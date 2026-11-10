@@ -10,6 +10,7 @@ import "core:time"
 import "mirai:cook/workspace"
 import "mirai:project"
 import "mirai:std/subprocess"
+import "mirai:std/base"
 
 AGENT_USAGE :: "agent install|updates|uninstall|runtime <codex|claude|all|bun> [--runtime Automatic|Bun|Node|pnpm|Bundled] [--version N] [--claude-code] [--home folder] [--cancel-file path]"
 AGENT_PACKAGES :: [2]string{"@agentclientprotocol/codex-acp","@agentclientprotocol/claude-agent-acp"}
@@ -79,7 +80,7 @@ agent_bun :: proc(operation:^Agent_Operation,home:string,download:bool) -> (path
     if target=="" {fmt.eprintln("No Bun package_name for this platform");return "",false}
     stage,error:=os.make_directory_temp(folder,".bun-*",context.allocator)
     if error!=nil {return "",false}
-    defer os.remove_all(stage)
+    defer base.remove_all(stage)
     zip:=join(stage,"bun.zip")
     url:=fmt.aprintf("https://github.com/oven-sh/bun/releases/download/bun-v%s/%s.zip",AGENT_BUN_VERSION,target)
     if !agent_exec(operation,stage,{"curl","--fail","--location","--silent","--show-error","--output",zip,url}) {return "",false}
@@ -115,7 +116,7 @@ agent_publish :: proc(operation:^Agent_Operation,stage,target,previous:string) -
         if had_previous {os.rename(previous,target)}
         return false
     }
-    os.remove_all(previous)
+    base.remove_all(previous)
     return true
 }
 
@@ -165,7 +166,7 @@ cmd_agent :: proc(engine_root:string,args:[]string) -> int {
         fmt.println("Updates checked");return 0
     case "uninstall":
         if agent_cancelled(&operation_state) {return 1}
-        if os.exists(target) && os.remove_all(target)!=nil {return 1}
+        if os.exists(target) && base.remove_all(target)!=nil {return 1}
         fmt.println("Agent uninstalled");return 0
     case "install":
         if version=="" {version=versions[index]}
@@ -178,7 +179,7 @@ cmd_agent :: proc(engine_root:string,args:[]string) -> int {
         if !agent_version_valid(version) || (runtime!="Bun"&&runtime!="Node"&&runtime!="pnpm"&&runtime!="Bundled") {return 2}
         stage,error:=os.make_directory_temp(home,".install-*",context.allocator)
         if error!=nil {return 1}
-        defer os.remove_all(stage)
+        defer base.remove_all(stage)
         manifest:=`{"private":true,"name":"mirai-agent"}`
         if runtime=="pnpm" {manifest=strings.concatenate({`{"private":true,"name":"mirai-agent","devEngines":{"runtime":{"name":"node","version":"^24.4.0","onFail":"download"}},"scripts":{"mirai-acp":"node node_modules/`,packages[index],`/dist/index.js"}}`},context.allocator)}
         if os.write_entire_file(join(stage,"package.json"),manifest)!=nil {return 1}
@@ -234,7 +235,7 @@ cmd_agent :: proc(engine_root:string,args:[]string) -> int {
         if marshal_error!=nil || os.write_entire_file(join(stage,"installation.json"),data)!=nil {return 1}
         previous:=join(home,fmt.aprintf(".previous-%s",name))
         if os.exists(previous) {
-            if !os.exists(target) {if os.rename(previous,target)!=nil {return 1}} else {if os.remove_all(previous)!=nil {return 1}}
+            if !os.exists(target) {if os.rename(previous,target)!=nil {return 1}} else {if base.remove_all(previous)!=nil {return 1}}
         }
         if !agent_publish(&operation_state,stage,target,previous) {return 1}
         fmt.printfln("Installed %s %s",name,version);return 0

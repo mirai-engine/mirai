@@ -17,7 +17,7 @@ and extend them with [ui.write](ui/writing-ui.md); do not write another menu sys
 
 - Restyle the menus, add a page, a button or an option, apply and save settings:
   [menus-settings.md](ui/menus-settings.md).
-- A HUD, a counter or bar, a sign in the world, a panel on a mesh:
+- A HUD, a counter or bar, a sign in the world, a panel on a mesh, a minimap drawn by code:
   [hud-panels.md](ui/hud-panels.md).
 - Named styles, tokens, states, widgets and animations: [styles.md](ui/styles.md).
 - Write a `.ui` (ui.write): [writing-ui.md](ui/writing-ui.md); translate: [texts.md](ui/texts.md).
@@ -27,7 +27,7 @@ and extend them with [ui.write](ui/writing-ui.md); do not write another menu sys
 ## Screens
 
 A screen is an entity with a `UI_Screen`; its `.ui` binds paths to components of that entity or
-to storages (`Status.message`, `Shell.page`).
+to storages. No step draws widgets: code draws a [`Draw` node](ui/hud-panels.md#custom-drawing).
 
 ```odin
 hud:=gui.UI_Screen{asset=hud_id}                              // Passive: draws, takes no input
@@ -56,9 +56,9 @@ menu_frame :: proc(g:^gui.Gui, screens:core.Read(Menu_Screen), options:^Menu_Opt
 }
 ```
 
-- Names are `base.name_hash` of the node name. A control bound to a setting writes it and the
-  engine keeps it; any other bound value the game writes on `Changed`, or the control goes back to
-  the field. Asking for a name the screen lacks is a problem `gui.names` once at run time.
+- Names are `base.name_hash` of the node name: `mirai ui check` refuses a literal no `.ui` has. A
+  control bound to a storage writes it (a setting is also kept); one bound to a component asks,
+  and the game writes it on `Changed`. A `Button` with `bind_value` writes its `choice` there.
 - The helpers (`clicked`, `changed`, `changed_value`, `submitted`, `dropped`, `back`,
   `menu_pressed`...) take a frame's `gui.events_this_frame(g)` or a tick's `UI_Events` storage: a
   fixed step reads the storage and sees nothing while the clock is stopped, as under a pause menu.

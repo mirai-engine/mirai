@@ -939,7 +939,7 @@ doc_node_fields_write :: proc(w:^Doc_Write,row:int,n:^ui.Tree_Node,root_params:[
             case .Layer:      append(&skip,"layer")
             case .Clip:       append(&skip,"clip")
             case .Block:      append(&skip,"block")
-            case .Values:     append(&skip,"index","count","choice","limit","delay","range","particle")
+            case .Values:     append(&skip,"index","count","choice","limit","delay","range","particle","draw")
             case .Action:     append(&skip,"action","hold")
             case .Focus:      append(&skip,"nav","order","flags")
             case .Drag:       append(&skip,"tag","accepts","ghost")
@@ -1866,7 +1866,7 @@ doc_instance_field :: proc(key:string) -> (field:ui.Node_Field,ok:bool) {
     case "block":          return .Block,true
     case "selected","disabled": return .Visibility,true
     case "variant":        return .Variant,true
-    case "index","count","choice","limit","delay","range","particle": return .Values,true
+    case "index","count","choice","limit","delay","range","particle","draw": return .Values,true
     case "action","hold":  return .Action,true
     case "nav","order","flags": return .Focus,true
     case "tag","accepts","ghost": return .Drag,true

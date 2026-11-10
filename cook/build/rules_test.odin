@@ -38,22 +38,29 @@ MOVE_ :: Move(1)
 `},
         {project.path(game,"game","shown.odin",allocator=context.temp_allocator),`package game
 import "mirai:core"
+import "mirai:ui"
 @(component,replicated) Score_Row :: struct {value:f32}
 @(component) Glow :: struct {value:f32}
 @(storage) Hud_State :: struct {value:f32}
 @(storage,events) Clicked :: struct {count:int}
 @(storage,events) Hits :: struct {count:int}
 @(storage,queue) Wishes :: struct {count:int}
-@(step="ui") hud_scores :: proc(rows:^core.Table(Score_Row)) {}
+@(step="render") hud_scores :: proc(rows:^core.Table(Score_Row)) {}
 @(step="render") hud_spawns :: proc(entities:^core.Entities) {}
-@(step="ui release") hud_commands :: proc(commands:core.Commands) {}
-@(step="ui",server) hud_rules :: proc() {}
-@(step="ui") hud_glow :: proc(glows:^core.Table(Glow),state:^Hud_State,clicked:^Clicked,wishes:^Wishes) {}
+@(step="render release") hud_commands :: proc(commands:core.Commands) {}
+@(step="render",server) hud_rules :: proc() {}
+@(step="render") hud_glow :: proc(glows:^core.Table(Glow),state:^Hud_State,clicked:^Clicked,wishes:^Wishes) {}
 @(step="fixed") glow_reader :: proc(glows:core.Read(Glow),state:core.Ref(Hud_State),clicked:core.Ref(Clicked),wishes:^Wishes) {}
 @(step="frame render") glow_both :: proc(state:^Hud_State) {}
 @(step="frame") hits_shown :: proc(hits:^Hits) {}
 @(step="fixed") hits_ticked :: proc(hits:^Hits) {}
 @(step="fixed") hits_reader :: proc(hits:core.Ref(Hits)) {}
+@(step="ui") hud_drawn :: proc() {}
+@(draw="map") map_draw :: proc(ctx:^ui.Context,node:ui.Draw_Node) {}
+@(draw="map") map_again :: proc(ctx:^ui.Context,node:ui.Draw_Node) {}
+@(draw) unnamed_draw :: proc(ctx:^ui.Context,node:ui.Draw_Node) {}
+@(draw="rows") rows_draw :: proc(ctx:^ui.Context,rows:core.Read(Glow)) {}
+@(draw="five") drawn_five :: 5
 `},
         {project.path(game,"game","game.odin",allocator=context.temp_allocator),"package game\nimport editor \"project:editor\"\n"+`@(step="fixed") steady :: proc() {}
 @(step="fixed") counted :: proc() -> int {return 0}
@@ -64,7 +71,10 @@ import "mirai:core"
 @(step="frame") tools_in_game :: proc(tools:editor.Tools) {}
 `},
         {project.path(game,"editor","editor.odin",allocator=context.temp_allocator),`package editor
+import "mirai:ui"
 @(storage) Panel :: struct {}
+@(step="ui") panel_shown :: proc() {}
+@(draw="panel") panel_draw :: proc(ctx:^ui.Context,node:ui.Draw_Node) {}
 @(net_message) Hello :: struct {}
 @(params) Tools :: struct {panel:^Panel}
 @(step="frame",loops="game") panel_in_game :: proc(panel:^Panel) {}
@@ -108,6 +118,12 @@ import "mirai:core"
         "hud_rules is server and runs only in ui or render",
         "glow_reader reads Glow, which only hud_glow writes, in ui or render",
         "glow_reader runs in fixed and reads Clicked, which only hud_glow fills",
+        "hud_drawn is a step of the ui phase in a game: a game shows its interfaces as .ui documents",
+        `map_again draws "map", which map_draw already draws`,
+        "unnamed_draw has @(draw) without a name",
+        "rows_draw is a @(draw) and is not a proc(ctx:^ui.Context,node:ui.Draw_Node)",
+        "@(draw) on drawn_five, which is not a procedure",
+        "panel_draw is a @(draw) of an editor package",
     }
     for want in wanted {
         found:=false
@@ -152,7 +168,7 @@ import inp "mirai:engine/input"
 @(step="frame",loops="editor") refilled :: proc(input:core.Input) {}
 @(step="late") stale_actions :: proc(input:inp.Input_Of) {}
 @(step="input") stale_input :: proc(input:core.Input) {}
-@(step="ui") fresh_actions :: proc(input:inp.Frame_Input_Of) {}
+@(step="late") fresh_actions :: proc(input:inp.Frame_Input_Of) {}
 @(step="fixed") ticked_actions :: proc(input:inp.Input_Of) {}
 `},
     }

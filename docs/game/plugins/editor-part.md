@@ -30,4 +30,6 @@ heal_make :: proc(s:^editor.Session, w:core.World_Ref, e:core.Entity) {
 
 Editor steps run in the `editor` loop and take what they use (`^editor.Session`, `^host.Assets`,
 `^host.Frame_Extras`, `^host.App` for the application itself).
-A tool is `editor.tool_button` plus `editor.tool_set`/`tool_on`; a panel, `editor.view_toggle`.
+A tool is `editor.tool_entry` in the register procedure of the API methods (its entry in the Tools
+menu and its key) plus `editor.tool_on` in its steps; a method a person runs too carries its menu
+entry and shortcut in the `entry` of its `editor.api_method_register`.

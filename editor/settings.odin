@@ -99,7 +99,8 @@ settings_all :: proc(s:^Session) -> []project.Setting {
 
 // Opens Project Settings, as the File menu does, on the setting of the world named name.
 settings_open :: proc(s:^Session,name:string) {
-    if !action_run(s,.Settings) || s.info==nil {return}
+    if command_state(s,"settings").disabled || s.info==nil {return}
+    settings_show(s)
     d:=&s.settings_dialog
     for c in settings_categories(s) {
         for storage,k in c.storages {

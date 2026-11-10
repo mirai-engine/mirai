@@ -187,8 +187,8 @@ History and recording:
 - **Output frame** (View menu) darkens outside the aspect ratio of the last recording, only while
   the viewport looks through a game camera (Play with its own camera or the camera preview): through
   the editor camera it would frame nothing of what is recorded.
-- **Detail of the game camera** (View menu, `editor.action` `game_detail`): in a Play the user
-  paused, the levels of the meshes and textures are those its camera saw at that tick
+- **Detail of the game camera** (View menu; `game_detail` of `Viewport_Preferences`): in a Play
+  the user paused, the levels of the meshes and textures are those its camera saw at that tick
   (`Session.paused_view`, kept before the editor camera takes the `View`), wherever the editor
   looks from, so a wrong level seen while playing is seen up close.
 
@@ -431,18 +431,41 @@ it leaves all its tabs and the unsaved assets (`recovery_tabs_keep`), which the 
 to recover, and exits with `EDITOR_GPU_LOST` and a message that names the cause. `engine.gpu_lose`
 causes the failure to test it.
 
-## Shortcuts and actions
+## Commands and shortcuts
 
-`Action` enumerates what the user can do: `action_run` executes one like its menu or shortcut,
-`action_state` says whether it is disabled or checked and `editor.action` exposes it to the API.
-The shortcuts are `ACTION_SHORTCUTS` and `ACTION_ALTERNATES` (`frame.odin`), with `Ctrl` as `Cmd`
-on macOS, and View > Keyboard shortcuts shows them.
+The methods of the API are the only catalog of commands (`editor/commands.odin`). A menu entry, a
+shortcut and a button of the bar are an entry (`Binding`): the name of a method, its params as
+JSON, a label, an icon, a shortcut and a menu. `command_run` runs an entry and `command_call` a
+method with params the interface worked out (Play from here); both queue the call, which runs
+between frames through the handler every call of an agent goes through, so the undo step, the
+errors and what is refused are those of the method. What fails is said in a notice.
 
+- **What is a command.** Whatever has a menu entry, a shortcut or a button. What a person does
+  inside a panel with the pointer or the keyboard focus (a scroll, a hover, a fold, a splitter, a
+  field being typed, the keys a focused card of the browser or an asset document takes) is the view
+  of that panel and has no method. What the editor remembers of its view is a preference, and its
+  entry calls `preferences.set`; what it does not (a dialog, a popup, a tab, the studio light) goes
+  through `editor.view`.
+- **The context stays out of the method.** The params of an entry name what the person has in front
+  in place of values: `$roots`, `$selection`, `$active`, `$copied` and `$all` stand for entities
+  (`api_context_entities`), `$toggle` for the opposite of what the entry shows checked, and `$ask`
+  for a file the person picks in a dialog. They mean that only in a gesture: an agent names its
+  entities and its paths.
+- **A person and an agent.** `api_person` says the call that runs is a gesture. The method is the
+  same; where it lacks a decision a person is asked (unsaved changes, the file of Open) and an agent
+  is told what to pass, and a person does not wait for what goes on (a build, an import) while an
+  agent gets the answer at its end.
+- **What an entry shows** (`Binding.state`: off, checked, another label) is for the person at the
+  editor now, and `editor.inspect` reports it with the method and the params of each entry. The
+  methods of the scene write the document: with a game shown their entries are off, and Delete
+  calls `play.destroy`.
+- **Keys.** With `Ctrl` as `Cmd` on macOS; View > Keyboard shortcuts lists them, those of the
+  plugins too. Two entries may share a key when they are never on together (Play and Stop on F5,
+  Pause and Resume on F6). They do not run while a text field is editing, a popup or dialog is
+  open or a tool has the pointer, and while a game has the keys only those of `in_game` do.
 - F5 also stops the networked game and stops watching. Deselect (Esc) is the last thing that runs
   in a frame.
 - Copy keeps the ids of the selected roots in `Session.copied`, not their data; Paste duplicates
   them like Duplicate, in one undo step, and selects the copies. What was copied and is no longer
-  in the scene is not pasted. In Play and while watching, Copy and Paste are disabled.
-- Shortcuts do not run while a text field is editing, a popup or dialog is open or a tool has the
-  pointer.
+  in the scene is not pasted. In Play and while watching, Copy and Paste are off.
 - The Stats popup summarizes what `engine.status` gives in more detail.
