@@ -126,7 +126,8 @@ flicker_hash :: proc "contextless" (v:u32) -> f32 {
     return f32(x>>8)/f32(1<<24)
 }
 
-// The globe of each lamp glows while it is lit (called by game_glow, the writer of Material_Values).
+// The globe of each lamp glows while it is lit.
+@(step="fixed")
 horror_glow :: proc(tints:^core.Table(render.Material_Values),lamps:core.Read(House_Lamp)) {
     for row in 0..<core.count(lamps) {
         lamp:=core.at(lamps,row)

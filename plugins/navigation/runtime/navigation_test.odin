@@ -724,6 +724,7 @@ agents_test_flier :: proc(f:^Nav_Test,feet:[3]f32) -> core.Entity {
 
 @(private)
 agents_test_step :: proc(f:^Nav_Test) {
+    clear(&f.nav_events.queue.items) // the log of a tick, as its readers are handed it
     time:=core.Time{tick=f.tick,seconds=f64(f.tick)/60,dt=1.0/60,playing=true}
     f.tick+=1
     nav_test_settle(f)

@@ -134,12 +134,11 @@ request_save :: proc(requests:^Terrain_Requests,owner:core.Entity,path:string=""
 
 // The room of the requests of a tick, and what did not fit in it.
 @(step="input fixed",loops="game editor",stage="begin")
-terrain_requests_serve :: proc(requests:^Terrain_Requests,digs:^Terrain_Digs,settings:Terrain_Settings,problems:^core.Problems) {
+terrain_requests_serve :: proc(requests:^Terrain_Requests,settings:Terrain_Settings,problems:^core.Problems) {
     capacity,setting:=int(settings.requests),"Terrain_Settings.requests"
     core.queue_serve(&requests.edits,capacity,problems,"terrain.requests","terrain edits",setting)
     core.queue_serve(&requests.layers,capacity,problems,"terrain.requests","terrain layer changes",setting)
     core.queue_serve(&requests.saves,capacity,problems,"terrain.requests","terrain saves",setting,"a save names a path shorter than 512 bytes")
-    core.queue_serve(&digs.digs,capacity,problems,"terrain.requests","terrain digs of a tick",setting)
 }
 
 // A brush of the world as the terrain at place reads it, and the other way.
@@ -185,8 +184,8 @@ Terrain_Dig :: struct {
 // What the edits of dig and the replays of the tick took out, in
 // their order. terrain_replay empties it at the start of each tick of a world
 // that plays.
-@(storage,events)
-Terrain_Digs :: struct {digs:core.Queue(Terrain_Dig)}
+@(storage)
+Terrain_Digs :: struct {digs:core.Events(Terrain_Dig)}
 
 // The dig of the last edit of the source of entry, if it took something out.
 @(private)
@@ -201,7 +200,7 @@ dig_push :: proc(digs:^Terrain_Digs,owner:core.Entity,entry:^Data_Source,worlds:
     dig.center=mm.transform_point(place,d.sum/d.volume)
     dig.radius=(linalg.length(d.high-d.low)*0.5+s.cell)*scale
     for i in 0..<int(s.layer_count) {dig.materials[i]=s.layers[i].material}
-    core.offer(&digs.digs,dig)
+    core.push(&digs.digs,dig)
 }
 
 // The meshes of the pieces of the terrains of a world: each world keeps its

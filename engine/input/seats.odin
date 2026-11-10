@@ -238,7 +238,7 @@ body_action :: proc(p:Players,body:core.Entity,a:Action) -> Action_State {
 // other ends get their actions from the network.
 @(step="fixed",stage="input")
 input_seats :: proc(
-    es:^core.Entities,app:^host.App,seats:^core.Table(Seat),
+    es:core.Commands,app:^host.App,seats:^core.Table(Seat),
     multiplayer:core.Read(Local_Multiplayer),state:^Seats,run:core.Ref(Run_Players),
     device:core.Input,bindings:core.Ref(Input_Map),network:core.Ref(core.Network),keeps:^core.Table(core.Keep),time:core.Time,
 ) {

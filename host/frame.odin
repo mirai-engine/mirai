@@ -313,6 +313,7 @@ app_game_frame :: proc(app:^App,world:rawptr,phases:=ALL_PHASES,step:=false,dt:=
     }
     f.alpha=f32(f.accumulator/f64(app.tick_dt))
     for phase in ([4]core.Phase{.Frame,.Late,.Ui,.Render}) {run_phase(app,loop,phase,phases,world,nil)}
+    if app.info.events_age!=nil {app.info.events_age(world,due>0)}
 }
 
 // A fixed tick of a world that already ran, again, from inside the phase that
@@ -373,6 +374,7 @@ app_editor_frame :: proc(app:^App,world,editor:rawptr,played:=false) {
         input^=tick
     }
     for phase in core.Phase {run_phase(app,loop,phase,ALL_PHASES,world,editor)}
+    if app.info.events_age!=nil {app.info.events_age(world,true)}
 }
 
 // The functions of the editor loop in a phase that the game loop does not also call, in order.
@@ -863,6 +865,7 @@ app_world_draw :: proc(app:^App,world,editor:rawptr,texture:render.Texture_Handl
         t.dt,t.playing=0,false
         f.dt,f.alpha=max(dt,0),1
         run_phase(app,.Editor,.Fixed,{.Fixed},world,editor)
+        core.world_events_age(ref)
         offscreen_origin(app,ref)
         run_phase(app,.Game,.Render,{.Render},world,nil)
         seen:=[1]render.Frame_View{{camera=app.camera,camera_cut=cut && frame==0,rect={0,0,size.x,size.y},texture=texture}}

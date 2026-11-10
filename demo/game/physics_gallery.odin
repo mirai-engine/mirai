@@ -13,7 +13,6 @@ import cache "plugins:physics_cache/runtime"
 import rag "plugins:ragdoll/runtime"
 
 PHYSICS_GALLERY_STATIONS :: 23
-PHYSICS_GALLERY_SCENE :: "physics_gallery/physics.scene"
 PHYSICS_GALLERY_BURST :: "physics_gallery/physics_burst.scene"
 
 @(component)
@@ -144,6 +143,7 @@ physics_gallery_events :: proc(stations:core.Read(Physics_Gallery),counts:^Physi
     }
 }
 
+@(step="fixed")
 physics_gallery_fade :: proc(stations:core.Read(Physics_Gallery),view:destruct.Destruct_View,tints:^core.Table(render.Material_Values),time:core.Time) {
     if !(time.dt>0) {return}
     for row in 0..<core.count(stations) {

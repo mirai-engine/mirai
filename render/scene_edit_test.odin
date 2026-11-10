@@ -690,16 +690,16 @@ touched_instances_go_in_runs_of_the_table_however_many_they_are :: proc(t:^testi
     testing.expect(t,s.touched_count==2 && len(s.instances)==900)
     testing.expect(t,scene_tint(r,{899,898},{{1,0,0},{1,1,1}},{{},{}},&count))
     testing.expect(t,s.touched_count==3 && instance_touched(s,899) && count==1,"the tint it had touches nothing")
-    // A highlight of another level sends its instance alone, and the same levels none.
+    // An instance given again with another highlight goes alone, and changes no light; given again as they are, none goes.
     touched_settle(s);touched_settle(s)
     s.instances_dirty=false
-    levels:=make([]u8,len(s.desc_instance));defer delete(levels)
-    levels[5]=2
-    testing.expect(t,scene_set_highlights(r,levels))
-    testing.expect(t,!s.instances_dirty && s.touched_count==1 && instance_touched(s,5) && s.highlighted==1)
+    s.changes={}
+    descs[5].highlight=2
+    testing.expect(t,scene_update(r,5,descs[5:6]))
+    testing.expect(t,!s.instances_dirty && s.touched_count==1 && instance_touched(s,5) && s.highlighted==1 && s.changes.count==0 && !s.changes.all)
     touched_settle(s)
-    testing.expect(t,scene_set_highlights(r,levels))
-    testing.expect(t,!s.instances_dirty && s.touched_count==0 && s.highlighted==1)
+    testing.expect(t,scene_update(r,0,descs[:890]))
+    testing.expect(t,!s.instances_dirty && s.touched_count==0 && s.highlighted==1 && s.changes.count==0)
 }
 
 // What the scene answers of an instance it was given: the rows of the

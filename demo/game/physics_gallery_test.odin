@@ -193,7 +193,7 @@ gallery_event_counts_restart_when_the_scene_is_loaded_again :: proc(t:^testing.T
         core.push(&events.fractured,destruct.Fracture{entity=e})
         physics_gallery_events(core.read(&stations),&counts,core.ref(&events),spawner,&bodies)
         testing.expect_value(t,counts.counts[10],u32(1))
-        core.queue_clear(&events.fractured)
+        clear(&events.fractured.items)
         core.entities_clear(&entities);core.table_clear(&stations)
     }
 }

@@ -412,6 +412,8 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     // After another world the time may jump by what loading it took: the
     // frame keeps the pace of the one before.
     if !r.world_switched {r.delta_time=max(r.time-r.previous_time,0)}
+    // A world shown again (scene_world) has the light of the scene it was given since.
+    if r.world_kept {r.scene.changes={}}
     r.world_switched,r.world_kept=false,false
     r.frame_changes={}
     // The origin follows the eye of the first view of the window; what the

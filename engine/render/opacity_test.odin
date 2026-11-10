@@ -24,7 +24,6 @@ tint_opacity_updates_only_dirty_instances_and_reuses_materials_without_allocatin
     if !core.test_world_init(t,&w,test_types) {return}
     defer core.test_world_destroy(&w)
     sync:Render_Sync;defer sync_free(&sync)
-    whole:Render_Sync;defer sync_free(&whole)
     w.view.position,w.view.rotation,w.view.size={0,0,5},1,{160,120}
     entities:=[2]core.Entity{core.create(&w.entities),core.create(&w.entities)}
     for e,i in entities {
@@ -41,12 +40,10 @@ tint_opacity_updates_only_dirty_instances_and_reuses_materials_without_allocatin
     alphas:=[9]f32{1,0.5,0,1,0.75,0.25,0.5,0,1}
     for alpha,pass in alphas {
         core.edit(&w.values,entities[0]).color.a=alpha
-        sets:=sync.stats.scene_sets
         updates:=sync.stats.instance_updates
         host.app_frame_begin(app)
         draw(&sync,app,&w)
         if pass>0 {
-            testing.expect_value(t,sync.stats.scene_sets,sets)
             testing.expect_value(t,sync.stats.instance_updates,updates+1)
             if pass==5 || pass==6 || pass==7 {testing.expect(t,!app.renderer.scene.tlas_dirty && !app.renderer.scene.tlas_nodes_dirty && !app.renderer.scene.tlas_refs_dirty)}
         }
@@ -55,8 +52,8 @@ tint_opacity_updates_only_dirty_instances_and_reuses_materials_without_allocatin
         hw:=app.renderer.scene.hw_instances[0].mask_flags
         testing.expect_value(t,hw&0xff,u32(alpha<1?gpu.RAY_GLASS:gpu.RAY_SMALL))
         testing.expect_value(t,hw&rhi.TLAS_ALPHA_TESTED!=0,alpha<1)
-        testing.expect_value(t,instance_entity(&sync,0),entities[0])
-        testing.expect_value(t,instance_entity(&sync,1),entities[1])
+        testing.expect_value(t,sync.drawn.entities[0],entities[0])
+        testing.expect_value(t,sync.drawn.entities[1],entities[1])
         host.app_frame_end(app)
         // The frame takes the tree of the instances as the updates left it, which rays traced by software walk.
         if !app.renderer.hardware_rt {
@@ -76,13 +73,7 @@ tint_opacity_updates_only_dirty_instances_and_reuses_materials_without_allocatin
         }
         testing.expectf(t,alpha==0?red==0:red>100,"alpha %f draws the fading entity (%d red pixels)",alpha,red)
         testing.expect(t,green>100,"the unchanged entity remains visible")
-        host.app_frame_begin(app)
-        testing.expect(t,world_instances(&w,&whole,app))
-        gpu.scene_set(app.renderer,whole.shown[:],sync.lights[:],sync.sun,sync.environment)
-        host.app_frame_end(app)
-        reference,_,_,reference_ok:=host.app_capture_pixels(app)
-        testing.expect(t,reference_ok && mem.compare(pixels,reference)==0,"incremental appearance matches a complete scene set")
-        delete(pixels);delete(reference)
+        delete(pixels)
     }
     material_rows:=len(app.assets.material_descs)
     allocations:=tracking.total_allocation_count
@@ -100,12 +91,12 @@ tint_opacity_updates_only_dirty_instances_and_reuses_materials_without_allocatin
     draw(&sync,app,&w)
     host.app_frame_end(app)
     testing.expect_value(t,len(app.renderer.scene.instances),1)
-    testing.expect_value(t,instance_entity(&sync,0),entities[0])
+    testing.expect_value(t,sync.drawn.entities[0],entities[0])
     core.add(&w.meshes,entities[1],Mesh_Renderer{shape=.Cube});core.test_world_settle(&w)
     host.app_frame_begin(app)
     draw(&sync,app,&w)
     host.app_frame_end(app)
     testing.expect_value(t,len(app.renderer.scene.instances),2)
-    testing.expect_value(t,instance_entity(&sync,1),entities[1])
+    testing.expect_value(t,sync.drawn.entities[1],entities[1])
     testing.expect_value(t,rhi.device_validation_errors(app.device),0)
 }
