@@ -135,6 +135,7 @@ pipelines_drop :: proc(r: ^Renderer) {
 	if t == nil {return}
 	sync.mutex_lock(&t.mutex)
 	defer sync.mutex_unlock(&t.mutex)
+	r.variants_wanted = true
 	for {
 		making := false
 		for &job in t.jobs {
@@ -150,6 +151,35 @@ pipelines_drop :: proc(r: ^Renderer) {
 		if !making {return}
 		sync.cond_wait(&t.made, &t.mutex)
 	}
+}
+
+// Whether the thread was asked for the pipeline of owner and has not put it in place.
+@(private)
+pipeline_asked :: proc(r: ^Renderer, owner: ^rhi.Pipeline) -> bool {
+	t := r.pipeline_thread
+	if t == nil || sync.atomic_load(&t.busy) == 0 {return false}
+	sync.mutex_lock(&t.mutex)
+	defer sync.mutex_unlock(&t.mutex)
+	for job in t.jobs {if job.state != .Free && job.owner == owner {return true}}
+	return false
+}
+
+// A frame that needs the pipeline of owner, which the thread was asked for,
+// waits for it and puts what is made in place. False when it was not asked.
+@(private)
+pipeline_wait :: proc(r: ^Renderer, owner: ^rhi.Pipeline) -> bool {
+	t := r.pipeline_thread
+	if !pipeline_asked(r, owner) {return false}
+	sync.mutex_lock(&t.mutex)
+	for {
+		waiting := false
+		for job in t.jobs {waiting ||= job.owner == owner && (job.state == .Asked || job.state == .Making)}
+		if !waiting {break}
+		sync.cond_wait(&t.made, &t.mutex)
+	}
+	sync.mutex_unlock(&t.mutex)
+	pipelines_install(r)
+	return true
 }
 
 // Whether a pipeline of a program that was asked for is not in place: the

@@ -546,6 +546,7 @@ Renderer :: struct {
 	pipelines:       [Pipeline_Id]rhi.Pipeline, // of each stage that traces no rays, without constants
 	variants:        [PIPELINE_VARIANTS]Pipeline_Variant, // the others (pipeline_of)
 	variant_count:   int,
+	variants_wanted: bool, // the variants a scene may ask for are asked of the pipeline thread before the next frame
 	shader_codes:    [Shader_Id]rhi.Shader_Code,
 	shader_assets:   Shader_Assets,
 	embedded:        []u8, // the code of the shaders the executable embeds, decoded when it runs them
@@ -741,6 +742,7 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	r.scene.instances_dirty = true
 	r.scene.lights_dirty = true
 	r.scene.tlas_dirty = true
+	pipeline_variants_ask(r)
 	return true
 }
 
@@ -1087,21 +1089,54 @@ pipeline_of :: proc(r: ^Renderer, id: Pipeline_Id, constants: rhi.Shader_Constan
 			set_error(r, "pipeline %s: more than %d variants of stages", pipeline_name(r, item), PIPELINE_VARIANTS)
 			break
 		}
-		if target^ == 0 {
-			made := item
-			if made.graphics {made.desc.fragment_constants += constants} else {made.constants += constants}
-			if target^ = pipeline_create(r, made); target^ == 0 {set_error(r, "pipeline %s: %s", pipeline_name(r, item), rhi.device_error(r.device))}
+		// One the pipeline thread makes is waited for; one it was not asked for is made here.
+		if target^ == 0 && !pipeline_wait(r, target) {
+			graphics, compute := pipeline_desc(r, item, constants)
+			pipeline_make(r, target, graphics, compute, now = true)
 		}
+		if target^ == 0 {set_error(r, "pipeline %s: %s", pipeline_name(r, item), rhi.device_error(r.device))}
 		return target
 	}
 	return &r.pipelines[id]
 }
 
-// The pipeline an item of the list describes.
+// What makes the pipeline an item of the list describes with more constants:
+// a graphics one, or a compute one when it has a shader.
 @(private)
-pipeline_create :: proc(r: ^Renderer, item: Pipeline_Make) -> rhi.Pipeline {
-	if item.graphics {return rhi.pipeline_create_graphics(r.device, item.desc)}
-	return rhi.pipeline_create_compute(r.device, {shader = &r.shader_codes[item.shaders[0]], constants = item.constants, name = item.name})
+pipeline_desc :: proc(r: ^Renderer, item: Pipeline_Make, constants: rhi.Shader_Constants = {}) -> (graphics: rhi.Graphics_Pipeline_Desc, compute: rhi.Compute_Pipeline_Desc) {
+	if item.graphics {
+		graphics = item.desc
+		graphics.fragment_constants += constants
+		return
+	}
+	return {}, {shader = &r.shader_codes[item.shaders[0]], constants = item.constants + constants, name = item.name}
+}
+
+// The variants a scene may ask for of the stages of the tracer in use, asked
+// of the pipeline thread so that no frame waits for the driver: every set of
+// the constants of a stage that traces or computes, those of colored shadows
+// while the setting is on. Without the thread, a frame makes each one.
+@(private)
+pipeline_variants_ask :: proc(r: ^Renderer) {
+	r.variants_wanted = false
+	if r.pipeline_thread == nil {return}
+	tracer := Pipeline_Rays.Hardware if r.hardware_rt else .Software
+	info := rhi.device_info(r.device)
+	list: Pipeline_List
+	pipelines_list(r, &list)
+	for item in list.items[:list.count] {
+		if item.lazy || item.target == nil || item.rays != .Any && item.rays != tracer || item.graphics && item.rays == .Any || !pipeline_possible(info, item) {continue}
+		code := &r.shader_codes[item.shaders[1]]
+		color, colored := rhi.shader_constant(code, "color")
+		for bits in u32(1) ..< u32(1) << uint(min(len(code.constants), rhi.MAX_SHADER_CONSTANTS)) {
+			constants := transmute(rhi.Shader_Constants)bits
+			if colored && color <= constants && !r.settings.colored_shadows {continue}
+			target := pipeline_slot(r, item.id, .Any if item.target == &r.pipelines[item.id] else item.rays, constants)
+			if target == nil || target^ != 0 || pipeline_asked(r, target) {continue}
+			graphics, compute := pipeline_desc(r, item, constants)
+			pipeline_make(r, target, graphics, compute)
+		}
+	}
 }
 
 // The pipelines of a renderer and their variants.
@@ -1155,7 +1190,8 @@ create_pipelines :: proc(r: ^Renderer, make: bit_set[Pipeline_Rays]) -> bool {
 			if at >= work.count {return}
 			r, item := work.r, &work.list.items[work.order[at]]
 			if r.reload_stop != nil && sync.atomic_load(r.reload_stop) {return}
-			item.target^ = pipeline_create(r, item^)
+			graphics, compute := pipeline_desc(r, item^)
+			pipeline_make(r, item.target, graphics, compute, now = true)
 		}
 	}
 	threads: [PIPELINE_THREADS_MAX]^thread.Thread
@@ -1412,6 +1448,7 @@ renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
 		destroy_targets(r, &r.main.targets)
 		if !create_targets(r, &r.main, r.window_width, r.window_height, window_render_scale(r, f32(r.window_height)), true) {return false}
 	}
+	pipeline_variants_ask(r)
 	return true
 }
 
