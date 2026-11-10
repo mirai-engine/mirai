@@ -21,12 +21,19 @@ $P terrain.layer '{"entity":"Hills","material":"hills/rock.mat","automatic":true
 $P asset.save '{"all":true}'; $P scene.save '{}'
 ```
 
-- Kinds: `heightfield` (heights over x and z: hills, valleys, plains), `mesh` (a 3D terrain: caves
-  and overhangs) and `volume` (solid and air: digging). Size is `samples` minus 1 times `spacing`.
-  `name` names the entity and its file, which goes beside the scene.
-- Brushes of `terrain.edit`: `raise`, `lower`, `smooth`, `flatten`, `set_height`, `ramp` (from `at`
-  to `to`), `terrace`, `noise`, `erode`, `paint` and `erase` (a layer), `hole`, `fill`. A stroke
-  goes from `at` to `to`; `radius`, `strength`, `falloff`, `passes` shape it.
+- Kinds: `heightfield` (heights over x and z: hills, valleys, plains) and `volume` (solid and
+  air: caves, overhangs and digging, as large as the ground needs). Size is `samples` minus 1
+  times `spacing`. `name` names the entity and its file, which goes beside the scene.
+- Brushes of `terrain.edit`, the same on both kinds: `raise`, `lower`, `smooth`, `flatten`,
+  `set_height`, `noise`, `paint` and `erase` (a layer), and `add` and `carve`, which join or take
+  out a `shape` (`sphere`, `capsule` to `to`, `box`). Of a heightfield alone: `ramp` (from `at` to
+  `to`), `terrace`, `erode`, `hole`, `fill`. A stroke goes from `at` to `to`; `radius`,
+  `strength`, `falloff`, `passes` shape it. A brush the kind lacks or a value out of range
+  answers what failed and what to use.
+- In game code one call digs whatever ground is under it:
+  `terrain.dig(requests, {kind=.Carve, center=point, radius=2, amount=1})` returns what is wrong
+  with the brush (`terrain.edit_error_fix` says how to fix it), and what it took out comes in
+  `Terrain_Digs`.
 - `terrain.layer` adds a material layer (up to four) or changes the one named `layer` by its
   material (its path or stem; `default` is one without a material); an `automatic` layer covers
   where the slope (degrees) and `height` (metres) are in its ranges, so rock lands on steep faces
@@ -53,7 +60,7 @@ $P foliage.paint '{"entity":"Woods","mode":"generate","at":[256,0,256],"radius":
   whole terrain; `ungenerate` off), `paint` and `erase` place or remove manual instances (a
   `ground_only` paint stays on the terrain), `reapply` redoes scale and turn. `foliage.place` puts
   one instance, `foliage.query` lists types and instances.
-- Foliage stands on the terrain by itself (`foliage_terrain`) and follows it when it is sculpted.
+- Foliage stands on the terrain by itself and follows it when it is sculpted.
   Far away it becomes impostors; collision is per type.
 - A `Wind` component (`volume "mirai:engine/volume"`) on any entity makes foliage sway; `wind` on
   a type scales it.

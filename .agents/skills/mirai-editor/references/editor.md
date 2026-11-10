@@ -164,12 +164,12 @@ History and recording:
   **Play from here**, among the strip controls when it went back (`play.pause` with `here`),
   continues from the frame it is at, edited or not, and discards the later ones.
 - The right button on the ruler of any time strip (`timeline_strip`: Play, assets that play,
-  cinematics) sets an end of its range at that frame (the other end stays while start stays before
-  end; otherwise, or without a range, it goes to the head or to the edge). Where the document
-  describes its range (`Ai_Range`), Copy range puts a few lines on the clipboard, paths relative
-  to the assets and never absolute: the ticks, the run (`Run.id`) and the scene of a Play; the
-  frames, the asset and its clip; or the ticks, the cinematic and its scene. With a range, the AI
-  button of the strip attaches the same to the next message of the chat
+  the Tracks tool) sets an end of its range at that frame (the other end stays while start stays
+  before end; otherwise, or without a range, it goes to the head or to the edge). Where the
+  document describes its range (`Ai_Range`), Copy range puts a few lines on the clipboard, paths
+  relative to the assets and never absolute: the ticks, the run (`Run.id`) and the scene of a Play;
+  the frames, the asset and its clip; or the ticks, the entity whose clip it is and its scene. With
+  a range, the AI button of the strip attaches the same to the next message of the chat
   ([ranges of a message](ai-tasks.md#assets-of-a-message)).
 - Stop keeps the user's Play that has a history, with its World and voices stopped
   (`Session.replay`), until the next Play, a change of document or a reload of code: `play.history`
@@ -241,12 +241,12 @@ The editor provides the generic parts:
   unsaved assets (`Pending.Play_Plugin`). While its game runs, Play and Simulate wait. Without a
   plugin that provides it, `play.start` with `online` fails saying `multiplayer` is missing.
 - **Player processes** (`editor/player_processes.odin`): the plugin opens a `mirai-player` per
-  player with the arguments that say what it plays; the editor adds `--attached`, how to show it
-  and `--library editor`: each process loads its copy of the `editor` library that the editor
-  already loaded and runs only the game's world and its loop, like the editor's Play, so nothing is
-  compiled for them. A Build while they run replaces the file: the processes continue with their
-  copy ([project libraries](../../mirai-core/references/host.md#project-libraries)). The scene
-  copies they run go to `.mirai/play/` (`play_copy_file`).
+  player with the arguments that say what it plays; the editor adds `--attached` and how to show
+  it: each process loads its copy of the `editor` library that the editor already loaded and runs
+  only the game's world and its loop, like the editor's Play, so nothing is compiled for them. A
+  Build while they run replaces the file: the processes continue with their copy
+  ([project libraries](../../mirai-core/references/host.md#project-libraries)). The scene copies
+  they run go to `.mirai/play/` (`play_copy_file`).
 
 Screen and input of the processes:
 
@@ -438,7 +438,9 @@ shortcut and a button of the bar are an entry (`Binding`): the name of a method,
 JSON, a label, an icon, a shortcut and a menu. `command_run` runs an entry and `command_call` a
 method with params the interface worked out (Play from here); both queue the call, which runs
 between frames through the handler every call of an agent goes through, so the undo step, the
-errors and what is refused are those of the method. What fails is said in a notice.
+errors and what is refused are those of the method. What fails is said in a notice. A method the
+person runs while a gesture of theirs is open records into that gesture's step
+(`command_join`, `api_edit_begin`): one undo takes back both.
 
 - **What is a command.** Whatever has a menu entry, a shortcut or a button. What a person does
   inside a panel with the pointer or the keyboard focus (a scroll, a hover, a fold, a splitter, a

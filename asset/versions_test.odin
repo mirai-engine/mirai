@@ -71,7 +71,7 @@ an_asset_of_another_version_says_which_it_is_and_how_to_import_it_again :: proc(
     testing.expect_value(t,kind_check(&a,KIND_MESH,MESH_VERSION-2),Error.Version)
     testing.expect_value(t,kind_check(&a,KIND_MATERIAL,MESH_VERSION-1),Error.Invalid)
     for info in KINDS {
-        testing.expectf(t,info.version>0 || info.kind==KIND_PHYSICS_CACHE,"%s has the version it reads",info.name)
+        testing.expectf(t,info.version>0,"%s has the version it reads",info.name)
     }
     b.blob.header.kind=Fourcc(u32('G')|u32('R')<<8|u32('W')<<16|u32('N')<<24)
     told=version_message(&b,&types,"grown.grw",2,context.temp_allocator)

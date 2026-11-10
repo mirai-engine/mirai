@@ -245,7 +245,8 @@ Server :: struct {
     guides:[]Guide,
     assets:serial.Text_Assets, // how params take a path where an Asset_Id goes
     pause:proc(s:^Server,seconds:f64)->bool, // keeps what owns the server going between two calls of _wait_until; false: it is ending
-    user:rawptr,                             // of pause
+    transaction:proc(s:^Server,call:^Call,open:bool)->bool, // opens the one step of undo the calls of a batch edit in, or closes it: a step when the call did not fail, nothing otherwise; false after failing the call
+    user:rawptr,                             // of pause and transaction
 }
 
 // A plugin the project finds; active: the project uses it.

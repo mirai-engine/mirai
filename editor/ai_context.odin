@@ -191,7 +191,7 @@ ai_entity_id_text :: proc(w:core.World_Ref,e:core.Entity) -> string {
 ai_item_rect :: proc(s:^Session,item:Scene_Item) -> (rect:ui.Rect,ok:bool) {
     v:=s.viewport
     if item.body {
-        if low,high,known:=picker_bounds(s.picker,s.app.assets,item.mesh);known {
+        if low,high,known:=mesh_bounds(s.app.assets,item.mesh);known {
             return project_box(v,mm.transform_matrix(item.world),low,high)
         }
     }
@@ -368,10 +368,10 @@ ai_state_write :: proc(s:^Session,task:^Ai_Task,w:core.World_Ref) -> bool {
 }
 
 // The methods a turn uses most, named in the instructions by their MCP tool.
-AI_PROMPT_TOOLS :: [?]string{"scene.inspect","scene.write","scene.add","scene.set","scene.delete","scene.batch","play.start","play.step","scene.save","asset.save","play.inspect","play.check","capture","play.stop","view.viewport","asset.import","finish","engine.describe"}
+AI_PROMPT_TOOLS :: [?]string{"scene.inspect","scene.write","batch","play.start","play.step","scene.save","asset.save","play.inspect","play.check","capture","play.stop","view.viewport","asset.import","finish","engine.describe"}
 // The methods whose parameters go in the instructions, from the live
 // registry: most of what a turn does, without looking their schemas up.
-AI_PROMPT_SCHEMAS :: [?]string{"scene.inspect","scene.write","scene.add","scene.set","scene.delete","scene.batch","finish"}
+AI_PROMPT_SCHEMAS :: [?]string{"scene.inspect","scene.write","batch","finish"}
 
 // The instructions that hold for every turn: who the agent is, its rules, the
 // tools and their schemas and the memory of the project. The agent works on the

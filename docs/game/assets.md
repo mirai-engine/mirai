@@ -13,7 +13,7 @@ has an id in its header: components and scenes name it by id; code, by its path.
 ## Map
 
 - Import a file: [Import](#import). Kinds: [Kinds](#kinds). Use an asset: [Reference](#reference).
-- Check or edit a file: [Inspect](#inspect). Interfaces and scenes as files of text:
+- Check or edit a file: [Inspect](#inspect). Interfaces and scenes as text:
   [text-sources.md](assets/text-sources.md). By code: [content-tool.md](assets/content-tool.md),
   props [props.md](assets/props.md), terrain and sea [whole-scene.md](assets/whole-scene.md).
 
@@ -28,26 +28,26 @@ mirai import source/sounds/step.wav --out assets/player --root .
 ```
 
 - Formats: OBJ, glTF/GLB, USD, FBX; PNG, JPEG, TGA, BMP, GIF, PSD, HDR; WAV and Ogg Vorbis (mono
-  or stereo); TTF, OTF; CSV texts (`key,en,es`); prompt manifests. `mirai import` with no
-  arguments lists every flag.
+  or stereo); TTF, OTF; CSV texts (`key,en,es`); prompt manifests.
 - A model writes meshes, materials, textures, skeletons, clips and a prefab: instantiate that.
 - An image is color unless its name says otherwise (`normal`, `_n`, `rough`, `metal`, `orm`,
   `_ao`, `height`, `mask`); force it with `--srgb`, `--data`, `--normal`, `--normal-green-down`.
-- Flags are saved in `<file>.import` beside the source and repeat on the next import.
+- `<file>.import` beside the source keeps the flags and the id of each asset, so importing again
+  updates in place, keeping ids and material edits: commit it, and move it with its source.
+- Meshes, textures, sounds and fonts are built into `.mirai/imported/`, never committed: `mirai
+  build` makes them again on a fresh clone. Edit their source, not them.
 - Triangle and texture limits and the collision shape are flags too; colliders a source brings
   win unless `--force-collision`. `mirai import` without arguments prints every flag.
 - A model without a skeleton that must animate: `--rig` with the template that fits it. Clips of
   another file onto a skeleton the project has: `--skeleton <id>` ([animation](animation.md)).
-- Importing again from the same path updates in place, keeping ids and material edits; after
-  moving or renaming the source pass `--into <id>` of its scene, texture or sound.
 - With an editor session: `asset.import` (MCP `asset_import`) answers when it ends, with what it
   wrote; a CLI import is picked up by the editor at its next call. `asset.list` shows what exists.
 
 ## Kinds
 - Engine: `.mesh` `.skeleton` `.mat` `.tex` `.anim` `.sound` `.sound_set` `.ui` `.font` `.strings`
-  `.prompts` `.records` `.fracture` `.physics_cache` `.scene` (one root: a prefab, `kind=prefab`).
+  `.prompts` `.records` `.scene` (one root: a prefab, `kind=prefab`).
 - Plugins add `.particle`, `.terrain`, `.foliage`, `.navmesh`, `.match`, `.pose`, `.blend`,
-  `.motion`, `.action`.
+  `.motion`, `.action`, `.fracture` (`destruct`), `.physics_cache`.
 - Folders are named after what they hold (`player`, `arena`), never after a kind. An import goes
   into the folder asked for, a model in one of its name inside. Sound sets: [audio](audio.md);
   particles: [vfx](vfx.md).
@@ -59,11 +59,11 @@ mirai import source/sounds/step.wav --out assets/player --root .
 - The API takes an asset by its path under `assets/`, with or without its extension, or its id;
   code, by its path as the file is spelled, and a field it fills by `host.assets_id(assets,path)`.
   A constant id in code is only for assets your own tool writes with `asset.content_id`.
-- Scenes and `.records` ship. Other assets only code names need a root in `cook.mirai`:
-  `{"roots":["arena/Chrome.mat","player/"]}` (path under `assets/`, folder with `/`, or id).
-- Texts: `host.strings_text(host.content_strings(app,"menu/texts.strings"),base.name_hash("en"),
-  base.name_hash(key))` gives `(text,found)`. `mirai texts export|import <file.csv>` moves the
-  translations of `.ui` files through the open editor.
+- Scenes, `.records` and `.strings` ship. Other assets only code names need a root in
+  `cook.mirai`: `{"roots":["arena/Chrome.mat","player/"]}` (path under `assets/`, folder with
+  `/`, or id).
+- Texts: every `.strings` is one table of keys, which a node of a `.ui`, a `core.Text` of a row
+  and `core.text(texts,"menu.start",language)` show: [texts](ui/texts.md).
 - Game data: a struct tagged `@(record)` is a catalog (items, dialogue, waves) whose rows live in
   a `.records` file (`records.create`; `records.add`, `records.set`). A
   `core.Record(T)` field names a row; read it with `core.record(rows,ref,problems,entity)`.

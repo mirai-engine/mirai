@@ -30,12 +30,12 @@ Terrain_Tool :: struct {
     active,begin,over,ready:bool,
     brush:terrain.Brush_Kind,
     level:bool, // Flatten goes to height: Set height
-    layer:int,  // the one Paint and Erase paint, and the one Add and Union give a Volume
+    layer:int,  // the one Paint and Erase paint, and the one Add gives a Volume
     interior:terrain.Interior, // what the panel shows of the interior of a Volume until Apply
     interior_of:Interior_Of,
-    axis:Drag_Axis,
+    shaping:bool, // Add and Carve place a shape (Shapes), not strokes of Sculpt
+    axis:Stroke_Axis,
     using prefs:Terrain_Preferences, // radius and strength are in meters of the world and from 0 to 1
-    plane:Brush_Plane,
     height:f32,  // of Set height, in the terrain
     picking:bool, // the next press takes the height under it for Set height
     touches:u64,  // made by the tool: the seeds of what changes at each
@@ -61,7 +61,7 @@ Interior_Of :: struct {id:base.Asset_Id,revision:u32}
 BRUSH_RATE :: 30
 
 Stroke :: struct {
-    active,changed,applied_once:bool,
+    active,changed:bool,
     touched:bool, // the held brush already touched the terrain in this stroke
     waited:f32,   // seconds since it last did
     first,last:[3]f32, // where the stroke began and its last touch, in the terrain
@@ -81,7 +81,6 @@ Stroke :: struct {
     to_local,to_world:mm.Mat4,
     scale,target:f32,
     normal:[3]f32,
-    drag:Terrain_Drag,
     revision:u32,
     stamp:terrain.File_Stamp, // of the file source holds
 }
@@ -101,7 +100,7 @@ Preview_Build :: struct {
 }
 // Preview chunks built at once in a frame; more wait for these.
 PREVIEW_BUILDS :: 8
-Create_Source :: enum {Plane,Heightmap,Selection}
+Create_Source :: enum {Plane,Heightmap}
 
 terrain_tool_free :: proc(t:^Terrain_Tool) {
     stroke_free(t)
@@ -143,7 +142,7 @@ stroke_baseline :: proc(t:^Terrain_Tool) -> bool {
     }
     if entry.held && entry.revision==stroke.revision {return true}
     head:terrain.Source
-    if !terrain.source_clone(&head,&stroke.source,editable=false) {return false}
+    if !terrain.source_clone(&head,&stroke.source) {return false}
     terrain.source_destroy(&entry.head)
     // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
     entry.head=head
@@ -213,20 +212,7 @@ terrain_sculpt :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
     if stroke.active {
         if !core.alive(core.world_entities(world),stroke.entity) || !core.has(terrains,stroke.entity) {stroke_free(tool);return}
         if ui.escape(s.gui.ctx) {stroke_cancel(tool);return}
-        if !core.mouse_down(input,.Left) || stroke.drag.released {
-            if stroke.drag.active {
-                if !stroke.drag.released {
-                    point,_,ok:=stroke_point(stroke,s.viewport,input.mouse_position)
-                    stroke.drag.destination=ok?point:stroke.drag.last
-                    stroke.drag.released=true
-                }
-                stroke_apply(s,tool,world,input,view,frame)
-                if linalg.length(stroke.drag.destination-stroke.drag.last)>1e-5 {
-                    stroke_preview(s,tool,world,terrains,chunks,worlds,assets,extras,job_system);cursor_draw(s,tool,input,view);return
-                }
-            }
-            stroke_end(s,tool,world,assets);return
-        }
+        if !core.mouse_down(input,.Left) {stroke_end(s,tool,world,assets);return}
         stroke_apply(s,tool,world,input,view,frame)
         stroke_preview(s,tool,world,terrains,chunks,worlds,assets,extras,job_system)
         cursor_draw(s,tool,input,view)
@@ -287,12 +273,10 @@ stroke_prepare :: proc(tool:^Terrain_Tool,assets:^host.Assets,allocator:runtime.
     return true
 }
 // The point of the terrain under a point of the window: of source, the one
-// being edited when nil, or the plane a drag moves on.
+// being edited when nil.
 @(private)
 stroke_point :: proc(stroke:^Stroke,v:^editor.Viewport,at:[2]f32,source:^terrain.Source=nil) -> (point,normal:[3]f32,ok:bool) {
-    if stroke.active && stroke.drag.released {return stroke.drag.destination,stroke.drag.plane,true}
     from,toward:=stroke_ray(stroke,v,at)
-    if stroke.active && stroke.drag.active {point,ok=terrain_drag_point(&stroke.drag,from,linalg.normalize0(toward));return point,stroke.drag.plane,ok}
     return terrain.source_ray(source!=nil?source:&stroke.source,from,toward)
 }
 // The ray of the viewport through a point of the window, in the terrain: the
@@ -307,9 +291,6 @@ stroke_ray :: proc(stroke:^Stroke,v:^editor.Viewport,at:[2]f32) -> (origin,direc
 stroke_changed :: proc(stroke:^Stroke,change:terrain.Change) {
     if !change.changed {return}
     stroke.changed=true
-    // The region the step of the stroke compares: a change of a Mesh may move
-    // triangles anywhere, and is kept whole.
-    if change.mesh || stroke.source.kind==.Mesh {stroke.dirty_all=true}
     from,to:=[2]int{change.low.x,change.low.z},[2]int{change.high.x,change.high.z}
     if !stroke.dirty_any {stroke.dirty={from,to}} else {stroke.dirty={linalg.min(stroke.dirty[0],from),linalg.max(stroke.dirty[1],to)}}
     stroke.dirty_any=true
@@ -342,9 +323,9 @@ preview_find :: proc(stroke:^Stroke,coord:[3]i32) -> int {
 // The levels the chunks of the stroke show: each its level outside the
 // stroke, a chunk with holes level 0 as the runtime makes it, and each side
 // the finer of the two chunks it joins. A chunk previewed at a coarse level
-// joins those around it; one whose side changes is previewed too. A
-// Heightfield keeps the border each chunk shows, lowered only where a hole
-// takes a chunk to level 0; the nodes of the quadtree are not previewed.
+// joins those around it; one whose side changes is previewed too. Each keeps
+// the border it shows, lowered only where a hole takes a chunk to level 0;
+// the nodes of the quadtree are not previewed. A Volume has no levels.
 @(private)
 preview_levels :: proc(stroke:^Stroke,terrains:core.Read(terrain.Terrain),chunks:core.Read(terrain.Terrain_Chunk)) {
     dirty:=false
@@ -352,12 +333,7 @@ preview_levels :: proc(stroke:^Stroke,terrains:core.Read(terrain.Terrain),chunks
     if !dirty && core.version(chunks)==stroke.levels_seen {return}
     stroke.levels_seen=core.version(chunks)
     s:=&stroke.source
-    // A Mesh section keeps its border at every level: at level 0 it joins its
-    // neighbors whatever theirs, without simplifying it at each touch.
-    if s.kind==.Mesh {
-        for &preview in stroke.previews {if preview.lod!={} {preview.lod,preview.dirty={},true}}
-        return
-    }
+    if s.kind!=.Heightfield {return}
     counts:=terrain.chunk_counts(s)
     levels:=make([]u8,counts.x*counts.y*counts.z,context.temp_allocator)
     shown:=make([]terrain.Chunk_Lod,len(levels),context.temp_allocator)
@@ -371,29 +347,24 @@ preview_levels :: proc(stroke:^Stroke,terrains:core.Read(terrain.Terrain),chunks
     }
     for &level,index in levels {if level>0 && terrain.chunk_holed(s,index) {level,dropped[index]=0,true}}
     for index in 0..<len(levels) {
+        if !has[index] {continue}
         coord:=terrain.chunk_coord(s,index)
-        lod:=terrain.chunk_lod_sides(s,levels,coord)
-        if s.kind==.Heightfield {
-            if !has[index] {continue}
-            lod=shown[index]
-            lod.level=levels[index]
-            lod.faces[2],lod.faces[3]=lod.level,lod.level
-            for &edge in lod.edges {edge=lod.level}
-            lower :: proc(s:^terrain.Source,levels:[]u8,dropped,has:[]bool,value:^u8,around:[]([3]i32)) {
-                for coord in around {
-                    at:=terrain.chunk_index(s,coord)
-                    if at>=0 && has[at] && dropped[at] {value^=min(value^,levels[at])}
-                }
+        lod:=shown[index]
+        lod.level=levels[index]
+        lower :: proc(s:^terrain.Source,levels:[]u8,dropped,has:[]bool,value:^u8,around:[]([3]i32)) {
+            for coord in around {
+                at:=terrain.chunk_index(s,coord)
+                if at>=0 && has[at] && dropped[at] {value^=min(value^,levels[at])}
             }
-            x,z:=coord.x,coord.z
-            lower(s,levels,dropped,has,&lod.faces[0],{{x,0,z},{x-1,0,z}})
-            lower(s,levels,dropped,has,&lod.faces[1],{{x,0,z},{x+1,0,z}})
-            lower(s,levels,dropped,has,&lod.faces[4],{{x,0,z},{x,0,z-1}})
-            lower(s,levels,dropped,has,&lod.faces[5],{{x,0,z},{x,0,z+1}})
-            for &corner,k in lod.corners {
-                dx,dz:=i32(k&1),i32(k>>1)
-                lower(s,levels,dropped,has,&corner,{{x+dx-1,0,z+dz-1},{x+dx,0,z+dz-1},{x+dx-1,0,z+dz},{x+dx,0,z+dz}})
-            }
+        }
+        x,z:=coord.x,coord.z
+        lower(s,levels,dropped,has,&lod.sides[0],{{x,0,z},{x-1,0,z}})
+        lower(s,levels,dropped,has,&lod.sides[1],{{x,0,z},{x+1,0,z}})
+        lower(s,levels,dropped,has,&lod.sides[2],{{x,0,z},{x,0,z-1}})
+        lower(s,levels,dropped,has,&lod.sides[3],{{x,0,z},{x,0,z+1}})
+        for &corner,k in lod.corners {
+            dx,dz:=i32(k&1),i32(k>>1)
+            lower(s,levels,dropped,has,&corner,{{x+dx-1,0,z+dz-1},{x+dx,0,z+dz-1},{x+dx-1,0,z+dz},{x+dx,0,z+dz}})
         }
         at:=preview_find(stroke,coord)
         if at<0 {
@@ -509,9 +480,8 @@ stroke_end :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,ass
         if slot:=preview_slot(stroke,preview.coord);slot>=0 {stroke.preview_at[slot]=-1}
     }
     clear(&stroke.previews)
-    stroke.revision=next;stroke.active,stroke.changed,stroke.applied_once=false,false,false
+    stroke.revision=next;stroke.active,stroke.changed=false,false
     stroke.touched,stroke.waited=false,0
-    stroke.drag={}
     stroke.pending={}
     stroke.dirty,stroke.dirty_any,stroke.dirty_all={},false,false
     committed=true
@@ -523,7 +493,7 @@ stroke_end :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,ass
 stroke_cancel :: proc(tool:^Terrain_Tool) {
     stroke:=&tool.stroke
     head:=editor.revision_head(&tool.history,stroke.id,stroke.revision)
-    if head==nil || stroke.source.kind==.Mesh || !source_take_back(&stroke.source,head,stroke.dirty[0],stroke.dirty[1]) {stroke_free(tool);return}
+    if head==nil || !source_take_back(&stroke.source,head,stroke.dirty[0],stroke.dirty[1]) {stroke_free(tool);return}
     if tool.assets!=nil {
         for preview in stroke.previews {
             if preview.mesh!={} {host.assets_mesh_release(tool.assets,preview.mesh)}
@@ -531,9 +501,8 @@ stroke_cancel :: proc(tool:^Terrain_Tool) {
         }
     }
     clear(&stroke.previews)
-    stroke.active,stroke.changed,stroke.applied_once=false,false,false
+    stroke.active,stroke.changed=false,false
     stroke.touched,stroke.waited=false,0
-    stroke.drag={}
     stroke.pending={}
     stroke.dirty,stroke.dirty_any,stroke.dirty_all={},false,false
 }

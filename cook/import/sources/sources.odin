@@ -12,6 +12,7 @@ import "mirai:cook/import/gltf"
 import "mirai:cook/import/obj"
 import "mirai:cook/import/usd"
 import "mirai:cook/prefab"
+import "mirai:project"
 import "mirai:std/serial"
 
 // The source files a project imports and the one way they are imported, the
@@ -116,21 +117,58 @@ source_kind :: proc(path:string,formats:[]importer.Format=nil) -> Source_Kind {
     return .None
 }
 
+// Whether a model is read by a format that is not one of FORMATS: one a
+// plugin adds, which only an editor with that plugin has.
+@(private)
+model_of_plugin :: proc(path:string,formats:[]importer.Format) -> bool {
+    buffer:[importer.SNIFF_BYTES]u8
+    head,_,error:=serial.file_read_head(path,buffer[:])
+    if error!=.None {return false}
+    format,found:=importer.format_find(formats,head,strings.to_lower(filepath.ext(path),context.temp_allocator))
+    if !found {return false}
+    for own in FORMATS {
+        if own.name==format.name {return false}
+    }
+    return true
+}
+
 // Imports a source file into folder: a model writes its assets and, when it
-// has nodes, <folder>/<name>.scene, which the report lists last; an image or
-// a sound writes one asset. The settings a model or an image was imported
-// with are written next to it (<source>.import, Import_Report.saved) unless
-// options.no_save; a settings file that cannot be written leaves a warning.
+// has nodes, the prefab of its hierarchy, which the report lists last; an
+// image or a sound writes one asset. The sidecar of the source
+// (<source>.import, Import_Report.saved) keeps the settings it was imported
+// with, the folder and the id of each asset: importing the source again, with
+// folder "" for the one its sidecar says, gives the same assets. With
+// options.root, what the import builds that nobody edits goes to the imported
+// folder of the root and the rest to folder (importer.Sidecar); a model of a
+// format a plugin adds keeps everything in folder, since only an editor with
+// that plugin imports it.
 import_source :: proc(path,folder:string,options:importer.Import_Options={},formats:[]importer.Format=nil,allocator:=context.allocator) -> (report:importer.Import_Report,error:importer.Error) {
     formats:=formats if formats!=nil else FORMATS[:]
-    switch source_kind(path,formats) {
+    options,folder:=options,folder
+    kind:=source_kind(path,formats)
+    if folder=="" && kind!=.None {
+        // Where its source is among the sources: a model in a folder of its own.
+        names:=project.FOLDER_NAMES
+        named:=importer.source_path(options,path)
+        if options.root=="" || !strings.has_prefix(named,names[.Source]) {return {},importer.error_make(.Not_Found,"%s: pass the folder its assets go to; only a source in the %s folder of a project (root) goes where it is",path,names[.Source])}
+        beside,_:=strings.replace_all(filepath.dir(named[len(names[.Source]):]),"\\","/",context.temp_allocator)
+        folder=fmt.tprintf("%s/%s%s",project.folder_path(options.root,.Assets,context.temp_allocator),strings.trim_left(beside,"/."),kind==.Model?fmt.tprintf("/%s",model_folder(path,formats)):"")
+    }
+    if kind==.Model && model_of_plugin(path,formats) {options.documents=true}
+    // Without a root the sidecar is in the folder, which reading a model does not know.
+    if kind==.Model && options.root=="" && !options.ignore_stored {
+        stored,found,settings_error:=importer.settings_load(path,"",folder)
+        if settings_error.code!=.None {return {},settings_error}
+        if found {options.settings,options.ignore_stored=stored,true}
+    }
+    switch kind {
     case .None:
         if importer.unsafe_path(path) || !os.exists(path) {return {},importer.error_make(.Not_Found,"%s does not exist",path)}
         return {},importer.error_make(.Unsupported,"%s is not a file Mirai imports: a model (%s), an image, a sound (WAV, Ogg Vorbis), a font (TrueType, OpenType), texts (CSV) or a manifest of prompts (%s); the formats a plugin adds import in the editor",path,importer.format_names(formats),importer.PROMPTS_MANIFEST)
     case .Model:
-        report,error=prefab.model_import(path,folder,formats,options,allocator)
+        return prefab.model_import(path,folder,formats,options,allocator)
     case .Image:
-        report,error=importer.import_texture(path,folder,options,allocator)
+        return importer.import_texture(path,folder,options,allocator)
     case .Sound:
         return importer.import_sound(path,folder,{},options,allocator)
     case .Font:
@@ -140,12 +178,5 @@ import_source :: proc(path,folder:string,options:importer.Import_Options={},form
     case .Prompts:
         return importer.import_prompts(path,folder,options,allocator)
     }
-    if error.code!=.None {return {},error}
-    if options.no_save {return report,{}}
-    if importer.settings_save(path,report.settings) {
-        report.saved=importer.settings_path(path,allocator)
-    } else {
-        append(&report.warnings,fmt.aprintf("the settings could not be written to %s",importer.settings_path(path,context.temp_allocator),allocator=allocator))
-    }
-    return report,{}
+    return
 }

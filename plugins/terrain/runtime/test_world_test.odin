@@ -1,5 +1,6 @@
 package terrain
 
+import "base:runtime"
 import "mirai:core"
 import render "mirai:engine/render"
 import scene "mirai:engine/scene"
@@ -23,6 +24,7 @@ Test_Terrain :: struct {
     data:Terrain_Data,
     terrain_requests:Terrain_Requests,
     digs:Terrain_Digs,
+    ground_queries:core.Ground_Queries,
 }
 
 // What test_step runs with unless told: every chunk at level 0, so that a
@@ -36,6 +38,20 @@ test_step :: proc(g:^Test_Terrain,commands:core.Commands,resident:^Terrain_Resid
     terrain_update(
         commands,&g.terrains,&g.chunks,core.read(&g.transforms),core.read(&g.parents),core.read(&g.ids),&g.colliders,
         &g.statics,&g.tints,&g.overrides,&g.data,resident,&g.terrain_requests,&g.digs,settings,app,time,frame,
-        view,core.read(&g.worlds),core.ref(&g.streaming),{},g.settings,{},nil,problems,{},
+        view,core.read(&g.worlds),core.ref(&g.streaming),{},g.settings,{},nil,problems,{},&g.ground_queries,
     )
+}
+
+// An allocator that serves remaining allocations of owner and then fails; below 0, all.
+@(private)
+Failing_Allocator :: struct {owner:runtime.Allocator,remaining:int}
+
+@(private)
+failing_allocator :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment:int,old_memory:rawptr,old_size:int,loc:=#caller_location) -> ([]byte,runtime.Allocator_Error) {
+    state:=(^Failing_Allocator)(data)
+    if mode==.Alloc || mode==.Alloc_Non_Zeroed || mode==.Resize || mode==.Resize_Non_Zeroed {
+        if state.remaining==0 {return nil,.Out_Of_Memory}
+        state.remaining-=1
+    }
+    return state.owner.procedure(state.owner.data,mode,size,alignment,old_memory,old_size,loc)
 }

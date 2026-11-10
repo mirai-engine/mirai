@@ -27,8 +27,8 @@ and sets it moving; there is no step that depends on looking at the mesh by hand
    - Animal: poor coverage says the template did not take the shape of the mesh; another family is
      tried, or the mesh is reoriented (on +Y, facing -Z once imported).
    - Importing the same source again writes where the first time did, even if `folder` changes.
-4. **Placing it.** `prefab.instantiate` of the character prefab gives the rig entity. Its rest pose
-   is that of the template with the lengths of the character.
+4. **Placing it.** `scene.write` of an entity with `prefab` naming the character prefab gives the
+   rig entity. Its rest pose is that of the template with the lengths of the character.
 5. **The clips to the character.** A `.pose` with `pose.profile.create` and two `retarget` rows:
    `mode:"Paths"` with `translation:"Reference"` (each bone keeps its length; its `source_bone` and
    `target_bone` are empty) and `mode:"Bone"` of the first bone under `root`

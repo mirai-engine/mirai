@@ -34,7 +34,7 @@ action_write_defaults :: proc() -> ^Action_Write_Params {
 }
 authoring_actions_register :: proc(s:^editor.Session) {
     defaults:=action_write_defaults();inspect:=Authoring_Inspect_Params{limit=64}
-    authoring_method_register(s,{name="animation.action.set",summary="Replaces what plays over the base of a .character that entities share: the stack of layers (a clip or a space of the set each, over a branch or the whole body, replacing or adding) and the named actions of clips with their layer, priorities, cancel policies, entry and exit, and sections, spans of their clips. In Edit.",params=Action_Write_Params,params_info=type_info_of(Action_Write_Params),defaults=defaults,run=authoring_action_set},Authoring_Write_Result,type_info_of(Authoring_Write_Result))
+    editor.api_method_register(s,Action_Write_Params,Authoring_Write_Result,{name="animation.action.set",summary="Replaces what plays over the base of a .character that entities share: the stack of layers (a clip or a space of the set each, over a branch or the whole body, replacing or adding) and the named actions of clips with their layer, priorities, cancel policies, entry and exit, and sections, spans of their clips. In Edit.",defaults=defaults,run=authoring_action_set,writes_result=true})
 }
 @(private)
 action_named_index :: proc(values:[]anim.Action_Definition,name:[64]u8) -> int {for value,i in values {if value.name==name {return i}};return -1}

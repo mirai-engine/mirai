@@ -21,23 +21,7 @@ loading_a_library_keeps_the_copies_of_processes_that_still_run :: proc(t:^testin
 }
 
 @(test)
-the_player_loads_the_library_its_arguments_name :: proc(t:^testing.T) {
-    Case :: struct {args:[]string,name:string,known:bool}
-    cases:=[?]Case{
-        {[]string{"--project","game"},"play",true},
-        {[]string{"--library","editor","--connect","code"},"editor",true},
-        {[]string{"--library","game"},"game",false},
-        {[]string{"--library"},"",false},
-    }
-    for c in cases {
-        name,known:=library_argument(c.args)
-        testing.expect_value(t,name,c.name)
-        testing.expect_value(t,known,c.known)
-    }
-    // The player reads it as its own: no plugin is asked for it.
-    options,ok:=player_options({"--library","editor"})
-    defer delete(options.arguments)
-    testing.expect(t,ok && len(options.arguments)==0)
+the_player_keeps_dedicated_for_the_plugin_that_serves_the_game :: proc(t:^testing.T) {
     // --dedicated is the player's and of the plugin that serves the game: it stays for that one.
     dedicated,read:=player_options({"--dedicated"})
     defer delete(dedicated.arguments)

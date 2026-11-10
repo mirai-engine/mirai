@@ -231,10 +231,10 @@ Grouped :: struct {
 // What happened to the destructibles in the tick: pieces that left their
 // body, the events applied, in order, what the replays did and the groups made
 // with an Id. This library clears it and fills it every tick.
-@(storage,events)
+@(storage)
 Destruct_Events :: struct {
-    fractured:core.Queue(Fracture),
-    applied:core.Queue(Applied),
-    replayed:core.Queue(Replayed),
-    grouped:core.Queue(Grouped),
+    fractured:core.Events(Fracture),
+    applied:core.Events(Applied),
+    replayed:core.Events(Replayed),
+    grouped:core.Events(Grouped),
 }

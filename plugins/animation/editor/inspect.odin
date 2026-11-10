@@ -275,8 +275,8 @@ Instance_Morphs :: struct {
 inspect_register :: proc(s:^editor.Session) {
     asset_defaults:=Asset_Inspect_Params{limit=128}
     instance_defaults:=Instance_Inspect_Params{limit=128}
-    authoring_method_register(s,{name="animation.asset.inspect",summary="Reads an animation definition: an .anim, a .skeleton or a .character.",params=Asset_Inspect_Params,params_info=type_info_of(Asset_Inspect_Params),defaults=&asset_defaults,flags={.Read_Only},run=asset_inspect},Asset_Inspect_Result,type_info_of(Asset_Inspect_Result))
-    authoring_method_register(s,{name="animation.inspect",summary="Reads what an animated entity does now, part by part; a part the entity lacks says why instead of failing the call.",params=Instance_Inspect_Params,params_info=type_info_of(Instance_Inspect_Params),defaults=&instance_defaults,flags={.Read_Only},run=instance_inspect},Instance_Inspect_Result,type_info_of(Instance_Inspect_Result))
+    editor.api_method_register(s,Asset_Inspect_Params,Asset_Inspect_Result,{name="animation.asset.inspect",summary="Reads an animation definition: an .anim, a .skeleton or a .character.",defaults=&asset_defaults,flags={.Read_Only},run=asset_inspect,writes_result=true})
+    editor.api_method_register(s,Instance_Inspect_Params,Instance_Inspect_Result,{name="animation.inspect",summary="Reads what an animated entity does now, part by part; a part the entity lacks says why instead of failing the call.",defaults=&instance_defaults,flags={.Read_Only},run=instance_inspect,writes_result=true})
 }
 
 // Runs a handler with params of its own, in the call.

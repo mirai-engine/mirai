@@ -42,8 +42,8 @@ authoring_profile_register :: proc(s:^editor.Session) {
     set.curve_pose,set.curve_drive,set.curve_material=anim.CURVE_POSE_DEFAULT,anim.CURVE_DRIVE_DEFAULT,anim.CURVE_MATERIAL_DEFAULT
     poses:=new(Profile_Poses_Params,context.temp_allocator);if poses==nil {return}
     poses.tolerance=PROFILE_POSES_TOLERANCE
-    authoring_method_register(s,{name="animation.modifier.set",summary="Replaces or appends the row of a table of the modifiers of a .character (IK, look, limits, grounding, rigs, curve poses) that has the key of the value, or removes it; a new .character at path is made of animation.",params=Profile_Set_Params,params_info=type_info_of(Profile_Set_Params),defaults=set,run=authoring_profile_set},Authoring_Write_Result,type_info_of(Authoring_Write_Result))
-    authoring_method_register(s,{name="animation.modifier.poses",summary="Makes the curve poses of a .character from the frames of a clip, each a pose that a Float curve of its name brings, measured from the pose at base: the poses of a face from an animation of them. One step of undo.",params=Profile_Poses_Params,params_info=type_info_of(Profile_Poses_Params),defaults=poses,run=authoring_profile_poses},Profile_Poses_Result,type_info_of(Profile_Poses_Result))
+    editor.api_method_register(s,Profile_Set_Params,Authoring_Write_Result,{name="animation.modifier.set",summary="Replaces or appends the row of a table of the modifiers of a .character (IK, look, limits, grounding, rigs, curve poses) that has the key of the value, or removes it; a new .character at path is made of animation.",defaults=set,run=authoring_profile_set,writes_result=true})
+    editor.api_method_register(s,Profile_Poses_Params,Profile_Poses_Result,{name="animation.modifier.poses",summary="Makes the curve poses of a .character from the frames of a clip, each a pose that a Float curve of its name brings, measured from the pose at base: the poses of a face from an animation of them. One step of undo.",defaults=poses,run=authoring_profile_poses,writes_result=true})
 }
 
 // The counts of the tables of the modifiers of a set, and a page of the rows of table.

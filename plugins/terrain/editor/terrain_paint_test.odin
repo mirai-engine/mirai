@@ -94,13 +94,10 @@ terrain_layers_paint_and_holes_are_steps_of_undo_kept_unsaved :: proc(t:^testing
     testing.expect(t,history.redo(&edits,ref,&selection));terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
     held=registry_source(t,&assets,id);testing.expect_value(t,held.layer_count,u32(2));terrain.source_destroy(&held)
 
-    // The material that blends the layers is a value of its source, and a
-    // step; slot 0 shows the layers, and a Heightfield has no other.
+    // The material that blends the layers is a value of its source, and a step.
     sand:=base.Asset_Id{93,94}
     if !prepare(t,&s,&tool,&world,owner) {return}
-    testing.expect(t,terrain_material_commit(&s,&tool,ref,app.assets,LAYERS_SLOT,sand))
-    testing.expect(t,!terrain_material_commit(&s,&tool,ref,app.assets,0,sand))
-    testing.expect(t,!terrain_material_commit(&s,&tool,ref,app.assets,1,sand))
+    testing.expect(t,terrain_material_commit(&s,&tool,ref,app.assets,sand))
     testing.expect(t,history.edits_commit(&edits,ref,&selection))
     held=registry_source(t,&assets,id);testing.expect_value(t,held.layers_material,sand);terrain.source_destroy(&held)
     testing.expect(t,history.undo(&edits,ref,&selection));terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
@@ -110,6 +107,6 @@ terrain_layers_paint_and_holes_are_steps_of_undo_kept_unsaved :: proc(t:^testing
 // The source the registry holds for a terrain, unsaved or on disk.
 @(private="file")
 registry_source :: proc(t:^testing.T,a:^host.Assets,id:base.Asset_Id) -> (s:terrain.Source) {
-    testing.expect(t,terrain.terrain_read(&s,a,id,editable=false))
+    testing.expect(t,terrain.terrain_read(&s,a,id))
     return
 }

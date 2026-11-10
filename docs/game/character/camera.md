@@ -13,9 +13,9 @@ the body looks; `Camera.own_hidden` leaves the head of that body out of its view
 ## Third person
 
 ```json
-{"method":"scene.set","params":{"entity":"Player view","components":{"Camera_Follow":{
- "mode":"Orbit","offset":[0,1.6,0],"distance":4.5,"pitch":0.3,"min_pitch":-0.4,"max_pitch":1.2,
- "aim":true}}}}
+{"method":"scene.write","params":{"root":"Player view","merge":true,"entities":[{
+ "components":{"Camera_Follow":{"mode":"Orbit","offset":[0,1.6,0],"distance":4.5,"pitch":0.3,
+ "min_pitch":-0.4,"max_pitch":1.2,"aim":true}}}]}}
 ```
 
 `Orbit` keeps the camera out of walls with a probe; `offset` is the pivot, over the feet; the

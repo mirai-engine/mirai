@@ -43,6 +43,7 @@ distance_tick_preserves_physical_fade_clocks_root_metadata_and_manual_warp_overr
     test_character_seed(&motion_assets,{1,2},{info={animation=source.id},motion=profile})
     problems:core.Problems
     step:=proc(animations:^core.Table(Animation),transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent),hierarchy:^core.Hierarchy,names:^core.Table(core.Name),targets:^core.Table(Animation_Target),roots:^core.Table(Root_Motion),requests:^Animation_Requests,events:^Animation_Events,playback:^Playback,app:^host.App,skeletons:^Skeleton_Assets,motion:^Motion_Runtime,motion_requests:^Motion_Requests,motion_assets:^Character_Assets,dt:f32,problems:^core.Problems) {
+        clear(&events.items) // the log of a tick, as its readers are handed it
         animation_tick(core.read(animations),transforms,core.read(parents),core.ref(hierarchy),core.read(names),requests,events,core.read(targets),core.read(roots),playback,app,{dt=dt,playing=true},{},skeletons,problems,characters=motion_assets,motion=motion,motion_requests=motion_requests)
     }
     step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&roots,&requests,&events,&playback,&app,&skeletons,&motion,&motion_requests,&motion_assets,.1,&problems)

@@ -137,17 +137,17 @@ demo enables. How an `editor/` adds steps, panels and tools:
 - **`multiplayer`**: the game network, without physics, and the editor's networked Play
   ([multiplayer](../../mirai-networking/references/multiplayer.md)).
 - **Automatic bridges**: `destruct_multiplayer` (replicated fractures), `physics_cache_destruct`
-  (the [recording of destructibles](physics-cache.md#recording)), `foliage_terrain` (the
-  [foliage ground](../../mirai-world/references/foliage.md#ground) from the terrains),
-  `foliage_multiplayer` (the replicated [removed
-  instances](../../mirai-world/references/foliage.md#instances-removed-in-play)),
-  `terrain_multiplayer` (the [terrain edits](../../mirai-world/references/terrain.md#network) over
-  the network), `terrain_vfx` (the [dust of what is
-  dug](../../mirai-world/references/terrain.md#what-digging-leaves)) and `spawn_physics` (the body
+  (the [recording of destructibles](physics-cache.md#recording)), `terrain_multiplayer` (the
+  [terrain edits](../../mirai-world/references/terrain.md#network) over the network) and
+  `spawn_physics` (the body
   that the [editor's Play puts at a place](../../mirai-gameplay/references/control.md#spawn-points)
   resting on what is below it). `terrain_debris` is not automatic: a project asks for its pieces and
-  drops. The ground of [grounding](../../mirai-animation/references/animation-grounding.md) and the
-  arm of the cameras need no bridge: they use `core.World_Queries`, which `physics` provides.
+  drops. What two plugins share through a `core` contract needs no bridge: the ground of
+  [grounding](../../mirai-animation/references/animation-grounding.md) and the arm of the cameras
+  use `core.World_Queries`, which `physics` provides; foliage and navigation read the ground of
+  `core.Ground_Queries`, which `terrain` provides; births of effects go through `core.Births`,
+  which `vfx` takes; and a component declared `replicated="object"` (removed foliage) is
+  replicated by `multiplayer` without a bridge ([core](../../mirai-core/references/core.md#ground)).
 - **`navigation`** (`Runtime`, `Editor`; depends on `physics`): automatic navmesh from static
   collision, per agent class and by tiles that rebuild themselves, areas, obstacles, manual and
   generated links, agents that write their `Move_Input` and cross links, the scene's `.navmesh`
@@ -176,7 +176,7 @@ demo enables. How an `editor/` adds steps, panels and tools:
     Test: `painted_copies_stay_in_memory_until_saved_and_go_with_undo_and_cancel`. API:
     [Paint](#paint).
 - **`terrain`** (`Runtime`, `Editor`, `Shaders`, `Assets`)
-  - Game: `Terrain{source, revision, solid}` and `terrain_update`. Heightfield, Mesh or Volume
+  - Game: `Terrain{source, revision, solid}` and `terrain_update`. Heightfield or Volume
     sources, derived chunks and immutable geometry replaced by region, material layers, levels of
     detail and holes. Contract in [terrain](../../mirai-world/references/terrain.md).
   - Editor: creation, sculpting, layer and hole painting with local preview, cancellation and

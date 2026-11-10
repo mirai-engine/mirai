@@ -30,8 +30,11 @@ import "mirai:ui"
 // next to them; an image becomes a texture in textures/ (sRGB unless its name
 // says it holds data or a normal map); a sound file (WAV, Ogg) becomes a
 // sound in sounds/; a source a plugin imports whole (Import_Source_Provider)
-// writes where its importer says. The settings of a source stay next to it
-// (<source>.import) and importing it again gives the same assets. The Import
+// writes where its importer says. The sidecar of a source (<source>.import)
+// keeps its settings and the id of each asset, and importing it again gives
+// the same assets; what an import builds that nobody edits is not a file of
+// the asset folder but of the imported folder of the project, which mirai
+// build brings up to date with the sources (sources.sync). The Import
 // button of the Assets tab and File > Import ask for the file; a file dropped
 // on the window is imported the same way.
 //
@@ -130,10 +133,12 @@ import_place :: proc(s:^Session) -> string {
 }
 
 // Starts importing a source file into the asset folder; false, with the
-// reason shown, when it cannot. The source may be anywhere: only what it
-// writes is in the project, and its settings are kept next to it only when it
-// is inside. A source imported before writes the assets it wrote then,
-// wherever they are; into names that import when the source was moved.
+// reason shown, when it cannot. The source may be anywhere. One inside the
+// project is versioned with its sidecar, so its meshes, textures, sounds and
+// fonts go to the imported folder; one outside is not, so every asset of it
+// is a file of the asset folder, and its sidecar is kept in the source folder
+// of the project under the name of the file (importer.Sidecar). A source
+// imported before writes the assets its sidecar lists, wherever they are.
 // folder, a folder of the assets (asset_folder_clean), is where it goes, a
 // model in a folder of its own inside; none is the root. profiled records the zones of
 // the import (importer.profile_totals) for asset.import_status.
@@ -144,7 +149,7 @@ import_place :: proc(s:^Session) -> string {
 // skeleton, when not zero, is the skeleton of the project the clips of a model
 // play on (Import_Settings.skeleton), kept the same way; so is front, when
 // given, where a model stands facing (Import_Settings.front).
-import_file :: proc(s:^Session,source:string,into:base.Asset_Id={},folder:="",profiled:=false,rig:Maybe(importer.Import_Settings)=nil,image:Maybe(importer.Image_Use)=nil,skeleton:base.Asset_Id={},front:Maybe(importer.Front)=nil) -> bool {
+import_file :: proc(s:^Session,source:string,folder:="",profiled:=false,rig:Maybe(importer.Import_Settings)=nil,image:Maybe(importer.Image_Use)=nil,skeleton:base.Asset_Id={},front:Maybe(importer.Front)=nil) -> bool {
     a:=s.app.assets
     if a==nil || a.registry.root=="" {
         import_say(s,"There is no asset folder to import into")
@@ -157,14 +162,11 @@ import_file :: proc(s:^Session,source:string,into:base.Asset_Id={},folder:="",pr
     name:=filepath.base(source)
     allocator:=runtime.heap_allocator()
     options:=importer.Import_Options{
-        root=strings.clone(s.project_root,allocator),into=into,
-        texture_cache=project.cache_path(s.project_root,project.TEXTURE_CACHE,allocator=allocator),
-        mesh_cache=project.cache_path(s.project_root,project.MESH_CACHE,allocator=allocator),
+        root=strings.clone(s.project_root,allocator),
+        texture_cache=project.content_cache_path(s.project_root,project.TEXTURE_CACHE,allocator=allocator),
+        mesh_cache=project.content_cache_path(s.project_root,project.MESH_CACHE,allocator=allocator),
         fast_textures=true,
     }
-    // A source outside the project keeps no settings next to it: the editor
-    // writes only into the project, and reimporting finds it by its path.
-    options.no_save=filepath.is_abs(importer.source_path(options,source))
     formats:=import_formats(s)
     // A source a plugin imports whole goes before the formats, which may read its bytes too.
     whole,claimed:=import_whole(s,source)
@@ -175,7 +177,7 @@ import_file :: proc(s:^Session,source:string,into:base.Asset_Id={},folder:="",pr
         _,rigged:=rig.?
         _,faced:=front.?
         if rigged || faced || skeleton!={} {
-            stored,_,settings_error:=importer.settings_load(importer.source_path(options,source))
+            stored,_,settings_error:=importer.settings_load(source,options.root)
             if settings_error.code!=.None {
                 import_say(s,"%s: %s",name,settings_error.message)
                 return false
@@ -188,7 +190,7 @@ import_file :: proc(s:^Session,source:string,into:base.Asset_Id={},folder:="",pr
     case .Image:
         options.image=sources.image_use(source)
         if use,given:=image.?;given {
-            stored,_,settings_error:=importer.settings_load(importer.source_path(options,source))
+            stored,_,settings_error:=importer.settings_load(source,options.root)
             if settings_error.code!=.None {
                 import_say(s,"%s: %s",name,settings_error.message)
                 return false
@@ -374,13 +376,49 @@ import_poll :: proc(s:^Session) {
         if a!=nil {scene,_=asset.registry_relative(&a.registry,job.scene)}
         base.text_set(status.scene[:],scene)
         import_say(s,"Imported %s: the scene %s and %d assets, %d warnings, in %.1f s",name,scene,len(report.assets)-1,len(report.warnings),job.seconds)
-    case job.kind!=.Model && job.kind!=.Image || report.saved!="" || job.options.no_save:
-        import_say(s,"Imported %s: %d assets",name,len(report.assets))
     case:
-        import_say(s,"Imported %s: %d assets; its settings could not be written next to it",name,len(report.assets))
+        import_say(s,"Imported %s: %d assets",name,len(report.assets))
     }
     base.text_set(status.message[:],string(s.importer.message[:s.importer.message_length]))
     for warning in report.warnings {log.warn(warning)}
+}
+
+// The sidecar of the import an asset is the root of (the prefab of a model,
+// the texture of an image, the sound of a sound file), and the registry files
+// of what that import keeps in the imported folder; "" for any other asset.
+// Deleting the root gives the import up: its sidecar goes with it, and with
+// the sidecar what only the import can build.
+@(private)
+import_root :: proc(s:^Session,r:^asset.Registry,id:base.Asset_Id) -> (sidecar:string,cached:[]u32) {
+    file,found:=asset.registry_find(r,id)
+    if !found || s.project_root=="" {return}
+    files:=make([dynamic]u32,context.temp_allocator)
+    // An imported asset is listed in the folder of its source; a document names the source it was imported from.
+    candidates:=make([dynamic]string,context.temp_allocator)
+    if file.imported!=0 {
+        entries,_:=os.read_all_directory_by_path(fmt.tprintf("%s/%s",project.folder_path(s.project_root,.Source,context.temp_allocator),filepath.dir(file.path)),context.temp_allocator)
+        for entry in entries {
+            if strings.has_suffix(entry.name,importer.SIDECAR_EXTENSION) {append(&candidates,entry.fullpath)}
+        }
+    } else {
+        types:asset.Types
+        asset.types_init(&types,context.temp_allocator)
+        defer asset.types_destroy(&types)
+        _,info,imported,error:=asset.import_peek(asset.registry_file_path(r,file.path,context.temp_allocator),&types)
+        if error!=.None || !imported {return}
+        source:=base.text_get(info.source[:])
+        if !filepath.is_abs(source) {source=project.path(s.project_root,source,allocator=context.temp_allocator)}
+        append(&candidates,importer.sidecar_path(source,s.project_root,allocator=context.temp_allocator))
+    }
+    for path in candidates {
+        listed,has,load_error:=importer.sidecar_load(path,context.temp_allocator)
+        if load_error.code!=.None || !has || len(listed.outputs)==0 || listed.outputs[0].id!=id {continue}
+        for output in listed.outputs {
+            if at,known:=r.by_id[output.id];known && r.files[at].imported!=0 {append(&files,at)}
+        }
+        return path,files[:]
+    }
+    return
 }
 
 // Waits for an import that runs and lets go of what the last one wrote:

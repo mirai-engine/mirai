@@ -229,8 +229,6 @@ does not understand. What it does not say:
 - Without `--players`, the local players come from the scene, or none if the role of the world is
   `Server`; with it, a server also has local players.
 - `--surface` implies `--attached` ([image in another process](#image-in-another-process)).
-- `--library` is read by `host.launch` ([project libraries](#project-libraries)); the shipped
-  game ignores it.
 - `--validation` with errors prints the last one on stderr and exits with `PLAYER_VALIDATION`,
   unless it already failed with another code.
 - `--dedicated` is a server nobody plays on: no window, renderer or mixer, frames at the pace of
@@ -283,12 +281,11 @@ player is heard. The end of stdin terminates it.
   editor)` takes them to the layout of another library without moving them in address and makes it
   their `World_Info` ([migration](core.md#world-reflection)); it fails without changing anything
   if one does not fit in its reserve.
-- `host.launch` is the `main` of `mirai-player` (it loads `.mirai/play`, or `.mirai/editor` with
-  `--library editor`) and `editor.launch` that of `mirai-editor` (it loads `.mirai/editor`); if the
-  library does not load, they print the reason and exit with 2. From the `World_Info` of the
-  `editor` library the player makes the same game world as with `play`: an editor package declares
-  nothing of the `World` or of the `Shared`, nor steps of the game loop (the generator rejects it),
-  and the `Editor` place is not created outside the editor.
+- `host.launch` is the `main` of `mirai-player` and `editor.launch` that of `mirai-editor`; both
+  load `.mirai/editor` and, if the library does not load, print the reason and exit with 2. From
+  its `World_Info` the player makes the game world alone: an editor package declares nothing of
+  the `World` or of the `Shared`, nor steps of the game loop (the generator rejects it), and the
+  `Editor` place is not created outside the editor.
   The `--project` folder is made absolute: once it is said where its dependencies are, Windows does
   not look for a relative library in the current folder.
 
@@ -375,8 +372,6 @@ of pieces) is not a fixed cap, and a frame that does not load does not allocate.
 - `assets_unsaved(a)`: the files that the registry has in memory unwritten.
   `app_asset_changed(app, path)` rereads what is loaded from a file that changed on disk or in
   memory, as when the watcher sees it.
-- `assets_fracture(a,id,&Asset)`: a validated `.fracture` view, valid until the caller closes the
-  file.
 - `assets_material_derive`, `assets_material_values`, `assets_material_faded`,
   `assets_material_overlays`, `assets_postprocess`: derived rows of the material table, with the
   values of a material as an entity or a layer shows it; equal values share a row.
@@ -479,7 +474,8 @@ row.
 ## Content
 
 `Content` (`app_content(app)`, `host/content.odin`) loads on demand what is not meshes or materials:
-`.ui`, `.anim`, `.sound`, `.sound_set`, `.font`, `.strings` and `.prompts`.
+`.ui`, `.anim`, `.sound`, `.sound_set`, `.font` and `.prompts`. The `.strings` are one table of
+the application, as the rows of the records (`host/texts.odin`).
 
 - Each entry carries a `generation` that changes with each load: whoever stores state made for the
   previous one rebuilds it.

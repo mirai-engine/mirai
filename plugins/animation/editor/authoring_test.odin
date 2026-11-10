@@ -186,7 +186,7 @@ timeline_authoring_edits_curves_keys_markers_and_root_without_partial_writes :: 
     unchanged:=authoring_test_revision(f,"clip.anim")
     result:=authoring_test_execute(f,"key",fmt.tprintf(`{{"asset":"%s","clip":"walk","target":"pulse","property":"Float","time":-1,"key":{{"value":[2,0,0,0]}}}}`,identity))
     testing.expect_value(t,result.code,api.INVALID_PARAMS);testing.expect_value(t,authoring_test_revision(f,"clip.anim"),unchanged)
-    result=authoring_test_execute(f,"key",fmt.tprintf(`{{"asset":"%s","clip":"walk","target":"pulse","property":"Float","time":1,"key":{{"value":[2,0,0,0],"interpolation":"Cubic_Spline"}}}}`,identity))
+    result=authoring_test_execute(f,"key",fmt.tprintf(`{{"asset":"%s","clip":"walk","target":"pulse","property":"Float","time":1,"key":{{"value":[2,0,0,0],"interpolation":"Cubic_Spline","tangents":false}}}}`,identity))
     testing.expect_value(t,result.code,api.INVALID_PARAMS);testing.expect_value(t,authoring_test_revision(f,"clip.anim"),unchanged)
     result=authoring_test_execute(f,"key",fmt.tprintf(`{{"asset":"%s","clip":"walk","target":"pulse","property":"Float","time":2,"key":{{"value":[2,0,0,0]}}}}`,identity))
     testing.expect_value(t,result.code,0)

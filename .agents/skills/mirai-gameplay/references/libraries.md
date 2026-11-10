@@ -67,8 +67,8 @@ the name of their type) and a world (handles and tables).
 - `save(world, app, path, previous)` captures and writes.
 - **Changing scene** is a request: `scene.request(&r, path_or_id)` in
   `Scene_Requests` (`queue`, `keep`). `scene_requests` (`input`, both loops) loads them one at a
-  time and leaves a `Scene_Result{scene, path, error}` in `Scene_Results` (`events`, `keep`) in the
-  frame in which the scene replaces the world, cleared in the next; `result_of` looks it up. One
+  time and pushes a `Scene_Result{scene, path, error}` to the log of `Scene_Results` (`keep`) in
+  the frame in which the scene replaces the world; `result_of` looks it up. One
   that fails is also the problem `scene.load` of the world, with the cause and the fix.
   `request_restart(&r)` loads again the scene the world is (`Scene_Root`).
 - **Phased load** (`loading.odin`): jobs read and decompress the scene in rounds: each one reads
@@ -465,14 +465,22 @@ the reverb of the room where the listener is and what covers each source.
   - Doppler: the source's and the listener's velocity come from how much they moved in the frame; a
     `View` with `cut` does not move. It is only sent while there is doppler.
   - With the world's `core.Clock` paused, its voices are paused and the sources are not updated
-    until it continues; the UI's loose sounds are not.
+    until it continues; one-shots are not.
+- **One-shots.** `audio.play(sounds, path_or_id, at, bus, volume, pitch)` pushes to
+  `Sound_Requests`, from any step and from the interface sounds of `gui` (on `BUS_UI`). Each is
+  an `Audio_Source` of `AUDIO_SOURCE_DEFAULT` with those values and starts through the same
+  `voice_start` as a source, so the mixer takes the same path for both, without a handle.
+  `audio_requests` (`fixed` and `late`, stage `end`) takes the queue: at the end of the tick that
+  asked, a tick that runs again (`time.resimulating`) drops what it asks, since it played the first
+  time, and the copies of the world for a rollback are made between ticks, after the take; what
+  frame steps and the interface push plays at the end of the frame's `late`.
 - **Reverb.** The mixer has [only one](../../mirai-platform/references/audio.md#reverb): that of
   the room where the listener is. `Audio_Reverb` is a value of [volume](#volume): without a
   `Volume`, the level's; without any, nothing reverberates. `audio_reverb` (`late`) takes the blend
   at the listener and moves toward it over some `REVERB_FADE` seconds; it only sends while it
   changes. It returns in `Audio_Settings.reverb_bus`.
-  - `Audio_Source.reverb` is the part of the source that it sends to the room; `play_asset_at`
-    sends all by default and `play_asset` none.
+  - `Audio_Source.reverb` is the part of the source that it sends to the room; a one-shot sends
+    none, as `AUDIO_SOURCE_DEFAULT`.
 - **Medium.** `Audio_Medium` is what surrounds the listener besides air, like the water they are
   under: a low-pass and a reverb with their weight. A single plugin writes it
   ([water](../../mirai-world/references/water.md#sound)) before `audio_reverb` and
@@ -501,7 +509,9 @@ the reverb of the room where the listener is and what covers each source.
   `voice` and `ui`, and a game its own below `AUDIO_BUS_CAPACITY`, which is the mixer's capacity. A
   bus is reserved the first time something names it.
   - `Audio_Settings` (project setting) has an entry per bus that does not sound as it arrives: its
-    gain in dB, its low-pass, who ducks it and its own reverb, over everything it touches. The gain
+    gain in dB, its low-pass, who ducks it, its own reverb over everything it touches, and the bus
+    it sends to ([sends](../../mirai-platform/references/audio.md#buses)): one of a lower number,
+    or the problem `audio.send` and the master. The gain
     is in dB so that an entry at zeros says "as it arrives": in linear, the master at volume 0
     would be an empty entry. `audio_bus_setting_set` writes or removes the entry and
     `db_volume` converts inside the mixer.
@@ -523,16 +533,9 @@ the reverb of the room where the listener is and what covers each source.
   `audio.sound`, `audio.bus`, `audio.voices` or `audio.memory`.
 - `Mixer_Listener` (host) is the mixer's listener, one per application: it is set by the world whose
   listener moved, or the one that runs after another.
-- A loose sound: `audio.play_asset(app,time,path_or_id,...)` and `play_asset_at`, with `.sound`
-  or `.sound_set`; `play_source` plays an `Audio_Source` as configured, without a place, and
-  `play_source_at` at a point of the world with its curve (a loop that follows something:
-  `source_place` moves it); `source_tune` passes either its changes; `stop` and `playing` on the
-  voice they return. Playing takes `^host.App`, which loads the sound; what acts on a voice
-  (`stop`, `playing`, `source_place`, `source_tune`) takes the mixer, `^audio.Mixer`. `buses_apply`
-  is what `audio_buses` does every frame, for whoever sounds outside the game (the editor). They
-  return zero if there is no mixer, the asset does not load or there is no free voice, or if a
-  rollback repeats the tick (`time.resimulating`): it already sounded the first time. They belong
-  to the game thread: only from the functions of the loop.
+- A loose sound is a one-shot of `Sound_Requests` (above). `buses_apply` is what `audio_buses`
+  does every frame, for whoever sounds outside the game (the editor), which starts what it plays
+  to be heard with `voice_start`.
 
 ## `anim`
 
@@ -609,8 +612,8 @@ one per local player that has screens or sees a `World_Widget`.
   `ui.scale_to_fit` brings to the window or the player's part. `languages` are the languages the
   game is in (`Language`, those the fonts have the glyphs of, with their code in
   `LANGUAGE_CODES`; English by default) and `source` the one the interfaces are written in.
-  Translations live in each `.ui`
-  ([localized texts](../../mirai-ui/references/ui.md#data-tree)). `prompts` picks the prompt
+  What each text says in them is in the `.strings`
+  ([texts](../../mirai-assets/references/kinds.md#texts)). `prompts` picks the prompt
   pack (none: they are drawn). `prompt_images` gives loose entries a texture that wins over that of
   the pack; Project Settings > UI shows them in a table with the entries the game binds.
 - **`UI_Preferences`** (machine setting): what the player chose, `language` (the language they
@@ -627,8 +630,8 @@ one per local player that has screens or sees a `World_Widget`.
   effects view of the renderer `PARTICLE_VIEW_METERS` high, per element and while it is being
   built); `sound` plays the asset. A screen that shows a camera or particles is built every frame:
   it is not drawn again from what it drew. `language` is the language the player chose
-  (`ui_language`): the localized texts of the `.ui` show their translation. A prompt that the pack
-  has shows its image (`host.prompts_find`); one it does not have is drawn.
+  (`ui_language`): the localized texts of the `.ui` show what their keys say in it. A prompt that
+  the pack has shows its image (`host.prompts_find`); one it does not have is drawn.
 - **Events.** `UI_Events` brings those of `ui.Tree_Event_Kind` (`Clicked`, `Changed`, `Submitted`,
   `Hovered`, `Unhovered`, `Focused`, `Unfocused`, `Dragged`, `Dropped`, `Finished`) and `Back`
   (Escape or East on the top screen with `back`, if the UI did not use them), `Menu` (the action,

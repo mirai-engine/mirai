@@ -175,7 +175,7 @@ mirai_stride :: proc(model:^importer.Imported_Model,rig:Mirai_Rig,walk:asset.Ani
 // sets name: the sections of the actions Greet and Step, a window of Step and the warp of the
 // stride to a target (animation_programs.odin).
 @(private)
-mirai_gallery_animation :: proc(o:^Out,model:^importer.Imported_Model,locomotion:[]asset.Animation_Clip_Desc) -> (id:base.Asset_Id,stride:f32) {
+mirai_gallery_animation :: proc(o:^Out,model:^importer.Imported_Model,locomotion:[]asset.Animation_Clip_Desc) -> (id:base.Asset_Id) {
     id=asset.content_id(PROJECT,"animation","mirai_gallery")
     rig,valid:=mirai_rig(model)
     idle,has_idle:=mirai_clip_find(locomotion,"idle")
@@ -203,6 +203,5 @@ mirai_gallery_animation :: proc(o:^Out,model:^importer.Imported_Model,locomotion
     for &clip in clips {clip.skeleton=idle.skeleton}
     file:="assets/characters/mirai/mirai_gallery.anim"
     asset.content_check(&o.content,file,asset.animation_save(path(o,file),&o.content.types,{id=id,clips=clips}))
-    // What the stride covers: the station of its warp places its goal by it.
-    return id,advance
+    return id
 }

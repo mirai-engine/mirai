@@ -28,6 +28,17 @@ a_library_makes_and_ends_bodies_of_its_own :: proc(t:^testing.T) {
 
     hit,found:=raycast(core.ref(&f.state),{3,5,3},{0,-1,0},10)
     testing.expect(t,found && hit.entity==ground && hit.body==body && hit.shape==shape)
+    // The box as if it were 20 m up, where nothing is now: only a ray asked at that pose hits it.
+    _,nothing:=raycast(core.ref(&f.state),{0,25,0},{0,-1,0},4)
+    testing.expect(t,!nothing)
+    lifted,up:=raycast_at(core.ref(&f.state),box,{0,20,0},1,{0,25,0},{0,-1,0},10)
+    testing.expect(t,up && lifted.entity==box && abs(lifted.distance-4.5)<0.01)
+    for direction in ([][3]f32{{},{0,transmute(f32)u32(0x7fc00000),0}}) {
+        _,up=raycast_at(core.ref(&f.state),box,{0,20,0},1,{0,25,0},direction,10)
+        testing.expect(t,!up)
+    }
+    _,up=raycast_at(core.ref(&f.state),core.Entity(987654),{0,20,0},1,{0,25,0},{0,-1,0},10)
+    testing.expect(t,!up)
     owned,is_owned:=owned_body_of(&f.state,hit.body)
     testing.expect(t,is_owned && owned==Owned_Body{7,ground,42})
     user,has_user:=owned_shape_user(&f.state,hit.shape)

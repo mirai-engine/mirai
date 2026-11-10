@@ -19,28 +19,27 @@ GENERATE_USAGE :: "generate [project]"
 EDIT_USAGE :: "edit [project] [--dev|--release] [editor arguments]"
 PLAY_USAGE :: "play [project] [--dev|--release] [player arguments]"
 
-// How optimized the engine and a project are built. Keep: the mode of the
-// binaries of the engine built last (Release when there are none) and the
-// optimization of the manifest. Dev: the engine and the project at
-// -o:minimal, for checking a change; Release: -o:speed, for measuring and shipping.
+// How optimized the engine and a project are built. Dev, what every command
+// builds unless --release is asked for: both at -o:minimal, for checking a
+// change. Release: the engine at -o:speed and the project at the optimization
+// of its manifest, for playing, measuring and shipping.
 // Each mode has binaries of its own.
 Build_Mode :: build.Engine_Mode
 
-// Takes --dev and --release out of args; false when both are there.
+// Takes --dev and --release out of args: the mode of every command that builds
+// or picks engine binaries, dev unless --release; false when both are there.
 build_mode_take :: proc(args:[]string) -> (mode:Build_Mode,rest:[]string,ok:bool) {
     list:=make([dynamic]string)
+    dev,release:=false,false
     for arg in args {
         switch arg {
-        case "--dev":
-            if mode==.Release {return}
-            mode=.Dev
-        case "--release":
-            if mode==.Dev {return}
-            mode=.Release
+        case "--dev":     dev=true
+        case "--release": release=true
         case: append(&list,arg)
         }
     }
-    return mode,list[:],true
+    if dev && release {return}
+    return .Release if release else .Dev,list[:],true
 }
 
 cmd_new :: proc(root:string,args:[]string) -> int {
@@ -118,8 +117,7 @@ engine_report :: proc(result:build.Engine_Result,root:string,out:=os.stdout) -> 
     switch result.status {
     case .Up_To_Date: fmt.fprintfln(out,"%s unchanged (%s).",paths.folder,mode);return 0
     case .Built:
-        if result.restored {fmt.fprintfln(out,"%s copied from the shared cache (%s).",paths.folder,mode);return 0}
-        fmt.fprintfln(out,"%s ready (%s, %.1f s).",paths.folder,mode,result.seconds)
+        fmt.fprintfln(out,"%s ready (%s, %.1f s): %d libraries compiled%s%s%s, %d copied from the shared cache%s.",paths.folder,mode,result.seconds,len(result.compiled),len(result.compiled)>0?" (":"",strings.join(result.compiled,", ",context.temp_allocator),len(result.compiled)>0?")":"",result.restored,result.programs?", the programs compiled":"")
         return 0
     case .Running,.Failed:
     }
@@ -154,14 +152,12 @@ cmd_generate :: proc(root:string,args:[]string) -> int {
 }
 
 // mirai edit [project] [--dev|--release] [arguments]: builds the library of
-// the project and opens it in the editor. A person runs it: --release unless
-// --dev is asked for. Without a project, in a folder that is none, it opens
+// the project and opens it in the editor. Without a project, in a folder that is none, it opens
 // the last project an editor opened when the launcher was told so, and the
 // launcher otherwise: the editor of the empty template with --launcher.
 cmd_edit :: proc(root:string,args:[]string) -> int {
     mode,args,ok:=build_mode_take(args)
     if !ok {fmt.eprintfln("Usage: mirai %s",EDIT_USAGE);return 2}
-    if mode==.Keep {mode=.Release}
     named:=len(args)>0 && !strings.has_prefix(args[0],"-")
     folder:=named?args[0]:"."
     rest:=named?args[1:]:args
@@ -193,16 +189,14 @@ edit_unnamed :: proc(root:string) -> (folder:string,extra:[]string) {
 }
 
 // mirai play [project] [--dev|--release] [arguments] (mirai play test: play_test.odin): builds the library of
-// the game of the project and plays it from the project, without cooking;
-// --release unless --dev is asked for.
+// the project and plays its game from the project, without cooking.
 cmd_play :: proc(root:string,args:[]string) -> int {
     if len(args)>0 && args[0]=="test" {return cmd_play_test(root,args[1:])}
     mode,args,ok:=build_mode_take(args)
     if !ok {fmt.eprintfln("Usage: mirai %s",PLAY_USAGE);return 2}
-    if mode==.Keep {mode=.Release}
     folder:=len(args)>0 && !strings.has_prefix(args[0],"-")?args[0]:"."
     rest:=len(args)>0 && folder==args[0]?args[1:]:args
-    code,_,_:=build_project(root,.Play,{folder},mode)
+    code,_,_:=build_project(root,.Editor,{folder},mode)
     if code!=0 {return code}
     if play_runs_headless(rest) {layers_isolate(root)}
     command:=make([dynamic]string)
@@ -234,7 +228,7 @@ play_arguments :: proc(args:[]string) -> []string {
 
 // Builds a target of a project. shaders_failed: the generation of its shaders
 // failed and the library was built with the ones it had.
-build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_Mode=.Keep,server:=false) -> (code:int,output:string,shaders_failed:bool) {
+build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_Mode,server:=false) -> (code:int,output:string,shaders_failed:bool) {
     folder,out:=".",""
     named:=false
     for i:=0;i<len(args);i+=1 {
@@ -262,7 +256,8 @@ build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_M
     // The binaries of the engine the libraries are built against.
     engine:=build.engine_mode_resolve(root,mode)
     engine_current:=target==.Game || build.engine_current(root,engine)
-    if target!=.Game && engine_current && library_current(root,&p,target,engine,mode==.Dev) {
+    // A project with sources goes on: its build imports what changed among them before it finds the library current.
+    if target!=.Game && engine_current && len(build.imports_roots(&p))==0 && library_current(root,&p,target,engine,mode==.Dev) {
         _=engine_report({status=.Up_To_Date,mode=engine},root)
         if os.is_file(project.path(project.shader_generation(p.root,context.temp_allocator),project.SHADERS_MANIFEST,allocator=context.temp_allocator)) {
             fmt.printfln("%s unchanged.",project.shader_generation(p.root,context.temp_allocator))
@@ -280,7 +275,7 @@ build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_M
         if closed,discarded,released=engine_release(root,p.root,engine,"build");!released {return 1,"",false}
     }
     engine_failed,rebuilt:bool
-    code,output,shaders_failed,engine_failed,rebuilt=build_project_run(root,&p,target,out,mode,engine,server)
+    code,output,shaders_failed,engine_failed,rebuilt=build_project_run(root,&p,target,out,mode,engine,engine_current,server)
     if closed.pid!=0 {
         session_reopen(root,p.root,closed,discarded,engine,!engine_failed,"build")
     } else if code==0 && rebuilt && target!=.Game {
@@ -296,7 +291,7 @@ build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_M
 // the binaries of the engine did not build; rebuilt: the engine or the
 // library were built again.
 @(private="file")
-build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out:string,mode,engine:Build_Mode,server:=false) -> (code:int,output:string,shaders_failed,engine_failed,rebuilt:bool) {
+build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out:string,mode,engine:Build_Mode,engine_current:bool,server:=false) -> (code:int,output:string,shaders_failed,engine_failed,rebuilt:bool) {
     lock:=build_lock(root,fmt.tprintf("build %v %s",target,p.root),{p.root})
     defer workspace.lock_release(&lock)
     // ui links the FreeType library, the importer that of ufbx and the editor that of SQLite.
@@ -304,7 +299,9 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
     // The libraries of a project are built against the binaries of the engine;
     // the game, against its sources.
     engine_built:=false
-    if target!=.Game {
+    if target!=.Game && engine_current {
+        _=engine_report({status=.Up_To_Date,mode=engine},root)
+    } else if target!=.Game {
         built:=build.engine_build({engine_root=root,mode=engine})
         if code:=engine_report(built,root);code!=0 {return code,"",false,true,false}
         engine_built=built.status==.Built
@@ -327,7 +324,7 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
         if generation.result.status!=.Failed && generation.result.message!="" {fmt.eprintln(generation.result.message)}
     }
     {
-        job:=build.job_run({project=p,target=target,output=out,server=server,dev=mode==.Dev,engine=engine,incremental=target==.Game && mode!=.Release})
+        job:=build.job_run({project=p,target=target,output=out,server=server,dev=mode==.Dev,engine=engine})
         defer build.job_destroy(job)
         result:=&job.result
         for diagnostic in result.diagnostics {
@@ -336,12 +333,6 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
         if compiled:=result.plugins_built-result.plugins_restored-result.plugins_relinked;compiled>0 {fmt.printfln("%s: %d plugin libraries built.",build.plugins_libraries_folder(p.root),compiled)}
         if result.plugins_relinked>0 {fmt.printfln("%s: %d plugin libraries linked again.",build.plugins_libraries_folder(p.root),result.plugins_relinked)}
         if result.plugins_restored>0 {fmt.printfln("%s: %d plugin libraries copied from the shared cache.",build.plugins_libraries_folder(p.root),result.plugins_restored)}
-        switch result.shipped_engine {
-        case .None:
-        case .Current:  fmt.println("Engine library of the game unchanged.")
-        case .Restored: fmt.println("Engine library of the game copied from the shared cache.")
-        case .Built:    fmt.println("Engine library of the game built.")
-        }
         switch result.status {
         case .Running:
         case .Built:      fmt.printfln("%s ready (%.1f s%s).",result.output,result.seconds,result.relinked?", linked again":"")
@@ -361,6 +352,7 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
             case .Output_Invalid:   fmt.eprintln("mirai build: --out cannot be the project folder")
             case .Copy_Failed:      fmt.eprintfln("mirai build: could not copy the files that go with %s",result.output)
             case .Settings_Invalid: fmt.eprintln("mirai build: could not merge the settings of the engine and the project; fix or delete the file named above")
+            case .Import_Failed:    fmt.eprintln("mirai build: a source of the project did not import")
             case .Cook_Failed:      fmt.eprintfln("mirai build: could not cook the assets: %v %s",result.cook.error,result.cook.detail)
             case .Cancelled:        fmt.eprintln("mirai build: cancelled")
             case .Engine_Time_Code:

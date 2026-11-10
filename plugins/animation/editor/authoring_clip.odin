@@ -23,7 +23,7 @@ Authoring_Keyframe :: struct {
 
 // What a key holds at its time; animation.key.set names the time apart.
 Authoring_Key_Value :: struct {
-    value:mm.Vec4,
+    value:mm.Vec4 `mirai:"optional"`,
     ease:mm.Ease `mirai:"optional"`,
     interpolation:lib.Interpolation `mirai:"optional"`,
     tangents:bool `mirai:"optional"`,
@@ -80,8 +80,9 @@ Key_Set_Params :: struct {
     target:[aa.NODE_PATH_CAPACITY]u8 `mirai:"text,label=Canonical bone or rigid-node path; scalar curve name for Float/Vector"`,
     property:lib.Property,
     slot:u8 `mirai:"optional"`,
-    time:f32 `mirai:"min=0,unit=s,label=The key at this time is replaced or removed; with no key there it is inserted in order"`,
-    key:Authoring_Key_Value `mirai:"optional,label=What the key holds; leave it out only with remove"`,
+    time:f32 `mirai:"min=0,unit=s,label=The key at this time is replaced, moved or removed; with no key there it is inserted in order"`,
+    key:Authoring_Key_Value `mirai:"optional,label=What the key holds; a field left out keeps what the key at time holds, and a new key needs value"`,
+    to:f32 `mirai:"optional,min=0,unit=s,label=Moves the key at time here; a key already at to is replaced"`,
     remove:bool `mirai:"optional,label=Removes the key at time"`,
     dry_run:bool `mirai:"optional,label=Validates and answers without writing"`,
 }
@@ -101,11 +102,11 @@ Marker_Set_Params :: struct {
 authoring_clip_register :: proc(s:^editor.Session) {
     inspect:=Clip_Inspect_Params{limit=128}
     track:=Track_Inspect_Params{limit=128}
-    authoring_method_register(s,{name="animation.clip.create",summary="Creates an empty named clip in a new .anim or after the clips of an existing one. One step of undo.",params=Clip_Create_Params,params_info=type_info_of(Clip_Create_Params),run=authoring_clip_create},Authoring_Write_Result,type_info_of(Authoring_Write_Result))
-    authoring_method_register(s,{name="animation.clip.set",summary="Renames a clip and replaces its root motion; its tracks and markers stay.",params=Clip_Set_Params,params_info=type_info_of(Clip_Set_Params),run=authoring_clip_set},Authoring_Write_Result,type_info_of(Authoring_Write_Result))
-    authoring_method_register(s,{name="animation.track.set",summary="Creates, replaces or removes the track of a clip found by target, property and slot.",params=Track_Set_Params,params_info=type_info_of(Track_Set_Params),run=authoring_track_set},Authoring_Write_Result,type_info_of(Authoring_Write_Result))
-    authoring_method_register(s,{name="animation.key.set",summary="Replaces, appends or removes one key of a track; the clip must stay valid, with finite values and ordered times.",params=Key_Set_Params,params_info=type_info_of(Key_Set_Params),run=authoring_key_set},Authoring_Write_Result,type_info_of(Authoring_Write_Result))
-    authoring_method_register(s,{name="animation.marker.set",summary="Replaces, appends or removes a named clip marker used for animation events and synchronization, or a span with a duration that actions and warping name.",params=Marker_Set_Params,params_info=type_info_of(Marker_Set_Params),run=authoring_marker_set},Authoring_Write_Result,type_info_of(Authoring_Write_Result))
+    editor.api_method_register(s,Clip_Create_Params,Authoring_Write_Result,{name="animation.clip.create",summary="Creates an empty named clip in a new .anim or after the clips of an existing one. One step of undo.",run=authoring_clip_create,writes_result=true})
+    editor.api_method_register(s,Clip_Set_Params,Authoring_Write_Result,{name="animation.clip.set",summary="Renames a clip and replaces its root motion; its tracks and markers stay.",run=authoring_clip_set,writes_result=true})
+    editor.api_method_register(s,Track_Set_Params,Authoring_Write_Result,{name="animation.track.set",summary="Creates, replaces or removes the track of a clip found by target, property and slot.",run=authoring_track_set,writes_result=true})
+    editor.api_method_register(s,Key_Set_Params,Authoring_Write_Result,{name="animation.key.set",summary="Replaces, inserts, moves or removes one key of a track; the clip must stay valid, with finite values and ordered times. One step of undo.",run=authoring_key_set,writes_result=true})
+    editor.api_method_register(s,Marker_Set_Params,Authoring_Write_Result,{name="animation.marker.set",summary="Replaces, appends or removes a named clip marker used for animation events and synchronization, or a span with a duration that actions and warping name.",run=authoring_marker_set,writes_result=true})
 }
 
 @(private)
@@ -266,24 +267,50 @@ authoring_key_set :: proc(s:^editor.Session,call:^api.Call) {
     view,ok:=authoring_clip_open(s,call,p.asset,&file);if !ok {return}
     index,found:=authoring_clip_index(call,view,base.text_get(p.clip[:]));if !found {return}
     clips,prepared:=authoring_clip_descs(view,call);if !prepared {return}
-    if !p.remove && !authoring_field_present(call,"key") {authoring_failure(call,"key","Required","the key to write at time, unless it is removed","missing","Supply key, or remove");return}
+    moving:=authoring_field_present(call,"to")
+    if p.remove && moving {authoring_failure(call,"to","Invalid_Edit","to or remove, not both","both","A key is moved or removed",fix="Pass to to move the key at time, or remove to take it out");return}
+    if !p.remove && !moving && !authoring_field_present(call,"key") {authoring_failure(call,"key","Required","the key to write at time, unless it is moved or removed","missing","Supply key, to or remove");return}
     selected:=-1
     for &each,i in clips[index].tracks {if each.target==base.text_get(p.target[:]) && each.property==p.property && each.slot==p.slot {selected=i;break}}
     if selected<0 {authoring_failure(call,"target","Missing_Track","a track of the clip by target, property and slot",base.text_get(p.target[:]),"The clip has no such track",fix="animation.track.set creates it");return}
     track:=&clips[index].tracks[selected]
-    at,exists:=len(track.keys),false
-    for &key,i in track.keys {
-        if abs(key.time-p.time)<=AUTHORING_TIME_EPSILON {at,exists=i,true;break}
-        if key.time>p.time {at=i;break}
-    }
-    if p.remove && !exists {authoring_failure(call,"time","Missing_Key","the time of a key of the track",fmt.tprintf("%f",p.time),"The track has no key at that time",fix="animation.asset.inspect with section Track lists its keys");return}
-    value:=authoring_keyframe({time=p.time,value=p.key.value,ease=p.key.ease,interpolation=p.key.interpolation,tangents=p.key.tangents,in_slope=p.key.in_slope,out_slope=p.key.out_slope})
+    at,exists:=authoring_key_at(track.keys,p.time)
+    if (p.remove || moving) && !exists {authoring_failure(call,"time","Missing_Key","the time of a key of the track",fmt.tprintf("%f",p.time),"The track has no key at that time",fix="animation.asset.inspect with section Track lists its keys");return}
     keys:[]lib.Keyframe
     done:bool
-    if exists || p.remove {keys,done=authoring_replace_row(track.keys,at,value,p.remove,aa.ANIMATION_MAX_KEYS,call.allocator)} else {keys,done=authoring_insert_row(track.keys,at,value,aa.ANIMATION_MAX_KEYS,call.allocator)}
+    if p.remove {
+        keys,done=authoring_replace_row(track.keys,at,lib.Keyframe{},true,aa.ANIMATION_MAX_KEYS,call.allocator)
+    } else {
+        key:=track.keys[at] if exists else lib.Keyframe{}
+        given:=api.json_member(call.raw,"key")
+        has :: proc(given,field:string) -> bool {return api.json_member(given,field)!=""}
+        if !exists && !has(given,"value") {authoring_failure(call,"key.value","Required","the value of a new key","missing","No key is at time, so the key needs its value",fix="Pass key.value, or the time of a key of the track");return}
+        if has(given,"value") {key.value=p.key.value}
+        if has(given,"ease") {key.ease=p.key.ease}
+        if has(given,"interpolation") {key.interpolation=p.key.interpolation}
+        if has(given,"tangents") {key.tangents=p.key.tangents}
+        if has(given,"in_slope") {key.in_slope=p.key.in_slope}
+        if has(given,"out_slope") {key.out_slope=p.key.out_slope}
+        key.time=p.to if moving else p.time
+        rest:=track.keys
+        if moving {
+            if rest,done=authoring_replace_row(track.keys,at,key,true,aa.ANIMATION_MAX_KEYS,call.allocator);done {at,exists=authoring_key_at(rest,key.time)}
+        } else {done=true}
+        if done && exists {keys,done=authoring_replace_row(rest,at,key,false,aa.ANIMATION_MAX_KEYS,call.allocator)} else if done {keys,done=authoring_insert_row(rest,at,key,aa.ANIMATION_MAX_KEYS,call.allocator)}
+    }
     if !done {authoring_failure(call,"time","Invalid_Edit","a track with room for the key",fmt.tprintf("%d keys; remove=%t",len(track.keys),p.remove),"The key edit cannot be prepared within capacity");return}
     track.keys=keys
     authoring_clip_save(s,call,file,p.asset,view,clips)
+}
+
+// Where a key at time is in keys ordered by time: its index, or where it goes.
+@(private)
+authoring_key_at :: proc(keys:[]lib.Keyframe,time:f32) -> (at:int,exists:bool) {
+    for &key,i in keys {
+        if abs(key.time-time)<=AUTHORING_TIME_EPSILON {return i,true}
+        if key.time>time {return i,false}
+    }
+    return len(keys),false
 }
 
 @(private)

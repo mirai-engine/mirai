@@ -185,6 +185,7 @@ step :: proc(f:^Fixture,ticks:=1) {
             f.was[a]=f.down[a]
         }
         w:=world_of(f)
+        clear(&f.events.queue.items) // the log of a tick, as its readers are handed it
         abilities_tick(&f.users,{&f.sheet_set},{&f.kit_set},&f.requests,&f.events,&w,test_overlap)
         for e in f.events.queue.items {append(&f.log,e)}
         core.time_advance(&f.time)

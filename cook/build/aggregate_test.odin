@@ -40,11 +40,14 @@ no_store_of_an_aggregate_of_more_than_64_bytes :: proc(t:^testing.T) {
 
     paths:=engine_paths(folder,.Dev)
     decl:=paths.decl
-    libraries:=ENGINE_LIBRARIES
-    for info,library in libraries {
+    // The libraries of release hold every package in four compiles: the stores are the same at -o:minimal.
+    libraries:=engine_libraries(.Release)
+    for library in libraries {
         errors,_,staged:=engine_library_stage(root,paths,library)
-        if !testing.expectf(t,staged && len(errors)==0,"%s: %v",info.name,errors) {return}
-        if !ir(t,root,compiler,project.path(paths.stages[library],engine_library_entry(library)),project.path(folder,"ir",engine_library_file(library)),flags[:],fmt.tprintf("-collection:mirai=%s",paths.stages[library])) {return}
+        if !testing.expectf(t,staged && len(errors)==0,"%s: %v",library.name,errors) {return}
+    }
+    for library in libraries {
+        if !ir(t,root,compiler,project.path(paths.stage,engine_library_entry(library)),project.path(folder,"ir",library.file),flags[:],fmt.tprintf("-collection:mirai=%s",paths.decl),fmt.tprintf("-collection:%s=%s",ENGINE_STAGE_COLLECTION,paths.stage)) {return}
     }
 
     p,open_error:=project.open(project.path(root,"demo"),root)
@@ -52,11 +55,13 @@ no_store_of_an_aggregate_of_more_than_64_bytes :: proc(t:^testing.T) {
     if !testing.expect_value(t,open_error.code,project.Error_Code.None) {return}
     generated,written:=generated_write(&p,.Editor)
     if !testing.expectf(t,written,"the demo generates no world: %v",generated.errors) {return}
-    for &lib in plugin_libraries(&p,.Editor,true,context.temp_allocator) {
+    for &lib in plugin_libraries(&p,true,context.temp_allocator) {
+        // The demo's own code compiles with the project, below.
+        if lib.project {continue}
         lib.stage=project.path(folder,"plugins",lib.stage[strings.last_index_byte(lib.stage,'/')+1:])
         // A name for the import library its stage links: IR links nothing.
         plugin_library_name(p.root,&lib,0,context.temp_allocator)
-        failed:=plugin_library_prepare(&p,&lib)
+        failed:=plugin_library_prepare(&lib)
         if !testing.expectf(t,len(failed)==0,"%v",failed) {return}
         if !ir(t,root,compiler,project.path(lib.stage,PLUGIN_ENTRY),project.path(folder,"ir",lib.family),flags[:],fmt.tprintf("-collection:mirai=%s",decl),fmt.tprintf("-collection:plugins=%s",lib.stage)) {return}
     }

@@ -2,14 +2,15 @@ package records
 
 import "core:testing"
 import "mirai:core"
+import "mirai:std/base"
 
 @(private="file")
 Test_Item :: struct {damage:int,title:core.Text}
 
 // A row keeps its id, its name and its value wherever it goes; a copy gets
-// an id of its own and texts of its own; a name is of one row.
+// an id of its own and shows the same key; a name is of one row.
 @(test)
-rows_keep_their_ids_and_a_copy_has_its_own_texts :: proc(t:^testing.T) {
+rows_keep_their_ids_and_a_copy_shows_the_same_text :: proc(t:^testing.T) {
     declared:=[1]core.Record_Info{{name="Item",library="game",type=Test_Item,info=type_info_of(Test_Item),default=proc(dst:rawptr) {(^Test_Item)(dst).damage=7}}}
     info:=core.World_Info{records=declared[:]}
     ids:=u64(1)
@@ -25,17 +26,11 @@ rows_keep_their_ids_and_a_copy_has_its_own_texts :: proc(t:^testing.T) {
     testing.expect(t,taken!="" && row_count(&e)==2,"a second row of a name is refused")
     testing.expect(t,row_rename(&e,bow,"sword")!="" && row_rename(&e,bow,"long bow")!="" && row_rename(&e,bow,"longbow")=="")
 
-    offset:=int(offset_of(Test_Item,title))
-    testing.expect_value(t,text_set(&e,&ids,sword,offset,"","Sword"),"")
-    testing.expect_value(t,text_set(&e,&ids,sword,offset,"es","Espada"),"")
+    base.text_set(item(&e,sword).title.key[:],"item.sword")
     item(&e,sword).damage=9
     copied,problem:=row_duplicate(&e,&ids,sword,"sabre")
     testing.expect(t,problem=="" && copied==sword+1 && row_find(&e,"longbow")==2,"a copy goes after its row")
-    testing.expect(t,item(&e,copied).damage==9 && item(&e,copied).title.id!=item(&e,sword).title.id)
-    text_put(&e,item(&e,copied).title.id,"es","Sable")
-    spanish,_:=text_get(&e,item(&e,sword).title.id,"es")
-    own,_:=text_get(&e,item(&e,copied).title.id,"")
-    testing.expect(t,spanish=="Espada" && own=="Sword","the texts of a copy are its own")
+    testing.expect(t,item(&e,copied).damage==9 && item(&e,copied).title==item(&e,sword).title)
 
     for id,row in e.ids {
         testing.expect(t,id!=0 && id<1<<ID_BITS)

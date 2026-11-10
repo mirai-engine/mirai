@@ -230,6 +230,9 @@ breakables_make :: proc(w:^World) -> bool {
     w.bonds=alloc(Bond,d.bond_capacity,a,&ok)
     w.piece_hulls=alloc(Hull_Handle,d.piece_capacity,a,&ok)
     w.piece_origins=alloc(Piece_Origin,d.piece_capacity,a,&ok)
+    w.stamps[.Breakables]=alloc(u64,base.chunks_of(d.breakable_capacity),a,&ok)
+    w.stamps[.Pieces]=alloc(u64,base.chunks_of(d.piece_capacity),a,&ok)
+    w.stamps[.Bonds]=alloc(u64,base.chunks_of(d.bond_capacity),a,&ok)
     if !w.kept {
         pieces,bonds,bodies:=d.piece_capacity,d.bond_capacity,d.body_capacity
         w.events.breaks=alloc(Break_Event,d.event_capacity,a,&ok)
@@ -265,6 +268,10 @@ breakables_make :: proc(w:^World) -> bool {
 breakables_free :: proc(w:^World) {
     a:=w.allocator
     delete(w.breakables,a);delete(w.pieces,a);delete(w.bonds,a);delete(w.piece_hulls,a);delete(w.piece_origins,a);delete(w.events.breaks,a)
+    for pool in ([3]Pool{.Breakables,.Pieces,.Bonds}) {
+        delete(w.stamps[pool],a)
+        w.stamps[pool]=nil
+    }
     s:=&w.breaking
     delete(s.parent,a);delete(s.group,a);delete(s.source,a);delete(s.firsts,a);delete(s.body,a);delete(s.made_body,a);delete(s.from,a);delete(s.ids,a)
     delete(s.volume,a);delete(s.anchored,a);delete(s.side,a);delete(s.keeper,a);delete(s.marks,a);delete(s.changed,a);delete(s.changed_list,a)
@@ -288,19 +295,39 @@ breakables_geometry_copy :: proc(dst,src:^World) {
 }
 
 @(private)
-breakable_get :: #force_inline proc "contextless" (w:^World,h:Breakable_Handle) -> (^Breakable,i32) {
+breakable_read :: #force_inline proc "contextless" (w:^World,h:Breakable_Handle) -> (^Breakable,i32) {
     index:=base.handle_index(base.Handle(h))
     generation:=base.handle_generation(base.Handle(h))
     // A kept world only holds its breakables: it has no scratch to read or change them with.
     if w.kept || index>=u32(w.breakable_high) || generation&1==0 || w.breakables[index].generation!=generation {return nil,-1}
     return &w.breakables[index],i32(index)
 }
+// To write, with every slot of its pieces and bonds stamped.
+@(private)
+breakable_get :: proc "contextless" (w:^World,h:Breakable_Handle) -> (^Breakable,i32) {
+    d,index:=breakable_read(w,h)
+    if d!=nil {breakable_stamp(w,index)}
+    return d,index
+}
+
+// Its slot and those of its pieces, its bonds and the hulls of its clusters are written.
+@(private)
+breakable_stamp :: proc "contextless" (w:^World,index:i32) {
+    d:=&w.breakables[index]
+    stamp(w,d)
+    for slot:=d.piece_list;slot>=0;slot=w.pieces[slot].next {stamp(w,.Pieces,slot)}
+    for slot:=d.bond_list;slot>=0;slot=w.bonds[slot].next {
+        bond:=&w.bonds[slot]
+        stamp(w,bond)
+        if .Cluster in bond.flags && bond.b>=0 {stamp(w,.Pieces,bond.b)}
+    }
+}
 @(private) breakable_handle :: #force_inline proc "contextless" (w:^World,index:i32) -> Breakable_Handle {
     return Breakable_Handle(base.handle_make(u32(index),w.breakables[index].generation))
 }
 
 breakable_valid :: proc(w:^World,h:Breakable_Handle) -> bool {
-    d,_:=breakable_get(w,h)
+    d,_:=breakable_read(w,h)
     return d!=nil
 }
 
@@ -316,10 +343,12 @@ piece_alloc :: proc(w:^World) -> i32 {
         return -1
     }
     w.piece_count+=1
+    stamp(w,.Pieces,index)
     return index
 }
 @(private)
 piece_release :: proc(w:^World,index:i32) {
+    stamp(w,.Pieces,index)
     w.pieces[index]={next=w.piece_free}
     w.piece_free=index
     w.piece_count-=1
@@ -336,6 +365,7 @@ bond_alloc :: proc(w:^World) -> i32 {
         return -1
     }
     w.bond_count+=1
+    stamp(w,.Bonds,index)
     return index
 }
 
@@ -345,6 +375,7 @@ bond_alloc :: proc(w:^World) -> i32 {
 @(private)
 piece_hull_set :: proc(w:^World,index:i32,desc:Hull_Desc,mass:^Hull_Mass=nil) -> (Hull_Handle,bool) {
     handle:=w.piece_hulls[index]
+    stamp(w,.Pieces,index)
     if hull_get(w,handle)!=nil && !hull_in_use(w,handle) {
         if !hull_rebuild(w,handle,desc) {
             hull_destroy(w,handle)
@@ -652,6 +683,7 @@ breakable_create :: proc(w:^World,desc:Breakable_Desc) -> (handle:Breakable_Hand
     }
     w.breakable_count+=1
     d:=&w.breakables[index]
+    stamp(w,d)
     d^={
         user_data=desc.user_data,piece_list=-1,piece_tail=-1,bond_list=-1,bond_tail=-1,
         density=desc.density,friction=desc.friction,restitution=desc.restitution,gravity_scale=desc.gravity_scale,
@@ -767,12 +799,14 @@ breakable_release :: proc(w:^World,index:i32) {
             piece_remove(w,c.b)
             piece_release(w,c.b)
         }
+        stamp(w,.Bonds,slot)
         w.bonds[slot]={next=w.bond_free}
         w.bond_free=slot
         w.bond_count-=1
         slot=next
     }
     if body_valid(w,d.body) && body_shapes(w,d.body,nil)==0 {body_destroy(w,d.body)}
+    stamp(w,d)
     d^={generation=d.generation+1,next_free=w.breakable_free}
     w.breakable_free=index
     w.breakable_count-=1
@@ -795,7 +829,7 @@ breakable_find :: proc(w:^World,user_data:u64) -> Breakable_Handle {
 
 // The body the breakable was created as: where its anchored pieces are, or its largest part.
 breakable_body :: proc(w:^World,h:Breakable_Handle) -> Body_Handle {
-    d,_:=breakable_get(w,h)
+    d,_:=breakable_read(w,h)
     return d!=nil?d.body:{}
 }
 
@@ -814,7 +848,7 @@ breakable_set_filter :: proc(w:^World,h:Breakable_Handle,filter:Filter) {
 
 // Pieces of the breakable, gone ones included, written to `out`; returns how many there are.
 breakable_pieces :: proc(w:^World,h:Breakable_Handle,out:[]Piece_Info) -> int {
-    d,_:=breakable_get(w,h)
+    d,_:=breakable_read(w,h)
     if d==nil {return 0}
     count:=0
     for slot:=d.piece_list;slot>=0;slot=w.pieces[slot].next {
@@ -850,7 +884,7 @@ hull_to_mesh :: proc(hull:^Hull,out:^geom.Mesh_Buffer) {
 
 // Steps until the pieces of the breakable on a body expire, and whether they do.
 breakable_body_remaining_ticks :: proc(w:^World,h:Breakable_Handle,body:Body_Handle) -> (ticks:u32,expires:bool) {
-    d,_:=breakable_get(w,h)
+    d,_:=breakable_read(w,h)
     if d==nil || !body_valid(w,body) {return}
     deadline:=max(u64)
     for slot:=d.piece_list;slot>=0;slot=w.pieces[slot].next {
@@ -1212,13 +1246,14 @@ breakables_update :: proc(w:^World) {
             piece:=&w.pieces[slot]
             if .Gone in piece.flags {continue}
             if .Debris in piece.flags {
-                if piece.expire<=w.breaking.tick {piece_remove(w,slot)}
+                if piece.expire<=w.breaking.tick {breakable_stamp(w,i32(index));piece_remove(w,slot)}
                 continue
             }
             if .Passive_Removal in d.flags {continue}
             body:=shape_body(w,piece.shape)
             if piece.group==0 || body=={} || piece.expire>w.breaking.tick && (.Remove_On_Sleep not_in d.flags || body_is_awake(w,body)) {continue}
             event:=Break_Event{breakable=breakable_handle(w,i32(index)),tick=u32(w.breaking.tick),piece=slot,kind=.Remove}
+            breakable_stamp(w,i32(index))
             if break_remove_body(w,i32(index),slot) {break_push(w,i32(index),event)}
         }
     }
@@ -1228,7 +1263,7 @@ breakables_update :: proc(w:^World) {
 // a step (World_Desc.event_capacity), whose damage was not done or not listed, and the capacities that
 // refused it what a break or a cut needed.
 breakable_shortfall :: proc(w:^World,h:Breakable_Handle) -> (events:int,refused:Break_Capacities) {
-    d,index:=breakable_get(w,h)
+    d,index:=breakable_read(w,h)
     if d==nil {return}
     return int(w.breaking.lost[index]),w.breaking.refused[index]
 }

@@ -72,7 +72,7 @@ Navigation_Builds :: struct {
     // By class, the tiles and zones that went in a run where the terrain is not loaded, with the
     // hash of the one each had (0: none), to read again from the bakes.
     paged:[NAV_CLASS_CAPACITY]base.Hash_Map(u64),
-    paged_seen:u64,       // Nav_Unloaded.revision and whether the world ran when they were last looked at
+    paged_seen:u64,       // the revision of the unloaded ground and whether the world ran when they were last looked at
     seen:[dynamic]bool,   // scratch of the looks: the entries still there
     sections_stamps:[6]u64, // the versions the sections were last gathered from
     fields:[dynamic]Tile_Field, // the heightfields kept, at most NAV_FIELDS: the one unused longest gives its place
@@ -461,7 +461,7 @@ upright_box :: proc "contextless" (pose:mm.Transform,half:[3]f32) -> (box:mm.Aab
 navigation_build :: proc(
     n:^Navigation,b:^Navigation_Builds,settings:core.Ref(Navigation_Settings),bakes:core.Read(Navigation_Bake),physics:core.Ref(phys.Physics_State),requests:^Nav_Build_Requests,
     bounds:core.Read(Nav_Bounds),areas:core.Read(Nav_Area),links:core.Read(Nav_Link),obstacles:core.Read(Nav_Obstacle),volumes:core.Read(volume.Volume),time:core.Time,transforms:core.Read(core.Transform),parents:core.Read(core.Parent),
-    unloaded:core.Ref(Nav_Unloaded),references:core.Read(scene.Scene_Reference),worlds:core.Read(core.World_Transform),ids:core.Read(core.Id),app:^host.App,problems:^core.Problems,
+    ground:core.Ref(core.Ground_Queries),world:core.World_Ref,references:core.Read(scene.Scene_Reference),worlds:core.Read(core.World_Transform),ids:core.Read(core.Id),app:^host.App,problems:^core.Problems,
 ) {
     if physics.ptr==nil || !physics.ready || settings.ptr==nil {return}
     // A section away is not loaded: like the terrain that is not, its tiles wait for it.
@@ -471,7 +471,8 @@ navigation_build :: proc(
         b.sections=sections_gather(references,worlds,ids)
         b.looked+=u64(core.count(references))
     }
-    gone:=Unloaded{unloaded.ptr,&b.sections,base.hash_combine(unloaded.ptr.revision if unloaded.ptr!=nil else 0,b.sections.hash)}
+    q:=core.ground_query(world,ground)
+    gone:=Unloaded{q.unloaded,&b.sections,base.hash_combine(q.unloaded_revision,b.sections.hash)}
     fresh,reset:=false,false
     // A class is made again when it changes, or when what blocks its agents does (Collision_Settings).
     collision:=&physics.ptr.collision
@@ -535,7 +536,7 @@ navigation_build :: proc(
         next,count,overflow=phys.static_changes(physics,b.cursor,b.boxes[:])
     }
     sections_update(n,b,limits,fresh)
-    paging_update(n,b,unloaded.ptr,time.playing,fresh,reset,app,problems)
+    paging_update(n,b,q,time.playing,fresh,reset,app,problems)
     published,spent:=builds_publish(n,b,problems)
     if published>0 {host.load_phase_add(app,.Nav_Tiles,spent,published)}
     builds_start(n,b,physics,limits,gone,time.playing,&app.jobs,problems)
@@ -582,7 +583,7 @@ bounds_update :: proc(n:^Navigation,b:^Navigation_Builds,bounds:core.Read(Nav_Bo
     if count==0 {
         box,ok:=phys.static_bounds(physics)
         if !ok {box=mm.AABB_EMPTY}
-        if unloaded.terrain!=nil {for gone in unloaded.terrain.boxes {box=mm.aabb_merge(box,gone)}}
+        for gone in unloaded.ground {box=mm.aabb_merge(box,gone)}
         if unloaded.sections!=nil {for gone in unloaded.sections.away[:unloaded.sections.away_count] {box=mm.aabb_merge(box,gone)}}
         if !mm.aabb_is_empty(box) {surface[0]=box;count=1}
     }
@@ -726,7 +727,7 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
     // The marks that wait for their collision are looked at again when what is not loaded changes.
     revision:=unloaded.revision
     loaded:=revision!=b.unloaded_seen
-    paging:=unloaded.terrain.boxes[:] if playing && unloaded.terrain!=nil else nil
+    paging:=unloaded.ground if playing else nil
     for i in 0..<n.count {
         c:=&n.classes[i]
         if c.ready==0 && (c.loading==0 || !loaded) {continue}
@@ -1176,19 +1177,19 @@ sections_update :: proc(n:^Navigation,b:^Navigation_Builds,limits:Limits,fresh:b
     }
 }
 
-// In a run, the tiles and zones that read only where the terrain is not
-// loaded (Nav_Unloaded) go, as those of a section away, and are kept in
+// In a run, the tiles and zones that read only where the ground is not
+// loaded go, as those of a section away, and are kept in
 // paged; when what is not loaded changes, those it no longer covers come back
 // from the bakes of the world, and are marked to build what the bakes do not
 // have or what changed. The edited world keeps them all: the editor bakes its
 // meshes.
 @(private)
-paging_update :: proc(n:^Navigation,b:^Navigation_Builds,unloaded:^Nav_Unloaded,playing,fresh,reset:bool,app:^host.App,problems:^core.Problems) {
+paging_update :: proc(n:^Navigation,b:^Navigation_Builds,ground:core.Ground_Query,playing,fresh,reset:bool,app:^host.App,problems:^core.Problems) {
     if reset {for &paged in b.paged {base.hash_map_clear(&paged)}}
-    seen:=base.hash_combine(unloaded.revision if unloaded!=nil else 0,u64(playing))
+    seen:=base.hash_combine(ground.unloaded_revision,u64(playing))
     if seen==b.paged_seen && !fresh {return}
     b.paged_seen=seen
-    boxes:=unloaded.boxes[:] if playing && unloaded!=nil else nil
+    boxes:=ground.unloaded if playing else nil
     paging_restore(n,b,boxes,app,problems)
     if len(boxes)==0 {return}
     gone:=make([dynamic]u64,context.temp_allocator)

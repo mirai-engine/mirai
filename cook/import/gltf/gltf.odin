@@ -73,6 +73,9 @@ read :: proc(r:^importer.Reader,bytes:[]u8) -> bool {
         if buffer.uri!=nil && !strings.has_prefix(string(buffer.uri),"data:") && importer.unsafe_path(string(buffer.uri)) {return importer.fail(r,.Malformed,"a glTF buffer names the device %s",string(buffer.uri))}
     }
     path:=strings.clone_to_cstring(r.path,context.temp_allocator)
+    for buffer in data.buffers {
+        if buffer.uri!=nil && !strings.has_prefix(string(buffer.uri),"data:") {append(&r.files,importer.resolve_path(r,string(buffer.uri)))}
+    }
     if result=cg.load_buffers(options,data,path);result!=.success {
         return importer.fail(r,result==.file_not_found?importer.Error_Code.Read:importer.Error_Code.Malformed,"glTF buffers could not be loaded: %v",result)
     }

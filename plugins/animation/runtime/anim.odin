@@ -118,17 +118,16 @@ Animation_Event :: struct {
     animation:base.Asset_Id, // Marker: the .anim of the clip
 }
 
-// Cleared and filled by animation_sample in every fixed tick: read it in fixed.
-@(storage,events)
-Animation_Events :: struct {using queue:core.Queue(Animation_Event)}
+@(storage)
+Animation_Events :: struct {using queue:core.Events(Animation_Event)}
 
 // Pushes an event within the room the animated entities of the world reserve. False when it did
 // not fit, or memory ran out.
 @(private)
 event_push :: proc(playback:^Playback,events:^Animation_Events,event:Animation_Event) -> bool {
     if playback==nil || events==nil {return false}
-    needed:=max(len(playback.states)*EVENT_BATCH,EVENT_BATCH)
-    if cap(events.items)<needed && reserve(&events.items,needed)!=nil || len(events.items)>=cap(events.items) {return false}
+    needed:=playback.events_from+max(len(playback.states)*EVENT_BATCH,EVENT_BATCH)
+    if cap(events.items)<needed && reserve(&events.items,needed)!=nil || len(events.items)>=needed {return false}
     append(&events.items,event)
     return true
 }
@@ -243,6 +242,7 @@ Stats :: struct {
 @(storage,free="playback_free")
 Playback :: struct {
     states:[dynamic]Playing,
+    events_from:int, // the events the log held when the tick began: the room of a tick is past them
     rows:[dynamic]i32, // by entity index: state+1
     rigs:[dynamic]Rig,
     follow_order:[dynamic]Rig_Follow, // the rigs that follow another, each after the rig it follows
@@ -272,7 +272,7 @@ animation_tick :: proc(
     paces:core.Read(core.Own_Pace)={},clock:=core.CLOCK_DEFAULT,budget:=ANIMATION_BUDGET_CONFIG_DEFAULT,
 ) {
     playback.frame+=1
-    clear(&events.items)
+    playback.events_from=len(events.items)
     if app.assets==nil || !finite(time.dt) || time.dt<0 {for &state in playback.states {clear(&state.curves);state.curves_ready=false;state.driven_ready=false;state.motion=ROOT_DELTA_DEFAULT;state.root_enabled=false;state.body_motion={}};return}
     // The editor runs this once a frame with dt 0: a preview advances by the frame.
     tick_dt:=time.dt

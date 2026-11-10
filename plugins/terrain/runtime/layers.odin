@@ -190,12 +190,27 @@ source_layer_set :: proc(s:^Source,index:int,layer:Terrain_Layer) -> bool {
 source_layer_remove :: proc(s:^Source,index:int) -> bool {
     count:=int(s.layer_count)
     if index<0 || index>=count || count==1 {return false}
-    for i in 0..<len(s.weights.pages) {if !grid_page_own(&s.weights,i,s.allocator) {return false}}
+    // Each page takes values no other grid holds before they change.
+    for &page in s.weights.pages {
+        if page.values==nil || shared_alone(page.values) {continue}
+        values,made:=shared_make(Weights,len(page.values),s.allocator)
+        if !made {return false}
+        copy(values,page.values)
+        shared_free(page.values)
+        page.values=values
+    }
     for &page in s.weights.pages {
         page.altered=true
         page.fill=weights_remove(page.fill,index,count)
         for &value in page.values {value=weights_remove(value,index,count)}
     }
+    Removed :: struct {index,count:int}
+    removed:=Removed{index,count}
+    grid_tiles_map(&s.weights,&removed,proc(user:rawptr,fill:Weights) -> Weights {
+        r:=(^Removed)(user)
+        return weights_remove(fill,r.index,r.count)
+    })
+    s.weights.filled=true
     copy(s.layers[index:count],s.layers[index+1:count])
     s.layers[count-1]={}
     s.layer_count-=1
@@ -204,10 +219,9 @@ source_layer_remove :: proc(s:^Source,index:int) -> bool {
 }
 
 // The materials of the slots the chunks of a source show: that of its layers
-// on slot 0, its own on the others.
+// on slot 0, the one a terrain has.
 chunk_materials :: proc "contextless" (s:^Source) -> (materials:[render.MATERIAL_SLOTS]base.Asset_Id) {
     materials[0]=s.layers_material!={}?s.layers_material:LAYERS_MATERIAL
-    copy(materials[1:],s.slots)
     return
 }
 
@@ -242,24 +256,27 @@ weights_used :: proc "contextless" (w:Weights,count:u32) -> bool {
     return true
 }
 
-// The weights a .terrain holds for the layers of info, into s.
+// Whether every weight a source holds is of its layers alone.
 @(private)
-source_weights_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=context.allocator,paged:=false) -> bool {
-    if !grid_read_document(&s.weights,file,types,weights_size(s),"weight_pages","weight_blocks",weights_full,allocator,paged) {return false}
+weights_all_used :: proc(s:^Source) -> bool {
     for page in s.weights.pages {
         if !weights_used(page.fill,s.layer_count) {return false}
         for value in page.values {if !weights_used(value,s.layer_count) {return false}}
     }
-    return true
+    count:=s.layer_count
+    return grid_tiles_all(&s.weights,&count,proc(user:rawptr,fill:Weights) -> bool {return weights_used(fill,(^u32)(user)^)})
+}
+
+// The weights a .terrain holds for the layers of info, into s.
+@(private)
+source_weights_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=context.allocator,paged:=false) -> bool {
+    if !grid_read_document(&s.weights,file,types,weights_size(s),"weight_pages","weight_blocks",weights_full,allocator,paged) {return false}
+    return weights_all_used(s)
 }
 
 @(private)
 source_weights_put :: proc(document:^asset.Document,types:^asset.Types,s:^Source,keep:=false) -> asset.Error {
-    if s.weights.size!=weights_size(s) {return .Invalid}
-    for page in s.weights.pages {
-        if !weights_used(page.fill,s.layer_count) {return .Invalid}
-        for value in page.values {if !weights_used(value,s.layer_count) {return .Invalid}}
-    }
+    if s.weights.size!=weights_size(s) || !weights_all_used(s) {return .Invalid}
     return grid_put_document(document,types,&s.weights,"weight_pages","weight_blocks",weights_full,s.file,s.allocator,keep)
 }
 
@@ -271,32 +288,13 @@ layers_reshape :: proc "contextless" (a,b:Source_Info) -> bool {
     return false
 }
 
-// Marks the sections of a Mesh source whose vertices read the weights of the
-// inclusive region of samples; true when it marked one.
-@(private)
-mesh_mark_weights :: proc(s:^Source,low,high:[2]int) -> (marked:bool) {
-    origin:=source_origin(s)
-    from:=[2]f32{origin.x+f32(low.x-1)*s.cell,origin.z+f32(low.y-1)*s.cell}
-    to:=[2]f32{origin.x+f32(high.x+1)*s.cell,origin.z+f32(high.y+1)*s.cell}
-    for &chunk,i in s.mesh_chunks {
-        if len(chunk.geometry.indices)==0 || chunk.low.x>to.x || chunk.high.x<from.x || chunk.low.z>to.y || chunk.high.z<from.y {continue}
-        s.mesh_changed[i]=true
-        marked=true
-    }
-    return
-}
-
 // Paints a layer into the weights, over X/Z, or in the ball of the brush in a
 // Volume: Paint adds brush.amount (a fraction, up to 1) of brush.layer at the
 // center, Erase takes it away, both fading out at brush.radius.
 source_paint :: proc(s:^Source,brush:Brush) -> (change:Change) {
-    change.mesh=s.kind==.Mesh
-    if change.mesh {for &dirty in s.mesh_changed {dirty=false}}
-    finite :: proc "contextless" (value:f32) -> bool {return value-value==0}
-    if brush.layer>=s.layer_count || !(brush.radius>0) || !(brush.amount>0) || !finite(brush.radius) || !finite(brush.amount) || !finite(brush.center.x) || !finite(brush.center.z) {change.error=.Invalid;return}
+    if brush.layer>=s.layer_count {change.error=.Layer;return}
     size:=s.weights.size
     volume:=size.y>1
-    if volume && !finite(brush.center.y) {change.error=.Invalid;return}
     center:=(brush.center-source_origin(s))/s.cell
     reach:=brush.radius/s.cell
     if !volume {center.y=0}
@@ -338,41 +336,8 @@ source_paint :: proc(s:^Source,brush:Brush) -> (change:Change) {
     }}}
     if volume {grid_settle(&s.weights,from,to,s.allocator)}
     if !change.changed {return}
-    if change.mesh {mesh_mark_weights(s,low.xz,high.xz);return}
     change.low,change.high=low,high
     if !volume {change.high.y=int(s.samples.y)-1}
     return
 }
 
-// The weights of the layers in the uvs of the vertices of slot 0, the surface
-// of the terrain. A vertex a triangle of another slot shares is repeated for
-// that triangle with its own uvs.
-@(private)
-chunk_mesh_layers :: proc(s:^Source,mesh:^Chunk_Mesh) -> bool {
-    m:=&mesh.geometry
-    count:=len(m.positions)
-    if resize(&mesh.remap,count)!=nil {return false}
-    for &at in mesh.remap {at=-1}
-    UNSHARED :: -2
-    colored:=len(m.colors)==count
-    for slot,t in m.materials {if slot==0 {for corner in 0..<3 {mesh.remap[m.indices[t*3+corner]]=UNSHARED}}}
-    for slot,t in m.materials {
-        if slot==0 {continue}
-        for corner in 0..<3 {
-            v:=m.indices[t*3+corner]
-            if mesh.remap[v]==UNSHARED {
-                mesh.remap[v]=i32(len(m.positions))
-                if append(&m.positions,m.positions[v])!=1 || append(&m.normals,m.normals[v])!=1 || append(&m.uvs,m.uvs[v])!=1 || append(&mesh.uv1s,mesh.uv1s[v])!=1 {return false}
-                if colored && append(&m.colors,m.colors[v])!=1 {return false}
-            }
-            if mesh.remap[v]>=0 {m.indices[t*3+corner]=u32(mesh.remap[v])}
-        }
-    }
-    for v in 0..<count {
-        if mesh.remap[v]==-1 {continue}
-        p:=m.positions[v]
-        w:=layers_vertex(s,source_weights_at(s,p),m.normals[v],p.y)
-        m.uvs[v],mesh.uv1s[v]={w[0],w[1]},{w[2],w[3]}
-    }
-    return true
-}

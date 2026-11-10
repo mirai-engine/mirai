@@ -40,6 +40,7 @@ ASSETS_MESH_NONE :: render.Mesh_Handle(max(u32))
 
 Assets_Desc :: struct {
     root:string,               // folder of the asset registry
+    imported:string,           // the imported folder that goes with root (asset.Registry); "" for none
     cache:string,              // file where the registry keeps what it scanned; "" for none
     renderer:^render.Renderer, // nil: nothing is uploaded
     allocator:mem.Allocator,   // context.allocator when unset
@@ -48,7 +49,7 @@ Assets_Desc :: struct {
     mounts:[]asset.Registry_Mount, // folders seen beside root under a prefix: the assets of active plugins
 }
 
-Assets_Kind :: enum u8 {Mesh,Texture,Material,Scene,Shape,Document,Fracture}
+Assets_Kind :: enum u8 {Mesh,Texture,Material,Scene,Shape,Document}
 
 Assets_Problem :: enum u8 {
     Missing,     // no file of the registry is that asset
@@ -134,13 +135,15 @@ assets_render_geometry_destroy :: proc(out:^Mesh_Render_Geometry) {
 // slots, as assets_mesh_generate would (levels: in a DAG of clusters, else
 // level 0 alone), with the cuts of its rays as the
 // renderer of limits traces them. Scratch from the temporary allocator of
-// the thread. Any thread. False when the streams do not match or without memory.
-assets_render_geometry_make :: proc(mesh:geom.Mesh,uv1s:[]geom.Vec2,slots:int,out:^Mesh_Render_Geometry,limits:Assets_Limits,tangents:[][4]f32=nil,levels:=false) -> bool {
+// the thread. locked, empty or one per vertex: with levels, the vertices
+// they keep where they are, as those of a border another mesh shares. Any
+// thread. False when the streams do not match or without memory.
+assets_render_geometry_make :: proc(mesh:geom.Mesh,uv1s:[]geom.Vec2,slots:int,out:^Mesh_Render_Geometry,limits:Assets_Limits,tangents:[][4]f32=nil,levels:=false,locked:[]bool=nil) -> bool {
     count:=len(mesh.positions)
-    if count==0 || len(mesh.normals)!=count || len(mesh.uvs)!=0 && len(mesh.uvs)!=count || len(uv1s)!=0 && len(uv1s)!=count || slots>asset.MESH_MAX_SLOTS {return false}
+    if count==0 || len(mesh.normals)!=count || len(mesh.uvs)!=0 && len(mesh.uvs)!=count || len(uv1s)!=0 && len(uv1s)!=count || len(locked)!=0 && len(locked)!=count || slots>asset.MESH_MAX_SLOTS {return false}
     for index in mesh.indices {if int(index)>=count {return false}}
     for slot in mesh.materials[:slots>0?len(mesh.materials):0] {if int(slot)>=slots {return false}}
-    return assets_render_geometry(mesh,mesh.normals,uv1s,slots,out,limits,tangents,levels)
+    return assets_render_geometry(mesh,mesh.normals,uv1s,slots,out,limits,tangents,levels,locked)
 }
 
 Assets_Texture :: struct {
@@ -257,10 +260,10 @@ assets_init :: proc(a:^Assets,desc:Assets_Desc) -> bool {
     allocator:=desc.allocator.procedure!=nil?desc.allocator:context.allocator
     capacity:=desc.capacity>0?desc.capacity:ASSETS_DEFAULT_CAPACITY
     a^={allocator=allocator,renderer=desc.renderer}
-    listed:=asset.registry_init(&a.registry,desc.root,desc.cache,allocator)
+    listed:=asset.registry_init(&a.registry,desc.root,desc.cache,allocator,desc.imported)
     // A copy of an asset made outside the editor gets an id of its own.
     a.registry.resolve_duplicates=true
-    for mount in desc.mounts {listed&&=asset.registry_mount(&a.registry,mount.folder,mount.prefix)}
+    for mount in desc.mounts {listed&&=asset.registry_mount(&a.registry,mount.folder,mount.prefix,mount.imported)}
     asset.types_init(&a.types,allocator)
     a.index=make(map[base.Asset_Id]Assets_Ref,allocator)
     a.derived=make(map[u64]u32,allocator)
@@ -431,7 +434,6 @@ assets_open :: proc(a:^Assets,id:base.Asset_Id,kind:Assets_Kind,file:^asset.Asse
     case .Material: expected=record.kind==asset.KIND_MATERIAL
     case .Scene:    expected=record.kind==asset.KIND_SCENE
     case .Document: expected=record.kind==document
-    case .Fracture: expected=record.kind==asset.KIND_FRACTURE
     }
     if !expected {return .Wrong_Kind,.Invalid,false}
     detail=assets_file(a,id,record.kind,file)
@@ -904,7 +906,7 @@ assets_render_geometry_add :: proc(a:^Assets,made:^Mesh_Render_Geometry,slot_mat
 // slots: of the mesh, which mesh.materials gives each triangle; 0: none.
 // Scratch from the temporary allocator. False without memory.
 @(private="file")
-assets_render_geometry :: proc(mesh:geom.Mesh,normals:[]geom.Vec3,uv1s:[]geom.Vec2,slots:int,out:^Mesh_Render_Geometry,limits:Assets_Limits,tangents:[][4]f32=nil,levels:=false) -> bool {
+assets_render_geometry :: proc(mesh:geom.Mesh,normals:[]geom.Vec3,uv1s:[]geom.Vec2,slots:int,out:^Mesh_Render_Geometry,limits:Assets_Limits,tangents:[][4]f32=nil,levels:=false,locked:[]bool=nil) -> bool {
     scratch:=context.temp_allocator
     count:=len(mesh.positions)
     flags:asset.Mesh_Flags
@@ -921,12 +923,14 @@ assets_render_geometry :: proc(mesh:geom.Mesh,normals:[]geom.Vec3,uv1s:[]geom.Ve
         return v
     }
     vertices:=make([dynamic]asset.Vertex,0,count,scratch)
+    locks:=make([dynamic]bool,0,len(locked),scratch)
     indices,failed:=make([]u32,len(mesh.indices),scratch)
     if failed!=nil || vertices==nil && count>0 {return false}
     given:=len(tangents)==count
     if given && (slots<=1 || len(mesh.materials)==0) {
         // A vertex of each source vertex: with one slot and their tangents nothing splits them.
         for index in 0..<count {append(&vertices,vertex_make(mesh,normals,uv1s,u32(index),0,tangents[index],&flags))}
+        append(&locks,..locked)
         copy(indices,mesh.indices)
     } else {
         corners:[][4]f32
@@ -945,6 +949,7 @@ assets_render_geometry :: proc(mesh:geom.Mesh,normals:[]geom.Vec3,uv1s:[]geom.Ve
                 vertex=u32(len(vertices))
                 known[key]=vertex
                 append(&vertices,vertex_make(mesh,normals,uv1s,index,slot,corners[at],&flags))
+                if len(locked)!=0 {append(&locks,locked[index])}
             }
             indices[at]=vertex
         }
@@ -955,7 +960,7 @@ assets_render_geometry :: proc(mesh:geom.Mesh,normals:[]geom.Vec3,uv1s:[]geom.Ve
     out.geometry={}
     out.ahead={}
     out.slots=slots
-    source:=asset.Mesh_Source{vertices=vertices[:],flags=flags}
+    source:=asset.Mesh_Source{vertices=vertices[:],flags=flags,locked=locks[:]}
     built:=asset.mesh_build_dag(source,indices,&out.geometry,allocator) if levels else asset.mesh_build(source,indices,nil,&out.geometry,allocator)
     if !built {return false}
     if !limits.renderer {return true}
@@ -1908,7 +1913,7 @@ assets_reload :: proc(a:^Assets,id:base.Asset_Id) -> bool {
     detail:asset.Error
     ok,removed,rebuild,derived:bool
     switch ref.kind {
-    case .Shape,.Fracture:
+    case .Shape:
     case .Mesh:
         entry:=&a.meshes[ref.index]
         fresh:Assets_Mesh
@@ -2102,7 +2107,7 @@ assets_unload :: proc(a:^Assets,gone:[]base.Asset_Id) -> int {
     for id in gone {
         ref:=a.index[id]
         switch ref.kind {
-        case .Shape,.Fracture:
+        case .Shape:
         case .Mesh:
             entry:=&a.meshes[ref.index]
             // A failed entry shows the stand-in, which is not its own.

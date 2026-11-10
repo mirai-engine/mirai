@@ -90,8 +90,8 @@ Clip_Edit_Result :: struct {
 clip_edit_register :: proc(s:^editor.Session) {
     edit:=Clip_Edit_Params{rate=60}
     analyze:=Analyze_Params{rate=60,contacts=16}
-    authoring_method_register(s,{name="animation.clip.edit",summary="Edits a clip with verbs applied in order into a new clip and measures it before and after as animation.analyze does. The body of the skeleton is the one it stores, or one found in memory for the call.",params=Clip_Edit_Params,params_info=type_info_of(Clip_Edit_Params),defaults=&edit,run=clip_edit},Clip_Edit_Result,type_info_of(Clip_Edit_Result))
-    authoring_method_register(s,{name="animation.analyze",summary="Measures a clip on its skeleton (travel, foot contacts and slide, penetration, jerk, loop seam and joint limits) and suggests the clip edits that fix what it finds.",params=Analyze_Params,params_info=type_info_of(Analyze_Params),defaults=&analyze,flags={.Read_Only},run=clip_analyze},Metrics_Result,type_info_of(Metrics_Result))
+    editor.api_method_register(s,Clip_Edit_Params,Clip_Edit_Result,{name="animation.clip.edit",summary="Edits a clip with verbs applied in order into a new clip and measures it before and after as animation.analyze does. The body of the skeleton is the one it stores, or one found in memory for the call.",defaults=&edit,run=clip_edit,writes_result=true})
+    editor.api_method_register(s,Analyze_Params,Metrics_Result,{name="animation.analyze",summary="Measures a clip on its skeleton (travel, foot contacts and slide, penetration, jerk, loop seam and joint limits) and suggests the clip edits that fix what it finds.",defaults=&analyze,flags={.Read_Only},run=clip_analyze,writes_result=true})
 }
 
 // A clip sampled on its skeleton for metrics and edits.

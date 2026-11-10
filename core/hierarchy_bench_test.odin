@@ -91,7 +91,7 @@ bench_hierarchy :: proc(t:^testing.T) {
     }
     bench_report("propagate, 64 groups moved",b,PASSES)
 
-    // A tick after a part changed parent: the order and every world again.
+    // A tick after a part changed parent: its world, and those of what hangs from it.
     b={}
     for bench_round(&b) {
         for pass in 0..<PASSES/8 {

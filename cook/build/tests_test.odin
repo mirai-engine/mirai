@@ -135,45 +135,42 @@ the_declarations_of_core_carry_the_test_world_builder :: proc(t:^testing.T) {
     }
 }
 
-// A library of a project compiles its packages from a stage without their
-// tests, which the compiler would otherwise read with their folder; the game
-// that ships and a test build read the project itself. What the compiler says
-// of the stage is said of the project.
+// The code of a project compiles into libraries of its own, game/ and
+// editor/ besides its plugins, each from a stage without the tests the
+// compiler would otherwise read with their folder, and the library of the
+// project reads their declarations; the game that ships, a check and a test
+// build read the project itself.
 @(test)
-a_library_of_a_project_compiles_its_packages_without_their_tests :: proc(t:^testing.T) {
+the_code_of_a_project_compiles_into_libraries_without_its_tests :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
     folder:=base.test_folder(t,"stage")
     if folder=="" {return}
     root,engine:=project.path(folder,"project"),project.path(folder,"engine")
-    files:=[?]string{"game/game.odin","game/game_test.odin","game/testdata/fixture.odin","plugins/own/runtime/own.odin","assets/script.odin","editor/tool.odin"}
+    files:=[?]string{"game/game.odin","game/game_test.odin","game/testdata/fixture.odin","game/sub/sub.odin","assets/script.odin","editor/tool.odin"}
     for file in files {
         path:=project.path(root,file)
         if !testing.expect(t,os.make_directory_all(path[:strings.last_index_byte(path,'/')])==nil) {return}
         if !testing.expect(t,os.write_entire_file(path,"package x\n")==nil) {return}
     }
     if !testing.expect(t,os.make_directory_all(project.path(engine,"plugins"))==nil) {return}
-    if !testing.expect(t,project_stage_write(root)) {return}
-    stage:=project_stage(root)
-    staged:=[?]struct{file:string,there:bool}{
-        {"game/game.odin",true},{"plugins/own/runtime/own.odin",true},{"editor/tool.odin",true},
-        {"game/game_test.odin",false},{"game/testdata/fixture.odin",false},{"assets/script.odin",false},
-    }
-    for c in staged {testing.expectf(t,os.is_file(project.path(stage,c.file))==c.there,"%s staged: %v",c.file,!c.there)}
-    testing.expect(t,os.remove(project.path(root,"editor/tool.odin"))==nil)
-    testing.expect(t,project_stage_write(root))
-    testing.expect(t,!os.is_file(project.path(stage,"editor/tool.odin")),"what the project no longer has leaves the stage")
-
     p:=project.Project{root=root,engine_root=engine}
+    libraries:=plugin_libraries(&p,true)
+    if !testing.expect_value(t,len(libraries),2) {return}
+    game,editor:=&libraries[0],&libraries[1]
+    testing.expect(t,game.project && slice.equal(game.packages,[]string{"game","game/sub"}),"the game library has its packages but testdata")
+    testing.expect(t,editor.part==.Editor && slice.equal(editor.project_needs,game.packages),"editor/ compiles against the game")
+    plugin_library_name(root,game,0)
+    if failed:=plugin_library_prepare(game);!testing.expectf(t,len(failed)==0,"%v",failed) {return}
+    testing.expect(t,os.is_file(project.path(game.stage,"game/game.odin")) && !os.is_file(project.path(game.stage,"game/game_test.odin")),"the stage has no tests")
+
     collection :: proc(flags:[]string) -> string {
         for flag in flags {if strings.has_prefix(flag,"-collection:project=") {return flag[len("-collection:project="):]}}
         return ""
     }
-    testing.expect_value(t,collection(target_flags(&p,.Editor,nil,context.temp_allocator,dev=true)),stage)
+    testing.expect_value(t,collection(target_flags(&p,.Editor,nil,context.temp_allocator,dev=true)),project_decl(root,"minimal"))
     testing.expect_value(t,collection(target_flags(&p,.Game,nil,context.temp_allocator,dev=true)),root)
-    diagnostics:=[]Diagnostic{{file=project.path(stage,"game/game.odin")},{file=project.path(engine,"core/core.odin")}}
-    stage_paths_restore(root,diagnostics,context.temp_allocator)
-    testing.expect_value(t,diagnostics[0].file,project.path(root,"game/game.odin"))
-    testing.expect_value(t,diagnostics[1].file,project.path(engine,"core/core.odin"))
+    job:=Job{root=root,flags=target_flags(&p,.Editor,nil,context.temp_allocator,dev=true)}
+    testing.expect_value(t,collection(probe_flags(&job)),root)
 }
 
 // The output of the runner: which tests run and which failed with what they

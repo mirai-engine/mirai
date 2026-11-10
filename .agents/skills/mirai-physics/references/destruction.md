@@ -12,8 +12,8 @@ and networking. There is no load, bending or structural stress solver.
 
 - The pools are made with the first breakable, with `World_Desc.breakable_capacity`,
   `piece_capacity` and `bond_capacity`: a world that breaks nothing holds none. They are state:
-  `world_snapshot`, `world_restore`, `world_state_copy` and `world_hash` take them with the bodies,
-  and a kept world holds what its source uses of them.
+  `world_state_copy` and `world_hash` take them with the bodies, and a kept world holds what its
+  source uses of them. An operation on a breakable stamps the slots of all its pieces and bonds.
 - `world_step` ends with the breakables: it reads the hits of the step (`world_events(w).hit`,
   from shapes with `hits`), applies impact damage, removes debris and expired groups and lists what
   it did in `world_events(w).breaks`. A break happens in the step of its hit.

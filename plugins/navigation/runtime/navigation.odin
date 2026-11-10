@@ -213,29 +213,15 @@ Tile_Mark :: struct {
     collision:bool, // dirty, the collision under it may have changed, not only its areas and obstacles: its build reads it again
 }
 
-// Where the static collision is not loaded: a library that pages geometry in
-// and out (the terrain, through the bridge navigation_terrain) names its
-// boxes. The tiles and zones that read one keep what they have, built before
-// or baked, instead of building from what is missing, and are built once it
-// loads; a search that finds no surface waits for them. In a run, those that
-// read only what the boxes cover go, and come back from the bakes once they do
-// not. Not the state of the world: its writer makes it again from the world it
-// runs on.
-@(storage,host,by_world,free="nav_unloaded_free")
-Nav_Unloaded :: struct {
-    boxes:[dynamic]mm.Aabb,
-    revision:u64, // changes whenever the boxes do
-}
-
-nav_unloaded_free :: proc(u:^Nav_Unloaded) {
-    delete(u.boxes)
-    u^={}
-}
-
-// Where the collision is not loaded this tick: what the terrain names, and
-// the boxes of the sections that are away (Nav_Sections).
+// Where the collision is not loaded this tick: what the ground names
+// (core.Ground_Query.unloaded), and the boxes of the sections that are away
+// (Nav_Sections). The tiles and zones that read one keep what they have,
+// built before or baked, instead of building from what is missing, and are
+// built once it loads; a search that finds no surface waits for them. In a
+// run, those that read only what the boxes cover go, and come back from the
+// bakes once they do not.
 Unloaded :: struct {
-    terrain:^Nav_Unloaded,
+    ground:[]mm.Aabb,
     sections:^Nav_Sections,
     revision:u64, // changes whenever the boxes of either do
 }
@@ -245,7 +231,7 @@ Unloaded :: struct {
 // cover it: it is another floor of their column, and the tile builds from
 // what is here.
 unloaded_overlaps :: proc "contextless" (u:Unloaded,box:mm.Aabb,flat:=false) -> bool {
-    if u.terrain!=nil {for unloaded in u.terrain.boxes {if mm.aabb_overlaps(unloaded,box) {return true}}}
+    for unloaded in u.ground {if mm.aabb_overlaps(unloaded,box) {return true}}
     if u.sections==nil {return false}
     for away in u.sections.away[:u.sections.away_count] {
         if !mm.aabb_overlaps(away,box) {continue}

@@ -163,8 +163,8 @@ validated by their plugin without adding them to the core: `.pose`, `.blend` and
   ([records](kinds.md#records)).
 - **`.particle`** (`PART`, of the [`vfx`](../../mirai-world/references/vfx.md#format) plugin):
   `particle` (`Particle_Info`), `parameters` (`Particle_Parameter`), `hidden` (`Particle_Field`).
-- **`.fracture`** (`FRAC`): `fracture` (`Fracture_Info`), `pieces`, `connections`, `clusters`,
-  `vertices` (`Vertex`) and `indices` local to each piece.
+- **`.fracture`** (`FRAC`, of the `destruct` plugin): `fracture` (`Fracture_Info`), `pieces`,
+  `connections`, `clusters`, `vertices` (`Vertex`) and `indices` local to each piece.
 - **`.foliage`** (`FOLI`): `foliage` (`Foliage_Info`), `types`, `cells`, and LZ bulk `manual`
   and `overrides`; defined and validated by the
   [foliage](../../mirai-world/references/foliage.md#format) plugin.
@@ -228,6 +228,16 @@ scan opens every file and writes it again.
   has one root ([prefab](scenes.md#prefab)).
 - `registry_dependents` comes from an inverse index built with each change: how many use an asset is
   its length, without walking the files (`asset.list` reports it as `used_by`).
+- **Imported folders.** An assets folder may have an imported folder with it (that of the root
+  and of each mount: `.mirai/imported/` of the project or the plugin): what the
+  [imports](../../mirai-imports/references/imports.md#identity-and-reimport) of its sources build
+  that nobody edits, never versioned, each file named by its id and the key of what it was built
+  from. The registry lists them like any asset (`Registry_File.imported` is that key,
+  `asset/registry_imported.odin`) at a path it derives from where the sidecar that lists each is
+  now: beside its source for the root of an import, in a folder named after the source file for
+  the rest; one whose source is gone is not listed, and one that moved is listed there at the
+  next scan. `registry_file_path` gives the
+  file of either folder. A cooked folder has none: the cook writes every asset at its path.
 - **Mounts.** `registry_mount` adds a folder under a prefix (a plugin's assets, in
   `plugins/<name>`). A prefix that starts with a dot belongs to the program's assets (the editor's,
   in `.editor`): they are found by id and by path, but a project's lists omit them

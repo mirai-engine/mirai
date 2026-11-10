@@ -75,7 +75,8 @@ Play/Simulation. `animation_sample` serves them.
 - A rejected request is a problem of its entity (`animation.action_*`) that says how to fix it; an
   event that does not fit is `animation.events_lost`.
 
-**One event queue.** `Animation_Events` is cleared every tick and carries, in the order they
+**One event log.** `Animation_Events` gives each reader what is new to it and carries, in the order
+they
 happened, Marker (of any clip; `action` says which action played it), Started, Ended,
 Interrupted, Section, Span_Begin and Span_End (the windows), with hashes that the API returns as
 names. To ask what an action is doing instead of following its events, `action_playing(runtime,

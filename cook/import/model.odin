@@ -37,7 +37,6 @@ Error_Code :: enum u8 {
     Limit,       // more than an asset can hold
     Tool,        // an external tool failed or is missing
     Write,       // an asset could not be written
-    Outside,     // an earlier output of the source lies outside the folder and the import may not write it there (Earlier_Outside.Refuse)
 }
 
 // message lives in context.temp_allocator of the caller.
@@ -47,16 +46,18 @@ Error :: struct {
 }
 
 Import_Options :: struct {
-    // Replaced by the settings of <source>.import when the source has that
-    // file, unless ignore_stored.
+    // Replaced by the settings the sidecar of the source keeps when it has
+    // one, unless ignore_stored.
     using settings:Import_Settings,
     ignore_stored:bool,
-    root:string,          // sources are named relative to it in Import_Info, and earlier imports are looked for under it; "": by absolute path, and in the folder written to
-    // The import to update from this source, by its root: the prefab of a
-    // model, the texture of an image or the sound of a sound file. Zero finds
-    // it by the source (earlier.odin).
-    into:base.Asset_Id,
-    outside:Earlier_Outside, // what becomes of an earlier output of the source that lies outside the folder written to
+    // The project or the plugin the import belongs to: sources are named
+    // relative to it in Import_Info, its documents are found under its assets
+    // folder, and what it builds of the cache kinds goes to its imported
+    // folder when the source is inside it and the folder under its assets
+    // (sidecar.odin). "": sources are named by absolute path, and every output
+    // is a file of the folder written to.
+    root:string,
+    documents:bool,       // every output is a document of the folder, also those of the cache kinds: an import that sources.sync cannot run again (a format of a plugin)
     rebuild:bool,         // writes every asset, also one whose file already is the one the import would write
     texture_cache:string, // folder of textures built before, kept by image and settings (textures.cache_read); "": none
     // A texture is built Fast unless the texture cache keeps it as Final
@@ -65,21 +66,11 @@ Import_Options :: struct {
     fast_textures:bool,
     mesh_cache:string,    // folder of meshes built before, kept by geometry and settings (mesh_cook); "": none
     earlier_cache:^Earlier_Cache, // the fronts of assets that earlier writes of the same import read; nil: each write reads them
-    no_save:bool,         // the settings file of the source is left as it is
     material_index:int,   // the index of the first material among those of the source: imports that write its materials apart give each its own
     // Where the import cooks: the worker that calls it (the owner of its
     // job system, or the job that imports), which runs its builds in
     // parallel on that system, and records zones in its profile.
     worker:jobs.Worker_Ref,
-}
-
-// What an import does with an output an earlier import of its source wrote
-// outside the folder this one writes to (moved there, or written there
-// because the search reached it through root).
-Earlier_Outside :: enum u8 {
-    In_Place, // writes it again where it is, with its id: what the editor does
-    Refuse,   // fails before writing anything, naming the file (unless into names the import): what mirai import does by default
-    Copy,     // looks for earlier imports only under the folder: what is found elsewhere is left alone, and a new import gets new ids
 }
 
 // A zone of the import that base.profile_end ends.
@@ -194,7 +185,8 @@ Imported_Model :: struct {
     animations:[]asset.Animation_Clip_Desc,
     warnings:[]string,  // what the importer left out or could not honor
     programs:[]string,  // the Surface programs reading it wrote to the shaders of the project, their files
-    settings:Import_Settings, // those of <source>.import when stored is set, else those of the options it was read with
+    files:[]string,     // the files reading it read besides the source and its images (buffers, material libraries)
+    settings:Import_Settings, // those of the sidecar of the source when stored is set, else those of the options it was read with
     stored:bool,
     arena:^mem.Dynamic_Arena,
     allocator:mem.Allocator,

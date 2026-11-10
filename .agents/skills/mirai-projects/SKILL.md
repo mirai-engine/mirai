@@ -68,8 +68,8 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 1. A new manifest field goes into the struct, with its default in `manifest_default` and its check
    in `manifest_validate` or `plugin_validate`.
 2. A new engine package goes into `ENGINE_PACKAGES`, in the lowest
-   [library](references/projects.md#engine-binaries) that has what it imports, and, if it is
-   engine-time, into `engine_time_packages`.
+   [layer](references/projects.md#engine-binaries) that has what it imports and after the
+   packages it imports, and, if it is engine-time, into `engine_time_packages`.
 3. A change in what `declare` writes bumps `DECLARE_VERSION`.
 4. Update [projects.md](references/projects.md) or [build.md](references/build.md) in the same task
    if an invariant or a workflow changes.
@@ -84,12 +84,17 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   the tool imports. It is guarded by `the_tool_imports_no_package_of_the_engine`.
 - The generator reads syntax (`core:odin/parser`) and writes text. The generated packages are the
   only source of what goes into each binary: `gen/game` imports `host` and the libraries, nothing
-  from the editor; `gen/editor` and `gen/play` only export `mirai_project_info`.
+  from the editor; `gen/editor` only exports `mirai_project_info`.
 - A generic procedure, an `inline` one, one with `deferred_*` or one with an `any` in its
   signature is compiled in its caller: it is not exported. An `any` crossing into a library would
   carry a typeid its type table lacks (`%v` of a plugin's enum prints nothing).
 - A private procedure is declared and exported only when the declarations of its package name it:
   what `declare` copies as text and what it looks for names in are the same set.
+- What compiles against the engine declarations follows the declarations it names and what they
+  reach, by the names in the text: a name that is hidden or inside a comment still counts, and a
+  type reached through a pointer too. More is followed, never less.
+- In dev a package that is edited often is a library of its own, and a library imports only
+  packages listed before its own in `ENGINE_PACKAGES`; an optimized build never splits a layer.
 - The project libraries and the engine ones share flags (`engine_flags`: `-custom-attribute` and
   the platform ones); their layouts depend on it.
 - Every test executable, of `mirai test` and of `build.test`, is built and run by one runner
@@ -107,8 +112,12 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   (`-export-dependencies:json`), not against what was generated; `engine_time_packages` defines it.
 - The compiler never writes over a published output: it writes with the job's prefix in
   `.mirai/build` and a successful build replaces it with a rename.
-- A plugin library compiles only when the plugin libraries it links are published; their
-  declarations are written before and do not wait.
+- The code of a project (`game/`, `editor/`, its plugins) compiles into libraries of its own, as
+  the engine plugins do; the library of the project is the generated world alone. The player runs
+  the game of that library: there is no second build of the game besides the one that ships.
+- Every declaration is written before anything compiles and does not wait. On Windows the import
+  library of each library is made from the module definition `declare` writes, so every library
+  compiles at once; elsewhere a library compiles only when the libraries it links are published.
 - `job_start` does not wait for the compiler and copies to its arena what it needs from the
   project: the `Project` can be closed afterwards.
 - Paths use `/` in everything that is stored, generated or compared.

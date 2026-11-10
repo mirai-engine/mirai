@@ -50,9 +50,9 @@ Spawning :: struct {
 // The bodies placed in this tick where the Play of the editor put the player
 // and not at a Spawn_Point: a library that knows their shape fits them
 // there (spawn_physics).
-@(storage,events)
+@(storage)
 Spawned_At_Origin :: struct {
-    using queue:core.Queue(core.Entity),
+    using queue:core.Events(core.Entity),
 }
 
 Spawn_Kind :: enum u8 {
@@ -105,11 +105,11 @@ Apply :: struct {
 
 // The bodies whose seat went away go with it, before input_drive lets go of them.
 @(step="fixed",stage="input",before="input_drive")
-spawn_seat_bodies :: proc(es:^core.Entities,hierarchy:core.Ref(core.Hierarchy),bodies:core.Read(Seat_Body),drivables:core.Read(input.Drivable)) {
+spawn_seat_bodies :: proc(es:core.Commands,hierarchy:core.Ref(core.Hierarchy),bodies:core.Read(Seat_Body),drivables:core.Read(input.Drivable)) {
     for row in 0..<core.count(bodies) {
         body:=core.entity_at(bodies,row)
         driven,_:=core.get(drivables,body)
-        if driven.seat!=core.NONE && !core.alive(es,driven.seat) {core.destroy_tree(es,hierarchy,body)}
+        if driven.seat!=core.NONE && !core.alive(es.entities,driven.seat) {core.destroy_tree(es.entities,hierarchy,body)}
     }
 }
 
@@ -121,7 +121,6 @@ spawn_step :: proc(
     seats:core.Read(input.Seat),points:core.Read(Spawn_Point),placer:core.Placer,driving:^input.Seat_Requests,requests:^Spawn_Requests,spawning:^Spawning,
     settings:core.Ref(Spawn_Settings),network:core.Ref(core.Network),time:core.Time,origin:core.Ref(scene.Play_Origin),at_origin:^Spawned_At_Origin,problems:^core.Problems,
 ) {
-    core.queue_clear(&at_origin.queue)
     a:=Apply{commands=commands,assets=assets,bodies=bodies,seats=seats,points=points,placer=placer,driving=driving,spawning=spawning,at_origin=at_origin,problems=problems}
     if settings.ptr!=nil {a.settings=settings.ptr^}
     if origin.ptr!=nil {a.origin=origin.ptr^}

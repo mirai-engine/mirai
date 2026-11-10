@@ -47,8 +47,8 @@ program_register :: proc(s:^editor.Session) {
     blend:=program_blend_defaults()
     if blend==nil {return}
     modifiers:=Modifier_Inspect_Params{limit=128}
-    authoring_method_register(s,{name="animation.space.set",summary="Replaces, adds or removes a space of a .character by its name: clips placed on one or two axes. A layer of the set that names it (animation.action.set) samples it: aim offsets or additive poses its axes sample, set by name. An invalid one changes nothing. In Edit.",params=Blend_Write_Params,params_info=type_info_of(Blend_Write_Params),defaults=blend,run=program_blend_set},Authoring_Write_Result,type_info_of(Authoring_Write_Result))
-    authoring_method_register(s,{name="animation.space.sample",summary="The samples of a space of a .character that contribute at a position and their weights, without advancing the world.",params=Blend_Sample_Params,params_info=type_info_of(Blend_Sample_Params),flags={.Read_Only},run=program_blend_sample},Blend_Sample_Result,type_info_of(Blend_Sample_Result))
+    editor.api_method_register(s,Blend_Write_Params,Authoring_Write_Result,{name="animation.space.set",summary="Replaces, adds or removes a space of a .character by its name: clips placed on one or two axes. A layer of the set that names it (animation.action.set) samples it: aim offsets or additive poses its axes sample, set by name. An invalid one changes nothing. In Edit.",defaults=blend,run=program_blend_set,writes_result=true})
+    editor.api_method_register(s,Blend_Sample_Params,Blend_Sample_Result,{name="animation.space.sample",summary="The samples of a space of a .character that contribute at a position and their weights, without advancing the world.",flags={.Read_Only},run=program_blend_sample,writes_result=true})
 }
 
 @(private)

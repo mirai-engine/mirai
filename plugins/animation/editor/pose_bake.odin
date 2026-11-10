@@ -135,6 +135,7 @@ pose_bake_sample :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,e
     root:=Pose_Bake_Root_State{turned=1};markers:=make([dynamic]asset.Animation_Marker_Desc,call.allocator)
     root_metadata:asset.Animation_Root
     previous:f32
+    cursor:u64 // of the event log, which keeps the steps before: frame 0 skips what the seek pushed
     for frame in 0..<frames {
         time:=min(f32(frame)/p.rate,p.end-p.start)
         if frame>0 {
@@ -172,7 +173,7 @@ pose_bake_sample :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,e
             for track in tracks {if track.bone==root.bone {base.text_set(root_metadata.bone[:],track.desc.target);break}}
             root_metadata.translation,root_metadata.rotation=root.root.translation,root.root.rotation
         }
-        if frame>0 {if events:=core.world_storage_of(world,anim.Animation_Events);events!=nil {for event in events.items {
+        if events:=core.world_storage_of(world,anim.Animation_Events);events!=nil {crossed:=core.events_since(events.queue,&cursor);if frame>0 {for event in crossed {
             if event.entity!=entity || event.kind!=.Marker {continue}
             name:=preview_marker_name(preview_trace_source_view(&trace,event.animation),event.name)
             if name[0]==0 {authoring_failure(call,"markers","Missing_Name","a source name for every crossed marker",fmt.tprintf("%x",event.name),"A marker name could not be resolved");return false}

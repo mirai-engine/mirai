@@ -156,7 +156,7 @@ the_data_of_a_stage_orders_its_steps :: proc(t:^testing.T) {
     if folder=="" {return}
     core_source:=`package core
 @(storage,queue) Orders :: struct {count:int}
-@(storage,events) News :: struct {count:int}
+@(storage) News :: struct {log:Events(int)}
 @(storage) Board :: struct {value:int}
 @(component) Score :: struct {value:f32}
 @(component,shared) Place :: struct {value:f32}
@@ -235,6 +235,29 @@ import "mirai:core"
         fixed,late:=calls_of(output.game_world,"game_fixed"),calls_of(output.game_world,"game_late")
         testing.expectf(t,slice_equal(fixed,c.fixed) && slice_equal(late,c.late),"%v %v",fixed,late)
     }
+}
+
+// In the world of the demo a seat's camera is settled with who drives what, before the seat's
+// Move_Input: what a cinematic that ends releases, its input block and its camera override, is
+// in force in the same tick, so its seat never walks through the camera it let go.
+@(test)
+a_seat_camera_is_settled_with_its_driving_before_its_move :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    root:=slashes(project.path_absolute(#directory+"../.."),context.temp_allocator)
+    p,error:=project.open(project.path(root,"demo"),root)
+    defer project.close(&p)
+    if !testing.expectf(t,error.code==.None,"the demo opens: %v",error) {return}
+    output:=world_generate(&p)
+    if !testing.expectf(t,len(output.errors)==0,"%v",output.errors) {return}
+    calls:=calls_of(output.game_world,"game_fixed")
+    order:=[]string{"input_drive","camera_select","locomotion_seat"}
+    at:=make([]int,len(order))
+    for name,i in order {
+        at[i]=-1
+        for call,j in calls {if call==name {at[i]=j}}
+        if !testing.expectf(t,at[i]>=0,"the fixed phase of the demo calls no %s: %v",name,calls) {return}
+    }
+    testing.expectf(t,at[0]<at[1] && at[1]<at[2],"%v run at %v of %v",order,at,calls)
 }
 
 // A server step runs only where the rules are decided: the generated call

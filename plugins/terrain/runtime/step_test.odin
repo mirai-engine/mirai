@@ -105,7 +105,7 @@ shared_terrain_chunks_remain_visible_after_duplicate_copy_and_preview_retirement
             host.app_camera_set(app,host.camera_from_view(view),view.cut,view.carried)
             outlines:core.Table(render.Outline);defer core.table_destroy(&outlines)
             outline_styles:=render.OUTLINE_STYLES_DEFAULT
-            render.render_sync(&sync,app,{},core.FRAME_TIME_DEFAULT,{},core.read(&poses[current]),core.read(&w.statics),core.read(&w.tints),core.read(&hidden),core.read(&elsewhere),core.read(&w.parents),{},core.read(&suns),core.read(&points),core.read(&spots),core.read(&rects),core.read(&emissions),core.read(&skies),core.read(&posts),{},core.read(&w.overrides),core.read(&highlights),core.read(&outlines),{&outline_styles},core.read(&offsets),core.read(&layers),{},{},{},{})
+            render.render_sync(&sync,app,{},core.FRAME_TIME_DEFAULT,{},core.read(&poses[current]),core.read(&w.statics),core.read(&w.tints),core.read(&hidden),core.read(&elsewhere),core.read(&w.parents),{},core.read(&suns),core.read(&points),core.read(&spots),core.read(&rects),core.read(&emissions),core.read(&skies),core.read(&posts),{},core.read(&w.overrides),core.read(&highlights),core.read(&outlines),{&outline_styles},core.read(&offsets),core.read(&layers),{},{},{},{},nil)
             host.app_frame_end(app)
         }
         if pass==4 {continue}
@@ -380,7 +380,7 @@ a_dig_finds_the_terrain_it_touches_and_reads_in_its_space :: proc(t:^testing.T) 
         core.add(&w.worlds,e,core.World_Transform{transform={position={f32(i)*500,0,0},rotation=1,scale=2}})
     }
     core.test_world_settle(&w)
-    brush:=Brush{kind=.Raise,center={510,1,6},radius=4,amount=1,normal={0,1,0},rotation=1}
+    brush:=Brush{kind=.Raise,center={510,1,6},radius=4,amount=1,rotation=1}
     resolved,ok:=edit_resolve(Edit_Request{brush=brush},&w.data,core.read(&w.terrains),core.read(&w.worlds))
     testing.expect(t,ok && resolved.owner==far)
     testing.expect_value(t,resolved.brush.center,[3]f32{5,0.5,3})
@@ -566,7 +566,8 @@ volume_runtime_keeps_empty_chunk_identity_and_updates_collision_when_material_ap
     core.test_world_settle(&w.w);terrain_test_update(&w,&resident,&app)
     testing.expect_value(t,len(w.chunks.values),8)
     testing.expect_value(t,len(w.colliders.values),4)
-    identities:[8]core.Entity
+    // Its eight chunks, and the root over them.
+    identities:[9]core.Entity
     copy(identities[:],resident.owners[0].chunks)
     dig(&w.terrain_requests,{kind=.Add,center={0,3,0},radius=1.5,amount=1},owner)
     terrain_test_update(&w,&resident,&app)
@@ -575,7 +576,7 @@ volume_runtime_keeps_empty_chunk_identity_and_updates_collision_when_material_ap
     testing.expect(t,len(w.colliders.values)>4)
     for e,i in resident.owners[0].chunks {testing.expect_value(t,e,identities[i])}
     testing.expect_value(t,len(w.digs.digs.items),0)
-    dig(&w.terrain_requests,{kind=.Remove,center={0,0,0},radius=30,amount=1},owner)
+    dig(&w.terrain_requests,{kind=.Carve,center={0,0,0},radius=30,amount=1},owner)
     terrain_test_update(&w,&resident,&app)
     // What it took is published once: the box of the source and what Add gave it.
     testing.expect_value(t,len(w.digs.digs.items),1)

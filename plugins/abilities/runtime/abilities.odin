@@ -268,8 +268,8 @@ Ability_Event :: struct {
 }
 
 // What the abilities did this tick; abilities_step clears and fills it.
-@(storage,events)
-Ability_Events :: struct {queue:core.Queue(Ability_Event)}
+@(storage)
+Ability_Events :: struct {queue:core.Events(Ability_Event)}
 
 // Asks entity to start ability as if its input fired: it waits for a moment it is valid as its
 // input.wait says (the kit's buffer, or also while the running ability goes on).

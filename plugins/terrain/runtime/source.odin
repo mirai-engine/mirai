@@ -3,6 +3,7 @@ package terrain
 import "base:runtime"
 import "core:math"
 import "core:math/linalg"
+import "core:mem"
 import "core:strings"
 import "mirai:asset"
 import "mirai:std/base"
@@ -12,17 +13,18 @@ import "mirai:std/serial"
 
 KIND :: asset.Fourcc(u32('T')|u32('E')<<8|u32('R')<<16|u32('R')<<24)
 EXTENSION :: ".terrain"
-VERSION :: 9
+VERSION :: 10
 HEIGHT_SAMPLES_MAX :: 16385
-MESH_SAMPLES_MAX :: 1025
-VOLUME_SAMPLES_MAX :: 129
+VOLUME_SAMPLES_MAX :: HEIGHT_SAMPLES_MAX
+// A Volume has at most this many chunks: one that reaches further takes more cells per chunk.
+VOLUME_CHUNKS_MAX :: 1<<18
 CHUNK_CELLS_MIN :: 4
 CHUNK_CELLS_MAX :: 256
 UV_METERS :: f32(4)
 SDF_BAND_CELLS :: f32(4)
 HEIGHT_LIMIT :: f32(100000)
 
-Source_Kind :: enum u8 {Heightfield,Volume,Mesh}
+Source_Kind :: enum u8 {Heightfield,Volume}
 
 Source_Info :: struct {
     kind:Source_Kind,
@@ -30,7 +32,6 @@ Source_Info :: struct {
     cell:f32 `mirai:"unit=m"`,
     chunk_cells:u32,
     revision:u32,
-    mesh_origin:[3]f32,
     layer_count:u32, // at least 1
     layers:[LAYERS_MAX]Terrain_Layer,
     // The material slot 0 shows: a Surface program that blends the layers by
@@ -47,11 +48,6 @@ Source :: struct {
     holes:Grid(u8),       // Heightfield: 1 for each cell without surface; no pages without holes
     distances:Grid(f32),  // Volume: samples.x by y by z in blocks; one all air or all solid holds no values
     scratch:[dynamic]f32, // the region a brush reads while it writes
-    ray_mesh:geom.Mesh_Buffer,
-    mesh_chunks:[]Mesh_Chunk,
-    mesh_changed:[]bool,
-    slots:[]base.Asset_Id, // the materials of the slots of a Mesh past 0, which shows the layers: slots[k-1] of slot k; none for a Heightfield or Volume
-    mesh_work:Mesh_Work,
     weights:Grid(Weights), // samples.x by samples.z, or of each sample of a Volume in blocks
     dug:Dug,               // what the last edit took out
     file:string,           // Heightfield and Volume: where the pages of its grids in blocks are read from
@@ -68,10 +64,11 @@ source_valid :: proc "contextless" (info:Source_Info) -> bool {
     }
     switch info.kind {
     case .Heightfield: return info.samples.y==1 && info.samples.x>=2 && info.samples.z>=2 && info.samples.x<=HEIGHT_SAMPLES_MAX && info.samples.z<=HEIGHT_SAMPLES_MAX
-    case .Volume: return info.samples.x>=3 && info.samples.y>=3 && info.samples.z>=3 && info.samples.x<=VOLUME_SAMPLES_MAX && info.samples.y<=VOLUME_SAMPLES_MAX && info.samples.z<=VOLUME_SAMPLES_MAX
-    case .Mesh:
-        for value in info.mesh_origin {if value-value!=0 || abs(value)>HEIGHT_LIMIT {return false}}
-        return info.samples.y==1 && info.samples.x>=2 && info.samples.z>=2 && info.samples.x<=MESH_SAMPLES_MAX && info.samples.z<=MESH_SAMPLES_MAX
+    case .Volume:
+        if !(info.samples.x>=3 && info.samples.y>=3 && info.samples.z>=3 && info.samples.x<=VOLUME_SAMPLES_MAX && info.samples.y<=VOLUME_SAMPLES_MAX && info.samples.z<=VOLUME_SAMPLES_MAX) {return false}
+        chunks:=u64(1)
+        for n in info.samples {chunks*=u64(max((int(n)-2+int(info.chunk_cells))/int(info.chunk_cells),1))}
+        return chunks<=VOLUME_CHUNKS_MAX
     }
     return false
 }
@@ -79,7 +76,7 @@ source_valid :: proc "contextless" (info:Source_Info) -> bool {
 height_valid :: proc "contextless" (value:f32) -> bool {return value-value==0 && abs(value)<=HEIGHT_LIMIT}
 
 @(private)
-source_allocate :: proc(s:^Source,info:Source_Info,allocator:=context.allocator,editable:=true) -> bool {
+source_allocate :: proc(s:^Source,info:Source_Info,allocator:=context.allocator) -> bool {
     if !source_valid(info) {return false}
     temporary:=Source{allocator=allocator,info=info}
     if info.kind==.Heightfield {
@@ -89,22 +86,12 @@ source_allocate :: proc(s:^Source,info:Source_Info,allocator:=context.allocator,
     }
     if !weights_init(&temporary) {source_destroy(&temporary);return false}
     temporary.scratch=make([dynamic]f32,allocator)
-    geom.mesh_buffer_init(&temporary.ray_mesh,allocator)
-    if info.kind==.Volume && editable {
-        if reserve(&temporary.ray_mesh.positions,36)!=nil || reserve(&temporary.ray_mesh.normals,36)!=nil || reserve(&temporary.ray_mesh.indices,36)!=nil {source_destroy(&temporary);return false}
-    }
     source_destroy(s)
     s^=temporary
     return true
 }
 
 source_make :: proc(s:^Source,kind:Source_Kind,samples:[3]int,cell:f32,chunk_cells:int,allocator:=context.allocator) -> bool {
-    if kind==.Mesh {
-        if samples.x>MESH_SAMPLES_MAX || samples.z>MESH_SAMPLES_MAX {return false}
-        height:Source
-        defer source_destroy(&height)
-        return source_make(&height,.Heightfield,{samples.x,1,samples.z},cell,chunk_cells,allocator) && source_convert_heightfield(s,&height,0,allocator)
-    }
     for n in samples {if n<1 || n>HEIGHT_SAMPLES_MAX {return false}}
     if chunk_cells<CHUNK_CELLS_MIN || chunk_cells>CHUNK_CELLS_MAX {return false}
     info:=Source_Info{kind=kind,samples={u32(samples.x),u32(samples.y),u32(samples.z)},cell=cell,chunk_cells=u32(chunk_cells),layer_count=1,layers={0=LAYER_DEFAULT}}
@@ -114,28 +101,30 @@ source_make :: proc(s:^Source,kind:Source_Kind,samples:[3]int,cell:f32,chunk_cel
         bottom:=-half.y+cell
         center_y:=bottom*0.5
         extents:=[3]f32{max(half.x-cell,cell*0.25),max(-bottom*0.5,cell*0.25),max(half.z-cell,cell*0.25)}
-        g:=&s.distances
-        scratch,error:=make([]f32,PAGE_VALUES,context.temp_allocator)
-        if error!=nil {source_destroy(s);return false}
         // Each block takes values of its own only where it is not all air or all solid.
-        for &page,i in g.pages {
-            first,_:=grid_page_region(g,i)
-            extent,count:=grid_page_extent(g,i)
-            values:=scratch[:count]
-            for z in 0..<extent.z {for y in 0..<extent.y {for x in 0..<extent.x {
-                p:=source_point(s,first+{x,y,z})-[3]f32{0,center_y,0}
-                d:=[3]f32{abs(p.x),abs(p.y),abs(p.z)}-extents
-                outside:=[3]f32{max(d.x,0),max(d.y,0),max(d.z,0)}
-                distance:=linalg.length(outside)+min(max(d.x,max(d.y,d.z)),0)
-                values[x+extent.x*(y+extent.y*z)]=clamp(distance,-cell*SDF_BAND_CELLS,cell*SDF_BAND_CELLS)
-            }}}
-            page.fill=values[0]
-            if page_uniform(values) {continue}
-            held,made:=shared_make(f32,count,s.allocator)
-            if !made {source_destroy(s);return false}
-            copy(held,values)
-            page.values=held
+        Block :: struct {s:^Source,center_y:f32,extents:[3]f32}
+        distance :: proc(b:^Block,p:[3]f32) -> f32 {
+            p:=p-[3]f32{0,b.center_y,0}
+            d:=[3]f32{abs(p.x),abs(p.y),abs(p.z)}-b.extents
+            outside:=[3]f32{max(d.x,0),max(d.y,0),max(d.z,0)}
+            return linalg.length(outside)+min(max(d.x,max(d.y,d.z)),0)
         }
+        page :: proc(user:rawptr,first,extent:[3]int,values:[]f32) -> (fill:f32,uniform:bool) {
+            b:=(^Block)(user)
+            s:=b.s
+            band:=s.cell*SDF_BAND_CELLS
+            // A block further from the faces of the solid than its own reach is all air or all solid.
+            low,high:=source_point(s,first),source_point(s,first+extent-1)
+            middle:=distance(b,(low+high)*0.5)
+            if reach:=linalg.length(high-low)*0.5;abs(middle)-reach>=band {return middle<0?-band:band,true}
+            for z in 0..<extent.z {for y in 0..<extent.y {for x in 0..<extent.x {
+                values[x+extent.x*(y+extent.y*z)]=clamp(distance(b,source_point(s,first+{x,y,z})),-band,band)
+            }}}
+            return
+        }
+        block:=Block{s,center_y,extents}
+        if !grid_generate(&s.distances,&block,page,s.allocator) {source_destroy(s);return false}
+        s.distances.filled=false
     }
     return true
 }
@@ -147,8 +136,6 @@ source_destroy :: proc(s:^Source) {
     grid_destroy(&s.holes,s.allocator)
     grid_destroy(&s.weights,s.allocator)
     coarse_destroy(&s.coarse,s.allocator)
-    geom.mesh_buffer_destroy(&s.ray_mesh)
-    source_mesh_destroy(s)
     delete(s.file,s.allocator)
     s^={}
 }
@@ -156,15 +143,14 @@ source_destroy :: proc(s:^Source) {
 // A Heightfield or Volume source holds every sample of its shape.
 @(private)
 source_samples_held :: proc "contextless" (s:^Source) -> bool {
-    if s.kind==.Heightfield {return s.heights.size=={int(s.samples.x),1,int(s.samples.z)} && len(s.heights.pages)>0}
-    return s.distances.size=={int(s.samples.x),int(s.samples.y),int(s.samples.z)} && len(s.distances.pages)>0
+    if s.kind==.Heightfield {return s.heights.size=={int(s.samples.x),1,int(s.samples.z)}}
+    return s.distances.size=={int(s.samples.x),int(s.samples.y),int(s.samples.z)}
 }
 
-source_clone :: proc(dst,src:^Source,allocator:=context.allocator,editable:=true) -> bool {
-    if src.kind==.Mesh {return source_mesh_clone(dst,src,allocator)}
+source_clone :: proc(dst,src:^Source,allocator:=context.allocator) -> bool {
     if !source_valid(src.info) || !source_samples_held(src) {return false}
     temporary:Source
-    if !source_allocate(&temporary,src.info,allocator,editable) {return false}
+    if !source_allocate(&temporary,src.info,allocator) {return false}
     if !grid_clone(&temporary.heights,&src.heights,allocator) || !grid_clone(&temporary.distances,&src.distances,allocator) || !grid_clone(&temporary.holes,&src.holes,allocator) || !grid_clone(&temporary.weights,&src.weights,allocator) {source_destroy(&temporary);return false}
     if src.file!="" {
         error:runtime.Allocator_Error
@@ -183,26 +169,23 @@ source_load :: proc(s:^Source,path:string,types:^asset.Types,allocator:=context.
     return source_read(s,&file,types,allocator)
 }
 
-// The source an open .terrain holds; s is replaced only when it is valid.
-// editable false leaves out what only brushes use, as source_clone. With
+// The source an open .terrain holds; s is replaced only when it is valid. With
 // pages, the path of file, a Heightfield or Volume leaves the values of its
 // pages in that file (asset_load_front opens it without them), read when
 // needed.
-source_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=context.allocator,editable:=true,pages:="") -> (id:base.Asset_Id,ok:bool) {
+source_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=context.allocator,pages:="") -> (id:base.Asset_Id,ok:bool) {
     if asset.kind_check(file,KIND,VERSION)!=.None {return}
     info,error:=asset.asset_row(file,types,"terrain",Source_Info)
     if error!=.None || info==nil || !source_valid(info^) {return}
-    if info.kind==.Mesh {return source_mesh_load(s,file,info^,types,allocator)}
     temporary:Source
-    if !source_allocate(&temporary,info^,allocator,editable) {return}
+    if !source_allocate(&temporary,info^,allocator) {return}
     defer source_destroy(&temporary)
     if info.kind==.Heightfield {
         if !grid_read_document(&temporary.heights,file,types,temporary.heights.size,"height_pages","height_blocks",height_valid,allocator,pages!="") {return}
     } else {
         g:=&temporary.distances
         if !grid_read_document(g,file,types,g.size,"distance_pages","distance_blocks",distance_finite,allocator,pages!="") {return}
-        band:=info.cell*SDF_BAND_CELLS
-        for page in g.pages {if !(abs(page.fill)<=band) || !distances_within(page.values,band) {return}}
+        if !grid_distances_within(g,info.cell*SDF_BAND_CELLS) {return}
     }
     if pages!="" {
         error:runtime.Allocator_Error
@@ -231,19 +214,19 @@ source_save :: proc(s:^Source,path:string,id:base.Asset_Id,types:^asset.Types,or
 @(private)
 source_origin_set :: proc(s:^Source,origin:u64) {
     s.origin=origin
-    unalter :: proc(g:^Grid($T)) {for &page in g.pages {page.altered=false}}
+    unalter :: proc(g:^Grid($T)) {
+        for &page in g.pages {page.altered=false}
+        g.filled=false
+    }
     unalter(&s.heights);unalter(&s.holes);unalter(&s.distances);unalter(&s.weights)
-    for &chunk in s.mesh_chunks {chunk.altered=false}
 }
 
 // The .terrain file of a source, as bytes from allocator aligned for its
 // chunks; with import_info, the record of the import it comes from. keep has
 // the grids keep their blocks for the next time (grid_put_document).
 source_bytes :: proc(s:^Source,id:base.Asset_Id,types:^asset.Types,allocator:=context.allocator,import_info:^asset.Import_Info=nil,keep:=false) -> (data:[]u8,error:asset.Error) {
-    if s.kind==.Mesh {return source_mesh_bytes(s,id,types,allocator,import_info)}
-    if !source_valid(s.info) || !source_samples_held(s) || len(s.slots)!=0 {return nil,.Invalid}
-    band:=s.cell*SDF_BAND_CELLS
-    for page in s.distances.pages {if !(abs(page.fill)<=band) || !distances_within(page.values,band) {return nil,.Invalid}}
+    if !source_valid(s.info) || !source_samples_held(s) {return nil,.Invalid}
+    if !grid_distances_within(&s.distances,s.cell*SDF_BAND_CELLS) {return nil,.Invalid}
     document:asset.Document
     asset.document_init(&document,KIND,id,s.allocator)
     defer asset.document_destroy(&document)
@@ -261,6 +244,14 @@ source_bytes :: proc(s:^Source,id:base.Asset_Id,types:^asset.Types,allocator:=co
     return asset.document_bytes(&document,allocator)
 }
 
+// What a source counts against Terrain_Settings.samples: the samples its
+// pages hold in memory, with the coarse grid of a Heightfield and the weights
+// of a Volume.
+source_cost :: proc(s:^Source) -> int {
+    if s.kind==.Heightfield {return grid_dense(&s.heights)+grid_dense(&s.coarse.heights)}
+    return grid_dense(&s.distances)+grid_dense(&s.weights)
+}
+
 // The value of a sample: a height of a Heightfield, a distance of a Volume.
 source_value :: #force_inline proc "contextless" (s:^Source,p:[3]int) -> f32 {
     if s.kind==.Heightfield {return grid_get(&s.heights,p.x,p.z)}
@@ -274,7 +265,6 @@ source_set :: proc(s:^Source,p:[3]int,value:f32) -> bool {
 }
 
 source_origin :: proc "contextless" (s:^Source) -> [3]f32 {
-    if s.kind==.Mesh {return s.mesh_origin}
     return -[3]f32{f32(s.samples.x-1),f32(s.samples.y-1),f32(s.samples.z-1)}*(s.cell*0.5)
 }
 
@@ -296,7 +286,6 @@ source_height :: proc "contextless" (s:^Source,x,z:f32) -> f32 {
 }
 
 source_density :: proc "contextless" (s:^Source,point:[3]f32) -> f32 {
-    if s.kind==.Mesh {return 0}
     if s.kind==.Heightfield {return point.y-source_height(s,point.x,point.z)}
     p:=(point-source_origin(s))/s.cell
     base_cell:[3]int
@@ -325,7 +314,6 @@ source_normal :: proc "contextless" (s:^Source,p:[3]f32) -> [3]f32 {
 }
 
 source_ray :: proc(s:^Source,origin,direction:[3]f32) -> (point,normal:[3]f32,ok:bool) {
-    if s.kind==.Mesh {return source_mesh_ray(s,origin,direction)}
     if !source_valid(s.info) || !source_samples_held(s) {return}
     for axis in 0..<3 {if origin[axis]-origin[axis]!=0 || direction[axis]-direction[axis]!=0 {return}}
     d:=linalg.normalize0(direction)
@@ -371,8 +359,14 @@ source_ray :: proc(s:^Source,origin,direction:[3]f32) -> (point,normal:[3]f32,ok
         }
         return
     }
-    // Each cell is extracted from a window of its samples and those its gradients read.
+    // Each cell is extracted from a window of its samples and those its gradients read,
+    // into memory of the call: rays of other threads read the same source.
     window:[4*4*4]f32
+    backing:[4096]u8
+    arena:mem.Arena
+    mem.arena_init(&arena,backing[:])
+    ray_mesh:geom.Mesh_Buffer
+    geom.mesh_buffer_init(&ray_mesh,mem.arena_allocator(&arena))
     grid:=geom.Scalar_Grid{samples={int(s.samples.x),int(s.samples.y),int(s.samples.z)},cell={s.cell,s.cell,s.cell},origin=low}
     start:=(origin+d*(near+s.cell*1e-5)-low)/s.cell
     cell,advance:[3]int
@@ -390,10 +384,23 @@ source_ray :: proc(s:^Source,origin,direction:[3]f32) -> (point,normal:[3]f32,ok
         for z in 0..<grid.extent.z {for y in 0..<grid.extent.y {for x in 0..<grid.extent.x {
             window[x+grid.extent.x*(y+grid.extent.y*z)]=block_get(&s.distances,grid.first+{x,y,z})
         }}}
-        if geom.isosurface(grid,cell,cell+[3]int{1,1,1},&s.ray_mesh)!=.None {return}
+        // A cell with every sample around it on one side holds no surface.
+        crossed:=false
+        for value in grid.values[1:] {if (value<0)!=(grid.values[0]<0) {crossed=true;break}}
+        if !crossed {
+            if end>=far {return}
+            for axis in 0..<3 {
+                if next[axis]>end {continue}
+                cell[axis]+=advance[axis]
+                if cell[axis]<0 || cell[axis]>=int(s.samples[axis])-1 {return}
+            }
+            near=end
+            continue
+        }
+        if geom.isosurface(grid,cell,cell+[3]int{1,1,1},&ray_mesh)!=.None {return}
         best:=f32(1e9)
-        for triangle:=0;triangle<len(s.ray_mesh.indices);triangle+=3 {
-            a,b,c:=s.ray_mesh.positions[s.ray_mesh.indices[triangle]],s.ray_mesh.positions[s.ray_mesh.indices[triangle+1]],s.ray_mesh.positions[s.ray_mesh.indices[triangle+2]]
+        for triangle:=0;triangle<len(ray_mesh.indices);triangle+=3 {
+            a,b,c:=ray_mesh.positions[ray_mesh.indices[triangle]],ray_mesh.positions[ray_mesh.indices[triangle+1]],ray_mesh.positions[ray_mesh.indices[triangle+2]]
             face:=mm.Triangle{a,b,c}
             t,_,hit:=mm.ray_triangle({origin,d},face)
             if hit && t>=near-s.cell*1e-4 && t<=end+s.cell*1e-4 && t<best {best=t;normal=mm.triangle_normal(face);ok=true}

@@ -60,7 +60,7 @@ Scenes:
 - **`destruction`**: destructible walls and blocks that the cubes the player throws break.
 - **`dig`**: a grass Volume over earth over rock with ore pockets, which digs a pit by itself when a
   Play starts; Use digs where the player looks. It raises dust of each layer's color, drops pieces
-  of earth and rock and ore drops that are picked up on passing (`terrain_vfx` and
+  of earth and rock and ore drops that are picked up on passing (`Terrain_Dust` and
   `terrain_debris`).
 - **`physics`**: gallery of 23 stations.
 - **`vfx`**: gallery of the `vfx` plugin (`game/vfx_gallery.odin`), five exhibits that the camera
@@ -164,8 +164,8 @@ values.
 An entity with `AI_Arena` builds in Play, where it is, agents that decide with
 [minds](../../mirai-world/references/behavior.md#enemies-with-minds), walk or fly through
 navigation and perceive through behavior, and its place (`arena_place`, in pieces), unless `place`
-is false because the scene has it: `tools/demo_content` writes it that way in the `ai` scene, so
-that the navmesh exists in the editor.
+is false because the scene has it, as the `ai` scene does, so that the navmesh exists in the
+editor.
 
 - `Horde` (`agents` zombies): a block of 3 by 3 buildings of 3.5 and 4.5 m with streets of 2.5 m.
   Zombies wander, chase the runner they see (`nav_follow`) jumping from roof to roof and falling to
@@ -231,8 +231,9 @@ Play, F1 releases the mouse and the click that returns it chooses who receives k
 
 ## Generated content
 
-`tools/demo_content` writes everything that is not edited by hand and gives the same bytes on every
-run:
+The scenes and prefabs of the demo are authored assets, changed with `scene.write`,
+`mirai scene write` or the editor; no code writes them. `tools/demo_content` writes what code
+computes and gives the same bytes on every run:
 
 ```sh
 mirai content demo
@@ -241,47 +242,38 @@ mirai content demo
 A `--<part>-only` flag after `--` regenerates only one part
 (`tools/demo_content/main.odin`).
 
-- `--prefabs-only`: `Player.scene`, `Person.scene`, `Dog.scene` and `Thrown cube.scene`.
-- `--control-only`: control scene. `--physics-only`: destruction and physics scenes.
-- `--portal-only`: scene `portal_chamber` and prefab `Portal player`.
-- `--raft-only`: scene `raft` and prefab `Swimmer`.
-- `--features-only`: scenes of the render plugins.
-- `--lights-only`: `lights` and `night`. `--horror-only`: `horror`. `--church-only`: `church` and
-  `church_fog`, with the meshes of the render plugins' scenes.
-- `--ai-only`: scene `ai` and the horde's wave and zombie-kind tables.
-- `--sky-only`: scene `sky`, the atmosphere over a plain with mountains.
-- `--interface-only`: scene `interface`, the English texts of its `.ui` (which are the source) and
-  their Spanish
-  translation (`INTERFACE_TEXTS`, by key), the icons of its objects and the tables of objects and
-  of the conversation (`tools/demo_content/records.odin` writes a table with fixed ids).
-- `--animation-only`: imports Mirai and writes the [animation gallery](animation-gallery.md): the
-  locomotion and gallery clips of Mirai and their programs, the taller
-  Mirai and its baked clips, the spider, the rig chains, the morph jellies and the scene
-  `animation`. Contracts: [animation plugin](../../mirai-animation/references/animation.md).
+- `--control-only`: the intro clip of `control`. `--physics-only`: the fractures, their meshes,
+  the baked cuts, the dust and the ragdoll rig of `physics`.
+- `--raft-only`: the particles of the sea of `raft`.
+- `--features-only`: the meshes of the render plugins' scenes, the blockout slabs and the decal
+  images.
+- `--ai-only`: the horde's wave and zombie-kind tables.
+- `--interface-only`: the icons of the items, the tables of items and of the conversation
+  (`tools/demo_content/records.odin` writes a table with fixed ids) and the `.strings` of their
+  texts, in English and Spanish.
+- `--dig-only`: the dig terrain, its layer materials and its dust.
+- `--animation-only`: imports Mirai and writes what the [animation gallery](animation-gallery.md)
+  uses: the locomotion and gallery clips of Mirai and their programs, the taller Mirai and its
+  baked clips, the spider, the rig chains and the morph jelly. Contracts:
+  [animation plugin](../../mirai-animation/references/animation.md).
 
 Content:
 
-- **Skies** (`sky.odin`): whole-sky images of 4096×2048 in `source/textures` (`sky_day`,
-  `sky_sunset`, `sky_overcast`, `sky_night`). `sky_of(sky, toward)` gives a scene's `Sky` and the
-  turn of its entity around the vertical so that the image's sun ends up at the requested heading,
-  and its sun's direction at the height it has in the image; `sky_set` adds the `Sky` entity with
-  that turn. Overcast and night have `disc` off. `main`, `skeletal` and `ocean` have it set by
-  hand.
-- **Scene light** (`Light_Units` of `sky.odin`): each scene gives its lights in the unit the demo
-  used before the physical units (a white surface in front of a light of 1 shows 1) and a single
-  factor per scene, nits per unit, converts sun (`lux`), lamps (`candela`), sky, background and
-  emission (`nits`): all compare as before.
-  - `LAMPLIT`: scenes with lamps, by day or by night. The lamps stay at plausible candelas (`LAMP`,
-    50 cd per unit) and the sun and sky as dim beside them as the demo had them: by day they are
-    the light of dusk (50 to 200 lux), which the light meter exposes like a noon; a manual exposure
-    has to be that of that light, not that of a sunny day.
-  - `daylight(sun)`: scenes lit only by the sun (`animation`, `physics`): the sun gives 100000 lux.
-  - Panels and screens emit their brightness and give the light of one π times brighter, as in the
-    demo.
-  - `main` and `ocean` (`LAMPLIT`), the template (`daylight(1.6)`) and the `Neon sign` material
-    follow the same rule, with their values set by hand.
+- **Skies**: whole-sky images of 4096×2048 in `source/textures` (`sky_day`, `sky_sunset`,
+  `sky_overcast`, `sky_night`). A scene's `Sky` entity is turned around the vertical so that the
+  image's sun has the heading of the scene's `Sun`, at the height it has in the image. Overcast
+  and night have `disc` off.
+- **Scene light**: the lights of a scene compare as in a unit where a white surface that faces a
+  light of 1 shows 1, times one factor of nits per unit for the whole scene, so sun, lamps, sky,
+  background and emission compare alike.
+  - Scenes with lamps, by day or by night: the lamps stay at plausible candelas (50 cd per unit)
+    and the sun and sky as dim beside them as the demo has them: by day they are the light of dusk
+    (50 to 200 lux), which the light meter exposes like a noon; a manual exposure has to be that
+    of that light, not that of a sunny day.
+  - Scenes lit only by the sun (`animation`, `physics`): the sun gives 100000 lux.
+  - Panels and screens emit their brightness and give the light of one π times brighter.
 - **Scene brightness**: the one their art direction gives them, as compensation over the light
-  meter (the `Exposure` entity, a scene-wide `View_Volume` that `sky_set` adds): `physics` +2,
+  meter (the `Exposure` entity, a scene-wide `View_Volume`): `physics` +2,
   `portals` +1, the template +0.75, `main` +0.6, `animation_features` −0.75, `showcase` −1,
   `monitors` −1.5 and `portal_lab` −2.5. `night` has fixed exposure, Manual at EV100 3.5:
   its lamps are wells of light in the dark and no compensation works from all its views. The
@@ -289,23 +281,22 @@ Content:
   camera carries `Exposure`: the viewport and the game expose the same.
 - **Imports** (`sources.odin`, with `cook/import/sources.import_source`, like the editor and
   `mirai import`): each image of `source/textures` is a `.tex` read according to the end of its name
-  (`_normal`, `_orm`, other: sRGB color). Those that show masked materials are imported with their
-  cutoff and write their `.import`, so that the editor and `mirai import` give the same texture.
-  Each model of `source/models` is a folder with its meshes, materials and the prefab of its nodes.
-  Re-importing keeps the ids
+  (`_normal`, `_orm`, other: sRGB color) the first time, and as its sidecar says from then on. Those
+  that show masked materials are imported with their cutoff. Each model of `source/models` is a
+  folder with its materials and the prefab of its nodes. The textures and the meshes are not
+  versioned: they are in `demo/.mirai/imported`, which `mirai build` makes again from the sources.
+  Re-importing keeps the ids, which the sidecars list
   ([identity](../../mirai-imports/references/imports.md#identity-and-reimport)), and what the
   demo generates over what was imported reads them from there (`imported.odin`); what it generates
   on its own uses `asset.content_id`. What did not change is kept
   ([cache](../../mirai-imports/references/imports.md#import-cache)).
-- **Prefabs** (`prefabs.odin`): `Player`, `Person`, `Dog` (with `Replicate`) and `Thrown cube`; the
-  scenes name them from their spawn points.
-- **Scenes** (`*_scene.odin`, `features.odin`): `night` uses primitives with the engine's material
-  and a tint, to build it the same in another build through the API. Floors, walls and edges are
-  `slab`, a mesh per size with UVs in meters: a scaled primitive would stretch the image. The image
-  of the `church` stained glass is generated by `scripts/demo_church_glass.py`, with colors that
-  survive the averaging of the haze and the bounce.
-- **Hand-edited assets** (with the editor or `mirai asset set`): `main`, `ocean`, `skeletal`, the
-  model prefabs and the materials of `assets/surfaces`.
+- **Blockout**: floors, walls and edges are `assets/blockout/slab_*.mesh`, a box per size with UVs
+  in metres (a scaled primitive would stretch the image); the tool rebuilds each from the size and
+  the metres a unit of UV covers that its name gives, in centimetres. The image of the `church`
+  stained glass is generated by `scripts/demo_church_glass.py`, with colors that survive the
+  averaging of the haze and the bounce.
+- **Authored assets** (with `scene.write`, the editor or `mirai asset set`): every scene and
+  prefab, the `.ui`, the model prefabs and the materials of `assets/surfaces`.
 
 ## Portal game
 

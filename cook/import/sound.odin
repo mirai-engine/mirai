@@ -65,9 +65,8 @@ sound_build :: proc(bytes:[]u8,options:Sound_Options={},allocator:=context.alloc
     return desc,.None
 }
 
-// Imports a sound file as <name>.sound in folder. The sound is the root of
-// the import: importing the file again writes the same asset, wherever it was
-// moved (earlier.odin).
+// Imports a sound file as <name>.sound. The sound is the root of the import:
+// importing the file again writes the asset its sidecar lists (identity.odin).
 import_sound :: proc(path,folder:string,sound:Sound_Options={},options:Import_Options={},allocator:=context.allocator) -> (report:Import_Report,error:Error) {
     caller:=context.temp_allocator
     scratch:mem.Dynamic_Arena
@@ -92,24 +91,21 @@ import_sound :: proc(path,folder:string,sound:Sound_Options={},options:Import_Op
     }
     report_init(&report,allocator)
     w:Writer
-    ok:=writer_init(&w,folder,options,&report,allocator)
+    ok:=writer_init(&w,path,folder,options,&report,allocator)
     defer asset.types_destroy(&w.types)
     if ok {
-        source:=source_path(options,path)
+        source:=w.source
         name:=filepath.stem(path)
         info:=import_info(source,name,0,u64(len(bytes)),base.hash64(bytes),u64(.Stream in desc.flags),import_version(0))
-        seen:=make(map[string]bool,context.temp_allocator)
-        target:=default_path(&w,&seen,name,".sound")
-        root:int
-        if root,ok=earlier_root(&w,asset.KIND_SOUND,source,info.source_size,info.source_hash);ok {
-            if root>=0 {desc.id,target=w.earlier[root].id,w.earlier[root].path} else {desc.id,target=writer_id(&w),fresh_path(&w,target)}
-            desc.source=&info
-            existed:=os.exists(target)
-            if save_error:=asset.sound_save(target,&w.types,desc,context.temp_allocator);save_error!=.None {
-                ok=save_failed(&w,save_error,target)
-            } else {
-                record(&w,desc.id,asset.KIND_SOUND,name,target,source,existed)
-            }
+        target:string
+        desc.id,target=root_take(&w,asset.KIND_SOUND,name,".sound")
+        desc.source=&info
+        existed:=os.exists(target)
+        if save_error:=asset.sound_save(target,&w.types,desc,context.temp_allocator);save_error!=.None {
+            ok=save_failed(&w,save_error,target)
+        } else {
+            record(&w,desc.id,asset.KIND_SOUND,name,target,source,existed)
+            ok=writer_finish(&w)
         }
     }
     if !ok {

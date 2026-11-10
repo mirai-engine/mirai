@@ -396,12 +396,12 @@ cluster_triangle_positions :: proc "contextless" (g: asset.Mesh_Geometry, cluste
 // The software tree of a cut over its triangles at rest.
 @(private = "file")
 cut_tree :: proc(g: asset.Mesh_Geometry, cut: ^Mesh_Ray_Cut, allocator: mem.Allocator) -> bool {
-	items, items_error := make([]Bvh_Item, len(cut.primitives), allocator)
+	items, items_error := make([]mm.Aabb, len(cut.primitives), allocator)
 	if items_error != nil {return false}
 	defer delete(items, allocator)
 	for primitive, t in cut.primitives {
 		a, b, c := primitive_positions(g, primitive)
-		items[t] = {bounds_min = linalg.min(linalg.min(a, b), c), bounds_max = linalg.max(linalg.max(a, b), c), center = (a + b + c) / 3}
+		items[t] = {linalg.min(linalg.min(a, b), c), linalg.max(linalg.max(a, b), c)}
 	}
 	nodes := make([dynamic]Gpu_Bvh_Node, 0, 0, allocator)
 	order := make([dynamic]u32, 0, 0, allocator)

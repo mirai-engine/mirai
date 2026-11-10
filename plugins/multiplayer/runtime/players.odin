@@ -19,7 +19,7 @@ import wire "mirai:net"
 
 @(step="fixed",loops="game",stage="begin")
 net_seats :: proc(
-    es:^core.Entities,seats:^core.Table(input.Seat),absents:^core.Table(Seat_Absent),disabled:^core.Table(core.Disabled),
+    es:core.Commands,seats:^core.Table(input.Seat),absents:^core.Table(Seat_Absent),disabled:^core.Table(core.Disabled),
     objects:^core.Table(Replicate),transforms:^core.Table(core.Transform),keeps:^core.Table(core.Keep),links:core.Read(Net_Link),
     bindings:core.Ref(input.Input_Map),connections:core.Ref(Remote_Inputs),network:core.Ref(core.Network),
     hierarchy:core.Ref(core.Hierarchy),settings:core.Ref(Net_Settings),time:core.Time,
@@ -82,11 +82,11 @@ net_seats :: proc(
             absent(absents,disabled,seat,time.tick+u64(max(waits,1)))
             continue
         }
-        core.destroy_tree(es,hierarchy,seat)
+        core.destroy_tree(es.entities,hierarchy,seat)
     }
     if serving {
         for at in 0..<len(absents.entities) {
-            if until:=absents.values[at].until;until!=0 && time.tick>=until {core.destroy_tree(es,hierarchy,absents.entities[at])}
+            if until:=absents.values[at].until;until!=0 && time.tick>=until {core.destroy_tree(es.entities,hierarchy,absents.entities[at])}
         }
     }
 }
@@ -134,6 +134,45 @@ owner_of :: proc(w:core.World_Ref,e:core.Entity) -> Connection {
     driven,_:=core.get(drivables,e)
     seat,_:=core.get(seats,driven.seat)
     return Connection(seat.peer)
+}
+
+// A client with Net_Settings.input_delay: the seat it drives with acts on what
+// its devices gave that many ticks ago, with seat_receive, as the server will:
+// both ends derive the same edges. It keeps two lines of what it held: the one
+// the devices feed (outside the World: it moves only when a tick runs first),
+// which net_input_take gives it before they do, and the one the game sees,
+// which net_input_delay gives back before the delayed actions reach it.
+@(step="fixed",loops="game",stage="input",before="input_seats")
+net_input_take :: proc(session:^Net_Session,seats:^core.Table(input.Seat),time:core.Time) {
+    seat:=delayed_seat(session,seats)
+    if seat==nil {return}
+    c:=&session.client
+    c.delayed=seat^
+    if !time.resimulating {seat.actions,seat.held,seat.rearm,seat.fed=c.fed_seat.actions,c.fed_seat.held,c.fed_seat.rearm,c.fed_seat.fed}
+}
+
+@(step="fixed",loops="game",stage="input",after="input_seats")
+net_input_delay :: proc(session:^Net_Session,seats:^core.Table(input.Seat),bindings:core.Ref(input.Input_Map),time:core.Time) {
+    seat:=delayed_seat(session,seats)
+    if seat==nil {return}
+    c:=&session.client
+    tick:=u32(time.tick)
+    if !time.resimulating {
+        c.fed_seat=seat^
+        sent,_:=input.seat_remote(core.read(seats),input.local_seat(core.read(seats),0),bindings.ptr)
+        c.taken[int(tick)%len(c.taken)]={tick+1,sent}
+    }
+    seat.actions,seat.held,seat.rearm,seat.fed=c.delayed.actions,c.delayed.held,c.delayed.rearm,c.delayed.fed
+    from:=tick-u32(session.desc.input_delay)
+    taken:=c.taken[int(from)%len(c.taken)]
+    input.seat_receive(seat,bindings.ptr,taken.tick==from+1?taken.actions:{},time.dt)
+}
+
+// The seat a client drives with while its input is delayed; nil otherwise.
+@(private)
+delayed_seat :: proc(session:^Net_Session,seats:^core.Table(input.Seat)) -> ^input.Seat {
+    if !session.host_ready || session.mode!=.Client || session.desc.input_delay==0 {return nil}
+    return core.edit(seats,input.local_seat(core.read(seats),0))
 }
 
 // A client: its first local seat asks to drive the body the server lets it

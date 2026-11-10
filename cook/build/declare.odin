@@ -1,12 +1,14 @@
 package build
 
 import "core:fmt"
+import "core:hash/xxhash"
 import "core:odin/ast"
 import "core:os"
 import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 import "mirai:project"
+import "mirai:std/base"
 
 // A binary of the engine is built from a copy of its packages, the stage,
 // where every source file ends exporting its procedures under names of their
@@ -21,6 +23,11 @@ import "mirai:project"
 // A file is written only when its text changes: a declaration that
 // comes out the same leaves the stage and the declarations as they were, and
 // the libraries of the engine follow each folder by itself.
+//
+// With Declare_Desc.names a package also says, in DECLARED_NAMES beside its
+// declarations, what each of them is and which others it names: what compiles
+// against a declaration follows that one and the ones it reaches, not its
+// whole package (declared.odin).
 
 Declare_Desc :: struct {
     root:string,       // where the packages are
@@ -29,6 +36,9 @@ Declare_Desc :: struct {
     library:string,    // what the declarations link against: the import library, the .so, the .dylib
     stage:string,      // the copy the binary is built from
     decl:string,       // the declarations
+    staged:string,     // the collection the stage is compiled as, through which its packages import each other while every other package is its declarations. "": they import each other as written
+    names:bool,        // each package writes DECLARED_NAMES
+    definition:string, // Windows: the module definition it writes, with the library and what it exports, which its import library is made from before it compiles. "": none
 }
 
 // What the call wrote: of each folder, whether any file was written, or
@@ -44,12 +54,14 @@ Declare :: struct {
     desc:Declare_Desc,
     changed:Declare_Changed,
     errors:[dynamic]string,
+    exports:map[string]bool, // the link names the stage exports, in every branch of a when
 }
 
 @(private="file")
 Output :: struct {
     head,decl,exports:strings.Builder,
     foreign_count,export_count:int,
+    names:^strings.Builder, // of the package: a line per declaration (DECLARED_NAMES); nil: not asked for
 }
 
 @(private="file")
@@ -62,6 +74,10 @@ File_Scope :: struct {
     link_prefix:string,
     private_file,private_package:bool,
     named:map[^ast.Value_Decl]bool, // the private procedures of its package that are declared
+    desc:^Declare_Desc,
+    imports:map[string]string,      // the packages of the collection of the binary it imports, by the name it gives each
+    conditions:[dynamic]^ast.Expr,  // of the when blocks around what is being declared
+    tags:u64,                       // the hash of the tags of the file: what it declares, it declares under them
 }
 
 // How a declaration of a source reaches the declarations.
@@ -77,6 +93,7 @@ Value_Kind :: enum u8 {
 @(private="file")
 Names :: struct {
     file,all:^map[string]bool,
+    imports:^map[string]string, // given: what is selected of a package the file imports counts, as `<package>.<name>`
 }
 
 // A private procedure that is declared foreign if the declarations name it.
@@ -95,7 +112,20 @@ Private_Proc :: struct {
 declare :: proc(desc:Declare_Desc) -> (errors:[]string,changed:Declare_Changed) {
     d:Declare
     d.desc=desc
+    d.exports=make(map[string]bool,context.temp_allocator)
     for path in desc.packages {declare_package(&d,path)}
+    when ODIN_OS==.Windows {
+        if desc.definition!="" {
+            // What another branch of a when exports only puts in the import library a name nothing that compiles here calls.
+            links,_:=slice.map_keys(d.exports,context.temp_allocator)
+            slice.sort(links)
+            text:=strings.builder_make(context.temp_allocator)
+            fmt.sbprintfln(&text,"LIBRARY %q\nEXPORTS",strings.concatenate({filepath.stem(desc.library),".dll"},context.temp_allocator))
+            for link in links {fmt.sbprintfln(&text,"    %q",link)}
+            changed:bool
+            write(&d,desc.definition,strings.to_string(text),&changed)
+        }
+    }
     return d.errors[:],d.changed
 }
 
@@ -113,13 +143,25 @@ declare_package :: proc(d:^Declare,path:string) {
         }
     }
     written:=make(map[string]bool,context.temp_allocator)
+    names:=strings.builder_make(context.temp_allocator)
     link_prefix:=fmt.aprintf("%s.%s",d.desc.binary,strings.join(strings.split(path,"/",context.temp_allocator),".",context.temp_allocator),allocator=context.temp_allocator)
     scopes:=make([]File_Scope,len(files),context.temp_allocator)
     for file,index in files {
         scope:=&scopes[index]
-        scope^={file=file,src=file.src,folder=filepath.dir(file.fullpath),stage_folder=stage,decl_folder=decl,link_prefix=link_prefix}
+        scope^={file=file,src=file.src,folder=filepath.dir(file.fullpath),stage_folder=stage,decl_folder=decl,link_prefix=link_prefix,desc=&d.desc}
+        scope.imports=make(map[string]string,context.temp_allocator)
+        scope.conditions=make([dynamic]^ast.Expr,context.temp_allocator)
+        for stmt in file.decls {
+            imp,is_import:=stmt.derived.(^ast.Import_Decl)
+            if !is_import {continue}
+            path,ours:=import_package(&d.desc,imp)
+            if !ours {continue}
+            name:=imp.name.text!=""?imp.name.text:path[strings.last_index_byte(path,'/')+1:]
+            scope.imports[name]=path
+        }
         for tag in file.tags {
             text:=strings.trim_space(tag.text)
+            scope.tags=base.hash_combine(scope.tags,xxhash.XXH3_64_default(transmute([]u8)text))
             if strings.has_prefix(text,"#+private") {
                 if strings.contains(text,"file") {scope.private_file=true} else {scope.private_package=true}
             }
@@ -132,6 +174,7 @@ declare_package :: proc(d:^Declare,path:string) {
         name:=filepath.base(file.fullpath)
         written[name]=true
         out:Output
+        if d.desc.names {out.names=&names}
         strings.builder_init(&out.head,context.temp_allocator)
         strings.builder_init(&out.decl,context.temp_allocator)
         strings.builder_init(&out.exports,context.temp_allocator)
@@ -147,6 +190,40 @@ declare_package :: proc(d:^Declare,path:string) {
     // What a source no longer produces does not stay in either folder.
     sweep(stage,written,&d.changed.stage)
     sweep(decl,written,&d.changed.decl)
+    if d.desc.names {
+        // The files come sorted, so the same declarations write the same lines.
+        write(d,project.path(decl,DECLARED_NAMES,allocator=context.temp_allocator),strings.to_string(names),&d.changed.decl)
+    }
+}
+
+// The package of the collection of the binary an import names; false for one of another collection.
+@(private="file")
+import_package :: proc(desc:^Declare_Desc,imp:^ast.Import_Decl) -> (path:string,ok:bool) {
+    literal:=strings.trim(imp.relpath.text,"\"`")
+    if !strings.has_prefix(literal,desc.binary) || len(literal)<=len(desc.binary)+1 || literal[len(desc.binary)]!=':' {return}
+    return literal[len(desc.binary)+1:],true
+}
+
+// The line of DECLARED_NAMES of what was declared as text under names: its
+// hash, with the tags of its file and the conditions of the when blocks around it, and the names it
+// and they carry: one of its package bare, one of a package its file imports
+// with the path of that package.
+@(private="file")
+names_line :: proc(scope:^File_Scope,out:^Output,names:[]string,text:string,nodes:..^ast.Node) {
+    if out.names==nil {return}
+    hash:=base.hash_combine(scope.tags,xxhash.XXH3_64_default(transmute([]u8)text))
+    carried:=make(map[string]bool,context.temp_allocator)
+    found:=Names{file=&carried,all=&carried,imports=&scope.imports}
+    for condition in scope.conditions {
+        hash=base.hash_combine(hash,xxhash.XXH3_64_default(transmute([]u8)node_text(scope,condition)))
+        names_add(&found,condition)
+    }
+    for node in nodes {names_add(&found,node)}
+    sorted,_:=slice.map_keys(carried,context.temp_allocator)
+    slice.sort(sorted)
+    for name in names {
+        if name!="" && name!="_" {fmt.sbprintfln(out.names,"%s %x %s",name,hash,strings.join(sorted," ",context.temp_allocator))}
+    }
 }
 
 // Removes the files of a folder of the package that this declaration did not
@@ -202,6 +279,10 @@ when_write :: proc(d:^Declare,scope:^File_Scope,out:^Output,s:^ast.When_Stmt,ind
     strings.write_string(&out.decl,opening)
     strings.write_string(&out.exports,opening)
     inner:=strings.concatenate({indent,"    "},context.temp_allocator)
+    // What a branch declares is what it is under its condition, and what the
+    // branches after it declare, under that one too.
+    append(&scope.conditions,s.cond)
+    defer pop(&scope.conditions)
     if body,ok:=s.body.derived.(^ast.Block_Stmt);ok {decls_write(d,scope,out,body.stmts[:],inner)}
     strings.write_string(&out.decl,fmt.tprintf("%s}",indent))
     strings.write_string(&out.exports,fmt.tprintf("%s}",indent))
@@ -252,7 +333,9 @@ foreign_block_write :: proc(d:^Declare,scope:^File_Scope,out:^Output,s:^ast.Fore
                 fmt.sbprintfln(&out.decl,"%s@(default_calling_convention=%q%s)",indent,convention,private_file?",private=\"file\"":"")
                 fmt.sbprintfln(&out.decl,"%sforeign _ {{",indent)
             }
-            fmt.sbprintfln(&out.decl,"%s    %s",indent,decl_text(scope,decl))
+            text:=decl_text(scope,decl)
+            fmt.sbprintfln(&out.decl,"%s    %s",indent,text)
+            names_line(scope,out,{ident_text(decl.names[0])},fmt.tprintf("%s %s",convention,text),decl)
             intrinsics+=1
         case .Foreign:
             if private && !scope.named[decl] {continue}
@@ -395,6 +478,12 @@ names_add :: proc(names:^Names,node:^ast.Node) {
         // of a field with a type or a value are its own, and the key of an
         // attribute is no name: none is a procedure of this package.
         case ^ast.Selector_Expr:
+            if of,is_name:=n.expr.derived.(^ast.Ident);is_name && names.imports!=nil && n.field!=nil {
+                if path,imported:=names.imports[of.name];imported {
+                    names.file[fmt.tprintf("%s.%s",path,n.field.name)]=true
+                    return nil
+                }
+            }
             ast.walk(v,n.expr)
             return nil
         case ^ast.Implicit_Selector_Expr:
@@ -433,7 +522,13 @@ value_write :: proc(d:^Declare,scope:^File_Scope,out:^Output,decl:^ast.Value_Dec
     switch kind {
     case .Skipped:
     case .Copied:
-        fmt.sbprintfln(&out.decl,"%s%s",indent,decl_text(scope,decl))
+        text:=decl_text(scope,decl)
+        fmt.sbprintfln(&out.decl,"%s%s",indent,text)
+        if out.names!=nil {
+            names:=make([dynamic]string,0,len(decl.names),context.temp_allocator)
+            for name in decl.names {append(&names,ident_text(name))}
+            names_line(scope,out,names[:],text,decl)
+        }
     case .Foreign:
         if len(decl.names)!=1 {
             append(&d.errors,fmt.aprintf("%s(%d): one procedure per declaration",scope.file.fullpath,decl.pos.line))
@@ -477,13 +572,16 @@ proc_declare :: proc(d:^Declare,scope:^File_Scope,out:^Output,decl:^ast.Value_De
     signature:=fmt.tprintf("%s%s%s%s",before,inner_procs_odin(params),inner_procs_odin(after),tags)
     // Its parameters renamed: one could have the name of the procedure it calls.
     wrapper:=fmt.tprintf("%s%s%s%s",before,renamed,after,tags)
+    declared:=fmt.tprintf("foreign __mirai {{ @(link_name=%q%s) %s :: %s --- }}",link,strings.to_string(kept),name,signature)
     fmt.sbprintfln(&out.decl,"%s@(default_calling_convention=\"odin\")",indent)
-    fmt.sbprintfln(&out.decl,"%sforeign __mirai {{ @(link_name=%q%s) %s :: %s --- }}",indent,link,strings.to_string(kept),name,signature)
+    fmt.sbprintfln(&out.decl,"%s%s",indent,declared)
+    names_line(scope,out,{name},declared,type)
     out.foreign_count+=1
     call:=fmt.tprintf("%s(%s)",name,arguments)
     if type.results!=nil && !type.diverging {call=fmt.tprintf("return %s",call)}
     fmt.sbprintfln(&out.exports,"%s@(export,link_name=%q%s) __mirai_export_%s :: %s {{%s}}",indent,link,private_file?",private=\"file\"":"",name,wrapper,call)
     out.export_count+=1
+    d.exports[strings.clone(link,context.temp_allocator)]=true
 }
 
 // A procedure type among what a foreign block declares takes "cdecl" and not
@@ -739,6 +837,12 @@ rewrite_paths :: proc(scope:^File_Scope,src:string,decls:[]^ast.Stmt) -> string 
     collect_foreign :: proc(stmts:[]^ast.Stmt,edits:^[dynamic][3]int,replacements:^[dynamic]string,scope:^File_Scope) {
         for stmt in stmts {
             #partial switch s in stmt.derived {
+            case ^ast.Import_Decl:
+                // A package of the same binary is compiled with this one, from the stage.
+                path,ours:=import_package(scope.desc,s)
+                if !ours || scope.desc.staged=="" || !slice.contains(scope.desc.packages,path) {continue}
+                append(edits,[3]int{s.relpath.pos.offset,s.relpath.pos.offset+len(s.relpath.text),len(replacements)})
+                append(replacements,fmt.tprintf("%q",fmt.tprintf("%s:%s",scope.desc.staged,path)))
             case ^ast.Foreign_Import_Decl:
                 for path in s.fullpaths {
                     lit,ok:=path.derived.(^ast.Basic_Lit)
