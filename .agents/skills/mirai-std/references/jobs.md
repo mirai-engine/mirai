@@ -48,18 +48,6 @@ request and return, so it must admit simultaneous calls.
   whatever `count` is; all take the next range from an atomic cursor.
 - It can be nested: a range may call `parallel_for` with its worker index.
 
-## Task graphs
-
-- A `Graph` is built once (`graph_add`, `graph_depend(&g, after, before)`) and executed as many
-  times as needed. A node runs when all those it depends on have finished.
-- `graph_run` returns when all have run; with a cycle it returns `false` without executing anything.
-- A pinned node (`graph_pin`) runs on the worker that called `graph_run`, never on another: what it
-  enqueues as owner of the system or is not shared between threads. While waiting, that worker runs
-  the pinned ones that became ready, in the order in which they became so, and the enqueued tasks;
-  whoever makes a pinned one ready wakes all those that sleep.
-- Without room, `graph_add` and `graph_depend` fail and add to `Graph.capacity_failures`.
-- A graph is built or executed by a single thread at a time, and does not move after `graph_init`.
-
 ## Temporary memory
 
 - Inside a task or a range, `context.temp_allocator` is the Odin temporary allocator of the thread
@@ -88,7 +76,7 @@ deterministic runs.
 
 ## Verification
 
-- After touching deques, waiting or graphs, repeat the executable at least 20 times and once with
+- After touching deques or waiting, repeat the executable at least 20 times and once with
   `--release`: `./mirai test std/jobs -keep-executable`.
 - Benchmarks:
   `./mirai test std/jobs --release -define:MIRAI_BENCH=true -define:ODIN_TEST_THREADS=1`.
