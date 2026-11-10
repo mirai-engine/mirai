@@ -44,8 +44,8 @@ bench_sync_run :: proc(t:^testing.T,write:Bench_Write,whole:bool) -> (mean,media
     for tick in 0..<MEASURED {
         switch write {
         case .Nothing:
-        case .Free_Transform:      core.get(&f.transforms,free_entity).position.x=f32(tick)*0.01
-        case .Parent_Of_Colliders: core.get(&f.transforms,holder).position.x=f32(tick)*0.01
+        case .Free_Transform:      core.edit(&f.transforms,free_entity).position.x=f32(tick)*0.01
+        case .Parent_Of_Colliders: core.edit(&f.transforms,holder).position.x=f32(tick)*0.01
         }
         physics_test_settle(&f)
         mark:=time.tick_now()

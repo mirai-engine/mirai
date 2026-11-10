@@ -58,7 +58,7 @@ gallery_mirai_matching_plays_idle_walk_and_jog_by_the_speed_it_is_asked :: proc(
     }}}
     testing.expectf(t,walk>.05 && jog>walk*1.2 && GALLERY_MATCH_SPEED>=jog*.9 && GALLERY_MATCH_SPEED<=jog*1.1,"walk %.3f m/s, jog %.3f m/s",walk,jog)
     for wanted in ([3]struct{speed:f32,clip:string}{{0,"idle"},{walk,"walk"},{jog,"jog"}}) {
-        core.get(&gallery,actor).speed=wanted.speed
+        core.edit(&gallery,actor).speed=wanted.speed
         playing:anim.Animation_Match
         for _ in 0..<90 {playing,_=tick(t,&f,&gallery,&graphs,&progress,&actions,&panel,&problems,time)}
         testing.expectf(t,playing.clip==base.name_hash(wanted.clip),"at %.2f m/s Mirai plays %s",wanted.speed,wanted.clip)

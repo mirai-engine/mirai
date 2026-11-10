@@ -177,7 +177,7 @@ world_of :: proc(f:^Fixture) -> Ability_World {
 @(private="file")
 step :: proc(f:^Fixture,ticks:=1) {
     for _ in 0..<ticks {
-        seat:=core.get(&f.seats,f.seat)
+        seat:=core.edit(&f.seats,f.seat)
         seat.actions.count=2
         for a in 0..<2 {
             st:=&seat.actions.states[a]
@@ -194,7 +194,7 @@ step :: proc(f:^Fixture,ticks:=1) {
 
 @(private="file")
 user :: proc(f:^Fixture,e:core.Entity) -> Ability_User {
-    u,_:=core.get(core.read(&f.users),e)
+    u,_:=core.get(&f.users,e)
     return u
 }
 
@@ -418,11 +418,11 @@ invalid_sheets_and_requests_are_problems_and_never_run :: proc(t:^testing.T) {
     step(f)
     testing.expect(t,core.problem_find(&f.problems,f.player,"abilities.kit")!=nil)
     f.kit[0].buffer=0.2
-    p:=core.get(&f.users,f.player)
+    p:=core.edit(&f.users,f.player)
     p.kit={KIT_TABLE,99}
     step(f)
     testing.expect(t,core.problem_find(&f.problems,f.player,"records.missing")!=nil)
-    p=core.get(&f.users,f.player)
+    p=core.edit(&f.users,f.player)
     p.attributes[1].regen=math.inf_f32(1)
     step(f)
     testing.expect(t,core.problem_find(&f.problems,f.player,"abilities.attributes")!=nil)

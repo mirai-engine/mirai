@@ -23,7 +23,7 @@ a_trigger_turns_its_sky_on_once_the_body_is_well_inside_its_volume :: proc(t:^te
     core.add(&w.worlds,body,core.World_Transform{transform={position={1.9,0,0},rotation=1,scale=1}})
     core.test_world_settle(&w)
     step :: proc(w:^Test_Cameras,x:f32) {
-        core.get(&w.worlds,core.entity_at(core.read(&w.worlds),1)).position.x=x
+        core.edit(&w.worlds,core.entity_at(&w.worlds,1)).position.x=x
         environment_triggers(&w.triggers,core.read(&w.volumes),core.read(&w.worlds),core.ref(&w.seat_state),core.read(&w.seats),core.read(&w.drivables),&w.environment)
         core.test_world_settle(w)
     }
@@ -40,7 +40,7 @@ a_trigger_turns_its_sky_on_once_the_body_is_well_inside_its_volume :: proc(t:^te
     step(&w,1.5)
     testing.expect_value(t,len(w.environment.queue.items),2)
     // The same trigger in a sphere: its border is where the sphere says.
-    core.get(&w.volumes,box)^=volume.sphere(3)
+    core.edit(&w.volumes,box)^=volume.sphere(3)
     step(&w,3.3)
     step(&w,2.9)
     testing.expect_value(t,len(w.environment.queue.items),2)

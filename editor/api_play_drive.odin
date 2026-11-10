@@ -211,7 +211,7 @@ api_drive_is :: proc(w:core.World_Ref,hit,e:core.Entity) -> bool {
 api_drive_has_top :: proc(w:core.World_Ref,e:core.Entity,world:[3]f32,box:mm.Aabb) -> bool {
     query:=api_drive_query(w)
     if query.probe==nil {return false}
-    if moves:=core.world_table_of(w,input.Move_Input);moves!=nil && core.has(core.read(moves),e) {return false}
+    if moves:=core.world_table_of(w,input.Move_Input);moves!=nil && core.has(moves,e) {return false}
     from:=world.y+box.max.y+1
     span:=box.max.y-box.min.y+2
     middle:=world+(box.min+box.max)*0.5

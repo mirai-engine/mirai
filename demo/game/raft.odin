@@ -39,19 +39,19 @@ raft_breath :: proc(
     worlds:core.Read(core.World_Transform),placer:core.Placer,time:core.Time,
 ) {
     if !time.playing || !(time.dt>0) {return}
-    for row in 0..<core.count(core.read(divers)) {
+    for row in 0..<core.count(divers) {
         e:=core.entity_at(divers,row)
         state,has:=core.get(states,e)
         if !has {continue}
         // Only a breath that changes is written: a full one over the surface stays as it is.
-        next:=core.at(core.read(divers),row)
+        next:=core.at(divers,row)
         if !next.ready {next.oxygen,next.ready=next.capacity,true}
         if state.head_depth>0 {
             next.oxygen=max(next.oxygen-time.dt,0)
         } else {next.oxygen=min(next.oxygen+next.refill*time.dt,next.capacity)}
         drowned:=next.oxygen<=0
         if drowned {next.oxygen,next.drowned=next.capacity,next.drowned+1}
-        if next!=core.at(core.read(divers),row) {core.at(divers,row)^=next}
+        if next!=core.at(divers,row) {core.edit_at(divers,row)^=next}
         if !drowned {continue}
         for &game in core.writable(games) {
             raft,found:=core.get(worlds,game.raft)
@@ -108,6 +108,6 @@ raft_hud :: proc(
             next.drowned,next.drowned_once=i32(diver.drowned),diver.drowned>0
             for at in 0..<core.count(games) {next.message||=!core.due(time,core.at(games,at).message_until)}
         }
-        if core.at(shown,row)!=next {core.at(huds,row)^=next}
+        if core.at(shown,row)!=next {core.edit_at(huds,row)^=next}
     }
 }

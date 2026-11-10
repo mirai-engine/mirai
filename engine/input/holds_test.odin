@@ -44,9 +44,9 @@ hold_test_init :: proc(t:^testing.T,f:^Hold_Test,jump:..Input_Binding) -> bool {
 hold_test_tick :: proc(f:^Hold_Test) {
     input_holds(&f.seats,&f.hold_requests,f.time,&f.problems)
     device:core.Input
-    seat_feed(core.get(&f.seats,f.local),&device,&f.bindings,false,1.0/60)
+    seat_feed(core.edit(&f.seats,f.local),&device,&f.bindings,false,1.0/60)
     sent,_:=seat_remote(core.read(&f.seats),f.local,&f.bindings)
-    seat_receive(core.get(&f.seats,f.remote),&f.bindings,sent,1.0/60)
+    seat_receive(core.edit(&f.seats,f.remote),&f.bindings,sent,1.0/60)
     core.time_advance(&f.time)
 }
 
@@ -100,7 +100,7 @@ a_held_action_keeps_the_contexts_blocks_and_capacity_of_its_seat :: proc(t:^test
     hold_test_tick(&f)
     testing.expect(t,!seat_down(typed,f.local,.Confirm),"an action of a context the seat is not in")
     let_go(&f.hold_requests,f.local,HOLD_CONFIRM)
-    seat:=core.get(&f.seats,f.local)
+    seat:=core.edit(&f.seats,f.local)
     seat.contexts.layers[0],seat.contexts.count=HOLD_MENU,1
     hold_test_tick(&f)
     hold(&f.hold_requests,f.local,HOLD_CONFIRM,{1,0})

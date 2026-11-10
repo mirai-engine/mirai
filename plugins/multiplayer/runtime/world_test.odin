@@ -160,10 +160,10 @@ a_scene_change_keeps_the_players_and_replicates_the_new_world_once_the_client_lo
     testing.expect_value(t,own_connection(core.ref(&p.sessions[1])),connection)
     testing.expect(t,core.has(&client.links,adopted),"the replica takes the entity of the scene with its Id")
     if !testing.expect_value(t,core.count(&server.seats),1) {return}
-    testing.expect_value(t,core.at(core.read(&server.seats),0).player,player_id({42,0}))
+    testing.expect_value(t,core.at(&server.seats,0).player,player_id({42,0}))
     mirrored:=false
     for row in 0..<core.count(&client.seats) {
-        value:=core.at(core.read(&client.seats),row)
+        value:=core.at(&client.seats,row)
         mirrored ||= value.peer==u64(connection) && value.player==0 && core.has(&client.links,core.entity_at(&client.seats,row))
     }
     testing.expect(t,mirrored,"the seat of the player reaches the client with its peer, without its id")
@@ -174,7 +174,7 @@ a_scene_change_keeps_the_players_and_replicates_the_new_world_once_the_client_lo
     testing.expect_value(t,len(client.scene_requests.queue.items),1)
     testing.expect_value(t,linked(client),0)
     testing.expect_value(t,core.count(&server.seats),1)
-    testing.expect_value(t,core.at(core.read(&server.seats),0).peer,u64(connection))
+    testing.expect_value(t,core.at(&server.seats,0).peer,u64(connection))
     testing.expect_value(t,len(server.remote.entries),1)
     for &slot in p.sessions[0].server.objects {
         if slot.object!=0 {testing.expect(t,slot.entity==core.NONE || core.has(&server.objects,slot.entity),"no object of the old world names an entity of the new one")}
@@ -309,7 +309,7 @@ pair_member :: proc(w:^Net_Test_World,info:^core.World_Info,id:base.Entity_Id,se
 // A section of a client loads, with what it brings, or drops it.
 @(private="file")
 pair_load_section :: proc(w:^Net_Test_World,info:^core.World_Info,section:core.Entity,loaded:bool,member:=core.NONE) {
-    core.get(&w.references,section).loaded=loaded?LEVEL_A:{}
+    core.edit(&w.references,section).loaded=loaded?LEVEL_A:{}
     if !loaded {core.destroy_tree(&w.entities,core.ref(&w.hierarchy),member)}
     core.settle(info,w,nil)
 }
@@ -396,8 +396,8 @@ a_replica_of_a_section_that_is_not_loaded_waits_for_it :: proc(t:^testing.T) {
 @(private="file")
 pair_box :: proc(w:^Net_Test_World,info:^core.World_Info,id:base.Entity_Id,loaded:bool,position,extents:[3]f32) -> core.Entity {
     e:=pair_section(w,info,id,loaded)
-    core.get(&w.references,e).extents=extents
-    core.get(&w.transforms,e).position=position
+    core.edit(&w.references,e).extents=extents
+    core.edit(&w.transforms,e).position=position
     core.add(&w.worlds,e,core.World_Transform{transform={position=position,rotation=1,scale={1,1,1}}})
     core.settle(info,w,nil)
     return e
@@ -408,7 +408,7 @@ pair_box :: proc(w:^Net_Test_World,info:^core.World_Info,id:base.Entity_Id,loade
 @(private="file")
 pair_placed :: proc(w:^Net_Test_World,info:^core.World_Info,id:base.Entity_Id,section:core.Entity,position:[3]f32,replicated:bool) -> core.Entity {
     e:=pair_member(w,info,id,section,replicated)
-    core.get(&w.transforms,e).position=position
+    core.edit(&w.transforms,e).position=position
     core.add(&w.worlds,e,core.World_Transform{transform={position=position,rotation=1,scale={1,1,1}}})
     core.settle(info,w,nil)
     return e
@@ -480,7 +480,7 @@ what_the_server_keeps_of_a_section_wins_over_what_a_client_kept :: proc(t:^testi
     chest:=pair_member(server,&p.info,101,room,true)
     core.add(&server.values,chest,Net_Test_Value{force=5})
     hidden:=pair_member(server,&p.info,103,room,true)
-    core.get(&server.objects,hidden).audience=.Custom
+    core.edit(&server.objects,hidden).audience=.Custom
     // A section the server dropped after a crate in it was destroyed.
     yard:=pair_section(server,&p.info,300,false)
     stone:=core.create(&server.entities)
@@ -502,7 +502,7 @@ what_the_server_keeps_of_a_section_wins_over_what_a_client_kept :: proc(t:^testi
     for _ in 0..<60 {pair_frame(p)}
     r:=replica_with(&p.sessions[1],101)
     testing.expect(t,r!=nil && r.entity==kept_chest,"the chest takes the entity it kept")
-    value,_:=core.get(core.read(&client.values),kept_chest)
+    value,_:=core.get(&client.values,kept_chest)
     testing.expect_value(t,value.force,5)
     testing.expect(t,!core.alive(&client.entities,crate),"what the server left a tombstone of goes")
     testing.expect(t,core.alive(&client.entities,well))

@@ -170,25 +170,25 @@ the_mind_of_an_agent_presents_what_it_does_and_does_not_tick_again_in_a_resimula
     problems:core.Problems
     minds_tick(minds,&world.mind_agents,"hunter",&COUNTING_ACTS,counting_think,&ctx,&c.w,{tick=1,dt=1.0/60,playing=true},&problems)
     core.test_world_settle(&world)
-    shown,found:=core.get(core.read(&world.presentations),e)
+    shown,found:=core.get(&world.presentations,e)
     testing.expect(t,found && c.entered==1)
     testing.expect(t,shown.action==u16(Count_Act.Count) && shown.step==ai.MIND_NONE)
     testing.expect(t,shown.look==core.NONE && shown.look_point=={1,2,3} && shown.animation==9 && shown.animations==1)
     // It ends and enters again: the same action, a new animation asked.
     minds_tick(minds,&world.mind_agents,"hunter",&COUNTING_ACTS,counting_think,&ctx,&c.w,{tick=2,dt=1.0/60,playing=true},&problems)
     core.test_world_settle(&world)
-    shown,_=core.get(core.read(&world.presentations),e)
+    shown,_=core.get(&world.presentations,e)
     testing.expect(t,c.entered==2 && shown.animations==2)
-    version:=core.version(core.read(&world.presentations))
+    version:=core.version(&world.presentations)
     ticks:=world.mind_agents.values[0].state.ticks
     // A tick that runs again (a rollback) neither ticks nor presents.
     minds_tick(minds,&world.mind_agents,"hunter",&COUNTING_ACTS,counting_think,&ctx,&c.w,{tick=3,dt=1.0/60,playing=true,resimulating=true},&problems)
     testing.expect_value(t,world.mind_agents.values[0].state.ticks,ticks)
-    testing.expect_value(t,core.version(core.read(&world.presentations)),version)
+    testing.expect_value(t,core.version(&world.presentations),version)
     c.w.entity=e
     present_look(&c.w,e)
     core.test_world_settle(&world)
-    shown,_=core.get(core.read(&world.presentations),e)
+    shown,_=core.get(&world.presentations,e)
     testing.expect(t,shown.look==e && shown.look_point=={})
     testing.expect_value(t,problems.count,0)
 }
@@ -259,14 +259,14 @@ move_actions_ask_navigation_and_read_where_the_agent_got :: proc(t:^testing.T) {
     testing.expect(t,len(world.moves.queue.items)==1 && world.moves.queue.items[0].kind==.Move_To && world.moves.queue.items[0].point=={1,2,3})
     a.phase=.Update
     testing.expect_value(t,move_act(&w,&a,{}),ai.Status.Running)
-    core.get(&world.paths,e).state=.Arrived
+    core.edit(&world.paths,e).state=.Arrived
     testing.expect_value(t,move_act(&w,&a,{}),ai.Status.Success)
-    core.get(&world.paths,e).partial=true
+    core.edit(&world.paths,e).partial=true
     testing.expect_value(t,path_status(&w),ai.Status.Failure)
     a.phase,a.cause=.Exit,.Aborted
     move_act(&w,&a,{})
     testing.expect(t,world.moves.queue.items[len(world.moves.queue.items)-1].kind==.Stop)
-    core.get(&world.paths,e).state=.Failed
+    core.edit(&world.paths,e).state=.Failed
     a.phase=.Update
     testing.expect_value(t,follow_act(&w,&a,e,1),ai.Status.Failure)
 }
@@ -308,21 +308,21 @@ perceivers_see_the_teams_they_notice_in_their_cone_hear_noises_and_forget :: pro
     core.add(&f.perceivables,behind,Perceivable{team=1,point=1})
     sight_tick(&f,0) // gives the guard its Perception
     sight_tick(&f,0.1)
-    mine:=core.get(&f.perceptions,guard)
+    mine:=core.edit(&f.perceptions,guard)
     testing.expect(t,mine!=nil && mine.memory.count==1 && ai.memory_find(&mine.memory,u64(ahead))!=nil)
     testing.expect(t,len(f.events.queue.items)==1 && f.events.queue.items[0].kind==.Noticed && f.events.queue.items[0].subject==ahead)
     // A noise behind it is heard; out of hearing, not.
     noise(&f.noises,{0,0,4},10,behind)
     noise(&f.noises,{0,0,40},10,friend)
     sight_tick(&f,0.2)
-    mine=core.get(&f.perceptions,guard)
+    mine=core.edit(&f.perceptions,guard)
     heard:=ai.memory_find(&mine.memory,u64(behind))
     testing.expect(t,heard!=nil && heard.senses=={.Hearing} && ai.memory_find(&mine.memory,u64(friend))==nil)
     // What it no longer perceives is forgotten after `forget` seconds.
-    core.get(&f.worlds,ahead).position={0,0,-50}
+    core.edit(&f.worlds,ahead).position={0,0,-50}
     sight_tick(&f,1.2)
     sight_tick(&f,2.5)
-    mine=core.get(&f.perceptions,guard)
+    mine=core.edit(&f.perceptions,guard)
     testing.expect(t,ai.memory_find(&mine.memory,u64(behind))==nil)
     forgot:=false
     for event in f.events.queue.items {forgot|=event.kind==.Forgot && event.subject==behind}
@@ -346,13 +346,13 @@ a_remembered_subject_that_is_destroyed_is_forgotten_at_once :: proc(t:^testing.T
     sight_tick(&f,0)
     noise(&f.noises,{3,0,0},10)
     sight_tick(&f,0.1)
-    mine:=core.get(&f.perceptions,guard)
+    mine:=core.edit(&f.perceptions,guard)
     testing.expect(t,mine!=nil && ai.memory_find(&mine.memory,u64(seen))!=nil && ai.memory_find(&mine.memory,0)!=nil)
     core.destroy(&f.entities,seen)
     core.test_world_settle(&f)
     again:=placed(&f,{0,0,-50})
     sight_tick(&f,0.2)
-    mine=core.get(&f.perceptions,guard)
+    mine=core.edit(&f.perceptions,guard)
     testing.expect(t,ai.memory_find(&mine.memory,u64(seen))==nil,"the destroyed subject is forgotten")
     testing.expect(t,ai.memory_find(&mine.memory,u64(again))==nil)
     testing.expect(t,ai.memory_find(&mine.memory,0)!=nil,"the place of a noise without a maker stays")
@@ -377,7 +377,7 @@ sight_shares_its_rays_among_perceivers_in_turns :: proc(t:^testing.T) {
     sight_tick(&f,0)
     for tick in 1..=3 {sight_tick(&f,f64(tick)*0.1)}
     for g in guards {
-        mine:=core.get(&f.perceptions,g)
+        mine:=core.edit(&f.perceptions,g)
         testing.expect(t,mine!=nil && ai.memory_find(&mine.memory,u64(target))!=nil)
     }
 }
@@ -400,15 +400,15 @@ every_perceiver_gets_its_turn_and_forgets_only_in_it :: proc(t:^testing.T) {
     sight_tick(&f,0)
     for tick in 1..=4 {sight_tick(&f,f64(tick)*0.1)}
     for g in guards {
-        mine:=core.get(&f.perceptions,g)
+        mine:=core.edit(&f.perceptions,g)
         testing.expect(t,mine!=nil && ai.memory_find(&mine.memory,u64(target))!=nil)
     }
     // Long after a subject was perceived, only the one whose turn it is forgets it.
     ghost:=u64(1<<40)
-    for g in guards {ai.memory_perceive(&core.get(&f.perceptions,g).memory,ghost,{},.Sight,1,0)}
+    for g in guards {ai.memory_perceive(&core.edit(&f.perceptions,g).memory,ghost,{},.Sight,1,0)}
     sight_tick(&f,5)
     forgot:=0
-    for g in guards {if ai.memory_find(&core.get(&f.perceptions,g).memory,ghost)==nil {forgot+=1}}
+    for g in guards {if ai.memory_find(&core.edit(&f.perceptions,g).memory,ghost)==nil {forgot+=1}}
     testing.expect_value(t,forgot,1)
 }
 
@@ -434,19 +434,19 @@ places_are_answered_in_order_within_the_budget :: proc(t:^testing.T) {
     problems:core.Problems
     places_run(&world.requests,&places,&world.results,core.ref(&world.settings),core.read(&world.worlds),core.read(&world.perceivers),{},core.read(&world.paths),core.read(&world.agents),core.read(&world.walks),core.read(&world.swims),core.ref(&world.navigation),core.ref(&world.physics),{},{},nil,{},{},&problems)
     core.test_world_settle(&world)
-    first,_:=core.get(core.read(&world.results),a)
-    second,_:=core.get(core.read(&world.results),b)
+    first,_:=core.get(&world.results,a)
+    second,_:=core.get(&world.results,b)
     testing.expect(t,first.status==.Found && first.request==1 && first.count==3 && first.points[0]=={3,0,0} && first.scores[0]>=first.scores[1])
     testing.expect(t,second.status==.Waiting && second.request==2)
     places_run(&world.requests,&places,&world.results,core.ref(&world.settings),core.read(&world.worlds),core.read(&world.perceivers),{},core.read(&world.paths),core.read(&world.agents),core.read(&world.walks),core.read(&world.swims),core.ref(&world.navigation),core.ref(&world.physics),{},{},nil,{},{},&problems)
-    second,_=core.get(core.read(&world.results),b)
+    second,_=core.get(&world.results,b)
     testing.expect(t,second.status==.Found && linalg.distance(second.points[0],mm.Vec3{6,0,0})<1e-4)
     // Of two queries of one querier, the last one is answered and the first does not take its place.
     q.querier=a
     place_query(&world.requests,q)
     place_query(&world.requests,q)
     places_run(&world.requests,&places,&world.results,core.ref(&world.settings),core.read(&world.worlds),core.read(&world.perceivers),{},core.read(&world.paths),core.read(&world.agents),core.read(&world.walks),core.read(&world.swims),core.ref(&world.navigation),core.ref(&world.physics),{},{},nil,{},{},&problems)
-    first,_=core.get(core.read(&world.results),a)
+    first,_=core.get(&world.results,a)
     testing.expect(t,first.status==.Found && first.request==4)
 }
 
@@ -486,7 +486,7 @@ places_of_a_target_that_is_destroyed_are_none :: proc(t:^testing.T) {
     }
     place_query(&f.requests,around)
     run(&f)
-    result,_:=core.get(core.read(&f.results),querier)
+    result,_:=core.get(&f.results,querier)
     testing.expect(t,result.status==.Found && result.request==1,"around the target while it is there")
     core.destroy(&f.entities,target)
     core.destroy(&f.entities,gone)
@@ -494,11 +494,11 @@ places_of_a_target_that_is_destroyed_are_none :: proc(t:^testing.T) {
     place_query(&f.requests,orphan)
     place_query(&f.requests,around)
     run(&f)
-    result,_=core.get(core.read(&f.results),querier)
+    result,_=core.get(&f.results,querier)
     testing.expectf(t,result.request==3 && result.status==.Empty,"around a target that is gone: %v",result)
     place_query(&f.requests,from)
     run(&f)
-    result,_=core.get(core.read(&f.results),querier)
+    result,_=core.get(&f.results,querier)
     testing.expectf(t,result.request==4 && result.status==.Empty,"measured from a target that is gone: %v",result)
     testing.expect_value(t,len(f.places.waiting),0)
     testing.expect_value(t,core.count(&f.results),1)
@@ -598,7 +598,7 @@ places_come_from_the_mesh_joined_to_the_center_from_entities_and_from_offers :: 
         places_run(&f.requests,&f.places,&f.results,core.ref(&f.settings),core.read(&f.worlds),core.read(&f.perceivers),core.read(&f.perceivables),core.read(&f.paths),
             core.read(&f.agents),core.read(&f.walks),core.read(&f.swims),core.ref(&f.navigation),core.ref(&f.physics),core.read(&f.objects),core.read(&f.states),&f.claims,{},{},&f.problems)
         core.test_world_settle(&f.w)
-        result,_:=core.get(core.read(&f.results),q.querier)
+        result,_:=core.get(&f.results,q.querier)
         return result
     }
     // Farthest from the querier first: on the ground it stands on, never on the island.
@@ -807,7 +807,7 @@ perceivers_find_by_the_grid_whom_they_would_among_every_perceivable :: proc(t:^t
         for row in 0..<core.count(&f.perceivers) {
             e:=core.entity_at(&f.perceivers,row)
             p:=f.perceivers.values[row]
-            pose:=core.get(&f.worlds,e)
+            pose:=core.edit(&f.worlds,e)
             eye:=pose.position+mm.Vec3{0,p.eyes,0}
             expected:[ai.PERCEPTION_CAPACITY]core.Entity
             count,total:=0,0
@@ -815,14 +815,14 @@ perceivers_find_by_the_grid_whom_they_would_among_every_perceivable :: proc(t:^t
                 if left<=0 {break}
                 subject:=core.entity_at(&f.perceivables,target)
                 other:=f.perceivables.values[target]
-                at:=core.get(&f.worlds,subject)
+                at:=core.edit(&f.worlds,subject)
                 if subject==e || u32(p.notices)&(1<<u32(other.team))==0 || !ai.sight_in_cone(eye,mm.quat_forward(pose.rotation),at.position+mm.Vec3{0,other.point,0},p.sight,p.angle) {continue}
                 left-=1
                 total+=1
                 if count<len(expected) {expected[count]=subject;count+=1}
             }
             seen+=total
-            mine:=core.get(&f.perceptions,e)
+            mine:=core.edit(&f.perceptions,e)
             if !testing.expect(t,mine!=nil) {return}
             testing.expectf(t,int(mine.memory.count)==count,"seed %d: perceiver %d remembers %d of the %d it sees",seed,row,mine.memory.count,total)
             for subject in expected[:count] {testing.expectf(t,ai.memory_find(&mine.memory,u64(subject))!=nil,"seed %d: perceiver %d does not remember %v, which it sees",seed,row,subject)}
@@ -852,21 +852,21 @@ a_tick_with_nothing_to_do_goes_through_no_row :: proc(t:^testing.T) {
     testing.expect(t,len(f.sight.grid.items)==0 && cap(f.sight.rows)==0 && f.turns.remembering==0)
     // A memory forged behind its back would be forgotten by a tick that looked at the perceiver.
     ghost:=u64(1<<40)
-    ai.memory_perceive(&core.get(&f.perceptions,guard).memory,ghost,{},.Sight,1,0)
+    ai.memory_perceive(&core.edit(&f.perceptions,guard).memory,ghost,{},.Sight,1,0)
     sight_tick(&f,50)
-    testing.expect(t,ai.memory_find(&core.get(&f.perceptions,guard).memory,ghost)!=nil && len(f.sight.grid.items)==0)
-    ai.memory_remove(&core.get(&f.perceptions,guard).memory,ghost)
+    testing.expect(t,ai.memory_find(&core.edit(&f.perceptions,guard).memory,ghost)!=nil && len(f.sight.grid.items)==0)
+    ai.memory_remove(&core.edit(&f.perceptions,guard).memory,ghost)
     // Someone to look at, a noise or a memory: it works again, and the count of memories follows.
     target:=placed(&f,{0,0,-5})
     core.add(&f.perceivables,target,Perceivable{point=1})
     sight_tick(&f,60)
-    mine:=core.get(&f.perceptions,guard)
+    mine:=core.edit(&f.perceptions,guard)
     testing.expect(t,ai.memory_find(&mine.memory,u64(target))!=nil && f.turns.remembering==1 && len(f.sight.grid.items)>0)
     core.remove(&f.perceivables,target)
     sight_tick(&f,60.1)
     testing.expect_value(t,f.turns.remembering,1)
     sight_tick(&f,70)
-    testing.expect(t,core.get(&f.perceptions,guard).memory.count==0 && f.turns.remembering==0)
+    testing.expect(t,core.edit(&f.perceptions,guard).memory.count==0 && f.turns.remembering==0)
     noise(&f.noises,{0,0,2},10)
     sight_tick(&f,71)
     testing.expect_value(t,f.turns.remembering,1)

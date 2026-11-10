@@ -114,10 +114,10 @@ an_update_writes_what_differs_onto_the_entities_that_have_the_ids_of_a_document 
     _,turned,_:=core.raw_state(core.raw(&w.lamps),bulb)
     testing.expect(t,held==Update_Lamp{range=5,heat=7} && turned,"the value follows the document, what it does not save stays, and it is off")
     testing.expect_value(t,core.name_get(core.read(&w.names),lamp),"Desk lamp")
-    testing.expect(t,!core.has(&w.links,lamp) && core.get(&w.links,bulb).target==other)
+    testing.expect(t,!core.has(&w.links,lamp) && core.at(&w.links,core.row_of(&w.links,bulb)).target==other)
     shade:=core.entity_of(&w.entities,50)
-    parent,_:=core.get(core.read(&w.parents),shade)
-    testing.expect(t,shade!=core.NONE && parent.entity==lamp && core.get(&w.links,shade).target==bulb && core.has(&w.transforms,shade))
+    parent,_:=core.get(&w.parents,shade)
+    testing.expect(t,shade!=core.NONE && parent.entity==lamp && core.at(&w.links,core.row_of(&w.links,shade)).target==bulb && core.has(&w.transforms,shade))
     testing.expect(t,!core.alive(&w.entities,cable) && core.alive(&w.entities,bulb) && core.alive(&w.entities,other))
     report,error=update_put(t,&f,ref,&document,scope)
     testing.expect(t,error==.None && report.components==0,"the world holds what the document says")
@@ -133,7 +133,7 @@ an_update_writes_what_differs_onto_the_entities_that_have_the_ids_of_a_document 
     asset.scene_set(&document,3,"Update_Link",&lost)
     asset.scene_entities_remove(&document,{50})
     report,error=update_put(t,&f,ref,&document,nil)
-    testing.expect(t,error==.None && report.dangling==1 && core.get(&w.links,bulb).target==core.NONE)
+    testing.expect(t,error==.None && report.dangling==1 && core.at(&w.links,core.row_of(&w.links,bulb)).target==core.NONE)
 }
 
 // asset declares the two components of the instances for a document, where

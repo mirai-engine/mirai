@@ -90,7 +90,7 @@ sections_sync :: proc(s:^Session) {
     if hierarchy==nil {return}
     image:=sections_image(s,w)
     for row in 0..<core.count(references) {
-        reference:=core.at(core.read(references),row)
+        reference:=core.at(references,row)
         e:=core.entity_at(references,row)
         changed:=reference.rule==.With_Document && reference.state!=.Unloaded && reference.loaded!={} && reference.loaded!=reference.scene
         made:=reference.loaded=={} && section_made(image,e) && section_wanted(s,w,e)!=.Unloaded
@@ -100,7 +100,7 @@ sections_sync :: proc(s:^Session) {
             core.world_destroy_tree(w,child)
             child=next
         }
-        loaded:=core.at(references,row)
+        loaded:=core.edit_at(references,row)
         loaded.loaded,loaded.held=reference.scene,false
         file:=host_scene(s,reference.scene)
         if file==nil || reference.scene==s.document.id {continue}
@@ -131,7 +131,7 @@ section_made :: proc(image:^history.Journal_Table,e:core.Entity) -> bool {return
 @(private)
 section_reload :: proc(s:^Session,w:core.World_Ref,e:core.Entity) {
     references:=core.world_table_of(w,scene.Scene_Reference)
-    reference:=core.get(references,e)
+    reference:=core.edit(references,e)
     if reference==nil || reference.loaded=={} {return}
     file:=host_scene(s,reference.scene)
     gone:=section_entities(w,e)
@@ -148,7 +148,7 @@ section_reload :: proc(s:^Session,w:core.World_Ref,e:core.Entity) {
         }
     }
     core.world_settle(w)
-    reference=core.get(references,e)
+    reference=core.edit(references,e)
     if reference!=nil {
         reference.loaded,reference.held={},false
         if file!=nil {reference.loaded=reference.scene}
@@ -222,7 +222,7 @@ section_of :: proc(w:core.World_Ref,e:core.Entity) -> core.Entity {
     if references==nil || core.count(references)==0 || parents==nil {return core.NONE}
     at:=e
     for depth:=0;depth<1024;depth+=1 {
-        parent,placed:=core.get(core.read(parents),at)
+        parent,placed:=core.get(parents,at)
         if !placed {return core.NONE}
         at=parent.entity
         if core.has(references,at) {return at}
@@ -244,7 +244,7 @@ section_holder :: proc(w:core.World_Ref,e:core.Entity) -> core.Entity {
             if row:=core.raw_row(core.raw(proxies),at);row>=0 {return proxies.values[row].reference}
         }
         if at!=e && core.raw_row(core.raw(references),at)>=0 {return at}
-        parent,placed:=core.get(core.read(parents),at)
+        parent,placed:=core.get(parents,at)
         if !placed {return core.NONE}
         at=parent.entity
     }
@@ -584,7 +584,7 @@ section_save :: proc(s:^Session,reference:core.Entity) -> (result:Section_Write,
     others:=make([dynamic]core.Entity,context.temp_allocator)
     for row in 0..<core.count(references) {
         e:=core.entity_at(references,row)
-        if e!=reference && core.at(core.read(references),row).scene==r.scene {append(&others,e)}
+        if e!=reference && core.at(references,row).scene==r.scene {append(&others,e)}
     }
     d:=&s.document.sections
     for e in others {
@@ -716,7 +716,7 @@ Sections_Watch :: struct {
     taken:[dynamic]core.Entity,
     made:[dynamic]core.Entity,    // references a gesture made, which the view keeps unloaded until their step loads them (sections_sync)
     references:core.Seen,         // of the Scene_Reference table of world, for the references that went
-    proxies:u64,                  // the version of the table of scene.Section_Proxy before
+    proxies:core.Seen,            // the table of scene.Section_Proxy before
     proxied:[dynamic]core.Entity, // the far forms there were before: one that goes is theirs too
     world:rawptr,
 }
@@ -740,12 +740,12 @@ sections_watch :: proc(s:^Session,watch:^Sections_Watch,world:core.World_Ref) {
     if core.count(references)==0 {return}
     clear(&watch.proxied)
     if proxies:=core.world_table_of(world,scene.Section_Proxy);proxies!=nil {
-        watch.proxies=core.version(core.read(proxies))
-        for row in 0..<core.count(core.read(proxies)) {append(&watch.proxied,core.entity_at(core.read(proxies),row))}
+        _=core.touched(proxies,&watch.proxies)
+        for row in 0..<core.count(proxies) {append(&watch.proxied,core.entity_at(proxies,row))}
     }
     for row in 0..<core.count(references) {
         e:=core.entity_at(references,row)
-        r:=core.at(core.read(references),row)
+        r:=core.at(references,row)
         append(&watch.marks,Section_Mark{e,r.loaded,r.far,r.held})
         if section_made(image,e) && !slice.contains(watch.made[:],e) {
             append(&watch.made,e)
@@ -802,12 +802,12 @@ sections_watched :: proc(s:^Session,watch:^Sections_Watch,world:core.World_Ref) 
     if s.mode!=.Edit || world.data!=s.edit_world || s.edits==nil || len(watch.marks)==0 {return}
     references:=core.world_table_of(world,scene.Scene_Reference)
     if references==nil {return}
-    if proxies:=core.world_table_of(world,scene.Section_Proxy);proxies!=nil && core.version(core.read(proxies))!=watch.proxies {
+    if proxies:=core.world_table_of(world,scene.Section_Proxy);proxies!=nil && core.touched(proxies,&watch.proxies) {
         sections_take_in(s,watch,world)
         return
     }
     for m in watch.marks {
-        r,found:=core.get(core.read(references),m.entity)
+        r,found:=core.get(references,m.entity)
         if !found || r.loaded!=m.loaded || r.held!=m.held || r.far!=m.far {
             sections_take_in(s,watch,world)
             return
@@ -884,13 +884,12 @@ sections_take_in :: proc(s:^Session,watch:^Sections_Watch,w:core.World_Ref) {
     for &t,i in w.info.tables {
         if i>=len(edits.saved) || !edits.saved[i] {continue}
         table:=core.world_table_at(w,&t)
-        c:=core.raw_changes(table,&watch.seen[i])
-        if !c.all && table.version<=c.since && len(c.gone)==0 {continue}
+        c:=core.raw_changes(table,&watch.seen[i],off=true)
         for e in c.gone {
             if theirs(watch,edits,w,e,parent_table) && history.history_is_author(authors,e) {history.journal_take(edits,w,i,e)}
         }
-        for e,row in table.entities {
-            if !c.all && table.stamps[row]<=c.since {continue}
+        for row in core.raw_each_changed(table,&c) {
+            e:=table.entities[row]
             if theirs(watch,edits,w,e,parent_table) && history.history_is_author(authors,e) {history.journal_take(edits,w,i,e)}
         }
     }

@@ -82,7 +82,7 @@ focus_and_driving_wait_for_held_buttons :: proc(t:^testing.T) {
     tick :: proc(seats:^core.Table(Seat),first,second:core.Entity,device:core.Input,focus:int,bindings:^Input_Map,moved:=false) {
         for e,slot in ([2]core.Entity{first,second}) {
             own:=slot_input(device,slot,2,focus)
-            seat_feed(core.get(seats,e),&own,bindings,moved && slot==focus,1.0/60)
+            seat_feed(core.edit(seats,e),&own,bindings,moved && slot==focus,1.0/60)
         }
     }
     tick(&w.seats,first,second,device,0,&bindings)
@@ -148,7 +148,7 @@ a_block_of_no_seat_takes_every_local_seat :: proc(t:^testing.T) {
     read:=Input_Of(Seat_Test_Action){seats=core.read(&w.seats),drivables=core.read(&w.drivables)}
     blocked :: proc(seats:^core.Table(Seat),e:core.Entity) -> Action_Mask {return seats.values[core.row_of(seats,e)].blocked}
     device:=core.Input{keys_down={.Space},keys_pressed={.Space}}
-    seat_feed(core.get(&w.seats,first),&device,&bindings,false,1.0/60)
+    seat_feed(core.edit(&w.seats,first),&device,&bindings,false,1.0/60)
     request_apply(&a,{kind=.Block_Add,owner=menu,mask=ALL_ACTIONS})
     blocks_apply(&w.seats,&state)
     testing.expect(t,blocking(&state,menu))

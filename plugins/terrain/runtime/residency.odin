@@ -518,7 +518,7 @@ collider_room :: proc(c:^Chunk_Tables,physics:phys.Physics_Settings) -> (room:[2
     room={int(made.heightfields),int(made.meshes)}
     shapes=int(made.shapes)
     for collider,row in c.colliders.values[:core.count(c.colliders)] {
-        if core.has(core.read(c.chunks),c.colliders.entities[row]) {continue}
+        if core.has(c.chunks,c.colliders.entities[row]) {continue}
         shapes-=1
         #partial switch collider.kind {
         case .Heightfield: room[0]-=1

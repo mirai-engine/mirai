@@ -520,7 +520,7 @@ rows_swap :: proc(r:^Step_Rows,t:^core.Raw_Table,info:^runtime.Type_Info,had:[]u
         _,was_off,_:=core.raw_state(t,e)
         if current!=nil {mem.copy(raw_data(had),current,size)}
         switch {
-        case r.present[k] && current!=nil: saved_copy(core.raw_get(t,info,e),raw_data(value),size,transient)
+        case r.present[k] && current!=nil: saved_copy(core.raw_edit(t,info,e),raw_data(value),size,transient)
         case r.present[k]:                 core.raw_add(t,info,e,raw_data(value))
         case current!=nil:                 core.raw_remove(t,e)
         }

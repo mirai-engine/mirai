@@ -95,7 +95,7 @@ selected_colliders_show_their_physics_shape_even_with_the_grid_hidden :: proc(t:
         testing.expect(t,abs(vertex.position.x-7)==1 && abs(vertex.position.y-4)==1 && abs(vertex.position.z-6)==1)
     }
     f.app.extras.debug_count=0
-    core.get(&f.transforms,selected).position.x=2
+    core.edit(&f.transforms,selected).position.x=2
     collider_test_step(&f)
     collider_lines_draw(&f.session,core.world_ref(&f.w,&f.info))
     testing.expect_value(t,f.app.extras.debug_count,2)
@@ -175,7 +175,7 @@ selected_author_colliders_exclude_derived_geometry_and_never_draw_partial_shapes
     mesh,generated:=host.assets_mesh_generate(&assets,geom.mesh_buffer_view(&geometry),options={no_lods=true,collision=true})
     if !testing.expect(t,generated) {return}
     core.add(&f.statics,first,erender.Mesh_Renderer{mesh=mesh});collider_test_settle(&f)
-    core.get(&f.colliders,first)^=phys.collider_mesh()
+    core.edit(&f.colliders,first)^=phys.collider_mesh()
     collider_test_step(&f)
     collider_lines_draw(&f.session,core.world_ref(&f.w,&f.info))
     if !testing.expect_value(t,f.app.extras.debug_count,2) {return}

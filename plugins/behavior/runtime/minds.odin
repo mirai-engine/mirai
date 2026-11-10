@@ -175,7 +175,7 @@ minds_tick :: proc(minds:^Minds,agents:^core.Table(Mind_Agent),name:string,acts:
     for row in 0..<core.count(agents) {
         if agents.values[row].mind!=key {continue}
         w.entity=core.entity_at(agents,row)
-        mind_run(&core.at(agents,row).state,acts,think,ctx,w)
+        mind_run(&core.edit_at(agents,row).state,acts,think,ctx,w)
     }
     if w.fars.table==nil || !nav.nav_far_decide(time) {return}
     // Until its next tick, once every step of what is far.
@@ -186,7 +186,7 @@ minds_tick :: proc(minds:^Minds,agents:^core.Table(Mind_Agent),name:string,acts:
         e:=agents.entities[row]
         if core.raw_find(core.raw(w.fars.table),type_info_of(nav.Nav_Far),e)==nil {continue}
         w.entity,w.far=e,true
-        mind_run(&core.at(agents,row).state,acts,think,ctx,w)
+        mind_run(&core.edit_at(agents,row).state,acts,think,ctx,w)
     }
     w.far=false
     ctx.lease=1

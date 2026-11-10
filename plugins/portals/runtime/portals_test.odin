@@ -199,7 +199,7 @@ lab_frame :: proc(lab:^Lab,wall:core.Entity,portal:mm.Transform,face,depth:f32) 
     for box in rim_boxes(portal.scale.xy,face,depth) {
         lab_box(lab,.Static,portal.position+mm.quat_rotate(portal.rotation,box.center),box.half,portal.rotation)
     }
-    cuts,_:=core.get(core.read(&lab.cuts),wall)
+    cuts,_:=core.get(&lab.cuts,wall)
     cuts.boxes[cuts.count]=hole_box(portal,depth)
     cuts.count+=1
     core.add(&lab.cuts,wall,cuts)
@@ -283,7 +283,7 @@ a_body_halfway_through_an_opening_meets_what_is_in_front_of_the_exit :: proc(t:^
         at:=lab_body(&lab,cube)
         testing.expectf(t,abs(at.pose.position.z-0.1)<0.03 && abs(at.pose.position.x)<1e-3,"the cube is at %v",at.pose.position)
         testing.expectf(t,linalg.length(at.linear)<0.05,"the cube moves at %v",at.linear)
-        testing.expect_value(t,core.count(core.read(&lab.cuts)),1)
+        testing.expect_value(t,core.count(&lab.cuts),1)
         testing.expect_value(t,lab.problems.count,0)
     }
     {
@@ -353,8 +353,8 @@ the_twin_of_a_body_goes_once_it_is_through :: proc(t:^testing.T) {
     // Out of the exit and on its way, with no twin, cut or copy left: nothing is where a copy would be.
     out:=lab_body(&lab,cube).pose.position
     testing.expectf(t,out.x>21 && abs(out.z-0.3)<1e-3,"the cube is at %v",out)
-    testing.expect_value(t,core.count(core.read(&lab.twins)),0)
-    testing.expect_value(t,core.count(core.read(&lab.cuts)),0)
+    testing.expect_value(t,core.count(&lab.twins),0)
+    testing.expect_value(t,core.count(&lab.cuts),0)
     found:[4]core.Entity
     copied,_:=phys.overlap_sphere(core.ref(&lab.state),mm.transform_point(through_of(openings[1].entrance,openings[1].exit),out),0.5,found[:])
     testing.expect_value(t,copied,0)
@@ -384,7 +384,7 @@ a_body_halfway_through_an_opening_steps_again_the_same_from_a_snapshot :: proc(t
     }
     first:[8]u64
     run(&lab,cube,openings[:],first[:])
-    testing.expect(t,core.has(core.read(&lab.twins),cube),"the snapshot is taken halfway in")
+    testing.expect(t,core.has(&lab.twins,cube),"the snapshot is taken halfway in")
     snapshot:Lab_World
     if !core.test_world_init(t,&snapshot,phys.test_types) {return}
     defer core.test_world_destroy(&snapshot)
