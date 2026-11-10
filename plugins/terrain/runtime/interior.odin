@@ -88,11 +88,11 @@ interior_layer_removed :: proc "contextless" (interior:^Interior,index:int) {
 volume_column_top :: proc "contextless" (s:^Source,x,z:int) -> f32 {
     origin:=source_origin(s)
     for y:=int(s.samples.y)-2;y>=0;y-=1 {
-        below,above:=block_get(&s.distances,{x,y,z}),block_get(&s.distances,{x,y+1,z})
+        below,above:=block_get(&s.field,{x,y,z}),block_get(&s.field,{x,y+1,z})
         if below>0 || above<=0 {continue}
         return origin.y+(f32(y)+below/(below-above))*s.cell
     }
-    if block_get(&s.distances,{x,int(s.samples.y)-1,z})<=0 {return origin.y+f32(s.samples.y-1)*s.cell}
+    if block_get(&s.field,{x,int(s.samples.y)-1,z})<=0 {return origin.y+f32(s.samples.y-1)*s.cell}
     return origin.y
 }
 

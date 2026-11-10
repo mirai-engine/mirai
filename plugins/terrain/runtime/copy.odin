@@ -13,7 +13,7 @@ data_source_copy :: proc(dst,src:^Source) -> bool {
         if error!=nil {return false}
         delete(dst.file,dst.allocator);dst.file=file
     }
-    if !grid_copy(&dst.heights,&src.heights,dst.allocator) || !grid_copy(&dst.holes,&src.holes,dst.allocator) || !grid_copy(&dst.distances,&src.distances,dst.allocator) {return false}
+    if !grid_copy(&dst.field,&src.field,dst.allocator) || !grid_copy(&dst.holes,&src.holes,dst.allocator) || !grid_copy(&dst.field,&src.field,dst.allocator) {return false}
     if !grid_copy(&dst.weights,&src.weights,dst.allocator) || !coarse_copy(&dst.coarse,&src.coarse,dst.allocator) {return false}
     dst.info,dst.origin=src.info,src.origin
     return true
@@ -49,7 +49,7 @@ source_restore :: proc(dst,src:^Source,low,high:[3]int) -> (change:Change) {
         if from[axis]>to[axis] {return}
     }
     change.low,change.high=to,from
-    g,h:=source_samples_grid(dst),source_samples_grid(src)
+    g,h:=&dst.field,&src.field
     if !grid_prepare(g,from,to,dst.allocator) {change.error=.Out_Of_Memory;return}
     for z in from.z..=to.z {for y in from.y..=to.y {for x in from.x..=to.x {
         p:=[3]int{x,y,z}
@@ -78,9 +78,9 @@ source_resize :: proc(dst,src:^Source,samples:[2]int,allocator:=context.allocato
     defer source_destroy(&temporary)
     shift:=(samples-old)/2
     last:=[3]int{samples.x-1,0,samples.y-1}
-    if !grid_prepare(&temporary.heights,{},last,allocator) {return false}
+    if !grid_prepare(&temporary.field,{},last,allocator) {return false}
     for z in 0..<samples.y {for x in 0..<samples.x {
-        grid_set(&temporary.heights,x,z,grid_get(&src.heights,clamp(x-shift.x,0,old.x-1),clamp(z-shift.y,0,old.y-1)))
+        grid_set(&temporary.field,x,z,grid_get(&src.field,clamp(x-shift.x,0,old.x-1),clamp(z-shift.y,0,old.y-1)))
     }}
     if !grid_prepare(&temporary.weights,{},last,allocator) {return false}
     for z in 0..<samples.y {for x in 0..<samples.x {
