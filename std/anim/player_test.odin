@@ -101,7 +101,7 @@ player_with_an_invalid_clip_does_nothing :: proc(t:^testing.T) {
 events_fire_once_when_playback_crosses_their_marker :: proc(t:^testing.T) {
     lib:=make_library(t)
     defer library_destroy(&lib)
-    clip:=timed_clip(&lib,.Once,1,{{0,1},{0.5,2},{1,3}})
+    clip:=timed_clip(&lib,.Once,1,{{0,1,0},{0.5,2,0},{1,3,0}})
     p:=player_make(clip,1,0.75)
     out:[dynamic]u32
     defer delete(out)
@@ -124,7 +124,7 @@ events_fire_once_when_playback_crosses_their_marker :: proc(t:^testing.T) {
 loop_fires_the_markers_at_both_ends_once_per_pass :: proc(t:^testing.T) {
     lib:=make_library(t)
     defer library_destroy(&lib)
-    p:=player_make(timed_clip(&lib,.Loop,1,{{0,10},{0.5,11},{1,12}}))
+    p:=player_make(timed_clip(&lib,.Loop,1,{{0,10,0},{0.5,11,0},{1,12,0}}))
     counts:[3]int
     for _ in 0..<24 {
         out:[dynamic]u32
@@ -141,7 +141,7 @@ loop_fires_the_markers_at_both_ends_once_per_pass :: proc(t:^testing.T) {
 ping_pong_fires_each_marker_on_the_way_out_and_on_the_way_back :: proc(t:^testing.T) {
     lib:=make_library(t)
     defer library_destroy(&lib)
-    p:=player_make(timed_clip(&lib,.Ping_Pong,1,{{0,10},{0.25,11},{1,12}}))
+    p:=player_make(timed_clip(&lib,.Ping_Pong,1,{{0,10,0},{0.25,11,0},{1,12,0}}))
     counts:[3]int
     order:[dynamic]u32
     defer delete(order)
@@ -160,7 +160,7 @@ ping_pong_fires_each_marker_on_the_way_out_and_on_the_way_back :: proc(t:^testin
 backward_playback_fires_markers_in_reverse_order :: proc(t:^testing.T) {
     lib:=make_library(t)
     defer library_destroy(&lib)
-    p:=player_make(timed_clip(&lib,.Once,1,{{0.25,1},{0.5,2},{0.75,3},{1,4}}),-1)
+    p:=player_make(timed_clip(&lib,.Once,1,{{0.25,1,0},{0.5,2,0},{0.75,3,0},{1,4,0}}),-1)
     player_restart(&lib,&p)
     out:[dynamic]u32
     defer delete(out)
@@ -174,7 +174,7 @@ backward_playback_fires_markers_in_reverse_order :: proc(t:^testing.T) {
 one_long_advance_reports_every_pass_in_order_and_counts_what_does_not_fit :: proc(t:^testing.T) {
     lib:=make_library(t)
     defer library_destroy(&lib)
-    clip:=timed_clip(&lib,.Loop,1,{{0.5,5}})
+    clip:=timed_clip(&lib,.Loop,1,{{0.5,5,0}})
     p:=player_make(clip)
     events:[8]Event
     written,dropped:=player_advance(&lib,&p,2.75,events[:])

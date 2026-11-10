@@ -7,15 +7,15 @@ import anim "plugins:animation/runtime"
 import phys "plugins:physics/runtime"
 
 // Locomotion animated by the physics. Every tick, each Character with an Animation tells its
-// motion matching (a .match in Animation.asset) what its body did in the simulation of this tick:
+// motion matching (the locomotion of the .character in Animation.asset) what its body did in the simulation of this tick:
 // the mode its locomotion is in, of which the Character is the only writer, the velocity of the
 // body, the velocity its Move_Input asks of that mode at the acceleration of the mode, where it
 // turns (toward its move, or where it looks when it moves relative to its look), the wall it
 // leans on, which its trajectory does not go into, and, while it falls and the clips of that mode
 // play toward a landing marker, when it lands on the arc it follows (phys.character_landing).
-// While it walks a clip of matching, the warping of its Animation.motion stretches the stride to
-// the speed of the root of its pose. A game writes no code for locomotion; the clips and their
-// modes are in the .match.
+// While it walks a clip of matching, the warping of its .character stretches the stride to the
+// speed of the root of its pose. A game writes no code for locomotion; the clips and their modes
+// are in the .character.
 @(step="fixed")
 animation_locomotion :: proc(characters:core.Read(phys.Character),found:core.Read(phys.Character_State),animations:core.Read(anim.Animation),motions:core.Read(core.Motion),inputs:core.Read(inp.Move_Input),walk_actions:inp.Input_Of(phys.Walk_Action),walks:core.Read(phys.Walk),tacticals:core.Read(phys.Tactical_Sprint),flights:core.Read(phys.Fly),swims:core.Read(phys.Swim),worlds:core.Read(core.World_Transform),playback:core.Ref(anim.Playback),physics:core.Ref(phys.Physics_State),requests:^anim.Animation_Requests,warps:^anim.Motion_Requests,problems:^core.Problems) {
     for row in 0..<core.count(characters) {
@@ -43,7 +43,7 @@ animation_locomotion :: proc(characters:core.Read(phys.Character),found:core.Rea
             // The slide keeps its course and the climb its way: what the body does is what it asks.
             if walk,ok:=core.get(walks,entity);ok {goal.desired,goal.acceleration,goal.braking={going.linear.x,0,going.linear.z},walk.acceleration,walk.braking}
             // The clip of the climb warps onto where it ends (mantle.odin).
-            if character.mode==phys.MODE_MANTLING && animation.motion!={} {anim.motion_target(warps,entity,MANTLE_WINDOW,mantle_target(character,placed.rotation))}
+            if character.mode==phys.MODE_MANTLING && matching {anim.motion_target(warps,entity,MANTLE_WINDOW,mantle_target(character,placed.rotation))}
         case:
             if walk,ok:=core.get(walks,entity);ok {
                 sprinting:=input.buttons&inp.action_bit(inp.action_of(walk_actions,.Sprint))!=0
@@ -53,7 +53,7 @@ animation_locomotion :: proc(characters:core.Read(phys.Character),found:core.Rea
             }
         }
         anim.match_goal(requests,goal)
-        if animation.motion=={} || !matching {continue}
+        if !matching {continue}
         // The warping corrects what the clip travels, in its own direction, toward the body: a clip
         // that strafes or backs off is not turned as if it went forward.
         along:=playing.travel if playing.travel!={} else mm.FORWARD

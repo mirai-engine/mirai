@@ -23,7 +23,6 @@ Cinematic_World :: struct {
     targets:core.Table(anim.Animation_Target),
     animations:core.Table(anim.Animation),
     progress:core.Table(anim.Animation_Progress),
-    modifiers:core.Table(anim.Pose_Modifiers),
     attachments:core.Table(anim.Bone_Attachment),
     sources:core.Table(anim.Pose_Source),
     cinematics:core.Table(Cinematic),
@@ -58,11 +57,8 @@ cinematic_types :: proc(types:^[dynamic]core.Test_Type) {
 
 @(private="file")
 Cinematic_Shared :: struct {
-    poses:anim.Pose_Assets,
+    characters:anim.Character_Assets,
     skeletons:anim.Skeleton_Assets,
-    blends:anim.Blend_Assets,
-    matches:anim.Match_Assets,
-    actions:anim.Actions_Assets,
     sources:anim.Source_Assets,
 }
 
@@ -71,10 +67,10 @@ Cinematic_Shared :: struct {
 @(private="file")
 cinematic_tick :: proc(w:^Cinematic_World,s:^Cinematic_Shared,app:^host.App,problems:^core.Problems,tick:u64,dt:f32) {
     time:=core.Time{dt=dt,tick=tick,playing=true}
-    anim.animation_sample(core.read(&w.animations),&w.progress,core.read(&w.modifiers),core.read(&w.attachments),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),core.read(&w.targets),core.read(&w.meshes),core.read(&w.sources),&w.requests,&w.events,&w.modifier_requests,&w.modifier_runtime,&w.playback,&s.poses,&s.skeletons,app,time,{},problems,&s.blends,&s.matches,&w.actions,&s.actions,nil,&w.motion_requests,nil,&s.sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
+    anim.animation_sample(core.read(&w.animations),&w.progress,core.read(&w.attachments),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),core.read(&w.targets),core.read(&w.meshes),core.read(&w.sources),&w.requests,&w.events,&w.modifier_requests,&w.modifier_runtime,&w.playback,&s.characters,&s.skeletons,app,time,{},problems,&w.actions,nil,&w.motion_requests,&s.sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
     core.test_world_settle(w)
     anim.animation_fields(core.test_world_ref(w),core.ref(&w.playback),&w.fields,core.ref(&s.sources),app,problems)
-    anim.animation_advance(core.read(&w.modifiers),&w.transforms,core.read(&w.parents),{},&w.modifier_requests,&w.modifier_runtime,&w.playback,&w.constraints,&w.grounding,{},{},time,&w.requests,core.ref(&s.skeletons),problems,nil,nil,{},{},core.CLOCK_DEFAULT,nil)
+    anim.animation_advance(&w.transforms,core.read(&w.parents),{},&w.modifier_requests,&w.modifier_runtime,&w.playback,&w.constraints,&w.grounding,{},{},time,&w.requests,core.ref(&s.skeletons),problems,nil,&s.characters,{},{},core.CLOCK_DEFAULT,nil)
     cinematic_advance(core.ref(&w.entities),&w.cinematics,core.read(&w.shots),core.read(&w.viewers),&w.views,core.read(&w.cameras),core.read(&w.drivables),&w.transforms,core.read(&w.parents),core.read(&w.animations),core.ref(&w.playback),core.ref(&w.shown),core.ref(&w.seat_state),&w.camera_requests,&w.seat_requests,core.read(&w.seats),time,core.read(&w.remotes),problems)
     core.test_world_settle(w)
 }
@@ -88,7 +84,7 @@ a_viewer_shows_the_shots_of_a_clip_while_it_plays :: proc(t:^testing.T) {
     problems:core.Problems
     assets:host.Assets;app:=host.App{assets=&assets,allocator=context.allocator};defer host.app_content_destroy(&app)
     s:Cinematic_Shared
-    defer {anim.pose_assets_free(&s.poses);anim.skeleton_assets_free(&s.skeletons);anim.blend_assets_free(&s.blends);anim.match_assets_free(&s.matches);anim.actions_assets_free(&s.actions);anim.source_assets_free(&s.sources)}
+    defer {anim.character_assets_free(&s.characters);anim.skeleton_assets_free(&s.skeletons);anim.source_assets_free(&s.sources)}
     id:=base.Asset_Id{0xc1,0xc2}
     {
         dolly:=[]lib.Keyframe{{time=0,value={0,0,0,0}},{time=1,value={8,0,0,0}}}
