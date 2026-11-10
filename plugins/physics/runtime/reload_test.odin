@@ -2,21 +2,19 @@ package physics
 
 import "core:fmt"
 import "core:math/linalg"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
 import scene "mirai:engine/scene"
 import sim "plugins:physics/runtime/sim"
+import "mirai:std/base"
 import mm "mirai:std/math"
 
 @(test)
 reloading_a_scene_recreates_body_velocity_and_automatic_joint_frames :: proc(t:^testing.T) {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    folder:=fmt.tprintf("%s/mirai-physics-reload-%d",directory,os.get_pid())
+    folder:=base.test_folder(t,"physics-reload")
+    if folder=="" {return}
     file:=fmt.tprintf("%s/physics.scene",folder)
-    if !testing.expect(t,os.make_directory_all(folder)==nil) {return}
-    defer os.remove(folder);defer os.remove(file)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     authored:asset.Scene
     testing.expect_value(t,asset.scene_init(&authored,&types,asset.KIND_SCENE,{12,45}),asset.Error.None)
