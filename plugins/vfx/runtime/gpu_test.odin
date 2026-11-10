@@ -52,9 +52,7 @@ gpu_fixture_init :: proc(t: ^testing.T, f: ^Gpu_Fixture, width, height: u32, set
 	}
 	f.device = device
 	if !testing.expect(t, gpu.renderer_init(&f.renderer, {device = device, width = width, height = height, settings = settings, shaders = &loaded}), f.renderer.error) {return false}
-	directory, _ := os.temp_directory(context.temp_allocator)
-	f.folder = fmt.aprintf("%s/mirai-vfx-gpu-%d-%p", directory, os.get_pid(), f)
-	os.make_directory_all(f.folder)
+	f.folder = base.test_folder(t, "vfx-gpu")
 	if !testing.expect(t, host.assets_init(&f.assets, {root = f.folder, renderer = &f.renderer})) {return false}
 	f.app = host.App{allocator = context.allocator, renderer = &f.renderer, assets = &f.assets, device = device}
 	cube := host.assets_shape(&f.assets, .Cube)
@@ -73,8 +71,6 @@ gpu_fixture_destroy :: proc(f: ^Gpu_Fixture) {
 	particle_sync_free(&f.sync)
 	host.assets_destroy(&f.assets)
 	gpu.renderer_destroy(&f.renderer)
-	os.remove_all(f.folder)
-	delete(f.folder)
 }
 
 // The emitters of a world for the next frame, as particles_sync gives them.
