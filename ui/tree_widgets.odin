@@ -67,6 +67,10 @@ tree_build_leaf :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,nod
     case .Image:
         image(ctx,{id=node_id,quad=image_ref.quad,tint=style.fill,width=node.layout.width,height=node.layout.height,border=image_ref.border,border_uv=image_ref.border_uv,fit=image_ref.fit,size=image_ref.size})
     case .Progress:
+        // The bar redraws when its fill moves a pixel.
+        if r:=bound_range(b.instance,bound.value);r!=nil && r.step!=0 {
+            if rect,laid:=widget_rect(ctx,node_id);laid && rect.w*ctx.scale>=1 {r.step,r.floor=1/(rect.w*ctx.scale),false}
+        }
         progress(ctx,{id=node_id,value=f32(shown),width=node.layout.width,height=node.layout.height,
             fill=style.fill,track=style.track,stroke=style.stroke,corners=style.radius,quad=image_ref.quad,border=image_ref.border,border_uv=image_ref.border_uv,
             fill_mode=style.fill_mode,stroke_width=style.stroke_width,program=tree.programs[node.style] if int(node.style)<len(tree.programs) else 0,program_values=style.program_values})

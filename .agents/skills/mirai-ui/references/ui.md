@@ -463,6 +463,9 @@ The node types are in `Node_Kind` (`tree.odin`) and the events in `Tree_Event`.
   - The instance copies only the bytes it reads: the ranges read from each region are joined and
     packed into `values`. `tree_values_refresh` copies only those ranges, skips what did not change
     according to its stamp and stores which ranges changed until the next build.
+  - What changed is what a node shows: an f32 shown only by a number of a template is copied when
+    it moves a shown step (its decimals, a second of a clock), and the value of a Progress when its
+    fill moves a pixel; below that nothing is copied and no node is built. Games never round.
   - The formats after the colon are in `tree_bind.odin`: numbers with the separators of the
     language of `Game_Source.language` (`NUMBER_LOCALES`), times, texts by value and CLDR plurals
     (`{n:one=# coin|other=# coins}`). An enum name or a category that does not exist fails like a

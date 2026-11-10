@@ -451,6 +451,7 @@ tree_instance_init :: proc(instance:^Tree_Instance,tree:^Widget_Tree,host:^Bind_
         o[.Items]=true
         b.text,o[.Text]=tree_bind_field(instance,scope,name(tree,&node,.Text),.Shown)
         b.value,o[.Value]=tree_bind_field(instance,scope,name(tree,&node,.Value),tree_value_want(node.kind))
+        if node.kind==.Progress && b.value.kind==.Float && b.value.size==4 && instance.host!=nil {instance.ranges[len(instance.ranges)-1].step=-1}
         if b.value.text && node.kind!=.Switcher && strings.index_byte(string(tree.strings[node.text_offset:][:node.text_length]),'=')<0 {o[.Value]=false}
         b.visible,o[.Visible]=tree_bind_field(instance,scope,name(tree,&node,.Visible),.Number)
         b.selected,o[.Selected]=tree_bind_field(instance,scope,name(tree,&node,.Selected),.Number)
