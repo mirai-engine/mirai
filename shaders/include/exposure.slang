@@ -2,13 +2,11 @@
 // its image, and the exposure value it adapts to.
 #ifndef MIRAI_EXPOSURE_SLANG
 #define MIRAI_EXPOSURE_SLANG
+#include <shared_constants.slang>
 
-// render.MIDDLE_GRAY: the reflectance of the card a meter takes as average.
-#define MIDDLE_GRAY 0.18
-
-// Bins of log2 of a luminance in nits, from EXPOSURE_LOG_MIN to
+// MIDDLE_GRAY: the reflectance of the card a meter takes as average.
+// EXPOSURE_BINS bins of log2 of a luminance in nits, from EXPOSURE_LOG_MIN to
 // EXPOSURE_LOG_MAX: a sixth of a stop to a third of one each.
-#define EXPOSURE_BINS 128u
 #define EXPOSURE_LOG_MIN -14.0
 #define EXPOSURE_LOG_MAX 28.0
 // After the bins, the count of the pixels of sky.

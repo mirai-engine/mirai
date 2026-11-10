@@ -114,6 +114,9 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
 
 - The shader language is Slang: a single source, SPIR-V for Vulkan and MSL for Metal generated from
   that SPIR-V with SPIRV-Cross.
+- A constant the shaders share with the CPU has one declaration, in Odin (`render/abi`, `asset`,
+  `rhi`), and the shaders get it generated
+  ([shared constants](references/shaders.md#compilation)): no `.slang` source writes its value.
 - The graphics API is the own `rhi` over Vulkan and Metal; wgpu is not used.
 - Each shader stage compiles in its own `slangc` process, even if other stages have the same
   defines.

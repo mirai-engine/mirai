@@ -233,7 +233,6 @@ meshes_created_before_their_world_transform_become_visible_and_visual_instances_
             testing.expectf(t,red==0 && green>100,"replacement %d hides the source and samples UV1 (%d red, %d green)",pass,red,green)
             if green>0 {testing.expect(t,pass==2?green_x/green<width/2:green_x/green>width/2)}
             testing.expect_value(t,app.renderer.scene.hidden_count,1)
-            testing.expect(t,!sync.instances[0].hidden,"the world instance cache keeps its visibility")
             testing.expect_value(t,app.renderer.scene.instances[1].meta.z,u32(u64(e)))
         } else {
             testing.expect(t,red>100 && green==0,"retiring the generated preview restores the source")

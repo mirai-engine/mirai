@@ -7,6 +7,7 @@ import "mirai:asset"
 import "mirai:rhi"
 import "mirai:std/jobs"
 import "mirai:std/compressor"
+import "mirai:render/abi"
 
 // The pages of streamed meshes. A mesh with the blocks of its pages (of a
 // file, or made in memory and packed: asset.mesh_pages_pack) whose root is
@@ -27,7 +28,7 @@ import "mirai:std/compressor"
 // pools and not in a cut rays trace. So every page in the pools has its
 // parents there too, and the clusters the cull draws cover each mesh once.
 
-PAGE_SLOT_WORDS :: asset.MESH_PAGE_WORDS // PAGE_SLOT_WORDS of cull_clusters.comp
+PAGE_SLOT_WORDS :: abi.PAGE_SLOT_WORDS // PAGE_SLOT_WORDS of cull_clusters.comp
 // Frames after its last stamp before a page in use may give its slot up: past
 // the frames its stamps take to come back.
 PAGE_KEEP :: u64(60)
@@ -37,7 +38,7 @@ PAGE_LOADS_MAX :: 64
 // Requests the cull lists in a frame; past them they are counted and dropped.
 PAGE_REQUEST_CAPACITY :: 8192
 // Words before the first request: the first counts them (cull_clusters.comp).
-PAGE_REQUEST_FIRST :: 4
+PAGE_REQUEST_FIRST :: abi.PAGE_REQUEST_FIRST
 // Frames in a row with pages that found no room before Stats.problem says so.
 PAGE_SHORT_FRAMES :: 120
 PAGE_SLOT_NONE :: max(u32)

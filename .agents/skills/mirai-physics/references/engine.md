@@ -2,8 +2,8 @@
 
 The solver (`plugins/physics/runtime/sim`, package `mirai_physics`; [physics](physics.md),
 [character](character.md)) does not know the data world; the plugin library
-(`plugins/physics/runtime`) connects it with the tables, in the same dynamic library. Imports:
-`phys "plugins:physics/runtime"` and, for the model, `sim "plugins:physics/runtime/sim"`.
+(`plugins/physics/runtime`) connects it with the tables, in the same dynamic library. A game or
+another plugin imports `phys "plugins:physics/runtime"`, never the solver.
 Destruction is the [destruct](engine-destruct.md) plugin; the [editor part](#editor-part) is
 `plugins/physics/editor`. Fields, defaults and constructors (`collider_*`, `joint_*`,
 `character_default`) are in `components.odin` and in `engine.describe`.
@@ -258,7 +258,9 @@ gives the [world queries](#queries). `physics_step` (`fixed`, `simulate` stage),
 4. Hands the `Character_Move` to the characters.
 5. **Advances the simulation** with `time.dt` (only if `Time.playing`, with the application's
    threads) and writes the poses into `Transform` and the states into `core.Motion` and
-   `Character_State`.
+   `Character_State`: of the bodies the step moved or woke, of what the reconciliation, a request
+   or a pose target addressed in the tick, of the proxies and of the characters. The rows of a
+   body that sleeps already say so and are not looked at.
 6. Forwards the events.
 
 In the editor loop nothing is simulated: bodies follow the `World_Transform` of their entity.
@@ -588,6 +590,24 @@ Filters:
   ancestor ([model drawing](physics.md#debug-draw)); `collider_bounds` gives its world box, which
   the [editor preview](../../mirai-editor/references/panels.md#previews) uses when the full drawing
   does not fit.
+
+## Owned bodies
+
+A library that makes collision from its own data, as `foliage` does for the instances of its
+cells, makes static bodies of its own in the simulation (`owned.odin`) instead of entities.
+
+- It declares a `Body_Owner` and makes each body with `owned_body_create`, with the entity its
+  hits name and its own index of the body, and each shape with `owned_shape_create` from a
+  primitive `Collider`, a pose in the frame of the body and its own index of the shape. What is
+  not made says why: no room in `Physics_Settings`, or no memory.
+- It keeps the handles in a storage of the world, so a copy for Play or a rollback carries them
+  with the simulation, and ends them itself (`owned_body_destroy`, `owned_shape_destroy`): physics
+  never makes, moves or ends an owned body.
+- `owned_body_of` and `owned_shape_user` say from the body and the shape of a `Hit` whose they are
+  and which ones, without the owner searching its own lists.
+- A cache outside the world that keeps bodies asks `simulation_replaced` whether they are still
+  of this simulation. `settings_capacities` gives the capacities a world is made with, for a
+  library that shares them out, as `terrain` does with the colliders of its chunks.
 
 ## For networking and saves
 

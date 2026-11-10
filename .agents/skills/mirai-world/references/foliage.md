@@ -240,8 +240,9 @@ same function:
   On a server the sources are the bodies of all connections, so each end has the cells around what
   it simulates; what the server moves far from every source does not collide with the foliage.
 - `Foliage_Physics` stores bodies and shapes with the world: a Play copy or a rollback carries
-  both together. It does not run in a resimulated tick. `collider_remove` removes the collision of
-  an instance in constant time.
+  both together. They are [owned bodies](../../mirai-physics/references/engine.md#owned-bodies) of
+  physics. It does not run in a resimulated tick. `collider_remove` removes the collision of an
+  instance in constant time.
 
 ## Instances removed in play
 
@@ -250,7 +251,7 @@ like the [tombstones](../../mirai-gameplay/references/libraries.md#scene-referen
 is destroyed in a section (`removal.odin`).
 
 - `foliage_remove(requests, plant)` requests it with a `Foliage_Plant` (its Foliage, cell and id,
-  `Placed.id`), as a pick of its batches gives it or `hit_of(foliage_physics, physics, hit)` from
+  `Placed.id`), as a pick of its batches gives it or `hit_of(physics, hit)` from
   a `physics.Hit`.
 - `foliage_removals` fulfills it at the end that decides (alone, or the server; a client requests
   nothing), once per instance that the cell shows, grouped **by cell**: an entity with

@@ -6,6 +6,7 @@ import "mirai:asset"
 import "mirai:rhi"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import "mirai:render/abi"
 
 // The meshes of the scene in the two word pools (gpu_types.odin): each one a
 // block of the vertex pool (the blocks of its pages one after the other, in
@@ -378,7 +379,7 @@ mesh_rays_build :: proc(g: asset.Mesh_Geometry, software: bool, allocator := con
 }
 
 // A primitive a ray meets: its cluster among those of the mesh, then its triangle.
-PRIMITIVE_TRIANGLE_BITS :: 7
+PRIMITIVE_TRIANGLE_BITS :: abi.PRIMITIVE_TRIANGLE_BITS
 #assert(1 << PRIMITIVE_TRIANGLE_BITS >= CLUSTER_TRIANGLES)
 
 // The corners of the triangle a primitive names, in the space of the mesh.

@@ -62,6 +62,8 @@ with networking ([networking](../mirai-networking/SKILL.md)).
   and [network](references/engine-destruct.md#network)
 - Breaking or digging terrain (craters, debris, pieces with physics per material): not `destruct`
   → [what can be dug](../mirai-world/references/terrain.md#what-digging-leaves)
+- Bodies a library makes from its own data (the cells of a foliage), the capacities of the
+  simulation, who may import the solver → [owned bodies](references/engine.md#owned-bodies)
 - `core.place` on a body → [engine.md#requests](references/engine.md#requests);
   `core.World_Queries` (cameras, feet) → [engine.md#queries](references/engine.md#queries)
 - Editor part (collider preset, collision settings, `physics.collision.*` API, Simulate, Collision
@@ -129,6 +131,9 @@ with networking ([networking](../mirai-networking/SKILL.md)).
   moves a body sends a request to `Body_Requests`; whoever teleports it uses `core.place`; whoever
   imposes the pose of another owner writes `core.Pose_Target`; whoever owns a body of another
   library uses proxies. Nobody writes the `Transform` of a body.
+- Only the physics plugin and the destruct plugins, whose fracture model is built on it, import
+  the solver: `mirai check` refuses the import in any other plugin and in a game. A library makes
+  static collision of its own with the owned bodies of the integration.
 - A Character's body and its look both face -Z.
 - A character moves only through its `Character_Move`: locomotion writes it and, in a game mode,
   the step of that mode writes it first, to which locomotion only adds the layered movements.

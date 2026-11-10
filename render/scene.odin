@@ -1,5 +1,6 @@
 package mirai_render
 
+import "base:intrinsics"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
@@ -8,6 +9,7 @@ import "mirai:asset"
 import "mirai:rhi"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import "mirai:render/abi"
 
 // GPU scene: one global vertex/index pool for every mesh, per-mesh BLAS (a
 // software BVH always, a native acceleration structure when hardware ray
@@ -156,9 +158,9 @@ LIGHT_CHANGE_SIZES :: f32(10)
 // rays meet of it (occluder_changed of trace.slang) and their histories start
 // again there. Past its room an instance joins the box it grows least, which
 // then stands for several (OCCLUDERS_MANY).
-OCCLUDER_CHANGES_MAX :: 16
-LIGHT_MOVES_MAX :: 16
-OCCLUDERS_MANY :: max(u32)
+OCCLUDER_CHANGES_MAX :: abi.OCCLUDER_CHANGES_MAX
+LIGHT_MOVES_MAX :: abi.LIGHT_MOVES_MAX
+OCCLUDERS_MANY :: abi.OCCLUDERS_MANY
 Occluder_Change :: struct {
 	low, high: Vec3,
 	instance:  u32, // OCCLUDERS_MANY: several, or one that is gone
@@ -305,8 +307,8 @@ Scene_State :: struct {
 	tlas_scratch:         [dynamic]Bvh_Item,         // the items of the instances and of the batches rays meet, while the tree is built
 	hw_instances:         [dynamic]rhi.Tlas_Instance, // of the native TLAS, one by instance; their BLAS when it is built (tlas_instances_record)
 	instances_dirty:      bool,
-	motion_pending:       bool,
-	touched:              [dynamic]u32, // instances that go to the GPU alone: moved since the last upload, or drawn in motion by it
+	touched:              [dynamic]u64, // a bit by instance that goes to the GPU alone: changed since the last upload, or drawn in motion by it
+	touched_count:        int,
 	hidden_count:         int,          // instances of the set that are hidden
 	tlas_nodes_dirty:     bool,         // the nodes changed and the instances did not: a move
 	tlas_refs_dirty:      bool,         // with them, their references: the tree was built again
@@ -402,7 +404,7 @@ scene_init :: proc(r: ^Renderer) -> bool {
 	s.overlays = make([dynamic]Instance_Overlays, a)
 	s.reflective = make([dynamic]Reflective_Instance, a)
 	s.materials = make([dynamic]Gpu_Material_Row, a)
-	errors: [4]mem.Allocator_Error
+	errors: [3]mem.Allocator_Error
 	s.material_ranges, errors[0] = make([dynamic]Pool_Range, 0, MATERIAL_RANGES_MAX + 1, a)
 	s.instance_keys = make([dynamic]Instance_Key, a)
 	s.desc_instance = make([dynamic]i32, a)
@@ -414,15 +416,15 @@ scene_init :: proc(r: ^Renderer) -> bool {
 	s.tlas_items = make([dynamic]Bvh_Item, a)
 	s.tlas_scratch = make([dynamic]Bvh_Item, a)
 	batches_init(r)
-	s.touched, errors[1] = make([dynamic]u32, 0, SCENE_TOUCHED_MAX, a)
+	s.touched = make([dynamic]u64, a)
 	s.hw_instances = make([dynamic]rhi.Tlas_Instance, a)
 	s.lights = make([dynamic]Gpu_Light, a)
 	s.light_tree = make([dynamic]Gpu_Light_Node, a)
 	s.light_keys = make([dynamic]Light_Key, a)
 	s.light_leaves = make([dynamic]u32, a)
 	// A refit adds a path of the tree before the ranges are counted.
-	s.light_ranges, errors[2] = make([dynamic]Pool_Range, 0, LIGHT_RANGES_MAX + LIGHT_TREE_DEPTH + 1, a)
-	s.light_node_ranges, errors[3] = make([dynamic]Pool_Range, 0, LIGHT_RANGES_MAX + LIGHT_TREE_DEPTH + 1, a)
+	s.light_ranges, errors[1] = make([dynamic]Pool_Range, 0, LIGHT_RANGES_MAX + LIGHT_TREE_DEPTH + 1, a)
+	s.light_node_ranges, errors[2] = make([dynamic]Pool_Range, 0, LIGHT_RANGES_MAX + LIGHT_TREE_DEPTH + 1, a)
 	return errors == {}
 }
 
@@ -1148,8 +1150,7 @@ instance_placement :: proc "contextless" (m: Mat4, low, high: Vec3) -> (inverse:
 	return
 }
 
-TLAS_REFIT_SLACK  :: 1.5 // how much worse than when it was built a refit tree may get before it is built again
-SCENE_TOUCHED_MAX :: 256 // moved instances that go to the GPU one by one; more go with the whole table
+TLAS_REFIT_SLACK :: 1.5 // how much worse than when it was built a refit tree may get before it is built again
 
 // The tree of the instances, their references classified, from tlas_items,
 // and of the batches drawn that rays meet, from their boxes: a reference past
@@ -1234,11 +1235,12 @@ tlas_refit :: proc(s: ^Scene_State) -> f32 {
 // boxes than scene_set would give them, so rays find the same surfaces. A
 // transform without an inverse hides the instance, and one with it shows it
 // again, as scene_update would (INSTANCE_FLAG_COLLAPSED). anchors: what each
-// transform is relative to (Instance_Desc.anchor), or none for the world. False,
-// with nothing changed, when the lists differ in length or name an instance
-// that the set did not have.
-scene_move :: proc(r: ^Renderer, descs: []u32, transforms: []Mat4, anchors: []Vec3 = nil) -> bool {
+// transform is relative to (Instance_Desc.anchor), or none for the world.
+// count takes how many were somewhere else. False, with nothing changed, when
+// the lists differ in length or name an instance that the set did not have.
+scene_move :: proc(r: ^Renderer, descs: []u32, transforms: []Mat4, anchors: []Vec3 = nil, count: ^int = nil) -> bool {
 	s := &r.scene
+	if count != nil {count^ = 0}
 	if len(descs) != len(transforms) || anchors != nil && len(anchors) != len(descs) {return false}
 	for desc in descs {
 		if int(desc) >= len(s.desc_instance) {return false}
@@ -1272,9 +1274,9 @@ scene_move :: proc(r: ^Renderer, descs: []u32, transforms: []Mat4, anchors: []Ve
 		occluder_moved(s, u32(index), before, inst^)
 		s.tlas_items[index] = Bvh_Item{bounds_min = bmin, bounds_max = bmax, center = (bmin + bmax) * 0.5}
 		s.hw_instances[index].transform = world if invertible else {}
-		// Too many to follow one by one: all of them go, and settle, as after scene_set.
-		if len(s.touched) < cap(s.touched) {append(&s.touched, u32(index))} else {s.motion_pending, s.instances_dirty = true, true}
+		instance_touch(s, u32(index))
 		moved = true
+		if count != nil {count^ += 1}
 	}
 	// What a hidden instance leaves out of the lists, a move that hides or shows one changes.
 	if collapsed {instances_classify(s)}
@@ -1321,7 +1323,7 @@ mesh_shown :: proc(r: ^Renderer, handle: u32) {
 		if !instance_uncollapse(s, u32(index)) {continue}
 		instance_changed_near(s, inst)
 		occluder_moved(s, u32(index), before, inst^)
-		if len(s.touched) < cap(s.touched) {append(&s.touched, u32(index))} else {s.instances_dirty = true}
+		instance_touch(s, u32(index))
 		shown = true
 	}
 	if shown {
@@ -1389,11 +1391,12 @@ tlas_settle :: proc(s: ^Scene_State) {
 }
 
 // Gives instances of the last scene_set another tint and emission, and
-// nothing else: descs are positions in the list it was given. False, with
-// nothing changed, when the lists differ in length or name an instance that
-// the set did not have.
-scene_tint :: proc(r: ^Renderer, descs: []u32, tints, emissions: []Vec3) -> bool {
+// nothing else: descs are positions in the list it was given. count takes how
+// many had another. False, with nothing changed, when the lists differ in
+// length or name an instance that the set did not have.
+scene_tint :: proc(r: ^Renderer, descs: []u32, tints, emissions: []Vec3, count: ^int = nil) -> bool {
 	s := &r.scene
+	if count != nil {count^ = 0}
 	if len(descs) != len(tints) || len(descs) != len(emissions) {return false}
 	for desc in descs {
 		if int(desc) >= len(s.desc_instance) {return false}
@@ -1408,9 +1411,53 @@ scene_tint :: proc(r: ^Renderer, descs: []u32, tints, emissions: []Vec3) -> bool
 		glowed := inst.emission != emission
 		inst.tint, inst.emission = tint, emission
 		instance_changed_near(s, inst, glowed)
-		if len(s.touched) < cap(s.touched) {append(&s.touched, u32(index))} else {s.instances_dirty = true}
+		instance_touch(s, u32(index))
+		if count != nil {count^ += 1}
 	}
 	return true
+}
+
+// An instance of the last scene_set described again at another place of the
+// list: `descriptor` is what `from` was, and takes where that one was drawn
+// as its previous transform, so the next frame draws its motion. For whoever
+// closes the gap an instance leaves with another, before it truncates the
+// scene. False for a descriptor the scene does not have.
+scene_instance_was :: proc(r: ^Renderer, descriptor, from: u32) -> bool {
+	s := &r.scene
+	if int(descriptor) >= len(s.desc_instance) || int(from) >= len(s.desc_instance) {return false}
+	to, was := s.desc_instance[descriptor], s.desc_instance[from]
+	if to < 0 || was < 0 {return true}
+	s.instances[to].prev_world = s.instances[was].world
+	instance_touch(s, u32(to))
+	return true
+}
+
+// The mesh an instance of the last scene_set shows, the one its description
+// named, and where it is: its transform into the world. False for a
+// descriptor the scene does not have or the set skipped.
+scene_instance_placed :: proc(r: ^Renderer, descriptor: u32) -> (mesh: Mesh_Handle, transform: Mat4, ok: bool) {
+	s := &r.scene
+	if int(descriptor) >= len(s.desc_instance) || s.desc_instance[descriptor] < 0 {return}
+	inst := &s.instances[s.desc_instance[descriptor]]
+	mesh = Mesh_Handle(inst.meta.x & INSTANCE_MESH_MASK)
+	// The pose of an instance whose programs move its vertices stands for the mesh it was given.
+	if int(mesh) < len(s.meshes) && s.meshes[mesh].skin != nil && s.meshes[mesh].skin.displaced {mesh = s.meshes[mesh].skin.source}
+	rows := origin_to_world(inst.world, -r.origin)
+	transform = 1
+	for row in 0 ..< 3 {for col in 0 ..< 4 {transform[row, col] = rows[row][col]}}
+	return mesh, transform, true
+}
+
+// The rows of the material table an instance of the last scene_set shows, as
+// its description named them: its material, those of its slots and its
+// layers. False for a descriptor the scene does not have or the set skipped.
+scene_instance_materials :: proc(r: ^Renderer, descriptor: u32) -> (material: Material_Handle, slots: [32]u32, overlays: Instance_Overlays, ok: bool) {
+	s := &r.scene
+	if int(descriptor) >= len(s.desc_instance) || s.desc_instance[descriptor] < 0 {return}
+	index := s.desc_instance[descriptor]
+	inst := &s.instances[index]
+	if inst.meta.y != GPU_NONE {material = Material_Handle(inst.meta.y)}
+	return material, inst.slot_materials, s.overlays[index], true
 }
 
 // Four numbers of each instance that extensions give it and read in their
@@ -1427,7 +1474,7 @@ scene_set_instance_values :: proc(r:^Renderer,descriptor:u32,values:Vec4) -> boo
     inst:=&s.instances[index]
     if instance_values(inst^)==values {return true}
     inst.tint.w,inst.emission.w,inst.bounds_min.w,inst.bounds_max.w=values.x,values.y,values.z,values.w
-    if len(s.touched)<cap(s.touched) {append(&s.touched,u32(index))} else {s.instances_dirty=true}
+    instance_touch(s, u32(index))
     return true
 }
 
@@ -1448,7 +1495,7 @@ scene_set_instance_wet :: proc(r:^Renderer,descriptor:u32,wet:f32) -> bool {
     inst:=&s.instances[index]
     if value:=clamp(wet,0,1);inst.wet!=value {
         inst.wet=value
-        if len(s.touched)<cap(s.touched) {append(&s.touched,u32(index))} else {s.instances_dirty=true}
+        instance_touch(s, u32(index))
     }
     return true
 }
@@ -1466,7 +1513,7 @@ instance_given :: proc "contextless" (inst:Gpu_Instance) -> Instance_Given {retu
 instances_reserve :: proc(s:^Scene_State,count:int) -> bool {
     return reserve(&s.instances,count)==nil && reserve(&s.instance_next,count)==nil && reserve(&s.instance_prev,count)==nil &&
            reserve(&s.overlays,count)==nil && reserve(&s.instance_keys,count)==nil && reserve(&s.tlas_items,count)==nil &&
-           reserve(&s.hw_instances,count)==nil && reserve(&s.desc_instance,count)==nil &&
+           reserve(&s.hw_instances,count)==nil && reserve(&s.desc_instance,count)==nil && reserve(&s.touched,(count+63)/64)==nil &&
            reserve(&s.translucent,count)==nil && reserve(&s.reflective,count)==nil &&
            reserve(&s.tlas_nodes,count*2+1)==nil && reserve(&s.tlas_refs,max(count,1))==nil
 }
@@ -1484,9 +1531,9 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
     count:=int(index)+1
     if before:=len(s.instances);count>before {
         if resize(&s.instances,count)!=nil || resize(&s.instance_next,count)!=nil || resize(&s.instance_prev,count)!=nil || resize(&s.overlays,count)!=nil ||
-           resize(&s.instance_keys,count)!=nil || resize(&s.tlas_items,count)!=nil || resize(&s.hw_instances,count)!=nil {
+           resize(&s.instance_keys,count)!=nil || resize(&s.tlas_items,count)!=nil || resize(&s.hw_instances,count)!=nil || resize(&s.touched,(count+63)/64)!=nil {
             base.truncate(&s.instances,before);base.truncate(&s.instance_next,before);base.truncate(&s.instance_prev,before);base.truncate(&s.overlays,before)
-            base.truncate(&s.instance_keys,before);base.truncate(&s.tlas_items,before);base.truncate(&s.hw_instances,before)
+            base.truncate(&s.instance_keys,before);base.truncate(&s.tlas_items,before);base.truncate(&s.hw_instances,before);base.truncate(&s.touched,(before+63)/64)
             return false
         }
     }
@@ -1594,9 +1641,11 @@ scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bo
         flags:u32
         given:Instance_Given
         before:Gpu_Instance
+        layers:Instance_Overlays
         if int(index)<old {
             inst:=s.instances[index]
             before=inst
+            layers=s.overlays[index]
             flags=inst.meta.w
             instance_changed_near(s,&s.instances[index])
             if s.instance_keys[index]==(Instance_Key{desc.object_id,desc.copy_owner,desc.copy_variant}) {
@@ -1613,13 +1662,17 @@ scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bo
             spatial||=before.meta.x&INSTANCE_MESH_MASK!=mesh || before.world!=s.instances[index].world
             // A pose its instance no longer shows goes.
             if before.meta.x&INSTANCE_MESH_MASK!=mesh && mesh_displaced(s,before.meta.x&INSTANCE_MESH_MASK) {s.displaced_stale=true}
+            // Another mesh or other materials show other textures: their levels are estimated again (textures_touched).
+            if before.meta.x&INSTANCE_MESH_MASK!=mesh || before.meta.y!=s.instances[index].meta.y || before.slot_materials!=s.instances[index].slot_materials || layers!=s.overlays[index] {
+                r.textures.residency.stale=true
+            }
         }
         if int(index)>=old {before=INSTANCE_ABSENT}
         if !instance_shades_same(before,s.instances[index]) {occluder_moved(s,index,before,s.instances[index])}
         changed:=flags~s.instances[index].meta.w
         classification||=changed&(INSTANCE_FLAG_BLENDED|INSTANCE_FLAG_HIDDEN)!=0
         ray_properties||=classification || changed&INSTANCE_FLAG_ALPHA_TESTED!=0
-        if len(s.touched)<cap(s.touched) {append(&s.touched,index)} else {s.instances_dirty=true}
+        instance_touch(s, index)
     }
     if truncate && end<old {
         for index in end..<old {
@@ -1630,7 +1683,7 @@ scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bo
         }
         base.truncate(&s.instances,end);base.truncate(&s.instance_next,end);base.truncate(&s.instance_prev,end);base.truncate(&s.overlays,end)
         base.truncate(&s.instance_keys,end);base.truncate(&s.tlas_items,end);base.truncate(&s.hw_instances,end);base.truncate(&s.desc_instance,end)
-        for i:=len(s.touched)-1;i>=0;i-=1 {if int(s.touched[i])>=end {unordered_remove(&s.touched,i)}}
+        touched_trim(s,end)
     }
     if len(s.instances)!=old {
         s.tlas_stale,s.instances_dirty=true,true
@@ -1692,7 +1745,7 @@ scene_set :: proc(r: ^Renderer, instances: []Instance_Desc, lights: []Light_Desc
 	clear(&s.tlas_items)
 	clear(&s.hw_instances)
 	clear(&s.translucent)
-	clear(&s.touched)
+	touched_trim(s, 0)
 	s.highlighted = 0
 	s.hidden_count = 0
 	s.has_bounds = false
@@ -1700,7 +1753,6 @@ scene_set :: proc(r: ^Renderer, instances: []Instance_Desc, lights: []Light_Desc
 	s.bounds_max = {-1e30, -1e30, -1e30}
 	// The poses of the instances that do not come again go.
 	if len(s.displaced) > 0 {s.displaced_stale = true}
-	motion := false
 	for given in instances {
         desc:=given
         desc.transform=origin_matrix(given.transform,r.origin-given.anchor)
@@ -1715,11 +1767,12 @@ scene_set :: proc(r: ^Renderer, instances: []Instance_Desc, lights: []Light_Desc
             given=instance_given(before)
             delete_key(&s.previous,key)
         }
-        motion||=previous!=desc.transform
         // Its room was reserved; without it the instance is left out as one of a mesh that is not there.
         written:=instance_write(r,index,desc,previous,given)
         append(&s.desc_instance,i32(index) if written else -1)
         if !written {continue}
+        // What moved since the set before is drawn in motion and goes once more, at rest.
+        if s.instances[index].prev_world!=s.instances[index].world {instance_touch(s,index)}
         if !found || !instance_lit_same(before,s.instances[index]) {
             instance_changed_near(s,&s.instances[index])
             if found {instance_changed_near(s,&before)}
@@ -1734,7 +1787,6 @@ scene_set :: proc(r: ^Renderer, instances: []Instance_Desc, lights: []Light_Desc
 	tlas_build(s)
 	s.instances_dirty = true
 	s.tlas_dirty = true
-	s.motion_pending = motion
 	lit := scene_set_lights(r, lights, sun, environment)
 	// A world shown again (scene_world) has the light of this scene already.
 	if r.world_kept {s.changes = {}}
@@ -2002,8 +2054,9 @@ renderer_reset_history :: proc(r:^Renderer,reset_camera:bool=false) {
 highlight_flags :: proc "contextless" (level: u8) -> u32 {return (u32(level) << INSTANCE_HIGHLIGHT_SHIFT) & INSTANCE_HIGHLIGHT_MASK}
 
 // Restyles highlights without touching transforms, the TLAS, lights or the
-// temporal history. levels is indexed like the instances of the last
-// scene_set; a length mismatch is rejected.
+// temporal history: only the instances whose level is another go to the GPU.
+// levels is indexed like the instances of the last scene_set; a length
+// mismatch is rejected.
 scene_set_highlights :: proc(r: ^Renderer, levels: []u8) -> bool {
 	s := &r.scene
 	if len(levels) != len(s.desc_instance) {return false}
@@ -2012,10 +2065,12 @@ scene_set_highlights :: proc(r: ^Renderer, levels: []u8) -> bool {
 		index := s.desc_instance[i]
 		if index < 0 {continue}
 		inst := &s.instances[index]
-		inst.meta.w = (inst.meta.w & ~INSTANCE_HIGHLIGHT_MASK) | highlight_flags(level)
 		if level != 0 {s.highlighted += 1}
+		flags := (inst.meta.w & ~INSTANCE_HIGHLIGHT_MASK) | highlight_flags(level)
+		if flags == inst.meta.w {continue}
+		inst.meta.w = flags
+		instance_touch(s, u32(index))
 	}
-	s.instances_dirty = true
 	return true
 }
 
@@ -2132,17 +2187,62 @@ upload_transient :: proc(r: ^Renderer, cmd: ^rhi.Command_List, data: []$T, targe
 	return true
 }
 
-// The instances that moved, each to its place in the table.
+// Marks an instance of the table to go to the GPU alone with the next frame.
+@(private)
+instance_touch :: proc(s: ^Scene_State, index: u32) {
+	word, bit := &s.touched[index >> 6], u64(1) << (index & 63)
+	if word^ & bit != 0 {return}
+	word^ |= bit
+	s.touched_count += 1
+}
+
+// The next run of touched instances that starts at `from` or after it. False past the last one.
+@(private)
+touched_range :: proc(s: ^Scene_State, from: u32) -> (range: Pool_Range, ok: bool) {
+	words := u32(len(s.touched))
+	first := from
+	for {
+		if first >> 6 >= words {return}
+		if rest := s.touched[first >> 6] >> (first & 63); rest != 0 {
+			first += u32(intrinsics.count_trailing_zeros(rest))
+			break
+		}
+		first = ((first >> 6) + 1) << 6
+	}
+	end := first
+	for end >> 6 < words {
+		// The bits the shift brings in are not of the word: without a clear one the run goes on in the next.
+		if rest := ~s.touched[end >> 6] >> (end & 63); rest != 0 {
+			end += u32(intrinsics.count_trailing_zeros(rest))
+			break
+		}
+		end = ((end >> 6) + 1) << 6
+	}
+	return {first, end - first}, true
+}
+
+// The table keeps `count` instances: those past them are touched no more.
+@(private)
+touched_trim :: proc(s: ^Scene_State, count: int) {
+	for range, ok := touched_range(s, u32(count)); ok; range, ok = touched_range(s, range.first + range.count) {s.touched_count -= int(range.count)}
+	words := (count + 63) / 64
+	base.truncate(&s.touched, words)
+	if count & 63 != 0 && words <= len(s.touched) {s.touched[words - 1] &= (u64(1) << uint(count & 63)) - 1}
+}
+
+// The touched instances, each run of them to its place in the table.
 @(private = "file")
 upload_touched :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 	s := &r.scene
 	size := u64(size_of(Gpu_Instance))
-	t := rhi.frame_alloc(r.device, u64(len(s.touched)) * size, 16)
-	if t.ptr == nil {set_error(r, "transient ring exhausted uploading %d instances", len(s.touched)); return false}
-	staged := ([^]Gpu_Instance)(t.ptr)
-	for index, i in s.touched {
-		staged[i] = s.instances[index]
-		rhi.cmd_copy_buffer(cmd, t.buffer, t.offset + u64(i) * size, s.instance_buffer, u64(index) * size, size)
+	t := rhi.frame_alloc(r.device, u64(s.touched_count) * size, 16)
+	if t.ptr == nil {set_error(r, "transient ring exhausted uploading %d instances", s.touched_count); return false}
+	at := u64(0)
+	for range, ok := touched_range(s, 0); ok; range, ok = touched_range(s, range.first + range.count) {
+		bytes := slice_bytes(s.instances[range.first:][:range.count])
+		mem.copy(rawptr(uintptr(t.ptr) + uintptr(at)), raw_data(bytes), len(bytes))
+		rhi.cmd_copy_buffer(cmd, t.buffer, t.offset + at, s.instance_buffer, u64(range.first) * size, u64(len(bytes)))
+		at += u64(len(bytes))
 	}
 	return true
 }
@@ -2168,17 +2268,19 @@ upload_ranges :: proc(r: ^Renderer, cmd: ^rhi.Command_List, data: []$T, ranges: 
 
 // After an upload: what was drawn in motion is at rest in the next frame,
 // previous = current, and goes once more; what was at rest is done.
-@(private = "file")
+@(private)
 touched_settle :: proc(s: ^Scene_State) {
-	kept := 0
-	for index in s.touched {
-		inst := &s.instances[index]
-		if inst.prev_world == inst.world {continue}
-		inst.prev_world = inst.world
-		s.touched[kept] = index
-		kept += 1
+	for range, ok := touched_range(s, 0); ok; range, ok = touched_range(s, range.first + range.count) {
+		for index in range.first ..< range.first + range.count {
+			inst := &s.instances[index]
+			if inst.prev_world != inst.world {
+				inst.prev_world = inst.world
+				continue
+			}
+			s.touched[index >> 6] &~= u64(1) << (index & 63)
+			s.touched_count -= 1
+		}
 	}
-	base.truncate(&s.touched, kept)
 }
 
 // Records uploads of dirty scene data and the hardware TLAS build.
@@ -2190,7 +2292,16 @@ upload_scene :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 	// What the frame's transient memory has no room for stays dirty and goes
 	// with the next frame: the GPU never falls behind the scene unnoticed.
 	ok := true
-	if s.instances_dirty || len(s.touched) > 0 || s.materials_dirty || len(s.material_ranges) > 0 {r.glass_stale = true}
+	textures_touched(r)
+	if s.instances_dirty || s.materials_dirty || len(s.material_ranges) > 0 {r.glass_stale = true}
+	// The row of an instance with glass brings the mean the CPU holds, not the one glass_mean.comp gave it.
+	if !r.glass_stale && len(s.translucent) > 0 {
+		each: for range, more := touched_range(s, 0); more; range, more = touched_range(s, range.first + range.count) {
+			for &inst in s.instances[range.first:][:range.count] {
+				if inst.meta.w & INSTANCE_FLAG_TRANSLUCENT != 0 {r.glass_stale = true;break each}
+			}
+		}
+	}
 	if s.materials_dirty {
 		if upload_transient(r, cmd, s.materials[:], s.material_buffer) {
 			s.materials_dirty = false
@@ -2205,19 +2316,11 @@ upload_scene :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 		if upload_transient(r, cmd, s.instances[:], s.instance_buffer) && batches_upload(r, cmd, true) && (!tree || upload_transient(r, cmd, s.tlas_nodes[:], s.tlas_node_buffer) && upload_transient(r, cmd, s.tlas_refs[:], s.tlas_ref_buffer)) {
 			s.instances_dirty = false
 			s.tlas_nodes_dirty, s.tlas_refs_dirty = false, false
-			if s.motion_pending {
-				// Next frame the objects are at rest again: previous = current.
-				for &inst in s.instances {inst.prev_world = inst.world}
-				s.motion_pending = false
-				s.instances_dirty = true
-				clear(&s.touched)
-			} else {
-				touched_settle(s)
-			}
+			touched_settle(s)
 		} else {ok = false}
 	} else {
 		if !batches_upload(r, cmd, false) {ok = false}
-		if len(s.touched) > 0 {
+		if s.touched_count > 0 {
 			if upload_touched(r, cmd) {touched_settle(s)} else {ok = false}
 		}
 		if s.tlas_nodes_dirty {

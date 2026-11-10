@@ -170,9 +170,8 @@ entity_surface :: proc(drawn:^erender.Render_Sync,meshes:core.Read(erender.Mesh_
         for &extra in drawn.extras {
             if extra.replace_source && extra.object_id==u64(e) {return surface_of(renderer,extra.mesh,extra.transform)}
         }
-        if at:=core.entity_map_index(&drawn.drawn,e);at>=0 && at<len(drawn.instances) {
-            instance:=drawn.instances[at]
-            return surface_of(renderer,instance.mesh,instance.transform)
+        if at:=core.entity_map_index(&drawn.drawn,e);at>=0 {
+            if mesh,transform,held:=erender.instance_placed(renderer,at);held {return surface_of(renderer,mesh,transform)}
         }
     }
     shown,has_mesh:=core.get(meshes,e)

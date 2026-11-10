@@ -5,10 +5,10 @@ import "mirai:std/base"
 import scene "mirai:engine/scene"
 import mm "mirai:std/math"
 import physics "plugins:physics/runtime"
-import sim "plugins:physics/runtime/sim"
 
 // The collision of the foliage: a static body per resident cell of each
-// Foliage, with a shape per instance of a type that collides. A cell
+// Foliage, with a shape per instance of a type that collides, made as bodies
+// the foliage owns in the simulation (physics.owned_body_create). A cell
 // collides while it is resident by the residency of the streaming sources
 // (scene.resident), as it is drawn, within the farthest distance at which a
 // type that collides is drawn as its mesh (collision_reach): far away there
@@ -22,7 +22,7 @@ import sim "plugins:physics/runtime/sim"
 Foliage_Physics :: struct {
     owners:[dynamic]Physics_Owner,
     cells:[dynamic]Physics_Cell,
-    shapes:[dynamic]sim.Shape_Handle, // by cell, one per instance that collides; zero once removed
+    shapes:[dynamic]physics.Shape_Handle, // by cell, one per instance that collides; zero once removed
     stats:Foliage_Physics_Stats,
 }
 Foliage_Physics_Stats :: struct {bodies,shapes,removed:u64}
@@ -45,9 +45,15 @@ Physics_Cell :: struct {
     ground:u32,  // the revision of its ground then
     removed:u64, // the hash of the instances taken out of it then (removed_cell)
     resident:bool,
-    body:sim.Body_Handle,
+    body:physics.Body_Handle,
     first,count:u32, // its shapes
 }
+
+BODY_OWNER :: physics.Body_Owner('f'|'o'<<8|'l'<<16|'i'<<24)
+
+// The index physics keeps of the body of a cell: its coordinates.
+@(private)
+cell_user :: proc "contextless" (coord:[2]i32) -> u64 {return u64(u32(coord.x))|u64(u32(coord.y))<<32}
 
 // How far from a source the cells of a source collide: the farthest distance
 // at which a type that collides is drawn as its mesh, and no farther than
@@ -75,24 +81,25 @@ cell_collides :: proc(near:^scene.Sources_Near,reach:f32,coord:[2]i32,was:bool) 
 
 // The shape of an instance of a type, in the frame of the body of its cell,
 // which has the position and rotation of the entity.
-instance_shape :: proc "contextless" (t:^Foliage_Type,p:Placed,owner:mm.Transform) -> (geometry:sim.Geometry,transform:sim.Transform,ok:bool) {
+instance_shape :: proc "contextless" (t:^Foliage_Type,p:Placed,owner:mm.Transform) -> (shape:physics.Owned_Shape,ok:bool) {
     across,along:=p.scale[0]*abs(owner.scale.x),p.scale[1]*abs(owner.scale.y)
     center:=[3]f32{0,0,0}
+    shape.collider={friction=0.6,preset=physics.Collision_Preset(t.preset)}
     switch t.collision {
     case .None: return
     case .Capsule:
         radius,height:=t.size.x*across,t.size.y*along
         if !(radius>0) || !(height>0) {return}
-        geometry=sim.Capsule{radius=radius,half_height=max(height*0.5-radius,0)}
+        shape.collider.kind,shape.collider.size=.Capsule,{radius,max(height*0.5-radius,0),0}
         center.y=max(height*0.5,radius)
     case .Box:
         half:=[3]f32{t.size.x*across,t.size.y*along,t.size.z*across}*0.5
         if !(half.x>0) || !(half.y>0) || !(half.z>0) {return}
-        geometry=sim.Box{half_extents=half}
+        shape.collider.kind,shape.collider.size=.Box,half
         center.y=half.y
     }
-    position:=p.position*owner.scale+mm.quat_rotate(p.rotation,center)
-    return geometry,{p=position,q=p.rotation},true
+    shape.position,shape.rotation,shape.user=p.position*owner.scale+mm.quat_rotate(p.rotation,center),p.rotation,p.id
+    return shape,true
 }
 
 // The bodies of the resident cells of one Foliage, from its source on its
@@ -101,9 +108,9 @@ instance_shape :: proc "contextless" (t:^Foliage_Type,p:Placed,owner:mm.Transfor
 // destroyed first; otherwise a cell whose content, ground, instances taken
 // out (gone) and residency did not change keeps its body. False when the
 // simulation had no room for all of them.
-physics_owner_build :: proc(fp:^Foliage_Physics,w:^sim.World,collision:^physics.Collision_Settings,e:core.Entity,s:^Source,transform:mm.Transform,ground:^Ground_Owner=nil,all:=true,near:^scene.Sources_Near=nil,reach:=f32(0),gone:^Removed_Owner=nil) -> (complete,enough:bool) {
+physics_owner_build :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,collision:^physics.Collision_Settings,e:core.Entity,s:^Source,transform:mm.Transform,ground:^Ground_Owner=nil,all:=true,near:^scene.Sources_Near=nil,reach:=f32(0),gone:^Removed_Owner=nil) -> (complete,enough:bool) {
     held:=make([dynamic]Physics_Cell,context.temp_allocator)
-    held_shapes:=make([dynamic]sim.Shape_Handle,context.temp_allocator)
+    held_shapes:=make([dynamic]physics.Shape_Handle,context.temp_allocator)
     // What each cell of the owner was, in the order of the source, for the residency to hold.
     before:=make([dynamic]Physics_Cell,context.temp_allocator)
     for cell in fp.cells {if cell.owner==e {append(&before,cell)}}
@@ -120,7 +127,7 @@ physics_owner_build :: proc(fp:^Foliage_Physics,w:^sim.World,collision:^physics.
             append(&held,kept)
         }
     }
-    physics_owner_clear(fp,w,e,held[:])
+    physics_owner_clear(fp,state,e,held[:])
     complete,enough=true,true
     work:Build_Work
     defer build_work_destroy(&work)
@@ -150,21 +157,25 @@ physics_owner_build :: proc(fp:^Foliage_Physics,w:^sim.World,collision:^physics.
             append(&fp.cells,Physics_Cell{owner=e,coord=cell.coord,ground=revision,removed=removed_hash,resident=true,first=u32(len(fp.shapes))})
             continue
         }
-        body:sim.Body_Handle
+        body:physics.Body_Handle
         first:=u32(len(fp.shapes))
         fit:=true
         for p in work.placed {
             t,_:=source_type(s,p.type)
             if t==nil || t.collision==.None {continue}
-            geometry,local,ok:=instance_shape(t,p,transform)
+            wanted,ok:=instance_shape(t,p,transform)
             if !ok {continue}
             if body=={} {
-                body=sim.body_create(w,{type=.Static,position=transform.position,rotation=transform.rotation,user_data=u64(e)})
-                if body=={} {fit=false;break}
+                failure:physics.Owned_Error
+                body,failure=physics.owned_body_create(state,{BODY_OWNER,e,cell_user(cell.coord)},transform.position,transform.rotation)
+                if body=={} {
+                    enough&&=failure!=.Out_Of_Memory
+                    fit=false
+                    break
+                }
                 fp.stats.bodies+=1
             }
-            filter:=physics.collision_filter(collision,physics.Collider{preset=physics.Collision_Preset(t.preset)})
-            shape:=sim.shape_create(w,body,{geometry=geometry,transform=local,friction=0.6,filter=filter,user_data=p.id},false)
+            shape:=physics.owned_shape_create(state,collision,body,wanted)
             if shape=={} {fit=false;continue}
             append(&fp.shapes,shape)
             fp.stats.shapes+=1
@@ -177,14 +188,14 @@ physics_owner_build :: proc(fp:^Foliage_Physics,w:^sim.World,collision:^physics.
 
 // Destroys the bodies of a Foliage, but those of the cells in keep (some of
 // its cells, in their order), and forgets its cells.
-physics_owner_clear :: proc(fp:^Foliage_Physics,w:^sim.World,e:core.Entity,keep:[]Physics_Cell={}) {
+physics_owner_clear :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,e:core.Entity,keep:[]Physics_Cell={}) {
     kept:=0
     shapes:=0
     k:=0
     for cell in fp.cells {
         if cell.owner==e {
             if k<len(keep) && keep[k].coord==cell.coord {k+=1;continue}
-            if w!=nil && cell.body!={} && sim.body_valid(w,cell.body) {sim.body_destroy(w,cell.body)}
+            physics.owned_body_destroy(state,cell.body)
             continue
         }
         moved:=cell
@@ -201,29 +212,26 @@ physics_owner_clear :: proc(fp:^Foliage_Physics,w:^sim.World,e:core.Entity,keep:
 // Takes the collision of one instance of a cell out of the simulation, in
 // constant time: instance is its place among the shapes of the cell. False
 // when it has none, or it was taken out already.
-collider_remove :: proc(fp:^Foliage_Physics,w:^sim.World,cell,instance:int) -> bool {
+collider_remove :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,cell,instance:int) -> bool {
     if cell<0 || cell>=len(fp.cells) || instance<0 || instance>=int(fp.cells[cell].count) {return false}
     shape:=&fp.shapes[int(fp.cells[cell].first)+instance]
-    if shape^=={} || !sim.shape_valid(w,shape^) {return false}
-    sim.shape_destroy(w,shape^,false)
+    if !physics.owned_shape_destroy(state,shape^) {return false}
     shape^={}
     fp.stats.removed+=1
     return true
 }
 
 // The instance of a Foliage a hit of physics met; false for anything else.
-hit_of :: proc(fp:core.Ref(Foliage_Physics),state:core.Ref(physics.Physics_State),hit:physics.Hit) -> (found:Foliage_Plant,ok:bool) {
-    return shape_instance(fp.ptr,&state.world,hit.body,hit.shape)
+hit_of :: proc(state:core.Ref(physics.Physics_State),hit:physics.Hit) -> (found:Foliage_Plant,ok:bool) {
+    return shape_instance(state.ptr,hit.body,hit.shape)
 }
 
 @(private)
-shape_instance :: proc(fp:^Foliage_Physics,w:^sim.World,body:sim.Body_Handle,shape:sim.Shape_Handle) -> (found:Foliage_Plant,ok:bool) {
-    if body=={} || !sim.shape_valid(w,shape) {return}
-    for cell in fp.cells {
-        if cell.body!=body {continue}
-        return {cell.owner,cell.coord,sim.shape_user_data(w,shape)},true
-    }
-    return
+shape_instance :: proc(state:^physics.Physics_State,body:physics.Body_Handle,shape:physics.Shape_Handle) -> (found:Foliage_Plant,ok:bool) {
+    cell:=physics.owned_body_of(state,body) or_return
+    if cell.owner!=BODY_OWNER {return}
+    instance:=physics.owned_shape_user(state,shape) or_return
+    return {cell.entity,{i32(u32(cell.user)),i32(u32(cell.user>>32))},instance},true
 }
 
 // Keeps the bodies of the foliage of the world equal to its sources, the
@@ -231,7 +239,6 @@ shape_instance :: proc(fp:^Foliage_Physics,w:^sim.World,body:sim.Body_Handle,sha
 @(step="fixed",loops="game editor",stage="simulate",after="physics_prepare",before="physics_places")
 foliage_physics :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,collision:core.Ref(physics.Collision_Settings),data:core.Ref(Foliage_Data),grounds:core.Ref(Foliage_Ground),removals:core.Ref(Foliage_Removals),foliages:core.Read(Foliage),worlds:core.Read(core.World_Transform),kept:core.Read(scene.Far_Kept),sources:core.Ref(scene.Streaming_Sources),time:core.Time,problems:^core.Problems) {
     if !state.ready || data.ptr==nil || time.resimulating {return}
-    w:=&state.world
     // Without settings every preset is the Default category, colliding with all.
     defaults:physics.Collision_Settings
     settings:=collision.ptr if collision.ptr!=nil else &defaults
@@ -240,7 +247,7 @@ foliage_physics :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,collisi
         f,shown:=core.get(foliages,owner.entity)
         // What stands for a section that is not loaded collides with nothing.
         if shown && f.source==owner.source && !(kept.table!=nil && core.has(kept,owner.entity)) {continue}
-        physics_owner_clear(fp,w,owner.entity)
+        physics_owner_clear(fp,state,owner.entity)
         unordered_remove(&fp.owners,i)
     }
     for row in 0..<core.count(foliages) {
@@ -269,7 +276,7 @@ foliage_physics :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,collisi
         reach:=collision_reach(&entry.source)
         near:scene.Sources_Near
         if reach>0 {near=scene.sources_near(sources.ptr,mm.transform_matrix(world.transform),reach)}
-        complete,enough:=physics_owner_build(fp,w,settings,e,&entry.source,world.transform,ground,all,sources.ptr!=nil?&near:nil,reach,gone)
+        complete,enough:=physics_owner_build(fp,state,settings,e,&entry.source,world.transform,ground,all,sources.ptr!=nil?&near:nil,reach,gone)
         if !enough {
             owner.loads=0
             memory_problem(problems,e,"the collision of its foliage: some cells do not collide")

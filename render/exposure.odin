@@ -2,6 +2,7 @@ package mirai_render
 
 import "core:math"
 import "mirai:rhi"
+import "mirai:render/abi"
 
 // The exposure of each view (Camera.exposure). Before the tonemap of a view,
 // exposure_histogram.comp counts the light of its image and
@@ -11,7 +12,7 @@ import "mirai:rhi"
 // gives them one when they cannot.
 
 // EXPOSURE_BINS of exposure.slang; the histogram has one more count, of the pixels of sky.
-EXPOSURE_BINS :: 128
+EXPOSURE_BINS :: abi.EXPOSURE_BINS
 
 // About how many pixels the meter reads, on a grid over the image whatever its size.
 EXPOSURE_SAMPLES :: 65536

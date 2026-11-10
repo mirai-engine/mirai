@@ -8,7 +8,6 @@ import scene "mirai:engine/scene"
 import "mirai:std/geom"
 import mm "mirai:std/math"
 import physics "plugins:physics/runtime"
-import sim "plugins:physics/runtime/sim"
 
 // A crown of two quads that cross in a box, dense enough to be solid, and a
 // lone triangle elsewhere that is not: the crown is the closed surface of the
@@ -137,9 +136,9 @@ a_type_with_an_impostor_draws_its_mesh_up_to_its_distance :: proc(t:^testing.T) 
 // that collide, and lets go of its body once every source has gone past it.
 @(test)
 the_cells_of_foliage_collide_while_they_are_resident :: proc(t:^testing.T) {
-    w:sim.World
-    if !testing.expect(t,sim.world_init(&w,sim.world_desc_default())) {return}
-    defer sim.world_destroy(&w)
+    w:physics.Physics_State
+    if !testing.expect(t,physics.test_state_make(&w)) {return}
+    defer physics.state_destroy(&w)
     s:Source
     defer source_destroy(&s)
     tree:=source_type_add(&s,"tree",{2,2})
@@ -158,17 +157,17 @@ the_cells_of_foliage_collide_while_they_are_resident :: proc(t:^testing.T) {
     near:=scene.sources_near(&sources,mm.MAT4_IDENTITY,reach)
     {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,{scale={1,1,1},rotation=1},nil,true,&near,reach);testing.expect(t,complete && enough)}
     testing.expect_value(t,len(fp.cells),4)
-    testing.expect_value(t,int(w.body_count),1)
+    testing.expect_value(t,int(w.world.body_count),1)
     testing.expect(t,fp.cells[0].resident && fp.cells[0].body!={} && !fp.cells[1].resident && fp.cells[1].body=={})
     // The source moves to the second tree: its cell collides, the first lets go.
     sources.items[0]={position={CELL_SIZE*4+5,0,5},ahead={CELL_SIZE*4+5,0,5}}
     near=scene.sources_near(&sources,mm.MAT4_IDENTITY,reach)
     {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,{scale={1,1,1},rotation=1},nil,false,&near,reach);testing.expect(t,complete && enough)}
-    testing.expect_value(t,int(w.body_count),1)
-    testing.expect(t,!fp.cells[0].resident && fp.cells[1].resident && sim.body_valid(&w,fp.cells[1].body))
+    testing.expect_value(t,int(w.world.body_count),1)
+    testing.expect(t,!fp.cells[0].resident && fp.cells[1].resident && fp.cells[1].body!={})
     // Without sources every cell collides.
     {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,{scale={1,1,1},rotation=1},nil,true);testing.expect(t,complete && enough)}
-    testing.expect_value(t,int(w.body_count),4)
+    testing.expect_value(t,int(w.world.body_count),4)
 }
 
 // The crown of a cell of a wood: the crowns of its trees, each a box of 4 m,

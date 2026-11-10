@@ -10,7 +10,6 @@ import render "mirai:engine/render"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import physics "plugins:physics/runtime"
-import sim "plugins:physics/runtime/sim"
 
 // Two types, a generated cell with overrides and a manual cell.
 @(private="file")
@@ -238,9 +237,9 @@ batch_instances_carry_the_transform_of_their_entity :: proc(t:^testing.T) {
 
 @(test)
 a_cell_collides_with_one_static_body_and_one_instance_leaves_alone :: proc(t:^testing.T) {
-    w:sim.World
-    if !testing.expect(t,sim.world_init(&w,sim.world_desc_default())) {return}
-    defer sim.world_destroy(&w)
+    w:physics.Physics_State
+    if !testing.expect(t,physics.test_state_make(&w)) {return}
+    defer physics.state_destroy(&w)
     s:Source
     defer source_destroy(&s)
     sample(&s)
@@ -252,35 +251,35 @@ a_cell_collides_with_one_static_body_and_one_instance_leaves_alone :: proc(t:^te
     {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,{scale={1,1,1},rotation=1});testing.expect(t,complete && enough)}
     // Trees collide, grass does not: the generated cell and the manual tree of cell (1,-1).
     testing.expect_value(t,len(fp.cells),len(s.cells))
-    testing.expect_value(t,int(w.body_count),2)
-    shapes:=int(w.shape_count)
+    testing.expect_value(t,int(w.world.body_count),2)
+    shapes:=int(w.world.shape_count)
     testing.expect_value(t,shapes,len(fp.shapes))
-    for cell in fp.cells {if cell.body!={} {testing.expect_value(t,sim.body_user_data(&w,cell.body),u64(e))}}
+    for cell in fp.cells {if cell.body!={} {owned,_:=physics.owned_body_of(&w,cell.body);testing.expect(t,owned.owner==BODY_OWNER && owned.entity==e)}}
     // One instance leaves: its shape, and nothing else.
     testing.expect(t,collider_remove(&fp,&w,0,0))
-    testing.expect_value(t,int(w.shape_count),shapes-1)
+    testing.expect_value(t,int(w.world.shape_count),shapes-1)
     testing.expect(t,!collider_remove(&fp,&w,0,0),"once")
-    for handle,i in fp.shapes {if i>0 {testing.expect(t,sim.shape_valid(&w,handle))}}
+    for handle,i in fp.shapes {if i>0 {_,valid:=physics.owned_shape_user(&w,handle);testing.expect(t,valid)}}
     // Building again replaces the bodies of the entity.
     {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,{scale={1,1,1},rotation=1});testing.expect(t,complete && enough)}
-    testing.expect_value(t,int(w.body_count),2)
-    testing.expect_value(t,int(w.shape_count),shapes)
+    testing.expect_value(t,int(w.world.body_count),2)
+    testing.expect_value(t,int(w.world.shape_count),shapes)
     // Building what changed keeps the bodies of the other cells.
     tree,generated:=[2]i32{1,-1},[2]i32{0,0}
-    kept:sim.Body_Handle
+    kept:physics.Body_Handle
     for cell in fp.cells {if cell.coord==tree {kept=cell.body}}
     source_cell(&s,{0,0}).version+=10
     {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,{scale={1,1,1},rotation=1},nil,false);testing.expect(t,complete && enough)}
-    testing.expect_value(t,int(w.body_count),2)
-    testing.expect_value(t,int(w.shape_count),shapes)
+    testing.expect_value(t,int(w.world.body_count),2)
+    testing.expect_value(t,int(w.world.shape_count),shapes)
     testing.expect_value(t,len(fp.shapes),shapes)
     for cell in fp.cells {
         if cell.coord==tree {testing.expect_value(t,cell.body,kept)}
-        if cell.coord==generated {testing.expect(t,sim.body_valid(&w,cell.body),"the cell that changed has a body again")}
-        for handle in fp.shapes[cell.first:][:cell.count] {testing.expect(t,sim.shape_valid(&w,handle))}
+        if cell.coord==generated {_,owned:=physics.owned_body_of(&w,cell.body);testing.expect(t,owned,"the cell that changed has a body again")}
+        for handle in fp.shapes[cell.first:][:cell.count] {_,valid:=physics.owned_shape_user(&w,handle);testing.expect(t,valid)}
     }
     physics_owner_clear(&fp,&w,e)
-    testing.expect(t,w.body_count==0 && len(fp.cells)==0 && len(fp.shapes)==0)
+    testing.expect(t,w.world.body_count==0 && len(fp.cells)==0 && len(fp.shapes)==0)
 }
 
 @(test)
@@ -766,8 +765,8 @@ foliage_calls_without_memory_are_refused :: proc(t:^testing.T) {
         ground:Ground_Owner
         fp:Foliage_Physics
         collision:physics.Collision_Settings
-        w:sim.World
-        if !testing.expect(t,sim.world_init(&w,sim.world_desc_default())) {return}
+        w:physics.Physics_State
+        if !testing.expect(t,physics.test_state_make(&w)) {return}
         if call==.Placed_Group {append(&work.placed,..whole.placed[:])}
         done,refused:=false,false
         for served in 0..<64 {
@@ -821,6 +820,6 @@ foliage_calls_without_memory_are_refused :: proc(t:^testing.T) {
         ground_owner_destroy(&ground)
         physics_owner_clear(&fp,&w,core.Entity(42))
         core.value_free(&fp,type_info_of(Foliage_Physics))
-        sim.world_destroy(&w)
+        physics.state_destroy(&w)
     }
 }

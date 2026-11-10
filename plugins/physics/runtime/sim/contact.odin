@@ -66,7 +66,8 @@ contact_destroy :: proc(w:^World,index:i32,wake:=true) {
     if wake && contact.flags&{.Touching,.Overlap}=={.Touching} {
         for body_index in ([2]i32{contact.body_a,contact.body_b}) {
             body:=&w.bodies[body_index]
-            if body.type!=.Static && .Awake not_in body.flags {body_wake(w,body_index)}
+            // One without an island is changing type (body_set_type), which wakes it.
+            if body.type!=.Static && .Awake not_in body.flags && body.island>=0 {body_wake(w,body_index)}
         }
     }
     for body_index,side in ([2]i32{contact.body_a,contact.body_b}) {

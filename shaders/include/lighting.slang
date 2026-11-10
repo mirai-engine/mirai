@@ -800,8 +800,6 @@ float3 extension_radiance(Shading s, Extension_Light light) {
 // (DIRECT_TRACED_BACK: a thin surface that lets light through, whose blocks
 // hold the shadows of its side alone). Their dispatch counts groups of
 // DIRECT_TRACED_GROUP (render.DIRECT_TRACED_*).
-#define DIRECT_TRACED_FIRST 1u
-#define DIRECT_TRACED_GROUP 64u
 #define DIRECT_TRACED_Y_SHIFT 15u
 #define DIRECT_TRACED_X_MASK 0x7FFFu
 #define DIRECT_TRACED_FRONT (1u << 30u)

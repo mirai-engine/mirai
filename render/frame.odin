@@ -6,45 +6,46 @@ import "core:math/linalg"
 import "core:mem"
 import "core:time"
 import "mirai:rhi"
+import "mirai:render/abi"
 
-// Binding slots, mirrored from shaders/include/common.slang.
-SLOT_FRAME          :: 0
-SLOT_PARAMS         :: 1
-SLOT_LINEAR_SAMPLER :: 2
-SLOT_POINT_SAMPLER  :: 3
-SLOT_INSTANCES      :: 4
-SLOT_MESHES         :: 5
-SLOT_VERTICES       :: 6
-SLOT_INDICES        :: 7
-SLOT_MATERIALS      :: 8
-SLOT_LIGHTS         :: 9
-SLOT_LIGHT_TREE     :: 10
-SLOT_BLAS_NODES     :: 11
-SLOT_BLAS_TRIANGLES :: 12
-SLOT_TLAS_NODES     :: 13
-SLOT_TLAS_REFS      :: 14
-SLOT_MATERIAL_SAMPLER :: 15
-SLOT_PROBES         :: 16
-SLOT_IRRADIANCE     :: 17
-SLOT_POINTS         :: 18 // the material points (points.odin)
-SLOT_PASS0          :: 19
-SLOT_PASS1          :: 20
-SLOT_PASS2          :: 21
-SLOT_PASS3          :: 22
-SLOT_PASS4          :: 23
-SLOT_PASS5          :: 24
-SLOT_PASS6          :: 25
-SLOT_PASS7          :: 26
-SLOT_PASS8          :: 27
-SLOT_PASS9          :: 28
-SLOT_TLAS           :: 29
-SLOT_SURFACE        :: 30
-SLOT_VIEWS          :: 31
-SLOT_LAYERS         :: 32
-SLOT_DISTANCE       :: 33
+// Binding slots.
+SLOT_FRAME          :: abi.SLOT_FRAME
+SLOT_PARAMS         :: abi.SLOT_PARAMS
+SLOT_LINEAR_SAMPLER :: abi.SLOT_LINEAR_SAMPLER
+SLOT_POINT_SAMPLER  :: abi.SLOT_POINT_SAMPLER
+SLOT_INSTANCES      :: abi.SLOT_INSTANCES
+SLOT_MESHES         :: abi.SLOT_MESHES
+SLOT_VERTICES       :: abi.SLOT_VERTICES
+SLOT_INDICES        :: abi.SLOT_INDICES
+SLOT_MATERIALS      :: abi.SLOT_MATERIALS
+SLOT_LIGHTS         :: abi.SLOT_LIGHTS
+SLOT_LIGHT_TREE     :: abi.SLOT_LIGHT_TREE
+SLOT_BLAS_NODES     :: abi.SLOT_BLAS_NODES
+SLOT_BLAS_TRIANGLES :: abi.SLOT_BLAS_TRIANGLES
+SLOT_TLAS_NODES     :: abi.SLOT_TLAS_NODES
+SLOT_TLAS_REFS      :: abi.SLOT_TLAS_REFS
+SLOT_MATERIAL_SAMPLER :: abi.SLOT_MATERIAL_SAMPLER
+SLOT_PROBES         :: abi.SLOT_PROBES
+SLOT_IRRADIANCE     :: abi.SLOT_IRRADIANCE
+SLOT_POINTS         :: abi.SLOT_POINTS // the material points (points.odin)
+SLOT_PASS0          :: abi.SLOT_PASS0
+SLOT_PASS1          :: abi.SLOT_PASS1
+SLOT_PASS2          :: abi.SLOT_PASS2
+SLOT_PASS3          :: abi.SLOT_PASS3
+SLOT_PASS4          :: abi.SLOT_PASS4
+SLOT_PASS5          :: abi.SLOT_PASS5
+SLOT_PASS6          :: abi.SLOT_PASS6
+SLOT_PASS7          :: abi.SLOT_PASS7
+SLOT_PASS8          :: abi.SLOT_PASS8
+SLOT_PASS9          :: abi.SLOT_PASS9
+SLOT_TLAS           :: abi.SLOT_TLAS
+SLOT_SURFACE        :: abi.SLOT_SURFACE
+SLOT_VIEWS          :: abi.SLOT_VIEWS
+SLOT_LAYERS         :: abi.SLOT_LAYERS
+SLOT_DISTANCE       :: abi.SLOT_DISTANCE
 // Of a draw of the clusters of an instance (gbuffer.vert): the Surface program
 // whose clusters it draws, 0 those without one, GPU_NONE all of them.
-SLOT_DRAW           :: SLOT_PASS9
+SLOT_DRAW           :: abi.SLOT_DRAW
 
 // What the passes of a view record with: the frame, the view with its
 // targets, and what several of them decide by.
@@ -478,8 +479,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     r.ui_shape_written,r.ui_shape_cache_count,r.ui_vertex_cache_count=0,0,0
     ui_written:=0
     s:=&r.scene
-    if s.instances_dirty || len(s.touched)>0 || s.materials_dirty || len(s.material_ranges)>0 {r.textures.residency.stale=true}
-    r.scene_uploads_change=s.instances_dirty || len(s.touched)>0 || s.materials_dirty || len(s.material_ranges)>0 || s.lights_dirty || s.lights_changed
+    r.scene_uploads_change=s.instances_dirty || s.touched_count>0 || s.materials_dirty || len(s.material_ranges)>0 || s.lights_dirty || s.lights_changed
     s.lights_changed=false
     texture_uploads_record(r,cmd)
     recorded_ok:=renderer_commit_geometry(r,cmd,slot) && font_record(r,cmd,slot) && upload_scene(r,cmd) && (frame.ui_only || air_frame(r,cmd))
@@ -940,8 +940,8 @@ cull_programs_bin :: proc(p: ^Pass, phase: u32) {
 }
 
 // The layout of Scene_State.program_bins (cull_programs.slang), for the most bins.
-@(private) PROGRAMS_DISPATCH :: 2
-@(private) PROGRAMS_HEADER :: 8
+@(private) PROGRAMS_DISPATCH :: abi.PROGRAMS_DISPATCH
+@(private) PROGRAMS_HEADER :: abi.PROGRAMS_HEADER
 @(private)
 program_entry_word :: proc "contextless" (entry: u32) -> u32 {return PROGRAMS_HEADER + 14 * POINTS_PROGRAM_CAPACITY + 3 * entry}
 @(private)
@@ -1238,8 +1238,8 @@ PROBE_LIGHT_BUDGET :: u32(4)
 // The list of the pixels whose direct light traces rays of its own
 // (DIRECT_TRACED_* in lighting.slang), room for every pixel of the view, and
 // the dispatch over them, which starts each frame as a copy of dispatch_start.
-DIRECT_TRACED_FIRST :: u32(1)
-DIRECT_TRACED_GROUP :: u32(64)
+DIRECT_TRACED_FIRST :: abi.DIRECT_TRACED_FIRST
+DIRECT_TRACED_GROUP :: abi.DIRECT_TRACED_GROUP
 @(private)
 ensure_direct_list :: proc(r: ^Renderer, t: ^Targets) -> bool {
 	if t.direct_traced != 0 {return true}
@@ -1445,8 +1445,8 @@ pass_indirect :: proc(p: ^Pass) -> bool {
 
 // The contact occlusion of the probe volume (contact.comp): the composition
 // takes it in p.gi.
-// Rays of each pixel. Must match CONTACT_SAMPLES of contact.comp.
-CONTACT_RAYS :: u64(8)
+// Rays of each pixel.
+CONTACT_RAYS :: abi.CONTACT_RAYS
 @(private)
 pass_contact :: proc(p: ^Pass) -> bool {
 	r, cmd, t := p.r, p.cmd, p.t
