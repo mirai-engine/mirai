@@ -17,8 +17,8 @@ plus requests queued from a `fixed` step; what is invalid or full shows in `engi
 - Vault, hit, death, reload, wave, aim, look, and reacting to them: [Four calls](#four-calls)
   and [One event loop](#one-event-loop).
 - The action set, its layers, sections and windows: [actions.md](animation/actions.md).
-- A door or prop that plays a clip, curves, root motion of a body that is not a `Character`:
-  [props.md](animation/props.md).
+- A door, a lift or a light moved by a clip, a cutscene with cameras and shots, curves, root
+  motion of a body that is not a `Character`: [props.md](animation/props.md).
 - IK, feet on the ground, warp to a target, held objects, retarget, mirror, distant characters:
   [rigs.md](animation/rigs.md). Importing clips: [assets](assets.md); AI: [ai](ai.md).
 

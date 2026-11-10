@@ -183,13 +183,13 @@ source_join :: proc(cache:^Source_Assets,set:^Source_Set,primary:base.Asset_Id,s
     if cache==nil || set==nil || primary=={} || len(sources)<2 {return .Invalid}
     allocator:=cache.allocator if cache.allocator.procedure!=nil else context.allocator
     desc:=lib.Library_Desc{allocator=allocator}
-    count,marker_names,streams,morphs:=0,0,0,0
+    count,marker_names,streams,morphs,fields:=0,0,0,0,0
     found:=false
     for source,i in sources {
         if source.id=={} || source.clip_count<0 || source.clip_count>len(source.names) || source.clip_count>len(source.roots) || source.lib.key_count<0 || source.lib.key_count>len(source.lib.keys) || source.lib.track_count<0 || source.lib.track_count>len(source.lib.tracks) || source.lib.marker_count<0 || source.lib.marker_count>len(source.lib.markers) || source.lib.stream_bytes<0 || source.lib.stream_bytes>0 && source.lib.stream_bytes+lib.STREAM_PADDING>len(source.lib.streams) || source.clip_count>source.lib.clip_count || source.clip_count>len(source.lib.clips) {return .Invalid}
         for previous in sources[:i] {if previous.id==source.id {return .Invalid}}
         found ||= source.id==primary
-        count+=source.clip_count;marker_names+=len(source.markers);streams+=source.lib.stream_bytes;morphs+=len(source.morphs)
+        count+=source.clip_count;marker_names+=len(source.markers);streams+=source.lib.stream_bytes;morphs+=len(source.morphs);fields+=len(source.fields)
         desc.max_keys+=source.lib.key_count;desc.max_tracks+=source.lib.track_count;desc.max_markers+=source.lib.marker_count
     }
     if !found || count==0 {return .Invalid}
@@ -199,17 +199,19 @@ source_join :: proc(cache:^Source_Assets,set:^Source_Set,primary:base.Asset_Id,s
     published:=false
     defer {if !published {source_set_free(&next,allocator)}}
     if !lib.library_init(&next.content.lib,desc) {return .Out_Of_Memory}
-    e1,e2,e3,e4,e5:mem.Allocator_Error
+    e1,e2,e3,e4,e5,e6:mem.Allocator_Error
     next.content.markers,e1=make([]u64,marker_names,allocator)
     next.content.names,e2=make([][asset.ANIMATION_NAME_CAPACITY]u8,count,allocator)
     next.content.roots,e3=make([]asset.Animation_Root,count,allocator)
     next.clip_sources,e4=make([]base.Asset_Id,count,allocator)
     next.content.morphs,e5=make([]host.Content_Morph,morphs,allocator)
-    if e1!=nil || e2!=nil || e3!=nil || e4!=nil || e5!=nil {return .Out_Of_Memory}
+    next.content.fields,e6=make([]host.Content_Field,fields,allocator)
+    if e1!=nil || e2!=nil || e3!=nil || e4!=nil || e5!=nil || e6!=nil {return .Out_Of_Memory}
     joined:=&next.content
-    key_at,track_at,marker_at,name_at,clip_at,stream_at,morph_at:=0,0,0,0,0,0,0
+    key_at,track_at,marker_at,name_at,clip_at,stream_at,morph_at,field_at:=0,0,0,0,0,0,0,0
     for source in sources {
         copy(joined.morphs[morph_at:],source.morphs);morph_at+=len(source.morphs)
+        copy(joined.fields[field_at:],source.fields);field_at+=len(source.fields)
         copy(joined.lib.keys[key_at:],source.lib.keys[:source.lib.key_count])
         copy(joined.lib.streams[stream_at:],source.lib.streams[:source.lib.stream_bytes])
         copy(joined.markers[name_at:],source.markers)
@@ -249,7 +251,7 @@ source_join :: proc(cache:^Source_Assets,set:^Source_Set,primary:base.Asset_Id,s
 @(private)
 source_set_free :: proc(set:^Source_Set,allocator:mem.Allocator) {
     lib.library_destroy(&set.content.lib)
-    delete(set.content.markers,allocator);delete(set.content.names,allocator);delete(set.content.roots,allocator);delete(set.content.morphs,allocator)
+    delete(set.content.markers,allocator);delete(set.content.names,allocator);delete(set.content.roots,allocator);delete(set.content.morphs,allocator);delete(set.content.fields,allocator)
     delete(set.clip_sources,allocator);delete(set.ids,allocator);delete(set.generations,allocator)
     set^={}
 }

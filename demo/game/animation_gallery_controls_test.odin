@@ -20,7 +20,7 @@ gallery_manual_controls_survive_the_automatic_demo_and_keep_other_stations_runni
     }
     core.table_settle(&gallery,&entities);core.table_settle(&animations,&entities)
     requests:anim.Animation_Requests
-    defer {delete(requests.seeks.items);delete(requests.plays.items)}
+    defer {delete(requests.timeline.items);delete(requests.plays.items)}
     modifiers:anim.Modifier_Requests
     defer delete(modifiers.controls.items)
     panel:Gallery_UI
@@ -55,11 +55,10 @@ gallery_panel_events_become_the_commands_of_their_station :: proc(t:^testing.T) 
     entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
     gallery:core.Table(Animation_Gallery);defer core.table_destroy(&gallery)
     panels:core.Table(Gallery_Panel);defer core.table_destroy(&panels)
-    paths:core.Table(anim.Keyframe_Path);defer core.table_destroy(&paths)
     station,panel_entity,other:=core.create(&entities),core.create(&entities),core.create(&entities)
     core.add(&gallery,station,{kind=.Matching})
     core.add(&panels,panel_entity,{station=station})
-    core.table_settle(&gallery,&entities);core.table_settle(&panels,&entities);core.table_settle(&paths,&entities)
+    core.table_settle(&gallery,&entities);core.table_settle(&panels,&entities)
     events:gui.UI_Events;defer delete(events.items)
     append(&events.items,
         gui.UI_Event{entity=panel_entity,name=base.name_hash("value"),kind=.Changed,item=0,value=.5},
@@ -68,7 +67,7 @@ gallery_panel_events_become_the_commands_of_their_station :: proc(t:^testing.T) 
         gui.UI_Event{entity=other,name=base.name_hash("button"),kind=.Clicked,item=0},
     )
     panel:Gallery_UI
-    gallery_panel_input(core.read(&panels),core.read(&gallery),{&events},{},core.read(&paths),nil,&panel)
+    gallery_panel_input(core.read(&panels),core.read(&gallery),{&events},{},&panel)
     if !testing.expect_value(t,int(panel.count),2) {return}
     testing.expect(t,panel.commands[0].kind==.Speed && panel.commands[0].entity==station && panel.commands[0].value==GALLERY_MATCH_SPEED*.5)
     testing.expect(t,panel.commands[1].kind==.Action && base.text_get(panel.commands[1].name[:])=="Wave")

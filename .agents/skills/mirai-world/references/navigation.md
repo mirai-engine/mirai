@@ -26,7 +26,10 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
   copies the marks of the tiles, the settings and the counts every time.
 - It builds by itself, in `navigation_build` (`fixed`, `react`, game and editor, `server`):
   - **Where.** Inside the `Nav_Bounds`; with none, in the box of all the static collision
-    (`phys.static_bounds`).
+    (`phys.static_bounds`). The box of a `Nav_Bounds`, a `Nav_Area` or a `Nav_Obstacle` is the
+    [`Volume`](../../mirai-gameplay/references/libraries.md#volume) of its entity, a `Box` taken
+    upright where the entity is (`box_half`); without one, the `navigation.volume` problem, and
+    the navigation does not see it.
   - **What.** The physics static collision (`phys.static_triangles`) that blocks the agents of the
     class (above), without dynamic or kinematic bodies, characters or sensors; the arcs of the
     generated links are checked against the same collision. Terrain and foliage enter
@@ -78,7 +81,7 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
   height. The sky has no edge: without air bounds there is no volume. The settings bring the
   `Flier` class with the size of `collider_character()`.
 - A class with `space` `Water` builds its volume the same way, from the water of the
-  `Fluid_Volume`s (`phys.fluids_in`): the box of each water box and, of a plane, the part of each
+  `Fluid`s (`phys.fluids_in`): the box of each water box and, of a plane, the part of each
   bound of the surface (or of the static collision) under its surface. Dry boxes stay solid,
   enlarged like the collision. Creating, moving or removing a fluid changes those boxes, and the
   zones they touch are rebuilt. The settings bring the `Swimmer` class.

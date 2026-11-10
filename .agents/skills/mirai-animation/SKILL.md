@@ -6,9 +6,9 @@ description: Mirai animation - the `animation` plugin (`plugins/animation/runtim
   `match_goal`) with inertialization, the action set (`.action`, layers over the matched pose
   and the actions of `play`, `stop`, `set`, `look`), aim offsets and additives (`.blend`), root
   motion, retarget, mirroring, rigs and IK, morph targets, motion profiles and warping,
-  grounding, budget, `Keyframe_Path` sequences, authoring by intent and by API, and the auto-rig
-  of a character without a skeleton. Use when animating characters or objects, building the
-  locomotion or the actions of a character, porting a character's or a weapon's motion and
+  grounding, budget, clips that move props and fields, authoring by intent and by API, and the
+  auto-rig of a character with no skeleton. Use when animating characters or objects, building
+  the locomotion or the actions of a character, porting a character's or a weapon's motion and
   events from another engine's data, looking for a state machine, an animation graph or a
   locomotion blend space (they do not exist), touching those packages or their assets, or
   diagnosing a pose, a skinning or a clip.
@@ -86,9 +86,12 @@ automatic plugin `animation_physics` feeds the locomotion of each `Character`.
   [execution and state](references/animation-grounding.md#execution-and-state).
 - `Animation_Budget` and parallel execution:
   [budget](references/animation-budget.md#animation_budget) and
-  [parallel execution](references/animation-budget.md#parallel-execution); `Keyframe_Path`
-  sequences: [keyframe path](references/animation-sequence.md#keyframe_path) and
-  [runtime](references/animation-sequence.md#runtime).
+  [parallel execution](references/animation-budget.md#parallel-execution).
+- A prop, a field of a component or an entity anywhere moved by a clip, and the one queue that
+  plays, pauses, stops and seeks it:
+  [what a track drives](references/animation-timeline.md#what-a-track-drives),
+  [when it writes](references/animation-timeline.md#when-it-writes) and
+  [commands](references/animation-timeline.md#commands).
 - Math and storage of `std/anim`:
   [clips](../mirai-std/references/anim.md#tracks-keys-and-clips-trackodin-clipodin),
   [pose](../mirai-std/references/anim.md#blending-poseodin),

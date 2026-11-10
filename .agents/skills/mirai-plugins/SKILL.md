@@ -3,7 +3,7 @@ name: mirai-plugins
 description: The Mirai plugin system - manifests (`plugin.mirai`), the runtime and editor parts,
   dependencies and order, plugins from git and the catalog (`cook/install`, `mirai plugin`) - and
   the tool, physics add-on and renderer plugins `paint`, `physics_placement`, `physics_cache`,
-  `physics_fields`, `ragdoll`, `playtest`, `previews`, `profiler`, `tracy`, `ui_inspector`,
+  `ragdoll`, `playtest`, `previews`, `profiler`, `tracy`, `ui_inspector`,
   `prompts_kenney`, `decals`, `deform`, `monitors`, `portals`, `mirror`, `fog`, `fsr` and `lens`.
   Use when creating, changing, splitting, installing or publishing a plugin, when a plugin must
   extend the engine or integrate with the project world, or when working on one of those plugins.
@@ -53,9 +53,6 @@ project world. Layout, manifests and build:
   [recording](references/physics-cache.md#recording),
   [relation with animation](references/physics-cache.md#relation-with-animation) and
   [playback](references/physics-cache.md#playback)
-- `physics_fields` (force and strain regions): [component](references/physics-fields.md#component),
-  [fixed step](references/physics-fields.md#fixed-step) and
-  [selection preview](references/physics-fields.md#selection-preview)
 - `ragdoll` (components and `ragdoll.setup`): [components](references/ragdoll.md#components),
   [setup by API](references/ragdoll.md#setup-by-api),
   [state and errors](references/ragdoll.md#state-and-errors) and

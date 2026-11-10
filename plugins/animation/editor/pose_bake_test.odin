@@ -50,7 +50,7 @@ pose_bake_test_sample :: proc(data,shared,editor,app_data:rawptr) {
 @(private)
 pose_bake_test_advance :: proc(data,shared,editor,app_data:rawptr) {
     w,s,app:=(^Pose_Bake_Test_World)(data),(^Pose_Bake_Test_Shared)(shared),(^host.App)(app_data)
-    anim.animation_advance(core.read(&w.modifiers),&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.modifier_requests,&w.modifier_runtime,&w.playback,&w.constraints,&w.grounding,{},{},w.time,&w.requests,core.ref(&s.skeletons),host.app_world_storage(app,data,core.Problems),nil,nil,{},{},core.CLOCK_DEFAULT)
+    anim.animation_advance(core.read(&w.modifiers),&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.modifier_requests,&w.modifier_runtime,&w.playback,&w.constraints,&w.grounding,{},{},w.time,&w.requests,core.ref(&s.skeletons),host.app_world_storage(app,data,core.Problems),nil,nil,{},{},core.CLOCK_DEFAULT,nil)
     core.settle(app.info,data,editor)
 }
 @(private)

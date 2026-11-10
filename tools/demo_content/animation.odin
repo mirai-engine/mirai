@@ -304,6 +304,32 @@ gallery_motor :: proc(s:^asset.Scene_Builder,entity:base.Entity_Id) {
 // The animation gallery: one hall that Mirai walks, with a station per feature. Every station
 // plays on its own from the start; at those with a panel, E frames it and frees the pointer for
 // its sliders and buttons.
+SEQUENCE_PLATFORM :: mm.Vec3{1.2,.25,1.2}
+
+// The clip of the platform of station 1.4: it holds, rises with an ease, holds, slides back turning
+// a quarter and growing, holds, and returns the way it came. Its keys are in the space of the
+// entity that plays it, so the same clip moves a platform wherever that entity is put.
+write_sequence_clip :: proc(o:^Out) -> base.Asset_Id {
+    id:=asset.content_id(PROJECT,"animation","animation_gallery_sequence")
+    quarter:=lib.quat_vec4(mm.quat_axis_angle({0,1,0},mm.PI*.5))
+    grown:=SEQUENCE_PLATFORM*mm.Vec3{1.4,1,1.4}
+    Stop :: struct {position:mm.Vec3,rotation:mm.Vec4,scale:mm.Vec3}
+    low,high,back:=Stop{{0,0,0},{0,0,0,1},SEQUENCE_PLATFORM},Stop{{0,1,0},{0,0,0,1},SEQUENCE_PLATFORM},Stop{{0,.5,-.6},quarter,grown}
+    stops:=[]Stop{low,low,high,high,back,back,high,high,low,low}
+    times:=[]f32{0,.5,2,2.5,3.5,4.5,5.5,6,7.5,8}
+    eased:=[]bool{false,false,true,false,false,false,false,false,true,false}
+    position,rotation,scale:=make([]lib.Keyframe,len(stops),context.temp_allocator),make([]lib.Keyframe,len(stops),context.temp_allocator),make([]lib.Keyframe,len(stops),context.temp_allocator)
+    for stop,i in stops {
+        ease:=mm.Ease.Sine_In_Out if eased[i] else .Linear
+        position[i]={time=times[i],value={stop.position.x,stop.position.y,stop.position.z,0},ease=ease}
+        rotation[i]={time=times[i],value=stop.rotation,ease=ease}
+        scale[i]={time=times[i],value={stop.scale.x,stop.scale.y,stop.scale.z,0},ease=ease}
+    }
+    clips:=[]asset.Animation_Clip_Desc{{name="ride",tracks={{target="Platform",property=.Position,keys=position},{target="Platform",property=.Rotation,keys=rotation},{target="Platform",property=.Scale,keys=scale}}}}
+    asset.content_check(&o.content,"assets/animation_gallery/sequence.anim",asset.animation_save(path(o,"assets/animation_gallery/sequence.anim"),&o.content.types,{id=id,clips=clips}))
+    return id
+}
+
 write_animation_scene :: proc(o:^Out) {
     source:="source/models/mirai/mirai.glb"
     model,error:=importer.import_model(path(o,source),sources.FORMATS[:],{root=fmt.tprintf("%s/demo",o.root)})
@@ -336,13 +362,13 @@ write_animation_scene :: proc(o:^Out) {
     gallery_item(&g,root,.Root_Motion,place,"1.3  Root motion","the hips of the stride move the actor")
 
     place=gallery_next(&g)
-    sequence:=gallery_cube(&s,"Sequence platform",place.origin+mm.Vec3{0,.3,0},{1.2,.25,1.2},{.2,.65,.9,1})
-    path_value:=anim.keyframe_path_default();path_value.count=3;path_value.relative=true;path_value.loop=.Ping_Pong
-    path_value.frames[0].hold=.5;path_value.frames[1].pose.position={0,1,0};path_value.frames[1].duration=1.5;path_value.frames[1].ease=.Sine_In_Out;path_value.frames[1].hold=.5
-    path_value.frames[2].pose.position={0,.5,-.6};path_value.frames[2].pose.rotation=mm.quat_axis_angle({0,1,0},mm.PI*.5);path_value.frames[2].duration=1;path_value.frames[2].hold=.5
-    path_value.frames[2].pose.scale={1.4,1,1.4}
-    asset.builder_set(&s,sequence,path_value)
-    gallery_item(&g,sequence,.Sequence,place,"1.4  Transform sequence","3 frames / holds / easing / ping-pong",adjustable=true)
+    sequence:=asset.builder_entity(&s,"Sequence platform",{position=place.origin+mm.Vec3{0,.3,0},rotation=1,scale={1,1,1}})
+    {value:=anim.ANIMATION_DEFAULT;value.asset=write_sequence_clip(o);value.fade=0;asset.builder_set(&s,sequence,value)}
+    {
+        platform:=asset.builder_entity(&s,"Platform",{rotation=1,scale=SEQUENCE_PLATFORM},sequence)
+        asset.builder_set(&s,platform,render.Mesh_Renderer{shape=.Cube});asset.builder_set(&s,platform,render.Tint{color={.2,.65,.9,1}})
+    }
+    gallery_item(&g,sequence,.Sequence,place,"1.4  Transform clip","a prop moved by keys / holds / easing / there and back",adjustable=true)
 
     place=gallery_next(&g)
     root=gallery_mirai(&g,"Mirai greeting layer",place.origin,place.facing)

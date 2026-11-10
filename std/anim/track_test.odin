@@ -11,76 +11,63 @@ rot_key :: proc(time:f32,q:math.Quat,interpolation:Interpolation=.Linear) -> Key
     return {time=time,value=quat_vec4(q),interpolation=interpolation}
 }
 
-@(test)
-track_holds_its_ends_and_interpolates_linearly :: proc(t:^testing.T) {
-    keys:=[]Keyframe{key(1,10),key(3,20),key(4,0)}
-    testing.expect(t,near(track_evaluate(keys,.Float,0).x,10))
-    testing.expect(t,near(track_evaluate(keys,.Float,1).x,10))
-    testing.expect(t,near(track_evaluate(keys,.Float,2).x,15))
-    testing.expect(t,near(track_evaluate(keys,.Float,3.5).x,10))
-    testing.expect(t,near(track_evaluate(keys,.Float,9).x,0))
-    testing.expect(t,track_evaluate(nil,.Float,1)==math.Vec4{})
-    testing.expect(t,near(track_evaluate(keys[:1],.Float,5).x,10))
+near :: proc(a,b:f32,eps:f32=1e-4) -> bool {return abs(a-b)<=eps}
+near_vec :: proc(a,b:$V/[$N]f32,eps:f32=1e-4) -> bool {
+    for i in 0..<N {if abs(a[i]-b[i])>eps {return false}}
+    return true
 }
 
+// The one way a keyed value is read at a time: what a clip, a cinematic and an interface play.
 @(test)
-track_step_holds_the_previous_value_until_the_key :: proc(t:^testing.T) {
-    keys:=[]Keyframe{key(0,1),key(1,5,.Step),key(2,9,.Step)}
-    testing.expect(t,near(track_evaluate(keys,.Float,0.99).x,1))
-    testing.expect(t,near(track_evaluate(keys,.Float,1).x,5))
-    testing.expect(t,near(track_evaluate(keys,.Float,1.99).x,5))
-    testing.expect(t,near(track_evaluate(keys,.Float,2).x,9))
-}
-
-@(test)
-track_easing_shapes_each_segment_by_the_arrival_key :: proc(t:^testing.T) {
-    keys:=[]Keyframe{key(0,0),key(2,8,.Linear,.Quad_In)}
-    testing.expect(t,near(track_evaluate(keys,.Float,1).x,2))
-}
-
-@(test)
-track_cubic_passes_through_keys_and_uses_neighbor_slopes :: proc(t:^testing.T) {
-    keys:=[]Keyframe{key(0,0),key(1,1,.Cubic),key(2,0,.Cubic)}
-    for k in keys {testing.expect(t,near(track_evaluate(keys,.Float,k.time).x,k.value.x))}
-    testing.expect(t,near(track_evaluate(keys,.Float,0.5).x,0.625))
-    testing.expect(t,near(track_evaluate(keys,.Float,1.5).x,0.625))
-    line:=[]Keyframe{key(0,0),key(1,1,.Cubic),key(2,2,.Cubic),key(3,3,.Cubic)}
-    for time in ([]f32{0.25,1.5,2.75}) {testing.expect(t,near(track_evaluate(line,.Float,time).x,time))}
-}
-
-@(test)
-track_vectors_interpolate_every_component :: proc(t:^testing.T) {
-    keys:=[]Keyframe{{time=0,value={0,2,4,6}},{time=2,value={2,4,6,8}}}
-    testing.expect(t,near_vec(track_evaluate(keys,.Vector,1),math.Vec4{1,3,5,7}))
-}
-
-@(test)
-track_rotation_takes_the_short_arc_and_stays_unit :: proc(t:^testing.T) {
-    a:=math.quat_axis_angle({0,1,0},0)
-    b:=math.quat_axis_angle({0,1,0},math.PI/2)
-    for sign in ([]f32{1,-1}) {
-        flipped:=quaternion(w=sign*b.w,x=sign*b.x,y=sign*b.y,z=sign*b.z)
-        keys:=[]Keyframe{rot_key(0,a),rot_key(1,flipped)}
-        mid:=vec4_quat(track_evaluate(keys,.Rotation,0.5))
-        testing.expect(t,near(math.quat_angle(a,mid),math.PI/4,1e-3))
-        testing.expect(t,near(abs(mid),1,1e-4))
+a_keyed_value_is_evaluated_one_way :: proc(t:^testing.T) {
+    quarter:=math.quat_axis_angle({0,1,0},math.PI/2)
+    half:=math.quat_axis_angle({0,1,0},math.PI)
+    nan:=f32(0h7fc00000)
+    Case :: struct {name:string,keys:[]Keyframe,property:Property,loop:Loop,time:f32,want:math.Vec4,unit:bool}
+    cases:=[]Case{
+        {name="no keys give zero",time=1},
+        {name="one key holds everywhere",keys={key(1,10)},time=5,want={10,0,0,0}},
+        {name="before the first key",keys={key(1,10),key(3,20)},time=0,want={10,0,0,0}},
+        {name="after the last key",keys={key(1,10),key(3,20)},time=9,want={20,0,0,0}},
+        {name="a NaN time gives the first value",keys={key(1,10),key(3,20)},time=nan,want={10,0,0,0}},
+        {name="Linear",keys={key(1,10),key(3,20),key(4,0)},time=2,want={15,0,0,0}},
+        {name="Linear, every component",keys={{time=0,value={0,2,4,6}},{time=2,value={2,4,6,8}}},property=.Vector,time=1,want={1,3,5,7}},
+        {name="Step holds until its key",keys={key(0,1),key(1,5,.Step),key(2,9,.Step)},time=.99,want={1,0,0,0}},
+        {name="Step arrives at its key",keys={key(0,1),key(1,5,.Step),key(2,9,.Step)},time=1,want={5,0,0,0}},
+        {name="Cubic passes through a key",keys={key(0,0),key(1,1,.Cubic),key(2,0,.Cubic)},time=1,want={1,0,0,0}},
+        {name="Cubic takes its slopes from the neighbors",keys={key(0,0),key(1,1,.Cubic),key(2,0,.Cubic)},time=.5,want={.625,0,0,0}},
+        {name="Cubic along a line is the line",keys={key(0,0),key(1,1,.Cubic),key(2,2,.Cubic),key(3,3,.Cubic)},time=1.5,want={1.5,0,0,0}},
+        {name="Cubic with its own slopes",keys={{time=10,out_slope={3,0,0,0},tangents=true},{time=14,value={12,0,0,0},in_slope={3,0,0,0},tangents=true,interpolation=.Cubic}},time=12,want={6,0,0,0}},
+        {name="Cubic_Spline with its own slopes",keys={{time=0,tangents=true},{time=2,value={8,0,0,0},tangents=true,interpolation=.Cubic_Spline}},time=1,want={4,0,0,0}},
+        {name="a rotation takes the short arc",keys={rot_key(0,1),rot_key(1,-quarter)},property=.Rotation,time=.5,want=quat_vec4(math.quat_axis_angle({0,1,0},math.PI/4)),unit=true},
+        {name="a Cubic rotation passes through a key",keys={rot_key(0,1,.Cubic),rot_key(1,quarter,.Cubic),rot_key(2,half,.Cubic)},property=.Rotation,time=1,want=quat_vec4(quarter),unit=true},
+        {name="keys at one time do not divide by zero",keys={key(0,0),key(1,1,.Cubic),key(1,5,.Cubic),key(2,6,.Cubic)},time=1,want={5,0,0,0}},
+        {name="Once holds the end",keys={key(0,0),key(2,8)},loop=.Once,time=5,want={8,0,0,0}},
+        {name="Loop starts over",keys={key(0,0),key(2,8)},loop=.Loop,time=5,want={4,0,0,0}},
+        {name="Ping_Pong comes back",keys={key(0,0),key(2,8)},loop=.Ping_Pong,time=3,want={4,0,0,0}},
+        {name="a loop of no length is its start",keys={key(0,3)},loop=.Loop,time=5,want={3,0,0,0}},
     }
-    cubic:=[]Keyframe{rot_key(0,a,.Cubic),rot_key(1,b,.Cubic),rot_key(2,math.quat_axis_angle({0,1,0},math.PI),.Cubic)}
-    for time in ([]f32{0.3,0.7,1.2,1.9}) {
-        q:=vec4_quat(track_evaluate(cubic,.Rotation,time))
-        testing.expect(t,near(abs(q),1,1e-4))
+    for c in cases {
+        duration:=c.keys[len(c.keys)-1].time if len(c.keys)>0 else 0
+        time:=c.time
+        if c.loop!=.Once || time>duration {time,_=loop_time(c.loop,duration,c.time)}
+        if c.time!=c.time {time=c.time}
+        got:=track_evaluate(c.keys,c.property,time)
+        if c.unit {
+            testing.expectf(t,near(abs(vec4_quat(got)),1) && near(math.quat_angle(vec4_quat(got),vec4_quat(c.want)),0,1e-3),"%s: %v, not %v",c.name,got,c.want)
+            continue
+        }
+        testing.expectf(t,near_vec(got,c.want),"%s: %v, not %v",c.name,got,c.want)
     }
-    at_key:=vec4_quat(track_evaluate(cubic,.Rotation,1))
-    testing.expect(t,near(math.quat_angle(at_key,b),0,1e-3))
-}
-
-@(test)
-track_with_repeated_times_does_not_divide_by_zero :: proc(t:^testing.T) {
-    keys:=[]Keyframe{key(0,0),key(1,1,.Cubic),key(1,5,.Cubic),key(2,6,.Cubic)}
-    for time in ([]f32{0.5,1,1.5}) {
-        v:=track_evaluate(keys,.Float,time).x
-        testing.expect(t,v==v && abs(v)<100)
+    // Every ease shapes the segment that arrives at its key, and leaves its ends where they are.
+    for ease in math.Ease {
+        keys:=[]Keyframe{key(0,2),key(4,10,.Linear,ease)}
+        testing.expectf(t,near(track_evaluate(keys,.Float,1).x,2+8*math.ease_apply(ease,.25)),"%v at a quarter",ease)
+        testing.expectf(t,near(track_evaluate(keys,.Float,0).x,2) && near(track_evaluate(keys,.Float,4).x,10),"%v at its ends",ease)
     }
+    // Keys out of order, of times that are not numbers or of an interpolation that does not exist give a value without failing.
+    hostile:=[]Keyframe{key(3,1),key(nan,2,.Cubic),key(-1,3,Interpolation(200),math.Ease(200)),key(max(f32),4,.Cubic_Spline),key(0,5)}
+    for time in ([]f32{-max(f32),-1,0,1,3,nan,max(f32)}) {_=track_evaluate(hostile,.Rotation,time);_=track_evaluate(hostile,.Float,time)}
 }
 
 make_library :: proc(t:^testing.T,keys:=64,tracks:=16,clips:=8,markers:=16) -> Library {

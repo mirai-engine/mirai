@@ -21,8 +21,8 @@ Components (`@(component)` of `plugins/animation/runtime`):
   skeleton of its own, [follows it](#following-a-rig-of-another-skeleton).
 - **`Pose_Modifiers`**: activates a shared `.pose` profile on its rig.
 - **`Bone_Attachment`**: on each equipped object, references a socket of the skeleton.
-- **`Keyframe_Path`** ([sequences](animation-sequence.md)), **`Animation_Budget`**
-  ([budget](animation-budget.md)) and **`Morph_Weights`** ([morphs](animation-morphs.md)).
+- **`Animation_Budget`** ([budget](animation-budget.md)) and **`Morph_Weights`**
+  ([morphs](animation-morphs.md)).
 - **`Animation_Target`**: internal identity of an imported rigid destination, hidden in the
   inspector; the visible name of the entity may change without losing it.
 - **`Skin_Part`**: a bone of the skinned mesh, with what hangs from it, is a part in those layers. A
@@ -335,7 +335,7 @@ of its clip; empty takes that of its definition or `library`.
 - `Animation_Progress` is written only by `animation_sample` while the game runs: a stored save
   keeps the time of the clip and, when loaded, an entity without state in `Playback` asks for
   `animation_seek` there.
-- The runtimes of modifiers, constraints, grounding, sequences, actions, motion and budget are
+- The runtimes of modifiers, constraints, grounding, field tracks, actions, motion and budget are
   copied for Play and rollback.
 - Definitions of skeletons, profiles and programs live in application caches, like `Skin_Runtime`;
   `Skin_Instances` stores the GPU meshes that each world deforms and `animation_skin_release`
@@ -465,11 +465,10 @@ message that says how to fix it; `engine.diagnostics` lists them and `animation.
   `program_asset`, `actions_asset`, `skeleton`, `skin_mesh`...
 - Data that does not apply: a clip, a layer, a bone, a socket or a parameter that do not exist
   (`animation.clip`, `layer_clip`, `layer_bone`, `pose_bone`, `attachment_socket`,
-  `program_parameter`, `match_clip`), a `.blend` as `Animation.asset` (`additive_space`), a matching
+  `parameter`, `match_clip`), a `.blend` as `Animation.asset` (`layer_space`), a matching
   database that is not built (`match_database`, `match_memory`), operations of a profile that are
   not bound or not resolved (`rig_*`, `constraint_*`, `grounding_*`, `retarget_*`, `motion_*`,
-  `morph_*`) and rejected requests (`action_*`, `modifier_*`, `distance`, `match_busy`,
-  `match_goal`).
+  `morph_*`) and rejected requests (`action_*`, `modifier_*`, `distance`, `match_goal`).
 - A rig that cannot follow its leader (`follow_rig`, `follow_bones`, `follow_pose`), curve poses
   of bones its skeleton lacks or with curves that are not finite (`curve_pose_bone`,
   `curve_pose_value`) and curve materials past the capacity of the override (`curve_material`).

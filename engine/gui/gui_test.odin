@@ -254,7 +254,7 @@ paths_read_the_components_and_storages_of_the_world_by_name :: proc(t:^testing.T
     testing.expect(t,found && storage)
     data,stamp=host.fetch(host.user,base.name_hash("Bind_Test_Match"),0)
     testing.expect(t,data==&w.match && stamp==0)
-    // A control bound to a setting writes it; a component, or anything else, asks the game.
+    // A control bound to a storage writes it; one bound to a component asks the game.
     testing.expect(t,host.commits(host.user,base.name_hash("Bind_Test_Match")) && !host.commits(host.user,base.name_hash("Bind_Test_Health")))
     _,_,found=host.source(host.user,base.name_hash("Missing"))
     testing.expect(t,!found)

@@ -15,7 +15,6 @@ import scene "mirai:engine/scene"
 import "mirai:host"
 import "mirai:std/base"
 import mm "mirai:std/math"
-import "mirai:ui"
 
 // The game of the demo project, for the scenes in ../assets. The
 // player is a character of the physics world that walks on the colliders of
@@ -421,91 +420,76 @@ game_projectiles :: proc(
     }
 }
 
-// A box of the HUD placed on its parent.
-hud_box :: proc(ctx:^ui.Context,name:string,anchor,pivot:ui.Anchor,offset:[2]f32,width,height:ui.Size,fill:ui.Color,padding:[4]f32={}) -> ui.Box {
-    return {
-        id=ui.id(ctx,name),layout={width=width,height=height,padding=padding,align_y=.Center},
-        float={to=.Parent,anchor=anchor,pivot=pivot,offset=offset,layer=ctx.layer},fill=fill,
-    }
+// What the use action does where a body stands.
+Player_Hint :: enum u8 {None,Open_Door,Close_Door,Swatch}
+
+// What player_hud.ui shows of the body it is on, a person or the dog, while a
+// seat drives it: the screen is on the body, so it shows in the view of its player.
+@(component,description="The HUD of a body a seat drives: the crosshair, the cubes it threw, what the use action does where it stands and the caption of the nearest exhibit.")
+Player_Hud :: struct {
+    shown:bool,       // a seat drives this body
+    person:bool,      // it throws cubes
+    thrown:i32,
+    hint:Player_Hint,
+    material:[24]u8 `mirai:"text"`, // of the sample in reach
+    captioned:bool,
+    caption:[CAPTION_CAPACITY]u8 `mirai:"text"`,
+    control:bool,     // the scene hands control between bodies
+    dog:bool,
+    barks:i32,
 }
 
-// The crosshair, the count of cubes, what the use action does here and the caption of the nearest exhibit.
-@(step="ui")
-game_hud :: proc(
-    g:^gui.Gui,players:core.Read(Player),doors:core.Read(Door),swatches:core.Read(Swatch),exhibits:core.Read(Exhibit),
-    barkers:core.Read(Barker),demos:core.Read(Control_Demo),drivables:core.Read(inp.Drivable),
-    seat_state:core.Ref(inp.Seats),locals:core.Read(inp.Seat),worlds:core.Read(core.World_Transform),names:core.Read(core.Name),
-    app:^host.App,
-) {
-    ctx:=gui.gui_context(g)
-    if ctx==nil {return}
-    body:=inp.body_of(drivables,inp.focused(seat_state.ptr,locals))
-    player,has_player:=core.get(players,body)
-    placed,has_world:=core.get(worlds,body)
-    barker,has_barker:=core.get(barkers,body)
-    if !has_player && !has_barker || !has_world {return}
-    feet:=placed.position
-    pixels:=host.app_player_rect(app,seat_state.focus,seat_state.local_count)
-    rect:=[4]f32{f32(pixels.x),f32(pixels.y),f32(pixels.z),f32(pixels.w)}/max(app.density,0.01)
-    root:=ui.Box{
-        id=ui.id(ctx,"game.hud"),layout={width=ui.fixed(f32(rect.z)),height=ui.fixed(f32(rect.w))},
-        float={to=.Surface,layer=1000,offset={f32(rect.x),f32(rect.y)}},
-    }
-    ui.box_begin(ctx,root)
-    defer ui.box_end(ctx,root)
-    white:=ui.Color{255,255,255,204}
-    if ui.box(ctx,hud_box(ctx,"cross.v",.Center,.Center,{},ui.fixed(2),ui.fixed(14),white)) {}
-    if ui.box(ctx,hud_box(ctx,"cross.h",.Center,.Center,{},ui.fixed(14),ui.fixed(2),white)) {}
-    if has_player {
-        if ui.box(ctx,hud_box(ctx,"thrown",.Top_Left,.Top_Left,{10,48},ui.fit(),ui.fixed(26),{0,0,0,128},ui.padding_xy(8,0))) {
-            ui.label(ctx,fmt.tprintf("Cubes thrown: %d",player.thrown))
-        }
-    }
-    hint:=""
-    for row in 0..<core.count(doors) {
-        if hint!="" || !in_reach(worlds,feet,core.entity_at(doors,row),core.at(doors,row).reach) {continue}
-        hint=fmt.tprintf("E: %s the door",core.at(doors,row).open?"close":"open")
-    }
-    swatch_names:=SWATCH_MATERIALS
-    for row in 0..<core.count(swatches) {
-        swatch:=core.at(swatches,row)
-        if hint!="" || !in_reach(worlds,feet,core.entity_at(swatches,row),swatch.reach) {continue}
-        name:=swatch_names[swatch_index(swatch)]
-        hint=fmt.tprintf("E: change the material (%s)",name[strings.last_index_byte(name,'/')+1:len(name)-len(".mat")])
-    }
-    if hint!="" {
-        if ui.box(ctx,hud_box(ctx,"hint",.Center,.Top_Center,{0,40},ui.fit(),ui.fit(),{},ui.padding_xy(4,2))) {
-            ui.label(ctx,hint,color=ctx.theme.accent)
-        }
-    }
-    caption:=""
+// The caption of the exhibit nearest to a point, within its reach: its own, or its name.
+exhibit_caption :: proc(out:[]u8,exhibits:core.Read(Exhibit),worlds:core.Read(core.World_Transform),names:core.Read(core.Name),from:[3]f32) -> bool {
+    found:=false
     distance:=max(f32)
     for row in 0..<core.count(exhibits) {
         e:=core.entity_at(exhibits,row)
         exhibit:=core.at(exhibits,row)
-        exhibit_placed,found:=core.get(worlds,e)
-        if !found {continue}
-        away:=linalg.distance(exhibit_placed.position,feet)
+        placed,has:=core.get(worlds,e)
+        if !has {continue}
+        away:=linalg.distance(placed.position,from)
         if away>=exhibit.reach || away>=distance {continue}
-        distance=away
-        caption=fmt.tprintf("%s",base.text_get(exhibit.caption[:]))
+        caption:=base.text_get(exhibit.caption[:])
         if caption=="" {caption=core.name_get(names,e)}
+        if caption=="" {continue}
+        distance,found=away,true
+        base.text_set(out,caption)
     }
-    if caption!="" {
-        if ui.box(ctx,hud_box(ctx,"caption",.Bottom_Center,.Bottom_Center,{0,-44},ui.fit(),ui.fixed(32),{0,0,0,140},ui.padding_xy(14,0))) {
-            ui.label(ctx,caption)
+    return found
+}
+
+@(step="frame")
+player_hud :: proc(
+    huds:^core.Table(Player_Hud),players:core.Read(Player),doors:core.Read(Door),swatches:core.Read(Swatch),exhibits:core.Read(Exhibit),
+    barkers:core.Read(Barker),demos:core.Read(Control_Demo),drivables:core.Read(inp.Drivable),
+    worlds:core.Read(core.World_Transform),names:core.Read(core.Name),
+) {
+    shown:=core.read(huds)
+    for row in 0..<core.count(shown) {
+        body:=core.entity_at(shown,row)
+        next:Player_Hud
+        player,has_player:=core.get(players,body)
+        barker,has_barker:=core.get(barkers,body)
+        if placed,has_world:=core.get(worlds,body);has_world && inp.seat_of(drivables,body)!=core.NONE && (has_player || has_barker) {
+            feet:=placed.position
+            next.shown,next.person,next.thrown=true,has_player,i32(player.thrown)
+            next.control,next.dog,next.barks=core.count(demos)>0,has_barker,i32(barker.count)
+            for at in 0..<core.count(doors) {
+                if next.hint!=.None || !in_reach(worlds,feet,core.entity_at(doors,at),core.at(doors,at).reach) {continue}
+                next.hint=core.at(doors,at).open?.Close_Door:.Open_Door
+            }
+            materials:=SWATCH_MATERIALS
+            for at in 0..<core.count(swatches) {
+                swatch:=core.at(swatches,at)
+                if next.hint!=.None || !in_reach(worlds,feet,core.entity_at(swatches,at),swatch.reach) {continue}
+                next.hint=.Swatch
+                // Its name is that of its file.
+                path:=materials[swatch_index(swatch)]
+                base.text_set(next.material[:],path[strings.last_index_byte(path,'/')+1:len(path)-len(".mat")])
+            }
+            next.captioned=exhibit_caption(next.caption[:],exhibits,worlds,names,feet)
         }
-    }
-    if core.count(demos)>0 {
-        box:=hud_box(ctx,"control",.Top_Left,.Top_Left,{12,88},ui.fixed(min(430,f32(rect.z)-24)),ui.fit(),{0,0,0,160},ui.padding_xy(10,6))
-        box.layout.direction=.Column
-        box.layout.gap=4
-        if ui.box(ctx,box) {
-            ui.label(ctx,"Tab / North: swap body")
-            ui.label(ctx,"V / RB: overhead camera   C / L3: camera mode")
-            ui.label(ctx,"Right mouse / LT: aim")
-            ui.label(ctx,fmt.tprintf("Controlling %s   E / West: use + bark",has_barker?"Dog":"Person"))
-            if has_barker {ui.label(ctx,fmt.tprintf("Barks: %d",barker.count))}
-        }
+        if core.at(shown,row)!=next {core.at(huds,row)^=next}
     }
 }

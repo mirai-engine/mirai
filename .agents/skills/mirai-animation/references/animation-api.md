@@ -12,7 +12,7 @@ catalog](../../mirai-agent-api/references/methods.md); flows and contracts:
   `animation.capture` and inspected with `animation.inspect` and `animation.asset.inspect`.
 - **Expert layer**, for fine work: clips, tracks, keys and markers, skeletons and sockets, `.pose`
   profiles, blend spaces, `.motion`, `.action`, bakes, morphs and
-  [sequences](animation-sequence.md).
+  [timelines](animation-timeline.md).
 
 ## Common errors
 

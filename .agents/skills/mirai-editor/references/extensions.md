@@ -439,7 +439,7 @@ and joins them with the engine's.
   library. `Inspector_Context` delivers session, world, table, entities and width.
 - `inspector_fields` reuses generic fields, gestures and resets for a struct inside the component.
   Writes go through `field_write`, with the common undo.
-- The `animation` plugin uses it to capture `Keyframe_Path` frames and choose `Bone_Ref` by path;
+- The `animation` plugin uses it to choose `Bone_Ref` by path;
   `vfx`, for the `Particle_Emitter` section: its fields with `inspector_fields`, its effect's with
   `asset_box` and the instance's values with `held_field_row` and `write`.
 - For controls of its own (a curve editor) a [panel](#a-panel) is added.
