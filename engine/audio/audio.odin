@@ -228,7 +228,7 @@ Mixer_Reverb :: struct {
     set:bool,
 }
 
-@(step="late",stage="end",after="transforms_propagate camera_view")
+@(step="late",stage="end",after="camera_view")
 audio_sources :: proc(
     world:core.World_Ref,sources:core.Read(Audio_Source),states:^core.Table(Audio_Source_State),worlds:core.Read(core.World_Transform),
     occlusions:core.Read(Audio_Occlusion),listeners:core.Read(Audio_Listener),view:core.Ref(core.View),queries:core.Ref(core.World_Queries),
@@ -276,7 +276,7 @@ sources_update :: proc(sources:core.Read(Audio_Source),states:^core.Table(Audio_
 
 // The reverb of the mixer goes to that of the volumes where the listener is
 // over about REVERB_FADE.
-@(step="late",stage="end",after="transforms_propagate camera_view")
+@(step="late",stage="end",after="camera_view")
 audio_reverb :: proc(
     reverbs:core.Read(Audio_Reverb),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),listeners:core.Read(Audio_Listener),
     view:core.Ref(core.View),settings:core.Ref(Audio_Settings),medium:core.Ref(Audio_Medium),frame:core.Frame_Time,reverb:^Mixer_Reverb,m:^Mixer,

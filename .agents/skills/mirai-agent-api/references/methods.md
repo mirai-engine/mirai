@@ -723,11 +723,14 @@ when the viewport draws with them, which `mirai shaders` asks for.
   last build that remains and answers when the game plays; if the build fails, it fails with the
   first error and the rest in `data.diagnostics`.
 - `build.check` checks the types of the project code (game, editor and plugins, with the generated
-  world) without compiling or loading anything, and `build.test` compiles and runs the `@(test)`s
-  of a project package (`package_folder`, `game` if missing; `tests` by name) against the engine it
-  uses, without loading it. Both reply when done, with each error and its file and line, or each
-  test that failed with what it logged; the editor keeps drawing meanwhile and they do not run
-  during a build.
+  world) without compiling or loading anything, and replies when done with each error and its file
+  and line. `build.test` compiles and runs the `@(test)`s of a project package (`package_folder`,
+  `game` if missing; `tests` by name) against the libraries the editor loads, without loading them,
+  with the runner and the executable of `mirai test` of that package
+  ([checks and tests](../../mirai-projects/references/projects.md#checks-and-tests)). It replies at
+  once with `running`, and the editor answers other calls while the job builds and runs:
+  `build.test.status` says how long it has run and, once `running` is false, each test that failed
+  with what it logged. Neither runs during a build, nor two at once.
 
 - With `target:"game"` it compiles the shipped game like `mirai build game`: first the saved
   shaders (without the editor's unsaved programs), then the game with its cooked assets in `out`

@@ -11,8 +11,8 @@ reads `game/` and the active plugins; `mirai generate` lists its errors.
 
 ## Map
 
-- Folders and files: [Layout](#layout). New component or storage: [Data](#data).
-- A function and its phase: [Functions](#functions), [Phases](#phases).
+- Folders and files: [Layout](#layout). New component or storage: [Data](#data). A function and
+  its phase: [Functions](#functions), [Phases](#phases). Waits: [waiting.md](core/waiting.md).
 - Order, asking a library, telling the rest what happened: [wiring.md](core/wiring.md).
 - Children, runtime prefabs, destroying a subtree: [prefabs.md](core/prefabs.md).
 - Catalogs as rows: [records.md](core/records.md). Saves, state of a run: [saves.md](core/saves.md).
@@ -76,5 +76,5 @@ game_regen :: proc(healths:^core.Table(Health),time:core.Time) {
 ## Pitfalls that fail silently
 
 - Writing the `Transform` of a body is refused: `core.place` or a request. A request pushed
-  after its owner ran waits for the next tick; events live one tick.
+  in a later stage than its owner's waits for the next tick; events live one tick.
 - A `fixed` function that reads `core.Frame_Input` differs when a tick is replayed: use actions.

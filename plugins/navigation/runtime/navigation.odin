@@ -180,6 +180,7 @@ Navigation :: struct {
     settings:Navigation_Settings, // those the meshes were made with
     uid:u64,                      // of this copy, for the builds that write to it; 0 until a build looks
     revision:u64,                 // any tile or link of any class changed
+    made:u32,                     // times its meshes were made anew: a search begun in those before reads nothing of these
     kept:[3]u64,                  // of a copy: the uid and the revision of the Navigation its meshes were built in, and its own revision when it took them (meshes_of)
     stats:Build_Stats,
     ready:bool,
@@ -208,6 +209,7 @@ Tile_Mark :: struct {
     building:bool,
     links:bool,    // its generated links wait to be made again
     unloaded:bool, // dirty, it waits for the collision it reads to load: it keeps what it has
+    collision:bool, // dirty, the collision under it may have changed, not only its areas and obstacles: its build reads it again
 }
 
 // Where the static collision is not loaded: a library that pages geometry in

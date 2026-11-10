@@ -11,7 +11,7 @@ import math "mirai:std/math"
 
 PERCEPTION_CAPACITY :: 16
 
-Sense :: enum u8 {Sight,Hearing,Told}
+Sense :: enum u8 {Sight,Hearing}
 Senses :: bit_set[Sense;u8]
 
 Observation :: struct {

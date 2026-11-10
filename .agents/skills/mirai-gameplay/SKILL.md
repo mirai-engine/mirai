@@ -90,9 +90,9 @@ the same attributes and no private paths. Declaration and parameter binding:
    `apply`: the camera of the focused player, spawns and the sampled animation; and in `simulate`:
    locomotion and physics.
    - What corrects the sampled pose before physics (`animation_motor_drive`) goes in
-     `stage="apply",after="animation_sample"`.
-   - A game that reacts to contacts or damage of the tick goes in `stage="react"`; one whose damage
-     must break in the same tick, with `before="destruct_step"`.
+     `stage="apply"`: reading `anim.Playback` puts it after `animation_sample`.
+   - A game that reacts to contacts or damage of the tick goes in `stage="react"`; what it pushes
+     to `Destruct_Requests` there breaks in the same tick.
    - What only the server or a single-player game decides carries `server` instead of asking
      `core.Network` ([attributes](../mirai-core/references/generator.md#attributes)).
 6. `time.dt` (`core.Time`) in `fixed`; `frame.dt` and `frame.alpha` (`core.Frame_Time`) in

@@ -97,8 +97,8 @@ Scenes:
   (`Demo_Actions`), and the components of the scenes.
   - `game_use` reads the actions of the body's seat: opens doors, changes the material sample and
     throws a cube with `scene.spawn`.
-  - `game_projectiles` (`stage="react"`, `before="destruct_step"`) damages with `destruct.damage`
-    what the cube touches, and destruction applies it in the same tick.
+  - `game_projectiles` (`stage="react"`) damages with `destruct.damage` what the cube touches, and
+    destruction applies it in the same tick.
   - `game_glow` is the only writer of `Tint`: it also serves the portals' buttons, the lamps of
     `horror` and the fade of the physics gallery.
   - The cameras of the prefabs are `Camera_Follow`: `Eyes` the player's, `Orbit` with `aim` those of
@@ -114,9 +114,9 @@ Scenes:
   - Person and dog are `Character`s relative to what their camera asks: the seat that drives one
     walks it; that of one without a seat is left to its AI, and on a client that of the others, to
     the network.
-  - `gallery_move_inputs` (`animation_gallery.odin`, `after="locomotion_seat"`): the `Move_Input` of
-    the animation gallery's bodies. The look of a body that crosses a portal is turned by the
-    `portals` plugin.
+  - `gallery_move_inputs` (`animation_gallery.odin`, `after="gallery_player_move"`): the
+    `Move_Input` of the animation gallery's bodies. The look of a body that crosses a portal is
+    turned by the `portals` plugin.
   - `game_barker`: counts a bark when its seat presses `bark` or the intro asks for it with the
     marker `intro.bark`.
 - **`raft.odin`**: a swimmer's air is a rule of the demo over `head_depth`: `Diver` spends oxygen
