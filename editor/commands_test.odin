@@ -254,3 +254,58 @@ the_methods_a_menu_calls_refuse_an_agent_what_they_cannot_do_and_say_how :: proc
     testing.expect(t,!command_run(&bare,"save") && !command_call(&bare,"scene.save","{}") && command_state(&bare,"save").disabled && len(command_bindings(&bare))==0 && !api_person(&bare))
     commands_run(&bare)
 }
+
+// A batch runs calls of any methods in order: a call takes what one before
+// it answered, the first that fails stops it, and with transaction what they
+// edit is one step, or nothing.
+@(test)
+a_batch_runs_calls_in_order_with_references_and_as_one_step :: proc(t:^testing.T) {
+    f:=new(Commands_Test);defer free(f)
+    if !commands_test_open(t,f) {return}
+    defer commands_test_close(f)
+    s:=&f.s
+    st:=api_state(s)
+    st.poll_temp=context.temp_allocator
+    w:=edited_world(s)
+    out:serial.Writer
+    serial.writer_init(&out);defer serial.writer_destroy(&out)
+    batch:=api.method_find(&st.server,"batch")
+    if !testing.expect(t,batch!=nil,"batch is a method") {return}
+    LAMP :: `{"method":"scene.write","params":{"merge":true,"entities":[{"name":"Lamp"}]}}`
+    MOVE :: `{"method":"scene.write","params":{"root":"$0.id","merge":true,"entities":[{"position":[1,2,3]}]}}`
+    cases:=[?]struct{params:string,steps,alive:int,says:string}{
+        // The second call names what the first made, the third reads it, and all of it is one step.
+        {`{"transaction":true,"calls":[`+LAMP+`,`+MOVE+`,{"method":"scene.inspect","params":{"name":"$0.created[0].name","components":true}}]}`,1,2,`"position":[1,2,3]`},
+        // Without transaction each call is its own step.
+        {`{"calls":[`+LAMP+`,`+MOVE+`]}`,2,2,`"results":[{"method":"scene.write","result":{`},
+        // The call that fails stops the batch: as one step nothing of it stays; otherwise what ran before does.
+        {`{"transaction":true,"calls":[`+LAMP+`,{"method":"scene.write","params":{"root":"Nobody","entities":[{}]}}]}`,0,1,`calls[1] scene.write: root: "Nobody" names no entity`},
+        {`{"calls":[`+LAMP+`,{"method":"scene.write","params":{"root":"Nobody","entities":[{}]}},`+LAMP+`]}`,1,2,`calls[1] scene.write: root: "Nobody" names no entity`},
+        {`{"calls":[{"method":"scene.write","params":{"root":"$2.id","entities":[{}]}}]}`,0,1,"calls[0] scene.write: $2.id: the batch has 0 results so far"},
+        {`{"calls":[`+LAMP+`,{"method":"scene.write","params":{"root":"$0.nothing","entities":[{}]}}]}`,1,2,"calls[1] scene.write: $0.nothing: "},
+        {`{"calls":[{"method":"no.such.method"}]}`,0,1,`calls[0] no.such.method: "no.such.method" is not a method`},
+        {`{"transaction":true,"calls":[`+LAMP+`,{"method":"batch","params":{"transaction":true,"calls":[`+LAMP+`]}}]}`,0,1,"calls[1] batch: a batch that is one step runs inside another"},
+        {`{"calls":[]}`,0,1,"calls"},
+        {`{"calls":[7]}`,0,1,"calls"},
+    }
+    for c in cases {
+        steps:=f.edits.cursor
+        base.arena_reset(&st.server.scratch)
+        serial.writer_reset(&out)
+        error,ran:=api.method_execute(&st.server,batch,c.params,&out)
+        answer:=ran?string(serial.writer_bytes(&out)):error.message
+        tight,_:=strings.remove_all(answer," ",context.temp_allocator)
+        says,_:=strings.remove_all(c.says," ",context.temp_allocator)
+        testing.expectf(t,strings.contains(tight,says),"%s: %s",c.params,answer)
+        testing.expectf(t,f.edits.cursor==steps+c.steps && core.world_entities(w).alive==c.alive,"%s: %d steps and %d entities",c.params,f.edits.cursor-steps,core.world_entities(w).alive)
+        testing.expect(t,!st.transaction && !f.edits.open)
+        // Each case starts from the scene as it was: the caller undoes its steps.
+        for _ in 0..<c.steps {
+            base.arena_reset(&st.server.scratch)
+            serial.writer_reset(&out)
+            _,undone:=api.method_execute(&st.server,api.method_find(&st.server,"history.undo"),"{}",&out)
+            testing.expect(t,undone)
+        }
+        testing.expect_value(t,core.world_entities(w).alive,1)
+    }
+}

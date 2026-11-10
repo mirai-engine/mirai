@@ -596,7 +596,7 @@ panel_value_nest :: proc(path,value:string) -> string {
 }
 
 // The value of a component (table not nil) or a setting with the JSON of one
-// field read over current, or over the default without it: what scene.set and
+// field read over current, or over the default without it: what scene.write and
 // settings.set accept for that field.
 @(private)
 panel_value_read :: proc(w:core.World_Ref,table:^core.Table_Info,info:^runtime.Type_Info,current:rawptr,path,value,what:string) -> (bytes:[]u8,problem:string) {

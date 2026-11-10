@@ -166,7 +166,7 @@ api_terrain :: proc(s:^editor.Session,call:^api.Call,named:[]u8) -> (tool:^Terra
     if !named_found {return}
     if !core.has(core.read(terrains),e) {api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with a Terrain: scene.inspect lists them",given);return}
     if s.app==nil || s.app.assets==nil {api.call_fail(call,api.INTERNAL_ERROR,"The editor has no assets loaded");return}
-    if !core.has(core.read(worlds),e) {api.call_failf(call,api.INVALID_PARAMS,"Terrain %s has no place in the world: give its entity a Transform with scene.set",given);return}
+    if !core.has(core.read(worlds),e) {api.call_failf(call,api.INVALID_PARAMS,"Terrain %s has no place in the world: give its entity a place with scene.write",given);return}
     marker,_:=core.get(core.read(terrains),e)
     if !terrain.terrain_stamp(s.app.assets,marker.source).found {api.call_failf(call,api.INVALID_PARAMS,"The .terrain of terrain %s is not among the assets: asset.list shows them",given);return}
     if !stroke_prepare(tool,s.app.assets,s.app.allocator,core.read(terrains),core.read(worlds),editor.Pick{entity=e}) {api.call_failf(call,api.INVALID_PARAMS,"The .terrain of terrain %s could not be read: engine.diagnostics says why",given);return}

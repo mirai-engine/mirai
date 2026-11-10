@@ -214,7 +214,7 @@ a_write_turns_off_the_members_of_an_instance_it_leaves_out_and_keeps_their_place
     testing.expect_value(t,len(f.edits.steps),steps+1)
 }
 
-// A new entity with prefab is the instance prefab.instantiate places, in the
+// A new entity with prefab is the instance a drop of the prefab places, in the
 // step of the write, and what the document says of its members is its own.
 @(test)
 a_write_places_a_prefab_as_a_linked_instance_with_what_the_document_says_of_it :: proc(t:^testing.T) {

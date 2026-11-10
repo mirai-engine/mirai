@@ -368,10 +368,10 @@ ai_state_write :: proc(s:^Session,task:^Ai_Task,w:core.World_Ref) -> bool {
 }
 
 // The methods a turn uses most, named in the instructions by their MCP tool.
-AI_PROMPT_TOOLS :: [?]string{"scene.inspect","scene.write","scene.add","scene.set","scene.delete","scene.batch","play.start","play.step","scene.save","asset.save","play.inspect","play.check","capture","play.stop","view.viewport","asset.import","finish","engine.describe"}
+AI_PROMPT_TOOLS :: [?]string{"scene.inspect","scene.write","batch","play.start","play.step","scene.save","asset.save","play.inspect","play.check","capture","play.stop","view.viewport","asset.import","finish","engine.describe"}
 // The methods whose parameters go in the instructions, from the live
 // registry: most of what a turn does, without looking their schemas up.
-AI_PROMPT_SCHEMAS :: [?]string{"scene.inspect","scene.write","scene.add","scene.set","scene.delete","scene.batch","finish"}
+AI_PROMPT_SCHEMAS :: [?]string{"scene.inspect","scene.write","batch","finish"}
 
 // The instructions that hold for every turn: who the agent is, its rules, the
 // tools and their schemas and the memory of the project. The agent works on the

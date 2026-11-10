@@ -521,7 +521,7 @@ ai_tool_notes_are_the_steps_of_a_turn_with_what_each_worked_on :: proc(t:^testin
     testing.expect_value(t,ai_call_target(&s,`{"name":"Crate","preset":"Cube"}`,buffer[:]),"Crate")
     testing.expect_value(t,ai_call_target(&s,`{"path":"materials/floor.mat"}`,buffer[:]),"floor.mat")
     testing.expect_value(t,ai_call_target(&s,`{"ids":[4,5,6]}`,buffer[:]),"3 entities")
-    testing.expect_value(t,ai_call_target(&s,`{"operations":[{},{}]}`,buffer[:]),"2 operations")
+    testing.expect_value(t,ai_call_target(&s,`{"calls":[{},{}]}`,buffer[:]),"2 calls")
     testing.expect_value(t,ai_call_target(&s,`not json`,buffer[:]),"")
     refs:[256]u8
     testing.expect_value(t,ai_call_refs(`{"path":"materials/floor.mat","ids":["0x2a","7",3]}`,refs[:]),"materials/floor.mat 0x000000000000002a 0x0000000000000007")
