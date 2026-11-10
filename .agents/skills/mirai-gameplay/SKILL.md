@@ -97,9 +97,9 @@ the same attributes and no private paths. Declaration and parameter binding:
      `core.Network` ([attributes](../mirai-core/references/generator.md#attributes)).
 6. `time.dt` (`core.Time`) in `fixed`; `frame.dt` and `frame.alpha` (`core.Frame_Time`) in
    `frame`/`late`/`render`; in the editor loop `time.dt` is 0. An effect that is not simulation (a
-   sound, a message) passes the `core.Time` to its sink (`audio.play_asset(app, time, ...)`,
-   `multiplayer.send(&outbox, time, ...)`), which does nothing while a rollback replays the tick
-   (`time.resimulating`); the game does not ask.
+   sound) passes the `core.Time` to its sink (`audio.play_asset(app, time, ...)`), which does
+   nothing while a rollback replays the tick (`time.resimulating`), like `multiplayer.send`; the
+   game does not ask.
 7. Runtime prefab: `scene.spawn(spawner, path_or_id, ...)` with `core.Commands`; its rows wait
    until the end of the function and are finished with
    `core.commands_added`. With `transient=true` the entities do not get an `Id` and a save does not

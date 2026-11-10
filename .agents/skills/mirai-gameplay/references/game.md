@@ -36,13 +36,14 @@ of its owner and is taken by the function in parentheses:
 - **Instantiate a prefab**: `scene.spawn(spawner, path_or_id, at)`, which gives the root.
 - **Save or load**: `save.request_save(&r, "slot")`, `request_load`, `request_delete` in
   `^save.Save_Requests` (`saves_serve`).
-- **Send a network message**: `multiplayer.send(&outbox, time, value)` with a struct
+- **Send a network message**: `multiplayer.send(&outbox, value)` with a struct
   `@(net_message)` in `^multiplayer.Net_Outbox` (`net_tick_tail`); it does not queue while a
   rollback replays the tick.
 
 Events the libraries emit: `phys.Physics_Events` (`contact_begin`, `overlap_begin`, `sleep`,
 `joint_break`...), `destruct.Destruct_Events`, `gui.UI_Events`, `anim.Animation_Events`,
-`cinematics.Cinematic_Events`, `save.Save_Results`, `scene.Scene_Results`, `net.Net_Events`. They
+`cinematics.Cinematic_Events`, `save.Save_Results`, `scene.Scene_Results`,
+`multiplayer.Net_Events` (filled at the start of each tick). They
 are cleared and filled once per tick or frame; those of the frame (`Save_Results`, `Scene_Results`)
 are read in a `frame` step, the others with `core.Ref(...)` in the same tick,
 in a function that runs after the emitting one: those of physics and destruction in the `react`

@@ -18,7 +18,7 @@ rewind_put :: proc(history:^Rewind_History,tick:u64,poses:..Rewind_Pose) {
 rewind_pose_interpolates_between_ticks_and_not_across_a_teleport :: proc(t:^testing.T) {
     slots:=u64(31)
     history:=new(Rewind_History)
-    testing.expect(t,rewind_make(history,int(slots),4))
+    testing.expect(t,rewind_make(history,int(slots),4,context.allocator))
     defer {rewind_free(history);free(history)}
     runner,other:=core.Entity(5),core.Entity(9)
     turned:=mm.quat_axis_angle({0,1,0},1)
@@ -81,9 +81,8 @@ rewind_tick_is_what_the_client_showed_within_the_limit :: proc(t:^testing.T) {
     testing.expect(t,!ok)
 }
 
-// A body the server simulates and this client does not drive is predicted by
-// default, and interpolated with interpolate_others; the one it drives is
-// predicted either way.
+// A body the server simulates and this client does not drive is shown in the
+// past, unless its Replicate asks to predict it; the one it drives is predicted.
 @(test)
 what_a_client_does_not_drive_is_shown_in_the_past_unless_it_is_asked_to_predict_it :: proc(t:^testing.T) {
     for case_ in ([3]struct{predict:bool,role:Role,mode:Mode}{{false,.Shown,.Interpolated},{true,.Shown,.Predicted},{false,.Predicted,.Predicted}}) {

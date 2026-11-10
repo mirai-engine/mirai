@@ -57,12 +57,12 @@ rewind_free :: proc(history:^Rewind_History) {
 
 // The ring of slots ticks, each with room for the poses of entities entities. Made when the session opens, as
 // a load: a stable tick does not allocate. False without memory.
-rewind_make :: proc(history:^Rewind_History,slots,entities:int) -> bool {
+rewind_make :: proc(history:^Rewind_History,slots,entities:int,allocator:runtime.Allocator) -> bool {
     rewind_free(history)
-    history.allocator=context.allocator
+    history.allocator=allocator
     error:runtime.Allocator_Error
-    if history.frames,error=make([]Rewind_Frame,slots);error!=nil {return false}
-    if history.poses,error=make([]Rewind_Pose,slots*entities);error!=nil {rewind_free(history);return false}
+    if history.frames,error=make([]Rewind_Frame,slots,allocator);error!=nil {return false}
+    if history.poses,error=make([]Rewind_Pose,slots*entities,allocator);error!=nil {rewind_free(history);return false}
     for &frame,index in history.frames {frame.poses=history.poses[index*entities:][:entities]}
     return true
 }
@@ -70,9 +70,9 @@ rewind_make :: proc(history:^Rewind_History,slots,entities:int) -> bool {
 // At the end of a tick, with what the server publishes: the Transform of
 // every entity with Rewind, under the number of the tick.
 @(step="fixed",loops="game",stage="end",before="net_tick_tail")
-rewind_record :: proc(session:core.Ref(Net_Session),time:core.Time,marked:core.Read(Rewind),transforms:core.Read(core.Transform),history:^Rewind_History,problems:^core.Problems) {
+rewind_record :: proc(session:core.Ref(Net_Session),time:core.Time,marked:core.Read(Rewind),transforms:core.Read(core.Transform),history:^Rewind_History,allocator:runtime.Allocator,problems:^core.Problems) {
     if session.ptr==nil || !session.host_ready || session.mode!=.Server || time.resimulating {return}
-    if slots:=session_history(session)+1;len(history.frames)!=slots && !rewind_make(history,slots,session.desc.rewind_entities) {
+    if slots:=session_history(session)+1;len(history.frames)!=slots && !rewind_make(history,slots,session.desc.rewind_entities,allocator) {
         core.report(problems,core.NONE,"multiplayer.rewind","the poses of %d ticks for lag compensation were not made (out of memory); free memory, or lower Net_Settings.replication.history_seconds or rewind_entities",slots-1)
         return
     }

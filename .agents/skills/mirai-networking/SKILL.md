@@ -85,7 +85,7 @@ neither the data world nor physics. A replicated object is an opaque game id plu
   `net/collection.odin`: flat collections of slots with stable identity.
 - `net/replication.odin`: simulation half (objects, publishing and turns, command reading).
   `net/back.odin`: network half (canonical state, links, baselines, reader).
-- `net/scope.odin`: scope (filters, spatial grid, `Custom` relevance) and priority.
+- `net/scope.odin`: scope (filters, spatial grid, groups, visibility bits) and priority.
   `net/event.odin`: events and authority messages.
 - `net/clock.odin`: client clock, time section and inputs. `net/interpolation.odin`:
   `Smoothing`, `Interpolation`.
@@ -103,10 +103,11 @@ In `plugins/multiplayer/runtime`:
   identity, own messages and the clock. `authority.odin`: the role of `core.Network`, which clears
   `core.Remote` on change. `players.odin`: connection seats and owners per seat.
 - `server.odin`: entities with `Replicate` as objects, their network parent (the replicated
-  ancestor), publishing by row stamps in the object's turns on the host, `Custom` relevance
-  requested by the game, connection inputs.
-- `client.odin`: replicas, interpolation, prediction with the world copy, correction, smoothing,
-  rewind and SyncTest. `history.odin`: authoritative history of predicted replicas and their
+  ancestor), publishing by row stamps in the object's turns on the host, the type of an object
+  following what its entity has, `Visibility` bits, connection inputs.
+- `client.odin`: replicas, the rule that says which are interpolated and which predicted,
+  prediction with the world copy, correction, smoothing, predicted spawns, rewind and SyncTest.
+  `history.odin`: authoritative history of predicted replicas and their
   component records.
 - `rewind.odin`: lag compensation; the server remembers the poses of what has `Rewind` and gives
   the tick each client saw (`rewind_tick`, `rewind_pose`).
@@ -192,26 +193,35 @@ In `plugins/multiplayer/runtime`:
 - **The past is sized in seconds, by the server.** Every ring of the past (the client's copies and
   records, the server's input and lag compensation) is `history_seconds` at the tick rate plus the
   tick being written, made when the session opens or connects; none is a fixed count of ticks.
-- **A correction is proportional to what is wrong.**
+- **One rule says how a replica is shown** (`replica_wanted`): predicted what the client drives,
+  what shared a simulation group with it in the last `critical_ticks`, what `Replicate.predict`
+  asks and what the client spawned ahead; interpolated the rest, with pose, motion, `Move_Input`
+  and components of the same server tick. There is no setting that changes it for every replica.
+- **A replica that changes timeline does not jump in what is drawn**, and neither does a
+  correction: the pose it was drawn at stays as an error of `Smoothing` that fades.
+- **A correction goes back or places, nothing else.**
   - Each state is compared at its own tick and with per-field tolerances.
-  - Only the critical (what is own and what shared a group with what the client drives)
-    resimulates, within the `max_resimulate` ticks of the frame and the `resimulate_budget`
-    budget.
-  - The rest, and what does not fit, is closed in the present without teleporting: velocity at
-    once and pose over the following ticks (`correction_time`).
-  - Whoever moves a predicted replica outside the tick (`replica_put`, the closing of an error)
-    corrects the later records (`records_shift`, what is left to close in the new ones); otherwise
-    the next state finds the same error again.
+  - What differs resimulates from the copy of its tick, within the `max_resimulate` ticks of the
+    frame and the `resimulate_budget` budget.
+  - What cannot go back takes the state in the present (`replica_place_now`), and its records up
+    to then are dropped: nothing is closed over later ticks.
   - What a library knows has changed in already simulated ticks comes back through `rewind`, not
     on its own.
+- **The type of an object is what its entity has now.** A replicated component that comes or goes
+  re-types the object in place (`object_retype`); it is never destroyed and made again for it.
+- **A spawn both ends make in a tick is one entity** (`predict_spawn`): the replica takes the
+  client's by the Id both draw, also when a correction runs the tick of the spawn again
+  (`replicas_relink`, `spawns_settle`).
 - **The client tick never goes backwards** once synchronized: the clock corrects with a bounded
   dilation and only jumps forward; the display time of remote objects does not either
   ([time](references/networking.md#time-and-inputs)).
 - **Rollback sets `core.Time.resimulating` and sinks respect it.** The clock comes back with the
   copy and the repeated ticks (`host.app_tick_replay`) advance it to the present;
   `core.Frame_Time` is not copied, so rollback neither stores nor restores anything of the clock.
-  A repeated tick sees the content it saw the first time (the generation the ring keeps).
-  `send` does not queue, `Net_Outbox` is not copied with the world (what it holds is not lost) and
+  A repeated tick sees the content it saw the first time (the generation the ring keeps), and the
+  connection events and messages it had (`Net_Connections`, `Net_Events`, filled at the start of
+  each tick). `send` does not queue (`Net_Outbox.replaying`), `Net_Outbox` is not copied with the
+  world (what it holds is not lost) and
   `net_tick_tail` neither publishes nor sends: messages are not repeated unless the game asks; the
   rest follows the rule of [`Time`](../mirai-core/references/core.md#core-storages)
   ([correction](references/multiplayer.md#the-tick)).
@@ -225,6 +235,8 @@ In `plugins/multiplayer/runtime`:
   `connection`, `secure`, `invite`, `congestion`, `conditioner`, `replication`,
   `descriptor_boundary`, `large_state`, `collection`, `references`, `convergence`, `grid`, `scope`,
   `authority`, `interpolation`, `clock`, `worker`, `baseline` (pools and shared baselines),
+  `replication` (re-typing:
+  `an_object_retyped_keeps_its_replica_and_takes_the_fragments_of_its_new_type`),
   `packing` (packet fill) and `portmap` ([port-mapping](references/port-mapping.md)).
 - `test_baselines_match` and `test_baselines_counted` check that each active baseline is the one
   the client stored and that the counts of shared ones are exact; the convergence tests compare
