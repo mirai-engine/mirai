@@ -65,7 +65,6 @@ Editor steps, in order; a plugin step orders itself against them with `after`
   the queue to the workers ([chats](ai-tasks.md)).
 - `editor_begin` (`input`): opens the UI with the frame's input, computes `Viewport.hovered` and
   runs shortcuts.
-- `prefabs_follow` (`input`): brings the prefab records up to date with the history.
 - `editor_tools` (`frame`, stage `begin`): camera, gizmo and selection; writes the `core.View` of
   the shown world.
 - `editor_panels` (`ui`): bar, panels, popups and dialogs.

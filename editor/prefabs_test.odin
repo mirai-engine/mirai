@@ -238,6 +238,435 @@ lamp_file_set :: proc(t:^testing.T,f:^Prefab_Fixture,file:string,lamp:base.Entit
     return true
 }
 
+// The overrides the instances of the document hold, all together.
+@(private="file")
+overrides_held :: proc(s:^Session) -> (count:int) {
+    for root in prefab_roots(edited_world(s),{}) {
+        overrides,_:=prefab_overrides_of(s,root)
+        count+=len(overrides)
+    }
+    return
+}
+
+@(test)
+prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T) {
+    world:Prefab_Test_World
+    core.entities_init(&world.entities)
+    core.table_init(&world.ids,"Id")
+    core.table_init(&world.names,"Name")
+    core.table_init(&world.transforms,"Transform")
+    core.table_init(&world.parents,"Parent")
+    core.table_init(&world.instances,"Prefab_Instance")
+    core.table_init(&world.members,"Prefab_Member")
+    defer core.entities_destroy(&world.entities)
+    defer core.table_destroy(&world.ids)
+    defer core.table_destroy(&world.names)
+    defer core.table_destroy(&world.transforms)
+    defer core.table_destroy(&world.parents)
+    defer core.table_destroy(&world.instances)
+    defer core.table_destroy(&world.members)
+    defer core.value_free(&world.hierarchy,type_info_of(core.Hierarchy))
+    tables:=[7]core.Table_Info{
+        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Prefab_Test_World,ids)},
+        {name="Name",type=core.Name,info=type_info_of(core.Name),offset=offset_of(Prefab_Test_World,names)},
+        {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Prefab_Test_World,transforms)},
+        {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Prefab_Test_World,parents)},
+        {name="Disabled",type=core.Disabled,info=type_info_of(core.Disabled),offset=offset_of(Prefab_Test_World,disabled)},
+        {name="Prefab_Instance",type=scene.Prefab_Instance,info=type_info_of(scene.Prefab_Instance),offset=offset_of(Prefab_Test_World,instances)},
+        {name="Prefab_Member",type=scene.Prefab_Member,info=type_info_of(scene.Prefab_Member),offset=offset_of(Prefab_Test_World,members)},
+    }
+    storages:=[2]core.Storage_Info{{type=Prefabs,place=.Editor},{type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Prefab_Test_World,hierarchy)}}
+    info:=core.World_Info{tables=tables[:],storages=storages[:],clear=prefab_test_clear,copy=prefab_test_copy,swap=prefab_test_swap,
+        sizes={.World=size_of(Prefab_Test_World),.Shared=0,.Editor=0},aligns={.World=align_of(Prefab_Test_World),.Shared=1,.Editor=1},
+        init={.World=prefab_test_init,.Shared=nil,.Editor=nil},destroy={.World=prefab_test_destroy,.Shared=nil,.Editor=nil}}
+    root:=project.path_absolute(fmt.tprintf(".mirai/test-prefabs-%d",os.get_pid()),context.temp_allocator)
+    testing.expect(t,!os.exists(root))
+    if os.exists(root) {return}
+    os.make_directory_all(root)
+    defer os.remove_all(root)
+    assets:host.Assets
+    asset.types_init(&assets.types)
+    defer asset.types_destroy(&assets.types)
+    asset.registry_init(&assets.registry,root)
+    defer asset.registry_destroy(&assets.registry)
+    app:=host.App{assets=&assets,info=&info,allocator=context.allocator}
+    defer delete(app.worlds)
+    viewport:Viewport
+    selection:Selection
+    inspector:Inspector
+    edits:Edits
+    document:Document
+    prefabs:Prefabs
+    ai:=new(Ai)
+    defer free(ai)
+    g:Editor_Ui
+    outliner:Outliner
+    // The session and the UI context are large: off the stack of the test.
+    s:=new(Session)
+    defer free(s)
+    s.info,s.edit_world,s.editor_world,s.assets_root,s.app=&info,&world,&prefabs,root,&app
+    s.gui,s.viewport,s.selection,s.inspector,s.edits,s.document,s.outliner,s.ai=&g,&viewport,&selection,&inspector,&edits,&document,&outliner,ai
+    defer delete(selection.entities)
+    defer core.value_free(&inspector,type_info_of(Inspector))
+    defer edits_free(&edits)
+    defer document_previous_free(&document)
+    defer prefabs_free(s)
+    w:=edited_world(s)
+    first:=entity_create(s,{name="First",transform={position={2,0,0},rotation=1,scale={1,1,1}}})
+    second:=entity_create(s,{name="Second",transform={position={6,0,0},rotation=1,scale={1,1,1}}})
+    core.world_settle(w)
+    first_id,second_id:=api_entity_id(w,first),api_entity_id(w,second)
+    edits_reset(&edits,w)
+    selection_set(&selection,{first,second})
+    testing.expect(t,!prefab_action_disabled(s,.Prefab_Create))
+    testing.expect(t,os.write_entire_file(fmt.tprintf("%s/blocked",root),[]u8{1})==nil)
+    _,failed:=prefab_create_entities(s,selection.entities[:],"blocked/pair")
+    testing.expect_value(t,failed,Prefab_Error.Write_Failed)
+    testing.expect_value(t,world.entities.alive,2)
+    testing.expect_value(t,len(selection.entities),2)
+    testing.expect_value(t,edits.cursor,0)
+    testing.expect_value(t,entity_parent(w,first),core.NONE)
+    testing.expect_value(t,entity_parent(w,second),core.NONE)
+    id,error:=prefab_create_entities(s,selection.entities[:],"pair")
+    testing.expect_value(t,error,Prefab_Error.None)
+    if error!=.None {return}
+    testing.expect_value(t,edits.cursor,1)
+    testing.expect_value(t,core.count(&world.instances),1)
+    group:=selection_active(&selection)
+    group_id:=api_entity_id(w,group)
+    first,second=api_entity(w,first_id),api_entity(w,second_id)
+    selection_clear(&selection)
+    testing.expect_value(t,selection_click_target(s,w,first,false),group)
+    testing.expect_value(t,selection_click_target(s,w,first,true),first)
+    selection_set(&selection,{group})
+    testing.expect_value(t,selection_click_target(s,w,first,false),first)
+    selection_set(&selection,{first})
+    testing.expect_value(t,selection_click_target(s,w,second,false),second)
+    selection_set(&selection,{group})
+    testing.expect_value(t,entity_parent(w,first),group)
+    testing.expect_value(t,entity_parent(w,second),group)
+    testing.expect_value(t,entity_world(w,first).position,([3]f32{2,0,0}))
+    testing.expect_value(t,entity_world(w,second).position,([3]f32{6,0,0}))
+    file:=fmt.tprintf("%s/pair.prefab",root)
+    testing.expect(t,file_exists(s,file) && !os.exists(file),"the prefab is an unsaved file of the step")
+    testing.expect(t,undo(&edits,w,&selection))
+    testing.expect(t,!file_exists(s,file) && core.count(&world.instances)==0)
+    testing.expect_value(t,world.entities.alive,2)
+    testing.expect_value(t,len(selection.entities),2)
+    testing.expect(t,redo(&edits,w,&selection))
+    testing.expect(t,file_exists(s,file) && core.count(&world.instances)==1)
+    group=api_entity(w,group_id)
+    group_placement:=core.to_math(core.Transform{{11,7,-3},quaternion(x=0,y=0.6,z=0,w=0.8),{2,3,4}})
+    transform_set(s,group,group_placement)
+    edits_commit(&edits,w,&selection)
+    selection_set(&selection,{group})
+    testing.expect(t,prefab_action_disabled(s,.Prefab_Apply) && prefab_action_disabled(s,.Prefab_Revert))
+    testing.expect_value(t,overrides_held(s),0)
+    root_field:=inspect_component(s,w,core.Transform,{group})
+    testing.expect_value(t,len(inspect_default(s,w,root_field.t,group)),0)
+    testing.expect(t,!inspect_changed(&root_field,int(offset_of(core.Transform,position)),12))
+    testing.expect(t,!inspect_changed(&root_field,int(offset_of(core.Transform,rotation)),16))
+    testing.expect(t,!inspect_changed(&root_field,int(offset_of(core.Transform,scale)),12))
+    placement_cursor:=edits.cursor
+    inspect_reset(&root_field,0,size_of(core.Transform))
+    edits_commit(&edits,w,&selection)
+    testing.expect_value(t,entity_local(w,group),group_placement)
+    testing.expect_value(t,edits.cursor,placement_cursor)
+    first=api_entity(w,first_id)
+    selection_set(&selection,{first})
+    testing.expect(t,prefab_action_disabled(s,.Prefab_Create))
+    inherited_position:=entity_local(w,first).position
+    changed_transform:=entity_local(w,first)
+    changed_transform.position.x+=4
+    transform_set(s,first,changed_transform)
+    edits_commit(&edits,w,&selection)
+    inherited_field:=inspect_component(s,w,core.Transform,{first})
+    position_offset:=int(offset_of(core.Transform,position))
+    testing.expect(t,inspect_changed(&inherited_field,position_offset,12))
+    mixed_field:=inspect_component(s,w,core.Transform,{group,first})
+    testing.expect(t,inspect_changed(&mixed_field,position_offset,12))
+    inspect_reset(&mixed_field,position_offset,12)
+    edits_commit(&edits,w,&selection)
+    testing.expect_value(t,entity_local(w,group),group_placement)
+    testing.expect_value(t,entity_local(w,first).position,inherited_position)
+    testing.expect(t,!inspect_changed(&inherited_field,position_offset,12))
+    testing.expect_value(t,api_entity_id(w,first),first_id)
+    testing.expect(t,entity_rename(s,first,"Changed"))
+    testing.expect_value(t,entity_name(w,first),"Changed")
+    edits_commit(&edits,w,&selection)
+    testing.expect_value(t,overrides_held(s),1)
+    testing.expect(t,!prefab_action_disabled(s,.Prefab_Apply))
+    count,apply_error:=prefab_apply(s,first,nil)
+    testing.expect(t,apply_error==.None && count==1)
+    testing.expect_value(t,entity_local(w,api_entity(w,group_id)),group_placement)
+    loaded,found:=prefab_scene_load(s,id)
+    testing.expect(t,found)
+    if found {
+        row,_:=asset.scene_entity_find(loaded,first_id)
+        testing.expect_value(t,base.text_get(asset.scene_names(loaded)[row][:]),"Changed")
+        root_value,_:=asset.scene_get(loaded,group_id,"Transform",core.Transform)
+        testing.expect_value(t,root_value,core.TRANSFORM_IDENTITY)
+        prefab_scene_free(loaded)
+    }
+    testing.expect(t,undo(&edits,w,&selection))
+    testing.expect(t,!prefab_action_disabled(s,.Prefab_Revert))
+    loaded,found=prefab_scene_load(s,id)
+    testing.expect(t,found)
+    if found {
+        row,_:=asset.scene_entity_find(loaded,first_id)
+        testing.expect_value(t,base.text_get(asset.scene_names(loaded)[row][:]),"First")
+        prefab_scene_free(loaded)
+    }
+    testing.expect(t,redo(&edits,w,&selection))
+    testing.expect(t,prefab_action_disabled(s,.Prefab_Revert))
+    testing.expect(t,undo(&edits,w,&selection))
+    first=selection_active(&selection)
+    reverted,revert_error:=prefab_revert(s,first,nil)
+    testing.expect(t,revert_error==.None && reverted==1)
+    testing.expect_value(t,entity_name(w,api_entity(w,first_id)),"First")
+    testing.expect_value(t,entity_local(w,api_entity(w,group_id)),group_placement)
+    group=api_entity(w,group_id)
+    first,second=api_entity(w,first_id),api_entity(w,second_id)
+    entity_rename(s,first,"First changed")
+    entity_rename(s,second,"Second changed")
+    edits_commit(&edits,w,&selection)
+    reverted,revert_error=prefab_revert(s,first,nil)
+    testing.expect(t,revert_error==.None && reverted==1)
+    first,second=api_entity(w,first_id),api_entity(w,second_id)
+    testing.expect_value(t,entity_name(w,first),"First")
+    testing.expect_value(t,entity_name(w,second),"Second changed")
+    entity_rename(s,first,"First changed")
+    edits_commit(&edits,w,&selection)
+    group=api_entity(w,group_id)
+    selection_set(&selection,{group})
+    testing.expect(t,!prefab_action_disabled(s,.Prefab_Apply) && !prefab_action_disabled(s,.Prefab_Revert))
+    count,apply_error=prefab_apply(s,group,nil,true)
+    testing.expect(t,apply_error==.None && count==2)
+    loaded,found=prefab_scene_load(s,id)
+    testing.expect(t,found)
+    if found {
+        row,_:=asset.scene_entity_find(loaded,first_id)
+        testing.expect_value(t,base.text_get(asset.scene_names(loaded)[row][:]),"First changed")
+        row,_=asset.scene_entity_find(loaded,second_id)
+        testing.expect_value(t,base.text_get(asset.scene_names(loaded)[row][:]),"Second changed")
+        prefab_scene_free(loaded)
+    }
+    testing.expect(t,undo(&edits,w,&selection))
+    group=api_entity(w,group_id)
+    reverted,revert_error=prefab_revert(s,group,nil,true)
+    testing.expect(t,revert_error==.None && reverted==2)
+    testing.expect_value(t,entity_name(w,api_entity(w,first_id)),"First")
+    testing.expect_value(t,entity_name(w,api_entity(w,second_id)),"Second")
+    testing.expect_value(t,entity_local(w,api_entity(w,group_id)),group_placement)
+    group=api_entity(w,group_id)
+    before:=edits.cursor
+    testing.expect_value(t,prefab_unlink(s,group,false),Prefab_Error.None)
+    testing.expect_value(t,edits.cursor,before+1)
+    testing.expect(t,!prefab_linked(s))
+    group=api_entity(w,group_id)
+    unlinked_field:=inspect_component(s,w,core.Transform,{group})
+    testing.expect(t,inspect_changed(&unlinked_field,position_offset,12))
+    testing.expect(t,undo(&edits,w,&selection))
+    testing.expect(t,prefab_linked(s))
+    ctx:=new(ui.Context)
+    defer free(ctx)
+    testing.expect(t,ui.context_init(ctx,{}))
+    defer ui.context_destroy(ctx)
+    g.ctx=ctx
+    for size in ([2][2]f32{{1440,900},{800,420}}) {
+        for _ in 0..<3 {
+            ui.frame_begin(ctx,{size=size,pointer_absent=true})
+            if ui.box(ctx,{width=ui.fixed(240),height=ui.FIT,gap=4,align_y=.Center}) {
+                identity_row(s,w,selection_active(&selection))
+            }
+            frame:=ui.frame_end(ctx)
+            testing.expect(t,!frame.overflow && ctx.stats.layout_errors==0)
+        }
+        _,visible:=ui.widget_rect(ctx,ui.id(ctx,"prefab_open"))
+        _,saves:=ui.widget_rect(ctx,ui.id(ctx,"variant_save"))
+        testing.expect(t,visible && saves,"the icon opens the prefab and Save variant shows beside Apply")
+        action_row:=f32(-1)
+        action_labels:=[3]string{"Apply changes","Revert all","Unlink"}
+        for action,action_index in ([3]Action{.Prefab_Apply,.Prefab_Revert,.Prefab_Unlink}) {
+            rect,shown:=ui.widget_rect(ctx,shell_id(&g,"action",int(action)+1+64))
+            testing.expect(t,shown && rect.w==22 && rect.h==ctx.theme.control)
+            if action_row<0 {action_row=rect.y}
+            testing.expect_value(t,rect.y,action_row)
+            // The tip shows once the pointer rested on the button.
+            for _ in 0..<int(ui.TOOLTIP_DELAY*60)+2 {
+                ui.frame_begin(ctx,{size=size,pointer={rect.x+rect.w/2,rect.y+rect.h/2},dt=1.0/60})
+                if ui.box(ctx,{width=ui.fixed(240),height=ui.FIT,gap=4,align_y=.Center}) {
+                    identity_row(s,w,selection_active(&selection))
+                }
+                ui.frame_end(ctx)
+            }
+            testing.expect_value(t,ctx.tooltip,action_labels[action_index])
+        }
+        selected:=selection_active(&selection)
+        first=api_entity(w,first_id)
+        selection_set(&selection,{first})
+        ui.frame_begin(ctx,{size=size,pointer_absent=true})
+        if ui.box(ctx,{width=ui.fixed(240),height=ui.FIT,gap=4,align_y=.Center}) {identity_row(s,w,first)}
+        ui.frame_end(ctx)
+        // A member reverts only itself.
+        _,revert:=ui.widget_rect(ctx,shell_id(&g,"action",int(Action.Prefab_Revert)+1+64))
+        _,apply:=ui.widget_rect(ctx,shell_id(&g,"action",int(Action.Prefab_Apply)+1+64))
+        _,unlink:=ui.widget_rect(ctx,shell_id(&g,"action",int(Action.Prefab_Unlink)+1+64))
+        testing.expect(t,revert && !apply && !unlink)
+        group=api_entity(w,group_id)
+        selection_set(&selection,{group})
+        ui.frame_begin(ctx,{size=size,pointer_absent=true})
+        if ui.box(ctx,{width=ui.fixed(240),height=ui.FIT,direction=.Column}) {
+            transform_rows(s,w)
+        }
+        ui.frame_end(ctx)
+        for paint in ctx.paints[:ctx.paint_count] {testing.expect(t,paint.icon!=.Revert)}
+        selection_set(&selection,{selected})
+    }
+    testing.expect(t,redo(&edits,w,&selection))
+    group=api_entity(w,group_id)
+    selection_set(&selection,{group})
+    before=edits.cursor
+    _,error=prefab_create(s,group,"single")
+    testing.expect_value(t,error,Prefab_Error.None)
+    testing.expect_value(t,edits.cursor,before+1)
+    testing.expect(t,undo(&edits,w,&selection))
+    testing.expect(t,!prefab_linked(s) && !file_exists(s,fmt.tprintf("%s/single.prefab",root)))
+    testing.expect(t,redo(&edits,w,&selection))
+    testing.expect(t,prefab_linked(s))
+    file_open_path(s,"single.prefab")
+    testing.expect_value(t,g.modal,Modal.None)
+    testing.expect(t,.Open in s.requests)
+    testing.expect_value(t,scene_open(s,"single.prefab"),Document_Error.None)
+    group=api_entity(w,group_id)
+    entity_rename(s,group,"Saved prefab")
+    edits_commit(&edits,w,&selection)
+    testing.expect_value(t,scene_save(s),Document_Error.None)
+    saved:asset.Scene
+    testing.expect_value(t,asset.scene_load(&saved,&assets.types,fmt.tprintf("%s/single.prefab",root)),asset.Error.None)
+    defer asset.scene_destroy(&saved)
+    testing.expect_value(t,saved.doc.kind,asset.KIND_PREFAB)
+    testing.expect_value(t,saved.info.root,group_id)
+    row,_:=asset.scene_entity_find(&saved,group_id)
+    testing.expect_value(t,base.text_get(asset.scene_names(&saved)[row][:]),"Saved prefab")
+    scene_new(s)
+    // A prefab let go on the scene replaces the World between frames, after the render of the
+    // frame it was let go in, which draws the World its fixed phase ran on.
+    alive:=world.entities.alive
+    s.requests={} // the Open above was run by hand
+    placement_commit(s,w,Drag{kind=.Asset,asset_kind=asset.KIND_PREFAB,asset_id=id},Pick{},true)
+    testing.expect(t,world.entities.alive>alive)
+    testing.expect_value(t,len(selection.entities),1)
+    if len(selection.entities)==1 {
+        link,linked:=prefab_link_of(w,selection.entities[0])
+        testing.expect(t,linked && link.root && link.asset==id)
+    }
+    scene_new(s)
+    placed,place_error:=prefab_instantiate(s,id,{position={9,5,1},rotation={0,0.6,0,0.8},scale_multiplier={2,3,4}})
+    testing.expect_value(t,place_error,Prefab_Error.None)
+    testing.expect_value(t,overrides_held(s),0)
+    placed_entity:=api_entity(w,placed)
+    placement:=entity_local(w,placed_entity)
+    reverted,revert_error=prefab_revert(s,placed_entity,nil)
+    testing.expect(t,revert_error==.None && reverted==0)
+    testing.expect_value(t,entity_local(w,api_entity(w,placed)),placement)
+    scene_new(s)
+    plain:=entity_create(s,{name="Plain",transform={position={7,2,3},rotation=1,scale={2,3,4}}})
+    core.world_settle(w)
+    selection_set(&selection,{plain})
+    edits_commit(&edits,w,&selection)
+    c:=inspect_component(s,w,core.Transform,{plain})
+    scale_offset:=int(offset_of(core.Transform,scale))
+    testing.expect(t,inspect_changed(&c,scale_offset,12))
+    inspect_reset(&c,scale_offset,12)
+    edits_commit(&edits,w,&selection)
+    testing.expect_value(t,entity_local(w,plain).position,[3]f32{7,2,3})
+    testing.expect_value(t,entity_local(w,plain).scale,[3]f32{1,1,1})
+    testing.expect(t,!inspect_changed(&c,scale_offset,12))
+    testing.expect(t,undo(&edits,w,&selection))
+    testing.expect_value(t,entity_local(w,plain).scale,[3]f32{2,3,4})
+    viewport_init(&viewport)
+    defer viewport_free(&viewport)
+    viewport.size={1440,900}
+    viewport.orbit.distance=37
+    original_camera:=viewport.orbit
+    original_cursor:=edits.cursor
+    original_state:=edits_state(&edits)
+    base.text_set(ai.prompt[:],"Scene draft")
+    ai.prompt_length=len("Scene draft")
+    ai.selected=7
+    testing.expect_value(t,document_open_tab(s,"single.prefab"),Document_Error.None)
+    defer documents_free(s)
+    testing.expect_value(t,len(s.documents),2)
+    testing.expect_value(t,s.active_document,1)
+    testing.expect(t,document_is_prefab(s) && viewport.preview_sun)
+    testing.expect_value(t,string(ai.prompt[:ai.prompt_length]),"Scene draft")
+    testing.expect_value(t,ai.selected,7)
+    prefab_world:=edited_world(s)
+    root_entity:=document_root(s,prefab_world)
+    testing.expect(t,root_entity!=core.NONE)
+    entity_rename(s,root_entity,"Changed in tab")
+    edits_commit(&edits,prefab_world,&selection)
+    viewport.orbit.distance=9
+    viewport.preview_sun=false
+    prefab_cursor:=edits.cursor
+    for size in ([2][2]f32{{1440,900},{800,420}}) {
+        for _ in 0..<3 {
+            ui.frame_begin(ctx,{size=size,pointer_absent=true})
+            documents_build(s)
+            frame:=ui.frame_end(ctx)
+            testing.expect(t,!frame.overflow && ctx.stats.layout_errors==0)
+        }
+    }
+    testing.expect(t,document_activate(s,0))
+    testing.expect_value(t,s.edit_world,rawptr(&world))
+    testing.expect_value(t,edits.cursor,original_cursor)
+    testing.expect_value(t,edits_state(&edits),original_state)
+    testing.expect_value(t,viewport.orbit,original_camera)
+    testing.expect_value(t,selection_active(&selection),plain)
+    testing.expect_value(t,string(ai.prompt[:ai.prompt_length]),"Scene draft")
+    testing.expect_value(t,ai.selected,7)
+    testing.expect_value(t,document_open_tab(s,"single.prefab"),Document_Error.None)
+    testing.expect_value(t,len(s.documents),2)
+    testing.expect_value(t,edits.cursor,prefab_cursor)
+    testing.expect_value(t,string(ai.prompt[:ai.prompt_length]),"Scene draft")
+    testing.expect_value(t,viewport.orbit.distance,f32(9))
+    testing.expect(t,!viewport.preview_sun)
+    testing.expect_value(t,entity_name(prefab_world,root_entity),"Changed in tab")
+    testing.expect(t,undo(&edits,prefab_world,&selection))
+    testing.expect_value(t,entity_name(prefab_world,root_entity),"Saved prefab")
+    testing.expect(t,redo(&edits,prefab_world,&selection))
+    child:=entity_create(s,{name="New child"})
+    edits_commit(&edits,prefab_world,&selection)
+    testing.expect_value(t,entity_parent(prefab_world,child),root_entity)
+    entities_delete(s,{root_entity})
+    core.world_settle(prefab_world)
+    testing.expect(t,entity_alive(prefab_world,root_entity))
+    testing.expect(t,!entity_reparent(s,root_entity,child))
+    saved_tabs,kept:=documents_save_restart(s,root)
+    testing.expect(t,kept && os.exists(saved_tabs))
+    document_close(s,1)
+    testing.expect_value(t,g.modal,Modal.Confirm)
+    confirm_resolve(s,.Cancel)
+    testing.expect_value(t,len(s.documents),2)
+    document_activate(s,0)
+    testing.expect_value(t,document_open_tab(s,"missing.prefab"),Document_Error.Not_Found)
+    testing.expect_value(t,len(s.documents),2)
+    testing.expect_value(t,s.active_document,0)
+    // Restore uses fresh worlds after a process restart; keep the stack-owned fixture active on exit.
+    document_activate(s,1)
+    document_close_active(s)
+    testing.expect_value(t,s.active_document,0)
+    testing.expect_value(t,documents_restore(s,saved_tabs),"")
+    testing.expect_value(t,len(s.documents),2)
+    testing.expect_value(t,s.active_document,1)
+    testing.expect(t,!viewport.preview_sun)
+    testing.expect_value(t,viewport.orbit.distance,f32(9))
+    testing.expect(t,document_dirty(s))
+    document_activate(s,0)
+    testing.expect_value(t,viewport.orbit,original_camera)
+}
+
 @(test)
 a_prefab_operation_is_one_step_of_the_rows_of_its_instance :: proc(t:^testing.T) {
     f:=new(Prefab_Fixture);defer free(f)
@@ -498,6 +927,353 @@ a_copy_of_an_instance_is_another_and_a_member_keeps_its_place :: proc(t:^testing
     testing.expect(t,!entity_reparent(s,lamp,core.NONE) && entity_parent(w,lamp)==lid)
     _,locked:=prefab_create(s,lamp,"lamp")
     testing.expect_value(t,locked,Prefab_Error.Member_Locked)
+}
+
+// The overrides of a kind, of the instances of the document.
+@(private="file")
+prefab_fixture_kind :: proc(f:^Prefab_Fixture,kind:asset.Override_Kind) -> (found:[dynamic]asset.Override) {
+    found=make([dynamic]asset.Override,context.temp_allocator)
+    for override in prefab_test_all(f) {
+        if override.kind==kind {append(&found,override)}
+    }
+    return
+}
+
+// The overrides the instances of the document hold, all together.
+@(private)
+prefab_test_all :: proc(f:^Prefab_Fixture) -> []asset.Override {
+    all:=make([dynamic]asset.Override,context.temp_allocator)
+    for root in prefab_roots(edited_world(&f.s),{}) {
+        overrides,_:=prefab_overrides_of(&f.s,root)
+        append(&all,..overrides)
+    }
+    return all[:]
+}
+
+@(test)
+prefab_instances_add_entities_and_turn_members_off_through_updates_apply_and_revert :: proc(t:^testing.T) {
+    f:=new(Prefab_Fixture);defer free(f)
+    if !testing.expect(t,prefab_fixture_init(f,"places")) {return}
+    defer prefab_fixture_destroy(f)
+    s:=&f.s
+    w:=edited_world(s)
+    // Root with A (holding C) and B.
+    root:=entity_create(s,{name="Root",named=true})
+    a:=entity_create(s,{name="A",named=true,parent=root})
+    b:=entity_create(s,{name="B",named=true,parent=root})
+    c:=entity_create(s,{name="C",named=true,parent=a})
+    core.world_settle(w)
+    edits_reset(&f.edits,w)
+    root_id,a_id,b_id,c_id:=api_entity_id(w,root),api_entity_id(w,a),api_entity_id(w,b),api_entity_id(w,c)
+    id,created:=prefab_create(s,root,"places")
+    if !testing.expect_value(t,created,Prefab_Error.None) {return}
+    file:=fmt.tprintf("%s/places.prefab",f.root)
+    testing.expect_value(t,len(prefab_test_all(f)),0)
+    disabled:=u64(0)
+    for table in s.info.tables {
+        if table.type==core.Disabled {disabled=base.name_hash(table.name)}
+    }
+
+    // Members keep the place of the prefab and are turned off instead of deleted; entities go under them.
+    a,b,c=prefab_fixture_find(f,a_id),prefab_fixture_find(f,b_id),prefab_fixture_find(f,c_id)
+    testing.expect(t,!entity_reparent(s,c,root) && !entity_reparent(s,c,core.NONE))
+    entities_delete(s,{b})
+    testing.expect(t,prefab_fixture_find(f,b_id)!=core.NONE)
+    added:=entity_create(s,{name="Added",named=true,parent=a})
+    prefab_fixture_step(f)
+    added_id:=api_entity_id(w,added)
+    entity_enabled_set(s,prefab_fixture_find(f,b_id),false)
+    prefab_fixture_step(f)
+    children:=prefab_fixture_kind(f,.Child)
+    off:=prefab_fixture_kind(f,.Added)
+    testing.expect(t,len(children)==1 && children[0].entity==added_id)
+    testing.expect(t,len(off)==1 && off[0].entity==b_id && off[0].component==disabled)
+    testing.expect_value(t,len(prefab_test_all(f)),2)
+
+    // A step that changes one value looks again at that member alone.
+    transform_set(s,prefab_fixture_find(f,c_id),core.to_math(core.Transform{{0,4,0},1,{1,1,1}}))
+    edits_commit(&f.edits,w,&f.selection)
+    total:=len(prefab_test_all(f))
+    testing.expect(t,total>2 && len(prefab_fixture_kind(f,.Field))==total-2)
+    for override in prefab_fixture_kind(f,.Field) {testing.expect_value(t,override.entity,c_id)}
+    // Undoing the steps forgets what they marked; redoing them marks it again.
+    for _ in 0..<3 {
+        testing.expect(t,undo(&f.edits,w,&f.selection))
+    }
+    testing.expect_value(t,len(prefab_test_all(f)),0)
+    for _ in 0..<3 {
+        testing.expect(t,redo(&f.edits,w,&f.selection))
+    }
+    testing.expect_value(t,len(prefab_test_all(f)),total)
+
+    // The prefab is saved and changes on disk: what the instance holds survives the refresh.
+    _,stored:=assets_save_all(s)
+    testing.expect(t,stored)
+    edited:asset.Scene
+    if !testing.expect_value(t,asset.scene_load(&edited,&f.assets.types,file),asset.Error.None) {return}
+    asset.scene_entity_rename(&edited,a_id,"A v2")
+    asset.scene_entity_add(&edited,0x77,b_id,"Under B")
+    identity:=core.TRANSFORM_IDENTITY
+    asset.scene_set(&edited,0x77,"Transform",&identity)
+    testing.expect_value(t,asset.scene_save(&edited,file),asset.Error.None)
+    asset.scene_destroy(&edited)
+    _=asset.registry_scan(&f.assets.registry)
+    listed:=prefab_instances(s)
+    testing.expect(t,len(listed)==1 && listed[0].stale)
+    _,refreshed:=prefab_refresh(s,id)
+    testing.expect_value(t,refreshed,Prefab_Error.None)
+    a,b,added=prefab_fixture_find(f,a_id),prefab_fixture_find(f,b_id),prefab_fixture_find(f,added_id)
+    testing.expect_value(t,entity_name(w,a),"A v2")
+    testing.expect(t,added!=core.NONE && entity_parent(w,added)==a)
+    testing.expect(t,b!=core.NONE && entity_has(w,b,core.Disabled))
+    under_b:=core.NONE
+    for child in entity_children(w,b) {if entity_name(w,child)=="Under B" {under_b=child}}
+    testing.expect(t,under_b!=core.NONE)
+    testing.expect(t,len(prefab_fixture_kind(f,.Child))==1 && len(prefab_fixture_kind(f,.Added))==1)
+
+    // Revert, one at a time: the entity added goes, and the member turned off comes back on.
+    count,reverted:=prefab_revert(s,added,nil)
+    testing.expect(t,reverted==.None && count==1 && prefab_fixture_find(f,added_id)==core.NONE)
+    count,reverted=prefab_revert(s,prefab_fixture_find(f,b_id),{"Disabled"})
+    testing.expect(t,reverted==.None && count==1)
+    testing.expect(t,!entity_has(w,prefab_fixture_find(f,b_id),core.Disabled))
+    testing.expect_value(t,len(prefab_test_all(f)),total-2) // C keeps its position
+    for _ in 0..<2 {
+        testing.expect(t,undo(&f.edits,w,&f.selection))
+    }
+    testing.expect_value(t,len(prefab_test_all(f)),total)
+
+    // Apply all: the prefab takes the entity added and B off, and the instance holds nothing of its own.
+    applied_count,applied:=prefab_apply(s,prefab_fixture_find(f,root_id),nil,true)
+    testing.expectf(t,applied==.None && applied_count==total,"apply: %v %d of %d",applied,applied_count,total)
+    testing.expect_value(t,len(prefab_test_all(f)),0)
+    testing.expect(t,prefab_fixture_find(f,added_id)!=core.NONE)
+    _,still_added:=prefab_link_of(w,api_entity(w,added_id))
+    testing.expect(t,still_added)
+    loaded,found:=prefab_scene_load(s,id)
+    if !testing.expect(t,found) {return}
+    defer prefab_scene_free(loaded)
+    table,has_disabled:=asset.scene_component_by_hash(loaded,disabled)
+    if testing.expect(t,has_disabled) {
+        _,b_off:=asset.scene_component_get(loaded,table,b_id)
+        testing.expect(t,b_off)
+    }
+    added_found:=false
+    for row in 0..<asset.scene_entity_count(loaded) {
+        record:=asset.scene_entity(loaded,row)
+        if record.name=="Added" {added_found=record.parent==a_id}
+    }
+    testing.expect(t,added_found)
+}
+
+// An undo in order that a step of another author leaves taken back, with no
+// observation between them, is observed: what the undo took away is no longer
+// an override.
+@(test)
+prefab_overrides_follow_an_undo_another_author_leaves_taken_back :: proc(t:^testing.T) {
+    f:=new(Prefab_Fixture);defer free(f)
+    if !testing.expect(t,prefab_fixture_init(f,"taken-back")) {return}
+    defer prefab_fixture_destroy(f)
+    s:=&f.s
+    w:=edited_world(s)
+    root:=entity_create(s,{name="Root",named=true})
+    a:=entity_create(s,{name="A",named=true,parent=root})
+    core.world_settle(w)
+    edits_reset(&f.edits,w)
+    a_id:=api_entity_id(w,a)
+    _,created:=prefab_create(s,root,"taken-back")
+    if !testing.expect_value(t,created,Prefab_Error.None) {return}
+
+    // An agent moves A; the user, later, adds an entity outside the instance.
+    f.edits.author=EDIT_AUTHOR_API
+    transform_set(s,prefab_fixture_find(f,a_id),core.to_math(core.Transform{{0,4,0},1,{1,1,1}}))
+    prefab_fixture_step(f)
+    testing.expect(t,len(prefab_fixture_kind(f,.Field))>0)
+    testing.expect(t,undo(&f.edits,w,&f.selection))
+    f.edits.author=EDIT_AUTHOR_USER
+    entity_create(s,{name="Elsewhere",named=true})
+    prefab_fixture_step(f)
+    testing.expect_value(t,len(prefab_fixture_kind(f,.Field)),0)
+}
+
+// A variant is a prefab whose root is an instance of its base: it follows the
+// base, keeps what it changes, takes what its instances apply and passes it
+// on to the base when asked.
+@(test)
+prefab_variants_follow_their_base_and_apply_to_it :: proc(t:^testing.T) {
+    f:=new(Prefab_Fixture);defer free(f)
+    if !testing.expect(t,prefab_fixture_init(f,"variants")) {return}
+    defer prefab_fixture_destroy(f)
+    s:=&f.s
+    w:=edited_world(s)
+    root:=entity_create(s,{name="Crate",named=true})
+    lid:=entity_create(s,{name="Lid",named=true,parent=root})
+    core.world_settle(w)
+    edits_reset(&f.edits,w)
+    root_id,lid_id:=api_entity_id(w,root),api_entity_id(w,lid)
+    crate,created:=prefab_create(s,root,"crate")
+    if !testing.expect_value(t,created,Prefab_Error.None) {return}
+    transform:=base.name_hash("Transform")
+
+    // Its root is an instance of the base; undo and redo take its file away and back.
+    path:=prefab_variant_path(s,crate)
+    testing.expect_value(t,path,"crate_variant")
+    variant,made:=prefab_variant_create(s,crate,path)
+    if !testing.expect_value(t,made,Prefab_Error.None) {return}
+    file:=fmt.tprintf("%s/crate_variant.prefab",f.root)
+    testing.expect(t,file_exists(s,file) && !os.exists(file))
+    testing.expect_value(t,prefab_variant_path(s,crate),"crate_variant_2")
+    _,taken:=prefab_variant_create(s,crate,path)
+    testing.expect_value(t,taken,Prefab_Error.Exists)
+    chain:=prefab_variant_chain(s,variant)
+    testing.expect(t,len(chain)==1 && chain[0]==crate)
+    testing.expect_value(t,len(prefab_variant_chain(s,crate)),0)
+    if loaded,found:=prefab_scene_load(s,variant);testing.expect(t,found) {
+        base_id,based:=asset.prefab_variant_base(loaded)
+        testing.expect(t,based && base_id==crate && len(loaded.overrides)==0)
+        prefab_scene_free(loaded)
+    }
+    testing.expect(t,undo(&f.edits,w,&f.selection))
+    testing.expect(t,!file_exists(s,file))
+    testing.expect(t,redo(&f.edits,w,&f.selection))
+    testing.expect(t,file_exists(s,file))
+
+    // An instance of the variant applies to the variant, which keeps the change as an override of its base.
+    placed,placed_error:=prefab_instantiate(s,variant,{position={5,0,0}})
+    if !testing.expect_value(t,placed_error,Prefab_Error.None) {return}
+    placed_lid:=core.NONE
+    for child in entity_children(w,prefab_fixture_find(f,placed)) {if entity_name(w,child)=="Lid" {placed_lid=child}}
+    if !testing.expect(t,placed_lid!=core.NONE) {return}
+    placed_lid_id:=api_entity_id(w,placed_lid)
+    link,linked:=prefab_link_of(w,api_entity(w,placed))
+    testing.expect(t,linked && link.root && link.asset==variant)
+    testing.expect_value(t,prefab_variant_of(s,w,link),crate)
+    testing.expect_value(t,inspector_variant_name(s,w,prefab_fixture_find(f,placed)),"crate")
+    lid_link,_:=prefab_link_of(w,api_entity(w,placed_lid_id))
+    selection_set(&f.selection,{prefab_fixture_find(f,placed)})
+    testing.expect(t,prefab_action_disabled(s,.Prefab_Apply_Base))
+    raised:=[3]f32{0,3,0}
+    transform_set(s,placed_lid,core.to_math(core.Transform{raised,1,{1,1,1}}))
+    prefab_fixture_step(f)
+    testing.expect(t,!prefab_action_disabled(s,.Prefab_Apply_Base))
+    _,applied:=prefab_apply(s,prefab_fixture_find(f,placed_lid_id),nil)
+    testing.expect_value(t,applied,Prefab_Error.None)
+    
+    if loaded,found:=prefab_scene_load(s,variant);testing.expect(t,found) {
+        moved,_:=asset.scene_get(loaded,lid_link.source,"Transform",core.Transform)
+        testing.expect_value(t,moved.position,raised)
+        kept:=false
+        for override in loaded.overrides {kept||=override.entity==lid_link.source && override.component==transform}
+        testing.expect(t,kept)
+        prefab_scene_free(loaded)
+    }
+    if loaded,found:=prefab_scene_load(s,crate);testing.expect(t,found) {
+        still,_:=asset.scene_get(loaded,lid_id,"Transform",core.Transform)
+        testing.expect_value(t,still.position,([3]f32{0,0,0}))
+        prefab_scene_free(loaded)
+    }
+
+    // The base is saved and changes on disk: the instance of the variant follows it and keeps the variant's change.
+    _,stored:=assets_save_all(s)
+    testing.expect(t,stored)
+    crate_file:=fmt.tprintf("%s/crate.prefab",f.root)
+    edited:asset.Scene
+    if !testing.expect_value(t,asset.scene_load(&edited,&f.assets.types,crate_file),asset.Error.None) {return}
+    asset.scene_entity_rename(&edited,lid_id,"Lid v2")
+    testing.expect_value(t,asset.scene_save(&edited,crate_file),asset.Error.None)
+    asset.scene_destroy(&edited)
+    _=asset.registry_scan(&f.assets.registry)
+    _,refreshed:=prefab_refresh(s,{})
+    testing.expect_value(t,refreshed,Prefab_Error.None)
+    placed_lid=prefab_fixture_find(f,placed_lid_id)
+    testing.expect_value(t,entity_name(w,placed_lid),"Lid v2")
+    testing.expect_value(t,entity_local(w,placed_lid).position,raised)
+    testing.expect_value(t,entity_name(w,prefab_fixture_find(f,lid_id)),"Lid v2")
+
+    // Apply to base: the name goes through the variant into the base, and the variant keeps its own change.
+    entity_rename(s,placed_lid,"Lid v3")
+    prefab_fixture_step(f)
+    count,to_base:=prefab_apply(s,prefab_fixture_find(f,placed),nil,true,.Base)
+    testing.expect(t,to_base==.None && count==1)
+    testing.expect_value(t,entity_name(w,prefab_fixture_find(f,lid_id)),"Lid v3")
+    placed_lid=prefab_fixture_find(f,placed_lid_id)
+    testing.expect_value(t,entity_name(w,placed_lid),"Lid v3")
+    testing.expect_value(t,entity_local(w,placed_lid).position,raised)
+    if loaded,found:=prefab_scene_load(s,crate);testing.expect(t,found) {
+        row,_:=asset.scene_entity_find(loaded,lid_id)
+        testing.expect_value(t,asset.scene_entity(loaded,row).name,"Lid v3")
+        prefab_scene_free(loaded)
+    }
+    if loaded,found:=prefab_scene_load(s,variant);testing.expect(t,found) {
+        kept,named:=false,false
+        for override in loaded.overrides {
+            kept||=override.entity==lid_link.source && override.component==transform
+            named||=override.component==0
+        }
+        testing.expect(t,kept && !named)
+        prefab_scene_free(loaded)
+    }
+    _,not_variant:=prefab_apply(s,prefab_fixture_find(f,root_id),nil,true,.Base)
+    testing.expect_value(t,not_variant,Prefab_Error.Not_Variant)
+    testing.expect(t,undo(&f.edits,w,&f.selection))
+    if loaded,found:=prefab_scene_load(s,crate);testing.expect(t,found) {
+        row,_:=asset.scene_entity_find(loaded,lid_id)
+        testing.expect_value(t,asset.scene_entity(loaded,row).name,"Lid v2")
+        prefab_scene_free(loaded)
+    }
+}
+
+// A prefab file written before its component gained a field: the field is no override of an instance until
+// the instance changes it, and applying it writes the component with every field, those the instance did not
+// change with the value loading gave them.
+@(test)
+prefab_apply_writes_fields_the_file_of_the_prefab_did_not_have :: proc(t:^testing.T) {
+    f:=new(Prefab_Fixture);defer free(f)
+    if !testing.expect(t,prefab_fixture_init(f,"old-fields")) {return}
+    defer prefab_fixture_destroy(f)
+    s:=&f.s
+    w:=edited_world(s)
+    lamps:=&f.tables[5]
+    lamps.default=proc(dst:rawptr) {(^Prefab_Test_Lamp)(dst)^={intensity=1,range=10}}
+    Lamp_Without_Range :: struct {intensity:f32}
+    old:asset.Scene
+    if !testing.expect_value(t,asset.scene_init(&old,&f.assets.types,asset.KIND_PREFAB,{1,2}),asset.Error.None) {return}
+    lamp_id,bulb_id:=base.Entity_Id(0x11),base.Entity_Id(0x12)
+    asset.scene_entity_add(&old,lamp_id,0,"Lamp")
+    asset.scene_entity_add(&old,bulb_id,lamp_id,"Bulb")
+    old.info.root=lamp_id
+    for id in ([]base.Entity_Id{lamp_id,bulb_id}) {
+        identity:=core.TRANSFORM_IDENTITY
+        without:=Lamp_Without_Range{intensity=3}
+        asset.scene_set(&old,id,"Transform",&identity)
+        asset.scene_set(&old,id,"Prefab_Test_Lamp",&without)
+    }
+    file:=fmt.tprintf("%s/lamp.prefab",f.root)
+    saved:=asset.scene_save(&old,file)
+    asset.scene_destroy(&old)
+    if !testing.expect_value(t,saved,asset.Error.None) {return}
+    core.world_settle(w)
+    edits_reset(&f.edits,w)
+    id,problem:=asset_resolve(s,"lamp",".prefab")
+    if !testing.expect_value(t,problem,"") {return}
+    placed,placed_error:=prefab_instantiate(s,id,{})
+    if !testing.expect_value(t,placed_error,Prefab_Error.None) {return}
+    none,known:=prefab_overrides_of(s,prefab_fixture_find(f,placed))
+    testing.expect(t,known && len(none)==0)
+
+    reach:=f32(25)
+    testing.expect(t,field_write(s,lamps,{prefab_fixture_find(f,placed)},int(offset_of(Prefab_Test_Lamp,range)),mem.ptr_to_bytes(&reach)))
+    prefab_fixture_step(f)
+    count,applied:=prefab_apply(s,prefab_fixture_find(f,placed),{"Prefab_Test_Lamp.range"})
+    testing.expectf(t,applied==.None && count==1,"apply: %v, %d applied",applied,count)
+    unsaved,_:=file_read(s,file)
+    written:asset.Scene
+    if !testing.expect_value(t,asset.scene_read(&written,&f.assets.types,unsaved),asset.Error.None) {return}
+    defer asset.scene_destroy(&written)
+    lamp,_:=asset.scene_get(&written,lamp_id,"Prefab_Test_Lamp",Prefab_Test_Lamp)
+    bulb,_:=asset.scene_get(&written,bulb_id,"Prefab_Test_Lamp",Prefab_Test_Lamp)
+    testing.expect_value(t,lamp,Prefab_Test_Lamp{intensity=3,range=25})
+    testing.expect_value(t,bulb,Prefab_Test_Lamp{intensity=3,range=10})
 }
 
 // The editors of a shared session, each over its own copy of the assets.

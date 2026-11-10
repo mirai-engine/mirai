@@ -186,6 +186,10 @@ scene_save :: proc(s:^Session,path:="") -> Document_Error {
     if !edits_commit(s.edits,edited_world(s),document_selection(s)) && s.edits.error!=.No_Change {return .Rejected}
     if file!=document_file(d) || d.id=={} {d.id=asset_id_new(s)}
     if error:=document_write(s,file,true);error!=.None {return error}
+    // What memory held of the file, unsaved (a prefab an operation made), is of before this save.
+    if r:=files_registry(s);r!=nil {
+        if relative,inside:=asset.registry_relative(r,file);inside {_,_=asset.registry_memory_drop(r,relative)}
+    }
     // A section that could not be written keeps the document unsaved.
     if !sections_save(s) {d.unsaved=true}
     owned:=make([dynamic]string,context.temp_allocator)

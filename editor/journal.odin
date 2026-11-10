@@ -12,7 +12,7 @@ import "mirai:std/base"
 // while collaboration or the recovery log read it, the rows the image took
 // since. Readers keep
 // a cursor of their own: undo its place in the steps, the review of an agent
-// and prefabs the state of a step, collaboration its place in the changes.
+// the state of a step, collaboration its place in the changes.
 // What changed since the image was taken comes from core.changes of each
 // table, the rows stamped since and the entities whose row went, compared
 // only with their rows in the image.

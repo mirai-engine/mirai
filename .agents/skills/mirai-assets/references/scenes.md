@@ -33,9 +33,18 @@ type with the component's name, `scene` (`Scene_Info`), those of instances if th
 ## Prefab instances
 
 The document stores each entity with its effective values, so a scene loads without its prefabs.
-An instance (`asset/prefab.odin`) records where its entities come from (one `Member` per entity),
-what it fixed on its own (its `Override`s) and against which file of its prefab it was updated
-(`stamp`, the prefab's `Scene.stamp`; 0: unknown).
+An instance (`asset/prefab.odin`) is two components of its entities, saved and merged as any
+other: `Prefab_Instance` on its root (the prefab, and the `stamp` of the file of that prefab it was
+last updated against: the prefab's `Scene.stamp`; 0: unknown) and `Prefab_Member` on every entity
+it placed, the root among them (the root, and `source`, the entity of the prefab it stands for).
+What it fixed on its own are its `Override`s, a table of the file.
+
+- `asset.Instance` and `asset.Member` are those components as a document holds them, declared
+  again because `asset` imports nothing above `std`; a world has them as `scene.Prefab_Instance`
+  and `scene.Prefab_Member`, and a test of `engine/scene` fails on any drift between the two.
+  `source` is a plain number: an `Entity_Id` field would be taken for a reference into this
+  document and remapped or emptied with it.
+- A copy spawned while the world runs is no instance, and a saved game holds none.
 
 - `scene_instantiate` copies the prefab's entities with new ids, points their internal references
   to the copies and empties those that pointed outside.
@@ -55,10 +64,16 @@ what it fixed on its own (its `Override`s) and against which file of its prefab 
     copies what is marked onto the new base (`override_keep`), in `asset/overrides.odin`; the
     layers of an [imported material](kinds.md#what-was-imported-and-what-was-changed) use the same
     functions.
-- Prefabs inside a prefab arrive as instances of their own with `outer` equal to the instance that
-  brought them. Overrides made in the document belong to the instance placed in it: the outermost
-  level wins. Only those placed in the document (`outer` 0) are updated, unlinked or removed; on
-  unlinking, the inner ones stay placed in it.
+- A document holds the instances it placed, not those its prefabs place: the entities of a prefab
+  inside a prefab are members of the outer instance, and what the outer prefab fixed of them is in
+  its own file. `scene_instance_unlink` with the prefab gives them back as instances of the
+  document, each member by its `source`, with the overrides the prefab held of them.
+- A member a prefab gains gets an Id made of the Id of the root and its `source`: the same in
+  every load, cook and editor that updates the instance.
+- `scene_overrides_derive` finds the overrides of the instances of a document by comparing their
+  members with a base, and `scene_overrides_apply` writes some into a prefab. A file keeps the
+  overrides for the load that finds the prefab changed; the editor derives them when it saves
+  ([overrides](../../mirai-editor/references/prefabs.md#overrides)).
 - The editor's Apply and Revert of an added entity: `scene_child_apply` writes it into the prefab
   with what hangs from it (instances placed among them included) and makes it a member;
   `scene_child_revert` deletes it with what hangs from it.
@@ -70,8 +85,8 @@ prefab's file, or when that prefab brings a stale one.
 
 - `Prefab_Resolver` reads each prefab once through `Prefab_Files`, which opens them for as long as
   needed: `Registry_Prefabs` reads them from a registry; `engine/scene`, from `host`'s cache.
-- `resolver_check` looks only at the `instances` table, without copying the document; `Checking` is
-  a prefab that contains itself. An instance of a missing prefab stays as it is.
+- `resolver_check` looks only at the `Prefab_Instance` table, without copying the document;
+  `Checking` is a prefab that contains itself. An instance of a missing prefab stays as it is.
 - `scene_resolve` updates each stale placed instance; each one's stamp is that of its prefab's file
   even if that prefab was resolved in memory: until it is saved, each resolution repeats it.
 - It is used by `engine/scene` on loading

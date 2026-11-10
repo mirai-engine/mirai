@@ -436,7 +436,7 @@ An entity is named as [the API names it](api.md#method-conventions). Each edit i
   has it ([turned off](../../mirai-core/references/core.md#disabled-entities)). `off` lists the
   components turned off by themselves, which `components` shows with their values.
 - `parent` is an id or `null` in what it returns; a param `parent` names an entity as any other. `prefab`, if it is a member of an instance:
-  `{instance,asset,source,root}`.
+  `{instance,asset,source,root}`, with `instance` the id of the root of the instance.
 - `components` is `{Name:{fields}}` with those the scene stores and the inspector lists; not
   `Transform`, `Name`, `Id`, `Parent`, `Hidden` or `Disabled`, which have fields of their own.
 - It omits `hidden` and `transient` fields. `include_runtime:true` adds those fields and the
@@ -758,10 +758,16 @@ transactions. Unknown id, no id, prefab not found, nonexistent override and "is 
 instance" are `-32602`; the rest, `-32000`
 ([errors](../../mirai-editor/references/prefabs.md#errors)).
 
-- `prefab.list`: a `stale` instance has a stamp that is not the hash of its prefab's file, or that
-  prefab brings an outdated one.
+- An instance is named by its `root`. `prefab.create`, `prefab.variant.create` and `prefab.apply`
+  leave the prefab files they write unsaved, as any asset an edit changes: `scene.save` or
+  `asset.save` writes them.
+- `prefab.list`: the instances the document placed, not those its prefabs place. A `stale`
+  instance has a stamp that is not the hash of its prefab's file, or that prefab brings an
+  outdated one; `prefab.refresh` updates it.
 - `prefab.inspect` with `entity`: `kind` of an override is `field`, `added`, `removed`, `turned` or
   `child` (the entity was added by the instance); a turned-off member is an `added` of `Disabled`.
+  The overrides are derived then, by comparing with the prefab; with `stale` true the instance is
+  not up to date with it and none can be told until it is refreshed.
   With `asset` it gives the prefab with its own instances up to date, and its `base` and
   `chain` if it is a [variant](../../mirai-editor/references/prefabs.md#variants) (zero and empty
   if not).

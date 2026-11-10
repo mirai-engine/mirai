@@ -128,7 +128,7 @@ every_tab_with_changes_keeps_its_chain_and_a_start_recovers_them_all :: proc(t:^
     core.world_settle(w)
     edits_reset(&f.edits,w)
 
-    plain_id:=api_entity_id(w,plain)
+    plain_id,linked_id:=api_entity_id(w,plain),api_entity_id(w,root)
     _,created:=prefab_create(s,root,"kept")
     if !testing.expect_value(t,created,Prefab_Error.None) {return}
     prefab_fixture_step(f)
@@ -176,6 +176,8 @@ every_tab_with_changes_keeps_its_chain_and_a_start_recovers_them_all :: proc(t:^
     testing.expect(t,document_activate(s,0))
     testing.expect(t,document_dirty(s) && !document_is_prefab(s))
     testing.expect_value(t,entity_name(edited_world(s),api_entity(edited_world(s),plain_id)),"Changed again")
+    recovered,linked:=prefab_link_of(edited_world(s),api_entity(edited_world(s),linked_id))
+    testing.expect(t,linked && recovered.root,"the instance comes back with the rows of its entities")
     testing.expect(t,document_activate(s,1))
     testing.expect(t,document_dirty(s) && document_is_prefab(s))
     testing.expect_value(t,entity_name(edited_world(s),api_entity(edited_world(s),root_id)),"Changed in the prefab")

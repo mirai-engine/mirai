@@ -1,6 +1,7 @@
 package editor
 
 import "core:fmt"
+import "core:os"
 import "core:path/filepath"
 import "core:slice"
 import "core:strings"
@@ -807,9 +808,15 @@ prefab_new_file :: proc(s:^Session,path:string) -> (file:string,error:Prefab_Err
     return file,.None
 }
 
-// Writes a prefab into its file, unsaved, as part of the open gesture.
+// Writes a prefab into its file, unsaved, as part of the open gesture. A file
+// no Save could write, because what would be its folder is a file, is refused now.
 @(private)
 prefab_file_write :: proc(s:^Session,prefab:^asset.Scene,path,label:string) -> Prefab_Error {
+    for at:=strings.last_index_byte(path,'/');at>0;at=strings.last_index_byte(path[:at],'/') {
+        if !os.exists(path[:at]) {continue}
+        if !os.is_dir(path[:at]) {return .Write_Failed}
+        break
+    }
     data,encoded:=asset.scene_bytes(prefab,context.temp_allocator)
     if encoded!=.None {return encoded==.Out_Of_Memory?.Out_Of_Memory:.Write_Failed}
     return file_write(s,path,data,label)?.None:.Write_Failed
@@ -1000,7 +1007,10 @@ prefab_instantiate_in :: proc(s:^Session,prefab_id:base.Asset_Id,placement:Prefa
     if instances==nil || members==nil {return core.NONE,.Rejected}
     // The other instances of the prefab follow its file with this one.
     current,_,_:=prefab_sync(s,prefab_id) or_return
+    // Encoding gives a scene the stamp of its bytes: the base keeps that of its file.
+    stamp:=current.stamp
     data,encoded:=asset.scene_bytes(current,context.temp_allocator)
+    current.stamp=stamp
     if encoded!=.None {return core.NONE,encoded==.Out_Of_Memory?.Out_Of_Memory:.Rejected}
     file:asset.Asset
     if asset.asset_open(&file,data)!=.None {return core.NONE,.Rejected}
@@ -1013,7 +1023,7 @@ prefab_instantiate_in :: proc(s:^Session,prefab_id:base.Asset_Id,placement:Prefa
     if failed!=.None {return core.NONE,failed==.Out_Of_Memory?.Out_Of_Memory:.Rejected}
     root=report.root
     for e,row in entities {core.add(members,e,scene.Prefab_Member{root,u64(view.ids[row])})}
-    core.add(instances,root,scene.Prefab_Instance{prefab_id,current.stamp})
+    core.add(instances,root,scene.Prefab_Instance{prefab_id,stamp})
     if transforms!=nil {
         if local:=core.get(transforms,root);local!=nil {
             if placement.rotation!={} {local.rotation=quaternion(x=placement.rotation.x,y=placement.rotation.y,z=placement.rotation.z,w=placement.rotation.w)} else {local.rotation=1}
