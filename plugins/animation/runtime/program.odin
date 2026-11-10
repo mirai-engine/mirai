@@ -558,15 +558,18 @@ program_buffers :: proc(state:^Playing,output:^Program_Output,content:^host.Cont
 }
 
 @(private)
-program_evaluate_nodes :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,output:^Program_Output,last:int,reference:f32=-1) -> bool {
+program_evaluate_nodes :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,output:^Program_Output,last:int,reference:f32=-1,worker:=0) -> bool {
     runtime:=&state.program;n:=len(state.bindings);c:=len(state.curves)
     for instruction,i in output.instructions[:last+1] {
         out:=runtime.nodes[i*n:(i+1)*n];properties:=runtime.node_properties[i*n:(i+1)*n];curves:=runtime.node_curves[i*c:(i+1)*c];weights:=runtime.node_weights[i*n:(i+1)*n]
         if instruction.kind==.Clip || instruction.kind==.Blend_Space {
-            group:=output.groups[instruction.group];pose:=&playback.pose;lib.pose_clear(pose)
+            group:=output.groups[instruction.group]
+            _,bones,shared,ready:=pose_room(playback,state,worker)
+            if !ready {runtime.error=.Out_Of_Memory;return false}
             for leaf in group.leaves[:group.count] {
-            leaf:=leaf;player:=runtime.players[leaf.player].player;if reference>=0 {player.time=reference} else if reference==-2 {player.time=runtime.players[leaf.player].from};lib.pose_blend(pose,&content.lib,player,leaf.weight)}
-            for binding,b in state.bindings {out[b],weights[b],properties[b]=lib.pose_bone(pose,binding.target,binding.rest)}
+            leaf:=leaf;player:=runtime.players[leaf.player].player;if reference>=0 {player.time=reference} else if reference==-2 {player.time=runtime.players[leaf.player].from};lib.bones_blend(bones,shared.bones[:],&content.lib,player,leaf.weight)}
+            tracks_twins(shared,bones)
+            for binding,b in state.bindings {out[b],weights[b],properties[b]=lib.bone_transform(bones[b],binding.rest)}
             if group.mirror {
                 if !playing_mirror(state,out) {runtime.error=.Unsupported_Mirror;return false}
                 for pair,b in state.mirror_pairs {if int(pair)>b {properties[b],properties[pair]=properties[pair],properties[b];weights[b],weights[pair]=weights[pair],weights[b]}}
@@ -637,7 +640,7 @@ program_mask_over :: proc(state:^Playing,over:u64,mask:[]f32) -> bool {
 }
 
 @(private)
-program_pose :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,output:^Program_Output,transforms:core.Read(core.Transform)) -> bool {
+program_pose :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,output:^Program_Output,transforms:core.Read(core.Transform),worker:=0) -> bool {
     if !program_buffers(state,output,content) {state.program.error=.Out_Of_Memory;return false}
     runtime:=&state.program;n:=len(state.bindings);c:=len(state.curves)
     for instruction,i in output.instructions[:output.instruction_count] {
@@ -649,13 +652,13 @@ program_pose :: proc(playback:^Playback,state:^Playing,content:^host.Content_Ani
             runtime.mask_keys[i]=key
         }
         if instruction.kind==.Additive || instruction.curves==.Additive {
-            if !program_evaluate_nodes(playback,state,content,output,int(instruction.right),instruction.reference) {return false}
+            if !program_evaluate_nodes(playback,state,content,output,int(instruction.right),instruction.reference,worker) {return false}
             copy(runtime.reference_nodes[i*n:(i+1)*n],runtime.nodes[int(instruction.right)*n:(int(instruction.right)+1)*n])
             copy(runtime.reference_curves[i*c:(i+1)*c],runtime.node_curves[int(instruction.right)*c:(int(instruction.right)+1)*c])
         }
     }
     runtime.mask_bound=state.bound
-    if !program_evaluate_nodes(playback,state,content,output,int(output.output)) {return false}
+    if !program_evaluate_nodes(playback,state,content,output,int(output.output),-1,worker) {return false}
     pose:=runtime.nodes[int(output.output)*n:(int(output.output)+1)*n];curves:=runtime.node_curves[int(output.output)*c:(int(output.output)+1)*c]
     share:=mm.saturate(animation.weight)
     for value,b in pose {if state.bindings[b].target!=0 {state.local[b]=value if share==1 else state.bindings[b].rest if share==0 else mm.transform_interpolate(state.bindings[b].rest,value,share)}}
@@ -664,7 +667,7 @@ program_pose :: proc(playback:^Playback,state:^Playing,content:^host.Content_Ani
     if runtime.capture && len(runtime.from)==n {
         previous:=runtime.history[:] if runtime.history_dt>0 else runtime.from[:]
         values:=runtime.inertia_values[:];old:=values[:c*5];now:=values[c*5:c*10];target:=values[c*10:c*15];target_previous:=values[c*15:]
-        if !program_evaluate_nodes(playback,state,content,output,int(output.output),-2) {return false}
+        if !program_evaluate_nodes(playback,state,content,output,int(output.output),-2,worker) {return false}
         before:=runtime.reference_nodes[int(output.output)*n:(int(output.output)+1)*n]
         for value,b in runtime.nodes[int(output.output)*n:(int(output.output)+1)*n] {before[b]=mm.transform_interpolate(state.bindings[b].rest,value,share)}
         for value,k in runtime.node_curves[int(output.output)*c:(int(output.output)+1)*c] {for v,j in value.value {target_previous[k*5+j]=v*share};target_previous[k*5+4]=value.weight*share}
@@ -682,7 +685,7 @@ program_pose :: proc(playback:^Playback,state:^Playing,content:^host.Content_Ani
     }
     if runtime.inertia.active {
         before:=runtime.reference_nodes[int(output.output)*n:(int(output.output)+1)*n]
-        if !program_evaluate_nodes(playback,state,content,output,int(output.output),-2) {return false}
+        if !program_evaluate_nodes(playback,state,content,output,int(output.output),-2,worker) {return false}
         for value,b in runtime.nodes[int(output.output)*n:(int(output.output)+1)*n] {before[b]=mm.transform_interpolate(state.bindings[b].rest,value,share)}
         root_bone:=bone_resolve(state,runtime.root.bone) if runtime.has_root else -1
         old_root,new_root:=mm.TRANSFORM_IDENTITY,mm.TRANSFORM_IDENTITY

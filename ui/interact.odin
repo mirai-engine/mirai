@@ -61,15 +61,12 @@ widget_hit :: proc(ctx:^Context,surface:u16,point:[2]f32) -> ^Widget {
 @(private)
 widget_under :: proc(ctx:^Context,id:Id) -> bool {
     if ctx.input.pointer_absent || id==0 {return false}
-    for &w in ctx.previous[:ctx.previous_count] {
-        if w.id!=id {continue}
-        if ctx.hot!=0 && w.layer<ctx.hot_layer {return false}
-        point:=ctx.screen_pointer if w.surface==0 else ctx.previous_panels[w.surface-1].pointer
-        p:=point
-        if w.scope!=0 && int(w.scope)<ctx.previous_scope_count {p=affine_apply(ctx.previous_scopes[w.scope],point)}
-        return rect_contains(w.area,p) && effect_hit(ctx,w.effect_clip,point)
-    }
-    return false
+    w:=widget_previous(ctx,id)
+    if w==nil || ctx.hot!=0 && w.layer<ctx.hot_layer {return false}
+    point:=ctx.screen_pointer if w.surface==0 else ctx.previous_panels[w.surface-1].pointer
+    p:=point
+    if w.scope!=0 && int(w.scope)<ctx.previous_scope_count {p=affine_apply(ctx.previous_scopes[w.scope],point)}
+    return rect_contains(w.area,p) && effect_hit(ctx,w.effect_clip,point)
 }
 
 @(private)
@@ -185,14 +182,15 @@ focus_advance :: proc(ctx:^Context,step:int) -> Id {
     count:=ctx.previous_count
     if count==0 {return 0}
     group:Id
-    for &w in ctx.previous[:count] {if w.id==ctx.focus {group=w.group;break}}
+    focused,has_focus:=id_table_find(&ctx.previous_ids,ctx.focus)
+    if has_focus {group=ctx.previous[focused].group}
     // Sorted by (order, index), where 0 sorts after every order.
     key :: proc "contextless" (w:^Widget,index:int) -> i64 {
         order:=i64(w.order) if w.order!=0 else i64(max(i16))+1
         return order<<32|i64(index)
     }
     from:i64=-1
-    for &w,i in ctx.previous[:count] {if w.id==ctx.focus {from=key(&w,i);break}}
+    if has_focus {from=key(&ctx.previous[focused],int(focused))}
     best,first:=-1,-1
     best_key,first_key:i64
     for &w,i in ctx.previous[:count] {
@@ -215,8 +213,7 @@ focus_advance :: proc(ctx:^Context,step:int) -> Id {
 // Moves the focus to the widget focus_neighbor finds; with none to go from,
 // to the first one.
 focus_move :: proc(ctx:^Context,direction:[2]f32) -> Id {
-    from:^Widget
-    for &w in ctx.previous[:ctx.previous_count] {if w.id==ctx.focus {from=&w;break}}
+    from:=widget_previous(ctx,ctx.focus)
     if from==nil || !navigation_candidate(ctx,from) {return focus_advance(ctx,1)}
     next:=focus_neighbor(ctx,from.id,direction)
     if next==0 {return 0}
@@ -230,8 +227,7 @@ focus_move :: proc(ctx:^Context,direction:[2]f32) -> Id {
 // inside a container that wraps in that axis, the farthest one on its other
 // side. 0: none.
 focus_neighbor :: proc(ctx:^Context,from_id:Id,direction:[2]f32) -> Id {
-    from:^Widget
-    for &w in ctx.previous[:ctx.previous_count] {if w.id==from_id {from=&w;break}}
+    from:=widget_previous(ctx,from_id)
     if from==nil {return 0}
     side:=0 if direction.y<0 else 1 if direction.x>0 else 2 if direction.y>0 else 3
     for link in ctx.previous_links[:ctx.previous_link_count] {
@@ -299,8 +295,8 @@ navigation_route :: proc(ctx:^Context) {
     if .Tab in in_.keys_repeated {focus_advance(ctx,-1 if shift else 1)}
     if .Next in in_.pad {focus_advance(ctx,1)}
     if .Previous in in_.pad {focus_advance(ctx,-1)}
-    adjusts:=false
-    for &w in ctx.previous[:ctx.previous_count] {if w.id==ctx.focus {adjusts=.Adjusts in w.flags;break}}
+    focused:=widget_previous(ctx,ctx.focus)
+    adjusts:=focused!=nil && .Adjusts in focused.flags
     if !adjusts {
         if .Left in in_.keys_repeated || .Left in in_.pad {focus_move(ctx,{-1,0})}
         if .Right in in_.keys_repeated || .Right in in_.pad {focus_move(ctx,{1,0})}

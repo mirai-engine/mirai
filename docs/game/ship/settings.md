@@ -30,8 +30,8 @@ sections of the engine file with the project's: the shipped game reads no engine
 
 ## Edit them
 
-- In an editor session: `settings.get` shows `machine` (the names of the machine settings),
-  `settings` (effective values), `engine` and `project` (what each file sets).
+- In an editor session: `settings.get` shows the effective values and what each file sets
+  (`mirai rpc --project . describe settings.get` gives its shape).
   `settings.set {"layer":"project","settings":{"Graphics_Settings":{"vsync":true}}}` writes the
   project's file; `"layer":"engine"` takes machine sections only and writes this machine's file.
   A field the project overrides does not change under `engine`.
@@ -68,3 +68,5 @@ field of `Audio_Volumes` ([audio](../audio.md)); language and interface scale ar
 - `settings.set` with `"layer":"engine"` changes every project on this machine.
 - A fixed `Graphics_Settings` in `settings.mirai` of the project hides the machine's default for
   the GPU; the player's own options still override it. Leave quality to the player.
+- A settings file names no preset: `Graphics_Settings` holds the fields of one, which
+  `graphics_preset` of `settings.set` or `render.graphics_preset_apply` write.

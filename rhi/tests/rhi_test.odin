@@ -493,6 +493,47 @@ rhi_texture_upload_writes_a_region_alone :: proc(t: ^testing.T) {
 	expect_clean(t, d)
 }
 
+// A texture takes on the GPU the bytes of another as they are, into its own
+// sRGB encoding too, each time it is copied; one of another size is refused
+// and keeps what it had.
+@(test)
+rhi_copy_texture_carries_the_bytes_into_another_texture :: proc(t: ^testing.T) {
+	d := test_device(t)
+	if d == nil {return}
+	defer rhi.device_destroy(d)
+	SIZE :: 8
+	source := rhi.texture_create(d, {width = SIZE, height = SIZE, format = .RGBA8_Unorm, usage = {.Color_Target, .Sampled, .Transfer_Src}, name = "copy source"})
+	encoded := rhi.texture_create(d, {width = SIZE, height = SIZE, format = .RGBA8_Srgb, usage = {.Sampled}, name = "copy into sRGB"})
+	same := rhi.texture_create(d, {width = SIZE, height = SIZE, format = .RGBA8_Unorm, usage = {.Sampled}, name = "copy into its format"})
+	small := rhi.texture_create(d, {width = SIZE / 2, height = SIZE / 2, format = .RGBA8_Unorm, usage = {.Sampled}, name = "copy into a smaller one"})
+	testing.expect(t, source != 0 && encoded != 0 && same != 0 && small != 0, rhi.device_error(d))
+	gray: [SIZE * SIZE * 4]u8
+	for &b in gray {b = 40}
+	for texture in ([]rhi.Texture{encoded, same}) {testing.expect(t, rhi.texture_upload(d, texture, gray[:], SIZE * 4), rhi.device_error(d))}
+	testing.expect(t, rhi.texture_upload(d, small, gray[:SIZE * SIZE], SIZE * 2), rhi.device_error(d))
+	texels, seen: [SIZE * SIZE * 4]u8
+	// Twice: the second copy finds on Metal the view the first one made.
+	for round in 0 ..< 2 {
+		for &b, i in texels {b = u8(i * 7 + round * 31)}
+		testing.expect(t, rhi.texture_upload(d, source, texels[:], SIZE * 4), rhi.device_error(d))
+		cmd := rhi.immediate_begin(d)
+		rhi.cmd_copy_texture(cmd, source, encoded)
+		rhi.cmd_copy_texture(cmd, source, same)
+		rhi.cmd_copy_texture(cmd, source, small)
+		rhi.cmd_copy_texture(cmd, source, source)
+		for texture in ([]rhi.Texture{source, encoded, same}) {rhi.cmd_barrier_texture(cmd, texture, .Shader_Read)}
+		testing.expect(t, rhi.immediate_end(d, cmd), rhi.device_error(d))
+		for texture in ([]rhi.Texture{encoded, same, source}) {
+			testing.expect(t, rhi.texture_read(d, texture, seen[:]), rhi.device_error(d))
+			testing.expectf(t, seen == texels, "round %d: a texture holds the bytes of the source", round)
+		}
+	}
+	testing.expect(t, rhi.texture_read(d, small, seen[:SIZE * SIZE]), rhi.device_error(d))
+	for b in seen[:SIZE * SIZE] {if b != 40 {testing.expect(t, false, "a texture of another size keeps what it had"); break}}
+	for texture in ([]rhi.Texture{source, encoded, same, small}) {rhi.texture_destroy(d, texture)}
+	expect_clean(t, d)
+}
+
 // A cube and an array take every layer of each level in one upload, as
 // HDR or 16-bit texels and as BC6H where the device samples blocks; the
 // table of 2D textures refuses them, and a cube needs square faces.

@@ -676,7 +676,7 @@ settings_nav :: proc(s:^Session,categories:[]Settings_Category,shown:int,needle:
             changed:=settings_changed(s)
             appearance:=ui.Node_Style{text={size=th.font_label,color=changed?th.accent_hover:th.text_faint}}
             reset,confirm:=shell_id(g,"settings_reset"),shell_id(g,"settings_reset_confirm")
-            if ui.button(ctx,reset,{label="Reset to default",width=0,height=th.row,size=th.font_label,padding=0,disabled=!changed,use_appearance=true,appearance=appearance}).clicked {
+            if ui.button(ctx,reset,{label="Reset to default",width=0,height=th.row,size=th.font_label,padding=0,disabled=!changed,look=&appearance}).clicked {
                 anchor,_:=ui.widget_rect(ctx,reset)
                 ui.popup_open(ctx,confirm,anchor)
             }
@@ -1020,9 +1020,6 @@ api_settings_set :: proc(s:^Session,call:^api.Call) {
         if error:=project.settings_parse(sections,next,strict=true);error.code!=.None {
             api.call_failf(call,api.INVALID_PARAMS,"settings: %s at line %d, column %d",error.detail,error.line,error.column)
             return
-        }
-        for setting,i in next {
-            if setting.name=="Graphics_Settings" {erender.graphics_quality_follow((^erender.Graphics_Settings)(setting.value),(^erender.Graphics_Settings)(current[i].value).quality)}
         }
     }
     for setting in next {

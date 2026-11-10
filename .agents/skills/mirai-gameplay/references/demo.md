@@ -200,7 +200,8 @@ The demo shows how a game builds its rules over `.records` tables
 inventories, dialogues or waves, and these are demo code that can be copied and changed.
 
 - **Inventory** (`interface_demo.odin`): a slot of `Interface_Demo` stores the `Item` row
-  (`assets/interface/items.records`) and how many units it has; name, icon and rarity are read from the
+  (`assets/interface/items.records`) and how many units it has; name, icon and rarity are read from
+  the
   row in the chosen language. Dropping an object on another equal one completes its stack up to the
   row's `stack`.
 - **Conversation** (`interface_demo.odin`): `Dialogue_Line` says who speaks, what, and which line
@@ -244,13 +245,14 @@ A `--<part>-only` flag after `--` regenerates only one part
   `church_fog`, with the meshes of the render plugins' scenes.
 - `--ai-only`: scene `ai` and the horde's wave and zombie-kind tables.
 - `--sky-only`: scene `sky`, the atmosphere over a plain with mountains.
-- `--interface-only`: scene `interface`, the English texts of its `.ui` (which are the source) and their Spanish
+- `--interface-only`: scene `interface`, the English texts of its `.ui` (which are the source) and
+  their Spanish
   translation (`INTERFACE_TEXTS`, by key), the icons of its objects and the tables of objects and
   of the conversation (`tools/demo_content/records.odin` writes a table with fixed ids).
 - `--animation-only`: imports Mirai and writes the [animation gallery](animation-gallery.md): the
   locomotion and gallery clips of Mirai and their programs, the taller
-  Mirai and its baked clips, the spider, the rig chains, the morph jellies and the scene `animation`. Contracts: [animation
-  plugin](../../mirai-animation/references/animation.md).
+  Mirai and its baked clips, the spider, the rig chains, the morph jellies and the scene
+  `animation`. Contracts: [animation plugin](../../mirai-animation/references/animation.md).
 
 Content:
 
@@ -369,7 +371,7 @@ mirai play demo --connect 127.0.0.1:27500 --headless --players 1 --frames 600 \
   the dog). The capture shows the AI dog behind the person and, afterwards, the camera behind the
   dog. Over the network, the server's `--status` reports two objects per connection.
 - Tests of `demo/game`: `animation_gallery_controls_test.odin`,
-  `animation_gallery_locomotion_test.odin` (graph with synthetic clips),
+  `animation_gallery_matching_test.odin` (the matching station with the Mirai assets),
   `animation_motor_test.odin`, `portal_game_test.odin` (`portal_fit`) and
   `grounding_physics_test.odin` (grounding with real bodies, which needs the `animation` and
   `physics` plugins). Real clips are checked with the demo integration.

@@ -45,6 +45,9 @@ the name of their type) and a world (handles and tables).
   that spawned it. The root receives `Prefab_Source`, which a server sends with what it replicates
   so that the client instantiates that prefab
   ([multiplayer](../../mirai-networking/references/multiplayer.md#what-the-game-declares)).
+  A World keeps the form of each prefab it spawned (`Prefab_Forms`): spawning it again reads no
+  file and gives the world reading it anew gives, until the prefab or a prefab it places changes.
+  The forms are of their World and are not copied with it.
 - With a project's assets, `load` and `spawn` instantiate a copy in which outdated prefab instances
   follow their current prefab
   ([resolution](../../mirai-assets/references/scenes.md#resolution-against-the-current-prefab));
@@ -598,8 +601,8 @@ one per local player that has screens or sees a `World_Widget`.
   `Hovered`, `Unhovered`, `Focused`, `Unfocused`, `Dragged`, `Dropped`, `Finished`) and `Back`
   (Escape or East on the top screen with `back`, if the UI did not use them), `Menu` (the action,
   `gui.menu_pressed`), with the entity of
-  the screen or the panel, the node's `base.name_hash`, its `rect` (window pixels for a screen, panel
-  units for a world panel), `item`, `on`, `value`, `text` (of a field),
+  the screen or the panel, the node's `base.name_hash`, its `rect` (window pixels for a screen,
+  panel units for a world panel), `item`, `on`, `value`, `text` (of a field),
   `from`, `from_item` and `from_entity`: in a `Dropped`, the entity of the interface it came from
   (`Context.owner` is the entity while each tree is built). They are those of the last drawn frame,
   delivered to the first following tick and to no other (`gui_events_deliver`, `fixed`, stage

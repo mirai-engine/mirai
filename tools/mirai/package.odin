@@ -61,7 +61,7 @@ cmd_package :: proc(root:string,args:[]string) -> int {
     if !compiler_found {fmt.eprintfln("mirai package: cannot find the Odin compiler; install Odin %s in .deps/odin/dist",build.ODIN_RELEASE);return 1}
     slangc,slang_found:=shaders.tool_find(root,.Slangc)
     slang:=filepath.dir(filepath.dir(slangc))
-    if !slang_found || !path_same(slang,join(deps,"slang")) {fmt.eprintfln("mirai package: the package carries the Slang of %s/slang: mirai setup slang",deps);return 1}
+    if !slang_found || !project.path_same(slang,join(deps,"slang")) {fmt.eprintfln("mirai package: the package carries the Slang of %s/slang: mirai setup slang",deps);return 1}
     spirv:[3]string
     for tool,i in ([3]shaders.Tool{.Spirv_Val,.Spirv_Opt,.Spirv_Cross}) {
         found:bool
@@ -97,7 +97,7 @@ cmd_package :: proc(root:string,args:[]string) -> int {
     if os.make_directory_all(join(out,"bin"))!=nil {fmt.eprintfln("mirai package: could not write to %s",out);return 1}
     sources:=join(root,"bin",fmt.aprintf(".package-%d.sources.json",os.get_pid()))
     defer os.remove(sources)
-    command:=tool_command(root,"tools/mirai","-o:speed",join(out,"bin",fmt.aprintf("mirai%s",EXE)),sources)
+    command:=tool_command(root,"tools/mirai","-o:speed",join(out,"bin",fmt.aprintf("mirai%s",project.EXECUTABLE_SUFFIX)),sources)
     if code:=run_compiler(root,command[:],"mirai package engine");code!=0 {return code}
 
     m:project.Engine_Manifest
@@ -226,7 +226,7 @@ package_odin :: proc(compiler,to:string) -> string {
         }
     }
     odin_root,_:=os.lookup_env("ODIN_ROOT",context.temp_allocator)
-    if odin_root!="" && !path_same(odin_root,folder) && os.is_dir(join(odin_root,"vendor")) {
+    if odin_root!="" && !project.path_same(odin_root,folder) && os.is_dir(join(odin_root,"vendor")) {
         if os.copy_directory_all(join(to,"vendor"),join(odin_root,"vendor"))!=nil {return ""}
     }
     _,said,_,run_error:=subprocess.exec({command={compiler,"version"}},context.temp_allocator)

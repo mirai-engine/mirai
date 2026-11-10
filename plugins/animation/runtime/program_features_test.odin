@@ -15,7 +15,7 @@ Program_Feature_Fixture :: struct {content:host.Content_Animation,state:Playing,
 @(private)
 program_feature_init :: proc(f:^Program_Feature_Fixture,t:^testing.T) {
     f.state=program_test_content(t,&f.content);f.output=new(Program_Output)
-    testing.expect(t,f.output!=nil && lib.pose_init(&f.playback.pose,64))
+    testing.expect(t,f.output!=nil && tracks_bind(&f.playback,&f.state,&f.content))
     f.animation=ANIMATION_DEFAULT;f.animation.loop=false;f.animation.root_motion=.Extract
     copy(f.state.local[:],f.state.rest[:])
     resize(&f.state.sampled,len(f.state.rest));copy(f.state.sampled[:],f.state.rest[:])

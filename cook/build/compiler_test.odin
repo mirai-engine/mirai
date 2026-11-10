@@ -74,7 +74,7 @@ build_fingerprint_follows_content_not_dates_checkouts_or_thread_counts :: proc(t
 the_compiler_of_an_installed_engine_counts_by_its_manifest_not_its_date :: proc(t:^testing.T) {
     root:=base.test_folder(t,"installed-compiler")
     if root=="" {return}
-    compiler:=project.path(root,".deps","odin","dist",strings.concatenate({"odin",EXECUTABLE_EXTENSION},context.temp_allocator),allocator=context.temp_allocator)
+    compiler:=project.path(root,".deps","odin","dist",strings.concatenate({"odin",project.EXECUTABLE_SUFFIX},context.temp_allocator),allocator=context.temp_allocator)
     if !testing.expect(t,os.make_directory_all(project.path(root,".deps","odin","dist",allocator=context.temp_allocator))==nil) {return}
     if !testing.expect(t,os.write_entire_file(compiler,"compiler")==nil) {return}
     dated :: proc(t:^testing.T,root,compiler:string,at:i64) -> u64 {

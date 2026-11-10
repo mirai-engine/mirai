@@ -8,6 +8,7 @@ import "core:slice"
 import "core:strings"
 import "core:time"
 import "mirai:core"
+import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:platform"
 import gpu "mirai:render"
@@ -192,7 +193,7 @@ profile_conditions :: proc(s:^Session) -> (c:Profile_Conditions) {
         c.render={int(stats.render_width),int(stats.render_height)}
     }
     if g:=graphics_settings(s);g!=nil {
-        c.preset=strings.clone(graphics_quality_label(g.quality))
+        c.preset=strings.clone(graphics_quality_label(erender.graphics_quality_of(g^)))
         c.render_scale,c.preset_height,c.vsync,c.frame_limit=g.render_scale,g.preset_height,g.vsync,g.frame_limit
     }
     current:=status(s)

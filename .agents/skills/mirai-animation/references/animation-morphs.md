@@ -23,7 +23,8 @@ same with the weights of its mesh and its animation.
 
 - `source` is the entity whose animation gives the curves (without it, itself when it is a rig that
   follows another, the rig of its `Pose_Source` or the nearest animated ancestor, as `morph_source`
-  resolves); the curves are its final ones, with those of its leader and its drives; `path`, that of its curves (empty,
+  resolves); the curves are its final ones, with those of its leader and its drives; `path`, that of
+  its curves (empty,
   that of its `Animation_Target`). The prefab writes `path` only on an entity without
   `Animation_Target`, the mesh that a rig shows.
 - Without either path (a rig built by code that shows its own mesh) each target takes the first
@@ -71,8 +72,8 @@ same with the weights of its mesh and its animation.
   level and the GPU keeps choosing the one it draws. The deltas go before the skin.
 - A mesh with targets and without skin is a one-joint pose.
 - The drawn weights interpolate those of the last two ticks like the pose (a mesh just shown takes
-  those of the tick); until the entity has its own, those of the mesh. Only those that changed go to the renderer, with the palette or, if the
-  budget skips it, over the one the renderer has.
+  those of the tick); until the entity has its own, those of the mesh. Only those that changed go to
+  the renderer, with the palette or, if the budget skips it, over the one the renderer has.
 
 ## Verification
 

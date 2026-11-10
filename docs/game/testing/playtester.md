@@ -24,9 +24,9 @@ mirai rpc --project . play.check '{"conditions":[{"entity":"Door","compare":"Gon
   --select passed
 ```
 
-- `play.observe` answers the tick, the focused player (`position`, `velocity`, `grounded`,
-  `facing`), `stuck`, new `problems`, the top screen with its `buttons` (`name`, `text`, `rect`
-  in the window points `play.step` takes, `disabled`) and the `targets` nearest to the eye.
+- `play.observe` answers the tick, the focused player, whether it is stuck, new problems, the top
+  screen with its buttons (their `rect` is in the window points `play.step` takes) and the
+  `targets` nearest to the eye; `describe play.observe` lists the fields.
 - A target has `distance` in meters, `bearing` in degrees right of where the camera looks
   (negative: left) and `elevation`; turn with `mouse_delta` by that much, then step forward.
   `targets` match component or entity names; `*` stands for any run of characters.

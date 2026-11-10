@@ -119,6 +119,32 @@ Route_Provider :: struct {
     next:proc(s:^Session,w:core.World_Ref,body:core.Entity,goal:[3]f32) -> Route,
 }
 
+// What the plugin that moves a body in a game says of it (physics: its
+// characters): the drive of play.step and the playtest plugin read it with
+// play_stance and play_body_measure, never by the name of a component. known
+// is false for a body that is not one it moves.
+Body_Provider :: struct {
+    standing:proc(w:core.World_Ref,body:core.Entity) -> (standing,known:bool),
+    measure:proc(w:core.World_Ref,body:core.Entity) -> (measure:Body_Measure,known:bool),
+}
+
+// The size of a body and how it moves, for what steers it; 0: it does not say.
+Body_Measure :: struct {
+    height:f32,      // m from its feet to the top of its head
+    step_height:f32, // m it walks up without a jump
+    speed:f32,       // m/s it walks at the most
+    jump_height:f32, // m a jump of it rises
+}
+
+// The body what steers is told for when none says its own: the character physics makes by default.
+BODY_PERSON :: Body_Measure{height=1.8,step_height=0.3,speed=5,jump_height=1.2}
+
+Stance :: enum u8 {
+    Unknown, // no plugin moves the body: nothing says whether it stands
+    Standing,
+    Airborne,
+}
+
 PROVIDER_CAPACITY :: 32 // of a kind the editor holds at once
 
 @(private)
@@ -128,6 +154,8 @@ Providers :: struct {
     play:Play_Provider,
     route:Route_Provider,
     simulates,plays,routes:bool,
+    bodies:[PROVIDER_CAPACITY]Body_Provider,
+    body_count:int,
     inspectors:[PROVIDER_CAPACITY]Inspector_Provider,
     inspector_count:int,
     components:[PROVIDER_CAPACITY]Component_Provider,
@@ -150,6 +178,7 @@ providers :: proc(s:^Session) -> ^Providers {
     p.simulation,p.simulates=provided(s,Simulation_Provider)
     p.play,p.plays=provided(s,Play_Provider)
     p.route,p.routes=provided(s,Route_Provider)
+    p.body_count=provided_all(s,p.bodies[:])
     p.inspector_count=provided_all(s,p.inspectors[:])
     p.component_count=provided_all(s,p.components[:])
     p.menu_count=provided_all(s,p.menus[:])
@@ -294,6 +323,34 @@ provided :: proc(s:^Session,$T:typeid) -> (provider:T,found:bool) {
 route_of_body :: proc(s:^Session,w:core.World_Ref,body:core.Entity,goal:[3]f32) -> Route {
     p:=providers(s)
     return p.routes && p.route.next!=nil?p.route.next(s,w,body,goal):{}
+}
+
+// Whether a body of a game stands, as the plugin that moves it says.
+play_stance :: proc(s:^Session,w:core.World_Ref,body:core.Entity) -> Stance {
+    p:=providers(s)
+    for &each in p.bodies[:p.body_count] {
+        if each.standing==nil {continue}
+        if standing,known:=each.standing(w,body);known {return standing?.Standing:.Airborne}
+    }
+    return .Unknown
+}
+
+// The measures of a body of a game, as the plugin that moves it says; those
+// of BODY_PERSON for a body none answers for and for what it leaves at 0.
+play_body_measure :: proc(s:^Session,w:core.World_Ref,body:core.Entity) -> Body_Measure {
+    said:Body_Measure
+    p:=providers(s)
+    for &each in p.bodies[:p.body_count] {
+        if each.measure==nil {continue}
+        if measure,known:=each.measure(w,body);known {said=measure;break}
+    }
+    person:=BODY_PERSON
+    return {
+        height=said.height>0?said.height:person.height,
+        step_height=said.step_height>0?said.step_height:person.step_height,
+        speed=said.speed>0?said.speed:person.speed,
+        jump_height=said.jump_height>0?said.jump_height:person.jump_height,
+    }
 }
 
 // The body a selected entity moves while Simular runs; none without one, or without physics.

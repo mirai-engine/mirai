@@ -80,7 +80,7 @@ direct_clip_weights_preserve_zero_full_and_partial_trs_without_allocations :: pr
     append(&state.local,rest)
     lib.fader_play(&state.fader,clip)
     playback:Playback;defer playback_free(&playback)
-    if !testing.expect(t,lib.pose_init(&playback.pose,8)) {return}
+    if !testing.expect(t,tracks_bind(&playback,&state,&content)) {return}
     pose_sample(&playback,&state,&content.lib,ANIMATION_DEFAULT,{},nil)
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     matched:=true
@@ -94,7 +94,7 @@ direct_clip_weights_preserve_zero_full_and_partial_trs_without_allocations :: pr
         matched &&=mm.quat_angle(state.local[0].rotation,expected.rotation)<1e-5
     }}
     context=saved
-    testing.expect(t,matched && playback.pose.failed==0)
+    testing.expect(t,matched)
 }
 
 @(test)
@@ -176,7 +176,7 @@ layers_play_over_the_clip_inside_their_branch_by_weight_and_fade_out :: proc(t:^
     state:=layer_fixture(t,&content)
     defer lib.library_destroy(&content.lib);defer playing_free(&state)
     playback:Playback;defer playback_free(&playback)
-    testing.expect(t,lib.pose_init(&playback.pose,64))
+    testing.expect(t,tracks_bind(&playback,&state,&content))
     events:Animation_Events;defer delete(events.items)
     animation:=ANIMATION_DEFAULT
     testing.expect(t,animation_play(&animation,"walk",fade=0))
@@ -223,7 +223,7 @@ layers_play_over_the_clip_inside_their_branch_by_weight_and_fade_out :: proc(t:^
     problems:core.Problems
     testing.expect(t,animation_play(&animation,"wave",fade=0,layer=1,mode=.Additive,reference_clip="missing"))
     copy(state.local[:],state.rest[:])
-    pose_layers(&playback,&state,&content.lib,animation,&problems)
+    pose_faults_report(&problems,state.entity,pose_layers(&playback,&state,&content.lib,animation))
     testing.expect(t,core.problem_find(&problems,state.entity,"animation.layer_reference")!=nil && state.local[3].position==0,"a reference clip the animation does not have is reported and the layer adds nothing")
 }
 
@@ -252,7 +252,7 @@ a_layer_in_the_space_of_the_rig_keeps_the_turn_of_its_clip_whatever_the_base_tur
     }
     resize(&state.local,3);resize(&state.world,3)
     playback:Playback;defer playback_free(&playback)
-    testing.expect(t,lib.pose_init(&playback.pose,64))
+    testing.expect(t,tracks_bind(&playback,&state,&content))
     events:Animation_Events;defer delete(events.items)
     turns:[2]f32
     for mesh,i in ([2]bool{false,true}) {

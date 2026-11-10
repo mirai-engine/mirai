@@ -107,3 +107,44 @@ the_first_control_of_each_page_takes_the_focus_unless_a_node_of_it_asks :: proc(
     testing.expect(t,.Focus_First in nodes[9].flags,"the node that asks keeps it")
     testing.expect(t,.Focus_First not_in nodes[11].flags,"nothing passed over takes it")
 }
+
+@(test)
+every_key_of_a_style_reaches_a_value_of_its_own :: proc(t:^testing.T) {
+    keys:=STYLE_KEYS
+    for key in Style_Key {
+        k:=keys[key]
+        testing.expectf(t,k.name!="" && k.size>0,"%v has a name and a size",key)
+        testing.expectf(t,(k.place==.Layout)==(key in LAYOUT_KEYS),"%v is of a layout when LAYOUT_KEYS has it",key)
+        testing.expectf(t,(k.kind==.Enum)==(k.type!=nil) && (k.kind!=.Enum || k.size==1),"%v names its enum, of one byte",key)
+        limit:=size_of(Node_Style)
+        switch k.place {
+        case .Style:
+        case .Layout: limit=size_of(Layout)
+        case .Info:   limit=size_of(Tree_Style_Info)
+        }
+        testing.expectf(t,int(k.offset)+int(k.size)<=limit,"%v is inside its struct",key)
+        for other in Style_Key {
+            o:=keys[other]
+            if other==key {continue}
+            testing.expectf(t,o.group!=k.group || o.name!=k.name,"%v and %v go by one name",key,other)
+            if o.place==k.place {testing.expectf(t,k.offset+k.size<=o.offset || o.offset+o.size<=k.offset,"%v and %v share bytes",key,other)}
+        }
+        if k.place!=.Style {
+            testing.expectf(t,!k.rule && style_key_value(&Node_Style{},key)==nil,"%v is not of the look of a style",key)
+            continue
+        }
+        // A value set by its key alone is what differs, and what a copy takes.
+        a,b:Node_Style
+        for &byte in style_key_value(&a,key) {byte=1}
+        for other in Style_Key {testing.expectf(t,style_key_differs(&a,&b,other)==(other==key),"%v set: %v",key,other)}
+        style_key_copy(&b,&a,key)
+        testing.expectf(t,a==b,"%v copies",key)
+        if k.rule {testing.expectf(t,key in style_fields_keys(style_keys_fields({key})),"%v goes in the patch of a rule and comes back",key)}
+    }
+    l,d:Layout
+    for key in LAYOUT_KEYS {
+        for &byte in layout_key_value(&l,key) {byte=1}
+        layout_key_copy(&d,&l,key)
+    }
+    testing.expect(t,l.width==d.width && l.padding==d.padding && l.aspect==d.aspect && l.self_y==d.self_y && l.tracks==0,"the keys of a layout copy theirs and nothing else")
+}

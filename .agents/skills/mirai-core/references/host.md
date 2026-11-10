@@ -492,7 +492,8 @@ row.
 - `prompts_find` gives the `ui.Prompt` of the texture part of the pack; keys and mouse are of the
   `Keyboard` family whichever one is asked for.
 - An `.anim` is published compressed with `asset.animation_compress` (a cooked one, as it comes);
-  if the preparation fails, the previous load stays ([animation storage](../../mirai-std/references/anim-storage.md)).
+  if the preparation fails, the previous load stays ([animation
+  storage](../../mirai-std/references/anim-storage.md)).
 - **An `.anim` is compressed once per input** (`host/content_animation.odin`).
   `App_Desc.animation_cache` (the editor and the player pass `project.ANIMATION_CACHE` of the
   project) keeps the compression as the cooked document a shipped game carries, named by the asset

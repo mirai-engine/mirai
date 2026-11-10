@@ -125,8 +125,8 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   into one LUT. Every view is exposed above its meter by the bias of its transform, one that gives
   the meter's gray the same light under each; the ACES 2.0 calibration is not touched.
 - `render` does not see native handles: backend differences stay in `rhi`, with a single
-  implementation of each pass for Vulkan and Metal. A plugin's runtime imports neither `render`
-  nor `rhi`.
+  implementation of each pass for Vulkan and Metal. A plugin imports neither `render` nor `rhi`
+  outside its tests, in its runtime or in its editor part: `mirai check` fails on it.
 - A GPU loss neither aborts nor hangs: `rhi` stores it typed (`device_failure`) from the first
   point that reports it, and everything that submits or waits returns at once; no Vulkan wait
   exceeds `GPU_WAIT_LIMIT_NS`.
@@ -193,25 +193,21 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   `MIRAI_GOLDEN=compare:<dir>` after, on the same machine.
 - After regenerating shaders, the diff contains only the outputs of the touched sources, the
   manifest, the catalog and the table fingerprint.
-- Device loss: `rhi_a_lost_device_fails_every_submission_and_wait_at_once` and
-  `rhi_a_lost_immediate_list_reports_the_loss` (`rhi/tests`),
-  `a_lost_gpu_leaves_the_frames_running_without_drawing` (`host`); in a session, `engine.gpu_lose`.
-  Metal, on a Mac: the same ones of `rhi/tests` with `MTL_DEBUG_LAYER=1`.
-- Device memory: `arena_*` and `vk_memory_*` (`rhi`, without a device),
-  `rhi_holds_more_resources_than_a_driver_gives_memory_allocations` and
-  `rhi_a_new_buffer_reads_zero_where_another_was` (`rhi/tests`).
+- Device loss: `rhi/tests/rhi_test.odin` and `host/gpu_failure_test.odin`; in a session,
+  `engine.gpu_lose`. Metal, on a Mac: the same ones of `rhi/tests` with `MTL_DEBUG_LAYER=1`.
+- Device memory: `rhi/arena_test.odin` and `rhi/vulkan_memory_test.odin` (without a device) and
+  `rhi/tests/pool_test.odin`.
 - Extensions: scenes of the render plugins. Benchmarks: only when touching a hot path.
-- Frame generation: `a_window_that_generates_frames_presents_two_images_a_frame` (`host`, with a
-  window), `present_interval_follows_the_frames_and_not_the_thread` (`rhi`) and the tests of
-  `plugins/fsr/runtime`; in an editor with a window (`mirai edit`: a headless session does not
-  present), `presentation` of `profile.capture` with and without `frame_generation` and
+- Frame generation: `host/frame_generation_test.odin` (with a window), `rhi/present_test.odin` and
+  the tests of `plugins/fsr/runtime`; in an editor with a window (`mirai edit`: a headless session
+  does not present), `presentation` of `profile.capture` with and without `frame_generation` and
   `capture` with `ui` and `generated` against the same view without generation.
 - Surface programs: the focal tests of
   [programs](references/materials.md#program-limits) (`render`), and `generate_test.odin` and
   `programs_test.odin` of `cook/shaders` for the per-program stages and the coverage; in a session,
   `material.program.edit` with `material.preview.capture` and `capture`.
 - Texture residency: the tests of `render/texture_residency_test.odin` (CPU) and, with GPU,
-  `a_texture_holds_the_levels_its_distance_asks_for` of `host`; in the editor, `textures` of
+  `host/assets_texture_test.odin`; in the editor, `textures` of
   `engine.status` (memory, pending) when bringing the camera close.
 - Environment, cases with their own conditions and measurement:
   [verification](references/verification.md).

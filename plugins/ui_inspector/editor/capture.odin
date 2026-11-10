@@ -7,7 +7,7 @@ import "mirai:editor"
 import "mirai:editor/api"
 import "mirai:engine/gui"
 import "mirai:host"
-import gpu "mirai:render"
+import erender "mirai:engine/render"
 import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:ui"
@@ -86,8 +86,8 @@ api_ui_capture :: proc(s:^editor.Session,call:^api.Call) {
     r:=app.renderer
     fill:=ui.Color{}
     image:ui.Quad
-    scene_texture:gpu.Texture_Handle
-    defer if scene_texture!=0 {gpu.texture_remove(r,scene_texture)}
+    scene_texture:erender.Texture_Handle
+    defer if scene_texture!=0 {erender.texture_remove(r,scene_texture)}
     switch p.background {
     case .Checker: fill=UI_CAPTURE_CHECKER[1]
     case .Color:   fill=p.color
@@ -96,10 +96,10 @@ api_ui_capture :: proc(s:^editor.Session,call:^api.Call) {
         scene,width,height,drawn:=host.app_capture_world(app,editor.shown_world(s).data,editor.API_CAPTURE_SETTLE,pixels,s.editor_world,app.allocator)
         if !drawn {api.call_failf(call,api.SERVER_ERROR,"the scene could not be drawn: %s",r.error);return}
         added:bool
-        scene_texture,added=gpu.texture_add(r,{pixels=scene,width=width,height=height,srgb=true,name="ui capture scene"})
+        scene_texture,added=erender.texture_add(r,{pixels=scene,width=width,height=height,srgb=true,name="ui capture scene"})
         delete(scene,app.allocator)
         if !added {api.call_failf(call,api.SERVER_ERROR,"the scene could not be shown under the interface: %s",r.error);return}
-        image=ui.quad_whole(.Image,gpu.ui_image(r,scene_texture)&~gpu.UI_MATERIAL_IMAGE_BIT)
+        image=gui.image_quad(r,scene_texture)
     }
     variant:=ui.style_variant(serial.text_field(p.variant[:]))
     // The first frame asks the font for its glyphs; the last one draws them.
@@ -122,11 +122,11 @@ api_ui_capture :: proc(s:^editor.Session,call:^api.Call) {
         frame=ui.frame_end(ctx)
         host.app_ui_font_sync(app,ctx)
     }
-    draws:=make([]gpu.Ui_Draw,host.UI_COMMAND_CAPACITY,context.temp_allocator)
+    draws:=make([]erender.Ui_Draw,host.UI_COMMAND_CAPACITY,context.temp_allocator)
     layer,_,_,_:=host.ui_frame_convert(frame,draws,nil)
-    texture,made:=gpu.ui_texture_add(r,u32(pixels.x),u32(pixels.y),"ui capture")
+    texture,made:=erender.ui_texture_add(r,u32(pixels.x),u32(pixels.y),"ui capture")
     if !made {api.call_failf(call,api.SERVER_ERROR,"the renderer took no texture of %dx%d: %s",pixels.x,pixels.y,r.error);return}
-    defer gpu.ui_texture_remove(r,texture)
+    defer erender.ui_texture_remove(r,texture)
     captured,width,height,drawn:=host.app_ui_texture_capture(app,{texture=texture,layer=layer,size=size,clear={0,0,0,1}},app.allocator)
     if !drawn {api.call_failf(call,api.SERVER_ERROR,"the interface could not be drawn: %s",r.error);return}
     editor.api_capture_answer(s,call,file,captured,width,height)

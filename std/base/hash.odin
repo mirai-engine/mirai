@@ -35,15 +35,19 @@ asset_id_named :: proc(name:string) -> Asset_Id {
     if id=={} {id[0]=1}
     return id
 }
-// The one sequence new entity Ids come from (SplitMix64): each call moves
-// state on and gives its next Id, never the zero that means none. The same
-// state gives the same Ids, and a state does not repeat one in 2^64 calls.
-// A World takes them through core.id_new, a document through
-// asset.scene_new_id.
+// The SplitMix64 sequence: each call moves state on and gives its next value.
+// The same state gives the same values, and a state does not repeat one in
+// 2^64 calls. For what keeps one word of state; Rng is the generator.
+splitmix_next :: #force_inline proc "contextless" (state:^u64) -> u64 {
+    state^+=0x9e3779b97f4a7c15
+    return hash_u64(state^)
+}
+// The one sequence new entity Ids come from: each call gives the next Id of
+// splitmix_next, never the zero that means none. A World takes them through
+// core.id_new, a document through asset.scene_new_id.
 entity_id_next :: proc "contextless" (state:^u64) -> Entity_Id {
     for {
-        state^+=0x9e3779b97f4a7c15
-        if id:=Entity_Id(hash_u64(state^));id!=0 {return id}
+        if id:=Entity_Id(splitmix_next(state));id!=0 {return id}
     }
 }
 // A random identity; never the zero that means none.

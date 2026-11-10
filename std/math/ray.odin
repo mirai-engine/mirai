@@ -123,12 +123,15 @@ ray_capsule :: proc "contextless" (ray:Ray,capsule:Capsule) -> (t:f32,normal:Vec
 
 // Both faces are hit. uv are the barycentric weights of b and c at the hit; a has 1-u-v.
 ray_triangle :: proc "contextless" (ray:Ray,triangle:Triangle) -> (t:f32,uv:Vec2,hit:bool) {
-    e1,e2:=triangle.b-triangle.a,triangle.c-triangle.a
+    return ray_triangle_edges(ray,triangle.a,triangle.b-triangle.a,triangle.c-triangle.a)
+}
+// The same for a triangle kept as a corner and the two edges that leave it.
+ray_triangle_edges :: proc "contextless" (ray:Ray,a,e1,e2:Vec3) -> (t:f32,uv:Vec2,hit:bool) {
     p:=linalg.cross(ray.direction,e2)
     determinant:=linalg.dot(e1,p)
     if abs(determinant)<1e-12 {return}
     inverse:=1/determinant
-    s:=ray.origin-triangle.a
+    s:=ray.origin-a
     u:=linalg.dot(s,p)*inverse
     if u<0 || u>1 {return}
     q:=linalg.cross(s,e1)

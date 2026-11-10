@@ -514,8 +514,8 @@ does.
 surface welded by position: `Hull`, a convex hull (of a flat surface, its outline); `Pieces`, hulls
 that together cover a non-convex mesh (up to `collision_hulls`); `Mesh`, the simplified triangles
 (`COLLISION_MESH_SHARE`); `Exact` (`--collision exact`), every triangle, for geometry made to
-collide (a clip map of another game), which a simplification would open. A surface from which the collider cannot be made is left without
-colliders with a warning. How they are used:
+collide (a clip map of another game), which a simplification would open. A surface from which the
+collider cannot be made is left without colliders with a warning. How they are used:
 [host](../../mirai-core/references/host.md#loaded-assets) and [the physics
 libraries](../../mirai-physics/references/engine.md).
 
@@ -759,7 +759,8 @@ this path. FBX 6 files are rejected with their version.
 
 - **Space.** The reader declares that of `GlobalSettings`: `UnitScaleFactor` (centimeters if
   missing) and the axes that ufbx normalizes as right, up and front: the engine's +X is its left,
-  +Y its up and +Z its back, half a turn so that the front lands on -Z; V from the bottom. ufbx converts nothing: the import bakes it.
+  +Y its up and +Z its back, half a turn so that the front lands on -Z; V from the bottom. ufbx
+  converts nothing: the import bakes it.
 - **Hierarchy.** Each node under the ufbx root, with the local transform that already includes
   pivots, pre- and post-rotations and rotation order. Names lose their namespace
   (`mixamorig:Hips` is `Hips`), unless that makes two siblings equal; the path is those names from

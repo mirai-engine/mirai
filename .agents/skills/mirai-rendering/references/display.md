@@ -93,7 +93,8 @@ of the display transform (`exposure_of_ev100`).
 - **Agreed tolerance.** The ACES 2.0 calibration is not touched: the brightness of a scene is
   decided by its exposure. A view of the demo or the template stays within half a step of the mean
   luminance its art direction gives it; if the meter moves it further away, it is corrected with
-  the compensation of its scene (its `View_Volume` without bounds), never in its camera: the `Exposure` of a camera is for a view that exposes differently
+  the compensation of its scene (its `View_Volume` without bounds), never in its camera: the
+  `Exposure` of a camera is for a view that exposes differently
   from its scene (a monitor, a cinematic), and the viewport does not use it except when looking
   through it.
 - **Pools of light in the dark.** The meter brings to mid gray the light it sees, and in a night
@@ -128,7 +129,8 @@ GPU flow:
 
 `Material_Info.emission_mode`: `Physical` (nits) or `Relative`, the value the exposed image shows
 whatever the exposure: 1 is a white surface under the light the meter takes, before
-the bias, and each doubling is one more EV. It is the one of unlits and the one that comes from glTF.
+the bias, and each doubling is one more EV. It is the one of unlits and the one that comes from
+glTF.
 
 - In render units it is worth `emission / frame.exposure` (`emission_render_units`); that of
   `Tint` takes the mode of its material. The G-buffer marks the pixel

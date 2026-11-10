@@ -1,5 +1,6 @@
 package ui
 
+import "base:intrinsics"
 import "mirai:std/base"
 
 Color_Token :: enum u8 {
@@ -66,41 +67,72 @@ style_token :: proc "contextless" (theme:^Theme,token:Color_Token,literal:Color)
     return literal
 }
 
-style_patch :: proc "contextless" (theme:^Theme,style:Node_Style,patch:Style_Patch) -> (result:Node_Style) {
-    result=style
-    v:=patch.values;t:=patch.tokens
-    if .Text_Font in patch.fields {result.text.font=v.text.font}
-    if .Text_Size in patch.fields {result.text.size=v.text.size}
-    if .Text_Color in patch.fields {result.text.color=style_token(theme,t.text,v.text.color)}
-    if .Text_Outline in patch.fields {result.text.outline,result.text.outline_color=v.text.outline,v.text.outline_color}
-    if .Text_Shadow in patch.fields {result.text.shadow,result.text.shadow_color=v.text.shadow,v.text.shadow_color}
-    if .Fill in patch.fields {result.fill=style_token(theme,t.fill,v.fill)}
-    if .Fill2 in patch.fields {result.fill2=style_token(theme,t.fill2,v.fill2)}
-    if .Stroke in patch.fields {result.stroke=style_token(theme,t.stroke,v.stroke)}
-    if .Track in patch.fields {result.track=style_token(theme,t.track,v.track)}
-    if .Knob in patch.fields {result.knob=style_token(theme,t.knob,v.knob)}
-    if .Mark in patch.fields {result.mark=style_token(theme,t.mark,v.mark)}
-    if .Radius in patch.fields {result.radius=v.radius}
-    if .Stroke_Width in patch.fields {result.stroke_width=v.stroke_width}
-    if .Shadow in patch.fields {result.shadow=v.shadow;result.shadow_color=v.shadow_color;result.shadow_blur=v.shadow_blur;result.shadow_offset=v.shadow_offset}
-    if .Move in patch.fields {result.move=v.move}
-    if .Scale in patch.fields {result.scale=v.scale}
-    return
+// Sets in style what a patch gives.
+style_patch :: proc "contextless" (theme:^Theme,style:^Node_Style,patch:^Style_Patch) {
+    v:=&patch.values;t:=patch.tokens
+    if .Text_Font in patch.fields {style.text.font=v.text.font}
+    if .Text_Size in patch.fields {style.text.size=v.text.size}
+    if .Text_Color in patch.fields {style.text.color=style_token(theme,t.text,v.text.color)}
+    if .Text_Outline in patch.fields {style.text.outline,style.text.outline_color=v.text.outline,v.text.outline_color}
+    if .Text_Shadow in patch.fields {style.text.shadow,style.text.shadow_color=v.text.shadow,v.text.shadow_color}
+    if .Fill in patch.fields {style.fill=style_token(theme,t.fill,v.fill)}
+    if .Fill2 in patch.fields {style.fill2=style_token(theme,t.fill2,v.fill2)}
+    if .Stroke in patch.fields {style.stroke=style_token(theme,t.stroke,v.stroke)}
+    if .Track in patch.fields {style.track=style_token(theme,t.track,v.track)}
+    if .Knob in patch.fields {style.knob=style_token(theme,t.knob,v.knob)}
+    if .Mark in patch.fields {style.mark=style_token(theme,t.mark,v.mark)}
+    if .Radius in patch.fields {style.radius=v.radius}
+    if .Stroke_Width in patch.fields {style.stroke_width=v.stroke_width}
+    if .Shadow in patch.fields {style.shadow=v.shadow;style.shadow_color=v.shadow_color;style.shadow_blur=v.shadow_blur;style.shadow_offset=v.shadow_offset}
+    if .Move in patch.fields {style.move=v.move}
+    if .Scale in patch.fields {style.scale=v.scale}
+}
+
+// Where a rule goes among those that hold: by the latest state it names, and
+// within it an unnamed rule before a named variant.
+style_rule_order :: #force_inline proc "contextless" (states:Style_States,variant:u64) -> u8 {
+    rank:=8-u8(intrinsics.count_leading_zeros(transmute(u8)states))
+    return rank<<1|u8(variant!=0)
+}
+
+@(private)
+style_rule_holds :: #force_inline proc "contextless" (rule:^Style_Variant,style:u16,variant:u64,states:Style_States) -> bool {
+    return rule.style==style && (rule.variant==0 || rule.variant==variant) && rule.states&states==rule.states
+}
+
+// Applies to result the rules that hold, as they come. held: one did.
+// ordered false: one came before a rule it goes after, and result is not what
+// they resolve to.
+@(private)
+style_rules_apply :: proc "contextless" (theme:^Theme,result:^Node_Style,rules:[]Style_Variant,style:u16,variant:u64,states:Style_States) -> (held,ordered:bool) {
+    last:u8
+    for &rule in rules {
+        if !style_rule_holds(&rule,style,variant,states) {continue}
+        order:=style_rule_order(rule.states,rule.variant)
+        if order<last {return true,false}
+        last=order
+        held=true
+        style_patch(theme,result,&rule.patch)
+    }
+    return held,true
 }
 
 // Table order wins within a state; a named variant wins over an unnamed rule.
-// The rule of the latest active state in Style_State has precedence.
+// The rule of the latest active state in Style_State has precedence. Rules
+// that come in that order, as a tree keeps those of each style, take one pass.
 style_resolve :: proc "contextless" (theme:^Theme,base:Node_Style,rules:[]Style_Variant,style:u16=0,variant:u64=0,states:Style_States={}) -> (result:Node_Style) {
     result=base
-    for priority in 0..=len(Style_State) {
-        for named in 0..<2 {
-            for rule in rules {
-                if rule.style!=style || (rule.variant!=0 && rule.variant!=variant) || int(rule.variant!=0)!=named || rule.states&states!=rule.states {continue}
-                rank:=0
-                for state in Style_State {if state in rule.states {rank=int(state)+1}}
-                if rank!=priority {continue}
-                result=style_patch(theme,result,rule.patch)
-            }
+    if _,ordered:=style_rules_apply(theme,&result,rules,style,variant,states);ordered {return}
+    result=base
+    orders:u32
+    for &rule in rules {
+        if style_rule_holds(&rule,style,variant,states) {orders|=1<<style_rule_order(rule.states,rule.variant)}
+    }
+    for orders!=0 {
+        order:=u8(intrinsics.count_trailing_zeros(orders))
+        orders&=orders-1
+        for &rule in rules {
+            if style_rule_holds(&rule,style,variant,states) && style_rule_order(rule.states,rule.variant)==order {style_patch(theme,&result,&rule.patch)}
         }
     }
     return

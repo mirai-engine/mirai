@@ -6,6 +6,7 @@ import "core:math/linalg"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:host"
 import lib "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -58,7 +59,8 @@ in_place_root_motion_preserves_gameplay_actor_placement_and_restores_internal_bo
     clip,_:=lib.clip_add(&library,{loop=.Loop,tracks={{target=0,property=.Position,keys={{time=0,value={}},{time=1,value={1,0,0,0}}}},{target=0,property=.Rotation,keys={{time=0,value={0,0,0,1}},{time=1,value={imag(turn),jmag(turn),kmag(turn),real(turn)}}}}}})
     lib.fader_play(&state.fader,clip)
     playback:Playback;defer playback_free(&playback)
-    testing.expect(t,lib.pose_init(&playback.pose,8))
+    bound:=host.Content_Animation{lib=library}
+    testing.expect(t,tracks_bind(&playback,&state,&bound))
     cache:Animation_Constraints;defer constraints_free(&cache)
     problems:core.Problems
     expected:=rest[0]

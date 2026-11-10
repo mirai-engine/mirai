@@ -1,5 +1,7 @@
 package mirai_render
 
+import mm "mirai:std/math"
+
 // Binned SAH bounding volume hierarchy builder used for both levels of the
 // software ray tracer: per-mesh BLAS over triangles and the scene TLAS over
 // instance bounds. The layout matches the GPU walker in trace.slang:
@@ -169,28 +171,6 @@ find_split :: proc(items: []Bvh_Item, order: []u32, cmin, cmax, bmin, bmax: Vec3
 	return left, false
 }
 
-// Moller-Trumbore ray/triangle intersection for the CPU BVH reference query.
-// Returns the ray distance, or -1 when the ray misses.
-ray_triangle :: proc(origin, dir, v0, e1, e2: Vec3) -> f32 {
-	t, _, _ := ray_triangle_barycentric(origin, dir, v0, e1, e2)
-	return t
-}
-
-// The same, with the weights of the second and the third vertex where it meets the triangle.
-ray_triangle_barycentric :: proc(origin, dir, v0, e1, e2: Vec3) -> (t, u, v: f32) {
-	p := Vec3{dir.y * e2.z - dir.z * e2.y, dir.z * e2.x - dir.x * e2.z, dir.x * e2.y - dir.y * e2.x}
-	det := e1.x * p.x + e1.y * p.y + e1.z * p.z
-	if abs(det) < 1e-12 {return -1, 0, 0}
-	inv_det := 1 / det
-	s := origin - v0
-	u = (s.x * p.x + s.y * p.y + s.z * p.z) * inv_det
-	if u < 0 || u > 1 {return -1, 0, 0}
-	q := Vec3{s.y * e1.z - s.z * e1.y, s.z * e1.x - s.x * e1.z, s.x * e1.y - s.y * e1.x}
-	v = (dir.x * q.x + dir.y * q.y + dir.z * q.z) * inv_det
-	if v < 0 || u + v > 1 {return -1, 0, 0}
-	return (e2.x * q.x + e2.y * q.y + e2.z * q.z) * inv_det, u, v
-}
-
 // Reference closest-hit query against a built BLAS, used by tests to check
 // the GPU walker and by tools that need CPU ray casts.
 bvh_ray_triangles :: proc(nodes: []Gpu_Bvh_Node, triangles: []Gpu_Bvh_Triangle, origin, dir: Vec3, t_max: f32) -> (t: f32, primitive: int) {
@@ -216,8 +196,7 @@ bvh_ray_triangles :: proc(nodes: []Gpu_Bvh_Node, triangles: []Gpu_Bvh_Triangle, 
 		}
 		for i in node.left_first ..< node.left_first + node.count {
 			tri := triangles[i]
-			hit := ray_triangle(origin, dir, tri.v0, tri.e1.xyz, tri.e2.xyz)
-			if hit > 0 && hit < t {
+			if hit, _, crossed := mm.ray_triangle_edges({origin, dir}, tri.v0, tri.e1.xyz, tri.e2.xyz); crossed && hit > 0 && hit < t {
 				t = hit
 				primitive = int(tri.primitive)
 			}

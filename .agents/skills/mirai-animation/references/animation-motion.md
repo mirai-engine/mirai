@@ -83,7 +83,8 @@ Limits of the correction:
 ## Authoring and control API
 
 - `animation.motion.set` receives pose, windows and distances as arrays and derives the
-  quantities; on a `path` that has one it replaces everything, keeps the id and, on an error, the previous file. `animation.motion.distance` queries a time
+  quantities; on a `path` that has one it replaces everything, keeps the id and, on an error, the
+  previous file. `animation.motion.distance` queries a time
   without touching clocks. Distance failures give the path of the invalid keys.
 - `motion`, `locomotion` and `distance` of
   [`animation.request`](animation-authoring.md#per-instance-control-and-preview) require Play or

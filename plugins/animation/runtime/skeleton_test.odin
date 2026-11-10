@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:math/linalg"
 import "core:os"
+import "core:slice"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
@@ -351,7 +352,7 @@ shared_profiles_accept_multiple_goals_at_the_origin_and_evaluate_without_stable_
     core.add(&w.configs,rig,{profile=id,weight=1,enabled=true});rig_test_settle(&w)
     cache:Pose_Assets;defer pose_assets_free(&cache)
     step :: proc(w:^Rig_Test,app:^host.App,cache:^Pose_Assets) {
-        animation_sample(core.read(&w.animations),&w.progress,core.read(&w.configs),core.read(&w.attachments),&w.transforms,core.read(&w.parents),{},core.read(&w.labels),core.read(&w.targets),core.read(&w.meshes),core.read(&w.skins),&w.requests,&w.events,&w.modifier_requests,&w.modifiers,&w.playback,cache,&w.cache,app,{dt=1.0/60,playing=true},{},&w.problems,nil,nil,nil,nil,nil,nil,nil,nil,nil,{},core.CLOCK_DEFAULT)
+        animation_sample(core.read(&w.animations),&w.progress,core.read(&w.configs),core.read(&w.attachments),&w.transforms,core.read(&w.parents),{},core.read(&w.labels),core.read(&w.targets),core.read(&w.meshes),core.read(&w.skins),&w.requests,&w.events,&w.modifier_requests,&w.modifiers,&w.playback,cache,&w.cache,app,{dt=1.0/60,playing=true},{},&w.problems,nil,nil,nil,nil,nil,nil,nil,nil,nil,{},core.CLOCK_DEFAULT,ANIMATION_BUDGET_CONFIG_DEFAULT)
         animation_advance(core.read(&w.configs),&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.modifier_requests,&w.modifiers,&w.playback,&w.constraints,&w.grounding,{},{},{dt=1.0/60,playing=true},&w.requests,{},&w.problems,nil,nil,{},{},core.CLOCK_DEFAULT)
     }
     modifier_goal(&w.modifier_requests,{rig=rig,kind=.Look,target=spatial_point({}),weight=1,enabled=true})
@@ -694,4 +695,79 @@ body_labels_of_a_skeleton_without_body_say_how_to_give_it_one :: proc(t:^testing
     if !testing.expect_value(t,len(problems),1) {return}
     text:=base.text_get(problems[0].text[:])
     testing.expectf(t,base.text_get(problems[0].code[:])=="animation.pose_bone" && strings.contains(text,"'@hand_l'") && strings.contains(text,"skeleton.body.detect"),"%s",text)
+}
+
+// Rigs under cross-fades and layers, posed on the owner thread and in jobs of one rig and of five:
+// each takes the same pose, and a tick whose rigs are bound takes no memory.
+@(test)
+rig_poses_do_not_depend_on_how_their_jobs_are_split :: proc(t:^testing.T) {
+    RIGS :: 17
+    directory:=base.test_folder(t,"pose-jobs")
+    _,mesh_id,_,saved:=rig_assets(t,directory)
+    if !saved {return}
+    moves:=base.Asset_Id{0x533,0x227}
+    {
+        types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+        turns:[4][2]lib.Keyframe
+        for &keys,i in turns {keys={{time=0,value=lib.quat_vec4(1)},{time=1,value=lib.quat_vec4(mm.quat_axis_angle(linalg.normalize(mm.Vec3{1,f32(i),.5}),.4+f32(i)*.3))}}}
+        slides:=[2][2]lib.Keyframe{{{time=0,value={0,-1,0,0}},{time=1,value={.5,-1,.25,0}}},{{time=0,value={0,2,0,0}},{time=1,value={-.25,2.5,0,0}}}}
+        clips:=[?]asset.Animation_Clip_Desc{
+            {name="lift",tracks={{target="upper",property=.Rotation,keys=turns[0][:]},{target="upper/lower",property=.Rotation,keys=turns[1][:]}}},
+            {name="kick",tracks={{target="upper/lower/foot",property=.Rotation,keys=turns[2][:]},{target="upper/lower",property=.Position,keys=slides[0][:]}}},
+            {name="sway",tracks={{target="upper",property=.Position,keys=slides[1][:]},{target="upper/lower/foot",property=.Rotation,keys=turns[3][:]},{target="upper",property=.Rotation,keys=turns[2][:]}}},
+        }
+        if !testing.expect_value(t,asset.animation_save(fmt.tprintf("%s/moves.anim",directory),&types,{id=moves,clips=clips[:]}),asset.Error.None) {return}
+    }
+    assets:host.Assets
+    if !testing.expect(t,host.assets_init(&assets,{root=directory})) {return}
+    defer host.assets_destroy(&assets)
+    app:=host.App{assets=&assets,allocator=context.allocator}
+    if !testing.expect(t,jobs.system_init(&app.jobs,{threads=3})) {return}
+    defer {host.app_content_destroy(&app);jobs.system_destroy(&app.jobs)}
+    if !testing.expect(t,host.content_animation_wait(&app,moves)!=nil) {return}
+
+    names:=[3]string{"lift","kick","sway"}
+    budgets:=[3]Animation_Budget_Config{{job_grain=4},{job_grain=1,parallel=true},{job_grain=5,parallel=true}}
+    worlds:[3]Rig_Test;caches:[3]Pose_Assets;made:[3]bool
+    defer for &w,i in worlds {if made[i] {rig_test_destroy(&w);pose_assets_free(&caches[i])}}
+    rigs:[RIGS]core.Entity
+    for &w,k in worlds {
+        if made[k]=rig_test_init(t,&w);!made[k] {return}
+        for i in 0..<RIGS {
+            rig:=core.create(&w.entities);rigs[i]=rig
+            core.add(&w.transforms,rig,core.TRANSFORM_IDENTITY)
+            core.add(&w.meshes,rig,{mesh=mesh_id})
+            animation:=ANIMATION_DEFAULT;animation.asset=moves;animation.weight=1-f32(i%4)*.2
+            animation_play(&animation,names[i%3],fade=.1,speed=.5+f32(i)*.2)
+            if i%2==0 {animation_play(&animation,"kick",layer=1,over="lower",weight=.6,fade=0)}
+            if i%5!=0 {animation_play(&animation,"sway",layer=2,weight=.5,fade=0,mode=.Additive,reference=.25,reference_clip="lift")}
+            core.add(&w.animations,rig,animation)
+        }
+        rig_test_settle(&w)
+    }
+    step :: proc(w:^Rig_Test,app:^host.App,cache:^Pose_Assets,budget:Animation_Budget_Config) {
+        animation_sample(core.read(&w.animations),&w.progress,core.read(&w.configs),core.read(&w.attachments),&w.transforms,core.read(&w.parents),{},core.read(&w.labels),core.read(&w.targets),core.read(&w.meshes),core.read(&w.skins),&w.requests,&w.events,&w.modifier_requests,&w.modifiers,&w.playback,cache,&w.cache,app,{dt=1.0/60,playing=true},{},&w.problems,nil,nil,nil,nil,nil,nil,nil,nil,nil,{},core.CLOCK_DEFAULT,budget)
+        animation_advance(core.read(&w.configs),&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.modifier_requests,&w.modifiers,&w.playback,&w.constraints,&w.grounding,{},{},{dt=1.0/60,playing=true},&w.requests,{},&w.problems,nil,nil,{},{},core.CLOCK_DEFAULT)
+    }
+    same,moved:=true,false
+    for tick in 0..<10 {
+        saved:=context
+        // The clip of some changes at the fourth tick, so they cross-fade; the last ticks are stable.
+        if tick==4 {for &w in worlds {for rig,i in rigs {if i%4==1 {animation_play(core.get(&w.animations,rig),names[(i+1)%3],fade=.1,speed=1)}}}}
+        if tick>=8 {context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()}
+        for &w,k in worlds {step(&w,&app,&caches[k],budgets[k])}
+        context=saved
+        for rig in rigs {
+            owner:=constraint_playing(&worlds[0].playback,rig)
+            if !testing.expect(t,owner!=nil && len(owner.sampled)==4) {return}
+            moved||=owner.sampled[2]!=owner.rest[2]
+            for &w in worlds[1:] {
+                other:=constraint_playing(&w.playback,rig)
+                same&&=other!=nil && slice.equal(other.sampled[:],owner.sampled[:]) && slice.equal(other.local[:],owner.local[:]) && other.motion==owner.motion
+            }
+        }
+    }
+    testing.expect(t,same && moved,"a rig posed in a job takes the pose it takes on the owner thread")
+    testing.expect(t,len(worlds[0].playback.scratch)==1 && len(worlds[1].playback.scratch)==jobs.worker_count(&app.jobs) && len(worlds[0].playback.track_maps)==1,"the rigs of one skeleton and content share one map, and only jobs take scratch of their own")
+    for &w in worlds {testing.expect_value(t,w.problems.count,0)}
 }

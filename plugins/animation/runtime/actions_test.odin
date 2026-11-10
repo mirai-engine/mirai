@@ -236,7 +236,7 @@ action_root_projection_preserves_each_base_and_action_contribution_and_validates
     actions:=Action_Runtime{allocator=context.allocator};defer actions_runtime_free(&actions)
     profile:=action_test_profile();profile.actions[0].root_motion=.In_Place;profile.actions[0].weight=.5;profile.actions[1].layer=2;profile.actions[1].root_motion=.Extract;base.text_set(profile.actions[1].clip[:],"run")
     append(&actions.plans,Action_Plan{profile=profile});action_test_add_state(&actions,Action_State{entity=state.entity,plan=0});reserve(&actions.events.items,ACTION_EVENT_CAPACITY)
-    playback:Playback;defer playback_free(&playback);testing.expect(t,lib.pose_init(&playback.pose,64));events:Animation_Events;defer delete(events.items)
+    playback:Playback;defer playback_free(&playback);testing.expect(t,tracks_bind(&playback,&state,&content));events:Animation_Events;defer delete(events.items)
     w:Actions_World
     if !core.test_world_init(t,&w,test_types) {return}
     defer core.test_world_destroy(&w)
@@ -248,7 +248,7 @@ action_root_projection_preserves_each_base_and_action_contribution_and_validates
         state.base_root={bone=bone_ref("hip"),translation=true,in_place=policy==.Extract};state.has_base_root=policy==.Extract
         actions_sample(&actions,&state,&description,.25,nil,&content);layers_advance(&playback,&state,&content,description,&events,.25,nil);actions_layer_finish(&actions,&state)
         copy(state.local[:],state.rest[:]);state.local[1].position.x=1
-        pose_layers(&playback,&state,&content.lib,description,nil);constraints_apply(&state,&playback,{},&cache,&w.transforms,{},.25)
+        pose_layers(&playback,&state,&content.lib,description);constraints_apply(&state,&playback,{},&cache,&w.transforms,{},.25)
         expected:f32=.5 if policy==.In_Place else .125
         testing.expect(t,state.action_root_mask==1 && state.has_action_in_place && abs(state.local[1].position.x-expected)<1e-5)
         actions.states[0].layers[0].finishing=true

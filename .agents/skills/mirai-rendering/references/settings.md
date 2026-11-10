@@ -39,9 +39,12 @@
   detail.
 - Changing the size, the number of views or the target recreates their targets.
 - `Graphics_Settings.render_scale` is the only control a game sets: above 0 it is used as it is;
-  0 follows `preset_height`, the target of the last preset. `quality` is derived from the fields
-  and only `graphics_apply` settles it. At the window of the render check, presets from Medium up
-  stay at one pixel per point, so a check compares the same image with the same cost.
+  0 follows `preset_height`, the target of the last preset. No setting stores the preset: what
+  names one (a control, `graphics_preset` of `settings.set`, the code of a game) writes its fields
+  with `graphics_preset_apply`, before the fields that go on top; `graphics_quality_of` computes
+  the one the fields are at, and `graphics_apply` only reads. At the window of the render check,
+  presets from Medium up stay at one pixel per point, so a check compares the same image with the
+  same cost.
 
 ## Inspection modes
 

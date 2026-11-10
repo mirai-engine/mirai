@@ -6,14 +6,12 @@ import "core:strings"
 import "core:sync"
 import "mirai:cook/workspace"
 import "mirai:std/subprocess"
+import "mirai:project"
 
 Tool :: enum {Slangc,Spirv_Val,Spirv_Opt,Spirv_Cross}
 
 @(private)
 TOOL_NAMES :: [Tool]string{.Slangc="slangc",.Spirv_Val="spirv-val",.Spirv_Opt="spirv-opt",.Spirv_Cross="spirv-cross"}
-
-@(private)
-EXECUTABLE_SUFFIX :: ".exe" when ODIN_OS==.Windows else ""
 
 // The tool the environment names (MIRAI_SLANGC or MIRAI_SLANG, for the
 // compiler), then the one installed under the deps of root
@@ -22,7 +20,7 @@ EXECUTABLE_SUFFIX :: ".exe" when ODIN_OS==.Windows else ""
 // a slangc that happens to be there is not the pinned one.
 tool_find :: proc(root:string,tool:Tool,allocator:=context.allocator) -> (path:string,ok:bool) {
     names:=TOOL_NAMES
-    executable:=strings.concatenate({names[tool],EXECUTABLE_SUFFIX},context.temp_allocator)
+    executable:=strings.concatenate({names[tool],project.EXECUTABLE_SUFFIX},context.temp_allocator)
     if tool==.Slangc {
         for variable in ([]string{"MIRAI_SLANGC","MIRAI_SLANG"}) {
             if configured,found:=os.lookup_env(variable,context.temp_allocator);found && configured!="" {return path_clean(configured,allocator),true}

@@ -178,8 +178,9 @@ load.
 - **Only the tests of what was touched.** Each run resolves a new doubt or verifies a change. While
   iterating, `mirai test <package> <test...>` of what changed, or `--failed`; the whole touched
   package, once at the end. No suites of other areas nor GPU tests if `render`, `shaders`, `rhi` or
-  the GPU part of the area was not touched. A run that passed is not repeated without a code change
-  in between. What fails in another area is not investigated in the task: it is reported.
+  the GPU part of the area was not touched (`mirai test <package> --no-gpu`). A run that passed is
+  not repeated without a code change in between. What fails in another area is not investigated in
+  the task: it is reported.
 - **Iterate on what is visible in seconds.** Before touching a shader or a material, confirm in the
   scene what draws what is seen (`scene.inspect` of the entity, its material and its program).
   While iterating, a single `--dev` session open on that scene: a material program is changed with

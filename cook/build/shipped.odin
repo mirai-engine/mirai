@@ -152,7 +152,7 @@ shipped_loads_covered :: proc(read,loads:[]string,compiler:string) -> bool {
     folder:=compiler[:max(strings.last_index_byte(compiler,'/'),0)]
     for file in read {
         if strings.has_suffix(file,".odin") {continue}
-        if folder!="" && len(file)>len(folder) && file[len(folder)]=='/' && path_equal(file[:len(folder)],folder) {continue}
+        if folder!="" && len(file)>len(folder) && file[len(folder)]=='/' && project.path_same(file[:len(folder)],folder) {continue}
         if !counted[strings.to_lower(slashes(file,context.temp_allocator),context.temp_allocator)] {return false}
     }
     return true

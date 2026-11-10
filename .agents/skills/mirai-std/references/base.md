@@ -62,12 +62,15 @@ holds the common contracts and what cannot be seen from a single function.
 ## Hashing, identities and randomness
 
 - `hash64` and `hash128` are XXH3 of `core`; `name_hash` (FNV-1a, `ids.odin`) is the name hash.
+  `hash_mix` folds one word into a hash and starts at `HASH_SEED`: the key that tells whether a
+  list of values changed. No package types its own mixer.
 - `asset_id_from_content` and `asset_id_named` give the same id every time: a content generator uses
   them. What an import writes has random ids that live in its files.
 - `Rng` is PCG32 with explicit state: 16 flat bytes and the same sequence on all platforms. A zeroed
   `Rng` works, but its first two values are 0. The distributions are in `std/math`.
 - `entity_id_next` is the sequence of new `Entity_Id`s and never gives zero; `core.id_new` uses it
-  in a world and `asset.scene_new_id` in a document.
+  in a world and `asset.scene_new_id` in a document. It is `splitmix_next`, the SplitMix64 sequence
+  over one word of state.
 - The hex texts of `Entity_Id` and `Asset_Id` are written in lowercase and read in both cases with
   exact length.
 

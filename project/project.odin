@@ -283,6 +283,7 @@ path :: proc(parts:..string,allocator:=context.allocator) -> string {
     return strings.to_string(b)
 }
 
+EXECUTABLE_SUFFIX :: ".exe" when ODIN_OS==.Windows else ""
 when ODIN_OS==.Windows {
     LIBRARY_PREFIX :: ""
     LIBRARY_SUFFIX :: ".dll"
@@ -335,9 +336,24 @@ start_scene :: proc(root:string,allocator:=context.allocator) -> string {
     return scene
 }
 
-// Whether two absolute paths name the same file: without case on Windows and macOS.
+// Whether two paths written from the same folder name the same file: without
+// case on Windows and macOS, whose file systems fold it, with either slash on
+// Windows, and with or without a slash at the end.
 path_same :: proc(a,b:string) -> bool {
-    when ODIN_OS==.Windows || ODIN_OS==.Darwin {return strings.equal_fold(a,b)} else {return a==b}
+    SEPARATORS :: "/\\" when ODIN_OS==.Windows else "/"
+    a,b:=strings.trim_right(a,SEPARATORS),strings.trim_right(b,SEPARATORS)
+    for {
+        i,j:=strings.index_any(a,SEPARATORS),strings.index_any(b,SEPARATORS)
+        if (i<0)!=(j<0) {return false}
+        x,y:=a[:i] if i>=0 else a,b[:j] if j>=0 else b
+        when ODIN_OS==.Windows || ODIN_OS==.Darwin {
+            if !strings.equal_fold(x,y) {return false}
+        } else {
+            if x!=y {return false}
+        }
+        if i<0 {return true}
+        a,b=a[i+1:],b[j+1:]
+    }
 }
 
 // Absolute, with forward slashes and no trailing one. "" without memory for it.

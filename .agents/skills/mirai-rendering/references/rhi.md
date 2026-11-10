@@ -144,6 +144,10 @@ For a renderer that generates frames (`rhi/present.odin`):
   layers, one after another in the data; `texture_read` leaves in shader-read state a texture that
   has only the `Sampled` usage. BC1, BC3, BC5, BC6H and BC7 are uploaded by blocks where
   `Features.texture_bc` says the device samples them.
+- `cmd_copy_texture` copies mip 0 of a texture into another on the GPU, with its bytes as they
+  are: the two have one size and layers, and one format or two that differ only in the sRGB
+  encoding (`texture_copy_problem`). Metal blits between textures of one pixel format, so its
+  source is read through a view with the encoding of the destination, made by the first such copy.
 - **Arrays and cubes** (`Texture_Desc.layers`, `cube`): a single 2D texture with layers, with an
   array, cube or cube-array view (on Vulkan, the latter with `imageCubeArray`). A cube is square
   and has six faces per cube; the layers do not exceed `Device_Info.max_texture_layers`
