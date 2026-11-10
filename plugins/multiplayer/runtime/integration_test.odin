@@ -15,7 +15,6 @@ import "mirai:engine/scene"
 import volume "mirai:engine/volume"
 import "mirai:host"
 import wire "mirai:net"
-import sim "plugins:physics/runtime/sim"
 import "mirai:std/base"
 
 @(component,replicated)
@@ -683,7 +682,8 @@ remote_character_intent_is_replayed_from_its_authoritative_tick :: proc(t:^testi
     app:=host.App{info=&info,allocator=context.allocator,tick_dt=1.0/60}
     defer {host.app_world_scratch_free(&app);delete(app.worlds)}
     net_test_physics(&world,&shared,&app)
-    testing.expect(t,sim.body_valid(&world.state.world,phys.body_of(core.ref(&world.state),e)))
+    _,made:=phys.body_info(core.ref(&world.state),phys.body_of(core.ref(&world.state),e))
+    testing.expect(t,made)
     network:wire.Sim_Network
     testing.expect(t,wire.sim_network_init(&network,{seed=6,endpoints=2,packets=64}))
     defer wire.sim_network_destroy(&network)

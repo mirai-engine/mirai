@@ -992,28 +992,31 @@ jumped :: proc(s:^Sync,e:core.Entity,from:[3]f32,turn:mm.Quat,to:[3]f32) {
     if s.jumps!=nil {core.jump(s.jumps,e,{to-mm.quat_rotate(turn,from),turn,{1,1,1}})}
 }
 
+// Applies a request of an area (a field, a radial force or impulse), which names no entity; false for any
+// other request.
+@(private)
+area_apply :: proc(s:^Sync,request:Body_Request) -> bool {
+    w:=&s.state.world
+    ok:bool
+    range,noise:=request.falloff_range,request.noise
+    #partial switch request.kind {
+    case .Box_Force: _,ok=sim.world_apply_box_force(w,request.position,request.half_extents,request.rotation,request.linear,request.falloff,request.filter,range,noise)
+    case .Sphere_Force: _,ok=sim.world_apply_sphere_force(w,request.position,request.radius,request.linear,request.falloff,request.filter,range,noise)
+    case .Box_Radial_Force: _,ok=sim.world_apply_box_radial_force(w,request.position,request.half_extents,request.rotation,request.strength,request.falloff,request.filter,range,noise)
+    case .Plane_Force: _,ok=sim.world_apply_plane_force(w,request.position,request.half_extents,request.rotation,request.linear,request.falloff,request.filter,range,noise)
+    case .Radial_Force,.Radial_Impulse: _,ok=sim.world_apply_radial(w,request.position,request.radius,request.strength,request.falloff,request.kind==.Radial_Impulse,request.override,request.filter,range,noise)
+    case: return false
+    }
+    if !ok {area_problem(s,request)}
+    return true
+}
+
 @(private)
 requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
     state:=s.state
     w:=&state.world
     for request in requests {
-        if request.kind==.Box_Force || request.kind==.Sphere_Force || request.kind==.Box_Radial_Force || request.kind==.Plane_Force {
-            ok:bool
-            range,noise:=request.falloff_range,request.noise
-            #partial switch request.kind {
-            case .Box_Force: _,ok=sim.world_apply_box_force(w,request.position,request.half_extents,request.rotation,request.linear,request.falloff,request.filter,range,noise)
-            case .Sphere_Force: _,ok=sim.world_apply_sphere_force(w,request.position,request.radius,request.linear,request.falloff,request.filter,range,noise)
-            case .Box_Radial_Force: _,ok=sim.world_apply_box_radial_force(w,request.position,request.half_extents,request.rotation,request.strength,request.falloff,request.filter,range,noise)
-            case .Plane_Force: _,ok=sim.world_apply_plane_force(w,request.position,request.half_extents,request.rotation,request.linear,request.falloff,request.filter,range,noise)
-            }
-            if !ok {area_problem(s,request)}
-            continue
-        }
-        if request.kind==.Radial_Force || request.kind==.Radial_Impulse {
-            _,ok:=sim.world_apply_radial(w,request.position,request.radius,request.strength,request.falloff,request.kind==.Radial_Impulse,request.override,request.filter,request.falloff_range,request.noise)
-            if !ok {area_problem(s,request)}
-            continue
-        }
+        if area_apply(s,request) {continue}
         e:=request.entity
         valid:=true
         for value in request.linear {valid=valid && value>=-max(f32) && value<=max(f32)}

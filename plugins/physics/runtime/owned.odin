@@ -74,6 +74,14 @@ owned_body_destroy :: proc(state:^Physics_State,body:Body_Handle) -> bool {
     return true
 }
 
+// Puts an owned body at a world pose, as its owner moves what it made: what touches it wakes and is not pushed.
+// False for a body that is not owned, or is gone.
+owned_body_place :: proc(state:^Physics_State,body:Body_Handle,position:[3]f32,rotation:mm.Quat) -> bool {
+    if owned_find(state,body)==nil {return false}
+    sim.body_set_transform(&state.world,body,position,rotation)
+    return true
+}
+
 // What an owned body is to its owner; false for any other body.
 owned_body_of :: proc(state:^Physics_State,body:Body_Handle) -> (found:Owned_Body,ok:bool) {
     owned:=owned_find(state,body)

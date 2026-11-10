@@ -4,9 +4,11 @@ import "core:testing"
 import "core:fmt"
 import "core:os"
 import "mirai:asset"
-import sim "plugins:physics/runtime/sim"
+import "mirai:core"
+import phys "plugins:physics/runtime"
 import fr "plugins:destruct/runtime/fracture"
 import "mirai:std/geom"
+import "mirai:std/jobs"
 import cache "plugins:physics_cache/runtime"
 
 @(test)
@@ -54,35 +56,36 @@ gallery_mixed_source_keeps_supports_and_full_collision_leaves_while_only_small_p
     if !testing.expect_value(t,asset.fracture_geometry(view,&fracture),asset.Error.None) {return}
     anchors:[8]bool
     for piece,at in builder.pieces {anchors[at]=piece.anchor}
-    w:sim.World;wd:=sim.world_desc_default()
-    wd.body_capacity,wd.shape_capacity,wd.contact_capacity,wd.joint_capacity=16,32,64,1
-    wd.hull_capacity=16;wd.gravity={}
-    if !testing.expect(t,sim.world_init(&w,wd)) {return};defer sim.world_destroy(&w)
-    f:fr.Fracture;fd:=fr.desc_default();fd.bodies,fd.destructibles,fd.pieces,fd.connections=wd.body_capacity,1,16,64
+    physics:phys.Physics_State;settings:=phys.Physics_Settings{bodies=16,shapes=32,contacts=64,joints=1,hulls=16}
+    if !testing.expect(t,phys.test_state_make(&physics,settings)) {return};defer phys.state_destroy(&physics)
+    w:=&physics.world
+    f:fr.Fracture;fd:=fr.desc_default();fd.bodies,fd.destructibles,fd.pieces,fd.connections=int(settings.bodies),1,16,64
     if !testing.expect(t,fr.fracture_init(&f,fd)) {return};defer fr.fracture_destroy(&f)
     dd:=fr.DESTRUCTIBLE_DESC_DEFAULT;dd.fracture=&fracture;dd.piece_anchors=anchors[:];dd.debris_volume=.1;dd.debris_ticks=480
-    h,error:=fr.destructible_create(&f,&w,dd)
+    h,error:=fr.destructible_create(&f,w,dd)
     if !testing.expect_value(t,error,fr.Destructible_Error.None) {return}
     root:=fr.destructible_body(&f,h)
-    _,broke:=fr.destructible_strain(&f,&w,h,{0,.7,0},4,10000)
+    _,broke:=fr.destructible_strain(&f,w,h,{0,.7,0},4,10000)
     if !testing.expect(t,broke) {return}
-    pieces:[8]fr.Piece_Info;testing.expect_value(t,fr.destructible_pieces(&f,&w,h,pieces[:]),8)
+    pieces:[8]fr.Piece_Info;testing.expect_value(t,fr.destructible_pieces(&f,w,h,pieces[:]),8)
     debris,solids,supports:int
     for piece in pieces {
         if .Anchor in piece.flags {
             supports+=1;testing.expect_value(t,piece.body,root);testing.expect(t,.Debris not_in piece.flags)
         } else if .Debris in piece.flags {
             debris+=1;testing.expect(t,piece.volume<dd.debris_volume)
-            remaining,expires:=fr.destructible_body_remaining_ticks(&f,&w,h,piece.body)
+            remaining,expires:=fr.destructible_body_remaining_ticks(&f,w,h,piece.body)
             testing.expect(t,expires && remaining==480)
         } else {
             solids+=1;testing.expect(t,piece.volume>dd.debris_volume && piece.body!=root)
-            _,expires:=fr.destructible_body_remaining_ticks(&f,&w,h,piece.body);testing.expect(t,!expires)
+            _,expires:=fr.destructible_body_remaining_ticks(&f,w,h,piece.body);testing.expect(t,!expires)
         }
     }
     testing.expect_value(t,supports,4);testing.expect_value(t,solids,2);testing.expect_value(t,debris,2)
-    for _ in 0..<481 {sim.world_step(&w,1.0/60);fr.fracture_update(&f,&w)}
+    job_system:jobs.Job_System
+    for _ in 0..<481 {testing.expect(t,phys.simulate(&physics,nil,&job_system,1.0/60,{}));fr.fracture_update(&f,w)}
     for piece in pieces {
-        testing.expect_value(t,sim.body_valid(&w,piece.body),.Debris not_in piece.flags)
+        _,valid:=phys.body_info(core.ref(&physics),piece.body)
+        testing.expect_value(t,valid,.Debris not_in piece.flags)
     }
 }

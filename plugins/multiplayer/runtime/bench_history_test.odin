@@ -7,7 +7,6 @@ import "mirai:core"
 import phys "plugins:physics/runtime"
 import "mirai:engine/render"
 import "mirai:host"
-import sim "plugins:physics/runtime/sim"
 import "mirai:std/base"
 
 // What the history of a client costs on a world the size of the demo: 117
@@ -134,29 +133,42 @@ history_bench_world :: proc(w:^History_Bench_World,shared:^Net_Test_Shared,app:^
         }
     }
     core.settle(shared.info,w,nil)
-    net_test_physics(w,shared,app)
-    world:=&w.state.world
-    vertices:=make([][3]f32,101*101)
-    defer delete(vertices)
-    indices:=make([]u32,100*100*6)
-    defer delete(indices)
-    for z in 0..<101 {for x in 0..<101 {vertices[z*101+x]={f32(x)-50,-1+f32((x*7+z*13)%5)*0.01,f32(z)-50}}}
-    for z in 0..<100 {
-        for x in 0..<100 {
-            at:=(z*100+x)*6
-            a:=u32(z*101+x)
-            indices[at+0],indices[at+1],indices[at+2]=a,a+101,a+1
-            indices[at+3],indices[at+4],indices[at+5]=a+1,a+101,a+102
+    // The level and the hulls are colliders of meshes the application generates.
+    if app.assets!=nil {
+        vertices:=make([][3]f32,101*101)
+        defer delete(vertices)
+        indices:=make([]u32,100*100*6)
+        defer delete(indices)
+        for z in 0..<101 {for x in 0..<101 {vertices[z*101+x]={f32(x)-50,-1+f32((x*7+z*13)%5)*0.01,f32(z)-50}}}
+        for z in 0..<100 {
+            for x in 0..<100 {
+                at:=(z*100+x)*6
+                a:=u32(z*101+x)
+                indices[at+0],indices[at+1],indices[at+2]=a,a+101,a+1
+                indices[at+3],indices[at+4],indices[at+5]=a+1,a+101,a+102
+            }
+        }
+        if level,made:=host.assets_mesh_generate(app.assets,{positions=vertices,indices=indices},options={no_lods=true,collision=true});made {
+            e:=core.create(&w.entities)
+            core.add(&w.transforms,e,core.TRANSFORM_IDENTITY)
+            core.add(&w.statics,e,render.Mesh_Renderer{mesh=level})
+            core.add(&w.colliders,e,phys.collider_mesh())
+        }
+        corners:=[4][3]f32{{0,0,0},{1,0,0},{0,1,0},{0,0,1}}
+        faces:=[12]u32{0,2,1,0,1,3,0,3,2,1,2,3}
+        for k in 0..<32 {
+            tetra:=corners
+            for &v in tetra {v*=1+f32(k)*0.01}
+            hull,made:=host.assets_mesh_generate(app.assets,{positions=tetra[:],indices=faces[:]},options={no_lods=true,collision=true})
+            if !made {continue}
+            e:=core.create(&w.entities)
+            core.add(&w.transforms,e,core.Transform{position={-60-2*f32(k),0,0},rotation=1,scale={1,1,1}})
+            core.add(&w.statics,e,render.Mesh_Renderer{mesh=hull})
+            core.add(&w.colliders,e,phys.collider_hull())
         }
     }
-    sim.mesh_create(world,{vertices=vertices,indices=indices})
-    corners:=[4][3]f32{{0,0,0},{1,0,0},{0,1,0},{0,0,1}}
-    counts:=[4]u8{3,3,3,3};faces:=[12]u8{0,2,1,0,1,3,0,3,2,1,2,3}
-    for k in 0..<32 {
-        tetra:=corners
-        for &v in tetra {v*=1+f32(k)*0.01}
-        sim.hull_create(world,{tetra[:],counts[:],faces[:]})
-    }
+    core.settle(shared.info,w,nil)
+    net_test_physics(w,shared,app)
 }
 
 @(private)
@@ -180,7 +192,10 @@ cost_of_the_history_of_a_client :: proc(t:^testing.T) {
     defer core.test_info_destroy(&info)
     shared:=Net_Test_Shared{info=&info}
     defer phys.collider_meshes_destroy(&shared.colliders)
-    app:=host.App{info=&info,allocator=context.allocator,tick_dt=1.0/60,shared=&shared}
+    assets:host.Assets
+    if !testing.expect(t,host.assets_init(&assets,{root=base.test_folder(t,"history"),capacity=64})) {return}
+    defer host.assets_destroy(&assets)
+    app:=host.App{info=&info,allocator=context.allocator,tick_dt=1.0/60,shared=&shared,assets=&assets}
     defer {host.app_world_scratch_free(&app);delete(app.worlds)}
     world:=new(History_Bench_World)
     defer free(world)

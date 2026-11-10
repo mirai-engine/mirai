@@ -8,7 +8,6 @@ import destruct "plugins:destruct/runtime"
 import phys "plugins:physics/runtime"
 import render "mirai:engine/render"
 import "mirai:host"
-import sim "plugins:physics/runtime/sim"
 import fr "plugins:destruct/runtime/fracture"
 import "mirai:std/base"
 import "mirai:std/jobs"
@@ -40,8 +39,7 @@ destructible_geometry_and_detached_group_poses_play_after_the_source_world_is_de
     if !core.test_world_init(t,&world,test_types) {return}
     defer core.test_world_destroy(&world)
     world.settings={destructibles=2,pieces=16,connections=64}
-    if !testing.expect(t,sim.world_init(&world.physics.world,{body_capacity=32,shape_capacity=64,contact_capacity=128,joint_capacity=8,hull_capacity=64,event_capacity=32,gravity={0,-9.81,0}})) {return}
-    world.physics.ready=true
+    if !testing.expect(t,phys.test_state_make(&world.physics,{bodies=32,shapes=64,contacts=128,joints=8,hulls=64,events=32})) {return}
     defer destruct.cache_destroy(h.app.assets,&h.app.jobs,&h.cache)
     owner:=core.create(&world.entities)
     core.add(&world.transforms,owner,core.Transform{position={3,2,-4},rotation=1,scale={1,1,1}})
@@ -68,13 +66,13 @@ destructible_geometry_and_detached_group_poses_play_after_the_source_world_is_de
     testing.expect(t,count>1)
     for group in groups[:count] {
         testing.expect_value(t,phys.body_of(core.ref(&world.physics),group.entity),group.body)
-        testing.expect_value(t,sim.body_user_data(&world.physics.world,group.body),u64(group.entity))
+        testing.expect_value(t,phys.entity_of(core.ref(&world.physics),group.body),group.entity)
     }
-    sim.world_step(&world.physics.world,1.0/60)
+    testing.expect(t,phys.simulate(&world.physics,nil,&h.app.jobs,1.0/60))
     testing.expect_value(t,capture(&record,&world,&h.cache,source[:],1.0/60),Cache_Error.None)
     destruct.slice(&world.requests,owner,{3,2,-4},{1,0,0})
     cache_test_step(&world,&h,5)
-    sim.world_step(&world.physics.world,1.0/60)
+    testing.expect(t,phys.simulate(&world.physics,nil,&h.app.jobs,1.0/60))
     testing.expect_value(t,capture(&record,&world,&h.cache,source[:],2.0/60),Cache_Error.None)
     testing.expect(t,len(record.tracks)>4)
     expected:[16]Playback_Piece

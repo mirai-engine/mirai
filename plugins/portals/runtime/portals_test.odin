@@ -3,8 +3,8 @@ package portals
 import "core:math"
 import "core:math/linalg"
 import "core:testing"
+import "mirai:core"
 import phys "plugins:physics/runtime"
-import sim "plugins:physics/runtime/sim"
 import mm "mirai:std/math"
 
 @(private="file")
@@ -138,83 +138,122 @@ gates_go_to_the_shaders_relative_to_the_origin :: proc(t:^testing.T) {
 // A world of the physics without gravity, where the tests below do what
 // portals_collision and portals_travel do for a traveler every tick.
 @(private="file")
+Lab_World :: struct {
+    using world:core.Test_World,
+    using physics:phys.Test_Physics,
+    twins:core.Table(phys.Body_Twin),
+    cuts:core.Table(phys.Collider_Cuts),
+    places:core.Places,
+    jumps:core.Jumps,
+}
+
+@(private="file")
 Lab :: struct {
-    w:sim.World,
-    walls:[4]sim.Cut,
-    wall_count:int,
+    using w:Lab_World,
+    using host:phys.Test_Physics_Host,
 }
 
 @(private="file")
-lab_init :: proc(lab:^Lab) -> bool {
-    desc:=sim.world_desc_default()
-    desc.body_capacity,desc.shape_capacity,desc.contact_capacity,desc.joint_capacity=64,64,512,4
-    desc.hull_capacity,desc.mesh_capacity,desc.heightfield_capacity=4,4,4
-    desc.character_capacity,desc.fluid_capacity,desc.event_capacity,desc.static_change_capacity=4,4,64,64
-    desc.gravity={}
-    return sim.world_init(&lab.w,desc)
+lab_init :: proc(t:^testing.T,lab:^Lab) -> bool {
+    if !core.test_world_init(t,&lab.w,phys.test_types) {return false}
+    lab.settings={bodies=64,shapes=64,contacts=512,joints=4,characters=4,hulls=4,meshes=4,heightfields=4,fluids=4,events=64}
+    lab.whole=true
+    return true
 }
 
 @(private="file")
-lab_box :: proc(lab:^Lab,type:sim.Body_Type,position,half:[3]f32,rotation:mm.Quat=1,velocity:[3]f32={}) -> sim.Body_Handle {
-    body:=sim.body_create(&lab.w,{type=type,position=position,rotation=rotation,linear_velocity=velocity,gravity_scale=1,sleep_disabled=true})
-    shape:=sim.SHAPE_DESC_DEFAULT
-    shape.geometry=sim.Box{half}
-    shape.friction=0
-    sim.shape_create(&lab.w,body,shape)
-    return body
+lab_destroy :: proc(lab:^Lab) {
+    phys.test_host_destroy(&lab.host)
+    core.test_world_destroy(&lab.w)
+}
+
+@(private="file")
+lab_box :: proc(lab:^Lab,type:phys.Body_Type,position,half:[3]f32,rotation:mm.Quat=1,velocity:[3]f32={}) -> core.Entity {
+    e:=core.create(&lab.entities)
+    core.add(&lab.transforms,e,core.Transform{position=position,rotation=rotation,scale={1,1,1}})
+    core.add(&lab.rigids,e,phys.Rigid_Body{type=type,gravity_scale=1})
+    collider:=phys.collider_box(half)
+    collider.friction=0
+    core.add(&lab.colliders,e,collider)
+    if velocity!={} {phys.set_velocity(&lab.requests,e,velocity)}
+    return e
+}
+
+// Makes the bodies of the rows and applies the requests, without a step.
+@(private="file")
+lab_settle :: proc(lab:^Lab) {
+    core.test_world_settle(&lab.w)
+    phys.test_step(&lab.physics,&lab.host,0)
+    core.test_world_settle(&lab.w)
+}
+
+@(private="file")
+lab_body :: proc(lab:^Lab,e:core.Entity) -> phys.Body_Info {
+    info,_:=phys.body_info(core.ref(&lab.state),phys.body_of(core.ref(&lab.state),e))
+    return info
 }
 
 // The frame of an opening in a wall and the hole of the wall, as portals_collision makes them.
 @(private="file")
-lab_frame :: proc(lab:^Lab,wall:sim.Shape_Handle,portal:mm.Transform,face,depth:f32) {
+lab_frame :: proc(lab:^Lab,wall:core.Entity,portal:mm.Transform,face,depth:f32) {
     for box in rim_boxes(portal.scale.xy,face,depth) {
         lab_box(lab,.Static,portal.position+mm.quat_rotate(portal.rotation,box.center),box.half,portal.rotation)
     }
-    hole:=hole_box(portal,depth)
-    lab.walls[lab.wall_count]={shape=wall,region={hole.center,hole.rotation,hole.half}}
-    lab.wall_count+=1
+    cuts,_:=core.get(core.read(&lab.cuts),wall)
+    cuts.boxes[cuts.count]=hole_box(portal,depth)
+    cuts.count+=1
+    core.add(&lab.cuts,wall,cuts)
 }
 
 // The twin and the cuts of the traveler for this tick; whether it has a twin.
 @(private="file")
-lab_tick :: proc(lab:^Lab,body:sim.Body_Handle,openings:[]Opening) -> bool {
-    cuts:[5]sim.Cut
-    copy(cuts[:],lab.walls[:lab.wall_count])
-    count:=lab.wall_count
-    bounds,_:=sim.body_bounds(&lab.w,body)
+lab_tick :: proc(lab:^Lab,traveler:core.Entity,openings:[]Opening) -> bool {
+    bounds,_:=phys.body_bounds(core.ref(&lab.state),traveler)
     twin,cut,near:=traveler_twin(openings,0.5*(bounds.min+bounds.max),0.5*linalg.length(bounds.max-bounds.min))
     if near {
-        sim.body_set_twin(&lab.w,body,{twin.through.position,twin.through.rotation},twin.point,twin.normal)
-        cuts[count]={body=body,region={cut.center,cut.rotation,cut.half}}
-        count+=1
+        core.add(&lab.twins,traveler,twin)
+        mine:=phys.Collider_Cuts{count=1}
+        mine.boxes[0]=cut
+        core.add(&lab.cuts,traveler,mine)
     } else {
-        sim.body_clear_twin(&lab.w,body)
+        if core.has(&lab.twins,traveler) {core.remove(&lab.twins,traveler)}
+        if core.has(&lab.cuts,traveler) {core.remove(&lab.cuts,traveler)}
     }
-    sim.world_set_cuts(&lab.w,cuts[:count])
+    core.test_world_settle(&lab.w)
+    phys.physics_twins(&lab.state,core.read(&lab.twins),core.read(&lab.cuts),&lab.problems)
     return near
+}
+
+@(private="file")
+lab_step :: proc(lab:^Lab) {
+    phys.test_step(&lab.physics,&lab.host,1.0/60)
+    core.test_world_settle(&lab.w)
 }
 
 // A body whose center went into an opening comes out of its exit, with its velocity turned.
 @(private="file")
-lab_travel :: proc(lab:^Lab,body:sim.Body_Handle,openings:[]Opening,before:[3]f32) {
-    pose:=sim.body_transform(&lab.w,body)
+lab_travel :: proc(lab:^Lab,traveler:core.Entity,openings:[]Opening,before:[3]f32) {
+    body:=lab_body(lab,traveler)
+    pose:=body.pose
     for opening in openings {
-        if _,crossed:=crosses(opening.entrance,false,before,pose.p);!crossed {continue}
+        if _,crossed:=crosses(opening.entrance,false,before,pose.position);!crossed {continue}
         through:=through_of(opening.entrance,opening.exit)
-        sim.body_set_transform(&lab.w,body,mm.transform_point(through,pose.p),through.rotation*pose.q)
-        sim.body_set_velocity(&lab.w,body,mm.quat_rotate(through.rotation,sim.body_linear_velocity(&lab.w,body)),{})
+        core.place({&lab.transforms,core.read(&lab.parents),&lab.places,&lab.jumps},traveler,mm.transform_point(through,pose.position),through.rotation*pose.rotation)
+        phys.physics_places(&lab.places,&lab.requests,core.ref(&lab.state),core.read(&lab.rigids),core.read(&lab.characters))
+        phys.set_velocity(&lab.requests,traveler,mm.quat_rotate(through.rotation,body.linear))
+        lab_settle(lab)
         return
     }
 }
 
 @(private="file")
-lab_run :: proc(lab:^Lab,body:sim.Body_Handle,openings:[]Opening,ticks:int) -> (twinned:int) {
-    before:=sim.body_position(&lab.w,body)
+lab_run :: proc(lab:^Lab,traveler:core.Entity,openings:[]Opening,ticks:int) -> (twinned:int) {
+    before:=lab_body(lab,traveler).pose.position
     for _ in 0..<ticks {
-        if lab_tick(lab,body,openings) {twinned+=1}
-        sim.world_step(&lab.w,1.0/60)
-        lab_travel(lab,body,openings,before)
-        before=sim.body_position(&lab.w,body)
+        if lab_tick(lab,traveler,openings) {twinned+=1}
+        lab_step(lab)
+        lab_travel(lab,traveler,openings,before)
+        before=lab_body(lab,traveler).pose.position
     }
     return
 }
@@ -233,115 +272,126 @@ a_body_halfway_through_an_opening_meets_what_is_in_front_of_the_exit :: proc(t:^
     openings:=lab_openings()
     {
         lab:Lab
-        if !testing.expect(t,lab_init(&lab)) {return}
-        defer sim.world_destroy(&lab.w)
+        if !lab_init(t,&lab) {return}
+        defer lab_destroy(&lab)
         // A cube goes into the first opening, and a wall stands 15 cm in front of the second.
         cube:=lab_box(&lab,.Dynamic,{0,0,0.4},{0.25,0.25,0.25},1,{0,0,-1})
         lab_box(&lab,.Static,{20.15+0.25,0,0},{0.25,2,2})
+        lab_settle(&lab)
         testing.expect(t,lab_run(&lab,cube,openings[:],60)>0)
         // The part that comes out stops at the wall: the cube stays halfway in, on this side.
-        at:=sim.body_position(&lab.w,cube)
-        testing.expectf(t,abs(at.z-0.1)<0.03 && abs(at.x)<1e-3,"the cube is at %v",at)
-        testing.expectf(t,linalg.length(sim.body_linear_velocity(&lab.w,cube))<0.05,"the cube moves at %v",sim.body_linear_velocity(&lab.w,cube))
-        testing.expect_value(t,len(sim.world_cuts(&lab.w)),1)
+        at:=lab_body(&lab,cube)
+        testing.expectf(t,abs(at.pose.position.z-0.1)<0.03 && abs(at.pose.position.x)<1e-3,"the cube is at %v",at.pose.position)
+        testing.expectf(t,linalg.length(at.linear)<0.05,"the cube moves at %v",at.linear)
+        testing.expect_value(t,core.count(core.read(&lab.cuts)),1)
+        testing.expect_value(t,lab.problems.count,0)
     }
     {
         lab:Lab
-        if !testing.expect(t,lab_init(&lab)) {return}
-        defer sim.world_destroy(&lab.w)
+        if !lab_init(t,&lab) {return}
+        defer lab_destroy(&lab)
         // In front of the second opening a crate stands instead: the part that comes out pushes it,
         // and the crate pushes the cube back as much.
         cube:=lab_box(&lab,.Dynamic,{0,0,0.4},{0.25,0.25,0.25},1,{0,0,-1})
         crate:=lab_box(&lab,.Dynamic,{20.35,0,0},{0.2,0.2,0.2})
+        lab_settle(&lab)
         lab_run(&lab,cube,openings[:],30)
-        pushed:=sim.body_position(&lab.w,crate)
+        pushed:=lab_body(&lab,crate).pose.position
         testing.expectf(t,pushed.x>20.4,"the crate is at %v",pushed)
         testing.expectf(t,abs(pushed.y)<1e-3 && abs(pushed.z)<1e-3,"the crate is pushed out of the opening: %v",pushed)
-        testing.expectf(t,linalg.length(sim.body_linear_velocity(&lab.w,cube))<0.9,"the cube moves at %v",sim.body_linear_velocity(&lab.w,cube))
+        moving:=lab_body(&lab,cube).linear
+        testing.expectf(t,linalg.length(moving)<0.9,"the cube moves at %v",moving)
     }
 }
 
 @(test)
 a_wall_of_any_collider_lets_through_its_opening_and_stops_beside_it :: proc(t:^testing.T) {
     lab:Lab
-    if !testing.expect(t,lab_init(&lab)) {return}
-    defer sim.world_destroy(&lab.w)
+    if !lab_init(t,&lab) {return}
+    defer lab_destroy(&lab)
     // A wall that is a sphere 10 m across whose top faces +Z at the origin, with an opening there.
-    ball:=sim.body_create(&lab.w,{type=.Static,position={0,0,-5},rotation=1})
-    shape:=sim.SHAPE_DESC_DEFAULT
-    shape.geometry=sim.Sphere{5}
-    wall:=sim.shape_create(&lab.w,ball,shape)
+    wall:=core.create(&lab.entities)
+    core.add(&lab.transforms,wall,core.Transform{position={0,0,-5},rotation=1,scale={1,1,1}})
+    core.add(&lab.colliders,wall,phys.collider_sphere(5))
     portal:=mm.Transform{{0,0,0.02},1,{1.2,1.2,1}}
     lab_frame(&lab,wall,portal,0.02,WALL_DEPTH_MAX)
-    testing.expect(t,sim.world_set_cuts(&lab.w,lab.walls[:lab.wall_count]))
+    lab_settle(&lab)
+    phys.physics_twins(&lab.state,core.read(&lab.twins),core.read(&lab.cuts),&lab.problems)
+    testing.expect_value(t,lab.problems.count,0)
     // A ray finds the wall beside the opening and not in it.
-    _,hit:=sim.ray_cast_closest(&lab.w,{0,0,1},{0,0,-2})
+    _,hit:=phys.raycast(core.ref(&lab.state),{0,0,1},{0,0,-1},2)
     testing.expect(t,!hit,"a ray through the opening goes into the hole")
-    beside,found:=sim.ray_cast_closest(&lab.w,{1.5,0,1},{0,0,-2})
-    testing.expectf(t,found && beside.shape==wall,"a ray beside it hits the wall: %v",beside)
+    beside,found:=phys.raycast(core.ref(&lab.state),{1.5,0,1},{0,0,-1},2)
+    testing.expectf(t,found && beside.entity==wall,"a ray beside it hits the wall: %v",beside)
     // One cube goes in through the opening; another, beside it, stops on the wall.
     into:=lab_box(&lab,.Dynamic,{0,0,0.5},{0.2,0.2,0.2},1,{0,0,-2})
     onto:=lab_box(&lab,.Dynamic,{2,0,0.3},{0.2,0.2,0.2},1,{0,0,-2})
-    for _ in 0..<40 {sim.world_step(&lab.w,1.0/60)}
-    in_hole:=sim.body_position(&lab.w,into)
+    lab_settle(&lab)
+    for _ in 0..<40 {lab_step(&lab)}
+    in_hole:=lab_body(&lab,into).pose.position
     testing.expectf(t,in_hole.z< -0.6 && abs(in_hole.x)<0.05,"the cube in the opening is at %v",in_hole)
-    stopped:=sim.body_position(&lab.w,onto)
+    stopped:=lab_body(&lab,onto).pose.position
     from_center:=linalg.length(stopped-[3]f32{0,0,-5})
     testing.expectf(t,from_center>5.15,"the cube beside the opening is %v m from the center of the wall",from_center)
     // The frame holds what is in the hole: pushed sideways, the cube stays inside the opening.
-    sim.body_set_velocity(&lab.w,into,{3,0,0},{})
-    for _ in 0..<30 {sim.world_step(&lab.w,1.0/60)}
-    held:=sim.body_position(&lab.w,into)
+    phys.set_velocity(&lab.requests,into,{3,0,0})
+    lab_settle(&lab)
+    for _ in 0..<30 {lab_step(&lab)}
+    held:=lab_body(&lab,into).pose.position
     testing.expectf(t,held.x<0.6-0.2+0.03,"the cube in the hole is at %v",held)
 }
 
 @(test)
 the_twin_of_a_body_goes_once_it_is_through :: proc(t:^testing.T) {
     lab:Lab
-    if !testing.expect(t,lab_init(&lab)) {return}
-    defer sim.world_destroy(&lab.w)
+    if !lab_init(t,&lab) {return}
+    defer lab_destroy(&lab)
     openings:=lab_openings()
     cube:=lab_box(&lab,.Dynamic,{0.3,0,1},{0.25,0.25,0.25},1,{0,0,-3})
+    lab_settle(&lab)
     testing.expect(t,lab_run(&lab,cube,openings[:],60)>0)
-    // Out of the exit and on its way, with no twin, cut or copy left.
-    out:=sim.body_position(&lab.w,cube)
+    // Out of the exit and on its way, with no twin, cut or copy left: nothing is where a copy would be.
+    out:=lab_body(&lab,cube).pose.position
     testing.expectf(t,out.x>21 && abs(out.z-0.3)<1e-3,"the cube is at %v",out)
-    testing.expect_value(t,sim.world_twins(&lab.w,nil),0)
-    testing.expect_value(t,len(sim.world_cuts(&lab.w)),0)
-    testing.expect_value(t,sim.world_stats(&lab.w).shapes,1)
+    testing.expect_value(t,core.count(core.read(&lab.twins)),0)
+    testing.expect_value(t,core.count(core.read(&lab.cuts)),0)
+    found:[4]core.Entity
+    copied,_:=phys.overlap_sphere(core.ref(&lab.state),mm.transform_point(through_of(openings[1].entrance,openings[1].exit),out),0.5,found[:])
+    testing.expect_value(t,copied,0)
+    testing.expect_value(t,lab.problems.count,0)
 }
 
 @(test)
 a_body_halfway_through_an_opening_steps_again_the_same_from_a_snapshot :: proc(t:^testing.T) {
     lab:Lab
-    if !testing.expect(t,lab_init(&lab)) {return}
-    defer sim.world_destroy(&lab.w)
+    if !lab_init(t,&lab) {return}
+    defer lab_destroy(&lab)
     openings:=lab_openings()
     // The cube pushes a crate against a wall in front of the exit, and goes through.
     cube:=lab_box(&lab,.Dynamic,{0,0,0.4},{0.25,0.25,0.25},1,{0,0,-1.5})
     lab_box(&lab,.Static,{20.6+0.25,0,0},{0.25,2,2})
     lab_box(&lab,.Dynamic,{20.3,0.1,0.1},{0.15,0.15,0.15})
-    run :: proc(lab:^Lab,cube:sim.Body_Handle,openings:[]Opening,hashes:[]u64) {
-        before:=sim.body_position(&lab.w,cube)
+    lab_settle(&lab)
+    run :: proc(lab:^Lab,cube:core.Entity,openings:[]Opening,hashes:[]u64) {
+        before:=lab_body(lab,cube).pose.position
         for &hash in hashes {
             lab_tick(lab,cube,openings)
-            sim.world_step(&lab.w,1.0/60)
+            lab_step(lab)
             lab_travel(lab,cube,openings,before)
-            before=sim.body_position(&lab.w,cube)
-            hash=sim.world_hash(&lab.w)
+            before=lab_body(lab,cube).pose.position
+            hash=phys.state_hash(core.ref(&lab.state))
         }
     }
     first:[8]u64
     run(&lab,cube,openings[:],first[:])
-    _,_,_,twinned:=sim.body_twin(&lab.w,cube)
-    testing.expect(t,twinned,"the snapshot is taken halfway in")
-    buffer:=make([]byte,sim.world_snapshot_size(&lab.w))
-    defer delete(buffer)
-    _,written:=sim.world_snapshot(&lab.w,buffer)
-    testing.expect(t,written)
+    testing.expect(t,core.has(core.read(&lab.twins),cube),"the snapshot is taken halfway in")
+    snapshot:Lab_World
+    if !core.test_world_init(t,&snapshot,phys.test_types) {return}
+    defer core.test_world_destroy(&snapshot)
+    testing.expect(t,core.test_world_copy(&snapshot,&lab.w))
     once,again:[40]u64
     run(&lab,cube,openings[:],once[:])
-    testing.expect(t,sim.world_restore(&lab.w,buffer))
+    testing.expect(t,core.test_world_copy(&lab.w,&snapshot))
     run(&lab,cube,openings[:],again[:])
     testing.expect(t,once==again)
 }

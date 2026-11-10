@@ -10,7 +10,6 @@ import "mirai:engine/render"
 import "mirai:host"
 import wire "mirai:net"
 import "mirai:platform"
-import sim "plugins:physics/runtime/sim"
 import "mirai:std/base"
 
 // A server that ticks 60 times a second and a client run by the game loop of
@@ -367,14 +366,15 @@ an_interpolated_body_is_kinematic_until_this_client_simulates_it :: proc(t:^test
         r.motion.linear={3,0,0}
         replica_sample(&s,r)
     }
-    body_type :: proc(w:^Net_Test_World,e:core.Entity) -> sim.Body_Type {
-        return sim.body_type(&w.state.world,phys.body_of(core.ref(&w.state),e))
+    body_type :: proc(w:^Net_Test_World,e:core.Entity) -> phys.Body_Type {
+        info,_:=phys.body_info(core.ref(&w.state),phys.body_of(core.ref(&w.state),e))
+        return info.type
     }
     for tick in 1..<30 {
         world.time.tick=u64(tick)
         net_test_fixed(&world,&shared,nil,&app)
     }
-    testing.expect_value(t,body_type(&world,e),sim.Body_Type.Kinematic)
+    testing.expect_value(t,body_type(&world,e),phys.Body_Type.Kinematic)
     motion,_:=core.get(core.read(&world.bodies),e)
     testing.expectf(t,math.abs(motion.linear.x-3)<0.2 && math.abs(motion.linear.y)<0.2,"it goes as the interpolation does: %v",motion.linear)
     r.role=.Held
@@ -385,7 +385,7 @@ an_interpolated_body_is_kinematic_until_this_client_simulates_it :: proc(t:^test
         net_test_fixed(&world,&shared,nil,&app)
     }
     testing.expect_value(t,r.mode,Mode.Here)
-    testing.expect_value(t,body_type(&world,e),sim.Body_Type.Dynamic)
+    testing.expect_value(t,body_type(&world,e),phys.Body_Type.Dynamic)
 }
 
 // The game manipulates every tick a body the network interpolates (an
@@ -438,7 +438,8 @@ an_interpolated_body_follows_the_server_over_a_manipulation_of_the_game_and_give
     replica_classify(&s,ref,r)
     core.settle(&info,&world,nil)
     body:=phys.body_of(core.ref(&world.state),e)
-    testing.expect_value(t,sim.body_type(&world.state.world,body),sim.Body_Type.Kinematic)
+    taken,_:=phys.body_info(core.ref(&world.state),body)
+    testing.expect_value(t,taken.type,phys.Body_Type.Kinematic)
     for tick in 30..<90 {
         world.time.tick=u64(tick)
         net_test_fixed(&world,&shared,nil,&app)
@@ -447,6 +448,7 @@ an_interpolated_body_follows_the_server_over_a_manipulation_of_the_game_and_give
     testing.expectf(t,linalg.length(local.position-held)<0.01,"the manipulation of the game holds it again: %v",local.position)
     phys.manipulation_end(&world.requests,e)
     net_test_fixed(&world,&shared,nil,&app)
-    testing.expect_value(t,sim.body_type(&world.state.world,body),sim.Body_Type.Dynamic)
+    given,_:=phys.body_info(core.ref(&world.state),body)
+    testing.expect_value(t,given.type,phys.Body_Type.Dynamic)
     testing.expect_value(t,problems.count,0)
 }
