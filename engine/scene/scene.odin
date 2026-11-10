@@ -64,6 +64,7 @@ Capture_Desc :: struct {
     sections:bool,          // also what hangs from a Scene_Reference, which its own scene keeps otherwise: a saved game
     section:core.Entity,    // only what hangs from this Scene_Reference, as its own scene, with the Ids of that scene
     excluded:[]typeid,      // components left out: what a network session keeps on entities, which a saved game does not
+    outside:bool,           // with root: its Entity fields keep the Id of an entity outside it, which are empty otherwise
 }
 
 Report :: struct {
@@ -715,7 +716,7 @@ capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,des
                 if target!=core.NONE {
                     // Outside what is captured: an entity of a section keeps its Id in the world.
                     if target_row,inside:=row_of[target];inside {saved=asset.scene_ids(scene)[target_row]}
-                    else if desc.root==core.NONE || desc.entities!=nil {saved=core.id_of(ids,target)}
+                    else if desc.root==core.NONE || desc.entities!=nil || desc.outside {saved=core.id_of(ids,target)}
                     if saved==0 {report.dangling+=1}
                 } else {
                     saved=pending[{visit.entity,hash,offset}]
