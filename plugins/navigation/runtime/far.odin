@@ -53,7 +53,7 @@ nav_far_decide :: proc "contextless" (time:core.Time) -> bool {
 }
 
 @(private)
-far_ticks :: #force_inline proc "contextless" (time:core.Time) -> u64 {return max(u64(NAV_FAR_PERIOD/time.dt+0.5),1)}
+far_ticks :: #force_inline proc "contextless" (time:core.Time) -> u64 {return max(core.ticks_of(time,NAV_FAR_PERIOD),1)}
 
 // The search over the coarse graph, made the first time.
 @(private)

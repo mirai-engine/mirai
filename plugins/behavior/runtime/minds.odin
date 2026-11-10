@@ -306,7 +306,7 @@ Mind_Tick :: struct {
 mind_tick :: proc(world:Mind_World) -> Mind_Tick {
     return {
         act={requests=world.requests,paths=world.paths,fars=world.fars,presentations=world.presentations},
-        smart={objects=world.objects,states=world.states,worlds=world.worlds,claims=world.claims,time=world.time.seconds,tick=world.time.tick},
+        smart={objects=world.objects,states=world.states,worlds=world.worlds,claims=world.claims,time=world.time},
         world=world,worlds=world.worlds,perceptions=world.perceptions,perceivables=world.perceivables,agents=world.nav_agents,links=world.links,
         places=world.places,results=world.results,uses=world.uses,noises=world.noises,influence=world.influence.ptr,
     }

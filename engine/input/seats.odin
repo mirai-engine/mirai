@@ -240,7 +240,7 @@ body_action :: proc(p:Players,body:core.Entity,a:Action) -> Action_State {
 input_seats :: proc(
     es:^core.Entities,app:^host.App,seats:^core.Table(Seat),
     multiplayer:core.Read(Local_Multiplayer),state:^Seats,run:core.Ref(Run_Players),
-    device:core.Input,bindings:core.Ref(Input_Map),network:core.Ref(core.Network),keeps:^core.Table(core.Keep),
+    device:core.Input,bindings:core.Ref(Input_Map),network:core.Ref(core.Network),keeps:^core.Table(core.Keep),time:core.Time,
 ) {
     // A server has players of its own only when someone asks for them: one
     // that is also a player, as the Play of an editor that serves.
@@ -262,7 +262,7 @@ input_seats :: proc(
         if !seat_local(seats.values[row]) {continue}
         slot:=int(seats.values[row].slot)
         own:=slot<count?slot_input(device,slot,count,state.focus):core.Input{}
-        seat_feed(core.at(seats,row),&own,bindings.ptr,slot<count && slot==state.focus && state.keyboard!=0 && state.keyboard!=slot+1)
+        seat_feed(core.at(seats,row),&own,bindings.ptr,slot<count && slot==state.focus && state.keyboard!=0 && state.keyboard!=slot+1,time.dt)
     }
     state.keyboard=count>0?state.focus+1:0
 }
@@ -271,9 +271,9 @@ input_seats :: proc(
 // got the device from another (gained) waits for the release of what it
 // holds; one whose contexts changed, for the release of the buttons that went
 // down with the change, as jump on the button that closed a menu.
-seat_feed :: proc(seat:^Seat,device:^core.Input,bindings:^Input_Map,gained:bool) {
+seat_feed :: proc(seat:^Seat,device:^core.Input,bindings:^Input_Map,gained:bool,dt:f32) {
     before:=seat.held
-    actions_update(&seat.actions,bindings,device,&seat.contexts,seat.holds[:seat.hold_count])
+    actions_update(&seat.actions,bindings,device,dt,&seat.contexts,seat.holds[:seat.hold_count])
     seat.held=held_buttons(&seat.actions,bindings)
     if gained {seat.rearm|=seat.held}
     if seat.fed!=seat.contexts {

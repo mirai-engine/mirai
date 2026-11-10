@@ -132,7 +132,7 @@ probe_tick :: proc(data,shared,editor,app:rawptr) {
     core.revisions_moved(core.world_revisions(core.world_ref(data,(cast(^host.App)app).info)))
     input.input_holds(&w.seats,&w.holds,w.time,nil)
     for row in 0..<core.count(&w.seats) {
-        input.seat_feed(core.at(&w.seats,row),&w.input,&w.bindings,false)
+        input.seat_feed(core.at(&w.seats,row),&w.input,&w.bindings,false,w.time.dt)
     }
     w.score.points+=1
     for ping in core.take(&w.pings.queue) {w.score.points+=ping.amount}
@@ -663,7 +663,7 @@ a_step_holds_each_segment_for_its_ticks_in_order_with_its_edges_at_its_first :: 
     testing.expect(t,.Space in seen.pressed[3] && .Space in seen.released[3] && .Space not_in seen.keys[3],"a tap is pressed and released inside its tick, never down")
     // The keys reach the action as those of a person: a hold of two ticks, and a tap shorter than a tick.
     j:=seen.jumps
-    testing.expect(t,j[0].pressed && j[1].down && !j[1].pressed && j[2].released && j[2].released_held==2,"held two ticks")
+    testing.expect(t,j[0].pressed && j[1].down && !j[1].pressed && j[2].released && abs(j[2].released_held-2.0/60)<1e-5,"held two ticks")
     testing.expect(t,j[3].pressed && j[3].released && j[3].tapped && !j[3].down,"tapped inside one tick")
     testing.expect(t,!j[4].down && !j[4].pressed,"let go")
     // A press is the pointer over the button, the button held, and let go.
@@ -721,9 +721,9 @@ a_step_plays_the_devices_of_a_person_tick_by_tick :: proc(t:^testing.T) {
     j:=seen.jumps
     testing.expect(t,j[0].pressed && j[0].released && j[0].tapped && !j[0].down,"a tap inside the first tick")
     testing.expect(t,!j[1].down && !j[2].down)
-    testing.expect(t,j[3].pressed && j[5].down && j[5].held_ticks==3 && j[6].released && j[6].tapped && j[6].released_held==3,"0.05 s is three ticks, a tap")
+    testing.expect(t,j[3].pressed && j[5].down && abs(j[5].held-3.0/60)<1e-5 && j[6].released && j[6].tapped && abs(j[6].released_held-3.0/60)<1e-5,"0.05 s is three ticks, a tap")
     testing.expect(t,j[8].pressed && !j[36].holding && j[37].hold_started && j[55].holding,"0.8 s holds past the hold threshold")
-    testing.expect(t,j[56].released && !j[56].tapped && j[56].released_held==48,"let go after 48 ticks")
+    testing.expect(t,j[56].released && !j[56].tapped && abs(j[56].released_held-48.0/60)<1e-4,"let go after 48 ticks")
     testing.expect(t,!j[57].down && !j[57].pressed && seen.keys[57]=={},"nothing is held after the segments")
 }
 

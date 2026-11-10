@@ -27,8 +27,7 @@ import "mirai:ui"
 // the mouse moves, to be the input a binding listens for.
 INPUT_LISTEN_AXIS :: f32(0.6)
 INPUT_LISTEN_MOUSE :: f32(160)
-// The longest tap or hold, in ticks.
-INPUT_TICKS_MAX :: 600
+INPUT_SECONDS_MAX :: f32(10) // the longest tap or hold
 
 Input_Settings :: struct {
     code:input.Input_Map,    // the defaults of the code
@@ -158,11 +157,11 @@ input_action_restore :: proc(m,code:^input.Input_Map,action:input.Action) {
     }
 }
 
-// A number of ticks as the map keeps it: 0 for the default.
+// The seconds of a tap or a hold as the map keeps them: 0 for the default.
 @(private)
-input_ticks_kept :: proc(value,default:u32) -> u32 {return value==default?0:value}
+input_seconds_kept :: proc(value,default:f32) -> f32 {return value==default?0:value}
 @(private)
-input_ticks_shown :: proc(value,default:u32) -> u32 {return value>0?value:default}
+input_seconds_shown :: proc(value,default:f32) -> f32 {return value>0?value:default}
 
 // ---------------------------------------------------------------- panel
 
@@ -714,23 +713,23 @@ input_binding_put :: proc(s:^Session,action:input.Action,nth:int,binding:input.I
     input_settings_commit(s)
 }
 
-// The ticks of a tap and of a hold.
+// The seconds of a tap and of a hold.
 @(private)
 input_timing_rows :: proc(s:^Session) {
     ctx:=s.gui.ctx
     th:=&ctx.theme
     st:=&s.settings_dialog.input
     m:=&st.current
-    rows:=[2]struct{label:string,value:^u32,code,default:u32}{
-        {"Tap ticks",&m.tap_ticks,st.code.tap_ticks,input.TAP_TICKS},
-        {"Hold ticks",&m.hold_ticks,st.code.hold_ticks,input.HOLD_TICKS},
+    rows:=[2]struct{label:string,value:^f32,code,default:f32}{
+        {"Tap seconds",&m.tap_seconds,st.code.tap_seconds,input.TAP_SECONDS},
+        {"Hold seconds",&m.hold_seconds,st.code.hold_seconds,input.HOLD_SECONDS},
     }
     for row,i in rows {
         if i>0 {input_row_rule(ctx)}
         row_begin(ctx,row.label)
-        value:=f64(input_ticks_shown(row.value^,row.default))
-        r:=ui.number_field(ctx,ui.id(ctx,"ticks",i+1),&value,{integer=true,speed=0.2,min=1,max=INPUT_TICKS_MAX,has_min=true,has_max=true})
-        if r.changed {row.value^=input_ticks_kept(u32(value),row.default);st.unsaved=true}
+        value:=f64(input_seconds_shown(row.value^,row.default))
+        r:=ui.number_field(ctx,ui.id(ctx,"ticks",i+1),&value,{speed=0.01,min=0.01,max=f64(INPUT_SECONDS_MAX),has_min=true,has_max=true})
+        if r.changed {row.value^=input_seconds_kept(f32(value),row.default);st.unsaved=true}
         if st.unsaved && !r.scrubbing && !r.editing {input_settings_commit(s)}
         if row.value^==row.code {
             ui.spacer(ctx,REVERT_SIDE,1)
@@ -749,8 +748,8 @@ Api_Input_Get_Params :: struct {
 }
 
 Api_Input :: struct {
-    tap_ticks:u32 `mirai:"label=Ticks a press may be held and still be a tap"`,
-    hold_ticks:u32 `mirai:"label=Ticks a press is held before it is a hold"`,
+    tap_seconds:f32 `mirai:"unit=s,label=How long a press may be held and still be a tap"`,
+    hold_seconds:f32 `mirai:"unit=s,label=How long a press is held before it is a hold"`,
     problem:[512]u8 `mirai:"text,label=Why input.mirai of the project was not read, so that input.set does not write over it; empty when it was"`,
     actions:[1]Api_Input_Action `mirai:"list,label=The actions the code declares"`,
 }
@@ -768,14 +767,14 @@ API_INPUT_SET_SCHEMA :: `{"type":"object","properties":{` +
     `"kind":{"enum":["Button","Axis","Axis2"],"description":"The kind the action takes with bindings; without it, the one it has"},` +
     `"bindings":{"type":"array","items":{"type":"object"},"description":"The bindings that replace those of the action, as input.mirai writes them: {\"key\": \"Space\"}, {\"keys\": [\"A\", \"D\", \"S\", \"W\"]} (two for an Axis, four for an Axis2: left, right, down, up), {\"mouse_button\": \"Left\"}, {\"mouse\": \"Delta\"}, {\"gamepad_button\": \"South\"}, {\"gamepad_axis\": \"Right_Trigger\"} or {\"gamepad_stick\": \"Left\"}, each with scale, dead_zone and gamepad (0 to 3) optional; [] leaves it without any"},` +
     `"reset":{"type":"boolean","description":"true: the action goes back to the kind and the bindings of the code"},` +
-    `"tap_ticks":{"type":"integer","minimum":1,"maximum":600,"description":"Ticks a press may be held and still be a tap"},` +
-    `"hold_ticks":{"type":"integer","minimum":1,"maximum":600,"description":"Ticks a press is held before it is a hold"}},` +
+    `"tap_seconds":{"type":"number","exclusiveMinimum":0,"maximum":10,"description":"Seconds a press may be held and still be a tap"},` +
+    `"hold_seconds":{"type":"number","exclusiveMinimum":0,"maximum":10,"description":"Seconds a press is held before it is a hold"}},` +
     `"additionalProperties":false}`
 
 @(private)
 input_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="input.get",summary="The input actions of the game and its plugins: the kind, the bindings in effect and whether they come from the code or from input.mirai of the project, and the ticks of a tap and of a hold.",params=Api_Input_Get_Params,result=Api_Input,writes_result=true,flags={.Read_Only},run=api_input_get})
-    api_register(s,st,{name="input.set",params_schema=API_INPUT_SET_SCHEMA,summary="Replaces the kind and the bindings of an input action, puts it back to the default of the code, or changes the ticks of a tap and of a hold; input.mirai of the project keeps what differs from the code, and a Play that starts or runs takes it. It answers with the action it changed.",result=Api_Input,writes_result=true,run=api_input_set})
+    api_register(s,st,{name="input.get",summary="The input actions of the game and its plugins: the kind, the bindings in effect and whether they come from the code or from input.mirai of the project, and the seconds of a tap and of a hold.",params=Api_Input_Get_Params,result=Api_Input,writes_result=true,flags={.Read_Only},run=api_input_get})
+    api_register(s,st,{name="input.set",params_schema=API_INPUT_SET_SCHEMA,summary="Replaces the kind and the bindings of an input action, puts it back to the default of the code, or changes the seconds of a tap and of a hold; input.mirai of the project keeps what differs from the code, and a Play that starts or runs takes it. It answers with the action it changed.",result=Api_Input,writes_result=true,run=api_input_set})
 }
 
 @(private)
@@ -799,8 +798,8 @@ input_api_write :: proc(s:^Session,out:^serial.Writer,filtered:=false,only:[]str
     st:=&s.settings_dialog.input
     m:=&st.current
     serial.write_u8(out,'{')
-    api.write_uint(out,"tap_ticks",u64(input_ticks_shown(m.tap_ticks,input.TAP_TICKS)),true)
-    api.write_uint(out,"hold_ticks",u64(input_ticks_shown(m.hold_ticks,input.HOLD_TICKS)))
+    api.write_key(out,"tap_seconds",true);api.write_number(out,input_seconds_shown(m.tap_seconds,input.TAP_SECONDS))
+    api.write_key(out,"hold_seconds");api.write_number(out,input_seconds_shown(m.hold_seconds,input.HOLD_SECONDS))
     api.write_text(out,"problem",base.text_get(st.problem[:]))
     api.write_key(out,"actions")
     serial.write_u8(out,'[')
@@ -862,19 +861,20 @@ api_input_set :: proc(s:^Session,call:^api.Call) {
 // Reads the params of input.set into a map over the code of the session;
 // what is wrong with them, or "".
 input_set_apply :: proc(s:^Session,m:^input.Input_Map,raw:string) -> string {
-    USAGE :: `params are {"action", "kind", "bindings"} to replace an action, {"action", "reset": true} to put it back, and "tap_ticks" or "hold_ticks"`
+    USAGE :: `params are {"action", "kind", "bindings"} to replace an action, {"action", "reset": true} to put it back, and "tap_seconds" or "hold_seconds"`
     value,parse_error:=json.parse_string(raw,json.DEFAULT_SPECIFICATION,true,context.temp_allocator)
     root,is_object:=value.(json.Object)
     if parse_error!=.None || !is_object {return USAGE}
-    ticks:=[2]struct{name:string,value:^u32,default:u32}{{"tap_ticks",&m.tap_ticks,input.TAP_TICKS},{"hold_ticks",&m.hold_ticks,input.HOLD_TICKS}}
-    for t in ticks {
+    seconds:=[2]struct{name:string,value:^f32,default:f32}{{"tap_seconds",&m.tap_seconds,input.TAP_SECONDS},{"hold_seconds",&m.hold_seconds,input.HOLD_SECONDS}}
+    for t in seconds {
         if t.name not_in root {continue}
-        number,is_integer:=root[t.name].(json.Integer)
-        if !is_integer || number<1 || number>INPUT_TICKS_MAX {return fmt.tprintf("%s is a whole number of ticks from 1 to %d; the default is %d",t.name,INPUT_TICKS_MAX,t.default)}
-        t.value^=input_ticks_kept(u32(number),t.default)
+        number:f64
+        #partial switch v in root[t.name] {case json.Float: number=v;case json.Integer: number=f64(v)}
+        if !(number>0) || number>f64(INPUT_SECONDS_MAX) {return fmt.tprintf("%s is seconds above 0 and up to %v; the default is %v",t.name,INPUT_SECONDS_MAX,t.default)}
+        t.value^=input_seconds_kept(f32(number),t.default)
     }
     if "action" not_in root {
-        if "tap_ticks" in root || "hold_ticks" in root {return ""}
+        if "tap_seconds" in root || "hold_seconds" in root {return ""}
         return fmt.tprintf("action is missing: %s",USAGE)
     }
     name,is_text:=root["action"].(json.String)

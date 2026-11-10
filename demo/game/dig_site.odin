@@ -10,7 +10,7 @@ import mm "mirai:std/math"
 import terrain "plugins:terrain/runtime"
 
 // The dig of the scene dig. The Volume under it digs a pit by itself at the
-// start of a Play, a ball every few ticks from the surface down, and Use
+// start of a Play, a ball every `interval` seconds from the surface down, and Use
 // digs a ball where the player looks. What each dig takes (terrain.Terrain_Digs)
 // goes to an inventory of cubic metres by material, and the ore drops that
 // terrain_debris spawns are picked up by walking over them: the rules of a
@@ -24,11 +24,12 @@ PICKUP_REACH :: f32(1.4)
 Dig_Site :: struct {
     radius:f32 `mirai:"min=0.1,unit=m"`, // of each ball it digs
     digs:u32,                            // balls it digs by itself
-    every:u32,                           // ticks between those
+    interval:f32 `mirai:"min=0,unit=s"`, // between those
     dug:u32 `mirai:"readonly"`,          // of those, the ones it dug
+    next:u64 `mirai:"readonly,hidden"`,  // the tick it digs the next one at
 }
 
-DIG_SITE_DEFAULT :: Dig_Site{radius=1.6,digs=14,every=10}
+DIG_SITE_DEFAULT :: Dig_Site{radius=1.6,digs=14,interval=1.0/6}
 
 @(component,description="A drop of the dig: walking over it puts it in the inventory.")
 Dig_Pickup :: struct {
@@ -61,13 +62,14 @@ dig_site :: proc(
     }
     inventory:=core.at(inventories,0)
     site:=core.at(sites,0)
-    if site.every>0 && site.dug<site.digs && time.tick%u64(site.every)==0 {
+    if site.interval>0 && site.dug<site.digs && core.due(time,site.next) {
         // Down a spiral, a little deeper each time: a pit with walls through every stratum.
         i:=f32(site.dug)
         center:=[3]f32{math.cos(i*1.9)*1.5,0.3-i*0.42,math.sin(i*1.9)*1.5}
         site_world,_:=core.get(worlds,site_entity)
         terrain.dig(requests,{kind=.Subtract,shape=.Sphere,center=mm.transform_point(site_world.transform,center),radius=site.radius,amount=1,blend=0.3},site_entity)
         site.dug+=1
+        site.next=core.deadline(time,site.interval)
     }
     for row in 0..<core.count(players) {
         e:=core.entity_at(players,row)

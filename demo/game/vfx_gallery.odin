@@ -44,7 +44,7 @@ Vfx_Impacts :: struct {
     count:u32,  // particles of a hit; 0: those of the effect
     volley:u32,
     station:u32,
-    clock:f32 `mirai:"transient,readonly"`,
+    next:u64 `mirai:"transient,readonly"`, // the tick of the next hit
     hits:u32 `mirai:"transient,readonly"`,
     volleys:u32 `mirai:"transient,readonly"`, // of the view it fired
 }
@@ -82,10 +82,7 @@ vfx_gallery_impacts :: proc(impacts:^core.Table(Vfx_Impacts),views:core.Read(Vfx
             if i32(wall.station)==view.volley_station {due=wall.volley}
             wall.volleys=view.volleys
         }
-        if wall.interval>0 {
-            wall.clock+=time.dt
-            for wall.clock>=wall.interval {wall.clock-=wall.interval;due+=1}
-        }
+        if wall.interval>0 && core.due(time,wall.next) {wall.next,due=core.deadline(time,wall.interval),due+1}
         origin:=mm.transform_point(world.transform,{0,0,0})
         out:=linalg.normalize0(mm.transform_point(world.transform,{0,0,1})-origin)
         for _ in 0..<min(due,64) {

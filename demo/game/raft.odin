@@ -30,7 +30,7 @@ DIVER_DEFAULT :: Diver{capacity=45,refill=15}
 Raft_Game :: struct {
     raft:core.Entity,
     deck:f32 `mirai:"unit=m"`, // over the center of the raft, where a diver comes back
-    message:f32 `mirai:"transient,readonly,unit=s"`, // left of the drowned message
+    message_until:u64 `mirai:"transient,readonly"`, // the tick the drowned message goes at
 }
 
 @(step="fixed")
@@ -39,9 +39,6 @@ raft_breath :: proc(
     worlds:core.Read(core.World_Transform),placer:core.Placer,time:core.Time,
 ) {
     if !time.playing || !(time.dt>0) {return}
-    for row in 0..<core.count(core.read(games)) {
-        if left:=core.at(core.read(games),row).message;left>0 {core.at(games,row).message=max(left-time.dt,0)}
-    }
     for row in 0..<core.count(core.read(divers)) {
         e:=core.entity_at(divers,row)
         state,has:=core.get(states,e)
@@ -60,7 +57,7 @@ raft_breath :: proc(
             raft,found:=core.get(worlds,game.raft)
             if !found {continue}
             core.place(placer,e,raft.position+mm.Vec3{0,game.deck,0},at_rest=true)
-            game.message=RAFT_DROWNED_SECONDS
+            game.message_until=core.deadline(time,RAFT_DROWNED_SECONDS)
             break
         }
     }
@@ -91,7 +88,7 @@ RAFT_BAR_STEPS :: 300 // the steps the bar of the breath moves in
 @(step="frame")
 raft_hud :: proc(
     huds:^core.Table(Raft_Hud),divers:core.Read(Diver),games:core.Read(Raft_Game),states:core.Read(phys.Character_State),characters:core.Read(phys.Character),
-    drivables:core.Read(inp.Drivable),
+    drivables:core.Read(inp.Drivable),time:core.Time,
 ) {
     shown:=core.read(huds)
     for row in 0..<core.count(shown) {
@@ -109,7 +106,7 @@ raft_hud :: proc(
             next.shown,next.oxygen,next.air=true,i32(math.round(diver.oxygen)),share<0.25?.Low:.Fine
             next.breath=math.round(share*RAFT_BAR_STEPS)/RAFT_BAR_STEPS
             next.drowned,next.drowned_once=i32(diver.drowned),diver.drowned>0
-            for at in 0..<core.count(games) {next.message||=core.at(games,at).message>0}
+            for at in 0..<core.count(games) {next.message||=!core.due(time,core.at(games,at).message_until)}
         }
         if core.at(shown,row)!=next {core.at(huds,row)^=next}
     }

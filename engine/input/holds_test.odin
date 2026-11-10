@@ -44,9 +44,9 @@ hold_test_init :: proc(t:^testing.T,f:^Hold_Test,jump:..Input_Binding) -> bool {
 hold_test_tick :: proc(f:^Hold_Test) {
     input_holds(&f.seats,&f.hold_requests,f.time,&f.problems)
     device:core.Input
-    seat_feed(core.get(&f.seats,f.local),&device,&f.bindings,false)
+    seat_feed(core.get(&f.seats,f.local),&device,&f.bindings,false,1.0/60)
     sent,_:=seat_remote(core.read(&f.seats),f.local,&f.bindings)
-    seat_receive(core.get(&f.seats,f.remote),&f.bindings,sent)
+    seat_receive(core.get(&f.seats,f.remote),&f.bindings,sent,1.0/60)
     core.time_advance(&f.time)
 }
 
@@ -72,13 +72,13 @@ a_held_action_reaches_its_seat_from_the_next_tick_whatever_its_bindings :: proc(
         hold_test_tick(&f)
         hold_test_tick(&f)
         testing.expect(t,seat_down(typed,f.remote,.Jump) && !seat_pressed(typed,f.remote,.Jump))
-        testing.expect_value(t,seat_action(read,f.remote,HOLD_JUMP).held_ticks,3)
+        testing.expect(t,abs(seat_action(read,f.remote,HOLD_JUMP).held-3.0/60)<1e-6)
         // Its seat still has the jump, which the next tick no longer holds.
         _,ahead=holds_at(f.seats.values[core.row_of(read,f.local)],f.local,&f.hold_requests,f.time.tick)
         testing.expect(t,ahead==1 && f.seats.values[core.row_of(read,f.local)].hold_count==2)
         hold_test_tick(&f)
         state:=seat_action(read,f.remote,HOLD_JUMP)
-        testing.expect(t,state.released && state.tapped && state.released_held==3,"released after its ticks")
+        testing.expect(t,state.released && state.tapped && abs(state.released_held-3.0/60)<1e-6,"released after its ticks")
         testing.expect_value(t,f.seats.values[core.row_of(read,f.local)].hold_count,1)
         testing.expect_value(t,seat_vector(typed,f.local,.Move),[2]f32{0,1})
         // Until it is let go: released on the tick after.
