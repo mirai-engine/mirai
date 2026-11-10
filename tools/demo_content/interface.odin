@@ -2,20 +2,13 @@ package main
 
 import "core:fmt"
 import "core:math"
-import "core:os"
 import "mirai:asset"
-import "mirai:core"
 import game "mirai:demo/game"
-import "mirai:engine/gui"
-import render "mirai:engine/render"
 import "mirai:std/base"
-import "mirai:std/serial"
 
-// The scene of the game interfaces (game/interface_demo.odin), whose .ui are
-// the files of assets/interface: a HUD with three styles, a menu of
-// options, an inventory to drag items in, a conversation and a name tag over
-// a pillar. The items and the conversation are tables of game data in
-// assets/interface.
+// What the interfaces of the interface scene (game/interface_demo.odin) show:
+// the icons of the inventory, and its items and the conversation as tables of
+// game data in assets/interface.
 
 ICON_SIZE :: 64
 
@@ -125,7 +118,7 @@ write_interface_records :: proc(o:^Out,icons:[5]base.Asset_Id) {
     write_records(o,ANSWERS_FILE,"game.Dialogue_Choice",game.Dialogue_Choice,answers,answer_texts[:])
 }
 
-write_interface_scene :: proc(o:^Out) {
+write_interface_assets :: proc(o:^Out) {
     icons:=[5]base.Asset_Id{
         write_item_icon(o,.Sword,{0.75,0.8,0.86}),
         write_item_icon(o,.Potion,{0.9,0.2,0.25}),
@@ -133,48 +126,5 @@ write_interface_scene :: proc(o:^Out) {
         write_item_icon(o,.Gem,{0.7,0.3,0.95}),
         write_item_icon(o,.Coin,{0.98,0.78,0.2}),
     }
-    hud,menu,inventory,tag,dialogue:=ui_id("interface_hud"),ui_id("interface_menu"),ui_id("interface_inventory"),ui_id("interface_tag"),ui_id("interface_dialogue")
     write_interface_records(o,icons)
-    if o.content.failed {return}
-
-    s:asset.Scene_Builder
-    asset.builder_init(&s,&o.content,asset.content_id(PROJECT,"scene","interface"))
-    defer asset.builder_destroy(&s)
-    environment,turn,to_sun,disc:=sky_of(o,.Day,render.SUN_DIRECTION,LAMPLIT,1.5)
-    sky_set(&s,&environment,turn)
-    sun:=render.Sun{color={1,0.96,0.9},illuminance=lux(LAMPLIT,1.5),disc=disc}
-    sun_entity:=asset.builder_entity(&s,"Sun",{position={0,6,0}})
-    pose:=sun_pose(to_sun,{0,6,0})
-    asset.builder_set(&s,sun_entity,pose)
-    asset.builder_set(&s,sun_entity,sun)
-    solid(&s,asset.builder_entity(&s,"Floor",{position={0,-0.05,0},scale={14,0.1,14}}),"Tiles")
-    solid(&s,asset.builder_entity(&s,"Pillar",{position={0,1,-3},scale={0.6,2,0.6}}),"Marble")
-    spawn_point(&s,{0,0,4})
-
-    demo:=game.Interface_Demo{health=100,most=100,coins=120,quality=2,subtitles=true}
-    base.text_set(demo.player[:],"Ana")
-    // Rows of the same item top each other up when one is let go over the other.
-    Stock :: struct {item:string,count:i32}
-    stock:=[?]Stock{{"sword",1},{"potion",5},{"shield",1},{"gem",3},{"coins",64},{"potion",2},{"gem",1}}
-    for slot,i in stock {demo.items[i]={item=record_ref(game.Item,ITEMS_FILE,slot.item),count=slot.count}}
-    demo.item_count=i32(len(stock))
-    demo.talk=record_ref(game.Dialogue_Line,LINES_FILE,"greet")
-    // The demo is the tag over the pillar too: a World_Widget binds the component of its own entity.
-    holder:=asset.builder_entity(&s,game.INTERFACE_DEMO,{position={0,2.6,-3}})
-    asset.builder_set(&s,holder,demo)
-    widget:=gui.WORLD_WIDGET_DEFAULT
-    widget.asset,widget.size,widget.scale,widget.facing,widget.pivot=tag,{280,90},0.006,.Billboard,.Bottom_Center
-    asset.builder_set(&s,holder,widget)
-
-    screen :: proc(s:^asset.Scene_Builder,name:string,asset_id:base.Asset_Id,holder:base.Entity_Id,input:gui.UI_Input,order:i32,back,hidden:bool) {
-        e:=asset.builder_entity(s,name)
-        sc:=gui.UI_Screen{asset=asset_id,entity=core.Entity(holder),input=input,order=order,back=back}
-        asset.builder_set(s,e,sc)
-        if hidden {asset.builder_set(s,e,render.Hidden{})}
-    }
-    screen(&s,game.INTERFACE_HUD,hud,holder,.Passive,0,false,false)
-    screen(&s,game.INTERFACE_INVENTORY,inventory,holder,.Menu,10,true,true)
-    screen(&s,game.INTERFACE_DIALOGUE,dialogue,holder,.Menu,15,true,true)
-    screen(&s,game.INTERFACE_MENU,menu,holder,.Modal,20,true,true)
-    asset.builder_save(&s,path(o,"assets/interface/interface.scene"))
 }

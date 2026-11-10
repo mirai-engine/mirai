@@ -27,10 +27,8 @@ import mm "mirai:std/math"
 //   flashlight  F, East: turns the flashlight of the horror house
 // Escape frees the mouse and captures it again. Spin, Bob, Door, Exhibit,
 // Swatch and Pulse are given to objects in the editor; scenes store
-// their values. The prefabs of the player and of the thrown cube are written
-// by tools/demo_content.
+// their values.
 
-WALK_SPEED :: f32(4)
 LOOK_SPEED :: inp.LOOK_SPEED
 VIEW_FOV :: f32(70)*mm.RAD_PER_DEG     // vertical
 THROW_SPEED :: f32(12)
@@ -153,12 +151,6 @@ PROJECTILE_DEFAULT :: Projectile{speed=THROW_SPEED,seconds_left=CUBE_SECONDS}
 yaw_of :: proc "contextless" (rotation:mm.Quat) -> f32 {
     ahead:=mm.quat_forward(rotation)
     return mm.yaw_of_direction(ahead)
-}
-
-player_walk :: proc "contextless" () -> phys.Walk {
-    walk:=phys.WALK_DEFAULT
-    walk.max_speed=WALK_SPEED
-    return walk
 }
 
 // The actions the game reads, those of interface_demo.odin too; move and jump are of physics

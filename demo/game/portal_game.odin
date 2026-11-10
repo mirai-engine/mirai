@@ -20,7 +20,6 @@ import portals "plugins:portals/runtime"
 // that goes through it back to where it started, also a thrown one: the
 // cubes are bullets, whose sweep meets thin triggers. A button in the floor
 // (Floor_Button) opens its door while a cube or the player stands on it.
-// The scene and the prefab of the player are written by tools/demo_content.
 
 PORTAL_SIZE :: [2]f32{1.3,2.2} // m, of the opening
 PORTAL_LIFT :: f32(0.02)        // m the opening stands off its wall
@@ -33,7 +32,6 @@ THROW_CUBE_SPEED :: f32(9)      // m/s
 FALL_LIMIT :: f32(-30)          // m: a cube below this height goes back to where it started
 
 Portal_Color :: enum u8 {Blue,Orange}
-PORTAL_GLOW :: [Portal_Color][3]f32{.Blue={0.1,0.4,1},.Orange={1,0.3,0.02}}
 
 @(component,description="The portal gun of the player: it opens the two portals and carries a cube.")
 Portal_Gun :: struct {
