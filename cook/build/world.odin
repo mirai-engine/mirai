@@ -474,9 +474,6 @@ has_sources :: proc(folder:string) -> bool {
     return false
 }
 
-@(private="file",thread_local)
-parse_problem:string
-
 // Reads and parses the sources of a package folder, without its tests, and returns its name and
 // its files in path order. Each problem goes to errors naming the file and the position, as the
 // compiler does. Not parser.parse_package: it reads the package clause of a file that failed to
@@ -493,14 +490,18 @@ sources_read :: proc(folder:string,errors:^[dynamic]string,allocator:=context.al
     }
     slice.sort_by(sorted[:],proc(a,b:^ast.File) -> bool {return a.fullpath<b.fullpath})
     p:=parser.default_parser()
+    // The handler takes no data of its own: it finds the problem through the context it is called in.
+    problem:string
+    context.user_ptr=&problem
     p.err=proc(pos:tokenizer.Pos,format:string,args:..any) {
-        if parse_problem=="" {parse_problem=fmt.aprintf("%s(%d:%d): %s",pos.file,pos.line,pos.column,fmt.tprintf(format,..args))}
+        problem:=(^string)(context.user_ptr)
+        if problem^=="" {problem^=fmt.aprintf("%s(%d:%d): %s",pos.file,pos.line,pos.column,fmt.tprintf(format,..args))}
     }
     ok=true
     for file in sorted {
-        parse_problem=""
+        problem=""
         if !parser.parse_file(&p,file) {
-            append(errors,parse_problem!="" ? parse_problem : fmt.aprintf("%s: the file does not parse",file.fullpath))
+            append(errors,problem!="" ? problem : fmt.aprintf("%s: the file does not parse",file.fullpath))
             ok=false
             continue
         }
@@ -510,7 +511,6 @@ sources_read :: proc(folder:string,errors:^[dynamic]string,allocator:=context.al
             ok=false
         }
     }
-    parse_problem=""
     return name,sorted[:],ok
 }
 
