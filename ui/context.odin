@@ -17,6 +17,7 @@ Context_Desc :: struct {
     allocator:runtime.Allocator, // context.allocator when unset
     // Capacities of one frame; zero takes the default.
     max_elements:int,   // layout elements (8192)
+    max_transitions:int, // elements a style carries to a new layout at once (64)
     max_text_words:int, // words kept measured for this frame, and as many for earlier ones (2 * max_elements)
     max_clips:int,      // containers that clip (256, at most 65535)
     max_widgets:int,    // interactive or tracked elements (2048)
@@ -298,7 +299,7 @@ context_init :: proc(ctx:^Context,desc:Context_Desc) -> bool {
     ctx.draw.font_quad=quad_pack(.Glyph,desc.font_texture)
 
     words:=desc.max_text_words if desc.max_text_words>0 else ctx.max_elements*2
-    if !layout_init(&ctx.layout,a,ctx.max_elements,words,len(ctx.text),count(desc.max_grid_tracks,64)) {context_destroy(ctx);return false}
+    if !layout_init(&ctx.layout,a,ctx.max_elements,words,len(ctx.text),count(desc.max_grid_tracks,64),count(desc.max_transitions,64)) {context_destroy(ctx);return false}
     return true
 }
 

@@ -406,8 +406,8 @@ What an element looks like hovered, pressed, focused or selected is a state of i
 `transition`: an `Anim_Set` has no animation for a state.
 
 - An animation changes how a node is drawn, never its size: a size is what the layout computes, and
-  a node goes to a new one with the `transition` of its style. `Value`, `Frame` and `Reveal` give
-  the value of a control, the frame of an image and the visible part of a text (typewriter).
+  a node goes to a new one with the `layout_transition` of its style. `Value`, `Frame` and `Reveal`
+  give the value of a control, the frame of an image and the visible part of a text (typewriter).
 - `anim_play` after another animation starts from the value that one left; the first of an element
   starts from its keys. In the tree, `clicked` arrives the frame after the click.
 - `animated(ctx, id, value)` draws what is built inside moved, scaled, rotated and tinted around the
@@ -528,16 +528,16 @@ that `tree_node` takes: the loaded tree is, byte for byte, the one the same call
 - With `Node_Style.transition`, a node's colors, its shadow and what `move` and `scale` give go from
   the style it showed to the new one when its state or variant changes; a change under way starts
   from where it was and a transparent end only fades.
-- The same `transition` carries the rectangle of the node to a new layout (an item inserted above
-  it, a page that grows, a size that changes), as Clay's transitions do: the layout keeps the last
-  rectangle of each element that asks (`layout_transition_ask`, by id, up to
-  `LAYOUT_TRANSITIONS`), and the node goes from where it was drawn to where the layout puts it with
-  the `Cubic_Out` ease. Its place is kept from the corner of its parent's content, so a parent
-  that moves or scrolls carries it without starting it; a size on its way is fixed for a second
-  layout, so what surrounds it follows. The first time, and on a surface of another size, it is
-  where the layout puts it at once. `Frame.transitioning` says the next frame differs, and
-  `engine/gui` keeps no screen of that context. Only tree nodes ask: what code builds, as the
-  editor, goes to its new place at once.
+- `Node_Style.layout_transition` carries the rectangle of the node to a new layout (an item inserted
+  above it, a page that grows, a size that changes), as Clay's transitions do: the layout keeps the
+  last rectangle of each element that asks (`layout_transition_ask`, in a table by id of
+  `Context_Desc.max_transitions`), and the node goes from where it was drawn to where the layout
+  puts it with the `Cubic_Out` ease. Its place is kept from the corner of its parent's content, so a
+  parent that moves or scrolls carries it without starting it; a size on its way is fixed for a
+  second layout, so what surrounds it follows. The first time, after a frame it was not asked for (a
+  node shown again), and on a surface of another size, it is where the layout puts it at once.
+  `Frame.transitioning` says the next frame differs, and `engine/gui` keeps no screen of that
+  context. Only tree nodes ask: what code builds, as the editor, goes to its new place at once.
 - `Node_Style.move` and `scale` draw a node through a scope around its center that the layout and
   the pointer do not see (`animated_begin` with `still`), so what lifts a button under the pointer
   does not lose it.

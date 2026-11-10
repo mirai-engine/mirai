@@ -19,8 +19,6 @@ import mm "mirai:std/math"
 // Containers open inside one another. A deeper one is refused with what it
 // holds and counted in Stats.dropped_elements.
 LAYOUT_DEPTH :: 64
-// Elements whose rectangles the layout keeps between frames to carry them to a new layout.
-LAYOUT_TRANSITIONS :: 256
 
 @(private)
 LAYOUT_EPSILON :: 0.01
@@ -57,7 +55,7 @@ Layout_Transition :: struct {
     from,to,now:Rect, // now: where it was drawn last
     surface:[2]f32,   // the size of the surface it was laid out on: another one places it at once
     time,seconds:f32,
-    frame:u64,        // the last that asked for it
+    frame:u64,        // the last that asked for it; one not asked the frame before starts where it is laid out
     placed:bool,
 }
 // What a run measures to in one line: its width, the width of its widest word
@@ -195,13 +193,13 @@ Layout_Tree :: struct {
     overflow:bool, // a line or a command did not fit this frame
     tracks:[]Grid_Tracks,track_count:int, // the widths of the columns of the grids of the frame (grid_tracks_add)
     aspects:bool,  // an element of the frame keeps an aspect
-    transitions:[]Layout_Transition,
+    transitions:[]Layout_Transition, // by id: a power of two of slots, found from the id on
     dt:f32,        // seconds since the last frame, which carry what transitions
     allocator:mem.Allocator,
 }
 
 @(private)
-layout_init :: proc(t:^Layout_Tree,allocator:mem.Allocator,max_elements,max_words,max_chars,max_tracks:int) -> bool {
+layout_init :: proc(t:^Layout_Tree,allocator:mem.Allocator,max_elements,max_words,max_chars,max_tracks,max_transitions:int) -> bool {
     t^={allocator=allocator}
     ok:=true
     alloc :: proc($T:typeid,n:int,a:mem.Allocator,ok:^bool) -> []T {
@@ -222,7 +220,9 @@ layout_init :: proc(t:^Layout_Tree,allocator:mem.Allocator,max_elements,max_word
     t.lines=alloc(Layout_Line,max_elements*4,a,&ok)
     t.commands=alloc(Layout_Command,max_elements*4,a,&ok)
     t.tracks=alloc(Grid_Tracks,max_tracks,a,&ok)
-    t.transitions=alloc(Layout_Transition,LAYOUT_TRANSITIONS,a,&ok)
+    transitions:=1
+    for transitions<max_transitions {transitions<<=1}
+    t.transitions=alloc(Layout_Transition,transitions,a,&ok)
     if !id_table_init(&t.ids,max_elements,a) {ok=false}
     // A frame has fewer runs than elements.
     slots:=16
@@ -1375,18 +1375,26 @@ layout_solve :: proc(t:^Layout_Tree,font:^Font) {
 }
 
 // Asks that the element id of this frame go from where it was drawn to where
-// the layout puts it over seconds. False when every rectangle the layout keeps
-// was asked for this frame.
+// the layout puts it over seconds. One not asked for the frame before, as a
+// node shown again, starts where it is laid out. False when every rectangle
+// the layout keeps was asked for this frame or the last.
 @(private)
 layout_transition_ask :: proc "contextless" (t:^Layout_Tree,id:Id,seconds:f32,frame:u64) -> bool {
     if id==0 || !(seconds>0 && seconds<math.F32_MAX) {return true}
-    oldest:^Layout_Transition
-    for &e in t.transitions {
-        if e.id==id {e.frame,e.seconds=frame,seconds;return true}
-        if oldest==nil || e.frame<oldest.frame {oldest=&e}
+    mask:=u64(len(t.transitions)-1)
+    free:^Layout_Transition
+    for probe in 0..<len(t.transitions) {
+        e:=&t.transitions[(u64(id)+u64(probe))&mask]
+        if e.id==id {
+            if e.frame+1<frame {e^={id=id}}
+            e.frame,e.seconds=frame,seconds
+            return true
+        }
+        if free==nil && (e.id==0 || e.frame+1<frame) {free=e}
+        if e.id==0 {break}
     }
-    if oldest==nil || oldest.frame==frame {return false}
-    oldest^={id=id,frame=frame,seconds=seconds}
+    if free==nil {return false}
+    free^={id=id,frame=frame,seconds=seconds}
     return true
 }
 
