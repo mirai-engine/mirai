@@ -31,20 +31,6 @@ Prefab_Test_World :: struct {
 // A component a scene saves and the API writes.
 Prefab_Test_Lamp :: struct {intensity,range:f32,target:core.Entity,uses:u32 `mirai:"hidden"`}
 
-prefab_test_settle :: proc(data,shared,editor:rawptr) {
-    w:=cast(^Prefab_Test_World)data
-    core.table_settle(&w.ids,&w.entities)
-    core.table_settle(&w.names,&w.entities)
-    core.table_settle(&w.transforms,&w.entities)
-    core.table_settle(&w.parents,&w.entities)
-    core.table_settle(&w.disabled,&w.entities)
-    core.table_settle(&w.lamps,&w.entities)
-    core.table_settle(&w.point_lights,&w.entities)
-    core.hierarchy_settle(&w.hierarchy,core.read(&w.parents),&w.entities)
-    core.entities_activity(&w.entities,core.read(&w.disabled),core.ref(&w.hierarchy))
-    core.entities_settle(&w.entities)
-}
-
 prefab_test_clear :: proc(data:rawptr) -> bool {
     w:=cast(^Prefab_Test_World)data
     core.table_clear(&w.ids)
@@ -120,7 +106,7 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
         {name="Disabled",type=core.Disabled,info=type_info_of(core.Disabled),offset=offset_of(Prefab_Test_World,disabled)},
     }
     storages:=[2]core.Storage_Info{{type=Prefabs,place=.Editor},{type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Prefab_Test_World,hierarchy)}}
-    info:=core.World_Info{tables=tables[:],storages=storages[:],settle=prefab_test_settle,clear=prefab_test_clear,copy=prefab_test_copy,swap=prefab_test_swap,
+    info:=core.World_Info{tables=tables[:],storages=storages[:],clear=prefab_test_clear,copy=prefab_test_copy,swap=prefab_test_swap,
         sizes={.World=size_of(Prefab_Test_World),.Shared=0,.Editor=0},aligns={.World=align_of(Prefab_Test_World),.Shared=1,.Editor=1},
         init={.World=prefab_test_init,.Shared=nil,.Editor=nil},destroy={.World=prefab_test_destroy,.Shared=nil,.Editor=nil}}
     root:=project.path_absolute(fmt.tprintf(".mirai/test-prefabs-%d",os.get_pid()),context.temp_allocator)
@@ -555,7 +541,7 @@ prefabs_follow_a_history_that_drops_its_oldest_steps :: proc(t:^testing.T) {
         {name="Disabled",type=core.Disabled,info=type_info_of(core.Disabled),offset=offset_of(Prefab_Test_World,disabled)},
     }
     storages:=[2]core.Storage_Info{{type=Prefabs,place=.Editor},{type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Prefab_Test_World,hierarchy)}}
-    info:=core.World_Info{tables=tables[:],storages=storages[:],settle=prefab_test_settle,clear=prefab_test_clear,copy=prefab_test_copy,swap=prefab_test_swap,
+    info:=core.World_Info{tables=tables[:],storages=storages[:],clear=prefab_test_clear,copy=prefab_test_copy,swap=prefab_test_swap,
         sizes={.World=size_of(Prefab_Test_World),.Shared=0,.Editor=0},aligns={.World=align_of(Prefab_Test_World),.Shared=1,.Editor=1},
         init={.World=prefab_test_init,.Shared=nil,.Editor=nil},destroy={.World=prefab_test_destroy,.Shared=nil,.Editor=nil}}
     root:=project.path_absolute(fmt.tprintf(".mirai/test-prefabs-history-%d",os.get_pid()),context.temp_allocator)
@@ -707,7 +693,7 @@ prefab_fixture_init :: proc(f:^Prefab_Fixture,name:string) -> bool {
     }
     f.storages={{type=Prefabs,place=.Editor,offset=offset_of(Prefab_Fixture_Editor,prefabs)},{type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Prefab_Test_World,hierarchy)},
         {type=Collab,place=.Editor,offset=offset_of(Prefab_Fixture_Editor,collab)},{name="Api",type=Api,info=type_info_of(Api),place=.Editor,offset=offset_of(Prefab_Fixture_Editor,api)}}
-    f.info=core.World_Info{tables=f.tables[:],storages=f.storages[:],settle=prefab_test_settle,clear=prefab_test_clear,copy=prefab_test_copy,swap=prefab_test_swap,
+    f.info=core.World_Info{tables=f.tables[:],storages=f.storages[:],clear=prefab_test_clear,copy=prefab_test_copy,swap=prefab_test_swap,
         sizes={.World=size_of(Prefab_Test_World),.Shared=0,.Editor=0},aligns={.World=align_of(Prefab_Test_World),.Shared=1,.Editor=1},
         init={.World=prefab_test_init,.Shared=nil,.Editor=nil},destroy={.World=prefab_test_destroy,.Shared=nil,.Editor=nil}}
     prefab_test_init(&f.world,context.allocator)

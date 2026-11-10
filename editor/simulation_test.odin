@@ -34,7 +34,7 @@ simulation_poses_apply_atomically_under_selected_parents_and_undo_together :: pr
         {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Simulation_Test_World,transforms)},
         {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Simulation_Test_World,parents)},
     }
-    info:=core.World_Info{entities=offset_of(Simulation_Test_World,entities),tables=tables[:],settle=simulation_test_settle}
+    info:=core.World_Info{entities=offset_of(Simulation_Test_World,entities),tables=tables[:]}
     parent,child:=core.create(&world.entities),core.create(&world.entities)
     core.add(&world.ids,parent,core.Id{1})
     core.add(&world.ids,child,core.Id{2})

@@ -1283,7 +1283,9 @@ rules_check :: proc(g:^Generator) {
                     if param.type.replication!=.None {
                         append(&g.errors,fmt.aprintf("%s: %s runs only in ui or render and writes %s, which is replicated: a dedicated server runs neither and would send what the scene says; write it in input, fixed, frame or late",s.where_,s.name,param.type.name))
                     }
-                case .Entities,.Commands:
+                case .Entities:
+                    append(&g.errors,fmt.aprintf("%s: %s runs only in ui or render and receives ^core.Entities, which creates and destroys entities, as a dedicated server would not: create them in input, fixed, frame or late; to ask only whether an entity is alive or off, receive core.Ref(core.Entities), which also leaves the tables unsettled after it",s.where_,s.name))
+                case .Commands:
                     append(&g.errors,fmt.aprintf("%s: %s runs only in ui or render and creates or destroys entities, which a dedicated server would not: create them in input, fixed, frame or late",s.where_,s.name))
                 }
             }
@@ -1641,10 +1643,15 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     // init
     for place,pi in places {
         fmt.sbprintf(w,"init_%s :: proc(data:rawptr,allocator:runtime.Allocator) -> bool {{\n    w:=cast(^%s)data\n    context.allocator=allocator\n",struct_names[pi],struct_names[pi])
-        if place==.World {fmt.sbprintf(w,"    if !%s.entities_init(&w.entities,allocator) {{return false}}\n",core_alias)}
+        if place==.World {fmt.sbprintf(w,"    if !%s.entities_init(&w.entities,allocator) || !%s.entities_tables(&w.entities,%d) {{return false}}\n",core_alias,core_alias,count_kind(g,.Component,editor))}
+        table_index:=0
         for t in g.types {
+            at:=table_index
+            if t.kind==.Component && included(t,editor) {table_index+=1}
             if t.place!=place || t.kind!=.Component || !included(t,editor) {continue}
             fmt.sbprintf(w,"    if !%s.table_init(&w.%s,\"%s\",allocator) {{return false}}\n",core_alias,t.field,t.name)
+            // Its place in info.tables is where core.settle finds what it has pending.
+            if place==.World {fmt.sbprintf(w,"    %s.table_follow(&w.%s,&w.entities,%d)\n",core_alias,t.field,at)}
             // The components of core are the base of every entity: on while it is disabled.
             if t.pkg.path=="mirai:core" {fmt.sbprintf(w,"    w.%s.base=true\n",t.field)}
             if t.single {fmt.sbprintf(w,"    w.%s.single=true\n",t.field)}
@@ -1770,28 +1777,6 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     }
     fmt.sbprint(w,"}\n\n")
 
-    // settle: the tables of every place follow the entities of the world;
-    // Disabled, Parent and its Hierarchy first, which say what of them is off
-    disabled:=g.by_key["mirai:core.Disabled"]
-    parent:=g.by_key["mirai:core.Parent"]
-    hierarchy:=g.by_key["mirai:core.Hierarchy"]
-    fmt.sbprint(w,"settle :: proc(world,shared,editor:rawptr) {\n    w:=cast(^World)world\n")
-    fmt.sbprint(w,"    e:=cast(^Editor)editor\n    _=e\n")
-    if disabled!=nil && parent!=nil && hierarchy!=nil {
-        fmt.sbprintf(w,"    %s.table_settle(&w.%s,&w.entities)\n    %s.table_settle(&w.%s,&w.entities)\n",core_alias,disabled.field,core_alias,parent.field)
-        fmt.sbprintf(w,"    _=%s.hierarchy_settle(&w.%s,%s.read(&w.%s),&w.entities)\n",core_alias,hierarchy.field,core_alias,parent.field)
-        fmt.sbprintf(w,"    _=%s.entities_activity(&w.entities,%s.read(&w.%s),%s.ref(&w.%s))\n",core_alias,core_alias,disabled.field,core_alias,hierarchy.field)
-    }
-    for t in g.types {
-        if t.kind!=.Component || !included(t,editor) {continue}
-        switch t.place {
-        case .World: fmt.sbprintf(w,"    %s.table_settle(&w.%s,&w.entities)\n",core_alias,t.field)
-        case .Editor: fmt.sbprintf(w,"    if e!=nil {{%s.table_settle(&e.%s,&w.entities)}}\n",core_alias,t.field)
-        case .Shared:
-        }
-    }
-    fmt.sbprintf(w,"    %s.entities_settle(&w.entities)\n}}\n\n",core_alias)
-
     // The functions as info.steps lists them: where each one adds its time.
     kept:=make([dynamic]^Step,context.temp_allocator)
     index_of:=make(map[^Step]int,context.temp_allocator)
@@ -1878,7 +1863,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
             holder:=param.type.place==.Editor?"e":"w"
             fmt.sbprintf(w,"    %s.table_settle(&%s.%s,&w.entities)\n",core_alias,holder,param.type.field)
         }
-        if whole {fmt.sbprint(w,"    settle(w,s,e)\n")}
+        if whole {fmt.sbprintf(w,"    %s.settle(app.info,w,e)\n",core_alias)}
         fmt.sbprintf(w,"    %s.profile_step_end(zone)\n",host_alias)
         fmt.sbprintf(w,"    if %d<len(app.step_ns) {{app.step_ns[%d]+=u64(gen_time.tick_since(started))}}\n}}\n\n",si,si)
     }
@@ -2051,7 +2036,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     fmt.sbprint(w,"    info.records=records\n")
     fmt.sbprint(w,"    info.init={.World=init_World,.Shared=init_Shared,.Editor=init_Editor}\n")
     fmt.sbprint(w,"    info.destroy={.World=destroy_World,.Shared=destroy_Shared,.Editor=destroy_Editor}\n")
-    fmt.sbprint(w,"    info.copy,info.copy_changed=copy_world,copy_changed_world\n    info.swap=swap_world\n    info.clear=clear_world\n    info.settle=settle\n    info.attach,info.detach=attach_World,detach_World\n")
+    fmt.sbprint(w,"    info.copy,info.copy_changed=copy_world,copy_changed_world\n    info.swap=swap_world\n    info.clear=clear_world\n    info.attach,info.detach=attach_World,detach_World\n")
     for loop in 0..<(editor?2:1) {
         for phase in 0..<len(PHASES) {
             if defined[loop][phase] {fmt.sbprintf(w,"    info.loops[.%s][.%s],info.order[.%s][.%s]=%s_%s,order_%s_%s[:]\n",loop==0?"Game":"Editor",titles[phase],loop==0?"Game":"Editor",titles[phase],loops[loop],phases[phase],loops[loop],phases[phase])}

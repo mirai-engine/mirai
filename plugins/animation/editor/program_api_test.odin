@@ -212,7 +212,7 @@ program_runtime_api_sets_named_parameters_and_keeps_plays_and_modifier_controls_
     document,play:Program_Test_World;core.entities_init(&document.entities);core.entities_init(&play.entities);defer program_test_destroy(&document);defer program_test_destroy(&play)
     tables:=[3]core.Table_Info{{type=core.Id,info=type_info_of(core.Id),offset=offset_of(Program_Test_World,ids)},{type=anim.Animation,info=type_info_of(anim.Animation),offset=offset_of(Program_Test_World,animations)},{type=anim.Pose_Modifiers,info=type_info_of(anim.Pose_Modifiers),offset=offset_of(Program_Test_World,modifiers)}}
     storages:=[3]core.Storage_Info{{type=anim.Animation_Requests,info=type_info_of(anim.Animation_Requests),offset=offset_of(Program_Test_World,animation_requests)},{type=anim.Modifier_Requests,info=type_info_of(anim.Modifier_Requests),offset=offset_of(Program_Test_World,modifier_requests)},{type=anim.Modifier_Runtime,info=type_info_of(anim.Modifier_Runtime),offset=offset_of(Program_Test_World,modifier_runtime)}}
-    world_info:=core.World_Info{tables=tables[:],storages=storages[:],settle=program_test_settle};test_locomotion_modes(&world_info)
+    world_info:=core.World_Info{tables=tables[:],storages=storages[:]};test_locomotion_modes(&world_info)
     for world in ([2]^Program_Test_World{&document,&play}) {
         entity:=core.create(&world.entities);core.add(&world.ids,entity,{value=17})
         value:=anim.ANIMATION_DEFAULT;value.asset=graph_id;core.add(&world.animations,entity,value)
@@ -279,7 +279,7 @@ modifier_goal_api_resolves_targets_in_the_running_world_accepts_the_origin_and_k
     document,play:Program_Test_World;core.entities_init(&document.entities);core.entities_init(&play.entities);defer program_test_destroy(&document);defer program_test_destroy(&play)
     tables:=[3]core.Table_Info{{type=core.Id,info=type_info_of(core.Id),offset=offset_of(Program_Test_World,ids)},{type=anim.Animation,info=type_info_of(anim.Animation),offset=offset_of(Program_Test_World,animations)},{type=anim.Pose_Modifiers,info=type_info_of(anim.Pose_Modifiers),offset=offset_of(Program_Test_World,modifiers)}}
     storages:=[3]core.Storage_Info{{type=anim.Animation_Requests,info=type_info_of(anim.Animation_Requests),offset=offset_of(Program_Test_World,animation_requests)},{type=anim.Modifier_Requests,info=type_info_of(anim.Modifier_Requests),offset=offset_of(Program_Test_World,modifier_requests)},{type=anim.Modifier_Runtime,info=type_info_of(anim.Modifier_Runtime),offset=offset_of(Program_Test_World,modifier_runtime)}}
-    info:=core.World_Info{tables=tables[:],storages=storages[:],settle=program_test_settle}
+    info:=core.World_Info{tables=tables[:],storages=storages[:]}
     core.create(&play.entities)
     for world in ([2]^Program_Test_World{&document,&play}) {
         entity:=core.create(&world.entities);core.add(&world.ids,entity,{value=17})

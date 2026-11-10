@@ -356,7 +356,7 @@ ai_chat_uses_live_selection_and_keeps_tasks_with_their_document :: proc(t:^testi
         {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Shell_Test_World,transforms)},
         {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Shell_Test_World,parents)},
     }
-    info:=core.World_Info{tables=tables[:],settle=shell_test_settle}
+    info:=core.World_Info{tables=tables[:]}
     entity:=core.create(&world.entities)
     core.add(&world.names,entity,core.name_make("Selected entity"))
     core.add(&world.transforms,entity,core.TRANSFORM_IDENTITY)

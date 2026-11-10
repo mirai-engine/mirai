@@ -82,23 +82,6 @@ section_world_swap :: proc(a,b:rawptr) {
     x^,y^=y^,x^
 }
 
-// As the generator settles: Disabled, Parent and the hierarchy first, which say what is off.
-@(private="file")
-section_world_settle :: proc(world,shared,editor:rawptr) {
-    w:=cast(^Section_World)world
-    es:=&w.entities
-    core.table_settle(&w.disabled,es);core.table_settle(&w.parents,es)
-    core.hierarchy_settle(&w.hierarchy,core.read(&w.parents),es)
-    core.entities_activity(es,core.read(&w.disabled),core.ref(&w.hierarchy))
-    core.table_settle(&w.ids,es);core.table_settle(&w.names,es);core.table_settle(&w.transforms,es)
-    core.table_settle(&w.parents,es);core.table_settle(&w.disabled,es);core.table_settle(&w.keeps,es)
-    core.table_settle(&w.references,es);core.table_settle(&w.members,es);core.table_settle(&w.held,es)
-    core.table_settle(&w.dormants,es);core.table_settle(&w.tombstones,es)
-    core.table_settle(&w.roaming,es);core.table_settle(&w.lamps,es);core.table_settle(&w.links,es);core.table_settle(&w.sources,es)
-    core.table_settle(&w.grounds,es);core.table_settle(&w.kept,es)
-    core.entities_settle(es)
-}
-
 @(private="file")
 section_world_clear :: proc(data:rawptr) -> bool {
     w:=cast(^Section_World)data
@@ -160,7 +143,7 @@ section_fixture_open :: proc(t:^testing.T,f:^Section_Fixture,name:string) -> boo
         {name="Section_Records",type=Section_Records,info=type_info_of(Section_Records),offset=offset_of(Section_World,records)},
         {name="Scene_Root",type=Scene_Root,info=type_info_of(Scene_Root),offset=offset_of(Section_World,root),keep=true},
     }
-    f.info={entities=offset_of(Section_World,entities),tables=f.tables[:],storages=f.storages[:],copy=section_world_copy,swap=section_world_swap,settle=section_world_settle,clear=section_world_clear}
+    f.info={entities=offset_of(Section_World,entities),tables=f.tables[:],storages=f.storages[:],copy=section_world_copy,swap=section_world_swap,clear=section_world_clear}
     f.info.sizes[.World],f.info.aligns[.World]=size_of(Section_World),align_of(Section_World)
     f.info.init[.World],f.info.destroy[.World]=section_world_init,section_world_destroy
     core.world_info_index(&f.info)

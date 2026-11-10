@@ -43,7 +43,7 @@ animation_stop_and_seek_operate_on_the_play_world_and_refuse_edit_seeks :: proc(
         {type=anim.Animation,info=type_info_of(anim.Animation),offset=offset_of(Api_Test_World,animations)},
     }
     storages:=[1]core.Storage_Info{{type=anim.Animation_Requests,info=type_info_of(anim.Animation_Requests),offset=offset_of(Api_Test_World,requests)}}
-    info:=core.World_Info{tables=tables[:],storages=storages[:],settle=api_test_settle}
+    info:=core.World_Info{tables=tables[:],storages=storages[:]}
     for w in ([2]^Api_Test_World{&document,&play_world}) {
         e:=core.create(&w.entities)
         core.add(&w.ids,e,core.Id{17})

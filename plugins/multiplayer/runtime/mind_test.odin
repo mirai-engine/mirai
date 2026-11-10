@@ -66,7 +66,7 @@ mind_net_info :: proc() -> core.World_Info {
     info.tables=tables
     info.sizes[.World],info.aligns[.World]=size_of(Mind_Net_World),align_of(Mind_Net_World)
     info.init[.World],info.destroy[.World]=mind_net_init,mind_net_destroy
-    info.copy,info.copy_changed,info.swap,info.settle=mind_net_copy,mind_net_copy_changed,mind_net_swap,mind_net_settle
+    info.copy,info.copy_changed,info.swap=mind_net_copy,mind_net_copy_changed,mind_net_swap
     return info
 }
 

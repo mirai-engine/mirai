@@ -36,15 +36,6 @@ test_tables :: proc() -> [5]core.Table_Info {
     }
 }
 
-@(private="file")
-test_settle :: proc(world,shared,ed:rawptr) {
-    w:=cast(^Foliage_Test_World)world
-    core.table_settle(&w.ids,&w.entities);core.table_settle(&w.names,&w.entities)
-    core.table_settle(&w.transforms,&w.entities);core.table_settle(&w.parents,&w.entities)
-    core.table_settle(&w.foliages,&w.entities)
-    core.entities_settle(&w.entities)
-}
-
 // The source the registry holds for a foliage, unsaved or on disk.
 @(private="file")
 held_source :: proc(t:^testing.T,a:^host.Assets,id:base.Asset_Id) -> (s:foliage.Source) {
@@ -99,7 +90,7 @@ foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved :: proc(t:^testing
         core.table_destroy(&world.parents);core.table_destroy(&world.foliages);core.entities_destroy(&world.entities)
     }
     tables:=test_tables()
-    info:=core.World_Info{entities=offset_of(Foliage_Test_World,entities),tables=tables[:],settle=test_settle}
+    info:=core.World_Info{entities=offset_of(Foliage_Test_World,entities),tables=tables[:]}
     ref:=core.world_ref(&world,&info)
     meadow:=core.create(&world.entities)
     core.add(&world.ids,meadow,core.Id{value=base.Entity_Id(100)})
@@ -300,7 +291,7 @@ a_move_of_an_imported_foliage_is_undone_back_to_revision_zero :: proc(t:^testing
         core.table_destroy(&world.parents);core.table_destroy(&world.foliages);core.entities_destroy(&world.entities)
     }
     tables:=test_tables()
-    info:=core.World_Info{entities=offset_of(Foliage_Test_World,entities),tables=tables[:],settle=test_settle}
+    info:=core.World_Info{entities=offset_of(Foliage_Test_World,entities),tables=tables[:]}
     ref:=core.world_ref(&world,&info)
     patch:=core.create(&world.entities)
     core.add(&world.ids,patch,core.Id{value=base.Entity_Id(200)})

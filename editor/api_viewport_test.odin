@@ -107,7 +107,7 @@ camera_set_takes_a_fov_and_looks_through_a_camera_of_the_scene_without_editing_i
     storages:=[1]core.Storage_Info{
         {type=Api,info=type_info_of(Api),place=.Editor},
     }
-    info:=core.World_Info{entities=offset_of(Camera_World,entities),tables=tables[:],storages=storages[:],settle=camera_world_settle}
+    info:=core.World_Info{entities=offset_of(Camera_World,entities),tables=tables[:],storages=storages[:]}
     rig,eye,cube,flat:=core.create(&world.entities),core.create(&world.entities),core.create(&world.entities),core.create(&world.entities)
     forward:=linalg.normalize([3]f32{-1,-0.5,0})
     core.add(&world.ids,rig,{value=1});core.add(&world.ids,eye,{value=2});core.add(&world.ids,cube,{value=3});core.add(&world.ids,flat,{value=4})

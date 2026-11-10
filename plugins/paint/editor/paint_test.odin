@@ -19,13 +19,6 @@ Paint_Test_World :: struct {
     painted:core.Table(paint.Painted),
 }
 
-@(private)
-paint_test_settle :: proc(world,shared,ed:rawptr) {
-    w:=cast(^Paint_Test_World)world
-    core.table_settle(&w.ids,&w.entities);core.table_settle(&w.meshes,&w.entities);core.table_settle(&w.painted,&w.entities)
-    core.entities_settle(&w.entities)
-}
-
 // A cube with Id 7 in a world of its own, with its assets under a folder that goes with the test.
 @(private)
 Paint_Test :: struct {
@@ -60,7 +53,7 @@ paint_test_open :: proc(t:^testing.T,f:^Paint_Test,name:string) -> bool {
         {name="Mesh_Renderer",type=erender.Mesh_Renderer,info=type_info_of(erender.Mesh_Renderer),offset=offset_of(Paint_Test_World,meshes)},
         {name="Painted",type=paint.Painted,info=type_info_of(paint.Painted),offset=offset_of(Paint_Test_World,painted)},
     }
-    f.info=core.World_Info{entities=offset_of(Paint_Test_World,entities),tables=f.tables[:],settle=paint_test_settle}
+    f.info=core.World_Info{entities=offset_of(Paint_Test_World,entities),tables=f.tables[:]}
     f.ref=core.world_ref(&f.world,&f.info)
     f.cube=core.create(&w.entities)
     core.add(&w.ids,f.cube,core.Id{value=7})

@@ -24,6 +24,7 @@ Entities :: struct {
     alive:int,
     disabled:int,            // the entities off
     ids:Id_Index,            // the entities by their Id
+    pending:[dynamic]bool,   // by table of the World, as its World_Info lists them: it has adds, removes or turns that wait for the settle (Table.waits); a multiple of 8 long, and empty in a World made by hand
 }
 
 // Turns its entity off with everything under it. Their components keep their
@@ -45,13 +46,20 @@ entities_init :: proc(es:^Entities,allocator:=context.allocator) -> bool {
     es.walk=make([dynamic]bool,allocator)
     es.ids.slots=make([dynamic]Id_Slot,allocator)
     es.ids.of=make([dynamic]base.Entity_Id,allocator)
+    es.pending=make([dynamic]bool,allocator)
     es.alive=0
     return true
 }
 
+// Room for the tables of the World to say what they have pending
+// (table_follow). False without memory.
+entities_tables :: proc(es:^Entities,tables:int) -> bool {
+    return resize(&es.pending,(tables+7)&~int(7))==nil
+}
+
 entities_destroy :: proc(es:^Entities) {
     delete(es.generation);delete(es.free);delete(es.doomed);delete(es.off);delete(es.turned);delete(es.walk)
-    delete(es.ids.slots);delete(es.ids.of)
+    delete(es.ids.slots);delete(es.ids.of);delete(es.pending)
     es^={}
 }
 

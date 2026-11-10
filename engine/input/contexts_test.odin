@@ -97,30 +97,30 @@ seats_enter_and_leave_contexts_by_owner :: proc(t:^testing.T) {
 
     input_context_enter(&requests,inventory,core.NONE,MENU)
     input_context_enter(&requests,map_screen,second,MAP,modal=true)
-    input_contexts(&es,&seats,&state,&requests,&problems)
+    input_contexts(core.ref(&es),&seats,&state,&requests,&problems)
     testing.expect(t,stack(&seats,first)==Context_Stack{layers={0=MENU},count=1},"none puts every local seat in it")
     testing.expect(t,stack(&seats,second)==Context_Stack{layers={0=MENU,1=MAP},count=2,modal=0b10},"the one entered last is on top")
     testing.expect(t,in_context(&state,inventory) && in_context(&state,map_screen))
 
     // Asked again with the same context, it keeps its place.
     input_context_enter(&requests,inventory,core.NONE,MENU)
-    input_contexts(&es,&seats,&state,&requests,&problems)
+    input_contexts(core.ref(&es),&seats,&state,&requests,&problems)
     testing.expect(t,stack(&seats,second).layers[1]==MAP)
 
     input_context_leave(&requests,inventory)
-    input_contexts(&es,&seats,&state,&requests,&problems)
+    input_contexts(core.ref(&es),&seats,&state,&requests,&problems)
     testing.expect(t,stack(&seats,first).count==0 && stack(&seats,second)==Context_Stack{layers={0=MAP},count=1,modal=1})
 
     // An owner that goes takes its seats out.
     core.destroy(&es,map_screen)
-    input_contexts(&es,&seats,&state,&requests,&problems)
+    input_contexts(core.ref(&es),&seats,&state,&requests,&problems)
     testing.expect(t,stack(&seats,second).count==0 && !in_context(&state,map_screen))
     testing.expect_value(t,problems.count,0)
 
     input_context_enter(&requests,inventory,core.NONE,CONTEXT_BASE)
     input_context_enter(&requests,inventory,core.NONE,Input_Context(CONTEXT_CAPACITY))
     input_context_enter(&requests,inventory,map_screen,MENU)
-    input_contexts(&es,&seats,&state,&requests,&problems)
+    input_contexts(core.ref(&es),&seats,&state,&requests,&problems)
     for code in ([]string{"input.context_base","input.context_value","input.context_seat"}) {
         testing.expectf(t,core.problem_find(&problems,inventory,code)!=nil,"%s is a problem",code)
     }

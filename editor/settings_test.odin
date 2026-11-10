@@ -17,9 +17,6 @@ import "mirai:ui"
 @(private="file") Layer_World :: struct {entities:core.Entities,setting:Layer_Setting,rule:Layer_Rule}
 
 @(private="file")
-layer_settle :: proc(data,shared,editor:rawptr) {core.entities_settle(&(^Layer_World)(data).entities)}
-
-@(private="file")
 layer_text :: proc(layer:project.Settings_Layer,root,engine:string) -> string {
     data,_:=os.read_entire_file(project.settings_file(layer,root,engine,context.temp_allocator),context.temp_allocator)
     return string(data)
@@ -42,7 +39,7 @@ settings_are_written_by_layer_and_the_project_wins :: proc(t:^testing.T) {
         {name="Layer_Setting",type=Layer_Setting,info=type_info_of(Layer_Setting),offset=offset_of(Layer_World,setting),setting=.Machine,default=proc(dst:rawptr) {(^Layer_Setting)(dst)^={quality=1,scale=1}}},
         {name="Layer_Rule",type=Layer_Rule,info=type_info_of(Layer_Rule),offset=offset_of(Layer_World,rule),setting=.Project},
     }
-    info:=core.World_Info{entities=offset_of(Layer_World,entities),storages=storages[:],settle=layer_settle}
+    info:=core.World_Info{entities=offset_of(Layer_World,entities),storages=storages[:]}
     world.setting={quality=1,scale=1}
     selection:Selection;defer delete(selection.entities)
     viewport:Viewport;gui:Editor_Ui;edits:Edits;defer edits_free(&edits)

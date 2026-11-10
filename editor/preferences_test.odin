@@ -198,7 +198,7 @@ preferences_are_read_and_changed_through_the_api :: proc(t:^testing.T) {
     world:Preferences_World
     core.entities_init(&world.entities);defer core.entities_destroy(&world.entities)
     storages:=[1]core.Storage_Info{{type=Api,info=type_info_of(Api),place=.Editor}}
-    info:=core.World_Info{entities=offset_of(Preferences_World,entities),storages=storages[:],settle=proc(data,shared,editor:rawptr) {core.entities_settle(&(^Preferences_World)(data).entities)}}
+    info:=core.World_Info{entities=offset_of(Preferences_World,entities),storages=storages[:]}
     selection:Selection;defer delete(selection.entities)
     edits:Edits;defer edits_free(&edits)
     inspector:Inspector

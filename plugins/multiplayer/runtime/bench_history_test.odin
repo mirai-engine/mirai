@@ -96,7 +96,7 @@ history_bench_info :: proc() -> core.World_Info {
     info.tables=tables
     info.sizes[.World],info.aligns[.World]=size_of(History_Bench_World),align_of(History_Bench_World)
     info.init[.World],info.destroy[.World]=history_bench_init,history_bench_destroy
-    info.copy,info.copy_changed,info.swap,info.settle=history_bench_copy,history_bench_copy_changed,history_bench_swap,history_bench_settle
+    info.copy,info.copy_changed,info.swap=history_bench_copy,history_bench_copy_changed,history_bench_swap
     return info
 }
 

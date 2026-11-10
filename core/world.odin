@@ -130,7 +130,7 @@ World_Info :: struct {
     copy:proc(dst,src:rawptr) -> bool, // failure leaves a destructible, partial destination
     copy_changed:proc(dst,src:rawptr,marks:[]Copy_Mark) -> bool, // copy that copies again only the tables that changed (table_copy_changed), for a dst a history keeps as a copy of src, with a mark per table, by its index in tables, that it updates; dst is only copied back with copy, as the storages that say copy_kept hold only what that needs
     swap:proc(a,b:rawptr), // publishes a prepared World without allocating; local storages stay
-    settle:proc(world,shared,editor:rawptr), // applies what the functions and the editor added and removed
+    settles:Settle_Info, // what settle looks for in tables and storages
     clear:proc(world:rawptr) -> bool, // every entity and row of a World, and the storages derived from them back to their start; settings and those that say keep stay. False without memory: the World as it was
     attach:proc(world,shared:rawptr,allocator:runtime.Allocator) -> bool, // the values of the by_world storages of a World with its id; false without memory
     detach:proc(world,shared:rawptr), // frees them, after the release phase of the World
@@ -177,7 +177,7 @@ world_run :: proc(w:World_Ref,shared,editor,app:rawptr,loop:Loop,phase:Phase,lib
         kept_frame=frame^
         frame^={accumulator=kept_frame.accumulator,dt=time.dt,alpha=1,phase=phase}
     }
-    w.info.settle(w.data,shared,editor)
+    settle(w.info,w.data,editor)
     for index in w.info.order[loop][phase] {
         s:=&w.info.steps[index]
         for library in libraries {
@@ -313,7 +313,7 @@ world_table_of :: proc(w:World_Ref,$T:typeid) -> ^Table(T) {
 
 // For code outside the loop: the World of a reference.
 world_settle :: proc(w:World_Ref) {
-    if w.place==.World {w.info.settle(w.data,nil,nil)}
+    if w.place==.World {settle(w.info,w.data,nil)}
 }
 
 // The components an entity has, by table.

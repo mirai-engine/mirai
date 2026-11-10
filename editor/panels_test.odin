@@ -45,7 +45,7 @@ panel_test_init :: proc(f:^Panel_Test_Fixture) {
     f.storages={
         {name="Quality",type=Panel_Test_Quality,info=type_info_of(Panel_Test_Quality),offset=offset_of(Panel_Test_World,quality),setting=.Project,default=proc(dst:rawptr) {(^Panel_Test_Quality)(dst)^={level=1}}},
     }
-    f.info={entities=offset_of(Panel_Test_World,entities),tables=f.tables[:],storages=f.storages[:],settle=panel_test_settle}
+    f.info={entities=offset_of(Panel_Test_World,entities),tables=f.tables[:],storages=f.storages[:]}
     for &e,i in f.entities {
         e=core.create(&f.world.entities)
         core.add(&f.world.ids,e,{value=base.Entity_Id(0x10*(i+1))})

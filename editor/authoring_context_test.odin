@@ -65,7 +65,7 @@ hierarchy_and_ai_context_keep_authors_with_the_bounds_of_their_derived_geometry 
         {name="Derived",type=Authoring_Context_Derived,info=type_info_of(Authoring_Context_Derived),offset=offset_of(Authoring_Context_World,derived)},
     }
     storages:=[1]core.Storage_Info{{type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Authoring_Context_World,hierarchy)}}
-    info:=core.World_Info{entities=offset_of(Authoring_Context_World,entities),tables=tables[:],storages=storages[:],settle=authoring_context_settle}
+    info:=core.World_Info{entities=offset_of(Authoring_Context_World,entities),tables=tables[:],storages=storages[:]}
     ref:=core.world_ref(&world,&info)
     parent,owner:=core.create(&world.entities),core.create(&world.entities)
     left,right,empty,authored_child:=core.create(&world.entities),core.create(&world.entities),core.create(&world.entities),core.create(&world.entities)

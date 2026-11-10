@@ -25,8 +25,8 @@ comes from here or from a library.
 - The own state (`Disabled`) and the effective one (`entity_off`) are kept apart: turning a parent
   on does not turn on a child with its own `Disabled`, nor a component that was disabled by itself.
   A new entity under a disabled parent is born disabled.
-- The generated `settle` recomputes what is off only if `Disabled` or the tree changed, and each
-  table moves the rows that changed state in that same settle.
+- `core.settle` recomputes what is off only if `Disabled` or the tree changed, and the tables
+  that hold a row of an entity that changed state move it in that same settle.
 - Libraries have no turn-on callbacks: they see it as a remove and an add (physics rebuilds the body
   with the velocity of `core.Motion`, audio cuts the voice). The network keeps its object and turns
   off the replica, except for what its section turns off
@@ -292,7 +292,7 @@ owned one is requested in the `Places` queue. `core.Placer` is a
 
 ### The `Hierarchy`
 
-The child index of `Parent`, in `order` order. Only the generated `settle` writes it, when settling
+The child index of `Parent`, in `order` order. Only `core.settle` writes it, when settling
 `Parent` and following its `changes`; a function reads it with `core.Ref(core.Hierarchy)` and code
 outside the loop with `core.world_storage_of`. It reflects `Parent` as of the last settle: a change
 inside a function is seen after it.
@@ -336,7 +336,8 @@ saving, network, the binding of an interface by name, editor) works with
 requests changes does not receive it: it uses `core.Commands` and the requests of the owning
 library.
 
-- `world_settle` applies what is pending outside the loop, only on a `World`.
+- `world_settle` applies what is pending outside the loop, only on a `World`: it is `core.settle`,
+  [the settle the loop runs](generator.md#generated-functions), without the tables of the editor.
 - `world_run` runs outside the loop the functions of some libraries in a phase, with their order,
   their binding and their settle, and with the given `Time` while they run: this is how
   `physics.step_world` and `anim.animation_evaluate` advance a preview or a copy.

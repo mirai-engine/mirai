@@ -125,7 +125,7 @@ terrain_panel_hides_creation_while_a_terrain_is_selected_and_reaches_it_on_short
     core.table_init(&world.worlds,"World_Transform");defer core.table_destroy(&world.worlds)
     core.table_init(&world.overrides,"Material_Override");defer core.table_destroy(&world.overrides)
     tables:=operand_test_tables()
-    info:=core.World_Info{entities=offset_of(Operand_Test_World,base)+offset_of(Create_Test_World,entities),tables=tables[:],settle=operand_test_settle}
+    info:=core.World_Info{entities=offset_of(Operand_Test_World,base)+offset_of(Create_Test_World,entities),tables=tables[:]}
     ref:=core.world_ref(&world,&info)
     owner:=core.create(&world.entities)
     core.add(&world.terrains,owner,terrain.Terrain{source={1,1},revision=1})
@@ -211,7 +211,7 @@ create_test_plane :: proc(t:^testing.T,kind:terrain.Source_Kind,depth:f32) {
     world:Create_Test_World
     create_test_world_init(&world);defer create_test_world_destroy(&world)
     tables:=create_test_tables()
-    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:],settle=create_test_settle}
+    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:]}
     ref:=core.world_ref(&world,&info)
     ctx:=new(ui.Context);defer free(ctx)
     if !testing.expect(t,ui.context_init(ctx,{})) {return}
@@ -285,7 +285,7 @@ a_named_terrain_takes_the_name_and_a_missing_heightmap_says_its_path :: proc(t:^
     world:Create_Test_World
     create_test_world_init(&world);defer create_test_world_destroy(&world)
     tables:=create_test_tables()
-    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:],settle=create_test_settle}
+    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:]}
     ref:=core.world_ref(&world,&info)
     app:=host.App{allocator=context.allocator,assets=&assets}
     selection:editor.Selection;defer delete(selection.entities)
@@ -321,7 +321,7 @@ a_volume_created_on_a_heightfield_is_filled_with_its_ground :: proc(t:^testing.T
     world:Create_Test_World
     create_test_world_init(&world);defer create_test_world_destroy(&world)
     tables:=create_test_tables()
-    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:],settle=create_test_settle}
+    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:]}
     ref:=core.world_ref(&world,&info)
     app:=host.App{allocator=context.allocator,assets=&assets}
     selection:editor.Selection;defer delete(selection.entities)
@@ -360,7 +360,7 @@ mesh_terrain_creation_from_selection_preserves_authoring_and_undo :: proc(t:^tes
     world:Create_Test_World
     create_test_world_init(&world);defer create_test_world_destroy(&world)
     tables:=create_test_tables()
-    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:],settle=create_test_settle}
+    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:]}
     ref:=core.world_ref(&world,&info)
     app:=host.App{allocator=context.allocator,assets=&assets}
     selection:editor.Selection;defer delete(selection.entities)
@@ -436,7 +436,7 @@ create_test_heightmap :: proc(t:^testing.T,kind:terrain.Source_Kind,depth:f32) {
     world:Create_Test_World
     create_test_world_init(&world);defer create_test_world_destroy(&world)
     tables:=create_test_tables()
-    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:],settle=create_test_settle}
+    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:]}
     ref:=core.world_ref(&world,&info)
     ctx:=new(ui.Context);defer free(ctx)
     if !testing.expect(t,ui.context_init(ctx,{})) {return}
@@ -523,7 +523,7 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     world:Create_Test_World
     create_test_world_init(&world);defer create_test_world_destroy(&world)
     tables:=create_test_tables()
-    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:],settle=create_test_settle}
+    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:]}
     ref:=core.world_ref(&world,&info)
     app:=host.App{allocator=context.allocator,assets=&assets}
     selection:editor.Selection;defer delete(selection.entities)

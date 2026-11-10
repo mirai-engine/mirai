@@ -317,11 +317,17 @@ parameters by hand.
 - After each function it applies the pending changes with `table_settle` of each `^core.Table` it
   received.
 - A function with `^core.Entities`, `core.Commands` or `core.World_Ref`, or that writes `Disabled`
-  or `Parent`, may touch any table, destroy entities or change what is disabled: after it `settle`
-  runs on all of them and releases the destroyed indices.
-- `settle` settles `Disabled` and `Parent` first, follows `Parent` into the `Hierarchy`, recomputes
-  what is disabled and then settles the others, which move the rows of the entities that were
-  disabled or enabled.
+  or `Parent`, may touch any table, destroy entities or change what is disabled: after it
+  `core.settle` runs on the World and releases the destroyed indices. One that only asks whether an
+  entity is alive or off receives `core.Ref(core.Entities)`: it asks for no settle of the World
+  and does not wait for every other function.
+- `core.settle` is one loop over the `World_Info`, the same for every project. It settles
+  `Disabled` and `Parent` first, follows `Parent` into the `Hierarchy`, recomputes what is disabled
+  and then settles the others, which move the rows of the entities that were disabled or enabled.
+  It comes only to the tables that wait: `add`, `remove`, `enable` and `disable` mark their table
+  in the `Entities` of its World (`init_World` gives each table its mark with `table_follow`), and
+  an entity destroyed or turned marks the tables that hold a row of it. A World made by hand has no
+  marks, and its settle looks at every table.
 - It adds the time of each function to `app.step_ns` (`engine.status` reports the most expensive
   ones) and opens its profile zone in the ring of the worker that runs it, which records only
   during a capture ([profiling](host.md#the-frame)).

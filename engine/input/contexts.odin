@@ -77,11 +77,11 @@ focused_contexts :: proc(state:^Seats,seats:core.Read(Seat)) -> ^Context_Stack {
 // The contexts as they were asked, without what refers to what no longer
 // exists, in the stack of each seat.
 @(step="fixed",stage="begin")
-input_contexts :: proc(es:^core.Entities,seats:^core.Table(Seat),state:^Input_Contexts,requests:^Context_Requests,problems:^core.Problems) {
-    for request in core.take(&requests.queue) {context_request_apply(es,seats,state,request,problems)}
+input_contexts :: proc(es:core.Ref(core.Entities),seats:^core.Table(Seat),state:^Input_Contexts,requests:^Context_Requests,problems:^core.Problems) {
+    for request in core.take(&requests.queue) {context_request_apply(es.ptr,seats,state,request,problems)}
     for &entry in state.entries {
         if !entry.active {continue}
-        if entry.seat!=core.NONE && !core.alive(es,entry.seat) || entry.owner!=core.NONE && !core.alive(es,entry.owner) {entry.active=false}
+        if entry.seat!=core.NONE && !core.alive(es.ptr,entry.seat) || entry.owner!=core.NONE && !core.alive(es.ptr,entry.owner) {entry.active=false}
     }
     for row in 0..<core.count(seats) {
         stack:=context_stack(state,core.entity_at(seats,row),seat_local(seats.values[row]))

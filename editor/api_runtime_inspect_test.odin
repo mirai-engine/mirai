@@ -223,7 +223,7 @@ inspect_filters_by_name_and_component_and_summarizes_without_values :: proc(t:^t
         {type=Api,info=type_info_of(Api),place=.Editor},
         {type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Filter_World,hierarchy)},
     }
-    info:=core.World_Info{entities=offset_of(Filter_World,entities),tables=tables[:],storages=storages[:],settle=filter_world_settle}
+    info:=core.World_Info{entities=offset_of(Filter_World,entities),tables=tables[:],storages=storages[:]}
     rig:=filter_entity(&world,1,"Rig")
     core.add(&world.cameras,filter_entity(&world,2,"Main Camera",rig),erender.CAMERA_DEFAULT)
     filter_entity(&world,3,"Crate 1");filter_entity(&world,4,"Crate 2");filter_entity(&world,5,"crate 3")
