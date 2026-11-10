@@ -145,3 +145,49 @@ the_frame_reflection_places_the_nested_views_after_what_the_renderer_mirrors :: 
     problem:=extensions_frame_read(&extensions,reflection(t,96))
     testing.expect(t,strings.contains(problem,"nested views"),problem)
 }
+
+// A plugin declares a constant it shares with its shaders once, in Odin: the
+// generation writes it into the include of the plugin, and says what a line
+// that cannot be followed lacks.
+@(test)
+a_plugin_shares_the_constants_of_its_odin_code :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"shaders")
+    if root=="" {return}
+    folder:=path_join(root,"gates/shaders",allocator=context.temp_allocator)
+    sources:=[]Source{{name="gates",folder=folder}}
+    include:=path_join(root,"out/include",allocator=context.temp_allocator)
+    fixture_write(t,path_join(root,"gates/runtime",allocator=context.temp_allocator),"gates.odin","package gates\n\nGATE_CAPACITY :: 8 // of a scene\nGATE_WORDS :u32: 0x10\nGATE_REACH :: 2.5\nGATE_CAPACITY_SQUARED :: GATE_CAPACITY*GATE_CAPACITY\ngate_count := 3\n")
+    fixture_write(t,folder,"gates.slang","//! mirai constant GATE_CAPACITY int ../runtime/gates.odin\n//! mirai constant GATE_WORDS uint ../runtime/gates.odin\n//! mirai constant GATE_REACH float ../runtime/gates.odin\n")
+    files:Sources
+    sources_init(&files,context.temp_allocator)
+    shared,problem:=owned_constants_write(&files,include,"",sources,context.temp_allocator)
+    testing.expect_value(t,problem,"")
+    written,_:=os.read_entire_file(path_join(include,"constants/plugins/gates.slang",allocator=context.temp_allocator),context.temp_allocator)
+    testing.expect_value(t,string(written),shared)
+    testing.expect(t,strings.contains(shared,"#define GATE_CAPACITY 8\n#define GATE_WORDS 16u\n#define GATE_REACH 2.5\n"),shared)
+    // The stamp of a generation follows the Odin source.
+    testing.expect(t,path_join(root,"gates/runtime/gates.odin",allocator=context.temp_allocator) in files.files)
+
+    for each in ([]struct{line,says:string}{
+        {"//! mirai constant GATE_CAPACITY int","<file.odin>"},
+        {"//! mirai constant GATE_CAPACITY word ../runtime/gates.odin","<int|uint|float>"},
+        {"//! mirai constant GATE_CAPACITY int ../runtime/missing.odin","could not read"},
+        {"//! mirai constant GATE_HEIGHT int ../runtime/gates.odin","does not declare"},
+        {"//! mirai constant gate_count int ../runtime/gates.odin","does not declare"},
+        {"//! mirai constant GATE_CAPACITY_SQUARED int ../runtime/gates.odin","declared with its number"},
+        {"//! mirai constant GATE_REACH uint ../runtime/gates.odin","declared with its number"},
+        {"//! mirai constant GATE_CAPACITY int ../runtime/gates.odin\n//! mirai constant GATE_CAPACITY uint ../runtime/gates.odin","already share"},
+    }) {
+        fixture_write(t,folder,"gates.slang",each.line)
+        again:Sources
+        sources_init(&again,context.temp_allocator)
+        _,problem=owned_constants_write(&again,include,"",sources,context.temp_allocator)
+        testing.expectf(t,strings.contains(problem,each.says),"%s: %s",each.line,problem)
+    }
+    // Without a line, no include: a source that named it would not compile.
+    fixture_write(t,folder,"gates.slang","// nothing shared\n")
+    none:Sources
+    sources_init(&none,context.temp_allocator)
+    shared,problem=owned_constants_write(&none,include,"",sources,context.temp_allocator)
+    testing.expect(t,shared=="" && problem=="" && !os.exists(path_join(include,"constants",allocator=context.temp_allocator)))
+}

@@ -3,6 +3,7 @@ package shaders
 import "core:encoding/json"
 import "core:fmt"
 import "core:os"
+import "core:strconv"
 import "core:strings"
 
 // What the shaders of a project and of its plugins ask of the stages of the
@@ -15,6 +16,8 @@ import "core:strings"
 //   //! mirai hook lights <count> <light>    it defines lights of its own; those of every source add up
 //   //! mirai hook probes <function>         it defines the probe hook; one source of a generation may
 //   //! mirai hook vertex <function>         it defines the vertex hook of batches; one source of a generation may
+//   //! mirai constant <NAME> <int|uint|float> <file.odin>
+//                                            it shares <NAME> with the Odin code next to it (owned_constants)
 //
 // A source with a frame line is included before the constants of the frame
 // are declared and can use no declaration of the engine. One with ray or light
@@ -75,6 +78,105 @@ extension_folders :: proc(files:^Sources,project:string,sources:[]Source,allocat
         append(&folders,Extension_Folder{strings.concatenate({"plugins/",source.name},allocator),folder})
     }
     return folders[:]
+}
+
+// The folder, under the include folder of a generation, of the includes with
+// the constants the shaders of the project and of each plugin share with their
+// own Odin code: constants/project.slang, constants/plugins/<name>.slang.
+OWNED_CONSTANTS_FOLDER :: "constants"
+
+// A line of an Odin source that declares a constant of its package, and what
+// it declares it as: `NAME :: 8` or `NAME :u32: 8`, without the comment after it.
+@(private)
+odin_declaration :: proc(line:string) -> (name,value:string,ok:bool) {
+    end:=0
+    for end<len(line) && is_word(line[end]) {end+=1}
+    after:=skip_spaces(line[end:])
+    if end==0 || !strings.has_prefix(after,":") {return}
+    typed:=strings.index_any(after[1:],":=")
+    if typed<0 || after[1+typed]!=':' {return}
+    value=after[typed+2:]
+    if comment:=strings.index(value,"//");comment>=0 {value=value[:comment]}
+    return line[:end],strings.trim_space(value),true
+}
+
+// What an Odin source declares the constant `name` as.
+@(private)
+odin_constant :: proc(text,name:string) -> (value:string,found:bool) {
+    rest:=text
+    for line in strings.split_lines_iterator(&rest) {
+        if declared,as,ok:=odin_declaration(line);ok && declared==name {return as,true}
+    }
+    return
+}
+
+// The include with the constants the sources of a folder share with the Odin
+// code next to them. A `//! mirai constant` line names the constant, the type
+// of its Slang literal and the Odin source that declares it, from the folder
+// of the line's own source: Odin holds the only declaration, and the shaders
+// of the folder include the generated file (<constants/plugins/<name>.slang>)
+// instead of writing the value. text is "" for a folder that shares none.
+// The Odin sources are read through `files`: the stamp of a generation
+// follows them. Both results are in the temporary allocator.
+@(private)
+owned_constants :: proc(files:^Sources,entry:Extension_Folder) -> (text,problem:string) {
+    USAGE :: "`//! mirai constant <NAME> <int|uint|float> <file.odin>`"
+    b:=strings.builder_make(context.temp_allocator)
+    names:=make([dynamic]string,context.temp_allocator)
+    for path in sources_below(files,entry.folder) {
+        if !strings.has_suffix(path,".slang") {continue}
+        rest:=string(sources_file(files,path).data)
+        for line in strings.split_lines_iterator(&rest) {
+            if !strings.has_prefix(line,"//!") {continue}
+            words:=strings.fields(line,context.temp_allocator)
+            if len(words)<3 || words[0]!="//!" || words[1]!="mirai" || words[2]!="constant" {continue}
+            if len(words)!=6 || !identifier_valid(words[3]) || !strings.has_suffix(words[5],".odin") {return "",fmt.tprintf("%s: %s",path,USAGE)}
+            name:=words[3]
+            for other in names {
+                if other==name {return "",fmt.tprintf("%s: the shaders of %s already share %s",path,entry.label,name)}
+            }
+            append(&names,name)
+            declared:=path_clean(path_join(path_parent(path),words[5],allocator=context.temp_allocator),context.temp_allocator)
+            odin:=sources_file(files,declared)
+            if !odin.found {return "",fmt.tprintf("%s: could not read %s, which should declare %s",path,declared,name)}
+            literal,found:=odin_constant(string(odin.data),name)
+            if !found {return "",fmt.tprintf("%s: %s does not declare the constant %s (`%s :: 8`)",path,declared,name,name)}
+            written:=false
+            switch words[4] {
+            case "int":
+                if value,ok:=strconv.parse_i64(literal);ok {fmt.sbprintf(&b,"#define %s %d\n",name,value);written=true}
+            case "uint":
+                if value,ok:=strconv.parse_u64(literal);ok {fmt.sbprintf(&b,"#define %s %du\n",name,value);written=true}
+            case "float":
+                if value,ok:=strconv.parse_f64(literal);ok {fmt.sbprintf(&b,"#define %s %s\n",name,number(f32(value)));written=true}
+            case:
+                return "",fmt.tprintf("%s: %s",path,USAGE)
+            }
+            if !written {return "",fmt.tprintf("%s: %s declares %s as `%s`, which is not the literal of a %s; a shared constant is declared with its number",path,declared,name,literal,words[4])}
+        }
+    }
+    if len(names)==0 {return "",""}
+    guard,_:=strings.replace_all(strings.to_upper(entry.label,context.temp_allocator),"/","_",context.temp_allocator)
+    return fmt.tprintf("// Generated by mirai shaders from the Odin code of %s. DO NOT EDIT.\n#ifndef MIRAI_CONSTANTS_%s_SLANG\n#define MIRAI_CONSTANTS_%s_SLANG\n%s#endif\n",entry.label,guard,guard,strings.to_string(b)),""
+}
+
+// Writes the include of the shared constants of each folder that has them
+// into the include folder of a generation or of a check. shared: the text of
+// them all, in the temporary allocator; problem, in `allocator`.
+@(private)
+owned_constants_write :: proc(files:^Sources,include,project:string,sources:[]Source,allocator:=context.allocator) -> (shared,problem:string) {
+    every:=strings.builder_make(context.temp_allocator)
+    if folder:=path_join(include,OWNED_CONSTANTS_FOLDER,allocator=context.temp_allocator);os.exists(folder) {os.remove_all(folder)}
+    for entry in extension_folders(files,project,sources,context.temp_allocator) {
+        text,invalid:=owned_constants(files,entry)
+        if invalid!="" {return "",strings.clone(invalid,allocator)}
+        if text=="" {continue}
+        target:=path_join(include,OWNED_CONSTANTS_FOLDER,strings.concatenate({entry.label,".slang"},context.temp_allocator),allocator=context.temp_allocator)
+        os.make_directory_all(path_parent(target))
+        if !write_file(target,transmute([]u8)text) {return "",fmt.aprintf("could not write %s",target,allocator=allocator)}
+        strings.write_string(&every,text)
+    }
+    return strings.to_string(every),""
 }
 
 // Reads what the sources of the folders ask for and writes the two includes
