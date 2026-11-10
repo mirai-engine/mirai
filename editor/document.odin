@@ -553,15 +553,28 @@ scene_load_file :: proc(s:^Session,file:string) -> (loaded:^asset.Scene,error:Do
     read=true
     tools_release(s)
     w:=edited_world(s)
-    if _,replaced:=scene.replace(w,s.app,document,&a.types);replaced!=.None {
+    stored:=make([dynamic]scene.Stored,context.temp_allocator)
+    if _,replaced:=scene.replace(w,s.app,document,&a.types,stored=&stored);replaced!=.None {
         log.errorf("%s: %s",file,scene.error_text(replaced))
         return loaded,.Rejected
     }
+    stored_log(s,stored[:])
     settling:=host.load_phase_begin(s.app,.Settle)
     core.problems_clear(host.app_world_storage(s.app,w.data,core.Problems))
     core.world_settle(w)
     host.load_phase_end(s.app,settling)
     return loaded,.None
+}
+
+// Says in the console what the scenes of a load store otherwise than the
+// world reads them: a warning when a save loses values or nothing reads them.
+stored_log :: proc(s:^Session,stored:[]scene.Stored) {
+    for entry in stored {
+        name:="a scene"
+        if file,found:=asset.registry_find(&s.app.assets.registry,entry.scene);found {name=file.path}
+        text,warning:=scene.stored_text(entry,name)
+        if warning {log.warn(text)} else {log.info(text)}
+    }
 }
 
 // After the World was replaced: a history of its own, nothing selected.

@@ -213,7 +213,7 @@ a_file_too_large_to_travel_is_told_to_every_editor :: proc(t:^testing.T) {
         st:=f.collab.state
         for &peer in st.peers {
             for message in peer.out {delete(message)}
-            delete(peer.out);delete(peer.file_bytes)
+            delete(peer.out);delete(peer.incoming)
         }
         for path in st.files_out {delete(path)}
         delete(st.files_out)
@@ -264,4 +264,53 @@ a_file_too_large_to_travel_is_told_to_every_editor :: proc(t:^testing.T) {
             testing.expectf(t,(!found || len(held.data)!=len(c.bytes)) && passed==(told?1:0),"case %d: %d messages passed on",at,passed)
         }
     }
+}
+
+// A file of COLLAB_FILE_BYTES crosses a session as one message, under loss:
+// the reliable channel streams it from the queue of its peer and the other
+// end takes it whole from its pieces.
+@(test)
+a_file_as_large_as_a_session_carries_crosses_as_one_message :: proc(t:^testing.T) {
+    network:wire.Sim_Network
+    if !testing.expect(t,wire.sim_network_init(&network,{seed=3,endpoints=2,packets=8192})) {return}
+    defer wire.sim_network_destroy(&network)
+    host,guest:=new(Collab_State),new(Collab_State)
+    defer free(host);defer free(guest)
+    host.role,guest.role=.Host,.Guest
+    for st,i in ([2]^Collab_State{host,guest}) {
+        desc:=wire.Host_Desc{mode=i==0?.Server:.Client,transport=wire.sim_endpoint_transport(&network,i),protocol_id=0x4d495241,seed=u64(7+i),channels=COLLAB_CHANNELS,send_rate=1<<30,packets_per_update=64}
+        testing.expect_value(t,wire.host_init(&st.host,desc),wire.Error.None)
+    }
+    defer {wire.host_destroy(&host.host);wire.host_destroy(&guest.host)}
+    defer {collab_peer_free(&host.peers[1]);collab_peer_free(&guest.peers[0])}
+    wire.sim_endpoint_conditions(&network,0,{loss=0.05})
+    wire.host_connect(&guest.host,wire.address_memory(0))
+    w:serial.Writer
+    collab_begin(&w,.File,COLLAB_FILE_BYTES+8)
+    for i in 0..<COLLAB_FILE_BYTES {serial.write_scalar(&w,u8(i*13+i>>16))}
+    file:=serial.writer_bytes(&w)
+    now:=0.0
+    queued,arrived:=false,false
+    for _ in 0..<40000 {
+        now+=1.0/60
+        wire.sim_network_advance(&network,now)
+        wire.host_update(&host.host,now);wire.host_update(&guest.host,now)
+        for command in wire.host_poll(&host.host) {
+            if command.kind==.Connected {host.peers[1]={used=true,connection=command.connection}}
+        }
+        if host.peers[1].used {
+            if !queued {collab_queue(&host.peers[1],file);queued=true}
+            collab_flush(host,&host.peers[1])
+        }
+        for command in wire.host_poll(&guest.host) {
+            if command.kind==.Disconnected {testing.expect(t,false,"the guest keeps the connection");return}
+            if command.kind!=.Message {continue}
+            message,whole:=collab_incoming(guest,&guest.peers[0],command)
+            if !whole {continue}
+            testing.expect(t,len(message)==len(file) && mem.compare(message,file)==0,"the file arrives whole and as it was sent")
+            arrived=true
+        }
+        if arrived {break}
+    }
+    testing.expect(t,arrived,"the file arrives")
 }
