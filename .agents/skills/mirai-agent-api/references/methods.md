@@ -227,10 +227,11 @@ with `animation.analyze` and `animation.capture` before touching keys.
 ## Cinematics
 
 The `cinematics.*` methods of the `cinematics` plugin build and play timelines without `scene.write`
-on their components; the keys and markers of a timeline are those of its clip, which the
-`animation.*` methods write. In Edit, `cinematics.control` moves the head of the Tracks tool on
-the timeline (`animation.tracks.show` for any clip): the document does not change and the image
-shows in the next frame (`capture`); in Play it queues the command in the running world. Contract:
+on their components; the keys and markers of a timeline (its shots and actions are markers on its
+cameras and actors) are those of its clip, which the `animation.*` methods write. In Edit,
+`cinematics.control` moves the head of the Tracks tool on the timeline (`animation.tracks.show` for
+any clip): the document does not change and the image shows in the next frame (`capture`); in Play
+it queues the command in the running world. Contract:
 [cinematics](../../mirai-gameplay/references/cinematics.md#editor-and-api).
 
 ## Ragdoll

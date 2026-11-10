@@ -46,7 +46,8 @@ the same attributes and no private paths. Declaration and parameter binding:
 - Slow or fast world time with the player at normal speed (bullet time: `core.Clock` and
   `core.Own_Pace`): [own pace](../mirai-core/references/core.md#core-storages).
 - Cinematics (plugin `cinematics`): [components](references/cinematics.md#components),
-  [playback](references/cinematics.md#playback), [viewers](references/cinematics.md#viewers),
+  [playback](references/cinematics.md#playback),
+  [shots and actions](references/cinematics.md#shots-and-actions),
   [events](references/cinematics.md#events), [networking](references/cinematics.md#networking) and
   [editor and API](references/cinematics.md#editor-and-api).
 - Attacks, combos, dashes, skills and hit reactions with costs, cooldowns, charges and damage

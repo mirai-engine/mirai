@@ -331,8 +331,8 @@ The `control` scene walks through the contract of [control](control.md) and of
 - `camera_mode` passes the body's camera through the presets, each time with a transition.
 - `aim` brings the prefab's `Person aim camera`, a camera with the `Aim` preset and a
   `Camera_Activation`; the person walks sideways looking toward it.
-- The intro is a `Cinematic`: a clip with two cameras as actors, a marker and two shots; its
-  viewer (without a seat: the focused player) blocks its input.
+- The intro is a `Cinematic`: a clip with two cameras as actors, a marker and two shots (a cut and
+  a blend, markers on the cameras); it blocks the input of the focused player.
 
 ## Networking
 

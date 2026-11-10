@@ -298,7 +298,7 @@ match_database :: proc(content:^Character_Content,library:^host.Content_Animatio
             event:=make([dynamic]u32,context.temp_allocator)
             if landing:=base.text_get(info.landing_marker[:]);landing!="" {
                 name:=base.name_hash(landing)
-                for marker,k in library.markers {if marker==name {append(&event,u32(k))}}
+                for marker,k in library.markers {if marker.name==name {append(&event,u32(k))}}
             }
             built.error=lib.match_database_build(&built.database,&library.lib,rig,clips,info.rate,weights,int(info.memory)*1024,event[:],allocator)
         }
