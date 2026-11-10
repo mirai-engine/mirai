@@ -1,4 +1,4 @@
-package mirror
+package portals
 
 import "core:fmt"
 import "core:math"
@@ -36,7 +36,7 @@ Gpu_Fixture :: struct {
 gpu_fixture_init :: proc(t: ^testing.T, f: ^Gpu_Fixture) -> bool {
 	root, _ := filepath.clean(ROOT, context.temp_allocator)
 	// mirai test generates them: cook is not shipped, and the game compiles its test files.
-	output := fmt.tprintf("%s/.mirai/tmp/mirror-test-shaders", root)
+	output := fmt.tprintf("%s/.mirai/tmp/portals-test-shaders", root)
 	loaded, problem := gpu.shader_assets_load(output)
 	if !testing.expect(t, problem == "", problem) {return false}
 	device := shared_device.take_or_skip(t)
@@ -48,7 +48,7 @@ gpu_fixture_init :: proc(t: ^testing.T, f: ^Gpu_Fixture) -> bool {
 	settings := gpu.DEFAULT_SETTINGS
 	settings.taa, settings.gi_enabled = false, false
 	if !testing.expect(t, gpu.renderer_init(&f.renderer, {device = device, width = WIDTH, height = HEIGHT, settings = settings, shaders = &loaded}), f.renderer.error) {return false}
-	folder := base.test_folder(t, "mirror-gpu")
+	folder := base.test_folder(t, "portals-gpu")
 	if folder == "" || !testing.expect(t, host.assets_init(&f.assets, {root = folder, renderer = &f.renderer})) {return false}
 	f.app = host.App{allocator = context.allocator, renderer = &f.renderer, assets = &f.assets, device = device}
 	cube := host.assets_shape(&f.assets, .Cube)
@@ -73,19 +73,18 @@ trs :: proc(position, scale: [3]f32) -> matrix[4, 4]f32 {
 	return m
 }
 
-// A face of a mirror as mirrors_render makes it, without its body.
+// The gate of a mirror as portals_render makes it, without its body.
 @(private = "file")
-face_of :: proc(shown: mm.Transform) -> Face {
-	to_local, _ := mm.transform_inverse_matrix({shown.position, shown.rotation, {shown.scale.x, shown.scale.y, 1}})
+mirror_gate :: proc(shown: mm.Transform) -> Gate {
 	normal := mm.quat_rotate(shown.rotation, [3]f32{0, 0, 1})
-	face := Face{to_local = mm.mat4_rows(to_local), place = shown.position}
-	face.plane = {normal.x, normal.y, normal.z, -(normal.x * shown.position.x + normal.y * shown.position.y + normal.z * shown.position.z)}
-	face.reflect = reflection(face.plane)
-	face.previous = face.reflect
-	for &corner, i in face.corners {
+	plane := [4]f32{normal.x, normal.y, normal.z, -(normal.x * shown.position.x + normal.y * shown.position.y + normal.z * shown.position.z)}
+	gate := Gate{entrance = {shown.position, shown.rotation, {shown.scale.x, shown.scale.y, 1}}, exit = shown, mirror = true, plane = plane, exit_plane = plane}
+	gate.through = gate_through(shown, shown, true)
+	gate.previous = gate.through
+	for &corner, i in gate.corners {
 		corner = shown.position + mm.quat_rotate(shown.rotation, [3]f32{(i & 1 != 0 ? 0.5 : -0.5) * shown.scale.x, (i & 2 != 0 ? 0.5 : -0.5) * shown.scale.y, 0})
 	}
-	return face
+	return gate
 }
 
 // The texel of a target at the middle of the view.
@@ -127,14 +126,15 @@ a_surface_seen_only_in_a_mirror_keeps_its_reflectance_and_layers :: proc(t: ^tes
 		{object_id = 2, mesh = f.cube, transform = trs({0, 1, 3}, {6, 6, 0.2}), material = gpu.Material_Handle(material), tint = {1, 1, 1}},
 	}, nil, {direction = {0.2, 1, 0.3}, color = {1, 1, 1}, illuminance = math.PI, enabled = true}, {sky = {0.3, 0.4, 0.6}})
 	camera := gpu.Camera{position = {0, 1, 0}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.1, far = 100, exposure = gpu.UNIT_EXPOSURE}
-	state := new(Mirrors_Gpu)
+	state := new(Portals_Gpu)
 	defer free(state)
-	state.faces[0] = face_of({position = {0, 1, -3}, rotation = 1, scale = {2, 2, 1}})
+	state.gates[0] = mirror_gate({position = {0, 1, -3}, rotation = 1, scale = {2, 2, 1}})
 	state.count = 1
+	state.constants.count = 1
 	for _ in 0 ..< 3 {
-		state.pipeline = gpu.stage_pipeline(r, {stage = .Mask, shader = "mirror_mask", name = "mirror masks"})
-		if !testing.expect(t, state.pipeline != 0, "the shaders of the plugin have the mask of mirrors") {return}
-		testing.expect(t, gpu.frame_pass(r, .Mask, mirrors_record, state))
+		state.pipeline = gpu.stage_pipeline(r, {stage = .Mask, shader = "portal_mask", name = "portal masks"})
+		if !testing.expect(t, state.pipeline != 0, "the shaders of the plugin have the mask of portals") {return}
+		testing.expect(t, gpu.frame_pass(r, .Mask, portals_record, state))
 		testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)
 	}
 	rhi.device_wait_idle(f.device)

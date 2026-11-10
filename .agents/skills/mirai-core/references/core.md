@@ -540,7 +540,8 @@ the schema and the editor and the API, the rows.
   (`host.app_records_failed`). The demo uses rows for its inventory, a dialogue and the waves of a
   horde ([demo](../../mirai-gameplay/references/demo.md#game-data)).
 - If the struct changes, the rows are read by field name, like every asset: a new field takes the
-  default of the type (`NAME_DEFAULT`) and a renamed one starts over.
+  default of the type (`NAME_DEFAULT`) and a renamed one keeps its values only with
+  `mirai:"was=<earlier name>"` ([migration](../../mirai-assets/references/serial.md#stdserial)).
 - `World_Info.records` describes each type; `Record_Info.ref` is the `typeid` of its `Record(T)`,
   because reflection does not know which `T` it is: `core.record_of_ref` gives the type of a field.
 

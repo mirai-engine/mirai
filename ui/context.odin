@@ -239,6 +239,7 @@ Frame :: struct {
     pointer_consumed:bool,  // the pointer is over the UI or held by it
     keyboard_consumed:bool, // typing or navigation belongs to the UI
     overflow:bool,          // something did not fit in a capacity this frame: see Stats
+    transitioning:bool,     // an element is on its way to where the layout put it: the next frame differs
 }
 
 context_init :: proc(ctx:^Context,desc:Context_Desc) -> bool {
@@ -539,7 +540,7 @@ clips_resume :: proc(ctx:^Context) {
 
 @(private)
 dropped_total :: proc "contextless" (s:^Stats) -> u32 {
-    return s.dropped_elements+s.dropped_widgets+s.dropped_paints+s.dropped_vertices+s.dropped_commands+s.dropped_text+s.dropped_scopes+s.dropped_panels+s.dropped_clips+s.layout_errors+s.dropped_shapes+s.dropped_layers+s.dropped_tree+s.dropped_tracks+s.dropped_nesting
+    return s.dropped_elements+s.dropped_widgets+s.dropped_paints+s.dropped_vertices+s.dropped_commands+s.dropped_text+s.dropped_scopes+s.dropped_panels+s.dropped_clips+s.layout_errors+s.dropped_shapes+s.dropped_layers+s.dropped_tree+s.dropped_tracks+s.dropped_nesting+s.dropped_transitions
 }
 
 // Begun inside a frame that was not ended, it starts over and that frame is lost.
@@ -621,10 +622,11 @@ frame_end :: proc(ctx:^Context) -> Frame {
 
     // Without an element in the frame there is no layout to end.
     laid:=ctx.layout_started
+    transitioning:=false
     ctx.widget_pieces=ctx.widget_count
     if laid {
         t:=&ctx.layout
-        layout_finish(t,&ctx.font)
+        transitioning=layout_finish(t,&ctx.font,ctx.stats.frame,ctx.input.dt)
         ctx.stats.layout_errors+=u32(t.duplicates)
         if t.overflow {ctx.stats.dropped_elements+=1}
         for &w in ctx.widgets[:ctx.widget_count] {
@@ -691,6 +693,7 @@ frame_end :: proc(ctx:^Context) -> Frame {
         pointer_consumed=ctx.over || ctx.active!=0,
         keyboard_consumed=ctx.edit.id!=0 || ctx.popup.count>0 || ctx.modal_open || (ctx.navigation && ctx.focus!=0),
         overflow=dropped_total(s)!=ctx.dropped_before,
+        transitioning=transitioning,
     }
 }
 

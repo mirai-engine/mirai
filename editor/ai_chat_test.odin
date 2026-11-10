@@ -191,11 +191,14 @@ ai_chat_builds_only_the_messages_in_sight_and_remeasures_a_growing_answer :: pro
     }
     painted:=frame(&s,task)
     testing.expect(t,!painted.overflow && ctx.stats.layout_errors==0)
+    // The first frame builds every message to measure it; the next only those in sight.
+    frame(&s,task)
     testing.expectf(t,ctx.stats.elements<60,"only the messages in sight become elements: %d",ctx.stats.elements)
     total:f32
     for h in task.transcript.heights[:task.transcript.count] {total+=h}
     testing.expect(t,m.scroll==total-200,"a new chat opens at its last message")
-    // The answer that streams grows its own line and only that one is measured again.
+    // The answer that streams grows its own line and only that one is measured again, by the
+    // frame that builds it.
     ai_transcript_add(&task.transcript,"And the lamp?",.Prompt)
     task.stream_open=true
     ai_transcript_add(&task.transcript,"Done.",.Output)
@@ -204,7 +207,8 @@ ai_chat_builds_only_the_messages_in_sight_and_remeasures_a_growing_answer :: pro
     before:=task.transcript.heights[last]
     second:=task.transcript.heights[last-1]
     ai_stream_add(&s,task," The table sits under the window and the lamp beside it, both inside the light of the sun.")
-    testing.expect(t,task.transcript.heights[last]==0 && task.transcript.heights[last-1]==second)
+    testing.expect(t,!task.transcript.built[last] && task.transcript.heights[last-1]==second)
+    frame(&s,task)
     frame(&s,task)
     testing.expect(t,task.transcript.heights[last]>before,"the grown answer takes more lines")
     total=0
@@ -558,15 +562,19 @@ ai_answers_are_one_markdown_message_with_the_entities_they_name_as_pills :: proc
     tr:=&task.transcript
     ai_transcript_add(tr,"Light the table",.Prompt)
     ai_transcript_add(tr,"I added a light over [Table](entity:3):\n\n```odin\nlight := 1\n```\n\n- [Point Light 1](entity:4)",.Output)
-    ui.frame_begin(&ctx,{size={800,600},pointer_absent=true})
-    ai_transcript_draw(&s,m,task,400,300)
-    painted:=ui.frame_end(&ctx)
+    painted:ui.Frame
+    for _ in 0..<2 {
+        ui.frame_begin(&ctx,{size={800,600},pointer_absent=true})
+        ai_transcript_draw(&s,m,task,400,300)
+        painted=ui.frame_end(&ctx)
+    }
     testing.expect(t,!painted.overflow && ctx.stats.layout_errors==0)
     shown:[AI_TRANSCRIPT_LINES]bool
     ai_transcript_shown(task,shown[:tr.count])
     message:=ai_message_text(tr,1,shown[:tr.count])
     testing.expect(t,strings.has_suffix(message,"](entity:4)") && strings.contains(message,"```odin\nlight := 1\n```"),"the lines of the answer join by their breaks")
-    testing.expect_value(t,tr.heights[1],AI_MESSAGE_GAP+ui.markdown_height(&ctx,message,300,ai_markdown_style(&s,ctx.theme.font_small)))
+    answer,_:=ui.widget_rect(&ctx,ui.id(&ctx,"line",1))
+    testing.expect(t,tr.heights[1]==answer.h && answer.h>AI_MESSAGE_GAP,"its height is that of what it builds")
     for index in 2..<tr.count {testing.expectf(t,tr.heights[index]==0,"line %d goes on the answer",index)}
 }
 

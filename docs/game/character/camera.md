@@ -57,6 +57,24 @@ cam.camera_mode(changes,camera,.Third_Person) // in a fixed step, changes:^cam.C
   cameras are its shots ([a cutscene](../animation/props.md#a-cutscene)).
 - `cam.camera_look(input,camera,yaw,pitch)` in `^cam.Camera_Input` turns an Orbit from code.
 
+## Shake the view by keys
+
+A swing or a landing moves the view the same way every time: a `cam.Shake_Sequence` is one track
+of the keys every animation uses (`std/anim` `Keyframe`, with their ease, interpolation and
+slopes), whose value is pitch, yaw, roll and the radians added to the vertical field of view.
+
+```odin
+nod:cam.Shake_Sequence
+nod.keys[0]={time=0,value={}}
+nod.keys[1]={time=0.08,value={0.06,0,0.02,0},ease=.Quad_Out}
+nod.keys[2]={time=0.3,value={},interpolation=.Cubic}
+nod.count,nod.length,nod.scale,nod.blend_out=3,0.3,1,0.1
+cam.camera_shake(shakes,camera,nod) // shakes:^cam.Camera_Shakes
+```
+
+`rate`, `blend_in` and `blend_out` play it faster and fade it; `single` with an `id` restarts the
+one that plays instead of adding another.
+
 ## Pitfalls that fail silently
 
 - `Camera.fov` is vertical, in radians (`70*mm.RAD_PER_DEG`).
