@@ -61,21 +61,15 @@ camera_drive :: proc(
         if turned,ok:=core.get(verticals,body);ok {move.look_yaw=mm.angle_wrap(move.look_yaw+turned.turn)}
         move.buttons=input.seat_buttons(seats,seat,bindings.ptr)
         wish:=input.seat_vector(move_actions,seat,.Move)
-        camera,_:=seat_camera(shown.ptr,seats,cameras,hierarchy,seat)
+        camera,_:=camera_selected(shown.ptr,seats,cameras,hierarchy,seat)
         follow,follows_it:=core.get(follows,camera)
-        yaw:f32
-        if camera==core.NONE {
-            move.look_pitch=0
-        } else if follows_it && (follow.mode==.Eyes || follow.mode==.Orbit && follow.aim) || !follows_it && core.is_under(parents,camera,body) {
+        if camera!=core.NONE && (follows_it && (follow.mode==.Eyes || follow.mode==.Orbit && follow.aim) || !follows_it && core.is_under(parents,camera,body)) {
             // Changing to it, the body starts looking where the camera it left looked.
-            if input.seat_local(source) && int(source.slot)<len(views.slots) {
-                if left:=views.slots[source.slot].camera;left!=core.NONE && left!=camera {
-                    if placed,ok:=core.get(worlds,left);ok {
-                        forward:=mm.quat_rotate(conj(vertical),mm.quat_forward(placed.rotation))
-                        move.look_yaw=mm.yaw_of_direction(forward)
-                        move.look_pitch=math.asin(clamp(forward.y,-1,1))+(follows_it && follow.mode==.Orbit?follow.pitch:0)
-                    }
-                }
+            left:=int(source.slot)<len(views.slots) && input.seat_local(source)?views.slots[source.slot].camera:camera
+            if placed,ok:=core.get(worlds,left);ok && left!=camera {
+                forward:=mm.quat_rotate(conj(vertical),mm.quat_forward(placed.rotation))
+                move.look_yaw=mm.yaw_of_direction(forward)
+                move.look_pitch=math.asin(clamp(forward.y,-1,1))+(follows_it && follow.mode==.Orbit?follow.pitch:0)
             }
             look:=input.seat_vector(look_actions,seat,.Look)*input.LOOK_SPEED
             low,high:f32=-PITCH_LIMIT,PITCH_LIMIT
@@ -88,13 +82,12 @@ camera_drive :: proc(
             move.look_pitch=clamp(move.look_pitch+look.y,low,high)
             move.move=mm.quat_rotate(vertical*mm.quat_axis_angle({0,1,0},move.look_yaw),[3]f32{wish.x,0,-wish.y})
             continue
-        } else {
-            move.look_pitch=0
-            if placed,ok:=core.get(worlds,camera);ok {yaw=yaw_in(vertical,placed.rotation)}
         }
+        // Along where the camera looks, or -Z of the world without one; it faces where it goes.
+        yaw:f32
+        if placed,ok:=core.get(worlds,camera);ok {yaw=yaw_in(vertical,placed.rotation)}
         toward:=mm.quat_rotate(mm.quat_axis_angle({0,1,0},yaw),[3]f32{wish.x,0,-wish.y})
-        move.move={}
-        // It faces where it goes.
+        move.look_pitch,move.move=0,{}
         if amount:=linalg.length(toward);amount>0.001 {
             move.look_yaw=mm.yaw_of_direction(toward)
             move.move=mm.quat_rotate(vertical,toward/max(amount,1))
@@ -102,13 +95,10 @@ camera_drive :: proc(
     }
 }
 
-// The yaw of a rotation about the up of a vertical frame: of where it looks,
-// or, looking straight down or up, of its up.
+// The yaw of where a rotation looks about the up of a vertical frame.
 @(private)
 yaw_in :: proc "contextless" (vertical,rotation:mm.Quat) -> f32 {
-    forward:=mm.quat_rotate(conj(vertical),mm.quat_forward(rotation))
-    if linalg.length(forward.xz)<1e-3 {forward=mm.quat_rotate(conj(vertical),mm.quat_rotate(rotation,{0,1,0}))*(forward.y>0?-1:1)}
-    return mm.yaw_of_direction(forward)
+    return mm.yaw_of_direction(mm.quat_rotate(conj(vertical),mm.quat_forward(rotation)))
 }
 
 // The free camera of player 1: made where the Play of the editor put the
@@ -124,9 +114,7 @@ camera_free :: proc(
     body:=input.body_of(seats,seat)
     if body!=core.NONE && body!=free.entity {free.bodied=true}
     if free.entity!=core.NONE {
-        if !core.alive(es.entities,free.entity) {
-            free.entity=core.NONE
-        } else if body!=free.entity && body!=core.NONE || seat==core.NONE {
+        if body!=free.entity && body!=core.NONE || seat==core.NONE || !core.alive(es.entities,free.entity) {
             core.destroy_tree(es.entities,hierarchy,free.entity)
             free.entity=core.NONE
         } else if row:=core.edit(transforms,free.entity);row!=nil && body==free.entity {

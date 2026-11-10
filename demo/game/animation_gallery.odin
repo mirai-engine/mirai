@@ -144,7 +144,7 @@ gallery_move_inputs :: proc(gallery:core.Read(Animation_Gallery),inputs:^core.Ta
                         // Half a turn in a bit less than the time it has, so that it faces its goal before it strides.
                         desired:=f32(math.PI) if warp.direction>0 else 0
                         input.move,input.buttons={},{}
-                        input.look_yaw=mm.angle_wrap(mm.angle_approach(yaw_of(placed.rotation),desired,1.25*math.PI/GALLERY_WARP_TURN*time.dt))
+                        input.look_yaw=mm.angle_wrap(mm.angle_approach(mm.yaw_of_direction(mm.quat_forward(placed.rotation)),desired,1.25*math.PI/GALLERY_WARP_TURN*time.dt))
                     }
                 }
             }

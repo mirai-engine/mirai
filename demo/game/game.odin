@@ -134,12 +134,6 @@ SWATCH_DEFAULT :: Swatch{reach=3}
 PULSE_DEFAULT :: Pulse{speed=2,low=0.3,high=1}
 PROJECTILE_DEFAULT :: Projectile{speed=THROW_SPEED,seconds_left=CUBE_SECONDS}
 
-// The look yaw of an upright character body: where its front, -Z, heads.
-yaw_of :: proc "contextless" (rotation:mm.Quat) -> f32 {
-    ahead:=mm.quat_forward(rotation)
-    return mm.yaw_of_direction(ahead)
-}
-
 // The actions the game reads, those of interface_demo.odin too; move and look are of the engine
 // (inp.Move_Action, inp.Look_Action) and jump of the locomotion (locomotion.Walk_Action).
 @(actions)

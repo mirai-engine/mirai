@@ -61,7 +61,7 @@ camera_blend :: proc(
             continue
         }
         seat:=seat_state.local_count>0?input.local_seat(seats,slot):core.NONE
-        camera,through:=seat_camera(shown.ptr,seats,cameras,hierarchy,seat)
+        camera,through:=camera_selected(shown.ptr,seats,cameras,hierarchy,seat)
         body:=input.body_of(seats,seat)
         view_update(v,camera,through,body,cameras,follows,worlds,frame)
         // The own body of the view is the body of its player, or else the one its

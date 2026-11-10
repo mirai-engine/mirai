@@ -167,13 +167,6 @@ camera_override_remove :: proc(r:^Camera_Requests,owner:core.Entity) {
     core.push(&r.queue,Camera_Request{override={owner=owner}})
 }
 
-// The camera a seat sees through: its latest override, and otherwise the
-// camera of its body. none without a valid one.
-camera_selected :: proc(cameras_state:^Cameras,seats:core.Read(input.Seat),cameras:core.Read(render.Camera),hierarchy:core.Ref(core.Hierarchy),seat:core.Entity) -> core.Entity {
-    camera,_:=seat_camera(cameras_state,seats,cameras,hierarchy,seat)
-    return camera
-}
-
 // What the players see through, for a step to receive in one parameter.
 @(params)
 Sight :: struct {
@@ -188,14 +181,14 @@ Sight :: struct {
 // sees through, where it looks, whatever the mode of that camera. False
 // without a camera.
 aim :: proc(sight:Sight,body:core.Entity) -> (origin,direction:[3]f32,ok:bool) {
-    camera,_:=seat_camera(sight.shown.ptr,sight.seats,sight.cameras,sight.hierarchy,input.seat_of(sight.seats,body))
+    camera,_:=camera_selected(sight.shown.ptr,sight.seats,sight.cameras,sight.hierarchy,input.seat_of(sight.seats,body))
     placed:=core.get(sight.worlds,camera) or_return
     return placed.position,mm.quat_forward(placed.rotation),true
 }
 
-// The camera a seat sees through and, when an override chose it, the blend it asked for.
-@(private)
-seat_camera :: proc(cameras_state:^Cameras,seats:core.Read(input.Seat),cameras:core.Read(render.Camera),hierarchy:core.Ref(core.Hierarchy),seat:core.Entity) -> (core.Entity,Camera_Blend) {
+// The camera a seat sees through: its latest override, and otherwise the
+// camera of its body; none without a valid one. With the blend an override asked for.
+camera_selected :: proc(cameras_state:^Cameras,seats:core.Read(input.Seat),cameras:core.Read(render.Camera),hierarchy:core.Ref(core.Hierarchy),seat:core.Entity) -> (core.Entity,Camera_Blend) {
     if chosen:=override_chosen(cameras_state,cameras,seat);chosen!=nil {return chosen.camera,chosen.blend}
     return body_camera(hierarchy,cameras,input.body_of(seats,seat)),{}
 }
@@ -273,9 +266,8 @@ camera_select :: proc(
             core.report(problems,camera,"camera.activation","the Camera_Activation of entity 0x%016x has no action or a blend below 0 seconds; give it the action that brings this camera, as aim",u64(camera))
             continue
         }
-        target:=input.body_of(seats,player)
-        if follow,ok:=core.get(follows,camera);ok {target=follow_target(camera,follow.target,parents,seats,player)}
-        seat:=input.seat_of(seats,target)
+        follow,_:=core.get(follows,camera)
+        seat:=input.seat_of(seats,follow_target(camera,follow.target,parents,seats,player))
         if seat!=core.NONE && camera_valid(cameras,camera) && input.seat_action(seats,seat,activation.action).down {
             if !override_set(cameras_state,{owner=camera,seat=seat,camera=camera,blend=activation.blend}) {
                 core.report(problems,camera,"camera.overrides_full","the Camera_Activation of entity 0x%016x was not seen: %d camera overrides are active, as many as fit",u64(camera),OVERRIDE_CAPACITY)

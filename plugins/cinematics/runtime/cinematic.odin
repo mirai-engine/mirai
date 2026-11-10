@@ -276,7 +276,8 @@ viewer_update :: proc(p:^Cine,es:^core.Entities,e:core.Entity,viewer:Cinematic_V
         if binding!=nil {view_release(p,e)}
         return
     }
-    entry:=binding!=nil?binding.entry_camera:camera.camera_selected(p.shown.ptr,p.seats,p.cameras,hierarchy,seat)
+    entry:=core.NONE
+    if binding!=nil {entry=binding.entry_camera} else {entry,_=camera.camera_selected(p.shown.ptr,p.seats,p.cameras,hierarchy,seat)}
     from_camera:=previous.camera!=core.NONE?previous.camera:entry
     if from_camera!=core.NONE && from_camera!=e {
         if from,found:=cinematic_camera_sample(p.cameras,locals,p.parents,from_camera);found {sample=cinematic_shot_blend(current,from,sample,c.time)}

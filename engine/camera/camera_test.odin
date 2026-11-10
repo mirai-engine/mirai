@@ -39,6 +39,9 @@ test_place :: proc(f:^Camera_Test,e:core.Entity,position:[3]f32,rotation:=mm.Qua
 }
 
 @(private="file")
+first_of :: proc(camera:core.Entity,_:Camera_Blend) -> core.Entity {return camera}
+
+@(private="file")
 close :: proc(a,b:f32,epsilon:f32=1e-3) -> bool {return abs(a-b)<=epsilon}
 
 @(private="file")
@@ -305,18 +308,18 @@ a_camera_with_an_activation_is_seen_while_its_player_holds_the_action :: proc(t:
     }
 
     select(f)
-    testing.expect(t,camera_selected(&f.selected,core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),seat)==base,"without the action, the camera of the body")
+    testing.expect(t,first_of(camera_selected(&f.selected,core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),seat))==base,"without the action, the camera of the body")
     testing.expect(t,has_problem(&f.problems,"camera.activation"),"an activation without an action says so")
 
     held:=core.edit(&f.seats,seat)
     held.actions.states[AIM].down=true
     select(f)
-    chosen,blend:=seat_camera(&f.selected,core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),seat)
+    chosen,blend:=camera_selected(&f.selected,core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),seat)
     testing.expect(t,chosen==aim && blend.seconds==0.25,"while it is held, the camera it brings, with its blend")
 
     held.actions.states[AIM].down=false
     select(f)
-    testing.expect(t,camera_selected(&f.selected,core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),seat)==base,"and back once it is let go")
+    testing.expect(t,first_of(camera_selected(&f.selected,core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),seat))==base,"and back once it is let go")
 }
 
 // On the side of a planet, where the up of a character is +X, the eyes sit
