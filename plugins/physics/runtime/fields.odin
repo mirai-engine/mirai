@@ -9,10 +9,10 @@ import mm "mirai:std/math"
 // a shaft, a lift, a magnet, a whirl. Each tick it asks apply_area for its
 // volume where the entity is; core.disable turns it off without losing its
 // values. Without a Volume it pushes in the whole world.
-@(component,description="Pushes the bodies in the Volume of its entity every tick: away from its center, or from the plane of a Plane, or along a direction of the entity. The force rises over the blend of the Volume by its falloff.")
+@(component,description="Pushes the bodies in the Volume of its entity every tick: away from its center, along the up of a Plane, or along a direction of the entity. The force rises over the blend of the Volume by its falloff.")
 Force_Field :: struct {
     force:f32 `mirai:"unit=N"`,   // negative pulls in
-    along:[3]f32,                 // in the frame of the entity; zero: away from its center
+    along:[3]f32,                 // in the frame of the entity; zero: away from its center, or along the up of a Plane
     falloff:Radial_Falloff,       // how the force rises over the blend of the Volume
     falloff_range:Weight_Range,   // weights of the force at the border and inside the blend; zero is 0 to 1
     noise:Field_Noise,            // scales the force; zero scale is none

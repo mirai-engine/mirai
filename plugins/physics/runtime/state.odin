@@ -237,8 +237,8 @@ Weight_Range :: sim.Weight_Range
 Field_Noise :: sim.Field_Noise
 // A force (N) on every body whose center of mass is in a volume placed at pose, in this tick: a blast, a
 // gust, a magnet. With impulse, an impulse (N s), or a change of velocity (m/s) with velocity_change. It
-// pushes away from the center of the volume, or from the plane of a Plane (a negative strength pulls in);
-// with `along`, that way of the world instead. The body gets the strength by the weight of the volume
+// pushes away from the center of the volume, or along the up of a Plane (a negative strength pulls the
+// other way); with `along`, that way of the world instead. The body gets the strength by the weight of the volume
 // where it is, 1 inside and rising over its blend from the border, through the falloff curve; range and
 // noise scale it. A pose without rotation or scale is one that neither turns nor scales.
 apply_area :: proc(requests:^Body_Requests,area:volume.Volume,pose:mm.Transform,strength:f32,along:[3]f32={},impulse:=false,velocity_change:=false,falloff:Radial_Falloff=.Linear,filter:=QUERY_FILTER_DEFAULT,range:Weight_Range={},noise:Field_Noise={}) {

@@ -39,8 +39,8 @@ $P scene.add '{"name":"Sea","components":{"Volume":{"shape":"Plane"},"Fluid":{"d
   Without a `Volume` it is on from the start.
 - `nav.Nav_Bounds`, `nav.Nav_Area`, `nav.Nav_Obstacle`: where navmeshes are made, an area with a
   cost, a blocker ([ai](../ai.md)). A `Box`; without one, the problem `navigation.volume`.
-- `foliage.Foliage_Bender`: leans the grass around a body. A `Sphere`; without one it bends
-  nothing.
+- `foliage.Foliage_Bender`: leans the grass around a body. A `Sphere`; without one, the problem
+  `foliage.bender_volume`.
 
 Several of them on one entity share its `Volume`: a `Force_Field` and a `Strain_Field` make a
 field that pushes and breaks.

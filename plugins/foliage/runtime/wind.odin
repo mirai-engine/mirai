@@ -153,12 +153,12 @@ wind_set_free :: proc(renderer:^render.Renderer,set:^Wind_Set) {
 // sway with the wind at the first streaming source. The benders nearest that
 // source go to the hook too.
 @(step="render",loops="game editor")
-foliage_wind :: proc(resident:^Foliage_Resident,winds:core.Read(volume.Wind),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),sources:core.Ref(scene.Streaming_Sources),benders:core.Read(Foliage_Bender),frame:core.Frame_Time,renderer:^render.Renderer) {
+foliage_wind :: proc(resident:^Foliage_Resident,winds:core.Read(volume.Wind),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),sources:core.Ref(scene.Streaming_Sources),benders:core.Read(Foliage_Bender),frame:core.Frame_Time,renderer:^render.Renderer,problems:^core.Problems) {
     if resident==nil || len(resident.owners)==0 {return}
     resident.wind=volume.gpu_wind(winds,volumes,worlds)
     at:=[3]f32{}
     if sources.ptr!=nil && sources.ptr.count>0 {at=sources.ptr.items[0].position} else if len(resident.owners)>0 {at=resident.owners[0].transform.position}
-    benders_gather(resident,benders,volumes,worlds,frame,at)
+    benders_gather(resident,benders,volumes,worlds,frame,at,problems)
     render.frame_pass(renderer,.Mask,foliage_wind_record,resident)
     if len(resident.winds)>0 {
         value:=volume.wind_at(winds,volumes,worlds,at)
@@ -180,7 +180,7 @@ foliage_wind :: proc(resident:^Foliage_Resident,winds:core.Read(volume.Wind),vol
 
 // The BENDERS benders nearest `at` where they are drawn this frame, each
 // with where it was the frame before (the motion vectors of what it bends).
-benders_gather :: proc(resident:^Foliage_Resident,benders:core.Read(Foliage_Bender),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),frame:core.Frame_Time,at:[3]f32) {
+benders_gather :: proc(resident:^Foliage_Resident,benders:core.Read(Foliage_Bender),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),frame:core.Frame_Time,at:[3]f32,problems:^core.Problems) {
     before:=resident.benders
     count:=resident.bender_count
     resident.bender_count=0
@@ -189,7 +189,11 @@ benders_gather :: proc(resident:^Foliage_Resident,benders:core.Read(Foliage_Bend
         bender:=core.at(benders,row)
         world,placed:=core.get(worlds,e)
         reach,shaped:=core.get(volumes,e)
-        if !placed || !shaped || reach.shape!=.Sphere || !(bender.lean>0) {continue}
+        if !shaped || reach.shape!=.Sphere {
+            core.report(problems,e,"foliage.bender_volume","its Foliage_Bender bends nothing: it reaches as far as the Volume of its entity, of shape Sphere; add one (volume.sphere)")
+            continue
+        }
+        if !placed || !(bender.lean>0) {continue}
         scale:=linalg.abs(world.scale)
         radius:=reach.extents.x*max(scale.x,scale.y,scale.z)
         if !(radius>0) {continue}

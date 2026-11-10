@@ -47,8 +47,10 @@ the_benders_nearest_the_view_bend_the_foliage :: proc(t: ^testing.T) {
 	core.add(&w.worlds, small, core.World_Transform{half, half})
 	core.test_world_settle(&w)
 	resident: Foliage_Resident
-	benders_gather(&resident, core.read(&w.benders), core.read(&w.volumes), core.read(&w.worlds), core.FRAME_TIME_DEFAULT, {})
+	problems: core.Problems
+	benders_gather(&resident, core.read(&w.benders), core.read(&w.volumes), core.read(&w.worlds), core.FRAME_TIME_DEFAULT, {}, &problems)
 	if !testing.expect_value(t, resident.bender_count, BENDERS) {return}
+	testing.expect_value(t, problems.count, 2)
 	for i in 1 ..< resident.bender_count {
 		testing.expect(t, resident.benders[i - 1].position.x <= resident.benders[i].position.x, "nearest first")
 	}
@@ -59,6 +61,6 @@ the_benders_nearest_the_view_bend_the_foliage :: proc(t: ^testing.T) {
 	moved := mm.TRANSFORM_IDENTITY
 	moved.position = {0.5, 0, 0}
 	core.free(&w.worlds, placed[len(placed) - 1])^ = core.World_Transform{moved, moved}
-	benders_gather(&resident, core.read(&w.benders), core.read(&w.volumes), core.read(&w.worlds), core.FRAME_TIME_DEFAULT, {})
+	benders_gather(&resident, core.read(&w.benders), core.read(&w.volumes), core.read(&w.worlds), core.FRAME_TIME_DEFAULT, {}, &problems)
 	testing.expect(t, resident.benders[1].position.x == 0.5 && resident.benders[1].previous.x == 1, "it was where the frame before had it")
 }
