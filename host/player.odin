@@ -83,7 +83,7 @@ PLAYER_USAGE_TEXT :: `Usage: [--project <folder>] [--scene <path>] [--headless] 
   --no-gpu      no window or renderer: only simulates
   --dedicated   a server nobody plays on: no window, renderer, audio or local players, at the pace of its
                 ticks and without the phases ui and render; the plugin of the network serves the game
-  --frames      exits after n frames, saying the last graphics preset named and the mean frame time; no window
+  --frames      exits after n frames, saying the mean frame time and the player options that applied; no window
   --capture     writes the last frame as a PNG on exit; no window
   --validation  enables graphics API validation; exits with code 6 if there are errors
   --input       input script: lines "<first frame> <last frame> <what>...", with keys (W, Space),
@@ -271,27 +271,19 @@ player_capture_problem :: proc(app:^App,path:string) -> string {
     return "the renderer had no frame to read, or the PNG could not be encoded"
 }
 
-// What a run with --frames says at its exit: the quality it drew at, with the
-// file of the player's options when one applied, so that a run those options
-// changed shows at once, and how long a frame took.
+// What a run with --frames says at its exit: how long a frame took and the
+// size it drew at, with the file of the player's options when one applied, so
+// that a run those options changed shows at once.
 @(private)
 player_run_summary :: proc(app:^App,frames:int,seconds:f64) -> string {
-    quality:="unknown"
     size:[2]f32
     if app.world!=nil {
-        ref:=app_world_ref(app,app.world)
-        if view:=core.world_storage_of(ref,core.View);view!=nil {size=view.size}
-        for s in app.info.storages {
-            if s.name!="Graphics_Settings" || s.place!=ref.place {continue}
-            if field:=reflect.struct_field_by_name(s.type,"quality");field.type!=nil {
-                quality=fmt.tprint(any{rawptr(uintptr(app.world)+s.offset+field.offset),field.type.id})
-            }
-        }
+        if view:=core.world_storage_of(app_world_ref(app,app.world),core.View);view!=nil {size=view.size}
     }
     file:=project.settings_file(.Player,app.root,app.engine_root,context.temp_allocator,player=app.options)
     applied:=file!="" && os.exists(file)?fmt.tprintf(", player options %s",file):", no player options"
     mean:=frames>0?1000*seconds/f64(frames):0
-    return fmt.tprintf("mirai: %d frames, graphics preset %s, mean frame time %.2f ms, drawn at %vx%v%s",frames,quality,mean,int(size.x),int(size.y),applied)
+    return fmt.tprintf("mirai: %d frames, mean frame time %.2f ms, drawn at %vx%v%s",frames,mean,int(size.x),int(size.y),applied)
 }
 
 // The icon of the window: a PNG, read as 8 bits per channel with alpha.

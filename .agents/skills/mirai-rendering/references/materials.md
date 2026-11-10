@@ -163,9 +163,10 @@ previews studio use it.
   (`assets_texture_image`). No pass samples cubes or arrays yet.
 - **Pool.** `texture_pool_megabytes` (in game and editor, a part of `Device_Info.memory` or
   `Graphics_Settings.texture_memory`) is the GPU memory for textures, which the
-  [residency by distance](#residency-by-distance) distributes. A texture that does not fit whole
-  when added enters without its largest levels; the one that does not follow the distance is
-  counted this way in `textures_reduced`.
+  [residency by distance](#residency-by-distance) distributes, less what the targets of the
+  [texture views](views.md#texture-views) hold (`Stats.view_target_bytes`). A texture that does
+  not fit whole when added enters without its largest levels; the one that does not follow the
+  distance is counted this way in `textures_reduced`.
 - Changing the maximum size or the pool does not touch what was already uploaded:
   `host.assets_textures_reload` loads again, from the smallest to the largest, the textures that
   the change reaches: those whose larger side exceeds the smaller of the two sizes, all if the pool
