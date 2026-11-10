@@ -29,8 +29,9 @@ World_State :: struct {
     cut_count:i32,
     twins:[TWIN_CAPACITY]Twin,
     cuts:[CUT_CAPACITY]Cut,
+    awake_head,moved_head:i32, // the lists of the awake bodies and of the moved shapes
 }
-#assert(size_of(World_State)==2672)
+#assert(size_of(World_State)==2680)
 
 @(private) Hull_Slot :: struct {hull:Hull,generation:u32,refs:i32,revision:u32} // revision: rebuilds under its handle
 @(private) Mesh_Slot :: struct {mesh:Mesh,generation:u32,refs:i32}
@@ -142,7 +143,7 @@ world_init :: proc(w:^World,desc:World_Desc) -> bool {
     w.allocator=d.allocator
     w.gravity=d.gravity
     w.body_free,w.shape_free,w.contact_free,w.joint_free,w.block_free,w.character_free=-1,-1,-1,-1,-1,-1
-    w.island_free,w.fluid_free=-1,-1
+    w.island_free,w.fluid_free,w.awake_head,w.moved_head=-1,-1,-1,-1
     w.breakable_free,w.piece_free,w.bond_free=-1,-1,-1
     a:=d.allocator
     ok:=true
