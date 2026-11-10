@@ -180,7 +180,7 @@ tree_broadcast :: proc(types:^asset.Types,index:serial.Type_Index,text:string) -
 TREE_NODE_REFUSED :: [?]string{"parent","text_id","anims","component"}
 TREE_NODE_WHY :: [?]string{
     "what a node holds goes in its children",
-    "the translations of a node are its own: ui.text.set sets them",
+    "the id of its text goes with its translations: a document gives both, and ui.text.set sets one text",
     "give what it plays with the key events",
     "a use names its widget by the name of its file in kind",
 }

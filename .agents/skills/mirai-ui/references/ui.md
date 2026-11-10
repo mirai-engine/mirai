@@ -467,7 +467,8 @@ that `tree_node` takes: the loaded tree is, byte for byte, the one the same call
   active. `Focused` is the navigation focus with its ring, not the one a click gives: it does not
   look like hover.
 - `style_resolve` applies the states in order; within the state, a named rule wins over the
-  wildcard, and then the last row.
+  wildcard, and then the last row. A tree keeps its rules by style and in that order
+  (`tree_style_rules`): a node looks only at those of its style.
 - With `Node_Style.transition`, a node's colors, its shadow and what `move` and `scale` give go from
   the style it showed to the new one when its state or variant changes; a change under way starts
   from where it was and a transparent end only fades.
@@ -483,6 +484,8 @@ that `tree_node` takes: the loaded tree is, byte for byte, the one the same call
   `Tree_Token` and `Tree_Param`; the frame reads the flat tables, and each name resolves when the
   file is written or links another (`tree_link`), so changing a token or a style reaches what names
   it without touching the frame. Game documentation: `docs/game/ui/styles.md`.
+- A value a style or a state sets is a `Style_Key` with its row in `STYLE_KEYS`: copying,
+  comparing, tokens and the document go by that row, so a new key is a new row.
 - A node's variant is its own, that of its `bind_variant` or the one it inherits from its box; that
   of the root is given by whoever builds (`Tree_Build_Desc.variant`).
 

@@ -7,6 +7,7 @@ import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "mirai:asset"
+import "mirai:engine/gui"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -20,10 +21,10 @@ import "mirai:ui"
 // name stays in the file (ui.tree_settle resolves them), so ui.inspect gives
 // them back and ui.write of what it gave changes nothing. ui.write declares
 // what the document names: the nodes of the file, or of one node, become
-// those of the document, matched by name; what the file keeps of a node (its
-// translations, the overrides of an instance) stays; the styles and
-// animations it names become those, null takes one away, and those it does
-// not name stay.
+// those of the document, matched by name; a node says its text in the other
+// languages of the game in translations, and what the file keeps of an
+// instance (its overrides) stays; the styles and animations it names become
+// those, null takes one away, and those it does not name stay.
 
 // A .ui a document takes names from.
 Doc_Lib :: struct {
@@ -34,7 +35,7 @@ Doc_Lib :: struct {
 
 // What a node gives by keys of its own, or keeps: none of it goes flat.
 DOCUMENT_NODE_SKIP :: [?]string{"kind","parent","name","text","text_id","style","image","anims","component","component_fields","layout","layout_own"}
-DOCUMENT_NODE_KEYS :: [?]string{"name","kind","text","style","look","image","events","children","slot"}
+DOCUMENT_NODE_KEYS :: [?]string{"name","kind","text","translations","text_id","style","look","image","events","children","slot"}
 DOCUMENT_EVENTS :: [?]string{"shown","hidden","hovered","unhovered","pressed","released","focused","unfocused","selected","unselected","clicked"}
 
 DOC_STATES :: [?]struct{key:string,states:ui.Style_States}{{"hover",{.Hovered}},{"focus",{.Focused}},{"pressed",{.Pressed}},{"disabled",{.Disabled}},{"selected",{.Selected}},{"over",{.Over}}}
@@ -762,6 +763,17 @@ document_node_body_write :: proc(w:^Doc_Write,row:int) {
         serial.json_text(out,"kind",fmt.tprintf("%v",n.kind),first)
     }
     if text:=records_text(r,n.text);text!="" {serial.json_text(out,"text",text)}
+    if .Localized in n.flags {
+        serial.json_key(out,"translations");serial.write_u8(out,'{')
+        once:=true
+        for &t in r.translations {
+            if t.id!=n.text_id || t.id==0 {continue}
+            serial.json_text(out,serial.text_field(t.language[:]),records_text(r,t.text),once)
+            once=false
+        }
+        serial.write_u8(out,'}')
+        if n.text_id!=0 {serial.json_text(out,"text_id",fmt.tprintf("%016x",n.text_id))}
+    }
     style:=int(n.style)
     if style==0 {
         // None, where a node without a style would take the one of its kind.
@@ -964,6 +976,7 @@ Document_Node :: struct {
     parent:int,   // index of the node that holds it; -1: one of the top
     row:int,      // of the node of the file it is matched to; -1: a new one
     current:string, // its name in the file while it is placed
+    localized:bool, // the node of the file it is matched to was
 }
 
 // Prefixes the error of the reading with where it happened; false.
@@ -1703,10 +1716,134 @@ document_nodes_apply :: proc(args:^Tree_Args,r:^Records,root:int,text:string) ->
         row:=root if d.row==root && root>=0 else document_row_of(r,d.current)
         if !document_node_apply(args,r,row,&d) {ok=document_failed(reading,d.path);return}
     }
+    if !document_texts_apply(args,r,decls[:],root) {return made,removed,false}
     for &d in decls {
         if d.name=="" && !(d.row==root && root>=0) {r.nodes[document_row_of(r,d.current)].name={}}
     }
     return made,removed,true
+}
+
+// The translations a node declares, and where they go in the file.
+Doc_Texts :: struct {
+    row:int,     // of its node
+    path:string, // of its node in the document
+    old,id:u64,  // the id its text had in the file, and the one it has now
+    codes,texts:[dynamic]string,
+    used:[]bool, // a row of the file took that one
+}
+
+// The id of a localized text as a document says it: 16 hexadecimal digits.
+doc_text_id :: proc(text:string) -> (id:u64,ok:bool) {
+    if len(text)!=16 {return 0,false}
+    for c in transmute([]u8)text {
+        switch c {
+        case '0'..='9': id=id<<4|u64(c-'0')
+        case 'a'..='f': id=id<<4|u64(c-'a'+10)
+        case 'A'..='F': id=id<<4|u64(c-'A'+10)
+        case: return 0,false
+        }
+    }
+    return id,id!=0
+}
+
+// The text of a node in each other language, by code as a .strings names
+// them: a language left out, or with an empty text, has none.
+doc_translations_read :: proc(reading:^Reading,text:string,texts:^Doc_Texts) -> bool {
+    codes,values:=tree_object(reading,text,"translations") or_return
+    languages:=gui.LANGUAGE_CODES
+    known:=slice.enumerated_array(&languages)
+    for code,i in codes {
+        if !slice.contains(known,code) {
+            return doc_failed(reading,"translations: '%s' is no language a game can be in; give its code: %s",code,strings.join(known,", ",context.temp_allocator))
+        }
+        if slice.contains(texts.codes[:],code) {return doc_failed(reading,"translations: '%s' is given twice",code)}
+        value,is_text:=doc_string(reading,values[i])
+        if !is_text {return doc_failed(reading,"translations.%s must be the text of the node in that language",code)}
+        if value=="" {continue}
+        append(&texts.codes,code)
+        append(&texts.texts,value)
+    }
+    texts.used=make([]bool,len(texts.codes),reading.allocator)
+    return true
+}
+
+// What the nodes of a document say of their texts in the other languages of
+// the game. A node with translations is Localized, under the text_id it
+// gives, the one it had or a new one, and its translations become those; one
+// without is not, and what the file had under its id stays there.
+document_texts_apply :: proc(args:^Tree_Args,r:^Records,decls:[]Document_Node,root:int) -> bool {
+    reading:=args.reading
+    declared:=make([dynamic]Doc_Texts,reading.allocator)
+    for &d in decls {
+        row:=root if d.row==root && root>=0 else document_row_of(r,d.current)
+        n:=&r.nodes[row]
+        node_args:=args^
+        node_args.keys,node_args.values=d.keys,d.values
+        id_text,has_id,id_read:=tree_arg_string(&node_args,"text_id")
+        if !id_read {return document_failed(reading,d.path)}
+        text,localized:=tree_arg(&node_args,"translations")
+        if !localized {
+            if !has_id {continue}
+            reading_fail(reading,"text_id: the id of the translations of a node goes with them; give translations ({} for none yet) or leave text_id out")
+            return document_failed(reading,d.path)
+        }
+        texts:=Doc_Texts{row=row,path=d.path,old=n.text_id,id=n.text_id,codes=make([dynamic]string,reading.allocator),texts=make([dynamic]string,reading.allocator)}
+        if has_id {
+            known:bool
+            if texts.id,known=doc_text_id(id_text);!known {
+                reading_failf(reading,"text_id: '%s' is no id of a text: 16 hexadecimal digits, as ui.inspect and the CSV of mirai texts give it; leave it out and the node keeps its own or gets a new one",id_text)
+                return document_failed(reading,d.path)
+            }
+        }
+        if !doc_translations_read(reading,text,&texts) {return document_failed(reading,d.path)}
+        // A node that becomes localized, or takes its first translation, gets its id.
+        if texts.id==0 && (!d.localized || len(texts.codes)>0) {texts.id=records_text_id(r,row)}
+        n.text_id=texts.id
+        n.flags+={.Localized}
+        append(&declared,texts)
+    }
+    // A row of the file is of the node whose text it was, or whose it is now:
+    // by its code it takes the text declared, or goes.
+    GOES :: -2
+    owner:=make([]int,len(r.translations),reading.allocator)
+    for &t,i in r.translations {
+        owner[i]=-1
+        if t.id==0 {continue}
+        for &texts,at in declared {if texts.old==t.id {owner[i]=at;break}}
+        if owner[i]>=0 {continue}
+        for &texts,at in declared {if texts.id==t.id {owner[i]=at;break}}
+    }
+    for at,i in owner {
+        if at<0 {continue}
+        texts:=&declared[at]
+        code:=serial.text_field(r.translations[i].language[:])
+        found:=-1
+        for other,j in texts.codes {if other==code && !texts.used[j] {found=j;break}}
+        if found<0 {owner[i]=GOES;continue}
+        texts.used[found]=true
+        r.translations[i].id=texts.id
+        if records_text(r,r.translations[i].text)!=texts.texts[found] {records_text_set(r,&r.translations[i].text,texts.texts[found])}
+    }
+    for &texts in declared {
+        for code,j in texts.codes {
+            if texts.used[j] {continue}
+            t:=ui.Tree_Translation{id=texts.id}
+            ui.tree_text_set(t.language[:],code)
+            append(&r.translations,t)
+            records_text_set(r,&r.translations[len(r.translations)-1].text,texts.texts[j])
+        }
+    }
+    for i:=len(owner)-1;i>=0;i-=1 {if owner[i]==GOES {ordered_remove(&r.translations,i)}}
+    for &texts in declared {
+        for &other,row in r.nodes {
+            if row==texts.row || other.text_id!=texts.id || texts.id==0 {continue}
+            name:=serial.text_field(other.name[:])
+            if name=="" || name[0]<' ' {name="without a name"}
+            reading_failf(reading,"text_id: %016x is also the text of the node %s; a text is not shared between nodes: leave text_id out of one and it gets its own",texts.id,name)
+            return document_failed(reading,texts.path)
+        }
+    }
+    return true
 }
 
 // A use holds what the Slot of its widget holds; a Box and the other
@@ -1747,7 +1884,7 @@ doc_layout_key :: proc(name:string) -> (which:ui.Style_Key,ok:bool) {
 
 // The node at row (of the records' tree) becomes what d declares: what it
 // does not give is that of a new node of its kind. It keeps what ties it to
-// the file: its translations and, as an instance, the overrides of it.
+// the file: the id of its text and, as an instance, the overrides of it.
 document_node_apply :: proc(args:^Tree_Args,r:^Records,row:int,d:^Document_Node) -> bool {
     reading:=args.reading
     n:=&r.nodes[row]
@@ -1771,7 +1908,8 @@ document_node_apply :: proc(args:^Tree_Args,r:^Records,row:int,d:^Document_Node)
             if slots:=(^[len(DOCUMENT_EVENTS)]ui.Anim)(&r.anim_sets[at]);slots[i]==0 {slots[i]=played}
         }
     }
-    n.flags=n.flags-{.Localized}+old.flags&{.Localized}
+    if .Localized in n.flags {return doc_failed(reading,"flags: a node is Localized by its translations; give translations, an object of language code and text ({} for none yet), and leave Localized out")}
+    d.localized=.Localized in old.flags
     node_args:=args^
     node_args.keys,node_args.values=d.keys,d.values
     _,has_style:=tree_arg(&node_args,"style")
