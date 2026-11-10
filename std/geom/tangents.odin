@@ -27,6 +27,7 @@ package geom
 import "base:intrinsics"
 import "core:math"
 import "core:math/linalg"
+import "mirai:std/base"
 
 // The tangents of the corners of an indexed triangle mesh, as MikkTSpace
 // gives them: xyz the unit tangent along u, w the sign of the bitangent,
@@ -165,7 +166,7 @@ corner_tangents :: proc(positions,normals:[]Vec3,uvs:[]Vec2,indices:[]u32,out:[]
                 a,b:=tris[ti].weld[k],tris[ti].weld[(k+1)%3]
                 if a>b {a,b=b,a}
                 key:=u64(a)<<32|u64(b)
-                slot:=int(tangent_mix(key))&edge_mask
+                slot:=int(base.hash_u64(key))&edge_mask
                 for {
                     corner:=edge_slots[slot]
                     if corner==NONE {
@@ -389,19 +390,10 @@ tangent_bits :: #force_inline proc "contextless" (x:f32) -> u32 {
 // A 64-bit hash of a weld key.
 @(private="file")
 tangent_key_hash :: #force_inline proc "contextless" (key:Tangent_Key) -> u64 {
-    hash:=tangent_mix(u64(key[0])|u64(key[1])<<32)
-    hash=tangent_mix(hash~(u64(key[2])|u64(key[3])<<32))
-    hash=tangent_mix(hash~(u64(key[4])|u64(key[5])<<32))
-    return tangent_mix(hash~(u64(key[6])|u64(key[7])<<32))
-}
-
-// The splitmix64 finalizer.
-@(private="file")
-tangent_mix :: #force_inline proc "contextless" (x:u64) -> u64 {
-    x:=x
-    x=(x~(x>>30))*0xbf58476d1ce4e5b9
-    x=(x~(x>>27))*0x94d049bb133111eb
-    return x~(x>>31)
+    hash:=base.hash_u64(u64(key[0])|u64(key[1])<<32)
+    hash=base.hash_u64(hash~(u64(key[2])|u64(key[3])<<32))
+    hash=base.hash_u64(hash~(u64(key[4])|u64(key[5])<<32))
+    return base.hash_u64(hash~(u64(key[6])|u64(key[7])<<32))
 }
 @(private="file")
 tangent_key :: proc "contextless" (p,n:Vec3,uv:Vec2) -> Tangent_Key {

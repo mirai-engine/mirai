@@ -108,8 +108,8 @@ answers on each event: [events](../ui.md#events).
 
 ## Texts
 
-A `Localized` node keeps its translations in the `.ui`. `mirai texts export|import <file.csv>
---project .` moves them through a CSV; `ui.text.set` changes one.
+A node says its `text` in the other languages of the game in `translations`, by language code,
+and `mirai texts` moves them through a CSV for translators: [texts.md](texts.md).
 
 ## Pitfalls that fail silently
 

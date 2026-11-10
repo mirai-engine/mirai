@@ -56,7 +56,8 @@ Code: `editor/api/` (package `api`: server, JSON-RPC, MCP, schemas, client),
   ([change review](../../mirai-editor/references/ai-review.md)); without the header, to no agent.
 - `X-Mirai-Client` names an agent outside the editor (letters, digits, `.`, `_` and `-`, shorter
   than `api.CLIENT_NAME_BYTES`), delivered as `Call.client_name`; a tagged request does not send
-  it. `mirai mcp` sends the `clientInfo.name` of the initialize of its client, lowercase; `mirai rpc`
+  it. `mirai mcp` sends the `clientInfo.name` of the initialize of its client, lowercase;
+  `mirai rpc`
   and `mcp` take `--client NAME` first, then `MIRAI_CLIENT`, and `claude-code` in a shell of Claude
   Code (`CLAUDECODE=1`). Its calls are the turn of its own chat in the editor
   ([outside the editor](../../mirai-editor/references/ai-tasks.md#agents-outside-the-editor)).
@@ -90,7 +91,8 @@ named by `.mirai/session.json` (pid, mode and arguments) and `api.json`; its log
   program and reads the stamp of the folder it started from (`Session.program`), not where the
   system says its moved executable is, and the session record follows it to the new process, so
   the next call reaches it through the port file, its `build.status`
-  says `Built`, and `mirai session` still knows it as the project's. `mirai build engine` does not restart sessions: it names them.
+  says `Built`, and `mirai session` still knows it as the project's. `mirai build engine` does not
+  restart sessions: it names them.
 - `stop` never saves: unsaved changes (from `editor.documents` and `asset.unsaved`) are discarded
   automatically if all are copies under `.mirai/tmp/`; otherwise it fails listing them and
   `--discard` discards them.
@@ -136,7 +138,8 @@ It prints its result with the editor's validation and exits with 1 if there are 
 
 ## `mirai play test`
 
-`mirai play test [project] [scenario...]` plays [scenarios](../../../../docs/game/testing/scenario.md) in the project's
+`mirai play test [project] [scenario...]` plays
+[scenarios](../../../../docs/game/testing/scenario.md) in the project's
 session or in one it opens and closes, one `play.scenario.run` per file: those named (a name of
 `tests/scenarios`, or a path) or all of `tests/scenarios`. It prints a line per scenario and, for
 one that fails, its failure and what the failing step answered; it exits with 0 when all pass, 1
@@ -174,7 +177,8 @@ first when it is not current, as `mirai import` does. What a game-writing agent 
   `asset.scene_instantiate`, and what the document changes of an entity of an instance is
   recorded as an override. An entity that names its prefab by path or id alone declares the
   instance as its prefab gives it, so the document that placed it writes nothing the next time;
-  with `{asset, root}`, as `read` gives it, it declares all it has. An entity it makes takes the id the document gives when the file is
+  with `{asset, root}`, as `read` gives it, it declares all it has. An entity it makes takes the id
+  the document gives when the file is
   new, and the components the game of this build does not know stay with the entities it keeps.
 - **`check`** lists what would fail in the game and exits with 1: for interfaces what `ui.check`
   lists, for scenes each file whose document does not write it back unchanged, with the first
@@ -247,7 +251,8 @@ array is that index (`entities.0.id`).
 - `--select a.b,c[0].d` prints those fields, one per line: a text without quotes, a number or
   `true`/`false`/`null` as is, and an object or array as JSON. A field that is not there is left
   out, and one line on stderr says which is missing and which exist; the exit code is 0.
-- `--wait-until '<field><op><value>'` is met in the server and prints that result. `op` is `=` (`==`), `!=`, `<`, `<=`, `>` or `>=`; the ordering ones need
+- `--wait-until '<field><op><value>'` is met in the server and prints that result. `op` is `=`
+  (`==`), `!=`, `<`, `<=`, `>` or `>=`; the ordering ones need
   numbers. Numbers are compared as numbers (exact integers), a text by its content, with or
   without quotes, and the rest as JSON without spaces (`selection=[]`). An editor that restarts
   during the wait (`-32096`) keeps being waited for, because Build restarts it; another error, a
@@ -260,7 +265,8 @@ array is that index (`entities.0.id`).
 It reads `engine.describe`: with no argument, the index: the core methods with a short summary, the
 names of the others by plugin and the plugins the project does not use. With the name of a plugin
 (or `editor`) or a prefix (`scene.` or `scene`), the summaries of that area. With a method, or with
-several methods (`methods` of `engine.describe`), for each its flags and its summary, each param with its type (range, length,
+several methods (`methods` of `engine.describe`), for each its flags and its summary, each param
+with its type (range, length,
 unit, enum, id), `required` or its default value and its label, an example of valid params and
 each field of the result with its type and its label. A name that lists none is `-32602` with the
 similar ones.
@@ -280,13 +286,14 @@ methods). Which plugins exist is told by `engine.describe`.
 - With `--project` the port is the one `.mirai/api.json` of that project names, read again on
   every message and never the fixed port, so it only reaches that project's editor, also after
   it restarts on another port. While the project has no editor it answers `initialize` itself
-  (with `listChanged: true`), lists the `docs` tool and one placeholder tool, and a tool call starts the session
-  like [`mirai rpc`](#mirai-rpc), by the same rule; what cannot start it says to run
+  (with `listChanged: true`), lists the `docs` tool and one placeholder tool, and a tool call starts
+  the session like [`mirai rpc`](#mirai-rpc), by the same rule; what cannot start it says to run
   `mirai session start`. When an editor appears, or another replaces it, it sends
   `notifications/tools/list_changed` once that editor answers.
 - Without `--project` and without an editor it answers `initialize` itself (with
-  `listChanged: true` and the instruction to open the editor), `ping` and a `tools/list` with only the
-  `docs` tool; a call or another request with `id` gives `-32099`. After that list it tries the editor every `BRIDGE_RETRY` seconds and, when it
+  `listChanged: true` and the instruction to open the editor), `ping` and a `tools/list` with only
+  the `docs` tool; a call or another request with `id` gives `-32099`. After that list it tries the
+  editor every `BRIDGE_RETRY` seconds and, when it
   answers, sends `notifications/tools/list_changed` once.
 - `.mcp.json` declares it: the engine's launches `bin/mirai mcp` relative to the root; a project's
   launches `mirai mcp` and requires the engine's `bin/` on the `PATH` (`mirai setup path`).
@@ -311,7 +318,8 @@ batch, without sessions.
 - `tools/list`: `docs` (the game documentation of `docs/game`, as `mirai docs` reads it, and the
   same in `mirai mcp` without an editor; its index goes in the instructions), one tool per editor
   core method (flag `Core`, which `engine.describe` gives as `core`: what agents use most, since
-  each one listed costs its schema every turn) and per method of the plugins named by the `X-Mirai-Plugins` header (comma-separated;
+  each one listed costs its schema every turn) and per method of the plugins named by the
+  `X-Mirai-Plugins` header (comma-separated;
   `*`, all methods), with dots turned into underscores (the `tool` of `engine.describe`), its
   summary, `inputSchema` and annotations from its flags, and at the end `call` (`method` and
   `params`), which runs any method by its name. `tools/call` is not filtered: it also takes the
@@ -322,7 +330,8 @@ batch, without sessions.
   guides. It paginates with `nextCursor`. Tools declare no `outputSchema`: `engine.describe` gives
   the shape of a result.
 - `tools/call`: the result as JSON text in `content`, the only copy, since clients give models
-  `structuredContent` in place of the text and it would undo `_select`; a method error is `isError:true` with `{"error":{...}}` in the text. A handler
+  `structuredContent` in place of the text and it would undo `_select`; a method error is
+  `isError:true` with `{"error":{...}}` in the text. A handler
   attaches a PNG with `api.call_image` (`capture`, `view.viewport`): MCP gives it as an image
   after the text and JSON-RPC returns only the result; if it does not fit in the response or
   cannot be read, a text with its path goes instead. A malformed JSON, or a non-object despite

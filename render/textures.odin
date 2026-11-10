@@ -3,6 +3,7 @@ package mirai_render
 import "core:math"
 import "mirai:rhi"
 import "mirai:std/base"
+import mm "mirai:std/math"
 
 // Material textures. Each one takes an entry of the RHI texture table, which
 // shaders index with the number a material stores, so no pass binds a texture
@@ -41,16 +42,6 @@ Texture_State :: struct {
 	bytes:     u64, // GPU memory of every level
 	reduced:   int, // textures not streamed that left levels out to fit the pool
 	residency: Texture_Residency, // of the streamed ones
-}
-
-@(private = "file")
-srgb_to_linear :: proc "contextless" (v: f32) -> f32 {
-	return v / 12.92 if v <= 0.04045 else math.pow((v + 0.055) / 1.055, 2.4)
-}
-
-@(private = "file")
-linear_to_srgb :: proc "contextless" (v: f32) -> f32 {
-	return v * 12.92 if v <= 0.0031308 else 1.055 * math.pow(v, 1.0 / 2.4) - 0.055
 }
 
 @(private = "file")
@@ -108,7 +99,7 @@ texture_reduce :: proc(src: []u8, sw, sh: int, dst: []u8, dw, dh: int, decode: ^
 				n = n / length if length > 1e-6 else Vec3{0, 0, 1}
 				sum.r, sum.g, sum.b = n.x * 0.5 + 0.5, n.y * 0.5 + 0.5, n.z * 0.5 + 0.5
 			}
-			if srgb {sum.r, sum.g, sum.b = linear_to_srgb(sum.r), linear_to_srgb(sum.g), linear_to_srgb(sum.b)}
+			if srgb {sum.r, sum.g, sum.b = mm.linear_to_srgb(sum.r), mm.linear_to_srgb(sum.g), mm.linear_to_srgb(sum.b)}
 			at := (y * dw + x) * 4
 			dst[at], dst[at + 1], dst[at + 2], dst[at + 3] = to_byte(sum.r), to_byte(sum.g), to_byte(sum.b), to_byte(sum.a)
 		}
@@ -188,7 +179,7 @@ texture_build :: proc(desc: Texture_Desc, max_size: int, allocator := context.al
 	decode: [256]f32
 	for &value, i in decode {
 		value = f32(i) / 255
-		if desc.srgb {value = srgb_to_linear(value)}
+		if desc.srgb {value = mm.srgb_to_linear(value)}
 	}
 	level := desc.pixels[:desc.width * desc.height * 4]
 	width, height := desc.width, desc.height
@@ -340,13 +331,21 @@ texture_add_data :: proc(r: ^Renderer, data: Texture_Data, name: string, key:u64
 	return Texture_Handle(index + 1), true
 }
 
-// The levels of data the pool (settings.texture_pool_megabytes) has no room
-// for, the largest, and the bytes of the others.
-texture_pool_first :: proc(r: ^Renderer, data: Texture_Data) -> (first: int, bytes: u64) {
+// The bytes the textures may take, and whether they have such a limit: the
+// pool of the settings (texture_pool_megabytes) less what the targets of the
+// views drawn into textures hold.
+texture_pool_room :: proc(r: ^Renderer) -> (bytes: u64, limited: bool) {
 	pool := u64(r.settings.texture_pool_megabytes) * 1024 * 1024
+	return pool - min(r.texture_view_bytes, pool), pool > 0
+}
+
+// The levels of data the pool (texture_pool_room) has no room for, the
+// largest, and the bytes of the others.
+texture_pool_first :: proc(r: ^Renderer, data: Texture_Data) -> (first: int, bytes: u64) {
+	pool, limited := texture_pool_room(r)
 	for level in data.levels {bytes += u64(len(level))}
 	// Never below 64 texels: a pool that small is a setting to fix, not a texture to erase.
-	for pool > 0 && r.textures.bytes + bytes > pool && first + 1 < len(data.levels) && max(data.width >> uint(first + 1), data.height >> uint(first + 1)) >= 64 {
+	for limited && r.textures.bytes + bytes > pool && first + 1 < len(data.levels) && max(data.width >> uint(first + 1), data.height >> uint(first + 1)) >= 64 {
 		bytes -= u64(len(data.levels[first]))
 		first += 1
 	}

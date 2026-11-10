@@ -248,6 +248,7 @@ Stats :: struct {
 	materials:         u32,
 	textures:          u32,
 	texture_bytes:     u64,
+	view_target_bytes: u64, // the GPU memory of the targets of the views drawn into textures, which the pool of the textures gives up
 	geometry_bytes:    u64, // the GPU buffers of the pools of the geometry and of the table of meshes
 	geometry_free:     u64, // of the pools: the bytes of the free ranges between their meshes
 	geometry_free_largest: u64, // the bytes of the largest of those ranges
@@ -489,7 +490,6 @@ View_State :: struct {
 	dispatch_start:rhi.Buffer, // {0,1,1,0}: copied over an indirect dispatch whose groups in x the GPU counts, to start it each frame
 	prev_depth_plane:Vec4,
 	texture:Texture_Handle, // of a view drawn into a texture
-	copy:rhi.Buffer,        // what carries its image to that texture
 	wide:rhi.Texture,       // RGBA32 float: its image as the last frame that asked for it kept it (Frame_View.wide)
 	last_frame:u64,         // of the renderer, when it was last drawn
 	exposure:rhi.Buffer,    // Gpu_Exposure the view adapts, which its tonemap reads
@@ -597,6 +597,7 @@ Renderer :: struct {
 	views:           [VIEW_CAPACITY]View_State, // those of a frame that has several
 	view_count:      int,
 	texture_views:   [TEXTURE_VIEW_CAPACITY]View_State, // those drawn into a texture, at each size they were
+	texture_view_bytes: u64, // what their targets held of the GPU when the last frame ended (texture_views_count)
 	passes:          [FRAME_PASS_CAPACITY]Frame_Pass, // what extensions record in the next frame
 	pass_count:      int,
 	plans:           [RENDER_PIPELINE_CAPACITY]Render_Plan, // of the pipelines asked for
@@ -1086,7 +1087,7 @@ create_pipelines :: proc(r: ^Renderer) -> bool {
 	for &item, i in list.items[:list.count] {
 		if !pipeline_possible(info, item) {continue}
 		for id in item.shaders[:2 if item.graphics else 1] {
-			item.cost += len(r.shader_codes[id].msl) when ODIN_OS == .Darwin else len(r.shader_codes[id].spirv)
+			item.cost += len(rhi.shader_code_bytes(r.shader_codes[id]))
 		}
 		at := work.count
 		for at > 0 && list.items[work.order[at - 1]].cost < item.cost {
@@ -1412,21 +1413,31 @@ highlight_style_valid :: proc(style: Highlight_Style) -> bool {
 
 // ---------------------------------------------------------------- targets
 
+// Every texture of the targets of a view but those of its glass
+// (glass_textures), made or not: what frees them and what counts their memory
+// read this one list.
+@(private)
+TARGET_TEXTURES :: 64
+@(private)
+targets_textures :: proc(t: ^Targets) -> (all: [TARGET_TEXTURES]rhi.Texture) {
+	s := &t.shadow
+	fixed := [?]rhi.Texture{
+		t.depth, t.albedo, t.surface, t.layers, t.instance, t.post_hdr[0], t.post_hdr[1], t.post_ldr[0], t.post_ldr[1], t.normal, t.emission, t.motion, t.linear_depth, t.direct, t.reflect_raw, t.reflect_shared, t.reflect_history[0], t.reflect_history[1], t.hdr[0], t.hdr[1], t.display, t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.hiz[0], t.hiz[1], t.ldr, t.generated,
+		t.highlight, t.highlight_depth, t.highlight_filtered, t.gi_reference,
+		t.reactive, t.nested_depth, t.aerial, t.contact[0], t.contact[1], t.ui_blur[0], t.ui_blur[1],
+		s.raw, s.light, s.geometry[0], s.geometry[1], s.history[0], s.history[1], s.widths[0], s.widths[1], s.filter[0], s.filter[1],
+	}
+	#assert(len(fixed) + UI_LAYER_DEPTH_CAPACITY <= TARGET_TEXTURES)
+	copy(all[:], fixed[:])
+	copy(all[len(fixed):], t.ui_layers[:])
+	return
+}
+
 @(private)
 destroy_targets :: proc(r: ^Renderer, t: ^Targets) {
 	d := r.device
-	textures := []rhi.Texture{
-		t.depth, t.albedo, t.surface, t.layers, t.instance, t.post_hdr[0],t.post_hdr[1],t.post_ldr[0],t.post_ldr[1],t.normal, t.emission, t.motion, t.linear_depth, t.direct, t.reflect_raw, t.reflect_shared, t.reflect_history[0], t.reflect_history[1], t.hdr[0], t.hdr[1], t.display, t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.hiz[0], t.hiz[1], t.ldr, t.generated,
-		t.highlight, t.highlight_depth, t.highlight_filtered, t.gi_reference,
-		t.reactive, t.nested_depth, t.aerial,
-	}
-	for tex in textures {if tex != 0 {rhi.texture_destroy(d, tex)}}
-	s := &t.shadow
-	for tex in ([]rhi.Texture{s.raw, s.light, s.geometry[0], s.geometry[1], s.history[0], s.history[1], s.widths[0], s.widths[1], s.filter[0], s.filter[1]}) {if tex != 0 {rhi.texture_destroy(d, tex)}}
+	for tex in targets_textures(t) {if tex != 0 {rhi.texture_destroy(d, tex)}}
 	for b in ([]rhi.Buffer{t.direct_traced, t.direct_dispatch}) {if b != 0 {rhi.buffer_destroy(d, b)}}
-	for tex in t.ui_layers {if tex!=0 {rhi.texture_destroy(d,tex)}}
-	for tex in t.ui_blur {if tex!=0 {rhi.texture_destroy(d,tex)}}
-	destroy_gi_targets(r, t)
 	destroy_glass_targets(r, t)
 	out_w, out_h := t.output_width, t.output_height
 	t^ = {}
@@ -1498,14 +1509,6 @@ ensure_shadow_targets :: proc(r: ^Renderer, cmd: ^rhi.Command_List, t: ^Targets,
 	}
 	set.valid = false
 	return ok
-}
-
-// The targets of the contact occlusion, which the next frame that needs them
-// makes again.
-@(private)
-destroy_gi_targets :: proc(r: ^Renderer, t: ^Targets) {
-	for tex in t.contact {if tex != 0 {rhi.texture_destroy(r.device, tex)}}
-	t.contact = {}
 }
 
 // Traced reflections: the rays of the frame, per pixel and per block of 2x2,
@@ -1780,7 +1783,7 @@ matrix_from_eye :: proc "contextless" (m: Mat4) -> Mat4 {
 // from the eye, as planes of the places relative to the origin.
 @(private)
 frustum_from_eye :: proc(view_projection: Mat4, eye: Vec3) -> [6]Vec4 {
-	planes := frustum_planes(view_projection)
+	planes := transmute([6]Vec4)mm.frustum_from_matrix(view_projection)
 	for &plane in planes {plane = origin_plane(plane, -eye)}
 	return planes
 }
@@ -1834,15 +1837,6 @@ upscale_jitter_phases :: proc "contextless" (width, output_width: u32) -> u32 {
 	return max(u32(8 * ratio * ratio), 1)
 }
 
-@(private)
-bounds_in_frustum :: proc "contextless" (bmin, bmax: Vec3, planes: [6]Vec4) -> bool {
-	for p in planes {
-		corner := Vec3{bmax.x if p.x >= 0 else bmin.x, bmax.y if p.y >= 0 else bmin.y, bmax.z if p.z >= 0 else bmin.z}
-		if p.x * corner.x + p.y * corner.y + p.z * corner.z + p.w < 0 {return false}
-	}
-	return true
-}
-
 // Whether some instance of the scene has a material with layers: a ray may
 // hit it wherever it is.
 @(private)
@@ -1856,10 +1850,11 @@ scene_layered :: proc(s: ^Scene_State) -> bool {
 // Whether some instance in the frustum needs the reflectance target, and
 // whether one needs the layers target too.
 reflectance_in_frustum :: proc(r: ^Renderer, planes: [6]Vec4) -> (reflectance, layered: bool) {
+	frustum := transmute(mm.Frustum)planes
 	for entry in r.scene.reflective {
 		if reflectance && (layered || !entry.layered) {continue}
 		inst := &r.scene.instances[entry.instance]
-		if bounds_in_frustum(inst.bounds_min.xyz, inst.bounds_max.xyz, planes) {
+		if mm.frustum_overlaps_aabb(frustum, {inst.bounds_min.xyz, inst.bounds_max.xyz}) {
 			reflectance = true
 			layered ||= entry.layered
 		}
@@ -1867,7 +1862,7 @@ reflectance_in_frustum :: proc(r: ^Renderer, planes: [6]Vec4) -> (reflectance, l
 	for entry in r.scene.batch.reflective {
 		if reflectance && (layered || !entry.layered) {continue}
 		box := &r.scene.batch.boxes[entry.instance]
-		if bounds_in_frustum(box.bounds_min, box.bounds_max, planes) {
+		if mm.frustum_overlaps_aabb(frustum, {box.bounds_min, box.bounds_max}) {
 			reflectance = true
 			layered ||= entry.layered
 		}
@@ -1875,14 +1870,3 @@ reflectance_in_frustum :: proc(r: ^Renderer, planes: [6]Vec4) -> (reflectance, l
 	return
 }
 
-@(private)
-frustum_planes :: proc(m: Mat4) -> [6]Vec4 {
-	row :: proc(m: Mat4, i: int) -> Vec4 {return {m[i, 0], m[i, 1], m[i, 2], m[i, 3]}}
-	r0, r1, r2, r3 := row(m, 0), row(m, 1), row(m, 2), row(m, 3)
-	planes := [6]Vec4{r3 + r0, r3 - r0, r3 + r1, r3 - r1, r2, r3 - r2}
-	for &p in planes {
-		length := math.sqrt(p.x * p.x + p.y * p.y + p.z * p.z)
-		if length > 1e-8 {p /= length}
-	}
-	return planes
-}

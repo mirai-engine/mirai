@@ -5,7 +5,7 @@ import "core:math/linalg"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:host"
-import gpu "mirai:render"
+import erender "mirai:engine/render"
 import mm "mirai:std/math"
 import fields "plugins:physics_fields/runtime"
 
@@ -14,7 +14,7 @@ FIELD_PREVIEW_SEGMENTS :: 32
 
 @(storage)
 Physics_Field_Preview :: struct {
-    vertices:[FIELD_PREVIEW_CAPACITY]gpu.Debug_Vertex,
+    vertices:[FIELD_PREVIEW_CAPACITY]erender.Debug_Vertex,
     source:core.World_Id, // the World it was drawn from
     selection_serial:u64,
     versions:[6]u64,
@@ -23,7 +23,7 @@ Physics_Field_Preview :: struct {
 }
 
 @(private)
-field_preview_arrow :: proc(lines:^gpu.Debug_Lines,from,to:mm.Vec3,color:mm.Vec4) {
+field_preview_arrow :: proc(lines:^erender.Debug_Lines,from,to:mm.Vec3,color:mm.Vec4) {
     span:=to-from
     length:=linalg.length(span)
     if !(length>1e-5) || math.is_inf(length) {return}
@@ -32,13 +32,13 @@ field_preview_arrow :: proc(lines:^gpu.Debug_Lines,from,to:mm.Vec3,color:mm.Vec4
     up:=linalg.cross(direction,side)
     head:=length*.2
     base:=to-direction*head
-    gpu.debug_line(lines,from,to,color)
-    for offset in ([4]mm.Vec3{side,-side,up,-up}) {gpu.debug_line(lines,to,base+offset*head*.5,color)}
+    erender.debug_line(lines,from,to,color)
+    for offset in ([4]mm.Vec3{side,-side,up,-up}) {erender.debug_line(lines,to,base+offset*head*.5,color)}
 }
 
 @(private)
 // on: the field is turned on; off, it is drawn gray.
-field_preview_draw :: proc(lines:^gpu.Debug_Lines,field:fields.Physics_Field,pose:mm.Transform,on:=true) {
+field_preview_draw :: proc(lines:^erender.Debug_Lines,field:fields.Physics_Field,pose:mm.Transform,on:=true) {
     if field.shape>.Plane || field.direction>.Directional {return}
     scale:=linalg.abs(pose.scale)
     radius:=field.radius*max(scale.x,scale.y,scale.z)
@@ -55,14 +55,14 @@ field_preview_draw :: proc(lines:^gpu.Debug_Lines,field:fields.Physics_Field,pos
     if len(lines.vertices)-lines.count<needed {lines.dropped+=needed/2;return}
     region_color:=mm.Vec4{1,.65,.15,.9} if on else mm.Vec4{.55,.55,.55,.7}
     arrow_color:=mm.Vec4{1,.9,.3,1} if on && field.force!=0 else mm.Vec4{.65,.65,.65,.8}
-    if field.shape==.Sphere {gpu.debug_sphere(lines,pose.position,radius,region_color,FIELD_PREVIEW_SEGMENTS)}
-    else {gpu.debug_box_transformed(lines,mm.transform_matrix({pose.position,pose.rotation,{1,1,1}}),-half,half,region_color)}
+    if field.shape==.Sphere {erender.debug_sphere(lines,pose.position,radius,region_color,FIELD_PREVIEW_SEGMENTS)}
+    else {erender.debug_box_transformed(lines,mm.transform_matrix({pose.position,pose.rotation,{1,1,1}}),-half,half,region_color)}
     sign:=f32(-1) if field.force<0 else f32(1)
     // The plane is the +Y face: crossed, with the arrow of a radial field along its normal up to it.
     if field.shape==.Plane {
         corner :: proc(pose:mm.Transform,half:mm.Vec3,x,z:f32) -> mm.Vec3 {return pose.position+mm.quat_rotate(pose.rotation,mm.Vec3{x*half.x,half.y,z*half.z})}
-        gpu.debug_line(lines,corner(pose,half,-1,-1),corner(pose,half,1,1),region_color)
-        gpu.debug_line(lines,corner(pose,half,-1,1),corner(pose,half,1,-1),region_color)
+        erender.debug_line(lines,corner(pose,half,-1,-1),corner(pose,half,1,1),region_color)
+        erender.debug_line(lines,corner(pose,half,-1,1),corner(pose,half,1,-1),region_color)
         if field.direction==.Radial {
             face:=corner(pose,half,0,0)
             field_preview_arrow(lines,pose.position if sign>0 else face,face if sign>0 else pose.position,arrow_color)
@@ -103,7 +103,7 @@ physics_fields_preview :: proc(
         return
     }
     versions:=[6]u64{core.version(regions),core.layout(regions),core.version(transforms),core.layout(transforms),core.version(parents),core.layout(parents)}
-    lines:=gpu.debug_lines_make(preview.vertices[:],depth_test=false)
+    lines:=erender.debug_lines_make(preview.vertices[:],depth_test=false)
     if !preview.ready || preview.source!=id || preview.selection_serial!=s.selection.serial || preview.versions!=versions {
         for entity in s.selection.entities {
             on,_,present:=core.raw_state(core.raw(regions.table),entity)

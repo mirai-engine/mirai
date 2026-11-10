@@ -223,8 +223,8 @@ job_start :: proc(desc:Desc) -> ^Job {
         return job_fail(job,.Write_Failed)
     }
     job.published=target_output(p,desc.target,desc.output,a,desc.server)
-    if desc.target==.Game && path_equal(job.published[:strings.last_index_byte(job.published,'/')],p.root) {return job_fail(job,.Output_Invalid)}
-    job.staged=project.path(job.work,strings.concatenate({job.prefix,desc.target==.Game?EXECUTABLE_EXTENSION:project.LIBRARY_SUFFIX},context.temp_allocator),allocator=a)
+    if desc.target==.Game && project.path_same(job.published[:strings.last_index_byte(job.published,'/')],p.root) {return job_fail(job,.Output_Invalid)}
+    job.staged=project.path(job.work,strings.concatenate({job.prefix,desc.target==.Game?project.EXECUTABLE_SUFFIX:project.LIBRARY_SUFFIX},context.temp_allocator),allocator=a)
     job.result.output=job.published
 
     if desc.compiler!="" {job.compiler=slashes(desc.compiler,a)}
@@ -520,7 +520,7 @@ job_project_start :: proc(job:^Job) -> ^Job {
                 current,_:=fingerprint(job.engine_root,job.compiler,job.flags,sources)
                 present:=current==saved && os.is_file(job.published)
                 // The game built for another folder is the same executable.
-                if current==saved && !present && job.target==.Game && built!="" && !path_equal(built,job.published) && os.is_file(built) {
+                if current==saved && !present && job.target==.Game && built!="" && !project.path_same(built,job.published) && os.is_file(built) {
                     folder:=job.published[:strings.last_index_byte(job.published,'/')]
                     present=(os.make_directory_all(folder)==nil || os.is_dir(folder)) && os.copy_file(job.published,built)==nil
                 }
@@ -782,7 +782,7 @@ target_output :: proc(p:^project.Project,target:Target,output:string,a:runtime.A
     }
     folder:=output!=""?project.path_absolute(output,context.temp_allocator):project.path(project.folder_path(p.root,.Generated,context.temp_allocator),server?"server":"game",allocator=context.temp_allocator)
     buffer:[len(project.Name)]u8
-    file:=strings.concatenate({project.executable_name(&p.manifest,buffer[:]),EXECUTABLE_EXTENSION},context.temp_allocator)
+    file:=strings.concatenate({project.executable_name(&p.manifest,buffer[:]),project.EXECUTABLE_SUFFIX},context.temp_allocator)
     return project.path(folder,file,allocator=a)
 }
 
@@ -1042,8 +1042,3 @@ stamp_read :: proc(file:string) -> (hash:u64,output:string,ok:bool) {
     return
 }
 
-@(private)
-path_equal :: proc(a,b:string) -> bool {
-    when ODIN_OS==.Windows {return strings.equal_fold(a,b)}
-    else {return a==b}
-}

@@ -127,10 +127,14 @@ discarding them. Zero: there was none.
 - `view_texture_add(r, width, height, name)` adds to the texture table an sRGB RGBA8 entry for what
   a camera sees; a material shows it like any color texture.
 - A `Frame_View` with `texture` nonzero (size in `rect.z/w`) is a complete view of the frame that
-  is drawn **before** those of the window; its LDR is copied to the entry in the same command
-  buffer.
-- The targets of each texture are created the first time a view names it and are kept (up to
-  `TEXTURE_VIEW_CAPACITY` = 16 states; when full, the one drawn longest ago is withdrawn).
+  is drawn **before** those of the window; its LDR is copied to the entry on the GPU
+  (`rhi.cmd_copy_texture`) in the same command buffer.
+- The targets of each texture are created the first time a view names it and are kept while
+  frames draw it: those no frame drew for `TEXTURE_VIEW_IDLE_FRAMES` are freed, and with all the
+  `TEXTURE_VIEW_CAPACITY` states taken, those of the view drawn longest ago. The entry keeps its
+  last image.
+- What those targets hold of the GPU is counted when each frame ends (`Stats.view_target_bytes`)
+  and comes out of the [texture pool](materials.md#textures).
 - `host.extras_texture_view_add(extras, view)` delivers them (up to 8 per frame).
 - `view_texture_remove(r, texture)` removes the entry and the targets of its view, between frames.
 - With `Frame_View.readback` the image returns to the CPU without waiting for the GPU, through the

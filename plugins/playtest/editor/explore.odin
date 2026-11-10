@@ -2,7 +2,7 @@ package playtest_editor
 
 import "base:runtime"
 import "core:fmt"
-import "core:math/linalg"
+import "core:math"
 import "core:mem/virtual"
 import "core:strings"
 import "mirai:core"
@@ -13,11 +13,14 @@ import "mirai:std/base"
 import "mirai:std/serial"
 
 // A bot that plays with no model, for no tokens: the same seed on the same
-// game plays the same ticks. In World it moves and jumps with the actions of
-// the seat toward the cells of the world it has been in the least; in Ui it
-// presses every button it sees and goes back through the pages that have some
-// left. Both end at their ticks at the latest, and sooner when nothing is left
-// to press. It reports what it covered and what the QA monitors saw.
+// game plays the same ticks. In World it picks the cell of the world it has
+// been in the least and a drive of the editor (editor.play_drive_to) takes it
+// there with the actions of the seat, as the drive of play.step goes: along
+// the way the navigation gives, over gaps and around what is in the way. In
+// Ui it presses every button it sees and goes back through the pages that
+// have some left. Both end at their ticks at the latest, and sooner when
+// nothing is left to press. It reports what it covered and what the QA
+// monitors saw.
 //
 // A button that asks the game to quit does not end the run: the request is
 // held, listed in exits with the button and the tick, and the bot goes on
@@ -29,10 +32,14 @@ API_EXPLORE_TICKS :: 36000
 @(private) API_EXPLORE_REPROS :: 4
 @(private) API_EXPLORE_NAMES :: 32
 @(private) EXPLORE_CELLS :: 8192
-@(private) EXPLORE_HOLD_TICKS :: 40
+@(private) EXPLORE_REACH :: 3          // cells around its own it picks the next one from
+@(private) EXPLORE_MISSES :: 8         // times a cell it did not reach counts against it, at the most
+@(private) EXPLORE_UI_EVERY :: 40      // ticks between two looks for a screen that takes the seat, on its way
 @(private) EXPLORE_WARM_TICKS :: 60    // for the seat and its body to appear
-@(private) EXPLORE_BLOCKED_TICKS :: 20 // without moving: another way
-@(private) EXPLORE_MOVED :: f32(0.1)
+// Stuck, by the measure of the monitors, on the way to a cell: it turns back
+// to where it has been. The drive had the time to jump and to try a side, and
+// it is under the time of the Stuck monitor, or half of it when that is less.
+@(private) EXPLORE_BLOCKED_SECONDS :: f64(1.5)
 @(private) EXPLORE_UI_NODES :: 256
 @(private) EXPLORE_UI_PAGES :: 64
 @(private) EXPLORE_UI_EDGES :: 256
@@ -45,7 +52,7 @@ Api_Explore_Mode :: enum u8 {World,Ui}
 Api_Explore_Stop :: enum u8 {Ticks,Run_Ended,No_Body,No_Ui,Ui_Covered,No_Progress,Blocked_By_Ui}
 
 Api_Play_Explore_Params :: struct {
-    mode:Api_Explore_Mode `mirai:"optional,label=World moves and jumps toward the least visited cells; Ui presses every visible button"`,
+    mode:Api_Explore_Mode `mirai:"optional,label=World goes to the least visited cells as a drive of play.step goes; Ui presses every visible button"`,
     seed:u64 `mirai:"optional,label=The same seed on the same game plays the same ticks"`,
     duration:[api.DURATION_TEXT]u8 `mirai:"optional,text,name=for,label=How long it plays at most: a number is ticks and a text ending in s is seconds as 600 or 20s"`,
     cell:f32 `mirai:"optional,min=0.25,max=1000,unit=m,label=Side of the cells of the world coverage"`,
@@ -75,11 +82,13 @@ Api_Play_Explore_Exit :: struct {
     tick:u64,
 }
 
+// A slot is free while it has no visits and no misses.
 @(private)
 Explore_Cells :: struct {
     keys:[][2]i32,
-    visits:[]u16, // 0: the slot is free
-    count:int,
+    visits:[]u16,
+    misses:[]u8, // times it went for the cell and did not reach it
+    count:int,   // cells it was in
 }
 
 @(private)
@@ -137,14 +146,20 @@ Explore_Run :: struct {
 @(private)
 explore_api_register :: proc(s:^editor.Session) {
     defaults:=Api_Play_Explore_Params{seed=1,cell=2}
-    editor.api_method_register(s,{name="play.explore",summary="A bot with no model that plays the game of the caller, deterministic by seed and bounded by ticks: World moves and jumps toward the least visited cells, Ui presses every visible button. Says what it covered and the violations of the QA monitors with their repros; a button that asks to quit is listed and does not end the run.",params=Api_Play_Explore_Params,params_info=type_info_of(Api_Play_Explore_Params),result=Api_Play_Explore_Result,result_info=type_info_of(Api_Play_Explore_Result),writes_result=true,defaults=&defaults,run=api_play_explore})
+    editor.api_method_register(s,{name="play.explore",summary="A bot with no model that plays the game of the caller, deterministic by seed and bounded by ticks: World goes to the least visited cells as a drive of play.step goes, Ui presses every visible button. Says what it covered and the violations of the QA monitors with their repros; a button that asks to quit is listed and does not end the run.",params=Api_Play_Explore_Params,params_info=type_info_of(Api_Play_Explore_Params),result=Api_Play_Explore_Result,result_info=type_info_of(Api_Play_Explore_Result),writes_result=true,defaults=&defaults,run=api_play_explore})
 }
 
 // ---------------------------------------------------------------- cells
 
 @(private)
 explore_cell_of :: proc(position:[3]f32,size:f32) -> [2]i32 {
-    return {i32(position.x/size+(position.x<0?-1:0)),i32(position.z/size+(position.z<0?-1:0))}
+    return {i32(math.floor(position.x/size)),i32(math.floor(position.z/size))}
+}
+
+// The middle of a cell, at a height.
+@(private)
+explore_cell_middle :: proc(cell:[2]i32,size,height:f32) -> [3]f32 {
+    return {(f32(cell.x)+0.5)*size,height,(f32(cell.y)+0.5)*size}
 }
 
 @(private)
@@ -152,52 +167,60 @@ explore_cell_slot :: proc(cells:^Explore_Cells,cell:[2]i32) -> int {
     mask:=len(cells.keys)-1
     at:=int((u32(cell.x)*73856093~u32(cell.y)*19349663)&u32(mask))
     for _ in 0..<len(cells.keys) {
-        if cells.visits[at]==0 || cells.keys[at]==cell {return at}
+        if cells.visits[at]==0 && cells.misses[at]==0 || cells.keys[at]==cell {return at}
         at=(at+1)&mask
     }
     return -1
 }
 
-// The times a cell was entered; 0 when never.
+// The times a cell was entered and the times it was not reached; 0 when never.
 @(private)
-explore_cell_visits :: proc(cells:^Explore_Cells,cell:[2]i32) -> u16 {
+explore_cell_visits :: proc(cells:^Explore_Cells,cell:[2]i32) -> (visits:u16,misses:u8) {
     at:=explore_cell_slot(cells,cell)
-    return at<0 || cells.visits[at]==0?0:cells.visits[at]
+    if at<0 || cells.keys[at]!=cell {return}
+    return cells.visits[at],cells.misses[at]
 }
 
 @(private)
 explore_cell_enter :: proc(cells:^Explore_Cells,cell:[2]i32) {
     at:=explore_cell_slot(cells,cell)
     if at<0 {return}
-    if cells.visits[at]==0 {
-        cells.keys[at]=cell
-        cells.count+=1
-    }
+    cells.keys[at]=cell
+    if cells.visits[at]==0 {cells.count+=1}
     if cells.visits[at]<max(u16) {cells.visits[at]+=1}
 }
 
+// It went for a cell and did not get there.
 @(private)
-EXPLORE_DIRECTIONS :: [8][2]f32{{0,1},{0.7071,0.7071},{1,0},{0.7071,-0.7071},{0,-1},{-0.7071,-0.7071},{-1,0},{-0.7071,0.7071}}
+explore_cell_miss :: proc(cells:^Explore_Cells,cell:[2]i32) {
+    at:=explore_cell_slot(cells,cell)
+    if at<0 {return}
+    cells.keys[at]=cell
+    if cells.misses[at]<EXPLORE_MISSES {cells.misses[at]+=1}
+}
 
-// The direction (an index of EXPLORE_DIRECTIONS, in the axes of the camera)
-// toward the least visited cells ahead, ties broken by the seed; those in
-// avoid only when nothing else is left.
+// The cell to go to from here: of those within EXPLORE_REACH, one it was
+// never in, the nearer the better and less each time it missed it; else the
+// least visited; ties broken by the seed. back: only where it has been, for a
+// body that does not move toward what is new.
 @(private)
-explore_direction :: proc(cells:^Explore_Cells,position,right,forward:[3]f32,size:f32,avoid:bit_set[0..<8],rng:^base.Rng) -> int {
-    directions:=EXPLORE_DIRECTIONS
-    best:=0
+explore_target :: proc(cells:^Explore_Cells,here:[2]i32,back:bool,rng:^base.Rng) -> [2]i32 {
+    best:=here
     best_score:=min(f32)
-    for d,i in directions {
-        world:=right*d.x+forward*d.y
-        score:f32
-        if i in avoid {score-=100}
-        for step in 1..=3 {
-            at:=position+world*size*f32(step)
-            visits:=explore_cell_visits(cells,explore_cell_of(at,size))
-            score+=visits==0?f32(4-step):-f32(min(visits,8))*0.25
+    for z in -EXPLORE_REACH..=EXPLORE_REACH {
+        for x in -EXPLORE_REACH..=EXPLORE_REACH {
+            if x==0 && z==0 {continue}
+            cell:=here+{i32(x),i32(z)}
+            visits,misses:=explore_cell_visits(cells,cell)
+            score:f32
+            switch {
+            case visits>0: score=-f32(min(visits,8))*0.25
+            case back:     score=-100
+            case:          score=f32(EXPLORE_REACH+1-max(abs(x),abs(z)))-f32(misses)
+            }
+            score+=f32(base.rng_u32(rng))/f32(max(u32))*0.5
+            if score>best_score {best,best_score=cell,score}
         }
-        score+=f32(base.rng_u32(rng))/f32(max(u32))*0.5
-        if score>best_score {best,best_score=i,score}
     }
     return best
 }
@@ -451,38 +474,45 @@ explore_world_play :: proc(x:^Explore_Run,p:^Api_Play_Explore_Params) -> (proble
     move,jump,can_jump,problem=editor.play_actions(s,m,base.text_get(p.move[:]),base.text_get(p.jump[:]))
     if problem!="" {return}
     if !explore_idle(x,min(2,x.total)) {return}
-    seat,body:=editor.play_focused(editor.run_ref(s,x.r))
+    _,body:=editor.play_focused(editor.run_ref(s,x.r))
     for wait:=0;body==core.NONE;wait+=1 {
         if wait>=EXPLORE_WARM_TICKS {
             x.stopped=.No_Body
             return
         }
         if !explore_tick(x,{}) {return}
-        seat,body=editor.play_focused(editor.run_ref(s,x.r))
+        _,body=editor.play_focused(editor.run_ref(s,x.r))
     }
-    directions:=EXPLORE_DIRECTIONS
-    avoid:bit_set[0..<8]
-    chosen:=0
-    previous:=editor.entity_world(editor.run_ref(s,x.r),body).position
-    still,next:=0,0
+    blocked_after:=EXPLORE_BLOCKED_SECONDS
+    if q:=qa_of(s,x.r);q!=nil && q.armed && q.limits.stuck_seconds>0 {blocked_after=min(blocked_after,f64(q.limits.stuck_seconds)*0.5)}
+    drive:editor.Api_Drive
+    driving:=false
+    target:[2]i32
+    tried:=f64(0) // how long it was stuck when it took its way
+    look:=0
     ui_previous,ui_node:=-1,-1
     for x.ran<x.total {
         if editor.api_stop_asked(x.s) {break}
         w=editor.run_ref(s,x.r)
-        requests=core.world_storage_of(w,input.Hold_Requests)
-        seat,body=editor.play_focused(w)
+        _,body=editor.play_focused(w)
         if body==core.NONE {
             if !explore_tick(x,{}) {return}
             continue
         }
         at:=editor.entity_world(w,body).position
-        explore_cell_enter(&x.cells,explore_cell_of(at,p.cell))
-        if linalg.length(at-previous)>=EXPLORE_MOVED {still=0} else {still+=1}
-        previous=at
-        blocked:=still>=EXPLORE_BLOCKED_TICKS
-        if x.ran>=next || blocked {
+        here:=explore_cell_of(at,p.cell)
+        explore_cell_enter(&x.cells,here)
+        still:=explore_still(x,w,body,at)
+        if still<tried {tried=0}
+        blocked:=driving && still-tried>=blocked_after
+        if !driving || blocked || x.ran>=look {
+            look=x.ran+EXPLORE_UI_EVERY
             // A screen that takes the seat is pressed through before moving on.
             if explore_modal_on_top(x) {
+                if driving {
+                    editor.play_drive_end(s,x.r,&drive)
+                    driving=false
+                }
                 going,done:=explore_ui_step(x,&ui_previous,&ui_node)
                 if !going {
                     x.stopped=x.stopped==.Ui_Covered?.Blocked_By_Ui:x.stopped
@@ -490,21 +520,34 @@ explore_world_play :: proc(x:^Explore_Run,p:^Api_Play_Explore_Params) -> (proble
                 }
                 if !done {continue}
             }
+        }
+        if !driving || blocked {
             if blocked {
-                avoid+={chosen}
-                still=0
-            } else {avoid={}}
-            right,forward:=editor.play_view_axes(w)
-            chosen=explore_direction(&x.cells,at,right,forward,p.cell,avoid,&x.rng)
-            hold:=u32(EXPLORE_HOLD_TICKS)
-            input.hold(requests,seat,move,directions[chosen],hold)
-            if can_jump && (blocked || base.rng_u32(&x.rng)%4==0) {input.hold(requests,seat,jump,{1,0},2)}
-            next=x.ran+int(hold)
+                editor.play_drive_end(s,x.r,&drive)
+                explore_cell_miss(&x.cells,target)
+                tried=still
+            }
+            target=explore_target(&x.cells,here,blocked,&x.rng)
+            drive=editor.play_drive_to(s,explore_cell_middle(target,p.cell,at.y),p.cell*0.5,move,jump,can_jump)
+            driving=true
+        }
+        if !editor.play_drive_steer(s,x.r,&drive) {
+            driving=false
+            if drive.stopped!=.Arrived {explore_cell_miss(&x.cells,target)}
         }
         if !explore_tick(x,{}) {return}
     }
+    if driving {editor.play_drive_end(s,x.r,&drive)}
     x.stopped=.Ticks
     return
+}
+
+// How long the body has been stuck: what the Stuck monitor measures (stuck_watch).
+@(private)
+explore_still :: proc(x:^Explore_Run,w:core.World_Ref,body:core.Entity,at:[3]f32) -> f64 {
+    slot,t:=playtest_run(x.s,x.r),core.world_storage_of(w,core.Time)
+    if slot==nil || t==nil {return 0}
+    return stuck_watch(&slot.stuck,w,body,at,t.seconds)
 }
 
 // Whether a modal screen takes the input of the focused player.
@@ -539,10 +582,11 @@ api_play_explore :: proc(s:^editor.Session,call:^api.Call) {
     x.exits.allocator=call.allocator
     x.cells.keys=make([][2]i32,EXPLORE_CELLS,call.allocator)
     x.cells.visits=make([]u16,EXPLORE_CELLS,call.allocator)
+    x.cells.misses=make([]u8,EXPLORE_CELLS,call.allocator)
     x.ui.nodes=make([]Explore_Ui_Node,EXPLORE_UI_NODES,call.allocator)
     x.ui.pages=make([]Explore_Ui_Page,EXPLORE_UI_PAGES,call.allocator)
     x.ui.edges=make([]Explore_Ui_Edge,EXPLORE_UI_EDGES,call.allocator)
-    if x.cells.keys==nil || x.cells.visits==nil || x.ui.nodes==nil || x.ui.pages==nil || x.ui.edges==nil || virtual.arena_init_growing(&x.arena)!=nil {
+    if x.cells.keys==nil || x.cells.visits==nil || x.cells.misses==nil || x.ui.nodes==nil || x.ui.pages==nil || x.ui.edges==nil || virtual.arena_init_growing(&x.arena)!=nil {
         api.call_fail(call,api.SERVER_ERROR,"No memory for the state of the bot")
         return
     }

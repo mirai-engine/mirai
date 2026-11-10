@@ -95,7 +95,6 @@ join :: proc(parts:..string) -> string {
     return path
 }
 
-EXE :: ".exe" when ODIN_OS==.Windows else ""
 
 // The compiler of cook/build: MIRAI_ODIN, the one pinned under .deps (also
 // the one of the main checkout from a worktree), or odin in PATH.
@@ -181,9 +180,9 @@ cmd_build :: proc(root:string,args:[]string) -> int {
         }
         if os.make_directory_all(join(root,"bin"))!=nil && !os.is_dir(join(root,"bin")) {return 1}
         // A failed build never replaces the previous executable.
-        staging:=join(root,"bin",fmt.aprintf(".%s-build-%d%s",target.output,os.get_pid(),EXE))
+        staging:=join(root,"bin",fmt.aprintf(".%s-build-%d%s",target.output,os.get_pid(),project.EXECUTABLE_SUFFIX))
         staged_sources:=fmt.aprintf("%s.sources.json",staging)
-        final:=join(root,"bin",fmt.aprintf("%s%s",target.output,EXE))
+        final:=join(root,"bin",fmt.aprintf("%s%s",target.output,project.EXECUTABLE_SUFFIX))
         command:=tool_command(root,target.package_path,debug?"-debug":"-o:speed",staging,staged_sources)
         if code:=run_compiler(root,command[:],"mirai build tools");code!=0 {os.remove(staging);os.remove(staged_sources);return code}
         if !executable_publish(root,staging,final,staged_sources,build_sources_file(root,target.output)) {return 1}
@@ -197,7 +196,7 @@ cmd_build :: proc(root:string,args:[]string) -> int {
 // is older than its sources, and that it was built when it is no longer there.
 // Named after the executable, so that Windows and WSL on one checkout keep theirs.
 build_sources_file :: proc(root,output:string) -> string {
-    return join(root,"bin",fmt.aprintf("%s%s.sources.json",output,EXE))
+    return join(root,"bin",fmt.aprintf("%s%s.sources.json",output,project.EXECUTABLE_SUFFIX))
 }
 
 // Puts a built executable and the list of its sources in their place. One
@@ -217,7 +216,7 @@ executable_publish :: proc(root,staging,final,staged_sources,sources:string) -> 
         }
     }
     if os.rename(staging,final)!=nil {
-        retired:=join(bin,fmt.aprintf(".retired-%d-%x%s",os.get_pid(),u64(time.to_unix_nanoseconds(time.now())),EXE))
+        retired:=join(bin,fmt.aprintf(".retired-%d-%x%s",os.get_pid(),u64(time.to_unix_nanoseconds(time.now())),project.EXECUTABLE_SUFFIX))
         if os.rename(final,retired)!=nil || os.rename(staging,final)!=nil {
             fmt.eprintfln("mirai: could not replace %s",final)
             os.remove(staging);os.remove(staged_sources)
@@ -250,6 +249,7 @@ cmd_check :: proc(root:string,args:[]string) -> int {
     append(&command,..args[1:])
     code:=run(root,command[:])
     if code==0 && folder!="" && alloc_lint_applies(root,folder) && !alloc_lint_package(folder) {return 1}
+    if code==0 && folder!="" && plugin_api_lint_applies(folder) && !plugin_api_lint_folder(folder) {return 1}
     return code
 }
 
@@ -259,12 +259,13 @@ cmd_check :: proc(root:string,args:[]string) -> int {
 check_project :: proc(root,folder:string) -> int {
     opened,error:=project.open(folder,root,context.temp_allocator)
     if error.code!=.None {fmt.eprintfln("mirai check: could not open the project %s",folder);return 1}
+    clean:=plugin_api_lint_project(&opened)
     job:=build.job_run({project=&opened,target=.Editor,action=.Check})
     defer build.job_destroy(job)
     for d in job.result.diagnostics {fmt.eprintfln("%s(%d:%d) %v: %s",d.file,d.line,d.column,d.severity,d.message)}
     if job.result.status==.Built {
         game:=join(folder,project.FOLDER_NAMES[.Game])
-        return 1 if alloc_lint_applies(root,game) && !alloc_lint_package(game) else 0
+        return 1 if alloc_lint_applies(root,game) && !alloc_lint_package(game) || !clean else 0
     }
     if len(job.result.diagnostics)==0 {fmt.eprintln(job.result.text)}
     return 1

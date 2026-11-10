@@ -59,7 +59,7 @@ multiple_animation_sources_keep_duplicate_clip_names_curves_markers_root_and_act
     state.asset,state.generation,state.source_plan=combined.id,combined.generation,1
     testing.expect(t,source_clip_source(&cache,&state,4)==sources[1].id && source_clip_source(&cache,&state,1)==sources[0].id)
     playback:Playback;events:Animation_Events;defer {playback_free(&playback);delete(events.items)}
-    testing.expect(t,lib.pose_init(&playback.pose,32))
+    testing.expect(t,tracks_bind(&playback,&state,combined))
     animation:=ANIMATION_DEFAULT;animation.loop=false;animation.root_motion=.Extract
     testing.expect(t,program_players(&state,output,combined,animation,&events,&playback,.5,-1,nil) && program_pose(&playback,&state,combined,animation,output,{}))
     source_markers_resolve(&cache,&state,events.items[:])

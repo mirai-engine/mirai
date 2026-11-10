@@ -11,13 +11,13 @@ import "mirai:std/serial"
 random_vitals :: proc(state:^u64) -> Test_Vitals {
     teams:=[3]Test_Team{.None,.Red,.Blue}
     v:=Test_Vitals{
-        health=i32(rng_next(state)%1001),armor=u8(rng_next(state)),team=teams[rng_next(state)%3],
-        flags=transmute(bit_set[Test_Flag;u8])u8(rng_next(state)%8),alive=rng_next(state)%2==0,
-        cache=u32(rng_next(state)),energy=f32(rng_unit(state)*100),raw=f32(rng_unit(state)*1e6-5e5),big=rng_next(state),
-        small=i16(rng_next(state)%32)-16,
+        health=i32(base.splitmix_next(state)%1001),armor=u8(base.splitmix_next(state)),team=teams[base.splitmix_next(state)%3],
+        flags=transmute(bit_set[Test_Flag;u8])u8(base.splitmix_next(state)%8),alive=base.splitmix_next(state)%2==0,
+        cache=u32(base.splitmix_next(state)),energy=f32(rng_unit(state)*100),raw=f32(rng_unit(state)*1e6-5e5),big=base.splitmix_next(state),
+        small=i16(base.splitmix_next(state)%32)-16,
     }
-    length:=int(rng_next(state)%16)
-    for i in 0..<length {v.name[i]=u8(97+rng_next(state)%26)}
+    length:=int(base.splitmix_next(state)%16)
+    for i in 0..<length {v.name[i]=u8(97+base.splitmix_next(state)%26)}
     return v
 }
 @(private)
@@ -59,11 +59,11 @@ descriptors_pick_a_serializer_per_field_and_round_trip_whole_and_as_deltas :: pr
     buffer:[MAX_STATE_BYTES+64]u8
     words,base_words,back:[MAX_STATE_WORDS]u32
     for round in 0..<300 {
-        transform,vitals,secret:=random_transform(&state),random_vitals(&state),Test_Secret{ammo=u16(rng_next(&state)),stamina=f32(rng_unit(&state)*10)}
+        transform,vitals,secret:=random_transform(&state),random_vitals(&state),Test_Secret{ammo=u16(base.splitmix_next(&state)),stamina=f32(rng_unit(&state)*10)}
         fragment_quantize(p,actor,0,&transform,words[:],nil,nil)
         fragment_quantize(p,actor,1,&vitals,words[:],nil,nil)
         fragment_quantize(p,actor,2,&secret,words[:],nil,nil)
-        mask:=round%3==0?actor.all:rng_next(&state)&actor.all
+        mask:=round%3==0?actor.all:base.splitmix_next(&state)&actor.all
         // Whole, then against a base that shares some leaves with the state.
         for pass in 0..<2 {
             base:[]u32

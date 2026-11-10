@@ -2,6 +2,7 @@ package geom
 
 import "core:math"
 import mm "mirai:std/math"
+import "mirai:std/base"
 
 // How a brush weakens from its center to its radius.
 Falloff :: enum u8 {Smooth,Sphere,Linear,Sharp,Constant}
@@ -219,7 +220,7 @@ mesh_surface_edit :: proc(w:^Mesh_Surface_Workspace,mesh:Mesh,brush:Mesh_Surface
             mesh_buffer_clear(out);return {},.Out_Of_Memory
         }
         for p,i in mesh.positions {
-            key:=hash_u64(position_hash(p)~position_hash(mesh.normals[i]))
+            key:=base.hash_u64(position_hash(p)~position_hash(mesh.normals[i]))
             if key==KEY_EMPTY {key=0}
             head,inserted:=key_map_entry(&w.points,key,u32(i))
             w.representatives[i]=u32(i);w.next[i]=NONE

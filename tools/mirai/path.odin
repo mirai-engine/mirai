@@ -2,7 +2,6 @@ package main
 
 import "core:fmt"
 import "core:path/filepath"
-import "core:strings"
 import "mirai:project"
 
 // mirai setup path: the bin/ folder of this engine in the PATH of the user,
@@ -25,13 +24,9 @@ Path_Entry :: enum {Bin,Ripgrep}
 path_entry_is :: proc(entry:string,kind:Path_Entry) -> bool {
     parent:=filepath.dir(entry)
     switch kind {
-    case .Bin:     return path_name_is(filepath.base(entry),"bin") && project.engine_root_is(parent)
-    case .Ripgrep: return path_name_is(filepath.base(entry),"ripgrep") && path_name_is(filepath.base(parent),".deps")
+    case .Bin:     return project.path_same(filepath.base(entry),"bin") && project.engine_root_is(parent)
+    case .Ripgrep: return project.path_same(filepath.base(entry),"ripgrep") && project.path_same(filepath.base(parent),".deps")
     }
     return false
 }
 
-@(private="file")
-path_name_is :: proc(name,expected:string) -> bool {
-    when ODIN_OS==.Windows {return strings.equal_fold(name,expected)} else {return name==expected}
-}

@@ -57,7 +57,8 @@ terrain sends over the network, editor thumbnails, the shaders the executables e
   `format.odin`, the stream format both sides read: block, quantum and chunk headers, array types,
   packet layouts, levels and the prediction of packed Huffman code lengths.
 - `std/compressor/bc7split` (runtime): restores BC7 blocks from a BC7Split stream (`decode`).
-- `std/compressor/lz` (runtime, since a game saves with `Edit`): the encoder (`compress`) and its block
+- `std/compressor/lz` (runtime, since a game saves with `Edit`): the encoder (`compress`) and its
+  block
   framing over the packages `entropy` (entropy arrays: Huffman, tANS, RLE, split; costs and log2
   tables), `match` (hash tables, suffix trie, long range matcher) and `lz`. It allocates its
   scratch on demand in the `Encoder`, kept across calls.

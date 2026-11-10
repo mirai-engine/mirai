@@ -578,6 +578,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
 	r.stats.cpu_end_ms = f32(time.duration_milliseconds(time.tick_diff(recorded, ended)))
 
 	r.frame += 1
+	texture_views_count(r)
 	update_stats(r)
 	if !ok {set_error(r, "the frame was not submitted: %s", rhi.device_error(d))}
 	return ok && recorded_ok
@@ -1773,6 +1774,7 @@ update_stats :: proc(r: ^Renderer) {
 	s.materials = u32(len(r.scene.materials))
 	s.textures = u32(r.textures.count)
 	s.texture_bytes = r.textures.bytes
+	s.view_target_bytes = r.texture_view_bytes
 	s.geometry_bytes = geometry_pool_bytes(r)
 	s.geometry_free, s.geometry_free_largest = geometry_pool_free(&r.scene)
 	s.ray_bytes, _ = rhi.accel_memory(r.device)

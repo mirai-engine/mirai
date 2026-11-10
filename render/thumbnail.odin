@@ -280,8 +280,7 @@ PREVIEW_CHANNELS :: bit_set[Debug_View]{.None,.Albedo,.Normal,.Roughness,.Metall
 // written while the frame is recorded: one set per frame in flight.
 Preview_GPU :: struct {
     vertices,materials:[rhi.MAX_FRAMES_IN_FLIGHT]rhi.Buffer,
-    color,depth:rhi.Texture,
-    copy:rhi.Buffer, // the texels on their way from the target to the image of the table
+    color,depth:rhi.Texture, // the color is copied into the image of the table
     width,height:u32,
 }
 
@@ -326,7 +325,6 @@ preview_destroy :: proc(device:^rhi.Device,gpu:^Preview_GPU) {
     if device!=nil {
         for buffer in gpu.vertices {if buffer!=0 {rhi.buffer_destroy(device,buffer)}}
         for buffer in gpu.materials {if buffer!=0 {rhi.buffer_destroy(device,buffer)}}
-        if gpu.copy!=0 {rhi.buffer_destroy(device,gpu.copy)}
         for texture in ([]rhi.Texture{gpu.color,gpu.depth}) {if texture!=0 {rhi.texture_destroy(device,texture)}}
     }
     gpu^={}
@@ -355,15 +353,13 @@ renderer_preview :: proc(r:^Renderer,gpu:^Preview_GPU,key:u64,name:string,vertic
         blank:=make([]u8,int(width)*int(height)*4,context.temp_allocator)
         texture=texture_image(r,key,blank,int(width),int(height),name) or_return
     }
-    if gpu.width!=width || gpu.height!=height || gpu.color==0 || gpu.depth==0 || gpu.copy==0 {
+    if gpu.width!=width || gpu.height!=height || gpu.color==0 || gpu.depth==0 {
         for old in ([]rhi.Texture{gpu.color,gpu.depth}) {if old!=0 {rhi.texture_destroy(device,old)}}
-        if gpu.copy!=0 {rhi.buffer_destroy(device,gpu.copy)}
         gpu.color=rhi.texture_create(device,{width=width,height=height,format=.RGBA8_Unorm,usage={.Color_Target,.Transfer_Src},name="preview studio"})
         gpu.depth=rhi.texture_create(device,{width=width,height=height,format=.D32_Float,usage={.Depth_Target},name="preview depth"})
-        gpu.copy=rhi.buffer_create(device,{size=u64(width)*u64(height)*4,usage={.Transfer_Src,.Transfer_Dst},memory=.GPU,name="preview copy"})
         gpu.width,gpu.height=width,height
     }
-    if gpu.color==0 || gpu.depth==0 || gpu.copy==0 {return 0,false}
+    if gpu.color==0 || gpu.depth==0 {return 0,false}
     r.previews[r.preview_count]={gpu,texture,vertices,materials,background,fit,view,light,size,channel}
     r.preview_count+=1
     return texture,true
@@ -403,8 +399,7 @@ previews_pass :: proc(r:^Renderer,cmd:^rhi.Command_List,slot:int) {
         rhi.cmd_bind_buffer(cmd,SLOT_MATERIALS,gpu.materials[slot])
         thumbnail_record(r,cmd,gpu.color,gpu.depth,u32(len(request.vertices)),rows[:len(request.materials)],{request.background.x,request.background.y,request.background.z,1},request.light.outdoor,request.size)
         image:=r.textures.textures[request.texture-1]
-        rhi.cmd_copy_texture_to_buffer(cmd,gpu.color,gpu.copy,0)
-        rhi.cmd_copy_buffer_to_texture(cmd,gpu.copy,0,image)
+        rhi.cmd_copy_texture(cmd,gpu.color,image)
         rhi.cmd_barrier_texture(cmd,image,.Shader_Read)
     }
 }

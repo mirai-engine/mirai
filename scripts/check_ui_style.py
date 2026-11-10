@@ -4,7 +4,7 @@
 """Warns when the UI code of the editor writes by hand what the theme defines.
 
 The colors, heights and font sizes of the controls come from `ui.Theme`
-(`ui/theme.odin`) and buttons take a `Button_Style`; a menu is `menu_button`
+(`ui/theme.odin`) and buttons take a `Button_Style`, not a look of their own; a menu is `menu_button`
 or `popup` with `menu_item`. Each pattern has a maximum: the existing code that
 has not moved to the theme yet. A new line that goes past it fails; when code
 is migrated, the maximum goes down.
@@ -22,7 +22,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 RULES = [
     (re.compile(r"(?<!:: )ui\.Color\{\d"), 4,
      "a color of ui.Theme, or a named constant of the palette of the domain"),
-    (re.compile(r"use_appearance=true"), 14,
+    (re.compile(r"ui\.button\(.*look=&"), 14,
      "a Button_Style (Ghost, Field, Accent, Tab, Well)"),
     (re.compile(r"(?:ui\.button|ui\.text_field|action_button)\(.*height=2[5-7][,}]"), 0,
      "height=ctx.theme.control"),

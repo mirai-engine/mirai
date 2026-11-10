@@ -182,6 +182,11 @@ With `backdrop_blur` the layer takes a filtered copy of its parent's background.
   [host](../../mirai-core/references/host.md#bridge-with-ui).
 - The text measures (`text_width`, `text_line`, `text_lines`, `text_index_at`…) are in layout units
   with the kerning and do not depend on the density. A text has no line limit.
+- **One word breaker.** Every text that wraps at words walks them with `layout_walk` and breaks
+  where the layout breaks a paragraph (`layout_break_next`): a word goes to the next line unless it
+  fits with the space after it, and one wider than the line takes a line of its own. `text_line`
+  is that break for a text with a style; rich text and Markdown fill their lines with the same
+  builder (`Flow`), which keeps on one line what no space parts.
 - **Lines like CSS.** `TEXT_LINE` (Inter's ascent plus descent) is the `normal` line height and the
   box of a line; `text_leading` centers it in a height with half the excess above, like CSS. A row
   centers its text this way, `Text_Style.line_height` distributes the excess of each line and a
@@ -237,8 +242,8 @@ All take the context, an id and their state by parameter.
     until the frame is drawn. What it does not recognize (HTML, tables) stays as text; italic has no
     face and its marks are removed. Bold and italic open and close on the same line.
   - Words are split as the layout splits a paragraph; one longer than the line is cut where the line
-    ends, and fenced code is cut by characters, so the height does not depend on where the spaces
-    fall. What does not fit in its buffers passes to the next line or word, never lost.
+    ends (`Flow.cut`), and fenced code is cut by characters, so the height does not depend on where
+    the spaces fall. A line that holds more pieces than its buffer goes on in the next, never lost.
   - Each link goes through `Markdown_Style.resolve`, which is called when measuring and when
     building and must give the same answer for the same destination in a frame. A `pill` link is not
     split: it passes whole to the next line and, if it is wider than a line, it is cut to it; a
@@ -279,8 +284,12 @@ All take the context, an id and their state by parameter.
 
 - `number_field`: a click without dragging writes the value; dragging traverses it from the initial
   value and Escape returns it. `began` and `ended` delimit the edit for undo.
-- `slider_field` needs a finite range (otherwise it uses the common field). `vector_field` builds a
-  field per component with the strip of its axis color, without a letter.
+- `slider` is the slider of the editor and of a game: a drag moves it and Escape returns the value
+  the drag began with; left and right step it with the focus. `slider_field` is one followed by the
+  field that types its value and needs a finite range (otherwise it is the field alone).
+  `vector_field` builds a field per component with the strip of its axis color, without a letter.
+- A `stepper` number has two arrows that step it, as left and right do with the focus, and what is
+  typed in it snaps to its `step`.
 
 ### Popups and scroll
 
@@ -326,9 +335,9 @@ boxes, violet only for what is active and primary. Each layer is one step lighte
 behind it (bar, document canvas, `panel`, `card`, `raised`) and a field (`well`) is darker than its
 card, so that a panel stands out from what is behind it and a card from its panel without depending
 on the border. `row` is the height of a property row and `control` that of a bar button, a menu row
-and a search box; `use_appearance` remains for what carries the color of a datum (that of an
-agent). The package's shapes, layers, styles and components do not change the layout or the controls
-of the editor panels:
+and a search box; a `look` of its own on a button remains for what carries the color of a datum
+(that of an agent). The package's shapes, layers, styles and components do not change the layout
+or the controls of the editor panels:
 [editor interface](../../mirai-editor/references/panels.md#layout).
 
 ## Game interfaces
@@ -337,12 +346,12 @@ of the editor panels:
   in texels of the part; `image_frame` gives the frame of a sprite sheet. `text` has its own style
   and `reveal` draws a part of its characters where the whole text places them, so it does not
   reflow while it appears. `anchored` hangs a container from a screen point inside the safe area and
-  `skin_button` uses images or colors per state.
-- **Game controls** (`game.odin`): one algorithm per control, used by the tree and by code. Every
-  color and corner comes from the `Node_Style` resolved for its state and a transparent part is not
-  drawn: neither the theme nor constants. `fill`, `stroke`, the corners and the text are the box;
-  `track` the track of a slider and the row under the pointer in a dropdown's list; `knob` the knob;
-  `mark` the dot of a radio, the tick of a checkbox, the arrows and the chosen option.
+  `skin_look` gives a button images or colors per state.
+- **Game controls**: a button, a checkbox, a slider and a number are the editor's with a `look`; a
+  radio, a selector, a field and a dropdown are in `game.odin`. Every color and corner comes from
+  the `Node_Style` resolved for its state (`widget_states`): neither the theme nor constants.
+  `fill`, `stroke`, corners and text are the box; `track` the track of a slider and the lit row of
+  a dropdown; `knob` the knob; `mark` the dot, the tick, the arrows and the chosen option.
   - Without a size, a control measures its text plus `GAME_PAD` and `GAME_WIDTH` sizes of width.
   - Left and right change a slider, a selector and a number with the focus; the slider writes only
     when the pointer or the keys move it, and what is written in a number is adjusted to the step
@@ -379,7 +388,8 @@ The node types are in `Node_Kind` (`tree.odin`) and the events in `Tree_Event`.
 - **Controls.** The tree's controls are the game ones, in the parts of the style that the node
   resolves, and **do not write the value**: they emit `Changed` with what they ask for and the game
   writes it; they show what was asked until the game has had a tick to write it. A control bound to
-  a field of a setting (`@(storage,setting)`) writes it itself: a settings screen is data. A `Selector` or a
+  a field of a setting (`@(storage,setting)`) writes it itself: a settings screen is data. A
+  `Selector` or a
   `Dropdown` written `Label=Value` binds the value of the option chosen (a number, a member of an
   enum, a text for a text field), not its index. A `Selector` or a
   `Dropdown` with `bind_items` takes its options from a game array.
@@ -467,7 +477,7 @@ that `tree_node` takes: the loaded tree is, byte for byte, the one the same call
   active. `Focused` is the navigation focus with its ring, not the one a click gives: it does not
   look like hover.
 - `style_resolve` applies the states in order; within the state, a named rule wins over the
-  wildcard, and then the last row.
+  wildcard, and then the last row. A tree keeps its rules by style, in that order.
 - With `Node_Style.transition`, a node's colors, its shadow and what `move` and `scale` give go from
   the style it showed to the new one when its state or variant changes; a change under way starts
   from where it was and a transparent end only fades.
@@ -483,10 +493,12 @@ that `tree_node` takes: the loaded tree is, byte for byte, the one the same call
   `Tree_Token` and `Tree_Param`; the frame reads the flat tables, and each name resolves when the
   file is written or links another (`tree_link`), so changing a token or a style reaches what names
   it without touching the frame. Game documentation: `docs/game/ui/styles.md`.
+- A value a style or a state sets is a `Style_Key` with its row in `STYLE_KEYS`: copying,
+  comparing, tokens and the document go by that row, so a new key is a new row.
 - A node's variant is its own, that of its `bind_variant` or the one it inherits from its box; that
   of the root is given by whoever builds (`Tree_Build_Desc.variant`).
 
-### Widgets
+### Widget files
 
 - A component is a widget: a `.ui` of its own, one root of any kind. A `Component` node is a use;
   `Tree_Component.widget` names the file and its name is the name of the file. A file that no node

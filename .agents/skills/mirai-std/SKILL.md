@@ -104,6 +104,8 @@ description: Mirai standard library for games, with the packages `std/base`, `st
   BVH are in [physics](../mirai-physics/references/physics.md#stdspatial).
 - Streams, schemas, hashes, import and migration of values (`std/serial`):
   [std/serial](../mirai-assets/references/serial.md#stdserial).
+- What the structure of a `.ui` is judged by (`std/ui_format`):
+  [interface](../mirai-assets/references/kinds.md#interface).
 - Child processes without console windows: [API](references/subprocess.md#api) and
   [Windows](references/subprocess.md#windows).
 

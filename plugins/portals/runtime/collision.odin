@@ -102,14 +102,7 @@ traveler_twin :: proc "contextless" (openings:[]Opening,center:[3]f32,radius:f32
 }
 
 @(private)
-frame_key :: proc "contextless" (portal,wall:mm.Transform,collider:phys.Collider) -> u64 {
-    h:=u64(0xcbf29ce484222325)
-    mix :: proc "contextless" (h:^u64,bytes:[]u8) {
-        for b in bytes {
-            h^~=u64(b)
-            h^*=0x100000001b3
-        }
-    }
+frame_key :: proc(portal,wall:mm.Transform,collider:phys.Collider) -> u64 {
     // What the frame is made from, without the padding of the collider.
     Made :: struct {
         portal,wall:mm.Transform,
@@ -122,8 +115,7 @@ frame_key :: proc "contextless" (portal,wall:mm.Transform,collider:phys.Collider
         portal,wall,collider.size,collider.center,collider.convex_radius,collider.friction,collider.restitution,
         u32(collider.kind),u32(collider.preset),u32(collider.sensor),collider.belongs,collider.collides,
     }
-    mix(&h,([^]u8)(&made)[:size_of(made)])
-    return h
+    return base.hash64(([^]u8)(&made)[:size_of(made)])
 }
 
 // Where the face and the back of a wall are behind an opening, measured by rays against its collider

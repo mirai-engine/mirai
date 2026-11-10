@@ -341,7 +341,7 @@ api_step_run :: proc(s:^Session,run:^Api_Step_Run,frame:Api_Step_Frame) -> (ran:
         if run.look!=nil {
             if problem=api_look_steer(s,target,run.look);problem!="" {return}
         }
-        if run.drive!=nil && !api_drive_steer(s,target,run.drive) {break}
+        if run.drive!=nil && !play_drive_steer(s,target,run.drive) {break}
         for at>=run.timeline[segment].ticks {segment+=1;at=0}
         if at==0 && run.timeline[segment].press!="" {
             if problem=api_press_aim(s,target,&run.timeline[segment]);problem!="" {return}

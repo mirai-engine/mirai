@@ -1,5 +1,6 @@
 package ui
 
+import "mirai:std/base"
 import "mirai:std/serial"
 
 // What the names of a .ui leave in its records. A document names tokens and
@@ -23,174 +24,168 @@ Style_Key :: enum u8 {
 Style_Keys :: bit_set[Style_Key;u64]
 
 LAYOUT_KEYS :: Style_Keys{.Width,.Height,.Direction,.Padding,.Gap,.Align_X,.Align_Y,.Columns,.Span,.Self_X,.Self_Y,.Aspect}
-// What a state (a rule of a style) can set.
-RULE_KEYS :: Style_Keys{.Fill,.Fill2,.Stroke,.Track,.Knob,.Mark,.Radius,.Border,.Shadow_Color,.Shadow_Blur,.Shadow_X,.Shadow_Y,.Font,.Size,.Color,.Outline,.Outline_Color,.Text_Shadow_Color,.Text_Shadow_X,.Text_Shadow_Y,.Move_X,.Move_Y,.Scale}
 
-@(private)
-SHADOW_KEYS :: Style_Keys{.Shadow_Color,.Shadow_Blur,.Shadow_X,.Shadow_Y}
-@(private)
-OUTLINE_KEYS :: Style_Keys{.Outline,.Outline_Color}
-@(private)
-TEXT_SHADOW_KEYS :: Style_Keys{.Text_Shadow_Color,.Text_Shadow_X,.Text_Shadow_Y}
-@(private)
-MOVE_KEYS :: Style_Keys{.Move_X,.Move_Y}
+// What a value is to whoever reads or writes it by its key.
+Style_Key_Kind :: enum u8 {
+    Number,  // an f32
+    Color,
+    Enum,    // a member of type, in one byte
+    Flag,    // a bool
+    Count,   // a whole number, as wide as size
+    Corners, // [4]f32: one number for the four, or each
+    Sides,   // [4]f32: one number for the four, one for each axis, or each
+    Size,
+    Font,    // a face: FONT_REGULAR and the others, or FONT_TREE plus a row of the fonts of its file
+    Program, // the name of a ui program
+    Numbers, // [4]f32
+    Sounds,  // a .sound for each Sound_Cue
+}
+// The struct a value is in.
+Style_Key_Place :: enum u8 {
+    Style,  // Node_Style
+    Layout, // Layout: that of a style (Tree_Style_Info.layout) or of a node
+    Info,   // Tree_Style_Info
+}
+Style_Key_Info :: struct {
+    name:string,       // as a document says it; that of a part of a group, inside it
+    group:string,      // the object of a document its parts go in; empty: by itself
+    kind:Style_Key_Kind,
+    place:Style_Key_Place,
+    offset,size:u16,   // in the struct of its place
+    type:typeid,       // of an Enum
+    rule:bool,         // a state (a rule of a style) can set it
+    field:Style_Field, // of the patch of a rule: what carries it there
+}
+
+// Every key: what reads, writes, copies and compares a value goes by its row.
+@(rodata)
+STYLE_KEYS := [Style_Key]Style_Key_Info{
+    .Fill={name="fill",kind=.Color,offset=u16(offset_of(Node_Style,fill)),size=size_of(Color),rule=true,field=.Fill},
+    .Fill2={name="fill2",kind=.Color,offset=u16(offset_of(Node_Style,fill2)),size=size_of(Color),rule=true,field=.Fill2},
+    .Stroke={name="stroke",kind=.Color,offset=u16(offset_of(Node_Style,stroke)),size=size_of(Color),rule=true,field=.Stroke},
+    .Track={name="track",kind=.Color,offset=u16(offset_of(Node_Style,track)),size=size_of(Color),rule=true,field=.Track},
+    .Knob={name="knob",kind=.Color,offset=u16(offset_of(Node_Style,knob)),size=size_of(Color),rule=true,field=.Knob},
+    .Mark={name="mark",kind=.Color,offset=u16(offset_of(Node_Style,mark)),size=size_of(Color),rule=true,field=.Mark},
+    .Radius={name="radius",kind=.Corners,offset=u16(offset_of(Node_Style,radius)),size=size_of([4]f32),rule=true,field=.Radius},
+    .Border={name="border",kind=.Number,offset=u16(offset_of(Node_Style,stroke_width)),size=size_of(f32),rule=true,field=.Stroke_Width},
+    .Shadow_Color={name="color",group="shadow",kind=.Color,offset=u16(offset_of(Node_Style,shadow_color)),size=size_of(Color),rule=true,field=.Shadow},
+    .Shadow_Blur={name="blur",group="shadow",kind=.Number,offset=u16(offset_of(Node_Style,shadow_blur)),size=size_of(f32),rule=true,field=.Shadow},
+    .Shadow_X={name="x",group="shadow",kind=.Number,offset=u16(offset_of(Node_Style,shadow_offset)),size=size_of(f32),rule=true,field=.Shadow},
+    .Shadow_Y={name="y",group="shadow",kind=.Number,offset=u16(offset_of(Node_Style,shadow_offset)+size_of(f32)),size=size_of(f32),rule=true,field=.Shadow},
+    .Font={name="font",kind=.Font,offset=u16(offset_of(Node_Style,text)+offset_of(Text_Style,font)),size=size_of(u8),rule=true,field=.Text_Font},
+    .Size={name="size",kind=.Number,offset=u16(offset_of(Node_Style,text)+offset_of(Text_Style,size)),size=size_of(f32),rule=true,field=.Text_Size},
+    .Color={name="color",kind=.Color,offset=u16(offset_of(Node_Style,text)+offset_of(Text_Style,color)),size=size_of(Color),rule=true,field=.Text_Color},
+    .Outline={name="outline",kind=.Number,offset=u16(offset_of(Node_Style,text)+offset_of(Text_Style,outline)),size=size_of(f32),rule=true,field=.Text_Outline},
+    .Outline_Color={name="outline_color",kind=.Color,offset=u16(offset_of(Node_Style,text)+offset_of(Text_Style,outline_color)),size=size_of(Color),rule=true,field=.Text_Outline},
+    .Text_Shadow_Color={name="color",group="text_shadow",kind=.Color,offset=u16(offset_of(Node_Style,text)+offset_of(Text_Style,shadow_color)),size=size_of(Color),rule=true,field=.Text_Shadow},
+    .Text_Shadow_X={name="x",group="text_shadow",kind=.Number,offset=u16(offset_of(Node_Style,text)+offset_of(Text_Style,shadow)),size=size_of(f32),rule=true,field=.Text_Shadow},
+    .Text_Shadow_Y={name="y",group="text_shadow",kind=.Number,offset=u16(offset_of(Node_Style,text)+offset_of(Text_Style,shadow)+size_of(f32)),size=size_of(f32),rule=true,field=.Text_Shadow},
+    .Move_X={name="move_x",kind=.Number,offset=u16(offset_of(Node_Style,move)),size=size_of(f32),rule=true,field=.Move},
+    .Move_Y={name="move_y",kind=.Number,offset=u16(offset_of(Node_Style,move)+size_of(f32)),size=size_of(f32),rule=true,field=.Move},
+    .Scale={name="scale",kind=.Number,offset=u16(offset_of(Node_Style,scale)),size=size_of(f32),rule=true,field=.Scale},
+    .Text_Align_X={name="text_x",kind=.Enum,offset=u16(offset_of(Node_Style,text)+offset_of(Text_Style,align_x)),size=size_of(Align),type=Align},
+    .Text_Align_Y={name="text_y",kind=.Enum,offset=u16(offset_of(Node_Style,text)+offset_of(Text_Style,align_y)),size=size_of(Align),type=Align},
+    .Text_Wrap={name="wrap",kind=.Enum,offset=u16(offset_of(Node_Style,text)+offset_of(Text_Style,wrap)),size=size_of(Text_Wrap),type=Text_Wrap},
+    .Ellipsis={name="ellipsis",kind=.Flag,offset=u16(offset_of(Node_Style,text)+offset_of(Text_Style,ellipsis)),size=size_of(bool)},
+    .Line_Height={name="line_height",kind=.Number,offset=u16(offset_of(Node_Style,text)+offset_of(Text_Style,line_height)),size=size_of(f32)},
+    .Fill_Mode={name="fill_mode",kind=.Enum,offset=u16(offset_of(Node_Style,fill_mode)),size=size_of(Progress_Fill),type=Progress_Fill},
+    .Program={name="program",kind=.Program,offset=u16(offset_of(Node_Style,program)),size=TREE_NAME_CAPACITY},
+    .Program_Values={name="program_values",kind=.Numbers,offset=u16(offset_of(Node_Style,program_values)),size=size_of([4]f32)},
+    .Sounds={name="sounds",kind=.Sounds,offset=u16(offset_of(Node_Style,sounds)),size=size_of([Sound_Cue]base.Asset_Id)},
+    .Transition={name="transition",kind=.Number,offset=u16(offset_of(Node_Style,transition)),size=size_of(f32)},
+    .Blur={name="blur",kind=.Number,place=.Info,offset=u16(offset_of(Tree_Style_Info,blur)),size=size_of(f32)},
+    .Width={name="width",kind=.Size,place=.Layout,offset=u16(offset_of(Layout,width)),size=size_of(Size)},
+    .Height={name="height",kind=.Size,place=.Layout,offset=u16(offset_of(Layout,height)),size=size_of(Size)},
+    .Direction={name="direction",kind=.Enum,place=.Layout,offset=u16(offset_of(Layout,direction)),size=size_of(Direction),type=Direction},
+    .Padding={name="padding",kind=.Sides,place=.Layout,offset=u16(offset_of(Layout,padding)),size=size_of([4]f32)},
+    .Gap={name="gap",kind=.Number,place=.Layout,offset=u16(offset_of(Layout,gap)),size=size_of(f32)},
+    .Align_X={name="align_x",kind=.Enum,place=.Layout,offset=u16(offset_of(Layout,align_x)),size=size_of(Align),type=Align},
+    .Align_Y={name="align_y",kind=.Enum,place=.Layout,offset=u16(offset_of(Layout,align_y)),size=size_of(Align),type=Align},
+    .Columns={name="columns",kind=.Count,place=.Layout,offset=u16(offset_of(Layout,columns)),size=size_of(u16)},
+    .Span={name="span",kind=.Count,place=.Layout,offset=u16(offset_of(Layout,span)),size=size_of(u8)},
+    .Self_X={name="self_x",kind=.Enum,place=.Layout,offset=u16(offset_of(Layout,self_x)),size=size_of(Self_Align),type=Self_Align},
+    .Self_Y={name="self_y",kind=.Enum,place=.Layout,offset=u16(offset_of(Layout,self_y)),size=size_of(Self_Align),type=Self_Align},
+    .Aspect={name="aspect",kind=.Number,place=.Layout,offset=u16(offset_of(Layout,aspect)),size=size_of(f32)},
+}
+
+// The bytes of a value of a style; none for a key of its layout or its blur.
+style_key_value :: proc "contextless" (s:^Node_Style,key:Style_Key) -> []u8 {
+    k:=STYLE_KEYS[key]
+    if k.place!=.Style {return nil}
+    return ([^]u8)(s)[k.offset:][:k.size]
+}
+// The bytes of a part of a layout; none for another key.
+layout_key_value :: proc "contextless" (l:^Layout,key:Style_Key) -> []u8 {
+    k:=STYLE_KEYS[key]
+    if k.place!=.Layout {return nil}
+    return ([^]u8)(l)[k.offset:][:k.size]
+}
+// The bytes of a value wherever a style keeps it: in its look, or in its info
+// (its layout and its blur); none when the value is in an info that is nil.
+style_value :: proc "contextless" (s:^Node_Style,info:^Tree_Style_Info,key:Style_Key) -> []u8 {
+    k:=STYLE_KEYS[key]
+    switch k.place {
+    case .Style:  return style_key_value(s,key)
+    case .Layout: if info!=nil {return layout_key_value(&info.layout,key)}
+    case .Info:   if info!=nil {return ([^]u8)(info)[k.offset:][:k.size]}
+    }
+    return nil
+}
 
 // Whether a color key: what a token of color may give it.
-style_key_color :: proc "contextless" (key:Style_Key) -> bool {
-    #partial switch key {
-    case .Fill,.Fill2,.Stroke,.Track,.Knob,.Mark,.Shadow_Color,.Color,.Outline_Color,.Text_Shadow_Color: return true
-    }
-    return false
-}
+style_key_color :: proc "contextless" (key:Style_Key) -> bool {return STYLE_KEYS[key].kind==.Color}
 // Whether a token of number may give it.
 style_key_number :: proc "contextless" (key:Style_Key) -> bool {
-    #partial switch key {
-    case .Radius,.Border,.Shadow_Blur,.Shadow_X,.Shadow_Y,.Size,.Outline,.Text_Shadow_X,.Text_Shadow_Y,.Move_X,.Move_Y,.Scale,.Line_Height,.Transition,.Blur,.Width,.Height,.Padding,.Gap: return true
+    #partial switch STYLE_KEYS[key].kind {
+    case .Number,.Corners,.Sides,.Size: return true
     }
     return false
 }
 
 // Writes a token into a value of a style (and, for a layout key, its layout).
 style_key_number_set :: proc "contextless" (s:^Node_Style,info:^Tree_Style_Info,key:Style_Key,n:f32) {
-    #partial switch key {
-    case .Radius:        s.radius={n,n,n,n}
-    case .Border:        s.stroke_width=n
-    case .Shadow_Blur:   s.shadow_blur=n
-    case .Shadow_X:      s.shadow_offset.x=n
-    case .Shadow_Y:      s.shadow_offset.y=n
-    case .Size:          s.text.size=n
-    case .Outline:       s.text.outline=n
-    case .Text_Shadow_X: s.text.shadow.x=n
-    case .Text_Shadow_Y: s.text.shadow.y=n
-    case .Move_X:        s.move.x=n
-    case .Move_Y:        s.move.y=n
-    case .Scale:         s.scale=n
-    case .Line_Height:   s.text.line_height=n
-    case .Transition:    s.transition=n
-    case .Blur:          if info!=nil {info.blur=n}
-    case .Width:         if info!=nil {info.layout.width=fixed(n)}
-    case .Height:        if info!=nil {info.layout.height=fixed(n)}
-    case .Padding:       if info!=nil {info.layout.padding=padding_all(n)}
-    case .Gap:           if info!=nil {info.layout.gap=n}
+    value:=raw_data(style_value(s,info,key))
+    if value==nil {return}
+    #partial switch STYLE_KEYS[key].kind {
+    case .Number:         (^f32)(value)^=n
+    case .Corners,.Sides: (^[4]f32)(value)^={n,n,n,n}
+    case .Size:           (^Size)(value)^=fixed(n)
     }
 }
 style_key_color_set :: proc "contextless" (s:^Node_Style,key:Style_Key,c:Color) {
-    #partial switch key {
-    case .Fill:              s.fill=c
-    case .Fill2:             s.fill2=c
-    case .Stroke:            s.stroke=c
-    case .Track:             s.track=c
-    case .Knob:              s.knob=c
-    case .Mark:              s.mark=c
-    case .Shadow_Color:      s.shadow_color=c;s.shadow=c[3]>0
-    case .Color:             s.text.color=c
-    case .Outline_Color:     s.text.outline_color=c
-    case .Text_Shadow_Color: s.text.shadow_color=c
-    }
+    if !style_key_color(key) {return}
+    (^Color)(raw_data(style_key_value(s,key)))^=c
+    if key==.Shadow_Color {s.shadow=c[3]>0}
 }
 
 // Copies one value of a style to another (a key of its layout is in the infos).
 style_key_copy :: proc "contextless" (to,from:^Node_Style,key:Style_Key) {
-    #partial switch key {
-    case .Fill:              to.fill=from.fill
-    case .Fill2:             to.fill2=from.fill2
-    case .Stroke:            to.stroke=from.stroke
-    case .Track:             to.track=from.track
-    case .Knob:              to.knob=from.knob
-    case .Mark:              to.mark=from.mark
-    case .Radius:            to.radius=from.radius
-    case .Border:            to.stroke_width=from.stroke_width
-    case .Shadow_Color:      to.shadow_color=from.shadow_color;to.shadow=from.shadow
-    case .Shadow_Blur:       to.shadow_blur=from.shadow_blur
-    case .Shadow_X:          to.shadow_offset.x=from.shadow_offset.x
-    case .Shadow_Y:          to.shadow_offset.y=from.shadow_offset.y
-    case .Font:              to.text.font=from.text.font
-    case .Size:              to.text.size=from.text.size
-    case .Color:             to.text.color=from.text.color
-    case .Outline:           to.text.outline=from.text.outline
-    case .Outline_Color:     to.text.outline_color=from.text.outline_color
-    case .Text_Shadow_Color: to.text.shadow_color=from.text.shadow_color
-    case .Text_Shadow_X:     to.text.shadow.x=from.text.shadow.x
-    case .Text_Shadow_Y:     to.text.shadow.y=from.text.shadow.y
-    case .Move_X:            to.move.x=from.move.x
-    case .Move_Y:            to.move.y=from.move.y
-    case .Scale:             to.scale=from.scale
-    case .Text_Align_X:      to.text.align_x=from.text.align_x
-    case .Text_Align_Y:      to.text.align_y=from.text.align_y
-    case .Text_Wrap:         to.text.wrap=from.text.wrap
-    case .Ellipsis:          to.text.ellipsis=from.text.ellipsis
-    case .Line_Height:       to.text.line_height=from.text.line_height
-    case .Fill_Mode:         to.fill_mode=from.fill_mode
-    case .Program:           to.program=from.program
-    case .Program_Values:    to.program_values=from.program_values
-    case .Sounds:            to.sounds=from.sounds
-    case .Transition:        to.transition=from.transition
-    }
+    copy(style_key_value(to,key),style_key_value(from,key))
+    if key==.Shadow_Color {to.shadow=from.shadow}
 }
 // Whether one value of a style differs from another.
 style_key_differs :: proc "contextless" (a,b:^Node_Style,key:Style_Key) -> bool {
-    x:=a^
-    style_key_copy(&x,b,key)
-    return x!=a^
+    return string(style_key_value(a,key))!=string(style_key_value(b,key)) || key==.Shadow_Color && a.shadow!=b.shadow
 }
 
 // Copies one part of a layout to another.
 layout_key_copy :: proc "contextless" (to,from:^Layout,key:Style_Key) {
-    #partial switch key {
-    case .Width:     to.width=from.width
-    case .Height:    to.height=from.height
-    case .Direction: to.direction=from.direction
-    case .Padding:   to.padding=from.padding
-    case .Gap:       to.gap=from.gap
-    case .Align_X:   to.align_x=from.align_x
-    case .Align_Y:   to.align_y=from.align_y
-    case .Columns:   to.columns=from.columns
-    case .Span:      to.span=from.span
-    case .Self_X:    to.self_x=from.self_x
-    case .Self_Y:    to.self_y=from.self_y
-    case .Aspect:    to.aspect=from.aspect
-    }
+    copy(layout_key_value(to,key),layout_key_value(from,key))
 }
 
 // The fields of a patch the keys of a state set; a shadow, an outline, a text
 // shadow or a move is one field whatever of it the state names.
 style_keys_fields :: proc "contextless" (keys:Style_Keys) -> (fields:Style_Fields) {
-    if .Fill in keys {fields+={.Fill}}
-    if .Fill2 in keys {fields+={.Fill2}}
-    if .Stroke in keys {fields+={.Stroke}}
-    if .Track in keys {fields+={.Track}}
-    if .Knob in keys {fields+={.Knob}}
-    if .Mark in keys {fields+={.Mark}}
-    if .Radius in keys {fields+={.Radius}}
-    if .Border in keys {fields+={.Stroke_Width}}
-    if keys&SHADOW_KEYS!={} {fields+={.Shadow}}
-    if .Font in keys {fields+={.Text_Font}}
-    if .Size in keys {fields+={.Text_Size}}
-    if .Color in keys {fields+={.Text_Color}}
-    if keys&OUTLINE_KEYS!={} {fields+={.Text_Outline}}
-    if keys&TEXT_SHADOW_KEYS!={} {fields+={.Text_Shadow}}
-    if keys&MOVE_KEYS!={} {fields+={.Move}}
-    if .Scale in keys {fields+={.Scale}}
+    for key in keys {
+        if k:=STYLE_KEYS[key];k.rule {fields+={k.field}}
+    }
     return
 }
 // The keys of the fields of a patch: every part of each.
 style_fields_keys :: proc "contextless" (fields:Style_Fields) -> (keys:Style_Keys) {
-    if .Fill in fields {keys+={.Fill}}
-    if .Fill2 in fields {keys+={.Fill2}}
-    if .Stroke in fields {keys+={.Stroke}}
-    if .Track in fields {keys+={.Track}}
-    if .Knob in fields {keys+={.Knob}}
-    if .Mark in fields {keys+={.Mark}}
-    if .Radius in fields {keys+={.Radius}}
-    if .Stroke_Width in fields {keys+={.Border}}
-    if .Shadow in fields {keys+=SHADOW_KEYS}
-    if .Text_Font in fields {keys+={.Font}}
-    if .Text_Size in fields {keys+={.Size}}
-    if .Text_Color in fields {keys+={.Color}}
-    if .Text_Outline in fields {keys+=OUTLINE_KEYS}
-    if .Text_Shadow in fields {keys+=TEXT_SHADOW_KEYS}
-    if .Move in fields {keys+=MOVE_KEYS}
-    if .Scale in fields {keys+={.Scale}}
+    for key in Style_Key {
+        if k:=STYLE_KEYS[key];k.rule && k.field in fields {keys+={key}}
+    }
     return
 }
 
@@ -385,10 +380,11 @@ settle_rules :: proc(styles:[]Node_Style,variants:^[dynamic]Tree_Style_Variant,r
     for &rule in variants {
         if int(rule.style)!=row || rule.inherited {continue}
         own:=rule_own_keys(&rule)
-        for group in ([4]Style_Keys{SHADOW_KEYS,OUTLINE_KEYS,TEXT_SHADOW_KEYS,MOVE_KEYS}) {
+        for field in Style_Field {
+            group:=style_fields_keys({field})
             if own&group=={} || own&group==group {continue}
             for key in group-own {style_key_copy(&rule.patch.values,&styles[row],key)}
         }
-        if rule.own!={} && own&SHADOW_KEYS!={} {rule.patch.values.shadow=rule.patch.values.shadow_color[3]>0}
+        if rule.own!={} && own&style_fields_keys({.Shadow})!={} {rule.patch.values.shadow=rule.patch.values.shadow_color[3]>0}
     }
 }

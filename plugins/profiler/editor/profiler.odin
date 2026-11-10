@@ -2,9 +2,9 @@ package profiler_editor
 
 import "core:fmt"
 import "core:hash"
-import "core:math"
 import "mirai:editor"
 import "mirai:host"
+import mm "mirai:std/math"
 import "mirai:ui"
 
 // A panel of the editor, under View > Profiler, that records frames into the
@@ -169,25 +169,7 @@ profiler_frame_text :: proc(p:^Profiler_Panel,c:^editor.Profile_Capture) -> stri
 // A color of its own for each name, among muted hues.
 @(private="file")
 zone_color :: proc(name:string) -> ui.Color {
-	h:=f32(hash.fnv32a(transmute([]u8)name)%360)
-	return hsv(h,0.45,0.78)
-}
-
-@(private="file")
-hsv :: proc(h,s,v:f32) -> ui.Color {
-	c:=v*s
-	x:=c*(1-abs(math.mod(h/60,2)-1))
-	r,g,b:f32
-	switch {
-	case h<60:  r,g,b=c,x,0
-	case h<120: r,g,b=x,c,0
-	case h<180: r,g,b=0,c,x
-	case h<240: r,g,b=0,x,c
-	case h<300: r,g,b=x,0,c
-	case:       r,g,b=c,0,x
-	}
-	m:=v-c
-	return {u8((r+m)*255),u8((g+m)*255),u8((b+m)*255),255}
+	return ui.rgb_color(mm.hsv_to_rgb({f32(hash.fnv32a(transmute([]u8)name)%360)/360,0.45,0.78}))
 }
 
 // One bar per frame: the frame's time, colored by what it waited for, with

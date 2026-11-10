@@ -2,6 +2,7 @@ package editor
 
 import "core:encoding/json"
 import "core:fmt"
+import "core:strconv"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
@@ -30,10 +31,32 @@ write_entity :: proc(f:^Prefab_Fixture,name:string,parent:=core.NONE) -> core.En
 
 @(private="file")
 write_scene :: proc(f:^Prefab_Fixture,raw:string) -> (result:Api_Write_Result,failure:string,ok:bool) {
-    method:=api.Method{result_id=Api_Write_Result}
-    call:=api.Call{method=&method,result=&result,raw=raw,allocator=context.temp_allocator}
+    result,_,failure,ok=write_scene_made(f,raw)
+    return
+}
+
+// A write with what its result names as made: "name id" of each, in order.
+@(private="file")
+write_scene_made :: proc(f:^Prefab_Fixture,raw:string) -> (result:Api_Write_Result,created:[]string,failure:string,ok:bool) {
+    method:=api.Method{result_id=Api_Write_Result,writes_result=true}
+    out:serial.Writer
+    serial.writer_init(&out,0,context.temp_allocator)
+    call:=api.Call{method=&method,raw=raw,out=&out,allocator=context.temp_allocator}
     api_scene_write(&f.s,&call)
-    return result,call.error.message,!call.failed
+    if call.failed {return {},nil,call.error.message,false}
+    text:=string(serial.writer_bytes(&out))
+    if shape:=api.result_mismatch(Api_Write_Result,text);shape!="" {return {},nil,shape,false}
+    value,error:=json.parse_string(text,parse_integers=true,allocator=context.temp_allocator)
+    if error!=nil {return {},nil,text,false}
+    answer:=value.(json.Object)
+    id,_:=strconv.parse_u64_maybe_prefixed(answer["id"].(json.String))
+    result={id=base.Entity_Id(id),made=int(answer["made"].(json.Integer)),removed=int(answer["removed"].(json.Integer)),disabled=int(answer["disabled"].(json.Integer))}
+    names:=make([dynamic]string,context.temp_allocator)
+    for made in answer["created"].(json.Array) {
+        entry:=made.(json.Object)
+        append(&names,fmt.tprintf("%s %s",entry["name"].(json.String),entry["id"].(json.String)))
+    }
+    return result,names[:],"",true
 }
 
 // The document scene.inspect gives of root, and the entities in it as text.
@@ -223,13 +246,14 @@ a_write_places_a_prefab_as_a_linked_instance_with_what_the_document_says_of_it :
     }
 
     document:=fmt.tprintf(`{{"root":"0x%016x","entities":[{{"name":"Level","children":[{{"name":"North","prefab":"crate.prefab","position":[4,0,0],"children":[{{"name":"Lid","children":[{{"name":"Lamp","components":{{"Prefab_Test_Lamp":{{"intensity":9}}}}}}]}}]}}]}}]}}`,u64(level_id))
-    result,failure,ok:=write_scene(f,document)
+    result,named,failure,ok:=write_scene_made(f,document)
     if !testing.expect(t,ok,failure) {return}
     testing.expect_value(t,result,Api_Write_Result{id=level_id,made=3})
     testing.expect_value(t,len(f.edits.steps),steps+1)
     testing.expect_value(t,core.world_entities(w).alive,alive+3)
     north,lamp:=placed_lamp(f,level_id)
     north_id,lamp_id:=api_entity_id(w,north),api_entity_id(w,lamp)
+    testing.expect(t,len(named)==1 && named[0]==fmt.tprintf("North 0x%016x",u64(north_id)),"The result names the instance it placed, by its root")
     link,linked:=prefab_link_of(w,north)
     testing.expect(t,linked && link.root && link.asset==id && entity_name(w,north)=="North")
     testing.expect_value(t,entity_local(w,north).position,[3]f32{4,0,0})
@@ -324,6 +348,7 @@ a_write_that_fails_says_where_in_the_document_and_changes_nothing :: proc(t:^tes
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made","prefab":{{"asset":"nobody.prefab","size":2}}}}]}}]}}`,at),"entities[0].children[0].prefab has no 'size'"},
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made","prefab":7}}]}}]}}`,at),"entities[0].children[0].prefab must be the path or the id of a prefab"},
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"A","prefab":{{"root":true}}}}]}}]}}`,at),"entities[0].children[0].prefab: it is not what links the entity to a prefab"},
+        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"A","components":{{"Prefab_Instance":{{}}}}}}]}}]}}`,at),"entities[0].children[0].components.Prefab_Instance: Prefab_Instance is what links an entity to its prefab"},
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"id":"0x%016x"}},{{"id":"0x%016x"}}]}}]}}`,at,u64(root_id)+1,u64(root_id)+1),"entities[0].children[1].id: 0x"},
         {fmt.tprintf(`{{%s,"entities":[{{"name":"Root"}},{{"name":"Two"}}]}}`,at),"entities declares one entity"},
     }

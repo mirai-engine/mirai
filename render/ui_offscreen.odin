@@ -4,6 +4,7 @@ import "core:math/linalg"
 import "core:mem"
 import "mirai:asset"
 import "mirai:rhi"
+import mm "mirai:std/math"
 
 // What the UI of a game asks of the renderer besides the screen and the
 // panels of the scene: world panels drawn into textures that materials show
@@ -61,7 +62,6 @@ Ui_Texture_Target :: struct {
     texture:Texture_Handle,
     size:[2]u32,
     ldr:rhi.Texture,              // drawn, then copied into the entry
-    copy:rhi.Buffer,
     hdr,coverage,depth:rhi.Texture, // of an effect view
     empty:rhi.Texture,            // the scene depth its effects fade against: none
     ui_layers:[UI_LAYER_DEPTH_CAPACITY]rhi.Texture, // made the first time its UI composes a layer
@@ -115,7 +115,6 @@ ui_texture_target_destroy :: proc(r:^Renderer,target:^Ui_Texture_Target) {
     for t in ([]rhi.Texture{target.ldr,target.hdr,target.coverage,target.depth,target.empty}) {if t!=0 {rhi.texture_destroy(r.device,t)}}
     for t in target.ui_layers {if t!=0 {rhi.texture_destroy(r.device,t)}}
     for t in target.ui_blur {if t!=0 {rhi.texture_destroy(r.device,t)}}
-    if target.copy!=0 {rhi.buffer_destroy(r.device,target.copy)}
     target^={}
 }
 
@@ -156,8 +155,7 @@ ui_texture_add :: proc(r:^Renderer,width,height:u32,name:string,effects:=false) 
     d:=r.device
     target^={texture=texture,size={width,height}}
     target.ldr=rhi.texture_create(d,{width=width,height=height,format=.RGBA8_Unorm,usage={.Color_Target,.Sampled,.Transfer_Src},name="ui texture"})
-    target.copy=rhi.buffer_create(d,{size=u64(width)*u64(height)*4,usage={.Transfer_Src,.Transfer_Dst},memory=.GPU,name="ui texture copy"})
-    made:=target.ldr!=0 && target.copy!=0
+    made:=target.ldr!=0
     if effects {
         target.hdr=rhi.texture_create(d,{width=width,height=height,format=.RGBA16_Float,usage={.Color_Target,.Sampled},name="effect view"})
         target.coverage=rhi.texture_create(d,{width=width,height=height,format=.R8_Unorm,usage={.Color_Target,.Sampled},name="effect view coverage"})
@@ -195,8 +193,7 @@ ui_texture_target :: proc(r:^Renderer,texture:Texture_Handle) -> ^Ui_Texture_Tar
 @(private)
 ui_texture_show :: proc(r:^Renderer,cmd:^rhi.Command_List,target:^Ui_Texture_Target) {
     image:=r.textures.textures[target.texture-1]
-    rhi.cmd_copy_texture_to_buffer(cmd,target.ldr,target.copy,0)
-    rhi.cmd_copy_buffer_to_texture(cmd,target.copy,0,image)
+    rhi.cmd_copy_texture(cmd,target.ldr,image)
     rhi.cmd_barrier_texture(cmd,image,.Shader_Read)
 }
 
@@ -428,7 +425,7 @@ mesh_ray :: proc(r:^Renderer,mesh:Mesh_Handle,transform:Mat4,origin,direction:Ve
                     corners:=asset.cluster_triangle(g.triangles,c,t)
                     a,b,d=posed_position(skin,a,first+u32(corners[0])),posed_position(skin,b,first+u32(corners[1])),posed_position(skin,d,first+u32(corners[2]))
                 }
-                if hit,_,_:=ray_triangle_barycentric(from,along,a,b-a,d-a);hit>0 && hit<distance {distance,primitive=hit,int(u32(ordinal)<<PRIMITIVE_TRIANGLE_BITS|t)}
+                if hit,_,crossed:=mm.ray_triangle({from,along},{a,b,d});crossed && hit>0 && hit<distance {distance,primitive=hit,int(u32(ordinal)<<PRIMITIVE_TRIANGLE_BITS|t)}
             }
         }
     }
@@ -443,8 +440,8 @@ mesh_ray :: proc(r:^Renderer,mesh:Mesh_Handle,transform:Mat4,origin,direction:Ve
         first:=p.clusters[u32(primitive)>>PRIMITIVE_TRIANGLE_BITS].vertex_first
         a,b,d=posed_position(skin,a,first+u32(corners[0])),posed_position(skin,b,first+u32(corners[1])),posed_position(skin,d,first+u32(corners[2]))
     }
-    _,u,v:=ray_triangle_barycentric(from,along,a,b-a,d-a)
-    return distance,va.uv*(1-u-v)+vb.uv*u+vc.uv*v,true
+    _,weights,_:=mm.ray_triangle({from,along},{a,b,d})
+    return distance,va.uv*(1-weights.x-weights.y)+vb.uv*weights.x+vc.uv*weights.y,true
 }
 
 // Where a vertex of a pose is in the next frame: at rest, with what its

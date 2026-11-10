@@ -121,6 +121,7 @@ Api_Visible_Kinds :: struct {
 
 Api_Textures :: struct {
     bytes:u64 `mirai:"label=GPU memory of the textures of the renderer"`,
+    view_bytes:u64 `mirai:"label=GPU memory of the targets of the views drawn into textures, which the pool of the textures gives up"`,
     pending:int `mirai:"label=Textures whose levels are not yet those their distance asks for"`,
     reduced:int `mirai:"label=Textures held coarser than their distance asks for to fit the pool"`,
     streamed:int `mirai:"label=Ranges of levels given to textures since the assets loaded"`,
@@ -473,7 +474,8 @@ api_status :: proc(s:^Session,call:^api.Call) {
         for dropped,k in stats.cull_dropped {r.visible_kinds.dropped[k]=int(dropped)}
         r.gpu_ms,r.ev100=stats.gpu_ms,stats.ev100
         r.probes_traced=int(stats.probes_traced)
-        r.textures.bytes,r.textures.pending,r.textures.reduced=stats.texture_bytes,int(stats.textures_pending),int(stats.textures_reduced)
+        r.textures.bytes,r.textures.view_bytes=stats.texture_bytes,stats.view_target_bytes
+        r.textures.pending,r.textures.reduced=int(stats.textures_pending),int(stats.textures_reduced)
         r.geometry={
             bytes=stats.geometry_bytes,free_bytes=stats.geometry_free,free_largest=stats.geometry_free_largest,ray_bytes=stats.ray_bytes,page_slots=int(stats.page_slots),page_bytes=stats.page_region_bytes,
             pages_resident=int(stats.pages_resident),pages_requested=int(stats.pages_requested),pages_loaded=int(stats.pages_loaded),

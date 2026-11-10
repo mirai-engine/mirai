@@ -3,6 +3,7 @@ package ui
 import "base:runtime"
 import "core:math/bits"
 import "core:slice"
+import "mirai:std/base"
 
 // Kerning read from the GPOS table of a font: the pair adjustments of the
 // lookups of the 'kern' feature of the Latin, Greek and Cyrillic scripts
@@ -229,11 +230,10 @@ font_kerning_read :: proc(kerning:^Kerning,data:[]byte,glyphs:[]u16,allocator:ru
     row_hashes:=make([]u64,N,context.temp_allocator)
     column_hashes:=make([]u64,N,context.temp_allocator)
     if rows==nil || columns==nil || row_hashes==nil || column_hashes==nil {return false}
-    mix :: #force_inline proc "contextless" (hash:u64,value:i32) -> u64 {return (hash~u64(u32(value)))*0x100000001b3}
     row_count,column_count:=0,0
     for a in 0..<N {
-        hash:=u64(0xcbf29ce484222325)
-        for value in totals[a*N:][:N] {hash=mix(hash,value)}
+        hash:=base.HASH_SEED
+        for value in totals[a*N:][:N] {hash=base.hash_mix(hash,u64(u32(value)))}
         class:=-1
         for c in 0..<row_count {
             if row_hashes[c]==hash && slice.equal(totals[rows[c]*N:][:N],totals[a*N:][:N]) {class=c;break}
@@ -246,8 +246,8 @@ font_kerning_read :: proc(kerning:^Kerning,data:[]byte,glyphs:[]u16,allocator:ru
         return true
     }
     for b in 0..<N {
-        hash:=u64(0xcbf29ce484222325)
-        for row in rows[:row_count] {hash=mix(hash,totals[row*N+b])}
+        hash:=base.HASH_SEED
+        for row in rows[:row_count] {hash=base.hash_mix(hash,u64(u32(totals[row*N+b])))}
         class:=-1
         for c in 0..<column_count {
             if column_hashes[c]==hash && same_column(totals,rows[:row_count],columns[c],b) {class=c;break}

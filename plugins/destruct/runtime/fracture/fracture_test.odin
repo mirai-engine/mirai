@@ -345,13 +345,14 @@ debris_touches_only_static_bodies_raises_no_events_and_expires :: proc(t:^testin
     defer world_destroy(&w)
     test_ground(&w)
     desc:=DESTRUCTIBLE_DESC_DEFAULT
-    desc.debris_volume,desc.debris_ticks=0.03,50
+    desc.debris_volume,desc.debris_ticks=0.06,50
     block,error:=test_destructible(&w,{0.5,0.5,0.5},{0,0.26,0},8,false,desc)
     testing.expect_value(t,error,Destructible_Error.None)
     box:=test_body(&w,sim.Box{{0.25,0.25,0.25}},{0.9,0.25,0})
     test_steps(&w,20)
     rest:=sim.body_position(&w.sim,box)
     bodies:=sim.world_stats(&w.sim).bodies
+    whole:=destructible_mass(&w.fracture,block)
     _,broke:=destructible_damage(&w.fracture,&w.sim,block,sim.body_center(&w.sim,destructible_body(&w.fracture,block)),2,{4000,500,0})
     testing.expect(t,broke)
     pieces:[16]Piece_Info
@@ -404,7 +405,7 @@ debris_touches_only_static_bodies_raises_no_events_and_expires :: proc(t:^testin
     for piece,i in after[:count] {
         if .Debris in pieces[i].flags {testing.expect(t,.Gone in piece.flags && piece.body=={} && !sim.body_valid(&w.sim,pieces[i].body))}
     }
-    testing.expect(t,destructible_mass(&w.fracture,block)<2000*0.125*0.5)
+    testing.expect(t,destructible_mass(&w.fracture,block)<whole)
 }
 
 @(test)

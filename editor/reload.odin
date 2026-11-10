@@ -74,7 +74,7 @@ engine_folder_here :: proc(s:^Session) -> string {
 
 // The program of the engine named beside this editor: the player, the importer.
 engine_program_here :: proc(s:^Session,name:string) -> string {
-    file:=strings.concatenate({name,".exe" when ODIN_OS==.Windows else ""},context.temp_allocator)
+    file:=strings.concatenate({name,project.EXECUTABLE_SUFFIX},context.temp_allocator)
     return project.path(engine_folder_here(s),file,allocator=context.temp_allocator)
 }
 

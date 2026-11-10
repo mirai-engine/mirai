@@ -66,7 +66,7 @@ Engine_Package :: struct {
 // library, with the package that binds it.
 ENGINE_PACKAGES :: [?]Engine_Package{
     {.Base,"std/base"},{.Base,"std/subprocess"},{.Base,"std/math"},{.Base,"std/geom"},{.Base,"std/serial"},{.Base,"std/spatial"},
-    {.Base,"std/jobs"},{.Base,"std/anim"},{.Base,"std/ai"},{.Base,"std/input"},
+    {.Base,"std/jobs"},{.Base,"std/anim"},{.Base,"std/ai"},{.Base,"std/input"},{.Base,"std/ui_format"},
     {.Base,"std/compressor"},{.Base,"std/compressor/bc7split"},{.Base,"std/compressor/lz/entropy"},{.Base,"std/compressor/lz/match"},
     {.Base,"std/compressor/lz/parse"},{.Base,"std/compressor/lz"},
     {.Base,"audio"},{.Base,"platform"},{.Base,"rhi"},{.Base,"project"},{.Base,"core"},
@@ -142,7 +142,7 @@ engine_library_entry :: proc(library:Engine_Library,allocator:=context.allocator
 // Changes when what declare writes changes, so that binaries built by an
 // earlier version are built again.
 @(private)
-DECLARE_VERSION :: 8
+DECLARE_VERSION :: 9
 
 Engine_Paths :: struct {
     folder:string,
@@ -226,10 +226,10 @@ engine_paths :: proc(engine_root:string,mode:Engine_Mode,allocator:=context.allo
         paths.libraries[library]=project.path(paths.folder,project.library_file(file,context.temp_allocator))
         paths.imports[library]=project.path(paths.folder,library_import_file(file,context.temp_allocator))
     }
-    paths.editor_program=project.path(paths.folder,strings.concatenate({"mirai-editor",EXECUTABLE_EXTENSION},context.temp_allocator))
-    paths.player_program=project.path(paths.folder,strings.concatenate({"mirai-player",EXECUTABLE_EXTENSION},context.temp_allocator))
-    paths.import_program=project.path(paths.folder,strings.concatenate({"mirai-import",EXECUTABLE_EXTENSION},context.temp_allocator))
-    paths.author_program=project.path(paths.folder,strings.concatenate({"mirai-author",EXECUTABLE_EXTENSION},context.temp_allocator))
+    paths.editor_program=project.path(paths.folder,strings.concatenate({"mirai-editor",project.EXECUTABLE_SUFFIX},context.temp_allocator))
+    paths.player_program=project.path(paths.folder,strings.concatenate({"mirai-player",project.EXECUTABLE_SUFFIX},context.temp_allocator))
+    paths.import_program=project.path(paths.folder,strings.concatenate({"mirai-import",project.EXECUTABLE_SUFFIX},context.temp_allocator))
+    paths.author_program=project.path(paths.folder,strings.concatenate({"mirai-author",project.EXECUTABLE_SUFFIX},context.temp_allocator))
     paths.stamp=project.path(paths.folder,ENGINE_STAMP)
     return
 }
@@ -552,7 +552,7 @@ engine_build :: proc(desc:Engine_Desc,allocator:=context.allocator) -> (result:E
             append(&command,compiler,"build",folder,fmt.tprintf("-collection:mirai=%s",paths.decl),fmt.tprintf("-out:%s",program.output))
             append(&command,..plan.flags[:])
             // The program of the editor has the name of its library, and so would their PDBs.
-            when ODIN_OS==.Windows {append(&command,fmt.tprintf("-pdb-name:%s",strings.concatenate({program.output[:len(program.output)-len(EXECUTABLE_EXTENSION)],"-program.pdb"},context.temp_allocator)))}
+            when ODIN_OS==.Windows {append(&command,fmt.tprintf("-pdb-name:%s",strings.concatenate({program.output[:len(program.output)-len(project.EXECUTABLE_SUFFIX)],"-program.pdb"},context.temp_allocator)))}
             when ODIN_OS==.Linux {linker_flags_append(&command,"-Wl,-rpath,$ORIGIN",context.temp_allocator)}
             else when ODIN_OS==.Darwin {linker_flags_append(&command,"-Wl,-rpath,@executable_path",context.temp_allocator)}
             if !compile(&result,root,command[:],program.name) {return}

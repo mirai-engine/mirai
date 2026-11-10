@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:mem"
 import "core:sync"
 import cnet "core:net"
+import "mirai:std/base"
 
 // Largest datagram the library sends or accepts: under the IPv6 minimum MTU
 // once IP and UDP headers are added, so no hop fragments it.
@@ -193,15 +194,7 @@ sim_endpoint_transport :: proc(n:^Sim_Network,endpoint:int) -> Transport {
 }
 
 @(private)
-rng_next :: proc "contextless" (state:^u64) -> u64 {
-    state^+=0x9e3779b97f4a7c15
-    z:=state^
-    z=(z~(z>>30))*0xbf58476d1ce4e5b9
-    z=(z~(z>>27))*0x94d049bb133111eb
-    return z~(z>>31)
-}
-@(private)
-rng_unit :: proc "contextless" (state:^u64) -> f64 {return f64(rng_next(state)>>11)/f64(u64(1)<<53)}
+rng_unit :: proc "contextless" (state:^u64) -> f64 {return f64(base.splitmix_next(state)>>11)/f64(u64(1)<<53)}
 
 @(private)
 sim_before :: proc "contextless" (n:^Sim_Network,a,b:u32) -> bool {

@@ -42,9 +42,6 @@ Chunk_Join :: struct {
     cuts:[]Join_Cut, // Heightfield
 }
 
-@(private)
-join_mix :: #force_inline proc "contextless" (h,v:u64) -> u64 {return (h~v)*0x100000001b3}
-
 // Whether a cell of a Heightfield is a hole: of the source, or one a Volume takes.
 cell_hole :: #force_inline proc "contextless" (s:^Source,cuts:[]Join_Cut,x,z:int) -> bool {
     if source_hole(s,x,z) {return true}
@@ -60,7 +57,7 @@ join_cut_key :: proc "contextless" (s:^Source,cuts:[]Join_Cut,index:int) -> u64 
     key:=u64(0)
     for cut in cuts {
         if cut.high.x<=low.x || cut.low.x>=high.x || cut.high.y<=low.z || cut.low.y>=high.z {continue}
-        key=join_mix(join_mix(join_mix(join_mix(key|1,u64(cut.low.x)),u64(cut.low.y)),u64(cut.high.x)),u64(cut.high.y))
+        key=base.hash_mix(base.hash_mix(base.hash_mix(base.hash_mix(key|1,u64(cut.low.x)),u64(cut.low.y)),u64(cut.high.x)),u64(cut.high.y))
     }
     return key
 }
@@ -183,13 +180,13 @@ resident_joins :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:co
             continue
         }
         join.ground,join.entity,join.offset,join.lift=ground_entry.id,g,offset,corner.y
-        hash:=join_mix(join_mix(join_mix(join_mix(join_mix(ground_entry.id[0],ground_entry.id[1]),u64(offset.x)),u64(offset.y)),u64(transmute(u32)corner.y)),u64(transmute(u32)v.cell))
+        hash:=base.hash_mix(base.hash_mix(base.hash_mix(base.hash_mix(base.hash_mix(ground_entry.id[0],ground_entry.id[1]),u64(offset.x)),u64(offset.y)),u64(transmute(u32)corner.y)),u64(transmute(u32)v.cell))
         // What the band reads of the ground: the chunks under the box and next to it.
         cells:=int(h.chunk_cells)
         counts:=chunk_counts(h)
         for cz in max(offset.y-1,0)/cells..=min((far.y+1)/cells,counts.z-1) {for cx in max(offset.x-1,0)/cells..=min((far.x+1)/cells,counts.x-1) {
             index:=chunk_index(h,{i32(cx),0,i32(cz)})
-            if index>=0 && index<len(ground_entry.versions) {hash=join_mix(hash,u64(ground_entry.versions[index]))}
+            if index>=0 && index<len(ground_entry.versions) {hash=base.hash_mix(hash,u64(ground_entry.versions[index]))}
         }}
         join.hash=hash|1
         if cut:=resident_source_find(resident,ground_entry.id,g);cut!=nil {
@@ -200,7 +197,7 @@ resident_joins :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:co
     for &source in resident.sources {
         if len(source.join.cuts)>0 {
             hash:=u64(1)
-            for cut in source.join.cuts {hash=join_mix(join_mix(join_mix(join_mix(hash,u64(cut.low.x)),u64(cut.low.y)),u64(cut.high.x)),u64(cut.high.y))}
+            for cut in source.join.cuts {hash=base.hash_mix(base.hash_mix(base.hash_mix(base.hash_mix(hash,u64(cut.low.x)),u64(cut.low.y)),u64(cut.high.x)),u64(cut.high.y))}
             source.join.hash=hash
         } else if source.join.ground=={} {source.join.hash=0}
         if source.join.hash!=source.join.seen {resident.marks+=1}

@@ -7,7 +7,7 @@ import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/history"
 import "mirai:host"
-import gpu "mirai:render"
+import erender "mirai:engine/render"
 import shapes "plugins:shapes/runtime"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -57,8 +57,8 @@ Shapes_Tool :: struct {
     stroke:Stroke,
     drag:Corner_Drag,
     hover:Corner_Hover,
-    lines_storage:[dynamic]gpu.Debug_Vertex,
-    lines:gpu.Debug_Lines,
+    lines_storage:[dynamic]erender.Debug_Vertex,
+    lines:erender.Debug_Lines,
 }
 
 shapes_tool_free :: proc(t:^Shapes_Tool) {
@@ -74,7 +74,7 @@ tool_ready :: proc(t:^Shapes_Tool) {
     t.settings=SETTINGS_DEFAULT
     resize(&t.lines_storage,LINE_CAPACITY)
     // Lines on the plane lie inside the shapes they outline.
-    t.lines=gpu.debug_lines_make(t.lines_storage[:],false)
+    t.lines=erender.debug_lines_make(t.lines_storage[:],false)
 }
 
 @(private)
@@ -90,7 +90,7 @@ shapes_pointer :: proc(s:^editor.Session,tool:^Shapes_Tool,input:core.Input) {
 
 @(step="frame",after="editor_tools")
 shapes_frame :: proc(s:^editor.Session,tool:^Shapes_Tool,world:core.World_Ref,extras:^host.Frame_Extras,allocator:runtime.Allocator,input:core.Input) {
-    gpu.debug_lines_clear(&tool.lines)
+    erender.debug_lines_clear(&tool.lines)
     defer if tool.lines.count>0 {host.extras_debug_lines_add(extras,tool.lines)}
     if !s.gui.begun {return}
     if !tool.active || editor.playing(s) {
@@ -335,7 +335,7 @@ stamp_draw :: proc(tool:^Shapes_Tool,plane:Plane,kind:shapes.Stamp_Kind,at:[2]f3
     c:=color_of(color)
     for p,i in loop {
         q:=loop[(i+1)%len(loop)]
-        gpu.debug_line(&tool.lines,mm.transform_point(plane,{p.x,p.y,0}),mm.transform_point(plane,{q.x,q.y,0}),c)
+        erender.debug_line(&tool.lines,mm.transform_point(plane,{p.x,p.y,0}),mm.transform_point(plane,{q.x,q.y,0}),c)
     }
 }
 
@@ -345,7 +345,7 @@ stamp_draw :: proc(tool:^Shapes_Tool,plane:Plane,kind:shapes.Stamp_Kind,at:[2]f3
 brush_draw :: proc(tool:^Shapes_Tool,kind:shapes.Brush_Kind,place:mm.Transform,color:ui.Color) {
     c:=color_of(color)
     line :: proc(tool:^Shapes_Tool,place:mm.Transform,a,b:[3]f32,c:[4]f32) {
-        gpu.debug_line(&tool.lines,mm.transform_point(place,a),mm.transform_point(place,b),c)
+        erender.debug_line(&tool.lines,mm.transform_point(place,a),mm.transform_point(place,b),c)
     }
     circle :: proc(tool:^Shapes_Tool,place:mm.Transform,center,x,y:[3]f32,c:[4]f32) {
         SEGMENTS :: 32
@@ -391,12 +391,12 @@ corners_draw :: proc(s:^editor.Session,tool:^Shapes_Tool,t:mm.Transform,shape:^s
         if first+n>count {break}
         for i in 0..<n {
             a,b:=shape.points[first+i],shape.points[first+(i+1)%n]
-            gpu.debug_line(&tool.lines,mm.transform_point(t,{a.x,a.y,0}),mm.transform_point(t,{b.x,b.y,0}),first+i==hover.edge?taken:edge)
+            erender.debug_line(&tool.lines,mm.transform_point(t,{a.x,a.y,0}),mm.transform_point(t,{b.x,b.y,0}),first+i==hover.edge?taken:edge)
         }
         first+=n
     }
     x,y:=mm.quat_rotate(t.rotation,{1,0,0}),mm.quat_rotate(t.rotation,{0,1,0})
-    square :: proc(s:^editor.Session,lines:^gpu.Debug_Lines,center,x,y:[3]f32,color:[4]f32) {
+    square :: proc(s:^editor.Session,lines:^erender.Debug_Lines,center,x,y:[3]f32,color:[4]f32) {
         // A meter along the plane, in points of the window: the square keeps its size on screen.
         a,seen_a:=editor.viewport_screen(s.viewport,center)
         b,seen_b:=editor.viewport_screen(s.viewport,center+x)
@@ -404,7 +404,7 @@ corners_draw :: proc(s:^editor.Session,tool:^Shapes_Tool,t:mm.Transform,shape:^s
         if !seen_a || !seen_b || !(across>1e-3) {return}
         h:=CORNER_MARK/across
         corners:=[4][3]f32{center+(-x-y)*h,center+(x-y)*h,center+(x+y)*h,center+(-x+y)*h}
-        for i in 0..<4 {gpu.debug_line(lines,corners[i],corners[(i+1)%4],color)}
+        for i in 0..<4 {erender.debug_line(lines,corners[i],corners[(i+1)%4],color)}
     }
     for p,i in shape.points[:count] {
         square(s,&tool.lines,mm.transform_point(t,{p.x,p.y,0}),x,y,i==hover.vertex?taken:mark)

@@ -6,7 +6,6 @@ import "mirai:core"
 import "mirai:editor"
 import erender "mirai:engine/render"
 import "mirai:host"
-import gpu "mirai:render"
 import phys "plugins:physics/runtime"
 import sim "plugins:physics/runtime/sim"
 
@@ -21,7 +20,7 @@ COLLISION_VIEW_PREFIX :: "collision."
 
 @(storage,free="collision_view_free")
 Collision_View :: struct {
-    vertices:[dynamic]gpu.Debug_Vertex, // made the first time a mode is shown
+    vertices:[dynamic]erender.Debug_Vertex, // made the first time a mode is shown
     scratch:[dynamic]sim.Debug_Line,
     world:rawptr, // what the lines were made from
     synced,tick,teleports:u64,
@@ -77,11 +76,11 @@ collision_view_draw :: proc(c:^Collision_View,w:core.World_Ref,layers:sim.Collis
         resize(&c.vertices,2*COLLISION_VIEW_LINES)
         resize(&c.scratch,COLLISION_VIEW_LINES)
     }
-    lines:=gpu.debug_lines_make(c.vertices[:])
+    lines:=erender.debug_lines_make(c.vertices[:])
     if !c.ready || c.world!=w.data || c.synced!=state.synced || c.epoch!=state.epoch || c.tick!=state.world.tick || c.teleports!=state.stats.teleports || c.layers!=layers {
         out:=sim.Debug_Draw{lines=c.scratch[:]}
         sim.world_debug_draw(&state.world,&out,{.Shapes},layers=layers)
-        for line in out.lines[:out.line_count] {gpu.debug_line(&lines,line.a,line.b,COLLISION_COLORS[line.kind])}
+        for line in out.lines[:out.line_count] {erender.debug_line(&lines,line.a,line.b,COLLISION_COLORS[line.kind])}
         c.world,c.synced,c.epoch,c.tick,c.teleports,c.layers=w.data,state.synced,state.epoch,state.world.tick,state.stats.teleports,layers
         c.count,c.dropped,c.ready=lines.count,lines.dropped+out.lines_dropped,true
     }

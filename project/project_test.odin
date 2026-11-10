@@ -363,6 +363,23 @@ paths_join_with_forward_slashes :: proc(t:^testing.T) {
 }
 
 @(test)
+paths_are_the_same_file_as_their_system_tells_them_apart :: proc(t:^testing.T) {
+    folds:=ODIN_OS==.Windows || ODIN_OS==.Darwin
+    cases:=[?]struct{a,b:string,same:bool}{
+        {"C:/games/demo","C:/games/demo",true},
+        {"C:/games/demo/","C:/games/demo",true},
+        {"C:/games/demo","C:/games/demos",false},
+        {"C:/games/demo","C:/games/demo/assets",false},
+        {"C:/games/demo","C:/games/de/mo",false},
+        {"C:/Games/Demo","c:/games/demo",folds},
+        {"C:\\games\\demo","C:/games/demo",ODIN_OS==.Windows},
+        {"bin","BIN",folds},
+        {"","",true},
+    }
+    for c in cases {testing.expectf(t,path_same(c.a,c.b)==c.same && path_same(c.b,c.a)==c.same,"%q and %q",c.a,c.b)}
+}
+
+@(test)
 paths_of_git_bash_name_the_drive_on_windows :: proc(t:^testing.T) {
     named :: proc(t:^testing.T,location,expected:string,expected_ok:bool,loc:=#caller_location) {
         native,ok:=path_native(location)

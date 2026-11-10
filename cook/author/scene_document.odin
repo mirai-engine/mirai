@@ -67,6 +67,14 @@ type_saved :: proc(info:^runtime.Type_Info) -> bool {
     return false
 }
 
+// Whether a component is what links an entity to its prefab: a document says
+// it with prefab, and declares it as no component.
+component_links :: proc(name:string) -> bool {
+    return name==asset.COMPONENT_INSTANCE || name==asset.COMPONENT_MEMBER
+}
+
+COMPONENT_LINKS_TEXT :: "%s: %s is what links an entity to its prefab, which a document does not override: leave it out, and give a new entity prefab to place an instance"
+
 // Whether a document writes a component by its name: what a scene saves
 // besides the identity and the place of an entity, which have keys of their own.
 component_listed :: proc(t:^core.Table_Info) -> bool {
@@ -837,6 +845,7 @@ scene_values_apply :: proc(a:^Scene_Apply,d:^Scene_Entity) -> bool {
         keys,values:=tree_object(reading,d.components,fmt.tprintf("%s.components",d.path)) or_return
         for name,i in keys {
             path:=fmt.aprintf("%s.components.%s",d.path,name,allocator=reading.allocator)
+            if component_links(name) {reading_failf(reading,COMPONENT_LINKS_TEXT,path,name);return false}
             t,v:=scene_table(f,name)
             if t==nil {reading_failf(reading,"%s: the game of this build has no component '%s'; %s",path,name,scene_components_near(f,name));return false}
             if !component_listed(t) || v.type==serial.TYPE_NONE {

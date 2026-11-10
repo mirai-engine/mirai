@@ -444,6 +444,11 @@ hostile_fades_through_the_fader :: proc(t:^testing.T) {
                 written,dropped:=fader_advance(&lib,&fader,hostile_time(&h),room)
                 testing.expect(t,written>=0 && written<=len(room) && dropped>=0,"A fader writes more events than fit")
             case 4: pose_clear(&pose);fader_blend(&pose,&lib,fader)
+                bones:[4]Bone_Blend;track_bones,references:[12]i32
+                for &bone in track_bones {bone=i32(base.hostile_int(&h,8))-2}
+                bones_fader_blend(bones[:base.hostile_int(&h,5)],track_bones[:base.hostile_int(&h,13)],&lib,fader)
+                _=bones_blend_additive(bones[:],track_bones[:],&lib,fader.current,hostile_time(&h),base.hostile_f32(&h),Clip(base.hostile_int(&h,lib.clip_count+2)),references[:base.hostile_int(&h,13)])
+                for bone in bones {_,_,_=bone_transform(bone,math.TRANSFORM_IDENTITY);_,_=bone_added_position(bone);_,_=bone_added_rotation(bone);_,_=bone_added_scale(bone)}
             }
             if !testing.expect(t,fader.outgoing_count>=0 && fader.outgoing_count<=FADER_OUTGOING && fader_fading(fader)==(fader.outgoing_count>0),"A fader has more clips fading out than it holds") {break}
             // With numbers for its times and an easing that stays in 0..1, every weight of a fade is a share.

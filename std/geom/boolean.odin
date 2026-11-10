@@ -445,7 +445,7 @@ Boolean_Settings :: struct {
     next,ne:=make([]u32,len(w.points),context.temp_allocator)
     defer delete(grid,context.temp_allocator);defer delete(next,context.temp_allocator)
     if ge!=nil || ne!=nil {w.error=.Out_Of_Memory;return}
-    cell_key :: proc "contextless" (cell:[3]i64) -> u64 {return hash_u64(hash_u64(hash_u64(u64(cell.x))~u64(cell.y))~u64(cell.z))}
+    cell_key :: proc "contextless" (cell:[3]i64) -> u64 {return base.hash_u64(base.hash_u64(base.hash_u64(u64(cell.x))~u64(cell.y))~u64(cell.z))}
     cell_of :: proc "contextless" (p:Vec3,epsilon:f64) -> [3]i64 {
         result:[3]i64
         for i in 0..<3 {result[i]=i64(clamp(math.floor(f64(p[i])/epsilon),-4e18,4e18))}

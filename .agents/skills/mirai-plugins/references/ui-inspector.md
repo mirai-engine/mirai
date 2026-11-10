@@ -179,8 +179,8 @@ made by hand, nothing is saved until Save, and one that would leave a tree that 
 changes nothing and says why.
 
 - `ui.inspect` gives the `.ui`, or with `node` that node and what it has, as the document that
-  `ui.write` takes back (`cook/author/ui_document.odin`): tokens, the files it `use`s, its `params`, named
-  styles with `extends` and their states, layouts, named animations, and the nodes
+  `ui.write` takes back (`cook/author/ui_document.odin`): tokens, the files it `use`s, its `params`,
+  named styles with `extends` and their states, layouts, named animations, and the nodes
   nested by `children`, each with what differs from a new node of its type and what its style does
   not give. Reading back names: what is written and read back is the same, and what the visual
   editor changed reads back by name too.
@@ -189,11 +189,15 @@ changes nothing and says why.
   person saves with Save). On the command line `document=@file` reads it from a file:
   - The document's nodes replace those of the part: they are matched by name and type (an unnamed
     one, by place among the unnamed ones of its type in the same container) and keep what ties
-    them to the file (translations by `text_id`, the overrides of an instance); the others are
+    them to the file (the `text_id` of their text, the overrides of an instance); the others are
     made and those that the document does not declare go away. What a node does not give is that
     of a new node of its type; without `style` or `look` it takes the style of its type
     ([styles](#styles)), and an empty `style` is none. A `look` is a style without family; with
     `extends` it is the override of that style, and the node says it instead of `style`.
+  - A node with `translations` (language code to text) is `Localized` and its translations become
+    those; one without is not, and what the file had under its `text_id` stays there, as when a
+    person turns Localized off. A node gets its `text_id` when it becomes localized or takes its
+    first translation, unless the document gives one; two nodes never share one.
   - The tokens, styles and animations it names become what it says, `null` removes them
     (a style that some node takes is not removed) and those it does not name stay. Without
     `nodes`, no node changes.

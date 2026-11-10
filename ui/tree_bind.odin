@@ -8,6 +8,7 @@ import "core:strconv"
 import "core:strings"
 import "mirai:std/base"
 import "mirai:std/serial"
+import mm "mirai:std/math"
 
 // How the nodes of a tree read the data of the game. A binding is a path: it
 // names a source first (a component of the entity the tree is built for, or
@@ -892,7 +893,7 @@ bound_color :: proc(values:rawptr,b:Bound) -> Color {
     for i in 0..<min(int(b.count),4) {
         if b.elem==.Float {
             v:=(cast(^f32)rawptr(p+uintptr(i*4)))^
-            if i<3 {v=linear_to_srgb(v)}
+            if i<3 {v=mm.linear_to_srgb(clamp(v,0,1))}
             color[i]=u8(clamp(v,0,1)*255+0.5)
         } else {color[i]=(cast(^u8)rawptr(p+uintptr(i)))^}
     }

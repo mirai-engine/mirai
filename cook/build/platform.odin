@@ -5,6 +5,7 @@ import "core:os"
 import "core:strings"
 import "mirai:cook/workspace"
 import "mirai:std/subprocess"
+import "mirai:project"
 
 // Where scripts/setup_linux_deps.py leaves the dependencies, inside the deps
 // of the engine (workspace.deps_folder).
@@ -134,7 +135,7 @@ search_path_prepend :: proc(variables:^[dynamic]string,name,directory:string,all
     present:=false
     rest:=current
     for entry in strings.split_iterator(&rest,separator) {
-        if path_equal(slashes(entry,context.temp_allocator),directory) {present=true}
+        if project.path_same(slashes(entry,context.temp_allocator),directory) {present=true}
     }
     if present {return}
     append(variables,strings.concatenate({name,"=",directory,current==""?"":separator,current},allocator))

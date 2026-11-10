@@ -9,7 +9,6 @@ import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
 import "mirai:host"
-import gpu "mirai:render"
 import anim "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -120,7 +119,7 @@ capture_pose :: proc(st:^Capture_State,frame:int) -> bool {
             for i in 0..<len(skin.world) {skin.world[i]=bones[i] if i<len(bones) else skin.world[i]}
         }
         for joint,i in skin.geometry.joints {skin.palette[i]=mm.transform_matrix(skin.world[joint.node])*joint.inverse_bind}
-        if !gpu.skin_preview_sample(sub.renderer,&skin.buffers,skin.palette,skin.geometry.posed) {return false}
+        if !editor.skin_preview_sample(sub.renderer,&skin.buffers,skin.palette,skin.geometry.posed) {return false}
         part:=sub.parts[skin.part]
         for index,i in skin.geometry.indices {
             placed:=&sub.posed[int(part.first)+i]
@@ -166,7 +165,7 @@ capture :: proc(s:^editor.Session,call:^api.Call) {
     turns:=[Capture_View]f32{.Three_Quarter=front+35*mm.RAD_PER_DEG,.Front=front,.Side=front+90*mm.RAD_PER_DEG,.Back=front+180*mm.RAD_PER_DEG}
     fits:=make([][2]mm.Vec3,len(views),call.allocator)
     for &fit in fits {fit={{max(f32),max(f32),max(f32)},{-max(f32),-max(f32),-max(f32)}}}
-    turn :: proc(posed,out:[]gpu.Thumbnail_Vertex,rotation:mm.Quat,pivot:mm.Vec3) {
+    turn :: proc(posed,out:[]editor.Thumbnail_Vertex,rotation:mm.Quat,pivot:mm.Vec3) {
         for vertex,i in posed {
             out[i]=vertex
             out[i].position=pivot+mm.quat_rotate(rotation,vertex.position-pivot)
@@ -189,20 +188,20 @@ capture :: proc(s:^editor.Session,call:^api.Call) {
     path,writable:=editor.api_capture_file(s,call,base.text_get(p.path[:]),fmt.tprintf("animation-%x.png",u64(captured_id)),call.allocator)
     if !writable {return}
     // The vertices and images outgrow the scratch of a call.
-    turned,turned_error:=make([]gpu.Thumbnail_Vertex,len(st.sub.posed),app.allocator)
+    turned,turned_error:=make([]editor.Thumbnail_Vertex,len(st.sub.posed),app.allocator)
     defer delete(turned,app.allocator)
     pixels,pixels_error:=make([]u8,side*side*4,app.allocator)
     defer delete(pixels,app.allocator)
     image,allocated:=make([]u8,width*height*4,app.allocator)
     if allocated!=nil || turned_error!=nil || pixels_error!=nil {delete(image,app.allocator);api.call_fail(call,api.SERVER_ERROR,"The image could not be allocated");return}
     for i in 0..<width*height {image[i*4],image[i*4+1],image[i*4+2],image[i*4+3]=38,40,46,255}
-    thumbnail:gpu.Thumbnail_GPU
-    defer gpu.thumbnail_destroy(app.renderer.device,&thumbnail)
+    thumbnail:editor.Thumbnail_Targets
+    defer editor.thumbnail_targets_destroy(app.renderer,&thumbnail)
     for frame in 0..<frames {
         if !capture_pose(st,frame) {delete(image,app.allocator);api.call_fail(call,api.SERVER_ERROR,"The skin of the character could not be posed");return}
         for view,v in views {
             turn(st.sub.posed[:],turned,mm.quat_axis_angle({0,1,0},turns[view]),pivot)
-            if !gpu.renderer_thumbnail(app.renderer,&thumbnail,turned,st.sub.materials[:],u32(side),u32(side),pixels,fits[v]) {delete(image,app.allocator);api.call_fail(call,api.SERVER_ERROR,"A frame could not be drawn");return}
+            if !editor.thumbnail_draw(app.renderer,&thumbnail,turned,st.sub.materials[:],u32(side),u32(side),pixels,fits[v]) {delete(image,app.allocator);api.call_fail(call,api.SERVER_ERROR,"A frame could not be drawn");return}
             for y in 0..<side {
                 for x in 0..<side {
                     from:=(y*side+x)*4

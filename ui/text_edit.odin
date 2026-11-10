@@ -447,12 +447,7 @@ text_field :: proc(ctx:^Context,id:Id,buffer:[]u8,length:^int,field:Text_Field={
         if !field.disabled && field.color[3]>0 {paint.text_color=field.color}
         if field.bare {paint.fill={};paint.stroke={}}
         if field.inline && !result.editing {paint.fill={};paint.stroke=th.border if it.hot && !field.disabled else {}}
-        if look!=nil {
-            text:=look.text.color
-            paint.fill,paint.stroke,paint.stroke_width,paint.corners,paint.text_color=look.fill,look.stroke,look.stroke_width,look.radius,text
-            paint.fill2=look.mark if look.mark[3]>0 else color_alpha(text,text[3]/4)
-            paint.faint=color_alpha(text,text[3]/2)
-        }
+        if look!=nil {field_paint_look(paint,look)}
     }
     height:=field.height
     if height<=0 {
@@ -473,10 +468,9 @@ text_field :: proc(ctx:^Context,id:Id,buffer:[]u8,length:^int,field:Text_Field={
 @(private)
 focus_peek :: proc(ctx:^Context,id:Id,step:int) -> Id {
     count:=ctx.previous_count
-    start:=-1
-    for &w,i in ctx.previous[:count] {if w.id==id {start=i;break}}
-    if start<0 {return 0}
-    index:=start
+    start,found:=id_table_find(&ctx.previous_ids,id)
+    if !found {return 0}
+    index:=int(start)
     for _ in 0..<count-1 {
         index=(index+step+count)%count
         w:=&ctx.previous[index]

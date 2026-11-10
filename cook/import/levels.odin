@@ -3,6 +3,7 @@ package importer
 import "core:math"
 import "core:slice"
 import "mirai:asset"
+import "mirai:std/base"
 import "mirai:std/geom"
 import mm "mirai:std/math"
 
@@ -226,7 +227,7 @@ levels_islands :: proc(positions:[]geom.Vec3,indices:[]u32,submeshes:[]Submesh,a
         for l in labels {if l!=NONE {sizes[l]+=1}}
         small:=0
         for size in sizes {if island_small(size,sub_triangles) {small+=1}}
-        base:=u32(len(found))
+        island_first:=u32(len(found))
         if small<ISLANDS_MIN {continue}
         // The small islands in the order of their first triangle, and the triangles of each.
         number:=make([]u32,count,context.temp_allocator)
@@ -235,8 +236,9 @@ levels_islands :: proc(positions:[]geom.Vec3,indices:[]u32,submeshes:[]Submesh,a
         append(&starts,0)
         for l,t in labels {
             if l==NONE || !island_small(sizes[l],sub_triangles) || number[l]!=NONE {continue}
-            number[l]=u32(len(found))-base
-            append(&found,Island{order=hash_u64(u64(first_triangle)+u64(t))})
+            number[l]=u32(len(found))-island_first
+            order:=u64(first_triangle)+u64(t)
+            append(&found,Island{order=base.splitmix_next(&order)})
             append(&starts,starts[len(starts)-1]+sizes[l])
         }
         offset:=u32(len(triangle_list))
@@ -248,7 +250,7 @@ levels_islands :: proc(positions:[]geom.Vec3,indices:[]u32,submeshes:[]Submesh,a
             triangle_list[offset+starts[k]+fill[k]]=first_triangle+u32(t)
             fill[k]+=1
         }
-        at:=found[base:]
+        at:=found[island_first:]
         for &i,k in at {
             i.first,i.count=offset+starts[k],starts[k+1]-starts[k]
             n:=0
@@ -278,8 +280,8 @@ levels_islands :: proc(positions:[]geom.Vec3,indices:[]u32,submeshes:[]Submesh,a
             return a.first<b.first
         })
         for i,k in at {
-            for triangle in triangle_list[i.first:][:i.count] {island[triangle]=base+u32(k)}
-            if k==0 || at[k-1].class!=i.class {append(&found_classes,Island_Class{first=base+u32(k)})}
+            for triangle in triangle_list[i.first:][:i.count] {island[triangle]=island_first+u32(k)}
+            if k==0 || at[k-1].class!=i.class {append(&found_classes,Island_Class{first=island_first+u32(k)})}
             class:=&found_classes[len(found_classes)-1]
             class.count+=1
             class.largest=max(class.largest,i.radius)
@@ -318,14 +320,6 @@ class_grow :: proc "contextless" (class:Island_Class,depth:u32,area_before:[]f32
 @(private="file")
 class_error :: proc "contextless" (class:Island_Class,depth:u32,area_before:[]f32) -> f32 {
     return class.largest*class_grow(class,depth,area_before)/ISLAND_PIXELS
-}
-
-@(private="file")
-hash_u64 :: proc "contextless" (x:u64) -> u64 {
-    z:=x+0x9e3779b97f4a7c15
-    z=(z~(z>>30))*0xbf58476d1ce4e5b9
-    z=(z~(z>>27))*0x94d049bb133111eb
-    return z~(z>>31)
 }
 
 @(private="file")

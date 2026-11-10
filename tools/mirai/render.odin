@@ -739,12 +739,12 @@ render_mode_flag :: proc(release:bool) -> string {return "--release" if release 
 @(private="file")
 render_editor_program :: proc(checkout:string,release:bool) -> string {
     if !release {
-        candidate:=project.path(checkout,".mirai","engine","dev",strings.concatenate({"mirai-editor",EXE},context.temp_allocator),allocator=context.temp_allocator)
+        candidate:=project.path(checkout,".mirai","engine","dev",strings.concatenate({"mirai-editor",project.EXECUTABLE_SUFFIX},context.temp_allocator),allocator=context.temp_allocator)
         return strings.clone(candidate) if os.is_file(candidate) else ""
     }
     for candidate in ([2]string{
-        project.path(checkout,".mirai","engine","release",strings.concatenate({"mirai-editor",EXE},context.temp_allocator),allocator=context.temp_allocator),
-        project.path(checkout,".mirai","engine",strings.concatenate({"mirai-editor",EXE},context.temp_allocator),allocator=context.temp_allocator),
+        project.path(checkout,".mirai","engine","release",strings.concatenate({"mirai-editor",project.EXECUTABLE_SUFFIX},context.temp_allocator),allocator=context.temp_allocator),
+        project.path(checkout,".mirai","engine",strings.concatenate({"mirai-editor",project.EXECUTABLE_SUFFIX},context.temp_allocator),allocator=context.temp_allocator),
     }) {
         if os.is_file(candidate) {return strings.clone(candidate)}
     }

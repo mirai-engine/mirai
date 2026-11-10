@@ -17,7 +17,7 @@ program_component_layers_preserve_scalar_curves :: proc(t:^testing.T) {
     playback:Playback; defer playback_free(&playback)
     append(&playback.states, program_test_content(t,&content)); state:=&playback.states[0]
     resize(&playback.rows,2); playback.rows[1]=1; playback.frame,state.seen=1,1
-    testing.expect(t,lib.pose_init(&playback.pose,64))
+    testing.expect(t,tracks_bind(&playback,state,&content))
     content.lib.clips[1].first_track,content.lib.clips[1].track_count=2,4
     content.lib.clips[4]=content.lib.clips[1]; content.lib.clips[4].loop=.Loop
     nodes:=program_test_graph(); profile:=Graph_Profile{info={animation={1,2},output=0},nodes=nodes[:]}
@@ -28,7 +28,7 @@ program_component_layers_preserve_scalar_curves :: proc(t:^testing.T) {
     testing.expect(t,program_players(state,output,&content,animation,&events,&playback,0,-1,nil))
     testing.expect(t,program_pose(&playback,state,&content,animation,output,{}))
     layers_advance(&playback,state,&content,animation,&events,0,nil)
-    pose_layers(&playback,state,&content.lib,animation,nil)
+    pose_layers(&playback,state,&content.lib,animation)
     sample_layer_curves(state,&content,animation)
     got:=animation_curve(&playback,state.entity,"pulse",default_value=2)
     testing.expect_value(t,state.local[2].position.y,f32(1))
