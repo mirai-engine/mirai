@@ -610,6 +610,7 @@ Renderer :: struct {
 	view_count:      int,
 	texture_views:   [TEXTURE_VIEW_CAPACITY]View_State, // those drawn into a texture, at each size they were
 	texture_view_bytes: u64, // what their targets held of the GPU when the last frame ended (texture_views_count)
+	shared_targets:  [SHARED_TARGET_CAPACITY]Shared_Target, // the targets of a frame of the views (targets_frame)
 	passes:          [FRAME_PASS_CAPACITY]Frame_Pass, // what extensions record in the next frame
 	pass_count:      int,
 	plans:           [RENDER_PIPELINE_CAPACITY]Render_Plan, // of the pipelines asked for
@@ -1344,7 +1345,6 @@ font_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List, slot: int) -> bool {
 		copy(staging[row * int(region.width):][:region.width], r.font_pixels[(int(region.y) + row) * width + int(region.x):][:region.width])
 	}
 	rhi.cmd_copy_buffer_to_texture(cmd, r.font_staging[slot], 0, r.font, 0, region)
-	rhi.cmd_barrier_texture(cmd, r.font, .Shader_Read)
 	return true
 }
 
@@ -1473,19 +1473,35 @@ highlight_style_valid :: proc(style: Highlight_Style) -> bool {
 
 // ---------------------------------------------------------------- targets
 
-// Every texture of the targets of a view but those of its glass
-// (glass_textures), made or not: what frees them and what counts their memory
-// read this one list.
+// The textures of the targets of a view whose contents live within its
+// frame: the view writes each before it reads it, and nothing reads them once
+// it is recorded. Views are recorded one after another, so those of one size
+// share them (shared_target), as the resources of a pipeline that are never
+// in use at once share memory.
 @(private)
-TARGET_TEXTURES :: 64
+FRAME_TARGETS :: 24
+@(private)
+targets_frame :: proc(t: ^Targets) -> [FRAME_TARGETS]^rhi.Texture {
+	s := &t.shadow
+	return {
+		&t.depth, &t.albedo, &t.surface, &t.layers, &t.instance, &t.normal, &t.emission, &t.motion, &t.linear_depth, &t.direct, &t.display,
+		&t.reflect_raw, &t.reflect_shared, &t.contact[0], &t.contact[1], &t.nested_depth, &t.post_hdr[0], &t.post_hdr[1], &t.post_ldr[0], &t.post_ldr[1],
+		&s.raw, &s.light, &s.filter[0], &s.filter[1],
+	}
+}
+
+// The other textures of the targets of a view but those of its glass
+// (glass_textures), made or not: its own, which what frees them and what
+// counts their memory read from this one list.
+@(private)
+TARGET_TEXTURES :: 40
 @(private)
 targets_textures :: proc(t: ^Targets) -> (all: [TARGET_TEXTURES]rhi.Texture) {
 	s := &t.shadow
 	fixed := [?]rhi.Texture{
-		t.depth, t.albedo, t.surface, t.layers, t.instance, t.post_hdr[0], t.post_hdr[1], t.post_ldr[0], t.post_ldr[1], t.normal, t.emission, t.motion, t.linear_depth, t.direct, t.reflect_raw, t.reflect_shared, t.reflect_history[0], t.reflect_history[1], t.display, t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.hiz[0], t.hiz[1], t.ldr, t.generated,
-		t.highlight, t.highlight_depth, t.highlight_filtered, t.gi_reference,
-		t.reactive, t.nested_depth, t.aerial, t.contact[0], t.contact[1], t.ui_blur[0], t.ui_blur[1],
-		s.raw, s.light, s.geometry[0], s.geometry[1], s.history[0], s.history[1], s.widths[0], s.widths[1], s.filter[0], s.filter[1],
+		t.reflect_history[0], t.reflect_history[1], t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.hiz[0], t.hiz[1], t.ldr, t.generated,
+		t.highlight, t.highlight_depth, t.highlight_filtered, t.gi_reference, t.reactive, t.aerial, t.ui_blur[0], t.ui_blur[1],
+		s.geometry[0], s.geometry[1], s.history[0], s.history[1], s.widths[0], s.widths[1],
 	}
 	#assert(len(fixed) + UI_LAYER_DEPTH_CAPACITY <= TARGET_TEXTURES)
 	copy(all[:], fixed[:])
@@ -1493,10 +1509,56 @@ targets_textures :: proc(t: ^Targets) -> (all: [TARGET_TEXTURES]rhi.Texture) {
 	return
 }
 
+// A texture of the frame of views, with the views that hold it.
+@(private)
+Shared_Target :: struct {
+	desc:    rhi.Texture_Desc,
+	texture: rhi.Texture,
+	users:   int,
+}
+
+@(private)
+SHARED_TARGET_CAPACITY :: 512
+
+// The texture of a description for a target of the frame of a view: the one
+// a view of the same size holds, or a new one (made). The targets of one view
+// differ in their names.
+@(private)
+shared_target :: proc(r: ^Renderer, desc: rhi.Texture_Desc) -> (texture: rhi.Texture, made: bool) {
+	free := -1
+	for &entry, i in r.shared_targets {
+		if entry.texture == 0 {
+			if free < 0 {free = i}
+		} else if entry.desc == desc {
+			entry.users += 1
+			return entry.texture, false
+		}
+	}
+	if free < 0 {set_error(r, "%s: the %d targets the views share are in use", desc.name, SHARED_TARGET_CAPACITY); return}
+	texture = rhi.texture_create(r.device, desc)
+	if texture == 0 {set_error(r, "%s: %s", desc.name, rhi.device_error(r.device)); return}
+	r.shared_targets[free] = {desc, texture, 1}
+	return texture, true
+}
+
+@(private)
+shared_target_release :: proc(r: ^Renderer, texture: rhi.Texture) {
+	for &entry in r.shared_targets {
+		if entry.texture != texture {continue}
+		entry.users -= 1
+		if entry.users == 0 {
+			rhi.texture_destroy(r.device, texture)
+			entry = {}
+		}
+		return
+	}
+}
+
 @(private)
 destroy_targets :: proc(r: ^Renderer, t: ^Targets) {
 	d := r.device
 	for tex in targets_textures(t) {if tex != 0 {rhi.texture_destroy(d, tex)}}
+	for tex in targets_frame(t) {if tex^ != 0 {shared_target_release(r, tex^)}}
 	for b in ([]rhi.Buffer{t.direct_traced, t.direct_dispatch}) {if b != 0 {rhi.buffer_destroy(d, b)}}
 	destroy_glass_targets(r, t)
 	out_w, out_h := t.output_width, t.output_height
@@ -1506,12 +1568,20 @@ destroy_targets :: proc(r: ^Renderer, t: ^Targets) {
 
 // A target a view makes the first time it needs it. clear: a history, which
 // its first temporal read must not find uninitialized (NaNs would persist).
+// shared: a target of the frame (targets_frame).
 @(private)
-target :: proc(r: ^Renderer, cmd: ^rhi.Command_List, texture: ^rhi.Texture, width, height: u32, format: rhi.Format, usage: rhi.Texture_Usage, name: string, clear := false) -> bool {
+target :: proc(r: ^Renderer, cmd: ^rhi.Command_List, texture: ^rhi.Texture, width, height: u32, format: rhi.Format, usage: rhi.Texture_Usage, name: string, clear := false, shared := false) -> bool {
 	if texture^ != 0 {return true}
-	texture^ = rhi.texture_create(r.device, {width = width, height = height, format = format, usage = usage, name = name})
-	if texture^ == 0 {set_error(r, "%s: %s", name, rhi.device_error(r.device)); return false}
-	if clear {clear_textures(cmd, texture^)}
+	desc := rhi.Texture_Desc{width = width, height = height, format = format, usage = usage, name = name}
+	made := true
+	if shared {
+		texture^, made = shared_target(r, desc)
+		if texture^ == 0 {return false}
+	} else {
+		texture^ = rhi.texture_create(r.device, desc)
+		if texture^ == 0 {set_error(r, "%s: %s", name, rhi.device_error(r.device)); return false}
+	}
+	if clear && made {clear_textures(cmd, texture^)}
 	return true
 }
 
@@ -1528,14 +1598,14 @@ ensure_generated_target :: proc(r: ^Renderer, t: ^Targets) -> bool {
 // (specular_pack in brdf.slang). It exists while a surface needs it.
 @(private)
 ensure_surface_target :: proc(r: ^Renderer, t: ^Targets) -> bool {
-	return target(r, nil, &t.surface, t.width, t.height, .RGBA8_Srgb, {.Color_Target, .Sampled}, "surface reflectance")
+	return target(r, nil, &t.surface, t.width, t.height, .RGBA8_Srgb, {.Color_Target, .Sampled}, "surface reflectance", shared = true)
 }
 
 // The seventh target of the G-buffer: the layers of the materials of each
 // pixel (gbuffer_layers_pack). It exists while a surface needs it.
 @(private)
 ensure_layers_target :: proc(r: ^Renderer, t: ^Targets) -> bool {
-	return target(r, nil, &t.layers, t.width, t.height, .RGBA32_Uint, {.Color_Target, .Sampled}, "material layers")
+	return target(r, nil, &t.layers, t.width, t.height, .RGBA32_Uint, {.Color_Target, .Sampled}, "material layers", shared = true)
 }
 
 // A pipeline of the G-buffer with the target of the instance ids after its
@@ -1549,7 +1619,7 @@ gbuffer_ids :: proc(desc: rhi.Graphics_Pipeline_Desc, ids: bool) -> rhi.Graphics
 
 @(private)
 ensure_instance_target :: proc(r: ^Renderer, t: ^Targets) -> bool {
-	return target(r, nil, &t.instance, t.width, t.height, .R32_Uint, {.Color_Target, .Sampled}, "instance ids")
+	return target(r, nil, &t.instance, t.width, t.height, .R32_Uint, {.Color_Target, .Sampled}, "instance ids", shared = true)
 }
 
 // The targets of a set of soft shadows, a texel for each block of `block` x `block` pixels.
@@ -1559,13 +1629,13 @@ ensure_shadow_targets :: proc(r: ^Renderer, cmd: ^rhi.Command_List, t: ^Targets,
 	set.block = block
 	set.width, set.height = (t.width + block - 1) / block, (t.height + block - 1) / block
 	w, h := set.width, set.height
-	ok := target(r, cmd, &set.raw, w, h, .RGBA16_Float, HISTORY_USAGE, "shadow rays", true)
-	ok &&= target(r, cmd, &set.light, w, h, .R16_Float, HISTORY_USAGE, "shadow light", true)
+	ok := target(r, cmd, &set.raw, w, h, .RGBA16_Float, HISTORY_USAGE, "shadow rays", true, true)
+	ok &&= target(r, cmd, &set.light, w, h, .R16_Float, HISTORY_USAGE, "shadow light", true, true)
 	for i in 0 ..< 2 {
 		ok &&= target(r, cmd, &set.geometry[i], w, h, .RGBA16_Float, HISTORY_USAGE, "shadow geometry", true)
 		ok &&= target(r, cmd, &set.history[i], w, h, .RGBA16_Float, HISTORY_USAGE, "shadow history", true)
 		ok &&= target(r, cmd, &set.widths[i], w, h, .RGBA16_Float, HISTORY_USAGE, "shadow widths", true)
-		ok &&= target(r, cmd, &set.filter[i], w, h, .RGBA16_Float, HISTORY_USAGE, "shadow filter", true)
+		ok &&= target(r, cmd, &set.filter[i], w, h, .RGBA16_Float, HISTORY_USAGE, "shadow filter" if i == 0 else "shadow filter 2", true, true)
 	}
 	set.valid = false
 	return ok
@@ -1576,8 +1646,8 @@ ensure_shadow_targets :: proc(r: ^Renderer, cmd: ^rhi.Command_List, t: ^Targets,
 @(private)
 ensure_reflect_targets :: proc(r: ^Renderer, cmd: ^rhi.Command_List, t: ^Targets) -> bool {
 	if t.reflect_raw != 0 {return true}
-	ok := target(r, cmd, &t.reflect_raw, t.width, t.height, .RGBA16_Float, {.Sampled, .Storage}, "reflection rays")
-	ok &&= target(r, cmd, &t.reflect_shared, t.half_width, t.half_height, .RGBA16_Float, HISTORY_USAGE, "shared reflection rays")
+	ok := target(r, cmd, &t.reflect_raw, t.width, t.height, .RGBA16_Float, {.Sampled, .Storage}, "reflection rays", shared = true)
+	ok &&= target(r, cmd, &t.reflect_shared, t.half_width, t.half_height, .RGBA16_Float, HISTORY_USAGE, "shared reflection rays", shared = true)
 	for i in 0 ..< 2 {ok &&= target(r, cmd, &t.reflect_history[i], t.width, t.height, .RGBA16_Float, HISTORY_USAGE, "reflection history", true)}
 	t.reflect_valid = false
 	return ok
@@ -1655,19 +1725,20 @@ create_targets :: proc(r: ^Renderer, v: ^View_State, width, height: u32, scale: 
 	t.height = render_extent(height, scale)
 	t.half_width = max((t.width + 1) / 2, 1)
 	t.half_height = max((t.height + 1) / 2, 1)
-	full :: proc(d: ^rhi.Device, t: ^Targets, format: rhi.Format, usage: rhi.Texture_Usage, name: string) -> rhi.Texture {
-		return rhi.texture_create(d, {width = t.width, height = t.height, format = format, usage = usage, name = name})
+	full :: proc(r: ^Renderer, t: ^Targets, texture: ^rhi.Texture, format: rhi.Format, usage: rhi.Texture_Usage, name: string) -> bool {
+		return target(r, nil, texture, t.width, t.height, format, usage, name, shared = true)
 	}
 	attachment := rhi.Texture_Usage{.Color_Target, .Sampled}
-	t.depth = full(d, t, .D32_Float, {.Depth_Target, .Sampled}, "depth") // sampled: a custom pass of a pipeline reads it
+	ok := full(r, t, &t.depth, .D32_Float, {.Depth_Target, .Sampled}, "depth") // sampled: a custom pass of a pipeline reads it
 	// sRGB keeps dark base colors free of banding in 8 bits; its alpha (metallic) stays linear.
-	t.albedo = full(d, t, .RGBA8_Srgb, attachment, "gbuffer albedo")
-	t.normal = full(d, t, .RGBA16_Float, attachment, "gbuffer normal")
-	t.emission = full(d, t, .RGBA16_Float, attachment, "gbuffer emission")
-	t.motion = full(d, t, .RGBA16_Float, attachment, "gbuffer motion")
-	t.linear_depth = full(d, t, .R32_Float, attachment, "gbuffer depth")
-	t.direct = full(d, t, .RGBA16_Float, {.Sampled, .Storage}, "direct light")
-	t.display = full(d, t, .RGBA16_Float, HISTORY_USAGE, "display")
+	ok &&= full(r, t, &t.albedo, .RGBA8_Srgb, attachment, "gbuffer albedo")
+	ok &&= full(r, t, &t.normal, .RGBA16_Float, attachment, "gbuffer normal")
+	ok &&= full(r, t, &t.emission, .RGBA16_Float, attachment, "gbuffer emission")
+	ok &&= full(r, t, &t.motion, .RGBA16_Float, attachment, "gbuffer motion")
+	ok &&= full(r, t, &t.linear_depth, .R32_Float, attachment, "gbuffer depth")
+	ok &&= full(r, t, &t.direct, .RGBA16_Float, {.Sampled, .Storage}, "direct light")
+	ok &&= full(r, t, &t.display, .RGBA16_Float, HISTORY_USAGE, "display")
+	if !ok {return false}
 	for i in 0 ..< 2 {t.taa[i] = rhi.texture_create(d, {width = t.output_width, height = t.output_height, format = .RGBA16_Float, usage = HISTORY_USAGE, name = "taa history"})}
 	for i in 0 ..< 2 {t.taa_frames[i] = rhi.texture_create(d, {width = t.output_width, height = t.output_height, format = .R16_Float, usage = HISTORY_USAGE, name = "taa frames"})}
 	t.taa_valid = false
@@ -1680,10 +1751,10 @@ create_targets :: proc(r: ^Renderer, v: ^View_State, width, height: u32, scale: 
 	t.hiz_valid = false
 	t.ldr = rhi.texture_create(d, {width = t.output_width, height = t.output_height, format = .RGBA8_Unorm, usage = {.Color_Target, .Sampled, .Transfer_Src}, name = "ldr"})
 	if main && !ui_layer_targets(r, t.ui_layers[:], t.ui_blur[:], t.output_width, t.output_height) {return false}
-	t.reactive = full(d, t, .R8_Unorm, attachment, "blended coverage")
+	t.reactive = rhi.texture_create(d, {width = t.width, height = t.height, format = .R8_Unorm, usage = attachment, name = "blended coverage"})
 	t.needs_clear = true
 	v.has_previous = false
-	all := []rhi.Texture{t.depth, t.albedo, t.normal, t.emission, t.motion, t.linear_depth, t.direct, t.display, t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.hiz[0], t.hiz[1], t.ldr, t.reactive}
+	all := []rhi.Texture{t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.hiz[0], t.hiz[1], t.ldr, t.reactive}
 	for tex in all {if tex == 0 {set_error(r, "render targets: %s", rhi.device_error(d)); return false}}
 	return true
 }
