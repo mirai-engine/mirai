@@ -27,6 +27,7 @@ import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "core:os"
+import "core:reflect"
 import "core:sync"
 import "core:thread"
 import "mirai:asset"
@@ -810,11 +811,13 @@ dfg_build :: proc(r: ^Renderer) -> bool {
 Pipeline_Rays :: enum u8 {Any, Software, Hardware}
 
 // A pipeline of create_pipelines, made into target: a compute one of
-// shaders[0], or a graphics one of desc.
+// shaders[0] with constants, or a graphics one of desc.
 @(private)
 Pipeline_Make :: struct {
 	target:   ^rhi.Pipeline,
 	shaders:  [2]Shader_Id,
+	constants: rhi.Shader_Constants,
+	name:     string, // of a compute one
 	rays:     Pipeline_Rays,
 	clip:     bool, // it needs a device that clips by a plane
 	required: bool, // the renderer fails without it
@@ -834,9 +837,10 @@ Pipeline_List :: struct {
 @(private)
 pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	list.count = 0
-	compute :: proc(list: ^Pipeline_List, r: ^Renderer, id: Pipeline_Id, shader: Shader_Id) {
-		pipeline_listed(list, {target = &r.pipelines[id], shaders = {shader, shader}, rays = pipeline_rays(id), clip = pipeline_uses_clip_distance(id),
-			required = pipeline_required(id)})
+	// A stage serves the pipelines of each set of its constants (`//! constant`), named by their ids.
+	compute :: proc(list: ^Pipeline_List, r: ^Renderer, id: Pipeline_Id, shader: Shader_Id, constants: rhi.Shader_Constants = {}) {
+		pipeline_listed(list, {target = &r.pipelines[id], shaders = {shader, shader}, constants = constants, name = reflect.enum_string(id),
+			rays = pipeline_rays(id), clip = pipeline_uses_clip_distance(id), required = pipeline_required(id)})
 	}
 	graphics :: proc(list: ^Pipeline_List, r: ^Renderer, id: Pipeline_Id, desc: rhi.Graphics_Pipeline_Desc) {
 		pipeline_listed(list, {target = &r.pipelines[id], shaders = {shader_of(r, desc.vertex), shader_of(r, desc.fragment)}, rays = pipeline_rays(id),
@@ -844,15 +848,15 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	}
 	compute(list, r, .Cull, .Cull_Comp)
 	compute(list, r, .Cull_Clusters, .Cull_Clusters_Comp)
-	compute(list, r, .Cull_Clusters_Candidates, .Cull_Clusters_Candidates_Comp)
+	compute(list, r, .Cull_Clusters_Candidates, .Cull_Clusters_Comp, {CULL_CLUSTERS_COMP_CANDIDATES})
 	compute(list, r, .Cull_Programs, .Cull_Programs_Comp)
 	compute(list, r, .Tlas_Batches, .Tlas_Batches_Comp)
 	compute(list, r, .Lighting, .Lighting_Comp)
-	compute(list, r, .Lighting_Unlayered, .Lighting_Unlayered_Comp)
+	compute(list, r, .Lighting_Unlayered, .Lighting_Comp, {LIGHTING_COMP_UNLAYERED})
 	compute(list, r, .Lighting_Traced, .Lighting_Traced_Comp)
-	compute(list, r, .Lighting_Traced_Color, .Lighting_Traced_Color_Comp)
+	compute(list, r, .Lighting_Traced_Color, .Lighting_Traced_Comp, {LIGHTING_TRACED_COMP_COLOR})
 	compute(list, r, .Ddgi_Trace, .Ddgi_Trace_Comp)
-	compute(list, r, .Ddgi_Trace_Color, .Ddgi_Trace_Color_Comp)
+	compute(list, r, .Ddgi_Trace_Color, .Ddgi_Trace_Comp, {DDGI_TRACE_COMP_COLOR})
 	compute(list, r, .Ddgi_Irradiance, .Ddgi_Irradiance_Comp)
 	compute(list, r, .Ddgi_Keep, .Ddgi_Keep_Comp)
 	compute(list, r, .Ddgi_Distance, .Ddgi_Distance_Comp)
@@ -862,42 +866,42 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	compute(list, r, .Ddgi_Mark, .Ddgi_Mark_Comp)
 	compute(list, r, .Contact, .Contact_Comp)
 	compute(list, r, .Composite, .Composite_Comp)
-	compute(list, r, .Composite_Unlayered, .Composite_Unlayered_Comp)
+	compute(list, r, .Composite_Unlayered, .Composite_Comp, {COMPOSITE_COMP_UNLAYERED})
 	compute(list, r, .Taa, .Taa_Comp)
 	compute(list, r, .Hiz, .Hiz_Comp)
 	compute(list, r, .Exposure_Histogram, .Exposure_Histogram_Comp)
 	compute(list, r, .Exposure_Adapt, .Exposure_Adapt_Comp)
 	compute(list, r, .Reflect, .Reflect_Comp)
-	compute(list, r, .Reflect_Color, .Reflect_Color_Comp)
-	compute(list, r, .Reflect_Unlayered, .Reflect_Unlayered_Comp)
-	compute(list, r, .Reflect_Unlayered_Color, .Reflect_Unlayered_Color_Comp)
+	compute(list, r, .Reflect_Color, .Reflect_Comp, {REFLECT_COMP_COLOR})
+	compute(list, r, .Reflect_Unlayered, .Reflect_Comp, {REFLECT_COMP_UNLAYERED})
+	compute(list, r, .Reflect_Unlayered_Color, .Reflect_Comp, {REFLECT_COMP_UNLAYERED, REFLECT_COMP_COLOR})
 	compute(list, r, .Reflect_Resolve, .Reflect_Resolve_Comp)
 	compute(list, r, .History_Scale, .History_Scale_Comp)
 	compute(list, r, .Air_Transmittance, .Air_Transmittance_Comp)
 	compute(list, r, .Air_Scattering, .Air_Scattering_Comp)
 	compute(list, r, .Air_Sky, .Air_Sky_Comp)
 	compute(list, r, .Air_Aerial, .Air_Aerial_Comp)
-	compute(list, r, .Reflect_Resolve_Glass, .Reflect_Resolve_Glass_Comp)
+	compute(list, r, .Reflect_Resolve_Glass, .Reflect_Resolve_Comp, {REFLECT_RESOLVE_COMP_GLASS})
 	compute(list, r, .Glass_Mean, .Glass_Mean_Comp)
 	compute(list, r, .Points, .Points_Comp)
 	compute(list, r, .Shadow_Trace, .Shadow_Trace_Comp)
-	compute(list, r, .Shadow_Trace_Color, .Shadow_Trace_Color_Comp)
+	compute(list, r, .Shadow_Trace_Color, .Shadow_Trace_Comp, {SHADOW_TRACE_COMP_COLOR})
 	compute(list, r, .Shadow_Temporal, .Shadow_Temporal_Comp)
 	compute(list, r, .Shadow_Penumbra, .Shadow_Penumbra_Comp)
 	compute(list, r, .Skin, .Skin_Comp)
 	compute(list, r, .Skin_Triangles, .Skin_Triangles_Comp)
 	compute(list, r, .Skin_Refit, .Skin_Refit_Comp)
 	compute(list, r, .Shadow_Trace_Hw, .Shadow_Trace_Hw_Comp)
-	compute(list, r, .Shadow_Trace_Color_Hw, .Shadow_Trace_Color_Hw_Comp)
+	compute(list, r, .Shadow_Trace_Color_Hw, .Shadow_Trace_Hw_Comp, {SHADOW_TRACE_COMP_COLOR})
 	compute(list, r, .Lighting_Traced_Hw, .Lighting_Traced_Hw_Comp)
-	compute(list, r, .Lighting_Traced_Color_Hw, .Lighting_Traced_Color_Hw_Comp)
+	compute(list, r, .Lighting_Traced_Color_Hw, .Lighting_Traced_Hw_Comp, {LIGHTING_TRACED_COMP_COLOR})
 	compute(list, r, .Ddgi_Trace_Hw, .Ddgi_Trace_Hw_Comp)
-	compute(list, r, .Ddgi_Trace_Color_Hw, .Ddgi_Trace_Color_Hw_Comp)
+	compute(list, r, .Ddgi_Trace_Color_Hw, .Ddgi_Trace_Hw_Comp, {DDGI_TRACE_COMP_COLOR})
 	compute(list, r, .Contact_Hw, .Contact_Hw_Comp)
 	compute(list, r, .Reflect_Hw, .Reflect_Hw_Comp)
-	compute(list, r, .Reflect_Color_Hw, .Reflect_Color_Hw_Comp)
-	compute(list, r, .Reflect_Unlayered_Hw, .Reflect_Unlayered_Hw_Comp)
-	compute(list, r, .Reflect_Unlayered_Color_Hw, .Reflect_Unlayered_Color_Hw_Comp)
+	compute(list, r, .Reflect_Color_Hw, .Reflect_Hw_Comp, {REFLECT_COMP_COLOR})
+	compute(list, r, .Reflect_Unlayered_Hw, .Reflect_Hw_Comp, {REFLECT_COMP_UNLAYERED})
+	compute(list, r, .Reflect_Unlayered_Color_Hw, .Reflect_Hw_Comp, {REFLECT_COMP_UNLAYERED, REFLECT_COMP_COLOR})
 	ids := r.frame_layout.instance_ids
 	gbuffer := rhi.Graphics_Pipeline_Desc{
 		vertex = &r.shader_codes[.Gbuffer_Batches_Vert], fragment = &r.shader_codes[.Gbuffer_Frag],
@@ -921,7 +925,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	clipped.name, clipped_plain.name = "gbuffer with a clip plane", "gbuffer with a clip plane, without reflectance"
 	graphics(list, r, .Gbuffer_Clip, gbuffer_ids(clipped, ids))
 	graphics(list, r, .Gbuffer_Plain_Clip, gbuffer_ids(clipped_plain, ids))
-	clipped.fragment, clipped_plain.fragment = &r.shader_codes[.Gbuffer_Nested_Frag], &r.shader_codes[.Gbuffer_Nested_Plain_Frag]
+	clipped.fragment_constants, clipped_plain.fragment_constants = {GBUFFER_FRAG_NESTED}, {GBUFFER_FRAG_NESTED}
 	clipped.name, clipped_plain.name = "gbuffer of a nested view", "gbuffer of a nested view, without reflectance"
 	graphics(list, r, .Gbuffer_Nested, gbuffer_ids(clipped, ids))
 	graphics(list, r, .Gbuffer_Nested_Plain, gbuffer_ids(clipped_plain, ids))
@@ -929,7 +933,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	clipped_layered.vertex = &r.shader_codes[.Gbuffer_Clip_Vert]
 	clipped_layered.name = "gbuffer with a clip plane, with layers"
 	graphics(list, r, .Gbuffer_Layers_Clip, gbuffer_ids(clipped_layered, ids))
-	clipped_layered.fragment = &r.shader_codes[.Gbuffer_Nested_Layers_Frag]
+	clipped_layered.fragment_constants = {GBUFFER_FRAG_NESTED}
 	clipped_layered.name = "gbuffer of a nested view, with layers"
 	graphics(list, r, .Gbuffer_Nested_Layers, gbuffer_ids(clipped_layered, ids))
 	graphics(list, r, .Nested_Prime, {
@@ -941,13 +945,13 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 		color_formats = {0 = .RGBA8_Srgb}, color_count = 1, name = "reflectance of a view before its nested views",
 	})
 	compute(list, r, .Glass, .Glass_Comp)
-	compute(list, r, .Glass_Color, .Glass_Color_Comp)
+	compute(list, r, .Glass_Color, .Glass_Comp, {GLASS_COMP_COLOR})
 	compute(list, r, .Glass_Inside, .Glass_Inside_Comp)
-	compute(list, r, .Glass_Inside_Color, .Glass_Inside_Color_Comp)
+	compute(list, r, .Glass_Inside_Color, .Glass_Inside_Comp, {GLASS_INSIDE_COMP_COLOR})
 	compute(list, r, .Glass_Hw, .Glass_Hw_Comp)
-	compute(list, r, .Glass_Color_Hw, .Glass_Color_Hw_Comp)
+	compute(list, r, .Glass_Color_Hw, .Glass_Hw_Comp, {GLASS_COMP_COLOR})
 	compute(list, r, .Glass_Inside_Hw, .Glass_Inside_Hw_Comp)
-	compute(list, r, .Glass_Inside_Color_Hw, .Glass_Inside_Color_Hw_Comp)
+	compute(list, r, .Glass_Inside_Color_Hw, .Glass_Inside_Hw_Comp, {GLASS_INSIDE_COMP_COLOR})
 	graphics(list, r, .Glass_Layer, {
 		vertex = &r.shader_codes[.Gbuffer_Vert], fragment = &r.shader_codes[.Glass_Layer_Frag],
 		color_formats = {0 = .RGBA8_Srgb, 1 = .RGBA16_Float, 2 = .RGBA16_Float, 3 = .RG32_Uint, 4 = .R32_Float, 5 = .RGBA8_Srgb}, color_count = 6,
@@ -970,14 +974,14 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	translucent.fragment = &r.shader_codes[.Translucent_Frag]
 	translucent.blend = {0 = .Additive}
 	graphics(list, r, .Translucent, translucent)
-	translucent.fragment = &r.shader_codes[.Translucent_Color_Frag]
+	translucent.fragment_constants = {TRANSLUCENT_FRAG_COLOR}
 	graphics(list, r, .Translucent_Color, translucent)
-	translucent.fragment = &r.shader_codes[.Translucent_Hw_Frag]
+	translucent.fragment, translucent.fragment_constants = &r.shader_codes[.Translucent_Hw_Frag], {}
 	graphics(list, r, .Translucent_Hw, translucent)
-	translucent.fragment = &r.shader_codes[.Translucent_Color_Hw_Frag]
+	translucent.fragment_constants = {TRANSLUCENT_FRAG_COLOR}
 	graphics(list, r, .Translucent_Color_Hw, translucent)
 	highlight := gbuffer
-	highlight.vertex = &r.shader_codes[.Gbuffer_Highlight_Vert]
+	highlight.vertex, highlight.vertex_constants = &r.shader_codes[.Gbuffer_Vert], {GBUFFER_VERT_HIGHLIGHT}
 	highlight.fragment = &r.shader_codes[.Highlight_Frag]
 	highlight.color_formats = {0 = .RG32_Float}
 	highlight.color_count = 1
@@ -1028,7 +1032,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
         color_formats = {0 = .RGBA8_Unorm}, color_count = 1, depth_format = .D32_Float, name = "preview backdrop",
     })
 	graphics(list, r, .Ui_World, {
-		vertex = &r.shader_codes[.Ui_World_Vert], fragment = &r.shader_codes[.Ui_World_Frag],
+		vertex = &r.shader_codes[.Ui_Vert], fragment = &r.shader_codes[.Ui_Frag], vertex_constants = {UI_VERT_WORLD}, fragment_constants = {UI_FRAG_WORLD},
 		color_formats = {0 = .RGBA8_Unorm}, color_count = 1, blend = {0 = .Alpha}, name = "world ui",
 	})
 	graphics(list, r, .Debug_Lines, {
@@ -1111,7 +1115,7 @@ create_pipelines :: proc(r: ^Renderer, make: bit_set[Pipeline_Rays]) -> bool {
 				item.target^ = rhi.pipeline_create_graphics(r.device, item.desc)
 			} else {
 				code := &r.shader_codes[item.shaders[0]]
-				item.target^ = rhi.pipeline_create_compute(r.device, {shader = code, name = code.name})
+				item.target^ = rhi.pipeline_create_compute(r.device, {shader = code, constants = item.constants, name = item.name})
 			}
 		}
 	}
@@ -1139,7 +1143,7 @@ create_pipelines :: proc(r: ^Renderer, make: bit_set[Pipeline_Rays]) -> bool {
 
 @(private)
 pipeline_name :: proc(r: ^Renderer, item: Pipeline_Make) -> string {
-	return item.desc.name if item.graphics else r.shader_codes[item.shaders[0]].name
+	return item.desc.name if item.graphics else item.name
 }
 
 // The name of a pipeline the rays of tracer need that the device can make and

@@ -1,6 +1,6 @@
 #include "native.slang"
 // unlayered: while no instance with layers is in sight (gbuffer.slang).
-//! variant unlayered MIRAI_GBUFFER_NO_LAYERS=1
+//! constant unlayered MIRAI_GBUFFER_NO_LAYERS
 // Final HDR composition: the direct light, the light around each pixel
 // (indirect_compose) and its emission. The irradiance comes from the probe
 // volume, darkened by its contact occlusion, or from the reference of the

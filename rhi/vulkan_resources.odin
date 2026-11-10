@@ -593,19 +593,44 @@ vk_pipeline_cache_close :: proc(d: ^Device, key: u64, cache: vk.PipelineCache, f
 	pipeline_store_put(&d.pipelines_kept, key, data[:size])
 }
 
+// What the constants of a shader are in a pipeline, as the driver takes them:
+// each one it declares, as a VkBool32.
+@(private)
+Vk_Specialization :: struct {
+	info:    vk.SpecializationInfo,
+	entries: [MAX_SHADER_CONSTANTS]vk.SpecializationMapEntry,
+	values:  [MAX_SHADER_CONSTANTS]b32,
+}
+
+// nil for a shader without constants. s outlives the creation of the pipeline.
+@(private)
+vk_specialization :: proc "contextless" (s: ^Vk_Specialization, code: ^Shader_Code, constants: Shader_Constants) -> ^vk.SpecializationInfo {
+	count := min(len(code.constants), MAX_SHADER_CONSTANTS)
+	if count == 0 {return nil}
+	for id in 0 ..< count {
+		s.entries[id] = {constantID = u32(id), offset = u32(id * size_of(b32)), size = size_of(b32)}
+		s.values[id] = b32(id in constants)
+	}
+	s.info = {mapEntryCount = u32(count), pMapEntries = &s.entries[0], dataSize = count * size_of(b32), pData = &s.values[0]}
+	return &s.info
+}
+
 pipeline_create_compute :: proc(d: ^Device, desc: Compute_Pipeline_Desc) -> Pipeline {
 	if !vk_pipeline_room(d) {return 0}
 	p := Vk_Pipeline{bind_point = .COMPUTE, name = desc.name}
 	if desc.shader == nil || desc.shader.stage != .Compute {set_error(d, "compute pipeline %s needs a compute shader", desc.name); return 0}
+	if !shader_constants_valid(d, desc.name, desc.shader, desc.constants) {return 0}
 	if !vk_merge_bindings(d, &p, {.Compute}, desc.shader) {vk_release_pipeline(d, &p); return 0}
 	module := vk_shader_module(d, desc.shader)
 	if module == 0 {vk_release_pipeline(d, &p); return 0}
 	defer d.dvk.DestroyShaderModule(d.handle, module, nil)
 	feedback: vk.PipelineCreationFeedback
 	feedback_info := vk.PipelineCreationFeedbackCreateInfo{sType = .PIPELINE_CREATION_FEEDBACK_CREATE_INFO, pPipelineCreationFeedback = &feedback}
+	specialization: Vk_Specialization
 	info := vk.ComputePipelineCreateInfo{
 		sType = .COMPUTE_PIPELINE_CREATE_INFO, pNext = &feedback_info,
-		stage = {sType = .PIPELINE_SHADER_STAGE_CREATE_INFO, stage = {.COMPUTE}, module = module, pName = "main"},
+		stage = {sType = .PIPELINE_SHADER_STAGE_CREATE_INFO, stage = {.COMPUTE}, module = module, pName = "main",
+			pSpecializationInfo = vk_specialization(&specialization, desc.shader, desc.constants)},
 		layout = p.layout,
 	}
 	key := pipeline_key_compute(desc)
@@ -635,15 +660,19 @@ pipeline_create_graphics :: proc(d: ^Device, desc: Graphics_Pipeline_Desc) -> Pi
 	if !vk_pipeline_room(d) {return 0}
 	p := Vk_Pipeline{bind_point = .GRAPHICS, name = desc.name}
 	if desc.vertex == nil || desc.fragment == nil {set_error(d, "graphics pipeline %s needs vertex and fragment shaders", desc.name); return 0}
+	if !shader_constants_valid(d, desc.name, desc.vertex, desc.vertex_constants) || !shader_constants_valid(d, desc.name, desc.fragment, desc.fragment_constants) {return 0}
 	if !vk_merge_bindings(d, &p, {.Vertex, .Fragment}, desc.vertex, desc.fragment) {vk_release_pipeline(d, &p); return 0}
 	vertex := vk_shader_module(d, desc.vertex)
 	fragment := vk_shader_module(d, desc.fragment)
 	defer if vertex != 0 {d.dvk.DestroyShaderModule(d.handle, vertex, nil)}
 	defer if fragment != 0 {d.dvk.DestroyShaderModule(d.handle, fragment, nil)}
 	if vertex == 0 || fragment == 0 {vk_release_pipeline(d, &p); return 0}
+	specializations: [2]Vk_Specialization
 	stages := [2]vk.PipelineShaderStageCreateInfo{
-		{sType = .PIPELINE_SHADER_STAGE_CREATE_INFO, stage = {.VERTEX}, module = vertex, pName = "main"},
-		{sType = .PIPELINE_SHADER_STAGE_CREATE_INFO, stage = {.FRAGMENT}, module = fragment, pName = "main"},
+		{sType = .PIPELINE_SHADER_STAGE_CREATE_INFO, stage = {.VERTEX}, module = vertex, pName = "main",
+			pSpecializationInfo = vk_specialization(&specializations[0], desc.vertex, desc.vertex_constants)},
+		{sType = .PIPELINE_SHADER_STAGE_CREATE_INFO, stage = {.FRAGMENT}, module = fragment, pName = "main",
+			pSpecializationInfo = vk_specialization(&specializations[1], desc.fragment, desc.fragment_constants)},
 	}
 	vertex_input := vk.PipelineVertexInputStateCreateInfo{sType = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO}
 	assembly := vk.PipelineInputAssemblyStateCreateInfo{sType = .PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO, topology = .LINE_LIST if desc.topology == .Lines else .TRIANGLE_LIST}

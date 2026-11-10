@@ -1,7 +1,7 @@
 #include "native.slang"
 // candidates: phase 1 tests again, against this frame's depth pyramid, the
 // clusters phase 0 found hidden by last frame's.
-//! variant candidates MIRAI_CULL_CANDIDATES=1
+//! constant candidates MIRAI_CULL_CANDIDATES
 // The clusters of the chunks the instance pass (cull.comp) handed over, a
 // group a chunk: those of the cut of the view (cut.slang) in the frustum, not
 // seen only from behind (a closed mesh) and not hidden by the depth pyramid
@@ -107,17 +107,20 @@ void cluster_visible(uint index, Mesh mesh, uint ordinal, Cluster c) {
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
 void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID, uint3 dispatch_id : SV_DispatchThreadID) {
-#ifdef MIRAI_CULL_CANDIDATES
-    if (dispatch_id.x >= min(cull_state[CULL_CANDIDATE_COUNT], params.candidate_capacity)) return;
-    uint2 entry = cluster_candidates[dispatch_id.x];
-    uint index = entry.x, ordinal = entry.y;
-#else
-    uint chunk = group.y * CULL_DISPATCH_X + group.x;
-    if (chunk >= min(cull_state[CULL_CHUNK_COUNT], params.chunk_capacity)) return;
-    uint2 work = chunks[chunk];
-    if (lane.x > (work.y & (CULL_CHUNK - 1u))) return;
-    uint index = work.x, ordinal = (work.y >> 6u) + lane.x;
-#endif
+    uint index, ordinal;
+    if (MIRAI_CULL_CANDIDATES) {
+        if (dispatch_id.x >= min(cull_state[CULL_CANDIDATE_COUNT], params.candidate_capacity)) return;
+        uint2 entry = cluster_candidates[dispatch_id.x];
+        index = entry.x;
+        ordinal = entry.y;
+    } else {
+        uint chunk = group.y * CULL_DISPATCH_X + group.x;
+        if (chunk >= min(cull_state[CULL_CHUNK_COUNT], params.chunk_capacity)) return;
+        uint2 work = chunks[chunk];
+        if (lane.x > (work.y & (CULL_CHUNK - 1u))) return;
+        index = work.x;
+        ordinal = (work.y >> 6u) + lane.x;
+    }
     Instance inst = scene_instance(index);
     Mesh mesh = meshes[instance_mesh(inst)];
     Cluster c = mesh_cluster(mesh, ordinal);
@@ -130,36 +133,36 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID, uint3 dispatc
         low -= reach;
         high += reach;
     }
-#ifdef MIRAI_CULL_CANDIDATES
-    if (!posed && occluded(low, high, frame.view_proj_unjittered, frame.camera_position.xyz, frame.depth_plane)) return;
-#else
-    float scale = instance_scale(inst);
-    Cluster_Cut cut = cluster_cut(inst, scale, mesh, c, frame.cut.x);
-    if (!cut.drawn) return;
-    if (materials[material_of(inst, cluster_material(mesh, c))].shared.alpha_mode == ALPHA_BLEND) return;
-    if (!posed) {
-        if (!frustum_visible(low, high) || cluster_backfacing(inst, scale, mesh, c, low, high)) return;
-        // What the depth pyramid hides asks too: it shows once what hides it moves.
-        if (cut.request) page_request(instance_mesh(inst), c.child_page, cut.pixels);
-        if (params.occlusion != 0u) {
-            if (params.phase == 0u) {
-                if (occluded(low, high, frame.prev_view_proj, frame.prev_eye.xyz, frame.prev_depth_plane)) {
-                    uint slot;
-                    InterlockedAdd(cull_state[CULL_CANDIDATE_COUNT], 1u, slot);
-                    if (slot < params.candidate_capacity) {
-                        cluster_candidates[slot] = uint2(index, ordinal);
-                        InterlockedMax(cull_state[CULL_CANDIDATE_DISPATCH], slot / MIRAI_GROUP_X + 1u);
-                    } else {
-                        InterlockedAdd(cull_state[CULL_DROPPED + 2u], 1u);
-                        InterlockedAdd(stats[0].dropped[2], 1u);
+    if (MIRAI_CULL_CANDIDATES) {
+        if (!posed && occluded(low, high, frame.view_proj_unjittered, frame.camera_position.xyz, frame.depth_plane)) return;
+    } else {
+        float scale = instance_scale(inst);
+        Cluster_Cut cut = cluster_cut(inst, scale, mesh, c, frame.cut.x);
+        if (!cut.drawn) return;
+        if (materials[material_of(inst, cluster_material(mesh, c))].shared.alpha_mode == ALPHA_BLEND) return;
+        if (!posed) {
+            if (!frustum_visible(low, high) || cluster_backfacing(inst, scale, mesh, c, low, high)) return;
+            // What the depth pyramid hides asks too: it shows once what hides it moves.
+            if (cut.request) page_request(instance_mesh(inst), c.child_page, cut.pixels);
+            if (params.occlusion != 0u) {
+                if (params.phase == 0u) {
+                    if (occluded(low, high, frame.prev_view_proj, frame.prev_eye.xyz, frame.prev_depth_plane)) {
+                        uint slot;
+                        InterlockedAdd(cull_state[CULL_CANDIDATE_COUNT], 1u, slot);
+                        if (slot < params.candidate_capacity) {
+                            cluster_candidates[slot] = uint2(index, ordinal);
+                            InterlockedMax(cull_state[CULL_CANDIDATE_DISPATCH], slot / MIRAI_GROUP_X + 1u);
+                        } else {
+                            InterlockedAdd(cull_state[CULL_DROPPED + 2u], 1u);
+                            InterlockedAdd(stats[0].dropped[2], 1u);
+                        }
+                        return;
                     }
+                } else if (occluded(low, high, frame.view_proj_unjittered, frame.camera_position.xyz, frame.depth_plane)) {
                     return;
                 }
-            } else if (occluded(low, high, frame.view_proj_unjittered, frame.camera_position.xyz, frame.depth_plane)) {
-                return;
             }
         }
     }
-#endif
     cluster_visible(index, mesh, ordinal, c);
 }
