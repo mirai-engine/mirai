@@ -14,3 +14,24 @@ test_types :: proc(types:^[dynamic]core.Test_Type) {
         core.test_type(Environment_Trigger,default=proc(dst:^Environment_Trigger) {dst^=ENVIRONMENT_TRIGGER_DEFAULT}),
     )
 }
+
+// The world the tests of this library share.
+@(private)
+Test_Cameras :: struct {
+    using world:core.Test_World,
+    cameras:core.Table(render.Camera),
+    follows:core.Table(Camera_Follow),
+    activations:core.Table(Camera_Activation),
+    triggers:core.Table(Environment_Trigger),
+    transforms:core.Table(core.Transform),
+    worlds:core.Table(core.World_Transform),
+    parents:core.Table(core.Parent),
+    moves:core.Table(input.Move_Input),
+    drivables:core.Table(input.Drivable),
+    seats:core.Table(input.Seat),
+    seat_state:input.Seats,
+    selected:Cameras,
+    requests:Camera_Requests,
+    shakes:Camera_Shakes,
+    environment:render.Environment_Requests,
+}

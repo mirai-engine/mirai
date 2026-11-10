@@ -11,37 +11,24 @@ import mm "mirai:std/math"
 
 @(private="file")
 Camera_Test :: struct {
-    es:core.Entities,
-    cameras:core.Table(render.Camera),
-    follows:core.Table(Camera_Follow),
-    worlds:core.Table(core.World_Transform),
+    using w:Test_Cameras,
     problems:core.Problems,
 }
 
 @(private="file")
-test_make :: proc() -> ^Camera_Test {
+test_make :: proc(t:^testing.T) -> ^Camera_Test {
     f:=new(Camera_Test)
-    core.entities_init(&f.es)
-    core.table_init(&f.cameras,"Camera")
-    core.table_init(&f.follows,"Camera_Follow")
-    core.table_init(&f.worlds,"World_Transform")
+    if !core.test_world_init(t,&f.w,test_types) {
+        free(f)
+        return nil
+    }
     return f
 }
 
 @(private="file")
 test_free :: proc(f:^Camera_Test) {
-    core.table_destroy(&f.worlds)
-    core.table_destroy(&f.follows)
-    core.table_destroy(&f.cameras)
-    core.entities_destroy(&f.es)
+    core.test_world_destroy(&f.w)
     free(f)
-}
-
-@(private="file")
-test_settle :: proc(f:^Camera_Test) {
-    core.table_settle(&f.cameras,&f.es)
-    core.table_settle(&f.follows,&f.es)
-    core.table_settle(&f.worlds,&f.es)
 }
 
 @(private="file")
@@ -99,14 +86,15 @@ a_blend_changes_the_layers_when_the_view_arrives_not_when_it_leaves :: proc(t:^t
 
 @(test)
 a_mode_is_taken_once_keeps_the_target_and_counts_for_the_views :: proc(t:^testing.T) {
-    f:=test_make()
+    f:=test_make(t)
+    if f==nil {return}
     defer test_free(f)
-    camera,body:=core.create(&f.es),core.create(&f.es)
+    camera,body:=core.create(&f.entities),core.create(&f.entities)
     core.add(&f.cameras,camera,render.CAMERA_DEFAULT)
     core.add(&f.follows,camera,Camera_Follow{target=body,mode=.Follow})
     // The camera looks with a yaw of 1 and a pitch of 0.2, as an Orbit does.
     test_place(f,camera,{},orbit_rotation(orbit_make({},4,1,0.2)))
-    test_settle(f)
+    core.test_world_settle(&f.w)
 
     third:=camera_preset(.Third_Person)
     mode_take(&f.follows,&f.cameras,core.read(&f.worlds),{camera,third,{0.5,.Linear}},&f.problems)
@@ -132,20 +120,21 @@ a_mode_is_taken_once_keeps_the_target_and_counts_for_the_views :: proc(t:^testin
     testing.expect(t,has_problem(&f.problems,"camera.mode_invalid") && follow.state.changes==2)
     testing.expect(t,follow.mode==.Orbit && follow.distance==camera_preset(.Isometric).follow.distance)
 
-    lonely:=core.create(&f.es)
+    lonely:=core.create(&f.entities)
     mode_take(&f.follows,&f.cameras,core.read(&f.worlds),{lonely,third,CAMERA_BLEND},&f.problems)
     testing.expect(t,has_problem(&f.problems,"camera.mode_camera"),"a mode needs a render.Camera")
 }
 
 @(test)
 a_mode_gives_a_camera_without_one_a_camera_follow :: proc(t:^testing.T) {
-    f:=test_make()
+    f:=test_make(t)
+    if f==nil {return}
     defer test_free(f)
-    camera:=core.create(&f.es)
+    camera:=core.create(&f.entities)
     core.add(&f.cameras,camera,render.CAMERA_DEFAULT)
-    test_settle(f)
+    core.test_world_settle(&f.w)
     mode_take(&f.follows,&f.cameras,core.read(&f.worlds),{camera,camera_preset(.Side),CAMERA_BLEND},&f.problems)
-    test_settle(f)
+    core.test_world_settle(&f.w)
     follow,ok:=core.get(core.read(&f.follows),camera)
     testing.expect(t,ok && follow.target==core.NONE && follow.state.changes==1 && follow.state.blend==CAMERA_BLEND)
 }
@@ -204,14 +193,15 @@ a_dolly_zoom_brings_a_perspective_view_to_the_framing_of_an_orthographic_one :: 
 
 @(test)
 a_view_blends_into_a_new_mode_from_what_it_drew_and_travels_with_its_body :: proc(t:^testing.T) {
-    f:=test_make()
+    f:=test_make(t)
+    if f==nil {return}
     defer test_free(f)
-    camera,body:=core.create(&f.es),core.create(&f.es)
+    camera,body:=core.create(&f.entities),core.create(&f.entities)
     core.add(&f.cameras,camera,render.CAMERA_DEFAULT)
     core.add(&f.follows,camera,Camera_Follow{mode=.Follow})
     test_place(f,camera,{})
     test_place(f,body,{})
-    test_settle(f)
+    core.test_world_settle(&f.w)
     frame:=core.Frame_Time{dt=0.125,alpha=1}
     v:Camera_View
     update:=proc(f:^Camera_Test,v:^Camera_View,camera,body:core.Entity,frame:core.Frame_Time) {
@@ -239,14 +229,15 @@ a_view_blends_into_a_new_mode_from_what_it_drew_and_travels_with_its_body :: pro
 // the same place beside the new camera instead of lagging behind the look.
 @(test)
 what_a_view_left_turns_with_the_camera_it_blends_into :: proc(t:^testing.T) {
-    f:=test_make()
+    f:=test_make(t)
+    if f==nil {return}
     defer test_free(f)
-    camera,body:=core.create(&f.es),core.create(&f.es)
+    camera,body:=core.create(&f.entities),core.create(&f.entities)
     core.add(&f.cameras,camera,render.CAMERA_DEFAULT)
     core.add(&f.follows,camera,Camera_Follow{mode=.Follow})
     test_place(f,camera,{0,0,2})
     test_place(f,body,{})
-    test_settle(f)
+    core.test_world_settle(&f.w)
     frame:=core.Frame_Time{dt=0.125,alpha=1}
     v:Camera_View
     view_update(&v,camera,{},body,core.read(&f.cameras),core.read(&f.follows),core.read(&f.worlds),frame)
@@ -265,14 +256,15 @@ what_a_view_left_turns_with_the_camera_it_blends_into :: proc(t:^testing.T) {
 
 @(test)
 a_view_enters_and_leaves_an_override_with_its_blend_and_cuts_without_one :: proc(t:^testing.T) {
-    f:=test_make()
+    f:=test_make(t)
+    if f==nil {return}
     defer test_free(f)
-    a,b,c:=core.create(&f.es),core.create(&f.es),core.create(&f.es)
+    a,b,c:=core.create(&f.entities),core.create(&f.entities),core.create(&f.entities)
     for e,i in ([3]core.Entity{a,b,c}) {
         core.add(&f.cameras,e,render.CAMERA_DEFAULT)
         test_place(f,e,{0,f32(i)*10,0})
     }
-    test_settle(f)
+    core.test_world_settle(&f.w)
     frame:=core.Frame_Time{dt=0.1,alpha=1}
     v:Camera_View
     update:=proc(f:^Camera_Test,v:^Camera_View,camera:core.Entity,through:Camera_Blend,frame:core.Frame_Time) {
@@ -293,55 +285,37 @@ a_view_enters_and_leaves_an_override_with_its_blend_and_cuts_without_one :: proc
 
 @(test)
 a_camera_with_an_activation_is_seen_while_its_player_holds_the_action :: proc(t:^testing.T) {
-    f:=test_make()
+    f:=test_make(t)
+    if f==nil {return}
     defer test_free(f)
-    activations:core.Table(Camera_Activation)
-    drivables:core.Table(input.Drivable)
-    seats:core.Table(input.Seat)
-    core.table_init(&activations,"Camera_Activation")
-    core.table_init(&drivables,"Drivable")
-    core.table_init(&seats,"Seat")
-    defer core.table_destroy(&activations)
-    defer core.table_destroy(&drivables)
-    defer core.table_destroy(&seats)
-    requests:Camera_Requests
-    defer core.queue_clear(&requests.queue)
-    defer delete(requests.queue.items)
-    state:=new(Cameras)
-    defer free(state)
-    seat_state:input.Seats
-
-    base,aim,body,seat,stray:=core.create(&f.es),core.create(&f.es),core.create(&f.es),core.create(&f.es),core.create(&f.es)
+    base,aim,body,seat,stray:=core.create(&f.entities),core.create(&f.entities),core.create(&f.entities),core.create(&f.entities),core.create(&f.entities)
     AIM :: 5
     core.add(&f.cameras,base,render.CAMERA_DEFAULT)
     core.add(&f.cameras,aim,render.CAMERA_DEFAULT)
     core.add(&f.cameras,stray,render.CAMERA_DEFAULT)
     core.add(&f.follows,aim,Camera_Follow{mode=.Orbit,target=body})
-    core.add(&activations,aim,Camera_Activation{action=AIM,blend={0.25,.Cubic_Out}})
-    core.add(&activations,stray,CAMERA_ACTIVATION_DEFAULT)
-    core.add(&drivables,body,input.Drivable{seat=seat,camera=base})
-    core.add(&seats,seat,input.Seat{actions={count=input.ACTION_CAPACITY}})
-    test_settle(f)
-    core.table_settle(&activations,&f.es)
-    core.table_settle(&drivables,&f.es)
-    core.table_settle(&seats,&f.es)
-    select:=proc(f:^Camera_Test,state:^Cameras,requests:^Camera_Requests,activations:^core.Table(Camera_Activation),drivables:^core.Table(input.Drivable),seats:^core.Table(input.Seat),seat_state:^input.Seats) {
-        camera_select(core.ref(&f.es),core.read(&f.cameras),state,requests,core.read(activations),core.read(&f.follows),core.read(drivables),core.read(seats),core.ref(seat_state),&f.problems)
+    core.add(&f.activations,aim,Camera_Activation{action=AIM,blend={0.25,.Cubic_Out}})
+    core.add(&f.activations,stray,CAMERA_ACTIVATION_DEFAULT)
+    core.add(&f.drivables,body,input.Drivable{seat=seat,camera=base})
+    core.add(&f.seats,seat,input.Seat{actions={count=input.ACTION_CAPACITY}})
+    core.test_world_settle(&f.w)
+    select:=proc(f:^Camera_Test) {
+        camera_select(core.ref(&f.entities),core.read(&f.cameras),&f.selected,&f.requests,core.read(&f.activations),core.read(&f.follows),core.read(&f.drivables),core.read(&f.seats),core.ref(&f.seat_state),&f.problems)
     }
 
-    select(f,state,&requests,&activations,&drivables,&seats,&seat_state)
-    testing.expect(t,camera_selected(state,core.read(&drivables),core.read(&f.cameras),seat)==base,"without the action, the camera of the body")
+    select(f)
+    testing.expect(t,camera_selected(&f.selected,core.read(&f.drivables),core.read(&f.cameras),seat)==base,"without the action, the camera of the body")
     testing.expect(t,has_problem(&f.problems,"camera.activation"),"an activation without an action says so")
 
-    held:=core.get(&seats,seat)
+    held:=core.get(&f.seats,seat)
     held.actions.states[AIM].down=true
-    select(f,state,&requests,&activations,&drivables,&seats,&seat_state)
-    chosen,blend:=seat_camera(state,core.read(&drivables),core.read(&f.cameras),seat)
+    select(f)
+    chosen,blend:=seat_camera(&f.selected,core.read(&f.drivables),core.read(&f.cameras),seat)
     testing.expect(t,chosen==aim && blend.seconds==0.25,"while it is held, the camera it brings, with its blend")
 
     held.actions.states[AIM].down=false
-    select(f,state,&requests,&activations,&drivables,&seats,&seat_state)
-    testing.expect(t,camera_selected(state,core.read(&drivables),core.read(&f.cameras),seat)==base,"and back once it is let go")
+    select(f)
+    testing.expect(t,camera_selected(&f.selected,core.read(&f.drivables),core.read(&f.cameras),seat)==base,"and back once it is let go")
 }
 
 // On the side of a planet, where the up of a character is +X, the eyes sit
@@ -349,21 +323,18 @@ a_camera_with_an_activation_is_seen_while_its_player_holds_the_action :: proc(t:
 // ticks in which its up turned, the camera turns with its place, not at once.
 @(test)
 the_eyes_sit_along_the_vertical_of_a_character_on_a_planet :: proc(t:^testing.T) {
-    f:=test_make()
+    f:=test_make(t)
+    if f==nil {return}
     defer test_free(f)
-    transforms:core.Table(core.Transform);core.table_init(&transforms,"Transform");defer core.table_destroy(&transforms)
-    parents:core.Table(core.Parent);core.table_init(&parents,"Parent");defer core.table_destroy(&parents)
-    moves:core.Table(input.Move_Input);core.table_init(&moves,"Move_Input");defer core.table_destroy(&moves)
-    camera,body:=core.create(&f.es),core.create(&f.es)
+    camera,body:=core.create(&f.entities),core.create(&f.entities)
     side:=mm.quat_between({0,1,0},{1,0,0})
     test_place(f,body,{20,0,0},side)
     test_place(f,camera,{})
-    core.add(&transforms,camera,core.Transform{rotation=1,scale={1,1,1}})
-    test_settle(f)
-    core.table_settle(&transforms,&f.es)
+    core.add(&f.transforms,camera,core.Transform{rotation=1,scale={1,1,1}})
+    core.test_world_settle(&f.w)
     follow:=Camera_Follow{target=body,mode=.Eyes,offset={0,1.6,0}}
-    follow_one(camera,&follow,body,&transforms,core.read(&f.worlds),core.read(&parents),core.read(&moves),side,{},core.FRAME_TIME_DEFAULT,1.0/60)
-    eyes,_:=core.get(core.read(&transforms),camera)
+    follow_one(camera,&follow,body,&f.transforms,core.read(&f.worlds),core.read(&f.parents),core.read(&f.moves),side,{},core.FRAME_TIME_DEFAULT,1.0/60)
+    eyes,_:=core.get(core.read(&f.transforms),camera)
     testing.expectf(t,close_vec(eyes.position,{21.6,0,0}),"the eyes are along the up of the character: %v",eyes.position)
     testing.expect(t,close_vec(mm.quat_rotate(eyes.rotation,{0,1,0}),{1,0,0}),"the eyes look level with its ground")
 
@@ -415,42 +386,37 @@ a_shake_channel_joins_its_keys_by_their_slopes :: proc(t:^testing.T) {
 // single and adds another when not.
 @(test)
 a_camera_plays_sequence_shakes_over_its_view_until_they_end :: proc(t:^testing.T) {
-    f:=test_make()
+    f:=test_make(t)
+    if f==nil {return}
     defer test_free(f)
-    transforms:core.Table(core.Transform);core.table_init(&transforms,"Transform");defer core.table_destroy(&transforms)
-    parents:core.Table(core.Parent);core.table_init(&parents,"Parent");defer core.table_destroy(&parents)
-    moves:core.Table(input.Move_Input);core.table_init(&moves,"Move_Input");defer core.table_destroy(&moves)
-    camera,body:=core.create(&f.es),core.create(&f.es)
+    camera,body:=core.create(&f.entities),core.create(&f.entities)
     test_place(f,body,{})
     test_place(f,camera,{})
-    core.add(&transforms,camera,core.Transform{rotation=1,scale={1,1,1}})
+    core.add(&f.transforms,camera,core.Transform{rotation=1,scale={1,1,1}})
     core.add(&f.follows,camera,Camera_Follow{target=body,mode=.Eyes,offset={0,1.6,0}})
-    test_settle(f)
-    core.table_settle(&transforms,&f.es)
-    shakes:Camera_Shakes
-    defer delete(shakes.queue.items)
+    core.test_world_settle(&f.w)
     problems:core.Problems
     nod:Shake_Sequence
     nod.pitch.keys[0]={value=0.1}
     nod.pitch.count=1
     nod.length,nod.rate,nod.scale,nod.blend_in,nod.blend_out=1,2,0.5,0.1,0.1
-    camera_shake(&shakes,camera,nod)
-    shakes_take(&f.follows,&shakes,&problems)
+    camera_shake(&f.shakes,camera,nod)
+    shakes_take(&f.follows,&f.shakes,&problems)
     // 0.05 s in, a quarter of the way through blend_in 0.1 at weight 0.5 x 0.1 rad.
-    testing.expectf(t,abs(shake_test_look(f,&transforms,&parents,&moves,camera,body,0.05)-0.025)<1e-4,"blending in")
-    testing.expectf(t,abs(shake_test_look(f,&transforms,&parents,&moves,camera,body,0.2)-0.05)<1e-4,"at full weight: scale times its key")
+    testing.expectf(t,abs(shake_test_look(f,camera,body,0.05)-0.025)<1e-4,"blending in")
+    testing.expectf(t,abs(shake_test_look(f,camera,body,0.2)-0.05)<1e-4,"at full weight: scale times its key")
     // The sequence lasts 1 s at rate 2: 0.5 s of play, the last 0.1 blending out.
-    testing.expectf(t,abs(shake_test_look(f,&transforms,&parents,&moves,camera,body,0.2)-0.025)<1e-4,"blending out at 0.45 s")
-    testing.expect(t,shake_test_look(f,&transforms,&parents,&moves,camera,body,0.1)==0,"ended: the view is its own again")
+    testing.expectf(t,abs(shake_test_look(f,camera,body,0.2)-0.025)<1e-4,"blending out at 0.45 s")
+    testing.expect(t,shake_test_look(f,camera,body,0.1)==0,"ended: the view is its own again")
     following:=core.get(&f.follows,camera)
     testing.expect(t,following.state.shakes[0].sequence.length==0,"and its slot is free")
 
     swing:=nod
     swing.single,swing.id=true,7
-    camera_shake(&shakes,camera,swing)
-    camera_shake(&shakes,camera,swing)
-    camera_shake(&shakes,camera,nod)
-    shakes_take(&f.follows,&shakes,&problems)
+    camera_shake(&f.shakes,camera,swing)
+    camera_shake(&f.shakes,camera,swing)
+    camera_shake(&f.shakes,camera,nod)
+    shakes_take(&f.follows,&f.shakes,&problems)
     playing:=0
     slots:=following.state.shakes
     for p in slots {
@@ -459,7 +425,7 @@ a_camera_plays_sequence_shakes_over_its_view_until_they_end :: proc(t:^testing.T
     testing.expect_value(t,playing,2)
     // A change of mode (a dash camera) does not cut what plays.
     core.add(&f.cameras,camera,render.Camera{fov=1,near=0.1,active=true})
-    test_settle(f)
+    core.test_world_settle(&f.w)
     setup:=Camera_Setup{follow={mode=.Eyes,offset={0,1.5,0}},lens={fov=1.2,near=0.1}}
     mode_take(&f.follows,&f.cameras,core.read(&f.worlds),{camera=camera,setup=setup},&problems)
     following=core.get(&f.follows,camera)
@@ -470,9 +436,9 @@ a_camera_plays_sequence_shakes_over_its_view_until_they_end :: proc(t:^testing.T
     }
     testing.expect(t,following.offset.y==1.5 && still==2,"the mode is taken and its shakes go on")
 
-    camera_shake(&shakes,camera,{})
-    camera_shake(&shakes,body,nod)
-    shakes_take(&f.follows,&shakes,&problems)
+    camera_shake(&f.shakes,camera,{})
+    camera_shake(&f.shakes,body,nod)
+    shakes_take(&f.follows,&f.shakes,&problems)
     testing.expect(t,core.problem_find(&problems,camera,"camera.shake")!=nil,"a shake without length is a problem")
     testing.expect(t,core.problem_find(&problems,body,"camera.shake")!=nil,"and one asked of what does not follow")
 
@@ -480,32 +446,32 @@ a_camera_plays_sequence_shakes_over_its_view_until_they_end :: proc(t:^testing.T
     zoom.fov.keys[0]={value=0.2}
     zoom.fov.count=1
     zoom.length,zoom.scale=1,0.5
-    camera_shake(&shakes,camera,zoom)
-    shakes_take(&f.follows,&shakes,&problems)
+    camera_shake(&f.shakes,camera,zoom)
+    shakes_take(&f.follows,&f.shakes,&problems)
     lens:=core.get(&f.cameras,camera)
-    shake_test_look(f,&transforms,&parents,&moves,camera,body,0.1)
+    shake_test_look(f,camera,body,0.1)
     testing.expectf(t,close(lens.fov,1.3,1e-5),"the lens of its mode plus scale times its key: %v",lens.fov)
-    shake_test_look(f,&transforms,&parents,&moves,camera,body,0.1)
+    shake_test_look(f,camera,body,0.1)
     testing.expectf(t,close(lens.fov,1.3,1e-5),"and not more each frame: %v",lens.fov)
     lens.projection=.Orthographic
-    shake_test_look(f,&transforms,&parents,&moves,camera,body,0.1)
+    shake_test_look(f,camera,body,0.1)
     testing.expect(t,lens.fov==1.2,"an orthographic lens keeps its own")
     lens.projection=.Perspective
     for &p in following.state.shakes {
         if p.sequence.fov.count>0 {p.sequence.scale=100}
     }
-    shake_test_look(f,&transforms,&parents,&moves,camera,body,0.1)
+    shake_test_look(f,camera,body,0.1)
     testing.expect(t,lens.fov==SHAKE_FOV_MAX,"and a perspective one stays below pi")
-    shake_test_look(f,&transforms,&parents,&moves,camera,body,1)
+    shake_test_look(f,camera,body,1)
     testing.expect(t,lens.fov==1.2,"ended: the lens is its own again")
 }
 
 // How far up the camera looks after following its body dt seconds.
 @(private="file")
-shake_test_look :: proc(f:^Camera_Test,transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent),moves:^core.Table(input.Move_Input),camera,body:core.Entity,dt:f32) -> f32 {
+shake_test_look :: proc(f:^Camera_Test,camera,body:core.Entity,dt:f32) -> f32 {
     following:=core.get(&f.follows,camera)
-    follow_one(camera,following,body,transforms,core.read(&f.worlds),core.read(parents),core.read(moves),1,{},{dt=dt,alpha=1},dt,core.get(&f.cameras,camera))
-    placed,_:=core.get(core.read(transforms),camera)
+    follow_one(camera,following,body,&f.transforms,core.read(&f.worlds),core.read(&f.parents),core.read(&f.moves),1,{},{dt=dt,alpha=1},dt,core.get(&f.cameras,camera))
+    placed,_:=core.get(core.read(&f.transforms),camera)
     ahead:=mm.quat_forward(placed.rotation)
     return math.asin(ahead.y) // how far up it looks
 }
