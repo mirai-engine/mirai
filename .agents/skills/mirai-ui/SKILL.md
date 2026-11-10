@@ -70,9 +70,11 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
   generation, so starting a frame does not depend on how many ids the previous one had; the
   previous frame's rectangles live in the widget registry, which `frame_end` indexes by id: a
   lookup by id (`widget_rect`) does not go through the widgets.
-- **The only thing the layout keeps between frames is the text measure**: a span of text that did
-  not change is not measured again (`Stats.text_measured` and `text_reused`), and one that does not
-  fit in `max_text_words` is measured again when split into lines, without being discarded.
+- **The layout keeps between frames only the text measure and the rectangles of the elements that
+  transition** (by id, those a style with `transition` asks for: game nodes, never the editor's
+  widgets). A span of text that did not change is not measured again (`Stats.text_measured` and
+  `text_reused`), and one that does not fit in `max_text_words` is measured again when split into
+  lines, without being discarded.
 - **Text goes into a box one way**: the text leaf, whose lines and height the layout computes in
   the frame that builds it ([text](references/ui.md#text)). No widget wraps text, counts its lines
   or reads last frame's width to do it.
