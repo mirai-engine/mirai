@@ -396,15 +396,24 @@ contact_handles :: proc(w:^World,contact:^Contact) -> (shape_a,shape_b:Shape_Han
     return shape_handle(w,contact.shape_a),shape_handle(w,contact.shape_b),body_handle(w,contact.body_a),body_handle(w,contact.body_b)
 }
 
+// The user data of two shapes and of their bodies, and the same seen from the second shape.
+@(private)
+event_users :: proc "contextless" (w:^World,shape_a,shape_b:i32) -> (users,swapped:Event_Users) #no_bounds_check {
+    a,b:=&w.shapes[shape_a],&w.shapes[shape_b]
+    users={w.bodies[a.body].user_data,w.bodies[b.body].user_data,a.user_data,b.user_data}
+    return users,{users.body_b,users.body_a,users.shape_b,users.shape_a}
+}
+
 @(private)
 contact_end_events :: proc(w:^World,contact:^Contact) {
     if .Debris in (w.bodies[contact.body_a].flags+w.bodies[contact.body_b].flags) {return}
     shape_a,shape_b,body_a,body_b:=contact_handles(w,contact)
+    users,swapped:=event_users(w,contact.shape_a,contact.shape_b)
     if .Overlap in contact.flags {
-        event_push(w,w.events.overlap_end,3,Overlap_Event{shape_a,shape_b,body_a,body_b,false})
-        event_push(w,w.events.overlap_end,3,Overlap_Event{shape_b,shape_a,body_b,body_a,false})
+        event_push(w,w.events.overlap_end,3,Overlap_Event{shape_a,shape_b,body_a,body_b,false,users})
+        event_push(w,w.events.overlap_end,3,Overlap_Event{shape_b,shape_a,body_b,body_a,false,swapped})
     } else {
-        event_push(w,w.events.contact_end,1,Contact_End_Event{shape_a,shape_b,body_a,body_b})
+        event_push(w,w.events.contact_end,1,Contact_End_Event{shape_a,shape_b,body_a,body_b,users})
     }
 }
 
@@ -447,8 +456,9 @@ contacts_update :: proc(w:^World) #no_bounds_check {
         if .Overlap in contact.flags {
             if .Started in contact.flags {
                 shape_a,shape_b,body_a,body_b:=contact_handles(w,contact)
-                event_push(w,w.events.overlap_begin,2,Overlap_Event{shape_a,shape_b,body_a,body_b,false})
-                event_push(w,w.events.overlap_begin,2,Overlap_Event{shape_b,shape_a,body_b,body_a,false})
+                users,swapped:=event_users(w,contact.shape_a,contact.shape_b)
+                event_push(w,w.events.overlap_begin,2,Overlap_Event{shape_a,shape_b,body_a,body_b,false,users})
+                event_push(w,w.events.overlap_begin,2,Overlap_Event{shape_b,shape_a,body_b,body_a,false,swapped})
             }
             continue
         }

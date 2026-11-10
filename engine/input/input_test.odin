@@ -57,14 +57,14 @@ the_defaults_of_the_code_need_no_step :: proc(t:^testing.T) {
 
     device:=core.Input{keys_down={.W,.J,.Space},keys_pressed={.W,.J,.Space},mouse_down={.Left},mouse_pressed={.Left}}
     actions:Actions
-    actions_update(&actions,&m,&device)
+    actions_update(&actions,&m,&device,1.0/60)
     testing.expect(t,action(&actions,MOVE).vector==[2]f32{0,1})
     testing.expect(t,action(&actions,JUMP).pressed,"input.mirai binds jump to J")
     testing.expect(t,action(&actions,HIT).pressed)
     testing.expect_value(t,actions.count,u32(41))
 
     device={keys_down={.Space},keys_pressed={.Space}}
-    actions_update(&actions,&m,&device)
+    actions_update(&actions,&m,&device,1.0/60)
     testing.expect(t,!action(&actions,JUMP).down,"Space is no longer a binding of jump")
     testing.expect(t,action(&actions,HIT).released)
     testing.expect(t,action(&actions,Action(50))=={},"a value the map does not have is released")
@@ -102,10 +102,10 @@ typed_reads_take_the_actions_of_their_enum :: proc(t:^testing.T) {
     input_map_make(&m,&info,"","",nil)
     device:=core.Input{keys_down={.D,.Space},keys_pressed={.D,.Space}}
     tick:Actions
-    actions_update(&tick,&m,&device)
+    actions_update(&tick,&m,&device,1.0/60)
     frame:Frame_Actions
     device={keys_down={.D}}
-    actions_update(&frame.actions,&m,&device)
+    actions_update(&frame.actions,&m,&device,1.0/60)
 
     input:=Input_Of(Test_Action){actions=core.ref(&tick),base=3}
     testing.expect_value(t,action_of(input,.Jump),JUMP)
@@ -136,16 +136,16 @@ a_frame_without_a_tick_leaves_input_of_at_the_last_tick :: proc(t:^testing.T) {
     shown:=Frame_Input_Of(Test_Action){actions=core.ref(&frame),base=3}
 
     pressed_space:=core.Input{keys_down={.Space},keys_pressed={.Space}}
-    input_actions_update(&m,&tick,pressed_space,core.ref(&state),core.read(&seats))
-    input_frame_actions_update(core.ref(&m),&frame,core.Frame_Input{input=pressed_space},core.ref(&state),core.read(&seats))
+    input_actions_update(&m,&tick,pressed_space,core.ref(&state),core.read(&seats),{dt=1.0/60})
+    input_frame_actions_update(core.ref(&m),&frame,core.Frame_Input{input=pressed_space},core.ref(&state),core.read(&seats),{dt=1.0/60})
     testing.expect(t,pressed(ticked,.Jump) && pressed(shown,.Jump))
 
-    input_frame_actions_update(core.ref(&m),&frame,core.Frame_Input{},core.ref(&state),core.read(&seats))
+    input_frame_actions_update(core.ref(&m),&frame,core.Frame_Input{},core.ref(&state),core.read(&seats),{dt=1.0/60})
     testing.expect(t,pressed(ticked,.Jump) && down(ticked,.Jump),"the edge of the last tick is still there")
     testing.expect(t,released(shown,.Jump) && !down(shown,.Jump),"the frame saw the key go up")
 
     held_d:=core.Input{keys_down={.D},keys_pressed={.D}}
-    input_frame_actions_update(core.ref(&m),&frame,core.Frame_Input{input=held_d},core.ref(&state),core.read(&seats))
+    input_frame_actions_update(core.ref(&m),&frame,core.Frame_Input{input=held_d},core.ref(&state),core.read(&seats),{dt=1.0/60})
     testing.expect_value(t,vector(ticked,.Move),[2]f32{0,0})
     testing.expect_value(t,vector(shown,.Move),[2]f32{1,0})
 }
@@ -177,6 +177,8 @@ what_the_code_does_not_declare_is_a_problem :: proc(t:^testing.T) {
     problems={}
     error,at:=input_map_parse(&m,&info,`{"actions":[{"name":"jump","kind":"Trigger"}]}`)
     testing.expect(t,error==.Unknown_Kind && at=="jump")
+    error,at=input_map_parse(&m,&info,`{"tap_ticks":12,"actions":[]}`)
+    testing.expect(t,error==.Syntax && at=="tap_ticks" && strings.contains(input_map_error_fix(error),"tap_seconds"),"a file that counts ticks is refused")
 }
 
 // What the player rebinds goes to its options as the actions that differ from
@@ -198,20 +200,20 @@ the_bindings_the_player_changed_come_back_over_those_of_the_project :: proc(t:^t
 
     input_map_unbind(&m,JUMP)
     testing.expect(t,input_map_bind(&m,JUMP,binding_key(.J)) && input_map_bind(&m,JUMP,binding_gamepad_button(.South,1)))
-    m.hold_ticks=40
+    m.hold_seconds=0.75
     text,ok=input_map_text(&m,&below,&info)
     testing.expect(t,ok && strings.contains(text,`"jump"`) && !strings.contains(text,`"move"`) && !strings.contains(text,`"hit"`),text)
 
     again:Input_Map
     input_map_make(&again,&info,"input.mirai",PROJECT,&problems,"options/input.mirai",text)
     testing.expect_value(t,problems.count,0)
-    testing.expect_value(t,again.hold_ticks,u32(40))
+    testing.expect_value(t,again.hold_seconds,f32(0.75))
     actions:Actions
     device:=core.Input{keys_down={.J},keys_pressed={.J}}
-    actions_update(&actions,&again,&device)
+    actions_update(&actions,&again,&device,1.0/60)
     testing.expect(t,action(&actions,JUMP).pressed,"the options bind jump to J")
     device={keys_down={.Space},keys_pressed={.Space}}
-    actions_update(&actions,&again,&device)
+    actions_update(&actions,&again,&device,1.0/60)
     testing.expect(t,!action(&actions,JUMP).down,"Space is the binding of the project, which the options replaced")
     same:=again
     unchanged,_:=input_map_text(&same,&again,&info)
@@ -223,8 +225,8 @@ the_bindings_the_player_changed_come_back_over_those_of_the_project :: proc(t:^t
     problems={}
     input_map_make(&kept,&info,"input.mirai",PROJECT,&problems,"options/input.mirai",stale)
     testing.expect(t,problems.count==1 && strings.has_prefix(string(problems.entries[0].code[:]),"input.options_gone"),string(problems.entries[0].text[:]))
-    testing.expect_value(t,kept.hold_ticks,u32(40))
-    actions_update(&actions,&kept,&core.Input{keys_down={.J},keys_pressed={.J}})
+    testing.expect_value(t,kept.hold_seconds,f32(0.75))
+    actions_update(&actions,&kept,&core.Input{keys_down={.J},keys_pressed={.J}},1.0/60)
     testing.expect(t,action(&actions,JUMP).pressed,"the rest of the options holds")
     rewritten,_:=input_map_text(&kept,&below,&info)
     testing.expect(t,!strings.contains(rewritten,`"gone"`),"writing the options again drops it")

@@ -680,7 +680,11 @@ registry_refresh :: proc(r:^Registry,paths:[]string) -> Error {
     changed,exhausted:=false,false
     r.stats.opened,r.stats.reused=0,0
     gone:=make([dynamic]base.Asset_Id,context.temp_allocator)
-    for path in paths {
+    // The paths may be strings of the registry, as those refused are, which the loop frees and moves.
+    own,no_room:=make([]string,len(paths),context.temp_allocator)
+    if no_room!=nil {return .Out_Of_Memory}
+    for path,at in paths {own[at]=strings.clone(path,context.temp_allocator)}
+    for path in own {
         if path=="" || registry_outside(path) || registry_skipped(path) {continue}
         // A file a guest mount refused comes in again: the index refuses it again if its id is taken.
         for listed,at in r.refused {

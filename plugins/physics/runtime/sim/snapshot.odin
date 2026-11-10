@@ -5,8 +5,8 @@ import "core:hash/xxhash"
 import "mirai:std/spatial"
 
 @(private) SNAPSHOT_MAGIC :: u32(0x5048594d)
-@(private) SNAPSHOT_VERSION :: u32(13)
-@(private) SNAPSHOT_BLOCKS :: 9
+@(private) SNAPSHOT_VERSION :: u32(14)
+@(private) SNAPSHOT_BLOCKS :: 12
 
 @(private)
 Snapshot_Header :: struct {
@@ -19,7 +19,7 @@ Snapshot_Header :: struct {
 
 @(private) SNAPSHOT_ELEMENT_SIZES :: [SNAPSHOT_BLOCKS]u32{
     size_of(Body),size_of(Shape),size_of(Contact),size_of(Joint),size_of(Manifold_Block),size_of(Character),
-    size_of(Joint_Axes),size_of(Island),size_of(Fluid),
+    size_of(Joint_Axes),size_of(Island),size_of(Fluid),size_of(Breakable),size_of(Piece),size_of(Bond),
 }
 
 // The arrays a snapshot holds, each up to the count that `s` gives it.
@@ -30,7 +30,8 @@ snapshot_blocks :: proc(w:^World,s:^World_State) -> [SNAPSHOT_BLOCKS][]byte {
         mem.slice_to_bytes(w.contacts[:s.contact_high]),mem.slice_to_bytes(w.joints[:s.joint_high]),
         mem.slice_to_bytes(w.blocks[:s.block_high]),mem.slice_to_bytes(w.characters[:s.character_high]),
         mem.slice_to_bytes(w.joint_axes[:s.joint_high]),mem.slice_to_bytes(w.islands[:s.island_high]),
-        mem.slice_to_bytes(w.fluids[:s.fluid_high]),
+        mem.slice_to_bytes(w.fluids[:s.fluid_high]),mem.slice_to_bytes(w.breakables[:s.breakable_high]),
+        mem.slice_to_bytes(w.pieces[:s.piece_high]),mem.slice_to_bytes(w.bonds[:s.bond_high]),
     }
 }
 
@@ -39,7 +40,8 @@ snapshot_counts_fit :: proc(w:^World,s:^World_State) -> bool {
     fits :: proc(count:i32,capacity:int) -> bool {return count>=0 && int(count)<=capacity}
     return fits(s.body_high,len(w.bodies)) && fits(s.shape_high,len(w.shapes)) && fits(s.contact_high,len(w.contacts)) &&
         fits(s.joint_high,len(w.joints)) && fits(s.joint_high,len(w.joint_axes)) && fits(s.block_high,len(w.blocks)) && fits(s.character_high,len(w.characters)) &&
-        fits(s.island_high,len(w.islands)) && fits(s.fluid_high,len(w.fluids))
+        fits(s.island_high,len(w.islands)) && fits(s.fluid_high,len(w.fluids)) &&
+        fits(s.breakable_high,len(w.breakables)) && fits(s.piece_high,len(w.pieces)) && fits(s.bond_high,len(w.bonds))
 }
 
 // Bytes that world_snapshot writes for the current state.
@@ -56,6 +58,8 @@ world_snapshot_capacity :: proc(w:^World) -> int {
     size+=len(w.bodies)*size_of(Body)+len(w.shapes)*size_of(Shape)+len(w.contacts)*size_of(Contact)
     size+=len(w.joints)*size_of(Joint)+len(w.blocks)*size_of(Manifold_Block)+len(w.characters)*size_of(Character)
     size+=len(w.joint_axes)*size_of(Joint_Axes)+len(w.islands)*size_of(Island)+len(w.fluids)*size_of(Fluid)
+    // The pools of the breakables may not be made yet.
+    size+=w.desc.breakable_capacity*size_of(Breakable)+w.desc.piece_capacity*size_of(Piece)+w.desc.bond_capacity*size_of(Bond)
     for &tree in w.trees {size+=size_of(spatial.Tree_Node)*len(tree.nodes)+64}
     return size+len(w.hulls)*size_of(u32)
 }
@@ -98,7 +102,9 @@ world_restore :: proc(w:^World,buffer:[]byte) -> bool {
     mem.copy_non_overlapping(&header,raw_data(buffer),size_of(Snapshot_Header))
     if header.magic!=SNAPSHOT_MAGIC || header.version!=SNAPSHOT_VERSION || header.size<size_of(Snapshot_Header) || u64(len(buffer))<header.size {return false}
     if snapshot_payload_hash(header,buffer[size_of(Snapshot_Header):header.size])!=header.payload {return false}
-    if header.element_sizes!=SNAPSHOT_ELEMENT_SIZES || !snapshot_counts_fit(w,&header.state) {return false}
+    if header.element_sizes!=SNAPSHOT_ELEMENT_SIZES {return false}
+    if header.state.breakable_high>0 && !breakables_make(w) {return false}
+    if !snapshot_counts_fit(w,&header.state) {return false}
     restored:=snapshot_blocks(w,&header.state)
     cursor:=size_of(Snapshot_Header)
     for block in restored {cursor+=len(block)}
@@ -135,6 +141,7 @@ world_restore :: proc(w:^World,buffer:[]byte) -> bool {
 // between. Fails, leaving dst unchanged, as world_restore does.
 world_state_copy :: proc(dst,src:^World) -> bool {
     if dst==src {return true}
+    if src.breaking.made && !dst.kept && !breakables_make(dst) {return false}
     if !world_state_fits(dst,src) {return false}
     if src.fluid_count>0 && !dst.kept && !fluid_scratch_make(dst) {return false}
     for &shape in src.shapes[:src.shape_high] {
@@ -152,6 +159,7 @@ world_state_copy :: proc(dst,src:^World) -> bool {
         if len(current[i])>len(block) {mem.zero_slice(current[i][len(block):])}
         copy(restored[i],block)
     }
+    if dst.breaking.made {breakables_geometry_copy(dst,src)}
     dst.state=src.state
     world_restored(dst)
     return true
@@ -159,7 +167,7 @@ world_state_copy :: proc(dst,src:^World) -> bool {
 
 // Whether the pools of dst hold the state of src.
 world_state_fits :: proc(dst,src:^World) -> bool {
-    if !snapshot_counts_fit(dst,&src.state) {return false}
+    if !snapshot_counts_fit(dst,&src.state) || int(src.piece_hull_high)>len(dst.piece_hulls) {return false}
     for &tree,i in src.trees {
         if int(tree.node_high)>len(dst.trees[i].nodes) {return false}
     }
@@ -181,8 +189,16 @@ world_kept_init :: proc(w,src:^World,allocator:mem.Allocator) -> bool {
     d.joint_capacity=room(src.joint_high,d.joint_capacity)
     d.character_capacity=room(src.character_high,d.character_capacity)
     d.fluid_capacity=room(src.fluid_high,d.fluid_capacity)
+    d.breakable_capacity=room(src.breakable_high,d.breakable_capacity)
+    d.piece_capacity=room(max(src.piece_high,src.piece_hull_high),d.piece_capacity)
+    d.bond_capacity=room(src.bond_high,d.bond_capacity)
     d.event_capacity,d.static_change_capacity=0,0
     if !world_init(w,d) {return false}
+    w.kept=true
+    if src.breaking.made && !breakables_make(w) {
+        world_destroy(w)
+        return false
+    }
     w.desc=src.desc
     w.desc.allocator=allocator
     w.kept=true
