@@ -2,10 +2,11 @@ package asset
 
 import "core:math"
 import "core:mem"
-import "core:os"
+import "core:fmt"
 import "core:testing"
 import mm "mirai:std/math"
 import "mirai:std/serial"
+import "mirai:std/base"
 
 // A welded bumpy sheet of side cells with colors and a uv1 of its own, as a
 // static mesh: its DAG has levels enough for pages out of the root.
@@ -149,8 +150,7 @@ the_coarsest_ray_cut_takes_only_root_clusters :: proc(t:^testing.T) {
 pages_round_trip_through_a_file_and_decode_one_by_one :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
     g:=page_sheet(160)
-    path:=test_path("pages.mesh")
-    defer os.remove(path)
+    path:=fmt.tprintf("%s/pages.mesh",base.test_folder(t,"asset"))
     testing.expect_value(t,mesh_save(path,&types,{id={0x9a,0x6e},geometry=g}),Error.None)
     a:Asset
     testing.expect_value(t,asset_load(&a,path),Error.None)

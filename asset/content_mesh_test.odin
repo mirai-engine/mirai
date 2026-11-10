@@ -4,12 +4,11 @@ import "core:fmt"
 import "core:os"
 import "core:testing"
 import "mirai:std/geom"
+import "mirai:std/base"
 
 @(test)
 a_mesh_buffer_is_written_as_a_mesh_with_the_colors_of_its_parts :: proc(t:^testing.T) {
-    folder,_:=os.temp_directory(context.temp_allocator)
-    folder=fmt.tprintf("%s/mirai-content-mesh-%d",folder,os.get_pid())
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"content-mesh")
     c:Content
     content_init(&c,"content_test")
     defer content_destroy(&c)

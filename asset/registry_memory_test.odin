@@ -22,9 +22,7 @@ material_bytes_of :: proc(t:^testing.T,types:^Types,id,texture:base.Asset_Id,rou
 @(test)
 registry_answers_with_files_held_in_memory_until_they_are_written_or_dropped :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    root:=test_path("registry-memory")
-    os.remove_all(root)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"registry-memory")
     os.make_directory_all(fmt.tprintf("%s/materials",root))
     stone,clay,brick:=base.Asset_Id{1,1},base.Asset_Id{2,2},base.Asset_Id{3,3}
     on_disk:=material_bytes_of(t,&types,stone,{},0.5)
@@ -73,9 +71,7 @@ registry_answers_with_files_held_in_memory_until_they_are_written_or_dropped :: 
 
 @(test)
 registry_holds_a_file_outside_its_folders_by_its_absolute_path :: proc(t:^testing.T) {
-    root:=test_path("registry-memory-outside")
-    os.remove_all(root)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"registry-memory-outside")
     os.make_directory_all(fmt.tprintf("%s/assets",root))
     os.make_directory_all(fmt.tprintf("%s/shaders",root))
     source:=fmt.tprintf("%s/shaders/rock.slang",root)
@@ -110,9 +106,7 @@ registry_holds_a_file_outside_its_folders_by_its_absolute_path :: proc(t:^testin
 @(test)
 registry_tells_which_files_place_a_prefab_while_memory_holds_them :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    root:=test_path("registry-placers")
-    os.remove_all(root)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"registry-placers")
     os.make_directory_all(root)
     r:Registry
     registry_init(&r,root)

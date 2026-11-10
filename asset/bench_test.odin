@@ -4,7 +4,6 @@ import "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:os"
-import "core:strings"
 import "core:testing"
 import "core:time"
 import "mirai:std/base"
@@ -151,11 +150,7 @@ scene_file_against_a_file_per_entity :: proc(t:^testing.T) {
         // The allocator of the test runner counts every allocation; the measurement uses the heap.
         context.allocator=runtime.heap_allocator()
         types:Types;types_init(&types);defer types_destroy(&types)
-        root:=strings.clone(test_path("bench"))
-        defer delete(root)
-        os.remove_all(root)
-        os.make_directory_all(root)
-        defer os.remove_all(root)
+        root:=base.test_folder(t,"bench")
         for count in ([]int{1000,10000,50000,100000}) {
             scene:Scene
             bench_scene(&scene,&types,count)

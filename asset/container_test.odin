@@ -3,7 +3,6 @@ package asset
 import "base:intrinsics"
 import "core:fmt"
 import "core:mem"
-import "core:os"
 import "core:testing"
 import "mirai:std/base"
 import "mirai:std/jobs"
@@ -17,12 +16,6 @@ test_random :: proc(state:^u64) -> u64 {
     state^~=state^<<25
     state^~=state^>>27
     return state^*0x2545f4914f6cdd1d
-}
-
-@(private)
-test_path :: proc(name:string) -> string {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    return fmt.tprintf("%s/mirai-asset-%d-%s",directory,os.get_pid(),name)
 }
 
 @(private="file") KIND_TEST :: Fourcc(u32('T')|u32('E')<<8|u32('S')<<16|u32('T')<<24)
@@ -217,8 +210,7 @@ document_writes_and_reads_back_the_same_tables :: proc(t:^testing.T) {
 asset_gives_views_of_the_file_and_lists_what_it_depends_on :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
     doc:Document;sample_document(&doc,&types);defer document_destroy(&doc)
-    path:=test_path("views.test")
-    defer os.remove(path)
+    path:=fmt.tprintf("%s/views.test",base.test_folder(t,"asset"))
     testing.expect_value(t,document_save(&doc,path),Error.None)
 
     a:Asset
@@ -269,7 +261,7 @@ asset_gives_views_of_the_file_and_lists_what_it_depends_on :: proc(t:^testing.T)
     testing.expect(t,header_error==.None && header.kind==KIND_TEST && header.id==base.Asset_Id{0x1111,0x2222} && header.total_size==u64(size))
 
     b:Asset
-    testing.expect_value(t,asset_load(&b,test_path("missing.test")),Error.Not_Found)
+    testing.expect_value(t,asset_load(&b,fmt.tprintf("%s/missing.test",base.test_folder(t,"asset"))),Error.Not_Found)
     testing.expect_value(t,asset_load(&b,path,limit=64),Error.Too_Large)
 }
 
@@ -361,7 +353,7 @@ document_rejects_what_a_file_cannot_hold :: proc(t:^testing.T) {
     testing.expect_value(t,document_write(&doc,&w),Error.Invalid)
     doc.tables[table].key=-1
     testing.expect_value(t,document_write(&doc,&w),Error.None)
-    testing.expect_value(t,document_save(&doc,test_path("no-folder/x.test")),Error.IO)
+    testing.expect_value(t,document_save(&doc,fmt.tprintf("%s/no-folder/x.test",base.test_folder(t,"asset"))),Error.IO)
 }
 
 @(test)

@@ -3,7 +3,7 @@ package asset
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
-import "core:os"
+import "core:fmt"
 import "core:testing"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -72,8 +72,7 @@ a_far_mesh_joins_its_parts_in_one_slot_with_the_mean_of_their_materials :: proc(
     testing.expect(t,pure>len(far.clusters)/2,"most clusters cover one part")
     // It round trips as any mesh.
     types:Types;types_init(&types);defer types_destroy(&types)
-    path:=test_path("far.mesh")
-    defer os.remove(path)
+    path:=fmt.tprintf("%s/far.mesh",base.test_folder(t,"asset"))
     testing.expect_value(t,mesh_save(path,&types,{id={0xfa,0x12},geometry=far}),Error.None)
     a:Asset
     testing.expect_value(t,asset_load(&a,path),Error.None)
