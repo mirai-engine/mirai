@@ -436,15 +436,17 @@ The node types are in `Node_Kind` (`tree.odin`) and the events in `Tree_Event`.
     (`{n:one=# coin|other=# coins}`). An enum name or a category that does not exist fails like a
     path.
   - A text with braces is a template of names (`{health:0}/{most}`): each name is a field of the
-    node with its path, so a translation names the same without paths. It is interpreted when
-    creating the instance and in the frame only what changed is formatted;
+    node with its path, so the text names the same in every language without paths. It is
+    interpreted when creating the instance and in the frame only what changed is formatted;
     `Tree_Build_Desc.changed` says that values that the refresh did not copy changed.
   - A `Collapsed` node is neither built nor takes place; an `Invisible` one takes its place but does
     not draw or take input. With `bind_visible`, the flag says what it is when the value is false.
-- **Localized texts.** A `Localized` node stores its text in the language in which the interface is
-  written and its translations in the same tree; `Game_Source.language` chooses which is shown and
-  the instance resolves them when created and when the language changes. A text is not shared
-  between nodes: the widget that has it is shared.
+- **Localized texts.** The text of a `Localized` node is a key of the texts of the game
+  (`base.Texts`, every `.strings` of the assets as one table:
+  [texts](../../mirai-assets/references/kinds.md#texts)). The instance asks `Game_Source.texts`
+  what the key says in `Game_Source.language` when it is created and when the language or the
+  generation of the texts changes; a key the texts lack shows as it is. Nodes, rows of game data
+  and code that name one key show one text.
 - **Input.** A `Button` with `action` is also pressed with that game action (with `hold`, only after
   holding it); `Action_Bar` lists the buttons with an action of its tree with their prompts. A
   The bar shows the buttons the last build found: a build that finds others, or their texts in

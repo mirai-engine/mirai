@@ -849,7 +849,9 @@ WAV and Ogg Vorbis, mono or stereo) and writes `<name>.sound`, the root of its i
 `cook/import/strings.odin`. `import_strings` reads a UTF-8 CSV per RFC 4180 (`csv_records`) and
 writes `<name>.strings`, the root of its import.
 
-- The first row is `key` and the code of each language (`key,es,en,pt-BR`); each following row is a
+- The first row is `key` and the code of each language (`key,en,es,pt-BR`), the one the texts are
+  written in first: a language that lacks a key shows that one
+  ([one store](../../mirai-assets/references/kinds.md#texts)). Each following row is a
   unique key and its text in each language. An empty cell is a missing text, and the report says
   how many are missing.
 - An error (`Malformed`) names the line: unclosed or stray quotes, invalid or repeated language or

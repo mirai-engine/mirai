@@ -149,22 +149,27 @@ texts_set :: proc(t:^Texts,key,code,text:string) -> (problem:string) {
 }
 
 // The key a text takes when whoever writes it gives none: its ASCII letters
-// and digits in lowercase, each run of anything else a _, cut at
-// TEXTS_KEY_WORDS. The key of that name that already says this text in the
-// language texts are written in is shared; one that says another leaves the
-// name to the next number: start, start_2, start_3.
+// and digits in lowercase, each run of anything else a _, cut at the last
+// word that ends within TEXTS_KEY_WORDS. The key of that name that already
+// says this text in the language texts are written in is shared; one that
+// says another leaves the name to the next number: start, start_2, start_3.
 texts_key :: proc(t:^Texts,text:string) -> string {
     b:=strings.builder_make(context.temp_allocator)
+    whole:=0 // the bytes of the words that ended
     for c in transmute([]u8)text {
-        if strings.builder_len(b)>=TEXTS_KEY_WORDS {break}
         switch c {
         case 'a'..='z','0'..='9': strings.write_byte(&b,c)
         case 'A'..='Z':           strings.write_byte(&b,c+('a'-'A'))
         case:
-            if n:=strings.builder_len(b);n>0 && b.buf[n-1]!='_' {strings.write_byte(&b,'_')}
+            if n:=strings.builder_len(b);n>0 && b.buf[n-1]!='_' {
+                whole=n
+                strings.write_byte(&b,'_')
+            }
         }
+        if strings.builder_len(b)>TEXTS_KEY_WORDS {break}
     }
     name:=strings.trim_right(strings.to_string(b),"_")
+    if len(name)>TEXTS_KEY_WORDS {name=name[:whole if whole>0 else TEXTS_KEY_WORDS]}
     if name=="" {name="text"}
     for n:=1;;n+=1 {
         key:=name if n==1 else fmt.tprintf("%s_%d",name,n)

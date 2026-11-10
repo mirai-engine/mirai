@@ -108,8 +108,8 @@ mirai ui check
 
 ## Texts
 
-A node says its `text` in the other languages of the game in `translations`, by language code,
-and `mirai texts` moves them through a CSV for translators: [texts.md](texts.md).
+A node with `key` shows that key of the texts of the game in the language of the player, and its
+`text` sets what the key says; `"key": ""` makes the key from the text: [texts.md](texts.md).
 
 ## Pitfalls that fail silently
 

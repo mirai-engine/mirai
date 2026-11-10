@@ -133,7 +133,10 @@ The packages are `std/serial` (streams, schemas, migration, paths, JSON), the co
     small levels) and the blocks and planes of fields in `texture_blocks_test.odin`;
   - animation, skeleton, skin and fracture: `content_test.odin`, `kinds_test.odin`,
     `skeleton_test.odin` and `fracture_test.odin` of `asset`; font, texts and prompts:
-    `asset/interface_kinds_test.odin`; game data tables: `asset/records_test.odin`;
+    `asset/interface_kinds_test.odin`; the one table of texts and its fallback:
+    `std/base/texts_test.odin` and `host/content_interface_test.odin`; the tools of the texts
+    (keys, CSV, what is missing): `cook/author/texts_test.odin`; game data tables:
+    `asset/records_test.odin`;
   - versions: `asset/versions_test.odin`; a plugin's own steps, in its plugin (`.match` and
     `.pose`);
   - registry: `asset/registry_test.odin` and, in the editor, `editor/content_test.odin`;

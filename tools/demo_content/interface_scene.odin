@@ -69,8 +69,10 @@ write_item_icon :: proc(o:^Out,shape:Icon_Shape,color:[3]f32) -> base.Asset_Id {
 ITEMS_FILE :: "assets/interface/items.records"
 LINES_FILE :: "assets/interface/merchant_lines.records"
 ANSWERS_FILE :: "assets/interface/merchant_answers.records"
+RECORD_TEXTS_FILE :: "assets/interface/records.strings"
 
-// The items of the inventory and what the merchant of the conversation says.
+// The items of the inventory and what the merchant of the conversation
+// says, with the .strings of their texts.
 @(private)
 write_interface_records :: proc(o:^Out,icons:[5]base.Asset_Id) {
     item :: proc(name,en,es:string,icon:base.Asset_Id,rarity:game.Item_Rarity,stack:i32,texts:^[dynamic]Text_Out) -> Row_Out(game.Item) {
@@ -78,19 +80,18 @@ write_interface_records :: proc(o:^Out,icons:[5]base.Asset_Id) {
         append(texts,title)
         return {name,{title=title.text,icon=icon,rarity=rarity,stack=stack}}
     }
-    item_texts:=make([dynamic]Text_Out,context.temp_allocator)
+    texts:=make([dynamic]Text_Out,context.temp_allocator)
     items:=[]Row_Out(game.Item){
-        item("sword","Sword","Espada",icons[0],.Rare,1,&item_texts),
-        item("potion","Potion","Poción",icons[1],.Common,10,&item_texts),
-        item("shield","Shield","Escudo",icons[2],.Common,1,&item_texts),
-        item("gem","Gem","Gema",icons[3],.Epic,5,&item_texts),
-        item("coins","Coins","Monedas",icons[4],.Common,99,&item_texts),
+        item("sword","Sword","Espada",icons[0],.Rare,1,&texts),
+        item("potion","Potion","Poción",icons[1],.Common,10,&texts),
+        item("shield","Shield","Escudo",icons[2],.Common,1,&texts),
+        item("gem","Gem","Gema",icons[3],.Epic,5,&texts),
+        item("coins","Coins","Monedas",icons[4],.Common,99,&texts),
     }
-    write_records(o,ITEMS_FILE,"game.Item",game.Item,items,item_texts[:])
+    write_records(o,ITEMS_FILE,"game.Item",game.Item,items)
 
-    line_texts:=make([dynamic]Text_Out,context.temp_allocator)
     merchant:=record_text_of(LINES_FILE,"merchant","Merchant","Mercader")
-    append(&line_texts,merchant)
+    append(&texts,merchant)
     line :: proc(name,en,es:string,next:string,speaker:Text_Out,texts:^[dynamic]Text_Out) -> Row_Out(game.Dialogue_Line) {
         said:=record_text_of(LINES_FILE,name,en,es)
         append(texts,said)
@@ -99,14 +100,13 @@ write_interface_records :: proc(o:^Out,icons:[5]base.Asset_Id) {
         return {name,value}
     }
     lines:=[]Row_Out(game.Dialogue_Line){
-        line("greet","Welcome, traveler. Looking for something?","Bienvenido, viajero. ¿Buscas algo?","",merchant,&line_texts),
-        line("wares","Only potions today. Come back tomorrow for the rest.","Hoy solo pociones. Vuelve mañana por lo demás.","greet",merchant,&line_texts),
-        line("news","They say a gem glows inside the old pillar.","Dicen que una gema brilla dentro del pilar viejo.","greet",merchant,&line_texts),
-        line("gem","Ha! Then keep it between us.","¡Ja! Entonces que quede entre nosotros.","",merchant,&line_texts),
+        line("greet","Welcome, traveler. Looking for something?","Bienvenido, viajero. ¿Buscas algo?","",merchant,&texts),
+        line("wares","Only potions today. Come back tomorrow for the rest.","Hoy solo pociones. Vuelve mañana por lo demás.","greet",merchant,&texts),
+        line("news","They say a gem glows inside the old pillar.","Dicen que una gema brilla dentro del pilar viejo.","greet",merchant,&texts),
+        line("gem","Ha! Then keep it between us.","¡Ja! Entonces que quede entre nosotros.","",merchant,&texts),
     }
-    write_records(o,LINES_FILE,"game.Dialogue_Line",game.Dialogue_Line,lines,line_texts[:])
+    write_records(o,LINES_FILE,"game.Dialogue_Line",game.Dialogue_Line,lines)
 
-    answer_texts:=make([dynamic]Text_Out,context.temp_allocator)
     answer :: proc(name,from,en,es,to:string,texts:^[dynamic]Text_Out,requires:="",sets:="") -> Row_Out(game.Dialogue_Choice) {
         said:=record_text_of(ANSWERS_FILE,name,en,es)
         append(texts,said)
@@ -117,12 +117,13 @@ write_interface_records :: proc(o:^Out,icons:[5]base.Asset_Id) {
         return {name,value}
     }
     answers:=[]Row_Out(game.Dialogue_Choice){
-        answer("wares","greet","Show me your wares.","Muéstrame lo que vendes.","wares",&answer_texts),
-        answer("news","greet","Any news?","¿Alguna novedad?","news",&answer_texts,sets="heard"),
-        answer("gem","greet","I found the gem of the pillar.","Encontré la gema del pilar.","gem",&answer_texts,requires="heard"),
-        answer("bye","greet","Goodbye.","Adiós.","",&answer_texts),
+        answer("wares","greet","Show me your wares.","Muéstrame lo que vendes.","wares",&texts),
+        answer("news","greet","Any news?","¿Alguna novedad?","news",&texts,sets="heard"),
+        answer("gem","greet","I found the gem of the pillar.","Encontré la gema del pilar.","gem",&texts,requires="heard"),
+        answer("bye","greet","Goodbye.","Adiós.","",&texts),
     }
-    write_records(o,ANSWERS_FILE,"game.Dialogue_Choice",game.Dialogue_Choice,answers,answer_texts[:])
+    write_records(o,ANSWERS_FILE,"game.Dialogue_Choice",game.Dialogue_Choice,answers)
+    write_strings(o,RECORD_TEXTS_FILE,texts[:])
 }
 
 write_interface_scene :: proc(o:^Out) {

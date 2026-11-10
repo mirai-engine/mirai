@@ -598,8 +598,8 @@ one per local player that has screens or sees a `World_Widget`.
   `ui.scale_to_fit` brings to the window or the player's part. `languages` are the languages the
   game is in (`Language`, those the fonts have the glyphs of, with their code in
   `LANGUAGE_CODES`; English by default) and `source` the one the interfaces are written in.
-  Translations live in each `.ui`
-  ([localized texts](../../mirai-ui/references/ui.md#data-tree)). `prompts` picks the prompt
+  What each text says in them is in the `.strings`
+  ([texts](../../mirai-assets/references/kinds.md#texts)). `prompts` picks the prompt
   pack (none: they are drawn). `prompt_images` gives loose entries a texture that wins over that of
   the pack; Project Settings > UI shows them in a table with the entries the game binds.
 - **`UI_Preferences`** (machine setting): what the player chose, `language` (the language they
@@ -616,8 +616,8 @@ one per local player that has screens or sees a `World_Widget`.
   effects view of the renderer `PARTICLE_VIEW_METERS` high, per element and while it is being
   built); `sound` plays the asset. A screen that shows a camera or particles is built every frame:
   it is not drawn again from what it drew. `language` is the language the player chose
-  (`ui_language`): the localized texts of the `.ui` show their translation. A prompt that the pack
-  has shows its image (`host.prompts_find`); one it does not have is drawn.
+  (`ui_language`): the localized texts of the `.ui` show what their keys say in it. A prompt that
+  the pack has shows its image (`host.prompts_find`); one it does not have is drawn.
 - **Events.** `UI_Events` brings those of `ui.Tree_Event_Kind` (`Clicked`, `Changed`, `Submitted`,
   `Hovered`, `Unhovered`, `Focused`, `Unfocused`, `Dragged`, `Dropped`, `Finished`) and `Back`
   (Escape or East on the top screen with `back`, if the UI did not use them), `Menu` (the action,

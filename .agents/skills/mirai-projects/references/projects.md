@@ -405,7 +405,7 @@ its skill:
 [images](../../mirai-agent-api/references/image.md),
 [`render check`](../../mirai-rendering/references/verification.md#render-check),
 [`bench compare`](../../mirai-agent-api/references/methods.md#profiling), `mirai texts`
-([texts](../../mirai-plugins/references/ui-inspector.md)) and, for an open editor,
+([texts](../../mirai-assets/references/kinds.md#texts)) and, for an open editor,
 [sessions](../../mirai-agent-api/references/api.md#sessions),
 [`rpc`](../../mirai-agent-api/references/api.md#mirai-rpc),
 [`mcp`](../../mirai-agent-api/references/api.md#mirai-mcp) and

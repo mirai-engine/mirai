@@ -479,7 +479,8 @@ row.
 ## Content
 
 `Content` (`app_content(app)`, `host/content.odin`) loads on demand what is not meshes or materials:
-`.ui`, `.anim`, `.sound`, `.sound_set`, `.font`, `.strings` and `.prompts`.
+`.ui`, `.anim`, `.sound`, `.sound_set`, `.font` and `.prompts`. The `.strings` are one table of
+the application, as the rows of the records (`host/texts.odin`).
 
 - Each entry carries a `generation` that changes with each load: whoever stores state made for the
   previous one rebuilds it.
