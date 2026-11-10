@@ -168,6 +168,7 @@ door_move :: proc(
 | `core.Ref(S)` | Reads storage `S` without copying it |
 | `S` | Reads a copy of storage `S`; for small ones (`Time`, `Input`, `View`) |
 | `core.Stamp(S)` | Asks `core.touched` whether storage `S` was written since it looked |
+| `core.Inbox(M)` | Reads the messages of the `@(net_message)` type `M` that arrived for the tick |
 | `core.Ref(core.Entities)` | Reads which entities are alive |
 | `core.Commands` | Creates and destroys entities, with rows of any component |
 | `core.World_Ref` | The whole world by reflection: scenes, saving, network, editor |

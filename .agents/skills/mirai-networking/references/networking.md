@@ -339,6 +339,9 @@ object are sent until its creation was acked.
   on the server those that do not come from the owner. Only `Held` ones reach a held connection:
   what the server says while it loads the world the connection will see.
 - They arrive as an `Event` command and are read with `event_read`.
+- An unreliable event encodes within `EVENT_MAX_BYTES`, a datagram; a reliable one within
+  `RELIABLE_EVENT_MAX_BYTES`, which its channel cuts in chunks as for any reliable message, and
+  every event within `MAX_STATE_WORDS`. `event_register` refuses one past them.
 - They name their object by handle and travel apart from the state: on the same object they arrive
   in order, but there is no order between events and updates.
 - A reliable event that arrives before its replica waits for it up to 5 s; one sent in the tick in
