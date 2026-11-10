@@ -262,8 +262,8 @@ build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_M
     // The binaries of the engine the libraries are built against.
     engine:=build.engine_mode_resolve(root,mode)
     engine_current:=target==.Game || build.engine_current(root,engine)
-    if target!=.Game && engine_current && library_current(root,&p,target,engine,mode==.Dev) {
-        if !build_imports(root,&p,engine) {return 1,"",false}
+    // A project with sources goes on: its build imports what changed among them before it finds the library current.
+    if target!=.Game && engine_current && library_current(root,&p,target,engine,mode==.Dev) && len(build.imports_roots(&p))==0 {
         _=engine_report({status=.Up_To_Date,mode=engine},root)
         if os.is_file(project.path(project.shader_generation(p.root,context.temp_allocator),project.SHADERS_MANIFEST,allocator=context.temp_allocator)) {
             fmt.printfln("%s unchanged.",project.shader_generation(p.root,context.temp_allocator))
@@ -293,26 +293,6 @@ build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_M
     return
 }
 
-// Brings what the imports of the project and of its plugins build that is not
-// versioned up to date with their sources, with the import program of the
-// engine, which is built: a checkout that was just cloned imports here. False,
-// with the reason said, when a source does not import.
-@(private="file")
-build_imports :: proc(root:string,p:^project.Project,engine:Build_Mode) -> bool {
-    roots:=make([dynamic]string,context.temp_allocator)
-    append(&roots,p.root)
-    for folder in project.asset_folders(p,context.temp_allocator) {
-        if folder.prefix!="" {append(&roots,folder.root)}
-    }
-    ok,message:=build.imports_sync(build.engine_paths(root,engine,context.temp_allocator).import_program,roots[:])
-    if !ok {
-        fmt.eprintfln("mirai build: could not import the sources of the project: %s",message)
-        return false
-    }
-    if message!="" {fmt.println(message)}
-    return true
-}
-
 // What build_project does once it has to compile, in its turn. engine_failed:
 // the binaries of the engine did not build; rebuilt: the engine or the
 // library were built again.
@@ -332,7 +312,6 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
     } else if !engine_shaders(root,turn_held=true) {
         return 1,"",false,true,false
     }
-    if !build_imports(root,p,engine) {return 1,"",false,false,engine_built}
     // The generation first: a game ships the one that is published, and a dedicated server none.
     if !server {
         generation:=build.shaders_run(p)
@@ -383,6 +362,7 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
             case .Output_Invalid:   fmt.eprintln("mirai build: --out cannot be the project folder")
             case .Copy_Failed:      fmt.eprintfln("mirai build: could not copy the files that go with %s",result.output)
             case .Settings_Invalid: fmt.eprintln("mirai build: could not merge the settings of the engine and the project; fix or delete the file named above")
+            case .Import_Failed:    fmt.eprintln("mirai build: a source of the project did not import")
             case .Cook_Failed:      fmt.eprintfln("mirai build: could not cook the assets: %v %s",result.cook.error,result.cook.detail)
             case .Cancelled:        fmt.eprintln("mirai build: cancelled")
             case .Engine_Time_Code:

@@ -101,10 +101,10 @@ the_sidecar_of_a_source_keeps_its_settings_and_importing_again_uses_them :: proc
     // does not know, a text of another version or of none, an output without an id, one id
     // twice, a part that is not of the cache, a field no sidecar has.
     ID :: "\"id\": \"00000000000000010000000000000002\""
-    whole :: proc(settings,outputs:string) -> string {return fmt.tprintf("{{\"version\": 1, \"settings\": %s, \"outputs\": [%s]}}",settings,outputs)}
+    whole :: proc(settings,outputs:string) -> string {return fmt.tprintf("{{\"version\": 2, \"settings\": %s, \"outputs\": [%s]}}",settings,outputs)}
     for broken in ([]string{
         whole("{\"lods\": \"Sometimes\"}",""),whole("{\"scale\": 2}",""),"{",whole("{\"max_texture_size\": -1}",""),whole("{\"alpha_coverage\": 1.5}",""),whole("{\"alpha_coverage\": \"nan\"}",""),whole("{\"rig\": \"Fox\", \"rig_crotch\": 0.9}",""),
-        "{}","{\"lods\": \"None\"}","{\"version\": 2, \"settings\": {}, \"outputs\": []}",
+        "{}","{\"lods\": \"None\"}","{\"version\": 3, \"settings\": {}, \"outputs\": []}",
         whole("{}","{\"kind\": \"MESH\", \"name\": \"Ball\", \"index\": 0}"),
         whole("{}",fmt.tprintf("{{\"kind\": \"MESH\", \"name\": \"Ball\", \"index\": 0, %s}}, {{\"kind\": \"MAT\", \"name\": \"Skin\", \"index\": 0, %s}}",ID,ID)),
         whole("{}",fmt.tprintf("{{\"kind\": \"MAT\", \"name\": \"Skin\", \"index\": 0, %s, \"part\": true}}",ID)),

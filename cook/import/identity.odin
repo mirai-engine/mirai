@@ -159,7 +159,8 @@ earlier_scan :: proc(w:^Writer,folder:string) {
 // folder of the root, everything else to the folder.
 @(private)
 writer_source :: proc(w:^Writer,path:string) -> bool {
-    w.source=source_path(w.options,path)
+    w.source,w.path=source_path(w.options,path),path
+    w.inputs.allocator,w.held.allocator=context.temp_allocator,context.temp_allocator
     w.sidecar_file=sidecar_path(path,w.options.root,w.folder,context.temp_allocator)
     error:Error
     if w.sidecar,_,error=sidecar_load(w.sidecar_file,context.temp_allocator);error.code!=.None {return writer_fail(w,error.code,"%s",error.message)}
@@ -173,11 +174,32 @@ writer_source :: proc(w:^Writer,path:string) -> bool {
     return true
 }
 
-// The file of an output of the cache: in the imported folder, by its id.
+// The file of an output of the cache: in the imported folder, by its id and
+// the key of what the import builds from (import_key). The file the id had
+// under another key takes that name first: the import keeps it or writes over
+// it, as it would the one of a document.
 @(private)
 imported_file :: proc(w:^Writer,id:base.Asset_Id,extension:string) -> string {
-    buffer:[base.ASSET_ID_TEXT]u8
-    return fmt.tprintf("%s/%s%s",w.imported,base.asset_id_format(id,buffer[:]),extension)
+    if w.key==0 {
+        slice.sort(w.inputs[:])
+        w.key=import_key(w.path,{settings=w.report.settings,inputs=w.inputs},w.version,w.options.fast_textures)
+        entries,_:=os.read_all_directory_by_path(w.imported,context.temp_allocator)
+        for entry in entries {
+            if held,_,named:=asset.imported_name(entry.name);named {w.held[held]=entry.name}
+        }
+    }
+    path:=asset.imported_file(w.imported,id,w.key,extension,context.temp_allocator)
+    if name,held:=w.held[id];held && !os.exists(path) {_=os.rename(fmt.tprintf("%s/%s",w.imported,name),path)}
+    return path
+}
+
+// Notes a file the import reads besides its source, as the sidecar lists it.
+@(private)
+writer_input :: proc(w:^Writer,file:string) {
+    relative,error:=filepath.rel(filepath.dir(path_key(w.path)),path_key(file),context.temp_allocator)
+    if error!=.None {return}
+    slashed,_:=strings.replace_all(relative,"\\","/",context.temp_allocator)
+    if !slice.contains(w.inputs[:],slashed) {append(&w.inputs,slashed)}
 }
 
 // The output of the sidecar a part is: of its kind and, unless it is the root
@@ -293,21 +315,15 @@ parts_record :: proc(w:^Writer,parts:[]Part) {
 writer_finish :: proc(w:^Writer) -> bool {
     for output,at in w.sidecar.outputs {
         if w.taken[at] || output.shared {continue}
-        if info,known:=asset.kind_info(output.kind);w.cached && known && kind_cached(output.kind) {
-            os.remove(imported_file(w,output.id,info.extension))
+        if name,held:=w.held[output.id];w.cached && held && kind_cached(output.kind) {
+            os.remove(fmt.tprintf("%s/%s",w.imported,name))
             writer_warn(w,"%s %s is no longer in the source: its asset is gone, and what named it names nothing",kind_name(output.kind),output.name)
         } else if found,located:=w.by_id[output.id];located {
             writer_warn(w,"%s is no longer in the source: it was left as it is",w.earlier[found].path)
         }
     }
-    // What the import gave is as new as its sidecar: what sync compares their times for.
-    defer if w.cached {
-        now:=time.now()
-        for written in w.report.assets {
-            if strings.has_prefix(written.path,w.imported) {_=os.change_times(written.path,now,now)}
-        }
-    }
-    if !sidecar_save(w.sidecar_file,{settings=w.report.settings,documents=!w.cached,outputs=w.outputs}) {
+    slice.sort(w.inputs[:])
+    if !sidecar_save(w.sidecar_file,{settings=w.report.settings,documents=!w.cached,inputs=w.inputs,outputs=w.outputs}) {
         return writer_fail(w,.Write,"%s, which keeps the ids of the import, could not be written",w.sidecar_file)
     }
     w.report.saved=strings.clone(w.sidecar_file,w.allocator)

@@ -7,6 +7,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "mirai:asset"
+import importer "mirai:cook/import"
 import "mirai:editor/api"
 import "mirai:editor/history"
 import "mirai:host"
@@ -83,8 +84,7 @@ asset_unsaved_refusal :: proc(r:^asset.Registry,paths:[]string,folder:="") -> st
 // Why an asset cannot be renamed or moved now; "" when it can.
 @(private)
 asset_move_refusal :: proc(s:^Session,r:^asset.Registry,file:^asset.Registry_File) -> string {
-    // Its place is the one the sidecar of its source gives it, where its import writes it again.
-    if file.imported {return "It is built by the import of its source, at the path its sidecar lists: duplicate it to have a copy that moves"}
+    if file.imported!=0 {return "It is a part of what its source gives, listed in the folder of its source: move that folder, or duplicate it to have a copy that moves"}
     if refusal:=asset_create_refusal(s);refusal!="" {return refusal}
     if refusal:=asset_delete_refusal(s,r,file);refusal!="" {return refusal}
     files:=asset_delete_files(r,file.id)
@@ -102,6 +102,21 @@ asset_move :: proc(s:^Session,id:base.Asset_Id,folder,name:string) -> (path,mess
     if r==nil {return "","The editor has no asset folder it can change"}
     file,found:=asset.registry_find(r,id)
     if !found {return "","The asset is not in the registry: asset.list lists them"}
+    // What a source gives is listed where the source is: its source moves, with its sidecar, and nothing is imported.
+    if sidecar,_:=import_root(s,r,id);file.imported!=0 && sidecar!="" {
+        into,refused:=asset_folder_clean(r,folder)
+        if refused!="" {return "",fmt.tprintf("folder: %s",refused)}
+        if busy:=import_busy(s);busy!="" {return "",busy}
+        source:=strings.trim_suffix(sidecar,importer.SIDECAR_EXTENSION)
+        target:=fmt.tprintf("%s/%s/%s",project.folder_path(s.project_root,.Source,context.temp_allocator),into,filepath.base(source))
+        if dir:=filepath.dir(target);!os.is_dir(dir) {_=os.make_directory_all(dir)}
+        if os.exists(target) || os.rename(source,target)!=nil || os.rename(sidecar,fmt.tprintf("%s%s",target,importer.SIDECAR_EXTENSION))!=nil {
+            return "",fmt.tprintf("%s could not be moved to %s: a file is there, or another program has it open",source,target)
+        }
+        host.assets_scan(s.app.assets)
+        if moved,listed:=asset.registry_find(r,id);listed {path=strings.clone(moved.path,context.temp_allocator)}
+        return
+    }
     if refusal:=asset_move_refusal(s,r,file);refusal!="" {return "",refusal}
     into,refused:=asset_folder_clean(r,folder)
     if refused!="" {return "",fmt.tprintf("folder: %s",refused)}
@@ -115,7 +130,7 @@ asset_move :: proc(s:^Session,id:base.Asset_Id,folder,name:string) -> (path,mess
     moves:=make([dynamic]Asset_Move,context.temp_allocator)
     for at,i in asset_delete_files(r,id) {
         // A part of the imported folder stays at the path its sidecar lists.
-        if i>0 && r.files[at].imported {continue}
+        if i>0 && r.files[at].imported!=0 {continue}
         from:=strings.clone(r.files[at].path,context.temp_allocator)
         to:=asset_create_join(into,named,extension)
         if i>0 {to=asset_create_join(into,from[len(source)+1:] if source!="" && asset_path_inside(from,source) else asset_path_base(from),"")}
@@ -178,8 +193,13 @@ asset_folder_move :: proc(s:^Session,from,folder,name:string) -> (path,message:s
     }
     full:=asset.registry_file_path(r,source,context.temp_allocator)
     target:=asset.registry_file_path(r,path,context.temp_allocator)
-    if dir:=filepath.dir(target);!os.is_dir(dir) {_=os.make_directory_all(dir)}
-    if os.rename(full,target)!=nil {return "",fmt.tprintf("%s could not be moved to %s; another program may have a file of it open",source,path)}
+    // The sources of the folder go with it: what they give is listed where they are, and nothing is imported.
+    sources:=project.folder_path(s.project_root,.Source,context.temp_allocator)
+    for pair in ([2][2]string{{fmt.tprintf("%s/%s",sources,source),fmt.tprintf("%s/%s",sources,path)},{full,target}}) {
+        if !os.is_dir(pair[0]) {continue}
+        if dir:=filepath.dir(pair[1]);!os.is_dir(dir) {_=os.make_directory_all(dir)}
+        if os.rename(pair[0],pair[1])!=nil {return "",fmt.tprintf("%s could not be moved to %s; another program may have a file of it open",source,path)}
+    }
     asset_history_moved(s,full,target,true)
     asset_start_scene_moved(s,source,path,true)
     host.assets_scan(s.app.assets)

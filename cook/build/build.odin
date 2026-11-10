@@ -49,6 +49,7 @@ Failure :: enum u8 {
     Copy_Failed,      // Game: what goes next to the executable
     Settings_Invalid, // Game: a settings file of the engine or of the project cannot be read: Result.text says where
     Cook_Failed,      // Game: the assets could not be cooked: Result.cook says why
+    Import_Failed,    // a source of the project did not import: Result.text says which and why
     Tests,            // Test: a test failed or the tests did not finish: Result.tests says which
     Cancelled,
 }
@@ -216,6 +217,15 @@ job_start :: proc(desc:Desc) -> ^Job {
     }
 
     if p.engine_root=="" || desc.action!=.Build && desc.target==.Game {return job_fail(job,.Engine_Missing)}
+    // What the imports of the project keep outside version control, from its sources: every build starts from it.
+    if desc.action==.Build {
+        if ok,message:=imports_sync(p.engine_root,desc.engine==.Keep?ENGINE_MODE_HERE:desc.engine,imports_roots(p));!ok {
+            job.result.text=strings.clone(message,a)
+            return job_fail(job,.Import_Failed)
+        } else if message!="" {
+            fmt.println(message)
+        }
+    }
     generated,written:=generated_write(p,desc.target)
     if !written {
         if len(generated.errors)>0 {

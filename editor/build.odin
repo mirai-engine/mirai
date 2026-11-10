@@ -493,7 +493,7 @@ FAILURE_TEXTS :: [build.Failure]string{
     .Output_Locked="The editor could not be replaced",.Output_Invalid="The output folder is the project",
     .Engine_Time_Code="Engine-time code reached the game",.Copy_Failed="The files of the game could not be copied",
     .Settings_Invalid="A settings file of the engine or of the project is not valid",
-    .Cook_Failed="The assets could not be cooked",.Tests="Tests failed",.Cancelled="Cancelled",
+    .Cook_Failed="The assets could not be cooked",.Import_Failed="A source did not import",.Tests="Tests failed",.Cancelled="Cancelled",
 }
 
 @(private)

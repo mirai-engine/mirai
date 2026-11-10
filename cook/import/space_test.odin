@@ -230,7 +230,7 @@ the_front_of_a_source_is_a_setting_kept_with_it_that_makes_another_mesh :: proc(
             if other!=front {testing.expectf(t,mesh_settings_hash(stated)!=mesh_settings_hash({front=other}),"%v and %v make the same mesh",front,other)}
         }
     }
-    _,ok:=sidecar_parse(`{"version": 1, "settings": {"front": "Up"}, "folder": "", "outputs": []}`,context.temp_allocator)
+    _,ok:=sidecar_parse(`{"version": 2, "settings": {"front": "Up"}, "folder": "", "outputs": []}`,context.temp_allocator)
     testing.expect(t,!ok,"a front the import does not know is not the settings of a source")
 }
 

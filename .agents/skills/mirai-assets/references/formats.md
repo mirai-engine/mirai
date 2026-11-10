@@ -231,10 +231,12 @@ scan opens every file and writes it again.
 - **Imported folders.** An assets folder may have an imported folder with it (that of the root
   and of each mount: `.mirai/imported/` of the project or the plugin): what the
   [imports](../../mirai-imports/references/imports.md#identity-and-reimport) of its sources build
-  that nobody edits, never versioned, each file named by its id. The registry lists them like any
-  asset (`Registry_File.imported`, `asset/registry_imported.odin`) at a path it derives from where
-  the source each names is now: beside it for the root of an import, in a folder named after the
-  source file for the rest; one whose source is gone is not listed. `registry_file_path` gives the
+  that nobody edits, never versioned, each file named by its id and the key of what it was built
+  from. The registry lists them like any asset (`Registry_File.imported` is that key,
+  `asset/registry_imported.odin`) at a path it derives from where the sidecar that lists each is
+  now: beside its source for the root of an import, in a folder named after the source file for
+  the rest; one whose source is gone is not listed, and one that moved is listed there at the
+  next scan. `registry_file_path` gives the
   file of either folder. A cooked folder has none: the cook writes every asset at its path.
 - **Mounts.** `registry_mount` adds a folder under a prefix (a plugin's assets, in
   `plugins/<name>`). A prefix that starts with a dot belongs to the program's assets (the editor's,

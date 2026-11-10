@@ -855,8 +855,10 @@ output folders in [importers](../../mirai-imports/SKILL.md).
   (`editor/assets_parts.odin`, `asset.detach`) takes one out of its owner as an unsaved edit with
   undo: it only clears `owner`, and the import leaves it out; there is no UI that calls it yet.
 - **What an import keeps in the imported folder is not edited where it is.** Moving, renaming,
-  detaching or deleting it on its own is refused, saying to duplicate it: it is listed where its
-  source is, and moves when the source does. Deleting the root of an import
+  detaching or deleting a part on its own is refused, saying to duplicate it. Moving the root of
+  an import (`asset_move`) moves its source and sidecar under `source/`, and moving a folder moves
+  the folder of the same path under `source/` with it: the registry lists their assets there at
+  once, without an import. Deleting the root of an import
   (its prefab, the texture of an image) gives the import up: its sidecar goes to the trash with
   what only the import can build, and the source stays. A
   copy made outside the editor receives an id of its own on scanning

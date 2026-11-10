@@ -221,7 +221,10 @@ import_prompts :: proc(path,folder:string,options:Import_Options={},allocator:=c
     ok:=writer_init(&w,path,folder,options,&report,allocator)
     w.options.textures,w.options.max_texture_size=.Uncompressed,PROMPTS_ATLAS_MAX
     defer asset.types_destroy(&w.types)
-    if ok {ok=prompts_write(&w,path,bytes,entries,of_entry,images[:],places,pages) && writer_finish(&w)}
+    if ok {
+        for file in files {writer_input(&w,file)}
+        ok=prompts_write(&w,path,bytes,entries,of_entry,images[:],places,pages) && writer_finish(&w)
+    }
     if ok && skipped>0 {append(&report.warnings,fmt.aprintf("%d images of %s say no input by their names and were left out; Project Settings > UI gives any input an image of its own",skipped,path,allocator=allocator))}
     if !ok {
         writer_rollback(&w)

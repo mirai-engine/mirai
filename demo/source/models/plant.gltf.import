@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "settings": {
     "max_texture_size": 0,
     "textures": "Blocks",
@@ -18,6 +18,7 @@
     "rig_neck": 0,
     "skeleton": "00000000000000000000000000000000"
   },
+  "inputs": ["../textures/leaves_color.png"],
   "outputs": [
     {"kind": "SCEN", "name": "plant", "index": 0, "id": "fc120101f1ddb302e135784184f05931"},
     {"kind": "TEX", "name": "leaves_color", "index": 0, "id": "df49540f1f9dbcf6fe2e612ea427757e", "shared": true},

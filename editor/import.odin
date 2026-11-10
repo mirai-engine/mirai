@@ -392,21 +392,33 @@ import_poll :: proc(s:^Session) {
 import_root :: proc(s:^Session,r:^asset.Registry,id:base.Asset_Id) -> (sidecar:string,cached:[]u32) {
     file,found:=asset.registry_find(r,id)
     if !found || s.project_root=="" {return}
-    types:asset.Types
-    asset.types_init(&types,context.temp_allocator)
-    defer asset.types_destroy(&types)
-    _,info,imported,error:=asset.import_peek(asset.registry_file_path(r,file.path,context.temp_allocator),&types)
-    if error!=.None || !imported {return}
-    source:=base.text_get(info.source[:])
-    if !filepath.is_abs(source) {source=project.path(s.project_root,source,allocator=context.temp_allocator)}
-    path:=importer.sidecar_path(source,s.project_root,allocator=context.temp_allocator)
-    listed,has,load_error:=importer.sidecar_load(path,context.temp_allocator)
-    if load_error.code!=.None || !has || len(listed.outputs)==0 || listed.outputs[0].id!=id {return}
     files:=make([dynamic]u32,context.temp_allocator)
-    for output in listed.outputs {
-        if at,known:=r.by_id[output.id];known && r.files[at].imported {append(&files,at)}
+    // An imported asset is listed in the folder of its source; a document names the source it was imported from.
+    candidates:=make([dynamic]string,context.temp_allocator)
+    if file.imported!=0 {
+        entries,_:=os.read_all_directory_by_path(fmt.tprintf("%s/%s",project.folder_path(s.project_root,.Source,context.temp_allocator),filepath.dir(file.path)),context.temp_allocator)
+        for entry in entries {
+            if strings.has_suffix(entry.name,importer.SIDECAR_EXTENSION) {append(&candidates,entry.fullpath)}
+        }
+    } else {
+        types:asset.Types
+        asset.types_init(&types,context.temp_allocator)
+        defer asset.types_destroy(&types)
+        _,info,imported,error:=asset.import_peek(asset.registry_file_path(r,file.path,context.temp_allocator),&types)
+        if error!=.None || !imported {return}
+        source:=base.text_get(info.source[:])
+        if !filepath.is_abs(source) {source=project.path(s.project_root,source,allocator=context.temp_allocator)}
+        append(&candidates,importer.sidecar_path(source,s.project_root,allocator=context.temp_allocator))
     }
-    return path,files[:]
+    for path in candidates {
+        listed,has,load_error:=importer.sidecar_load(path,context.temp_allocator)
+        if load_error.code!=.None || !has || len(listed.outputs)==0 || listed.outputs[0].id!=id {continue}
+        for output in listed.outputs {
+            if at,known:=r.by_id[output.id];known && r.files[at].imported!=0 {append(&files,at)}
+        }
+        return path,files[:]
+    }
+    return
 }
 
 // Waits for an import that runs and lets go of what the last one wrote:

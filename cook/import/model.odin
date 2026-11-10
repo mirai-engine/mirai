@@ -185,6 +185,7 @@ Imported_Model :: struct {
     animations:[]asset.Animation_Clip_Desc,
     warnings:[]string,  // what the importer left out or could not honor
     programs:[]string,  // the Surface programs reading it wrote to the shaders of the project, their files
+    files:[]string,     // the files reading it read besides the source and its images (buffers, material libraries)
     settings:Import_Settings, // those of the sidecar of the source when stored is set, else those of the options it was read with
     stored:bool,
     arena:^mem.Dynamic_Arena,

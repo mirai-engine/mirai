@@ -130,6 +130,11 @@ Writer :: struct {
     taken:[]bool,                // the outputs of sidecar the import gives again
     outputs:[dynamic]Output,     // what the import gives: the outputs of the sidecar it writes
     imported:string,             // the imported folder of options.root
+    path:string,                 // the source
+    version:u32,                 // import_version of what reads the source
+    inputs:[dynamic]string,      // the files read besides the source, as the sidecar lists them (writer_input)
+    key:u64,                     // import_key of the import, once a file of the cache is named; inputs are whole by then
+    held:map[base.Asset_Id]string, // the files the imported folder had, by id
     cached:bool,                 // what the import builds of the cache kinds goes there, each file named by its id
     owner:base.Asset_Id,         // of the parts: the prefab of a model
     rng:base.Rng,
@@ -331,7 +336,7 @@ texture_detail :: proc(format:asset.Texture_Format,width,height,mips:int) -> str
 // an import), and of those of the imported folder of the root.
 @(private)
 writer_init :: proc(w:^Writer,path,folder:string,options:Import_Options,report:^Import_Report,allocator:mem.Allocator) -> bool {
-    w^={options=options,folder=folder,report=report,allocator=allocator}
+    w^={options=options,folder=folder,report=report,allocator=allocator,version=import_version(0)}
     w.created.allocator=context.temp_allocator
     w.names.allocator=context.temp_allocator
     w.earlier.allocator=context.temp_allocator
@@ -405,6 +410,11 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
     for warning in model.warnings {writer_warn(w,"%s",warning)}
     for program in model.programs {append(&w.report.programs,strings.clone(program,w.allocator))}
 
+    w.version=model.version
+    for file in model.files {writer_input(w,file)}
+    for image in model.images {
+        if image.path!="" {writer_input(w,image.path)}
+    }
     name:=model.name if model.name!="" else filepath.stem(source)
     if chosen.skeleton!={} {return write_clips_onto(w,model,source,name,chosen.skeleton)}
 

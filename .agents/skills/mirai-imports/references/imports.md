@@ -184,8 +184,9 @@ index, size and hash of what was read (the source, or the image of a texture), v
 ## Identity and reimport
 
 `<source>.import`, the sidecar, is what is versioned of an import with its source
-(`cook/import/sidecar.odin`): a text with the settings and one output per asset the source gives,
-by kind, name and index, with its id. Nothing else decides an id: the first import gives each part
+(`cook/import/sidecar.odin`): a text with the settings, the files the import read besides the
+source (`inputs`) and one output per asset the source gives, by kind, name and index, with its id.
+Nothing else decides an id: the first import gives each part
 a random one and the sidecar keeps it; importing again, on any machine and in any order of sources,
 gives each part the asset it had. A sidecar that does not parse is an error that names it, never
 the defaults nor new ids.
@@ -194,9 +195,10 @@ What an import of a source in the `source/` folder of a root writes is of two so
 
 - **The cache**: meshes, textures, sounds and fonts. Nothing edits them after the import, so the
   source and the sidecar give them back whole. Each is a file of the imported folder of the root
-  (`project.imported_path`: `.mirai/imported/`), named by its id and never versioned. Nothing
-  stores where it is listed: the [registry](../../mirai-assets/references/formats.md#registry)
-  derives its path from where its source is now. [Sync](#sync) builds it again where it is missing.
+  (`project.imported_path`: `.mirai/imported/`), named by its id and by the key of what it was
+  built from (`import_key`), never versioned. Nothing stores where it is listed: the
+  [registry](../../mirai-assets/references/formats.md#registry) derives its path from where the
+  sidecar that lists it is now. [Sync](#sync) builds it again where it is missing.
 - **Documents**: materials, prefabs, skeletons, clips, texts and prompts. The editor edits them,
   so they are files of the assets folder, versioned. An import finds each by its id, wherever a
   person moved it under the assets, writes again what the source gives and keeps what was changed
@@ -219,9 +221,11 @@ it writes to. Such an import builds its textures Final also in the editor.
   new. An output the source no longer gives leaves the sidecar with a warning: its file goes with
   it when it is of the cache, and stays as a plain asset when it is a document.
 - **A source moved or renamed** keeps its import as long as its sidecar goes with it, and takes
-  what it has in the cache with it: once it is imported again, the registry lists those assets
-  where the source is. A source that is deleted takes them out of the listing at once. A copy of
-  the source without its sidecar is another import, with ids of its own.
+  what it has in the cache with it without an import: the registry lists those assets where the
+  sidecar is at its next scan, which the editor runs when it moves an asset or a folder (their
+  sources go with them) and when its watch of `source/` sees a change. A source that is deleted
+  takes them out of the listing at once. A copy of the source without its sidecar is another
+  import, with ids of its own.
 - **The textures of a model** name the model as source and the image as name, with the size and
   hash of the image.
 - **What the project already has is not written twice.** A new texture whose image has the bytes
@@ -274,19 +278,20 @@ what surely belongs to that model is a part; what is doubtful stays independent 
 the sources of its source folder (`cook/import/sources/sync.odin`): it is what makes a checkout
 that was just cloned, a worktree that was just made or a branch that changed a source run.
 
-- It imports each source whose sidecar lists outputs of the cache when one of them is missing,
-  older than the source or its sidecar, written for the source at another path, by another version
-  of the importer, or a texture the editor built Fast. What each output was built from is its
-  [`Import_Info`](#import-cache), which the import compares: an output that is still what the
-  source gives is kept. A file a model reads next to it (an image, a buffer) is not looked at:
-  after changing one alone, import the model.
-- A file of the imported folder that no sidecar with its source next to it lists is removed. A
-  source that does not import is a failure of the report that names it: the others are imported,
-  and nothing is removed.
-- **Who runs it.** `mirai build`, before it compiles or cooks
-  ([build](../../mirai-projects/references/build.md#imported-sources)), with the engine's import
-  program, and `mirai package engine` for the plugins. The editor and the cook do not: the build
-  that opens or ships did. A plugin with assets is a root of its own.
+- It imports each source whose sidecar lists outputs of the cache when one of them has no file
+  named by the key of what the import builds from now (`importer.import_key`): the bytes of the
+  source and of every file it read (the buffers and images of a glTF, the material library of an
+  OBJ, the images of a pack of prompts), its settings, the versions of the importer and of what it
+  writes, with textures Final. One notion of current, no dates: a source that only moved is not
+  imported, and one whose `.bin` or image changed is. A USD is composed by `usdcat`, which does
+  not say which layers it read: after changing one alone, import the stage.
+- A file of the imported folder that no sidecar with its source next to it lists under its
+  current key is removed. A source that does not import is a failure of the report that names it:
+  the others are imported, and nothing is removed.
+- **Who runs it.** Every build of a project, at its start (`build.job_start`, `imports_sync`):
+  `mirai build` of the editor, the game or the server, `mirai play`, and the builds the editor
+  starts, with the engine's import program, which is built first when it is not current. `mirai
+  package engine` runs it for the plugins. A plugin with assets is a root of its own.
 - What costs comes from the [texture cache](#texture-cache) and the [mesh cache](#mesh-cache),
   which the worktrees of a repository share: a new worktree reads its sources and writes its
   imported folder without compressing or simplifying anything.

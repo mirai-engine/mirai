@@ -76,7 +76,7 @@ asset_delete_users :: proc(r:^asset.Registry,files:[]u32) -> []u32 {
 @(private)
 asset_delete_refusal :: proc(s:^Session,r:^asset.Registry,file:^asset.Registry_File) -> string {
     if refusal:=asset_owned_refusal(r,file);refusal!="" {return refusal}
-    if file.imported {
+    if file.imported!=0 {
         if sidecar,_:=import_root(s,r,file.id);sidecar=="" {return "It is built by the import of its source, which makes it again: delete or move the asset that source gives (its prefab), change the source, or duplicate it to have a copy of its own"}
     }
     if watching(s) {return "The run of an agent is being watched; stop watching it first"}

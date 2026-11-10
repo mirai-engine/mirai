@@ -36,7 +36,7 @@ Registry_File :: struct {
     size:i64,
     time:i64,    // of its last change, nanoseconds since 1970
     state:Registry_State,
-    imported:bool, // its file is in the imported folder that goes with its assets folder, named by its id (registry_imported.odin)
+    imported:u64, // not 0: its file is in the imported folder that goes with its assets folder, named by its id and this key (registry_imported.odin)
     id:base.Asset_Id,
     owner:base.Asset_Id, // the asset it is a part of; zero for one of its own
     kind:Fourcc,
@@ -283,7 +283,7 @@ registry_refused_clear :: proc(r:^Registry,prefix:string) {
 // the mount whose prefix it starts with, or itself when it is outside them.
 // "" without memory for it.
 registry_file_path :: proc(r:^Registry,path:string,allocator:=context.allocator) -> string {
-    if at,known:=r.by_path[path];known && r.files[at].imported {return registry_imported_file(r,path,r.files[at].id,allocator)}
+    if at,known:=r.by_path[path];known && r.files[at].imported!=0 {return registry_imported_file(r,path,r.files[at].id,r.files[at].imported,allocator)}
     parts:=[3]string{r.root,"/",path}
     if registry_outside(path) {
         parts={path,"",""}
@@ -696,7 +696,7 @@ registry_refresh :: proc(r:^Registry,paths:[]string) -> Error {
         info,stat_error:=os.stat(full,context.temp_allocator)
         present:=stat_error==nil && info.type==.Regular
         at,known:=r.by_path[path]
-        imported:=known && r.files[at].imported
+        imported:=known?r.files[at].imported:0
         if !present {
             if !known {continue}
             if !changed {r.revision+=1;changed=true}
@@ -867,8 +867,9 @@ registry_save :: proc(r:^Registry,path:string) -> bool {
         serial.write_string(&w,file.path)
         serial.write_svarint(&w,file.size)
         serial.write_svarint(&w,file.time)
-        serial.write_u8(&w,u8(file.state)|u8(file.imported)<<7)
+        serial.write_u8(&w,u8(file.state))
         if file.state!=.Asset {continue}
+        serial.write_u64(&w,file.imported)
         serial.write_u64(&w,file.id[0]);serial.write_u64(&w,file.id[1])
         serial.write_u64(&w,file.owner[0]);serial.write_u64(&w,file.owner[1])
         serial.write_u32(&w,u32(file.kind))
@@ -930,11 +931,10 @@ registry_cache_read :: proc(path:string,files:^[dynamic]Registry_File,dependenci
         path_text:=serial.read_string(&r)
         file.size,file.time=serial.read_svarint(&r),serial.read_svarint(&r)
         state:=serial.read_u8(&r)
-        file.imported=state&0x80!=0
-        state&=0x7f
         if r.failed || state>u8(max(Registry_State)) {ok=false;break}
         file.state=Registry_State(state)
         if file.state==.Asset {
+            file.imported=serial.read_u64(&r)
             file.id={serial.read_u64(&r),serial.read_u64(&r)}
             file.owner={serial.read_u64(&r),serial.read_u64(&r)}
             file.kind=Fourcc(serial.read_u32(&r))

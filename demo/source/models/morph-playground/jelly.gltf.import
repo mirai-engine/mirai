@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "settings": {
     "max_texture_size": 0,
     "textures": "Blocks",
@@ -18,6 +18,7 @@
     "rig_neck": 0,
     "skeleton": "00000000000000000000000000000000"
   },
+  "inputs": ["jelly.bin"],
   "outputs": [
     {"kind": "SCEN", "name": "jelly", "index": 0, "id": "107c9b8f4bf9dfe8936235eae8e042a6"},
     {"kind": "MAT", "name": "Candy", "index": 0, "id": "a18adcad4fedf21125038a819d27acd2"},

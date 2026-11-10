@@ -113,8 +113,10 @@ cmd_package :: proc(root:string,args:[]string) -> int {
     // What the imports of the plugins build, which no checkout has: an installed engine imports nothing.
     imported:=make([dynamic]string,context.temp_allocator)
     plugins,_:=os.read_all_directory_by_path(join(out,"plugins"),context.temp_allocator)
-    for plugin in plugins {append(&imported,join(out,"plugins",plugin.name))}
-    if ok,message:=build.imports_sync(build.engine_paths(out,.Release,context.temp_allocator).import_program,imported[:]);!ok {
+    for plugin in plugins {
+        if os.is_dir(join(out,"plugins",plugin.name,"source")) {append(&imported,join(out,"plugins",plugin.name))}
+    }
+    if ok,message:=build.imports_sync(out,.Release,imported[:]);!ok {
         fmt.eprintfln("mirai package: could not import the sources of the plugins: %s",message)
         return 1
     }

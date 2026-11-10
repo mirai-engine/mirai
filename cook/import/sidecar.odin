@@ -1,5 +1,6 @@
 package importer
 
+import "core:fmt"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
@@ -20,22 +21,15 @@ import "mirai:std/serial"
 // source elsewhere, a format of a plugin, no root) keeps every output as a
 // document of the folder it writes to.
 
-SIDECAR_EXTENSION :: ".import"
-SIDECAR_VERSION :: 1
+SIDECAR_EXTENSION :: asset.SIDECAR_EXTENSION
+SIDECAR_VERSION :: 2
 
-// One asset an import gives, by what it is in the source.
-Output :: struct {
-    kind:asset.Fourcc,
-    name:string,       // in the source: the mesh, the material, the image
-    index:int,         // among those of its kind in the source
-    id:base.Asset_Id,
-    part:bool,         // of one in the cache: it is a part of the root of the import (parts.odin), decided when it was first imported
-    shared:bool,       // another import writes it: this one only names it
-}
+Output :: asset.Import_Output
 
 Sidecar :: struct {
     settings:Import_Settings,
     documents:bool, // every output is a document of the assets: sources.sync does not import the source
+    inputs:[dynamic]string, // the files the import read besides the source, from the folder of the source: with it, what the outputs are built from
     outputs:[dynamic]Output,
 }
 
@@ -59,19 +53,6 @@ sidecar_path :: proc(source:string,root:="",folder:="",allocator:=context.alloca
 }
 
 @(private="file")
-kind_text :: proc(kind:asset.Fourcc,buffer:^[4]u8) -> string {
-    return strings.trim_right(asset.fourcc_text(kind,buffer)," ")
-}
-
-@(private="file")
-kind_parse :: proc(text:string) -> (kind:asset.Fourcc,ok:bool) {
-    if len(text)==0 || len(text)>4 {return 0,false}
-    bytes:=[4]u8{' ',' ',' ',' '}
-    copy(bytes[:],text)
-    return asset.Fourcc(u32(bytes[0])|u32(bytes[1])<<8|u32(bytes[2])<<16|u32(bytes[3])<<24),true
-}
-
-@(private="file")
 settings_valid :: proc(settings:Import_Settings) -> bool {
     return settings.max_texture_size>=0 && settings.max_triangles>=0 && settings.collision_hulls>=0 && settings.textures<=max(textures.Encoding) && settings.rdo_lambda<=textures.RDO_LAMBDA_MAX &&
         settings.image<=max(Image_Use) && settings.alpha_coverage>=0 && settings.alpha_coverage<=1 && settings.lods<=max(Lods) && settings.collision<=max(Collision) && settings.parts<=max(Parts) && settings.front<=max(Front) && settings.rig<=max(Rig) &&
@@ -91,23 +72,17 @@ sidecar_text :: proc(sidecar:Sidecar,allocator:=context.allocator) -> string {
     serial.text_write_raw(&w,",\n  \"settings\": ")
     serial.text_write(&w,&schema,type,([^]u8)(&settings)[:size_of(Import_Settings)],depth=1)
     if sidecar.documents {serial.text_write_raw(&w,",\n  \"documents\": true")}
-    serial.text_write_raw(&w,",\n  \"outputs\": [")
-    for output,at in sidecar.outputs {
-        buffer:[4]u8
-        serial.text_write_raw(&w,at>0?",\n    {\"kind\": ":"\n    {\"kind\": ")
-        serial.text_write_string(&w,kind_text(output.kind,&buffer))
-        serial.text_write_raw(&w,", \"name\": ")
-        serial.text_write_string(&w,output.name)
-        serial.text_write_raw(&w,", \"index\": ")
-        serial.text_write_int(&w,i64(output.index))
-        serial.text_write_raw(&w,", \"id\": \"")
-        serial.text_write_asset_id(&w,output.id)
-        serial.text_write_raw(&w,"\"")
-        if output.part {serial.text_write_raw(&w,", \"part\": true")}
-        if output.shared {serial.text_write_raw(&w,", \"shared\": true")}
-        serial.text_write_raw(&w,"}")
+    if len(sidecar.inputs)>0 {
+        serial.text_write_raw(&w,",\n  \"inputs\": [")
+        for input,at in sidecar.inputs {
+            if at>0 {serial.text_write_raw(&w,", ")}
+            serial.text_write_string(&w,input)
+        }
+        serial.text_write_raw(&w,"]")
     }
-    serial.text_write_raw(&w,len(sidecar.outputs)>0?"\n  ]\n}\n":"]\n}\n")
+    serial.text_write_raw(&w,",\n  \"outputs\": ")
+    asset.import_outputs_write(&w,sidecar.outputs[:])
+    serial.text_write_raw(&w,"\n}\n")
     return string(serial.writer_take(&w))
 }
 
@@ -142,13 +117,15 @@ sidecar_parse :: proc(text:string,allocator:=context.allocator) -> (sidecar:Side
         case "documents":
             sidecar.documents=serial.text_keyword(&r,"true")
             if !sidecar.documents && !serial.text_keyword(&r,"false") {return}
-        case "outputs":
+        case "inputs":
+            sidecar.inputs=make([dynamic]string,allocator)
             serial.text_expect(&r,'[') or_return
             for begun:=false;!serial.text_accept(&r,']');begun=true {
                 if begun {serial.text_expect(&r,',') or_return}
-                output:=output_parse(&r,allocator) or_return
-                append(&sidecar.outputs,output)
+                append(&sidecar.inputs,strings.clone(serial.text_string(&r) or_return,allocator))
             }
+        case "outputs":
+            asset.import_outputs_read(&r,&sidecar.outputs,allocator) or_return
         case:
             return
         }
@@ -164,34 +141,21 @@ sidecar_parse :: proc(text:string,allocator:=context.allocator) -> (sidecar:Side
     return sidecar,true
 }
 
-@(private="file")
-output_parse :: proc(r:^serial.Text_Reader,allocator:=context.allocator) -> (output:Output,ok:bool) {
-    serial.text_expect(r,'{') or_return
-    for first:=true;!serial.text_accept(r,'}');first=false {
-        if !first {serial.text_expect(r,',') or_return}
-        key:=serial.text_string(r) or_return
-        field:=strings.clone(key,context.temp_allocator)
-        serial.text_expect(r,':') or_return
-        switch field {
-        case "kind":
-            output.kind=kind_parse(serial.text_string(r) or_return) or_return
-        case "name":
-            output.name=strings.clone(serial.text_string(r) or_return,allocator)
-        case "index":
-            negative,magnitude:=serial.text_integer(r) or_return
-            if negative || magnitude>u64(max(i32)) {return}
-            output.index=int(magnitude)
-        case "id":
-            output.id=serial.text_parse_asset_id(serial.text_string(r) or_return) or_return
-        case "part","shared":
-            value:=serial.text_keyword(r,"true")
-            if !value && !serial.text_keyword(r,"false") {return}
-            if field=="part" {output.part=value} else {output.shared=value}
-        case:
-            return
-        }
+// What the outputs of an import are built from, as one number: the bytes of
+// the source at path and of each input its sidecar lists, its settings, the
+// version of what reads and writes it and whether its textures are built
+// Fast. An output of the cache is current when its file is named by this key.
+import_key :: proc(path:string,sidecar:Sidecar,version:u32,fast:bool) -> u64 {
+    key:=base.hash_combine(u64(version)<<1|u64(fast),u64(asset.MESH_VERSION)<<32|u64(asset.TEXTURE_VERSION)<<16|u64(textures.BUILD_VERSION))
+    key=base.hash_combine(key,base.hash64(transmute([]u8)sidecar_text({settings=sidecar.settings},context.temp_allocator)))
+    folder:=filepath.dir(path)
+    for at in -1..<len(sidecar.inputs) {
+        file:=path if at<0 else fmt.tprintf("%s/%s",folder,sidecar.inputs[at])
+        bytes,_:=serial.file_read(file,context.temp_allocator,limit=MAX_SOURCE_BYTES)
+        key=base.hash_combine(key,base.hash64(bytes))
+        delete(bytes,context.temp_allocator)
     }
-    return output,true
+    return key|1
 }
 
 // The sidecar at path, in allocator. found is false, with an empty one, when

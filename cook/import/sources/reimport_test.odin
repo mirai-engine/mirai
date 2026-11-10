@@ -131,7 +131,8 @@ a_source_keeps_the_ids_of_its_import_with_its_sidecar_and_a_copy_without_it_is_a
     testing.expect_value(t,moved.prefab,first.prefab)
     for written in first.assets {
         same,found:=written_of(&moved,written.kind,written.kind==asset.KIND_SCENE?"crate":written.name)
-        testing.expectf(t,found && same.id==written.id && same.path==written.path,"%s keeps its id and its file",written.name)
+        // A file of the imported folder is named by what it is built from, which changed.
+        testing.expectf(t,found && same.id==written.id && (same.path==written.path || importer.kind_cached(written.kind)),"%s keeps its id and its file",written.name)
     }
     testing.expect_value(t,len(moved.warnings),0)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
@@ -173,7 +174,7 @@ a_material_renamed_in_the_source_keeps_its_id_and_a_part_taken_out_is_left_alone
     testing.expect_value(t,slot_materials(t,&renamed,&types),[2]base.Asset_Id{wood.id,paint.id})
 
     // Whether a mesh is a part is decided once and kept in the sidecar: taken out there, it stays out.
-    mesh,_:=written_of(&first,asset.KIND_MESH,"Box")
+    mesh,_:=written_of(&renamed,asset.KIND_MESH,"Box")
     testing.expect(t,header_of(mesh.path).owner==first.prefab)
     file:=fmt.tprintf("%s.import",source)
     listed,_:=os.read_entire_file(file,context.temp_allocator)
@@ -438,7 +439,7 @@ a_checkout_without_its_imported_folder_gets_the_same_assets_from_its_sources :: 
         testing.expect_value(t,asset.registry_scan(&r),asset.Error.None)
         listed=make([dynamic]Listed,context.temp_allocator)
         for file in r.files {
-            if file.imported {append(&listed,Listed{file.id,strings.clone(file.path,context.temp_allocator)})}
+            if file.imported!=0 {append(&listed,Listed{file.id,strings.clone(file.path,context.temp_allocator)})}
         }
         lost:=make([dynamic]asset.Registry_Missing,context.temp_allocator)
         asset.registry_missing(&r,&lost)
@@ -456,28 +457,28 @@ a_checkout_without_its_imported_folder_gets_the_same_assets_from_its_sources :: 
     _,has_sign:=path_of(before[:],"sign.tex")
     testing.expectf(t,has_body && has_keg && has_sign && missing==0 && len(before)==cached,"a part in the folder of its source file, a root beside its source: %v",before[:])
 
-    // A source that changed is imported again, and it alone.
+    // A source that changed is imported again, and it alone; a file it reads counts as the source.
     _=os.write_entire_file(fmt.tprintf("%s/source/sign.png",root),png_bytes(8,8,{40,40,200}))
     changed:=sync(root,caches,context.temp_allocator)
     testing.expectf(t,changed.imported==1 && len(changed.failures)==0,"%v",changed)
+    _=os.write_entire_file(fmt.tprintf("%s/source/set/crate/across.png",root),png_pixels(64,64,gradient_green))
+    read:=sync(root,caches,context.temp_allocator)
+    testing.expectf(t,read.imported==1 && len(read.failures)==0,"an image a model reads changed: %v",read)
 
-    // A folder with two sources moves, one of them is renamed and another source is deleted: until
-    // they are imported again nothing stale is listed, and then every asset is listed where its
-    // source is, with the id it had; what names them still finds them.
+    // A folder with two sources moves, one of them is renamed and another source is deleted: at
+    // once, without an import, every asset is listed where its source is, with the id it had,
+    // what names them still finds them and nothing of the deleted source is listed.
     testing.expect(t,os.rename(fmt.tprintf("%s/source/set",root),fmt.tprintf("%s/source/props",root))==nil)
     for end in ([2]string{"",".import"}) {testing.expect(t,os.rename(fmt.tprintf("%s/source/props/barrel/barrel.gltf%s",root,end),fmt.tprintf("%s/source/props/barrel/keg.gltf%s",root,end))==nil)}
     testing.expect(t,os.remove(fmt.tprintf("%s/source/sign.png",root))==nil)
-    moved,_:=listing(t,root)
-    testing.expectf(t,len(moved)==0,"an asset whose source is not where it says is not listed: %v",moved[:])
-    again_synced:=sync(root,caches,context.temp_allocator)
-    testing.expectf(t,again_synced.sources==2 && again_synced.imported==2 && again_synced.removed==1 && len(again_synced.failures)==0,"%v",again_synced)
     after,after_missing:=listing(t,root)
     moved_body,_:=path_of(after[:],"props/crate/crate.gltf/Body.mesh")
     moved_keg,_:=path_of(after[:],"props/barrel/keg.gltf/Body.mesh")
     testing.expectf(t,moved_body==body && moved_keg==keg && body!={} && keg!={} && after_missing==0 && len(after)==len(before)-1,"%v",after[:])
-    for entry in after {
-        testing.expectf(t,strings.has_prefix(entry.path,"props/"),"%s is listed where its source is",entry.path)
-    }
+    for entry in after {testing.expectf(t,strings.has_prefix(entry.path,"props/"),"%s is listed where its source is",entry.path)}
+    // Nothing changed in what they are built from: the next build imports nothing, and removes what the deleted source gave.
+    again_synced:=sync(root,caches,context.temp_allocator)
+    testing.expectf(t,again_synced.sources==2 && again_synced.imported==0 && again_synced.removed==1 && len(again_synced.failures)==0,"%v",again_synced)
 }
 
 // What cannot be imported again from the checkout alone has no cache: the
