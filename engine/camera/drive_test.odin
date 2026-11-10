@@ -164,7 +164,7 @@ each_orbit_turns_with_the_look_of_its_own_seat :: proc(t:^testing.T) {
     camera_follow(
         core.test_world_ref(w),&w.follows,&w.cameras,&w.transforms,core.read(&w.worlds),core.read(&w.parents),core.read(&w.seats),core.read(&w.moves),core.ref(&w.shown),
         core.ref(&w.seat_state),{actions=core.ref(&w.frame),state=core.ref(&w.seat_state),seats=core.read(&w.seats),base=DRIVE_LOOK},core.ref(&w.queries),&w.look_input,&w.changes,
-        core.ref(&w.views),core.read(&w.verticals),{dt=1.0/60,alpha=1},{dt=1.0/60},&problems,&w.shakes,
+        core.read(&w.verticals),{dt=1.0/60,alpha=1},{dt=1.0/60},&problems,&w.shakes,
     )
     first,_:=core.get(&w.follows,eyes[0])
     second,_:=core.get(&w.follows,eyes[1])

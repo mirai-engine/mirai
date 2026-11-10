@@ -279,8 +279,6 @@ a transition.
 - `Camera_Activation{action, blend}`, on a camera: the player who drives the target of its
   `Camera_Follow` sees through it while holding `action`. `camera_select` requests it as an
   override whose owner is the camera.
-- Cameras without `aim` and with `turn` that follow the same body look where the visible one looks,
-  so switching from one to another does not turn the view.
 - The `Aim` preset is such a camera (Create > Cameras > Aim): an `Orbit` that aims, so the body
   looks where it looks and walks sideways, starting from where the camera it left looked.
 

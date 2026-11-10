@@ -310,7 +310,7 @@ camera_follow :: proc(
     worlds:core.Read(core.World_Transform),parents:core.Read(core.Parent),
     seats:core.Read(input.Seat),moves:core.Read(input.Move_Input),shown:core.Ref(Cameras),
     seat_state:core.Ref(input.Seats),look_actions:input.Frame_Input_Of(input.Look_Action),queries:core.Ref(core.World_Queries),look_input:^Camera_Input,changes:^Camera_Changes,
-    views:core.Ref(Camera_Views),verticals:core.Read(core.Vertical),frame:core.Frame_Time,time:core.Time,problems:^core.Problems,
+    verticals:core.Read(core.Vertical),frame:core.Frame_Time,time:core.Time,problems:^core.Problems,
     shakes:^Camera_Shakes,
 ) {
     // The lens is the one of the mode or the override; the shakes go over it again below.
@@ -334,20 +334,6 @@ camera_follow :: proc(
         follow.state.idle=0
     }
     player:=input.focused(seat_state.ptr,seats)
-    // The cameras that turn with the look of the player of the one seen look
-    // where it looks, so that the view does not turn when it changes to one.
-    for slot in views.slots {
-        seen:=core.edit(follows,slot.camera)
-        if seen==nil || seen.mode!=.Orbit || seen.aim || !seen.turn || !seen.state.ready {continue}
-        target:=follow_target(slot.camera,seen.target,parents,seats,player)
-        for row in 0..<core.count(follows) {
-            e:=core.entity_at(follows,row)
-            other:=core.edit_at(follows,row)
-            if e==slot.camera || other.mode!=.Orbit || other.aim || !other.turn || !other.state.ready || follow_target(e,other.target,parents,seats,player)!=target {continue}
-            low,high:=pitch_limits(other^)
-            other.looking={seen.looking.x,clamp(seen.looking.y,low,high)}
-        }
-    }
     for row in 0..<core.count(follows) {
         e:=core.entity_at(follows,row)
         follow:=core.edit_at(follows,row)
