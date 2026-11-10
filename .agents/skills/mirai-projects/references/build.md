@@ -106,7 +106,9 @@ and `tools/mirai`. The main checkout of a worktree is `project.shared_root(root)
     what started earlier is not stopped.
   - A process with `MIRAI_MEASURE` is part of a measurement: it neither takes `measure.lock` nor
     waits for it. Whoever measures sets it for its children, and an editor opened inside them
-    inherits it.
+    inherits it. The editor of a session is no child of the command that calls it: `mirai rpc`
+    sends its `MIRAI_MEASURE` with the call, and `profile.capture` runs in that turn while the
+    lock names the same measurement.
 - The self-refresh of `bin/mirai` uses one lock per checkout (`bin/.refresh.lock`): if another
   process already rebuilt it, it uses that one.
 

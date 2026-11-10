@@ -25,3 +25,15 @@ camera_matrices_give_a_view_along_forward_and_stay_finite :: proc(t:^testing.T) 
         }
     }
 }
+
+// What follows a cut starts the jitter and the pixels that share a ray over:
+// its frames do not depend on how many the view drew before it.
+@(test)
+a_cut_restarts_the_turn_of_a_view :: proc(t:^testing.T) {
+    long,short:=View_State{frames=37,turn=37,has_previous=true},View_State{frames=5,turn=5,has_previous=true}
+    view_camera_cut(&long)
+    view_camera_cut(&short)
+    testing.expect_value(t,long.turn,short.turn)
+    testing.expect_value(t,taa_jitter(long.turn,TAA_JITTER_PHASES),taa_jitter(short.turn,TAA_JITTER_PHASES))
+    testing.expect_value(t,long.frames,u64(37))
+}

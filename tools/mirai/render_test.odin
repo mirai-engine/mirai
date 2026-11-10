@@ -146,7 +146,7 @@ render_free_region_leaves_out_the_bar_and_the_panels :: proc(t:^testing.T) {
 @(test)
 render_plan_load_refuses_a_camera_without_a_target :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    folder,error:=os.make_directory_temp("","mirai-render-plan-*",context.temp_allocator)
+    folder,error:=os.make_directory_temp("","mirai-render-plan-camera-*",context.temp_allocator)
     if !testing.expect(t,error==nil) {return}
     defer os.remove_all(folder)
     write :: proc(t:^testing.T,folder,text:string) {testing.expect(t,os.write_entire_file(join(folder,RENDER_PLAN_FILE),text)==nil)}
@@ -416,7 +416,7 @@ render_judge_finds_a_push_that_leaves_more_behind :: proc(t:^testing.T) {
 @(test)
 render_plan_load_refuses_a_push_it_cannot_make :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    folder,error:=os.make_directory_temp("","mirai-render-plan-*",context.temp_allocator)
+    folder,error:=os.make_directory_temp("","mirai-render-plan-push-*",context.temp_allocator)
     if !testing.expect(t,error==nil) {return}
     defer os.remove_all(folder)
     write :: proc(t:^testing.T,folder,push:string) {

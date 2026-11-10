@@ -13,7 +13,9 @@ import phys "plugins:physics/runtime"
 // (that of its own team) and how covered it is from someone. Each tick spreads
 // Behavior_Settings.influence_cells cells and casts influence_rays rays of
 // cover, so its cost is bounded: the cover is measured first around the
-// Perceivables, in turns, and then over the rest of the map.
+// Perceivables, in turns, and then over the rest of the map. A world with
+// nobody to stamp them or to read them (no Perceivable, Perceiver, Mind_Agent
+// or querier of places) has no maps and spends nothing on them.
 
 INFLUENCE_TEAMS :: 4
 INFLUENCE_HEIGHT :: f32(40)   // m above influence_center a ray looks down for the ground of a cell from
@@ -34,10 +36,14 @@ influence_free :: proc(i:^Influence) {
 }
 
 @(step="fixed",stage="input",server,after="perception_update")
-influence_update :: proc(influence:^Influence,settings:core.Ref(Behavior_Settings),perceivables:core.Read(Perceivable),worlds:core.Read(core.World_Transform),physics:core.Ref(phys.Physics_State),time:core.Time) {
+influence_update :: proc(
+    influence:^Influence,settings:core.Ref(Behavior_Settings),perceivables:core.Read(Perceivable),perceivers:core.Read(Perceiver),minds:core.Read(Mind_Agent),
+    queriers:core.Read(Place_Result),worlds:core.Read(core.World_Transform),physics:core.Ref(phys.Physics_State),time:core.Time,
+) {
     if settings.ptr==nil || !time.playing || time.dt<=0 {return}
+    used:=core.count(perceivables)>0 || core.count(perceivers)>0 || core.count(minds)>0 || core.count(queriers)>0
     s:=settings.ptr^
-    if !(s.influence_cell>0) || s.influence_size<=0 {
+    if !used || !(s.influence_cell>0) || s.influence_size<=0 {
         if influence.grid.width>0 {influence_free(influence)}
         return
     }

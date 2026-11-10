@@ -164,8 +164,10 @@ While working, `--views` and `--quality`.
   - Stability: luma MAE (like `mirai image diff`) between consecutive captures, over the window
     without the bar or the panels, and that of the worst block. A still and settled view does not
     change: what changes is boiling of the GI, the shadows or TAA. The windowless editor draws
-    with the fixed `dt` of `engine.step`, so the histories do not depend on how long each capture
-    takes.
+    with the fixed `dt` of `engine.step`, and the captures come a fixed count of frames after
+    `camera.set`, a cut that restarts the jitter of the view, and before the cost, whose
+    `profile.capture` runs frames by the clock: a view gives the same image whatever was measured
+    before it and however long anything took.
   - Mean luminance of that region in the first capture.
   - In a flying view: the trail, how much brighter the image is on stopping than settled
     (`excess` of `mirai image diff`), and the light blotches on smooth surfaces

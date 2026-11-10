@@ -444,13 +444,14 @@ api_profile_capture :: proc(s:^Session,call:^api.Call) {
         }
         if refusal:=profile_refusal(profile_limits(conditions));refusal!="" {api.call_fail(call,api.SERVER_ERROR,refusal);return}
     }
-    // Frames that run here run alone among the checkouts, or not at all.
+    // Frames that run here run alone among the checkouts, or not at all: in
+    // the turn this takes, or in that of the measurement the caller is part of.
     measure:workspace.Lock
     defer workspace.lock_release(&measure)
     if p.advance && s.engine_root!="" {
         ok,compiling:bool
         holder:string
-        measure,ok,holder,compiling=workspace.measure_try(s.engine_root,fmt.tprintf("pid %d, profile.capture in %s",os.get_pid(),s.project_root),time.Duration(p.wait)*time.Second)
+        measure,ok,holder,compiling=workspace.measure_try(s.engine_root,workspace.measure_holder(fmt.tprintf("profile.capture in %s",s.project_root)),time.Duration(p.wait)*time.Second,call.measure)
         if holder=="" {holder="another process"}
         what:=compiling?"A compilation":"Another measurement"
         if !ok {api.call_failf(call,api.SERVER_ERROR,"%s runs (%s) and did not end within wait (%d s); mirai locks says who holds its turn, and the call can be made again when it ends",what,holder,p.wait);return}

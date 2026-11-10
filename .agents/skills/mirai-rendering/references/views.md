@@ -220,7 +220,9 @@ in the declared order. Each renderer stage (`Render_Stage`) declares what it rea
     after a view cut and are read without a writer before them in the frame.
 - **Jitter** (`Render_Pipeline_Desc.jitter`): `Resolve` follows the stage (16 phases while TAA is
   on); `Upscale` is that of a temporal upscaler of the pipeline: 8 phases at output size times the
-  square of how much smaller the view is drawn (`upscale_jitter_phases`).
+  square of how much smaller the view is drawn (`upscale_jitter_phases`). A view cut restarts its
+  phases and the frame index the shaders seed their noise with (`View_State.turn`): the frames
+  after a cut do not depend on how many the view drew before it.
 - **Record.** The `record` of a `Custom` pass binds its resources with
   `pass_resource(pass, slot, resource, previous, mip)` and dispatches with
   `stage_pipeline({stage = .Custom, shader})`, which takes `<shader>.comp` from the shaders in use.

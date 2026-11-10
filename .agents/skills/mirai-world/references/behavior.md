@@ -95,7 +95,9 @@ what it perceives; `think` only reads and proposes, and the actions write.
 
 - `influence_update` (`fixed`, `input`, `server`, after perception) maintains `Influence` over
   `ai.Influence_Grid`, with what `Behavior_Settings` says: the cell size (0 turns the maps off),
-  the cells per side and the center.
+  the cells per side and the center. A world with nobody to stamp the maps or to read them (no
+  `Perceivable`, `Perceiver`, `Mind_Agent` or querier of places) has none: the step returns before
+  making them and frees the ones it had.
 - One layer for each of the first `INFLUENCE_TEAMS` teams: each pass stamps its `Perceivable`s
   and the influence spreads `influence_falloff` less per meter. `influence_cells` cells are
   processed per tick.
