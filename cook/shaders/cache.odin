@@ -435,11 +435,11 @@ shader_to_json :: proc(writer:^Json_Writer,shader:Shader) {
         json_object_end(writer)
     }
     json_array_end(writer)
-    json_key(writer,"constants");json_array_begin(writer)
-    for constant in shader.constants {json_string(writer,constant)}
-    json_array_end(writer)
     json_key(writer,"group");json_array_begin(writer)
     for size in shader.group {json_integer(writer,i64(size))}
+    json_array_end(writer)
+    json_key(writer,"constants");json_array_begin(writer)
+    for constant in shader.constants {json_string(writer,constant)}
     json_array_end(writer)
     json_key(writer,"fingerprint");json_string(writer,shader.fingerprint)
     json_key(writer,"spv_hash");json_string(writer,shader.spv_hash)
