@@ -58,7 +58,8 @@ slot_materials :: proc(t:^testing.T,report:^importer.Import_Report,types:^asset.
 
 @(test)
 the_parts_of_an_import_name_its_prefab_and_keep_their_ids_where_they_were_moved :: proc(t:^testing.T) {
-    root:=temp_folder("reimport-moved");defer os.remove_all(root)
+    root:=base.test_folder(t,"reimport-moved")
+    if root=="" {return}
     os.make_directory_all(fmt.tprintf("%s/source",root))
     source:=box_source(fmt.tprintf("%s/source",root),"box.gltf","Wood","Paint")
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
@@ -99,7 +100,8 @@ the_parts_of_an_import_name_its_prefab_and_keep_their_ids_where_they_were_moved 
 
 @(test)
 a_source_moved_or_renamed_keeps_the_ids_of_its_import :: proc(t:^testing.T) {
-    root:=temp_folder("reimport-renamed");defer os.remove_all(root)
+    root:=base.test_folder(t,"reimport-renamed")
+    if root=="" {return}
     os.make_directory_all(fmt.tprintf("%s/source/props",root))
     source:=box_source(fmt.tprintf("%s/source",root),"box.gltf","Wood","Paint")
     first,ok:=box_import(t,source,root);if !ok {return};defer importer.report_destroy(&first)
@@ -138,7 +140,8 @@ a_source_moved_or_renamed_keeps_the_ids_of_its_import :: proc(t:^testing.T) {
 
 @(test)
 a_copy_of_a_source_that_is_still_there_is_an_import_of_its_own_and_says_so :: proc(t:^testing.T) {
-    root:=temp_folder("reimport-copy");defer os.remove_all(root)
+    root:=base.test_folder(t,"reimport-copy")
+    if root=="" {return}
     os.make_directory_all(fmt.tprintf("%s/source/copy",root))
     source:=box_source(fmt.tprintf("%s/source",root),"box.gltf","Wood","Paint")
     first,ok:=box_import(t,source,root);if !ok {return};defer importer.report_destroy(&first)
@@ -152,7 +155,8 @@ a_copy_of_a_source_that_is_still_there_is_an_import_of_its_own_and_says_so :: pr
 
 @(test)
 a_material_renamed_in_the_source_keeps_its_id_and_a_part_taken_out_is_left_alone :: proc(t:^testing.T) {
-    root:=temp_folder("reimport-parts");defer os.remove_all(root)
+    root:=base.test_folder(t,"reimport-parts")
+    if root=="" {return}
     os.make_directory_all(fmt.tprintf("%s/source",root))
     source:=box_source(fmt.tprintf("%s/source",root),"box.gltf","Wood","Paint")
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
@@ -250,7 +254,8 @@ atlas_images :: proc(folder:string) {
 
 @(test)
 a_material_is_a_part_only_when_its_texture_is_an_atlas_of_one_model :: proc(t:^testing.T) {
-    root:=temp_folder("parts-rule");defer os.remove_all(root)
+    root:=base.test_folder(t,"parts-rule")
+    if root=="" {return}
     folder:=fmt.tprintf("%s/source",root)
     atlas_images(folder)
     source:=atlas_source(folder,"props.gltf",{"atlas","waves","across","shared"})
@@ -277,7 +282,8 @@ a_material_is_a_part_only_when_its_texture_is_an_atlas_of_one_model :: proc(t:^t
 
 @(test)
 a_second_model_with_the_same_textures_takes_its_material_and_both_lose_it_as_a_part :: proc(t:^testing.T) {
-    root:=temp_folder("parts-shared");defer os.remove_all(root)
+    root:=base.test_folder(t,"parts-shared")
+    if root=="" {return}
     atlas_images(fmt.tprintf("%s/source/first",root))
     atlas_images(fmt.tprintf("%s/source/second",root))
     first_source:=atlas_source(fmt.tprintf("%s/source/first",root),"crate.gltf",{"atlas","waves","across","shared"})
@@ -304,7 +310,8 @@ a_second_model_with_the_same_textures_takes_its_material_and_both_lose_it_as_a_p
 // next import of the editor with that image takes it as one written Final.
 @(test)
 a_second_model_imported_by_the_editor_takes_the_texture_the_first_wrote_fast :: proc(t:^testing.T) {
-    root:=temp_folder("parts-shared-fast");defer os.remove_all(root)
+    root:=base.test_folder(t,"parts-shared-fast")
+    if root=="" {return}
     os.make_directory_all(fmt.tprintf("%s/source/chair",root))
     os.make_directory_all(fmt.tprintf("%s/source/table",root))
     chair_source:=box_source(fmt.tprintf("%s/source/chair",root),"chair.gltf","Wood","Paint")
@@ -322,7 +329,8 @@ a_second_model_imported_by_the_editor_takes_the_texture_the_first_wrote_fast :: 
 
 @(test)
 a_second_model_with_the_same_textures_and_other_values_writes_a_material_of_its_own :: proc(t:^testing.T) {
-    root:=temp_folder("parts-shared-values");defer os.remove_all(root)
+    root:=base.test_folder(t,"parts-shared-values")
+    if root=="" {return}
     os.make_directory_all(fmt.tprintf("%s/source/chair",root))
     os.make_directory_all(fmt.tprintf("%s/source/table",root))
     chair_source:=box_source(fmt.tprintf("%s/source/chair",root),"chair.gltf","Wood","Paint",roughness="0.5")
@@ -339,7 +347,8 @@ a_second_model_with_the_same_textures_and_other_values_writes_a_material_of_its_
 
 @(test)
 an_image_imported_on_its_own_takes_no_texture_of_a_model_whose_source_moved :: proc(t:^testing.T) {
-    root:=temp_folder("reimport-image-model");defer os.remove_all(root)
+    root:=base.test_folder(t,"reimport-image-model")
+    if root=="" {return}
     os.make_directory_all(fmt.tprintf("%s/source",root))
     source:=box_source(fmt.tprintf("%s/source",root),"box.gltf","Wood","Paint")
     first,ok:=box_import(t,source,root);if !ok {return};defer importer.report_destroy(&first)
@@ -358,7 +367,8 @@ an_image_imported_on_its_own_takes_no_texture_of_a_model_whose_source_moved :: p
 // alone; --copy makes a separate import there, --in-place updates the live one.
 @(test)
 mirai_import_writes_nothing_outside_out_unless_asked :: proc(t:^testing.T) {
-    root:=temp_folder("reimport-outside");defer os.remove_all(root)
+    root:=base.test_folder(t,"reimport-outside")
+    if root=="" {return}
     os.make_directory_all(fmt.tprintf("%s/source",root))
     source:=box_source(fmt.tprintf("%s/source",root),"box.gltf","Wood","Paint")
     first,ok:=box_import(t,source,root);if !ok {return};defer importer.report_destroy(&first)
@@ -424,7 +434,8 @@ mirai_import_writes_nothing_outside_out_unless_asked :: proc(t:^testing.T) {
 // given once stays in its settings.
 @(test)
 an_image_on_its_own_holds_what_its_name_says_until_its_settings_say_otherwise :: proc(t:^testing.T) {
-    root:=temp_folder("image-use");defer os.remove_all(root)
+    root:=base.test_folder(t,"image-use")
+    if root=="" {return}
     out:=fmt.tprintf("%s/textures",root)
     run :: proc(args:..string) -> (code:int,err:string) {
         output,errors:=strings.builder_make(context.temp_allocator),strings.builder_make(context.temp_allocator)
@@ -465,8 +476,8 @@ an_image_on_its_own_holds_what_its_name_says_until_its_settings_say_otherwise ::
 // A skeleton too old to read gives up what a person set on it, and the import says so, keeping its id.
 @(test)
 importing_over_a_skeleton_of_an_older_version_says_what_it_did_not_keep :: proc(t:^testing.T) {
-    folder:=temp_folder("old-skeleton")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"old-skeleton")
+    if folder=="" {return}
     first,error:=import_source(FIXTURES+"skeletal-analytic.glb",folder,{textures=.Uncompressed,no_save=true})
     if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
     defer importer.report_destroy(&first)

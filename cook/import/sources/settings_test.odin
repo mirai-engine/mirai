@@ -5,6 +5,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
+import "mirai:std/base"
 import "mirai:std/geom"
 import importer "mirai:cook/import"
 
@@ -28,8 +29,8 @@ sphere_obj :: proc(folder:string) -> string {
 
 @(test)
 an_import_stores_levels_and_colliders_and_reports_them :: proc(t:^testing.T) {
-    folder:=temp_folder("levels")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"levels")
+    if folder=="" {return}
     source:=sphere_obj(folder)
     model,ok:=import_ok(t,source,{collision=.Hull})
     if !ok {return}
@@ -59,8 +60,8 @@ an_import_stores_levels_and_colliders_and_reports_them :: proc(t:^testing.T) {
 
 @(test)
 settings_live_next_to_the_source_and_importing_again_uses_them :: proc(t:^testing.T) {
-    folder:=temp_folder("settings")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"settings")
+    if folder=="" {return}
     source:=sphere_obj(folder)
     stored,found,load_error:=importer.settings_load(source)
     testing.expect(t,!found && load_error.code==.None && stored=={},"a source without settings has the defaults")
@@ -126,8 +127,8 @@ a_mesh_records_only_the_settings_it_is_built_from :: proc(t:^testing.T) {
 
 @(test)
 a_standalone_image_takes_its_use_from_its_settings :: proc(t:^testing.T) {
-    folder:=temp_folder("image-settings")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"image-settings")
+    if folder=="" {return}
     path:=fmt.tprintf("%s/normal.png",folder)
     _=os.write_entire_file(path,png_bytes(8,8,{128,128,255}))
     testing.expect(t,importer.settings_save(path,{image=.Normal,max_texture_size=4}))
@@ -142,8 +143,8 @@ a_standalone_image_takes_its_use_from_its_settings :: proc(t:^testing.T) {
 
 @(test)
 the_coverage_of_a_standalone_image_is_a_setting_kept_next_to_it :: proc(t:^testing.T) {
-    folder:=temp_folder("image-coverage")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"image-coverage")
+    if folder=="" {return}
     path:=fmt.tprintf("%s/leaves.png",folder)
     _=os.write_entire_file(path,png_bytes(16,16,{40,120,30},masked=true))
     out:=fmt.tprintf("%s/out",folder)
@@ -172,8 +173,8 @@ the_coverage_of_a_standalone_image_is_a_setting_kept_next_to_it :: proc(t:^testi
 
 @(test)
 a_vertex_that_is_not_a_number_fails_its_model_with_a_message :: proc(t:^testing.T) {
-    folder:=temp_folder("not_a_number")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"not_a_number")
+    if folder=="" {return}
     model,ok:=import_ok(t,sphere_obj(folder),{})
     if !ok {return}
     defer importer.model_destroy(&model)

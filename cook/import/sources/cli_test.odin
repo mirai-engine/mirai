@@ -7,6 +7,7 @@ import "core:slice"
 import "core:strings"
 import "core:testing"
 import importer "mirai:cook/import"
+import "mirai:std/base"
 import "mirai:std/subprocess"
 
 // End to end: imports the fixtures with the command of `mirai import`, as the
@@ -69,8 +70,8 @@ mirai_import_writes_assets_that_mirai_asset_verifies :: proc(t:^testing.T) {
     }
     compiler,has_compiler:=os.lookup_env("MIRAI_ODIN",context.temp_allocator)
     if !has_compiler || compiler=="" {compiler="odin"}
-    folder:=temp_folder("cli")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"cli")
+    if folder=="" {return}
     exe:=fmt.tprintf("%s/bin/tests/mirai-import-cli%s",root,EXE)
     os.make_directory_all(fmt.tprintf("%s/bin/tests",root))
     {

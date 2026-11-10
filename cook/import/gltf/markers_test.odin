@@ -5,6 +5,7 @@ import "core:mem"
 import "core:os"
 import "core:testing"
 import importer "mirai:cook/import"
+import "mirai:std/base"
 
 // A node moved by one clip whose glTF animation carries markers in its extras.
 @(private="file")
@@ -18,7 +19,8 @@ markers_fixture :: proc(folder,markers:string) -> string {
 // sorted by time; a marker at a time that is not finite and nonnegative fails the import.
 @(test)
 gltf_animation_extras_give_the_markers_of_the_clip :: proc(t:^testing.T) {
-    folder:=temp_folder("markers-import");defer os.remove_all(folder)
+    folder:=base.test_folder(t,"markers-import")
+    if folder=="" {return}
     model,ok:=import_ok(t,markers_fixture(folder,`[{"name":"foot_r","time":0.6},{"name":"foot_l","time":0.25}]`));defer importer.model_destroy(&model)
     if !ok {return}
     testing.expect_value(t,len(model.animations),1)

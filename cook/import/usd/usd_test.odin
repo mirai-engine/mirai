@@ -7,6 +7,7 @@ import "core:math/linalg"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "mirai:std/base"
 import mm "mirai:std/math"
 import importer "mirai:cook/import"
 
@@ -79,8 +80,8 @@ composed_and_binary_usd_need_usdcat :: proc(t:^testing.T) {
 
 @(test)
 units_and_up_axis_are_baked_into_meters_and_y_up :: proc(t:^testing.T) {
-    folder:=temp_folder("usd-units")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"usd-units")
+    if folder=="" {return}
     path:=write_text(folder,"units.usda",`#usda 1.0
 (
  metersPerUnit = 0.01
@@ -114,8 +115,8 @@ def Xform "Root"
 
 @(test)
 transform_ops_compose_in_the_order_usd_states :: proc(t:^testing.T) {
-    folder:=temp_folder("usd-ops")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"usd-ops")
+    if folder=="" {return}
     path:=write_text(folder,"ops.usda",`#usda 1.0
 (
  metersPerUnit = 1
@@ -371,8 +372,8 @@ def Xform "B"
 
 @(test)
 usd_material_networks_resolve_through_graphs_and_bindings :: proc(t:^testing.T) {
-    folder:=temp_folder("usd-networks")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"usd-networks")
+    if folder=="" {return}
     path:=write_text(folder,"networks.usda",NETWORKS)
     model,ok:=import_ok(t,path,TEXT_ONLY)
     if !ok {return}
@@ -399,8 +400,8 @@ usd_material_networks_resolve_through_graphs_and_bindings :: proc(t:^testing.T) 
 
 @(test)
 images_next_to_the_usd_file_and_failures_without_leftovers :: proc(t:^testing.T) {
-    folder:=temp_folder("usd-images")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"usd-images")
+    if folder=="" {return}
     MATERIAL :: `#usda 1.0
 (
  metersPerUnit = 1
@@ -456,8 +457,8 @@ def Mesh "Painted"
 
 @(test)
 what_a_static_importer_cannot_hold_is_rejected_by_name :: proc(t:^testing.T) {
-    folder:=temp_folder("usd-reject")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"usd-reject")
+    if folder=="" {return}
     HEADER :: "#usda 1.0\n(\n metersPerUnit = 1\n upAxis = \"Y\"\n)\n"
     TRIANGLE :: "  point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]\n  int[] faceVertexCounts = [3]\n  int[] faceVertexIndices = [0,1,2]\n"
     cases:=[?]struct{body,expect:string,code:importer.Error_Code}{
@@ -480,8 +481,8 @@ what_a_static_importer_cannot_hold_is_rejected_by_name :: proc(t:^testing.T) {
 
 @(test)
 left_handed_meshes_flip_their_winding_and_holes_are_skipped :: proc(t:^testing.T) {
-    folder:=temp_folder("usd-winding")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"usd-winding")
+    if folder=="" {return}
     path:=write_text(folder,"w.usda",`#usda 1.0
 (
  metersPerUnit = 1
@@ -518,8 +519,8 @@ write_tool :: proc(folder,name,windows,unix:string) -> string {
 
 @(test)
 the_text_of_usdcat_is_what_is_read_and_its_failure_is_reported :: proc(t:^testing.T) {
-    folder:=temp_folder("usd-tool")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"usd-tool")
+    if folder=="" {return}
     flattened:=write_text(folder,"flattened.usda",`#usda 1.0
 (
  metersPerUnit = 1
@@ -549,8 +550,8 @@ def Mesh "FromTheTool"
 
 @(test)
 a_usd_texture_transform_is_turned_to_v_from_the_top :: proc(t:^testing.T) {
-    folder:=temp_folder("usd-transform")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"usd-transform")
+    if folder=="" {return}
     STAGE :: `#usda 1.0
 (
  metersPerUnit = 1
@@ -616,8 +617,8 @@ def Mesh "Painted"
 
 @(test)
 a_usd_clearcoat_is_a_white_coat_of_the_index_of_the_surface :: proc(t:^testing.T) {
-    folder:=temp_folder("usd-clearcoat")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"usd-clearcoat")
+    if folder=="" {return}
     STAGE :: `#usda 1.0
 (
  metersPerUnit = 1

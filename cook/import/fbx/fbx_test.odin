@@ -9,6 +9,7 @@ import "core:testing"
 import "mirai:asset"
 import anim "mirai:std/anim"
 import importer "mirai:cook/import"
+import "mirai:std/base"
 import mm "mirai:std/math"
 
 FIXTURES :: #directory+"/../../../assets/fixtures/"
@@ -257,9 +258,9 @@ a_node_that_does_not_inherit_a_squashed_parent_scale_keeps_its_own_pose :: proc(
 
 @(test)
 an_fbx_6_is_refused_saying_why :: proc(t:^testing.T) {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    path:=fmt.tprintf("%s/mirai-fbx-%d-old.fbx",directory,os.get_pid())
-    defer os.remove(path)
+    folder:=base.test_folder(t,"fbx")
+    if folder=="" {return}
+    path:=fmt.tprintf("%s/old.fbx",folder)
     text:="; FBX 6.1.0 project file\nFBXHeaderExtension:  {\n\tFBXHeaderVersion: 1003\n\tFBXVersion: 6100\n}\nObjects:  {\n}\n"
     _=os.write_entire_file(path,text)
     model,error:=importer.import_model(path,FORMATS[:])

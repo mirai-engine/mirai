@@ -5,6 +5,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:testing"
 import importer "mirai:cook/import"
+import "mirai:std/base"
 
 // A source cut at any length, or with any byte changed, is either imported or
 // refused: never a crash and never a leak (the runner checks the memory). A
@@ -14,8 +15,8 @@ survives :: proc(t:^testing.T,source:string,extension:string,options:importer.Im
     formats:=formats if formats!=nil else FORMATS[:]
     bytes,error:=os.read_entire_file(source,context.temp_allocator)
     if !testing.expectf(t,error==nil,"%s cannot be read",source) {return}
-    folder:=temp_folder(fmt.tprintf("fuzz-%s",filepath.stem(source)))
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,fmt.tprintf("fuzz-%s",filepath.stem(source)))
+    if folder=="" {return}
     path:=fmt.tprintf("%s/subject%s",folder,extension)
     imported,refused:=0,0
     attempt :: proc(path:string,data:[]u8,options:importer.Import_Options,formats:[]importer.Format,imported,refused:^int) {
@@ -117,8 +118,8 @@ damaged_wav_and_ogg_files_are_built_or_refused :: proc(t:^testing.T) {
 
 @(test)
 damaged_images_and_settings_are_imported_or_refused :: proc(t:^testing.T) {
-    folder:=temp_folder("fuzz-image")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"fuzz-image")
+    if folder=="" {return}
     png:=png_bytes(8,8,{200,120,60},true)
     path:=fmt.tprintf("%s/subject.png",folder)
     imported,refused:=0,0
@@ -170,8 +171,8 @@ damaged_images_and_settings_are_imported_or_refused :: proc(t:^testing.T) {
 // with bytes changed, are imported or refused.
 @(test)
 damaged_fonts_texts_and_prompts_are_imported_or_refused :: proc(t:^testing.T) {
-    folder:=temp_folder("fuzz-interface")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"fuzz-interface")
+    if folder=="" {return}
     _=os.write_entire_file(fmt.tprintf("%s/a.png",folder),png_bytes(8,8,{200,120,60},true))
     Subject :: struct {file:string,data:[]u8}
     subjects:=[?]Subject{

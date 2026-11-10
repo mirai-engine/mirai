@@ -103,8 +103,8 @@ simple_skin_of_khronos_imports_with_external_buffers :: proc(t:^testing.T) {
 invalid_skin_weights_are_rejected :: proc(t:^testing.T) {
     source,read_error:=os.read_entire_file(FIXTURES+"skeletal-analytic.gltf",context.temp_allocator)
     testing.expect(t,read_error==nil)
-    folder:=temp_folder("skin-invalid")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"skin-invalid")
+    if folder=="" {return}
     binary,binary_error:=os.read_entire_file(FIXTURES+"skeletal-analytic.bin",context.temp_allocator)
     testing.expect(t,binary_error==nil)
     _=os.write_entire_file(fmt.tprintf("%s/skeletal-analytic.bin",folder),binary)
@@ -121,7 +121,8 @@ gltf_preserves_all_eight_skin_influences :: proc(t:^testing.T) {
     if !testing.expect_value(t,read_error,nil) {return}
     binary,binary_error:=os.read_entire_file(FIXTURES+"skeletal-analytic.bin",context.temp_allocator)
     if !testing.expect_value(t,binary_error,nil) {return}
-    folder:=temp_folder("skin-eight");defer os.remove_all(folder)
+    folder:=base.test_folder(t,"skin-eight")
+    if folder=="" {return}
     if !testing.expect_value(t,os.write_entire_file(fmt.tprintf("%s/skeletal-analytic.bin",folder),binary),nil) {return}
     text,_:=strings.replace_all(string(source),`"WEIGHTS_0": 3`,`"WEIGHTS_0": 3, "JOINTS_1": 2, "WEIGHTS_1": 3`,context.temp_allocator)
     model,error:=importer.import_model(write_text(folder,"eight.gltf",text),FORMATS[:])

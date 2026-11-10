@@ -48,7 +48,8 @@ morph_delta :: proc(mesh:importer.Imported_Mesh,target:int,vertex:u32) -> asset.
 
 @(test)
 gltf_morphs_keep_sparse_named_targets_node_weights_and_every_weight_interpolation :: proc(t:^testing.T) {
-    folder:=temp_folder("morph-import");defer os.remove_all(folder)
+    folder:=base.test_folder(t,"morph-import")
+    if folder=="" {return}
     model,ok:=import_ok(t,morph_fixture(folder));defer importer.model_destroy(&model)
     if !ok {return}
     testing.expect_value(t,len(model.meshes),1)
@@ -88,7 +89,8 @@ gltf_morphs_keep_sparse_named_targets_node_weights_and_every_weight_interpolatio
 
 @(test)
 glb_morphs_decode_sparse_accessors :: proc(t:^testing.T) {
-    folder:=temp_folder("sparse-morph-glb");defer os.remove_all(folder)
+    folder:=base.test_folder(t,"sparse-morph-glb")
+    if folder=="" {return}
     path:=morph_fixture(folder)
     json_bytes,_:=os.read_entire_file(path,context.temp_allocator)
     original,_:=os.read_entire_file(fmt.tprintf("%s/morph.bin",folder),context.temp_allocator)
@@ -132,7 +134,8 @@ flat_fixture :: proc(folder:string,glb:bool) -> string {
 
 @(test)
 gltf_and_glb_morphs_follow_each_face_without_normals_and_keep_stated_normals :: proc(t:^testing.T) {
-    folder:=temp_folder("morph-flat-normals");defer os.remove_all(folder)
+    folder:=base.test_folder(t,"morph-flat-normals")
+    if folder=="" {return}
     for glb in ([2]bool{false,true}) {
         model,ok:=import_ok(t,flat_fixture(folder,glb));defer importer.model_destroy(&model)
         if !ok {return}
@@ -161,7 +164,8 @@ gltf_and_glb_morphs_follow_each_face_without_normals_and_keep_stated_normals :: 
 
 @(test)
 gltf_morph_tangents_are_read_where_the_file_states_the_tangents :: proc(t:^testing.T) {
-    folder:=temp_folder("morph-tangents");defer os.remove_all(folder)
+    folder:=base.test_folder(t,"morph-tangents")
+    if folder=="" {return}
     values:=[48]f32{
         0,0,0, 1,0,0, 0,1,0,
         0,0,1, 0,0,1, 0,0,1,

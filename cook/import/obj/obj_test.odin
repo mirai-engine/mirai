@@ -3,10 +3,10 @@ package obj
 import "core:fmt"
 import "core:math/linalg"
 import "core:mem"
-import "core:os"
 import "core:strings"
 import "core:testing"
 import importer "mirai:cook/import"
+import "mirai:std/base"
 import mm "mirai:std/math"
 
 @(test)
@@ -55,8 +55,8 @@ objects_of_one_file_become_separate_meshes_and_nodes :: proc(t:^testing.T) {
 
 @(test)
 normals_texture_coordinates_and_maps_of_an_mtl_survive :: proc(t:^testing.T) {
-    folder:=temp_folder("obj-material")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"obj-material")
+    if folder=="" {return}
     write_text(folder,"wall.mtl",`newmtl plaster
 Kd 0.8 0.6 0.4
 Ns 250
@@ -106,8 +106,8 @@ f 1/1 3/3 4/4
 
 @(test)
 transparency_and_blender_roughness_follow_the_mtl_conventions :: proc(t:^testing.T) {
-    folder:=temp_folder("obj-alpha")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"obj-alpha")
+    if folder=="" {return}
     write_text(folder,"m.mtl","newmtl glass\nTr 0.75\nNs 1000\nnewmtl exact\nNs 1000\nPr 0.3\nd 1\n")
     path:=write_text(folder,"m.obj","mtllib m.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl glass\nf 1 2 3\nusemtl exact\nf 1 2 3\nusemtl absent\nf 1 2 3\n")
     model,ok:=import_ok(t,path)
@@ -126,8 +126,8 @@ transparency_and_blender_roughness_follow_the_mtl_conventions :: proc(t:^testing
 
 @(test)
 faces_of_several_materials_are_grouped_by_slot :: proc(t:^testing.T) {
-    folder:=temp_folder("obj-slots")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"obj-slots")
+    if folder=="" {return}
     path:=write_text(folder,"s.obj","v 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl a\nf 1 2 3\nusemtl b\nf 1 2 3\nusemtl a\nf 3 2 1\n")
     model,ok:=import_ok(t,path)
     if !ok {return}
@@ -140,8 +140,8 @@ faces_of_several_materials_are_grouped_by_slot :: proc(t:^testing.T) {
 
 @(test)
 a_broken_obj_fails_cleanly_and_leaves_nothing_behind :: proc(t:^testing.T) {
-    folder:=temp_folder("obj-broken")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"obj-broken")
+    if folder=="" {return}
     path:=write_text(folder,"invalid.obj","v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 99\n")
     _,error:=importer.import_model(path,FORMATS[:])
     testing.expect_value(t,error.code,importer.Error_Code.Malformed)
@@ -170,8 +170,8 @@ a_broken_obj_fails_cleanly_and_leaves_nothing_behind :: proc(t:^testing.T) {
 
 @(test)
 faces_without_area_are_skipped_with_a_warning :: proc(t:^testing.T) {
-    folder:=temp_folder("obj-degenerate")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"obj-degenerate")
+    if folder=="" {return}
     path:=write_text(folder,"d.obj","v 0 0 0\nv 1 0 0\nv 2 0 0\nv 0 1 0\nf 1 2 3\nf 1 2 4\n")
     model,ok:=import_ok(t,path)
     if !ok {return}
@@ -184,8 +184,8 @@ faces_without_area_are_skipped_with_a_warning :: proc(t:^testing.T) {
 @(test)
 a_model_larger_than_the_scratch_memory_of_its_caller_imports :: proc(t:^testing.T) {
     QUADS :: 4000
-    folder:=temp_folder("obj-large")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"obj-large")
+    if folder=="" {return}
     text:=strings.builder_make();defer strings.builder_destroy(&text)
     for i in 0..=QUADS {fmt.sbprintf(&text,"v %d 0 0\nv %d 0 1\n",i,i)}
     for i in 0..<QUADS {a:=i*2+1;fmt.sbprintf(&text,"f %d %d %d %d\n",a,a+1,a+3,a+2)}
@@ -219,8 +219,8 @@ the_vase_of_the_demo_imports_without_warnings :: proc(t:^testing.T) {
 
 @(test)
 a_path_with_a_control_character_is_not_read :: proc(t:^testing.T) {
-    folder:=temp_folder("control")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"control")
+    if folder=="" {return}
     write_text(folder,"c.mtl","newmtl a\nKd 1 0 0\n")
     path:=write_text(folder,"c.obj","mtllib c\x00.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl a\nf 1 2 3\n")
     model,ok:=import_ok(t,path)
@@ -234,8 +234,8 @@ a_path_with_a_control_character_is_not_read :: proc(t:^testing.T) {
 // the bitangent up the image (+Y here, since OBJ counts v from the bottom).
 @(test)
 mirrored_uvs_turn_the_tangent_and_keep_the_bitangent :: proc(t:^testing.T) {
-    folder:=temp_folder("obj-mirror")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"obj-mirror")
+    if folder=="" {return}
     path:=write_text(folder,"mirror.obj",`v -1 0 0
 v 0 0 0
 v 0 1 0

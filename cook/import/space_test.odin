@@ -62,9 +62,9 @@ test_sniff :: proc(head:[]u8) -> Sniff {return .Extension}
 TEST_FORMAT :: Format{name="Test",extensions={0=".test"},version=7,space={meters_per_unit=0.01,axes={.Y,.Z,.Negative_X},v_origin=.Bottom},sniff=test_sniff,read=test_read}
 
 @(private="file")
-test_import :: proc(format:Format) -> (Imported_Model,Error) {
-    folder:=temp_folder("space")
-    defer os.remove_all(folder)
+test_import :: proc(t:^testing.T,format:Format) -> (Imported_Model,Error) {
+    folder:=base.test_folder(t,"space")
+    if folder=="" {return {},{code=.Not_Found}}
     path:=fmt.tprintf("%s/model.test",folder)
     _=os.write_entire_file(path,"anything")
     formats:=[1]Format{format}
@@ -74,7 +74,7 @@ test_import :: proc(format:Format) -> (Imported_Model,Error) {
 @(private="file")
 test_import_ok :: proc(t:^testing.T,format:Format) -> (model:Imported_Model,ok:bool) {
     error:Error
-    model,error=test_import(format)
+    model,error=test_import(t,format)
     ok=testing.expectf(t,error.code==.None,"%v %s",error.code,error.message)
     return
 }
@@ -183,8 +183,8 @@ a_model_is_turned_to_minus_z_in_place_by_its_rig_or_by_the_front_its_settings_st
         {name="a mesh whose front is stated",file={faces=.X},front=.X,faces=.Negative_Z},
         {name="a rig stated to face -Z already",file={faces=.Z,rig=true},front=.Negative_Z,faces=.Z},
     }
-    folder:=temp_folder("facing")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"facing")
+    if folder=="" {return}
     path:=fmt.tprintf("%s/model.test",folder)
     _=os.write_entire_file(path,"anything")
     for &c in cases {
@@ -310,7 +310,7 @@ a_source_in_the_space_of_the_engine_is_kept_as_it_is :: proc(t:^testing.T) {
 
     for broken in ([]Source_Space{{meters_per_unit=0,axes={.X,.Y,.Z}},{meters_per_unit=1,axes={.X,.Negative_X,.Z}}}) {
         stated=broken
-        _,refused:=test_import(engine)
+        _,refused:=test_import(t,engine)
         testing.expect(t,refused.code==.Malformed && strings.contains(refused.message,"distinct axes"),refused.message)
     }
 }

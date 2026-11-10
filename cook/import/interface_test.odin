@@ -6,6 +6,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import cimage "mirai:cook/image"
+import "mirai:std/base"
 import "mirai:std/serial"
 
 @(private="file") CFF_OTF :: #load("../../assets/fixtures/cff.otf")
@@ -13,8 +14,8 @@ import "mirai:std/serial"
 
 @(test)
 fonts_import_as_the_file_they_are_and_collections_are_refused :: proc(t:^testing.T) {
-    folder:=temp_folder("fonts")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"fonts")
+    if folder=="" {return}
     for file in ([2]string{"face.otf","inter.ttf"}) {
         source:=fmt.tprintf("%s/%s",folder,file)
         _=os.write_entire_file(source,CFF_OTF if file=="face.otf" else INTER)
@@ -70,8 +71,8 @@ csv_fields_follow_rfc_4180 :: proc(t:^testing.T) {
 
 @(test)
 strings_import_from_csv_by_key_and_language :: proc(t:^testing.T) {
-    folder:=temp_folder("strings")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"strings")
+    if folder=="" {return}
     long:=strings.repeat("ñandú ",40,context.temp_allocator)
     source:=fmt.tprintf("%s/menu.csv",folder)
     _=os.write_entire_file(source,transmute([]u8)fmt.tprintf("key,es,en,pt-BR\nmenu.play,Jugar,Play,Jogar\nmenu.quit,Salir,Quit,\nstory,\"%s\",Long,\"Ελληνικά, Русский\"\n",long))
@@ -157,8 +158,8 @@ prompt_images_pack_into_power_of_two_atlases :: proc(t:^testing.T) {
 
 @(test)
 prompts_import_packs_the_images_of_a_manifest :: proc(t:^testing.T) {
-    folder:=temp_folder("prompts")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"prompts")
+    if folder=="" {return}
     os.make_directory_all(fmt.tprintf("%s/images",folder))
     paint :: proc(path:string,width,height:int,color:[4]u8) {
         color:=color

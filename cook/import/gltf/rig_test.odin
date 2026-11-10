@@ -1,6 +1,5 @@
 package gltf
 
-import "core:os"
 import "core:strings"
 import "core:testing"
 import "core:math/linalg"
@@ -116,8 +115,8 @@ a_humanoid_rig_fits_the_joints_a_person_placed_and_rests_as_the_template :: proc
     }
 
     // Its skeleton is written with a grip on each hand, measured on its skin.
-    folder:=temp_folder("rig-grips")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"rig-grips")
+    if folder=="" {return}
     report,error:=importer.import_write(&rigged,folder)
     defer importer.report_destroy(&report)
     if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
