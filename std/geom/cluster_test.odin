@@ -2,6 +2,8 @@ package geom
 
 import "core:math"
 import "core:testing"
+import "mirai:std/base"
+import mm "mirai:std/math"
 
 // A closed torus welded by position, its outer half of submesh 1 with
 // vertices of its own on the outline between the halves, and a uv per
@@ -130,7 +132,7 @@ cluster_bounds_hold_their_vertices_and_the_cone_culls_only_back_faces :: proc(t:
     vertices:=make([]u32,len(torus.indices),context.temp_allocator)
     triangles:=make([]u8,len(torus.indices),context.temp_allocator)
     count,_:=meshlets_build(meshlets,vertices,triangles,torus.indices[:],torus.positions[:],CLUSTER_MAX_VERTICES,CLUSTER_MIN_TRIANGLES,CLUSTER_MAX_TRIANGLES,0.5)
-    rng:=rng_make(3)
+    rng:=base.rng_make(3)
     culled:=0
     for m in meshlets[:count] {
         indices:=make([]u32,m.triangle_count*3,context.temp_allocator)
@@ -141,7 +143,7 @@ cluster_bounds_hold_their_vertices_and_the_cone_culls_only_back_faces :: proc(t:
             if math.sqrt(d.x*d.x+d.y*d.y+d.z*d.z)>b.radius*(1+1e-5) {testing.expect(t,false,"a vertex is outside the sphere of its cluster");return}
         }
         for _ in 0..<32 {
-            camera:=rng_ball(&rng)*4
+            camera:=mm.random_in_sphere(&rng)*4
             d:=b.cone_apex-camera
             l:=math.sqrt(d.x*d.x+d.y*d.y+d.z*d.z)
             if l==0 || (d.x*b.cone_axis.x+d.y*b.cone_axis.y+d.z*b.cone_axis.z)/l<b.cone_cutoff {continue}
@@ -263,9 +265,9 @@ dag_check :: proc(t:^testing.T,dag:^Cluster_Dag,positions:[]Vec3,indices:[]u32,r
         if !edges_open_equal(positions,before[:],after[:]) {testing.expectf(t,false,"group %d at level %d moved its border",g.group,g.level,loc=loc);return}
     }
     // Cuts from cameras near and far, at thresholds fine and coarse.
-    rng:=rng_make(11)
+    rng:=base.rng_make(11)
     for _ in 0..<24 {
-        camera:=rng_ball(&rng)*f32(1+rng_int(&rng,40))
+        camera:=mm.random_in_sphere(&rng)*f32(1+rng_int(&rng,40))
         threshold:=f32(rng_int(&rng,6))*0.02
         drawn:=cut(dag,camera,threshold)
         if closed {
@@ -278,7 +280,7 @@ dag_check :: proc(t:^testing.T,dag:^Cluster_Dag,positions:[]Vec3,indices:[]u32,r
 }
 
 @(private="file")
-rng_int :: proc(r:^Rng,below:int) -> int {return int(rng_u32(r)%u32(below))}
+rng_int :: proc(r:^base.Rng,below:int) -> int {return int(base.rng_u32(r)%u32(below))}
 
 // Whether two triangle lists have the same open edges by position; with
 // ends_only, whether every open edge of b joins places on open edges of a.
@@ -376,10 +378,10 @@ cluster_levels_cut_one_whole_level :: proc(t:^testing.T) {
     testing.expect(t,dag.levels==3 && dag.groups==3)
     per_level:[3]int
     for c in dag.clusters {per_level[c.level]+=1}
-    rng:=rng_make(5)
+    rng:=base.rng_make(5)
     picked:[3]bool
     for _ in 0..<64 {
-        camera:=rng_ball(&rng)*f32(2+rng_int(&rng,60))
+        camera:=mm.random_in_sphere(&rng)*f32(2+rng_int(&rng,60))
         threshold:=f32(rng_int(&rng,10))*0.002
         drawn:[3]int
         for c in dag.clusters {

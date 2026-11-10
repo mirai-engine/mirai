@@ -1,8 +1,8 @@
 package ui
 
-import "core:hash"
 import "core:math"
 import "core:mem"
+import "mirai:std/base"
 
 // The layout of a frame. The widgets open and close its elements, and the size
 // an element asks for follows from its children as they close. layout_finish
@@ -344,8 +344,7 @@ layout_find :: proc(t:^Layout_Tree,id:Id) -> (Rect,bool) {
 // same in the same size and face.
 @(private)
 layout_measure :: proc(t:^Layout_Tree,font:^Font,text:string,size:f32,face:u8) -> Layout_Measure {
-    seed:=u64(0xcbf29ce484222325)~u64(transmute(u32)size)~u64(face)<<32
-    key:=hash.fnv64a(transmute([]byte)text,seed)
+    key:=base.hash_mix(base.name_hash(text),u64(transmute(u32)size)|u64(face)<<32)
     current:=&t.measures[0]
     slot,found:=layout_measures_find(current,key,text,size,face)
     if found {t.reused+=1;return current.entries[slot].measure}

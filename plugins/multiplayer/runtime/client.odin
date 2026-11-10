@@ -1,7 +1,6 @@
 package multiplayer
 
 import "base:runtime"
-import "core:hash"
 import "core:hash/xxhash"
 import "core:math"
 import "core:math/linalg"
@@ -999,10 +998,10 @@ client_upload :: proc(s:^Net_Session,w:core.World_Ref) {
             r.motion=motion
             wire.object_write(&s.host,r.object,t.motion,&motion)
         }
-        held_hash:=u64(0xcbf29ce484222325)
+        held_hash:=base.HASH_SEED
         for k in 0..<t.count {
             info:=&w.info.tables[t.tables[k]]
-            if value:=core.raw_find(core.world_table_at(w,info),info.info,r.entity);value!=nil {held_hash=hash.fnv64a(mem.byte_slice(value,info.info.size),held_hash)}
+            if value:=core.raw_find(core.world_table_at(w,info),info.info,r.entity);value!=nil {held_hash=base.hash64(mem.byte_slice(value,info.info.size),held_hash)}
         }
         if held_hash==r.held_hash {continue}
         r.held_hash=held_hash

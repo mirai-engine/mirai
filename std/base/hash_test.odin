@@ -48,6 +48,13 @@ hashes_are_stable_and_spread :: proc(t:^testing.T) {
     testing.expect_value(t,hash_u64(0x9e3779b97f4a7c15),u64(0xe220a8397b1dcdaf))
     testing.expect_value(t,hash_u64(0x3c6ef372fe94f82a),u64(0x6e789e6aa1b965f4))
     testing.expect(t,hash_u64(2)!=hash_u64(3))
+    state:u64=0
+    testing.expect_value(t,splitmix_next(&state),u64(0xe220a8397b1dcdaf))
+    testing.expect_value(t,splitmix_next(&state),u64(0x6e789e6aa1b965f4))
+    // A fold tells the order and the count of its words, zeros too.
+    testing.expect_value(t,HASH_SEED,name_hash(""))
+    testing.expect(t,hash_mix(hash_mix(HASH_SEED,1),2)!=hash_mix(hash_mix(HASH_SEED,2),1))
+    testing.expect(t,hash_mix(HASH_SEED,0)!=HASH_SEED && hash_mix(hash_mix(HASH_SEED,0),0)!=hash_mix(HASH_SEED,0))
     id:=asset_id_from_content(bytes)
     testing.expect_value(t,id,Asset_Id(wide))
     testing.expect(t,asset_id_from_content(nil)!={})

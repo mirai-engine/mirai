@@ -274,7 +274,7 @@ test_file_take :: proc(root,arg:string,packages:^[dynamic]Test_Package) -> bool 
     for candidate in ([2]string{project.path_absolute(arg,context.temp_allocator),join(root,arg)}) {
         if !os.is_file(candidate) {continue}
         folder:=project.path_absolute(os.dir(candidate))
-        if n==0 || !path_same(packages[n-1].folder,folder) {
+        if n==0 || !project.path_same(packages[n-1].folder,folder) {
             path:=os.dir(arg)
             append(packages,Test_Package{path=path!=""?path:".",folder=folder})
         }
@@ -353,7 +353,7 @@ test_names_check :: proc(root:string,packages:[]Test_Package,failed_only,no_gpu:
         for file in p.files {
             found,here:=false,false
             for test in declared {
-                if !path_same(test.file,file) {continue}
+                if !project.path_same(test.file,file) {continue}
                 found=true
                 here||=test.here
                 if test.here && !slice.contains(p.names[:],test.name) {append(&p.names,test.name)}
@@ -416,7 +416,7 @@ test_names_check :: proc(root:string,packages:[]Test_Package,failed_only,no_gpu:
 // The executable of the tests of a package: bin/tests/<test_name>.
 @(private="file")
 test_executable :: proc(root,folder:string) -> string {
-    return join(root,"bin","tests",fmt.aprintf("%s%s",test_name(root,folder),EXE))
+    return join(root,"bin","tests",fmt.aprintf("%s%s",test_name(root,folder),project.EXECUTABLE_SUFFIX))
 }
 
 // The flag that gives the threads of a test executable the stack of the system with the most:
@@ -448,7 +448,7 @@ test_build_plan :: proc(root,folder,optimization:string,flags:[]string) -> (plan
     if info,error:=os.stat(command[0],context.temp_allocator);error==nil {fmt.sbprintf(&key,"%d %v",info.size,info.modification_time)}
     planned.key=strings.to_string(key)
     if test_current(root,folder,planned.executable,test_sources_file(planned.executable),test_stamp_file(planned.executable),planned.key) {return}
-    planned.staging=join(root,"bin","tests",fmt.aprintf(".%s-build-%d%s",test_name(root,folder),os.get_pid(),EXE))
+    planned.staging=join(root,"bin","tests",fmt.aprintf(".%s-build-%d%s",test_name(root,folder),os.get_pid(),project.EXECUTABLE_SUFFIX))
     planned.log=fmt.aprintf("%s.log",planned.staging)
     append(&command,fmt.aprintf("-out:%s",planned.staging),"-export-dependencies:json",fmt.aprintf("-export-dependencies-file:%s",test_sources_file(planned.staging)))
     planned.command=command
@@ -683,7 +683,7 @@ project_of :: proc(folder:string) -> string {
 path_inside :: proc(path,folder:string) -> bool {
     a:=project.path_absolute(path,context.temp_allocator)
     b:=strings.trim_right(project.path_absolute(folder,context.temp_allocator),"/")
-    return len(a)>len(b) && a[len(b)]=='/' && path_same(a[:len(b)],b)
+    return len(a)>len(b) && a[len(b)]=='/' && project.path_same(a[:len(b)],b)
 }
 
 // The sources of a package of an engine plugin, its tests among them, import

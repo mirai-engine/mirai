@@ -1,6 +1,7 @@
 package ui
 
 import "core:math"
+import mm "mirai:std/math"
 
 // What an element draws once the layout has placed it. Widgets fill one of these
 // records while the frame is built; frame_end turns them into geometry with
@@ -343,8 +344,8 @@ paint_draw :: proc(ctx:^Context,r:Rect,p:^Paint) {
             s0,s1:=f32(i)/N,f32(i+1)/N;v0,v1:=1-f32(j)/N,1-f32(j+1)/N
             h:=p.hsv[0]
             draw_quad_colors(ctx,{{x0,y0},{x1,y0},{x1,y1},{x0,y1}},{
-                rgb_color(hsv_to_rgb(h,s0,v0)),rgb_color(hsv_to_rgb(h,s1,v0)),
-                rgb_color(hsv_to_rgb(h,s1,v1)),rgb_color(hsv_to_rgb(h,s0,v1))})
+                rgb_color(mm.hsv_to_rgb({h,s0,v0})),rgb_color(mm.hsv_to_rgb({h,s1,v0})),
+                rgb_color(mm.hsv_to_rgb({h,s1,v1})),rgb_color(mm.hsv_to_rgb({h,s0,v1}))})
         }}
         point:=[2]f32{r.x+p.hsv[1]*r.w,r.y+(1-p.hsv[2])*r.h}
         clip_push(ctx,r)
@@ -355,7 +356,7 @@ paint_draw :: proc(ctx:^Context,r:Rect,p:^Paint) {
     case .Hue:
         for i in 0..<6 {
             x0,x1:=r.x+r.w*f32(i)/6,r.x+r.w*f32(i+1)/6
-            c0:=rgb_color(hsv_to_rgb(f32(i)/6,1,1));c1:=rgb_color(hsv_to_rgb(f32(i+1)/6-1e-4,1,1))
+            c0:=rgb_color(mm.hsv_to_rgb({f32(i)/6,1,1}));c1:=rgb_color(mm.hsv_to_rgb({f32(i+1)/6-1e-4,1,1}))
             draw_quad_colors(ctx,{{x0,r.y},{x1,r.y},{x1,r.y+r.h},{x0,r.y+r.h}},{c0,c1,c1,c0})
         }
         x:=r.x+p.hsv[0]*r.w

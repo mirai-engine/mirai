@@ -37,7 +37,7 @@ they share.
     without the platform libm (the angles of the primitives come from `turn_sincos`, a polynomial
     with exact quadrants; the icosphere uses `math.atan2`, implemented in Odin).
   - Walks have a fixed order, ties are resolved by index and no hash table is iterated. The
-    fracture sites come from its own PCG32 that depends only on the seed.
+    fracture sites come from a `base.Rng` that depends only on the seed.
   - Equality across architectures depends on the compiler not contracting `a*b+c` (Odin does not by
     default).
 - **Precision.** Coordinates enter and leave as `f32`. The predicates (side of a plane,

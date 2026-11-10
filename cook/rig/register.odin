@@ -4,6 +4,7 @@ import "core:math"
 import "core:math/linalg"
 import "core:slice"
 import mm "mirai:std/math"
+import "mirai:std/base"
 
 // Where the joints of an animal template are in a mesh: the template's own
 // surface (the samples of its model, weighted to its bones) is deformed by
@@ -238,16 +239,9 @@ surface_sample :: proc(meshes:[]Mesh,count:int) -> (points:[]Vec,ok:bool) {
     return points,true
 }
 
-// splitmix64, in [0,1).
+// In [0,1).
 @(private="file")
-random :: proc "contextless" (state:^u64) -> f64 {
-    state^+=0x9e3779b97f4a7c15
-    z:=state^
-    z=(z~(z>>30))*0xbf58476d1ce4e5b9
-    z=(z~(z>>27))*0x94d049bb133111eb
-    z~=z>>31
-    return f64(z>>11)/f64(u64(1)<<53)
-}
+random :: proc "contextless" (state:^u64) -> f64 {return f64(base.splitmix_next(state)>>11)/f64(u64(1)<<53)}
 
 // Template space to mesh space: the box's, and z through matched rows of legs.
 @(private="file")

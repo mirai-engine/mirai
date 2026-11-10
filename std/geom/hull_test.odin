@@ -4,6 +4,8 @@ import "core:math"
 import "core:math/linalg"
 import "core:slice"
 import "core:testing"
+import "mirai:std/base"
+import mm "mirai:std/math"
 
 @(private) bytes_equal :: proc(a,b:[]$T) -> bool {
     return slice.equal(slice.to_bytes(a),slice.to_bytes(b))
@@ -16,20 +18,20 @@ import "core:testing"
 
 @(private) Cloud :: enum {Box,Sphere_Surface,Ball,Grid,Slab,Clusters}
 
-@(private) cloud_fill :: proc(points:[]Vec3,kind:Cloud,rng:^Rng,scale:f32=1,offset:Vec3={}) {
+@(private) cloud_fill :: proc(points:[]Vec3,kind:Cloud,rng:^base.Rng,scale:f32=1,offset:Vec3={}) {
     for &p,i in points {
         switch kind {
-        case .Box: p={rng_f32(rng)-0.5,rng_f32(rng)-0.5,rng_f32(rng)-0.5}
+        case .Box: p={mm.random_f32(rng)-0.5,mm.random_f32(rng)-0.5,mm.random_f32(rng)-0.5}
         case .Sphere_Surface:
-            b:=rng_ball(rng)
+            b:=mm.random_in_sphere(rng)
             l:=math.sqrt(b.x*b.x+b.y*b.y+b.z*b.z)
             p=b/l if l>1e-6 else Vec3{1,0,0}
-        case .Ball: p=rng_ball(rng)
-        case .Grid: p={f32(rng_u32(rng)%5),f32(rng_u32(rng)%5),f32(rng_u32(rng)%5)}
-        case .Slab: p={rng_f32(rng)-0.5,(rng_f32(rng)-0.5)*1e-3,rng_f32(rng)-0.5}
+        case .Ball: p=mm.random_in_sphere(rng)
+        case .Grid: p={f32(base.rng_u32(rng)%5),f32(base.rng_u32(rng)%5),f32(base.rng_u32(rng)%5)}
+        case .Slab: p={mm.random_f32(rng)-0.5,(mm.random_f32(rng)-0.5)*1e-3,mm.random_f32(rng)-0.5}
         case .Clusters:
             center:=Vec3{f32(i%3),f32(i%2),f32(i%5)}
-            p=center+rng_ball(rng)*0.01
+            p=center+mm.random_in_sphere(rng)*0.01
         }
         p=p*scale+offset
     }
@@ -41,8 +43,8 @@ hull_of_a_cube_has_six_quads :: proc(t:^testing.T) {
     defer delete(points)
     corners:=box_corners({-1,-1,-1},{1,1,1})
     // Interior points, points on faces and on edges, and every corner twice.
-    rng:=rng_make(1)
-    for _ in 0..<200 {append(&points,Vec3{rng_f32(&rng)*2-1,rng_f32(&rng)*2-1,rng_f32(&rng)*2-1}*0.99)}
+    rng:=base.rng_make(1)
+    for _ in 0..<200 {append(&points,Vec3{mm.random_f32(&rng)*2-1,mm.random_f32(&rng)*2-1,mm.random_f32(&rng)*2-1}*0.99)}
     for i in 0..<100 {
         u,v:=f32(i%10)/5-0.9,f32(i/10)/5-0.9
         append(&points,Vec3{u,v,1},Vec3{u,-1,v},Vec3{1,u,v},Vec3{-1,u,v},Vec3{u,1,v},Vec3{u,v,-1})
@@ -139,7 +141,7 @@ hull_keeps_its_shape_at_tiny_and_huge_coordinates :: proc(t:^testing.T) {
 @(test)
 hull_bounded_by_max_vertices_stays_inside_the_full_hull :: proc(t:^testing.T) {
     points:[2000]Vec3
-    rng:=rng_make(7)
+    rng:=base.rng_make(7)
     cloud_fill(points[:],.Sphere_Surface,&rng)
     full,_:=hull_build(points[:])
     defer hull_destroy(&full)
@@ -162,15 +164,15 @@ hull_bounded_by_max_vertices_stays_inside_the_full_hull :: proc(t:^testing.T) {
 
 @(test)
 hull_contains_every_point_of_random_clouds :: proc(t:^testing.T) {
-    rng:=rng_make(0x51ce)
+    rng:=base.rng_make(0x51ce)
     points:[dynamic]Vec3
     defer delete(points)
     for round in 0..<240 {
         kind:=Cloud(round%len(Cloud))
-        count:=4+int(rng_u32(&rng)%400)
+        count:=4+int(base.rng_u32(&rng)%400)
         scales:=[4]f32{1,1e-3,250,1e4}
         scale:=scales[round/len(Cloud)%4]
-        offset:=Vec3{rng_f32(&rng),rng_f32(&rng),rng_f32(&rng)}*scale*(round%5==0?100:1)
+        offset:=Vec3{mm.random_f32(&rng),mm.random_f32(&rng),mm.random_f32(&rng)}*scale*(round%5==0?100:1)
         resize(&points,count)
         cloud_fill(points[:],kind,&rng,scale,offset)
         // Repeat a few points so that duplicates are always present.
@@ -286,9 +288,9 @@ hull_of_a_lattice_is_its_bounding_box :: proc(t:^testing.T) {
 hull_keeps_points_beside_thin_faces :: proc(t:^testing.T) {
     // A plate 1000 times wider than thick: almost every point is within the
     // tolerance of the planes of the first tetrahedron but far beside it.
-    rng:=rng_make(99)
+    rng:=base.rng_make(99)
     points:[600]Vec3
-    for &p in points {p={rng_f32(&rng)*200,rng_f32(&rng)*0.2+3000,rng_f32(&rng)*200}}
+    for &p in points {p={mm.random_f32(&rng)*200,mm.random_f32(&rng)*0.2+3000,mm.random_f32(&rng)*200}}
     tolerance:=tolerance_noise(positions_max_abs(points[:]))
     hull,error:=hull_build(points[:])
     defer hull_destroy(&hull)

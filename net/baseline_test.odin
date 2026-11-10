@@ -103,7 +103,7 @@ without_room_for_baselines_updates_go_whole_and_host_stats_counts_it :: proc(t:^
     for i in 0..<20 {crowd_spawn(s,c,i,&state,true)}
     tick:=u32(0)
     for _ in 0..<120 {
-        for _ in 0..<5 {crowd_mutate(s,c,int(rng_next(&state)%20),&state)}
+        for _ in 0..<5 {crowd_mutate(s,c,int(base.splitmix_next(&state)%20),&state)}
         scene_tick(s,&tick)
     }
     for _ in 0..<60 {scene_tick(s,&tick)}
@@ -147,7 +147,7 @@ connections_well_past_eight_take_every_baseline_they_ask_for_within_the_default_
     for step in 0..<420 {
         if step<300 {
             for i in 0..<OBJECTS {transforms[i].position.x+=0.05}
-            for _ in 0..<10 {vitals[rng_next(&state)%OBJECTS].health=i32(rng_next(&state)%1001)}
+            for _ in 0..<10 {vitals[base.splitmix_next(&state)%OBJECTS].health=i32(base.splitmix_next(&state)%1001)}
         }
         tick+=1
         host_publish(server,tick)

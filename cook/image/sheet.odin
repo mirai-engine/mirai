@@ -1,6 +1,7 @@
 package image
 
 import "core:math"
+import mm "mirai:std/math"
 
 // A contact sheet: evenly spaced frames of a sequence as tiles of a grid, in
 // order from the top left, each with a number in its top left corner, to look
@@ -79,7 +80,7 @@ sheet_put :: proc(sheet:^Sheet,k:int,pixels:[]f32,width,height:int,linear:bool,l
             for c in 0..<3 {
                 v:=sum[c]
                 if !(v>0) {v=0}
-                if linear {v=v<=0.0031308?v*12.92:1.055*math.pow(min(v,1),1/2.4)-0.055}
+                if linear {v=mm.linear_to_srgb(min(v,1))}
                 out[c]=u8(clamp(v,0,1)*255+0.5)
             }
             out[3]=255

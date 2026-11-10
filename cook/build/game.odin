@@ -83,7 +83,7 @@ copies_run :: proc(copies:[]Copy) -> bool {
 // the development plugins, whose folders are given. Sorted.
 engine_time_packages :: proc(sources:[]string,root,engine_root:string,development:[]string={},allocator:=context.allocator) -> []string {
     inside :: proc(file,folder:string) -> (relative:string,ok:bool) {
-        if folder=="" || len(file)<=len(folder) || file[len(folder)]!='/' || !path_equal(file[:len(folder)],folder) {return "",false}
+        if folder=="" || len(file)<=len(folder) || file[len(folder)]!='/' || !project.path_same(file[:len(folder)],folder) {return "",false}
         return file[len(folder)+1:],true
     }
     plugin_editor :: proc(relative:string) -> bool {

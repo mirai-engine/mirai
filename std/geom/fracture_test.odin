@@ -2,6 +2,8 @@ package geom
 
 import "core:math/linalg"
 import "core:testing"
+import "mirai:std/base"
+import mm "mirai:std/math"
 
 @(private) fractures_equal :: proc(a,b:^Fracture) -> bool {
     return buffers_equal(&a.mesh,&b.mesh) && bytes_equal(a.pieces[:],b.pieces[:]) && bytes_equal(a.connections[:],b.connections[:])
@@ -260,20 +262,20 @@ fracture_pieces_are_closed_and_add_up_to_the_mesh :: proc(t:^testing.T) {
     defer mesh_buffer_destroy(&b)
     sites:[dynamic]Vec3
     defer delete(sites)
-    rng:=rng_make(0xf4ac)
+    rng:=base.rng_make(0xf4ac)
     for round in 0..<54 {
         shape:=Shape(round%len(Shape))
         mesh_buffer_clear(&b)
         shape_build(&b,shape)
         scales:=[3]f32{1,1e-2,150}
         scale:=scales[round/len(Shape)%3]
-        offset:=Vec3{rng_f32(&rng)-0.5,rng_f32(&rng)-0.5,rng_f32(&rng)-0.5}*scale*(round%4==0?400:1)
+        offset:=Vec3{mm.random_f32(&rng)-0.5,mm.random_f32(&rng)-0.5,mm.random_f32(&rng)-0.5}*scale*(round%4==0?400:1)
         for &p in b.positions {p=p*scale+offset}
         mesh:=mesh_buffer_view(&b)
         lo,hi:=mesh_bounds(mesh.positions)
-        resize(&sites,2+int(rng_u32(&rng)%30))
+        resize(&sites,2+int(base.rng_u32(&rng)%30))
         pattern:=Site_Pattern(round/2%len(Site_Pattern))
-        impact:=mesh.positions[int(rng_u32(&rng))%len(mesh.positions)]
+        impact:=mesh.positions[int(base.rng_u32(&rng))%len(mesh.positions)]
         sites_generate(sites[:],{pattern=pattern,seed=u64(round),lo=lo,hi=hi,center=impact,radius=0.4*scale})
         what:=[3]string{"uniform","clustered","radial"}
         testing.expect_value(t,mesh_fracture(&f,mesh,sites[:],{interior_material=1}),Fracture_Error.None)

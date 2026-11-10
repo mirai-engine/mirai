@@ -1705,7 +1705,7 @@ material_reflectance_target_follows_frustum_and_preserves_plain_shading :: proc(
     testing.expect_value(t,len(r.scene.reflective),1)
     camera_needs_reflectance :: proc(r:^Renderer,camera:Camera)->bool {
         view,proj,_:=camera_matrices(camera,1)
-        reflectance,_:=reflectance_in_frustum(r,frustum_planes(proj*view))
+        reflectance,_:=reflectance_in_frustum(r,transmute([6]Vec4)mm.frustum_from_matrix(proj*view))
         return reflectance
     }
     testing.expect(t,!camera_needs_reflectance(r,OVERHEAD),"An off-camera reflective surface uses the plain G-buffer")

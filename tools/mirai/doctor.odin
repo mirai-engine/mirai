@@ -34,7 +34,7 @@ cmd_doctor :: proc(root:string,args:[]string) -> int {
         report(&errors,manifest_error.code==.None && platform==project.ENGINE_PLATFORM,fmt.tprintf("installed engine %s of %s, built from %s",base.text_get(m.version[:]),platform,base.text_get(m.commit[:])),fmt.tprintf("unpack the package of the engine for %s again",project.ENGINE_PLATFORM))
     }
     shared:=project.shared_root(root,context.temp_allocator)
-    if !path_same(shared,root) {fmt.printfln("  info   worktree of %s: uses its .deps and its binary cache",shared)}
+    if !project.path_same(shared,root) {fmt.printfln("  info   worktree of %s: uses its .deps and its binary cache",shared)}
     deps:=workspace.deps_folder(root,context.temp_allocator)
     report(&errors,os.is_dir(deps),fmt.tprintf("dependencies in %s",deps),"download the pinned dependencies into .deps of the main checkout (README); a worktree takes them from there")
     compiler,found:=build.compiler_find(root)

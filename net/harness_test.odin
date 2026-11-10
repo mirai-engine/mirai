@@ -103,18 +103,18 @@ test_fuzz_transport :: proc(f:^Test_Fuzz) -> Transport {
         plain,opened:=test_unseal(f.host,buffer[:size],from)
         if !opened {return}
         f.mutated+=1
-        switch rng_next(&f.rng)%4 {
+        switch base.splitmix_next(&f.rng)%4 {
         case 0,1:
-            flips:=1+rng_next(&f.rng)%8
+            flips:=1+base.splitmix_next(&f.rng)%8
             for _ in 0..<flips {
-                bit:=rng_next(&f.rng)%u64(plain*8)
+                bit:=base.splitmix_next(&f.rng)%u64(plain*8)
                 buffer[bit>>3]~=1<<(bit&7)
             }
         case 2:
-            plain=1+int(rng_next(&f.rng)%u64(plain))
+            plain=1+int(base.splitmix_next(&f.rng)%u64(plain))
         case 3:
-            plain=2+int(rng_next(&f.rng)%u64(len(buffer)-TAG_BYTES-2))
-            for &b in buffer[1:plain] {b=u8(rng_next(&f.rng))}
+            plain=2+int(base.splitmix_next(&f.rng)%u64(len(buffer)-TAG_BYTES-2))
+            for &b in buffer[1:plain] {b=u8(base.splitmix_next(&f.rng))}
         }
         size=test_reseal(f.host,buffer,plain,from)
         return

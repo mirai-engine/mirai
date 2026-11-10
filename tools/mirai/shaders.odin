@@ -200,7 +200,7 @@ cmd_setup :: proc(root:string,args:[]string) -> int {
 plugin_test_shaders :: proc(root,folder:string) -> bool {
     plugins:=project.path_absolute(join(root,"plugins"),context.temp_allocator)
     absolute:=project.path_absolute(folder,context.temp_allocator)
-    if len(absolute)<=len(plugins) || absolute[len(plugins)]!='/' || !path_same(absolute[:len(plugins)],plugins) {return true}
+    if len(absolute)<=len(plugins) || absolute[len(plugins)]!='/' || !project.path_same(absolute[:len(plugins)],plugins) {return true}
     rest:=absolute[len(plugins)+1:]
     name:=rest
     if slash:=strings.index_byte(rest,'/');slash>=0 {name=rest[:slash]}

@@ -1,49 +1,18 @@
 package ui
 
-import "core:math"
+import mm "mirai:std/math"
 
 // Colors of widgets are display (sRGB) values; scene colors are linear. A
 // swatch or a picker converts at its edge.
 
-hsv_to_rgb :: proc "contextless" (h,s,v:f32) -> [3]f32 {
-    hue:=math.mod(max(h,0),1)*6
-    c:=v*s;x:=c*(1-abs(math.mod(hue,2)-1));m:=v-c
-    rgb:[3]f32
-    switch int(hue) {
-    case 0:rgb={c,x,0}
-    case 1:rgb={x,c,0}
-    case 2:rgb={0,c,x}
-    case 3:rgb={0,x,c}
-    case 4:rgb={x,0,c}
-    case:rgb={c,0,x}
-    }
-    return rgb+m
-}
-rgb_to_hsv :: proc "contextless" (rgb:[3]f32) -> [3]f32 {
-    hi:=max(rgb.r,rgb.g,rgb.b);lo:=min(rgb.r,rgb.g,rgb.b);d:=hi-lo
-    h:f32
-    if d>1e-6 {
-        if hi==rgb.r {h=math.mod((rgb.g-rgb.b)/d+6,6)} else if hi==rgb.g {h=(rgb.b-rgb.r)/d+2} else {h=(rgb.r-rgb.g)/d+4}
-        h/=6
-    }
-    return {h,d/hi if hi>1e-6 else 0,hi}
-}
 rgb_color :: proc "contextless" (rgb:[3]f32,alpha:u8=255) -> Color {
     return {u8(clamp(rgb.r,0,1)*255+0.5),u8(clamp(rgb.g,0,1)*255+0.5),u8(clamp(rgb.b,0,1)*255+0.5),alpha}
 }
-linear_to_srgb :: proc "contextless" (c:f32) -> f32 {
-    v:=clamp(c,0,1)
-    return v*12.92 if v<=0.0031308 else 1.055*math.pow(v,1/2.4)-0.055
-}
-srgb_to_linear :: proc "contextless" (c:f32) -> f32 {
-    v:=clamp(c,0,1)
-    return v/12.92 if v<=0.04045 else math.pow((v+0.055)/1.055,2.4)
-}
 display_color :: proc "contextless" (linear:[3]f32) -> [3]f32 {
-    return {linear_to_srgb(linear.x),linear_to_srgb(linear.y),linear_to_srgb(linear.z)}
+    return {mm.linear_to_srgb(clamp(linear.x,0,1)),mm.linear_to_srgb(clamp(linear.y,0,1)),mm.linear_to_srgb(clamp(linear.z,0,1))}
 }
 linear_color :: proc "contextless" (display:[3]f32) -> [3]f32 {
-    return {srgb_to_linear(display.x),srgb_to_linear(display.y),srgb_to_linear(display.z)}
+    return {mm.srgb_to_linear(clamp(display.x,0,1)),mm.srgb_to_linear(clamp(display.y,0,1)),mm.srgb_to_linear(clamp(display.z,0,1))}
 }
 
 // "#RRGGBB", with or without the '#'.
@@ -69,11 +38,11 @@ hex_color :: proc "contextless" (text:string) -> (rgb:[3]u8,ok:bool) {
 Color_Picker :: struct {hsv:[3]f32}
 color_picker_set :: proc "contextless" (p:^Color_Picker,rgb:[3]f32) {
     hue:=p.hsv[0]
-    p.hsv=rgb_to_hsv({clamp(rgb.r,0,1),clamp(rgb.g,0,1),clamp(rgb.b,0,1)})
+    p.hsv=mm.rgb_to_hsv({clamp(rgb.r,0,1),clamp(rgb.g,0,1),clamp(rgb.b,0,1)})
     if p.hsv[1]==0 {p.hsv[0]=hue}
 }
 // Display space, 0 to 1.
-color_picker_rgb :: proc "contextless" (p:^Color_Picker) -> [3]f32 {return hsv_to_rgb(p.hsv[0],p.hsv[1],p.hsv[2])}
+color_picker_rgb :: proc "contextless" (p:^Color_Picker) -> [3]f32 {return mm.hsv_to_rgb(p.hsv)}
 
 Color_Picker_Result :: struct {
     changed:bool,
