@@ -428,48 +428,53 @@ rhi_pipelines_are_made_on_other_threads_while_frames_are_recorded :: proc(t: ^te
 	expect_clean(t, d)
 }
 
-// Devices made and destroyed at the same time by several threads, as the
-// tests of a package or the sessions of a tool do: the loader lock of the
-// application keeps the Vulkan loader to one of them at a time.
+// Devices made, used and destroyed one after another and then at the same
+// time by several threads, as the tests of a package or the sessions of a tool
+// do: the loader lock of the application keeps the Vulkan loader to one of
+// them at a time. The NVIDIA driver of Windows ended the process within a few
+// devices in a row when none other was alive (shared_device.keep_one).
 @(test)
-rhi_devices_are_created_and_destroyed_on_several_threads_with_one_loader_lock :: proc(t: ^testing.T) {
+rhi_devices_are_created_and_destroyed_in_turn_and_on_several_threads :: proc(t: ^testing.T) {
 	THREADS :: 4
 	ROUNDS :: 3
+	IN_TURN :: 24
 	Shared :: struct {
 		lock:                               sync.Mutex,
 		created, refused, wrong, complaints: i64,
 	}
+	use :: proc(shared: ^Shared, round: int) {
+		d, _ := rhi.device_create({app_name = "mirai rhi threads", validation = true, upload_bytes_per_frame = 1 << 20, loader_lock = &shared.lock})
+		if d == nil {
+			intrinsics.atomic_add(&shared.refused, 1)
+			return
+		}
+		values, echo: [256]u32
+		for &value, at in values {value = u32(at * (round + 3))}
+		buffer := rhi.buffer_create(d, {size = size_of(values), usage = {.Storage}, memory = .GPU, name = "threads"})
+		if buffer == 0 || !rhi.buffer_upload_slice(d, buffer, 0, values[:]) || !rhi.buffer_read_slice(d, buffer, 0, echo[:]) || echo != values {
+			intrinsics.atomic_add(&shared.wrong, 1)
+		}
+		intrinsics.atomic_add(&shared.complaints, i64(rhi.device_validation_errors(d)))
+		rhi.device_destroy(d)
+		intrinsics.atomic_add(&shared.created, 1)
+	}
 	work :: proc(shared: ^Shared) {
 		defer free_all(context.temp_allocator)
-		for round in 0 ..< ROUNDS {
-			d, _ := rhi.device_create({app_name = "mirai rhi threads", validation = true, upload_bytes_per_frame = 1 << 20, loader_lock = &shared.lock})
-			if d == nil {
-				intrinsics.atomic_add(&shared.refused, 1)
-				continue
-			}
-			values, echo: [256]u32
-			for &value, at in values {value = u32(at * (round + 3))}
-			buffer := rhi.buffer_create(d, {size = size_of(values), usage = {.Storage}, memory = .GPU, name = "threads"})
-			if buffer == 0 || !rhi.buffer_upload_slice(d, buffer, 0, values[:]) || !rhi.buffer_read_slice(d, buffer, 0, echo[:]) || echo != values {
-				intrinsics.atomic_add(&shared.wrong, 1)
-			}
-			intrinsics.atomic_add(&shared.complaints, i64(rhi.device_validation_errors(d)))
-			rhi.device_destroy(d)
-			intrinsics.atomic_add(&shared.created, 1)
-		}
+		for round in 0 ..< ROUNDS {use(shared, round)}
 	}
 	// One device first: without a GPU the test has nothing to say.
 	first := test_device(t)
 	if first == nil {return}
 	rhi.device_destroy(first)
 	shared: Shared
+	for round in 0 ..< IN_TURN {use(&shared, round)}
 	threads: [THREADS]^thread.Thread
 	for &worker in threads {worker = thread.create_and_start_with_poly_data(&shared, work)}
 	for worker in threads {
 		thread.join(worker)
 		thread.destroy(worker)
 	}
-	testing.expect_value(t, shared.created, THREADS * ROUNDS)
+	testing.expect_value(t, shared.created, IN_TURN + THREADS * ROUNDS)
 	testing.expect_value(t, shared.refused, 0)
 	testing.expect_value(t, shared.wrong, 0)
 	testing.expect_value(t, shared.complaints, 0)
