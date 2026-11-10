@@ -33,13 +33,12 @@ bench_ragdoll :: proc(w:^World,origin:Vec3) {
     }
     spherical :: proc(w:^World,a,b:Body_Handle,anchor,axis:Vec3,cone,twist:f32) {
         desc:=test_joint(w,.Spherical,a,b,anchor,axis)
-        desc.cone=cone
-        desc.enable_limit,desc.lower,desc.upper=true,-twist,twist
+        desc.angular={{motion=.Limited,lower=-twist,upper=twist},{motion=.Limited,lower=-cone,upper=cone},{motion=.Limited,lower=-cone,upper=cone}}
         joint_create(w,desc)
     }
     revolute :: proc(w:^World,a,b:Body_Handle,anchor,axis:Vec3,lower,upper:f32) {
         desc:=test_joint(w,.Revolute,a,b,anchor,axis)
-        desc.enable_limit,desc.lower,desc.upper=true,lower,upper
+        desc.angular[0]={motion=.Limited,lower=lower,upper=upper}
         joint_create(w,desc)
     }
     o:=origin

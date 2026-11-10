@@ -49,10 +49,7 @@ ccd_transfers_momentum_to_a_sleeping_target_and_wakes_its_joint_island :: proc(t
     a:=test_bullet(&w,{-1,0,0},{200,0,0},true)
     b:=test_bullet(&w,{},{},false)
     c:=test_bullet(&w,{0,2,0},{},false)
-    jd:=Joint_Desc{}
-    jd.type,jd.body_a,jd.body_b=.Distance,b,c
-    jd.length=2
-    joint_create(&w,jd)
+    joint_create(&w,test_distance(b,c,2,2))
     body_set_awake(&w,b,false)
     testing.expect(t,!body_is_awake(&w,b) && !body_is_awake(&w,c))
     world_step(&w,1.0/60)

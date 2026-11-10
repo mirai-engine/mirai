@@ -59,10 +59,11 @@ physics_ragdoll_station :: proc(o:^Out,s:^asset.Scene_Builder,origin:mm.Vec3) ->
         if parents[i]>=0 {
             parent:=parents[i];anchor:=mm.Vec3{0,sizes[i].y*.4,0}
             if i==4 {anchor={0,.175,0}}
-            joint:=phys.joint_sixdof(core.Entity(bodies[parent]),anchor);joint.auto_target=false;joint.target_anchor=world[i].position+anchor-world[parent].position
+            joint:=phys.joint_fixed(core.Entity(bodies[parent]))
+            joint.b_frame,joint.b_anchor,joint.b_rotation=true,world[i].position+anchor-world[parent].position,1
             for &axis in joint.angular {axis.motion=.Limited;axis.lower=-1.1;axis.upper=1.1}
             if i==1 {for &axis in joint.angular {axis.lower=-.4;axis.upper=.4}}
-            asset.builder_set(s,bodies[i],joint)
+            asset.builder_set(s,asset.builder_entity(s,fmt.tprintf("Ragdoll joint %s",names[i]),{position=anchor},bodies[i]),joint)
         }
     }
     return root

@@ -135,7 +135,7 @@ step_init :: proc(st:^Step,d:World_Desc,a:mem.Allocator) -> bool {
     st.joint_order=alloc(i32,d.joint_capacity,a,&ok)
     st.joint_slots=alloc(i32,d.joint_capacity,a,&ok)
     st.joint_data=alloc(Joint_Solver,d.joint_capacity,a,&ok)
-    joint_blocks:=d.joint_capacity>0?d.joint_capacity/WIDE+GRAPH_COLORS*LANE_JOINT_TYPES:0
+    joint_blocks:=d.joint_capacity>0?d.joint_capacity/WIDE+GRAPH_COLORS*LANE_JOINT_KERNELS:0
     st.joint_blocks=alloc(Joint_Block(WIDE),joint_blocks,a,&ok)
     st.joint_lanes=alloc(i32,joint_blocks*WIDE,a,&ok)
     st.joint_scratch=alloc(Joint_Lane,d.joint_capacity,a,&ok)
@@ -246,7 +246,6 @@ solve_stage :: proc(w:^World,pass:Solve_Pass) {
     st:=&w.step
     st.pass=pass
     joints:=pass!=.Restitution
-    // The drives of a spherical joint go before the rest of it, which is solved in lanes.
     if joints {
         st.stage_offset=st.joint_color_start[OVERFLOW_COLOR]
         if count:=st.joint_color_start[OVERFLOW_COLOR+1]-st.stage_offset;count>0 {joints_scalar_task(w,0,count,0)}
@@ -361,7 +360,7 @@ constraints_gather :: proc(w:^World) #no_bounds_check {
             key=joint.edges[key&1].next
         }
     }
-    JOINT_BUCKETS :: GRAPH_COLORS*LANE_JOINT_TYPES
+    JOINT_BUCKETS :: GRAPH_COLORS*LANE_JOINT_KERNELS
     lane_buckets:[JOINT_BUCKETS]int
     lanes:=0
     for i in st.joint_solved[:st.joint_solved_count] {
@@ -369,19 +368,19 @@ constraints_gather :: proc(w:^World) #no_bounds_check {
         a,b:=w.bodies[joint.body_a].solver_index,w.bodies[joint.body_b].solver_index
         island_constraint(w,joint.body_a,joint.body_b)
         color:=color_assign(st,a,b)
-        if joint.type==.SixDOF || joint.type==.Spherical && .Angular_Drive in joint.flags {
+        if joint.kernel==.General {
             st.joint_slots[st.joint_count]=i32(color)
             st.joint_data[st.joint_count].joint=i
             st.joint_count+=1
             counts[color]+=1
+            continue
         }
-        if joint.type==.SixDOF {continue}
         if color==OVERFLOW_COLOR {
             st.joint_single_slots[st.joint_single_count]=i
             st.joint_single_count+=1
             continue
         }
-        bucket:=color*LANE_JOINT_TYPES+int(joint.type)
+        bucket:=color*LANE_JOINT_KERNELS+int(joint.kernel)
         st.joint_scratch[lanes]={i,i32(bucket)}
         lanes+=1
         lane_buckets[bucket]+=1
@@ -398,13 +397,13 @@ constraints_gather :: proc(w:^World) #no_bounds_check {
         st.joint_order[cursor[color]]=i32(i)
         cursor[color]+=1
     }
-    // A block holds joints of one type: each type of each color starts a block.
+    // A block holds joints of one kernel: each kernel of each color starts a block.
     lane_slots:[JOINT_BUCKETS]int
     joint_blocks:=0
     for color in 0..<GRAPH_COLORS {
         st.joint_block_start[color]=joint_blocks
-        for type in 0..<LANE_JOINT_TYPES {
-            bucket:=color*LANE_JOINT_TYPES+type
+        for kernel in 0..<LANE_JOINT_KERNELS {
+            bucket:=color*LANE_JOINT_KERNELS+kernel
             lane_slots[bucket]=joint_blocks*WIDE
             joint_blocks+=(lane_buckets[bucket]+WIDE-1)/WIDE
         }

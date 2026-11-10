@@ -1,6 +1,5 @@
 package physics
 
-import "core:math/linalg"
 import "mirai:core"
 import sim "plugins:physics/runtime/sim"
 import mm "mirai:std/math"
@@ -249,114 +248,79 @@ character_state_of :: proc "contextless" (found:sim.Character_State) -> Characte
     }
 }
 
-Joint_Kind :: enum u8 {
-    Fixed,     // the two frames coincide
-    Spherical, // the anchors coincide; cone limits the angle between the axes and the limit, the twist
-    Revolute,  // rotation about the axis; limit, motor and spring act on the angle
-    Prismatic, // translation along the axis; limit, motor and spring act on the translation
-    Distance,  // the anchors stay at length, or between lower and upper pulled toward length by the spring
-    SixDOF,
-}
 Joint_Motion :: sim.Joint_Motion
 Joint_Drive :: sim.Joint_Drive
 Joint_Axis :: sim.Joint_Axis
 Joint_Error :: sim.Joint_Error
 
-// Joins the body of its entity to the body of target, or to the world when
-// target is NONE. Both need a body of their own: a Rigid_Body, a Collider
-// without one, or a Character as target. The joint acts in a frame of each
-// body: anchor and rotation give the one of the entity, in its own space, and
-// the X axis of the rotation is the axis of the joint. With auto_target the
-// frame of the target is taken from where the two bodies are when the joint
-// is made, and kept in Joint_State.
-@(component,replicated)
+// Joins two bodies: a, or the body of the parent of its entity when a is NONE, and b, or the world when b is
+// NONE; each needs a body of its own (a Rigid_Body, a Collider without one, a Character). The Transform of
+// its entity is its frame, seen from a, and seen from b where the joint is when it is made, which Joint_State
+// keeps, unless b_frame gives it. Each move along an axis of that frame and each turn about it is free,
+// locked or limited, with an optional drive: the X axis is the one of a hinge or a slider, and the turns
+// about Y and Z, limited together, a cone. The presets joint_fixed, joint_spherical, joint_revolute,
+// joint_prismatic and joint_distance lock what each kind locks.
+@(component,replicated,description="Joins two bodies at its own frame: each move along its axes and each turn about them free, locked or limited, with an optional drive.")
 Joint :: struct {
-    kind:Joint_Kind `mirai:"section=Bodies"`,
-    target:core.Entity,
-    anchor:[3]f32 `mirai:"unit=m"`,
-    rotation:mm.Quat,        // zero: identity
-    target_anchor:[3]f32 `mirai:"unit=m"`,
-    target_rotation:mm.Quat,
-    auto_target:bool,
-    collide:bool,            // the two bodies keep colliding with each other
-    limit:bool `mirai:"section=Limits"`,
-    lower,upper:f32,         // radians (revolute, spherical twist) or meters (prismatic, distance)
-    cone:f32 `mirai:"angle,min=0"`, // spherical; zero: no limit
-    motor:bool `mirai:"section=Motor"`,
-    motor_speed:f32,         // rad/s or m/s
-    max_motor:f32 `mirai:"min=0"`, // N m or N
-    spring:bool `mirai:"section=Spring"`,
-    hertz:f32 `mirai:"min=0"`,
-    damping_ratio:f32 `mirai:"min=0"`,
-    spring_target:f32,       // angle or translation the spring pulls toward
-    length:f32 `mirai:"min=0,unit=m"`, // distance; zero: the distance when the joint is made
-    break_force:f32 `mirai:"min=0,unit=N,section=Breaking"`,  // zero: unbreakable
-    break_torque:f32 `mirai:"min=0"`,        // N m
-    linear:[3]Joint_Axis `mirai:"section=Axes"`,
-    angular:[3]Joint_Axis,
+    a:core.Entity `mirai:"section=Bodies"`,
+    b:core.Entity,
+    b_frame:bool,             // b_anchor and b_rotation give its frame on b
+    b_anchor:[3]f32 `mirai:"unit=m"`,
+    b_rotation:mm.Quat,       // zero: identity
+    collide:bool,             // the two bodies keep colliding with each other
+    break_force:f32 `mirai:"min=0,unit=N,section=Breaking"`, // zero: unbreakable
+    break_torque:f32 `mirai:"min=0,unit=N m"`,
+    linear:[3]Joint_Axis `mirai:"section=Axes"`, // along X, Y and Z: two or three limited share one limit, on the length across them
+    angular:[3]Joint_Axis,    // about X, Y and Z: Y and Z limited share one, a cone whose angle toward each side is its limit
 }
 
 // What the simulation knows of a joint. broken stops the joint from being made
-// again until the game clears it; the rest is what auto_target took.
+// again until the game repairs it; b_anchor and b_rotation are the frame on b it took.
 @(component,replicated)
 Joint_State :: struct {
     broken:bool,
     taken:bool,
-    target_anchor:[3]f32,
-    target_rotation:mm.Quat,
-    length:f32,
+    b_anchor:[3]f32,
+    b_rotation:mm.Quat,
     error:Joint_Error `mirai:"readonly"`,
 }
 
-joint_axis :: proc "contextless" (axis:[3]f32) -> mm.Quat {
-    length:=linalg.length(axis)
-    if length<1e-6 {return 1}
-    return mm.quat_between([3]f32{1,0,0},axis/length)
-}
+@(private) JOINT_LOCKED :: [3]Joint_Axis{{motion=.Locked},{motion=.Locked},{motion=.Locked}}
 
-joint_fixed :: proc "contextless" (target:core.Entity) -> Joint {
-    return {kind=.Fixed,target=target,rotation=1,target_rotation=1,auto_target=true}
+joint_fixed :: proc "contextless" (b:core.Entity) -> Joint {
+    return {b=b,linear=JOINT_LOCKED,angular=JOINT_LOCKED}
 }
-joint_spherical :: proc "contextless" (target:core.Entity,anchor:[3]f32={},cone:f32=0) -> Joint {
-    return {kind=.Spherical,target=target,anchor=anchor,rotation=1,target_rotation=1,auto_target=true,cone=cone}
-}
-// A hinge about axis through anchor, both in the space of the entity.
-joint_revolute :: proc "contextless" (target:core.Entity,anchor:[3]f32={},axis:=[3]f32{1,0,0}) -> Joint {
-    return {kind=.Revolute,target=target,anchor=anchor,rotation=joint_axis(axis),target_rotation=1,auto_target=true}
-}
-// A slider along axis, in the space of the entity.
-joint_prismatic :: proc "contextless" (target:core.Entity,axis:=[3]f32{1,0,0},anchor:[3]f32={}) -> Joint {
-    return {kind=.Prismatic,target=target,anchor=anchor,rotation=joint_axis(axis),target_rotation=1,auto_target=true}
-}
-// A rod from anchor on the entity to target_anchor on the target, each in the
-// space of its own; with hertz, a spring of that frequency instead.
-joint_distance :: proc "contextless" (target:core.Entity,anchor:[3]f32={},target_anchor:[3]f32={},length:f32=0,hertz:f32=0,damping_ratio:f32=1) -> Joint {
-    return {
-        kind=.Distance,target=target,anchor=anchor,rotation=1,target_anchor=target_anchor,target_rotation=1,length=length,
-        spring=hertz>0,hertz=hertz,damping_ratio=damping_ratio,limit=hertz>0,lower=0,upper=max(f32),
-    }
-}
-
-joint_sixdof :: proc "contextless" (target:core.Entity,anchor:[3]f32={}) -> Joint {
-    joint:=Joint{kind=.SixDOF,target=target,anchor=anchor,rotation=1,target_rotation=1,auto_target=true}
-    for &axis in joint.linear {axis.motion=.Locked}
-    for &axis in joint.angular {axis.motion=.Locked}
+// The anchors coincide; with cone, the X axis of b turns at most that much from that of a.
+joint_spherical :: proc "contextless" (b:core.Entity,cone:f32=0) -> Joint {
+    joint:=Joint{b=b,linear=JOINT_LOCKED}
+    if cone>0 {joint.angular[1],joint.angular[2]={motion=.Limited,lower=-cone,upper=cone},{motion=.Limited,lower=-cone,upper=cone}}
     return joint
+}
+// A hinge about the X axis of its frame.
+joint_revolute :: proc "contextless" (b:core.Entity) -> Joint {
+    return {b=b,linear=JOINT_LOCKED,angular={{},{motion=.Locked},{motion=.Locked}}}
+}
+// A slider along the X axis of its frame.
+joint_prismatic :: proc "contextless" (b:core.Entity) -> Joint {
+    return {b=b,linear={{},{motion=.Locked},{motion=.Locked}},angular=JOINT_LOCKED}
+}
+// The frame stays between lower and upper meters from b_anchor on b: a rope from 0, a rod at lower equal to upper.
+joint_distance :: proc "contextless" (b:core.Entity,b_anchor:[3]f32,lower,upper:f32) -> Joint {
+    limit:=Joint_Axis{motion=.Limited,lower=lower,upper=upper}
+    return {b=b,b_frame=true,b_anchor=b_anchor,b_rotation=1,linear={limit,limit,limit}}
 }
 
 joint_configuration_error :: proc "contextless" (joint:Joint) -> Joint_Error {
     return sim.joint_configuration_error({
-        type=sim.Joint_Type(joint.kind),frame_a={joint.anchor,joint.rotation},frame_b={joint.target_anchor,joint.target_rotation},
-        enable_limit=joint.limit,lower=joint.lower,upper=joint.upper,cone=joint.cone,
-        enable_motor=joint.motor,motor_speed=joint.motor_speed,max_motor=joint.max_motor,
-        enable_spring=joint.spring,hertz=joint.hertz,damping_ratio=joint.damping_ratio,target=joint.spring_target,
-        length=joint.length,break_force=joint.break_force,break_torque=joint.break_torque,linear=joint.linear,angular=joint.angular,
+        frame_b={joint.b_anchor,joint.b_rotation},break_force=joint.break_force,break_torque=joint.break_torque,
+        linear=joint.linear,angular=joint.angular,
     })
 }
 
+// Drives a joint toward a translation and a rotation of b in its frame: sim.joint_drive_pose.
 joint_drive_pose :: proc "contextless" (joint:^Joint,translation:[3]f32,rotation:mm.Quat,hertz:f32=5,damping_ratio:f32=1,max_force:f32=1000,max_torque:f32=1000) -> Joint_Error {
     if joint==nil {return .Invalid_Value}
-    desc:=sim.Joint_Desc{type=sim.Joint_Type(joint.kind),linear=joint.linear,angular=joint.angular}
+    desc:=sim.Joint_Desc{linear=joint.linear,angular=joint.angular}
     if error:=sim.joint_drive_pose(&desc,translation,rotation,hertz,damping_ratio,max_force,max_torque);error!=.None {return error}
     next:=joint^
     next.linear,next.angular=desc.linear,desc.angular

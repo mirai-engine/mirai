@@ -196,18 +196,16 @@ joints_without_color_hold_the_same_with_any_workers :: proc(t:^testing.T) {
         for i in 0..<30 {
             angle:=f32(i)*2*PI/30
             ball:=test_body(w,Sphere{0.1},{2*cmath.cos(angle),8,2*cmath.sin(angle)})
-            desc:=test_joint(w,.Distance,hub,ball,{0,8,0})
-            desc.frame_b.p={}
-            joint_create(w,desc)
+            joint_create(w,test_distance(hub,ball,2,2))
         }
-        types:=[4]Joint_Type{.Spherical,.Revolute,.Prismatic,.Fixed}
+        types:=[4]Test_Joint{.Spherical,.Revolute,.Prismatic,.Fixed}
         for type,k in types {
             previous:=anchor
             for link in 0..<5 {
                 position:=Vec3{f32(k)*2-3,6-f32(link)*0.6,4}
                 body:=test_body(w,Box{{0.1,0.2,0.1}},position)
                 desc:=test_joint(w,type,previous,body,position+{0,0.3,0},{0,0,1})
-                if type==.Prismatic {desc.enable_limit,desc.lower,desc.upper=true,-0.05,0.05}
+                if type==.Prismatic {desc.linear[0]={motion=.Limited,lower=-0.05,upper=0.05}}
                 joint_create(w,desc)
                 previous=body
             }

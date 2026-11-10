@@ -185,8 +185,7 @@ write_physics_gallery :: proc(o:^Out) {
         case 16:
             secondary=physics_gallery_primitive(&s,"Constraint cube",origin+mm.Vec3{0,2,0},{.4,.4,.4},.Cube,phys.collider_box({.5,.5,.5}),{.9,.9,.3,1},10)
             target=physics_gallery_breakable(&s,"Constrained collection",origin+mm.Vec3{0,0,0},sources.bricks,sources.bricks_mesh)
-            joint:=phys.joint_spherical(core.Entity(secondary),{0,1.2,0},1)
-            asset.builder_set(&s,target,joint)
+            asset.builder_set(&s,asset.builder_entity(&s,"Constrained collection joint",{position={0,1.2,0}},target),phys.joint_spherical(core.Entity(secondary),1))
         case:
             source,mesh:=sources.bricks,sources.bricks_mesh
             if station==3 {source,mesh=sources.hierarchy,sources.hierarchy_mesh}
@@ -221,15 +220,17 @@ physics_gallery_extra :: proc(s:^asset.Scene_Builder,label:base.Asset_Id) {
     prior:base.Entity_Id
     for part in 0..<7 {
         e:=physics_gallery_primitive(s,fmt.tprintf("Chain link %d",part),origin+mm.Vec3{f32(part)*.42-1.26,1.5,0},{.4,.4,.4},.Cube,phys.collider_box({.5,.5,.5}),{.75,.8,.9,1})
-        joint:=phys.joint_spherical(core.Entity(prior),{-.525,0,0})
-        asset.builder_set(s,e,joint);prior=e
+        asset.builder_set(s,asset.builder_entity(s,fmt.tprintf("Chain joint %d",part),{position={-.525,0,0}},e),phys.joint_spherical(core.Entity(prior)))
+        prior=e
     }
     physics_gallery_item(s,label,19,"Constraint chain and CCD","Seven linked rigid bodies with bullet motion. E launches the chain; R restores it.",origin,prior)
     origin={-4,1,-40}
     body:=physics_gallery_primitive(s,"Six axis driven body",origin+mm.Vec3{0,1,0},{.7,.7,.7},.Cube,phys.collider_box({.5,.5,.5}),{.9,.3,.2,1},2)
-    joint:=phys.joint_sixdof(core.NONE)
-    phys.joint_drive_pose(&joint,{.5,.2,0},mm.quat_axis_angle({0,0,1},.4),4,1,500,500)
-    asset.builder_set(s,body,joint)
+    // The world seen from the body where its drives take it: .5 m right, .2 m up and turned .4 about Z.
+    turn:=mm.quat_inverse(mm.quat_axis_angle({0,0,1},.4))
+    joint:=phys.joint_fixed(core.NONE)
+    phys.joint_drive_pose(&joint,-mm.quat_rotate(turn,mm.Vec3{.5,.2,0}),turn,4,1,500,500)
+    asset.builder_set(s,asset.builder_entity(s,"Six axis driven body joint",{},body),joint)
     physics_gallery_item(s,label,20,"Six axis motor","Linear and angular D6 drives target a pose. E disturbs the body; the drives restore it.",origin,body)
     origin={4,1,-40}
     e:=asset.builder_entity(s,"Physical character",{position=origin-mm.Vec3{0,.8,0}})

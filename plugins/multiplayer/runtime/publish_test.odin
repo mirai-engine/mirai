@@ -135,7 +135,9 @@ net_test_late_reference :: proc(t:^testing.T,body:bool) {
             core.edit(&server.values,source).target=target
             core.add(&server.objects,source,net_test_replicate(audience=.Always,update_hz=10,simulation=body?.Lent:.Server))
             if body {
-                core.add(&server.joints,source,phys.joint_fixed(target))
+                joint:=phys.joint_fixed(target)
+                joint.a=source
+                core.add(&server.joints,source,joint)
                 core.settle(&info,server,nil)
                 net_test_physics(server,&shares[0],&apps[0])
             }
@@ -166,7 +168,7 @@ net_test_late_reference :: proc(t:^testing.T,body:bool) {
             testing.expect_value(t,value.target,visitor)
             if body {
                 joint,has:=core.get(&client.joints,replica)
-                testing.expect(t,has && joint.target==visitor)
+                testing.expect(t,has && joint.b==visitor)
                 net_test_physics(client,&shares[1],&apps[1])
                 testing.expect_value(t,client.state.world.joint_count,i32(1))
             }
@@ -182,14 +184,16 @@ net_test_late_reference :: proc(t:^testing.T,body:bool) {
             }
         case 71:
             if body {
-                core.add(&server.joints,source,phys.joint_fixed(core.NONE))
+                joint:=phys.joint_fixed(core.NONE)
+                joint.a=source
+                core.add(&server.joints,source,joint)
                 core.settle(&info,server,nil)
                 net_test_physics(server,&shares[0],&apps[0])
             } else {core.edit(&server.values,source).target=core.NONE}
         case 84:
             if body {
                 joint,has:=core.get(&client.joints,replica)
-                testing.expect(t,has && joint.target==core.NONE)
+                testing.expect(t,has && joint.b==core.NONE)
                 net_test_physics(client,&shares[1],&apps[1])
                 testing.expect_value(t,client.state.world.joint_count,i32(1))
             } else {
