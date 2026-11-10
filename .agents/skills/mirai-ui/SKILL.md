@@ -67,7 +67,8 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
 - **The layout is built again every frame** (immediate), when the frame opens its first element: a
   frame that only draws shapes and text builds no layout. The id and measure tables are emptied by
   generation, so starting a frame does not depend on how many ids the previous one had; the
-  previous frame's rectangles live in the widget registry.
+  previous frame's rectangles live in the widget registry, which `frame_end` indexes by id: a
+  lookup by id (`widget_rect`) does not go through the widgets.
 - **The only thing the layout keeps between frames is the text measure**: a paragraph that did not
   change is not measured again (`Stats.text_measured` and `text_reused`), and one that does not fit
   in `max_text_words` is measured again when split into lines, without being discarded.

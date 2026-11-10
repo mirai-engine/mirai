@@ -219,9 +219,10 @@ with the project library.
   it imports next to it and at the same depth as `decl/`, and `<name>-<part>.stamp` the fingerprint
   of the last build.
 - The declarations copy the body of `#force_inline`, generic or `where` procedures and declare the
-  others as functions of the library. An `@(private="file")` is also declared, private in the
-  declarations file and exported with the name of its file (`mirai.<package>.<file>.<name>`), so a
-  copied body can call it.
+  others as functions of the library, the private ones
+  [only when named](#engine-binaries). An `@(private="file")` one is private in the declarations
+  file and exported with the name of its file (`mirai.<package>.<file>.<name>`), so a copied body
+  can call it.
 - Order: the runtime parts in the order of the plugins (dependencies first) and then, for
   `Editor`, the editor ones. A part imports the runtime of its plugin (the editor one) and the
   parts of the plugins it depends on, with its own, each with all its packages. `Play` links only
@@ -290,7 +291,9 @@ Each mode has its folder: switching between them compiles nothing.
   those with an `any` in their signature (`..any`, `[]any`) with their body (they are compiled in
   the caller: an `any` carries a typeid that only the caller's type table knows, so `fmt` in the
   library would print an enum or a struct of a plugin as nothing) and the rest `foreign` towards
-  the library. Nothing
+  the library. A private procedure is declared and exported only when the text of the declarations
+  of its package names it (a copied body or value, a default value of a declared procedure): no
+  other package can call it, so changing one that is not named changes no declaration. Nothing
   of the engine is recompiled with what uses it. It writes only the files whose text changes.
 - **Currency by parts.** A library is recompiled by its sources (without `_test.odin`; the one
   with `render`, also by `shaders/build/manifest.json`, which gives the hash of the code it
@@ -431,7 +434,7 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 | Run the content tool of a project | `mirai content [project] [-- arguments]` |
 | Documents of interfaces and scenes, no editor | `mirai ui\|scene read\|write\|check ... [--project P]` |
 | Git plugins of a project | `mirai plugin add\|update\|remove\|sync\|list\|catalog\|check ...` |
-| Check types | `mirai check [<package> [-flag...]]`: a package relative to the working folder or to the engine, or absolute; none inside a project: its game, editor and plugins. In a runtime package it also fails on an allocation whose error nothing receives (`tools/mirai/alloc_lint.odin` says which calls and which packages) |
+| Check types | `mirai check [<package> [-flag...]]`: a package relative to the working folder or to the engine, or absolute; none inside a project: its game, editor and plugins. In a runtime package it also fails on an allocation whose error nothing receives (`tools/mirai/alloc_lint.odin` says which calls and which packages), and in the runtime or editor part of a plugin on an import of `render` or `rhi` outside its tests |
 | Run tests | `mirai test [<package>] [test...] [--list\|--failed\|--quiet] [-flag...]`: the package as for `check`; none inside a project: its game |
 | Headless background editor | `mirai session start\|restart\|stop\|status [project] [--dev] [--copy]` |
 | Call the editor API | `mirai rpc <method> [key=value...\|json] [--select c] [--wait-until c=v] [--project P]` |

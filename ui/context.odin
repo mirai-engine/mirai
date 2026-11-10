@@ -139,6 +139,7 @@ Context :: struct {
 
     widgets,previous:[]Widget,
     widget_count,previous_count:int,
+    previous_ids:Id_Table, // the place in previous of the first widget of each id
     clips:[]Clip,clip_count:int, // the first is no clip
     // Containers that clip around what is being built; 0 is none, which a popup pushes.
     clip_stack:[LAYOUT_DEPTH+POPUP_DEPTH]u16,clip_depth,clip_skipped:int,
@@ -255,6 +256,7 @@ context_init :: proc(ctx:^Context,desc:Context_Desc) -> bool {
     a:=ctx.allocator
     ctx.widgets=slice(Widget,count(desc.max_widgets,2048),a,&ok)
     ctx.previous=slice(Widget,len(ctx.widgets),a,&ok)
+    if !id_table_init(&ctx.previous_ids,len(ctx.widgets),a) {ok=false}
     ctx.links=slice(Focus_Link,FOCUS_LINKS,a,&ok)
     ctx.previous_links=slice(Focus_Link,FOCUS_LINKS,a,&ok)
     ctx.groups=slice(Focus_Group,FOCUS_LINKS,a,&ok)
@@ -299,6 +301,7 @@ context_destroy :: proc(ctx:^Context) {
     if ctx.font_owner==nil && ctx.font.allocator.procedure!=nil {font_destroy(&ctx.font)}
     layout_destroy(&ctx.layout)
     delete(ctx.widgets,a);delete(ctx.previous,a);delete(ctx.paints,a);delete(ctx.text,a)
+    id_table_destroy(&ctx.previous_ids,a)
     delete(ctx.links,a);delete(ctx.previous_links,a);delete(ctx.groups,a);delete(ctx.previous_groups,a)
     retained_destroy(ctx)
     base.region_release(&ctx.draw.region);delete(ctx.draw.commands,a)
@@ -343,6 +346,66 @@ id_push :: proc(ctx:^Context,scope:Id) {
 id_pop :: proc(ctx:^Context) {
     if ctx.id_skipped>0 {ctx.id_skipped-=1;return}
     if ctx.id_depth>0 {ctx.id_depth-=1}
+}
+
+// Where what has an id is: the first place put for it. A slot of an earlier
+// generation is free, so emptying the table costs nothing. It has slots for
+// twice what it is made for, and is given no more than that.
+@(private)
+Id_Table :: struct {ids:[]Id,places:[]i32,generations:[]u32,mask,generation:u32}
+
+@(private)
+id_table_init :: proc(t:^Id_Table,most:int,allocator:runtime.Allocator) -> bool {
+    slots:=16
+    for slots<most*2 {slots<<=1}
+    errors:[3]runtime.Allocator_Error
+    t.ids,errors[0]=make([]Id,slots,allocator)
+    t.places,errors[1]=make([]i32,slots,allocator)
+    t.generations,errors[2]=make([]u32,slots,allocator)
+    if errors!={} {id_table_destroy(t,allocator);return false}
+    // Allocated memory is not promised to be zeroed, and a slot is free by
+    // the generation it holds.
+    mem.zero_slice(t.generations)
+    t.mask,t.generation=u32(slots-1),1
+    return true
+}
+@(private)
+id_table_destroy :: proc(t:^Id_Table,allocator:runtime.Allocator) {
+    delete(t.ids,allocator);delete(t.places,allocator);delete(t.generations,allocator)
+    t^={}
+}
+@(private)
+id_table_clear :: proc(t:^Id_Table) {
+    t.generation+=1
+    if t.generation==0 {mem.zero_slice(t.generations);t.generation=1}
+}
+@(private)
+id_table_slot :: #force_inline proc "contextless" (t:^Id_Table,id:Id) -> u32 {
+    // Ids are hashes already: one multiplication spreads them over the slots.
+    return (u32(id)*2654435761)>>8 & t.mask
+}
+// False when the id has a place already, which it keeps.
+@(private)
+id_table_put :: proc(t:^Id_Table,id:Id,place:i32) -> bool {
+    slot:=id_table_slot(t,id)
+    for t.generations[slot]==t.generation {
+        if t.ids[slot]==id {return false}
+        slot=(slot+1)&t.mask
+    }
+    t.generations[slot]=t.generation
+    t.ids[slot]=id
+    t.places[slot]=place
+    return true
+}
+@(private)
+id_table_find :: proc(t:^Id_Table,id:Id) -> (place:i32,found:bool) {
+    if len(t.ids)==0 {return}
+    slot:=id_table_slot(t,id)
+    for t.generations[slot]==t.generation {
+        if t.ids[slot]==id {return t.places[slot],true}
+        slot=(slot+1)&t.mask
+    }
+    return
 }
 
 // Adds the widths of the columns of a Grid to the frame and returns what its
@@ -411,8 +474,16 @@ widget_add :: proc(ctx:^Context,id:Id,flags:Widget_Flags) {
 // The rectangle an element had when the previous frame was laid out: the one
 // that was on screen when this frame's input happened.
 widget_rect :: proc(ctx:^Context,id:Id) -> (rect:Rect,found:bool) {
-    for &w in ctx.previous[:ctx.previous_count] {if w.id==id {return w.rect,true}}
-    return {},false
+    w:=widget_previous(ctx,id)
+    if w==nil {return {},false}
+    return w.rect,true
+}
+// The widget of an id in the previous frame, the first registered with it;
+// nil when none was.
+@(private)
+widget_previous :: proc(ctx:^Context,id:Id) -> ^Widget {
+    place,found:=id_table_find(&ctx.previous_ids,id)
+    return &ctx.previous[place] if found else nil
 }
 
 // A float nested deeper than LAYER_STACK_DEPTH stays in the layer around it.
@@ -581,6 +652,8 @@ frame_end :: proc(ctx:^Context) -> Frame {
     input_frame_end(ctx)
     ctx.widgets,ctx.previous=ctx.previous,ctx.widgets
     ctx.previous_count=ctx.widget_count
+    id_table_clear(&ctx.previous_ids)
+    for &w,place in ctx.previous[:ctx.previous_count] {id_table_put(&ctx.previous_ids,w.id,i32(place))}
     ctx.links,ctx.previous_links=ctx.previous_links,ctx.links
     ctx.previous_link_count=ctx.link_count
     ctx.groups,ctx.previous_groups=ctx.previous_groups,ctx.groups

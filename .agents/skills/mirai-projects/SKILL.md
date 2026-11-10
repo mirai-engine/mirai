@@ -88,6 +88,8 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 - A generic procedure, an `inline` one, one with `deferred_*` or one with an `any` in its
   signature is compiled in its caller: it is not exported. An `any` crossing into a library would
   carry a typeid its type table lacks (`%v` of a plugin's enum prints nothing).
+- A private procedure is declared and exported only when the declarations of its package name it:
+  what `declare` copies as text and what it looks for names in are the same set.
 - The project libraries and the engine ones share flags (`engine_flags`: `-custom-attribute` and
   the platform ones); their layouts depend on it.
 - Only the shaders job (`Shaders_Job`, on its thread) writes to `project.shader_generation(root)`.

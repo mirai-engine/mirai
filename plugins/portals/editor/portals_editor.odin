@@ -4,7 +4,7 @@ import "core:math"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:host"
-import gpu "mirai:render"
+import erender "mirai:engine/render"
 import "mirai:ui"
 import portals "plugins:portals/runtime"
 
@@ -36,16 +36,16 @@ portal_make :: proc(s:^editor.Session,w:core.World_Ref,e:core.Entity) {
 }
 
 @(storage)
-Portals_Gizmo :: struct {vertices:[GIZMO_VERTICES]gpu.Debug_Vertex}
+Portals_Gizmo :: struct {vertices:[GIZMO_VERTICES]erender.Debug_Vertex}
 
 // The opening of each selected portal, its front, and the way to its exit.
 @(step="frame",after="editor_tools")
 portals_gizmo :: proc(s:^editor.Session,gizmo:^Portals_Gizmo,app:^host.App) {
-    draw :: proc(lines:^gpu.Debug_Lines,w:core.World_Ref,e:core.Entity,portal:portals.Portal) {
+    draw :: proc(lines:^erender.Debug_Lines,w:core.World_Ref,e:core.Entity,portal:portals.Portal) {
         placed:=editor.entity_world(w,e)
         editor.gizmo_face(lines,placed,portal.ellipse,GIZMO_COLOR)
         if editor.entity_alive(w,portal.exit) {
-            gpu.debug_arrow(lines,placed.position,editor.entity_world(w,portal.exit).position,GIZMO_COLOR,0.3)
+            erender.debug_arrow(lines,placed.position,editor.entity_world(w,portal.exit).position,GIZMO_COLOR,0.3)
         }
     }
     editor.selection_gizmo(s,app,gizmo.vertices[:],portals.Portal,draw)

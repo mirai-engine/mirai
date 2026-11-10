@@ -9,7 +9,6 @@ import "mirai:core"
 import "mirai:editor"
 import erender "mirai:engine/render"
 import "mirai:host"
-import gpu "mirai:render"
 import "mirai:std/base"
 import "mirai:ui"
 import vfx "plugins:vfx/runtime"
@@ -199,7 +198,7 @@ effect_parameter :: proc(values:^Effect_Values,name:string) -> ^effect.Particle_
 }
 
 // Stores a value for a parameter the program declares; false without room.
-effect_parameter_put :: proc(values:^Effect_Values,declared:^gpu.Program_Parameter,value:[4]f64,texture:base.Asset_Id) -> bool {
+effect_parameter_put :: proc(values:^Effect_Values,declared:^erender.Program_Parameter,value:[4]f64,texture:base.Asset_Id) -> bool {
     stored:=effect_parameter(values,declared.name)
     if stored==nil {
         if values.parameter_count>=len(values.parameters) {return false}
@@ -375,7 +374,7 @@ effect_rows :: proc(s:^editor.Session,p:^Effect_Document,assets:^host.Assets) {
 parameter_rows :: proc(s:^editor.Session,p:^Effect_Document,assets:^host.Assets) {
     ctx:=s.gui.ctx
     th:=&ctx.theme
-    program:^gpu.Program
+    program:^erender.Program
     if name:=base.text_get(p.held.info.program[:]);name!="" {program=erender.program_find(assets,name,.Vfx)}
     if program!=nil {
         for &declared,index in program.parameters {
@@ -401,7 +400,7 @@ parameter_rows :: proc(s:^editor.Session,p:^Effect_Document,assets:^host.Assets)
 // A parameter as its kind and components take it, inside its range, with the
 // arrow that gives it back what the file stores.
 @(private)
-parameter_row :: proc(s:^editor.Session,p:^Effect_Document,declared:^gpu.Program_Parameter) {
+parameter_row :: proc(s:^editor.Session,p:^Effect_Document,declared:^erender.Program_Parameter) {
     ctx:=s.gui.ctx
     th:=&ctx.theme
     label:=editor.readable(declared.name)

@@ -11,7 +11,6 @@ import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:platform"
 import paint "plugins:paint/runtime"
-import gpu "mirai:render"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:ui"
@@ -46,8 +45,8 @@ Paint_Tool :: struct {
     over:bool,    // the pointer is on the scene
     ready:bool,
     stroke:Stroke,
-    lines_storage:[dynamic]gpu.Debug_Vertex,
-    lines:gpu.Debug_Lines,
+    lines_storage:[dynamic]erender.Debug_Vertex,
+    lines:erender.Debug_Lines,
 }
 
 Stroke :: struct {
@@ -79,7 +78,7 @@ tool_ready :: proc(t:^Paint_Tool) {
     t.ready=true
     t.radius,t.strength,t.color=RADIUS_DEFAULT,STRENGTH_DEFAULT,COLOR_DEFAULT
     resize(&t.lines_storage,LINE_CAPACITY)
-    t.lines=gpu.debug_lines_make(t.lines_storage[:],true)
+    t.lines=erender.debug_lines_make(t.lines_storage[:],true)
 }
 
 @(private)
@@ -104,7 +103,7 @@ paint_brush :: proc(
     s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),
     assets:^host.Assets,extras:^host.Frame_Extras,allocator:runtime.Allocator,input:core.Input,frame:core.Frame_Time,
 ) {
-    gpu.debug_lines_clear(&tool.lines)
+    erender.debug_lines_clear(&tool.lines)
     defer if tool.lines.count>0 {host.extras_debug_lines_add(extras,tool.lines)}
     if !s.gui.begun {return}
     stroke:=&tool.stroke
@@ -145,10 +144,10 @@ ring :: proc(tool:^Paint_Tool,position,normal:[3]f32) {
     for segment in 1..=RING_SEGMENTS {
         angle:=f32(segment)/RING_SEGMENTS*math.TAU
         point:=center+(side*math.cos(angle)+up*math.sin(angle))*tool.radius
-        gpu.debug_line(&tool.lines,previous,point,color)
+        erender.debug_line(&tool.lines,previous,point,color)
         previous=point
     }
-    gpu.debug_line(&tool.lines,center,center+normal*tool.radius*0.25,color)
+    erender.debug_line(&tool.lines,center,center+normal*tool.radius*0.25,color)
 }
 
 // Takes the mesh of the entity under the pointer into memory and paints the
