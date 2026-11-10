@@ -1041,23 +1041,24 @@ agent_neighbors :: proc(a:^Navigation_Agents,i:int,top,wanted:f32) {
             if !ok {break}
             if int(index)==i {continue}
             other:=a.near[index]
-            velocity:=other.velocity
-            if !other.avoids {velocity={}}
+            velocity:=other.avoids?other.velocity:{}
+            to:=other.position-near.position
             reach:=NAV_AGENT_HORIZON*(top+linalg.length(velocity))
             if near.flies {
                 reach+=near_sphere(near)+near_sphere(other)
-                distance2:=linalg.length2(other.position-near.position)
-                if distance2>reach*reach {continue}
-                append(&a.neighbors_air,ai.Avoid_Agent(3){position=other.position,velocity=velocity,radius=near_sphere(other)})
-                if distance2<=held*held {within+=1}
-                continue
+            } else {
+                if abs(to.y)>max(near.height,other.height) {continue}
+                to.y=0
+                reach+=near.radius+other.radius
             }
-            if abs(other.position.y-near.position.y)>max(near.height,other.height) {continue}
-            reach+=near.radius+other.radius
-            distance2:=linalg.length2(mm.Vec2{other.position.x-near.position.x,other.position.z-near.position.z})
+            distance2:=linalg.length2(to)
             if distance2>reach*reach {continue}
-            append(&a.neighbors,ai.Avoid_Agent(2){position={other.position.x,other.position.z},velocity={velocity.x,velocity.z},radius=other.radius})
             if distance2<=held*held {within+=1}
+            if near.flies {
+                append(&a.neighbors_air,ai.Avoid_Agent(3){position=other.position,velocity=velocity,radius=near_sphere(other)})
+            } else {
+                append(&a.neighbors,ai.Avoid_Agent(2){position=other.position.xz,velocity=velocity.xz,radius=other.radius})
+            }
         }
         if held>=far || within>=ai.AVOID_MAX_NEIGHBORS {return}
     }
