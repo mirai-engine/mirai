@@ -1,6 +1,5 @@
 package editor
 
-import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
@@ -39,8 +38,8 @@ documents_save_restart :: proc(s:^Session,folder:string) -> (file:string,ok:bool
         if document_write(s,snapshot,false)!=.None {return "",false}
         append(&saved.tabs,Document_Restore{snapshot,strings.clone(document_path(s.document),context.temp_allocator),selected_ids(s),s.viewport.orbit,document_dirty(s),s.viewport.preview_sun})
     }
-    data,error:=json.marshal(saved,{},context.temp_allocator)
-    if error!=nil {return "",false}
+    data,encoded:=serial.text_encode(saved,.Line,context.temp_allocator)
+    if !encoded {return "",false}
     file=project.path(folder,"restart-documents.json",allocator=context.temp_allocator)
     return file,serial.file_write_atomic(file,data)==.None
 }
@@ -51,7 +50,7 @@ documents_restore :: proc(s:^Session,file:string,beside:=false) -> string {
     data,error:=os.read_entire_file(file,context.temp_allocator)
     if error!=nil {return fmt.tprintf("%s could not be read: %s",file,os.error_string(error))}
     saved:Documents_Restore
-    if json.unmarshal(data,&saved,allocator=context.temp_allocator)!=nil || len(saved.tabs)==0 {return fmt.tprintf("%s lists no tabs",file)}
+    if serial.text_decode(string(data),&saved,context.temp_allocator)!="" || len(saved.tabs)==0 {return fmt.tprintf("%s lists no tabs",file)}
     folder:=filepath.dir(project.path_absolute(file,context.temp_allocator))
     for tab,index in saved.tabs {
         expected:=project.path(folder,fmt.tprintf("restart-%d.scene",index),allocator=context.temp_allocator)

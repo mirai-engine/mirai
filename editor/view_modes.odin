@@ -345,11 +345,6 @@ Api_View_Mode_Params :: struct {
 	mode: [VIEW_MODE_NAME_BYTES]u8 `mirai:"text,label=A mode that editor.view_mode.list lists: lit or base_color or direct or shadows... or one of a plugin such as collision or collision.<layer>"`,
 }
 
-@(private)
-API_VIEW_MODE_SCHEMA :: `{"type":"object","properties":{"mode":{"type":"string"},"label":{"type":"string"},"group":{"type":"string"},"submenu":{"type":"string"},"available":{"type":"boolean"},"reason":{"type":"string"}},"required":["mode","label","group","submenu","available","reason"],"additionalProperties":false}`
-@(private)
-API_VIEW_MODES_SCHEMA :: `{"type":"object","properties":{"current":{"type":"string"},"modes":{"type":"array","items":` + API_VIEW_MODE_SCHEMA + `}},"required":["current","modes"],"additionalProperties":false}`
-
 // A mode as the API gives it: its name, its label, its group and submenu in
 // the menu, and why it cannot be shown now when it cannot.
 @(private)
@@ -396,8 +391,32 @@ api_view_mode :: proc(s: ^Session, call: ^api.Call) {
 	api_view_mode_write(call, entry)
 }
 
+// What editor.view_mode.list answers.
+Api_Editor_View_Mode_List_Result_Modes :: struct {
+    mode:string,
+    label:string,
+    group:string,
+    submenu:string,
+    available:bool,
+    reason:string,
+}
+Api_Editor_View_Mode_List_Result :: struct {
+    current:string,
+    modes:[]Api_Editor_View_Mode_List_Result_Modes,
+}
+
+// What editor.view_mode.set answers.
+Api_Editor_View_Mode_Set_Result :: struct {
+    mode:string,
+    label:string,
+    group:string,
+    submenu:string,
+    available:bool,
+    reason:string,
+}
+
 @(private)
 view_modes_api_register :: proc(s: ^Session, st: ^Api_State) {
-	api_register(s, st, {name = "editor.view_mode.list", summary = "The modes of inspection of the viewport, of the core and of the plugins: where the menu shows each, the one shown and why one cannot be shown now.", result_schema = API_VIEW_MODES_SCHEMA, flags = {.Read_Only}, run = api_view_modes})
-	api_register(s, st, {name = "editor.view_mode.set", summary = "Shows a mode of inspection in the viewport instead of the lit image. A Play shows the lit image of its game.", params = Api_View_Mode_Params, result_schema = API_VIEW_MODE_SCHEMA, flags = {.Idempotent}, run = api_view_mode})
+	api_register(s, st, {name = "editor.view_mode.list", summary = "The modes of inspection of the viewport, of the core and of the plugins: where the menu shows each, the one shown and why one cannot be shown now.",result=Api_Editor_View_Mode_List_Result,writes_result=true, flags = {.Read_Only}, run = api_view_modes})
+	api_register(s, st, {name = "editor.view_mode.set", summary = "Shows a mode of inspection in the viewport instead of the lit image. A Play shows the lit image of its game.", params = Api_View_Mode_Params,result=Api_Editor_View_Mode_Set_Result,writes_result=true, flags = {.Idempotent}, run = api_view_mode})
 }

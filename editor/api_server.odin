@@ -1,7 +1,6 @@
 package editor
 
 import "base:runtime"
-import "core:encoding/json"
 import "core:fmt"
 import "core:log"
 import "core:os"
@@ -170,8 +169,9 @@ api_port_file_path :: proc(s:^Session) -> string {
 api_port_file_write :: proc(s:^Session,port:int) {
     if !s.has_project {return}
     engine:=engine_folder_here(s)
-    data,error:=json.marshal(api.Port_File{port,os.get_pid(),s.project_root,engine,s.engine_stamp,build.target_stamp_of(s.project_root,.Editor,context.temp_allocator),s.headless},{pretty=true},context.temp_allocator)
-    if error!=nil {return}
+    file:=api.Port_File{port,os.get_pid(),s.project_root,engine,s.engine_stamp,build.target_stamp_of(s.project_root,.Editor,context.temp_allocator),s.headless}
+    data,encoded:=serial.text_encode(file,.Pretty,context.temp_allocator)
+    if !encoded {return}
     path:=api_port_file_path(s)
     _=os.make_directory_all(path[:strings.last_index_byte(path,'/')])
     _=serial.file_write_atomic(path,data)
@@ -191,7 +191,7 @@ api_port_file_remove :: proc(s:^Session) {
     data,error:=os.read_entire_file(path,context.temp_allocator)
     if error!=nil {return}
     written:api.Port_File
-    if json.unmarshal(data,&written,allocator=context.temp_allocator)==nil && written.pid==os.get_pid() {_=os.remove(path)}
+    if serial.text_decode(string(data),&written,context.temp_allocator)=="" && written.pid==os.get_pid() {_=os.remove(path)}
 }
 
 // The schema of every component of the world, to read and write their values as JSON.
@@ -378,21 +378,12 @@ api_disk_sync :: proc(s:^Session,call:^api.Call) -> bool {
     if sources==s.build.shader_sources {return true}
     s.build.shader_sources=sources
     programs_publish_request(s)
-    if !api_call_draws(call) {return true}
+    if .Draws not_in call.method.flags {return true}
     if ok,message:=programs_wait(s,API_SHADERS_SECONDS,true);!ok {
         api.call_fail(call,api.SERVER_ERROR,message)
         return false
     }
     return true
-}
-
-// Whether a method draws the scene or starts what draws it.
-@(private)
-api_call_draws :: proc(call:^api.Call) -> bool {
-    switch call.method.name {
-    case "capture","play.start","play.record","view.viewport","material.preview.capture","animation.capture","ui.capture": return true
-    }
-    return false
 }
 
 // Whether an agent drives the editor: a call runs, or one arrived within API_ACTIVE.
@@ -445,7 +436,7 @@ api_trampoline :: proc(call:^api.Call) {
     refs:=ai_call_refs(call.raw,refs_buffer[:]) if turn!=nil else ""
     serial_before:=edits!=nil?edits.serial:0
     started:=time.tick_now()
-    if edits!=nil && !api_call_as_user(call) {edits.author=turn!=nil?history.Edit_Author(turn.id):history.EDIT_AUTHOR_API}
+    if edits!=nil && .As_User not_in call.method.flags {edits.author=turn!=nil?history.Edit_Author(turn.id):history.EDIT_AUTHOR_API}
     api_refusal_begin(entry.session)
     event(entry.session,"api",call.method.name)
     if st.in_call>1 || api_disk_sync(entry.session,call) {entry.run(entry.session,call)}
@@ -465,7 +456,7 @@ api_trampoline :: proc(call:^api.Call) {
     if task!=nil && base.text_get(task.name[:])!=call.client_tag {task=nil}
     if external_id!=0 {task=ai_task_find(entry.session.ai,external_id)}
     if task!=nil {ai_tool_note(entry.session,task,call.method.name,target,refs,call.failed?call.error.message:"",time.tick_since(started))}
-    if task!=nil && !call.failed && .Read_Only not_in call.method.flags && !strings.has_prefix(call.method.name,"engine.") && entry.session.edits!=nil && entry.session.edits.serial!=serial_before {
+    if task!=nil && !call.failed && call.method.flags&{.Read_Only,.As_User}=={} && entry.session.edits!=nil && entry.session.edits.serial!=serial_before {
         ai_review_record(entry.session,task,serial_before)
         ai_task_dirty(task)
         ai_task_persist(entry.session,task)
@@ -473,22 +464,11 @@ api_trampoline :: proc(call:^api.Call) {
 }
 
 // Whether a method may edit the document: not one that only reads, runs
-// frames, input or captures of the editor, moves its camera or selection, or
-// ends a turn.
+// frames, input or captures of the editor as the user would, moves its camera
+// or selection, or ends a turn. Its flags say so.
 @(private)
 api_call_edits :: proc(call:^api.Call) -> bool {
-    switch call.method.name {
-    case "finish","editor.select","camera.set","editor.section_view","editor.section_travel": return false
-    }
-    return .Read_Only not_in call.method.flags && !api_call_as_user(call)
-}
-
-// Whether a method runs frames, input or captures of the editor as the user
-// would: what they change is the user's.
-@(private)
-api_call_as_user :: proc(call:^api.Call) -> bool {
-    name:=call.method.name
-    return name=="editor.input" || name=="capture" || strings.has_prefix(name,"engine.")
+    return call.method.flags&{.Read_Only,.As_User,.View}=={}
 }
 
 Api_Method :: struct {
@@ -498,8 +478,7 @@ Api_Method :: struct {
     defaults:rawptr,
     run:Api_Handler,
     flags:api.Method_Flags,
-    params_schema,result_schema:string,
-    writes_result:bool, // the handler writes the result into call.out; result only gives its schema
+    writes_result:bool, // the handler writes the result into call.out, in the shape of result
 }
 
 // A provider is the sole field of an Editor storage with a default procedure.
@@ -551,7 +530,7 @@ api_register :: proc(s:^Session,st:^Api_State,m:Api_Method) -> bool {
     result:=api.method_register(&st.server,{
         name=m.name,summary=m.summary,plugin=st.plugin,params=m.params,result=m.result,defaults=m.defaults,
         params_info=m.params_info,result_info=m.result_info,
-        params_schema=m.params_schema,result_schema=m.result_schema,handler=api_trampoline,user=entry,flags=m.flags,writes_result=m.writes_result,
+        handler=api_trampoline,user=entry,flags=m.flags,writes_result=m.writes_result,
     })
     if result!=.None {
         return refuse(st,"%s could not be registered: %v %s",m.name,result,st.server.schema.error)

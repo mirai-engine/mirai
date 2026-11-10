@@ -35,7 +35,7 @@ bench_process :: proc(t:^testing.T) {
     defer server_destroy(&f.server)
     testing.expect_value(t,method_register(&f.server,{name="test.add",params=Add_Params,result=Add_Result,handler=add_handler}),Register_Error.None)
     testing.expect_value(t,method_register(&f.server,{name="test.shapes",params=Shapes,result=Shapes,handler=shapes_handler}),Register_Error.None)
-    testing.expect_value(t,method_register(&f.server,{name="test.raw",handler=raw_handler}),Register_Error.None)
+    testing.expect_value(t,method_register(&f.server,{name="test.raw",params=Raw_Params,result=Raw_Result,writes_result=true,handler=raw_handler}),Register_Error.None)
     @(static) server:^Server
     server=&f.server
     measure("process: typed call, two integers",100000,proc(n:int) {

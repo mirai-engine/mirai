@@ -49,8 +49,10 @@ tool_find :: proc(s:^Server,name:string) -> ^Method {
     return nil
 }
 
-// Adds the params or the result type of a method to the schema.
-schema_register :: proc(s:^Server,id:typeid,info:^runtime.Type_Info=nil) -> (index:serial.Type_Index,ok:bool) {
+// Adds the params or the result type of a method to the schema: a struct. A
+// result may also be a list, and serial.Json when only the world knows its
+// shape.
+schema_register :: proc(s:^Server,id:typeid,info:^runtime.Type_Info=nil,result:=false) -> (index:serial.Type_Index,ok:bool) {
     if id==nil {return serial.TYPE_NONE,true}
     first_type:=len(s.schema.types)
     index=serial.schema_add_type_info(&s.schema,info!=nil?info:type_info_of(id)) or_return
@@ -61,7 +63,8 @@ schema_register :: proc(s:^Server,id:typeid,info:^runtime.Type_Info=nil) -> (ind
             return serial.TYPE_NONE,false
         }
     }
-    if s.schema.types[index].kind!=.Struct {
+    kind:=s.schema.types[index].kind
+    if kind!=.Struct && !(result && (kind==.Slice || kind==.Json)) {
         delete(s.schema.error,s.schema.allocator)
         s.schema.error=format_text(s.schema.allocator,"%v is not a struct",id)
         return serial.TYPE_NONE,false
@@ -84,11 +87,8 @@ method_register :: proc(s:^Server,desc:Method_Desc) -> Register_Error {
     method.params,ok=schema_register(s,desc.params,desc.params_info)
     if !ok {return .Invalid_Type}
     method.clamps=type_clamps(s,method.params)
-    method.result,ok=schema_register(s,desc.result,desc.result_info)
+    method.result,ok=schema_register(s,desc.result,desc.result_info,result=true)
     if !ok {return .Invalid_Type}
-    for pair in ([2]struct{text:string,type:typeid}{{desc.params_schema,desc.params},{desc.result_schema,desc.result}}) {
-        if pair.text!="" && (pair.type!=nil || !json_valid(context.temp_allocator,pair.text)) {return .Invalid_Schema}
-    }
     limit:=u32(s.scratch.arena.data!=nil?len(s.scratch.arena.data)/4:0)
     if method.params!=serial.TYPE_NONE && s.schema.types[method.params].size>limit {return .Too_Large}
     if method.result!=serial.TYPE_NONE && !method.writes_result && s.schema.types[method.result].size>limit {return .Too_Large}
@@ -100,8 +100,6 @@ method_register :: proc(s:^Server,desc:Method_Desc) -> Register_Error {
     method.name=clone_text(s.allocator,desc.name)
     method.summary=clone_text(s.allocator,desc.summary)
     method.plugin=clone_text(s.allocator,desc.plugin)
-    method.params_schema=clone_text(s.allocator,desc.params_schema)
-    method.result_schema=clone_text(s.allocator,desc.result_schema)
     s.methods[s.method_count]=method
     s.method_count+=1
     return .None

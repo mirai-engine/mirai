@@ -99,7 +99,7 @@ project_set_writes_project_mirai_only_when_all_of_it_is_valid :: proc(t:^testing
         {`{"identifier":"com studio"}`,"com.studio.game"},
         {`{"icon":"missing.png"}`,"does not exist in the project"},
         {`{"start_scene":"scenes/none.scene"}`,"does not exist"},
-        {`{"window":{"width":0}}`,"go from 1 to"},
+        {`{"window":{"width":0}}`,"window.width must be at least 1"},
         {`{"title":"Game"}`,"title"},
         {`{"name":""}`,"name is missing"},
     }

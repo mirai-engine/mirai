@@ -195,7 +195,7 @@ api_filmstrip_read :: proc(s:^Session,call:^api.Call,r:^Run,own:bool,p:^Api_Capt
 api_filmstrip_run :: proc(s:^Session,call:^api.Call,strip:^Api_Filmstrip,path:string,shown:bool) {
     defer img.sheet_destroy(&strip.sheet)
     r:=run_player(s,strip.run.owner,strip.run.player)
-    if r==nil {api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first");return}
+    if r==nil {api_no_game(call);return}
     if strip.run.owner==0 && !play_paused(s) {play_pause(s,true,stepped=true)}
     if problem:=api_filmstrip_take(s,strip,0);problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return}
     ran,_,problem:=api_step_run(s,&strip.run,api_step_frame)

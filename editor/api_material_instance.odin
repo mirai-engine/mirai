@@ -15,9 +15,6 @@ import "mirai:std/serial"
 // edits it.
 
 @(private)
-MATERIAL_INSTANCE_SET_SCHEMA :: `{"type":"object","properties":{"entity":{`+api.ENTITY_SCHEMA+`,"description":"The entity with the Mesh_Renderer"},"slot":{"type":"integer","minimum":0,"description":"The slot of its mesh whose material the values, parameters and textures are of, from 0; 0 when omitted"},"values":{"type":"object","description":"Values it shows, as material.instance.inspect gives them: those that differ from its material become its own"},"parameters":{"type":"object","description":"Numbers of the Surface program of its material for this entity, by name, as 1 to 4 numbers; null takes one away"},"textures":{"type":"object","description":"Textures for this entity by a map (maps.base_color, maps.normal...) or a texture of the program: a texture by path or id, \"\" for none, null takes it away"},"overlays":{"type":["array","null"],"description":"Layers in place of those of its material, [{material, blend: Alpha|Additive|Multiply, enabled}]; null gives back those of the material"}},"required":["entity"],"additionalProperties":false}`
-
-@(private)
 Api_Material_Slot_Params :: struct {
     entity:Api_Entity_Text `mirai:"text,entity"`,
     slot:int `mirai:"optional,min=0,label=The slot of its mesh, from 0"`,
@@ -42,10 +39,20 @@ Api_Material_Instance_Overlay :: struct {
     enabled:bool,
 }
 
+// What material.instance.set takes.
+Api_Material_Instance_Set_Params :: struct {
+    entity:string `mirai:"entity,label=The entity with the Mesh_Renderer"`,
+    slot:int `mirai:"optional,min=0,label=The slot of its mesh whose material the values, parameters and textures are of, from 0; 0 when omitted"`,
+    values:serial.Json `mirai:"optional,label=Values it shows, as material.instance.inspect gives them: those that differ from its material become its own"`,
+    parameters:serial.Json `mirai:"optional,label=Numbers of the Surface program of its material for this entity, by name, as 1 to 4 numbers; null takes one away"`,
+    textures:serial.Json `mirai:"optional,label=Textures for this entity by a map (maps.base_color, maps.normal...) or a texture of the program: a texture by path or id, '' for none, null takes it away"`,
+    overlays:[]serial.Json `mirai:"optional,label=Layers in place of those of its material, [{material, blend: Alpha|Additive|Multiply, enabled}]; null gives back those of the material"`,
+}
+
 @(private)
 material_instance_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="material.instance.inspect",params=Api_Material_Slot_Params,summary="What an entity shows of the material of a slot of its mesh: its values with those of the entity over them, what the entity changes of it, its parameters and its overlays.",result=Api_Material_Instance,writes_result=true,flags={.Read_Only},run=api_material_instance_inspect})
-    api_register(s,st,{name="material.instance.set",params_schema=MATERIAL_INSTANCE_SET_SCHEMA,summary="Makes the values given that differ from the material of the slot, and the parameters, textures and overlays given, the entity's own; the material does not change. In Edit; one undo step.",result=Api_Material_Instance,writes_result=true,run=api_material_instance_set})
+    api_register(s,st,{name="material.instance.set",params=Api_Material_Instance_Set_Params,summary="Makes the values given that differ from the material of the slot, and the parameters, textures and overlays given, the entity's own; the material does not change. In Edit; one undo step.",result=Api_Material_Instance,writes_result=true,run=api_material_instance_set})
     api_register(s,st,{name="material.instance.revert",params=Api_Material_Slot_Params,summary="The entity takes back everything of the material of a slot, and for the first slot its overlays. In Edit; one undo step.",result=Api_Material_Instance,writes_result=true,run=api_material_instance_revert})
     api_register(s,st,{name="material.instance.apply",params=Api_Material_Slot_Params,summary="Writes what the entity changes of the material of a slot into it for every entity that shows it (but what each changes itself), saves it at once and reverts the slot of the entity, in one undo step.",result=Api_Material_Result,writes_result=true,run=api_material_instance_apply})
 }

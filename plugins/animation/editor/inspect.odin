@@ -115,7 +115,7 @@ Asset_Inspect_Result :: struct {
 Asset_Clip_Name :: struct {name:[aa.ANIMATION_NAME_CAPACITY]u8 `mirai:"text"`}
 // entry: it starts its modes, searched from its start when the body enters one of them.
 Asset_Match_Clip :: struct {
-    clip:[64]u8 `mirai:"text"`,animation:base.Asset_Id `mirai:"optional,label=Empty is that of the .match"`,modes:[1][32]u8 `mirai:"text,list"`,loop,entry:bool,
+    clip:[64]u8 `mirai:"text"`,animation:base.Asset_Id `mirai:"optional,label=Empty is that of the .match"`,modes:[][32]u8 `mirai:"text"`,loop,entry:bool,
     speed:f32 `mirai:"optional,unit=m/s,label=The speed it travels at, set by hand; omitted is measured"`,
     blend:[][64]u8 `mirai:"text,optional,label=The clips it blends with in phase, at the weights of each sample"`,
     samples:[]Asset_Match_Sample `mirai:"optional,label=A blend: its points the search picks"`,

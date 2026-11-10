@@ -318,7 +318,7 @@ draw_icon :: proc(ctx:^Context,icon:Icon,r:Rect,color:Color) {
         draw_line(ctx,c+{-4.5*u,-7.5*u},c+{-4.5*u,7*u},1.6,color)
         draw_triangle(ctx,c+{-4.5*u,-7.5*u},c+{6.5*u,-4*u},c+{-4.5*u,-0.5*u},color)
         draw_ellipse(ctx,c+{-4.5*u,7*u},3.5*u,1.2*u,color_alpha(color,140))
-    // The icons of the prototype drawn on a 24 unit grid, at two thirds.
+    // Icons drawn on a 24 unit grid, at two thirds.
     case .Palette:
         draw_ring(ctx,c,6*u,1.5*u,color)
         for p in ([3][2]f32{{-3,-2},{1,-3.5},{3,0}}) {draw_circle(ctx,c+p*u,u,color)}

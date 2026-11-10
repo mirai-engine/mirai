@@ -85,9 +85,6 @@ settings_plugins_load :: proc(s:^Session) {
     plugins_git_catalog_updates(s)
 }
 
-@(private)
-API_SETTINGS_SET_SCHEMA :: `{"type":"object","properties":{"graphics_preset":{"enum":["Low","Medium","High","Ultra"],"description":"Sets every field of the quality of Graphics_Settings as that preset of the Graphics popup does, before what settings says"},"layer":{"enum":["project","engine"],"description":"project, the default, may set any setting; engine holds only the settings of the machine (machine in settings.get), which every project follows in what it does not set"},"settings":{"type":"object","additionalProperties":{"type":"object"},"description":"{\"<Section>\": {\"<field>\": value}}: an object of sections, each with the fields to change"}},"additionalProperties":false}`
-
 // The settings of the edited World and of the application, as the file names them.
 @(private)
 settings_all :: proc(s:^Session) -> []project.Setting {
@@ -806,10 +803,19 @@ Api_Settings :: struct {
     project:serial.Json `mirai:"label=The sections and fields the file of the project sets over the engine and the code"`,
 }
 
+// What settings.set takes.
+Api_Settings_Set_Params_Graphics_Preset :: enum u8 {Low,Medium,High,Ultra}
+Api_Settings_Set_Params_Layer :: enum u8 {project,engine}
+Api_Settings_Set_Params :: struct {
+    graphics_preset:Api_Settings_Set_Params_Graphics_Preset `mirai:"optional,label=Sets every field of the quality of Graphics_Settings as that preset of the Graphics popup does, before what settings says"`,
+    layer:Api_Settings_Set_Params_Layer `mirai:"optional,label=project, the default, may set any setting; engine holds only the settings of the machine (machine in settings.get), which every project follows in what it does not set"`,
+    settings:serial.Json `mirai:"optional,label={'<Section>': {'<field>': value}}: an object of sections, each with the fields to change"`,
+}
+
 @(private)
 settings_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="settings.get",summary="The settings of the engine, the active plugins and the game: the values in effect and what the file of each layer sets over the layers under it.",params=Api_Settings_Get_Params,result=Api_Settings,writes_result=true,flags={.Read_Only},run=api_settings_get})
-    api_register(s,st,{name="settings.set",params_schema=API_SETTINGS_SET_SCHEMA,summary="Changes settings in a layer, whose file keeps what differs from the layers under it; the edited World and the games that play take the result at once and it answers with the sections changed.",result=Api_Settings,writes_result=true,run=api_settings_set})
+    api_register(s,st,{name="settings.set",params=Api_Settings_Set_Params,summary="Changes settings in a layer, whose file keeps what differs from the layers under it; the edited World and the games that play take the result at once and it answers with the sections changed.",result=Api_Settings,writes_result=true,run=api_settings_set})
 }
 
 @(private)

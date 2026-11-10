@@ -284,6 +284,46 @@ the_game_that_plays_is_changed_and_read_by_its_storages_and_conditions :: proc(t
     testing.expect_value(t,error.code,api.INVALID_PARAMS)
 }
 
+// The structs of its params and of its result are the only description of a
+// method: each method of the editor gives a JSON Schema of both from them, a
+// method takes a struct or nothing, and none answers JSON it does not declare.
+@(test)
+every_method_of_the_editor_is_described_by_its_types :: proc(t:^testing.T) {
+    f:=new(Probe);defer free(f)
+    if !probe_open(t,f) {return}
+    defer probe_close(f)
+    server:=&api_state(&f.s).server
+    testing.expect(t,server.method_count>100,"the methods of the editor are registered")
+    buffer:=make([]u8,256*1024,context.temp_allocator)
+    for &method in server.methods[:server.method_count] {
+        if method.params!=serial.TYPE_NONE {
+            testing.expectf(t,server.schema.types[method.params].kind==.Struct,"%s: its params are a struct",method.name)
+        }
+        if method.result!=serial.TYPE_NONE {
+            testing.expectf(t,server.schema.types[method.result].kind!=.Json,"%s answers JSON whose shape it does not declare: give its result a struct",method.name)
+        } else {
+            testing.expectf(t,!method.writes_result,"%s writes a result without a type",method.name)
+        }
+        for result in ([2]bool{false,true}) {
+            w:serial.Writer
+            serial.writer_init_fixed(&w,buffer)
+            api.method_schema_write(&w,server,&method,result)
+            text:=string(serial.writer_bytes(&w))
+            testing.expectf(t,w.overflow==0 && api.json_valid(context.temp_allocator,text) && api.json_member(text,"type")!="","%s: %s",method.name,text[:min(len(text),200)])
+        }
+    }
+    // A method that has no params type takes none, and one whose handler writes what it does not declare fails.
+    error,_:=probe_call(f,"play.status",`{"anything":1}`)
+    testing.expect(t,error.code==api.INVALID_PARAMS && strings.contains(error.message,"play.status takes no params"),error.message)
+    // What the state of the editor does not allow now has one code, with the method that changes it.
+    error,_=probe_call(f,"play.stop",`{}`)
+    testing.expect_value(t,error.code,0)
+    for method in ([]string{"play.player","play.get"}) {
+        error,_=probe_call(f,method,method=="play.get"?`{"entity":"Hero","field":"Transform.position"}`:`{}`)
+        testing.expectf(t,error.code==api.NOT_NOW && error.message==API_NO_GAME && error.data==`{"fix":"play.start"}`,"%s: %v",method,error)
+    }
+}
+
 @(test)
 play_set_takes_an_entity_by_its_name_and_a_parameter_it_does_not_know_is_refused_by_name :: proc(t:^testing.T) {
     f:=new(Probe);defer free(f)
@@ -296,7 +336,7 @@ play_set_takes_an_entity_by_its_name_and_a_parameter_it_does_not_know_is_refused
     testing.expect_value(t,placed(f),[3]f32{7,8,9})
     refused:=[?]struct{method,params,says:string}{
         {"play.set",`{"entity":"Nobody","position":[0,0,0]}`,"Nobody"},
-        {"play.set",`{"position":[0,0,0]}`,"entity: it must be the name of an entity"},
+        {"play.set",`{"position":[0,0,0]}`,"entity is required"},
         {"play.set",`{"entity":"Hero","position":[0,0,0],"speed":3}`,"speed"},
         {"play.check",`{"conditions":[{"storage":"Probe_Score"}],"speed":3}`,"speed"},
     }

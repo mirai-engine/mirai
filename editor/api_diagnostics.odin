@@ -26,20 +26,83 @@ Api_Diagnostics_Params :: struct {
     limit:int `mirai:"optional,min=1,max=500,clamp,label=Most console entries listed: the newest ones"`,
 }
 
-@(private) API_DIAGNOSTICS_RESULT :: `{"type":"object","properties":{` +
-    `"validation":{"type":"object","properties":{"errors":{"type":"integer"},"loader_errors":{"type":"integer"},"messages":{"type":"array","items":{"type":"string"}}},"required":["errors","loader_errors","messages"]},` +
-    `"console":{"type":"object","properties":{"serial":{"type":"integer"},"counts":{"type":"object","additionalProperties":{"type":"integer"}},"omitted":{"type":"integer"},"entries":{"type":"array","items":{"type":"object","properties":{"serial":{"type":"integer"},"level":{"enum":["Debug","Info","Warning","Error"]},"text":{"type":"string"},"repeats":{"type":"integer"}},"required":["serial","level","text","repeats"]}}},"required":["serial","counts","omitted","entries"]},` +
-    `"asset_errors":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"type":"string"},"problem":{"type":"string"},"detail":{"type":"string"},"path":{"type":"string"},"message":{"type":"string"}},"required":["id","kind","problem","detail"]}},` +
-    `"build":{"type":"object","properties":{"phase":{"type":"string"},"errors":{"type":"integer"},"diagnostics":{"type":"array","items":{"type":"object","properties":{"severity":{"enum":["Error","Warning"]},"file":{"type":"string"},"line":{"type":"integer"},"column":{"type":"integer"},"message":{"type":"string"}},"required":["severity","file","line","column","message"]}},"text":{"type":"string"}},"required":["phase","errors","diagnostics","text"]},` +
-    `"problems":{"type":"array","items":{"type":"object","properties":{"world":{"enum":["edit","play"]},"owner":{"type":"integer"},"player":{"type":"integer"},"serial":{"type":"integer"},"evicted":{"type":"integer"},` +
-    `"entries":{"type":"array","items":{"type":"object","properties":{"id":{"type":["string","null"]},"entity":{"type":["string","null"]},"name":{"type":"string"},"alive":{"type":"boolean"},"code":{"type":"string"},"message":{"type":"string","description":"What failed and how to fix it"},"count":{"type":"integer"},"first":{"type":"integer"},"last":{"type":"integer"}},"required":["id","entity","name","alive","code","message","count","first","last"]}}},"required":["world","serial","evicted","entries"]}}` +
-    `,"renderer":{"type":"object","properties":{"problem":{"type":"string"}},"required":["problem"]}` +
-    `},"required":["validation","renderer","console","asset_errors","build","problems"],"additionalProperties":false}`
+// What engine.diagnostics answers.
+Api_Engine_Diagnostics_Result_Validation :: struct {
+    errors:int,
+    loader_errors:int,
+    messages:[]string,
+}
+Api_Engine_Diagnostics_Result_Console_Entries_Level :: enum u8 {Debug,Info,Warning,Error}
+Api_Engine_Diagnostics_Result_Console_Entries :: struct {
+    serial:int,
+    level:Api_Engine_Diagnostics_Result_Console_Entries_Level,
+    text:string,
+    repeats:int,
+}
+Api_Engine_Diagnostics_Result_Console :: struct {
+    serial_:int `mirai:"name=serial"`,
+    counts:serial.Json,
+    omitted:int,
+    entries:[]Api_Engine_Diagnostics_Result_Console_Entries,
+}
+Api_Engine_Diagnostics_Result_Asset_Errors :: struct {
+    id:string,
+    kind:string,
+    problem:string,
+    detail:string,
+    path:string `mirai:"optional"`,
+    message:string `mirai:"optional"`,
+}
+Api_Engine_Diagnostics_Result_Build_Diagnostics_Severity :: enum u8 {Error,Warning}
+Api_Engine_Diagnostics_Result_Build_Diagnostics :: struct {
+    severity:Api_Engine_Diagnostics_Result_Build_Diagnostics_Severity,
+    file:string,
+    line:int,
+    column:int,
+    message:string,
+}
+Api_Engine_Diagnostics_Result_Build :: struct {
+    phase:string,
+    errors:int,
+    diagnostics:[]Api_Engine_Diagnostics_Result_Build_Diagnostics,
+    text:string,
+}
+Api_Engine_Diagnostics_Result_Problems_World :: enum u8 {edit,play}
+Api_Engine_Diagnostics_Result_Problems_Entries :: struct {
+    id:string,
+    entity:string,
+    name:string,
+    alive:bool,
+    code:string,
+    message:string `mirai:"label=What failed and how to fix it"`,
+    count:int,
+    first:int,
+    last:int,
+}
+Api_Engine_Diagnostics_Result_Problems :: struct {
+    world:Api_Engine_Diagnostics_Result_Problems_World,
+    owner:int `mirai:"optional"`,
+    player:int `mirai:"optional"`,
+    serial:int,
+    evicted:int,
+    entries:[]Api_Engine_Diagnostics_Result_Problems_Entries,
+}
+Api_Engine_Diagnostics_Result_Renderer :: struct {
+    problem:string,
+}
+Api_Engine_Diagnostics_Result :: struct {
+    validation:Api_Engine_Diagnostics_Result_Validation,
+    console:Api_Engine_Diagnostics_Result_Console,
+    asset_errors:[]Api_Engine_Diagnostics_Result_Asset_Errors,
+    build:Api_Engine_Diagnostics_Result_Build,
+    problems:[]Api_Engine_Diagnostics_Result_Problems,
+    renderer:Api_Engine_Diagnostics_Result_Renderer,
+}
 
 @(private)
 api_diagnostics_register :: proc(s:^Session,st:^Api_State) {
     defaults:=Api_Diagnostics_Params{min_level=.Info,limit=50}
-    api_register(s,st,{name="engine.diagnostics",summary="The text behind the counters of engine.status: what the GPU, the console, the assets and the last build reported, and the problems the functions of the edited world and of each Play met.",params=Api_Diagnostics_Params,result_schema=API_DIAGNOSTICS_RESULT,defaults=&defaults,flags={.Core,.Read_Only},run=api_diagnostics})
+    api_register(s,st,{name="engine.diagnostics",summary="The text behind the counters of engine.status: what the GPU, the console, the assets and the last build reported, and the problems the functions of the edited world and of each Play met.",params=Api_Diagnostics_Params,result=Api_Engine_Diagnostics_Result,writes_result=true,defaults=&defaults,flags={.Core,.Read_Only,.As_User},run=api_diagnostics})
 }
 
 // The text without a multi-byte character cut at its end.

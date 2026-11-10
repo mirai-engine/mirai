@@ -661,9 +661,6 @@ material_document_build :: proc(s:^Session) {
     }
 }
 
-@(private)
-MATERIAL_DOCUMENT_SCHEMA :: `{"type":"object","properties":{"material":{"type":"string","description":"A material: its path under the assets folder, or its id; absent or empty closes the material document in front"},"parameters":{"type":"array","maxItems":16,"items":{"type":"string"},"description":"Values of the material to pick, which the next message takes as context: parameters of its program by name, or base_color, roughness, metallic and emission of the standard model"},"channel":{"enum":["lit","base_color","roughness","metallic","normal","emission"],"description":"What the preview shows, which the next message takes as context: the lit sphere, or one value the material writes"}},"additionalProperties":false}`
-
 Api_Material_Document_Result :: struct {
     open:bool,
     program:[64]u8 `mirai:"text"`,
@@ -671,17 +668,32 @@ Api_Material_Document_Result :: struct {
     channel:[16]u8 `mirai:"text"`,
 }
 
-@(private)
-MATERIAL_VARIANTS_SCHEMA :: `{"type":"object","properties":{"material":{"type":"string","description":"A material: its path under the assets folder, or its id; absent: the one of the material document in front"},"variants":{"type":"array","maxItems":6,"items":{"type":"object","properties":{"label":{"type":"string","maxLength":31},"values":{"type":"object","description":"Those of material.set by parameter of its program (or base_color, roughness, metallic and emission of the standard model): a number, a bool, or an array of its components, inside the range of the parameter","additionalProperties":{}}},"required":["label","values"],"additionalProperties":false},"description":"Replaces the variants; an empty array takes them out"}},"required":["variants"],"additionalProperties":false}`
-
 Api_Material_Variants_Result :: struct {
     count:int,
 }
 
+// What editor.material.show takes.
+Api_Editor_Material_Show_Params_Channel :: enum u8 {lit,base_color,roughness,metallic,normal,emission}
+Api_Editor_Material_Show_Params :: struct {
+    material:string `mirai:"optional,label=A material: its path under the assets folder, or its id; absent or empty closes the material document in front"`,
+    parameters:[]string `mirai:"optional,label=At most 16. Values of the material to pick, which the next message takes as context: parameters of its program by name, or base_color, roughness, metallic and emission of the standard model"`,
+    channel:Api_Editor_Material_Show_Params_Channel `mirai:"optional,label=What the preview shows, which the next message takes as context: the lit sphere, or one value the material writes"`,
+}
+
+// What editor.material.variants takes.
+Api_Editor_Material_Variants_Params_Variants :: struct {
+    label:string,
+    values:serial.Json `mirai:"label=Those of material.set by parameter of its program (or base_color, roughness, metallic and emission of the standard model): a number, a bool, or an array of its components, inside the range of the parameter"`,
+}
+Api_Editor_Material_Variants_Params :: struct {
+    material:string `mirai:"optional,label=A material: its path under the assets folder, or its id; absent: the one of the material document in front"`,
+    variants:[]Api_Editor_Material_Variants_Params_Variants `mirai:"label=At most 6. Replaces the variants; an empty array takes them out"`,
+}
+
 @(private)
 material_document_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="editor.material.show",params_schema=MATERIAL_DOCUMENT_SCHEMA,summary="Opens the document of a material for the user in a tab next to the scenes, with its preview, its variants and its values; without material it closes the one in front.",result=Api_Material_Document_Result,flags={.Idempotent},run=api_material_document})
-    api_register(s,st,{name="editor.material.variants",params_schema=MATERIAL_VARIANTS_SCHEMA,summary="Proposes to the user sets of values of a material, each on its own sphere in its document, which it opens; the material changes only when a click on one sets them, as one undo step.",result=Api_Material_Variants_Result,flags={.Idempotent},run=api_material_variants})
+    api_register(s,st,{name="editor.material.show",params=Api_Editor_Material_Show_Params,summary="Opens the document of a material for the user in a tab next to the scenes, with its preview, its variants and its values; without material it closes the one in front.",result=Api_Material_Document_Result,flags={.Idempotent},run=api_material_document})
+    api_register(s,st,{name="editor.material.variants",params=Api_Editor_Material_Variants_Params,summary="Proposes to the user sets of values of a material, each on its own sphere in its document, which it opens; the material changes only when a click on one sets them, as one undo step.",result=Api_Material_Variants_Result,flags={.Idempotent},run=api_material_variants})
 }
 
 @(private)
@@ -726,7 +738,7 @@ api_material_document :: proc(s:^Session,call:^api.Call) {
         for id,c in MATERIAL_CHANNEL_IDS {if id==channel {chosen,found=c,true}}
         if !found {api.call_failf(call,api.INVALID_PARAMS,"%q is not a channel: lit, base_color, roughness, metallic, normal or emission",channel);return}
     }
-    if playing(s) {api.call_fail(call,api.SERVER_ERROR,"A game is playing; the document of a material opens in Edit");return}
+    if playing(s) {api_playing(call,"the document of a material opens in Edit");return}
     id,found:=asset_named(s,call,name,asset.KIND_MATERIAL,".mat","a material")
     if !found {return}
     if !asset_document_show(s,id) {api.call_failf(call,api.SERVER_ERROR,"The document of %s could not open: %s",name,string(s.toast[:s.toast_length]));return}
@@ -820,7 +832,7 @@ api_material_variants :: proc(s:^Session,call:^api.Call) {
     }
     if a.failed {return}
     if !listed {api.call_fail(call,api.INVALID_PARAMS,"variants is required: an array, empty to take them out");return}
-    if playing(s) {api.call_fail(call,api.SERVER_ERROR,"A game is playing; the document of a material opens in Edit");return}
+    if playing(s) {api_playing(call,"the document of a material opens in Edit");return}
     id:base.Asset_Id
     if name!="" {
         found:bool

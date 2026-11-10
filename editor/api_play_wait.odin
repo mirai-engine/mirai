@@ -177,7 +177,7 @@ api_conditions_read :: proc(s:^Session,w:core.World_Ref,conditions:[]Api_Play_Co
 api_play_check :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Play_Check_Params)
     r,_:=api_play_run(s,call,params.player)
-    if r==nil {api.call_fail(call,api.SERVER_ERROR,API_NO_GAME);return}
+    if r==nil {api_no_game(call);return}
     values:[1]string
     api.object_values(call.allocator,call.raw,{"conditions"},values[:])
     count:=api.json_count(values[0])
@@ -268,7 +268,7 @@ api_entity_field :: proc(s:^Session,w:core.World_Ref,e:core.Entity,field:string,
 api_play_get :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Play_Get_Params)
     r,_:=api_play_run(s,call,p.player)
-    if r==nil {api.call_fail(call,api.SERVER_ERROR,API_NO_GAME);return}
+    if r==nil {api_no_game(call);return}
     w:=run_ref(s,r)
     e,known:=api_call_entity(call,w,p.entity[:],game=true)
     if !known {return}

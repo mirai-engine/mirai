@@ -326,13 +326,9 @@ records_move_places_a_row_right_after_another :: proc(t:^testing.T) {
     }
 }
 
-// The hand-written params schemas are JSON, and a row as inspect writes it
-// keeps the shape of its result.
+// A row as inspect writes it keeps the shape of its result.
 @(test)
-records_api_schemas_and_results_keep_their_shape :: proc(t:^testing.T) {
-    for schema in ([]string{RECORDS_API_CREATE_SCHEMA,RECORDS_API_INSPECT_SCHEMA,RECORDS_API_SET_SCHEMA,RECORDS_API_ADD_SCHEMA,RECORDS_API_REMOVE_SCHEMA,RECORDS_API_MOVE_SCHEMA,RECORDS_API_IMPORT_SCHEMA,RECORDS_API_EXPORT_SCHEMA}) {
-        testing.expectf(t,api.json_valid(context.temp_allocator,schema),"%s",schema)
-    }
+records_api_results_keep_their_shape :: proc(t:^testing.T) {
     f:Csv_Fixture
     csv_fixture(&f)
     _,_,_,message:=csv_import(&f,"name,damage,title,title@es\nsword,7,Sword,Espada\naxe,1,,\n")

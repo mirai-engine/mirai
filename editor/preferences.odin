@@ -162,13 +162,15 @@ Api_Preferences :: struct {
     kept:serial.Json `mirai:"label=The sections and fields the file sets over the values of the code"`,
 }
 
-@(private)
-API_PREFERENCES_SET_SCHEMA :: `{"type":"object","properties":{"preferences":{"type":"object","additionalProperties":{"type":"object"},"description":"{\"<Area>\": {\"<field>\": value}}: an object of areas as preferences.get names them, each with the fields to change"}},"required":["preferences"],"additionalProperties":false}`
+// What preferences.set takes.
+Api_Preferences_Set_Params :: struct {
+    preferences:serial.Json `mirai:"label={'<Area>': {'<field>': value}}: an object of areas as preferences.get names them, each with the fields to change"`,
+}
 
 @(private)
 preferences_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="preferences.get",summary="The preferences of the editor on this machine, the same for every project: its panels, viewport, lists, console, Play and chats, and of the plugins.",params=Api_Preferences_Get_Params,result=Api_Preferences,writes_result=true,flags={.Read_Only},run=api_preferences_get})
-    api_register(s,st,{name="preferences.set",params_schema=API_PREFERENCES_SET_SCHEMA,summary="Changes preferences of the editor; they take effect at once, the file keeps what differs from the values of the code and it answers with the areas changed.",result=Api_Preferences,writes_result=true,run=api_preferences_set})
+    api_register(s,st,{name="preferences.set",params=Api_Preferences_Set_Params,summary="Changes preferences of the editor; they take effect at once, the file keeps what differs from the values of the code and it answers with the areas changed.",result=Api_Preferences,writes_result=true,run=api_preferences_set})
 }
 
 @(private)

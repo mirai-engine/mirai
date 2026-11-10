@@ -16,8 +16,23 @@ Shape_Params :: struct {
     rows:[2]Inner `mirai:"optional"`,
 }
 
+// Params whose handler reads them from the text: what a caller writes of them
+// reaches it as these types say it.
 @(private="file")
-SHAPE_HAND :: `{"type":"object","properties":{"entity":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}},"kind":{"enum":["Alpha","Beta"]},"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"parent":{"type":["string","null"]},"window":{"type":"object","properties":{"width":{"type":"integer"}}},"free":{"type":"object","properties":{"known":{"type":"integer"}},"additionalProperties":true},"byname":{"type":"object","properties":{"known":{"type":"integer"}},"additionalProperties":{"type":"object"}},"rows":{"type":"array","items":{"type":"object","properties":{"x":{"type":"integer"}}}},"any":{"type":"object"}}}`
+Shape_Kind :: enum u8 {Alpha,Beta}
+@(private="file")
+Shape_Read :: struct {
+    entity:string `mirai:"optional"`,
+    paths:[]string `mirai:"optional"`,
+    kind:Shape_Kind `mirai:"optional"`,
+    position:[3]f32 `mirai:"optional"`,
+    parent:[32]u8 `mirai:"text,entity,optional"`,
+    window:struct {width:int `mirai:"optional"`} `mirai:"optional"`,
+    free:serial.Json `mirai:"optional"`,
+    byname:serial.Json `mirai:"optional"`,
+    rows:[]struct {x:int `mirai:"optional"`} `mirai:"optional"`,
+    any:serial.Json `mirai:"optional"`,
+}
 
 @(private="file")
 shape_echo :: proc(call:^Call) {raw(call.out,call.raw)}
@@ -26,8 +41,8 @@ shape_echo :: proc(call:^Call) {raw(call.out,call.raw)}
 params_are_taken_in_the_singular_or_plural_and_as_a_value_or_a_list_of_one :: proc(t:^testing.T) {
     s,ok:=test_server(t);if !ok {return}
     defer server_destroy(&s)
-    testing.expect_value(t,method_register(&s,{name="typed",params=Shape_Params,handler=shape_echo}),Register_Error.None)
-    testing.expect_value(t,method_register(&s,{name="hand",params_schema=SHAPE_HAND,handler=shape_echo}),Register_Error.None)
+    testing.expect_value(t,method_register(&s,{name="typed",params=Shape_Params,result=Raw_Result,writes_result=true,handler=shape_echo}),Register_Error.None)
+    testing.expect_value(t,method_register(&s,{name="hand",params=Shape_Read,result=Raw_Result,writes_result=true,handler=shape_echo}),Register_Error.None)
     cases:=[]struct{method,params,shaped,problem:string}{
         {"typed",`{"method":"a"}`,`{"methods":["a"]}`,""},
         {"typed",`{"methods":"a"}`,`{"methods":["a"]}`,""},
@@ -36,7 +51,7 @@ params_are_taken_in_the_singular_or_plural_and_as_a_value_or_a_list_of_one :: pr
         {"typed",`{"count":[3]}`,`{"count":3}`,""},
         {"typed",`{"rows":{"x":1}}`,`{"rows":[{"x":1}]}`,""},
         {"typed",`{"rows":[{"xs":1}]}`,`{"rows":[{"x":1}]}`,""},
-        {"typed",`{"mode":"run"}`,`{"mode":"run"}`,""},
+        {"typed",`{"mode":"run"}`,`{"mode":"Run"}`,""},
         {"typed",`{"entity":["a","b"]}`,"","entity takes one value, not a list of several"},
         {"typed",`{"entities":["a","b"]}`,"","entity takes one value"},
         {"typed",`{"position":1}`,"","expected an array"},
@@ -47,13 +62,13 @@ params_are_taken_in_the_singular_or_plural_and_as_a_value_or_a_list_of_one :: pr
         {"hand",`{"entity":["x"],"kind":"beta"}`,`{"entity":"x","kind":"Beta"}`,""},
         {"hand",`{"parent":null,"position":[1,2,3]}`,`{"parent":null,"position":[1,2,3]}`,""},
         {"hand",`{"parent":["x"]}`,`{"parent":"x"}`,""},
-        {"hand",`{"kind":"gama"}`,"",`kind "gama" is not one of its names`},
+        {"hand",`{"kind":"gama"}`,"",`kind: "gama" is not one of its names`},
         {"hand",`{"entity":["a","b"]}`,"","entity takes one value"},
         {"typed",`{"entity":123}`,`{"entity":"123"}`,""},
         {"typed",`{"entity":true}`,`{"entity":"true"}`,""},
         {"typed",`{"methods":[1,"a"]}`,`{"methods":["1","a"]}`,""},
         {"hand",`{"entity":-1.5}`,`{"entity":"-1.5"}`,""},
-        {"hand",`{"parent":5}`,`{"parent":5}`,""},
+        {"hand",`{"parent":5}`,`{"parent":"5"}`,""},
         {"hand",`{"kind":1}`,`{"kind":1}`,""},
         {"hand",`{"bogus":1}`,"",`invalid params: "bogus" is not a field: the fields are entity, paths, kind, position, parent, window, free, byname, rows, any at line 1 column 2`},
         {"typed",`{"bogus":1}`,"",`invalid params: "bogus" is not a field: the fields are methods, entity, count, mode, position, rows at line 1 column 2`},
@@ -157,6 +172,19 @@ a_limit_past_its_maximum_takes_it_and_the_answer_says_so :: proc(t:^testing.T) {
 
 @(private="file")
 usage_refuses :: proc(call:^Call) {call_fail(call,INVALID_PARAMS,"no such thing")}
+// More fields than an error has room to say.
+@(private="file")
+Long_Params :: struct {
+    field0:int `mirai:"label=a description long enough to fill the room there is"`,
+    a:Long_Fields `mirai:"optional"`,
+    b:Long_Fields `mirai:"optional"`,
+    c:Long_Fields `mirai:"optional"`,
+}
+@(private="file")
+Long_Fields :: struct {
+    f00,f01,f02,f03,f04,f05,f06,f07,f08,f09,f10,f11,f12,f13,f14,f15,f16,f17,f18,f19,f20,f21,f22,f23,f24,f25,f26,f27,f28,f29,f30,f31,f32,f33,f34,f35,f36,f37,f38,f39,f40,f41,f42,f43,f44,f45,f46,f47,f48,f49,f50,f51,f52,f53,f54,f55,f56,f57,f58,f59:int `mirai:"optional,label=a description long enough to fill the room there is"`,
+}
+
 @(private="file")
 usage_refuses_with_data :: proc(call:^Call) {call_fail(call,INVALID_PARAMS,"no such thing",`{"own":1}`)}
 
@@ -167,11 +195,7 @@ an_invalid_params_error_says_what_the_method_takes_and_only_it_does :: proc(t:^t
     testing.expect_value(t,method_register(&s,{name="small",params=Small,handler=noop}),Register_Error.None)
     testing.expect_value(t,method_register(&s,{name="refuses",params=Small,handler=usage_refuses}),Register_Error.None)
     testing.expect_value(t,method_register(&s,{name="own",params=Small,handler=usage_refuses_with_data}),Register_Error.None)
-    b:=strings.builder_make(context.temp_allocator)
-    strings.write_string(&b,`{"type":"object","properties":{`)
-    for i in 0..<512 {fmt.sbprintf(&b,`%s"field%d":{{"type":"integer","description":"a description long enough to fill the room there is"}}`,i>0?",":"",i)}
-    strings.write_string(&b,`},"required":["field0"]}`)
-    testing.expect_value(t,method_register(&s,{name="long",params_schema=strings.to_string(b),handler=noop}),Register_Error.None)
+    testing.expect_value(t,method_register(&s,{name="long",params=Long_Params,handler=noop}),Register_Error.None)
     testing.expect_value(t,method_register(&s,{name="no_schema",handler=usage_refuses}),Register_Error.None)
     buffer:=make([]u8,64*1024,context.temp_allocator)
     run :: proc(s:^Server,name,params:string,buffer:[]u8) -> (err:Error,ran:bool) {
@@ -204,7 +228,7 @@ an_invalid_params_error_says_what_the_method_takes_and_only_it_does :: proc(t:^t
     err,_=run(&s,"long",`{"field0":[1,2]}`,buffer)
     usage,is_text=json_string(json_member(err.data,"usage"))
     testing.expect(t,is_text && len(usage)<=USAGE_BYTES && strings.contains(usage,"example: mirai rpc long"),"a long description keeps its example and fits")
-    testing.expect_value(t,method_register(&s,{name="closed",params_schema=`{"type":"object","properties":{"path":{"type":"string"},"values":{"type":"object"}},"additionalProperties":false}`,handler=noop}),Register_Error.None)
+    testing.expect_value(t,method_register(&s,{name="closed",params=struct{path:string `mirai:"optional"`,values:serial.Json `mirai:"optional"`},handler=noop}),Register_Error.None)
     err,ran=run(&s,"closed",`{"pathx":"a"}`,buffer)
     testing.expectf(t,!ran && strings.contains(err.message,`"pathx" is not a field: the fields are path, values`) && strings.contains(err.data,"usage"),"a key a closed schema does not name: %s",err.message)
     _,ran=run(&s,"closed",`{"path":"a","values":{"x":1}}`,buffer)

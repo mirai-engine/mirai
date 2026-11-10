@@ -762,20 +762,21 @@ Api_Input_Action :: struct {
     bindings:serial.Json `mirai:"label=The bindings in effect as input.mirai writes them"`,
 }
 
-@(private)
-API_INPUT_SET_SCHEMA :: `{"type":"object","properties":{` +
-    `"action":{"type":"string","description":"The name of an action, as input.get lists it"},` +
-    `"kind":{"enum":["Button","Axis","Axis2"],"description":"The kind the action takes with bindings; without it, the one it has"},` +
-    `"bindings":{"type":"array","items":{"type":"object"},"description":"The bindings that replace those of the action, as input.mirai writes them: {\"key\": \"Space\"}, {\"keys\": [\"A\", \"D\", \"S\", \"W\"]} (two for an Axis, four for an Axis2: left, right, down, up), {\"mouse_button\": \"Left\"}, {\"mouse\": \"Delta\"}, {\"gamepad_button\": \"South\"}, {\"gamepad_axis\": \"Right_Trigger\"} or {\"gamepad_stick\": \"Left\"}, each with scale, dead_zone and gamepad (0 to 3) optional; [] leaves it without any"},` +
-    `"reset":{"type":"boolean","description":"true: the action goes back to the kind and the bindings of the code"},` +
-    `"tap_ticks":{"type":"integer","minimum":1,"maximum":600,"description":"Ticks a press may be held and still be a tap"},` +
-    `"hold_ticks":{"type":"integer","minimum":1,"maximum":600,"description":"Ticks a press is held before it is a hold"}},` +
-    `"additionalProperties":false}`
+// What input.set takes.
+Api_Input_Set_Params_Kind :: enum u8 {Button,Axis,Axis2}
+Api_Input_Set_Params :: struct {
+    action:string `mirai:"optional,label=The name of an action, as input.get lists it"`,
+    kind:Api_Input_Set_Params_Kind `mirai:"optional,label=The kind the action takes with bindings; without it, the one it has"`,
+    bindings:[]serial.Json `mirai:"optional,label=The bindings that replace those of the action, as input.mirai writes them: {'key': 'Space'}, {'keys': ['A', 'D', 'S', 'W']} (two for an Axis, four for an Axis2: left, right, down, up), {'mouse_button': 'Left'}, {'mouse': 'Delta'}, {'gamepad_button': 'South'}, {'gamepad_axis': 'Right_Trigger'} or {'gamepad_stick': 'Left'}, each with scale, dead_zone and gamepad (0 to 3) optional; [] leaves it without any"`,
+    reset:bool `mirai:"optional,label=true: the action goes back to the kind and the bindings of the code"`,
+    tap_ticks:int `mirai:"optional,min=1,max=600,label=Ticks a press may be held and still be a tap"`,
+    hold_ticks:int `mirai:"optional,min=1,max=600,label=Ticks a press is held before it is a hold"`,
+}
 
 @(private)
 input_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="input.get",summary="The input actions of the game and its plugins: the kind, the bindings in effect and whether they come from the code or from input.mirai of the project, and the ticks of a tap and of a hold.",params=Api_Input_Get_Params,result=Api_Input,writes_result=true,flags={.Read_Only},run=api_input_get})
-    api_register(s,st,{name="input.set",params_schema=API_INPUT_SET_SCHEMA,summary="Replaces the kind and the bindings of an input action, puts it back to the default of the code, or changes the ticks of a tap and of a hold; input.mirai of the project keeps what differs from the code, and a Play that starts or runs takes it. It answers with the action it changed.",result=Api_Input,writes_result=true,run=api_input_set})
+    api_register(s,st,{name="input.set",params=Api_Input_Set_Params,summary="Replaces the kind and the bindings of an input action, puts it back to the default of the code, or changes the ticks of a tap and of a hold; input.mirai of the project keeps what differs from the code, and a Play that starts or runs takes it. It answers with the action it changed.",result=Api_Input,writes_result=true,run=api_input_set})
 }
 
 @(private)

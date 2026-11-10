@@ -14,7 +14,7 @@ result_mismatch :: proc(T:typeid,text:string,info:^runtime.Type_Info=nil) -> str
     server.allocator=context.temp_allocator
     serial.schema_init(&server.schema,context.temp_allocator)
     server.schema.unsized=true
-    index,ok:=schema_register(&server,T,info)
+    index,ok:=schema_register(&server,T,info,result=true)
     if !ok {return "the type does not register"}
     r:serial.Text_Reader
     serial.text_reader_init(&r,text,context.temp_allocator)

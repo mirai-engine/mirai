@@ -98,7 +98,7 @@ a_menu_opens_under_its_title_and_an_item_closes_it :: proc(t:^testing.T) {
     // A disabled item is drawn at 40 % of its opacity.
     testing.expect_value(t,test_paint(&ctx,"Quit").text_color,color_faded(THEME_EDITOR.text))
     testing.expect_value(t,test_paint(&ctx,"Ctrl+Q").text_color,color_faded(THEME_EDITOR.text_muted))
-    // Under the pointer an item takes the tint of the prototype.
+    // Under the pointer an item takes the tint of a hovered row.
     test_point(&input,item)
     frame:=test_menus_frame(&ctx,&input,&s)
     testing.expect_value(t,test_menu_hovered(&ctx),1)

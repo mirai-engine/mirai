@@ -262,7 +262,7 @@ placement_api_drops_settle_and_confirm_within_the_call :: proc(t:^testing.T) {
     f.session.mode=.Play
     playing:=api.Call{method=&method,params=&params,result=&result,raw=call.raw,allocator=context.temp_allocator}
     placement_api_run(&f.session,&playing,&f.tool)
-    testing.expect(t,playing.failed && playing.error.code==api.SERVER_ERROR)
+    testing.expect(t,playing.failed && playing.error.code==api.NOT_NOW && playing.error.data==`{"fix":"play.stop"}`,playing.error.message)
     f.session.mode=.Edit
     empty:=api.Call{method=&method,params=&params,result=&result,raw=`{"drops":[]}`,allocator=context.temp_allocator}
     placement_api_run(&f.session,&empty,&f.tool)

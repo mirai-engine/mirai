@@ -115,7 +115,7 @@ play_observe_api_register :: proc(s:^Session,st:^Api_State) {
 api_play_ui :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Play_Ui_Params)
     r,_:=api_play_run(s,call,p.player)
-    if r==nil {api.call_fail(call,api.SERVER_ERROR,API_NO_GAME);return}
+    if r==nil {api_no_game(call);return}
     // The names come from the files of the interfaces, which can be larger than the scratch of a request.
     arena:virtual.Arena
     if virtual.arena_init_growing(&arena)!=nil {api.call_fail(call,api.INTERNAL_ERROR,"The editor has no memory to read the interfaces");return}
@@ -130,7 +130,7 @@ api_play_ui :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_play_audio :: proc(s:^Session,call:^api.Call) {
     r,_:=api_play_run(s,call,api.call_params(call,Api_Play_Audio_Params).player)
-    if r==nil {api.call_fail(call,api.SERVER_ERROR,API_NO_GAME);return}
+    if r==nil {api_no_game(call);return}
     play_audio_write(s,call.out,host.app_world_storage(s.app,r.world,eaudio.Voices),core.world_ref(r.world,s.info),s.app.mixer)
 }
 

@@ -269,6 +269,7 @@ params_parse :: proc(s:^Server,method:^Method,params:string,bytes:[]u8,r:^serial
     serial.text_reader_init(r,params,base.arena_allocator(&s.scratch))
     r.assets=s.assets
     r.loose_names=true
+    r.nulls=true
     return serial.text_read(r,&s.schema,method.params,bytes) && serial.text_end(r)
 }
 
@@ -284,19 +285,18 @@ params_parse_error :: proc(s:^Server,method:^Method,text:string,r:^serial.Text_R
 
 // Reads params as the params of method into the scratch of the server, with
 // its defaults, and checks them against its schema: nil for a method that
-// reads its params by hand. shaped is the text it read (params_shape), which
-// the handler gets. What method_execute does before the handler runs.
+// takes none. shaped is the text it read (params_shape), which the handler
+// gets. What method_execute does before the handler runs.
 params_read :: proc(s:^Server,method:^Method,params:string) -> (bytes:[]u8,shaped:string,err:Error,ok:bool) {
     shaped=params
     s.clamped=""
     allocator:=base.arena_allocator(&s.scratch)
     failed:=s.scratch.failed
     if method.params==serial.TYPE_NONE {
-        problem:string
-        shaped,problem=params_shape(s,method.params_schema,params)
+        members,_:=json_members(params,allocator)
         if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
-        if problem!="" {return nil,params,{INVALID_PARAMS,problem,params_usage(s,method)},false}
-        return nil,shaped,{},true
+        if len(members)>0 {return nil,params,{INVALID_PARAMS,format_text(allocator,"%s takes no params; it was given %s",method.name,shorten(members[0].name)),""},false}
+        return nil,params,{},true
     }
     sc:=&s.schema
     type:=sc.types[method.params]
@@ -307,7 +307,7 @@ params_read :: proc(s:^Server,method:^Method,params:string) -> (bytes:[]u8,shape
         if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
         first:=params_parse_error(s,method,params,&r)
         problem:string
-        shaped,problem=params_shape(s,params_schema_text(s,method),params,by_hand=false)
+        shaped,problem=params_shape(s,params_schema_text(s,method),params)
         if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
         if problem!="" {return nil,params,{INVALID_PARAMS,problem,params_usage(s,method)},false}
         if shaped==params {return nil,params,first,false}
@@ -316,17 +316,15 @@ params_read :: proc(s:^Server,method:^Method,params:string) -> (bytes:[]u8,shape
             return nil,params,params_parse_error(s,method,shaped,&r),false
         }
     }
+    // A member it took by another spelling goes to the handler as its type has it.
+    if r.loosened {shaped,_=params_shape(s,params_schema_text(s,method),shaped,names=true)}
     if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
     checker:=Checker{server=s,schema=sc,allocator=allocator}
     again:serial.Text_Reader
     serial.text_reader_init(&again,shaped,allocator)
-    if !check_required(&checker,&again,method.params) {
+    if !check_given(&checker,&again,method.params,bytes[:type.size]) {
         if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
-        return nil,params,{INVALID_PARAMS,checker.message!=""?checker.message:"invalid params",params_usage(s,method)},false
-    }
-    if !check_value(&checker,method.params,bytes[:type.size],nil) {
-        if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
-        return nil,params,{INVALID_PARAMS,checker.message!=""?checker.message:"invalid params",""},false
+        return nil,params,{INVALID_PARAMS,checker.message!=""?checker.message:"invalid params",checker.ranged?"":params_usage(s,method)},false
     }
     s.clamped=checker.clamped
     return bytes,shaped,{},true
@@ -366,6 +364,9 @@ method_execute :: proc(s:^Server,method:^Method,params:string,out:^serial.Writer
     if typed {
         size:=int(sc.types[method.result].size)
         serial.text_write(out,sc,method.result,mem.byte_slice(call.result,size),.Line)
+    } else if !method.writes_result && out.count!=mark {
+        rewind(out,mark)
+        return {INTERNAL_ERROR,format_text(allocator,"%s wrote a result and declares none: its registration needs the type of its result",method.name),""},false
     } else if out.count==mark {
         raw(out,"null")
     }
@@ -470,6 +471,9 @@ write_flags :: proc(w:^serial.Writer,flags:Method_Flags) {
         case .Idempotent: raw(w,`"idempotent"`)
         case .Core: raw(w,`"core"`)
         case .Turn: raw(w,`"turn"`)
+        case .Draws: raw(w,`"draws"`)
+        case .As_User: raw(w,`"as_user"`)
+        case .View: raw(w,`"view"`)
         }
     }
     raw(w,"]")

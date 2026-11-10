@@ -9,6 +9,7 @@ import "core:testing"
 import "core:thread"
 import "core:time"
 import "mirai:std/base"
+import "mirai:std/serial"
 
 Add_Params :: struct {a,b:i32}
 Add_Result :: struct {sum:i64}
@@ -18,6 +19,10 @@ Echo_Params :: struct {
 }
 Echo_Result :: struct {text:[160]u8 `mirai:"text"`}
 Fail_Params :: struct {code:i32 `mirai:"optional"`}
+
+// What the test methods that write their own answer take, and what they declare of it.
+Raw_Params :: struct {ops,a,text:serial.Json `mirai:"optional"`}
+Raw_Result :: struct {}
 
 add_handler :: proc(call:^Call) {
     p,r:=call_params(call,Add_Params),call_result(call,Add_Result)
@@ -87,10 +92,10 @@ fixture_start :: proc(f:^Fixture,t:^testing.T,desc:Server_Desc={}) -> bool {
     ok&&=method_register(&f.server,{name="test.echo",summary="Repeats a text.",params=Echo_Params,result=Echo_Result,defaults=&defaults,handler=echo_handler,flags={.Core}})==.None
     ok&&=method_register(&f.server,{name="test.fail",summary="Always fails.",params=Fail_Params,handler=fail_handler,flags={.Destructive,.Core}})==.None
     ok&&=method_register(&f.server,{name="test.shapes",summary="Returns its params.",params=Shapes,result=Shapes,defaults=&shapes_defaults,handler=shapes_handler,flags={.Core}})==.None
-    ok&&=method_register(&f.server,{name="test.raw",summary="Wraps its params.",handler=raw_handler,flags={.Core}})==.None
-    ok&&=method_register(&f.server,{name="test.big",summary="Writes a large array.",handler=big_handler,flags={.Core}})==.None
-    if desc.max_response>=4<<20 {ok&&=method_register(&f.server,{name="test.huge",summary="Writes a very large array.",handler=huge_handler,flags={.Core}})==.None}
-    ok&&=method_register(&f.server,{name="test.broken",summary="Fails after writing.",handler=failing_raw_handler,flags={.Core}})==.None
+    ok&&=method_register(&f.server,{name="test.raw",summary="Wraps its params.",params=Raw_Params,result=Raw_Result,writes_result=true,handler=raw_handler,flags={.Core}})==.None
+    ok&&=method_register(&f.server,{name="test.big",summary="Writes a large array.",result=Raw_Result,writes_result=true,handler=big_handler,flags={.Core}})==.None
+    if desc.max_response>=4<<20 {ok&&=method_register(&f.server,{name="test.huge",summary="Writes a very large array.",result=Raw_Result,writes_result=true,handler=huge_handler,flags={.Core}})==.None}
+    ok&&=method_register(&f.server,{name="test.broken",summary="Fails after writing.",result=Raw_Result,writes_result=true,handler=failing_raw_handler,flags={.Core}})==.None
     testing.expect(t,ok,"the sample methods register")
     mem.tracking_allocator_init(&f.tracking,context.allocator)
     f.thread=thread.create(fixture_run)

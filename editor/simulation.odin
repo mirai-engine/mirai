@@ -111,7 +111,7 @@ api_simulation_register :: proc(s:^Session,st:^Api_State) {
 @(private)
 api_simulation_guard :: proc(s:^Session,call:^api.Call) -> bool {
     if simulating(s) {return true}
-    api.call_fail(call,api.SERVER_ERROR,"No scene is simulating; play.start with simulate first")
+    api.call_not_now(call,"No scene is simulating; play.start with simulate first","play.start")
     return false
 }
 

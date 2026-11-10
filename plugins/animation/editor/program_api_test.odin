@@ -156,7 +156,7 @@ graph_sync_fields_belong_to_sources_and_inspection_matches_the_typed_result :: p
     testing.expect(t,!strings.contains(value,"sync_mode") && !strings.contains(value,"sync_duration") && !strings.contains(value,"sync_group"))
     schema:=authoring_result_schema(Graph_Inspect_Result,type_info_of(Graph_Inspect_Result),context.temp_allocator)
     testing.expect(t,strings.contains(schema,`"required":["name","kind"]`))
-    testing.expect_value(t,api.method_register(&f.server,{name="shape",params=Graph_Inspect_Result,params_info=type_info_of(Graph_Inspect_Result),handler=proc(call:^api.Call) {serial.text_write_raw(call.out,"{}")}}),api.Register_Error.None)
+    testing.expect_value(t,api.method_register(&f.server,{name="shape",params=Graph_Inspect_Result,params_info=type_info_of(Graph_Inspect_Result),result=serial.Json,writes_result=true,handler=proc(call:^api.Call) {serial.text_write_raw(call.out,"{}")}}),api.Register_Error.None)
     result=authoring_test_execute(f,"shape",text);testing.expect(t,result.code==0,result.message)
     replace,_:=strings.replace_all(request,`"path":"sync.agraph"`,`"path":"sync.agraph"`,context.temp_allocator)
     bad,_:=strings.replace_all(replace,`"left":"idle"`,`"sync_mode":"Independent","left":"idle"`,context.temp_allocator)

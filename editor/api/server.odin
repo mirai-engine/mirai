@@ -62,7 +62,6 @@ server_destroy :: proc(s:^Server) {
     if s.listening {net.close(s.listener)}
     for &method in s.methods[:s.method_count] {
         delete(method.name,s.allocator);delete(method.summary,s.allocator);delete(method.plugin,s.allocator);delete(method.defaults,s.allocator)
-        delete(method.params_schema,s.allocator);delete(method.result_schema,s.allocator)
     }
     delete(s.name,s.allocator);delete(s.version,s.allocator);delete(s.instructions,s.allocator);delete(s.docs_root,s.allocator)
     plugins_free(s)
@@ -110,7 +109,6 @@ plugins_free :: proc(s:^Server) {
 server_methods_reset :: proc(s:^Server) -> bool {
     for &method in s.methods[:s.method_count] {
         delete(method.name,s.allocator);delete(method.summary,s.allocator);delete(method.plugin,s.allocator);delete(method.defaults,s.allocator)
-        delete(method.params_schema,s.allocator);delete(method.result_schema,s.allocator)
         method={}
     }
     s.method_count=0

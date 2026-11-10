@@ -129,7 +129,7 @@ Api_Records_Row :: struct {
     id:u64 `mirai:"label=What a core.Record keeps"`,
     name:[asset.RECORDS_NAME]u8 `mirai:"text"`,
     values:serial.Json `mirai:"label=The row as records.set takes it; a core.Text is its id and a core.Record its table and row"`,
-    texts:u8 `mirai:"any,optional,label=By path of each core.Text field with a text: its text by language code; the key \"\" is the language the game is written in"`,
+    texts:serial.Json `mirai:"optional,label=By path of each core.Text field with a text: its text by language code; the key \"\" is the language the game is written in"`,
 }
 @(private)
 Api_Records_Removed :: struct {
@@ -161,20 +161,6 @@ Api_Records_Export :: struct {
 }
 
 // ---------------------------------------------------------------- params
-
-@(private) RECORDS_API_P_RECORDS :: `"records":{"type":"string","description":"A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"}`
-@(private) RECORDS_API_P_ROW :: `"row":{"type":"string","description":"The name of a row, as records.inspect lists them"}`
-@(private) RECORDS_API_P_VALUES :: `"values":{"type":"object","description":"Fields of the row, as records.inspect shows them, or paths of a part of one (\"stats.speed\", \"windows[2].to\"); each is set whole: an object or a list leaves what it does not give at the default of the type, and what no key names keeps its value. A core.Record field also takes the name of a row (\"sword\") or its table and name (\"data/weapons/sword\"); a core.Text field also takes its source text"}`
-@(private) RECORDS_API_P_TEXTS :: `"texts":{"type":"object","description":"Texts of core.Text fields by field path, each by language code, as {\"title\":{\"\":\"Sword\",\"es\":\"Espada\"}}; \"\" is the language the game is written in and an empty translation removes it"}`
-
-@(private) RECORDS_API_CREATE_SCHEMA :: `{"type":"object","properties":{"path":{"type":"string","description":"Where the new table goes, under the assets folder; .records is added when missing"},"type":{"type":"string","description":"The type of its rows as library.Name, as records.types lists them"}},"required":["path","type"],"additionalProperties":false}`
-@(private) RECORDS_API_INSPECT_SCHEMA :: `{"type":"object","properties":{` + RECORDS_API_P_RECORDS + `,"rows":{"type":"array","items":{"type":"string"},"description":"Only these rows, by name"}},"required":["records"],"additionalProperties":false}`
-@(private) RECORDS_API_SET_SCHEMA :: `{"type":"object","properties":{` + RECORDS_API_P_RECORDS + `,` + RECORDS_API_P_ROW + `,` + RECORDS_API_P_VALUES + `,` + RECORDS_API_P_TEXTS + `,"name":{"type":"string","description":"A new name for the row"}},"required":["records","row"],"additionalProperties":false}`
-@(private) RECORDS_API_ADD_SCHEMA :: `{"type":"object","properties":{` + RECORDS_API_P_RECORDS + `,"name":{"type":"string","description":"The name of the new row: a word of ASCII letters, digits and _, unique in the table"},` + RECORDS_API_P_VALUES + `,` + RECORDS_API_P_TEXTS + `,"after":{"type":"string","description":"The row it goes after; without it, at the end"}},"required":["records","name"],"additionalProperties":false}`
-@(private) RECORDS_API_REMOVE_SCHEMA :: `{"type":"object","properties":{` + RECORDS_API_P_RECORDS + `,"rows":{"type":"array","items":{"type":"string"},"description":"The names of the rows to remove"}},"required":["records","rows"],"additionalProperties":false}`
-@(private) RECORDS_API_MOVE_SCHEMA :: `{"type":"object","properties":{` + RECORDS_API_P_RECORDS + `,` + RECORDS_API_P_ROW + `,"after":{"type":"string","description":"The row it goes right after; empty: it goes first"}},"required":["records","row","after"],"additionalProperties":false}`
-@(private) RECORDS_API_IMPORT_SCHEMA :: `{"type":"object","properties":{` + RECORDS_API_P_RECORDS + `,"file":{"type":"string","description":"A CSV file (UTF-8, comma separated, its first row the columns as records.export writes them): its path from the root of the project, or absolute"}},"required":["records","file"],"additionalProperties":false}`
-@(private) RECORDS_API_EXPORT_SCHEMA :: `{"type":"object","properties":{` + RECORDS_API_P_RECORDS + `,"file":{"type":"string","description":"The CSV file to write: its path from the root of the project, or absolute; an existing one is replaced"}},"required":["records","file"],"additionalProperties":false}`
 
 Records_Api_Key :: enum u8 {Records,Path,Type,Row,Name,After,File,Values,Texts,Rows}
 Records_Api_Keys :: bit_set[Records_Api_Key;u16]
@@ -1157,17 +1143,72 @@ records_api_file :: proc(s:^Session,path:string) -> string {
     return project.path_absolute(project.path(s.project_root,native,allocator=context.temp_allocator),context.temp_allocator)
 }
 
+// What records.create takes.
+Api_Records_Create_Params :: struct {
+    path:string `mirai:"label=Where the new table goes, under the assets folder; .records is added when missing"`,
+    type:string `mirai:"label=The type of its rows as library.Name, as records.types lists them"`,
+}
+
+// What records.inspect takes.
+Api_Records_Inspect_Params :: struct {
+    records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
+    rows:[]string `mirai:"optional,label=Only these rows, by name"`,
+}
+
+// What records.set takes.
+Api_Records_Set_Params :: struct {
+    records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
+    row:string `mirai:"label=The name of a row, as records.inspect lists them"`,
+    values:serial.Json `mirai:"optional,label=Fields of the row, as records.inspect shows them, or paths of a part of one ('stats.speed', 'windows[2].to'); each is set whole: an object or a list leaves what it does not give at the default of the type, and what no key names keeps its value. A core.Record field also takes the name of a row ('sword') or its table and name ('data/weapons/sword'); a core.Text field also takes its source text"`,
+    texts:serial.Json `mirai:"optional,label=Texts of core.Text fields by field path, each by language code, as {'title':{'':'Sword','es':'Espada'}}; '' is the language the game is written in and an empty translation removes it"`,
+    name:string `mirai:"optional,label=A new name for the row"`,
+}
+
+// What records.add takes.
+Api_Records_Add_Params :: struct {
+    records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
+    name:string `mirai:"label=The name of the new row: a word of ASCII letters, digits and _, unique in the table"`,
+    values:serial.Json `mirai:"optional,label=Fields of the row, as records.inspect shows them, or paths of a part of one ('stats.speed', 'windows[2].to'); each is set whole: an object or a list leaves what it does not give at the default of the type, and what no key names keeps its value. A core.Record field also takes the name of a row ('sword') or its table and name ('data/weapons/sword'); a core.Text field also takes its source text"`,
+    texts:serial.Json `mirai:"optional,label=Texts of core.Text fields by field path, each by language code, as {'title':{'':'Sword','es':'Espada'}}; '' is the language the game is written in and an empty translation removes it"`,
+    after:string `mirai:"optional,label=The row it goes after; without it, at the end"`,
+}
+
+// What records.remove takes.
+Api_Records_Remove_Params :: struct {
+    records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
+    rows:[]string `mirai:"label=The names of the rows to remove"`,
+}
+
+// What records.move takes.
+Api_Records_Move_Params :: struct {
+    records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
+    row:string `mirai:"label=The name of a row, as records.inspect lists them"`,
+    after:string `mirai:"label=The row it goes right after; empty: it goes first"`,
+}
+
+// What records.import takes.
+Api_Records_Import_Params :: struct {
+    records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
+    file:string `mirai:"label=A CSV file (UTF-8, comma separated, its first row the columns as records.export writes them): its path from the root of the project, or absolute"`,
+}
+
+// What records.export takes.
+Api_Records_Export_Params :: struct {
+    records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
+    file:string `mirai:"label=The CSV file to write: its path from the root of the project, or absolute; an existing one is replaced"`,
+}
+
 @(private)
 records_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="records.types",summary="The record types of the project (structs marked @(record)) with their fields and their .records tables.",result=Api_Records_Types,writes_result=true,flags={.Read_Only},run=api_records_types})
-    api_register(s,st,{name="records.create",params_schema=RECORDS_API_CREATE_SCHEMA,summary="Makes a new empty table (.records) of a record type at a path under the assets folder.",result=Api_Records_Table,writes_result=true,run=api_records_create})
-    api_register(s,st,{name="records.inspect",params_schema=RECORDS_API_INSPECT_SCHEMA,summary="The rows of a table of game data (.records) with their ids, names, values and texts by language.",result=Api_Records_Table,writes_result=true,flags={.Read_Only},run=api_records_inspect})
-    api_register(s,st,{name="records.set",params_schema=RECORDS_API_SET_SCHEMA,summary="Changes the values, the texts or the name of a row of a table of game data.",result=Api_Records_Table,writes_result=true,run=api_records_set})
-    api_register(s,st,{name="records.add",params_schema=RECORDS_API_ADD_SCHEMA,summary="Adds a row to a table of game data with the defaults of its type and the values and texts given.",result=Api_Records_Table,writes_result=true,run=api_records_add})
-    api_register(s,st,{name="records.remove",params_schema=RECORDS_API_REMOVE_SCHEMA,summary="Removes rows of a table of game data by name; the references to them are left as they are.",result=Api_Records_Removed,writes_result=true,flags={.Destructive},run=api_records_remove})
-    api_register(s,st,{name="records.move",params_schema=RECORDS_API_MOVE_SCHEMA,summary="Moves a row of a table of game data to another place of its order; its id stays.",result=Api_Records_Table,writes_result=true,run=api_records_move})
-    api_register(s,st,{name="records.import",params_schema=RECORDS_API_IMPORT_SCHEMA,summary="Updates the rows of a table of game data from a CSV file by their names and adds the rows it lacks, as one step of the history.",result=Api_Records_Import,writes_result=true,run=api_records_import})
-    api_register(s,st,{name="records.export",params_schema=RECORDS_API_EXPORT_SCHEMA,summary="Writes the rows of a table of game data to a CSV file that records.import reads back.",result=Api_Records_Export,writes_result=true,flags={.Idempotent},run=api_records_export})
+    api_register(s,st,{name="records.create",params=Api_Records_Create_Params,summary="Makes a new empty table (.records) of a record type at a path under the assets folder.",result=Api_Records_Table,writes_result=true,run=api_records_create})
+    api_register(s,st,{name="records.inspect",params=Api_Records_Inspect_Params,summary="The rows of a table of game data (.records) with their ids, names, values and texts by language.",result=Api_Records_Table,writes_result=true,flags={.Read_Only},run=api_records_inspect})
+    api_register(s,st,{name="records.set",params=Api_Records_Set_Params,summary="Changes the values, the texts or the name of a row of a table of game data.",result=Api_Records_Table,writes_result=true,run=api_records_set})
+    api_register(s,st,{name="records.add",params=Api_Records_Add_Params,summary="Adds a row to a table of game data with the defaults of its type and the values and texts given.",result=Api_Records_Table,writes_result=true,run=api_records_add})
+    api_register(s,st,{name="records.remove",params=Api_Records_Remove_Params,summary="Removes rows of a table of game data by name; the references to them are left as they are.",result=Api_Records_Removed,writes_result=true,flags={.Destructive},run=api_records_remove})
+    api_register(s,st,{name="records.move",params=Api_Records_Move_Params,summary="Moves a row of a table of game data to another place of its order; its id stays.",result=Api_Records_Table,writes_result=true,run=api_records_move})
+    api_register(s,st,{name="records.import",params=Api_Records_Import_Params,summary="Updates the rows of a table of game data from a CSV file by their names and adds the rows it lacks, as one step of the history.",result=Api_Records_Import,writes_result=true,run=api_records_import})
+    api_register(s,st,{name="records.export",params=Api_Records_Export_Params,summary="Writes the rows of a table of game data to a CSV file that records.import reads back.",result=Api_Records_Export,writes_result=true,flags={.Idempotent},run=api_records_export})
 }
 
 @(private)

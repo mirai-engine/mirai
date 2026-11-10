@@ -11,17 +11,20 @@ import "mirai:std/serial"
 // between frames. Methods take and return plain structs described by a
 // serial.Schema; their JSON Schemas are generated from the same description.
 //
-// Convention for parameters: a field is required unless its struct tag has
+// The params and the result of a method are structs, and they are its only
+// description: a method without a params type takes none, and one without a
+// result type answers null. A field is required unless its struct tag has
 // `optional` (`mirai:"optional,min=0,max=10"`). An absent optional field keeps
 // the value of Method_Desc.defaults, or zero without it. Text is a [N]u8 field
-// tagged `text`; N bytes is the longest value. Ranges come from the tags
-// min and max, which also bound each element of an array field. A result a
-// handler writes itself describes a list of any length with an array tagged
-// `list`, any JSON value with a field tagged `any`, and a key that cannot be
-// the name of a field (an Odin keyword such as where) with `name=where`. A
-// param tagged `any` takes any JSON too; its handler reads it from Call.raw.
-// An integer param that only bounds how much a method answers is tagged
-// `clamp`: past its max it takes the max and the answer says so in _clamped.
+// tagged `text`, N bytes the longest value, or a string of any length. Ranges
+// come from the tags min and max, which also bound each element of an array
+// field. A list of any length is a slice, in the scratch of the call; any
+// JSON value, one whose shape only the world knows (the values of a
+// component), is a serial.Json field, which holds its text; and a key that
+// cannot be the name of a field (an Odin keyword such as where) is given with
+// `name=where`. An integer param that only bounds how much a method answers is
+// tagged `clamp`: past its max it takes the max and the answer says so in
+// _clamped.
 
 DEFAULT_PORT :: 7940
 
@@ -68,6 +71,7 @@ METHOD_NOT_FOUND  :: -32601
 INVALID_PARAMS    :: -32602
 INTERNAL_ERROR    :: -32603
 SERVER_ERROR      :: -32000 // a handler failed without a code of its own
+NOT_NOW           :: -32001 // the state of the editor does not allow the method now: data.fix names the method that changes it
 CANCELLED         :: -32094 // the client cancelled the call; it stopped at a safe point
 HUNG              :: -32095 // client side: the process of the editor is alive and has used no CPU for a while: it will not answer
 CLOSED            :: -32096 // the editor closed the connection without a byte of answer, or is ending during a _wait_until: it ended or restarted, perhaps after running the call
@@ -87,20 +91,20 @@ Method_Flag :: enum u8 {
     Idempotent,
     Core,      // tools/list gives it always: what agents use most, as each costs its schema every turn; the rest go through the tool call
     Turn,      // only for the turn of an agent of the editor: tools/list does not give it to another request
+    Draws,     // it draws the scene or starts what draws it: whoever serves it has the shaders of the disk published first
+    As_User,   // it runs frames, input or captures as the user would: what it changes is the user's, of no caller
+    View,      // it changes what the editor shows, or ends a turn, and not the document
 }
 Method_Flags :: bit_set[Method_Flag;u8]
 
-// A handler reads call.params and fills call.result, or calls call_fail. A
-// method without params or result type is free-form: it reads call.raw and
-// writes JSON into call.out.
+// A handler reads call.params and fills call.result, or calls call_fail.
 Handler :: #type proc(call:^Call)
 
 Method_Desc :: struct {
     name,summary:string,
     plugin:string,        // the plugin that registers it; empty for the editor
-    params,result:typeid, // structs; nil: free-form JSON
+    params,result:typeid, // structs; nil: it takes no params, it answers null
     params_info,result_info:^runtime.Type_Info, // of params and result, from the binary that declares them when it is not this one
-    params_schema,result_schema:string,         // a JSON Schema written by hand for free-form params or result
     defaults:rawptr,      // a params value; absent optional fields take its values
     handler:Handler,
     user:rawptr,
@@ -112,9 +116,8 @@ Method :: struct {
     name,summary:string,
     plugin:string,
     name_hash:u64,
-    params,result:serial.Type_Index, // TYPE_NONE: free-form
+    params,result:serial.Type_Index, // TYPE_NONE: no params, a null result
     params_id,result_id:typeid,
-    params_schema,result_schema:string,
     defaults:[]u8,
     handler:Handler,
     user:rawptr,
@@ -127,13 +130,13 @@ Call :: struct {
     server:^Server,
     method:^Method,
     user:rawptr,
-    raw:string,                   // the params as received: a JSON object
+    raw:string,                   // the params as read: a JSON object, with its names as the types of the params have them
     client_tag:string,
     client_name:string,           // X-Mirai-Client: the agent outside the editor that calls, or ""
     measure:string,               // X-Mirai-Measure: the measurement the caller is part of, or ""
-    params:rawptr,                // validated; nil when free-form
-    result:rawptr,                // zeroed; nil when the handler writes the result
-    out:^serial.Writer,           // the result the handler writes; nil when typed
+    params:rawptr,                // validated; nil when the method takes none
+    result:rawptr,                // zeroed; nil when the handler writes the result or there is none
+    out:^serial.Writer,           // the result a handler that writes it writes; nil when the server writes it from result
     allocator:runtime.Allocator,  // scratch that lives until the response is written
     error:Error,
     failed:bool,
@@ -147,7 +150,6 @@ Register_Error :: enum u8 {
     Invalid_Name,
     Invalid_Handler,
     Invalid_Type, // the reason is in schema.error, or the type is not a struct
-    Invalid_Schema, // a schema written by hand is not JSON, or the method has a type for it
     Too_Large,
 }
 
@@ -263,6 +265,7 @@ method_find :: proc(s:^Server,name:string) -> ^Method {
 call_reader_init :: proc(call:^Call,r:^serial.Text_Reader,text:string) {
     serial.text_reader_init(r,text,call.allocator)
     r.loose_names=true
+    r.nulls=true
     if call.server!=nil {r.assets=call.server.assets}
 }
 
@@ -282,6 +285,13 @@ call_image :: proc(call:^Call,path:string) {call.image=clone_text(call.allocator
 call_fail :: proc(call:^Call,code:int,message:string,data:="") {
     call.failed=true
     call.error={code,clone_text(call.allocator,message),clone_text(call.allocator,data)}
+}
+// The state of the editor does not allow the method now: no game plays, or one
+// does. fix names the method that changes that, which the error carries in
+// data.fix for whoever calls to branch on.
+call_not_now :: proc(call:^Call,message,fix:string) {
+    call.failed=true
+    call.error={NOT_NOW,clone_text(call.allocator,message),format_text(call.allocator,`{{"fix":%s}}`,serial.text_quote(fix,call.allocator))}
 }
 call_failf :: proc(call:^Call,code:int,format:string,args:..any) {
     call.failed=true

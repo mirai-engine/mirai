@@ -473,7 +473,7 @@ qa_violations_write :: proc(s:^editor.Session,out:^serial.Writer,q:^Run_Qa) {
 api_play_qa_report :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Api_Play_Qa_Report_Params)
     r,_:=editor.api_play_run(s,call,p.player)
-    if r==nil {api.call_fail(call,api.SERVER_ERROR,editor.API_NO_GAME);return}
+    if r==nil {editor.api_no_game(call);return}
     q:=qa_of(s,r)
     if q==nil || !q.armed {api.call_fail(call,api.INVALID_PARAMS,"No monitors on this game: play.qa.start first");return}
     strip_path:=base.text_get(p.filmstrip[:])

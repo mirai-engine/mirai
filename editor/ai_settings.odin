@@ -1,6 +1,5 @@
 package editor
 
-import "core:encoding/json"
 import "core:os"
 import "core:strings"
 import "mirai:project"
@@ -52,10 +51,10 @@ Ai_Connection :: struct {
 // the machine (ai_agents_read).
 Ai_Connection_Disk :: struct {
     provider,model,effort:string,
-    configured:bool `json:"configured,omitempty"`,
-    name:string `json:"name,omitempty"`,
-    command:string `json:"command,omitempty"`,
-    arguments:[]string `json:"arguments,omitempty"`,
+    configured:bool,
+    name:string,
+    command:string,
+    arguments:[]string,
 }
 Ai_Subagent_Disk :: struct {mode,connection,model,effort:string}
 Ai_Settings_Disk :: struct {version:int, connections:[]Ai_Connection_Disk, subagent:Ai_Subagent_Disk}
@@ -213,7 +212,7 @@ ai_agents_refresh :: proc(s:^Session) {
         } else {
             folder:=ai_agents_folder(s.ai,base.text_get(connection.id[:]))
             disk:struct{version,runtime:string}
-            if data,error:=os.read_entire_file(project.path(folder,"installation.json",allocator=context.temp_allocator),context.temp_allocator);error==nil && json.unmarshal(data,&disk,allocator=context.temp_allocator)==nil {
+            if data,error:=os.read_entire_file(project.path(folder,"installation.json",allocator=context.temp_allocator),context.temp_allocator);error==nil && serial.text_decode(string(data),&disk,context.temp_allocator,skip_unknown=true)=="" {
                 for name,kind in AI_RUNTIME_NAMES {if disk.runtime==name {connection.runtime=kind}}
                 entry:=ai_agent_entry(s.ai,connection.agent,connection.runtime)
                 connection.installed=entry!="" && os.is_file(entry)
@@ -267,7 +266,7 @@ ai_settings_initialize :: proc(s:^Session) {
     if len(home)<len(m.agents_home) {base.text_set(m.agents_home[:],home)}
     file:=project.path(s.project_root,".mirai","ai","connections.json",allocator=context.temp_allocator)
     disk:Ai_Settings_Disk
-    if data,error:=os.read_entire_file(file,context.temp_allocator);error==nil && json.unmarshal(data,&disk,allocator=context.temp_allocator)==nil && disk.version==2 {
+    if data,error:=os.read_entire_file(file,context.temp_allocator);error==nil && serial.text_decode(string(data),&disk,context.temp_allocator)=="" && disk.version==2 {
         for item in disk.connections {
             provider,ok:=ai_provider_find(m,item.provider)
             if !ok {
@@ -311,8 +310,8 @@ ai_settings_save :: proc(s:^Session) -> bool {
     modes:=AI_SUBAGENT_MODES
     defaults:=&s.ai.subagent
     disk:=Ai_Settings_Disk{version=2,connections=entries[:s.ai.connection_count],subagent={mode=modes[defaults.mode],connection=base.text_get(defaults.connection[:]),model=base.text_get(defaults.model[:]),effort=base.text_get(defaults.effort[:])}}
-    data,error:=json.marshal(disk,{pretty=true},context.temp_allocator)
-    if error!=nil {return false}
+    data,encoded:=serial.text_encode(disk,.Pretty,context.temp_allocator)
+    if !encoded {return false}
     folder:=project.path(s.project_root,".mirai","ai",allocator=context.temp_allocator)
     if os.make_directory_all(folder)!=nil && !os.is_dir(folder) {return false}
     if serial.file_write_atomic(project.path(folder,"connections.json",allocator=context.temp_allocator),data)!=.None {return false}

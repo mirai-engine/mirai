@@ -116,8 +116,6 @@ navigation_bake_keep :: proc(s:^editor.Session,kept:^Nav_Bake_Kept) {
     if written {kept^={w.data,n.revision,seen}}
 }
 
-@(private) BAKE_SCHEMA :: `{"type":"object","properties":{"asset":{"type":"string"},"path":{"type":"string"},"tiles":{"type":"integer"},"settled":{"type":"boolean"}},"required":["asset","path","tiles","settled"]}`
-
 // The scene, or the section edited in its world, saves its meshes: the first
 // time it gets a .navmesh beside it and an entity whose Navigation_Bake names
 // it, in one undo step; the file stays in memory until the scene is saved,

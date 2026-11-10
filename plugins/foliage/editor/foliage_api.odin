@@ -107,19 +107,39 @@ Query_Params :: struct {
 
 @(private) LAYER_NAME_BYTES :: 256
 @(private) TYPE_OUT_OF_RANGE :: "The type is out of range: densities and distances at least 0, slopes from 0 to 90 degrees, align and weight from 0 to 1"
-@(private) TYPE_RESULT :: `{"type":"object","properties":{"type":{"type":"string"}},"required":["type"]}`
+// What foliage.create answers.
+Foliage_Create_Result :: struct {
+    id:string,
+}
+
+// What foliage.type_add, foliage.type_set, foliage.type_remove, foliage.place answer.
+Type_Result :: struct {
+    type:string,
+}
+
+// What foliage.paint answers.
+Foliage_Paint_Result :: struct {
+    changed:bool,
+}
+
+// What foliage.query answers.
+Foliage_Query_Result :: struct {
+    types:[]serial.Json,
+    instances:[]serial.Json `mirai:"optional"`,
+    more:bool `mirai:"optional"`,
+}
 
 @(private)
 foliage_api_register :: proc(s:^editor.Session) {
     paint_defaults:=Paint_Params{radius=3,density=1}
     query_defaults:=Query_Params{limit=256}
-    editor.api_method_register(s,{name="foliage.create",summary="Makes a Foliage in the edited scene, with a .foliage of no types in memory until it is saved; one step of undo takes it away.",params=Create_Params,params_info=type_info_of(Create_Params),result_schema=`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`,run=api_create})
-    editor.api_method_register(s,{name="foliage.type_add",summary="Adds a type of foliage that shows a mesh with the values it is given, as one step of undo; the name it answers names it in the other methods.",params=Type_Add_Params,params_info=type_info_of(Type_Add_Params),result_schema=TYPE_RESULT,run=api_type_add})
-    editor.api_method_register(s,{name="foliage.type_set",summary="Changes the values of a type of foliage it is given, as one step of undo; the others stay: its mesh, how dense, large, turned and leaned it is, its offset, its rule of slope, height and terrain layers, its distances, wind and shadow.",params=Type_Set_Params,params_info=type_info_of(Type_Set_Params),result_schema=TYPE_RESULT,run=api_type_set})
-    editor.api_method_register(s,{name="foliage.type_remove",summary="Takes a type of foliage out with its instances, as one step of undo.",params=Type_Remove_Params,params_info=type_info_of(Type_Remove_Params),flags={.Destructive},result_schema=TYPE_RESULT,run=api_type_remove})
-    editor.api_method_register(s,{name="foliage.paint",summary="One stroke of the foliage brush from at to to (or at alone), as one step of undo: paint fills the ring to the density of each type under its rules, erase leaves erase_density of it, reapply gives the instances the scale, turn and offset of their type again, generate and ungenerate turn the generator of the cells under the ring on or off.",params=Paint_Params,params_info=type_info_of(Paint_Params),defaults=&paint_defaults,result_schema=`{"type":"object","properties":{"changed":{"type":"boolean"}},"required":["changed"]}`,run=api_paint})
-    editor.api_method_register(s,{name="foliage.place",summary="Puts one instance of a type on the surface under a point, with the scale, turn and offset of its type at random, as one step of undo.",params=Place_Params,params_info=type_info_of(Place_Params),result_schema=TYPE_RESULT,run=api_place})
-    editor.api_method_register(s,{name="foliage.query",summary="The types of a Foliage with how many instances each shows, and the instances inside a box of the world: type, where they are, their scale and whether they are manual or generated.",params=Query_Params,params_info=type_info_of(Query_Params),defaults=&query_defaults,flags={.Read_Only},result_schema=`{"type":"object","properties":{"types":{"type":"array"},"instances":{"type":"array"},"more":{"type":"boolean"}},"required":["types"]}`,run=api_query})
+    editor.api_method_register(s,{name="foliage.create",summary="Makes a Foliage in the edited scene, with a .foliage of no types in memory until it is saved; one step of undo takes it away.",params=Create_Params,params_info=type_info_of(Create_Params),result=Foliage_Create_Result,result_info=type_info_of(Foliage_Create_Result),writes_result=true,run=api_create})
+    editor.api_method_register(s,{name="foliage.type_add",summary="Adds a type of foliage that shows a mesh with the values it is given, as one step of undo; the name it answers names it in the other methods.",params=Type_Add_Params,params_info=type_info_of(Type_Add_Params),result=Type_Result,result_info=type_info_of(Type_Result),writes_result=true,run=api_type_add})
+    editor.api_method_register(s,{name="foliage.type_set",summary="Changes the values of a type of foliage it is given, as one step of undo; the others stay: its mesh, how dense, large, turned and leaned it is, its offset, its rule of slope, height and terrain layers, its distances, wind and shadow.",params=Type_Set_Params,params_info=type_info_of(Type_Set_Params),result=Type_Result,result_info=type_info_of(Type_Result),writes_result=true,run=api_type_set})
+    editor.api_method_register(s,{name="foliage.type_remove",summary="Takes a type of foliage out with its instances, as one step of undo.",params=Type_Remove_Params,params_info=type_info_of(Type_Remove_Params),flags={.Destructive},result=Type_Result,result_info=type_info_of(Type_Result),writes_result=true,run=api_type_remove})
+    editor.api_method_register(s,{name="foliage.paint",summary="One stroke of the foliage brush from at to to (or at alone), as one step of undo: paint fills the ring to the density of each type under its rules, erase leaves erase_density of it, reapply gives the instances the scale, turn and offset of their type again, generate and ungenerate turn the generator of the cells under the ring on or off.",params=Paint_Params,params_info=type_info_of(Paint_Params),defaults=&paint_defaults,result=Foliage_Paint_Result,result_info=type_info_of(Foliage_Paint_Result),writes_result=true,run=api_paint})
+    editor.api_method_register(s,{name="foliage.place",summary="Puts one instance of a type on the surface under a point, with the scale, turn and offset of its type at random, as one step of undo.",params=Place_Params,params_info=type_info_of(Place_Params),result=Type_Result,result_info=type_info_of(Type_Result),writes_result=true,run=api_place})
+    editor.api_method_register(s,{name="foliage.query",summary="The types of a Foliage with how many instances each shows, and the instances inside a box of the world: type, where they are, their scale and whether they are manual or generated.",params=Query_Params,params_info=type_info_of(Query_Params),defaults=&query_defaults,flags={.Read_Only},result=Foliage_Query_Result,result_info=type_info_of(Foliage_Query_Result),writes_result=true,run=api_query})
 }
 
 // The tool and the edited world with the source of a Foliage ready to edit.

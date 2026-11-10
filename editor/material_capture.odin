@@ -48,7 +48,7 @@ Api_Material_Capture_View :: struct {
 @(private)
 material_capture_register :: proc(s:^Session,st:^Api_State) {
     defaults:=Api_Material_Capture_Params{size=256,wait=180}
-    api_register(s,st,{name="material.preview.capture",summary="Draws a material on the sphere of the studio and returns the image with what it gives at each pixel by views, once the previews have the last change of its program.",params=Api_Material_Capture_Params,result=Api_Material_Capture_Result,writes_result=true,defaults=&defaults,flags={.Read_Only},run=api_material_capture})
+    api_register(s,st,{name="material.preview.capture",summary="Draws a material on the sphere of the studio and returns the image with what it gives at each pixel by views, once the previews have the last change of its program.",params=Api_Material_Capture_Params,result=Api_Material_Capture_Result,writes_result=true,defaults=&defaults,flags={.Read_Only,.Draws},run=api_material_capture})
 }
 
 // The shape previews draw a material on; captures draw it on the sphere.

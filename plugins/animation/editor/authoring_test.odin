@@ -42,7 +42,7 @@ authoring_test_destroy :: proc(f:^Authoring_Test) {
 @(private)
 authoring_test_register :: proc(f:^Authoring_Test,t:^testing.T,name:string,$T:typeid,run:editor.Api_Handler,defaults:^T=nil) {
     entry:=new(Authoring_Test_Entry,context.temp_allocator);entry^={&f.session,run}
-    testing.expect_value(t,api.method_register(&f.server,{name=name,params=T,params_info=type_info_of(T),defaults=defaults,user=entry,handler=proc(call:^api.Call) {entry:=(^Authoring_Test_Entry)(call.user);entry.run(entry.session,call)}}),api.Register_Error.None)
+    testing.expect_value(t,api.method_register(&f.server,{name=name,params=T,params_info=type_info_of(T),result=serial.Json,writes_result=true,defaults=defaults,user=entry,handler=proc(call:^api.Call) {entry:=(^Authoring_Test_Entry)(call.user);entry.run(entry.session,call)}}),api.Register_Error.None)
 }
 
 @(private)

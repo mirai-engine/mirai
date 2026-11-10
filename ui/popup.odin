@@ -412,7 +412,7 @@ menu_row :: proc(ctx:^Context,id:Id,text:string,item:Menu_Item,open,arrow:bool) 
         text_color,muted,icon_color,check=color_faded(text_color),color_faded(muted),color_faded(icon_color),color_faded(check)
     }
     fill:=color_hover(th) if it.hot || open else Color{}
-    // The items of a menu of the prototype are text of 11.
+    // The items of a menu are text of the size of the theme.
     size:=th.font
     shortcut:=f32(0)
     if item.shortcut!="" {shortcut=text_width(&ctx.font,item.shortcut,MENU_HEADER_FONT)+1}

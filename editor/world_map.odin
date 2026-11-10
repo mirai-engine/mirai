@@ -452,6 +452,38 @@ SECTION_RULE_NAMES :: [scene.Section_Rule]string{.With_Document="With_Document",
 
 // One section, as editor.sections and the answers of its methods write it.
 @(private)
+// A section as api_section_write writes it.
+Api_Section :: struct {
+    id:base.Entity_Id `mirai:"label=The entity with the Scene_Reference"`,
+    name:string,
+    scene_:string `mirai:"name=scene,label=The path of its scene under the assets folder; empty when the registry does not have it"`,
+    rule:scene.Section_Rule,
+    asked:scene.Section_State `mirai:"label=What its reference asks"`,
+    view:string `mirai:"label=What the view of the editor asks instead: Active, Loaded or Unloaded; Auto when it follows the reference"`,
+    shown:Section_Shown `mirai:"label=What the editor shows of it now"`,
+    edited:bool `mirai:"label=Whether it is the section edited in its world"`,
+    position:[3]f32 `mirai:"label=In the world"`,
+    min:[3]f32 `mirai:"optional,label=Of the box of its extents in the world; without extents it has none"`,
+    max:[3]f32 `mirai:"optional"`,
+    cost:Api_Section_Cost `mirai:"optional,label=editor.sections: what loading it takes"`,
+}
+Api_Section_Cost :: struct {
+    entities,meshes,textures:int,
+    gpu_bytes,file_bytes:i64,
+}
+Api_Sections_Result :: struct {
+    sections:[]Api_Section,
+    sources:[]Api_Sections_Source `mirai:"label=The streaming sources of the edited world"`,
+    camera:Api_Sections_Camera `mirai:"label=The camera of the editor"`,
+}
+Api_Sections_Source :: struct {
+    position:[3]f32,
+    distance:f32,
+}
+Api_Sections_Camera :: struct {
+    position,forward:[3]f32,
+}
+
 api_section_write :: proc(s:^Session,out:^serial.Writer,w:core.World_Ref,e:core.Entity,costs:bool) {
     r,_:=entity_get(w,e,scene.Scene_Reference)
     pose:=entity_world(w,e)

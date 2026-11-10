@@ -135,19 +135,6 @@ schema_of_every_kind_of_field :: proc(t:^testing.T) {
 }
 
 @(test)
-free_form_methods_describe_any_json :: proc(t:^testing.T) {
-    s,ok:=test_server(t);if !ok {return}
-    defer server_destroy(&s)
-    testing.expect_value(t,method_register(&s,{name="free",handler=noop}),Register_Error.None)
-    buffer:[64]u8
-    w:serial.Writer
-    serial.writer_init_fixed(&w,buffer[:])
-    method_schema_write(&w,&s,method_find(&s,"free"),false)
-    method_schema_write(&w,&s,method_find(&s,"free"),true)
-    testing.expect_value(t,string(serial.writer_bytes(&w)),`{"type":"object"}{}`)
-}
-
-@(test)
 registry_refuses_invalid_duplicate_and_excess_methods :: proc(t:^testing.T) {
     s,ok:=test_server(t,{max_methods=4});if !ok {return}
     defer server_destroy(&s)
@@ -219,27 +206,100 @@ a_value_of_another_schema_is_checked_like_the_params_of_a_method :: proc(t:^test
     testing.expect_value(t,message,"x.flags has bits that are not members of its set")
 }
 
+Open_Part :: struct {name:string,weights:[]f32 `mirai:"min=0,max=1"`}
+Open :: struct {
+    title:string `mirai:"optional,label=What it is called, in a line"`,
+    parts:[]Open_Part `mirai:"optional"`,
+    names:[][16]u8 `mirai:"text,optional"`,
+    values:serial.Json `mirai:"optional,label=By name"`,
+    parent:[32]u8 `mirai:"text,entity,optional"`,
+}
+
+open_handler :: proc(call:^Call) {
+    p:=call_params(call,Open)
+    result:=call_result(call,Open)
+    result^=p^
+    if len(p.parts)>0 {
+        // What a handler answers of any length lives in the scratch of its call.
+        result.parts=make([]Open_Part,len(p.parts)+1,call.allocator)
+        if result.parts==nil {return}
+        copy(result.parts,p.parts)
+        result.parts[len(p.parts)]={name="added"}
+    }
+}
+
+// The struct of the params and of the result of a method is its only
+// description: lists of any length, strings and any JSON are fields of it,
+// read and written by the server; without a params type a method takes none,
+// and without a result type it answers null.
 @(test)
-a_free_form_method_is_described_by_the_schema_written_for_it :: proc(t:^testing.T) {
+a_method_is_described_by_its_types_alone :: proc(t:^testing.T) {
     s,ok:=test_server(t);if !ok {return}
     defer server_destroy(&s)
-    PARAMS :: `{"type":"object","properties":{"open":{"type":"object"}}}`
-    testing.expect_value(t,method_register(&s,{name="open",params_schema=PARAMS,result_schema=`{"type":"array"}`,handler=noop}),Register_Error.None)
-    testing.expect_value(t,method_register(&s,{name="broken",params_schema=`{"type":`,handler=noop}),Register_Error.Invalid_Schema)
-    testing.expect_value(t,method_register(&s,{name="typed",params=Small,params_schema=PARAMS,handler=noop}),Register_Error.Invalid_Schema)
-    buffer:[1024]u8
-    for result in ([2]bool{false,true}) {
-        w:serial.Writer
-        serial.writer_init_fixed(&w,buffer[:])
-        method_schema_write(&w,&s,&s.methods[s.method_count-1],result)
-        testing.expect_value(t,string(serial.writer_bytes(&w)),result?`{"type":"array"}`:`{"type":"object","properties":{`+SELECT_SCHEMA+`,"open":{"type":"object"}}}`)
-    }
+    testing.expect_value(t,method_register(&s,{name="open",params=Open,result=Open,handler=open_handler}),Register_Error.None)
     testing.expect_value(t,method_register(&s,{name="bare",handler=noop}),Register_Error.None)
-    w:serial.Writer
-    serial.writer_init_fixed(&w,buffer[:])
-    method_schema_write(&w,&s,&s.methods[s.method_count-1],false)
-    testing.expect_value(t,string(serial.writer_bytes(&w)),`{"type":"object"}`)
+    testing.expect_value(t,method_register(&s,{name="ranged",params=struct{window:struct{width,height:int `mirai:"optional,min=1"`} `mirai:"optional"`,scale:f32 `mirai:"optional,min=1"`},handler=noop}),Register_Error.None)
+    testing.expect_value(t,method_register(&s,{name="recursive",params=struct{inner:struct{again:[]Open_Recursive}},handler=noop}),Register_Error.Invalid_Type)
+    buffer:=make([]u8,8192,context.temp_allocator)
+    schema :: proc(s:^Server,name:string,result:bool,buffer:[]u8) -> string {
+        w:serial.Writer
+        serial.writer_init_fixed(&w,buffer)
+        method_schema_write(&w,s,method_find(s,name),result)
+        return strings.clone(string(serial.writer_bytes(&w)),context.temp_allocator)
+    }
+    testing.expect_value(t,schema(&s,"bare",false,buffer),`{"type":"object","properties":{`+SELECT_SCHEMA+`},"additionalProperties":false}`)
+    testing.expect_value(t,schema(&s,"bare",true,buffer),`{"type":"null"}`)
+    testing.expect_value(t,schema(&s,"open",true,buffer),
+        `{"type":"object","properties":{"title":{"type":"string","description":"What it is called, in a line"},"parts":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"weights":{"type":"array","items":{"type":"number","minimum":0,"maximum":1}}},"required":["name","weights"],"additionalProperties":false}},"names":{"type":"array","items":{"type":"string","maxLength":16}},"values":{"description":"By name"},"parent":{"type":"string","x-entity":"a name, a path Parent/Child or an id","maxLength":32}},"additionalProperties":false}`)
+    run :: proc(s:^Server,name,params:string,buffer:[]u8) -> (text:string,err:Error,ran:bool) {
+        w:serial.Writer
+        serial.writer_init_fixed(&w,buffer)
+        err,ran=method_execute(s,method_find(s,name),params,&w)
+        return strings.clone(string(serial.writer_bytes(&w)),context.temp_allocator),err,ran
+    }
+    text,err,ran:=run(&s,"open",`{"title":"a, b","parts":[{"name":"x","weights":[0.5,1]}],"names":["one","two"],"values":{"Light":{"intensity":3}},"parent":null}`,buffer)
+    testing.expect(t,ran,err.message)
+    testing.expect_value(t,text,`{"title": "a, b", "parts": [{"name": "x", "weights": [0.5, 1]}, {"name": "added", "weights": []}], "names": ["one", "two"], "values": {"Light":{"intensity":3}}, "parent": ""}`)
+    testing.expect_value(t,result_mismatch(Open,text),"")
+    text,err,ran=run(&s,"open",`{}`,buffer)
+    testing.expect(t,ran && text==`{"title": "", "parts": [], "names": [], "values": null, "parent": ""}`,text)
+    text,err,ran=run(&s,"bare",`{}`,buffer)
+    testing.expect(t,ran && text=="null",text)
+    // What a caller writes that is not what the types say, also inside a list of any length.
+    // A range that leaves zero out is asked of an optional field only when it is given.
+    text,err,ran=run(&s,"ranged",`{}`,buffer)
+    testing.expect(t,ran,err.message)
+    text,err,ran=run(&s,"ranged",`{"window":{"height":4},"scale":null}`,buffer)
+    testing.expect(t,ran,err.message)
+    refused:=[]struct{method,params,says:string}{
+        {"ranged",`{"window":{"width":0}}`,"window.width must be at least 1"},
+        {"ranged",`{"scale":0.5}`,"scale must be at least 1"},
+        {"bare",`{"anything":1}`,"bare takes no params; it was given anything"},
+        {"open",`{"parts":[{"name":"x","weights":[0.5]},{"weights":[]}]}`,"parts[1].name is required"},
+        {"open",`{"parts":[{"name":"x","weights":[0.5,2]}]}`,"parts[0].weights[1] must be at most 1"},
+        {"open",`{"parts":[{"name":"x","weights":[0.5,"nan"]}]}`,"parts[0].weights[1] must be finite"},
+        {"open",`{"parts":[{"name":"x","weights":[],"more":1}]}`,`parts[0]: "more" is not a field: the fields are name, weights`},
+        {"open",`{"parts":{"name":7}}`,"parts"},
+        {"open",`{"names":["a name that is longer than its bytes"]}`,"names[0]: text too long"},
+        {"open",`{"title":[1,2]}`,"title takes one value, not a list of several"},
+        {"open",`{"values":`,"values: expected"},
+        {"open",`{"parts":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[`,""},
+    }
+    for c in refused {
+        _,err,ran=run(&s,c.method,c.params,buffer)
+        testing.expectf(t,!ran && err.code==INVALID_PARAMS && strings.contains(err.message,c.says),"%s: %s",c.params,err.message)
+    }
+    // A list longer than the scratch of a request fails; it does not grow it.
+    long:=strings.builder_make(context.temp_allocator)
+    strings.write_string(&long,`{"parts":[`)
+    for i in 0..<60000 {strings.write_string(&long,i>0?`,{"name":"x","weights":[]}`:`{"name":"x","weights":[]}`)}
+    strings.write_string(&long,`]}`)
+    _,err,ran=run(&s,"open",strings.to_string(long),buffer)
+    testing.expect(t,!ran && (err.code==INTERNAL_ERROR || err.code==INVALID_PARAMS),err.message)
+    _,err,ran=run(&s,"open",`{"title":"still answers"}`,buffer)
+    testing.expect(t,ran,err.message)
 }
+Open_Recursive :: struct {inner:struct {again:[]Open_Recursive}}
 
 @(test)
 the_description_of_the_methods_has_the_shape_it_declares :: proc(t:^testing.T) {

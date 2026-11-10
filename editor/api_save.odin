@@ -170,7 +170,7 @@ api_save_run :: proc(s:^Session,call:^api.Call) -> (r:^Run,ok:bool) {
     own:bool
     r,own=api_play_run(s,call)
     switch {
-    case r==nil: api.call_fail(call,api.SERVER_ERROR,"No game is playing: start Play with play.start first; save.list and save.delete work without it")
+    case r==nil: api_no_game(call,"save.list and save.delete work without it")
     case !own: api_play_refused(call)
     case core.world_storage_of(run_ref(s,r),save.Save_Requests)==nil: api.call_fail(call,api.SERVER_ERROR,"The game of this project has no save library: generate the project again so that its world has engine/save")
     case: return r,true

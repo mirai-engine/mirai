@@ -122,7 +122,7 @@ invalid_params_are_reported_with_the_field_that_caused_them :: proc(t:^testing.T
         {"test.add",`{"a":1,"b":2,"c":3}`,`"c" is not a field: the fields are a, b`},
         {"test.add",`{"a":1}`,"b is required"},
         {"test.add",`{}`,"is required"},
-        {"test.add",`{"a":null,"b":1}`,"expected a number"},
+        {"test.add",`{"a":null,"b":1}`,"a is required"},
         {"test.echo",`{"text":"x","times":9}`,"times must be at most 4"},
         {"test.echo",`{"text":"x","times":0}`,"times must be at least 1"},
         {"test.echo",`{"text":"this text is longer than thirty-two bytes"}`,"text too long"},

@@ -81,6 +81,10 @@ scene_referenced :: proc(s:^Session,id:base.Asset_Id) -> (title,reference:string
     return
 }
 
+Api_Asset_Convert_Result :: struct {
+    path:string `mirai:"label=Where the asset is now, under the assets folder"`,
+}
+
 api_asset_convert :: proc(s:^Session,call:^api.Call) {
     r,id,named:=api_asset_named(s,call,base.text_get(api.call_params(call,Api_Asset_Convert_Params).asset[:]))
     if !named {return}

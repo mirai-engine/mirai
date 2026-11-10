@@ -24,12 +24,6 @@ import "mirai:std/serial"
 // program is the one its source declares.
 
 @(private)
-PROGRAM_PARAMS_SCHEMA :: `{"type":"object","properties":{"program":{"type":"string","description":"A program by name (Surface, PostProcess, Vfx or UI), or the path of its .slang under the project"},"material":{"type":"string","description":"A material whose program it is: its path under the assets folder, or its id"},"source":{"type":"string","description":"check: the text to check in place of the file; edit: the whole new source"},"edits":{"type":"array","description":"edit: replacements applied in order; each old occurs once in the source","items":{"type":"object","properties":{"old":{"type":"string"},"new":{"type":"string"}},"required":["old","new"],"additionalProperties":false}}},"additionalProperties":false}`
-
-@(private)
-PROGRAM_CREATE_SCHEMA :: `{"type":"object","properties":{"program":{"type":"string","description":"The name of the new program: a Slang identifier no program of the project, its plugins or the engine has"},"kind":{"type":"string","enum":["surface","postprocess","vfx","ui"],"description":"Its domain; without it the one source declares, else surface"},"source":{"type":"string","description":"Its whole source, declaring //! mirai <kind> <program>; without it a template of the domain that compiles"}},"required":["program"],"additionalProperties":false}`
-
-@(private)
 Program_Params :: struct {
     program,material,source,kind:string,
     has_source:bool,
@@ -110,12 +104,32 @@ Api_Program_Edge :: struct {
     control:bool `mirai:"label=to is inside the branch or loop from; otherwise to takes the value of from"`,
 }
 
+// What material.program.check, material.program.edit, material.program.inspect take.
+Api_Program_Params_Edits :: struct {
+    old:string,
+    new:string,
+}
+Api_Program_Params :: struct {
+    program:string `mirai:"optional,label=A program by name (Surface, PostProcess, Vfx or UI), or the path of its .slang under the project"`,
+    material:string `mirai:"optional,label=A material whose program it is: its path under the assets folder, or its id"`,
+    source:string `mirai:"optional,label=check: the text to check in place of the file; edit: the whole new source"`,
+    edits:[]Api_Program_Params_Edits `mirai:"optional,label=edit: replacements applied in order; each old occurs once in the source"`,
+}
+
+// What material.program.create takes.
+Api_Material_Program_Create_Params_Kind :: enum u8 {surface,postprocess,vfx,ui}
+Api_Material_Program_Create_Params :: struct {
+    program:string `mirai:"label=The name of the new program: a Slang identifier no program of the project, its plugins or the engine has"`,
+    kind:Api_Material_Program_Create_Params_Kind `mirai:"optional,label=Its domain; without it the one source declares, else surface"`,
+    source:string `mirai:"optional,label=Its whole source, declaring //! mirai <kind> <program>; without it a template of the domain that compiles"`,
+}
+
 @(private)
 programs_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="material.program.check",params_schema=PROGRAM_PARAMS_SCHEMA,summary="Compiles a program without publishing it, where it runs (a Surface program for raster and for ray hits), and reads its source for the usual mistakes.",result=Api_Program_Result,writes_result=true,flags={.Read_Only,.Idempotent},run=api_program_check})
-    api_register(s,st,{name="material.program.create",params_schema=PROGRAM_CREATE_SCHEMA,summary="Makes a new program in the shaders folder of the project once it compiles, in memory as one undo step until asset.save writes its .slang, and publishes the programs of the project.",result=Api_Program_Result,writes_result=true,run=api_program_create})
-    api_register(s,st,{name="material.program.edit",params_schema=PROGRAM_PARAMS_SCHEMA,summary="Changes the source of a program once it compiles, in memory as one undo step until asset.save writes its .slang, and publishes the programs of the project.",result=Api_Program_Result,writes_result=true,run=api_program_edit})
-    api_register(s,st,{name="material.program.inspect",params_schema=PROGRAM_PARAMS_SCHEMA,summary="The source of a program, the fields of its struct Parameters and the graph derived from the source.",result=Api_Program_Inspect,writes_result=true,flags={.Read_Only,.Idempotent},run=api_program_inspect})
+    api_register(s,st,{name="material.program.check",params=Api_Program_Params,summary="Compiles a program without publishing it, where it runs (a Surface program for raster and for ray hits), and reads its source for the usual mistakes.",result=Api_Program_Result,writes_result=true,flags={.Read_Only,.Idempotent},run=api_program_check})
+    api_register(s,st,{name="material.program.create",params=Api_Material_Program_Create_Params,summary="Makes a new program in the shaders folder of the project once it compiles, in memory as one undo step until asset.save writes its .slang, and publishes the programs of the project.",result=Api_Program_Result,writes_result=true,run=api_program_create})
+    api_register(s,st,{name="material.program.edit",params=Api_Program_Params,summary="Changes the source of a program once it compiles, in memory as one undo step until asset.save writes its .slang, and publishes the programs of the project.",result=Api_Program_Result,writes_result=true,run=api_program_edit})
+    api_register(s,st,{name="material.program.inspect",params=Api_Program_Params,summary="The source of a program, the fields of its struct Parameters and the graph derived from the source.",result=Api_Program_Inspect,writes_result=true,flags={.Read_Only,.Idempotent},run=api_program_inspect})
 }
 
 @(private)

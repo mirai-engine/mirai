@@ -52,7 +52,7 @@ ACTION_LABELS :: [Action]string{
     .Camera_Preview="Preview camera",.Camera_Keep="Keep cameras",.Camera_Discard="Discard cameras",
 }
 
-// The icon of an action in the menus, as the prototype has them; .None: none.
+// The icon of an action in the menus; .None: none.
 action_icon :: proc(action:Action) -> ui.Icon {
     user :: proc(icon:User_Icon) -> ui.Icon {return ui.icon_user(u8(icon))}
     #partial switch action {

@@ -296,7 +296,7 @@ api_play_observe :: proc(s:^editor.Session,call:^api.Call) {
     r,_:=editor.api_play_run(s,call,p.player)
     if r==nil {
         if stepped[0]!="" {api.call_failf(call,api.SERVER_ERROR,"The game ended during the step, after %s ticks",stepped[0]);return}
-        api.call_fail(call,api.SERVER_ERROR,editor.API_NO_GAME)
+        editor.api_no_game(call)
         return
     }
     count,_:=api.params_array_count(call,"targets")

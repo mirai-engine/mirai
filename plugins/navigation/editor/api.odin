@@ -50,23 +50,71 @@ Path_Params :: struct {
     excluded:nav.Nav_Areas `mirai:"optional,label=The areas it never walks by name"`,
 }
 
+// What nav.status answers.
+Nav_Status_Result :: struct {
+    ready:bool,
+    classes:[]serial.Json,
+    builds:serial.Json `mirai:"optional"`,
+}
+
+// What nav.build, nav.move answer.
+Nav_Build_Result :: struct {
+    queued:bool,
+}
+
+// What nav.bake answers.
+Nav_Bake_Result :: struct {
+    asset:string,
+    path:string,
+    tiles:int,
+    settled:bool,
+}
+
+// What nav.inspect answers.
+Nav_Inspect_Result :: struct {
+    class:string,
+    tiles:[]serial.Json,
+    polygons:[]serial.Json,
+    links:[]serial.Json,
+    zones:[]serial.Json `mirai:"optional"`,
+    cells:[]serial.Json `mirai:"optional"`,
+    more:bool,
+}
+
+// What nav.agent answers.
+Nav_Agent_Result :: struct {
+    class:string `mirai:"optional"`,
+    state:string,
+    goal:[]serial.Json `mirai:"optional"`,
+    corners:[]serial.Json,
+    partial:bool `mirai:"optional"`,
+    replans:int `mirai:"optional"`,
+    far:bool,
+}
+
+// What nav.path answers.
+Nav_Path_Result :: struct {
+    class:string,
+    status:string,
+    partial:bool,
+    cost:f64 `mirai:"optional"`,
+    corners:[]serial.Json,
+    polygons:int `mirai:"optional"`,
+    cells:int `mirai:"optional"`,
+}
+
 @(private)
 register :: proc(s:^editor.Session) {
     inspect_defaults:=Inspect_Params{limit=256}
     path_defaults:=Path_Params{up=-1,across=-1,down=-1}
-    editor.api_method_register(s,{name="nav.status",summary="The navigation meshes of the shown world: for each class of Navigation_Settings its size and what it can jump or drop, its tiles, polygons and links, the tiles that wait for a build, are building, or wait for their collision to load (unloaded: they keep what they have), the sections and portals of its coarse graph, and what the builds did (dropped: tiles that went with their sections or, in a run, with the terrain not loaded; regions: sections of the coarse graph made). Read it after editing collision to know when the meshes caught up.",flags={.Read_Only},result_schema=STATUS_SCHEMA,run=status})
-    editor.api_method_register(s,{name="nav.build",summary="Builds again the tiles of every class inside a box (min and max), or all of them, even where nothing changed. The meshes build by themselves when collision, a Nav_Area or a Nav_Bounds changes: this is for what they cannot see.",params=Build_Params,params_info=type_info_of(Build_Params),result_schema=`{"type":"object","properties":{"queued":{"type":"boolean"}},"required":["queued"]}`,run=build})
-    editor.api_method_register(s,{name="nav.bake",summary="Saves the navigation meshes with the edited scene, or with the section edited in its world: the first time it makes a .navmesh beside the scene and names it in the Navigation_Bake of an entity of the scene, in one undo step. Neither reaches the disk before the scene is saved; until then the editor keeps the .navmesh as the meshes, in memory. A section keeps the tiles over its box, and loads and drops them with it; the scene that holds it keeps the rest with the coarse graph of every section. A world that loads the scene starts with those meshes and builds only the tiles whose collision changed.",result_schema=BAKE_SCHEMA,run=bake_call})
-    editor.api_method_register(s,{name="nav.inspect",summary="The mesh of a class inside a box, or all of it: its tiles, its polygons (vertices, area and whether each edge is a wall, inner or a border to the next tile) and its links (kind, ends, direction, whether both ends rest on the mesh, what they need to be crossed and who made them). For a class of the air or the water, its zones and the free cells (nodes and voxels of the octree) inside the box.",params=Inspect_Params,params_info=type_info_of(Inspect_Params),defaults=&inspect_defaults,flags={.Read_Only},result_schema=INSPECT_SCHEMA,run=inspect})
-    editor.api_method_register(s,{name="nav.agent",summary="What a Nav_Agent of the shown world does: its class, state (Idle, Waiting, Moving, Crossing, Arrived, Failed), goal or target, whether its path is partial, the next corners it heads for, the link it crosses and how many times it planned again. An agent far from the players, off where its section is not loaded, says far, with the speed it goes at and, as its corners, what is left of its route through the coarse graph. Use it in Play to see why an agent goes where it goes.",params=Agent_Params,params_info=type_info_of(Agent_Params),flags={.Read_Only},result_schema=AGENT_SCHEMA,run=agent})
-    editor.api_method_register(s,{name="nav.move",summary="Asks a Nav_Agent of the running world to walk to a point, to follow an entity at a distance, or to stop (neither to nor target): what a game asks with nav_move_to, nav_follow and nav_stop. For trying agents in Play; nav.agent tells what it does then.",params=Move_Params,params_info=type_info_of(Move_Params),result_schema=`{"type":"object","properties":{"queued":{"type":"boolean"}},"required":["queued"]}`,run=move})
-    editor.api_method_register(s,{name="nav.path",summary="The path an agent of a class would walk, or fly or swim for a class of the air or the water, between two points now: its corners, the links it crosses with their kind, its cost and whether it reaches the end (partial: as near as it can). up, across, down and abilities say what the agent can cross; omitted, what its class can.",params=Path_Params,params_info=type_info_of(Path_Params),defaults=&path_defaults,flags={.Read_Only},result_schema=PATH_SCHEMA,run=path})
+    editor.api_method_register(s,{name="nav.status",summary="The navigation meshes of the shown world: for each class of Navigation_Settings its size and what it can jump or drop, its tiles, polygons and links, the tiles that wait for a build, are building, or wait for their collision to load (unloaded: they keep what they have), the sections and portals of its coarse graph, and what the builds did (dropped: tiles that went with their sections or, in a run, with the terrain not loaded; regions: sections of the coarse graph made). Read it after editing collision to know when the meshes caught up.",flags={.Read_Only},result=Nav_Status_Result,result_info=type_info_of(Nav_Status_Result),writes_result=true,run=status})
+    editor.api_method_register(s,{name="nav.build",summary="Builds again the tiles of every class inside a box (min and max), or all of them, even where nothing changed. The meshes build by themselves when collision, a Nav_Area or a Nav_Bounds changes: this is for what they cannot see.",params=Build_Params,params_info=type_info_of(Build_Params),result=Nav_Build_Result,result_info=type_info_of(Nav_Build_Result),writes_result=true,run=build})
+    editor.api_method_register(s,{name="nav.bake",summary="Saves the navigation meshes with the edited scene, or with the section edited in its world: the first time it makes a .navmesh beside the scene and names it in the Navigation_Bake of an entity of the scene, in one undo step. Neither reaches the disk before the scene is saved; until then the editor keeps the .navmesh as the meshes, in memory. A section keeps the tiles over its box, and loads and drops them with it; the scene that holds it keeps the rest with the coarse graph of every section. A world that loads the scene starts with those meshes and builds only the tiles whose collision changed.",result=Nav_Bake_Result,result_info=type_info_of(Nav_Bake_Result),writes_result=true,run=bake_call})
+    editor.api_method_register(s,{name="nav.inspect",summary="The mesh of a class inside a box, or all of it: its tiles, its polygons (vertices, area and whether each edge is a wall, inner or a border to the next tile) and its links (kind, ends, direction, whether both ends rest on the mesh, what they need to be crossed and who made them). For a class of the air or the water, its zones and the free cells (nodes and voxels of the octree) inside the box.",params=Inspect_Params,params_info=type_info_of(Inspect_Params),defaults=&inspect_defaults,flags={.Read_Only},result=Nav_Inspect_Result,result_info=type_info_of(Nav_Inspect_Result),writes_result=true,run=inspect})
+    editor.api_method_register(s,{name="nav.agent",summary="What a Nav_Agent of the shown world does: its class, state (Idle, Waiting, Moving, Crossing, Arrived, Failed), goal or target, whether its path is partial, the next corners it heads for, the link it crosses and how many times it planned again. An agent far from the players, off where its section is not loaded, says far, with the speed it goes at and, as its corners, what is left of its route through the coarse graph. Use it in Play to see why an agent goes where it goes.",params=Agent_Params,params_info=type_info_of(Agent_Params),flags={.Read_Only},result=Nav_Agent_Result,result_info=type_info_of(Nav_Agent_Result),writes_result=true,run=agent})
+    editor.api_method_register(s,{name="nav.move",summary="Asks a Nav_Agent of the running world to walk to a point, to follow an entity at a distance, or to stop (neither to nor target): what a game asks with nav_move_to, nav_follow and nav_stop. For trying agents in Play; nav.agent tells what it does then.",params=Move_Params,params_info=type_info_of(Move_Params),result=Nav_Build_Result,result_info=type_info_of(Nav_Build_Result),writes_result=true,run=move})
+    editor.api_method_register(s,{name="nav.path",summary="The path an agent of a class would walk, or fly or swim for a class of the air or the water, between two points now: its corners, the links it crosses with their kind, its cost and whether it reaches the end (partial: as near as it can). up, across, down and abilities say what the agent can cross; omitted, what its class can.",params=Path_Params,params_info=type_info_of(Path_Params),defaults=&path_defaults,flags={.Read_Only},result=Nav_Path_Result,result_info=type_info_of(Nav_Path_Result),writes_result=true,run=path})
 }
-
-@(private) STATUS_SCHEMA :: `{"type":"object","properties":{"ready":{"type":"boolean"},"classes":{"type":"array"},"builds":{"type":"object"}},"required":["ready","classes"]}`
-@(private) INSPECT_SCHEMA :: `{"type":"object","properties":{"class":{"type":"string"},"tiles":{"type":"array"},"polygons":{"type":"array"},"links":{"type":"array"},"zones":{"type":"array"},"cells":{"type":"array"},"more":{"type":"boolean"}},"required":["class","tiles","polygons","links","more"]}`
-@(private) AGENT_SCHEMA :: `{"type":"object","properties":{"class":{"type":"string"},"state":{"type":"string"},"goal":{"type":"array"},"corners":{"type":"array"},"partial":{"type":"boolean"},"replans":{"type":"integer"},"far":{"type":"boolean"}},"required":["state","corners","far"]}`
-@(private) PATH_SCHEMA :: `{"type":"object","properties":{"class":{"type":"string"},"status":{"type":"string"},"partial":{"type":"boolean"},"cost":{"type":"number"},"corners":{"type":"array"},"polygons":{"type":"integer"},"cells":{"type":"integer"}},"required":["class","status","partial","corners"]}`
 
 @(private)
 navigation_of :: proc(s:^editor.Session,call:^api.Call) -> (n:^nav.Navigation,w:core.World_Ref,ok:bool) {
@@ -590,7 +638,7 @@ far_of :: proc(w:core.World_Ref,e:core.Entity) -> ^nav.Nav_Far {
 @(private)
 move :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Move_Params)
-    if !editor.playing(s) {api.call_fail(call,api.INVALID_PARAMS,"nav.move works on the running world: play.start first");return}
+    if !editor.playing(s) {editor.api_no_game(call,"nav.move works on the running world");return}
     world:=editor.shown_world(s)
     requests:=core.world_storage_of(world,nav.Nav_Requests)
     agents:=core.world_table_of(world,nav.Nav_Agent)

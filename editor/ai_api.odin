@@ -107,17 +107,36 @@ Ai_Permission_Result :: struct {ok:bool}
 
 AI_LINE_NAMES :: [ai_store.Line_Kind]string{.Output="output",.Prompt="prompt",.Note="note",.Report="report",.Divider="divider"}
 
-@(private) AI_HISTORY_RESULT :: `{"type":"array","description":"Without id: the conversations of the project; the last updated first. With id: its messages; the oldest first.","items":{"anyOf":[` +
-    `{"type":"object","properties":{"id":{"type":"integer","description":"What id takes"},"title":{"type":"string"},"document":{"type":"string","description":"The document it worked on"},"provider":{"type":"string","description":"The id of its connection"},"model":{"type":"string"},"effort":{"type":"string"},"updated_at":{"type":"integer","description":"Unix time in milliseconds"}},"required":["id","title","document","provider","model","effort","updated_at"],"additionalProperties":false},` +
-    `{"type":"object","properties":{"sequence":{"type":"integer","description":"What before takes"},"kind":{"enum":["prompt","output","note","report","divider"]},"text":{"type":"string"},"role":{"type":"string"},"event_type":{"type":"string"},"tool":{"type":"string"},"context":{"type":"string","description":"JSON as text"}},"required":["sequence","kind","text","role","event_type","tool","context"],"additionalProperties":false}` +
-    `]}}`
+// What ai.history answers. Without id: the conversations of the project, the
+// last updated first, each with the fields of a conversation. With id: its
+// messages, the oldest first, each with the fields of a message.
+Api_Ai_History_Entry :: struct {
+    id:int `mirai:"optional,label=Of a conversation: what id takes"`,
+    title:string `mirai:"optional,label=Of a conversation"`,
+    document:string `mirai:"optional,label=Of a conversation: the document it worked on"`,
+    provider:string `mirai:"optional,label=Of a conversation: the id of its connection"`,
+    model:string `mirai:"optional,label=Of a conversation"`,
+    effort:string `mirai:"optional,label=Of a conversation"`,
+    updated_at:int `mirai:"optional,label=Of a conversation: Unix time in milliseconds"`,
+    sequence:int `mirai:"optional,label=Of a message: what before takes"`,
+    kind:Api_Ai_History_Search_Result_Kind `mirai:"optional,label=Of a message"`,
+    text:string `mirai:"optional,label=Of a message"`,
+    role:string `mirai:"optional,label=Of a message"`,
+    event_type:string `mirai:"optional,label=Of a message"`,
+    tool:string `mirai:"optional,label=Of a message"`,
+    context_:string `mirai:"name=context,optional,label=Of a message: JSON as text"`,
+}
 
-@(private) AI_HISTORY_SEARCH_RESULT :: `{"type":"array","description":"The matching lines of the saved conversations, the best first.","items":{"type":"object","properties":{` +
-    `"conversation":{"type":"integer","description":"What ai.history takes as id"},"title":{"type":"string"},` +
-    `"sequence":{"type":"integer","description":"ai.history with before set to sequence+1 returns the messages up to it"},` +
-    `"kind":{"enum":["prompt","output","note","report","divider"],"description":"A note is said by the editor, as a step of a turn: Tool: method target"},` +
-    `"snippet":{"type":"string","description":"Words around the matches, which go between **"},"updated_at":{"type":"integer","description":"Of the conversation, Unix time in milliseconds"}},` +
-    `"required":["conversation","title","sequence","kind","snippet","updated_at"],"additionalProperties":false}}`
+// What ai.history.search answers.
+Api_Ai_History_Search_Result_Kind :: enum u8 {prompt,output,note,report,divider}
+Api_Ai_History_Search_Result :: struct {
+    conversation:int `mirai:"label=What ai.history takes as id"`,
+    title:string,
+    sequence:int `mirai:"label=ai.history with before set to sequence+1 returns the messages up to it"`,
+    kind:Api_Ai_History_Search_Result_Kind `mirai:"label=A note is said by the editor, as a step of a turn: Tool: method target"`,
+    snippet:string `mirai:"label=Words around the matches, which go between **"`,
+    updated_at:int `mirai:"label=Of the conversation, Unix time in milliseconds"`,
+}
 
 @(private)
 ai_api_register :: proc(s:^Session,st:^Api_State) {
@@ -135,8 +154,8 @@ ai_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="ai.restore",summary="Takes back the changes of a task the user reverted (declined) to be reviewed again, keeping newer edits of users or agents.",params=Ai_Id_Params,result=Ai_Task_Result,writes_result=true,flags={.Destructive},run=ai_method_restore})
     api_register(s,st,{name="ai.review.accept",summary="Confirms the result of a task and clears its agent icon and scene outlines without changing the scene.",params=Ai_Id_Params,result=Ai_Task_Result,writes_result=true,run=ai_method_finish_review})
     api_register(s,st,{name="ai.retry",summary="Reverts the scene changes of a task and sends its message again in the same conversation, with the same icon and color.",params=Ai_Id_Params,result=Ai_Task_Result,writes_result=true,run=ai_method_retry})
-    api_register(s,st,{name="ai.history",summary="The saved conversations of the project, or a page of the saved messages of one.",params=Ai_History_Params,result_schema=AI_HISTORY_RESULT,flags={.Read_Only},run=ai_method_history})
-    api_register(s,st,{name="ai.history.search",summary="Full-text search of the saved conversations of the project: what was asked, answered and done in earlier chats, by words, an entity id or an asset path, ranked by BM25. Each hit is short; ai.history with its conversation and before pages the messages around it.",params=Ai_History_Search_Params,result_schema=AI_HISTORY_SEARCH_RESULT,flags={.Read_Only},run=ai_method_history_search})
+    api_register(s,st,{name="ai.history",summary="The saved conversations of the project, or a page of the saved messages of one.",params=Ai_History_Params,result=[]Api_Ai_History_Entry,writes_result=true,flags={.Read_Only},run=ai_method_history})
+    api_register(s,st,{name="ai.history.search",summary="Full-text search of the saved conversations of the project: what was asked, answered and done in earlier chats, by words, an entity id or an asset path, ranked by BM25. Each hit is short; ai.history with its conversation and before pages the messages around it.",params=Ai_History_Search_Params,result=[]Api_Ai_History_Search_Result,writes_result=true,flags={.Read_Only},run=ai_method_history_search})
     api_register(s,st,{name="ai.turn_end",summary="Ends the turn of the agent outside the editor that calls (the client of mirai mcp, or mirai rpc --client NAME): its changes wait for the review of the user, and its next call opens the turn again until they are resolved. The turns of the agents of the editor and a turn already ended stay as they are. The Stop hook of Claude Code in a project calls it.",result=Ai_Turn_End_Result,flags={.Idempotent},run=ai_method_turn_end})
     api_register(s,st,{name="ai.compact",summary="Summarizes the context of a chat that is not working, with the command of its agent or else with a new native session; the chat goes on.",params=Ai_Compact_Params,result=Ai_Task_Result,writes_result=true,run=ai_method_compact})
     api_register(s,st,{name="ai.permission",summary="Answers a permission an agent waits for with one of its options, or cancels it.",params=Ai_Permission_Params,result=Ai_Permission_Result,run=ai_method_permission})

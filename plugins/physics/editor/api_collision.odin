@@ -11,15 +11,6 @@ import phys "plugins:physics/runtime"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-@(private) API_COLLISION_LIST :: `"type":"array","maxItems":32,"items":{"type":"string","minLength":1,"maxLength":31}`
-@(private) API_COLLISION_NAMES :: `{`+API_COLLISION_LIST+`}`
-@(private) API_COLLISION_TARGET :: `"entity":{`+api.ENTITY_SCHEMA+`},"component":{"type":"string","minLength":1,"maxLength":63,"description":"The component that holds the collision; omitted: the only one of the entity"},"prefix":{"type":"string","maxLength":127,"description":"Dotted path of the field of the component that holds a nested collision"}`
-@(private) API_COLLISION_GET_SCHEMA :: `{"type":"object","properties":{`+API_COLLISION_TARGET+`},"required":["entity"],"additionalProperties":false}`
-@(private) API_COLLISION_SET_SCHEMA :: `{"type":"object","properties":{`+API_COLLISION_TARGET+`,"preset":{"type":"string","minLength":1,"maxLength":31,"description":"Of a Collider; 'custom' keeps what it is as its own"},"sensor":{"type":"boolean","description":"Of a Collider, as belongs and collides: of its own, which make it custom from what it is"},"belongs":`+API_COLLISION_NAMES+`,"collides":`+API_COLLISION_NAMES+`,"hits":{`+API_COLLISION_LIST+`,"description":"Of a Query_Filter: the categories it hits; '*' is all"},"sensors":{"type":"boolean","description":"Of a Query_Filter: whether it reports sensors"}},"required":["entity"],"additionalProperties":false}`
-@(private) API_COLLISION_SETTINGS_SCHEMA :: `{"type":"object","properties":{"categories":{"type":"array","items":{"type":"string"},"description":"Declared in code; names.create declares one"},"presets":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"sensor":{"type":"boolean"},"belongs":`+API_COLLISION_NAMES+`,"collides":`+API_COLLISION_NAMES+`},"required":["name","sensor","belongs","collides"]},"description":"What colliders can use, declared in code; Collision_Settings, written with settings.set, says by name what each is"},"pushes":{"type":"array","items":{"type":"object","properties":{"a":{"type":"string"},"b":{"type":"string"},"force":{"type":"number","exclusiveMinimum":0,"x-unit":"N","description":"The most they push with"}},"required":["a","b","force"]},"description":"Pairs of categories whose dynamic bodies yield to each other"},"undeclared":{"type":"array","items":{"type":"object","properties":{"field":{"enum":["presets","pushes"]},"index":{"type":"integer","minimum":0},"value":{"type":"integer","minimum":0}},"required":["field","index","value"]},"description":"Entries of Collision_Settings for values no code declares"}},"required":["categories","presets","pushes","undeclared"],"additionalProperties":false}`
-@(private) API_COLLISION_PUSHES :: `{"type":"object","additionalProperties":{"type":"number","exclusiveMinimum":0,"x-unit":"N"},"description":"Of a Collider: the categories its dynamic body yields to, with the force"}`
-@(private) API_COLLISION_RESULT_SCHEMA :: `{"type":"object","properties":{"id":{"type":"string"},"playing":{"type":"boolean"},"component":{"type":"string"},"prefix":{"type":"string"},"preset":{"type":"string","description":"Of a Collider"},"sensor":{"type":"boolean","description":"Of a Collider, as belongs and collides: from its preset, or its own when custom"},"belongs":`+API_COLLISION_NAMES+`,"collides":`+API_COLLISION_NAMES+`,"pushes":`+API_COLLISION_PUSHES+`,"group":{"type":["string","null"],"description":"Of a Collider"},"hits":{`+API_COLLISION_LIST+`,"description":"Of a Query_Filter: the categories it hits"},"sensors":{"type":"boolean","description":"Of a Query_Filter: whether it reports sensors"}},"required":["id","playing","component","prefix"],"additionalProperties":false}`
-
 @(private)
 Api_Collision_Request :: struct {
     entity:editor.Api_Entity_Text,
@@ -46,11 +37,72 @@ Api_Collision_Target :: struct {
     prefix:string,
 }
 
+// What physics.collision.inspect answers.
+Physics_Collision_Inspect_Result_Presets :: struct {
+    name:string,
+    sensor:bool,
+    belongs:[]string `mirai:"label=At most 32."`,
+    collides:[]string `mirai:"label=At most 32."`,
+}
+Physics_Collision_Inspect_Result_Pushes :: struct {
+    a:string,
+    b:string,
+    force:f64 `mirai:"label=Above 0. The most they push with"`,
+}
+Physics_Collision_Inspect_Result_Undeclared_Field :: enum u8 {presets,pushes}
+Physics_Collision_Inspect_Result_Undeclared :: struct {
+    field:Physics_Collision_Inspect_Result_Undeclared_Field,
+    index:int `mirai:"min=0"`,
+    value:int `mirai:"min=0"`,
+}
+Physics_Collision_Inspect_Result :: struct {
+    categories:[]string `mirai:"label=Declared in code; names.create declares one"`,
+    presets:[]Physics_Collision_Inspect_Result_Presets `mirai:"label=What colliders can use, declared in code; Collision_Settings, written with settings.set, says by name what each is"`,
+    pushes:[]Physics_Collision_Inspect_Result_Pushes `mirai:"label=Pairs of categories whose dynamic bodies yield to each other"`,
+    undeclared:[]Physics_Collision_Inspect_Result_Undeclared `mirai:"label=Entries of Collision_Settings for values no code declares"`,
+}
+
+// What physics.collision.get answers.
+Physics_Collision_Get_Result :: struct {
+    id:string,
+    playing:bool,
+    component:string,
+    prefix:string,
+    preset:string `mirai:"optional,label=Of a Collider"`,
+    sensor:bool `mirai:"optional,label=Of a Collider, as belongs and collides: from its preset, or its own when custom"`,
+    belongs:[]string `mirai:"optional,label=At most 32."`,
+    collides:[]string `mirai:"optional,label=At most 32."`,
+    pushes:serial.Json `mirai:"optional,label=Of a Collider: the categories its dynamic body yields to, with the force"`,
+    group:string `mirai:"optional,label=Of a Collider"`,
+    hits:[]string `mirai:"optional,label=At most 32. Of a Query_Filter: the categories it hits"`,
+    sensors:bool `mirai:"optional,label=Of a Query_Filter: whether it reports sensors"`,
+}
+
+// What physics.collision.get takes.
+Physics_Collision_Get_Params :: struct {
+    entity:string `mirai:"entity"`,
+    component:string `mirai:"optional,label=The component that holds the collision; omitted: the only one of the entity"`,
+    prefix:string `mirai:"optional,label=Dotted path of the field of the component that holds a nested collision"`,
+}
+
+// What physics.collision.set takes.
+Physics_Collision_Set_Params :: struct {
+    entity:string `mirai:"entity"`,
+    component:string `mirai:"optional,label=The component that holds the collision; omitted: the only one of the entity"`,
+    prefix:string `mirai:"optional,label=Dotted path of the field of the component that holds a nested collision"`,
+    preset:string `mirai:"optional,label=Of a Collider; 'custom' keeps what it is as its own"`,
+    sensor:bool `mirai:"optional,label=Of a Collider, as belongs and collides: of its own, which make it custom from what it is"`,
+    belongs:[]string `mirai:"optional,label=At most 32."`,
+    collides:[]string `mirai:"optional,label=At most 32."`,
+    hits:[]string `mirai:"optional,label=At most 32. Of a Query_Filter: the categories it hits; '*' is all"`,
+    sensors:bool `mirai:"optional,label=Of a Query_Filter: whether it reports sensors"`,
+}
+
 @(private)
 api_collision_register :: proc(s:^editor.Session) {
-    editor.api_method_register(s,{name="physics.collision.inspect",summary="The collision categories and presets the code declares, the pushes between categories and the entries of Collision_Settings no code declares. Read the names here before editing collision.",result_schema=API_COLLISION_SETTINGS_SCHEMA,flags={.Read_Only},run=api_collision_settings_list})
-    editor.api_method_register(s,{name="physics.collision.get",summary="Reads by name the collision of a component of the shown world: what a Collider is and collides with, or what a Query_Filter hits. Without component, that of the only collision component of the entity.",params_schema=API_COLLISION_GET_SCHEMA,result_schema=API_COLLISION_RESULT_SCHEMA,flags={.Read_Only},run=api_collision_get})
-    editor.api_method_register(s,{name="physics.collision.set",summary="Edits by name the collision of a Collider or a Query_Filter of a component, or of the only collision component of the entity without one; other fields are kept. One step of undo.",params_schema=API_COLLISION_SET_SCHEMA,result=editor.Api_Edit_Result,run=api_collision_set})
+    editor.api_method_register(s,{name="physics.collision.inspect",summary="The collision categories and presets the code declares, the pushes between categories and the entries of Collision_Settings no code declares. Read the names here before editing collision.",result=Physics_Collision_Inspect_Result,writes_result=true,flags={.Read_Only},run=api_collision_settings_list})
+    editor.api_method_register(s,{name="physics.collision.get",summary="Reads by name the collision of a component of the shown world: what a Collider is and collides with, or what a Query_Filter hits. Without component, that of the only collision component of the entity.",params=Physics_Collision_Get_Params,result=Physics_Collision_Get_Result,writes_result=true,flags={.Read_Only},run=api_collision_get})
+    editor.api_method_register(s,{name="physics.collision.set",summary="Edits by name the collision of a Collider or a Query_Filter of a component, or of the only collision component of the entity without one; other fields are kept. One step of undo.",params=Physics_Collision_Set_Params,result=editor.Api_Edit_Result,run=api_collision_set})
 }
 
 @(private)

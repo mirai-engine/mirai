@@ -61,7 +61,7 @@ Unsaved_Use :: struct {
     uses:bool,
 }
 
-// The dot of unsaved changes, as the prototype draws it.
+// The dot of unsaved changes.
 UNSAVED_COLOR :: ui.Color{201,181,239,255}
 Splitter :: enum u8 {None,Bottom,Right}
 
@@ -480,7 +480,7 @@ draw_user :: proc(ctx:^ui.Context,rect:ui.Rect,kind:u32,data:u64,color:ui.Color)
         ui.draw_polyline(ctx,p[:],1.5,color)
         ui.draw_line(ctx,p[0],c+{-2*s*sign,-6*s},1.5,color)
         ui.draw_line(ctx,p[0],c+{-2*s*sign,2*s},1.5,color)
-    // The icons of the prototype drawn on a 24 unit grid, at two thirds.
+    // Icons drawn on a 24 unit grid, at two thirds.
     case .Scene:
         for y in ([2]f32{-2,2}) {ui.draw_line(ctx,c+{-5.33*s,y*s},c+{5.33*s,y*s},1.3*s,color)}
         ui.draw_line(ctx,c+{-1.33*s,-6*s},c+{-2.67*s,6*s},1.3*s,color)
@@ -669,7 +669,7 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
         projects_build(s)
         return
     }
-    // Behind a document in front, where the scene would be, the canvas of the prototype.
+    // Behind a document in front, where the scene would be, a plain canvas.
     if scene_covered(s) {
         if ui.box(ctx,{width=ui.fixed(ctx.size.x),height=ui.fixed(ctx.size.y),fill=th.well,float={to=.Surface}}) {}
     }
@@ -1113,7 +1113,7 @@ bar_build :: proc(s:^Session,w:core.World_Ref) {
             if ui.box(ctx,{width=ui.FIT,height=ui.GROW,gap=4,align_y=.Center}) {
                 tools:=[3]Action{.Tool_Move,.Tool_Rotate,.Tool_Scale}
                 icons:=[3]ui.Icon{.Move,.Rotate,.Scale}
-                // Up to 1050 points the prototype narrows them.
+                // Up to 1050 points they are narrower, so the toolbar fits.
                 for action,i in tools {
                     action_button(s,action,{icon=icons[i],style=.Tab,width=25 if ctx.size.x<=1050 else TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,icon_size=16},0)
                 }
@@ -1167,11 +1167,11 @@ bar_build :: proc(s:^Session,w:core.World_Ref) {
 }
 
 // One menu for the tools of the plugins and the panels of the project: the
-// one chosen takes the place of Details. As in the prototype: icon, name and
+// one chosen takes the place of Details. It shows icon, name and
 // arrow, the name as wide as "Tools" so the button never grows and a longer
 // one is cut; below 900 points, the icon and the arrow.
 TOOLS_MENU_POPUP_WIDTH :: 240
-TOOLS_LABEL_WIDTH :: 28 // the width of "Tools" in the prototype
+TOOLS_LABEL_WIDTH :: 28 // the least width of its name: that of "Tools"
 TOOLS_MENU_PARTS :: 58  // the width of the button besides its name: paddings, icon, gaps and arrow
 @(private)
 tools_menu_build :: proc(s:^Session) {
@@ -1200,7 +1200,7 @@ tools_menu_build :: proc(s:^Session) {
         ui.icon(ctx,icon,color,16)
         if wide {
             room:=max(ui.text_width(&ctx.font,"Tools",th.font),TOOLS_LABEL_WIDTH)
-            // A fifth wider than the prototype, all of it for the name.
+            // A fifth of the button more, all of it for the name.
             room+=(room+TOOLS_MENU_PARTS)*0.2
             ui.label(ctx,ai_chat_menu_label(ctx,label,room,th.font),th.font,color,room)
         }

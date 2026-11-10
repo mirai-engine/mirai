@@ -27,9 +27,9 @@ Use_Params :: struct {
 
 @(private)
 register :: proc(s:^editor.Session) {
-    editor.api_method_register(s,{name="abilities.inspect",summary="What an Ability_User does and why: its kit, the ability it runs and for how long, the windows open now, its statuses, its attributes with their bases and current values, what waits in its input buffer, its cooldowns and timers, and for every ability of its kit whether it could start now or what blocks it (a status, its mode, a condition, a cost, a cooldown, or no open cancel window of the running ability that accepts its tags). Use it in Play to see why an ability does or does not start.",params=Inspect_Params,params_info=type_info_of(Inspect_Params),flags={.Read_Only},result_schema=`{"type":"object"}`,run=inspect})
-    editor.api_method_register(s,{name="abilities.check",summary="Checks every Ability and Ability_Kit row of the project as the game runs them: times, windows, hitboxes, effects, costs and conditions, and references to rows that no table has. Returns each problem with its table, its row and how to fix it; an empty list means every sheet runs. Run it after records.set or records.import of abilities.",flags={.Read_Only},result_schema=`{"type":"object"}`,run=check})
-    editor.api_method_register(s,{name="abilities.use",summary="Asks an Ability_User of the running game to start an ability by the name of its row, as its input would: it starts when it is valid within the buffer of its kit. Needs Play or Simulate; abilities.inspect tells what blocks it.",params=Use_Params,params_info=type_info_of(Use_Params),result_schema=`{"type":"object"}`,run=use})
+    editor.api_method_register(s,{name="abilities.inspect",summary="What an Ability_User does and why: its kit, the ability it runs and for how long, the windows open now, its statuses, its attributes with their bases and current values, what waits in its input buffer, its cooldowns and timers, and for every ability of its kit whether it could start now or what blocks it (a status, its mode, a condition, a cost, a cooldown, or no open cancel window of the running ability that accepts its tags). Use it in Play to see why an ability does or does not start.",params=Inspect_Params,params_info=type_info_of(Inspect_Params),flags={.Read_Only},result=serial.Json,result_info=type_info_of(serial.Json),writes_result=true,run=inspect})
+    editor.api_method_register(s,{name="abilities.check",summary="Checks every Ability and Ability_Kit row of the project as the game runs them: times, windows, hitboxes, effects, costs and conditions, and references to rows that no table has. Returns each problem with its table, its row and how to fix it; an empty list means every sheet runs. Run it after records.set or records.import of abilities.",flags={.Read_Only},result=serial.Json,result_info=type_info_of(serial.Json),writes_result=true,run=check})
+    editor.api_method_register(s,{name="abilities.use",summary="Asks an Ability_User of the running game to start an ability by the name of its row, as its input would: it starts when it is valid within the buffer of its kit. Needs Play or Simulate; abilities.inspect tells what blocks it.",params=Use_Params,params_info=type_info_of(Use_Params),result=serial.Json,result_info=type_info_of(serial.Json),writes_result=true,run=use})
 }
 
 @(private)
@@ -273,7 +273,7 @@ check :: proc(s:^editor.Session,call:^api.Call) {
 use :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Use_Params)
     if !editor.playing(s) {
-        api.call_failf(call,api.INVALID_PARAMS,"the game is not running: play.start first")
+        editor.api_no_game(call)
         return
     }
     world:=editor.shown_world(s)

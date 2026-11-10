@@ -12,6 +12,7 @@ import "mirai:cook/build"
 import "mirai:editor/api"
 import "mirai:cook/workspace"
 import "mirai:project"
+import "mirai:std/serial"
 import "mirai:std/subprocess"
 
 SESSION_USAGE :: "session start|restart|stop|status|sync [project] [paths of sync] [--dev|--release] [--no-build] [--copy] [--discard] [--orphans] [--timeout S] [editor arguments]"
@@ -115,7 +116,7 @@ session_find :: proc(folder:string) -> (file:api.Port_File,alive:bool) {
     path:=project.path(folder,".mirai",api.PORT_FILE,allocator=context.temp_allocator)
     data,error:=os.read_entire_file(path,context.temp_allocator)
     if error!=nil {return}
-    if json.unmarshal(data,&file,allocator=context.temp_allocator)!=nil || file.port<=0 || file.pid<=0 {return}
+    if serial.text_decode(string(data),&file,context.temp_allocator)!="" || file.port<=0 || file.pid<=0 {return {},false}
     return file,subprocess.process_alive(file.pid)
 }
 
@@ -157,7 +158,7 @@ session_answers :: proc(port:int) -> bool {
 
 session_record :: proc(folder:string) -> (record:Session_Record,found:bool) {
     data,error:=os.read_entire_file(project.path(folder,".mirai",SESSION_FILE,allocator=context.temp_allocator),context.temp_allocator)
-    if error!=nil || json.unmarshal(data,&record,allocator=context.temp_allocator)!=nil || record.pid<=0 {return {},false}
+    if error!=nil || serial.text_decode(string(data),&record,context.temp_allocator)!="" || record.pid<=0 {return {},false}
     return record,true
 }
 
@@ -172,8 +173,8 @@ session_record_mode :: proc(record:Session_Record) -> Build_Mode {
 
 @(private="file")
 session_record_write :: proc(folder:string,record:Session_Record) {
-    data,error:=json.marshal(record,{pretty=true},context.temp_allocator)
-    if error!=nil {return}
+    data,encoded:=serial.text_encode(record,.Pretty,context.temp_allocator)
+    if !encoded {return}
     _=os.write_entire_file(project.path(folder,".mirai",SESSION_FILE,allocator=context.temp_allocator),data)
 }
 

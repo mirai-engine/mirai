@@ -13,9 +13,6 @@ import "mirai:std/serial"
 // import and the fields changed after it, which the next import keeps.
 
 @(private)
-MATERIAL_PARAMS_SCHEMA :: `{"type":"object","properties":{"material":{"type":"string","description":"A material: its path under the assets folder, or its id"},"path":{"type":"string","description":"material.set: in place of material, a new material at this path under the assets folder, made over the defaults; it fails when that file exists"},"values":{"type":"object","description":"Fields of the material to change, as material.inspect shows them"}},"additionalProperties":false}`
-
-@(private)
 Api_Material_Revert_Params :: struct {
     material:[API_PATH_BYTES]u8 `mirai:"text,label=A material by its path under the assets folder or its id"`,
     paths:[512]u8 `mirai:"text,optional,label=Fields separated by commas as overrides names them (roughness; maps.normal.texture) or parts of the material (coat; maps.normal); none: all of it"`,
@@ -30,11 +27,18 @@ Api_Material_Result :: struct {
     overrides:[][asset.OVERRIDE_PATH_BYTES]u8 `mirai:"text,optional,label=Of an imported material: every field that differs from imported; importing it again keeps them"`,
 }
 
+// What material.inspect, material.set take.
+Api_Material_Params :: struct {
+    material:string `mirai:"optional,label=A material: its path under the assets folder, or its id"`,
+    path:string `mirai:"optional,label=material.set: in place of material, a new material at this path under the assets folder, made over the defaults; it fails when that file exists"`,
+    values:serial.Json `mirai:"optional,label=Fields of the material to change, as material.inspect shows them"`,
+}
+
 @(private)
 materials_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="material.inspect",params_schema=MATERIAL_PARAMS_SCHEMA,summary="The values of a material (.mat) and, of an imported one, what its source gave at the last import and the fields that differ from it.",result=Api_Material_Result,writes_result=true,flags={.Read_Only},run=api_material_inspect})
+    api_register(s,st,{name="material.inspect",params=Api_Material_Params,summary="The values of a material (.mat) and, of an imported one, what its source gave at the last import and the fields that differ from it.",result=Api_Material_Result,writes_result=true,flags={.Read_Only},run=api_material_inspect})
     material_capture_register(s,st)
-    api_register(s,st,{name="material.set",params_schema=MATERIAL_PARAMS_SCHEMA,summary="Changes the values of a material (.mat) for every entity that shows it, keeping its program parameters and overlays, or makes a new one at path over the defaults.",result=Api_Material_Result,writes_result=true,run=api_material_set})
+    api_register(s,st,{name="material.set",params=Api_Material_Params,summary="Changes the values of a material (.mat) for every entity that shows it, keeping its program parameters and overlays, or makes a new one at path over the defaults.",result=Api_Material_Result,writes_result=true,run=api_material_set})
     api_register(s,st,{name="material.revert",params=Api_Material_Revert_Params,summary="Gives fields of an imported material back what its source gave at the last import, so they stop being overrides.",result=Api_Material_Result,writes_result=true,flags={.Idempotent},run=api_material_revert})
     material_instance_api_register(s,st)
 }

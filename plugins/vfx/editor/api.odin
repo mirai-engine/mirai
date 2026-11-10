@@ -23,12 +23,6 @@ import "plugins:vfx/runtime/effect"
 // steps of the history of the document (history.undo), with the file
 // the step wrote.
 
-@(private)
-PARTICLE_PARAMS_SCHEMA :: `{"type":"object","properties":{"particle":{"type":"string","description":"An effect: its path under the assets folder, or its id"},"path":{"type":"string","description":"particle.create: where the new effect goes, under the assets folder"},"values":{"type":"object","description":"Fields of the effect to change, as particle.inspect shows them"},"parameters":{"type":"object","description":"Parameters of its Vfx program by name: a number, a list, true or false, or a texture by path or id; null takes one away"},"hidden":{"type":"array","items":{"type":"string"},"description":"The fields its instances do not show; replaces the list"},"resources":{"type":"object","description":"What each resource of its Vfx program reads when an instance binds nothing else, by name: a mesh by its path or id; null takes one away"}},"additionalProperties":false}`
-
-@(private)
-PARTICLE_INSTANCE_SET_SCHEMA :: `{"type":"object","properties":{"entity":{`+api.ENTITY_SCHEMA+`,"description":"The entity with the Particle_Emitter"},"values":{"type":"object","description":"Values it shows, as particle.instance.inspect gives them: those that differ from its effect become its own, at most 16 and not its assets or program"},"parameters":{"type":"object","description":"Parameters of the Vfx program of its effect for this entity, by name, at most 8; null takes one away"}},"required":["entity"],"additionalProperties":false}`
-
 // The keys of the params of an effect besides its name, path and values.
 @(private)
 PARTICLE_EXTRA :: [3]string{"parameters","hidden","resources"}
@@ -64,19 +58,36 @@ Api_Particle_Control_Result :: struct {
     queued:bool `mirai:"label=It takes the request in its next fixed step"`,
 }
 
+// What particle.inspect, particle.set take.
+Particle_Inspect_Params :: struct {
+    particle:string `mirai:"optional,label=An effect: its path under the assets folder, or its id"`,
+    path:string `mirai:"optional,label=particle.create: where the new effect goes, under the assets folder"`,
+    values:serial.Json `mirai:"optional,label=Fields of the effect to change, as particle.inspect shows them"`,
+    parameters:serial.Json `mirai:"optional,label=Parameters of its Vfx program by name: a number, a list, true or false, or a texture by path or id; null takes one away"`,
+    hidden:[]string `mirai:"optional,label=The fields its instances do not show; replaces the list"`,
+    resources:serial.Json `mirai:"optional,label=What each resource of its Vfx program reads when an instance binds nothing else, by name: a mesh by its path or id; null takes one away"`,
+}
+
+// What particle.instance.set takes.
+Particle_Instance_Set_Params :: struct {
+    entity:string `mirai:"entity,label=The entity with the Particle_Emitter"`,
+    values:serial.Json `mirai:"optional,label=Values it shows, as particle.instance.inspect gives them: those that differ from its effect become its own, at most 16 and not its assets or program"`,
+    parameters:serial.Json `mirai:"optional,label=Parameters of the Vfx program of its effect for this entity, by name, at most 8; null takes one away"`,
+}
+
 @(private)
 api_register :: proc(s:^editor.Session) {
-    editor.api_method_register(s,{name="particle.inspect",params_schema=PARTICLE_PARAMS_SCHEMA,summary="The values of a particle effect (.particle), the parameters of its Vfx program and the fields its instances do not show; problem says why its program would not run.",flags={.Read_Only},run=api_particle_inspect})
-    editor.api_method_register(s,{name="particle.set",params_schema=PARTICLE_PARAMS_SCHEMA,summary="Changes the values, Vfx parameters or hidden fields of a particle effect for every entity that shows it, or makes a new one at path over the defaults.",flags={.Idempotent},run=api_particle_set})
+    editor.api_method_register(s,{name="particle.inspect",params=Particle_Inspect_Params,params_info=type_info_of(Particle_Inspect_Params),summary="The values of a particle effect (.particle), the parameters of its Vfx program and the fields its instances do not show; problem says why its program would not run.",flags={.Read_Only},result=serial.Json,result_info=type_info_of(serial.Json),writes_result=true,run=api_particle_inspect})
+    editor.api_method_register(s,{name="particle.set",params=Particle_Inspect_Params,params_info=type_info_of(Particle_Inspect_Params),summary="Changes the values, Vfx parameters or hidden fields of a particle effect for every entity that shows it, or makes a new one at path over the defaults.",flags={.Idempotent},result=serial.Json,result_info=type_info_of(serial.Json),writes_result=true,run=api_particle_set})
     bake:=Api_Grid_Bake_Params{}
-    editor.api_method_register(s,{name="particle.grid.bake",params=Api_Grid_Bake_Params,params_info=type_info_of(Api_Grid_Bake_Params),defaults=&bake,summary="Writes the cells of the grid of an entity of the edited world, as the steps of the next frame leave them, as a .grid at path (one there takes the new state) in an undo step of its own: a Particle_Grid that names it in cached starts from that state. The call holds until the cells come back from the GPU and names the file and its id, or fails when they do not come back.",run=api_grid_bake})
-    editor.api_method_register(s,{name="particle.programs",summary="The Vfx programs of the shaders: their parameters with kind, components, default and range, the bytes each keeps per particle, the resources it reads by name (surfaces, bones, channels, grids) and its stages: what each goes over, its iterations and the radius of its neighbors.",flags={.Read_Only},run=api_particle_programs})
+    editor.api_method_register(s,{name="particle.grid.bake",params=Api_Grid_Bake_Params,params_info=type_info_of(Api_Grid_Bake_Params),defaults=&bake,summary="Writes the cells of the grid of an entity of the edited world, as the steps of the next frame leave them, as a .grid at path (one there takes the new state) in an undo step of its own: a Particle_Grid that names it in cached starts from that state. The call holds until the cells come back from the GPU and names the file and its id, or fails when they do not come back.",result=serial.Json,result_info=type_info_of(serial.Json),writes_result=true,run=api_grid_bake})
+    editor.api_method_register(s,{name="particle.programs",summary="The Vfx programs of the shaders: their parameters with kind, components, default and range, the bytes each keeps per particle, the resources it reads by name (surfaces, bones, channels, grids) and its stages: what each goes over, its iterations and the radius of its neighbors.",flags={.Read_Only},result=serial.Json,result_info=type_info_of(serial.Json),writes_result=true,run=api_particle_programs})
     inspect:=Api_Particle_Instance_Params{world=.Edit}
     control:=Api_Particle_Control_Params{world=.Play}
-    editor.api_method_register(s,{name="particle.instance.inspect",params=Api_Particle_Instance_Params,params_info=type_info_of(Api_Particle_Instance_Params),defaults=&inspect,summary="What an emitter shows: the values of its effect with its own over them, its own values by path, the parameters of its program, why its program does not run, and its clock (state, control, seconds, generation, births).",flags={.Read_Only},run=api_particle_instance_inspect})
-    editor.api_method_register(s,{name="particle.instance.set",params_schema=PARTICLE_INSTANCE_SET_SCHEMA,summary="In Edit, one undo step: the values given that differ from the effect become the entity's own (at most 16, not its assets or program), and the parameters given its own (at most 8). The result is as particle.instance.inspect's.",run=api_particle_instance_set})
-    editor.api_method_register(s,{name="particle.instance.revert",params=Api_Particle_Id_Params,params_info=type_info_of(Api_Particle_Id_Params),summary="In Edit, one undo step: the entity takes back every value and parameter of its effect.",run=api_particle_instance_revert})
-    editor.api_method_register(s,{name="particle.instance.apply",params=Api_Particle_Id_Params,params_info=type_info_of(Api_Particle_Id_Params),summary="Writes the values and parameters the entity shows into its effect, for every entity that shows it, and reverts the entity, in one undo step.",run=api_particle_instance_apply})
+    editor.api_method_register(s,{name="particle.instance.inspect",params=Api_Particle_Instance_Params,params_info=type_info_of(Api_Particle_Instance_Params),defaults=&inspect,summary="What an emitter shows: the values of its effect with its own over them, its own values by path, the parameters of its program, why its program does not run, and its clock (state, control, seconds, generation, births).",flags={.Read_Only},result=serial.Json,result_info=type_info_of(serial.Json),writes_result=true,run=api_particle_instance_inspect})
+    editor.api_method_register(s,{name="particle.instance.set",params=Particle_Instance_Set_Params,params_info=type_info_of(Particle_Instance_Set_Params),summary="In Edit, one undo step: the values given that differ from the effect become the entity's own (at most 16, not its assets or program), and the parameters given its own (at most 8). The result is as particle.instance.inspect's.",result=serial.Json,result_info=type_info_of(serial.Json),writes_result=true,run=api_particle_instance_set})
+    editor.api_method_register(s,{name="particle.instance.revert",params=Api_Particle_Id_Params,params_info=type_info_of(Api_Particle_Id_Params),summary="In Edit, one undo step: the entity takes back every value and parameter of its effect.",result=serial.Json,result_info=type_info_of(serial.Json),writes_result=true,run=api_particle_instance_revert})
+    editor.api_method_register(s,{name="particle.instance.apply",params=Api_Particle_Id_Params,params_info=type_info_of(Api_Particle_Id_Params),summary="Writes the values and parameters the entity shows into its effect, for every entity that shows it, and reverts the entity, in one undo step.",result=serial.Json,result_info=type_info_of(serial.Json),writes_result=true,run=api_particle_instance_apply})
     editor.api_method_register(s,{name="particle.instance.control",params=Api_Particle_Control_Params,params_info=type_info_of(Api_Particle_Control_Params),result=Api_Particle_Control_Result,result_info=type_info_of(Api_Particle_Control_Result),defaults=&control,summary="Asks an emitter in the Play of the caller, or in the preview of the document, to start, stop, restart, pause, resume, go back to its fields or burst count particles. It takes it in its next fixed step; its fields do not change.",run=api_particle_instance_control})
 }
 
@@ -444,7 +455,7 @@ particle_world :: proc(s:^editor.Session,call:^api.Call,world:Particle_World) ->
     if world==.Edit {return editor.edited_world(s),true}
     r,_:=editor.api_play_run(s,call)
     if r==nil {
-        api.call_fail(call,api.INVALID_PARAMS,"Start a Play (play.start) before addressing its emitters, or use world Edit")
+        editor.api_no_game(call,"or address the emitters of world Edit")
         return
     }
     return editor.run_ref(s,r),true

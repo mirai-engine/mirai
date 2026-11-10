@@ -29,7 +29,7 @@ Type_Kind :: enum u8 {
     Array,     // count elements of type elem; vectors, quaternions and matrices are arrays of floats
     // Only in a schema that takes them (Schema.unsized): values that live in
     // memory and in text, with no image, no binary schema and no migration.
-    Slice,     // []T: any number of elements of type elem
+    Slice,     // []T or [dynamic]T: any number of elements of type elem
     String,    // string
     Json,      // serial.Json
 }
@@ -446,6 +446,14 @@ schema_add_info :: proc(s:^Schema,info:^runtime.Type_Info,path:string) -> (Type_
         }
         type.kind=.String
     case runtime.Type_Info_Slice:
+        if !s.unsized {
+            delete(type.name,s.allocator)
+            return schema_fail(s,path,info)
+        }
+        elem_type,ok:=schema_add_info(s,variant.elem,path)
+        if !ok {delete(type.name,s.allocator);return TYPE_NONE,false}
+        type.kind,type.elem=.Slice,elem_type
+    case runtime.Type_Info_Dynamic_Array:
         if !s.unsized {
             delete(type.name,s.allocator)
             return schema_fail(s,path,info)

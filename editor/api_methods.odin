@@ -30,6 +30,17 @@ import "mirai:ui"
 
 API_STEP_LIMIT :: 3600
 API_NO_GAME :: "No game is playing; play.start first"
+API_PLAYING :: "A game is playing; play.stop first"
+
+// What a method that needs a game answers without one, and one that needs
+// Edit while a game plays: one code and one text each, with the method that
+// changes it.
+api_no_game :: proc(call:^api.Call,more:="") {
+    api.call_not_now(call,more!=""?fmt.tprintf("%s; %s",API_NO_GAME,more):API_NO_GAME,"play.start")
+}
+api_playing :: proc(call:^api.Call,more:="") {
+    api.call_not_now(call,more!=""?fmt.tprintf("%s; %s",API_PLAYING,more):API_PLAYING,"play.stop")
+}
 API_FILMSTRIP_CELLS :: 64
 API_DT_MAX :: f32(0.25)
 API_INPUT_EVENTS :: 256
@@ -320,30 +331,109 @@ Api_Editor_Action :: struct {
     disabled,checked:bool,
 }
 
+// What editor.input takes.
+Api_Editor_Input_Params_Events_Mouse_Buttons :: enum u8 {left,right,middle}
+Api_Editor_Input_Params_Events :: struct {
+    keys:[]string `mirai:"optional,label=keys held in the frame; they replace the previous set"`,
+    repeat_keys:[]string `mirai:"optional,label=keys that repeat in the frame"`,
+    mouse_buttons:[]Api_Editor_Input_Params_Events_Mouse_Buttons `mirai:"optional,label=buttons held in the frame; they replace the previous set"`,
+    mouse_position:[2]f32 `mirai:"optional,label=points; excludes mouse_delta"`,
+    mouse_delta:[2]f32 `mirai:"optional,label=points; excludes mouse_position"`,
+    wheel:serial.Json `mirai:"optional,label=One of: number; array."`,
+    text:string `mirai:"optional,label=printable ASCII typed in the frame"`,
+    clicks:int `mirai:"optional,min=1,max=3"`,
+    dt:f64 `mirai:"optional,max=0.25,label=Above 0. seconds"`,
+}
+Api_Editor_Input_Params :: struct {
+    events:[]Api_Editor_Input_Params_Events `mirai:"optional"`,
+    dt:f64 `mirai:"optional,max=0.25,label=Above 0. seconds"`,
+}
+
+// What camera.set takes.
+Api_Camera_Set_Params_Exposure :: enum u8 {scene,camera,manual}
+Api_Camera_Set_Params :: struct {
+    position:[3]f32 `mirai:"optional"`,
+    target:[3]f32 `mirai:"optional"`,
+    yaw:f64 `mirai:"optional,label=radians"`,
+    pitch:f64 `mirai:"optional,label=radians"`,
+    distance:f64 `mirai:"optional,label=Above 0."`,
+    fov:f64 `mirai:"optional,min=1,max=170,label=degrees, vertical"`,
+    entity:string `mirai:"entity,optional,label=an entity with a perspective Camera by its name, a path Parent/Child, its id or its handle: the camera takes its eye, where it looks and its fov, without changing the scene; excludes position, target, yaw and pitch"`,
+    exposure:Api_Camera_Set_Params_Exposure `mirai:"optional,label=how the view exposes: as the Sky that is on, as the Camera of entity, or at ev100"`,
+    ev100:f64 `mirai:"optional,min=-10,max=24,label=exposure value at ISO 100 of manual; alone, it chooses manual"`,
+    frame:[]string `mirai:"entity,optional,label=At most 64. entities by name, path or id the camera frames with what hangs from them, looking the way it looks now; excludes position, target and entity"`,
+    from:[3]f32 `mirai:"optional,label=with frame: the direction from what is framed to the camera"`,
+}
+
+// What build.check answers.
+Api_Build_Check_Result_Diagnostics_Severity :: enum u8 {Error,Warning}
+Api_Build_Check_Result_Diagnostics :: struct {
+    severity:Api_Build_Check_Result_Diagnostics_Severity,
+    file:string,
+    line:int,
+    column:int,
+    message:string,
+}
+Api_Build_Check_Result :: struct {
+    ok:bool,
+    failure:string,
+    seconds:f64,
+    errors:int,
+    diagnostics:[]Api_Build_Check_Result_Diagnostics,
+    text:string,
+}
+
+// What build.test answers.
+Api_Build_Test_Result_Failed :: struct {
+    package_:string `mirai:"name=package"`,
+    name:string,
+    messages:[]string `mirai:"label=what it logged at error level and above, with where"`,
+}
+Api_Build_Test_Result_Diagnostics_Severity :: enum u8 {Error,Warning}
+Api_Build_Test_Result_Diagnostics :: struct {
+    severity:Api_Build_Test_Result_Diagnostics_Severity,
+    file:string,
+    line:int,
+    column:int,
+    message:string,
+}
+Api_Build_Test_Result :: struct {
+    ok:bool,
+    failure:string,
+    seconds:f64,
+    compiled:bool `mirai:"label=false: the package did not build; diagnostics say why"`,
+    total:int,
+    passed:int,
+    failed:[]Api_Build_Test_Result_Failed,
+    errors:int,
+    diagnostics:[]Api_Build_Test_Result_Diagnostics,
+    text:string `mirai:"label=what the compiler or the tests printed, when they failed"`,
+}
+
 @(private)
 api_methods_register :: proc(s:^Session,st:^Api_State) {
     step_default:=Api_Step_Params{frames=1,dt=HEADLESS_DT}
     play_step_default:=Api_Play_Step_Params{focus=-1,trace={every=1},drive={within=API_DRIVE_WITHIN}}
     build_default:=Api_Build_Params{seconds=API_BUILD_SECONDS}
     pause_default:=Api_Pause_Params{paused=true}
-    api_register(s,st,{name="engine.status",summary="The state of the editor and of its renderer, and what the last frame cost by part of the main thread and by pass of the GPU.",result=Api_Status,flags={.Read_Only},run=api_status})
-    api_register(s,st,{name="engine.step",summary="Advances whole frames of editor, game and render with a fixed dt. Manual execution only (headless).",params=Api_Step_Params,result=Api_Step_Result,defaults=&step_default,run=api_step})
-    api_register(s,st,{name="engine.shutdown",summary="Stops Play and quits the editor after answering. Fails with unsaved changes of scenes or assets unless discard.",params=Api_Shutdown_Params,result=Api_Shutdown_Result,flags={.Destructive},run=api_shutdown})
-    api_register(s,st,{name="engine.gpu_lose",summary="Makes the next submission to the GPU report the device lost, as a reset of the GPU does, to test what follows: the editor starts again with its documents, and ends if it was started again for a loss less than a minute before.",result=Api_Gpu_Lose_Result,flags={.Destructive},run=api_gpu_lose})
+    api_register(s,st,{name="engine.status",summary="The state of the editor and of its renderer, and what the last frame cost by part of the main thread and by pass of the GPU.",result=Api_Status,flags={.Read_Only,.As_User},run=api_status})
+    api_register(s,st,{name="engine.step",summary="Advances whole frames of editor, game and render with a fixed dt. Manual execution only (headless).",params=Api_Step_Params,result=Api_Step_Result,defaults=&step_default,flags={.As_User},run=api_step})
+    api_register(s,st,{name="engine.shutdown",summary="Stops Play and quits the editor after answering. Fails with unsaved changes of scenes or assets unless discard.",params=Api_Shutdown_Params,result=Api_Shutdown_Result,flags={.Destructive,.As_User},run=api_shutdown})
+    api_register(s,st,{name="engine.gpu_lose",summary="Makes the next submission to the GPU report the device lost, as a reset of the GPU does, to test what follows: the editor starts again with its documents, and ends if it was started again for a loss less than a minute before.",result=Api_Gpu_Lose_Result,flags={.Destructive,.As_User},run=api_gpu_lose})
     api_register(s,st,{name="editor.inspect",summary="What the editor shows and the actions it can run, to drive it as a person would with editor.input and editor.action.",result=Api_Editor_Inspect,writes_result=true,flags={.Read_Only},run=api_editor_inspect})
     api_register(s,st,{name="editor.action",summary="Runs an action of the editor by name, as its menu entry or its shortcut does.",params=Api_Action_Params,result=Api_Action_Result,run=api_editor_action})
     api_register(s,st,{name="editor.recover",summary="Recovers what an editor that ended left unsaved, or discards it; until then it stays set aside, whatever is edited or saved meanwhile, and a tab with changes stays as it is. With nothing offered it answers resolved false.",params=Api_Recovery_Params,result=Api_Recovery_Result,flags={.Idempotent},run=api_recover})
-    api_register(s,st,{name="editor.section_edit",summary="Edits the section of a Scene_Reference in its world: its entities are edited here, scene.save writes its scene too, and everything else reads only. id 0 stops. Returns the reference edited.",params=Api_Section_Edit_Params,run=api_section_edit})
-    api_register(s,st,{name="editor.section_preview",summary="Draws the sky and the sun of the section of a Scene_Reference instead of those on, in the view of the editor only: not an edit, not saved, and Play starts without it. id 0 goes back. Returns the sky and the sun drawn.",params=Api_Section_Preview_Params,run=api_section_preview})
-    api_register(s,st,{name="editor.sections",summary="The sections of the scene as the World panel maps them: each Scene_Reference with its rule, the state it asks, what the view of the editor asks of it (view; Auto for nothing) and what it shows, its box, and what it costs (entities, meshes and textures of its scene, GPU bytes they hold now and bytes of their files); with the sources the sections stream around and the camera of the editor.",flags={.Read_Only},run=api_sections})
-    api_register(s,st,{name="editor.section_view",summary="Turns a section on (Active), loaded and off (Loaded) or off (Unloaded) in the view of the editor alone, or gives it back to what its reference asks (Auto): not an edit, not in the undo and not saved; Play starts with what the references ask. It loads over the next frames: shown in editor.sections says when it is there. Returns the section.",params=Api_Section_View_Params,flags={.Idempotent},run=api_section_view})
-    api_register(s,st,{name="editor.section_travel",summary="Brings the camera of the editor to a section, framing its box (into it when the box is big), and turns it on in the view when what asks for it does not. Returns the section.",params=Api_Section_Id_Params,run=api_section_travel})
-    api_register(s,st,{name="editor.select",summary="Sets the selection of the editor: the entities the panels and the tools act on.",params=Api_Select_Params,result=Api_Select_Result,flags={.Idempotent},run=api_editor_select})
-    api_register(s,st,{name="editor.input",params_schema=API_INPUT_SCHEMA,summary="Runs a frame per event of synthetic input through the path of real input. Manual execution only (headless).",result=Api_Editor_Inspect,writes_result=true,run=api_editor_input})
-    api_register(s,st,{name="camera.set",params_schema=API_CAMERA_SCHEMA,summary="Moves the camera of the editor, or looks through a Camera of the scene without changing it, and chooses how the view is exposed.",result=Api_Camera_Result,flags={.Idempotent},run=api_camera_set})
+    api_register(s,st,{name="editor.section_edit",summary="Edits the section of a Scene_Reference in its world: its entities are edited here, scene.save writes its scene too, and everything else reads only. id 0 stops. Returns the reference edited.",params=Api_Section_Edit_Params,result=Api_Section_Edit_Result,writes_result=true,run=api_section_edit})
+    api_register(s,st,{name="editor.section_preview",summary="Draws the sky and the sun of the section of a Scene_Reference instead of those on, in the view of the editor only: not an edit, not saved, and Play starts without it. id 0 goes back. Returns the sky and the sun drawn.",params=Api_Section_Preview_Params,result=Api_Section_Preview_Result,writes_result=true,run=api_section_preview})
+    api_register(s,st,{name="editor.sections",summary="The sections of the scene as the World panel maps them: each Scene_Reference with its rule, the state it asks, what the view of the editor asks of it (view; Auto for nothing) and what it shows, its box, and what it costs (entities, meshes and textures of its scene, GPU bytes they hold now and bytes of their files); with the sources the sections stream around and the camera of the editor.",flags={.Read_Only},result=Api_Sections_Result,writes_result=true,run=api_sections})
+    api_register(s,st,{name="editor.section_view",summary="Turns a section on (Active), loaded and off (Loaded) or off (Unloaded) in the view of the editor alone, or gives it back to what its reference asks (Auto): not an edit, not in the undo and not saved; Play starts with what the references ask. It loads over the next frames: shown in editor.sections says when it is there. Returns the section.",params=Api_Section_View_Params,flags={.Idempotent,.View},result=Api_Section,writes_result=true,run=api_section_view})
+    api_register(s,st,{name="editor.section_travel",summary="Brings the camera of the editor to a section, framing its box (into it when the box is big), and turns it on in the view when what asks for it does not. Returns the section.",params=Api_Section_Id_Params,result=Api_Section,writes_result=true,flags={.View},run=api_section_travel})
+    api_register(s,st,{name="editor.select",summary="Sets the selection of the editor: the entities the panels and the tools act on.",params=Api_Select_Params,result=Api_Select_Result,flags={.Idempotent,.View},run=api_editor_select})
+    api_register(s,st,{name="editor.input",params=Api_Editor_Input_Params,summary="Runs a frame per event of synthetic input through the path of real input. Manual execution only (headless).",result=Api_Editor_Inspect,writes_result=true,flags={.As_User},run=api_editor_input})
+    api_register(s,st,{name="camera.set",params=Api_Camera_Set_Params,summary="Moves the camera of the editor, or looks through a Camera of the scene without changing it, and chooses how the view is exposed.",result=Api_Camera_Result,flags={.Idempotent,.View},run=api_camera_set})
     api_register(s,st,{name="history.undo",flags={.Core},summary="Undoes the last edit of the caller (its turn, or the API outside a turn), even after edits of others, keeping every field they changed since.",result=Api_History_Result,run=api_undo})
     api_register(s,st,{name="history.redo",summary="Redoes the edit the last undo of the caller took back, keeping every field others changed since; a new edit of the caller drops what it can redo.",result=Api_History_Result,run=api_redo})
-    api_register(s,st,{name="play.start",flags={.Core},summary="Plays a copy of the scene: a game the caller already plays goes on and answers its state while the document is as it was when it started, and starts again when it changed. Outside a turn, in the editor; in a turn, a run of its own the editor does not show and only play.step advances. Up to three turns play besides the user. When an Odin source changed since the last build, it builds first and answers when the game plays, or fails with what the compiler said.",params=Api_Play_Start_Params,result=Api_Play_Result,run=api_play_start})
+    api_register(s,st,{name="play.start",flags={.Core,.Draws},summary="Plays a copy of the scene: a game the caller already plays goes on and answers its state while the document is as it was when it started, and starts again when it changed. Outside a turn, in the editor; in a turn, a run of its own the editor does not show and only play.step advances. Up to three turns play besides the user. When an Odin source changed since the last build, it builds first and answers when the game plays, or fails with what the compiler said.",params=Api_Play_Start_Params,result=Api_Play_Result,run=api_play_start})
     api_register(s,st,{name="play.stop",flags={.Core,.Idempotent},summary="Ends the game of the caller (its turn, or the user outside a turn, with its game on the network) and discards what it changed.",result=Api_Play_Result,run=api_play_stop})
     api_register(s,st,{name="play.pause",summary="Pauses the game, or resumes it with paused false: from the newest tick it played, or with here from the tick play.seek went to.",params=Api_Pause_Params,result=Api_Play_Result,defaults=&pause_default,run=api_play_pause})
     api_register(s,st,{name="play.step",flags={.Core},summary="Pauses the game and runs exactly the fixed ticks asked for with the input given (keys, mouse, pointer and text for its UI, gamepads of the local seats), or until conditions hold; keys held by consecutive calls stay down and a call that omits one releases it; segments change the input along the ticks, press clicks a button of its UI by name, drive steers the focused player to a target and a trace reads values along them.",params=Api_Play_Step_Params,result=Api_Play_Step_Result,writes_result=true,defaults=&play_step_default,run=api_play_step})
@@ -351,9 +441,9 @@ api_methods_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="build.start",flags={.Core},summary="Builds the editor of the project, whose new code loads into the running editor when it succeeds, the game to ship, which leaves the editor as it is, or its shaders; answers when it ends, with each error and its file and line.",params=Api_Build_Params,result=Api_Build_Result,defaults=&build_default,run=api_build_start})
     api_register(s,st,{name="build.status",summary="State of the build and what the compiler said, with file and line.",result=Api_Build_Result,flags={.Core,.Read_Only},run=api_build_status})
     check_defaults:=Api_Build_Check_Params{seconds=300}
-    api_register(s,st,{name="build.check",summary="Checks the types of the code of the project, its game, editor and plugins, without building or loading anything; answers when it ends, with each error and its file and line.",params=Api_Build_Check_Params,defaults=&check_defaults,result_schema=API_CHECK_RESULT,flags={.Core,.Read_Only},run=api_build_check})
+    api_register(s,st,{name="build.check",summary="Checks the types of the code of the project, its game, editor and plugins, without building or loading anything; answers when it ends, with each error and its file and line.",params=Api_Build_Check_Params,defaults=&check_defaults,result=Api_Build_Check_Result,writes_result=true,flags={.Core,.Read_Only},run=api_build_check})
     test_defaults:=Api_Build_Test_Params{seconds=600}
-    api_register(s,st,{name="build.test",summary="Builds and runs the @(test) procedures of a package of the project against the engine it uses, without loading anything; answers when they end, with each failed test and what it logged.",params=Api_Build_Test_Params,defaults=&test_defaults,result_schema=API_TEST_RESULT,flags={.Read_Only},run=api_build_test})
+    api_register(s,st,{name="build.test",summary="Builds and runs the @(test) procedures of a package of the project against the engine it uses, without loading anything; answers when they end, with each failed test and what it logged.",params=Api_Build_Test_Params,defaults=&test_defaults,result=Api_Build_Test_Result,writes_result=true,flags={.Read_Only},run=api_build_test})
     api_play_record_register(s,st)
     api_play_history_register(s,st)
     api_scene_register(s,st)
@@ -1335,7 +1425,7 @@ api_play_status :: proc(s:^Session,call:^api.Call) {
 api_play_pause :: proc(s:^Session,call:^api.Call) {
     r,own:=api_play_run(s,call)
     switch {
-    case r==nil: api.call_fail(call,api.SERVER_ERROR,API_NO_GAME)
+    case r==nil: api_no_game(call)
     case !own: api_play_refused(call)
     case r.owner!=0: api.call_fail(call,api.SERVER_ERROR,"This run advances only with play.step")
     case:
@@ -1349,7 +1439,7 @@ api_play_pause :: proc(s:^Session,call:^api.Call) {
 api_play_step :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Play_Step_Params)
     r,own:=api_play_run(s,call)
-    if r==nil {api.call_fail(call,api.SERVER_ERROR,API_NO_GAME);return}
+    if r==nil {api_no_game(call);return}
     if !own {api_play_refused(call);return}
     owner:=r.owner
     if !api_step_drive_ticks(s,call,params) {return}
@@ -1611,12 +1701,6 @@ Api_Build_Test_Params :: struct {
     seconds:int `mirai:"optional,min=1,max=3600,label=How long the build and the tests may take before they are stopped"`,
 }
 
-@(private) API_PROBE_DIAGNOSTICS :: `"diagnostics":{"type":"array","items":{"type":"object","properties":{"severity":{"enum":["Error","Warning"]},"file":{"type":"string"},"line":{"type":"integer"},"column":{"type":"integer"},"message":{"type":"string"}},"required":["severity","file","line","column","message"]}}`
-@(private) API_CHECK_RESULT :: `{"type":"object","properties":{"ok":{"type":"boolean"},"failure":{"type":"string"},"seconds":{"type":"number"},"errors":{"type":"integer"},` + API_PROBE_DIAGNOSTICS + `,"text":{"type":"string"}},"required":["ok","failure","seconds","errors","diagnostics","text"],"additionalProperties":false}`
-@(private) API_TEST_RESULT :: `{"type":"object","properties":{"ok":{"type":"boolean"},"failure":{"type":"string"},"seconds":{"type":"number"},"compiled":{"type":"boolean","description":"false: the package did not build; diagnostics say why"},"total":{"type":"integer"},"passed":{"type":"integer"},` +
-    `"failed":{"type":"array","items":{"type":"object","properties":{"package":{"type":"string"},"name":{"type":"string"},"messages":{"type":"array","items":{"type":"string"},"description":"what it logged at error level and above, with where"}},"required":["package","name","messages"]}},` +
-    `"errors":{"type":"integer"},` + API_PROBE_DIAGNOSTICS + `,"text":{"type":"string","description":"what the compiler or the tests printed, when they failed"}},"required":["ok","failure","seconds","compiled","total","passed","failed","errors","diagnostics","text"],"additionalProperties":false}`
-
 @(private)
 api_build_check :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Build_Check_Params)
@@ -1698,10 +1782,6 @@ api_probe_write :: proc(out:^serial.Writer,result:^build.Result) {
     text:=result.status==.Built?"":result.text
     api.write_text(out,"text",api_text_whole(text[:min(len(text),API_DIAGNOSTICS_BUILD_TEXT)]))
 }
-
-// The shapes of the params of the methods that read them by hand.
-@(private) API_INPUT_SCHEMA :: `{"type":"object","additionalProperties":false,"properties":{"events":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{"keys":{"type":"array","items":{"type":"string"},"description":"keys held in the frame; they replace the previous set"},"repeat_keys":{"type":"array","items":{"type":"string"},"description":"keys that repeat in the frame"},"mouse_buttons":{"type":"array","items":{"type":"string","enum":["left","right","middle"]},"description":"buttons held in the frame; they replace the previous set"},"mouse_position":{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2,"description":"points; excludes mouse_delta"},"mouse_delta":{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2,"description":"points; excludes mouse_position"},"wheel":{"oneOf":[{"type":"number"},{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2}]},"text":{"type":"string","description":"printable ASCII typed in the frame"},"clicks":{"type":"integer","minimum":1,"maximum":3},"dt":{"type":"number","exclusiveMinimum":0,"maximum":0.25,"description":"seconds"}}}},"dt":{"type":"number","exclusiveMinimum":0,"maximum":0.25,"description":"seconds"}}}`
-@(private) API_CAMERA_SCHEMA :: `{"type":"object","additionalProperties":false,"properties":{"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"target":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"yaw":{"type":"number","description":"radians"},"pitch":{"type":"number","description":"radians"},"distance":{"type":"number","exclusiveMinimum":0},"fov":{"type":"number","minimum":1,"maximum":170,"description":"degrees, vertical"},"entity":{"type":"string","description":"an entity with a perspective Camera by its name, a path Parent/Child, its id or its handle: the camera takes its eye, where it looks and its fov, without changing the scene; excludes position, target, yaw and pitch"},"exposure":{"enum":["scene","camera","manual"],"description":"how the view exposes: as the Sky that is on, as the Camera of entity, or at ev100"},"ev100":{"type":"number","minimum":-10,"maximum":24,"description":"exposure value at ISO 100 of manual; alone, it chooses manual"},"frame":{"type":"array","maxItems":64,"items":{"type":"string"},"description":"entities by name, path or id the camera frames with what hangs from them, looking the way it looks now; excludes position, target and entity"},"from":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"with frame: the direction from what is framed to the camera"}}}`
 
 // The runs of a turn: its own, with players local ones, and those a plugin
 // adds for online players (multiplayer: a run per online player that joins

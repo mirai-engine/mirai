@@ -104,7 +104,7 @@ schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^s
             }
         } else if type.size==16 {
             entry(w,&count,"type");raw(w,`"string"`)
-            entry(w,&count,"pattern");raw(w,`"^0x[0-9a-fA-F]{32}$"`)
+            entry(w,&count,"pattern");serial.text_write_string(w,PATTERN_WIDE)
         } else {
             lo,hi:=integer_bounds(type,field)
             entry(w,&count,"type");raw(w,`"integer"`)
@@ -125,7 +125,7 @@ schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^s
         entry(w,&count,"uniqueItems");raw(w,"true")
     case .Entity,.Entity_Id:
         entry(w,&count,"type");raw(w,`"string"`)
-        entry(w,&count,"pattern");raw(w,`"^(0x)?[0-9a-fA-F]{1,16}$"`)
+        entry(w,&count,"pattern");serial.text_write_string(w,PATTERN_ENTITY_ID)
     case .Asset:
         entry(w,&count,"type");raw(w,`"string"`)
         entry(w,&count,"x-asset");serial.text_write_string(w,field!=nil && field.asset_kinds!=""?field.asset_kinds:"any")
@@ -213,7 +213,8 @@ write_names :: proc(w:^serial.Writer,choices:[]serial.Choice) {
     raw(w,"]")
 }
 
-// The schema of the params or result of a method; free-form JSON when there is no type.
+// The schema of the params or result of a method: that of its type. Without
+// one it takes no params, and it answers null.
 method_schema_write :: proc(w:^serial.Writer,s:^Server,method:^Method,result:bool) {
     start:=w.count
     defer if !result {
@@ -223,17 +224,18 @@ method_schema_write :: proc(w:^serial.Writer,s:^Server,method:^Method,result:boo
     }
     index:=result?method.result:method.params
     if index==serial.TYPE_NONE {
-        written:=result?method.result_schema:method.params_schema
-        raw(w,written!=""?written:result?"{}":`{"type":"object"}`)
+        raw(w,result?`{"type":"null"}`:`{"type":"object","properties":{},"additionalProperties":false}`)
         return
     }
     schema_write(w,s,index,nil,result?nil:method.defaults,params=!result)
 }
 
-// x-entity says of a param what it takes; a schema written by hand spreads
-// ENTITY_SCHEMA into the object of the param.
+// The patterns of the ids, which describe.odin tells apart by them.
+PATTERN_ENTITY_ID :: "^(0x)?[0-9a-fA-F]{1,16}$"
+PATTERN_WIDE :: "^0x[0-9a-fA-F]{32}$"
+
+// x-entity says of a param what it takes.
 @(private="file") ENTITY_NAMES :: `"a name, a path Parent/Child or an id"`
-ENTITY_SCHEMA :: `"type":"string","x-entity":` + ENTITY_NAMES
 
 // The key of a result that says which params took their maximum.
 @(private) CLAMPED_SCHEMA :: `"_clamped":{"type":"object","description":"The params past their maximum by name: what was asked and what was used"}`

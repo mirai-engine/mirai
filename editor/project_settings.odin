@@ -237,21 +237,37 @@ Api_Project_Changed :: struct {
     active_plugins:[][64]u8 `mirai:"text,label=The plugins on after the change; project.get gives the manifest and every plugin"`,
 }
 
-@(private)
-API_PROJECT_SET_SCHEMA :: `{"type":"object","additionalProperties":false,"properties":{` +
-    `"name":{"type":"string"},"version":{"type":"string","description":"of the game: major.minor.patch"},` +
-    `"identifier":{"type":"string","description":"a reverse domain name, as com.studio.game; empty: none"},` +
-    `"icon":{"type":"string","description":"a PNG of the window of the game, relative to the project; empty: none"},` +
-    `"thumbnail":{"type":"string","description":"a PNG the list of projects shows the project with, relative to the project; empty: the view of its start scene"},` +
-    `"start_scene":{"type":"string","description":"a .scene relative to the assets folder; empty: none"},` +
-    `"window":{"type":"object","additionalProperties":false,"properties":{"title":{"type":"string","description":"empty: the name"},"mode":{"enum":["Maximized","Fullscreen","Windowed"]},"width":{"type":"integer","minimum":1,"maximum":16384},"height":{"type":"integer","minimum":1,"maximum":16384}}},` +
-    `"build":{"type":"object","additionalProperties":false,"properties":{"executable":{"type":"string","description":"file of the shipped game without extension; empty: from the name"},"optimization":{"enum":["Minimal","None","Size","Speed","Aggressive"]},"debug":{"type":"boolean"},"defines":{"type":"array","items":{"type":"string"},"description":"NAME or NAME=value"}}},` +
-    `"plugins":{"type":"object","additionalProperties":{"type":"boolean"},"description":"{\"<plugin>\": true to activate it, false to deactivate it}; project.get lists them"}}}`
+// What project.set takes.
+Api_Project_Set_Params_Window_Mode :: enum u8 {Maximized,Fullscreen,Windowed}
+Api_Project_Set_Params_Window :: struct {
+    title:string `mirai:"optional,label=empty: the name"`,
+    mode:Api_Project_Set_Params_Window_Mode `mirai:"optional"`,
+    width:int `mirai:"optional,min=1,max=16384"`,
+    height:int `mirai:"optional,min=1,max=16384"`,
+}
+Api_Project_Set_Params_Build_Optimization :: enum u8 {Minimal,None,Size,Speed,Aggressive}
+Api_Project_Set_Params_Build :: struct {
+    executable:string `mirai:"optional,label=file of the shipped game without extension; empty: from the name"`,
+    optimization:Api_Project_Set_Params_Build_Optimization `mirai:"optional"`,
+    debug:bool `mirai:"optional"`,
+    defines:[]string `mirai:"optional,label=NAME or NAME=value"`,
+}
+Api_Project_Set_Params :: struct {
+    name:string `mirai:"optional"`,
+    version:string `mirai:"optional,label=of the game: major.minor.patch"`,
+    identifier:string `mirai:"optional,label=a reverse domain name, as com.studio.game; empty: none"`,
+    icon:string `mirai:"optional,label=a PNG of the window of the game, relative to the project; empty: none"`,
+    thumbnail:string `mirai:"optional,label=a PNG the list of projects shows the project with, relative to the project; empty: the view of its start scene"`,
+    start_scene:string `mirai:"optional,label=a .scene relative to the assets folder; empty: none"`,
+    window:Api_Project_Set_Params_Window `mirai:"optional"`,
+    build:Api_Project_Set_Params_Build `mirai:"optional"`,
+    plugins:serial.Json `mirai:"optional,label={'<plugin>': true to activate it, false to deactivate it}; project.get lists them"`,
+}
 
 @(private)
 project_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="project.get",summary="project.mirai (name, version, identifier, icon, thumbnail, start scene, window and build) and every plugin the project can see, active or not.",result=Api_Project,writes_result=true,flags={.Read_Only},run=api_project_get})
-    api_register(s,st,{name="project.set",params_schema=API_PROJECT_SET_SCHEMA,summary="Changes the fields of project.mirai it names and activates or deactivates plugins; a change of the plugins or of build starts a build, which restarts the editor, and answers when it ends, with build_error when it failed.",result=Api_Project_Changed,writes_result=true,run=api_project_set})
+    api_register(s,st,{name="project.set",params=Api_Project_Set_Params,summary="Changes the fields of project.mirai it names and activates or deactivates plugins; a change of the plugins or of build starts a build, which restarts the editor, and answers when it ends, with build_error when it failed.",result=Api_Project_Changed,writes_result=true,run=api_project_set})
 }
 
 @(private)

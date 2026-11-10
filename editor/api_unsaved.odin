@@ -17,9 +17,6 @@ API_UNSAVED :: 64
 API_UNSAVED_NAMED :: 16 // of the unsaved files an error names, the rest counted
 
 @(private)
-UNSAVED_SCHEMA :: `{"type":"object","properties":{"assets":{"type":"array","maxItems":64,"items":{"type":"string"},"description":"Unsaved assets, by their path under the asset folder or their id; a program by the path of its .slang under the project. asset.save without assets or all: those of the turn of the caller, or every one outside a turn"},"all":{"type":"boolean","description":"Every unsaved asset instead of a list"},"folder":{"type":"string","description":"asset.save: writes copies under this folder of the project, inside .mirai/tmp/, and leaves the assets unsaved"}},"additionalProperties":false}`
-
-@(private)
 Api_Unsaved_Params :: struct {
     assets:[API_UNSAVED][API_PATH_BYTES]u8,
     count:int,
@@ -47,11 +44,18 @@ Api_Discarded_Result :: struct {
     discarded:int `mirai:"label=Assets given back what their files hold"`,
 }
 
+// What asset.save, asset.discard take.
+Api_Asset_Save_Params :: struct {
+    assets:[]string `mirai:"optional,label=At most 64. Unsaved assets, by their path under the asset folder or their id; a program by the path of its .slang under the project. asset.save without assets or all: those of the turn of the caller, or every one outside a turn"`,
+    all:bool `mirai:"optional,label=Every unsaved asset instead of a list"`,
+    folder:string `mirai:"optional,label=asset.save: writes copies under this folder of the project, inside .mirai/tmp/, and leaves the assets unsaved"`,
+}
+
 @(private)
 unsaved_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="asset.unsaved",summary="The assets and Slang programs changed in memory and not saved, and which of them the scene of the document uses.",result=Api_Unsaved_Result,writes_result=true,flags={.Read_Only},run=api_asset_unsaved})
-    api_register(s,st,{name="asset.save",flags={.Core},params_schema=UNSAVED_SCHEMA,summary="Writes unsaved assets to their files, or copies of them that leave them unsaved. Writing the files is refused while a game plays.",result=Api_Saved_Result,writes_result=true,run=api_asset_save})
-    api_register(s,st,{name="asset.discard",params_schema=UNSAVED_SCHEMA,summary="Gives unsaved assets back what their files hold; one that only memory held is gone.",result=Api_Discarded_Result,run=api_asset_discard})
+    api_register(s,st,{name="asset.save",flags={.Core},params=Api_Asset_Save_Params,summary="Writes unsaved assets to their files, or copies of them that leave them unsaved. Writing the files is refused while a game plays.",result=Api_Saved_Result,writes_result=true,run=api_asset_save})
+    api_register(s,st,{name="asset.discard",params=Api_Asset_Save_Params,summary="Gives unsaved assets back what their files hold; one that only memory held is gone.",result=Api_Discarded_Result,run=api_asset_discard})
 }
 
 @(private)

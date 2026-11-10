@@ -221,7 +221,7 @@ api_view_targets :: proc(w:core.World_Ref,points:[]Api_Play_View_Point,raw:strin
 api_play_view :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Play_View_Params)
     r,_:=api_play_run(s,call,p.player)
-    if r==nil {api.call_fail(call,api.SERVER_ERROR,API_NO_GAME);return}
+    if r==nil {api_no_game(call);return}
     w:=run_ref(s,r)
     values:[1]string
     api.object_values(call.allocator,call.raw,{"points"},values[:])

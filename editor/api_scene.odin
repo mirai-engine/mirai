@@ -121,17 +121,54 @@ Api_Batch_Entry :: struct {
     id:base.Entity_Id `mirai:"label=The entity of the operation; the new one of scene.add and scene.duplicate"`,
 }
 
+// What scene.add takes.
+Api_Scene_Add_Params :: struct {
+    preset:string `mirai:"optional,label=empty, cube, sphere, cylinder, cone, capsule, plane, prism, pyramid, point_light, spot_light, rect_light, sun, camera, spawn, particles, or the card of a plugin by its label"`,
+    name:string `mirai:"optional"`,
+    parent:string `mirai:"entity,optional,label=the parent by its name, a path Parent/Child or its id; null: a root"`,
+    position:[3]f32 `mirai:"optional"`,
+    rotation_deg:[3]f32 `mirai:"optional"`,
+    scale:[3]f32 `mirai:"optional"`,
+    visible:bool `mirai:"optional"`,
+    enabled:bool `mirai:"optional,label=false turns the entity and everything under it off: their components keep their values and no system sees them"`,
+    components:serial.Json `mirai:"optional,label=by component name, the fields to set"`,
+    off:serial.Json `mirai:"optional,label=by component name, true turns the component off by itself and false on; it keeps its values"`,
+}
+
+// What scene.set takes.
+Api_Scene_Set_Params :: struct {
+    entity:string `mirai:"entity,label=the entity by its name, a path Parent/Child or its id; a name several entities have is an error listing them"`,
+    name:string `mirai:"optional,label=its new name"`,
+    parent:string `mirai:"entity,optional,label=the parent by its name, a path Parent/Child or its id; null: a root"`,
+    position:[3]f32 `mirai:"optional"`,
+    rotation_deg:[3]f32 `mirai:"optional"`,
+    scale:[3]f32 `mirai:"optional"`,
+    visible:bool `mirai:"optional"`,
+    enabled:bool `mirai:"optional,label=false turns the entity and everything under it off: their components keep their values and no system sees them"`,
+    components:serial.Json `mirai:"optional,label=by component name, the fields to change, or null to remove it"`,
+    off:serial.Json `mirai:"optional,label=by component name, true turns the component off by itself and false on; it keeps its values"`,
+}
+
+// What scene.batch takes.
+Api_Scene_Batch_Params_Operations :: struct {
+    method:string `mirai:"label=One of scene.add, scene.set, scene.delete, scene.duplicate."`,
+    params:serial.Json `mirai:"optional,label=the params of that method"`,
+}
+Api_Scene_Batch_Params :: struct {
+    operations:[]Api_Scene_Batch_Params_Operations `mirai:"label=At most 64. At least 1."`,
+}
+
 @(private)
 api_scene_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="scene.inspect",summary="The entities of the document in save order with their place and the names of their components; with components, their transforms, prefab links and values; with root, that entity and what hangs from it as the nested document scene.write takes.",params=Api_Inspect_Params,result=Api_Inspect_Result,writes_result=true,flags={.Core,.Read_Only},run=api_scene_inspect})
     api_register(s,st,{name="play.inspect",summary="As scene.inspect, on the world of the game that plays, whose entities are named by their handle; with storages, also its storages: the score or the state of a match.",params=Api_Inspect_Params,result=Api_Inspect_Result,writes_result=true,flags={.Core,.Read_Only},run=api_play_inspect})
     api_register(s,st,{name="play.player",summary="The focused local seat of the game that plays, the body it drives and the camera that shows it. play.inspect with include_runtime reads the rest.",params=Api_Play_Player_Params,result=Api_Play_Player_Result,writes_result=true,flags={.Read_Only},run=api_play_player})
-    api_register(s,st,{name="scene.add",flags={.Core},params_schema=API_ADD_SCHEMA,summary="Creates an entity from a preset or the card of a plugin.",result=Api_Edit_Result,run=api_scene_add})
-    api_register(s,st,{name="scene.set",flags={.Core},params_schema=API_SET_SCHEMA,summary="Changes an entity; what the params leave out stays as it is.",result=Api_Edit_Result,run=api_scene_set})
+    api_register(s,st,{name="scene.add",flags={.Core},params=Api_Scene_Add_Params,summary="Creates an entity from a preset or the card of a plugin.",result=Api_Edit_Result,run=api_scene_add})
+    api_register(s,st,{name="scene.set",flags={.Core},params=Api_Scene_Set_Params,summary="Changes an entity; what the params leave out stays as it is.",result=Api_Edit_Result,run=api_scene_set})
     api_register(s,st,{name="scene.delete",summary="Destroys an entity with what hangs from it.",params=Api_Entity_Params,result=Api_Edit_Result,flags={.Core,.Destructive},run=api_scene_delete})
     api_register(s,st,{name="scene.duplicate",summary="Copies an entity and what hangs from it with new ids.",params=Api_Entity_Params,result=Api_Edit_Result,run=api_scene_duplicate})
     api_scene_write_register(s,st)
-    api_register(s,st,{name="scene.batch",flags={.Core},params_schema=API_BATCH_SCHEMA,summary="Runs scene.add, scene.set, scene.delete and scene.duplicate operations as one transaction: one step of undo, undone whole when one fails.",result=Api_Batch_Result,writes_result=true,run=api_scene_batch})
+    api_register(s,st,{name="scene.batch",flags={.Core},params=Api_Scene_Batch_Params,summary="Runs scene.add, scene.set, scene.delete and scene.duplicate operations as one transaction: one step of undo, undone whole when one fails.",result=Api_Batch_Result,writes_result=true,run=api_scene_batch})
     api_register(s,st,{name="scene.save",flags={.Core},summary="Writes the document to its file or to another, which becomes its file.",params=Api_Path_Params,result=Api_File_Result,run=api_scene_save})
     api_register(s,st,{name="scene.open",summary="Opens a scene or a prefab file as the document, with an empty history.",params=Api_Path_Params,result=Api_File_Result,flags={.Destructive},run=api_scene_open})
 }
@@ -424,7 +461,7 @@ api_scene_inspect :: proc(s:^Session,call:^api.Call) {api_inspect_run(s,call,edi
 @(private)
 api_play_inspect :: proc(s:^Session,call:^api.Call) {
     r,_:=api_play_run(s,call,api.call_params(call,Api_Inspect_Params).player)
-    if r==nil {api.call_fail(call,api.SERVER_ERROR,API_NO_GAME);return}
+    if r==nil {api_no_game(call);return}
     api_inspect_run(s,call,core.world_ref(r.world,s.info),true)
 }
 
@@ -857,7 +894,7 @@ api_scene_batch :: proc(s:^Session,call:^api.Call) {
         if call.server==nil {break}
         method:=api.method_find(call.server,operation.method)
         if method==nil {continue}
-        shaped,problem:=api.params_shape(call.server,api.params_schema_text(call.server,method),operation.params)
+        shaped,problem:=api.params_shape(call.server,api.params_schema_text(call.server,method),operation.params,names=true)
         if problem!="" {api.call_failf(call,api.INVALID_PARAMS,"operations[%d].params: %s",i,problem);return}
         operation.params=shaped
     }
@@ -982,7 +1019,3 @@ api_scene_open :: proc(s:^Session,call:^api.Call) {
     api_file_result(s,call)
 }
 
-// The shapes of the params of the methods that read them by hand.
-@(private) API_ADD_SCHEMA :: `{"type":"object","additionalProperties":false,"properties":{"preset":{"type":"string","description":"empty, cube, sphere, cylinder, cone, capsule, plane, prism, pyramid, point_light, spot_light, rect_light, sun, camera, spawn, particles, or the card of a plugin by its label"},"name":{"type":"string"},"parent":{"type":["string","null"],"description":"the parent by its name, a path Parent/Child or its id; null: a root"},"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"rotation_deg":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"scale":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"visible":{"type":"boolean"},"enabled":{"type":"boolean","description":"false turns the entity and everything under it off: their components keep their values and no system sees them"},"components":{"type":"object","additionalProperties":{"type":"object"},"description":"by component name, the fields to set"},"off":{"type":"object","additionalProperties":{"type":"boolean"},"description":"by component name, true turns the component off by itself and false on; it keeps its values"}}}`
-@(private) API_SET_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["entity"],"properties":{"entity":{"type":"string","description":"the entity by its name, a path Parent/Child or its id; a name several entities have is an error listing them"},"name":{"type":"string","description":"its new name"},"parent":{"type":["string","null"],"description":"the parent by its name, a path Parent/Child or its id; null: a root"},"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"rotation_deg":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"scale":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"visible":{"type":"boolean"},"enabled":{"type":"boolean","description":"false turns the entity and everything under it off: their components keep their values and no system sees them"},"components":{"type":"object","additionalProperties":{"type":["object","null"]},"description":"by component name, the fields to change, or null to remove it"},"off":{"type":"object","additionalProperties":{"type":"boolean"},"description":"by component name, true turns the component off by itself and false on; it keeps its values"}}}`
-@(private) API_BATCH_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["operations"],"properties":{"operations":{"type":"array","minItems":1,"maxItems":64,"items":{"type":"object","required":["method"],"additionalProperties":false,"properties":{"method":{"type":"string","enum":["scene.add","scene.set","scene.delete","scene.duplicate"]},"params":{"type":"object","description":"the params of that method"}}}}}}`

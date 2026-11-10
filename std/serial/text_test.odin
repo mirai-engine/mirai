@@ -486,6 +486,17 @@ an_unsized_schema_reads_and_writes_slices_strings_and_any_json :: proc(t:^testin
         testing.expectf(t,!text_read(&reader,&s,type,bytes_of(&into)) && reader.error.code==c.code,"%s: %v",c.text,reader.error.code)
         if c.path!="" {testing.expectf(t,string(reader.error.path[:reader.error.path_length])==c.path,"%s: %s",c.text,string(reader.error.path[:reader.error.path_length]))}
     }
+    // The same through the schema a call makes for one value: what a file of Mirai is read and written with.
+    decoded:struct {title:string,lines:[dynamic]string,count:u8}
+    testing.expect_value(t,text_decode(`{"title":"a","lines":["x","y"],"count":2}`,&decoded,context.temp_allocator),"")
+    append(&decoded.lines,"z")
+    encoded,encoded_ok:=text_encode(decoded,.Line,context.temp_allocator)
+    testing.expect(t,encoded_ok && string(encoded)==`{"title": "a", "lines": ["x", "y", "z"], "count": 2}`,string(encoded))
+    testing.expect_value(t,text_decode("{\n \"title\":\"a\",\n \"more\":1}",&decoded,context.temp_allocator),`"more" is not a field: the fields are title, lines, count at line 3 column 2`)
+    testing.expect_value(t,text_decode(`{"more":{"deep":[1]},"count":9}`,&decoded,context.temp_allocator,skip_unknown=true),"")
+    testing.expect_value(t,decoded.count,9)
+    pointer:struct {p:^int}
+    testing.expect(t,text_decode(`{}`,&pointer)!="","a type no schema takes is a problem, not a crash")
     // Without memory for what a slice or a string holds it says so and reads no further.
     for limit in ([]int{0,8,40,64}) {
         buffer:[64]u8

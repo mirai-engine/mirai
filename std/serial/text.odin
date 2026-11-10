@@ -2,9 +2,11 @@ package serial
 
 import "base:intrinsics"
 import "base:runtime"
+import "core:fmt"
 import "core:mem"
 import "core:slice"
 import "core:strconv"
+import "core:strings"
 import "core:unicode/utf8"
 import "mirai:std/base"
 
@@ -37,6 +39,48 @@ text_write :: proc(w:^Writer,s:^Schema,type:Type_Index,data:[]u8,format:=Text_Fo
 // what a schema describes, and one that is unsized is what holds it.
 text_write_of :: proc(w:^Writer,s:^Schema,type:Type_Index,value:^$T,format:=Text_Format.Pretty) {
     text_write(w,s,type,mem.ptr_to_bytes(value),format)
+}
+
+// The text of a value, of any type an unsized schema takes: the form of a
+// file or a message Mirai defines, which text_decode reads back. In
+// allocator; ok is false when it is not of such a type or there is no memory.
+text_encode :: proc(value:any,format:=Text_Format.Pretty,allocator:=context.allocator) -> (text:[]u8,ok:bool) {
+    if value.data==nil {return nil,false}
+    s:Schema
+    schema_init(&s,context.temp_allocator)
+    defer schema_destroy(&s)
+    s.unsized=true
+    type:=schema_add_type_info(&s,type_info_of(value.id)) or_return
+    w:Writer
+    writer_init(&w,256,allocator)
+    text_write(&w,&s,type,mem.byte_slice(value.data,int(s.types[type].size)),format)
+    if w.overflow>0 {
+        writer_destroy(&w)
+        return nil,false
+    }
+    return writer_take(&w),true
+}
+
+// Reads text into a value of T, of any type an unsized schema takes. What
+// the value holds of any length goes in allocator, and a Json field is a view
+// of text. A field text does not have keeps what value had; one T does not
+// have is an error, or is skipped with skip_unknown, for whoever reads part
+// of what another wrote. problem, in temporary memory, says what is wrong and
+// where: its field, line and column; "" when it read.
+text_decode :: proc(text:string,value:^$T,allocator:=context.allocator,skip_unknown:=false) -> (problem:string) {
+    s:Schema
+    schema_init(&s,context.temp_allocator)
+    defer schema_destroy(&s)
+    s.unsized=true
+    type,added:=schema_add(&s,T)
+    if !added {return s.error!=""?strings.clone(s.error,context.temp_allocator):"not enough memory to read it"}
+    r:Text_Reader
+    text_reader_init(&r,text,context.temp_allocator)
+    defer text_reader_destroy(&r)
+    r.values,r.skip_unknown=allocator,skip_unknown
+    if text_read(&r,&s,type,mem.ptr_to_bytes(value)) && text_end(&r) {return ""}
+    line,column:=text_position(text,r.error.offset)
+    return fmt.tprintf("%s at line %d column %d",text_error_message(&r,allocator=context.temp_allocator),line,column)
 }
 
 text_write_raw :: #force_inline proc(w:^Writer,text:string) {write_bytes(w,transmute([]u8)text)}
@@ -386,6 +430,9 @@ Text_Reader :: struct {
     asset_kinds:string, // of the field being read
     values:runtime.Allocator, // where what a slice or a string read holds goes: the allocator of the reader
     loose_names:bool,   // text a person or an agent wrote: members of enums and bit sets as base.name_find takes them
+    loosened:bool,      // it took a member by a name that is not written as the type has it
+    nulls:bool,         // null where a value goes leaves what the destination had, as a field left out does
+    skip_unknown:bool,  // a field the type does not have is skipped: whoever reads part of what another wrote
 }
 
 // How a reader that knows the assets takes a name for one where an Asset_Id
@@ -480,6 +527,7 @@ text_member :: proc(r:^Text_Reader,choices:[]Choice,name:string) -> (value:i64,f
     if !r.loose_names {return}
     index,_:=base.name_find(name,text_choice_names(choices))
     if index<0 {return}
+    r.loosened=true
     return choices[index].value,true
 }
 
@@ -794,6 +842,7 @@ text_read_value :: proc(r:^Text_Reader,s:^Schema,index:Type_Index,bytes:[]u8,is_
     type:=s.types[index]
     text_space(r)
     start:=r.offset
+    if r.nulls && type.kind!=.Json && text_keyword(r,"null") {return true}
     switch text_kind(type) {
     case .Bool:
         if text_keyword(r,"true") {scalar_store(bytes,1);return true}
@@ -889,7 +938,13 @@ text_read_value :: proc(r:^Text_Reader,s:^Schema,index:Type_Index,bytes:[]u8,is_
             for &field in s.fields[type.first:][:type.count] {
                 if field.name==name {found=&field;break}
             }
-            if found==nil {return text_fail_names(r,.Unknown_Field,at,nil,s.fields[type.first:][:type.count])}
+            if found==nil {
+                if !r.skip_unknown {return text_fail_names(r,.Unknown_Field,at,nil,s.fields[type.first:][:type.count])}
+                text_expect(r,':') or_return
+                text_skip(r) or_return
+                if text_accept(r,',') {continue}
+                return text_expect(r,'}')
+            }
             text_expect(r,':') or_return
             r.asset_kinds=found.asset_kinds
             part:=bytes[found.offset:][:s.types[found.type].size]
@@ -954,6 +1009,11 @@ text_read_value :: proc(r:^Text_Reader,s:^Schema,index:Type_Index,bytes:[]u8,is_
             held.data=raw_data(data)
         }
         held.len=count
+        if len(bytes)>=size_of(runtime.Raw_Dynamic_Array) {
+            // A dynamic array, which grows in the allocator its elements were read into.
+            intrinsics.unaligned_store((^runtime.Raw_Dynamic_Array)(raw_data(bytes)),runtime.Raw_Dynamic_Array{held.data,count,count,r.values})
+            return true
+        }
         intrinsics.unaligned_store((^runtime.Raw_Slice)(raw_data(bytes)),held)
         return true
     case .String:

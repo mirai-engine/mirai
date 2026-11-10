@@ -62,7 +62,7 @@ play_player_snapshot :: proc(w:core.World_Ref) -> (value:Play_Player_Snapshot) {
 @(private)
 api_play_player :: proc(s:^Session,call:^api.Call) {
     r,_:=api_play_run(s,call,api.call_params(call,Api_Play_Player_Params).player)
-    if r==nil {api.call_fail(call,api.SERVER_ERROR,API_NO_GAME);return}
+    if r==nil {api_no_game(call);return}
     bytes,error:=json.marshal(play_player_snapshot(core.world_ref(r.world,s.info)),{},call.allocator)
     if error!=nil {api.call_fail(call,api.INTERNAL_ERROR,"The player snapshot could not be serialized");return}
     serial.text_write_raw(call.out,string(bytes))

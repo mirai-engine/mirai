@@ -333,7 +333,7 @@ api_section_preview :: proc(s:^Session,call:^api.Call) {
     w:=edited_world(s)
     p:=core.world_storage_of(w,erender.Environment_Preview)
     if s.mode!=.Edit || p==nil {
-        api.call_fail(call,api.INVALID_PARAMS,"The preview of a section is of Edit: stop Play or Simulate first")
+        api_playing(call,"the preview of a section is of Edit")
         return
     }
     if params.entity[0]==0 {
@@ -633,6 +633,15 @@ sections_save :: proc(s:^Session) -> bool {
 
 Api_Section_Edit_Params :: struct {
     entity:Api_Entity_Text `mirai:"text,entity,optional,label=The entity of a Scene_Reference whose section is edited in its world: Save writes its scene too, and the rest reads only; omitted stops"`,
+}
+
+Api_Section_Edit_Result :: struct {
+    editing:base.Entity_Id `mirai:"label=The section edited in its world now; 0 for none"`,
+    unsaved:base.Entity_Id `mirai:"label=The section it left with unsaved changes, which stays loaded; 0 for none"`,
+}
+Api_Section_Preview_Result :: struct {
+    sky:base.Entity_Id `mirai:"label=The Sky the viewport previews; 0 for that of the document"`,
+    sun:base.Entity_Id `mirai:"label=The sun the viewport previews; 0 for that of the document"`,
 }
 
 api_section_edit :: proc(s:^Session,call:^api.Call) {

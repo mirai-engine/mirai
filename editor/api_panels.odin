@@ -62,25 +62,23 @@ Api_Panel_Restored :: struct {
     of:Api_Panel,
 }
 
-@(private)
-API_PANEL_TARGET :: `"component":{"type":"string"},"field":{"type":"string","description":"A field of the component; a nested one by its path with dots."},"entity":{"type":"string","description":"Whose component, by its id; with neither entity nor where: the first entity that has it."}`
-@(private)
-API_PANEL_SAVE_SCHEMA :: `{"type":"object","properties":{` +
-    `"id":{"type":"string","description":"The panel to replace; omitted: the id its title gives. Lower case letters, digits, - and _. It is kept in panels/<id>.mirai of the project."},` +
-    `"title":{"type":"string"},` +
-    `"buttons":{"type":"array","maxItems":12,"description":"Each button is a variant that sets fields of components or settings to values when pressed (on one entity or on every entity a where matches; the fields left out of the rows), those of the scene as one undo step. A folded Attributes section of the panel lists what the buttons set. A panel has buttons, rows or both.","items":{"type":"object","properties":{"name":{"type":"string","description":"Unique in the panel."},"sets":{"type":"array","minItems":1,"maxItems":12,"items":{"oneOf":[` +
-        `{"type":"object","properties":{` + API_PANEL_TARGET + `,"where":{"type":"object","description":"Every entity with the component whose fields equal these values, by path, found when the button is pressed; {}: every entity with it.","additionalProperties":{}},"value":{"description":"The JSON scene.set takes for that field."}},"required":["component","field","value"],"additionalProperties":false},` +
-        `{"type":"object","properties":{"setting":{"type":"string","description":"A section of settings.get, as Graphics_Settings."},"field":{"type":"string"},"value":{"description":"The JSON settings.set takes for that field."}},"required":["setting","field","value"],"additionalProperties":false}]}}},"required":["name","sets"],"additionalProperties":false}},` +
-    `"rows":{"type":"array","maxItems":32,"description":"Fields the user tunes with the controls of Details, as after pressing a button: of one entity, of every entity a where matches, or of a setting.","items":{"oneOf":[` +
-        `{"type":"object","properties":{"heading":{"type":"string"}},"required":["heading"],"additionalProperties":false},` +
-        `{"type":"object","properties":{` + API_PANEL_TARGET + `,"where":{"type":"object","description":"The row shows the first entity it matches and writes all of them; {}: every entity with the component.","additionalProperties":{}},"label":{"type":"string"}},"required":["component","field"],"additionalProperties":false},` +
-        `{"type":"object","properties":{"setting":{"type":"string","description":"A section of settings.get, as Graphics_Settings."},"field":{"type":"string"},"label":{"type":"string"}},"required":["setting","field"],"additionalProperties":false}]}},` +
-    `"open":{"type":"boolean","description":"Show it in the editor; true when omitted."}},"required":["title"],"additionalProperties":false}`
+// What panel.save takes.
+Api_Panel_Save_Params_Buttons :: struct {
+    name:string `mirai:"label=Unique in the panel."`,
+    sets:[]serial.Json `mirai:"label=Each one of: component, field, entity, where, value; setting, field, value. At most 12. At least 1."`,
+}
+Api_Panel_Save_Params :: struct {
+    id:string `mirai:"optional,label=The panel to replace; omitted: the id its title gives. Lower case letters, digits, - and _. It is kept in panels/<id>.mirai of the project."`,
+    title:string,
+    buttons:[]Api_Panel_Save_Params_Buttons `mirai:"optional,label=At most 12. Each button is a variant that sets fields of components or settings to values when pressed (on one entity or on every entity a where matches; the fields left out of the rows), those of the scene as one undo step. A folded Attributes section of the panel lists what the buttons set. A panel has buttons, rows or both."`,
+    rows:[]serial.Json `mirai:"optional,label=Each one of: heading; component, field, entity, where, label; setting, field, label. At most 32. Fields the user tunes with the controls of Details, as after pressing a button: of one entity, of every entity a where matches, or of a setting."`,
+    open:bool `mirai:"optional,label=Show it in the editor; true when omitted."`,
+}
 
 @(private)
 panels_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="panel.list",summary="The panels of the project: interfaces of the editor made for the user. The Tools menu of the toolbar shows one at a time in place of Details.",result=Api_Panel_List,writes_result=true,flags={.Read_Only},run=api_panel_list})
-    api_register(s,st,{name="panel.save",params_schema=API_PANEL_SAVE_SCHEMA,summary="Makes or replaces a panel of the project, the way to give the user an interface of their own (to try the environment, the post process or the lights). Checked against the project first.",result=Api_Panel,writes_result=true,run=api_panel_save})
+    api_register(s,st,{name="panel.save",params=Api_Panel_Save_Params,summary="Makes or replaces a panel of the project, the way to give the user an interface of their own (to try the environment, the post process or the lights). Checked against the project first.",result=Api_Panel,writes_result=true,run=api_panel_save})
     api_register(s,st,{name="panel.open",summary="Shows a panel of the project in the editor.",params=Api_Panel_Params,result=Api_Panel,writes_result=true,flags={.Idempotent},run=api_panel_open})
     api_register(s,st,{name="panel.close",summary="Hides a panel of the project; it stays in the Tools menu.",params=Api_Panel_Params,result=Api_Panel,writes_result=true,flags={.Idempotent},run=api_panel_close})
     api_register(s,st,{name="panel.delete",summary="Deletes a panel of the project and its file.",params=Api_Panel_Params,result=Api_Panel_Deleted,flags={.Destructive},run=api_panel_delete})
