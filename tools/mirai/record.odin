@@ -4,7 +4,6 @@ import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:strconv"
-import "core:strings"
 import "mirai:project"
 
 RECORD_USAGE :: "record [project] [--out <folder>] [--scene S] [--format png16|exr] [--fps N] [--seconds S] [--size WxH] [--sheet N] [--no-audio] [--dev|--release]"
@@ -55,7 +54,7 @@ cmd_record :: proc(root:string,args:[]string) -> int {
         case "--dev":  mode=.Dev
         case "--release": mode=.Release
         case:
-            if strings.has_prefix(args[i],"-") || folder!="." {return usage()}
+            if !positional(args[i]) || folder!="." {return argument_unknown("record",args[i])}
             folder=args[i]
         }
         if !ok {return usage()}

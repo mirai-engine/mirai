@@ -274,7 +274,7 @@ rpc_params_reserved :: proc(request:Rpc_Request,params:string,wait_ms:int) -> st
 // connection_args left. problem says what is wrong, unless it is plain misuse.
 rpc_request :: proc(args:[]string) -> (request:Rpc_Request,problem:string,ok:bool) {
     request.params="{}"
-    positional:=make([dynamic]string,context.temp_allocator)
+    values:=make([dynamic]string,context.temp_allocator)
     fields:=make([dynamic]string,context.temp_allocator)
     file:=""
     for i:=0;i<len(args);i+=1 {
@@ -290,22 +290,22 @@ rpc_request :: proc(args:[]string) -> (request:Rpc_Request,problem:string,ok:boo
             }
         case:
             switch {
-            case strings.has_prefix(arg,"--"): return request,fmt.tprintf("unknown option '%s'",arg),false
+            case !positional(arg) && arg!="-": return request,fmt.tprintf("'%s' is not an option of rpc; a value that starts with '-' goes in key=value or JSON params",arg),false
             case rpc_field_arg(arg):           append(&fields,arg)
-            case:                              append(&positional,arg)
+            case:                              append(&values,arg)
             }
         }
     }
-    if len(positional)==0 || len(positional)>2 || (len(positional)==2 && file!="") {return request,"",false}
-    request.method=positional[0]
+    if len(values)==0 || len(values)>2 || (len(values)==2 && file!="") {return request,"",false}
+    request.method=values[0]
     if len(fields)>0 {
-        if len(positional)==2 || file!="" {return request,"key=value arguments and a JSON object do not go together",false}
+        if len(values)==2 || file!="" {return request,"key=value arguments and a JSON object do not go together",false}
         request.params,problem=rpc_fields_params(fields[:])
         return request,problem,problem==""
     }
     switch {
-    case len(positional)==2 && positional[1]=="-": request.params=read_stdin()
-    case len(positional)==2: request.params=positional[1]
+    case len(values)==2 && values[1]=="-": request.params=read_stdin()
+    case len(values)==2: request.params=values[1]
     case file!="":
         data,error:=os.read_entire_file(file,context.allocator)
         if error!=nil {return request,fmt.tprintf("could not read %s",file),false}

@@ -15,14 +15,13 @@ WORKTREE_USAGE :: "worktree new <name> [--from <branch or commit>] [--branch <br
 // sources they are built from. Its shader tables are generated here.
 cmd_worktree :: proc(root:string,args:[]string) -> int {
     if len(args)<2 || args[0]!="new" {fmt.eprintfln("Usage: mirai %s",WORKTREE_USAGE);return 2}
+    if !positional(args[1]) {return argument_unknown("worktree",args[1])}
     name,from,branch:=args[1],"HEAD",args[1]
     for i:=2;i<len(args);i+=1 {
         switch {
         case args[i]=="--from" && i+1<len(args):   i+=1;from=args[i]
         case args[i]=="--branch" && i+1<len(args): i+=1;branch=args[i]
-        case:
-            fmt.eprintfln("Usage: mirai %s",WORKTREE_USAGE)
-            return 2
+        case: return argument_unknown("worktree",args[i])
         }
     }
     for c in name {

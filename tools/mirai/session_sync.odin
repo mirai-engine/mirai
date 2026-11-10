@@ -68,7 +68,7 @@ session_sync :: proc(root,copy:string,args:[]string) -> int {
     for arg in args {
         switch {
         case arg=="--no-build": no_build=true
-        case strings.has_prefix(arg,"--"): fmt.eprintfln("mirai session sync: %s is not an option of sync. Usage: mirai session sync <copy> <path>... [--no-build]",arg);return 2
+        case !positional(arg): return argument_unknown("session sync",arg)
         case: append(&paths,arg)
         }
     }

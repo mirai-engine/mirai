@@ -193,7 +193,8 @@ command :: proc(args:[]string,output,errors:io.Writer) -> int {
                 if flag=="--rig-crotch" {given.rig_crotch=f32(height);changed+={.Rig_Crotch}} else {given.rig_neck=f32(height);changed+={.Rig_Neck}}
             }
         case:
-            if strings.has_prefix(args[at],"--") || file!="" {fmt.wprintln(errors,IMPORT_USAGE);return 2}
+            if strings.has_prefix(args[at],"-") {fmt.wprintfln(errors,"mirai import: '%s' is not an option of import; a file that starts with '-' goes as ./%s\n%s",args[at],args[at],IMPORT_USAGE);return 2}
+            if file!="" {fmt.wprintln(errors,IMPORT_USAGE);return 2}
             file=args[at]
         }
         if !ok {fmt.wprintln(errors,IMPORT_USAGE);return 2}

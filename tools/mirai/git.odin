@@ -8,7 +8,8 @@ import "mirai:project"
 // folder is in through mirai (build.git_setup). Once per clone, and again
 // when the engine moved.
 setup_git :: proc(root:string,args:[]string) -> int {
-    if len(args)>1 {fmt.eprintfln("Usage: mirai %s",SETUP_USAGE);return 2}
+    if code:=positionals_only("setup git",args);code!=0 {return code}
+    if len(args)>1 {return argument_unknown("setup git",args[1])}
     folder:=len(args)==1?args[0]:"."
     done,error:=build.git_setup(root,folder)
     switch error {

@@ -578,7 +578,7 @@ session_stop :: proc(root,folder:string,args:[]string) -> int {
         switch arg {
         case "--discard": discard=true
         case "--orphans": orphans=true
-        case: fmt.eprintfln("Usage: mirai %s",SESSION_USAGE);return 2
+        case: return argument_unknown("session stop",arg)
         }
     }
     if orphans {return session_stop_orphans(root,folder)}

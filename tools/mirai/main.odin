@@ -64,15 +64,12 @@ main :: proc() {
     }
     if code,refreshed:=self_refresh(root);refreshed {os.exit(code)}
     args:=os.args[1:]
-    if len(args)==0 || args[0]=="help" || args[0]=="--help" {usage();os.exit(len(args)==0?2:0)}
+    if len(args)==0 || args[0]=="help" || args[0]=="--help" || args[0]=="-h" {usage();os.exit(len(args)==0?2:0)}
     if project.engine_installed(root) && !installed_runs(args) {
         fmt.eprintfln("mirai %s: needs a checkout of the engine, with its sources and its history; %s is an installed engine",args[0],root)
         os.exit(2)
     }
-    for command in COMMANDS {
-        if command.name==args[0] {os.exit(command.run(root,args[1:]))}
-    }
-    fmt.eprintfln("mirai: unknown command '%s'",args[0]);usage();os.exit(2)
+    os.exit(command_run(root,args))
 }
 
 // Whether an installed engine runs a command: not those that build the engine
@@ -170,8 +167,12 @@ cmd_build :: proc(root:string,args:[]string) -> int {
     if len(args)==0 {fmt.eprintfln("Usage: mirai %s\n       mirai %s",BUILD_USAGE,BUILD_PROJECT_USAGE);return 2}
     if args[0]=="editor" || args[0]=="game" || args[0]=="server" {return cmd_build_project(root,args)}
     if args[0]=="engine" {return cmd_build_engine(root,args[1:])}
+    if !positional(args[0]) {return argument_unknown("build",args[0])}
     debug:=false
-    for arg in args[1:] {if arg=="--debug" {debug=true}}
+    for arg in args[1:] {
+        if arg!="--debug" {return argument_unknown("build",arg)}
+        debug=true
+    }
     for target in BUILD_TARGETS {
         if target.name!=args[0] {continue}
         if target.name!="tools" {
@@ -274,5 +275,6 @@ check_project :: proc(root,folder:string) -> int {
 }
 
 cmd_deps :: proc(root:string,args:[]string) -> int {
+    if len(args)>0 {return argument_unknown("deps",args[0])}
     return ensure_runtime_dependencies(root)?0:1
 }

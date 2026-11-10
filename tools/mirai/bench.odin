@@ -116,7 +116,7 @@ bench_options :: proc(args:[]string) -> (o:Bench_Options,error:string) {
     folder_given:=false
     for i:=0;i<len(args);i+=1 {
         option:=args[i]
-        if !strings.has_prefix(option,"--") {
+        if positional(option) {
             if folder_given {return o,fmt.tprintf("'%s' is one too many: the comparison takes a single project",option)}
             o.folder,folder_given=option,true
             continue

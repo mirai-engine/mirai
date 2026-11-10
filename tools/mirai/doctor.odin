@@ -16,6 +16,8 @@ DOCTOR_USAGE :: "doctor [project]"
 // What is wrong on this machine or in a project, and what to do about it.
 cmd_doctor :: proc(root:string,args:[]string) -> int {
     if len(args)>0 && args[0]=="--probe-gpu" {return gpu_probe()}
+    if code:=positionals_only("doctor",args);code!=0 {return code}
+    if len(args)>1 {return argument_unknown("doctor",args[1])}
     folder:=len(args)>0?args[0]:(os.is_file(project.PROJECT_FILE)?".":"")
     errors:=0
     report :: proc(errors:^int,ok:bool,what,fix:string) {

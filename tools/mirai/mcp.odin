@@ -36,7 +36,8 @@ cmd_mcp :: proc(root:string,args:[]string) -> int {
     plugins:=""
     rest:=connection.rest[:]
     if ok && len(rest)==2 && rest[0]=="--plugins" && rest[1]!="" {plugins,rest=rest[1],rest[2:]}
-    if !ok || len(rest)>0 {
+    if ok && len(rest)>0 {return argument_unknown("mcp",rest[0])}
+    if !ok {
         fmt.eprintfln("Usage: mirai %s",MCP_USAGE)
         return 2
     }

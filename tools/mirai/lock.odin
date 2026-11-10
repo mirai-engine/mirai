@@ -65,7 +65,7 @@ LOCKS_USAGE :: "locks"
 // those of compilations and measurements among them, and since when; and
 // which compilation took its turn last.
 cmd_locks :: proc(root:string,args:[]string) -> int {
-    if len(args)>0 {fmt.eprintfln("Usage: mirai %s",LOCKS_USAGE);return 2}
+    if len(args)>0 {return argument_unknown("locks",args[0])}
     folder:=workspace.cache_folder(root,"locks",context.temp_allocator)
     names:=make([dynamic]string,context.temp_allocator)
     append(&names,workspace.BUILD_LOCK,workspace.MEASURE_LOCK)
@@ -117,6 +117,7 @@ cmd_measure :: proc(root:string,args:[]string) -> int {
     command:=args
     if len(command)>0 && command[0]=="--" {command=command[1:]}
     if len(command)==0 {fmt.eprintfln("Usage: mirai %s",MEASURE_USAGE);return 2}
+    if len(command)==len(args) && !positional(command[0]) {return argument_unknown("measure",command[0])}
     lock:=measure_lock(root,fmt.tprintf("measure %s",strings.join(command," ",context.temp_allocator)))
     defer workspace.lock_release(&lock)
     if !workspace.measuring() {_=os.set_env(workspace.MEASURE_ENV,fmt.tprintf("%d",os.get_pid()))}
