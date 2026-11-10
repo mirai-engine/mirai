@@ -1,8 +1,8 @@
 ---
 name: audio
-description: Sound in a game - `.sound` and `.sound_set`, `Audio_Source`, `audio.play_asset`,
-  positional audio, headphones and speakers, buses, ducking, volume options, reverb volumes,
-  occlusion, materials, music, ambience.
+description: Sound in a game - `.sound` and `.sound_set`, `Audio_Source`, `audio.play`,
+  `Sound_Requests`, positional audio, headphones and speakers, buses, sends, ducking, limiter,
+  volume options, reverb volumes, occlusion, materials, music, ambience.
 ---
 
 # Game audio
@@ -30,19 +30,18 @@ source.volume, source.max_distance = 0.7, 25
   writes `playing`, `volume`, `pitch`, `pan`, `loop` (`core.writable` on its table).
 
 ## One-shots from code
-Only from a function that takes `app:^host.App` (it loads the sound) and `time:core.Time`:
+Push to `Sound_Requests`, from any step:
 
 ```odin
 @(step="fixed")
-crash_sound :: proc(app:^host.App, time:core.Time, broken:core.Ref(destruct.Destruct_Events)) {
-    for f in broken.fractured.items {audio.play_asset_at(app,time,"arena/crash.sound",f.point)}
+crash_sound :: proc(sounds:^audio.Sound_Requests, broken:core.Ref(destruct.Destruct_Events)) {
+    for f in broken.fractured.items {audio.play(sounds,"arena/crash.sound",at=f.point)}
 }
 ```
 
-- `play_asset` has no place (`pan`) nor room reverb; `play_asset_at` has both. Both take a path or
-  an id and default to `BUS_EFFECTS`; `play_source(_at)` take a whole `Audio_Source`.
-- They return a `Voice`; `audio.stop(mixer,voice,fade)`, `playing`, `source_place`, `source_tune`
-  take `mixer:^audio.Mixer`. What loops or follows a thing is better as an `Audio_Source`.
+- A path or an id; `at` places it, else it is not placed. `bus` (default
+  `BUS_EFFECTS`), `volume`, `pitch`; the rest as `AUDIO_SOURCE_DEFAULT`. It plays once, even when a
+  rollback runs the tick again; no handle: what stops, loops or follows is an `Audio_Source`.
 
 ## Sets
 A `.sound_set` picks one sound (weights, volume and pitch ranges) each time it starts; use its
@@ -50,11 +49,13 @@ path or id where a sound goes. `sound_set.set` makes one (`path`, `values`, `.so
 `asset.list`); `sound_set.inspect` reads it.
 
 ## Buses
-`BUS_MASTER`, `BUS_MUSIC`, `BUS_EFFECTS` (default), `BUS_VOICE`, `BUS_UI`. Add your own as
-constants below `AUDIO_BUS_CAPACITY`: `BUS_AMBIENCE :: audio.Audio_Bus(5)`.
+`BUS_MASTER`, `BUS_MUSIC`, `BUS_EFFECTS` (default), `BUS_VOICE`, `BUS_UI` (interface sounds). Add
+your own as constants below `AUDIO_BUS_CAPACITY`: `BUS_AMBIENCE :: audio.Audio_Bus(5)`.
 
 `Audio_Settings` (project setting) mixes a bus: `gain` in dB (0 as it comes; `volume` fields are
-linear), `lowpass`, `reverb`, ducking (`duck_by`, `duck_amount`, `duck_threshold`). Edit it in
+linear), `lowpass`, `reverb`, ducking (`duck_by`, `duck_amount`, `duck_threshold`) and `send`, the
+bus it plays into (the master, or one of a lower number: ambience into effects). A limiter on the
+master keeps a loud moment under full scale. Edit it in
 Project Settings, with `settings.set` (`settings.get` shows the shape) or
 `audio.audio_bus_setting_set`.
 
@@ -74,7 +75,6 @@ options: a slider bound to `Audio_Volumes.music` writes it itself; the game writ
 - A non-looping source that ended stays `ended` until `playing` is cleared: set false, then true.
   Changing `sound`, `bus` or the curve restarts the voice; the other fields tune it live. Zero
   `pitch` means 1.
-- `play_asset*` return a zero `Voice` silently: no mixer (headless), a path the assets do not
-  have, no free voice, bus over capacity, rollback replay.
-- A source that cannot sound is a problem of its entity: see `engine.diagnostics` (`audio.*`).
+- A source that cannot sound is a problem of its entity, a request one of no entity: see
+  `engine.diagnostics` (`audio.*`). Headless, nothing plays and nothing is said.
 - Hear it in an open editor session: `audio.play`; `audio.status` shows the buses.

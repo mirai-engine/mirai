@@ -1,0 +1,24 @@
+{
+  "version": 2,
+  "settings": {
+    "max_texture_size": 0,
+    "textures": "Blocks",
+    "rdo_lambda": 0,
+    "image": "Data",
+    "alpha_coverage": 0,
+    "lods": "Auto",
+    "max_triangles": 0,
+    "collision": "None",
+    "force_collision": false,
+    "collision_hulls": 0,
+    "parts": "Auto",
+    "front": "Auto",
+    "rig": "Source",
+    "rig_crotch": 0,
+    "rig_neck": 0,
+    "skeleton": "00000000000000000000000000000000"
+  },
+  "outputs": [
+    {"kind": "TEX", "name": "planks_orm", "index": 0, "id": "6646d15415504809a3da8752ce1d6ca6"}
+  ]
+}

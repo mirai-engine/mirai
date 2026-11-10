@@ -829,9 +829,9 @@ one root is none: the error says so), nonexistent override and "is not part of a
   (`ok`), its message, the scene of a map and the assets it wrote (`kept`: its file was already
   the one it gives). `asset.import_status` gives the same, and whether one runs (`importing`), at
   any moment. While it runs, another import and whatever writes assets fail saying what is being
-  imported. Reimporting keeps ids and files;
-  `into` (the id of the prefab, texture or sound of the import) updates it from a moved or renamed
-  source. `image` (`color`, `data`, `normal`, `normal_green_down`) says what an image imported on
+  imported. Reimporting keeps ids and files, which the sidecar of the source lists
+  ([identity](../../mirai-imports/references/imports.md#identity-and-reimport)).
+  `image` (`color`, `data`, `normal`, `normal_green_down`) says what an image imported on
   its own holds, over its settings and its name (a packed metallic-roughness or a mask is `data`); a
   source in the project keeps the choice in its settings
 - `asset.detach`: `asset` (path or id) is a part that leaves its owner: it is left without `owner`

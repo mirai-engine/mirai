@@ -257,7 +257,8 @@ build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_M
     // The binaries of the engine the libraries are built against.
     engine:=build.engine_mode_resolve(root,mode)
     engine_current:=target==.Game || build.engine_current(root,engine)
-    if target!=.Game && engine_current && library_current(root,&p,target,engine,mode==.Dev) {
+    // A project with sources goes on: its build imports what changed among them before it finds the library current.
+    if target!=.Game && engine_current && library_current(root,&p,target,engine,mode==.Dev) && len(build.imports_roots(&p))==0 {
         _=engine_report({status=.Up_To_Date,mode=engine},root)
         if os.is_file(project.path(project.shader_generation(p.root,context.temp_allocator),project.SHADERS_MANIFEST,allocator=context.temp_allocator)) {
             fmt.printfln("%s unchanged.",project.shader_generation(p.root,context.temp_allocator))
@@ -356,6 +357,7 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
             case .Output_Invalid:   fmt.eprintln("mirai build: --out cannot be the project folder")
             case .Copy_Failed:      fmt.eprintfln("mirai build: could not copy the files that go with %s",result.output)
             case .Settings_Invalid: fmt.eprintln("mirai build: could not merge the settings of the engine and the project; fix or delete the file named above")
+            case .Import_Failed:    fmt.eprintln("mirai build: a source of the project did not import")
             case .Cook_Failed:      fmt.eprintfln("mirai build: could not cook the assets: %v %s",result.cook.error,result.cook.detail)
             case .Cancelled:        fmt.eprintln("mirai build: cancelled")
             case .Engine_Time_Code:

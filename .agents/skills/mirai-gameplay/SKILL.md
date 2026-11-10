@@ -97,16 +97,16 @@ the same attributes and no private paths. Declaration and parameter binding:
    - What only the server or a single-player game decides carries `server` instead of asking
      `core.Network` ([attributes](../mirai-core/references/generator.md#attributes)).
 6. `time.dt` (`core.Time`) in `fixed`; `frame.dt` and `frame.alpha` (`core.Frame_Time`) in
-   `frame`/`late`/`render`; in the editor loop `time.dt` is 0. An effect that is not simulation (a
-   sound) passes the `core.Time` to its sink (`audio.play_asset(app, time, ...)`), which does
-   nothing while a rollback replays the tick (`time.resimulating`), like `multiplayer.send`; the
-   game does not ask.
+   `frame`/`late`/`render`; in the editor loop `time.dt` is 0. An effect that is not simulation is
+   a request its library serves once: a sound is pushed with `audio.play(sounds, ...)`, which does
+   not play again while a rollback replays the tick (`time.resimulating`), like
+   `multiplayer.send`; the game does not ask.
 7. Runtime prefab: `scene.spawn(spawner, path_or_id, ...)` with `core.Commands`; its rows wait
    until the end of the function and are finished with
    `core.commands_added`. With `transient=true` the entities do not get an `Id` and a save does not
    include them as scene entities.
 8. Game code names an asset by its path in the assets wherever a call takes one (`scene.spawn`,
-   `scene.request`, `audio.play_asset`, `host.content_strings`), and a field it fills by
+   `scene.request`, `audio.play`, `host.content_strings`), and a field it fills by
    `host.assets_id`; data fields hold its `base.Asset_Id`.
 
 ## Invariants
