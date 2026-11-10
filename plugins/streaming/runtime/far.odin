@@ -472,11 +472,11 @@ streaming_far :: proc(
         e:=core.entity_at(references,row)
         reference:=core.at(references,row)
         mesh:=far_mesh(far,reference.scene)
-        pose,posed:=core.get(core.read(transforms),e)
+        pose,posed:=core.get(transforms,e)
         if !posed {pose=core.TRANSFORM_IDENTITY}
         if proxy,has:=shown[e];has {
             // It follows its reference.
-            if now,has:=core.get(core.read(transforms),proxy);has && now!=pose {core.get(transforms,proxy)^=pose}
+            if now,has:=core.get(transforms,proxy);has && now!=pose {core.edit(transforms,proxy)^=pose}
             continue
         }
         if mesh=={} || !far_shows(views.ptr,e,reference) {continue}

@@ -246,7 +246,7 @@ ik_holds_the_rotation_it_is_asked_and_look_keeps_its_up_axis :: proc(t:^testing.
     for hold in IK_Hold {
         if hold==.Target {continue}
         copy(state.local[:],state.rest[:]);state.local[3].rotation=bent
-        core.at(&iks,0).hold=hold;cache.stamps={}
+        core.edit_at(&iks,0).hold=hold;cache.stamps={}
         testing.expect(t,lib.pose_world(state.parents[:],state.local[:],state.world[:]))
         held:=state.world[3].rotation
         constraints_apply(&state,&playback,{ik=core.read(&iks),problems=&problems},&cache,&transforms,{},0)

@@ -1,16 +1,11 @@
 package game
 
-import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "mirai:core"
 import inp "mirai:engine/input"
-import gui "mirai:engine/gui"
 import phys "plugins:physics/runtime"
-import "mirai:host"
-import "mirai:std/base"
 import mm "mirai:std/math"
-import "mirai:ui"
 import portals "plugins:portals/runtime"
 
 // The portal chamber of portals/portal_chamber.scene. The player carries a gun
@@ -207,18 +202,18 @@ portal_gun :: proc(
     // A player that went through a grill loses the portals and what it carries; a cube that did is let go.
     for passed in passes.queue.items {
         for row in 0..<core.count(guns) {
-            if core.entity_at(guns,row)!=passed && guns.values[row].held!=passed {continue}
-            core.at(guns,row).held=core.NONE
+            if core.entity_at(guns,row)!=passed && core.at(guns,row).held!=passed {continue}
+            core.edit_at(guns,row).held=core.NONE
             if core.entity_at(guns,row)!=passed {continue}
             for at in 0..<core.count(mouths) {
-                if mouths.values[at].placed {core.at(mouths,at).placed=false}
+                if core.at(mouths,at).placed {core.edit_at(mouths,at).placed=false}
             }
         }
     }
     core.queue_clear(&passes.queue)
     for row in 0..<core.count(guns) {
         player:=core.entity_at(guns,row)
-        gun:=core.at(core.read(guns),row)
+        gun:=core.at(guns,row)
         eye,aim,ok:=inp.aim(drivables,worlds,player)
         if !ok {continue}
         blue:=inp.pressed(actions,player,.Portal_Blue)
@@ -236,11 +231,11 @@ portal_gun :: proc(
             if blue {
                 walking,_:=core.get(characters,player)
                 phys.set_velocity(bodies,held,mm.quat_rotate(carry,aim*THROW_CUBE_SPEED+walking.linear))
-                core.at(guns,row).held=core.NONE
+                core.edit_at(guns,row).held=core.NONE
                 continue
             }
             if dropped {
-                core.at(guns,row).held=core.NONE
+                core.edit_at(guns,row).held=core.NONE
                 continue
             }
             gap:=target-cube.position
@@ -256,12 +251,12 @@ portal_gun :: proc(
             continue
         }
         if grab {
-            if hit,found:=phys.raycast(physics,eye,aim,HOLD_REACH,player);found && core.has(cubes,hit.entity) {core.at(guns,row).held=hit.entity}
+            if hit,found:=phys.raycast(physics,eye,aim,HOLD_REACH,player);found && core.has(cubes,hit.entity) {core.edit_at(guns,row).held=hit.entity}
             continue
         }
         if !blue && !orange {continue}
         color:=blue?Portal_Color.Blue:Portal_Color.Orange
-        core.at(guns,row).shots+=1
+        core.edit_at(guns,row).shots+=1
         hit,found:=portal_ray(physics,openings,worlds,eye,aim,player)
         if !found {continue}
         wall:=hit.collider
@@ -278,7 +273,7 @@ portal_gun :: proc(
         }
         mine,other:=core.Entity(core.NONE),Maybe(mm.Transform)(nil)
         for at in 0..<core.count(mouths) {
-            mouth:=core.at(core.read(mouths),at)
+            mouth:=core.at(mouths,at)
             if mouth.color==color {mine=core.entity_at(mouths,at);continue}
             if !mouth.placed {continue}
             if portal,has:=core.get(openings,mouth.opening);has && portal.wall==wall {
@@ -288,10 +283,10 @@ portal_gun :: proc(
         if mine==core.NONE {continue}
         placed,fits:=portal_fit(wall_world.transform,box,hit.point,hit.normal,up,other)
         if !fits {continue}
-        local:=core.get(transforms,mine)
+        local:=core.edit(transforms,mine)
         if local==nil {continue}
         local.position,local.rotation=placed.position,placed.rotation
-        mouth:=core.get(mouths,mine)
+        mouth:=core.edit(mouths,mine)
         mouth.placed,mouth.wall=true,wall
     }
 }
@@ -316,8 +311,8 @@ portal_links :: proc(mouths:core.Read(Portal_Mouth),openings:^core.Table(portals
         other,other_placed:=opening_of(mouths,mouth.color==.Blue?.Orange:.Blue)
         exit:=mouth.placed && other_placed?other:core.NONE
         wall:=mouth.placed?mouth.wall:core.NONE
-        if portal,has:=core.get(core.read(openings),mouth.opening);has && (portal.exit!=exit || portal.wall!=wall) {
-            written:=core.get(openings,mouth.opening)
+        if portal,has:=core.get(openings,mouth.opening);has && (portal.exit!=exit || portal.wall!=wall) {
+            written:=core.edit(openings,mouth.opening)
             written.exit,written.wall=exit,wall
         }
         ask_hidden(shows,core.entity_at(mouths,row),!mouth.placed)
@@ -334,15 +329,15 @@ portal_chamber :: proc(
     physics:core.Ref(phys.Physics_State),passes:^Grill_Passes,placer:core.Placer,
 ) {
     home :: proc(cubes:^core.Table(Portal_Cube),placer:core.Placer,e:core.Entity) {
-        cube,_:=core.get(core.read(cubes),e)
+        cube,_:=core.get(cubes,e)
         core.place(placer,e,cube.home,at_rest=true)
     }
     for row in 0..<core.count(cubes) {
         e:=core.entity_at(cubes,row)
         placed,has:=core.get(worlds,e)
         if !has {continue}
-        if !cubes.values[row].homed {
-            cube:=core.at(cubes,row)
+        if !core.at(cubes,row).homed {
+            cube:=core.edit_at(cubes,row)
             cube.home,cube.homed=placed.position,true
         } else if placed.position.y<FALL_LIMIT {
             home(cubes,placer,e)
@@ -369,7 +364,7 @@ portal_chamber :: proc(
             count,_:=phys.overlap_box(physics,mm.transform_point(placed.transform,zone.center),zone.size*placed.scale,placed.rotation,found[:],filter)
             for other in found[:min(count,len(found))] {pressed||=core.has(cubes,other) || core.has(guns,other)}
         }
-        if buttons.values[row].pressed!=pressed {core.at(buttons,row).pressed=pressed}
+        if core.at(buttons,row).pressed!=pressed {core.edit_at(buttons,row).pressed=pressed}
     }
 }
 
@@ -385,75 +380,37 @@ door_opened :: proc(doors:core.Read(Door),buttons:core.Read(Floor_Button),e:core
     return false
 }
 
-// The crosshair with the two portals it has open, what the actions do, and the caption of what is near.
-@(step="ui")
+// What portal_hud.ui shows of the body with the gun it is on, while a seat
+// drives it: the screen is on the body, so it shows in the view of its player.
+@(component,description="The HUD of a portal gun: the crosshair with the portals it has open, what its actions do and the caption of what is near.")
+Portal_Hud :: struct {
+    shown:bool,   // a seat drives this body
+    blue,orange:bool, // that portal is open
+    holding:bool, // it carries a cube
+    aiming:bool,  // it does not: its buttons open portals
+    captioned:bool,
+    caption:[CAPTION_CAPACITY]u8 `mirai:"text"`,
+}
+
+@(step="frame")
 portal_hud :: proc(
-    g:^gui.Gui,guns:core.Read(Portal_Gun),mouths:core.Read(Portal_Mouth),exhibits:core.Read(Exhibit),
-    drivables:core.Read(inp.Drivable),seat_state:core.Ref(inp.Seats),locals:core.Read(inp.Seat),
-    worlds:core.Read(core.World_Transform),names:core.Read(core.Name),app:^host.App,
+    huds:^core.Table(Portal_Hud),guns:core.Read(Portal_Gun),mouths:core.Read(Portal_Mouth),exhibits:core.Read(Exhibit),
+    drivables:core.Read(inp.Drivable),worlds:core.Read(core.World_Transform),names:core.Read(core.Name),
 ) {
-    ctx:=gui.gui_context(g)
-    if ctx==nil {return}
-    body:=inp.body_of(drivables,inp.focused(seat_state.ptr,locals))
-    gun,has_gun:=core.get(guns,body)
-    placed,has_world:=core.get(worlds,body)
-    if !has_gun || !has_world {return}
-    pixels:=host.app_player_rect(app,seat_state.focus,seat_state.local_count)
-    rect:=[4]f32{f32(pixels.x),f32(pixels.y),f32(pixels.z),f32(pixels.w)}/max(app.density,0.01)
-    root:=ui.Box{
-        id=ui.id(ctx,"portal.hud"),layout={width=ui.fixed(rect.z),height=ui.fixed(rect.w)},
-        float={to=.Surface,layer=1000,offset={rect.x,rect.y}},
-    }
-    ui.box_begin(ctx,root)
-    defer ui.box_end(ctx,root)
-    box :: proc(ctx:^ui.Context,name:string,anchor,pivot:ui.Anchor,offset:[2]f32,width,height:ui.Size,fill:ui.Color,padding:[4]f32={}) -> ui.Box {
-        return {
-            id=ui.id(ctx,name),layout={width=width,height=height,padding=padding,align_y=.Center},
-            float={to=.Parent,anchor=anchor,pivot=pivot,offset=offset,layer=ctx.layer},fill=fill,
+    shown:=core.read(huds)
+    for row in 0..<core.count(shown) {
+        body:=core.entity_at(shown,row)
+        next:Portal_Hud
+        gun,has_gun:=core.get(guns,body)
+        if placed,has_world:=core.get(worlds,body);has_world && has_gun && inp.seat_of(drivables,body)!=core.NONE {
+            next.shown,next.holding,next.aiming=true,gun.held!=core.NONE,gun.held==core.NONE
+            for at in 0..<core.count(mouths) {
+                mouth:=core.at(mouths,at)
+                if !mouth.placed {continue}
+                if mouth.color==.Blue {next.blue=true} else {next.orange=true}
+            }
+            next.captioned=exhibit_caption(next.caption[:],exhibits,worlds,names,placed.position)
         }
-    }
-    // A mark on each side of the crosshair, lit in the color of each portal that is open.
-    glow:=PORTAL_GLOW
-    for color in Portal_Color {
-        lit:=false
-        for row in 0..<core.count(mouths) {
-            mouth:=core.at(mouths,row)
-            lit||=mouth.color==color && mouth.placed
-        }
-        c:=glow[color]
-        fill:=ui.Color{u8(c.r*255),u8(c.g*255),u8(c.b*255),lit?230:70}
-        side:=color==.Blue?f32(-14):f32(14)
-        if ui.box(ctx,box(ctx,color==.Blue?"mark.blue":"mark.orange",.Center,.Center,{side,0},ui.fixed(6),ui.fixed(16),fill)) {}
-    }
-    white:=ui.Color{255,255,255,204}
-    if ui.box(ctx,box(ctx,"dot",.Center,.Center,{},ui.fixed(3),ui.fixed(3),white)) {}
-    help:=box(ctx,"portal.help",.Top_Left,.Top_Left,{12,48},ui.fit(),ui.fit(),{0,0,0,140},ui.padding_xy(10,6))
-    help.layout.direction=.Column
-    help.layout.gap=4
-    if ui.box(ctx,help) {
-        if gun.held!=core.NONE {
-            ui.label(ctx,"Left button: throw the cube   E: put it down")
-        } else {
-            ui.label(ctx,"Left button: blue portal   Right button: orange portal")
-            ui.label(ctx,"E: pick up a cube")
-        }
-    }
-    caption:=""
-    distance:=max(f32)
-    for row in 0..<core.count(exhibits) {
-        e:=core.entity_at(exhibits,row)
-        exhibit:=core.at(exhibits,row)
-        seen,found:=core.get(worlds,e)
-        if !found {continue}
-        away:=linalg.distance(seen.position,placed.position)
-        if away>=exhibit.reach || away>=distance {continue}
-        distance=away
-        caption=fmt.tprintf("%s",base.text_get(exhibit.caption[:]))
-        if caption=="" {caption=core.name_get(names,e)}
-    }
-    if caption!="" {
-        if ui.box(ctx,box(ctx,"portal.caption",.Bottom_Center,.Bottom_Center,{0,-44},ui.fit(),ui.fixed(32),{0,0,0,140},ui.padding_xy(14,0))) {
-            ui.label(ctx,caption)
-        }
+        if core.at(shown,row)!=next {core.edit_at(huds,row)^=next}
     }
 }

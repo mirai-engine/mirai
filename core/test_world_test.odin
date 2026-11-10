@@ -1,6 +1,7 @@
 package core
 
 import "base:runtime"
+import "core:fmt"
 import "core:strings"
 import "core:testing"
 
@@ -21,6 +22,12 @@ Described_Lines :: struct {
     single:Table(Described_Single),
     kept:Described_Kept,
     plain:Described_Plain,
+}
+
+@(private="file")
+Described_Array :: struct {
+    using world:Test_World,
+    sent:[3]Table(Described_Sent),
 }
 
 @(private="file")
@@ -88,6 +95,30 @@ a_test_world_is_described_as_the_declarations_of_its_types_say :: proc(t:^testin
         kept,plain:=lines.storages[0],lines.storages[1]
         testing.expect(t,sent.replicated==.All && !sent.single && kept.keep,"a declaration on one line has its attributes")
         testing.expect(t,single.single && single.replicated==.None && !plain.keep,"and the declaration below it does not")
+    }
+
+    // An array of tables is a table of its type for each element.
+    array:Described_Array
+    if test_world_init(t,&array) {
+        defer test_world_destroy(&array)
+        tables:=test_world_info(&array).tables
+        if testing.expect_value(t,len(tables),3) {
+            for table,k in tables {
+                testing.expectf(t,table.name==fmt.tprintf("Described_Sent_%d",k) && table.replicated==.All && table.offset==offset_of(Described_Array,sent)+uintptr(k*size_of(Table(Described_Sent))),"element %d: %v",k,table)
+            }
+        }
+        e:=create(&array.entities)
+        for &table,k in array.sent {add(&table,e,Described_Sent{i32(k)})}
+        testing.expect_value(t,test_world_settle(&array),3)
+        copied:Described_Array
+        if test_world_init(t,&copied) {
+            defer test_world_destroy(&copied)
+            testing.expect(t,test_world_copy(&copied,&array))
+            for &table,k in copied.sent {
+                value,found:=get(read(&table),e)
+                testing.expectf(t,found && value.value==i32(k),"each element copies as a table of its own: %d",k)
+            }
+        }
     }
 
     Case :: struct {what:string,world:^runtime.Type_Info,shared:^runtime.Type_Info,names:string}

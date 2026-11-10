@@ -52,12 +52,8 @@ Mode :: enum u8 {Edit,Play,Paused,Simulate,Simulation_Paused,Watch}
 
 Request :: enum u8 {
     Play,    // copy the edited World and run its game loop
-    Simulate,
-    Apply_Simulation,
     Recover,Discard_Recovery,
     Stop,    // discard the World of the Play
-    Pause,
-    Resume,
     Resume_Here, // from the frame the history went back to, dropping what came after it
     New,     // an empty scene, without asking
     Open,    // Session.open_path, without asking
@@ -70,9 +66,6 @@ Request :: enum u8 {
     Asset_Close,   // Session.asset_request closes, asking about its asset
     Asset_Discard, // Session.asset_request closes without asking
     Quit_Check,
-    Camera_Preview, // preview Camera_Preview_Run.request
-    Camera_Keep,    // end previewing, keeping what the cameras became
-    Camera_Discard, // end previewing without it
 }
 Requests :: bit_set[Request;u64]
 
@@ -250,6 +243,7 @@ Session :: struct {
     panels:^Project_Panels,
     git:^Git,
     projects:^Projects,
+    api:^Api,
     profiles:Profiles,
 }
 
@@ -556,7 +550,7 @@ close :: proc(s:^Session) -> int {
     services_close(s)
     // A normal end leaves no chain; one for the GPU kept what it needs.
     recovery_chains_close(s,s.gpu_failure!=.Ended)
-    if s.recovery.assets_owned {os.remove_all(recovery_assets_own(s))}
+    if s.recovery.assets_owned {base.remove_all(recovery_assets_own(s))}
     recovery_log_destroy(s)
     events_close(s)
     app,edit_world,editor_world:=s.app,s.edit_world,s.editor_world
@@ -739,29 +733,16 @@ between_frames :: proc(s:^Session) {
 @(private)
 requests_run :: proc(s:^Session) {
     requests:=s.requests
-    s.requests-={.Play,.Simulate,.Apply_Simulation,.Stop,.Pause,.Resume,.Resume_Here,.New,.Open,.Restart,.Quit,.Recover,.Discard_Recovery,.Document_Switch,.Document_Close,.Document_Discard,.Asset_Switch,.Asset_Close,.Asset_Discard,.Quit_Check,.Camera_Preview,.Camera_Keep,.Camera_Discard}
+    s.requests-={.Play,.Stop,.Resume_Here,.New,.Open,.Restart,.Quit,.Recover,.Discard_Recovery,.Document_Switch,.Document_Close,.Document_Discard,.Asset_Switch,.Asset_Close,.Asset_Discard,.Quit_Check}
     if .Recover in requests {
         if _,why:=recovery_resolve(s,false);why!="" {notify(s,why)}
     }
     if .Discard_Recovery in requests {
         if _,why:=recovery_resolve(s,true);why!="" {notify(s,why)}
     }
-    if .Stop in requests {
-        switch {
-        case s.mode==.Watch:   watch_stop(s)
-        case playing(s):       play_stop(s)
-        case play_plugin_active(s): play_plugin_stop(s)
-        }
-    }
-    if .Apply_Simulation in requests && simulating(s) {simulation_apply_selection(s)}
-    if .Camera_Keep in requests {camera_preview_end(s,true)}
-    if .Camera_Discard in requests {camera_preview_end(s,false)}
-    if .Camera_Preview in requests && !playing(s) && !camera_preview_start(s,s.camera_run.request) {notify(s,"The camera could not be previewed")}
+    if .Stop in requests {shown_stop(s)}
     if .Play in requests && playing(s) {s.play_asked={}}
     if .Play in requests && !playing(s) && !play_build_first(s,{request=true}) && !play_start(s) {notify(s,"The game could not start")}
-    if .Simulate in requests && !playing(s) && !simulation_start(s) {notify(s,"The simulation could not start")}
-    if .Pause in requests && (s.mode==.Play || s.mode==.Simulate) {play_pause(s,true)}
-    if .Resume in requests && play_paused(s) {play_pause(s,false)}
     if .Resume_Here in requests && play_paused(s) {play_pause(s,false,here=true)}
     if .New in requests {
         runs_stop(s)
@@ -784,13 +765,23 @@ requests_run :: proc(s:^Session) {
     if .Quit in requests {s.quit=true}
 }
 
+// Ends what the editor shows in place of the document: the watch of another
+// run, the game of the user, or the one a plugin plays.
+shown_stop :: proc(s:^Session) {
+    switch {
+    case s.mode==.Watch:        watch_stop(s)
+    case playing(s):            play_stop(s)
+    case play_plugin_active(s): play_plugin_stop(s)
+    }
+}
+
 // Opens the scene of open_path, or asks first what the open one would lose.
 open_run :: proc(s:^Session) {
     path:=string(s.open_path[:s.open_length])
     scene:=document_scene_tab(s)
     // Another scene takes the place of the one open: who would lose what
     // they do, or what is unsaved, is asked about first.
-    replaces:=scene>=0 && !path_is_prefab(path) && !document_holds_file(s,path)
+    replaces:=scene>=0 && !path_is_prefab(s,path) && !document_holds_file(s,path)
     if replaces && !s.open_confirmed {
         asset_document_activate(s,-1)
         document_activate(s,scene)
@@ -1132,6 +1123,7 @@ session_bind :: proc(s:^Session) -> bool {
     s.panels=core.world_storage_of(ref,Project_Panels)
     s.git=core.world_storage_of(ref,Git)
     s.projects=core.world_storage_of(ref,Projects)
+    s.api=core.world_storage_of(ref,Api)
     return !(s.selection==nil || s.edits==nil || s.document==nil || s.viewport==nil || s.gui==nil || s.console==nil || s.build==nil || s.picker==nil || s.outliner==nil || s.inspector==nil || s.content==nil || s.materials==nil || s.thumbnails==nil || s.graphics==nil || s.preferences==nil || s.importer==nil || s.finder==nil || s.ai==nil || s.play_players==nil || s.play_history==nil || s.processes==nil || s.view_modes==nil || s.panels==nil || s.git==nil || s.projects==nil)
 }
 

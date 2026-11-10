@@ -9,6 +9,7 @@ import "core:strings"
 import "mirai:cook/author"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:std/base"
@@ -736,7 +737,6 @@ api_set_apply :: proc(s:^Session,a:^Rpc_Args,w:core.World_Ref) -> (id:base.Entit
 
 @(private)
 api_delete_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,e:core.Entity) -> bool {
-    if e==document_root(s,w) {api.call_fail(call,api.SERVER_ERROR,"The root of the prefab document cannot be deleted");return false}
     if text:=section_lock_text(s,w,e,true);text!="" {
         api.call_failf(call,api.SERVER_ERROR,"scene.delete: %s",text)
         return false
@@ -750,19 +750,24 @@ api_delete_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,e:core.Entit
     return true
 }
 
+// Copies entities together: what one of them names of another is, in its copy, the copy of the other.
 @(private)
-api_duplicate_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,e:core.Entity) -> (copy:base.Entity_Id,ok:bool) {
-    if text:=section_lock_text(s,w,e,true);text!="" {
-        api.call_failf(call,api.SERVER_ERROR,"scene.duplicate: %s",text)
-        return 0,false
+api_duplicate_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,entities:[]core.Entity,label:="Duplicate") -> (copies:[]base.Entity_Id,ok:bool) {
+    for e in entities {
+        if text:=section_lock_text(s,w,e,true);text!="" {
+            api.call_failf(call,api.SERVER_ERROR,"scene.duplicate: %s",text)
+            return nil,false
+        }
     }
-    copies:=entities_duplicate(s,{e})
+    made:=entities_duplicate(s,entities,label)
     core.world_settle(w)
-    if len(copies)==0 {
+    if len(made)==0 {
         api.call_fail(call,api.SERVER_ERROR,"scene.duplicate: nothing was copied")
-        return 0,false
+        return nil,false
     }
-    return api_entity_id(w,copies[0]),true
+    copies=make([]base.Entity_Id,len(made),call.allocator)
+    for e,i in made {copies[i]=api_entity_id(w,e)}
+    return copies,true
 }
 
 @(private)
@@ -788,23 +793,40 @@ api_scene_set :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_scene_delete :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Entity_Params)
-    if !api_edit_begin(s,call,"Delete entity") {return}
+    if !api_edit_begin(s,call,api_person(s)?"Delete":"Delete entity") {return}
     w:=edited_world(s)
-    e,known:=api_call_entity(call,w,params.entity[:])
-    id:=api_entity_id(w,e)
-    if api_edit_end(s,call,known && api_delete_apply(s,call,w,e)) {api.call_result(call,Api_Edit_Result).id=id}
+    targets,known:=api_call_targets(call,w,params.entity[:])
+    id:base.Entity_Id
+    applied:=known
+    if known {
+        id=api_entity_id(w,targets[0])
+        for e in targets {
+            if !api_delete_apply(s,call,w,e) {applied=false;break}
+        }
+    }
+    if api_edit_end(s,call,applied) {api.call_result(call,Api_Edit_Result).id=id}
 }
 
 @(private)
 api_scene_duplicate :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Entity_Params)
-    if !api_edit_begin(s,call,"Duplicate entity") {return}
+    label:="Duplicate entity"
+    if api_person(s) {label=base.text_get(params.entity[:])==CONTEXT_COPIED?"Paste":"Duplicate"}
+    if !api_edit_begin(s,call,label) {return}
     w:=edited_world(s)
-    e,known:=api_call_entity(call,w,params.entity[:])
-    copied:base.Entity_Id
+    targets,known:=api_call_targets(call,w,params.entity[:])
+    copies:[]base.Entity_Id
     applied:=false
-    if known {copied,applied=api_duplicate_apply(s,call,w,e)}
-    if api_edit_end(s,call,applied) {api.call_result(call,Api_Edit_Result).id=copied}
+    if known {copies,applied=api_duplicate_apply(s,call,w,targets,label)}
+    // A person goes on with the copies: they are what the step leaves selected.
+    if applied && api_person(s) {
+        selected:=make([dynamic]core.Entity,0,len(copies),context.temp_allocator)
+        for id in copies {
+            if e:=api_entity(w,id);e!=core.NONE {append(&selected,e)}
+        }
+        history.selection_set(document_selection(s),selected[:])
+    }
+    if api_edit_end(s,call,applied) {api.call_result(call,Api_Edit_Result).id=copies[0]}
 }
 
 @(private)
@@ -901,7 +923,8 @@ api_scene_batch :: proc(s:^Session,call:^api.Call) {
                     ids[at]=api_entity_id(world,target)
                     applied=api_delete_apply(s,call,world,target)
                 } else {
-                    ids[at],applied=api_duplicate_apply(s,call,world,target)
+                    copies:[]base.Entity_Id
+                    if copies,applied=api_duplicate_apply(s,call,world,{target});applied {ids[at]=copies[0]}
                 }
             }
         }
@@ -940,6 +963,17 @@ api_document_fail :: proc(call:^api.Call,error:Document_Error,path:string) {
 @(private)
 api_scene_save :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Path_Params)
+    // A person saves what is in front, picks the file of Save as, and is asked
+    // about the unsaved assets the scene uses.
+    if api_person(s) {
+        switch {
+        case api_asks(s,base.text_get(params.path[:])): dialog_save(s)
+        case asset_document_active(s)!=nil:             asset_document_save(s)
+        case:                                           save_request(s)
+        }
+        api_file_result(s,call)
+        return
+    }
     if !api_guard(s,call) {return}
     if !collab_can_save(s) {
         api.call_fail(call,api.SERVER_ERROR,"The host of the session saves the shared scene")

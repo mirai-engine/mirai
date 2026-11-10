@@ -8,6 +8,7 @@ import si "core:sys/info"
 import "core:time"
 import "mirai:project"
 import "mirai:std/subprocess"
+import "mirai:std/base"
 
 // Linking again instead of compiling. A library of a plugin is named after
 // what it is built from (plugin_library_name), so that a program that loaded
@@ -310,7 +311,7 @@ remove_later :: proc(paths:[]string) {
             continue
         }
         to:=fmt.tprintf("%s%s%d-%x",path,TRASH,os.get_pid(),u64(time.to_unix_nanoseconds(time.now())))
-        if os.rename(path,to)==nil {append(&moved,to)} else {_=os.remove_all(path)}
+        if os.rename(path,to)==nil {append(&moved,to)} else {_=base.remove_all(path)}
     }
     when ODIN_OS==.Windows {
         // A line of cmd holds at most 8191 characters.
@@ -332,7 +333,7 @@ remove_later :: proc(paths:[]string) {
             end+=1
         }
         if _,error:=subprocess.detached(command[:],null,"");error!=nil {
-            for path in moved[start:end] {_=os.remove_all(path)}
+            for path in moved[start:end] {_=base.remove_all(path)}
         }
         start=end
     }

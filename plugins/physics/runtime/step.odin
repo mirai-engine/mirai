@@ -82,11 +82,11 @@ physics_step :: proc(
     rigids:core.Read(Rigid_Body),colliders:core.Read(Collider),characters:core.Read(Character),moves:core.Read(Character_Move),
     joints:^core.Table(Joint),statics:core.Read(render.Mesh_Renderer),parents:core.Read(core.Parent),names:core.Read(core.Name),
     transforms:^core.Table(core.Transform),motions:^core.Table(core.Motion),targets:core.Read(core.Pose_Target),
-    character_states:^core.Table(Character_State),joint_states:^core.Table(Joint_State),volumes:core.Read(Fluid_Volume),
+    character_states:^core.Table(Character_State),joint_states:^core.Table(Joint_State),fluids:core.Read(Fluid),
     joint_requests:^Joint_Requests,
     collision:core.Ref(Collision_Settings),sync_check:core.Ref(core.Sync_Check),simulation_hash:^core.Simulation_Hash,
     jumps:^core.Jumps,problems:^core.Problems,
-    gravities:core.Read(volume.Gravity),gravity_volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),
+    gravities:core.Read(volume.Gravity),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),
     fluid_waves:core.Read(Fluid_Waves),winds:core.Read(volume.Wind),
     hierarchy:core.Ref(core.Hierarchy),
 ) {
@@ -96,7 +96,7 @@ physics_step :: proc(
         return
     }
     w:=&state.world
-    fluids_sync(state,volumes,core.read(transforms),parents,problems,fluid_waves,winds,gravity_volumes,worlds)
+    fluids_sync(state,fluids,volumes,core.read(transforms),parents,problems,fluid_waves,winds,worlds)
     if !events_reserve(events,w.desc.event_capacity) {
         memory_problem(problems,core.NONE,"the events of the physics, so nothing is simulated in this tick")
         core.queue_clear(&requests.queue)
@@ -220,7 +220,7 @@ physics_step :: proc(
     }
     parallel:=Parallel{&app.jobs}
     w.desc.parallel_user=&parallel
-    if gravities.table!=nil {gravity_apply(state,gravities,gravity_volumes,worlds,problems)}
+    if gravities.table!=nil {gravity_apply(state,gravities,volumes,worlds,problems)}
     sim.world_step(w,time.dt)
     w.desc.parallel_user=nil
     step_followed(state,characters)
@@ -254,7 +254,7 @@ physics_verticals :: proc(state:core.Ref(Physics_State),characters:core.Read(Cha
         next:=core.Vertical{sim.character_state(&state.world,l.character).up_frame}
         if at:=core.row_of(verticals,e);at<0 {
             core.add(verticals,e,next)
-        } else if verticals.values[at]!=next {core.at(verticals,at)^=next}
+        } else if verticals.values[at]!=next {core.edit_at(verticals,at)^=next}
     }
     for row:=core.count(verticals)-1;row>=0;row-=1 {
         if e:=core.entity_at(verticals,row);!core.has(characters,e) {core.remove(verticals,e)}
@@ -300,10 +300,9 @@ sealed_sync :: proc(s:^Sync,structure:u64) -> bool {
     c:=core.changes(s.locals,&seen)
     if c.all {return false}
     clear(&state.sealed)
-    for row in 0..<core.count(s.locals) {
-        if core.stamp(s.locals,row)<=c.since {continue}
+    for row in core.each_changed(s.locals,&c) {
         root:=core.entity_at(s.locals,row)
-        if sealed_above(s.locals,h,root,c.since) {continue}
+        if sealed_above(s.locals,h,root,c) {continue}
         for at:=root;at!=core.NONE;at=core.subtree_next(h,root,at) {
             order,body:=sync_order(s,at)
             if !body {continue}
@@ -320,9 +319,9 @@ sealed_sync :: proc(s:^Sync,structure:u64) -> bool {
 
 // Whether something e hangs from has its Transform sealed since: its walk takes e.
 @(private)
-sealed_above :: proc(locals:core.Read(core.Transform),h:core.Ref(core.Hierarchy),e:core.Entity,since:u64) -> bool {
+sealed_above :: proc(locals:core.Read(core.Transform),h:core.Ref(core.Hierarchy),e:core.Entity,c:core.Changes) -> bool {
     for at:=core.parent_of(h,e);at!=core.NONE;at=core.parent_of(h,at) {
-        if row:=core.row_of(locals,at);row>=0 && core.stamp(locals,row)>since {return true}
+        if row:=core.row_of(locals,at);row>=0 && core.changed(locals,c,row) {return true}
     }
     return false
 }
@@ -430,7 +429,7 @@ pose_write :: proc(s:^Sync,l:^Link,e:core.Entity,pose:sim.Transform) {
     l.written_position,l.written_rotation=position,rotation
     local:=s.transforms.values[row]
     if local.position==position && local.rotation==rotation {return}
-    written:=core.at(s.transforms,row)
+    written:=core.edit_at(s.transforms,row)
     written.position,written.rotation=position,rotation
 }
 
@@ -841,7 +840,7 @@ character_sync :: proc(s:^Sync,e:core.Entity,l:^Link,config:Character,capsule:Co
 @(private)
 made_velocity :: proc(s:^Sync,e:core.Entity) -> (linear,angular:[3]f32) {
     if target,on:=core.get(s.targets,e);on {return target.linear,target.angular}
-    if held:=core.get(s.motions,e);held!=nil {return held.linear,held.angular}
+    if held,ok:=core.get(s.motions,e);ok {return held.linear,held.angular}
     return
 }
 
@@ -992,20 +991,31 @@ jumped :: proc(s:^Sync,e:core.Entity,from:[3]f32,turn:mm.Quat,to:[3]f32) {
     if s.jumps!=nil {core.jump(s.jumps,e,{to-mm.quat_rotate(turn,from),turn,{1,1,1}})}
 }
 
-// Applies a request of an area (a field, a radial force or impulse), which names no entity; false for any
-// other request.
+// A volume where it is, for the simulation to ask how much of it a point is in.
+@(private)
+Area_Place :: struct {
+    area:volume.Volume,
+    pose:mm.Transform,
+}
+
+// Applies a request of an area, which names no entity; false for any other request.
 @(private)
 area_apply :: proc(s:^Sync,request:Body_Request) -> bool {
-    w:=&s.state.world
-    ok:bool
-    range,noise:=request.falloff_range,request.noise
-    #partial switch request.kind {
-    case .Box_Force: _,ok=sim.world_apply_box_force(w,request.position,request.half_extents,request.rotation,request.linear,request.falloff,request.filter,range,noise)
-    case .Sphere_Force: _,ok=sim.world_apply_sphere_force(w,request.position,request.radius,request.linear,request.falloff,request.filter,range,noise)
-    case .Box_Radial_Force: _,ok=sim.world_apply_box_radial_force(w,request.position,request.half_extents,request.rotation,request.strength,request.falloff,request.filter,range,noise)
-    case .Plane_Force: _,ok=sim.world_apply_plane_force(w,request.position,request.half_extents,request.rotation,request.linear,request.falloff,request.filter,range,noise)
-    case .Radial_Force,.Radial_Impulse: _,ok=sim.world_apply_radial(w,request.position,request.radius,request.strength,request.falloff,request.kind==.Radial_Impulse,request.override,request.filter,range,noise)
-    case: return false
+    if request.kind!=.Area_Force && request.kind!=.Area_Impulse {return false}
+    place:=Area_Place{request.area,{request.position,request.rotation==0?mm.QUAT_IDENTITY:request.rotation,request.scale=={}?[3]f32{1,1,1}:request.scale}}
+    weight :: proc "contextless" (user:rawptr,point:[3]f32) -> f32 {
+        p:=(^Area_Place)(user)
+        return volume.weight(p.area,p.pose,point)
+    }
+    ok:=volume.valid(place.area,place.pose) && request.strength>=-max(f32) && request.strength<=max(f32)
+    for value in request.linear {ok=ok && value>=-max(f32) && value<=max(f32)}
+    if ok {
+        radial:=request.linear=={}
+        force:=radial?[3]f32{request.strength,0,0}:linalg.normalize0(request.linear)*request.strength
+        // Away from a plane is along its normal.
+        if radial && place.area.shape==.Plane {radial,force=false,mm.quat_rotate(place.pose.rotation,[3]f32{0,1,0})*request.strength}
+        area:=sim.Area{bounds=volume.bounds(place.area,place.pose),center=place.pose.position,rotation=place.pose.rotation,weight=weight,user=&place}
+        _,ok=sim.world_apply_area(&s.state.world,area,force,radial,request.kind==.Area_Impulse,request.override,request.falloff,request.filter,request.falloff_range,request.noise)
     }
     if !ok {area_problem(s,request)}
     return true
@@ -1047,7 +1057,7 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
             case .Velocity:         sim.character_launch(w,l.character,request.linear,true)
             case .Impulse:          sim.character_launch(w,l.character,request.linear/max(l.config.mass,1e-3))
             case .Force:            sim.body_apply_force(w,sim.character_body(w,l.character),request.linear)
-            case .Radial_Force,.Radial_Impulse,.Box_Force,.Sphere_Force,.Box_Radial_Force,.Plane_Force:
+            case .Area_Force,.Area_Impulse:
             case .Kinematic,.Manipulate,.Release_Manipulation: request_problem(s,e,request.kind,"physics.request_character","a Character moves by its Character_Move","teleport it, give it a velocity or an impulse, or write its Character_Move")
             }
             continue
@@ -1075,7 +1085,7 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
         case .Force:
             if request.at_point {sim.body_apply_force_at(w,l.body,request.linear,request.point)} else {sim.body_apply_force(w,l.body,request.linear)}
             if request.angular!={} {sim.body_apply_torque(w,l.body,request.angular)}
-        case .Radial_Force,.Radial_Impulse,.Box_Force,.Sphere_Force,.Box_Radial_Force,.Plane_Force:
+        case .Area_Force,.Area_Impulse:
         case .Kinematic:
             if s.playing {
                 sim.body_set_kinematic_target(w,l.body,request.position,rotation,s.dt)
@@ -1123,7 +1133,7 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
 // A force or impulse over a volume that the simulation refused.
 @(private)
 area_problem :: proc(s:^Sync,request:Body_Request) {
-    core.report(s.problems,core.NONE,"physics.request_area","a %v request of Body_Requests did nothing: its radius or extents are not positive, its values are not finite, its falloff is not a Radial_Falloff, or its noise scale is negative; send a positive size, finite values and a falloff and noise of physics",request.kind)
+    core.report(s.problems,core.NONE,"physics.request_area","a %v request of Body_Requests did nothing: its volume has no size or a pose that is not finite, its strength or its direction is not finite, a velocity change is not an impulse, its falloff is not a Radial_Falloff, or its noise scale is negative; send apply_area a volume of volume.box, volume.sphere or volume.plane with a positive size, finite values and a falloff and noise of physics",request.kind)
 }
 
 // Brings back into the rows what the step left: the pose, the Motion and the state of the bodies it moved or
@@ -1191,7 +1201,7 @@ link_write :: proc(s:^Sync,l:^Link,e:core.Entity) -> (again:bool) {
             next.height=sim.character_desc(w,l.character).height
             next.velocity=sim.character_velocity(w,l.character)
             next.cramped=next.height<l.height_asked-HEIGHT_EPSILON
-            if s.character_states.values[row]!=next {core.at(s.character_states,row)^=next}
+            if s.character_states.values[row]!=next {core.edit_at(s.character_states,row)^=next}
         }
         body:=sim.character_body(w,l.character)
         motion_write(s,e,body,sim.body_is_awake(w,body),false)
@@ -1211,7 +1221,7 @@ motion_write :: proc(s:^Sync,e:core.Entity,body:sim.Body_Handle,awake,add:bool) 
         center=center,island=s.grouped?sim.body_group(w,body):0,awake=awake,
     }
     if row:=core.row_of(s.motions,e);row>=0 {
-        if s.motions.values[row]!=next {core.at(s.motions,row)^=next}
+        if s.motions.values[row]!=next {core.edit_at(s.motions,row)^=next}
     } else if add {
         core.add(s.motions,e,next)
     }

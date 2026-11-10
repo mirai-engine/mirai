@@ -57,13 +57,13 @@ ai_review_test_entity :: proc(w:^Ai_Review_Test_World,id:base.Entity_Id) -> core
 
 @(private="file")
 ai_review_test_transform :: proc(w:^Ai_Review_Test_World,e:core.Entity) -> core.Transform {
-    value,_:=core.get(core.read(&w.transforms),e)
+    value,_:=core.get(&w.transforms,e)
     return value
 }
 
 @(private="file")
 ai_review_test_parent :: proc(w:^Ai_Review_Test_World,e:core.Entity) -> core.Parent {
-    value,_:=core.get(core.read(&w.parents),e)
+    value,_:=core.get(&w.parents,e)
     return value
 }
 
@@ -87,13 +87,13 @@ ai_review_attributes_concurrent_entities_and_fields_and_reverts_as_one_undo :: p
     defer ai_review_free(&a.review);defer ai_review_free(&b.review)
     before:=f.edits.serial
     history.edits_begin(&f.edits,&f.selection,"A position")
-    core.get(&f.w.transforms,first).position={1,2,3}
+    core.edit(&f.w.transforms,first).position={1,2,3}
     history.edits_commit(&f.edits,ref,&f.selection)
     ai_review_record(&f.s,a,before)
     before=f.edits.serial
     history.edits_begin(&f.edits,&f.selection,"B scale and other entity")
-    core.get(&f.w.transforms,first).scale={2,2,2}
-    core.get(&f.w.transforms,second).position={7,8,9}
+    core.edit(&f.w.transforms,first).scale={2,2,2}
+    core.edit(&f.w.transforms,second).position={7,8,9}
     history.edits_commit(&f.edits,ref,&f.selection)
     ai_review_record(&f.s,b,before)
     testing.expect_value(t,len(a.review.changed_ids),1)
@@ -131,7 +131,7 @@ ai_review_reverts_and_restores_a_turn_that_outgrew_its_record_from_the_history :
     for half in 0..<2 {
         before:=f.edits.serial
         history.edits_begin(&f.edits,&f.selection,"Move all")
-        for e in entities {core.get(&f.w.transforms,e).position[half]=1}
+        for e in entities {core.edit(&f.w.transforms,e).position[half]=1}
         history.edits_commit(&f.edits,ref,&f.selection)
         ai_review_record(&f.s,task,before)
     }
@@ -160,14 +160,14 @@ ai_review_preserves_later_overlapping_edits_and_finish_keeps_output :: proc(t:^t
     defer ai_review_free(&task.review)
     before:=f.edits.serial
     history.edits_begin(&f.edits,&f.selection,"Agent")
-    core.get(&f.w.transforms,entity).position={1,0,0}
+    core.edit(&f.w.transforms,entity).position={1,0,0}
     history.edits_commit(&f.edits,ref,&f.selection);ai_review_record(&f.s,task,before)
     history.edits_begin(&f.edits,&f.selection,"User")
-    core.get(&f.w.transforms,entity).position={2,0,0}
+    core.edit(&f.w.transforms,entity).position={2,0,0}
     history.edits_commit(&f.edits,ref,&f.selection)
     before=f.edits.serial
     history.edits_begin(&f.edits,&f.selection,"Agent again")
-    core.get(&f.w.transforms,entity).position={3,0,0}
+    core.edit(&f.w.transforms,entity).position={3,0,0}
     history.edits_commit(&f.edits,ref,&f.selection);ai_review_record(&f.s,task,before)
     task.state=.Done
     testing.expect_value(t,ai_task_revert(&f.s,&f.ai,task),"")
@@ -175,7 +175,7 @@ ai_review_preserves_later_overlapping_edits_and_finish_keeps_output :: proc(t:^t
     testing.expect_value(t,task.review.skipped,1)
     before=f.edits.serial
     history.edits_begin(&f.edits,&f.selection,"Accepted agent")
-    core.get(&f.w.transforms,entity).scale={4,4,4}
+    core.edit(&f.w.transforms,entity).scale={4,4,4}
     history.edits_commit(&f.edits,ref,&f.selection);ai_review_record(&f.s,task,before)
     state:=history.edits_state(&f.edits)
     testing.expect(t,ai_task_finish(&f.s,&f.ai,task))
@@ -214,7 +214,7 @@ ai_review_restores_deleted_hierarchies_without_replacing_reused_entities :: proc
     created:=ai_review_test_entity(&f.w,67)
     history.edits_commit(&f.edits,ref,&f.selection);ai_review_record(&f.s,task,before)
     history.edits_begin(&f.edits,&f.selection,"User changed created object")
-    core.get(&f.w.transforms,created).position={9,0,0}
+    core.edit(&f.w.transforms,created).position={9,0,0}
     history.edits_commit(&f.edits,ref,&f.selection)
     testing.expect_value(t,ai_task_revert(&f.s,&f.ai,task),"")
     testing.expect(t,core.alive(&f.w.entities,created))
@@ -257,7 +257,7 @@ ai_review_persists_project_reviews_and_remaps_entity_references_on_reopen :: pro
     defer ai_review_free(&task.review)
     before:=f.edits.serial
     history.edits_begin(&f.edits,&f.selection,"Reparent")
-    core.get(&f.w.parents,child).entity=second
+    core.edit(&f.w.parents,child).entity=second
     history.edits_commit(&f.edits,ref,&f.selection);ai_review_record(&f.s,task,before)
     task.state=.Running
     testing.expect_value(t,ai_review_save(&f.s,task),"")
@@ -307,14 +307,14 @@ ai_scene_follows_committed_edits_to_new_entities_and_keeps_the_sent_context :: p
     history.edits_begin(&f.edits,&f.selection,"Create agent object")
     second:=ai_review_test_entity(&f.w,22)
     core.world_settle(ref)
-    core.get(&f.w.transforms,second).position={20,2,30}
+    core.edit(&f.w.transforms,second).position={20,2,30}
     history.edits_commit(&f.edits,ref,&f.selection)
     ai_review_record(&f.s,task,serial)
     testing.expect(t,task.anchor!=initial && (task.anchor.x==20 || task.anchor.z==30) && task.anchor.y>2,"committed creation moves the figure along one gizmo axis above the new entity")
     testing.expect(t,task.context_count==1 && task.context_ids[0]==11,"following edits preserves the context captured at send")
     serial=f.edits.serial
     history.edits_begin(&f.edits,&f.selection,"Move original context")
-    core.get(&f.w.transforms,first).position={-15,1,-25}
+    core.edit(&f.w.transforms,first).position={-15,1,-25}
     history.edits_commit(&f.edits,ref,&f.selection)
     ai_review_record(&f.s,task,serial)
     testing.expect(t,(task.anchor.x==-15 || task.anchor.z==-25) && task.anchor.y>1,"the next transaction relocates the same figure on a single gizmo axis")
@@ -333,7 +333,7 @@ ai_review_storage_reclaims_bulk_scratch_and_rejects_oversized_files_before_readi
     base.text_set(task.name[:],"1-0")
     before:=f.edits.serial
     history.edits_begin(&f.edits,&f.selection,"Agent move")
-    core.get(&f.w.transforms,entity).position={1,2,3}
+    core.edit(&f.w.transforms,entity).position={1,2,3}
     history.edits_commit(&f.edits,ref,&f.selection);ai_review_record(&f.s,task,before)
     exemplar:=task.review.transactions[0].rows[0]
     for i in 1..<512 {
@@ -380,7 +380,7 @@ ai_scene_places_figures_on_gizmo_axes_above_the_handles_at_different_zooms :: pr
     task:Ai_Task
     for space in ([2]Space{.World,.Local}) {
         f.viewport.space=space
-        core.get(&f.w.transforms,e).rotation=mm.quat_axis_angle({0,1,0},0.7)
+        core.edit(&f.w.transforms,e).rotation=mm.quat_axis_angle({0,1,0},0.7)
         for distance in ([3]f32{5,17,40}) {
             f.viewport.orbit.distance=distance
             viewport_camera(&f.viewport)
@@ -414,12 +414,12 @@ ai_review_resolves_one_field_and_one_entity_at_a_time :: proc(t:^testing.T) {
     // Two transactions of one turn move the same field twice.
     before:=f.edits.serial
     history.edits_begin(&f.edits,&f.selection,"Agent edits")
-    core.get(&f.w.transforms,first).position={1,2,3}
-    core.get(&f.w.transforms,first).scale={2,2,2}
-    core.get(&f.w.transforms,second).position={7,8,9}
+    core.edit(&f.w.transforms,first).position={1,2,3}
+    core.edit(&f.w.transforms,first).scale={2,2,2}
+    core.edit(&f.w.transforms,second).position={7,8,9}
     history.edits_commit(&f.edits,ref,&f.selection)
     history.edits_begin(&f.edits,&f.selection,"Agent edits again")
-    core.get(&f.w.transforms,first).position={4,5,6}
+    core.edit(&f.w.transforms,first).position={4,5,6}
     history.edits_commit(&f.edits,ref,&f.selection)
     ai_review_record(&f.s,task,before)
     task.state=.Done
@@ -536,8 +536,8 @@ ai_review_keeps_deletions_reviewable_and_puts_them_back_one_by_one :: proc(t:^te
     child:=ai_review_test_entity(&f.w,55)
     core.add(&f.w.parents,child,core.Parent{entity=parent})
     core.world_settle(ref)
-    core.get(&f.w.transforms,parent).position={2,0,0}
-    core.get(&f.w.transforms,child).position={0,1,0}
+    core.edit(&f.w.transforms,parent).position={2,0,0}
+    core.edit(&f.w.transforms,child).position={0,1,0}
     history.edits_reset(&f.edits,ref)
     task:=&f.ai.tasks[0];task.id=1;task.world=&f.w
     defer ai_review_free(&task.review)
@@ -596,7 +596,7 @@ ai_review_takes_declined_changes_back_for_review :: proc(t:^testing.T) {
     defer ai_review_free(&task.review)
     before:=f.edits.serial
     history.edits_begin(&f.edits,&f.selection,"Agent edits")
-    core.get(&f.w.transforms,moved).position={3,0,0}
+    core.edit(&f.w.transforms,moved).position={3,0,0}
     core.destroy(&f.w.entities,gone)
     created:=ai_review_test_entity(&f.w,46)
     history.edits_commit(&f.edits,ref,&f.selection);ai_review_record(&f.s,task,before)
@@ -704,8 +704,8 @@ ai_review_walk_goes_on_to_the_next_change_after_one_is_resolved :: proc(t:^testi
         change(w)
         history.edits_commit(s.edits,edited_world(s),s.selection);ai_review_record(s,task,before)
     }
-    step(&f.s,task,&f.w,proc(w:^Ai_Review_Test_World) {core.get(&w.transforms,ai_review_test_id(w,44)).position={1,0,0}})
-    step(&f.s,task,&f.w,proc(w:^Ai_Review_Test_World) {core.get(&w.transforms,ai_review_test_id(w,45)).position={2,0,0}})
+    step(&f.s,task,&f.w,proc(w:^Ai_Review_Test_World) {core.edit(&w.transforms,ai_review_test_id(w,44)).position={1,0,0}})
+    step(&f.s,task,&f.w,proc(w:^Ai_Review_Test_World) {core.edit(&w.transforms,ai_review_test_id(w,45)).position={2,0,0}})
     step(&f.s,task,&f.w,proc(w:^Ai_Review_Test_World) {core.destroy(&w.entities,ai_review_test_id(w,46))})
     task.state=.Done
     testing.expect(t,!core.alive(&f.w.entities,gone))
@@ -758,7 +758,7 @@ ai_review_shows_reverts_and_restores_a_component_turned_off :: proc(t:^testing.T
 
     // Revert turns it on in one step of undo, and Restore turns it off again.
     testing.expect_value(t,ai_task_revert(&f.s,&f.ai,task),"")
-    value,on:=core.get(core.read(&f.w.lamps),lamp)
+    value,on:=core.get(&f.w.lamps,lamp)
     testing.expect(t,on && value.intensity==10)
     testing.expect(t,history.undo(&f.edits,ref,&f.selection) && !core.has(&f.w.lamps,lamp))
     testing.expect(t,history.redo(&f.edits,ref,&f.selection) && core.has(&f.w.lamps,lamp))

@@ -48,7 +48,7 @@ input_holds :: proc(seats:^core.Table(Seat),requests:^Hold_Requests,time:core.Ti
             core.report(problems,core.NONE,"input.hold_seat","holding action %d was refused: entity 0x%016x is not a live Seat; ask with the seat of a player",r.action,u64(r.seat))
             continue
         }
-        if !seat_local(core.get(seats,r.seat)^) {
+        if !seat_local(core.at(seats,core.row_of(seats,r.seat))) {
             core.report(problems,r.seat,"input.hold_remote_seat","holding action %d was refused: this is the seat of a player at another end, which takes the actions its client sends; hold the local seat in the run of that client",r.action)
             continue
         }
@@ -56,7 +56,7 @@ input_holds :: proc(seats:^core.Table(Seat),requests:^Hold_Requests,time:core.Ti
             core.report(problems,r.seat,"input.hold_action","holding action %d was refused: actions are below %d",r.action,ACTION_CAPACITY)
             continue
         }
-        if !hold_set(core.get(seats,r.seat),r,time.tick) {
+        if !hold_set(core.edit(seats,r.seat),r,time.tick) {
             core.report(problems,r.seat,"input.holds_full","holding action %d was refused: the seat holds %d actions, as many as fit; let go of one first",r.action,HOLD_CAPACITY)
         }
     }
@@ -65,7 +65,7 @@ input_holds :: proc(seats:^core.Table(Seat),requests:^Hold_Requests,time:core.Ti
         expired:=false
         for hold in source.holds[:source.hold_count] {expired||=hold.until!=0 && hold.until<=time.tick}
         if !expired {continue}
-        seat:=core.at(seats,row)
+        seat:=core.edit_at(seats,row)
         kept:u8
         for hold in seat.holds[:seat.hold_count] {
             if hold.until!=0 && hold.until<=time.tick {continue}

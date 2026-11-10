@@ -106,7 +106,7 @@ world_map_gather :: proc(s:^Session,m:^World_Map,w:core.World_Ref) {
     if references!=nil {
         for row in 0..<core.count(references) {
             e:=core.entity_at(references,row)
-            r:=core.at(core.read(references),row)
+            r:=core.at(references,row)
             pose:=entity_world(w,e)
             item:=Map_Item{reference=e,id=api_entity_id(w,e),point=map_plane(m.view,pose.position),shown=section_shown(s,w,e),edited=e==edited}
             _,item.overridden=section_view(s,w,e)

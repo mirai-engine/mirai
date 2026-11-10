@@ -23,7 +23,7 @@ GIT_SOURCES :: [?]Git_Source{
     {"wav",asset.KIND_SOUND},{"ogg",asset.KIND_SOUND},{"mp3",asset.KIND_SOUND},
     {"png",asset.KIND_TEXTURE},{"jpg",asset.KIND_TEXTURE},{"jpeg",asset.KIND_TEXTURE},{"tga",asset.KIND_TEXTURE},
     {"exr",asset.KIND_TEXTURE},{"hdr",asset.KIND_TEXTURE},{"psd",asset.KIND_TEXTURE},
-    {"glb",asset.KIND_PREFAB},{"gltf",asset.KIND_PREFAB},{"obj",asset.KIND_PREFAB},{"fbx",asset.KIND_PREFAB},{"usd",asset.KIND_PREFAB},{"usdz",asset.KIND_PREFAB},
+    {"glb",SHOWN_PREFAB},{"gltf",SHOWN_PREFAB},{"obj",SHOWN_PREFAB},{"fbx",SHOWN_PREFAB},{"usd",SHOWN_PREFAB},{"usdz",SHOWN_PREFAB},
 }
 
 git_panel_build :: proc(s:^Session,width,room:f32) {
@@ -89,7 +89,7 @@ git_changes_build :: proc(s:^Session,width,room:f32) {
             if ui.box(ctx,{width=ui.fixed(6),height=ui.fixed(6),fill=UNSAVED_COLOR,radius=3}) {}
             ui.label(ctx,"Unsaved changes",th.font_small,th.text)
             ui.spacer(ctx)
-            if ui.button(ctx,ui.id(ctx,"git_save"),{label="Save all",style=.Field,height=th.control-6}).clicked {action_run(s,.Save_All)}
+            if ui.button(ctx,ui.id(ctx,"git_save"),{label="Save all",style=.Field,height=th.control-6}).clicked {command_run(s,"save_all")}
         }
     }
     // Discarding all of them shows while the pointer is on their head.
@@ -181,7 +181,7 @@ git_change_icon :: proc(s:^Session,registry:^asset.Registry,path:string) -> (ico
     relative:=strings.trim_prefix(path,"assets/")
     if registry!=nil && relative!=path {
         if file,found:=asset.registry_find_path(registry,relative);found && file.state==.Asset {
-            icon,_=asset_icon(s,file.kind)
+            icon,_=asset_icon(s,shown_kind(file))
             return icon,asset_file_color(s,file)
         }
     }
@@ -260,5 +260,5 @@ git_status_build :: proc(s:^Session) {
     case .Finish: doing="Finishing the merge..."
     }
     if doing!="" {ui.label(ctx,doing,th.font_small,th.text_muted);return}
-    if failure:=base.text_get(g.error[:]);failure!="" {ui.paragraph(ctx,failure,th.font_small,th.danger)}
+    if failure:=base.text_get(g.error[:]);failure!="" {ui.text(ctx,failure,ui.prose(ctx,th.font_small,th.danger))}
 }

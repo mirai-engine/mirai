@@ -213,8 +213,8 @@ failed_tick_preparation_retires_previous_root_delta_and_markers_while_preserving
     entity:=core.entity_make(1,1);playback.frame=11
     resize(&playback.rows,2);playback.rows[1]=1
     append(&playback.states,Playing{entity=entity,seen=11,root_enabled=true,motion={translation={.5,0,0},rotation=1}})
-    requests:Animation_Requests;defer delete(requests.seeks.items);defer delete(requests.distances.items)
-    core.push(&requests.seeks,Animation_Seek{entity=entity,time=.7})
+    requests:Animation_Requests;defer delete(requests.timeline.items);defer delete(requests.distances.items)
+    core.push(&requests.timeline,Animation_Command{entity=entity,time=.7})
     events:Animation_Events;defer delete(events.items);core.push(&events.queue,Animation_Marker{entity=entity,marker=1})
     app:=host.App{allocator=runtime.nil_allocator()}
     _,valid:=animation_root_delta(&playback,entity);testing.expect(t,valid)
@@ -223,6 +223,6 @@ failed_tick_preparation_retires_previous_root_delta_and_markers_while_preserving
     context=saved
     delta,available:=animation_root_delta(&playback,entity)
     testing.expect(t,!available);testing.expect_value(t,delta,ROOT_DELTA_DEFAULT)
-    testing.expect_value(t,len(events.items),0);testing.expect_value(t,len(requests.seeks.items),1)
-    testing.expect_value(t,requests.seeks.items[0].time,f32(.7))
+    testing.expect_value(t,len(events.items),0);testing.expect_value(t,len(requests.timeline.items),1)
+    testing.expect_value(t,requests.timeline.items[0].time,f32(.7))
 }

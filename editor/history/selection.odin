@@ -75,7 +75,7 @@ selection_roots :: proc(s:^Selection,w:core.World_Ref,allocator:=context.temp_al
         if parents!=nil {
             at:=e
             for _ in 0..<256 {
-                parent,ok:=core.get(core.read(parents),at)
+                parent,ok:=core.get(parents,at)
                 if !ok || parent.entity==core.NONE {break}
                 at=parent.entity
                 if selection_has(s,at) {covered=true;break}

@@ -148,6 +148,11 @@ receives the place of its origin: a type or a function of an editor package neve
   world, the `Shared` and `^host.App`: there a `by_world` storage releases what its value holds, and
   an application one what it had of that world (it recognizes it by `core.World_Id`). A `release`
   function that is not in the `game` loop (that of an editor package) is an error.
+  A step of the `ui` phase is of the engine or of an editor package: in a game (`game/`, the
+  runtime part of a plugin) it is refused, because a game shows `.ui` documents.
+- `draw="name"`, on a `proc(ctx:^ui.Context,node:ui.Draw_Node)` of a library or of `game/`: the
+  procedure that draws the `Draw` nodes of the interfaces that say that name
+  (`World_Info.draws`, [gui](../../mirai-gameplay/references/libraries.md#gui)). One per name.
 - `loops="game editor"`: in which loops it runs; by default `game` in a library and `editor` in an
   editor package.
 - `stage="stage"`: in which stage of its phases it runs; by default `intent` ([order](#order)).

@@ -73,7 +73,7 @@ content_animation_wait :: proc(app:^App,id:base.Asset_Id) -> ^Content_Animation 
 
 // Starts the first load of each .anim that ids name, directly or through the assets they depend
 // on in the registry, and appends them to out: what a world that starts playing with those ids
-// can play. Scenes are not followed: they load apart.
+// can play. Scenes of several roots are not followed: they load apart.
 content_animations_start :: proc(app:^App,ids:[]base.Asset_Id,out:^[dynamic]base.Asset_Id) {
     a:=app.assets
     if a==nil {return}
@@ -85,7 +85,7 @@ content_animations_start :: proc(app:^App,ids:[]base.Asset_Id,out:^[dynamic]base
         if id=={} || id in seen {continue}
         seen[id]=true
         file,found:=asset.registry_find(&a.registry,id)
-        if !found || file.kind==asset.KIND_SCENE {continue}
+        if !found || file.kind==asset.KIND_SCENE && !asset.registry_prefab(file) {continue}
         if file.kind==asset.KIND_ANIMATION {
             _=content_animation(app,id)
             append(out,id)
@@ -178,7 +178,7 @@ content_animation_finish :: proc(app:^App,entry:^Content_Animation,job:bool) {
     content_animation_free(c,entry)
     built:=&load.built
     entry.lib,entry.clip_count,entry.markers=built.lib,built.clip_count,built.markers
-    entry.names,entry.roots,entry.morphs=built.names,built.roots,built.morphs
+    entry.names,entry.roots,entry.morphs,entry.fields=built.names,built.roots,built.morphs,built.fields
     built^={}
     if first {content_loaded(c,entry,true)} else {content_reloaded(c,entry)}
 }
@@ -316,7 +316,9 @@ content_animation_build :: proc(load:^Content_Animation_Load,worker:int) {
     built.roots,e3=make([]asset.Animation_Root,count,load.allocator)
     morphing:bool
     built.morphs,morphing=content_animation_morphs(view,load.allocator)
-    if e1!=nil || e2!=nil || e3!=nil || !morphing {return}
+    fielded:bool
+    built.fields,fielded=content_animation_fields(view,load.allocator)
+    if e1!=nil || e2!=nil || e3!=nil || !morphing || !fielded {return}
     if count>0 && asset.animation_clips_add(view,&built.lib,.Once)==0 {return}
     content_animation_loops(&built.lib,count)
     built.clip_count=count

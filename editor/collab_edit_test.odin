@@ -52,9 +52,9 @@ an_edit_of_another_end_makes_entities_that_its_other_rows_name_by_id :: proc(t:^
     made,named:=core.entity_of(&world.entities,50),core.entity_of(&world.entities,51)
     if !testing.expect(t,made!=core.NONE && named!=core.NONE && made!=f.original) {return}
     testing.expect_value(t,world.entities.alive,3)
-    link,linked:=core.get(core.read(&world.parents),named)
+    link,linked:=core.get(&world.parents,named)
     testing.expect(t,linked && link.entity==made)
-    local,_:=core.get(core.read(&world.transforms),named)
+    local,_:=core.get(&world.transforms,named)
     testing.expect_value(t,local.position,[3]f32{0,2,0})
     testing.expect_value(t,core.entity_of(&world.entities,base.Entity_Id(1)),f.original)
 }
@@ -79,7 +79,7 @@ a_scene_of_the_host_that_fails_halfway_leaves_the_world_as_it_was :: proc(t:^tes
     st:=new(Collab_State);defer free(st)
 
     host_scene:asset.Scene
-    asset.scene_init(&host_scene,&assets.types,asset.KIND_SCENE,{0x1c,1})
+    asset.scene_init(&host_scene,&assets.types,{0x1c,1})
     defer asset.scene_destroy(&host_scene)
     placed:=core.Transform{{0,3,0},1,{1,1,1}}
     for i in 1..=64 {
@@ -112,7 +112,7 @@ a_scene_of_the_host_that_fails_halfway_leaves_the_world_as_it_was :: proc(t:^tes
     testing.expect_value(t,world.entities.alive,64)
     testing.expect(t,!core.alive(&world.entities,f.original))
     box:=core.entity_of(&world.entities,base.Entity_Id(101))
-    local,found:=core.get(core.read(&world.transforms),box)
+    local,found:=core.get(&world.transforms,box)
     testing.expect(t,found && local.position==[3]f32{0,3,0})
 }
 

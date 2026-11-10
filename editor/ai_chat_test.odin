@@ -423,7 +423,7 @@ ai_chat_uses_live_selection_and_keeps_tasks_with_their_document :: proc(t:^testi
     second_chip,second_found:=ui.widget_rect(&ctx,ui.id(&ctx,"context",2))
     ui.id_pop(&ctx)
     testing.expect(t,second_found && first_chip.y==second_chip.y && second_chip.w<60,"short entity chips share a row and keep their own width")
-    core.get(&world.names,second)^=core.name_make("An entity whose very long name should fit inside the composer without pushing the send button out")
+    core.edit(&world.names,second)^=core.name_make("An entity whose very long name should fit inside the composer without pushing the send button out")
     for _ in 0..<2 {
         ui.frame_begin(&ctx,{size={800,600},pointer_absent=true})
         ai_chat_content_build(&session,280,420)

@@ -479,8 +479,8 @@ build_tools :: proc(s:^Session) {
         ui.label(ctx,fmt.tprintf("%.0f s",time.duration_seconds(time.tick_since(b.started))),th.font_small,th.text_muted)
         return
     }
-    state:=action_state(s,.Build)
-    if ui.button(ctx,ui.id(ctx,"build_run"),{label="Build",style=.Field,height=24,width=72,center=true,size=th.font_small,disabled=state.disabled}).clicked {build_start(s)}
+    state:=command_state(s,"build")
+    if ui.button(ctx,ui.id(ctx,"build_run"),{label="Build",style=.Field,height=24,width=72,center=true,size=th.font_small,disabled=state.disabled}).clicked {command_run(s,"build")}
 }
 
 FAILURE_TEXTS :: [build.Failure]string{
@@ -536,7 +536,7 @@ build_panel_build :: proc(s:^Session,height:f32) {
     if text=="" {text=b.shaders_text}
     if text!="" {
         if ui.scroll_area(ctx,ui.id(ctx,"build_text"),&b.text_scroll,{height=ui.fixed(room)}) {
-            ui.paragraph(ctx,text,th.font_small,th.text_muted)
+            ui.text(ctx,text,ui.prose(ctx,th.font_small,th.text_muted))
         }
     }
 }

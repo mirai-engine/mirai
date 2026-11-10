@@ -127,7 +127,7 @@ outliner_sync :: proc(o:^Outliner,w:core.World_Ref) {
     if names!=nil {for e in names.entities {if entity_author(w,e)==e {add(o,es,e)}}}
     for &node in o.nodes {
         if parents==nil {break}
-        if parent,ok:=core.get(core.read(parents),node.entity);ok && parent.entity!=core.NONE {
+        if parent,ok:=core.get(parents,node.entity);ok && parent.entity!=core.NONE {
             i:=core.entity_index(parent.entity)
             if i<len(o.node_of) && o.node_of[i]!=0 && o.nodes[o.node_of[i]-1].entity==parent.entity {node.parent=o.node_of[i]-1}
             node.order=parent.order
@@ -416,19 +416,19 @@ outliner_menu :: proc(s:^Session,w:core.World_Ref) {
             outliner_reveal(o,w,child)
         }
         if ui.menu_item(ctx,ui.id(ctx,"menu_rename"),"Rename",{shortcut="F2"}) {outliner_rename(o,e)}
-        if ui.menu_item(ctx,ui.id(ctx,"menu_duplicate"),"Duplicate",{shortcut=shortcut_text(ACTION_SHORTCUTS[.Duplicate])}) {action_run(s,.Duplicate)}
+        if ui.menu_item(ctx,ui.id(ctx,"menu_duplicate"),"Duplicate",{shortcut=command_shortcut_text(s,"duplicate")}) {command_run(s,"duplicate")}
         if ui.menu_item(ctx,ui.id(ctx,"menu_root"),"Move to root",{disabled=entity_parent(w,e)==core.NONE}) {
             tool_preview_cancel(s)
             if !entity_reparent(s,e,core.NONE) {notify(s,"The entity could not leave its parent")}
         }
-        if ui.menu_item(ctx,ui.id(ctx,"menu_focus"),"Focus",{shortcut="F"}) {action_run(s,.Focus)}
+        if ui.menu_item(ctx,ui.id(ctx,"menu_focus"),"Focus",{shortcut="F"}) {command_run(s,"focus")}
         ui.menu_separator(ctx)
-        for action in ([5]Action{.Prefab_Create,.Prefab_Apply,.Prefab_Apply_Base,.Prefab_Revert,.Prefab_Unlink}) {
-            state:=action_state(s,action)
-            if ui.menu_item(ctx,ui.id(ctx,"menu_prefab",int(action)),state.label,{disabled=state.disabled}) {action_run(s,action)}
+        for entry,at in ([5]string{"prefab_create","prefab_apply","prefab_apply_base","prefab_revert","prefab_unlink"}) {
+            state:=command_state(s,entry)
+            if ui.menu_item(ctx,ui.id(ctx,"menu_prefab",at+1),command_label(s,entry),{disabled=state.disabled}) {command_run(s,entry)}
         }
         ui.menu_separator(ctx)
-        if ui.menu_item(ctx,ui.id(ctx,"menu_delete"),"Delete",{shortcut="Del"}) {action_run(s,.Delete)}
+        if ui.menu_item(ctx,ui.id(ctx,"menu_delete"),"Delete",{shortcut="Del"}) {command_run(s,s.mode!=.Edit?"delete_in_game":"delete")}
     }
 }
 

@@ -241,10 +241,10 @@ paths_read_the_components_and_storages_of_the_world_by_name :: proc(t:^testing.T
     testing.expect(t,found && !storage)
     data,stamp:=host.fetch(host.user,base.name_hash("Bind_Test_Health"),base.Entity(e))
     testing.expect(t,data!=nil && (^Bind_Test_Health)(data).value==3)
-    _,_=core.get(core.read(&w.healths),e)
+    _,_=core.get(&w.healths,e)
     _,same:=host.fetch(host.user,base.name_hash("Bind_Test_Health"),base.Entity(e))
     testing.expect_value(t,same,stamp)
-    core.get(&w.healths,e).value=4
+    core.edit(&w.healths,e).value=4
     _,moved:=host.fetch(host.user,base.name_hash("Bind_Test_Health"),base.Entity(e))
     testing.expect(t,moved!=stamp,"a write moves the stamp")
     none,_:=host.fetch(host.user,base.name_hash("Bind_Test_Health"),base.Entity(core.entity_make(9,1)))
@@ -254,7 +254,7 @@ paths_read_the_components_and_storages_of_the_world_by_name :: proc(t:^testing.T
     testing.expect(t,found && storage)
     data,stamp=host.fetch(host.user,base.name_hash("Bind_Test_Match"),0)
     testing.expect(t,data==&w.match && stamp==0)
-    // A control bound to a setting writes it; a component, or anything else, asks the game.
+    // A control bound to a storage writes it; one bound to a component asks the game.
     testing.expect(t,host.commits(host.user,base.name_hash("Bind_Test_Match")) && !host.commits(host.user,base.name_hash("Bind_Test_Health")))
     _,_,found=host.source(host.user,base.name_hash("Missing"))
     testing.expect(t,!found)
@@ -481,10 +481,10 @@ the_buttons_of_a_modal_get_the_actions_it_takes_from_the_game :: proc(t:^testing
     inp.input_map_action(&bindings,DROP,.Button)
     inp.input_map_bind(&bindings,DROP,inp.binding_key(.X))
     device:=core.Input{keys_down={.X},keys_pressed={.X}}
-    inp.seat_feed(core.get(&w.seats,seat),&device,&bindings,false)
+    inp.seat_feed(core.edit(&w.seats,seat),&device,&bindings,false)
     state:inp.Seats
     state.blocks[0]={owner=inventory,mask=inp.ALL_ACTIONS,active=true}
-    core.get(&w.seats,seat).blocked=inp.ALL_ACTIONS
+    core.edit(&w.seats,seat).blocked=inp.ALL_ACTIONS
     names:=[1]core.Name_Info{{type=inp.Action,value=i64(DROP),name="drop_item"}}
     info:=core.test_world_info(&w)
     info.names=names[:]

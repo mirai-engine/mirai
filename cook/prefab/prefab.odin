@@ -34,7 +34,7 @@ model_prefab :: proc(model:^importer.Imported_Model,assets:^importer.Import_Repo
     count:=len(model.nodes)
     if count==0 {return {},.Empty}
     scene:asset.Scene
-    if asset.scene_init(&scene,types,asset.KIND_PREFAB,id,allocator)!=.None {return {},.Write}
+    if asset.scene_init(&scene,types,id,allocator)!=.None {return {},.Write}
     defer asset.scene_destroy(&scene)
     roots:=0
     for node in model.nodes {
@@ -132,13 +132,12 @@ model_prefab :: proc(model:^importer.Imported_Model,assets:^importer.Import_Repo
         }
         if light,has:=node.light.?;has && !model_light(&scene,own,light,node.name,assets) {return report,.Write}
     }
-    scene.info.root=top!=0?top:base.Entity_Id(1)
-    for node,i in model.nodes {
-        if node.parent<0 && top==0 {scene.info.root=base.Entity_Id(i+1)}
-    }
+    // One root, the model's own or the entity that wraps several: the scene is a prefab.
+    root,rooted:=asset.prefab_root(&scene)
+    if !rooted {return report,.Write}
     if assets.animation_id!={} {
         animation:=Animation{asset=assets.animation_id,speed=1,weight=1,loop=true,playing=true,fade=0.2}
-        if asset.scene_set(&scene,scene.info.root,"Animation",&animation)!=.None {return report,.Write}
+        if asset.scene_set(&scene,root,"Animation",&animation)!=.None {return report,.Write}
         if len(rig_ids)>1 {for rig in rig_ids {if asset.scene_set(&scene,rig,"Animation",&animation)!=.None {return report,.Write}}}
     }
     scene.info.id_counter=max(scene.info.id_counter,u64(count+len(rig_ids)+1))
@@ -275,7 +274,7 @@ model_write :: proc(model:^importer.Imported_Model,path,folder:string,options:im
     size:int
     if info,stat_error:=os.stat(target,context.temp_allocator);stat_error==nil {size=int(info.size)}
     append(&report.assets,importer.Written{
-        id=id,kind=asset.KIND_PREFAB,name=strings.clone(name,allocator),path=strings.clone(target,allocator),source=strings.clone(source,allocator),bytes=size,
+        id=id,kind=asset.KIND_SCENE,name=strings.clone(name,allocator),path=strings.clone(target,allocator),source=strings.clone(source,allocator),bytes=size,
         detail=fmt.aprintf("%d %s",built.entities,built.entities==1?"entity":"entities",allocator=allocator),
     })
     return report,{}

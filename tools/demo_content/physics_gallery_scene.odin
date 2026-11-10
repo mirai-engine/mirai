@@ -10,11 +10,11 @@ import destruct "plugins:destruct/runtime"
 import gui "mirai:engine/gui"
 import phys "plugins:physics/runtime"
 import render "mirai:engine/render"
+import volume "mirai:engine/volume"
 import "mirai:std/base"
 import "mirai:std/geom"
 import mm "mirai:std/math"
 import cache "plugins:physics_cache/runtime"
-import fields "plugins:physics_fields/runtime"
 import vfx "plugins:vfx/runtime"
 import "plugins:vfx/runtime/effect"
 
@@ -81,10 +81,10 @@ physics_burst :: proc(o:^Out) {
     dust.colors={{.9,.72,.42,.85},{1,.9,.65,.65}};dust.drag=1
     id:=asset.content_id(PROJECT,"particle","physics_dust")
     asset.content_check(&o.content,"physics dust",effect.particle_save(path(o,"assets/physics_gallery/physics_dust.particle"),&o.content.types,{id=id,info=dust}))
-    s:asset.Scene_Builder;asset.builder_init(&s,&o.content,asset.KIND_PREFAB,PHYSICS_GALLERY_BURST_ID);defer asset.builder_destroy(&s)
+    s:asset.Scene_Builder;asset.builder_init(&s,&o.content,PHYSICS_GALLERY_BURST_ID);defer asset.builder_destroy(&s)
     e:=asset.builder_entity(&s,"Fracture dust")
     asset.builder_set(&s,e,vfx.Particle_Emitter{particle=id,active=true,destroy_when_done=true})
-    asset.builder_save(&s,path(o,"assets/physics_gallery/physics_burst.prefab"))
+    asset.builder_save(&s,path(o,"assets/physics_gallery/physics_burst.scene"))
 }
 
 @(private)
@@ -125,7 +125,7 @@ physics_gallery_primitive :: proc(s:^asset.Scene_Builder,name:string,position,si
 
 write_physics_gallery :: proc(o:^Out) {
     sources:=physics_sources(o);physics_burst(o)
-    s:asset.Scene_Builder;asset.builder_init(&s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene","physics"));defer asset.builder_destroy(&s)
+    s:asset.Scene_Builder;asset.builder_init(&s,&o.content,asset.content_id(PROJECT,"scene","physics"));defer asset.builder_destroy(&s)
     // The sun alone lights the gallery: a sun of 3 is noon.
     u:=daylight(3)
     // Two stops over the meter: the gallery as bright as the demo has it.
@@ -172,7 +172,7 @@ write_physics_gallery :: proc(o:^Out) {
             target=physics_gallery_primitive(&s,"Sphere",origin+mm.Vec3{-1,1,0},{.7,.7,.7},.Sphere,sphere,{.1,.6,1,1})
             physics_gallery_primitive(&s,"Box",origin+mm.Vec3{0,1,0},{.7,.7,.7},.Cube,box,{1,.45,.15,1})
             physics_gallery_primitive(&s,"Capsule",origin+mm.Vec3{1,1,0},{.7,.7,.7},.Capsule,capsule,{.25,1,.55,1})
-            if station==12 {field=asset.builder_entity(&s,"Directional box field",{position=origin});f:=fields.PHYSICS_FIELD_DEFAULT;f.shape=.Box;f.direction=.Directional;f.half_extents={2,3,2};f.force=50;f.falloff=.Constant;asset.builder_set(&s,field,f);turn_off(&s,field,"Physics_Field")}
+            if station==12 {field=asset.builder_entity(&s,"Directional box field",{position=origin});f:=phys.FORCE_FIELD_DEFAULT;f.force=50;f.along={0,1,0};asset.builder_set(&s,field,volume.box({2,3,2}));asset.builder_set(&s,field,f);turn_off(&s,field,"Force_Field")}
         case 17:
             target=asset.builder_entity(&s,"Baked geometry playback",{position=origin-mm.Vec3{0,1,0}})
             player:=cache.GEOMETRY_PLAYBACK_DEFAULT;player.source=sources.cache;player.playing=false;player.loop=false
@@ -202,7 +202,7 @@ write_physics_gallery :: proc(o:^Out) {
                 tint:=render.TINT_DEFAULT;asset.builder_set(&s,target,tint)
             }
             asset.builder_set(&s,target,config)
-            if station==14 {field=asset.builder_entity(&s,"Destructive box field",{position=origin});f:=fields.PHYSICS_FIELD_DEFAULT;f.shape=.Box;f.half_extents={1,2,1};f.strain=400;f.force=30;asset.builder_set(&s,field,f);turn_off(&s,field,"Physics_Field");asset.builder_set(&s,field,core.Transform{origin,mm.quat_axis_angle({0,1,0},.4),{1,1,1}})}
+            if station==14 {field=asset.builder_entity(&s,"Destructive box field",{position=origin});f:=phys.FORCE_FIELD_DEFAULT;f.force=30;strain:=destruct.STRAIN_FIELD_DEFAULT;strain.strain=400;asset.builder_set(&s,field,volume.box({1,2,1},blend=1));asset.builder_set(&s,field,f);asset.builder_set(&s,field,strain);turn_off(&s,field,"Force_Field");turn_off(&s,field,"Strain_Field");asset.builder_set(&s,field,core.Transform{origin,mm.quat_axis_angle({0,1,0},.4),{1,1,1}})}
         }
         physics_gallery_item(&s,label,u32(station),titles[station],details[station],origin,target,secondary,field)
     }
@@ -240,11 +240,11 @@ physics_gallery_extra :: proc(s:^asset.Scene_Builder,label:base.Asset_Id) {
     physics_gallery_item(s,label,21,"Physical character","Physical capsule shares solver contacts. E launches it with the public radial impulse API.",origin,e)
     origin={12,1,-40}
     pool:=asset.builder_entity(s,"Water pool",{position={12,0.6,-40}})
-    water:=phys.fluid_volume_box({2.5,0.6,2.5},1000)
-    asset.builder_set(s,pool,water)
+    asset.builder_set(s,pool,phys.FLUID_DEFAULT)
+    asset.builder_set(s,pool,volume.box({2.5,0.6,2.5}))
     bell:=asset.builder_entity(s,"Dry bell",{position={13.4,0.6,-41.4}})
-    air:=phys.fluid_volume_dry({0.8,0.8,0.8})
-    asset.builder_set(s,bell,air)
+    asset.builder_set(s,bell,phys.Fluid{})
+    asset.builder_set(s,bell,volume.box({0.8,0.8,0.8},priority=1))
     floater:=physics_gallery_floating(s,"Half the density of water",origin+mm.Vec3{-1.2,0.5,1},{.7,.7,.7},.Cube,phys.collider_box({.5,.5,.5}),500,{.9,.75,.35,1})
     physics_gallery_floating(s,"Light cylinder",origin+mm.Vec3{0,0.6,1.2},{.5,.9,.5},.Cylinder,phys.collider_cylinder(.5,.5),300,{.5,.8,1,1})
     physics_gallery_floating(s,"Capsule",origin+mm.Vec3{-1,0.6,-1},{.5,.5,.5},.Capsule,phys.collider_capsule(.5,.5),700,{.3,1,.6,1})
