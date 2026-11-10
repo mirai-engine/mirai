@@ -212,6 +212,8 @@ journal_diff :: proc(t:^core.Raw_Table,image:^Journal_Table,size:int,ranges:[][2
     seen:=image.seen
     d={table=t,image=image,size=size,ranges=ranges,c=core.raw_changes(t,&seen),authors=authors,only_authors=only_authors}
     if d.c.all {d.phase,d.at=2,len(image.entities)}
+    // Each entity once, however many times its row went.
+    if gone:=slice.clone(d.c.gone,context.temp_allocator);len(gone)>1 {slice.sort(gone);d.c.gone=slice.unique(gone)}
     return
 }
 
@@ -222,7 +224,7 @@ journal_differ :: proc(d:^Journal_Diff,image_row,row:int) -> bool {
 }
 
 // The next row the World and the image disagree on: of the entities whose
-// row went or turned off, once each, and of the rows stamped since; of every
+// row went or turned off, and of the rows stamped since; of every
 // row of both when the table holds rows the image did not see. Rows are
 // visited from the last, so a row dropped meanwhile does not hide another.
 journal_diff_next :: proc(d:^Journal_Diff) -> (r:Journal_Row,ok:bool) {
@@ -237,7 +239,7 @@ journal_diff_next :: proc(d:^Journal_Diff) -> (r:Journal_Row,ok:bool) {
             }
             e:=d.c.gone[d.at]
             d.at+=1
-            if slice.contains(d.c.gone[:d.at-1],e) || d.only_authors && !history_is_author(d.authors,e) {continue}
+            if d.only_authors && !history_is_author(d.authors,e) {continue}
             row:=core.raw_row(t,e)
             if row>=0 && t.stamps[row]>d.c.since {continue}
             if image_row:=journal_row(image,e);journal_differ(d,image_row,row) {return {e,image_row,row},true}
