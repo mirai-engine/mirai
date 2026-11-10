@@ -55,7 +55,8 @@ open_push :: proc "contextless" (open:^Open_Set,node:u32,key:f32) -> bool {
     if int(node)>=len(open.slot) {return false}
     index:=int(open.slot[node])
     if index>=0 {
-        if key>=open.key[index] {return true}
+        // Not lower: higher, equal, or a NaN, which has no order.
+        if !(key<open.key[index]) {return true}
         open.key[index]=key
         open_up(open,index)
         return true

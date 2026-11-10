@@ -22,6 +22,8 @@ Obstacle :: struct($V:typeid) {
 
 limit_length :: proc "contextless" (v:$V/[$N]f32,max_length:f32) -> V {
     length:=linalg.length(v)
+    // A vector whose length is not a number, or does not fit in one, has no direction to keep.
+    if !(length<=max(f32)) {return {}}
     return v*(max_length/length) if length>max_length && length>0 else v
 }
 
@@ -128,7 +130,7 @@ avoid_obstacles :: proc "contextless" (position,velocity:$V/[$N]f32,obstacles:[]
             force=perpendicular(side)*max_force
         }
     }
-    return force
+    return limit_length(force,max_force)
 }
 @(private)
 perpendicular :: proc "contextless" (v:$V/[$N]f32) -> V {

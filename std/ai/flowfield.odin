@@ -97,8 +97,9 @@ flow_field_direction :: #force_inline proc "contextless" (f:^Flow_Field,c:Cell) 
 }
 // The direction at a position in cell units (cell centers at whole numbers):
 // the four nearest cells' directions blended bilinearly and normalized, so an
-// agent turns smoothly across cell borders.
+// agent turns smoothly across cell borders. Zero at a position that is not finite.
 flow_field_sample :: proc "contextless" (f:^Flow_Field,position:math.Vec2) -> math.Vec2 {
+    if position-position!={} {return {}}
     x0,y0:=i32(cmath.floor(position.x)),i32(cmath.floor(position.y))
     fx,fy:=position.x-f32(x0),position.y-f32(y0)
     top:=flow_field_direction(f,{x0,y0})*(1-fx)+flow_field_direction(f,{x0+1,y0})*fx
