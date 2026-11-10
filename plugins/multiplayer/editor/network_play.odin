@@ -173,11 +173,13 @@ serve :: proc(s:^editor.Session,n:^Net_Play) -> string {
     }
     port,refused:=net_play_port(s)
     if port==0 {return refused}
+    invite,made:=wire.invite_token()
+    if !made {return "The game could not start: this system gives no secure random bytes to seal the network with"}
     players:=clamp(local_players(s),1,editor.PLAYER_PROCESSES)
     if s.play_players!=nil {s.play_players.players=players}
     n.party.online=clamp(n.party.online,0,editor.PLAYER_PROCESSES-players)
     n.party.ping=clamp(n.party.ping,0,1000)
-    n.role,n.port,n.serial,n.invite=.Server,port,u32(platform.clock_ns()>>10)|1,wire.invite_token()
+    n.role,n.port,n.serial,n.invite=.Server,port,u32(platform.clock_ns()>>10)|1,invite
     n.scene_ready=true
     n.reason={}
     n.phase=n.party.online>0?.Waiting:.Running
@@ -495,7 +497,8 @@ net_play_turn :: proc(s:^editor.Session,owner,players,online,ping:int) -> string
     if r==nil {return "The game could not start"}
     port,refused:=net_play_port(s)
     if port==0 {return refused}
-    token:=wire.invite_token()
+    token,made:=wire.invite_token()
+    if !made {return "The game could not start: this system gives no secure random bytes to seal the network with"}
     session_open(editor.run_ref(s,r),{server=true,port=port,invite=true,invite_token=token,timeout=NET_PLAY_STEPPED_TIMEOUT})
     code:=wire.invite_encode(wire.address_ip4(127,0,0,1,port),token,context.temp_allocator)
     for player in 1..=online {

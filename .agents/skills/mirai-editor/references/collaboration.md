@@ -22,8 +22,8 @@ Code: `collab.odin`, `collab_api.odin` and `collab_play.odin` (the host's networ
   ([invitations](../../mirai-networking/references/networking.md)): the address the router mapped
   for it ([port mapping](../../mirai-networking/references/port-mapping.md)) or, without a mapping,
   that of its network (`address_lan`: the one the system uses toward the internet, not a virtual
-  adapter's), and the token. Whoever enters without that token is rejected; the host's log shows
-  the code each time it changes.
+  adapter's), and the token. Whoever enters without that token gets no answer and times out; the
+  host's log shows the code each time it changes.
 - The host sees two codes in Session: **Same network**, with its address on the network, and
   **Internet**, with the one the router opened (`collab_internet_code`). From the host's network
   one enters with the network one: the internet one depends on the router returning the traffic to
@@ -115,8 +115,9 @@ Edits:
 
 - The handshake carries the world layout version: a hash of `COLLAB_VERSION` (that of the
   messages) and of names and sizes of the `World` tables.
-- If it differs, the host rejects the guest (`Denied_Version`: "has another version of the
-  project"). Both editors must be generated and compiled from the same project and engine.
+- If it differs, the guest stops on reading the host's challenge (`Denied_Version`: "has another
+  version of the project"). Both editors must be generated and compiled from the same project and
+  engine.
 
 ## When the host changes scene
 
