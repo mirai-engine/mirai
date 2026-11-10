@@ -179,8 +179,8 @@ made by hand, nothing is saved until Save, and one that would leave a tree that 
 changes nothing and says why.
 
 - `ui.inspect` gives the `.ui`, or with `node` that node and what it has, as the document that
-  `ui.write` takes back (`cook/author/ui_document.odin`): tokens, the files it `use`s, its `params`, named
-  styles with `extends` and their states, layouts, named animations, and the nodes
+  `ui.write` takes back (`cook/author/ui_document.odin`): tokens, the files it `use`s, its `params`,
+  named styles with `extends` and their states, layouts, named animations, and the nodes
   nested by `children`, each with what differs from a new node of its type and what its style does
   not give. Reading back names: what is written and read back is the same, and what the visual
   editor changed reads back by name too.

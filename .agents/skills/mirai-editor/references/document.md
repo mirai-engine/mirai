@@ -246,7 +246,8 @@ it, and without an answer the next startup offers it again:
 - An editor that ended because of its GPU left all its tabs (`recovery-tabs/`, with
   `documents_save_restart`): Recover opens them like a restart, with their unsaved assets.
 - Discard deletes what is offered and leaves the chains of this editor; closing without resolving
-  the notice keeps it. A session's chains are deleted by its normal close and, that of each document, by saving it
+  the notice keeps it. A session's chains are deleted by its normal close and, that of each
+  document, by saving it
   or undoing until it is clean. The internal restart uses its own snapshot and shows no notice.
 
 Native failures:

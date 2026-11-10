@@ -87,7 +87,8 @@ and the tick it started, and derives everything else from the tick against the s
 - Types: `mirai check plugins/abilities/runtime` and `plugins/abilities/editor` (with
   `-collection:plugins=plugins`).
 - Tests: `mirai test plugins/abilities/runtime` (`abilities_test.odin`: the blade kit combo,
-  the input delay and the wait for the branch, a window on the own clock, the charged dash with charges, a copy halfway that runs the same future, a cancel that leaves
+  the input delay and the wait for the branch, a window on the own clock, the charged dash with
+  charges, a copy halfway that runs the same future, a cancel that leaves
   nothing, replicas, lasting effects with stacks, cleanse and immunity, invalid sheets and
   requests, and a stable tick without allocations).
 - Methods: `mirai generate demo`, `mirai build editor demo --dev` and, in a session on a copy,

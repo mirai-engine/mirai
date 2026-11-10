@@ -34,11 +34,13 @@ difference with the catalog, it rules.
   [`play.record`, `play.seek`](references/methods.md#play) and
   [`mirai record`](references/api.md#mirai-record).
 - Checking a motion in one or two calls (an input timeline, a table of values per tick, one
-  image of cells around an entity): [`play.step`](references/methods.md#play) and [`capture`](references/methods.md#editor-and-viewport).
+  image of cells around an entity): [`play.step`](references/methods.md#play) and
+  [`capture`](references/methods.md#editor-and-viewport).
 - Walking the player to a place, with no bot, and turning the view at something: `play.step` with
   `drive` or `look_at` ([drive](../../../docs/game/testing/scenario.md#drive)).
 - Writing or changing a `.ui` (one nested document by name: `ui.write asset=<path>
-  document=@<file> save=true`, `ui.inspect` reads it back): [writing-ui](../../../docs/game/ui/writing-ui.md).
+  document=@<file>
+  save=true`, `ui.inspect` reads it back): [writing-ui](../../../docs/game/ui/writing-ui.md).
 - Reading, checking or writing the documents of interfaces, scenes and prefabs with no editor,
   from files of text under `source/`:
   [`mirai ui` and `mirai scene`](references/api.md#mirai-ui-and-mirai-scene).

@@ -278,7 +278,8 @@ entities that have it:
 ## Build
 
 The engine is compiled into dynamic libraries, one per group of layers, with declarations that
-allow compiling each library and the project separately. The editor and the player load the project's world through
+allow compiling each library and the project separately. The editor and the player load the
+project's world through
 `World_Info`. The distributed game is compiled from source and excludes the engine-time packages.
 
 - Targets, collections, outputs and binary updates:
@@ -334,8 +335,8 @@ Numbered layers; a package only imports lower layers.
   they combine, and wind), `render`, `audio`, `gui`, `input` (devices, actions, seats, driving and
   `Move_Input`), `camera` (each seat's camera and the game view), `save`.
 - **6** `cook/*`: engine-time; world generator and project build, `cook/cache` (what is built,
-  stored by what makes it), textures (with the encoders `cook/compressor/texture`, of BC1 to BC7, and
-  `cook/compressor/bc7split`), importers, shaders, `cook/workspace` (a worktree's main
+  stored by what makes it), textures (with the encoders `cook/compressor/texture`, of BC1 to BC7,
+  and `cook/compressor/bc7split`), importers, shaders, `cook/workspace` (a worktree's main
   checkout, the dependencies folder, shared cache and locks between processes), `cook/image` (PNG
   to RGBA8, difference, statistics, montage, crop, enlargement and pixels of captures),
   `cook/movie` (the files of a recording: half EXR, 16-bit PNG and WAV) and `cook/install` (a
@@ -375,4 +376,5 @@ Numbered layers; a package only imports lower layers.
 The low-level packages `render`, `audio` and `std/anim`, and the `physics` solver, are declared
 `mirai_render`, `mirai_audio`, `mirai_anim` and `mirai_physics` so they do not clash with the
 libraries that use them; these import them with aliases (`gpu`, `mixer`, `lib`, `sim`). For the
-same reason `cook/compressor/bc7split` is declared `bc7split_encode`, apart from `std/compressor/bc7split`.
+same reason `cook/compressor/bc7split` is declared `bc7split_encode`, apart from
+`std/compressor/bc7split`.

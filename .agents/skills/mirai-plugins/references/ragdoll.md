@@ -28,7 +28,8 @@ is detected in memory for the call and the `.skeleton` does not change.
 - The rig is the entity with `Animation` whose `Mesh_Renderer` shows a skeletal mesh; a skin with
   `Pose_Source` leads to its rig. A body that cannot be detected, or one without a pelvis, which
   is the root, fails and the `fix` asks for `skeleton.body.set`.
-- On the document, also while a game plays. It validates rig, skeleton, scale, joints and masses before writing; bodies,
+- On the document, also while a game plays. It validates rig, skeleton, scale, joints and masses
+  before writing; bodies,
   components and the rig's `Ragdoll` (from `RAGDOLL_DEFAULT`, with `mode`) enter a single undo
   step, or nothing remains. The ragdoll the rig had leaves in that same step.
 - One body per part: pelvis, spine and chest (the chain between pelvis and neck split at its
@@ -85,7 +86,8 @@ is detected in memory for the call and the `.skeleton` does not change.
 
 ## Verification
 
-- `plugins/ragdoll/runtime` with `-collection:plugins=plugins`; `--release` only if a failure may depend on optimization.
+- `plugins/ragdoll/runtime` with `-collection:plugins=plugins`; `--release` only if a failure may
+  depend on optimization.
 - `plugins/ragdoll/editor` (no GPU), for `ragdoll.setup`:
   `ragdoll_setup_builds_a_body_and_limited_joint_per_part_of_a_humanoid_in_one_step_of_undo`,
   `ragdoll_setup_finds_a_body_the_skeleton_does_not_store_and_leaves_the_skeleton_as_it_is` and
@@ -95,6 +97,6 @@ is detected in memory for the call and the `.skeleton` does not change.
 - `plugins/animation/runtime`:
   `final_world_poses_update_skin_and_sockets_in_the_same_tick_without_stable_allocations` and
   `partial_final_world_poses_blend_once_and_do_not_stretch_a_translated_chain`.
-- The ragdoll station of `physics_gallery/physics.scene` alternates Animated, Driven and Simulated until
-  the first E, which then changes the mode; interaction and graphics validation in
+- The ragdoll station of `physics_gallery/physics.scene` alternates Animated, Driven and Simulated
+  until the first E, which then changes the mode; interaction and graphics validation in
   [the demo](../../mirai-gameplay/references/demo.md).

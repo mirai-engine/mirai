@@ -598,8 +598,8 @@ one per local player that has screens or sees a `World_Widget`.
   `Hovered`, `Unhovered`, `Focused`, `Unfocused`, `Dragged`, `Dropped`, `Finished`) and `Back`
   (Escape or East on the top screen with `back`, if the UI did not use them), `Menu` (the action,
   `gui.menu_pressed`), with the entity of
-  the screen or the panel, the node's `base.name_hash`, its `rect` (window pixels for a screen, panel
-  units for a world panel), `item`, `on`, `value`, `text` (of a field),
+  the screen or the panel, the node's `base.name_hash`, its `rect` (window pixels for a screen,
+  panel units for a world panel), `item`, `on`, `value`, `text` (of a field),
   `from`, `from_item` and `from_entity`: in a `Dropped`, the entity of the interface it came from
   (`Context.owner` is the entity while each tree is built). They are those of the last drawn frame,
   delivered to the first following tick and to no other (`gui_events_deliver`, `fixed`, stage

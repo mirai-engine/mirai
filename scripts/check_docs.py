@@ -16,6 +16,11 @@ costs a bounded read. A file of docs/game, tracked or still being written, links
 docs/game, opens with frontmatter when it is a topic and stays within the line cap of its kind: the
 engine serves that folder to projects, where the rest of the repository does not exist.
 
+Every documentation file also keeps its lines within LINE_WIDTH (a lone URL and a table row may
+pass) and has no two headings with the same anchor. A file named in backticks (.odin, .slang, .py)
+is tracked, and a test named in a Verification section exists in some *_test.odin. Every skill
+folder is a row of the table of README.md, and a root CLAUDE.md imports AGENTS.md.
+
 Usage: uv run scripts/check_docs.py
 """
 
@@ -48,6 +53,39 @@ MAP = re.compile(r"^## Map[ \t]*$(.*?)(?=^## |\Z)", re.S | re.M)
 HEADING_LINK = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
 TAG = re.compile(r"<[^>]+>")
 ANCHOR = re.compile(r"<a\s+(?:id|name)=\"([^\"]+)\"")
+SOURCE_SUFFIXES = (".odin", ".slang", ".py")
+UNLINTED_PREFIXES = ("assets/", "demo/", "third_party/")
+UNLINTED_NAMES = ("THIRD_PARTY_NOTICES.md", "UPSTREAM.md")
+PROJECT_DOCS = ("docs/game/", "templates/")
+# Names a document may use that no tracked file has: generated files, the include paths of shaders,
+# files of the project a game generates, files of other repositories and placeholders.
+UNTRACKED_NAMES = (
+    "render/shaders_gen.odin",
+    "shaders_gen_test.odin",
+    "material_schema.slang",
+    "surface_programs.slang",
+    "surface_coverage.slang",
+    "postprocess_programs.slang",
+    "vfx_programs.slang",
+    "ui_programs.slang",
+    "extensions.slang",
+    "extension_hooks.slang",
+    "extension_probes.slang",
+    "game/main.odin",
+    "game/names.odin",
+    "editor/main.odin",
+    "play/main.odin",
+    "programs/plugins/deform/deform.slang",
+    "scripts/validate.py",
+    "name.comp.slang",
+    "name.vert.slang",
+    "name.frag.slang",
+    "a.odin",
+    "b.odin",
+)
+TEST_NAME = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$")
+TEST_WORDS = 5
+WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 def tracked_files(root: Path) -> list[str]:
@@ -191,10 +229,135 @@ def game_doc_errors(p: str, text: str) -> list[str]:
     lines = text.splitlines()
     if len(lines) > cap:
         errors.append(f"{p}: has {len(lines)} lines; keep {cap}")
-    for number, line in enumerate(lines, 1):
-        if len(line) > LINE_WIDTH and " " in line.strip():
-            errors.append(f"{p}:{number}: has {len(line)} characters; keep {LINE_WIDTH}")
     return errors
+
+
+def linted(p: str) -> bool:
+    """Documentation the repository writes itself, not the files of third parties."""
+    name = posixpath.basename(p)
+    return not (p.startswith(UNLINTED_PREFIXES) or name in UNLINTED_NAMES or name.startswith("LICENSE"))
+
+
+def prose(text: str) -> list[tuple[int, str]]:
+    """Every line outside fenced code as (number, line)."""
+    found = []
+    fence = ""
+    for number, line in enumerate(text.split("\n"), 1):
+        marker = re.match(r"^(```|~~~)", line)
+        if marker:
+            fence = "" if fence == marker.group(1) else fence or marker.group(1)
+        elif not fence:
+            found.append((number, line))
+    return found
+
+
+def width_errors(p: str, text: str) -> list[str]:
+    """Lines above LINE_WIDTH, except a lone token (a URL) and a table row."""
+    return [
+        f"{p}:{number}: has {len(line)} characters; keep {LINE_WIDTH}"
+        for number, line in enumerate(text.splitlines(), 1)
+        if len(line) > LINE_WIDTH and " " in line.strip() and not line.lstrip().startswith("|")
+    ]
+
+
+def duplicate_heading_errors(p: str, text: str) -> list[str]:
+    """Two headings of a file with the same anchor: a link reaches only the first."""
+    seen: dict[str, int] = {}
+    errors: list[str] = []
+    for _, heading, number, _ in sections(text):
+        key = slug(heading)
+        if key in seen:
+            errors.append(f"{p}:{number}: heading {heading!r} repeats the one at line {seen[key]}")
+        else:
+            seen[key] = number
+    return errors
+
+
+def source_names(span: str) -> list[str]:
+    """The files named by the words of one inline code span, without line numbers."""
+    names = []
+    for word in span.split():
+        word = re.sub(r"(?::\d+(?:-\d+)?)?[.,;:)]*$", "", word.lstrip("(")).removeprefix("./")
+        if (
+            word.endswith(SOURCE_SUFFIXES)
+            and word.rpartition("/")[2].partition(".")[0].strip("_")
+            and not word.startswith(("_", "/", "-", "~", ".mirai/", "bin/", ".deps/"))
+            and not re.search(r"[*<>{}$\[\]|=%\\]", word)
+            and not re.match(r"^[A-Za-z]:", word)
+        ):
+            names.append(word)
+    return names
+
+
+def untracked_name(name: str) -> bool:
+    return any(name == g or name.endswith("/" + g) for g in UNTRACKED_NAMES)
+
+
+def file_errors(p: str, text: str, known: set[str]) -> list[str]:
+    """Files named in backticks that the repository does not track."""
+    return [
+        f"{p}:{number}: names {name}, which is not a tracked file"
+        for number, line in prose(text)
+        for span in INLINE.findall(line)
+        for name in source_names(span.strip("`"))
+        if name not in known and not untracked_name(name)
+    ]
+
+
+def known_paths(files: list[str]) -> set[str]:
+    """Every tracked path and each of its trailing sub-paths: a doc may name a file by its tail."""
+    known: set[str] = set()
+    for f in files:
+        parts = f.split("/")
+        known.update("/".join(parts[i:]) for i in range(len(parts)))
+    return known
+
+
+def test_words(root: Path, files: list[str]) -> set[str]:
+    """The identifiers of the test files, which include the names of their tests."""
+    words: set[str] = set()
+    for f in files:
+        if f.endswith("_test.odin") and (root / f).exists():
+            words.update(WORD.findall((root / f).read_text(encoding="utf-8")))
+    return words
+
+
+def verification_name_errors(p: str, text: str, tests: set[str]) -> list[str]:
+    """Test-like names in a Verification section that no *_test.odin declares."""
+    spans = [
+        (start, start + size)
+        for _, heading, start, size in sections(text)
+        if heading.lower().startswith("verification")
+    ]
+    errors = []
+    for number, line in prose(text):
+        if not any(start <= number < end for start, end in spans):
+            continue
+        for span in INLINE.findall(line):
+            token = span.strip("`")
+            if (
+                TEST_NAME.match(token)
+                and (token.count("_") + 1 >= TEST_WORDS or token.startswith("test_"))
+                and token not in tests
+            ):
+                errors.append(f"{p}:{number}: Verification names {token}, which no *_test.odin declares")
+    return errors
+
+
+def readme_errors(skills: list[str], readme: str) -> list[str]:
+    """Skill folders that the table of README.md does not list."""
+    return [
+        f"README.md: the skill table lacks {name}; add its row"
+        for name in skills
+        if f"{SKILLS}{name}/SKILL.md" not in readme
+    ]
+
+
+def claude_errors(claude: str | None, agents: bool) -> list[str]:
+    """A root CLAUDE.md that does not import AGENTS.md leaves Claude Code without its rules."""
+    if claude is not None and agents and not re.search(r"^@AGENTS\.md\s*$", claude, re.M):
+        return ["CLAUDE.md: must import AGENTS.md with a line @AGENTS.md"]
+    return []
 
 
 def main() -> int:
@@ -232,6 +395,17 @@ def main() -> int:
     for p in sorted(game_docs):
         errors += game_doc_errors(p, texts[p])
 
+    known = known_paths(files)
+    tests = test_words(root, files)
+    for p in markdown:
+        if not linted(p):
+            continue
+        errors += width_errors(p, texts[p])
+        errors += duplicate_heading_errors(p, texts[p])
+        if not p.startswith(PROJECT_DOCS):
+            errors += file_errors(p, texts[p], known)
+            errors += verification_name_errors(p, texts[p], tests)
+
     skills = sorted(p for p in present if p.startswith(SKILLS) and p.count("/") == 3)
     for p in skills:
         if posixpath.basename(p) == "SKILL.md":
@@ -240,6 +414,12 @@ def main() -> int:
     for p in markdown:
         if p.startswith(SKILLS) and "/references/" in p:
             errors += section_errors(p, texts[p])
+    skill_names = sorted({p.split("/")[2] for p in skills})
+    errors += readme_errors(skill_names, texts.get("README.md", ""))
+    claude = root / "CLAUDE.md"
+    errors += claude_errors(
+        claude.read_text(encoding="utf-8") if claude.exists() else None, "AGENTS.md" in present
+    )
     if SKILLS_LINK not in tracked_symlinks(root):
         errors.append(f"{SKILLS_LINK}: must be a symlink to ../{SKILLS.rstrip('/')} in git")
     elif not (root / SKILLS_LINK).is_symlink():
