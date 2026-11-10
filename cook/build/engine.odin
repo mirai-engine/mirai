@@ -10,7 +10,6 @@ import "mirai:cook/shaders"
 import "mirai:cook/workspace"
 import "mirai:project"
 import "mirai:std/base"
-import "mirai:std/subprocess"
 
 // The binaries of the engine, each built once per version of what it is
 // built from, under <engine>/.mirai/engine/<mode>: those of dev and of
@@ -151,11 +150,11 @@ engine_libraries :: proc(mode:Engine_Mode,allocator:=context.allocator) -> []Eng
 // Changes when what declare writes changes, so that binaries built by an
 // earlier version are built again.
 @(private)
-DECLARE_VERSION :: 11
+DECLARE_VERSION :: 12
 
-// The collection the stage of the engine is compiled as (Declare_Desc.staged).
+// The collection a stage is compiled as (Declare_Desc.staged): of the engine, and of a plugin library.
 @(private)
-ENGINE_STAGE_COLLECTION :: "staged"
+STAGE_COLLECTION :: "staged"
 
 Engine_Paths :: struct {
     mode:Engine_Mode,                 // of the binaries there: the one asked for, but in an installed engine
@@ -211,7 +210,7 @@ ENGINE_MODE_HERE :: Engine_Mode.Dev when ODIN_OPTIMIZATION_MODE==.Minimal || ODI
 ENGINE_STAMP :: "engine.stamp"
 
 // The mode of the binaries an installed engine carries, the only one it
-// has: --dev builds the libraries of a project at -o:minimal against them.
+// has: dev builds the libraries of a project at -o:minimal against them.
 ENGINE_MODE_INSTALLED :: Engine_Mode.Release
 
 // The mode of the binaries a command gets: the one it asks for, but in an
@@ -408,9 +407,9 @@ main :: proc() {os.exit(author.command(os.args[1:],os.to_writer(os.stdout),os.to
 @(private)
 engine_library_stage :: proc(root:string,paths:Engine_Paths,library:Engine_Library) -> (errors:[]string,changed:Declare_Changed,ok:bool) {
     _,linked:=engine_library_files(paths,library,context.temp_allocator)
-    errors,changed=declare({root=root,packages=library.packages,binary="mirai",library=linked,stage=paths.stage,decl=paths.decl,staged=ENGINE_STAGE_COLLECTION,names=true,slots=paths.mode==.Dev,definition=engine_definition(paths,library)})
+    errors,changed=declare({root=root,packages=library.packages,binary="mirai",library=linked,stage=paths.stage,decl=paths.decl,staged=STAGE_COLLECTION,names=true,slots=paths.mode==.Dev,definition=engine_definition(paths,library)})
     if len(errors)>0 {return errors,changed,true}
-    entry,written:=entry_write(paths.stage,engine_library_entry(library,context.temp_allocator),entry_imports(ENGINE_STAGE_COLLECTION,library.packages)[:])
+    entry,written:=entry_write(paths.stage,engine_library_entry(library,context.temp_allocator),entry_imports(STAGE_COLLECTION,library.packages)[:])
     changed.stage||=entry
     return nil,changed,written
 }
@@ -455,11 +454,23 @@ engine_reach :: proc(root:string,libraries:[]Engine_Library,only:[]bool=nil) -> 
             if !only[which] {continue}
             for before in 0..<which {reach.needs[which][before]=only[before]}
         }
+        skip:=make([]string,len(library.packages),a)
+        for path,at in library.packages {skip[at]=fmt.tprintf("mirai:%s",path)}
         for path,at in library.packages {
             index:=library.first+at
             owner[index]=which
             row:=&packages[index]
-            declared_names_of(engine_sources(root,{path}),library.packages,&reach.names[which],row,index)
+            errors:=make([dynamic]string,a)
+            _,files,_:=sources_read(project.path(root,path,allocator=a),&errors,a)
+            declared_named(files,skip,&reach.names[which])
+            // A package of the engine imports only the ones before it.
+            for file in files {
+                for imp in file.imports {
+                    literal:=strings.trim(imp.fullpath,"\"`")
+                    if !strings.has_prefix(literal,ENGINE_COLLECTION) {continue}
+                    if other,found:=engine_package_index(literal[len(ENGINE_COLLECTION):]);found && other<index {row[other]=true}
+                }
+            }
             if only!=nil {continue}
             for other in 0..<index {
                 if !row[other] {continue}
@@ -619,16 +630,19 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
     }
     programs:=engine_program_sources(paths)
     program_names:=make(map[string]bool,context.temp_allocator)
-    for program in programs {declared_names(program.source,nil,&program_names)}
-    programs_against:=declared_key(declared,program_names)
-    build_programs:=desc.force || stamp.programs!=plan.programs || stamp.programs_against!=programs_against
+    build_programs:=desc.force || stamp.programs!=plan.programs
     for program in programs {
         folder:=project.path(paths.folder,"programs",program.package_name,allocator=context.temp_allocator)
         if os.make_directory_all(folder)!=nil && !os.is_dir(folder) {return engine_fail(.Write_Failed,program.name,"")}
         written,error:=write_changed(project.path(folder,"main.odin",allocator=context.temp_allocator),program.source)
         if error!=nil {return engine_fail(.Write_Failed,program.name,"")}
         build_programs||=written || !os.is_file(program.output)
+        errors:=make([dynamic]string,context.temp_allocator)
+        _,files,_:=sources_read(folder,&errors,context.temp_allocator)
+        declared_named(files,nil,&program_names)
     }
+    programs_against:=declared_key(declared,program_names)
+    build_programs||=stamp.programs_against!=programs_against
 
     // The stamp says what stands as each part ends: a part that fails costs
     // itself and not the ones that ended before it.
@@ -640,7 +654,8 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
 
     tasks:=make([dynamic]Engine_Task,context.temp_allocator)
     for library,which in libraries {
-        task:=Engine_Task{name=fmt.tprintf("library %s",library.file),stream=library.file,library=which,state=.Done}
+        output,_:=engine_library_files(paths,library,context.temp_allocator)
+        task:=Engine_Task{name=fmt.tprintf("library %s",library.file),compile={streams=engine_streams(paths,library.file),staged=output,library=which},state=.Done}
         if compile[which] {
             task.state=.Pending
             task.command=engine_library_command(compiler,paths,library,slice.contains(reach.needs[which],true),mode,plan.flags[:])
@@ -651,7 +666,7 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
     every:=make([]bool,len(libraries),context.temp_allocator)
     slice.fill(every,true)
     for program in programs {
-        task:=Engine_Task{name=program.name,stream=fmt.tprintf("program-%s",program.package_name),library=-1,state=.Done,needs=every}
+        task:=Engine_Task{name=program.name,compile={streams=engine_streams(paths,fmt.tprintf("program-%s",program.package_name)),staged=program.output,library=-1},state=.Done,needs=every}
         if build_programs {
             task.state=.Pending
             task.command=engine_program_command(compiler,paths,program,plan.flags[:])
@@ -659,7 +674,7 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
         append(&tasks,task)
     }
     for &task in tasks {
-        if task.library>=0 {task.needs=reach.needs[task.library]}
+        if task.compile.library>=0 {task.needs=reach.needs[task.compile.library]}
         // What they link against was made ahead: they all compile at once.
         if IMPORT_LIBRARIES_AHEAD {task.needs=nil}
     }
@@ -683,12 +698,16 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
 @(private)
 Engine_Task :: struct {
     name:string,    // the step it is
-    stream:string,  // the name of the files of its streams
-    library:int,    // -1: a program
     command:[]string,
     needs:[]bool,   // the libraries it links against: it starts once none of them is being built
     state:enum u8 {Done,Pending,Running,Failed},
-    process:os.Process,
+    compile:Compile, // library: of the libraries, -1 for a program
+}
+
+// The files of the streams of a compiler of the engine, named after what it builds.
+@(private)
+engine_streams :: proc(paths:Engine_Paths,name:string) -> [2]string {
+    return {project.path(paths.work,fmt.tprintf("%s.err",name),allocator=context.temp_allocator),project.path(paths.work,fmt.tprintf("%s.out",name),allocator=context.temp_allocator)}
 }
 
 // Runs the pending tasks, as many at once as compilers_at_once, each once the
@@ -701,9 +720,6 @@ engine_tasks_run :: proc(root:string,paths:Engine_Paths,libraries:[]Engine_Libra
     if os.make_directory_all(paths.work)!=nil && !os.is_dir(paths.work) {return engine_fail(.Write_Failed,paths.work,""),false}
     limit:=compilers_at_once()
     ok=true
-    streams :: proc(paths:Engine_Paths,task:^Engine_Task) -> [2]string {
-        return {project.path(paths.work,fmt.tprintf("%s.err",task.stream),allocator=context.temp_allocator),project.path(paths.work,fmt.tprintf("%s.out",task.stream),allocator=context.temp_allocator)}
-    }
     for {
         running:=0
         for task in tasks {
@@ -715,33 +731,19 @@ engine_tasks_run :: proc(root:string,paths:Engine_Paths,libraries:[]Engine_Libra
             for needed,which in task.needs {
                 if needed && tasks[which].state!=.Done {continue start}
             }
-            files:=streams(paths,&task)
-            opened:[2]^os.File
-            for file,i in files {
-                stream,error:=os.open(file,{.Write,.Create,.Trunc})
-                if error!=nil {
-                    if i>0 {os.close(opened[0])}
-                    failed=engine_fail(.Write_Failed,task.name,"")
-                    ok=false
-                    break start
-                }
-                opened[i]=stream
-            }
-            process,error:=subprocess.start({command=task.command,env=child_environment(root,context.temp_allocator),stderr=opened[0],stdout=opened[1]},compiler_limits(root))
-            os.close(opened[0]);os.close(opened[1])
-            if error!=nil {
+            if !compile_start(&task.compile,root,task.command,child_environment(root,context.temp_allocator)) {
                 failed=engine_fail(.Compiler_Failed,task.name,"")
                 ok=false
                 break
             }
-            task.process,task.state=process,.Running
+            task.state=.Running
             running+=1
         }
         if running==0 {break}
         waited:=false
         for &task in tasks {
             if task.state!=.Running {continue}
-            state,error:=os.process_wait(task.process,0 if waited else (os.TIMEOUT_INFINITE if running==1 else WAIT_STEP))
+            state,error:=os.process_wait(task.compile.process,0 if waited else (os.TIMEOUT_INFINITE if running==1 else WAIT_STEP))
             waited=true
             if !state.exited {
                 if general,is_general:=error.(os.General_Error);is_general && general==.Timeout {continue}
@@ -752,21 +754,10 @@ engine_tasks_run :: proc(root:string,paths:Engine_Paths,libraries:[]Engine_Libra
                 }
                 continue
             }
-            files:=streams(paths,&task)
-            said:[2]string
-            for file,i in files {
-                read,_:=os.read_entire_file(file,context.temp_allocator)
-                said[i]=string(read)
-            }
-            diagnostics,rest:=diagnostics_parse(said[0],context.allocator)
-            bad:=state.exit_code!=0
-            for diagnostic in diagnostics {
-                if diagnostic.severity==.Error {bad=true}
-            }
-            if !bad {
+            diagnostics,text,failure,_:=compile_end(&task.compile,state.exit_code)
+            if failure==.None {
                 task.state=.Done
-                for file in files {_=os.remove(file)}
-                if which:=task.library;ok && which>=0 {
+                if which:=task.compile.library;ok && which>=0 {
                     stamp.libraries[which]=built[which]
                     _=engine_stamp_write(paths.stamp,stamp^,libraries)
                     append(compiled,strings.clone(libraries[which].file,compiled.allocator))
@@ -776,9 +767,7 @@ engine_tasks_run :: proc(root:string,paths:Engine_Paths,libraries:[]Engine_Libra
             }
             task.state=.Failed
             if !ok {continue}
-            text:=strings.trim_space(strings.concatenate({rest,"\n",said[1]},context.temp_allocator))
-            if text=="" && len(diagnostics)==0 {text=compiler_silent_failure(state.exit_code,context.temp_allocator)}
-            failed=engine_fail(.Out_Of_Memory if compiler_out_of_memory(text) else .Compile,task.name,text)
+            failed=engine_fail(failure,task.name,text)
             ok=false
             // The diagnostics of a staged source point at the source.
             for &diagnostic in diagnostics {
@@ -797,7 +786,7 @@ engine_library_command :: proc(compiler:string,paths:Engine_Paths,library:Engine
     output,_:=engine_library_files(paths,library,context.temp_allocator)
     command:=make([dynamic]string,context.temp_allocator)
     append(&command,compiler,"build",project.path(paths.stage,engine_library_entry(library,context.temp_allocator),allocator=context.temp_allocator),"-build-mode:dll")
-    append(&command,fmt.tprintf("-collection:mirai=%s",paths.decl),fmt.tprintf("-collection:%s=%s",ENGINE_STAGE_COLLECTION,paths.stage),fmt.tprintf("-out:%s",output))
+    append(&command,fmt.tprintf("-collection:mirai=%s",paths.decl),fmt.tprintf("-collection:%s=%s",STAGE_COLLECTION,paths.stage),fmt.tprintf("-out:%s",output))
     append(&command,..flags)
     append(&command,"-json-errors")
     // A library finds the ones it links beside it, whatever loads it. The many
@@ -835,34 +824,6 @@ engine_installed_present :: proc(root:string) -> bool {
     for library in engine_libraries(ENGINE_MODE_INSTALLED,context.temp_allocator) {present&&=library_present(engine_library_files(paths,library,context.temp_allocator))}
     for program in engine_programs(paths) {present&&=os.is_file(program)}
     return present
-}
-
-// Leaves in stage the declarations of the packages as decl has them: what
-// is the same by size and date is not copied again, and what decl no longer
-// has goes. What the stage builds compiles against them.
-@(private)
-decl_mirror :: proc(stage,decl:string,packages:[]string) -> bool {
-    for path in packages {
-        from:=project.path(decl,path,allocator=context.temp_allocator)
-        to:=project.path(stage,path,allocator=context.temp_allocator)
-        if os.make_directory_all(to)!=nil && !os.is_dir(to) {return false}
-        sources,error:=os.read_all_directory_by_path(from,context.temp_allocator)
-        if error!=nil {return false}
-        copies,_:=os.read_all_directory_by_path(to,context.temp_allocator)
-        present:=make(map[string]os.File_Info,context.temp_allocator)
-        for entry in copies {
-            if entry.type!=.Directory && strings.has_suffix(entry.name,".odin") {present[entry.name]=entry}
-        }
-        for entry in sources {
-            if entry.type==.Directory || !strings.has_suffix(entry.name,".odin") {continue}
-            copy,found:=present[entry.name]
-            delete_key(&present,entry.name)
-            if found && copy.size==entry.size && time.diff(entry.modification_time,copy.modification_time)>=0 {continue}
-            if os.copy_file(project.path(to,entry.name,allocator=context.temp_allocator),entry.fullpath)!=nil {return false}
-        }
-        for _,stale in present {_=os.remove(stale.fullpath)}
-    }
-    return true
 }
 
 // The folder of the libraries of the engine in the cache every checkout of the repository shares.
@@ -1099,7 +1060,8 @@ engine_flags :: proc(root:string,dev:bool) -> [dynamic]string {
     return flags
 }
 
-// The sources of some packages under root, sorted, and the files given besides.
+// The sources of some packages under root, sorted, with the files they load
+// (#load and its kin: what is built from them reads those too), and the files given besides.
 @(private)
 engine_sources :: proc(root:string,packages:[]string,files:..string) -> []string {
     list:=make([dynamic]string,context.temp_allocator)
@@ -1109,6 +1071,10 @@ engine_sources :: proc(root:string,packages:[]string,files:..string) -> []string
         for entry in entries {
             if entry.type==.Directory || !strings.has_suffix(entry.name,".odin") || strings.has_suffix(entry.name,"_test.odin") {continue}
             append(&list,slashes(entry.fullpath,context.temp_allocator))
+            text,_:=os.read_entire_file(entry.fullpath,context.temp_allocator)
+            for loaded in loaded_files(string(text),folder) {
+                if !slice.contains(list[:],loaded) {append(&list,loaded)}
+            }
         }
     }
     for file in files {append(&list,slashes(file,context.temp_allocator))}

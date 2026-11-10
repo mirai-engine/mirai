@@ -7,6 +7,7 @@ import "mirai:core"
 import "mirai:std/ai"
 import mm "mirai:std/math"
 import nav "plugins:navigation/runtime"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
 // Counts what is asked of it and gives nothing: a tick that must not allocate runs with it.
@@ -52,8 +53,8 @@ Behavior_World :: struct {
     paths:core.Table(nav.Nav_Path),
     fars:core.Table(nav.Nav_Far),
     agents:core.Table(nav.Nav_Agent),
-    walks:core.Table(phys.Walk),
-    swims:core.Table(phys.Swim),
+    walks:core.Table(locomotion.Walk),
+    swims:core.Table(locomotion.Swim),
     turns:Perceiving,
     noises:Noises,
     events:Perception_Events,
@@ -520,9 +521,9 @@ the_path_of_places_walks_only_what_the_querier_walks :: proc(t:^testing.T) {
     walker,swimmer:=core.create(&world.entities),core.create(&world.entities)
     for e in ([]core.Entity{walker,swimmer}) {
         core.add(&world.agents,e,nav.NAV_AGENT_DEFAULT)
-        core.add(&world.walks,e,phys.Walk{max_speed=4,jump_height=1})
+        core.add(&world.walks,e,locomotion.Walk{max_speed=4,jump_height=1})
     }
-    core.add(&world.swims,swimmer,phys.SWIM_DEFAULT)
+    core.add(&world.swims,swimmer,locomotion.SWIM_DEFAULT)
     core.test_world_settle(&world)
     places:Places
     defer places_free(&places)
@@ -883,17 +884,18 @@ a_tick_with_nothing_to_do_goes_through_no_row :: proc(t:^testing.T) {
     testing.expect(t,core.has(&f.states,box))
     smart_update(core.read(&f.objects),&f.states,&f.uses,{seconds=1})
     core.test_world_settle(&f.behavior)
-    testing.expect(t,f.uses.layouts==[2]u64{core.layout(&f.objects),core.layout(&f.states)})
+    shapes:=f.uses.shapes
+    testing.expect(t,!core.reshaped(&f.objects,&shapes[0]) && !core.reshaped(&f.states,&shapes[1]))
     // One without its state is not looked for while the tables say nothing changed.
     other:=placed(&f,{})
     core.add(&f.objects,other,Smart_Object{})
     core.test_world_settle(&f.behavior)
-    changed:=f.uses.layouts
-    f.uses.layouts={core.layout(&f.objects),core.layout(&f.states)}
+    changed:=f.uses.shapes
+    _=core.reshaped(&f.objects,&f.uses.shapes[0]) | core.reshaped(&f.states,&f.uses.shapes[1])
     smart_update(core.read(&f.objects),&f.states,&f.uses,{seconds=2})
     core.test_world_settle(&f.behavior)
     testing.expect(t,!core.has(&f.states,other))
-    f.uses.layouts=changed
+    f.uses.shapes=changed
     smart_update(core.read(&f.objects),&f.states,&f.uses,{seconds=3})
     core.test_world_settle(&f.behavior)
     testing.expect(t,core.has(&f.states,other))

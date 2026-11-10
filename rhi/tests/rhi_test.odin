@@ -5,6 +5,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:strings"
 import "core:math"
+import "core:mem"
 import "core:sync"
 import "core:testing"
 import "core:time"
@@ -216,12 +217,23 @@ rhi_raster_uses_y_up_clip_space :: proc(t: ^testing.T) {
 		{{0.8, -0.8, 0.5, 1}, {0, 0, 1, 1}},
 		{{0, 0.9, 0.5, 1}, {1, 0, 0, 1}},
 	}
+	// A compute copy writes the vertices the pass reads in the same frame, and
+	// nothing declares that read: the pass transitions what its draws bind.
+	source := rhi.buffer_create(d, {size = size_of(vertices), usage = {.Storage}, memory = .GPU, name = "source"})
 	buffer := rhi.buffer_create(d, {size = size_of(vertices), usage = {.Storage}, memory = .GPU, name = "vertices"})
-	rhi.buffer_upload_slice(d, buffer, 0, vertices[:])
+	rhi.buffer_upload_slice(d, source, 0, vertices[:])
+	fill := rhi.pipeline_create_compute(d, {shader = rhi.test_shader("fill.comp"), name = "fill"})
+	testing.expect(t, fill != 0, rhi.device_error(d))
 	cmd, ok := rhi.frame_begin(d)
 	testing.expect(t, ok)
 	if !ok {return}
-	rhi.cmd_barrier_buffer(cmd, buffer, .Shader_Read)
+	Params :: struct {count: u32, scale, offset: f32, pad: u32}
+	params := Params{count = size_of(vertices) / size_of(f32), scale = 1}
+	rhi.cmd_bind_pipeline(cmd, fill)
+	rhi.cmd_set_constants(cmd, 0, &params, size_of(params))
+	rhi.cmd_bind_buffer(cmd, 1, source)
+	rhi.cmd_bind_buffer(cmd, 2, buffer)
+	rhi.cmd_dispatch(cmd, 1)
 	pass := rhi.Render_Pass_Desc{color_count = 1, name = "triangle"}
 	pass.colors[0] = {texture = target, load = .Clear, store = .Store, clear = {0, 0.5, 0, 1}}
 	rhi.cmd_begin_render_pass(cmd, &pass)
@@ -239,8 +251,10 @@ rhi_raster_uses_y_up_clip_space :: proc(t: ^testing.T) {
 	testing.expectf(t, pixels[bottom + 2] > 150 && pixels[bottom] < 120, "base color near the bottom row: %v", pixels[bottom:bottom + 4])
 	testing.expectf(t, pixels[1] > 100 && pixels[0] < 10, "clear color outside the triangle: %v", pixels[0:4])
 	rhi.buffer_destroy(d, buffer)
+	rhi.buffer_destroy(d, source)
 	rhi.texture_destroy(d, target)
 	rhi.pipeline_destroy(d, pipeline)
+	rhi.pipeline_destroy(d, fill)
 	expect_clean(t, d)
 }
 
@@ -547,7 +561,7 @@ rhi_texture_upload_writes_a_region_alone :: proc(t: ^testing.T) {
 
 // A texture takes on the GPU the bytes of another as they are, into its own
 // sRGB encoding too, each time it is copied; one of another size is refused
-// and keeps what it had.
+// and keeps what it had, and takes the mip of a chain of its size.
 @(test)
 rhi_copy_texture_carries_the_bytes_into_another_texture :: proc(t: ^testing.T) {
 	d := test_device(t)
@@ -582,7 +596,18 @@ rhi_copy_texture_carries_the_bytes_into_another_texture :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, rhi.texture_read(d, small, seen[:SIZE * SIZE]), rhi.device_error(d))
 	for b in seen[:SIZE * SIZE] {if b != 40 {testing.expect(t, false, "a texture of another size keeps what it had"); break}}
-	for texture in ([]rhi.Texture{source, encoded, same, small}) {rhi.texture_destroy(d, texture)}
+	// A mip of a chain into the first of a texture of its size.
+	chain := rhi.texture_create(d, {width = SIZE, height = SIZE, mip_levels = 2, format = .RGBA8_Unorm, usage = {.Sampled}, name = "copy chain"})
+	second: [SIZE * SIZE]u8
+	for &b, i in second {b = u8(i * 3 + 1)}
+	testing.expect(t, chain != 0 && rhi.texture_upload_levels(d, chain, {texels[:], second[:]}), rhi.device_error(d))
+	cmd := rhi.immediate_begin(d)
+	rhi.cmd_copy_texture(cmd, chain, small, src_mip = 1)
+	for texture in ([]rhi.Texture{chain, small}) {rhi.cmd_barrier_texture(cmd, texture, .Shader_Read)}
+	testing.expect(t, rhi.immediate_end(d, cmd), rhi.device_error(d))
+	testing.expect(t, rhi.texture_read(d, small, seen[:SIZE * SIZE]), rhi.device_error(d))
+	testing.expect(t, mem.compare(seen[:SIZE * SIZE], second[:]) == 0, "the smaller texture holds the second mip of the chain")
+	for texture in ([]rhi.Texture{source, encoded, same, small, chain}) {rhi.texture_destroy(d, texture)}
 	expect_clean(t, d)
 }
 

@@ -58,8 +58,8 @@ bench_options_take_the_defaults_and_say_what_is_wrong :: proc(t:^testing.T) {
     testing.expect_value(t,o.out,"bin/x")
 
     release,_:=bench_options({"--release"})
-    dev,_:=bench_options({"--release","--dev"})
-    testing.expect(t,!o.release && release.release && !dev.release,"both builds are at --dev unless --release says otherwise")
+    _,error=bench_options({"--dev"})
+    testing.expect(t,!o.release && release.release && error!="","both builds are dev unless --release says otherwise, and --dev is no option")
 
     wrong:=[?][]string{
         {"demo","other"},{"--pairs","1"},{"--frames","10"},{"--pairs","x"},{"--camera","1,2,3"},

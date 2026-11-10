@@ -35,7 +35,7 @@ play_player_reads_the_live_seat_without_changing_the_document :: proc(t:^testing
     core.add(&running.names,body,core.name_make("Driven body"))
     core.add(&running.transforms,body,core.Transform{position={4,5,6},rotation=1,scale={1,1,1}})
     core.add(&running.transforms,camera,core.Transform{position={8,9,10},rotation=1,scale={1,1,1}})
-    core.add(&running.bodies,body,input.Drivable{seat,camera})
+    core.add(&running.bodies,body,input.Drivable{seat=seat,camera=camera})
     core.add(&running.seats,seat,input.Seat{})
     core.settle(&info,&running,nil)
     running.players.local_count,running.shown.entity=1,camera

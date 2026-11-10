@@ -94,9 +94,9 @@ api_play_hold_of :: proc(s:^Session,m:^input.Input_Map,entry:^Api_Play_Input_Act
     }
     action=input.Action(found)
     if m.declared&input.action_bit(action)==0 {
-        return 0,{},fmt.tprintf("actions.%d: %q has no kind in the input map of the game: give it a default in code or a kind with input.set",at,name)
+        return 0,{},fmt.tprintf("actions.%d: %q has no kind in the input map of the game: give it a default in code, or bind it in Input_Settings with settings.set",at,name)
     }
-    kind:=m.kinds[action]
+    kind:=m.actions[action].kind
     if entry.release {return action,{},""}
     if !rpc_finite(entry.value) || !rpc_finite(entry.vector.x) || !rpc_finite(entry.vector.y) {
         return 0,{},fmt.tprintf("actions.%d: %q takes finite numbers",at,name)

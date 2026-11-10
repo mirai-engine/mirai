@@ -122,8 +122,9 @@ Body :: struct {
     type:Body_Type,
     flags:Body_Flags,
     gravity:Vec3, // m/s2, with Own_Gravity
+    awake_prev,awake_next:i32, // neighbors in the list of the awake bodies, while Awake
 }
-#assert(size_of(Body)==280)
+#assert(size_of(Body)==288)
 
 // Dynamic bodies that touching contacts and joints connect, directly or not, fall asleep and wake together as
 // an island. A kinematic body is an island of its own; a static body has none.
@@ -166,7 +167,7 @@ Push_Rule :: struct {
 PUSH_RULE_CAPACITY :: 16
 
 Shape_Flag :: enum u32 {
-    Moved,   // needs new pairs at the next step
+    Moved,   // needs new pairs at the next step: it is in the list of the moved shapes
     One_Way, // blocks only what comes from the side its local +Y faces
     Hits,    // its contacts raise hit events
     Twin,    // a copy that the twin of its body carries elsewhere (twin.odin)
@@ -214,8 +215,9 @@ Shape :: struct {
     radius:f32, // convex radius of a box, hull or cylinder: it collides as its core, smaller by this, inflated by it
     drag:f32,   // Cd in a fluid
     source:i32, // a copy of a twin: the shape it copies
+    moved_prev,moved_next:i32, // neighbors in the list of the moved shapes, while Moved
 }
-#assert(size_of(Shape)==200)
+#assert(size_of(Shape)==208)
 
 Contact_Flag :: enum u32 {
     Touching,
@@ -223,8 +225,7 @@ Contact_Flag :: enum u32 {
     Started,  // touching began in the last step
     Stopped,
     Disjoint, // the fat boxes stopped overlapping
-    Visited,
-    Continuous,
+    Visited,  // in the active contacts of the step being taken
     Pass,     // met a one-way shape from its back: goes through it until the shapes stop touching
 }
 Contact_Flags :: bit_set[Contact_Flag;u32]

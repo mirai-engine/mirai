@@ -57,7 +57,7 @@ author_needs_library :: proc(kind:string,rest:[]string) -> bool {return kind!="t
 // the editor of the project, with the command that builds it; "" when the
 // library is the one its code gives now.
 author_library_problem :: proc(state:build.Target_State,owner:string,dev:bool) -> string {
-    fix:=fmt.tprintf(`mirai build editor "%s" %s`,owner,dev?"--dev":"--release")
+    fix:=fmt.tprintf(`mirai build editor "%s"%s`,owner,dev?"":" --release")
     switch state {
     case .Missing: return fmt.tprintf("the project was never built, and its documents are checked against the types of its game: %s builds its library",fix)
     case .Stale:   return fmt.tprintf("the code of the project changed since its library was built, and its documents are checked against the types of its game: %s builds it again",fix)
@@ -78,8 +78,7 @@ author_engine :: proc(root,kind:string,mode:Build_Mode) -> int {
 
 @(private="file")
 author_run :: proc(root,kind,usage:string,args:[]string) -> int {
-    mode,without_mode,ok:=build_mode_take(args)
-    if !ok {fmt.eprintfln("mirai %s: --dev and --release do not go together; pass one of them",kind);return 2}
+    mode,without_mode:=build_mode_take(args)
     folder,rest,named:=author_project_take(without_mode)
     if !named || len(rest)==0 {
         fmt.eprintfln("Usage: mirai %s",usage)

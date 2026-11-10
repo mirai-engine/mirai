@@ -27,7 +27,7 @@ badge and the hum); `mirai content <project>` runs it. It does not go into the g
 
 - `project.mirai`: start scene `control/control.scene`; plugins `spawn`, `cinematics`,
   `physics`, `destruct`, `multiplayer`, `paint`, `terrain`, `animation`, `previews`,
-  `physics_placement`, `navigation`, `behavior` and others. The `destruct_multiplayer` bridge
+  `navigation`, `behavior` and others. The `destruct_multiplayer` bridge
   activates on its own.
 - `settings.mirai`: `Spawn_Settings` with `"players": true` and `UI_Settings` in English and
   Spanish, with the prompt pack of `prompts_kenney`.
@@ -107,7 +107,7 @@ Scenes:
   - `game_glow` is the only writer of `Tint`: it also serves the portals' buttons, the lamps of
     `horror` and the fade of the physics gallery.
   - The cameras of the prefabs are `Camera_Follow`: `Eyes` the player's, `Orbit` with `aim` those of
-    the person and the dog, which walk with `move_relative_to` `View`.
+    the person and the dog, whose `Drivable` walks them with `move_relative_to` `View`.
 - **`control.odin`**: `Follow` is an AI that takes the body behind its leader while no seat drives
   it.
   - `game_dogs` (`server`) gives each person a dog with `Follow`; `game_follow` writes the

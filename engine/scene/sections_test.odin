@@ -167,7 +167,8 @@ a_streamed_section_holds_and_comes_back_as_it_was_left :: proc(t:^testing.T) {
 
     section_stream(&f.requests,room,.Loaded)
     section_frame(&f)
-    links_before:=core.version(&f.world.links)
+    links:core.Seen
+    _=core.touched(&f.world.links,&links)
     section_frame(&f)
     reference,_:=core.get(&f.world.references,room)
     testing.expect_value(t,reference.state,Section_State.Active)
@@ -177,7 +178,7 @@ a_streamed_section_holds_and_comes_back_as_it_was_left :: proc(t:^testing.T) {
     testing.expect(t,core.alive(&f.world.entities,lamp) && row_has(&f.world.held,lamp) && row_has(&f.world.disabled,lamp),"what it loaded is held")
     link,_:=core.get(&f.world.links,switch_)
     testing.expect_value(t,link.target,lamp)
-    testing.expect(t,core.version(&f.world.links)>links_before,"the field resolved is stamped")
+    testing.expect(t,core.touched(&f.world.links,&links),"the field resolved is stamped")
     testing.expect(t,len(f.world.unresolved.resolved)==1 && f.world.unresolved.resolved[0].entity==switch_,"and said to be the load's, not an edit")
 
     section_stream(&f.requests,room,.Active)
