@@ -8,7 +8,7 @@ import sim "plugins:physics/runtime/sim"
 
 @(private="file")
 Collision_View_Test_World :: struct {
-    entities:core.Entities,
+    using world:core.Test_World,
     physics:phys.Physics_State,
     settings:phys.Collision_Settings,
 }
@@ -18,23 +18,18 @@ Collision_View_Test_World :: struct {
 @(test)
 collision_view_draws_the_layers_asked_for_and_keeps_its_lines_while_physics_stays :: proc(t:^testing.T) {
     world:Collision_View_Test_World
-    world.settings=phys.COLLISION_SETTINGS_DEFAULT
-    storages:=[2]core.Storage_Info{
-        {name="Physics_State",type=phys.Physics_State,info=type_info_of(phys.Physics_State),offset=offset_of(Collision_View_Test_World,physics)},
-        {name="Collision_Settings",type=phys.Collision_Settings,info=type_info_of(phys.Collision_Settings),offset=offset_of(Collision_View_Test_World,settings)},
-    }
-    info:=core.World_Info{entities=offset_of(Collision_View_Test_World,entities),storages=storages[:]}
+    if !core.test_world_init(t,&world,phys.test_types) {return}
+    defer core.test_world_destroy(&world)
     desc:=sim.world_desc_default()
     desc.body_capacity,desc.shape_capacity,desc.contact_capacity,desc.joint_capacity=16,16,64,4
     if !testing.expect(t,sim.world_init(&world.physics.world,desc)) {return}
-    defer sim.world_destroy(&world.physics.world)
     world.physics.ready=true
     body:=sim.body_create(&world.physics.world,{type=.Static,rotation=1})
     sim.shape_create(&world.physics.world,body,{geometry=sim.Box{{0.5,0.5,0.5}},filter={layers=1,block=0xffffffff}})
     view:Collision_View
     defer collision_view_free(&view)
     app:host.App
-    w:=core.world_ref(&world,&info)
+    w:=core.test_world_ref(&world)
     lines_of :: proc(app:^host.App) -> int {
         count:=0
         for lines in app.extras.debug[:app.extras.debug_count] {count+=lines.count/2}
