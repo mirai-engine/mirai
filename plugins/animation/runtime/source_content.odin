@@ -119,7 +119,8 @@ animation_content :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,desc
     if at<0 || at>=len(cache.plans) || cache.plans[at].key!=key {at=-1;for plan,i in cache.plans {if plan.key==key {at=i;break}}}
     if at<0 {
         if len(cache.plans)>=SOURCE_CACHE_CAPACITY || !program_array_reserve(&cache.plans,len(cache.plans)+1) {return nil,.Out_Of_Memory}
-        at=len(cache.plans);append(&cache.plans,Source_Plan{key=key})
+        at=len(cache.plans)
+        if append(&cache.plans,Source_Plan{key=key})!=1 {return nil,.Out_Of_Memory}
     }
     plan:=&cache.plans[at]
     content_generation:=app.content.generations if app.content!=nil else 0

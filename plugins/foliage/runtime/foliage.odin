@@ -484,7 +484,10 @@ foliage_render :: proc(resident:^Foliage_Resident,data:core.Ref(Foliage_Data),gr
         owner:^Resident_Owner
         for &held in resident.owners {if held.entity==e {owner=&held;break}}
         if owner==nil {
-            append(&resident.owners,Resident_Owner{entity=e,source=f.source})
+            if _,err:=append(&resident.owners,Resident_Owner{entity=e,source=f.source});err!=nil {
+                memory_problem(problems,e,"this Foliage, which is not drawn")
+                continue
+            }
             owner=&resident.owners[len(resident.owners)-1]
         }
         ground:=ground_owner(grounds.ptr,e)
@@ -504,11 +507,11 @@ foliage_render :: proc(resident:^Foliage_Resident,data:core.Ref(Foliage_Data),gr
     if resident.impostors.dirty {impostors_build(resident,data.ptr)}
 }
 
-// The parts of a prefab, read once while the assets keep it.
+// The parts of a prefab, read once while the assets keep it; nil without memory.
 @(private)
 resident_prefab :: proc(resident:^Foliage_Resident,a:^host.Assets,id:base.Asset_Id) -> ^Resident_Prefab {
     for &prefab in resident.prefabs {if prefab.id==id {return &prefab}}
-    append(&resident.prefabs,Resident_Prefab{id=id})
+    if _,err:=append(&resident.prefabs,Resident_Prefab{id=id});err!=nil {return nil}
     prefab:=&resident.prefabs[len(resident.prefabs)-1]
     if file:=host.assets_scene(a,id);file!=nil {prefab.read=prefab_parts(file,&a.types,&prefab.parts)}
     return prefab
@@ -531,6 +534,11 @@ types_draw :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Data_
         case t.mesh!={}: pieces=single[:]
         case t.prefab!={}:
             prefab:=resident_prefab(resident,app.assets,t.prefab)
+            if prefab==nil {
+                memory_problem(problems,owner.entity,"the prefab of a type of this Foliage, which is not drawn")
+                owner.pending=true
+                break
+            }
             if !prefab.read || len(prefab.parts)==0 {
                 core.report(problems,owner.entity,"foliage.prefab","foliage type '%s' of source %s shows prefab %s, which is not loaded or has no Mesh_Renderer under a single root; give the type a prefab with meshes, or a mesh",base.text_get(t.name[:]),host.assets_name(app.assets,entry.id,&name),host.assets_name(app.assets,t.prefab,&other))
             }

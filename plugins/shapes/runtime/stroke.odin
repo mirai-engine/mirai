@@ -185,10 +185,11 @@ sweep_union :: proc(st:^Shape_Stroke,base:^geom.Polygon_Set,a,b:geom.Vec2,out:^g
     at:=0
     for size,i in st.piece_sizes {
         clear(&st.ends)
-        for p in st.pieces[at:at+size] {append(&st.ends,p+a,p+b)}
+        for p in st.pieces[at:at+size] {
+            if _,err:=append(&st.ends,p+a,p+b);err!=nil {return false}
+        }
         at+=size
-        hull_of(st.ends[:],&st.hull)
-        if len(st.hull)<3 {return false}
+        if !hull_of(st.ends[:],&st.hull) || len(st.hull)<3 {return false}
         hull_loops:=[1]int{len(st.hull)}
         // The pieces go back and forth between out and swept and end in out.
         into:=out if (len(st.piece_sizes)-1-i)%2==0 else &st.swept
@@ -209,21 +210,22 @@ set_copy :: proc(to,from:^geom.Polygon_Set) -> bool {
 }
 
 // The convex hull of points into out, counter-clockwise, without points on
-// its edges; sorts points.
+// its edges; sorts points. False without memory for it.
 @(private)
-hull_of :: proc(points:[]geom.Vec2,out:^[dynamic]geom.Vec2) {
+hull_of :: proc(points:[]geom.Vec2,out:^[dynamic]geom.Vec2) -> bool {
     clear(out)
     slice.sort_by(points,proc(a,b:geom.Vec2) -> bool {return a.x<b.x || a.x==b.x && a.y<b.y})
     for p in points {
         for len(out)>=2 && orient(dvec(out[len(out)-2]),dvec(out[len(out)-1]),dvec(p))<=0 {pop(out)}
-        append(out,p)
+        if _,err:=append(out,p);err!=nil {return false}
     }
     lower:=len(out)+1
     #reverse for p in points[:max(len(points)-1,0)] {
         for len(out)>=lower && orient(dvec(out[len(out)-2]),dvec(out[len(out)-1]),dvec(p))<=0 {pop(out)}
-        append(out,p)
+        if _,err:=append(out,p);err!=nil {return false}
     }
     if len(out)>1 {pop(out)}
+    return true
 }
 
 // Whether no two edges of a loop that are not neighbors meet.

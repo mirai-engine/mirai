@@ -1,5 +1,7 @@
 package terrain
 
+import "base:runtime"
+import "core:mem"
 import "core:testing"
 import "mirai:core"
 
@@ -29,4 +31,37 @@ a_build_without_memory_for_its_border_does_not_start_and_leaves_its_slot_free ::
         slot.border={}
         if !testing.expectf(t,!started && slot.kind==.None && slot.source==nil,"with %d requests served the build starts, or its slot is taken",served) {break}
     }
+}
+
+// The source a head starts where none is loaded, with the memory ending at
+// each request in turn: Out_Of_Memory with nothing loaded, and with memory
+// enough the source is among the loaded.
+@(test)
+a_head_without_memory_loads_no_source :: proc(t:^testing.T) {
+    failure:=Mesh_Conversion_Failure{owner=context.allocator,remaining=-1}
+    limited:=runtime.Allocator{mesh_conversion_failure_allocator,&failure}
+    shape:Source
+    if !testing.expect(t,source_make(&shape,.Heightfield,{9,1,9},1,4)) {return}
+    head:=Head{origin=shape.origin,info=shape.info}
+    source_destroy(&shape)
+    bytes:[HEAD_BYTES]u8
+    mem.copy_non_overlapping(&bytes,&head,HEAD_BYTES)
+    data:Terrain_Data
+    data.settings.sources=4
+    data.entries=make([dynamic]Data_Source,limited)
+    defer terrain_data_free(&data)
+    loaded,refused:=false,false
+    for served:=0;!loaded && served<256;served+=1 {
+        failure.remaining=served
+        entry,error:=replay_head(&data,nil,{kind=.Head,source={7,7},whole=true,values=bytes[:]},limited)
+        failure.remaining=-1
+        loaded=error==.None
+        if loaded {
+            testing.expect(t,entry!=nil && len(data.entries)==1 && data.samples>0,"the source is among the loaded")
+            break
+        }
+        refused=true
+        testing.expectf(t,error==.Out_Of_Memory && len(data.entries)==0 && data.samples==0,"with %d requests served: %v, %d sources loaded",served,error,len(data.entries))
+    }
+    testing.expect(t,loaded && refused,"refused without memory, and loaded with it")
 }

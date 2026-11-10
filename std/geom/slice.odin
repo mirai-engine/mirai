@@ -315,11 +315,11 @@ mesh_slice :: proc(s:^Slicer,mesh:Mesh,plane:Plane,front,back:^Mesh_Buffer,optio
         if in_front==0 && behind==0 {k=1}
         if out:=p.out[k];out!=nil && copy_whole {
             pass_reserve(&p,k,vertex_count,len(mesh.indices)/3) or_return
-            append(&out.positions,..mesh.positions)
-            if p.has_normals {append(&out.normals,..mesh.normals)}
-            if p.has_uvs {append(&out.uvs,..mesh.uvs)}
-            if p.has_colors {append(&out.colors,..mesh.colors)}
-            append(&out.indices,..mesh.indices)
+            append(&out.positions,..mesh.positions) or_return
+            if p.has_normals {append(&out.normals,..mesh.normals) or_return}
+            if p.has_uvs {append(&out.uvs,..mesh.uvs) or_return}
+            if p.has_colors {append(&out.colors,..mesh.colors) or_return}
+            append(&out.indices,..mesh.indices) or_return
             for t in 0..<len(mesh.indices)/3 {
                 push(&out.materials,mesh.materials[t] if p.has_materials else 0)
                 push(&s.sources[k],u32(t))

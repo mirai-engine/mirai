@@ -312,16 +312,28 @@ visual_mesh :: proc(entry:^Entry,visual:^Visual) -> geom.Mesh {
 }
 
 // Notes the geometry of a piece of the cut: kept when the slot still holds the piece it was made for.
+// False without memory to note it.
 @(private)
-visual_source :: proc(entry:^Entry,piece:fr.Piece_Info) {
+visual_source :: proc(entry:^Entry,piece:fr.Piece_Info) -> bool {
     visual:=visual_find(entry,piece.id)
-    if visual!=nil && visual.center==piece.center && visual.volume==piece.volume {return}
+    if visual!=nil && visual.center==piece.center && visual.volume==piece.volume {return true}
     if visual==nil {
-        append(&entry.visuals,Visual{piece=piece.id})
+        if _,err:=append(&entry.visuals,Visual{piece=piece.id});err!=nil {return false}
         visual=&entry.visuals[len(entry.visuals)-1]
         geom.mesh_buffer_init(&visual.geometry)
     }
     visual.center,visual.volume,visual.source=piece.center,piece.volume,piece.source
+    return true
+}
+
+// visual_source for the pieces of the cut of an entity, which is told when one found no memory.
+@(private)
+visuals_source :: proc(problems:^core.Problems,e:core.Entity,entry:^Entry,pieces:[]fr.Piece_Info) {
+    noted:=true
+    for piece in pieces {
+        if piece.source>=0 && !visual_source(entry,piece) {noted=false}
+    }
+    if !noted {core.report(problems,e,"destruct.memory","out of memory for the geometry of the pieces of its Destructible: they collide, and are not drawn; free memory")}
 }
 
 // The geometry of a half: the geometry of the piece it was cut from, cut by the same plane.
@@ -335,18 +347,22 @@ visual_cut :: proc(cache:^Destruct_Cache,entry:^Entry,piece:fr.Piece_Info) -> bo
     if error!=.None || len(half.indices)==0 {return false}
     visual:=visual_find(entry,piece.id)
     if visual==nil {
-        append(&entry.visuals,Visual{piece=piece.id})
+        if _,err:=append(&entry.visuals,Visual{piece=piece.id});err!=nil {return false}
         visual=&entry.visuals[len(entry.visuals)-1]
         geom.mesh_buffer_init(&visual.geometry)
     }
     g:=&visual.geometry
     geom.mesh_buffer_clear(g)
-    append(&g.positions,..half.positions[:])
-    append(&g.normals,..half.normals[:])
-    append(&g.uvs,..half.uvs[:])
-    append(&g.colors,..half.colors[:])
-    append(&g.indices,..half.indices[:])
-    append(&g.materials,..half.materials[:])
+    _,no_positions:=append(&g.positions,..half.positions[:])
+    _,no_normals:=append(&g.normals,..half.normals[:])
+    _,no_uvs:=append(&g.uvs,..half.uvs[:])
+    _,no_colors:=append(&g.colors,..half.colors[:])
+    _,no_indices:=append(&g.indices,..half.indices[:])
+    _,no_materials:=append(&g.materials,..half.materials[:])
+    if no_positions!=nil || no_normals!=nil || no_uvs!=nil || no_colors!=nil || no_indices!=nil || no_materials!=nil {
+        geom.mesh_buffer_clear(g)
+        return false
+    }
     visual.center,visual.volume,visual.source=piece.center,piece.volume,-1
     return true
 }

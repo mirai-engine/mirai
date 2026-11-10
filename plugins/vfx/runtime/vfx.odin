@@ -195,7 +195,7 @@ particles_sync :: proc(
 ) {
     if sync==nil {return}
     if reports!=nil {reports_read(reports,sync,app,id)}
-    if read!=nil {data_read(read,&sync.data,app,id)}
+    if read!=nil {data_read(read,&sync.data,app,id,problems)}
     r,a:=app.renderer,app.assets
     sync.world,sync.world_id=erender.world_key(id),id
     clear(&sync.descs)
@@ -218,7 +218,7 @@ particles_sync :: proc(
     now:=time.playing?time.seconds:sync.time+f64(max(frame.dt,0))
     dt:=sync.timed?f32(clamp(now-sync.time,0,1)):0
     sync.time,sync.timed=now,true
-    channels_sync(sync,clocks.ptr,now)
+    channels_sync(sync,clocks.ptr,now,problems)
     core.entity_map_prune(&sync.shown,emitters,core.changes(emitters,&sync.seen_emitters))
     core.entity_map_prune(&sync.shown,worlds,core.changes(worlds,&sync.seen_worlds))
     shaders:=app.shaders.reloads

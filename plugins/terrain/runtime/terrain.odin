@@ -548,8 +548,8 @@ data_load_end :: proc(data:^Terrain_Data,load:^Source_Load,a:^host.Assets,proble
         core.report(problems,e,"terrain.sources_full","terrain source %s is not loaded: %d sources are, as many as Terrain_Settings.sources allows; raise it, or share fewer sources among more terrains",host.assets_name(a,load.id,&name),data.settings.sources)
     case !data_fits(data,nil,source_cost(&load.entry.source),problems,e,a,load.id):
     case:
+        if _,err:=append(&data.entries,load.entry);err!=nil {source_memory(problems,e,a,load.id);break}
         data.samples+=u32(source_cost(&load.entry.source))
-        append(&data.entries,load.entry)
         load.entry={}
         data.stats.loads+=1
         entry=&data.entries[len(data.entries)-1]
@@ -724,8 +724,8 @@ data_load :: proc(data:^Terrain_Data,a:^host.Assets,id:base.Asset_Id,problems:^c
     if !terrain_read(&entry.source,a,id,a.allocator,paged=true) {source_destroy(&entry.source);source_unread(problems,e,a,id);return nil}
     if !data_chunks_allocate(&entry,a.allocator,data.jobs) {data_entry_free(&entry);source_memory(problems,e,a,id);return nil}
     if !data_fits(data,nil,source_cost(&entry.source),problems,e,a,id) {data_entry_free(&entry);return nil}
+    if _,err:=append(&data.entries,entry);err!=nil {data_entry_free(&entry);source_memory(problems,e,a,id);return nil}
     data.samples+=u32(source_cost(&entry.source))
-    append(&data.entries,entry)
     data.stats.loads+=1
     return &data.entries[len(data.entries)-1]
 }

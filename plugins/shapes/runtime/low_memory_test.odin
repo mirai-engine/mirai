@@ -51,3 +51,30 @@ static_collision_without_memory_is_refused :: proc(t:^testing.T) {
         shape_geometry_destroy(&g)
     }
 }
+
+// A stroke swept to its next point with the memory ending at each request in
+// turn: a point that finds none leaves the area as it was, and with memory
+// enough the brush is swept to it.
+@(test)
+a_stroke_without_memory_keeps_its_area :: proc(t:^testing.T) {
+    limit:=Memory_Limit{owner=context.allocator,remaining=max(int)}
+    limited:=runtime.Allocator{memory_limit_proc,&limit}
+    square:=[]geom.Vec2{{-0.5,-0.5},{0.5,-0.5},{0.5,0.5},{-0.5,0.5}}
+    swept,refused:=false,false
+    for served:=0;!swept && served<256;served+=1 {
+        st:Shape_Stroke
+        if !testing.expect_value(t,shape_stroke_begin(&st,square,0.05,limited),Shape_Error.None) || !testing.expect(t,shape_stroke_to(&st,{0,0})) {return}
+        limit.remaining=served
+        swept=shape_stroke_to(&st,{3,1})
+        limit.remaining=max(int)
+        points,loops:=shape_stroke_area(&st)
+        if swept {
+            testing.expectf(t,len(loops)==1 && len(points)>len(square),"swept to %d points in %d loops",len(points),len(loops))
+        } else {
+            refused=true
+            testing.expectf(t,len(loops)==1 && len(points)==len(square),"with %d requests served: the area that was refused has %d points in %d loops",served,len(points),len(loops))
+        }
+        shape_stroke_destroy(&st)
+    }
+    testing.expect(t,swept && refused,"refused without memory, and swept with it")
+}

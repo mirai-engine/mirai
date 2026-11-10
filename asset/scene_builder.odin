@@ -116,7 +116,7 @@ builder_set :: proc(b:^Scene_Builder,id:base.Entity_Id,value:$T) where intrinsic
 // and the path, is the same on every run.
 content_mesh :: proc(c:^Content,path:string,mesh:^geom.Mesh_Buffer,materials:..base.Asset_Id) -> base.Asset_Id {
     id:=content_id(c.project,"mesh",path)
-    geom.mesh_buffer_paint(mesh,{1,1,1,1})
+    if !geom.mesh_buffer_paint(mesh,{1,1,1,1}) {content_check(c,path,.Out_Of_Memory);return id}
     if !geom.mesh_is_valid(geom.mesh_buffer_view(mesh)) || len(mesh.normals)!=len(mesh.positions) || len(mesh.uvs)!=len(mesh.positions) || len(mesh.indices)==0 {
         content_check(c,path,.Invalid)
         return id

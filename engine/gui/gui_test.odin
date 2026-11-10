@@ -1,5 +1,6 @@
 package gui
 
+import "base:runtime"
 import "core:math"
 import "core:math/linalg"
 import "core:testing"
@@ -260,6 +261,38 @@ paths_read_the_components_and_storages_of_the_world_by_name :: proc(t:^testing.T
     testing.expect(t,host.commits(host.user,base.name_hash("Bind_Test_Match")) && !host.commits(host.user,base.name_hash("Bind_Test_Health")))
     _,_,found=host.source(host.user,base.name_hash("Missing"))
     testing.expect(t,!found)
+
+    // With the memory ending at each request in turn, a name that finds none
+    // for its source is not found, and with memory enough it is.
+    Limit :: struct {owner:runtime.Allocator,remaining:int}
+    limit_proc :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment:int,old_memory:rawptr,old_size:int,loc:=#caller_location) -> ([]byte,runtime.Allocator_Error) {
+        limit:=(^Limit)(data)
+        if size>0 && (mode==.Alloc || mode==.Alloc_Non_Zeroed || mode==.Resize || mode==.Resize_Non_Zeroed) {
+            if limit.remaining<=0 {return nil,.Out_Of_Memory}
+            limit.remaining-=1
+        }
+        return limit.owner.procedure(limit.owner.data,mode,size,alignment,old_memory,old_size,loc)
+    }
+    named,refused:=false,false
+    for served:=0;!named && served<64;served+=1 {
+        limit:=Limit{context.allocator,served}
+        limited:=runtime.Allocator{limit_proc,&limit}
+        low:Gui
+        low.allocator=limited
+        low.sources=make([dynamic]Bound_Source,limited)
+        binding:=Bind{gui=&low,world=core.world_ref(&w,&info)}
+        {
+            context.allocator=limited
+            low_host:=bind_host(&binding)
+            _,_,named=low_host.source(low_host.user,base.name_hash("Bind_Test_Health"))
+            row,_:=low_host.fetch(low_host.user,base.name_hash("Bind_Test_Health"),base.Entity(e))
+            testing.expectf(t,(row!=nil)==named,"with %d requests served: found %v, its row %v",served,named,row!=nil)
+        }
+        refused||=!named
+        limit.remaining=max(int)
+        gui_free(&low)
+    }
+    testing.expect(t,named && refused,"refused without memory, and with it the source is found")
 }
 
 @(test)

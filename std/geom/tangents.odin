@@ -196,14 +196,15 @@ corner_tangents :: proc(positions,normals:[]Vec3,uvs:[]Vec2,indices:[]u32,out:[]
         for c in 0..<3 {
             if tris[ti].group[c]!=-1 {continue}
             gi:=len(groups)
-            append(&groups,Tangent_Group{rep=tris[ti].weld[c],orient=tris[ti].orient,first=len(group_tris)})
+            _,no_group:=append(&groups,Tangent_Group{rep=tris[ti].weld[c],orient=tris[ti].orient,first=len(group_tris)})
+            _,no_tri:=append(&group_tris,u32(ti))
+            if no_group!=nil || no_tri!=nil {return false}
             tris[ti].group[c]=i32(gi)
-            append(&group_tris,u32(ti))
             groups[gi].count+=1
             incident:=[2]int{c,(c+2)%3}
             for e in incident {
                 nb:=tris[ti].adj[e]
-                if nb>=0 {tangent_assign_group(tris,&group_tris,groups[:],gi,int(nb))}
+                if nb>=0 {tangent_assign_group(tris,&group_tris,groups[:],gi,int(nb)) or_return}
             }
         }
     }
@@ -267,9 +268,10 @@ corner_tangents :: proc(positions,normals:[]Vec3,uvs:[]Vec2,indices:[]u32,out:[]
             }
             if found<0 {
                 first:=len(sub_tris)
-                append(&sub_tris,..kept)
-                append(&subs,Tangent_Subgroup{first=first,count=held})
-                append(&sub_spaces,tangent_eval(tris,group,kept,projected[:],n,g.rep,g.orient))
+                _,no_tris:=append(&sub_tris,..kept)
+                _,no_sub:=append(&subs,Tangent_Subgroup{first=first,count=held})
+                _,no_space:=append(&sub_spaces,tangent_eval(tris,group,kept,projected[:],n,g.rep,g.orient))
+                if no_tris!=nil || no_sub!=nil || no_space!=nil {return false}
                 found=len(subs)-1
             }
             space:=sub_spaces[found]
@@ -449,25 +451,26 @@ tangent_members_equal :: proc "contextless" (a,b:[]u32) -> bool #no_bounds_check
 }
 
 @(private="file")
-tangent_assign_group :: proc(tris:[]Tangent_Tri,group_tris:^[dynamic]u32,groups:[]Tangent_Group,gi,ti:int) #no_bounds_check {
+tangent_assign_group :: proc(tris:[]Tangent_Tri,group_tris:^[dynamic]u32,groups:[]Tangent_Group,gi,ti:int) -> bool #no_bounds_check {
     g:=&groups[gi]
     c:=tangent_corner(tris[ti],g.rep)
-    if c<0 {return}
-    if tris[ti].group[c]==i32(gi) {return}
-    if tris[ti].group[c]!=-1 {return}
+    if c<0 {return true}
+    if tris[ti].group[c]==i32(gi) {return true}
+    if tris[ti].group[c]!=-1 {return true}
     if !tris[ti].any {
-        if tris[ti].orient!=g.orient {return}
+        if tris[ti].orient!=g.orient {return true}
     } else if tris[ti].group[0]==-1 && tris[ti].group[1]==-1 && tris[ti].group[2]==-1 {
         tris[ti].orient=g.orient
     }
+    if _,err:=append(group_tris,u32(ti));err!=nil {return false}
     tris[ti].group[c]=i32(gi)
-    append(group_tris,u32(ti))
     g.count+=1
     incident:=[2]int{c,(c+2)%3}
     for e in incident {
         nb:=tris[ti].adj[e]
-        if nb>=0 {tangent_assign_group(tris,group_tris,groups,gi,int(nb))}
+        if nb>=0 {tangent_assign_group(tris,group_tris,groups,gi,int(nb)) or_return}
     }
+    return true
 }
 
 // The tangent of a subgroup: the projected tangents of its members, weighted
