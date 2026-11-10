@@ -177,7 +177,9 @@ test_world_clear :: proc(w:^$W) -> bool {return made_clear(w)}
 
 // The options of the attributes of the declaration whose name is at a line
 // and a column of a source: those before it on its line and those on the
-// lines right above it, as the generator reads them from the parsed source.
+// lines right above it that hold attributes alone, as the generator reads
+// them from the parsed source. A line above that goes on after its
+// attributes is another declaration, which keeps them.
 test_declared_options :: proc(text:string,line,column:int,allocator:=context.temp_allocator) -> map[string]string {
     options:=make(map[string]string,allocator)
     at:=0
@@ -192,19 +194,24 @@ test_declared_options :: proc(text:string,line,column:int,allocator:=context.tem
         start:=strings.last_index_byte(text[:end],'\n')+1
         above:=strings.trim_space(text[start:end])
         if !strings.has_prefix(above,"@(") {break}
-        attributes_text(&options,above,allocator)
+        read:=make(map[string]string,allocator)
+        rest:=attributes_text(&read,above,allocator)
+        if rest!="" && !strings.has_prefix(rest,"//") {break}
+        for name,value in read {options[name]=value}
         at=start
     }
     return options
 }
 
+// Reads the attributes a text starts with, one after another; rest is what
+// follows them.
 @(private="file")
-attributes_text :: proc(options:^map[string]string,text:string,allocator:runtime.Allocator) {
+attributes_text :: proc(options:^map[string]string,text:string,allocator:runtime.Allocator) -> (rest:string) {
     i:=0
     for {
-        open:=strings.index(text[i:],"@(")
-        if open<0 {return}
-        i+=open+2
+        for i<len(text) && (text[i]==' ' || text[i]=='\t') {i+=1}
+        if !strings.has_prefix(text[i:],"@(") {return text[i:]}
+        i+=2
         for i<len(text) && text[i]!=')' {
             start:=i
             for i<len(text) && is_name(text[i]) {i+=1}
@@ -232,6 +239,7 @@ attributes_text :: proc(options:^map[string]string,text:string,allocator:runtime
             }
             options[name]=value
         }
+        i=min(i+1,len(text))
     }
 }
 
@@ -872,6 +880,23 @@ made_detach :: proc(world,shared:rawptr) {
 
 @(private="file") @(storage,reset="described_reset") Described_Reset :: struct {value:i32}
 
+// Declarations on one line right above others: each keeps its attributes.
+@(private="file") @(storage,keep) Described_Kept :: struct {value:i32}
+Described_Plain :: struct {value:i32}
+@(private="file") @(component,replicated) Described_Sent :: struct {value:i32}
+@(private="file")
+@(component,single)
+Described_Single :: struct {value:i32}
+
+@(private="file")
+Described_Lines :: struct {
+    using world:Test_World,
+    sent:Table(Described_Sent),
+    single:Table(Described_Single),
+    kept:Described_Kept,
+    plain:Described_Plain,
+}
+
 @(private="file")
 Described_World :: struct {
     using world:Test_World,
@@ -917,6 +942,14 @@ a_test_world_is_described_as_the_declarations_of_its_types_say :: proc(t:^testin
     testing.expect(t,b.time.tick==7 && b.clock.scale==2 && b.frame.alpha==1,"what says copy=false stays")
     testing.expect(t,info.clear(&a))
     testing.expect(t,a.time.tick==7 && a.clock.scale==2,"what says keep survives clearing the World")
+
+    if lines,read:=test_info(t,Described_Lines);read {
+        defer test_info_destroy(&lines)
+        sent,single:=lines.tables[0],lines.tables[1]
+        kept,plain:=lines.storages[0],lines.storages[1]
+        testing.expect(t,sent.replicated==.All && !sent.single && kept.keep,"a declaration on one line has its attributes")
+        testing.expect(t,single.single && single.replicated==.None && !plain.keep,"and the declaration below it does not")
+    }
 
     Case :: struct {what:string,world:^runtime.Type_Info,shared:^runtime.Type_Info,names:string}
     cases:=[]Case{

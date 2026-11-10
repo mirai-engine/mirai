@@ -13,10 +13,8 @@ import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:ui"
 
-@(private="file") @(storage,setting="machine")
-Layer_Setting :: struct {quality:i32,scale:f32}
-@(private="file") @(storage,setting)
-Layer_Rule :: struct {count:i32}
+@(private="file") @(storage,setting="machine") Layer_Setting :: struct {quality:i32,scale:f32}
+@(private="file") @(storage,setting) Layer_Rule :: struct {count:i32}
 @(private="file") Layer_World :: struct {using world:core.Test_World,setting:Layer_Setting,rule:Layer_Rule}
 @(private="file") Layer_Editor :: struct {api:Api}
 
@@ -174,8 +172,7 @@ settings_are_written_by_layer_and_the_project_wins :: proc(t:^testing.T) {
     testing.expect_value(t,error.code,api.INVALID_PARAMS)
 }
 
-@(private="file") @(storage,setting)
-Advanced_Setting :: struct {
+@(private="file") @(storage,setting) Advanced_Setting :: struct {
     shown:bool `mirai:"section=Rules"`,
     pool:bool `mirai:"advanced"`,
     budget:bool `mirai:"section=Limits,advanced"`,

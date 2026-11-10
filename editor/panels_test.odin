@@ -12,8 +12,7 @@ import "mirai:std/serial"
 
 @(private="file") Panel_Test_Exposure :: struct {compensation:f32 `mirai:"unit=EV"`,auto:bool}
 @(private="file") Panel_Test_Look :: struct {sky:[3]f32 `mirai:"color"`,tint:[3]f32 `mirai:"color"`,group:i32,exposure:Panel_Test_Exposure,secret:f32 `mirai:"hidden"`}
-@(private="file") @(storage,setting)
-Panel_Test_Quality :: struct {level:i32 `mirai:"min=0,max=3"`,sharp:bool}
+@(private="file") @(storage,setting) Panel_Test_Quality :: struct {level:i32 `mirai:"min=0,max=3"`,sharp:bool}
 @(private="file") Panel_Test_World :: struct {
     using world:core.Test_World,
     ids:core.Table(core.Id),
