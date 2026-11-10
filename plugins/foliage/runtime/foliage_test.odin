@@ -736,9 +736,10 @@ memory_limit_proc :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment
 }
 
 // What a cell asks memory for (its instances placed, grouped by type, its
-// tile of ground and its collision), with the memory ending at each request
-// in turn: the call is refused and what it works on stays usable, and with
-// memory enough it goes through.
+// tile of ground and its collision), a new type of a source and a source read
+// from its file, with the memory ending at each request in turn: the call is
+// refused and what it works on stays usable, and with memory enough it goes
+// through.
 @(test)
 foliage_calls_without_memory_are_refused :: proc(t:^testing.T) {
     s:Source
@@ -750,8 +751,17 @@ foliage_calls_without_memory_are_refused :: proc(t:^testing.T) {
     whole:Build_Work
     defer build_work_destroy(&whole)
     if !testing.expect(t,cell_build(&s,source_cell(&s,{0,0}),{},&whole) && len(whole.placed)>0) {return}
-    Call :: enum {Cell_Build,Placed_Group,Ground_Tile,Collision}
+    types:asset.Types
+    asset.types_init(&types)
+    defer asset.types_destroy(&types)
+    data,written:=source_bytes(&s,{5,6},&types)
+    defer delete(data)
+    file:asset.Asset
+    if !testing.expect(t,written==.None && asset.asset_open(&file,data)==.None) {return}
+    defer asset.asset_close(&file)
+    Call :: enum {Cell_Build,Placed_Group,Ground_Tile,Collision,Type_Add,Source_Read}
     for call in Call {
+        fresh:Source
         work:Build_Work
         ground:Ground_Owner
         fp:Foliage_Physics
@@ -773,6 +783,10 @@ foliage_calls_without_memory_are_refused :: proc(t:^testing.T) {
                 done=tile!=nil
             case .Collision:
                 _,done=physics_owner_build(&fp,&w,&collision,core.Entity(42),&s,{scale={1,1,1},rotation=1})
+            case .Type_Add:
+                done=source_type_add(&fresh,"moss",{2,2})!=nil
+            case .Source_Read:
+                _,done=source_read(&fresh,&file,&types)
             }
             context.allocator=owner
             limit.remaining=max(int)
@@ -784,6 +798,7 @@ foliage_calls_without_memory_are_refused :: proc(t:^testing.T) {
             #partial switch call {
             case .Cell_Build:  testing.expectf(t,len(work.placed)==0,"%v with %d requests served leaves %d instances",call,served,len(work.placed))
             case .Ground_Tile: testing.expectf(t,len(ground.tiles)==0,"%v with %d requests served leaves a tile",call,served)
+            case .Type_Add,.Source_Read: testing.expectf(t,len(fresh.types)+len(fresh.cells)==0 && fresh.info=={},"%v with %d requests served leaves a part of the source",call,served)
             }
         }
         testing.expectf(t,done && refused,"%v: refused without memory, and with it it goes through",call)
@@ -796,7 +811,12 @@ foliage_calls_without_memory_are_refused :: proc(t:^testing.T) {
         case .Ground_Tile:
             heights,_,tile:=ground_tile(&ground,{0,0})
             testing.expect(t,tile!=nil && len(heights)==16)
+        case .Type_Add:
+            testing.expect(t,len(fresh.types)==1 && fresh.info.next_type==1,"the type that was refused took no id")
+        case .Source_Read:
+            testing.expect(t,len(fresh.types)==len(s.types) && len(fresh.cells)==len(s.cells))
         }
+        source_destroy(&fresh)
         build_work_destroy(&work)
         ground_owner_destroy(&ground)
         physics_owner_clear(&fp,&w,core.Entity(42))

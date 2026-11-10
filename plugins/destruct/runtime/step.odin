@@ -263,9 +263,7 @@ reconcile :: proc(c:^Ctx,e:core.Entity,d:Destructible) {
         physics.proxy_set(c.state,e,st.body,local.position,local.rotation)
     }
     count:=min(fr.destructible_pieces(f,w,handle,cache.infos),len(cache.infos))
-    for piece in cache.infos[:count] {
-        if piece.source>=0 {visual_source(entry,piece)}
-    }
+    visuals_source(c.problems,e,entry,cache.infos[:count])
 
 }
 
@@ -318,7 +316,7 @@ cache_recover :: proc(c:^Ctx,e:core.Entity,d:Destructible,static:render.Mesh_Ren
     st.waiting=prepared_pending(entry.prepared)
     if st.waiting || entry.prepared.error!=.None {return}
     count:=min(fr.destructible_pieces(c.f,c.w,st.handle,c.cache.infos),len(c.cache.infos))
-    for piece in c.cache.infos[:count] {if piece.source>=0 {visual_source(entry,piece)}}
+    visuals_source(c.problems,e,entry,c.cache.infos[:count])
     for row in 0..<core.count(c.groups) {
         group:=c.groups.values[row]
         if group.owner!=e {continue}

@@ -552,6 +552,7 @@ type_make :: proc(s:^editor.Session,tool:^Foliage_Tool,app:^host.App,mesh:base.A
         if file,found:=asset.registry_find(&app.assets.registry,mesh);found {wanted=filepath.stem(filepath.base(file.path))}
     }
     t:=foliage.source_type_add(source,type_name_free(source,wanted),mesh)
+    if t==nil {editor.notify(s,"There is no memory for another foliage type");return nil}
     type_reveal(tool,t.id)
     return t
 }
