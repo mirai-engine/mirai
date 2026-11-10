@@ -1,6 +1,7 @@
 package spawn
 
 import "mirai:core"
+import cam "mirai:engine/camera"
 import input "mirai:engine/input"
 import scene "mirai:engine/scene"
 import "mirai:host"
@@ -30,7 +31,9 @@ Spawn_Point :: struct {
 // A body that appeared for a seat: it goes when its seat goes (a player who
 // left the game).
 @(component,description="A body the spawn library gave to a seat: it is destroyed when that seat goes away.")
-Seat_Body :: struct {}
+Seat_Body :: struct {
+    seat:core.Entity `mirai:"transient,readonly"`,
+}
 
 // How spawn gives bodies to the players. A project setting.
 @(storage,setting)
@@ -104,11 +107,9 @@ Apply :: struct {
 
 // The bodies whose seat went away go with it, before input_drive lets go of them.
 @(step="fixed",stage="input",before="input_drive")
-spawn_seat_bodies :: proc(es:core.Commands,hierarchy:core.Ref(core.Hierarchy),bodies:core.Read(Seat_Body),drivables:core.Read(input.Drivable)) {
+spawn_seat_bodies :: proc(es:core.Commands,hierarchy:core.Ref(core.Hierarchy),bodies:core.Read(Seat_Body)) {
     for row in 0..<core.count(bodies) {
-        body:=core.entity_at(bodies,row)
-        driven,_:=core.get(drivables,body)
-        if driven.seat!=core.NONE && !core.alive(es.entities,driven.seat) {core.destroy_tree(es.entities,hierarchy,body)}
+        if seat:=core.at(bodies,row).seat;!core.alive(es.entities,seat) {core.destroy_tree(es.entities,hierarchy,core.entity_at(bodies,row))}
     }
 }
 
@@ -116,7 +117,7 @@ spawn_seat_bodies :: proc(es:core.Commands,hierarchy:core.Ref(core.Hierarchy),bo
 // appear to their seats in the same tick.
 @(step="fixed",stage="input",after="input_seats")
 spawn_step :: proc(
-    commands:core.Commands,assets:^host.Assets,drivables:core.Read(input.Drivable),bodies:^core.Table(Seat_Body),
+    commands:core.Commands,assets:^host.Assets,free:core.Ref(cam.Free_Camera),bodies:^core.Table(Seat_Body),
     seats:core.Read(input.Seat),points:core.Read(Spawn_Point),placer:core.Placer,driving:^input.Seat_Requests,requests:^Spawn_Requests,spawning:^Spawning,
     settings:core.Ref(Spawn_Settings),network:core.Ref(core.Network),time:core.Time,origin:core.Ref(scene.Play_Origin),at_origin:^Spawned_At_Origin,problems:^core.Problems,
 ) {
@@ -137,7 +138,8 @@ spawn_step :: proc(
     if client || !core.due(time,spawning.retry_after) || !prefab_found(&a) {return}
     for row in 0..<core.count(seats) {
         seat:=core.entity_at(seats,row)
-        if input.body_of(drivables,seat)!=core.NONE {continue}
+        // The camera player 1 flies without a body is not one.
+        if body:=input.body_of(seats,seat);body!=core.NONE && body!=free.entity {continue}
         given:=false
         for other in a.given[:a.given_count] {given ||= other==seat}
         if given {continue}
@@ -226,7 +228,7 @@ spawn_body :: proc(a:^Apply,r:Spawn_Request) -> bool {
         a.given[a.given_count]=r.seat
         a.given_count+=1
         input.drive(a.driving,r.seat,root)
-        core.add(a.bodies,root,Seat_Body{})
+        core.add(a.bodies,root,Seat_Body{r.seat})
     }
     return true
 }

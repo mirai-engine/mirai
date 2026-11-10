@@ -68,10 +68,18 @@ CONTEXT_CAPACITY :: 16
 CHORD_CAPACITY :: si.CHORD_CAPACITY
 
 // How a player looks around (Axis2: x right, y up, in points of mouse
-// movement): the locomotion turns a body with it, and a camera that orbits
-// turns with it. The sensitivity of a player is the scale of its bindings.
+// movement): it turns the look of the body its seat drives, or a camera that
+// orbits it. The sensitivity of a player is the scale of its bindings.
 @(actions)
 Look_Action :: enum u8 {Look}
+
+// Where a player moves the body its seat drives (Axis2: x right, y forward).
+@(actions)
+Move_Action :: enum u8 {Move}
+
+move_action_defaults :: proc "contextless" () -> [Move_Action]Action_Default {
+    return {.Move=action_default(.Axis2,binding_keys(.A,.D,.S,.W),binding_gamepad_stick(.Left))}
+}
 
 // Radians the look turns per unit of the look action: a point of mouse movement.
 LOOK_SPEED :: f32(0.12*math.RAD_PER_DEG)
@@ -178,7 +186,6 @@ Frame_Actions :: struct {slots:[LOCAL_CAPACITY]Actions}
 Input_Of :: struct($E:typeid) where intrinsics.type_is_enum(E) {
     state:core.Ref(Seats),
     seats:core.Read(Seat),
-    drivables:core.Read(Drivable),
     base:Action,
 }
 
@@ -210,7 +217,7 @@ vector :: proc{input_vector,frame_vector,body_vector}
 
 input_state :: proc(input:Input_Of($E),a:E) -> Action_State {return seat_action(input.seats,focused(input.state.ptr,input.seats),action_of(input,a))}
 frame_state :: proc(input:Frame_Input_Of($E),a:E) -> Action_State {return slot_frame_state(input,input.state.focus,a)}
-body_state :: proc(input:Input_Of($E),body:core.Entity,a:E) -> Action_State {return body_action({input.seats,input.drivables},body,action_of(input,a))}
+body_state :: proc(input:Input_Of($E),body:core.Entity,a:E) -> Action_State {return body_action(input.seats,body,action_of(input,a))}
 // The state of an action of a local slot this frame.
 slot_frame_state :: proc(input:Frame_Input_Of($E),slot:int,a:E) -> Action_State {
     if slot<0 || slot>=LOCAL_CAPACITY {return {}}

@@ -42,7 +42,6 @@ Net_Test_Tables :: struct {
     offsets:core.Table(render.Draw_Offset),
     move_inputs:core.Table(inp.Move_Input),
     instances:core.Table(scene.Prefab_Instance),
-    drivables:core.Table(inp.Drivable),
     seats:core.Table(inp.Seat),
     absents:core.Table(Seat_Absent),
     visibility:core.Table(Visibility),
@@ -235,8 +234,7 @@ net_test_replicate :: proc(audience:=Audience.Near,simulation:=Simulation.Server
 @(private)
 net_test_own :: proc(w:^Net_Test_World,e:core.Entity,connection:Connection) {
     seat:=core.create(&w.entities)
-    core.add(&w.seats,seat,inp.Seat{peer=u64(connection)})
-    core.add(&w.drivables,e,inp.Drivable{seat=seat})
+    core.add(&w.seats,seat,inp.Seat{peer=u64(connection),body=e})
 }
 
 @(private)

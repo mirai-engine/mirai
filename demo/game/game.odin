@@ -6,6 +6,7 @@ import "core:math"
 import "core:math/linalg"
 import "core:strings"
 import "mirai:core"
+import cam "mirai:engine/camera"
 import destruct "plugins:destruct/runtime"
 import gui "mirai:engine/gui"
 import inp "mirai:engine/input"
@@ -139,8 +140,8 @@ yaw_of :: proc "contextless" (rotation:mm.Quat) -> f32 {
     return mm.yaw_of_direction(ahead)
 }
 
-// The actions the game reads, those of interface_demo.odin too; move and jump are of physics
-// (locomotion.Walk_Action) and look of the engine (inp.Look_Action).
+// The actions the game reads, those of interface_demo.odin too; move and look are of the engine
+// (inp.Move_Action, inp.Look_Action) and jump of the locomotion (locomotion.Walk_Action).
 @(actions)
 Action :: enum u8 {
     Use,Flashlight,Throw,Bark,Switch_Body,Overhead_View,
@@ -182,15 +183,13 @@ action_defaults :: proc "contextless" () -> [Action]inp.Action_Default {
 // The Menu action lets the focused seat go of its body, and that frees the mouse; again, it takes
 // the body back. The animation gallery lets go too while its player adjusts a panel.
 @(step="frame")
-game_menu :: proc(game:^Game,g:^gui.Gui,state:core.Ref(inp.Seats),seats:core.Read(inp.Seat),drivables:core.Read(inp.Drivable),moves:^core.Table(inp.Move_Input),requests:^inp.Seat_Requests) {
+game_menu :: proc(game:^Game,g:^gui.Gui,state:core.Ref(inp.Seats),seats:core.Read(inp.Seat),requests:^inp.Seat_Requests) {
     if !gui.menu_pressed(gui.events_this_frame(g)) {return}
     seat:=inp.focused(state.ptr,seats)
     if seat==core.NONE {return}
-    if body:=inp.body_of(drivables,seat);body!=core.NONE {
+    if body:=inp.body_of(seats,seat);body!=core.NONE {
         game.left=body
         inp.release(requests,seat)
-        // Nobody writes the Move_Input of a body no seat drives: it would keep walking.
-        if move:=core.edit(moves,body);move!=nil {move.move,move.buttons={},{}}
     } else if game.left!=core.NONE {
         inp.drive(requests,seat,game.left)
         game.left=core.NONE
@@ -208,7 +207,7 @@ swatch_index :: proc(swatch:Swatch) -> int {return int(swatch.index)%%len(SWATCH
 @(step="fixed")
 game_use :: proc(
     players:^core.Table(Player),doors:^core.Table(Door),swatches:^core.Table(Swatch),inputs:core.Read(inp.Move_Input),
-    drivables:core.Read(inp.Drivable),actions:inp.Input_Of(Action),worlds:core.Read(core.World_Transform),names:core.Read(core.Name),spawner:scene.Spawner,
+    sight:cam.Sight,actions:inp.Input_Of(Action),worlds:core.Read(core.World_Transform),names:core.Read(core.Name),spawner:scene.Spawner,
 ) {
     for row in 0..<core.count(players) {
         e:=core.entity_at(players,row)
@@ -229,7 +228,7 @@ game_use :: proc(
                 if in_reach(worlds,feet,core.entity_at(swatches,at),swatch.reach) {swatch.index=i32((swatch_index(swatch^)+1)%len(SWATCH_MATERIALS))}
             }
         }
-        if origin,aim,aimed:=inp.aim(drivables,worlds,e);aimed && inp.pressed(actions,e,.Throw) {
+        if origin,aim,aimed:=cam.aim(sight,e);aimed && inp.pressed(actions,e,.Throw) {
             from:=origin+aim*0.8
             turn:=mm.quat_from_euler({input.look_pitch,input.look_yaw,0})
             scene.spawn(spawner,THROWN_CUBE,{from,turn,THROWN_CUBE_SIZE},transient=true)
@@ -433,7 +432,7 @@ exhibit_caption :: proc(out:[]u8,exhibits:core.Read(Exhibit),worlds:core.Read(co
 @(step="frame")
 player_hud :: proc(
     huds:^core.Table(Player_Hud),players:core.Read(Player),doors:core.Read(Door),swatches:core.Read(Swatch),exhibits:core.Read(Exhibit),
-    barkers:core.Read(Barker),demos:core.Read(Control_Demo),drivables:core.Read(inp.Drivable),
+    barkers:core.Read(Barker),demos:core.Read(Control_Demo),seats:core.Read(inp.Seat),
     worlds:core.Read(core.World_Transform),names:core.Read(core.Name),
 ) {
     shown:=core.read(huds)
@@ -442,7 +441,7 @@ player_hud :: proc(
         next:Player_Hud
         player,has_player:=core.get(players,body)
         barker,has_barker:=core.get(barkers,body)
-        if placed,has_world:=core.get(worlds,body);has_world && inp.seat_of(drivables,body)!=core.NONE && (has_player || has_barker) {
+        if placed,has_world:=core.get(worlds,body);has_world && inp.seat_of(seats,body)!=core.NONE && (has_player || has_barker) {
             feet:=placed.position
             next.shown,next.person,next.thrown=true,has_player,i32(player.thrown)
             next.control,next.dog,next.barks=core.count(demos)>0,has_barker,i32(barker.count)

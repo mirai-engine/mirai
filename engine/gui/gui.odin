@@ -558,11 +558,11 @@ gui_events_frame :: proc(events:^UI_Events,gui:^Gui,time:core.Time) {
 gui_frame_begin :: proc(
     world:core.World_Ref,screens:core.Read(UI_Screen),widgets:core.Read(World_Widget),worlds:core.Read(core.World_Transform),
     hidden:core.Read(render.Hidden),parents:core.Read(core.Parent),meshes:core.Read(render.Mesh_Renderer),settings:UI_Settings,preferences:UI_Preferences,time:core.Time,
-    seat_state:core.Ref(inp.Seats),seats:core.Read(inp.Seat),drivables:core.Read(inp.Drivable),bindings:core.Ref(inp.Input_Map),actions:core.Ref(inp.Frame_Actions),
+    seat_state:core.Ref(inp.Seats),seats:core.Read(inp.Seat),moves:core.Read(inp.Move_Input),bindings:core.Ref(inp.Input_Map),actions:core.Ref(inp.Frame_Actions),
     device:core.Frame_Input,cameras:core.Read(render.Camera),exposures:core.Read(render.Exposure),view_volumes:core.Read(render.View_Volume),volumes:core.Read(volume.Volume),
     requests:^UI_Requests,effects:^UI_Effects,sounds:^audio.Sound_Requests,gui:^Gui,app:^host.App,problems:^core.Problems,
 ) {
-    frame_begin(world,screens,widgets,worlds,hidden,parents,meshes,settings,preferences,time,seat_state,seats,drivables,bindings,actions,device,cameras,exposures,view_volumes,volumes,requests,effects,sounds,gui,app,problems,false)
+    frame_begin(world,screens,widgets,worlds,hidden,parents,meshes,settings,preferences,time,seat_state,seats,moves,bindings,actions,device,cameras,exposures,view_volumes,volumes,requests,effects,sounds,gui,app,problems,false)
 }
 
 // The preview of the editor's world, while it does not play: the
@@ -572,19 +572,19 @@ gui_frame_begin :: proc(
 gui_preview_begin :: proc(
     world:core.World_Ref,screens:core.Read(UI_Screen),widgets:core.Read(World_Widget),worlds:core.Read(core.World_Transform),
     hidden:core.Read(render.Hidden),parents:core.Read(core.Parent),meshes:core.Read(render.Mesh_Renderer),settings:UI_Settings,preferences:UI_Preferences,time:core.Time,
-    seat_state:core.Ref(inp.Seats),seats:core.Read(inp.Seat),drivables:core.Read(inp.Drivable),bindings:core.Ref(inp.Input_Map),actions:core.Ref(inp.Frame_Actions),
+    seat_state:core.Ref(inp.Seats),seats:core.Read(inp.Seat),moves:core.Read(inp.Move_Input),bindings:core.Ref(inp.Input_Map),actions:core.Ref(inp.Frame_Actions),
     device:core.Frame_Input,cameras:core.Read(render.Camera),exposures:core.Read(render.Exposure),view_volumes:core.Read(render.View_Volume),volumes:core.Read(volume.Volume),
     requests:^UI_Requests,effects:^UI_Effects,sounds:^audio.Sound_Requests,gui:^Gui,app:^host.App,problems:^core.Problems,
 ) {
     if time.playing {return}
-    frame_begin(world,screens,widgets,worlds,hidden,parents,meshes,settings,preferences,time,seat_state,seats,drivables,bindings,actions,device,cameras,exposures,view_volumes,volumes,requests,effects,sounds,gui,app,problems,true)
+    frame_begin(world,screens,widgets,worlds,hidden,parents,meshes,settings,preferences,time,seat_state,seats,moves,bindings,actions,device,cameras,exposures,view_volumes,volumes,requests,effects,sounds,gui,app,problems,true)
 }
 
 @(private)
 frame_begin :: proc(
     world:core.World_Ref,screens:core.Read(UI_Screen),widgets:core.Read(World_Widget),worlds:core.Read(core.World_Transform),
     hidden:core.Read(render.Hidden),parents:core.Read(core.Parent),meshes:core.Read(render.Mesh_Renderer),settings:UI_Settings,preferences:UI_Preferences,time:core.Time,
-    seat_state:core.Ref(inp.Seats),seats:core.Read(inp.Seat),drivables:core.Read(inp.Drivable),bindings:core.Ref(inp.Input_Map),actions:core.Ref(inp.Frame_Actions),
+    seat_state:core.Ref(inp.Seats),seats:core.Read(inp.Seat),moves:core.Read(inp.Move_Input),bindings:core.Ref(inp.Input_Map),actions:core.Ref(inp.Frame_Actions),
     device:core.Frame_Input,cameras:core.Read(render.Camera),exposures:core.Read(render.Exposure),view_volumes:core.Read(render.View_Volume),volumes:core.Read(volume.Volume),
     requests:^UI_Requests,effects:^UI_Effects,sounds:^audio.Sound_Requests,gui:^Gui,app:^host.App,problems:^core.Problems,preview:bool,
 ) {
@@ -607,7 +607,7 @@ frame_begin :: proc(
     if gui.surfaces[0].ctx==nil && !surface_create(gui,app,0) {return}
     count:=max(seat_state.local_count,1)
     views_update(gui,app,count,seat_state.focus)
-    if !preview {plan_screens(gui,app,world,screens,hidden,parents,seats,drivables,time,seat_state.local_count,problems)}
+    if !preview {plan_screens(gui,app,world,screens,hidden,parents,seats,moves,time,seat_state.local_count,problems)}
     plan_widgets(gui,app,world,widgets,worlds,meshes,hidden,parents,time,count,problems,preview)
     for &entry in gui.plan {
         for request in gui.requests {

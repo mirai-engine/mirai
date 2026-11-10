@@ -2,6 +2,8 @@ package game
 
 import "core:testing"
 import "mirai:core"
+import cam "mirai:engine/camera"
+import render "mirai:engine/render"
 import inp "mirai:engine/input"
 import terrain "plugins:terrain/runtime"
 
@@ -11,8 +13,11 @@ Dig_World :: struct {
     sites:core.Table(Dig_Site),
     pickups:core.Table(Dig_Pickup),
     players:core.Table(Player),
-    drivables:core.Table(inp.Drivable),
+    seats:core.Table(inp.Seat),
+    cameras:core.Table(render.Camera),
     worlds:core.Table(core.World_Transform),
+    hierarchy:core.Hierarchy,
+    shown:cam.Cameras,
     inventories:core.Table(Dig_Inventory),
     keeps:core.Table(core.Keep),
     requests:terrain.Terrain_Requests,
@@ -20,8 +25,13 @@ Dig_World :: struct {
 }
 
 @(private="file")
+dig_sight :: proc(w:^Dig_World) -> cam.Sight {
+    return {core.ref(&w.shown),core.read(&w.seats),core.read(&w.cameras),core.ref(&w.hierarchy),core.read(&w.worlds)}
+}
+
+@(private="file")
 dig_types :: proc(types:^[dynamic]core.Test_Type) {
-    append(types,core.test_type(Dig_Site,default=proc(dst:^Dig_Site) {dst^=DIG_SITE_DEFAULT}),core.test_type(inp.Drivable,default=proc(dst:^inp.Drivable) {dst^=inp.DRIVABLE_DEFAULT}))
+    append(types,core.test_type(Dig_Site,default=proc(dst:^Dig_Site) {dst^=DIG_SITE_DEFAULT}))
 }
 
 // What the players take is run state: a component on a core.Keep root, which
@@ -42,7 +52,7 @@ the_inventory_of_the_dig_lives_on_a_root_that_keeps :: proc(t:^testing.T) {
     core.add(&w.worlds,drop,core.World_Transform{})
     core.test_world_settle(w)
     tick :: proc(w:^Dig_World,commands:core.Commands) {
-        dig_site(commands,&w.sites,core.read(&w.pickups),core.read(&w.players),core.read(&w.drivables),{},core.read(&w.worlds),&w.requests,core.ref(&w.digs),&w.inventories,{},{tick=1,dt=1.0/60,playing=true})
+        dig_site(commands,&w.sites,core.read(&w.pickups),core.read(&w.players),dig_sight(w),{},core.read(&w.worlds),&w.requests,core.ref(&w.digs),&w.inventories,{},{tick=1,dt=1.0/60,playing=true})
         core.test_world_settle(w)
     }
     tick(w,commands)
@@ -62,7 +72,7 @@ the_pit_digs_by_seconds_and_a_copy_digs_on :: proc(t:^testing.T) {
     dug :: proc(w:^Dig_World,hz,from,to:u64) -> u32 {
         commands:=core.commands(w,core.test_world_info(w))
         for tick in from..<to {
-            dig_site(commands,&w.sites,core.read(&w.pickups),core.read(&w.players),core.read(&w.drivables),{},core.read(&w.worlds),&w.requests,core.ref(&w.digs),&w.inventories,{},{tick=tick,dt=1/f32(hz),playing=true})
+            dig_site(commands,&w.sites,core.read(&w.pickups),core.read(&w.players),dig_sight(w),{},core.read(&w.worlds),&w.requests,core.ref(&w.digs),&w.inventories,{},{tick=tick,dt=1/f32(hz),playing=true})
             core.test_world_settle(w)
         }
         return core.at(core.read(&w.sites),0).dug

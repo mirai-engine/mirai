@@ -85,7 +85,7 @@ pair_frame :: proc(p:^Pair,ticks:=true) {
         if !p.sessions[1].ended {client_clock(&p.sessions[1],refs[1],&p.apps[1])}
         core.clock_requests(&client.clock_requests,&client.clock,core.ref(&client.network),&p.problems[1])
     }
-    net_seats({entities=&server.entities},&server.seats,&server.absents,&server.disabled,&server.objects,&server.transforms,nil,core.read(&server.links),
+    net_seats({entities=&server.entities},&server.seats,&server.absents,&server.disabled,&server.objects,&server.transforms,nil,core.read(&server.links),core.read(&server.remotes),
         core.ref(&p.bindings),core.ref(&server.remote),core.ref(&server.network),core.ref(&server.hierarchy),{},server.time)
     core.settle(&p.info,server,nil)
     if ticks {

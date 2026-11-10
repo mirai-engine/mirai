@@ -29,7 +29,6 @@ Cinematic_World :: struct {
     shots:core.Table(Cinematic_Shot),
     viewers:core.Table(Cinematic_Viewer),
     views:core.Table(Cinematic_View),
-    drivables:core.Table(input.Drivable),
     seats:core.Table(input.Seat),
     remotes:core.Table(core.Remote),
     hierarchy:core.Hierarchy,
@@ -71,7 +70,7 @@ cinematic_tick :: proc(w:^Cinematic_World,s:^Cinematic_Shared,app:^host.App,prob
     core.test_world_settle(w)
     anim.animation_fields(core.test_world_ref(w),core.ref(&w.playback),&w.fields,core.ref(&s.sources),app,problems)
     anim.animation_advance(&w.transforms,core.read(&w.parents),{},&w.modifier_requests,&w.modifier_runtime,&w.playback,&w.constraints,&w.grounding,{},{},time,&w.requests,core.ref(&s.skeletons),problems,nil,&s.characters,{},{},core.CLOCK_DEFAULT,nil)
-    cinematic_advance(core.ref(&w.entities),&w.cinematics,core.read(&w.shots),core.read(&w.viewers),&w.views,core.read(&w.cameras),core.read(&w.drivables),&w.transforms,core.read(&w.parents),core.read(&w.animations),core.ref(&w.playback),core.ref(&w.shown),core.ref(&w.seat_state),&w.camera_requests,&w.seat_requests,core.read(&w.seats),time,core.read(&w.remotes),problems)
+    cinematic_advance(core.ref(&w.entities),&w.cinematics,core.read(&w.shots),core.read(&w.viewers),&w.views,core.read(&w.cameras),core.ref(&w.hierarchy),&w.transforms,core.read(&w.parents),core.read(&w.animations),core.ref(&w.playback),core.ref(&w.shown),core.ref(&w.seat_state),&w.camera_requests,&w.seat_requests,core.read(&w.seats),time,core.read(&w.remotes),problems)
     core.test_world_settle(w)
 }
 

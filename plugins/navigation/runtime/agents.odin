@@ -265,7 +265,7 @@ agent_filter :: proc "contextless" (n:^Navigation,class:int,agent:Nav_Agent,walk
 @(step="fixed",stage="apply",server)
 navigation_agents :: proc(
     n:core.Ref(Navigation),a:^Navigation_Agents,agents:core.Read(Nav_Agent),paths:^core.Table(Nav_Path),
-    requests:^Nav_Requests,events:^Nav_Events,inputs:^core.Table(input.Move_Input),drivables:core.Read(input.Drivable),
+    requests:^Nav_Requests,events:^Nav_Events,inputs:^core.Table(input.Move_Input),seats:core.Read(input.Seat),
     characters:core.Read(phys.Character),loco_states:core.Read(locomotion.Locomotion_State),colliders:core.Read(phys.Collider),walks:core.Read(locomotion.Walk),flights:core.Read(locomotion.Fly),swims:core.Read(locomotion.Swim),
     grounds:core.Read(phys.Character_State),motions:core.Read(core.Motion),worlds:core.Read(core.World_Transform),
     obstacles:core.Read(Nav_Obstacle),volumes:core.Read(volume.Volume),loco:^locomotion.Locomotion_Requests,physics:core.Ref(phys.Physics_State),builds:core.Ref(Navigation_Builds),fars:^core.Table(Nav_Far),
@@ -461,7 +461,7 @@ navigation_agents :: proc(
     sections:=&builds.ptr.sections if builds.ptr!=nil else nil
     agents_search(n.ptr,a,builds.ptr,paths,agents,characters,grounds,colliders,walks,swims,worlds,physics,sections,budget,time.dt,events,problems)
     agents_avoid(n.ptr,a,paths,time.dt,problems)
-    crossings.count=agents_steer(n.ptr,agents,paths,inputs,drivables,characters,grounds,worlds,walks,flights,swims,time.dt)
+    crossings.count=agents_steer(n.ptr,agents,paths,inputs,seats,grounds,worlds,walks,flights,swims,time.dt)
     agents_far(n,builds,a,agents,paths,fars,roamings,disabled,walks,flights,swims,colliders,worlds,placer,bodies,events,time)
 }
 
@@ -1077,21 +1077,21 @@ agents_avoid :: proc(n:^Navigation,a:^Navigation_Agents,paths:^core.Table(Nav_Pa
 }
 
 // Writes the Move_Input of every agent no seat drives, and of a seated one
-// while it goes: toward its velocity, facing it, or what it looks at, turning
-// at the turn speed of its Character, at the share of the speed of its Walk
-// that its velocity asks: the velocity that steps aside is the one it moves
-// at. One that flies or swims looks level and climbs or dives with move.y, at
-// the share of the speed of its Fly or its Swim. The seat of a seated one wrote its Move_Input
-// earlier in the tick, with its buttons and the turn of the ground. How many
-// agents cross a link.
+// while it goes: along its velocity, at the share of the speed of its Walk
+// that its velocity asks (the velocity that steps aside is the one it moves
+// at), looking where it goes or at what it looks at; its body turns there at
+// its own rate. One that flies or swims looks level and climbs or dives, at
+// the share of the speed of its Fly or its Swim. The seat of a seated one
+// wrote its Move_Input earlier in the tick, with its buttons and the turn of
+// the ground. How many agents cross a link.
 @(private)
-agents_steer :: proc(n:^Navigation,agents:core.Read(Nav_Agent),paths:^core.Table(Nav_Path),inputs:^core.Table(input.Move_Input),drivables:core.Read(input.Drivable),characters:core.Read(phys.Character),grounds:core.Read(phys.Character_State),worlds:core.Read(core.World_Transform),walks:core.Read(locomotion.Walk),flights:core.Read(locomotion.Fly),swims:core.Read(locomotion.Swim),dt:f32) -> (crossing:u32) {
+agents_steer :: proc(n:^Navigation,agents:core.Read(Nav_Agent),paths:^core.Table(Nav_Path),inputs:^core.Table(input.Move_Input),seats:core.Read(input.Seat),grounds:core.Read(phys.Character_State),worlds:core.Read(core.World_Transform),walks:core.Read(locomotion.Walk),flights:core.Read(locomotion.Fly),swims:core.Read(locomotion.Swim),dt:f32) -> (crossing:u32) {
     for row in 0..<core.count(paths) {
         e:=core.entity_at(paths,row)
         p:=core.edit_at(paths,row)
         if p.state==.Crossing {crossing+=1}
         driven:=false
-        if d,ok:=core.get(drivables,e);ok && d.seat!=core.NONE {
+        if input.seat_of(seats,e)!=core.NONE {
             agent,_:=core.get(agents,e)
             if !agent.seated {continue}
             driven=true
@@ -1107,25 +1107,16 @@ agents_steer :: proc(n:^Navigation,agents:core.Read(Nav_Agent),paths:^core.Table
             continue
         }
         p.halted=false
-        character,_:=core.get(characters,e)
         ground,_:=core.get(grounds,e)
         pose,_:=core.get(worlds,e)
-        yaw:=mi.look_yaw+(driven?0:ground.ground_turn)
-        want:=yaw
+        if !driven {mi.look_yaw=mm.angle_wrap(mi.look_yaw+ground.ground_turn)}
         flat:=mm.Vec3{p.velocity.x,0,p.velocity.z}
         speed:=linalg.length(flat)
         if p.looking {
             to:=p.look-pose.position
             to.y=0
-            if linalg.length(to)>1e-3 {want=mm.yaw_of_direction(to)}
-        } else if speed>0.05 {want=mm.yaw_of_direction(flat)}
-        turn:=math.remainder(want-yaw,2*math.PI)
-        step:=character.turn_speed*dt
-        if character.turn_speed>0 && abs(turn)>step {turn=math.copy_sign(step,turn)}
-        yaw+=turn
-        mi.look_yaw=yaw
-        right:=mm.Vec3{math.cos(yaw),0,-math.sin(yaw)}
-        forward:=mm.Vec3{-math.sin(yaw),0,-math.cos(yaw)}
+            if linalg.length(to)>1e-3 {mi.look_yaw=mm.yaw_of_direction(to)}
+        } else if speed>0.05 {mi.look_yaw=mm.yaw_of_direction(flat)}
         if p.class>=0 && int(p.class)<n.count && class_in_volume(n,int(p.class)) {
             mi.look_pitch=0
             full:=linalg.length(p.velocity)
@@ -1139,14 +1130,13 @@ agents_steer :: proc(n:^Navigation,agents:core.Read(Nav_Agent),paths:^core.Table
                 top=fly.speed
             }
             share:=min(full/top,1) if top>0 else 1
-            d:=p.velocity/full*share
-            mi.move={linalg.dot(d,right),d.y,-linalg.dot(d,forward)}
+            mi.move=p.velocity/full*share
             continue
         }
         if speed<=1e-4 || p.state==.Crossing && !p.medium {mi.move={};continue}
         walk,_:=core.get(walks,e)
         top:=max(speed,walk.max_speed if walk.max_speed>0 else 3)
-        mi.move={linalg.dot(flat,right)/top,0,-linalg.dot(flat,forward)/top}
+        mi.move=flat/top
     }
     return
 }

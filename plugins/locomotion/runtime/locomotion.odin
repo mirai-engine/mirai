@@ -27,7 +27,24 @@ import phys "plugins:physics/runtime"
 // Modes and layered moves are asked through Locomotion_Requests. The mode
 // components replicate: every end of a network session runs the same
 // locomotion from the same state. The Move_Input, the Locomotion_State and the
-// Character_Move of a Character are added while it plays.
+// Character_Move of a Character are added while it plays. The body faces the
+// yaw of its Locomotion_State, which turns toward the look yaw of its
+// Move_Input at the turn_speed of its Character, and with the ground it stands
+// on: the one turn of every body, whoever drives it.
+
+// The actions of a body a seat drives, with input.Move_Action and
+// input.Look_Action: jump, sprint and crouch are Buttons.
+@(actions)
+Walk_Action :: enum u8 {Jump,Sprint,Crouch}
+
+// Their bindings when input.mirai of the project does not name them.
+walk_action_defaults :: proc "contextless" () -> [Walk_Action]input.Action_Default {
+    return {
+        .Jump=input.action_default(.Button,input.binding_key(.Space),input.binding_gamepad_button(.South)),
+        .Sprint=input.action_default(.Button,input.binding_key(.Left_Shift),input.binding_gamepad_button(.Left_Stick)),
+        .Crouch=input.action_default(.Button,input.binding_key(.Left_Control),input.binding_gamepad_button(.Right_Stick)),
+    }
+}
 
 @(names="MODE_")
 Locomotion_Mode :: distinct u16
@@ -108,7 +125,8 @@ Locomotion_State :: struct {
     gravity:f32 `mirai:"transient,readonly,hidden"`,           // times the gravity_scale of its Character, set_gravity_scale asked; 0: 1
     jumped:bool `mirai:"transient,readonly,hidden"`,           // in the air by a jump: no coyote time
     jump_held:bool `mirai:"transient,readonly,hidden"`,        // the jump button was down in the last tick
-    ready:bool `mirai:"transient,local,hidden"`,               // its look was taken from where it stands
+    ready:bool `mirai:"transient,local,hidden"`,               // its yaw was taken from where it stands
+    yaw:f32 `mirai:"transient,readonly,hidden,angle"`,         // it faces, about its up
     coyote:f32 `mirai:"transient,readonly,hidden,unit=s"`,     // left
     added:[3]f32 `mirai:"transient,readonly,hidden,unit=m/s"`, // what additive layered moves put in the last drive
     driven:[3]f32 `mirai:"transient,readonly,hidden,unit=m/s"`, // what the locomotion drove toward in the last tick without them, in the world
@@ -233,24 +251,25 @@ locomotion_step :: proc(
         capsule,made:=phys.character_capsule(physics,e)
         frame:=capsule.up_frame if made else mm.QUAT_IDENTITY
         move_input:=core.edit(inputs,e)
-        if move_input==nil {
-            // Whoever drives it writes into the one it gets here, looking where it stands: by its
-            // Transform, since a body spawned in this tick has no World_Transform yet.
-            first:input.Move_Input
-            if placed,ok:=core.world_of(locals,parents,e);ok {first.look_yaw=phys.look_yaw_of(frame,placed.rotation)}
-            core.add(inputs,e,first)
-            move_input=core.added(inputs,e)
+        if !c.ready || move_input==nil {
+            // It faces where it stands: by its Transform, since a body spawned in this tick has no
+            // World_Transform yet. Whoever drives it writes into the Move_Input it gets here.
+            if placed,ok:=core.world_of(locals,parents,e);ok {c.yaw=phys.look_yaw_of(frame,placed.rotation)}
+            if move_input==nil {
+                core.add(inputs,e,input.Move_Input{look_yaw=c.yaw})
+                move_input=core.added(inputs,e)
+            } else if core.owned(remotes,e) {move_input.look_yaw=c.yaw}
             c.ready=true
         }
-        if !c.ready {
-            // It looks where it stands, where this end decides it.
-            if placed,ok:=core.world_of(locals,parents,e);ok && core.owned(remotes,e) {move_input.look_yaw=phys.look_yaw_of(frame,placed.rotation)}
-            c.ready=true
-        }
-        given:input.Move_Input
-        if move_input!=nil {given=move_input^}
+        asked:input.Move_Input
+        if move_input!=nil {asked=move_input^}
         pace:=core.pace_of(clock,paces,e)
         ground,_:=core.get(found,e)
+        c.yaw=mm.angle_wrap(c.yaw+ground.ground_turn)
+        if body.turn_speed>0 {
+            c.yaw=mm.angle_wrap(mm.angle_approach(c.yaw,asked.look_yaw,body.turn_speed*time.dt*pace))
+        } else {c.yaw=asked.look_yaw}
+        given:=move_facing(asked,c.yaw,frame)
         motion,_:=core.get(motions,e)
         next:phys.Character_Move
         walk:Maybe(Walk)
@@ -330,8 +349,17 @@ locomotion_state_of :: proc(states:^core.Table(Locomotion_State),characters:core
 // What set_gravity_scale asked to scale the gravity of a character by.
 locomotion_gravity :: proc "contextless" (loco:Locomotion_State) -> f32 {return loco.gravity!=0?loco.gravity:1}
 
-// Direction of the move of the input in the world, across the up of the frame
-// of the vertical, at most 1 long.
+// A Move_Input in the axes of the yaw a character faces, in the frame of its
+// vertical: what its modes read.
+move_facing :: proc "contextless" (asked:input.Move_Input,yaw:f32,frame:mm.Quat) -> input.Move_Input {
+    facing:=asked
+    facing.look_yaw=yaw
+    facing.move=mm.quat_rotate(conj(frame*mm.quat_axis_angle({0,1,0},yaw)),asked.move)
+    return facing
+}
+
+// Direction of the move of an input in the axes of its yaw (move_facing) in
+// the world, across the up of the frame of the vertical, at most 1 long.
 move_wish :: proc "contextless" (move_input:input.Move_Input,frame:mm.Quat) -> [3]f32 {
     s,c:=cmath.sincos(move_input.look_yaw)
     m:=move_input.move

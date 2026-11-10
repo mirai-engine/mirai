@@ -65,11 +65,11 @@ CAMERA_PRESETS :: [Camera_Preset]Camera_Setup{
             pull_grace=ARM_GRACE,pull_time=ARM_PULL_TIME,return_delay=ARM_HOLD,return_time=ARM_RETURN_TIME,arm_margin=ARM_MARGIN,hide_within=0.9},
         lens={projection=.Perspective,fov=60*mm.RAD_PER_DEG,near=0.05},
     },
-    // Closer over the shoulder, with a narrower field, and the body looks
-    // where it looks: the camera a Camera_Activation brings while aiming.
+    // Closer over the shoulder, with a narrower field, turning with the look
+    // of the body: the camera a Camera_Activation brings while aiming.
     .Aim={
         follow={mode=.Orbit,offset={0,1.45,0},distance=1.8,half_life=0.04,probe_radius=0.25,shoulder={0.65,0.1},
-            pitch=0.1,min_pitch=-0.7,max_pitch=1.2,turn=true,facing=true,
+            pitch=0.1,min_pitch=-0.7,max_pitch=1.2,aim=true,
             pull_grace=ARM_GRACE,pull_time=ARM_PULL_TIME,return_delay=ARM_HOLD,return_time=ARM_RETURN_TIME,arm_margin=ARM_MARGIN,hide_within=0.7},
         lens={projection=.Perspective,fov=45*mm.RAD_PER_DEG,near=0.05},
     },

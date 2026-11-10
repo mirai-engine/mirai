@@ -91,29 +91,39 @@ defaults_are_given_by_member_of_an_enum_of_actions :: proc(t:^testing.T) {
 }
 
 // A step reads the actions of its enum by member, and the base of the enum
-// makes them the actions of the world: of the tick and of the frame.
+// makes them the actions of the world: of the focused seat for the tick, of
+// its slot for the frame. A block of that seat takes them from both.
 @(test)
 typed_reads_take_the_actions_of_their_enum :: proc(t:^testing.T) {
     names:=TEST_NAMES
     info,made:=test_info(t,Defaults_World,names[:])
     if !made {return}
     defer core.test_info_destroy(&info)
+    w:Test_Seats
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    seat:=core.create(&w.entities)
+    core.add(&w.seats,seat,Seat{})
+    core.test_world_settle(&w)
     m:Input_Map
     input_map_make(&m,&info,"","",nil)
     device:=core.Input{keys_down={.D,.Space},keys_pressed={.D,.Space}}
-    tick:Actions
-    actions_update(&tick,&m,&device,1.0/60)
+    actions_update(&core.edit(&w.seats,seat).actions,&m,&device,1.0/60)
+    state:=Seats{local_count=1}
     frame:Frame_Actions
     device={keys_down={.D}}
-    actions_update(&frame.actions,&m,&device,1.0/60)
+    actions_update(&frame.slots[0],&m,&device,1.0/60)
 
-    input:=Input_Of(Test_Action){actions=core.ref(&tick),base=3}
+    input:=Input_Of(Test_Action){state=core.ref(&state),seats=core.read(&w.seats),base=3}
     testing.expect_value(t,action_of(input,.Jump),JUMP)
     testing.expect(t,pressed(input,.Jump) && down(input,.Jump) && !released(input,.Jump))
     testing.expect_value(t,vector(input,.Move),[2]f32{1,0})
-    shown:=Frame_Input_Of(Test_Action){actions=core.ref(&frame),base=3}
+    shown:=Frame_Input_Of(Test_Action){actions=core.ref(&frame),state=core.ref(&state),seats=core.read(&w.seats),base=3}
     testing.expect(t,!down(shown,.Jump) && vector(shown,.Move)=={1,0},"the frame has its own")
     testing.expect_value(t,action_of(shown,.Move),MOVE)
+
+    core.edit(&w.seats,seat).blocked=ALL_ACTIONS
+    testing.expect(t,!pressed(input,.Jump) && vector(shown,.Move)=={},"a menu that blocks the seat blocks what the machine reads")
 }
 
 // A frame without a tick (a paused clock) runs the input phase and not fixed:
@@ -126,26 +136,30 @@ a_frame_without_a_tick_leaves_input_of_at_the_last_tick :: proc(t:^testing.T) {
     info,made:=test_info(t,Defaults_World,names[:])
     if !made {return}
     defer core.test_info_destroy(&info)
+    w:Test_Seats
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    seat:=core.create(&w.entities)
+    core.add(&w.seats,seat,Seat{})
+    core.test_world_settle(&w)
     m:Input_Map
     input_map_make(&m,&info,"","",nil)
-    state:Seats
-    seats:core.Table(Seat)
-    tick:Actions
+    state:=Seats{local_count=1}
     frame:Frame_Actions
-    ticked:=Input_Of(Test_Action){actions=core.ref(&tick),base=3}
-    shown:=Frame_Input_Of(Test_Action){actions=core.ref(&frame),base=3}
+    ticked:=Input_Of(Test_Action){state=core.ref(&state),seats=core.read(&w.seats),base=3}
+    shown:=Frame_Input_Of(Test_Action){actions=core.ref(&frame),state=core.ref(&state),seats=core.read(&w.seats),base=3}
 
     pressed_space:=core.Input{keys_down={.Space},keys_pressed={.Space}}
-    input_actions_update(&m,&tick,pressed_space,core.ref(&state),core.read(&seats),{dt=1.0/60})
-    input_frame_actions_update(core.ref(&m),&frame,core.Frame_Input{input=pressed_space},core.ref(&state),core.read(&seats),{dt=1.0/60})
+    seat_feed(core.edit(&w.seats,seat),&pressed_space,&m,false,1.0/60)
+    input_frame_actions_update(core.ref(&m),&frame,core.Frame_Input{input=pressed_space},core.ref(&state),core.read(&w.seats),{dt=1.0/60})
     testing.expect(t,pressed(ticked,.Jump) && pressed(shown,.Jump))
 
-    input_frame_actions_update(core.ref(&m),&frame,core.Frame_Input{},core.ref(&state),core.read(&seats),{dt=1.0/60})
+    input_frame_actions_update(core.ref(&m),&frame,core.Frame_Input{},core.ref(&state),core.read(&w.seats),{dt=1.0/60})
     testing.expect(t,pressed(ticked,.Jump) && down(ticked,.Jump),"the edge of the last tick is still there")
     testing.expect(t,released(shown,.Jump) && !down(shown,.Jump),"the frame saw the key go up")
 
     held_d:=core.Input{keys_down={.D},keys_pressed={.D}}
-    input_frame_actions_update(core.ref(&m),&frame,core.Frame_Input{input=held_d},core.ref(&state),core.read(&seats),{dt=1.0/60})
+    input_frame_actions_update(core.ref(&m),&frame,core.Frame_Input{input=held_d},core.ref(&state),core.read(&w.seats),{dt=1.0/60})
     testing.expect_value(t,vector(ticked,.Move),[2]f32{0,0})
     testing.expect_value(t,vector(shown,.Move),[2]f32{1,0})
 }

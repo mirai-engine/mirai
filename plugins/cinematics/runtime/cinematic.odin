@@ -155,7 +155,7 @@ cinematic_follow :: proc(cinematics:core.Read(Cinematic),animations:core.Read(an
 @(step="fixed",stage="react")
 cinematic_advance :: proc(
     entities:core.Ref(core.Entities),cinematics:^core.Table(Cinematic),shots:core.Read(Cinematic_Shot),viewers:core.Read(Cinematic_Viewer),
-    views:^core.Table(Cinematic_View),cameras:core.Read(render.Camera),drivables:core.Read(input.Drivable),transforms:^core.Table(core.Transform),
+    views:^core.Table(Cinematic_View),cameras:core.Read(render.Camera),hierarchy:core.Ref(core.Hierarchy),transforms:^core.Table(core.Transform),
     parents:core.Read(core.Parent),animations:core.Read(anim.Animation),playback:core.Ref(anim.Playback),
     shown:core.Ref(camera.Cameras),seat_state:core.Ref(input.Seats),camera_requests:^camera.Camera_Requests,seat_requests:^input.Seat_Requests,
     seats:core.Read(input.Seat),time:core.Time,remotes:core.Read(core.Remote),problems:^core.Problems,
@@ -190,7 +190,7 @@ cinematic_advance :: proc(
         if next!=was {core.edit_at(cinematics,row)^=next}
     }
     for row in 0..<core.count(viewers) {
-        viewer_update(&p,es,core.entity_at(viewers,row),core.at(viewers,row),drivables)
+        viewer_update(&p,es,core.entity_at(viewers,row),core.at(viewers,row),hierarchy)
     }
 }
 
@@ -256,7 +256,7 @@ view_ask :: proc(p:^Cine,e,seat:core.Entity,viewer:Cinematic_Viewer,fov,near:f32
 }
 
 @(private)
-viewer_update :: proc(p:^Cine,es:^core.Entities,e:core.Entity,viewer:Cinematic_Viewer,drivables:core.Read(input.Drivable)) {
+viewer_update :: proc(p:^Cine,es:^core.Entities,e:core.Entity,viewer:Cinematic_Viewer,hierarchy:core.Ref(core.Hierarchy)) {
     c,has_timeline:=core.get(p.cinematics,viewer.timeline)
     ready:=has_timeline && (c.status==.Playing || c.status==.Paused)
     seat:=viewer.seat!=core.NONE?viewer.seat:input.focused(p.seat_state.ptr,p.seats)
@@ -276,7 +276,7 @@ viewer_update :: proc(p:^Cine,es:^core.Entities,e:core.Entity,viewer:Cinematic_V
         if binding!=nil {view_release(p,e)}
         return
     }
-    entry:=binding!=nil?binding.entry_camera:camera.camera_selected(p.shown.ptr,drivables,p.cameras,seat)
+    entry:=binding!=nil?binding.entry_camera:camera.camera_selected(p.shown.ptr,p.seats,p.cameras,hierarchy,seat)
     from_camera:=previous.camera!=core.NONE?previous.camera:entry
     if from_camera!=core.NONE && from_camera!=e {
         if from,found:=cinematic_camera_sample(p.cameras,locals,p.parents,from_camera);found {sample=cinematic_shot_blend(current,from,sample,c.time)}

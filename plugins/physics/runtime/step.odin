@@ -252,7 +252,8 @@ physics_verticals :: proc(state:core.Ref(Physics_State),characters:core.Read(Cha
         e:=core.entity_at(characters,row)
         l:=link_find(state.ptr,e)
         if l==nil || l.kind!=.Character || !sim.character_valid(&state.world,l.character) {continue}
-        next:=core.Vertical{sim.character_state(&state.world,l.character).up_frame}
+        found:=sim.character_state(&state.world,l.character)
+        next:=core.Vertical{found.up_frame,found.ground_turn}
         if at:=core.row_of(verticals,e);at<0 {
             core.add(verticals,e,next)
         } else if verticals.values[at]!=next {core.edit_at(verticals,at)^=next}

@@ -46,8 +46,8 @@ Camera_Views :: struct {
 // The view of every local slot; the focused one's is the view of the game.
 @(step="late",stage="end")
 camera_blend :: proc(
-    views:^Camera_Views,shown:core.Ref(Cameras),seat_state:core.Ref(input.Seats),seats:core.Read(input.Seat),drivables:core.Read(input.Drivable),
-    cameras:core.Read(render.Camera),follows:core.Read(Camera_Follow),worlds:core.Read(core.World_Transform),chosen:^render.View_Camera,
+    views:^Camera_Views,shown:core.Ref(Cameras),seat_state:core.Ref(input.Seats),seats:core.Read(input.Seat),
+    parents:core.Read(core.Parent),hierarchy:core.Ref(core.Hierarchy),cameras:core.Read(render.Camera),follows:core.Read(Camera_Follow),worlds:core.Read(core.World_Transform),chosen:^render.View_Camera,
     bodies:^render.View_Bodies,frame:core.Frame_Time,
 ) {
     player:=input.focused(seat_state.ptr,seats)
@@ -61,14 +61,14 @@ camera_blend :: proc(
             continue
         }
         seat:=seat_state.local_count>0?input.local_seat(seats,slot):core.NONE
-        camera,through:=seat_camera(shown.ptr,drivables,cameras,seat)
-        body:=input.body_of(drivables,seat)
+        camera,through:=seat_camera(shown.ptr,seats,cameras,hierarchy,seat)
+        body:=input.body_of(seats,seat)
         view_update(v,camera,through,body,cameras,follows,worlds,frame)
         // The own body of the view is the body of its player, or else the one its
         // camera follows. Nearer to it than twice what it allows, the view fades it out.
         v.fade=0
         if follow,ok:=core.get(follows,v.camera);ok && follow.state.ready {
-            target:=follow_target(v.camera,follow.target,drivables,player)
+            target:=follow_target(v.camera,follow.target,parents,seats,player)
             if body==core.NONE {body=target}
             if follow.hide_within>0 && target==body {
                 v.fade=clamp(2-linalg.length(v.pose.position-follow.state.pivot.position)/follow.hide_within,0,1)

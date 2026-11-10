@@ -3,6 +3,7 @@ package game
 import "core:math"
 import "core:math/linalg"
 import "mirai:core"
+import cam "mirai:engine/camera"
 import inp "mirai:engine/input"
 import phys "plugins:physics/runtime"
 import render "mirai:engine/render"
@@ -177,7 +178,7 @@ portal_fit :: proc(wall:mm.Transform,box:Surface_Box,point,normal,up:[3]f32,othe
 portal_gun :: proc(
     guns:^core.Table(Portal_Gun),mouths:^core.Table(Portal_Mouth),surfaces:core.Read(Portal_Surface),cubes:core.Read(Portal_Cube),
     rims:core.Read(portals.Portal_Rim),openings:core.Read(portals.Portal),
-    colliders:core.Read(phys.Collider),inputs:core.Read(inp.Move_Input),drivables:core.Read(inp.Drivable),actions:inp.Input_Of(Action),worlds:core.Read(core.World_Transform),
+    colliders:core.Read(phys.Collider),inputs:core.Read(inp.Move_Input),sight:cam.Sight,actions:inp.Input_Of(Action),worlds:core.Read(core.World_Transform),
     transforms:^core.Table(core.Transform),physics:core.Ref(phys.Physics_State),bodies:^phys.Body_Requests,
     characters:core.Read(core.Motion),passes:core.Ref(Grill_Passes),
 ) {
@@ -195,7 +196,7 @@ portal_gun :: proc(
     for row in 0..<core.count(guns) {
         player:=core.entity_at(guns,row)
         gun:=core.at(guns,row)
-        eye,aim,ok:=inp.aim(drivables,worlds,player)
+        eye,aim,ok:=cam.aim(sight,player)
         if !ok {continue}
         blue:=inp.pressed(actions,player,.Portal_Blue)
         orange:=inp.pressed(actions,player,.Portal_Orange)
@@ -375,14 +376,14 @@ Portal_Hud :: struct {
 @(step="frame")
 portal_hud :: proc(
     huds:^core.Table(Portal_Hud),guns:core.Read(Portal_Gun),mouths:core.Read(Portal_Mouth),exhibits:core.Read(Exhibit),
-    drivables:core.Read(inp.Drivable),worlds:core.Read(core.World_Transform),names:core.Read(core.Name),
+    seats:core.Read(inp.Seat),worlds:core.Read(core.World_Transform),names:core.Read(core.Name),
 ) {
     shown:=core.read(huds)
     for row in 0..<core.count(shown) {
         body:=core.entity_at(shown,row)
         next:Portal_Hud
         gun,has_gun:=core.get(guns,body)
-        if placed,has_world:=core.get(worlds,body);has_world && has_gun && inp.seat_of(drivables,body)!=core.NONE {
+        if placed,has_world:=core.get(worlds,body);has_world && has_gun && inp.seat_of(seats,body)!=core.NONE {
             next.shown,next.holding,next.aiming=true,gun.held!=core.NONE,gun.held==core.NONE
             for at in 0..<core.count(mouths) {
                 mouth:=core.at(mouths,at)

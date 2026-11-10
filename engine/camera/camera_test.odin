@@ -296,26 +296,26 @@ a_camera_with_an_activation_is_seen_while_its_player_holds_the_action :: proc(t:
     core.add(&f.follows,aim,Camera_Follow{mode=.Orbit,target=body})
     core.add(&f.activations,aim,Camera_Activation{action=AIM,blend={0.25,.Cubic_Out}})
     core.add(&f.activations,stray,CAMERA_ACTIVATION_DEFAULT)
-    core.add(&f.drivables,body,input.Drivable{seat=seat,camera=base})
-    core.add(&f.seats,seat,input.Seat{actions={count=input.ACTION_CAPACITY}})
+    core.add(&f.parents,base,core.Parent{entity=body})
+    core.add(&f.seats,seat,input.Seat{body=body,actions={count=input.ACTION_CAPACITY}})
     core.test_world_settle(&f.w)
     select:=proc(f:^Camera_Test) {
-        camera_select(core.ref(&f.entities),core.read(&f.cameras),&f.selected,&f.requests,core.read(&f.activations),core.read(&f.follows),core.read(&f.drivables),core.read(&f.seats),core.ref(&f.seat_state),&f.problems)
+        camera_select(core.ref(&f.entities),core.read(&f.cameras),&f.selected,&f.requests,core.read(&f.activations),core.read(&f.follows),core.read(&f.parents),core.read(&f.seats),core.ref(&f.seat_state),&f.problems)
     }
 
     select(f)
-    testing.expect(t,camera_selected(&f.selected,core.read(&f.drivables),core.read(&f.cameras),seat)==base,"without the action, the camera of the body")
+    testing.expect(t,camera_selected(&f.selected,core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),seat)==base,"without the action, the camera of the body")
     testing.expect(t,has_problem(&f.problems,"camera.activation"),"an activation without an action says so")
 
     held:=core.edit(&f.seats,seat)
     held.actions.states[AIM].down=true
     select(f)
-    chosen,blend:=seat_camera(&f.selected,core.read(&f.drivables),core.read(&f.cameras),seat)
+    chosen,blend:=seat_camera(&f.selected,core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),seat)
     testing.expect(t,chosen==aim && blend.seconds==0.25,"while it is held, the camera it brings, with its blend")
 
     held.actions.states[AIM].down=false
     select(f)
-    testing.expect(t,camera_selected(&f.selected,core.read(&f.drivables),core.read(&f.cameras),seat)==base,"and back once it is let go")
+    testing.expect(t,camera_selected(&f.selected,core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),seat)==base,"and back once it is let go")
 }
 
 // On the side of a planet, where the up of a character is +X, the eyes sit

@@ -22,7 +22,6 @@ End_World :: struct {
     using world:core.Test_World,
     using ground:terrain.Test_Terrain,
     seats:core.Table(input.Seat),
-    drivables:core.Table(input.Drivable),
     replays:terrain.Terrain_Replays,
     replayed:terrain.Terrain_Replay_Events,
     net_settings:Terrain_Net_Settings,
@@ -141,7 +140,7 @@ end_tick :: proc(e:^End,_:^Fixture,resimulating:=false) {
     time:=core.Time{dt=1.0/60,playing=true,tick=e.tick,resimulating=resimulating}
     e.outbox.replaying=resimulating // as a correction of the network leaves it
     terrain_net_follow(core.ref(&e.authority),&e.net,time,&e.replays,&e.outbox,core.ref(&e.session),core.ref(&e.data),core.read(&e.terrains),
-        core.read(&e.seats),core.read(&e.drivables),core.read(&e.worlds),e.net_settings,core.ref(&e.root),f.app.assets,&e.problems)
+        core.read(&e.seats),core.read(&e.worlds),e.net_settings,core.ref(&e.root),f.app.assets,&e.problems)
     clear(&e.replayed.results.items);clear(&e.digs.digs.items) // the logs of a tick, as their readers are handed them
     terrain.terrain_replay(&e.replays,&e.replayed,&e.digs,&e.terrain_requests,&e.data,core.read(&e.terrains),core.read(&e.worlds),f.app.assets,&e.problems)
     terrain_net_send(core.ref(&e.authority),&e.net,time,&e.outbox,core.ref(&e.connections),core.ref(&e.replayed),core.ref(&e.data),core.ref(&e.session),core.ref(&e.root))

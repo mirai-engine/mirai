@@ -10,7 +10,7 @@ test_types :: proc(types:^[dynamic]core.Test_Type) {}
 Test_Seats :: struct {
     using world:core.Test_World,
     seats:core.Table(Seat),
-    drivables:core.Table(Drivable),
+    moves:core.Table(Move_Input),
     worlds:core.Table(core.World_Transform),
     remotes:core.Table(core.Remote),
     hold_requests:Hold_Requests,

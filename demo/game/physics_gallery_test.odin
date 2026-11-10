@@ -29,7 +29,7 @@ gallery_geometry_actions_restart_once_per_trigger_alternating_forward_and_revers
     views:core.Table(Physics_Gallery_View);stations:core.Table(Physics_Gallery)
     states:core.Table(destruct.Destructible_State);groups:core.Table(destruct.Destructible_Group);force_fields:core.Table(phys.Force_Field);strain_fields:core.Table(destruct.Strain_Field)
     defer core.table_destroy(&views);defer core.table_destroy(&stations);defer core.table_destroy(&states);defer core.table_destroy(&groups);defer core.table_destroy(&force_fields);defer core.table_destroy(&strain_fields)
-    actions:inp.Actions;requests:destruct.Destruct_Requests;bodies:phys.Body_Requests;playback:cache.Geometry_Requests;ragdolls:Ragdoll_Gallery_Requests
+    seats:core.Table(inp.Seat);seat_state:inp.Seats;requests:destruct.Destruct_Requests;bodies:phys.Body_Requests;playback:cache.Geometry_Requests;ragdolls:Ragdoll_Gallery_Requests
     defer delete(requests.queue.items);defer delete(requests.waiting.items);defer delete(bodies.queue.items);defer delete(playback.queue.items);defer delete(ragdolls.queue.items)
     physics:phys.Physics_State
     core.add(&views,core.create(&entities),PHYSICS_GALLERY_VIEW_DEFAULT)
@@ -38,7 +38,7 @@ gallery_geometry_actions_restart_once_per_trigger_alternating_forward_and_revers
     core.table_settle(&views,&entities);core.table_settle(&stations,&entities)
     for activation in 1..=3 {
         core.edit(&stations,station).trigger=u32(activation)
-        for repeat in 0..<2 {physics_gallery_actions(&views,&stations,{actions=core.ref(&actions)},&requests,&bodies,&force_fields,&strain_fields,&playback,&ragdolls,{playing=true,dt=.5},destruct.Destruct_View{core.ref(&physics),core.read(&states),core.read(&groups)})}
+        for repeat in 0..<2 {physics_gallery_actions(&views,&stations,{state=core.ref(&seat_state),seats=core.read(&seats)},&requests,&bodies,&force_fields,&strain_fields,&playback,&ragdolls,{playing=true,dt=.5},destruct.Destruct_View{core.ref(&physics),core.read(&states),core.read(&groups)})}
         testing.expect_value(t,len(playback.queue.items),1)
         for command in core.take(&playback.queue) {
             testing.expect_value(t,command.entity,recorded)
@@ -70,7 +70,7 @@ gallery_internal_strain_holds_then_releases_a_suspended_collection_without_launc
     entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
     views:core.Table(Physics_Gallery_View);stations:core.Table(Physics_Gallery);states:core.Table(destruct.Destructible_State);groups:core.Table(destruct.Destructible_Group);force_fields:core.Table(phys.Force_Field);strain_fields:core.Table(destruct.Strain_Field)
     defer core.table_destroy(&views);defer core.table_destroy(&stations);defer core.table_destroy(&states);defer core.table_destroy(&groups);defer core.table_destroy(&force_fields);defer core.table_destroy(&strain_fields)
-    actions:inp.Actions;requests:destruct.Destruct_Requests;bodies:phys.Body_Requests;caches:cache.Geometry_Requests;ragdolls:Ragdoll_Gallery_Requests
+    seats:core.Table(inp.Seat);seat_state:inp.Seats;requests:destruct.Destruct_Requests;bodies:phys.Body_Requests;caches:cache.Geometry_Requests;ragdolls:Ragdoll_Gallery_Requests
     defer delete(requests.queue.items);defer delete(requests.waiting.items);defer delete(bodies.queue.items);defer delete(caches.queue.items);defer delete(ragdolls.queue.items)
     physics:phys.Physics_State;defer phys.state_destroy(&physics)
     settings:=phys.Physics_Settings{bodies=8,shapes=32,contacts=32,joints=1,hulls=16,breakables=1,pieces=32,bonds=64}
@@ -88,7 +88,7 @@ gallery_internal_strain_holds_then_releases_a_suspended_collection_without_launc
     core.table_settle(&views,&entities);core.table_settle(&stations,&entities);core.table_settle(&states,&entities)
     for activation in 1..=2 {
         core.edit(&stations,station).trigger=u32(activation)
-        physics_gallery_actions(&views,&stations,{actions=core.ref(&actions)},&requests,&bodies,&force_fields,&strain_fields,&caches,&ragdolls,{playing=true,dt=1.0/60},destruct.Destruct_View{core.ref(&physics),core.read(&states),core.read(&groups)})
+        physics_gallery_actions(&views,&stations,{state=core.ref(&seat_state),seats=core.read(&seats)},&requests,&bodies,&force_fields,&strain_fields,&caches,&ragdolls,{playing=true,dt=1.0/60},destruct.Destruct_View{core.ref(&physics),core.read(&states),core.read(&groups)})
         command:=requests.queue.items[activation-1]
         testing.expect_value(t,command.vector,mm.Vec3{})
         if activation==1 {
@@ -125,14 +125,14 @@ gallery_keeps_initial_trigger_until_ready_and_slices_through_a_live_piece_center
     entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
     views:core.Table(Physics_Gallery_View);stations:core.Table(Physics_Gallery);states:core.Table(destruct.Destructible_State);groups:core.Table(destruct.Destructible_Group);force_fields:core.Table(phys.Force_Field);strain_fields:core.Table(destruct.Strain_Field)
     defer core.table_destroy(&views);defer core.table_destroy(&stations);defer core.table_destroy(&states);defer core.table_destroy(&groups);defer core.table_destroy(&force_fields);defer core.table_destroy(&strain_fields)
-    actions:inp.Actions;requests:destruct.Destruct_Requests;bodies:phys.Body_Requests;caches:cache.Geometry_Requests;ragdolls:Ragdoll_Gallery_Requests
+    seats:core.Table(inp.Seat);seat_state:inp.Seats;requests:destruct.Destruct_Requests;bodies:phys.Body_Requests;caches:cache.Geometry_Requests;ragdolls:Ragdoll_Gallery_Requests
     defer delete(requests.queue.items);defer delete(requests.waiting.items);defer delete(bodies.queue.items);defer delete(caches.queue.items);defer delete(ragdolls.queue.items)
     physics:phys.Physics_State;defer phys.state_destroy(&physics)
     view:=core.create(&entities);station:=core.create(&entities);target:=core.create(&entities)
     core.add(&views,view,PHYSICS_GALLERY_VIEW_DEFAULT)
     core.add(&stations,station,Physics_Gallery{station=2,target=target,trigger=1,origin={3,1,5}})
     core.table_settle(&views,&entities);core.table_settle(&stations,&entities);core.entities_settle(&entities)
-    physics_gallery_actions(&views,&stations,{actions=core.ref(&actions)},&requests,&bodies,&force_fields,&strain_fields,&caches,&ragdolls,{playing=true,dt=1.0/60},destruct.Destruct_View{core.ref(&physics),core.read(&states),core.read(&groups)})
+    physics_gallery_actions(&views,&stations,{state=core.ref(&seat_state),seats=core.read(&seats)},&requests,&bodies,&force_fields,&strain_fields,&caches,&ragdolls,{playing=true,dt=1.0/60},destruct.Destruct_View{core.ref(&physics),core.read(&states),core.read(&groups)})
     testing.expect_value(t,core.at(&stations,core.row_of(&stations,station)).activations,u32(0));testing.expect_value(t,len(requests.queue.items),0)
     settings:=phys.Physics_Settings{bodies=8,shapes=32,contacts=32,joints=1,hulls=32,breakables=1,pieces=32,bonds=64}
     testing.expect(t,gallery_physics_make(&physics,settings))
@@ -143,7 +143,7 @@ gallery_keeps_initial_trigger_until_ready_and_slices_through_a_live_piece_center
     if !testing.expect_value(t,error,phys.Breakable_Error.None) {return}
     body:=phys.breakable_body(core.ref(&physics),h)
     core.add(&states,target,destruct.Destructible_State{handle=h,body=body});core.table_settle(&states,&entities)
-    physics_gallery_actions(&views,&stations,{actions=core.ref(&actions)},&requests,&bodies,&force_fields,&strain_fields,&caches,&ragdolls,{playing=true,dt=1.0/60},destruct.Destruct_View{core.ref(&physics),core.read(&states),core.read(&groups)})
+    physics_gallery_actions(&views,&stations,{state=core.ref(&seat_state),seats=core.read(&seats)},&requests,&bodies,&force_fields,&strain_fields,&caches,&ragdolls,{playing=true,dt=1.0/60},destruct.Destruct_View{core.ref(&physics),core.read(&states),core.read(&groups)})
     testing.expect_value(t,core.at(&stations,core.row_of(&stations,station)).activations,u32(1));testing.expect_value(t,len(requests.queue.items),1)
     command:=requests.queue.items[0];testing.expect_value(t,command.kind,destruct.Fracture_Kind.Slice)
     asked:=command.event;asked.breakable,asked.piece=h,-1
