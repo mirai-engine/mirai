@@ -432,9 +432,9 @@ a_load_waits_while_a_library_names_what_it_names :: proc(t:^testing.T) {
 }
 
 // A spawn of a prefab that is not loaded reads nothing in the call: its root
-// comes at once, off, where it was asked, and jobs read the prefab and the
-// mesh it names; within frames the root takes them, keeps what it was given
-// meanwhile, and turns on. A scene load reads the prefabs its fields name,
+// comes at once, alone, where it was asked, and jobs read the prefab and the
+// mesh it names; within frames the root takes them and keeps what it was
+// given meanwhile. A scene load reads the prefabs its fields name,
 // with what they take: a spawn after it is whole in the call.
 @(test)
 a_spawn_of_a_prefab_not_loaded_returns_its_root_and_jobs_fill_it :: proc(t:^testing.T) {
@@ -459,7 +459,7 @@ a_spawn_of_a_prefab_not_loaded_returns_its_root_and_jobs_fill_it :: proc(t:^test
     core.add(&p.world.models,root,Loading_Model{LEVEL})
     core.world_settle(w)
     pose,_:=core.get(&p.world.transforms,root)
-    testing.expect(t,core.raw_row(core.raw(&p.world.pendings),root)>=0 && core.raw_row(core.raw(&p.world.disabled),root)>=0 && pose.position==[3]f32{1,2,3},"its root, off, where it was asked")
+    testing.expect(t,core.raw_row(core.raw(&p.world.pendings),root)>=0 && !core.has(&p.world.names,root) && pose.position==[3]f32{1,2,3},"its root alone, where it was asked")
     started:=time.tick_now()
     for frame:=0;core.raw_row(core.raw(&p.world.pendings),root)>=0;frame+=1 {
         p.app.stats.frames+=1
@@ -472,7 +472,7 @@ a_spawn_of_a_prefab_not_loaded_returns_its_root_and_jobs_fill_it :: proc(t:^test
     testing.expect(t,host.assets_loaded(&p.assets,PREFAB) && host.assets_loaded(&p.assets,MESH) && p.assets.stats.loads==2,"jobs read the prefab and its mesh")
     model,_:=core.get(&p.world.models,root)
     name,_:=core.get(&p.world.names,root)
-    testing.expect(t,core.has(&p.world.models,root) && model.mesh==LEVEL && base.text_get(name.text[:])=="Model","it keeps what it was given, on, with the rest of its prefab")
+    testing.expect(t,core.has(&p.world.models,root) && model.mesh==LEVEL && base.text_get(name.text[:])=="Model","it keeps what it was given, with the rest of its prefab")
     pose,_=core.get(&p.world.transforms,root)
     testing.expect_value(t,pose.position,[3]f32{1,2,3})
 

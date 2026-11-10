@@ -125,20 +125,20 @@ Load_Item :: struct {
     ready:bool, // a job prepared it
 }
 
-// Starts reading in jobs a prefab and what it takes that is not loaded, for
-// the spawns that wait for it (Prefab_Pending): a load without a World, all
-// Warming. nil, with the error, when it cannot start.
-prefab_warm_begin :: proc(app:^host.App,prefab:base.Asset_Id) -> (job:^Load_Job,error:Error) {
+// Starts reading in jobs prefabs and what they take that is not loaded, for
+// the spawns that wait for them (Prefab_Pending): a load without a World,
+// all Warming. nil, with the error, when it cannot start.
+prefab_warm_begin :: proc(app:^host.App,prefabs:..base.Asset_Id) -> (job:^Load_Job,error:Error) {
     a:=app.assets
     if a==nil {return nil,.No_Assets}
     heap:=runtime.heap_allocator()
     no_job:runtime.Allocator_Error
     if job,no_job=new(Load_Job,heap);no_job!=nil {return nil,.Out_Of_Memory}
-    job^={app=app,root=prefab,cooked=a.indexed,started=time.tick_now()}
+    job^={app=app,cooked=a.indexed,started=time.tick_now()}
     job.names=make([dynamic]base.Asset_Id,heap)
     job.animations=make([dynamic]base.Asset_Id,heap)
     asset.types_init(&job.types,heap)
-    append(&job.names,prefab)
+    append(&job.names,..prefabs)
     load_warm_begin(job)
     if job.error!=.None {
         error=job.error

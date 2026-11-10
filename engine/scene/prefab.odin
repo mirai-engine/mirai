@@ -41,9 +41,9 @@ prefab_instance_of :: proc(w:core.World_Ref,e:core.Entity) -> (root:core.Entity,
 }
 
 // The root of a spawned copy whose prefab, or something it takes, was not
-// loaded: it is off and waits for jobs to read them, and then takes what its
-// prefab places (scene_spawns).
-@(component,description="A spawned copy that waits for its prefab to be read: off until it takes what the prefab places.")
+// loaded: it has only what its spawn and its spawner gave it until jobs read
+// them, and then takes what its prefab places (scene_spawns).
+@(component,description="A spawned copy that waits for its prefab to be read, and then takes what the prefab places.")
 Prefab_Pending :: struct {
     prefab:base.Asset_Id `mirai:"readonly"`,
 }
@@ -72,10 +72,10 @@ scene_spawns :: proc(world:core.World_Ref,app:^host.App,warms:^Prefab_Warms,prob
 }
 
 // Moves the reads of prefabs on and gives each spawn that waits its prefab
-// once it is read: the root takes what the prefab places but what it has,
-// and turns on, unless the prefab turns its root off. A prefab that does not
-// place takes its root away, which a problem says. With all, it waits for
-// every read: what the editor and agents spawn is whole when they answer.
+// once it is read: the root takes what the prefab places but what it has. A
+// prefab that does not place takes its root away, which a problem says. With
+// all, it waits for every read: what the editor and agents spawn is whole
+// when they answer.
 spawns_fill :: proc(w:core.World_Ref,app:^host.App,warms:^Prefab_Warms,problems:^core.Problems,all:=false) {
     if app==nil || app.assets==nil || warms==nil {return}
     a:=app.assets
@@ -88,7 +88,6 @@ spawns_fill :: proc(w:core.World_Ref,app:^host.App,warms:^Prefab_Warms,problems:
     if pending==nil {return}
     t:=core.raw(pending)
     if core.raw_count(t)==0 {return}
-    disabled:=core.world_table_of(w,core.Disabled)
     ids:=core.world_table_of(w,core.Id)
     forms:=core.world_storage_of(w,Prefab_Forms)
     for row in 0..<core.raw_count(t) {
@@ -118,16 +117,5 @@ spawns_fill :: proc(w:core.World_Ref,app:^host.App,warms:^Prefab_Warms,problems:
             continue
         }
         core.remove(pending,root)
-        if !prefab_root_off(w,form) {core.remove(disabled,root)}
     }
-}
-
-// Whether the prefab of a form keeps its root off.
-@(private)
-prefab_root_off :: proc(w:core.World_Ref,form:^Form) -> bool {
-    for c in form.components {
-        if w.info.tables[c.table].type!=core.Disabled {continue}
-        for row in c.rows {if row==form.root {return true}}
-    }
-    return false
 }

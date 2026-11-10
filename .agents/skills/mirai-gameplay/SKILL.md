@@ -103,7 +103,7 @@ the same attributes and no private paths. Declaration and parameter binding:
    `multiplayer.send`; the game does not ask.
 7. Runtime prefab: `scene.spawn(spawner, path_or_id, ...)` with `core.Commands`; its rows wait
    until the end of the function and are finished with
-   `core.commands_added`; a prefab not loaded yet gives its root off, filled frames later
+   `core.commands_added`; a prefab not loaded yet gives its root alone, filled frames later
    ([scene](references/libraries.md#scene)). With `transient=true` the entities do not get an
    `Id` and a save does not include them as scene entities.
 8. Game code names an asset by its path in the assets wherever a call takes one (`scene.spawn`,

@@ -45,13 +45,13 @@ the name of their type) and a world (handles and tables).
   and is the problem `scene.spawn` of its `parent` (or of the world), with the fix. A zero
   rotation is none and a zero scale is 1; its rows wait for the end of the function that spawned
   it. It never reads a file: a prefab that is not loaded, or that takes something that is not,
-  gives its root at once, off (`core.Disabled`, `Prefab_Pending{prefab}`), with its `Transform`,
-  `Parent` and `Id`; jobs read the prefab and what it takes (`prefab_warm_begin`, at most
-  `PREFAB_WARMS` at once) and `scene_spawns` (`frame`, both loops) places the rest on the root,
-  which keeps what it was given meanwhile, and turns it on; a prefab that does not place takes its
-  root away with the problem. `spawns_fill(all=true)` waits, for an answer of the editor that gives
-  the copy whole. A scene or section load reads, with the assets its World names, the prefabs its
-  fields name and what they take, so their first spawn is whole in the call.
+  gives its root at once with only its `Transform`, `Parent`, `Id` and `Prefab_Pending{prefab}`;
+  jobs read the prefab and what it takes (`prefab_warm_begin`, at most `PREFAB_WARMS` at once) and
+  `scene_spawns` (`frame`, both loops) places the rest on the root, which keeps what it was given
+  meanwhile (a seat that drives it keeps driving it); a prefab that does not place takes its root
+  away with the problem. `spawns_fill(all=true)` waits, for an answer of the editor that gives the
+  copy whole. A load, in phases or in the call, reads the prefabs the fields of its World name and
+  what they take, so their first spawn is whole in the call.
   The root receives `Prefab_Instance{prefab}`, the one component that says what prefab an
   entity is of (with `Prefab_Member`, a linked instance; alone, a copy), which a server sends
   ([multiplayer](../../mirai-networking/references/multiplayer.md#what-the-game-declares)).

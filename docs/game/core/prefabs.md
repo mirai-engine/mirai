@@ -33,9 +33,9 @@ has `scene.Prefab_Instance`, whose `prefab` is the scene it came from.
 
 A spawn never waits for a file. A prefab the scene names in a field (a `Spawn_Point`'s prefab) is
 read with the scene, and its spawn is whole at once. One that is not loaded yet is read in the
-background: the root comes at once, off (`core.Disabled`, `scene.Prefab_Pending`), with its
-transform and parent, and takes the rest of the prefab a few frames later, turning on. What the
-game gives the root meanwhile stays, and wins over the prefab's value.
+background: the root comes at once with its transform, parent and `scene.Prefab_Pending`, and
+nothing else, and takes the rest of the prefab a few frames later. What the game gives the root
+meanwhile stays, and wins over the prefab's value.
 
 ## Keep the root
 

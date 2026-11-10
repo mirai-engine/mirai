@@ -561,18 +561,17 @@ replica_turns :: #force_inline proc "contextless" (r:^Replica) -> bool {return r
 // The entity of a replica is off while the server's is (Pose.disabled),
 // whatever it was here: the network gives it Disabled or takes it back. What
 // its section turned off here (scene.Section_Held) is left to the section,
-// and so is what the network turned off in a section loaded and off here,
-// and a copy that waits for its prefab (scene.Prefab_Pending).
+// and so is what the network turned off in a section loaded and off here.
 @(private)
 replica_turn :: proc(w:core.World_Ref,r:^Replica) {
-    disabled,held,pending:=core.world_table_of(w,core.Disabled),core.world_table_of(w,scene.Section_Held),core.world_table_of(w,scene.Prefab_Pending)
+    disabled,held:=core.world_table_of(w,core.Disabled),core.world_table_of(w,scene.Section_Held)
     e:=r.entity
     if disabled==nil || !core.alive(core.world_entities(w),e) {return}
     off:=row_staged(core.raw(disabled),e)
     switch {
     case r.pose.disabled && !off:
         core.add(disabled,e,core.Disabled{})
-    case !r.pose.disabled && off && (held==nil || !row_staged(core.raw(held),e)) && (pending==nil || !row_staged(core.raw(pending),e)):
+    case !r.pose.disabled && off && (held==nil || !row_staged(core.raw(held),e)):
         if held!=nil && section_holding(w,e) {core.add(held,e,scene.Section_Held{})} else {core.remove(disabled,e)}
     }
 }

@@ -102,9 +102,9 @@ Spawner :: struct {
 // ("pets/Dog.scene") or its id, and gives back its root, whose rows wait for
 // the end of the function. NONE when it did not spawn, which is the problem
 // scene.spawn that says why. A prefab that is not loaded, or that takes
-// something that is not, is read in jobs: its root comes at once, off, with
-// its Transform, Parent, Id and Prefab_Pending, and takes the rest of the
-// prefab once it is read (scene_spawns), turning on; what was given to it
+// something that is not, is read in jobs: its root comes at once with its
+// Transform, Parent, Id and Prefab_Pending, and nothing else, and takes the
+// rest of the prefab once it is read (scene_spawns); what was given to it
 // meanwhile stays, and its own value of a component wins over the prefab's.
 spawn :: proc{spawn_path,spawn_id}
 
@@ -230,10 +230,29 @@ replace :: proc(w:core.World_Ref,app:^host.App,a:^asset.Asset,asset_types:^asset
     root_set(candidate,a.blob.header.id)
     references_resolve(candidate)
     propagate(candidate,app)
+    prefabs_warm(candidate,app)
     core.world_swap(w.info,w.data,data)
     // A look without memory for it stays asked for: scene_sections looks again, and reports it.
     _=records_look(w)
     return
+}
+
+// The prefabs the fields of a World that was just loaded name, and what they
+// take, read now, as a load in phases reads them in jobs: their first spawn
+// is whole in its call.
+@(private)
+prefabs_warm :: proc(w:core.World_Ref,app:^host.App) {
+    names:=make([dynamic]base.Asset_Id,context.temp_allocator)
+    host.world_asset_ids(w,&names)
+    prefabs:=make([dynamic]base.Asset_Id,context.temp_allocator)
+    for id in names {
+        if file,found:=asset.registry_find(&app.assets.registry,id);found && asset.registry_prefab(file) {append(&prefabs,id)}
+    }
+    if len(prefabs)==0 {return}
+    if job,begun:=prefab_warm_begin(app,..prefabs[:]);begun==.None {
+        load_step(job,true)
+        load_free(job)
+    }
 }
 
 // The world transforms of a World that was just loaded, now: the propagation
@@ -274,7 +293,6 @@ spawn_placed :: proc(c:core.Commands,assets:^host.Assets,s:Spawn,forms:^Prefab_F
     core.commands_add(c,root,Prefab_Instance{prefab=s.prefab}) // no stamp, no members: of its prefab, linked to no document
     if !loaded {
         core.commands_add(c,root,Prefab_Pending{s.prefab})
-        core.commands_add(c,root,core.Disabled{})
         return {root=root,entities=1},.None
     }
     report,error=form_place(w,form,&assets.types,{transient=s.transient,fresh=!s.transient,documents=assets_documents(assets),root=root},entities)
