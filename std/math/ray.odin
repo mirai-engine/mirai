@@ -191,6 +191,7 @@ ray_aabb4 :: proc "contextless" (origin,inverse_direction:Vec3,boxes:^Aabb4,t_ma
 }
 
 aabb4_set :: proc "contextless" (boxes:^Aabb4,lane:int,box:Aabb) {
+    if lane<0 || lane>=4 {return}
     boxes.min_x=simd.replace(boxes.min_x,lane,box.min.x);boxes.min_y=simd.replace(boxes.min_y,lane,box.min.y);boxes.min_z=simd.replace(boxes.min_z,lane,box.min.z)
     boxes.max_x=simd.replace(boxes.max_x,lane,box.max.x);boxes.max_y=simd.replace(boxes.max_y,lane,box.max.y);boxes.max_z=simd.replace(boxes.max_z,lane,box.max.z)
 }

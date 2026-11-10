@@ -93,13 +93,22 @@ quat_look :: proc "contextless" (forward,up:Vec3) -> Quat {
     m[0,2],m[1,2],m[2,2]=back.x,back.y,back.z
     return linalg.normalize(quat_from_mat3(m))
 }
+// The unit vector along v, also when its length overflows a float; the
+// fallback when it has no direction: zero, or with a NaN or an infinity.
+@(private)
+direction_or :: proc "contextless" (v,fallback:Vec3) -> Vec3 {
+    length:=linalg.length(v)
+    if length>1e-6 && length<=math.F32_MAX {return v/length}
+    largest:=max(abs(v.x),abs(v.y),abs(v.z))
+    if v!=v || !(largest>1e-6) || largest>math.F32_MAX {return fallback}
+    return linalg.normalize(v/largest)
+}
 // Orthonormal axes of a view along `forward`. A zero forward becomes FORWARD
 // and an up that is zero or parallel to it is replaced, so the result is
 // always finite.
 look_basis :: proc "contextless" (forward,up:Vec3) -> (back,right,actual_forward:Vec3) {
-    actual_forward=forward
-    actual_forward=linalg.normalize(actual_forward) if linalg.length(actual_forward)>1e-6 else FORWARD
-    hint:=up if linalg.length(up)>1e-6 else Vec3{0,1,0}
+    actual_forward=direction_or(forward,FORWARD)
+    hint:=direction_or(up,{0,1,0})
     right=linalg.cross(actual_forward,hint)
     if linalg.length(right)<1e-5 {right=linalg.cross(actual_forward,Vec3{0,0,1} if abs(actual_forward.y)>0.9 else Vec3{0,1,0})}
     right=linalg.normalize(right)
