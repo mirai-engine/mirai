@@ -78,10 +78,8 @@ test_document :: proc(t:^testing.T,types:^asset.Types,path:string,kind:asset.Fou
 
 @(test)
 thumbnails_show_the_model_an_animation_moves :: proc(t:^testing.T) {
-    temporary,_:=os.temp_directory(context.temp_allocator)
-    root,_:=strings.replace_all(project.path(temporary,fmt.tprintf("mirai-thumbnail-models-%d",os.get_pid()),allocator=context.temp_allocator),"\\","/",context.temp_allocator)
-    os.remove_all(root)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"thumbnail-models")
+    if root=="" {return}
     for folder in ([?]string{"a","b","c","d"}) {os.make_directory_all(project.path(root,folder,allocator=context.temp_allocator))}
     file:=proc(root,name:string) -> string {return fmt.tprintf("%s/%s",root,name)}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
