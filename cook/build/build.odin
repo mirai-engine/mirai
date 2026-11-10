@@ -943,7 +943,7 @@ job_files_remove :: proc(job:^Job) {
             remove=strings.has_suffix(entry.name,".old") || stale && (debug || !subprocess.process_alive(job_file_pid(entry.name[len(target):])))
         }
         if !remove {continue}
-        if entry.type==.Directory {_=os.remove_all(entry.fullpath)}
+        if entry.type==.Directory {_=base.remove_all(entry.fullpath)}
         else {_=os.remove(entry.fullpath)}
     }
 }

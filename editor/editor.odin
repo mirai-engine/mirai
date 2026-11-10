@@ -556,7 +556,7 @@ close :: proc(s:^Session) -> int {
     services_close(s)
     // A normal end leaves no chain; one for the GPU kept what it needs.
     recovery_chains_close(s,s.gpu_failure!=.Ended)
-    if s.recovery.assets_owned {os.remove_all(recovery_assets_own(s))}
+    if s.recovery.assets_owned {base.remove_all(recovery_assets_own(s))}
     recovery_log_destroy(s)
     events_close(s)
     app,edit_world,editor_world:=s.app,s.edit_world,s.editor_world

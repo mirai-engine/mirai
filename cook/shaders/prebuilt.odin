@@ -5,6 +5,7 @@ import "core:os"
 import "core:strings"
 import "core:time"
 import "mirai:cook/workspace"
+import "mirai:std/base"
 
 // An official prebuilt package of a tool, pinned by its version and SHA-256,
 // that installs into <deps>/<folder>.
@@ -35,11 +36,11 @@ prebuilt_install :: proc(root:string,p:Prebuilt,archive:string="",allocator:=con
         runner:Runner
         output,downloaded:=tool_run(&runner,{system_tool("curl"),"--location","--fail","--silent","--show-error","--output",source,p.url},context.temp_allocator)
         if !downloaded {
-            os.remove_all(download)
+            base.remove_all(download)
             return fmt.aprintf("Could not download %s with curl: %s",p.url,strings.trim_space(output),allocator=allocator),false
         }
     }
-    defer if download!="" {os.remove_all(download)}
+    defer if download!="" {base.remove_all(download)}
     return prebuilt_install_archive(target,source,p,allocator)
 }
 
@@ -66,7 +67,7 @@ prebuilt_install_archive :: proc(target,archive:string,p:Prebuilt,allocator:=con
     folder,folder_error:=os.make_directory_temp(path_parent(target),fmt.tprintf("%s-install-*",p.folder),context.temp_allocator)
     if folder_error!=nil {return fmt.aprintf("Could not create a temporary folder next to %s",target,allocator=allocator),false}
     temporary:=path_clean(folder,context.temp_allocator)
-    defer os.remove_all(temporary)
+    defer base.remove_all(temporary)
     unpacked:=path_join(temporary,"package",allocator=context.temp_allocator)
     os.make_directory(unpacked)
     runner:Runner

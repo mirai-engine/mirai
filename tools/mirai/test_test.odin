@@ -341,7 +341,7 @@ a_package_is_found_relative_to_the_working_folder :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
     folder:=project.path_absolute(fmt.tprintf("mirai-package-%d",os.get_pid()),context.temp_allocator)
     testing.expect(t,os.make_directory_all(folder)==nil)
-    defer os.remove_all(folder)
+    defer base.remove_all(folder)
     testing.expect(t,os.write_entire_file(fmt.tprintf("%s/a.odin",folder),`package a`)==nil)
     testing.expect_value(t,package_folder("/nowhere",os.base(folder)),folder)
 }
