@@ -1258,3 +1258,23 @@ the_api_edits_the_document_while_a_game_plays :: proc(t:^testing.T) {
     testing.expect_value(t,entity_name(running,f.hero),"Hero")
     testing.expect(t,f.edits.cursor==1 && document_dirty(&f.s),"a step of the document")
 }
+
+// editor.input refuses the events no frame takes before it runs one.
+@(test)
+editor_input_refuses_what_no_frame_takes :: proc(t:^testing.T) {
+    f:=new(Probe);defer free(f)
+    if !probe_open(t,f) {return}
+    defer probe_close(f)
+    cases:=[?]struct{params,says:string}{
+        {`{"events":[]}`,"1 to 256"},
+        {`{"events":[{"keys":["Nope"]}]}`,"platform.Key"},
+        {`{"events":[{"mouse_position":[1,2],"mouse_delta":[1,0]}]}`,"exclude each other"},
+        {`{"events":[{"mouse_position":[1]}]}`,"x and y"},
+        {`{"events":[{"repeat_keys":["B"]}]}`,"held in keys"},
+        {`{"events":[{"text":"\u00e9"}]}`,"printable ASCII"},
+    }
+    for c in cases {
+        error,_:=probe_call(f,"editor.input",c.params)
+        testing.expectf(t,error.code==api.INVALID_PARAMS && strings.contains(error.message,c.says),"%s: %v",c.params,error)
+    }
+}

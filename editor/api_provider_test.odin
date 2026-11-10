@@ -59,7 +59,6 @@ API_HAND_WRITTEN :: [?]struct{file,pattern:string,count:int}{
     {"plugins/ui_inspector/editor/bindings.odin","writes_result=true",3},
     {"plugins/ui_inspector/editor/capture.odin","writes_result=true",1},
     {"editor/api_material_instance.odin","rpc_init(",2},
-    {"editor/api_methods.odin","rpc_init(",1},
     {"editor/api_play_edit.odin","rpc_init(",1},
 }
 

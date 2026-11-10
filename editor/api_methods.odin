@@ -334,10 +334,10 @@ Api_Editor_Input_Params_Events :: struct {
     keys:[]string `mirai:"optional,label=keys held in the frame; they replace the previous set"`,
     repeat_keys:[]string `mirai:"optional,label=keys that repeat in the frame"`,
     mouse_buttons:[]Api_Editor_Input_Params_Events_Mouse_Buttons `mirai:"optional,label=buttons held in the frame; they replace the previous set"`,
-    mouse_position:[2]f32 `mirai:"optional,label=points; excludes mouse_delta"`,
+    mouse_position:[]f32 `mirai:"optional,label=x and y in points; excludes mouse_delta"`,
     mouse_delta:[2]f32 `mirai:"optional,label=points; excludes mouse_position"`,
-    wheel:serial.Json `mirai:"optional,label=One of: number; array."`,
-    text:string `mirai:"optional,label=printable ASCII typed in the frame"`,
+    wheel:[2]f32 `mirai:"optional,label=x and y; a usual wheel turns y"`,
+    text:string `mirai:"optional,label=printable ASCII typed in the frame, up to 32 characters"`,
     clicks:int `mirai:"optional,min=1,max=3"`,
     dt:f64 `mirai:"optional,max=0.25,label=Above 0. seconds"`,
 }
@@ -794,7 +794,7 @@ Api_Input_Step :: struct {
     keys,repeat:platform.Keys,
     buttons:platform.Mouse_Buttons,
     position,delta,wheel:[2]f32,
-    has_position,has_delta:bool,
+    has_position:bool,
     clicks:u8,
     text:[32]u8,
     text_length:int,
@@ -808,133 +808,71 @@ api_key_from_name :: proc(name:string) -> (key:platform.Key,ok:bool) {
     return platform.Key(index),true
 }
 
+// Keys by their platform.Key names.
 @(private)
-api_keys :: proc(a:^Rpc_Args,what:string) -> (keys:platform.Keys,ok:bool) {
-    if !serial.text_accept(&a.r,'[') {return {},rpc_fail_type(a,"%s must be an array of key names",what)}
-    if serial.text_accept(&a.r,']') {return {},true}
-    for {
-        name,read:=serial.text_string(&a.r)
-        if !read {return {},rpc_fail_type(a,"%s must be an array of key names",what)}
+api_keys :: proc(call:^api.Call,names:[]string,what:string) -> (keys:platform.Keys,ok:bool) {
+    for name in names {
         key,known:=api_key_from_name(name)
-        if !known {return {},rpc_fail(a,"%s: %s; keys go by their platform.Key name, such as A, F5, Enter, Space, Left_Shift, Left_Control or Left_Super (Command on a Mac)",what,base.name_problem(name,"a key",reflect.enum_field_names(platform.Key)))}
+        if !known {api.call_failf(call,api.INVALID_PARAMS,"%s: %s; keys go by their platform.Key name, such as A, F5, Enter, Space, Left_Shift, Left_Control or Left_Super (Command on a Mac)",what,base.name_problem(name,"a key",reflect.enum_field_names(platform.Key)));return}
         keys+={key}
-        if serial.text_accept(&a.r,',') {continue}
-        if !serial.text_accept(&a.r,']') {return {},rpc_fail_type(a,"%s must be an array of key names",what)}
-        return keys,true
     }
-}
-
-@(private)
-api_buttons :: proc(a:^Rpc_Args,what:string) -> (buttons:platform.Mouse_Buttons,ok:bool) {
-    if !serial.text_accept(&a.r,'[') {return {},rpc_fail_type(a,"%s must be an array of left, right or middle",what)}
-    if serial.text_accept(&a.r,']') {return {},true}
-    for {
-        name,read:=serial.text_string(&a.r)
-        if !read {return {},rpc_fail_type(a,"%s must be an array of left, right or middle",what)}
-        switch {
-        case strings.equal_fold(name,"left"):   buttons+={.Left}
-        case strings.equal_fold(name,"right"):  buttons+={.Right}
-        case strings.equal_fold(name,"middle"): buttons+={.Middle}
-        case: return {},rpc_fail(a,"%s: unknown button %q",what,name)
-        }
-        if serial.text_accept(&a.r,',') {continue}
-        if !serial.text_accept(&a.r,']') {return {},rpc_fail_type(a,"%s must be an array of left, right or middle",what)}
-        return buttons,true
-    }
+    return keys,true
 }
 
 @(private)
 api_dt_valid :: proc "contextless" (dt:f32) -> bool {return rpc_finite(dt) && dt>0 && dt<=API_DT_MAX}
 
 @(private)
-api_input_step :: proc(a:^Rpc_Args,step:^Api_Input_Step) -> bool {
-    object:Rpc_Object
-    rpc_object_begin(a,"an event") or_return
-    for key in rpc_next(a,&object) {
-        switch key {
-        case "keys":           step.keys=api_keys(a,key) or_return
-        case "repeat_keys":    step.repeat=api_keys(a,key) or_return
-        case "mouse_buttons":  step.buttons=api_buttons(a,key) or_return
-        case "mouse_position":
-            rpc_vector(a,key,step.position[:]) or_return
-            step.has_position=true
-        case "mouse_delta":
-            rpc_vector(a,key,step.delta[:]) or_return
-            step.has_delta=true
-        case "wheel":
-            if serial.text_peek(&a.r)=='[' {rpc_vector(a,key,step.wheel[:]) or_return} else {step.wheel.y=rpc_number(a,key) or_return}
-        case "clicks":
-            clicks:=rpc_unsigned(a,key) or_return
-            if clicks<1 || clicks>3 {return rpc_fail(a,"clicks must be 1 to 3")}
-            step.clicks=u8(clicks)
-        case "text":
-            text:=rpc_text(a,key,step.text[:]) or_return
-            step.text_length=len(text)
-            for character in transmute([]u8)text {
-                if character<32 || character>126 {return rpc_fail(a,"text must be printable ASCII")}
-            }
-        case "dt":
-            step.dt=rpc_number(a,key) or_return
-            if !api_dt_valid(step.dt) {return rpc_fail(a,"dt must be greater than 0 and at most 0.25 seconds")}
-        case:
-            return rpc_fail_unknown(a,key,"keys","repeat_keys","mouse_buttons","mouse_position","mouse_delta","wheel","clicks","text","dt")
-        }
+api_input_step :: proc(call:^api.Call,event:Api_Editor_Input_Params_Events,at:int) -> (step:Api_Input_Step,ok:bool) {
+    step.keys=api_keys(call,event.keys,fmt.tprintf("events[%d].keys",at)) or_return
+    step.repeat=api_keys(call,event.repeat_keys,fmt.tprintf("events[%d].repeat_keys",at)) or_return
+    buttons:=[Api_Editor_Input_Params_Events_Mouse_Buttons]platform.Mouse_Button{.left=.Left,.right=.Right,.middle=.Middle}
+    for button in event.mouse_buttons {step.buttons+={buttons[button]}}
+    switch len(event.mouse_position) {
+    case 0:
+    case 2: step.position,step.has_position={event.mouse_position[0],event.mouse_position[1]},true
+    case: api.call_failf(call,api.INVALID_PARAMS,"events[%d].mouse_position must be x and y",at);return
     }
-    if a.failed {return false}
-    if step.has_position && step.has_delta {return rpc_fail(a,"mouse_position and mouse_delta exclude each other")}
-    if step.repeat-step.keys!={} {return rpc_fail(a,"repeat_keys must be held in keys")}
-    return true
+    step.delta,step.wheel,step.clicks,step.dt=event.mouse_delta,event.wheel,u8(event.clicks),f32(event.dt)
+    if step.has_position && step.delta!={} {api.call_failf(call,api.INVALID_PARAMS,"events[%d]: mouse_position and mouse_delta exclude each other",at);return}
+    if step.repeat-step.keys!={} {api.call_failf(call,api.INVALID_PARAMS,"events[%d]: repeat_keys must be held in keys",at);return}
+    if event.dt!=0 && !api_dt_valid(step.dt) {api.call_failf(call,api.INVALID_PARAMS,"events[%d].dt must be greater than 0 and at most 0.25 seconds",at);return}
+    if len(event.text)>len(step.text) {api.call_failf(call,api.INVALID_PARAMS,"events[%d].text has more than %d characters",at,len(step.text));return}
+    for character in transmute([]u8)event.text {
+        if character<32 || character>126 {api.call_failf(call,api.INVALID_PARAMS,"events[%d].text must be printable ASCII",at);return}
+    }
+    step.text_length=copy(step.text[:],event.text)
+    return step,true
 }
 
 @(private)
 api_editor_input :: proc(s:^Session,call:^api.Call) {
     if !api_manual_required(s,call) {return}
-    steps,memory:=make([]Api_Input_Step,API_INPUT_EVENTS,call.allocator)
-    if memory!=nil {
-        api.call_fail(call,api.INTERNAL_ERROR,"the request needs more scratch memory than the server has")
+    params:=api.call_params(call,Api_Editor_Input_Params)
+    if len(params.events)==0 || len(params.events)>API_INPUT_EVENTS {
+        api.call_failf(call,api.INVALID_PARAMS,"events must have 1 to %d entries",API_INPUT_EVENTS)
         return
     }
-    count:=0
     dt:=HEADLESS_DT
-    a:Rpc_Args
-    rpc_init(&a,call,call.raw)
-    object:Rpc_Object
-    if !rpc_object_begin(&a,"params") {return}
-    for key in rpc_next(&a,&object) {
-        switch key {
-        case "dt":
-            value,ok:=rpc_number(&a,key)
-            if ok && !api_dt_valid(value) {rpc_fail(&a,"dt must be greater than 0 and at most 0.25 seconds")}
-            dt=value
-        case "events":
-            if !serial.text_accept(&a.r,'[') {rpc_fail(&a,"events must be an array");break}
-            if serial.text_accept(&a.r,']') {break}
-            for !a.failed {
-                if count>=API_INPUT_EVENTS {rpc_fail(&a,"events has more than %d entries",API_INPUT_EVENTS);break}
-                if !api_input_step(&a,&steps[count]) {break}
-                count+=1
-                if serial.text_accept(&a.r,',') {continue}
-                if !serial.text_accept(&a.r,']') {rpc_fail(&a,"events must be an array")}
-                break
-            }
-        case:
-            rpc_fail_unknown(&a,key,"events","dt")
-        }
+    if api.call_given(call,"dt") {
+        if !api_dt_valid(f32(params.dt)) {api.call_fail(call,api.INVALID_PARAMS,"dt must be greater than 0 and at most 0.25 seconds");return}
+        dt=f32(params.dt)
     }
-    if a.failed {return}
-    if count==0 {
-        api.call_fail(call,api.INVALID_PARAMS,"events must have 1 to 256 entries")
-        return
+    steps:=make([]Api_Input_Step,len(params.events),call.allocator)
+    for event,i in params.events {
+        step,ok:=api_input_step(call,event,i)
+        if !ok {return}
+        steps[i]=step
     }
     p:=s.app.platform
-    for &step in steps[:count] {
+    for &step in steps {
         frame:=platform.input_frame(p)
         held_keys,held_buttons:=frame.keys_down,frame.mouse_down
         position:=frame.mouse_inside?frame.mouse_position:[2]f32{}
         if step.has_position {
             position=step.position
             platform.input_inject(p,platform.Mouse_Motion_Event{position=position})
-        } else if step.has_delta {
+        } else if step.delta!={} {
             position+=step.delta
             platform.input_inject(p,platform.Mouse_Motion_Event{position=position,delta=step.delta})
         }
