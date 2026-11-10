@@ -14,15 +14,13 @@ import "mirai:std/subprocess"
 // The demo's engine plugins build one library per part: the runtime parts in
 // the order of the plugins, dependencies first, then the editor parts for the
 // editor; each compiles against the parts of its plugin and of those it
-// depends on. Play links the runtime parts and the game none.
+// depends on.
 @(test)
 plugin_libraries_follow_the_parts_and_their_dependencies :: proc(t:^testing.T) {
     root:=slashes(project.path_absolute(#directory+"../..",context.temp_allocator),context.temp_allocator)
     p,error:=project.open(project.path(root,"demo",allocator=context.temp_allocator),root,context.temp_allocator)
     if !testing.expectf(t,error.code==.None,"the demo opens: %v",error) {return}
-    editor:=plugin_libraries(&p,.Editor,true,context.temp_allocator)
-    play:=plugin_libraries(&p,.Play,true,context.temp_allocator)
-    testing.expect_value(t,len(plugin_libraries(&p,.Game,true,context.temp_allocator)),0)
+    editor:=plugin_libraries(&p,true,context.temp_allocator)
     index_of :: proc(list:[]Plugin_Library,path:string) -> int {
         for lib,i in list {if lib.path==path {return i}}
         return -1
@@ -34,11 +32,17 @@ plugin_libraries_follow_the_parts_and_their_dependencies :: proc(t:^testing.T) {
     testing.expect(t,slice.contains(editor[ragdoll].needs,"animation/runtime"))
     testing.expect(t,slice.contains(editor[previews].needs,"animation/runtime") && slice.contains(editor[previews].needs,"animation/editor"))
     testing.expect(t,slice.contains(editor[index_of(editor,"terrain/editor")].needs,"terrain/runtime"),"an editor part compiles against its runtime")
-    for lib,i in editor {
-        if lib.part==.Editor {testing.expectf(t,i>=len(play),"%s builds after every runtime part",lib.path)}
+    runtime_parts:=0
+    for lib in editor {
+        if lib.part==.Runtime && !lib.project {runtime_parts+=1}
     }
-    for lib in play {testing.expect_value(t,lib.part,project.Plugin_Part.Runtime)}
-    testing.expect(t,index_of(play,"profiler/editor")<0 && index_of(editor,"profiler/editor")>=0)
+    for lib,i in editor {
+        if lib.part==.Editor {testing.expectf(t,i>=runtime_parts,"%s builds after every runtime part",lib.path)}
+    }
+    testing.expect(t,index_of(editor,"profiler/editor")>=0)
+    // The game of the demo is a library of its own, after the engine plugins it may use.
+    game:=editor[len(editor)-1]
+    testing.expect(t,game.project && game.path=="game" && slice.contains(game.needs,"animation/runtime") && !slice.contains(game.needs,"previews/editor"),"the game compiles against the runtime parts")
     testing.expect(t,plugins_mode(&p,true)=="minimal" && plugins_mode(&p,false)=="speed")
     // Optimized, a library of a plugin or of the project is one module, as the
     // game that ships compiles it; unoptimized, one module per package.
@@ -55,7 +59,6 @@ plugin_libraries_follow_the_parts_and_their_dependencies :: proc(t:^testing.T) {
         libraries:=[?][]string{
             plugin_flags(&p,c.dev,context.temp_allocator),
             target_flags(&p,.Editor,nil,context.temp_allocator,c.dev),
-            target_flags(&p,.Play,nil,context.temp_allocator,c.dev),
         }
         for flags,i in libraries {
             testing.expectf(t,slice.contains(flags,c.level) && slice.contains(flags,"-use-separate-modules")==c.split,"library %d at %v (dev %v): %v",i,c.optimization,c.dev,flags)
@@ -78,7 +81,7 @@ a_plugin_library_is_the_same_in_every_project :: proc(t:^testing.T) {
         testing.expect(t,os.write_entire_file(project.path(folder,project.PROJECT_FILE),`{"name": "Shared", "plugins": ["ragdoll"]}`)==nil)
         p,open_error:=project.open(folder,root)
         if !testing.expectf(t,open_error.code==.None,"the project opens: %v",open_error) {return}
-        libraries:=plugin_libraries(&p,.Play,true)
+        libraries:=plugin_libraries(&p,true)
         found:^Plugin_Library
         for &lib in libraries {if lib.path=="ragdoll/runtime" {found=&lib}}
         if !testing.expect(t,found!=nil && len(found.needs)>0) {return}
@@ -93,36 +96,36 @@ a_plugin_library_is_the_same_in_every_project :: proc(t:^testing.T) {
     testing.expect_value(t,hashes[1],hashes[0])
 }
 
-@(private="file")
-spaced_library :: proc(folder:string) -> Plugin_Library {
-    stage:=project.path(folder,"a folder","stage-thing-runtime",allocator=context.temp_allocator)
-    return {name="thing",path="thing/runtime",file="plugin-thing-runtime-minimal",stage=stage}
-}
-
-// The library of a project under a folder with spaces links with its definition
-// and the import library names the file it is published as.
+// On Windows what links against a library links against an import library
+// made from the module definition declare writes, before the library
+// compiles: it names the file the library is published as and what it
+// exports, and the library, here under a folder with spaces, compiles
+// without one of its own.
 @(test)
-a_plugin_library_under_a_folder_with_spaces_links_with_its_definition :: proc(t:^testing.T) {
-    when ODIN_OS==.Windows {
+a_plugin_library_is_linked_against_an_import_library_made_ahead :: proc(t:^testing.T) {
+    when IMPORT_LIBRARIES_AHEAD {
         context.allocator=context.temp_allocator
         root:=slashes(project.path_absolute(#directory+"../..",context.temp_allocator),context.temp_allocator)
         compiler,found:=compiler_find(root,context.temp_allocator)
         if !testing.expect(t,found,"no Odin compiler") {return}
         folder:=base.test_folder(t,"plugin-spaces")
         if folder=="" {return}
-        lib:=spaced_library(folder)
-        testing.expect(t,os.make_directory_all(lib.stage)==nil)
-        entry_write(lib.stage,PLUGIN_ENTRY,{})
-        testing.expect(t,os.write_entire_file(project.path(lib.stage,PLUGIN_ENTRY,"answer.odin"),"package __plugin\n\n@(export)\nanswer :: proc \"c\" () -> i32 {return 42}\n")==nil)
-        testing.expect(t,plugin_definition_write(&lib))
+        sources:=project.path(folder,"a folder","plugins")
+        testing.expect(t,os.make_directory_all(project.path(sources,"thing/runtime"))==nil)
+        testing.expect(t,os.write_entire_file(project.path(sources,"thing/runtime/answer.odin"),"package thing\n\nanswer :: proc() -> i32 {return 42}\n")==nil)
+        lib:=Plugin_Library{name="thing",path="thing/runtime",packages={"thing/runtime"},root=sources,file="plugin-thing-runtime-minimal-00000001",
+            stage=project.path(folder,"a folder","minimal","stage-thing-runtime"),linked=project.path(folder,"a folder","lib","plugin-thing-runtime-minimal-00000001.lib")}
+        testing.expect(t,os.make_directory_all(project.path(folder,"a folder","lib"))==nil)
+        if failed:=plugin_library_prepare(&lib);!testing.expectf(t,len(failed)==0,"%v",failed) {return}
+        testing.expect_value(t,import_libraries_make(compiler,{{plugin_definition(&lib),lib.linked}}),"")
+        import_library,read:=os.read_entire_file(lib.linked,context.temp_allocator)
+        testing.expect(t,read==nil && strings.contains(string(import_library),"plugin-thing-runtime-minimal-00000001.dll") && strings.contains(string(import_library),"plugins.thing.runtime.answer"),"the import library names the published file and what it exports")
         staged:=project.path(folder,"a folder","staged.dll")
         command:=plugin_command(&lib,compiler,lib.stage,staged,{"-build-mode:dll","-o:minimal"})
         memory,_:=compiler_memory()
-        state,_,errors,error:=subprocess.exec({command=command,working_dir=lib.stage,env=child_environment(root,context.temp_allocator)},context.temp_allocator,{memory=memory})
+        state,_,errors,error:=subprocess.exec({command=command,env=child_environment(root,context.temp_allocator)},context.temp_allocator,{memory=memory})
         if !testing.expectf(t,error==nil && state.exit_code==0,"the library does not link:\n%s",string(errors)) {return}
-        testing.expect(t,os.is_file(staged))
-        import_library,read:=os.read_entire_file(project.path(folder,"a folder","staged.lib"),context.temp_allocator)
-        testing.expect(t,read==nil && strings.contains(string(import_library),project.library_file(lib.file,context.temp_allocator)),"the import library names the published file")
+        testing.expect(t,os.is_file(staged) && !os.is_file(project.path(folder,"a folder","staged.lib")),"the library leaves no import library of its own")
     }
 }
 
@@ -156,7 +159,7 @@ plugin_job :: proc(p:^project.Project,compiler:string) -> ^Job {
     job.allocator=context.temp_allocator
     _=virtual.arena_init_growing(&job.arena)
     a:=virtual.arena_allocator(&job.arena)
-    job.target=.Play
+    job.target=.Editor
     job.root,job.engine_root=strings.clone(p.root,a),strings.clone(p.engine_root,a)
     job.compiler=compiler
     job.work=project.path(project.folder_path(p.root,.Generated,context.temp_allocator),"build",allocator=a)
@@ -186,7 +189,7 @@ a_part_with_folders_is_one_library_that_the_shared_cache_keeps :: proc(t:^testin
     if !testing.expectf(t,len(world.errors)==0,"%v",world.errors) {return}
     testing.expect(t,strings.contains(world.game_world,`"plugins:thing/runtime/sim"`),"the world reads the attributes of the package of the folder")
     testing.expect(t,!strings.contains(world.game_world,"testdata"))
-    libraries:=plugin_libraries(&p,.Play,true)
+    libraries:=plugin_libraries(&p,true)
     if !testing.expect_value(t,len(libraries),1) {return}
     testing.expect_value(t,len(libraries[0].packages),2)
     testing.expect(t,slice.contains(libraries[0].packages,"thing/runtime") && slice.contains(libraries[0].packages,"thing/runtime/sim"))
@@ -194,7 +197,7 @@ a_part_with_folders_is_one_library_that_the_shared_cache_keeps :: proc(t:^testin
 
     job:=plugin_job(&p,compiler)
     defer virtual.arena_destroy(&job.arena)
-    if !testing.expect_value(t,job_plugins_plan(job,&p,{project=&p,target=.Play,dev=true,engine=.Dev}),Failure.None) {return}
+    if !testing.expect_value(t,job_plugins_plan(job,&p,{project=&p,target=.Editor,dev=true,engine=.Dev}),Failure.None) {return}
     if !testing.expect_value(t,len(job.plugin_queue),1) {return}
     job_plugins_start(job)
     if !testing.expect_value(t,len(job.compiles),1) {return}
@@ -227,12 +230,12 @@ a_part_with_folders_is_one_library_that_the_shared_cache_keeps :: proc(t:^testin
     testing.expect(t,base.remove_all(project.folder_path(p.root,.Generated))==nil)
     again:=plugin_job(&p,compiler)
     defer virtual.arena_destroy(&again.arena)
-    if !testing.expect_value(t,job_plugins_plan(again,&p,{project=&p,target=.Play,dev=true,engine=.Dev}),Failure.None) {return}
+    if !testing.expect_value(t,job_plugins_plan(again,&p,{project=&p,target=.Editor,dev=true,engine=.Dev}),Failure.None) {return}
     testing.expect_value(t,len(again.plugin_queue),0)
     testing.expect_value(t,again.result.plugins_restored,1)
     testing.expect_value(t,again.result.plugins_built,1)
     testing.expect(t,os.is_file(lib.library) && os.is_file(lib.linked))
-    testing.expect(t,plugins_current(&p,.Play,compiler,true,.Dev),"the library copied stands as built")
+    testing.expect(t,plugins_current(&p,compiler,true,.Dev),"the library copied stands as built")
     declaration:=project.path(plugins_decl(p.root,"minimal"),"thing","runtime","sim","sim.odin")
     testing.expect(t,os.is_file(declaration),"its declarations are written")
 
@@ -245,16 +248,16 @@ a_part_with_folders_is_one_library_that_the_shared_cache_keeps :: proc(t:^testin
     testing.expect(t,os.write_entire_file(source,strings.concatenate({string(before),"\nmore :: proc() -> i32 {return 1}\n"}))==nil)
     changed:=plugin_job(&p,compiler)
     defer virtual.arena_destroy(&changed.arena)
-    testing.expect_value(t,job_plugins_plan(changed,&p,{project=&p,target=.Play,dev=true,engine=.Dev}),Failure.None)
+    testing.expect_value(t,job_plugins_plan(changed,&p,{project=&p,target=.Editor,dev=true,engine=.Dev}),Failure.None)
     testing.expect_value(t,len(changed.plugin_queue),1)
     testing.expect(t,os.write_entire_file(source,before)==nil)
-    testing.expect(t,!plugins_current(&p,.Play,compiler,true,.Dev),"what was declared and not built does not stand")
+    testing.expect(t,!plugins_current(&p,compiler,true,.Dev),"what was declared and not built does not stand")
     back:=plugin_job(&p,compiler)
     defer virtual.arena_destroy(&back.arena)
-    testing.expect_value(t,job_plugins_plan(back,&p,{project=&p,target=.Play,dev=true,engine=.Dev}),Failure.None)
+    testing.expect_value(t,job_plugins_plan(back,&p,{project=&p,target=.Editor,dev=true,engine=.Dev}),Failure.None)
     declared_after,_:=os.read_entire_file(declaration,context.temp_allocator)
     testing.expect(t,string(declared_after)==string(declared_before),"the declarations are those of the library that stands")
-    testing.expect(t,plugins_current(&p,.Play,compiler,true,.Dev))
+    testing.expect(t,plugins_current(&p,compiler,true,.Dev))
 }
 
 // The cache keeps the entries used last and writes a whole one once.
@@ -361,7 +364,7 @@ a_plugin_step_receives_a_params_struct_through_its_library :: proc(t:^testing.T)
 
     job:=plugin_job(&p,compiler)
     defer virtual.arena_destroy(&job.arena)
-    if !testing.expect_value(t,job_plugins_plan(job,&p,{project=&p,target=.Play,dev=true,engine=.Dev}),Failure.None) {return}
+    if !testing.expect_value(t,job_plugins_plan(job,&p,{project=&p,target=.Editor,dev=true,engine=.Dev}),Failure.None) {return}
     if !testing.expect_value(t,len(job.plugin_queue),1) {return}
     job_plugins_start(job)
     if !testing.expect_value(t,len(job.compiles),1) {return}
@@ -441,9 +444,10 @@ an_any_of_a_type_of_what_links_against_a_library_formats_where_it_is_called :: p
     testing.expect_value(t,string(printed),"a Cancel of Request{kind = \"Section\", at = 7}, 42")
 }
 
-// The libraries of plugins compile at once, each as soon as the libraries it
-// links against are published: one that depends on another waits for it, and
-// one that does not starts beside it.
+// The libraries of plugins compile at once, each as soon as what it links
+// against is there: on Windows the import libraries made ahead, so all of
+// them start together; elsewhere the libraries, so one that depends on
+// another waits for it, and one that does not starts beside it.
 @(test)
 a_plugin_library_compiles_once_those_it_links_against_are_published :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
@@ -474,7 +478,7 @@ a_plugin_library_compiles_once_those_it_links_against_are_published :: proc(t:^t
 
     job:=plugin_job(&p,compiler)
     defer virtual.arena_destroy(&job.arena)
-    if !testing.expect_value(t,job_plugins_plan(job,&p,{project=&p,target=.Play,dev=true,engine=.Dev}),Failure.None) {return}
+    if !testing.expect_value(t,job_plugins_plan(job,&p,{project=&p,target=.Editor,dev=true,engine=.Dev}),Failure.None) {return}
     if !testing.expect_value(t,len(job.plugin_queue),3) {return}
     index_of :: proc(job:^Job,path:string) -> int {
         for lib,i in job.plugins {if lib.path==path {return i}}
@@ -489,9 +493,9 @@ a_plugin_library_compiles_once_those_it_links_against_are_published :: proc(t:^t
     job.plugin_limit=3
     job_plugins_start(job)
     testing.expect(t,running(job,base_index) && running(job,lone_index),"what depends on nothing that is not published starts at once")
-    testing.expect(t,!running(job,middle_index),"a library waits for the one it links against")
+    testing.expect(t,running(job,middle_index)==IMPORT_LIBRARIES_AHEAD,"a library waits for the one it links against unless what it links was made ahead")
     for len(job.compiles)>0 {
-        if running(job,middle_index) {testing.expect(t,job.plugin_published[base_index],"it starts once that one is published")}
+        if running(job,middle_index) && !IMPORT_LIBRARIES_AHEAD {testing.expect(t,job.plugin_published[base_index],"it starts once that one is published")}
         compile:=job.compiles[0]
         ordered_remove(&job.compiles,0)
         state,_:=os.process_wait(compile.process)

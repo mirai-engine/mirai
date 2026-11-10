@@ -1604,10 +1604,6 @@ api_build_start :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.SERVER_ERROR,"Build needs a project and the root of the engine: start the editor with --engine or MIRAI_ROOT")
         return
     }
-    if player_building(s) {
-        api.call_fail(call,api.SERVER_ERROR,"The player of the project is being built: wait for it")
-        return
-    }
     if !build_start(s,target,out) {
         tool_call_fail(s,call,"The build could not start")
         return

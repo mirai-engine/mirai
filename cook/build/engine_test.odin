@@ -720,8 +720,9 @@ a_library_of_the_engine_is_shared_by_what_it_is_built_from :: proc(t:^testing.T)
     testing.expect(t,os.make_directory_all(restored.folder)==nil)
     testing.expect(t,!engine_cache_take(project.path(folder,"cache","none"),restored,library),"an entry the cache does not have is not taken")
     if !testing.expect(t,engine_cache_take(entry,restored,library)) {return}
-    file,linked:=engine_library_files(restored,library)
-    testing.expect(t,library_present(file,linked),"the library and what links against it")
+    // What links against it is made from its declarations, not kept.
+    file,_:=engine_library_files(restored,library)
+    testing.expect(t,os.is_file(file),"the library")
 
     keys:=make(map[string]bool)
     keys[engine_cache_entry(first,library,.Dev,built,3)]=true
