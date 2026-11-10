@@ -401,8 +401,8 @@ inspector_build :: proc(s:^Session,w:core.World_Ref,width,max_height:f32) {
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(INSPECTOR_HEAD),padding={11,0,7,0},gap=4,align_y=.Center}) {
         if !single {
             ui.label(ctx,fmt.tprintf("%d selected",len(s.selection.entities)),ctx.theme.font_heading,th.text,0,font=ui.FONT_SEMIBOLD)
-            if s.mode==.Edit {action_button(s,.Group,{icon=action_icon(.Group),tip=fmt.tprintf("Group selection (%s)",shortcut_text(ACTION_SHORTCUTS[.Group])),icon_size=14,icon_color=th.text_muted,style=.Ghost,width=25,height=ctx.theme.control},2)}
-            if s.mode==.Edit && s.app.assets!=nil {action_button(s,.Prefab_Create,{icon=.Prefab,tip="Create prefab",icon_size=14,icon_color=th.text_muted,style=.Ghost,width=25,height=ctx.theme.control},1)}
+            if s.mode==.Edit {command_button(s,"group",{icon=command_icon(s,"group"),tip=fmt.tprintf("Group selection (%s)",command_shortcut_text(s,"group")),icon_size=14,icon_color=th.text_muted,style=.Ghost,width=25,height=ctx.theme.control},2)}
+            if s.mode==.Edit && s.app.assets!=nil {command_button(s,"prefab_create",{icon=.Prefab,tip="Create prefab",icon_size=14,icon_color=th.text_muted,style=.Ghost,width=25,height=ctx.theme.control},1)}
         }
         if single && identity_row(s,w,active) {return}
     }
@@ -545,7 +545,7 @@ identity_row :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> (changed:bool
         named:=ui.text_field(ctx,field,ins.name[:len(ins.name)-1],&ins.name_length,{height=ctx.theme.control,size=ctx.theme.font_heading,inline=true,font=ui.FONT_SEMIBOLD,color=linked && link.root?PREFAB_TEXT:entity_has(w,e,scene.Scene_Reference)?SECTION_TEXT:th.text})
         if named.changed && !entity_rename(s,e,string(ins.name[:ins.name_length])) {notify(s,"An entity needs a name")}
         if s.mode==.Edit && s.app.assets!=nil && !linked && len(s.selection.entities)==1 {
-            changed|=action_button(s,.Prefab_Create,{icon=.Prefab,tip="Create prefab",icon_size=14,icon_color=th.text_muted,style=.Ghost,width=25,height=ctx.theme.control},1)
+            changed|=command_button(s,"prefab_create",{icon=.Prefab,tip="Create prefab",icon_size=14,icon_color=th.text_muted,style=.Ghost,width=25,height=ctx.theme.control},1)
         }
         if s.mode==.Edit && entity_has(w,e,scene.Scene_Reference) {
             editing:=section_editing(s)==e
@@ -557,16 +557,16 @@ identity_row :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> (changed:bool
             if link.root {
                 variant:=ui.id(ctx,"variant_save")
                 // A variant of an instance that changes nothing would be its prefab again.
-                unchanged:=prefab_action_disabled(s,.Prefab_Apply)
+                unchanged:=prefab_entry_disabled(s,"prefab_apply")
                 if ui.button(ctx,variant,{icon=ui.icon_user(u8(User_Icon.Variant)),tip="Save variant",icon_size=15,style=.Ghost,width=22,height=ctx.theme.control,disabled=unchanged,active=ui.popup_is_open(ctx,variant_prompt_popup(s.gui)) && s.gui.variant.instance==e}).clicked {
                     variant_prompt_open(s,variant,link.asset,e)
                 }
-                changed|=action_button(s,.Prefab_Apply,{icon=.Save_Prefab,tip="Apply changes",icon_size=15,style=.Ghost,width=22,height=ctx.theme.control},1)
-                if prefab_variant_of(s,w,link)!={} {changed|=action_button(s,.Prefab_Apply_Base,{icon=ui.icon_user(u8(User_Icon.Up)),tip="Apply to base",icon_size=15,style=.Ghost,width=22,height=ctx.theme.control},1)}
-                changed|=action_button(s,.Prefab_Unlink,{icon=ui.icon_user(u8(User_Icon.Unlink)),tip="Unlink",icon_size=15,style=.Ghost,width=22,height=ctx.theme.control},1)
-                changed|=action_button(s,.Prefab_Revert,{icon=.Revert,tip="Revert all",icon_size=15,style=.Ghost,width=22,height=ctx.theme.control},1)
+                changed|=command_button(s,"prefab_apply",{icon=.Save_Prefab,tip="Apply changes",icon_size=15,style=.Ghost,width=22,height=ctx.theme.control},1)
+                if prefab_variant_of(s,w,link)!={} {changed|=command_button(s,"prefab_apply_base",{icon=ui.icon_user(u8(User_Icon.Up)),tip="Apply to base",icon_size=15,style=.Ghost,width=22,height=ctx.theme.control},1)}
+                changed|=command_button(s,"prefab_unlink",{icon=ui.icon_user(u8(User_Icon.Unlink)),tip="Unlink",icon_size=15,style=.Ghost,width=22,height=ctx.theme.control},1)
+                changed|=command_button(s,"prefab_revert",{icon=.Revert,tip="Revert all",icon_size=15,style=.Ghost,width=22,height=ctx.theme.control},1)
             } else {
-                changed|=action_button(s,.Prefab_Revert,{icon=.Revert,tip="Revert entity changes",icon_size=15,style=.Ghost,width=22,height=ctx.theme.control},1)
+                changed|=command_button(s,"prefab_revert",{icon=.Revert,tip="Revert entity changes",icon_size=15,style=.Ghost,width=22,height=ctx.theme.control},1)
             }
             if ui.box(ctx,{width=ui.fixed(1),height=ui.fixed(16),fill=th.border}) {}
         }
