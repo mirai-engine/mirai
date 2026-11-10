@@ -5,6 +5,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:strings"
 import "core:math"
+import "core:mem"
 import "core:sync"
 import "core:testing"
 import "core:time"
@@ -560,7 +561,7 @@ rhi_texture_upload_writes_a_region_alone :: proc(t: ^testing.T) {
 
 // A texture takes on the GPU the bytes of another as they are, into its own
 // sRGB encoding too, each time it is copied; one of another size is refused
-// and keeps what it had.
+// and keeps what it had, and takes the mip of a chain of its size.
 @(test)
 rhi_copy_texture_carries_the_bytes_into_another_texture :: proc(t: ^testing.T) {
 	d := test_device(t)
@@ -595,7 +596,18 @@ rhi_copy_texture_carries_the_bytes_into_another_texture :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, rhi.texture_read(d, small, seen[:SIZE * SIZE]), rhi.device_error(d))
 	for b in seen[:SIZE * SIZE] {if b != 40 {testing.expect(t, false, "a texture of another size keeps what it had"); break}}
-	for texture in ([]rhi.Texture{source, encoded, same, small}) {rhi.texture_destroy(d, texture)}
+	// A mip of a chain into the first of a texture of its size.
+	chain := rhi.texture_create(d, {width = SIZE, height = SIZE, mip_levels = 2, format = .RGBA8_Unorm, usage = {.Sampled}, name = "copy chain"})
+	second: [SIZE * SIZE]u8
+	for &b, i in second {b = u8(i * 3 + 1)}
+	testing.expect(t, chain != 0 && rhi.texture_upload_levels(d, chain, {texels[:], second[:]}), rhi.device_error(d))
+	cmd := rhi.immediate_begin(d)
+	rhi.cmd_copy_texture(cmd, chain, small, src_mip = 1)
+	for texture in ([]rhi.Texture{chain, small}) {rhi.cmd_barrier_texture(cmd, texture, .Shader_Read)}
+	testing.expect(t, rhi.immediate_end(d, cmd), rhi.device_error(d))
+	testing.expect(t, rhi.texture_read(d, small, seen[:SIZE * SIZE]), rhi.device_error(d))
+	testing.expect(t, mem.compare(seen[:SIZE * SIZE], second[:]) == 0, "the smaller texture holds the second mip of the chain")
+	for texture in ([]rhi.Texture{source, encoded, same, small, chain}) {rhi.texture_destroy(d, texture)}
 	expect_clean(t, d)
 }
 

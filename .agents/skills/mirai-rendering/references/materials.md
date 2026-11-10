@@ -141,7 +141,7 @@ previews studio use it.
 ## Textures
 
 - A `.tex` brings all its levels in their final format; `host` uploads with `texture_add_data`
-  those that its [distance](#residency-by-distance) asks for. The chain, its color rules and the
+  those that the [frames sample](#residency-by-sampling). The chain, its color rules and the
   compression belong to `cook/textures`
   ([imports](../../mirai-imports/references/imports.md#textures-cooktextures)).
 - A `.tex` larger than `texture_max_size` (in game and editor, the Textures option of
@@ -156,17 +156,17 @@ previews studio use it.
   `Features.texture_bc` (`texture_limits`), `host` decodes each
   level to RGBA8, and BC6H to RGBA16F, before uploading it.
 - **Arrays and cubes.** A layered `.tex` is uploaded through the same `texture_add_data`, all its
-  layers in each level (`Texture_Data.layers`, `cube`), whole and without following the distance.
+  layers in each level (`Texture_Data.layers`, `cube`), whole and without streaming.
   It occupies its entry, but the table shows the default white in it: the shaders read the table as
   `Texture2D` and a pass that samples a cube binds the entry's texture. A material, a program
   parameter, a UI, a decal or the sky that name one receive it as `Unsupported`
   (`assets_texture_image`). No pass samples cubes or arrays yet.
 - **Pool.** `texture_pool_megabytes` (in game and editor, a part of `Device_Info.memory` or
   `Graphics_Settings.texture_memory`) is the GPU memory for textures, which the
-  [residency by distance](#residency-by-distance) distributes, less what the targets of the
+  [residency by sampling](#residency-by-sampling) distributes, less what the targets of the
   [texture views](views.md#texture-views) hold (`Stats.view_target_bytes`). A texture that does
-  not fit whole when added enters without its largest levels; the one that does not follow the
-  distance is counted this way in `textures_reduced`.
+  not fit whole when added enters without its largest levels; the one that does not stream is
+  counted this way in `textures_reduced`.
 - Changing the maximum size or the pool does not touch what was already uploaded:
   `host.assets_textures_reload` loads again, from the smallest to the largest, the textures that
   the change reaches: those whose larger side exceeds the smaller of the two sizes, all if the pool
@@ -180,59 +180,58 @@ previews studio use it.
   entry `TEXTURE_RESERVED + handle - 1` (`texture_index`)
   ([table](rhi.md#bindings-and-texture-table)).
 
-## Residency by distance
+## Residency by sampling
 
-A texture of an asset resides with the levels that the distance of what shows it asks for
+A texture of an asset resides with the levels the GPU samples of it
 (`render/texture_residency.odin`, `host/assets_streaming.odin`). The others (`texture_add`,
 `texture_image`, shared, from extensions) keep what they received.
 
 - **Source.** `Texture_Data.source` and `level` say which chain their levels belong to; `host` gives
   that of the `.tex`, which it reads again to give others.
-- **What shows it.** The non-hidden instances, their layers and the drawn batches whose material
-  rows name it in a map. A texture of a Surface program, whose uv its source decides, asks for all
-  its levels while something shows it. One that nothing in the scene shows (particles, UI, sky,
-  decals, previews) keeps the levels it has unless the pool asks for them.
-- **From where.** The views of the last frame that the window showed (not offscreen frames, except
-  those of a capture that waits for its textures, `Frame_Desc.streamed`) and the
-  [streaming sources](../../mirai-gameplay/references/libraries.md#sources-and-residency)
-  of the drawn world with their advanced point (`texture_sources`), seen as from the perspective
-  view of the largest scale.
-- **The level.** That of the source whose texel covers a pixel at the nearest point of the box: the
-  distance, the pixels of a meter at a meter at the view corner (`texture_viewer`), the uv per meter
-  of that mesh entry (`mesh_uv_density`), the largest scale of the instance and the major axis of
-  the map transform. It resides `TEXTURE_FILTER_LEVELS` finer, what anisotropic filtering can read,
-  between the largest that `texture_max_size` allows and that of side `TEXTURE_TAIL`. With all
-  that the image is that of the whole texture.
-- **Hysteresis.** It asks for more levels as soon as it needs them and releases one only when its
-  distance asks for `TEXTURE_KEEP_LEVELS` less, the proportion of `RESIDENT_KEEP`.
-- **Budget.** While what is asked for exceeds the pool (minus what does not follow the distance),
-  all take the same fraction of a coarser level, the smallest that fits (`texture_targets`): the
-  farthest ends up coarser. Those this holds back are counted in `textures_reduced`; those that do
-  not have their levels yet, in `textures_pending`.
-- **When.** The estimate runs between frames (`textures_update`) only if a view or a source moved
-  `TEXTURE_VIEW_MOVE`, or what the scene shows changed: its instance table, the mesh or the
-  materials of an instance, a material, a batch or a texture. An instance that only moves, or is
-  hidden or shown, asks again alone when its row goes to the GPU (`textures_touched`): nearer, its
-  textures take the finer level at once; `TEXTURE_FAR_STEP` farther than where it last asked, or
-  hidden, the scene is estimated again only if a texture was at the level that instance asked.
-  A level is never coarser than the estimate of the whole scene gives. `host`
-  (`app_textures_stream`, in `app_frame_begin`) reads up to `TEXTURE_READS` at a time in jobs,
-  each decoding only the levels it gives (the smallest lie at the start of the `.tex` stream),
-  first those that need more levels (those that free memory if the pool is exceeded) and those
-  farthest from their levels, and gives them to the renderer with the
+- **Feedback.** The stages that shade surfaces (`MIRAI_TEXTURE_FEEDBACK`: the G-buffer with its
+  nested views and programs, the glass layers, traced reflections, the probe rays and the material
+  points of programs) write, per texture, the finest level they read with an atomic minimum into a
+  buffer of the frame, which comes back like the page requests. A raster sample reports the level
+  anisotropic filtering reads from its uv derivatives and bias, each axis the shortest a device may
+  take: the levels kept are never coarser than what the sampler reads, and the image is that of the
+  whole texture. A ray reports the level its cone reads at the hit, so a texture seen only in a
+  reflection or by the probes loads. A program reports every level of the textures it samples: its
+  uv and levels are its own.
+- **Which frames.** Those the window shows; an offscreen frame only when it waits for its textures
+  (`Frame_Desc.streamed`). The stages of extensions (decals, particles), the sky and the UI do not
+  report: what only they show keeps the levels it has unless the pool asks for them. Nothing asks
+  for a level before a frame samples it; the streaming sources still load sections with their tails.
+- **Hysteresis.** A finer level is taken as soon as a frame reads it; levels go only when a window
+  of `TEXTURE_FEEDBACK_FRAMES` frames read it `TEXTURE_KEEP_LEVELS` coarser, the proportion of
+  `RESIDENT_KEEP`. A texture no frame of a window sampled is unseen and keeps its levels: what was
+  behind the camera comes back as it was. Levels lie between the largest that `texture_max_size`
+  allows and that of side `TEXTURE_TAIL`.
+- **Budget.** While what is asked for exceeds the pool (minus what does not stream), the unseen
+  textures give levels up first, all the same fraction of a level; past their tails the sampled
+  ones too, the farthest ending coarser (`texture_targets`). Those held back are counted in
+  `textures_reduced`; those that do not have their levels yet, in `textures_pending`.
+- **When.** The targets are chosen between frames (`textures_update`) only when the feedback, the
+  pool or the textures changed. It counts one texture more while the feedback of a frame that saw
+  other views or a new texture has not come back, so a capture that waits for its textures waits
+  for it. `host` (`app_textures_stream`, in `app_frame_begin`) reads up to `TEXTURE_READS` at a
+  time in jobs, each decoding only the levels it gives (the smallest lie at the start of the `.tex`
+  stream), first those that need more levels (those that free memory if the pool is exceeded) and
+  those farthest from their levels, and gives them to the renderer with the
   [load budget](../../mirai-core/references/host.md#loaded-assets).
-- **Transaction.** `texture_levels_set` creates a texture with the new levels, puts it in the table
-  entry and destroys the previous one: the handle and the material rows do not change. A request
-  whose texture changed since then (`stamp`) does nothing; a texture whose file is no longer read
-  stops following the distance (`texture_stream_stop`).
-- `host` gives them with `texture_levels_queue`: their rows are uploaded in the list of the
-  following frames, among all of them their share of `UPLOAD_FRAME_BYTES` per frame, which they
-  share with the [geometry over several frames](scene.md#geometry-over-several-frames), and up to
-  `TEXTURE_UPLOADS` textures at a time; the texture takes its entry between frames once all of
-  them were uploaded (`texture_uploads_install`). What the job read stays while
-  `texture_upload_pending`; a large level does not stall a frame.
-- What a section load brings arrives with the levels of side `TEXTURE_TAIL` and its distance asks
-  for the others; the main scene and direct loads arrive whole.
+- **Transaction.** A texture with the new levels takes the table entry and the previous one is
+  destroyed: the handle and the material rows do not change. A request whose texture changed since
+  then (`stamp`) does nothing; a texture whose file is no longer read stops streaming
+  (`texture_stream_stop`).
+- `host` reads only for more levels and gives them with `texture_levels_queue`: the rows of the
+  levels the texture lacks are uploaded in the list of the following frames, among all of them
+  their share of `UPLOAD_FRAME_BYTES` per frame, which they share with the
+  [geometry over several frames](scene.md#geometry-over-several-frames), and up to
+  `TEXTURE_UPLOADS` textures at a time; then the levels it holds are copied on the GPU and it takes
+  its entry between frames (`texture_uploads_install`). Fewer levels need no read: the renderer
+  copies them from those it holds through the same queue (`textures_shrink`). What the job read
+  stays while `texture_upload_pending`; a large level does not stall a frame.
+- What a section load brings arrives with the levels of side `TEXTURE_TAIL` and the frames that
+  sample it ask for the others; the main scene and direct loads arrive whole.
 - A texture that a load gives over several frames (`texture_add_over_frames`) enters with its
   levels of side `TEXTURE_TAIL` or less and the larger ones go through the same queue: until all
   were uploaded the small ones are shown, never a half level. Those that the pool has no room for
@@ -562,9 +561,8 @@ The light that crosses glass is paid for with its detail only where it is seen:
 No node-based material editing or view (the [graph](#derived-graph) is derived from the code),
 virtual textures, subsurface, iridescence, dispersion or OpenPBR transmission outside of glass.
 
-- The [residency by distance](#residency-by-distance) does not see nested views (a portal): what is
-  seen through them resides by its distance to the camera. A texture shown by a distant instance
-  and something outside the scene (a particle) resides by the instance.
+- The [residency by sampling](#residency-by-sampling) does not see the refraction rays of glass nor
+  the stages of extensions: a texture only they show keeps the levels it has.
 
 - Of the glass, the layers do not reach the ray filters (colored shadows, medium filter) or the exit
   face seen from inside (`glass_inside.comp`).

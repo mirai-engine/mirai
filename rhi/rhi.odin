@@ -779,12 +779,14 @@ format_linear :: proc "contextless" (f: Format) -> Format {
 	return f
 }
 
-// Why cmd_copy_texture cannot copy a texture into another, "" when it can:
-// both are 2D, with one size and as many layers, and their formats hold the
-// same bytes (one format, or two that differ only in the sRGB encoding).
-texture_copy_problem :: proc "contextless" (src, dst: Texture_Desc) -> string {
+// Why cmd_copy_texture cannot copy `mips` mips of a texture from src_mip
+// into another from dst_mip, "" when it can: both are 2D and have those mips,
+// of one size and as many layers, and their formats hold the same bytes (one
+// format, or two that differ only in the sRGB encoding).
+texture_copy_problem :: proc "contextless" (src, dst: Texture_Desc, src_mip: u32 = 0, dst_mip: u32 = 0, mips: u32 = 1) -> string {
 	if src.depth > 1 || dst.depth > 1 {return "a 3D texture is written by shaders"}
-	if src.width != dst.width || src.height != dst.height || max(src.layers, 1) != max(dst.layers, 1) {return "the two textures differ in size or layers"}
+	if mips == 0 || u64(src_mip) + u64(mips) > u64(max(src.mip_levels, 1)) || u64(dst_mip) + u64(mips) > u64(max(dst.mip_levels, 1)) {return "the mips copied are past those of a texture"}
+	if max(src.width >> src_mip, 1) != max(dst.width >> dst_mip, 1) || max(src.height >> src_mip, 1) != max(dst.height >> dst_mip, 1) || max(src.layers, 1) != max(dst.layers, 1) {return "the two textures differ in size or layers at the mips copied"}
 	if format_linear(src.format) != format_linear(dst.format) {return "the two formats differ in more than the sRGB encoding"}
 	return ""
 }
