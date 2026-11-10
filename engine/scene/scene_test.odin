@@ -40,10 +40,9 @@ Scene_Test :: struct {
 
 @(private="file")
 lamp_write :: proc(t:^testing.T,types:^asset.Types,path:string,range:f32) -> (lamp:asset.Scene) {
-    asset.scene_init(&lamp,types,asset.KIND_PREFAB,TEST_LAMP)
+    asset.scene_init(&lamp,types,TEST_LAMP)
     asset.scene_entity_add(&lamp,1,0,"Lamp")
     asset.scene_entity_add(&lamp,2,1,"Bulb")
-    lamp.info.root=1
     light:=Scene_Test_Lamp{range,1}
     asset.scene_set(&lamp,2,"Scene_Test_Lamp",&light)
     testing.expect_value(t,asset.scene_save(&lamp,path),asset.Error.None)
@@ -97,9 +96,9 @@ a_load_brings_instances_up_to_date_with_their_prefabs_unless_the_assets_are_cook
     p:Scene_Test_Project
     if !scene_test_project_open(t,&p,"resolve") {return}
     defer scene_test_project_close(&p)
-    lamp_path:=fmt.tprintf("%s/lamp.prefab",p.folder)
+    lamp_path:=fmt.tprintf("%s/lamp.scene",p.folder)
     lamp:=lamp_write(t,&p.types,lamp_path,1)
-    level:asset.Scene;asset.scene_init(&level,&p.types,asset.KIND_SCENE,{0x1a,2});defer asset.scene_destroy(&level)
+    level:asset.Scene;asset.scene_init(&level,&p.types,{0x1a,2});defer asset.scene_destroy(&level)
     _,placed:=asset.scene_instantiate(&level,&lamp,TEST_LAMP,0)
     testing.expect_value(t,placed,asset.Error.None)
     testing.expect_value(t,asset.scene_save(&level,fmt.tprintf("%s/level.scene",p.folder)),asset.Error.None)
@@ -130,7 +129,7 @@ a_scene_saved_with_another_layout_of_a_component_loads_it_by_field_names :: proc
     p:Scene_Test_Project
     if !scene_test_project_open(t,&p,"migrate") {return}
     defer scene_test_project_close(&p)
-    old:asset.Scene;asset.scene_init(&old,&p.types,asset.KIND_SCENE,{0x3a,1});defer asset.scene_destroy(&old)
+    old:asset.Scene;asset.scene_init(&old,&p.types,{0x3a,1});defer asset.scene_destroy(&old)
     asset.scene_entity_add(&old,1,0,"Lamp")
     testing.expect_value(t,asset.scene_set(&old,1,"Scene_Test_Lamp",&Scene_Test_Old_Lamp{intensity=4,flicker=7}),asset.Error.None)
     testing.expect_value(t,asset.scene_save(&old,fmt.tprintf("%s/old.scene",p.folder)),asset.Error.None)
@@ -155,12 +154,12 @@ a_referenced_scene_hangs_from_each_reference_with_its_own_ids :: proc(t:^testing
     defer scene_test_project_close(&p)
     ROOM :: base.Asset_Id{0x2a,1}
     LEVEL :: base.Asset_Id{0x2a,2}
-    room:asset.Scene;asset.scene_init(&room,&p.types,asset.KIND_SCENE,ROOM);defer asset.scene_destroy(&room)
+    room:asset.Scene;asset.scene_init(&room,&p.types,ROOM);defer asset.scene_destroy(&room)
     asset.scene_entity_add(&room,1,0,"Lamp")
     light:=Scene_Test_Lamp{3,1}
     asset.scene_set(&room,1,"Scene_Test_Lamp",&light)
     testing.expect_value(t,asset.scene_save(&room,fmt.tprintf("%s/room.scene",p.folder)),asset.Error.None)
-    level:asset.Scene;asset.scene_init(&level,&p.types,asset.KIND_SCENE,LEVEL);defer asset.scene_destroy(&level)
+    level:asset.Scene;asset.scene_init(&level,&p.types,LEVEL);defer asset.scene_destroy(&level)
     for id in ([2]base.Entity_Id{10,20}) {
         asset.scene_entity_add(&level,id,0,"Room")
         asset.scene_set(&level,id,"Scene_Reference",&Scene_Reference{scene=ROOM})
@@ -231,7 +230,7 @@ a_referenced_scene_hangs_from_each_reference_with_its_own_ids :: proc(t:^testing
     LOOP :: base.Asset_Id{0x2a,3}
     HALL :: base.Asset_Id{0x2a,4}
     for pair in ([2][2]base.Asset_Id{{LOOP,HALL},{HALL,LOOP}}) {
-        doc:asset.Scene;asset.scene_init(&doc,&p.types,asset.KIND_SCENE,pair[0]);defer asset.scene_destroy(&doc)
+        doc:asset.Scene;asset.scene_init(&doc,&p.types,pair[0]);defer asset.scene_destroy(&doc)
         asset.scene_entity_add(&doc,1,0,"Next")
         asset.scene_set(&doc,1,"Scene_Reference",&Scene_Reference{scene=pair[1]})
         testing.expect_value(t,asset.scene_save(&doc,fmt.tprintf("%s/%s.scene",p.folder,"loop" if pair[0]==LOOP else "hall")),asset.Error.None)
@@ -250,7 +249,7 @@ a_scene_loads_in_phases_and_replaces_the_world_at_its_end :: proc(t:^testing.T) 
     if !scene_test_project_open(t,&p,"phases") {return}
     defer scene_test_project_close(&p)
     LEVEL :: base.Asset_Id{0x3a,1}
-    level:asset.Scene;asset.scene_init(&level,&p.types,asset.KIND_SCENE,LEVEL);defer asset.scene_destroy(&level)
+    level:asset.Scene;asset.scene_init(&level,&p.types,LEVEL);defer asset.scene_destroy(&level)
     light:=Scene_Test_Lamp{7,1}
     asset.scene_entity_add(&level,1,0,"Lamp")
     asset.scene_set(&level,1,"Scene_Test_Lamp",&light)
@@ -278,7 +277,7 @@ a_scene_loads_in_phases_and_replaces_the_world_at_its_end :: proc(t:^testing.T) 
 // entities. The content hash follows the bytes.
 @(private="file")
 scene_test_lamps :: proc(t:^testing.T,types:^asset.Types,id:base.Asset_Id,count:int,range:f32,broken:bool) -> []u8 {
-    level:asset.Scene;asset.scene_init(&level,types,asset.KIND_SCENE,id);defer asset.scene_destroy(&level)
+    level:asset.Scene;asset.scene_init(&level,types,id);defer asset.scene_destroy(&level)
     light:=Scene_Test_Lamp{range,1}
     for e in 1..=count {
         asset.scene_entity_add(&level,base.Entity_Id(e),0,"Lamp")
@@ -407,7 +406,7 @@ a_capture_leaves_out_what_hangs_from_a_reference :: proc(t:^testing.T) {
     core.test_world_settle(w)
     for sections in ([2]bool{false,true}) {
         document:asset.Scene
-        _,error:=capture(ref,&document,&types,{kind=asset.KIND_SCENE,id={1,2},sections=sections})
+        _,error:=capture(ref,&document,&types,{id={1,2},sections=sections})
         testing.expect_value(t,error,Error.None)
         testing.expect_value(t,asset.scene_entity_count(&document),sections?2:1)
         _,referenced:=asset.scene_get(&document,1,"Scene_Reference",Scene_Reference)
@@ -416,7 +415,7 @@ a_capture_leaves_out_what_hangs_from_a_reference :: proc(t:^testing.T) {
     }
     // The section alone, as its own scene: its entities with the Ids of that scene.
     section:asset.Scene
-    _,error:=capture(ref,&section,&types,{kind=asset.KIND_SCENE,id={9,9},section=room})
+    _,error:=capture(ref,&section,&types,{id={9,9},section=room})
     testing.expect_value(t,error,Error.None)
     testing.expect_value(t,asset.scene_entity_count(&section),1)
     _,found:=asset.scene_entity_find(&section,7)
@@ -459,7 +458,7 @@ scene_fixture_document :: proc(t:^testing.T,s:^Scene_Test_Fixture,ref:core.World
     core.add(&w.parents,child,core.Parent{entity=parent})
     core.test_world_settle(w)
     document:asset.Scene
-    _,error:=capture(ref,&document,types,{kind=asset.KIND_SCENE,id={1,2}})
+    _,error:=capture(ref,&document,types,{id={1,2}})
     if !testing.expect_value(t,error,Error.None) {return false}
     defer asset.scene_destroy(&document)
     out:serial.Writer;serial.writer_init(&out,0,context.allocator);defer serial.writer_destroy(&out)
@@ -525,7 +524,7 @@ copies_spawned_to_stay_get_ids_of_their_own :: proc(t:^testing.T) {
     for id in w.ids.values {seen[id.value]=true}
     testing.expect_value(t,len(seen),6)
     document:asset.Scene
-    _,error:=capture(ref,&document,&types,{kind=asset.KIND_SCENE,id={1,2}})
+    _,error:=capture(ref,&document,&types,{id={1,2}})
     testing.expect_value(t,error,Error.None)
     asset.scene_destroy(&document)
 }
@@ -557,7 +556,7 @@ spawned_prefabs_keep_their_entity_references_inside :: proc(t:^testing.T) {
     file:asset.Asset
     if !testing.expect(t,asset.asset_open(&file,serial.writer_bytes(&out),context.allocator)==.None) {return}
     defer asset.asset_close(&file)
-    testing.expect_value(t,file.blob.header.kind,asset.KIND_PREFAB)
+    testing.expect(t,asset.asset_prefab(&file),"what is under one entity is a scene with one root: a prefab")
 
     core.test_world_clear(w)
     made:[2][2]core.Entity
@@ -603,7 +602,7 @@ the_sky_of_a_prefab_in_a_scene_document_loads_off :: proc(t:^testing.T) {
 
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     doc:asset.Scene
-    if !testing.expect_value(t,asset.scene_init(&doc,&types,asset.KIND_SCENE,{0x5c,1}),asset.Error.None) {return}
+    if !testing.expect_value(t,asset.scene_init(&doc,&types,{0x5c,1}),asset.Error.None) {return}
     defer asset.scene_destroy(&doc)
     PLACED,ROOT_SKY :: base.Entity_Id(1),base.Entity_Id(5)
     asset.scene_entity_add(&doc,PLACED,0,"Placed")
@@ -650,10 +649,10 @@ untrusted_project_open :: proc(t:^testing.T,p:^Scene_Test_Project,name:string) -
     if !scene_test_project_open(t,p,name) {return}
     guest=base.test_folder(t,fmt.tprintf("scene-%s-guest",name))
     if guest=="" {return}
-    lamp:=lamp_write(t,&p.types,fmt.tprintf("%s/lamp.prefab",p.folder),1)
+    lamp:=lamp_write(t,&p.types,fmt.tprintf("%s/lamp.scene",p.folder),1)
     asset.scene_destroy(&lamp)
     for room in ([2]base.Asset_Id{UNTRUSTED_ROOM,UNTRUSTED_GUEST_ROOM}) {
-        doc:asset.Scene;asset.scene_init(&doc,&p.types,asset.KIND_SCENE,room);defer asset.scene_destroy(&doc)
+        doc:asset.Scene;asset.scene_init(&doc,&p.types,room);defer asset.scene_destroy(&doc)
         asset.scene_entity_add(&doc,1,0,"Lamp")
         asset.scene_set(&doc,1,"Scene_Test_Lamp",&Scene_Test_Lamp{5,1})
         if !testing.expect_value(t,asset.scene_save(&doc,fmt.tprintf("%s/room.scene",room==UNTRUSTED_ROOM?p.folder:guest)),asset.Error.None) {return}
@@ -667,7 +666,7 @@ untrusted_project_open :: proc(t:^testing.T,p:^Scene_Test_Project,name:string) -
 // folder; edit changes it first.
 @(private="file")
 untrusted_level_write :: proc(t:^testing.T,types:^asset.Types,path:string,id:base.Asset_Id,edit:proc(level:^asset.Scene)) -> bool {
-    level:asset.Scene;asset.scene_init(&level,types,asset.KIND_SCENE,id);defer asset.scene_destroy(&level)
+    level:asset.Scene;asset.scene_init(&level,types,id);defer asset.scene_destroy(&level)
     asset.scene_entity_add(&level,1,0,"Block")
     asset.scene_entity_add(&level,2,0,"Lamp")
     block:=UNTRUSTED_BLOCK
@@ -724,9 +723,8 @@ an_untrusted_level_loads_only_what_its_rules_allow :: proc(t:^testing.T) {
         {"an entity outside the level",proc(l:^asset.Scene) {b:=UNTRUSTED_BLOCK;b.link=core.Entity(99);untrusted_block_set(l,b)},{components=allowed},.Unknown_Reference,"Scene_Test_Block","link",.Refused},
         {"an asset the game does not have",proc(l:^asset.Scene) {b:=UNTRUSTED_BLOCK;b.material={0x77,7};untrusted_block_set(l,b)},{components=allowed},.Unknown_Reference,"Scene_Test_Block","material",.Refused},
         {"an instance of a prefab the game does not have",proc(l:^asset.Scene) {
-            other:asset.Scene;asset.scene_init(&other,l.types,asset.KIND_PREFAB,{0x77,8});defer asset.scene_destroy(&other)
+            other:asset.Scene;asset.scene_init(&other,l.types,{0x77,8});defer asset.scene_destroy(&other)
             asset.scene_entity_add(&other,1,0,"Other")
-            other.info.root=1
             asset.scene_instantiate(l,&other,{0x77,8},0)
         },{components=allowed},.Unknown_Reference,"","",.None},
         {"a reference to a scene of a player",proc(l:^asset.Scene) {
@@ -780,7 +778,7 @@ an_untrusted_level_of_random_bytes_or_values_never_crashes :: proc(t:^testing.T)
     loaded,refused:=0,0
     for round in 0..<300 {
         runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
-        level:asset.Scene;asset.scene_init(&level,&p.types,asset.KIND_SCENE,{0x5a,u64(round)})
+        level:asset.Scene;asset.scene_init(&level,&p.types,{0x5a,u64(round)})
         count:=1+pick(&rng,48)
         for e in 1..=count {
             asset.scene_entity_add(&level,base.Entity_Id(e),pick(&rng,3)==0?base.Entity_Id(1+pick(&rng,e)):0,"E")

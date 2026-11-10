@@ -36,7 +36,7 @@ Net_Test_Tables :: struct {
     remotes:core.Table(core.Remote),
     offsets:core.Table(render.Draw_Offset),
     move_inputs:core.Table(inp.Move_Input),
-    sources:core.Table(scene.Prefab_Source),
+    instances:core.Table(scene.Prefab_Instance),
     drivables:core.Table(inp.Drivable),
     seats:core.Table(inp.Seat),
     absents:core.Table(Seat_Absent),

@@ -39,8 +39,8 @@ lands on Close. In a narrow window the bar drops its dividers and some labels (`
   Stop, and in Simulate Apply transforms. Advancing one tick at a time is API-only (`play.step`).
 - `Graphics_Settings.show_fps` shows the counter next to the Graphics button, only where that
   button is; in the standalone game it goes at the top right.
-- A prefab document omits run and scene graphics and offers Preview sunlight
-  ([prefabs](prefabs.md#operations)).
+- A prefab document omits scene graphics and offers its variants and Preview sunlight
+  ([prefabs](prefabs.md#prefab-document)); it runs as any scene.
 - There is one avatar per agent working in the document and per other editor of the session, with
   the glyph and color of its [figure](editor.md#figures-of-whoever-works); a click opens its menu.
   While watching, the bar says "Watching", hides the edit tools and shows Stop.
@@ -479,13 +479,16 @@ The Content Browser tab shows the registry of the assets of the project and its 
   that uses (`content_selection_read`, `host.entity_asset_ids`), read again when the selection, the
   registry or the document change.
 - **Strip** under the search: a bar per family (Prefab, Model, Material, Scene, Plugins), each named
-  only in its tooltip; a funnel opens the rest (Texture, Animation, Sound, UI) and lights up while
-  one of them is on, and a cross by it, there only while a filter is on, clears them and the
-  viewport selection. They combine; none active shows everything. Model gathers meshes, fractures
-  and physics caches; Sound, sounds and sound sets; Plugins, every kind of a plugin ([types of a
-  plugin](extensions.md#asset-types-of-a-plugin)). A part of an import appears in its folder when
-  the filters leave out its owner (Model shows the meshes of an imported prefab). Skeletons are not
-  listed: the mesh that uses them represents them (`content_listed`).
+  only in its tooltip. Prefab and Scene are one kind of file told apart by what the registry knows
+  of each (`shown_kind`: a scene with one root is shown as a prefab, in its color, with its icon
+  and under its filter; [what a prefab is](prefabs.md)); a funnel opens the rest (Texture,
+  Animation, Sound, UI) and lights up while one of them is on, and a cross by it, there only
+  while a filter is on, clears them and the viewport selection. They combine; none active shows
+  everything. Model gathers meshes, fractures and physics caches; Sound, sounds and sound sets;
+  Plugins, every kind of a plugin
+  ([types of a plugin](extensions.md#asset-types-of-a-plugin)). A part of an import appears in
+  its folder when the filters leave out its owner (Model shows the meshes of an imported prefab).
+  Skeletons are not listed: the mesh that uses them represents them (`content_listed`).
 - What a scene makes of itself (`Asset_Kind.scene_data`: foliage, terrain, navmesh bakes) shows only
   with the Plugins filter or a search. Every kind of a plugin has the same color; each keeps its
   icon. The type of an asset is written nowhere but in a tooltip.
@@ -597,7 +600,7 @@ documents follow the asset; the selection passes to it (`Content.reveal`).
   The owner unfolds its parts in the order of their paths (`Content.parts`), except a prefab. A
   part also appears in its folder while a search finds it, in Recent and Favorites and with Show
   parts of imports; one whose owner is not there is shown as an asset of its own.
-- **Variants of a prefab:** the arrow of a `.prefab` is only there if it has
+- **Variants of a prefab:** the arrow of a `.scene` is only there if it has
   [variants](prefabs.md#variants), and shows them (`Content.variants`, read once per change of the
   registry of the prefabs that nest another).
 - It lists the engine's types (`asset.KINDS`) and the plugin ones that a plugin opens as a document
@@ -614,7 +617,9 @@ documents follow the asset; the selection passes to it (`Content.reveal`).
 
 Gestures:
 
-- **Dragging a prefab**: places it linked ([prefabs](prefabs.md)).
+- **Dragging a prefab**: places it linked ([prefabs](prefabs.md)). **Dragging a scene** with
+  several roots places a `Scene_Reference` to it, a section; a prefab becomes a section by naming
+  it in the `scene` of a `Scene_Reference`.
 - **Dragging a mesh**: creates an entity with that mesh, resting on the surface.
 - **Dragging a material**: assigns it to the mesh under the pointer.
 - **Dropping a card on the name, chip or cell of a folder**: moves it there.
@@ -820,7 +825,7 @@ File > Import, the content browser, a file dropped on the window and `asset.impo
 imports in a thread of its own, with its own job system, while the editor keeps drawing; the
 content browser shows the dot of what works. `import_poll`, between frames, takes what it wrote on
 finishing. One import runs at a time and, while it runs, nothing else writes assets: another
-import, saving (`scene_save`, `assets_save`), creating, deleting, converting and writing prefabs
+import, saving (`scene_save`, `assets_save`), creating, deleting and writing prefabs
 fail with `import_busy`, which says what is being imported. What the file is is told by its
 content (`sources.source_kind`, with the formats of the engine and of the plugins); the dialog
 offers those formats, the plugins' whole sources and the image and sound extensions. Formats and

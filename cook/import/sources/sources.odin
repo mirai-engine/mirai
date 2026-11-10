@@ -117,7 +117,7 @@ source_kind :: proc(path:string,formats:[]importer.Format=nil) -> Source_Kind {
 }
 
 // Imports a source file into folder: a model writes its assets and, when it
-// has nodes, <folder>/<name>.prefab, which the report lists last; an image or
+// has nodes, <folder>/<name>.scene, which the report lists last; an image or
 // a sound writes one asset. The settings a model or an image was imported
 // with are written next to it (<source>.import, Import_Report.saved) unless
 // options.no_save; a settings file that cannot be written leaves a warning.

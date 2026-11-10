@@ -1,8 +1,14 @@
 # Hierarchy, prefabs and spawning
 
-A prefab is a `.prefab` asset ([assets](../assets.md)). Code names it by its path in the assets,
-as the file is spelled (`"pets/Dog.prefab"`); a field of data (`Spawn_Point.prefab`) holds its
-`base.Asset_Id`. Every prefab of the project ships, whether a scene names it or not.
+A prefab is a scene with exactly one root entity: a `.scene` asset ([assets](../assets.md)) as
+any other, placed as a copy of what hangs from that root. Code names it by its path in the
+assets, as the file is spelled (`"pets/Dog.scene"`); a field of data (`Spawn_Point.prefab`) holds
+its `base.Asset_Id`. Every scene of the project ships, whether another names it or not.
+
+- A scene with several roots is not spawned: it hangs whole under an entity with
+  `scene.Scene_Reference` (a section, loaded with its scene or asked with
+  `scene.section_request`). A prefab can hang as a section too.
+- A scene a prefab references loads with each copy of it.
 
 ## Spawn and forget
 
@@ -13,7 +19,7 @@ import "mirai:engine/scene"
 game_burst :: proc(impacts:core.Read(Impact),spawner:scene.Spawner) {
     for row in 0..<core.count(impacts) {
         at:=core.at(impacts,row).point
-        scene.spawn(spawner,"arena/Burst.prefab",{position=at},transient=true)
+        scene.spawn(spawner,"arena/Burst.scene",{position=at},transient=true)
     }
 }
 ```
@@ -21,8 +27,9 @@ game_burst :: proc(impacts:core.Read(Impact),spawner:scene.Spawner) {
 The third argument is the `core.Transform{position, rotation, scale}` of the root; a zero rotation
 is none and a zero scale is 1. `parent=` hangs the root under an entity. `transient=true`: no `Id`
 of its own, for effects and projectiles. The path or the `base.Asset_Id` of a prefab both work.
-A spawn that fails returns `core.NONE` and is the problem `scene.spawn` of the parent or of the
-world.
+A spawn that fails (no such scene, or one without exactly one root) returns `core.NONE` and is the
+problem `scene.spawn` of the parent or of the world, which says what to change. The root of a copy
+has `scene.Prefab_Instance`, whose `prefab` is the scene it came from.
 
 ## Keep the root
 
@@ -32,7 +39,7 @@ world.
 @(step="fixed",server)
 game_dogs :: proc(spawner:scene.Spawner,owners:core.Read(Owner)) {
     for row in 0..<core.count(owners) {
-        dog:=scene.spawn(spawner,"pets/Dog.prefab",{position=core.at(owners,row).home})
+        dog:=scene.spawn(spawner,"pets/Dog.scene",{position=core.at(owners,row).home})
         if dog!=core.NONE {
             core.commands_add(spawner.commands,dog,Follow{leader=core.entity_at(owners,row)})
         }

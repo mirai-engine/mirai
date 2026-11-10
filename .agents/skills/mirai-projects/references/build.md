@@ -232,7 +232,7 @@ Settings > Input changed, and SDL3, which the executable links.
 job calls it with the project assets, `cook.mirai`, the asset folders of the active plugins and the
 texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error` and `detail`.
 
-- **Roots.** Every `.scene`, `.prefab` (code reaches one only by instantiating it) and `.records`
+- **Roots.** Every `.scene` (code reaches a prefab only by instantiating it) and `.records`
   of the folder and what `cook.mirai` (`COOK_FILE`) names: the other assets only code refers to (a
   material chosen by name).
 
@@ -271,7 +271,7 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
   cook with `Source_Failed` and says how to fix it.
 - **Animations.** An `.anim` is written cooked: its clips sampled as the runtime plays them
   (`asset.animation_compress`, [storage](../../mirai-std/references/anim-storage.md)).
-- **Prefab instances.** A scene or a prefab with a stale instance is written with its instances up
+- **Prefab instances.** A scene with a stale instance is written with its instances up
   to date, by an `asset.Prefab_Resolver` of the project prefabs
   ([instances](../../mirai-assets/references/scenes.md#resolution-against-the-current-prefab)); the
   shipped game loads them without checking them. If it cannot, `Resolve_Failed` with the file.

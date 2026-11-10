@@ -25,7 +25,7 @@ content_test_registry :: proc() -> asset.Registry {
         asset.Registry_File{path="Materials/red.mat",state=.Asset,kind=asset.KIND_MATERIAL,id={1,2}},
         asset.Registry_File{path="Meshes/box.mesh",state=.Asset,kind=asset.KIND_MESH,id={1,3}},
         asset.Registry_File{path="Meshes/nested/sphere.mesh",state=.Asset,kind=asset.KIND_MESH,id={1,4}},
-        asset.Registry_File{path="Prefabs/robot.prefab",state=.Asset,kind=asset.KIND_PREFAB,id={1,5}},
+        asset.Registry_File{path="Prefabs/robot.scene",state=.Asset,kind=asset.KIND_SCENE,flags={.One_Root},id={1,5}},
         asset.Registry_File{path="Sounds/hit.sound",state=.Asset,kind=asset.KIND_SOUND,id={1,6}},
         asset.Registry_File{path="Textures/color.tex",state=.Asset,kind=asset.KIND_TEXTURE,id={1,7}},
         asset.Registry_File{path="UI/hud.ui",state=.Asset,kind=asset.KIND_UI,id={1,8}},
@@ -839,8 +839,8 @@ content_test_parts_registry :: proc() -> asset.Registry {
         asset.Registry_File{path="Robot/SKM_Robot.mesh",state=.Asset,kind=asset.KIND_MESH,id={2,4},owner=CONTENT_TEST_ROBOT},
         asset.Registry_File{path="Robot/SK_Robot.skeleton",state=.Asset,kind=asset.KIND_SKELETON,id={2,5},owner=CONTENT_TEST_ROBOT},
         asset.Registry_File{path="Robot/T_Robot_01_D.tex",state=.Asset,kind=asset.KIND_TEXTURE,id={2,6},owner=CONTENT_TEST_ROBOT},
-        asset.Registry_File{path="Robot/robot.prefab",state=.Asset,kind=asset.KIND_PREFAB,id=CONTENT_TEST_ROBOT},
-        asset.Registry_File{path="Spider/spider.prefab",state=.Asset,kind=asset.KIND_PREFAB,id={3,1}},
+        asset.Registry_File{path="Robot/robot.scene",state=.Asset,kind=asset.KIND_SCENE,flags={.One_Root},id=CONTENT_TEST_ROBOT},
+        asset.Registry_File{path="Spider/spider.scene",state=.Asset,kind=asset.KIND_SCENE,flags={.One_Root},id={3,1}},
         asset.Registry_File{path="Stray/orphan.mesh",state=.Asset,kind=asset.KIND_MESH,id={4,1},owner={9,9}},
     )
     registry:=asset.Registry{files=files,allocator=context.allocator}
