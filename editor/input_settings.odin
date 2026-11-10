@@ -750,21 +750,20 @@ Api_Input_Get_Params :: struct {
 Api_Input :: struct {
     tap_seconds:f32 `mirai:"unit=s,label=How long a press may be held and still be a tap"`,
     hold_seconds:f32 `mirai:"unit=s,label=How long a press is held before it is a hold"`,
-    problem:[512]u8 `mirai:"text,label=Why input.mirai of the project was not read, so that input.set does not write over it; empty when it was"`,
+    problem:string `mirai:"optional,label=Why input.mirai of the project was not read, so that input.set does not write over it"`,
     actions:[]Api_Input_Action `mirai:"label=The actions the code declares"`,
 }
 Api_Input_Action :: struct {
-    name:[64]u8 `mirai:"text,label=What input.set and input.mirai call it"`,
-
-    kind:[8]u8 `mirai:"text,label=Button; Axis or Axis2"`,
-    source:[8]u8 `mirai:"text,label=code: the default of the code; file: input.mirai of the project changes it"`,
+    name:string `mirai:"label=What input.set and input.mirai call it"`,
+    kind:input.Action_Kind,
+    source:Api_Input_Source `mirai:"label=Code: the default of the code; File: input.mirai of the project changes it"`,
     bindings:serial.Json `mirai:"label=The bindings in effect as input.mirai writes them"`,
 }
 
-Api_Input_Set_Params_Kind :: enum u8 {Button,Axis,Axis2}
+Api_Input_Source :: enum u8 {Code,File}
 Api_Input_Set_Params :: struct {
     action:string `mirai:"optional,label=The name of an action, as input.get lists it"`,
-    kind:Api_Input_Set_Params_Kind `mirai:"optional,label=The kind the action takes with bindings; without it, the one it has"`,
+    kind:input.Action_Kind `mirai:"optional,label=The kind the action takes with bindings; without it, the one it has"`,
     bindings:[]serial.Json `mirai:"optional,label=The bindings that replace those of the action, as input.mirai writes them: {'key': 'Space'}, {'keys': ['A', 'D', 'S', 'W']} (two for an Axis, four for an Axis2: left, right, down, up), {'mouse_button': 'Left'}, {'mouse': 'Delta'}, {'gamepad_button': 'South'}, {'gamepad_axis': 'Right_Trigger'} or {'gamepad_stick': 'Left'}, each with scale, dead_zone and gamepad (0 to 3) optional; [] leaves it without any"`,
     reset:bool `mirai:"optional,label=true: the action goes back to the kind and the bindings of the code"`,
     tap_seconds:f32 `mirai:"optional,unit=s,label=Seconds a press may be held and still be a tap, above 0 and up to 10"`,
@@ -773,8 +772,8 @@ Api_Input_Set_Params :: struct {
 
 @(private)
 input_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="input.get",summary="The input actions of the game and its plugins: the kind, the bindings in effect and whether they come from the code or from input.mirai of the project, and the seconds of a tap and of a hold.",params=type_info_of(Api_Input_Get_Params),result=type_info_of(Api_Input),writes_result=true,flags={.Read_Only},run=api_input_get})
-    api_register(s,st,{name="input.set",params=type_info_of(Api_Input_Set_Params),summary="Replaces the kind and the bindings of an input action, puts it back to the default of the code, or changes the seconds of a tap and of a hold; input.mirai of the project keeps what differs from the code, and a Play that starts or runs takes it. It answers with the action it changed.",result=type_info_of(Api_Input),writes_result=true,run=api_input_set})
+    api_register(s,st,{name="input.get",summary="The input actions of the game and its plugins: the kind, the bindings in effect and whether they come from the code or from input.mirai of the project, and the seconds of a tap and of a hold.",params=type_info_of(Api_Input_Get_Params),result=type_info_of(Api_Input),flags={.Read_Only},run=api_input_get})
+    api_register(s,st,{name="input.set",params=type_info_of(Api_Input_Set_Params),summary="Replaces the kind and the bindings of an input action, puts it back to the default of the code, or changes the seconds of a tap and of a hold; input.mirai of the project keeps what differs from the code, and a Play that starts or runs takes it. It answers with the action it changed.",result=type_info_of(Api_Input),run=api_input_set})
 }
 
 @(private)
@@ -790,46 +789,38 @@ api_input_get :: proc(s:^Session,call:^api.Call) {
         }
         append(&only,wanted)
     }
-    input_api_write(s,call.out,len(only)>0,only[:])
+    api.call_result(call,Api_Input)^=input_api(s,len(only)>0,only[:],call.allocator)
 }
 
 @(private)
-input_api_write :: proc(s:^Session,out:^serial.Writer,filtered:=false,only:[]string={}) {
+input_api :: proc(s:^Session,filtered:=false,only:[]string={},allocator:=context.temp_allocator) -> (r:Api_Input) {
     st:=&s.settings_dialog.input
     m:=&st.current
-    serial.write_u8(out,'{')
-    api.write_key(out,"tap_seconds",true);api.write_number(out,input_seconds_shown(m.tap_seconds,input.TAP_SECONDS))
-    api.write_key(out,"hold_seconds");api.write_number(out,input_seconds_shown(m.hold_seconds,input.HOLD_SECONDS))
-    api.write_text(out,"problem",base.text_get(st.problem[:]))
-    api.write_key(out,"actions")
-    serial.write_u8(out,'[')
-    first:=true
+    r.tap_seconds,r.hold_seconds=input_seconds_shown(m.tap_seconds,input.TAP_SECONDS),input_seconds_shown(m.hold_seconds,input.HOLD_SECONDS)
+    r.problem=strings.clone(base.text_get(st.problem[:]),allocator)
+    actions:=make([dynamic]Api_Input_Action,allocator)
+    b:=strings.builder_make(allocator)
     for entry in core.names_of(s.info,input.Action) {
         if entry.value<0 || entry.value>=input.ACTION_CAPACITY {continue}
         if filtered && !slice.contains(only,entry.name) {continue}
         action:=input.Action(entry.value)
-        if !first {serial.write_u8(out,',')}
-        first=false
-        serial.write_u8(out,'{')
-        api.write_text(out,"name",entry.name,true)
-
-        api.write_text(out,"kind",reflect.enum_string(m.kinds[action]))
-        api.write_text(out,"source",input.input_map_action_same(m,&st.code,action)?"code":"file")
-        api.write_key(out,"bindings")
-        serial.write_u8(out,'[')
-        b:=strings.builder_make(context.temp_allocator)
+        // A binding is written as input.mirai has it.
+        start:=strings.builder_len(b)
+        strings.write_byte(&b,'[')
         count:=0
         for &binding in m.bindings[:m.binding_count] {
             if binding.action!=action {continue}
-            strings.builder_reset(&b)
-            if !input.input_binding_text(&b,binding) {continue}
-            if count>0 {serial.text_write_raw(out,", ")}
-            serial.text_write_raw(out,strings.to_string(b))
+            mark:=strings.builder_len(b)
+            if count>0 {strings.write_string(&b,", ")}
+            if !input.input_binding_text(&b,binding) {resize(&b.buf,mark);continue}
             count+=1
         }
-        serial.text_write_raw(out,"]}")
+        strings.write_byte(&b,']')
+        source:=Api_Input_Source.Code if input.input_map_action_same(m,&st.code,action) else .File
+        append(&actions,Api_Input_Action{entry.name,m.kinds[action],source,serial.Json(string(b.buf[start:]))})
     }
-    serial.text_write_raw(out,"]}")
+    r.actions=actions[:]
+    return
 }
 
 // Checked whole before the file changes: a call that fails changes nothing.
@@ -842,7 +833,8 @@ api_input_set :: proc(s:^Session,call:^api.Call) {
         return
     }
     next:=new_clone(st.current,context.temp_allocator)
-    if message:=input_set_apply(s,next,call.raw);message!="" {
+    p:=api.call_params(call,Api_Input_Set_Params)
+    if message:=input_set_apply(s,call,next,p);message!="" {
         api.call_fail(call,api.INVALID_PARAMS,message)
         return
     }
@@ -851,60 +843,45 @@ api_input_set :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.SERVER_ERROR,message)
         return
     }
-    values:[1]string
-    api.object_values(call.allocator,call.raw,{"action"},values[:])
-    action:=strings.trim(values[0],`"`)
-    only:=[1]string{action}
-    input_api_write(s,call.out,true,action!=""?only[:]:nil)
+    only:=[1]string{p.action}
+    api.call_result(call,Api_Input)^=input_api(s,true,p.action!=""?only[:]:nil,call.allocator)
 }
 
 // Reads the params of input.set into a map over the code of the session;
 // what is wrong with them, or "".
-input_set_apply :: proc(s:^Session,m:^input.Input_Map,raw:string) -> string {
+input_set_apply :: proc(s:^Session,call:^api.Call,m:^input.Input_Map,p:^Api_Input_Set_Params) -> string {
     USAGE :: `params are {"action", "kind", "bindings"} to replace an action, {"action", "reset": true} to put it back, and "tap_seconds" or "hold_seconds"`
-    value,parse_error:=json.parse_string(raw,json.DEFAULT_SPECIFICATION,true,context.temp_allocator)
-    root,is_object:=value.(json.Object)
-    if parse_error!=.None || !is_object {return USAGE}
-    seconds:=[2]struct{name:string,value:^f32,default:f32}{{"tap_seconds",&m.tap_seconds,input.TAP_SECONDS},{"hold_seconds",&m.hold_seconds,input.HOLD_SECONDS}}
+    seconds:=[2]struct{name:string,given:f32,value:^f32,default:f32}{{"tap_seconds",p.tap_seconds,&m.tap_seconds,input.TAP_SECONDS},{"hold_seconds",p.hold_seconds,&m.hold_seconds,input.HOLD_SECONDS}}
+    timed:=false
     for t in seconds {
-        if t.name not_in root {continue}
-        number:f64
-        #partial switch v in root[t.name] {case json.Float: number=v;case json.Integer: number=f64(v)}
-        if !(number>0) || number>f64(INPUT_SECONDS_MAX) {return fmt.tprintf("%s is seconds above 0 and up to %v; the default is %v",t.name,INPUT_SECONDS_MAX,t.default)}
-        t.value^=input_seconds_kept(f32(number),t.default)
+        if !api.call_given(call,t.name) {continue}
+        timed=true
+        if !(t.given>0) || t.given>INPUT_SECONDS_MAX {return fmt.tprintf("%s is seconds above 0 and up to %v; the default is %v",t.name,INPUT_SECONDS_MAX,t.default)}
+        t.value^=input_seconds_kept(t.given,t.default)
     }
-    if "action" not_in root {
-        if "tap_seconds" in root || "hold_seconds" in root {return ""}
+    if p.action=="" {
+        if timed {return ""}
         return fmt.tprintf("action is missing: %s",USAGE)
     }
-    name,is_text:=root["action"].(json.String)
-    if !is_text {return fmt.tprintf("action is the name of an action in quotes: %s",input_action_names(s))}
+    name:=p.action
     found,declared:=core.name_value(s.info,input.Action,name)
     if !declared || found<0 || found>=input.ACTION_CAPACITY {
         return fmt.tprintf(`%q is not an input action: the code declares %s; names.create {{"type": "Action", "name": %q}} declares a new one`,name,input_action_names(s),name)
     }
     action:=input.Action(found)
-    reset,_:=root["reset"].(json.Boolean)
-    if reset {
-        if "kind" in root || "bindings" in root {return "reset puts back the kind and the bindings of the code: leave out kind and bindings"}
+    if p.reset {
+        if api.call_given(call,"kind") || api.call_given(call,"bindings") {return "reset puts back the kind and the bindings of the code: leave out kind and bindings"}
         input_action_restore(m,&s.settings_dialog.input.code,action)
         return ""
     }
-    list,has_list:=root["bindings"].(json.Array)
-    if !has_list {
-        if "bindings" in root {return `bindings is a list of bindings: [{"key": "Space"}, ...]`}
-        return fmt.tprintf("give the bindings of %q (with its kind to change it), or reset: true: %s",name,USAGE)
-    }
-    kind:=m.kinds[action]
-    if "kind" in root {
-        kind_name,_:=root["kind"].(json.String)
-        named,known:=reflect.enum_from_name(input.Action_Kind,kind_name)
-        if !known {return fmt.tprintf("kind %q is not a kind: Button, Axis or Axis2",kind_name)}
-        kind=named
-    }
+    if !api.call_given(call,"bindings") {return fmt.tprintf("give the bindings of %q (with its kind to change it), or reset: true: %s",name,USAGE)}
+    kind:=p.kind if api.call_given(call,"kind") else m.kinds[action]
+    list:=p.bindings
     bindings:=make([]input.Input_Binding,len(list),context.temp_allocator)
     for item,i in list {
-        o,is_binding:=item.(json.Object)
+        // A binding is in the grammar of input.mirai.
+        value,_:=json.parse_string(string(item),json.DEFAULT_SPECIFICATION,true,context.temp_allocator)
+        o,is_binding:=value.(json.Object)
         if !is_binding {return fmt.tprintf(`bindings[%d] is not an object: {"key": "Space"}`,i)}
         input_binding_names_fit(o)
         binding,error,field:=input.input_binding_parse(o)

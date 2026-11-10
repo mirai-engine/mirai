@@ -115,7 +115,7 @@ input_set_writes_only_what_differs_and_reset_brings_back_the_code :: proc(t:^tes
 
     text,error:=input_call(f,"input.get","{}")
     testing.expect_value(t,error.code,0)
-    for want in ([]string{`"tap_seconds":0.2`,`"hold_seconds":0.5`,`"problem":""`,`{"name":"move","kind":"Axis2","source":"code","bindings":[{"keys": ["A", "D", "S", "W"]}, {"gamepad_stick": "Left"}]}`,`{"name":"hit","kind":"Button","source":"code","bindings":[]}`}) {
+    for want in ([]string{`"tap_seconds": 0.2`,`"hold_seconds": 0.5`,`{"name": "move", "kind": "Axis2", "source": "Code", "bindings": [{"keys": ["A", "D", "S", "W"]}, {"gamepad_stick": "Left"}]}`,`{"name": "hit", "kind": "Button", "source": "Code", "bindings": []}`}) {
         testing.expectf(t,strings.contains(text,want),"%q is not in %s",want,text)
     }
     _,exists:=input_file(f)
@@ -124,7 +124,7 @@ input_set_writes_only_what_differs_and_reset_brings_back_the_code :: proc(t:^tes
     f.world.bindings.built=true
     text,error=input_call(f,"input.set",`{"action":"jump","bindings":[{"key":"J"},{"gamepad_button":"South","gamepad":1}]}`)
     testing.expect_value(t,error.code,0)
-    testing.expect(t,strings.contains(text,`{"name":"jump","kind":"Button","source":"file","bindings":[{"key": "J"}, {"gamepad_button": "South", "gamepad": 1}]}`),text)
+    testing.expect(t,strings.contains(text,`{"name": "jump", "kind": "Button", "source": "File", "bindings": [{"key": "J"}, {"gamepad_button": "South", "gamepad": 1}]}`),text)
     testing.expect(t,!f.world.bindings.built,"the edited World builds its map again from the file")
     file,_:=input_file(f)
     testing.expect(t,strings.contains(file,`"jump"`) && !strings.contains(file,`"move"`) && !strings.contains(file,`"hit"`),file)
@@ -150,7 +150,7 @@ input_set_writes_only_what_differs_and_reset_brings_back_the_code :: proc(t:^tes
 
     text,error=input_call(f,"input.set",`{"action":"jump","reset":true}`)
     testing.expect_value(t,error.code,0)
-    testing.expect(t,strings.contains(text,`{"name":"jump","kind":"Button","source":"code","bindings":[{"key": "Space"}]}`),text)
+    testing.expect(t,strings.contains(text,`{"name": "jump", "kind": "Button", "source": "Code", "bindings": [{"key": "Space"}]}`),text)
     file,_=input_file(f)
     testing.expect(t,!strings.contains(file,`"jump"`) && strings.contains(file,`"hit"`),file)
 
