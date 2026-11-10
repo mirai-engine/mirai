@@ -164,33 +164,46 @@ merge_keeps_entities_both_sides_added_and_drops_what_hung_from_a_removed_one :: 
 }
 
 @(test)
-merge_gives_instances_both_sides_placed_their_own_ids :: proc(t:^testing.T) {
+merge_keeps_the_instances_each_side_placed_and_leaves_none_half_linked :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
     origin,ours,theirs,merged:Scene
     origin_scene(t,&types,&origin);defer scene_destroy(&origin)
+    // Both start with an instance rooted at A, with B as its member.
+    scene_instance_set(&origin,A,{prefab={3,3},stamp=1})
+    scene_member_set(&origin,A,A,0x1)
+    scene_member_set(&origin,B,A,0x2)
     scene_copy(t,&types,&origin,&ours);defer scene_destroy(&ours)
     scene_copy(t,&types,&origin,&theirs);defer scene_destroy(&theirs)
     R1,R2:=base.Entity_Id(0x71),base.Entity_Id(0x72)
     scene_entity_add(&ours,R1,0,"Lamp")
-    append(&ours.instances,Instance{id=1,prefab={1,1},root=R1})
-    append(&ours.members,Member{instance=1,source=0x1,entity=R1})
+    scene_instance_set(&ours,R1,{prefab={1,1}})
+    scene_member_set(&ours,R1,R1,0x1)
     scene_entity_add(&theirs,R2,0,"Tree")
-    append(&theirs.instances,Instance{id=1,prefab={2,2},root=R2})
-    append(&theirs.members,Member{instance=1,source=0x1,entity=R2})
+    scene_instance_set(&theirs,R2,{prefab={2,2}})
+    scene_member_set(&theirs,R2,R2,0x1)
+    // Each side brought the instance of A up to date with another file.
+    scene_instance_set(&ours,A,{prefab={3,3},stamp=2})
+    scene_instance_set(&theirs,A,{prefab={3,3},stamp=3})
 
     m:Merge;defer merge_destroy(&m)
     merged_scene(t,&types,&origin,&ours,&theirs,&merged,&m);defer scene_destroy(&merged)
     testing.expect_value(t,len(m.conflicts),0)
-    testing.expect_value(t,len(merged.instances),2)
-    ids:[2]u32
-    for instance in merged.instances {
-        if instance.root==R1 {ids[0]=instance.id} else {ids[1]=instance.id}
-    }
-    testing.expect(t,ids[0]==1 && ids[1]==2)
-    for member in merged.members {
-        if member.entity==R2 {testing.expect_value(t,member.instance,u32(2))}
-        if member.entity==R1 {testing.expect_value(t,member.instance,u32(1))}
-    }
+    testing.expect_value(t,len(scene_instance_roots(&merged)),3)
+    shared,_:=scene_instance(&merged,A)
+    testing.expect(t,shared==Instance{{3,3},0},"an instance of two files is of none: the next load brings it up to date")
+    testing.expect(t,scene_entity_instance(&merged,R1)==R1 && scene_entity_instance(&merged,R2)==R2 && scene_entity_instance(&merged,B)==A)
+
+    // Ours unlinks A while theirs gives it another member: no entity stays a member of what is not an instance.
+    scene_destroy(&ours);scene_destroy(&theirs)
+    scene_copy(t,&types,&origin,&ours)
+    scene_copy(t,&types,&origin,&theirs)
+    testing.expect_value(t,scene_instance_unlink(&ours,A),Error.None)
+    scene_member_set(&theirs,C,A,0x3)
+    unlinked:Scene
+    again:Merge;defer merge_destroy(&again)
+    merged_scene(t,&types,&origin,&ours,&theirs,&unlinked,&again);defer scene_destroy(&unlinked)
+    _,_,member:=scene_member(&unlinked,C)
+    testing.expect(t,len(scene_instance_roots(&unlinked))==0 && !member && scene_entity_instance(&unlinked,B)==0)
 }
 
 @(private="file") Test_Shade :: struct {roughness:f32,metallic:f32,tint:[3]f32}

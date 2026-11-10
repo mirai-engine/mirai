@@ -56,8 +56,7 @@ the name of their type) and a world (handles and tables).
   hangs from them, and their `Entity` fields store the `Id` of an entity left outside: the values
   of some entities, to compare them.
   - From `previous` (the document the world was loaded from) come the order of the roots,
-    components of libraries the project does not have, prefab instance records and tables that are
-    not components.
+    components of libraries the project does not have and tables that are not components.
   - `transient` fields go as zero; `Entity` ones store the `Id` of their target.
 - `save(world, app, path, previous)` captures and writes.
 - **Changing scene** is a request: `scene.request(&r, id)` or `request_path(&r, path)` in

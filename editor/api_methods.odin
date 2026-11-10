@@ -557,7 +557,6 @@ api_gpu_lose :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_history_result :: proc(s:^Session,call:^api.Call,kept:=0) {
     if st:=api_state(s);st!=nil && st.manual {api_frames(s,1,0)}
-    prefabs_sync(s,prefabs_of(s))
     api.call_result(call,Api_History_Result)^={edits_undo_count(s.edits),edits_redo_count(s.edits),kept}
 }
 
@@ -620,8 +619,6 @@ api_editor_action :: proc(s:^Session,call:^api.Call) {
         api.call_failf(call,api.INVALID_PARAMS,"%s opens a dialog: use scene.open, scene.save or engine.shutdown",name)
         return
     }
-    prefabs_sync(s,prefabs_of(s))
-    prefab_observe(s)
     if !action_run(s,action) {
         api.call_failf(call,api.SERVER_ERROR,"%s is disabled now",name)
         return

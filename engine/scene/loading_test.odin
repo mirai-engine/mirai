@@ -431,7 +431,7 @@ the_sections_loading_tell_how_far_they_are :: proc(t:^testing.T) {
         room:asset.Scene;asset.scene_init(&room,&p.types,asset.KIND_SCENE,ROOM);defer asset.scene_destroy(&room)
         asset.scene_entity_add(&room,1,0,"Model")
         asset.scene_set(&room,1,"Loading_Model",&Loading_Model{meshes[0]})
-        _,_,placed:=asset.scene_instantiate(&room,&lamp,LAMP,0)
+        _,placed:=asset.scene_instantiate(&room,&lamp,LAMP,0)
         testing.expect_value(t,placed,asset.Error.None)
         testing.expect_value(t,asset.scene_save(&room,fmt.tprintf("%s/room.scene",p.folder)),asset.Error.None)
     }

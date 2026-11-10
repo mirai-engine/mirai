@@ -304,9 +304,11 @@ change_row_put :: proc(w:core.World_Ref,row:^Change_Row,e:core.Entity,forward:bo
 
 // The entities about to go (marked ENTITY_GOING by index) that an author that
 // stays names in an Entity field a scene saves stay, and so do those they
-// name in turn: their mark goes. How many stay.
+// name in turn: their mark goes. How many stay. The rows a swap of step
+// writes are left out: what they name after it is what the step holds, which
+// step_exact looks at (the members of an instance whose root an undo takes).
 @(private)
-entities_named_keep :: proc(w:core.World_Ref,marks:[]u8) -> (kept:int) {
+entities_named_keep :: proc(w:core.World_Ref,marks:[]u8,step:^Edit_Step=nil) -> (kept:int) {
     es:=core.world_entities(w)
     ids:=core.world_table_of(w,core.Id)
     going :: proc(es:^core.Entities,marks:[]u8,e:core.Entity) -> bool {
@@ -315,13 +317,21 @@ entities_named_keep :: proc(w:core.World_Ref,marks:[]u8) -> (kept:int) {
     }
     for {
         changed:=false
-        for &descriptor in w.info.tables {
+        for &descriptor,index in w.info.tables {
             if descriptor.place!=w.place || !type_saved(descriptor.info) {continue}
             offsets:=saved_entity_offsets(descriptor.info)
             if len(offsets)==0 {continue}
             table:=core.world_table_at(w,&descriptor)
+            written:map[core.Entity]bool
+            if step!=nil {
+                for &rows in step.tables {
+                    if rows.table!=index {continue}
+                    written=make(map[core.Entity]bool,len(rows.entities),context.temp_allocator)
+                    for e in rows.entities {written[e]=true}
+                }
+            }
             for source,row in table.entities {
-                if going(es,marks,source) || ids!=nil && core.raw_row(core.raw(ids),source)<0 {continue}
+                if going(es,marks,source) || ids!=nil && core.raw_row(core.raw(ids),source)<0 || written[source] {continue}
                 value:=core.raw_value(table,descriptor.info,row)
                 for at in offsets {
                     target:=(^core.Entity)(uintptr(value)+at)^

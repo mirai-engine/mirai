@@ -53,16 +53,13 @@ selection_clear :: proc(s:^Selection) {
 
 selection_click_target :: proc(s:^Session,w:core.World_Ref,e:core.Entity,individual:bool) -> core.Entity {
     if e==core.NONE || individual || s.document==nil {return e}
-    link,linked:=prefab_link_of(s,api_entity_id(w,e))
+    link,linked:=prefab_link_of(w,e)
     if !linked || link.root {return e}
     for selected in s.selection.entities {
-        selected_link,selected_linked:=prefab_link_of(s,api_entity_id(w,selected))
+        selected_link,selected_linked:=prefab_link_of(w,selected)
         if selected_linked && selected_link.instance==link.instance {return e}
     }
-    at:=asset.scene_instance_find(s.document.previous,link.instance)
-    if at<0 {return e}
-    if root:=core.entity_of(core.world_entities(w),s.document.previous.instances[at].root);root!=core.NONE {return root}
-    return e
+    return link.instance
 }
 
 // Forgets what is no longer alive in a World.

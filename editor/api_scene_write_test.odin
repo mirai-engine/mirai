@@ -35,7 +35,6 @@ write_scene :: proc(f:^Prefab_Fixture,raw:string) -> (result:Api_Write_Result,fa
     method:=api.Method{result_id=Api_Write_Result}
     call:=api.Call{method=&method,result=&result,raw=raw,allocator=context.temp_allocator}
     api_scene_write(&f.s,&call)
-    prefabs_follow(&f.s,&f.prefabs)
     return result,call.error.message,!call.failed
 }
 
@@ -157,11 +156,9 @@ a_write_turns_off_the_members_of_an_instance_it_leaves_out_and_keeps_their_place
     c:=write_entity(f,"C",a)
     core.world_settle(w)
     edits_reset(&f.edits,w)
-    prefabs_follow(s,&f.prefabs)
     root_id,a_id,b_id,c_id:=api_entity_id(w,root),api_entity_id(w,a),api_entity_id(w,b),api_entity_id(w,c)
     _,created:=prefab_create(s,root,"members")
     if !testing.expect_value(t,created,Prefab_Error.None) {return}
-    prefabs_follow(s,&f.prefabs)
     steps:=len(f.edits.steps)
 
     _,failure,ok:=write_scene(f,fmt.tprintf(`{{"root":"0x%016x","entities":[{{"name":"Root","children":[{{"id":"0x%016x"}},{{"id":"0x%016x"}},{{"id":"0x%016x"}}]}}]}}`,u64(root_id),u64(a_id),u64(c_id),u64(b_id)))
@@ -178,7 +175,8 @@ a_write_turns_off_the_members_of_an_instance_it_leaves_out_and_keeps_their_place
     }
     testing.expect(t,entity_parent(w,api_entity(w,c_id))==api_entity(w,a_id))
     added,child:=0,0
-    for override in f.document.previous.overrides {
+    marked,_:=prefab_overrides_of(s,prefab_instance_for(w,api_entity(w,a_id)))
+    for override in marked {
         if override.kind==.Added {added+=1} else if override.kind==.Child {child+=1}
     }
     testing.expect(t,added==2 && child==1,"The members are off, and what the write made under A is the instance's own")
@@ -210,11 +208,9 @@ a_write_places_a_prefab_as_a_linked_instance_with_what_the_document_says_of_it :
     level:=write_entity(f,"Level")
     core.world_settle(w)
     edits_reset(&f.edits,w)
-    prefabs_follow(s,&f.prefabs)
     level_id:=api_entity_id(w,level)
     id,created:=prefab_create(s,crate,"crate")
     if !testing.expect_value(t,created,Prefab_Error.None) {return}
-    prefabs_follow(s,&f.prefabs)
     steps,alive:=len(f.edits.steps),core.world_entities(w).alive
     // The lamp of the instance under the first child of Level.
     placed_lamp :: proc(f:^Prefab_Fixture,level:base.Entity_Id) -> (north,lamp:core.Entity) {
@@ -236,14 +232,15 @@ a_write_places_a_prefab_as_a_linked_instance_with_what_the_document_says_of_it :
     testing.expect_value(t,core.world_entities(w).alive,alive+3)
     north,lamp:=placed_lamp(f,level_id)
     north_id,lamp_id:=api_entity_id(w,north),api_entity_id(w,lamp)
-    link,linked:=prefab_link_of(s,north_id)
+    link,linked:=prefab_link_of(w,north)
     testing.expect(t,linked && link.root && link.asset==id && entity_name(w,north)=="North")
     testing.expect_value(t,entity_local(w,north).position,[3]f32{4,0,0})
-    member,is_member:=prefab_link_of(s,lamp_id)
+    member,is_member:=prefab_link_of(w,lamp)
     value,_:=core.get(core.read(&f.world.lamps),lamp)
     testing.expect(t,is_member && !member.root && member.instance==link.instance && value.intensity==9,"What the document says of a member, by its name, the member holds")
-    testing.expect(t,asset.scene_overridden(f.document.previous,lamp_id,base.name_hash("Prefab_Test_Lamp"),"intensity"),"and the instance holds it on its own")
-    for override in f.document.previous.overrides {testing.expect(t,override.kind!=.Child,"Nothing was made beside the members")}
+    testing.expect(t,prefab_test_has(f,north,lamp,"Prefab_Test_Lamp",.Field,"intensity"),"and the instance holds it on its own")
+    held,_:=prefab_overrides_of(s,north)
+    for override in held {testing.expect(t,override.kind!=.Child,"Nothing was made beside the members")}
 
     // The document that placed it, and the one inspect gives of it, written again change nothing.
     result,failure,ok=write_scene(f,document)
@@ -256,34 +253,30 @@ a_write_places_a_prefab_as_a_linked_instance_with_what_the_document_says_of_it :
 
     // One step: undone, the instance is gone with its link; done again, it is linked as before.
     testing.expect(t,undo(&f.edits,w,&f.selection))
-    prefabs_follow(s,&f.prefabs)
     testing.expect_value(t,core.world_entities(w).alive,alive)
-    testing.expect_value(t,len(f.document.previous.instances),1)
+    testing.expect_value(t,core.count(&f.world.instances),1)
     testing.expect(t,redo(&f.edits,w,&f.selection))
-    prefabs_follow(s,&f.prefabs)
     north,lamp=placed_lamp(f,level_id)
-    link,linked=prefab_link_of(s,north_id)
-    testing.expect(t,linked && link.root && api_entity_id(w,north)==north_id && len(f.document.previous.instances)==2)
+    link,linked=prefab_link_of(w,north)
+    testing.expect(t,linked && link.root && api_entity_id(w,north)==north_id && core.count(&f.world.instances)==2)
 
     // Revert gives the member back what the prefab has.
     reverted,revert_error:=prefab_revert(s,north,nil,true)
-    prefabs_follow(s,&f.prefabs)
     _,lamp=placed_lamp(f,level_id)
     value,_=core.get(core.read(&f.world.lamps),lamp)
     testing.expect(t,revert_error==.None && reverted>0 && value.intensity==2 && value.range==3,fmt.tprintf("%v %d %v",revert_error,reverted,value))
 
     // Without root the instance is the new root, with what the document says of it.
     result,failure,ok=write_scene(f,`{"entities":[{"name":"Alone","prefab":"crate.prefab","enabled":false}]}`)
-    alone,placed_alone:=prefab_link_of(s,result.id)
-    testing.expect(t,ok && result.made==3 && placed_alone && alone.root && entity_has(w,api_entity(w,result.id),core.Disabled),failure)
+    alone,placed_alone:=prefab_link_of(w,api_entity(w,result.id))
+    testing.expect(t,ok && result.made==3 && placed_alone && alone.root && entity_has(w,api_entity(w,result.id),core.Disabled),fmt.tprintf("%s %v %v %v",failure,result,placed_alone,alone))
 
     // What a write refuses after placing an instance takes the instance back; and a prefab is not placed in a file it holds.
     yard,nested:=prefab_create(s,api_entity(w,level_id),"yard")
     if !testing.expect_value(t,nested,Prefab_Error.None) {return}
     testing.expect(t,prefab_contains(s,yard,id) && !prefab_contains(s,id,yard))
-    prefabs_follow(s,&f.prefabs)
     steps,alive=len(f.edits.steps),core.world_entities(w).alive
-    instances,members:=len(f.document.previous.instances),len(f.document.previous.members)
+    instances,members:=core.count(&f.world.instances),core.count(&f.world.members)
     open_id:=f.document.id
     cases:=[?]struct{document,says:string,inside:bool}{
         {`{"entities":[{"name":"Top","children":[{"name":"South","prefab":"crate.prefab"},{"name":"Bad","components":{"Light":{}}}]}]}`,"entities[0].children[1].components.Light",false},
@@ -297,7 +290,7 @@ a_write_places_a_prefab_as_a_linked_instance_with_what_the_document_says_of_it :
         testing.expectf(t,!accepted && strings.contains(refused,c.says),"%s: %s",c.says,refused)
         testing.expect_value(t,core.world_entities(w).alive,alive)
         testing.expect_value(t,len(f.edits.steps),steps)
-        testing.expect(t,len(f.document.previous.instances)==instances && len(f.document.previous.members)==members,"The records of the instances are those from before")
+        testing.expect(t,core.count(&f.world.instances)==instances && core.count(&f.world.members)==members,"The instances are those from before")
     }
 }
 

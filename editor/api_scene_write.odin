@@ -207,18 +207,20 @@ api_scene_write :: proc(s:^Session,call:^api.Call) {
     if !api_edit_begin(s,call,"Write entities") {return}
     result,applied:=api_write_apply(s,call,edited_world(s),root,decls[:])
     if api_edit_end(s,call,applied) {api.call_result(call,Api_Write_Result)^=result}
-    // The records of an instance the write placed follow its step, or go back with it.
-    if p:=prefabs_of(s);p!=nil {prefabs_sync(s,p)}
 }
 
 // Makes the part of root say what the document declares, inside the open
 // transaction. False after failing the call, with where in the document.
 @(private)
 api_write_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,root_id:base.Entity_Id,decls:[]Api_Write_Entity) -> (result:Api_Write_Result,ok:bool) {
-    links:=prefab_links(s,w,call.allocator)
-    member :: proc(w:core.World_Ref,links:map[base.Entity_Id]Prefab_Link,e:core.Entity) -> bool {
-        link,linked:=links[api_entity_id(w,e)]
+    member :: proc(w:core.World_Ref,e:core.Entity) -> bool {
+        link,linked:=prefab_link_of(w,e)
         return linked && !link.root
+    }
+    // The root of the instance that placed an entity; NONE for none.
+    placer :: proc(w:core.World_Ref,e:core.Entity) -> core.Entity {
+        link,_:=prefab_link_of(w,e)
+        return link.instance
     }
     // The part, each entity true once a document entity takes it.
     part:[]core.Entity
@@ -255,15 +257,15 @@ api_write_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,root_id:base.
     }
     reading:=author.Reading{allocator=call.allocator,raw=call.raw,assets={s,asset_text_resolve}}
     // The instances the document names by their prefab alone: what it leaves out of them stays.
-    sparse:=make(map[u32]bool,call.allocator)
+    sparse:=make(map[core.Entity]bool,call.allocator)
     for &d in decls {
         if d.prefab!="" {
             read:bool
             if d.given,read=author.scene_prefab_read(&reading,d.prefab,d.path);!read {api_write_unread(call,&reading);return}
         }
         if d.e==core.NONE {continue}
-        if d.prefab!="" {api_write_linked(call,w,&reading,links,&sparse,&d) or_return}
-        if d.parent>=0 && member(w,links,d.e) && entity_parent(w,d.e)!=decls[d.parent].e {
+        if d.prefab!="" {api_write_linked(call,w,&reading,&sparse,&d) or_return}
+        if d.parent>=0 && member(w,d.e) && entity_parent(w,d.e)!=decls[d.parent].e {
             api.call_failf(call,api.INVALID_PARAMS,"%s: %s is a member of an instance of a prefab and keeps the place its prefab gives it; declare it under %s, or leave it out to turn it off",d.path,entity_label(w,d.e),entity_label(w,entity_parent(w,d.e)))
             return
         }
@@ -289,11 +291,10 @@ api_write_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,root_id:base.
         }
         if d.e==core.NONE && d.prefab!="" {
             result.made+=api_write_place(s,call,w,&reading,decls,i,parent,part,&taken,&sparse) or_return
-            links=prefab_links(s,w,call.allocator)
             // What it declares under the instance is of its members, by their names.
             for c in i..<d.end {
                 if decls[c].e==core.NONE {continue}
-                if c>i && decls[c].prefab!="" {api_write_linked(call,w,&reading,links,&sparse,&decls[c]) or_return}
+                if c>i && decls[c].prefab!="" {api_write_linked(call,w,&reading,&sparse,&decls[c]) or_return}
                 api_write_match(w,decls,c,&taken,call.allocator)
             }
         } else if d.e==core.NONE {
@@ -310,7 +311,7 @@ api_write_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,root_id:base.
     }
     result.id=api_entity_id(w,decls[0].e)
     for &d in decls {
-        d.sparse||=sparse[links[api_entity_id(w,d.e)].instance]
+        d.sparse||=sparse[placer(w,d.e)]
         api_write_values(s,call,w,&d,parts[d.card] if d.card>=0 else nil) or_return
     }
     // Siblings in the order of the document; a member keeps the place of its prefab.
@@ -319,7 +320,7 @@ api_write_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,root_id:base.
         for c:=i+1;c<p.end;c=decls[c].end {
             e:=decls[c].e
             parent,_:=entity_get(w,e,core.Parent)
-            if member(w,links,e) {last=max(last,parent.order);continue}
+            if member(w,e) {last=max(last,parent.order);continue}
             if parent.order<=last {
                 api_write_editable(s,call,w,e,decls[c].path) or_return
                 entity_order_set(s,e,last+1)
@@ -336,12 +337,12 @@ api_write_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,root_id:base.
         if taken[e] {continue}
         parent:=entity_parent(w,e)
         parent_taken,parent_inside:=taken[parent]
-        if member(w,links,e) {
-            if sparse[links[api_entity_id(w,e)].instance] || !parent_taken || entity_has(w,e,core.Disabled) {continue}
+        if member(w,e) {
+            if sparse[placer(w,e)] || !parent_taken || entity_has(w,e,core.Disabled) {continue}
             api_write_editable(s,call,w,e,"root") or_return
             entity_enabled_set(s,e,false)
             result.disabled+=1
-        } else if parent_taken || !parent_inside || member(w,links,parent) && !sparse[links[api_entity_id(w,parent)].instance] {
+        } else if parent_taken || !parent_inside || member(w,parent) && !sparse[placer(w,parent)] {
             api_write_editable(s,call,w,e,"root") or_return
             append(&gone,e)
         }
@@ -385,8 +386,8 @@ api_write_match :: proc(w:core.World_Ref,decls:[]Api_Write_Entity,p:int,taken:^m
 // The prefab a matched entity gives is what links it; by its path or id
 // alone, the instance is declared as its prefab gives it.
 @(private)
-api_write_linked :: proc(call:^api.Call,w:core.World_Ref,reading:^author.Reading,links:map[base.Entity_Id]Prefab_Link,sparse:^map[u32]bool,d:^Api_Write_Entity) -> bool {
-    link,linked:=links[api_entity_id(w,d.e)]
+api_write_linked :: proc(call:^api.Call,w:core.World_Ref,reading:^author.Reading,sparse:^map[core.Entity]bool,d:^Api_Write_Entity) -> bool {
+    link,linked:=prefab_link_of(w,d.e)
     if !author.scene_prefab_same(reading,d.given,d.path,link.asset,link.root,linked) {return api_write_unread(call,reading)}
     if d.given.alone {
         d.sparse=true
@@ -396,11 +397,10 @@ api_write_linked :: proc(call:^api.Call,w:core.World_Ref,reading:^author.Reading
 }
 
 // Places the prefab the new entity at index names under parent, inside the
-// open edit, with prefab_instantiate. That replaces the World, so the
-// entities the write holds are found again by their ids. The members of the
-// instance are left to be matched; made counts them.
+// open edit, with prefab_instantiate. The members of the instance are left
+// to be matched; made counts them.
 @(private)
-api_write_place :: proc(s:^Session,call:^api.Call,w:core.World_Ref,reading:^author.Reading,decls:[]Api_Write_Entity,index:int,parent:core.Entity,part:[]core.Entity,taken:^map[core.Entity]bool,sparse:^map[u32]bool) -> (made:int,ok:bool) {
+api_write_place :: proc(s:^Session,call:^api.Call,w:core.World_Ref,reading:^author.Reading,decls:[]Api_Write_Entity,index:int,parent:core.Entity,part:[]core.Entity,taken:^map[core.Entity]bool,sparse:^map[core.Entity]bool) -> (made:int,ok:bool) {
     d:=&decls[index]
     prefab:asset.Scene
     if !author.scene_prefab_open(reading,author.assets_of(s.app.assets),d.given,d.path,s.document.id,&prefab) {return 0,api_write_unread(call,reading)}
@@ -408,28 +408,17 @@ api_write_place :: proc(s:^Session,call:^api.Call,w:core.World_Ref,reading:^auth
     source,_:=asset.prefab_root(&prefab)
     local,placed:=asset.scene_get(&prefab,source,"Transform",core.Transform)
     if !placed {local=core.TRANSFORM_IDENTITY}
-    ids:=make([]base.Entity_Id,len(decls)+len(part),call.allocator)
-    for other,i in decls {ids[i]=api_entity_id(w,other.e)}
-    for e,i in part {ids[len(decls)+i]=api_entity_id(w,e)}
-    held:=make(map[base.Entity_Id]bool,len(taken),call.allocator)
-    for e,used in taken {held[api_entity_id(w,e)]=used}
-    root,error:=prefab_instantiate(s,d.given.asset,{parent=parent,position=local.position,rotation={local.rotation.x,local.rotation.y,local.rotation.z,local.rotation.w}},true)
-    link,linked:=prefab_link_of(s,root)
-    if error==.None && !linked {error=.Rejected}
+    instantiated,error:=prefab_instantiate(s,d.given.asset,{parent=parent,position=local.position,rotation={local.rotation.x,local.rotation.y,local.rotation.z,local.rotation.w}},true)
+    root:=api_entity(w,instantiated)
+    if error==.None && root==core.NONE {error=.Rejected}
     if error!=.None {
         api.call_failf(call,api.SERVER_ERROR,"%s.prefab: %s",d.path,prefab_error_text(error))
         return 0,false
     }
-    core.world_settle(w)
-    for &other,i in decls {other.e=api_entity(w,ids[i])}
-    for &e,i in part {e=api_entity(w,ids[len(decls)+i])}
-    clear(taken)
-    for id,used in held {taken[api_entity(w,id)]=used}
-    d.e,d.made,d.sparse=api_entity(w,root),true,true
-    sparse[link.instance]=true
-    for member in s.document.previous.members {
-        if member.instance!=link.instance {continue}
-        taken[api_entity(w,member.entity)]=member.entity==root
+    d.e,d.made,d.sparse=root,true,true
+    sparse[root]=true
+    for member in prefab_members(w,root) {
+        taken[member.entity]=member.entity==root
         made+=1
     }
     return made,true
@@ -614,7 +603,7 @@ api_inspect_tree :: proc(s:^Session,call:^api.Call,w:core.World_Ref,params:^Api_
     api.write_key(out,"total");serial.text_write_int(out,i64(core.world_entities(w).alive))
     api.write_key(out,"offset");serial.write_u8(out,'0')
     api.write_key(out,"entities");serial.write_u8(out,'[')
-    api_tree_entity_write(s,w,out,root,prefab_links(s,w,call.allocator),scratch,values)
+    api_tree_entity_write(s,w,out,root,scratch,values)
     serial.write_u8(out,']')
     api.write_key(out,"shown");serial.text_write_int(out,i64(len(part)))
     api.write_key(out,"matched");serial.text_write_int(out,i64(len(part)))
@@ -623,7 +612,7 @@ api_inspect_tree :: proc(s:^Session,call:^api.Call,w:core.World_Ref,params:^Api_
 }
 
 @(private)
-api_tree_entity_write :: proc(s:^Session,w:core.World_Ref,out:^serial.Writer,e:core.Entity,links:map[base.Entity_Id]Prefab_Link,scratch:[]u8,values:Api_Inspect_Values) {
+api_tree_entity_write :: proc(s:^Session,w:core.World_Ref,out:^serial.Writer,e:core.Entity,scratch:[]u8,values:Api_Inspect_Values) {
     st:=api_state(s)
     id:=api_entity_id(w,e)
     serial.text_write_raw(out,`{"id":`);api.write_id(out,id)
@@ -635,7 +624,7 @@ api_tree_entity_write :: proc(s:^Session,w:core.World_Ref,out:^serial.Writer,e:c
     if local.scale!={1,1,1} {api.write_key(out,"scale");api.write_list(out,local.scale[:])}
     if entity_has(w,e,erender.Hidden) {api.write_key(out,"visible");api.write_flag(out,false)}
     if entity_has(w,e,core.Disabled) {api.write_key(out,"enabled");api.write_flag(out,false)}
-    if link,linked:=links[id];linked {
+    if link,linked:=prefab_link_of(w,e);linked {
         api.write_key(out,"prefab");serial.text_write_raw(out,`{"asset":`);api_asset_write(out,link.asset)
         api.write_key(out,"root");api.write_flag(out,link.root)
         serial.write_u8(out,'}')
@@ -669,7 +658,7 @@ api_tree_entity_write :: proc(s:^Session,w:core.World_Ref,out:^serial.Writer,e:c
         if !api_part_kept(s,w,child) {continue}
         if !children {api.write_key(out,"children");serial.write_u8(out,'[')} else {serial.write_u8(out,',')}
         children=true
-        api_tree_entity_write(s,w,out,child,links,scratch,values)
+        api_tree_entity_write(s,w,out,child,scratch,values)
     }
     if children {serial.write_u8(out,']')}
     serial.write_u8(out,'}')

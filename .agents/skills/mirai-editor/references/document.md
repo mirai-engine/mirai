@@ -8,13 +8,13 @@ Code: `document.odin`, `documents.odin`, `documents_restore.odin`, `asset_docume
 
 `Document` is the open scene: `path`, relative to `assets/` if inside it, and `file`, absolute (one
 never saved has an empty `path` and is "Untitled"). `previous`, the `asset.Scene` it was read with,
-keeps what the `World` does not store: order of the roots, library tables the project does not
-have and prefab records.
+keeps what the `World` does not store: order of the roots and library tables the project does not
+have.
 
 - `path`: relative to `assets/` if inside it; `file`: absolute. A scene never saved has an empty
   `path` and is called "Untitled".
 - `previous`: the `asset.Scene` it was read with; it keeps what the `World` does not store (order
-  of the roots, library tables the project does not have, prefab records).
+  of the roots, library tables the project does not have).
 - The asset id and the history state it was saved at.
 
 Procedures:
@@ -374,7 +374,7 @@ Rules:
 - With a Play running, `edits_commit` does not record the edits of the Play's world.
 - The [cancelable previews](extensions.md#cancelable-previews) use `Edits.preview`:
   finishing a field or saving does not close the gesture; confirming leaves a step and cancelling
-  also restores the selection and the pending prefab records.
+  also restores the selection.
 
 ### Undo by author
 
@@ -408,8 +408,9 @@ edited afterwards, without overwriting what another wrote later.
 - **New steps.** A new edit by an author discards what that author could redo. What others undid in
   order stays before the new step, reverted and with the sides swapped (`swapped`), and its redo
   continues by ids. An undo or redo by ids does not discard anyone's redo.
-- A step that changed linked prefab records (`Prefab_Version`) or components that are not plain
-  data goes only in order: by ids it fails and says what to do instead.
+- A step that wrote a prefab file, which the instances of the scene follow, or that changed
+  components that are not plain data goes only in order: by ids it fails and says what to do
+  instead.
 - The labels and state of Undo and Redo, `status`, `editor.inspect` and the counters of `history.*`
   are the author's.
 - Before an API method that can edit (all but the read-only ones, `engine.*`, `editor.input`,

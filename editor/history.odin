@@ -10,8 +10,8 @@ import "core:strings"
 // others did after it: in order while the history can exchange the step with
 // the World (undo, redo in edits.odin), otherwise by the ids of its entities
 // in a step of the author of its own, which keeps what others wrote since
-// (change sets). A step that changed the records of linked prefabs goes only
-// in order: they are versioned by the state of the history. The steps of the
+// (change sets). A step that wrote a prefab file goes only in order: the
+// instances it brought up to date follow that file. The steps of the
 // selection of the author go back and forward between them in the order they
 // were made (edits_selection.odin).
 
@@ -94,8 +94,8 @@ history_by_ids :: proc(s:^Session,state:u64,forward:bool) -> (move:History_Move)
     if index<0 {return}
     step:=&edits.steps[index]
     move.label=strings.clone(edits_label(step),context.temp_allocator)
-    if history_prefab_step(s,state) {
-        move.error=fmt.tprintf("%s only undoes and redoes in order, and others edited after it: it changed linked prefabs; make the opposite change by hand (delete the instance, or revert or apply the prefab)",move.label)
+    if history_prefab_step(step) {
+        move.error=fmt.tprintf("%s only undoes and redoes in order, and others edited after it: it wrote a prefab that the instances of the scene follow; make the opposite change by hand (revert or apply the prefab again)",move.label)
         return
     }
     set:Change_Set
@@ -151,12 +151,11 @@ history_by_ids :: proc(s:^Session,state:u64,forward:bool) -> (move:History_Move)
     return
 }
 
-// Whether the step of a state changed the records of linked prefabs.
+// Whether a step wrote a prefab file.
 @(private="file")
-history_prefab_step :: proc(s:^Session,state:u64) -> bool {
-    if s.editor_world==nil {return false}
-    p:=prefabs_of(s)
-    if p==nil {return false}
-    for &version in p.versions {if version.after_state==state {return true}}
+history_prefab_step :: proc(step:^Edit_Step) -> bool {
+    for &file in step.files {
+        if strings.has_suffix(file.path,PREFAB_EXTENSION) {return true}
+    }
     return false
 }

@@ -272,9 +272,9 @@ SECTION_TEXT :: ui.Color{240,211,107,255}
 PREFAB_TEXT :: ui.Color{143,176,255,255}
 
 // What e is the root of.
-container_kind :: proc(links:map[base.Entity_Id]Prefab_Link,w:core.World_Ref,e:core.Entity) -> Container_Kind {
+container_kind :: proc(w:core.World_Ref,e:core.Entity) -> Container_Kind {
     if entity_has(w,e,scene.Scene_Reference) {return .Section}
-    if link,linked:=links[api_entity_id(w,e)];linked && link.root {return .Prefab}
+    if link,linked:=prefab_link_of(w,e);linked && link.root {return .Prefab}
     return .None
 }
 
@@ -288,20 +288,20 @@ container_color :: proc(s:^Session,kind:Container_Kind) -> (icon,text:ui.Color) 
 }
 
 // The root of what contains e, outside e itself: from a root, that of what contains it.
-container_of :: proc(links:map[base.Entity_Id]Prefab_Link,w:core.World_Ref,e:core.Entity) -> core.Entity {
+container_of :: proc(w:core.World_Ref,e:core.Entity) -> core.Entity {
     at:=entity_parent(w,e)
     for depth:=0;at!=core.NONE && depth<1024;depth+=1 {
-        if container_kind(links,w,at)!=.None {return at}
+        if container_kind(w,at)!=.None {return at}
         at=entity_parent(w,at)
     }
     return core.NONE
 }
 
 // The document of a root: the scene a section names, the prefab of an instance.
-container_document :: proc(s:^Session,links:map[base.Entity_Id]Prefab_Link,w:core.World_Ref,e:core.Entity) -> string {
+container_document :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> string {
     id:base.Asset_Id
     if reference,ok:=entity_get(w,e,scene.Scene_Reference);ok {id=reference.scene}
-    else if link,linked:=links[api_entity_id(w,e)];linked {id=link.asset}
+    else if link,linked:=prefab_link_of(w,e);linked {id=link.asset}
     if id=={} || s.app.assets==nil {return ""}
     if file,found:=asset.registry_find(&s.app.assets.registry,id);found {return filepath.base(file.path)}
     return "Missing"
@@ -541,6 +541,10 @@ section_capture :: proc(s:^Session,w:core.World_Ref,reference:core.Entity,captur
     defer if had {asset.scene_destroy(&previous)}
     if _,error:=scene.capture(w,captured,&a.types,{section=reference,previous=had?&previous:nil,kind=asset.KIND_SCENE,id=r.scene});error!=.None {
         return "",false,fmt.tprintf("it could not be captured: %s",scene.error_text(error))
+    }
+    if prefab_overrides_put(s,captured,had?previous.overrides[:]:nil)!=.None {
+        asset.scene_destroy(captured)
+        return "",false,"the overrides of its prefab instances could not be derived"
     }
     if _,error:=asset.scene_bytes(captured,context.temp_allocator);error!=.None {
         asset.scene_destroy(captured)

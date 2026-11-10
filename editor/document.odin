@@ -17,7 +17,7 @@ import "mirai:std/base"
 
 // The scene being edited: the file the World was opened from or saved to,
 // the document it was read as (what the World cannot hold: the order of its
-// roots, tables of libraries the project does not have, prefab records) and
+// roots, tables of libraries the project does not have) and
 // the state of the history it was saved at. Opening and creating replace the
 // World and start a new history.
 
@@ -186,6 +186,10 @@ scene_save :: proc(s:^Session,path:="") -> Document_Error {
     if !edits_commit(s.edits,edited_world(s),document_selection(s)) && s.edits.error!=.No_Change {return .Rejected}
     if file!=document_file(d) || d.id=={} {d.id=asset_id_new(s)}
     if error:=document_write(s,file,true);error!=.None {return error}
+    // What memory held of the file, unsaved (a prefab an operation made), is of before this save.
+    if r:=files_registry(s);r!=nil {
+        if relative,inside:=asset.registry_relative(r,file);inside {_,_=asset.registry_memory_drop(r,relative)}
+    }
     // A section that could not be written keeps the document unsaved.
     if !sections_save(s) {d.unsaved=true}
     owned:=make([dynamic]string,context.temp_allocator)
@@ -199,18 +203,21 @@ scene_save :: proc(s:^Session,path:="") -> Document_Error {
 }
 
 // The edited World as a scene, with the overrides of its prefab instances
-// observed.
+// as a file keeps them.
 @(private)
 document_capture :: proc(s:^Session,captured:^asset.Scene,id:base.Asset_Id,recovery:^Recovery_Info=nil,allocator:=context.allocator) -> Document_Error {
     tool_preview_cancel(s)
     a:=s.app.assets
     if a==nil {return .No_Assets}
-    if error:=prefab_observe(s);error!=.None {
-        log.errorf("the overrides of the prefab instances could not be marked: %s",prefab_error_text(error))
-        return .Capture_Failed
-    }
     if _,error:=scene.capture(edited_world(s),captured,&a.types,{previous=s.document.previous,id=id},allocator);error!=.None {
         log.errorf("the scene could not be captured: %s",scene.error_text(error))
+        return error==.Out_Of_Memory?.Out_Of_Memory:.Capture_Failed
+    }
+    kept:[]asset.Override
+    if previous:=s.document.previous;previous!=nil {kept=previous.overrides[:]}
+    if error:=prefab_overrides_put(s,captured,kept);error!=.None {
+        log.errorf("the overrides of the prefab instances could not be derived: %s",prefab_error_text(error))
+        asset.scene_destroy(captured)
         return error==.Out_Of_Memory?.Out_Of_Memory:.Capture_Failed
     }
     if recovery!=nil {
@@ -529,11 +536,30 @@ scene_load_file :: proc(s:^Session,file:string) -> (loaded:^asset.Scene,error:Do
         free(loaded)
         return nil,.Not_A_Scene
     }
+    // Its instances follow their prefabs before the World takes them: no step holds that, and the
+    // document is as its file until it is saved.
+    resolved:asset.Asset
+    defer asset.asset_close(&resolved)
+    document:=&source
+    {
+        reader:Prefab_Reader
+        prefab_reader_begin(s,&reader)
+        defer prefab_reader_end(&reader)
+        if changed,_:=asset.scene_resolve(&reader.resolver,loaded);changed {
+            data,encoded:=asset.scene_bytes(loaded)
+            if encoded!=.None || asset.asset_take(&resolved,data)!=.None {
+                asset.scene_destroy(loaded)
+                free(loaded)
+                return nil,.Not_A_Scene
+            }
+            document=&resolved
+        }
+    }
     host.load_phase_end(s.app,reading,1)
     read=true
     tools_release(s)
     w:=edited_world(s)
-    if _,replaced:=scene.replace(w,s.app,&source,&a.types);replaced!=.None {
+    if _,replaced:=scene.replace(w,s.app,document,&a.types);replaced!=.None {
         log.errorf("%s: %s",file,scene.error_text(replaced))
         return loaded,.Rejected
     }
@@ -549,6 +575,7 @@ scene_load_file :: proc(s:^Session,file:string) -> (loaded:^asset.Scene,error:Do
 document_opened :: proc(s:^Session) {
     w:=edited_world(s)
     edits_reset(s.edits,w)
+    prefabs_opened(s)
     s.document.saved=edits_scene_state(s.edits)
     s.document.unsaved=false
     s.document.sections={}

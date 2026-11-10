@@ -70,7 +70,7 @@ variant_prompt_build :: proc(s:^Session) {
     path:=folder==""?name:fmt.tprintf("%s/%s",folder,name)
     p.path_length=copy(p.path[:],path)
     ui.popup_close(ctx,popup)
-    s.requests+={.Variant_Create}
+    variant_prompt_run(s)
 }
 
 // The variants of the prefab of the document in its toolbar: a menu with its

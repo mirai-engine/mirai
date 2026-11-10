@@ -127,9 +127,9 @@ untrusted_check :: proc(w:core.World_Ref,assets:^host.Assets,a:^asset.Asset,rule
         refused^={number=f64(len(view.ids)),limit=f64(rules.max_entities)}
         return .Too_Large
     }
-    for instance in view.instances {
+    for instance,at in view.instances {
         if file,found:=asset.registry_find(registry,instance.prefab);!found || file.kind!=asset.KIND_PREFAB {
-            refused^={entity=instance.root,asset=instance.prefab}
+            refused^={entity=view.ids[view.instance_rows[at]],asset=instance.prefab}
             return .Unknown_Reference
         }
     }
@@ -180,7 +180,7 @@ untrusted_check :: proc(w:core.World_Ref,assets:^host.Assets,a:^asset.Asset,rule
 
 @(private="file")
 untrusted_allowed :: proc(allowed:[]typeid,type:typeid) -> bool {
-    return len(allowed)==0 || type==core.Transform || slice.contains(allowed,type)
+    return len(allowed)==0 || type==core.Transform || type==Prefab_Instance || type==Prefab_Member || slice.contains(allowed,type)
 }
 
 // The entities of the document and the registry, against which its

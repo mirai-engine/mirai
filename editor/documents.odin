@@ -81,7 +81,6 @@ document_activate :: proc(s:^Session,index:int) -> bool {
     s.inspector.gesture=0
     settings_flush(s)
     edits_commit(s.edits,edited_world(s),s.selection)
-    prefab_observe(s)
     document_tab_exchange(s,&s.documents[s.active_document])
     document_tab_exchange(s,&s.documents[index])
     s.active_document=index
@@ -98,12 +97,12 @@ document_activate :: proc(s:^Session,index:int) -> bool {
         assets_rescan(s)
         if file,found:=asset.registry_find(&s.app.assets.registry,s.document.id);found && s.document.source_stamp!=([2]i64{file.size,file.time}) {
             selected:=selected_ids(s)
-            if scene_open(s,document_file(s.document))==.None {prefabs_follow(s,prefabs_of(s));select_ids(s,selected)}
+            if scene_open(s,document_file(s.document))==.None {select_ids(s,selected)}
         }
     }
     if prefab_linked(s) {
         for state in prefab_instances(s) {
-            if state.stale {prefab_refresh(s,{},true);break}
+            if state.stale {prefab_refresh(s,{});break}
         }
     }
     return true
@@ -128,7 +127,6 @@ document_open_tab :: proc(s:^Session,path:string) -> Document_Error {
             document_activate(s,previous)
             return error
         }
-        prefabs_follow(s,prefabs_of(s))
         return .None
     }
     previous:=s.active_document
@@ -137,7 +135,6 @@ document_open_tab :: proc(s:^Session,path:string) -> Document_Error {
         document_tab_drop_last(s,previous)
         return error
     }
-    prefabs_follow(s,prefabs_of(s))
     if document_is_prefab(s) {
         w:=edited_world(s)
         for e in core.world_table_of(w,core.Id).entities {
