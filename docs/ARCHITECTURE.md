@@ -7,8 +7,10 @@ code and API/MCP. The general rules are in [AGENTS.md](../AGENTS.md).
 
 A game is an in-memory struct and a list of functions that transform it.
 
-- **A piece of data lives in one place.** There are no synchronized copies or bridges:
-  the pose of a body is in the physics table and the renderer reads it from there.
+- **A piece of data has one owner.** What several functions read is written by one of them, once.
+  The physics solver owns the pose of a body: its step writes the pose to `Transform` and the
+  velocity to `Motion` once per tick, for the bodies that moved, and the renderer reads them there.
+  Nobody else writes them: the game moves a body with a request.
 - **A function receives exactly what it uses.** The compiler prevents touching anything else.
 - **The rules are verified.** What an agent might not know becomes a type error, a build error or
   a runtime failure with a message that says how to fix it.

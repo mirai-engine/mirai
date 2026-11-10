@@ -257,7 +257,9 @@ gives the [world queries](#queries). `physics_step` (`fixed`, `simulate` stage),
 4. Hands the `Character_Move` to the characters.
 5. **Advances the simulation** with `time.dt` (only if `Time.playing`, with the application's
    threads) and writes the poses into `Transform` and the states into `core.Motion` and
-   `Character_State`.
+   `Character_State`: of the bodies the step moved or woke, of what the reconciliation, a request
+   or a pose target addressed in the tick, of the proxies and of the characters. The rows of a
+   body that sleeps already say so and are not looked at.
 6. Forwards the events.
 
 In the editor loop nothing is simulated: bodies follow the `World_Transform` of their entity.
