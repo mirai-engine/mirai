@@ -11,6 +11,7 @@ import "mirai:std/base"
 // load is left out.
 App_Texts :: struct {
     set:base.Texts,
+    retired:base.Texts, // of the load before: what a frame already took of it lasts until the next load
     stamp:u64,    // of the files it was loaded from: their ids and content hashes
     revision:u64, // of the registry when the stamp was last compared
     loaded:bool,
@@ -31,7 +32,9 @@ app_texts :: proc(app:^App) -> ^base.Texts {
 }
 
 app_texts_destroy :: proc(app:^App) {
-    delete(app.texts.set.slots,app.allocator);delete(app.texts.set.text,app.allocator)
+    for set in ([2]base.Texts{app.texts.set,app.texts.retired}) {
+        delete(set.slots,app.allocator);delete(set.text,app.allocator)
+    }
     app.texts={}
 }
 
@@ -87,8 +90,9 @@ texts_load :: proc(app:^App) -> bool {
         }
         at+=len(view.text)
     }
-    generation:=app.texts.set.generation
-    app_texts_destroy(app)
-    app.texts.set={slots=slots,text=text,generation=generation+1}
+    t:=&app.texts
+    delete(t.retired.slots,app.allocator);delete(t.retired.text,app.allocator)
+    t.retired=t.set
+    t.set={slots=slots,text=text,generation=t.retired.generation+1}
     return true
 }
