@@ -8,8 +8,9 @@ import "mirai:std/base"
 import "mirai:ui"
 
 // The menu of the glyph of a figure, in the scene or in the bar: go to it,
-// follow the camera of another editor, watch a run, open the chat of an agent
-// of this end, and the Play of the host to watch or join.
+// follow the camera of another editor, watch the run or open the chat of an
+// agent of this end, and what the plugin that plays offers of the game the
+// host serves.
 
 Presence_Menu_Kind :: enum u8 {None,Agent,Peer,Remote_Agent}
 
@@ -112,7 +113,7 @@ presence_menu_items :: proc(s:^Session,menu:Presence_Menu) {
         if watched {
             if ui.menu_item(ctx,ui.id(ctx,"unwatch"),"Stop watching",{icon=.Stop}) {watch_stop(s)}
         } else if ui.menu_item(ctx,ui.id(ctx,"watch"),"Watch",{icon=.Play,disabled=run_find(s,task.id)==nil}) {
-            if !watch_start(s,task.id,false) {notify(s,"The run of the agent cannot be shown now")}
+            if !watch_start(s,task.id) {notify(s,"The run of the agent cannot be shown now")}
         }
     case .Peer:
         st:=collab_state(s)
@@ -135,14 +136,8 @@ presence_menu_items :: proc(s:^Session,menu:Presence_Menu) {
         if ui.menu_item(ctx,ui.id(ctx,"follow"),following?"Stop following":"Follow",{icon=.Eye,checked=following,disabled=!posed || s.mode!=.Edit && !following}) {
             if following {s.viewport.follow=0} else {collab_follow_start(s,menu.peer)}
         }
-        // Only the host is watched and joined: its Play travels with the
-        // session, and the address of its game is the one of the session.
+        // Only the game of the host is joined: its address is the one of the session.
         if menu.peer==0 && st.role==.Guest {
-            if s.mode==.Watch && s.watch.host {
-                if ui.menu_item(ctx,ui.id(ctx,"unwatch"),"Stop watching",{icon=.Stop}) {watch_stop(s)}
-            } else if ui.menu_item(ctx,ui.id(ctx,"watch"),"Watch Play",{icon=.Play,disabled=!peer.playing}) {
-                if !watch_start(s,0,true) {notify(s,"The Play of the host cannot be shown now")}
-            }
             if p:=providers(s);p.plays && p.play.host_menu!=nil {p.play.host_menu(s,peer.serving)}
         }
     case .Remote_Agent:

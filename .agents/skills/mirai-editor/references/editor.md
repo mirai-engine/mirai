@@ -207,25 +207,23 @@ fallback. How the game uses it:
 
 ## Watching another run
 
-The `Watch` mode shows in the viewport the run of another without stopping any: that of a turn
-(`watch_start(s, task, false)`) or the host's Play (`watch_start(s, 0, true)`,
-[collaboration](collaboration.md#watching-the-hosts-play)). `watch_stop`, Stop, Esc, F5 and the
-bar chip return to the previous mode and camera.
+The `Watch` mode shows in the viewport the run of a turn without stopping any
+(`watch_start(s, task)`). `watch_stop`, Stop, Esc, F5 and the bar chip return to the previous mode
+and camera.
 
 - From Edit it keeps the document's selection in `edit_selection` and restores it on return. From
   a user Play it releases input; that game keeps running without being seen or receiving input
   (`game_frame` advances it according to `watch.from`) and, if it ends in the meantime, on
   stopping watching it returns to Edit.
 - What is watched receives no user input. A turn's run advances only with its `play.step` and is
-  seen with its game camera or the editor's; the host's Play, with the host's view.
+  seen with its game camera or the editor's.
 - What is watched is not edited: the
   [edit procedures](document.md#world-edit-procedures) do nothing, the gizmo and the
   tools do not act, Details is disabled and Paste, Duplicate, Delete, Group, Rename and Pause are
   turned off. Selection, Hierarchy and camera work on the watched world; document editing by API
   stays the same.
-- `watch_update`, between frames, stops watching with a toast when the run ended or the host
-  stopped playing. A document change ends the runs and what is watched; the user's `play_start`
-  stops watching before starting.
+- `watch_update`, between frames, stops watching with a toast when the run ended. A document
+  change ends the runs and what is watched; the user's `play_start` stops watching before starting.
 
 ## Networked Play
 
@@ -337,8 +335,8 @@ session ([collaboration](collaboration.md#what-travels)) is drawn with the same 
   of the bar) and its name.
 - A click on the glyph or the figure of an agent opens its chat; that of another editor, or the
   right click on a bar glyph, opens its menu (`presence_menu.odin`): **Go to**, **Follow** (follows
-  its camera until one's own moves), **Watch Play** and **Join game** of the host for a guest, and
-  **Open chat** and **Watch** of one's own agent.
+  its camera until one's own moves), **Join game** of the host for a guest, and **Open chat** and
+  **Watch** of one's own agent.
 - A palette, `AGENT_COLORS`, for agents and editors, with an outline level per color from
   `AGENT_LEVEL`; `AI_CONTEXT_LEVEL` is what a turn only read. The glyph and the name distinguish
   an agent and an editor of the same color.

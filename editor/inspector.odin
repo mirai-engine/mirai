@@ -2538,7 +2538,7 @@ list_build :: proc(s:^Session,w:core.World_Ref) {
 // The details of the selection as the panel on the right shows them, inside
 // the panel of a plugin tool that takes its place.
 details_build :: proc(s:^Session,w:core.World_Ref,width,max_height:f32) {
-    read_only:=watching(s) || selection_held(s)
+    read_only:=watching(s)
     if read_only {ui.disabled_begin(s.gui.ctx)}
     inspector_build(s,w,width,max_height)
     if read_only {ui.disabled_end(s.gui.ctx)}

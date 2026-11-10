@@ -28,6 +28,12 @@ Api_Collab_Peer :: struct {
     in_game:bool `mirai:"label=A guest playing the game the host serves"`,
 }
 
+Api_Collab_Unsent :: struct {
+    path:[COLLAB_UNSENT_PATH]u8 `mirai:"text,label=The asset file, too large to travel: whoever changed it saves it and shares it through the repository of the project"`,
+    peer:u8 `mirai:"label=The id of the editor that changed it"`,
+    bytes:u64,
+}
+
 Api_Collab_Status :: struct {
     role:Collab_Role,
     phase:Collab_Phase,
@@ -37,6 +43,8 @@ Api_Collab_Status :: struct {
     reason:[96]u8 `mirai:"text,label=Why the session ended"`,
     peers:[COLLAB_PEERS]Api_Collab_Peer `mirai:"label=The first count are in the session"`,
     count:int,
+    unsent:[COLLAB_UNSENT]Api_Collab_Unsent `mirai:"label=The first unsent_count are files changed in the session that the others do not have"`,
+    unsent_count:int,
     sent_edits,received_edits,sent_ops,received_ops:u64,
 }
 
@@ -69,6 +77,10 @@ api_collab_result :: proc(s:^Session,call:^api.Call) {
         }
         base.text_set(r.peers[r.count].name[:],string(peer.name[:peer.name_length]))
         r.count+=1
+    }
+    for unsent in st.unsent[:st.unsent_count] {
+        r.unsent[r.unsent_count]={path=unsent.path,peer=unsent.peer,bytes=unsent.bytes}
+        r.unsent_count+=1
     }
     r.sent_edits,r.received_edits,r.sent_ops,r.received_ops=st.sent_edits,st.received_edits,st.sent_ops,st.received_ops
 }
@@ -225,6 +237,7 @@ share_build :: proc(s:^Session) {
                     ui.label(ctx,i==0?"Host":"Guest",th.font_label,th.text_muted)
                 }
             }
+            for &unsent in st.unsent[:st.unsent_count] {ui.paragraph(ctx,collab_unsent_text(st,&unsent),th.font_label,th.danger_soft)}
             label:=st.role==.Host?"Stop":"Leave"
             if st.phase==.Ended {label="Close"}
             if ui.button(ctx,shell_id(g,"share_leave"),{label=label,style=.Accent,width=-1,height=ctx.theme.control,size=11,center=true}).clicked {collab_leave(s)}
