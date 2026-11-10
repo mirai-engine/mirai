@@ -273,8 +273,9 @@ the snapshot; the [`water`](../../mirai-world/references/water.md) plugin draws 
   lake, a pool), or a `Path` (a river): the samples of a curve that `fluid_create` and `fluid_set`
   copy, each with its width and its height as depth, level across, ending at its ends. Density,
   current (in the frame of the box, or of the path: -Z along it toward its end) and priority. The
-  integration takes a path from `Fluid_Path`, which the plugin of its source writes (a `Spline` of
-  `shapes`): physics never samples a curve itself.
+  integration makes a `Fluid` with a `volume.Spline` on its entity a path: it samples the spline
+  and lays it on the ground with the procedures of the `Spline`, and does it again when the spline,
+  its place or the revision of the ground changes.
   - With zero density it is a dry box: it removes the lowest-priority fluid where it is (a base
     under the sea). Flooding a room is raising the floor of its air with `fluid_set`.
   - A fluid does not overlap another one, nor a dry box another dry box; where they would, the one

@@ -31,7 +31,7 @@ Stamp_Result :: struct {
 }
 
 Corner_Params :: struct {
-    entity:editor.Api_Entity_Text `mirai:"text,entity,label=A Solid with a polygon or a Spline"`,
+    entity:editor.Api_Entity_Text `mirai:"text,entity,label=A Shape with a polygon or a Spline"`,
     op:Corner_Op,
     at:[3]f32 `mirai:"unit=m,label=World point: the corner nearest it is moved or removed; a corner is inserted at the point of the nearest edge"`,
     to:[3]f32 `mirai:"optional,unit=m,label=Where a moved corner goes, taken onto the plane of the shape: its local XY, or the local XZ of a Spline"`,
@@ -48,7 +48,7 @@ api_register :: proc(s:^editor.Session) {
     editor.tool_entry(s,TOOL,"Shapes",.Prism,{key=.K,set=true})
     defaults:=Stamp_Params{size=SETTINGS_DEFAULT.size}
     editor.api_method_register(s,Stamp_Params,Stamp_Result,{name="shapes.stamp",summary="Sweeps a stamp (square, circle, star, heart...) along world points over the polygons of the shapes of a plane, as the Stamp mode of the Shapes tool: adding joins the area to the first shape it touches at the first point or makes one, cutting takes it out of every polygon of the plane, splitting it into shapes or deleting it. One step of undo.",defaults=&defaults,run=api_stamp})
-    editor.api_method_register(s,Corner_Params,Corner_Result,{name="shapes.corner",summary="Moves, inserts or removes a corner of the polygon of a Solid or a point of a Spline at world points, as the Corners mode of the Shapes tool; a point inserted on a Spline takes the width and height in proportion. A change that would make the edges of a polygon cross is refused. One step of undo.",run=api_corner})
+    editor.api_method_register(s,Corner_Params,Corner_Result,{name="shapes.corner",summary="Moves, inserts or removes a corner of the polygon of a Shape or a point of a Spline at world points, as the Corners mode of the Shapes tool; a point inserted on a Spline takes the width and height in proportion. A change that would make the edges of a polygon cross is refused. One step of undo.",run=api_corner})
 }
 
 @(private)
@@ -95,22 +95,17 @@ api_corner :: proc(s:^editor.Session,call:^api.Call) {
     w:=editor.edited_world(s)
     e,named:=editor.api_call_entity(call,w,p.entity[:])
     if !named {return}
-    shape,found:=editor.entity_get(w,e,shapes.Shape)
-    if !found || shape.loop_count==0 {api.call_failf(call,api.INVALID_PARAMS,"entity %s has no Shape with corners: a Solid with a polygon or a Spline",base.text_get(p.entity[:]));return}
+    corners,found:=corners_of(w,e)
+    if !found {api.call_failf(call,api.INVALID_PARAMS,"entity %s has no corners: give it a Shape with a polygon or a Spline",base.text_get(p.entity[:]));return}
     if p.op==.Move && !editor.tool_call_given(call,"to") {api.call_fail(call,api.INVALID_PARAMS,"to: a move needs the world point the corner goes to");return}
     t:=editor.entity_world(w,e)
     if !shapes.scale_usable(t.scale) {api.call_failf(call,api.INVALID_PARAMS,"entity %s has a scale with a zero axis",base.text_get(p.entity[:]));return}
-    plane:=corner_plane(t,&shape,-1)
+    plane:=corner_plane(t,&corners,-1)
     at,to:=local_of(plane,p.at),local_of(plane,p.to)
-    index:int
-    found_place:bool
-    switch p.op {
-    case .Move,.Remove: index,found_place=shapes.shape_vertex_near(&shape,at,1e30)
-    case .Insert:
-        edge,point,near:=shapes.shape_edge_near(&shape,at,1e30)
-        index,at,found_place=edge,point,near
-    }
-    if !found_place {api.call_failf(call,api.INVALID_PARAMS,"entity %s has no corners",base.text_get(p.entity[:]));return}
+    vertex,edge,on_edge:=corner_near(&corners,at)
+    index:=p.op==.Insert?edge:vertex
+    if index<0 {api.call_failf(call,api.INVALID_PARAMS,"entity %s has no corners",base.text_get(p.entity[:]));return}
+    if p.op==.Insert {at=on_edge}
     if p.op==.Move {at=to}
     if !editor.api_edit_begin(s,call,p.op==.Move?"Move corner":p.op==.Insert?"Insert corner":"Remove corner") {return}
     error:=corner_edit(s,e,p.op,index,at,"")
@@ -121,8 +116,8 @@ api_corner :: proc(s:^editor.Session,call:^api.Call) {
     case:                                  api.call_fail(call,api.INVALID_PARAMS,shapes.shape_error_text(error))
     }
     if !editor.api_edit_end(s,call,error==.None) {return}
-    now,_:=editor.entity_get(w,e,shapes.Shape)
+    now,_:=corners_of(w,e)
     out:=api.call_result(call,Corner_Result)
-    out.id,out.corners=editor.api_entity_id(w,e),u32(now.point_count)
+    out.id,out.corners=editor.api_entity_id(w,e),u32(corner_count(&now))
     out.corner=u32(p.op==.Insert?index+1:index)
 }

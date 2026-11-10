@@ -9,13 +9,13 @@ import "mirai:std/geom"
 import mm "mirai:std/math"
 
 // What draws and collides a shape, made from its source alone, on any
-// thread; a spline from the points of its ribbon (spline.odin). The drawn
+// thread; the ribbon of a spline from its points (ribbon.odin). The drawn
 // mesh has one material slot. A polygon alone has its caps with planar UVs and
 // its sides with UVs that run along the perimeter, flat normals where a loop
 // turns sharply and shared ones where it turns little, so a circle looks
 // round; the bands of a bevel continue the UVs of its sides. A Solid with
-// brushes has the UVs of a box projection; a ribbon runs u across and v along
-// it. All scale their UVs by uv_scale. What collides is, for a static shape,
+// brushes has the UVs of a box projection. Both scale their UVs by uv_scale; a
+// ribbon runs u across and v along it in meters. What collides is, for a static shape,
 // the triangles of the mesh joined by position (of a polygon alone, its caps
 // and sides without the bevel), with the edges between coplanar triangles
 // disabled so nothing catches on the seams of a flat face; for a body, the
@@ -73,23 +73,15 @@ shape_geometry_clear :: proc(g:^Shape_Geometry) {
 }
 
 // Builds the mesh of a shape and what collides: for a body its convex
-// pieces, else the static triangles; a spline only its mesh, from g.ribbon.
-// The brushes, in order, are those of a Solid. On an error g holds nothing
-// usable.
+// pieces, else the static triangles. The brushes, in order, are those of the
+// Solid. On an error g holds nothing usable.
 shape_geometry_build :: proc(s:^Shape,brushes:[]Brush,body:bool,g:^Shape_Geometry) -> Shape_Error {
     shape_geometry_clear(g)
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
-    error:Shape_Error
-    switch s.kind {
-    case .Solid:  error=solid_build(s,brushes,g)
-    case .Spline: error=ribbon_build(s,g)
-    case:         error=.Invalid
-    }
-    if error!=.None {
+    if error:=solid_build(s,brushes,g);error!=.None {
         shape_geometry_clear(g)
         return error
     }
-    if s.kind==.Spline {return .None}
     if !body {
         if !static_collision(g) {
             shape_geometry_clear(g)
@@ -98,7 +90,7 @@ shape_geometry_build :: proc(s:^Shape,brushes:[]Brush,body:bool,g:^Shape_Geometr
         return .None
     }
     geom.mesh_buffer_clear(&g.collision)
-    if error=shape_pieces_build(s,brushes,g);error!=.None {
+    if error:=shape_pieces_build(s,brushes,g);error!=.None {
         shape_geometry_clear(g)
         return error
     }
@@ -111,7 +103,7 @@ shape_geometry_build :: proc(s:^Shape,brushes:[]Brush,body:bool,g:^Shape_Geometr
 shape_pieces_build :: proc(s:^Shape,brushes:[]Brush,g:^Shape_Geometry) -> Shape_Error {
     clear(&g.pieces.points);clear(&g.pieces.sizes)
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
-    adds:=s.kind==.Solid
+    adds:=true
     for b in brushes {adds&&=b.op==.Union}
     if adds && s.loop_count>0 {
         points,sizes,error:=outline_loops(s)
@@ -148,26 +140,21 @@ shape_pieces_build :: proc(s:^Shape,brushes:[]Brush,g:^Shape_Geometry) -> Shape_
     return .None
 }
 
-// What a build depends on: the source, its brushes in order and whether it is a body; a spline also
-// depends on where it lies.
+// What a build depends on: the source, its brushes in order and whether it is a body.
 shape_key :: proc(s:^Shape,brushes:[]Brush,body:bool) -> u64 {
     points,loops:=shape_counts(s)
     bevel_points:=min(int(s.bevel_point_count),BEVEL_POINTS)
     head:=struct {
-        kind:Shape_Kind,body:bool,loops:u8,points:u16,depth,uv_scale:f32,material:base.Asset_Id,
+        body:bool,loops:u8,points:u16,depth,uv_scale:f32,material:base.Asset_Id,
         bevel:f32,profile:Bevel_Profile,segments,bevel_points:u8,
     } {
-        s.kind,body,u8(loops),u16(points),s.depth,s.uv_scale,s.material,
+        body,u8(loops),u16(points),s.depth,s.uv_scale,s.material,
         s.bevel,s.bevel_profile,s.bevel_segments,u8(bevel_points),
     }
     h:=hash.fnv64a(slice.bytes_from_ptr(&head,size_of(head)))
     h=hash.fnv64a(slice.to_bytes(s.loops[:loops]),h)
     h=hash.fnv64a(slice.to_bytes(s.points[:points]),h)
     h=hash.fnv64a(slice.to_bytes(s.bevel_points[:bevel_points]),h)
-    if s.kind==.Spline {
-        h=hash.fnv64a(slice.to_bytes(s.widths[:points]),h)
-        h=hash.fnv64a(slice.to_bytes(s.heights[:points]),h)
-    }
     for b in brushes {
         // Field by field: the padding of a Brush is not part of it.
         values:=[12]f32{
@@ -341,12 +328,11 @@ solid_build :: proc(s:^Shape,brushes:[]Brush,g:^Shape_Geometry) -> Shape_Error {
 }
 
 // The mesh of the ribbon of a spline from its points, g.ribbon: u across
-// from its left side and v along its middle, in meters times uv_scale, and the
-// normal of each point across the points around it, facing up.
+// from its left side and v along its middle, in meters, and the normal of each
+// point across the points around it, facing up.
 @(private)
-ribbon_build :: proc(s:^Shape,g:^Shape_Geometry) -> Shape_Error {
-    k,usable:=uv_scale_of(s)
-    if !usable {return .Invalid}
+ribbon_build :: proc(g:^Shape_Geometry) -> Shape_Error {
+    shape_geometry_clear(g)
     c:=g.columns
     if c<2 || len(g.ribbon)<2*c || len(g.ribbon)%c!=0 {return .Invalid}
     rows:=len(g.ribbon)/c
@@ -363,7 +349,7 @@ ribbon_build :: proc(s:^Shape,g:^Shape_Geometry) -> Shape_Error {
             n:=linalg.normalize0(linalg.cross(across,along))
             if n.y<0 {n=-n}
             if n=={} {n={0,1,0}}
-            append(&m.positions,p);append(&m.normals,n);append(&m.uvs,geom.Vec2{u*k,v*k})
+            append(&m.positions,p);append(&m.normals,n);append(&m.uvs,geom.Vec2{u,v})
         }
     }
     // Counter-clockwise seen from above: the columns go from left to right of the way along the rows.

@@ -103,7 +103,7 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
   [navigation](../mirai-std/references/ai.md#navigation) of `std/ai`
 - `shapes` (editable solids of a polygon and brush entities saved as source, stamps and vertex
   edits, bevels of the rims of a polygon, the derived child with mesh and collider, static or
-  dynamic; splines on the ground that are roads with a material and rivers with a `Fluid`; the
+  dynamic; the ribbons of roads along a `volume.Spline` with a material; the
   Shapes tool and `shapes.*`):
   [source and derived](references/shapes.md#source-and-derived),
   [static and dynamic](references/shapes.md#static-and-dynamic),

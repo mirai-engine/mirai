@@ -381,13 +381,12 @@ hostile_strokes_do_not_crash :: proc(t:^testing.T) {
     tilted.rotation=mm.quat_axis_angle({1,0,0},0.5)
     bad:=SHAPE_DEFAULT
     bad.point_count=SHAPE_POINTS+1
-    // A spline and a solid of brushes alone have no polygon to stamp.
-    solid:=Shape{kind=.Solid}
+    // A solid of brushes alone has no polygon to stamp.
+    solid:=Shape{}
     testing.expect(t,!shape_edit_piece(&e,core.Entity(1),tilted,SHAPE_DEFAULT))
     testing.expect(t,!shape_edit_piece(&e,core.Entity(1),lost,SHAPE_DEFAULT))
     testing.expect(t,!shape_edit_piece(&e,core.Entity(1),mm.TRANSFORM_IDENTITY,bad))
     testing.expect(t,!shape_edit_piece(&e,core.Entity(1),mm.TRANSFORM_IDENTITY,solid))
-    testing.expect(t,!shape_edit_piece(&e,core.Entity(1),mm.TRANSFORM_IDENTITY,SPLINE_DEFAULT))
     for p in ([]geom.Vec2{{nan,0},{1e30,-1e30},{0,0}}) {shape_edit_to(&e,p)}
     testing.expect_value(t,len(e.pieces),0)
 }
@@ -443,4 +442,13 @@ a_concave_brush_keeps_its_dents_while_it_is_dragged :: proc(t:^testing.T) {
     bow:=[]geom.Vec2{{-1,-1},{1,1},{1,-1},{-1,1}}
     crossed:Shape_Stroke
     testing.expect_value(t,shape_stroke_begin(&crossed,bow,0.01),Shape_Error.Invalid)
+}
+
+@(private="file")
+segment_nearest :: proc "contextless" (a,b,p:geom.Vec2) -> geom.Vec2 {
+    ab:=b-a
+    length:=ab.x*ab.x+ab.y*ab.y
+    if !(length>0) {return a}
+    t:=clamp(((p.x-a.x)*ab.x+(p.y-a.y)*ab.y)/length,0,1)
+    return a+ab*t
 }

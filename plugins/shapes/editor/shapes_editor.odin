@@ -134,6 +134,15 @@ selected_shape :: proc(s:^editor.Session,w:core.World_Ref) -> (e:core.Entity,sha
     return
 }
 
+// The entity selected last that has corners: the one the Corners mode works on.
+@(private)
+selected_corners :: proc(s:^editor.Session,w:core.World_Ref) -> (e:core.Entity,c:Corners,found:bool) {
+    #reverse for selected in s.selection.entities {
+        if value,ok:=corners_of(w,selected);ok {return selected,value,true}
+    }
+    return
+}
+
 // ---------------------------------------------------------------- stamps
 
 @(private)
@@ -231,21 +240,21 @@ corners_frame :: proc(s:^editor.Session,tool:^Shapes_Tool,w:core.World_Ref,input
         }
         t:=editor.entity_world(w,drag.entity)
         // A move the shape refuses leaves the corner where it was last taken.
-        if p,hit:=local_point(corner_plane(t,&drag.shape,drag.vertex),ray);hit {corner_drag_move(s,drag,p)}
-        corners_draw(s,tool,t,&drag.shape,{entity=drag.entity,vertex=drag.vertex,edge=-1})
+        if p,hit:=local_point(corner_plane(t,&drag.corners,drag.vertex),ray);hit {corner_drag_move(s,drag,p)}
+        corners_draw(s,tool,t,&drag.corners,{entity=drag.entity,vertex=drag.vertex,edge=-1})
         if !core.mouse_down(input,.Left) {corner_drag_end(s,drag)}
         return
     }
     tool.hover={vertex=-1,edge=-1}
-    e,shape,found:=selected_shape(s,w)
-    if !found || shape.loop_count==0 {
+    e,corners,found:=selected_corners(s,w)
+    if !found {
         if tool.begin {select_under(s,w,input)}
         return
     }
     t:=editor.entity_world(w,e)
-    if tool.over {tool.hover=corner_hover(s,&shape,t,input.mouse_position)}
+    if tool.over {tool.hover=corner_hover(s,&corners,t,input.mouse_position)}
     tool.hover.entity=e
-    corners_draw(s,tool,t,&shape,tool.hover)
+    corners_draw(s,tool,t,&corners,tool.hover)
     hover:=tool.hover
     removing:=hover.vertex>=0 && ctx.edit.id==0 && (core.key_pressed(input,.Delete) || core.key_pressed(input,.Backspace))
     if tool.begin && hover.vertex>=0 && .Primary in ctx.input.modifiers {removing=true}
@@ -254,7 +263,7 @@ corners_frame :: proc(s:^editor.Session,tool:^Shapes_Tool,w:core.World_Ref,input
         corner_refused(s,.Remove,corner_edit(s,e,.Remove,hover.vertex,{},"Remove corner"))
     case !tool.begin:
     case hover.vertex>=0:
-        corner_drag_begin(drag,e,hover.vertex,shape)
+        corner_drag_begin(drag,e,hover.vertex,corners)
         tool.taken={e,hover.vertex}
     case hover.edge>=0:
         if ctx.input.clicks>=2 {corner_refused(s,.Insert,corner_edit(s,e,.Insert,hover.edge,hover.at,"Insert corner"))}
@@ -382,19 +391,18 @@ brush_draw :: proc(tool:^Shapes_Tool,kind:shapes.Brush_Kind,place:mm.Transform,c
     }
 }
 
-// The edges of the corners of a shape placed at t and a square at each
+// The edges of the corners of an entity placed at t and a square at each
 // corner, the one under the pointer and the edge it would insert on marked.
 @(private)
-corners_draw :: proc(s:^editor.Session,tool:^Shapes_Tool,t:mm.Transform,shape:^shapes.Shape,hover:Corner_Hover) {
-    count:=min(int(shape.point_count),shapes.SHAPE_POINTS)
+corners_draw :: proc(s:^editor.Session,tool:^Shapes_Tool,t:mm.Transform,c:^Corners,hover:Corner_Hover) {
     edge,mark,taken:=color_of(editor.BRUSH_CHANGE),color_of(editor.BRUSH_CHANGE),color_of(editor.BRUSH_ADD)
     edge.a*=0.6
     edges:=make([dynamic][2]int,context.temp_allocator)
-    corner_edges(shape,&edges)
+    corner_edges(c,&edges)
     for e in edges {
-        erender.debug_line(&tool.lines,corner_world(t,shape,e[0]),corner_world(t,shape,e[1]),e[0]==hover.edge?taken:edge)
+        erender.debug_line(&tool.lines,corner_world(t,c,e[0]),corner_world(t,c,e[1]),e[0]==hover.edge?taken:edge)
     }
-    plane:=corner_plane(t,shape,-1)
+    plane:=corner_plane(t,c,-1)
     x,y:=mm.quat_rotate(plane.rotation,{1,0,0}),mm.quat_rotate(plane.rotation,{0,1,0})
     square :: proc(s:^editor.Session,lines:^erender.Debug_Lines,center,x,y:[3]f32,color:[4]f32) {
         // A meter along the plane, in points of the window: the square keeps its size on screen.
@@ -406,13 +414,13 @@ corners_draw :: proc(s:^editor.Session,tool:^Shapes_Tool,t:mm.Transform,shape:^s
         corners:=[4][3]f32{center+(-x-y)*h,center+(x-y)*h,center+(x+y)*h,center+(-x+y)*h}
         for i in 0..<4 {erender.debug_line(lines,corners[i],corners[(i+1)%4],color)}
     }
-    for i in 0..<count {
-        square(s,&tool.lines,corner_world(t,shape,i),x,y,i==hover.vertex?taken:mark)
+    for i in 0..<corner_count(c) {
+        square(s,&tool.lines,corner_world(t,c,i),x,y,i==hover.vertex?taken:mark)
     }
-    if hover.vertex<0 && hover.edge>=0 {
-        a,b:=shape.points[hover.edge],shape.points[(hover.edge+1)%count]
-        along:=linalg.length(b-a)>0?linalg.length(hover.at-a)/linalg.length(b-a):0
-        square(s,&tool.lines,linalg.lerp(corner_world(t,shape,hover.edge),corner_world(t,shape,(hover.edge+1)%count),along),x,y,taken)
+    for e in edges {
+        if hover.vertex>=0 || e[0]!=hover.edge {continue}
+        a,b:=corner_at(c,e[0]),corner_at(c,e[1])
+        square(s,&tool.lines,linalg.lerp(corner_world(t,c,e[0]),corner_world(t,c,e[1]),segment_along(a,b,hover.at)),x,y,taken)
     }
 }
 
@@ -447,7 +455,9 @@ shapes_panel :: proc(s:^editor.Session,tool:^Shapes_Tool,world:core.World_Ref,in
             if solid:=selected_solid(s,world);solid!=core.NONE {e,shape,found=solid,editor.entity_get(world,solid,shapes.Shape)}
         }
         note:=""
-        if found && tool.mode!=.Brush && shape.loop_count>0 {note=fmt.tprintf("%d corners",shape.point_count)}
+        corners_e,corners,cornered:=selected_corners(s,world)
+        if tool.mode==.Corners && cornered {e,found,note=corners_e,true,fmt.tprintf("%d corners",corner_count(&corners))}
+        if tool.mode==.Stamp && found && shape.loop_count>0 {note=fmt.tprintf("%d corners",shape.point_count)}
         if found && tool.mode==.Brush {
             count:=0
             for child in editor.entity_children(world,e) {
@@ -472,8 +482,9 @@ shapes_panel :: proc(s:^editor.Session,tool:^Shapes_Tool,world:core.World_Ref,in
             editor.held_field_row(s,h,"angle")
             editor.held_field_row(s,h,"material","","Of the shapes a stamp makes outside every shape")
         case .Corners:
-            if found && shape.kind==.Spline && tool.taken.entity==e && tool.taken.vertex<int(shape.point_count) {
-                size:=Corner_Size{shape.widths[tool.taken.vertex],shape.heights[tool.taken.vertex]}
+            if cornered && corners.spline && tool.taken.entity==e && tool.taken.vertex<corner_count(&corners) {
+                point:=corners.path.points[tool.taken.vertex]
+                size:=Corner_Size{point.width,point.height}
                 same:=size
                 held:=editor.Held_Values{key=u64(PANEL_SCOPE)<<32|2,info=type_info_of(Corner_Size),value=&size,defaults=&same,width=editor.tool_panel_inner(g),write=corner_size_write,user=&tool.taken,name="Point size"}
                 editor.held_field_row(s,held,"width")

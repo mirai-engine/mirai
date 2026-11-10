@@ -1032,7 +1032,8 @@ stroke_box :: proc(ctx:^ui.Context,v:^Viewport,pose:mm.Transform,extents:[3]f32,
 
 // How far what is selected reaches, as strokes over the scene, as wide as
 // the discs draw theirs: the range of a light, its cone or its square, the
-// distances of a sound, the box or the sphere of a volume.
+// distances of a sound, the box or the sphere of a volume, the points of a
+// spline.
 @(private)
 reach_draw :: proc(s:^Session,w:core.World_Ref) {
     v:=s.viewport
@@ -1058,6 +1059,10 @@ reach_draw :: proc(s:^Session,w:core.World_Ref) {
             flat:=mm.Transform{world.position,world.rotation,{1,1,1}}
             stroke_box(ctx,v,flat,{REACH_PLANE,0,REACH_PLANE},REACH_VOLUME)
             stroke_line(ctx,v,world.position,world.position-mm.quat_rotate(world.rotation,[3]f32{0,REACH_PLANE*0.5,0}),REACH_VOLUME)
+        }
+        // A path nothing may draw: a river, a patrol.
+        if path,ok:=entity_get(w,e,evolume.Spline);ok {
+            for i in 1..<min(int(path.count),evolume.SPLINE_POINTS) {stroke_line(ctx,v,mm.transform_point(world,path.points[i-1].position),mm.transform_point(world,path.points[i].position),REACH_VOLUME)}
         }
         if entity_has(w,e,erender.Mesh_Renderer) {continue}
         if point,ok:=entity_get(w,e,erender.Point_Light);ok && point.range>0 {stroke_sphere(ctx,v,world.position,point.range,REACH_LIGHT)}

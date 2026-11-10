@@ -28,7 +28,8 @@ the same attributes and no private paths. Declaration and parameter binding:
   [save](references/libraries.md#save).
 - A region of the world (`Volume`: the one shape, containment and overlap test), the per-zone
   values in it (`Wind`, `View_Volume`, `Audio_Reverb`, `Gravity`, `Fog_Volume`) and their single
-  algorithm: [volume](references/libraries.md#volume).
+  algorithm, and the one path on the ground (`Spline`: roads, rivers, routes):
+  [volume](references/libraries.md#volume).
 - Particles (plugin `vfx`: emitters, effects, clocks and requests):
   [vfx](../mirai-world/references/vfx.md#game).
 - Animation of transforms and skeletons: [plugin

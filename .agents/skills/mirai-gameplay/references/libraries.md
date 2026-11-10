@@ -800,6 +800,13 @@ does it.
   `Environment_Trigger`, the `Nav_Bounds`, `Nav_Area` and `Nav_Obstacle` of
   [navigation](../../mirai-world/references/navigation.md) and `Foliage_Bender`. Each says which
   shapes it takes and reports a problem for another.
+- **`Spline`** (`spline.odin`) is the one path, as `Volume` is the one region: points in the frame
+  of its entity, each with a width and a height over the ground. What goes along it is another
+  component: a `Fluid` makes it a river ([physics](../../mirai-physics/references/physics.md)),
+  its `material` a ribbon on the ground ([shapes](../../mirai-world/references/shapes.md#splines)),
+  a patrol walks it. Every reader samples it with `spline_sample` (the one sampler,
+  `mm.path_sample`) and lays each sample with `spline_lay` on `core.Ground_Queries`, never with a
+  copy of its own, and nothing in it names a reader.
 
 The values that change per zone are gravity, wind, reverb, how views look and fog (`Fog_Volume` of
 the `fog` plugin):

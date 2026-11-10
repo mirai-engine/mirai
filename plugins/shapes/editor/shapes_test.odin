@@ -8,6 +8,7 @@ import "mirai:editor"
 import "mirai:editor/api"
 import "mirai:editor/history"
 import "mirai:host"
+import volume "mirai:engine/volume"
 import shapes "plugins:shapes/runtime"
 import mm "mirai:std/math"
 
@@ -20,6 +21,7 @@ Shapes_Test_World :: struct {
     parents:core.Table(core.Parent),
     brushes:core.Table(shapes.Shape_Brush),
     shapes:core.Table(shapes.Shape),
+    splines:core.Table(volume.Spline),
 }
 
 // A scene with the tables a shape entity uses, edited by a session of its own.
@@ -191,7 +193,7 @@ a_corner_drag_is_one_step_and_a_move_that_crosses_does_not_apply :: proc(t:^test
     s,w:=&f.session,&f.world
     e:=shapes_test_shape(f,shapes.SHAPE_DEFAULT)
     drag:Corner_Drag
-    corner_drag_begin(&drag,e,2,shapes.SHAPE_DEFAULT)
+    corner_drag_begin(&drag,e,2,{shape=shapes.SHAPE_DEFAULT})
     testing.expect_value(t,corner_drag_move(s,&drag,{1,1}),shapes.Shape_Error.None)
     testing.expect_value(t,corner_drag_move(s,&drag,{-1,-0.2}),shapes.Shape_Error.Self_Intersecting)
     testing.expect_value(t,core.at(&w.shapes,core.row_of(&w.shapes,e)).points[2],[2]f32{1,1})
@@ -276,7 +278,7 @@ a_brush_placed_on_a_surface_is_one_step_and_a_child_with_an_id :: proc(t:^testin
     if !shapes_test_open(t,f) {return}
     defer shapes_test_close(f)
     s,w:=&f.session,&f.world
-    solid:=shapes_test_shape(f,shapes.Shape{kind=.Solid,uv_scale=1})
+    solid:=shapes_test_shape(f,shapes.Shape{uv_scale=1})
 
     // On the top of the solid, its Y up the normal: an added box rests on the surface.
     place:=brush_place_at(.Union,{0,0,0.5},{0,0,1},0.25,0)
@@ -304,8 +306,7 @@ a_brush_placed_on_a_surface_is_one_step_and_a_child_with_an_id :: proc(t:^testin
     testing.expect_value(t,f.edits.cursor,2)
     testing.expect_value(t,w.entities.alive,4)
     made_parent,_:=core.get(&w.parents,made)
-    made_solid,_:=core.get(&w.shapes,made_parent.entity)
-    testing.expect_value(t,made_solid.kind,shapes.Shape_Kind.Solid)
+    testing.expect(t,core.has(&w.shapes,made_parent.entity))
 
     testing.expect(t,history.undo(&f.edits,f.ref,&f.selection))
     testing.expect_value(t,w.entities.alive,2)
@@ -334,9 +335,10 @@ a_ray_meets_a_brush_primitive_where_it_enters_and_leaves :: proc(t:^testing.T) {
     }
 }
 
-// The points of a spline lie in its local XZ: the API takes them by world
-// points from above, inserts with the width and height in proportion, and
-// keeps two; the panel writes the size of one point as a step.
+// The points of a Spline lie in its local XZ, edited by the one corner tool:
+// the API takes them by world points from above, inserts with the width and
+// height in proportion, lets the path cross itself and keeps two; the panel
+// writes the size of one point as a step.
 @(test)
 shapes_api_edits_the_points_of_a_spline_from_above :: proc(t:^testing.T) {
     f:=new(Shapes_Test)
@@ -344,7 +346,13 @@ shapes_api_edits_the_points_of_a_spline_from_above :: proc(t:^testing.T) {
     if !shapes_test_open(t,f) {return}
     defer shapes_test_close(f)
     s,w:=&f.session,&f.world
-    e:=shapes_test_shape(f,shapes.SPLINE_DEFAULT)
+    e:=shapes_test_shape(f,{})
+    core.remove(&w.shapes,e)
+    path:=volume.SPLINE_DEFAULT
+    path.points[1].width,path.points[1].height=5,1
+    core.add(&w.splines,e,path)
+    core.test_world_settle(w)
+    history.edits_reset(&f.edits,f.ref)
     run :: proc(s:^editor.Session,params:Corner_Params) -> (corner:u32,failed:bool) {
         method:=api.Method{params_id=Corner_Params,result_id=Corner_Result}
         params:=params
@@ -356,19 +364,20 @@ shapes_api_edits_the_points_of_a_spline_from_above :: proc(t:^testing.T) {
     }
     // Inserted from 9 m above the middle of the path.
     corner,failed:=run(s,{op=.Insert,at={0.5,9,-6}})
-    shape:=core.at(&w.shapes,core.row_of(&w.shapes,e))
-    testing.expectf(t,!failed && corner==1 && shape.point_count==3 && abs(shape.points[1].x)<1e-4 && abs(shape.points[1].y+6)<1e-4 && shape.widths[1]==3,"%v %v",shape.point_count,shape.points[1])
-    _,failed=run(s,{op=.Move,at={0,0,-6},to={2,5,-6}})
-    shape=core.at(&w.shapes,core.row_of(&w.shapes,e))
-    testing.expectf(t,!failed && abs(shape.points[1].x-2)<1e-4 && abs(shape.points[1].y+6)<1e-4,"%v",shape.points[1])
+    spline:=core.at(&w.splines,core.row_of(&w.splines,e))
+    p:=spline.points[1]
+    testing.expectf(t,!failed && corner==1 && spline.count==3 && abs(p.position.x)<1e-4 && abs(p.position.z+6)<1e-4 && abs(p.width-4)<1e-4 && abs(p.height-0.525)<1e-4,"%v %v",spline.count,p)
+    // Across the path: a spline may cross itself.
+    _,failed=run(s,{op=.Move,at={0,0,-6},to={2,5,-14}})
+    spline=core.at(&w.splines,core.row_of(&w.splines,e))
+    testing.expectf(t,!failed && abs(spline.points[1].position.x-2)<1e-4 && abs(spline.points[1].position.z+14)<1e-4,"%v",spline.points[1])
     taken:=Corner_Taken{e,1}
-    width:=f32(5)
+    width:=f32(6)
     corner_size_write(s,&taken,int(offset_of(Corner_Size,width)),([^]u8)(&width)[:size_of(f32)])
-    shape=core.at(&w.shapes,core.row_of(&w.shapes,e))
-    testing.expect(t,shape.widths[1]==5)
-    testing.expect(t,history.undo(&f.edits,f.ref,&f.selection) && core.at(&w.shapes,core.row_of(&w.shapes,e)).widths[1]==3,"one step")
+    testing.expect(t,core.at(&w.splines,core.row_of(&w.splines,e)).points[1].width==6)
+    testing.expect(t,history.undo(&f.edits,f.ref,&f.selection) && abs(core.at(&w.splines,core.row_of(&w.splines,e)).points[1].width-4)<1e-4,"one step")
     testing.expect(t,history.redo(&f.edits,f.ref,&f.selection))
-    run(s,{op=.Remove,at={2,0,-6}})
+    run(s,{op=.Remove,at={2,0,-14}})
     _,failed=run(s,{op=.Remove,at={0,0,0}})
-    testing.expect(t,failed && core.at(&w.shapes,core.row_of(&w.shapes,e)).point_count==2,"a spline keeps two points")
+    testing.expect(t,failed && core.at(&w.splines,core.row_of(&w.splines,e)).count==2,"a spline keeps two points")
 }

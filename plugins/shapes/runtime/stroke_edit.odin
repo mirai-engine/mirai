@@ -76,7 +76,7 @@ shape_edit_free :: proc(e:^Shape_Edit) {
 // polygon or its plane is not that of the edit.
 shape_edit_piece :: proc(e:^Shape_Edit,entity:core.Entity,world:mm.Transform,shape:Shape) -> bool {
     shape:=shape
-    if len(e.stroke.brush)<3 || shape.kind!=.Solid || shape_valid_counts(&shape)!=.None || !shape_coplanar(world,e.plane) {return false}
+    if len(e.stroke.brush)<3 || shape_valid_counts(&shape)!=.None || !shape_coplanar(world,e.plane) {return false}
     _,error:=append(&e.pieces,Shape_Piece{entity=entity,given=true,split_of=-1,world=world,base=shape,shape=shape})
     return error==nil
 }
