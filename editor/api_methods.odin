@@ -388,6 +388,8 @@ api_frames :: proc(s:^Session,count:int,dt:f32) -> int {
     p:=s.app.platform
     saved:=p.fixed_dt
     if st.manual && dt>0 {p.fixed_dt=dt}
+    // A method a frame of another one runs (a gesture inside editor.input) leaves it stepping.
+    stepping:=st.stepping
     st.stepping=true
     done:=0
     for _ in 0..<count {
@@ -397,7 +399,7 @@ api_frames :: proc(s:^Session,count:int,dt:f32) -> int {
         profile_sample(s,start)
         if !running {break}
     }
-    st.stepping=false
+    st.stepping=stepping
     p.fixed_dt=saved
     return done
 }

@@ -51,6 +51,8 @@ services_open :: proc(s:^Session,options:Options) -> (api_ok:bool) {
 @(private)
 services_poll :: proc(s:^Session) {
     collab_update(s)
+    // What the person asked for in the frame, then what the agents ask: one call at a time.
+    commands_run(s)
     api_poll(s)
 }
 

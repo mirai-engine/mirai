@@ -197,3 +197,51 @@ the_params_of_an_entry_take_what_it_shows_in_place_of_a_toggle :: proc(t:^testin
         testing.expect_value(t,strings.to_string(b),c.want)
     }
 }
+
+@(test)
+the_methods_a_menu_calls_refuse_an_agent_what_they_cannot_do_and_say_how :: proc(t:^testing.T) {
+    f:=new(Commands_Test);defer free(f)
+    if !commands_test_open(t,f) {return}
+    defer commands_test_close(f)
+    s:=&f.s
+    st:=api_state(s)
+    st.poll_temp=context.temp_allocator
+    w:=edited_world(s)
+    out:serial.Writer
+    serial.writer_init(&out);defer serial.writer_destroy(&out)
+    cases:=[?]struct{method,params,want:string}{
+        {"scene.group",`{"entities":[]}`,"name the entities"},
+        {"scene.group",`{"entities":["Nobody"]}`,"names no entity"},
+        {"scene.group",`{"entities":["$roots"]}`,"names no entity"},
+        {"scene.duplicate",`{"entity":"$copied"}`,"names no entity"},
+        {"editor.copy",`{"entities":["Nobody"]}`,"names no entity"},
+        {"editor.tool",`{"tool":"hammer"}`,"hammer"},
+        {"editor.tool",`{"tool":"move","on":false}`,"always has a mode"},
+        {"editor.tool",`{}`,"tool"},
+        {"editor.view",`{"part":"Nothing"}`,"part"},
+        {"editor.view",`{"part":"Find","on":false}`,"only shows"},
+        {"editor.view",`{"part":"Settings"}`,"project"},
+        {"editor.view",`{"part":"Rename"}`,"one selected entity"},
+        {"camera.preview",`{}`,"entity"},
+        {"camera.preview",`{"entity":"Object"}`,"could not be previewed"},
+        {"camera.preview",`{"end":"Keep"}`,"No camera is being previewed"},
+        {"scene.thumbnail",`{}`,"thumbnail"},
+        {"scene.new",`{"discard":"yes"}`,"discard"},
+    }
+    alive:=core.world_entities(w).alive
+    for c in cases {
+        base.arena_reset(&st.server.scratch)
+        serial.writer_reset(&out)
+        method:=api.method_find(&st.server,c.method)
+        if !testing.expectf(t,method!=nil,"%s is a method",c.method) {continue}
+        error,ran:=api.method_execute(&st.server,method,c.params,&out)
+        testing.expectf(t,!ran && strings.contains(error.message,c.want),"%s %s: %s",c.method,c.params,error.message)
+    }
+    testing.expect(t,core.world_entities(w).alive==alive && history.edits_undo_count(&f.edits)==0 && len(s.copied)==0)
+    // An entry needs a method and a name no other has; a session without the registry runs none.
+    testing.expect(t,!command_bind(s,{name="orphan",label="Orphan"}) && !command_bind(s,{name="save",method="scene.save",label="Save"}))
+    testing.expect(t,tool_entry(s,"brush","Brush",.Edit) && !tool_entry(s,"brush","Brush",.Edit))
+    bare:Session
+    testing.expect(t,!command_run(&bare,"save") && !command_call(&bare,"scene.save","{}") && command_state(&bare,"save").disabled && len(command_bindings(&bare))==0 && !api_person(&bare))
+    commands_run(&bare)
+}

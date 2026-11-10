@@ -722,7 +722,6 @@ between_frames :: proc(s:^Session) {
     git_poll(s)
     projects_poll(s)
     plugins_git_poll(s)
-    commands_run(s)
     requests_run(s)
     play_history_seek(s)
     watch_update(s)
