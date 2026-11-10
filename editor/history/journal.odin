@@ -205,7 +205,7 @@ turned_rows_drop :: proc(w:core.World_Ref,es:^core.Entities,marks:[]u8,bound:int
 
 // Whether a table changed since its image was taken.
 journal_moved :: proc "contextless" (t:^core.Raw_Table,image:^Journal_Table) -> bool {
-    return t.version!=image.seen.version || t.gone_first+u64(len(t.gone))!=image.seen.gone
+    return t.version!=image.seen.version || core.log_end(t.gone)!=image.seen.gone
 }
 
 journal_diff :: proc(t:^core.Raw_Table,image:^Journal_Table,size:int,ranges:[][2]int,authors:History_Authors,only_authors:bool) -> (d:Journal_Diff) {

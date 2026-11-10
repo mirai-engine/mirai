@@ -91,13 +91,51 @@ an_occurrence_reaches_each_reader_once_at_any_cadence :: proc(t:^testing.T) {
         }
         exact(t,copied,at_copy,"the function of the frame in the copy")
     }
-    // A cursor of another log gets what this one holds, or nothing past its end.
-    log:Events(int);defer delete(log.items)
-    for i in 0..<4 {push(&log,i)}
-    events_age(&log);events_age(&log)
-    push(&log,4)
-    behind,ahead:=u64(1),u64(99)
-    testing.expect_value(t,len(events_since(log,&behind)),1)
-    testing.expect_value(t,len(events_since(log,&ahead)),0)
-    testing.expect(t,behind==5 && ahead==5)
+}
+
+// A log gives each reader every entry once, whatever trims it (a room, as the
+// gone of a table and the moved of the Hierarchy, or the age of Events): one
+// that reads after each push and one that reads less often than the log is
+// trimmed get each entry; one that fell behind the trim, or holds a cursor of
+// another log, reads it whole and goes on from the present, as one added late.
+@(test)
+a_log_gives_each_reader_every_entry_once :: proc(t:^testing.T) {
+    Trim :: enum {Room,Age}
+    for trim in Trim {
+        log:Events(int);defer delete(log.items)
+        each,slow,behind:u64
+        seen:[dynamic]int;defer delete(seen)
+        _,_=log_since(log.log,&behind)
+        for i in 0..<100 {
+            if trim==.Room {log_push(&log.log,i,8)} else {events_push(&log,i)}
+            items,whole:=log_since(log.log,&each)
+            testing.expectf(t,!whole && len(items)==1 && items[0]==i,"%v: the reader of each push got %v",trim,items)
+            if i%3!=2 {continue}
+            items,whole=log_since(log.log,&slow)
+            testing.expect(t,!whole)
+            append(&seen,..items)
+            if trim==.Age {events_age(&log)}
+        }
+        for value,i in seen {if value!=i {testing.expectf(t,false,"%v: the slow reader got %d at %d",trim,value,i);break}}
+        testing.expectf(t,len(seen)==99,"%v: the slow reader got %d",trim,len(seen))
+        late:u64
+        for cursor in ([2]^u64{&behind,&late}) {
+            items,whole:=log_since(log.log,cursor)
+            testing.expectf(t,whole && len(items)==len(log.items),"%v: one behind reads what it holds, whole",trim)
+        }
+        log_push(&log.log,100)
+        for cursor in ([3]^u64{&behind,&late,&each}) {
+            items,whole:=log_since(log.log,cursor)
+            testing.expect(t,!whole && len(items)==1 && items[0]==100)
+        }
+        ahead:=max(u64)
+        items,whole:=log_since(log.log,&ahead)
+        testing.expect(t,whole && len(items)==0 && ahead==log_end(log.log),"a cursor past the end gets nothing and goes on from here")
+        log_drop(&log.log,-1)
+        log_drop(&log.log,1<<40)
+        testing.expect(t,len(log.items)==0 && log.first==ahead)
+        log_reset(&log.log,max(u64)-1)
+        items,whole=log_since(log.log,&ahead)
+        testing.expect(t,whole && len(items)==0)
+    }
 }
