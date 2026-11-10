@@ -93,8 +93,8 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 - What compiles against the engine declarations follows the declarations it names and what they
   reach, by the names in the text: a name that is hidden or inside a comment still counts, and a
   type reached through a pointer too. More is followed, never less.
-- In dev the unit that is rebuilt is the package, and a library imports only packages listed
-  before its own in `ENGINE_PACKAGES`; an optimized build never splits a layer.
+- In dev a package that is edited often is a library of its own, and a library imports only
+  packages listed before its own in `ENGINE_PACKAGES`; an optimized build never splits a layer.
 - The project libraries and the engine ones share flags (`engine_flags`: `-custom-attribute` and
   the platform ones); their layouts depend on it.
 - Every test executable, of `mirai test` and of `build.test`, is built and run by one runner

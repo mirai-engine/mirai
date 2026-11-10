@@ -267,9 +267,14 @@ Each mode has its folder: switching between them compiles nothing.
   [plugin libraries](#plugin-libraries).
 - **Libraries.** What is rebuilt is a library, so the mode decides the cut (`engine_libraries`).
   Release has one library per layer: the compiler optimizes across the packages of each. Dev has
-  one per package, or per unit of packages that change together (`Engine_Package.unit`): the body
-  of a procedure compiles its package and nothing else. A new package is a line in
-  `ENGINE_PACKAGES`, among those of its layer and after what it imports.
+  one per unit (`Engine_Package.unit`): a package that is edited often is a unit of its own, so
+  the body of a procedure compiles its package and nothing else, and the packages that change
+  little share one, because every library pays a compile of the Odin runtime and a link whatever
+  its size. A new package is a line in `ENGINE_PACKAGES`, among those of its layer and its unit
+  and after what it imports.
+- **Debug information.** Release builds carry it, for the crash reports of what ships. Dev builds
+  do not: it is written again with every library that compiles; `MIRAI_ODIN_FLAGS=-debug` asks
+  for it.
 - **What crosses between libraries** is what crosses to a project: calls, with the context and
   its allocators, and data. Each library has its own Odin runtime and type table, so none looks up
   a type of another by `typeid`

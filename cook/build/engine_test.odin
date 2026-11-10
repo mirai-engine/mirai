@@ -48,7 +48,9 @@ engine_modes_have_folders_and_libraries_of_their_own :: proc(t:^testing.T) {
             testing.expect_value(t,library.name,unit)
         }
     }
-    testing.expect(t,core_library!=nil && len(core_library.packages)==1 && core_library.file=="mirai-core","in dev a package is a library")
+    testing.expect(t,core_library!=nil && len(core_library.packages)==1 && core_library.file=="mirai-core","in dev a package that is edited often is a library")
+    // Release carries the debug information of what ships; dev does not write it again with every library.
+    testing.expect(t,slice.contains(engine_flags(root,false)[:],"-debug") && !slice.contains(engine_flags(root,true)[:],"-debug"))
 }
 
 // The packages of the engine are listed each after the ones it imports: what

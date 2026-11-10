@@ -28,9 +28,10 @@ import "mirai:std/subprocess"
 //
 // What is rebuilt is a library, so the mode decides how the packages are cut
 // into libraries. Release has one per layer: the compiler optimizes across
-// the packages of each. Dev has one per package, or per few packages that
-// change together: the body of a procedure compiles its package again and
-// nothing else.
+// the packages of each. Dev has one per unit: a package that is edited often
+// is one of its own, so the body of a procedure compiles its package again and
+// nothing else, and those that change little share one, since every library
+// pays a compile of the runtime and a link.
 //
 // Each part is built again only for what it reads: a library for its sources
 // and for the declarations they name in other libraries, so a change in the
@@ -55,7 +56,7 @@ ENGINE_LAYER_NAMES :: [Engine_Layer]string{.Base="base",.Engine="engine",.Cook="
 Engine_Package :: struct {
     layer:Engine_Layer,
     path:string, // relative to the root and to the collection: core, engine/scene
-    unit:string, // Dev: the library it shares with the packages beside it that change with it. "": one of its own
+    unit:string, // Dev: the library it shares with the packages beside it. "": one of its own
 }
 
 // Every package of the engine with a declaration, each after the ones it
@@ -63,26 +64,25 @@ Engine_Package :: struct {
 // it imports; a C library, with the package that binds it. The packages of a
 // layer, and those of a unit, stand together.
 ENGINE_PACKAGES :: [?]Engine_Package{
-    {.Base,"std/base",""},{.Base,"std/subprocess",""},{.Base,"std/math",""},{.Base,"std/geom",""},{.Base,"std/serial",""},{.Base,"std/spatial",""},
-    {.Base,"std/jobs",""},{.Base,"std/anim",""},{.Base,"std/ai",""},{.Base,"std/input",""},{.Base,"std/ui_format",""},
-    {.Base,"std/compressor","std-compressor"},{.Base,"std/compressor/bc7split","std-compressor"},{.Base,"std/compressor/lz/entropy","std-compressor"},{.Base,"std/compressor/lz/match","std-compressor"},
-    {.Base,"std/compressor/lz/parse","std-compressor"},{.Base,"std/compressor/lz","std-compressor"},
-    {.Base,"audio",""},{.Base,"platform",""},{.Base,"rhi",""},{.Base,"project",""},{.Base,"core",""},
+    {.Base,"std/base","std"},{.Base,"std/subprocess","std"},{.Base,"std/math","std"},{.Base,"std/geom","std"},{.Base,"std/serial","std"},
+    {.Base,"std/spatial","std"},{.Base,"std/jobs","std"},{.Base,"std/anim","std"},{.Base,"std/ai","std"},{.Base,"std/input","std"},
+    {.Base,"std/ui_format","std"},{.Base,"std/compressor","std"},{.Base,"std/compressor/bc7split","std"},{.Base,"std/compressor/lz/entropy","std"},{.Base,"std/compressor/lz/match","std"},
+    {.Base,"std/compressor/lz/parse","std"},{.Base,"std/compressor/lz","std"},{.Base,"audio","system"},{.Base,"platform","system"},{.Base,"rhi","system"},
+    {.Base,"project","system"},{.Base,"core",""},
 
-    {.Engine,"third_party/freetype",""},{.Engine,"asset",""},{.Engine,"net",""},{.Engine,"render/abi",""},{.Engine,"render",""},{.Engine,"ui",""},{.Engine,"host",""},
-    {.Engine,"engine/volume",""},{.Engine,"engine/input",""},{.Engine,"engine/scene",""},{.Engine,"engine/render",""},{.Engine,"engine/audio",""},
-    {.Engine,"engine/gui",""},{.Engine,"engine/camera",""},{.Engine,"engine/save",""},
+    {.Engine,"asset",""},{.Engine,"net",""},{.Engine,"render/abi","render"},{.Engine,"render","render"},{.Engine,"third_party/freetype","ui"},
+    {.Engine,"ui","ui"},{.Engine,"host",""},{.Engine,"engine/volume","engine"},{.Engine,"engine/input","engine"},{.Engine,"engine/scene","engine"},
+    {.Engine,"engine/render","engine"},{.Engine,"engine/audio","engine"},{.Engine,"engine/gui","engine"},{.Engine,"engine/camera","engine"},{.Engine,"engine/save","engine"},
 
-    {.Cook,"cook/workspace",""},{.Cook,"cook/cache",""},{.Cook,"cook/compressor/lz","cook-compressor"},{.Cook,"cook/compressor/bc7split","cook-compressor"},{.Cook,"cook/compressor/texture/common","cook-compressor"},
-    {.Cook,"cook/compressor/texture/bc67","cook-compressor"},{.Cook,"cook/compressor/texture/bc1","cook-compressor"},{.Cook,"cook/compressor/texture/bc4","cook-compressor"},
-    {.Cook,"cook/compressor/texture/bc6","cook-compressor"},{.Cook,"cook/compressor/texture/bc7","cook-compressor"},{.Cook,"cook/compressor/texture","cook-compressor"},
-    {.Cook,"cook/textures",""},{.Cook,"cook/image",""},{.Cook,"cook/movie",""},{.Cook,"cook/rig",""},{.Cook,"cook/import",""},
-    {.Cook,"cook/import/obj",""},{.Cook,"cook/import/gltf",""},{.Cook,"cook/import/usd",""},{.Cook,"third_party/ufbx",""},{.Cook,"cook/import/fbx",""},
-    {.Cook,"cook/shaders",""},{.Cook,"cook/prefab",""},{.Cook,"cook/import/sources",""},{.Cook,"cook/author",""},{.Cook,"cook/install",""},
-    {.Cook,"cook/build",""},
+    {.Cook,"cook/workspace","cook"},{.Cook,"cook/cache","cook"},{.Cook,"cook/compressor/lz","cook"},{.Cook,"cook/compressor/bc7split","cook"},{.Cook,"cook/compressor/texture/common","cook"},
+    {.Cook,"cook/compressor/texture/bc67","cook"},{.Cook,"cook/compressor/texture/bc1","cook"},{.Cook,"cook/compressor/texture/bc4","cook"},{.Cook,"cook/compressor/texture/bc6","cook"},{.Cook,"cook/compressor/texture/bc7","cook"},
+    {.Cook,"cook/compressor/texture","cook"},{.Cook,"cook/textures","cook"},{.Cook,"cook/image","cook"},{.Cook,"cook/movie","cook"},{.Cook,"cook/rig","cook"},
+    {.Cook,"cook/import","cook"},{.Cook,"cook/import/obj","cook"},{.Cook,"cook/import/gltf","cook"},{.Cook,"cook/import/usd","cook"},{.Cook,"third_party/ufbx","cook"},
+    {.Cook,"cook/import/fbx","cook"},{.Cook,"cook/shaders","cook"},{.Cook,"cook/prefab","cook"},{.Cook,"cook/import/sources","cook"},{.Cook,"cook/author","cook"},
+    {.Cook,"cook/install","cook"},{.Cook,"cook/build",""},
 
-    {.Editor,"third_party/sqlite",""},{.Editor,"editor/api",""},{.Editor,"editor/acp",""},{.Editor,"editor/diff",""},{.Editor,"editor/ai_store",""},{.Editor,"editor/git",""},{.Editor,"editor/history",""},{.Editor,"editor/records",""},
-    {.Editor,"editor",""},
+    {.Editor,"third_party/sqlite","editor-parts"},{.Editor,"editor/api","editor-parts"},{.Editor,"editor/acp","editor-parts"},{.Editor,"editor/diff","editor-parts"},{.Editor,"editor/ai_store","editor-parts"},
+    {.Editor,"editor/git","editor-parts"},{.Editor,"editor/history","editor-parts"},{.Editor,"editor/records","editor-parts"},{.Editor,"editor",""},
 }
 
 @(private)
@@ -1023,8 +1023,10 @@ ENGINE_COLLECTION :: "mirai:"
 @(private)
 engine_flags :: proc(root:string,dev:bool) -> [dynamic]string {
     flags:=make([dynamic]string,context.temp_allocator)
-    // The debug information lets a crash report name the procedure and the line; it does not change the code.
-    append(&flags,dev?"-o:minimal":"-o:speed","-debug",fmt.tprintf("-custom-attribute:%s",CUSTOM_ATTRIBUTES))
+    // The debug information lets a crash report of what ships name the procedure and the line; it does not
+    // change the code. In dev it is written again with every library that compiles: MIRAI_ODIN_FLAGS=-debug asks for it.
+    append(&flags,dev?"-o:minimal":"-o:speed",fmt.tprintf("-custom-attribute:%s",CUSTOM_ATTRIBUTES))
+    if !dev {append(&flags,"-debug")}
     platform_flags(root,&flags,false,context.temp_allocator)
     environment_flags(&flags,context.temp_allocator)
     return flags
