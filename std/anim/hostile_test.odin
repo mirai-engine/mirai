@@ -350,6 +350,11 @@ hostile_fades_through_the_fader :: proc(t:^testing.T) {
             case 0,1: fader_play(&fader,Clip(hostile_int(&h,lib.clip_count+2)),hostile_f32(&h),hostile_f32(&h),hostile_ease(&h))
             case 2,3: _,_=fader_advance(&lib,&fader,hostile_time(&h),events[:hostile_int(&h,9)])
             case 4: pose_clear(&pose);fader_blend(&pose,&lib,fader);_=fader_fading(fader);_=fader_current_weight(fader)
+                bones:[4]Bone_Blend;track_bones,references:[12]i32
+                for &bone in track_bones {bone=i32(hostile_int(&h,8))-2}
+                bones_fader_blend(bones[:hostile_int(&h,5)],track_bones[:hostile_int(&h,13)],&lib,fader)
+                _=bones_blend_additive(bones[:],track_bones[:],&lib,fader.current,hostile_time(&h),hostile_f32(&h),Clip(hostile_int(&h,lib.clip_count+2)),references[:hostile_int(&h,13)])
+                for bone in bones {_,_,_=bone_transform(bone,math.TRANSFORM_IDENTITY);_,_=bone_added_position(bone);_,_=bone_added_rotation(bone);_,_=bone_added_scale(bone)}
             }
         }
         for o in fader.outgoing[:fader.outgoing_count] {_=fade_out_weight(o)}

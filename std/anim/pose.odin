@@ -206,6 +206,146 @@ pose_float :: proc "contextless" (pose:^Pose,target:u64,slot:u8=0) -> (value:f32
     return v.x,weight,ok
 }
 
+// What the clips of a rig blend for one of its bones, without the search by name of a Pose: the
+// caller says once, by track of the library, which bone each track moves. bones_blend keeps the
+// weighted sum of each channel and its weight, as a Pose_Entry does; bones_blend_additive keeps
+// what additive clips put on top, a sum or for a rotation the product of their turns. A channel
+// nothing gave has weight 0.
+Bone_Blend :: struct {
+    position,scale:math.Vec3,
+    rotation:math.Vec4,
+    weights:math.Vec3, // of the position, rotation and scale
+}
+
+// The bone a track of the library moves, by track_bones: -1 for a track that moves none of `count`.
+@(private)
+track_bone :: #force_inline proc "contextless" (count:int,track_bones:[]i32,track:int) -> int {
+    if track<0 || track>=len(track_bones) {return -1}
+    bone:=int(track_bones[track])
+    return bone if bone>=0 && bone<count else -1
+}
+
+// Adds every track of the player's clip that moves a bone, sampled at its time, with the weight
+// of the player times `scale`, as pose_blend does for the targets of a Pose.
+bones_blend :: proc "contextless" (bones:[]Bone_Blend,track_bones:[]i32,lib:^Library,p:Player,scale:f32=1,lock:Pose_Lock={}) {
+    if !clip_valid(lib,p.clip) {return}
+    weight:=p.weight*scale
+    if weight<=0 {return}
+    first:=int(lib.clips[p.clip-1].first_track)
+    reader:Clip_Reader=---
+    clip_reader(&reader,lib,p.clip,player_time(lib,p))
+    tracks:=clip_tracks(lib,p.clip)
+    for {
+        i,value,more:=clip_reader_next(&reader)
+        if !more {break}
+        at:=track_bone(len(bones),track_bones,first+i)
+        if at<0 {continue}
+        bone:=&bones[at]
+        track:=tracks[i]
+        locked:=track.target==lock.target && track.slot==0
+        #partial switch track.property {
+        case .Position:
+            if locked && lock.position {value.xyz=lock.value.position}
+            bone.position+=value.xyz*weight;bone.weights.x+=weight
+        case .Rotation:
+            if locked && lock.rotation {value=quat_vec4(lock.value.rotation)}
+            if bone.weights.y>0 {value=quat_align(value,bone.rotation)}
+            bone.rotation+=value*weight;bone.weights.y+=weight
+        case .Scale:
+            bone.scale+=value.xyz*weight;bone.weights.z+=weight
+        }
+    }
+}
+// The clips of the fader, each with its weight.
+bones_fader_blend :: proc "contextless" (bones:[]Bone_Blend,track_bones:[]i32,lib:^Library,f:Fader) {
+    f:=f
+    bones_blend(bones,track_bones,lib,f.current,fader_current_weight(f))
+    for o in f.outgoing[:f.outgoing_count] {bones_blend(bones,track_bones,lib,o.player,fade_out_weight(o))}
+}
+
+// Adds what an additive clip changes for each bone at the player's time, as pose_blend_additive
+// does for the targets of a Pose. references is the caller's room to pair each bone with its track
+// of `from`: three places a bone. False, with nothing added, when `from` is given and it is short.
+bones_blend_additive :: proc "contextless" (bones:[]Bone_Blend,track_bones:[]i32,lib:^Library,p:Player,reference:f32=0,scale:f32=1,from:Clip=0,references:[]i32=nil) -> bool {
+    if !clip_valid(lib,p.clip) {return true}
+    weight:=p.weight*scale
+    if weight<=0 {return true}
+    others:[]Track
+    if from!=0 && clip_valid(lib,from) {
+        if len(references)<len(bones)*3 {return false}
+        others=clip_tracks(lib,from)
+        paired:=references[:len(bones)*3]
+        for &place in paired {place=0}
+        start:=int(lib.clips[from-1].first_track)
+        for other,j in others {
+            if u8(other.property)>u8(Property.Scale) {continue}
+            at:=track_bone(len(bones),track_bones,start+j)
+            if at<0 {continue}
+            place:=&paired[at*3+int(other.property)]
+            if place^==0 {place^=i32(j+1)}
+        }
+    }
+    first:=int(lib.clips[p.clip-1].first_track)
+    reader:Clip_Reader=---
+    clip_reader(&reader,lib,p.clip,player_time(lib,p))
+    tracks:=clip_tracks(lib,p.clip)
+    for {
+        i,now,more:=clip_reader_next(&reader)
+        if !more {break}
+        at:=track_bone(len(bones),track_bones,first+i)
+        if at<0 {continue}
+        bone:=&bones[at]
+        track:=tracks[i]
+        if u8(track.property)>u8(Property.Scale) {continue}
+        source:=track
+        if others!=nil {
+            if paired:=int(references[at*3+int(track.property)]);paired>0 {source=others[paired-1]}
+        }
+        rest:=clip_evaluate(lib,source,reference)
+        #partial switch track.property {
+        case .Position:
+            bone.position+=(now.xyz-rest.xyz)*weight;bone.weights.x+=weight
+        case .Rotation:
+            turn:=math.quat_slerp(1,conj(vec4_quat(rest))*vec4_quat(now),weight)
+            bone.rotation=quat_vec4((vec4_quat(bone.rotation) if bone.weights.y>0 else 1)*turn);bone.weights.y+=weight
+        case .Scale:
+            bone.scale+=(now.xyz-rest.xyz)*weight;bone.weights.z+=weight
+        }
+    }
+    return true
+}
+
+// What bones_blend gave a channel of a bone: its weighted average, normalized for a rotation, and
+// the weight that blended it. False for a channel no clip gave.
+bone_position :: #force_inline proc "contextless" (bone:Bone_Blend) -> (value:math.Vec3,weight:f32,ok:bool) {
+    if !(bone.weights.x>0) {return}
+    return bone.position/bone.weights.x,bone.weights.x,true
+}
+bone_rotation :: #force_inline proc "contextless" (bone:Bone_Blend) -> (value:math.Quat,weight:f32,ok:bool) {
+    if !(bone.weights.y>0) {return 1,0,false}
+    return linalg.normalize0(vec4_quat(bone.rotation)),bone.weights.y,true
+}
+bone_scale :: #force_inline proc "contextless" (bone:Bone_Blend) -> (value:math.Vec3,weight:f32,ok:bool) {
+    if !(bone.weights.z>0) {return}
+    return bone.scale/bone.weights.z,bone.weights.z,true
+}
+// What bones_blend_additive gave a channel of a bone: the change to put on top.
+bone_added_position :: #force_inline proc "contextless" (bone:Bone_Blend) -> (change:math.Vec3,ok:bool) {return bone.position,bone.weights.x>0}
+bone_added_rotation :: #force_inline proc "contextless" (bone:Bone_Blend) -> (change:math.Quat,ok:bool) {
+    if !(bone.weights.y>0) {return 1,false}
+    return linalg.normalize0(vec4_quat(bone.rotation)),true
+}
+bone_added_scale :: #force_inline proc "contextless" (bone:Bone_Blend) -> (change:math.Vec3,ok:bool) {return bone.scale,bone.weights.z>0}
+
+// The local transform of a bone from what bones_blend gave it, as pose_bone gives it from a Pose.
+bone_transform :: proc "contextless" (bone:Bone_Blend,rest:math.Transform) -> (value:math.Transform,weights:math.Vec3,properties:bit_set[Property;u8]) {
+    value=rest
+    if v,w,ok:=bone_position(bone);ok {share:=math.saturate(w);value.position=v if share==1 else math.lerp(rest.position,v,share);properties+={.Position};weights.x=share}
+    if v,w,ok:=bone_rotation(bone);ok {share:=math.saturate(w);value.rotation=v if share==1 else math.quat_slerp(rest.rotation,v,share);properties+={.Rotation};weights.y=share}
+    if v,w,ok:=bone_scale(bone);ok {share:=math.saturate(w);value.scale=v if share==1 else math.lerp(rest.scale,v,share);properties+={.Scale};weights.z=share}
+    return
+}
+
 // Clips that fade out at once besides the one fading in.
 FADER_OUTGOING :: 3
 

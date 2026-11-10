@@ -235,6 +235,8 @@ skeleton_bind :: proc(playback:^Playback,state:^Playing,content:^Skeleton_Conten
         if resize(&next.regions,count)!=nil {return false}
         if !lib.body_regions(next.parents[:],body,next.regions[:]) {clear(&next.regions);next.body={}}
     }
+    if !tracks_bind(playback,&next,clip) {return false}
+    tracks_release(playback,state);state.tracks,next.tracks=next.tracks,0
     delete(state.bindings);delete(state.parents);delete(state.targets);delete(state.aliases)
     delete(state.rest);delete(state.local);delete(state.world);delete(state.sampled);delete(state.previous)
     delete(state.mirror_pairs);delete(state.mirror_corrections);delete(state.mirror_scratch);delete(state.regions)
