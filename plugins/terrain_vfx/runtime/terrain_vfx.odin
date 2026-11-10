@@ -1,6 +1,7 @@
 package terrain_vfx
 
 import "mirai:core"
+import "mirai:std/base"
 import terrain "plugins:terrain/runtime"
 import vfx "plugins:vfx/runtime"
 
@@ -12,7 +13,7 @@ import vfx "plugins:vfx/runtime"
 // each end of a network session, as the edits it follows: a rollback that
 // repeats a tick does not start its births twice (vfx channels).
 
-CHANNEL_DUST :: vfx.Particle_Channel_Name(7)
+CHANNEL_DUST :: "dust"
 
 @(component,description="The dust a game's digs of this terrain raise: births on the channel of each layer, of its color, by the cubic metres taken.")
 Terrain_Dust :: struct {
@@ -24,12 +25,12 @@ Terrain_Dust :: struct {
 }
 
 Dust_Layer :: struct {
-    channel:vfx.Particle_Channel_Name, // none: no dust
+    channel:[vfx.CHANNEL_NAME_BYTES]u8 `mirai:"text"`, // empty: no dust
     color:[4]f32 `mirai:"color"`,      // multiplies that of the effect; zero: white
 }
 
 TERRAIN_DUST_DEFAULT :: Terrain_Dust{
-    layers={0..<terrain.LAYERS_MAX={channel=CHANNEL_DUST,color={1,1,1,1}}},
+    layers={0..<terrain.LAYERS_MAX={channel={0='d',1='u',2='s',3='t'},color={1,1,1,1}}},
     per_cubic_metre=40,
     most=96,
     speed=1.5,
@@ -43,10 +44,12 @@ terrain_dust :: proc(digs:core.Ref(terrain.Terrain_Digs),dusts:core.Read(Terrain
         budget:=f32(dust.most)
         if dig.volume*dust.per_cubic_metre<budget {budget=dig.volume*dust.per_cubic_metre}
         for layer,i in dust.layers {
-            if layer.channel==vfx.CHANNEL_NONE || !(dig.layers[i]>0) {continue}
+            layer:=layer
+            channel:=base.text_get(layer.channel[:])
+            if channel=="" || !(dig.layers[i]>0) {continue}
             count:=u32(budget*dig.layers[i]/dig.volume+0.5)
             if count==0 {continue}
-            vfx.channel_emit(channels,layer.channel,{position=dig.center,velocity={0,dust.speed,0},color=layer.color,size=dust.size,count=count})
+            vfx.channel_emit(channels,channel,{position=dig.center,velocity={0,dust.speed,0},color=layer.color,size=dust.size,count=count})
         }
     }
 }

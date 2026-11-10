@@ -127,7 +127,8 @@ write_dig_scene :: proc(o:^Out) {
 
     dust_entity:=asset.builder_entity(&s,"Dig dust")
     asset.builder_set(&s,dust_entity,vfx.Particle_Emitter{particle=dust_id,active=true,loop=true})
-    channel:=vfx.Particle_Channel{name=terrain_vfx.CHANNEL_DUST}
+    channel:vfx.Particle_Channel
+    base.text_set(channel.name[:],terrain_vfx.CHANNEL_DUST)
     asset.builder_set(&s,dust_entity,channel)
     spawn_point(&s,{0,0.2,7})
     asset.builder_save(&s,path(o,"assets/dig/dig.scene"))

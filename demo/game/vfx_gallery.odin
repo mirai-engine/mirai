@@ -37,7 +37,7 @@ VFX_GALLERY_VIEW_DEFAULT :: Vfx_Gallery_View{station=-1}
 // its station.
 @(component)
 Vfx_Impacts :: struct {
-    channel:vfx.Particle_Channel_Name,
+    channel:[vfx.CHANNEL_NAME_BYTES]u8 `mirai:"text"`,
     size:[2]f32 `mirai:"min=0,unit=m"`,
     interval:f32 `mirai:"min=0,unit=s"`,
     speed:f32 `mirai:"unit=m/s"`,
@@ -89,7 +89,7 @@ vfx_gallery_impacts :: proc(impacts:^core.Table(Vfx_Impacts),views:core.Read(Vfx
             wall.hits+=1
             u,v:=vfx_gallery_random(wall.hits,1),vfx_gallery_random(wall.hits,2)
             at:=mm.transform_point(world.transform,{(u-0.5)*wall.size.x,(v-0.5)*wall.size.y,0})
-            vfx.channel_emit(channels,wall.channel,vfx.Channel_Birth{position=at,velocity=out*wall.speed,count=wall.count})
+            vfx.channel_emit(channels,base.text_get(wall.channel[:]),vfx.Channel_Birth{position=at,velocity=out*wall.speed,count=wall.count})
         }
     }
 }

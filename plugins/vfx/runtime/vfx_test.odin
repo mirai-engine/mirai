@@ -579,15 +579,15 @@ channel_births_start_once_through_a_rollback :: proc(t:^testing.T) {
     if !fixture_init(t,&f) {return}
     defer fixture_destroy(&f)
     e:=fixture_emitter(&f,Particle_Emitter{})
-    IMPACTS,NOBODY :: Particle_Channel_Name(CHANNEL_GAME),Particle_Channel_Name(CHANNEL_GAME+1)
-    listener:=Particle_Channel{name=IMPACTS}
+    listener:Particle_Channel
+    base.text_set(listener.name[:],"impacts")
     core.add(&f.listeners,e,listener)
     fixture_settle(&f)
     f.app.assets=nil
     id:=core.World_Id{0,1}
     tick :: proc(f:^Emitters_Fixture,at:int) {
-        if at%2==0 {channel_emit(&f.channels,IMPACTS,Channel_Birth{position={f32(at),0,0},count=3})}
-        channel_emit(&f.channels,NOBODY,Channel_Birth{count=1})
+        if at%2==0 {channel_emit(&f.channels,"impacts",Channel_Birth{position={f32(at),0,0},count=3})}
+        channel_emit(&f.channels,"nobody",Channel_Birth{count=1})
         fixture_tick(f,TICK)
     }
     for at in 0..<4 {tick(&f,at)}

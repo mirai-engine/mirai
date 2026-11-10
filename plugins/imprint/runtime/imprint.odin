@@ -29,7 +29,7 @@ import vfx "plugins:vfx/runtime"
 // stands on it.
 
 IMPRINT_GRID :: "imprint"
-CHANNEL_STAMPS :: vfx.Particle_Channel_Name(6)
+CHANNEL_STAMPS :: "stamps"
 
 GROUND_CAPACITY :: 256  // meshes drawn displaced at once, over every Imprint_Ground
 STAMP_CAPACITY :: 64    // stamps that walk with a stride at once

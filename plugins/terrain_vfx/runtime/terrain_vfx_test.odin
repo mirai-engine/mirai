@@ -2,6 +2,7 @@ package terrain_vfx
 
 import "core:testing"
 import "mirai:core"
+import "mirai:std/base"
 import terrain "plugins:terrain/runtime"
 import vfx "plugins:vfx/runtime"
 
@@ -20,8 +21,9 @@ a_dig_raises_dust_of_each_layer_it_took_on_its_channel :: proc(t:^testing.T) {
     defer core.test_world_destroy(&w)
     dusty,bare:=core.create(&w.entities),core.create(&w.entities)
     dust:=TERRAIN_DUST_DEFAULT
-    dust.layers[1]={channel=vfx.Particle_Channel_Name(20),color={1,0,0,1}}
-    dust.layers[3].channel=vfx.CHANNEL_NONE
+    dust.layers[1].color={1,0,0,1}
+    base.text_set(dust.layers[1].channel[:],"gravel")
+    dust.layers[3].channel={}
     core.add(&w.dusts,dusty,dust)
     core.test_world_settle(&w)
     core.push(&w.digs.digs,terrain.Terrain_Dig{owner=dusty,center={1,2,3},volume=1,layers={0.5,0.25,0,0.25}})
@@ -30,6 +32,6 @@ a_dig_raises_dust_of_each_layer_it_took_on_its_channel :: proc(t:^testing.T) {
     pushes:=w.channels.queue.items[:]
     testing.expect_value(t,len(pushes),2)
     if len(pushes)!=2 {return}
-    testing.expect(t,pushes[0].channel==CHANNEL_DUST && pushes[0].birth.count==20 && pushes[0].birth.position==[3]f32{1,2,3})
-    testing.expect(t,pushes[1].channel==vfx.Particle_Channel_Name(20) && pushes[1].birth.count==10 && pushes[1].birth.color==[4]f32{1,0,0,1})
+    testing.expect(t,pushes[0].channel==base.name_hash(CHANNEL_DUST) && pushes[0].birth.count==20 && pushes[0].birth.position==[3]f32{1,2,3})
+    testing.expect(t,pushes[1].channel==base.name_hash("gravel") && pushes[1].birth.count==10 && pushes[1].birth.color==[4]f32{1,0,0,1})
 }

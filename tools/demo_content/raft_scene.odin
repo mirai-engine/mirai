@@ -3,6 +3,7 @@ package main
 import "core:os"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:std/base"
 import game "mirai:demo/game"
 import audio "mirai:engine/audio"
 import cam "mirai:engine/camera"
@@ -75,7 +76,8 @@ write_raft_scene :: proc(o:^Out) {
     asset.content_check(&o.content,"raft splash",effect.particle_save(path(o,"assets/raft/raft_splash.particle"),&o.content.types,{id=splash_id,info=splash_effect}))
     splashes:=asset.builder_entity(&s,"Splashes")
     asset.builder_set(&s,splashes,vfx.Particle_Emitter{particle=splash_id,active=true,loop=true})
-    splash_channel:=vfx.Particle_Channel{name=water.CHANNEL_SPLASHES}
+    splash_channel:vfx.Particle_Channel
+    base.text_set(splash_channel.name[:],water.CHANNEL_SPLASHES)
     asset.builder_set(&s,splashes,splash_channel)
     // The bubbles a body leaves as it moves under the surface, which rise and wobble.
     bubble_effect:=effect.PARTICLE_DEFAULTS
@@ -147,11 +149,13 @@ write_raft_scene :: proc(o:^Out) {
     // After the others, which keep their entities.
     bubbles:=asset.builder_entity(&s,"Bubbles")
     asset.builder_set(&s,bubbles,vfx.Particle_Emitter{particle=bubble_id,active=true,loop=true})
-    bubble_channel:=vfx.Particle_Channel{name=water.CHANNEL_BUBBLES}
+    bubble_channel:vfx.Particle_Channel
+    base.text_set(bubble_channel.name[:],water.CHANNEL_BUBBLES)
     asset.builder_set(&s,bubbles,bubble_channel)
     motes:=asset.builder_entity(&s,"Motes")
     asset.builder_set(&s,motes,vfx.Particle_Emitter{particle=mote_id,active=true,loop=true})
-    mote_channel:=vfx.Particle_Channel{name=water.CHANNEL_MOTES}
+    mote_channel:vfx.Particle_Channel
+    base.text_set(mote_channel.name[:],water.CHANNEL_MOTES)
     asset.builder_set(&s,motes,mote_channel)
     feature_scene_end(&s,o,"raft")
 }

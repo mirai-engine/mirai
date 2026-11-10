@@ -15,9 +15,9 @@ import vfx "plugins:vfx/runtime"
 // WET_SECONDS (water_wet_render). Presentation alone: nothing of it enters
 // the simulation, a snapshot or a rollback.
 
-CHANNEL_SPLASHES :: vfx.Particle_Channel_Name(3)
-CHANNEL_BUBBLES :: vfx.Particle_Channel_Name(4)
-CHANNEL_MOTES :: vfx.Particle_Channel_Name(5)
+CHANNEL_SPLASHES :: "splashes"
+CHANNEL_BUBBLES :: "bubbles"
+CHANNEL_MOTES :: "motes"
 SPLASH_SPEED :: f32(1.5)   // m/s down through the surface below which a body makes no splash
 SPLASH_ENTERED :: f32(0.05) // share of a body under the surface past which it is in
 SPLASH_PAUSE :: 30          // ticks a body makes no other splash after one

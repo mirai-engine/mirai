@@ -2,12 +2,13 @@ package water
 
 import "core:testing"
 import "mirai:core"
+import "mirai:std/base"
 import phys "plugins:physics/runtime"
 import vfx "plugins:vfx/runtime"
 
 @(private="file")
-births :: proc(channels:^vfx.Particle_Channels,channel:vfx.Particle_Channel_Name) -> (count:int) {
-    for push in channels.queue.items {if push.channel==channel {count+=1}}
+births :: proc(channels:^vfx.Particle_Channels,channel:string) -> (count:int) {
+    for push in channels.queue.items {if push.channel==base.name_hash(channel) {count+=1}}
     return
 }
 
