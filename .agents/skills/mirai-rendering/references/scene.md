@@ -134,8 +134,9 @@
 The scene is given incrementally, and the index of an instance is the place it was given at.
 `render_sync` gives the world through these alone, from the rows that changed (`core.changes`):
 what stops being drawn leaves its place to the last instance of the world, what starts comes
-after them, the rest is made again in runs of `scene_update`, moves go to `scene_move` and colors to `scene_tint`; the visual instances of the
-frame follow those of the world, given whole in every frame.
+after them, the rest is made again in runs of `scene_update`, moves go to `scene_move` and colors
+to `scene_tint`; the visual instances of the frame follow those of the world, given whole in
+every frame.
 
 - **`scene_move(r, descs, transforms, anchors)`** moves instances: `descs` are their indices and
   `transforms` the current transform of each one.
@@ -176,8 +177,8 @@ frame follow those of the world, given whole in every frame.
   - It marks the light change around each instance that comes, goes or shows something else
     (not the highlight), before and after, like `scene_tint`; not in the whole scene. The reach
     is its box plus `LIGHT_CHANGE_SIZES` (10) times its radius, up to `LIGHT_CHANGE_REACH` (8 m):
-    its shadow and the light it reflects fall with the square of the distance over its size. An instance that glows, or whose brightness changes, marks the
-    whole `LIGHT_CHANGE_REACH`.
+    its shadow and the light it reflects fall with the square of the distance over its size. An
+    instance that glows, or whose brightness changes, marks the whole `LIGHT_CHANGE_REACH`.
 - **`scene_light_update(r, index, light)`** gives one light: one past the last is added, another
   replaced; **`scene_light_remove(r, index)`** takes one out, and the last takes its place. They
   touch neither instances nor their tree; a light that gives no light (`light_gives`) is refused.
