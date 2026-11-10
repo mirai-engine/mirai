@@ -8,13 +8,17 @@ import mm "mirai:std/math"
 // primitives: several calls append to one buffer, and the buffer is the whole
 // mesh, parts merged. Each writes its positions, normals, texture coordinates
 // and indices; mesh_buffer_paint then colors what the last parts left without
-// color.
+// color. Like the primitives, each takes the room of all it appends first:
+// without memory it appends nothing and answers false. Input that makes no
+// shape appends nothing and answers true.
 
 // Colors the vertices of the buffer that have no color yet: what was built
 // since the last paint. Colors keep the rest of a Mesh; a part never painted
 // is white when the mesh is written.
-mesh_buffer_paint :: proc(b:^Mesh_Buffer,color:Vec4) {
+mesh_buffer_paint :: proc(b:^Mesh_Buffer,color:Vec4) -> bool {
+    if reserve_more(&b.colors,max(len(b.positions)-len(b.colors),0))!=nil {return false}
     for len(b.colors)<len(b.positions) {append(&b.colors,color)}
+    return true
 }
 
 // Moves the vertices of a part from first on: scales them, turns them around
@@ -30,9 +34,10 @@ mesh_buffer_place :: proc(b:^Mesh_Buffer,first:int,at:Vec3,turn:f32=0,size:Vec3=
 
 // Gives every triangle of the buffer its own vertices with the normal of the
 // face, for a look of cut facets; its color and texture coordinates stay.
-mesh_buffer_flatten :: proc(b:^Mesh_Buffer) {
-    if len(b.normals)!=len(b.positions) || len(b.uvs)!=0 && len(b.uvs)!=len(b.positions) || len(b.indices)%3!=0 {return}
-    for index in b.indices {if int(index)>=len(b.positions) {return}}
+// False without memory, with the buffer as it was.
+mesh_buffer_flatten :: proc(b:^Mesh_Buffer) -> bool {
+    if len(b.normals)!=len(b.positions) || len(b.uvs)!=0 && len(b.uvs)!=len(b.positions) || len(b.indices)%3!=0 {return true}
+    for index in b.indices {if int(index)>=len(b.positions) {return true}}
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD(ignore=temp_is(b.positions.allocator))
     scratch:=context.temp_allocator
     count:=len(b.indices)
@@ -41,7 +46,9 @@ mesh_buffer_flatten :: proc(b:^Mesh_Buffer) {
     uvs:=make([]Vec2,len(b.uvs)>0?count:0,scratch)
     colored:=len(b.colors)==len(b.positions) && len(b.colors)>0
     colors:=make([]Vec4,colored?count:0,scratch)
-    if count>0 && (positions==nil || normals==nil) {return}
+    if count>0 && (positions==nil || normals==nil || len(b.uvs)>0 && uvs==nil || colored && colors==nil) {return false}
+    if reserve(&b.positions,count)!=nil || reserve(&b.normals,count)!=nil || reserve(&b.uvs,len(uvs))!=nil ||
+       reserve(&b.colors,len(colors))!=nil || reserve(&b.indices,count)!=nil {return false}
     for t:=0;t+2<count;t+=3 {
         a,c,d:=b.indices[t],b.indices[t+1],b.indices[t+2]
         n:=fnormalize(linalg.cross(b.positions[c]-b.positions[a],b.positions[d]-b.positions[a]),b.normals[a])
@@ -57,14 +64,16 @@ mesh_buffer_flatten :: proc(b:^Mesh_Buffer) {
     append(&b.uvs,..uvs)
     append(&b.colors,..colors)
     for i in 0..<u32(count) {append(&b.indices,i)}
+    return true
 }
 
 // A tube along a path, as a trunk or a branch: rings around a curve through
 // its points, tapering from radius[0] at the first to radius[1] at the last,
 // closed at both ends. rings: the lengths of the curve.
-tube_build :: proc(out:^Mesh_Buffer,path:[]Vec3,radius:Vec2={0.25,0.12},sides:=6,rings:=8) {
-    if len(path)<2 {return}
+tube_build :: proc(out:^Mesh_Buffer,path:[]Vec3,radius:Vec2={0.25,0.12},sides:=6,rings:=8) -> bool {
+    if len(path)<2 {return true}
     sides,rings:=max(sides,3),max(rings,1)
+    shape_room(out,(rings+3)*(sides+1),(rings+1)*sides*6) or_return
     base:=u32(len(out.positions))
     tangent:=tangent_at(path,0)
     across:=abs(tangent.y)<0.9?Vec3{0,1,0}:Vec3{1,0,0}
@@ -92,14 +101,16 @@ tube_build :: proc(out:^Mesh_Buffer,path:[]Vec3,radius:Vec2={0.25,0.12},sides:=6
     }
     shape_cap(out,base,sides,-tangent_at(path,0))
     shape_cap(out,base+u32(rings)*row,sides,tangent_at(path,1))
+    return true
 }
 
 // A solid of revolution around Y, as a jar, a post or a mushroom: each point
 // of profile is a radius and a height, in order along the outline. Where it
 // ends away from the axis a flat disc closes it.
-lathe_build :: proc(out:^Mesh_Buffer,profile:[]Vec2,segments:=SHAPE_SEGMENTS) {
-    if len(profile)<2 {return}
+lathe_build :: proc(out:^Mesh_Buffer,profile:[]Vec2,segments:=SHAPE_SEGMENTS) -> bool {
+    if len(profile)<2 {return true}
     segments:=max(segments,3)
+    shape_room(out,(len(profile)+2)*(segments+1),len(profile)*segments*6) or_return
     base:=u32(len(out.positions))
     for p,at in profile {
         before,after:=profile[max(at-1,0)],profile[min(at+1,len(profile)-1)]
@@ -122,16 +133,18 @@ lathe_build :: proc(out:^Mesh_Buffer,profile:[]Vec2,segments:=SHAPE_SEGMENTS) {
     if profile[0].x>0 {shape_cap(out,base,segments,{0,profile[0].y<=profile[1].y?-1:1,0})}
     last:=len(profile)-1
     if profile[last].x>0 {shape_cap(out,base+u32(last)*row,segments,{0,profile[last].y>=profile[last-1].y?1:-1,0})}
+    return true
 }
 
 // A flat outline extruded along Z, as a sign or a plank: outline is a closed
 // polygon of X and Y; the solid goes from z=-depth/2 to z=depth/2.
-extrude_build :: proc(out:^Mesh_Buffer,outline:[]Vec2,depth:f32) {
-    if len(outline)<3 {return}
+extrude_build :: proc(out:^Mesh_Buffer,outline:[]Vec2,depth:f32) -> bool {
+    if len(outline)<3 {return true}
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD(ignore=temp_is(out.positions.allocator))
     triangles:=make([dynamic]u32,context.temp_allocator)
     sizes:=[1]int{len(outline)}
-    if polygon_triangulate(outline,sizes[:],&triangles)==0 {return}
+    if polygon_triangulate(outline,sizes[:],&triangles)==0 {return true}
+    shape_room(out,6*len(outline),2*len(triangles)+6*len(outline)) or_return
     half:=depth/2
     for face in 0..<2 {
         z:=face==0?half:-half
@@ -157,6 +170,7 @@ extrude_build :: proc(out:^Mesh_Buffer,outline:[]Vec2,depth:f32) {
         vertex(out,{b.x,b.y,-half},edge,{1,0})
         shape_quad(out,base,base+1,base+2,base+3)
     }
+    return true
 }
 
 // A leaf or a blade of grass, a thin sheet with both faces that goes from
@@ -169,9 +183,9 @@ Blade :: struct {
     segments:int,   // along it; 0: 6
 }
 
-blade_build :: proc(out:^Mesh_Buffer,root,direction:Vec3,blade:Blade) {
-    segments:=max(blade.segments,1)
-    if blade.segments==0 {segments=6}
+blade_build :: proc(out:^Mesh_Buffer,root,direction:Vec3,blade:Blade) -> bool {
+    segments:=blade_segments(blade)
+    shape_room(out,4*(segments+1),12*segments) or_return
     forward:=fnormalize(direction,{0,0,1})
     right:=abs(forward.y)<0.99?fnormalize(linalg.cross(Vec3{0,1,0},forward),{1,0,0}):Vec3{1,0,0}
     belly:=clamp(blade.belly,0,1)
@@ -197,32 +211,41 @@ blade_build :: proc(out:^Mesh_Buffer,root,direction:Vec3,blade:Blade) {
             shape_quad(out,a,a+2,a+3,a+1)
         }
     }
+    return true
+}
+
+@(private="file") blade_segments :: proc(blade:Blade) -> int {
+    return 6 if blade.segments==0 else max(blade.segments,1)
 }
 
 // count blades around root, evenly turned around Y and each a little different
 // as seed says: a palm crown, a grass tuft. splay: 0 straight up, 1 level.
-fan_build :: proc(out:^Mesh_Buffer,root:Vec3,count:int,blade:Blade,splay:f32=1,seed:u32=0) {
+fan_build :: proc(out:^Mesh_Buffer,root:Vec3,count:int,blade:Blade,splay:f32=1,seed:u32=0) -> bool {
+    segments:=blade_segments(blade)
+    shape_room(out,max(count,0)*4*(segments+1),max(count,0)*12*segments) or_return
     for i in 0..<count {
         turn:=(f64(i)+f64(shape_random(seed,i,0))*0.5)/f64(count)
         sn,cs:=turn_sincos(turn)
         grown:=blade
         grown.length*=0.8+0.4*shape_random(seed,i,1)
         grown.droop*=0.75+0.5*shape_random(seed,i,2)
-        blade_build(out,root,{f32(cs)*splay,1-splay,f32(sn)*splay},grown)
+        blade_build(out,root,{f32(cs)*splay,1-splay,f32(sn)*splay},grown) or_return
     }
+    return true
 }
 
 // A lumpy ball, as a rock or a bush: an icosphere whose surface moves in and
 // out by lumps (a share of its radius) in a pattern seed picks. radius per axis.
-blob_build :: proc(out:^Mesh_Buffer,radius:Vec3={0.5,0.5,0.5},subdivisions:=1,lumps:f32=0.25,seed:u32=0) {
+blob_build :: proc(out:^Mesh_Buffer,radius:Vec3={0.5,0.5,0.5},subdivisions:=1,lumps:f32=0.25,seed:u32=0) -> bool {
     first:=len(out.positions)
-    icosphere_build(out,1,subdivisions)
+    icosphere_build(out,1,subdivisions) or_return
     for &p,i in out.positions[first:] {
         unit:=fnormalize(p,{0,1,0})
         r:=1+lumps*(shape_noise(unit*2.5,seed)*2-1)
         p=unit*r*radius
         out.normals[first+i]=fnormalize(unit/radius,unit)
     }
+    return true
 }
 
 // The span of a curve through its points at t, from 0 at the first to 1 at

@@ -5,7 +5,7 @@ import "core:mem"
 import "core:testing"
 
 @(private="file")
-Memory_Call :: enum {Slice,Slice_Whole,Fracture,Hull,Hull_Flat,Decompose,Tangents,Triangulate,Cluster_Dag,Cluster_Levels,Surface_Edit,Surface_Refine,Primitives,Weld,Hull_Mesh}
+Memory_Call :: enum {Slice,Slice_Whole,Fracture,Hull,Hull_Flat,Decompose,Tangents,Triangulate,Delaunay,Convex_Partition,Cluster_Dag,Cluster_Levels,Surface_Edit,Surface_Refine,Primitives,Shapes,Paint_Flatten,Weld,Hull_Mesh}
 
 // The most requests a call of the test makes of its allocator.
 @(private="file")
@@ -52,6 +52,7 @@ Memory_Rig :: struct {
     parts:Decomposition,
     tangents:[dynamic]Vec4,
     triangles:[dynamic]u32,
+    second:[dynamic]u32, // the half-edges of the Delaunay triangles, the sizes of the convex pieces
     dag:Cluster_Dag,
     work:Mesh_Surface_Workspace,
 }
@@ -64,6 +65,7 @@ memory_rig_init :: proc(r:^Memory_Rig,allocator:runtime.Allocator) {
     fracture_init(&r.fracture,allocator)
     r.tangents=make([dynamic]Vec4,allocator)
     r.triangles=make([dynamic]u32,allocator)
+    r.second=make([dynamic]u32,allocator)
     mesh_surface_workspace_init(&r.work,allocator)
 }
 
@@ -74,7 +76,7 @@ memory_rig_destroy :: proc(r:^Memory_Rig) {
     fracture_destroy(&r.fracture)
     hull_destroy(&r.hull)
     decomposition_destroy(&r.parts)
-    delete(r.tangents);delete(r.triangles)
+    delete(r.tangents);delete(r.triangles);delete(r.second)
     cluster_dag_destroy(&r.dag)
     mesh_surface_workspace_destroy(&r.work)
 }
@@ -108,6 +110,11 @@ memory_call :: proc(t:^testing.T,r:^Memory_Rig,s:^Memory_Source,call:Memory_Call
     case .Triangulate:
         clear(&r.triangles)
         refused=polygon_triangulate(s.outline[:],{4,4},&r.triangles)==0
+    case .Delaunay:
+        refused=delaunay_triangulate(s.outline[:],&r.triangles,&r.second)==0
+    case .Convex_Partition:
+        clear(&r.triangles);clear(&r.second)
+        refused=polygon_convex_partition(s.outline[:],{4,4},&r.triangles,&r.second)==0
     case .Cluster_Dag:
         error:=cluster_dag_build(&r.dag,{positions=ball.positions,indices=ball.indices},r.allocator)
         refused,other=error==.Out_Of_Memory,error==.Invalid_Mesh || error==.Invalid_Attributes
@@ -139,6 +146,39 @@ memory_call :: proc(t:^testing.T,r:^Memory_Rig,s:^Memory_Source,call:Memory_Call
             mesh_buffer_clear(out)
             break
         }
+    case .Shapes:
+        out:=&r.buffers[0]
+        mesh_buffer_clear(out)
+        Shape :: proc(out:^Mesh_Buffer) -> bool
+        shapes:=[]Shape{
+            proc(out:^Mesh_Buffer) -> bool {return tube_build(out,{{0,0,0},{0.2,1,0},{0.5,2,0.1}})},
+            proc(out:^Mesh_Buffer) -> bool {return lathe_build(out,{{0.5,0},{0.7,0.5},{0.3,1}},8)},
+            proc(out:^Mesh_Buffer) -> bool {return extrude_build(out,{{0,0},{2,0},{2,1},{1,1},{1,2},{0,2}},0.5)},
+            proc(out:^Mesh_Buffer) -> bool {return blade_build(out,{},{1,0,0},{length=1,width=0.2,rise=0.2})},
+            proc(out:^Mesh_Buffer) -> bool {return fan_build(out,{},5,{length=1,width=0.2,rise=0.2})},
+            proc(out:^Mesh_Buffer) -> bool {return blob_build(out)},
+        }
+        for shape,i in shapes {
+            held:=[4]int{len(out.positions),len(out.normals),len(out.uvs),len(out.indices)}
+            if shape(out) {continue}
+            refused=true
+            testing.expectf(t,held==[4]int{len(out.positions),len(out.normals),len(out.uvs),len(out.indices)},"the shape %d that was refused appended a part of itself",i,loc=loc)
+            mesh_buffer_clear(out)
+            break
+        }
+    case .Paint_Flatten:
+        // Painted and flattened with memory of its own, the buffer goes to the allocator of the rig.
+        out:=&r.buffers[0]
+        mesh_buffer_clear(out)
+        if !sphere_build(out,0.5,8,4) {return true}
+        held:=[5]int{len(out.positions),len(out.normals),len(out.uvs),len(out.colors),len(out.indices)}
+        painted:=mesh_buffer_paint(out,{1,0,0,1})
+        if painted {held[3]=len(out.colors)}
+        if !painted || !mesh_buffer_flatten(out) {
+            refused=true
+            testing.expectf(t,held==[5]int{len(out.positions),len(out.normals),len(out.uvs),len(out.colors),len(out.indices)},"a paint or a flatten that was refused changed the buffer",loc=loc)
+            mesh_buffer_clear(out)
+        }
     case .Weld:
         refused=!mesh_weld(cube,0,&r.buffers[0])
     case .Hull_Mesh:
@@ -164,9 +204,10 @@ memory_rig_empty :: proc(r:^Memory_Rig,call:Memory_Call) -> bool {
     case .Decompose:                    return r.parts.hulls==nil
     case .Tangents:                     return buffer_empty(&r.buffers[0]) && len(r.tangents)==0
     case .Triangulate:                  return len(r.triangles)==0
+    case .Delaunay,.Convex_Partition:   return len(r.triangles)+len(r.second)==0
     case .Cluster_Dag,.Cluster_Levels:  return len(r.dag.clusters)+len(r.dag.vertices)+len(r.dag.triangles)+r.dag.groups+r.dag.levels==0
     case .Surface_Edit,.Surface_Refine: return buffer_empty(&r.buffers[0])
-    case .Primitives,.Weld,.Hull_Mesh:  return buffer_empty(&r.buffers[0])
+    case .Primitives,.Shapes,.Paint_Flatten,.Weld,.Hull_Mesh: return buffer_empty(&r.buffers[0])
     }
     return false
 }
@@ -191,10 +232,12 @@ memory_rig_equal :: proc(a,b:^Memory_Rig,call:Memory_Call) -> bool {
         return buffers_equal(&a.buffers[0],&b.buffers[0]) && bytes_equal(a.tangents[:],b.tangents[:])
     case .Triangulate:
         return bytes_equal(a.triangles[:],b.triangles[:])
+    case .Delaunay,.Convex_Partition:
+        return bytes_equal(a.triangles[:],b.triangles[:]) && bytes_equal(a.second[:],b.second[:])
     case .Cluster_Dag,.Cluster_Levels:
         return bytes_equal(a.dag.clusters[:],b.dag.clusters[:]) && bytes_equal(a.dag.vertices[:],b.dag.vertices[:]) && bytes_equal(a.dag.triangles[:],b.dag.triangles[:]) &&
             a.dag.groups==b.dag.groups && a.dag.levels==b.dag.levels
-    case .Surface_Edit,.Surface_Refine,.Primitives,.Weld,.Hull_Mesh:
+    case .Surface_Edit,.Surface_Refine,.Primitives,.Shapes,.Paint_Flatten,.Weld,.Hull_Mesh:
         return buffers_equal(&a.buffers[0],&b.buffers[0])
     }
     return false
