@@ -181,19 +181,12 @@ plugin_needs :: proc(p:^project.Project,index:int,part:project.Plugin_Part,needs
 }
 
 // The flags of a plugin library besides its collections and its output: the
-// optimization and the defines of the project's libraries. Optimized, a
-// library is one module, as the game that ships compiles it: a #force_inline
-// procedure of another package is not inlined across modules. Unoptimized,
-// one module per package compiles it in parallel.
+// optimization and the defines of the project's libraries.
 @(private)
 plugin_flags :: proc(p:^project.Project,dev:bool,allocator:=context.allocator) -> []string {
 	flags:=make([dynamic]string,allocator)
 	append(&flags,"-build-mode:dll",fmt.aprintf("-custom-attribute:%s",CUSTOM_ATTRIBUTES,allocator=allocator))
-	optimization:=project.Optimization.Minimal if dev else p.manifest.build.optimization
-	if optimization==.Minimal || optimization==.None {append(&flags,"-use-separate-modules")}
-	optimizations:=OPTIMIZATION_FLAGS
-	append(&flags,optimizations[optimization])
-	if p.manifest.build.debug {append(&flags,"-debug")}
+	library_optimization_append(&flags,p,dev)
 	for &define in p.manifest.build.defines {
 		if text:=base.text_get(define[:]);text!="" {append(&flags,fmt.aprintf("-define:%s",text,allocator=allocator))}
 	}

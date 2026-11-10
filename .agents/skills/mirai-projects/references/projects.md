@@ -227,9 +227,7 @@ with the project library.
   `Editor`, the editor ones. A part imports the runtime of its plugin (the editor one) and the
   parts of the plugins it depends on, with its own, each with all its packages. `Play` links only
   the runtime ones.
-- Flags: those of the project library with `-build-mode:dll`. Optimized (`Size`, `Speed`,
-  `Aggressive`) it is a single LLVM module, as the shipped game compiles it; with `--dev`
-  (`minimal`) or `None`, one module per package.
+- Flags: those of the project library, with the same [modules](build.md#targets).
 - Currency: the fingerprint joins its sources, the declarations of the plugins it imports, the
   hashes `engine.stamp` stores for the engine packages those sources and declarations import, the
   compiler and the flags. An engine change that declares the same compiles no plugin, and a
