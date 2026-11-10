@@ -507,17 +507,14 @@ open :: proc(s:^Store,root:string,allocator:=context.allocator) -> string {
     if message=="" {message=schema(s)}
     if message=="" {message=refresh(s)}
     if message!="" {close(s);return message}
-    sqlite.busy_timeout(s.db,0)
+    sqlite.busy_timeout(s.db,BUSY_MS)
     return ""
 }
 
 // Waits for another editor so that the writes it kept reach the database.
 close :: proc(s:^Store) {
     if s.db!=nil {
-        if len(s.kept)>0 {
-            sqlite.busy_timeout(s.db,OPEN_BUSY_MS)
-            flush(s)
-        }
+        flush_waiting(s,OPEN_BUSY_MS)
         sqlite.close_v2(s.db);s.db=nil
     }
     if s.folder=="" {return}
@@ -659,9 +656,7 @@ db_write :: proc(s:^Store,what,sql:string,values:..Db_Value) -> string {
 db_insert :: proc(s:^Store,what,sql:string,values:..Db_Value) -> (id:i64,message:string) {
     if s.db==nil {return 0,fail(s,NOT_OPEN)}
     if !write_ready(s) {return 0,fail(s,BUSY)}
-    sqlite.busy_timeout(s.db,BUSY_MS)
     value,found,ok:=db_value(s,sql,..values)
-    sqlite.busy_timeout(s.db,0)
     if !ok && db_busy(s) {return 0,fail(s,BUSY)}
     if !ok || !found {return 0,db_fail(s,what)}
     return value,""

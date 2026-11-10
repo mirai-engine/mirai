@@ -1,7 +1,7 @@
 # AI chats and agents
 
-Code: `editor/ai*.odin`, `editor/acp/` and `tools/mirai/agent.odin`; the UI is in
-[AI panel](panels.md#ai-panel).
+Code: `editor/ai*.odin`, `editor/ai_store/`, `editor/acp/` and `tools/mirai/agent.odin`; the UI is
+in [AI panel](panels.md#ai-panel).
 
 - A project has **one continuous chat**, the main chat: the user only ever talks to it, there are
   no sessions to open or pick, and the word session does not appear in the UI. The main agent
@@ -414,10 +414,11 @@ and the turn folders stay files.
   instructions, and although it announces renaming, a user's Claude Code 2.1 does not implement it
   (`rename_session`) and the turn would fail.
 - **Search** (`editor/ai_store/search.odin`): a query is words, each a quoted phrase so that no
-  character is syntax (an asset path or a method is the phrase of its parts), all in the line, `OR` between
-  two taking either; ranked by BM25, with a prefix option for a box being typed in. Every line is
-  indexed, prompts, answers and notes. The search of the clock looks in the main chat, and
-  `ai.history.search` in all the conversations; the memory topics have their own table and rules.
+  character is syntax (an asset path or a method is the phrase of its parts), all in the line,
+  `OR` between two taking either; ranked by BM25, with a prefix option for a box being typed in.
+  Every line is indexed, prompts, answers and notes. The search of the clock looks in the main
+  chat, and `ai.history.search` in all the conversations; the memory topics have their own table
+  and rules.
 - Spend is what the adapter reports through ACP, without estimating it: tokens with the `usage` of
   the `session/prompt` response (unstable in ACP) and the context window and cost with
   `usage_update`. Codex reports no cost.

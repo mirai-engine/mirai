@@ -1,5 +1,6 @@
 package ai_store
 
+import "core:c"
 import "core:mem"
 import "mirai:third_party/sqlite"
 
@@ -8,7 +9,7 @@ import "mirai:third_party/sqlite"
 // keeps it, with a copy of what it binds, and flush runs what it kept in the
 // order it was written. What is read is what reached the database.
 
-BUSY_MS :: 4         // what a write whose result is needed waits for the lock: a gesture asks for it, not every frame
+BUSY_MS :: 4         // what a read, or a write whose result is needed, waits for the lock; a write that can be kept waits nothing
 OPEN_BUSY_MS :: 5000 // what opening and closing the store wait
 
 BUSY :: "The project chat database is busy with another editor: try again"
@@ -42,7 +43,9 @@ db_busy :: proc(s:^Store) -> bool {
 }
 
 @(private="file")
-write_run :: proc(s:^Store,w:^Write) -> Write_Result {
+write_run :: proc(s:^Store,w:^Write,wait_ms:c.int) -> Write_Result {
+    sqlite.busy_timeout(s.db,wait_ms)
+    defer sqlite.busy_timeout(s.db,BUSY_MS)
     transaction:=len(w.statements)>1
     if transaction && !db_exec(s,"BEGIN IMMEDIATE") {
         if db_busy(s) {return .Busy}
@@ -132,7 +135,7 @@ write_keep :: proc(s:^Store,w:^Write) -> string {
 write :: proc(s:^Store,w:^Write) -> string {
     if s.db==nil {return fail(s,NOT_OPEN)}
     if len(s.kept)==0 {
-        switch write_run(s,w) {
+        switch write_run(s,w,0) {
         case .Done:   return write_done(s,w)
         case .Failed: return string(s.error[:s.error_len])
         case .Busy:
@@ -144,9 +147,14 @@ write :: proc(s:^Store,w:^Write) -> string {
 // Runs what was kept, the oldest first, until the database is busy. A write
 // that fails stays kept and is reported: the next flush tries it again.
 flush :: proc(s:^Store) -> string {
+    return flush_waiting(s,0)
+}
+
+@(private)
+flush_waiting :: proc(s:^Store,wait_ms:c.int) -> string {
     for len(s.kept)>0 {
         w:=&s.kept[0]
-        switch write_run(s,w) {
+        switch write_run(s,w,wait_ms) {
         case .Busy:   return ""
         case .Failed: return string(s.error[:s.error_len])
         case .Done:

@@ -1,10 +1,10 @@
 ---
 name: mirai-editor
-description: The Mirai editor (package `editor`, with `editor/acp`) - session, Play, Simulate and
-  networked Play, undo (`edits_*`), viewport and tools (`tool_set`/`tool_on`), inspector, content
-  browser, prefabs, collaboration (`--share`, `--join`), AI chats and extensions. Use when changing
-  the editor, adding a tool or panel of a plugin, editing the scene from editor code or driving an
-  open editor.
+description: The Mirai editor (package `editor`, with `editor/acp`, `editor/ai_store` and
+  `editor/git`) - session, Play, Simulate and networked Play, undo (`edits_*`), viewport and tools
+  (`tool_set`/`tool_on`), inspector, content browser, prefabs, collaboration (`--share`,
+  `--join`), AI chats and extensions. Use when changing the editor, adding a tool or panel of a
+  plugin, editing the scene from editor code or driving an open editor.
 ---
 
 # Mirai editor
@@ -242,7 +242,9 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   `editor.action` `ai_chat` and `capture` with the UI in a session.
 - Chat database and its search: `mirai test editor/ai_store` (reopening, search ranked and kept up
   to date, a corrupt database left alone, each table, kinds and parents, a second store on the
-  same project); live, `ai.history.search` in a session for a word of the chat.
+  same project, writes kept while another editor holds the database); the frames of a streaming
+  answer with the database held, `ai_stream_does_not_wait_for_another_editor_and_loses_no_line`;
+  live, `ai.history.search` in a session for a word of the chat.
 - Single chat, in `editor/ai_subagents_test.odin` (`mirai test editor <names>`):
   `the_main_chat_is_restored_with_its_transcript_and_never_evicted`,
   `a_subagent_runs_in_its_own_conversation_and_keeps_the_view_of_the_user`,
