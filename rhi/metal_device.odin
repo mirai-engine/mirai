@@ -25,6 +25,7 @@ Mtl_Buffer :: struct {
 Mtl_Texture :: struct {
 	handle:    ^MTL.Texture,
 	mip_views: [MAX_TEXTURE_MIPS]^MTL.Texture, // single-level views when mip_levels > 1
+	encoded:   ^MTL.Texture, // a view with the other sRGB encoding of its format, made by the first copy into a texture of it (cmd_copy_texture)
 	desc:      Texture_Desc,
 	format:    MTL.PixelFormat,
 	swapchain: bool, // handle is the current drawable texture, not owned
@@ -595,6 +596,7 @@ device_destroy :: proc(d: ^Device) {
 	for &t, i in d.textures.items {
 		if !d.textures.alive[i] || t.swapchain {continue}
 		for v in t.mip_views {mtl_release(v)}
+		mtl_release(t.encoded)
 		mtl_release(t.handle)
 	}
 	for &b, i in d.buffers.items {
