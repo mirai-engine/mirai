@@ -18,8 +18,8 @@ import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
 
 Pose_Bake_Test_World :: struct {
-    entities:core.Entities,
-    ids:core.Table(core.Id),transforms:core.Table(core.Transform),parents:core.Table(core.Parent),worlds:core.Table(core.World_Transform),
+    using world:core.Test_World,
+    ids:core.Table(core.Id),transforms:core.Table(core.Transform),parents:core.Table(core.Parent),worlds:core.Table(core.World_Transform),disabled:core.Table(core.Disabled),
     names:core.Table(core.Name),targets:core.Table(anim.Animation_Target),animations:core.Table(anim.Animation),modifiers:core.Table(anim.Pose_Modifiers),
     meshes:core.Table(erender.Mesh_Renderer),morph_weights:core.Table(anim.Morph_Weights),sources:core.Table(anim.Pose_Source),
     attachments:core.Table(anim.Bone_Attachment),
@@ -27,9 +27,9 @@ Pose_Bake_Test_World :: struct {
     modifier_runtime:anim.Modifier_Runtime,modifier_requests:anim.Modifier_Requests,grounding:anim.Grounding_Runtime,morphs:anim.Morph_Playback,
     actions:anim.Action_Runtime,action_requests:anim.Action_Requests,motion_requests:anim.Motion_Requests,
     hierarchy:core.Hierarchy,propagation:core.Propagation,jumps:core.Jumps,
-    progress:core.Table(anim.Animation_Progress),time:core.Time,frame:core.Frame_Time,problems:core.Problems,
+    progress:core.Table(anim.Animation_Progress),time:core.Time,frame:core.Frame_Time,world_id:core.World_Id,
 }
-Pose_Bake_Test_Shared :: struct {skeletons:anim.Skeleton_Assets,poses:anim.Pose_Assets,blends:anim.Blend_Assets,graphs:anim.Graph_Assets,sources:anim.Source_Assets,skin:anim.Skin_Runtime,actions:anim.Actions_Assets}
+Pose_Bake_Test_Shared :: struct {skeletons:anim.Skeleton_Assets,poses:anim.Pose_Assets,blends:anim.Blend_Assets,graphs:anim.Graph_Assets,sources:anim.Source_Assets,skin:anim.Skin_Runtime,actions:anim.Actions_Assets,problems:core.By_World(core.Problems)}
 Pose_Bake_Test :: struct {authoring:Authoring_Test,world:Pose_Bake_Test_World,shared:Pose_Bake_Test_Shared,info:core.World_Info,rig:core.Entity}
 @(private)
 Pose_Bake_Failing_Copy :: struct {owner:runtime.Allocator,attempts,fail_at:int}
@@ -40,91 +40,40 @@ pose_bake_failing_copy_allocator :: proc(data:rawptr,mode:runtime.Allocator_Mode
     return state.owner.procedure(state.owner.data,mode,size,alignment,old_memory,old_size,loc)
 }
 
-@(private)
-pose_bake_test_settle :: proc(data,shared,editor:rawptr) {
-    world:=(^Pose_Bake_Test_World)(data)
-    core.table_settle(&world.ids,&world.entities);core.table_settle(&world.transforms,&world.entities);core.table_settle(&world.parents,&world.entities);core.table_settle(&world.worlds,&world.entities)
-    core.hierarchy_settle(&world.hierarchy,core.read(&world.parents),&world.entities)
-    core.table_settle(&world.names,&world.entities);core.table_settle(&world.targets,&world.entities);core.table_settle(&world.animations,&world.entities);core.table_settle(&world.modifiers,&world.entities)
-    core.table_settle(&world.meshes,&world.entities);core.table_settle(&world.morph_weights,&world.entities);core.table_settle(&world.sources,&world.entities)
-    core.table_settle(&world.attachments,&world.entities);core.table_settle(&world.progress,&world.entities)
-}
-
 // The functions animation_evaluate runs, bound as a generated world binds them.
 @(private)
 pose_bake_test_sample :: proc(data,shared,editor,app_data:rawptr) {
-    w,s:=(^Pose_Bake_Test_World)(data),(^Pose_Bake_Test_Shared)(shared)
-    anim.animation_sample(core.read(&w.animations),&w.progress,core.read(&w.modifiers),core.read(&w.attachments),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),core.read(&w.targets),core.read(&w.meshes),core.read(&w.sources),&w.requests,&w.events,&w.modifier_requests,&w.modifier_runtime,&w.playback,&s.poses,&s.skeletons,(^host.App)(app_data),w.time,w.frame,&w.problems,&s.blends,&s.graphs,&w.actions,&w.action_requests,&s.actions,nil,&w.motion_requests,nil,&s.sources,{},core.CLOCK_DEFAULT)
-    pose_bake_test_settle(data,shared,editor)
+    w,s,app:=(^Pose_Bake_Test_World)(data),(^Pose_Bake_Test_Shared)(shared),(^host.App)(app_data)
+    anim.animation_sample(core.read(&w.animations),&w.progress,core.read(&w.modifiers),core.read(&w.attachments),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),core.read(&w.targets),core.read(&w.meshes),core.read(&w.sources),&w.requests,&w.events,&w.modifier_requests,&w.modifier_runtime,&w.playback,&s.poses,&s.skeletons,app,w.time,w.frame,host.app_world_storage(app,data,core.Problems),&s.blends,&s.graphs,&w.actions,&w.action_requests,&s.actions,nil,&w.motion_requests,nil,&s.sources,{},core.CLOCK_DEFAULT)
+    core.settle(app.info,data,editor)
 }
 @(private)
 pose_bake_test_advance :: proc(data,shared,editor,app_data:rawptr) {
-    w,s:=(^Pose_Bake_Test_World)(data),(^Pose_Bake_Test_Shared)(shared)
-    anim.animation_advance(core.read(&w.modifiers),&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.modifier_requests,&w.modifier_runtime,&w.playback,&w.constraints,&w.grounding,{},{},w.time,&w.requests,core.ref(&s.skeletons),&w.problems,nil,nil,{},{},core.CLOCK_DEFAULT)
-    pose_bake_test_settle(data,shared,editor)
+    w,s,app:=(^Pose_Bake_Test_World)(data),(^Pose_Bake_Test_Shared)(shared),(^host.App)(app_data)
+    anim.animation_advance(core.read(&w.modifiers),&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.modifier_requests,&w.modifier_runtime,&w.playback,&w.constraints,&w.grounding,{},{},w.time,&w.requests,core.ref(&s.skeletons),host.app_world_storage(app,data,core.Problems),nil,nil,{},{},core.CLOCK_DEFAULT)
+    core.settle(app.info,data,editor)
 }
 @(private)
 pose_bake_test_morph :: proc(data,shared,editor,app_data:rawptr) {
-    w,s:=(^Pose_Bake_Test_World)(data),(^Pose_Bake_Test_Shared)(shared)
-    anim.animation_morph(core.read(&w.meshes),core.read(&w.morph_weights),core.read(&w.animations),core.read(&w.targets),core.read(&w.sources),core.read(&w.parents),core.ref(&w.playback),core.ref(&w.modifier_runtime),&s.skin,&w.morphs,nil,(^host.App)(app_data),w.time,&w.problems)
+    w,s,app:=(^Pose_Bake_Test_World)(data),(^Pose_Bake_Test_Shared)(shared),(^host.App)(app_data)
+    anim.animation_morph(core.read(&w.meshes),core.read(&w.morph_weights),core.read(&w.animations),core.read(&w.targets),core.read(&w.sources),core.read(&w.parents),core.ref(&w.playback),core.ref(&w.modifier_runtime),&s.skin,&w.morphs,nil,app,w.time,host.app_world_storage(app,data,core.Problems))
 }
 @(private)
 pose_bake_test_propagate :: proc(data,shared,editor,app_data:rawptr) {
     w:=(^Pose_Bake_Test_World)(data)
     core.transforms_propagate(core.read(&w.transforms),core.ref(&w.hierarchy),&w.worlds,&w.propagation,&w.jumps,w.frame)
-    pose_bake_test_settle(data,shared,editor)
-}
-
-@(private)
-pose_bake_test_world_free :: proc(data:rawptr) {
-    world:=(^Pose_Bake_Test_World)(data)
-    anim.playback_free(&world.playback);anim.constraints_free(&world.constraints);anim.modifier_runtime_free(&world.modifier_runtime);anim.grounding_free(&world.grounding);anim.morph_playback_free(&world.morphs);anim.actions_runtime_free(&world.actions)
-    core.value_free(world,type_info_of(Pose_Bake_Test_World))
+    core.settle((^host.App)(app_data).info,data,editor)
 }
 
 @(private)
 pose_bake_test_init :: proc(f:^Pose_Bake_Test,t:^testing.T,name:string) -> bool {
     if !authoring_test_init(&f.authoring,t,name) {return false}
-    core.entities_init(&f.world.entities)
-    tables:=make([]core.Table_Info,13,context.temp_allocator)
-    tables[12]={type=anim.Animation_Progress,info=type_info_of(anim.Animation_Progress),offset=offset_of(Pose_Bake_Test_World,progress)}
-    tables[0]={type=core.Id,info=type_info_of(core.Id),offset=offset_of(Pose_Bake_Test_World,ids)}
-    tables[1]={type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Pose_Bake_Test_World,transforms)}
-    tables[2]={type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Pose_Bake_Test_World,parents)}
-    tables[3]={type=core.World_Transform,info=type_info_of(core.World_Transform),offset=offset_of(Pose_Bake_Test_World,worlds)}
-    tables[4]={type=core.Name,info=type_info_of(core.Name),offset=offset_of(Pose_Bake_Test_World,names)}
-    tables[5]={type=anim.Animation_Target,info=type_info_of(anim.Animation_Target),offset=offset_of(Pose_Bake_Test_World,targets)}
-    tables[6]={type=anim.Animation,info=type_info_of(anim.Animation),offset=offset_of(Pose_Bake_Test_World,animations)}
-    tables[7]={type=anim.Pose_Modifiers,info=type_info_of(anim.Pose_Modifiers),offset=offset_of(Pose_Bake_Test_World,modifiers)}
-    tables[8]={type=erender.Mesh_Renderer,info=type_info_of(erender.Mesh_Renderer),offset=offset_of(Pose_Bake_Test_World,meshes)}
-    tables[9]={type=anim.Morph_Weights,info=type_info_of(anim.Morph_Weights),offset=offset_of(Pose_Bake_Test_World,morph_weights)}
-    tables[10]={type=anim.Pose_Source,info=type_info_of(anim.Pose_Source),offset=offset_of(Pose_Bake_Test_World,sources)}
-    tables[11]={type=anim.Bone_Attachment,info=type_info_of(anim.Bone_Attachment),offset=offset_of(Pose_Bake_Test_World,attachments)}
-    storages:=make([]core.Storage_Info,24,context.temp_allocator)
-    storages[23]={type=core.Problems,info=type_info_of(core.Problems),offset=offset_of(Pose_Bake_Test_World,problems)}
-    storages[21]={type=core.Frame_Time,info=type_info_of(core.Frame_Time),offset=offset_of(Pose_Bake_Test_World,frame)}
-    storages[20]={type=core.Time,info=type_info_of(core.Time),offset=offset_of(Pose_Bake_Test_World,time)}
-    storages[0]={type=anim.Playback,info=type_info_of(anim.Playback),offset=offset_of(Pose_Bake_Test_World,playback)}
-    storages[1]={type=anim.Animation_Requests,info=type_info_of(anim.Animation_Requests),offset=offset_of(Pose_Bake_Test_World,requests)}
-    storages[2]={type=anim.Animation_Events,info=type_info_of(anim.Animation_Events),offset=offset_of(Pose_Bake_Test_World,events)}
-    storages[3]={type=anim.Animation_Constraints,info=type_info_of(anim.Animation_Constraints),offset=offset_of(Pose_Bake_Test_World,constraints)}
-    storages[4]={type=anim.Modifier_Runtime,info=type_info_of(anim.Modifier_Runtime),offset=offset_of(Pose_Bake_Test_World,modifier_runtime)}
-    storages[5]={type=anim.Modifier_Requests,info=type_info_of(anim.Modifier_Requests),offset=offset_of(Pose_Bake_Test_World,modifier_requests)}
-    storages[6]={type=anim.Grounding_Runtime,info=type_info_of(anim.Grounding_Runtime),offset=offset_of(Pose_Bake_Test_World,grounding)}
-    storages[7]={type=anim.Morph_Playback,info=type_info_of(anim.Morph_Playback),offset=offset_of(Pose_Bake_Test_World,morphs)}
-    storages[8]={type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Pose_Bake_Test_World,hierarchy)}
-    storages[9]={type=core.Jumps,info=type_info_of(core.Jumps),offset=offset_of(Pose_Bake_Test_World,jumps)}
-    storages[10]={type=anim.Skeleton_Assets,info=type_info_of(anim.Skeleton_Assets),offset=offset_of(Pose_Bake_Test_Shared,skeletons),place=.Shared}
-    storages[11]={type=anim.Pose_Assets,info=type_info_of(anim.Pose_Assets),offset=offset_of(Pose_Bake_Test_Shared,poses),place=.Shared}
-    storages[12]={type=anim.Blend_Assets,info=type_info_of(anim.Blend_Assets),offset=offset_of(Pose_Bake_Test_Shared,blends),place=.Shared}
-    storages[13]={type=anim.Graph_Assets,info=type_info_of(anim.Graph_Assets),offset=offset_of(Pose_Bake_Test_Shared,graphs),place=.Shared}
-    storages[14]={type=anim.Source_Assets,info=type_info_of(anim.Source_Assets),offset=offset_of(Pose_Bake_Test_Shared,sources),place=.Shared}
-    storages[15]={type=anim.Skin_Runtime,info=type_info_of(anim.Skin_Runtime),offset=offset_of(Pose_Bake_Test_Shared,skin),place=.Shared}
-    storages[16]={type=anim.Action_Runtime,info=type_info_of(anim.Action_Runtime),offset=offset_of(Pose_Bake_Test_World,actions)}
-    storages[17]={type=anim.Action_Requests,info=type_info_of(anim.Action_Requests),offset=offset_of(Pose_Bake_Test_World,action_requests)}
-    storages[18]={type=anim.Actions_Assets,info=type_info_of(anim.Actions_Assets),offset=offset_of(Pose_Bake_Test_Shared,actions),place=.Shared}
-    storages[19]={type=anim.Motion_Requests,info=type_info_of(anim.Motion_Requests),offset=offset_of(Pose_Bake_Test_World,motion_requests)}
-    storages[22]={type=core.Propagation,info=type_info_of(core.Propagation),offset=offset_of(Pose_Bake_Test_World,propagation)}
+    described:bool
+    f.info,described=core.test_info(t,Pose_Bake_Test_World,Pose_Bake_Test_Shared,core.Test_None,anim.test_types)
+    if !described || !testing.expect(t,f.info.init[.Shared](&f.shared,context.allocator) && f.info.init[.World](&f.world,context.allocator)) {
+        pose_bake_test_destroy(f)
+        return false
+    }
     steps:=make([]core.Step_Info,4,context.temp_allocator)
     steps[0]={name="animation_sample",library="anim",call=pose_bake_test_sample}
     steps[1]={name="animation_advance",library="anim",call=pose_bake_test_advance}
@@ -132,12 +81,8 @@ pose_bake_test_init :: proc(f:^Pose_Bake_Test,t:^testing.T,name:string) -> bool 
     steps[3]={name="transforms_propagate",library="core",call=pose_bake_test_propagate}
     order:=make([]i32,4,context.temp_allocator)
     for &index,i in order {index=i32(i)}
-    f.info={tables=tables,storages=storages,steps=steps}
+    f.info.steps=steps
     f.info.order[.Editor][.Fixed]=order
-    f.info.sizes[.World],f.info.aligns[.World]=size_of(Pose_Bake_Test_World),align_of(Pose_Bake_Test_World)
-    f.info.init[.World]=proc(data:rawptr,allocator:runtime.Allocator) -> bool {world:=(^Pose_Bake_Test_World)(data);world^={};core.entities_init(&world.entities,allocator);return len(world.entities.generation)>0}
-    f.info.destroy[.World]=pose_bake_test_world_free
-    f.info.copy=proc(dst,src:rawptr) -> bool {return core.value_copy(dst,src,type_info_of(Pose_Bake_Test_World))}
     f.authoring.app.info,f.authoring.app.shared=&f.info,&f.shared
     f.authoring.session.info,f.authoring.session.edit_world=&f.info,&f.world
     f.rig=core.create(&f.world.entities);core.add(&f.world.ids,f.rig,{value=17});core.add(&f.world.transforms,f.rig,core.from_math(mm.TRANSFORM_IDENTITY))
@@ -148,17 +93,20 @@ pose_bake_test_init :: proc(f:^Pose_Bake_Test,t:^testing.T,name:string) -> bool 
         transform:=mm.TRANSFORM_IDENTITY;if i>1 {transform.position.y=.5}
         core.add(&f.world.transforms,entity,core.from_math(transform));core.add(&f.world.parents,entity,{entity=parent});parent=entity
     }
-    pose_bake_test_settle(&f.world,nil,nil)
+    core.settle(&f.info,&f.world,nil)
     authoring_test_register(&f.authoring,t,"bake",Pose_Bake_Params,authoring_pose_bake,pose_bake_defaults())
     return true
 }
 
 @(private)
 pose_bake_test_destroy :: proc(f:^Pose_Bake_Test) {
-    pose_bake_test_world_free(&f.world)
-    anim.skeleton_assets_free(&f.shared.skeletons);anim.pose_assets_free(&f.shared.poses);anim.blend_assets_free(&f.shared.blends);anim.graph_assets_free(&f.shared.graphs);anim.source_assets_free(&f.shared.sources);anim.skin_runtime_free(&f.shared.skin);anim.actions_assets_free(&f.shared.actions)
+    if f.info.destroy[.World]!=nil {
+        f.info.destroy[.World](&f.world)
+        f.info.destroy[.Shared](&f.shared)
+    }
     delete(f.authoring.app.worlds)
     authoring_test_destroy(&f.authoring)
+    core.test_info_destroy(&f.info)
 }
 
 @(test)
@@ -171,7 +119,7 @@ pose_bake_uses_preview_actions_and_keeps_marker_crossings_across_discontinuous_s
     definition:=anim.ACTION_DEFINITION_DEFAULT;base.text_set(definition.name[:],"reach");base.text_set(definition.clip[:],"Reach");definition.fade_in,definition.fade_out=0,0;definition.root_motion=.In_Place
     sections:=[2]anim.Action_Section{{start=0,end=.25,next=1},{start=1,end=1.5,next=-1}};base.text_set(sections[0].name[:],"prepare");base.text_set(sections[1].name[:],"contact")
     testing.expect_value(t,anim.action_profile_save(fmt.tprintf("%s/reach.action",a.root),&a.assets.types,action_id,{info={animation=source_id},actions={definition},sections=sections[:]}),asset.Error.None);testing.expect(t,host.assets_scan(&a.assets))
-    description:=anim.ANIMATION_DEFAULT;description.asset,description.actions=source_id,action_id;description.loop=false;base.text_set(description.clip[:],"Idle");core.add(&f.world.animations,f.rig,description);pose_bake_test_settle(&f.world,nil,nil)
+    description:=anim.ANIMATION_DEFAULT;description.asset,description.actions=source_id,action_id;description.loop=false;base.text_set(description.clip[:],"Idle");core.add(&f.world.animations,f.rig,description);core.settle(&f.info,&f.world,nil)
     result:=authoring_test_execute(a,"bake",`{"entity":"0000000000000011","path":"action.anim","clip":"Final","start":0,"end":0.4,"rate":2.5,"actions":[{"kind":"Fire","name":"reach","tick":0}]}`);if !testing.expect(t,result.code==0,result.message) {return}
     file:asset.Asset;testing.expect_value(t,authoring_test_load(a,"action.anim",&file),asset.Error.None);defer asset.asset_close(&file)
     view,error:=asset.animation_view(&file,&a.assets.types);if !testing.expect_value(t,error,asset.Error.None) {return}
@@ -204,7 +152,7 @@ pose_bake_samples_final_constraints_curves_markers_blended_root_and_exact_partia
     authoring_test_register(a,t,"graph",Graph_Write_Params,program_graph_set,program_graph_defaults())
     result:=authoring_test_execute(a,"graph",fmt.tprintf(`{{"path":"blend.agraph","animation":"%s","output":"mix","nodes":[{{"name":"walk","kind":"Clip","clip":"walk"}},{{"name":"run","kind":"Clip","clip":"run","animation":"%s"}},{{"name":"mix","kind":"Blend","left":"walk","right":"run","weight":0.5}}]}}`,authoring_test_id_text(source_id),authoring_test_id_text(other_id)))
     if !testing.expect(t,result.code==0,result.message) {return}
-    animation:=anim.ANIMATION_DEFAULT;animation.asset=authoring_test_id(a,"blend.agraph");animation.root_motion=.In_Place;core.add(&f.world.animations,f.rig,animation);core.add(&f.world.modifiers,f.rig,{profile=pose_id,weight=1,enabled=true});pose_bake_test_settle(&f.world,nil,nil)
+    animation:=anim.ANIMATION_DEFAULT;animation.asset=authoring_test_id(a,"blend.agraph");animation.root_motion=.In_Place;core.add(&f.world.animations,f.rig,animation);core.add(&f.world.modifiers,f.rig,{profile=pose_id,weight=1,enabled=true});core.settle(&f.info,&f.world,nil)
     before:=f.world.transforms.values[1]
     result=authoring_test_execute(a,"bake",`{"entity":"0000000000000011","path":"final.anim","clip":"Baked","start":0.2,"end":0.57,"rate":10,"goals":[{"kind":"IK","name":"joint4","target":{"position":[1,1,0]}}]}`)
     if !testing.expect(t,result.code==0,result.message) {return}
@@ -253,15 +201,22 @@ pose_bake_preserves_other_clips_and_undoes_without_publishing_on_failure :: proc
     f:=new(Pose_Bake_Test);defer free(f);if !pose_bake_test_init(f,t,"pose-bake-publication") {return};defer pose_bake_test_destroy(f)
     a:=&f.authoring;source_id:=base.Asset_Id{502,1}
     testing.expect_value(t,asset.animation_save(fmt.tprintf("%s/source.anim",a.root),&a.assets.types,{id=source_id,clips={{name="Still"}}}),asset.Error.None);testing.expect(t,host.assets_scan(&a.assets))
-    animation:=anim.ANIMATION_DEFAULT;animation.asset=source_id;core.add(&f.world.animations,f.rig,animation);pose_bake_test_settle(&f.world,nil,nil)
+    animation:=anim.ANIMATION_DEFAULT;animation.asset=source_id;core.add(&f.world.animations,f.rig,animation);core.settle(&f.info,&f.world,nil)
     result:=authoring_test_execute(a,"bake",`{"entity":"0000000000000011","path":"final.anim","clip":"Still","start":0,"end":0.1,"rate":10}`);if !testing.expect(t,result.code==0,result.message) {return}
     output_id:=authoring_test_id(a,"final.anim");revision:=authoring_test_revision(a,"final.anim")
     result=authoring_test_execute(a,"bake",`{"entity":"0000000000000011","path":"final.anim","clip":"Other","start":0,"end":0.1,"rate":10}`);if !testing.expect(t,result.code==0,result.message) {return}
     file:asset.Asset;testing.expect_value(t,authoring_test_load(a,"final.anim",&file),asset.Error.None)
     view,error:=asset.animation_view(&file,&a.assets.types);testing.expect(t,error==.None && len(view.clips)==2 && len(view.tracks)==30);asset.asset_close(&file)
-    failure:=Pose_Bake_Failing_Copy{owner=a.app.allocator,fail_at=3};saved:=a.app.allocator;a.app.allocator={pose_bake_failing_copy_allocator,&failure}
+    failure:=Pose_Bake_Failing_Copy{owner=a.app.allocator};saved:=a.app.allocator;a.app.allocator={pose_bake_failing_copy_allocator,&failure}
+    // Fails the first allocation of the copy: the one after those of making the World it goes to.
+    {
+        context.allocator=a.app.allocator
+        made:=host.app_world_create(&a.app);making:=failure.attempts
+        host.app_world_free(&a.app,made)
+        failure.fail_at=failure.attempts+making+1
+    }
     result=authoring_test_execute(a,"bake",`{"entity":"0000000000000011","path":"oom.anim","clip":"Still","start":0,"end":0.1,"rate":10}`)
-    a.app.allocator=saved;testing.expect(t,result.code!=0 && failure.attempts==3 && strings.contains(result.message,"copied") && !authoring_test_exists(a,"oom.anim"))
+    a.app.allocator=saved;testing.expect(t,result.code!=0 && failure.attempts==failure.fail_at && strings.contains(result.message,"copied") && !authoring_test_exists(a,"oom.anim"))
     testing.expect_value(t,authoring_test_execute(a,"bake",`{"entity":"0000000000000011","path":"bad.anim","clip":"Still","start":0.2,"end":0.1}`).code,api.INVALID_PARAMS)
     testing.expect(t,!authoring_test_exists(a,"bad.anim"))
 }
@@ -279,12 +234,12 @@ pose_bake_creates_editable_tracks_from_an_unanimated_skeleton_and_exports_final_
     follow:=anim.FOLLOW_CONSTRAINT_DEFAULT;follow.bone=anim.bone_ref("joint2");follow.target=anim.spatial_point({.3,1,0});base.text_set(follow.name[:],"hand")
     corrective:=anim.POSE_CORRECTIVE_DEFAULT;corrective.driver=anim.bone_ref("joint1");corrective.apply_pose=false;corrective.sample_count=1;corrective.samples[0]=anim.POSE_CORRECTIVE_SAMPLE_DEFAULT;corrective.samples[0].curve_value=.3;base.text_set(corrective.curve[:],"Smile");base.text_set(corrective.name[:],"face")
     testing.expect_value(t,anim.pose_profile_save(fmt.tprintf("%s/procedural.pose",a.root),&a.assets.types,profile_id,{follow={follow},correctives={corrective}}),asset.Error.None);testing.expect(t,host.assets_scan(&a.assets))
-    core.add(&f.world.meshes,f.rig,{mesh=mesh_id});core.add(&f.world.modifiers,f.rig,{profile=profile_id,weight=1,enabled=true});pose_bake_test_settle(&f.world,nil,nil)
+    core.add(&f.world.meshes,f.rig,{mesh=mesh_id});core.add(&f.world.modifiers,f.rig,{profile=profile_id,weight=1,enabled=true});core.settle(&f.info,&f.world,nil)
     testing.expect(t,core.count(&f.world.animations)==0 && core.count(&f.world.sources)==0 && len(f.world.playback.states)==0)
     expected:=[4]f32{.2,.7,.8,.6};paths:=[4]string{"zero.anim","default.anim","override.anim","additive.anim"}
     modes:=[4]anim.Morph_Weight_Mode{.Default,.Default,.Override,.Additive};values:=[4]f32{0,.4,.8,.1}
     for pass in 0..<4 {
-        if pass>0 {weights:=anim.Morph_Weights{source=f.rig};anim.morph_weight_set(&weights,"Smile",values[pass],modes[pass]);core.add(&f.world.morph_weights,f.rig,weights);pose_bake_test_settle(&f.world,nil,nil)}
+        if pass>0 {weights:=anim.Morph_Weights{source=f.rig};anim.morph_weight_set(&weights,"Smile",values[pass],modes[pass]);core.add(&f.world.morph_weights,f.rig,weights);core.settle(&f.info,&f.world,nil)}
         path:=paths[pass]
         result:=authoring_test_execute(a,"bake",fmt.tprintf(`{{"entity":"0000000000000011","path":"%s","clip":"Pose","start":0,"end":0.1,"rate":10}}`,path));if !testing.expect(t,result.code==0,result.message) {return}
         file:asset.Asset;testing.expect_value(t,authoring_test_load(a,path,&file),asset.Error.None)

@@ -21,9 +21,8 @@ Authoring_Test_Entry :: struct {session:^editor.Session,run:editor.Api_Handler}
 
 @(private)
 authoring_test_init :: proc(f:^Authoring_Test,t:^testing.T,name:string) -> bool {
-    temp,_:=os.temp_directory(context.temp_allocator)
-    f.root=fmt.tprintf("%s/mirai-authoring-%d-%s",temp,os.get_pid(),name)
-    os.remove_all(f.root);os.make_directory_all(f.root)
+    f.root=base.test_folder(t,fmt.tprintf("authoring-%s",name))
+    if f.root=="" {return false}
     // As the editor names its files, so that edits stay in the memory of the registry.
     f.root=project.path_absolute(f.root,context.temp_allocator)
     if !testing.expect(t,host.assets_init(&f.assets,{root=f.root,capacity=8,error_capacity=8})) {return false}
@@ -37,7 +36,7 @@ authoring_test_init :: proc(f:^Authoring_Test,t:^testing.T,name:string) -> bool 
 @(private)
 authoring_test_destroy :: proc(f:^Authoring_Test) {
     host.app_content_destroy(&f.app)
-    serial.writer_destroy(&f.out);api.server_destroy(&f.server);host.assets_destroy(&f.assets);os.remove_all(f.root)
+    serial.writer_destroy(&f.out);api.server_destroy(&f.server);host.assets_destroy(&f.assets)
 }
 
 @(private)
