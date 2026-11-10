@@ -11,11 +11,10 @@ import "mirai:project"
 import "mirai:third_party/sqlite"
 
 // The chats of a project live in one SQLite database, .mirai/ai/chat.db, in
-// WAL mode so that several editors of the project can share it: a write waits
-// for another one instead of failing. The review of a conversation stays in
-// .mirai/ai/chats/<id>.review.json.
+// WAL mode so that several editors of the project can share it: a write that
+// finds another one under way is kept and runs later (queue.odin). The review
+// of a conversation stays in .mirai/ai/chats/<id>.review.json.
 VERSION :: 1 // PRAGMA user_version of the database
-BUSY_MS :: 5000 // what a write waits for another editor of the project
 
 @(private="file")
 SCHEMA :: `CREATE TABLE conversations(
@@ -152,6 +151,8 @@ Store :: struct {
     db:^sqlite.Db,
     conversations:[dynamic]Conversation, // by updated_at and id, the latest first
     data_version:i64, // of the database when conversations was read
+    kept:[dynamic]Kept_Write, // writes the database was busy for, the oldest first
+    landed:u64, // kept writes that reached the database: what shows their rows reads again when it moves
     allocator:runtime.Allocator,
     error:[512]u8,
     error_len:int,
@@ -301,7 +302,7 @@ db_fail :: proc(s:^Store,what:string) -> string {
 @(private)
 Db_Value :: union {i64,f64,string}
 
-@(private="file")
+@(private)
 db_bind :: proc(statement:^sqlite.Stmt,values:..Db_Value) -> bool {
     for value,index in values {
         code:c.int
@@ -324,7 +325,7 @@ db_prepare :: proc(s:^Store,sql:string,values:..Db_Value) -> (statement:^sqlite.
     return statement,true
 }
 
-@(private="file")
+@(private)
 db_finish :: proc(statement:^sqlite.Stmt) -> bool {
     for {
         switch sqlite.step(statement) {
@@ -333,22 +334,6 @@ db_finish :: proc(statement:^sqlite.Stmt) -> bool {
         case:             return false
         }
     }
-}
-
-// Runs a statement that returns no rows, or whose rows are not read.
-@(private)
-db_run :: proc(s:^Store,sql:string,values:..Db_Value) -> bool {
-    statement,ok:=db_prepare(s,sql,..values)
-    if !ok {return false}
-    defer sqlite.finalize(statement)
-    return db_finish(statement)
-}
-
-// Runs again a statement prepared before, with other values.
-@(private="file")
-db_again :: proc(statement:^sqlite.Stmt,values:..Db_Value) -> bool {
-    sqlite.reset(statement)
-    return db_bind(statement,..values) && db_finish(statement)
 }
 
 // The integer of the first row of a statement, if it gives one.
@@ -378,7 +363,7 @@ db_clone :: proc(statement:^sqlite.Stmt,column:c.int,allocator:runtime.Allocator
     return strings.clone(db_text(statement,column),allocator)
 }
 
-@(private="file")
+@(private)
 db_exec :: proc(s:^Store,sql:cstring) -> bool {
     return sqlite.exec(s.db,sql,nil,nil,nil)==sqlite.OK
 }
@@ -417,7 +402,7 @@ before :: proc(a,b:Conversation) -> bool {
 }
 
 // Puts c in its place of the order, replacing the conversation with its id.
-@(private="file")
+@(private)
 place :: proc(s:^Store,c:^Conversation) -> bool {
     for &existing,index in s.conversations {
         if existing.id==c.id {ordered_remove(&s.conversations,index);break}
@@ -429,11 +414,17 @@ place :: proc(s:^Store,c:^Conversation) -> bool {
 }
 
 @(private="file")
-row_write :: proc(s:^Store,c:^Conversation) -> bool {
-    return db_run(s,CONVERSATION_UPSERT,i64(c.id),i64(c.kind),i64(c.parent),string(c.title[:c.title_len]),string(c.document[:c.document_len]),
-        string(c.provider[:c.provider_len]),string(c.model[:c.model_len]),string(c.effort[:c.effort_len]),string(c.native_session[:c.native_session_len]),
-        string(c.last[:c.last_len]),c.created_at,c.updated_at,f64(c.seconds),c.usage.input,c.usage.output,c.usage.cache_read,c.usage.cache_write,
-        c.usage.total,c.usage.context_used,c.usage.context_size,c.usage.cost)
+ROW_VALUES :: 21
+
+@(private="file")
+row_values :: proc(c:^Conversation,out:[]Db_Value) {
+    out[0],out[1],out[2]=i64(c.id),i64(c.kind),i64(c.parent)
+    out[3],out[4]=string(c.title[:c.title_len]),string(c.document[:c.document_len])
+    out[5],out[6],out[7]=string(c.provider[:c.provider_len]),string(c.model[:c.model_len]),string(c.effort[:c.effort_len])
+    out[8],out[9]=string(c.native_session[:c.native_session_len]),string(c.last[:c.last_len])
+    out[10],out[11],out[12]=c.created_at,c.updated_at,f64(c.seconds)
+    out[13],out[14],out[15],out[16]=c.usage.input,c.usage.output,c.usage.cache_read,c.usage.cache_write
+    out[17],out[18],out[19],out[20]=c.usage.total,c.usage.context_used,c.usage.context_size,c.usage.cost
 }
 
 @(private="file")
@@ -503,10 +494,11 @@ open :: proc(s:^Store,root:string,allocator:=context.allocator) -> string {
         sqlite.close_v2(s.db);s.db=nil
         return message
     }
-    sqlite.busy_timeout(s.db,BUSY_MS)
+    sqlite.busy_timeout(s.db,OPEN_BUSY_MS)
     s.allocator=allocator
     s.folder=strings.clone(folder,allocator)
     s.conversations=make([dynamic]Conversation,allocator)
+    s.kept=make([dynamic]Kept_Write,allocator)
     s.data_version=-1
     message:=""
     if !db_exec(s,"PRAGMA journal_mode=WAL") || !db_exec(s,"PRAGMA synchronous=NORMAL") {
@@ -514,25 +506,34 @@ open :: proc(s:^Store,root:string,allocator:=context.allocator) -> string {
     }
     if message=="" {message=schema(s)}
     if message=="" {message=refresh(s)}
-    if message!="" {close(s)}
-    return message
+    if message!="" {close(s);return message}
+    sqlite.busy_timeout(s.db,0)
+    return ""
 }
 
+// Waits for another editor so that the writes it kept reach the database.
 close :: proc(s:^Store) {
-    if s.db!=nil {sqlite.close_v2(s.db);s.db=nil}
+    if s.db!=nil {
+        if len(s.kept)>0 {
+            sqlite.busy_timeout(s.db,OPEN_BUSY_MS)
+            flush(s)
+        }
+        sqlite.close_v2(s.db);s.db=nil
+    }
     if s.folder=="" {return}
+    for &kept in s.kept {delete(kept.block,s.allocator)}
+    delete(s.kept)
     delete(s.folder,s.allocator)
     delete(s.conversations)
-    s.folder,s.conversations={},{}
+    s.folder,s.conversations,s.kept={},{},{}
 }
 
 // Reserves the next identifier by inserting its row, which no list shows until
 // it is saved, so that another editor of the same project does not take it.
 next_id :: proc(s:^Store) -> (id:u64,message:string) {
-    if s.db==nil {return 0,fail(s,NOT_OPEN)}
-    value,found,ok:=db_value(s,"INSERT INTO conversations(id,kind,reserved) SELECT coalesce(max(id),0)+1,?1,1 FROM conversations RETURNING id",
+    value,failed:=db_insert(s,"Could not reserve a chat identifier","INSERT INTO conversations(id,kind,reserved) SELECT coalesce(max(id),0)+1,?1,1 FROM conversations RETURNING id",
         i64(Conversation_Kind.Archived))
-    if !ok || !found {return 0,db_fail(s,"Could not reserve a chat identifier")}
+    if failed!="" {return 0,failed}
     if value<=0 || value>=max(i64) {return 0,fail(s,"Chat identifiers are exhausted")}
     return u64(value),""
 }
@@ -542,27 +543,26 @@ next_id :: proc(s:^Store) -> (id:u64,message:string) {
 save :: proc(s:^Store,c:^Conversation,lines:[]Line) -> string {
     if s.db==nil {return fail(s,NOT_OPEN)}
     if c.id==0 || c.id>=u64(max(i64)) {return fail(s,"Invalid chat identifier")}
-    if !db_exec(s,"BEGIN IMMEDIATE") {return db_fail(s,"Could not save the project chat")}
-    upsert,done:=db_prepare(s,MESSAGE_UPSERT)
-    if done {
-        for line in lines {
-            role:=line.kind==.Prompt?"user":line.kind==.Output?"assistant":"system"
-            if !db_again(upsert,i64(c.id),i64(line.sequence),i64(line.kind),line.text,role) {done=false;break}
-        }
-        sqlite.finalize(upsert)
+    LINE_VALUES :: 5
+    statements:=make([]Statement,len(lines)+1,context.temp_allocator)
+    values:=make([]Db_Value,len(lines)*LINE_VALUES+ROW_VALUES,context.temp_allocator)
+    if statements==nil || values==nil {return fail(s,"No memory to save the project chat")}
+    for line,index in lines {
+        bound:=values[index*LINE_VALUES:][:LINE_VALUES]
+        bound[0],bound[1],bound[2],bound[3]=i64(c.id),i64(line.sequence),i64(line.kind),line.text
+        bound[4]=line.kind==.Prompt?"user":line.kind==.Output?"assistant":"system"
+        statements[index]={MESSAGE_UPSERT,bound}
     }
-    if !done || !row_write(s,c) || !db_exec(s,"COMMIT") {return db_abort(s,"Could not save the project chat")}
-    if !place(s,c) {return fail(s,"No memory for the project chats")}
-    return ""
+    row:=values[len(lines)*LINE_VALUES:]
+    row_values(c,row)
+    statements[len(lines)]={CONVERSATION_UPSERT,row}
+    w:=Write{what="Could not save the project chat",statements=statements,conversation=c}
+    return write(s,&w)
 }
 
 // Sets role, event type, tool and context of a message saved before.
 annotate :: proc(s:^Store,id,sequence:u64,role,event_type,tool,context_json:string) -> string {
-    if s.db==nil {return fail(s,NOT_OPEN)}
-    if !db_run(s,"UPDATE messages SET role=?1,event_type=?2,tool=?3,context_json=?4 WHERE conversation=?5 AND sequence=?6",role,event_type,tool,context_json,i64(id),i64(sequence)) {
-        return db_fail(s,"Could not save the project chat")
-    }
-    return ""
+    return db_write(s,"Could not save the project chat","UPDATE messages SET role=?1,event_type=?2,tool=?3,context_json=?4 WHERE conversation=?5 AND sequence=?6",role,event_type,tool,context_json,i64(id),i64(sequence))
 }
 
 // The conversations whose titles have needle, or that found names. Without
@@ -645,18 +645,24 @@ latest_user_message :: proc(s:^Store,id:u64) -> i64 {
     return value if ok && found else -1
 }
 
+// what and sql are constants of the package.
 @(private="file")
 db_write :: proc(s:^Store,what,sql:string,values:..Db_Value) -> string {
-    if s.db==nil {return fail(s,NOT_OPEN)}
-    if !db_run(s,sql,..values) {return db_fail(s,what)}
-    return ""
+    statements:=[1]Statement{{sql,values}}
+    w:=Write{what=what,statements=statements[:]}
+    return write(s,&w)
 }
 
-// Inserts a row and gives its id.
+// Inserts a row and gives its id, which is needed now: with the database
+// busy it fails instead of waiting or being kept.
 @(private="file")
 db_insert :: proc(s:^Store,what,sql:string,values:..Db_Value) -> (id:i64,message:string) {
     if s.db==nil {return 0,fail(s,NOT_OPEN)}
+    if !write_ready(s) {return 0,fail(s,BUSY)}
+    sqlite.busy_timeout(s.db,BUSY_MS)
     value,found,ok:=db_value(s,sql,..values)
+    sqlite.busy_timeout(s.db,0)
+    if !ok && db_busy(s) {return 0,fail(s,BUSY)}
     if !ok || !found {return 0,db_fail(s,what)}
     return value,""
 }
@@ -708,8 +714,8 @@ note_set :: proc(s:^Store,conversation:u64,text:string) -> string {
     return db_write(s,"Could not save the chat notes","INSERT INTO notes(conversation,text,updated_at) VALUES(?1,?2,?3) ON CONFLICT(conversation) DO UPDATE SET text=excluded.text,updated_at=excluded.updated_at",i64(conversation),text,now())
 }
 
-pin_add :: proc(s:^Store,kind,ref,label:string) -> (id:i64,message:string) {
-    return db_insert(s,"Could not save the pin","INSERT INTO pins(kind,ref,label,created_at) VALUES(?1,?2,?3,?4) RETURNING id",kind,ref,label,now())
+pin_add :: proc(s:^Store,kind,ref,label:string) -> string {
+    return db_write(s,"Could not save the pin","INSERT INTO pins(kind,ref,label,created_at) VALUES(?1,?2,?3,?4)",kind,ref,label,now())
 }
 
 pins :: proc(s:^Store,allocator:=context.temp_allocator) -> (pins:[]Pin,message:string) {
@@ -756,40 +762,48 @@ annotation_remove :: proc(s:^Store,id:i64) -> string {
     return db_write(s,"Could not remove the annotation","DELETE FROM annotations WHERE id=?1",id)
 }
 
-annotation_set_text :: proc(s:^Store,id:i64,text:string) -> string {
+@(private="file")
+annotation_known :: proc(s:^Store,id:i64) -> string {
     if s.db==nil {return fail(s,NOT_OPEN)}
-    _,found,ok:=db_value(s,"UPDATE annotations SET text=?1 WHERE id=?2 RETURNING id",text,id)
-    if !ok {return db_fail(s,"Could not save the annotation")}
+    _,found,ok:=db_value(s,"SELECT id FROM annotations WHERE id=?1",id)
+    if !ok {return db_fail(s,"Could not read the annotations")}
     if !found {return fail(s,fmt.tprintf("There is no annotation %d: list the annotations of the document",id))}
     return ""
+}
+
+annotation_set_text :: proc(s:^Store,id:i64,text:string) -> string {
+    if message:=annotation_known(s,id);message!="" {return message}
+    return db_write(s,"Could not save the annotation","UPDATE annotations SET text=?1 WHERE id=?2",text,id)
 }
 
 annotation_set_group :: proc(s:^Store,id:i64,group_name:string) -> string {
-    if s.db==nil {return fail(s,NOT_OPEN)}
-    _,found,ok:=db_value(s,"UPDATE annotations SET group_name=?1 WHERE id=?2 RETURNING id",group_name,id)
-    if !ok {return db_fail(s,"Could not save the annotation")}
-    if !found {return fail(s,fmt.tprintf("There is no annotation %d: list the annotations of the document",id))}
-    return ""
+    if message:=annotation_known(s,id);message!="" {return message}
+    return db_write(s,"Could not save the annotation","UPDATE annotations SET group_name=?1 WHERE id=?2",group_name,id)
 }
 
+@(private="file")
+PROVENANCE_UPSERT :: "INSERT INTO provenance(ref_kind,ref,conversation,sequence,at) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(ref_kind,ref) DO UPDATE SET conversation=excluded.conversation,sequence=excluded.sequence,at=excluded.at"
+
 provenance_set :: proc(s:^Store,ref_kind,ref:string,conversation,sequence:u64) -> string {
-    return db_write(s,"Could not save who changed it","INSERT INTO provenance(ref_kind,ref,conversation,sequence,at) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(ref_kind,ref) DO UPDATE SET conversation=excluded.conversation,sequence=excluded.sequence,at=excluded.at",
-        ref_kind,ref,i64(conversation),i64(sequence),now())
+    return db_write(s,"Could not save who changed it",PROVENANCE_UPSERT,ref_kind,ref,i64(conversation),i64(sequence),now())
 }
 
 // All a transaction of a turn changed, in one write.
 provenance_record :: proc(s:^Store,refs:[]Provenance_Ref,conversation,sequence:u64) -> string {
     if s.db==nil {return fail(s,NOT_OPEN)}
     if len(refs)==0 {return ""}
-    if !db_exec(s,"BEGIN IMMEDIATE") {return db_fail(s,"Could not save who changed it")}
-    for ref in refs {
-        if message:=provenance_set(s,ref.kind,ref.ref,conversation,sequence);message!="" {
-            db_exec(s,"ROLLBACK")
-            return message
-        }
+    REF_VALUES :: 5
+    statements:=make([]Statement,len(refs),context.temp_allocator)
+    values:=make([]Db_Value,len(refs)*REF_VALUES,context.temp_allocator)
+    if statements==nil || values==nil {return fail(s,"No memory to save who changed it")}
+    at:=now()
+    for ref,index in refs {
+        bound:=values[index*REF_VALUES:][:REF_VALUES]
+        bound[0],bound[1],bound[2],bound[3],bound[4]=ref.kind,ref.ref,i64(conversation),i64(sequence),at
+        statements[index]={PROVENANCE_UPSERT,bound}
     }
-    if !db_exec(s,"COMMIT") {return db_abort(s,"Could not save who changed it")}
-    return ""
+    w:=Write{what="Could not save who changed it",statements=statements}
+    return write(s,&w)
 }
 
 provenance_get :: proc(s:^Store,ref_kind,ref:string) -> (provenance:Provenance,found:bool,message:string) {

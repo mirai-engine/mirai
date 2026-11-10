@@ -69,7 +69,7 @@ ai_pin_toggle :: proc(s:^Session,kind,ref,label:string) {
     } else {
         if m.pin_count>=AI_PINS {notify(s,fmt.tprintf("At most %d references can be pinned",AI_PINS));return}
         if len(ref)>=AI_PATH_BYTES {notify(s,"The path of this reference is too long to pin it");return}
-        if _,message:=ai_store.pin_add(&m.store,kind,ref,label);message!="" {notify(s,message);return}
+        if message:=ai_store.pin_add(&m.store,kind,ref,label);message!="" {notify(s,message);return}
     }
     m.pins_loaded=false
 }

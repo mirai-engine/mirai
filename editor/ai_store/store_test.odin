@@ -4,7 +4,9 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "core:time"
 import "mirai:project"
+import "mirai:third_party/sqlite"
 
 @(private="file")
 test_root :: proc(name:string) -> string {
@@ -297,11 +299,10 @@ keeps_each_new_table :: proc(t:^testing.T) {
     note,message=note_get(&store,1)
     testing.expect(t,message=="" && note=="second")
 
-    pin,pin_message:=pin_add(&store,"asset","materials/floor.mat","Floor")
-    testing.expect_value(t,pin_message,"")
+    testing.expect_value(t,pin_add(&store,"asset","materials/floor.mat","Floor"),"")
     pinned,pins_message:=pins(&store)
-    testing.expect(t,pins_message=="" && len(pinned)==1 && pinned[0].id==pin && pinned[0].ref=="materials/floor.mat" && pinned[0].label=="Floor")
-    testing.expect_value(t,pin_remove(&store,pin),"")
+    testing.expect(t,pins_message=="" && len(pinned)==1 && pinned[0].ref=="materials/floor.mat" && pinned[0].label=="Floor")
+    if len(pinned)==1 {testing.expect_value(t,pin_remove(&store,pinned[0].id),"")}
     pinned,pins_message=pins(&store)
     testing.expect(t,pins_message=="" && len(pinned)==0)
 
@@ -421,4 +422,68 @@ shares_the_project_with_another_open_store :: proc(t:^testing.T) {
     lines:[4]Stored_Line
     line_count,page_message:=page(&first,id,-1,lines[:])
     testing.expect(t,page_message=="" && line_count==1 && lines[0].event_type=="user_message","and the first reads what the other wrote")
+}
+
+@(test)
+a_write_does_not_wait_for_another_editor_and_lands_in_order :: proc(t:^testing.T) {
+    root:=test_root("busy")
+    testing.expect(t,!os.exists(root))
+    if os.exists(root) {return}
+    defer os.remove_all(root)
+    store:Store
+    defer close(&store)
+    testing.expect_value(t,open(&store,root),"")
+    // Another editor of the project, in a write that does not end.
+    other:^sqlite.Db
+    path:=strings.clone_to_cstring(project.path(root,".mirai/ai/chat.db",allocator=context.temp_allocator),context.temp_allocator)
+    testing.expect(t,sqlite.open_v2(path,&other,sqlite.OPEN_READWRITE|sqlite.OPEN_NOMUTEX,nil)==sqlite.OK)
+    defer sqlite.close_v2(other)
+    testing.expect(t,sqlite.exec(other,"BEGIN IMMEDIATE",nil,nil,nil)==sqlite.OK)
+
+    c:=test_conversation(1,"scene/main.scene")
+    text:=strings.clone("Raise the lighthouse",context.temp_allocator)
+    transcript:=make([dynamic]Line,context.temp_allocator)
+    test_add(&transcript,text,.Prompt)
+    started:=time.tick_now()
+    _,reserved:=next_id(&store)
+    testing.expect_value(t,reserved,BUSY)
+    testing.expect_value(t,save(&store,&c,transcript[:]),"")
+    testing.expect_value(t,annotate(&store,1,0,"user","user_message","","{}"),"")
+    testing.expect_value(t,note_set(&store,1,"first"),"")
+    testing.expect_value(t,note_set(&store,1,"second"),"")
+    _,reserved=next_id(&store)
+    testing.expect_value(t,reserved,BUSY)
+    testing.expect_value(t,flush(&store),"")
+    testing.expect(t,time.tick_since(started)<OPEN_BUSY_MS*time.Millisecond/2,"no write waited for the other editor")
+    testing.expect_value(t,pending(&store),4)
+    // A kept write holds its own copy of what it binds.
+    for &b in transmute([]u8)text {b='x'}
+    conversation_set_text(c.title[:],&c.title_len,"Renamed later")
+
+    listed:[4]Conversation
+    count,_:=list(&store,listed[:])
+    testing.expect(t,count==0 && find(&store,1)==nil,"what is read is what reached the database")
+
+    testing.expect(t,sqlite.exec(other,"COMMIT",nil,nil,nil)==sqlite.OK)
+    testing.expect_value(t,flush(&store),"")
+    testing.expect_value(t,pending(&store),0)
+    testing.expect_value(t,store.landed,u64(4))
+    count,_=list(&store,listed[:])
+    testing.expect(t,count==1 && string(listed[0].title[:listed[0].title_len])=="Player questions")
+    lines:[4]Stored_Line
+    line_count,_:=page(&store,1,-1,lines[:])
+    testing.expect(t,line_count==1 && lines[0].text=="Raise the lighthouse")
+    testing.expect(t,line_count==1 && lines[0].event_type=="user_message","the annotation ran after the save of its line")
+    note,_:=note_get(&store,1)
+    testing.expect_value(t,note,"second")
+
+    // Closing waits for the other editor, so that what was kept is not lost.
+    testing.expect(t,sqlite.exec(other,"BEGIN IMMEDIATE",nil,nil,nil)==sqlite.OK)
+    testing.expect_value(t,note_set(&store,1,"third"),"")
+    testing.expect_value(t,pending(&store),1)
+    testing.expect(t,sqlite.exec(other,"COMMIT",nil,nil,nil)==sqlite.OK)
+    close(&store)
+    testing.expect_value(t,open(&store,root),"")
+    note,_=note_get(&store,1)
+    testing.expect_value(t,note,"third")
 }

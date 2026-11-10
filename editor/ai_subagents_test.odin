@@ -519,7 +519,7 @@ the_delta_has_what_waits_what_is_pinned_and_who_works :: proc(t:^testing.T) {
     agent,_:=ai_agent_spawn(&f.s,m,"Paint the wall","Painter","","","")
     if !testing.expect(t,agent!=nil) {return}
     testing.expect_value(t,ai_store.delivery_add(&m.store,main.conversation.id,AI_DELIVERY_REPORT,"Subagent 9 ended well"),"")
-    _,pin_error:=ai_store.pin_add(&m.store,"asset","materials/wall.mat","The wall")
+    pin_error:=ai_store.pin_add(&m.store,"asset","materials/wall.mat","The wall")
     testing.expect_value(t,pin_error,"")
     _,here:=ai_store.annotation_add(&m.store,"todo","scenes/main.scene",33,1,2,3,"Fix this corner")
     testing.expect_value(t,here,"")

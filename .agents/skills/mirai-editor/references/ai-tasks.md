@@ -378,10 +378,17 @@ The chat outlives any native context of its agent.
 ## Project data
 
 One SQLite database, `<project>/.mirai/ai/chat.db` (package `editor/ai_store`, WAL, without
-credentials), holds what Mirai queries and updates; several editors of the same project share it
-and a write waits for another one. The review of each conversation
+credentials), holds what Mirai queries and updates; several editors of the same project share it.
+The review of each conversation
 (`.mirai/ai/chats/<id>.review.json`, [review](ai-review.md#persistence-and-capacity)), the captures
 and the turn folders stay files.
+
+- **A frame never waits for the database.** A write that finds another editor writing is kept by
+  the store with a copy of what it binds, and the poll of the chats runs what was kept in the
+  order it was written (`ai_persist_poll`); closing the editor does wait, so nothing kept is lost.
+  What is read is what reached the database, and what shows its rows reads them again when a kept
+  write lands. A write whose result is needed at once (the id of a new chat or annotation) is
+  never kept: with the database busy it fails and says to try again.
 
 - **Conversations** have a kind: `Main` (the one chat), `Agent` (a subagent, with its `parent`) or
   `Archived` (the conversations of agents outside the editor). **Messages** are the lines of a

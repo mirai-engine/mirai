@@ -157,6 +157,7 @@ Ai :: struct {
     history:[64]ai_store.Conversation,
     history_count,history_offset:int,
     last_flush:f64,
+    landed_seen:u64, // Store.landed when what shows rows of the store last read them
     login:bool,
     login_provider:Ai_Provider,
     login_process:platform.Process,

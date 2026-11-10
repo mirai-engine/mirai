@@ -450,7 +450,8 @@ ai_send_task_prompt :: proc(s:^Session,worker:^Ai_Worker,task:^Ai_Task) {
     // What waited for this chat goes with its turn, whatever started it.
     deliveries:[]ai_store.Delivery
     if s.ai.store.db!=nil {
-        problem:string
+        problem:=ai_store.flush(&s.ai.store)
+        if problem!="" {notify(s,problem)}
         deliveries,problem=ai_store.deliveries(&s.ai.store,task.conversation.id)
         if problem!="" {notify(s,problem)}
     }
@@ -846,9 +847,29 @@ ai_task_poll :: proc(s:^Session,m:^Ai) {
     }
     ai_login_poll(s)
     ai_install_poll(s)
-    if now-m.last_flush>=0.2 {
-        for &task in m.tasks[:m.task_count] {if task.dirty {ai_task_persist(s,&task)}}
+    ai_persist_poll(s,m,now)
+}
+
+AI_FLUSH_SECONDS :: f64(0.2)
+
+// Saves the chats that changed, after what the store kept while another
+// editor wrote the database; the frame never waits for it. While the store
+// keeps writes the chats stay dirty, and their lines go in one save once it
+// is free.
+ai_persist_poll :: proc(s:^Session,m:^Ai,now:f64) {
+    if now-m.last_flush>=AI_FLUSH_SECONDS {
         m.last_flush=now
+        if message:=ai_store.flush(&m.store);message!="" {notify(s,message)}
+        if ai_store.pending(&m.store)==0 {
+            for &task in m.tasks[:m.task_count] {if task.dirty {ai_task_persist(s,&task)}}
+        }
+    }
+    // What shows rows of the store reads them again once a kept write reached the database.
+    if m.store.landed!=m.landed_seen {
+        m.landed_seen=m.store.landed
+        m.pins_loaded=false
+        m.annotations.stale=true
+        m.scene_serial+=1
     }
 }
 
