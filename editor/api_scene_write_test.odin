@@ -288,8 +288,8 @@ a_write_places_a_prefab_as_a_linked_instance_with_what_the_document_says_of_it :
     value,_=core.get(core.read(&f.world.lamps),lamp)
     testing.expect(t,revert_error==.None && reverted>0 && value.intensity==2 && value.range==3,fmt.tprintf("%v %d %v",revert_error,reverted,value))
 
-    // Without root the instance is the new root, with what the document says of it.
-    result,failure,ok=write_scene(f,`{"entities":[{"name":"Alone","prefab":"crate.scene","enabled":false}]}`)
+    // Without root the instance goes at the top of the scene, with what the document says of it.
+    result,failure,ok=write_scene(f,`{"merge":true,"entities":[{"name":"Alone","prefab":"crate.scene","enabled":false}]}`)
     alone,placed_alone:=prefab_link_of(w,api_entity(w,result.id))
     testing.expect(t,ok && result.made==3 && placed_alone && alone.root && entity_has(w,api_entity(w,result.id),core.Disabled),fmt.tprintf("%s %v %v %v",failure,result,placed_alone,alone))
 
@@ -302,8 +302,8 @@ a_write_places_a_prefab_as_a_linked_instance_with_what_the_document_says_of_it :
     open_id:=f.document.id
     cases:=[?]struct{document,says:string,inside:bool}{
         {`{"entities":[{"name":"Top","children":[{"name":"South","prefab":"crate.scene"},{"name":"Bad","components":{"Light":{}}}]}]}`,"entities[0].children[1].components.Light",false},
-        {`{"entities":[{"name":"In","prefab":"crate.scene"}]}`,"holds the file it would be placed in",true},
-        {`{"entities":[{"name":"In","prefab":"yard.scene"}]}`,"holds the file it would be placed in",true},
+        {`{"entities":[{"name":"In","prefab":"crate.scene"}]}`,"holds the scene it would be placed in",true},
+        {`{"entities":[{"name":"In","prefab":"yard.scene"}]}`,"holds the scene it would be placed in",true},
     }
     for c in cases {
         if c.inside {f.document.id=id}
@@ -336,12 +336,12 @@ a_write_that_fails_says_where_in_the_document_and_changes_nothing :: proc(t:^tes
     alive,steps:=core.world_entities(w).alive,len(f.edits.steps)
     at:=fmt.tprintf(`"root":"0x%016x"`,u64(root_id))
     cases:=[?]struct{document,says:string}{
-        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made"}},{{}},{{"components":{{"Light":{{}}}}}}]}}]}}`,at),`entities[0].children[2].components.Light: "Light" is not a component of the world`},
+        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made"}},{{}},{{"components":{{"Light":{{}}}}}}]}}]}}`,at),`entities[0].children[2].components.Light: "Light" is not a component; the nearest are`},
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made"}},{{"components":{{"Prefab_Test_Lamp":{{"intensty":1}}}}}}]}}]}}`,at),"entities[0].children[1].components.Prefab_Test_Lamp"},
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"components":{{"Prefab_Test_Lamp":null}}}}]}}]}}`,at),"entities[0].children[0].components.Prefab_Test_Lamp: the document declares the components"},
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"A","off":["Prefab_Test_Lamp"]}}]}}]}}`,at),"entities[0].children[0].off: Prefab_Test_Lamp is not among the components it declares"},
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"x","colour":1}}]}}]}}`,at),"entities[0].children[0] has no 'colour'"},
-        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"position":[1,2]}}]}}]}}`,at),"entities[0].children[0]: position must be an array of 3 numbers"},
+        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"position":[1,2]}}]}}]}}`,at),"entities[0].children[0].position must be an array of 3 numbers"},
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"id":"0x%016x"}}]}}]}}`,at,u64(other_id)),"entities[0].children[0].id: 0x"},
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made","prefab":"nobody.scene"}}]}}]}}`,at),`entities[0].children[0].prefab: "nobody.scene" is no .scene asset`},
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made","prefab":"level.scene"}}]}}]}}`,at),`entities[0].children[0].prefab: "level.scene" is no .scene asset`},

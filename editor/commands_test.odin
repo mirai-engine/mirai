@@ -111,7 +111,7 @@ every_entry_of_a_menu_or_a_shortcut_calls_a_method_of_the_api_with_params_it_tak
     serial.writer_init(&out);defer serial.writer_destroy(&out)
     api_commands_write(s,&out)
     listed:=string(serial.writer_bytes(&out))
-    testing.expect(t,strings.contains(listed,`{"name":"delete","method":"scene.delete","params":"{\"entity\":\"$roots\"}"`),listed[:min(len(listed),200)])
+    testing.expect(t,strings.contains(listed,`{"name":"delete","method":"scene.write","params":"{\"root\":\"$roots\",\"merge\":true,\"entities\":[{\"delete\":true}]}"`),listed[:min(len(listed),200)])
 }
 
 @(test)
@@ -124,17 +124,17 @@ a_gesture_runs_its_method_between_frames_with_what_the_person_has_selected :: pr
     w:=edited_world(s)
     out:serial.Writer
     serial.writer_init(&out);defer serial.writer_destroy(&out)
-    delete_method:=api.method_find(&st.server,"scene.delete")
+    delete_method:=api.method_find(&st.server,"scene.write")
     // Nothing selected: the entry is off, and the method says so to a gesture that reaches it.
     testing.expect(t,command_state(s,"delete").disabled && !command_run(s,"delete"))
-    testing.expect(t,command_call(s,"scene.delete",`{"entity":"$roots"}`))
+    testing.expect(t,command_call(s,"scene.write",`{"root":"$roots","merge":true,"entities":[{"delete":true}]}`))
     commands_run(s)
     testing.expect(t,strings.contains(string(s.toast[:s.toast_length]),"nothing is selected") && core.world_entities(w).alive==1,string(s.toast[:s.toast_length]))
     // An agent names its entities: the selection of the person is not a param of its calls.
     history.selection_set(&f.selection,{f.entity})
     st.poll_temp=context.temp_allocator
     base.arena_reset(&st.server.scratch)
-    refused,ran:=api.method_execute(&st.server,delete_method,`{"entity":"$roots"}`,&out)
+    refused,ran:=api.method_execute(&st.server,delete_method,`{"root":"$roots","merge":true,"entities":[{"delete":true}]}`,&out)
     testing.expect(t,!ran && strings.contains(refused.message,"names no entity") && core.world_entities(w).alive==1,refused.message)
     // The entry asks; the method runs between frames, as one step of the person.
     testing.expect(t,command_run(s,"delete"))
@@ -168,11 +168,11 @@ a_gesture_runs_its_method_between_frames_with_what_the_person_has_selected :: pr
     commands_run(s)
     testing.expect(t,strings.contains(string(s.toast[:s.toast_length]),"no.such.method"))
     s.toast_length=0
-    testing.expect(t,command_call(s,"scene.delete",`{"entity":`))
+    testing.expect(t,command_call(s,"scene.write",`{"root":`))
     commands_run(s)
     testing.expect(t,s.toast_length>0 && core.world_entities(w).alive==alive)
     long:=strings.repeat("x",COMMAND_PARAMS+1,context.temp_allocator)
-    testing.expect(t,!command_call(s,"scene.delete",long))
+    testing.expect(t,!command_call(s,"scene.write",long))
     for _ in 0..<COMMAND_QUEUE {testing.expect(t,command_call(s,"editor.select","{}"))}
     testing.expect(t,!command_call(s,"editor.select","{}"),"past its room a frame asks for nothing more")
     commands_run(s)
@@ -213,7 +213,7 @@ the_methods_a_menu_calls_refuse_an_agent_what_they_cannot_do_and_say_how :: proc
         {"scene.group",`{"entities":[]}`,"name the entities"},
         {"scene.group",`{"entities":["Nobody"]}`,"names no entity"},
         {"scene.group",`{"entities":["$roots"]}`,"names no entity"},
-        {"scene.duplicate",`{"entity":"$copied"}`,"names no entity"},
+        {"scene.write",`{"merge":true,"entities":[{"copy":"$copied"}]}`,"names no entity"},
         {"editor.copy",`{"entities":["Nobody"]}`,"names no entity"},
         {"editor.tool",`{"tool":"hammer"}`,"hammer"},
         {"editor.tool",`{"tool":"move","on":false}`,"always has a mode"},

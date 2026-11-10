@@ -278,12 +278,12 @@ the_document_of_a_scene_writes_it_back_and_declares_what_its_file_has :: proc(t:
     scene_id:[base.ASSET_ID_TEXT]u8
     cases:=[]struct{document,message:string}{
         {fmt.tprintf(`{{"entities":[{{"name":"x","prefab":"%s"}}]}}`,base.asset_id_format(scene_file.id,scene_id[:])),"is no prefab of the project; give the path or the id of a .scene"},
-        {`{"entities":[{"name":"x","components":{"Nope":{}}}]}`,"entities[0].components.Nope: the game of this build has no component 'Nope'"},
+        {`{"entities":[{"name":"x","components":{"Nope":{}}}]}`,`entities[0].components.Nope: "Nope" is not a component`},
         {`{"entities":[{"name":"x","preset":"cubes"}]}`,"entities[0].preset: "},
         {`{"entities":[{"name":"x","prefab":"player/Nobody.scene"}]}`,"entities[0].prefab: "},
         {`{"entities":[{"name":"x","prefab":"arena/main.scene"}]}`,`entities[0].prefab: "arena/main.scene" is no prefab of the project`},
         {`{"entities":[{"name":"x","prefab":{"asset":"player/Player.scene","size":2}}]}`,"entities[0].prefab has no 'size'"},
-        {`{"entities":[{"id":"0x00000000000000ff"}]}`,"entities[0].id: 0x00000000000000ff is no entity of the file"},
+        {`{"entities":[{"id":"0x00000000000000ff"}]}`,"entities[0].id: 0x00000000000000ff is no entity of the scene"},
         {`{"entities":[{"name":"x","components":{"Tint":{"colour":[1,1,1,1]}}}]}`,"entities[0].components.Tint"},
         {`{"entities":[{"name":"x","sizes":3}]}`,"entities[0] has no 'sizes'; an entity has id, name"},
         {`{"entities":[{"name":"x","components":{"Prefab_Instance":{}}}]}`,"entities[0].components.Prefab_Instance: Prefab_Instance is what links an entity to its prefab"},
@@ -399,7 +399,7 @@ a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testin
     gate:=slice.clone(file_bytes(&p,"arena/Gate.scene"),context.temp_allocator)
     for inner in ([]string{"arena/Gate.scene","arena/Wall.scene"}) {
         _,refused:=scene_write(&p,"arena/Gate.scene",fmt.tprintf(`{{"entities":[{{"name":"Gate","children":[{{"name":"In","prefab":%q}}]}}]}}`,inner))
-        testing.expectf(t,strings.contains(refused,"entities[0].children[0].prefab: ") && strings.contains(refused,"holds the file it would be placed in"),"%s gave '%s'",inner,refused)
+        testing.expectf(t,strings.contains(refused,"entities[0].children[0].prefab: ") && strings.contains(refused,"holds the scene it would be placed in"),"%s gave '%s'",inner,refused)
     }
     testing.expect(t,slice.equal(file_bytes(&p,"arena/Gate.scene"),gate),"a refused document leaves the file as it was")
 }

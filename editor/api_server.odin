@@ -771,17 +771,6 @@ rpc_unsigned :: proc(a:^Rpc_Args,what:string) -> (value:u64,ok:bool) {
     return magnitude,true
 }
 
-// The id a document read by hand holds; null is none.
-rpc_id :: proc(a:^Rpc_Args,what:string) -> (id:base.Entity_Id,ok:bool) {
-    if a.failed {return}
-    if serial.text_keyword(&a.r,"null") {return 0,true}
-    text,read:=serial.text_string(&a.r)
-    if !read {return 0,rpc_fail_type(a,"%s must be an entity id",what)}
-    value,parsed:=serial.text_parse_hex(text)
-    if !parsed {return 0,rpc_fail_type(a,"%s must be an entity id",what)}
-    return base.Entity_Id(value),true
-}
-
 rpc_text :: proc(a:^Rpc_Args,what:string,out:[]u8) -> (text:string,ok:bool) {
     if a.failed {return}
     value,read:=serial.text_string(&a.r)

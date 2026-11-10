@@ -28,14 +28,6 @@ Api_Prefab_Create_Params :: struct {
     path:[API_PATH_BYTES]u8 `mirai:"text,optional,label=A new file inside the assets folder; omitted: beside the open scene with the name of the entity"`,
 }
 
-Api_Prefab_Instantiate_Params :: struct {
-    asset:[API_PATH_BYTES]u8 `mirai:"text,label=The prefab: a path inside the assets folder or its asset id"`,
-    parent:Api_Entity_Text `mirai:"text,entity,optional"`,
-    position:[3]f32 `mirai:"optional"`,
-    rotation_deg:[3]f32 `mirai:"optional"`,
-    scale_multiplier:[3]f32 `mirai:"optional,min=0"`,
-}
-
 Api_Prefab_Entity_Params :: struct {
     entity:Api_Entity_Text `mirai:"text,entity"`,
     paths:[512]u8 `mirai:"text,optional,label=Names separated by commas (name; Component; Component.field or child); none: every override of the entity"`,
@@ -129,11 +121,9 @@ Api_Prefab_Entity :: struct {
 
 @(private)
 prefab_api_register :: proc(s:^Session,st:^Api_State) {
-    instantiate:=Api_Prefab_Instantiate_Params{scale_multiplier={1,1,1}}
     api_register(s,st,{name="prefab.list",summary="The prefabs of the assets and the instances of the document.",result=Api_Prefab_List,writes_result=true,flags={.Read_Only},run=api_prefab_list})
     api_register(s,st,{name="prefab.inspect",summary="The prefab links and overrides of an entity, or the entities of a prefab.",params=Api_Prefab_Inspect_Params,result=Api_Prefab_Inspect_Result,writes_result=true,flags={.Read_Only},run=api_prefab_inspect})
     api_register(s,st,{name="prefab.create",summary="Writes the subtree of an entity as a prefab and links the entity as its first instance.",params=Api_Prefab_Create_Params,result=Api_Prefab_Created_Result,run=api_prefab_create})
-    api_register(s,st,{name="prefab.instantiate",summary="Places an instance of a prefab with new ids.",params=Api_Prefab_Instantiate_Params,result=Api_Prefab_Created_Result,defaults=&instantiate,run=api_prefab_instantiate})
     api_register(s,st,{name="prefab.apply",summary="Writes the overrides of an entity, a member or one an instance added, into the file of its prefab, or through a variant into its base, ends them and brings every instance up to date.",params=Api_Prefab_Apply_Params,result=Api_Prefab_Count_Result,run=api_prefab_apply})
     api_register(s,st,{name="prefab.revert",summary="Forgets overrides of an entity, a member or one an instance added, and gives back what its prefab has: values, and no entity added by the instance.",params=Api_Prefab_Entity_Params,result=Api_Prefab_Count_Result,run=api_prefab_revert})
     api_register(s,st,{name="prefab.refresh",summary="Brings the instances of a prefab, or of all, up to date with its file; what an instance holds on its own stays.",params=Api_Prefab_Params,result=Api_Prefab_Refresh_Result,run=api_prefab_refresh})
@@ -296,32 +286,6 @@ api_prefab_create :: proc(s:^Session,call:^api.Call) {
     if api_person(s) {notify(s,fmt.tprintf("Prefab %s created",path))}
     result:=api.call_result(call,Api_Prefab_Created_Result)
     result.id,result.asset=api_entity_id(edited_world(s),e),id
-    if file,_,ok:=prefab_file(s,id);ok {base.text_set(result.path[:],file.path)}
-}
-
-@(private)
-api_prefab_instantiate :: proc(s:^Session,call:^api.Call) {
-    params:=api.call_params(call,Api_Prefab_Instantiate_Params)
-    if !api_guard(s,call) {return}
-    id,located:=asset_named(s,call,base.text_get(params.asset[:]),asset.KIND_SCENE,SCENE_EXTENSION,"a prefab")
-    if !located {return}
-    placement:=Prefab_Placement{position=params.position,scale_multiplier=params.scale_multiplier}
-    if params.parent[0]!=0 {
-        parent,found:=api_call_entity(call,edited_world(s),params.parent[:],"parent")
-        if !found {return}
-        placement.parent=parent
-    }
-    if params.rotation_deg!={} {
-        q:=mm.quat_from_euler(params.rotation_deg*mm.RAD_PER_DEG)
-        placement.rotation={q.x,q.y,q.z,q.w}
-    }
-    root,error:=prefab_instantiate(s,id,placement)
-    if error!=.None {
-        api_prefab_fail(call,error)
-        return
-    }
-    result:=api.call_result(call,Api_Prefab_Created_Result)
-    result.id,result.asset=root,id
     if file,_,ok:=prefab_file(s,id);ok {base.text_set(result.path[:],file.path)}
 }
 
