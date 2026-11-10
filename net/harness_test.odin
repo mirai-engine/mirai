@@ -71,8 +71,8 @@ test_step :: proc(w:^Test_World,steps:=1) {
 }
 // Steps until the client reports a connection or gives up; returns both handles.
 @(private)
-test_connect :: proc(w:^Test_World,server,client:^Host,limit:=600) -> (on_server,on_client:Connection) {
-    host_connect(client,address_memory(0))
+test_connect :: proc(w:^Test_World,server,client:^Host,limit:=600,credentials:=Credentials{}) -> (on_server,on_client:Connection) {
+    host_connect(client,address_memory(0),credentials)
     for _ in 0..<limit {
         test_step(w)
         for command in host_poll(server) {
@@ -125,7 +125,7 @@ test_packet_data :: proc(bytes:[]u8) -> bool {return bytes[0]==u8(Packet_Type.Da
 // What comes before the checksum or the tag of a datagram, deciphered in place as the host would.
 @(private)
 test_unseal :: proc(h:^Host,bytes:[]u8,from:Address) -> (plain:int,ok:bool) {
-    if !test_packet_data(bytes) || h.desc.security.mode!=.Encrypted {return len(bytes)-CHECKSUM_BYTES,true}
+    if !test_packet_data(bytes) {return len(bytes)-CHECKSUM_BYTES,true}
     p:=peer_find(&h.back,from)
     plain=len(bytes)-TAG_BYTES
     if p==nil || p.state!=.Connected || plain<DATA_HEADER {return}
@@ -139,7 +139,7 @@ test_unseal :: proc(h:^Host,bytes:[]u8,from:Address) -> (plain:int,ok:bool) {
 test_reseal :: proc(h:^Host,buffer:[]u8,plain:int,from:Address) -> int {
     p:=peer_find(&h.back,from)
     data:=test_packet_data(buffer)
-    if data && h.desc.security.mode==.Encrypted {
+    if data {
         if p!=nil && p.state==.Connected && plain>=DATA_HEADER {
             counter,valid:=counter_expand(p.recv_counter,u16(buffer[1])|u16(buffer[2])<<8)
             if valid && counter/h.back.secure.rekey_interval==p.secure.receive_epoch {
@@ -148,7 +148,7 @@ test_reseal :: proc(h:^Host,buffer:[]u8,plain:int,from:Address) -> int {
         }
         return plain+TAG_BYTES
     }
-    checksum_write(buffer[:plain+CHECKSUM_BYTES],data && p!=nil?p.key:h.back.key)
+    checksum_write(buffer[:plain+CHECKSUM_BYTES],h.back.key)
     return plain+CHECKSUM_BYTES
 }
 // Seals a handshake datagram written from buffer[1] on, as a host does.
