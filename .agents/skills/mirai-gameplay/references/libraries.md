@@ -522,7 +522,7 @@ the reverb of the room where the listener is and what covers each source.
     `platform.audio_device_names`; empty, the system's. `audio_output` moves the mixer to it when
     it changes, without losing its voices, and only if the application has an open output. A name
     the system does not list sounds through the system's and is the problem `audio.output`. Its
-    `kind` (headphones by default, or speakers) is given to every mixer, open output or not.
+    `kind` (speakers by default, or headphones) is given to every mixer, open output or not.
   - `audio_buses` (`late`) compares each bus of the mixer with its entry and its volume and sends
     only what differs; a bus without an entry returns to 0 dB, without filter or ducking. The
     master's mute belongs to the host (the player without focus), not to the settings.
