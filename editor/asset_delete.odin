@@ -173,7 +173,7 @@ asset_delete_modal :: proc(s:^Session) {
                 }
                 for at in users[:min(len(users),ASSET_DELETE_USERS)] {
                     user:=&r.files[at]
-                    icon,_:=asset_icon(s,shown_kind(user))
+                    icon,_:=asset_file_icon(s,user)
                     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(24),gap=8,padding={8,0,8,0},align_y=.Center}) {
                         ui.icon(ctx,icon,th.text_muted,14)
                         ui.label(ctx,filepath.base(user.path),th.font,th.text,0)

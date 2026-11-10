@@ -196,6 +196,7 @@ Session :: struct {
     gpu_failure:Gpu_Failure_Reaction, // what the editor did once its GPU stopped working (gpu_failure.odin)
     open_path:[1024]u8,open_length:int,
     open_confirmed:bool, // the scene of open_path replaces the open one: the question was answered
+    new_prefab:bool,     // what New makes: a prefab, or a scene
     frame:u64,
     quit:bool,
     frames:int,          // frames to run before it ends; 0: until it is asked to
@@ -748,7 +749,7 @@ requests_run :: proc(s:^Session) {
     if .New in requests {
         runs_stop(s)
         asset_document_activate(s,-1)
-        scene_new(s)
+        scene_new(s,s.new_prefab)
     }
     if .Open in requests {open_run(s)}
     if .Document_Switch in requests {

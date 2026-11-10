@@ -1,12 +1,15 @@
 # Hierarchy, prefabs and spawning
 
-A prefab is a scene with exactly one root entity: a `.scene` asset ([assets](../assets.md)) as
-any other, placed as a copy of what hangs from that root. Code names it by its path in the
+A prefab is a `.scene` asset ([assets](../assets.md)) whose kind is Prefab, with exactly one root
+entity, placed as a copy of what hangs from that root. Its kind is chosen when it is made (Create
+> Prefab, File > New prefab, a prefab made of a selection, `scene.new` with `kind`, `kind` in a
+document of `scene.write` or `mirai scene write`) and changed the same way; a prefab opens in the
+studio light, so a door needs no sun of its own. Code names it by its path in the
 assets, as the file is spelled (`"pets/Dog.scene"`); a field of data (`Spawn_Point.prefab`) holds
 its `base.Asset_Id`. Every scene of the project ships, whether another names it or not.
 
-- A scene with several roots is not spawned: it hangs whole under an entity with
-  `scene.Scene_Reference` (a section, loaded with its scene or asked with
+- A scene that is not a prefab is not spawned, whatever its roots: it hangs whole under an entity
+  with `scene.Scene_Reference` (a section, loaded with its scene or asked with
   `scene.section_request`). A prefab can hang as a section too.
 - A scene a prefab references loads with each copy of it.
 
@@ -27,7 +30,7 @@ game_burst :: proc(impacts:core.Read(Impact),spawner:scene.Spawner) {
 The third argument is the `core.Transform{position, rotation, scale}` of the root; a zero rotation
 is none and a zero scale is 1. `parent=` hangs the root under an entity. `transient=true`: no `Id`
 of its own, for effects and projectiles. The path or the `base.Asset_Id` of a prefab both work.
-A spawn that fails (no such scene, or one without exactly one root) returns `core.NONE` and is the
+A spawn that fails (no such scene, or one that is not a prefab) returns `core.NONE` and is the
 problem `scene.spawn` of the parent or of the world, which says what to change. The root of a copy
 has `scene.Prefab_Instance`, whose `prefab` is the scene it came from.
 

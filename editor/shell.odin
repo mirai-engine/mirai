@@ -1109,7 +1109,7 @@ bar_build :: proc(s:^Session,w:core.World_Ref) {
             if s.mode!=.Play && !scene_covered(s) {
                 command_button(s,"find",{icon=ui.icon_user(u8(User_Icon.Search)),style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,icon_size=14})
             }
-            if !document_is_prefab(s) && (document==nil || !asset_document_flat(s,document.kind)) {
+            if document==nil || !asset_document_flat(s,document.kind) {
                 if document==nil && s.mode!=.Play {view_mode_build(s)}
                 // The rate of the frame goes with Graphics, where it is turned on.
                 if graphics:=graphics_settings(s);graphics!=nil && graphics.show_fps {
@@ -1644,7 +1644,7 @@ modal_row :: proc(ctx:^ui.Context,icon:ui.Icon,name,kind:string) {
 
 @(private)
 modal_asset_row :: proc(s:^Session,ctx:^ui.Context,file:^asset.Registry_File) {
-    icon,_:=asset_icon(s,shown_kind(file))
+    icon,_:=asset_file_icon(s,file)
     kind:="File"
     if info,known:=asset.kind_info(file.kind);known {kind=strings.to_upper_camel_case(info.name,context.temp_allocator)}
     modal_row(ctx,icon,asset_name(file.path),kind)
