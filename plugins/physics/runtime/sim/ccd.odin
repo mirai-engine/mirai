@@ -397,10 +397,11 @@ continuous_crossings :: proc(w:^World,bullets:int) #no_bounds_check {
             if gjk_distance(shape_proxy(w,a,&storage_a),shape_proxy(w,s,&storage_b),xf,nil,true).distance<=0 {continue}
             shape_a,shape_b:=shape_handle(w,hit.shape_a),shape_handle(w,hit.shape_b)
             body_a,body_b:=body_handle(w,a.body),body_handle(w,s.body)
-            event_push(w,w.events.overlap_begin,2,Overlap_Event{shape_a,shape_b,body_a,body_b,true})
-            event_push(w,w.events.overlap_begin,2,Overlap_Event{shape_b,shape_a,body_b,body_a,true})
-            event_push(w,w.events.overlap_end,3,Overlap_Event{shape_a,shape_b,body_a,body_b,true})
-            event_push(w,w.events.overlap_end,3,Overlap_Event{shape_b,shape_a,body_b,body_a,true})
+            users,swapped:=event_users(w,hit.shape_a,hit.shape_b)
+            event_push(w,w.events.overlap_begin,2,Overlap_Event{shape_a,shape_b,body_a,body_b,true,users})
+            event_push(w,w.events.overlap_begin,2,Overlap_Event{shape_b,shape_a,body_b,body_a,true,swapped})
+            event_push(w,w.events.overlap_end,3,Overlap_Event{shape_a,shape_b,body_a,body_b,true,users})
+            event_push(w,w.events.overlap_end,3,Overlap_Event{shape_b,shape_a,body_b,body_a,true,swapped})
         }
     }
 }

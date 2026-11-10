@@ -35,26 +35,27 @@ bench_animation_optional_feature_discovery :: proc(t:^testing.T) {
         append(&motion_assets.contents,Motion_Content{id={5,6},checked=1,revision=1,profile=motion_test_profile(),valid=true})
         actions:Action_Runtime;defer actions_runtime_free(&actions)
         motion:Motion_Runtime;defer motion_runtime_free(&motion)
-        requests:Action_Requests;defer delete(requests.queue.items)
+        requests:Animation_Requests;defer {delete(requests.plays.items);delete(requests.values.items);delete(requests.looks.items)}
+        events:Animation_Events;defer delete(events.items)
         targets:Motion_Requests;defer {delete(targets.targets.items);delete(targets.locomotion.items)}
         playback:Playback;defer playback_free(&playback)
         problems:core.Problems
         for _ in 0..<2 {
-            if !testing.expect(t,actions_prepare(&actions,&requests,&action_assets,core.read(&w.descriptions),&playback,app.assets,app.allocator,&problems) && motion_prepare(&motion,&targets,core.read(&w.descriptions),&playback,&motion_assets,app.assets,app.allocator,&problems)) {return}
+            if !testing.expect(t,actions_prepare(&actions,&requests,&action_assets,core.read(&w.descriptions),&playback,&events,app.assets,app.allocator,&problems) && motion_prepare(&motion,&targets,core.read(&w.descriptions),&playback,&motion_assets,app.assets,app.allocator,&problems)) {return}
         }
         best:=max(time.Duration);valid:=true
         saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;app.allocator=context.allocator
         for _ in 0..<5 {
             start:=time.tick_now()
             for tick in 0..<REPEATS {
-                if case_index==3 {core.at(&w.descriptions,COUNT-1).weight=f32(tick&1)}
-                valid &&=actions_prepare(&actions,&requests,&action_assets,core.read(&w.descriptions),&playback,app.assets,app.allocator,&problems)
+                if case_index==3 {core.edit_at(&w.descriptions,COUNT-1).weight=f32(tick&1)}
+                valid &&=actions_prepare(&actions,&requests,&action_assets,core.read(&w.descriptions),&playback,&events,app.assets,app.allocator,&problems)
                 valid &&=motion_prepare(&motion,&targets,core.read(&w.descriptions),&playback,&motion_assets,app.assets,app.allocator,&problems)
             }
             best=min(best,time.tick_since(start))
         }
         context=saved;app.allocator=saved.allocator;actions.allocator=saved.allocator;action_assets.allocator=saved.allocator;motion_assets.allocator=saved.allocator
-        testing.expect(t,valid && len(actions.states)==feature_count && len(motion.instances)==feature_count && problems.count==0 && len(actions.events.items)==0)
+        testing.expect(t,valid && len(actions.states)==feature_count && len(motion.instances)==feature_count && problems.count==0 && len(events.items)==0)
         log.infof("animation feature preparation, %d components / %d configured, changed unrelated row %v: %.2f ns/tick",COUNT,feature_count,case_index==3,f64(time.duration_nanoseconds(best))/REPEATS)
     }
 }

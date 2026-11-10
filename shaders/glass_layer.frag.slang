@@ -10,7 +10,7 @@
 // the others keep only the unlit bit.
 //! variant layers MIRAI_GLASS_LAYERS=1
 #ifndef MIRAI_GLASS_LAYERS
-#define MIRAI_MATERIAL_NO_LAYERS 1
+#define MIRAI_MATERIAL_NO_LAYERS true
 #endif
 #include "raster.slang"
 #include "gbuffer.slang"

@@ -36,7 +36,7 @@ Net_Test_Tables :: struct {
     remotes:core.Table(core.Remote),
     offsets:core.Table(render.Draw_Offset),
     move_inputs:core.Table(inp.Move_Input),
-    sources:core.Table(scene.Prefab_Source),
+    instances:core.Table(scene.Prefab_Instance),
     drivables:core.Table(inp.Drivable),
     seats:core.Table(inp.Seat),
     absents:core.Table(Seat_Absent),
@@ -134,7 +134,7 @@ net_test_feed :: proc(w:^Net_Test_World) {
     for row in 0..<core.count(&w.seats) {
         if !inp.seat_local(w.seats.values[row]) {continue}
         device:=w.input
-        inp.seat_feed(core.at(&w.seats,row),&device,&w.bindings,false)
+        inp.seat_feed(core.edit_at(&w.seats,row),&device,&w.bindings,false,1.0/60)
     }
 }
 
@@ -309,7 +309,7 @@ net_test_pack :: proc(s:^Net_Session,w:^Net_Test_World,r:^Replica,tick:u32,pose:
 // The state of a replica as w has its entity.
 @(private)
 net_test_command :: proc(s:^Net_Session,w:^Net_Test_World,r:^Replica,tick:u32,force:f32,words:[]u32) -> wire.Command {
-    local,_:=core.get(core.read(&w.transforms),r.entity)
+    local,_:=core.get(&w.transforms,r.entity)
     pose:=Pose{id=core.id_of(core.read(&w.identities),r.entity),position=local.position,rotation=local.rotation,scale=local.scale}
     motion,_:=motion_read(core.world_ref(w,s.info),r.entity)
     return net_test_pack(s,w,r,tick,pose,motion,force,words)
@@ -355,8 +355,8 @@ authoritative_components_replay_at_their_ticks_with_real_physics :: proc(t:^test
         net_test_physics(&expected,&reference_shared,&app)
         if tick==3 {
             expected.values.values[0].force=7
-            local,_:=core.get(core.read(&third.transforms),e)
-            motion,_:=core.get(core.read(&third.bodies),e)
+            local,_:=core.get(&third.transforms,e)
+            motion,_:=core.get(&third.bodies,e)
             core.push(&expected.requests.queue,phys.Body_Request{entity=e,kind=.Teleport,position=local.position,rotation=local.rotation})
             phys.set_velocity(&expected.requests,e,motion.linear,motion.angular)
         }
@@ -371,12 +371,12 @@ authoritative_components_replay_at_their_ticks_with_real_physics :: proc(t:^test
     testing.expect_value(t,s.stats.corrected,u64(1))
     testing.expect_value(t,world.values.values[0].force,f32(7))
     testing.expect_value(t,world.force.total,expected.force.total)
-    got,_:=core.get(core.read(&world.transforms),e)
-    wanted,_:=core.get(core.read(&expected.transforms),e)
+    got,_:=core.get(&world.transforms,e)
+    wanted,_:=core.get(&expected.transforms,e)
     testing.expectf(t,linalg.length(got.position-wanted.position)<0.002,"position %v expected %v",got.position,wanted.position)
     before:=got.position
     client_reconcile(&s,core.world_ref(&world,&info),&app,1.0/60)
-    got,_=core.get(core.read(&world.transforms),e)
+    got,_=core.get(&world.transforms,e)
     testing.expect_value(t,got.position,before)
 }
 
@@ -440,7 +440,7 @@ component_references_resolve_after_binding_and_clear_after_destruction :: proc(t
     testing.expect_value(t,wire.object_bind(&s.host,target_object,u64(target)),wire.Error.None)
     references_refresh(&s,core.world_ref(&world,&info))
     core.settle(&info,&world,nil)
-    resolved,found:=core.get(core.read(&world.values),source)
+    resolved,found:=core.get(&world.values,source)
     testing.expect(t,found && resolved.target==target && resolved.force==3)
     testing.expect(t,s.stats.references_resolved>0)
     testing.expect_value(t,wire.object_destroy(&s.host,target_object),wire.Error.None)
@@ -477,14 +477,14 @@ server_publishes_only_changed_rows_at_the_objects_frequency :: proc(t:^testing.T
         core.settle(&info,&world,nil)
     }
     before:=s.stats.fragments_published
-    core.get(&world.values,first).force=9
+    core.edit(&world.values,first).force=9
     server_publish(&s,core.world_ref(&world,&info),&outbox,4)
     testing.expect_value(t,s.stats.fragments_published-before,u64(1))
     // Ten times a second at 60 ticks: on its turn, once every six ticks, whatever changed between turns.
-    core.get(&world.objects,first).update_hz=10
+    core.edit(&world.objects,first).update_hz=10
     before=s.stats.fragments_published
     for tick in 5..<17 {
-        core.get(&world.values,first).force=f32(tick)
+        core.edit(&world.values,first).force=f32(tick)
         server_publish(&s,core.world_ref(&world,&info),&outbox,u32(tick))
     }
     testing.expect_value(t,s.stats.fragments_published-before,u64(2))
@@ -514,7 +514,7 @@ net_test_physical_objects :: proc(w:^Net_Test_World,info:^core.World_Info,entiti
     core.add(&w.joint_states,entities[0],phys.Joint_State{})
     core.disable(&w.joints,entities[0])
     core.settle(info,w,nil)
-    core.get(&w.values,entities[0]).target=entities[1]
+    core.edit(&w.values,entities[0]).target=entities[1]
 }
 
 @(private)
@@ -534,8 +534,8 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
         shares[index].info=&info
         apps[index]={info=&info,allocator=context.allocator,tick_dt=1.0/60,shared=&shares[index]}
         net_test_physics(&world,&shares[index],&apps[index])
-        core.get(&world.values,entities[index][0]).force=0
-        core.get(&world.values,entities[index][1]).force=0
+        core.edit(&world.values,entities[index][0]).force=0
+        core.edit(&world.values,entities[index][1]).force=0
     }
     net_test_player(&worlds[1],&info)
     defer for &world in worlds {core.world_destroy(&info,.World,&world)}
@@ -604,15 +604,15 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
         core.value_free(&server_events,type_info_of(Net_Events))
         core.value_free(&client_events,type_info_of(Net_Events))
         if tick==60 {core.enable(&worlds[0].joints,entities[0][0])}
-        if tick==90 {core.get(&worlds[0].values,entities[0][0]).force=400}
+        if tick==90 {core.edit(&worlds[0].values,entities[0][0]).force=400}
         if tick==140 {
-            core.get(&worlds[0].values,entities[0][0]).force=0
+            core.edit(&worlds[0].values,entities[0][0]).force=0
             joint:=phys.joint_prismatic(entities[0][1])
             joint.motor,joint.motor_speed,joint.max_motor=true,1,100
             core.add(&worlds[0].joints,entities[0][0],joint)
             core.add(&worlds[0].joint_states,entities[0][0],phys.Joint_State{})
         }
-        if tick==200 {core.get(&worlds[0].joints,entities[0][0]).motor_speed=-1}
+        if tick==200 {core.edit(&worlds[0].joints,entities[0][0]).motor_speed=-1}
         if tick==260 {core.disable(&worlds[0].joints,entities[0][0])}
         worlds[1].input.gamepads[0]={connected=true,down={.South},axes={.Left_X=0.75,.Left_Y=0,.Right_X=0,.Right_Y=0,.Left_Trigger=0,.Right_Trigger=0}}
         for &world,index in worlds {
@@ -620,7 +620,7 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
             world.time.tick=u64(tick+(index==1?8:0))
             net_test_fixed(&world,&shares[index],nil,&apps[index])
         }
-        if state,has:=core.get(core.read(&worlds[1].joint_states),entities[1][0]);has && state.broken {saw_break=true}
+        if state,has:=core.get(&worlds[1].joint_states,entities[1][0]);has && state.broken {saw_break=true}
         if core.has(&worlds[1].joints,entities[1][0]) {saw_joint=true}
         if tick==300 {
             for e in entities[0] {phys.set_velocity(&worlds[0].requests,e,{},{})}
@@ -630,7 +630,7 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
     testing.expect(t,connected!=0 && sessions[1].status==.Connected)
     testing.expect(t,saw_joint && saw_break)
     testing.expect(t,!core.has(&worlds[1].joints,entities[1][0]))
-    client_value,_:=core.get(core.read(&worlds[1].values),entities[1][0])
+    client_value,_:=core.get(&worlds[1].values,entities[1][0])
     testing.expect_value(t,client_value.target,entities[1][1])
     testing.expect_value(t,client_value.force,f32(0))
     remote,status:=remote_input(core.ref(&worlds[0].remote),connected)
@@ -644,8 +644,8 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
     entry:=remote_entry(&worlds[0].remote,connected)
     testing.expectf(t,entry!=nil && entry.view>0 && abs(f64(entry.tick)-entry.view)<60,"view %v at tick %v",entry.view if entry!=nil else 0,entry.tick if entry!=nil else 0)
     for index in 0..<2 {
-        server_pose,_:=core.get(core.read(&worlds[0].transforms),entities[0][index])
-        client_pose,_:=core.get(core.read(&worlds[1].transforms),entities[1][index])
+        server_pose,_:=core.get(&worlds[0].transforms,entities[0][index])
+        client_pose,_:=core.get(&worlds[1].transforms,entities[1][index])
         testing.expectf(t,linalg.length(server_pose.position-client_pose.position)<0.02,"body %d server %v client %v",index,server_pose.position,client_pose.position)
     }
     testing.expect(t,sessions[1].stats.corrected>0)
@@ -654,7 +654,7 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
     if udp {
         server_stats,client_stats:=wire.host_stats(&sessions[0].host),wire.host_stats(&sessions[1].host)
         testing.expect(t,server_stats.packets_sent>0 && server_stats.packets_received>0 && client_stats.packets_sent>0 && client_stats.packets_received>0)
-        link,_:=core.get(core.read(&worlds[1].links),entities[1][0])
+        link,_:=core.get(&worlds[1].links,entities[1][0])
         r:=replica_of(&sessions[1],link.object)
         testing.expect(t,r!=nil && r.role==.Predicted && r.mode==.Predicted)
         object:=wire.object_of_user(&sessions[0].host,u64(entities[0][0]))
@@ -705,7 +705,7 @@ remote_character_intent_is_replayed_from_its_authoritative_tick :: proc(t:^testi
     replica_update(&s,core.world_ref(&world,&info),app.assets,&three)
     for tick in 1..<4 {
         client_inputs(&s,core.world_ref(&world,&info),u32(tick))
-        move,_:=core.get(core.read(&world.move_inputs),e)
+        move,_:=core.get(&world.move_inputs,e)
         testing.expect_value(t,move.move.x,tick<3?f32(1):f32(-1))
         _,status:=remote_input(core.ref(&world.remote),55)
         testing.expect(t,status==.None,"the actions of another player never reach a client")
@@ -756,8 +756,8 @@ replicas_joined_to_any_of_many_driven_bodies_are_critical :: proc(t:^testing.T) 
     c:=&s.client
     replica :: proc(c:^Client,index:int,e:core.Entity,role:Role) {c.replicas[index]={object=Object(index),entity=e,role=role,slot=-1}}
     for k in 0..<PAIRS {
-        a,_:=core.get(core.read(&world.bodies),driven[k])
-        b,_:=core.get(core.read(&world.bodies),joined[k])
+        a,_:=core.get(&world.bodies,driven[k])
+        b,_:=core.get(&world.bodies,joined[k])
         testing.expectf(t,a.island!=0 && a.island==b.island,"pair %d: islands %d and %d",k,a.island,b.island)
         replica(c,1+k,driven[k],.Predicted)
         replica(c,1+PAIRS+k,joined[k],.Shown)
@@ -818,7 +818,7 @@ object_scope_controls_relevance_radius_and_follows_the_replicated_ancestor :: pr
         if tick==20 {core.add(&world.objects,parent,net_test_replicate(audience=.Custom))}
         if tick==40 {testing.expect(t,relevance_set(&sessions[0],parent,connected,true))}
         if tick==70 {testing.expect(t,relevance_set(&sessions[0],parent,connected,false))}
-        if tick==100 {testing.expect(t,relevance_set(&sessions[0],parent,connected,true));core.get(&world.objects,large).radius=10}
+        if tick==100 {testing.expect(t,relevance_set(&sessions[0],parent,connected,true));core.edit(&world.objects,large).radius=10}
         if tick==120 {core.destroy(&world.entities,parent)}
         if tick==121 {
             replacement=net_test_body(world,&info,4,{100,0,0})
@@ -922,10 +922,10 @@ replicated_joint_waits_for_its_target_and_preserves_authoritative_frames_on_reta
     testing.expect_value(t,wire.object_bind(&session.host,target_object,u64(target)),wire.Error.None)
     references_refresh(&session,ref)
     core.settle(&info,&world,nil)
-    held,has:=core.get(core.read(&world.joints),source)
+    held,has:=core.get(&world.joints,source)
     testing.expect(t,has && held.target==target)
     net_test_physics(&world,&shared,&app)
-    took,_:=core.get(core.read(&world.joint_states),source)
+    took,_:=core.get(&world.joint_states,source)
     testing.expect(t,took.taken && took.target_anchor==state.target_anchor && took.target_rotation==state.target_rotation)
     testing.expect_value(t,world.state.world.joint_count,i32(1))
     r:=replica_of(&session,object)
@@ -940,7 +940,7 @@ replicated_joint_waits_for_its_target_and_preserves_authoritative_frames_on_reta
     replica_update(&session,ref,app.assets,&retarget)
     core.settle(&info,&world,nil)
     net_test_physics(&world,&shared,&app)
-    took,_=core.get(core.read(&world.joint_states),source)
+    took,_=core.get(&world.joint_states,source)
     testing.expect(t,took.taken && took.target_anchor==state.target_anchor)
     generation:=world.state.world.joints[0].generation
     joint.motor=true;joint.motor_speed=1;joint.max_motor=1
@@ -951,13 +951,13 @@ replicated_joint_waits_for_its_target_and_preserves_authoritative_frames_on_reta
     core.settle(&info,&world,nil)
     net_test_physics(&world,&shared,&app)
     testing.expect_value(t,world.state.world.joints[0].generation,generation)
-    target_pose,_:=core.get(core.read(&world.transforms),initial)
+    target_pose,_:=core.get(&world.transforms,initial)
     pose_apply(&session,ref,initial,net_type(&session,net_test_type(&session,ref,initial)),Pose{position=target_pose.position,rotation=target_pose.rotation,scale={2,1,1}},Motion_State{},false)
     core.settle(&info,&world,nil)
     net_test_physics(&world,&shared,&app)
-    scaled,_:=core.get(core.read(&world.transforms),initial)
+    scaled,_:=core.get(&world.transforms,initial)
     testing.expect_value(t,scaled.scale,[3]f32{2,1,1})
-    took,_=core.get(core.read(&world.joint_states),source)
+    took,_=core.get(&world.joint_states,source)
     testing.expect(t,took.taken && took.target_anchor==state.target_anchor)
     testing.expect_value(t,world.state.world.joint_count,i32(1))
 }

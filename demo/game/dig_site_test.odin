@@ -54,3 +54,32 @@ the_inventory_of_the_dig_lives_on_a_root_that_keeps :: proc(t:^testing.T) {
     testing.expect(t,found && inventory.count==1 && inventory.drops[0]==1 && inventory.materials[0]=={7,7})
     testing.expect(t,!core.alive(&w.entities,drop),"the drop walked over is taken")
 }
+
+// The pit digs a ball every interval seconds, as many at 60 as at 120 Hz, and
+// a copy of the World digs on from where it was.
+@(test)
+the_pit_digs_by_seconds_and_a_copy_digs_on :: proc(t:^testing.T) {
+    dug :: proc(w:^Dig_World,hz,from,to:u64) -> u32 {
+        commands:=core.commands(w,core.test_world_info(w))
+        for tick in from..<to {
+            dig_site(commands,&w.sites,core.read(&w.pickups),core.read(&w.players),core.read(&w.drivables),{},core.read(&w.worlds),&w.requests,core.ref(&w.digs),&w.inventories,{},{tick=tick,dt=1/f32(hz),playing=true})
+            core.test_world_settle(w)
+        }
+        return core.at(core.read(&w.sites),0).dug
+    }
+    for hz in ([]u64{60,120}) {
+        w:=new(Dig_World)
+        kept:=new(Dig_World)
+        defer free(w)
+        defer free(kept)
+        if !core.test_world_init(t,w,dig_types) || !core.test_world_init(t,kept,dig_types) {return}
+        defer core.test_world_destroy(w)
+        defer core.test_world_destroy(kept)
+        core.add(&w.sites,core.create(&w.entities),DIG_SITE_DEFAULT)
+        core.add(&w.inventories,core.create(&w.entities),Dig_Inventory{})
+        core.test_world_settle(w)
+        testing.expectf(t,dug(w,hz,0,hz/2)==3,"%d Hz: a ball at 0, 1/6 and 2/6 s",hz)
+        if !testing.expect(t,core.test_world_copy(kept,w)) {return}
+        testing.expectf(t,dug(w,hz,hz/2,hz)==6 && dug(kept,hz,hz/2,hz)==6,"%d Hz: the World and its copy dig on alike",hz)
+    }
+}

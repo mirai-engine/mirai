@@ -240,7 +240,7 @@ body_action :: proc(p:Players,body:core.Entity,a:Action) -> Action_State {
 input_seats :: proc(
     es:^core.Entities,app:^host.App,seats:^core.Table(Seat),
     multiplayer:core.Read(Local_Multiplayer),state:^Seats,run:core.Ref(Run_Players),
-    device:core.Input,bindings:core.Ref(Input_Map),network:core.Ref(core.Network),keeps:^core.Table(core.Keep),
+    device:core.Input,bindings:core.Ref(Input_Map),network:core.Ref(core.Network),keeps:^core.Table(core.Keep),time:core.Time,
 ) {
     // A server has players of its own only when someone asks for them: one
     // that is also a player, as the Play of an editor that serves.
@@ -262,7 +262,7 @@ input_seats :: proc(
         if !seat_local(seats.values[row]) {continue}
         slot:=int(seats.values[row].slot)
         own:=slot<count?slot_input(device,slot,count,state.focus):core.Input{}
-        seat_feed(core.at(seats,row),&own,bindings.ptr,slot<count && slot==state.focus && state.keyboard!=0 && state.keyboard!=slot+1)
+        seat_feed(core.edit_at(seats,row),&own,bindings.ptr,slot<count && slot==state.focus && state.keyboard!=0 && state.keyboard!=slot+1,time.dt)
     }
     state.keyboard=count>0?state.focus+1:0
 }
@@ -271,9 +271,9 @@ input_seats :: proc(
 // got the device from another (gained) waits for the release of what it
 // holds; one whose contexts changed, for the release of the buttons that went
 // down with the change, as jump on the button that closed a menu.
-seat_feed :: proc(seat:^Seat,device:^core.Input,bindings:^Input_Map,gained:bool) {
+seat_feed :: proc(seat:^Seat,device:^core.Input,bindings:^Input_Map,gained:bool,dt:f32) {
     before:=seat.held
-    actions_update(&seat.actions,bindings,device,&seat.contexts,seat.holds[:seat.hold_count])
+    actions_update(&seat.actions,bindings,device,dt,&seat.contexts,seat.holds[:seat.hold_count])
     seat.held=held_buttons(&seat.actions,bindings)
     if gained {seat.rearm|=seat.held}
     if seat.fed!=seat.contexts {
@@ -343,7 +343,7 @@ blocks_apply :: proc(seats:^core.Table(Seat),state:^Seats) {
         for block in state.blocks {
             if block.active && (block.seat==e || block.seat==core.NONE && local) {mask|=block.mask}
         }
-        if seats.values[row].blocked!=mask {core.at(seats,row).blocked=mask}
+        if seats.values[row].blocked!=mask {core.edit_at(seats,row).blocked=mask}
     }
 }
 
@@ -435,14 +435,14 @@ body_assign :: proc(a:^Apply,seat,body:core.Entity) -> Refusal {
     if !valid {return .Seat_Twice}
     target:^Drivable
     if body!=core.NONE {
-        target=core.get(a.drivables,body)
+        target=core.edit(a.drivables,body)
         if target==nil {return .Not_Drivable}
         if target.seat!=core.NONE && target.seat!=seat {return .Taken}
     }
     // Letting go decides nothing of a body: a client lets go of what the server gave someone else.
     if !decides(a,body) {return .Server_Decides}
     if previous==body {return .None}
-    if previous!=core.NONE {core.get(a.drivables,previous).seat=core.NONE}
+    if previous!=core.NONE {core.edit(a.drivables,previous).seat=core.NONE}
     if target!=nil {target.seat=seat}
     rearm(a,seat)
     return .None
@@ -457,8 +457,8 @@ body_swap :: proc(a:^Apply,first,second:core.Entity) -> Refusal {
     if !valid_left || !valid_right {return .Seat_Twice}
     if left==core.NONE || right==core.NONE {return .No_Body}
     if !decides(a,left) || !decides(a,right) {return .Server_Decides}
-    core.get(a.drivables,left).seat=second
-    core.get(a.drivables,right).seat=first
+    core.edit(a.drivables,left).seat=second
+    core.edit(a.drivables,right).seat=first
     rearm(a,first)
     rearm(a,second)
     return .None
@@ -467,7 +467,7 @@ body_swap :: proc(a:^Apply,first,second:core.Entity) -> Refusal {
 // The buttons a seat holds now wait for their release before it can use them.
 @(private)
 rearm :: proc(a:^Apply,seat:core.Entity) {
-    if source:=core.get(a.seats,seat);source!=nil && source.held!=0 {source.rearm|=source.held}
+    if source:=core.edit(a.seats,seat);source!=nil && source.held!=0 {source.rearm|=source.held}
 }
 
 @(private)
@@ -492,7 +492,7 @@ block_release :: proc(seats:^core.Table(Seat),block:^Block) {
     if !block.active {return}
     for row in 0..<core.count(seats) {
         e,source:=core.entity_at(seats,row),&seats.values[row]
-        if (e==block.seat || block.seat==core.NONE && seat_local(source^)) && source.held&block.mask!=0 {core.at(seats,row).rearm|=source.held&block.mask}
+        if (e==block.seat || block.seat==core.NONE && seat_local(source^)) && source.held&block.mask!=0 {core.edit_at(seats,row).rearm|=source.held&block.mask}
     }
     block.active=false
 }
@@ -518,7 +518,7 @@ upkeep :: proc(a:^Apply) {
     es:=a.es
     for value,row in a.drivables.values[:core.count(a.drivables)] {
         if value.seat==core.NONE || core.alive(es,value.seat) {continue}
-        core.at(a.drivables,row).seat=core.NONE
+        core.edit_at(a.drivables,row).seat=core.NONE
     }
     for &item in a.state.blocks {
         if !item.active {continue}

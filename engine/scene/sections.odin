@@ -102,7 +102,7 @@ scene_sections :: proc(
     waited:=core.take(&waits.assets) if waits!=nil else nil
     if u:=core.world_storage_of(world,Unresolved_References);u!=nil {clear(&u.resolved)}
     for r in core.take(&requests.queue) {
-        reference:=core.get(references,r.entity)
+        reference:=core.edit(references,r.entity)
         if reference==nil {
             core.report(problems,r.entity,"scene.section","a section state was asked of an entity without Scene_Reference; ask it of the entity that references the scene")
             continue
@@ -154,7 +154,7 @@ scene_sections :: proc(
         e:=core.entity_at(references,row)
         // What a section dropped above it this frame destroyed or left dormant waits.
         if !core.alive(es,e) || dormants!=nil && core.raw_added(core.raw(dormants),type_info_of(Dormant),e)!=nil {continue}
-        reference:=core.at(core.read(references),row)
+        reference:=core.at(references,row)
         state:=section_wanted(views.ptr,e,reference)
         slot:=-1
         if loads!=nil {for l,i in loads.items {if l.job!=nil && l.entity==e {slot=i}}}
@@ -179,7 +179,7 @@ scene_sections :: proc(
             job.gated=waits!=nil
             loads.items[free]={job,e}
         }
-        reference=core.at(core.read(references),row)
+        reference=core.at(references,row)
         // Not loaded nor loading: what draws a far form of its own shows, read from its scene apart.
         loading:=slot>=0
         if loads!=nil && !loading {for l in loads.items {if l.job!=nil && l.entity==e {loading=true}}}
@@ -198,7 +198,7 @@ scene_sections :: proc(
             if section_hold(world,e,held)!=.None {
                 core.report(problems,e,"scene.memory","out of memory to tell what this section turned on from what changed in it: a save holds it all as changed; free memory")
             }
-            core.at(references,row).held=held
+            core.edit_at(references,row).held=held
         }
     }
     if records_look(world)!=.None {
@@ -218,7 +218,7 @@ scene_sections :: proc(
 // asked again; one whose scene is inside itself names the scenes around it.
 @(private)
 section_failed :: proc(w:core.World_Ref,assets:^host.Assets,references:^core.Table(Scene_Reference),e:core.Entity,scene:base.Asset_Id,error:Error,problems:^core.Problems) {
-    if reference:=core.get(references,e);reference!=nil {reference.failed=scene}
+    if reference:=core.edit(references,e);reference!=nil {reference.failed=scene}
     if error==.Cycle {
         path:=make([dynamic]base.Asset_Id,context.temp_allocator)
         append(&path,..section_path(w,e))
@@ -238,7 +238,7 @@ section_drop :: proc(w:core.World_Ref,documents:Documents,e:core.Entity) {
         for child:=core.first_child(core.ref(hierarchy),e);child!=core.NONE;child=core.next_sibling(core.ref(hierarchy),child) {core.world_destroy_tree(w,child)}
     }
     if references:=core.world_table_of(w,Scene_Reference);references!=nil {
-        if reference:=(^Scene_Reference)(core.raw_get(core.raw(references),type_info_of(Scene_Reference),e));reference!=nil {reference.loaded,reference.held,reference.far={},false,{}}
+        if reference:=(^Scene_Reference)(core.raw_edit(core.raw(references),type_info_of(Scene_Reference),e));reference!=nil {reference.loaded,reference.held,reference.far={},false,{}}
     }
 }
 
@@ -285,7 +285,7 @@ section_hold :: proc(world:core.World_Ref,e:core.Entity,held:bool) -> Error {
         for x in content {
             at,off:=x,false
             for {
-                parent,_:=core.get(core.read(parents),at)
+                parent,_:=core.get(parents,at)
                 if parent.entity==e {
                     off||=!slice.contains(turned[:],at)
                     break

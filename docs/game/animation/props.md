@@ -1,4 +1,4 @@
-# Clips on props, layers, curves and root motion
+# Clips on props, curves and root motion
 
 For entities that no `.match` drives: a door, a lift, a pickup, a light, a cutscene, a scripted
 creature. `Animation.asset` may be a `.anim` (a library of clips); the field `clip` picks one. A
@@ -26,15 +26,12 @@ The target of each track says what it drives, by text:
   `animation.track.set` per track (`target`, `property`, `keys` with `time`, `value`, `ease`,
   `interpolation`), and assign it with `animation.play`. A hold is two keys with the same value.
 
-## Play, layer, seek
+## Play and seek
 
 ```odin
 // animations:^core.Table(anim.Animation), requests:^anim.Animation_Requests
-if a:=core.get(animations,door);a!=nil {
-    anim.animation_play(a,"open",.2,loop=false)          // layer 0: cross-fades from the clip
-    anim.animation_play(a,"wave",layer=1,over="@upper_body",weight=1)  // layers 1 to 3
-    anim.animation_weight(a,1,.5)                        // weight of a layer, reached over its fade
-    anim.animation_stop(a,1,.2)                          // fades a layer out and frees it
+if a:=core.edit(animations,door);a!=nil {
+    anim.animation_clip(a,"open",.2,loop=false)          // cross-fades from the clip it played
     a.speed=-1                                           // backwards
 }
 anim.animation_command(requests,door,.Play)              // from its start, in the next tick
@@ -47,11 +44,8 @@ anim.animation_seek(requests,door,0.5)                   // jumps there, skippin
   and a command holds until your code changes that field: a step that owns the `Animation` writes
   `a.playing` and seeks, and asks with commands only for entities it does not write;
   `anim.animation_playing(playback.ptr,door)` says what the clip does now.
-
-- `over` names a bone (its branch) or a body region (`@upper_body`, `@arm_l`) that the skeleton
-  maps; `mode=.Additive` with `reference` adds what a clip changes over a reference pose (an emote
-  over a stand); `mesh_space=true` keeps an Override branch's turn whatever the base turns above.
-- Layer 0 is the entity's own clip; actions use layers 1 to 3.
+- What plays over the clip (a wave over the arm, a mix by a value, an action) is a layer or an
+  action of an action set, as for a character: [actions.md](actions.md).
 
 ## Read progress, curves and markers
 
@@ -63,10 +57,10 @@ glow:=anim.animation_curve(playback.ptr,e,"pulse")       // Float curve of the c
 
 - `animation_vector` reads a Vector curve; `animation_bone_transform(playback.ptr,rig,bone)`
   gives a finished bone pose in the world.
-- A marker the clip crosses arrives in `Animation_Events.items` (`entity`, `marker` as
-  `base.name_hash`, `fraction` of the tick); for a clip that blends several, `event_policy`
-  picks which markers fire. Count arrivals by a marker of the clip, not by elapsed time.
-- Parameters of an `.agraph` are set by name: `anim.animation_parameter(a,"Mood",.5)`.
+- A marker the clip crosses arrives in `Animation_Events.items` as a `Marker` event (`entity`,
+  `name` as `base.name_hash`, `fraction` of the tick); for a clip that blends several,
+  `event_policy` picks which markers fire. Count arrivals by a marker of the clip, not by
+  elapsed time.
 
 ## A cutscene
 
@@ -82,7 +76,7 @@ anim.animation_command(requests,intro,.Play)             // as any clip
 // cinematics:core.Read(cine.Cinematic), events:core.Ref(anim.Animation_Events)
 if c,ok:=core.get(cinematics,intro);ok && c.status==.Completed {start_the_level()}
 for event in events.items {
-    if event.entity==intro && event.marker==base.name_hash("door_slam") {slam()}
+    if event.entity==intro && event.name==base.name_hash("door_slam") {slam()}  // a .Marker
 }
 ```
 
@@ -93,8 +87,8 @@ for event in events.items {
 
 `Animation.root_motion` is `Extract` (the clip's root movement is reported per tick) or `In_Place`
 (reported too, and the root bone is held at its reference so the pose stays on the entity). A
-`Character` whose `.action` has `body_move` is moved by the engine and the game does not convert
-root motion. Any other body moves itself:
+`Character` that plays an action with `body_move` is moved by the engine and the game does not
+convert root motion. Any other body moves itself:
 
 ```odin
 if d,ok:=anim.animation_root_delta(playback.ptr,e);ok {
@@ -113,8 +107,8 @@ if d,ok:=anim.animation_root_delta(playback.ptr,e);ok {
 
 ## Pitfalls
 
-- `animation_play` on layer 0 keeps the entity's `loop`; pass `loop=false` for a one-shot and
-  test `ended` only for a clip that does not loop.
+- `animation_clip` keeps the entity's `loop`; pass `loop=false` for a one-shot and test `ended`
+  only for a clip that does not loop.
 - A clip name the asset lacks is a problem of the entity, not an error at the call.
-- Changing `Animation.library` restarts the program; it replaces clips by name.
-- A `.blend` as `Animation.asset` fails: it lives under an `Additive` of an `.agraph`.
+- Changing `Animation.library` restarts the `.match`; it replaces clips by name.
+- A `.blend` as `Animation.asset` fails: it is the `space` of a layer of an action set.

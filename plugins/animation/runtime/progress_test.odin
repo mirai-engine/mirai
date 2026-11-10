@@ -25,7 +25,7 @@ a_loaded_clip_seeks_the_progress_its_entity_kept :: proc(t:^testing.T) {
     state.clip,state.time=0,1.5
     progress_write(&w.progress,core.read(&w.animations),&w.playback)
     core.test_world_settle(&w)
-    kept,found:=core.get(core.read(&w.progress),e)
+    kept,found:=core.get(&w.progress,e)
     testing.expect(t,found && kept.time==1.5)
 
     progress_resume(&w.progress,&w.playback,&w.requests)
@@ -35,7 +35,7 @@ a_loaded_clip_seeks_the_progress_its_entity_kept :: proc(t:^testing.T) {
     testing.expect(t,len(w.requests.timeline.items)==1 && w.requests.timeline.items[0]==Animation_Command{e,1.5,.Seek})
     // What a command left the clip doing comes back with it.
     clear(&w.requests.timeline.items)
-    core.get(&w.progress,e).transport=.Pause
+    core.edit(&w.progress,e).transport=.Pause
     progress_resume(&w.progress,&w.playback,&w.requests)
     testing.expect(t,len(w.requests.timeline.items)==2 && w.requests.timeline.items[0]==Animation_Command{e,0,.Pause})
 

@@ -92,19 +92,19 @@ incomplete_terrain_chunks_are_reconstructed_without_ghosts_or_changes_to_authors
         for chunk,row in w.chunks.values {
             e:=w.chunks.entities[row]
             testing.expect(t,chunk_entity_matches(&tables,e,chunk.owner,chunk.coord,chunk.depth))
-            shown,_:=core.get(core.read(&w.statics),e)
+            shown,_:=core.get(&w.statics,e)
             testing.expect(t,host.assets_mesh_generated(&assets,shown.mesh))
         }
         if author!=core.NONE {
-            static,_:=core.get(core.read(&w.statics),author)
-            transform,_:=core.get(core.read(&w.transforms),author)
+            static,_:=core.get(&w.statics,author)
+            transform,_:=core.get(&w.transforms,author)
             testing.expect(t,core.alive(&w.entities,author) && core.has(&w.ids,author) && static.mesh=={} && !core.has(&w.chunks,author))
             testing.expect_value(t,transform.position.x,damage==.Author?f32(72):f32(0))
             testing.expect(t,!core.has(&w.parents,author))
             if damage==.Author {
-                marker,_:=core.get(core.read(&w.terrains),author)
-                collider,_:=core.get(core.read(&w.colliders),author)
-                identity,_:=core.get(core.read(&w.ids),author)
+                marker,_:=core.get(&w.terrains,author)
+                collider,_:=core.get(&w.colliders,author)
+                identity,_:=core.get(&w.ids,author)
                 testing.expect(t,marker==(Terrain{source=id,revision=1,solid=true}) && identity.value==2)
                 testing.expect_value(t,collider,phys.collider_box({1.25,2.5,3.75}))
             } else {testing.expect(t,!core.has(&w.colliders,author))}

@@ -54,7 +54,7 @@ write_horde_records :: proc(o:^Out) {
 write_ai_scene :: proc(o:^Out) {
     write_horde_records(o)
     s:asset.Scene_Builder
-    asset.builder_init(&s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene","ai"))
+    asset.builder_init(&s,&o.content,asset.content_id(PROJECT,"scene","ai"))
     defer asset.builder_destroy(&s)
     environment,turn,to_sun,disc:=sky_of(o,.Day,mm.quat_rotate(mm.quat_from_euler({-0.6,0.8,0}),render.SUN_DIRECTION),LAMPLIT,1.6)
     sky_set(&s,&environment,turn)

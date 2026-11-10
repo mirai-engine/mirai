@@ -89,12 +89,12 @@ the_fade_of_a_layer_is_edited_under_its_row_as_one_undo_step :: proc(t:^testing.
 	defer delete(selection.entities)
 	history.selection_set(&selection,{e})
 	fade :: proc(w:^Post_Process_Test_World,e:core.Entity) -> f32 {
-		v,_:=core.get(core.read(&w.volumes),e)
+		v,_:=core.get(&w.volumes,e)
 		return v.layers[0].fade
 	}
 	frame :: proc(s:^Session,w:^Post_Process_Test_World,e:core.Entity,input:ui.Input) {
 		ui.frame_begin(s.gui.ctx,input)
-		v,_:=core.get(core.read(&w.volumes),e)
+		v,_:=core.get(&w.volumes,e)
 		if ui.box(s.gui.ctx,{width=ui.fixed(320),height=ui.FIT,direction=.Column}) {post_process_row(s,0,v.layers[0])}
 		ui.frame_end(s.gui.ctx)
 	}

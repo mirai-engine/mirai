@@ -28,7 +28,7 @@ rig_path :: proc(model:^importer.Imported_Model,name:string) -> string {
 // on its left and right, one row every GALLERY_ROW meters.
 @(private) GALLERY_SIDE :: 5.5 // m from the center of the walkway to a station
 @(private) GALLERY_ROW :: 5
-@(private) GALLERY_STATIONS :: 23
+@(private) GALLERY_STATIONS :: 22
 
 
 // The turn of an actor that looks toward +Z of the world.
@@ -87,11 +87,12 @@ gallery_mirai :: proc(g:^Gallery_Build,name:string,position:mm.Vec3,facing:mm.Qu
     return gallery_actor(g.o,g.s,g.model,g.source,name,position,facing,g.clip,clip_name)
 }
 
-// A clip over the one of the actor, authored on its Animation.
+// The action set of the actor: the layers and actions that play over its base.
 @(private)
-gallery_layer :: proc(s:^asset.Scene_Builder,root:base.Entity_Id,clip:string,layer:int,over:="",sync:=false,weight:f32=1,fade:f32=.25) {
+gallery_actions :: proc(s:^asset.Scene_Builder,root:base.Entity_Id,set:base.Asset_Id) {
     value,found:=asset.scene_get(&s.scene,root,"Animation",anim.Animation)
-    if !found || !anim.animation_play(&value,clip,fade,layer=layer,over=over,sync=sync,weight=weight) {s.failed=true;return}
+    if !found {s.failed=true;return}
+    value.actions=set
     asset.builder_set(s,root,value)
 }
 
@@ -340,7 +341,7 @@ write_animation_scene :: proc(o:^Out) {
     if o.content.failed {return}
     programs:=gallery_program_assets(o,&model,clip,stride_time)
     matching:=gallery_mirai_matching(o,locomotion)
-    s:asset.Scene_Builder;asset.builder_init(&s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene","animation"));defer asset.builder_destroy(&s)
+    s:asset.Scene_Builder;asset.builder_init(&s,&o.content,asset.content_id(PROJECT,"scene","animation"));defer asset.builder_destroy(&s)
     g:=Gallery_Build{o=o,s=&s,model=&model,source=source,clip=clip,label=ui_id("animation_gallery_label"),panel=ui_id("animation_gallery_panel")}
     gallery_environment(o,&s)
     shoulder:=rig_path(&model,"LeftShoulder")
@@ -371,31 +372,18 @@ write_animation_scene :: proc(o:^Out) {
 
     place=gallery_next(&g)
     root=gallery_mirai(&g,"Mirai greeting layer",place.origin,place.facing)
-    gallery_layer(&s,root,"wave",layer=1,over=shoulder,fade=.35)
+    gallery_actions(&s,root,programs.greeting)
     gallery_item(&g,root,.Layered,place,"2.1  Layer over the shoulder","the wave moves only the left arm of the walk",adjustable=true)
 
     place=gallery_next(&g)
     root=gallery_mirai(&g,"Mirai synchronized strides",place.origin,place.facing)
-    gallery_layer(&s,root,"jog",layer=1,sync=true,weight=.5)
+    gallery_actions(&s,root,programs.strides)
     gallery_item(&g,root,.Sync,place,"2.2  Synchronized layer","walk and jog keep their steps together",adjustable=true)
 
     place=gallery_next(&g)
     root=gallery_mirai(&g,"Mirai additive wave",place.origin,place.facing)
-    {
-        value:=anim.ANIMATION_DEFAULT;value.asset=programs.additive
-        _,wave:=game.gallery_automatic(.Additive,0);anim.animation_parameter(&value,game.GALLERY_WAVE,wave)
-        asset.builder_set(&s,root,value)
-    }
+    gallery_actions(&s,root,programs.additive)
     gallery_item(&g,root,.Additive,place,"2.3  Additive wave","a wave space added over the walk",adjustable=true)
-
-    place=gallery_next(&g)
-    root=gallery_mirai(&g,"Mirai greeting graph",place.origin,place.facing)
-    {
-        value:=anim.ANIMATION_DEFAULT;value.asset,value.actions=programs.graph,programs.actions
-        _,wave:=game.gallery_automatic(.Graph,0);anim.animation_parameter(&value,game.GALLERY_WAVE,wave)
-        asset.builder_set(&s,root,value)
-    }
-    gallery_item(&g,root,.Graph,place,"2.4  Graph and action","a weighted layer of the graph and the Greet action",adjustable=true)
 
     place=gallery_next(&g)
     root=gallery_mirai(&g,"Mirai named actions",place.origin,place.facing,"idle")
@@ -403,12 +391,12 @@ write_animation_scene :: proc(o:^Out) {
         value:=anim.ANIMATION_DEFAULT;value.asset,value.actions=clip,programs.actions;base.text_set(value.clip[:],"idle")
         asset.builder_set(&s,root,value);gallery_motor(&s,root)
     }
-    gallery_item(&g,root,.Actions,place,"2.5  Named actions","Greet on the arm, Step with root motion",adjustable=true)
+    gallery_item(&g,root,.Actions,place,"2.4  Named actions","Greet on the arm, Step with root motion",adjustable=true)
 
     place=gallery_next(&g)
     root=gallery_mirai(&g,"Mirai matching by speed",place.origin,place.facing)
     {
-        value:=anim.ANIMATION_DEFAULT;value.asset=programs.matching;value.root_motion=.In_Place
+        value:=anim.ANIMATION_DEFAULT;value.asset,value.actions=programs.matching,programs.actions;value.root_motion=.In_Place
         asset.builder_set(&s,root,value)
     }
     gallery_item(&g,root,.Matching,place,"3.1  Motion matching","the speed asked picks idle, walk or jog",adjustable=true)

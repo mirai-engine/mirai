@@ -5,7 +5,6 @@
   "parts": ["Runtime", "Editor"],
   "asset_kinds": [
     {"extension": ".match", "merged": true},
-    {"extension": ".agraph", "merged": true},
     {"extension": ".blend", "merged": true},
     {"extension": ".motion", "merged": true},
     {"extension": ".pose", "merged": true},

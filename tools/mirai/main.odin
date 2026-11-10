@@ -46,7 +46,7 @@ COMMANDS :: [?]Command{
     {"mcp",MCP_USAGE,"MCP server over stdio that forwards to the editor of the project or of the given port; gives the editor tools and those of the plugins in --plugins",cmd_mcp},
     {"texts",TEXTS_USAGE,"Takes the translatable texts of the project's .ui files to a CSV to translate, and back, through the open editor",cmd_texts},
     {"ui",UI_USAGE,"Reads, writes and checks the interfaces of a project as the documents ui.inspect gives and ui.write takes, with no editor",cmd_ui},
-    {"scene",SCENE_USAGE,"Reads, writes and checks the scenes and prefabs of a project as the documents scene.inspect gives with root and scene.write takes, with no editor",cmd_scene},
+    {"scene",SCENE_USAGE,"Reads, writes and checks the scenes of a project as the documents scene.inspect gives with root and scene.write takes, with no editor",cmd_scene},
     {"content",CONTENT_USAGE,"Runs the content tool of a project, which writes the assets it makes from code",cmd_content},
     {"import","import <file> --out <folder> [--max-texture N]","Imports a model, an image, a sound, a font, CSV texts or a prompts manifest as .mesh, .mat, .tex, .sound, .font, .strings and .prompts assets",cmd_import},
 }
@@ -252,6 +252,7 @@ cmd_check :: proc(root:string,args:[]string) -> int {
     if code==0 && folder!="" && alloc_lint_applies(root,folder) && !alloc_lint_package(folder) {return 1}
     if code==0 && folder!="" && plugin_api_lint_applies(folder) && !plugin_api_lint_folder(folder) {return 1}
     if code==0 && folder!="" && solver_lint_applies(root,folder) && !solver_lint_package(folder) {return 1}
+    if code==0 && folder!="" && !row_copy_lint_package(folder) {return 1}
     return code
 }
 
@@ -267,7 +268,7 @@ check_project :: proc(root,folder:string) -> int {
     for d in job.result.diagnostics {fmt.eprintfln("%s(%d:%d) %v: %s",d.file,d.line,d.column,d.severity,d.message)}
     if job.result.status==.Built {
         game:=join(folder,project.FOLDER_NAMES[.Game])
-        if !solver_lint_package(game) {return 1}
+        if !solver_lint_package(game) || !row_copy_lint_package(game) {return 1}
         return 1 if alloc_lint_applies(root,game) && !alloc_lint_package(game) || !clean else 0
     }
     if len(job.result.diagnostics)==0 {fmt.eprintln(job.result.text)}

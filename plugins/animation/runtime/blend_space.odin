@@ -111,7 +111,8 @@ blend_space_view :: proc(file:^asset.Asset,types:^asset.Types) -> (profile:Blend
     return profile,.None
 }
 
-Blend_Content :: struct {id:base.Asset_Id,checked,revision:u64,stamp:[2]i64,profile:Blend_Profile,space:lib.Blend_Space,axis_names:[2]u64,valid:bool,error:asset.Error}
+// axis_names and sample_names: base.name_hash of the name of each axis and of the clip of each sample.
+Blend_Content :: struct {id:base.Asset_Id,checked,revision:u64,stamp:[2]i64,profile:Blend_Profile,space:lib.Blend_Space,axis_names:[2]u64,sample_names:[]u64,valid:bool,error:asset.Error}
 @(storage,host,free="blend_assets_free")
 Blend_Assets :: struct {allocator:mem.Allocator,contents:[dynamic]Blend_Content}
 
@@ -123,7 +124,7 @@ blend_assets_free :: proc(cache:^Blend_Assets) {
     if cache==nil {return}
     allocator:=cache.allocator
     if allocator.procedure==nil {allocator=context.allocator}
-    for &content in cache.contents {blend_profile_free(&content.profile,allocator);delete(content.space.points,allocator);content.space={}}
+    for &content in cache.contents {blend_profile_free(&content.profile,allocator);delete(content.space.points,allocator);delete(content.sample_names,allocator);content.space={}}
     delete(cache.contents);cache^={}
 }
 blend_content :: proc(cache:^Blend_Assets,assets:^host.Assets,allocator:runtime.Allocator,id:base.Asset_Id) -> ^Blend_Content {
@@ -143,7 +144,7 @@ blend_content :: proc(cache:^Blend_Assets,assets:^host.Assets,allocator:runtime.
     error:=asset.Error.Not_Found
     if found {next,error=blend_profile_read(assets,id,cache.allocator)}
     if error==.Out_Of_Memory {content.error=error;content.checked=0;return nil}
-    blend_profile_free(&content.profile,cache.allocator);delete(content.space.points,cache.allocator)
+    blend_profile_free(&content.profile,cache.allocator);delete(content.space.points,cache.allocator);delete(content.sample_names,cache.allocator)
     revision:=content.revision+1
     content^=next;content.id,content.stamp,content.checked,content.revision=id,stamp,assets_stamp(assets),revision
     content.valid,content.error=error==.None,error
@@ -161,14 +162,16 @@ blend_profile_read :: proc(assets:^host.Assets,id:base.Asset_Id,allocator:mem.Al
     }
     profile:Blend_Profile;profile.info=view.info
     success:=false
-    defer {if !success {blend_profile_free(&profile,allocator);delete(content.space.points,allocator)}}
+    defer {if !success {blend_profile_free(&profile,allocator);delete(content.space.points,allocator);delete(content.sample_names,allocator);content={}}}
     ok:bool
     profile.samples,ok=clone(view.samples,allocator);if !ok {return {},.Out_Of_Memory}
     profile.segments,ok=clone(view.segments,allocator);if !ok {return {},.Out_Of_Memory}
     profile.triangles,ok=clone(view.triangles,allocator);if !ok {return {},.Out_Of_Memory}
     points,allocation:=make([]mm.Vec2,len(profile.samples),allocator)
-    if allocation!=nil {return {},.Out_Of_Memory}
-    for sample,i in profile.samples {points[i]=blend_position(profile.info,sample.position)}
+    names,names_allocation:=make([]u64,len(profile.samples),allocator)
+    content.space.points,content.sample_names=points,names
+    if allocation!=nil || names_allocation!=nil {return {},.Out_Of_Memory}
+    for &sample,i in profile.samples {points[i]=blend_position(profile.info,sample.position);names[i]=base.name_hash(base.text_get(sample.clip[:]))}
     content.profile=profile
     content.space={dimension=profile.info.dimension,points=points,segments=profile.segments,triangles=profile.triangles,allocator=allocator}
     success=true
