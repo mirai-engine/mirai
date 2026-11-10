@@ -196,6 +196,8 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   with `MIRAI_VALIDATION=1` (Vulkan) or `MTL_DEBUG_LAYER=1` (Metal). No GPU test may report
   validation errors; a new one takes the shared device
   ([GPU environment](references/verification.md#gpu-environment)).
+- A change of `render_sync` runs `engine/render/sync_test.odin`, without a device: the rows it
+  looks at in a frame (`Sync_Stats.rows`) and what the renderer has against a world given whole.
 - A change that must preserve the image is checked with `MIRAI_GOLDEN=write:<dir>` before and
   `MIRAI_GOLDEN=compare:<dir>` after, on the same machine.
 - After regenerating shaders, the diff contains only the outputs of the touched sources, the

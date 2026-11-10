@@ -169,8 +169,6 @@ meshes_created_before_their_world_transform_become_visible_and_visual_instances_
             testing.expect_value(t,len(sync.drawn.entities),1)
         } else {testing.expect_value(t,green,0)}
         testing.expect_value(t,w.entities.alive,2) // the mesh and the sky
-        // Placing the mesh puts its instance in.
-        if pass==3 {testing.expect_value(t,sync.stats.moves,u64(1))}
     }
     testing.expect_value(t,len(app.renderer.scene.instances),1)
     testing.expect_value(t,app.assets.stats.derived,0)
