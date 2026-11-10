@@ -213,7 +213,7 @@ mirai rpc --batch <calls.jsonl|-> [the same options]
   its text to a field that takes only a string. A value that a shell would split or that needs a
   list of texts goes in the object form.
 - `--project P` takes the port from its `api.json` and, when the project has no editor open,
-  starts its headless `--dev` session as `mirai session start` does and then makes the call,
+  starts its headless dev session as `mirai session start` does and then makes the call,
   saying so on stderr; a method that only makes sense with an editor already open
   (`RPC_NEEDS_OPEN_EDITOR`) never starts one and fails without an editor. Without `--project` or
   `--port`, the port is that of `MIRAI_API_PORT` or the editor of the project at or above the

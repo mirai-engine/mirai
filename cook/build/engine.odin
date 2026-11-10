@@ -211,7 +211,7 @@ ENGINE_MODE_HERE :: Engine_Mode.Dev when ODIN_OPTIMIZATION_MODE==.Minimal || ODI
 ENGINE_STAMP :: "engine.stamp"
 
 // The mode of the binaries an installed engine carries, the only one it
-// has: --dev builds the libraries of a project at -o:minimal against them.
+// has: dev builds the libraries of a project at -o:minimal against them.
 ENGINE_MODE_INSTALLED :: Engine_Mode.Release
 
 // The mode of the binaries a command gets: the one it asks for, but in an

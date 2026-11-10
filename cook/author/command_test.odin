@@ -149,7 +149,7 @@ the_commands_read_write_and_check_the_document_of_an_asset :: proc(t:^testing.T)
     before:=file_bytes_at(root,"assets/hud/hud.ui")
     for args in ([][]string{{"ui","write","hud/hud.ui",hud},{"ui","check"},{"scene","read","arena/main.scene"},{"scene","write","arena/main.scene",hud},{"scene","check"}}) {
         refused:=run(base_args,..args)
-        testing.expectf(t,refused.code==1 && refused.out=="" && strings.contains(refused.err,"mirai build editor <project> --dev"),"%v: %d %s%s",args,refused.code,refused.out,refused.err)
+        testing.expectf(t,refused.code==1 && refused.out=="" && strings.contains(refused.err,"mirai build editor <project> builds it"),"%v: %d %s%s",args,refused.code,refused.out,refused.err)
     }
     testing.expect(t,slice.equal(file_bytes_at(root,"assets/hud/hud.ui"),before))
 

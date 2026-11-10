@@ -34,7 +34,7 @@ says how to fix each finding.
 | `mirai build server . [--out dir]` | a dedicated server folder, run with `--dedicated` |
 | `mirai package engine --out dir` | assembles the engine itself as an installed engine |
 
-- Every command builds `--dev` (`-o:minimal`) unless `--release` is given, which compiles the
+- Every command builds in dev (`-o:minimal`) unless `--release` is given, which compiles the
   project at the `build.optimization` of `project.mirai`. `package engine` is always `--release`.
 - `play` compiles the project and reads assets and shaders from the project: nothing is cooked,
   so it starts fast.

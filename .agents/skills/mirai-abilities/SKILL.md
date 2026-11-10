@@ -91,5 +91,5 @@ and the tick it started, and derives everything else from the tick against the s
   charges, a copy halfway that runs the same future, a cancel that leaves
   nothing, replicas, lasting effects with stacks, cleanse and immunity, invalid sheets and
   requests, and a stable tick without allocations).
-- Methods: `mirai generate demo`, `mirai build editor demo --dev` and, in a session on a copy,
+- Methods: `mirai generate demo`, `mirai build editor demo` and, in a session on a copy,
   `abilities.check`, `abilities.inspect` and `abilities.use` against rows written with `records.*`.

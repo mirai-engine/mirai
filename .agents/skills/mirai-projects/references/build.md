@@ -19,7 +19,7 @@ errors of the attributes.
   `mirai-player` runs its game (`mirai play`, `player.start`, the editor's attached players).
   Optimized (`Size`, `Speed`, `Aggressive`) it is a single LLVM module, as the shipped game
   compiles it, because a `#force_inline` procedure of another package is not inlined across
-  modules; with `--dev` (`minimal`) or `None`, one module per package
+  modules; in dev (`minimal`) or `None`, one module per package
   (`library_optimization_append`).
 - `Game`: a `main` that calls `host.player_run` over `gen/shipped_world`, the world without the
   development plugins, which only this target generates. It compiles the whole engine, the
@@ -266,7 +266,7 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
 - **Parallel.** Files are cooked on a job system (`Cook_Desc.worker`, else one of the cook with a
   thread per core), the largest first; what is written and the report are those of a cook on one
   thread, and an error is the first by path. Prefab resolution and texture cache writes take a lock.
-  A `--dev` game is cooked with the pack `QUICK` of `cook/compressor/lz` (`Cook_Desc.quick`), a
+  A dev game is cooked with the pack `QUICK` of `cook/compressor/lz` (`Cook_Desc.quick`), a
   release one with `SHIP`.
 - **Scope.** The roots and, transitively, the dependencies each asset declares; the rest goes to
   `dropped`. A dependency that is not any file goes to `missing` and does not stop the cooking.

@@ -15,8 +15,7 @@ import "mirai:cook/workspace"
 // arguments, and its exit code is the command's.
 
 cmd_import :: proc(root:string,args:[]string) -> int {
-    mode,rest,ok:=build_mode_take(args)
-    if !ok {fmt.eprintln("mirai import: --dev and --release do not go together; pass one of them");return 2}
+    mode,rest:=build_mode_take(args)
     mode=build.engine_mode_resolve(root,mode)
     if !c_libraries_current(root) || !build.engine_current(root,mode) {
         lock:=build_lock(root,"import")

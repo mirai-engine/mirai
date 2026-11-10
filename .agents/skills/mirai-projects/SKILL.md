@@ -26,7 +26,7 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 - Shipping and cooking: [shipped game](references/build.md#shipped-game),
   [dedicated server](references/build.md#dedicated-server) and
   [cooking](references/build.md#asset-cooking).
-- `--dev`/`--release` modes, per-part currency and the shared engine cache:
+- Dev and `--release` modes, per-part currency and the shared engine cache:
   [engine binaries](references/projects.md#engine-binaries) and
   [plugin libraries](references/projects.md#plugin-libraries).
 - Engine shipped as a binary, `engine.mirai`, `mirai package engine`, engine root and release
@@ -149,7 +149,7 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   `the_tests_of_runtime_packages_import_no_engine_time_package` of `cook/build`.
 - Cache: changing an engine source and opening the editor rebuilds; repeating without changes
   reuses both builds ([reload](../mirai-editor/references/editor.md#build-and-reload)).
-- Fingerprint and shared cache: `mirai build engine --dev` twice (the second says "unchanged"
+- Fingerprint and shared cache: `mirai build engine` twice (the second says "unchanged"
   without waiting for a turn), a change in the body of a procedure (rebuilds only the library of
   its package) and in a worktree from `mirai worktree new` (reports "copied from the shared
   cache").
@@ -160,8 +160,8 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   counts by its manifest, not its date) and `plugins_test.odin` (a plugin library is the same in
   every project). If the package changes, by hand:
   `mirai package engine --out <short folder>`, compress it, decompress it into another folder and,
-  with its `bin/mirai`, `new` of each template and `build editor --dev`, which does not compile
-  plugin libraries; then `edit --dev` opens the editor. The workflow YAML is validated with
+  with its `bin/mirai`, `new` of each template and `build editor`, which does not compile
+  plugin libraries; then `edit` opens the editor. The workflow YAML is validated with
   `actionlint`.
 - ACP installer in a temporary project: install, search, cancel and uninstall Codex, and
   `initialize` of the adapter with `CODEX_PATH` pointing at the binary, with Bun and with Bundled.
