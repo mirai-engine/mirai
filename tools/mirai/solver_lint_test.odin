@@ -17,8 +17,8 @@ only_the_physics_plugin_imports_the_solver :: proc(t:^testing.T) {
         testing.expectf(t,solver_lint_applies("C:/engine",c.folder)==c.applies,"%s: %v",c.folder,!c.applies)
     }
     context.allocator=context.temp_allocator
-    line,column,found,parsed:=solver_lint_source("sample.odin","package sample\n\nimport \"mirai:core\"\nimport sim \"plugins:physics/runtime/sim\"\n")
-    testing.expect(t,parsed && found && line==4 && column==1)
-    _,_,found,parsed=solver_lint_source("sample.odin","package sample\n\nimport physics \"plugins:physics/runtime\"\n\n// plugins:physics/runtime/sim\n")
-    testing.expect(t,parsed && !found)
+    line,column,found:=solver_import(source_parse("sample.odin","package sample\n\nimport \"mirai:core\"\nimport sim \"plugins:physics/runtime/sim\"\n"))
+    testing.expect(t,found && line==4 && column==1)
+    _,_,found=solver_import(source_parse("sample.odin","package sample\n\nimport physics \"plugins:physics/runtime\"\n\n// plugins:physics/runtime/sim\n"))
+    testing.expect(t,!found)
 }

@@ -267,7 +267,9 @@ world_generate :: proc(p:^project.Project,allocator:=context.allocator,shipped:=
     g.engine_root,g.root=p.engine_root,p.root
     packages_find(&g,p)
     for pkg in g.packages {package_read(&g,pkg)}
-    for pkg in g.packages {plugin_imports_check(&g,p,pkg)}
+    for pkg in g.packages {
+        if pkg.plugin>=0 {plugin_imports_check(p.plugins,pkg.plugin,pkg.files,&g.errors)}
+    }
     types_settle(&g)
     names_settle(&g)
     bundles_settle(&g)
@@ -419,17 +421,18 @@ plugin_import :: proc(root:string,plugin:^project.Plugin,name,part:string,alloca
     return fmt.aprintf("project:%s/%s",folder,part,allocator=allocator)
 }
 
-// A plugin imports only itself and what it depends on: what it does not name
-// in its plugin.mirai is not active with it.
-@(private="file")
-plugin_imports_check :: proc(g:^Generator,p:^project.Project,pkg:^Package) {
-    if pkg.plugin<0 {return}
-    for file in pkg.files {
+// A plugin imports only itself and what it depends on, and its tests also what
+// they depend on: what it does not name in its plugin.mirai is not active with
+// it. Each import of the files of a package of the plugin at index that
+// reaches another goes to errors, with what to declare.
+plugin_imports_check :: proc(plugins:[]project.Plugin,index:int,files:[]^ast.File,errors:^[dynamic]string) {
+    for file in files {
+        tests:=strings.has_suffix(file.fullpath,"_test.odin")
         for decl in file.imports {
             imported:=strings.trim(decl.fullpath,"\"`")
             other:=project.import_plugin(imported)
-            if other=="" || project.plugin_reaches(p.plugins,pkg.plugin,other,false) {continue}
-            append(&g.errors,fmt.aprintf("%s: imports %s, a plugin %s does not depend on; add %q to the dependencies of its plugin.mirai, or take the import out",file.fullpath,imported,base.text_get(p.plugins[pkg.plugin].manifest.name[:]),other))
+            if other=="" || project.plugin_reaches(plugins,index,other,tests) {continue}
+            append(errors,fmt.aprintf("%s(%d:%d): imports %s, a plugin %s does not depend on; add %q to the %s of its plugin.mirai, or take the import out",file.fullpath,decl.pos.line,decl.pos.column,imported,base.text_get(plugins[index].manifest.name[:]),other,tests?"test_dependencies":"dependencies"))
         }
     }
 }
@@ -444,11 +447,11 @@ has_sources :: proc(folder:string) -> bool {
     return false
 }
 
-// Reads and parses the sources of a package folder, without its tests, and returns its name and
-// its files in path order. Each problem goes to errors naming the file and the position, as the
+// Reads and parses the sources of a package folder, its tests only when asked, and returns its
+// name and its files in path order. Each problem goes to errors naming the file and the position, as the
 // compiler does. Not parser.parse_package: it reads the package clause of a file that failed to
 // parse, which a file without one leaves nil.
-sources_read :: proc(folder:string,errors:^[dynamic]string,allocator:=context.allocator) -> (name:string,files:[]^ast.File,ok:bool) {
+sources_read :: proc(folder:string,errors:^[dynamic]string,allocator:=context.allocator,tests:=false) -> (name:string,files:[]^ast.File,ok:bool) {
     collected,collected_ok:=parser.collect_package(folder)
     if !collected_ok {
         append(errors,fmt.aprintf("%s: the package could not be read",folder))
@@ -456,7 +459,7 @@ sources_read :: proc(folder:string,errors:^[dynamic]string,allocator:=context.al
     }
     sorted:=make([dynamic]^ast.File,0,len(collected.files),allocator)
     for path,file in collected.files {
-        if !strings.has_suffix(path,"_test.odin") {append(&sorted,file)}
+        if tests || !strings.has_suffix(path,"_test.odin") {append(&sorted,file)}
     }
     slice.sort_by(sorted[:],proc(a,b:^ast.File) -> bool {return a.fullpath<b.fullpath})
     p:=parser.default_parser()
