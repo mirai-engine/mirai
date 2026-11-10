@@ -282,7 +282,7 @@ Stats :: struct {
 }
 
 Pipeline_Id :: enum {
-	Postprocess_Copy, Postprocess_Hdr, Postprocess_Ldr, Cull, Cull_Clusters, Cull_Clusters_Candidates, Cull_Programs, Tlas_Batches, Gbuffer, Light_Grid_Count, Light_Grid_Scan, Light_Grid_Fill, Light_Grid_Weights, Direct_Rays, Direct_Rays_Hw, Direct_Samples, Direct_Samples_Hw, Direct_Points, Direct_Spread, Direct_Filter, Direct_Filter_Hw, Ddgi_Trace, Ddgi_Trace_Hw, Ddgi_Irradiance, Ddgi_Distance, Ddgi_Keep,
+	Postprocess_Copy, Postprocess_Hdr, Postprocess_Ldr, Cull, Cull_Clusters, Cull_Clusters_Candidates, Cull_Programs, Tlas_Batches, Gbuffer, Light_Grid_Count, Light_Grid_Scan, Light_Grid_Fill, Light_Grid_Weights, Direct_Maps, Direct_Rays, Direct_Rays_Hw, Direct_Samples, Direct_Samples_Hw, Direct_Points, Direct_Spread, Direct_Filter, Direct_Filter_Hw, Ddgi_Trace, Ddgi_Trace_Hw, Ddgi_Irradiance, Ddgi_Distance, Ddgi_Keep,
 	Ddgi_Relocate, Ddgi_Select, Ddgi_Touch, Ddgi_Mark, Contact, Contact_Hw, Contact_Light, Contact_Pixels, Composite, Taa, Hiz,
 	Exposure_Histogram, Exposure_Adapt, Tonemap, Tonemap_Wide, Ui, Thumbnail, Thumbnail_Values, Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Tint, Shadow_Map_Glass, Shadow_Maps, Reflect, Reflect_Hw, Translucent, Translucent_Hw, Reflect_Resolve,
 	Ddgi_Trace_Color, Ddgi_Trace_Color_Hw,
@@ -292,7 +292,7 @@ Pipeline_Id :: enum {
 	Gbuffer_Plain, // without the reflectance target: no reflective instance in the frustum
 	Gbuffer_Layers, Gbuffer_Layers_Clip, Gbuffer_Nested_Layers, // with the layers target: an instance with layers in the frustum
 	Direct_Samples_Color, Direct_Samples_Color_Hw, Direct_Samples_Unlayered_Color, Direct_Samples_Hw_Unlayered_Color, // the glass the light crosses colors it
-	Direct_Samples_Unlayered, Direct_Samples_Hw_Unlayered, Direct_Filter_Unlayered, Direct_Filter_Hw_Unlayered, Composite_Unlayered, // without: they read no layers
+	Direct_Maps_Unlayered, Direct_Samples_Unlayered, Direct_Samples_Hw_Unlayered, Direct_Filter_Unlayered, Direct_Filter_Hw_Unlayered, Composite_Unlayered, // without: they read no layers
 	Reflect_Unlayered, Reflect_Unlayered_Hw, Reflect_Unlayered_Color, Reflect_Unlayered_Color_Hw, // no instance with layers in the scene
 	Ui_World, Ui_Composite, Ui_Blur, Debug_Lines,
 	Skin, Skin_Triangles, Skin_Refit,
@@ -833,6 +833,8 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	compute(list, r, .Light_Grid_Scan, .Light_Grid_Scan_Comp)
 	compute(list, r, .Light_Grid_Fill, .Light_Grid_Fill_Comp)
 	compute(list, r, .Light_Grid_Weights, .Light_Grid_Weights_Comp)
+	compute(list, r, .Direct_Maps, .Direct_Maps_Comp)
+	compute(list, r, .Direct_Maps_Unlayered, .Direct_Maps_Unlayered_Comp)
 	compute(list, r, .Direct_Rays, .Direct_Rays_Comp)
 	compute(list, r, .Direct_Samples, .Direct_Samples_Comp)
 	compute(list, r, .Direct_Samples_Unlayered, .Direct_Samples_Unlayered_Comp)

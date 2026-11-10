@@ -6,6 +6,7 @@
 // samples its place in its group says, leaving what stopped it for the samples
 // of the group and of the groups around to meet; the other three, nothing.
 #define GBUFFER_NORMAL SLOT_PASS0
+#define SHADOW_DATA_SLOT SLOT_PASS9
 #include "lighting.slang"
 #include "gbuffer.slang"
 #include "pixel.slang"
@@ -47,13 +48,13 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     float3 normal = gbuffer_normal(source);
     uint4 row = direct_cell(pixel.position);
     uint count = direct_items(row);
-    // The weights of the items and of the sun, the sun last; none where a map tells of it.
+    // The weights of the items and of the sun, the sun last; none for one a map holds here.
     float sun = direct_sun_weight(pixel.position, normal);
     Shadow_Map held;
     if (sun > 0.0 && sun_map_of(pixel.position, held)) sun = 0.0;
     float total = sun;
     for (uint i = 0u; i < count; i++) {
-        total += direct_item_weight(row, direct_item(row, i), pixel.position, normal);
+        total += direct_sampled_weight(row, direct_item(row, i), pixel.position, normal);
     }
     uint m = max(params.samples, 1u);
     if (!(total > 0.0)) {
@@ -71,7 +72,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     uint first = 0u;
     bool found = false;
     for (uint i = 0u; i <= count && k < m; i++) {
-        float w = i < count ? direct_item_weight(row, direct_item(row, i), pixel.position, normal) : sun;
+        float w = i < count ? direct_sampled_weight(row, direct_item(row, i), pixel.position, normal) : sun;
         upto += w;
         first = k;
         while (k < m && next < upto) {

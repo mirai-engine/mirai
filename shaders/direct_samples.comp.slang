@@ -7,8 +7,10 @@
 //! variant color_hw MIRAI_DIRECT_GLASS=1 MIRAI_HW_RT=1
 //! variant unlayered_color MIRAI_DIRECT_GLASS=1 MIRAI_GBUFFER_NO_LAYERS=1
 //! variant hw_unlayered_color MIRAI_DIRECT_GLASS=1 MIRAI_HW_RT=1 MIRAI_GBUFFER_NO_LAYERS=1
-// The second pass of the direct light of a view (direct_samples.slang): the
-// samples of each point. Each
+// The pass of the direct light of a view (direct_samples.slang) that takes
+// the samples of each point of the lights no map of the view holds there: of
+// those a map holds, direct_maps.comp gave the light before, and this adds to
+// it at the points it marked; without maps, all of it. Each
 // light that takes some gives its exact light
 // with nothing in the way, with the material, once (light_radiance), by the
 // share of samples it took against those due to it, and by the part of them
@@ -21,12 +23,13 @@
 // through the whole scene. What it leaves of the local lights: their light
 // with nothing in the way over the reflectance, and the part of it that got
 // there, plus 2 where a sample met what changed (occluder_changed). Of the sun
-// it leaves only how much of it gets there, from its map where one holds the
-// point and from its samples elsewhere, and what the glass on the way leaves
-// of it: its light is taken at the pixels (direct_filter.comp), whose normals
-// and materials shape it.
+// no map holds it leaves only how much of it its samples find, and what the
+// glass on the way leaves of it: its light is taken at the pixels
+// (direct_filter.comp), whose normals and materials shape it.
 #define GBUFFER_ALBEDO SLOT_PASS3
 #define GBUFFER_NORMAL SLOT_PASS0
+#define SUN_SHADOW_SLOT SLOT_PASS8
+#define SHADOW_DATA_SLOT SLOT_PASS9
 // The filters of glass with a program wait for it (points.slang): the light
 // takes their means, and the resume (params.resume) adds what the exact ones
 // change of it.
@@ -60,9 +63,6 @@ struct Params_Block { uint pad0; uint samples; float sun_radius; uint scale; uin
 // (direct_penumbra); for direct_spread.comp.
 [[vk::binding(SLOT_PASS5, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> out_depth : register(MIRAI_REGISTER(u, SLOT_PASS5), space0);
 [[vk::binding(SLOT_PASS6, 0)]] StructuredBuffer<uint4> light_grid : register(MIRAI_REGISTER(t, SLOT_PASS6), space0);
-// The maps of the shadows of the lights rasterized this frame (shadow_maps.slang).
-[[vk::binding(SLOT_PASS8, 0)]] Texture2D<float4> shadow_atlas : register(MIRAI_REGISTER(t, SLOT_PASS8), space0);
-[[vk::binding(SLOT_PASS9, 0)]] StructuredBuffer<uint4> shadow_data : register(MIRAI_REGISTER(t, SLOT_PASS9), space0);
 // What the glass on the way leaves of the light of the sun at each point
 // (rgb), and how much of the sun gets there (a), below 0 where it gives none.
 [[vk::binding(SLOT_PASS7, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> out_sun : register(MIRAI_REGISTER(u, SLOT_PASS7), space0);
@@ -74,6 +74,8 @@ struct Params_Block { uint pad0; uint samples; float sun_radius; uint scale; uin
 // of the pixels side by side, so that a warp reads them from as many banks.
 #define GROUP_SIZE uint(MIRAI_GROUP_X * MIRAI_GROUP_Y)
 groupshared uint samples_weights[GROUP_SIZE * DIRECT_FEW / 2u];
+// Whether a point of the group takes samples.
+groupshared uint group_samples;
 float samples_weight(uint i, uint index) { return asfloat((samples_weights[(i >> 1u) * GROUP_SIZE + index] << ((i & 1u) != 0u ? 0u : 16u)) & 0xFFFF0000u); }
 
 #ifndef MIRAI_HW_RT
@@ -171,96 +173,6 @@ float direct_hit(float3 o, float3 w, float reach, uint2 mask) {
 #endif
 }
 
-// The map of a light (INVALID: the sun) a point falls in, and its index;
-// false without one.
-bool shadow_map_of(uint item, float3 position, out Shadow_Map m, out uint index) {
-    m = (Shadow_Map)0;
-    index = 0u;
-    if (params.shadow_on == 0u) return false;
-    if (item == INVALID) return sun_map_of(position, m);
-    uint word = shadow_light_word(shadow_data, item);
-    if (word == 0u) return false;
-    uint faces = word >> SHADOW_LIGHT_FACES;
-    uint face = shadow_face_of(position - lights[item].position_range.xyz);
-    if ((faces & (1u << face)) == 0u) return false;
-    index = (word & 0xFFFFu) - 1u + countbits(faces & ((1u << face) - 1u));
-    m = shadow_map_at(shadow_data, params.shadow_rows, index);
-    return true;
-}
-
-// The taps of the map around a point that find its blockers; the most texels
-// they reach, as wide as the penumbrae of large lights near what they light;
-// and the least half width of a penumbra, texels, so that the edge of what
-// hides itself, where it turns from the light, does not show the texels of
-// the map.
-#define SHADOW_TAPS 12u
-#define SHADOW_SEARCH_MAX 64.0
-#define SHADOW_PENUMBRA_MIN 1.5
-
-// What the map of a light says of a point at position with normal n: 1 where
-// the taps around it see past all that could hide a part of the light, 0
-// where they all meet something nearer, -1 without its map, for its rays to
-// tell; where they disagree, at a penumbra, its hard shadow (shadow_hard_seen),
-// which direct_spread.comp averages over the width of the penumbra the
-// blockers the taps met cast there, to both sides of its border. radius: of the light, metres, or the
-// angle of the sun; spin: how the taps are turned at the point; spread: the
-// width of the penumbra of what hides a point that is not lit.
-float shadow_map_seen(uint item, float3 position, float3 n, float radius, float spin, out float spread) {
-    spread = 0.0;
-    Shadow_Map m;
-    uint index;
-    if (!shadow_map_of(item, position, m, index)) return -1.0;
-    bool sun = item == INVALID;
-    float3 toward = sun ? frame.sun_direction.xyz : normalize(lights[item].position_range.xyz - position);
-    float c = dot(n, toward);
-    if (!(c > 0.0)) return -1.0;
-    float lean = min(sqrt(max(1.0 - c * c, 0.0)) / max(c, 1e-3), 8.0);
-    float step = shadow_map_texel(m, shadow_map_local(m, position).z);
-    // A texel and a half off the surface, so that it does not hide itself.
-    float3 local = shadow_map_local(m, position + n * (1.5 * step));
-    float d = local.z;
-    float2 unit = shadow_map_unit(m, local);
-    if (any(abs(unit) >= 1.0)) return -1.0;
-    float side = float(m.rect.z);
-    float2 texel = float2(unit.x * 0.5 + 0.5, 0.5 - unit.y * 0.5) * side;
-    float bias = step * (1.0 + lean) + 0.001 * d;
-    // What lies nearer the light than this is its body, not what it shines past.
-    float skip = sun ? m.near : max(m.near, min(3.0 * radius, radius + 0.3));
-    // How far around the point a blocker may stand and still hide a part of
-    // the light: at the nearest it may be.
-    float reach = sun ? radius * max(d - skip, 0.0) : radius * max(d - skip, 0.0) / max(skip, 1e-3);
-    float search = clamp(reach / step, SHADOW_PENUMBRA_MIN + 1.0, SHADOW_SEARCH_MAX);
-    // The least half width of a penumbra, metres at the point.
-    float least = SHADOW_PENUMBRA_MIN * step;
-    uint taps = 0u, blocked = 0u, hiding = 0u;
-    float blockers = 0.0;
-    for (uint i = 0u; i <= SHADOW_TAPS; i++) {
-        float2 off = float2(0.0);
-        if (i > 0u) {
-            float a = float(i) * 2.39996323 + spin;
-            off = float2(cos(a), sin(a)) * sqrt((float(i) - 0.5) / float(SHADOW_TAPS)) * search;
-        }
-        int2 at = int2(floor(texel + off));
-        if (any(at < 0) || any(at >= int(m.rect.z))) continue;
-        taps++;
-        float b = shadow_map_distance(m, shadow_atlas.Load(int3(int2(m.rect.xy) + at, 0)).r);
-        float apart = length(off) * step;
-        if (!(b > skip && b < d - bias - apart * lean)) continue;
-        blocked++;
-        // A blocker hides a part of the light only within the penumbra it casts on the point.
-        float width = sun ? radius * (d - b) : radius * (d - b) / max(b, 1e-3);
-        if (apart > max(width, least) + step) continue;
-        hiding++;
-        blockers += b;
-    }
-    if (taps == 0u) return -1.0;
-    if (hiding == 0u) return 1.0;
-    float b = blockers / float(hiding);
-    spread = sun ? 2.0 * radius * (d - b) : 2.0 * radius * (d - b) / (b + radius);
-    if (blocked == taps) return 0.0;
-    return shadow_hard_seen(shadow_atlas, m, texel, d, bias, skip);
-}
-
 // The samples of a light at a point traced first; the rest only at its penumbra.
 #define DIRECT_PROBES 4u
 
@@ -303,10 +215,22 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
     int2 source = p * scale;
     int2 size = direct_points(scale);
     bool inside = all(p < size);
-#ifndef MIRAI_HW_RT
-    if (index == 0u) list_count = 0u;
+    // While the view drew maps, the points direct_maps.comp marked; else all.
+    bool maps = frame.sun_maps.z != 0u;
+    bool sampled = inside;
+    if (sampled && maps) sampled = out_depth[p].z < 0.0;
+#ifdef MIRAI_HW_RT
+    if (!sampled) return;
+#else
+    if (index == 0u) {
+        list_count = 0u;
+        group_samples = 0u;
+    }
     for (uint i = index; i < DIRECT_TABLE; i += uint(MIRAI_GROUP_X * MIRAI_GROUP_Y)) list_table[i] = INVALID;
     GroupMemoryBarrierWithGroupSync();
+    if (sampled) InterlockedOr(group_samples, 1u);
+    GroupMemoryBarrierWithGroupSync();
+    if (group_samples == 0u) return;
     // What stopped the ray at the place of the pixel in each of the squares of
     // 8x8 pixels around, so that a thin blocker none of the rays of a group met
     // still hides the light its neighbours found it hiding.
@@ -323,7 +247,7 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
     }
     GroupMemoryBarrierWithGroupSync();
 #endif
-    if (!inside) return;
+    if (!sampled) return;
     float depth = g_depth.Load(int3(source, 0)).r;
     if (depth_empty(depth)) {
         out_depth[p] = float4(0.0);
@@ -345,30 +269,27 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
     bool traced_open = (stopped & ~DIRECT_CHANGED) == DIRECT_NONE;
     uint4 row = direct_cell(pixel.position);
     uint count = direct_items(row);
-    // The sun: where a map of the view holds the point it tells how much of the
-    // sun gets there, and the sun takes no samples; elsewhere it takes them as a
-    // light more, for that alone.
+    // The sun: where a map of the view holds the point, direct_maps.comp gave
+    // how much of it gets there; elsewhere it takes samples as a light more,
+    // for that alone.
     float sun = direct_sun_weight(pixel.position, normal);
     float3 sun_glass = float3(1.0);
     float sun_part = -1.0, sun_wide = 0.0;
     uint sun_chain = INVALID;
+    bool sun_given = false;
     if (sun > 0.0) {
-        sun_glass = direct_glass(origin, frame.sun_direction.xyz, 1e5, float3(1.0));
+        Shadow_Map held;
+        sun_given = sun_map_of(pixel.position, held);
+        if (!sun_given) sun_glass = direct_glass(origin, frame.sun_direction.xyz, 1e5, float3(1.0));
 #ifdef MIRAI_FILTER_POINTS
         sun_chain = filter_chain;
         filter_chain = INVALID;
 #endif
-        Shadow_Map held;
-        if (sun_map_of(pixel.position, held)) {
-            float known = shadow_map_seen(INVALID, pixel.position, normal, params.sun_radius, spin, sun_wide);
-            sun_part = known < 0.0 ? 1.0 : known;
-            if (changes && !marked) marked = occluder_changed_in_cone(origin, frame.sun_direction.xyz, 1e5, params.sun_radius);
-            sun = 0.0;
-        }
+        if (sun_given) sun = 0.0;
     }
     float total = sun;
     for (uint i = 0u; i < count; i++) {
-        float w = direct_item_weight(row, direct_item(row, i), pixel.position, normal);
+        float w = direct_sampled_weight(row, direct_item(row, i), pixel.position, normal);
         uint bits = asuint(w) >> 16u;
         if ((i & 1u) == 0u) samples_weights[(i >> 1u) * GROUP_SIZE + index] = bits;
         else samples_weights[(i >> 1u) * GROUP_SIZE + index] |= bits << 16u;
@@ -430,19 +351,6 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
                 // what changed reaches them only through it, and the list holds
                 // what moved, so that one with nothing of it in the cone is lit.
                 if (changes && !marked) marked = occluder_changed_in_cone(origin, axis, far, spread);
-                // Its map, where it has one, gives its shadow; its rays go
-                // only where it has none.
-                float map_spread = 0.0;
-                float known = of_sun ? -1.0 : shadow_map_seen(item, pixel.position, normal, light_extent(lights[item]), spin, map_spread);
-                if (known >= 0.0) {
-                    lit += share * known;
-                    // Within the penumbra of what its taps met, on its lit side as on the other.
-                    if (map_spread > 0.0) {
-                        wide += luminance(share) * map_spread;
-                        hid += luminance(share);
-                    }
-                    continue;
-                }
                 bool traced_here = traced >= first && traced < k;
 #ifdef MIRAI_HW_RT
                 uint2 mask = uint2(0u);
@@ -531,12 +439,33 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
     if (sun_chain != INVALID) head_append(point_head(INVALID, sun_chain, place_of | DIRECT_OWNER_SUN));
     if (filter_chain != INVALID) head_append(point_head(INVALID, filter_chain, place_of));
 #endif
-    float part = luminance(open) > 0.0 ? saturate(luminance(lit) / luminance(open)) : 1.0;
+    float seen = luminance(lit);
+    float4 given_depth = float4(0.0);
+    if (maps) {
+        // What direct_maps.comp gave of the lights maps hold here, how much of
+        // it is hidden at a penumbra and how wide those are (its out_depth).
+        float4 given = out_samples[p];
+        given_depth = out_depth[p];
+        float3 light = given.rgb * reflectance;
+        float given_part = given.a >= 1.5 ? given.a - 2.0 : given.a;
+        marked = marked || given.a >= 1.5;
+        float hidden = (-given_depth.z - 1.0) * luminance(light);
+        wide += hidden * given_depth.w;
+        hid += hidden;
+        open += light;
+        seen += given_part * luminance(light);
+    }
+    float part = luminance(open) > 0.0 ? saturate(seen / luminance(open)) : 1.0;
     out_samples[p] = float4(finite_or_zero(open / reflectance), (isfinite(part) ? part : 1.0) + (marked ? 2.0 : 0.0));
-    out_sun[p] = float4(sun_glass, isfinite(sun_part) ? sun_part : 1.0);
     // The reach of the spread over each penumbra, in points, and half a point.
     float width = float(scale) * (frame.footprint.x + frame.footprint.y * depth_distance(depth));
     float radius = hid > 0.0 ? min(DIRECT_SPREAD_REACH * wide / (hid * width) + 0.5, float(DIRECT_SPREAD_MAX)) : 0.0;
     float sun_radius = sun_part >= 0.0 && sun_wide > 0.0 ? min(DIRECT_SPREAD_REACH * sun_wide / width + 0.5, float(DIRECT_SPREAD_MAX)) : 0.0;
+    // The sun a map holds, as direct_maps.comp left it.
+    if (sun_given) {
+        sun_radius = given_depth.y;
+    } else {
+        out_sun[p] = float4(sun_glass, isfinite(sun_part) ? sun_part : 1.0);
+    }
     out_depth[p] = float4(depth_distance(depth), isfinite(sun_radius) ? sun_radius : 0.0, 0.0, isfinite(radius) ? radius : 0.0);
 }

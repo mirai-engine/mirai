@@ -3,9 +3,9 @@
 // and direct_filter.comp share.
 //
 // Each pixel weighs the lights of its cell of the grid at its point
-// (direct_grid.slang), and the sun where no map of the view holds the point
-// (sun_map_of: where one does, it tells how much of the sun gets there and the
-// sun takes no samples), and spreads its samples over them by those weights, one at each m-th of their sum from the place of the pixel in a 3x3
+// (direct_grid.slang) and the sun, those no map of the view holds there (the
+// light of the others direct_maps.comp gives, exact, and they take no
+// samples), and spreads its samples over them by those weights, one at each m-th of their sum from the place of the pixel in a 3x3
 // pattern on: a light with a k-th of the weight takes about m/k samples and
 // none is drawn by chance. The cost of a pixel is that of its samples and of
 // the lights it weighs, DIRECT_FEW at most, whatever the number of lights.

@@ -1235,11 +1235,12 @@ DIRECT_FILTER_PIXELS :: u32(2)
 PROBE_LIGHT_BUDGET :: u32(4)
 
 // The direct light of each pixel, the sun and the local lights with their
-// shadows, from its samples (direct_samples.slang): the grid of the lights in
-// the frame one changed, the maps of the shadows, the ray of one point of each
-// square of 2x2, the samples of each point, the window and the spread that
-// filter them, and the pass that takes them to the pixels, where the sun
-// gives its light.
+// shadows (direct_samples.slang): the grid of the lights in the frame one
+// changed, the maps of the shadows and the light of what they hold at each
+// point, the ray of one point of each square of 2x2 and the samples of each
+// point of the lights no map holds, the window and the spread that filter
+// them, and the pass that takes them to the pixels, where the sun gives its
+// light.
 @(private)
 pass_direct :: proc(p: ^Pass) -> bool {
 	r, cmd, t := p.r, p.cmd, p.t
@@ -1271,8 +1272,27 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	params.shadow = {sun = max(u32)}
 	if !reference {params.shadow = shadow_maps_pass(p)}
 	atlas := t.shadow_atlas if params.shadow.on != 0 else r.dummy_texture
+	table := t.shadow_buffers.table if params.shadow.on != 0 else r.dummy_buffer
 	grid := or_dummy(r, s.light_grid_buffer)
 	hw := r.hardware_rt
+	// The light of what the maps hold, while the view drew them: the samples
+	// add the rest where it marks a point (Frame.sun_maps.z, direct_maps.comp).
+	if p.frame.sun_maps.z != 0 {
+		rhi.cmd_timestamp(cmd, "direct maps")
+		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Direct_Maps if p.layered else .Direct_Maps_Unlayered])
+		set_params(cmd, &params)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct_samples)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.albedo)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS4, t.shadow_tint if p.frame.sun_maps.w != 0 else r.dummy_texture)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.direct_depth)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS6, grid)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.direct_sun)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS8, atlas)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS9, table)
+		rhi.cmd_dispatch(cmd, groups(points.x, 8), groups(points.y, 8))
+	}
 	rhi.cmd_timestamp(cmd, "direct rays")
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Direct_Rays_Hw if hw else .Direct_Rays])
 	set_params(cmd, &params)
@@ -1280,6 +1300,7 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct_blockers)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS6, grid)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS9, table)
 	// A thread for each square of 2x2 points, and a group of the samples for
 	// each 4x4 of them (direct_group_pixel).
 	squares := (points.x + 1) / 2
@@ -1305,7 +1326,7 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS6, grid)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.direct_sun)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS8, atlas)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS9, t.shadow_buffers.table if params.shadow.on != 0 else r.dummy_buffer)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS9, table)
 	points_bind(p)
 	rhi.cmd_dispatch(cmd, groups(squares, 4), groups(points.y, 8))
 	points_rounds(p, batch, r.pipelines[samples], &params, 1)
