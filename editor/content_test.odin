@@ -414,10 +414,8 @@ ctrl_or_shift_add_an_asset_to_the_selection_or_take_it_away :: proc(t:^testing.T
 
 @(test)
 content_lines_follow_registry_revisions_when_storage_and_count_are_reused :: proc(t:^testing.T) {
-    root:=fmt.tprintf(".mirai/test-content-registry-%d",os.get_pid())
-    if !testing.expect(t,!os.exists(root)) {return}
-    if !testing.expect_value(t,os.make_directory_all(root),os.Error(nil)) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"content-registry")
+    if root=="" {return}
     path:=fmt.tprintf("%s/.index",root)
     source:=content_test_registry()
     defer content_test_registry_free(&source)
@@ -1012,10 +1010,8 @@ content_shows_empty_folders_and_the_line_of_create :: proc(t:^testing.T) {
 // the line, Enter makes it unsaved, and it comes selected and open.
 @(test)
 a_right_click_on_a_folder_creates_an_asset_named_in_place :: proc(t:^testing.T) {
-    temporary,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-content-create-%d",temporary,os.get_pid())
-    os.remove_all(root)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"content-create")
+    if root=="" {return}
     if !testing.expect_value(t,os.make_directory_all(fmt.tprintf("%s/Materials",root)),os.Error(nil)) {return}
     ctx:ui.Context
     testing.expect(t,ui.context_init(&ctx,{}))
