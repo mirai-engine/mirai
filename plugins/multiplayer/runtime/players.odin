@@ -165,7 +165,7 @@ net_input_delay :: proc(session:^Net_Session,seats:^core.Table(input.Seat),bindi
     seat.actions,seat.held,seat.rearm,seat.fed=c.delayed.actions,c.delayed.held,c.delayed.rearm,c.delayed.fed
     from:=tick-u32(session.desc.input_delay)
     taken:=c.taken[int(from)%len(c.taken)]
-    input.seat_receive(seat,bindings.ptr,taken.tick==from+1?taken.actions:{})
+    input.seat_receive(seat,bindings.ptr,taken.tick==from+1?taken.actions:{},time.dt)
 }
 
 // The seat a client drives with while its input is delayed; nil otherwise.

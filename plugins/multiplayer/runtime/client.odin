@@ -196,9 +196,9 @@ Client :: struct {
     answered:bool,      // it told the server it is in that world
     player_told:bool,   // it told the server the player it is
     sections:[dynamic]base.Entity_Id, // the sections of the world it told the server it has
-    sections_seen:[2]u64, // the version and the layout of scene.Scene_Reference it told them for
+    sections_seen:core.Seen, // what of scene.Scene_Reference it told them for
     waiting:int,        // replicas none of whose sections is loaded here
-    sections_version:u64, // of scene.Scene_Reference, when the replicas last looked at their sections
+    sections_looked:core.Seen, // what of scene.Scene_Reference the replicas last looked at their sections for
 }
 
 @(private)
@@ -397,10 +397,7 @@ client_commands :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,allo
 replicas_sections :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets) {
     c:=&s.client
     references:=core.world_table_of(w,scene.Scene_Reference)
-    if references==nil {return}
-    version:=core.version(references)
-    if version==c.sections_version {return}
-    c.sections_version=version
+    if references==nil || !core.touched(references,&c.sections_looked) {return}
     changed:=false
     for &r in c.replicas[:c.replica_high] {
         if r.object==0 {continue}

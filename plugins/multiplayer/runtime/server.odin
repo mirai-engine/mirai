@@ -71,12 +71,13 @@ Server :: struct {
     objects:[]Server_Object, // by object index
     views:[]View,            // by connection index
     peers:[]Server_Peer,     // by connection index
-    visibility:[2]u64,       // the versions of Visibility and of input.Seat the bits of the objects and of the connections were read for, plus one
-    layouts:[]u64,           // by table of the world info: the layout of each replicated component the types of the objects were looked at for
+    visibility:[2]core.Seen, // what of Visibility and of input.Seat the bits of the objects and of the connections were read for
+    layouts:[]core.Shape,    // by table of the world info: the rows of each replicated component the types of the objects were looked at for
     changed:[]bool,          // likewise: it changed since the publish before
-    moved:[2]u64,            // the layouts of core.Motion and of input.Move_Input, likewise
-    ancestry:[3]u64,         // the version of the Hierarchy and the layouts of Replicate and of Scene_Reference the ancestors and sections follow
-    boxes:[2]u64,            // the version of Scene_Reference and the stamps of the World_Transform of its rows the sections of each object were looked at for
+    moved:[2]core.Shape,     // the rows of core.Motion and of input.Move_Input, likewise
+    ancestry:Ancestry,
+    boxes:core.Seen,         // what of Scene_Reference the sections of each object were looked at for,
+    places:u64,              // and the stamps of the World_Transform of its rows
     section_boxes:[dynamic]Section_Box, // the boxes of the sections as of boxes
     scene:base.Asset_Id,     // the scene the world is, and the number of that change (scene.Scene_Root)
     changes:u32,
@@ -88,6 +89,14 @@ Server :: struct {
     groups:[dynamic]Group_Change,
     gone:[dynamic]Gone_Due,
     notices:[dynamic]Gone_Notice, // which the host had no room for
+}
+
+// What the ancestors and the sections of the objects follow: the version of the Hierarchy and
+// the rows of Replicate and of Scene_Reference.
+@(private)
+Ancestry :: struct {
+    hierarchy:u64,
+    objects,references:core.Shape,
 }
 
 // The box of a section where it is, and the box of the world around it.
@@ -139,7 +148,7 @@ server_init :: proc(s:^Net_Session,allocator:runtime.Allocator) -> bool {
     if s.server.peers,error=make([]Server_Peer,wire.MAX_CONNECTIONS,allocator);error!=nil {return false}
     s.server.clock=core.CLOCK_DEFAULT
     if s.server.sections,error=make([]base.Entity_Id,s.host.desc.replication.groups,allocator);error!=nil {return false}
-    if s.server.layouts,error=make([]u64,len(s.fragments),allocator);error!=nil {return false}
+    if s.server.layouts,error=make([]core.Shape,len(s.fragments),allocator);error!=nil {return false}
     if s.server.changed,error=make([]bool,len(s.fragments),allocator);error!=nil {return false}
     if s.server.loaded,error=make([]u64,wire.MAX_CONNECTIONS*loaded_words(&s.server),allocator);error!=nil {return false}
     s.server.section_boxes=make([dynamic]Section_Box,allocator)
@@ -185,15 +194,11 @@ server_kinds :: proc(s:^Net_Session,w:core.World_Ref) {
     motions,moves:=core.world_table_of(w,core.Motion),core.world_table_of(w,input.Move_Input)
     count:=0
     for kind,table in s.fragments {
-        layout:u64
-        if kind!=wire.FRAGMENT_NONE {layout=core.world_table_at(w,&w.info.tables[table]).layout}
-        server.changed[table]=layout!=server.layouts[table]
-        server.layouts[table]=layout
+        server.changed[table]=kind!=wire.FRAGMENT_NONE && core.raw_reshaped(core.world_table_at(w,&w.info.tables[table]),&server.layouts[table])
         count+=int(server.changed[table])
     }
-    seen:=[2]u64{core.layout(motions),moves!=nil?core.layout(moves):0}
-    moved:=seen!=server.moved
-    server.moved=seen
+    moved:=core.reshaped(motions,&server.moved[0])
+    if moves!=nil && core.reshaped(moves,&server.moved[1]) {moved=true}
     if count==0 && !moved {return}
     for &slot in server.objects {
         if slot.object==0 || slot.retype {continue}
@@ -276,8 +281,11 @@ server_visibility :: proc(s:^Net_Session,w:core.World_Ref) {
     visibility:=core.world_table_of(w,Visibility)
     if visibility==nil {return}
     seats:=core.world_table_of(w,input.Seat)
-    seen:=[2]u64{core.version(visibility)+1,seats!=nil?core.version(seats)+1:1}
-    if seen==server.visibility {return}
+    // Moved on only once everything was told: what the full frame refuses is read again.
+    seen:=server.visibility
+    changed:=core.touched(visibility,&seen[0])
+    if seats!=nil && core.touched(seats,&seen[1]) {changed=true}
+    if !changed {return}
     told:=true
     for &slot in server.objects {
         if slot.object==0 {continue}
@@ -539,10 +547,11 @@ server_publish :: proc(s:^Net_Session,w:core.World_Ref,outbox:^Net_Outbox,tick:u
     }
     // The ancestors and the sections change only with the hierarchy, with what replicates or with the references.
     references:=core.world_table_of(w,scene.Scene_Reference)
-    // .ptr spelled out: a field reached through using in a ternary is loaded before its nil check (see ODIN_WORKAROUNDS).
-    ancestry:=[3]u64{hierarchy.ptr!=nil?hierarchy.ptr.version:0,core.layout(objects),references!=nil?core.layout(references):0}
-    if ancestry!=server.ancestry {
-        server.ancestry=ancestry
+    ancestry:=&server.ancestry
+    related:=core.reshaped(objects,&ancestry.objects)
+    if references!=nil && core.reshaped(references,&ancestry.references) {related=true}
+    if hierarchy.ptr!=nil && hierarchy.ptr.version!=ancestry.hierarchy {ancestry.hierarchy,related=hierarchy.ptr.version,true}
+    if related {
         for &slot in server.objects {
             if slot.object==0 {continue}
             slot.ancestor=replicated_ancestor(w,hierarchy,objects,slot.entity)
@@ -556,8 +565,7 @@ server_publish :: proc(s:^Net_Session,w:core.World_Ref,outbox:^Net_Outbox,tick:u
         }
     }
     // What a section that moved, loaded or changed its box holds is looked at again.
-    if boxes:=sections_seen(references,worlds);boxes!=server.boxes {
-        server.boxes=boxes
+    if sections_moved(server,references,worlds) {
         section_boxes(&server.section_boxes,references,worlds)
         for &slot in server.objects {slot.placed={}}
     }
@@ -752,14 +760,15 @@ section_boxes :: proc(out:^[dynamic]Section_Box,references:^core.Table(scene.Sce
     }
 }
 
-// What the sections of the objects follow: the version of the references
-// and where each of them is.
+// Whether what the sections of the objects follow changed: the references, or where one of them is.
 @(private)
-sections_seen :: proc(references:^core.Table(scene.Scene_Reference),worlds:^core.Table(core.World_Transform)) -> (seen:[2]u64) {
-    if references==nil {return}
-    seen[0]=core.version(references)
-    for e in references.entities[:core.count(references)] {seen[1]=seen[1]*31+row_stamp(core.raw(worlds),e)}
-    return
+sections_moved :: proc(server:^Server,references:^core.Table(scene.Scene_Reference),worlds:^core.Table(core.World_Transform)) -> bool {
+    if references==nil {return false}
+    moved:=core.touched(references,&server.boxes)
+    places:u64
+    for e in references.entities[:core.count(references)] {places=places*31+row_stamp(core.raw(worlds),e)}
+    if places!=server.places {server.places,moved=places,true}
+    return moved
 }
 
 // The Ids of the references of sections, as a pose names them.
