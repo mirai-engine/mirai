@@ -940,7 +940,7 @@ remote_look :: proc(session:core.Ref(Net_Session),inputs:^Remote_Inputs,seats:co
         move:=core.get(moves,core.entity_at(drivables,row))
         if entry==nil || move==nil {continue}
         now:=int(time.tick%len(entry.looks))
-        if behind:=int(entry.look_behind);entry.has_look && behind<int(entry.looks_kept)+int(behind==0) {
+        if behind:=int(entry.look_behind);entry.has_look && behind<=int(entry.looks_kept) {
             had:=behind==0?[2]f32{move.look_yaw,move.look_pitch}:entry.looks[(now+len(entry.looks)-behind)%len(entry.looks)]
             // The yaw comes wrapped: the shortest turn to it keeps the body's whole turns.
             off:=[2]f32{mm.angle_wrap(entry.look[0]-had[0]),entry.look[1]-had[1]}

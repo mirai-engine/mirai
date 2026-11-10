@@ -202,6 +202,7 @@ Session :: struct {
     server_toy:Toy,
     published:Test_Transform, // what the server replicates of its toy
     fresh,repeated,none:int,
+    delay:u32, // ticks ahead of its own the client submits its input for
     last_client_tick:u32,
     ticks:Test_Ticks,
 }
@@ -226,8 +227,8 @@ session_frame :: proc(t:^testing.T,x:^Session) {
     first,steps:=test_ticks(&x.ticks,client,s.w.now)
     for step in 0..<u32(steps) {
         tick:=first+step
-        mine:=toy_input(tick)
-        testing.expect_value(t,input_submit(client,tick,&mine),Error.None)
+        mine:=toy_input(tick+x.delay)
+        testing.expect_value(t,input_submit(client,tick+x.delay,&mine),Error.None)
         host_publish(client,tick)
         x.last_client_tick=tick
     }
@@ -240,6 +241,26 @@ session_init :: proc(x:^Session,s:^Scene,conditions:Sim_Conditions) {
     object_create(s.server,{type=s.tp.prop,sources={0=&x.published},owner=s.on_server[0],poll=true})
     sim_endpoint_conditions(&s.w.sim,0,conditions)
     sim_endpoint_conditions(&s.w.sim,1,conditions)
+}
+
+// A client that submits its input some ticks ahead of its own (an input delay) runs that many ticks less ahead
+// of the server, and its inputs still arrive in time.
+@(test)
+an_input_delay_runs_the_client_that_many_ticks_less_ahead :: proc(t:^testing.T) {
+    leads:[2]f64
+    for delay,index in ([2]u32{0,3}) {
+        s:=new(Scene);defer free(s)
+        scene_init(s,1,{max_objects=8,input_delay=f32(delay)},seed=9);defer scene_destroy(s)
+        x:=new(Session);defer free(x)
+        session_init(x,s,{latency=0.05,jitter=0.004})
+        x.delay=delay
+        for _ in 0..<240 {session_frame(t,x)}
+        x.fresh,x.repeated,x.none=0,0,0
+        for _ in 0..<600 {session_frame(t,x)}
+        testing.expectf(t,x.fresh>=594,"delay %d: %d of 600 inputs in time",delay,x.fresh)
+        leads[index]=f64(x.last_client_tick)-f64(x.server_tick)
+    }
+    testing.expectf(t,abs(leads[0]-leads[1]-3)<=1,"%v ticks ahead without a delay and %v with one of 3",leads[0],leads[1])
 }
 
 @(test)
