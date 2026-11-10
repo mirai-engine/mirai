@@ -5,6 +5,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:editor/api"
 import "mirai:project"
+import "mirai:std/base"
 
 @(private="file")
 DOCS_TOPIC :: `---
@@ -49,9 +50,8 @@ Last body.
 // engine's.
 @(private="file")
 docs_root :: proc(t:^testing.T,name:string) -> (root:string,ok:bool) {
-    directory,error:=os.make_directory_temp("",name,context.temp_allocator)
-    if !testing.expectf(t,error==nil && directory!="","no temporary folder: %v",error) {return}
-    root=project.path_absolute(directory,context.temp_allocator)
+    root=base.test_folder(t,name)
+    if root=="" {return}
     write :: proc(t:^testing.T,root,name,text:string) {
         file:=project.path(root,api.DOCS_FOLDER,name,allocator=context.temp_allocator)
         testing.expect(t,os.make_directory_all(file[:strings.last_index_byte(file,'/')])==nil)
@@ -68,9 +68,8 @@ docs_root :: proc(t:^testing.T,name:string) -> (root:string,ok:bool) {
 @(test)
 docs_finds_one_section_and_names_what_is_valid :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    root,made:=docs_root(t,"mirai-docs-sections-*")
+    root,made:=docs_root(t,"docs-sections")
     if !made {return}
-    defer os.remove_all(root)
 
     found:=[?]struct{section,has,lacks:string}{
         {"spawn-a-thing","Inner body.","First."},
@@ -106,9 +105,8 @@ docs_finds_one_section_and_names_what_is_valid :: proc(t:^testing.T) {
     testing.expect(t,strings.contains(index,"Core of a game - components, steps and phases."),index)
     testing.expect(t,strings.contains(index,"\n  core prefabs: Prefabs and spawning\nship"),index)
 
-    empty,empty_error:=os.make_directory_temp("","mirai-docs-empty-*",context.temp_allocator)
-    if !testing.expectf(t,empty_error==nil && empty!="","no temporary folder: %v",empty_error) {return}
-    defer os.remove_all(empty)
+    empty:=base.test_folder(t,"docs-empty")
+    if empty=="" {return}
     _,ok:=api.docs_answer(empty,"","")
     testing.expect(t,!ok)
     testing.expect_value(t,api.docs_compact(empty),"")
@@ -119,9 +117,8 @@ docs_finds_one_section_and_names_what_is_valid :: proc(t:^testing.T) {
 @(test)
 the_docs_tool_is_answered_by_the_bridge :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    root,made:=docs_root(t,"mirai-docs-bridge-*")
+    root,made:=docs_root(t,"docs-bridge")
     if !made {return}
-    defer os.remove_all(root)
 
     call :: proc(root,arguments:string) -> (text,error:string,answered:bool) {
         reply,was:=mcp_docs_call(root,strings.concatenate({`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"docs","arguments":`,arguments,"}}"}))

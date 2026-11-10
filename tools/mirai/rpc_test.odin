@@ -1,11 +1,11 @@
 package main
 
-import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:editor/api"
 import "mirai:project"
+import "mirai:std/base"
 
 @(private="file")
 SAMPLE_RESULT :: `{"phase": "Compiling", "errors": 0, "frame": 18446744073709551615, "ok": false,
@@ -153,10 +153,10 @@ the_commands_of_an_agent_call_its_editor_in_its_context :: proc(t:^testing.T) {
 @(test)
 the_project_of_a_folder_is_the_nearest_with_a_manifest :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    root:=fmt.tprintf("%s/mirai-project-of-%d",os.get_env("TEMP",context.temp_allocator),os.get_pid())
+    root:=base.test_folder(t,"project-of")
+    if root=="" {return}
     nested:=project.path(root,"game/sub",allocator=context.temp_allocator)
     testing.expect(t,os.make_directory_all(nested)==nil)
-    defer os.remove_all(root)
     testing.expect(t,os.write_entire_file(project.path(root,project.PROJECT_FILE),"{}")==nil)
     testing.expect_value(t,project_of(nested),project.path_absolute(root))
 }
