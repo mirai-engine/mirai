@@ -10,16 +10,12 @@ import "mirai:asset"
 import "mirai:project"
 import "mirai:std/base"
 
-// Which asset each thing of a source is, and where its file is. The sidecar
-// of the source says the first (sidecar.odin): an import gives every part the
-// id its sidecar lists for it, and a part it does not list a random one, which
-// the sidecar keeps from then on. A part of the cache is written at the path
-// the sidecar gives it, in the imported folder. A document is written where
-// the file with its id is now, wherever a person moved it under the folder
-// searched (the assets folder of the project at options.root, else
-// options.root, else the folder written to), found by reading the front of
-// every asset there. Of files with one id, the one a copy was made of is the
-// asset (asset.file_newer).
+// Which asset each part of a source is (its sidecar says: sidecar.odin) and
+// where its file is: one of the cache at the path the sidecar lists, in the
+// imported folder; a document where the file with its id is now, under the
+// folder searched (the assets of options.root, else options.root, else the
+// folder written to), found by reading the front of every asset there. Of
+// files with one id, the one a copy was made of is the asset.
 
 @(private)
 Earlier :: struct {

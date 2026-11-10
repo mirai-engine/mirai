@@ -9,30 +9,15 @@ import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-// What is versioned of an import: the source and, next to it, <source>.import,
-// a text that says how the source becomes assets (its settings), where they go
-// (folder) and which asset each thing of the source is (outputs). The id of an
-// output lives there and nowhere else decides it: importing the source again,
-// on any machine, gives every part the asset it had, so what names it keeps
-// naming it. What the import builds is of two sorts:
-//
-//   - the cache (kind_cached): meshes, textures, sounds and fonts. Nobody
-//     edits them; they are files of the imported folder of the project
-//     (project.imported_path), which is never versioned, at the path the
-//     sidecar gives them among the assets, and are built again from the source
-//     and the sidecar wherever they are missing (sources.sync);
-//   - documents: materials, prefabs, skeletons, clips, texts and prompts. The
-//     editor edits them, so they are files of the assets folder, versioned,
-//     found by their id wherever a person moved them; an import writes again
-//     what the source gives and keeps what was changed.
-//
-// An import whose source cannot be imported again from the checkout alone has
-// no cache: every output is a document of the folder. That is a source outside
-// the root, whose sidecar is kept in the source folder of the root under the
-// name of the file; a format the engine does not have
-// (Import_Options.documents); and an import without a root, which belongs to
-// no project: its sidecar is kept in the folder it writes to, under the name
-// of the file, and nothing is written next to the source.
+// <source>.import, the sidecar: what is versioned of an import with its
+// source. It says how the source becomes assets (settings), where they go
+// (folder) and which asset each thing of the source is (outputs): nothing else
+// decides an id. Meshes, textures, sounds and fonts (kind_cached), which
+// nobody edits, go to the imported folder of the root, never versioned, at
+// the path their output lists, and sources.sync builds them again. The other
+// kinds are documents of the assets folder, found by their id. An import a
+// checkout cannot repeat (a source outside the root, a format of a plugin, no
+// root) has no cache: every output is a document of the folder.
 
 SIDECAR_EXTENSION :: ".import"
 SIDECAR_VERSION :: 1

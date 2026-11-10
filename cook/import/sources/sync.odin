@@ -14,21 +14,13 @@ import "mirai:std/base"
 import "mirai:std/jobs"
 import "mirai:std/serial"
 
-// What the imports of a project or a plugin build that nobody edits is not
-// versioned: it is in its imported folder (project.imported_path) and sync
-// builds it again from the sources and their sidecars, which are. A checkout
-// that was just cloned, a worktree that was just made and a branch that
-// changed a source are brought up to date the same way, by whoever needs the
-// assets: mirai build before it compiles or cooks, and mirai import --project.
-// What costs (the levels of a mesh,
-// the blocks of a texture) comes from the caches kept by content, which the
-// worktrees of a repository share.
-//
-// A source is imported again when one of its outputs of the cache is missing
-// or when what it was built from changed: the source, its sidecar, a file it
-// read (the stamp its import leaves in the imported folder lists them with
-// their size, time and hash) or the build that imports. A file of the
-// imported folder that no sidecar lists is removed.
+// Builds again what the imports of a project or a plugin keep in its imported
+// folder, which is not versioned, from its sources and their sidecars: what
+// mirai build and mirai import --project run. A source is imported when one
+// of its outputs of the cache is missing, or when the source, its sidecar, a
+// file it read (the stamp its import leaves lists them with size, time and
+// hash) or the build that imports changed. A file of the folder that no
+// sidecar lists is removed.
 
 Sync_Options :: struct {
     texture_cache,mesh_cache:string, // "": those of the root (project.content_cache_path)

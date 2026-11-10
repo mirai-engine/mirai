@@ -6,11 +6,9 @@ import "core:strings"
 import "mirai:project"
 import "mirai:std/subprocess"
 
-// What the imports of a project build that nobody edits is not versioned: a
-// build brings it up to date from the sources and their sidecars before it
-// compiles or cooks (cook/import/sources.sync). The importers are engine
-// code, which the tool builds without: the import program of the engine runs
-// them, in a process of its own.
+// A build brings the imported folders up to date before it compiles or cooks
+// (cook/import/sources.sync), with the import program of the engine: the tool
+// builds without the importers.
 
 // The roots whose sources a build of the project imports: the project and
 // each active plugin with assets.
