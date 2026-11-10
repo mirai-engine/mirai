@@ -65,7 +65,7 @@ seat_test_seat :: proc(f:^Seat_Test) -> core.Entity {
     core.add(&f.seats,seat,input.Seat{})
     seat_test_settle(f)
     device:=core.Input{keys_down={.W,.Space},keys_pressed={.W,.Space},mouse_delta={10,0}}
-    input.seat_feed(core.edit(&f.seats,seat),&device,&f.bindings,false)
+    input.seat_feed(core.edit(&f.seats,seat),&device,&f.bindings,false,1.0/60)
     return seat
 }
 

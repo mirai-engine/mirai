@@ -62,8 +62,8 @@ seat_remote :: proc(seats:core.Read(Seat),seat:core.Entity,bindings:^Input_Map) 
 // The actions of a seat for the tick, from what another end sent of them: the
 // edges, taps and holds from the tick before, as if its devices were here.
 // The contexts were applied by that end, and the ones of the seat here are not.
-seat_receive :: proc(seat:^Seat,bindings:^Input_Map,sent:Remote_Actions) {
-    actions_receive(&seat.actions,bindings,sent)
+seat_receive :: proc(seat:^Seat,bindings:^Input_Map,sent:Remote_Actions,dt:f32) {
+    actions_receive(&seat.actions,bindings,sent,dt)
     seat.held=held_buttons(&seat.actions,bindings)
     seat.rearm&=seat.held
     seat.fed=seat.contexts
@@ -86,7 +86,7 @@ remote_repeated :: proc "contextless" (sent:Remote_Actions) -> (out:Remote_Actio
 // The actions of the map for the tick from what another end sent of them. An
 // axis it did not send is at zero; what names an action out of the map is
 // left out.
-actions_receive :: proc(actions:^Actions,m:^Input_Map,sent:Remote_Actions) {
+actions_receive :: proc(actions:^Actions,m:^Input_Map,sent:Remote_Actions,dt:f32) {
     if m==nil {
         actions^={}
         return
@@ -97,8 +97,8 @@ actions_receive :: proc(actions:^Actions,m:^Input_Map,sent:Remote_Actions) {
     for axis in sent.axes[:min(int(sent.axis_count),REMOTE_AXES)] {
         if int(axis.action)<count {values[axis.action]=axis.value}
     }
-    tap:=m.tap_ticks>0?m.tap_ticks:TAP_TICKS
-    hold:=m.hold_ticks>0?m.hold_ticks:HOLD_TICKS
+    tap:=m.tap_seconds>0?m.tap_seconds:TAP_SECONDS
+    hold:=m.hold_seconds>0?m.hold_seconds:HOLD_SECONDS
     for i in 0..<count {
         previous:=i<int(actions.count)?actions.states[i]:{}
         bit:=action_bit(Action(i))
@@ -112,7 +112,7 @@ actions_receive :: proc(actions:^Actions,m:^Input_Map,sent:Remote_Actions) {
             if down {vector=values[i]}
             value=linalg.length(vector)
         }
-        actions.states[i]=si.action_step(previous,down,sent.quick&bit!=0,value,vector,tap,hold)
+        actions.states[i]=si.action_step(previous,down,sent.quick&bit!=0,value,vector,dt,tap,hold)
     }
     for i in count..<int(actions.count) {actions.states[i]={}}
     actions.count=u32(count)

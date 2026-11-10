@@ -404,8 +404,9 @@ their defaults, `input.mirai` and the seats: [actions](control.md#actions).
   - `Axis`: two keys (negative, positive), a gamepad axis or a mouse axis.
   - `Axis2`: four keys (left, right, down, up), a stick or the mouse movement. Key diagonals keep
     unit length.
-- `Action_State`: `down`, `pressed`, `released`, `tapped`, `holding`, `held_ticks`, `value`,
-  `vector`. `tap_ticks` (12) and `hold_ticks` (30) come from the map.
+- `Action_State`: `down`, `pressed`, `released`, `tapped`, `holding`, `held` (seconds), `value`,
+  `vector`. `tap_seconds` and `hold_seconds` come from the map, and each threshold is met at the
+  tick nearest to it, so a tap and a hold last the same at any tick rate.
 - Changing the map at runtime: `input_map_action(&m, jump, .Button)`,
   `input_map_bind(&m, jump, inp.binding_key(.Space))`, `input_map_unbind`, with the action of the
   world (`jump:=inp.action_of(walk, .Jump)`); `input_map_has` says whether it has an action of a

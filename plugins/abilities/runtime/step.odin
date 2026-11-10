@@ -379,12 +379,13 @@ input_down :: proc(t:^Tick,e:core.Entity,input:Ability_Input) -> bool {
 input_fired :: proc(t:^Tick,e:core.Entity,input:Ability_Input) -> bool {
     if input.on==.None {return false}
     s:=input_state(t,e,input)
-    hold:=u32(ticks_of(input.hold,t.dt))
+    // The tick nearest to input.hold crosses it.
+    crossed:=input.hold-t.dt*0.5
     switch input.on {
     case .None: return false
     case .Pressed: return s.pressed
-    case .Released: return s.released && s.released_held>=hold
-    case .Held: return hold==0?s.pressed:s.down && s.held_ticks==hold
+    case .Released: return s.released && s.released_held>=crossed
+    case .Held: return s.down && s.held>=crossed && (s.pressed || s.held-t.dt<crossed)
     case .Down: return s.down
     }
     return false

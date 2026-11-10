@@ -5,7 +5,6 @@ import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
 import "mirai:editor/history"
-import destruct "plugins:destruct/runtime"
 import phys "plugins:physics/runtime"
 import erender "mirai:engine/render"
 import "mirai:host"
@@ -15,7 +14,6 @@ Placement_Test_World :: struct {
     using world:core.Test_World,
     using physics:phys.Test_Physics,
     ids:core.Table(core.Id),
-    destructibles:core.Table(destruct.Destructible),
     gameplay_ticks:int,
     time:core.Time,
     id:core.World_Id,
@@ -57,7 +55,7 @@ Placement_Test :: struct {
 }
 
 placement_test_open :: proc(t:^testing.T,f:^Placement_Test) -> bool {
-    f.info=core.test_info(t,Placement_Test_World,Placement_Test_Shared,core.Test_None,destruct.test_types) or_return
+    f.info=core.test_info(t,Placement_Test_World,Placement_Test_Shared,core.Test_None,phys.test_types) or_return
     f.steps={{name="physics_step",library="physics",call=placement_test_physics}}
     f.info.steps=f.steps[:]
     f.info.order[.Editor][.Fixed]=f.order[:]
@@ -186,7 +184,9 @@ placement_uses_the_chosen_mesh_and_rejects_invalid_geometry_atomically :: proc(t
     if !placement_test_open(t,&f) {return}
     defer placement_test_close(&f)
     floor:=placement_test_box(&f,"Floor",{0,-0.5,0},{20,1,20},false)
-    core.add(&f.world.destructibles,floor,destruct.destructible())
+    // The floor is one of another plugin, which would make its shapes: the preview takes its mesh.
+    external:=phys.COLLIDER_DEFAULT;external.kind=.External
+    core.add(&f.world.colliders,floor,external)
     root:=core.create(&f.world.entities)
     core.add(&f.world.ids,root,core.Id{base.Entity_Id(root)})
     core.add(&f.world.names,root,core.name_make("Books"))

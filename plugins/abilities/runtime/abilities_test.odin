@@ -181,7 +181,7 @@ step :: proc(f:^Fixture,ticks:=1) {
         for a in 0..<2 {
             st:=&seat.actions.states[a]
             st^={down=f.down[a],pressed=f.down[a] && !f.was[a],released=!f.down[a] && f.was[a]}
-            if f.down[a] {f.held[a]+=1;st.held_ticks=f.held[a]} else {if f.was[a] {st.released_held=f.held[a]};f.held[a]=0}
+            if f.down[a] {f.held[a]+=1;st.held=f32(f.held[a])*f.time.dt} else {if f.was[a] {st.released_held=f32(f.held[a])*f.time.dt};f.held[a]=0}
             f.was[a]=f.down[a]
         }
         w:=world_of(f)
