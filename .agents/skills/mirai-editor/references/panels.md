@@ -861,8 +861,11 @@ sections that fold like those of the settings dialog: Quality and Frame rate.
 - Antialiasing is not part of the presets: Off, TAA and the
   [techniques](../../mirai-rendering/references/views.md#antialiasing-techniques) of the active
   plugins; one that no plugin offers is shown as TAA, which is what is drawn.
-- A plugin adds rows with the fields of its machine setting that carry `graphics=Label` in the tag:
-  an enum or a bool.
+- A row is a field of a machine setting, of the engine or of a plugin, whose tag carries
+  `graphics=Label`: a bool or an enum (its values, named by `choices=A|B` or by their names), a
+  number with the values `choices` lists (`label:value`, or a label that is its value), or the text
+  of the antialiasing technique. The rows of the section `Frames` go to Frame rate. There is no
+  list of options apart from the tags.
 - A choice is applied instantly to the edited world and stored in the engine layer
   (`settings.mirai` in `project.machine_folder`: the main checkout's `.mirai`, which its worktrees
   share). A value the project fixes wins again on rereading. It does not touch the document or its

@@ -89,7 +89,7 @@ Graphics_Status :: struct {
     render_scale:f32 `mirai:"label=The 3D image per point of the window; 0 follows the target of the preset"`,
     preset_height:u32 `mirai:"label=The lines the last preset aims for; 0 is one per point"`,
     antialiasing:[24]u8 `mirai:"text,label=The technique of the setting: off or taa or one a plugin offers"`,
-    options:[len(GRAPHICS_OPTION_LABELS)]Api_Graphics_Option `mirai:"label=Every option of the popup with its choices"`,
+    options:[GRAPHICS_ROWS_CAPACITY]Api_Graphics_Option `mirai:"trim,label=Every option of the popup with its choices"`,
     fps,gpu_ms:f32,
 }
 
@@ -250,17 +250,14 @@ api_graphics_fill :: proc(s:^Session,result:^Graphics_Status,g:^erender.Graphics
     result.frame_generation=g.frame_generation
     technique:=g.antialiasing
     base.text_set(result.antialiasing[:],base.text_get(technique[:]))
-    option_labels:=GRAPHICS_OPTION_LABELS
-    offered:=erender.antialiasing_offered(s.app.renderer)
-    choices:=graphics_choices(g^,offered)
-    at:=0
-    for option in Graphics_Option {
-        row:=&result.options[at]
-        at+=1
-        base.text_set(row.name[:],option_labels[option])
-        labels:=graphics_labels(option,offered)
-        if choice:=int(choices[option]);choice>=0 && choice<len(labels) {base.text_set(row.choice[:],labels[choice])}
-        for label,i in labels[:min(len(labels),len(row.choices))] {base.text_set(row.choices[i][:],label)}
+    rows:=graphics_rows_of(s,erender.antialiasing_offered(s.app.renderer))
+    for &each,at in rows[:min(len(rows),len(result.options))] {
+        option:=&result.options[at]
+        info:=&s.info.storages[each.storage]
+        data:=rawptr(g) if info.type==erender.Graphics_Settings else graphics_setting_of(s,info)
+        base.text_set(option.name[:],each.label)
+        if choice:=graphics_row_choice(&each,data);choice>=0 {base.text_set(option.choice[:],each.choices[choice])}
+        for label,i in each.choices[:min(len(each.choices),len(option.choices))] {base.text_set(option.choices[i][:],label)}
     }
     result.fps=s.app.stats.fps
     if s.app.renderer!=nil {
