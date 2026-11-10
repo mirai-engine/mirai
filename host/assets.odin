@@ -1100,8 +1100,8 @@ assets_texture_first :: proc(view:asset.Texture_View,limits:render.Texture_Limit
 }
 
 // The levels of a texture the renderer takes: from `from`, or the first one
-// its side allows, to the last; for a device that does not sample blocks, or
-// a renderer told not to use them, decoded to RGBA8, and BC6H to RGBA16F.
+// its side allows, to the last; for a device that does not sample blocks,
+// decoded to RGBA8, and BC6H to RGBA16F.
 // The levels of one layer name the file as their source, whose other levels
 // the renderer can ask for; an array or a cube takes every level its side
 // allows at once. Any thread.
@@ -2166,7 +2166,7 @@ assets_textures_reload :: proc(a:^Assets,before:render.Settings) {
     if r==nil {return}
     was,now:=render.texture_limits_of(r,before),render.texture_limits(r)
     pool :: proc "contextless" (megabytes:u32) -> u64 {return megabytes==0?max(u64):u64(megabytes)}
-    all:=was.blocks!=now.blocks || pool(r.settings.texture_pool_megabytes)<pool(before.texture_pool_megabytes)
+    all:=pool(r.settings.texture_pool_megabytes)<pool(before.texture_pool_megabytes)
     grown:=pool(r.settings.texture_pool_megabytes)>pool(before.texture_pool_megabytes)
     side:=min(was.max_size,now.max_size)
     Loaded :: struct {id:base.Asset_Id,index:u32,bytes:u64}
