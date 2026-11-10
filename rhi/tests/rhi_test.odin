@@ -14,14 +14,7 @@ import "mirai:rhi/shared_device"
 
 @(private = "file")
 test_device :: proc(t: ^testing.T) -> ^rhi.Device {
-	shared_device.hold(t)
-	d, err := rhi.device_create({on_message = rhi.message_print, app_name = "mirai rhi tests", validation = true, allow_hardware_ray_tracing = true, upload_bytes_per_frame = 1 << 20})
-	if d == nil {
-		if rhi.gpu_skip_allowed() {fmt.eprintln("rhi tests skipped:", err); return nil}
-		testing.expectf(t, false, "no GPU device: %s (set MIRAI_ALLOW_GPU_SKIP=1 to skip)", err)
-		return nil
-	}
-	return d
+	return shared_device.create_or_skip(t, {on_message = rhi.message_print, app_name = "mirai rhi tests", validation = true, allow_hardware_ray_tracing = true, upload_bytes_per_frame = 1 << 20})
 }
 
 @(private = "file")

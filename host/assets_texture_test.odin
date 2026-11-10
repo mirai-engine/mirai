@@ -13,11 +13,8 @@ import mm "mirai:std/math"
 
 @(test)
 loaded_textures_take_the_limits_the_renderer_changes_to :: proc(t:^testing.T) {
-    device,err:=shared_device.take(t, hardware_rt = false)
-    if device==nil {
-        if !rhi.gpu_skip_allowed() {testing.expectf(t,false,"no GPU device: %s (set MIRAI_ALLOW_GPU_SKIP=1 to skip)",err)}
-        return
-    }
+    device:=shared_device.take_or_skip(t,hardware_rt=false)
+    if device==nil {return}
     r:=new(render.Renderer);defer free(r)
     if !render.renderer_init(r,{device=device,width=64,height=64}) {testing.expect(t,false,r.error);return}
     defer render.renderer_destroy(r)
@@ -84,11 +81,8 @@ loaded_textures_take_the_limits_the_renderer_changes_to :: proc(t:^testing.T) {
 // from its file. Its handle stays, and the materials that name it with it.
 @(test)
 a_texture_holds_the_levels_its_distance_asks_for :: proc(t:^testing.T) {
-    device,err:=shared_device.take(t, hardware_rt = false)
-    if device==nil {
-        if !rhi.gpu_skip_allowed() {testing.expectf(t,false,"no GPU device: %s (set MIRAI_ALLOW_GPU_SKIP=1 to skip)",err)}
-        return
-    }
+    device:=shared_device.take_or_skip(t,hardware_rt=false)
+    if device==nil {return}
     r:=new(render.Renderer)
     defer free(r)
     if !render.renderer_init(r,{device=device,width=64,height=64}) {testing.expect(t,false,r.error);return}
@@ -184,11 +178,8 @@ a_texture_holds_the_levels_its_distance_asks_for :: proc(t:^testing.T) {
 // texture has them all, with the same handle.
 @(test)
 a_texture_a_load_takes_over_frames_shows_its_small_levels_until_the_rest_went :: proc(t:^testing.T) {
-    device,err:=shared_device.take(t, hardware_rt = false)
-    if device==nil {
-        if !rhi.gpu_skip_allowed() {testing.expectf(t,false,"no GPU device: %s (set MIRAI_ALLOW_GPU_SKIP=1 to skip)",err)}
-        return
-    }
+    device:=shared_device.take_or_skip(t,hardware_rt=false)
+    if device==nil {return}
     r:=new(render.Renderer)
     defer free(r)
     if !render.renderer_init(r,{device=device,width=64,height=64}) {testing.expect(t,false,r.error);return}
@@ -262,11 +253,8 @@ pools_hold :: proc(device:^rhi.Device,r:^render.Renderer,m:render.Mesh_Record,ve
 // is not drawn at all, outlined or met by rays, and then it shows posed.
 @(test)
 a_mesh_a_load_takes_over_frames_and_its_skinned_copy_are_drawn_once_all_of_them_went :: proc(t:^testing.T) {
-    device,err:=shared_device.take(t, hardware_rt = false)
-    if device==nil {
-        if !rhi.gpu_skip_allowed() {testing.expectf(t,false,"no GPU device: %s (set MIRAI_ALLOW_GPU_SKIP=1 to skip)",err)}
-        return
-    }
+    device:=shared_device.take_or_skip(t,hardware_rt=false)
+    if device==nil {return}
     r:=new(render.Renderer)
     defer free(r)
     if !render.renderer_init(r,{device=device,width=64,height=64}) {testing.expect(t,false,r.error);return}
@@ -375,11 +363,8 @@ a_mesh_a_load_takes_over_frames_and_its_skinned_copy_are_drawn_once_all_of_them_
 // textures; a material that names it gets nothing, and an Unsupported error.
 @(test)
 a_cube_loads_whole_and_a_material_does_not_sample_it :: proc(t:^testing.T) {
-    device,err:=shared_device.take(t, hardware_rt = false)
-    if device==nil {
-        if !rhi.gpu_skip_allowed() {testing.expectf(t,false,"no GPU device: %s (set MIRAI_ALLOW_GPU_SKIP=1 to skip)",err)}
-        return
-    }
+    device:=shared_device.take_or_skip(t,hardware_rt=false)
+    if device==nil {return}
     r:=new(render.Renderer);defer free(r)
     if !render.renderer_init(r,{device=device,width=64,height=64}) {testing.expect(t,false,r.error);return}
     defer render.renderer_destroy(r)

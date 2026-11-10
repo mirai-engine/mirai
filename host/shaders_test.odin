@@ -43,11 +43,8 @@ loads_settle :: proc(app:^App) {
 
 @(test)
 generations_load_off_the_frames_in_the_order_they_were_asked_for :: proc(t:^testing.T) {
-    device,err:=shared_device.take(t, hardware_rt = false)
-    if device==nil {
-        if !rhi.gpu_skip_allowed() {testing.expectf(t,false,"no GPU device: %s (set MIRAI_ALLOW_GPU_SKIP=1 to skip)",err)}
-        return
-    }
+    device:=shared_device.take_or_skip(t,hardware_rt=false)
+    if device==nil {return}
     r:=new(render.Renderer);defer free(r)
     if !render.renderer_init(r,{device=device,width=64,height=64}) {testing.expect(t,false,r.error);return}
     defer render.renderer_destroy(r)

@@ -14,12 +14,8 @@ import vk "vendor:vulkan"
 // drop the barrier between a compute write and a dependent compute read.
 @(test)
 rhi_validation_detects_a_missing_barrier :: proc(t: ^testing.T) {
-	shared_device.hold(t)
-	d, err := rhi.device_create({on_message = rhi.message_print, app_name = "mirai validation meta test", validation = true, upload_bytes_per_frame = 1 << 20})
-	if d == nil {
-		if !rhi.gpu_skip_allowed() {testing.expectf(t, false, "no GPU device: %s", err)}
-		return
-	}
+	d := shared_device.create_or_skip(t, {on_message = rhi.message_print, app_name = "mirai validation meta test", validation = true, upload_bytes_per_frame = 1 << 20})
+	if d == nil {return}
 	defer rhi.device_destroy(d)
 	if !d.info.features.validation {return} // no validation layer installed
 	COUNT :: 256

@@ -8,12 +8,7 @@ import "mirai:std/base"
 
 @(private="file")
 small_device :: proc(t:^testing.T,capacities:rhi.Device_Capacities,upload:u64=1<<20) -> ^rhi.Device {
-    shared_device.hold(t)
-    d,err:=rhi.device_create({app_name="mirai rhi capacity tests",validation=true,upload_bytes_per_frame=upload,capacities=capacities})
-    if d==nil {
-        if rhi.gpu_skip_allowed() {fmt.eprintln("rhi tests skipped:",err)} else {testing.expectf(t,false,"no GPU device: %s (set MIRAI_ALLOW_GPU_SKIP=1 to skip)",err)}
-    }
-    return d
+    return shared_device.create_or_skip(t,{app_name="mirai rhi capacity tests",validation=true,upload_bytes_per_frame=upload,capacities=capacities})
 }
 
 @(test)
@@ -214,16 +209,12 @@ Messages :: struct {errors,validation:int}
 @(test)
 rhi_messages_reach_the_presenter_the_device_was_given :: proc(t:^testing.T) {
     messages:Messages
-    shared_device.hold(t)
-    d,err:=rhi.device_create({app_name="mirai rhi message test",validation=true,upload_bytes_per_frame=1<<20,message_user=&messages,
+    d:=shared_device.create_or_skip(t,{app_name="mirai rhi message test",validation=true,upload_bytes_per_frame=1<<20,message_user=&messages,
         on_message=proc(kind:rhi.Message_Kind,text:string,user:rawptr) {
             messages:=cast(^Messages)user
             if kind==.Error {messages.errors+=1} else if kind==.Validation_Error {messages.validation+=1}
         }})
-    if d==nil {
-        if !rhi.gpu_skip_allowed() {testing.expectf(t,false,"no GPU device: %s",err)}
-        return
-    }
+    if d==nil {return}
     defer rhi.device_destroy(d)
     testing.expect(t,!rhi.texture_table_set(d,u32(rhi.texture_table_limit(d)),0))
     testing.expect_value(t,messages.errors,1)
