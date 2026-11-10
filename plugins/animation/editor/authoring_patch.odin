@@ -27,7 +27,7 @@ Graph_Patch_Params :: struct {
     dry_run:bool `mirai:"optional,label=Validates and answers without writing"`,
 }
 authoring_patch_register :: proc(s:^editor.Session) {
-    authoring_method_register(s,{name="animation.graph.patch",summary="Edits only the given fields of the named nodes and parameters of an .agraph, and its source and output, all at once; animation.graph.set replaces its nodes and masks.",params=Graph_Patch_Params,params_info=type_info_of(Graph_Patch_Params),run=authoring_graph_patch},Authoring_Write_Result,type_info_of(Authoring_Write_Result))
+    editor.api_method_register(s,Graph_Patch_Params,Authoring_Write_Result,{name="animation.graph.patch",summary="Edits only the given fields of the named nodes and parameters of an .agraph, and its source and output, all at once; animation.graph.set replaces its nodes and masks.",run=authoring_graph_patch,writes_result=true})
 }
 @(private)
 graph_named_definition :: proc(call:^api.Call,profile:anim.Graph_Profile,p:^Graph_Write_Params) -> (counts:Graph_Counts,ok:bool) {

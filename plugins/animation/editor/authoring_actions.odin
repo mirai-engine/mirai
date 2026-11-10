@@ -38,7 +38,7 @@ action_write_defaults :: proc() -> ^Action_Write_Params {
 }
 authoring_actions_register :: proc(s:^editor.Session) {
     defaults:=action_write_defaults();inspect:=Authoring_Inspect_Params{limit=64}
-    authoring_method_register(s,{name="animation.action.set",summary="Makes or replaces an .action profile that entities share: named actions of clips with priorities and cancel policies, their sections and gameplay windows. In Edit.",params=Action_Write_Params,params_info=type_info_of(Action_Write_Params),defaults=defaults,run=authoring_action_set},Authoring_Write_Result,type_info_of(Authoring_Write_Result))
+    editor.api_method_register(s,Action_Write_Params,Authoring_Write_Result,{name="animation.action.set",summary="Makes or replaces an .action profile that entities share: named actions of clips with priorities and cancel policies, their sections and gameplay windows. In Edit.",defaults=defaults,run=authoring_action_set,writes_result=true})
 }
 @(private)
 action_authoring_open :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id,file:^Authoring_File) -> (anim.Action_Profile,bool) {
