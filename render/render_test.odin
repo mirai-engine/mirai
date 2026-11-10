@@ -1360,6 +1360,95 @@ render_mesh_added_under_hardware_tracing_gets_its_software_tree_when_software_re
 	expect_clean(t, f.device)
 }
 
+// ---------------------------------------------------------------- tracers
+
+// Whether r has every pipeline of the rays of tracer, and none of the other
+// tracer's when only is set.
+@(private = "file")
+tracer_made :: proc(t: ^testing.T, r: ^Renderer, tracer: Pipeline_Rays, only: bool, loc := #caller_location) {
+	testing.expectf(t, tracer_missing(r, tracer) == "", "the pipeline %s of rays traced by %v is made", tracer_missing(r, tracer), tracer, loc = loc)
+	if !only {return}
+	list: Pipeline_List
+	pipelines_list(r, &list)
+	for item in list.items[:list.count] {
+		other := item.rays != .Any && item.rays != tracer
+		testing.expectf(t, !other || item.target^ == 0, "the pipeline %s of rays traced by %v is not made while they are traced by %v", pipeline_name(r, item), item.rays, tracer, loc = loc)
+	}
+}
+
+// A slab over a floor in the sun: the floor under it is darker than the
+// floor in the open only if the frame traced the shadow rays.
+@(private = "file")
+tracer_frame_shadows :: proc(t: ^testing.T, r: ^Renderer, cube: Mesh_Handle, loc := #caller_location) {
+	instances := []Instance_Desc{
+		{object_id = 1, mesh = cube, transform = trs({0, -0.1, 0}, {12, 0.2, 12}), tint = {0.8, 0.8, 0.8}},
+		{object_id = 2, mesh = cube, transform = trs({0, 1.5, 0}, {2, 0.2, 2}), tint = {0.5, 0.5, 0.5}},
+	}
+	scene_set(r, instances, nil, {direction = {0.05, 1, 0.02}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}, {sky = {0.3, 0.4, 0.6}})
+	camera := Camera{position = {0, 8, 7}, forward = {0, -8, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	for _ in 0 ..< 4 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error, loc = loc)}
+	rhi.device_wait_idle(r.device)
+	pixels, w, _, ok := renderer_capture(r)
+	testing.expect(t, ok, r.error, loc = loc)
+	if !ok {return}
+	defer delete(pixels)
+	shadow := pixel(pixels, w, project(r, camera, {0, 0.001, 0.8}))
+	lit := pixel(pixels, w, project(r, camera, {3.5, 0.001, 2.5}))
+	testing.expectf(t, lit[0] > shadow[0] + 40, "rays traced by hardware %v: the lit floor %v is brighter than the shadowed floor %v", r.hardware_rt, lit, shadow, loc = loc)
+}
+
+@(private = "file")
+tracer_settings :: proc(mode: Trace_Mode) -> Settings {
+	s := DEFAULT_SETTINGS
+	s.trace_mode = mode
+	s.gi_enabled = false
+	return s
+}
+
+@(test)
+a_device_makes_only_the_pipelines_of_the_tracer_it_uses_and_the_other_ones_on_a_switch :: proc(t: ^testing.T) {
+	for start in ([]Trace_Mode{.Auto, .Software}) {
+		f: Cube_Fixture
+		if !cube_fixture_init(t, &f, 192, 128, tracer_settings(start)) {return}
+		defer fixture_destroy(&f)
+		r := f.renderer
+		if !r.hardware_rt_verified {
+			fmt.eprintln("tracer switch skipped: the device has no ray queries that pass the self-test")
+			return
+		}
+		first: Pipeline_Rays = .Hardware if start == .Auto else .Software
+		testing.expect_value(t, r.hardware_rt, first == .Hardware)
+		tracer_made(t, r, first, only = true)
+		tracer_frame_shadows(t, r, f.cube)
+		for mode in ([]Trace_Mode{.Software if start == .Auto else .Auto, start}) {
+			settings := r.settings
+			settings.trace_mode = mode
+			testing.expect(t, renderer_apply_settings(r, settings), r.error)
+			tracer: Pipeline_Rays = .Software if mode == .Software else .Hardware
+			testing.expect_value(t, r.hardware_rt, tracer == .Hardware)
+			tracer_made(t, r, tracer, only = false)
+			tracer_frame_shadows(t, r, f.cube)
+		}
+		expect_clean(t, f.device)
+	}
+}
+
+@(test)
+a_device_without_ray_queries_starts_with_the_software_pipelines :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	if !fixture_init(t, &f, 192, 128, tracer_settings(.Auto), hardware_rt = false) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	testing.expect(t, !r.hardware_rt)
+	tracer_made(t, r, .Software, only = true)
+	vertices, indices := cube_mesh()
+	added: bool
+	f.cube, added = mesh_add(r, vertices[:], indices[:])
+	testing.expect(t, added)
+	tracer_frame_shadows(t, r, f.cube)
+	expect_clean(t, f.device)
+}
+
 // ---------------------------------------------------------------- moves
 
 @(private = "file")
