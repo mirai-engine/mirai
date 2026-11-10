@@ -44,7 +44,7 @@ grounding_inspection_derives_final_pose_errors_and_reports_blocked_legs_without_
 }
 
 @(test)
-rig_modifier_api_discovers_named_operations_effectors_and_retarget_without_pose_modifiers :: proc(t:^testing.T) {
+rig_modifier_api_discovers_named_operations_effectors_and_retarget_chains_of_the_character :: proc(t:^testing.T) {
     f:=new(Authoring_Test);defer free(f);if !authoring_test_init(f,t,"rig-modifiers") {return};defer authoring_test_destroy(f)
     pose_id,retarget_id:=base.Asset_Id{111,222},base.Asset_Id{112,223}
     chain:=anim.CHAIN_IK_CONSTRAINT_DEFAULT;base.text_set(chain.name[:],"arm");chain.root,chain.end=anim.bone_ref("a"),anim.bone_ref("c")
@@ -56,23 +56,23 @@ rig_modifier_api_discovers_named_operations_effectors_and_retarget_without_pose_
     base.text_set(multi.effectors[0].name[:],"left");base.text_set(multi.effectors[1].name[:],"right")
     retarget:=anim.CHAIN_RETARGET_CONSTRAINT_DEFAULT;base.text_set(retarget.name[:],"transfer")
     retarget.source_root,retarget.source_end,retarget.target_root,retarget.target_end=chain.root,chain.end,chain.root,chain.end
-    unused:=retarget;base.text_set(unused.name[:],"unused_pose_chain")
-    testing.expect_value(t,anim.pose_profile_save(fmt.tprintf("%s/rig.pose",f.root),&f.assets.types,pose_id,{chain_ik={chain},twist={twist},springs={spring},multi_ik={multi},retarget_chains={unused}}),asset.Error.None)
-    testing.expect_value(t,anim.pose_profile_save(fmt.tprintf("%s/transfer.pose",f.root),&f.assets.types,retarget_id,{retarget_chains={retarget}}),asset.Error.None)
+    set:=anim.character_set_make({});set.pose={chain_ik={chain},twist={twist},springs={spring},multi_ik={multi},retarget_chains={retarget}}
+    testing.expect_value(t,anim.character_save(fmt.tprintf("%s/rig.character",f.root),&f.assets.types,pose_id,set),asset.Error.None)
+    set.pose={retarget_chains={retarget}}
+    testing.expect_value(t,anim.character_save(fmt.tprintf("%s/transfer.character",f.root),&f.assets.types,retarget_id,set),asset.Error.None)
     testing.expect(t,host.assets_scan(&f.assets))
     play:Program_Test_World;if !core.test_world_init(t,&play,anim.test_types) {return};defer core.test_world_destroy(&play)
     first,second:=core.create(&play.entities),core.create(&play.entities)
     core.add(&play.ids,first,{value=17});core.add(&play.ids,second,{value=18})
-    core.add(&play.modifiers,first,{profile=pose_id,weight=.8,enabled=true})
-    value:=anim.ANIMATION_DEFAULT;value.retarget,value.source=retarget_id,second;core.add(&play.animations,first,value)
-    value.source=first;core.add(&play.animations,second,value);core.test_world_settle(&play)
+    value:=anim.ANIMATION_DEFAULT;value.asset=pose_id;core.add(&play.animations,first,value)
+    value.asset=retarget_id;core.add(&play.animations,second,value);core.test_world_settle(&play)
     f.session.info,f.session.mode=core.test_world_info(&play),.Play;f.session.runs[0]={world=&play}
     inspect:=Modifier_Inspect_Params{limit=256};requested:=request_defaults()
     authoring_test_register(f,t,"request",Request_Params,request,requested)
     authoring_test_register(f,t,"inspect",Modifier_Inspect_Params,program_modifier_inspect,&inspect)
     testing.expect_value(t,authoring_test_execute(f,"inspect",`{"entity":"0000000000000011"}`).code,0)
     output:=string(serial.writer_bytes(&f.out))
-    testing.expect(t,strings.contains(output,`"total":5`) && strings.contains(output,`"name":"transfer"`) && !strings.contains(output,"unused_pose_chain"))
+    testing.expect(t,strings.contains(output,`"total":5`) && strings.contains(output,`"name":"transfer"`))
     testing.expect(t,!strings.contains(output,`"diagnostic"`) && !strings.contains(output,`"slot"`) && !strings.contains(output,`"index"`) && strings.contains(output,`"left"`) && strings.contains(output,`"right"`))
     testing.expect_value(t,authoring_test_execute(f,"inspect",`{"entity":"0000000000000011","diagnostics":true}`).code,0)
     testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"diagnostic"`))

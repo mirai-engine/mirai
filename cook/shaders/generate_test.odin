@@ -172,13 +172,13 @@ generation_compiles_publishes_and_reuses_what_did_not_change :: proc(t:^testing.
     }
     testing.expect(t,os.is_file(path_join(mini.output,"catalog.json",allocator=context.temp_allocator)) && os.is_file(path_join(mini.output,"include",SURFACE_INCLUDE,allocator=context.temp_allocator)) && os.is_file(path_join(mini.output,"include",POSTPROCESS_INCLUDE,allocator=context.temp_allocator)))
     manifest:=mini_read(&mini,"shaders/build/manifest.json")
-    testing.expect(t,strings.contains(manifest,first.engine),"the manifest names the engine sources")
+    testing.expect(t,strings.contains(manifest,first.engine),"the manifest names what its stages share with the engine")
     testing.expect(t,strings.contains(manifest,"\"id\": \"Fill_Double_Comp\"") && strings.contains(manifest,"\"tests\": [\n    {\n      \"id\": \"Probe_Comp\""))
     testing.expect(t,strings.contains(manifest,"\"bindings\": [\n        {\n          \"slot\": 0,\n          \"kind\": \"Uniform_Buffer\"\n        },\n        {\n          \"slot\": 1,\n          \"kind\": \"Storage_Buffer\"\n        },\n        {\n          \"slot\": 2,\n          \"kind\": \"Storage_Buffer_RW\"\n        }\n      ],\n      \"group\": [\n        64,\n        1,\n        1\n      ],"),"bindings and threadgroup are the reflected ones")
     table:=mini_read(&mini,"render/shaders_gen.odin")
     testing.expect(t,strings.contains(table,"\npackage mirai_render\n"))
     testing.expect(t,strings.contains(table,"Shader_Id :: enum u8 {\n\tColor_Frag,\n\tFill_Comp,\n\tFill_Double_Comp,\n\tPoint_Vert,\n}"),"stages in the order of their files, a variant after its source")
-    testing.expect(t,strings.contains(table,strings.concatenate({"SHADERS_FINGERPRINT :: \"",first.engine,"\""},context.temp_allocator)))
+    testing.expect(t,strings.contains(table,strings.concatenate({"SHADERS_INTERFACE :: \"",first.engine,"\""},context.temp_allocator)))
     testing.expect(t,strings.contains(table,"#panic(\"the shaders were generated without"),"the other system is told to ask for its backend")
     testing.expect(t,strings.contains(mini_read(&mini,"rhi/shaders_gen_test.odin"),"\tProbe_Comp,\n\tProbe_Double_Comp,\n"))
     testing.expect(t,mini_read(&mini,strings.concatenate({"shaders/build/fill.comp",HOST_CODE},context.temp_allocator))!=mini_read(&mini,strings.concatenate({"shaders/build/fill_double.comp",HOST_CODE},context.temp_allocator)),"a variant is another compilation")
@@ -208,7 +208,9 @@ generation_compiles_publishes_and_reuses_what_did_not_change :: proc(t:^testing.
     testing.expect_value(t,third.error,"")
     testing.expect_value(t,third.compiled,1)
     testing.expect_value(t,third.reused,5)
-    testing.expect(t,third.engine!=first.engine,"the include is an engine source")
+    // Code alone changed: an engine built from the table loads this generation as it runs.
+    testing.expect_value(t,third.engine,first.engine)
+    testing.expect(t,mini_read(&mini,"render/shaders_gen.odin")==table,"the table says nothing of the code of a stage")
 
     // The output was lost: the shared cache gives the stages back without compiling.
     base.remove_all(mini.output)
@@ -223,6 +225,14 @@ generation_compiles_publishes_and_reuses_what_did_not_change :: proc(t:^testing.
     testing.expect(t,len(own)==1 && own[0].name==STAMP_FILE,"the cache of a checkout holds its stamp")
     stages:=files_in(path_join(mini.root,".mirai/cache",CACHE_NAME,CACHE_STAGES,allocator=context.temp_allocator))
     testing.expectf(t,len(stages)==14,"seven entries, each with the code of this system: %d files",len(stages))
+
+    // A stage binds another buffer: the engine binds what its table says, so the table and what names it are others.
+    bound,_:=strings.replace(POINT,"struct Stage_Output","[[vk::binding(1, 0)]] StructuredBuffer<Corner> others : register(t1, space0);\nstruct Stage_Output",1,context.temp_allocator)
+    bound,_=strings.replace(bound,"corners[vertex_id].position;","corners[vertex_id].position + others[vertex_id].position;",1,context.temp_allocator)
+    fixture_write(t,mini.root,"shaders/point.vert.slang",bound)
+    fifth:=mini_generate(t,&mini,mini.options)
+    testing.expect_value(t,fifth.error,"")
+    testing.expect(t,fifth.engine!=first.engine && mini_read(&mini,"render/shaders_gen.odin")!=table,"a binding is what the stage shares with the engine")
 }
 
 @(test)

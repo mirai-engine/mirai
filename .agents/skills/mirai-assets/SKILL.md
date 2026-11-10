@@ -142,8 +142,7 @@ registry).
     `std/base/texts_test.odin` and `host/content_interface_test.odin`; the tools of the texts
     (keys, CSV, what is missing): `cook/author/texts_test.odin`; game data tables:
     `asset/records_test.odin`;
-  - versions: `asset/versions_test.odin`; a plugin's own steps, in its plugin (`.match` and
-    `.pose`);
+  - versions: `asset/versions_test.odin`; a plugin's own steps, in its plugin (`.character`);
   - registry: `asset/registry_test.odin` and, in the editor, `editor/content_test.odin`;
   - layers of an imported material: `asset/kinds_test.odin`, and the overrides shared with prefabs
     in the editor, `editor/prefabs_test.odin`;
@@ -157,7 +156,7 @@ registry).
   with `--release`) and `asset/types_memory_test.odin`. If schema validation changes, add
   `hostile_schema_binary` and `hostile_random_schemas_validate` of `std/serial/hostile_test.odin`
   with `--release` and `-define:SERIAL_HOSTILE_ROUNDS=20000`.
-- `.pose`, `.blend` and `.action` are verified in their [plugin](../mirai-plugins/SKILL.md).
+- `.character` is verified in its [plugin](../mirai-animation/SKILL.md).
 - Compression: `mirai test std/compressor/lz` and `mirai test cook/compressor/lz` (every level
   decodes through `std/compressor`),
   `asset/container_test.odin` (chunks with alignment and compression) and the pages in

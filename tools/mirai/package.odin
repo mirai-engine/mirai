@@ -78,7 +78,7 @@ cmd_package :: proc(root:string,args:[]string) -> int {
 
     lock:=build_lock(root,"package engine")
     defer workspace.lock_release(&lock)
-    if _,_,released:=engine_release(root,"",.Release,"package engine");!released {return 1}
+    engine_release(root,"",.Release,"package engine")
     if !ensure_runtime_dependencies(root) {fmt.eprintln("mirai package: the C libraries could not be built; mirai deps shows why");return 1}
     if code:=engine_report(build.engine_build({engine_root=root,mode=.Release}),root);code!=0 {return code}
 

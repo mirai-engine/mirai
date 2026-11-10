@@ -12,10 +12,14 @@ import mm "mirai:std/math"
 import lib "mirai:std/anim"
 import "base:runtime"
 
-// A mesh that shows the pose of a rig of its skeleton instead of posing its own;
-// with a skeleton of its own it is a rig that follows that one (Rig.leader).
-@(component,description="Uses another entity's evaluated pose to deform this mesh: clothing and meshes that share one rig. A mesh of another skeleton, as a head, follows it on the bones of the same name and keeps its own animation on the rest.")
-Pose_Source :: struct {rig:core.Entity}
+// The one link by which a rig takes the pose of another (Rig.leader). At stage Finished a mesh of
+// the same skeleton shows the finished pose of rig instead of posing its own, and one of another
+// skeleton follows it on the bones they share by name; at stage Sampled it takes the pose rig
+// sampled, before the modifiers of rig, mapped by those names or by the Chain Retarget rows of
+// its .character, and adapts it with its own modifiers (a live retarget).
+Pose_Stage :: enum u8 {Finished,Sampled}
+@(component,description="Takes the pose of another rig: clothing that shares it, a head of another skeleton that follows it by bone names, or, at stage Sampled, a character of other proportions that plays its animation through bone names or the chains of its .character.")
+Pose_Source :: struct {rig:core.Entity,stage:Pose_Stage}
 
 // A bone by its path, or by its name when no other bone has it. A text that
 // starts with BODY_LABEL names a part of the body of the skeleton instead

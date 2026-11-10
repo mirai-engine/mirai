@@ -1,6 +1,6 @@
 # Clips on props, curves and root motion
 
-For entities that no `.match` drives: a door, a lift, a pickup, a light, a cutscene, a scripted
+For entities that no `.character` drives: a door, a lift, a pickup, a light, a cutscene, a scripted
 creature. `Animation.asset` may be a `.anim` (a library of clips); the field `clip` picks one. A
 clip is the one way to move a value over time: there is no other keyed component.
 
@@ -45,7 +45,7 @@ anim.animation_seek(requests,door,0.5)                   // jumps there, skippin
   `a.playing` and seeks, and asks with commands only for entities it does not write;
   `anim.animation_playing(playback.ptr,door)` says what the clip does now.
 - What plays over the clip (a wave over the arm, a mix by a value, an action) is a layer or an
-  action of an action set, as for a character: [actions.md](actions.md).
+  action of a `.character` over that `.anim`, as for a character: [actions.md](actions.md).
 
 ## Read progress, curves and markers
 
@@ -110,5 +110,4 @@ if d,ok:=anim.animation_root_delta(playback.ptr,e);ok {
 - `animation_clip` keeps the entity's `loop`; pass `loop=false` for a one-shot and test `ended`
   only for a clip that does not loop.
 - A clip name the asset lacks is a problem of the entity, not an error at the call.
-- Changing `Animation.library` restarts the `.match`; it replaces clips by name.
-- A `.blend` as `Animation.asset` fails: it is the `space` of a layer of an action set.
+- Changing `Animation.library` restarts the locomotion of the set; it replaces clips by name.

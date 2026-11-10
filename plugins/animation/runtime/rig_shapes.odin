@@ -100,7 +100,7 @@ rig_shapes_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constra
     spline_first,spline_end:=rig_rows(&runtime.spline_ik,state.entity)
     corrective_first,corrective_end:=rig_rows(&runtime.correctives,state.entity)
     if spline_first<spline_end && len(runtime.spline_states)!=len(runtime.spline_ik.values) && resize(&runtime.spline_states,len(runtime.spline_ik.values))!=nil ||
-       corrective_first<corrective_end && len(runtime.corrective_states)!=len(runtime.correctives.values) && resize(&runtime.corrective_states,len(runtime.correctives.values))!=nil {memory_problem(inputs.problems,state.entity,"the Spline IK and Corrective operations of its pose profile");return false}
+       corrective_first<corrective_end && len(runtime.corrective_states)!=len(runtime.correctives.values) && resize(&runtime.corrective_states,len(runtime.correctives.values))!=nil {memory_problem(inputs.problems,state.entity,"the Spline IK and Corrective operations of its .character");return false}
     valid:=true
     skeleton:=playing_skeleton(state)
     for &config,slot in runtime.spline_ik.values[spline_first:spline_end] {

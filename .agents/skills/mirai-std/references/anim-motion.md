@@ -2,7 +2,7 @@
 
 Functions of `std/anim` over caller buffers; they neither allocate nor store pointers in the
 temporal state. The world integration and the authoring are in
-[the motion profile](../../mirai-animation/references/animation-motion.md).
+[the warping of the plugin](../../mirai-animation/references/animation-motion.md).
 
 ## Motion matching (`matching.odin`)
 
