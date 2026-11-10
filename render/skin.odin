@@ -272,16 +272,17 @@ skin_binding_upload :: proc(r:^Renderer,binding:^Skin_Binding) -> bool {
 // Copies a tree breadth first: the nodes of each depth follow one another
 // from the root and the children of a node stay together, so a refit runs a
 // level at a time over contiguous nodes. The unused slot of the tree
-// (BVH_UNUSED_NODE) goes last. False for a tree deeper than levels.
+// (BVH_UNUSED_NODE) stays where spatial.bvh_build leaves it, out of every
+// level. False for a tree deeper than levels.
 @(private)
 bvh_breadth_first :: proc(nodes,out:[]Gpu_Bvh_Node,levels:^[BVH_MAX_DEPTH+1]Pool_Range)->bool {
     if len(nodes)==0 || len(out)!=len(nodes) {return false}
-    reached:=len(nodes)-1 if len(nodes)>BVH_UNUSED_NODE else len(nodes)
+    first:=1
+    if len(nodes)>BVH_UNUSED_NODE {out[BVH_UNUSED_NODE],first={},BVH_UNUSED_NODE+1}
     out[0]=nodes[0]
-    head,next:=0,1
+    head,end,next:=0,1,first
     for &level in levels {
-        level={u32(head),u32(next-head)}
-        end:=next
+        level={u32(head),u32(end-head)}
         for &node in out[head:end] {
             if node.count!=0 {continue}
             if int(node.left_first)+1>=len(nodes) || next+1>=len(out) {return false}
@@ -289,11 +290,9 @@ bvh_breadth_first :: proc(nodes,out:[]Gpu_Bvh_Node,levels:^[BVH_MAX_DEPTH+1]Pool
             node.left_first=u32(next)
             next+=2
         }
-        head=end
+        head,end=max(end,first),next
     }
-    if head!=reached {return false}
-    for &node in out[reached:] {node={}}
-    return true
+    return head==end && next==len(out)
 }
 
 // The tree of level 0 of a pose, which mesh_rays_complete just made, stored
