@@ -19,16 +19,10 @@ LAYOUT_DEPTH :: 64
 
 @(private)
 LAYOUT_EPSILON :: 0.01
-// The line box of a paragraph in em, that of the messages of the chat,
-// rounded down to a whole unit. Each line of text is centered
-// in its box.
+// The line box of the running text of the editor in sizes, that of the
+// messages of the chat: prose rounds it down to a whole unit.
 @(private)
 PARAGRAPH_LINE :: f32(1.6)
-
-// The line box of a paragraph of text of size whose lines are line sizes
-// apart, PARAGRAPH_LINE when 0, in whole units.
-@(private)
-paragraph_line :: proc "contextless" (size,line:f32) -> f32 {return math.floor(size*(line if line>0 else PARAGRAPH_LINE))}
 
 @(private)
 Layout_Node :: struct {
