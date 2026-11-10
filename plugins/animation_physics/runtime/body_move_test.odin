@@ -6,6 +6,7 @@ import "core:testing"
 import "mirai:core"
 import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
 // The root motion the actions of a Character give its body is one tick of a layered move of their
@@ -16,10 +17,11 @@ the_root_motion_of_an_action_that_moves_its_body_moves_its_character_for_one_tic
     World :: struct {
         using world:core.Test_World,
         characters:core.Table(phys.Character),
+        states:core.Table(locomotion.Locomotion_State),
         worlds:core.Table(core.World_Transform),
         paces:core.Table(core.Own_Pace),
         playback:anim.Playback,
-        moves:phys.Locomotion_Requests,
+        moves:locomotion.Locomotion_Requests,
     }
     w:World
     if !core.test_world_init(t,&w,test_types) {return}
@@ -28,7 +30,8 @@ the_root_motion_of_an_action_that_moves_its_body_moves_its_character_for_one_tic
     yaw:=mm.quat_axis_angle({0,1,0},math.PI/2) // its -Z, its front, is -X of the world
     resize(&w.playback.rows,core.entity_index(still)+1)
     for e,i in ([3]core.Entity{walker,climber,still}) {
-        core.add(&w.characters,e,phys.Character{mode=phys.MODE_MANTLING if e==climber else phys.MODE_WALKING,mass=80})
+        core.add(&w.characters,e,phys.Character{mass=80})
+        core.add(&w.states,e,locomotion.Locomotion_State{mode=locomotion.MODE_MANTLING if e==climber else locomotion.MODE_WALKING})
         core.add(&w.worlds,e,core.World_Transform{transform={rotation=yaw,scale={2,2,2}}})
         state:=anim.Playing{entity=e}
         if e!=still {state.body_motion={translation={0,.1,-.05},move=.Additive}}
@@ -36,14 +39,14 @@ the_root_motion_of_an_action_that_moves_its_body_moves_its_character_for_one_tic
     }
     core.add(&w.paces,walker,core.Own_Pace{rate=.5})
     core.test_world_settle(&w)
-    animation_body_move(core.read(&w.characters),core.read(&w.worlds),{},core.read(&w.paces),core.ref(&w.playback),&w.moves,{playing=true,dt=.1},core.CLOCK_DEFAULT)
+    animation_body_move(core.read(&w.characters),core.read(&w.states),core.read(&w.worlds),{},core.read(&w.paces),core.ref(&w.playback),&w.moves,{playing=true,dt=.1},core.CLOCK_DEFAULT)
     if !testing.expect_value(t,len(w.moves.queue.items),1) {return}
     // .05 forward (-Z) at twice its size in .05 s of its own time; its .1 up is dropped. Its force takes
     // the 80 kg body from rest to those 2 m/s in that time.
     asked:=w.moves.queue.items[0]
     testing.expectf(t,asked.entity==walker && asked.kind==.Add_Move && asked.move.mix==.Additive && asked.move.ticks==1 && asked.move.id==BODY_ROOT_MOVE && linalg.length(asked.move.velocity-mm.Vec3{-2,0,0})<1e-4 && abs(asked.move.force-80*2/.05)<1e-2,"%v",asked)
     placed:=core.World_Transform{transform={rotation=yaw,scale={1,1,1}}}
-    cases:=[?]struct {body:anim.Body_Motion,up:mm.Quat,velocity:mm.Vec3,mix:phys.Move_Mix}{
+    cases:=[?]struct {body:anim.Body_Motion,up:mm.Quat,velocity:mm.Vec3,mix:locomotion.Move_Mix}{
         {{translation={0,.1,-.1},move=.Override,vertical=true},mm.QUAT_IDENTITY,{-1,1,0},.Override},
         // A body whose up is -X of the world (core.Vertical) keeps the motion across that up.
         {{translation={0,.1,-.1},move=.Additive},mm.quat_axis_angle({0,0,1},math.PI/2),{0,1,0},.Additive},

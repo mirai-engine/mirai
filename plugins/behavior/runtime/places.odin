@@ -6,6 +6,7 @@ import "mirai:std/ai"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import nav "plugins:navigation/runtime"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
 // Queries of places: where to take cover, where to flank, where to flee, whom
@@ -125,7 +126,7 @@ places_free :: proc(p:^Places) {
 places_run :: proc(
     requests:^Place_Requests,places:^Places,results:^core.Table(Place_Result),settings:core.Ref(Behavior_Settings),
     worlds:core.Read(core.World_Transform),perceivers:core.Read(Perceiver),perceivables:core.Read(Perceivable),paths:core.Read(nav.Nav_Path),
-    agents:core.Read(nav.Nav_Agent),walks:core.Read(phys.Walk),swims:core.Read(phys.Swim),
+    agents:core.Read(nav.Nav_Agent),walks:core.Read(locomotion.Walk),swims:core.Read(locomotion.Swim),
     navigation:core.Ref(nav.Navigation),physics:core.Ref(phys.Physics_State),
     smart:Smart_View,influence:core.Ref(Influence),problems:^core.Problems,
 ) {
@@ -165,7 +166,7 @@ places_run :: proc(
 }
 
 // What the querier walks and crosses, for the Path measure: as navigation moves it.
-place_filter :: proc(navigation:core.Ref(nav.Navigation),querier:core.Entity,paths:core.Read(nav.Nav_Path),agents:core.Read(nav.Nav_Agent),walks:core.Read(phys.Walk),swims:core.Read(phys.Swim),physics:core.Ref(phys.Physics_State)) -> ai.Nav_Filter {
+place_filter :: proc(navigation:core.Ref(nav.Navigation),querier:core.Entity,paths:core.Read(nav.Nav_Path),agents:core.Read(nav.Nav_Agent),walks:core.Read(locomotion.Walk),swims:core.Read(locomotion.Swim),physics:core.Ref(phys.Physics_State)) -> ai.Nav_Filter {
     if navigation.ptr==nil || !navigation.ready || navigation.count==0 {return {}}
     class:=0
     if p,found:=core.get(paths,querier);found && p.class>=0 && int(p.class)<navigation.count {class=int(p.class)}

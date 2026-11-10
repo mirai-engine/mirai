@@ -41,11 +41,10 @@ proxy_remove :: proc(state:^Physics_State,e:core.Entity) {
         sim.body_set_velocity(&state.world,l.body,{},{})
         sim.body_set_type(&state.world,l.body,l.hold.type_before)
     }
-    for &joint,at in state.joints.values {
-        if state.joints.entities[at]==e || joint.applied.target==e {
-            if sim.joint_valid(&state.world,joint.joint) {sim.joint_destroy(&state.world,joint.joint)}
-            joint.joint,joint.body,joint.target={}, {}, {}
-        }
+    for &joint in state.joints.values {
+        if joint.a!=l.body && joint.b!=l.body {continue}
+        if sim.joint_valid(&state.world,joint.joint) {sim.joint_destroy(&state.world,joint.joint)}
+        joint.joint,joint.a,joint.b={},{},{}
     }
     core.entity_map_remove(&state.links,e)
     // The links moved, and poses_write drops the entity from the proxies.
