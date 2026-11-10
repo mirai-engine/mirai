@@ -163,5 +163,13 @@ compression, typed tables, asset types, scene/prefab, registry).
   (library streams, hostile streams, `decompress_does_not_allocate`), of each package under
   `std/compressor/lz` (hostile inputs, determinism), of `std/compressor/bc7split` and of
   `cook/compressor/bc7split` (`encode_matches_the_library`).
+- A change to the LZ decoder: `mutated_streams_never_escape_their_buffers` with a large budget,
+  in the background, under the sanitizer and with `COMPRESSOR_CHECKED`, which compiles the tables
+  the decoder builds from a stream as bounds-checked slices. The test changes bytes anywhere and
+  the headers and tables of valid streams, and poisons the guards around the stream, the output
+  and the scratch, so the sanitizer reports any read or write outside them:
+  `mirai test std/compressor mutated_streams_never_escape_their_buffers -sanitize:address
+  -define:COMPRESSOR_CHECKED=true -define:COMPRESSOR_MUTATIONS=4000000 --timeout 0`.
+  `-define:COMPRESSOR_MUTATION_SEED=<n>` gives another sequence, for runs side by side.
 - Benchmark (not routine):
   `mirai test asset scene_file_against_a_file_per_entity --release -define:ASSET_BENCH=true`.

@@ -3,6 +3,19 @@ package compressor
 import "base:intrinsics"
 import "base:runtime"
 
+// With COMPRESSOR_CHECKED the tables the decoder builds from what a stream says (code lengths,
+// symbol lists, state counts, run lengths) are slices, and every index into them is bounds
+// checked; without it they are pointers, and what their builders validate is all that guards
+// them. The mutation tests run with it next to the sanitizer, which sees the bytes of the
+// stream, the output and the scratch, pointers in both.
+@(private) CHECKED :: #config(COMPRESSOR_CHECKED,false)
+
+when CHECKED {
+    @(private) view :: #force_inline proc "contextless" (a:^$A/[$N]$T) -> []T {return a[:]}
+} else {
+    @(private) view :: #force_inline proc "contextless" (a:^$A/[$N]$T) -> [^]T {return ([^]T)(a)}
+}
+
 // Unaligned loads and stores. Every target is little-endian.
 
 @(private) load16 :: #force_inline proc "contextless" (
