@@ -34,8 +34,8 @@ Api_Asset_Document_Tab :: struct {
 }
 
 documents_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="editor.documents",summary="The open documents: the tabs of scenes and prefabs and the asset documents next to them.",result=Api_Documents_Result,flags={.Read_Only},run=api_documents})
-    api_register(s,st,{name="editor.document",summary="Opens, activates or closes a document, or turns the preview sun of a prefab on or off.",params=Api_Document_Params,result=Api_Documents_Result,run=api_document})
+    api_register(s,st,{name="editor.documents",summary="The open documents: the tabs of scenes and prefabs and the asset documents next to them.",result=type_info_of(Api_Documents_Result),flags={.Read_Only},run=api_documents})
+    api_register(s,st,{name="editor.document",summary="Opens, activates or closes a document, or turns the preview sun of a prefab on or off.",params=type_info_of(Api_Document_Params),result=type_info_of(Api_Documents_Result),run=api_document})
 }
 
 api_documents :: proc(s:^Session,call:^api.Call) {

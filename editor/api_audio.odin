@@ -118,11 +118,11 @@ Api_Sound_Set_Params :: struct {
 @(private)
 audio_api_register :: proc(s:^Session,st:^Api_State) {
     play:=Api_Audio_Play_Params{volume=1,pitch=1}
-    api_register(s,st,{name="audio.status",summary="The mixer of the editor with its counters and its buses, and what audio.play plays.",result=Api_Audio_Status,flags={.Read_Only},run=api_audio_status})
-    api_register(s,st,{name="audio.play",params=Api_Audio_Play_Params,defaults=&play,result=Api_Audio_Play_Result,summary="Plays a .sound, or one sound of a .sound_set with its ranges, to be heard in the editor out of every world in place of what played, as Play sound of the content browser does.",run=api_audio_play})
-    api_register(s,st,{name="audio.stop",result=Api_Audio_Stop_Result,summary="Stops what audio.play or the content browser plays.",flags={.Idempotent},run=api_audio_stop})
-    api_register(s,st,{name="sound_set.inspect",params=Api_Sound_Set_Params,summary="The values of a sound set (.sound_set) and the paths of its sounds.",result=Api_Sound_Set_Result,flags={.Read_Only},run=api_sound_set_inspect})
-    api_register(s,st,{name="sound_set.set",params=Api_Sound_Set_Params,summary="Changes the sounds, weights and ranges of a sound set (.sound_set) for every source and call that plays it, or makes a new one at path over the defaults.",result=Api_Sound_Set_Result,run=api_sound_set_set})
+    api_register(s,st,{name="audio.status",summary="The mixer of the editor with its counters and its buses, and what audio.play plays.",result=type_info_of(Api_Audio_Status),flags={.Read_Only},run=api_audio_status})
+    api_register(s,st,{name="audio.play",params=type_info_of(Api_Audio_Play_Params),defaults=&play,result=type_info_of(Api_Audio_Play_Result),summary="Plays a .sound, or one sound of a .sound_set with its ranges, to be heard in the editor out of every world in place of what played, as Play sound of the content browser does.",run=api_audio_play})
+    api_register(s,st,{name="audio.stop",result=type_info_of(Api_Audio_Stop_Result),summary="Stops what audio.play or the content browser plays.",flags={.Idempotent},run=api_audio_stop})
+    api_register(s,st,{name="sound_set.inspect",params=type_info_of(Api_Sound_Set_Params),summary="The values of a sound set (.sound_set) and the paths of its sounds.",result=type_info_of(Api_Sound_Set_Result),flags={.Read_Only},run=api_sound_set_inspect})
+    api_register(s,st,{name="sound_set.set",params=type_info_of(Api_Sound_Set_Params),summary="Changes the sounds, weights and ranges of a sound set (.sound_set) for every source and call that plays it, or makes a new one at path over the defaults.",result=type_info_of(Api_Sound_Set_Result),run=api_sound_set_set})
 }
 
 @(private)

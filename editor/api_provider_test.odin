@@ -19,14 +19,14 @@ api_test_provider_v2 :: proc(dst:rawptr) {(^Api_Test_Provider)(dst)^={provider={
 api_test_register_v1 :: proc(s:^Session) {
     defaults:=Api_Test_Params{value=7}
     // The method comes with its entry of the View menu and its key: a plugin gives one thing.
-    api_method_register(s,Api_Test_Params,Api_Test_Result,{
+    api_method_register(s,{params=type_info_of(Api_Test_Params),result=type_info_of(Api_Test_Result),
         name="test.plugin",defaults=&defaults,run=api_test_run_v1,
         entry={label="Test plugin",params=`{"value":3}`,shortcut={key=.F9,set=true},menu=.View},
     })
 }
 api_test_register_v2 :: proc(s:^Session) {
     defaults:=Api_Test_Params{value=9}
-    api_method_register(s,Api_Test_Params,Api_Test_Result,{name="test.plugin",defaults=&defaults,run=api_test_run_v2})
+    api_method_register(s,{params=type_info_of(Api_Test_Params),result=type_info_of(Api_Test_Result),name="test.plugin",defaults=&defaults,run=api_test_run_v2})
 }
 api_test_run_v1 :: proc(s:^Session,call:^api.Call) {
     value:=api.call_params(call,Api_Test_Params).value

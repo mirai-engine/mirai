@@ -56,7 +56,7 @@ Api_Play_Record_Result :: struct {
 @(private)
 api_play_record_register :: proc(s:^Session,st:^Api_State) {
     record_default:=Api_Play_Record_Params{format=.Png16,fps=30,duration={0='2',1='s'},width=1280,height=720,audio=true,sheet=16}
-    api_register(s,st,{name="play.record",summary="Records the game of the caller as a sequence of images and its sound, frame after frame at a fixed rate whatever the clock: it pauses the game, advances it 1/fps each frame and draws it alone through its camera. Ends paused.",params=Api_Play_Record_Params,result=Api_Play_Record_Result,defaults=&record_default,flags={.Draws},run=api_play_record})
+    api_register(s,st,{name="play.record",summary="Records the game of the caller as a sequence of images and its sound, frame after frame at a fixed rate whatever the clock: it pauses the game, advances it 1/fps each frame and draws it alone through its camera. Ends paused.",params=type_info_of(Api_Play_Record_Params),result=type_info_of(Api_Play_Record_Result),defaults=&record_default,flags={.Draws},run=api_play_record})
 }
 
 // A frame on its way to a file, and to its tile of the sheet.

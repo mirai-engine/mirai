@@ -52,9 +52,9 @@ authoring_test_register :: proc(f:^Authoring_Test,t:^testing.T,name:string,$T:ty
         {authoring_profile_poses,Profile_Poses_Result},{body_detect,Body_Result},{body_set,Body_Result},{clip_edit,Clip_Edit_Result},{clip_analyze,Metrics_Result},
         {authoring_bone_add,Skeleton_Bone_Add_Result},{program_blend_sample,Blend_Sample_Result},{setup,Setup_Result},{request,Request_Result},
     }
-    desc:=api.Method_Desc{name=name,params=T,params_info=type_info_of(T),result=serial.Json,writes_result=true,defaults=defaults,user=entry,handler=proc(call:^api.Call) {entry:=(^Authoring_Test_Entry)(call.user);entry.run(entry.session,call)}}
+    desc:=api.Method_Desc{name=name,params=type_info_of(T),result=type_info_of(serial.Json),writes_result=true,defaults=defaults,user=entry,handler=proc(call:^api.Call) {entry:=(^Authoring_Test_Entry)(call.user);entry.run(entry.session,call)}}
     for each in typed {
-        if each.run==run {desc.result,desc.result_info,desc.writes_result=each.result,type_info_of(each.result),false}
+        if each.run==run {desc.result,desc.writes_result=type_info_of(each.result),false}
     }
     testing.expect_value(t,api.method_register(&f.server,desc),api.Register_Error.None)
 }
@@ -169,7 +169,7 @@ skeleton_authoring_defaults_reference_poses_to_identity_and_rejects_invalid_rota
     testing.expect_value(t,result.code,api.INVALID_PARAMS);testing.expect_value(t,authoring_test_revision(f,"rig.skeleton"),revision)
     result=authoring_test_execute(f,"bone",fmt.tprintf(`{{"asset":"%s","path":"root/hand","bone":{{"name":"palm","path":"root/hand","parent":"root"}}}}`,identity))
     testing.expect_value(t,result.code,api.INVALID_PARAMS);testing.expect_value(t,authoring_test_revision(f,"rig.skeleton"),revision)
-    schema:=authoring_result_schema(Skeleton_Bone_Set_Params,type_info_of(Skeleton_Bone_Set_Params),context.temp_allocator)
+    schema:=authoring_result_schema(Skeleton_Bone_Set_Params,context.temp_allocator)
     testing.expect(t,!strings.contains(schema,`"parent"`))
     result=authoring_test_execute(f,"create",`{"path":"invalid.skeleton","bones":[{"name":"root","path":"root","rotation":[0,0,0,2]}]}`)
     testing.expect_value(t,result.code,api.INVALID_PARAMS)

@@ -118,7 +118,7 @@ setup_test_init :: proc(f:^Setup_Test,t:^testing.T,name:string) -> bool {
     if !testing.expect_value(t,api.server_init(&f.server,{max_connections=1,max_methods=4}),api.Init_Error.None) {return false}
     serial.writer_init(&f.out,1<<20)
     defaults:=new(Ragdoll_Setup_Params,context.temp_allocator);defaults^={mode=rag.RAGDOLL_DEFAULT.mode}
-    testing.expect_value(t,api.method_register(&f.server,{name="ragdoll.setup",params=Ragdoll_Setup_Params,params_info=type_info_of(Ragdoll_Setup_Params),result=Ragdoll_Setup_Result,result_info=type_info_of(Ragdoll_Setup_Result),defaults=defaults,user=&f.session,handler=proc(call:^api.Call) {setup((^editor.Session)(call.user),call)}}),api.Register_Error.None)
+    testing.expect_value(t,api.method_register(&f.server,{name="ragdoll.setup",params=type_info_of(Ragdoll_Setup_Params),result=type_info_of(Ragdoll_Setup_Result),defaults=defaults,user=&f.session,handler=proc(call:^api.Call) {setup((^editor.Session)(call.user),call)}}),api.Register_Error.None)
     turned:=mm.Transform{{2,0,3},mm.quat_axis_angle({0,1,0},.5),{1,1,1}}
     f.figure=setup_test_rig(f,t,"figure",0x11,701,true,turned)
     f.plain=setup_test_rig(f,t,"plain",0x12,702,false,mm.TRANSFORM_IDENTITY)

@@ -113,9 +113,9 @@ tools_api_register :: proc(s:^Session,st:^Api_State) {
     programs_api_register(s,st)
     material_document_register(s,st)
     import_default:=Import_Params{seconds=API_IMPORT_SECONDS}
-    api_register(s,st,{name="asset.import",flags={.Core},summary="Imports a source file from anywhere on disk into the asset folder as the Import button of the content browser does: a model, an image, a sound, a font, a CSV of texts, prompts or a source a plugin imports. Answers when it ends, with whether it wrote its assets, what it said and what it wrote; importing it again updates those assets.",params=Import_Params,result=Import_Status_Result,defaults=&import_default,run=api_asset_import})
-    api_register(s,st,{name="asset.import_status",summary="Whether an import runs, and of the last one that ended: whether it wrote its assets, what it said and what it wrote.",result=Import_Status_Result,flags={.Read_Only},run=api_asset_import_status})
-    api_register(s,st,{name="graphics.status",summary="The graphics settings the renderer runs with (those of the game that plays while one does), the pacing of the frames and the cost of the last ones.",result=Graphics_Status,flags={.Read_Only},run=api_graphics_status})
+    api_register(s,st,{name="asset.import",flags={.Core},summary="Imports a source file from anywhere on disk into the asset folder as the Import button of the content browser does: a model, an image, a sound, a font, a CSV of texts, prompts or a source a plugin imports. Answers when it ends, with whether it wrote its assets, what it said and what it wrote; importing it again updates those assets.",params=type_info_of(Import_Params),result=type_info_of(Import_Status_Result),defaults=&import_default,run=api_asset_import})
+    api_register(s,st,{name="asset.import_status",summary="Whether an import runs, and of the last one that ended: whether it wrote its assets, what it said and what it wrote.",result=type_info_of(Import_Status_Result),flags={.Read_Only},run=api_asset_import_status})
+    api_register(s,st,{name="graphics.status",summary="The graphics settings the renderer runs with (those of the game that plays while one does), the pacing of the frames and the cost of the last ones.",result=type_info_of(Graphics_Status),flags={.Read_Only},run=api_graphics_status})
 }
 
 // A source is absolute or relative to the project, not to where the editor runs.

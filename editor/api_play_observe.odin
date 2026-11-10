@@ -107,8 +107,8 @@ Api_Play_Audio_Voice :: struct {
 
 @(private)
 play_observe_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="play.ui",summary="The live tree of the UI of the game of the caller as its last frame built it: each interface with its nodes and where they are in the window, and what has the hover and the focus.",params=Api_Play_Ui_Params,result=Api_Play_Ui,writes_result=true,flags={.Read_Only},run=api_play_ui})
-    api_register(s,st,{name="play.audio",summary="The voices the sources of the game of the caller play: sound, bus, gain, pitch and place of each, with the counters of its voices and of the mixer.",params=Api_Play_Audio_Params,result=Api_Play_Audio,writes_result=true,flags={.Read_Only},run=api_play_audio})
+    api_register(s,st,{name="play.ui",summary="The live tree of the UI of the game of the caller as its last frame built it: each interface with its nodes and where they are in the window, and what has the hover and the focus.",params=type_info_of(Api_Play_Ui_Params),result=type_info_of(Api_Play_Ui),writes_result=true,flags={.Read_Only},run=api_play_ui})
+    api_register(s,st,{name="play.audio",summary="The voices the sources of the game of the caller play: sound, bus, gain, pitch and place of each, with the counters of its voices and of the mixer.",params=type_info_of(Api_Play_Audio_Params),result=type_info_of(Api_Play_Audio),writes_result=true,flags={.Read_Only},run=api_play_audio})
 }
 
 @(private)

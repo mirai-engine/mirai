@@ -59,8 +59,8 @@ Api_Play_Get_Result :: struct {
 
 @(private)
 api_play_wait_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="play.get",summary="One value of one entity of the game of the caller now, without its whole document: a field of a component or a place of the world.",params=Api_Play_Get_Params,result=Api_Play_Get_Result,writes_result=true,flags={.Read_Only},run=api_play_get})
-    api_register(s,st,{name="play.check",summary="Says whether conditions on the game of the caller hold now (values of components or storages compared, entities there or gone) with what each one read: the assertions of a test.",params=Api_Play_Check_Params,result=Api_Play_Check_Result,writes_result=true,flags={.Core,.Read_Only},run=api_play_check})
+    api_register(s,st,{name="play.get",summary="One value of one entity of the game of the caller now, without its whole document: a field of a component or a place of the world.",params=type_info_of(Api_Play_Get_Params),result=type_info_of(Api_Play_Get_Result),writes_result=true,flags={.Read_Only},run=api_play_get})
+    api_register(s,st,{name="play.check",summary="Says whether conditions on the game of the caller hold now (values of components or storages compared, entities there or gone) with what each one read: the assertions of a test.",params=type_info_of(Api_Play_Check_Params),result=type_info_of(Api_Play_Check_Result),writes_result=true,flags={.Core,.Read_Only},run=api_play_check})
 }
 
 // What a condition read of a world: whether it holds, and the value as JSON.

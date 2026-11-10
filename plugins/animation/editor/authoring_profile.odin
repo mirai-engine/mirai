@@ -56,9 +56,9 @@ authoring_profile_register :: proc(s:^editor.Session) {
     set.curve_pose,set.curve_drive,set.curve_material=anim.CURVE_POSE_DEFAULT,anim.CURVE_DRIVE_DEFAULT,anim.CURVE_MATERIAL_DEFAULT
     poses:=new(Profile_Poses_Params,context.temp_allocator);if poses==nil {return}
     poses.tolerance=PROFILE_POSES_TOLERANCE
-    editor.api_method_register(s,Authoring_Create_Params,Authoring_Write_Result,{name="pose.profile.create",summary="Creates an empty .pose profile of rig operations; pose.profile.set fills its tables.",run=authoring_profile_create})
-    editor.api_method_register(s,Profile_Set_Params,Authoring_Write_Result,{name="pose.profile.set",summary="Replaces or appends the row of a table of a .pose profile that has the key of the value, or removes it.",defaults=set,run=authoring_profile_set})
-    editor.api_method_register(s,Profile_Poses_Params,Profile_Poses_Result,{name="pose.profile.poses",summary="Makes the curve poses of a .pose from the frames of a clip, each a pose that a Float curve of its name brings, measured from the pose at base: the poses of a face from an animation of them. One step of undo.",defaults=poses,run=authoring_profile_poses})
+    editor.api_method_register(s,{params=type_info_of(Authoring_Create_Params),result=type_info_of(Authoring_Write_Result),name="pose.profile.create",summary="Creates an empty .pose profile of rig operations; pose.profile.set fills its tables.",run=authoring_profile_create})
+    editor.api_method_register(s,{params=type_info_of(Profile_Set_Params),result=type_info_of(Authoring_Write_Result),name="pose.profile.set",summary="Replaces or appends the row of a table of a .pose profile that has the key of the value, or removes it.",defaults=set,run=authoring_profile_set})
+    editor.api_method_register(s,{params=type_info_of(Profile_Poses_Params),result=type_info_of(Profile_Poses_Result),name="pose.profile.poses",summary="Makes the curve poses of a .pose from the frames of a clip, each a pose that a Float curve of its name brings, measured from the pose at base: the poses of a face from an animation of them. One step of undo.",defaults=poses,run=authoring_profile_poses})
 }
 
 @(private)

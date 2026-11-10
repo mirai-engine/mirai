@@ -19,7 +19,7 @@ Retarget_Bake_Params :: struct {
 authoring_bake_register :: proc(s:^editor.Session) {
     pose_bake_register(s)
     defaults:=Retarget_Bake_Params{rate=60}
-    editor.api_method_register(s,Retarget_Bake_Params,Authoring_Write_Result,{name="animation.retarget.bake",summary="Bakes the clips of an .anim onto another skeleton, of any topology, through the bone mappings and chains of a .pose profile, into a new .anim with their curves, markers and root motion.",defaults=&defaults,run=authoring_retarget_bake})
+    editor.api_method_register(s,{params=type_info_of(Retarget_Bake_Params),result=type_info_of(Authoring_Write_Result),name="animation.retarget.bake",summary="Bakes the clips of an .anim onto another skeleton, of any topology, through the bone mappings and chains of a .pose profile, into a new .anim with their curves, markers and root motion.",defaults=&defaults,run=authoring_retarget_bake})
 }
 
 @(private)

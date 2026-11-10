@@ -24,5 +24,5 @@ procedural_profile_authoring_derives_nested_arrays_and_exposes_compact_typed_res
     profile,error:=anim.pose_profile_view(&file,&f.assets.types);testing.expect_value(t,error,asset.Error.None);testing.expect(t,profile.chain_ik[0].limit_count==1 && profile.chain_ik[0].iterations==24 && profile.twist[0].amount_count==2 && profile.twist[0].amounts[1]==.75);asset.asset_close(&file)
     result=authoring_test_execute(f,"inspect",fmt.tprintf(`{{"asset":"%s","table":"Twist"}}`,identity));testing.expect_value(t,result.code,0)
     text:=string(serial.writer_bytes(&f.out));testing.expect(t,!strings.contains(text,"amount_count") && strings.contains(text,`"value": 0.75`) && !strings.contains(text,"limit_count"))
-    schema:=authoring_result_schema(Profile_Inspect_Result,type_info_of(Profile_Inspect_Result),context.temp_allocator);testing.expect(t,!strings.contains(schema,"amount_count") && !strings.contains(schema,"effector_count") && !strings.contains(schema,"limit_count"))
+    schema:=authoring_result_schema(Profile_Inspect_Result,context.temp_allocator);testing.expect(t,!strings.contains(schema,"amount_count") && !strings.contains(schema,"effector_count") && !strings.contains(schema,"limit_count"))
 }

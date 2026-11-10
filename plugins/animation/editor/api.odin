@@ -82,8 +82,8 @@ register :: proc(s:^editor.Session) {
     preview_defaults:=new(Preview_Params,context.temp_allocator);if preview_defaults==nil {return}
     preview_defaults.dt,preview_defaults.limit,preview_defaults.trace_limit=1.0/60,256,16
     request_rows_defaults(preview_defaults)
-    editor.api_method_register(s,Play_Params,Control_Result,{name="animation.play",summary="Plays a clip of an .anim or the motion matching of a .match on an entity. What plays over it are the layers and actions of its action set (animation.action.set, animation.request). One step of undo in Edit; in Play it changes the running world.",defaults=&play_defaults,run=play})
-    editor.api_method_register(s,Preview_Params,Preview_Result,{name="animation.preview",summary="Evaluates an entity on a copy of the world with the fields of animation.request scheduled by tick and returns its poses; the document and the running world stay intact.",defaults=preview_defaults,flags={.Read_Only},run=preview,writes_result=true})
+    editor.api_method_register(s,{params=type_info_of(Play_Params),result=type_info_of(Control_Result),name="animation.play",summary="Plays a clip of an .anim or the motion matching of a .match on an entity. What plays over it are the layers and actions of its action set (animation.action.set, animation.request). One step of undo in Edit; in Play it changes the running world.",defaults=&play_defaults,run=play})
+    editor.api_method_register(s,{params=type_info_of(Preview_Params),result=type_info_of(Preview_Result),name="animation.preview",summary="Evaluates an entity on a copy of the world with the fields of animation.request scheduled by tick and returns its poses; the document and the running world stay intact.",defaults=preview_defaults,flags={.Read_Only},run=preview,writes_result=true})
 }
 
 @(private)

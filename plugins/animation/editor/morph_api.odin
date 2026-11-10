@@ -35,7 +35,7 @@ Morph_Set_Result :: struct {id:base.Entity_Id,name:[64]u8 `mirai:"text"`,value:f
 morph_register :: proc(s:^editor.Session) {
     inspect:=Morph_Inspect_Params{limit=256}
     set:=Morph_Set_Params{mode=.Override}
-    editor.api_method_register(s,Morph_Set_Params,Morph_Set_Result,{name="animation.morph.set",summary="Sets the weight of a morph target of a mesh instance by name. One step of undo in Edit; Play and Simulation change only the running world.",defaults=&set,run=morph_set})
+    editor.api_method_register(s,{params=type_info_of(Morph_Set_Params),result=type_info_of(Morph_Set_Result),name="animation.morph.set",summary="Sets the weight of a morph target of a mesh instance by name. One step of undo in Edit; Play and Simulation change only the running world.",defaults=&set,run=morph_set})
 }
 
 @(private)

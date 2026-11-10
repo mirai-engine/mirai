@@ -193,9 +193,9 @@ Ai_Memory_Save_Result :: struct {
 
 @(private)
 ai_memory_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="memory.search",summary="Full-text search of the topics of the memory of the project by their words, ranked by BM25; memory.read gives the one you want.",params=Ai_Memory_Search_Params,result=Ai_Memory_Search_Result,flags={.Core,.Read_Only},run=ai_method_memory_search})
-    api_register(s,st,{name="memory.read",summary="A topic of the memory of the project, or the file of the user.",params=Ai_Memory_Read_Params,result=Ai_Memory_Read_Result,flags={.Core,.Read_Only},run=ai_method_memory_read})
-    api_register(s,st,{name="memory.save",summary="Replaces a topic of the memory of the project, its short index, or the memory of the user, with one text that says how things are now.",params=Ai_Memory_Save_Params,result=Ai_Memory_Save_Result,flags={.Core},run=ai_method_memory_save})
+    api_register(s,st,{name="memory.search",summary="Full-text search of the topics of the memory of the project by their words, ranked by BM25; memory.read gives the one you want.",params=type_info_of(Ai_Memory_Search_Params),result=type_info_of(Ai_Memory_Search_Result),flags={.Core,.Read_Only},run=ai_method_memory_search})
+    api_register(s,st,{name="memory.read",summary="A topic of the memory of the project, or the file of the user.",params=type_info_of(Ai_Memory_Read_Params),result=type_info_of(Ai_Memory_Read_Result),flags={.Core,.Read_Only},run=ai_method_memory_read})
+    api_register(s,st,{name="memory.save",summary="Replaces a topic of the memory of the project, its short index, or the memory of the user, with one text that says how things are now.",params=type_info_of(Ai_Memory_Save_Params),result=type_info_of(Ai_Memory_Save_Result),flags={.Core},run=ai_method_memory_save})
 }
 
 @(private)

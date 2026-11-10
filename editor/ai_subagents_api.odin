@@ -36,11 +36,11 @@ Ai_Agent_List_Result :: struct {
 
 @(private)
 ai_subagents_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="agent.spawn",flags={.Core,.Turn},summary="Starts a subagent from a turn of the main chat, to work in parallel with its own review, and returns at once; when its turn ends its report reaches the main chat.",params=Ai_Agent_Spawn_Params,result=Ai_Agent_Result,run=ai_method_agent_spawn})
-    api_register(s,st,{name="agent.list",summary="The subagents of the main chat with their state, connection, changes to review and, once finished, their answer.",result=Ai_Agent_List_Result,flags={.Read_Only},run=ai_method_agent_list})
-    api_register(s,st,{name="agent.message",summary="Sends a message to a subagent: it joins the turn in progress at its next safe point, or starts its next turn when it is idle.",params=Ai_Agent_Message_Params,result=Ai_Agent_Result,run=ai_method_agent_message})
-    api_register(s,st,{name="agent.stop",summary="Stops a subagent, or takes it out of the queue; what it changed stays for review.",params=Ai_Id_Params,result=Ai_Agent_Result,flags={.Idempotent},run=ai_method_agent_stop})
-    api_register(s,st,{name="chat.note",flags={.Core},summary="Replaces the working notes of the main chat, which outlive its context.",params=Ai_Chat_Note_Params,result=Ai_Chat_Note_Result,run=ai_method_chat_note})
+    api_register(s,st,{name="agent.spawn",flags={.Core,.Turn},summary="Starts a subagent from a turn of the main chat, to work in parallel with its own review, and returns at once; when its turn ends its report reaches the main chat.",params=type_info_of(Ai_Agent_Spawn_Params),result=type_info_of(Ai_Agent_Result),run=ai_method_agent_spawn})
+    api_register(s,st,{name="agent.list",summary="The subagents of the main chat with their state, connection, changes to review and, once finished, their answer.",result=type_info_of(Ai_Agent_List_Result),flags={.Read_Only},run=ai_method_agent_list})
+    api_register(s,st,{name="agent.message",summary="Sends a message to a subagent: it joins the turn in progress at its next safe point, or starts its next turn when it is idle.",params=type_info_of(Ai_Agent_Message_Params),result=type_info_of(Ai_Agent_Result),run=ai_method_agent_message})
+    api_register(s,st,{name="agent.stop",summary="Stops a subagent, or takes it out of the queue; what it changed stays for review.",params=type_info_of(Ai_Id_Params),result=type_info_of(Ai_Agent_Result),flags={.Idempotent},run=ai_method_agent_stop})
+    api_register(s,st,{name="chat.note",flags={.Core},summary="Replaces the working notes of the main chat, which outlive its context.",params=type_info_of(Ai_Chat_Note_Params),result=type_info_of(Ai_Chat_Note_Result),run=ai_method_chat_note})
 }
 
 @(private)

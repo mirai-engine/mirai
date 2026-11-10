@@ -39,7 +39,7 @@ Api_Play_Input_Result :: struct {
 @(private)
 api_play_input_register :: proc(s:^Session,st:^Api_State) {
     defaults:=Api_Play_Input_Params{slot=-1}
-    api_register(s,st,{name="play.input",summary="From the next tick on, holds input actions of a seat of the game of the caller by name for some ticks or until released. play.step then runs the ticks.",params=Api_Play_Input_Params,result=Api_Play_Input_Result,defaults=&defaults,run=api_play_input})
+    api_register(s,st,{name="play.input",summary="From the next tick on, holds input actions of a seat of the game of the caller by name for some ticks or until released. play.step then runs the ticks.",params=type_info_of(Api_Play_Input_Params),result=type_info_of(Api_Play_Input_Result),defaults=&defaults,run=api_play_input})
 }
 
 // The local seat of slot (-1: the focused one) of a run; false after failing

@@ -72,9 +72,9 @@ wait_until_calls_the_method_again_until_its_result_meets_the_condition :: proc(t
     if !testing.expect_value(t,server_init(&server,{port=0}),Init_Error.None) {return}
     defer server_destroy(&server)
     count:=0
-    testing.expect_value(t,method_register(&server,{name="count",result=Count_Result,handler=count_handler,user=&count,flags={.Read_Only}}),Register_Error.None)
+    testing.expect_value(t,method_register(&server,{name="count",result=type_info_of(Count_Result),handler=count_handler,user=&count,flags={.Read_Only}}),Register_Error.None)
     changes:=0
-    testing.expect_value(t,method_register(&server,{name="change",result=Count_Result,handler=count_handler,user=&changes}),Register_Error.None)
+    testing.expect_value(t,method_register(&server,{name="change",result=type_info_of(Count_Result),handler=count_handler,user=&changes}),Register_Error.None)
     pause :: proc(s:^Server,seconds:f64) -> bool {return true}
     server.pause=pause
     out:serial.Writer

@@ -137,8 +137,8 @@ Run_Qa :: struct {
 qa_api_register :: proc(s:^editor.Session) {
     defaults:=Api_Play_Qa_Start_Params{stuck_seconds=3,falls=true,non_finite=true,problems=true}
     report:=Api_Play_Qa_Report_Params{violation=-1}
-    editor.api_method_register(s,Api_Play_Qa_Start_Params,Api_Play_Qa_Start_Result,{name="play.qa.start",summary="Starts monitors on the game of the caller, for the ticks the API runs: frame time, memory, stuck, falling, non-finite transforms and core.report problems. A violation can write a repro whenever they start, as long as the API drove the game from its first tick.",defaults=&defaults,run=api_play_qa_start})
-    editor.api_method_register(s,Api_Play_Qa_Report_Params,Api_Play_Qa_Report,{name="play.qa.report",summary="The violations the monitors of play.qa.start saw, with tick, place and severity; for one of them writes a repro scenario or a filmstrip around its tick.",writes_result=true,defaults=&report,run=api_play_qa_report})
+    editor.api_method_register(s,{params=type_info_of(Api_Play_Qa_Start_Params),result=type_info_of(Api_Play_Qa_Start_Result),name="play.qa.start",summary="Starts monitors on the game of the caller, for the ticks the API runs: frame time, memory, stuck, falling, non-finite transforms and core.report problems. A violation can write a repro whenever they start, as long as the API drove the game from its first tick.",defaults=&defaults,run=api_play_qa_start})
+    editor.api_method_register(s,{params=type_info_of(Api_Play_Qa_Report_Params),result=type_info_of(Api_Play_Qa_Report),name="play.qa.report",summary="The violations the monitors of play.qa.start saw, with tick, place and severity; for one of them writes a repro scenario or a filmstrip around its tick.",writes_result=true,defaults=&report,run=api_play_qa_report})
 }
 
 // Whether a body is asked to move this tick, by a seat or by whatever drives it.

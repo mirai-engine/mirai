@@ -45,8 +45,8 @@ program_register :: proc(s:^editor.Session) {
     blend:=program_blend_defaults()
     if blend==nil {return}
     modifiers:=Modifier_Inspect_Params{limit=128}
-    editor.api_method_register(s,Blend_Write_Params,Authoring_Write_Result,{name="animation.blend_space.set",summary="Makes or replaces a .blend: clips placed on one or two axes, its segments or triangles prepared from the samples. It plays as the space of a layer of an action set (animation.action.set): aim offsets or additive poses its axes sample, set by name. An invalid one changes nothing. In Edit.",defaults=blend,run=program_blend_set})
-    editor.api_method_register(s,Blend_Sample_Params,Blend_Sample_Result,{name="animation.blend_space.sample",summary="The samples of a blend space that contribute at a position and their weights, without advancing the world.",flags={.Read_Only},run=program_blend_sample})
+    editor.api_method_register(s,{params=type_info_of(Blend_Write_Params),result=type_info_of(Authoring_Write_Result),name="animation.blend_space.set",summary="Makes or replaces a .blend: clips placed on one or two axes, its segments or triangles prepared from the samples. It plays as the space of a layer of an action set (animation.action.set): aim offsets or additive poses its axes sample, set by name. An invalid one changes nothing. In Edit.",defaults=blend,run=program_blend_set})
+    editor.api_method_register(s,{params=type_info_of(Blend_Sample_Params),result=type_info_of(Blend_Sample_Result),name="animation.blend_space.sample",summary="The samples of a blend space that contribute at a position and their weights, without advancing the world.",flags={.Read_Only},run=program_blend_sample})
 }
 
 @(private)

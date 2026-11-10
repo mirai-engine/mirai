@@ -44,14 +44,14 @@ Api_Panel_Save_Params :: struct {
 
 @(private)
 panels_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="panel.list",summary="The panels of the project: interfaces of the editor made for the user. The Tools menu of the toolbar shows one at a time in place of Details.",result=Api_Panel_List,flags={.Read_Only},run=api_panel_list})
+    api_register(s,st,{name="panel.list",summary="The panels of the project: interfaces of the editor made for the user. The Tools menu of the toolbar shows one at a time in place of Details.",result=type_info_of(Api_Panel_List),flags={.Read_Only},run=api_panel_list})
     save:=Api_Panel_Save_Params{open=true}
-    api_register(s,st,{name="panel.save",params=Api_Panel_Save_Params,defaults=&save,summary="Makes or replaces a panel of the project, the way to give the user an interface of their own (to try the environment, the post process or the lights). Checked against the project first.",result=Api_Panel,run=api_panel_save})
-    api_register(s,st,{name="panel.open",summary="Shows a panel of the project in the editor.",params=Api_Panel_Params,result=Api_Panel,flags={.Idempotent},run=api_panel_open})
-    api_register(s,st,{name="panel.close",summary="Hides a panel of the project; it stays in the Tools menu.",params=Api_Panel_Params,result=Api_Panel,flags={.Idempotent},run=api_panel_close})
-    api_register(s,st,{name="panel.delete",summary="Deletes a panel of the project and its file.",params=Api_Panel_Params,result=Api_Panel_Deleted,flags={.Destructive},run=api_panel_delete})
-    api_register(s,st,{name="panel.restore",summary="Puts back as they were what the buttons and rows of a panel changed since the editor opened or the last restore: the scene as one undo step, the settings as the settings dialog.",params=Api_Panel_Params,result=Api_Panel_Restored,run=api_panel_restore})
-    api_register(s,st,{name="panel.apply",summary="Presses a button of a panel: what it sets in the scene as one undo step, the settings of the project as the settings dialog. Nothing changes when a value fails.",params=Api_Panel_Apply_Params,result=Api_Panel_Applied,run=api_panel_apply})
+    api_register(s,st,{name="panel.save",params=type_info_of(Api_Panel_Save_Params),defaults=&save,summary="Makes or replaces a panel of the project, the way to give the user an interface of their own (to try the environment, the post process or the lights). Checked against the project first.",result=type_info_of(Api_Panel),run=api_panel_save})
+    api_register(s,st,{name="panel.open",summary="Shows a panel of the project in the editor.",params=type_info_of(Api_Panel_Params),result=type_info_of(Api_Panel),flags={.Idempotent},run=api_panel_open})
+    api_register(s,st,{name="panel.close",summary="Hides a panel of the project; it stays in the Tools menu.",params=type_info_of(Api_Panel_Params),result=type_info_of(Api_Panel),flags={.Idempotent},run=api_panel_close})
+    api_register(s,st,{name="panel.delete",summary="Deletes a panel of the project and its file.",params=type_info_of(Api_Panel_Params),result=type_info_of(Api_Panel_Deleted),flags={.Destructive},run=api_panel_delete})
+    api_register(s,st,{name="panel.restore",summary="Puts back as they were what the buttons and rows of a panel changed since the editor opened or the last restore: the scene as one undo step, the settings as the settings dialog.",params=type_info_of(Api_Panel_Params),result=type_info_of(Api_Panel_Restored),run=api_panel_restore})
+    api_register(s,st,{name="panel.apply",summary="Presses a button of a panel: what it sets in the scene as one undo step, the settings of the project as the settings dialog. Nothing changes when a value fails.",params=type_info_of(Api_Panel_Apply_Params),result=type_info_of(Api_Panel_Applied),run=api_panel_apply})
 }
 
 @(private)

@@ -773,8 +773,8 @@ Api_Input_Set_Params :: struct {
 
 @(private)
 input_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="input.get",summary="The input actions of the game and its plugins: the kind, the bindings in effect and whether they come from the code or from input.mirai of the project, and the seconds of a tap and of a hold.",params=Api_Input_Get_Params,result=Api_Input,writes_result=true,flags={.Read_Only},run=api_input_get})
-    api_register(s,st,{name="input.set",params=Api_Input_Set_Params,summary="Replaces the kind and the bindings of an input action, puts it back to the default of the code, or changes the seconds of a tap and of a hold; input.mirai of the project keeps what differs from the code, and a Play that starts or runs takes it. It answers with the action it changed.",result=Api_Input,writes_result=true,run=api_input_set})
+    api_register(s,st,{name="input.get",summary="The input actions of the game and its plugins: the kind, the bindings in effect and whether they come from the code or from input.mirai of the project, and the seconds of a tap and of a hold.",params=type_info_of(Api_Input_Get_Params),result=type_info_of(Api_Input),writes_result=true,flags={.Read_Only},run=api_input_get})
+    api_register(s,st,{name="input.set",params=type_info_of(Api_Input_Set_Params),summary="Replaces the kind and the bindings of an input action, puts it back to the default of the code, or changes the seconds of a tap and of a hold; input.mirai of the project keeps what differs from the code, and a Play that starts or runs takes it. It answers with the action it changed.",result=type_info_of(Api_Input),writes_result=true,run=api_input_set})
 }
 
 @(private)

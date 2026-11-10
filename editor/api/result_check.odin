@@ -1,6 +1,5 @@
 package api
 
-import "base:runtime"
 import "core:fmt"
 import "core:strings"
 import "mirai:std/serial"
@@ -8,13 +7,13 @@ import "mirai:std/serial"
 // Where the JSON a handler wrote leaves the shape of its result type, or ""
 // when it keeps it: a key the type lacks, a required field missing, or a value
 // whose JSON type, length or name its field does not take.
-result_mismatch :: proc(T:typeid,text:string,info:^runtime.Type_Info=nil) -> string {
+result_mismatch :: proc(T:typeid,text:string) -> string {
     context.allocator=context.temp_allocator
     server:Server
     server.allocator=context.temp_allocator
     serial.schema_init(&server.schema,context.temp_allocator)
     server.schema.unsized=true
-    index,ok:=schema_register(&server,T,info,result=true)
+    index,ok:=schema_register(&server,type_info_of(T),result=true)
     if !ok {return "the type does not register"}
     r:serial.Text_Reader
     serial.text_reader_init(&r,text,context.temp_allocator)

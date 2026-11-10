@@ -55,10 +55,10 @@ Api_Material_Overlay_Param :: struct {
 
 @(private)
 material_instance_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="material.instance.inspect",params=Api_Material_Slot_Params,summary="What an entity shows of the material of a slot of its mesh: its values with those of the entity over them, what the entity changes of it, its parameters and its overlays.",result=Api_Material_Instance,flags={.Read_Only},run=api_material_instance_inspect})
-    api_register(s,st,{name="material.instance.set",params=Api_Material_Instance_Set_Params,summary="Makes the values given that differ from the material of the slot, and the parameters, textures and overlays given, the entity's own; the material does not change. In Edit; one undo step.",result=Api_Material_Instance,run=api_material_instance_set})
-    api_register(s,st,{name="material.instance.revert",params=Api_Material_Slot_Params,summary="The entity takes back everything of the material of a slot, and for the first slot its overlays. In Edit; one undo step.",result=Api_Material_Instance,run=api_material_instance_revert})
-    api_register(s,st,{name="material.instance.apply",params=Api_Material_Slot_Params,summary="Writes what the entity changes of the material of a slot into it for every entity that shows it (but what each changes itself), saves it at once and reverts the slot of the entity, in one undo step.",result=Api_Material_Result,run=api_material_instance_apply})
+    api_register(s,st,{name="material.instance.inspect",params=type_info_of(Api_Material_Slot_Params),summary="What an entity shows of the material of a slot of its mesh: its values with those of the entity over them, what the entity changes of it, its parameters and its overlays.",result=type_info_of(Api_Material_Instance),flags={.Read_Only},run=api_material_instance_inspect})
+    api_register(s,st,{name="material.instance.set",params=type_info_of(Api_Material_Instance_Set_Params),summary="Makes the values given that differ from the material of the slot, and the parameters, textures and overlays given, the entity's own; the material does not change. In Edit; one undo step.",result=type_info_of(Api_Material_Instance),run=api_material_instance_set})
+    api_register(s,st,{name="material.instance.revert",params=type_info_of(Api_Material_Slot_Params),summary="The entity takes back everything of the material of a slot, and for the first slot its overlays. In Edit; one undo step.",result=type_info_of(Api_Material_Instance),run=api_material_instance_revert})
+    api_register(s,st,{name="material.instance.apply",params=type_info_of(Api_Material_Slot_Params),summary="Writes what the entity changes of the material of a slot into it for every entity that shows it (but what each changes itself), saves it at once and reverts the slot of the entity, in one undo step.",result=type_info_of(Api_Material_Result),run=api_material_instance_apply})
 }
 
 @(private)

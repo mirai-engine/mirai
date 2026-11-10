@@ -35,10 +35,10 @@ Api_Material_Params :: struct {
 
 @(private)
 materials_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="material.inspect",params=Api_Material_Params,summary="The values of a material (.mat) and, of an imported one, what its source gave at the last import and the fields that differ from it.",result=Api_Material_Result,flags={.Read_Only},run=api_material_inspect})
+    api_register(s,st,{name="material.inspect",params=type_info_of(Api_Material_Params),summary="The values of a material (.mat) and, of an imported one, what its source gave at the last import and the fields that differ from it.",result=type_info_of(Api_Material_Result),flags={.Read_Only},run=api_material_inspect})
     material_capture_register(s,st)
-    api_register(s,st,{name="material.set",params=Api_Material_Params,summary="Changes the values of a material (.mat) for every entity that shows it, keeping its program parameters and overlays, or makes a new one at path over the defaults.",result=Api_Material_Result,run=api_material_set})
-    api_register(s,st,{name="material.revert",params=Api_Material_Revert_Params,summary="Gives fields of an imported material back what its source gave at the last import, so they stop being overrides.",result=Api_Material_Result,flags={.Idempotent},run=api_material_revert})
+    api_register(s,st,{name="material.set",params=type_info_of(Api_Material_Params),summary="Changes the values of a material (.mat) for every entity that shows it, keeping its program parameters and overlays, or makes a new one at path over the defaults.",result=type_info_of(Api_Material_Result),run=api_material_set})
+    api_register(s,st,{name="material.revert",params=type_info_of(Api_Material_Revert_Params),summary="Gives fields of an imported material back what its source gave at the last import, so they stop being overrides.",result=type_info_of(Api_Material_Result),flags={.Idempotent},run=api_material_revert})
     material_instance_api_register(s,st)
 }
 

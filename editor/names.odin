@@ -313,9 +313,9 @@ Api_Name_Rename_Result :: struct {building:bool}
 
 @(private)
 api_names_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="names.list",summary="The types @(names) of the project (locomotion modes, input actions, collision categories...) with the named values the code declares for each.",params=Api_Names_Params,result=Api_Names_Result,flags={.Read_Only},run=api_names_list})
-    api_register(s,st,{name="names.create",summary="Declares a new value of a type @(names) in game/names.odin, the first free one after its highest, and starts the build of the game; an input action is declared in code, as a member of the enum @(actions) of the game.",params=Api_Name_Create_Params,result=Api_Name_Create_Result,run=api_name_create})
-    api_register(s,st,{name="names.rename",summary="Renames a value of a type @(names) that the project declared, with @(name) on its constant, and starts the build of the game; saved data keeps its number. An input action is renamed in code first (its member of the enum @(actions)); once built, this follows it: input.mirai of the project and the documents that keep it take the new name, as edits, unsaved.",params=Api_Name_Rename_Params,result=Api_Name_Rename_Result,run=api_name_rename})
+    api_register(s,st,{name="names.list",summary="The types @(names) of the project (locomotion modes, input actions, collision categories...) with the named values the code declares for each.",params=type_info_of(Api_Names_Params),result=type_info_of(Api_Names_Result),flags={.Read_Only},run=api_names_list})
+    api_register(s,st,{name="names.create",summary="Declares a new value of a type @(names) in game/names.odin, the first free one after its highest, and starts the build of the game; an input action is declared in code, as a member of the enum @(actions) of the game.",params=type_info_of(Api_Name_Create_Params),result=type_info_of(Api_Name_Create_Result),run=api_name_create})
+    api_register(s,st,{name="names.rename",summary="Renames a value of a type @(names) that the project declared, with @(name) on its constant, and starts the build of the game; saved data keeps its number. An input action is renamed in code first (its member of the enum @(actions)); once built, this follows it: input.mirai of the project and the documents that keep it take the new name, as edits, unsaved.",params=type_info_of(Api_Name_Rename_Params),result=type_info_of(Api_Name_Rename_Result),run=api_name_rename})
 }
 
 @(private)

@@ -476,7 +476,8 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
     }
     if options.select!="" {select_ids(s,options.select)}
     if options.restore=="" {recovery_open(s)}
-    if !services_open(s,options) && options.headless && options.frames==0 {
+    // A headless editor is driven through its API: one that cannot open it ends.
+    if !services_open(s,options) && options.headless {
         close(s)
         return nil,EDITOR_API
     }

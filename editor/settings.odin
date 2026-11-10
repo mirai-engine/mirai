@@ -814,8 +814,8 @@ Api_Settings_Set_Params :: struct {
 
 @(private)
 settings_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="settings.get",summary="The settings of the engine, the active plugins and the game: the values in effect and what the file of each layer sets over the layers under it.",params=Api_Settings_Get_Params,result=Api_Settings,flags={.Read_Only},run=api_settings_get})
-    api_register(s,st,{name="settings.set",params=Api_Settings_Set_Params,summary="Changes settings in a layer, whose file keeps what differs from the layers under it; the edited World and the games that play take the result at once and it answers with the sections changed.",result=Api_Settings,run=api_settings_set})
+    api_register(s,st,{name="settings.get",summary="The settings of the engine, the active plugins and the game: the values in effect and what the file of each layer sets over the layers under it.",params=type_info_of(Api_Settings_Get_Params),result=type_info_of(Api_Settings),flags={.Read_Only},run=api_settings_get})
+    api_register(s,st,{name="settings.set",params=type_info_of(Api_Settings_Set_Params),summary="Changes settings in a layer, whose file keeps what differs from the layers under it; the edited World and the games that play take the result at once and it answers with the sections changed.",result=type_info_of(Api_Settings),run=api_settings_set})
 }
 
 @(private)

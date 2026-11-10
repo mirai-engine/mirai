@@ -444,10 +444,7 @@ commands_register :: proc(s:^Session,st:^Api_State) {
         {name="prefab_unlink",method="prefab.unlink",params=`{"entity":"$active"}`,label="Unlink prefab",icon=user(.Unlink),state=state_prefab,scene=true},
     }
     for entry in entries {
-        if !command_bind(s,entry) && st.refused==0 {
-            st.refused+=1
-            st.refusal=fmt.bprintf(st.refusal_buffer[:],"the entry %s did not fit: raise BINDING_CAPACITY in editor/commands.odin",entry.name)
-        }
+        if !command_bind(s,entry) {api_refuse(st,fmt.tprintf("the entry %s did not fit: raise BINDING_CAPACITY in editor/commands.odin",entry.name))}
     }
     if s.has_project {tool_entry(s,AI_ANNOTATE_TOOL,"Annotate",ai_annotate_icon())}
 }
@@ -617,15 +614,15 @@ Api_Camera_Preview_Result :: struct {
 commands_methods_register :: proc(s:^Session,st:^Api_State) {
     on:=Api_View_Params{on=true}
     tool_on_default:=Api_Tool_Params{on=true}
-    api_register(s,st,{name="scene.new",summary="An empty scene in place of the document, with an empty history. Fails with unsaved changes unless discard.",params=Api_Scene_New_Params,result=Api_File_Result,flags={.Destructive},run=api_scene_new})
-    api_register(s,st,{name="scene.group",summary="Puts entities under a new empty entity at their center, as one undo step. Returns the group.",params=Api_Group_Params,result=Api_Edit_Result,run=api_scene_group})
-    api_register(s,st,{name="scene.thumbnail",summary="Takes the view of the viewport as the thumbnail of the scene of the document, which the content browser and the projects screen show.",result=Api_Thumbnail_Result,run=api_scene_thumbnail})
-    api_register(s,st,{name="editor.copy",summary="Keeps entities for Paste of the editor (Ctrl+V), which duplicates them; scene.write with copy copies one at once.",params=Api_Copy_Params,result=Api_Copy_Result,flags={.Idempotent},run=api_editor_copy})
-    api_register(s,st,{name="editor.tool",summary="Chooses what the pointer does in the viewport: the mode of the gizmo, or the tool of a plugin, whose panel takes the place of Details while it is on.",params=Api_Tool_Params,result=Api_Tool_Result,defaults=&tool_on_default,flags={.Idempotent},run=api_editor_tool})
-    api_register(s,st,{name="editor.view",summary="Shows or hides a part of the interface of the editor that is not a preference: a dialog, a popup, a tab of the left panel, the name field of Details or the studio light. To see it, capture with ui.",params=Api_View_Params,result=Api_View_Result,defaults=&on,flags={.Idempotent},run=api_editor_view})
-    api_register(s,st,{name="editor.save_all",summary="Writes every unsaved asset and every document with changes that has a file.",result=Api_Save_All_Result,run=api_save_all})
-    api_register(s,st,{name="play.release",summary="Gives the keyboard and the mouse of the game the user plays back to the editor, as F1 does; a click on the game takes them again.",result=Api_Release_Result,flags={.Idempotent},run=api_play_release})
-    api_register(s,st,{name="camera.preview",summary="Previews a camera of the scene: the scene plays as a simulation seen through it, with the blend of its activation, and Details edits the copy that plays. end stops it, keeping what the cameras became or not.",params=Api_Camera_Preview_Params,result=Api_Camera_Preview_Result,run=api_camera_preview})
+    api_register(s,st,{name="scene.new",summary="An empty scene in place of the document, with an empty history. Fails with unsaved changes unless discard.",params=type_info_of(Api_Scene_New_Params),result=type_info_of(Api_File_Result),flags={.Destructive},run=api_scene_new})
+    api_register(s,st,{name="scene.group",summary="Puts entities under a new empty entity at their center, as one undo step. Returns the group.",params=type_info_of(Api_Group_Params),result=type_info_of(Api_Edit_Result),run=api_scene_group})
+    api_register(s,st,{name="scene.thumbnail",summary="Takes the view of the viewport as the thumbnail of the scene of the document, which the content browser and the projects screen show.",result=type_info_of(Api_Thumbnail_Result),run=api_scene_thumbnail})
+    api_register(s,st,{name="editor.copy",summary="Keeps entities for Paste of the editor (Ctrl+V), which duplicates them; scene.write with copy copies one at once.",params=type_info_of(Api_Copy_Params),result=type_info_of(Api_Copy_Result),flags={.Idempotent},run=api_editor_copy})
+    api_register(s,st,{name="editor.tool",summary="Chooses what the pointer does in the viewport: the mode of the gizmo, or the tool of a plugin, whose panel takes the place of Details while it is on.",params=type_info_of(Api_Tool_Params),result=type_info_of(Api_Tool_Result),defaults=&tool_on_default,flags={.Idempotent},run=api_editor_tool})
+    api_register(s,st,{name="editor.view",summary="Shows or hides a part of the interface of the editor that is not a preference: a dialog, a popup, a tab of the left panel, the name field of Details or the studio light. To see it, capture with ui.",params=type_info_of(Api_View_Params),result=type_info_of(Api_View_Result),defaults=&on,flags={.Idempotent},run=api_editor_view})
+    api_register(s,st,{name="editor.save_all",summary="Writes every unsaved asset and every document with changes that has a file.",result=type_info_of(Api_Save_All_Result),run=api_save_all})
+    api_register(s,st,{name="play.release",summary="Gives the keyboard and the mouse of the game the user plays back to the editor, as F1 does; a click on the game takes them again.",result=type_info_of(Api_Release_Result),flags={.Idempotent},run=api_play_release})
+    api_register(s,st,{name="camera.preview",summary="Previews a camera of the scene: the scene plays as a simulation seen through it, with the blend of its activation, and Details edits the copy that plays. end stops it, keeping what the cameras became or not.",params=type_info_of(Api_Camera_Preview_Params),result=type_info_of(Api_Camera_Preview_Result),run=api_camera_preview})
 }
 
 @(private)

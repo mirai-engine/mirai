@@ -85,7 +85,7 @@ Play_View_Target :: struct {
 
 @(private)
 play_view_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="play.view",summary="What the player of the game of the caller sees: the camera and its place, rotation and lens, its mode and the blend into it, what it follows and how far, and where entities or world points show on the screen. The traces of play.step and the conditions of play.check read the same with view.",params=Api_Play_View_Params,result=Api_Play_View,flags={.Read_Only},run=api_play_view})
+    api_register(s,st,{name="play.view",summary="What the player of the game of the caller sees: the camera and its place, rotation and lens, its mode and the blend into it, what it follows and how far, and where entities or world points show on the screen. The traces of play.step and the conditions of play.check read the same with view.",params=type_info_of(Api_Play_View_Params),result=type_info_of(Api_Play_View),flags={.Read_Only},run=api_play_view})
 }
 
 @(private)

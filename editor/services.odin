@@ -17,7 +17,10 @@ services_open :: proc(s:^Session,options:Options) -> (api_ok:bool) {
     api_ok=true
     manual:=options.headless && options.frames==0
     if options.no_api {
-        if opened,problem:=api_open(s,0,false,listen=false);opened!=.None {fmt.eprintfln("mirai: the methods of the editor could not be registered, so its menus and shortcuts run nothing: %s",problem)}
+        if opened,problem:=api_open(s,0,false,listen=false);opened!=.None {
+            fmt.eprintfln("mirai: the methods of the editor could not be registered, so its menus and shortcuts run nothing: %s",problem)
+            api_ok=false
+        }
     } else {
         port:=options.api_port>0?options.api_port:api.DEFAULT_PORT
         if options.api_port_any {port=0}

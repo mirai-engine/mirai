@@ -44,9 +44,9 @@ Api_Asset_Save_Params :: struct {
 
 @(private)
 unsaved_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="asset.unsaved",summary="The assets and Slang programs changed in memory and not saved, and which of them the scene of the document uses.",result=Api_Unsaved_Result,flags={.Read_Only},run=api_asset_unsaved})
-    api_register(s,st,{name="asset.save",flags={.Core},params=Api_Asset_Save_Params,summary="Writes unsaved assets to their files, or copies of them that leave them unsaved. Writing the files is refused while a game plays.",result=Api_Saved_Result,run=api_asset_save})
-    api_register(s,st,{name="asset.discard",params=Api_Asset_Save_Params,summary="Gives unsaved assets back what their files hold; one that only memory held is gone.",result=Api_Discarded_Result,run=api_asset_discard})
+    api_register(s,st,{name="asset.unsaved",summary="The assets and Slang programs changed in memory and not saved, and which of them the scene of the document uses.",result=type_info_of(Api_Unsaved_Result),flags={.Read_Only},run=api_asset_unsaved})
+    api_register(s,st,{name="asset.save",flags={.Core},params=type_info_of(Api_Asset_Save_Params),summary="Writes unsaved assets to their files, or copies of them that leave them unsaved. Writing the files is refused while a game plays.",result=type_info_of(Api_Saved_Result),run=api_asset_save})
+    api_register(s,st,{name="asset.discard",params=type_info_of(Api_Asset_Save_Params),summary="Gives unsaved assets back what their files hold; one that only memory held is gone.",result=type_info_of(Api_Discarded_Result),run=api_asset_discard})
 }
 
 @(private)

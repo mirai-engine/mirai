@@ -123,10 +123,10 @@ Api_Material_Program_Create_Params :: struct {
 
 @(private)
 programs_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="material.program.check",params=Api_Program_Params,summary="Compiles a program without publishing it, where it runs (a Surface program for raster and for ray hits), and reads its source for the usual mistakes.",result=Api_Program_Result,writes_result=true,flags={.Read_Only,.Idempotent},run=api_program_check})
-    api_register(s,st,{name="material.program.create",params=Api_Material_Program_Create_Params,summary="Makes a new program in the shaders folder of the project once it compiles, in memory as one undo step until asset.save writes its .slang, and publishes the programs of the project.",result=Api_Program_Result,writes_result=true,run=api_program_create})
-    api_register(s,st,{name="material.program.edit",params=Api_Program_Params,summary="Changes the source of a program once it compiles, in memory as one undo step until asset.save writes its .slang, and publishes the programs of the project.",result=Api_Program_Result,writes_result=true,run=api_program_edit})
-    api_register(s,st,{name="material.program.inspect",params=Api_Program_Params,summary="The source of a program, the fields of its struct Parameters and the graph derived from the source.",result=Api_Program_Inspect,writes_result=true,flags={.Read_Only,.Idempotent},run=api_program_inspect})
+    api_register(s,st,{name="material.program.check",params=type_info_of(Api_Program_Params),summary="Compiles a program without publishing it, where it runs (a Surface program for raster and for ray hits), and reads its source for the usual mistakes.",result=type_info_of(Api_Program_Result),writes_result=true,flags={.Read_Only,.Idempotent},run=api_program_check})
+    api_register(s,st,{name="material.program.create",params=type_info_of(Api_Material_Program_Create_Params),summary="Makes a new program in the shaders folder of the project once it compiles, in memory as one undo step until asset.save writes its .slang, and publishes the programs of the project.",result=type_info_of(Api_Program_Result),writes_result=true,run=api_program_create})
+    api_register(s,st,{name="material.program.edit",params=type_info_of(Api_Program_Params),summary="Changes the source of a program once it compiles, in memory as one undo step until asset.save writes its .slang, and publishes the programs of the project.",result=type_info_of(Api_Program_Result),writes_result=true,run=api_program_edit})
+    api_register(s,st,{name="material.program.inspect",params=type_info_of(Api_Program_Params),summary="The source of a program, the fields of its struct Parameters and the graph derived from the source.",result=type_info_of(Api_Program_Inspect),writes_result=true,flags={.Read_Only,.Idempotent},run=api_program_inspect})
 }
 
 @(private)

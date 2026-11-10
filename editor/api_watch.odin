@@ -17,7 +17,7 @@ Api_Watch_Result :: struct {
 
 @(private)
 watch_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="editor.watch",summary="Shows in the viewport the run of an agent, without stopping or editing it. Outside a turn only.",params=Api_Watch_Params,result=Api_Watch_Result,run=api_editor_watch})
+    api_register(s,st,{name="editor.watch",summary="Shows in the viewport the run of an agent, without stopping or editing it. Outside a turn only.",params=type_info_of(Api_Watch_Params),result=type_info_of(Api_Watch_Result),run=api_editor_watch})
 }
 
 @(private)

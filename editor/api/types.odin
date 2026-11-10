@@ -103,8 +103,7 @@ Handler :: #type proc(call:^Call)
 Method_Desc :: struct {
     name,summary:string,
     plugin:string,        // the plugin that registers it; empty for the editor
-    params,result:typeid, // structs; nil: it takes no params, it answers null
-    params_info,result_info:^runtime.Type_Info, // of params and result, from the binary that declares them when it is not this one
+    params,result:^runtime.Type_Info, // structs, from the library that declares them; nil: no params, a null result
     defaults:rawptr,      // a params value; absent optional fields take its values
     handler:Handler,
     user:rawptr,

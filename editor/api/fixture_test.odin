@@ -88,15 +88,15 @@ fixture_start :: proc(f:^Fixture,t:^testing.T,desc:Server_Desc={}) -> bool {
     defaults:=Echo_Params{times=1}
     shapes_defaults:=Shapes{mode=.Walk}
     ok:=true
-    ok&&=method_register(&f.server,{name="batch",summary=BATCH_SUMMARY,params=Batch_Params,result=Batch_Result,handler=batch})==.None
-    ok&&=method_register(&f.server,{name="test.add",summary="Adds two integers.",params=Add_Params,result=Add_Result,handler=add_handler,flags={.Read_Only,.Idempotent,.Core}})==.None
-    ok&&=method_register(&f.server,{name="test.echo",summary="Repeats a text.",params=Echo_Params,result=Echo_Result,defaults=&defaults,handler=echo_handler,flags={.Core}})==.None
-    ok&&=method_register(&f.server,{name="test.fail",summary="Always fails.",params=Fail_Params,handler=fail_handler,flags={.Destructive,.Core}})==.None
-    ok&&=method_register(&f.server,{name="test.shapes",summary="Returns its params.",params=Shapes,result=Shapes,defaults=&shapes_defaults,handler=shapes_handler,flags={.Core}})==.None
-    ok&&=method_register(&f.server,{name="test.raw",summary="Wraps its params.",params=Raw_Params,result=Raw_Result,writes_result=true,handler=raw_handler,flags={.Core}})==.None
-    ok&&=method_register(&f.server,{name="test.big",summary="Writes a large array.",result=Raw_Result,writes_result=true,handler=big_handler,flags={.Core}})==.None
-    if desc.max_response>=4<<20 {ok&&=method_register(&f.server,{name="test.huge",summary="Writes a very large array.",result=Raw_Result,writes_result=true,handler=huge_handler,flags={.Core}})==.None}
-    ok&&=method_register(&f.server,{name="test.broken",summary="Fails after writing.",result=Raw_Result,writes_result=true,handler=failing_raw_handler,flags={.Core}})==.None
+    ok&&=method_register(&f.server,{name="batch",summary=BATCH_SUMMARY,params=type_info_of(Batch_Params),result=type_info_of(Batch_Result),handler=batch})==.None
+    ok&&=method_register(&f.server,{name="test.add",summary="Adds two integers.",params=type_info_of(Add_Params),result=type_info_of(Add_Result),handler=add_handler,flags={.Read_Only,.Idempotent,.Core}})==.None
+    ok&&=method_register(&f.server,{name="test.echo",summary="Repeats a text.",params=type_info_of(Echo_Params),result=type_info_of(Echo_Result),defaults=&defaults,handler=echo_handler,flags={.Core}})==.None
+    ok&&=method_register(&f.server,{name="test.fail",summary="Always fails.",params=type_info_of(Fail_Params),handler=fail_handler,flags={.Destructive,.Core}})==.None
+    ok&&=method_register(&f.server,{name="test.shapes",summary="Returns its params.",params=type_info_of(Shapes),result=type_info_of(Shapes),defaults=&shapes_defaults,handler=shapes_handler,flags={.Core}})==.None
+    ok&&=method_register(&f.server,{name="test.raw",summary="Wraps its params.",params=type_info_of(Raw_Params),result=type_info_of(Raw_Result),writes_result=true,handler=raw_handler,flags={.Core}})==.None
+    ok&&=method_register(&f.server,{name="test.big",summary="Writes a large array.",result=type_info_of(Raw_Result),writes_result=true,handler=big_handler,flags={.Core}})==.None
+    if desc.max_response>=4<<20 {ok&&=method_register(&f.server,{name="test.huge",summary="Writes a very large array.",result=type_info_of(Raw_Result),writes_result=true,handler=huge_handler,flags={.Core}})==.None}
+    ok&&=method_register(&f.server,{name="test.broken",summary="Fails after writing.",result=type_info_of(Raw_Result),writes_result=true,handler=failing_raw_handler,flags={.Core}})==.None
     testing.expect(t,ok,"the sample methods register")
     mem.tracking_allocator_init(&f.tracking,context.allocator)
     f.thread=thread.create(fixture_run)

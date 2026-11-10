@@ -111,12 +111,12 @@ Api_Play_Player_Entity :: struct {
 
 @(private)
 api_scene_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="scene.inspect",summary="The entities of the document in save order with their place and the names of their components; with components, their transforms, prefab links and values; with root, that entity and what hangs from it as the nested document scene.write takes.",params=Api_Inspect_Params,result=Api_Inspect_Result,writes_result=true,flags={.Core,.Read_Only},run=api_scene_inspect})
-    api_register(s,st,{name="play.inspect",summary="As scene.inspect, on the world of the game that plays, whose entities are named by their handle; with storages, also its storages: the score or the state of a match.",params=Api_Inspect_Params,result=Api_Inspect_Result,writes_result=true,flags={.Core,.Read_Only},run=api_play_inspect})
-    api_register(s,st,{name="play.player",summary="The focused local seat of the game that plays, the body it drives and the camera that shows it. play.inspect with include_runtime reads the rest.",params=Api_Play_Player_Params,result=Api_Play_Player_Result,writes_result=true,flags={.Read_Only},run=api_play_player})
+    api_register(s,st,{name="scene.inspect",summary="The entities of the document in save order with their place and the names of their components; with components, their transforms, prefab links and values; with root, that entity and what hangs from it as the nested document scene.write takes.",params=type_info_of(Api_Inspect_Params),result=type_info_of(Api_Inspect_Result),writes_result=true,flags={.Core,.Read_Only},run=api_scene_inspect})
+    api_register(s,st,{name="play.inspect",summary="As scene.inspect, on the world of the game that plays, whose entities are named by their handle; with storages, also its storages: the score or the state of a match.",params=type_info_of(Api_Inspect_Params),result=type_info_of(Api_Inspect_Result),writes_result=true,flags={.Core,.Read_Only},run=api_play_inspect})
+    api_register(s,st,{name="play.player",summary="The focused local seat of the game that plays, the body it drives and the camera that shows it. play.inspect with include_runtime reads the rest.",params=type_info_of(Api_Play_Player_Params),result=type_info_of(Api_Play_Player_Result),writes_result=true,flags={.Read_Only},run=api_play_player})
     api_scene_write_register(s,st)
-    api_register(s,st,{name="scene.save",flags={.Core},summary="Writes the document to its file or to another, which becomes its file.",params=Api_Path_Params,result=Api_File_Result,run=api_scene_save})
-    api_register(s,st,{name="scene.open",summary="Opens a scene or a prefab file as the document, with an empty history.",params=Api_Path_Params,result=Api_File_Result,flags={.Destructive},run=api_scene_open})
+    api_register(s,st,{name="scene.save",flags={.Core},summary="Writes the document to its file or to another, which becomes its file.",params=type_info_of(Api_Path_Params),result=type_info_of(Api_File_Result),run=api_scene_save})
+    api_register(s,st,{name="scene.open",summary="Opens a scene or a prefab file as the document, with an empty history.",params=type_info_of(Api_Path_Params),result=type_info_of(Api_File_Result),flags={.Destructive},run=api_scene_open})
 }
 
 // ---------------------------------------------------------------- scene.inspect

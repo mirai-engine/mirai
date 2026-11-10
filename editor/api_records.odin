@@ -882,15 +882,15 @@ records_api_file :: proc(s:^Session,path:string) -> string {
 
 @(private)
 records_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="records.types",summary="The record types of the project (structs marked @(record)) with their fields and their .records tables.",result=Api_Records_Types,flags={.Read_Only},run=api_records_types})
-    api_register(s,st,{name="records.create",params=Api_Records_Create_Params,summary="Makes a new empty table (.records) of a record type at a path under the assets folder.",result=Api_Records_Table,run=api_records_create})
-    api_register(s,st,{name="records.inspect",params=Api_Records_Inspect_Params,summary="The rows of a table of game data (.records) with their ids, names and values.",result=Api_Records_Table,flags={.Read_Only},run=api_records_inspect})
-    api_register(s,st,{name="records.set",params=Api_Records_Set_Params,summary="Changes the values or the name of a row of a table of game data.",result=Api_Records_Table,run=api_records_set})
-    api_register(s,st,{name="records.add",params=Api_Records_Add_Params,summary="Adds a row to a table of game data with the defaults of its type and the values given.",result=Api_Records_Table,run=api_records_add})
-    api_register(s,st,{name="records.remove",params=Api_Records_Remove_Params,summary="Removes rows of a table of game data by name; the references to them are left as they are.",result=Api_Records_Removed,flags={.Destructive},run=api_records_remove})
-    api_register(s,st,{name="records.move",params=Api_Records_Move_Params,summary="Moves a row of a table of game data to another place of its order; its id stays.",result=Api_Records_Table,run=api_records_move})
-    api_register(s,st,{name="records.import",params=Api_Records_Import_Params,summary="Updates the rows of a table of game data from a CSV file by their names and adds the rows it lacks, as one step of the history.",result=Api_Records_Import,run=api_records_import})
-    api_register(s,st,{name="records.export",params=Api_Records_Export_Params,summary="Writes the rows of a table of game data to a CSV file that records.import reads back.",result=Api_Records_Export,flags={.Idempotent},run=api_records_export})
+    api_register(s,st,{name="records.types",summary="The record types of the project (structs marked @(record)) with their fields and their .records tables.",result=type_info_of(Api_Records_Types),flags={.Read_Only},run=api_records_types})
+    api_register(s,st,{name="records.create",params=type_info_of(Api_Records_Create_Params),summary="Makes a new empty table (.records) of a record type at a path under the assets folder.",result=type_info_of(Api_Records_Table),run=api_records_create})
+    api_register(s,st,{name="records.inspect",params=type_info_of(Api_Records_Inspect_Params),summary="The rows of a table of game data (.records) with their ids, names and values.",result=type_info_of(Api_Records_Table),flags={.Read_Only},run=api_records_inspect})
+    api_register(s,st,{name="records.set",params=type_info_of(Api_Records_Set_Params),summary="Changes the values or the name of a row of a table of game data.",result=type_info_of(Api_Records_Table),run=api_records_set})
+    api_register(s,st,{name="records.add",params=type_info_of(Api_Records_Add_Params),summary="Adds a row to a table of game data with the defaults of its type and the values given.",result=type_info_of(Api_Records_Table),run=api_records_add})
+    api_register(s,st,{name="records.remove",params=type_info_of(Api_Records_Remove_Params),summary="Removes rows of a table of game data by name; the references to them are left as they are.",result=type_info_of(Api_Records_Removed),flags={.Destructive},run=api_records_remove})
+    api_register(s,st,{name="records.move",params=type_info_of(Api_Records_Move_Params),summary="Moves a row of a table of game data to another place of its order; its id stays.",result=type_info_of(Api_Records_Table),run=api_records_move})
+    api_register(s,st,{name="records.import",params=type_info_of(Api_Records_Import_Params),summary="Updates the rows of a table of game data from a CSV file by their names and adds the rows it lacks, as one step of the history.",result=type_info_of(Api_Records_Import),run=api_records_import})
+    api_register(s,st,{name="records.export",params=type_info_of(Api_Records_Export_Params),summary="Writes the rows of a table of game data to a CSV file that records.import reads back.",result=type_info_of(Api_Records_Export),flags={.Idempotent},run=api_records_export})
 }
 
 @(private)

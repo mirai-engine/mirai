@@ -345,8 +345,8 @@ Ai_Annotation_Remove_Result :: struct {
 
 @(private)
 ai_annotations_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="annotation.list",summary="The pins the user dropped on a document for the agent, with their numbers, groups, positions, entities and notes.",params=Ai_Annotation_List_Params,result=Ai_Annotation_List_Result,flags={.Read_Only,.Idempotent},run=ai_method_annotation_list})
-    api_register(s,st,{name="annotation.remove",summary="Takes out one annotation of the open document, or every annotation of one of its groups, when the agent is done with them.",params=Ai_Annotation_Remove_Params,result=Ai_Annotation_Remove_Result,run=ai_method_annotation_remove})
+    api_register(s,st,{name="annotation.list",summary="The pins the user dropped on a document for the agent, with their numbers, groups, positions, entities and notes.",params=type_info_of(Ai_Annotation_List_Params),result=type_info_of(Ai_Annotation_List_Result),flags={.Read_Only,.Idempotent},run=ai_method_annotation_list})
+    api_register(s,st,{name="annotation.remove",summary="Takes out one annotation of the open document, or every annotation of one of its groups, when the agent is done with them.",params=type_info_of(Ai_Annotation_Remove_Params),result=type_info_of(Ai_Annotation_Remove_Result),run=ai_method_annotation_remove})
 }
 
 @(private)

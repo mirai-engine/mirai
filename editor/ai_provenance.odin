@@ -150,7 +150,7 @@ Ai_Provenance_Result :: struct {
 
 @(private)
 ai_provenance_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="ai.provenance",summary="Who last changed an entity or an asset through a turn of an agent: the conversation, its title, the prompt of that turn, the model, the effort and the date.",params=Ai_Provenance_Params,result=Ai_Provenance_Result,flags={.Read_Only,.Idempotent},run=ai_method_provenance})
+    api_register(s,st,{name="ai.provenance",summary="Who last changed an entity or an asset through a turn of an agent: the conversation, its title, the prompt of that turn, the model, the effort and the date.",params=type_info_of(Ai_Provenance_Params),result=type_info_of(Ai_Provenance_Result),flags={.Read_Only,.Idempotent},run=ai_method_provenance})
 }
 
 @(private)

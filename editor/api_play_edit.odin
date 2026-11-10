@@ -69,10 +69,10 @@ Api_Play_Push_Params :: struct {
 @(private)
 api_play_edit_register :: proc(s:^Session,st:^Api_State) {
     spawn_default:=Api_Play_Spawn_Params{scale={1,1,1}}
-    api_register(s,st,{name="play.set",params=Api_Play_Set_Params,summary="Changes an entity of the game of the caller between two ticks: values of its components, and a teleport to a place of the world. Not the document, and not in the history.",result=Api_Play_Set_Result,run=api_play_set})
-    api_register(s,st,{name="play.spawn",summary="Places a prefab in the game of the caller now, as the game spawns one; returns its root.",params=Api_Play_Spawn_Params,result=Api_Play_Spawn_Result,defaults=&spawn_default,run=api_play_spawn})
-    api_register(s,st,{name="play.destroy",summary="Destroys an entity of the game of the caller with what hangs from it.",params=Api_Play_Entity_Params,result=Api_Play_Destroy_Result,flags={.Destructive},run=api_play_destroy})
-    api_register(s,st,{name="play.push",params=Api_Play_Push_Params,summary="Pushes requests to a queue storage of the game of the caller, as its functions push them (Seat_Requests, Spawns or one of the game); the functions that take it read them in the next tick.",result=Api_Play_Push_Result,run=api_play_push})
+    api_register(s,st,{name="play.set",params=type_info_of(Api_Play_Set_Params),summary="Changes an entity of the game of the caller between two ticks: values of its components, and a teleport to a place of the world. Not the document, and not in the history.",result=type_info_of(Api_Play_Set_Result),run=api_play_set})
+    api_register(s,st,{name="play.spawn",summary="Places a prefab in the game of the caller now, as the game spawns one; returns its root.",params=type_info_of(Api_Play_Spawn_Params),result=type_info_of(Api_Play_Spawn_Result),defaults=&spawn_default,run=api_play_spawn})
+    api_register(s,st,{name="play.destroy",summary="Destroys an entity of the game of the caller with what hangs from it.",params=type_info_of(Api_Play_Entity_Params),result=type_info_of(Api_Play_Destroy_Result),flags={.Destructive},run=api_play_destroy})
+    api_register(s,st,{name="play.push",params=type_info_of(Api_Play_Push_Params),summary="Pushes requests to a queue storage of the game of the caller, as its functions push them (Seat_Requests, Spawns or one of the game); the functions that take it read them in the next tick.",result=type_info_of(Api_Play_Push_Result),run=api_play_push})
     api_play_input_register(s,st)
 }
 

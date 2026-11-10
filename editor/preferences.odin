@@ -171,8 +171,8 @@ Api_Preferences_Set_Params :: struct {
 
 @(private)
 preferences_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="preferences.get",summary="The preferences of the editor on this machine, the same for every project: its panels, viewport, lists, console, Play and chats, and of the plugins.",params=Api_Preferences_Get_Params,result=Api_Preferences,flags={.Read_Only},run=api_preferences_get})
-    api_register(s,st,{name="preferences.set",params=Api_Preferences_Set_Params,summary="Changes preferences of the editor; they take effect at once, the file keeps what differs from the values of the code and it answers with the areas changed.",result=Api_Preferences,run=api_preferences_set})
+    api_register(s,st,{name="preferences.get",summary="The preferences of the editor on this machine, the same for every project: its panels, viewport, lists, console, Play and chats, and of the plugins.",params=type_info_of(Api_Preferences_Get_Params),result=type_info_of(Api_Preferences),flags={.Read_Only},run=api_preferences_get})
+    api_register(s,st,{name="preferences.set",params=type_info_of(Api_Preferences_Set_Params),summary="Changes preferences of the editor; they take effect at once, the file keeps what differs from the values of the code and it answers with the areas changed.",result=type_info_of(Api_Preferences),run=api_preferences_set})
 }
 
 @(private)

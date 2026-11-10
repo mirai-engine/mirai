@@ -51,16 +51,9 @@ tool_find :: proc(s:^Server,name:string) -> ^Method {
 
 // Adds the params or the result type of a method to the schema: a struct. A
 // result may also be serial.Json, when only the world knows its shape.
-schema_register :: proc(s:^Server,id:typeid,info:^runtime.Type_Info=nil,result:=false) -> (index:serial.Type_Index,ok:bool) {
-    if id==nil {return serial.TYPE_NONE,true}
-    // Without its information the type is of this binary. One of another, with
-    // its own type table, is not in the table of this one.
-    root:=info!=nil?info:type_info_of(id)
-    if root.id!=id {
-        delete(s.schema.error,s.schema.allocator)
-        s.schema.error=format_text(s.schema.allocator,"a type of another library without its information: pass type_info_of of it (params_info, result_info)")
-        return serial.TYPE_NONE,false
-    }
+schema_register :: proc(s:^Server,info:^runtime.Type_Info,result:=false) -> (index:serial.Type_Index,ok:bool) {
+    if info==nil {return serial.TYPE_NONE,true}
+    root:=info
     first_type:=len(s.schema.types)
     index=serial.schema_add_type_info(&s.schema,root) or_return
     for type in s.schema.types[first_type:] {
@@ -73,7 +66,7 @@ schema_register :: proc(s:^Server,id:typeid,info:^runtime.Type_Info=nil,result:=
     kind:=s.schema.types[index].kind
     if kind!=.Struct && !(result && kind==.Json) {
         delete(s.schema.error,s.schema.allocator)
-        s.schema.error=format_text(s.schema.allocator,"%v is not a struct",id)
+        s.schema.error=format_text(s.schema.allocator,"%v is not a struct",info.id)
         return serial.TYPE_NONE,false
     }
     return index,true
@@ -89,12 +82,14 @@ method_register :: proc(s:^Server,desc:Method_Desc) -> Register_Error {
     if s.method_count>=len(s.methods) {s.stats.methods_refused+=1;return .Full}
     if method_find(s,desc.name)!=nil || tool_find(s,desc.name)!=nil {return .Duplicate}
     if desc.writes_result && desc.result==nil {return .Invalid_Type}
-    method:=Method{name_hash=base.name_hash(desc.name),params_id=desc.params,result_id=desc.result,handler=desc.handler,user=desc.user,flags=desc.flags,writes_result=desc.writes_result}
+    method:=Method{name_hash=base.name_hash(desc.name),handler=desc.handler,user=desc.user,flags=desc.flags,writes_result=desc.writes_result}
     ok:bool
-    method.params,ok=schema_register(s,desc.params,desc.params_info)
+    if desc.params!=nil {method.params_id=desc.params.id}
+    if desc.result!=nil {method.result_id=desc.result.id}
+    method.params,ok=schema_register(s,desc.params)
     if !ok {return .Invalid_Type}
     method.clamps=type_clamps(s,method.params)
-    method.result,ok=schema_register(s,desc.result,desc.result_info,result=true)
+    method.result,ok=schema_register(s,desc.result,result=true)
     if !ok {return .Invalid_Type}
     limit:=u32(s.scratch.arena.data!=nil?len(s.scratch.arena.data)/4:0)
     if method.params!=serial.TYPE_NONE && s.schema.types[method.params].size>limit {return .Too_Large}

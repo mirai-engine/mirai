@@ -76,7 +76,7 @@ Scenario_Step :: struct {
 
 @(private)
 api_play_scenario_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="play.scenario.run",summary="Plays the scenarios of the project, gameplay tests written as files: each plays its scene from the first tick, runs its steps (calls of play.input, play.step, play.check, play.spawn, capture and the other play methods) and stops; says per step whether it passed, at which tick and what its method answered.",params=Api_Play_Scenario_Params,result=Api_Play_Scenario_Result,writes_result=true,run=api_play_scenario_run})
+    api_register(s,st,{name="play.scenario.run",summary="Plays the scenarios of the project, gameplay tests written as files: each plays its scene from the first tick, runs its steps (calls of play.input, play.step, play.check, play.spawn, capture and the other play methods) and stops; says per step whether it passed, at which tick and what its method answered.",params=type_info_of(Api_Play_Scenario_Params),result=type_info_of(Api_Play_Scenario_Result),writes_result=true,run=api_play_scenario_run})
 }
 
 // The keys of a JSON object in values, in the order of keys; problem names a

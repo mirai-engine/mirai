@@ -66,7 +66,7 @@ Api_Write :: struct {
 
 @(private)
 api_scene_write_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="scene.write",flags={.Core,.Destructive},params=Api_Scene_Write_Params,summary="The one way to change the entities of the scene: makes it say what a document of nested entities declares, as scene.inspect with root gives it. Entities are matched by id or name, the others made (with preset, with prefab as a linked instance, with copy from another entity). What the document leaves out goes, or with merge stays: then it names only what changes, and delete takes an entity away. One step of undo; the result names what it made.",result=Api_Write_Result,run=api_scene_write})
+    api_register(s,st,{name="scene.write",flags={.Core,.Destructive},params=type_info_of(Api_Scene_Write_Params),summary="The one way to change the entities of the scene: makes it say what a document of nested entities declares, as scene.inspect with root gives it. Entities are matched by id or name, the others made (with preset, with prefab as a linked instance, with copy from another entity). What the document leaves out goes, or with merge stays: then it names only what changes, and delete takes an entity away. One step of undo; the result names what it made.",result=type_info_of(Api_Write_Result),run=api_scene_write})
 }
 
 // The entities of the part of the scene a document declares: root and what

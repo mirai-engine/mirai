@@ -44,7 +44,7 @@ pose_bake_defaults :: proc() -> ^Pose_Bake_Params {
 @(private)
 pose_bake_register :: proc(s:^editor.Session) {
     p:=pose_bake_defaults();if p==nil {return}
-    editor.api_method_register(s,Pose_Bake_Params,Authoring_Write_Result,{name="animation.pose.bake",summary="Bakes the final pose, curves, morph weights and crossed markers of an entity between two times into a clip, on a copy run with the fields of animation.preview without gameplay or physics. In Edit.",defaults=p,run=authoring_pose_bake})
+    editor.api_method_register(s,{params=type_info_of(Pose_Bake_Params),result=type_info_of(Authoring_Write_Result),name="animation.pose.bake",summary="Bakes the final pose, curves, morph weights and crossed markers of an entity between two times into a clip, on a copy run with the fields of animation.preview without gameplay or physics. In Edit.",defaults=p,run=authoring_pose_bake})
 }
 
 @(private)

@@ -407,7 +407,7 @@ describe_register :: proc(s:^Server) -> bool {
     return method_register(s,{
         name="engine.describe",
         summary="A short index of the methods and the plugins of the project; methods gives the JSON Schema of the params and the result of those it names, plugin or prefix the summaries of an area.",
-        params=Describe_Params,result=Describe_Result,writes_result=true,handler=describe_handler,flags={.Read_Only,.Idempotent,.Core},
+        params=type_info_of(Describe_Params),result=type_info_of(Describe_Result),writes_result=true,handler=describe_handler,flags={.Read_Only,.Idempotent,.Core},
     })==.None
 }
 

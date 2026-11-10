@@ -101,11 +101,11 @@ Marker_Set_Params :: struct {
 authoring_clip_register :: proc(s:^editor.Session) {
     inspect:=Clip_Inspect_Params{limit=128}
     track:=Track_Inspect_Params{limit=128}
-    editor.api_method_register(s,Clip_Create_Params,Authoring_Write_Result,{name="animation.clip.create",summary="Creates an empty named clip in a new .anim or after the clips of an existing one. One step of undo.",run=authoring_clip_create})
-    editor.api_method_register(s,Clip_Set_Params,Authoring_Write_Result,{name="animation.clip.set",summary="Renames a clip and replaces its root motion; its tracks and markers stay.",run=authoring_clip_set})
-    editor.api_method_register(s,Track_Set_Params,Authoring_Write_Result,{name="animation.track.set",summary="Creates, replaces or removes the track of a clip found by target, property and slot.",run=authoring_track_set})
-    editor.api_method_register(s,Key_Set_Params,Authoring_Write_Result,{name="animation.key.set",summary="Replaces, inserts, moves or removes one key of a track; the clip must stay valid, with finite values and ordered times. One step of undo.",run=authoring_key_set})
-    editor.api_method_register(s,Marker_Set_Params,Authoring_Write_Result,{name="animation.marker.set",summary="Replaces, appends or removes a named clip marker used for animation events and synchronization.",run=authoring_marker_set})
+    editor.api_method_register(s,{params=type_info_of(Clip_Create_Params),result=type_info_of(Authoring_Write_Result),name="animation.clip.create",summary="Creates an empty named clip in a new .anim or after the clips of an existing one. One step of undo.",run=authoring_clip_create})
+    editor.api_method_register(s,{params=type_info_of(Clip_Set_Params),result=type_info_of(Authoring_Write_Result),name="animation.clip.set",summary="Renames a clip and replaces its root motion; its tracks and markers stay.",run=authoring_clip_set})
+    editor.api_method_register(s,{params=type_info_of(Track_Set_Params),result=type_info_of(Authoring_Write_Result),name="animation.track.set",summary="Creates, replaces or removes the track of a clip found by target, property and slot.",run=authoring_track_set})
+    editor.api_method_register(s,{params=type_info_of(Key_Set_Params),result=type_info_of(Authoring_Write_Result),name="animation.key.set",summary="Replaces, inserts, moves or removes one key of a track; the clip must stay valid, with finite values and ordered times. One step of undo.",run=authoring_key_set})
+    editor.api_method_register(s,{params=type_info_of(Marker_Set_Params),result=type_info_of(Authoring_Write_Result),name="animation.marker.set",summary="Replaces, appends or removes a named clip marker used for animation events and synchronization.",run=authoring_marker_set})
 }
 
 @(private)

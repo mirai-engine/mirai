@@ -41,8 +41,8 @@ shape_echo :: proc(call:^Call) {raw(call.out,call.raw)}
 params_are_taken_in_the_singular_or_plural_and_as_a_value_or_a_list_of_one :: proc(t:^testing.T) {
     s,ok:=test_server(t);if !ok {return}
     defer server_destroy(&s)
-    testing.expect_value(t,method_register(&s,{name="typed",params=Shape_Params,result=Raw_Result,writes_result=true,handler=shape_echo}),Register_Error.None)
-    testing.expect_value(t,method_register(&s,{name="hand",params=Shape_Read,result=Raw_Result,writes_result=true,handler=shape_echo}),Register_Error.None)
+    testing.expect_value(t,method_register(&s,{name="typed",params=type_info_of(Shape_Params),result=type_info_of(Raw_Result),writes_result=true,handler=shape_echo}),Register_Error.None)
+    testing.expect_value(t,method_register(&s,{name="hand",params=type_info_of(Shape_Read),result=type_info_of(Raw_Result),writes_result=true,handler=shape_echo}),Register_Error.None)
     cases:=[]struct{method,params,shaped,problem:string}{
         {"typed",`{"method":"a"}`,`{"methods":["a"]}`,""},
         {"typed",`{"methods":"a"}`,`{"methods":["a"]}`,""},
@@ -104,7 +104,7 @@ Named_Params :: struct {
 a_param_that_names_an_entity_says_so_in_its_schema :: proc(t:^testing.T) {
     s,ok:=test_server(t);if !ok {return}
     defer server_destroy(&s)
-    testing.expect_value(t,method_register(&s,{name="named",params=Named_Params,handler=noop}),Register_Error.None)
+    testing.expect_value(t,method_register(&s,{name="named",params=type_info_of(Named_Params),handler=noop}),Register_Error.None)
     schema:=params_schema_text(&s,method_find(&s,"named"))
     testing.expectf(t,strings.contains(schema,`"x-entity":`) && !strings.contains(schema,"pattern"),"the schema of a param says how it names: %s",schema)
     described:=strings.builder_make(context.temp_allocator)
@@ -146,7 +146,7 @@ clamp_handler :: proc(call:^Call) {call_result(call,Clamp_Result).limit=call_par
 a_limit_past_its_maximum_takes_it_and_the_answer_says_so :: proc(t:^testing.T) {
     s,ok:=test_server(t);if !ok {return}
     defer server_destroy(&s)
-    testing.expect_value(t,method_register(&s,{name="clamp",params=Clamp_Params,result=Clamp_Result,handler=clamp_handler}),Register_Error.None)
+    testing.expect_value(t,method_register(&s,{name="clamp",params=type_info_of(Clamp_Params),result=type_info_of(Clamp_Result),handler=clamp_handler}),Register_Error.None)
     method:=method_find(&s,"clamp")
     cases:=[]struct{params,says,error:string}{
         {`{"limit":10}`,`"limit": 10}`,""},
@@ -192,10 +192,10 @@ usage_refuses_with_data :: proc(call:^Call) {call_fail(call,INVALID_PARAMS,"no s
 an_invalid_params_error_says_what_the_method_takes_and_only_it_does :: proc(t:^testing.T) {
     s,ok:=test_server(t);if !ok {return}
     defer server_destroy(&s)
-    testing.expect_value(t,method_register(&s,{name="small",params=Small,handler=noop}),Register_Error.None)
-    testing.expect_value(t,method_register(&s,{name="refuses",params=Small,handler=usage_refuses}),Register_Error.None)
-    testing.expect_value(t,method_register(&s,{name="own",params=Small,handler=usage_refuses_with_data}),Register_Error.None)
-    testing.expect_value(t,method_register(&s,{name="long",params=Long_Params,handler=noop}),Register_Error.None)
+    testing.expect_value(t,method_register(&s,{name="small",params=type_info_of(Small),handler=noop}),Register_Error.None)
+    testing.expect_value(t,method_register(&s,{name="refuses",params=type_info_of(Small),handler=usage_refuses}),Register_Error.None)
+    testing.expect_value(t,method_register(&s,{name="own",params=type_info_of(Small),handler=usage_refuses_with_data}),Register_Error.None)
+    testing.expect_value(t,method_register(&s,{name="long",params=type_info_of(Long_Params),handler=noop}),Register_Error.None)
     testing.expect_value(t,method_register(&s,{name="no_schema",handler=usage_refuses}),Register_Error.None)
     buffer:=make([]u8,64*1024,context.temp_allocator)
     run :: proc(s:^Server,name,params:string,buffer:[]u8) -> (err:Error,ran:bool) {
@@ -217,7 +217,7 @@ an_invalid_params_error_says_what_the_method_takes_and_only_it_does :: proc(t:^t
         {"own",`{"count":1}`,"own"},
         {"named",`{"entity":"Floor","bogus":1}`,"usage"},
     }
-    testing.expect_value(t,method_register(&s,{name="named",params=Named_Params,handler=noop}),Register_Error.None)
+    testing.expect_value(t,method_register(&s,{name="named",params=type_info_of(Named_Params),handler=noop}),Register_Error.None)
     for c in failures {
         err,ran=run(&s,c.method,c.params,buffer)
         testing.expectf(t,!ran && (c.data=="" && err.data=="" || c.data!="" && strings.contains(err.data,c.data)),"%s %s: %s",c.method,c.params,err.data)
@@ -228,7 +228,7 @@ an_invalid_params_error_says_what_the_method_takes_and_only_it_does :: proc(t:^t
     err,_=run(&s,"long",`{"field0":[1,2]}`,buffer)
     usage,is_text=json_string(json_member(err.data,"usage"))
     testing.expect(t,is_text && len(usage)<=USAGE_BYTES && strings.contains(usage,"example: mirai rpc long"),"a long description keeps its example and fits")
-    testing.expect_value(t,method_register(&s,{name="closed",params=struct{path:string `mirai:"optional"`,values:serial.Json `mirai:"optional"`},handler=noop}),Register_Error.None)
+    testing.expect_value(t,method_register(&s,{name="closed",params=type_info_of(struct{path:string `mirai:"optional"`,values:serial.Json `mirai:"optional"`}),handler=noop}),Register_Error.None)
     err,ran=run(&s,"closed",`{"pathx":"a"}`,buffer)
     testing.expectf(t,!ran && strings.contains(err.message,`"pathx" is not a field: the fields are path, values`) && strings.contains(err.data,"usage"),"a key a closed schema does not name: %s",err.message)
     _,ran=run(&s,"closed",`{"path":"a","values":{"x":1}}`,buffer)

@@ -264,8 +264,8 @@ Api_Project_Set_Params :: struct {
 
 @(private)
 project_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="project.get",summary="project.mirai (name, version, identifier, icon, thumbnail, start scene, window and build) and every plugin the project can see, active or not.",result=Api_Project,flags={.Read_Only},run=api_project_get})
-    api_register(s,st,{name="project.set",params=Api_Project_Set_Params,summary="Changes the fields of project.mirai it names and activates or deactivates plugins; a change of the plugins or of build starts a build, which restarts the editor, and answers when it ends, with build_error when it failed.",result=Api_Project_Changed,run=api_project_set})
+    api_register(s,st,{name="project.get",summary="project.mirai (name, version, identifier, icon, thumbnail, start scene, window and build) and every plugin the project can see, active or not.",result=type_info_of(Api_Project),flags={.Read_Only},run=api_project_get})
+    api_register(s,st,{name="project.set",params=type_info_of(Api_Project_Set_Params),summary="Changes the fields of project.mirai it names and activates or deactivates plugins; a change of the plugins or of build starts a build, which restarts the editor, and answers when it ends, with build_error when it failed.",result=type_info_of(Api_Project_Changed),run=api_project_set})
 }
 
 @(private)

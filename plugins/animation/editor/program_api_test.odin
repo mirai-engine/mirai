@@ -110,7 +110,7 @@ program_test_worlds_destroy :: proc(info:^core.World_Info,document,play:^Program
 @(private)
 program_test_register_result :: proc(f:^Authoring_Test,t:^testing.T,name:string,$P,$R:typeid,run:editor.Api_Handler,defaults:^P=nil) {
     entry:=new(Authoring_Test_Entry,context.temp_allocator);entry^={&f.session,run}
-    testing.expect_value(t,api.method_register(&f.server,{name=name,params=P,params_info=type_info_of(P),result=R,result_info=type_info_of(R),defaults=defaults,user=entry,handler=proc(call:^api.Call) {entry:=(^Authoring_Test_Entry)(call.user);entry.run(entry.session,call)}}),api.Register_Error.None)
+    testing.expect_value(t,api.method_register(&f.server,{name=name,params=type_info_of(P),result=type_info_of(R),defaults=defaults,user=entry,handler=proc(call:^api.Call) {entry:=(^Authoring_Test_Entry)(call.user);entry.run(entry.session,call)}}),api.Register_Error.None)
 }
 
 @(test)

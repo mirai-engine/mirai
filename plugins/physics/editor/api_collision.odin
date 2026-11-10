@@ -88,9 +88,9 @@ Physics_Collision_Set_Params :: struct {
 
 @(private)
 api_collision_register :: proc(s:^editor.Session) {
-    editor.api_method_register(s,{name="physics.collision.inspect",summary="The collision categories and presets the code declares, the pushes between categories and the entries of Collision_Settings no code declares. Read the names here before editing collision.",result=Physics_Collision_Inspect_Result,flags={.Read_Only},run=api_collision_settings_list})
-    editor.api_method_register(s,{name="physics.collision.get",summary="Reads by name the collision of a component of the shown world: what a Collider is and collides with, or what a Query_Filter hits. Without component, that of the only collision component of the entity.",params=Physics_Collision_Get_Params,result=Physics_Collision_Get_Result,flags={.Read_Only},run=api_collision_get})
-    editor.api_method_register(s,{name="physics.collision.set",summary="Edits by name the collision of a Collider or a Query_Filter of a component, or of the only collision component of the entity without one; other fields are kept. One step of undo.",params=Physics_Collision_Set_Params,result=editor.Api_Edit_Result,run=api_collision_set})
+    editor.api_method_register(s,{name="physics.collision.inspect",summary="The collision categories and presets the code declares, the pushes between categories and the entries of Collision_Settings no code declares. Read the names here before editing collision.",result=type_info_of(Physics_Collision_Inspect_Result),flags={.Read_Only},run=api_collision_settings_list})
+    editor.api_method_register(s,{params=type_info_of(Physics_Collision_Get_Params),result=type_info_of(Physics_Collision_Get_Result),name="physics.collision.get",summary="Reads by name the collision of a component of the shown world: what a Collider is and collides with, or what a Query_Filter hits. Without component, that of the only collision component of the entity.",flags={.Read_Only},run=api_collision_get})
+    editor.api_method_register(s,{params=type_info_of(Physics_Collision_Set_Params),result=type_info_of(editor.Api_Edit_Result),name="physics.collision.set",summary="Edits by name the collision of a Collider or a Query_Filter of a component, or of the only collision component of the entity without one; other fields are kept. One step of undo.",run=api_collision_set})
 }
 
 @(private)

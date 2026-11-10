@@ -121,14 +121,14 @@ Api_Prefab_Entity :: struct {
 
 @(private)
 prefab_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="prefab.list",summary="The prefabs of the assets and the instances of the document.",result=Api_Prefab_List,flags={.Read_Only},run=api_prefab_list})
-    api_register(s,st,{name="prefab.inspect",summary="The prefab links and overrides of an entity, or the entities of a prefab.",params=Api_Prefab_Inspect_Params,result=Api_Prefab_Inspect_Result,flags={.Read_Only},run=api_prefab_inspect})
-    api_register(s,st,{name="prefab.create",summary="Writes the subtree of an entity as a prefab and links the entity as its first instance.",params=Api_Prefab_Create_Params,result=Api_Prefab_Created_Result,run=api_prefab_create})
-    api_register(s,st,{name="prefab.apply",summary="Writes the overrides of an entity, a member or one an instance added, into the file of its prefab, or through a variant into its base, ends them and brings every instance up to date.",params=Api_Prefab_Apply_Params,result=Api_Prefab_Count_Result,run=api_prefab_apply})
-    api_register(s,st,{name="prefab.revert",summary="Forgets overrides of an entity, a member or one an instance added, and gives back what its prefab has: values, and no entity added by the instance.",params=Api_Prefab_Entity_Params,result=Api_Prefab_Count_Result,run=api_prefab_revert})
-    api_register(s,st,{name="prefab.refresh",summary="Brings the instances of a prefab, or of all, up to date with its file; what an instance holds on its own stays.",params=Api_Prefab_Params,result=Api_Prefab_Refresh_Result,run=api_prefab_refresh})
-    api_register(s,st,{name="prefab.variant.create",summary="Writes a variant of a prefab: a new prefab whose root is an instance of it, which follows its changes and keeps its own as overrides.",params=Api_Prefab_Variant_Params,result=Api_Prefab_Variant_Result,run=api_prefab_variant_create})
-    api_register(s,st,{name="prefab.unlink",summary="Makes the members of an instance ordinary entities.",params=Api_Prefab_Unlink_Params,result=Api_Edit_Result,run=api_prefab_unlink})
+    api_register(s,st,{name="prefab.list",summary="The prefabs of the assets and the instances of the document.",result=type_info_of(Api_Prefab_List),flags={.Read_Only},run=api_prefab_list})
+    api_register(s,st,{name="prefab.inspect",summary="The prefab links and overrides of an entity, or the entities of a prefab.",params=type_info_of(Api_Prefab_Inspect_Params),result=type_info_of(Api_Prefab_Inspect_Result),flags={.Read_Only},run=api_prefab_inspect})
+    api_register(s,st,{name="prefab.create",summary="Writes the subtree of an entity as a prefab and links the entity as its first instance.",params=type_info_of(Api_Prefab_Create_Params),result=type_info_of(Api_Prefab_Created_Result),run=api_prefab_create})
+    api_register(s,st,{name="prefab.apply",summary="Writes the overrides of an entity, a member or one an instance added, into the file of its prefab, or through a variant into its base, ends them and brings every instance up to date.",params=type_info_of(Api_Prefab_Apply_Params),result=type_info_of(Api_Prefab_Count_Result),run=api_prefab_apply})
+    api_register(s,st,{name="prefab.revert",summary="Forgets overrides of an entity, a member or one an instance added, and gives back what its prefab has: values, and no entity added by the instance.",params=type_info_of(Api_Prefab_Entity_Params),result=type_info_of(Api_Prefab_Count_Result),run=api_prefab_revert})
+    api_register(s,st,{name="prefab.refresh",summary="Brings the instances of a prefab, or of all, up to date with its file; what an instance holds on its own stays.",params=type_info_of(Api_Prefab_Params),result=type_info_of(Api_Prefab_Refresh_Result),run=api_prefab_refresh})
+    api_register(s,st,{name="prefab.variant.create",summary="Writes a variant of a prefab: a new prefab whose root is an instance of it, which follows its changes and keeps its own as overrides.",params=type_info_of(Api_Prefab_Variant_Params),result=type_info_of(Api_Prefab_Variant_Result),run=api_prefab_variant_create})
+    api_register(s,st,{name="prefab.unlink",summary="Makes the members of an instance ordinary entities.",params=type_info_of(Api_Prefab_Unlink_Params),result=type_info_of(Api_Edit_Result),run=api_prefab_unlink})
 }
 
 @(private)

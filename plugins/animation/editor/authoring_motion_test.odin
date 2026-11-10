@@ -19,7 +19,7 @@ motion_authoring_uses_array_lengths_defaults_and_monotonic_distance_diagnostics 
     authoring_test_register(f,t,"set",Motion_Write_Params,authoring_motion_set,defaults)
     authoring_test_register(f,t,"inspect",Authoring_Inspect_Params,authoring_motion_profile_inspect,&inspect)
     entry:=new(Authoring_Test_Entry,context.temp_allocator);entry^={&f.session,authoring_motion_distance}
-    testing.expect_value(t,api.method_register(&f.server,{name="distance",params=Motion_Distance_Params_Query,params_info=type_info_of(Motion_Distance_Params_Query),result=Motion_Distance_Result,result_info=type_info_of(Motion_Distance_Result),user=entry,handler=proc(call:^api.Call) {entry:=(^Authoring_Test_Entry)(call.user);entry.run(entry.session,call)}}),api.Register_Error.None)
+    testing.expect_value(t,api.method_register(&f.server,{name="distance",params=type_info_of(Motion_Distance_Params_Query),result=type_info_of(Motion_Distance_Result),user=entry,handler=proc(call:^api.Call) {entry:=(^Authoring_Test_Entry)(call.user);entry.run(entry.session,call)}}),api.Register_Error.None)
     definition:=`"windows":[{"clip":"walk","name":"ledge","start":0,"end":1}],"distances":[{"clip":"walk","name":"stop","keys":[{"time":0,"distance":3},{"time":1,"distance":1},{"time":2,"distance":0}]}]`
     result:=authoring_test_execute(f,"set",fmt.tprintf(`{{"path":"actor.motion",%s}}`,definition))
     if !testing.expect(t,result.code==0,fmt.tprintf("%s %s",result.message,result.data)) {return}

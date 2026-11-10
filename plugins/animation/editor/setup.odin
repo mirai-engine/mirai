@@ -80,7 +80,7 @@ Setup_Result :: struct {
 @(private)
 setup_register :: proc(s:^editor.Session) {
     defaults:=Setup_Params{want=SETUP_ALL}
-    editor.api_method_register(s,Setup_Params,Setup_Result,{name="animation.character.setup",summary="Makes a character move: writes and assigns the assets of each capability from its skeleton's body and its clips (a .match of its locomotion clips, which its Character of the physics plugin drives, and the profiles of the intents of animation.request), and says how ready each is. One step of undo.",defaults=&defaults,run=setup})
+    editor.api_method_register(s,{params=type_info_of(Setup_Params),result=type_info_of(Setup_Result),name="animation.character.setup",summary="Makes a character move: writes and assigns the assets of each capability from its skeleton's body and its clips (a .match of its locomotion clips, which its Character of the physics plugin drives, and the profiles of the intents of animation.request), and says how ready each is. One step of undo.",defaults=&defaults,run=setup})
 }
 
 // What a clip of the library is by the words of its name. Landing enters walking and Jumping enters

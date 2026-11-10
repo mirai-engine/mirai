@@ -390,6 +390,6 @@ api_view_mode :: proc(s: ^Session, call: ^api.Call) {
 
 @(private)
 view_modes_api_register :: proc(s: ^Session, st: ^Api_State) {
-	api_register(s, st, {name = "editor.view_mode.list", summary = "The modes of inspection of the viewport, of the core and of the plugins: where the menu shows each, the one shown and why one cannot be shown now.",result = Api_View_Modes, flags = {.Read_Only}, run = api_view_modes})
-	api_register(s, st, {name = "editor.view_mode.set", summary = "Shows a mode of inspection in the viewport instead of the lit image. A Play shows the lit image of its game.", params = Api_View_Mode_Params,result = Api_View_Mode, flags = {.Idempotent}, run = api_view_mode})
+	api_register(s, st, {name = "editor.view_mode.list", summary = "The modes of inspection of the viewport, of the core and of the plugins: where the menu shows each, the one shown and why one cannot be shown now.",result=type_info_of(Api_View_Modes), flags = {.Read_Only}, run = api_view_modes})
+	api_register(s, st, {name = "editor.view_mode.set", summary = "Shows a mode of inspection in the viewport instead of the lit image. A Play shows the lit image of its game.", params=type_info_of(Api_View_Mode_Params),result=type_info_of(Api_View_Mode), flags = {.Idempotent}, run = api_view_mode})
 }

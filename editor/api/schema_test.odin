@@ -48,23 +48,10 @@ schema_of_a_struct_has_ranges_required_fields_and_defaults :: proc(t:^testing.T)
     s,ok:=test_server(t);if !ok {return}
     defer server_destroy(&s)
     defaults:=Small{ratio=0.5}
-    testing.expect_value(t,method_register(&s,{name="small",params=Small,defaults=&defaults,handler=noop}),Register_Error.None)
+    testing.expect_value(t,method_register(&s,{name="small",params=type_info_of(Small),defaults=&defaults,handler=noop}),Register_Error.None)
     buffer:[1024]u8
     testing.expect_value(t,schema_text(&s,Small,buffer[:],s.methods[s.method_count-1].defaults),
         `{"type":"object","properties":{"count":{"type":"integer","minimum":1,"maximum":9,"description":"Count"},"ratio":{"type":"number","minimum":0,"maximum":1,"x-unit":"m","default":0.5}},"required":["count"],"additionalProperties":false}`)
-}
-
-// The type of a method comes with its information when another library
-// declares it: the table of types of this one does not have it, and what it
-// would find instead is not that type. The method is refused, saying what to pass.
-@(test)
-a_type_whose_information_is_of_another_type_is_refused :: proc(t:^testing.T) {
-    s,ok:=test_server(t);if !ok {return}
-    defer server_destroy(&s)
-    testing.expect_value(t,method_register(&s,{name="small",params=Small,params_info=type_info_of(Listed),handler=noop}),Register_Error.Invalid_Type)
-    testing.expect(t,strings.contains(s.schema.error,"params_info"),s.schema.error)
-    testing.expect_value(t,method_register(&s,{name="small",params=Small,params_info=type_info_of(Small),handler=noop}),Register_Error.None)
-    testing.expect_value(t,method_register(&s,{name="smaller",params=Small,handler=noop}),Register_Error.None)
 }
 
 Listed :: struct {
@@ -79,7 +66,7 @@ an_array_shows_the_default_of_its_elements_and_not_its_own :: proc(t:^testing.T)
     defer server_destroy(&s)
     defaults:=Listed{scale={1,1,1},rotation={0,0,0,1}}
     for &part in defaults.parts {part={x=3,y=2}}
-    testing.expect_value(t,method_register(&s,{name="listed",params=Listed,defaults=&defaults,handler=noop}),Register_Error.None)
+    testing.expect_value(t,method_register(&s,{name="listed",params=type_info_of(Listed),defaults=&defaults,handler=noop}),Register_Error.None)
     buffer:[1024]u8
     testing.expect_value(t,schema_text(&s,Listed,buffer[:],s.methods[s.method_count-1].defaults),
         `{"type":"object","properties":{"scale":{"type":"array","items":{"type":"number","default":1},"minItems":3,"maxItems":3},"rotation":{"type":"array","items":{"type":"number"},"minItems":4,"maxItems":4},"parts":{"type":"array","items":{"type":"object","properties":{"x":{"type":"integer","minimum":0,"maximum":255},"y":{"type":"integer","minimum":-32768,"maximum":32767,"default":2}},"required":["x"],"additionalProperties":false},"maxItems":8}},"additionalProperties":false}`)
@@ -102,7 +89,7 @@ a_result_the_handler_writes_is_described_by_its_type :: proc(t:^testing.T) {
     s,ok:=test_server(t);if !ok {return}
     defer server_destroy(&s)
     testing.expect_value(t,method_register(&s,{name="bare",writes_result=true,handler=noop}),Register_Error.Invalid_Type)
-    testing.expect_value(t,method_register(&s,{name="written",result=Written,writes_result=true,handler=written_handler}),Register_Error.None)
+    testing.expect_value(t,method_register(&s,{name="written",result=type_info_of(Written),writes_result=true,handler=written_handler}),Register_Error.None)
     method:=method_find(&s,"written")
     buffer:[1024]u8
     w:serial.Writer
@@ -128,7 +115,7 @@ a_result_the_handler_writes_is_described_by_its_type :: proc(t:^testing.T) {
 schema_of_every_kind_of_field :: proc(t:^testing.T) {
     s,ok:=test_server(t);if !ok {return}
     defer server_destroy(&s)
-    testing.expect_value(t,method_register(&s,{name="shapes",params=Shapes,result=Shapes,handler=noop}),Register_Error.None)
+    testing.expect_value(t,method_register(&s,{name="shapes",params=type_info_of(Shapes),result=type_info_of(Shapes),handler=noop}),Register_Error.None)
     buffer:[4096]u8
     text:=schema_text(&s,Shapes,buffer[:])
     expected:=[]string{
@@ -159,10 +146,10 @@ registry_refuses_invalid_duplicate_and_excess_methods :: proc(t:^testing.T) {
     testing.expect_value(t,method_register(&s,{name="a.b",handler=noop}),Register_Error.None)
     testing.expect_value(t,method_register(&s,{name="a.b",handler=noop}),Register_Error.Duplicate)
     testing.expect_value(t,method_register(&s,{name="a_b",handler=noop}),Register_Error.Duplicate)
-    testing.expect_value(t,method_register(&s,{name="c",params=i32,handler=noop}),Register_Error.Invalid_Type)
-    testing.expect_value(t,method_register(&s,{name="c",params=struct{p:^int},handler=noop}),Register_Error.Invalid_Type)
+    testing.expect_value(t,method_register(&s,{name="c",params=type_info_of(i32),handler=noop}),Register_Error.Invalid_Type)
+    testing.expect_value(t,method_register(&s,{name="c",params=type_info_of(struct{p:^int}),handler=noop}),Register_Error.Invalid_Type)
     testing.expect(t,s.schema.error!="","the schema says why a type is refused")
-    testing.expect_value(t,method_register(&s,{name="c",result=string,handler=noop}),Register_Error.Invalid_Type)
+    testing.expect_value(t,method_register(&s,{name="c",result=type_info_of(string),handler=noop}),Register_Error.Invalid_Type)
     testing.expect_value(t,method_register(&s,{name="c",defaults=&s,handler=noop}),Register_Error.Invalid_Type)
     testing.expect_value(t,method_register(&s,{name="c",handler=noop}),Register_Error.None)
     testing.expect_value(t,method_register(&s,{name="d",handler=noop}),Register_Error.None)
@@ -175,8 +162,8 @@ registry_refuses_types_larger_than_the_scratch :: proc(t:^testing.T) {
     s,ok:=test_server(t,{scratch=1<<20});if !ok {return}
     defer server_destroy(&s)
     Huge :: struct {data:[1<<20]u8}
-    testing.expect_value(t,method_register(&s,{name="huge",params=Huge,handler=noop}),Register_Error.Too_Large)
-    testing.expect_value(t,method_register(&s,{name="huge",result=Huge,handler=noop}),Register_Error.Too_Large)
+    testing.expect_value(t,method_register(&s,{name="huge",params=type_info_of(Huge),handler=noop}),Register_Error.Too_Large)
+    testing.expect_value(t,method_register(&s,{name="huge",result=type_info_of(Huge),handler=noop}),Register_Error.Too_Large)
 }
 
 @(test)
@@ -249,10 +236,10 @@ open_handler :: proc(call:^Call) {
 a_method_is_described_by_its_types_alone :: proc(t:^testing.T) {
     s,ok:=test_server(t);if !ok {return}
     defer server_destroy(&s)
-    testing.expect_value(t,method_register(&s,{name="open",params=Open,result=Open,handler=open_handler}),Register_Error.None)
+    testing.expect_value(t,method_register(&s,{name="open",params=type_info_of(Open),result=type_info_of(Open),handler=open_handler}),Register_Error.None)
     testing.expect_value(t,method_register(&s,{name="bare",handler=noop}),Register_Error.None)
-    testing.expect_value(t,method_register(&s,{name="ranged",params=struct{window:struct{width,height:int `mirai:"optional,min=1"`} `mirai:"optional"`,scale:f32 `mirai:"optional,min=1"`},handler=noop}),Register_Error.None)
-    testing.expect_value(t,method_register(&s,{name="recursive",params=struct{inner:struct{again:[]Open_Recursive}},handler=noop}),Register_Error.Invalid_Type)
+    testing.expect_value(t,method_register(&s,{name="ranged",params=type_info_of(struct{window:struct{width,height:int `mirai:"optional,min=1"`} `mirai:"optional"`,scale:f32 `mirai:"optional,min=1"`}),handler=noop}),Register_Error.None)
+    testing.expect_value(t,method_register(&s,{name="recursive",params=type_info_of(struct{inner:struct{again:[]Open_Recursive}}),handler=noop}),Register_Error.Invalid_Type)
     buffer:=make([]u8,8192,context.temp_allocator)
     schema :: proc(s:^Server,name:string,result:bool,buffer:[]u8) -> string {
         w:serial.Writer
@@ -318,7 +305,7 @@ Open_Recursive :: struct {inner:struct {again:[]Open_Recursive}}
 the_description_of_the_methods_has_the_shape_it_declares :: proc(t:^testing.T) {
     s,ok:=test_server(t);if !ok {return}
     defer server_destroy(&s)
-    testing.expect_value(t,method_register(&s,{name="shapes",params=Shapes,result=Shapes,handler=noop,flags={.Read_Only,.Idempotent}}),Register_Error.None)
+    testing.expect_value(t,method_register(&s,{name="shapes",params=type_info_of(Shapes),result=type_info_of(Shapes),handler=noop,flags={.Read_Only,.Idempotent}}),Register_Error.None)
     testing.expect_value(t,method_register(&s,{name="grow",plugin="foliage",handler=noop}),Register_Error.None)
     server_plugins_set(&s,{{"foliage",true},{"terrain",false}})
     buffer:=make([]u8,64*1024,context.temp_allocator)

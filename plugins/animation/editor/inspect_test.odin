@@ -10,7 +10,7 @@ import mm "mirai:std/math"
 import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
-result_shape_mismatch :: proc($T:typeid,text:string) -> string {return api.result_mismatch(T,text,type_info_of(T))}
+result_shape_mismatch :: proc($T:typeid,text:string) -> string {return api.result_mismatch(T,text)}
 
 @(test)
 inspectors_read_every_definition_kind_and_the_parts_of_an_instance :: proc(t:^testing.T) {

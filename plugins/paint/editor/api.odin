@@ -42,8 +42,8 @@ Clear_Result :: struct {cleared:u32}
 api_register :: proc(s:^editor.Session) {
     editor.tool_entry(s,"paint","Paint",.Edit,{key=.B,set=true})
     defaults:=Stroke_Params{radius=RADIUS_DEFAULT,strength=STRENGTH_DEFAULT,color=COLOR_DEFAULT}
-    editor.api_method_register(s,Stroke_Params,Stroke_Result,{name="paint.stroke",summary="Paints the vertex colors of the mesh of an entity with the brush of the Paint tool along world points. One step of undo; the entity shows a painted copy of its mesh that stays unsaved until saved.",defaults=&defaults,run=api_stroke})
-    editor.api_method_register(s,Clear_Params,Clear_Result,{name="paint.clear",summary="Gives painted entities back the mesh or primitive they showed before their first stroke. One step of undo.",run=api_clear})
+    editor.api_method_register(s,{params=type_info_of(Stroke_Params),result=type_info_of(Stroke_Result),name="paint.stroke",summary="Paints the vertex colors of the mesh of an entity with the brush of the Paint tool along world points. One step of undo; the entity shows a painted copy of its mesh that stays unsaved until saved.",defaults=&defaults,run=api_stroke})
+    editor.api_method_register(s,{params=type_info_of(Clear_Params),result=type_info_of(Clear_Result),name="paint.clear",summary="Gives painted entities back the mesh or primitive they showed before their first stroke. One step of undo.",run=api_clear})
 }
 
 @(private)

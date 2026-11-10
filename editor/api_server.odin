@@ -57,8 +57,8 @@ Api_State :: struct {
     entries:[API_METHOD_CAPACITY]Api_Entry,
     count:int,
     refused:int,                // methods that were not registered
-    refusal:string,             // why the first one was not, in refusal_buffer
-    refusal_buffer:[256]u8,
+    refusal:string,             // why each was not, separated by "; ", in refusal_buffer
+    refusal_buffer:[4096]u8,
     poll_temp:runtime.Allocator,
     allocator:runtime.Allocator,
     in_call:int,
@@ -147,7 +147,7 @@ api_open :: proc(s:^Session,port:int,manual:bool,listen:=true) -> (error:Api_Ope
     commands_register(s,st)
     api_providers_register(s)
     if st.refused>0 {
-        problem=fmt.tprintf("%d methods did not register, the first: %s",st.refused,st.refusal)
+        problem=fmt.tprintf("%d methods did not register: %s",st.refused,st.refusal)
         api_close(s)
         return .Methods,problem
     }
@@ -256,7 +256,7 @@ api_poll :: proc(s:^Session) {
     st.poll_temp=context.temp_allocator
     if st.library_generation!=s.library_generation {
         if !api.server_methods_reset(&st.server) {return}
-        st.count,st.refused=0,0
+        st.count,st.refused,st.refusal=0,0,""
         st.commands={}
         api_schema_free(st)
         api_schema_build(s,st)
@@ -264,7 +264,7 @@ api_poll :: proc(s:^Session) {
         api_methods_register(s,st)
         commands_register(s,st)
         api_providers_register(s)
-        if st.refused>0 {log.errorf("%d methods of the API were not registered after the reload, the first: %s",st.refused,st.refusal)}
+        if st.refused>0 {log.errorf("%d methods of the API were not registered after the reload: %s",st.refused,st.refusal)}
         st.library_generation=s.library_generation
     }
     st.server.instance={os.get_pid(),project.ENGINE_VERSION,project_name(s),s.project_root}
@@ -515,8 +515,7 @@ api_asks :: proc(s:^Session,text:string) -> bool {return text==COMMAND_ASK && ap
 
 Api_Method :: struct {
     name,summary:string,
-    params,result:typeid,
-    params_info,result_info:^runtime.Type_Info,
+    params,result:^runtime.Type_Info, // type_info_of in the library that declares them: each library has its own table
     defaults:rawptr,
     run:Api_Handler,
     flags:api.Method_Flags,
@@ -554,30 +553,24 @@ api_plugins_set :: proc(s:^Session,st:^Api_State) {
     api.server_plugins_set(&st.server,plugins)
 }
 
-// Registers a method of a plugin, with P its params and R its result: their
-// type info comes from the library that declares them, where the procedure
-// instantiates.
-api_method_register :: proc{api_method_register_free,api_method_register_params,api_method_register_typed}
-
-api_method_register_free :: proc(s:^Session,m:Api_Method) -> bool {
+// Registers a method of a plugin.
+api_method_register :: proc(s:^Session,m:Api_Method) -> bool {
     st:=api_state(s)
     return st!=nil && api_register(s,st,m)
 }
-api_method_register_params :: proc(s:^Session,$P:typeid,m:Api_Method) -> bool {
-    m:=m
-    m.params,m.params_info=P,type_info_of(P)
-    return api_method_register_free(s,m)
-}
-api_method_register_typed :: proc(s:^Session,$P,$R:typeid,m:Api_Method) -> bool {
-    m:=m
-    m.result,m.result_info=R,type_info_of(R)
-    return api_method_register_params(s,P,m)
+
+// Counts a method or an entry that did not register and adds why to the refusal.
+api_refuse :: proc(st:^Api_State,why:string) {
+    st.refused+=1
+    used:=len(st.refusal)
+    if used>0 {used+=copy(st.refusal_buffer[used:],"; ")}
+    used+=copy(st.refusal_buffer[used:],why)
+    st.refusal=string(st.refusal_buffer[:used])
 }
 
 api_register :: proc(s:^Session,st:^Api_State,m:Api_Method) -> bool {
     refuse :: proc(st:^Api_State,format:string,args:..any) -> bool {
-        st.refused+=1
-        if st.refused==1 {st.refusal=fmt.bprintf(st.refusal_buffer[:],format,..args)}
+        api_refuse(st,fmt.tprintf(format,..args))
         return false
     }
     if st.count>=len(st.entries) {
@@ -585,13 +578,8 @@ api_register :: proc(s:^Session,st:^Api_State,m:Api_Method) -> bool {
     }
     entry:=&st.entries[st.count]
     entry^={state=st,session=s,run=m.run}
-    // The types of the editor are known here: the library of the API has its own type table.
-    params_info,result_info:=m.params_info,m.result_info
-    if params_info==nil && m.params!=nil {params_info=type_info_of(m.params)}
-    if result_info==nil && m.result!=nil {result_info=type_info_of(m.result)}
     result:=api.method_register(&st.server,{
         name=m.name,summary=m.summary,plugin=st.plugin,params=m.params,result=m.result,defaults=m.defaults,
-        params_info=params_info,result_info=result_info,
         handler=api_trampoline,user=entry,flags=m.flags,writes_result=m.writes_result,
     })
     if result!=.None {

@@ -690,8 +690,8 @@ Api_Editor_Material_Variants_Params :: struct {
 
 @(private)
 material_document_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="editor.material.show",params=Api_Editor_Material_Show_Params,summary="Opens the document of a material for the user in a tab next to the scenes, with its preview, its variants and its values; without material it closes the one in front.",result=Api_Material_Document_Result,flags={.Idempotent},run=api_material_document})
-    api_register(s,st,{name="editor.material.variants",params=Api_Editor_Material_Variants_Params,summary="Proposes to the user sets of values of a material, each on its own sphere in its document, which it opens; the material changes only when a click on one sets them, as one undo step.",result=Api_Material_Variants_Result,flags={.Idempotent},run=api_material_variants})
+    api_register(s,st,{name="editor.material.show",params=type_info_of(Api_Editor_Material_Show_Params),summary="Opens the document of a material for the user in a tab next to the scenes, with its preview, its variants and its values; without material it closes the one in front.",result=type_info_of(Api_Material_Document_Result),flags={.Idempotent},run=api_material_document})
+    api_register(s,st,{name="editor.material.variants",params=type_info_of(Api_Editor_Material_Variants_Params),summary="Proposes to the user sets of values of a material, each on its own sphere in its document, which it opens; the material changes only when a click on one sets them, as one undo step.",result=type_info_of(Api_Material_Variants_Result),flags={.Idempotent},run=api_material_variants})
 }
 
 @(private)

@@ -89,7 +89,7 @@ Api_Engine_Diagnostics_Result :: struct {
 @(private)
 api_diagnostics_register :: proc(s:^Session,st:^Api_State) {
     defaults:=Api_Diagnostics_Params{min_level=.Info,limit=50}
-    api_register(s,st,{name="engine.diagnostics",summary="The text behind the counters of engine.status: what the GPU, the console, the assets and the last build reported, and the problems the functions of the edited world and of each Play met.",params=Api_Diagnostics_Params,result=Api_Engine_Diagnostics_Result,defaults=&defaults,flags={.Core,.Read_Only,.As_User},run=api_diagnostics})
+    api_register(s,st,{name="engine.diagnostics",summary="The text behind the counters of engine.status: what the GPU, the console, the assets and the last build reported, and the problems the functions of the edited world and of each Play met.",params=type_info_of(Api_Diagnostics_Params),result=type_info_of(Api_Engine_Diagnostics_Result),defaults=&defaults,flags={.Core,.Read_Only,.As_User},run=api_diagnostics})
 }
 
 // The text without a multi-byte character cut at its end.
