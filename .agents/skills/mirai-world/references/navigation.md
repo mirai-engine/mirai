@@ -19,6 +19,11 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
   the document's mesh. `Navigation_Builds` (per world, application) holds the jobs and what
   follows the entities; a new copy is recognized by `Navigation.uid` and discards what was being
   built for another.
+- **Every change of a mesh, a volume or a coarse graph moves `Navigation.revision`**, also across
+  a reset. The uid and the revision of the `Navigation` they were built in say whose meshes a copy
+  holds, until its own revision moves: the copy a history keeps (`navigation_copy_kept`) takes
+  them again only when it holds those of another, also after the world went back to a copy, and
+  copies the marks of the tiles, the settings and the counts every time.
 - It builds by itself, in `navigation_build` (`fixed`, `react`, game and editor, `server`):
   - **Where.** Inside the `Nav_Bounds`; with none, in the box of all the static collision
     (`phys.static_bounds`).

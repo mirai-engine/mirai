@@ -114,7 +114,7 @@ Replica :: struct {
 @(private)
 Frame :: struct {
     world:rawptr,
-    marks:[]core.Copy_Mark, // what each table of the World was when it was last copied here
+    marks:[]core.Copy_Mark, // what each table and storage of the World was when it was last copied here
     tick:u32,
     valid:bool,
     whole:bool,        // the world was replaced since: the next copy is whole
@@ -217,7 +217,7 @@ history_make :: proc(s:^Net_Session,w:core.World_Ref,c:^Client,ticks:int) -> (ok
         if alloc_error!=nil || data==nil {return false}
         frame.world=data
         if !w.info.init[.World](data,allocator) {return false}
-        if frame.marks,error=make([]core.Copy_Mark,len(w.info.tables),allocator);error!=nil {return false}
+        if frame.marks,error=make([]core.Copy_Mark,core.copy_marks_count(w.info),allocator);error!=nil {return false}
         if frame.delays,error=make([]Delay,d.max_objects,allocator);error!=nil {return false}
     }
     if c.records,error=make([]Record,slots*d.predicted_capacity,allocator);error!=nil {return false}

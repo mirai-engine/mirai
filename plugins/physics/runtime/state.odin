@@ -547,8 +547,7 @@ state_copy_kept :: proc(dst,src:^Physics_State) -> bool {return state_copy_as(ds
 @(private)
 state_copy_as :: proc(dst,src:^Physics_State,kept:bool) -> bool {
     if dst==src {return true}
-    if !core.value_copy(&dst.links,&src.links,type_info_of(core.Entity_Map(Link))) || !core.value_copy(&dst.joints,&src.joints,type_info_of(core.Entity_Map(Joint_Link))) {return false}
-    if !core.value_copy(&dst.fluids,&src.fluids,type_info_of(core.Entity_Map(Fluid_Link))) {return false}
+    if !core.entity_map_copy(&dst.links,&src.links) || !core.entity_map_copy(&dst.joints,&src.joints) || !core.entity_map_copy(&dst.fluids,&src.fluids) {return false}
     if !core.value_copy(&dst.sources,&src.sources,type_info_of([dynamic]Geometry_Source)) {return false}
     if !core.value_copy(&dst.pieces,&src.pieces,type_info_of([dynamic]Piece)) {return false}
     dst.world_body,dst.pass,dst.stats,dst.collision,dst.targets_seen=src.world_body,src.pass,src.stats,src.collision,src.targets_seen

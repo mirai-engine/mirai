@@ -53,7 +53,12 @@ settle :: proc(info:^World_Info,world,editor:rawptr) -> (settled:int) {
     }
     if s.disabled>=0 && s.parent>=0 && s.hierarchy>=0 {
         h:=cast(^Hierarchy)(uintptr(world)+info.storages[s.hierarchy].offset)
+        seen,version,rows,cut:=h.seen,h.version,len(h.parent),len(h.cut)
         _=hierarchy_settle(h,Read(Parent){cast(^Table(Parent))(uintptr(world)+info.tables[s.parent].offset)},es)
+        // The settle is the writer of the Hierarchy: a copy of what changed takes it when it moved.
+        if info.revisions!=0 && (h.seen!=seen || h.version!=version || len(h.parent)!=rows || len(h.cut)!=cut) {
+            ([^]u64)(uintptr(world)+info.revisions)[s.hierarchy]+=1
+        }
         _=entities_activity(es,Read(Disabled){cast(^Table(Disabled))(uintptr(world)+info.tables[s.disabled].offset)},ref(h))
     }
     if linked {

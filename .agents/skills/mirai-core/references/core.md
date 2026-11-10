@@ -363,9 +363,18 @@ library.
   `World_Schema` of each table and `scene` storage (without `transient` fields; another layout hash
   migrates by field names), which scenes and saves use without rebuilding it.
 - `World_Info.init` and `copy` can fail without memory and leave a world that `destroy` releases;
-  `swap` does not allocate and what is not copied stays in its world. `copy_changed` takes only the
-  tables that changed; storages are always copied, with their `copy_kept` if they have one. `clear`
-  takes the derived storages to their start ([classes](generator.md#attributes)).
+  `swap` does not allocate and what is not copied stays in its world. `clear` takes the derived
+  storages to their start ([classes](generator.md#attributes)).
+- `copy_changed` takes only the tables that changed and the storages that were written, with their
+  `copy_kept` if they have one, and keeps `copy_marks_count` marks for it. A `World` holds a
+  revision for each storage, which moves when a function receives the storage with `^S`
+  ([generated functions](generator.md#generated-functions)), when code outside the loop asks for it
+  (`world_storage`, `world_storage_of`, `world_storage_at`: what writes a storage outside the loop
+  reaches it through one of these), when `core.settle` changes the `Hierarchy`, and when the world
+  is copied over, swapped or cleared. A storage written through a `core.Ref`, or through a pointer
+  kept from an earlier function, changes without it: `MIRAI_CHECK_WRITES` makes `copy_changed`
+  compare the storages it left alone and `core.fail` on one that differs. A World made by hand has
+  no revisions (`World_Info.revisions`), and its storages are copied every time.
 - The `by_world` values of a world are given and taken by `attach`/`detach`; `world_storage` does
   not return them: `host.app_world_storage` looks up that of a world.
 

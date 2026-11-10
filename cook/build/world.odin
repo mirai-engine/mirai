@@ -1620,9 +1620,15 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
 
     places:=[3]core.Place{.World,.Shared,.Editor}
     struct_names:=[3]string{"World","Shared","Editor"}
+    // Each storage by its index in info.storages, where its revision is.
+    storage_index:=make(map[^Type]int,context.temp_allocator)
+    for t in g.types {
+        if t.kind==.Storage && included(t,editor) {storage_index[t]=len(storage_index)}
+    }
+    tables:=count_kind(g,.Component,editor)
     for place,pi in places {
         fmt.sbprintf(w,"%s :: struct {{\n",struct_names[pi])
-        if place==.World {fmt.sbprintf(w,"    entities:%s.Entities,\n",core_alias)}
+        if place==.World {fmt.sbprintf(w,"    entities:%s.Entities,\n    storage_revisions:[%d]u64,\n",core_alias,len(storage_index))}
         for t in g.types {
             if t.place!=place || !included(t,editor) {continue}
             if t.kind==.Component {fmt.sbprintf(w,"    %s:%s.Table(%s.%s),\n",t.field,core_alias,t.pkg.alias,t.name)}
@@ -1691,13 +1697,14 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     // copy and clear of World; the index of the entities by Id comes with
     // them and goes on following the table of Id that comes with it. The
     // copy of what changed takes again only the tables that changed since the
-    // marks, one per table by its index in info.tables, and is the copy a
-    // history keeps: it takes the copy_kept of the storages that have one
+    // marks, one per table by its index in info.tables, and the storages a
+    // function received to write since theirs, which follow those of the
+    // tables; it is the copy a history keeps: it takes the copy_kept of the
+    // storages that have one
     identity:=g.by_key["mirai:core.Id"]
-    tables:=count_kind(g,.Component,editor)
     for changed in ([2]bool{false,true}) {
         if changed {
-            fmt.sbprintf(w,"copy_changed_world :: proc(dst_data,src_data:rawptr,marks:[]%s.Copy_Mark) -> bool {{\n    if dst_data==src_data {{return true}}\n    if len(marks)<%d {{return copy_world(dst_data,src_data)}}\n",core_alias,tables)
+            fmt.sbprintf(w,"copy_changed_world :: proc(dst_data,src_data:rawptr,marks:[]%s.Copy_Mark) -> bool {{\n    if dst_data==src_data {{return true}}\n    if len(marks)<%d {{return copy_world(dst_data,src_data)}}\n",core_alias,tables+len(storage_index))
         } else {
             fmt.sbprint(w,"copy_world :: proc(dst_data,src_data:rawptr) -> bool {\n    if dst_data==src_data {return true}\n")
         }
@@ -1714,14 +1721,27 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
                 else {fmt.sbprintf(w,"    if !%s.table_copy(&dst.%s,&src.%s) {{return false}}\n",core_alias,t.field,t.field)}
             } else if t.copy=="false" {
                 continue
-            } else if changed && t.copy_kept!="" {
-                fmt.sbprintf(w,"    if !%s.%s(&dst.%s,&src.%s) {{return false}}\n",t.pkg.alias,t.copy_kept,t.field,t.field)
-            } else if t.copy!="" {
-                fmt.sbprintf(w,"    if !%s.%s(&dst.%s,&src.%s) {{return false}}\n",t.pkg.alias,t.copy,t.field,t.field)
             } else {
-                fmt.sbprintf(w,"    if !%s.value_copy(&dst.%s,&src.%s,type_info_of(%s.%s)) {{return false}}\n",core_alias,t.field,t.field,t.pkg.alias,t.name)
+                // The copy of what changed takes a storage again only when its
+                // revision moved since the mark of this copy.
+                copy:=fmt.tprintf("%s.value_copy(&dst.%s,&src.%s,type_info_of(%s.%s))",core_alias,t.field,t.field,t.pkg.alias,t.name)
+                if changed && t.copy_kept!="" {
+                    copy=fmt.tprintf("%s.%s(&dst.%s,&src.%s)",t.pkg.alias,t.copy_kept,t.field,t.field)
+                } else if t.copy!="" {
+                    copy=fmt.tprintf("%s.%s(&dst.%s,&src.%s)",t.pkg.alias,t.copy,t.field,t.field)
+                }
+                if !changed {
+                    fmt.sbprintf(w,"    if !%s {{return false}}\n",copy)
+                    continue
+                }
+                k:=storage_index[t]
+                fmt.sbprintf(w,"    if %s.storage_changed(&marks[%d],src.storage_revisions[%d]) {{\n        if !%s {{return false}}\n        %s.storage_copied(&marks[%d],&dst.storage_revisions[%d],src.storage_revisions[%d])\n    }}\n",core_alias,tables+k,k,copy,core_alias,tables+k,k,k)
+                if t.copy=="" && t.copy_kept=="" {
+                    fmt.sbprintf(w,"    when %s.CHECK_WRITES {{%s.storage_check(&dst.%s,&src.%s,type_info_of(%s.%s),\"%s\")}}\n",core_alias,core_alias,t.field,t.field,t.pkg.alias,t.name,t.name)
+                }
             }
         }
+        if !changed {fmt.sbprintf(w,"    %s.revisions_copied(dst.storage_revisions[:],src.storage_revisions[:])\n",core_alias)}
         if identity!=nil {fmt.sbprintf(w,"    %s.ids_moved(&dst.entities,%s.read(&dst.%s),synced)\n",core_alias,core_alias,identity.field)}
         fmt.sbprint(w,"    return true\n}\n\n")
     }
@@ -1738,6 +1758,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
         else if t.swap!="" {fmt.sbprintf(w,"    %s.%s(&a.%s,&b.%s)\n",t.pkg.alias,t.swap,t.field,t.field)}
         else {fmt.sbprintf(w,"    gen_slice.ptr_swap_non_overlapping(&a.%s,&b.%s,size_of(a.%s))\n",t.field,t.field,t.field)}
     }
+    fmt.sbprintf(w,"    %s.revisions_swapped(a.storage_revisions[:],b.storage_revisions[:])\n",core_alias)
     if identity!=nil {fmt.sbprintf(w,"    %s.ids_moved(&a.entities,%s.read(&a.%s),b_synced)\n    %s.ids_moved(&b.entities,%s.read(&b.%s),a_synced)\n",core_alias,core_alias,identity.field,core_alias,core_alias,identity.field)}
     fmt.sbprint(w,"}\n\n")
     // Clearing a World takes its entities, and the storages derived from them
@@ -1758,6 +1779,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
         value,found:=default_value(t)
         fmt.sbprintf(w,"    w.%s=%s\n",t.field,found?value:"{}")
     }
+    fmt.sbprintf(w,"    %s.revisions_moved(w.storage_revisions[:])\n",core_alias)
     fmt.sbprint(w,"    return true\n}\n\n")
 
     // The values of the by_world storages of a World, by its id
@@ -1848,6 +1870,14 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
         fmt.sbprintf(w,"    w:=cast(^World)world\n    s:=cast(^Shared)shared\n    e:=cast(^Editor)editor\n    app:=cast(^%s.App)app_data\n    _,_,_=s,e,app\n",host_alias)
         // A client neither runs nor resimulates what the server or a game alone decides.
         if step.server {fmt.sbprintf(w,"    if w.%s.role==.Client {{return}}\n",g.by_key["mirai:core.Network"].field)}
+        // A storage of the World handed out to write is another from here on:
+        // the copy of what changed takes it again (copy_changed_world).
+        for param,pi in step.params {
+            if param.kind!=.Storage_Write || param.type.place!=.World || param.type.by_world || param.type.copy=="false" {continue}
+            again:=false
+            for other in step.params[:pi] {again||=other.kind==.Storage_Write && other.type==param.type}
+            if !again {fmt.sbprintf(w,"    w.storage_revisions[%d]+=1\n",storage_index[param.type])}
+        }
         fmt.sbprintf(w,"    started:=gen_time.tick_now()\n    zone:=%s.profile_step_begin(app,%d,worker)\n",host_alias,si)
         if strings.builder_len(checks)>0 {
             fmt.sbprintf(w,"    when %s.CHECK_WRITES {{\n        checks:=[?]%s.Write_Check{{%s}}\n        %s\n        %s.write_check_end(checks[:],\"%s\")\n    }} else {{%s}}\n",core_alias,core_alias,strings.to_string(checks),call,core_alias,step.name,call)
@@ -2030,7 +2060,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     fmt.sbprintf(w,"    info:%s.World_Info\n",core_alias)
     fmt.sbprint(w,"    info.sizes={.World=size_of(World),.Shared=size_of(Shared),.Editor=size_of(Editor)}\n")
     fmt.sbprint(w,"    info.aligns={.World=align_of(World),.Shared=align_of(Shared),.Editor=align_of(Editor)}\n")
-    fmt.sbprint(w,"    info.entities=offset_of(World,entities)\n")
+    fmt.sbprint(w,"    info.entities,info.revisions=offset_of(World,entities),offset_of(World,storage_revisions)\n")
     fmt.sbprint(w,"    info.tables,info.storages,info.messages,info.steps=tables,storages,messages,steps\n")
     fmt.sbprint(w,"    info.named_types,info.names,info.name_bits,info.actions=named_types,names,name_bits,actions\n")
     fmt.sbprint(w,"    info.records=records\n")

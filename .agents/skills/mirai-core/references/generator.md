@@ -112,7 +112,10 @@ receives the place of its origin: a type or a function of an editor package neve
 - `copy_kept="proc"`: a `World` storage that is copied; a procedure of the package
   `(dst, src: ^S) -> bool` that `copy_changed` uses, the copy that a history keeps and that is only
   copied back with `copy`: it may store only what that return trip needs (physics, its pools sized
-  to what is used and not to their capacities).
+  to what is used and not to their capacities). `copy_changed` calls it only when the storage was
+  [received to write](core.md#world-reflection) since the last copy; a storage its owner receives
+  on every tick tells there what of it changed, by an identity of its own that no world of another
+  timeline repeats (navigation: the uid and the revision of its meshes).
 - `copy=false`: the storage is neither copied nor swapped: it stays in its world (what a world is
   and not its content).
 - `swap="proc"`: a procedure of the package `(a, b: ^S)` that replaces the default swap (the bytes),
@@ -335,7 +338,10 @@ parameters by hand.
   `write_check_begin`/`write_check_end`.
 
 The generated code does not touch `version`: each row requested for writing bumps it
-([stamps](core.md#tables)). Receiving a table with `^` and not writing it does not move it.
+([stamps](core.md#tables)). Receiving a table with `^` and not writing it does not move it. A
+storage has no rows to stamp: receiving a `World` storage with `^S` moves its revision before the
+function runs, written or not, and `copy_changed` takes it again
+([reflection](core.md#world-reflection)).
 
 ### Order
 

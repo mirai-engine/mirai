@@ -656,6 +656,9 @@ colliders_of_the_same_mesh_and_scale_share_one_slot_of_geometry :: proc(t:^testi
     copy:Physics_State
     defer state_destroy(&copy)
     testing.expect(t,state_copy(&copy,&g.state))
+    // What links the entities to the simulation is plain data: its copy is a copy of its bytes.
+    testing.expect(t,core.value_flat(type_info_of(Link)) && core.value_flat(type_info_of(Joint_Link)) && core.value_flat(type_info_of(Fluid_Link)))
+    for wall in walls {testing.expect(t,link_find(&copy,wall)!=nil && link_find(&copy,wall)^==link_find(&g.state,wall)^)}
     copied,_:=geometry_budget({&copy},.Hull)
     testing.expect_value(t,copied,2)
     buffer:=make([]byte,sim.world_snapshot_capacity(&g.state.world))

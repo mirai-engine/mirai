@@ -172,11 +172,15 @@ A game is a struct in memory and a list of functions that transform it
   shown or simulated is replaced with `host.app_world_replace` (separate copy and swap without
   allocating), never with `clear` and `copy` on top.
 - **A copy that is kept copies only what changed.** `info.copy_changed` serves a destination that is
-  a copy of the same world (the rollback history and the Play one); it relies on the stamps: a world
-  into which another one of a different origin was copied is copied whole
-  ([tables](references/core.md#tables)). That destination is only copied back with `copy`, it never
-  runs: the storages with `copy_kept` keep there only what that return trip needs
-  ([attributes](references/generator.md#attributes)).
+  a copy of the same world (the rollback history and the Play one); it relies on the stamps of the
+  rows and on the revisions of the storages: a world into which another one of a different origin
+  was copied is copied whole ([tables](references/core.md#tables)). That destination is only copied
+  back with `copy`, it never runs: the storages with `copy_kept` keep there only what that return
+  trip needs ([attributes](references/generator.md#attributes)).
+- **A storage of a `World` is written by whoever received it with `^S` or asked `core` for it**
+  (`world_storage*`): that moves its revision, and a copy of what changed takes it again. Reaching
+  one by its offset, or writing through a `core.Ref`, leaves a rollback with the older value
+  ([reflection](references/core.md#world-reflection)).
 - **Clearing a world takes its derived storages to their start.** Loading a scene or a save and
   opening a document call `info.clear`; what remains is only what `@(storage,keep)` says (state of
   the run), the settings and what is not copied. What a save must keep goes in a component, never

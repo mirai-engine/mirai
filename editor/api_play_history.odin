@@ -261,7 +261,7 @@ api_history_verify :: proc(s:^Session,r:^Run,from,to:u64,out:^Api_Play_Verify) -
     defer mem.free(copied,allocator)
     if !s.info.init[.World](copied,allocator) {s.info.destroy[.World](copied);return "No memory for a copy of the World to compare"}
     defer s.info.destroy[.World](copied)
-    marks,marks_error:=make([]core.Copy_Mark,len(s.info.tables),context.temp_allocator)
+    marks,marks_error:=make([]core.Copy_Mark,core.copy_marks_count(s.info),context.temp_allocator)
     if marks_error!=nil {return "No memory for a copy of the World to compare"}
     w:=run_ref(s,r)
     for n in 0..<h.count {
