@@ -275,9 +275,11 @@ app_shaders_poll :: proc(app:^App) {
         case !load.built:
             sh.state=.Failed
             if load.candidate!=nil {log.errorf("shaders: the generation of %s was not taken: %s",load.folder,load.candidate.error)}
+        case load.candidate!=nil && !render.renderer_publish_shader_reload(r,&load.assets,load.candidate):
+            sh.state=.Failed
+            log.errorf("shaders: the generation of %s was not taken: %s",load.folder,r.error)
         case:
-            if load.candidate!=nil {render.renderer_publish_shader_reload(r,&load.assets,load.candidate)}
-            else {render.renderer_publish_shader_metadata(r,&load.assets)}
+            if load.candidate==nil {render.renderer_publish_shader_metadata(r,&load.assets)}
             r.programs=load.catalog
             r.programs.loaded=true
             load.catalog={}
