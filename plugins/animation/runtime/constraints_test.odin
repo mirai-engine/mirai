@@ -148,7 +148,7 @@ taking_a_sampled_pose_pairs_dense_skeletons_by_name_then_path_and_preserves_acto
         paths:=source_paths[:] if set==0 else target_paths[:]
         for &bone,i in bones {
             bone.rotation,bone.scale=1,{1,1,1};bone.target=base.name_hash(paths[i])
-            base.text_set(bone.path[:],paths[i]);base.text_set(bone.name[:],"hand" if i==len(bones)-1 else paths[i])
+            base.text_set(bone.path[:],paths[i]);base.text_set(bone.name[:],"hand" if i==len(bones)-1 || paths[i]=="root/hips/arm/hand" else paths[i])
         }
     }
     source_content:=Skeleton_Content{id={1,1},revision=1,bones=source_bones[:]}

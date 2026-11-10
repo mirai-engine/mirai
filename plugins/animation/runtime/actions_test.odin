@@ -37,7 +37,7 @@ action_test_spans :: proc(content:^host.Content_Animation) {
 action_test_spans_free :: proc(content:^host.Content_Animation) {delete(content.markers);content.markers=nil}
 // The .character {3,4} of the actions of profile over the clips {1,2} of layer_fixture.
 @(private)
-action_test_set :: proc(profile:Action_Profile) -> Character_Set {return {info={animation={1,2}},actions=profile}}
+action_test_set :: proc(profile:Action_Profile) -> Character_Set {return {info={animation={1,2}},match={info=MATCH_INFO_DEFAULT},actions=profile,motion={warp=POSE_WARP_PROFILE_DEFAULT}}}
 
 @(private)
 action_test_add_state :: proc(runtime:^Action_Runtime,value:Action_State) {
@@ -344,11 +344,11 @@ actions_preserve_the_previous_asset_state_when_appending_a_replacement_plan_fail
     previous:=actions.states[0].slots;previous_plan:=actions.plans[0]
     failure:=Runtime_Allocation_Failure{owner=context.allocator,remaining=100};failing:=runtime.Allocator{procedure=runtime_failure_allocator,data=&failure}
     limited:=make([dynamic]Action_Plan,1,1,failing);limited[0]=actions.plans[0];delete(actions.plans);actions.plans=limited
-    core.free(&w.descriptions,entity).asset={5,6};failure.remaining,failure.calls=3,0;app.allocator=failing
+    core.free(&w.descriptions,entity).asset={5,6};failure.remaining,failure.calls=2,0;app.allocator=failing
     problems:core.Problems
     prepared:=prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,&problems)
     app.allocator=failure.owner;actions.allocator=failure.owner
-    testing.expect(t,prepared && failure.calls==4 && core.problem_find(&problems,entity,"animation.memory")!=nil && len(actions.plans)==1 && len(actions.states)==1)
+    testing.expect(t,prepared && failure.calls==3 && core.problem_find(&problems,entity,"animation.memory")!=nil && len(actions.plans)==1 && len(actions.states)==1)
     testing.expect(t,actions.states[0].plan==0 && actions.states[0].slots==previous && actions.states[0].seen==actions.frame && actions.plans[0].asset==previous_plan.asset && actions.plans[0].revision==previous_plan.revision && raw_data(actions.plans[0].profile.actions)==raw_data(previous_plan.profile.actions) && len(events.items)==0)
     failure.remaining=100
     testing.expect(t,prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil))

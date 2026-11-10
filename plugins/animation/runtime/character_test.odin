@@ -22,7 +22,7 @@ character_test_set :: proc() -> Character_Set {
     actions:=make([]Action_Definition,1);actions[0]=ACTION_DEFINITION_DEFAULT;base.text_set(actions[0].name[:],"Wave");base.text_set(actions[0].clip[:],"wave")
     sections:=make([]Action_Section,1);sections[0]={action=0,next=-1};base.text_set(sections[0].name[:],"Hello")
     windows:=make([]Motion_Window,1);windows[0]=MOTION_WINDOW_DEFAULT;base.text_set(windows[0].name[:],"Reach")
-    grounding:=make([]Foot_Grounding,1);grounding[0]=FOOT_GROUNDING_DEFAULT;grounding[0].count=2
+    grounding:=make([]Foot_Grounding,1);grounding[0]=FOOT_GROUNDING_DEFAULT;grounding[0].count=2;grounding[0].legs[0],grounding[0].legs[1]=GROUNDED_LEG_DEFAULT,GROUNDED_LEG_DEFAULT
     spaces:=make([]Blend_Info,1);spaces[0]=space
     return {info={animation={3,4}},match={info=MATCH_INFO_DEFAULT,clips=clips},actions={layers=layers,actions=actions,sections=sections},spaces=spaces,space_samples=samples,motion={warp=POSE_WARP_PROFILE_DEFAULT,windows=windows},pose={grounding=grounding}}
 }
