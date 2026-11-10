@@ -259,10 +259,10 @@ a_method_is_described_by_its_types_alone :: proc(t:^testing.T) {
     }
     text,err,ran:=run(&s,"open",`{"title":"a, b","parts":[{"name":"x","weights":[0.5,1]}],"names":["one","two"],"values":{"Light":{"intensity":3}},"parent":null}`,buffer)
     testing.expect(t,ran,err.message)
-    testing.expect_value(t,text,`{"title": "a, b", "parts": [{"name": "x", "weights": [0.5, 1]}, {"name": "added", "weights": []}], "names": ["one", "two"], "values": {"Light":{"intensity":3}}, "parent": ""}`)
+    testing.expect_value(t,text,`{"title": "a, b", "parts": [{"name": "x", "weights": [0.5, 1]}, {"name": "added", "weights": []}], "names": ["one", "two"], "values": {"Light":{"intensity":3}}}`)
     testing.expect_value(t,result_mismatch(Open,text),"")
     text,err,ran=run(&s,"open",`{}`,buffer)
-    testing.expect(t,ran && text==`{"title": "", "parts": [], "names": [], "values": null, "parent": ""}`,text)
+    testing.expect(t,ran && text==`{}`,text)
     text,err,ran=run(&s,"bare",`{}`,buffer)
     testing.expect(t,ran && text=="null",text)
     // What a caller writes that is not what the types say, also inside a list of any length.

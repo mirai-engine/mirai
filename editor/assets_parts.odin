@@ -53,45 +53,27 @@ api_asset_detach :: proc(s:^Session,call:^api.Call) {
         return
     }
     file,_:=asset.registry_find(r,id)
-    w:=call.out
-    serial.text_write_raw(w,`{"asset":`);api_asset_write(w,id)
-    api.write_text(w,"path",file.path)
-    api.write_key(w,"owner");api_asset_write(w,owner)
-    api.write_key(w,"unsaved");api.write_flag(w,true)
-    serial.write_u8(w,'}')
+    api.call_result(call,Api_Detach_Result)^={id,file.path,owner,true}
 }
 
 // The files that had the id of another and were given one of their own, and
 // the pairs that could not be: what engine.diagnostics tells as asset errors.
 @(private)
-api_duplicates_write :: proc(r:^asset.Registry,out:^serial.Writer,first:bool) -> (count:int) {
+api_duplicates_list :: proc(r:^asset.Registry,errors:^[dynamic]Api_Engine_Diagnostics_Result_Asset_Errors) {
     buffer,other:[base.ASSET_ID_TEXT]u8
     for entry in r.reassigned {
-        if !first || count>0 {serial.write_u8(out,',')}
-        count+=1
-        serial.write_u8(out,'{')
-        api.write_text(out,"id",base.asset_id_format(entry.to,buffer[:]),true)
-        api.write_text(out,"kind",api_kind_name(r,entry.path))
-        api.write_text(out,"problem","Duplicate_Id")
-        api.write_text(out,"detail","Reassigned")
-        api.write_text(out,"path",entry.path)
-        api.write_text(out,"message",fmt.tprintf("%s had the id %s of %s, as a copy made outside the editor does: in memory it has the id %s and is an asset of its own, without owner or import. Save it (asset.save) to keep that id, or delete the file if the copy is not wanted.",entry.path,base.asset_id_format(entry.from,other[:]),entry.original,base.asset_id_format(entry.to,buffer[:])))
-        serial.write_u8(out,'}')
+        append(errors,Api_Engine_Diagnostics_Result_Asset_Errors{
+            fmt.tprint(base.asset_id_format(entry.to,buffer[:])),api_kind_name(r,entry.path),"Duplicate_Id","Reassigned",entry.path,
+            fmt.tprintf("%s had the id %s of %s, as a copy made outside the editor does: in memory it has the id %s and is an asset of its own, without owner or import. Save it (asset.save) to keep that id, or delete the file if the copy is not wanted.",entry.path,base.asset_id_format(entry.from,other[:]),entry.original,base.asset_id_format(entry.to,buffer[:])),
+        })
     }
     for duplicate in r.duplicates {
-        if !first || count>0 {serial.write_u8(out,',')}
-        count+=1
         a,b:=r.files[duplicate.first].path,r.files[duplicate.second].path
-        serial.write_u8(out,'{')
-        api.write_text(out,"id",base.asset_id_format(duplicate.id,buffer[:]),true)
-        api.write_text(out,"kind",api_kind_name(r,a))
-        api.write_text(out,"problem","Duplicate_Id")
-        api.write_text(out,"detail","Unresolved")
-        api.write_text(out,"path",b)
-        api.write_text(out,"message",fmt.tprintf("%s and %s have the same id, and lookups give %s. One of them is unsaved, which keeps the id: save it (asset.save) or discard it (asset.discard), and delete the file that is a copy.",a,b,a))
-        serial.write_u8(out,'}')
+        append(errors,Api_Engine_Diagnostics_Result_Asset_Errors{
+            fmt.tprint(base.asset_id_format(duplicate.id,buffer[:])),api_kind_name(r,a),"Duplicate_Id","Unresolved",b,
+            fmt.tprintf("%s and %s have the same id, and lookups give %s. One of them is unsaved, which keeps the id: save it (asset.save) or discard it (asset.discard), and delete the file that is a copy.",a,b,a),
+        })
     }
-    return
 }
 
 @(private)

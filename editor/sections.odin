@@ -343,12 +343,7 @@ api_section_preview :: proc(s:^Session,call:^api.Call) {
         if !ok {return}
         if !section_previewed(w,e) {section_preview_toggle(s,w,e)}
     }
-    w_out:=call.out
-    serial.text_write_raw(w_out,`{"sky":`)
-    serial.text_write_string(w_out,fmt.tprintf("0x%016x",u64(api_entity_id(w,p.sky))))
-    serial.text_write_raw(w_out,`,"sun":`)
-    serial.text_write_string(w_out,fmt.tprintf("0x%016x",u64(api_entity_id(w,p.sun))))
-    serial.write_u8(w_out,'}')
+    api.call_result(call,Api_Section_Preview_Result)^={api_entity_id(w,p.sky),api_entity_id(w,p.sun)}
 }
 
 // The entity of the Scene_Reference id names; none, with the call failed, for another.
@@ -663,12 +658,7 @@ api_section_edit :: proc(s:^Session,call:^api.Call) {
         api.call_failf(call,api.SERVER_ERROR,"%d sections were edited in their world since the scene opened: scene.save, then scene.open it again to edit another",SECTIONS_EDITED)
         return
     }
-    out:=call.out
-    serial.text_write_raw(out,`{"editing":`)
-    api.write_id(out,api_entity_id(w,e))
-    serial.text_write_raw(out,`,"unsaved":`)
-    api.write_id(out,kept?api_entity_id(w,left):0)
-    serial.write_u8(out,'}')
+    api.call_result(call,Api_Section_Edit_Result)^={api_entity_id(w,e),kept?api_entity_id(w,left):0}
 }
 
 // ---------------------------------------------------------------- the view

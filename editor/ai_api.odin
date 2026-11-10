@@ -1,5 +1,7 @@
 package editor
 
+import "base:runtime"
+import "core:strings"
 import "mirai:editor/ai_store"
 import "mirai:editor/api"
 import "mirai:std/base"
@@ -42,14 +44,14 @@ Ai_Permission_Params :: struct {
 
 Ai_Task_Result :: struct {
     id:int `mirai:"label=The conversation; ai.task continues it with conversation"`,
-    kind:[8]u8 `mirai:"text,label=main; agent (a subagent of the main chat) or archived"`,
+    kind:string `mirai:"label=main; agent (a subagent of the main chat) or archived"`,
     parent:int `mirai:"label=Of a subagent: its main chat"`,
     held:int `mirai:"label=Messages written to it that have not reached its agent"`,
-    state:[16]u8 `mirai:"text,label=queued; running; done; failed; cancelled or interrupted"`,
-    prompt:[96]u8 `mirai:"text,label=The start of the message"`,
-    agent:[32]u8 `mirai:"text,label=The connection that runs it; until it starts the one asked for"`,
-    model:[128]u8 `mirai:"text"`,
-    effort:[32]u8 `mirai:"text"`,
+    state:string `mirai:"label=queued; running; done; failed; cancelled or interrupted"`,
+    prompt:string `mirai:"label=The start of the message"`,
+    agent:string `mirai:"label=The connection that runs it; until it starts the one asked for"`,
+    model:string,
+    effort:string,
     play:bool `mirai:"label=Sent during a Play: the agent gets the live player"`,
     region:[4]f32 `mirai:"label=x y width and height in window points"`,
     entities:int `mirai:"label=The entities of the region its context lists"`,
@@ -61,7 +63,7 @@ Ai_Task_Result :: struct {
     review_pending:bool `mirai:"label=Changes to the scene or its settings or files wait for review"`,
     files_changed:bool `mirai:"label=The agent changed files of the project its review could not keep (larger than 1 MB, or past its capacity); ai.revert refuses it"`,
     changed:[]base.Entity_Id `mirai:"label=The entities it changed"`,
-    changed_files:[][AI_PATH_BYTES]u8 `mirai:"text,label=Project paths of the files it wrote through the API"`,
+    changed_files:[]string `mirai:"label=Project paths of the files it wrote through the API"`,
     skipped:int `mirai:"label=Changes that reverting it kept because others changed them later"`,
     undone:bool `mirai:"label=Its changes were reverted"`,
     declined:bool `mirai:"label=The user reverted it; ai.restore takes the changes back for review"`,
@@ -72,8 +74,8 @@ Ai_Task_Result :: struct {
     transcript:[]Ai_Task_Line `mirai:"optional,label=Of a task asked by id: its lines from first"`,
 }
 Ai_Task_Line :: struct {
-    kind:[8]u8 `mirai:"text,label=prompt (what it was asked); output (printed by the agent); note (said by the editor); report (a subagent with this id ended a turn) or divider (a new context of the chat began)"`,
-    text:[AI_LINE_BYTES]u8 `mirai:"text"`,
+    kind:string `mirai:"label=prompt (what it was asked); output (printed by the agent); note (said by the editor); report (a subagent with this id ended a turn) or divider (a new context of the chat began)"`,
+    text:string,
 }
 
 Ai_Status_Result :: struct {
@@ -88,12 +90,12 @@ Ai_Status_Result :: struct {
 Ai_Status_Permission :: struct {
     index:int `mirai:"label=What ai.permission takes as index"`,
     task:int,
-    title:[512]u8 `mirai:"text"`,
-    options:[8]Ai_Status_Option,
+    title:string,
+    options:[]Ai_Status_Option,
 }
 Ai_Status_Option :: struct {
-    id:[128]u8 `mirai:"text,label=What ai.permission takes as option"`,
-    name:[128]u8 `mirai:"text"`,
+    id:string `mirai:"label=What ai.permission takes as option"`,
+    name:string,
 }
 Ai_Status_Chat :: struct {
     open:bool,
@@ -107,28 +109,33 @@ Ai_Permission_Result :: struct {ok:bool}
 
 AI_LINE_NAMES :: [ai_store.Line_Kind]string{.Output="output",.Prompt="prompt",.Note="note",.Report="report",.Divider="divider"}
 
-// What ai.history answers. Without id: the conversations of the project, the
-// last updated first, each with the fields of a conversation. With id: its
-// messages, the oldest first, each with the fields of a message.
-Api_Ai_History_Entry :: struct {
-    id:int `mirai:"optional,label=Of a conversation: what id takes"`,
-    title:string `mirai:"optional,label=Of a conversation"`,
-    document:string `mirai:"optional,label=Of a conversation: the document it worked on"`,
-    provider:string `mirai:"optional,label=Of a conversation: the id of its connection"`,
-    model,effort:string `mirai:"optional,label=Of a conversation"`,
-    updated_at:int `mirai:"optional,label=Of a conversation: Unix time in milliseconds"`,
-    sequence:int `mirai:"optional,label=Of a message: what before takes"`,
-    kind:Api_Ai_History_Search_Result_Kind `mirai:"optional,label=Of a message"`,
-    text,role,event_type,tool:string `mirai:"optional,label=Of a message"`,
-    context_:string `mirai:"name=context,optional,label=Of a message: JSON as text"`,
+Api_Ai_History :: struct {
+    conversations:[]Api_Ai_Conversation `mirai:"optional,label=Without id: the conversations of the project, the last updated first"`,
+    messages:[]Api_Ai_Message `mirai:"optional,label=With id: its messages, the oldest first"`,
+}
+Api_Ai_Conversation :: struct {
+    id:int `mirai:"label=What id takes"`,
+    title:string,
+    document:string `mirai:"label=The document it worked on"`,
+    provider:string `mirai:"label=The id of its connection"`,
+    model,effort:string,
+    updated_at:int `mirai:"label=Unix time in milliseconds"`,
+}
+Api_Ai_Message :: struct {
+    sequence:int `mirai:"label=What before takes"`,
+    kind:string `mirai:"label=prompt, output, note, report or divider"`,
+    text,role,event_type,tool:string,
+    context_:string `mirai:"name=context,label=JSON as text"`,
+}
+Api_Ai_History_Search :: struct {
+    hits:[]Api_Ai_History_Search_Result `mirai:"label=The best first"`,
 }
 
-Api_Ai_History_Search_Result_Kind :: enum u8 {prompt,output,note,report,divider}
 Api_Ai_History_Search_Result :: struct {
     conversation:int `mirai:"label=What ai.history takes as id"`,
     title:string,
     sequence:int `mirai:"label=ai.history with before set to sequence+1 returns the messages up to it"`,
-    kind:Api_Ai_History_Search_Result_Kind `mirai:"label=A note is said by the editor, as a step of a turn: Tool: method target"`,
+    kind:string `mirai:"label=prompt, output, note, report or divider. A note is said by the editor, as a step of a turn: Tool: method target"`,
     snippet:string `mirai:"label=Words around the matches, which go between **"`,
     updated_at:int `mirai:"label=Of the conversation, Unix time in milliseconds"`,
 }
@@ -142,17 +149,17 @@ ai_api_register :: proc(s:^Session,st:^Api_State) {
     ai_provenance_api_register(s,st)
     api_viewport_register(s,st)
     api_ai_finish_register(s,st)
-    api_register(s,st,{name="ai.task",summary="Sends a message to the main chat of the project, or to a subagent, over ACP with the skills of the project and Mirai MCP, starting the agent when needed; poll ai.status until it ends.",params=Ai_Task_Params,result=Ai_Task_Result,writes_result=true,run=ai_method_task})
-    api_register(s,st,{name="ai.status",summary="The tasks of the agents of this editor, with the permissions they wait for and the state of the chat.",params=Ai_Status_Params,result=Ai_Status_Result,writes_result=true,flags={.Read_Only},run=ai_method_status})
-    api_register(s,st,{name="ai.cancel",summary="Stops the agent of a task, or takes a queued one out of the queue.",params=Ai_Id_Params,result=Ai_Task_Result,writes_result=true,flags={.Idempotent},run=ai_method_cancel})
-    api_register(s,st,{name="ai.revert",summary="Reverts the scene fields and project files a task changed through the API, keeping what users or agents wrote afterwards. Files the agent wrote with its own tools stay.",params=Ai_Id_Params,result=Ai_Task_Result,writes_result=true,flags={.Destructive},run=ai_method_revert})
-    api_register(s,st,{name="ai.restore",summary="Takes back the changes of a task the user reverted (declined) to be reviewed again, keeping newer edits of users or agents.",params=Ai_Id_Params,result=Ai_Task_Result,writes_result=true,flags={.Destructive},run=ai_method_restore})
-    api_register(s,st,{name="ai.review.accept",summary="Confirms the result of a task and clears its agent icon and scene outlines without changing the scene.",params=Ai_Id_Params,result=Ai_Task_Result,writes_result=true,run=ai_method_finish_review})
-    api_register(s,st,{name="ai.retry",summary="Reverts the scene changes of a task and sends its message again in the same conversation, with the same icon and color.",params=Ai_Id_Params,result=Ai_Task_Result,writes_result=true,run=ai_method_retry})
-    api_register(s,st,{name="ai.history",summary="The saved conversations of the project, or a page of the saved messages of one.",params=Ai_History_Params,result=[]Api_Ai_History_Entry,writes_result=true,flags={.Read_Only},run=ai_method_history})
-    api_register(s,st,{name="ai.history.search",summary="Full-text search of the saved conversations of the project: what was asked, answered and done in earlier chats, by words, an entity id or an asset path, ranked by BM25. Each hit is short; ai.history with its conversation and before pages the messages around it.",params=Ai_History_Search_Params,result=[]Api_Ai_History_Search_Result,writes_result=true,flags={.Read_Only},run=ai_method_history_search})
+    api_register(s,st,{name="ai.task",summary="Sends a message to the main chat of the project, or to a subagent, over ACP with the skills of the project and Mirai MCP, starting the agent when needed; poll ai.status until it ends.",params=Ai_Task_Params,result=Ai_Task_Result,run=ai_method_task})
+    api_register(s,st,{name="ai.status",summary="The tasks of the agents of this editor, with the permissions they wait for and the state of the chat.",params=Ai_Status_Params,result=Ai_Status_Result,flags={.Read_Only},run=ai_method_status})
+    api_register(s,st,{name="ai.cancel",summary="Stops the agent of a task, or takes a queued one out of the queue.",params=Ai_Id_Params,result=Ai_Task_Result,flags={.Idempotent},run=ai_method_cancel})
+    api_register(s,st,{name="ai.revert",summary="Reverts the scene fields and project files a task changed through the API, keeping what users or agents wrote afterwards. Files the agent wrote with its own tools stay.",params=Ai_Id_Params,result=Ai_Task_Result,flags={.Destructive},run=ai_method_revert})
+    api_register(s,st,{name="ai.restore",summary="Takes back the changes of a task the user reverted (declined) to be reviewed again, keeping newer edits of users or agents.",params=Ai_Id_Params,result=Ai_Task_Result,flags={.Destructive},run=ai_method_restore})
+    api_register(s,st,{name="ai.review.accept",summary="Confirms the result of a task and clears its agent icon and scene outlines without changing the scene.",params=Ai_Id_Params,result=Ai_Task_Result,run=ai_method_finish_review})
+    api_register(s,st,{name="ai.retry",summary="Reverts the scene changes of a task and sends its message again in the same conversation, with the same icon and color.",params=Ai_Id_Params,result=Ai_Task_Result,run=ai_method_retry})
+    api_register(s,st,{name="ai.history",summary="The saved conversations of the project, or a page of the saved messages of one.",params=Ai_History_Params,result=Api_Ai_History,flags={.Read_Only},run=ai_method_history})
+    api_register(s,st,{name="ai.history.search",summary="Full-text search of the saved conversations of the project: what was asked, answered and done in earlier chats, by words, an entity id or an asset path, ranked by BM25. Each hit is short; ai.history with its conversation and before pages the messages around it.",params=Ai_History_Search_Params,result=Api_Ai_History_Search,flags={.Read_Only},run=ai_method_history_search})
     api_register(s,st,{name="ai.turn_end",summary="Ends the turn of the agent outside the editor that calls (the client of mirai mcp, or mirai rpc --client NAME): its changes wait for the review of the user, and its next call opens the turn again until they are resolved. The turns of the agents of the editor and a turn already ended stay as they are. The Stop hook of Claude Code in a project calls it.",result=Ai_Turn_End_Result,flags={.Idempotent},run=ai_method_turn_end})
-    api_register(s,st,{name="ai.compact",summary="Summarizes the context of a chat that is not working, with the command of its agent or else with a new native session; the chat goes on.",params=Ai_Compact_Params,result=Ai_Task_Result,writes_result=true,run=ai_method_compact})
+    api_register(s,st,{name="ai.compact",summary="Summarizes the context of a chat that is not working, with the command of its agent or else with a new native session; the chat goes on.",params=Ai_Compact_Params,result=Ai_Task_Result,run=ai_method_compact})
     api_register(s,st,{name="ai.permission",summary="Answers a permission an agent waits for with one of its options, or cancels it.",params=Ai_Permission_Params,result=Ai_Permission_Result,run=ai_method_permission})
 }
 
@@ -177,64 +184,32 @@ ai_method_turn_end :: proc(s:^Session,call:^api.Call) {
 }
 
 @(private)
-ai_put_rect :: proc(w:^serial.Writer,name:string,rect:ui.Rect,first:=false) {
-    values:=[4]f32{rect.x,rect.y,rect.w,rect.h}
-    api.write_numbers(w,name,values[:],first)
-}
-
-@(private)
-ai_task_write :: proc(s:^Session,task:^Ai_Task,w:^serial.Writer,transcript:bool,from:int) {
+ai_task_result :: proc(s:^Session,task:^Ai_Task,allocator:runtime.Allocator,transcript:bool,from:int) -> (r:Ai_Task_Result) {
     names:=AI_STATE_NAMES
     kinds:=AI_LINE_NAMES
     conversation_kinds:=[ai_store.Conversation_Kind]string{.Main="main",.Agent="agent",.Archived="archived"}
     t:=&task.transcript
-    serial.write_u8(w,'{')
-    api.write_int(w,"id",i64(task.id),true)
-    api.write_text(w,"kind",conversation_kinds[task.conversation.kind])
-    api.write_int(w,"parent",i64(task.conversation.parent))
-    api.write_int(w,"held",i64(ai_task_held(task)))
-    api.write_text(w,"state",names[task.state])
-    api.write_text(w,"prompt",base.text_get(task.title[:]))
-    api.write_text(w,"agent",base.text_get(task.agent[:]))
-    api.write_text(w,"model",string(task.conversation.model[:task.conversation.model_len]))
-    api.write_text(w,"effort",string(task.conversation.effort[:task.conversation.effort_len]))
-    api.write_bool(w,"play",task.play)
-    ai_put_rect(w,"region",task.region)
-    api.write_int(w,"entities",i64(task.entities))
-    api.write_bool(w,"image",task.image)
-    api.write_key(w,"seconds");api.write_number(w,task.seconds)
-    api.write_int(w,"steps",i64(len(task.review.transactions)))
-    api.write_bool(w,"revertible",ai_task_finished(task) && !task.review_finished && ai_review_revertible(s,&task.review) && !task.files_changed && ai_task_current(s,task))
-    api.write_bool(w,"review_finished",task.review_finished)
-    api.write_bool(w,"review_pending",task.review.pending)
-    api.write_bool(w,"files_changed",task.files_changed)
-    api.write_key(w,"changed");serial.write_u8(w,'[')
-    for id,index in task.review.changed_ids {if index>0 {serial.write_u8(w,',')};api.write_id(w,id)}
-    serial.write_u8(w,']')
-    api.write_key(w,"changed_files");serial.write_u8(w,'[')
-    for path,index in task.review.changed_files {if index>0 {serial.write_u8(w,',')};serial.text_write_string(w,path)}
-    serial.write_u8(w,']')
-    api.write_int(w,"skipped",i64(task.review.skipped))
-    api.write_bool(w,"undone",task.undone)
-    api.write_bool(w,"declined",task.declined)
-    api.write_bool(w,"needs_build",task.needs_build)
-    api.write_bool(w,"finish_called",task.finish_called)
-    api.write_int(w,"lines",i64(t.dropped+t.count))
+    c:=&task.conversation
+    r={
+        id=int(task.id),kind=conversation_kinds[c.kind],parent=int(c.parent),held=int(ai_task_held(task)),state=names[task.state],
+        prompt=base.text_get(task.title[:]),agent=base.text_get(task.agent[:]),model=string(c.model[:c.model_len]),effort=string(c.effort[:c.effort_len]),
+        play=task.play,region={task.region.x,task.region.y,task.region.w,task.region.h},entities=int(task.entities),image=task.image,seconds=task.seconds,
+        steps=len(task.review.transactions),
+        revertible=ai_task_finished(task) && !task.review_finished && ai_review_revertible(s,&task.review) && !task.files_changed && ai_task_current(s,task),
+        review_finished=task.review_finished,review_pending=task.review.pending,files_changed=task.files_changed,
+        changed=task.review.changed_ids[:],changed_files=task.review.changed_files[:],skipped=int(task.review.skipped),
+        undone=task.undone,declined=task.declined,needs_build=task.needs_build,finish_called=task.finish_called,lines=t.dropped+t.count,
+    }
     if transcript {
         first:=clamp(from-t.dropped,0,t.count)
-        api.write_int(w,"first",i64(t.dropped+first))
-        api.write_key(w,"transcript");serial.write_u8(w,'[')
+        r.first=t.dropped+first
+        r.transcript=make([]Ai_Task_Line,t.count-first,allocator)
         for index in first..<t.count {
             text,kind:=ai_transcript_line(t,index)
-            if index>first {serial.write_u8(w,',')}
-            serial.write_u8(w,'{')
-            api.write_text(w,"kind",kinds[kind],true)
-            api.write_text(w,"text",text)
-            serial.write_u8(w,'}')
+            r.transcript[index-first]={kinds[kind],text}
         }
-        serial.write_u8(w,']')
     }
-    serial.write_u8(w,'}')
+    return
 }
 
 @(private)
@@ -257,14 +232,13 @@ ai_method_task :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.SERVER_ERROR,message)
         return
     }
-    ai_task_write(s,task,call.out,true,0)
+    api.call_result(call,Ai_Task_Result)^=ai_task_result(s,task,call.allocator,true,0)
 }
 
 @(private)
 ai_method_status :: proc(s:^Session,call:^api.Call) {
     m:=s.ai
     params:=api.call_params(call,Ai_Status_Params)
-    w:=call.out
     only:^Ai_Task
     if params.id!=0 {
         if only=ai_task_find(m,params.id);only==nil {
@@ -272,39 +246,23 @@ ai_method_status :: proc(s:^Session,call:^api.Call) {
             return
         }
     }
-    serial.write_u8(w,'{')
-    api.write_key(w,"running",true);serial.write_u8(w,'[')
-    comma:=false
-    for &worker in m.workers {if worker.task!=0 {if comma {serial.write_u8(w,',')};comma=true;serial.text_write_int(w,i64(worker.task))}}
-    serial.write_u8(w,']')
-    api.write_bool(w,"process_running",ai_process_running(m))
-    api.write_int(w,"capacity",AI_WORKER_CAPACITY)
-    api.write_bool(w,"show_agents_in_scene",m.show_agents_in_scene)
-    api.write_key(w,"permissions");serial.write_u8(w,'[')
+    rect :: proc(r:ui.Rect) -> [4]f32 {return {r.x,r.y,r.w,r.h}}
+    r:=api.call_result(call,Ai_Status_Result)
+    running:=make([dynamic]int,call.allocator)
+    for &worker in m.workers {if worker.task!=0 {append(&running,int(worker.task))}}
+    r.running,r.process_running,r.capacity,r.show_agents_in_scene=running[:],ai_process_running(m),AI_WORKER_CAPACITY,m.show_agents_in_scene
+    r.permissions=make([]Ai_Status_Permission,m.permission_count,call.allocator)
     for &p,index in m.permissions[:m.permission_count] {
-        if index>0 {serial.write_u8(w,',')}
-        serial.write_u8(w,'{');api.write_int(w,"index",i64(index),true);api.write_int(w,"task",i64(m.workers[p.worker].task));api.write_text(w,"title",base.text_get(p.title[:]))
-        api.write_key(w,"options");serial.write_u8(w,'[')
-        for option in 0..<p.count {if option>0 {serial.write_u8(w,',')};serial.write_u8(w,'{');api.write_text(w,"id",base.text_get(p.ids[option][:]),true);api.write_text(w,"name",base.text_get(p.names[option][:]));serial.write_u8(w,'}')}
-        serial.text_write_raw(w,"]}")
+        options:=make([]Ai_Status_Option,p.count,call.allocator)
+        for &option,at in options {option={base.text_get(p.ids[at][:]),base.text_get(p.names[at][:])}}
+        r.permissions[index]={index,int(m.workers[p.worker].task),base.text_get(p.title[:]),options}
     }
-    serial.write_u8(w,']')
-    api.write_key(w,"chat");serial.write_u8(w,'{')
-    api.write_bool(w,"open",m.chat_open,true)
-    ai_put_rect(w,"rect",m.chat_open?m.chat_rect:{})
-    ai_put_rect(w,"region",m.has_region?m.region:{})
-    api.write_int(w,"selected",i64(m.selected))
-    api.write_int(w,"main",i64(m.main))
-    serial.write_u8(w,'}')
-    api.write_key(w,"tasks");serial.write_u8(w,'[')
-    first:=true
+    r.chat={m.chat_open,rect(m.chat_open?m.chat_rect:{}),rect(m.has_region?m.region:{}),int(m.selected),int(m.main)}
+    tasks:=make([dynamic]Ai_Task_Result,call.allocator)
     for &task in m.tasks[:m.task_count] {
-        if only!=nil && only!=&task {continue}
-        if !first {serial.write_u8(w,',')}
-        first=false
-        ai_task_write(s,&task,w,only!=nil,params.from)
+        if only==nil || only==&task {append(&tasks,ai_task_result(s,&task,call.allocator,only!=nil,params.from))}
     }
-    serial.text_write_raw(w,"]}")
+    r.tasks=tasks[:]
 }
 
 @(private)
@@ -320,7 +278,7 @@ ai_method_cancel :: proc(s:^Session,call:^api.Call) {
     task:=ai_task_of(s,call)
     if task==nil {return}
     ai_task_cancel(s,s.ai,task)
-    ai_task_write(s,task,call.out,false,0)
+    api.call_result(call,Ai_Task_Result)^=ai_task_result(s,task,call.allocator,false,0)
 }
 
 @(private)
@@ -331,7 +289,7 @@ ai_method_compact :: proc(s:^Session,call:^api.Call) {
     task:=ai_task_find(s.ai,id)
     if task==nil {api.call_failf(call,api.INVALID_PARAMS,"there is no chat %d: ai.status lists them",id);return}
     if message:=ai_chat_compact(s,task);message!="" {api.call_fail(call,api.INVALID_PARAMS,message);return}
-    ai_task_write(s,task,call.out,false,0)
+    api.call_result(call,Ai_Task_Result)^=ai_task_result(s,task,call.allocator,false,0)
 }
 
 @(private)
@@ -340,7 +298,7 @@ ai_method_revert :: proc(s:^Session,call:^api.Call) {
     if task==nil {return}
     if message:=ai_task_revert(s,s.ai,task);message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
     ai_task_persist(s,task)
-    ai_task_write(s,task,call.out,false,0)
+    api.call_result(call,Ai_Task_Result)^=ai_task_result(s,task,call.allocator,false,0)
 }
 
 ai_method_restore :: proc(s:^Session,call:^api.Call) {
@@ -348,7 +306,7 @@ ai_method_restore :: proc(s:^Session,call:^api.Call) {
     if task==nil {return}
     if message:=ai_task_restore(s,s.ai,task);message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
     ai_task_persist(s,task)
-    ai_task_write(s,task,call.out,false,0)
+    api.call_result(call,Ai_Task_Result)^=ai_task_result(s,task,call.allocator,false,0)
 }
 
 ai_method_finish_review :: proc(s:^Session,call:^api.Call) {
@@ -356,7 +314,7 @@ ai_method_finish_review :: proc(s:^Session,call:^api.Call) {
     if task==nil {return}
     if !ai_task_finish(s,s.ai,task) {api.call_fail(call,api.SERVER_ERROR,"The task is not ready for review");return}
     ai_task_persist(s,task)
-    ai_task_write(s,task,call.out,false,0)
+    api.call_result(call,Ai_Task_Result)^=ai_task_result(s,task,call.allocator,false,0)
 }
 
 ai_method_retry :: proc(s:^Session,call:^api.Call) {
@@ -364,12 +322,12 @@ ai_method_retry :: proc(s:^Session,call:^api.Call) {
     if task==nil {return}
     if message:=ai_task_retry(s,s.ai,task);message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
     api_frames(s,3,HEADLESS_DT)
-    ai_task_write(s,task,call.out,false,0)
+    api.call_result(call,Ai_Task_Result)^=ai_task_result(s,task,call.allocator,false,0)
 }
 
 ai_method_history_search :: proc(s:^Session,call:^api.Call) {
     ai_initialize(s)
-    p:=api.call_params(call,Ai_History_Search_Params);w:=call.out
+    p:=api.call_params(call,Ai_History_Search_Params)
     hits:[ai_store.SEARCH_HITS]ai_store.Search_Hit
     query:=base.text_get(p.query[:])
     if ai_store.index_match(query,false)=="" {api.call_fail(call,api.INVALID_PARAMS,ai_store.SEARCH_NO_WORDS);return}
@@ -377,18 +335,13 @@ ai_method_history_search :: proc(s:^Session,call:^api.Call) {
     count,message:=ai_store.search(&s.ai.store,query,hits[:min(limit,len(hits))],u64(p.conversation),marks={"**","**"},allocator=call.allocator)
     if message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
     kinds:=AI_LINE_NAMES
-    serial.write_u8(w,'[')
-    written:=0
+    found:=make([dynamic]Api_Ai_History_Search_Result,call.allocator)
     for &hit in hits[:count] {
-        c:=ai_store.find(&s.ai.store,hit.conversation)
-        if c==nil {continue}
-        if written>0 {serial.write_u8(w,',')}
-        written+=1
-        serial.write_u8(w,'{');api.write_int(w,"conversation",i64(c.id),true);api.write_text(w,"title",string(c.title[:c.title_len]))
-        api.write_int(w,"sequence",i64(hit.sequence));api.write_text(w,"kind",kinds[hit.kind]);api.write_text(w,"snippet",hit.snippet)
-        api.write_int(w,"updated_at",c.updated_at);serial.write_u8(w,'}')
+        if c:=ai_store.find(&s.ai.store,hit.conversation);c!=nil {
+            append(&found,Api_Ai_History_Search_Result{int(c.id),strings.clone(string(c.title[:c.title_len]),call.allocator),int(hit.sequence),kinds[hit.kind],hit.snippet,int(c.updated_at)})
+        }
     }
-    serial.write_u8(w,']')
+    api.call_result(call,Api_Ai_History_Search).hits=found[:]
 }
 
 ai_method_permission :: proc(s:^Session,call:^api.Call) {
@@ -399,30 +352,24 @@ ai_method_permission :: proc(s:^Session,call:^api.Call) {
 
 ai_method_history :: proc(s:^Session,call:^api.Call) {
     ai_initialize(s)
-    p:=api.call_params(call,Ai_History_Params);w:=call.out
+    p:=api.call_params(call,Ai_History_Params)
+    r:=api.call_result(call,Api_Ai_History)
     if p.id==0 {
-        conversations:[64]ai_store.Conversation
-        count,message:=ai_store.list(&s.ai.store,conversations[:],"",p.offset)
+        conversations:=make([]ai_store.Conversation,64,call.allocator)
+        count,message:=ai_store.list(&s.ai.store,conversations,"",p.offset)
         if message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
-        serial.write_u8(w,'[')
+        r.conversations=make([]Api_Ai_Conversation,count,call.allocator)
         for &c,index in conversations[:count] {
-            if index>0 {serial.write_u8(w,',')}
-            serial.write_u8(w,'{');api.write_int(w,"id",i64(c.id),true)
-            api.write_text(w,"title",string(c.title[:c.title_len]));api.write_text(w,"document",string(c.document[:c.document_len]))
-            api.write_text(w,"provider",string(c.provider[:c.provider_len]));api.write_text(w,"model",string(c.model[:c.model_len]));api.write_text(w,"effort",string(c.effort[:c.effort_len]))
-            api.write_int(w,"updated_at",c.updated_at);serial.write_u8(w,'}')
+            r.conversations[index]={int(c.id),string(c.title[:c.title_len]),string(c.document[:c.document_len]),string(c.provider[:c.provider_len]),string(c.model[:c.model_len]),string(c.effort[:c.effort_len]),int(c.updated_at)}
         }
-        serial.write_u8(w,']');return
+        return
     }
     lines:[128]ai_store.Stored_Line
     count,message:=ai_store.page(&s.ai.store,u64(p.id),p.before==0?-1:i64(p.before),lines[:],call.allocator)
     if message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
-    serial.write_u8(w,'[')
     kinds:=AI_LINE_NAMES
+    r.messages=make([]Api_Ai_Message,count,call.allocator)
     for &line,index in lines[:count] {
-        if index>0 {serial.write_u8(w,',')}
-        serial.write_u8(w,'{');api.write_int(w,"sequence",i64(line.sequence),true);api.write_text(w,"kind",kinds[line.kind]);api.write_text(w,"text",line.text)
-        api.write_text(w,"role",line.role);api.write_text(w,"event_type",line.event_type);api.write_text(w,"tool",line.tool);api.write_text(w,"context",line.context_json);serial.write_u8(w,'}')
+        r.messages[index]={int(line.sequence),kinds[line.kind],line.text,line.role,line.event_type,line.tool,line.context_json}
     }
-    serial.write_u8(w,']')
 }

@@ -54,7 +54,7 @@ Api_Asset_Params :: struct {
 }
 
 Api_Asset_List :: struct {
-    root:[API_PATH_BYTES]u8 `mirai:"text,label=The asset folder"`,
+    root:string `mirai:"label=The asset folder"`,
     assets:[]Api_Asset_Entry,
     total:int `mirai:"label=Assets the filters take"`,
     offset:int,
@@ -64,9 +64,9 @@ Api_Asset_List :: struct {
     missing:int `mirai:"label=Dependencies that no file of the registry is"`,
 }
 Api_Asset_Entry :: struct {
-    path:[API_PATH_BYTES]u8 `mirai:"text,label=Under the asset folder"`,
+    path:string `mirai:"label=Under the asset folder"`,
     asset:base.Asset_Id,
-    kind:[32]u8 `mirai:"text,label=The name of its kind (mesh; texture; material...); other for a kind this build does not know"`,
+    kind:string `mirai:"label=The name of its kind (mesh; texture; material...); other for a kind this build does not know"`,
     size:int `mirai:"label=Bytes of the file"`,
     dependencies:int `mirai:"label=Assets it uses"`,
     used_by:int `mirai:"label=Files that use it"`,
@@ -76,28 +76,28 @@ Api_Asset_Entry :: struct {
 // What api_asset_detach (assets_parts.odin) writes.
 Api_Detach_Result :: struct {
     asset:base.Asset_Id `mirai:"label=The part"`,
-    path:[API_PATH_BYTES]u8 `mirai:"text,label=Its path under the asset folder"`,
+    path:string `mirai:"label=Its path under the asset folder"`,
     owner:base.Asset_Id `mirai:"label=The asset it was a part of"`,
     unsaved:bool `mirai:"label=Always true: the change waits for asset.save"`,
 }
 
 // What api_asset_delete (asset_delete.odin) writes.
 Api_Asset_Delete_Result :: struct {
-    moved:[][API_PATH_BYTES]u8 `mirai:"text,label=The paths moved to the trash: the asset and its parts"`,
-    used_by:[][API_PATH_BYTES]u8 `mirai:"text,label=The files that use what moved; they keep the reference"`,
-    error:[API_PATH_BYTES+64]u8 `mirai:"text,optional,label=Why the rest could not be moved after some were"`,
+    moved:[]string `mirai:"label=The paths moved to the trash: the asset and its parts"`,
+    used_by:[]string `mirai:"label=The files that use what moved; they keep the reference"`,
+    error:string `mirai:"optional,label=Why the rest could not be moved after some were"`,
 }
 
 @(private)
 api_assets_register :: proc(s:^Session,st:^Api_State) {
     assets:=Api_Asset_Params{limit=256}
     api_register(s,st,{name="component.list",summary="The components a scene can hold, with their defaults and their fields as scene.add and scene.set take them.",params=Api_Component_Params,result=Api_Component_List,writes_result=true,flags={.Core,.Read_Only},run=api_component_list})
-    api_register(s,st,{name="asset.list",summary="The assets of the registry by kind and folder, with a count of its broken files, duplicated ids and missing dependencies.",params=Api_Asset_Params,result=Api_Asset_List,writes_result=true,defaults=&assets,flags={.Core,.Read_Only},run=api_asset_list})
-    api_register(s,st,{name="asset.detach",summary="Takes a part of an import out of the asset that owns it so it shows on its own; the import still writes it and leaves it out of the owner.",params=Api_Detach_Params,result=Api_Detach_Result,writes_result=true,run=api_asset_detach})
+    api_register(s,st,{name="asset.list",summary="The assets of the registry by kind and folder, with a count of its broken files, duplicated ids and missing dependencies.",params=Api_Asset_Params,result=Api_Asset_List,defaults=&assets,flags={.Core,.Read_Only},run=api_asset_list})
+    api_register(s,st,{name="asset.detach",summary="Takes a part of an import out of the asset that owns it so it shows on its own; the import still writes it and leaves it out of the owner.",params=Api_Detach_Params,result=Api_Detach_Result,run=api_asset_detach})
     api_register(s,st,{name="asset.create",summary="Makes an empty asset in a folder of the assets as Create of the content browser does; material.set, particle.set and the like fill it.",params=Api_Asset_Create_Params,result=Api_Asset_Create_Result,run=api_asset_create})
-    api_register(s,st,{name="asset.convert",summary="Turns a scene into a prefab or a prefab into a scene, keeping its id; a scene needs one root and no Scene_Reference to become a prefab. At once, not an edit.",params=Api_Asset_Convert_Params,result=Api_Asset_Convert_Result,writes_result=true,run=api_asset_convert})
-    api_register(s,st,{name="asset.users",summary="The files that use an asset or a part it owns, as the Delete modal of the content browser lists them.",params=Api_Asset_Users_Params,result=Api_Asset_Users_Result,writes_result=true,flags={.Read_Only},run=api_asset_users})
-    api_register(s,st,{name="asset.delete",summary="Moves an asset and the parts it owns to the trash of the system at once and without undo. Fails for files of plugins, the engine or the editor, open tabs and outside Edit.",params=Api_Asset_Delete_Params,result=Api_Asset_Delete_Result,writes_result=true,flags={.Destructive},run=api_asset_delete})
+    api_register(s,st,{name="asset.convert",summary="Turns a scene into a prefab or a prefab into a scene, keeping its id; a scene needs one root and no Scene_Reference to become a prefab. At once, not an edit.",params=Api_Asset_Convert_Params,result=Api_Asset_Convert_Result,run=api_asset_convert})
+    api_register(s,st,{name="asset.users",summary="The files that use an asset or a part it owns, as the Delete modal of the content browser lists them.",params=Api_Asset_Users_Params,result=Api_Asset_Users_Result,flags={.Read_Only},run=api_asset_users})
+    api_register(s,st,{name="asset.delete",summary="Moves an asset and the parts it owns to the trash of the system at once and without undo. Fails for files of plugins, the engine or the editor, open tabs and outside Edit.",params=Api_Asset_Delete_Params,result=Api_Asset_Delete_Result,flags={.Destructive},run=api_asset_delete})
     api_register(s,st,{name="asset.move",summary="Moves, renames or copies an asset with the parts it owns, or a folder with all it holds, at once and without undo; a move keeps ids and references, an asset its extension. A move fails for files of plugins, the engine or the editor, open tabs, unsaved changes, a folder into itself and outside Edit.",params=Api_Asset_Move_Params,result=Api_Asset_Moved_Result,run=api_asset_move})
 }
 
@@ -265,36 +265,18 @@ api_asset_list :: proc(s:^Session,call:^api.Call) {
     host.assets_scan(a)
     registry:=&a.registry
     folder:=base.text_get(params.folder[:])
-    w:=call.out
-    total,shown:=0,0
-    broken:=0
-    serial.text_write_raw(w,`{"root":`);serial.text_write_string(w,registry.root)
-    api.write_key(w,"assets");serial.write_u8(w,'[')
+    r:=api.call_result(call,Api_Asset_List)
+    entries:=make([dynamic]Api_Asset_Entry,call.allocator)
     for &file in registry.files {
-        if file.state==.Broken {broken+=1}
+        if file.state==.Broken {r.broken+=1}
         if file.state!=.Asset || !asset.registry_listed(&file) || !api_asset_kind_matches(s,base.text_get(params.kind[:]),file.kind) {continue}
         if folder!="" && !strings.has_prefix(file.path,folder) {continue}
-        total+=1
-        if total<=params.offset || shown>=params.limit {continue}
-        if shown>0 {serial.write_u8(w,',')}
-        shown+=1
-        serial.text_write_raw(w,`{"path":`);serial.text_write_string(w,file.path)
-        api.write_key(w,"asset");api_asset_write(w,file.id)
-        api.write_key(w,"kind");serial.text_write_string(w,api_asset_kind_name(s,file.kind))
-        api.write_key(w,"size");serial.text_write_int(w,file.size)
-        api.write_key(w,"dependencies");serial.text_write_int(w,i64(file.dependency_count))
-        api.write_key(w,"used_by");serial.text_write_int(w,i64(len(asset.registry_dependents(registry,file.id))))
-        if file.owner!={} {api.write_key(w,"owner");api_asset_write(w,file.owner)}
-        serial.write_u8(w,'}')
+        r.total+=1
+        if r.total<=params.offset || len(entries)>=params.limit {continue}
+        append(&entries,Api_Asset_Entry{file.path,file.id,api_asset_kind_name(s,file.kind),int(file.size),int(file.dependency_count),len(asset.registry_dependents(registry,file.id)),file.owner})
     }
-    serial.write_u8(w,']')
-    api.write_key(w,"total");serial.text_write_int(w,i64(total))
-    api.write_key(w,"offset");serial.text_write_int(w,i64(params.offset))
-    api.write_key(w,"shown");serial.text_write_int(w,i64(shown))
-    api.write_key(w,"broken");serial.text_write_int(w,i64(broken))
-    api.write_key(w,"duplicates");serial.text_write_int(w,i64(len(registry.duplicates)+len(registry.reassigned)))
     missing:=make([dynamic]asset.Registry_Missing,context.temp_allocator)
     asset.registry_missing(registry,&missing)
-    api.write_key(w,"missing");serial.text_write_int(w,i64(len(missing)))
-    serial.write_u8(w,'}')
+    r.root,r.assets,r.offset,r.shown=registry.root,entries[:],params.offset,len(entries)
+    r.duplicates,r.missing=len(registry.duplicates)+len(registry.reassigned),len(missing)
 }

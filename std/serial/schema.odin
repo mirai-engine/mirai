@@ -132,6 +132,7 @@ Schema :: struct {
     named:map[typeid]Named, // whoever builds it sets and keeps it before adding types; the schema copies the names it takes
     error:string, // set when schema_add fails: the path of the field that is not plain data; empty when it had no memory
     unsized:bool, // its types may hold slices, strings and Json; whoever builds it sets it before adding types
+    sparse:bool,  // text leaves out a field tagged optional that holds nothing: all its bytes are zero
     adding:[dynamic]typeid, // the structs schema_add is inside of: one that holds itself is not added
     allocator:runtime.Allocator,
 }

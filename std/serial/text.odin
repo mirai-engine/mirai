@@ -272,6 +272,7 @@ text_write_value :: proc(w:^Writer,s:^Schema,index:Type_Index,bytes:[]u8,is_text
         first:=true
         for field in s.fields[type.first:][:type.count] {
             if field.flags & omit_fields != (Field_Flags{}) {continue}
+            if s.sparse && .Optional in field.hints && slice.all_of(bytes[field.offset:][:s.types[field.type].size],0) {continue}
             text_write_key(w,field.name,first,format,depth+1)
             first=false
             text_write_field(w,s,field,bytes[field.offset:][:s.types[field.type].size],format,depth+1,omit_fields)

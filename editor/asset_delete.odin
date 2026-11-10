@@ -26,7 +26,7 @@ Api_Asset_Users_Params :: struct {
 }
 
 Api_Asset_Users_Result :: struct {
-    used_by:[][API_PATH_BYTES]u8 `mirai:"text,label=The files that reference the asset or a part it owns, by id: moving it keeps them working and deleting it breaks them"`,
+    used_by:[]string `mirai:"label=The files that reference the asset or a part it owns, by id: moving it keeps them working and deleting it breaks them"`,
 }
 
 ASSET_DELETE_USERS :: 4 // rows of the files that use it; the rest is a count
@@ -204,38 +204,22 @@ api_asset_named :: proc(s:^Session,call:^api.Call,name:string) -> (r:^asset.Regi
 api_asset_users :: proc(s:^Session,call:^api.Call) {
     r,id,ok:=api_asset_named(s,call,base.text_get(api.call_params(call,Api_Asset_Users_Params).asset[:]))
     if !ok {return}
-    w:=call.out
-    serial.text_write_raw(w,`{"used_by":[`)
-    for at,i in asset_delete_users(r,asset_delete_files(r,id)) {
-        if i>0 {serial.write_u8(w,',')}
-        serial.text_write_string(w,r.files[at].path)
-    }
-    serial.text_write_raw(w,`]}`)
+    users:=asset_delete_users(r,asset_delete_files(r,id))
+    used:=make([]string,len(users),call.allocator)
+    for at,i in users {used[i]=r.files[at].path}
+    api.call_result(call,Api_Asset_Users_Result).used_by=used
 }
 
 @(private)
 api_asset_delete :: proc(s:^Session,call:^api.Call) {
     r,id,ok:=api_asset_named(s,call,base.text_get(api.call_params(call,Api_Asset_Delete_Params).asset[:]))
     if !ok {return}
-    users:=make([dynamic]string,context.temp_allocator)
-    for at in asset_delete_users(r,asset_delete_files(r,id)) {append(&users,strings.clone(r.files[at].path,context.temp_allocator))}
+    users:=make([dynamic]string,call.allocator)
+    for at in asset_delete_users(r,asset_delete_files(r,id)) {append(&users,strings.clone(r.files[at].path,call.allocator))}
     moved,message:=asset_delete(s,id)
     if len(moved)==0 {
         api.call_fail(call,api.INVALID_PARAMS,message!=""?message:"Nothing was deleted")
         return
     }
-    w:=call.out
-    serial.text_write_raw(w,`{"moved":[`)
-    for path,i in moved {
-        if i>0 {serial.write_u8(w,',')}
-        serial.text_write_string(w,path)
-    }
-    serial.text_write_raw(w,`],"used_by":[`)
-    for path,i in users {
-        if i>0 {serial.write_u8(w,',')}
-        serial.text_write_string(w,path)
-    }
-    serial.write_u8(w,']')
-    if message!="" {api.write_text(w,"error",message)}
-    serial.write_u8(w,'}')
+    api.call_result(call,Api_Asset_Delete_Result)^={moved,users[:],message}
 }

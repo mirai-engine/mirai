@@ -59,8 +59,8 @@ ai_methods_write_the_results_they_declare :: proc(t:^testing.T) {
     ai_api_register(&s,state)
     if !testing.expectf(t,state.refused==0,"%s",state.refusal) {return}
     out_buffer:=make([]u8,64*1024,context.temp_allocator)
-    // ai.history answers a list of the conversations or of the messages of one.
-    for request in ([]struct{method,params,key:string}{{"ai.status",`{}`,""},{"ai.status",`{"id":7,"from":1}`,""},{"ai.cancel",`{"id":8}`,""},{"ai.connections",`{}`,""},{"agent.list",`{}`,""},{"memory.search",`{"query":"wall"}`,""},{"annotation.list",`{}`,""},{"ai.provenance",`{"asset":"cube.mat"}`,""},{"ai.history",`{}`,"updated_at"},{"ai.history",`{"id":1}`,"sequence"}}) {
+    // ai.history answers the conversations, or the messages of one.
+    for request in ([]struct{method,params,key:string}{{"ai.status",`{}`,""},{"ai.status",`{"id":7,"from":1}`,""},{"ai.cancel",`{"id":8}`,""},{"ai.connections",`{}`,""},{"agent.list",`{}`,""},{"memory.search",`{"query":"wall"}`,""},{"annotation.list",`{}`,""},{"ai.provenance",`{"asset":"cube.mat"}`,""},{"ai.history",`{}`,"conversations"},{"ai.history",`{"id":1}`,"messages"}}) {
         method:=api.method_find(&state.server,request.method)
         if !testing.expect(t,method!=nil) {continue}
         w:serial.Writer
@@ -72,12 +72,8 @@ ai_methods_write_the_results_they_declare :: proc(t:^testing.T) {
             testing.expect_value(t,api.result_mismatch(method.result_id,text),"")
             continue
         }
-        reply,reply_error:=json.parse_string(text,allocator=context.temp_allocator)
-        items,listed:=reply.(json.Array)
-        testing.expectf(t,reply_error==.None && listed && len(items)>0,"%s answers %s",request.method,text)
-        for item in items {
-            _,keyed:=item.(json.Object)[request.key]
-            testing.expectf(t,keyed,"%s answers %s",request.method,text)
-        }
+        testing.expect_value(t,api.result_mismatch(method.result_id,text),"")
+        items,listed:=api.json_elements(api.json_member(text,request.key))
+        testing.expectf(t,listed && len(items)>0,"%s answers %s",request.method,text)
     }
 }

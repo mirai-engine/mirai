@@ -1,6 +1,7 @@
 package cinematics_editor
 
 import "core:fmt"
+import "core:strings"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
@@ -19,20 +20,20 @@ Inspect_Params :: struct {
     entity:editor.Api_Entity_Text `mirai:"text,entity,label=The timeline or one of its shots viewers or actors"`,
     time:f32 `mirai:"optional,min=-1,unit=s,label=The time of the clip whose shot is given; -1: the head of the preview in Edit or where the clip is in Play"`,
 }
-Inspect_Shot :: struct {id,camera:base.Entity_Id,camera_name:[64]u8 `mirai:"text"`,time,blend:f32 `mirai:"unit=s"`,ease:mm.Ease}
+Inspect_Shot :: struct {id,camera:base.Entity_Id,camera_name:string,time,blend:f32 `mirai:"unit=s"`,ease:mm.Ease}
 Inspect_Actor :: struct {
     id:base.Entity_Id,
-    name:[64]u8 `mirai:"text"`,
-    target:[64]u8 `mirai:"text,label=What the tracks of the clip call it: the target of animation.track.set; its field tracks are target/@field/Component.field"`,
+    name:string,
+    target:string `mirai:"label=What the tracks of the clip call it: the target of animation.track.set; its field tracks are target/@field/Component.field"`,
 }
 Inspect_Viewer :: struct {id,seat:base.Entity_Id}
 Inspect_View :: struct {camera:base.Entity_Id,position:[3]f32,rotation:[4]f32 `mirai:"label=Quaternion xyzw"`,fov:f32 `mirai:"angle"`,near:f32 `mirai:"unit=m"`}
 Inspect_Preview :: struct {on,playing,shot_view:bool,head:f32 `mirai:"unit=s"`}
 Inspect_Result :: struct {
     id:base.Entity_Id,
-    name:[64]u8 `mirai:"text"`,
+    name:string,
     clip:base.Asset_Id `mirai:"label=The .anim of the Animation of the timeline: animation.track.set and animation.key.set write its keys and animation.marker.set its markers"`,
-    clip_name:[anim.CLIP_CAPACITY]u8 `mirai:"text,label=Animation.clip; empty: the first of the asset"`,
+    clip_name:string `mirai:"label=Animation.clip; empty: the first of the asset"`,
     duration:f32 `mirai:"unit=s,label=Of the clip as the world plays it; 0 before it has one"`,
     loop,playing:bool `mirai:"label=Of its Animation"`,
     status:cine.Cinematic_Status,
@@ -77,7 +78,7 @@ Add_Result :: struct {id:base.Entity_Id}
 register :: proc(s:^editor.Session) {
     editor.tool_entry(s,TOOL,"Cinematics",.Play)
     inspect_defaults:=Inspect_Params{time=-1}
-    editor.api_method_register(s,{name="cinematics.inspect",summary="A timeline: the clip of its Animation and where it is, its shots, the actors its clip moves, its viewers, what the viewers show at a time, and the preview of the editor. The keys and markers are of the clip: animation.asset.inspect reads them.",params=Inspect_Params,params_info=type_info_of(Inspect_Params),result=Inspect_Result,result_info=type_info_of(Inspect_Result),defaults=&inspect_defaults,writes_result=true,flags={.Read_Only},run=api_inspect})
+    editor.api_method_register(s,{name="cinematics.inspect",summary="A timeline: the clip of its Animation and where it is, its shots, the actors its clip moves, its viewers, what the viewers show at a time, and the preview of the editor. The keys and markers are of the clip: animation.asset.inspect reads them.",params=Inspect_Params,params_info=type_info_of(Inspect_Params),result=Inspect_Result,result_info=type_info_of(Inspect_Result),defaults=&inspect_defaults,flags={.Read_Only},run=api_inspect})
     editor.api_method_register(s,{name="cinematics.control",summary="Plays, pauses, resumes, stops or seeks the clip of a timeline: in Edit the preview of the Cinematics tool, which seeks the clip in the scene without changing the document; in Play the running world, as anim.animation_command does.",params=Control_Params,params_info=type_info_of(Control_Params),result=Control_Result,result_info=type_info_of(Control_Result),run=api_control})
     editor.api_method_register(s,{name="cinematics.add",summary="Adds a timeline (an entity with a Cinematic and the Animation that plays its clip), a shot under one, or an actor: an entity anywhere that the clip moves by a name. One step of undo.",params=Add_Params,params_info=type_info_of(Add_Params),result=Add_Result,result_info=type_info_of(Add_Result),run=api_add})
 }
@@ -113,70 +114,28 @@ api_inspect :: proc(s:^editor.Session,call:^api.Call) {
     if time<0 {time=previewed?c.head/rate:at}
     status:=value.status
     if s.mode==.Edit {status=clipped?cine.cinematic_status(false,ended,at):.Stopped}
-    out:=call.out
-    serial.write_u8(out,'{')
-    api.write_key(out,"id",true);api.write_id(out,editor.api_entity_id(w,timeline))
-    api.write_text(out,"name",editor.entity_name(w,timeline))
-    clip_text:[base.ASSET_ID_TEXT]u8
-    api.write_text(out,"clip",base.asset_id_format(animation.asset,clip_text[:]))
-    api.write_text(out,"clip_name",base.text_get(animation.clip[:]))
-    api.write_key(out,"duration");api.write_number(out,clipped?duration:0)
-    api.write_bool(out,"loop",animation.loop)
-    api.write_bool(out,"playing",animation.playing)
-    api.write_text(out,"status",fmt.tprintf("%v",status))
-    api.write_key(out,"time");api.write_number(out,time)
-    api.write_key(out,"shots");serial.write_u8(out,'[')
+    r:=api.call_result(call,Inspect_Result)
+    r^={
+        id=editor.api_entity_id(w,timeline),name=editor.entity_name(w,timeline),clip=animation.asset,clip_name=strings.clone(base.text_get(animation.clip[:]),call.allocator),
+        duration=clipped?duration:0,loop=animation.loop,playing=animation.playing,status=status,time=time,
+        preview={previewed && c.previewing,previewed && c.playing,previewed && c.shot_view,previewed?c.head/rate:0},
+    }
     shots,shot_values:=parts_of(w,timeline,cine.Cinematic_Shot)
-    for shot,i in shot_values {
-        if i>0 {serial.write_u8(out,',')}
-        serial.write_u8(out,'{')
-        api.write_key(out,"id",true);api.write_id(out,editor.api_entity_id(w,shots[i]))
-        api.write_key(out,"camera");api.write_id(out,editor.api_entity_id(w,shot.camera))
-        api.write_text(out,"camera_name",editor.entity_name(w,shot.camera))
-        api.write_key(out,"time");api.write_number(out,shot.time)
-        api.write_key(out,"blend");api.write_number(out,shot.blend)
-        api.write_text(out,"ease",fmt.tprintf("%v",shot.ease))
-        serial.write_u8(out,'}')
-    }
-    serial.write_u8(out,']')
-    api.write_key(out,"actors");serial.write_u8(out,'[')
+    r.shots=make([]Inspect_Shot,len(shot_values),call.allocator)
+    for shot,i in shot_values {r.shots[i]={editor.api_entity_id(w,shots[i]),editor.api_entity_id(w,shot.camera),editor.entity_name(w,shot.camera),shot.time,shot.blend,shot.ease}}
     actors,actor_values:=actors_of(w,timeline)
+    r.actors=make([]Inspect_Actor,len(actor_values),call.allocator)
     for &actor,i in actor_values {
-        if i>0 {serial.write_u8(out,',')}
-        serial.write_u8(out,'{')
-        api.write_key(out,"id",true);api.write_id(out,editor.api_entity_id(w,actors[i]))
-        api.write_text(out,"name",editor.entity_name(w,actors[i]))
+        name:=editor.entity_name(w,actors[i])
         target:=base.text_get(actor.path[:])
-        api.write_text(out,"target",target if target!="" else editor.entity_name(w,actors[i]))
-        serial.write_u8(out,'}')
+        r.actors[i]={editor.api_entity_id(w,actors[i]),name,target if target!="" else name}
     }
-    serial.write_u8(out,']')
-    api.write_key(out,"viewers");serial.write_u8(out,'[')
     viewers,viewer_values:=parts_of(w,timeline,cine.Cinematic_Viewer)
-    for viewer,i in viewer_values {
-        if i>0 {serial.write_u8(out,',')}
-        serial.write_u8(out,'{')
-        api.write_key(out,"id",true);api.write_id(out,editor.api_entity_id(w,viewers[i]))
-        api.write_key(out,"seat");api.write_id(out,editor.api_entity_id(w,viewer.seat))
-        serial.write_u8(out,'}')
-    }
-    serial.write_u8(out,']')
+    r.viewers=make([]Inspect_Viewer,len(viewer_values),call.allocator)
+    for viewer,i in viewer_values {r.viewers[i]={editor.api_entity_id(w,viewers[i]),editor.api_entity_id(w,viewer.seat)}}
     if shot,sample,ok:=shot_view(w,timeline,time);ok {
-        api.write_key(out,"view");serial.write_u8(out,'{')
-        api.write_key(out,"camera",true);api.write_id(out,editor.api_entity_id(w,shot.camera))
-        api.write_numbers(out,"position",sample.pose.position)
-        rotation:=([4]f32)(lib.quat_vec4(sample.pose.rotation))
-        api.write_numbers(out,"rotation",rotation[:])
-        api.write_key(out,"fov");api.write_number(out,sample.fov)
-        api.write_key(out,"near");api.write_number(out,sample.near)
-        serial.write_u8(out,'}')
+        r.view={editor.api_entity_id(w,shot.camera),sample.pose.position,([4]f32)(lib.quat_vec4(sample.pose.rotation)),sample.fov,sample.near}
     }
-    api.write_key(out,"preview");serial.write_u8(out,'{')
-    api.write_bool(out,"on",previewed && c.previewing,true)
-    api.write_bool(out,"playing",previewed && c.playing)
-    api.write_bool(out,"shot_view",previewed && c.shot_view)
-    api.write_key(out,"head");api.write_number(out,previewed?c.head/rate:0)
-    serial.text_write_raw(out,"}}")
 }
 
 @(private)

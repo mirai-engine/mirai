@@ -583,14 +583,14 @@ a_pinned_chip_stays_over_the_composer_once_it_leaves_the_message :: proc(t:^test
 @(private="file")
 annotation_list :: proc(t:^testing.T,f:^Fixture) -> string {
     p:=new(Ai_Annotation_List_Params,context.temp_allocator)
-    w:=new(serial.Writer,context.temp_allocator)
-    serial.writer_init(w,0,context.temp_allocator)
+    result:=new(Ai_Annotation_List_Result,context.temp_allocator)
     method:=new(api.Method,context.temp_allocator)
     method^={name="annotation.list",params_id=Ai_Annotation_List_Params,result_id=Ai_Annotation_List_Result}
-    call:=api.Call{method=method,raw="{}",params=p,out=w,allocator=context.temp_allocator}
+    call:=api.Call{method=method,raw="{}",params=p,result=result,allocator=context.temp_allocator}
     ai_method_annotation_list(&f.s,&call)
     testing.expect(t,!call.failed,call.error.message)
-    return string(serial.writer_bytes(w))
+    text,_:=serial.text_encode(result^,.Line,context.temp_allocator)
+    return api.json_compact(string(text))
 }
 
 @(private="file")

@@ -178,15 +178,14 @@ a_transaction_of_a_turn_says_who_changed_its_entities_and_assets :: proc(t:^test
     testing.expect_value(t,base.text_get(ai_provenance_view(m,.Asset,"rock.mat").title[:]),"Wet rock")
     p:=new(Ai_Provenance_Params,context.temp_allocator)
     p.entity=0x2a
-    w:=new(serial.Writer,context.temp_allocator)
-    serial.writer_init(w,0,context.temp_allocator)
+    result:=new(Ai_Provenance_Result,context.temp_allocator)
     method:=new(api.Method,context.temp_allocator)
     method^={name="ai.provenance",params_id=Ai_Provenance_Params,result_id=Ai_Provenance_Result}
-    call:=api.Call{method=method,raw="{}",params=p,out=w,allocator=context.temp_allocator}
+    call:=api.Call{method=method,raw="{}",params=p,result=result,allocator=context.temp_allocator}
     ai_method_provenance(&f.s,&call)
     testing.expect(t,!call.failed,call.error.message)
-    text:=string(serial.writer_bytes(w))
-    testing.expect_value(t,api.result_mismatch(Ai_Provenance_Result,text),"")
+    encoded,_:=serial.text_encode(result^,.Line,context.temp_allocator)
+    text:=api.json_compact(string(encoded))
     for fragment in ([?]string{`"found":true`,`"conversation":7`,"Wet rock","Make the rock wet","gpt-6","high"}) {
         testing.expectf(t,strings.contains(text,fragment),"%q is missing from %s",fragment,text)
     }

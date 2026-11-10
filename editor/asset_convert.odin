@@ -86,15 +86,12 @@ Api_Asset_Convert_Result :: struct {
 }
 
 api_asset_convert :: proc(s:^Session,call:^api.Call) {
-    r,id,named:=api_asset_named(s,call,base.text_get(api.call_params(call,Api_Asset_Convert_Params).asset[:]))
+    _,id,named:=api_asset_named(s,call,base.text_get(api.call_params(call,Api_Asset_Convert_Params).asset[:]))
     if !named {return}
     path,message:=asset_convert(s,id)
     if message!="" {
         api.call_fail(call,api.INVALID_PARAMS,message)
         return
     }
-    w:=call.out
-    serial.text_write_raw(w,`{"path":`)
-    serial.text_write_string(w,path)
-    serial.write_u8(w,'}')
+    api.call_result(call,Api_Asset_Convert_Result).path=path
 }

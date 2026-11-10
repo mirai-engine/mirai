@@ -1,7 +1,9 @@
 package editor
 
+import "base:runtime"
 import "core:fmt"
 import "core:slice"
+import "core:strings"
 import "core:sync"
 import "core:unicode/utf8"
 import "mirai:asset"
@@ -30,10 +32,9 @@ Api_Engine_Diagnostics_Result_Validation :: struct {
     errors,loader_errors:int,
     messages:[]string,
 }
-Api_Engine_Diagnostics_Result_Console_Entries_Level :: enum u8 {Debug,Info,Warning,Error}
 Api_Engine_Diagnostics_Result_Console_Entries :: struct {
     serial:int,
-    level:Api_Engine_Diagnostics_Result_Console_Entries_Level,
+    level:string `mirai:"label=Debug, Info, Warning or Error"`,
     text:string,
     repeats:int,
 }
@@ -47,9 +48,8 @@ Api_Engine_Diagnostics_Result_Asset_Errors :: struct {
     id,kind,problem,detail:string,
     path,message:string `mirai:"optional"`,
 }
-Api_Engine_Diagnostics_Result_Build_Diagnostics_Severity :: enum u8 {Error,Warning}
 Api_Engine_Diagnostics_Result_Build_Diagnostics :: struct {
-    severity:Api_Engine_Diagnostics_Result_Build_Diagnostics_Severity,
+    severity:string `mirai:"label=Error or Warning"`,
     file:string,
     line,column:int,
     message:string,
@@ -60,16 +60,16 @@ Api_Engine_Diagnostics_Result_Build :: struct {
     diagnostics:[]Api_Engine_Diagnostics_Result_Build_Diagnostics,
     text:string,
 }
-Api_Engine_Diagnostics_Result_Problems_World :: enum u8 {edit,play}
 Api_Engine_Diagnostics_Result_Problems_Entries :: struct {
-    id,entity,name:string,
+    id,entity:string `mirai:"optional,label=Of the entity it is about, when it is about one"`,
+    name:string,
     alive:bool,
     code:string,
     message:string `mirai:"label=What failed and how to fix it"`,
     count,first,last:int,
 }
 Api_Engine_Diagnostics_Result_Problems :: struct {
-    world:Api_Engine_Diagnostics_Result_Problems_World,
+    world:string `mirai:"label=edit or play"`,
     owner,player:int `mirai:"optional"`,
     serial,evicted:int,
     entries:[]Api_Engine_Diagnostics_Result_Problems_Entries,
@@ -89,7 +89,7 @@ Api_Engine_Diagnostics_Result :: struct {
 @(private)
 api_diagnostics_register :: proc(s:^Session,st:^Api_State) {
     defaults:=Api_Diagnostics_Params{min_level=.Info,limit=50}
-    api_register(s,st,{name="engine.diagnostics",summary="The text behind the counters of engine.status: what the GPU, the console, the assets and the last build reported, and the problems the functions of the edited world and of each Play met.",params=Api_Diagnostics_Params,result=Api_Engine_Diagnostics_Result,writes_result=true,defaults=&defaults,flags={.Core,.Read_Only,.As_User},run=api_diagnostics})
+    api_register(s,st,{name="engine.diagnostics",summary="The text behind the counters of engine.status: what the GPU, the console, the assets and the last build reported, and the problems the functions of the edited world and of each Play met.",params=Api_Diagnostics_Params,result=Api_Engine_Diagnostics_Result,defaults=&defaults,flags={.Core,.Read_Only,.As_User},run=api_diagnostics})
 }
 
 // The text without a multi-byte character cut at its end.
@@ -108,172 +108,96 @@ api_text_whole :: proc(text:string) -> string {
 @(private)
 api_diagnostics :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Diagnostics_Params)
-    out:=call.out
+    r:=api.call_result(call,Api_Engine_Diagnostics_Result)
     app:=s.app
-    errors,loader:int
-    history:[rhi.VALIDATION_HISTORY]string
-    shown:=0
     if app!=nil && app.device!=nil {
-        errors,loader=rhi.device_validation_errors(app.device),rhi.device_loader_errors(app.device)
-        shown=rhi.device_validation_messages(app.device,history[:])
+        history:[rhi.VALIDATION_HISTORY]string
+        r.validation.errors,r.validation.loader_errors=rhi.device_validation_errors(app.device),rhi.device_loader_errors(app.device)
+        r.validation.messages=make([]string,rhi.device_validation_messages(app.device,history[:]),call.allocator)
+        for &message,i in r.validation.messages {message=strings.clone(api_text_whole(history[i]),call.allocator)}
     }
-    serial.text_write_raw(out,`{"validation":{`)
-    api.write_int(out,"errors",i64(errors),true)
-    api.write_int(out,"loader_errors",i64(loader))
-    api.write_key(out,"messages");serial.write_u8(out,'[')
-    for message,i in history[:shown] {
-        if i>0 {serial.write_u8(out,',')}
-        serial.text_write_string(out,api_text_whole(message))
-    }
-    serial.text_write_raw(out,`]}`)
-    problem:string
-    if app!=nil && app.renderer!=nil {problem=gpu.renderer_stats(app.renderer).problem}
-    api.write_key(out,"renderer");serial.write_u8(out,'{')
-    api.write_text(out,"problem",problem,true)
-    serial.write_u8(out,'}')
-    if s.console!=nil {api_diagnostics_console(s.console,params,out)}
-    api.write_key(out,"asset_errors");serial.write_u8(out,'[')
+    if app!=nil && app.renderer!=nil {r.renderer.problem=gpu.renderer_stats(app.renderer).problem}
+    if s.console!=nil {r.console=api_diagnostics_console(s.console,params,call.allocator)}
+    errors:=make([dynamic]Api_Engine_Diagnostics_Result_Asset_Errors,call.allocator)
     if app!=nil && app.assets!=nil {
         listed:=host.assets_errors(app.assets)
-        for known,i in listed[:min(len(listed),API_DIAGNOSTICS_LIMIT)] {
-            if i>0 {serial.write_u8(out,',')}
+        for known in listed[:min(len(listed),API_DIAGNOSTICS_LIMIT)] {
             buffer:[base.ASSET_ID_TEXT]u8
-            serial.write_u8(out,'{')
-            api.write_text(out,"id",base.asset_id_format(known.id,buffer[:]),true)
-            api.write_text(out,"kind",fmt.tprint(known.kind))
-            api.write_text(out,"problem",fmt.tprint(known.problem))
-            api.write_text(out,"detail",fmt.tprint(known.detail))
-            if known.detail==.Version {api.write_text(out,"message",api_asset_stale(app.assets,known.id))}
-            serial.write_u8(out,'}')
+            entry:=Api_Engine_Diagnostics_Result_Asset_Errors{id=strings.clone(base.asset_id_format(known.id,buffer[:]),call.allocator),kind=fmt.tprint(known.kind),problem=fmt.tprint(known.problem),detail=fmt.tprint(known.detail)}
+            if known.detail==.Version {entry.message=api_asset_stale(app.assets,known.id)}
+            append(&errors,entry)
         }
-        api_duplicates_write(&app.assets.registry,out,len(listed)==0)
+        api_duplicates_list(&app.assets.registry,&errors)
     }
-    serial.write_u8(out,']')
-    api.write_key(out,"build");serial.write_u8(out,'{')
+    r.asset_errors=errors[:]
+    r.build.phase="Idle"
     if b:=s.build;b!=nil {
-        api.write_text(out,"phase",fmt.tprint(b.phase),true)
-        api.write_int(out,"errors",i64(len(b.diagnostics)))
-        api.write_key(out,"diagnostics");serial.write_u8(out,'[')
-        for d,i in b.diagnostics[:min(len(b.diagnostics),API_DIAGNOSTICS_LIMIT)] {
-            if i>0 {serial.write_u8(out,',')}
-            serial.write_u8(out,'{')
-            api.write_text(out,"severity",fmt.tprint(d.severity),true)
-            api.write_text(out,"file",d.file)
-            api.write_int(out,"line",i64(d.line))
-            api.write_int(out,"column",i64(d.column))
-            api.write_text(out,"message",d.message)
-            serial.write_u8(out,'}')
-        }
-        serial.write_u8(out,']')
+        shown:=b.diagnostics[:min(len(b.diagnostics),API_DIAGNOSTICS_LIMIT)]
+        r.build.phase,r.build.errors=fmt.tprint(b.phase),len(b.diagnostics)
+        r.build.diagnostics=make([]Api_Engine_Diagnostics_Result_Build_Diagnostics,len(shown),call.allocator)
+        for d,i in shown {r.build.diagnostics[i]={fmt.tprint(d.severity),d.file,d.line,d.column,d.message}}
         text:=b.text
         if len(b.shaders_text)>0 {text=len(text)>0?fmt.tprintf("%s\n%s",b.shaders_text,text):b.shaders_text}
-        api.write_text(out,"text",api_text_whole(text[:min(len(text),API_DIAGNOSTICS_BUILD_TEXT)]))
-    } else {
-        api.write_text(out,"phase","Idle",true)
-        api.write_int(out,"errors",0)
-        api.write_key(out,"diagnostics");serial.text_write_raw(out,"[]")
-        api.write_text(out,"text","")
+        r.build.text=api_text_whole(text[:min(len(text),API_DIAGNOSTICS_BUILD_TEXT)])
     }
-    serial.write_u8(out,'}')
-    api.write_key(out,"problems");serial.write_u8(out,'[')
-    listed:=api_diagnostics_problems(s,edited_world(s),nil,out,true)
-    for &r in s.runs {
-        if r.world!=nil && api_diagnostics_problems(s,run_ref(s,&r),&r,out,!listed) {listed=true}
+    problems:=make([dynamic]Api_Engine_Diagnostics_Result_Problems,call.allocator)
+    if w:=edited_world(s);w.data!=nil && app!=nil {
+        if held:=host.app_world_storage(app,w.data,core.Problems);held!=nil {append(&problems,api_problems_of(w,held,"edit",call.allocator))}
     }
-    serial.text_write_raw(out,"]}")
-}
-
-// The problems of a world, the oldest first: those of the run r, or of the
-// edited world. False when the world has none to list.
-@(private)
-api_diagnostics_problems :: proc(s:^Session,w:core.World_Ref,r:^Run,out:^serial.Writer,first:bool) -> bool {
-    if w.data==nil || s.app==nil {return false}
-    problems:=host.app_world_storage(s.app,w.data,core.Problems)
-    if problems==nil {return false}
-    if !first {serial.write_u8(out,',')}
-    serial.write_u8(out,'{')
-    api.write_text(out,"world",r!=nil?"play":"edit",true)
-    if r!=nil {
-        api.write_int(out,"owner",i64(r.owner))
-        api.write_int(out,"player",i64(r.player))
+    for &run in s.runs {
+        if run.world==nil || app==nil {continue}
+        w:=run_ref(s,&run)
+        if held:=host.app_world_storage(app,w.data,core.Problems);held!=nil {
+            listed:=api_problems_of(w,held,"play",call.allocator)
+            listed.owner,listed.player=int(run.owner),int(run.player)
+            append(&problems,listed)
+        }
     }
-    api_problems_write(w,problems,out)
-    serial.write_u8(out,'}')
-    return true
+    r.problems=problems[:]
 }
 
 // The serial, the evicted and the entries of the problems of a world, the
 // oldest first, after the first key of an object.
 @(private)
-api_problems_write :: proc(w:core.World_Ref,problems:^core.Problems,out:^serial.Writer) {
-    api.write_uint(out,"serial",problems.serial)
-    api.write_uint(out,"evicted",problems.evicted)
-    api.write_key(out,"entries");serial.write_u8(out,'[')
+api_problems_of :: proc(w:core.World_Ref,problems:^core.Problems,world:string,allocator:runtime.Allocator) -> (r:Api_Engine_Diagnostics_Result_Problems) {
     listed:=slice.clone(core.problems_list(problems),context.temp_allocator)
     slice.sort_by(listed,proc(a,b:core.Problem) -> bool {return a.first<b.first})
     entities:=core.world_entities(w)
+    r={world=world,serial=int(problems.serial),evicted=int(problems.evicted),entries=make([]Api_Engine_Diagnostics_Result_Problems_Entries,len(listed),allocator)}
     for &p,i in listed {
-        if i>0 {serial.write_u8(out,',')}
         named:=p.entity!=core.NONE
-        serial.write_u8(out,'{')
-        api.write_key(out,"id",true)
-        if id:=api_entity_id(w,p.entity);named && id!=0 {api.write_id(out,id)} else {serial.text_write_raw(out,"null")}
-        api.write_key(out,"entity")
-        if named {serial.write_u8(out,'"');serial.text_write_hex(out,u64(p.entity));serial.write_u8(out,'"')} else {serial.text_write_raw(out,"null")}
-        api.write_text(out,"name",entity_name(w,p.entity) if named else "")
-        api.write_bool(out,"alive",named && core.alive(entities,p.entity))
-        api.write_text(out,"code",core.problem_code(&p))
-        api.write_text(out,"message",api_text_whole(core.problem_text(&p)))
-        api.write_uint(out,"count",p.count)
-        api.write_uint(out,"first",p.first)
-        api.write_uint(out,"last",p.last)
-        serial.write_u8(out,'}')
+        entry:=&r.entries[i]
+        entry^={alive=named && core.alive(entities,p.entity),code=core.problem_code(&p),message=strings.clone(api_text_whole(core.problem_text(&p)),allocator),count=int(p.count),first=int(p.first),last=int(p.last)}
+        if !named {continue}
+        entry.entity,entry.name=fmt.aprintf("0x%016x",u64(p.entity),allocator=allocator),entity_name(w,p.entity)
+        if id:=api_entity_id(w,p.entity);id!=0 {entry.id=fmt.aprintf("0x%016x",u64(id),allocator=allocator)}
     }
-    serial.write_u8(out,']')
+    return
 }
 
 // The entries of the console that are newer than since and reach min_level,
 // the newest limit of them, oldest first.
 @(private)
-api_diagnostics_console :: proc(c:^Console,params:^Api_Diagnostics_Params,out:^serial.Writer) {
+api_diagnostics_console :: proc(c:^Console,params:^Api_Diagnostics_Params,allocator:runtime.Allocator) -> (r:Api_Engine_Diagnostics_Result_Console) {
     sync.mutex_lock(&c.mutex)
     defer sync.mutex_unlock(&c.mutex)
     matches :: proc(params:^Api_Diagnostics_Params,entry:^Console_Entry) -> bool {
         return entry.serial>params.since && entry.level>=params.min_level
     }
-    total:=0
+    entries:=make([dynamic]Api_Engine_Diagnostics_Result_Console_Entries,allocator)
     if len(c.entries)>0 {
         for i in 0..<c.count {
-            if matches(params,console_at(c,i)) {total+=1}
+            if entry:=console_at(c,i);matches(params,entry) {
+                append(&entries,Api_Engine_Diagnostics_Result_Console_Entries{int(entry.serial),fmt.tprint(entry.level),strings.clone(api_text_whole(string(entry.text[:entry.length])),allocator),int(entry.repeats)})
+            }
         }
     }
-    skip:=max(total-params.limit,0)
-    api.write_key(out,"console");serial.text_write_raw(out,`{"serial":`);serial.text_write_uint(out,c.serial)
-    api.write_key(out,"counts");serial.write_u8(out,'{')
-    for level in Console_Level {
-        api.write_int(out,fmt.tprint(level),i64(c.counts[level]),level==.Debug)
-    }
-    serial.write_u8(out,'}')
-    api.write_int(out,"omitted",i64(skip))
-    api.write_key(out,"entries");serial.write_u8(out,'[')
-    seen,written:=0,0
-    if len(c.entries)>0 {
-        for i in 0..<c.count {
-            entry:=console_at(c,i)
-            if !matches(params,entry) {continue}
-            seen+=1
-            if seen<=skip {continue}
-            if written>0 {serial.write_u8(out,',')}
-            written+=1
-            serial.write_u8(out,'{')
-            api.write_uint(out,"serial",entry.serial,true)
-            api.write_text(out,"level",fmt.tprint(entry.level))
-            api.write_text(out,"text",api_text_whole(string(entry.text[:entry.length])))
-            api.write_uint(out,"repeats",u64(entry.repeats))
-            serial.write_u8(out,'}')
-        }
-    }
-    serial.text_write_raw(out,"]}")
+    counts:=strings.builder_make(allocator)
+    for level in Console_Level {fmt.sbprintf(&counts,`%s"%v":%d`,level==.Debug?"{":",",level,c.counts[level])}
+    strings.write_byte(&counts,'}')
+    r.omitted=max(len(entries)-params.limit,0)
+    r.serial_,r.counts,r.entries=int(c.serial),serial.Json(strings.to_string(counts)),entries[r.omitted:]
+    return
 }
 
 // What to do about an asset of a version this build does not read: which

@@ -348,16 +348,19 @@ Api_View_Mode_Params :: struct {
 // A mode as the API gives it: its name, its label, its group and submenu in
 // the menu, and why it cannot be shown now when it cannot.
 @(private)
-api_view_mode_write :: proc(call: ^api.Call, entry: View_Mode_Entry) {
-	out := call.out
-	serial.write_u8(out, '{')
-	api.write_text(out, "mode", entry.name, true)
-	api.write_text(out, "label", entry.label)
-	api.write_text(out, "group", entry.group)
-	api.write_text(out, "submenu", entry.submenu)
-	api.write_bool(out, "available", entry.available)
-	api.write_text(out, "reason", entry.reason)
-	serial.write_u8(out, '}')
+Api_View_Mode :: struct {
+	mode, label, group, submenu: string,
+	available:                   bool,
+	reason:                      string,
+}
+Api_View_Modes :: struct {
+	current: string,
+	modes:   []Api_View_Mode,
+}
+
+@(private)
+api_view_mode_of :: proc(entry: View_Mode_Entry) -> Api_View_Mode {
+	return {entry.name, entry.label, entry.group, entry.submenu, entry.available, entry.reason}
 }
 
 @(private)
@@ -366,16 +369,10 @@ api_view_modes :: proc(s: ^Session, call: ^api.Call) {
 	if r == nil {api.call_fail(call, api.SERVER_ERROR, "The editor has no renderer: it runs without a GPU"); return}
 	buffer: [VIEW_MODE_ENTRY_CAPACITY]View_Mode_Entry
 	entries := view_mode_entries(r, s.view_modes, shown_world(s), buffer[:])
-	out := call.out
-	serial.write_u8(out, '{')
-	api.write_text(out, "current", view_mode_current(s.viewport), true)
-	api.write_key(out, "modes")
-	serial.write_u8(out, '[')
-	for entry, i in entries {
-		if i > 0 {serial.write_u8(out, ',')}
-		api_view_mode_write(call, entry)
-	}
-	serial.text_write_raw(out, "]}")
+	result := api.call_result(call, Api_View_Modes)
+	result.current = view_mode_current(s.viewport)
+	result.modes = make([]Api_View_Mode, len(entries), call.allocator)
+	for entry, i in entries {result.modes[i] = api_view_mode_of(entry)}
 }
 
 @(private)
@@ -388,27 +385,11 @@ api_view_mode :: proc(s: ^Session, call: ^api.Call) {
 	if !found {api.call_failf(call, api.INVALID_PARAMS, "%q is not a view mode; editor.view_mode.list lists them", name); return}
 	if !entry.available {api.call_failf(call, api.INVALID_PARAMS, "%s cannot be shown now: %s", entry.name, entry.reason); return}
 	base.text_set(s.viewport.view_mode[:], entry.name)
-	api_view_mode_write(call, entry)
-}
-
-Api_Editor_View_Mode_List_Result_Modes :: struct {
-    mode,label,group,submenu:string,
-    available:bool,
-    reason:string,
-}
-Api_Editor_View_Mode_List_Result :: struct {
-    current:string,
-    modes:[]Api_Editor_View_Mode_List_Result_Modes,
-}
-
-Api_Editor_View_Mode_Set_Result :: struct {
-    mode,label,group,submenu:string,
-    available:bool,
-    reason:string,
+	api.call_result(call, Api_View_Mode)^ = api_view_mode_of(entry)
 }
 
 @(private)
 view_modes_api_register :: proc(s: ^Session, st: ^Api_State) {
-	api_register(s, st, {name = "editor.view_mode.list", summary = "The modes of inspection of the viewport, of the core and of the plugins: where the menu shows each, the one shown and why one cannot be shown now.",result=Api_Editor_View_Mode_List_Result,writes_result=true, flags = {.Read_Only}, run = api_view_modes})
-	api_register(s, st, {name = "editor.view_mode.set", summary = "Shows a mode of inspection in the viewport instead of the lit image. A Play shows the lit image of its game.", params = Api_View_Mode_Params,result=Api_Editor_View_Mode_Set_Result,writes_result=true, flags = {.Idempotent}, run = api_view_mode})
+	api_register(s, st, {name = "editor.view_mode.list", summary = "The modes of inspection of the viewport, of the core and of the plugins: where the menu shows each, the one shown and why one cannot be shown now.",result = Api_View_Modes, flags = {.Read_Only}, run = api_view_modes})
+	api_register(s, st, {name = "editor.view_mode.set", summary = "Shows a mode of inspection in the viewport instead of the lit image. A Play shows the lit image of its game.", params = Api_View_Mode_Params,result = Api_View_Mode, flags = {.Idempotent}, run = api_view_mode})
 }

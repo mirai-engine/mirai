@@ -336,23 +336,23 @@ the_map_shows_each_section_by_its_box_and_the_api_reads_it_and_turns_it_in_the_v
     testing.expect(t,abs(low.y-35)<1e-3 && abs(high.y-45)<1e-3,"its height, 40 m down, spans 10 m")
     testing.expect_value(t,item.shown,Section_Shown.Active)
     // The API turns it off in the view, and says so.
-    out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)
     server:=api.Server{max_response=1<<16}
-    method:=api.Method{params_id=Api_Section_View_Params}
+    method:=api.Method{params_id=Api_Section_View_Params,result_id=Api_Section}
     params:Api_Section_View_Params;copy(params.entity[:],"0000000000000002")
     base.text_set(params.state[:],"Off")
-    call:=api.Call{server=&server,method=&method,params=&params,out=&out,allocator=context.temp_allocator}
+    viewed:Api_Section
+    call:=api.Call{server=&server,method=&method,params=&params,result=&viewed,allocator=context.temp_allocator}
     api_section_view(s,&call)
     testing.expect(t,call.failed && strings.contains(call.error.message,"Unloaded"),call.error.message)
     base.text_set(params.state[:],"Unloaded")
-    call=api.Call{server=&server,method=&method,params=&params,out=&out,allocator=context.temp_allocator}
+    call=api.Call{server=&server,method=&method,params=&params,result=&viewed,allocator=context.temp_allocator}
     api_section_view(s,&call)
-    testing.expect(t,!call.failed && strings.contains(string(serial.writer_bytes(&out)),`"view":"Unloaded"`),string(serial.writer_bytes(&out)))
-    serial.writer_reset(&out)
-    listing:=api.Call{server=&server,out=&out,allocator=context.temp_allocator}
+    testing.expect(t,!call.failed && viewed.view=="Unloaded",viewed.view)
+    listed:Api_Sections_Result
+    listing_method:=api.Method{result_id=Api_Sections_Result}
+    listing:=api.Call{server=&server,method=&listing_method,result=&listed,allocator=context.temp_allocator}
     api_sections(s,&listing)
-    text:=string(serial.writer_bytes(&out))
-    testing.expect(t,!listing.failed && strings.contains(text,`"name":"Layer"`) && strings.contains(text,`"rule":"Manual"`) && strings.contains(text,`"entities":1`),text)
+    testing.expect(t,!listing.failed && len(listed.sections)==1 && listed.sections[0].name=="Layer" && listed.sections[0].rule==.Manual && listed.sections[0].cost.entities==1)
 }
 
 @(test)

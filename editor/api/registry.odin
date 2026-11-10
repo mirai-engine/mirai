@@ -50,8 +50,7 @@ tool_find :: proc(s:^Server,name:string) -> ^Method {
 }
 
 // Adds the params or the result type of a method to the schema: a struct. A
-// result may also be a list, and serial.Json when only the world knows its
-// shape.
+// result may also be serial.Json, when only the world knows its shape.
 schema_register :: proc(s:^Server,id:typeid,info:^runtime.Type_Info=nil,result:=false) -> (index:serial.Type_Index,ok:bool) {
     if id==nil {return serial.TYPE_NONE,true}
     first_type:=len(s.schema.types)
@@ -64,7 +63,7 @@ schema_register :: proc(s:^Server,id:typeid,info:^runtime.Type_Info=nil,result:=
         }
     }
     kind:=s.schema.types[index].kind
-    if kind!=.Struct && !(result && (kind==.Slice || kind==.Json)) {
+    if kind!=.Struct && !(result && kind==.Json) {
         delete(s.schema.error,s.schema.allocator)
         s.schema.error=format_text(s.schema.allocator,"%v is not a struct",id)
         return serial.TYPE_NONE,false

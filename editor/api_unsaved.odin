@@ -18,13 +18,13 @@ API_UNSAVED_NAMED :: 16 // of the unsaved files an error names, the rest counted
 
 Api_Unsaved_Result :: struct {
     assets:[]Api_Unsaved_Asset,
-    scene:[][API_PATH_BYTES]u8 `mirai:"text,label=The unsaved assets the scene of the document uses"`,
+    scene:[]string `mirai:"label=The unsaved assets the scene of the document uses"`,
 }
 Api_Unsaved_Asset :: struct {
-    path:[API_PATH_BYTES]u8 `mirai:"text,label=Under the asset folder; of a Slang program the path of its .slang under the project or under engine/ for one of the engine"`,
+    path:string `mirai:"label=Under the asset folder; of a Slang program the path of its .slang under the project or under engine/ for one of the engine"`,
     removed:bool `mirai:"label=Whether memory holds it as removed"`,
     asset:base.Asset_Id `mirai:"optional,label=Its id; a program has none"`,
-    kind:[32]u8 `mirai:"text,optional,label=The kind of the asset; program for a Slang program"`,
+    kind:string `mirai:"optional,label=The kind of the asset; program for a Slang program"`,
 }
 
 Api_Saved_Result :: struct {
@@ -44,7 +44,7 @@ Api_Asset_Save_Params :: struct {
 
 @(private)
 unsaved_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="asset.unsaved",summary="The assets and Slang programs changed in memory and not saved, and which of them the scene of the document uses.",result=Api_Unsaved_Result,writes_result=true,flags={.Read_Only},run=api_asset_unsaved})
+    api_register(s,st,{name="asset.unsaved",summary="The assets and Slang programs changed in memory and not saved, and which of them the scene of the document uses.",result=Api_Unsaved_Result,flags={.Read_Only},run=api_asset_unsaved})
     api_register(s,st,{name="asset.save",flags={.Core},params=Api_Asset_Save_Params,summary="Writes unsaved assets to their files, or copies of them that leave them unsaved. Writing the files is refused while a game plays.",result=Api_Saved_Result,writes_result=true,run=api_asset_save})
     api_register(s,st,{name="asset.discard",params=Api_Asset_Save_Params,summary="Gives unsaved assets back what their files hold; one that only memory held is gone.",result=Api_Discarded_Result,run=api_asset_discard})
 }
@@ -56,28 +56,22 @@ api_asset_unsaved :: proc(s:^Session,call:^api.Call) {
         return
     }
     r:=&s.app.assets.registry
-    w:=call.out
-    serial.text_write_raw(w,`{"assets":[`)
-    for held,i in assets_unsaved(s) {
-        if i>0 {serial.write_u8(w,',')}
-        serial.text_write_raw(w,`{"path":`);serial.text_write_string(w,unsaved_name(s,held.path))
-        api.write_key(w,"removed");serial.text_write_raw(w,held.removed?"true":"false")
-        if asset.registry_outside(held.path) {
-            api.write_text(w,"kind","program")
-        } else if file,found:=asset.registry_find_path(r,held.path);found && file.state==.Asset {
-            api.write_key(w,"asset");api_asset_write(w,file.id)
-            api.write_key(w,"kind");serial.text_write_string(w,api_asset_kind_name(s,file.kind))
+    held:=assets_unsaved(s)
+    result:=api.call_result(call,Api_Unsaved_Result)
+    result.assets=make([]Api_Unsaved_Asset,len(held),call.allocator)
+    for entry,i in held {
+        out:=&result.assets[i]
+        out.path,out.removed=unsaved_name(s,entry.path),entry.removed
+        if asset.registry_outside(entry.path) {
+            out.kind="program"
+        } else if file,found:=asset.registry_find_path(r,entry.path);found && file.state==.Asset {
+            out.asset,out.kind=file.id,api_asset_kind_name(s,file.kind)
         }
-        serial.write_u8(w,'}')
     }
-    used:=make([dynamic]string,context.temp_allocator)
+    used:=make([dynamic]string,call.allocator)
     world_unsaved_assets(s,edited_world(s),&used)
-    serial.text_write_raw(w,`],"scene":[`)
-    for path,i in used {
-        if i>0 {serial.write_u8(w,',')}
-        serial.text_write_string(w,unsaved_name(s,path))
-    }
-    serial.text_write_raw(w,`]}`)
+    for &path in used {path=unsaved_name(s,path)}
+    result.scene=used[:]
 }
 
 // The unsaved files of the caller: those its turn changed, or every one

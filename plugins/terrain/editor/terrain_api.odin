@@ -130,7 +130,7 @@ Resize_Params :: struct {
 @(private) LAST_LAYER :: "A terrain keeps one layer at least: give this one another material with terrain.layer, or add another first"
 @(private) LAYER_NAME_BYTES :: 256
 Id_Result :: struct {
-    id:string,
+    id:base.Entity_Id,
 }
 
 Terrain_Edit_Result :: struct {
@@ -149,9 +149,9 @@ Terrain_Interior_Result :: struct {
 
 Terrain_Sample_Result :: struct {
     found:bool,
-    height:f64 `mirai:"optional"`,
-    normal:[]serial.Json `mirai:"optional"`,
-    slope:f64 `mirai:"optional"`,
+    height:f32 `mirai:"optional"`,
+    normal:[3]f32 `mirai:"optional"`,
+    slope:f32 `mirai:"optional,unit=deg"`,
     weights:serial.Json `mirai:"optional"`,
     hole:bool `mirai:"optional"`,
     layers:int `mirai:"optional"`,
@@ -160,7 +160,7 @@ Terrain_Sample_Result :: struct {
 
 Terrain_Heightmap_Result :: struct {
     written:string `mirai:"optional"`,
-    height_scale,height_offset:f64 `mirai:"optional"`,
+    height_scale,height_offset:f32 `mirai:"optional"`,
 }
 
 @(private)
@@ -172,13 +172,13 @@ terrain_api_register :: proc(s:^editor.Session) {
     interior_defaults:=Interior_Params{wave_scale=16}
     for &stratum in interior_defaults.strata {stratum.depth=1}
     for &vein in interior_defaults.veins {vein.scale,vein.amount,vein.depth=4,0.3,{0,terrain.HEIGHT_LIMIT}}
-    editor.api_method_register(s,{name="terrain.create",summary="Makes a terrain in the edited scene: a Heightfield (heights over x and z), a 3D Terrain (a mesh, for caves and overhangs) or a Volume (solid and air), flat or from a heightmap. Its .terrain stays in memory until it is saved; one step of undo takes it away.",params=Create_Params,params_info=type_info_of(Create_Params),defaults=&create_defaults,result=Id_Result,result_info=type_info_of(Id_Result),writes_result=true,run=api_create})
-    editor.api_method_register(s,{name="terrain.edit",summary="One stroke of a brush of the terrain tool on a terrain, from at to to (or at alone), as one step of undo: sculpting (raise, lower, smooth, flatten, set_height, terrace, noise, erode, a ramp between at and to), painting a layer (paint, erase), holes (hole, fill) or shapes of a 3D Terrain or a Volume (union, subtract). The error says what the terrain takes.",params=Edit_Params,params_info=type_info_of(Edit_Params),defaults=&edit_defaults,result=Terrain_Edit_Result,result_info=type_info_of(Terrain_Edit_Result),writes_result=true,run=api_edit})
-    editor.api_method_register(s,{name="terrain.layer",summary="Adds, changes or takes out a material layer of a terrain, with its tiling, height blend and its automatic rule of slope and height, as one step of undo; what it is not given stays as it is. From one layer, which covers everything when the terrain is made, up to four.",params=Layer_Params,params_info=type_info_of(Layer_Params),defaults=&layer_defaults,result=Terrain_Layer_Result,result_info=type_info_of(Terrain_Layer_Result),writes_result=true,run=api_layer})
-    editor.api_method_register(s,{name="terrain.interior",summary="Sets what a Volume holds under its surface, as its layers, and writes it into every sample as one step of undo: strata down from the top of each column (grass, dirt, rock) and pockets or veins of noise over them (ore). The walls and floor of what is dug show it, and what a game digs reports it by layer (terrain.Terrain_Digs). What it is not given stays as it is.",params=Interior_Params,params_info=type_info_of(Interior_Params),defaults=&interior_defaults,result=Terrain_Interior_Result,result_info=type_info_of(Terrain_Interior_Result),writes_result=true,run=api_interior})
-    editor.api_method_register(s,{name="terrain.sample",summary="What a terrain has under a point: the height and normal of its surface in the world, its slope, the weight of each of its layers there by its name (rules included) and whether it is a hole; while a game of the caller plays, in that game, with check, a hash of every value of its source, equal in two games that hold the same.",params=Sample_Params,params_info=type_info_of(Sample_Params),flags={.Read_Only},result=Terrain_Sample_Result,result_info=type_info_of(Terrain_Sample_Result),writes_result=true,run=api_sample})
-    editor.api_method_register(s,{name="terrain.heightmap",summary="Imports a heightmap into a Heightfield Terrain as one step of undo, or exports its heights as a 16-bit PNG (the scale and offset it answers import it back).",params=Heightmap_Params,params_info=type_info_of(Heightmap_Params),result=Terrain_Heightmap_Result,result_info=type_info_of(Terrain_Heightmap_Result),writes_result=true,run=api_heightmap})
-    editor.api_method_register(s,{name="terrain.resize",summary="Gives a Heightfield Terrain other samples around its center as one step of undo: what it had stays where it was, and what grows takes the heights and layers of the nearest edge.",params=Resize_Params,params_info=type_info_of(Resize_Params),result=Id_Result,result_info=type_info_of(Id_Result),writes_result=true,run=api_resize})
+    editor.api_method_register(s,{name="terrain.create",summary="Makes a terrain in the edited scene: a Heightfield (heights over x and z), a 3D Terrain (a mesh, for caves and overhangs) or a Volume (solid and air), flat or from a heightmap. Its .terrain stays in memory until it is saved; one step of undo takes it away.",params=Create_Params,params_info=type_info_of(Create_Params),defaults=&create_defaults,result=Id_Result,result_info=type_info_of(Id_Result),run=api_create})
+    editor.api_method_register(s,{name="terrain.edit",summary="One stroke of a brush of the terrain tool on a terrain, from at to to (or at alone), as one step of undo: sculpting (raise, lower, smooth, flatten, set_height, terrace, noise, erode, a ramp between at and to), painting a layer (paint, erase), holes (hole, fill) or shapes of a 3D Terrain or a Volume (union, subtract). The error says what the terrain takes.",params=Edit_Params,params_info=type_info_of(Edit_Params),defaults=&edit_defaults,result=Terrain_Edit_Result,result_info=type_info_of(Terrain_Edit_Result),run=api_edit})
+    editor.api_method_register(s,{name="terrain.layer",summary="Adds, changes or takes out a material layer of a terrain, with its tiling, height blend and its automatic rule of slope and height, as one step of undo; what it is not given stays as it is. From one layer, which covers everything when the terrain is made, up to four.",params=Layer_Params,params_info=type_info_of(Layer_Params),defaults=&layer_defaults,result=Terrain_Layer_Result,result_info=type_info_of(Terrain_Layer_Result),run=api_layer})
+    editor.api_method_register(s,{name="terrain.interior",summary="Sets what a Volume holds under its surface, as its layers, and writes it into every sample as one step of undo: strata down from the top of each column (grass, dirt, rock) and pockets or veins of noise over them (ore). The walls and floor of what is dug show it, and what a game digs reports it by layer (terrain.Terrain_Digs). What it is not given stays as it is.",params=Interior_Params,params_info=type_info_of(Interior_Params),defaults=&interior_defaults,result=Terrain_Interior_Result,result_info=type_info_of(Terrain_Interior_Result),run=api_interior})
+    editor.api_method_register(s,{name="terrain.sample",summary="What a terrain has under a point: the height and normal of its surface in the world, its slope, the weight of each of its layers there by its name (rules included) and whether it is a hole; while a game of the caller plays, in that game, with check, a hash of every value of its source, equal in two games that hold the same.",params=Sample_Params,params_info=type_info_of(Sample_Params),flags={.Read_Only},result=Terrain_Sample_Result,result_info=type_info_of(Terrain_Sample_Result),run=api_sample})
+    editor.api_method_register(s,{name="terrain.heightmap",summary="Imports a heightmap into a Heightfield Terrain as one step of undo, or exports its heights as a 16-bit PNG (the scale and offset it answers import it back).",params=Heightmap_Params,params_info=type_info_of(Heightmap_Params),result=Terrain_Heightmap_Result,result_info=type_info_of(Terrain_Heightmap_Result),run=api_heightmap})
+    editor.api_method_register(s,{name="terrain.resize",summary="Gives a Heightfield Terrain other samples around its center as one step of undo: what it had stays where it was, and what grows takes the heights and layers of the nearest edge.",params=Resize_Params,params_info=type_info_of(Resize_Params),result=Id_Result,result_info=type_info_of(Id_Result),run=api_resize})
 }
 
 // The tool, the edited world and the terrain of an id, ready to edit as
@@ -217,11 +217,7 @@ api_terrain_unplaced :: proc(s:^editor.Session,user:rawptr) -> bool {
 
 @(private)
 api_changed_write :: proc(call:^api.Call,changed:bool,touches:int) {
-    w:=call.out
-    serial.text_write_raw(w,"{")
-    api.write_bool(w,"changed",changed,true)
-    if touches>0 {api.write_int(w,"touches",i64(touches))}
-    serial.text_write_raw(w,"}")
+    api.call_result(call,Terrain_Edit_Result)^={changed,touches}
 }
 
 @(private)
@@ -292,10 +288,7 @@ api_create :: proc(s:^editor.Session,call:^api.Call) {
     if e==core.NONE {editor.tool_call_fail(s,call,"The terrain could not be made");return}
     world:=editor.edited_world(s)
     core.world_settle(world)
-    w:=call.out
-    serial.text_write_raw(w,"{")
-    api.write_key(w,"id",true);api.write_id(w,editor.api_entity_id(world,e))
-    serial.text_write_raw(w,"}")
+    api.call_result(call,Id_Result).id=editor.api_entity_id(world,e)
 }
 
 // The brush of a name, and whether set_height (Flatten to a height).
@@ -494,11 +487,9 @@ api_layer :: proc(s:^editor.Session,call:^api.Call) {
         if !layer_values(call,p,&layer) {return}
         if !terrain_layer_commit(s,tool,world,s.app.assets,index,layer,false) {editor.tool_call_fail(s,call,"The layer could not be set");return}
     }
-    w:=call.out
-    serial.text_write_raw(w,"{")
-    api.write_uint(w,"layers",u64(tool.stroke.source.layer_count),true)
-    if !p.remove {api.write_text(w,"layer",layer_names(s,&tool.stroke.source)[index])}
-    serial.text_write_raw(w,"}")
+    r:=api.call_result(call,Terrain_Layer_Result)
+    r.layers=int(tool.stroke.source.layer_count)
+    if !p.remove {r.layer=layer_names(s,&tool.stroke.source)[index]}
 }
 
 // What of a layer the params of terrain.layer give.
@@ -584,10 +575,7 @@ api_edit_play :: proc(s:^editor.Session,call:^api.Call,p:^Edit_Params,w:core.Wor
             if brush.amount>0 {terrain.dig(requests,terrain.brush_world(brush,place.transform),e);pushed+=1}
         }
     }
-    serial.text_write_raw(call.out,"{")
-    api.write_bool(call.out,"changed",pushed>0,true)
-    api.write_int(call.out,"touches",i64(pushed))
-    serial.text_write_raw(call.out,"}")
+    api_changed_write(call,pushed>0,pushed)
 }
 
 // terrain.layer in a game that plays: a request of the game.
@@ -613,9 +601,7 @@ api_layer_play :: proc(s:^editor.Session,call:^api.Call,p:^Layer_Params,w:core.W
         if !layer_values(call,p,&layer) {return}
         terrain.request_layer(requests,e,index,layer)
     }
-    serial.text_write_raw(call.out,"{")
-    api.write_uint(call.out,"layers",u64(p.remove?count-1:max(count,index+1)),true)
-    serial.text_write_raw(call.out,"}")
+    api.call_result(call,Terrain_Layer_Result).layers=int(p.remove?count-1:max(count,index+1))
 }
 
 @(private)
@@ -659,11 +645,7 @@ api_interior :: proc(s:^editor.Session,call:^api.Call) {
     }
     s.toast_length=0
     if !terrain_interior_commit(s,tool,world,s.app.assets,interior) {editor.tool_call_fail(s,call,"The interior could not be set");return}
-    w:=call.out
-    serial.text_write_raw(w,"{")
-    api.write_uint(w,"strata",u64(source.interior.strata_count),true)
-    api.write_uint(w,"veins",u64(source.interior.vein_count))
-    serial.text_write_raw(w,"}")
+    api.call_result(call,Terrain_Interior_Result)^={int(source.interior.strata_count),int(source.interior.vein_count)}
 }
 
 @(private)
@@ -690,33 +672,24 @@ api_sample :: proc(s:^editor.Session,call:^api.Call) {
     }
     q:=(to_local*[4]f32{p.at.x,p.at.y,p.at.z,1}).xyz
     point,normal,found:=terrain.source_ray(source,{q.x,terrain.HEIGHT_LIMIT*0.5,q.z},{0,-1,0})
-    w:=call.out
-    serial.text_write_raw(w,"{")
-    api.write_bool(w,"found",found,true)
-    if played {
-        api.write_uint(w,"layers",u64(source.layer_count))
-        api.write_key(w,"check");buffer:[16]u8;serial.text_write_string(w,fmt.bprintf(buffer[:],"%016x",check))
-    }
+    r:=api.call_result(call,Terrain_Sample_Result)
+    r.found=found
+    if played {r.layers,r.check=int(source.layer_count),fmt.aprintf("%016x",check,allocator=call.allocator)}
     if found {
         world_point:=(to_world*[4]f32{point.x,point.y,point.z,1}).xyz
-        up:=linalg.normalize0((to_world*[4]f32{normal.x,normal.y,normal.z,0}).xyz)
-        api.write_key(w,"height");api.write_number(w,world_point.y)
-        api.write_key(w,"normal");serial.text_write_raw(w,"[");api.write_number(w,up.x);serial.text_write_raw(w,",");api.write_number(w,up.y);serial.text_write_raw(w,",");api.write_number(w,up.z);serial.text_write_raw(w,"]")
-        api.write_key(w,"slope");api.write_number(w,math.to_degrees(math.acos(clamp(normal.y,-1,1))))
+        r.height,r.normal=world_point.y,linalg.normalize0((to_world*[4]f32{normal.x,normal.y,normal.z,0}).xyz)
+        r.slope=math.to_degrees(math.acos(clamp(normal.y,-1,1)))
         weights:=terrain.layers_vertex(source,terrain.source_weights_at(source,point),normal,point.y)
-        api.write_key(w,"weights");serial.text_write_raw(w,"{")
-        for name,i in layer_names(s,source) {
-            api.write_key(w,name,i==0)
-            api.write_number(w,weights[i])
-        }
-        serial.text_write_raw(w,"}")
+        by_layer:=strings.builder_make(call.allocator)
+        for name,i in layer_names(s,source) {fmt.sbprintf(&by_layer,"%s%q:%v",i==0?"{":",",name,weights[i])}
+        strings.write_byte(&by_layer,'}')
+        r.weights=serial.Json(strings.builder_len(by_layer)>1?strings.to_string(by_layer):"{}")
     }
     if source.kind==.Heightfield {
         origin:=terrain.source_origin(source)
-        c,r:=int((q.x-origin.x)/source.cell),int((q.z-origin.z)/source.cell)
-        api.write_bool(w,"hole",c>=0 && r>=0 && c<int(source.samples.x)-1 && r<int(source.samples.z)-1 && terrain.source_hole(source,c,r))
+        c,r_:=int((q.x-origin.x)/source.cell),int((q.z-origin.z)/source.cell)
+        r.hole=c>=0 && r_>=0 && c<int(source.samples.x)-1 && r_<int(source.samples.z)-1 && terrain.source_hole(source,c,r_)
     }
-    serial.text_write_raw(w,"}")
 }
 
 @(private)
@@ -741,12 +714,7 @@ api_heightmap :: proc(s:^editor.Session,call:^api.Call) {
         exported=file
     }
     if exported!="" && !heightmap_export(s,tool,exported) {editor.tool_call_fail(s,call,"The heightmap could not be written");return}
-    w:=call.out
-    serial.text_write_raw(w,"{")
-    api.write_key(w,"height_scale",true);api.write_number(w,tool.height_scale)
-    api.write_key(w,"height_offset");api.write_number(w,tool.height_offset)
-    if exported!="" {api.write_text(w,"written",exported)}
-    serial.text_write_raw(w,"}")
+    api.call_result(call,Terrain_Heightmap_Result)^={exported,tool.height_scale,tool.height_offset}
 }
 
 @(private)
@@ -756,9 +724,6 @@ api_resize :: proc(s:^editor.Session,call:^api.Call) {
     if !ok {return}
     s.toast_length=0
     if !terrain_resize(s,tool,world,s.app.assets,{int(p.samples.x),int(p.samples.y)}) {editor.tool_call_fail(s,call,"The terrain could not be resized");return}
-    w:=call.out
-    serial.text_write_raw(w,"{")
     resized,_:=editor.api_entity_find(world,base.text_get(p.entity[:]))
-    api.write_key(w,"id",true);api.write_id(w,editor.api_entity_id(world,resized))
-    serial.text_write_raw(w,"}")
+    api.call_result(call,Id_Result).id=editor.api_entity_id(world,resized)
 }

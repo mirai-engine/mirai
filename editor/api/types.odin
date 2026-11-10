@@ -278,6 +278,12 @@ call_result :: #force_inline proc(call:^Call,$T:typeid) -> ^T {
     assert(call.method.result_id==T)
     return (^T)(call.result)
 }
+// Whether the caller gave a param, and not null: an optional one left out
+// holds what it starts with, which may be what the caller would have given.
+call_given :: proc(call:^Call,name:string) -> bool {
+    value:=json_member(call.raw,name)
+    return value!="" && value!="null"
+}
 // An MCP answer carries the PNG at path as an image after the text of the
 // result; a JSON-RPC one only the result. path is copied.
 call_image :: proc(call:^Call,path:string) {call.image=clone_text(call.allocator,path)}

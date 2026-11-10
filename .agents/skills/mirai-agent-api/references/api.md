@@ -374,7 +374,8 @@ when the server opens; code reload rebuilds methods and schemas without closing 
   through the API: assets and binary data are read exactly.
 - **Params and result are structs, and they are the only description of a method.** A field is
   required unless its tag carries `optional`; when absent or `null`, it takes the value from the
-  method's `defaults`, or zero. A method without a result type answers `null`.
+  method's `defaults`, or zero. A method without a result type answers `null`, and an optional
+  field of a result that holds nothing (zero, empty) is left out of the answer.
   - Text: `[N]u8` with tag `text`, up to N bytes, or a `string` of any length.
   - A list of any length is a slice (`[]T`) and any JSON value a `serial.Json` field, which holds
     its text; both live in the scratch of the call, so a request that does not fit fails. A type

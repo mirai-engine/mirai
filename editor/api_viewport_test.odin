@@ -144,7 +144,7 @@ camera_set_takes_a_fov_and_looks_through_a_camera_of_the_scene_without_editing_i
     error,result=execute(state,&out,`{"entity":"0000000000000002","fov":70,"distance":4}`)
     testing.expect_value(t,error.code,0)
     testing.expect(t,near(result.position,{10,2,5}) && result.fov_y==70 && abs(result.distance-4)<1e-4,"fov and distance apply over the camera")
-    for wrong in ([]string{`{"entity":"0000000000000002","position":[0,0,0]}`,`{"entity":"0000000000000002","yaw":1}`,`{"entity":"0000000000000003"}`,`{"entity":"0000000000000004"}`,`{"entity":"0000000000000063"}`,`{"entity":null}`}) {
+    for wrong in ([]string{`{"entity":"0000000000000002","position":[0,0,0]}`,`{"entity":"0000000000000002","yaw":1}`,`{"entity":"0000000000000003"}`,`{"entity":"0000000000000004"}`,`{"entity":"0000000000000063"}`}) {
         error,_=execute(state,&out,wrong)
         testing.expectf(t,error.code==api.INVALID_PARAMS,"%s: %v",wrong,error)
     }
