@@ -295,6 +295,7 @@ Scene_State :: struct {
 	material_capacity:    int,
 	smoothest:            f32, // lowest roughness a material of the table can have
 	instance_keys:        [dynamic]Instance_Key,
+	instance_revision:    u64, // counts the updates that gave an index another instance, or another number of them
 	highlighted:          int,          // instances with a highlight level
 	displaced:            map[Instance_Key]Mesh_Handle, // the poses of the instances whose material programs move their vertices (displace.odin)
 	displaced_stale:      bool, // an instance may need a pose it lacks or have one it no longer needs: displaced_reconcile
@@ -1638,7 +1639,7 @@ scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bo
         for i:=len(s.translucent)-1;i>=0;i-=1 {if at:=s.translucent[i].instance;at>=first && at<left {unordered_remove(&s.translucent,i)}}
         for i:=len(s.reflective)-1;i>=0;i-=1 {if at:=s.reflective[i].instance;at>=first && at<left {unordered_remove(&s.reflective,i)}}
     }
-    written:=true
+    written,identities:=true,false
     for given,at in instances {
         desc:=given
         desc.transform=origin_matrix(given.transform,r.origin-given.anchor)
@@ -1656,7 +1657,7 @@ scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bo
             if s.instance_keys[index]==(Instance_Key{desc.object_id,desc.copy_owner,desc.copy_variant}) {
                 for row in 0..<3 {for col in 0..<4 {previous[row,col]=s.instances[index].world[row][col]}}
                 given=instance_given(inst)
-            }
+            } else {identities=true}
             instance_unlink(s,index)
         }
         // Only an instance past the old ones takes room, and it was reserved.
@@ -1697,6 +1698,7 @@ scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bo
         base.truncate(&s.instance_keys,end);base.truncate(&s.tlas_items,end);base.truncate(&s.hw_instances,end)
         touched_trim(s,end)
     }
+    if identities || len(s.instances)!=old {s.instance_revision+=1}
     if len(s.instances)!=old {
         s.tlas_stale,s.instances_dirty=true,true
     } else {

@@ -1025,6 +1025,11 @@ instance_remove :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Sync_
 // visual instances of the frame.
 instance_count :: proc(renderer:^Renderer) -> int {return len(renderer.scene.instance_keys)}
 
+// Changes when an index of the instances the renderer has names another, or
+// they are another number: what was given to each by its index holds while it
+// stays.
+instance_revision :: proc(renderer:^Renderer) -> u64 {return renderer.scene.instance_revision}
+
 // The object an instance of the renderer is drawn for (gpu.Instance_Desc.object_id):
 // the entity of a mesh of the world, or what a visual instance names. 0 for none.
 instance_object :: proc(renderer:^Renderer,instance:int) -> u64 {
