@@ -37,7 +37,7 @@ Collider_Room :: struct {
     counted:bool,
     meshes,heightfields,shapes:int, // left; before they are counted, what the call gave back
     starved:bool,   // a chunk waits for room
-    seen:u64,       // the version of Collider when it began to wait
+    seen:core.Seen, // Collider when it began to wait
 }
 
 // A chunk shows nothing yet and a viewer is within this share of its
@@ -56,9 +56,8 @@ chunk_entity_matches :: proc(c:^Chunk_Tables,e,owner:core.Entity,coord:[3]i32,de
 // when it ran: then the owners show every chunk again.
 @(private)
 terrain_chunks_prune :: proc(c:^Chunk_Tables,terrains:^core.Table(Terrain),resident:^Terrain_Resident) -> bool {
-    stamps:=[6]u64{core.layout(c.locals),core.layout(c.parents),core.version(c.parents),c.chunks.layout,core.layout(c.ids),terrains.layout}
-    if resident.gc_stamps==stamps {return false}
-    resident.gc_stamps=stamps
+    shapes:=&resident.gc_shapes
+    if !(core.reshaped(c.locals,&shapes[0]) | core.touched(c.parents,&resident.gc_parents) | core.reshaped(c.chunks,&shapes[1]) | core.reshaped(c.ids,&shapes[2]) | core.reshaped(terrains,&shapes[3])) {return false}
     entities:=c.commands.entities
     for chunk,row in c.chunks.values[:core.count(c.chunks)] {
         e:=c.chunks.entities[row]
@@ -67,6 +66,12 @@ terrain_chunks_prune :: proc(c:^Chunk_Tables,terrains:^core.Table(Terrain),resid
         if !core.alive(entities,chunk.owner) || !core.has(terrains,chunk.owner) || !chunk_entity_matches(c,e,chunk.owner,chunk.coord,chunk.depth) {core.destroy(entities,e)}
     }
     return true
+}
+
+// Whether Terrain, Tint or Material_Override changed since shown, which it moves to now.
+@(private)
+shown_touched :: proc "contextless" (terrains:^core.Table(Terrain),c:^Chunk_Tables,shown:^[3]core.Seen) -> bool {
+    return core.touched(terrains,&shown[0]) | core.touched(c.tints,&shown[1]) | core.touched(c.overrides,&shown[2])
 }
 
 @(private)
@@ -779,7 +784,7 @@ terrain_update :: proc(
     }
     full:=terrain_chunks_prune(&c,terrains,resident)
     // Chunks shown without their collider try again once the colliders change.
-    if resident.room.starved && core.version(c.colliders)!=resident.room.seen {
+    if resident.room.starved && core.touched(c.colliders,&resident.room.seen) {
         resident.room.starved=false
         full=true
     }
@@ -833,7 +838,7 @@ terrain_update :: proc(
             if !took || round>QUAD_DEPTH_MAX {break}
         }
         for &entry in data.entries {pages_leave(data,resident,&entry)}
-        seen:=[3]u64{core.version(terrains),core.version(c.tints),core.version(c.overrides)}==resident.shown
+        seen:=!shown_touched(terrains,&c,&resident.shown)
         for marker,row in terrains.values[:core.count(terrains)] {
             entry:=data_find(data,marker.source)
             if entry==nil {continue}
@@ -888,8 +893,9 @@ terrain_update :: proc(
         data_entry_free(entry)
         unordered_remove(&data.entries,i)
     }
-    resident.shown={core.version(terrains),core.version(c.tints),core.version(c.overrides)}
-    if resident.room.starved {resident.room.seen=core.version(c.colliders)}
+    // What the owners wrote as they showed is not a change for the next call.
+    _=shown_touched(terrains,&c,&resident.shown)
+    if resident.room.starved {_=core.touched(c.colliders,&resident.room.seen)}
     ground_update(resident,data,core.read(terrains),colliders,worlds,focus)
     host.assets_commit(app.assets)
 }

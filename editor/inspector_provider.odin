@@ -2,6 +2,7 @@ package editor
 
 import "base:runtime"
 import "mirai:core"
+import input "mirai:engine/input"
 import "mirai:std/base"
 
 Inspector_Context :: struct {
@@ -67,6 +68,9 @@ inspector_within :: proc(s:^Session,t:^core.Table_Info) -> bool {
 // Why a plugin refuses a value of a setting; empty when none does.
 @(private)
 setting_problem :: proc(s:^Session,info:^runtime.Type_Info,value:rawptr) -> string {
+    if info.id==input.Input_Settings {
+        if problem:=input.input_settings_problem(s.info,(^input.Input_Settings)(value));problem!="" {return problem}
+    }
     for &p in providers(s).inspectors[:providers(s).inspector_count] {
         if p.valid==nil {continue}
         if problem:=p.valid(info,value);problem!="" {return problem}

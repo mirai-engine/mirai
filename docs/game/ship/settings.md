@@ -24,7 +24,10 @@ data folder (`host.app_user_folder`).
 }
 ```
 
-One section per setting, named by its type; enums by name. Never hand-write `input.mirai`.
+One section per setting, named by its type; enums by name. `Input_Settings` holds the bindings
+the project or the player changed, an entry per action by its name
+([actions](../character/actions-seats.md#declare)); a project with an `input.mirai` of before is
+told to move its bindings there.
 `mirai build game` writes next to the executable one `settings.mirai` that merges the machine
 sections of the engine file with the project's: the shipped game reads no engine file.
 

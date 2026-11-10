@@ -65,7 +65,8 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   thread) → [programs](references/materials.md#surface-programs-in-rays-and-raster); programs that
   move vertices (`//! vertex`, `displace.odin`) →
   [vertex functions](references/materials.md#vertex-functions); texture levels
-  by distance, `textures_pending` → [residency](references/materials.md#residency-by-distance)
+  by what the GPU samples, `textures_pending` →
+  [residency](references/materials.md#residency-by-sampling)
 - OpenPBR layers (coat, fuzz, anisotropy, diffuse transmission, unlit), tangents and normal maps →
   [layers](references/materials.md#layers-openpbr),
   [normal maps](references/materials.md#normal-maps-and-specular-antialiasing)

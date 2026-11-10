@@ -97,7 +97,7 @@ destruct_step :: proc(
 @(private)
 entity_end :: proc(c:^Ctx,e:core.Entity,entry:^Entry) {
     physics.proxy_remove(c.state,e)
-    if st:=core.edit(c.states,e);st!=nil {
+    if st,found:=core.get(c.states,e);found {
         if physics.breakable_valid(c.view,st.handle) {
             physics.breakable_destroy(c.state,st.handle)
             c.cache.stats.destroyed+=1

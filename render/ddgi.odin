@@ -206,6 +206,7 @@ ddgi_update :: proc(p: ^Pass, warm := false) -> bool {
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, g.chosen)
 	rhi.cmd_bind_buffer(cmd, SLOT_PROBES, g.probes)
 	points_bind(p)
+	textures_feedback_bind(r, cmd)
 	rhi.cmd_dispatch_indirect(cmd, g.dispatch, 0)
 	points_rounds(p, batch, trace, &update, 1)
 	for pipeline, i in ([2]Pipeline_Id{.Ddgi_Irradiance, .Ddgi_Distance}) {

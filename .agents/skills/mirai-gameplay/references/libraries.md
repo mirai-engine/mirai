@@ -199,9 +199,8 @@ previous frame, unless it jumped (`View.cut`). Its `revision` grows only when a 
 `SOURCE_MOVE` or how many there are changed; those beyond `SOURCES_MAX` are the problem
 `scene.sources`.
 
-It is the only residency by distance: sections (the `streaming` plugin), terrain chunks, foliage
-cells and texture levels use it, the last receiving the sources of the drawn world in
-`render_texture_sources` (`engine/render`). `sources_near` puts the sources in the frame of what is
+It is the only residency by distance: sections (the `streaming` plugin), terrain chunks and foliage
+cells use it. `sources_near` puts the sources in the frame of what is
 placed, `box_near` says how many reaches away a box is (the source's `distance` or the one each
 library gives), `resident` leaves it resident within one and up to `RESIDENT_KEEP` if it already
 was, and `residents_past` leaves, out of a budget, the closest ones.
@@ -397,7 +396,7 @@ Functions and rules:
 Actions instead of keys. `Input_Map` says which keys, buttons, mouse axes and gamepad controls move
 each action and `Actions` stores the state of each one in the tick, both indexed by the value of
 `inp.Action`. They are `keep`: loading a scene or a save does not touch them. Which actions exist,
-their defaults, `input.mirai` and the seats: [actions](control.md#actions).
+their defaults, `Input_Settings` and the seats: [actions](control.md#actions).
 
 - Action types: `Button`, `Axis`, `Axis2`.
   - `Button`: a key or button, or an axis from a threshold.
@@ -407,7 +406,8 @@ their defaults, `input.mirai` and the seats: [actions](control.md#actions).
 - `Action_State`: `down`, `pressed`, `released`, `tapped`, `holding`, `held` (seconds), `value`,
   `vector`. `tap_seconds` and `hold_seconds` come from the map, and each threshold is met at the
   tick nearest to it, so a tap and a hold last the same at any tick rate.
-- Changing the map at runtime: `input_map_action(&m, jump, .Button)`,
+- A rebinding is a change of `Input_Settings`, which the map follows. On a map a tool builds
+  (`input_map_make`): `input_map_action(&m, jump, .Button)`,
   `input_map_bind(&m, jump, inp.binding_key(.Space))`, `input_map_unbind`, with the action of the
   world (`jump:=inp.action_of(walk, .Jump)`); `input_map_has` says whether it has an action of a
   type.
@@ -424,23 +424,17 @@ their defaults, `input.mirai` and the seats: [actions](control.md#actions).
   - Deltas, edges and tap/hold counters last one frame.
   - It is queried with the same functions over `&frame_actions.actions`.
   - Physical movement and gameplay actions read `Actions` in `fixed`.
-- `input_map_build` (`input`, stage `begin`) builds the map once (`input_map_make`): the code
-  defaults and `input.mirai` on top. Each action of the file replaces type and bindings; the others
-  stay. A bad file is not read and is a world problem that says how to fix it.
-- `input.mirai` (JSON): `tap_ticks`, `hold_ticks` and `actions: [{name, kind, context, bindings:
-  [...]}]`, where `name` is the name of an `inp.Action` constant and `context`, optional, that of an
-  `inp.Input_Context` ([contexts](control.md#contexts)).
-  - A binding names its input with `key`, `keys` (2 or 4), `mouse_button`, `mouse` (`X`, `Y`,
-    `Wheel_X`, `Wheel_Y`, `Delta`, `Wheel`), `gamepad_button`, `gamepad_axis` or `gamepad_stick`
-    (`Left`, `Right`), with the names of the `core` enums.
-  - Optional: `scale`, `dead_zone`, `gamepad` (0 to 3; all if missing) and `chord`, the keys or
-    buttons that are also held ([chords](control.md#chords)).
-- `input_map_parse` returns an `Input_Map_Error` and the action where it found it.
-- **Player bindings.** On top of the project's `input.mirai` the one in the player's options is
-  read (`input_options_file`, in `App.options`); one that is not read is the problem
-  `input.options` and the project's stay. `input_options_write` writes there the actions whose type
-  or bindings differ from those of the code and the project (`input_map_text`), or deletes the file
-  if none differs; `save` calls it when saving the options.
+- `input_map_build` (`input`, stage `begin`) builds the map (`input_map_make`) from the code
+  defaults and `Input_Settings` on top, again whenever the setting changes: each entry replaces
+  the type, context and bindings of its action; the others stay. An entry the code does not take
+  is a world problem that names the action and the fix ([actions](control.md#actions)).
+- `Input_Settings` (machine setting): `tap_seconds`, `hold_seconds` and `actions`, keyed entries
+  `{action, kind, context, bindings: [{inputs, chord, gamepad, scale, dead_zone}]}` where `action`
+  is the name of an action, `context` that of an `inp.Input_Context`
+  ([contexts](control.md#contexts)), `inputs` the `Input_Code`s the binding reads, `chord` the keys
+  or buttons also held ([chords](control.md#chords)) and `gamepad` 0 for every gamepad or 1 to 4.
+  The project's layer and the player's are its layers; `input_settings_put`,
+  `input_settings_remove` and `input_settings_find` change and read an entry.
 - Those of a seat, with its blocks, are read through [`control`](control.md#actions).
 
 ## `audio`
@@ -774,16 +768,16 @@ Saves: the `World` written in a slot, a file `saves/<slot>.save` in the project'
   `@(storage,persist)` of all libraries, the progress that is not a save's (achievements,
   unlocks, the last level). It belongs to the player on this machine: `saves_serve` reads it the
   first time a world runs (`Profile_State`) and writes it by itself, also with networking
-  (`kept_watch`: hashes of what the file holds, looked at every `KEPT_LOOK`; a change is written
-  when it rests, after `KEPT_LOOKS` of never resting, and in `saves_release`).
+  (`kept_watch`: the hash of what the file holds, written when it rests after a change, as
+  `project.Rest` says, and in `saves_release`).
   - A document with one table per storage (`library/type`); written atomically. A storage stored
     with another layout migrates by field name and one the file does not have keeps its value.
   - A `persist` that is not flat data or has `Entity` fields is not written (`Failed`). A profile
     that is not read is the problem `save.profile` and the progress stays at its initial values.
 - **Player options**, kept the same way as the profile: the machine settings of the world and the
   application (`Graphics_Settings`, `Display_Settings`, `Audio_Volumes`, `Audio_Output`,
-  `UI_Preferences`) go to the `settings.mirai` of `App.options` (`host.app_options_save`) and the
-  changed bindings to its `input.mirai`. The player reads them over the project's; without
+  `UI_Preferences`, `Input_Settings` with what the player rebound) go to the `settings.mirai` of
+  `App.options` (`host.app_options_save`). The player reads them over the project's; without
   `App.options` (the editor) it is `Unavailable`.
 
 ## `volume`
