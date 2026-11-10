@@ -202,6 +202,7 @@ gbuffer_pass :: proc(p: ^Pass, phase: u32, clear, keep_depth: bool) {
 		if clipped := &r.pipelines[.Gbuffer_Layers_Clip if p.layered else .Gbuffer_Clip if p.reflectance else .Gbuffer_Plain_Clip]; p.camera.clip_plane != {} && clipped^ != 0 {target = clipped}
 		rhi.cmd_bind_pipeline(cmd, target^)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.visible_buffer)
+		textures_feedback_bind(r, cmd)
 		rhi.cmd_draw_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, draws)) + u64(phase) * size_of(Gpu_Draw), 1, size_of(Gpu_Draw))
 		gbuffer_programs_draw(p, target, phase)
 	}
@@ -295,6 +296,7 @@ reflect_pass :: proc(p: ^Pass, normal, depth, albedo, history_previous, history_
 		rhi.cmd_bind_pipeline(p.cmd, pipeline)
 		set_params(p.cmd, params)
 		points_bind(p)
+		textures_feedback_bind(p.r, p.cmd)
 		run(p, glass, half, x, y)
 		points_rounds(p, batch, pipeline, params, 1)
 	}
@@ -417,7 +419,6 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
         for view in frame.views {if view.texture==0 && !view.disabled {eye=view.camera.position;break}}
         renderer_origin_follow(r,eye)
     }
-    textures_views_record(r,frame)
     frame,framed:=origin_frame(r,frame)
     if !framed {return false}
     displaced_prepare(r)
@@ -464,6 +465,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     read_stats(r,slot)
     points_read(r,slot)
     pages_update(r,slot)
+    textures_feedback_read(r,slot)
     extension_counters_begin(r,cmd,slot)
     // A frame none of whose views culls reports no counts, not those of the last one that did.
     rhi.cmd_fill_buffer(cmd,r.stats_buffer,0,size_of(Gpu_Cull_Stats),0)
@@ -480,6 +482,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     texture_uploads_record(r,cmd)
     recorded_ok:=renderer_commit_geometry(r,cmd,slot) && font_record(r,cmd,slot) && upload_scene(r,cmd) && (frame.ui_only || air_frame(r,cmd))
     if recorded_ok {pages_record_begin(r,cmd)}
+    recorded_ok=recorded_ok && textures_feedback_begin(r,cmd,frame)
     // The BLASes built frames ago become their compacted copies; the TLAS of this frame names those.
     if recorded_ok && r.hardware_rt {
         if replaced,freed:=rhi.cmd_compact_blases(cmd);replaced>0 {s.tlas_dirty=true;geometry_released(s,freed)}
@@ -560,6 +563,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
         rhi.cmd_copy_buffer(cmd,r.stats_buffer,0,r.stats_readback[slot],0,size_of(Gpu_Cull_Stats))
         rhi.cmd_barrier_buffer(cmd,r.stats_readback[slot],.Host_Read)
         pages_record_end(r,cmd,slot)
+        textures_feedback_end(r,cmd,slot)
         points_end(r,cmd,slot)
         extension_counters_end(r,cmd,slot)
         depth_probes_end(r,cmd,slot)
@@ -1192,6 +1196,7 @@ nested_views_record :: proc(p: ^Pass) -> bool {
 			target := &r.pipelines[.Gbuffer_Nested_Layers if p.layered else .Gbuffer_Nested if p.reflectance else .Gbuffer_Nested_Plain]
 			rhi.cmd_bind_pipeline(cmd, target^)
 			rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.visible_buffer)
+			textures_feedback_bind(r, cmd)
 			rhi.cmd_draw_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, draws)), 1, size_of(Gpu_Draw))
 			gbuffer_programs_draw(p, target, 0)
 		}

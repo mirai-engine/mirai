@@ -4,8 +4,8 @@ import "base:runtime"
 
 // Ids with names. A distinct integer type declared @(names) has as its values
 // the constants of that type the generator finds in any package of the
-// project; the code is where they are declared, and data (a scene, a setting,
-// input.mirai) and the API name them. A value is saved as its number, so a
+// project; the code is where they are declared, and data (a scene, a setting)
+// and the API name them. A value is saved as its number, so a
 // name can change without touching what was saved. @(names="PREFIX_") takes
 // the prefix off the identifiers; @(name="...") on a constant gives its name.
 // A type @(name_bits="T") is a mask whose bit i is the value i of T.
@@ -42,7 +42,7 @@ Name_Info :: struct {
 }
 
 // An enum @(actions): its member i is the value base+i of the type @(names,actions).
-// defaults writes the [E]Action_Default of engine/input that its package
+// defaults writes the [E]Action_Bindings of engine/input that its package
 // declares beside it, <ENUM>_DEFAULTS or <enum>_defaults(); nil without one.
 Actions_Info :: struct {
     type:typeid,

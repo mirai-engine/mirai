@@ -82,16 +82,10 @@ a_plugin_library_is_the_same_in_every_project :: proc(t:^testing.T) {
         p,open_error:=project.open(folder,root)
         if !testing.expectf(t,open_error.code==.None,"the project opens: %v",open_error) {return}
         libraries:=plugin_libraries(&p,true)
-        found:^Plugin_Library
-        for &lib in libraries {if lib.path=="ragdoll/runtime" {found=&lib}}
-        if !testing.expect(t,found!=nil && len(found.needs)>0) {return}
-        // The declarations of what it compiles against, as each project writes them.
-        for need in found.needs {
-            decl:=project.path(plugins_decl(p.root,"minimal"),need)
-            testing.expect(t,os.make_directory_all(decl)==nil)
-            testing.expect(t,os.write_entire_file(project.path(decl,"declared.odin"),need)==nil)
-        }
-        hash=plugin_library_hash(&p,found,"odin",plugin_flags(&p,true),engine,nil)
+        found:=-1
+        for lib,i in libraries {if lib.path=="ragdoll/runtime" {found=i}}
+        if !testing.expect(t,found>=0 && len(libraries[found].needs)>0) {return}
+        hash,_=plugin_library_hashes(&p,libraries,found,"odin",plugin_flags(&p,true),engine,nil)
     }
     testing.expect_value(t,hashes[1],hashes[0])
 }
@@ -535,20 +529,24 @@ a_plugin_library_follows_the_declarations_of_the_packages_it_reaches :: proc(t:^
     write(t,p.engine_root,"plugins/over/runtime/over.odin","package over\n\nimport drawn \"plugins:drawn/runtime\"\n\nOver :: struct {view:drawn.View}\n")
     write(t,p.engine_root,"plugins/tool/editor/tool.odin","package tool\n\nimport \"mirai:editor\"\n\nTool :: struct {panel:editor.Panel}\n")
     plugins:=project.path(folder,"plugins")
-    // The declarations of drawn, which over compiles against, as its build writes them.
-    write(t,plugins,"decl/drawn/runtime/drawn.odin","package drawn\n\nimport draw \"mirai:engine/render\"\n\nView :: struct {view:draw.View}\n")
     Part :: enum {Plain,Drawn,Over,Tool}
+    sources:=project.path(p.engine_root,"plugins")
     libraries:=[Part]Plugin_Library{
-        .Plain={part=.Runtime,packages={"plain/runtime"},stage=project.path(plugins,"stage-plain-runtime")},
-        .Drawn={part=.Runtime,packages={"drawn/runtime"},stage=project.path(plugins,"stage-drawn-runtime")},
-        .Over={part=.Runtime,packages={"over/runtime"},needs={"drawn/runtime"},stage=project.path(plugins,"stage-over-runtime")},
-        .Tool={part=.Editor,packages={"tool/editor"},stage=project.path(plugins,"stage-tool-editor")},
+        .Plain={part=.Runtime,root=sources,packages={"plain/runtime"},stage=project.path(plugins,"stage-plain-runtime")},
+        .Drawn={part=.Runtime,root=sources,packages={"drawn/runtime"},stage=project.path(plugins,"stage-drawn-runtime")},
+        .Over={part=.Runtime,root=sources,packages={"over/runtime"},needs={"drawn/runtime"},stage=project.path(plugins,"stage-over-runtime")},
+        .Tool={part=.Editor,root=sources,packages={"tool/editor"},stage=project.path(plugins,"stage-tool-editor")},
     }
+    // drawn declares what over compiles against, as its build does.
+    if errors:=plugin_library_prepare(&libraries[.Drawn]);!testing.expectf(t,len(errors)==0,"drawn declares: %v",errors) {return}
     built:=project.path(folder,"built")
     engine:=Engine_Paths{decl=project.path(built,"decl"),declared=project.path(built,"engine.declared"),stamp=project.path(built,ENGINE_STAMP)}
     keys :: proc(p:^project.Project,libraries:^[Part]Plugin_Library,engine:Engine_Paths) -> (keys:[Part]u64) {
         declared:=declared_read(engine.declared,context.temp_allocator)
-        for &lib,part in libraries {keys[part]=plugin_library_hash(p,&lib,"",nil,engine,declared)}
+        for &lib,part in libraries {
+            keys[part],_=plugin_library_hashes(p,slice.enumerated_array(libraries),int(part),"",nil,engine,declared)
+            plugin_library_declared(&lib,&declared)
+        }
         return
     }
     // The engine declares its sources and what each declaration reaches, as its build does.
