@@ -616,9 +616,10 @@ ui_texture_remove :: proc(renderer:^Renderer,texture:Texture_Handle) -> bool {
     return renderer!=nil && gpu.ui_texture_remove(renderer,texture)
 }
 
-// Where a ray meets a mesh placed by transform, and its first texture
-// coordinates there (gpu.mesh_ray). ok false for a miss or without a renderer.
-mesh_ray :: proc(renderer:^Renderer,mesh:Mesh_Handle,transform:matrix[4,4]f32,origin,direction:[3]f32,limit:=max(f32)) -> (distance:f32,uv:[2]f32,ok:bool) {
+// Where a ray meets a mesh placed by transform, its first texture
+// coordinates there and the normal it meets, against the ray (gpu.mesh_ray).
+// ok false for a miss or without a renderer.
+mesh_ray :: proc(renderer:^Renderer,mesh:Mesh_Handle,transform:matrix[4,4]f32,origin,direction:[3]f32,limit:=max(f32)) -> (distance:f32,uv:[2]f32,normal:[3]f32,ok:bool) {
     if renderer==nil {return}
     return gpu.mesh_ray(renderer,mesh,transform,origin,direction,limit)
 }

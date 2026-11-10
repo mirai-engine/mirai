@@ -12,7 +12,8 @@ import wire "mirai:net"
 //                    the world on the clock of the connection
 //   input (begin)    after the libraries read what arrived, client: goes back to the earliest
 //                    tick a library asked for (rewind)
-//   fixed (begin)    who arrived and who left since the last tick (Net_Connections).
+//   fixed (begin)    who arrived and who left, and the messages that arrived, since the last
+//                    tick (Net_Connections, Net_Events).
 //                    server: the input each connection sent for the tick.
 //                    client: the copy of the world as the tick found it, and the interpolated
 //                    replicas where they are shown at that tick
@@ -24,18 +25,17 @@ import wire "mirai:net"
 // Each step first catches up with a scene that replaced the world (world.odin).
 // A paused game runs no phase: pump keeps its connections instead.
 //
-// A correction runs the fixed loop again from the input phase with
-// core.Time.resimulating set: send drops what the ticks ask again, and the
-// tail neither publishes nor sends.
+// A correction, or whoever plays a frame again, sets core.Time.resimulating:
+// the outbox follows it (outbox_follow), so send drops what is asked again,
+// and the tail neither publishes nor sends.
 
 @(step="input",loops="game",stage="begin",before="clock_requests")
-net_begin :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,settings:^Net_Settings,events:^Net_Events,inputs:^Remote_Inputs,problems:^core.Problems) {
+net_begin :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,settings:^Net_Settings,inputs:^Remote_Inputs,problems:^core.Problems) {
     previous:=session.problems
     session.problems=problems
     defer session.problems=previous
     defer authority_follow(session,world)
-    if !session.events_held {core.queue_clear(&events.received)}
-    session.events_held=false
+    outbox_follow(world)
     if !session.opened {session_start(session,world,app,settings)}
     if !session.host_ready {
         report_update(session,app)
@@ -46,7 +46,7 @@ net_begin :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,settin
         frame_view_take(session,world)
         client_sync_test(session,world,app)
     }
-    if net_receive(session,world,app,events,inputs) && session.mode==.Client {
+    if net_receive(session,world,app,inputs) && session.mode==.Client {
         frame:=core.world_storage_of(world,core.Frame_Time)
         client_reconcile(session,world,app,frame!=nil?frame.dt:0)
         client_clock(session,world,app)
@@ -67,7 +67,7 @@ net_rewind :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,rewin
 }
 
 @(step="fixed",loops="game",stage="begin",before="pose_targets_place")
-net_tick_head :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,inputs:^Remote_Inputs,connections:^Net_Connections,problems:^core.Problems) {
+net_tick_head :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,inputs:^Remote_Inputs,connections:^Net_Connections,events:^Net_Events,problems:^core.Problems) {
     previous:=session.problems
     session.problems=problems
     defer session.problems=previous
@@ -75,11 +75,17 @@ net_tick_head :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,in
     authority_follow(session,world)
     time:=core.world_storage_of(world,core.Time)
     if time==nil {return}
+    outbox_follow(world)
     // A tick run again has those it had.
     if connections!=nil && !time.resimulating {
         core.queue_clear(&connections.events)
         for event in session.arrived {core.push(&connections.events,event)}
         clear(&session.arrived)
+    }
+    if events!=nil && !time.resimulating {
+        core.queue_clear(&events.received)
+        for item in session.received {core.push(&events.received,item)}
+        clear(&session.received)
     }
     if !session.host_ready {return}
     world_follow(session,world)
@@ -98,12 +104,13 @@ net_tick_tail :: proc(world:core.World_Ref,session:^Net_Session,outbox:^Net_Outb
     defer session.problems=previous
     world_follow(session,world)
     adopted:=core.take(&adoptions.queue)
-    if session.host_ready && session.mode==.Client {
-        for item in adopted {replica_adopt(session,world,item.id,item.entity)}
-    }
-    if !session.host_ready {return}
     time:=core.world_storage_of(world,core.Time)
-    if time==nil || time.resimulating {return}
+    if !session.host_ready || time==nil {return}
+    if session.mode==.Client {
+        for item in adopted {replica_adopt(session,world,item.id,item.entity)}
+        spawns_settle(session,world,time)
+    }
+    if time.resimulating {return}
     tick:=u32(time.tick)
     if session.mode==.Server {
         server_publish(session,world,outbox,tick)
@@ -114,10 +121,19 @@ net_tick_tail :: proc(world:core.World_Ref,session:^Net_Session,outbox:^Net_Outb
 
 @(step="frame",loops="game",stage="begin")
 net_frame :: proc(world:core.World_Ref,session:^Net_Session) {
+    outbox_follow(world)
     if !session.host_ready || session.mode!=.Client {return}
     world_follow(session,world)
     frame:=core.world_storage_of(world,core.Frame_Time)
     client_frame(session,world,frame!=nil?frame.dt:0)
+}
+
+// The outbox of a world knows whether what runs now runs again (core.Time.resimulating), at
+// the start of each phase and of each tick: send needs no Time.
+@(private)
+outbox_follow :: proc(w:core.World_Ref) {
+    time,outbox:=core.world_storage_of(w,core.Time),core.world_storage_of(w,Net_Outbox)
+    if time!=nil && outbox!=nil {outbox.replaying=time.resimulating}
 }
 
 STATUS_TICKS :: 60
@@ -149,7 +165,7 @@ net_end :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,problems
 // its phases: without it the other ends time out. A session asked for opens
 // here when no frame opened it yet (a run that has not run). What arrives is
 // taken as at the start of a frame, without the correction nor the clock of a
-// client, and its events wait for the next frame that runs.
+// client, and its messages wait for the next tick that runs.
 pump :: proc(session:^Net_Session,world:core.World_Ref,app:^host.App) {
     previous:=session.problems
     session.problems=core.world_storage_of(world,core.Problems)
@@ -164,11 +180,10 @@ pump :: proc(session:^Net_Session,world:core.World_Ref,app:^host.App) {
         }
     }
     if !session.host_ready {return}
-    events,inputs:=core.world_storage_of(world,Net_Events),core.world_storage_of(world,Remote_Inputs)
-    if events==nil || inputs==nil {return}
-    session.events_held=true
+    inputs:=core.world_storage_of(world,Remote_Inputs)
+    if inputs==nil {return}
     world_follow(session,world)
-    if net_receive(session,world,app,events,inputs) {
+    if net_receive(session,world,app,inputs) {
         // Its ticks stand still while it is pumped: its clients' estimate of them too.
         if session.mode==.Server {server_clock(session,world,true)}
         wire.host_update(&session.host,host.app_seconds(app))
@@ -180,14 +195,14 @@ pump :: proc(session:^Net_Session,world:core.World_Ref,app:^host.App) {
 // What arrived, as commands of the host, for net_begin and pump. false when
 // the session of a client ended with it, and is destroyed.
 @(private)
-net_receive :: proc(session:^Net_Session,world:core.World_Ref,app:^host.App,events:^Net_Events,inputs:^Remote_Inputs) -> bool {
+net_receive :: proc(session:^Net_Session,world:core.World_Ref,app:^host.App,inputs:^Remote_Inputs) -> bool {
     session.now=host.app_seconds(app)
     commands:=wire.host_poll(&session.host)
     if session.mode==.Server {
-        server_commands(session,world,app.assets,commands,events,inputs)
+        server_commands(session,world,app.assets,commands,inputs)
         return true
     }
-    client_commands(session,world,app.assets,app.allocator,commands,events)
+    client_commands(session,world,app.assets,app.allocator,commands)
     if !session.ended {return true}
     // Its ticks go at the pace of the frames again, and its clock is its own.
     if frame:=core.world_storage_of(world,core.Frame_Time);frame!=nil {frame.dilation=0}

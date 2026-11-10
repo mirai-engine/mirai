@@ -80,7 +80,9 @@ server_world :: proc(s:^Net_Session,w:core.World_Ref,root:scene.Scene_Root) {
         slot.entity,slot.ancestor,slot.sections,slot.holder,slot.member=core.NONE,core.NONE,{},0,0
     }
     mem.zero_slice(server.views)
-    server.request_count=0
+    server.visibility={}
+    mem.zero_slice(server.layouts)
+    server.moved={}
     server.ancestry={}
     mem.zero_slice(server.sections)
     server.section_count,server.sections_full=0,false
@@ -307,8 +309,8 @@ client_sections :: proc(s:^Net_Session,w:core.World_Ref) {
     references:=core.world_table_of(w,scene.Scene_Reference)
     ids:=core.world_table_of(w,core.Id)
     if !s.follows || references==nil || ids==nil {return}
-    seen:=[2]u64{core.version(references),core.layout(references)}
-    if seen==c.sections_seen {return}
+    seen:=c.sections_seen
+    if !core.touched(references,&seen) {return}
     loaded:=make([dynamic]base.Entity_Id,context.temp_allocator)
     for row in 0..<core.count(references) {
         reference:=core.at(references,row)

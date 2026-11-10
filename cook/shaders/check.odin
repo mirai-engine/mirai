@@ -7,8 +7,8 @@ import "core:math"
 import "core:os"
 import "core:slice"
 import "core:strings"
-import "core:thread"
 import "mirai:std/base"
+import "mirai:std/jobs"
 
 // Checks one program without publishing it: the rules below read its source
 // for the mistakes programs are written with, and Slang compiles it where it
@@ -513,7 +513,7 @@ Check_Compile :: struct {
     ok:bool,
 }
 
-// On a thread of its own: its output is in the heap and the caller frees it.
+// On a job of its own: its output is in the heap and the caller frees it.
 @(private="file")
 check_compile_run :: proc(job:^Check_Compile) {
     job.output,job.ok=tool_run(job.runner,job.command,runtime.heap_allocator())
@@ -686,7 +686,7 @@ program_check :: proc(options:Check_Options,allocator:=context.allocator) -> (re
                 append(&out,"-o",strings.concatenate({output,".spv"},context.temp_allocator))
                 return out[:]
             }
-            jobs:=make([dynamic]Check_Compile,context.temp_allocator)
+            compiles:=make([dynamic]Check_Compile,context.temp_allocator)
             if c.domain==.Surface {
                 raster_path:=path_join(temporary,"check_raster.frag.slang",allocator=context.temp_allocator)
                 ray_path:=path_join(temporary,"check_ray.comp.slang",allocator=context.temp_allocator)
@@ -694,8 +694,8 @@ program_check :: proc(options:Check_Options,allocator:=context.allocator) -> (re
                     result.error=strings.clone("the stages of the check could not be written",allocator)
                     return
                 }
-                append(&jobs,Check_Compile{runner=&runner,stage="raster",command=command(slangc,raster_path,"fragment",raster_path,"",include,options.root,options.project,folder,options.sources)})
-                append(&jobs,Check_Compile{runner=&runner,stage="ray",command=command(slangc,ray_path,"compute",ray_path,"",include,options.root,options.project,folder,options.sources)})
+                append(&compiles,Check_Compile{runner=&runner,stage="raster",command=command(slangc,raster_path,"fragment",raster_path,"",include,options.root,options.project,folder,options.sources)})
+                append(&compiles,Check_Compile{runner=&runner,stage="ray",command=command(slangc,ray_path,"compute",ray_path,"",include,options.root,options.project,folder,options.sources)})
             }
             stages,kinds:=CHECK_STAGES,SLANG_STAGES
             sources:=make([dynamic]string,context.temp_allocator)
@@ -713,20 +713,21 @@ program_check :: proc(options:Check_Options,allocator:=context.allocator) -> (re
                 stage:=path_name(source)
                 _,kind,_:=stage_of(stage)
                 output:=path_join(temporary,stage,allocator=context.temp_allocator)
-                append(&jobs,Check_Compile{runner=&runner,stage=strings.trim_suffix(stage,".slang"),command=command(slangc,source,kinds[kind],output,own_folder if c.domain==.Vfx else "",include,options.root,options.project,folder,options.sources)})
+                append(&compiles,Check_Compile{runner=&runner,stage=strings.trim_suffix(stage,".slang"),command=command(slangc,source,kinds[kind],output,own_folder if c.domain==.Vfx else "",include,options.root,options.project,folder,options.sources)})
             }
-            threads:=make([]^thread.Thread,len(jobs),context.temp_allocator)
-            for &job,i in jobs {threads[i]=thread.create_and_start_with_poly_data(&job,check_compile_run)}
-            for t,i in threads {
-                if t==nil {check_compile_run(&jobs[i]);continue}
-                thread.join(t);thread.destroy(t)
-            }
-            defer for job in jobs {delete(job.output,runtime.heap_allocator())}
-            compiled=len(jobs)>0
-            for job in jobs {compiled&&=job.ok}
+            // Every compilation at once: each waits on slangc.
+            js:jobs.Job_System
+            run :: proc(compiles:^[dynamic]Check_Compile,first,last,worker:int) {for &compile in compiles[first:last] {check_compile_run(&compile)}}
+            if jobs.system_init(&js,{threads=max(len(compiles)-1,0)}) {
+                jobs.parallel_for(&js,jobs.OWNER,len(compiles),1,run,&compiles)
+                jobs.system_destroy(&js)
+            } else {run(&compiles,0,len(compiles),jobs.OWNER)}
+            defer for job in compiles {delete(job.output,runtime.heap_allocator())}
+            compiled=len(compiles)>0
+            for job in compiles {compiled&&=job.ok}
             entry:=entry_line(&c)
             found:=make([dynamic]Diagnostic,context.temp_allocator)
-            for job in jobs {
+            for job in compiles {
                 said:=slang_diagnostics(job.output,context.temp_allocator)
                 diagnostics_place(said,copies,roots,context.temp_allocator)
                 each: for &d in said {
@@ -745,7 +746,7 @@ program_check :: proc(options:Check_Options,allocator:=context.allocator) -> (re
                 }
             }
             for &d in found {
-                if len(jobs)>1 && strings.count(d.stage,",")==len(jobs)-1 {d.stage="all"}
+                if len(compiles)>1 && strings.count(d.stage,",")==len(compiles)-1 {d.stage="all"}
                 if !rule_explains(diagnostics[:static_count],d) {append(&diagnostics,d)}
             }
         }

@@ -52,7 +52,7 @@ placement_same :: proc(a,b:Drag) -> bool {return a.kind==b.kind && a.card==b.car
 @(private)
 placement_measure :: proc(s:^Session,p:^Placement_Preview,part:Placement_Part) {
     append(&p.parts,part)
-    low,high,known:=picker_bounds(s.picker,s.app.assets,part.mesh)
+    low,high,known:=mesh_bounds(s.app.assets,part.mesh)
     if !known {return}
     box:=mm.aabb_transform({low,high},mm.transform_matrix(part.transform))
     if !p.measured {p.low,p.high,p.measured=box.min,box.max,true} else {
@@ -186,7 +186,7 @@ outline_entity :: proc(s:^Session,w:core.World_Ref,e:core.Entity,color:[4]f32) {
     world:=entity_world(w,e)
     low,high:=[3]f32{-GHOST_MARKER*0.5,-GHOST_MARKER*0.5,-GHOST_MARKER*0.5},[3]f32{GHOST_MARKER*0.5,GHOST_MARKER*0.5,GHOST_MARKER*0.5}
     if mesh,ok:=entity_get(w,e,erender.Mesh_Renderer);ok && (mesh.mesh!={} || mesh.shape!=.None) {
-        if mesh_low,mesh_high,known:=picker_bounds(s.picker,s.app.assets,mesh);known {low,high=mesh_low,mesh_high}
+        if mesh_low,mesh_high,known:=mesh_bounds(s.app.assets,mesh);known {low,high=mesh_low,mesh_high}
     }
     gpu.debug_box_transformed(&s.viewport.lines,mm.transform_matrix(world),low,high,color)
 }

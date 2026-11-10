@@ -566,9 +566,24 @@ api_plugins_set :: proc(s:^Session,st:^Api_State) {
     api.server_plugins_set(&st.server,plugins)
 }
 
-api_method_register :: proc(s:^Session,m:Api_Method) -> bool {
+// Registers a method of a plugin, with P its params and R its result: their
+// type info comes from the library that declares them, where the procedure
+// instantiates.
+api_method_register :: proc{api_method_register_free,api_method_register_params,api_method_register_typed}
+
+api_method_register_free :: proc(s:^Session,m:Api_Method) -> bool {
     st:=api_state(s)
     return st!=nil && api_register(s,st,m)
+}
+api_method_register_params :: proc(s:^Session,$P:typeid,m:Api_Method) -> bool {
+    m:=m
+    m.params,m.params_info=P,type_info_of(P)
+    return api_method_register_free(s,m)
+}
+api_method_register_typed :: proc(s:^Session,$P,$R:typeid,m:Api_Method) -> bool {
+    m:=m
+    m.result,m.result_info=R,type_info_of(R)
+    return api_method_register_params(s,P,m)
 }
 
 api_register :: proc(s:^Session,st:^Api_State,m:Api_Method) -> bool {

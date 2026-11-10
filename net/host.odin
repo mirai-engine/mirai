@@ -94,7 +94,7 @@ Command_Kind :: enum u8 {
     Connected,          // tick: the ticks of history of the server (host_history)
     Disconnected,       // reason
     Message,            // channel, data
-    Object_Created,     // object, type, role, simulation, tick, mask, words
+    Object_Created,     // object, type, role, simulation, tick, mask, words; retyped: of a replica this end has, which is of this type from now on
     Object_Updated,     // object, type, tick, mask, words; connection is the client that sent it, on a server
     Object_Destroyed,   // object
     Role_Changed,       // object, role
@@ -119,6 +119,7 @@ Command :: struct {
     client_id:u64, // Connected, on a server: the id in the connect token of the client, or zero
     object:Object,
     ended:bool,   // Object_Destroyed: the object is gone on the server; false: it only left what this connection sees
+    retyped:bool, // Object_Created: the replica of this object goes on, with the type and the whole state of the command
     mask:u64,     // fields that changed, one bit each as numbered by the object type
     data:[]u8,
     words:[]u32,  // quantized state: object_read and event_read turn it into structures
@@ -156,8 +157,8 @@ Host_Stats :: struct {
 @(private)
 Op_Kind :: enum u8 {
     Tick,Connect,Disconnect,Message,
-    Object_Create,Object_State,Object_Destroy,Object_Owner,Object_Priority,Object_Position,Object_Radius,Object_Filter,
-    Object_Parent,Authority_Grant,Authority_Request,Authority_Release,View,Event,Input,Object_Relevance,Hold,Clock,
+    Object_Create,Object_Retype,Object_State,Object_Destroy,Object_Owner,Object_Priority,Object_Position,Object_Radius,Object_Filter,
+    Object_Parent,Authority_Grant,Authority_Request,Authority_Release,View,Event,Input,Object_Visibility,Connection_Visibility,Hold,Clock,
     Object_Group,Connection_Group,
 }
 @(private)
