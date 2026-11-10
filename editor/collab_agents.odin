@@ -43,35 +43,30 @@ collab_agents_send :: proc(s:^Session,st:^Collab_State,now:f64) {
     w:serial.Writer
     collab_begin(&w,.Agents,1024)
     serial.write_scalar(&w,st.self)
-    m:=s.ai
     world:=edited_world(s)
     count:=0
-    if m!=nil {
-        for &task in m.tasks[:m.task_count] {if ai_scene_task_visible(s,world,&task) {count+=1}}
-    }
+    for &task in ai_tasks(s.ai) {if ai_scene_task_visible(s,world,&task) {count+=1}}
     count=min(count,COLLAB_AGENTS)
     serial.write_scalar(&w,u8(count))
     room:=COLLAB_AGENT_IDS
     written:=0
-    if m!=nil {
-        for &task in m.tasks[:m.task_count] {
-            if written==count {break}
-            if !ai_scene_task_visible(s,world,&task) {continue}
-            written+=1
-            anchor:=ai_scene_anchor(s,&task)
-            serial.write_scalar(&w,u16(task.id))
-            serial.write_scalar(&w,task.color_index)
-            serial.write_scalar(&w,task.icon)
-            serial.write_scalar(&w,anchor.x);serial.write_scalar(&w,anchor.y);serial.write_scalar(&w,anchor.z)
-            serial.write_scalar(&w,task.facing)
-            name:=ai_agent_name(m,&task)
-            serial.write_string(&w,name)
-            ids:[]base.Entity_Id
-            if task.review.pending {ids=task.review.changed_ids[:min(len(task.review.changed_ids),room)]}
-            room-=len(ids)
-            serial.write_scalar(&w,u16(len(ids)))
-            for id in ids {serial.write_scalar(&w,u64(id))}
-        }
+    for &task in ai_tasks(s.ai) {
+        if written==count {break}
+        if !ai_scene_task_visible(s,world,&task) {continue}
+        written+=1
+        anchor:=ai_scene_anchor(s,&task)
+        serial.write_scalar(&w,u16(task.id))
+        serial.write_scalar(&w,task.color_index)
+        serial.write_scalar(&w,task.icon)
+        serial.write_scalar(&w,anchor.x);serial.write_scalar(&w,anchor.y);serial.write_scalar(&w,anchor.z)
+        serial.write_scalar(&w,task.facing)
+        name:=ai_agent_name(s.ai,&task)
+        serial.write_string(&w,name)
+        ids:[]base.Entity_Id
+        if task.review.pending {ids=task.review.changed_ids[:min(len(task.review.changed_ids),room)]}
+        room-=len(ids)
+        serial.write_scalar(&w,u16(len(ids)))
+        for id in ids {serial.write_scalar(&w,u64(id))}
     }
     bytes:=serial.writer_bytes(&w)
     key:=base.hash64(bytes)
@@ -116,7 +111,7 @@ collab_agents_receive :: proc(st:^Collab_State,from:int,data:[]u8) {
 // The agents of another editor that is in the session now.
 @(private)
 collab_remote_agents :: proc(s:^Session,st:^Collab_State,i:int,now:f64) -> []Collab_Agent {
-    if !collab_peer_live(st,i,now) || s.ai!=nil && !s.ai.show_agents_in_scene {return nil}
+    if !collab_peer_live(st,i,now) || !ai_agents_in_scene(s.ai) {return nil}
     agents:=&st.peers[i].agents
     return agents.list[:agents.count]
 }

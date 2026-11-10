@@ -492,17 +492,7 @@ git_merge_ai :: proc(s:^Session,index:int) {
     } else {
         strings.write_string(&prompt,"Resolve the merge conflicts of the project. Call git.conflicts to see them, choose ours or theirs for each value with git.choose, merge the files of code that both sides changed keeping both changes (save them and choose folder for them), and accept every item with git.accept. Do not call git.finish.")
     }
-    if !git_ai_ask(s,strings.to_string(prompt)) {notify(s,"Connect an AI agent first")}
-}
-
-@(private)
-git_ai_ask :: proc(s:^Session,text:string) -> bool {
-    m:=s.ai
-    if m==nil {return false}
-    m.selected=m.main
-    m.prompt_length=copy(m.prompt[:AI_MESSAGE_BYTES-1],text)
-    library_select(s,.Ai)
-    return ai_chat_send(s)
+    if !ai_chat_ask(s,s.ai,strings.to_string(prompt)) {notify(s,"Connect an AI agent first")}
 }
 
 // While the merge waits, its entities are outlined red until accepted.

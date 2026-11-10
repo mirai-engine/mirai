@@ -677,11 +677,11 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
     play:=play_shown(s)
     document:=asset_document_active(s)
     if play {
-        if s.ai.chat_open!=s.play_chat_open {play_chat_set(s,s.ai.chat_open)}
+        if ai_chat_open(s.ai)!=s.play_chat_open {play_chat_set(s,ai_chat_open(s.ai))}
     } else {
-        if s.ai.chat_open && l.library_tab!=.Ai {library_select(s,.Ai)}
-        if !s.ai.chat_open && l.library_tab==.Ai {library_select(s,l.previous_library_tab)}
-        if !material_document_shown(s) && s.ai.material.open {s.ai.material={}}
+        if ai_chat_open(s.ai) && l.library_tab!=.Ai {library_select(s,.Ai)}
+        if !ai_chat_open(s.ai) && l.library_tab==.Ai {library_select(s,l.previous_library_tab)}
+        if !material_document_shown(s) && ai_material_open(s.ai) {ai_material_set(s.ai,{})}
     }
     bars:=th.bar_height+toolbar_height(g)
     top:=bars+DETAILS_MARGIN
@@ -700,7 +700,7 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
 
     shown_tab:=library_tab_shown(s)
     // The chat takes the whole area below the bars, and nothing else is drawn on it.
-    expanded:=s.ai.chat_expanded && shown_tab==.Ai && panels && l.left_open
+    expanded:=ai_chat_expanded(s.ai) && shown_tab==.Ai && panels && l.left_open
     if expanded {
         left_width=ctx.size.x-RAIL_WIDTH
         details=false
@@ -856,8 +856,8 @@ library_select :: proc(s:^Session,tab:Library_Tab) {
     if l.library_tab!=.Ai {l.previous_library_tab=l.library_tab}
     l.library_tab=tab
     l.left_open=true
-    s.ai.chat_open=tab==.Ai
-    if tab==.Ai {s.ai.focus=true}
+    ai_chat_show(s.ai,tab==.Ai)
+    if tab==.Ai {ai_chat_focus(s.ai,true)}
     // The search of the browser takes the keyboard, as the message of AI does,
     // unless an asset it reveals takes it.
     if tab==.Content && s.content!=nil {s.content.focus_search=s.content.reveal=={}}

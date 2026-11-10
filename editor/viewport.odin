@@ -921,7 +921,7 @@ highlight_sync :: proc(s:^Session,w:core.World_Ref) {
     play:=play_viewed(s) || camera_previewing(s)
     marquee:=v.capture==.Select && v.moved && !play
     ids:=core.world_table_of(w,core.Id)
-    key:=Highlight_Key{sources={s.selection.serial,u64(uintptr(w.data)),parents!=nil?parents.layout+parents.version:0,meshes!=nil?meshes.layout:0,u64(len(es.generation)),0,0,0,0,0,0,s.ai!=nil?s.ai.scene_serial:0,ids!=nil?ids.layout+ids.version:0,collab_highlights_key(s)},marquee=marquee,play=play,isolated=play_shown(s)}
+    key:=Highlight_Key{sources={s.selection.serial,u64(uintptr(w.data)),parents!=nil?parents.layout+parents.version:0,meshes!=nil?meshes.layout:0,u64(len(es.generation)),0,0,0,0,0,0,ai_scene_serial(s.ai),ids!=nil?ids.layout+ids.version:0,collab_highlights_key(s)},marquee=marquee,play=play,isolated=play_shown(s)}
     if marquee {
         transforms:=core.world_table_of(w,core.Transform)
         worlds:=core.world_table_of(w,core.World_Transform)

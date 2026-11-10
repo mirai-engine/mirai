@@ -152,6 +152,10 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   imports or creates goes where the user is, and it creates no folder named after a type.
 - State located according to [the session](references/editor.md#the-session). `Api` keeps only a
   pointer because the server must stay where it was born.
+- A procedure takes the storage it reads and writes (`^Ai`, the chat store, `^Git`), not the
+  `Session`, when it needs nothing else. What needs no storage of the editor is its own package
+  under `editor/` (`acp`, `ai_store`, `diff`, `git`). Files outside `ai_*.odin` do not reach the
+  fields of `Ai`: they go through `editor/ai_outside.odin` and the procedures of the tasks.
 - `edited_world` is the document (undo, scenes, Build); `shown_world` is that of the Play while it
   runs or what is watched in `Watch`. UI edits during a Play go to the Play's world and are not
   saved; the edit API always writes to the document.

@@ -104,7 +104,7 @@ material_document_clear :: proc(s:^Session) {
     material_document_unload(w)
     material_variants_free(w)
     w^={}
-    if s.ai!=nil {s.ai.material={}}
+    ai_material_set(s.ai,{})
 }
 
 // The document in front is a material, and nothing plays.
@@ -611,7 +611,7 @@ material_document_build :: proc(s:^Session) {
         it,rect:=asset_image_show(s,&preview.image)
         asset_view_input(ctx,&preview.camera,it,rect)
         // The preview is what a message shows the agent of the material.
-        if rect.w>0 && s.ai!=nil {s.ai.region,s.ai.has_region=rect,true}
+        if rect.w>0 {ai_region_set(s.ai,rect)}
         if w.variant_count>0 {
             ui.box_begin(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,padding={asset_workspace_under(g),0,0,0}})
             defer ui.box_end(ctx,{})
@@ -911,9 +911,7 @@ material_variant_value :: proc(text:string,components:int,is_bool:bool,out:^[4]f
 // the values picked, the channel shown and the variant set last.
 @(private)
 material_document_context :: proc(s:^Session,w:^Material_Document) {
-    if s.ai==nil {return}
-    m:=&s.ai.material
-    m^={open=true,id=w.material}
+    m:=Ai_Material_Context{open=true,id=w.material}
     if w.material!={} && s.app.assets!=nil {
         if file,found:=asset.registry_find(&s.app.assets.registry,w.material);found {base.text_set(m.material[:],file.path)}
     }
@@ -925,4 +923,5 @@ material_document_context :: proc(s:^Session,w:^Material_Document) {
         base.text_set(m.channel[:],ids[w.channel])
     }
     if w.chosen>0 {m.variant=w.variants[w.chosen-1].label} else {m.variant,m.variant_applied=w.applied,base.text_get(w.applied[:])!=""}
+    ai_material_set(s.ai,m)
 }

@@ -110,7 +110,7 @@ git_schedule :: proc(s:^Session) {
     if !g.available {return}
     signals:=[2]u64{}
     if s.app.assets!=nil {signals[0]=s.app.assets.registry.revision}
-    if s.ai!=nil {signals[1]=s.ai.scene_serial}
+    signals[1]=ai_scene_serial(s.ai)
     if signals!=g.seen {g.seen,g.stale=signals,true}
     if !s.headless && platform.input_frame(s.app.platform).window.focus_gained {g.stale=true}
     shown:=g.panel_frame!=0 && s.frame-g.panel_frame<=1
