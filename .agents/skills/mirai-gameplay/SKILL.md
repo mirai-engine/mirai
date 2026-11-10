@@ -104,7 +104,7 @@ the same attributes and no private paths. Declaration and parameter binding:
    until the end of the function and are finished with
    `core.commands_added`. With `transient=true` the entities do not get an `Id` and a save does not
    include them as scene entities.
-8. Game code names a prefab or a scene by its path in the assets; data fields hold its
+8. Game code names a scene, a prefab among them, by its path in the assets; data fields hold its
    `base.Asset_Id`.
 
 ## Invariants

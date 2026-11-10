@@ -236,7 +236,7 @@ mirai content demo
 A `--<part>-only` flag after `--` regenerates only one part
 (`tools/demo_content/main.odin`).
 
-- `--prefabs-only`: `Player.prefab`, `Person.prefab`, `Dog.prefab` and `Thrown cube.prefab`.
+- `--prefabs-only`: `Player.scene`, `Person.scene`, `Dog.scene` and `Thrown cube.scene`.
 - `--control-only`: control scene. `--physics-only`: destruction and physics scenes.
 - `--portal-only`: scene `portal_chamber` and prefab `Portal player`.
 - `--raft-only`: scene `raft` and prefab `Swimmer`.
@@ -306,7 +306,7 @@ Content:
 
 `portals/portal_chamber.scene` uses the
 [`portals`](../../mirai-plugins/references/render-plugins.md#portals) plugin. The player
-(`Portal player.prefab`) carries `Portal_Gun`; its capsule has `dominance` 1: it pushes the cubes
+(`Portal player.scene`) carries `Portal_Gun`; its capsule has `dominance` 1: it pushes the cubes
 and they do not push it.
 
 - **Shooting.** `portal_blue` and `portal_orange` fire a ray from the eyes that crosses an open

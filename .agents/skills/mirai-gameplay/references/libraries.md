@@ -39,21 +39,24 @@ the name of their type) and a world (handles and tables).
   registry. Prefab instances are not resolved against their prefabs. A `Scene_Reference` may name
   only a scene the game ships: what hangs from it loads unchecked. `report.refused` says what
   failed and `untrusted_text` how to fix it.
-- `spawn(spawner, path_or_id, at)` is the one way to place a prefab while playing and returns its
-  root; one that fails returns `NONE` and is the problem `scene.spawn` of its `parent` (or of the
-  world). A zero rotation is none and a zero scale is 1; its rows wait for the end of the function
-  that spawned it. The root receives `Prefab_Source`, which a server sends with what it replicates
-  so that the client instantiates that prefab
+- `spawn(spawner, path_or_id, at)` is the one way to place a copy of a scene while playing and
+  returns its root. It places a scene with exactly one root, a prefab; one with none or several is
+  `Not_One_Root`, and hangs whole from a `Scene_Reference` instead. One that fails returns `NONE`
+  and is the problem `scene.spawn` of its `parent` (or of the world), with the fix. A zero
+  rotation is none and a zero scale is 1; its rows wait for the end of the function that spawned
+  it. The root receives `Prefab_Instance{prefab}`, the one component that says what prefab an
+  entity is of (with `Prefab_Member`, a linked instance; alone, a copy), which a server sends
   ([multiplayer](../../mirai-networking/references/multiplayer.md#what-the-game-declares)).
-  A World keeps the form of each prefab it spawned (`Prefab_Forms`): spawning it again reads no
-  file and gives the world reading it anew gives, until the prefab or a prefab it places changes.
-  The forms are of their World and are not copied with it.
+  The scenes the copy references load with it, under `Id`s made with that of its reference in
+  the world; a `transient` copy, which has none, brings every section. A World keeps the form of
+  each prefab it spawned (`Prefab_Forms`) until that prefab or one it places changes: spawning it
+  again reads no file. The forms are of their World and are not copied with it.
 - With a project's assets, `load` and `spawn` instantiate a copy in which outdated prefab instances
   follow their current prefab
   ([resolution](../../mirai-assets/references/scenes.md#resolution-against-the-current-prefab));
   without any, the file as is. With cooked assets (`Assets.indexed`) they load the file, which
   cooking already resolved.
-- `capture(world, &scene, types, {root, previous, kind, id, entities, sections})` writes a document
+- `capture(world, &scene, types, {root, previous, id, entities, sections})` writes a document
   with the entities that have `Id`, in depth, without what hangs from a reference, which stores its
   scene; with `sections` (a save), everything. With `entities`, only those, as roots, without what
   hangs from them, and their `Entity` fields store the `Id` of an entity left outside: the values
@@ -75,7 +78,8 @@ the name of their type) and a world (handles and tables).
   asset marks do not read meanwhile. Then, jobs (at most the `LOAD_WORKERS_SHARE` part of the
   workers, the rest stays for the frames' work) read and decode the meshes, textures and materials
   it names that are not loaded, and what the other assets it names take (the meshes of a foliage
-  source; not those of a scene, which is another section), each after what it takes, and
+  source or of a scene to spawn; not those of a `Scene_Reference`, another section), each after
+  what it takes, and
   `load_step` hands them to the renderer with the part of the frame the load has
   ([budget](../../mirai-core/references/host.md#loaded-assets)); it also waits for the first
   loads of the `.anim` its World can play, through its prefabs and other assets
@@ -98,15 +102,14 @@ the name of their type) and a world (handles and tables).
 - An entity is looked up by its `Id` with `core.entity_of(&es, id)`, up to date from the settle that
   settles what was instantiated
   ([identity](../../mirai-core/references/core.md#persistent-identity)).
-- `Error`: `No_Assets`, `Not_Found`, `Invalid`, `Cycle`, `Not_A_Prefab`, `Corrupt`,
+- `Error`: `No_Assets`, `Not_Found`, `Invalid`, `Cycle`, `Not_One_Root`, `Corrupt`,
   `Duplicate_Id`, `Out_Of_Memory`, `Write_Failed` and, of `load_untrusted`, `Too_Large`,
   `Not_Allowed`, `Out_Of_Range`, `Unknown_Reference`; `error_text`.
 
 ### Scene references
 
-A `.prefab` is a template that is placed as copies (instances with overrides, `spawn`); a `.scene`
-is a place that is referenced as a section or loaded as the world. Same format, two roles;
-`asset.convert` changes a document's type and keeps its id.
+One kind of scene, placed as its use asks: loaded as the world, referenced as a section or,
+with exactly one root, copied (an instance with overrides in a document, `spawn` while running).
 
 - `Scene_Reference{scene}` (`reference.odin`) on an entity: the scene's entities hang from it
   without being copied into the document that has the reference. Deleting or turning it off removes
@@ -173,9 +176,8 @@ is a place that is referenced as a section or loaded as the world. Same format, 
   another, and what is in the root goes into the save and is replicated. Replacing the entire scene
   (from a menu to a game) passes to the new world what has `core.Keep`, with what hangs from it:
   the players' seats carry it.
-- A prefab has no references (`Invalid`); a scene that references itself, directly or not, or more
-  than `REFERENCE_DEPTH` levels, is `Cycle`; a reference to a scene that is not there is counted in
-  `missing` and stays empty. `spawn` of a scene is `Not_A_Prefab`.
+- A scene that references itself, directly or not, or more than `REFERENCE_DEPTH` levels, is
+  `Cycle`; a reference to a scene that is not there is counted in `missing` and stays empty.
 - **Between sections** (`unresolved.odin`): an `Entity` field that names something outside its
   document stores the `Id` in the world of its target. If on loading it is not there (its section
   did not load), the field stays `NONE` and waits in `Unresolved_References`; `capture` stores that

@@ -1,7 +1,8 @@
 # A whole scene through the API
 
-A scene and a prefab are files of `assets/`, the source of the game, as a `.ui` is: an agent
-writes them through the API, a person in the editor, and nothing writes over what either saved.
+A scene is a file of `assets/`, the source of the game, as a `.ui` is: an agent writes it through
+the API, a person in the editor, and nothing writes over what either saved. A prefab is a scene
+with one root.
 Terrain, foliage and sea go in one `--batch` file of JSON lines, one line per call, each finding
 what it needs by name ([terrain-foliage](../world/terrain-foliage.md)):
 
@@ -14,7 +15,7 @@ what it needs by name ([terrain-foliage](../world/terrain-foliage.md)):
 {"method":"foliage.type_add","params":{"entity":"Plants","mesh":"island/palm.mesh","name":"palm","density":0.007,"scale":[0.8,1.25],"align":0.15,"rule":true,"slope":[0,28],"ground_height":[0.9,6.5]}}
 {"method":"foliage.paint","params":{"entity":"Plants","mode":"generate","at":[0,0,0],"radius":82}}
 {"method":"scene.add","params":{"name":"Sea","components":{"Fluid_Volume":{"shape":"Plane","density":1025},"Water":{},"Fluid_Waves":{}}}}
-{"method":"scene.write","params":{"entities":[{"name":"Hut","prefab":"island/hut.prefab","position":[4,3,-2]}]}}
+{"method":"scene.write","params":{"entities":[{"name":"Hut","prefab":"island/hut.scene","position":[4,3,-2]}]}}
 {"method":"asset.save","params":{"all":true}}
 {"method":"scene.save","params":{}}
 ```
@@ -30,7 +31,7 @@ mirai rpc --project . --batch island.jsonl
 - A generated mesh or material (a palm, the sand) is an asset a [content tool](content-tool.md)
   wrote; its path or id is what a layer and a type name. The tool runs before this file; it never
   writes a scene.
-- `scene.write` with `prefab` places a linked instance of that `.prefab`, as the document of
+- `scene.write` with `prefab` places a linked instance of that one-root `.scene`, as the document of
   [a scene as text](text-sources.md#a-scene) does; what the line leaves out stays as the prefab
   gives it, and what it says of the children of the prefab, by their names, the instance holds.
 - The file is the recipe of a first version: to change the scene later, edit what it made
@@ -38,7 +39,7 @@ mirai rpc --project . --batch island.jsonl
 
 ## As a file of text
 
-`mirai scene` reads and writes a scene or a prefab as one nested document, with no editor running,
+`mirai scene` reads and writes a scene as one nested document, with no editor running,
 against the components of the game as it was built (`mirai build editor . --dev` first):
 
 ```sh
