@@ -110,14 +110,17 @@ tool_refresh_ignores_newer_tests_and_tracks_runtime_and_loaded_files :: proc(t:^
     defer os.remove_all(folder)
     source:=project.path(folder,"main.odin",allocator=context.temp_allocator)
     tests:=project.path(folder,"main_test.odin",allocator=context.temp_allocator)
+    imported:=project.path(folder,"lib","lib.odin",allocator=context.temp_allocator)
+    imported_tests:=project.path(folder,"lib","lib_test.odin",allocator=context.temp_allocator)
+    if !testing.expect(t,os.make_directory(project.path(folder,"lib",allocator=context.temp_allocator))==nil) {return}
     loaded:=project.path(folder,"data.txt",allocator=context.temp_allocator)
     output:=project.path(folder,"mirai",allocator=context.temp_allocator)
     dependencies:=project.path(folder,"sources.json",allocator=context.temp_allocator)
-    for file in ([]string{source,tests,loaded,output}) {
+    for file in ([]string{source,tests,imported,imported_tests,loaded,output}) {
         if !testing.expect(t,os.write_entire_file(file,"data")==nil) {return}
         if !testing.expect(t,os.change_times(file,time.unix(100,0),time.unix(100,0))==nil) {return}
     }
-    export:=struct {source_files,load_files:[]string}{source_files={source},load_files={loaded}}
+    export:=struct {source_files,load_files:[]string}{source_files={source,imported},load_files={loaded}}
     data,marshal_error:=json.marshal(export,allocator=context.temp_allocator)
     if !testing.expect(t,marshal_error==nil && os.write_entire_file(dependencies,data)==nil) {return}
     if !testing.expect(t,os.change_times(output,time.unix(200,0),time.unix(200,0))==nil) {return}
@@ -131,9 +134,15 @@ tool_refresh_ignores_newer_tests_and_tracks_runtime_and_loaded_files :: proc(t:^
         testing.expect(t,known && newer)
         if !testing.expect(t,os.change_times(file,time.unix(100,0),time.unix(100,0))==nil) {return}
     }
-    // The build of the tests of the folder compiled them.
-    newer,known=sources_newer(dependencies,output,folder,tests=folder)
+    // A build of tests compiled them, and those of the packages it imports.
+    newer,known=sources_newer(dependencies,output,folder,tests=true)
     testing.expect(t,known && newer)
+    if !testing.expect(t,os.change_times(tests,time.unix(100,0),time.unix(100,0))==nil) {return}
+    newer,known=sources_newer(dependencies,output,folder,tests=true)
+    testing.expect(t,known && !newer)
+    if !testing.expect(t,os.change_times(imported_tests,time.unix(300,0),time.unix(300,0))==nil) {return}
+    newer,known=sources_newer(dependencies,output,folder,tests=true)
+    testing.expect(t,known && newer,"a test file of an imported package is a source of a build of tests")
     if !testing.expect(t,os.remove(source)==nil) {return}
     newer,known=sources_newer(dependencies,output,folder)
     testing.expect(t,known && newer)

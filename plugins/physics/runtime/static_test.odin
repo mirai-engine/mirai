@@ -27,7 +27,7 @@ triangles_bounds :: proc(vertices:[][3]f32,indices:[]u32,colliders:[]core.Entity
 @(test)
 static_triangles_and_changes_come_from_the_static_colliders_of_the_world :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     physics:=core.ref(&f.state)
     vertices:[64][3]f32
@@ -103,7 +103,7 @@ static_triangles_and_changes_come_from_the_static_colliders_of_the_world :: proc
 @(test)
 static_bounds_hold_every_static_collider :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     physics:=core.ref(&f.state)
     _,ok:=static_bounds(physics)

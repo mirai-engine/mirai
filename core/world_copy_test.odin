@@ -234,11 +234,9 @@ a_copy_of_what_changed_equals_a_whole_copy_after_writes_layout_changes_and_a_swa
 @(private="file") Rev_List :: struct {items:[dynamic]i32}
 @(private="file") Rev_Count :: struct {value:i32}
 
-// A World with a revision for each storage, as the generator makes it.
 @(private="file")
 Rev_World :: struct {
-    es:Entities,
-    revisions:[3]u64,
+    using world:Test_World,
     disabled:Table(Disabled),
     parents:Table(Parent),
     hierarchy:Hierarchy,
@@ -248,75 +246,25 @@ Rev_World :: struct {
 
 @(private="file") REV_TABLES :: 2
 
-@(private="file")
-rev_info :: proc(tables:^[REV_TABLES]Table_Info,storages:^[3]Storage_Info) -> World_Info {
-    tables^={
-        {name="Disabled",type=Disabled,info=type_info_of(Disabled),offset=offset_of(Rev_World,disabled)},
-        {name="Parent",type=Parent,info=type_info_of(Parent),offset=offset_of(Rev_World,parents)},
-    }
-    storages^={
-        {name="Hierarchy",type=Hierarchy,info=type_info_of(Hierarchy),offset=offset_of(Rev_World,hierarchy)},
-        {name="Rev_List",type=Rev_List,info=type_info_of(Rev_List),offset=offset_of(Rev_World,list)},
-        {name="Rev_Count",type=Rev_Count,info=type_info_of(Rev_Count),offset=offset_of(Rev_World,count)},
-    }
-    return {entities=offset_of(Rev_World,es),revisions=offset_of(Rev_World,revisions),tables=tables[:],storages=storages[:]}
-}
-
-@(private="file")
-rev_init :: proc(w:^Rev_World) {
-    entities_init(&w.es)
-    table_init(&w.disabled,"Disabled");table_init(&w.parents,"Parent")
-    w.disabled.base,w.parents.base=true,true
-}
-
-@(private="file")
-rev_destroy :: proc(w:^Rev_World) {
-    table_destroy(&w.disabled);table_destroy(&w.parents)
-    value_free(&w.hierarchy,type_info_of(Hierarchy));delete(w.list.items)
-    entities_destroy(&w.es)
-}
-
-// As copy_world (without marks) and copy_changed_world of a generated World.
-@(private="file")
-rev_copy :: proc(info:^World_Info,dst,src:^Rev_World,marks:[]Copy_Mark) -> bool {
-    if !entities_copy(&dst.es,&src.es) {return false}
-    if marks==nil {
-        if !table_copy(&dst.disabled,&src.disabled) || !table_copy(&dst.parents,&src.parents) {return false}
-    } else if !table_copy_changed(&dst.disabled,&src.disabled,&marks[0]) || !table_copy_changed(&dst.parents,&src.parents,&marks[1]) {
-        return false
-    }
-    for &storage,k in info.storages {
-        to,from:=rawptr(uintptr(dst)+storage.offset),rawptr(uintptr(src)+storage.offset)
-        if marks==nil {
-            if !value_copy(to,from,storage.info) {return false}
-        } else if storage_changed(&marks[REV_TABLES+k],src.revisions[k]) {
-            if !value_copy(to,from,storage.info) {return false}
-            storage_copied(&marks[REV_TABLES+k],&dst.revisions[k],src.revisions[k])
-        }
-    }
-    if marks==nil {revisions_copied(dst.revisions[:],src.revisions[:])}
-    return true
-}
-
 // A copy of what changed takes a storage again when a function received it
 // to write, when code outside the loop asked for it, when the settle moved
 // the Hierarchy or when the World was copied over, and no other: after each,
 // the copy holds what a whole copy does.
 @(test)
 a_copy_of_what_changed_takes_the_storages_written_and_equals_a_whole_copy :: proc(t:^testing.T) {
-    tables:[REV_TABLES]Table_Info
-    storages:[3]Storage_Info
-    info:=rev_info(&tables,&storages)
+    info,described:=test_info(t,Rev_World)
+    if !described {return}
+    defer test_info_destroy(&info)
     w,kept,older,whole:Rev_World
-    for world in ([]^Rev_World{&w,&kept,&older,&whole}) {rev_init(world)}
-    defer for world in ([]^Rev_World{&w,&kept,&older,&whole}) {rev_destroy(world)}
+    for world in ([]^Rev_World{&w,&kept,&older,&whole}) {testing.expect(t,info.init[.World](world,context.allocator))}
+    defer for world in ([]^Rev_World{&w,&kept,&older,&whole}) {info.destroy[.World](world)}
     marks,older_marks:[REV_TABLES+3]Copy_Mark
     testing.expect_value(t,copy_marks_count(&info),len(marks))
     ref:=world_ref(&w,&info)
-    root,child:=create(&w.es),create(&w.es)
+    root,child:=create(&w.entities),create(&w.entities)
     append(&w.list.items,1,2,3)
     settle(&info,&w,nil)
-    testing.expect(t,rev_copy(&info,&kept,&w,marks[:]))
+    testing.expect(t,info.copy_changed(&kept,&w,marks[:]))
     Case :: struct {
         what:string,
         act:proc(w:^Rev_World,ref:World_Ref,root,child:Entity),
@@ -326,7 +274,7 @@ a_copy_of_what_changed_takes_the_storages_written_and_equals_a_whole_copy :: pro
         {"nothing was written",proc(w:^Rev_World,ref:World_Ref,root,child:Entity) {},{}},
         {"a storage was read where it is",proc(w:^Rev_World,ref:World_Ref,root,child:Entity) {_=w.count.value+i32(len(w.list.items))},{}},
         {"a function received a storage to write",proc(w:^Rev_World,ref:World_Ref,root,child:Entity) {
-            w.revisions[1]+=1 // as its call_ does before it runs
+            w.storage_revisions[1]+=1 // as its call_ does before it runs
             append(&w.list.items,4)
         },{false,true,false}},
         {"code outside the loop asked for a storage",proc(w:^Rev_World,ref:World_Ref,root,child:Entity) {world_storage_of(ref,Rev_Count).value=7},{false,false,true}},
@@ -338,47 +286,47 @@ a_copy_of_what_changed_takes_the_storages_written_and_equals_a_whole_copy :: pro
         },{true,false,false}},
         {"the World was cleared",proc(w:^Rev_World,ref:World_Ref,root,child:Entity) {
             w.count.value=0
-            revisions_moved(w.revisions[:])
+            revisions_moved(w.storage_revisions[:3])
         },{true,true,true}},
     }
     for c,at in cases {
         // Half way, another copy is kept as the World is: a correction goes back to it below.
-        if at==4 {testing.expect(t,rev_copy(&info,&older,&w,older_marks[:]))}
+        if at==4 {testing.expect(t,info.copy_changed(&older,&w,older_marks[:]))}
         c.act(&w,ref,root,child)
-        before:=kept.revisions
-        testing.expect(t,rev_copy(&info,&kept,&w,marks[:]))
+        before:=kept.storage_revisions
+        testing.expect(t,info.copy_changed(&kept,&w,marks[:]))
         for &storage,k in info.storages {
-            testing.expectf(t,(kept.revisions[k]!=before[k])==c.copied[k],"%s: %s was %s",c.what,storage.name,c.copied[k]?"not copied":"copied")
+            testing.expectf(t,(kept.storage_revisions[k]!=before[k])==c.copied[k],"%s: %s was %s",c.what,storage.name,c.copied[k]?"not copied":"copied")
         }
-        testing.expect(t,rev_copy(&info,&whole,&w,nil))
+        testing.expect(t,info.copy(&whole,&w))
         for &storage in info.storages {
             testing.expectf(t,value_equal(rawptr(uintptr(&kept)+storage.offset),rawptr(uintptr(&whole)+storage.offset),storage.info),"%s: the copy of %s is not what a whole copy holds",c.what,storage.name)
         }
     }
     // A correction: the World is the older copy again. The copy it came from keeps its marks,
     // and the next copy into it takes nothing; the other takes what differs.
-    testing.expect(t,rev_copy(&info,&w,&older,nil))
+    testing.expect(t,info.copy(&w,&older))
     copy_marks_follow(ref,older_marks[:],marks[:])
     copy_marks_follow(ref,older_marks[:],older_marks[:])
-    before:=older.revisions
-    testing.expect(t,rev_copy(&info,&older,&w,older_marks[:]))
-    testing.expect_value(t,older.revisions,before)
-    testing.expect(t,rev_copy(&info,&kept,&w,marks[:]) && rev_copy(&info,&whole,&w,nil))
+    before:=older.storage_revisions
+    testing.expect(t,info.copy_changed(&older,&w,older_marks[:]))
+    testing.expect_value(t,older.storage_revisions,before)
+    testing.expect(t,info.copy_changed(&kept,&w,marks[:]) && info.copy(&whole,&w))
     for &storage in info.storages {
         testing.expectf(t,value_equal(rawptr(uintptr(&kept)+storage.offset),rawptr(uintptr(&whole)+storage.offset),storage.info),"after a correction the copy of %s is not what a whole copy holds",storage.name)
     }
     // What the World writes after it is none of what the copies of before it hold.
     world_storage_of(ref,Rev_Count).value=3
-    testing.expect(t,rev_copy(&info,&older,&w,older_marks[:]))
+    testing.expect(t,info.copy_changed(&older,&w,older_marks[:]))
     testing.expect_value(t,older.count.value,i32(3))
     // Two Worlds swapped are both others.
-    swapped:=[2][3]u64{w.revisions,kept.revisions}
-    revisions_swapped(w.revisions[:],kept.revisions[:])
-    for k in 0..<3 {testing.expect(t,w.revisions[k]>max(swapped[0][k],swapped[1][k]) && kept.revisions[k]==w.revisions[k])}
+    swapped:=[2][TEST_STORAGES]u64{w.storage_revisions,kept.storage_revisions}
+    revisions_swapped(w.storage_revisions[:3],kept.storage_revisions[:3])
+    for k in 0..<3 {testing.expect(t,w.storage_revisions[k]>max(swapped[0][k],swapped[1][k]) && kept.storage_revisions[k]==w.storage_revisions[k])}
     // A World made by hand has no revisions: asking for a storage moves none.
     plain:=info
     plain.revisions=0
-    revisions:=w.revisions
+    revisions:=w.storage_revisions
     world_storage_of(world_ref(&w,&plain),Rev_Count).value=1
-    testing.expect(t,w.revisions==revisions && world_revisions(world_ref(&w,&plain))==nil)
+    testing.expect(t,w.storage_revisions==revisions && world_revisions(world_ref(&w,&plain))==nil)
 }

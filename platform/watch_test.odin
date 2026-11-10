@@ -6,19 +6,7 @@ import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 import "core:testing"
-
-// A folder of its own in the temporary folder of the system, removed by test_folder_remove.
-@(private="file")
-test_folder :: proc(t:^testing.T,name:string) -> string {
-    base,ok:=path_temporary_folder(context.temp_allocator)
-    testing.expect(t,ok)
-    folder,_:=filepath.join({base,fmt.tprintf("mirai-platform-%d-%s",os.get_pid(),name)},context.temp_allocator)
-    _=os.remove_all(folder)
-    testing.expect(t,os.make_directory_all(folder)==nil)
-    return folder
-}
-@(private="file")
-test_folder_remove :: proc(folder:string) {_=os.remove_all(folder)}
+import "mirai:std/base"
 
 @(private="file")
 write :: proc(t:^testing.T,folder,name,text:string) {
@@ -58,8 +46,7 @@ expect_lines :: proc(t:^testing.T,lines:[]string,expected:..string,loc:=#caller_
 watch_reports_created_changed_and_removed_files :: proc(t:^testing.T) {
     p:=test_headless(t)
     defer destroy(p)
-    folder:=test_folder(t,"watch")
-    defer test_folder_remove(folder)
+    folder:=base.test_folder(t,"watch")
     write(t,folder,"a.txt","one")
     write(t,folder,"sub/b.txt","two")
     write(t,folder,"sub/deep/c.txt","three")
@@ -101,8 +88,7 @@ watch_reports_created_changed_and_removed_files :: proc(t:^testing.T) {
 watch_follows_its_options :: proc(t:^testing.T) {
     p:=test_headless(t)
     defer destroy(p)
-    folder:=test_folder(t,"watch-options")
-    defer test_folder_remove(folder)
+    folder:=base.test_folder(t,"watch-options")
     write(t,folder,"a.txt","a")
     write(t,folder,".hidden.txt","h")
     write(t,folder,".cache/data.bin","d")
@@ -130,8 +116,7 @@ watch_follows_its_options :: proc(t:^testing.T) {
 watch_spreads_a_pass_over_many_small_polls :: proc(t:^testing.T) {
     p:=test_headless(t)
     defer destroy(p)
-    folder:=test_folder(t,"watch-budget")
-    defer test_folder_remove(folder)
+    folder:=base.test_folder(t,"watch-budget")
     for i in 0..<40 {write(t,folder,fmt.tprintf("d%d/file%d.txt",i%4,i),"x")}
     watch,error:=watch_create(p,{path=folder,recursive=true,report_existing=true})
     testing.expect_value(t,error,Watch_Error.None)
@@ -167,8 +152,7 @@ watch_spreads_a_pass_over_many_small_polls :: proc(t:^testing.T) {
 watch_keeps_working_when_its_capacity_is_exhausted :: proc(t:^testing.T) {
     p:=test_headless(t)
     defer destroy(p)
-    folder:=test_folder(t,"watch-capacity")
-    defer test_folder_remove(folder)
+    folder:=base.test_folder(t,"watch-capacity")
     for i in 0..<6 {write(t,folder,fmt.tprintf("file%d.txt",i),"x")}
     watch,error:=watch_create(p,{path=folder,file_capacity=4,report_existing=true})
     testing.expect_value(t,error,Watch_Error.None)
@@ -196,8 +180,7 @@ watch_keeps_working_when_its_capacity_is_exhausted :: proc(t:^testing.T) {
 watch_does_not_walk_a_folder_nobody_touched :: proc(t:^testing.T) {
     p:=test_headless(t)
     defer destroy(p)
-    folder:=test_folder(t,"watch-quiet")
-    defer test_folder_remove(folder)
+    folder:=base.test_folder(t,"watch-quiet")
     write(t,folder,"a.txt","a")
     write(t,folder,"sub/b.txt","b")
     watch,error:=watch_create(p,{path=folder,recursive=true})
@@ -239,8 +222,7 @@ watch_does_not_walk_a_folder_nobody_touched :: proc(t:^testing.T) {
 watch_reuses_the_room_of_removed_files :: proc(t:^testing.T) {
     p:=test_headless(t)
     defer destroy(p)
-    folder:=test_folder(t,"watch-churn")
-    defer test_folder_remove(folder)
+    folder:=base.test_folder(t,"watch-churn")
     // Room for three paths at a time; files come and go many times over.
     watch,error:=watch_create(p,{path=folder,file_capacity=8,path_bytes=40})
     testing.expect_value(t,error,Watch_Error.None)
@@ -270,8 +252,7 @@ watch_reuses_the_room_of_removed_files :: proc(t:^testing.T) {
 watch_survives_the_loss_of_its_folder :: proc(t:^testing.T) {
     p:=test_headless(t,{watch_capacity=1})
     defer destroy(p)
-    folder:=test_folder(t,"watch-gone")
-    defer test_folder_remove(folder)
+    folder:=base.test_folder(t,"watch-gone")
     inner,_:=filepath.join({folder,"project"},context.temp_allocator)
     none,error:=watch_create(p,{path=inner})
     testing.expect(t,none==0 && error==.Not_Found)
@@ -308,8 +289,7 @@ watch_survives_the_loss_of_its_folder :: proc(t:^testing.T) {
 watch_polls_without_allocating :: proc(t:^testing.T) {
     p:=test_headless(t)
     defer destroy(p)
-    folder:=test_folder(t,"watch-memory")
-    defer test_folder_remove(folder)
+    folder:=base.test_folder(t,"watch-memory")
     for i in 0..<20 {write(t,folder,fmt.tprintf("s%d/f%d.txt",i%3,i),"x")}
     watch,error:=watch_create(p,{path=folder,recursive=true})
     testing.expect_value(t,error,Watch_Error.None)

@@ -12,7 +12,7 @@ import sim "plugins:physics/runtime/sim"
 @(test)
 a_teleport_is_a_jump_by_what_takes_the_body_from_where_it_was :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     jumps:core.Jumps
     defer delete(jumps.queue.items)
@@ -48,7 +48,7 @@ a_teleport_is_a_jump_by_what_takes_the_body_from_where_it_was :: proc(t:^testing
 @(test)
 a_place_at_rest_stops_the_body :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     places:core.Places
     defer delete(places.queue.items)
@@ -73,7 +73,7 @@ a_place_at_rest_stops_the_body :: proc(t:^testing.T) {
 @(test)
 a_body_that_changes_parent_where_it_is_is_no_teleport :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     box:=physics_test_box(&f,{5,0,0},{0.5,0.5,0.5},RIGID_BODY_DYNAMIC)
     physics_test_step(&f)
@@ -93,7 +93,7 @@ a_body_that_changes_parent_where_it_is_is_no_teleport :: proc(t:^testing.T) {
 @(test)
 a_write_that_only_turns_a_character_is_a_problem_that_says_how :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     e:=core.create(&f.entities)
     core.add(&f.transforms,e,core.Transform{{0,1,0},1,{1,1,1}})

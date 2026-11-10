@@ -16,9 +16,9 @@ Bench_Write :: enum {Nothing,Free_Transform,Parent_Of_Colliders}
 // colliders: what physics_step costs per tick, the settle of the rows apart.
 // whole: every sync goes through every body, as without the sealed rows.
 @(private="file")
-bench_sync_run :: proc(write:Bench_Write,whole:bool) -> (mean,median:f64,teleports:u64) {
+bench_sync_run :: proc(t:^testing.T,write:Bench_Write,whole:bool) -> (mean,median:f64,teleports:u64) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     f.whole=whole
     f.settings={bodies=4200,shapes=4200,contacts=8192,characters=2}
@@ -65,7 +65,7 @@ bench_sync :: proc(t:^testing.T) {
     for write in Bench_Write {
         for pair in 0..<3 {
             for whole in ([2]bool{true,false}) {
-                mean,median,teleports:=bench_sync_run(write,whole)
+                mean,median,teleports:=bench_sync_run(t,write,whole)
                 fmt.printfln("BENCH physics_step, 4,115 bodies, %v written, %s sync, pair %v: %.4f ms mean, %.4f median, %v teleports",write,whole?"whole":"sealed",pair,mean,median,teleports)
             }
         }
