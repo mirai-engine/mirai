@@ -21,6 +21,11 @@ Api_Grid_Bake_Params :: struct {
     entity:editor.Api_Entity_Text `mirai:"text,entity"`,
     path:[editor.API_PATH_BYTES]u8 `mirai:"text"`,
 }
+@(private)
+Grid_Bake_Result :: struct {
+    path:string,
+    grid:base.Asset_Id,
+}
 
 // A bake a particle.grid.bake holds its call for: the file it writes when the
 // cells come back from the GPU, frames later.
@@ -85,15 +90,7 @@ api_grid_bake :: proc(s:^editor.Session,call:^api.Call) {
         api.call_failf(call,api.SERVER_ERROR,"The state of the grid could not be written to %s",base.text_get(answer[:]))
         return
     }
-    out:=call.out
-    serial.write_u8(out,'{')
-    api.write_key(out,"path",true)
-    serial.text_write_string(out,base.text_get(answer[:]))
-    api.write_key(out,"grid")
-    serial.write_u8(out,'"')
-    serial.text_write_asset_id(out,id)
-    serial.write_u8(out,'"')
-    serial.write_u8(out,'}')
+    api.call_result(call,Grid_Bake_Result)^={strings.clone(base.text_get(answer[:]),call.allocator),id}
 }
 
 // Whether the cells asked have still to come back; when they do, written as a
