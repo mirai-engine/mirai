@@ -207,7 +207,7 @@ job_start :: proc(desc:Desc) -> ^Job {
     job.stamp_file=project.path(job.work,fmt.tprintf("%s.stamp",name),allocator=a)
     job.sources_staged=project.path(job.work,fmt.tprintf("%s.sources.json",job.prefix),allocator=a)
     job.link_file=project.path(job.work,fmt.tprintf("%s.link",name),allocator=a)
-    job.masked=plugins_decl(p.root,plugins_mode(p,desc.dev),a)
+    job.masked=plugins_folder(p.root,plugins_mode(p,desc.dev),a)
     job.stream_files={
         project.path(job.work,fmt.tprintf("%s.err",job.prefix),allocator=a),
         project.path(job.work,fmt.tprintf("%s.out",job.prefix),allocator=a),
@@ -231,7 +231,6 @@ job_start :: proc(desc:Desc) -> ^Job {
         }
         return job_fail(job,.Write_Failed)
     }
-    if desc.target!=.Game && !project_stage_write(p.root) {return job_fail(job,.Write_Failed)}
     job.published=target_output(p,desc.target,desc.output,a,desc.server)
     if desc.target==.Game && project.path_same(job.published[:strings.last_index_byte(job.published,'/')],p.root) {return job_fail(job,.Output_Invalid)}
     job.staged=project.path(job.work,strings.concatenate({job.prefix,desc.target==.Game?project.EXECUTABLE_SUFFIX:project.LIBRARY_SUFFIX},context.temp_allocator),allocator=a)
@@ -309,7 +308,7 @@ job_plugins_plan :: proc(job:^Job,p:^project.Project,desc:Desc) -> Failure {
         // Its declarations are about to name the library of these sources: until
         // that one is published, no stamp says the part stands.
         _=os.remove(lib.stamp)
-        if errors:=plugin_library_prepare(p,&lib);len(errors)>0 {
+        if errors:=plugin_library_prepare(&lib);len(errors)>0 {
             job.result.text=strings.join(errors,"\n",a)
             return .Generate
         }
@@ -320,7 +319,7 @@ job_plugins_plan :: proc(job:^Job,p:^project.Project,desc:Desc) -> Failure {
         }
         // Another checkout built it from the same sources: its declarations
         // are the ones just written, and the library is copied.
-        if !desc.force && job.plugin_cache && job_plugin_restore(job,i) {continue}
+        if !desc.force && job.plugin_cache && !lib.project && job_plugin_restore(job,i) {continue}
         // The declarations of what it links against are written by now.
         job.plugin_compile_hashes[i]=plugin_library_compile_hash(p,&lib,job.compiler,job.plugin_flags,engine,declared)
         if !desc.force {
@@ -426,9 +425,10 @@ job_plugins_start :: proc(job:^Job) {
 // Windows it links against their import libraries.
 @(private)
 job_plugin_ready :: proc(job:^Job,index:int) -> bool {
-    needs:=job.plugins[index].needs
+    lib:=&job.plugins[index]
     for &other,i in job.plugins {
         if i==index || job.plugin_published[i] {continue}
+        needs:=lib.project_needs if other.project else lib.needs
         for path in other.packages {
             if slice.contains(needs,path) {return false}
         }
@@ -587,8 +587,8 @@ job_probe_start :: proc(job:^Job) -> ^Job {
     command:=make([dynamic]string,context.temp_allocator)
     append(&command,job.compiler,"check",job.flags[1])
     // What only a build reads, odin check refuses.
-    for flag in job.flags[2:] {
-        if flag=="-build-mode:dll" || flag=="-use-separate-modules" || strings.has_prefix(flag,"-o:") {continue}
+    for flag in probe_flags(job) {
+        if flag=="-use-separate-modules" || strings.has_prefix(flag,"-o:") {continue}
         append(&command,flag)
     }
     // The library has no main of its own.
@@ -603,18 +603,8 @@ job_probe_start :: proc(job:^Job) -> ^Job {
 @(private)
 job_test_start :: proc(job:^Job) -> ^Job {
     a:=virtual.arena_allocator(&job.arena)
-    flags:=make([dynamic]string,context.temp_allocator)
-    staged:=fmt.tprintf("-collection:project=%s",project_stage(job.root,context.temp_allocator))
-    for flag in job.flags[2:] {
-        switch flag {
-        case "-build-mode:dll":
-        // A test build reads the tests of the project: the project itself, not its stage.
-        case staged: append(&flags,fmt.tprintf("-collection:project=%s",job.root))
-        case: append(&flags,flag)
-        }
-    }
     executable:=test_executable(project_tests_folder(job.root,context.temp_allocator),job.root,job.test_package,a)
-    job.test_build=test_build_plan(job.engine_root,job.compiler,job.test_package,executable,flags[:],a)
+    job.test_build=test_build_plan(job.engine_root,job.compiler,job.test_package,executable,probe_flags(job),a)
     job.started=time.now()
     job.testing=true
     if !test_build_start(&job.test_build,child_environment(job.engine_root,context.temp_allocator)) {
@@ -622,6 +612,18 @@ job_test_start :: proc(job:^Job) -> ^Job {
         return job_fail(job,.Compiler_Failed)
     }
     return job
+}
+
+// The flags of the target for a check or a test build, which read the code
+// of the project itself, tests included, and not the declarations of its libraries.
+@(private)
+probe_flags :: proc(job:^Job) -> []string {
+    flags:=make([dynamic]string,context.temp_allocator)
+    for flag in job.flags[2:] {
+        if flag=="-build-mode:dll" {continue}
+        append(&flags,fmt.tprintf("-collection:project=%s",job.root) if strings.has_prefix(flag,"-collection:project=") else flag)
+    }
+    return flags[:]
 }
 
 // Follows the compiler of the test executable and then its run.
@@ -671,7 +673,6 @@ job_compile_read :: proc(job:^Job,files:[2]string,links:=false) -> (text:string,
     }
     rest:string
     job.result.diagnostics,rest=diagnostics_parse(streams[0],a)
-    stage_paths_restore(job.root,job.result.diagnostics,a)
     text=strings.trim_space(strings.concatenate({links?link_calls_strip(rest,context.temp_allocator):rest,rest!=""?"\n":"",strings.trim_space(streams[1])},a))
     for diagnostic in job.result.diagnostics {
         if diagnostic.severity==.Error {errors=true}
@@ -707,10 +708,9 @@ job_plugin_finish :: proc(job:^Job,compile:Compile,exit_code:int) {
     a:=virtual.arena_allocator(&job.arena)
     lib:=&job.plugins[compile.library]
     text,errors,output:=job_compile_read(job,compile.streams,links=true)
-    sources:=project.path(job.engine_root,"plugins",allocator=context.temp_allocator)
     failed:=errors || exit_code!=0 || !os.is_file(compile.staged)
     for &diagnostic in job.result.diagnostics {
-        if strings.has_prefix(diagnostic.file,lib.stage) {diagnostic.file=project.path(sources,diagnostic.file[len(lib.stage):],allocator=a)}
+        if strings.has_prefix(diagnostic.file,lib.stage) {diagnostic.file=project.path(lib.root,diagnostic.file[len(lib.stage):],allocator=a)}
     }
     if failed && compile.relink {
         // The objects do not link again: it compiles.
@@ -744,7 +744,7 @@ job_plugin_finish :: proc(job:^Job,compile:Compile,exit_code:int) {
     job.plugin_published[compile.library]=true
     // What links again goes to the shared cache with the library it was
     // compiled as: linking it again takes less than storing it.
-    if job.plugin_cache && !compile.relink {
+    if job.plugin_cache && !compile.relink && !lib.project {
         plugin_cache_store(job.engine_root,lib,job.plugin_hashes[compile.library])
         job.plugin_stored=true
     }
@@ -803,7 +803,7 @@ target_flags :: proc(p:^project.Project,target:Target,extra:[]string,a:runtime.A
     append(&flags,"build",generated_folder(p.root,target,a))
     // A library sees the engine through its declarations; the game, whole.
     mirai:=target==.Game?p.engine_root:engine_paths(p.engine_root,engine,context.temp_allocator).decl
-    append(&flags,fmt.aprintf("-collection:mirai=%s",mirai,allocator=a),fmt.aprintf("-collection:project=%s",p.root if target==.Game else project_stage(p.root,context.temp_allocator),allocator=a))
+    append(&flags,fmt.aprintf("-collection:mirai=%s",mirai,allocator=a),fmt.aprintf("-collection:project=%s",p.root if target==.Game else project_decl(p.root,plugins_mode(p,dev),context.temp_allocator),allocator=a))
     // A library sees the engine's plugins through the declarations of their libraries; the game, whole.
     plugins:=target==.Game?project.path(p.engine_root,"plugins",allocator=context.temp_allocator):plugins_decl(p.root,plugins_mode(p,dev),context.temp_allocator)
     append(&flags,fmt.aprintf("-collection:plugins=%s",plugins,allocator=a))
@@ -972,8 +972,6 @@ job_finish :: proc(job:^Job,compile:Compile,exit_code:int) {
         job_compile_fail(job,exit_code)
         return
     }
-    // What a library read of the stage is what it read of the project, as later fingerprints read it.
-    if job.target!=.Game && !compile.relink {stage_sources_restore(job.root,job.sources_staged)}
     sources,_:=dependencies_read(compile.relink?job.sources_file:job.sources_staged,context.temp_allocator)
     if job.target==.Game {
         if job.result.engine_time=engine_time_packages(sources,job.root,job.engine_root,job.development[:],a);len(job.result.engine_time)>0 {

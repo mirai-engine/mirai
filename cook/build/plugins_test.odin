@@ -34,12 +34,15 @@ plugin_libraries_follow_the_parts_and_their_dependencies :: proc(t:^testing.T) {
     testing.expect(t,slice.contains(editor[index_of(editor,"terrain/editor")].needs,"terrain/runtime"),"an editor part compiles against its runtime")
     runtime_parts:=0
     for lib in editor {
-        if lib.part==.Runtime {runtime_parts+=1}
+        if lib.part==.Runtime && !lib.project {runtime_parts+=1}
     }
     for lib,i in editor {
         if lib.part==.Editor {testing.expectf(t,i>=runtime_parts,"%s builds after every runtime part",lib.path)}
     }
     testing.expect(t,index_of(editor,"profiler/editor")>=0)
+    // The game of the demo is a library of its own, after the engine plugins it may use.
+    game:=editor[len(editor)-1]
+    testing.expect(t,game.project && game.path=="game" && slice.contains(game.needs,"animation/runtime") && !slice.contains(game.needs,"previews/editor"),"the game compiles against the runtime parts")
     testing.expect(t,plugins_mode(&p,true)=="minimal" && plugins_mode(&p,false)=="speed")
     // Optimized, a library of a plugin or of the project is one module, as the
     // game that ships compiles it; unoptimized, one module per package.
