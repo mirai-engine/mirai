@@ -140,7 +140,7 @@ texture_views_count :: proc(r:^Renderer) {
             for texture in entry.textures {bytes+=rhi.texture_bytes(r.device,texture)}
         }
     }
-    if bytes!=r.texture_view_bytes {r.textures.residency.stale=true}
+    if bytes!=r.texture_view_bytes {r.textures.residency.retarget=true}
     r.texture_view_bytes=bytes
 }
 

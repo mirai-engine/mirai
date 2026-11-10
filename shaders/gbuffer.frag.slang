@@ -14,6 +14,8 @@
 // Without the layers target no instance with layers is in sight.
 #define MIRAI_MATERIAL_NO_LAYERS true
 #endif
+// It reports the levels it samples of each texture (texture_feedback in scene.slang).
+#define MIRAI_TEXTURE_FEEDBACK
 #include "raster.slang"
 #include "gbuffer.slang"
 

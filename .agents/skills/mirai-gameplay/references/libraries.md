@@ -199,9 +199,8 @@ previous frame, unless it jumped (`View.cut`). Its `revision` grows only when a 
 `SOURCE_MOVE` or how many there are changed; those beyond `SOURCES_MAX` are the problem
 `scene.sources`.
 
-It is the only residency by distance: sections (the `streaming` plugin), terrain chunks, foliage
-cells and texture levels use it, the last receiving the sources of the drawn world in
-`render_texture_sources` (`engine/render`). `sources_near` puts the sources in the frame of what is
+It is the only residency by distance: sections (the `streaming` plugin), terrain chunks and foliage
+cells use it. `sources_near` puts the sources in the frame of what is
 placed, `box_near` says how many reaches away a box is (the source's `distance` or the one each
 library gives), `resident` leaves it resident within one and up to `RESIDENT_KEEP` if it already
 was, and `residents_past` leaves, out of a budget, the closest ones.

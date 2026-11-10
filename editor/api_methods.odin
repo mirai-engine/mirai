@@ -122,8 +122,8 @@ Api_Visible_Kinds :: struct {
 Api_Textures :: struct {
     bytes:u64 `mirai:"label=GPU memory of the textures of the renderer"`,
     view_bytes:u64 `mirai:"label=GPU memory of the targets of the views drawn into textures, which the pool of the textures gives up"`,
-    pending:int `mirai:"label=Textures whose levels are not yet those their distance asks for"`,
-    reduced:int `mirai:"label=Textures held coarser than their distance asks for to fit the pool"`,
+    pending:int `mirai:"label=Textures whose levels are not yet those the frames sample"`,
+    reduced:int `mirai:"label=Textures held coarser than the frames sample to fit the pool"`,
     streamed:int `mirai:"label=Ranges of levels given to textures since the assets loaded"`,
 }
 

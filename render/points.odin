@@ -212,6 +212,7 @@ points_resolve :: proc(p: ^Pass) {
 		params := Params{program = program.id, whole = u32(whole)}
 		set_params(cmd, &params)
 		points_bind(p)
+		textures_feedback_bind(r, cmd)
 		args := POINTS_ARGS if whole else POINTS_HEADER + 3 * m.programs + 3 * program.id
 		rhi.cmd_dispatch_indirect(cmd, m.buffer, u64(args) * size_of(u32))
 	}

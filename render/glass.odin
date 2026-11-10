@@ -238,6 +238,7 @@ glass_layers :: proc(p: ^Pass) {
 		set_params(cmd, &params)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.linear_depth)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS1, nearer)
+		textures_feedback_bind(r, cmd)
 		for entry in s.translucent {draw_translucent(r, cmd, target, entry)}
 		rhi.cmd_end_render_pass(cmd)
 	}
