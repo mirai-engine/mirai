@@ -507,7 +507,8 @@ A test that needs a world declares a struct and lets `core` describe it
 destroy, settle, copy and swap of its tables.
 
 - The struct starts with `using world:core.Test_World`; each other field is a `core.Table(T)` of a
-  component or the value of a storage. What the attributes of `T` say is read from the source that
+  component, an array of them (a table per element, named `<T>_<index>`) or the value of a
+  storage. What the attributes of `T` say is read from the source that
   declares it, through the `core.declared_read` the generator uses: a test world cannot say
   something else of a type than a generated one. A type a test file declares may have no attribute,
   and takes the default its test gives it.

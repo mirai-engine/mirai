@@ -1,6 +1,5 @@
 package multiplayer
 
-import "core:fmt"
 import "core:strings"
 import "core:testing"
 import "mirai:core"
@@ -99,15 +98,25 @@ remote_follows_the_replicas_a_client_neither_predicts_nor_holds :: proc(t:^testi
     testing.expect(t,!core.owned(core.read(&world.remotes),e))
 }
 
+@(private="file")
+@(component,replicated)
+Net_Test_Names :: struct {names:[]string}
+
+@(private="file")
+Names_World :: struct {
+    using world:core.Test_World,
+    names:core.Table(Net_Test_Names),
+}
+
 // A replicated component the protocol cannot carry opens no network: the
 // problem and the reason of the session name the component and why.
 @(test)
 a_replicated_component_that_does_not_fit_the_protocol_is_refused_with_its_fix :: proc(t:^testing.T) {
-    Net_Test_Names :: struct {names:[]string}
-    tables:=[]core.Table_Info{{name="Net_Test_Names",type=Net_Test_Names,info=type_info_of(Net_Test_Names),replicated=.All}}
+    info,described:=core.test_info(t,Names_World)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     problems:core.Problems
     s:=Net_Session{allocator=context.allocator,problems=&problems}
-    info:=core.World_Info{tables=tables}
     testing.expect(t,!protocol_build(&s,core.world_ref(nil,&info)))
     session_destroy(&s)
     refusal:=base.text_get(s.refusal[:])
@@ -118,7 +127,7 @@ a_replicated_component_that_does_not_fit_the_protocol_is_refused_with_its_fix ::
 
 @(private="file")
 Crowded_World :: struct {
-    es:core.Entities,
+    using world:core.Test_World,
     transforms:core.Table(core.Transform),
     worlds:core.Table(core.World_Transform),
     sources:core.Table(scene.Prefab_Source),
@@ -133,33 +142,15 @@ Crowded_World :: struct {
 @(test)
 an_entity_with_more_replicated_components_than_an_object_carries_is_not_replicated :: proc(t:^testing.T) {
     w:Crowded_World
-    core.entities_init(&w.es)
-    defer {
-        core.table_destroy(&w.transforms);core.table_destroy(&w.worlds);core.table_destroy(&w.sources);core.table_destroy(&w.motions);core.table_destroy(&w.moves)
-        for &table in w.values {core.table_destroy(&table)}
-        core.entities_destroy(&w.es)
-    }
-    tables:[len(w.values)+5]core.Table_Info
-    tables[0]={name="core.Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Crowded_World,transforms)}
-    tables[1]={name="core.World_Transform",type=core.World_Transform,info=type_info_of(core.World_Transform),offset=offset_of(Crowded_World,worlds)}
-    tables[2]={name="scene.Prefab_Source",type=scene.Prefab_Source,info=type_info_of(scene.Prefab_Source),offset=offset_of(Crowded_World,sources)}
-    tables[3]={name="core.Motion",type=core.Motion,info=type_info_of(core.Motion),offset=offset_of(Crowded_World,motions)}
-    tables[4]={name="input.Move_Input",type=input.Move_Input,info=type_info_of(input.Move_Input),offset=offset_of(Crowded_World,moves)}
-    for k in 0..<len(w.values) {
-        offset:=offset_of(Crowded_World,values)+uintptr(k*size_of(core.Table(Net_Test_Value)))
-        tables[5+k]={name=fmt.tprintf("Net_Test_Value_%d",k),type=Net_Test_Value,info=type_info_of(Net_Test_Value),offset=offset,replicated=.All}
-    }
-    info:=core.World_Info{tables=tables[:]}
-    ref:=core.world_ref(&w,&info)
-    e:=core.create(&w.es)
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    ref:=core.test_world_ref(&w)
+    e:=core.create(&w.entities)
     core.add(&w.transforms,e,core.TRANSFORM_IDENTITY)
     core.add(&w.motions,e,core.Motion{})
     core.add(&w.moves,e,input.Move_Input{})
-    core.table_settle(&w.transforms,&w.es);core.table_settle(&w.motions,&w.es);core.table_settle(&w.moves,&w.es)
-    for &table in w.values {
-        core.add(&table,e,Net_Test_Value{})
-        core.table_settle(&table,&w.es)
-    }
+    for &table in w.values {core.add(&table,e,Net_Test_Value{})}
+    core.test_world_settle(&w)
     problems:core.Problems
     s:=Net_Session{allocator=context.allocator,problems=&problems}
     defer session_destroy(&s)
