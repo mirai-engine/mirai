@@ -116,9 +116,8 @@ client_seats :: proc(es:core.Commands,seats:^core.Table(input.Seat),links:core.R
         }
     }
     if own==core.NONE || made==core.NONE {return}
-    from:=seats.values[core.row_of(seats,made)]
-    to:=core.edit(seats,own)
-    to.slot,to.actions,to.held,to.rearm,to.blocked,to.contexts,to.fed,to.holds,to.hold_count,to.body=0,from.actions,from.held,from.rearm,from.blocked,from.contexts,from.fed,from.holds,from.hold_count,from.body
+    // Both are of this machine and of slot 0: the replica takes the seat whole.
+    core.edit(seats,own)^=seats.values[core.row_of(seats,made)]
     core.destroy(es.entities,made)
 }
 
