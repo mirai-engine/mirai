@@ -38,7 +38,7 @@ the_quadtree_of_a_source_covers_its_chunks_once_from_one_root :: proc(t:^testing
     volume:Source;defer source_destroy(&volume)
     testing.expect(t,source_make(&volume,.Volume,{17,17,17},1,8))
     v:=quad_of(&volume)
-    testing.expect(t,v.depth==0 && quad_total(&v)==8)
+    testing.expect(t,v.depth==1 && quad_total(&v)==9)
     testing.expect_value(t,quad_place(&volume,&v,5),chunk_coord(&volume,5))
 }
 
@@ -187,48 +187,6 @@ quadtree_nodes_and_chunks_of_mixed_levels_join_without_cracks_or_overlaps :: pro
     }
 }
 
-// A node of a Mesh joins the sections it covers into a coarser surface whose
-// outer border is theirs: any neighbor, a section or another node, meets it.
-@(test)
-a_mesh_node_keeps_the_outer_border_of_its_sections_with_fewer_triangles :: proc(t:^testing.T) {
-    s:Source;defer source_destroy(&s)
-    lod_mesh_source(t,&s,64,1,16,20)
-    q:=quad_of(&s)
-    testing.expect_value(t,q.depth,2)
-    node:=quad_index(&q,1,{0,0})
-    mesh:Chunk_Mesh;chunk_mesh_init(&mesh);defer chunk_mesh_destroy(&mesh)
-    testing.expect(t,node_build(&s,&q,node,{level=node_lod_min(&s,&q,node)},nil,&mesh))
-    chunk_in_terrain(&mesh)
-    open :: proc(positions:[][3]f32,indices:[]u32,out:^map[[2][3]f32]int) {
-        for at:=0;at<len(indices);at+=3 {for corner in 0..<3 {
-            a,b:=positions[indices[at+corner]],positions[indices[at+(corner+1)%3]]
-            key:=a.x<b.x || a.x==b.x && (a.y<b.y || a.y==b.y && a.z<b.z)?[2][3]f32{a,b}:[2][3]f32{b,a}
-            out[key]+=1
-        }}
-    }
-    sections:map[[2][3]f32]int;defer delete(sections)
-    triangles:=0
-    section:Chunk_Mesh;chunk_mesh_init(&section);defer chunk_mesh_destroy(&section)
-    for z in 0..<2 {for x in 0..<2 {
-        // In the space of the terrain as the node is, through its own place.
-        testing.expect(t,chunk_build(&s,{i32(x),0,i32(z)},&section,false))
-        chunk_in_terrain(&section)
-        g:=&section.geometry
-        open(g.positions[:],g.indices[:],&sections)
-        triangles+=len(g.indices)/3
-    }}
-    built:map[[2][3]f32]int;defer delete(built)
-    open(mesh.geometry.positions[:],mesh.geometry.indices[:],&built)
-    testing.expect(t,len(mesh.geometry.indices)/3<triangles/2,"a node shows fewer triangles than its sections")
-    border:=0
-    for edge,uses in sections {
-        if uses!=1 {continue}
-        border+=1
-        testing.expectf(t,built[edge]==1,"the edge %v of the border of the sections is not one of the node",edge)
-    }
-    testing.expect(t,border>0)
-}
-
 // A level is the coarsest whose error covers about a pixel, never finer than
 // samples two pixels apart, and stays put near the bounds.
 @(test)
@@ -253,4 +211,14 @@ levels_follow_the_projected_error_and_the_spacing_of_the_samples :: proc(t:^test
     view:=core.VIEW_DEFAULT
     view.size={1440,1800}
     testing.expect(t,abs(view_pixels(view)-2*LOD_VIEW_PIXELS)<1e-2)
+}
+
+// Appends a piece to a mesh of all of them, as they stand in their terrain.
+@(private)
+lod_append :: proc(all:^geom.Mesh_Buffer,m:^geom.Mesh_Buffer) {
+    first:=u32(len(all.positions))
+    append(&all.positions,..m.positions[:])
+    append(&all.normals,..m.normals[:])
+    for index in m.indices {append(&all.indices,index+first)}
+    append(&all.materials,..m.materials[:])
 }

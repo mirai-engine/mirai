@@ -42,7 +42,7 @@ Api_Component_Field :: struct {
     max:f32 `mirai:"optional"`,
     unit:[32]u8 `mirai:"text,optional"`,
     label:[256]u8 `mirai:"text,optional,label=The name the inspector shows"`,
-    read_only:bool `mirai:"optional,label=Present and true when scene.add and scene.set refuse to change it"`,
+    read_only:bool `mirai:"optional,label=Present and true when scene.write refuses to change it"`,
     description:[1024]u8 `mirai:"text,optional"`,
 }
 
@@ -67,7 +67,7 @@ Api_Asset_Entry :: struct {
     path:[API_PATH_BYTES]u8 `mirai:"text,label=Under the asset folder"`,
     asset:base.Asset_Id,
     kind:[32]u8 `mirai:"text,label=The name of its kind (mesh; texture; material...); other for a kind this build does not know"`,
-    prefab:bool `mirai:"optional,label=Of a scene: whether it has exactly one root, which makes it a prefab that prefab.instantiate and scene.spawn place"`,
+    prefab:bool `mirai:"optional,label=Of a scene: whether it has exactly one root, which makes it a prefab that scene.write with prefab and scene.spawn place"`,
     size:int `mirai:"label=Bytes of the file"`,
     dependencies:int `mirai:"label=Assets it uses"`,
     used_by:int `mirai:"label=Files that use it"`,
@@ -92,7 +92,7 @@ Api_Asset_Delete_Result :: struct {
 @(private)
 api_assets_register :: proc(s:^Session,st:^Api_State) {
     assets:=Api_Asset_Params{limit=256}
-    api_register(s,st,{name="component.list",summary="The components a scene can hold, with their defaults and their fields as scene.add and scene.set take them.",params=Api_Component_Params,result=Api_Component_List,writes_result=true,flags={.Core,.Read_Only},run=api_component_list})
+    api_register(s,st,{name="component.list",summary="The components a scene can hold, with their defaults and their fields as scene.write takes them.",params=Api_Component_Params,result=Api_Component_List,writes_result=true,flags={.Core,.Read_Only},run=api_component_list})
     api_register(s,st,{name="asset.list",summary="The assets of the registry by kind and folder, with a count of its broken files, duplicated ids and missing dependencies.",params=Api_Asset_Params,result=Api_Asset_List,writes_result=true,defaults=&assets,flags={.Core,.Read_Only},run=api_asset_list})
     api_register(s,st,{name="asset.detach",summary="Takes a part of an import out of the asset that owns it so it shows on its own; the import still writes it and leaves it out of the owner.",params=Api_Detach_Params,result=Api_Detach_Result,writes_result=true,run=api_asset_detach})
     api_register(s,st,{name="asset.create",summary="Makes an empty asset in a folder of the assets as Create of the content browser does; material.set, particle.set and the like fill it.",params=Api_Asset_Create_Params,result=Api_Asset_Create_Result,run=api_asset_create})

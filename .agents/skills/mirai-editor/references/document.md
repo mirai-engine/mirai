@@ -131,7 +131,7 @@ double click in the content browser.
 - What hangs from a reference is edited in its scene: in this one it is read and not changed by
   any path. The edit procedures reject it (`section_refused`, and `section_target_refused` for
   what would go below a reference or something of its own) with a notice that names the section and
-  its scene; `scene.set`, `scene.delete`, `scene.duplicate` and `scene.add` fail with that text;
+  its scene; `scene.write` fails with that text;
   the gizmo does not appear (`selection_section_locked`) and Details shows it disabled. Save leaves
   the section out.
 - A loaded reference whose `scene` changes (inspector, API) reloads the section in the same step,

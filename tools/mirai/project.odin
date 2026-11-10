@@ -19,14 +19,15 @@ GENERATE_USAGE :: "generate [project]"
 EDIT_USAGE :: "edit [project] [--dev|--release] [editor arguments]"
 PLAY_USAGE :: "play [project] [--dev|--release] [player arguments]"
 
-// How optimized the engine and a project are built. Release, what every
-// command builds unless --dev is asked for: the engine at -o:speed and the
-// project at the optimization of its manifest, for playing, measuring and
-// shipping. Dev: both at -o:minimal, for checking a change.
+// How optimized the engine and a project are built. Dev, what every command
+// builds unless --release is asked for: both at -o:minimal, for checking a
+// change. Release: the engine at -o:speed and the project at the optimization
+// of its manifest, for playing, measuring and shipping.
 // Each mode has binaries of its own.
 Build_Mode :: build.Engine_Mode
 
-// Takes --dev and --release out of args; false when both are there.
+// Takes --dev and --release out of args: the mode of every command that builds
+// or picks engine binaries, dev unless --release; false when both are there.
 build_mode_take :: proc(args:[]string) -> (mode:Build_Mode,rest:[]string,ok:bool) {
     list:=make([dynamic]string)
     dev,release:=false,false
@@ -38,7 +39,7 @@ build_mode_take :: proc(args:[]string) -> (mode:Build_Mode,rest:[]string,ok:bool
         }
     }
     if dev && release {return}
-    return .Dev if dev else .Release,list[:],true
+    return .Release if release else .Dev,list[:],true
 }
 
 cmd_new :: proc(root:string,args:[]string) -> int {
@@ -151,8 +152,7 @@ cmd_generate :: proc(root:string,args:[]string) -> int {
 }
 
 // mirai edit [project] [--dev|--release] [arguments]: builds the library of
-// the project and opens it in the editor. A person runs it: --release unless
-// --dev is asked for. Without a project, in a folder that is none, it opens
+// the project and opens it in the editor. Without a project, in a folder that is none, it opens
 // the last project an editor opened when the launcher was told so, and the
 // launcher otherwise: the editor of the empty template with --launcher.
 cmd_edit :: proc(root:string,args:[]string) -> int {
@@ -189,8 +189,7 @@ edit_unnamed :: proc(root:string) -> (folder:string,extra:[]string) {
 }
 
 // mirai play [project] [--dev|--release] [arguments] (mirai play test: play_test.odin): builds the library of
-// the game of the project and plays it from the project, without cooking;
-// --release unless --dev is asked for.
+// the game of the project and plays it from the project, without cooking.
 cmd_play :: proc(root:string,args:[]string) -> int {
     if len(args)>0 && args[0]=="test" {return cmd_play_test(root,args[1:])}
     mode,args,ok:=build_mode_take(args)
@@ -229,7 +228,7 @@ play_arguments :: proc(args:[]string) -> []string {
 
 // Builds a target of a project. shaders_failed: the generation of its shaders
 // failed and the library was built with the ones it had.
-build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_Mode=.Release,server:=false) -> (code:int,output:string,shaders_failed:bool) {
+build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_Mode,server:=false) -> (code:int,output:string,shaders_failed:bool) {
     folder,out:=".",""
     named:=false
     for i:=0;i<len(args);i+=1 {
@@ -257,7 +256,8 @@ build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_M
     // The binaries of the engine the libraries are built against.
     engine:=build.engine_mode_resolve(root,mode)
     engine_current:=target==.Game || build.engine_current(root,engine)
-    if target!=.Game && engine_current && library_current(root,&p,target,engine,mode==.Dev) {
+    // A project with sources goes on: its build imports what changed among them before it finds the library current.
+    if target!=.Game && engine_current && library_current(root,&p,target,engine,mode==.Dev) && len(build.imports_roots(&p))==0 {
         _=engine_report({status=.Up_To_Date,mode=engine},root)
         if os.is_file(project.path(project.shader_generation(p.root,context.temp_allocator),project.SHADERS_MANIFEST,allocator=context.temp_allocator)) {
             fmt.printfln("%s unchanged.",project.shader_generation(p.root,context.temp_allocator))
@@ -356,6 +356,7 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
             case .Output_Invalid:   fmt.eprintln("mirai build: --out cannot be the project folder")
             case .Copy_Failed:      fmt.eprintfln("mirai build: could not copy the files that go with %s",result.output)
             case .Settings_Invalid: fmt.eprintln("mirai build: could not merge the settings of the engine and the project; fix or delete the file named above")
+            case .Import_Failed:    fmt.eprintln("mirai build: a source of the project did not import")
             case .Cook_Failed:      fmt.eprintfln("mirai build: could not cook the assets: %v %s",result.cook.error,result.cook.detail)
             case .Cancelled:        fmt.eprintln("mirai build: cancelled")
             case .Engine_Time_Code:

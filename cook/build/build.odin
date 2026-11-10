@@ -49,6 +49,7 @@ Failure :: enum u8 {
     Copy_Failed,      // Game: what goes next to the executable
     Settings_Invalid, // Game: a settings file of the engine or of the project cannot be read: Result.text says where
     Cook_Failed,      // Game: the assets could not be cooked: Result.cook says why
+    Import_Failed,    // a source of the project did not import: Result.text says which and why
     Tests,            // Test: a test failed or the tests did not finish: Result.tests says which
     Cancelled,
 }
@@ -216,6 +217,15 @@ job_start :: proc(desc:Desc) -> ^Job {
     }
 
     if p.engine_root=="" || desc.action!=.Build && desc.target==.Game {return job_fail(job,.Engine_Missing)}
+    // What the imports of the project keep outside version control, from its sources: every build starts from it.
+    if desc.action==.Build {
+        if ok,message:=imports_sync(p.engine_root,desc.engine,imports_roots(p));!ok {
+            job.result.text=strings.clone(message,a)
+            return job_fail(job,.Import_Failed)
+        } else if message!="" {
+            fmt.println(message)
+        }
+    }
     generated,written:=generated_write(p,desc.target)
     if !written {
         if len(generated.errors)>0 {
@@ -252,7 +262,7 @@ job_start :: proc(desc:Desc) -> ^Job {
             if p.plugins[index].manifest.development {append(&job.development,strings.clone(p.plugins[index].folder,a))}
         }
         if assets:=project.folder_path(p.root,.Assets,a);os.is_dir(assets) {
-            job.cook={assets=assets,output=project.folder_path(folder,.Assets,a),manifest=project.path(p.root,COOK_FILE,allocator=a),texture_cache=project.cache_path(p.root,project.TEXTURE_CACHE,allocator=a),mesh_cache=project.cache_path(p.root,project.MESH_CACHE,allocator=a),root=p.root,server=desc.server,quick=desc.dev,import_program=engine_paths(p.engine_root,desc.engine,a).import_program,allocator=a}
+            job.cook={assets=assets,output=project.folder_path(folder,.Assets,a),manifest=project.path(p.root,COOK_FILE,allocator=a),texture_cache=project.content_cache_path(p.root,project.TEXTURE_CACHE,allocator=a),mesh_cache=project.content_cache_path(p.root,project.MESH_CACHE,allocator=a),root=p.root,server=desc.server,quick=desc.dev,allocator=a}
             job.plugin_assets=make([dynamic]project.Asset_Folder,a)
             for found in project.asset_folders(p,a) {
                 if found.prefix!="" {append(&job.plugin_assets,found)}
@@ -798,7 +808,7 @@ target_output :: proc(p:^project.Project,target:Target,output:string,a:runtime.A
 // What the compiler is given for a target besides where it writes: what
 // identifies the build next to its sources.
 @(private)
-target_flags :: proc(p:^project.Project,target:Target,extra:[]string,a:runtime.Allocator,dev:=false,engine:=Engine_Mode.Release,incremental:=false) -> []string {
+target_flags :: proc(p:^project.Project,target:Target,extra:[]string,a:runtime.Allocator,dev:=false,engine:=Engine_Mode.Dev,incremental:=false) -> []string {
     flags:=make([dynamic]string,a)
     append(&flags,"build",generated_folder(p.root,target,a))
     shipped:=shipped_engine_paths(p.root,context.temp_allocator)
@@ -842,7 +852,7 @@ Target_State :: enum u8 {
 
 // What job_start would find of a target, without writing anything: the game
 // is the one of the default folder. dev and engine as in Desc.
-target_state :: proc(p:^project.Project,target:Target,compiler:="",dev:=false,engine:=Engine_Mode.Release) -> Target_State {
+target_state :: proc(p:^project.Project,target:Target,compiler:="",dev:=false,engine:=Engine_Mode.Dev) -> Target_State {
     temp:=context.temp_allocator
     published:=target_output(p,target,"",temp)
     if !os.is_file(published) {return .Missing}

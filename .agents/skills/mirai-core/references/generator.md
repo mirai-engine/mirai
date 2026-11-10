@@ -381,11 +381,10 @@ between packages; in `fixed`:
 
 - `begin`: the core and the network at the start of the tick: inputs and seats of the connections,
   pose targets.
-- `input`: actions and seats of this machine, bodies that appear, who drives what and the
-  `Move_Input` of what a seat drives.
+- `input`: actions and seats of this machine, bodies that appear, who drives what, the camera of
+  each seat and the `Move_Input` of what a seat drives.
 - `intent`, the default stage: the game logic, which writes `Move_Input` and pushes requests.
-- `apply`: what does what was requested before simulating: spawns, the camera of each seat, paths
-  and animation sampling.
+- `apply`: what does what was requested before simulating: spawns, paths and animation sampling.
 - `simulate`: what feeds physics (locomotion, ragdolls, fields, terrain), the requested places and
   the step.
 - `react`: what reads physics: destruction, animation after physics, game contacts.

@@ -10,16 +10,31 @@ smoothing_keeps_the_picture_still_through_a_correction_and_fades_it_out :: proc(
     smoothing_init(&s,0.1,4)
     turned:quaternion128=quaternion(w=math.cos(f32(0.4)),x=0,y=math.sin(f32(0.4)),z=0)
     straight:quaternion128=quaternion(w=1,x=0,y=0,z=0)
+    // Where an object simulated at a pose is drawn: with what is left of the error.
+    drawn :: proc(s:^Smoothing,position:[3]f32,rotation:quaternion128) -> ([3]f32,quaternion128) {return position+s.offset,s.rotation*rotation}
     smoothing_correct(&s,{1,0,0},{2,0,1},turned,straight)
-    position,rotation:=smoothing_apply(&s,{2,0,1},straight)
+    position,rotation:=drawn(&s,{2,0,1},straight)
     testing.expect(t,abs(position.x-1)<1e-5 && abs(position.z)<1e-5)
     testing.expect(t,abs(rotation.y-turned.y)<1e-5 && abs(rotation.w-turned.w)<1e-5)
     smoothing_update(&s,0.1)
-    position,_=smoothing_apply(&s,{2,0,1},straight)
+    position,_=drawn(&s,{2,0,1},straight)
     testing.expect(t,abs(position.x-1.5)<1e-4 && abs(position.z-0.5)<1e-4)
     for _ in 0..<100 {smoothing_update(&s,0.05)}
-    position,rotation=smoothing_apply(&s,{2,0,1},straight)
+    position,rotation=drawn(&s,{2,0,1},straight)
     testing.expect(t,abs(position.x-2)<1e-4 && abs(rotation.w-1)<1e-4 && abs(rotation.y)<1e-3)
+    testing.expect_value(t,s.fading,f32(0))
+    // An error that asks to fade slower slows the one under way, and a faster one after it does not speed it up.
+    smoothing_correct(&s,{0,0,0},{1,0,0},straight,straight)
+    smoothing_correct(&s,{0,0,0},{1,0,0},straight,straight,0.4)
+    smoothing_correct(&s,{0,0,0},{1,0,0},straight,straight)
+    smoothing_update(&s,0.4)
+    testing.expect(t,abs(s.offset.x+1.5)<1e-4,"three meters of error halve in the longest half life asked")
+    for _ in 0..<100 {smoothing_update(&s,0.4)}
+    testing.expect_value(t,s.offset,[3]f32{0,0,0})
+    smoothing_correct(&s,{0,0,0},{1,0,0},straight,straight)
+    smoothing_update(&s,0.1)
+    testing.expect(t,abs(s.offset.x+0.5)<1e-4,"once it is gone, the next fades at its own pace")
+    for _ in 0..<100 {smoothing_update(&s,0.1)}
     // Too far to slide: show it where it is.
     smoothing_correct(&s,{0,0,0},{10,0,0},straight,straight)
     testing.expect_value(t,s.offset,[3]f32{0,0,0})

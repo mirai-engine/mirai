@@ -327,6 +327,22 @@ shape_ray_cast :: proc(w:^World,h:Shape_Handle,origin,translation:Vec3) -> (Ray_
     return {shape_handle(w,index),body_handle(w,shape.body),origin+translation*t,q_rotate(xf.q,normal),t,false},true
 }
 
+// Ray against the shapes of one body as if the body were at a pose, whatever their filter: where it was at
+// another time.
+body_ray_cast :: proc(w:^World,h:Body_Handle,at:Transform,origin,translation:Vec3) -> (best:Ray_Hit,found:bool) {
+    body,_:=body_get(w,h)
+    if body==nil {return}
+    best.fraction=1
+    for s:=body.shape_list;s>=0;s=w.shapes[s].next {
+        shape:=&w.shapes[s]
+        xf:=xf_mul(at,shape.local)
+        if t,normal,hit:=shape_ray(w,shape,xf_inv_point(xf,origin),q_inv_rotate(xf.q,translation),best.fraction);hit {
+            best,found={shape_handle(w,s),h,origin+translation*t,q_rotate(xf.q,normal),t,false},true
+        }
+    }
+    return
+}
+
 // A convex query shape as a proxy; false for meshes, heightfields and invalid geometry. A hull keeps its
 // convex radius.
 @(private)

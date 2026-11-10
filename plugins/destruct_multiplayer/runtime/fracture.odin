@@ -133,13 +133,13 @@ memory_problem :: proc(problems:^core.Problems) {
     core.report(problems,core.NONE,"destruct.net_memory","out of memory for what the server says of a broken Destructible; it is asked for again and may show other pieces until then: free memory")
 }
 
-// What arrived this frame, to be used by the ticks that follow: a frame can
-// have several ticks, or none. A fracture of a tick already simulated asks to
-// go back to it.
-@(step="input",stage="begin")
+// What arrived since the tick before. A fracture of a tick already simulated
+// asks to go back to it, in the next frame. A tick that runs again took its
+// messages the first time: what they left is outside the World.
+@(step="fixed",stage="begin")
 destruct_net_receive :: proc(events:core.Ref(multiplayer.Net_Events),authority:core.Ref(core.Network),n:^Destruct_Net,time:core.Time,rewinds:^multiplayer.Net_Rewinds,root:core.Ref(scene.Scene_Root),problems:^core.Problems) {
     net_world(n,root)
-    if authority.role==.Standalone {return}
+    if authority.role==.Standalone || time.resimulating {return}
     server:=authority.role==.Server
     for item in events.received.items {
         if fracture,ok:=multiplayer.event_read(item,Net_Fracture);ok {
@@ -270,7 +270,7 @@ fractures_send :: proc(n:^Destruct_Net,physics_state:core.Ref(physics.Physics_St
         if last {
             if st,found:=core.get(states,applied.entity);found && physics.breakable_valid(physics_state,st.handle) {fracture.check=physics.breakable_check(physics_state,st.handle)}
         }
-        if multiplayer.send(outbox,time,fracture) {n.stats.sent+=1}
+        if multiplayer.send(outbox,fracture) {n.stats.sent+=1}
     }
 }
 
@@ -315,7 +315,7 @@ states_serve :: proc(n:^Destruct_Net,physics_state:core.Ref(physics.Physics_Stat
             chunk.offset,chunk.count=u32(offset),u32(count)
             mem.zero_slice(chunk.words[:])
             copy(([^]u8)(&chunk.words)[:count],n.scratch[offset:][:count])
-            multiplayer.send(outbox,time,chunk,core.NONE,request.connection)
+            multiplayer.send(outbox,chunk,core.NONE,request.connection)
         }
         budget-=size+32
     }
@@ -348,6 +348,6 @@ replays_verify :: proc(n:^Destruct_Net,es:^core.Entities,time:core.Time,outbox:^
         st,found:=core.get(states,e)
         if !found {continue}
         if l.newest>st.sequence && l.log[(st.sequence+1)%NET_LOG].sequence!=st.sequence+1 {l.ask=true}
-        if l.ask && (l.asked==0 || time.tick+1-l.asked>=NET_ASK_TICKS) && session.status==.Connected && multiplayer.send(outbox,time,Net_Ask{l.id}) {l.asked=time.tick+1}
+        if l.ask && (l.asked==0 || time.tick+1-l.asked>=NET_ASK_TICKS) && session.status==.Connected && multiplayer.send(outbox,Net_Ask{l.id}) {l.asked=time.tick+1}
     }
 }

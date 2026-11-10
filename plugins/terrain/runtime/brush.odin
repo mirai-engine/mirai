@@ -5,7 +5,13 @@ import "core:math/linalg"
 import "mirai:std/geom"
 import mm "mirai:std/math"
 
-Brush_Kind :: enum u8 {Raise,Lower,Smooth,Flatten,Add,Remove,Refine,Union,Subtract,Grab,Grow,Paint,Erase,Hole,Fill,Ramp,Terrace,Noise,Erode}
+// What a brush does, as an intent every representation maps to its data: a
+// game asks to carve a sphere and the terrain under it, a Heightfield or a
+// Volume, takes it out. Add and Carve join or take the shape of the brush;
+// Raise and Lower move the surface by amount metres; Smooth, Flatten and Noise
+// take it a part of the way; Paint and Erase change the weight of a layer.
+// Hole, Fill, Ramp, Terrace and Erode are of a Heightfield alone.
+Brush_Kind :: enum u8 {Raise,Lower,Smooth,Flatten,Add,Carve,Paint,Erase,Hole,Fill,Ramp,Terrace,Noise,Erode}
 
 // Which way a brush may move a sample: Up never lowers one, Down never raises one.
 Brush_Way :: enum u8 {Both,Up,Down}
@@ -14,7 +20,7 @@ Brush_Way :: enum u8 {Both,Up,Down}
 // first, over the square that holds the disc.
 Brush_Alpha :: struct {size:int,values:[]f32}
 
-// What Union and Subtract join or take: a sphere at center, a capsule from
+// What Add and Carve join or take: a sphere at center, a capsule from
 // center to center+delta, a box of half size extent turned by rotation.
 Brush_Shape :: enum u8 {Sphere,Capsule,Box}
 
@@ -22,16 +28,14 @@ Brush :: struct {
     kind:Brush_Kind,
     center:[3]f32,
     radius,amount,target:f32,
-    normal:[3]f32,
     delta:[3]f32,
     rotation:quaternion128,
-    max_edge:f32,
-    layer:u32, // Paint and Erase
+    layer:u32, // Paint and Erase, and what Add gives a Volume
     falloff:geom.Falloff,
     hardness:f32, // the part of the radius at full weight
     shape:Brush_Shape,
     extent:[3]f32,
-    blend:f32, // Union and Subtract of a Volume: the width over which the shape joins what was there
+    blend:f32, // Add and Carve of a Volume: the width over which the shape joins what was there
     way:Brush_Way,      // Smooth, Flatten, Ramp, Terrace, Noise and Erode
     capped:bool,        // Raise and Lower of a Heightfield stop at target: Raise lifts what is under it, Lower cuts what is over it
     interval:f32,       // Terrace: metres between its steps, from target
@@ -50,55 +54,123 @@ Brush :: struct {
 SMOOTH_REACH :: f32(0.25)
 SMOOTH_SAMPLES_MAX :: 8
 
-Edit_Error :: enum u8 {None,Invalid,Not_Closed,Out_Of_Memory,Budget,Topology}
+// Why an edit changed nothing: the field of the brush that is wrong, or what
+// the source lacks. edit_error_fix says how to fix each.
+// Invalid and Budget are of what a replay or a layer change asks: bytes or
+// a layer that do not fit the source, and no room for another source.
+Edit_Error :: enum u8 {None,Kind,Center,Radius,Amount,Target,Delta,Extent,Blend,Falloff,Layer,Alpha,Slope,Terrace,Noise,Unloaded,Out_Of_Memory,Invalid,Budget}
+
 Change :: struct {
     changed:bool,
     low,high:[3]int, // inclusive sample coordinates
-    mesh:bool,
     error:Edit_Error,
 }
 
-source_edit :: proc(s:^Source,brush:Brush,vertex_budget:int=MESH_TRIANGLES_MAX*3,baseline:^Source=nil) -> (change:Change) {
-    s.dug={}
-    if !(brush.hardness>=0 && brush.hardness<1) || brush.falloff>.Constant || brush.shape>.Box || brush.way>.Down || !brush_options_valid(brush) {return Change{error=.Invalid}}
-    // What a brush adds to a Volume is of brush.layer.
-    if s.kind==.Volume && brush_grows(brush.kind) && brush.layer>=s.layer_count {return Change{error=.Invalid}}
-    if brush.kind==.Paint || brush.kind==.Erase {return source_paint(s,brush)}
-    if brush.kind==.Hole || brush.kind==.Fill {return source_holes_edit(s,brush)}
-    if s.kind==.Mesh {return source_mesh_edit(s,brush,vertex_budget,baseline)}
-    grid_only:=brush.kind==.Ramp || brush.kind==.Terrace || brush.kind==.Erode
-    if brush.kind==.Refine || brush.kind==.Grab || (brush.kind==.Grow && s.kind!=.Volume) || grid_only && s.kind!=.Heightfield {return Change{error=.Invalid}}
-    if (brush.kind==.Union || brush.kind==.Subtract) {
-        if s.kind!=.Volume {return Change{error=.Invalid}}
-        return source_volume_shape(s,brush)
+// What an error of an edit asks of whoever made it. kind: the brush, which
+// chooses the brush to use in place of one a Volume lacks.
+edit_error_fix :: proc "contextless" (error:Edit_Error,kind:Brush_Kind) -> string {
+    switch error {
+    case .None: return ""
+    case .Kind:
+        #partial switch kind {
+        case .Hole,.Fill: return "a Volume has no holes: Carve opens it and Add closes it"
+        case .Ramp:       return "a Ramp is of a Heightfield: on a Volume use Add with a Capsule or a Box"
+        case .Terrace:    return "Terrace is of a Heightfield: on a Volume use Flatten at the height of each step"
+        case .Erode:      return "Erode is of a Heightfield: on a Volume use Smooth or Noise"
+        }
+        return "kind is not a brush: name one from Raise to Erode"
+    case .Center:  return "center has a value that is not a number: give the point to edit"
+    case .Radius:  return "radius is not above 0 or passes 100000 m: give the reach of the brush in metres"
+    case .Amount:  return "amount is not above 0, is not a number or, for Add and Carve, passes 1: metres for Raise, Lower and Noise, a part from 0 to 1 for the others (1 takes or adds the whole shape)"
+    case .Target:  return "target is not a number within 100000 m, or for a Paint toward a weight is not from 0 to 1"
+    case .Delta:   return "delta has a value that is not a number or passes 200000 m: give the way from center to the other end of a Capsule or a Ramp"
+    case .Extent:  return "extent of a Box has a side that is not above 0 or passes 100000 m: give its half sizes in metres"
+    case .Blend:   return "blend is below 0, not a number or passes 100000 m: give the metres over which the shape joins the ground, or 0"
+    case .Falloff: return "falloff, shape or way is not one of its values, or hardness is not from 0 to below 1"
+    case .Layer:   return "layer is not a layer of the source: name one below its layer count, or add the layer first"
+    case .Alpha:   return "alpha has fewer than 2 values a side or not size by size of them, or was given to a request, which keeps no memory of it: leave it nil"
+    case .Slope:   return "slope is not an ordered range from 0 to a quarter turn, or turn is not a number"
+    case .Terrace: return "interval of a Terrace is not above 0 or its riser is not from 0 to 1"
+    case .Noise:   return "scale of a Noise is not above 0 or passes 100000 m"
+    case .Unloaded: return "the source holds no samples there: it is not loaded, or its pages could not be read"
+    case .Out_Of_Memory: return "out of memory and nothing changed: free memory, or use a smaller brush"
+    case .Invalid: return "what it brings does not fit the source: its shape, its pages or its layers are of another one"
+    case .Budget:  return "Terrain_Settings.sources has no room for another source: raise it"
     }
-    if !source_valid(s.info) || !source_samples_held(s) {return}
-    if !(brush.radius>0) || !(brush.amount>0) || brush.radius-brush.radius!=0 || brush.amount-brush.amount!=0 || brush.target-brush.target!=0 {return}
-    for coordinate in brush.center {if coordinate-coordinate!=0 {return}}
-    for coordinate in brush.delta {if coordinate-coordinate!=0 || abs(coordinate)>HEIGHT_LIMIT*2 {return Change{error=.Invalid}}}
-    if s.kind==.Heightfield && (brush.kind==.Add || brush.kind==.Remove) || s.kind==.Volume && (brush.kind==.Raise || brush.kind==.Lower) {return}
-    segment:=brush.kind==.Grow || brush.kind==.Ramp
+    return ""
+}
+
+// What is wrong with a brush whatever source it edits; None for one a source
+// can take.
+brush_check :: proc "contextless" (brush:Brush) -> Edit_Error {
+    finite :: proc "contextless" (value:f32) -> bool {return value-value==0}
+    finite3 :: proc "contextless" (v:[3]f32) -> bool {return v.x-v.x==0 && v.y-v.y==0 && v.z-v.z==0}
+    if brush.kind>max(Brush_Kind) {return .Kind}
+    if !(brush.hardness>=0 && brush.hardness<1) || brush.falloff>.Constant || brush.shape>.Box || brush.way>.Down {return .Falloff}
+    if !finite3(brush.center) {return .Center}
+    if !finite3(brush.delta) || max(abs(brush.delta.x),abs(brush.delta.y),abs(brush.delta.z))>HEIGHT_LIMIT*2 {return .Delta}
+    if !finite(brush.target) || abs(brush.target)>HEIGHT_LIMIT {return .Target}
+    shaped:=brush.kind==.Add || brush.kind==.Carve
+    if shaped && brush.shape==.Box {
+        if !finite3(brush.extent) || !(brush.extent.x>0 && brush.extent.y>0 && brush.extent.z>0) || max(brush.extent.x,brush.extent.y,brush.extent.z)>HEIGHT_LIMIT {return .Extent}
+    } else if !(brush.radius>0) || !(brush.radius<=HEIGHT_LIMIT) {return .Radius}
+    // Hole and Fill do not read it.
+    if brush.kind!=.Hole && brush.kind!=.Fill && (!(brush.amount>0) || !finite(brush.amount)) {return .Amount}
+    if shaped && brush.amount>1 {return .Amount}
+    if !(brush.blend>=0) || brush.blend>HEIGHT_LIMIT {return .Blend}
+    if !finite(brush.turn) || !finite(brush.slope.x) || !finite(brush.slope.y) {return .Slope}
+    if brush.slope!={} && !(brush.slope.x>=0 && brush.slope.x<=brush.slope.y && brush.slope.y<=math.PI/2+1e-4) {return .Slope}
+    if brush.alpha!=nil && (brush.alpha.size<2 || len(brush.alpha.values)!=brush.alpha.size*brush.alpha.size) {return .Alpha}
+    #partial switch brush.kind {
+    case .Terrace: if !(brush.interval>0 && brush.interval<=HEIGHT_LIMIT && brush.riser>=0 && brush.riser<=1) {return .Terrace}
+    case .Noise:   if !(brush.scale>0 && brush.scale<=HEIGHT_LIMIT) {return .Noise}
+    case .Paint:   if brush.toward && !(brush.target>=0 && brush.target<=1) {return .Target}
+    }
+    return .None
+}
+
+// Edits a source with a brush in its space. What is wrong with the brush, or
+// a brush its representation lacks, is an error and changes nothing; a brush
+// that touches nothing is no error.
+source_edit :: proc(s:^Source,brush:Brush) -> (change:Change) {
+    s.dug={}
+    if error:=brush_check(brush);error!=.None {return Change{error=error}}
+    if !source_valid(s.info) || !source_samples_held(s) {return Change{error=.Unloaded}}
+    volume:=s.kind==.Volume
+    // What a brush adds to a Volume is of brush.layer.
+    if (volume && brush.kind==.Add || brush.kind==.Paint || brush.kind==.Erase) && brush.layer>=s.layer_count {return Change{error=.Layer}}
+    if brush.kind==.Paint || brush.kind==.Erase {return source_paint(s,brush)}
+    if volume {
+        #partial switch brush.kind {
+        case .Hole,.Fill,.Ramp,.Terrace,.Erode: return Change{error=.Kind}
+        case .Add,.Carve: return source_volume_shape(s,brush)
+        }
+    }
+    if brush.kind==.Hole || brush.kind==.Fill {return source_holes_edit(s,brush)}
+    shaped:=brush.kind==.Add || brush.kind==.Carve
+    segment:=brush.kind==.Ramp
     reach:=brush.radius
-    if s.kind==.Volume && (brush.kind==.Add || brush.kind==.Remove || brush.kind==.Grow) {reach+=s.cell*SDF_BAND_CELLS}
     // The water of Erode runs past the disc and leaves there what it carries.
     if brush.kind==.Erode {reach*=EROSION_REACH}
-    center:=(brush.center-source_origin(s))/s.cell
+    origin:=source_origin(s)
+    span_low,span_high:=brush.center-reach,brush.center+reach
+    if segment {
+        end:=brush.center+brush.delta
+        span_low,span_high=linalg.min(brush.center,end)-reach,linalg.max(brush.center,end)+reach
+    }
+    if shaped {span_low,span_high=brush_shape_bounds(brush)}
     low,high:[3]int
     for axis in 0..<3 {
-        if s.kind==.Heightfield && axis==1 {continue}
-        end:=center[axis]+(segment?brush.delta[axis]/s.cell:0)
-        lo,hi:=math.ceil(min(center[axis],end)-reach/s.cell),math.floor(max(center[axis],end)+reach/s.cell)
+        if !volume && axis==1 {continue}
+        lo,hi:=math.ceil((span_low[axis]-origin[axis])/s.cell),math.floor((span_high[axis]-origin[axis])/s.cell)
         first,last:=f32(0),f32(s.samples[axis]-1)
-        if s.kind==.Volume {first,last=1,last-1}
+        if volume {first,last=1,last-1}
         if hi<first || lo>last {return}
         low[axis]=int(clamp(lo,first,last))
         high[axis]=int(clamp(hi,first,last))
     }
-    if s.kind==.Heightfield {low.y,high.y=0,0}
     if !grid_prepare(source_samples_grid(s),low,high,s.allocator) {return Change{error=.Out_Of_Memory}}
     if brush.kind==.Erode {return source_erode(s,brush,low,high)}
-    layered:=s.kind==.Volume && brush_grows(brush.kind)
-    if layered && !grid_prepare(&s.weights,low,high,s.allocator) {return Change{error=.Out_Of_Memory}}
     // Smooth reads the region as it was, with a halo as wide as its box, and
     // so does the slope filter: what the brush raises before a sample does not
     // change whether it touches it.
@@ -108,14 +180,14 @@ source_edit :: proc(s:^Source,brush:Brush,vertex_budget:int=MESH_TRIANGLES_MAX*3
     smoothing:=0
     if brush.kind==.Smooth {
         for axis in 0..<3 {
-            if s.kind==.Heightfield && axis==1 {continue}
+            if !volume && axis==1 {continue}
             from[axis]=max(from[axis]-k,0);to[axis]=min(to[axis]+k,int(s.samples[axis])-1)
         }
         size:=to-from+1
         smoothing=2*size.x*size.y*size.z
     }
     filter_size:=high.xz-low.xz+1
-    filtering:=s.kind==.Heightfield && brush.slope!={}?filter_size.x*filter_size.y:0
+    filtering:=!volume && brush.slope!={}?filter_size.x*filter_size.y:0
     if smoothing+filtering>0 && resize(&s.scratch,smoothing+filtering)!=nil {return Change{error=.Out_Of_Memory}}
     allowed:=s.scratch[smoothing:][:filtering]
     for z in 0..<(filtering>0?filter_size.y:0) {for x in 0..<filter_size.x {allowed[x+filter_size.x*z]=brush_slope_allows(s,brush,low.x+x,low.z+z)?1:0}}
@@ -135,56 +207,61 @@ source_edit :: proc(s:^Source,brush:Brush,vertex_budget:int=MESH_TRIANGLES_MAX*3
         blurred=a
     }
     size:=to-from+1
+    band:=s.cell*SDF_BAND_CELLS
     change.low=high;change.high=low
     for z in low.z..=high.z {for y in low.y..=high.y {for x in low.x..=high.x {
         p:=[3]int{x,y,z}
-        point:=source_origin(s)+[3]f32{f32(x),f32(y),f32(z)}*s.cell
-        distance:=f32(0)
-        along:=f32(0)
-        if s.kind==.Heightfield {
-            nearest:=brush.center.xz
-            if segment {
-                length:=linalg.dot(brush.delta.xz,brush.delta.xz)
-                if length>0 {along=clamp(linalg.dot(point.xz-brush.center.xz,brush.delta.xz)/length,0,1);nearest+=brush.delta.xz*along}
-            }
-            distance=linalg.length(point.xz-nearest)
-        } else {
-            nearest:=brush.center
-            if segment {length:=linalg.dot(brush.delta,brush.delta);if length>0 {along=clamp(linalg.dot(point-brush.center,brush.delta)/length,0,1);nearest+=brush.delta*along}}
-            distance=linalg.length(point-nearest)
-        }
-        if distance>=reach {continue}
+        point:=origin+[3]f32{f32(x),f32(y),f32(z)}*s.cell
         old:=source_value(s,p)
         value:=old
-        if brush.kind==.Add || brush.kind==.Remove || brush.kind==.Grow {
-            sphere:=clamp(distance-brush.radius,-s.cell*SDF_BAND_CELLS,s.cell*SDF_BAND_CELLS)
-            target:=brush.kind!=.Remove?min(old,sphere):max(old,-sphere)
-            value=math.lerp(old,target,min(brush.amount,1))
+        if shaped {
+            // A Heightfield holds one height over each sample: Carve takes the
+            // ground the shape holds and what stands on it, down to the bottom of
+            // the shape there, and Add fills up to its top what the shape reaches.
+            bottom,top,inside:=brush_shape_column(brush,point.x,point.z)
+            if !inside || old<=bottom || old>=top {continue}
+            value=math.lerp(old,brush.kind==.Carve?bottom:top,brush.amount)
         } else {
+            distance:=f32(0)
+            along:=f32(0)
+            if !volume {
+                nearest:=brush.center.xz
+                if segment {
+                    length:=linalg.dot(brush.delta.xz,brush.delta.xz)
+                    if length>0 {along=clamp(linalg.dot(point.xz-brush.center.xz,brush.delta.xz)/length,0,1);nearest+=brush.delta.xz*along}
+                }
+                distance=linalg.length(point.xz-nearest)
+            } else {distance=linalg.length(point-brush.center)}
+            if distance>=reach {continue}
             weight:=brush_weight(brush,point.xz-brush.center.xz,distance)
             if weight>0 && filtering>0 && allowed[x-low.x+filter_size.x*(z-low.z)]==0 {weight=0}
             if weight<=0 {continue}
-            grid:=s.kind==.Heightfield
             switch brush.kind {
             case .Raise:
-                if brush.capped && grid {
+                // The surface of a Volume rises where its distance falls.
+                switch {
+                case volume: value-=brush.amount*weight
+                case brush.capped:
                     if old>=brush.target {continue}
                     value=min(old+brush.amount*weight,brush.target)
-                } else {value+=brush.amount*weight}
+                case: value+=brush.amount*weight
+                }
             case .Lower:
-                if brush.capped && grid {
+                switch {
+                case volume: value+=brush.amount*weight
+                case brush.capped:
                     if old<=brush.target {continue}
                     value=max(old-brush.amount*weight,brush.target)
-                } else {value-=brush.amount*weight}
+                case: value-=brush.amount*weight
+                }
             case .Flatten:
-                target:=grid?brush.target:clamp(point.y-brush.target,-s.cell*SDF_BAND_CELLS,s.cell*SDF_BAND_CELLS)
+                target:=volume?clamp(point.y-brush.target,-band,band):brush.target
                 value=math.lerp(old,target,min(brush.amount*weight,1))
             case .Terrace:
                 value=math.lerp(old,terrace_height(old,brush.target,brush.interval,brush.riser),min(brush.amount*weight,1))
             case .Noise:
-                // The surface of a Volume rises where its value falls.
-                n:=brush_noise(point,brush.scale,brush.seed,!grid)*brush.amount*weight
-                value+=grid?n:-n
+                n:=brush_noise(point,brush.scale,brush.seed,volume)*brush.amount*weight
+                value+=volume?-n:n
             case .Ramp:
                 value=math.lerp(old,brush.center.y+brush.delta.y*along,min(brush.amount*weight,1))
             case .Smooth:
@@ -195,41 +272,44 @@ source_edit :: proc(s:^Source,brush:Brush,vertex_budget:int=MESH_TRIANGLES_MAX*3
                 if n<2 {continue}
                 mean:=blurred[at.x+size.x*(at.y+size.y*at.z)]
                 value=math.lerp(old,(mean*f32(n)-old)/f32(n-1),min(brush.amount*weight,1))
-            case .Add,.Remove,.Refine,.Union,.Subtract,.Grab,.Grow,.Paint,.Erase,.Hole,.Fill,.Erode:
+            case .Add,.Carve,.Paint,.Erase,.Hole,.Fill,.Erode:
             }
-            value=brush_way_keep(brush.way,!grid,old,value)
+            value=brush_way_keep(brush.way,volume,old,value)
         }
-        limit:=s.kind==.Heightfield?HEIGHT_LIMIT:s.cell*SDF_BAND_CELLS
+        limit:=volume?band:HEIGHT_LIMIT
         value=clamp(value,-limit,limit)
         if value==old {continue}
         dug_count(s,p,old,value)
-        if layered {grid_write(&s.weights,p,weights_grow(grid_value(&s.weights,p),int(brush.layer),int(s.layer_count),volume_solid(old,s.cell),volume_solid(value,s.cell)))}
-        if s.kind==.Heightfield {grid_set(&s.heights,x,z,value)} else {block_set(&s.distances,p,value)}
+        if volume {block_set(&s.distances,p,value)} else {grid_set(&s.heights,x,z,value)}
         change.changed=true
         for axis in 0..<3 {change.low[axis]=min(change.low[axis],p[axis]);change.high[axis]=max(change.high[axis],p[axis])}
     }}}
-    if s.kind==.Volume {grid_settle(&s.distances,low,high,s.allocator)}
-    if layered {grid_settle(&s.weights,low,high,s.allocator)}
+    if volume {grid_settle(&s.distances,low,high,s.allocator)}
     return
 }
 
-// Whether a brush gives a Volume solid of its layer.
-@(private)
-brush_grows :: #force_inline proc "contextless" (kind:Brush_Kind) -> bool {return kind==.Add || kind==.Union || kind==.Grow}
-
-// Whether what a brush adds to its disc is in range.
-@(private)
-brush_options_valid :: proc "contextless" (brush:Brush) -> bool {
-    finite :: proc "contextless" (value:f32) -> bool {return value-value==0}
-    if !finite(brush.turn) || !finite(brush.slope.x) || !finite(brush.slope.y) {return false}
-    if brush.slope!={} && !(brush.slope.x>=0 && brush.slope.x<=brush.slope.y && brush.slope.y<=math.PI/2+1e-4) {return false}
-    if brush.alpha!=nil && (brush.alpha.size<2 || len(brush.alpha.values)!=brush.alpha.size*brush.alpha.size) {return false}
-    #partial switch brush.kind {
-    case .Terrace: return brush.interval>0 && brush.interval<=HEIGHT_LIMIT && brush.riser>=0 && brush.riser<=1
-    case .Noise:   return brush.scale>0 && brush.scale<=HEIGHT_LIMIT
-    case .Paint:   return !brush.toward || brush.target>=0 && brush.target<=1
+// The lowest and highest point of the shape of a brush over x, z; inside is
+// false where the shape does not reach that column. A shape is convex: its
+// distance along the column falls to one lowest value and rises again.
+brush_shape_column :: proc(brush:Brush,x,z:f32) -> (bottom,top:f32,inside:bool) {
+    low,high:=brush_shape_bounds(brush)
+    if x<low.x || x>high.x || z<low.z || z>high.z {return}
+    a,b:=low.y,high.y
+    for _ in 0..<32 {
+        third:=(b-a)/3
+        if brush_shape_distance(brush,{x,a+third,z})<brush_shape_distance(brush,{x,b-third,z}) {b-=third} else {a+=third}
     }
-    return true
+    middle:=(a+b)*0.5
+    if !(brush_shape_distance(brush,{x,middle,z})<0) {return}
+    cross :: proc(brush:Brush,x,z,inner,outer:f32) -> f32 {
+        inner,outer:=inner,outer
+        for _ in 0..<32 {
+            y:=(inner+outer)*0.5
+            if brush_shape_distance(brush,{x,y,z})<0 {inner=y} else {outer=y}
+        }
+        return (inner+outer)*0.5
+    }
+    return cross(brush,x,z,middle,low.y-1),cross(brush,x,z,middle,high.y+1),true
 }
 
 // The weight of a brush at an offset over x and z from its center, at a
@@ -361,17 +441,10 @@ smooth_min :: proc "contextless" (a,b,k:f32) -> f32 {
     return min(a,b)-h*h*k*0.25
 }
 
-// Union joins the shape of the brush to a Volume and Subtract takes it away,
+// Add joins the shape of the brush to a Volume and Carve takes it away,
 // over blend; amount is the part of the way to that.
 @(private)
 source_volume_shape :: proc(s:^Source,brush:Brush) -> (change:Change) {
-    if !source_valid(s.info) || !source_samples_held(s) {return}
-    finite3 :: proc "contextless" (v:[3]f32) -> bool {return v.x-v.x==0 && v.y-v.y==0 && v.z-v.z==0}
-    if !finite3(brush.center) || !finite3(brush.delta) || !finite3(brush.extent) || !(brush.amount>0) || brush.amount>1 || !(brush.blend>=0) || brush.blend>HEIGHT_LIMIT {return Change{error=.Invalid}}
-    switch brush.shape {
-    case .Sphere,.Capsule: if !(brush.radius>0) || brush.radius>HEIGHT_LIMIT {return Change{error=.Invalid}}
-    case .Box: if !(brush.extent.x>0 && brush.extent.y>0 && brush.extent.z>0) || max(brush.extent.x,brush.extent.y,brush.extent.z)>HEIGHT_LIMIT {return Change{error=.Invalid}}
-    }
     band:=s.cell*SDF_BAND_CELLS
     shape_low,shape_high:=brush_shape_bounds(brush)
     margin:=brush.blend+band
@@ -386,14 +459,14 @@ source_volume_shape :: proc(s:^Source,brush:Brush) -> (change:Change) {
     change.low=high;change.high=low
     if !grid_prepare(&s.distances,low,high,s.allocator) {return Change{error=.Out_Of_Memory}}
     defer grid_settle(&s.distances,low,high,s.allocator)
-    layered:=brush.kind==.Union
+    layered:=brush.kind==.Add
     if layered && !grid_prepare(&s.weights,low,high,s.allocator) {return Change{error=.Out_Of_Memory}}
     defer if layered {grid_settle(&s.weights,low,high,s.allocator)}
     for z in low.z..=high.z {for y in low.y..=high.y {for x in low.x..=high.x {
         p:=[3]int{x,y,z}
         d:=brush_shape_distance(brush,origin+[3]f32{f32(x),f32(y),f32(z)}*s.cell)
         old:=source_value(s,p)
-        target:=brush.kind==.Union?smooth_min(old,d,brush.blend):-smooth_min(-old,d,brush.blend)
+        target:=brush.kind==.Add?smooth_min(old,d,brush.blend):-smooth_min(-old,d,brush.blend)
         value:=clamp(math.lerp(old,target,brush.amount),-band,band)
         if value==old {continue}
         dug_count(s,p,old,value)

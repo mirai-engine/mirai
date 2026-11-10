@@ -85,9 +85,9 @@ mode_set :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,asset
     if stroke.active {stroke_cancel(tool)}
     kind:=stroke.source.kind
     switch mode {
-    case 0: tool.brush,tool.level=sculpt_brushes(kind)[0].kind,false
-    case 1: tool.brush=kind==.Heightfield?.Hole:.Union
-    case 2: tool.brush=.Paint
+    case 0: tool.brush,tool.level,tool.shaping=sculpt_brushes(kind)[0].kind,false,false
+    case 1: tool.brush,tool.shaping=kind==.Heightfield?.Hole:.Add,kind!=.Heightfield
+    case 2: tool.brush,tool.shaping=.Paint,false
     }
     tool.picking=false
     editor.tool_take(s,"terrain")
@@ -108,9 +108,8 @@ terrain_sculpt_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.Wor
     if clicked:=choice_grid(ctx,ui.id(ctx,"brushes"),names[:len(brushes)],chosen,3);clicked>=0 && !stroke.active {brush_choose(s,tool,clicked)}
     if chosen>=0 {ui.section(ctx,brushes[chosen].name,"",80)}
     brush:=tool.brush
-    drag:=brush==.Grab || brush==.Grow
-    falloff:=brush!=.Add && brush!=.Remove && !drag && brush!=.Refine
-    brush_fields(s,tool,brush_strong(brush),falloff,kind!=.Mesh && falloff && brush!=.Ramp)
+    falloff:=brush!=.Add && brush!=.Carve
+    brush_fields(s,tool,brush_strong(brush),falloff,falloff && brush!=.Ramp)
     if tool.level {
         height:=f64(tool.height)
         if ui.property(ctx,"Height") {
@@ -148,22 +147,11 @@ terrain_sculpt_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.Wor
             pending_buttons(s,tool,world,app.assets)
         }
     }
-    if drag {
+    if kind==.Heightfield && brush!=.Ramp {
         axis:=int(tool.axis)
-        if ui.property(ctx,"Axis") {if ui.tabs(ctx,ui.id(ctx,"axis"),{"Free","X","Y","Z"},&axis) {tool.axis=Drag_Axis(axis)}}
-    } else if kind==.Heightfield && brush!=.Ramp {
-        axis:=tool.axis==.X?1:tool.axis==.Z?2:0
-        if ui.property(ctx,"Axis") {if ui.tabs(ctx,ui.id(ctx,"axis"),{"Free","X","Z"},&axis) {axes:=[3]Drag_Axis{.Free,.X,.Z};tool.axis=axes[axis]}}
+        if ui.property(ctx,"Axis") {if ui.tabs(ctx,ui.id(ctx,"axis"),{"Free","X","Z"},&axis) {tool.axis=Stroke_Axis(axis)}}
     }
-    if kind==.Mesh && (brush==.Raise || brush==.Lower || brush==.Flatten && !tool.level) {
-        plane:=int(tool.plane)
-        if ui.property(ctx,"Plane") {if ui.tabs(ctx,ui.id(ctx,"plane"),{"Surface","Locked","View"},&plane) {tool.plane=Brush_Plane(plane)}}
-    }
-    if brush==.Refine || kind==.Mesh && brush==.Grow {
-        edge:=f64(tool.edge_length)
-        if ui.property(ctx,"Edge length") {if ui.number_field(ctx,ui.id(ctx,"edge"),&edge,{width=ui.fixed(FIELD_WIDTH),min=0.01,max=100,has_min=true,has_max=true,speed=0.05,unit="m"}).changed {tool.edge_length=f32(edge)}}
-    }
-    if kind==.Heightfield && !drag {slope_fields(s,tool)}
+    if kind==.Heightfield {slope_fields(s,tool)}
     if kind==.Heightfield {
         ui.section(ctx,"Heightmap","",80)
         heightmap_fields(s,tool)
@@ -173,14 +161,10 @@ terrain_sculpt_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.Wor
         }
         ui.section(ctx,"Size",fmt.tprintf("%.0f × %.0f m",f32(stroke.source.samples.x-1)*stroke.source.cell,f32(stroke.source.samples.z-1)*stroke.source.cell),140)
         resize_fields(s,tool,world,app.assets)
-        ui.section(ctx,"Convert","",80)
-        depth:=f64(tool.solid_depth)
-        if ui.property(ctx,"Base depth") {if ui.number_field(ctx,ui.id(ctx,"solid"),&depth,{width=ui.fixed(FIELD_WIDTH),min=0,max=10000,has_min=true,has_max=true,speed=0.1,unit="m"}).changed {tool.solid_depth=f32(depth)}}
-        if ui.button(ctx,ui.id(ctx,"convert"),{label=tool.solid_depth>0?"Convert to solid mesh":"Convert to open mesh",style=.Field,width=-1,center=true}).clicked {terrain_convert(s,tool,world,app.assets,app.allocator)}
     }
     if kind==.Volume {
-        ui.section(ctx,"Convert","",80)
-        if ui.button(ctx,ui.id(ctx,"convert"),{label="Convert to mesh",style=.Field,width=-1,center=true}).clicked {terrain_convert(s,tool,world,app.assets,app.allocator)}
+        ui.section(ctx,"Mesh","",80)
+        if ui.button(ctx,ui.id(ctx,"export_mesh"),{label="Save surface as mesh",style=.Field,width=-1,center=true}).clicked {terrain_surface_mesh(s,tool,app.assets,app.allocator)}
     }
 }
 
@@ -264,19 +248,16 @@ slope_fields :: proc(s:^editor.Session,tool:^Terrain_Tool) {
 terrain_shapes_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator) {
     ctx:=s.gui.ctx
     stroke:=&tool.stroke
-    count:=stroke.source.kind==.Mesh?len(Shape_Kind):len(Shape_Kind)-1
     shown:=editor.tool_aside(s,"terrain")?-1:int(tool.shape)
-    if clicked:=choice_grid(ctx,ui.id(ctx,"shapes"),SHAPE_NAMES[:count],shown,2);clicked>=0 && !stroke.active {tool.shape=Shape_Kind(clicked);editor.tool_take(s,"terrain")}
-    mode:=tool.brush==.Subtract?1:0
-    if ui.property(ctx,"Mode") {if ui.tabs(ctx,ui.id(ctx,"shape_mode"),{"Add","Carve"},&mode) {tool.brush=mode==1?.Subtract:.Union}}
+    if clicked:=choice_grid(ctx,ui.id(ctx,"shapes"),SHAPE_NAMES[:],shown,2);clicked>=0 && !stroke.active {tool.shape=Shape_Kind(clicked);editor.tool_take(s,"terrain")}
+    mode:=tool.brush==.Carve?1:0
+    if ui.property(ctx,"Mode") {if ui.tabs(ctx,ui.id(ctx,"shape_mode"),{"Add","Carve"},&mode) {tool.brush=mode==1?.Carve:.Add}}
+    if tool.shape!=.Selected {brush_fields(s,tool,false,false)}
+    blend:=f64(tool.blend)
+    if ui.property(ctx,"Blend") {if ui.number_field(ctx,ui.id(ctx,"blend"),&blend,{width=ui.fixed(FIELD_WIDTH),min=0,max=100,has_min=true,has_max=true,speed=0.02,unit="m"}).changed {tool.blend=f32(blend)}}
     if tool.shape==.Selected {
         if ui.button(ctx,ui.id(ctx,"operand"),{label="Apply and consume selected mesh",style=.Field,width=-1,center=true}).clicked {terrain_operand(s,tool,world,assets,allocator)}
         return
-    }
-    brush_fields(s,tool,false,false)
-    if stroke.source.kind==.Volume {
-        blend:=f64(tool.blend)
-        if ui.property(ctx,"Blend") {if ui.number_field(ctx,ui.id(ctx,"blend"),&blend,{width=ui.fixed(FIELD_WIDTH),min=0,max=100,has_min=true,has_max=true,speed=0.02,unit="m"}).changed {tool.blend=f32(blend)}}
     }
     if stroke.active && stroke.pending.kind==.Shape && !stroke.pending.placing {pending_buttons(s,tool,world,assets)}
 }
