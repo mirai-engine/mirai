@@ -3,43 +3,30 @@ package camera
 import "core:math"
 import "mirai:core"
 import render "mirai:engine/render"
+import lib "mirai:std/anim"
 import mm "mirai:std/math"
 
-// A camera shake authored as keys (a camera animation): the angles it adds to the view, and the
-// field of view it adds to a perspective lens, along its own time, played at a rate, scaled, and
-// blended in and out. Unlike Shake (trauma and noise), it
-// moves the view the same way every time, as a swing or a landing asks. camera_shake asks a camera
-// for one; camera_follow, the only writer of the camera, plays it over the rotation it gives the
-// view, in the axes of the view: pitch up, yaw to its left and roll counterclockwise as seen, all
-// positive.
+// A camera shake authored as keys (a camera animation): one track of std/anim keys whose value is
+// the pitch, the yaw and the roll it adds to the view and the radians it adds to the vertical field
+// of view of a perspective lens (x, y, z, w), along its own time, played at a rate, scaled, and
+// blended in and out. Unlike Shake (trauma and noise), it moves the view the same way every time,
+// as a swing or a landing asks. camera_shake asks a camera for one; camera_follow, the only writer
+// of the camera, plays it over the rotation it gives the view, in the axes of the view: pitch up,
+// yaw to its left and roll counterclockwise as seen, all positive.
 
-SHAKE_SEQUENCE_KEYS :: 16
+SHAKE_KEYS :: 16
 CAMERA_SHAKES :: 4
 // The field of view a shake leaves a perspective lens within, radians: render.Camera takes 0 as its
 // default and needs less than pi.
 SHAKE_FOV_MIN :: 1*mm.RAD_PER_DEG
 SHAKE_FOV_MAX :: 179*mm.RAD_PER_DEG
 
-// A key of a channel: its value at time (seconds of the sequence) and the slope it passes with
-// (per second of the sequence; 0 is flat). Between two keys the value is the cubic Hermite of
-// both.
-Shake_Key :: struct {
-    time:f32 `mirai:"min=0,unit=s"`,
-    value:f32 `mirai:"angle"`,
-    slope:f32 `mirai:"unit=1/s"`,
-}
-
-Shake_Channel :: struct {
-    keys:[SHAKE_SEQUENCE_KEYS]Shake_Key,
-    count:u8, // keys used, in order of time
-}
-
 Shake_Sequence :: struct {
-    pitch,yaw,roll:Shake_Channel,
-    fov:Shake_Channel,                    // radians added to the vertical field of view of a perspective lens
+    keys:[SHAKE_KEYS]lib.Keyframe,        // in time order (seconds of the sequence); value: pitch, yaw, roll and field of view, radians
+    count:u8,                             // keys used
     length:f32 `mirai:"min=0,unit=s"`,    // of the sequence; it ends there
     rate:f32 `mirai:"min=0"`,             // sequence seconds per second; 0: 1
-    scale:f32,                            // of its angles
+    scale:f32,                            // of what its keys add
     blend_in,blend_out:f32 `mirai:"min=0,unit=s"`, // seconds of play to reach its full weight and to leave it
     single:bool,                          // asked again while it plays, it starts over instead of adding another
     id:u32,                               // what single compares; given by the game
@@ -66,24 +53,6 @@ camera_shake :: proc(shakes:^Camera_Shakes,camera:core.Entity,sequence:Shake_Seq
     core.push(&shakes.queue,Shake_Request{camera,sequence})
 }
 
-// The value of a channel at time t of its sequence: the first value before its first key and the
-// last after its last.
-shake_channel_at :: proc "contextless" (c:Shake_Channel,t:f32) -> f32 {
-    count:=int(min(c.count,SHAKE_SEQUENCE_KEYS))
-    if count==0 {return 0}
-    if t<=c.keys[0].time {return c.keys[0].value}
-    for i in 1..<count {
-        a,b:=c.keys[i-1],c.keys[i]
-        if t>b.time {continue}
-        span:=b.time-a.time
-        if !(span>0) {return b.value}
-        u:=(t-a.time)/span
-        u2,u3:=u*u,u*u*u
-        return (2*u3-3*u2+1)*a.value+(u3-2*u2+u)*span*a.slope+(-2*u3+3*u2)*b.value+(u3-u2)*span*b.slope
-    }
-    return c.keys[count-1].value
-}
-
 // The weight of a shake that has played time seconds: up over blend_in, down over the last
 // blend_out of its length at its rate; 0 when it ended.
 shake_weight :: proc "contextless" (s:Shake_Sequence,time:f32) -> f32 {
@@ -96,23 +65,17 @@ shake_weight :: proc "contextless" (s:Shake_Sequence,time:f32) -> f32 {
     return clamp(weight,0,1)
 }
 
-// The rotation a shake adds to the view after time seconds of play.
-shake_sequence_rotation :: proc "contextless" (s:Shake_Sequence,time:f32) -> mm.Quat {
-    weight:=shake_weight(s,time)*s.scale
-    if weight==0 || !(abs(weight)<math.F32_MAX) {return 1}
+// What a shake adds to the view after time seconds of play: a rotation and radians of vertical
+// field of view.
+shake_sequence_at :: proc "contextless" (s:^Shake_Sequence,time:f32) -> (turn:mm.Quat,widen:f32) {
+    turn=1
+    weight:=shake_weight(s^,time)*s.scale
+    if weight==0 || !(abs(weight)<math.F32_MAX) {return}
     rate:=s.rate if s.rate>0 else 1
-    t:=time*rate
-    pitch,yaw,roll:=shake_channel_at(s.pitch,t)*weight,shake_channel_at(s.yaw,t)*weight,shake_channel_at(s.roll,t)*weight
-    return mm.quat_axis_angle({0,1,0},yaw)*mm.quat_axis_angle({1,0,0},pitch)*mm.quat_axis_angle({0,0,1},roll)
-}
-
-// The radians a shake adds to the vertical field of view after time seconds of play.
-shake_sequence_fov :: proc "contextless" (s:Shake_Sequence,time:f32) -> f32 {
-    weight:=shake_weight(s,time)*s.scale
-    if weight==0 || !(abs(weight)<math.F32_MAX) {return 0}
-    rate:=s.rate if s.rate>0 else 1
-    widen:=shake_channel_at(s.fov,time*rate)*weight
-    return widen if abs(widen)<math.F32_MAX else 0
+    v:=lib.track_evaluate(s.keys[:min(int(s.count),SHAKE_KEYS)],.Vector,time*rate)*weight
+    if !(abs(v.x)+abs(v.y)+abs(v.z)+abs(v.w)<math.F32_MAX) {return}
+    turn=mm.quat_axis_angle({0,1,0},v.y)*mm.quat_axis_angle({1,0,0},v.x)*mm.quat_axis_angle({0,0,1},v.z)
+    return turn,v.w
 }
 
 // Starts what was asked of a camera that follows: a single one that plays starts over.
@@ -157,8 +120,9 @@ shakes_advance :: proc "contextless" (state:^Camera_Follow_State,dt:f32) -> (tur
         p.time+=dt
         rate:=p.sequence.rate if p.sequence.rate>0 else 1
         if !(p.time<p.sequence.length/rate) {p={};continue}
-        turn*=shake_sequence_rotation(p.sequence,p.time)
-        widen+=shake_sequence_fov(p.sequence,p.time)
+        add,more:=shake_sequence_at(&p.sequence,p.time)
+        turn*=add
+        widen+=more
     }
     return
 }
