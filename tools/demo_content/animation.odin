@@ -87,12 +87,12 @@ gallery_mirai :: proc(g:^Gallery_Build,name:string,position:mm.Vec3,facing:mm.Qu
     return gallery_actor(g.o,g.s,g.model,g.source,name,position,facing,g.clip,clip_name)
 }
 
-// The action set of the actor: the layers and actions that play over its base.
+// The .character of the actor: its layers and actions over the clip it plays.
 @(private)
 gallery_actions :: proc(s:^asset.Scene_Builder,root:base.Entity_Id,set:base.Asset_Id) {
     value,found:=asset.scene_get(&s.scene,root,"Animation",anim.Animation)
     if !found {s.failed=true;return}
-    value.actions=set
+    value.asset=set
     asset.builder_set(s,root,value)
 }
 
@@ -179,7 +179,7 @@ gallery_hand_ik :: proc(g:^Gallery_Build,root:base.Entity_Id,place:Gallery_Place
     look:=anim.LOOK_CONSTRAINT_DEFAULT;look.rig,look.bone=core.Entity(root),anim.bone_ref("Head");look.target=ik.target
     look.forward,look.max_angle=linalg.normalize0(mm.quat_forward(mm.quat_inverse(rig.rest_world[head].rotation))),.6
     limit:=anim.ROTATION_CONSTRAINT_DEFAULT;limit.rig,limit.bone=core.Entity(root),anim.bone_ref("Head");limit.max_swing,limit.min_twist,limit.max_twist=.35,-.6,.6
-    gallery_profile(o,s,root,"characters/mirai","mirai_constraints",{ik={ik},look={look},limits={limit}})
+    gallery_character(o,s,root,"characters/mirai","mirai_constraints",{pose={ik={ik},look={look},limits={limit}}})
     baton:=gallery_cube(s,"Socket baton",{},{1,1,1},{.2,1,.4,1})
     // The grip is on the palm, so the baton lies on it by half its thickness.
     socket:=anim.BONE_ATTACHMENT_DEFAULT;socket.rig=core.Entity(root);base.text_set(socket.socket[:],"grip_right")
@@ -252,7 +252,8 @@ mirai_animation :: proc(o:^Out,model:^importer.Imported_Model) -> (id:base.Asset
 
 @(private)
 mirai_feet :: proc(model:^importer.Imported_Model) -> anim.Foot_Grounding {
-    feet:=anim.FOOT_GROUNDING_DEFAULT;feet.count=2;feet.body=anim.bone_ref("Hips")
+    // Its body and legs are those of the body of its skeleton.
+    feet:=anim.FOOT_GROUNDING_DEFAULT;feet.count=2
     feet.global_contact=0;feet.max_rise=.15;feet.trace_above=.55;feet.trace_below=.9;feet.blend_time=.08
     bones:=model.skeletons[0].bones
     rest:=make([]mm.Transform,len(bones),context.temp_allocator)
@@ -262,8 +263,6 @@ mirai_feet :: proc(model:^importer.Imported_Model) -> anim.Foot_Grounding {
     }
     for side,i in ([]string{"Left","Right"}) {
         leg:=anim.GROUNDED_LEG_DEFAULT
-        leg.hip=anim.bone_ref(fmt.tprintf("%sUpLeg",side));leg.knee=anim.bone_ref(fmt.tprintf("%sLeg",side));leg.foot=anim.bone_ref(fmt.tprintf("%sFoot",side))
-        leg.contact_bone=anim.bone_ref(fmt.tprintf("%sToeBase",side))
         leg.pole_offset={};leg.max_distance=.55;leg.contact_height=.04;leg.plant_speed=.6
         for &bone,j in bones {
             if base.text_get(bone.name[:])==fmt.tprintf("%sFoot",side) {
@@ -282,14 +281,6 @@ gallery_save :: proc(o:^Out,s:^asset.Scene_Builder,name:string) {
     s.scene.info.id_counter=max(s.scene.info.id_counter,u64(s.next))
     file:=fmt.tprintf("assets/animation_gallery/%s.scene",name)
     asset.builder_save(s,path(o,file))
-}
-
-@(private)
-gallery_profile :: proc(o:^Out,s:^asset.Scene_Builder,root:base.Entity_Id,folder,name:string,profile:anim.Pose_Profile) {
-    id:=asset.content_id(PROJECT,"pose",name)
-    asset.content_check(&o.content,name,anim.pose_profile_save(path(o,fmt.tprintf("assets/%s/%s.pose",folder,name)),&o.content.types,id,profile))
-    config:=anim.POSE_MODIFIERS_DEFAULT;config.profile=id
-    asset.builder_set(s,root,config)
 }
 
 // A body that moves by the root motion of its clips instead of what it is asked.
@@ -337,10 +328,10 @@ write_animation_scene :: proc(o:^Out) {
     defer importer.model_destroy(&model)
     locomotion,locomotion_clips:=mirai_animation(o,&model)
     if o.content.failed {return}
-    clip,stride,stride_time:=mirai_gallery_animation(o,&model,locomotion_clips)
+    clip,stride:=mirai_gallery_animation(o,&model,locomotion_clips)
     if o.content.failed {return}
-    programs:=gallery_program_assets(o,&model,clip,stride_time)
-    matching:=gallery_mirai_matching(o,locomotion)
+    programs:=gallery_program_assets(o,&model,clip)
+    matching:=gallery_mirai_matching(o,&model,locomotion)
     s:asset.Scene_Builder;asset.builder_init(&s,&o.content,asset.content_id(PROJECT,"scene","animation"));defer asset.builder_destroy(&s)
     g:=Gallery_Build{o=o,s=&s,model=&model,source=source,clip=clip,label=ui_id("animation_gallery_label"),panel=ui_id("animation_gallery_panel")}
     gallery_environment(o,&s)
@@ -388,7 +379,7 @@ write_animation_scene :: proc(o:^Out) {
     place=gallery_next(&g)
     root=gallery_mirai(&g,"Mirai named actions",place.origin,place.facing,"idle")
     {
-        value:=anim.ANIMATION_DEFAULT;value.asset,value.actions=clip,programs.actions;base.text_set(value.clip[:],"idle")
+        value:=anim.ANIMATION_DEFAULT;value.asset=programs.actions;base.text_set(value.clip[:],"idle")
         asset.builder_set(&s,root,value);gallery_motor(&s,root)
     }
     gallery_item(&g,root,.Actions,place,"2.4  Named actions","Greet on the arm, Step with root motion",adjustable=true)
@@ -396,26 +387,26 @@ write_animation_scene :: proc(o:^Out) {
     place=gallery_next(&g)
     root=gallery_mirai(&g,"Mirai matching by speed",place.origin,place.facing)
     {
-        value:=anim.ANIMATION_DEFAULT;value.asset,value.actions=programs.matching,programs.actions;value.root_motion=.In_Place
+        value:=anim.ANIMATION_DEFAULT;value.asset=programs.matching;value.root_motion=.In_Place
         asset.builder_set(&s,root,value)
     }
     gallery_item(&g,root,.Matching,place,"3.1  Motion matching","the speed asked picks idle, walk or jog",adjustable=true)
 
     place=gallery_next(&g)
-    root=gallery_mirai_physical(&g,"Mirai slope walk",place.origin+mm.Vec3{0,.05,1.2},matching,programs.locomotion)
+    root=gallery_mirai_physical(&g,"Mirai slope walk",place.origin+mm.Vec3{0,.05,1.2},matching)
     gallery_item(&g,root,.Walker,place,"3.2  Physics, slope and foot IK","matching from its Character / feet on the ground")
     gallery_cube(&s,"Slope",place.origin+mm.Vec3{0,.27,0},{2,.2,4},{.2,.28,.35,1},true,mm.quat_from_euler({.12,0,0}))
     for j in 0..<3 {gallery_cube(&s,fmt.tprintf("Stair %d",j),place.origin+mm.Vec3{0,.15+f32(j)*.1,-1.1-f32(j)*.3},{2,.3+f32(j)*.2,.3},{.25,.35,.4,1},true)}
 
     place=gallery_next(&g)
-    root=gallery_mirai_physical(&g,"Mirai physical jump and fall",place.origin+mm.Vec3{0,.05,1.2},matching,programs.locomotion)
+    root=gallery_mirai_physical(&g,"Mirai physical jump and fall",place.origin+mm.Vec3{0,.05,1.2},matching)
     gallery_item(&g,root,.Jumper,place,"3.3  Jump, fall and land","entry clips of falling and walking")
     gallery_cube(&s,"Jump obstacle",place.origin+mm.Vec3{0,.225,0},{1.4,.45,.35},{.35,.25,.16,1},true)
 
     place=gallery_next(&g)
     root=gallery_mirai(&g,"Mirai warp to a target",game.gallery_warp_start({origin=place.origin,stride=stride}),GALLERY_TOWARD_PLUS_Z,"idle")
     {
-        value:=anim.ANIMATION_DEFAULT;value.asset,value.motion=clip,programs.reach;value.root_motion=.In_Place;base.text_set(value.clip[:],"idle")
+        value:=anim.ANIMATION_DEFAULT;value.asset=programs.reach;value.root_motion=.In_Place;base.text_set(value.clip[:],"idle")
         asset.builder_set(&s,root,value);gallery_motor(&s,root)
     }
     goal:=gallery_cube(&s,"Reach goal",place.origin+mm.Vec3{0,.1,.3*stride},{.16,.2,.16},{1,.5,.08,1})
@@ -450,7 +441,7 @@ write_animation_scene :: proc(o:^Out) {
         if i==1 {gallery_item(&g,root,.Budget,place,"5.5  Presentation budget","the far one is presented every 4 frames")}
     }
 
-    player:=gallery_mirai_physical(&g,"Mirai",game.GALLERY_START,matching,programs.locomotion,1)
+    player:=gallery_mirai_physical(&g,"Mirai",game.GALLERY_START,matching,1)
     gallery_player(&s,player,spider)
     if g.next!=GALLERY_STATIONS {fmt.eprintfln("demo_content: the gallery placed %d stations, not %d",g.next,GALLERY_STATIONS);o.content.failed=true}
     gallery_save(o,&s,"animation")

@@ -17,7 +17,7 @@ import "base:runtime"
 CHARACTER_KIND :: asset.Fourcc(u32('C')|u32('H')<<8|u32('A')<<16|u32('R')<<24)
 CHARACTER_VERSION :: 1
 
-Character_Info :: struct {animation:base.Asset_Id} // the .anim of its clips
+Character_Info :: struct {animation:base.Asset_Id} // the .anim of its clips; empty for a set that names none (the modifiers of a rope)
 // spaces: the aim offsets and additive poses its layers sample, each with its samples in
 // space_samples, in the order of the spaces.
 Character_Set :: struct {
@@ -31,7 +31,8 @@ Character_Set :: struct {
 }
 
 character_check :: proc(set:Character_Set) -> bool {
-    if set.info.animation=={} || !match_check(set.match) || !action_profile_check(set.actions) || !motion_profile_check(set.motion) || !pose_profile_check(set.pose) {return false}
+    clipless:=len(set.match.clips)+len(set.actions.actions)+len(set.actions.layers)+len(set.spaces)+len(set.motion.distances)==0
+    if set.info.animation=={} && !clipless || !match_check(set.match) || !action_profile_check(set.actions) || !motion_profile_check(set.motion) || !pose_profile_check(set.pose) {return false}
     if len(set.spaces)>STACK_LAYERS || len(set.space_samples)>lib.BLEND_MAX_SAMPLES*len(set.spaces) {return false}
     for &space,i in set.spaces {
         first,count:=character_space_samples(set,i)

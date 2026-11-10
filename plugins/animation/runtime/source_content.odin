@@ -96,6 +96,10 @@ animation_playing_content :: proc(cache:^Source_Assets,app:^host.App,state:^Play
 animation_content :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,description:Animation,characters:^Character_Assets=nil) -> (content:^host.Content_Animation,error:Program_Error) {
     if app.assets==nil || state==nil {return nil,.Invalid_Asset}
     if description.asset=={} {state.source_plan=0;return nil,.None}
+    // A set without clips plays none: it only adapts the pose.
+    if character:=animation_character(app.assets,description);character!={} && description.library=={} {
+        if set:=character_content(characters,app.assets,app.allocator,character);set!=nil && set.set.info.animation=={} {state.source_plan=0;return nil,.None}
+    }
     if cache==nil {
         primary:=description.asset
         if character:=animation_character(app.assets,description);character!={} {

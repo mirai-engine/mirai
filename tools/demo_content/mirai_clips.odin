@@ -4,6 +4,7 @@ import "core:math"
 import "core:math/linalg"
 import "mirai:asset"
 import importer "mirai:cook/import"
+import game "mirai:demo/game"
 import lib "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -170,9 +171,11 @@ mirai_stride :: proc(model:^importer.Imported_Model,rig:Mirai_Rig,walk:asset.Ani
 }
 
 // The clips of the gallery's Mirai, made from its idle and walk: the walk with its steps and a
-// pulse curve, a faster jog, a wave and the stride that root motion moves.
+// pulse curve, a faster jog, a wave and the stride that root motion moves, with the spans its
+// sets name: the sections of the actions Greet and Step, a window of Step and the warp of the
+// stride to a target (animation_programs.odin).
 @(private)
-mirai_gallery_animation :: proc(o:^Out,model:^importer.Imported_Model,locomotion:[]asset.Animation_Clip_Desc) -> (id:base.Asset_Id,stride,stride_time:f32) {
+mirai_gallery_animation :: proc(o:^Out,model:^importer.Imported_Model,locomotion:[]asset.Animation_Clip_Desc) -> (id:base.Asset_Id,stride:f32) {
     id=asset.content_id(PROJECT,"animation","mirai_gallery")
     rig,valid:=mirai_rig(model)
     idle,has_idle:=mirai_clip_find(locomotion,"idle")
@@ -191,10 +194,15 @@ mirai_gallery_animation :: proc(o:^Out,model:^importer.Imported_Model,locomotion
     wave,waved:=mirai_wave(model,rig,idle)
     stride_clip,strode:=mirai_stride(model,rig,walk,advance)
     if !waved || !strode {o.content.failed=true;return}
+    wave.markers=[]asset.Animation_Marker_Desc{{time=0,name="Greeting",duration=2}}
+    stride_spans:=[]asset.Animation_Marker_Desc{{time=0,name="Advance",duration=1.5},{time=.3,name="Movement",duration=.9},{time=0,name=game.GALLERY_REACH,duration=duration}}
+    stride_markers:=make([]asset.Animation_Marker_Desc,len(stride_clip.markers)+len(stride_spans),context.temp_allocator)
+    copy(stride_markers,stride_clip.markers);copy(stride_markers[len(stride_clip.markers):],stride_spans)
+    stride_clip.markers=stride_markers
     clips:=[]asset.Animation_Clip_Desc{idle,walk,mirai_clip_scaled(walk,"jog",.72,1.2),wave,stride_clip}
     for &clip in clips {clip.skeleton=idle.skeleton}
     file:="assets/characters/mirai/mirai_gallery.anim"
     asset.content_check(&o.content,file,asset.animation_save(path(o,file),&o.content.types,{id=id,clips=clips}))
-    // What the stride covers and how long it lasts: the window of its warp (mirai_reach.motion).
-    return id,advance,duration
+    // What the stride covers: the station of its warp places its goal by it.
+    return id,advance
 }

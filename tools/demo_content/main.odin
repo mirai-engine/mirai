@@ -117,7 +117,7 @@ write_lift :: proc(o:^Out) -> base.Asset_Id {
         key={time=seconds*f32(i)/4,value=lib.quat_vec4(mm.quat_axis_angle({0,1,0},f32(i)*math.PI/2))}
     }
     clips:=[]asset.Animation_Clip_Desc{
-        {name="ride",tracks={{target="Platform",property=.Position,keys=rise},{target="Beacon",property=.Rotation,keys=turn}},markers={{seconds/2,"top"}}},
+        {name="ride",tracks={{target="Platform",property=.Position,keys=rise},{target="Beacon",property=.Rotation,keys=turn}},markers={{time=seconds/2,name="top"}}},
         {name="parked",tracks={{target="Platform",property=.Position,keys=rise[:1]}}},
     }
     asset.content_check(&o.content,"assets/showcase/lift.anim",asset.animation_save(path(o,"assets/showcase/lift.anim"),&o.content.types,{id=id,clips=clips}))

@@ -122,11 +122,10 @@ gallery_morphs :: proc(g:^Gallery_Build,places:[3]Gallery_Place) {
     if error.code!=.None {fmt.eprintln(error.message);o.content.failed=true;return};defer importer.model_destroy(&model)
     animation:=imported_id(o,logical,asset.KIND_ANIMATION,"jelly")
     // Its moods over the dance: how sleepy it is, and how much the rubber adds, by the weights the game sets.
-    moods:=asset.content_id(PROJECT,"action","jelly_moods")
     layers:=[2]anim.Stack_Layer{anim.STACK_LAYER_DEFAULT,anim.STACK_LAYER_DEFAULT}
     base.text_set(layers[0].name[:],"Mood");base.text_set(layers[0].clip[:],"Sleepy");layers[0].sync,layers[0].weight,layers[0].fade=true,0,0
     base.text_set(layers[1].name[:],"Rubber");base.text_set(layers[1].clip[:],"Rubber");layers[1].mode,layers[1].weight,layers[1].fade=.Additive,.25,.2
-    asset.content_check(&o.content,"jelly_moods.action",anim.action_profile_save(path(o,"assets/characters/jelly/jelly_moods.action"),&o.content.types,moods,{info={animation=animation},layers=layers[:]}))
+    moods:=gallery_set(o,"characters/jelly","jelly_moods",animation,{actions={layers=layers[:]}})
     actor_names:=[3]string{"Jelly mixer","Jelly bones","Jelly extremes"}
     titles:=[3]string{"5.2  Morph mix","5.3  Morphs under bones","5.4  Signed morph weights"}
     details:=[3]string{"morph clips + mood layer + additive layer","the same shapes, before skeletal skinning","weights past 1 and below 0, per instance"}
@@ -135,7 +134,7 @@ gallery_morphs :: proc(g:^Gallery_Build,places:[3]Gallery_Place) {
         origin:=places[i].origin+mm.Vec3{0,.21,0};skinned:=i==1;mesh:=model.meshes[1 if skinned else 0]
         actor:=asset.builder_entity(s,actor_names[i],{position=origin})
         asset.builder_set(s,actor,render.Mesh_Renderer{mesh=imported_id(o,logical,asset.KIND_MESH,mesh.name)})
-        clip:=anim.ANIMATION_DEFAULT;clip.asset,clip.actions=animation,moods;base.text_set(clip.clip[:],"JellyDance");asset.builder_set(s,actor,clip)
+        clip:=anim.ANIMATION_DEFAULT;clip.asset=moods;base.text_set(clip.clip[:],"JellyDance");asset.builder_set(s,actor,clip)
         weights:=anim.Morph_Weights{source=core.Entity(actor)};base.text_set(weights.path[:],"JellySkinned" if skinned else "Jelly");asset.builder_set(s,actor,weights)
         asset.builder_set(s,actor,game.Morph_Playground{variant=u8(i)})
         podium:=asset.builder_entity(s,"Candy podium",{position=origin+mm.Vec3{0,-.13,0},scale={2.55,.24,2.35}});asset.builder_set(s,podium,render.Mesh_Renderer{shape=.Cylinder});asset.builder_set(s,podium,render.Tint{color=podium_colors[i]})

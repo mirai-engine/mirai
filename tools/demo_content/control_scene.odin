@@ -85,7 +85,7 @@ write_control_scene :: proc(o:^Out) {
     {
         dolly:=[]lib.Keyframe{{time=0,value={5,5,9,0}},{time=CUT,value={4,4.5,8,0},ease=.Cubic_In_Out}}
         zoom:=[]lib.Keyframe{{time=CUT,value={game.VIEW_FOV,0,0,0}},{time=2*CUT,value={0.9,0,0,0},ease=.Cubic_In_Out}}
-        clips:=[]asset.Animation_Clip_Desc{{name="intro",tracks={{target=ROOM,property=.Position,keys=dolly},{target=DOG+"/"+asset.ANIMATION_FIELD_PATH+"Camera.fov",property=.Float,keys=zoom}},markers={{CUT/2,"intro.bark"}}}}
+        clips:=[]asset.Animation_Clip_Desc{{name="intro",tracks={{target=ROOM,property=.Position,keys=dolly},{target=DOG+"/"+asset.ANIMATION_FIELD_PATH+"Camera.fov",property=.Float,keys=zoom}},markers={{time=CUT/2,name="intro.bark"}}}}
         asset.content_check(&o.content,"assets/control/intro.anim",asset.animation_save(path(o,"assets/control/intro.anim"),&o.content.types,{id=intro,clips=clips}))
     }
     timeline:=asset.builder_entity(&s,game.CONTROL_INTRO)

@@ -8,6 +8,8 @@ import mm "mirai:std/math"
 GROUNDING_LEGS :: 16
 Grounding_Mode :: enum u8 {Animated,Procedural}
 
+// A leg: bones left empty in the first two legs are those of the left and the right leg of the
+// body of the skeleton, the contact its toe; in the others they are needed.
 Grounded_Leg :: struct {
     hip,knee,foot,contact_bone:Bone_Ref,
     pole_offset,foot_up:mm.Vec3,
@@ -24,7 +26,7 @@ Foot_Grounding :: struct {
     mode:Grounding_Mode,
     legs:[GROUNDING_LEGS]Grounded_Leg `mirai:"hidden"`,
     count:i32 `mirai:"min=0,max=16"`,
-    body:Bone_Ref,
+    body:Bone_Ref, // empty: the pelvis of the body of the skeleton
     up:mm.Vec3, // in the frame of the rig as it is placed, not as its bones move; the rig of a character plants its feet along the up of its vertical (core.Vertical)
     trace_above,trace_below,minimum_ground_dot:f32,
     collision_mask:u32, // the collision categories the feet stand on, a bit each
@@ -229,15 +231,23 @@ grounding_bind :: proc(cache:^Grounding_Runtime,row:int,state:^Playing,config:Fo
     }
     bones:[GROUNDING_LEGS][3]int
     contacts:[GROUNDING_LEGS]int
+    // A bone a table leaves empty is the part of the body of the skeleton it stands for.
+    part :: proc(state:^Playing,ref:Bone_Ref,default:lib.Body_Part) -> int {
+        if ref!={} {return bone_resolve(state,ref)}
+        return int(state.body[default]) if state.body[default]>0 else -1
+    }
+    LEGS :: [2][4]lib.Body_Part{{.Hip_L,.Knee_L,.Foot_L,.Toe_L},{.Hip_R,.Knee_R,.Foot_R,.Toe_R}}
     for i in 0..<int(config.count) {
         leg:=config.legs[i]
-        bones[i]={bone_resolve(state,leg.hip),bone_resolve(state,leg.knee),bone_resolve(state,leg.foot)}
+        sides:=LEGS;side:=sides[min(i,1)]
+        if i<2 {bones[i]={part(state,leg.hip,side[0]),part(state,leg.knee,side[1]),part(state,leg.foot,side[2])}} else {bones[i]={bone_resolve(state,leg.hip),bone_resolve(state,leg.knee),bone_resolve(state,leg.foot)}}
         hip,knee,foot:=bones[i][0],bones[i][1],bones[i][2]
         if hip<=0 || knee<=0 || foot<=0 || state.parents[knee]!=i32(hip) || state.parents[foot]!=i32(knee) {
             core.report(problems,state.entity,"animation.grounding_bones","leg %d of Foot_Grounding: its hip, knee and foot are not a chain of bones of this skeleton, each the parent of the next; name such a chain (animation.asset.inspect lists the bones)",i)
             return false
         }
         contacts[i]=foot
+        if toe:=int(state.body[side[3]]);leg.contact_bone=={} && i<2 && toe>0 && state.parents[toe]==i32(foot) {contacts[i]=toe}
         if leg.contact_bone!={} {
             contacts[i]=bone_resolve(state,leg.contact_bone)
             ancestor:=contacts[i]
@@ -248,7 +258,7 @@ grounding_bind :: proc(cache:^Grounding_Runtime,row:int,state:^Playing,config:Fo
             }
         }
     }
-    body:=bone_resolve(state,config.body)
+    body:=part(state,config.body,.Pelvis)
     if !grounding_hierarchy_prepare(cache,row,state) {
         core.report(problems,state.entity,"animation.grounding_bones","the skeleton of this rig cannot be grounded: its bones are not ordered parents first, or memory ran out; import the skeleton again, or free memory")
         return false

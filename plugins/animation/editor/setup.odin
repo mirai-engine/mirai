@@ -368,29 +368,25 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
         }
     }
     if .Foot_Ik in want {
+        // Its legs and body are those of the body of the skeleton: their bones stay empty.
         feet:=anim.FOOT_GROUNDING_DEFAULT
-        feet.body=bone(skeleton,body,.Pelvis);feet.up=up
+        feet.up=up
         feet.max_rise=.15;feet.trace_above=.55;feet.trace_below=.9;feet.blend_time=.08
         for side in 0..<2 {
             parts:=[4]lib.Body_Part{.Hip_L,.Knee_L,.Foot_L,.Toe_L} if side==0 else {.Hip_R,.Knee_R,.Foot_R,.Toe_R}
             if !mapped(body,parts[0],parts[1],parts[2]) {continue}
             leg:=anim.GROUNDED_LEG_DEFAULT
-            // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
-            leg.hip=bone(skeleton,body,parts[0])
-            leg.knee=bone(skeleton,body,parts[1])
-            leg.foot=bone(skeleton,body,parts[2])
-            leg.contact_bone=bone(skeleton,body,parts[3]) if body.bones[parts[3]]>=0 else leg.foot
             foot:=world[body.bones[parts[2]]]
             leg.foot_up=mm.quat_rotate(conj(foot.rotation),up)
             leg.sole_height=max(0,linalg.dot(foot.position,up))
             if body.bones[parts[3]]>=0 {leg.contact_offset=max(0,linalg.dot(world[body.bones[parts[3]]].position,up))}
             leg.pole_offset={};leg.max_distance=.55;leg.contact_height=.04
-            feet.legs[feet.count]=leg;feet.count+=1
+            feet.legs[side]=leg;feet.count+=1
         }
-        if feet.count>0 && feet.body.path[0]!=0 {
+        if feet.count==2 && body.bones[.Pelvis]>=0 {
             append(&grounding,feet)
-            say(&capabilities[.Foot_Ik],.Ready if feet.count==2 else .Partial,"the feet stand on the ground under them, with physics colliders","" if feet.count==2 else "Set hip, knee and foot of both legs with skeleton.body.set")
-        } else {say(&capabilities[.Foot_Ik],.Missing,"the body has no pelvis or complete leg","Set pelvis, hip, knee and foot with skeleton.body.set")}
+            say(&capabilities[.Foot_Ik],.Ready,"the feet stand on the ground under them, with physics colliders","")
+        } else {say(&capabilities[.Foot_Ik],.Missing,"the body has no pelvis or not both legs","Set pelvis, and hip, knee and foot of both legs with skeleton.body.set")}
     }
     pose.look,pose.ik,pose.grounding=looks[:],hands[:],grounding[:]
 
