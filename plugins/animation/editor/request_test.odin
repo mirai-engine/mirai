@@ -12,13 +12,12 @@ import lib "mirai:std/anim"
 import "mirai:std/base"
 import anim "plugins:animation/runtime"
 
-// A character set up as character.setup leaves it: a skinned mesh with a body,
-// a look and hand IK in its pose profile, a wave gesture, a layer Speed whose weight is a
-// parameter and a locomote warp window. Returns the entity it looks at.
+// A character set up as character.setup leaves it: a skinned mesh with a body and one .character
+// with a look and hand IK, a wave gesture, a layer Speed whose weight is a parameter and a
+// locomote warp window. Returns the entity it looks at.
 request_test_character :: proc(f:^Pose_Bake_Test,t:^testing.T) -> core.Entity {
     a:=&f.authoring
-    source_id,skeleton_id,mesh_id,pose_id,action_id:=base.Asset_Id{830,1},base.Asset_Id{830,2},base.Asset_Id{830,3},base.Asset_Id{830,4},base.Asset_Id{830,5}
-    motion_id:base.Asset_Id
+    source_id,skeleton_id,mesh_id,character_id:=base.Asset_Id{830,1},base.Asset_Id{830,2},base.Asset_Id{830,3},base.Asset_Id{830,4}
     bones:=body_test_figure()
     map_,_:=asset.skeleton_body_detect(bones,lib.body_map_empty())
     body:asset.Skeleton_Body
@@ -39,18 +38,16 @@ request_test_character :: proc(f:^Pose_Bake_Test,t:^testing.T) -> core.Entity {
         // The right arm names the parts of the body the skeleton keeps.
         if i==1 {ik.root,ik.joint,ik.end=anim.bone_ref_part(parts[0]),anim.bone_ref_part(parts[1]),anim.bone_ref_part(parts[2])}
     }
-    testing.expect_value(t,anim.pose_profile_save(fmt.tprintf("%s/figure.pose",a.root),&a.assets.types,pose_id,{look={look},ik=hands[:]}),asset.Error.None)
     wave:=anim.ACTION_DEFINITION_DEFAULT;base.text_set(wave.name[:],"wave");base.text_set(wave.clip[:],"wave")
     speed:=anim.STACK_LAYER_DEFAULT;base.text_set(speed.name[:],"Speed");base.text_set(speed.clip[:],"walk");speed.weight=0
-    testing.expect_value(t,anim.action_profile_save(fmt.tprintf("%s/figure.action",a.root),&a.assets.types,action_id,{info={animation=source_id},layers={speed},actions={wave}}),asset.Error.None)
+    set:=anim.character_set_make(source_id);set.pose,set.actions={look={look},ik=hands[:]},{layers={speed},actions={wave}}
+    testing.expect_value(t,anim.character_save(fmt.tprintf("%s/figure.character",a.root),&a.assets.types,character_id,set),asset.Error.None)
     testing.expect(t,host.assets_scan(&a.assets))
     motion:=motion_write_defaults();authoring_test_register(a,t,"motion",Motion_Write_Params,authoring_motion_set,motion)
-    result:=authoring_test_execute(a,"motion",`{"path":"figure.motion","windows":[{"clip":"walk","name":"locomote","start":0,"end":1}]}`)
+    result:=authoring_test_execute(a,"motion",`{"path":"figure.character","windows":[{"name":"locomote"}]}`)
     testing.expectf(t,result.code==0,"motion: %s %s",result.message,result.data)
-    motion_id=authoring_test_id(a,"figure.motion")
-    description:=anim.ANIMATION_DEFAULT;description.asset,description.actions,description.motion=source_id,action_id,motion_id;base.text_set(description.clip[:],"idle")
+    description:=anim.ANIMATION_DEFAULT;description.asset=character_id;base.text_set(description.clip[:],"idle")
     core.add(&f.world.animations,f.rig,description)
-    core.add(&f.world.modifiers,f.rig,{profile=pose_id,weight=1,enabled=true})
     core.add(&f.world.meshes,f.rig,erender.Mesh_Renderer{mesh=mesh_id})
     friend:=core.create(&f.world.entities);core.add(&f.world.ids,friend,{value=18})
     core.settle(&f.info,&f.world,nil)
@@ -67,7 +64,7 @@ request_intents_compile_to_goals_controls_actions_parameters_and_motion :: proc(
     authoring_test_register(a,t,"request",Request_Params,request,defaults)
     result:=authoring_test_execute(a,"request",`{"entity":"0000000000000011","look":{"target":{"kind":"Entity","entity":"0000000000000012"}},"reach":[{"hand":"Right","target":{"position":[0.4,1.3,-0.3]}}],"gesture":{"clip":"wave"},"locomote":{"target":{"position":[0,0,-5]},"speed":1.2}}`)
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
-    testing.expect_value(t,result_shape_mismatch(Request_Result,string(serial_bytes(a))),"")
+    testing.expect_value(t,result_shape_mismatch(Request_Result,api.json_compact(string(serial_bytes(a)))),"")
     goals,controls:=f.world.modifier_requests.queue.items,f.world.modifier_requests.controls.items
     if !testing.expect(t,len(goals)==2 && len(controls)==2) {return}
     testing.expect(t,goals[0].kind==.Look && goals[0].enabled && goals[0].target.kind==.Entity && goals[0].target.entity==friend)

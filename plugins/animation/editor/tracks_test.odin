@@ -215,7 +215,7 @@ capture_keys_the_tracks_of_an_entity_with_what_it_has_now :: proc(t:^testing.T) 
     cursor:=f.edits.cursor
     result:=tracks_test_call(f,"animation.key.capture",`{"animation":"0000000000000001","entity":"0000000000000002","time":1}`)
     if !testing.expectf(t,result.code==0,"%v",result) {return}
-    testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"keys": 2`),string(serial.writer_bytes(&f.out)))
+    testing.expect(t,strings.contains(api.json_compact(string(serial.writer_bytes(&f.out))),`"keys":2`),api.json_compact(string(serial.writer_bytes(&f.out))))
     testing.expect_value(t,f.edits.cursor,cursor+1)
     position:=tracks_test_keys(f,"Panel",.Position)
     rotation:=tracks_test_keys(f,"Panel",.Rotation)

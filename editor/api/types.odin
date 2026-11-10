@@ -49,7 +49,7 @@ Port_File :: struct {
     pid:int,
     project:string,
     engine:string, // the folder of the binaries of the engine it runs
-    stamp:string,  // the stamp of those binaries when it started
+    stamp:string,  // the stamp of the binaries it runs, as they were built (build.engine_stamp_of)
     library:string, // the stamp of the library of the project it loaded last
     manual:bool,   // headless, driven by the API frame by frame; false for an editor with a window
 }

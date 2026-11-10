@@ -177,7 +177,7 @@ api_port_file_path :: proc(s:^Session) -> string {
 api_port_file_write :: proc(s:^Session,port:int) {
     if !s.has_project {return}
     engine:=engine_folder_here(s)
-    file:=api.Port_File{port,os.get_pid(),s.project_root,engine,s.engine_stamp,build.target_stamp_of(s.project_root,.Editor,context.temp_allocator),s.headless}
+    file:=api.Port_File{port,os.get_pid(),s.project_root,engine,s.engine_stamp,s.library_stamp,s.headless}
     data,encoded:=serial.text_encode(file,.Pretty,context.temp_allocator)
     if !encoded {return}
     path:=api_port_file_path(s)

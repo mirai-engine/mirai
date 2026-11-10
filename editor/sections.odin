@@ -70,7 +70,9 @@ section_place :: proc(s:^Session,id:base.Asset_Id,point:[3]f32,name:string) -> c
 @(private)
 section_instantiate :: proc(s:^Session,w:core.World_Ref,e:core.Entity,file:^asset.Asset,extents:[3]f32) -> scene.Error {
     path:=[1]base.Asset_Id{s.document.id}
-    _,error:=scene.instantiate(w,file,&s.app.assets.types,{parent=e,documents=scene.assets_documents(s.app.assets),salt=api_entity_id(w,e),path=path[:],scope=e,scope_extents=extents})
+    stored:=make([dynamic]scene.Stored,context.temp_allocator)
+    _,error:=scene.instantiate(w,file,&s.app.assets.types,{parent=e,documents=scene.assets_documents(s.app.assets),salt=api_entity_id(w,e),path=path[:],scope=e,scope_extents=extents,stored=&stored})
+    stored_log(s,stored[:])
     return error
 }
 

@@ -24,7 +24,7 @@ Asset_Inspect_Params :: struct {
     target:[aa.NODE_PATH_CAPACITY]u8 `mirai:"text,optional,label=.anim with section Track: the bone path or curve of the track of the clip"`,
     property:lib.Property `mirai:"optional,label=.anim with section Track: its property"`,
     slot:u8 `mirai:"optional,label=.anim with section Track: its slot"`,
-    table:Profile_Table `mirai:"optional,label=.pose: the table"`,
+    table:Profile_Table `mirai:"optional,label=.character: the table of its modifiers"`,
     offset:u32 `mirai:"optional,label=First row of each long table"`,
     limit:u32 `mirai:"optional,min=1,max=512,clamp,label=Rows of each long table"`,
 }
@@ -67,14 +67,27 @@ Asset_Inspect_Result :: struct {
     unassigned:[]string `mirai:"optional,label=The first bones outside the body; unassigned_total counts them all"`,
     fix:string `mirai:"optional,label=How to complete or correct the body; empty when it needs nothing"`,
     stored:bool `mirai:"optional,label=Whether the .skeleton holds a body: skeleton.body.detect saves it"`,
-    counts:Profile_Counts `mirai:"optional,label=.pose: the rows of each table"`,
-    table:Profile_Table `mirai:"optional,label=.pose: the table read; only its field has rows"`,
+    animation:base.Asset_Id `mirai:"optional,label=.character: the .anim of its clips"`,
+    match:anim.Match_Info `mirai:"optional,label=.character: its locomotion: the rate of its database, the interval of its searches, the blend of a jump, its memory and weights"`,
+    match_clips_total:u32 `mirai:"optional,label=.character"`,
+    match_clips:[]Asset_Match_Clip `mirai:"optional,label=.character: a page of its locomotion clips with the Locomotion_Mode each serves"`,
+    databases:[]Asset_Match_Database `mirai:"optional,label=.character: the database built for each skeleton a rig played it on"`,
+    layers_total,actions_total,sections_total:u32 `mirai:"optional,label=.character"`,
+    layers:[]Authoring_Page(anim.Stack_Layer) `mirai:"optional,label=.character: its stack over the base, in order"`,
+    actions:[]Authoring_Page(anim.Action_Definition) `mirai:"optional"`,
+    sections:[]Authoring_Page(Action_Section_Params) `mirai:"optional"`,
+    spaces:[]Asset_Space `mirai:"optional,label=.character: the spaces its layers sample"`,
+    warp:anim.Pose_Warp_Profile `mirai:"optional,label=.character: pose warping"`,
+    windows_total:u32 `mirai:"optional,label=.character"`,
+    windows:[]Authoring_Page(anim.Motion_Window) `mirai:"optional,label=.character: warp windows, each over the spans of its name on the clips"`,
+    distances_total:u32 `mirai:"optional,label=.character"`,
+    distances:[]Authoring_Page(Motion_Distance_Params) `mirai:"optional,label=.character: distance tracks"`,
+    counts:Profile_Counts `mirai:"optional,label=.character: the rows of each table of its modifiers"`,
+    table:Profile_Table `mirai:"optional,label=.character: the table read; only its field has rows"`,
     ik:[]Authoring_Page(anim.IK_Constraint) `mirai:"optional"`,
     look:[]Authoring_Page(anim.Look_Constraint) `mirai:"optional"`,
     limits:[]Authoring_Page(anim.Rotation_Constraint) `mirai:"optional"`,
-    contacts:[]Authoring_Page(anim.Foot_Contact_Constraint) `mirai:"optional"`,
     grounding:[]Authoring_Page(Profile_Grounding_Params) `mirai:"optional"`,
-    retarget:[]Authoring_Page(anim.Retarget_Mapping) `mirai:"optional"`,
     chain_ik:[]Authoring_Page(Profile_Chain_Params) `mirai:"optional"`,
     twist:[]Authoring_Page(Profile_Twist_Params) `mirai:"optional"`,
     springs:[]Authoring_Page(Profile_Spring_Params) `mirai:"optional"`,
@@ -86,30 +99,13 @@ Asset_Inspect_Result :: struct {
     curve_poses:[]Authoring_Page(anim.Curve_Pose) `mirai:"optional"`,
     curve_drives:[]Authoring_Page(anim.Curve_Drive) `mirai:"optional"`,
     curve_materials:[]Authoring_Page(anim.Curve_Material) `mirai:"optional"`,
-    info:anim.Blend_Info `mirai:"optional,label=.blend: its axes and source animation"`,
-    samples_total,segments_total,triangles_total:u32 `mirai:"optional,label=.blend"`,
-    samples:[]Authoring_Page(anim.Blend_Sample) `mirai:"optional,label=.blend: positions in the units of the axes"`,
-    segments:[]Authoring_Page(lib.Blend_Segment) `mirai:"optional,label=.blend of one axis: prepared from the samples"`,
-    triangles:[]Authoring_Page(lib.Blend_Triangle) `mirai:"optional,label=.blend of two axes: prepared from the samples"`,
-    match:anim.Match_Info `mirai:"optional,label=.match: its source .anim, the rate of its database, the interval of its searches, the blend of a jump, its memory, bones and weights"`,
-    match_clips_total:u32 `mirai:"optional,label=.match"`,
-    match_clips:[]Asset_Match_Clip `mirai:"optional,label=.match: a page of its clips with the Locomotion_Mode each serves"`,
-    databases:[]Asset_Match_Database `mirai:"optional,label=.match: the database built for each skeleton a rig played it on"`,
-    animation:base.Asset_Id `mirai:"optional,label=.action: the source .anim"`,
-    pose:Motion_Pose_Params `mirai:"optional,label=.motion: pose warping"`,
-    windows_total:u32 `mirai:"optional,label=.motion and .action"`,
-    windows:[]Authoring_Page(Asset_Window) `mirai:"optional,label=.motion: warp windows; .action: gameplay windows"`,
-    distances_total:u32 `mirai:"optional,label=.motion"`,
-    distances:[]Authoring_Page(Motion_Distance_Params) `mirai:"optional,label=.motion: distance tracks"`,
-    layers_total,actions_total,sections_total:u32 `mirai:"optional,label=.action"`,
-    layers:[]Authoring_Page(anim.Stack_Layer) `mirai:"optional,label=.action: its stack over the base, in order"`,
-    actions:[]Authoring_Page(anim.Action_Definition) `mirai:"optional"`,
-    sections:[]Authoring_Page(Action_Section_Params) `mirai:"optional"`,
 }
+// A space of a .character with its samples.
+Asset_Space :: struct {info:anim.Blend_Info,samples:[]Authoring_Page(anim.Blend_Sample) `mirai:"label=Positions in the units of the axes"`}
 Asset_Clip_Name :: struct {name:[aa.ANIMATION_NAME_CAPACITY]u8 `mirai:"text"`}
 // entry: it starts its modes, searched from its start when the body enters one of them.
 Asset_Match_Clip :: struct {
-    clip:[64]u8 `mirai:"text"`,animation:base.Asset_Id `mirai:"optional,label=Empty is that of the .match"`,modes:[][32]u8 `mirai:"text"`,loop,entry:bool,
+    clip:[64]u8 `mirai:"text"`,animation:base.Asset_Id `mirai:"optional,label=Empty is that of the .character"`,modes:[][32]u8 `mirai:"text"`,loop,entry:bool,
     speed:f32 `mirai:"optional,unit=m/s,label=The speed it travels at, set by hand; omitted is measured"`,
     blend:[][64]u8 `mirai:"text,optional,label=The clips it blends with in phase, at the weights of each sample"`,
     samples:[]Asset_Match_Sample `mirai:"optional,label=A blend: its points the search picks"`,
@@ -117,18 +113,6 @@ Asset_Match_Clip :: struct {
 Asset_Match_Sample :: struct {weights:[anim.MATCH_BLEND]f32 `mirai:"label=Of clip, then of each of blend"`,speed:f32 `mirai:"optional,unit=m/s,label=Set by hand; omitted is measured from the blended feet"`}
 Asset_Match_Database :: struct {rows:u32,bytes:u64 `mirai:"optional"`,error:lib.Match_Build_Error `mirai:"label=Memory_Limit: it keeps more than memory; Invalid: a bone or clip is missing on the skeleton"`}
 Asset_Clip_Track :: struct {target:[aa.NODE_PATH_CAPACITY]u8 `mirai:"text"`,property:lib.Property,slot:u8,keys_total:u32}
-// A warp window of a .motion or a gameplay window of an .action.
-Asset_Window :: struct {
-    name:[64]u8 `mirai:"text"`,
-    start,end:f32 `mirai:"unit=s"`,
-    action:[64]u8 `mirai:"text,optional,label=.action: its action"`,
-    clip:[64]u8 `mirai:"text,optional,label=.motion: its source clip"`,
-    translation,rotation:bool `mirai:"optional,label=.motion: what it warps"`,
-    axes:[3]bool `mirai:"optional"`,
-    weight:f32 `mirai:"optional"`,
-    animation:base.Asset_Id `mirai:"optional"`,
-}
-
 // What a part the entity lacks holds instead of its fields.
 Instance_Missing :: struct {
     code:[32]u8 `mirai:"text,optional,label=Why the entity lacks the part"`,
@@ -139,7 +123,7 @@ Instance_Inspect_Result :: struct {
     id:base.Entity_Id `mirai:"optional"`,
     entity:[18]u8 `mirai:"text,optional,label=The handle asked"`,
     rig:Instance_Rig `mirai:"optional,label=Clips and bones with their mirror"`,
-    match:Instance_Match `mirai:"optional,label=What the motion matching of its .match plays in Play, Simulation or the preview of the editor, the clips it searches and its last search"`,
+    match:Instance_Match `mirai:"optional,label=What the motion matching of its .character plays in Play, Simulation or the preview of the editor, the clips it searches and its last search"`,
     modifiers:Instance_Modifiers `mirai:"optional,label=Rig operations and their influence"`,
     actions:Instance_Actions `mirai:"optional"`,
     motion:Instance_Motion `mirai:"optional,label=Warp windows and their targets"`,
@@ -150,7 +134,7 @@ Instance_Inspect_Result :: struct {
 // search matching had to make.
 Instance_Match :: struct {
     using missing:Instance_Missing `mirai:"inline"`,
-    available:bool `mirai:"optional"`,
+    available:bool `mirai:"optional,label=false when the entity plays no locomotion"`,
     clip:[64]u8 `mirai:"text,optional"`,mode:[32]u8 `mirai:"text,optional"`,forced:bool `mirai:"optional"`,
     time:f32 `mirai:"optional,unit=s"`,rate:f32 `mirai:"optional"`,speed:f32 `mirai:"optional,unit=m/s"`,cost:f32 `mirai:"optional"`,
     searches,jumps:u32 `mirai:"optional"`,
@@ -220,17 +204,14 @@ Instance_Bone :: struct {
 Instance_Modifiers :: struct {
     using missing:Instance_Missing `mirai:"inline"`,
     id:base.Entity_Id `mirai:"optional"`,
-    profile:base.Asset_Id `mirai:"optional,label=Pose_Modifiers.profile"`,
-    retarget_profile:base.Asset_Id `mirai:"optional,label=Animation.retarget: it holds the Chain_Retarget operations"`,
+    character:base.Asset_Id `mirai:"optional,label=The .character of its Animation"`,
     total:u32 `mirai:"optional"`,
-    last_request_error:anim.Modifier_Request_Error `mirai:"optional,label=Missing_Operation or Missing_Effector: a goal or control names what the profile lacks; Missing_Target: its target is not found"`,
+    last_request_error:anim.Modifier_Request_Error `mirai:"optional,label=Missing_Operation or Missing_Effector: a goal or control names what the .character lacks; Missing_Target: its target is not found"`,
     modifiers:[]Instance_Modifier `mirai:"optional,label=A page of the operations"`,
 }
 Instance_Modifier :: struct {
     kind:anim.Modifier_Kind,
     name:[256]u8 `mirai:"text"`,
-    profile:base.Asset_Id,
-    
     weight:f32 `mirai:"label=Effective influence"`,
     enabled:bool,
     alpha,target_alpha:f32 `mirai:"optional,label=With diagnostics: the fade now and where it goes"`,
@@ -242,7 +223,7 @@ Instance_Modifier :: struct {
 Instance_Actions :: struct {
     using missing:Instance_Missing `mirai:"inline"`,
     id:base.Entity_Id `mirai:"optional"`,
-    profile:base.Asset_Id `mirai:"optional,label=Animation.actions"`,
+    character:base.Asset_Id `mirai:"optional,label=The .character of its Animation"`,
     problems:[]Problem_Result `mirai:"optional,label=What its actions reported; the most recent first"`,
     parameters:[]anim.Stack_Parameter_Info `mirai:"optional,label=What animation.request parameters sets: the weight of each layer and the axes of their spaces"`,
     playing:[]Action_Playing_Result `mirai:"optional,label=The actions playing with their effective weight"`,
@@ -251,7 +232,7 @@ Instance_Actions :: struct {
 Instance_Motion :: struct {
     using missing:Instance_Missing `mirai:"inline"`,
     id:base.Entity_Id `mirai:"optional"`,
-    profile:base.Asset_Id `mirai:"optional"`,
+    character:base.Asset_Id `mirai:"optional,label=The .character of its Animation"`,
     ready:bool `mirai:"optional"`,
     window:i32 `mirai:"optional,label=The window that warps now; -1 for none"`,
     error:anim.Motion_Error `mirai:"optional"`,
@@ -285,21 +266,10 @@ Instance_Morphs :: struct {
 inspect_register :: proc(s:^editor.Session) {
     asset_defaults:=Asset_Inspect_Params{limit=128}
     instance_defaults:=Instance_Inspect_Params{limit=128}
-    editor.api_method_register(s,{params=type_info_of(Asset_Inspect_Params),result=type_info_of(Asset_Inspect_Result),name="animation.asset.inspect",summary="Reads an animation definition: an .anim, .skeleton, .pose, .blend, .match, .motion or .action.",defaults=&asset_defaults,flags={.Read_Only},run=asset_inspect})
+    editor.api_method_register(s,{params=type_info_of(Asset_Inspect_Params),result=type_info_of(Asset_Inspect_Result),name="animation.asset.inspect",summary="Reads an animation definition: an .anim, a .skeleton or a .character.",defaults=&asset_defaults,flags={.Read_Only},run=asset_inspect})
     editor.api_method_register(s,{params=type_info_of(Instance_Inspect_Params),result=type_info_of(Instance_Inspect_Result),name="animation.inspect",summary="Reads what an animated entity does now, part by part; a part the entity lacks says why instead of failing the call.",defaults=&instance_defaults,flags={.Read_Only},run=instance_inspect})
 }
 
-// Runs a handler with params of its own, in the call.
-@(private)
-inspect_with :: proc(s:^editor.Session,call:^api.Call,params:^$T,run:proc(s:^editor.Session,call:^api.Call)) {
-    saved,method:=call.params,call.method
-    inner:api.Method
-    if method!=nil {inner=method^}
-    inner.params_id=T
-    call.params,call.method=params,&inner
-    run(s,call)
-    call.params,call.method=saved,method
-}
 
 @(private)
 asset_inspect :: proc(s:^editor.Session,call:^api.Call) {
@@ -322,13 +292,9 @@ asset_inspect :: proc(s:^editor.Session,call:^api.Call) {
         body:=body_fields(call,view,aa.skeleton_body_map(view.bones,view.body,view.body_parts))
         r.up,r.axes_confidence,r.parts,r.missing=body.up,body.axes_confidence,body.parts,body.missing
         r.unassigned_total,r.unassigned,r.fix,r.stored=body.unassigned_total,body.unassigned,body.fix,view.body!=nil
-    case anim.POSE_KIND: authoring_profile_inspect(s,call,&page,r)
-    case anim.BLEND_KIND: program_blend_inspect(s,call,&page,r)
-    case anim.MATCH_KIND: match_inspect(s,call,&page,r)
-    case anim.MOTION_KIND: authoring_motion_profile_inspect(s,call,&page,r)
-    case anim.ACTION_KIND: authoring_action_profile_inspect(s,call,&page,r)
+    case anim.CHARACTER_KIND: character_inspect(s,call,&page,r)
     case:
-        authoring_failure(call,"asset","Invalid_Kind","an .anim, .skeleton, .pose, .blend, .match, .motion or .action",fmt.tprintf("%v",record.kind),"The asset is not an animation definition",fix="Use asset.list to find animation assets")
+        authoring_failure(call,"asset","Invalid_Kind","an .anim, .skeleton or .character",fmt.tprintf("%v",record.kind),"The asset is not an animation definition",fix="Use asset.list to find animation assets")
     }
 }
 
@@ -369,15 +335,15 @@ instance_inspect :: proc(s:^editor.Session,call:^api.Call) {
 instance_match :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity:core.Entity) -> (r:Instance_Match) {
     value,present:=editor.entity_get(world,entity,anim.Animation)
     if !present {authoring_failure(call,"entity","Missing_Component","an Animation component","missing component","The entity has no Animation component");return}
-    if record,found:=aa.registry_find(&s.app.assets.registry,value.asset);!found || record.kind!=anim.MATCH_KIND {authoring_failure(call,"entity","Not_Matching","an Animation.asset that is a .match","another asset" if found else "none","The entity plays no motion matching",fix="Make one with animation.character.setup");return}
+    if anim.animation_character(s.app.assets,value)=={} {authoring_failure(call,"entity","Not_Matching","an Animation.asset that is a .character with locomotion","another asset","The entity plays no motion matching",fix="Make one with animation.character.setup");return}
     result,matching:=preview_match(world,s.app,entity)
-    if !matching {authoring_failure(call,"entity","Not_Running","a .match the world plays","not sampled","Matching runs in Play, Simulation, the preview of the editor or animation.preview");return}
+    if !matching {authoring_failure(call,"entity","Not_Running","locomotion the world plays","not sampled or without locomotion clips","Matching runs in Play, Simulation, the preview of the editor or animation.preview, for a .character with locomotion clips");return}
     authoring_struct_fields(&r,result)
     playback:=core.world_storage_of(world,anim.Playback)
     state:^anim.Playing;for &playing in playback.states {if playing.entity==entity {state=&playing;break}}
     shared:=core.world_ref(s.app.shared,world.info,.Shared)
     library:=anim.animation_playing_content(core.world_storage_of(shared,anim.Source_Assets),s.app,state)
-    db:=anim.animation_match_database(core.world_storage_of(shared,anim.Match_Assets),library,state)
+    db:=anim.animation_match_database(core.world_storage_of(shared,anim.Character_Assets),library,state)
     if db==nil {return}
     modes:=locomotion_modes(world.info)
     r.ranges=make([]Instance_Match_Range,len(db.ranges),call.allocator)
@@ -422,39 +388,4 @@ match_modes :: proc(call:^api.Call,modes:[]core.Name_Info,bits:u32) -> [][32]u8 
         append(&names,text)
     }
     return names[:]
-}
-
-// A .match with a page of its clips and the database of each skeleton a rig built.
-@(private)
-match_inspect :: proc(s:^editor.Session,call:^api.Call,p:^Asset_Inspect_Params,r:^Asset_Inspect_Result) {
-    file:Authoring_File;defer aa.asset_close(&file.file)
-    profile,ok:=program_match_open(s,call,p.asset,&file);if !ok {return}
-    modes:=locomotion_modes(s.info)
-    base.text_set(r.path[:],file.path)
-    r.match,r.match_clips_total=profile.info,u32(len(profile.clips))
-    start:=min(int(p.offset),len(profile.clips));end:=min(start+int(p.limit),len(profile.clips))
-    r.match_clips=make([]Asset_Match_Clip,end-start,call.allocator)
-    for &row,i in r.match_clips {
-        clip:=&profile.clips[start+i]
-        row={clip=clip.clip,animation=clip.animation,modes=match_modes(call,modes,clip.modes),loop=clip.loop,entry=clip.entry,speed=clip.speed}
-        names,count:=anim.match_source_clips(clip)
-        if count<=1 {continue}
-        row.blend=make([][64]u8,count-1,call.allocator)
-        for &name,k in row.blend {base.text_set(name[:],names[1+k])}
-        samples:=make([dynamic]Asset_Match_Sample,call.allocator)
-        for &sample in profile.samples {if int(sample.source)==start+i {append(&samples,Asset_Match_Sample{weights=sample.weights,speed=sample.speed})}}
-        row.samples=samples[:]
-    }
-    databases:=make([dynamic]Asset_Match_Database,call.allocator)
-    if cache:=core.world_storage_of(core.world_ref(s.app.shared,s.info,.Shared),anim.Match_Assets);cache!=nil {
-        for &content in cache.contents {
-            if content.id!=p.asset {continue}
-            for &built in content.databases {
-                row:=Asset_Match_Database{rows=u32(built.database.rows),error=built.error}
-                if built.error==.None {row.bytes=u64(lib.match_database_size(built.database))}
-                append(&databases,row)
-            }
-        }
-    }
-    r.databases=databases[:]
 }

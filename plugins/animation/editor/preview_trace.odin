@@ -17,14 +17,14 @@ Preview_Program_Result :: struct {
     asset:base.Asset_Id,ready:bool,
     fade_remaining:f32 `mirai:"unit=s,label=Of the inertial blend into the last clip matching jumped to or a play"`,
     error:anim.Program_Error,
-    parameters:[]anim.Stack_Parameter_Info `mirai:"label=What its action set declares: the weight of each layer and the axes of their spaces, at the value they have"`,
-    match:Preview_Match_Result `mirai:"optional,label=A .match: what its matching plays"`,
+    parameters:[]anim.Stack_Parameter_Info `mirai:"label=What its .character declares: the weight of each layer and the axes of their spaces, at the value they have"`,
+    match:Preview_Match_Result `mirai:"optional,label=The locomotion of its .character: what its matching plays"`,
 }
-// clip: of the library of the .match; mode: the Locomotion_Mode it serves; forced: a play of
+// clip: of the library of the .character; mode: the Locomotion_Mode it serves; forced: a play of
 // animation.request plays it; rate: of the clip to follow the body; speed: that the pose walks at.
 // In animation.inspect a rig without matching holds only available, code and reason.
 Preview_Match_Result :: struct {
-    available:bool `mirai:"optional,label=false when the entity plays no .match"`,
+    available:bool `mirai:"optional,label=false when the entity plays no locomotion of a .character"`,
     clip:[64]u8 `mirai:"text,optional"`,mode:[32]u8 `mirai:"text,optional"`,forced:bool `mirai:"optional"`,
     time:f32 `mirai:"optional,unit=s"`,rate:f32 `mirai:"optional"`,speed:f32 `mirai:"optional,unit=m/s"`,cost:f32 `mirai:"optional"`,
     searches,jumps:u32 `mirai:"optional"`,
@@ -92,7 +92,7 @@ preview_curve_name :: proc(trace:^Preview_Trace,hash:u64) -> [asset.NODE_PATH_CA
     return {}
 }
 // What the matching of an entity plays, with the names of its clip and mode; false for an entity
-// that does not play a .match.
+// that plays no locomotion of a .character.
 @(private)
 preview_match :: proc(world:core.World_Ref,app:^host.App,entity:core.Entity) -> (result:Preview_Match_Result,ok:bool) {
     playback:=core.world_storage_of(world,anim.Playback)
@@ -114,8 +114,8 @@ preview_program :: proc(call:^api.Call,world:core.World_Ref,app:^host.App,state:
     if state==nil {return}
     runtime:=&state.program;r.ready,r.error,r.fade_remaining=runtime.ready,runtime.error,max(0,runtime.fade-runtime.elapsed)
     parameters:=make([]anim.Stack_Parameter_Info,anim.STACK_PARAMETERS*2,call.allocator)
-    blends:=core.world_storage_of(core.world_ref(app.shared,world.info,.Shared),anim.Blend_Assets)
-    r.parameters=parameters[:anim.stack_parameters(core.world_storage_of(world,anim.Action_Runtime),blends,core.world_storage_of(world,anim.Playback),state.entity,parameters)]
+    characters:=core.world_storage_of(core.world_ref(app.shared,world.info,.Shared),anim.Character_Assets)
+    r.parameters=parameters[:anim.stack_parameters(core.world_storage_of(world,anim.Action_Runtime),characters,core.world_storage_of(world,anim.Playback),state.entity,parameters)]
     if match,ok:=preview_match(world,app,state.entity);ok {r.match=match}
     return
 }
@@ -166,9 +166,9 @@ preview_trace_frame :: proc(call:^api.Call,trace:^Preview_Trace,world:core.World
         value:=Preview_Marker_Result{kind=event.kind,animation=event.animation,clip_hash=event.clip,time=event.time,weight=event.weight,source=event.source,group=event.group}
         if event.kind==.Marker {view:=preview_trace_source_view(trace,event.animation);value.clip,value.marker,value.marker_hash=preview_clip_name(view,event.clip),preview_marker_name(view,event.name),event.name}
         if actions!=nil && event.action!=0 {for &plan in actions.plans {
-            if plan.asset!=description.actions {continue}
+            if plan.asset!=description.asset {continue}
             for &action in plan.profile.actions {if base.name_hash(base.text_get(action.name[:]))==event.action {value.action=action.name}}
-            if event.kind==.Span_Begin || event.kind==.Span_End {for &window in plan.profile.windows {if base.name_hash(base.text_get(window.name[:]))==event.name {value.name=window.name}}} else if event.kind!=.Marker {for &section in plan.profile.sections {if base.name_hash(base.text_get(section.name[:]))==event.name {value.name=section.name}}}
+            if event.kind==.Span_Begin || event.kind==.Span_End {value.name=preview_marker_name(preview_trace_source_view(trace,plan.animation),event.name)} else if event.kind!=.Marker {for &section in plan.profile.sections {if base.name_hash(base.text_get(section.name[:]))==event.name {value.name=section.name}}}
         }}
         append(&marks,value)
     }}

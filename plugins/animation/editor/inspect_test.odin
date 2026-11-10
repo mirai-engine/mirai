@@ -25,7 +25,7 @@ inspectors_read_every_definition_kind_and_the_parts_of_an_instance :: proc(t:^te
     test_locomotion_modes(&f.info)
     result:=authoring_test_execute(a,"setup",fmt.tprintf(`{{"entity":"0000000000000011","library":"%s","folder":"c"}}`,authoring_test_id_text(library)))
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
-    testing.expect_value(t,result_shape_mismatch(Setup_Result,string(serial_bytes(a))),"")
+    testing.expect_value(t,result_shape_mismatch(Setup_Result,api.json_compact(string(serial_bytes(a)))),"")
     expect :: proc(t:^testing.T,a:^Authoring_Test,request:string,needles:..string,loc:=#caller_location) {
         result:=authoring_test_execute(a,"asset",request)
         if !testing.expectf(t,result.code==0,"%s: %s %s",request,result.message,result.data,loc=loc) {return}
@@ -38,10 +38,7 @@ inspectors_read_every_definition_kind_and_the_parts_of_an_instance :: proc(t:^te
     expect(t,a,fmt.tprintf(`{{"asset":"%s","clip":"Walk","section":"Track","target":"root","property":"Position"}}`,authoring_test_id_text(library)),`"keys"`)
     expect(t,a,fmt.tprintf(`{{"asset":"%s","section":"Body"}}`,id(a,"figure.skeleton")),`"part":"Head"`,`"stored":true`)
     expect(t,a,fmt.tprintf(`{{"asset":"%s"}}`,id(a,"figure.skeleton")),`"bones_total"`)
-    expect(t,a,fmt.tprintf(`{{"asset":"%s","table":"Look"}}`,id(a,"c/figure.pose")),`"look"`)
-    expect(t,a,fmt.tprintf(`{{"asset":"%s"}}`,id(a,"c/figure.match")),`"match_clips":[{"clip":"Idle"`,`"modes":["WALKING"]`)
-    expect(t,a,fmt.tprintf(`{{"asset":"%s"}}`,id(a,"c/figure.motion")),`"pose"`)
-    expect(t,a,fmt.tprintf(`{{"asset":"%s"}}`,id(a,"c/figure.action")),`"Wave Arm_R"`)
+    expect(t,a,fmt.tprintf(`{{"asset":"%s","table":"Look"}}`,id(a,"c/figure.character")),`"look"`,`"match_clips":[{"clip":"Idle"`,`"modes":["WALKING"]`,`"warp"`,`"Wave Arm_R"`)
     result=authoring_test_execute(a,"asset",fmt.tprintf(`{{"asset":"%s"}}`,id(a,"figure.mesh")))
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,"Invalid_Kind"))
     result=authoring_test_execute(a,"instance",`{"entity":"0000000000000011"}`)
@@ -51,17 +48,17 @@ inspectors_read_every_definition_kind_and_the_parts_of_an_instance :: proc(t:^te
     testing.expect_value(t,result_shape_mismatch(Instance_Inspect_Result,text),"")
     result=authoring_test_execute(a,"instance",`{"entity":"0000000000000011","diagnostics":true}`)
     testing.expect(t,result.code==0)
-    testing.expect_value(t,result_shape_mismatch(Instance_Inspect_Result,string(serial_bytes(a))),"")
+    testing.expect_value(t,result_shape_mismatch(Instance_Inspect_Result,api.json_compact(string(serial_bytes(a)))),"")
     result=authoring_test_execute(a,"instance",`{"entity":"0000000000000011","parts":["Match"]}`)
-    testing.expect(t,result.code==0 && !strings.contains(string(serial_bytes(a)),`"rig"`))
-    // A preview plays the .match on a copy: it builds the database of the skeleton, and an action
-    // of its set plays over it at the tick asked.
+    testing.expect(t,result.code==0 && !strings.contains(api.json_compact(string(serial_bytes(a))),`"rig"`))
+    // A preview plays the locomotion of the .character on a copy: it builds the database of the
+    // skeleton, and an action of the set plays over it at the tick asked.
     result=authoring_test_execute(a,"preview",`{"entity":"0000000000000011","ticks":2,"trace":true,"actions":[{"name":"Wave","tick":1}]}`)
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
     text=api.json_compact(string(serial_bytes(a)))
     testing.expectf(t,strings.contains(text,`"match":{"available":true`) && strings.contains(text,`"kind":"Started","action":"Wave"`),"preview %s",text)
     testing.expect_value(t,result_shape_mismatch(Preview_Result,text),"")
-    expect(t,a,fmt.tprintf(`{{"asset":"%s"}}`,id(a,"c/figure.match")),`"databases":[{"rows":`,`"error":"None"`)
+    expect(t,a,fmt.tprintf(`{{"asset":"%s"}}`,id(a,"c/figure.character")),`"databases":[{"rows":`,`"error":"None"`)
 
     // The Pose part: names that do not exist fail the call; a rig that has not posed says so.
     result=authoring_test_execute(a,"instance",`{"entity":"0000000000000011","parts":["Pose"],"names":["@hand_r","baton"]}`)

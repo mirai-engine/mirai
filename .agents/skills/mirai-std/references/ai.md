@@ -304,7 +304,7 @@ no GOAP. What those models gave is written this way, without implementing them o
   `behavior` stores it in `Mind_Agent`, inspects it and presents it without knowing the enum.
 - `mind_tick(&mind, &ACTS, think, &ctx)`: `ACTS` is an `[Enum]proc(^Act(Enum)) -> Status`, one per
   value. An enum with negative values or outside the capacity does not compile; an action without a
-  procedure fails on entry (`behavior` rejects it earlier, when registering).
+  procedure fails on entry (the world generator rejects it earlier, when it builds a mind).
 - `think` calls `propose(t, action, score)`; a score of 0 or less, or one that is not finite, does
   not propose. The highest wins and, in a tie, the first proposed.
 - The running action is worth its proposal plus `keep`, or its `commit` if greater: what scores only
@@ -314,10 +314,9 @@ no GOAP. What those models gave is written this way, without implementing them o
   trip to an object, a jump. What must interrupt it proposes more (stun, die).
 - An action that ends asks for `think` again in the same tick, over what changed, and the best one
   enters; it may be itself again, unless it failed.
-- `Mind_Context` is what the game gives: `user` (what its loop function received), `time` in
-  simulation seconds, `tick`, `keep`, `holder` (the agent, owner of its reservations),
-  `reservations` and `lease`. `behavior.minds_tick` fills the time, the tick, the owner and the
-  lease.
+- `Mind_Context` is what the caller gives: `user` (the context of the mind), `tick`, `dt`, `keep`,
+  `holder` (the agent, owner of its reservations), `reservations` and `lease`.
+  `behavior.minds_tick` fills all of it.
 - Deterministic within a configuration, without allocating: copying the minds and the world
   halfway gives the same future.
 

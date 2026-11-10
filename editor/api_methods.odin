@@ -234,7 +234,7 @@ Api_Play_Step_Params :: struct {
 }
 
 Api_Build_Params :: struct {
-    target:[8]u8 `mirai:"optional,text,label=editor (the default): the library of the editor, loaded into it; game: the shipped game with its cooked assets; shaders: the shaders of the project published again, answering once the viewport draws with them"`,
+    target:[8]u8 `mirai:"optional,text,label=editor (the default): the library of the editor, loaded into it; game: the shipped game with its cooked assets; shaders: the shaders of the project published again, answering once the viewport draws with them; built: what a build outside the editor left (mirai build editor): its libraries and its shaders, loaded without building"`,
     out:[512]u8 `mirai:"optional,text,label=For the game: the folder it is built into; empty: .mirai/game of the project"`,
     seconds:int `mirai:"optional,min=1,max=3600,unit=s,label=How long it waits for the end of the build; past that it answers building and the build goes on"`,
 }
@@ -260,7 +260,7 @@ Api_Build_Diagnostic :: struct {
 
 Api_Build_Result :: struct {
     building:bool `mirai:"label=It still runs: the wait of build.start ran out or build.status asked while it runs"`,
-    restarting:bool `mirai:"label=The new library needs an engine built after this editor started: the editor starts again now on the new one"`,
+    restarting:bool `mirai:"label=What was built is not taken in place (a declaration of the engine changed or the worlds do not fit their room): the editor starts again now on it with its documents"`,
     publishing:bool `mirai:"label=Target shaders: the stages the frames do not run are still being compiled"`,
     target:[8]u8 `mirai:"text,label=editor or game: of the build that runs or ran last"`,
     game:[512]u8 `mirai:"text,label=The executable of the game the last build of the game left; player.start with shipped runs it"`,
@@ -1481,8 +1481,18 @@ api_build_start :: proc(s:^Session,call:^api.Call) {
     case "shaders":
         api_build_shaders(s,call,params.seconds)
         return
+    case "built":
+        if s.build.phase==.Running {break}
+        s.build.started_sources=code_fingerprint(s.project_root)
+        s.build.reload=library_stale(s)
+        // The shaders it published load as those the editor publishes, and it answers once the viewport draws with them.
+        shaders:u64
+        if s.app.renderer!=nil && host.app_shaders_behind(s.app) {shaders=host.app_shaders_reload(s.app)}
+        api_wait(s,f64(params.seconds),&shaders,built_loading,"loading")
+        api_build_result(s,call)
+        return
     case:
-        api.call_failf(call,api.INVALID_PARAMS,"target %q is editor, game or shaders",text)
+        api.call_failf(call,api.INVALID_PARAMS,"target %q is editor, game, shaders or built",text)
         return
     }
     out:=base.text_get(params.out[:])
@@ -1507,9 +1517,19 @@ api_build_start :: proc(s:^Session,call:^api.Call) {
         tool_call_fail(s,call,"The build could not start")
         return
     }
-    build_running :: proc(s:^Session,user:rawptr) -> bool {return s.build.phase==.Running || s.build.reload}
     api_wait(s,f64(params.seconds),nil,build_running,"building")
     api_build_result(s,call)
+}
+
+@(private="file")
+build_running :: proc(s:^Session,user:rawptr) -> bool {return s.build.phase==.Running || s.build.reload}
+
+@(private="file")
+built_loading :: proc(s:^Session,user:rawptr) -> bool {
+    if build_running(s,nil) {return true}
+    if s.app.renderer==nil {return false}
+    host.app_shaders_poll(s.app)
+    return host.app_shaders_loading(s.app,(^u64)(user)^) || gpu.renderer_pipelines_pending(s.app.renderer)
 }
 
 @(private)

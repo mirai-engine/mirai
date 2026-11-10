@@ -106,12 +106,13 @@ Field :: struct {
     axes:string,        // the letters of the cells of a vector, one each
     graphics:string,    // the label of the field in the graphics popup of the viewport
     choices:string,     // what the graphics popup offers: labels separated by |, each label:value or a label that is its value
+    was:string,         // the names the field had before, separated by spaces (was=): a migration reads a stored field by any of them
 }
 
 // The texts a field owns in its schema.
 @(private)
-field_texts :: #force_inline proc "contextless" (field:^Field) -> [10]^string {
-    return {&field.name,&field.label,&field.unit,&field.description,&field.asset_kinds,&field.section,&field.with,&field.icons,&field.axes,&field.graphics}
+field_texts :: #force_inline proc "contextless" (field:^Field) -> [11]^string {
+    return {&field.name,&field.label,&field.unit,&field.description,&field.asset_kinds,&field.section,&field.with,&field.icons,&field.axes,&field.graphics,&field.was}
 }
 
 Choice :: struct {name:string,value:i64}
@@ -480,6 +481,14 @@ schema_add_info :: proc(s:^Schema,info:^runtime.Type_Info,path:string) -> (Type_
             delete(type.name,s.allocator)
             return TYPE_NONE,false
         }
+        if clash:=was_clash(fields[:]);clash!="" {
+            for added in fields {schema_field_free(s,added)}
+            delete(type.name,s.allocator)
+            if s.error=="" {
+                if text,error:=strings.clone(fmt.tprintf("%s: %s",path==""?type_label(info):path,clash),s.allocator);error==nil {s.error=text}
+            }
+            return TYPE_NONE,false
+        }
         type.kind=.Struct
         type.first,type.count=u32(len(s.fields)),u32(len(fields))
         append(&s.fields,..fields[:])
@@ -500,6 +509,21 @@ schema_add_info :: proc(s:^Schema,info:^runtime.Type_Info,path:string) -> (Type_
 field_inlined :: proc(variant:runtime.Type_Info_Struct,i:int) -> (nested:runtime.Type_Info_Struct,inlined:bool) {
     if tagged,_:=field_tag(variant.tags[i]);.Inline not_in tagged.hints {return}
     return runtime.type_info_base(variant.types[i]).variant.(runtime.Type_Info_Struct)
+}
+
+// A field whose earlier name (was=) is the name of a field of the struct: a
+// stored value would go to both. "" when there is none.
+@(private)
+was_clash :: proc(fields:[]Field) -> string {
+    for field in fields {
+        rest:=field.was
+        for name in strings.fields_iterator(&rest) {
+            for other in fields {
+                if other.name==name {return fmt.tprintf("field %s: was=%s is the name of a field the struct has, and a stored value would go to both; give the earlier name to one field only",field.name,name)}
+            }
+        }
+    }
+    return ""
 }
 
 // The fields of a struct at offset of the one that holds them, in order.
@@ -559,7 +583,7 @@ schema_add_floats :: proc(s:^Schema,info:^runtime.Type_Info,type:Type,count:int,
 }
 
 // The options a tag takes, as an error names them.
-FIELD_TAGS :: "transient, local, readonly, hidden, color, angle, text, trim, entity, inline, optional, clamp, advanced, owned, game, hex, data, min=, max=, step=, precision=, bits=, unit=, name=, kind=, requires=, section=, with=, icons=, axes=, graphics=, choices= and, last, label="
+FIELD_TAGS :: "transient, local, readonly, hidden, color, angle, text, trim, entity, inline, optional, clamp, advanced, owned, game, hex, data, min=, max=, step=, precision=, bits=, unit=, name=, kind=, requires=, was=, section=, with=, icons=, axes=, graphics=, choices= and, last, label="
 
 // What the tag of a field says: the only reader of `mirai:"..."`, for the
 // schema and for whoever walks the type information of a struct itself. The
@@ -638,6 +662,7 @@ field_tag :: proc(tag:string) -> (field:Field,problem:string) {
         case "axes":     field.axes=value
         case "graphics": field.graphics=value
         case "choices":  field.choices=value
+        case "was":      field.was=value
         case "requires": field.required_component=value!=""?base.name_hash(value):0
         case:
             return field,fmt.tprintf("%q is not a tag of a field: the tags are %s",key,FIELD_TAGS)

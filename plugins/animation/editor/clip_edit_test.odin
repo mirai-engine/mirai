@@ -38,7 +38,7 @@ clip_test_assets :: proc(f:^Authoring_Test,t:^testing.T) -> (animation,skeleton:
         {target="root",property=.Position,keys=root},
         {target="root/pelvis",property=.Position,keys=pelvis},
         {target="root/pelvis/spine_01/clavicle_r/upperarm_r",property=.Rotation,keys=hand},
-    },markers={{.5,"step"}},root={translation=true}}
+    },markers={{time=.5,name="step"}},root={translation=true}}
     base.text_set(clip.root.bone[:],"root")
     testing.expect_value(t,aa.animation_save(fmt.tprintf("%s/sway.anim",f.root),&f.assets.types,{id=animation,clips={clip}}),aa.Error.None)
     testing.expect(t,host.assets_scan(&f.assets))
@@ -70,9 +70,9 @@ clip_edit_retimes_smooths_and_loops_into_a_new_clip_with_metrics_before_and_afte
 
     result:=authoring_test_execute(f,"analyze",fmt.tprintf(`{{%s,"clip":"sway"}}`,ids))
     if !testing.expect(t,result.code==0,result.message) {return}
-    text:=strings.clone(string(serial.writer_bytes(&f.out)),context.temp_allocator)
+    text:=strings.clone(api.json_compact(string(serial.writer_bytes(&f.out))),context.temp_allocator)
     testing.expect_value(t,result_shape_mismatch(Metrics_Result,text),"")
-    testing.expect(t,strings.contains(text,`"root": "root"`) && strings.contains(text,`"in_place": false`))
+    testing.expect(t,strings.contains(text,`"root":"root"`) && strings.contains(text,`"in_place":false`))
     testing.expectf(t,abs(clip_test_number(text,"speed","")-1)<.01,"speed in %s",text)
     jerk:=clip_test_number(text,"jerk","mean")
 
@@ -83,13 +83,13 @@ clip_edit_retimes_smooths_and_loops_into_a_new_clip_with_metrics_before_and_afte
     testing.expect_value(t,authoring_test_revision(f,"sway.anim"),before)
     result=authoring_test_execute(f,"edit",request)
     if !testing.expect(t,result.code==0,result.message) {return}
-    text=strings.clone(string(serial.writer_bytes(&f.out)),context.temp_allocator)
+    text=strings.clone(api.json_compact(string(serial.writer_bytes(&f.out))),context.temp_allocator)
     testing.expect_value(t,result_shape_mismatch(Clip_Edit_Result,text),"")
     after:=api.json_member(text,"after")
     testing.expectf(t,abs(clip_test_number(after,"duration","")-2)<1e-3,"after %s",after)
     testing.expectf(t,abs(clip_test_number(after,"speed","")-.5)<.02,"after %s",after)
     testing.expectf(t,clip_test_number(after,"jerk","mean")<jerk/4,"jerk %v to %s",jerk,after)
-    testing.expect(t,strings.contains(after,`"loop": true`))
+    testing.expect(t,strings.contains(after,`"loop":true`))
 
     file:aa.Asset
     if !testing.expect_value(t,authoring_test_load(f,"sway.anim",&file),aa.Error.None) {return}

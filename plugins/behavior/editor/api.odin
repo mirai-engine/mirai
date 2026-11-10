@@ -127,7 +127,7 @@ Place_Result :: struct {
 @(private)
 register :: proc(s:^editor.Session) {
     query_defaults:=Query_Params{inner=2,outer=8,rings=3,per_ring=12,spacing=1,keep=5}
-    editor.api_method_register(s,{name="behavior.minds",summary="The minds the game ticks (behavior.minds_tick): their names, their actions and how many Mind_Agents of the shown world run each.",flags={.Read_Only},result=type_info_of(Minds_Result),run=minds})
+    editor.api_method_register(s,{name="behavior.minds",summary="The minds the game declares (@(mind)): their names, their actions and how many Mind_Agents of the shown world run each.",flags={.Read_Only},result=type_info_of(Minds_Result),run=minds})
     editor.api_method_register(s,{name="behavior.inspect",summary="What the mind of a Mind_Agent does and why: the action and the step it runs by name, its stage and since when, its commit, the best proposals of its last decision with their scores, its last exits with their cause and what interrupted them, and what it holds of the claims. Use it in Play to see why an agent decides what it does.",params=type_info_of(Entity_Params),flags={.Read_Only},result=type_info_of(Inspect_Result),run=inspect})
     editor.api_method_register(s,{name="behavior.perception",summary="What a Perceiver remembers: each subject it saw or heard, where, by which senses this tick, how sure it still is, and the seconds since it first and last perceived it.",params=type_info_of(Entity_Params),flags={.Read_Only},result=type_info_of(Perception_Result),run=perception})
     editor.api_method_register(s,{name="behavior.offers",summary="The offers of a Smart_Object: each use, where its user stands, who may take it, how many at once, how many times and how often, how many times it was used, when it is offered again and who holds it now.",params=type_info_of(Entity_Params),flags={.Read_Only},result=type_info_of(Offers_Result),run=offers})
@@ -213,7 +213,7 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
     r:=api.call_result(call,Inspect_Result)
     r.mind=name_text(agent.mind)
     if entry==nil {
-        r.note="no mind is registered by this name: the game ticks it with behavior.minds_tick, which registers it"
+        r.note="no mind is registered by this name: the game declares it with @(mind=\"name\") on its think procedure, and it registers when the world plays"
         return
     }
     m:=&agent.state
@@ -370,9 +370,9 @@ query :: proc(s:^editor.Session,call:^api.Call) {
     agents_read:=core.read(agents if agents!=nil else &empty_agents)
     time:core.Time
     if t:=core.world_storage_of(world,core.Time);t!=nil {time=t^}
-    smart:=behavior.Smart_View{objects=core.read(objects if objects!=nil else &empty_objects),states=core.read(states if states!=nil else &empty_states),worlds=core.read(worlds),claims=core.world_storage_of(world,behavior.Claims),time=time}
+    smart:=behavior.Smart_View{objects=core.read(objects if objects!=nil else &empty_objects),states=core.read(states if states!=nil else &empty_states),worlds=core.read(worlds),claims=core.ref(core.world_storage_of(world,behavior.Claims)),time=time}
     filter:=behavior.place_filter(core.ref(navigation),e,paths_read,agents_read,core.read(walks if walks!=nil else &empty_walks),core.read(swims if swims!=nil else &empty_swims),core.ref(physics))
-    if !behavior.place_run(&places,q,&result,core.read(worlds),core.read(perceivers if perceivers!=nil else &empty_perceivers),core.read(perceivables if perceivables!=nil else &empty_perceivables),paths_read,core.ref(navigation),core.ref(physics),&filter,&smart,agents_read,influence_of(s,world)) {api.call_fail(call,api.SERVER_ERROR,"no memory for the path search of the query: free memory and ask again");return}
+    if !behavior.place_run(&places,q,&result,core.read(worlds),core.read(perceivers if perceivers!=nil else &empty_perceivers),core.read(perceivables if perceivables!=nil else &empty_perceivables),paths_read,core.ref(navigation),core.ref(physics),&filter,smart,agents_read,influence_of(s,world)) {api.call_fail(call,api.SERVER_ERROR,"no memory for the path search of the query: free memory and ask again");return}
     found:=make([]Place_Result,int(result.count),call.allocator)
     for &place,i in found {
         place={position=result.points[i],score=result.scores[i],offer=int(result.offers[i])}

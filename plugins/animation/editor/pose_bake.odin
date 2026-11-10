@@ -118,7 +118,8 @@ pose_bake_sample :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,e
     animation,_:=editor.entity_get(world,entity,anim.Animation)
     if animation.asset!={} {
         valid:bool;trace.primary,valid=program_source(s,call,animation.asset,animation.library);if !valid {return false}
-        trace.view,valid=program_animation_open(s,call,trace.primary,&source_file);if !valid {return false}
+        // A .character of only modifiers has no clips.
+        if trace.primary!={} {trace.view,valid=program_animation_open(s,call,trace.primary,&source_file);if !valid {return false}}
     }
     tracks:=make([dynamic]Pose_Bake_Track,call.allocator);frames:=int(preview.ticks)+1
     skeleton:^anim.Skeleton_Content
@@ -177,7 +178,7 @@ pose_bake_sample :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,e
             name:=preview_marker_name(preview_trace_source_view(&trace,event.animation),event.name)
             if name[0]==0 {authoring_failure(call,"markers","Missing_Name","a source name for every crossed marker",fmt.tprintf("%x",event.name),"A marker name could not be resolved");return false}
             label:=base.text_get(name[:]);owned:=strings.clone(label,call.allocator)
-            if len(owned)!=len(label) || len(markers)>=asset.ANIMATION_MAX_MARKERS || append(&markers,asset.Animation_Marker_Desc{previous+(time-previous)*event.fraction,owned})!=1 {authoring_failure(call,"markers","Capacity","memory and capacity for crossed markers","full marker buffer","The baked markers could not be stored",api.SERVER_ERROR);return false}
+            if len(owned)!=len(label) || len(markers)>=asset.ANIMATION_MAX_MARKERS || append(&markers,asset.Animation_Marker_Desc{time=previous+(time-previous)*event.fraction,name=owned})!=1 {authoring_failure(call,"markers","Capacity","memory and capacity for crossed markers","full marker buffer","The baked markers could not be stored",api.SERVER_ERROR);return false}
         }}}
         previous=time
     }

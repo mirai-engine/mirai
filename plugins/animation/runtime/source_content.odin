@@ -8,24 +8,23 @@ import lib "mirai:std/anim"
 import "mirai:std/base"
 import "base:runtime"
 
-// An Animation whose .match, action set or the spaces of its layers name clips
-// of several .anim plays one library that joins them, prepared once per set of
-// sources and shared by every entity and world. Its primary source is the
-// animation of its asset: its clips keep their names, those of another source
-// are named by source_clip_name.
+// An Animation whose .character names clips of several .anim (in its locomotion, its actions,
+// its layers or its spaces) plays one library that joins them, prepared once per set of sources
+// and shared by every entity and world. Its primary source is the animation of the set: its
+// clips keep their names, those of another source are named by source_clip_name.
 
 ANIMATION_SOURCES :: 64
 SOURCE_CACHE_CAPACITY :: 256
-SOURCE_DEPENDENCIES :: ANIMATION_SOURCES+STACK_LAYERS+2
+SOURCE_DEPENDENCIES :: ANIMATION_SOURCES+1
 // Joined libraries count their generations from here, apart from those of host content.
 SOURCE_GENERATION :: u32(1)<<31
 
 Source_Error :: enum u8 {None,Invalid,Alias_Collision,Out_Of_Memory}
 Source_Dependency :: struct {id:base.Asset_Id,size,time:i64,present:bool}
-// The sources of one Animation asset, library and actions, found again when one of the files
-// they were read from changes.
+// The sources of one Animation asset and library, found again when one of the files they were read
+// from changes.
 Source_Plan :: struct {
-    key:[3]base.Asset_Id,
+    key:[2]base.Asset_Id,
     primary:base.Asset_Id,
     dependencies:[]Source_Dependency,
     set:u32,                // in sets + 1; 0 plays the primary source alone
@@ -92,26 +91,27 @@ animation_playing_content :: proc(cache:^Source_Assets,app:^host.App,state:^Play
     return host.content_animation(app,state.asset)
 }
 
-// The library an Animation plays, joining the sources of its .match and its action set when there
-// are several. A tick whose assets did not change reuses the plan without reading them.
-animation_content :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,description:Animation,blends:^Blend_Assets=nil,matches:^Match_Assets=nil,actions:^Action_Runtime=nil) -> (content:^host.Content_Animation,error:Program_Error) {
+// The library an Animation plays, joining the sources of its .character when there are several. A
+// tick whose assets did not change reuses the plan without reading them.
+animation_content :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,description:Animation,characters:^Character_Assets=nil) -> (content:^host.Content_Animation,error:Program_Error) {
     if app.assets==nil || state==nil {return nil,.Invalid_Asset}
     if description.asset=={} {state.source_plan=0;return nil,.None}
-    if record,present:=asset.registry_find(&app.assets.registry,description.asset);present && record.kind==BLEND_KIND {state.source_plan=0;return nil,.Layer_Space}
+    // A set without clips plays none: it only adapts the pose.
+    if character:=animation_character(app.assets,description);character!={} && description.library=={} {
+        if set:=character_content(characters,app.assets,app.allocator,character);set!=nil && set.set.info.animation=={} {state.source_plan=0;return nil,.None}
+    }
     if cache==nil {
         primary:=description.asset
-        if record,present:=asset.registry_find(&app.assets.registry,description.asset);present {
-            if record.kind==MATCH_KIND {
-                match:=match_content(matches,app.assets,app.allocator,description.asset);if match==nil {return nil,.Invalid_Asset}
-                primary=source_effective({},match.profile.info.animation,description.library)
-            }
+        if character:=animation_character(app.assets,description);character!={} {
+            set:=character_content(characters,app.assets,app.allocator,character);if set==nil {return nil,.Invalid_Asset}
+            primary=source_effective({},set.set.info.animation,description.library)
         }
         state.source_plan=0
         return source_single(app,primary)
     }
     if cache.allocator.procedure==nil {cache.allocator=app.allocator}
     context.allocator=cache.allocator
-    key:=[3]base.Asset_Id{description.asset,description.library,description.actions}
+    key:=[2]base.Asset_Id{description.asset,description.library}
     at:=int(state.source_plan)-1
     if at<0 || at>=len(cache.plans) || cache.plans[at].key!=key {at=-1;for plan,i in cache.plans {if plan.key==key {at=i;break}}}
     if at<0 {
@@ -132,7 +132,7 @@ animation_content :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,desc
     primary:=plan.primary
     if changed {
         ok:bool
-        primary,ok=source_collect(app.assets,app.allocator,description,state.entity,blends,matches,actions,&ids,&count,&dependencies,&dependency_count)
+        primary,ok=source_collect(app.assets,app.allocator,description,characters,&ids,&count,&dependencies,&dependency_count)
         if !ok {return nil,.Invalid_Asset}
     } else if plan.set>0 {set:=cache.sets[plan.set-1];count=len(set.ids);copy(ids[:],set.ids)} else {ids[0]=primary;count=1}
     copied:[]Source_Dependency
@@ -152,11 +152,11 @@ animation_content :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,desc
 
 // While a source of what an Animation now names still has its first load under way, the library
 // of the plan it played before, with the asset and library that plan was made for. None when it
-// played nothing, or its actions asset changed: those actions name clips of the new sources.
+// played nothing, or its asset changed: a new .character names clips of the new sources.
 source_previous :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,description:Animation) -> (content:^host.Content_Animation,played,library:base.Asset_Id,kept:bool) {
     if cache==nil || app==nil || state==nil || state.source_plan==0 || int(state.source_plan)>len(cache.plans) {return}
     plan:=&cache.plans[state.source_plan-1]
-    if !plan.valid || plan.key[2]!=description.actions || plan.key==([3]base.Asset_Id{description.asset,description.library,description.actions}) {return}
+    if !plan.valid || plan.key[0]!=description.asset || plan.key==([2]base.Asset_Id{description.asset,description.library}) {return}
     found,error:=source_plan_content(cache,app,plan)
     if error!=.None || found==nil {return}
     return found,plan.key[0],plan.key[1],true
@@ -298,40 +298,24 @@ source_id_add :: proc(ids:^[ANIMATION_SOURCES]base.Asset_Id,count:^int,id:base.A
     ids[count^]=id;count^+=1;return true
 }
 @(private)
-source_blend_collect :: proc(profile:Blend_Profile,override:base.Asset_Id,ids:^[ANIMATION_SOURCES]base.Asset_Id,count:^int) -> bool {
-    for sample in profile.samples {if !source_id_add(ids,count,source_effective(sample.animation,profile.info.animation,override)) {return false}}
-    return true
-}
-
-@(private)
-source_collect :: proc(assets:^host.Assets,allocator:runtime.Allocator,description:Animation,entity:core.Entity,blends:^Blend_Assets,matches:^Match_Assets,actions:^Action_Runtime,ids:^[ANIMATION_SOURCES]base.Asset_Id,count:^int,dependencies:^[SOURCE_DEPENDENCIES]Source_Dependency,dependency_count:^int) -> (primary:base.Asset_Id,ok:bool) {
+source_collect :: proc(assets:^host.Assets,allocator:runtime.Allocator,description:Animation,characters:^Character_Assets,ids:^[ANIMATION_SOURCES]base.Asset_Id,count:^int,dependencies:^[SOURCE_DEPENDENCIES]Source_Dependency,dependency_count:^int) -> (primary:base.Asset_Id,ok:bool) {
     if !source_dependency_add(assets,dependencies,dependency_count,description.asset) {return}
     record,present:=asset.registry_find(&assets.registry,description.asset)
     kind:=record.kind if present else asset.KIND_ANIMATION
     primary=description.asset
     switch kind {
-    case MATCH_KIND:
-        match:=match_content(matches,assets,allocator,description.asset);if match==nil {return}
-        primary=source_effective({},match.profile.info.animation,description.library)
+    case CHARACTER_KIND:
+        content:=character_content(characters,assets,allocator,description.asset);if content==nil {return}
+        set:=content.set;animation:=set.info.animation;library:=description.library
+        primary=source_effective({},animation,library)
         if !source_id_add(ids,count,primary) {return}
-        for clip in match.profile.clips {if !source_id_add(ids,count,source_effective(clip.animation,match.profile.info.animation,description.library)) {return}}
+        for clip in set.match.clips {if !source_id_add(ids,count,source_effective(clip.animation,animation,library)) {return}}
+        for action in set.actions.actions {if !source_id_add(ids,count,source_effective(action.animation,animation,library)) {return}}
+        for layer in set.actions.layers {if (layer.clip[0]!=0 || layer.reference_clip[0]!=0) && !source_id_add(ids,count,source_effective(layer.animation,animation,library)) {return}}
+        for sample in set.space_samples {if !source_id_add(ids,count,source_effective(sample.animation,animation,library)) {return}}
     case asset.KIND_ANIMATION:
         if description.library!={} || !source_id_add(ids,count,primary) {return}
     case: return
-    }
-    if description.actions!={} {
-        if !source_dependency_add(assets,dependencies,dependency_count,description.actions) {return}
-        active:=action_state(actions,entity)
-        if active==nil || active.plan<0 || int(active.plan)>=len(actions.plans) {return}
-        profile:=actions.plans[active.plan].profile
-        for action in profile.actions {if !source_id_add(ids,count,source_effective(action.animation,profile.info.animation,description.library)) {return}}
-        for layer in profile.layers {
-            if layer.clip[0]!=0 || layer.reference_clip[0]!=0 {if !source_id_add(ids,count,source_effective(layer.animation,profile.info.animation,description.library)) {return}}
-            if layer.space=={} {continue}
-            if !source_dependency_add(assets,dependencies,dependency_count,layer.space) {return}
-            // A space that cannot be read is the problem of its layer, not of what the entity plays.
-            if blend:=blend_content(blends,assets,allocator,layer.space);blend!=nil && !source_blend_collect(blend.profile,description.library,ids,count) {return}
-        }
     }
     for id in ids[:count^] {if !source_dependency_add(assets,dependencies,dependency_count,id) {return}}
     // The primary source stays first and the rest are sorted, so equal sets share one library.

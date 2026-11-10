@@ -38,7 +38,7 @@ program_bench_pose_hash :: proc(pose:[]mm.Transform) -> u64 {
 }
 
 // What a tick does for the pose of one rig: the clip of its component, or the program output is
-// when given (the clip a .match picked), then the slots of its stack.
+// when given (the clip the locomotion picked), then the slots of its stack.
 @(private)
 program_bench_step :: proc(state:^Playing,playback:^Playback,content:^host.Content_Animation,animation:Animation,events:^Animation_Events,output:^Program_Output) -> bool {
     clear(&events.items)

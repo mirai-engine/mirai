@@ -123,8 +123,8 @@ Owner of everything it contains; `asset/document.odin` builds by tables, columns
 `asset.KINDS` gives extension, fourcc, name and version of each engine type; their tables are in
 their `asset/<type>.odin` and `mirai asset info` shows them. Contract of each: [kinds.md](kinds.md);
 scenes and their prefab instances: [scenes.md](scenes.md). The plugins' types are declared and
-validated by their plugin without adding them to the core: `.pose`, `.blend` and `.action`
-([animation](../../mirai-animation/references/animation.md)),
+validated by their plugin without adding them to the core:
+[`.character`](../../mirai-animation/references/animation.md#components-and-shared-data),
 [`.foliage`](../../mirai-world/references/foliage.md#format),
 [`.terrain`](../../mirai-world/references/terrain.md) and
 [`.physics_cache`](../../mirai-plugins/references/physics-cache.md).
@@ -145,15 +145,8 @@ validated by their plugin without adding them to the core: `.pose`, `.blend` and
   them), `scene`, `overrides` and `off` (turned-off components). With one root it is a
   [prefab](scenes.md#prefab).
 - **`.anim`** (`ANIM`): `clips` (`Animation_Clip`), `tracks` (`Animation_Track`), `keys`
-  (`anim.Keyframe`), `markers` (`Animation_Marker`) and the bulk `streams`, empty but in a cooked
-  `.anim`.
-- **`.pose`** (`POSE`): constraint tables of the [animation
-  plugin](../../mirai-animation/references/animation.md): `ik`, `look`, `limits`, `contacts`,
-  `grounding`, `retarget`.
-- **`.blend`** (`BLND`): `blend` (`Blend_Info`), `samples` (`Blend_Sample`), `segments`,
-  `triangles`; defined and validated by the animation plugin.
-- **`.action`**: `info` (`Action_Info`), `layers` (`Stack_Layer`), `actions`, `sections`,
-  `windows`; defined and validated by the animation plugin.
+  (`anim.Keyframe`), `markers` (`Animation_Marker`, a moment or, with a duration, a span) and the
+  bulk `streams`, empty but in a cooked `.anim`.
 - **`.sound`** (`SND `): `sound` (`Sound_Info`) and one of two bulk tables: `samples` (`i16`) or
   `file` (`u8`).
 - **`.sound_set`** (`SSET`): `sound_set` (`Sound_Set_Info`).
@@ -273,7 +266,8 @@ scan opens every file and writes it again.
 
 ## Text
 
-`document_text_write` produces the JSON that `mirai asset dump` prints and `unpack` saves:
+`document_text_write` produces the JSON that `mirai asset dump` prints and `unpack` saves, of
+every kind but a scene and a `.ui`, whose text is their document ([CLI](cli.md#subcommands)):
 `mirai_asset`, the header (`kind`, `kind_version`, `id`, `owner` only on a part of another asset,
 `flags`), `dependencies`, the optional `schema` and the `tables`, each with its columns and `data`.
 

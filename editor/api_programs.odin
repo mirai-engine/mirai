@@ -372,7 +372,7 @@ programs_wait :: proc(s:^Session,seconds:f64,viewport:=false) -> (ok:bool,messag
     load:=pub.preview
     if viewport {
         if s.app.renderer!=nil && pub.refused {
-            if s.app.shaders.state==.Stale {return false,"the shaders of the engine changed since this editor was built, and it draws with those it was built with: build the editor again (mirai build editor) and restart it"}
+            if s.app.shaders.state==.Stale {return false,"the shaders of the engine bind or lay out otherwise than when this editor was built, and it draws with those it was built with: mirai build editor builds it again and its session takes it"}
             return false,"the renderer refused the shaders; engine.diagnostics has why"
         }
         load=pub.running!=0?pub.running:pub.whole

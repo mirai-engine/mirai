@@ -121,8 +121,8 @@ fader_cuts_without_a_fade_and_nested_fades_keep_the_pose_where_it_was :: proc(t:
 fader_reports_the_markers_of_both_clips :: proc(t:^testing.T) {
     lib:=make_library(t)
     defer library_destroy(&lib)
-    a,_:=clip_add(&lib,{loop=.Loop,tracks={{target=HIP,property=.Float,keys={key(0,0),key(1,1)}}},markers={{0.5,1}}})
-    b,_:=clip_add(&lib,{loop=.Loop,tracks={{target=HIP,property=.Float,keys={key(0,0),key(1,1)}}},markers={{0.5,2}}})
+    a,_:=clip_add(&lib,{loop=.Loop,tracks={{target=HIP,property=.Float,keys={key(0,0),key(1,1)}}},markers={{0.5,1,0}}})
+    b,_:=clip_add(&lib,{loop=.Loop,tracks={{target=HIP,property=.Float,keys={key(0,0),key(1,1)}}},markers={{0.5,2,0}}})
     f:Fader
     fader_play(&f,a)
     fader_advance(&lib,&f,0.25,nil)

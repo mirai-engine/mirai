@@ -35,14 +35,14 @@ gallery_rigs :: proc(o:^Out) {
         switch kind {
         case .Spline:
             spline:=anim.SPLINE_IK_CONSTRAINT_DEFAULT;base.text_set(spline.name[:],"tail");spline.root,spline.end=anim.bone_ref("joint0"),anim.bone_ref("joint8");spline.controls={anim.spatial_point(origin),anim.spatial_point(origin+{0,.7,0}),anim.spatial_point(origin+{.5,1.5,0}),anim.spatial_point(origin+{.4,2.3,0})};spline.up={0,0,1}
-            pose_write(o,"animation_gallery/rig_playground","playground_spline",{spline_ik={spline}})
+            gallery_set(o,"animation_gallery/rig_playground","playground_spline",{},{pose={spline_ik={spline}}})
         case .Stretch:
             chain:=anim.CHAIN_IK_CONSTRAINT_DEFAULT;base.text_set(chain.name[:],"reach");chain.root,chain.end=anim.bone_ref("joint0"),anim.bone_ref("joint8");chain.target=anim.spatial_point(origin+{0,2.5,0});chain.pole=origin+{0,1,1};chain.use_pole=true;chain.reach={soft_distance=.3,max_stretch=.4}
-            pose_write(o,"animation_gallery/rig_playground","playground_stretch",{chain_ik={chain}})
+            gallery_set(o,"animation_gallery/rig_playground","playground_stretch",{},{pose={chain_ik={chain}}})
         case .Corrective:
             corrective:=anim.POSE_CORRECTIVE_DEFAULT;base.text_set(corrective.name[:],"bend_bulge");base.text_set(corrective.curve[:],"bulge");corrective.driver,corrective.bone=anim.bone_ref("joint3"),anim.bone_ref("joint3");corrective.sample_count=2
             corrective.samples[0],corrective.samples[1]=anim.POSE_CORRECTIVE_SAMPLE_DEFAULT,anim.POSE_CORRECTIVE_SAMPLE_DEFAULT;corrective.samples[1].rotation=mm.quat_axis_angle({0,0,1},1.4);corrective.samples[1].delta.scale={2,1,2};corrective.samples[1].curve_value=1
-            pose_write(o,"animation_gallery/rig_playground","playground_corrective",{correctives={corrective}})
+            gallery_set(o,"animation_gallery/rig_playground","playground_corrective",{},{pose={correctives={corrective}}})
         }
     }
 }

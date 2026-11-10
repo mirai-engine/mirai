@@ -781,50 +781,61 @@ engine_process_text :: proc(p:Engine_Process,role:Engine_Role) -> string {
 
 // Before a build replaces the binaries of the engine of a mode. The build
 // moves aside the ones a program runs (build.engine_unlock), so nothing stops
-// it: the other programs that run them go on with the binaries they started
-// with, each one said in a line, until they start again. The session mirai
-// session opened for the project at folder closes, and session_reopen opens it
-// again after the build on the new ones. folder "" closes no session.
-engine_release :: proc(root,folder:string,mode:Build_Mode,command:string) -> (closed:Session_Record,discarded:int,ok:bool) {
+// it: the programs that run them go on with the binaries they started with,
+// each one said in a line, until they start again. Not the session mirai
+// session opened for the project at folder, which takes the build when it
+// ends (session_take).
+engine_release :: proc(root,folder:string,mode:Build_Mode,command:string) {
     binaries:=build.engine_paths(root,mode,context.temp_allocator).folder
     running:=engine_processes(binaries)
-    roles:=make([]Engine_Role,len(running),context.temp_allocator)
     session:=0
-    for p,i in running {
-        roles[i]=engine_process_role(p)
-        if roles[i]==.Session && folder!="" && project.path_same(p.project,folder) {session=p.pid}
+    for p in running {
+        if folder!="" && engine_process_role(p)==.Session && project.path_same(p.project,folder) {session=p.pid}
     }
     others:=0
-    for p,i in running {
-        // What the session started, as its players, ends with it.
+    for p in running {
         if session!=0 && (p.pid==session || p.parent==session) {continue}
         if others==0 {fmt.eprintfln("mirai %s: these go on with the engine binaries of %s they started with; they take the new ones when they start again:",command,binaries)}
         others+=1
         fmt.eprintfln("  pid %d, %s %s of %s",p.pid,filepath.base(p.program),p.headless?"headless":"windowed",p.project!=""?p.project:"no project")
     }
-    if session==0 {return {},0,true}
-    file,_:=session_find(folder)
-    closed,_=session_record(folder)
-    shut:bool
-    if shut,discarded=session_close(folder,file,false,command,fmt.tprintf("mirai session restart %s --discard",folder));!shut {return {},0,false}
-    for p in running {
-        if p.parent==session {process_end(p.pid,5*time.Second)}
-    }
-    return closed,discarded,true
 }
 
-// Opens again, with its arguments and without building, the session
-// engine_release closed; says so in a line.
-session_reopen :: proc(root,folder:string,closed:Session_Record,discarded:int,mode:Build_Mode,engine_built:bool,command:string) {
-    copies:=discarded>0?fmt.tprintf(", discarding %d unsaved changes of copies in .mirai/tmp/,",discarded):""
-    if !engine_built {
-        fmt.eprintfln("mirai %s: closed the session of %s (pid %d)%s because it ran the binaries to replace, and the engine did not build: mirai session start opens it",command,folder,closed.pid,copies)
+// How long the session has to take a build (session_take): the load, and the
+// editor that starts again.
+SESSION_TAKE_S :: 180
+
+// The session mirai session opened for the project takes what the builds
+// since it loaded its binaries left, and the command ends once it runs them:
+// the libraries and the shaders. The libraries of the engine built again
+// whose declarations stand go in place, with its documents, its Play and its
+// history as they are (build.engine_swap); otherwise it starts again with its
+// documents. Says which in a line, with what keeps it from going on.
+session_take :: proc(root,folder:string,mode:Build_Mode) {
+    file,alive:=session_find(folder)
+    paths:=build.engine_paths(root,mode,context.temp_allocator)
+    if !alive || !file.manual || !project.path_same(file.engine,paths.folder) {return}
+    now:=build.engine_stamp_of(paths.folder,context.temp_allocator)
+    libraries,restart:=build.engine_swap(mode,file.stamp,now,context.temp_allocator)
+    started:=time.tick_now()
+    result,err,called:=api.rpc_call(file.port,"build.start",`{"target":"built"}`,1,SESSION_TAKE_S*1000,context.temp_allocator)
+    reply:struct {restarting:bool}
+    if !called || err.code!=0 || json.unmarshal_string(result,&reply,allocator=context.temp_allocator)!=nil {
+        fmt.eprintfln("mirai build: the session of %s (pid %d) did not take this build (%s); mirai session restart opens it with it",folder,file.pid,err.message!=""?err.message:"it did not answer")
         return
     }
-    file,code:=session_open(root,folder,mode,true,180,closed.args)
-    if code!=0 {
-        fmt.eprintfln("mirai %s: closed the session of %s (pid %d)%s because it ran the binaries to replace, and could not open it again",command,folder,closed.pid,copies)
+    if !reply.restarting {
+        names:=make([dynamic]string,context.temp_allocator)
+        for library in libraries {append(&names,library.file)}
+        fmt.printfln("Session of %s (pid %d) runs this build after %.1f s, without starting again%s%s.",folder,file.pid,time.duration_seconds(time.tick_since(started)),len(names)>0?": it took in place ":"",strings.join(names[:],", ",context.temp_allocator))
         return
     }
-    fmt.printfln("Session of %s closed (pid %d)%s because it ran the binaries to replace, and opened again with this build (pid %d).",folder,closed.pid,copies,file.pid)
+    for time.duration_seconds(time.tick_since(started))<SESSION_TAKE_S {
+        if next,answers:=session_find(folder);answers && next.pid!=file.pid && session_answers(next.port) {
+            fmt.printfln("Session of %s started again on this build with its documents after %.1f s (pid %d, before %d): %s.",folder,time.duration_seconds(time.tick_since(started)),next.pid,file.pid,restart!=""?restart:"the worlds of the project do not fit the room they have")
+            return
+        }
+        time.sleep(250*time.Millisecond)
+    }
+    fmt.eprintfln("mirai build: the session of %s did not answer %d s after starting again; mirai session status says what runs",folder,SESSION_TAKE_S)
 }

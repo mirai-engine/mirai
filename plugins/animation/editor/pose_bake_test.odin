@@ -3,12 +3,10 @@ package animation_editor
 import "base:runtime"
 import "core:fmt"
 import "core:math/linalg"
-import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
-import "mirai:editor"
 import "mirai:editor/api"
 import erender "mirai:engine/render"
 import "mirai:host"
@@ -20,7 +18,7 @@ import anim "plugins:animation/runtime"
 Pose_Bake_Test_World :: struct {
     using world:core.Test_World,
     ids:core.Table(core.Id),transforms:core.Table(core.Transform),parents:core.Table(core.Parent),worlds:core.Table(core.World_Transform),disabled:core.Table(core.Disabled),
-    names:core.Table(core.Name),targets:core.Table(anim.Animation_Target),animations:core.Table(anim.Animation),modifiers:core.Table(anim.Pose_Modifiers),
+    names:core.Table(core.Name),targets:core.Table(anim.Animation_Target),animations:core.Table(anim.Animation),
     meshes:core.Table(erender.Mesh_Renderer),morph_weights:core.Table(anim.Morph_Weights),sources:core.Table(anim.Pose_Source),
     attachments:core.Table(anim.Bone_Attachment),
     playback:anim.Playback,requests:anim.Animation_Requests,events:anim.Animation_Events,constraints:anim.Animation_Constraints,
@@ -29,7 +27,7 @@ Pose_Bake_Test_World :: struct {
     hierarchy:core.Hierarchy,propagation:core.Propagation,jumps:core.Jumps,
     progress:core.Table(anim.Animation_Progress),time:core.Time,frame:core.Frame_Time,world_id:core.World_Id,
 }
-Pose_Bake_Test_Shared :: struct {skeletons:anim.Skeleton_Assets,poses:anim.Pose_Assets,blends:anim.Blend_Assets,graphs:anim.Match_Assets,sources:anim.Source_Assets,skin:anim.Skin_Runtime,actions:anim.Actions_Assets,problems:core.By_World(core.Problems)}
+Pose_Bake_Test_Shared :: struct {skeletons:anim.Skeleton_Assets,characters:anim.Character_Assets,sources:anim.Source_Assets,skin:anim.Skin_Runtime,problems:core.By_World(core.Problems)}
 Pose_Bake_Test :: struct {authoring:Authoring_Test,world:Pose_Bake_Test_World,shared:Pose_Bake_Test_Shared,info:core.World_Info,rig:core.Entity}
 @(private)
 Pose_Bake_Failing_Copy :: struct {owner:runtime.Allocator,attempts,fail_at:int}
@@ -44,13 +42,13 @@ pose_bake_failing_copy_allocator :: proc(data:rawptr,mode:runtime.Allocator_Mode
 @(private)
 pose_bake_test_sample :: proc(data,shared,editor,app_data:rawptr) {
     w,s,app:=(^Pose_Bake_Test_World)(data),(^Pose_Bake_Test_Shared)(shared),(^host.App)(app_data)
-    anim.animation_sample(core.read(&w.animations),&w.progress,core.read(&w.modifiers),core.read(&w.attachments),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),core.read(&w.targets),core.read(&w.meshes),core.read(&w.sources),&w.requests,&w.events,&w.modifier_requests,&w.modifier_runtime,&w.playback,&s.poses,&s.skeletons,app,w.time,w.frame,host.app_world_storage(app,data,core.Problems),&s.blends,&s.graphs,&w.actions,&s.actions,nil,&w.motion_requests,nil,&s.sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
+    anim.animation_sample(core.read(&w.animations),&w.progress,core.read(&w.attachments),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),core.read(&w.targets),core.read(&w.meshes),core.read(&w.sources),&w.requests,&w.events,&w.modifier_requests,&w.modifier_runtime,&w.playback,&s.characters,&s.skeletons,app,w.time,w.frame,host.app_world_storage(app,data,core.Problems),&w.actions,nil,&w.motion_requests,&s.sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
     core.settle(app.info,data,editor)
 }
 @(private)
 pose_bake_test_advance :: proc(data,shared,editor,app_data:rawptr) {
     w,s,app:=(^Pose_Bake_Test_World)(data),(^Pose_Bake_Test_Shared)(shared),(^host.App)(app_data)
-    anim.animation_advance(core.read(&w.modifiers),&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.modifier_requests,&w.modifier_runtime,&w.playback,&w.constraints,&w.grounding,{},{},w.time,&w.requests,core.ref(&s.skeletons),host.app_world_storage(app,data,core.Problems),nil,nil,{},{},core.CLOCK_DEFAULT,nil)
+    anim.animation_advance(&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.modifier_requests,&w.modifier_runtime,&w.playback,&w.constraints,&w.grounding,{},{},w.time,&w.requests,core.ref(&s.skeletons),host.app_world_storage(app,data,core.Problems),nil,&s.characters,{},{},core.CLOCK_DEFAULT,nil)
     core.settle(app.info,data,editor)
 }
 @(private)
@@ -114,12 +112,13 @@ pose_bake_uses_preview_actions_and_keeps_marker_crossings_across_discontinuous_s
     f:=new(Pose_Bake_Test);defer free(f);if !pose_bake_test_init(f,t,"pose-bake-actions") {return};defer pose_bake_test_destroy(f)
     a:=&f.authoring;source_id,action_id:=base.Asset_Id{504,1},base.Asset_Id{504,2}
     root:asset.Animation_Root;base.text_set(root.bone[:],"joint1");root.translation=true
-    clips:=[2]asset.Animation_Clip_Desc{{name="Idle"},{name="Reach",root=root,tracks={{target="joint1",property=.Position,keys={{time=0},{time=2,value={2,0,0,0}}}}},markers={{time=.1,name="start"},{time=1.1,name="end"}}}}
+    clips:=[2]asset.Animation_Clip_Desc{{name="Idle"},{name="Reach",root=root,tracks={{target="joint1",property=.Position,keys={{time=0},{time=2,value={2,0,0,0}}}}},markers={{time=.1,name="start"},{time=1.1,name="end"},{time=0,name="prepare",duration=.25},{time=1,name="contact",duration=.5}}}}
     testing.expect_value(t,asset.animation_save(fmt.tprintf("%s/source.anim",a.root),&a.assets.types,{id=source_id,clips=clips[:]}),asset.Error.None)
     definition:=anim.ACTION_DEFINITION_DEFAULT;base.text_set(definition.name[:],"reach");base.text_set(definition.clip[:],"Reach");definition.fade_in,definition.fade_out=0,0;definition.root_motion=.In_Place
-    sections:=[2]anim.Action_Section{{start=0,end=.25,next=1},{start=1,end=1.5,next=-1}};base.text_set(sections[0].name[:],"prepare");base.text_set(sections[1].name[:],"contact")
-    testing.expect_value(t,anim.action_profile_save(fmt.tprintf("%s/reach.action",a.root),&a.assets.types,action_id,{info={animation=source_id},actions={definition},sections=sections[:]}),asset.Error.None);testing.expect(t,host.assets_scan(&a.assets))
-    description:=anim.ANIMATION_DEFAULT;description.asset,description.actions=source_id,action_id;description.loop=false;base.text_set(description.clip[:],"Idle");core.add(&f.world.animations,f.rig,description);core.settle(&f.info,&f.world,nil)
+    sections:=[2]anim.Action_Section{{next=1},{next=-1}};base.text_set(sections[0].name[:],"prepare");base.text_set(sections[1].name[:],"contact")
+    set:=anim.character_set_make(source_id);set.actions={actions={definition},sections=sections[:]}
+    testing.expect_value(t,anim.character_save(fmt.tprintf("%s/reach.character",a.root),&a.assets.types,action_id,set),asset.Error.None);testing.expect(t,host.assets_scan(&a.assets))
+    description:=anim.ANIMATION_DEFAULT;description.asset=action_id;description.loop=false;base.text_set(description.clip[:],"Idle");core.add(&f.world.animations,f.rig,description);core.settle(&f.info,&f.world,nil)
     result:=authoring_test_execute(a,"bake",`{"entity":"0000000000000011","path":"action.anim","clip":"Final","start":0,"end":0.4,"rate":2.5,"actions":[{"name":"reach","tick":0}]}`);if !testing.expect(t,result.code==0,result.message) {return}
     file:asset.Asset;testing.expect_value(t,authoring_test_load(a,"action.anim",&file),asset.Error.None);defer asset.asset_close(&file)
     view,error:=asset.animation_view(&file,&a.assets.types);if !testing.expect_value(t,error,asset.Error.None) {return}
@@ -147,13 +146,14 @@ pose_bake_samples_final_constraints_curves_markers_root_and_exact_partial_endpoi
     }
     ik:=anim.IK_CONSTRAINT_DEFAULT;ik.root,ik.joint,ik.end=anim.bone_ref("joint2"),anim.bone_ref("joint3"),anim.bone_ref("joint4")
     corrective:=anim.POSE_CORRECTIVE_DEFAULT;base.text_set(corrective.name[:],"root-offset");corrective.driver,corrective.bone=anim.bone_ref("joint1"),anim.bone_ref("joint1");base.text_set(corrective.curve[:],"bulge");corrective.sample_count=1;corrective.samples[0]=anim.POSE_CORRECTIVE_SAMPLE_DEFAULT;corrective.samples[0].delta.position={.1,0,0};corrective.samples[0].curve_value=.7
-    testing.expect_value(t,anim.pose_profile_save(fmt.tprintf("%s/constraints.pose",a.root),&a.assets.types,pose_id,{ik={ik},correctives={corrective}}),asset.Error.None)
+    set:=anim.character_set_make(source_id);set.pose={ik={ik},correctives={corrective}}
+    testing.expect_value(t,anim.character_save(fmt.tprintf("%s/blend.character",a.root),&a.assets.types,pose_id,set),asset.Error.None)
     testing.expect(t,host.assets_scan(&a.assets))
     // The walk carries the root; a layer under it plays the run of the other source in step, at half its weight.
     authoring_test_register(a,t,"set",Action_Write_Params,authoring_action_set,action_write_defaults())
-    result:=authoring_test_execute(a,"set",fmt.tprintf(`{{"path":"blend.action","animation":"%s","layers":[{{"name":"Run","clip":"run","animation":"%s","over":{{"path":"joint2"}},"sync":true,"weight":0.5,"fade":0}}]}}`,authoring_test_id_text(source_id),authoring_test_id_text(other_id)))
+    result:=authoring_test_execute(a,"set",fmt.tprintf(`{{"path":"blend.character","animation":"%s","layers":[{{"name":"Run","clip":"run","animation":"%s","over":{{"path":"joint2"}},"sync":true,"weight":0.5,"fade":0}}]}}`,authoring_test_id_text(source_id),authoring_test_id_text(other_id)))
     if !testing.expect(t,result.code==0,result.message) {return}
-    animation:=anim.ANIMATION_DEFAULT;animation.asset,animation.actions=source_id,authoring_test_id(a,"blend.action");base.text_set(animation.clip[:],"walk");animation.root_motion=.In_Place;core.add(&f.world.animations,f.rig,animation);core.add(&f.world.modifiers,f.rig,{profile=pose_id,weight=1,enabled=true});core.settle(&f.info,&f.world,nil)
+    animation:=anim.ANIMATION_DEFAULT;animation.asset=pose_id;base.text_set(animation.clip[:],"walk");animation.root_motion=.In_Place;core.add(&f.world.animations,f.rig,animation);core.settle(&f.info,&f.world,nil)
     before:=f.world.transforms.values[1]
     result=authoring_test_execute(a,"bake",`{"entity":"0000000000000011","path":"final.anim","clip":"Baked","start":0.2,"end":0.57,"rate":10,"goals":[{"kind":"IK","name":"joint4","target":{"position":[1,1,0]}}]}`)
     if !testing.expect(t,result.code==0,result.message) {return}
@@ -234,10 +234,14 @@ pose_bake_creates_editable_tracks_from_an_unanimated_skeleton_and_exports_final_
     testing.expect_value(t,source_mesh_save(fmt.tprintf("%s/rig.mesh",a.root),&a.assets.types,{id=mesh_id,skeleton=skeleton_id,joints={{node=0,inverse_bind=1}}},{vertices=vertices[:],skin=skin[:],morphs={target},morph_deltas={{vertex=0,position={.1,0,0}}}},{0,1,2}),asset.Error.None)
     follow:=anim.FOLLOW_CONSTRAINT_DEFAULT;follow.bone=anim.bone_ref("joint2");follow.target=anim.spatial_point({.3,1,0});base.text_set(follow.name[:],"hand")
     corrective:=anim.POSE_CORRECTIVE_DEFAULT;corrective.driver=anim.bone_ref("joint1");corrective.apply_pose=false;corrective.sample_count=1;corrective.samples[0]=anim.POSE_CORRECTIVE_SAMPLE_DEFAULT;corrective.samples[0].curve_value=.3;base.text_set(corrective.curve[:],"Smile");base.text_set(corrective.name[:],"face")
-    testing.expect_value(t,anim.pose_profile_save(fmt.tprintf("%s/procedural.pose",a.root),&a.assets.types,profile_id,{follow={follow},correctives={corrective}}),asset.Error.None);testing.expect(t,host.assets_scan(&a.assets))
-    core.add(&f.world.meshes,f.rig,{mesh=mesh_id});core.add(&f.world.modifiers,f.rig,{profile=profile_id,weight=1,enabled=true});core.settle(&f.info,&f.world,nil)
-    testing.expect(t,core.count(&f.world.animations)==0 && core.count(&f.world.sources)==0 && len(f.world.playback.states)==0)
-    expected:=[4]f32{.2,.7,.8,.6};paths:=[4]string{"zero.anim","default.anim","override.anim","additive.anim"}
+    // A .character without clips: only its modifiers.
+    set:=anim.character_set_make({});set.pose={follow={follow},correctives={corrective}}
+    testing.expect_value(t,anim.character_save(fmt.tprintf("%s/procedural.character",a.root),&a.assets.types,profile_id,set),asset.Error.None);testing.expect(t,host.assets_scan(&a.assets))
+    animation:=anim.ANIMATION_DEFAULT;animation.asset=profile_id
+    core.add(&f.world.meshes,f.rig,{mesh=mesh_id});core.add(&f.world.animations,f.rig,animation);core.settle(&f.info,&f.world,nil)
+    testing.expect(t,core.count(&f.world.sources)==0 && len(f.world.playback.states)==0)
+    // The curve of the corrective adds .3 to the weight of the morph unless an override sets it.
+    expected:=[4]f32{.5,.7,.8,.6};paths:=[4]string{"zero.anim","default.anim","override.anim","additive.anim"}
     modes:=[4]anim.Morph_Weight_Mode{.Default,.Default,.Override,.Additive};values:=[4]f32{0,.4,.8,.1}
     for pass in 0..<4 {
         if pass>0 {weights:=anim.Morph_Weights{source=f.rig};anim.morph_weight_set(&weights,"Smile",values[pass],modes[pass]);core.add(&f.world.morph_weights,f.rig,weights);core.settle(&f.info,&f.world,nil)}
@@ -254,5 +258,5 @@ pose_bake_creates_editable_tracks_from_an_unanimated_skeleton_and_exports_final_
         }
         testing.expect(t,saw_rest && saw_follow && saw_morph && len(file.dependencies)==0);asset.asset_close(&file)
     }
-    testing.expect(t,core.count(&f.world.animations)==0 && len(f.world.playback.states)==0)
+    testing.expect(t,core.count(&f.world.animations)==1 && len(f.world.playback.states)==0)
 }

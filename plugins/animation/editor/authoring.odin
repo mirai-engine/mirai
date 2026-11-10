@@ -13,11 +13,6 @@ import "mirai:std/base"
 import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
-Authoring_Inspect_Params :: struct {
-    asset:base.Asset_Id,
-    offset:u32 `mirai:"optional"`,
-    limit:u32 `mirai:"optional,min=1,max=256,clamp"`,
-}
 Authoring_Create_Params :: struct {
     path:[1024]u8 `mirai:"text"`,
     dry_run:bool `mirai:"optional,label=Validates and answers without writing"`,
