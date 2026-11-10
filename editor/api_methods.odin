@@ -274,13 +274,13 @@ Api_Build_Result :: struct {
 Api_Editor_Inspect :: struct {
     frame:u64,
     selection:[]base.Entity_Id,
-    active:serial.Json `mirai:"label=The id of the active entity of the selection; null without a selection"`,
-    tool:[8]u8 `mirai:"text,label=move rotate or scale"`,
-    plugin_tool:[32]u8 `mirai:"text,optional,label=The plugin tool that is on (such as terrain or foliage) by the name it turns on with"`,
+    active:base.Entity_Id `mirai:"optional,label=The id of the active entity of the selection; omitted without a selection"`,
+    tool:string `mirai:"label=move rotate or scale"`,
+    plugin_tool:string `mirai:"optional,label=The plugin tool that is on (such as terrain or foliage) by the name it turns on with"`,
     plugin_tool_aside:bool `mirai:"optional,label=It lent the scene to the gizmo (W or E or R) and stays on"`,
-    space:[8]u8 `mirai:"text,label=world or local: the axes of the gizmo"`,
+    space:string `mirai:"label=world or local: the axes of the gizmo"`,
     snap,indicators:bool,
-    mode:[24]u8 `mirai:"text,label=edit play paused simulate simulation_paused or watch"`,
+    mode:string `mirai:"label=edit play paused simulate simulation_paused or watch"`,
     document:Api_Editor_Document,
     camera:Api_Editor_Camera `mirai:"label=The camera of the viewport"`,
     interactions:Api_Editor_Interactions,
@@ -289,7 +289,7 @@ Api_Editor_Inspect :: struct {
     commands:[]Api_Editor_Command `mirai:"label=Every entry of the menus and shortcuts and buttons of the editor and of its plugins: a person runs the method it names"`,
 }
 Api_Editor_Document :: struct {
-    path:[API_PATH_BYTES]u8 `mirai:"text"`,
+    path:string,
     dirty:bool,
     entities:int,
     undo,redo:int,
@@ -302,8 +302,8 @@ Api_Editor_Camera :: struct {
     fov:f32 `mirai:"label=Vertical degrees"`,
 }
 Api_Editor_Interactions :: struct {
-    captured_by:[8]u8 `mirai:"text,label=What holds the pointer in the viewport: look pan select or gizmo; empty when nothing does"`,
-    modal:[16]u8 `mirai:"text,label=The dialog that blocks the editor: confirm save_changes recovery shortcuts settings delete_asset or git_discard; empty when none does"`,
+    captured_by:string `mirai:"label=What holds the pointer in the viewport: look pan select or gizmo; empty when nothing does"`,
+    modal:string `mirai:"label=The dialog that blocks the editor: confirm save_changes recovery shortcuts settings delete_asset or git_discard; empty when none does"`,
     recovery_offered:bool `mirai:"label=Whether changes an editor left when it ended wait for editor.recover: they stay set aside until then"`,
     popups:int `mirai:"label=Popups open"`,
     editing_text:bool `mirai:"label=Whether a text field takes the keys"`,
@@ -317,14 +317,14 @@ Api_Editor_Window :: struct {
 }
 Api_Editor_Layout :: struct {
     bar,left,right,bottom:[4]f32,
-    widgets:serial.Json `mirai:"label=The rectangle of each widget drawn by key: command.<name> for the button of an entry; menu.<name> for a menu; stats; share"`,
+    widgets:serial.Json `mirai:"label=An object whose keys the commands name: The rectangle of each widget drawn by key: command.<name> for the button of an entry; menu.<name> for a menu; stats; share"`,
 }
 Api_Editor_Command :: struct {
-    name:[32]u8 `mirai:"text,label=Of the entry: layout.widgets names its button command.<name>"`,
-    method:[api.MAX_NAME]u8 `mirai:"text,label=The method it calls"`,
-    params:[COMMAND_PARAMS]u8 `mirai:"text,optional,label=The params it calls it with as JSON; $roots and $selection and $active and $copied and $all stand for entities of the selection of the person; $toggle for the opposite of checked; $ask for a file the person picks: a call names them itself"`,
-    label:[64]u8 `mirai:"text"`,
-    shortcut:[24]u8 `mirai:"text,optional"`,
+    name:string `mirai:"label=Of the entry: layout.widgets names its button command.<name>"`,
+    method:string `mirai:"label=The method it calls"`,
+    params:string `mirai:"optional,label=The params it calls it with as JSON; $roots and $selection and $active and $copied and $all stand for entities of the selection of the person; $toggle for the opposite of checked; $ask for a file the person picks: a call names them itself"`,
+    label:string,
+    shortcut:string `mirai:"optional"`,
     disabled:bool `mirai:"label=The person cannot run it now"`,
     checked:bool,
 }
@@ -397,7 +397,7 @@ api_methods_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="engine.step",summary="Advances whole frames of editor, game and render with a fixed dt. Manual execution only (headless).",params=type_info_of(Api_Step_Params),result=type_info_of(Api_Step_Result),defaults=&step_default,flags={.As_User},run=api_step})
     api_register(s,st,{name="engine.shutdown",summary="Stops Play and quits the editor after answering. Fails with unsaved changes of scenes or assets unless discard.",params=type_info_of(Api_Shutdown_Params),result=type_info_of(Api_Shutdown_Result),flags={.Destructive,.As_User},run=api_shutdown})
     api_register(s,st,{name="engine.gpu_lose",summary="Makes the next submission to the GPU report the device lost, as a reset of the GPU does, to test what follows: the editor starts again with its documents, and ends if it was started again for a loss less than a minute before.",result=type_info_of(Api_Gpu_Lose_Result),flags={.Destructive,.As_User},run=api_gpu_lose})
-    api_register(s,st,{name="editor.inspect",summary="What the editor shows and the entries of its menus, shortcuts and buttons: the method each one calls, with what params, and whether it is off or checked for the person now.",result=type_info_of(Api_Editor_Inspect),writes_result=true,flags={.Read_Only},run=api_editor_inspect})
+    api_register(s,st,{name="editor.inspect",summary="What the editor shows and the entries of its menus, shortcuts and buttons: the method each one calls, with what params, and whether it is off or checked for the person now.",result=type_info_of(Api_Editor_Inspect),flags={.Read_Only},run=api_editor_inspect})
     api_register(s,st,{name="editor.recover",summary="Recovers what an editor that ended left unsaved, or discards it; until then it stays set aside, whatever is edited or saved meanwhile, and a tab with changes stays as it is. With nothing offered it answers resolved false.",params=type_info_of(Api_Recovery_Params),result=type_info_of(Api_Recovery_Result),flags={.Idempotent},run=api_recover})
     api_register(s,st,{name="editor.section_edit",summary="Edits the section of a Scene_Reference in its world: its entities are edited here, scene.save writes its scene too, and everything else reads only. id 0 stops. Returns the reference edited.",params=type_info_of(Api_Section_Edit_Params),result=type_info_of(Api_Section_Edit_Result),run=api_section_edit})
     api_register(s,st,{name="editor.section_preview",summary="Draws the sky and the sun of the section of a Scene_Reference instead of those on, in the view of the editor only: not an edit, not saved, and Play starts without it. id 0 goes back. Returns the sky and the sun drawn.",params=type_info_of(Api_Section_Preview_Params),result=type_info_of(Api_Section_Preview_Result),run=api_section_preview})
@@ -405,7 +405,7 @@ api_methods_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="editor.section_view",summary="Turns a section on (Active), loaded and off (Loaded) or off (Unloaded) in the view of the editor alone, or gives it back to what its reference asks (Auto): not an edit, not in the undo and not saved; Play starts with what the references ask. It loads over the next frames: shown in editor.sections says when it is there. Returns the section.",params=type_info_of(Api_Section_View_Params),flags={.Idempotent,.View},result=type_info_of(Api_Section),run=api_section_view})
     api_register(s,st,{name="editor.section_travel",summary="Brings the camera of the editor to a section, framing its box (into it when the box is big), and turns it on in the view when what asks for it does not. Returns the section.",params=type_info_of(Api_Section_Id_Params),result=type_info_of(Api_Section),flags={.View},run=api_section_travel})
     api_register(s,st,{name="editor.select",summary="Sets the selection of the editor: the entities the panels and the tools act on.",params=type_info_of(Api_Select_Params),result=type_info_of(Api_Select_Result),flags={.Idempotent,.View},run=api_editor_select})
-    api_register(s,st,{name="editor.input",params=type_info_of(Api_Editor_Input_Params),summary="Runs a frame per event of synthetic input through the path of real input. Manual execution only (headless).",result=type_info_of(Api_Editor_Inspect),writes_result=true,flags={.As_User},run=api_editor_input})
+    api_register(s,st,{name="editor.input",params=type_info_of(Api_Editor_Input_Params),summary="Runs a frame per event of synthetic input through the path of real input. Manual execution only (headless).",result=type_info_of(Api_Editor_Inspect),flags={.As_User},run=api_editor_input})
     api_register(s,st,{name="camera.set",params=type_info_of(Api_Camera_Set_Params),summary="Moves the camera of the editor, or looks through a Camera of the scene without changing it, and chooses how the view is exposed.",result=type_info_of(Api_Camera_Result),flags={.Idempotent,.View},run=api_camera_set})
     api_register(s,st,{name="history.undo",flags={.Core},summary="Undoes the last edit of the caller (its turn, or the API outside a turn), even after edits of others, keeping every field they changed since.",result=type_info_of(Api_History_Result),run=api_undo})
     api_register(s,st,{name="history.redo",summary="Redoes the edit the last undo of the caller took back, keeping every field others changed since; a new edit of the caller drops what it can redo.",result=type_info_of(Api_History_Result),run=api_redo})
@@ -700,91 +700,55 @@ api_editor_select :: proc(s:^Session,call:^api.Call) {
 // ---------------------------------------------------------------- editor.inspect
 
 @(private)
-api_rect :: proc(w:^serial.Writer,rect:ui.Rect) {api.write_list(w,{rect.x,rect.y,rect.w,rect.h})}
-
-@(private)
-api_inspect_write :: proc(s:^Session,w:^serial.Writer) {
+api_editor_inspect_value :: proc(s:^Session,allocator:=context.temp_allocator) -> (r:Api_Editor_Inspect) {
     v:=s.viewport
     g:=s.gui
     world:=shown_world(s)
-    serial.text_write_raw(w,`{"frame":`);serial.text_write_uint(w,s.frame)
-    api.write_key(w,"selection");serial.write_u8(w,'[')
-    for e,i in s.selection.entities {
-        if i>0 {serial.write_u8(w,',')}
-        api.write_id(w,api_entity_id(world,e))
-    }
-    serial.write_u8(w,']')
-    api.write_key(w,"active")
-    if active:=api_entity_id(world,history.selection_active(s.selection));active!=0 {api.write_id(w,active)} else {serial.text_write_raw(w,"null")}
+    r.frame=s.frame
+    r.selection=make([]base.Entity_Id,len(s.selection.entities),allocator)
+    for e,i in s.selection.entities {r.selection[i]=api_entity_id(world,e)}
+    r.active=api_entity_id(world,history.selection_active(s.selection))
     tool,_:=reflect.enum_name_from_value(v.tool)
+    r.tool=api_lower(tool)
     // A plugin tool that holds the scene is the tool; one that lent it to the gizmo is the plugin.
-    api.write_key(w,"tool");serial.text_write_string(w,api_lower(tool))
-    if v.plugin_tool!=0 {api.write_key(w,"plugin_tool");serial.text_write_string(w,base.text_get(v.plugin_tool_name[:]));api.write_bool(w,"plugin_tool_aside",v.plugin_aside)}
-    api.write_key(w,"space");serial.text_write_string(w,v.space==.World?"world":"local")
-    api.write_key(w,"snap");api.write_flag(w,snapping(v,.Move))
-    api.write_key(w,"indicators");api.write_flag(w,v.show_indicators)
+    if v.plugin_tool!=0 {r.plugin_tool,r.plugin_tool_aside=strings.clone(base.text_get(v.plugin_tool_name[:]),allocator),v.plugin_aside}
+    r.space="world" if v.space==.World else "local"
+    r.snap,r.indicators=snapping(v,.Move),v.show_indicators
     mode,_:=reflect.enum_name_from_value(s.mode)
-    api.write_key(w,"mode");serial.text_write_string(w,api_lower(mode))
-    api.write_key(w,"document");serial.text_write_raw(w,`{"path":`);serial.text_write_string(w,document_path(s.document))
-    api.write_key(w,"dirty");api.write_flag(w,document_dirty(s))
-    api.write_key(w,"entities");serial.text_write_int(w,i64(core.world_entities(world).alive))
-    api.write_key(w,"undo");serial.text_write_int(w,i64(history.edits_undo_count(s.edits)))
-    api.write_key(w,"redo");serial.text_write_int(w,i64(history.edits_redo_count(s.edits)))
-    serial.write_u8(w,'}')
-    position:=orbit_position(v.orbit)
-    api.write_key(w,"camera");serial.text_write_raw(w,`{"position":`);api.write_list(w,position[:])
-    api.write_key(w,"target");api.write_list(w,v.orbit.target[:])
-    api.write_key(w,"yaw");api.write_number(w,v.orbit.yaw)
-    api.write_key(w,"pitch");api.write_number(w,v.orbit.pitch)
-    api.write_key(w,"distance");api.write_number(w,v.orbit.distance)
-    api.write_key(w,"fov");api.write_number(w,v.orbit.fov)
-    serial.write_u8(w,'}')
+    r.mode=api_lower(mode)
+    r.document={document_path(s.document),document_dirty(s),core.world_entities(world).alive,history.edits_undo_count(s.edits),history.edits_redo_count(s.edits)}
+    r.camera={orbit_position(v.orbit),v.orbit.target,v.orbit.yaw,v.orbit.pitch,v.orbit.distance,v.orbit.fov}
     capture,_:=reflect.enum_name_from_value(v.capture)
-    api.write_key(w,"interactions");serial.text_write_raw(w,`{"captured_by":`)
-    serial.text_write_string(w,v.capture==.None?"":api_lower(capture))
     modal,_:=reflect.enum_name_from_value(g.modal)
-    api.write_key(w,"modal");serial.text_write_string(w,g.modal==.None?"":api_lower(modal))
-    api.write_key(w,"recovery_offered");api.write_flag(w,s.recovery.pending)
-    api.write_key(w,"popups");serial.text_write_int(w,i64(g.ctx.popup.count))
-    api.write_key(w,"editing_text");api.write_flag(w,g.ctx.edit.id!=0)
-    api.write_key(w,"dialog_pending");api.write_flag(w,platform.dialog_pending(s.app.platform))
-    api.write_key(w,"hovered");api.write_flag(w,v.hovered)
-    serial.write_u8(w,'}')
+    r.interactions={"" if v.capture==.None else api_lower(capture),"" if g.modal==.None else api_lower(modal),s.recovery.pending,g.ctx.popup.count,g.ctx.edit.id!=0,platform.dialog_pending(s.app.platform),v.hovered}
     window:=platform.input_frame(s.app.platform).window
-    api.write_key(w,"window");serial.text_write_raw(w,`{"present":`);api.write_flag(w,!s.headless)
-    api.write_key(w,"size");api.write_list(w,{f32(window.size.x),f32(window.size.y)})
-    api.write_key(w,"minimized");api.write_flag(w,window.minimized)
-    api.write_key(w,"maximized");api.write_flag(w,window.maximized)
-    api.write_key(w,"fullscreen");api.write_flag(w,window.fullscreen)
-    serial.write_u8(w,'}')
-    api.write_key(w,"layout");serial.text_write_raw(w,`{"bar":`);api_rect(w,g.rects.bar)
-    api.write_key(w,"left");api_rect(w,g.rects.left)
-    api.write_key(w,"right");api_rect(w,g.rects.right)
-    api.write_key(w,"bottom");api_rect(w,g.rects.bottom)
-    api.write_key(w,"widgets");serial.write_u8(w,'{')
-    first:=true
-    widget :: proc(w:^serial.Writer,s:^Session,first:^bool,key:string,id:ui.Id) {
-        rect,found:=ui.widget_rect(s.gui.ctx,id)
-        if !found {return}
-        api.write_key(w,key,first^)
-        first^=false
-        api_rect(w,rect)
+    r.window={!s.headless,{f32(window.size.x),f32(window.size.y)},window.minimized,window.maximized,window.fullscreen}
+    rect :: proc(rect:ui.Rect) -> [4]f32 {return {rect.x,rect.y,rect.w,rect.h}}
+    r.layout={bar=rect(g.rects.bar),left=rect(g.rects.left),right=rect(g.rects.right),bottom=rect(g.rects.bottom)}
+    widgets:serial.Writer
+    serial.writer_init(&widgets,0,allocator)
+    serial.write_u8(&widgets,'{')
+    widget :: proc(w:^serial.Writer,s:^Session,key:string,id:ui.Id) {
+        found,drawn:=ui.widget_rect(s.gui.ctx,id)
+        if !drawn {return}
+        if w.count>1 {serial.write_u8(w,',')}
+        serial.text_write_string(w,key);serial.text_write_raw(w,": ")
+        api.write_list(w,{found.x,found.y,found.w,found.h})
     }
-    for &b in command_bindings(s) {
-        widget(w,s,&first,fmt.tprintf("command.%s",b.name),command_widget(g,b.name))
-    }
-    widget(w,s,&first,"menu.file",shell_id(g,"menu",1))
-    widget(w,s,&first,"menu.view",shell_id(g,"menu",4))
-    widget(w,s,&first,"stats",shell_id(g,"stats"))
-    widget(w,s,&first,"share",shell_id(g,"share"))
-    serial.text_write_raw(w,"}}")
-    api.write_key(w,"commands");api_commands_write(s,w)
-    serial.write_u8(w,'}')
+    for &b in command_bindings(s) {widget(&widgets,s,fmt.tprintf("command.%s",b.name),command_widget(g,b.name))}
+    widget(&widgets,s,"menu.file",shell_id(g,"menu",1))
+    widget(&widgets,s,"menu.view",shell_id(g,"menu",4))
+    widget(&widgets,s,"stats",shell_id(g,"stats"))
+    widget(&widgets,s,"share",shell_id(g,"share"))
+    serial.write_u8(&widgets,'}')
+    r.layout.widgets=serial.Json(string(serial.writer_bytes(&widgets)))
+    r.commands=api_commands(s,allocator)
+    return
 }
 
 @(private)
 api_editor_inspect :: proc(s:^Session,call:^api.Call) {
-    api_inspect_write(s,call.out)
+    api.call_result(call,Api_Editor_Inspect)^=api_editor_inspect_value(s,call.allocator)
 }
 
 // ---------------------------------------------------------------- editor.input
@@ -892,7 +856,7 @@ api_editor_input :: proc(s:^Session,call:^api.Call) {
         if step.text_length>0 {platform.input_inject_text(p,string(step.text[:step.text_length]))}
         if api_frames(s,1,step.dt>0?step.dt:dt)==0 || s.quit {break}
     }
-    api_inspect_write(s,call.out)
+    api.call_result(call,Api_Editor_Inspect)^=api_editor_inspect_value(s,call.allocator)
 }
 
 // ---------------------------------------------------------------- camera and capture

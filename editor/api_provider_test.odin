@@ -44,7 +44,7 @@ api_test_run_v2 :: proc(s:^Session,call:^api.Call) {api.call_result(call,Api_Tes
 API_HAND_WRITTEN :: [?]struct{file,pattern:string,count:int}{
     {"editor/api/rpc.odin","writes_result=true",1},
     {"editor/api_assets.odin","writes_result=true",1},
-    {"editor/api_methods.odin","writes_result=true",3},
+    {"editor/api_methods.odin","writes_result=true",1},
     {"editor/api_play_history.odin","writes_result=true",1},
     {"editor/api_play_observe.odin","writes_result=true",2},
     {"editor/api_play_scenario.odin","writes_result=true",1},

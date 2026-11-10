@@ -918,22 +918,15 @@ api_camera_preview :: proc(s:^Session,call:^api.Call) {
 // ---------------------------------------------------------------- editor.inspect
 
 // Every entry with the method it calls and what it shows now.
-@(private)
-api_commands_write :: proc(s:^Session,w:^serial.Writer) {
-    serial.write_u8(w,'[')
-    for &b,i in command_bindings(s) {
-        if i>0 {serial.write_u8(w,',')}
+api_commands :: proc(s:^Session,allocator:=context.temp_allocator) -> []Api_Editor_Command {
+    bindings:=command_bindings(s)
+    commands:=make([]Api_Editor_Command,len(bindings),allocator)
+    for &b,i in bindings {
         state:=binding_state(s,&b)
-        serial.text_write_raw(w,`{"name":`);serial.text_write_string(w,b.name)
-        api.write_key(w,"method");serial.text_write_string(w,b.method)
-        if b.params!="" {api.write_key(w,"params");serial.text_write_string(w,b.params)}
-        api.write_key(w,"label");serial.text_write_string(w,binding_label(&b,state))
-        if b.shortcut.set {api.write_key(w,"shortcut");serial.text_write_string(w,shortcut_text(b.shortcut))}
-        api.write_key(w,"disabled");api.write_flag(w,state.disabled)
-        api.write_key(w,"checked");api.write_flag(w,state.checked)
-        serial.write_u8(w,'}')
+        commands[i]={name=b.name,method=b.method,params=b.params,label=binding_label(&b,state),disabled=state.disabled,checked=state.checked}
+        if b.shortcut.set {commands[i].shortcut=shortcut_text(b.shortcut)}
     }
-    serial.write_u8(w,']')
+    return commands
 }
 
 // The widget of the bar an entry draws, as editor.inspect names it.
