@@ -136,8 +136,7 @@ makes is kept whole.
   does the same on each state read.
 - `dump --textconv` of a scene or a `.ui` is its document, so a diff reads as what agents write.
   It never builds the engine: without the author program, the project or the library of its game
-  it prints the one line of a file it cannot show. Of the other kinds it differs from `dump` in
-  what would change without a value changing: a row names the row it refers to by its key, not by
-  its position, and a column leaves out the index of its type. A file the build does not read
-  prints one line that says why and ends with 0, so a log that reaches one goes on. `pack` does
-  not read this text.
+  it prints the one line of a file it cannot show. Of the other kinds it differs from `dump` in a
+  column leaving out the index of its type, which a type added before it would change. A file the
+  build does not read prints one line that says why and ends with 0, so a log that reaches one
+  goes on. `pack` does not read this text.

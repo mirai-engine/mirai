@@ -38,46 +38,36 @@ stored_collect :: proc(w:core.World_Ref,a:^asset.Asset,asset_types:^asset.Types,
             m:serial.Migration
             if serial.migration_init(&m,&a.schema,component.table.columns[1].type,&types.schema,value_type.type,context.temp_allocator)!=.None {return false}
             defer serial.migration_destroy(&m)
-            removed,no_removed:=texts_clone(m.removed[:],allocator)
-            incompatible,no_incompatible:=texts_clone(m.incompatible[:],allocator)
-            entry.removed,entry.incompatible=removed,incompatible
-            if no_removed || no_incompatible {return false}
+            if entry.removed,entry.incompatible=texts_clone(m.removed[:],allocator),texts_clone(m.incompatible[:],allocator);len(entry.removed)<len(m.removed) || len(entry.incompatible)<len(m.incompatible) {return false}
         }
-        name,no_name:=strings.clone(component.name,allocator)
-        if no_name!=nil {return false}
-        entry.component=name
+        no_name:mem.Allocator_Error
+        if entry.component,no_name=strings.clone(component.name,allocator);no_name!=nil {return false}
         if _,no_room:=append(stored,entry);no_room!=nil {return false}
     }
     return true
 }
 
+// Copies of texts, as many as memory had room for.
 @(private="file")
-texts_clone :: proc(texts:[]string,allocator:=context.allocator) -> (copied:[]string,failed:bool) {
-    if len(texts)==0 {return}
-    no_list:mem.Allocator_Error
-    if copied,no_list=make([]string,len(texts),allocator);no_list!=nil {return nil,true}
+texts_clone :: proc(texts:[]string,allocator:=context.allocator) -> []string {
+    copied,no_list:=make([]string,len(texts),allocator)
+    if no_list!=nil {return nil}
     for text,i in texts {
         no_text:mem.Allocator_Error
-        if copied[i],no_text=strings.clone(text,allocator);no_text!=nil {return copied[:i],true}
+        if copied[i],no_text=strings.clone(text,allocator);no_text!=nil {return copied[:i]}
     }
-    return
+    return copied
 }
 
 // What a person or an agent reads of a component a document stores otherwise,
-// naming the scene by name. warning: a save loses values, or nothing reads
-// them; otherwise it only says the values were read from another layout.
-stored_text :: proc(entry:Stored,scene:string,allocator:=context.temp_allocator) -> (text:string,warning:bool) {
-    b:=strings.builder_make(allocator)
-    if entry.unknown {
-        fmt.sbprintf(&b,"%s: the component %s is not one of this game: a save keeps its values and nothing reads them; add the plugin or the code that declares it, or take it off the entities",scene,entry.component)
-        return strings.to_string(b),true
-    }
+// naming the scene by name, in temporary memory. warning: a save loses values,
+// or nothing reads them; otherwise it only says the values were read from
+// another layout.
+stored_text :: proc(entry:Stored,scene:string) -> (text:string,warning:bool) {
+    if entry.unknown {return fmt.tprintf("%s: the component %s is not one of this game: a save keeps its values and nothing reads them; add the plugin or the code that declares it, or take it off the entities",scene,entry.component),true}
+    b:=strings.builder_make(context.temp_allocator)
     fmt.sbprintf(&b,"%s: %s is stored with another layout and read by the names of its fields",scene,entry.component)
-    if len(entry.removed)>0 {
-        fmt.sbprintf(&b,"; it has no field %s now, and saving the scene loses %s: a renamed field says the names it had with the tag mirai:\"was=<earlier name>\"",strings.join(entry.removed,", ",context.temp_allocator),len(entry.removed)==1?"its value":"their values")
-    }
-    if len(entry.incompatible)>0 {
-        fmt.sbprintf(&b,"; %s %s a type its stored %s do not convert to, and %s at the default",strings.join(entry.incompatible,", ",context.temp_allocator),len(entry.incompatible)==1?"has":"have",len(entry.incompatible)==1?"value":"values",len(entry.incompatible)==1?"starts":"start")
-    }
-    return strings.to_string(b),len(entry.removed)>0 || len(entry.incompatible)>0
+    if len(entry.removed)>0 {fmt.sbprintf(&b,"; saving the scene loses the stored fields %v, which it has under no name now: a renamed field says the names it had with the tag mirai:\"was=<earlier name>\"",entry.removed)}
+    if len(entry.incompatible)>0 {fmt.sbprintf(&b,"; the stored fields %v do not convert to the types they have now, and start at their default",entry.incompatible)}
+    return strings.to_string(b),len(entry.removed)+len(entry.incompatible)>0
 }
