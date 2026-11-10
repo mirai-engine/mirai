@@ -197,7 +197,7 @@ are `copy=false`: they are neither copied nor cleared. `Jumps` and `Hierarchy` a
   fixed step is a single one, and each library that moves an entity through time compensates:
   - the locomotion of its `Character` and the turn of the seat
     ([locomotion](../../mirai-physics/references/engine.md#own-pace));
-  - its animation, its pose modifiers and its `Keyframe_Path` advance `dt * pace_of`.
+  - its animation and its pose modifiers advance `dt * pace_of`.
   - The camera that follows it already runs with the `dt` of the frame (`late`), which does not
     scale.
   - What it throws or fires follows the world clock unless the game gives it its own `Own_Pace`; a

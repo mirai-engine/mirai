@@ -84,14 +84,18 @@ And a screen that uses it:
 ## Animations
 
 ```json
-"animations": {"pulse": {"scale": [1, 1.2], "seconds": 0.6, "ease": "In_Out_Quad",
+"animations": {"pulse": {"scale": [1, 1.2], "seconds": 0.6, "ease": "Quad_In_Out",
                          "loop": "Ping_Pong"}}
 ```
 
 A property (`offset`, `scale`, `rotation`, `opacity`, `color`, `width`, `height`, `value`, `frame`,
-`reveal`) goes from one value to another; nodes play it with `"events": {"shown": "pulse"}`. Keyed
-tracks go in `tracks` (`[{"property": "Scale", "keys": [{"time": 0, "value": [1, 1, 0, 0]}]}]`) and
-a `"kind": "Sequence"` or `"Parallel"` names others in `parts`.
+`reveal`) goes from one value to another; nodes play it with `"events": {"shown": "pulse"}`, and
+the triggers are `shown`, `hidden` and `clicked`. How a node looks hovered, pressed, focused or
+selected is a state of its style with a `transition`, never an animation. Keyed tracks go in
+`tracks` (`[{"property": "Scale", "keys": [{"time": 0, "value": [1, 1, 0, 0]}]}]`) and a
+`"kind": "Sequence"` or `"Parallel"` names others in `parts`. A key is the one of a clip of an
+`.anim`: `time`, `value`, `ease` (`Linear`, `Cubic_Out`, `Back_Out`, `Bounce_Out`... the eases of
+the engine) and `interpolation` (`Linear`, `Step`, `Cubic`).
 
 ## Pitfalls that fail silently
 

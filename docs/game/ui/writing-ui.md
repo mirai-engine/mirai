@@ -27,7 +27,7 @@ mirai rpc --project . ui.write asset=ui/screen.ui document=@screen.json save=tru
       "hover": {"fill": "#6b4a7a"},
       "focus": {"extends": "hover", "stroke": "cream", "border": 3}}
   },
-  "animations": {"pulse": {"scale": [1, 1.2], "seconds": 0.6, "ease": "In_Out_Quad",
+  "animations": {"pulse": {"scale": [1, 1.2], "seconds": 0.6, "ease": "Quad_In_Out",
                            "loop": "Ping_Pong"}},
   "use": ["hud/stat.ui"],
   "nodes": [
@@ -69,7 +69,7 @@ A document only sees its own `styles` and those of what it lists in `use`.
   (`{"texture": "hud/badge.tex"}`), `events`, `flags` and the other fields of `ui.Tree_Node`.
   A style holds the common ones; a node only what differs: [styles.md](styles.md).
 - Paths in `bind_*` are the data of the game: [hud-panels.md](hud-panels.md#hud). `events` by
-  trigger names the animation that plays: `shown`, `hidden`, `hovered`, `pressed`, `clicked`...
+  trigger names the animation that plays: `shown`, `hidden` or `clicked`.
 - A `Text` with a `fill`, `radius` or `stroke` in its style draws them behind the text, with its
   `padding` around the text: a pill needs no parent `Box`.
 - The first control of a page takes the focus when it shows; a node that must have it instead has

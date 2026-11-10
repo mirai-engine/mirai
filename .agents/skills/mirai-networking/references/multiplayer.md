@@ -621,7 +621,7 @@ melee swing) where that player aimed.
   this end is the owner: `core.owned(remotes, e)`. Without network always; on the server, what no
   connection owns; on a client, what it owns, what it has lent and what is not replicated.
   `destruct` damages only on the server (by role), seats change only bodies this end owns and
-  cinematics are controlled only where one owns the timeline.
+  the clip of a cinematic follows the end that owns the timeline.
 - The game tells its role with `core.Network` (`Standalone`, `Server`, `Client`), or with
   `is_server` and `is_client` where it already has the session.
 - A client does not save games: `save` answers `Unavailable` on a client.

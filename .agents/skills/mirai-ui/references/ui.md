@@ -364,23 +364,23 @@ or the controls of the editor panels:
   - `Options` gives the options of a selector or a dropdown: one by one, a text separated by `|` or
     an array of texts or enums (by their name or by a text `Name=Text|...`), without a cap.
 
-**Animation** (`anim.odin`). `Anim_Library` stores keyframes, tracks and animations in flat arrays;
-the state belongs to the caller (`Anim_Player` or `Anim_State` with `anim_react`, which plays those
-of an `Anim_Set` on state changes and returns true while the element must be built).
+**Animation** (`anim.odin`). `Anim_Library` stores tracks and animations in flat arrays; its keys
+are those of [std/anim](../../mirai-std/references/anim.md#tracks-keys-and-clips-trackodin-clipodin)
+(`Keyframe`, with the `Ease` of `std/math` and `Loop`), read by its `track_evaluate`. The state
+belongs to the caller (`Anim_Player` or `Anim_State` with `anim_react`, which plays those of an
+`Anim_Set` when the element is shown, hidden or clicked and returns true while it must be built).
+What an element looks like hovered, pressed, focused or selected is a state of its style, with its
+`transition`: an `Anim_Set` has no animation for a state.
 
 - `Width`, `Height`, `Value`, `Frame` and `Reveal` are properties that the tree applies to its node:
   the size replaces that of the layout before building it and what surrounds the node follows it;
   the others give the value of a control, the frame of an image and the visible part of a text
   (typewriter).
 - `anim_play` after another animation starts from the value that one left; the first of an element
-  starts from its keys. In the tree, a node whose set does not animate the focus plays with it what
-  is on the pointer, and `clicked` arrives the frame after the click.
+  starts from its keys. In the tree, `clicked` arrives the frame after the click.
 - `animated(ctx, id, value)` draws what is built inside moved, scaled, rotated and tinted around the
   element's center; the layout does not change and the pointer follows what is drawn. An outer clip
   cuts it by its transformed box: exact with shift and scale, approximate with rotation.
-- `ui.Ease` keeps the names and values stored in the keys of a `.ui` and delegates the curves to
-  [std/math](../../mirai-std/references/math.md#easing-and-curves-easeodin-curveodin); `Step` keeps
-  the previous value until the key.
 
 ### Data tree
 

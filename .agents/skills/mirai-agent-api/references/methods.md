@@ -220,7 +220,9 @@ with `animation.analyze` and `animation.capture` before touching keys.
 ## Cinematics
 
 The `cinematics.*` methods of the `cinematics` plugin build and play timelines without `scene.set`
-on their components. In Edit, `cinematics.control` drives the preview of the Cinematics tool: the
+on their components; the keys and markers of a timeline are those of its clip, which the
+`animation.*` methods write. In Edit, `cinematics.control` drives the preview of the Cinematics
+tool: the
 document does not change and the image shows in the next frame (`capture`); in Play it
 queues the command in the running world. Contract:
 [cinematics](../../mirai-gameplay/references/cinematics.md#editor-and-api).
