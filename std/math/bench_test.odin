@@ -284,15 +284,6 @@ bench_packing_and_curves :: proc(t:^testing.T) {
     b={}
     for bench_round(&b) {for n,i in normals {sink+=ease_apply(Ease(i%31),abs(n.x))}}
     bench_report("ease_apply, every curve in turn",b,COUNT,sink)
-    keys:[32]Curve_Key
-    for &key,i in keys {key={time=f32(i),value=f32(i%5),slope_in=0.3,slope_out=-0.2}}
-    b={}
-    for bench_round(&b) {for n in normals {sink+=curve_evaluate(keys[:],abs(n.x)*31)}}
-    bench_report("curve_evaluate, 32 keys, random times",b,COUNT,sink)
-    segment:=0
-    b={}
-    for bench_round(&b) {for i in 0..<COUNT {sink+=curve_evaluate_from(keys[:],f32(i)*(31.0/COUNT),&segment)}}
-    bench_report("curve_evaluate_from, 32 keys, playback",b,COUNT,sink)
     b={}
     for bench_round(&b) {for i in 0..<COUNT-3 {sink+=catmull_rom(normals[i],normals[i+1],normals[i+2],normals[i+3],0.4).x}}
     bench_report("catmull_rom (Vec3)",b,COUNT,sink)

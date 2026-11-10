@@ -35,9 +35,9 @@ description: Mirai standard library for games, with the packages `std/base`, `st
   [easing and curves](references/math.md#easing-and-curves-easeodin-curveodin),
   [random and noise](references/math.md#random-and-noise-randomodin-noiseodin) and
   [color](references/math.md#color-and-quantization-colorodin-quantizeodin).
-- Tweens, clips, additive blend spaces, poses, blending, IK and retarget:
-  [tweens](references/anim.md#tweens-tweenodin-loopodin),
-  [clips](references/anim.md#tracks-keys-and-clips-trackodin-clipodin),
+- Keys, clips, additive blend spaces, poses, blending, IK and retarget:
+  [loops](references/anim.md#loops-loopodin),
+  [keys and clips](references/anim.md#tracks-keys-and-clips-trackodin-clipodin),
   [playback](references/anim.md#playback-and-events-playerodin),
   [blending](references/anim.md#blending-poseodin),
   [blend spaces](references/anim.md#blend-spaces-blend_spaceodin),

@@ -3,6 +3,7 @@ package host
 import "core:mem"
 import "core:testing"
 import "mirai:asset"
+import anim "mirai:std/anim"
 import "mirai:std/base"
 import "mirai:ui"
 
@@ -22,7 +23,7 @@ Roundtrip_Records :: struct {
     fonts:[1]ui.Tree_Font,
     anims:[3]ui.Tree_Anim,
     tracks:[2]ui.Tree_Track,
-    keys:[4]ui.Keyframe,
+    keys:[4]anim.Keyframe,
     parts:[2]ui.Anim,
     anim_sets:[1]ui.Anim_Set,
     translations:[2]ui.Tree_Translation,
@@ -184,7 +185,7 @@ the_check_of_a_ui_refuses_rows_outside_their_tables_as_the_tree_does :: proc(t:^
     styles:=[1]ui.Node_Style{}
     anims:=[1]ui.Tree_Anim{{kind=.Clip,first=0,count=1}}
     tracks:=[1]ui.Tree_Track{{.Opacity,0,2}}
-    keys:=[2]ui.Keyframe{{time=0},{time=0.5,value={1,0,0,0}}}
+    keys:=[2]anim.Keyframe{{time=0},{time=0.5,value={1,0,0,0}}}
     sets:=[1]ui.Anim_Set{{shown=1}}
     good:=ui.Tree_Data{nodes=nodes[:],styles=styles[:],anims=anims[:],tracks=tracks[:],keys=keys[:],anim_sets=sets[:],text=text}
     check_agrees(t,&types,good,true,"valid records")
