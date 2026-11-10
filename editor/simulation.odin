@@ -25,6 +25,23 @@ simulation_start :: proc(s:^Session) -> bool {return run_find(s,0)==nil && play_
 simulation_apply_poses :: proc(s:^Session,poses:[]Simulation_Pose) -> bool {
     if s.mode!=.Edit || len(poses)==0 {return false}
     w:=edited_world(s)
+    tools_release(s)
+    if !history.edits_commit(s.edits,w,s.selection) && s.edits.error!=.No_Change {return false}
+    _,edit_ready:=edit_open(s,"Apply simulation")
+    if !edit_ready {return false}
+    if !poses_write(s,poses) {
+        history.edits_cancel(s.edits,w)
+        return false
+    }
+    history.edits_end(s.edits)
+    if !history.edits_commit(s.edits,w,s.selection) && s.edits.error!=.No_Change {history.edits_cancel(s.edits,w);return false}
+    return true
+}
+
+// Writes world poses into the edit that is open, parents first; nothing when one is not valid.
+@(private)
+poses_write :: proc(s:^Session,poses:[]Simulation_Pose) -> bool {
+    w:=edited_world(s)
     entities:=make([]core.Entity,len(poses),context.temp_allocator)
     for pose,i in poses {
         e:=api_entity(w,pose.id)
@@ -39,20 +56,11 @@ simulation_apply_poses :: proc(s:^Session,poses:[]Simulation_Pose) -> bool {
     placed:=make([]Placed,len(poses),context.temp_allocator)
     for e,i in entities {placed[i]={parent_table!=nil?core.depth_of(core.read(parent_table),e):0,i}}
     slice.sort_by(placed,proc(a,b:Placed) -> bool {return a.depth<b.depth})
-    tools_release(s)
-    if !history.edits_commit(s.edits,w,s.selection) && s.edits.error!=.No_Change {return false}
-    _,edit_ready:=edit_open(s,"Apply simulation")
-    if !edit_ready {return false}
     for item in placed {
         e:=entities[item.pose]
         local,ok:=core.local_under(core.read(transforms),core.read(parent_table),entity_parent(w,e),simulation_transform(poses[item.pose]))
-        if !ok || !transform_set(s,e,local) {
-            history.edits_cancel(s.edits,w)
-            return false
-        }
+        if !ok || !transform_set(s,e,local) {return false}
     }
-    history.edits_end(s.edits)
-    if !history.edits_commit(s.edits,w,s.selection) && s.edits.error!=.No_Change {history.edits_cancel(s.edits,w);return false}
     return true
 }
 
@@ -95,42 +103,91 @@ simulation_apply :: proc(s:^Session,ids:[]base.Entity_Id) -> bool {
 // moving, says which came to rest. A problem says what failed and how to fix it, with nothing
 // applied; at is the index in moving it is about, -1 for none.
 simulate_until_rest :: proc(s:^Session,moving:[]core.Entity,ticks:int,rested:[]bool) -> (ran,at:int,problem:string) {
-    p:=providers(s)
-    if !p.simulates {return 0,-1,"No plugin simulates bodies: add physics to the plugins of the project"}
-    if s.mode!=.Edit {return 0,-1,"Only the document being edited settles: play.stop first"}
-    if len(moving)==0 || len(rested)!=len(moving) {return 0,-1,"Give at least one entity to settle"}
     if ticks<1 {return 0,-1,"ticks must be at least 1"}
-    if !(s.app.tick_dt>0) {return 0,-1,"The project has no tick rate: set Simulation_Settings.tick_rate"}
-    w:=edited_world(s)
-    for e,i in moving {
-        if !core.alive(core.world_entities(w),e) || !entity_has(w,e,core.Transform) || api_entity_id(w,e)==0 {return 0,i,"is not an entity of the document: it was destroyed or never made"}
-        for previous in moving[:i] {if previous==e {return 0,i,"is given twice"}}
-    }
-    world:=document_copy(s)
-    if world==nil {return 0,-1,"The document could not be copied: there is no memory for another world"}
+    if len(rested)!=len(moving) {return 0,-1,"Give a rested for each entity"}
+    world:rawptr
+    if world,at,problem=settle_begin(s,moving);problem!="" {return}
     defer host.app_world_free(s.app,world)
-    run:=host.app_world_ref(s.app,world)
-    if at,problem=p.simulation.limit(run,s.app,moving);problem!="" {return}
-    motions:=core.read(core.world_table_of(run,core.Motion))
     for ran<ticks {
-        if !p.simulation.step(run,s.app,s.app.tick_dt) {return ran,-1,"Physics stopped while they fell: engine.diagnostics names what failed"}
+        all,ok:=settle_tick(s,world,moving,rested)
+        if !ok {return ran,-1,"Physics stopped while they fell: engine.diagnostics names what failed"}
         ran+=1
-        all:=true
-        for e,i in moving {
-            motion,made:=core.get(motions,e)
-            rested[i]=made && !motion.awake
-            all&&=rested[i]
-        }
         if all {break}
     }
+    if !simulation_apply_poses(s,settle_poses(s,world,moving)) {return ran,-1,"The poses could not be kept as a step of undo: an edit of the document is open"}
+    return ran,-1,""
+}
+
+// The copy a Simulate limited to moving runs on, which the caller frees with host.app_world_free;
+// nil with the problem otherwise, as simulate_until_rest says it.
+settle_begin :: proc(s:^Session,moving:[]core.Entity) -> (world:rawptr,at:int,problem:string) {
+    p:=providers(s)
+    if !p.simulates {return nil,-1,"No plugin simulates bodies: add physics to the plugins of the project"}
+    if s.mode!=.Edit {return nil,-1,"Only the document being edited settles: play.stop first"}
+    if len(moving)==0 {return nil,-1,"Give at least one entity to settle"}
+    if !(s.app.tick_dt>0) {return nil,-1,"The project has no tick rate: set Simulation_Settings.tick_rate"}
+    w:=edited_world(s)
+    for e,i in moving {
+        if !core.alive(core.world_entities(w),e) || !entity_has(w,e,core.Transform) || api_entity_id(w,e)==0 {return nil,i,"is not an entity of the document: it was destroyed or never made"}
+        for previous in moving[:i] {if previous==e {return nil,i,"is given twice"}}
+    }
+    world=document_copy(s)
+    if world==nil {return nil,-1,"The document could not be copied: there is no memory for another world"}
+    if at,problem=p.simulation.limit(host.app_world_ref(s.app,world),s.app,moving);problem!="" {
+        host.app_world_free(s.app,world)
+        return nil,at,problem
+    }
+    return world,-1,""
+}
+
+// The last of moving, which the document made after settle_begin copied it, moves in the copy
+// too, with the same handle and rows; the others go on as they were.
+settle_add :: proc(s:^Session,world:rawptr,moving:[]core.Entity) -> (at:int,problem:string) {
+    if len(moving)==0 {return -1,"Give at least one entity to settle"}
+    at=len(moving)-1
+    w,run:=edited_world(s),host.app_world_ref(s.app,world)
+    e:=moving[at]
+    if !core.alive(core.world_entities(w),e) || api_entity_id(w,e)==0 {return at,"is not an entity of the document: it was destroyed or never made"}
+    if core.create(core.world_entities(run))!=e {return at,"was not the next entity the document made after the copy"}
+    for &t in s.info.tables {
+        if t.place!=.World {continue}
+        if value:=core.raw_find(core.world_table_at(w,&t),t.info,e);value!=nil {core.raw_add(core.world_table_at(run,&t),t.info,e,value)}
+    }
+    core.world_settle(run)
+    return providers(s).simulation.limit(run,s.app,moving)
+}
+
+// One tick of the copy at the project's rate: which of moving rest, and whether all do. False when
+// physics stopped.
+settle_tick :: proc(s:^Session,world:rawptr,moving:[]core.Entity,rested:[]bool) -> (all,ok:bool) {
+    run:=host.app_world_ref(s.app,world)
+    if !providers(s).simulation.step(run,s.app,s.app.tick_dt) {return}
+    motions:=core.read(core.world_table_of(run,core.Motion))
+    all=true
+    for e,i in moving {
+        motion,made:=core.get(motions,e)
+        rested[i]=made && !motion.awake
+        all&&=rested[i]
+    }
+    return all,true
+}
+
+// The poses moving have in the copy, written into the edit of the document that is open: what a
+// gesture shows while it lasts.
+settle_write :: proc(s:^Session,world:rawptr,moving:[]core.Entity) -> bool {
+    return s.edits.open && poses_write(s,settle_poses(s,world,moving))
+}
+
+@(private)
+settle_poses :: proc(s:^Session,world:rawptr,moving:[]core.Entity) -> []Simulation_Pose {
+    w,run:=edited_world(s),host.app_world_ref(s.app,world)
     poses:=make([]Simulation_Pose,len(moving),context.temp_allocator)
     for e,i in moving {
         t:=entity_world(run,e)
         q:=t.rotation
         poses[i]={api_entity_id(w,e),t.position,{q.x,q.y,q.z,q.w},t.scale}
     }
-    if !simulation_apply_poses(s,poses) {return ran,-1,"The poses could not be kept as a step of undo: an edit of the document is open"}
-    return ran,-1,""
+    return poses
 }
 
 Api_Simulation_Apply_Params :: struct {

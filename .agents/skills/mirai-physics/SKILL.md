@@ -69,7 +69,7 @@ networking ([networking](../mirai-networking/SKILL.md)).
 - `core.place` on a body → [engine.md#requests](references/engine.md#requests);
   `core.World_Queries` (cameras, feet) → [engine.md#queries](references/engine.md#queries)
 - Editor part (collider preset, collision settings, `physics.collision.*` API, Simulate, dropping
-  objects to rest with `physics.settle`, Collision view modes) →
+  objects to rest with `physics.settle` and the Drop tool, Collision view modes) →
   [engine.md#editor-part](references/engine.md#editor-part)
 
 ## Workflow

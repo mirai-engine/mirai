@@ -468,8 +468,9 @@ and joins them with the engine's.
   (`Simulation_Pose`, normalized quaternion), validates everything before changing, respects
   selected parents and records a single undo; it creates no entities nor applies components.
 - `simulate_until_rest(s, moving, ticks, rested)` is the
-  [Simulate limited](editor.md#simulate) to some entities: a tool that arranges entities by
-  letting them fall calls it (or `physics.settle`) instead of keeping a world of its own.
+  [Simulate limited](editor.md#simulate) to some entities, and `settle_begin` to `settle_write`
+  the same run a few ticks a frame: a tool that arranges entities by letting them fall uses them
+  instead of keeping a world of its own.
 
 ## A plugin's game and player processes
 

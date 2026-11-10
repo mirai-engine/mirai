@@ -1,6 +1,7 @@
 package physics_editor
 
 import "core:fmt"
+import "core:mem"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor"
@@ -53,6 +54,7 @@ Settle_Test :: struct {
     viewport:editor.Viewport,
     gui:editor.Editor_Ui,
     document:editor.Document,
+    tool:Drop_Tool,
 }
 
 @(private="file")
@@ -76,6 +78,7 @@ settle_test_open :: proc(t:^testing.T,f:^Settle_Test) -> bool {
 
 @(private="file")
 settle_test_close :: proc(f:^Settle_Test) {
+    drop_free(&f.tool)
     history.edits_free(&f.edits)
     delete(f.selection.entities)
     core.world_destroy(&f.info,.World,&f.world)
@@ -190,4 +193,74 @@ settle_refuses_what_cannot_fall_and_says_why_a_fall_did_not_rest :: proc(t:^test
     call=api.Call{method=&method,params=&params,result=&result,raw=`{"entities":[]}`,allocator=context.temp_allocator}
     api_settle(&f.session,&call)
     testing.expect(t,call.failed && call.error.code==api.INVALID_PARAMS)
+}
+
+// Every component row of the World of f, compared byte by byte with snapshot: what Cancel leaves.
+@(private="file")
+settle_test_same :: proc(t:^testing.T,f:^Settle_Test,snapshot:rawptr) -> bool {
+    w,was:=core.world_ref(&f.world,&f.info),core.world_ref(snapshot,&f.info)
+    if !testing.expect_value(t,f.world.entities.alive,core.world_entities(was).alive) {return false}
+    for &table in f.info.tables {
+        if table.place!=.World || !table.flat {continue}
+        now,then:=core.world_table_at(w,&table),core.world_table_at(was,&table)
+        if !testing.expectf(t,now.on==then.on && len(now.entities)==len(then.entities),"%s has other rows",table.name) {return false}
+        for e,row in now.entities {
+            same:=e==then.entities[row] && mem.compare_ptrs(core.raw_value(now,table.info,row),core.raw_value(then,table.info,row),table.info.size)==0
+            if !testing.expectf(t,same,"%s differs at row %d",table.name,row) {return false}
+        }
+    }
+    return true
+}
+
+// The Drop tool: two meshes dropped at once and stepped over frames end where physics.settle puts
+// the same meshes, and Confirm keeps them as one undo step; Cancel leaves every row as it was.
+@(test)
+drop_gesture_settles_live_as_physics_settle_and_cancel_leaves_the_document :: proc(t:^testing.T) {
+    live,once:=new(Settle_Test),new(Settle_Test)
+    defer {free(live);free(once)}
+    poses:[2][2]core.Transform
+    for f,run in ([2]^Settle_Test{live,once}) {
+        if !settle_test_open(t,f) {return}
+        _=settle_test_box(f,"Floor",{0,-0.5,0},{20,1,20},true)
+        w:=editor.edited_world(&f.session)
+        history.edits_reset(&f.edits,w)
+        editor.tool_set(&f.session,DROP_TOOL,true)
+        f.tool={ready=true,mesh={shape=.Cube},scale=1,speed=5,height=1,bounds={{-0.5,-0.5,-0.5},{0.5,0.5,0.5}},measured=true}
+        if !testing.expect_value(t,drop_one(&f.session,&f.tool,{0,0,0}),"") {return}
+        if !testing.expect_value(t,drop_one(&f.session,&f.tool,{0.1,1.5,0}),"") {return}
+        moving:=f.tool.moving[:2]
+        if run==0 {
+            for frame:=0;!f.tool.resting && frame<600;frame+=1 {testing.expect(t,drop_advance(&f.session,&f.tool,1.0/30))}
+            testing.expect(t,f.tool.resting && f.tool.ticks<SETTLE_TICKS)
+            testing.expect_value(t,f.edits.cursor,0)
+            testing.expect(t,drop_end(&f.session,&f.tool,true))
+            testing.expect_value(t,f.edits.cursor,1)
+        } else {
+            testing.expect(t,drop_end(&f.session,&f.tool,true))
+            rested:[2]bool
+            _,_,problem:=editor.simulate_until_rest(&f.session,moving,SETTLE_TICKS,rested[:])
+            testing.expectf(t,problem=="" && rested==[2]bool{true,true},"%s",problem)
+        }
+        for e,i in moving {poses[run][i]=core.from_math(editor.entity_world(w,e))}
+    }
+    defer {settle_test_close(live);settle_test_close(once)}
+    for i in 0..<2 {
+        a,b:=poses[0][i],poses[1][i]
+        testing.expectf(t,abs(a.position.x-b.position.x)+abs(a.position.y-b.position.y)+abs(a.position.z-b.position.z)<1e-3,"mesh %d: live %v, settled %v",i,a.position,b.position)
+    }
+    testing.expectf(t,abs(poses[0][0].position.y-0.5)<0.03 && abs(poses[0][1].position.y-1.5)<0.05,"%v",poses[0])
+
+    f:=live
+    w:=editor.edited_world(&f.session)
+    snapshot:=host.app_world_create(&f.app)
+    defer host.app_world_free(&f.app,snapshot)
+    testing.expect(t,core.world_copy(&f.info,snapshot,&f.world))
+    testing.expect_value(t,drop_one(&f.session,&f.tool,{3,0,0}),"")
+    for _ in 0..<10 {testing.expect(t,drop_advance(&f.session,&f.tool,1.0/30))}
+    testing.expect(t,editor.entity_world(w,f.tool.moving[0]).position.y<1.5)
+    testing.expect(t,drop_end(&f.session,&f.tool,false))
+    core.settle(&f.info,&f.world,nil)
+    settle_test_same(t,f,snapshot)
+    testing.expect_value(t,f.edits.cursor,1)
+    testing.expect_value(t,host.app_world_count(&f.app),1)
 }

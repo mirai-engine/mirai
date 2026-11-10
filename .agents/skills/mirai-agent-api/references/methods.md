@@ -690,6 +690,7 @@ Runs the whole scene with the editor's camera and controls, without player input
   need a `Collider`. Dropping a pile is `scene.write` of the objects
   above where they fall, then `physics.settle` of them; the poses are one undo step. An entity that
   cannot fall is `-32602` naming its index; `rested` false and `reason` say what the tick limit cut.
+  `physics.drop` only ends the Drop gesture a person holds open (`Confirm` or `Cancel`).
 
 During Simulate, `editor.select`, `editor.inspect`, `editor.input`, `camera.set` and the viewport
 actions act on the copy; `editor.input` still requires a manual editor and `capture` with `ui`

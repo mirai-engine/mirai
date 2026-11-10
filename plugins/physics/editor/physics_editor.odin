@@ -27,6 +27,7 @@ PHYSICS_API_DEFAULT :: Physics_Api{provider={register=api_register}}
 api_register :: proc(s:^editor.Session) {
     api_collision_register(s)
     api_settle_register(s)
+    api_drop_register(s)
 }
 
 @(storage)

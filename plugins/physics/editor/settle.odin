@@ -39,7 +39,7 @@ api_settle_register :: proc(s:^editor.Session) {
         name="physics.settle",
         summary="Simulates the scene with only the given entities moving until they rest or the ticks run out, and keeps their poses as one step of undo: what drops placed objects onto the scene and onto each other. Create them above where they fall with scene.write, each with a Collider.",
         defaults=&defaults,run=api_settle,
-        entry={label="Drop to rest",params=`{"entities":["$selection"]}`,icon=.Import,shortcut={key=.P,set=true},menu=.Tools,state=settle_state,scene=true},
+        entry={label="Drop to rest",params=`{"entities":["$selection"]}`,icon=.Import,menu=.Tools,state=settle_state,scene=true},
     })
 }
 
@@ -79,7 +79,8 @@ api_settle :: proc(s:^editor.Session,call:^api.Call) {
 // For a Simulate limited to moving: each is a dynamic body (with its Rigid_Body when that is
 // dynamic, or one that comes to rest soon), every other body is static and every character the
 // still capsule of its collider. Physics runs alone there: what another plugin gives its shapes
-// (an External collider, as a Destructible has) is the mesh it shows.
+// (an External collider, as a Destructible has) is the mesh it shows. Again with more entities,
+// those that already moved go on as they were.
 @(private)
 simulation_limit :: proc(w:core.World_Ref,app:^host.App,moving:[]core.Entity) -> (at:int,problem:string) {
     rigids,colliders,motions:=core.world_table_of(w,phys.Rigid_Body),core.world_table_of(w,phys.Collider),core.world_table_of(w,core.Motion)
@@ -89,7 +90,6 @@ simulation_limit :: proc(w:core.World_Ref,app:^host.App,moving:[]core.Entity) ->
         if !found {return i,"has no Collider: give it one with scene.write, so it has a shape to fall with"}
         if collider.kind==.Mesh || collider.kind==.Heightfield {return i,"has a Collider of kind Mesh or Heightfield, which has no mass: give it a Box, Sphere, Capsule, Cylinder or Hull"}
     }
-    if state:=core.world_storage_of(w,phys.Physics_State);state!=nil {phys.state_destroy(state)}
     if requests:=core.world_storage_of(w,phys.Body_Requests);requests!=nil {core.queue_clear(&requests.queue)}
     if characters:=core.world_table_of(w,phys.Character);characters!=nil {
         for e in characters.entities {core.remove(characters,e)}
@@ -109,7 +109,7 @@ simulation_limit :: proc(w:core.World_Ref,app:^host.App,moving:[]core.Entity) ->
             core.add(rigids,e,body)
         }
         // Made by a step that does not play, a body gets no Motion of physics: without one its rest is never read.
-        core.add(motions,e,core.Motion{awake=true})
+        if !core.has(motions,e) {core.add(motions,e,core.Motion{awake=true})}
     }
     core.world_settle(w)
     made:=phys.step_world(w,app,0)
