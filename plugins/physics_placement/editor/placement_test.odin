@@ -62,7 +62,7 @@ placement_test_open :: proc(t:^testing.T,f:^Placement_Test) -> bool {
     f.info.steps=f.steps[:]
     f.info.order[.Editor][.Fixed]=f.order[:]
     f.info.loops[.Game][.Fixed]=placement_test_game
-    if !testing.expect(t,f.info.init[.World](&f.world,context.allocator)) {
+    if !testing.expect(t,core.world_init(&f.info,.World,&f.world,context.allocator)) {
         core.test_info_destroy(&f.info)
         return false
     }
@@ -79,8 +79,8 @@ placement_test_close :: proc(f:^Placement_Test) {
     physics_placement_free(&f.tool)
     history.edits_free(&f.edits)
     delete(f.selection.entities)
-    f.info.destroy[.World](&f.world)
-    f.info.destroy[.Shared](&f.shared)
+    core.world_destroy(&f.info,.World,&f.world)
+    core.world_destroy(&f.info,.Shared,&f.shared)
     delete(f.app.worlds)
     core.test_info_destroy(&f.info)
 }

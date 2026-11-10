@@ -621,13 +621,13 @@ gone_reset :: proc "contextless" (t:^Raw_Table) {
     clear(&t.gone)
 }
 
-table_copy :: proc(dst,src:^Table($T)) -> bool {return raw_copy(raw(dst),raw(src),type_info_of([dynamic]T))}
+table_copy :: proc(dst,src:^Table($T)) -> bool {return raw_copy(raw(dst),raw(src),type_info_of(T))}
 
-// values: the type of the dynamic array of the values of the table.
-raw_copy :: proc(dst,src:^Raw_Table,values:^runtime.Type_Info) -> bool {
+// info: of a value of the table.
+raw_copy :: proc(dst,src:^Raw_Table,info:^runtime.Type_Info) -> bool {
     if dst==src {return true}
     dst.on=0
-    if !value_copy(&dst.values,&src.values,values) ||
+    if !array_copy(&dst.values,&src.values,info) ||
        !value_copy(&dst.entities,&src.entities,type_info_of([dynamic]Entity)) ||
        !value_copy(&dst.stamps,&src.stamps,type_info_of([dynamic]u64)) ||
        !value_copy(&dst.off,&src.off,type_info_of([dynamic]bool)) ||
@@ -660,21 +660,21 @@ Copy_Mark :: struct {
 // copy mark says; the rows whose stamps differ when both have the same rows;
 // all of it otherwise. To the readers of dst it is a copy like table_copy.
 table_copy_changed :: proc(dst,src:^Table($T),mark:^Copy_Mark) -> bool {
-    return #force_inline raw_copy_changed(raw(dst),raw(src),type_info_of(T),type_info_of([dynamic]T),size_of(T),mark)
+    return raw_copy_changed(raw(dst),raw(src),type_info_of(T),mark)
 }
 
-// info and size: of a value of the table; values: as raw_copy takes it.
-raw_copy_changed :: proc(dst,src:^Raw_Table,info,values:^runtime.Type_Info,size:int,mark:^Copy_Mark) -> bool {
+// info: of a value of the table.
+raw_copy_changed :: proc(dst,src:^Raw_Table,info:^runtime.Type_Info,mark:^Copy_Mark) -> bool {
     if dst==src {return true}
     if mark.valid && mark.version==src.version && mark.layout==src.layout {return true}
     mark.valid=false
     same:=dst.on==src.on && len(dst.entities)==len(src.entities) && slice.equal(dst.entities[:],src.entities[:]) && slice.equal(dst.off[:],src.off[:])
     if !same {
-        if !raw_copy(dst,src,values) {return false}
+        if !raw_copy(dst,src,info) {return false}
         mark^={src.version,src.layout,true}
         return true
     }
-    flat:=-1
+    size,flat:=info.size,-1
     for stamp,row in src.stamps {
         if dst.stamps[row]==stamp {continue}
         if flat<0 {flat=int(value_flat(info))}

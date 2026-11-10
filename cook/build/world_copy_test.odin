@@ -8,7 +8,7 @@ import "mirai:project"
 import "mirai:std/base"
 
 @(test)
-generated_world_copy_reports_failure_and_publication_keeps_local_storage :: proc(t:^testing.T) {
+a_generated_world_says_how_core_copies_and_swaps_each_storage :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"copy")
     if folder=="" {return}
     engine:=project.path(folder,"engine",allocator=context.temp_allocator)
@@ -50,34 +50,26 @@ Both :: struct {plain:^Plain,state:Ref(State)}
     output:=world_generate(&p,context.temp_allocator)
     if !testing.expect_value(t,len(output.errors),0) {return}
     for text in ([]string{output.game_world,output.editor_world}) {
-        testing.expect(t,strings.contains(text,"init_World :: proc(data:rawptr,allocator:runtime.Allocator) -> bool"))
-        testing.expect(t,strings.contains(text,"if error!=nil || raw_data(locks)==nil {return false}"))
-        testing.expect(t,strings.contains(text,"w.owner.locks[0]={p_core.lock_offset(&w.owner,&w.transform),1,LOCK_NAMES[:],\"Transform\"}"))
-        testing.expect(t,strings.contains(text,"if !p_core.entities_copy("))
-        // The index of the entities by Id goes on following the table of Id that comes with it.
-        testing.expect(t,strings.contains(text,"synced:=p_core.ids_synced(&src.entities,p_core.read(&src.id))"),text)
-        testing.expect(t,strings.contains(text,"p_core.ids_moved(&dst.entities,p_core.read(&dst.id),synced)"))
-        testing.expect(t,strings.contains(text,"p_core.ids_moved(&a.entities,p_core.read(&a.id),b_synced)"))
-        // The copy a history keeps takes the copy_kept of the storage; the others its copy.
-        whole,_,changed:=strings.partition(text,"copy_changed_world :: proc")
-        changed,_,_=strings.partition(changed,"swap_world :: proc")
-        testing.expect(t,strings.contains(whole,"if !p_core.state_copy(&dst.state,&src.state)") && !strings.contains(whole,"state_copy_kept"))
-        testing.expect(t,strings.contains(changed,"if !p_core.state_copy_kept(&dst.state,&src.state)"))
+        // Making, copying, swapping and clearing a World are loops of core over what info says of
+        // each table and storage: none is written for a world.
+        for name in ([]string{"init_World","destroy_World","copy_world","swap_world","clear_world","table_init","table_copy","table_swap"}) {
+            testing.expectf(t,!strings.contains(text,name),"%s is written for the world",name)
+        }
+        // A lock is the distance from its table to the one whose rows it takes.
+        testing.expect(t,strings.contains(text,"locks_owner[0]={int(offset_of(World,transform))-int(offset_of(World,owner)),1,LOCK_NAMES[:],\"Transform\"}"),text)
+        testing.expect(t,strings.contains(text,",true,locks_owner}\n") && strings.contains(text,",true,nil}\n"),"a component of core is the base of every entity")
+        // The procedures the attributes of a storage name, as core calls them.
+        testing.expect(t,strings.contains(text,"copy_state :: proc(a,b:rawptr) -> bool {return p_core.state_copy(cast(^p_core.State)a,cast(^p_core.State)b)}"),text)
+        testing.expect(t,strings.contains(text,"copy_kept_state :: proc(a,b:rawptr) -> bool {return p_core.state_copy_kept(cast(^p_core.State)a,cast(^p_core.State)b)}"))
+        testing.expect(t,strings.contains(text,"swap_state :: proc(a,b:rawptr) {p_core.state_swap(cast(^p_core.State)a,cast(^p_core.State)b)}"))
+        testing.expect(t,strings.contains(text,"free_local :: proc(value:rawptr) {p_core.local_free(cast(^p_core.Local)value)}"))
+        testing.expect(t,strings.contains(text,"offset_of(World,state),.World,.None,nil,false,nil,false,false,\"\",false,false,{copy=copy_state,copy_kept=copy_kept_state,swap=swap_state}}"),text)
+        testing.expect(t,strings.contains(text,"offset_of(World,plain),.World,.None,nil,false,nil,false,false,\"\",false,false,{}}"))
+        // What says copy=false is local: no copy or swap of the World touches it.
+        testing.expect(t,strings.contains(text,"offset_of(World,local),.World,.None,nil,false,nil,false,false,\"\",false,true,{free=free_local}}"))
         // A World holds a revision for each storage of info.storages; Local is 0, State 1, Plain 2.
         testing.expect(t,strings.contains(text,"storage_revisions:[6]u64,"),text)
         testing.expect(t,strings.contains(text,"info.entities,info.revisions=offset_of(World,entities),offset_of(World,storage_revisions)"))
-        // The copy of what changed takes a storage only when its revision moved since its mark, which
-        // follows those of the 3 tables; without a mark for each, it copies whole.
-        testing.expect(t,strings.contains(changed,"if len(marks)<9 {return copy_world(dst_data,src_data)}"),changed)
-        testing.expect(t,strings.contains(changed,"    if p_core.storage_changed(&marks[4],src.storage_revisions[1]) {\n        if !p_core.state_copy_kept(&dst.state,&src.state) {return false}\n        p_core.storage_copied(&marks[4],&dst.storage_revisions[1],src.storage_revisions[1])\n    }\n"),changed)
-        testing.expect(t,strings.contains(changed,"    if p_core.storage_changed(&marks[5],src.storage_revisions[2]) {\n        if !p_core.value_copy(&dst.plain,&src.plain,type_info_of(p_core.Plain)) {return false}"),changed)
-        testing.expect_value(t,strings.count(changed,"p_core.storage_changed("),4)
-        // A storage with a copy of its own holds what a comparison of values does not read.
-        testing.expect(t,strings.contains(changed,"when p_core.CHECK_WRITES {p_core.storage_check(&dst.plain,&src.plain,type_info_of(p_core.Plain),\"Plain\")}"))
-        testing.expect(t,!strings.contains(changed,"storage_check(&dst.state"))
-        testing.expect(t,!strings.contains(whole,"storage_changed") && strings.contains(whole,"p_core.revisions_copied(dst.storage_revisions[:],src.storage_revisions[:])"))
-        testing.expect(t,strings.contains(text,"p_core.revisions_swapped(a.storage_revisions[:],b.storage_revisions[:])"))
-        testing.expect(t,strings.contains(text,"p_core.revisions_moved(w.storage_revisions[:])"))
         // Whoever receives a storage of the World to write moves its revision, before it runs.
         Case :: struct {step:string,moves:[]string,call:string}
         cases:=[]Case{
@@ -102,15 +94,6 @@ Both :: struct {plain:^Plain,state:Ref(State)}
         _,_,rules:=strings.partition(text,"call_rules :: proc(")
         role,_,moved:=strings.partition(rules,"w.storage_revisions[1]+=1")
         testing.expect(t,strings.contains(role,"if w.network.role==.Client {return}") && moved!="")
-        testing.expect(t,strings.contains(text,"p_core.state_swap("))
-        testing.expect(t,strings.contains(text,"p_core.table_swap("))
-        // A multiple assignment of storages keeps LLVM optimizing for a minute (odin-lang/Odin#7937).
-        testing.expect(t,strings.contains(text,"gen_slice.ptr_swap_non_overlapping(&a.plain,&b.plain,size_of(a.plain))"),text)
-        testing.expect(t,strings.contains(text,"gen_slice.ptr_swap_non_overlapping(&a.entities,&b.entities,size_of(a.entities))"))
-        testing.expect(t,!strings.contains(text,"a.plain,b.plain=") && !strings.contains(text,"a.entities,b.entities="))
         testing.expect(t,strings.contains(text,"local:p_core.Local"))
-        testing.expect(t,!strings.contains(text,"&dst.local") && !strings.contains(text,"a.local,b.local="))
-        testing.expect(t,strings.contains(text,"p_core.local_free(&w.local)"))
-        testing.expect(t,strings.contains(text,"info.swap=swap_world"))
     }
 }

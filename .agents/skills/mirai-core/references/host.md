@@ -69,8 +69,8 @@ its `exit_code` and `script_hold`.
   what they kept for it) and frees it.
 - `app_world_id(app, data)`, `app_world_of(app, id)` (`nil` if it was already released) and
   `app_world_count`.
-- Creating a world also gives it its values of the `by_world` storages (`info.attach`); if there is
-  no memory, it is not created. Releasing it removes them after its `release`.
+- Creating a world also gives it its values of the `by_world` storages (`core.world_attach`); if
+  there is no memory, it is not created. Releasing it removes them after its `release`.
 - `app_world_storage(app, data, T)`: the storage `T` of a world as its functions receive it: in the
   `World`, or its value of a `by_world` of the `Shared` (the network session of a run, its
   [problems](core.md#problems)). `nil` without it or without a loaded game (`app.info` empty).

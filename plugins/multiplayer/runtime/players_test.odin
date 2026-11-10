@@ -157,7 +157,7 @@ a_server_owns_each_body_to_the_connection_of_its_seat :: proc(t:^testing.T) {
     defer core.test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
-    defer info.destroy[.World](&world)
+    defer core.world_destroy(&info,.World,&world)
     connection:=Connection(u64(3)<<32|7)
     body,free:=net_test_body(&world,&info,1),net_test_body(&world,&info,2)
     net_test_own(&world,body,connection)

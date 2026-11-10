@@ -41,8 +41,8 @@ ai_context_continues_project_chats_and_passes_instructions_skills_and_live_play 
     if !described {return}
     defer core.test_info_destroy(&info)
     world,live:Ai_Context_Test_World
-    defer info.destroy[.World](&world);defer info.destroy[.World](&live)
-    if !testing.expect(t,info.init[.World](&world,context.allocator) && info.init[.World](&live,context.allocator)) {return}
+    defer core.world_destroy(&info,.World,&world);defer core.world_destroy(&info,.World,&live)
+    if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator) && core.world_init(&info,.World,&live,context.allocator)) {return}
     state:=Api_State{server={port=7940}}
     editor_world:=Ai_Context_Test_Editor{api={state=&state}}
     app:host.App

@@ -18,7 +18,7 @@ bench_publish_run :: proc(t:^testing.T,changed:bool,hz:f32) {
     defer core.test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
-    defer info.destroy[.World](&world)
+    defer core.world_destroy(&info,.World,&world)
     first:=core.NONE
     for i in 0..<OBJECTS {
         entity:=core.create(&world.entities)

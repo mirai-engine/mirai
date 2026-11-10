@@ -28,6 +28,8 @@ Table_Info :: struct {
     fields:[]Field_Description, // of the fields of its struct that have a comment on their line
     single:bool, // @(component,single): the world uses one at a time; its table keeps one row on
     far:bool,    // @(component,far): its entity draws a far form of its own, which stays when its section unloads
+    base:bool,   // a component of core, the base of every entity: on while its entity is disabled
+    locks:[]Lock, // @(component,locks="..."): the rows of other tables of its struct a row on of this one owns
 }
 
 // Which ends of a network session receive the values of a component of the
@@ -91,6 +93,18 @@ Storage_Info :: struct {
     keep:bool,    // @(storage,keep): the state of the run, which clearing the World leaves
     plugin:string, // the plugin whose package declares it; empty for the engine and the project
     game:bool,     // the game of the project declares it, not the engine or a plugin
+    local:bool,    // @(storage,copy=false): no copy, swap or clear of the World touches it
+    procs:Storage_Procs,
+}
+
+// The procedures the attributes of a storage name, in place of what core
+// does with its value by reflection; nil without one.
+Storage_Procs :: struct {
+    copy:proc(dst,src:rawptr) -> bool,      // copy="f"
+    copy_kept:proc(dst,src:rawptr) -> bool, // copy_kept="f": into the copy a history keeps
+    swap:proc(a,b:rawptr),                  // swap="f"
+    free:proc(value:rawptr),                // free="f"
+    reset:proc(value:rawptr),               // reset="f": what clearing the World does to it
 }
 
 Step_Info :: struct {
@@ -120,15 +134,7 @@ World_Info :: struct {
     actions:[]Actions_Info,     // the enums @(actions), in the order of their values
     records:[]Record_Info,      // the types @(record)
     steps:[]Step_Info,
-    init:[Place]proc(data:rawptr,allocator:runtime.Allocator) -> bool,
-    destroy:[Place]proc(data:rawptr),
-    copy:proc(dst,src:rawptr) -> bool, // failure leaves a destructible, partial destination
-    copy_changed:proc(dst,src:rawptr,marks:[]Copy_Mark) -> bool, // copy that copies again only the tables that changed (table_copy_changed) and the storages whose revision moved, for a dst a history keeps as a copy of src, with the copy_marks_count marks it updates: one per table, by its index in tables, then one per storage; dst is only copied back with copy, as the storages that say copy_kept hold only what that needs
-    swap:proc(a,b:rawptr), // publishes a prepared World without allocating; local storages stay
-    settles:Settle_Info, // what settle looks for in tables and storages
-    clear:proc(world:rawptr) -> bool, // every entity and row of a World, and the storages derived from them back to their start; settings and those that say keep stay. False without memory: the World as it was
-    attach:proc(world,shared:rawptr,allocator:runtime.Allocator) -> bool, // the values of the by_world storages of a World with its id; false without memory
-    detach:proc(world,shared:rawptr), // frees them, after the release phase of the World
+    settles:Settle_Info, // what settle and the procedures of world_data look for in tables and storages
     loops:[Loop][Phase]Loop_Proc,
     order:[Loop][Phase][]i32, // the steps each loop calls, by index, in its order
     tables_by_type,storages_by_type:map[typeid]int, // index in tables and in storages, by_world aside: world_info_index
@@ -482,20 +488,7 @@ value_copy :: proc(dst,src:rawptr,info:^runtime.Type_Info) -> bool {
             if !value_copy(rawptr(uintptr(dst)+offset),rawptr(uintptr(src)+offset),v.elem) {return false}
         }
     case runtime.Type_Info_Dynamic_Array:
-        d:=cast(^runtime.Raw_Dynamic_Array)dst
-        s:=cast(^runtime.Raw_Dynamic_Array)src
-        if d.allocator.procedure==nil {d.allocator=context.allocator}
-        context.allocator=d.allocator
-        if s.len>0 && v.elem_size>0 && s.len>max(int)/v.elem_size {return false}
-        if d.cap<s.len && !runtime.__dynamic_array_reserve(d,v.elem_size,v.elem.align,s.len) {return false}
-        for i in s.len..<d.len {value_free(rawptr(uintptr(d.data)+uintptr(i*v.elem_size)),v.elem)}
-        if s.len>d.len {mem.zero(rawptr(uintptr(d.data)+uintptr(d.len*v.elem_size)),(s.len-d.len)*v.elem_size)}
-        d.len=s.len
-        if value_flat(v.elem) {mem.copy(d.data,s.data,s.len*v.elem_size);return true}
-        for i in 0..<s.len {
-            offset:=uintptr(i*v.elem_size)
-            if !value_copy(rawptr(uintptr(d.data)+offset),rawptr(uintptr(s.data)+offset),v.elem) {return false}
-        }
+        return array_copy(cast(^runtime.Raw_Dynamic_Array)dst,cast(^runtime.Raw_Dynamic_Array)src,v.elem)
     case runtime.Type_Info_Slice:
         d:=cast(^runtime.Raw_Slice)dst
         s:=cast(^runtime.Raw_Slice)src
@@ -520,6 +513,25 @@ value_copy :: proc(dst,src:rawptr,info:^runtime.Type_Info) -> bool {
         }
     case:
         mem.copy(dst,src,info.size)
+    }
+    return true
+}
+
+// Copies a dynamic array of values of a type, as value_copy copies each.
+array_copy :: proc(d,s:^runtime.Raw_Dynamic_Array,elem:^runtime.Type_Info) -> bool {
+    if d==s {return true}
+    size:=elem.size
+    if d.allocator.procedure==nil {d.allocator=context.allocator}
+    context.allocator=d.allocator
+    if s.len>0 && size>0 && s.len>max(int)/size {return false}
+    if d.cap<s.len && !runtime.__dynamic_array_reserve(d,size,elem.align,s.len) {return false}
+    for i in s.len..<d.len {value_free(rawptr(uintptr(d.data)+uintptr(i*size)),elem)}
+    if s.len>d.len {mem.zero(rawptr(uintptr(d.data)+uintptr(d.len*size)),(s.len-d.len)*size)}
+    d.len=s.len
+    if value_flat(elem) {mem.copy(d.data,s.data,s.len*size);return true}
+    for i in 0..<s.len {
+        offset:=uintptr(i*size)
+        if !value_copy(rawptr(uintptr(d.data)+offset),rawptr(uintptr(s.data)+offset),elem) {return false}
     }
     return true
 }

@@ -16,7 +16,7 @@ custom_relevance_replicates_an_entity_only_to_the_connections_the_game_names :: 
     sessions:[2]Net_Session
     problems:core.Problems
     for &world,index in worlds {net_test_init(&world,&info);apps[index]={allocator=context.allocator,tick_dt=1.0/60}}
-    defer for &world in worlds {info.destroy[.World](&world)}
+    defer for &world in worlds {core.world_destroy(&info,.World,&world)}
     defer for &app in apps {host.app_world_scratch_free(&app);delete(app.worlds)}
     network:wire.Sim_Network
     testing.expect(t,wire.sim_network_init(&network,{seed=5,endpoints=2,packets=1024}))
@@ -78,7 +78,7 @@ entities_of_the_same_frequency_take_turns_instead_of_publishing_together :: proc
     if !described {return}
     defer core.test_info_destroy(&info)
     world:Net_Test_World
-    net_test_init(&world,&info);defer info.destroy[.World](&world)
+    net_test_init(&world,&info);defer core.world_destroy(&info,.World,&world)
     entities:[3]core.Entity
     for &e,i in entities {
         e=net_test_body(&world,&info,base.Entity_Id(i+1),{f32(i),0,0})
@@ -115,7 +115,7 @@ the_parent_on_the_network_is_the_closest_replicated_ancestor :: proc(t:^testing.
     defer core.test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
-    defer info.destroy[.World](&world)
+    defer core.world_destroy(&info,.World,&world)
     network:wire.Sim_Network
     testing.expect(t,wire.sim_network_init(&network,{seed=9,endpoints=1,packets=64}))
     defer wire.sim_network_destroy(&network)

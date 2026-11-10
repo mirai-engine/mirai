@@ -190,7 +190,7 @@ client_init :: proc(s:^Net_Session,w:core.World_Ref,allocator:runtime.Allocator)
         data,alloc_error:=mem.alloc(max(w.info.sizes[.World],1),max(w.info.aligns[.World],1),allocator)
         if alloc_error!=nil || data==nil {return false}
         c.sync_world=data
-        if !w.info.init[.World](data,allocator) {return false}
+        if !core.world_init(w.info,.World,data,allocator) {return false}
         // What simulates outside the tables leaves a hash of it for the test.
         if check:=core.world_storage_of(w,core.Sync_Check);check!=nil {check.on=true}
     }
@@ -215,7 +215,7 @@ history_make :: proc(s:^Net_Session,w:core.World_Ref,c:^Client,ticks:int) -> (ok
         data,alloc_error:=mem.alloc(max(w.info.sizes[.World],1),max(w.info.aligns[.World],1),allocator)
         if alloc_error!=nil || data==nil {return false}
         frame.world=data
-        if !w.info.init[.World](data,allocator) {return false}
+        if !core.world_init(w.info,.World,data,allocator) {return false}
         if frame.marks,error=make([]core.Copy_Mark,core.copy_marks_count(w.info),allocator);error!=nil {return false}
         if frame.delays,error=make([]Delay,d.max_objects,allocator);error!=nil {return false}
     }
@@ -236,7 +236,7 @@ history_free :: proc(s:^Net_Session,c:^Client) {
     allocator:=s.allocator
     for &frame in c.frames {
         if frame.world!=nil {
-            s.info.destroy[.World](frame.world)
+            core.world_destroy(s.info,.World,frame.world)
             mem.free(frame.world,allocator)
         }
         delete(frame.marks,allocator)
@@ -274,7 +274,7 @@ client_destroy :: proc(s:^Net_Session) {
     context.allocator=allocator
     history_free(s,c)
     if c.sync_world!=nil {
-        s.info.destroy[.World](c.sync_world)
+        core.world_destroy(s.info,.World,c.sync_world)
         mem.free(c.sync_world,allocator)
     }
     if c.interpolation.data!=nil {wire.interpolation_destroy(&c.interpolation)}
@@ -821,10 +821,9 @@ feed_state :: proc(c:^Client,object:Object,pose:Pose,motion:Motion_State) {
 // since the slot was last written.
 @(private)
 frame_copy :: proc(w:core.World_Ref,frame:^Frame) -> bool {
-    if w.info.copy_changed==nil {return w.info.copy(frame.world,w.data)}
     // Marks of no copy: every table again.
     if frame.whole {mem.zero_slice(frame.marks)}
-    if !w.info.copy_changed(frame.world,w.data,frame.marks) {return false}
+    if !core.world_copy_changed(w.info,frame.world,w.data,frame.marks) {return false}
     frame.whole=false
     return true
 }
@@ -1450,7 +1449,7 @@ client_sync_test :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App) {
     for tick:=first;i32(last-tick)>=0;tick+=1 {
         if at:=&c.frames[int(tick)%len(c.frames)];!at.valid || at.tick!=tick || c.record_ticks[int(tick)%c.history]!=tick+1 {return}
     }
-    if !w.info.copy(c.sync_world,w.data) {return}
+    if !core.world_copy(w.info,c.sync_world,w.data) {return}
     count:=len(w.info.tables)+1
     hashes:=c.sync_hashes[c.history*count:][:count]
     present_input:core.Input
@@ -1479,7 +1478,7 @@ client_sync_test :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App) {
     }
     c.sync_testing=false
     if input!=nil {input^=present_input}
-    w.info.swap(w.data,c.sync_world)
+    core.world_swap(w.info,w.data,c.sync_world)
     core.world_settle(w)
 }
 

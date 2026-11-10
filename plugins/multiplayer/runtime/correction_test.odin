@@ -138,7 +138,7 @@ correction_run :: proc(t:^testing.T,settings:Net_Settings,link:Correction_Link,s
         net_test_physics(&world,&shares[index],&apps[index])
     }
     net_test_player(&worlds[1],&info)
-    defer for &world in worlds {info.destroy[.World](&world)}
+    defer for &world in worlds {core.world_destroy(&info,.World,&world)}
     defer for &app in apps {host.app_world_scratch_free(&app);delete(app.worlds)}
     defer for &share in shares {phys.collider_meshes_destroy(&share.colliders)}
     network:wire.Sim_Network
@@ -316,8 +316,8 @@ correction_fixture_destroy :: proc(f:^Correction_Fixture) {
     wire.sim_network_destroy(&f.network)
     host.app_world_scratch_free(&f.app);delete(f.app.worlds)
     phys.collider_meshes_destroy(&f.shared.colliders)
-    if f.info.destroy[.World]==nil {return}
-    f.info.destroy[.World](&f.world)
+    if f.info.sizes[.World]<=0 {return}
+    core.world_destroy(&f.info,.World,&f.world)
     core.test_info_destroy(&f.info)
 }
 
@@ -376,7 +376,7 @@ a_client_keeps_the_history_of_its_server :: proc(t:^testing.T) {
     apps:[2]host.App
     sessions:[2]Net_Session
     for &world,index in worlds {net_test_init(&world,&info);apps[index]={info=&info,allocator=context.allocator,tick_dt=1.0/240}}
-    defer for &world in worlds {info.destroy[.World](&world)}
+    defer for &world in worlds {core.world_destroy(&info,.World,&world)}
     defer for &app in apps {host.app_world_scratch_free(&app);delete(app.worlds)}
     network:wire.Sim_Network
     testing.expect(t,wire.sim_network_init(&network,{seed=5,endpoints=2,packets=256}))
@@ -410,9 +410,9 @@ an_error_too_deep_for_the_frame_is_closed_over_the_next_ticks_without_a_teleport
     defer correction_fixture_destroy(&f)
     if !correction_fixture_init(t,&f,.Predicted,{max_objects=8,predicted_capacity=8,replication={history_seconds=0.5},max_resimulate=4}) {return}
     expected:Net_Test_World
-    f.info.init[.World](&expected,context.allocator)
-    f.info.copy(&expected,&f.world)
-    defer f.info.destroy[.World](&expected)
+    core.world_init(&f.info,.World,&expected,context.allocator)
+    core.world_copy(&f.info,&expected,&f.world)
+    defer core.world_destroy(&f.info,.World,&expected)
     reference:=Net_Test_Shared{info=&f.info}
     defer phys.collider_meshes_destroy(&reference.colliders)
     before:=correction_fixture_position(&f)
@@ -441,9 +441,9 @@ an_error_of_a_body_out_of_reach_is_closed_over_the_next_ticks_and_its_records_fo
     eighth,_:=record_of(c,&f.session.desc,&c.replicas[1],8)
     at_four,at_eight:=fourth^,eighth^
     expected:Net_Test_World
-    f.info.init[.World](&expected,context.allocator)
-    f.info.copy(&expected,&f.world)
-    defer f.info.destroy[.World](&expected)
+    core.world_init(&f.info,.World,&expected,context.allocator)
+    core.world_copy(&f.info,&expected,&f.world)
+    defer core.world_destroy(&f.info,.World,&expected)
     reference:=Net_Test_Shared{info=&f.info}
     defer phys.collider_meshes_destroy(&reference.colliders)
     expected.time.tick=11

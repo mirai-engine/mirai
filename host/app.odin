@@ -445,14 +445,14 @@ world_register :: proc(app:^App,at:int,data:rawptr) -> bool {
     if slot.generation==0 {slot.generation=1}
     slot.data=data
     if id:=core.world_storage_of(app_world_ref(app,data),core.World_Id);id!=nil {id^={u32(at),slot.generation}}
-    return app.info.attach==nil || app.info.attach(data,app.shared,app.allocator)
+    return core.world_attach(app.info,data,app.shared,app.allocator)
 }
 
 // Takes the World out of its slot with the values of its by_world storages.
 @(private)
 world_unregister :: proc(app:^App,data:rawptr) {
     if app.allocator.procedure!=nil {context.allocator=app.allocator}
-    if app.info.detach!=nil {app.info.detach(data,app.shared)}
+    core.world_detach(app.info,data,app.shared)
     if at:=world_slot_of(app,data);at>=0 {app.worlds[at].data=nil}
 }
 
@@ -469,8 +469,8 @@ app_world_replace :: proc(app:^App,dst,src:rawptr) -> bool {
         if app.scratch=app_world_create(app);app.scratch==nil {return false}
     }
     context.allocator=app.allocator
-    if !app.info.copy(app.scratch,src) {return false}
-    app.info.swap(dst,app.scratch)
+    if !core.world_copy(app.info,app.scratch,src) {return false}
+    core.world_swap(app.info,dst,app.scratch)
     return true
 }
 
@@ -508,7 +508,7 @@ world_alloc :: proc(app:^App,place:core.Place) -> rawptr {
     }
     app.reserved.allocator=app.allocator
     app.reserved[data]=reserved
-    if !info.init[place](data,app.allocator) {
+    if !core.world_init(info,place,data,app.allocator) {
         world_free(app,data,place)
         return nil
     }
@@ -519,7 +519,7 @@ world_alloc :: proc(app:^App,place:core.Place) -> rawptr {
 @(private)
 world_free :: proc(app:^App,data:rawptr,place:core.Place) {
     context.allocator=app.allocator
-    app.info.destroy[place](data)
+    core.world_destroy(app.info,place,data)
     _,reserved:=delete_key(&app.reserved,data)
     virtual.release(data,uint(reserved))
     if len(app.reserved)==0 {
@@ -574,17 +574,17 @@ app_worlds_migrate :: proc(app:^App,m:^core.World_Migration,editor:rawptr) -> bo
 place_replace :: proc(app:^App,m:^core.World_Migration,place:core.Place,data:rawptr) {
     size:=max(m.to.sizes[place],1)
     fresh,error:=mem.alloc(size,max(m.to.aligns[place],1),app.allocator)
-    if error!=nil || !m.to.init[place](fresh,app.allocator) {
+    if error!=nil || !core.world_init(m.to,place,fresh,app.allocator) {
         // Without memory for it, the struct starts as the new library makes it.
-        if fresh!=nil {m.to.destroy[place](fresh);mem.free(fresh,app.allocator)}
-        m.from.destroy[place](data)
+        if fresh!=nil {core.world_destroy(m.to,place,fresh);mem.free(fresh,app.allocator)}
+        core.world_destroy(m.from,place,data)
         mem.zero(data,size)
-        _=m.to.init[place](data,app.allocator)
+        _=core.world_init(m.to,place,data,app.allocator)
         return
     }
     if place!=.Editor {app_settings_load(app,fresh,place)}
     core.place_migrate(m,place,data,fresh,app.allocator)
-    m.from.destroy[place](data)
+    core.world_destroy(m.from,place,data)
     old:=max(m.from.sizes[place],1)
     if page_round(size)>page_round(old) {_=virtual.commit(data,uint(page_round(size)))}
     mem.copy(data,fresh,size)

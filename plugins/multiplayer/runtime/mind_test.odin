@@ -89,7 +89,7 @@ a_mind_decides_on_the_server_and_the_client_sees_its_presentation :: proc(t:^tes
         shares[index].info=&info
         apps[index]={allocator=context.allocator,tick_dt=1.0/60,shared=&shares[index]}
     }
-    defer for &world in worlds {info.destroy[.World](&world)}
+    defer for &world in worlds {core.world_destroy(&info,.World,&world)}
     server,client:=&worlds[0],&worlds[1]
     minds:=new(behavior.Minds);defer free(minds)
     for w in ([]^Mind_Net_World{server,client}) {
@@ -117,7 +117,7 @@ a_mind_decides_on_the_server_and_the_client_sees_its_presentation :: proc(t:^tes
     shown:[200]behavior.Mind_Presentation
     seen_steps:bit_set[Net_Act]
     snapshot:^Mind_Net_World
-    defer if snapshot!=nil {info.destroy[.World](snapshot);free(snapshot)}
+    defer if snapshot!=nil {core.world_destroy(&info,.World,snapshot);free(snapshot)}
     for tick in 1..<200 {
         now:=f64(tick)/60
         wire.sim_network_advance(&network,now)
@@ -140,7 +140,7 @@ a_mind_decides_on_the_server_and_the_client_sees_its_presentation :: proc(t:^tes
         }
         if tick==100 {
             snapshot=new(Mind_Net_World)
-            testing.expect(t,info.init[.World](snapshot,context.allocator) && info.copy(snapshot,server))
+            testing.expect(t,core.world_init(&info,.World,snapshot,context.allocator) && core.world_copy(&info,snapshot,server))
         }
         server_publish(&sessions[0],core.world_ref(server,&info),&outbox,u32(tick))
     }

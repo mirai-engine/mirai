@@ -23,9 +23,9 @@ animation_stop_and_seek_operate_on_the_play_world_and_refuse_edit_seeks :: proc(
     if !described {return}
     defer core.test_info_destroy(&info)
     document,play_world:Api_Test_World
-    defer for w in ([2]^Api_Test_World{&document,&play_world}) {info.destroy[.World](w)}
+    defer for w in ([2]^Api_Test_World{&document,&play_world}) {core.world_destroy(&info,.World,w)}
     for w in ([2]^Api_Test_World{&document,&play_world}) {
-        if !testing.expect(t,info.init[.World](w,context.allocator)) {return}
+        if !testing.expect(t,core.world_init(&info,.World,w,context.allocator)) {return}
         e:=core.create(&w.entities)
         core.add(&w.ids,e,core.Id{17})
         core.add(&w.animations,e,anim.ANIMATION_DEFAULT)

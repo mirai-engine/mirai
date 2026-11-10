@@ -60,16 +60,16 @@ Defects of Odin `dev-2026-11` (`nightly:e28f5d1`).
     - restoring backups of tens of KiB in a single assignment
       (`m.connections,…=previous,…` in `editor/ai_settings.odin`) took the editor library to
       `-o:speed` in 24 minutes;
-    - the generated `swap_world`, with about 46 KB of storages, took the demo library to
-      `-o:speed` in more than 70 s;
+    - a swap of the storages of a world written as multiple assignments, about 46 KB, took the
+      demo library to `-o:speed` in more than 70 s;
     - `p.manifest,error=manifest_read(…)` in `project.open`, of a `Manifest`, took the runtime
       library to 13 minutes at `-o:speed -debug` (254 s of its 290 on one thread at
       `-use-separate-modules`);
     - `profile,error=motion_profile_read(…)` in `anim.motion_content`, with a `Motion_Profile` of
       16,712 bytes, took the runtime library of `animation` from 1 to 15 s.
   - Workaround: one assignment per value at the sites marked
-    `// One store per value until odin-lang/Odin#7937`; `swap_world` swaps the storages by
-    memory (`slice.ptr_swap_non_overlapping`).
+    `// One store per value until odin-lang/Odin#7937`; `core.world_swap` swaps the storages
+    by memory (`slice.ptr_swap_non_overlapping`).
   - Detecting it: `mirai test cook/build no_store_of_an_aggregate_of_more_than_64_bytes` compiles
     to IR with `-o:minimal` the engine libraries, the demo editor library with its world and the
     library of each demo plugin, and fails on every `store` of an aggregate of more than 64 bytes.
@@ -79,8 +79,8 @@ Defects of Odin `dev-2026-11` (`nightly:e28f5d1`).
     thousand lines of IR) and `project.open` (`p.manifest,error=manifest_read(…)`, which took the
     runtime library to 13 minutes at `-o:speed -debug`) got in. The same test fails on a function
     with more than `IR_SPLIT_LIMIT` of those lines. The form through
-    temporaries leaves no `store`: the generator test covers `swap_world`, and in the rest there
-    remain pairs of `llvm.memcpy` to and from an unnamed `alloca`, of more than 64 bytes:
+    temporaries leaves no `store`: there remain pairs of `llvm.memcpy` to and from an unnamed
+    `alloca`, of more than 64 bytes:
     `physics.state_swap` (`a^,b^=b^,a^`, 6064 bytes), `physics_step` and `state_copy` (2624),
     `host.assets_material_values` (a ternary of 1072), `mirror.mirrors_render` (4096),
     `previews_editor.effect_merge` (3840) and `portals.portals_render` (1792), among others.

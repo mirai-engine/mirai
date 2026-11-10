@@ -43,11 +43,11 @@ preview_loads_and_samples_the_imported_mirai_avatar_assets :: proc(t:^testing.T)
         info,described:=core.test_info(t,Avatar_World,Avatar_Shared,core.Test_None,eanim.test_types)
         if !described {return}
         defer core.test_info_destroy(&info)
-        shared:Avatar_Shared;defer info.destroy[.Shared](&shared)
+        shared:Avatar_Shared;defer core.world_destroy(&info,.Shared,&shared)
         app:=host.App{assets=&assets,renderer=&renderer,allocator=context.allocator,shared=&shared}
         w:Avatar_World
-        if !testing.expect(t,info.init[.World](&w,context.allocator)) {return}
-        defer info.destroy[.World](&w)
+        if !testing.expect(t,core.world_init(&info,.World,&w,context.allocator)) {return}
+        defer core.world_destroy(&info,.World,&w)
         world:=core.world_ref(&w,&info)
         scene:=Scene{transforms=&w.transforms,parents=&w.parents,skins=&w.skins,meshes=&w.meshes}
         rig:=core.create(&w.entities)

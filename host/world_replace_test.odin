@@ -13,8 +13,8 @@ world_replacement_out_of_memory_keeps_the_destination_and_a_warm_one_does_not_al
     if !described {return}
     defer core.test_info_destroy(&info)
     source:Replace_World
-    if !testing.expect(t,info.init[.World](&source,context.allocator)) {return}
-    defer info.destroy[.World](&source)
+    if !testing.expect(t,core.world_init(&info,.World,&source,context.allocator)) {return}
+    defer core.world_destroy(&info,.World,&source)
     for value in 0..<40 {
         e:=core.create(&source.entities)
         core.add(&source.values,e,u32(value))

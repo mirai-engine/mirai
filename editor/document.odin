@@ -155,7 +155,7 @@ scene_new :: proc(s:^Session) {
     runs_stop(s)
     tools_release(s)
     w:=edited_world(s)
-    if !w.info.clear(w.data) {
+    if !core.world_clear(w.info,w.data) {
         notify(s,"There is not enough memory for a new scene; this one stays open")
         return
     }

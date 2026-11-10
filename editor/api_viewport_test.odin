@@ -89,8 +89,8 @@ camera_set_takes_a_fov_and_looks_through_a_camera_of_the_scene_without_editing_i
     if !described {return}
     defer core.test_info_destroy(&info)
     world:Camera_World
-    if !testing.expect(t,info.init[.World](&world,context.allocator)) {return}
-    defer info.destroy[.World](&world)
+    if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator)) {return}
+    defer core.world_destroy(&info,.World,&world)
     rig,eye,cube,flat:=core.create(&world.entities),core.create(&world.entities),core.create(&world.entities),core.create(&world.entities)
     forward:=linalg.normalize([3]f32{-1,-0.5,0})
     core.add(&world.ids,rig,{value=1});core.add(&world.ids,eye,{value=2});core.add(&world.ids,cube,{value=3});core.add(&world.ids,flat,{value=4})

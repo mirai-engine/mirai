@@ -70,7 +70,7 @@ pose_bake_test_init :: proc(f:^Pose_Bake_Test,t:^testing.T,name:string) -> bool 
     if !authoring_test_init(&f.authoring,t,name) {return false}
     described:bool
     f.info,described=core.test_info(t,Pose_Bake_Test_World,Pose_Bake_Test_Shared,core.Test_None,anim.test_types)
-    if !described || !testing.expect(t,f.info.init[.Shared](&f.shared,context.allocator) && f.info.init[.World](&f.world,context.allocator)) {
+    if !described || !testing.expect(t,core.world_init(&f.info,.Shared,&f.shared,context.allocator) && core.world_init(&f.info,.World,&f.world,context.allocator)) {
         pose_bake_test_destroy(f)
         return false
     }
@@ -100,9 +100,9 @@ pose_bake_test_init :: proc(f:^Pose_Bake_Test,t:^testing.T,name:string) -> bool 
 
 @(private)
 pose_bake_test_destroy :: proc(f:^Pose_Bake_Test) {
-    if f.info.destroy[.World]!=nil {
-        f.info.destroy[.World](&f.world)
-        f.info.destroy[.Shared](&f.shared)
+    if f.info.sizes[.World]>0 {
+        core.world_destroy(&f.info,.World,&f.world)
+        core.world_destroy(&f.info,.Shared,&f.shared)
     }
     delete(f.authoring.app.worlds)
     authoring_test_destroy(&f.authoring)

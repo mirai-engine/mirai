@@ -56,7 +56,7 @@ pair_init :: proc(t:^testing.T,p:^Pair,server_scene,client_scene:base.Asset_Id,f
 pair_destroy :: proc(p:^Pair) {
     for &session in p.sessions {session_destroy(&session);delete(session.reason_text)}
     wire.sim_network_destroy(&p.network)
-    for &world in p.worlds {p.info.destroy[.World](&world)}
+    for &world in p.worlds {core.world_destroy(&p.info,.World,&world)}
     for &app in p.apps {host.app_world_scratch_free(&app);delete(app.worlds)}
     for &share in p.shares {phys.collider_meshes_destroy(&share.colliders)}
     delete(p.info.messages)
@@ -123,7 +123,7 @@ pair_load :: proc(p:^Pair,index:int,id:base.Asset_Id,thing:base.Entity_Id) {
     loaded:=new(Net_Test_World)
     defer free(loaded)
     net_test_init(loaded,&p.info)
-    defer p.info.destroy[.World](loaded)
+    defer core.world_destroy(&p.info,.World,loaded)
     pair_thing(loaded,&p.info,thing,index==0)
     to,from:=core.world_ref(loaded,&p.info),core.world_ref(w,&p.info)
     core.world_run_copy(to,from)
@@ -132,7 +132,7 @@ pair_load :: proc(p:^Pair,index:int,id:base.Asset_Id,thing:base.Entity_Id) {
     if len(kept)>0 {core.world_union(to,from,core.NONE,nil,kept[:])}
     core.settle(&p.info,loaded,nil)
     loaded.root={scene=id,changes=w.root.changes+1}
-    p.info.swap(w,loaded)
+    core.world_swap(&p.info,w,loaded)
 }
 
 // The entities of a world the network links to objects.
@@ -262,7 +262,7 @@ the_connections_that_come_and_go_reach_the_first_tick_after_them :: proc(t:^test
     defer core.test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
-    defer info.destroy[.World](&world)
+    defer core.world_destroy(&info,.World,&world)
     app:=host.App{info=&info,allocator=context.allocator,tick_dt=1.0/60}
     s:Net_Session
     defer delete(s.arrived)

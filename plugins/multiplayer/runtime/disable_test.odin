@@ -23,7 +23,7 @@ components_turned_off_on_the_server_turn_off_on_the_client :: proc(t:^testing.T)
         shares[index].info=&info
         apps[index]={allocator=context.allocator,tick_dt=1.0/60,shared=&shares[index]}
     }
-    defer for &world in worlds {info.destroy[.World](&world)}
+    defer for &world in worlds {core.world_destroy(&info,.World,&world)}
     network:wire.Sim_Network
     if !testing.expect(t,wire.sim_network_init(&network,{seed=11,endpoints=2,packets=1024})) {return}
     defer wire.sim_network_destroy(&network)

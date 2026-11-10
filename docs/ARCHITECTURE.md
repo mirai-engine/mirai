@@ -63,11 +63,13 @@ Each `world` has:
   not step on each other, and it is released in that world's `release` phase.
   `World` stays plain data copied in blocks; sockets and pointers live outside.
 - `Editor` (only in `editor_world`): the components and storages of the editor packages.
-- `init_*`, `destroy_*`, `copy_world`, `swap_world`, `clear_world` (entities, rows and derived
-  storages), the loops per phase and `info()`. `init_*` and `copy_world` return `false`
-  without memory and leave a world that `destroy_*` frees.
+- The call of each function, the loops per phase and `info()`.
   `info()` returns the `core.World_Info`, which describes types, tables, storages, functions and
   loops for generic code (editor, scenes, network, saving) without knowing the game's types.
+  With it `core` makes, frees, copies, swaps and clears any world (`core.world_init`,
+  `world_destroy`, `world_copy`, `world_swap`, `world_clear`: entities, rows and derived
+  storages); `world_init` and `world_copy` return `false` without memory and leave a world that
+  `world_destroy` frees.
 
 **Reflection.** The engine cannot find a project's types with `type_info_of(typeid)`: they live in
 a library the project compiled.

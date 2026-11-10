@@ -130,7 +130,7 @@ world_migration_keeps_indices :: proc(m:^World_Migration) -> bool {
 }
 
 // Moves the place of data, laid out by m.from, into fresh, initialized by
-// m.to. data is left for m.from.destroy[place]. Run after world_settle: no
+// m.to. data is left for world_destroy by m.from. Run after world_settle: no
 // add waits. allocator is that of the World.
 place_migrate :: proc(m:^World_Migration,place:Place,data,fresh:rawptr,allocator:runtime.Allocator) {
     context.allocator=allocator

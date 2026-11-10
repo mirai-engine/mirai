@@ -42,9 +42,9 @@ morph_api_inspects_named_defaults_final_weights_and_sources_and_controls_instanc
     if !described {return}
     defer core.test_info_destroy(&info)
     document,play:Morph_Api_Test_World
-    defer for world in ([2]^Morph_Api_Test_World{&document,&play}) {info.destroy[.World](world)}
+    defer for world in ([2]^Morph_Api_Test_World{&document,&play}) {core.world_destroy(&info,.World,world)}
     for world in ([2]^Morph_Api_Test_World{&document,&play}) {
-        if !testing.expect(t,info.init[.World](world,context.allocator)) {return}
+        if !testing.expect(t,core.world_init(&info,.World,world,context.allocator)) {return}
         source,mesh:=core.create(&world.entities),core.create(&world.entities)
         core.add(&world.ids,source,{17});core.add(&world.ids,mesh,{18});core.add(&world.parents,mesh,{entity=source})
         core.add(&world.meshes,mesh,{mesh=id});core.add(&world.animations,source,anim.ANIMATION_DEFAULT)

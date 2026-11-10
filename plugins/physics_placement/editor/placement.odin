@@ -167,7 +167,7 @@ placement_start :: proc(s:^editor.Session,tool:^Physics_Placement,desc:Placement
     data:=host.app_world_create(s.app)
     if data==nil {return false}
     tool.preview=host.app_world_ref(s.app,data)
-    if !s.info.copy(data,w.data) {return false}
+    if !core.world_copy(s.info,data,w.data) {return false}
     if !placement_prepare(tool) || !placement_drop(tool,desc,bounds) {return false}
     success=true
     return true

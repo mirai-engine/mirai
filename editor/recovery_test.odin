@@ -15,8 +15,8 @@ recovery_copy_is_written_by_a_job_and_read_back :: proc(t:^testing.T) {
     if !described {return}
     defer core.test_info_destroy(&info)
     world:Prefab_Test_World
-    if !testing.expect(t,info.init[.World](&world,context.allocator)) {return}
-    defer info.destroy[.World](&world)
+    if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator)) {return}
+    defer core.world_destroy(&info,.World,&world)
     root:=base.test_folder(t,"recovery")
     if root=="" {return}
     assets:host.Assets

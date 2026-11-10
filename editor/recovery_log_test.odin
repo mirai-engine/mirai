@@ -18,8 +18,8 @@ recovery_log_writes_each_step_over_the_saved_file_and_puts_them_back :: proc(t:^
     if !described {return}
     defer core.test_info_destroy(&info)
     world:Prefab_Test_World
-    if !testing.expect(t,info.init[.World](&world,context.allocator)) {return}
-    defer info.destroy[.World](&world)
+    if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator)) {return}
+    defer core.world_destroy(&info,.World,&world)
     root:=base.test_folder(t,"recovery-log")
     if root=="" {return}
     assets:host.Assets
