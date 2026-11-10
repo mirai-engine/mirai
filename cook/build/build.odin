@@ -304,6 +304,9 @@ job_plugins_plan :: proc(job:^Job,p:^project.Project,desc:Desc) -> Failure {
             job.plugin_published[i]=true
             continue
         }
+        // Its declarations are about to name the library of these sources: until
+        // that one is published, no stamp says the part stands.
+        _=os.remove(lib.stamp)
         if errors:=plugin_library_prepare(p,&lib);len(errors)>0 {
             job.result.text=strings.join(errors,"\n",a)
             return .Generate

@@ -233,7 +233,28 @@ a_part_with_folders_is_one_library_that_the_shared_cache_keeps :: proc(t:^testin
     testing.expect_value(t,again.result.plugins_built,1)
     testing.expect(t,os.is_file(lib.library) && os.is_file(lib.linked))
     testing.expect(t,plugins_current(&p,.Play,compiler,true,.Dev),"the library copied stands as built")
-    testing.expect(t,os.is_file(project.path(plugins_decl(p.root,"minimal"),"thing","runtime","sim","sim.odin")),"its declarations are written")
+    declaration:=project.path(plugins_decl(p.root,"minimal"),"thing","runtime","sim","sim.odin")
+    testing.expect(t,os.is_file(declaration),"its declarations are written")
+
+    // A part whose sources changed and whose library did not build has no
+    // stamp: its declarations name a library that is not there. With the
+    // sources back they are written again, for the library that stands.
+    source:=project.path(engine,"plugins","thing","runtime","sim","sim.odin")
+    before,_:=os.read_entire_file(source,context.temp_allocator)
+    declared_before,_:=os.read_entire_file(declaration,context.temp_allocator)
+    testing.expect(t,os.write_entire_file(source,strings.concatenate({string(before),"\nmore :: proc() -> i32 {return 1}\n"}))==nil)
+    changed:=plugin_job(&p,compiler)
+    defer virtual.arena_destroy(&changed.arena)
+    testing.expect_value(t,job_plugins_plan(changed,&p,{project=&p,target=.Play,dev=true,engine=.Dev}),Failure.None)
+    testing.expect_value(t,len(changed.plugin_queue),1)
+    testing.expect(t,os.write_entire_file(source,before)==nil)
+    testing.expect(t,!plugins_current(&p,.Play,compiler,true,.Dev),"what was declared and not built does not stand")
+    back:=plugin_job(&p,compiler)
+    defer virtual.arena_destroy(&back.arena)
+    testing.expect_value(t,job_plugins_plan(back,&p,{project=&p,target=.Play,dev=true,engine=.Dev}),Failure.None)
+    declared_after,_:=os.read_entire_file(declaration,context.temp_allocator)
+    testing.expect(t,string(declared_after)==string(declared_before),"the declarations are those of the library that stands")
+    testing.expect(t,plugins_current(&p,.Play,compiler,true,.Dev))
 }
 
 // The cache keeps the entries used last and writes a whole one once.
