@@ -2,6 +2,7 @@ package physics
 
 import "core:testing"
 import "mirai:core"
+import volume "mirai:engine/volume"
 import "mirai:std/geom"
 import "mirai:std/jobs"
 import sim "plugins:physics/runtime/sim"
@@ -55,8 +56,7 @@ a_copy_and_a_kept_copy_carry_what_broke_and_step_as_their_source :: proc(t:^test
     for step in 0..<40 {
         for end in ends {
             if step==5 {
-                _,cut:=breakable_slice(end,wall,{0.5,1,0},{1,0.2,0})
-                testing.expect(t,cut)
+                testing.expect(t,test_slice(end,wall,{0.5,1,0},{1,0.2,0}))
             }
             testing.expect(t,simulate(end,nil,&job_system,1.0/60))
         }
@@ -72,7 +72,7 @@ a_copy_and_a_kept_copy_carry_what_broke_and_step_as_their_source :: proc(t:^test
 }
 
 @(test)
-a_region_of_strain_asked_in_a_tick_breaks_what_its_filter_meets_after_the_step :: proc(t:^testing.T) {
+a_strain_asked_of_a_volume_in_a_tick_breaks_what_its_filter_meets_after_the_step :: proc(t:^testing.T) {
     state:Physics_State
     defer state_destroy(&state)
     if !testing.expect(t,test_state_make(&state,WALL_SETTINGS)) {return}
@@ -85,19 +85,26 @@ a_region_of_strain_asked_in_a_tick_breaks_what_its_filter_meets_after_the_step :
     unseen:=QUERY_FILTER_DEFAULT
     unseen.objects=8
     nan:=transmute(f32)u32(0x7fc00000)
-    // What strains nothing: a filter that does not see the wall, values that are not numbers, a weakening.
-    strain_region(&requests,{point={0,1,0},radius=5,falloff=.Constant},1e6,filter=unseen)
-    strain_region(&requests,{point={nan,1,0},radius=5,falloff=.Constant},1e6)
-    strain_region(&requests,{point={0,1,0},radius=5,falloff=.Constant},nan)
+    // What strains nothing: a filter that does not see the wall, values that are not numbers, a volume
+    // that is neither a box nor a sphere, one that does not reach the wall.
+    strain_area(&requests,volume.sphere(5),{position={0,1,0}},1e6,filter=unseen)
+    strain_area(&requests,volume.sphere(5),{position={nan,1,0}},1e6)
+    strain_area(&requests,volume.sphere(5),{position={0,1,0}},nan)
+    strain_area(&requests,volume.plane(),{position={0,9,0}},1e6)
+    strain_area(&requests,volume.world(),{},1e6)
+    strain_area(&requests,volume.box({1,1,1}),{position={0,9,0}},1e6)
     testing.expect(t,simulate(&state,&requests,&job_system,1.0/60))
     testing.expect_value(t,len(breakable_events(view)),0)
-    strain_region(&requests,{point={0,1,0},radius=5,falloff=.Constant},1e6,weakening=true)
-    testing.expect(t,simulate(&state,&requests,&job_system,1.0/60))
-    testing.expect(t,len(breakable_events(view))==1 && breakable_events(view)[0].kind==.Weaken && breakable_revision(view,wall)==0)
-    strain_region(&requests,{point={0,1,0},half_extents={5,5,5},rotation=1,falloff=.Constant},1e6)
+    // A weakening strains and breaks nothing; the blend of the volume is that of the event.
+    strain_area(&requests,volume.sphere(5,blend=2),{position={0,1,0}},1e6,weakening=true)
     testing.expect(t,simulate(&state,&requests,&job_system,1.0/60))
     events:=breakable_events(view)
-    testing.expect(t,len(events)==1 && events[0].breakable==wall && events[0].kind==.Damage && breakable_revision(view,wall)!=0)
+    testing.expect(t,len(events)==1 && events[0].kind==.Weaken && events[0].radius==5 && events[0].blend==2 && breakable_revision(view,wall)==0)
+    // A box is scaled and turned by its pose.
+    strain_area(&requests,volume.box({1,1,1}),{position={0,1,0},rotation=1,scale={5,-5,5}},1e6)
+    testing.expect(t,simulate(&state,&requests,&job_system,1.0/60))
+    events=breakable_events(view)
+    testing.expect(t,len(events)==1 && events[0].breakable==wall && events[0].kind==.Damage && events[0].half_extents=={5,5,5} && breakable_revision(view,wall)!=0)
     // The bodies that came off name the entity of the breakable until their owner names them.
     pieces:[64]Piece_Info
     count:=min(breakable_pieces(view,wall,pieces[:]),len(pieces))
@@ -127,17 +134,15 @@ the_breakables_of_a_simulation_that_is_not_ready_or_of_stale_handles_are_refused
     for c in ([]Case{{&missing,wall},{nil,wall},{&ready,{}},{&ready,stale},{&ready,Breakable_Handle(max(u64))}}) {
         view:=core.ref(c.state)
         testing.expect(t,!breakable_valid(view,c.handle) && breakable_body(view,c.handle)=={} && breakable_pieces(view,c.handle,out[:])==0)
-        testing.expect(t,breakable_bonds(view,c.handle,nil)==0 && breakable_clusters(view,c.handle,nil)==0 && breakable_mass(view,c.handle)==0)
+        testing.expect(t,breakable_clusters(view,c.handle,nil)==0)
         testing.expect(t,breakable_revision(view,c.handle)==0 && breakable_check(view,c.handle)==0 && breakable_state_size(view,c.handle)==0)
         testing.expect(t,breakable_state_write(view,c.handle,bytes[:])==0 && !breakable_state_apply(c.state,c.handle,bytes[:]))
-        _,broke:=breakable_strain(c.state,c.handle,{0,1,0},4,1e6)
-        _,weakened:=breakable_weaken(c.state,c.handle,{0,1,0},4,1e6)
-        _,cut:=breakable_slice(c.state,c.handle,{0,1,0},{0,1,0})
-        _,_,strained:=breakable_strain_region(c.state,c.handle,0,{point={0,1,0},radius=4},1e6)
-        _,cut_body:=breakable_slice_body(c.state,c.handle,0,{0,1,0},{0,1,0})
-        _,removed:=breakable_remove_body(c.state,c.handle,0)
-        testing.expect(t,!broke && !weakened && !cut && !strained && !cut_body && !removed)
-        testing.expect(t,!breakable_event_apply(c.state,{breakable=c.handle,piece=-1,point={0,1,0},radius=4,strain=1e6}))
+        for kind in Break_Kind {
+            applied,changed,strained:=break_apply(c.state,{breakable=c.handle,piece=-1,region={point={0,1,0},radius=4},vector={0,1,0},strain=1e6,kind=kind})
+            testing.expect(t,!changed && !strained && applied.breakable==c.handle)
+        }
+        changed,strained:=test_strain(c.state,c.handle,{0,1,0},4,1e6)
+        testing.expect(t,!changed && !strained && !test_slice(c.state,c.handle,{0,1,0},{0,1,0}))
         events,refused:=breakable_shortfall(view,c.handle)
         _,expires:=breakable_body_remaining_ticks(view,c.handle,breakable_body(core.ref(&ready),wall))
         testing.expect(t,events==0 && refused=={} && !expires)

@@ -6,6 +6,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
+import volume "mirai:engine/volume"
 import phys "plugins:physics/runtime"
 import render "mirai:engine/render"
 import "mirai:host"
@@ -114,72 +115,30 @@ a_destructible_that_cannot_be_made_names_its_entity_and_the_fix :: proc(t:^testi
 }
 
 @(test)
-field_strain_excludes_one_body_while_other_groups_keep_receiving_damage_without_allocations :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"destruct-field-filter")
-    tracking:mem.Tracking_Allocator;mem.tracking_allocator_init(&tracking,context.allocator);defer mem.tracking_allocator_destroy(&tracking)
-    previous:=context.allocator;context.allocator=mem.tracking_allocator(&tracking);defer {context.allocator=previous}
-    Filter_Case :: enum {Root,Fragment,None,Stale}
-    for scenario in ([4]Filter_Case{.Root,.Fragment,.None,.Stale}) {
-        f:Destruct_Test
-        if !testing.expect(t,destruct_test_init(t,&f,folder,pieces=4)) {return}
-        defer destruct_test_destroy(&f)
-        config:=destructible();config.fracture={1,2};config.debris_volume=0;config.gravity_scale=0
-        e:=destruct_test_entity(&f,config)
-        destruct_test_step(&f);destruct_test_step(&f)
-        handle:=core.get(&f.states,e).handle
-        strain(&f.requests,e,{},.1,1000);destruct_test_step(&f)
-        found:[4]Group_Info
-        if !testing.expect_value(t,groups(Destruct_View{core.ref(&f.physics),core.read(&f.states),core.read(&f.groups)},e,found[:]),2) {return}
-        root:=phys.body_of(core.ref(&f.physics),e)
-        fragment:Group_Info
-        for group in found[:2] {if group.group!=0 {fragment=group}}
-        ignored:phys.Body_Handle
-        switch scenario {
-        case .Root: ignored=root
-        case .Fragment: ignored=fragment.body
-        case .None:
-        case .Stale: ignored=phys.test_ball(&f.physics,{0,9,0},{});phys.test_body_end(&f.physics,ignored)
-        }
-        excluded_count:=scenario==.Root || scenario==.Fragment?1:0
-        region:=Destruct_Region{radius=4,falloff=.Constant}
-        field_strain(&f.requests,e,region,1,weakening=true,ignore_body=ignored)
-        destruct_test_step(&f)
-        infos:[4]Piece_Info
-        if !testing.expect_value(t,pieces(Destruct_View{core.ref(&f.physics),core.read(&f.states),core.read(&f.groups)},e,infos[:]),4) {return}
-        bonds:[3]phys.Bond_Info
-        if !testing.expect_value(t,phys.breakable_bonds(core.ref(&f.physics),handle,bonds[:]),3) {return}
-        excluded,affected:=0,0
-        for bond in bonds {
-            if bond.broken {continue}
-            for piece in infos {
-                if piece.id!=bond.a {continue}
-                if piece.body==ignored {excluded+=1;testing.expect_value(t,bond.strain,f32(0))}
-                else {affected+=1;testing.expect_value(t,bond.strain,f32(1))}
-            }
-        }
-        testing.expect_value(t,excluded,excluded_count);testing.expect_value(t,affected,2-excluded_count)
-        allocations:=tracking.total_allocation_count
-        for _ in 0..<64 {
-            field_strain(&f.requests,e,region,.01,weakening=true,ignore_body=ignored)
-            destruct_test_step(&f)
-        }
-        testing.expect_value(t,tracking.total_allocation_count,allocations)
-        if scenario==.Fragment {
-            field_strain(&f.requests,fragment.entity,region,100,ignore_body=ignored)
-            destruct_test_step(&f)
-            testing.expect_value(t,groups(Destruct_View{core.ref(&f.physics),core.read(&f.states),core.read(&f.groups)},e,found[:]),2)
-        }
-        field_strain(&f.requests,e,region,100,ignore_body=ignored)
-        destruct_test_step(&f)
-        testing.expect_value(t,groups(Destruct_View{core.ref(&f.physics),core.read(&f.states),core.read(&f.groups)},e,found[:]),4-excluded_count)
-        phys.breakable_bonds(core.ref(&f.physics),handle,bonds[:])
-        excluded=0
-        for bond in bonds {
-            if bond.broken {continue}
-            for piece in infos {if piece.id==bond.a && piece.body==ignored {excluded+=1;testing.expect_value(t,bond.strain,f32(0))}}
-        }
-        testing.expect_value(t,excluded,excluded_count)
-    }
+a_strain_asked_of_physics_in_a_volume_breaks_a_destructible_and_is_applied_as_its_events :: proc(t:^testing.T) {
+    f:Destruct_Test
+    if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-strain-area"),pieces=4)) {return}
+    defer destruct_test_destroy(&f)
+    config:=destructible();config.fracture={1,2};config.debris_volume=0;config.gravity_scale=0
+    e:=destruct_test_entity(&f,config)
+    destruct_test_step(&f);destruct_test_step(&f)
+    bodies:phys.Body_Requests;defer delete(bodies.queue.items)
+    out:[4]Group_Info
+    // A weakening reaches its bonds by the weight of the volume and lets nothing go.
+    phys.strain_area(&bodies,volume.sphere(4,blend=1),{},1,weakening=true)
+    testing.expect(t,phys.simulate(&f.physics,&bodies,&f.app.jobs,1.0/60,{}))
+    destruct_test_step(&f)
+    if !testing.expect_value(t,len(f.events.applied.items),1) {return}
+    applied:=f.events.applied.items[0]
+    testing.expect(t,applied.entity==e && applied.record.kind==.Weaken && applied.record.radius==4 && applied.record.blend==1 && applied.record.strain==1)
+    testing.expect_value(t,groups(Destruct_View{core.ref(&f.physics),core.read(&f.states),core.read(&f.groups)},e,out[:]),1)
+    // What breaks it is applied as one event, and every piece is a body of its own.
+    phys.strain_area(&bodies,volume.sphere(4),{},1e6)
+    testing.expect(t,phys.simulate(&f.physics,&bodies,&f.app.jobs,1.0/60,{}))
+    destruct_test_step(&f)
+    testing.expect(t,len(f.events.applied.items)==1 && f.events.applied.items[0].record.kind==.Damage)
+    testing.expect_value(t,groups(Destruct_View{core.ref(&f.physics),core.read(&f.states),core.read(&f.groups)},e,out[:]),4)
+    testing.expect_value(t,f.problems.count,0)
 }
 
 @(test)
@@ -310,7 +269,7 @@ cosmetic_fragments_can_be_removed_locally_on_a_passive_client :: proc(t:^testing
     f.authority.role=.Client
     destruct_test_step(&f);destruct_test_step(&f)
     state:=core.get(&f.states,e)
-    phys.breakable_strain(&f.physics,state.handle,{},4,1000)
+    phys.test_strain(&f.physics,state.handle,{},4,1000)
     destruct_test_step(&f)
     out:[4]Group_Info
     testing.expect_value(t,groups(Destruct_View{core.ref(&f.physics),core.read(&f.states),core.read(&f.groups)},e,out[:]),2)
@@ -473,7 +432,15 @@ root_slice_requests_preserve_previous_groups_meshes_and_volume_across_ticks :: p
     e:=destruct_test_entity(&f,config)
     destruct_test_step(&f);destruct_test_step(&f)
     handle:=core.get(&f.states,e).handle
-    mass:=phys.breakable_mass(core.ref(&f.physics),handle)
+    live_volume :: proc(f:^Destruct_Test,e:core.Entity) -> (volume:f32) {
+        held:[64]Piece_Info
+        count:=min(pieces(Destruct_View{core.ref(&f.physics),core.read(&f.states),core.read(&f.groups)},e,held[:]),len(held))
+        for piece in held[:count] {
+            if piece.body!=0 {volume+=piece.volume}
+        }
+        return
+    }
+    whole:=live_volume(&f,e)
     previous:[16]Group_Info
     previous_count:=min(groups(Destruct_View{core.ref(&f.physics),core.read(&f.states),core.read(&f.groups)},e,previous[:]),len(previous))
     for pass in 0..<3 {
@@ -493,7 +460,7 @@ root_slice_requests_preserve_previous_groups_meshes_and_volume_across_ticks :: p
             testing.expect(t,core.alive(&f.entities,group.entity))
             testing.expect_value(t,phys.body_of(core.ref(&f.physics),group.entity),group.body)
         }
-        testing.expect(t,abs(phys.breakable_mass(core.ref(&f.physics),handle)-mass)<0.01,"successive root cuts preserve all live volume")
+        testing.expect(t,abs(live_volume(&f,e)-whole)<5e-6,"successive root cuts preserve all live volume")
         previous_count=min(groups(Destruct_View{core.ref(&f.physics),core.read(&f.states),core.read(&f.groups)},e,previous[:]),len(previous))
         testing.expect(t,previous_count>=pass+2)
         testing.expect_value(t,f.assets.stats.generated,previous_count)

@@ -9,6 +9,7 @@ import phys "plugins:physics/runtime"
 import "mirai:std/geom"
 import "mirai:std/jobs"
 import cache "plugins:physics_cache/runtime"
+import "mirai:std/base"
 
 @(test)
 gallery_geometry_bake_records_two_cuts_new_interior_meshes_and_fragment_retirement :: proc(t:^testing.T) {
@@ -17,7 +18,7 @@ gallery_geometry_bake_records_two_cuts_new_interior_meshes_and_fragment_retireme
     root:=fmt.tprintf("%s/mirai-gallery-geometry-%d",directory,os.get_pid())
     o:=Out{root=root};asset.content_init(&o.content,PROJECT);defer asset.content_destroy(&o.content)
     if !testing.expect_value(t,os.make_directory_all(path(&o,"assets/physics_gallery")),nil) {return}
-    defer os.remove_all(root)
+    defer base.remove_all(root)
     sources:=physics_sources(&o)
     if !testing.expect(t,!o.content.failed) {return}
     file:asset.Asset
@@ -62,7 +63,7 @@ gallery_mixed_source_keeps_supports_and_full_collision_leaves_while_only_small_p
     h,error:=phys.breakable_create(&physics,dd)
     if !testing.expect_value(t,error,phys.Breakable_Error.None) {return}
     root:=phys.breakable_body(view_of,h)
-    _,broke:=phys.breakable_strain(&physics,h,{0,.7,0},4,10000)
+    broke,_:=phys.test_strain(&physics,h,{0,.7,0},4,10000)
     if !testing.expect(t,broke) {return}
     pieces:[8]phys.Piece_Info;testing.expect_value(t,phys.breakable_pieces(view_of,h,pieces[:]),8)
     debris,solids,supports:int

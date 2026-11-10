@@ -28,7 +28,7 @@ event_note :: proc(c:^Ctx,e:core.Entity,event:physics.Break_Event) {
     core.push(&c.events.applied,Applied{e,{
         sequence=st.sequence,tick=u32(c.time.tick),piece=place,kind=event.kind,
         point=mm.quat_rotate(inverse,event.point-frame.p),vector=mm.quat_rotate(inverse,event.vector),radius=event.radius,strain=event.strain,
-        half_extents=event.half_extents,rotation=inverse*(event.rotation==0?mm.QUAT_IDENTITY:event.rotation),falloff=event.falloff,
+        half_extents=event.half_extents,rotation=inverse*(event.rotation==0?mm.QUAT_IDENTITY:event.rotation),blend=event.blend,
     }})
 }
 
@@ -75,7 +75,7 @@ replay_stopped :: proc(c:^Ctx,e:core.Entity) -> bool {
 @(private)
 event_replay :: proc(c:^Ctx,e:core.Entity,st:^Destructible_State,entry:^Entry,record:Fracture_Record) -> bool {
     count:=min(physics.breakable_pieces(c.view,st.handle,c.cache.infos),len(c.cache.infos))
-    event:=physics.Break_Event{breakable=st.handle,tick=record.tick,piece=-1,kind=record.kind,radius=record.radius,strain=record.strain,half_extents=record.half_extents,falloff=record.falloff}
+    event:=physics.Break_Event{breakable=st.handle,piece=-1,kind=record.kind,region={radius=record.radius,half_extents=record.half_extents,blend=record.blend},strain=record.strain}
     frame:physics.Body_Pose
     if record.piece==max(u32) {
         frame,_=physics.body_pose(c.view,physics.breakable_body(c.view,st.handle))
@@ -89,7 +89,7 @@ event_replay :: proc(c:^Ctx,e:core.Entity,st:^Destructible_State,entry:^Entry,re
     event.point=frame.p+mm.quat_rotate(frame.q,record.point)
     event.vector=mm.quat_rotate(frame.q,record.vector)
     event.rotation=frame.q*record.rotation
-    physics.breakable_event_apply(c.state,event)
+    event,_,_=physics.break_apply(c.state,event)
     event_applied(c,e,entry,event,false)
     return true
 }

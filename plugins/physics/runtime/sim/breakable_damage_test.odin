@@ -301,11 +301,11 @@ authored_piece_cluster_bond_and_hull_capacity_failures_leave_no_live_destructibl
 }
 
 @(test)
-destructive_box_fields_use_oriented_common_falloff_without_impulse :: proc(t:^testing.T) {
+a_strain_in_an_oriented_box_breaks_without_impulse :: proc(t:^testing.T) {
     w:World;testing.expect(t,test_destruct_world(&w));defer world_destroy(&w)
     settings:=BREAKABLE_DESC_DEFAULT;settings.gravity_scale=0
     h,_:=test_authored_destructible(&w,false,settings)
-    region:=Break_Region{point={0,3,0},half_extents={.2,3,.3},rotation=math.quat_axis_angle({0,0,1},PI*.5),falloff=.Constant}
+    region:=Break_Region{point={0,3,0},half_extents={.2,3,.3},rotation=math.quat_axis_angle({0,0,1},PI*.5)}
     event,broke,strained:=breakable_strain_region(&w,h,-1,region,10000)
     testing.expect(t,broke && strained)
     testing.expect_value(t,event.vector,Vec3{})
@@ -393,15 +393,46 @@ a_cut_without_hulls_for_its_halves_is_refused_and_says_so :: proc(t:^testing.T) 
 }
 
 @(test)
-destruction_fields_accept_every_falloff_curve :: proc(t:^testing.T) {
+a_strain_weighs_as_a_volume_does_whole_inside_and_rising_over_its_blend :: proc(t:^testing.T) {
     w:World
     testing.expect(t,test_destruct_world(&w))
     defer world_destroy(&w)
     h:=test_wall(&w)
-    for falloff in Radial_Falloff {
-        _,_,strained:=breakable_strain_region(&w,h,-1,{point={0,1,0},radius=3,falloff=falloff},1,weaken=true)
-        testing.expectf(t,strained,"%v strains nothing",falloff)
+    bonds:=make([]Bond_Info,breakable_bonds(&w,h,nil));defer delete(bonds)
+    // A sphere around the middle of the wall, and a box turned a quarter that crosses it.
+    Case :: struct {region:Break_Region,name:string}
+    turn:=math.quat_axis_angle({0,0,1},PI*.5)
+    for c in ([]Case{
+        {{point={0,1,0},radius=1.5},"a sphere without blend"},{{point={0,1,0},radius=1.5,blend=1},"a sphere with blend"},
+        {{point={0,1,0},radius=1.5,blend=1.5},"a sphere that blends to its center"},
+        {{point={0,1,0},half_extents={1.5,1.2,1},rotation=turn},"a box without blend"},{{point={0,1,0},half_extents={1.5,1.2,1},rotation=turn,blend=.5},"a box with blend"},
+    }) {
+        region:=c.region
+        breakable_bonds(&w,h,bonds)
+        before:=make([]f32,len(bonds));defer delete(before)
+        for bond,at in bonds {before[at]=bond.strain}
+        event,_,strained:=breakable_strain_region(&w,h,-1,region,1,weaken=true)
+        testing.expectf(t,strained && event.region==region,"%s strains nothing",c.name)
+        breakable_bonds(&w,h,bonds)
+        pieces:[64]Piece_Info
+        count:=min(breakable_pieces(&w,h,pieces[:]),len(pieces))
+        whole,partial:=0,0
+        for bond,at in bonds {
+            center:Vec3
+            for piece in pieces[:count] {
+                if piece.id==bond.a || piece.id==bond.b {center+=0.5*(piece.center+Vec3{0,1,0})}
+            }
+            expected:=break_region_weight(&region,center)
+            testing.expectf(t,abs(bond.strain-before[at]-expected)<1e-4,"%s: a bond at %v took %v, not %v",c.name,center,bond.strain-before[at],expected)
+            whole+=int(expected==1)
+            partial+=int(expected>0 && expected<1)
+        }
+        testing.expectf(t,whole>0 || region.blend>=region.radius && region.radius>0,"%s holds no bond whole",c.name)
+        testing.expectf(t,(partial>0)==(region.blend>0),"%s: %d bonds in its blend",c.name,partial)
     }
-    _,_,strained:=breakable_strain_region(&w,h,-1,{point={0,1,0},radius=3,falloff=Radial_Falloff(5)},1,weaken=true)
-    testing.expect(t,!strained)
+    nan:=transmute(f32)u32(0x7fc00000)
+    for blend in ([]f32{-1,nan}) {
+        _,_,strained:=breakable_strain_region(&w,h,-1,{point={0,1,0},radius=3,blend=blend},1,weaken=true)
+        testing.expect(t,!strained)
+    }
 }

@@ -1,30 +1,19 @@
 package mirai_physics
 
+import "core:math/linalg"
 import "core:mem"
 import "mirai:std/geom"
 
-Break_Region :: struct {
-    point:Vec3,
-    radius:f32,
-    half_extents:Vec3,
-    rotation:Quat,
-    falloff:Radial_Falloff,
-}
-
+// How much of a region a point of the world is in.
 @(private)
-break_region_weight :: proc "contextless" (event:^Break_Event,point:Vec3) -> f32 {
-    if event.half_extents!={} {return box_weight(point,event.point,event.half_extents,event.rotation,event.falloff)}
-    return radial_weight(length(point-event.point),event.radius,event.falloff)
-}
-
-breakable_strain_region :: proc(w:^World,h:Breakable_Handle,piece:i32,region:Break_Region,amount:f32,impulse:Vec3={},weaken:=false) -> (event:Break_Event,broke,strained:bool) {
-    d,index:=breakable_get(w,h)
-    if d==nil || piece>=0 && piece_body(w,index,piece)=={} {return}
-    w.breaking.tick=w.tick
-    event={breakable=h,tick=u32(w.breaking.tick),piece=piece,point=region.point,radius=region.radius,half_extents=region.half_extents,
-        rotation=region.rotation,falloff=region.falloff,vector=impulse,strain=amount,kind=weaken?.Weaken:.Damage}
-    broke,strained=break_damage(w,index,&event)
-    return
+break_region_weight :: proc "contextless" (r:^Break_Region,point:Vec3) -> f32 {
+    depth:=r.radius-length(point-r.point)
+    if r.half_extents!={} {
+        inside:=r.half_extents-linalg.abs(q_inv_rotate(r.rotation==0?QUAT_IDENTITY:q_normalize(r.rotation),point-r.point))
+        depth=min(inside.x,inside.y,inside.z)
+    }
+    if !(depth>=0) {return 0}
+    return r.blend>0?min(depth/r.blend,1):1
 }
 
 // Strains every breakable that `filter` meets in a region, body by body, so that the event of each body can
@@ -51,9 +40,10 @@ breakables_strain :: proc(w:^World,region:Break_Region,amount:f32,impulse:Vec3={
             s.firsts[bodies]=piece
             bodies+=1
         }
-        handle:=breakable_handle(w,i32(slot))
+        asked:=Break_Event{breakable=breakable_handle(w,i32(slot)),region=region,vector=impulse,strain=amount,kind=weaken?.Weaken:.Damage}
         for piece in s.firsts[:bodies] {
-            event,_,reached:=breakable_strain_region(w,handle,piece,region,amount,impulse,weaken)
+            asked.piece=piece
+            event,_,reached:=break_apply(w,asked)
             if !reached {continue}
             break_push(w,i32(slot),event)
             strained+=1
@@ -123,42 +113,6 @@ break_cluster_common :: proc "contextless" (clusters:[]Cluster_Desc,a,b:i32) -> 
     return left==right?left:-1
 }
 
-breakable_strain :: proc(w:^World,h:Breakable_Handle,point:Vec3,radius,amount:f32,impulse:Vec3={}) -> (event:Break_Event,broke:bool) {
-    d,index:=breakable_get(w,h)
-    if d==nil {return}
-    w.breaking.tick=w.tick
-    event={breakable=h,tick=u32(w.breaking.tick),piece=-1,point=point,vector=impulse,radius=radius,kind=.Damage,strain=amount,falloff=.Linear}
-    broke,_=break_damage(w,index,&event)
-    return
-}
-
-breakable_strain_body :: proc(w:^World,h:Breakable_Handle,piece:i32,point:Vec3,radius,amount:f32,impulse:Vec3={}) -> (event:Break_Event,broke,strained:bool) {
-    d,index:=breakable_get(w,h)
-    if d==nil || piece_body(w,index,piece)=={} {return}
-    w.breaking.tick=w.tick
-    event={breakable=h,tick=u32(w.breaking.tick),piece=piece,point=point,vector=impulse,radius=radius,kind=.Damage,strain=amount,falloff=.Linear}
-    broke,strained=break_damage(w,index,&event)
-    return
-}
-
-breakable_weaken :: proc(w:^World,h:Breakable_Handle,point:Vec3,radius,amount:f32) -> (event:Break_Event,strained:bool) {
-    d,index:=breakable_get(w,h)
-    if d==nil {return}
-    w.breaking.tick=w.tick
-    event={breakable=h,tick=u32(w.breaking.tick),piece=-1,point=point,radius=radius,kind=.Weaken,strain=amount,falloff=.Linear}
-    _,strained=break_damage(w,index,&event)
-    return
-}
-
-breakable_weaken_body :: proc(w:^World,h:Breakable_Handle,piece:i32,point:Vec3,radius,amount:f32) -> (event:Break_Event,strained:bool) {
-    d,index:=breakable_get(w,h)
-    if d==nil || piece_body(w,index,piece)=={} {return}
-    w.breaking.tick=w.tick
-    event={breakable=h,tick=u32(w.breaking.tick),piece=piece,point=point,radius=radius,kind=.Weaken,strain=amount,falloff=.Linear}
-    _,strained=break_damage(w,index,&event)
-    return
-}
-
 @(private)
 break_clusters_damage :: proc(w:^World,index:i32,event:^Break_Event,only:Body_Handle) -> (broke,strained:bool) {
     d:=&w.breakables[index]
@@ -179,7 +133,7 @@ break_clusters_damage :: proc(w:^World,index:i32,event:^Break_Event,only:Body_Ha
             for ancestor:=piece.cluster;ancestor>=0;ancestor=w.bonds[ancestor].cluster {
                 if ancestor==slot {belongs=true;break}
             }
-            if belongs {weight=max(weight,break_region_weight(event,xf_point(body_transform(w,body),piece.center)))}
+            if belongs {weight=max(weight,break_region_weight(&event.region,xf_point(body_transform(w,body),piece.center)))}
         }
         if weight<=0 {continue}
         c.strain=min(max(f32),c.strain+event.strain*weight)

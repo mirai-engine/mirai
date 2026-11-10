@@ -580,7 +580,7 @@ a_cache_entry_restores_into_another_checkout_without_naming_the_first :: proc(t:
     entry:=project.path(folder,"cache","entry")
     engine_cache_store(paths,entry)
     testing.expect(t,os.is_file(project.path(entry,CACHE_COMPLETE)),"the build is kept")
-    testing.expect(t,os.remove_all(first)==nil)
+    testing.expect(t,base.remove_all(first)==nil)
 
     restored:=engine_paths(second,.Dev)
     testing.expect(t,os.make_directory_all(restored.stages[.Editor])==nil)

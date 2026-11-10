@@ -88,15 +88,6 @@ simulation_apply :: proc(s:^Session,ids:[]base.Entity_Id) -> bool {
     return simulation_apply_poses(s,poses)
 }
 
-@(private)
-simulation_apply_selection :: proc(s:^Session) {
-    ids: [64]base.Entity_Id
-    if len(s.selection.entities)>len(ids) {notify(s,"Select at most 64 entities to apply");return}
-    w:=shown_world(s)
-    for e,i in s.selection.entities {ids[i]=api_entity_id(w,e)}
-    if !simulation_apply(s,ids[:len(s.selection.entities)]) {notify(s,"Select scene entities to apply their transforms")}
-}
-
 Api_Simulation_Apply_Params :: struct {
     entities:[64]Api_Entity_Text `mirai:"text,entity,label=Existing scene entities whose world transforms are kept"`,
 }
@@ -121,14 +112,14 @@ api_simulation_apply :: proc(s:^Session,call:^api.Call) {
     if _,own:=api_play_run(s,call);!own {api_play_refused(call);return}
     params:=api.call_params(call,Api_Simulation_Apply_Params)
     ids:[len(params.entities)]base.Entity_Id
-    count:=0
-    for &text,i in params.entities {
-        if text[0]==0 {continue}
-        e,named:=api_call_entity(call,shown_world(s),text[:],fmt.tprintf("entities[%d]",i),true)
-        if !named {return}
-        ids[count]=api_entity_id(shown_world(s),e)
-        count+=1
+    entities,named:=api_call_entities(call,shown_world(s),params.entities[:],"entities",call.allocator,true)
+    if !named {return}
+    if len(entities)>len(ids) {
+        api.call_failf(call,api.INVALID_PARAMS,"entities: at most %d at once",len(ids))
+        return
     }
+    count:=len(entities)
+    for e,i in entities {ids[i]=api_entity_id(shown_world(s),e)}
     if !simulation_apply(s,ids[:count]) {
         api.call_fail(call,api.INVALID_PARAMS,"Give distinct entities that exist in both the document and the simulation")
         return

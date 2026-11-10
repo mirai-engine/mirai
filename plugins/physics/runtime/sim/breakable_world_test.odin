@@ -137,7 +137,7 @@ a_strain_over_a_region_reaches_each_body_of_the_breakables_its_filter_meets :: p
     _,cut:=breakable_slice(&w,near,{0,3,0},{1,0,0})
     testing.expect(t,cut)
     world_step(&w,1.0/60)
-    region:=Break_Region{point={0,4,0},radius=8,falloff=.Constant}
+    region:=Break_Region{point={0,4,0},radius=8}
     seen:=QUERY_FILTER_DEFAULT
     seen.objects=1
     testing.expect_value(t,breakables_strain(&w,region,5,weaken=true,filter=seen),2)
@@ -180,7 +180,7 @@ breakables_and_bodies_asked_for_with_hostile_values_are_refused :: proc(t:^testi
         {point={nan,1,0},radius=3},{point={0,1,0},radius=nan},{point={0,1,0},radius=-1},{point={0,inf,0},radius=3},
         {point={0,1,0},half_extents={1,nan,1}},{point={0,1,0},half_extents={1,-1,1}},
         {point={0,1,0},half_extents={1,1,1},rotation=Quat(quaternion(w=nan,x=0,y=0,z=0))},
-        {point={0,1,0},radius=3,falloff=Radial_Falloff(200)},
+        {point={0,1,0},radius=3,blend=-1},{point={0,1,0},radius=3,blend=nan},
     }
     for region,at in regions {
         testing.expectf(t,breakables_strain(&w,region,1000)==0,"region %v strained",at)

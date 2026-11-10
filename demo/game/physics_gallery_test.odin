@@ -14,7 +14,6 @@ import "mirai:std/geom"
 import "mirai:std/jobs"
 import mm "mirai:std/math"
 import cache "plugins:physics_cache/runtime"
-import fields "plugins:physics_fields/runtime"
 
 // A simulation of the settings given, made as the physics plugin makes it for a world.
 gallery_physics_make :: proc(state:^phys.Physics_State,settings:phys.Physics_Settings) -> bool {
@@ -28,8 +27,8 @@ gallery_physics_make :: proc(state:^phys.Physics_State,settings:phys.Physics_Set
 gallery_geometry_actions_restart_once_per_trigger_alternating_forward_and_reverse :: proc(t:^testing.T) {
     entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
     views:core.Table(Physics_Gallery_View);stations:core.Table(Physics_Gallery)
-    states:core.Table(destruct.Destructible_State);groups:core.Table(destruct.Destructible_Group);field_configs:core.Table(fields.Physics_Field)
-    defer core.table_destroy(&views);defer core.table_destroy(&stations);defer core.table_destroy(&states);defer core.table_destroy(&groups);defer core.table_destroy(&field_configs)
+    states:core.Table(destruct.Destructible_State);groups:core.Table(destruct.Destructible_Group);force_fields:core.Table(phys.Force_Field);strain_fields:core.Table(destruct.Strain_Field)
+    defer core.table_destroy(&views);defer core.table_destroy(&stations);defer core.table_destroy(&states);defer core.table_destroy(&groups);defer core.table_destroy(&force_fields);defer core.table_destroy(&strain_fields)
     actions:inp.Actions;requests:destruct.Destruct_Requests;bodies:phys.Body_Requests;playback:cache.Geometry_Requests;ragdolls:Ragdoll_Gallery_Requests
     defer delete(requests.queue.items);defer delete(requests.waiting.items);defer delete(bodies.queue.items);defer delete(playback.queue.items);defer delete(ragdolls.queue.items)
     physics:phys.Physics_State
@@ -39,7 +38,7 @@ gallery_geometry_actions_restart_once_per_trigger_alternating_forward_and_revers
     core.table_settle(&views,&entities);core.table_settle(&stations,&entities)
     for activation in 1..=3 {
         core.get(&stations,station).trigger=u32(activation)
-        for repeat in 0..<2 {physics_gallery_actions(&views,&stations,{actions=core.ref(&actions)},&requests,&bodies,&field_configs,&playback,&ragdolls,{playing=true,dt=.5},destruct.Destruct_View{core.ref(&physics),core.read(&states),core.read(&groups)})}
+        for repeat in 0..<2 {physics_gallery_actions(&views,&stations,{actions=core.ref(&actions)},&requests,&bodies,&force_fields,&strain_fields,&playback,&ragdolls,{playing=true,dt=.5},destruct.Destruct_View{core.ref(&physics),core.read(&states),core.read(&groups)})}
         testing.expect_value(t,len(playback.queue.items),1)
         for command in core.take(&playback.queue) {
             testing.expect_value(t,command.entity,recorded)
@@ -69,8 +68,8 @@ gallery_removal_events_do_not_launch_fragments_count_fractures_or_spawn_dust :: 
 @(test)
 gallery_internal_strain_holds_then_releases_a_suspended_collection_without_launching :: proc(t:^testing.T) {
     entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
-    views:core.Table(Physics_Gallery_View);stations:core.Table(Physics_Gallery);states:core.Table(destruct.Destructible_State);groups:core.Table(destruct.Destructible_Group);field_configs:core.Table(fields.Physics_Field)
-    defer core.table_destroy(&views);defer core.table_destroy(&stations);defer core.table_destroy(&states);defer core.table_destroy(&groups);defer core.table_destroy(&field_configs)
+    views:core.Table(Physics_Gallery_View);stations:core.Table(Physics_Gallery);states:core.Table(destruct.Destructible_State);groups:core.Table(destruct.Destructible_Group);force_fields:core.Table(phys.Force_Field);strain_fields:core.Table(destruct.Strain_Field)
+    defer core.table_destroy(&views);defer core.table_destroy(&stations);defer core.table_destroy(&states);defer core.table_destroy(&groups);defer core.table_destroy(&force_fields);defer core.table_destroy(&strain_fields)
     actions:inp.Actions;requests:destruct.Destruct_Requests;bodies:phys.Body_Requests;caches:cache.Geometry_Requests;ragdolls:Ragdoll_Gallery_Requests
     defer delete(requests.queue.items);defer delete(requests.waiting.items);defer delete(bodies.queue.items);defer delete(caches.queue.items);defer delete(ragdolls.queue.items)
     physics:phys.Physics_State;defer phys.state_destroy(&physics)
@@ -89,18 +88,20 @@ gallery_internal_strain_holds_then_releases_a_suspended_collection_without_launc
     core.table_settle(&views,&entities);core.table_settle(&stations,&entities);core.table_settle(&states,&entities)
     for activation in 1..=2 {
         core.get(&stations,station).trigger=u32(activation)
-        physics_gallery_actions(&views,&stations,{actions=core.ref(&actions)},&requests,&bodies,&field_configs,&caches,&ragdolls,{playing=true,dt=1.0/60},destruct.Destruct_View{core.ref(&physics),core.read(&states),core.read(&groups)})
+        physics_gallery_actions(&views,&stations,{actions=core.ref(&actions)},&requests,&bodies,&force_fields,&strain_fields,&caches,&ragdolls,{playing=true,dt=1.0/60},destruct.Destruct_View{core.ref(&physics),core.read(&states),core.read(&groups)})
         command:=requests.queue.items[activation-1]
         testing.expect_value(t,command.vector,mm.Vec3{})
         if activation==1 {
             testing.expect_value(t,command.kind,destruct.Fracture_Kind.Weaken)
-            _,ok:=phys.breakable_weaken(&physics,h,command.region.point,command.region.radius,command.strain)
+            asked:=command.event;asked.breakable,asked.piece=h,-1
+            _,_,ok:=phys.break_apply(&physics,asked)
             testing.expect(t,ok);testing.expect_value(t,phys.breakable_revision(core.ref(&physics),h),u32(0))
             for _ in 0..<30 {gallery_step(&physics)}
             testing.expect_value(t,gallery_body(&physics,root).pose.position,dd.position)
         } else {
             testing.expect_value(t,command.kind,destruct.Fracture_Kind.Damage)
-            _,ok:=phys.breakable_strain(&physics,h,command.region.point,command.region.radius,command.strain)
+            asked:=command.event;asked.breakable,asked.piece=h,-1
+            _,ok,_:=phys.break_apply(&physics,asked)
             testing.expect(t,ok)
             pieces:[2]phys.Piece_Info;testing.expect_value(t,phys.breakable_pieces(core.ref(&physics),h,pieces[:]),2)
             testing.expect(t,pieces[0].body!=pieces[1].body)
@@ -122,8 +123,8 @@ gallery_internal_strain_holds_then_releases_a_suspended_collection_without_launc
 @(test)
 gallery_keeps_initial_trigger_until_ready_and_slices_through_a_live_piece_center :: proc(t:^testing.T) {
     entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
-    views:core.Table(Physics_Gallery_View);stations:core.Table(Physics_Gallery);states:core.Table(destruct.Destructible_State);groups:core.Table(destruct.Destructible_Group);field_configs:core.Table(fields.Physics_Field)
-    defer core.table_destroy(&views);defer core.table_destroy(&stations);defer core.table_destroy(&states);defer core.table_destroy(&groups);defer core.table_destroy(&field_configs)
+    views:core.Table(Physics_Gallery_View);stations:core.Table(Physics_Gallery);states:core.Table(destruct.Destructible_State);groups:core.Table(destruct.Destructible_Group);force_fields:core.Table(phys.Force_Field);strain_fields:core.Table(destruct.Strain_Field)
+    defer core.table_destroy(&views);defer core.table_destroy(&stations);defer core.table_destroy(&states);defer core.table_destroy(&groups);defer core.table_destroy(&force_fields);defer core.table_destroy(&strain_fields)
     actions:inp.Actions;requests:destruct.Destruct_Requests;bodies:phys.Body_Requests;caches:cache.Geometry_Requests;ragdolls:Ragdoll_Gallery_Requests
     defer delete(requests.queue.items);defer delete(requests.waiting.items);defer delete(bodies.queue.items);defer delete(caches.queue.items);defer delete(ragdolls.queue.items)
     physics:phys.Physics_State;defer phys.state_destroy(&physics)
@@ -131,7 +132,7 @@ gallery_keeps_initial_trigger_until_ready_and_slices_through_a_live_piece_center
     core.add(&views,view,PHYSICS_GALLERY_VIEW_DEFAULT)
     core.add(&stations,station,Physics_Gallery{station=2,target=target,trigger=1,origin={3,1,5}})
     core.table_settle(&views,&entities);core.table_settle(&stations,&entities);core.entities_settle(&entities)
-    physics_gallery_actions(&views,&stations,{actions=core.ref(&actions)},&requests,&bodies,&field_configs,&caches,&ragdolls,{playing=true,dt=1.0/60},destruct.Destruct_View{core.ref(&physics),core.read(&states),core.read(&groups)})
+    physics_gallery_actions(&views,&stations,{actions=core.ref(&actions)},&requests,&bodies,&force_fields,&strain_fields,&caches,&ragdolls,{playing=true,dt=1.0/60},destruct.Destruct_View{core.ref(&physics),core.read(&states),core.read(&groups)})
     testing.expect_value(t,core.get(&stations,station).activations,u32(0));testing.expect_value(t,len(requests.queue.items),0)
     settings:=phys.Physics_Settings{bodies=8,shapes=32,contacts=32,joints=1,hulls=32,breakables=1,pieces=32,bonds=64}
     testing.expect(t,gallery_physics_make(&physics,settings))
@@ -142,10 +143,11 @@ gallery_keeps_initial_trigger_until_ready_and_slices_through_a_live_piece_center
     if !testing.expect_value(t,error,phys.Breakable_Error.None) {return}
     body:=phys.breakable_body(core.ref(&physics),h)
     core.add(&states,target,destruct.Destructible_State{handle=h,body=body});core.table_settle(&states,&entities)
-    physics_gallery_actions(&views,&stations,{actions=core.ref(&actions)},&requests,&bodies,&field_configs,&caches,&ragdolls,{playing=true,dt=1.0/60},destruct.Destruct_View{core.ref(&physics),core.read(&states),core.read(&groups)})
+    physics_gallery_actions(&views,&stations,{actions=core.ref(&actions)},&requests,&bodies,&force_fields,&strain_fields,&caches,&ragdolls,{playing=true,dt=1.0/60},destruct.Destruct_View{core.ref(&physics),core.read(&states),core.read(&groups)})
     testing.expect_value(t,core.get(&stations,station).activations,u32(1));testing.expect_value(t,len(requests.queue.items),1)
     command:=requests.queue.items[0];testing.expect_value(t,command.kind,destruct.Fracture_Kind.Slice)
-    _,cut:=phys.breakable_slice(&physics,h,command.region.point,command.vector)
+    asked:=command.event;asked.breakable,asked.piece=h,-1
+    _,cut,_:=phys.break_apply(&physics,asked)
     testing.expect(t,cut);testing.expect(t,phys.breakable_revision(core.ref(&physics),h)>0)
     testing.expect(t,abs(command.region.point.y-.3)<.001)
     events:destruct.Destruct_Events;counts:Physics_Gallery_Events;app:host.App;spawned:core.Problems;spawner:=scene.Spawner{problems=&spawned}
@@ -154,7 +156,7 @@ gallery_keeps_initial_trigger_until_ready_and_slices_through_a_live_piece_center
     physics_gallery_events(core.read(&stations),&counts,core.ref(&events),spawner,&bodies)
     testing.expect_value(t,counts.counts[2],u32(1));testing.expect_value(t,len(bodies.queue.items),1)
     launch:=bodies.queue.items[0]
-    testing.expect_value(t,launch.kind,phys.Body_Request_Kind.Radial_Impulse)
+    testing.expect_value(t,launch.kind,phys.Body_Request_Kind.Area_Impulse)
     pieces:[8]destruct.Piece_Info;piece_count:=phys.breakable_pieces(core.ref(&physics),h,pieces[:])
     live:phys.Body_Handle
     for piece in pieces[:min(piece_count,len(pieces))] {if piece.body!=0 {live=piece.body;break}}
@@ -211,7 +213,7 @@ gallery_fragments_remain_while_sleeping_and_fade_before_their_physical_expiry ::
     dd.user_data=u64(target)
     handle,error:=phys.breakable_create(&physics,dd)
     if !testing.expect_value(t,error,phys.Breakable_Error.None) {return}
-    _,fractured:=phys.breakable_strain(&physics,handle,{0,0,0},10,10000)
+    _,fractured,_:=phys.break_apply(&physics,{breakable=handle,piece=-1,region={radius=10,blend=10},strain=10000})
     if !testing.expect(t,fractured) {return}
     root:=phys.breakable_body(core.ref(&physics),handle)
     pieces:[8]destruct.Piece_Info;count:=phys.breakable_pieces(core.ref(&physics),handle,pieces[:])

@@ -92,6 +92,30 @@ bench_navmesh :: proc(t:^testing.T) {
         }
     }
     log.infof("paths found %d of %d, mean length %.3f",found,PATHS,total/f32(max(found,1)))
+    // A horde: every point is a follower of the last one, each by a search of its own, then all by one toward it.
+    FOLLOWERS :: 400
+    target,end:=refs[QUERIES-1],points[QUERIES-1]
+    expanded:=0
+    b={}
+    for bench_round(&b) {
+        expanded=0
+        for i in 0..<FOLLOWERS {
+            count,_,_:=nav_find_path(&q,&mesh,refs[i],target,points[i],end,&filter,path[:])
+            expanded+=q.search.stats.expanded
+            sink+=f32(count)
+        }
+    }
+    bench_report("400 followers of one end, a search each",&b,FOLLOWERS,f32(expanded))
+    b={}
+    for bench_round(&b) {
+        nav_toward_begin(&q,&mesh,target,end,&filter)
+        for i in 0..<FOLLOWERS {
+            nav_toward_reach(&q,refs[i],max(int))
+            count,_:=nav_toward_path(&q,refs[i],path[:])
+            sink+=f32(count)
+        }
+    }
+    bench_report("400 followers of one end, one search toward it",&b,FOLLOWERS,f32(q.search.stats.expanded))
 }
 
 // A zombie of 3 actions: it attacks or chases what it sees, else wanders;
@@ -129,7 +153,7 @@ bench_minds :: proc(t:^testing.T) {
     b:Bench
     for bench_round(&b) {
         for tick in 0..<TICKS {
-            ctx.time=f64(tick)/30
+            ctx.dt=1.0/30
             ctx.tick=u64(tick)
             for &m,i in minds {
                 facts[i]={i32((i+tick)/20%2),i32((i*7+tick)%4)}
@@ -182,6 +206,28 @@ bench_nav_build_tile :: proc(t:^testing.T) {
         nav_tile_data_free(&data)
     }
     bench_report("nav_build_tile, 64x64 cells",&b,1,f32(polys))
+    // The same tile once an obstacle settles on it: from its triangles, and from the field its build kept.
+    obstacle:=[1]Nav_Area_Volume{{points={{6,6},{8,6},{8,8},{6,8},{},{},{},{}},count=4,area=NAV_AREA_BLOCKED,min_y=-1,max_y=2}}
+    input.volumes=obstacle[:]
+    field:Nav_Tile_Field
+    nav_build_tile(config,{},input,&scratch,&data,field=&field)
+    defer nav_tile_field_free(&field)
+    nav_tile_data_free(&data)
+    b={}
+    for bench_round(&b) {
+        nav_build_tile(config,{},input,&scratch,&data)
+        polys=len(data.polys)
+        nav_tile_data_free(&data)
+    }
+    bench_report("nav_build_tile with an obstacle, 64x64 cells",&b,1,f32(polys))
+    b={}
+    for bench_round(&b) {
+        nav_build_tile_again(config,{},&field,obstacle[:],&scratch,&data)
+        polys=len(data.polys)
+        nav_tile_data_free(&data)
+    }
+    bench_report("nav_build_tile_again with an obstacle",&b,1,f32(polys))
+    log.infof("the field of the tile takes %d bytes",len(field.block))
 }
 
 // A crowd of agents at about one per 1.2 units of area (or volume), each
@@ -224,6 +270,24 @@ bench_avoid :: proc($N:int,name:string) {
         }
     }
     bench_report(name,&b,AGENTS*REPEAT,sink)
+    when N==2 {
+        // Each in a yard of its own, three units across.
+        b={}
+        for bench_round(&b) {
+            for _ in 0..<REPEAT {
+                for a,i in agents {
+                    p:=a.position
+                    walls:=[8]Avoid_Wall{
+                        {{p.x-1.5,p.y+1.5},{p.x,p.y+1.5}},{{p.x,p.y+1.5},{p.x+1.5,p.y+1.5}},{{p.x+1.5,p.y+1.5},{p.x+1.5,p.y}},{{p.x+1.5,p.y},{p.x+1.5,p.y-1.5}},
+                        {{p.x+1.5,p.y-1.5},{p.x,p.y-1.5}},{{p.x,p.y-1.5},{p.x-1.5,p.y-1.5}},{{p.x-1.5,p.y-1.5},{p.x-1.5,p.y}},{{p.x-1.5,p.y},{p.x-1.5,p.y+1.5}},
+                    }
+                    v:=avoid_velocity(a,preferred[i],1.5,lists[i*NEIGHBORS:][:NEIGHBORS],2,1.0/30,walls[:],0.5)
+                    sink+=v[0]
+                }
+            }
+        }
+        bench_report("avoid_velocity 2D, 16 neighbors and 8 walls",&b,AGENTS*REPEAT,sink)
+    }
 }
 
 @(test)

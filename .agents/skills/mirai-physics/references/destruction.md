@@ -104,9 +104,18 @@ Topology:
   - The explicit impulse is distributed by volume and spatial weight among what is detached. A
     contact impact distributes it only when detaching from static: the solver already hit the
     dynamic.
+<<<<<<< HEAD
   - If bodies are missing, it keeps the broken bonds and retries detaching in a later event.
 - The optional [physics_fields](../../mirai-plugins/references/physics-fields.md) plugin provides
   persistent fields through `physics.strain_region`; it adds no field state to the core.
+=======
+  - If bodies are missing, it keeps the broken connections and retries detaching in a later event.
+- `Strain_Field` on an entity with a box or sphere
+  [`Volume`](../../mirai-gameplay/references/libraries.md#volume) is persistent strain through the
+  public API (`strain_fields_step`): each tick it asks `field_strain` of every destructible its
+  filter sees, with the region of the volume, constant without blend and linear with it. A client
+  asks for none; another shape is the `destruct.strain_field` problem.
+>>>>>>> main
 
 ## Removal
 

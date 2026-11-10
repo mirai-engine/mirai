@@ -20,7 +20,6 @@ Destruct_Pattern :: enum u8 {
 }
 
 Fracture_Kind :: phys.Break_Kind
-Destruct_Region :: phys.Break_Region
 Piece_Info :: phys.Piece_Info
 Piece_Flags :: phys.Piece_Flags
 Piece_Flag :: phys.Piece_Flag
@@ -108,13 +107,10 @@ Destructible_Group :: struct {
     written_rotation:quaternion128 `mirai:"transient,readonly,hidden"`,
 }
 
+// What is asked of a destructible, or of one body that broke off it: the event each of its bodies gets.
 Destruct_Request :: struct {
     entity:core.Entity,
-    kind:Fracture_Kind,
-    region:phys.Break_Region,
-    vector:[3]f32,
-    strain:f32,
-    ignore_body:phys.Body_Handle,
+    using event:phys.Break_Event,
 }
 
 // A fracture event applied to a destructible, in the frame of the body it was
@@ -130,7 +126,7 @@ Fracture_Record :: struct {
     strain:f32,
     half_extents:[3]f32,
     rotation:quaternion128,
-    falloff:phys.Radial_Falloff,
+    blend:f32,
 }
 
 // A fracture recorded on another end, to apply to a destructible here. check,
@@ -172,25 +168,21 @@ state_replay :: proc(requests:^Destruct_Requests,e:core.Entity,sequence:u32,data
 // radius takes the size of the impulse, fading to nothing at the radius, and
 // what comes off shares the impulse.
 damage :: proc(requests:^Destruct_Requests,e:core.Entity,point:[3]f32,radius:f32,impulse:[3]f32) {
-    core.push(&requests.queue,Destruct_Request{entity=e,kind=.Damage,region={point=point,radius=radius,falloff=.Linear},vector=impulse,strain=linalg.length(impulse)})
+    core.push(&requests.queue,Destruct_Request{e,{kind=.Damage,region={point=point,radius=radius,blend=radius},vector=impulse,strain=linalg.length(impulse)}})
 }
 
 strain :: proc(requests:^Destruct_Requests,e:core.Entity,point:[3]f32,radius,amount:f32,impulse:[3]f32={}) {
-    core.push(&requests.queue,Destruct_Request{entity=e,kind=.Damage,region={point=point,radius=radius,falloff=.Linear},vector=impulse,strain=amount})
+    core.push(&requests.queue,Destruct_Request{e,{kind=.Damage,region={point=point,radius=radius,blend=radius},vector=impulse,strain=amount}})
 }
 
 weaken :: proc(requests:^Destruct_Requests,e:core.Entity,point:[3]f32,radius,amount:f32) {
-    core.push(&requests.queue,Destruct_Request{entity=e,kind=.Weaken,region={point=point,radius=radius,falloff=.Linear},strain=amount})
+    core.push(&requests.queue,Destruct_Request{e,{kind=.Weaken,region={point=point,radius=radius,blend=radius},strain=amount}})
 }
 
 // Cuts a destructible by the plane through a world point: the pieces the
 // plane crosses become two and the two sides come apart.
 slice :: proc(requests:^Destruct_Requests,e:core.Entity,point,normal:[3]f32) {
-    core.push(&requests.queue,Destruct_Request{entity=e,kind=.Slice,region={point=point},vector=normal})
-}
-
-field_strain :: proc(requests:^Destruct_Requests,e:core.Entity,region:phys.Break_Region,amount:f32,impulse:[3]f32={},weakening:=false,ignore_body:phys.Body_Handle={}) {
-    core.push(&requests.queue,Destruct_Request{entity=e,kind=weakening?.Weaken:.Damage,region=region,vector=impulse,strain=amount,ignore_body=ignore_body})
+    core.push(&requests.queue,Destruct_Request{e,{kind=.Slice,region={point=point},vector=normal}})
 }
 
 Remove_Error :: enum {None,Missing_Group,Retained_Group}
@@ -199,7 +191,7 @@ remove :: proc(requests:^Destruct_Requests,groups:core.Read(Destructible_Group),
     group,has:=core.get(groups,e)
     if !has {return .Missing_Group}
     if group.group==0 {return .Retained_Group}
-    core.push(&requests.queue,Destruct_Request{entity=e,kind=.Remove})
+    core.push(&requests.queue,Destruct_Request{e,{kind=.Remove}})
     return .None
 }
 

@@ -459,7 +459,7 @@ rich_text_takes_italics_rules_links_and_images :: proc(t:^testing.T) {
     for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Image {coin=&p}}
     testing.expect(t,coin!=nil && coin.quad.data==3,"An image of the tree goes in the line")
     // The pointer over a piece of a link underlines all of it, and a click reports its name.
-    first:=id_derive(&ctx,id(&ctx,"rich"),"link",1)
+    first:=id_derive(&ctx,id(&ctx,"rich"),"link",int(u32(base.name_hash("shop")))+1)
     test_point(&input,test_rect(t,&ctx,first))
     test_frame(&ctx,&input,build,&r)
     gold=test_paint(&ctx,"gold")

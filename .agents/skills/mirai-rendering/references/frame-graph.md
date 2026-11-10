@@ -91,12 +91,12 @@ or interleave its own passes.
 9. **composite**: `direct + indirect_compose + emission`
    ([indirect composition](materials.md#indirect-composition)), or the view's
    [inspection mode](settings.md#inspection-modes). Under an atmosphere, the image that is shown
-   takes the aerial perspective; `Hdr`, the light that the next frame traces, does not.
+   takes the aerial perspective.
    - The specular lobe takes the traced reflection in the proportion that it traced and the
      volume around its dominant direction in the rest.
-   - The [grid](#reference-grid) is composed only in the background, outside the history.
+   - The [grid](#reference-grid) is composed only in the background.
    - With extension passes and without an inspection mode, the [`Lit`](views.md#extension-stages)
-     stage over the lit opaque image, without touching `Hdr`. With glass in view and `Lit`
+     stage over the lit opaque image. With glass in view and `Lit`
      passes, the raster of the layers (step 11) goes before: the stage runs behind the nearest
      layer and again in front, over the lit glass.
 10. **overlay**: up to four additional Surface materials per instance, in order, over opaque or
@@ -178,7 +178,7 @@ or interleave its own passes.
   [shapes](../../mirai-editor/references/editor.md#figures-of-whoever-works).
 - **Mask.** It draws only the highlighted instances, after the G-buffer and with its own depth
   buffer: the surrounding geometry does not clip it. It is rasterized without jitter at the
-  window point resolution, independent of `render_scale`, and respects the material's alpha
+  window point resolution, independent of `Settings.resolution`, and respects the material's alpha
   cutoff. The filter and the PostProcess (`mirai_outline`) read it, and they see only the game
   styles.
 - **Occlusion.** The visible depth is queried in scene coordinates, with its jitter and a

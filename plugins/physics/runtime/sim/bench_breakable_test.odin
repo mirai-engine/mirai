@@ -77,7 +77,7 @@ bench_destruct :: proc(t:^testing.T) {
         flat,flat_error:=bench_slab(w,{-20,0.5,0},false)
         flat_build+=time.duration_milliseconds(time.tick_since(mark))/ROUNDS
         mark=time.tick_now()
-        _,split_broke,_:=breakable_strain_region(w,flat,-1,{point={-20,0.5,0},half_extents={0.1,10,10},rotation=QUAT_IDENTITY,falloff=.Constant},1e9)
+        _,split_broke,_:=breakable_strain_region(w,flat,-1,{point={-20,0.5,0},half_extents={0.1,10,10},rotation=QUAT_IDENTITY},1e9)
         split+=time.duration_milliseconds(time.tick_since(mark))/ROUNDS
         breakable_destroy(w,flat)
         if other_error!=.None || flat_error!=.None || !broke || !split_broke {

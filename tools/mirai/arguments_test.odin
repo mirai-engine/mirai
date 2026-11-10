@@ -2,6 +2,7 @@ package main
 
 import "core:os"
 import "core:testing"
+import "mirai:std/base"
 
 // --help prints the usage and does nothing else; an argument that starts with
 // '-' and is no option of the command is misuse, never a name or a path.
@@ -57,6 +58,6 @@ every_command_refuses_unknown_options_and_answers_help :: proc(t:^testing.T) {
     }
     for name in ([]string{"--help","-h","--nope","-x","x","y"}) {
         testing.expectf(t,!os.exists(name),"a refused or help command left %s behind",name)
-        os.remove_all(name)
+        base.remove_all(name)
     }
 }

@@ -52,14 +52,11 @@ destructible_geometry_and_detached_group_poses_play_after_the_source_world_is_de
     record:cache.Cache_Recorder
     testing.expect_value(t,cache.record_init(&record,{frames=8,tracks=16,samples=128,vertices=8192,indices=16384,origin={position={3,2,-4},rotation=1,scale={1,1,1}}}),cache.Cache_Error.None)
     defer cache.record_destroy(&record)
-    scratch:Capture
-    testing.expect_value(t,capture_init(&scratch,16),cache.Cache_Error.None)
-    defer capture_destroy(&scratch)
     source:=[1]Capture_Source{{entity=owner,object=1}}
-    capture :: proc(c:^Capture,r:^cache.Cache_Recorder,w:^Cache_Test_World,g:^destruct.Destruct_Cache,sources:[]Capture_Source,time:f32)->cache.Cache_Error {
-        return capture_destructible(c,r,time,sources,destruct.Destruct_View{core.ref(&w.physics),core.read(&w.states),core.read(&w.groups)},core.ref(g))
+    capture :: proc(r:^cache.Cache_Recorder,w:^Cache_Test_World,g:^destruct.Destruct_Cache,sources:[]Capture_Source,time:f32)->cache.Cache_Error {
+        return capture_destructible(r,time,sources,destruct.Destruct_View{core.ref(&w.physics),core.read(&w.states),core.read(&w.groups)},core.ref(g))
     }
-    testing.expect_value(t,capture(&scratch,&record,&world,&h.cache,source[:],0),cache.Cache_Error.None)
+    testing.expect_value(t,capture(&record,&world,&h.cache,source[:],0),cache.Cache_Error.None)
     testing.expect_value(t,len(record.tracks),4)
     destruct.strain(&world.requests,owner,{3,2,-4},4,1e6,{2,4,1})
     cache_test_step(&world,&h,4)
@@ -71,11 +68,11 @@ destructible_geometry_and_detached_group_poses_play_after_the_source_world_is_de
         testing.expect_value(t,phys.entity_of(core.ref(&world.physics),group.body),group.entity)
     }
     testing.expect(t,phys.simulate(&world.physics,nil,&h.app.jobs,1.0/60))
-    testing.expect_value(t,capture(&scratch,&record,&world,&h.cache,source[:],1.0/60),cache.Cache_Error.None)
+    testing.expect_value(t,capture(&record,&world,&h.cache,source[:],1.0/60),cache.Cache_Error.None)
     destruct.slice(&world.requests,owner,{3,2,-4},{1,0,0})
     cache_test_step(&world,&h,5)
     testing.expect(t,phys.simulate(&world.physics,nil,&h.app.jobs,1.0/60))
-    testing.expect_value(t,capture(&scratch,&record,&world,&h.cache,source[:],2.0/60),cache.Cache_Error.None)
+    testing.expect_value(t,capture(&record,&world,&h.cache,source[:],2.0/60),cache.Cache_Error.None)
     testing.expect(t,len(record.tracks)>4)
     expected:[16]cache.Playback_Piece
     end:=cache.cache_sample(cache.record_view(&record),2.0/60,expected[:])

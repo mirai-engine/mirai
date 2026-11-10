@@ -249,7 +249,7 @@ physics_placement_pointer :: proc(s:^editor.Session,tool:^Physics_Placement,inpu
     tool.held=(tool.held || tool.press) && s.viewport.hovered && core.mouse_down(input,.Left)
 }
 
-@(step="frame",after="editor_tools")
+@(step="frame")
 physics_placement_frame :: proc(s:^editor.Session,tool:^Physics_Placement,world:core.World_Ref,frame:core.Frame_Time) {
     if tool.preview.data!=nil {
         if editor.playing(s) || !editor.tool_on(s,PLACEMENT_TOOL) || (s.gui.begun && ui.escape(s.gui.ctx)) {placement_cancel(tool);return}
@@ -305,9 +305,6 @@ physics_placement_panel :: proc(s:^editor.Session,tool:^Physics_Placement,input:
     if !g.begun || editor.playing(s) {return}
     placement_ready(tool)
     ctx:=g.ctx
-    if core.key_pressed(input,.P) && ctx.edit.id==0 && ctx.input.modifiers=={} && g.modal==.None && ctx.popup.count==0 {editor.tool_set(s,PLACEMENT_TOOL,!editor.tool_on(s,PLACEMENT_TOOL))}
-    active:=editor.tool_on(s,PLACEMENT_TOOL)
-    if editor.tool_button(g,ui.id_derive(ctx,PLACEMENT_SCOPE,"tool"),.Import,"Placement","P",active) {editor.tool_set(s,PLACEMENT_TOOL,!active)}
     if !editor.tool_on(s,PLACEMENT_TOOL) || s.viewport.pick.active {return}
     id:=ui.id_derive(ctx,PLACEMENT_SCOPE,"panel")
     if ui.panel(ctx,id,editor.tool_panel(g,id)) {

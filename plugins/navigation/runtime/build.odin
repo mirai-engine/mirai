@@ -5,6 +5,7 @@ import "core:math/linalg"
 import "core:time"
 import "mirai:core"
 import scene "mirai:engine/scene"
+import volume "mirai:engine/volume"
 import "mirai:host"
 import "mirai:std/ai"
 import "mirai:std/base"
@@ -24,12 +25,15 @@ import phys "plugins:physics/runtime"
 // where the terrain is not loaded go too, and come back from the bakes of the
 // world when it loads. The coarse graph of a section here is made again once
 // its tiles, or its zones for a class of a volume, settle with other hashes
-// than it was made from.
+// than it was made from. A tile marked only by an area or an obstacle is
+// built again from the heightfield its last build kept (Tile_Field), without
+// its collision: carving costs no gathering and no voxels.
 
 NAV_CHECKS_PER_TICK :: 64      // tiles gathered and hashed in a tick, built or not
 NAV_CHANGES_PER_READ :: 256
 NAV_TRIANGLES_MAX :: 1<<20     // of the input of one tile
 NAV_COARSE_EXPANDED :: 256     // nodes the searches of the ways of a region of the coarse graph expand in a tick
+NAV_FIELDS :: 64               // tiles whose heightfield is kept to build them again when an area or an obstacle changes on them
 
 // What the application keeps to build the meshes of a world: the jobs and
 // what the build tracks of the world. None of it is the state of the world.
@@ -44,7 +48,7 @@ Navigation_Builds :: struct {
     obstacles:core.Entity_Map(Area_Seen), // each Nav_Obstacle as it was at the last look
     bounds:[dynamic]mm.Aabb,         // of the Nav_Bounds at the last look; empty: the static collision
     air:[dynamic]mm.Aabb,            // of the Nav_Bounds of the air at the last look
-    water:[dynamic]mm.Aabb,          // of the water of the Fluid_Volume rows at the last look, a plane within the bounds
+    water:[dynamic]mm.Aabb,          // of the water of the Fluid rows at the last look, a plane within the bounds
     dry:[dynamic]mm.Aabb,            // of their dry boxes
     boxes:[NAV_CHANGES_PER_READ]mm.Aabb,
     sections:Nav_Sections,           // of this tick
@@ -70,12 +74,53 @@ Navigation_Builds :: struct {
     paged:[NAV_CLASS_CAPACITY]base.Hash_Map(u64),
     paged_seen:u64,       // Nav_Unloaded.revision and whether the world ran when they were last looked at
     seen:[dynamic]bool,   // scratch of the looks: the entries still there
+    sections_stamps:[6]u64, // the versions the sections were last gathered from
+    fields:[dynamic]Tile_Field, // the heightfields kept, at most NAV_FIELDS: the one unused longest gives its place
+    fields_clock:u64,
+    looked:u64,           // rows, marks and builds the build went through so far: a tick with nothing to do adds none
+}
+
+// The heightfield a tile was last built from, with what it was made of: a
+// build that only an area or an obstacle asked for starts from it.
+@(private)
+Tile_Field :: struct {
+    field:ai.Nav_Tile_Field,
+    class:int,
+    coord:[2]i32,
+    geometry:u64,  // the hash of the config and the triangles it was made from
+    low,high:f32,  // the heights its collision was read between
+    used:u64,      // fields_clock when it was kept or last built from
 }
 
 // The versions of a table of boxes in the frame of their entities and of the poses that place them.
 @(private)
 poses_stamps :: proc "contextless" (rows:core.Read($T),transforms:core.Read(core.Transform),parents:core.Read(core.Parent)) -> [6]u64 {
     return {core.version(rows),core.layout(rows),core.version(transforms),core.layout(transforms),core.version(parents),core.layout(parents)}
+}
+
+// poses_stamps of rows whose box is the Volume of their entity.
+@(private)
+boxes_stamps :: proc "contextless" (rows:core.Read($T),volumes:core.Read(volume.Volume),transforms:core.Read(core.Transform),parents:core.Read(core.Parent)) -> [6]u64 {
+    stamps:=poses_stamps(rows,transforms,parents)
+    if volumes.table!=nil {
+        stamps[0]+=core.version(volumes)
+        stamps[1]+=core.layout(volumes)
+    }
+    return stamps
+}
+
+// Half the size of the box of a Nav_Bounds, a Nav_Area or a Nav_Obstacle: the
+// extents of the Volume of its entity, which is to be a Box.
+box_half :: proc(volumes:core.Read(volume.Volume),e:core.Entity) -> (half:[3]f32,ok:bool) {
+    if volumes.table==nil {return}
+    v,found:=core.get(volumes,e)
+    if !found || v.shape!=.Box {return}
+    return v.extents,true
+}
+
+@(private)
+box_missing :: proc(problems:^core.Problems,e:core.Entity,what:string) {
+    core.report(problems,e,"navigation.volume","its %s has no box, so the navigation does not see it: it takes the Volume of its entity, of shape Box; add one (volume.box)",what)
 }
 
 @(private)
@@ -107,6 +152,7 @@ Area_Seen :: struct {
 
 Build_Stats :: struct {
     built,emptied,unchanged,discarded:u64, // tiles
+    carved:u64,                            // of those built, from the heightfield kept and not from the collision
     failed:u64,                            // builds that did not finish: input too large, no memory
     overflowed:u64,                        // tiles whose input did not all fit
     dropped:u64,                           // tiles and zones that went with their sections, or in a run with the terrain not loaded
@@ -141,6 +187,11 @@ Build :: struct {
     volume_scratch_ready:bool,
     zone_result:ai.Nav_Volume_Data,
     ns:i64, // what its job took
+    // The heightfield of the tile: kept by a build from the collision, or the one it builds from.
+    field:ai.Nav_Tile_Field,
+    from_field:bool,
+    geometry:u64,
+    low,high:f32,
 }
 
 builds_free :: proc(b:^Navigation_Builds) {
@@ -161,6 +212,8 @@ builds_free :: proc(b:^Navigation_Builds) {
     ai.nav_coarse_build_destroy(&b.region)
     delete(b.bounds)
     delete(b.air);delete(b.water);delete(b.dry);delete(b.seen)
+    fields_clear(b)
+    delete(b.fields)
     b^={}
 }
 
@@ -171,6 +224,53 @@ build_release :: proc(build:^Build) {
     ai.nav_volume_scratch_destroy(&build.volume_scratch)
     ai.nav_tile_data_free(&build.result)
     ai.nav_volume_data_free(&build.zone_result)
+    ai.nav_tile_field_free(&build.field)
+}
+
+@(private)
+fields_clear :: proc(b:^Navigation_Builds) {
+    for &kept in b.fields {ai.nav_tile_field_free(&kept.field)}
+    clear(&b.fields)
+}
+
+// The heightfield kept of a tile, when it was made of the collision between those heights.
+@(private)
+field_find :: proc(b:^Navigation_Builds,class:int,coord:[2]i32,low,high:f32) -> ^Tile_Field {
+    for &kept in b.fields {
+        if kept.class==class && kept.coord==coord {return &kept if kept.low==low && kept.high==high else nil}
+    }
+    return nil
+}
+
+@(private)
+field_drop :: proc(b:^Navigation_Builds,class:int,coord:[2]i32) {
+    for &kept,i in b.fields {
+        if kept.class!=class || kept.coord!=coord {continue}
+        ai.nav_tile_field_free(&kept.field)
+        unordered_remove(&b.fields,i)
+        return
+    }
+}
+
+// Keeps the heightfield a build made from the collision, taking it from the
+// build: in the place of the one of its tile, in a free one, or in that of
+// the one unused longest.
+@(private)
+field_keep :: proc(b:^Navigation_Builds,build:^Build) {
+    b.fields_clock+=1
+    kept:=Tile_Field{field=build.field,class=build.class,coord=build.coord,geometry=build.geometry,low=build.low,high=build.high,used=b.fields_clock}
+    at:=-1
+    for &old,i in b.fields {
+        if old.class==build.class && old.coord==build.coord {at=i;break}
+        if len(b.fields)>=NAV_FIELDS && (at<0 || old.used<b.fields[at].used) {at=i}
+    }
+    if at<0 {
+        if _,error:=append(&b.fields,kept);error!=nil {return}
+    } else {
+        ai.nav_tile_field_free(&b.fields[at].field)
+        b.fields[at]=kept
+    }
+    build.field={}
 }
 
 // How a class is built.
@@ -213,9 +313,9 @@ filters_same :: proc "contextless" (n:^Navigation,collision:^phys.Collision_Sett
 @(private)
 navigation_reset :: proc(n:^Navigation,settings:^Navigation_Settings,collision:^phys.Collision_Settings,problems:^core.Problems) -> bool {
     // The revision goes on from where it was: with the uid it says whose meshes a copy holds (navigation_copy_kept).
-    uid,revision:=n.uid,n.revision
+    uid,revision,made:=n.uid,n.revision,n.made+1
     navigation_free(n)
-    n.uid,n.revision=uid,revision
+    n.uid,n.revision,n.made=uid,revision,made
     n.settings=settings^
     tiles:=int(settings.max_tiles) if settings.max_tiles>0 else 1024
     links:=int(settings.max_links) if settings.max_links>=0 else 0
@@ -236,7 +336,7 @@ navigation_reset :: proc(n:^Navigation,settings:^Navigation_Settings,collision:^
             c.volume_config=volume_config(class)
             if !ai.nav_volume_init(&c.volume,{voxel=c.volume_config.voxel,layers=c.volume_config.layers,max_zones=min(tiles,ai.NAV_VOLUME_SLOT_MAX)}) || !base.hash_map_init(&c.marks,tiles) {
                 navigation_free(n)
-                n.uid,n.revision=uid,revision+1
+                n.uid,n.revision,n.made=uid,revision+1,made
                 return false
             }
             n.count+=1
@@ -252,7 +352,7 @@ navigation_reset :: proc(n:^Navigation,settings:^Navigation_Settings,collision:^
         width:=f32(c.config.tile_size)*c.config.cell_size
         if !ai.nav_mesh_init(&c.mesh,{tile_width=width,climb=class.climb,max_tiles=tiles,max_links=links}) || !base.hash_map_init(&c.marks,tiles) {
             navigation_free(n)
-            n.uid,n.revision=uid,revision+1
+            n.uid,n.revision,n.made=uid,revision+1,made
             return false
         }
         n.count+=1
@@ -263,14 +363,15 @@ navigation_reset :: proc(n:^Navigation,settings:^Navigation_Settings,collision:^
 }
 
 // Marks the tiles and zones of every class that a box touches, with the
-// margin their build reads around them; only tiles for what changes only the
-// surface (areas, obstacles).
+// margin their build reads around them. `volumes`: only an area or an
+// obstacle changed there, which no zone reads and which leaves the collision
+// under the tiles as their last build read it.
 @(private)
-mark_box :: proc(n:^Navigation,box:mm.Aabb,limits:Limits,force:=false,air:=true) {
+mark_box :: proc(n:^Navigation,box:mm.Aabb,limits:Limits,force:=false,volumes:=false) {
     for i in 0..<n.count {
         c:=&n.classes[i]
         if class_in_volume(n,i) {
-            if air {mark_zones(c,box,limits_of(c,limits),force)}
+            if !volumes {mark_zones(c,box,limits_of(c,limits),force)}
             continue
         }
         margin:=ai.nav_build_margin(c.config)
@@ -283,7 +384,7 @@ mark_box :: proc(n:^Navigation,box:mm.Aabb,limits:Limits,force:=false,air:=true)
                 if !tile_inside(c,coord,limits.surface) && ai.nav_mesh_tile_at(&c.mesh,coord)==nil {continue}
                 mark,_:=base.hash_map_insert(&c.marks,coord_key(coord))
                 if mark==nil {continue}
-                mark_set(c,mark,marked(mark^,force))
+                mark_set(c,mark,marked(mark^,force,!volumes))
             }
         }
     }
@@ -307,11 +408,14 @@ mark_zones :: proc(c:^Class_Mesh,box:mm.Aabb,air:[]mm.Aabb,force:bool) {
     }
 }
 
-// A mark marked again: it waits for a build, and looks again at whether its collision is loaded.
+// A mark marked again: it waits for a build, and looks again at whether its
+// collision is loaded. collision: what marks it may have changed the
+// collision under it, and not only its areas and obstacles.
 @(private)
-marked :: proc "contextless" (mark:Tile_Mark,force:bool) -> Tile_Mark {
+marked :: proc "contextless" (mark:Tile_Mark,force:bool,collision:=true) -> Tile_Mark {
     next:=mark
     next.dirty,next.unloaded=true,false
+    next.collision|=collision || force
     next.stamp+=1
     if force {next.hash=0}
     return next
@@ -356,12 +460,17 @@ upright_box :: proc "contextless" (pose:mm.Transform,half:[3]f32) -> (box:mm.Aab
 @(step="fixed",loops="game editor",stage="react",server)
 navigation_build :: proc(
     n:^Navigation,b:^Navigation_Builds,settings:core.Ref(Navigation_Settings),bakes:core.Read(Navigation_Bake),physics:core.Ref(phys.Physics_State),requests:^Nav_Build_Requests,
-    bounds:core.Read(Nav_Bounds),areas:core.Read(Nav_Area),links:core.Read(Nav_Link),obstacles:core.Read(Nav_Obstacle),time:core.Time,transforms:core.Read(core.Transform),parents:core.Read(core.Parent),
+    bounds:core.Read(Nav_Bounds),areas:core.Read(Nav_Area),links:core.Read(Nav_Link),obstacles:core.Read(Nav_Obstacle),volumes:core.Read(volume.Volume),time:core.Time,transforms:core.Read(core.Transform),parents:core.Read(core.Parent),
     unloaded:core.Ref(Nav_Unloaded),references:core.Read(scene.Scene_Reference),worlds:core.Read(core.World_Transform),ids:core.Read(core.Id),app:^host.App,problems:^core.Problems,
 ) {
     if physics.ptr==nil || !physics.ready || settings.ptr==nil {return}
     // A section away is not loaded: like the terrain that is not, its tiles wait for it.
-    b.sections=sections_gather(references,worlds,ids)
+    section_stamps:=[6]u64{core.version(references),core.layout(references),core.version(worlds),core.layout(worlds),core.version(ids),core.layout(ids)}
+    if section_stamps!=b.sections_stamps || !n.ready {
+        b.sections_stamps=section_stamps
+        b.sections=sections_gather(references,worlds,ids)
+        b.looked+=u64(core.count(references))
+    }
     gone:=Unloaded{unloaded.ptr,&b.sections,base.hash_combine(unloaded.ptr.revision if unloaded.ptr!=nil else 0,b.sections.hash)}
     fresh,reset:=false,false
     // A class is made again when it changes, or when what blocks its agents does (Collision_Settings).
@@ -373,6 +482,7 @@ navigation_build :: proc(
         }
         core.entity_map_clear(&b.bakes)
         b.bakes_seen=0
+        fields_clear(b)
         fresh,reset=true,true
     }
     // What changes no mesh (area costs, budgets) takes effect at once.
@@ -386,6 +496,7 @@ navigation_build :: proc(
         core.entity_map_clear(&b.links)
         core.entity_map_clear(&b.obstacles)
         for build in b.builds {if build.busy {build.uid=0}}
+        fields_clear(b)
         b.region_busy=false
         // A copy has the meshes of the bakes of its world already.
         if !reset {core.entity_map_clear(&b.bakes)}
@@ -394,13 +505,13 @@ navigation_build :: proc(
     }
     bakes_update(n,b,bakes,app,problems,fresh && !reset)
     next,count,overflow:=phys.static_changes(physics,b.cursor,b.boxes[:])
-    limits:=bounds_update(n,b,bounds,transforms,parents,physics,gone,fresh,count>0 || overflow,problems)
+    limits:=bounds_update(n,b,bounds,volumes,transforms,parents,physics,gone,fresh,count>0 || overflow,problems)
     if fresh {
         for limit in limits.surface {mark_box(n,limit,limits)}
         for limit in limits.air {mark_box(n,limit,limits)}
     }
-    areas_update(n,b,areas,transforms,parents,limits,fresh,problems)
-    obstacles_update(n,b,obstacles,transforms,parents,limits,time,fresh,problems)
+    areas_update(n,b,areas,volumes,transforms,parents,limits,fresh,problems)
+    obstacles_update(n,b,obstacles,volumes,transforms,parents,limits,time,fresh,problems)
     for asked in core.take(&requests.queue) {
         if asked.box=={} {
             for limit in limits.surface {mark_box(n,limit,limits,true)}
@@ -426,7 +537,7 @@ navigation_build :: proc(
     sections_update(n,b,limits,fresh)
     paging_update(n,b,unloaded.ptr,time.playing,fresh,reset,app,problems)
     published,spent:=builds_publish(n,b,problems)
-    host.load_phase_add(app,.Nav_Tiles,spent,published)
+    if published>0 {host.load_phase_add(app,.Nav_Tiles,spent,published)}
     builds_start(n,b,physics,limits,gone,time.playing,&app.jobs,problems)
     // Tiles building keep a load from being resident.
     building:=false
@@ -440,16 +551,17 @@ navigation_build :: proc(
 // The bounds where meshes are made: those of the Nav_Bounds, or the box of
 // the static collision and of where it is not loaded, which does not shrink
 // when a terrain lets its colliders go; those of the air; and the water of the
-// Fluid_Volume rows, up to its surface, a plane within the bounds of the
+// Fluid rows, up to its surface, a plane within the bounds of the
 // surface, with its dry boxes. Tiles and zones that leave them are removed;
 // those that enter are marked.
 @(private)
-bounds_update :: proc(n:^Navigation,b:^Navigation_Builds,bounds:core.Read(Nav_Bounds),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),physics:core.Ref(phys.Physics_State),unloaded:Unloaded,fresh,collision_changed:bool,problems:^core.Problems) -> Limits {
+bounds_update :: proc(n:^Navigation,b:^Navigation_Builds,bounds:core.Read(Nav_Bounds),volumes:core.Read(volume.Volume),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),physics:core.Ref(phys.Physics_State),unloaded:Unloaded,fresh,collision_changed:bool,problems:^core.Problems) -> Limits {
     // The water and the box of the collision change with the collision, through its change log.
-    poses:=poses_stamps(bounds,transforms,parents)
+    poses:=boxes_stamps(bounds,volumes,transforms,parents)
     stamps:=[7]u64{poses[0],poses[1],poses[2],poses[3],poses[4],poses[5],unloaded.revision}
     if !fresh && !collision_changed && stamps==b.bounds_stamps {return {b.bounds[:],b.air[:],b.water[:],b.dry[:]}}
     b.bounds_stamps=stamps
+    b.looked+=u64(core.count(bounds))+1
     surface,air:[64]mm.Aabb
     count,count_air:=0,0
     for i in 0..<core.count(bounds) {
@@ -457,7 +569,12 @@ bounds_update :: proc(n:^Navigation,b:^Navigation_Builds,bounds:core.Read(Nav_Bo
         pose,ok:=core.world_of(transforms,parents,e)
         if !ok {continue}
         bound:=bounds.table.values[i]
-        box,_:=upright_box(pose,bound.half)
+        half,boxed:=box_half(volumes,e)
+        if !boxed {
+            box_missing(problems,e,"Nav_Bounds")
+            continue
+        }
+        box,_:=upright_box(pose,half)
         if bound.air {
             if count_air<len(air) {air[count_air]=box;count_air+=1}
         } else if count<len(surface) {surface[count]=box;count+=1}
@@ -557,35 +674,41 @@ bounds_update :: proc(n:^Navigation,b:^Navigation_Builds,bounds:core.Read(Nav_Bo
 
 // Marks where a Nav_Area was and is, when it moved, changed or went.
 @(private)
-areas_update :: proc(n:^Navigation,b:^Navigation_Builds,areas:core.Read(Nav_Area),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),limits:Limits,fresh:bool,problems:^core.Problems) {
-    stamps:=poses_stamps(areas,transforms,parents)
+areas_update :: proc(n:^Navigation,b:^Navigation_Builds,areas:core.Read(Nav_Area),volumes:core.Read(volume.Volume),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),limits:Limits,fresh:bool,problems:^core.Problems) {
+    stamps:=boxes_stamps(areas,volumes,transforms,parents)
     if !fresh && stamps==b.areas_stamps {return}
     seen,enough:=seen_reset(b,len(b.areas.values),problems)
     if !enough {return}
     b.areas_stamps=stamps
+    b.looked+=u64(core.count(areas))+u64(len(seen))
     for i in 0..<core.count(areas) {
         e:=core.entity_at(areas,i)
         pose,ok:=core.world_of(transforms,parents,e)
         if !ok {continue}
         area:=areas.table.values[i]
-        box,corners:=upright_box(pose,area.half)
+        half,boxed:=box_half(volumes,e)
+        if !boxed {
+            box_missing(problems,e,"Nav_Area")
+            continue
+        }
+        box,corners:=upright_box(pose,half)
         now:=Area_Seen{box=box,volume={count=4,area=u8(area.area),min_y=box.min.y,max_y=box.max.y}}
         for corner,k in corners {now.volume.points[k]=corner}
         at:=core.entity_map_index(&b.areas,e)
         if at>=0 {
             if at<len(seen) {seen[at]=true}
             if b.areas.values[at]!=now {
-                if !fresh {mark_box(n,b.areas.values[at].box,limits,air=false);mark_box(n,box,limits,air=false)}
+                if !fresh {mark_box(n,b.areas.values[at].box,limits,volumes=true);mark_box(n,box,limits,volumes=true)}
                 b.areas.values[at]=now
             }
             continue
         }
         core.entity_map_put(&b.areas,e,now)
-        if !fresh {mark_box(n,box,limits,air=false)}
+        if !fresh {mark_box(n,box,limits,volumes=true)}
     }
     for at:=len(seen)-1;at>=0;at-=1 {
         if seen[at] {continue}
-        mark_box(n,b.areas.values[at].box,limits,air=false)
+        mark_box(n,b.areas.values[at].box,limits,volumes=true)
         core.entity_map_remove_at(&b.areas,at)
     }
 }
@@ -609,6 +732,7 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
         if c.ready==0 && (c.loading==0 || !loaded) {continue}
         it:=base.hash_map_iterator(&c.marks)
         for key,mark in base.hash_map_iterate(&it) {
+            b.looked+=1
             if !mark.dirty || mark.building {continue}
             // What it reads is not all loaded: it keeps what it has and waits. With nothing to
             // keep where only away sections are, it waits for nothing: a change there marks it
@@ -635,7 +759,8 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
             if free==nil {return}
             checks+=1
             next:=mark^
-            next.dirty=false
+            collision:=mark.collision
+            next.dirty,next.collision=false,false
             mark_set(c,mark,next)
             if class_in_volume(n,i) {
                 zone:=zone_of_key(key)
@@ -669,9 +794,9 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
                 mark.hash=0
                 continue
             }
-            complete,enough:=gather(free,n,c,b,physics,coord,problems)
+            complete,enough:=gather(free,i,c,b,physics,coord,collision)
             if !enough {
-                next.dirty=true
+                next.dirty,next.collision=true,collision
                 mark_set(c,mark,next)
                 core.report(problems,core.NONE,"navigation.memory","No memory for the collision under a tile of class %q: it is built in a later tick; free memory, or lower tile_cells in Navigation_Settings",base.text_get(c.class.name[:]))
                 return
@@ -682,7 +807,8 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
             }
             if free.hash==mark.hash {n.stats.unchanged+=1;continue}
             // No collision here: nothing to build, and a bake keeps no tile of it, so every load asks.
-            if len(free.indices)==0 && len(free.volumes)==0 {
+            if !free.from_field && len(free.indices)==0 && len(free.volumes)==0 {
+                field_drop(b,i,coord)
                 if ai.nav_mesh_remove_tile(&c.mesh,coord) {n.revision+=1;links_mark(n,i,coord)}
                 mark.hash=free.hash
                 n.stats.emptied+=1
@@ -767,9 +893,13 @@ gather_zone :: proc(build:^Build,c:^Class_Mesh,b:^Navigation_Builds,physics:core
     return
 }
 
-// The input of a tile into a build, and its hash. False when not all of it fit.
+// The input of a tile into a build, and its hash. False when not all of it
+// fit. Without `collision` (only its areas or obstacles changed since its
+// build began) and with the heightfield of its tile kept, the build takes a
+// copy of that instead of the collision, which is not read: the hash is the
+// same either way.
 @(private)
-gather :: proc(build:^Build,n:^Navigation,c:^Class_Mesh,b:^Navigation_Builds,physics:core.Ref(phys.Physics_State),coord:[2]i32,problems:^core.Problems) -> (complete,enough:bool) {
+gather :: proc(build:^Build,class:int,c:^Class_Mesh,b:^Navigation_Builds,physics:core.Ref(phys.Physics_State),coord:[2]i32,collision:bool) -> (complete,enough:bool) {
     rect:=ai.nav_tile_rect(c.config,coord)
     margin:=ai.nav_build_margin(c.config)
     box:=mm.Aabb{{rect.min.x-margin,-1e9,rect.min.z-margin},{rect.max.x+margin,1e9,rect.max.z+margin}}
@@ -777,8 +907,24 @@ gather :: proc(build:^Build,n:^Navigation,c:^Class_Mesh,b:^Navigation_Builds,phy
         box.min.y=min(box.min.y if box.min.y>-1e9 else limit.min.y,limit.min.y)
         box.max.y=max(box.max.y if box.max.y<1e9 else limit.max.y,limit.max.y)
     }
-    complete,enough=gather_triangles(build,physics,box,c.filter)
-    if !enough {return}
+    ai.nav_tile_field_free(&build.field)
+    build.from_field,build.low,build.high=false,box.min.y,box.max.y
+    if kept:=field_find(b,class,coord,box.min.y,box.max.y);kept!=nil && !collision {
+        if field,ok:=ai.nav_tile_field_clone(&kept.field);ok {
+            b.fields_clock+=1
+            kept.used=b.fields_clock
+            build.field,build.from_field,build.geometry=field,true,kept.geometry
+            clear(&build.vertices)
+            clear(&build.indices)
+            complete,enough=true,true
+        }
+    }
+    if !build.from_field {
+        complete,enough=gather_triangles(build,physics,box,c.filter)
+        if !enough {return}
+        config:=c.config
+        build.geometry=base.hash_combine(base.hash64(mem.ptr_to_bytes(&config),0),triangles_hash(transmute([][3]f32)build.vertices[:],build.indices[:]))
+    }
     clear(&build.volumes)
     // The deep ground under the water first: an area of a Nav_Area or an obstacle there wins.
     for water in b.water {
@@ -800,11 +946,7 @@ gather :: proc(build:^Build,n:^Navigation,c:^Class_Mesh,b:^Navigation_Builds,phy
         if !seen.blocks || box.max.x<rect.min.x-margin || box.min.x>rect.max.x+margin || box.max.z<rect.min.z-margin || box.min.z>rect.max.z+margin {continue}
         append(&build.volumes,seen.volume)
     }
-    config:=c.config
-    h:=base.hash64(mem.ptr_to_bytes(&config),0)
-    h=base.hash_combine(h,triangles_hash(transmute([][3]f32)build.vertices[:],build.indices[:]))
-    h=base.hash64(mem.slice_to_bytes(build.volumes[:]),h)
-    build.hash=h|1
+    build.hash=base.hash64(mem.slice_to_bytes(build.volumes[:]),build.geometry)|1
     return
 }
 
@@ -834,7 +976,11 @@ build_job :: proc(build:^Build,worker:int) {
     }
     if !build.scratch_ready {ai.nav_build_scratch_init(&build.scratch);build.scratch_ready=true}
     ai.nav_tile_data_free(&build.result)
-    build.status=ai.nav_build_tile(build.config,build.coord,{vertices=build.vertices[:],indices=build.indices[:],volumes=build.volumes[:]},&build.scratch,&build.result)
+    if build.from_field {
+        build.status=ai.nav_build_tile_again(build.config,build.coord,&build.field,build.volumes[:],&build.scratch,&build.result)
+        return
+    }
+    build.status=ai.nav_build_tile(build.config,build.coord,{vertices=build.vertices[:],indices=build.indices[:],volumes=build.volumes[:]},&build.scratch,&build.result,field=&build.field)
 }
 
 // Puts the tiles of finished builds in their meshes, when they are still
@@ -845,14 +991,21 @@ builds_publish :: proc(n:^Navigation,b:^Navigation_Builds,problems:^core.Problem
         if !build.busy || jobs.pending(&build.counter) {continue}
         build.busy=false
         ended+=1
+        b.looked+=1
         ns+=build.ns
         defer ai.nav_tile_data_free(&build.result)
         defer ai.nav_volume_data_free(&build.zone_result)
+        defer ai.nav_tile_field_free(&build.field)
         if build.uid!=n.uid || build.class>=n.count {n.stats.discarded+=1;continue}
         c:=&n.classes[build.class]
         if build.air {
             zone_publish(n,c,build,problems)
             continue
+        }
+        // The heightfield of a build from the collision is that of what it read, whoever marked the
+        // tile meanwhile: a mark of the collision since has the next build read it again.
+        if !build.from_field {
+            if (build.status==.Built || build.status==.Empty) && build.field.block!=nil {field_keep(b,build)} else {field_drop(b,build.class,build.coord)}
         }
         mark:=base.hash_map_ptr(&c.marks,coord_key(build.coord))
         if mark==nil {n.stats.discarded+=1;continue}
@@ -867,6 +1020,7 @@ builds_publish :: proc(n:^Navigation,b:^Navigation_Builds,problems:^core.Problem
                 build.result={}
                 mark.hash=build.hash
                 n.stats.built+=1
+                if build.from_field {n.stats.carved+=1}
                 n.revision+=1
                 links_mark(n,build.class,build.coord)
             } else {
@@ -918,8 +1072,8 @@ zone_publish :: proc(n:^Navigation,c:^Class_Mesh,build:^Build,problems:^core.Pro
 // Obstacles block the surface under them once they have been still long
 // enough, and stop when they move; outside a run (the editor) they are still.
 @(private)
-obstacles_update :: proc(n:^Navigation,b:^Navigation_Builds,obstacles:core.Read(Nav_Obstacle),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),limits:Limits,time:core.Time,fresh:bool,problems:^core.Problems) {
-    stamps:=poses_stamps(obstacles,transforms,parents)
+obstacles_update :: proc(n:^Navigation,b:^Navigation_Builds,obstacles:core.Read(Nav_Obstacle),volumes:core.Read(volume.Volume),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),limits:Limits,time:core.Time,fresh:bool,problems:^core.Problems) {
+    stamps:=boxes_stamps(obstacles,volumes,transforms,parents)
     moved:=fresh || stamps!=b.obstacles_stamps
     // Unmoved, only those that settle need the tick.
     if !moved && b.settling==0 {return}
@@ -928,6 +1082,7 @@ obstacles_update :: proc(n:^Navigation,b:^Navigation_Builds,obstacles:core.Read(
     b.obstacles_stamps=stamps
     running:=time.playing && time.dt>0
     b.settling=0
+    b.looked+=u64(core.count(obstacles))+u64(len(seen))
     for i in 0..<core.count(obstacles) {
         e:=core.entity_at(obstacles,i)
         obstacle:=obstacles.table.values[i]
@@ -935,7 +1090,12 @@ obstacles_update :: proc(n:^Navigation,b:^Navigation_Builds,obstacles:core.Read(
         if moved {
             pose,ok:=core.world_of(transforms,parents,e)
             if !ok {continue}
-            box,corners:=upright_box(pose,obstacle.half)
+            half,boxed:=box_half(volumes,e)
+            if !boxed {
+                box_missing(problems,e,"Nav_Obstacle")
+                continue
+            }
+            box,corners:=upright_box(pose,half)
             volume:=ai.Nav_Area_Volume{count=4,area=ai.NAV_AREA_BLOCKED,min_y=box.min.y,max_y=box.max.y}
             for corner,k in corners {volume.points[k]=corner}
             if at<0 {
@@ -945,7 +1105,7 @@ obstacles_update :: proc(n:^Navigation,b:^Navigation_Builds,obstacles:core.Read(
             } else if at<len(seen) {seen[at]=true}
             o:=&b.obstacles.values[at]
             if o.box!=box {
-                if o.blocks {mark_box(n,o.box,limits,air=false)}
+                if o.blocks {mark_box(n,o.box,limits,volumes=true)}
                 o.box,o.volume,o.still,o.blocks=box,volume,0,false
             }
         } else if at<0 {continue}
@@ -953,13 +1113,13 @@ obstacles_update :: proc(n:^Navigation,b:^Navigation_Builds,obstacles:core.Read(
         o.still+=time.dt if running else obstacle.settle
         if !o.blocks && o.still>=obstacle.settle {
             o.blocks=true
-            mark_box(n,o.box,limits,air=false)
+            mark_box(n,o.box,limits,volumes=true)
         }
         if !o.blocks {b.settling+=1}
     }
     for at:=len(seen)-1;at>=0;at-=1 {
         if seen[at] {continue}
-        if b.obstacles.values[at].blocks {mark_box(n,b.obstacles.values[at].box,limits,air=false)}
+        if b.obstacles.values[at].blocks {mark_box(n,b.obstacles.values[at].box,limits,volumes=true)}
         core.entity_map_remove_at(&b.obstacles,at)
     }
 }

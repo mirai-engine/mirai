@@ -312,9 +312,8 @@ Stats :: struct {
     body_capacity_exhausted,shape_capacity_exhausted,contact_capacity_exhausted,joint_capacity_exhausted:int,
     manifold_capacity_exhausted,event_capacity_exhausted,geometry_capacity_exhausted:int,
     character_capacity_exhausted,fluid_capacity_exhausted:int,
-    // Breakables, breaks and cuts refused because a capacity of theirs or of the world ran out, and break
-    // events that did not fit in those of a step.
-    breakable_capacity_exhausted,break_events_dropped:int,
+    // Breakables, breaks and cuts refused because a capacity of theirs or of the world ran out.
+    breakable_capacity_exhausted:int,
     // Shapes a bullet went through in a step beyond the CCD_OVERLAP_CAPACITY it keeps, without their overlap
     // events, since the world was created.
     ccd_overlaps_dropped:int,

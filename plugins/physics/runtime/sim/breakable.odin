@@ -68,19 +68,25 @@ Break_Kind :: enum u32 {
     Remove,
 }
 
-// What broke a breakable, small enough to send: applying it to an equal world gives an equal result.
+// Where a strain reaches, in the world: a sphere, or a box when half_extents is not zero. Its weight is
+// that of a volume: 1 inside, rising from 0 at the border over `blend` meters when there is one.
+Break_Region :: struct {
+    point:Vec3,
+    radius:f32,
+    half_extents:Vec3,
+    rotation:Quat, // zero means identity
+    blend:f32,
+}
+
+// What breaks a breakable, small enough to send: applying it to an equal world gives an equal result.
 Break_Event :: struct {
     breakable:Breakable_Handle,
     tick:u32,     // of the world when it was applied
     piece:i32,    // id of a piece: only the body that holds it is damaged or cut. -1: every body of the breakable
-    point:Vec3,   // world
+    using region:Break_Region, // of a strain; point is also where the plane of a slice goes through
     vector:Vec3,  // impulse in N s, or the normal of the plane of a slice
-    radius:f32,   // m
     kind:Break_Kind,
-    strain:f32,  // N s, independent of the impulse
-    half_extents:Vec3, // nonzero selects a box instead of a sphere
-    rotation:Quat,
-    falloff:Radial_Falloff,
+    strain:f32,   // N s, independent of the impulse
 }
 #assert(size_of(Break_Event)==88)
 
@@ -162,7 +168,6 @@ Piece_Info :: struct {
     cut_offset:f32,
     front:bool,
 }
-Bond_Info :: struct {a,b:i32,area,strain:f32,broken:bool}
 
 @(private)
 Break_Scratch :: struct {
@@ -826,31 +831,6 @@ breakable_pieces :: proc(w:^World,h:Breakable_Handle,out:[]Piece_Info) -> int {
     return count
 }
 
-// Bonds of the breakable, broken ones included; `a` and `b` are piece ids.
-breakable_bonds :: proc(w:^World,h:Breakable_Handle,out:[]Bond_Info) -> int {
-    d,_:=breakable_get(w,h)
-    if d==nil {return 0}
-    count:=0
-    for slot:=d.bond_list;slot>=0;slot=w.bonds[slot].next {
-        c:=&w.bonds[slot]
-        if .Cluster in c.flags {continue}
-        if count<len(out) {out[count]={c.a,c.b,c.area,c.strain,.Broken in c.flags}}
-        count+=1
-    }
-    return count
-}
-
-// Mass of the pieces that are still in the world.
-breakable_mass :: proc(w:^World,h:Breakable_Handle) -> f32 {
-    d,_:=breakable_get(w,h)
-    if d==nil {return 0}
-    volume:f32
-    for slot:=d.piece_list;slot>=0;slot=w.pieces[slot].next {
-        if .Gone not_in w.pieces[slot].flags {volume+=w.pieces[slot].volume}
-    }
-    return volume*d.density
-}
-
 @(private)
 hull_to_mesh :: proc(hull:^Hull,out:^geom.Mesh_Buffer) {
     geom.mesh_buffer_clear(out)
@@ -866,60 +846,6 @@ hull_to_mesh :: proc(hull:^Hull,out:^geom.Mesh_Buffer) {
             previous=u32(edge.origin)
         }
     }
-}
-
-// The hull of a piece as a closed triangle mesh in the frame of its body.
-breakable_piece_mesh :: proc(w:^World,h:Breakable_Handle,id:i32,out:^geom.Mesh_Buffer) -> bool {
-    d,index:=breakable_get(w,h)
-    if d==nil || id<0 || id>=w.piece_high || w.pieces[id].breakable!=index {return false}
-    hull:=hull_get(w,w.pieces[id].hull)
-    if hull==nil {return false}
-    hull_to_mesh(hull,out)
-    return true
-}
-
-// Damages the breakable around a world point: each bond within the radius takes the size of
-// the impulse, fading to nothing at the radius; what comes off shares the impulse. Returns the event that
-// repeats it elsewhere and whether anything broke.
-breakable_damage :: proc(w:^World,h:Breakable_Handle,point:Vec3,radius:f32,impulse:Vec3) -> (event:Break_Event,broke:bool) {
-    return breakable_strain(w,h,point,radius,length(impulse),impulse)
-}
-
-// Cuts the breakable by the plane through a world point: the pieces the plane crosses become two, each
-// with a new hull, and the two sides come apart. Between ticks; it allocates.
-breakable_slice :: proc(w:^World,h:Breakable_Handle,point,normal:Vec3) -> (event:Break_Event,cut:bool) {
-    d,index:=breakable_get(w,h)
-    if d==nil {return}
-    w.breaking.tick=w.tick
-    event={breakable=h,tick=u32(w.breaking.tick),piece=-1,point=point,vector=normal,kind=.Slice}
-    return event,break_slice(w,index,&event)
-}
-
-// The same on the body that holds one piece alone, whose frame the event can then travel in: what the
-// event does no longer depends on where the other bodies of the breakable are. strained: some
-// bond of that body was within the radius.
-breakable_damage_body :: proc(w:^World,h:Breakable_Handle,piece:i32,point:Vec3,radius:f32,impulse:Vec3) -> (event:Break_Event,broke,strained:bool) {
-    d,index:=breakable_get(w,h)
-    if d==nil || piece_body(w,index,piece)=={} {return}
-    w.breaking.tick=w.tick
-    event={breakable=h,tick=u32(w.breaking.tick),piece=piece,point=point,vector=impulse,radius=radius,kind=.Damage,strain=length(impulse),falloff=.Linear}
-    broke,strained=break_damage(w,index,&event)
-    return
-}
-breakable_slice_body :: proc(w:^World,h:Breakable_Handle,piece:i32,point,normal:Vec3) -> (event:Break_Event,cut:bool) {
-    d,index:=breakable_get(w,h)
-    if d==nil || piece_body(w,index,piece)=={} {return}
-    w.breaking.tick=w.tick
-    event={breakable=h,tick=u32(w.breaking.tick),piece=piece,point=point,vector=normal,kind=.Slice}
-    return event,break_slice(w,index,&event)
-}
-
-breakable_remove_body :: proc(w:^World,h:Breakable_Handle,piece:i32) -> (event:Break_Event,removed:bool) {
-    d,index:=breakable_get(w,h)
-    if d==nil || piece_body(w,index,piece)=={} || w.pieces[piece].group==0 {return}
-    w.breaking.tick=w.tick
-    event={breakable=h,tick=u32(w.breaking.tick),piece=piece,kind=.Remove}
-    return event,break_remove_body(w,index,piece)
 }
 
 // Steps until the pieces of the breakable on a body expire, and whether they do.
@@ -943,29 +869,31 @@ piece_body :: proc(w:^World,index,piece:i32) -> Body_Handle {
     return shape_body(w,w.pieces[piece].shape)
 }
 
-// Applies an event recorded by this world or by another one in the same state.
-break_event_apply :: proc(w:^World,event:Break_Event) -> bool {
+// Applies an event to its breakable: what is asked of it now, or what this world or another one in the
+// same state recorded. A Damage strains the bonds in its region by `strain`, and what comes off shares the
+// impulse; a Weaken strains them and breaks nothing yet; a Slice cuts by the plane through point, and
+// allocates; a Remove takes out the body of its piece, when it is one that came off. Returns the event
+// with its tick, whether the pieces changed, and whether a strain reached a bond.
+break_apply :: proc(w:^World,event:Break_Event) -> (applied:Break_Event,changed,strained:bool) {
     d,index:=breakable_get(w,event.breakable)
-    if d==nil {return false}
-    e:=event
-    if e.piece>=0 && piece_body(w,index,e.piece)=={} {return false}
+    applied=event
+    if d==nil || event.piece>=0 && piece_body(w,index,event.piece)=={} {return}
     w.breaking.tick=w.tick
-    switch e.kind {
-    case .Damage,.Impact,.Weaken:
-        broke,_:=break_damage(w,index,&e)
-        return broke
-    case .Slice: return break_slice(w,index,&e)
-    case .Remove: return break_remove_body(w,index,e.piece)
+    applied.tick=u32(w.tick)
+    switch event.kind {
+    case .Damage,.Impact,.Weaken: changed,strained=break_damage(w,index,&applied)
+    case .Slice: changed=break_slice(w,index,&applied)
+    case .Remove: changed=break_remove_body(w,index,event.piece)
     }
-    return false
+    return
 }
 
 @(private)
 break_damage :: proc(w:^World,index:i32,event:^Break_Event) -> (broke,strained:bool) {
     d:=&w.breakables[index]
     size:=event.strain
-    if !(size>0) || event.falloff>.Logarithmic || !break_finite(size,event.radius,event.point.x,event.point.y,event.point.z,event.vector.x,event.vector.y,event.vector.z,
-       event.half_extents.x,event.half_extents.y,event.half_extents.z,event.rotation.x,event.rotation.y,event.rotation.z,event.rotation.w) {return}
+    if !(size>0) || !(event.blend>=0) || !break_finite(size,event.blend,event.radius,event.rotation.x,event.rotation.y,event.rotation.z,event.rotation.w) ||
+       !is_finite3(event.point) || !is_finite3(event.vector) || !is_finite3(event.half_extents) {return}
     if event.half_extents=={} {if !(event.radius>0) {return}}
     else if !(event.half_extents.x>0 && event.half_extents.y>0 && event.half_extents.z>0) {return}
     only:=piece_body(w,index,event.piece)
@@ -975,7 +903,7 @@ break_damage :: proc(w:^World,index:i32,event:^Break_Event) -> (broke,strained:b
         if c.flags&{.Broken,.Cluster}!={} || c.cluster>=0 {continue}
         body:=shape_body(w,w.pieces[c.a].shape)
         if body=={} || event.piece>=0 && body!=only {continue}
-        weight:=break_region_weight(event,xf_point(body_transform(w,body),c.center))
+        weight:=break_region_weight(&event.region,xf_point(body_transform(w,body),c.center))
         if weight<=0 {continue}
         c.strain=min(max(f32),c.strain+size*weight)
         strained=true
@@ -1072,7 +1000,7 @@ breakable_regroup :: proc(w:^World,index:i32,event:^Break_Event) {
             body_set_velocity(w,body,body_linear_velocity(w,parent)+cross(angular,center-body_center(w,parent)),angular)
         }
         if event.kind==.Damage || (event.kind==.Impact && parent_type==.Static) {
-            s.volume[slot]*=break_region_weight(event,center)
+            s.volume[slot]*=break_region_weight(&event.region,center)
             weight+=s.volume[slot]
         } else {
             s.volume[slot]=0
@@ -1239,13 +1167,8 @@ break_slice :: proc(w:^World,index:i32,event:^Break_Event) -> bool {
 @(private)
 break_push :: proc(w:^World,index:i32,event:Break_Event) {
     count:=w.events.counts[8]
-    if count>=len(w.events.breaks) {
-        w.breaking.lost[index]+=1
-        w.stats.break_events_dropped+=1
-        return
-    }
-    w.events.breaks[count]=event
-    w.events.counts[8]=count+1
+    event_push(w,w.events.breaks,8,event)
+    if w.events.counts[8]==count {w.breaking.lost[index]+=1}
 }
 
 // The end of a step: its hits on a piece harder than the threshold of its breakable damage it around the
@@ -1271,7 +1194,7 @@ breakables_update :: proc(w:^World) {
             // The normal goes from shape A to shape B: the impulse on each one points into it.
             s.hits[count]={
                 breakable=breakable_handle(w,piece.breakable),tick=u32(w.breaking.tick),piece=i32(tag-1),point=hit.point,
-                vector=hit.normal*(side==0?-hit.impulse:hit.impulse),radius=d.damage_radius,kind=.Impact,strain=hit.impulse,falloff=.Linear,
+                vector=hit.normal*(side==0?-hit.impulse:hit.impulse),radius=d.damage_radius,blend=d.damage_radius,kind=.Impact,strain=hit.impulse,
             }
             count+=1
         }

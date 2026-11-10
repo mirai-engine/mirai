@@ -1,11 +1,20 @@
 ---
 name: mirai-physics
 description: Modify, use and verify Mirai physics - the `physics` plugin (the
+<<<<<<< HEAD
   `plugins/physics/runtime/sim` solver with bodies, joints, queries, character, breakable bodies and
   snapshots, the `plugins/physics/runtime` integration with character locomotion, and its editor
   part) and the `destruct` plugin, which makes a `Destructible` a breakable body. Use when changing
   the solver, breaking things, writing gameplay with bodies and characters (walk, jump, fly, swim,
   `Character`, `Walk`, `Swim`), working with buoyancy and drag of `Fluid_Volume`s (the drawn water
+=======
+  `plugins/physics/runtime/sim` solver with bodies, joints, queries, character and snapshots, the
+  `plugins/physics/runtime` integration with character locomotion, and its editor part) and the
+  `destruct` plugin with its fracture model (`plugins/destruct/runtime/fracture`). Use when changing
+  the solver or the model, writing gameplay with bodies and characters (walk, jump, fly, swim,
+  `Character`, `Walk`, `Swim`), working with buoyancy and drag of `Fluid`s, with `Force_Field`s
+  and area forces (the drawn water
+>>>>>>> main
   is in `mirai-world`) or changing how the simulation is reflected in entities.
 ---
 
@@ -28,7 +37,7 @@ networking ([networking](../mirai-networking/SKILL.md)).
 - `std/spatial` → [physics.md#stdspatial](references/physics.md#stdspatial)
 - Water: fluid volumes, buoyancy, drag and the surface query →
   [physics.md#fluids](references/physics.md#fluids); the character in a fluid →
-  [character.md#in-a-fluid](references/character.md#in-a-fluid); `Fluid_Volume`, `fluid_at`,
+  [character.md#in-a-fluid](references/character.md#in-a-fluid); `Fluid`, `fluid_at`,
   `fluids_in` → [engine.md](references/engine.md#components)
 - Physical character (capsule, support, `Character_Move`) →
   [data and lifecycle](references/character.md#data-and-lifecycle),

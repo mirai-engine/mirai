@@ -87,9 +87,11 @@ inspector use them.
   game keeps the name of each action it holds
   ([named ids](../../mirai-core/references/core.md#named-ids)).
 - **Type and bindings.** Whoever declares an action (the engine, a plugin or the game) gives its
-  kind and default bindings in code, next to it: a `host` storage of its package with a field
-  `[E]inp.Action_Default`, by member, made by the storage's default (`walk_actions_default` of
-  locomotion, `game_actions_default` of the templates); the compiler asks for every member. The
+  kind and default bindings in code, next to it: `<enum>_defaults() -> [E]inp.Action_Default` (or
+  a constant `<ENUM>_DEFAULTS`) of its package, found by name as `NAME_DEFAULT` is
+  (`walk_action_defaults` of locomotion, `action_defaults` of the templates); the generator hands
+  it to the map through `core.Actions_Info.defaults`, refuses a struct that carries
+  `[E]Action_Default`, and the compiler asks for every member. The
   project's `input.mirai` only holds what Project Settings > Input and `input.set` changed of
   those, and is not written by hand; the player's options keep another one with what the player
   rebinds. A renamed or removed action has no backward compatibility: in the player's file it is
@@ -358,9 +360,9 @@ game with its own mode passes its setup. The editor offers them as recipes in Cr
 
 ### Environment that changes on passing
 
-`Environment_Trigger{sky, sun, extents, seconds}` (`engine/camera`, `environment_triggers`,
-`frame`): when the focused player's body enters the entity's box (`extents` by its scale) by more
-than `TRIGGER_MARGIN`, it requests turning on the `Sky` and the `Sun` it names, the sky in
+`Environment_Trigger{sky, sun, seconds}` (`engine/camera`, `environment_triggers`, `frame`): when
+the focused player's body enters the [`Volume`](libraries.md#volume) of its entity by more than
+`TRIGGER_MARGIN`, it requests turning on the `Sky` and the `Sun` it names, the sky in
 `seconds`; to leave it has to move away by as much, so the edge does not alternate. It goes by the
 body and not by the camera, and belongs to each end of a session. It is placed in a narrow passage,
 where the geometry covers the change.

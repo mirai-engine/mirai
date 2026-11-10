@@ -542,7 +542,6 @@ events_apply :: proc(c:^Ctx,waiting,requests:[]Destruct_Request,retry:^core.Queu
         bodies:=0
         for piece in cache.infos[:count] {
             if piece.body=={} || .Debris in piece.flags && request.kind!=.Remove {continue}
-            if piece.body==request.ignore_body {continue}
             if body!={} && piece.body!=body {continue}
             slot:=base.handle_index(base.Handle(piece.body))
             if cache.marks[slot]==cache.mark {continue}
@@ -550,19 +549,12 @@ events_apply :: proc(c:^Ctx,waiting,requests:[]Destruct_Request,retry:^core.Queu
             cache.firsts[bodies]=piece.id
             bodies+=1
         }
+        asked:=request.event
+        asked.breakable=st.handle
         for piece in cache.firsts[:bodies] {
-            event:physics.Break_Event
-            if request.kind==.Remove {
-                removed:bool
-                if event,removed=physics.breakable_remove_body(c.state,st.handle,piece);!removed {continue}
-            } else if request.kind==.Slice {
-                cut:bool
-                if event,cut=physics.breakable_slice_body(c.state,st.handle,piece,request.region.point,request.vector);!cut {continue}
-            } else {
-                strained:bool
-                if event,_,strained=physics.breakable_strain_region(c.state,st.handle,piece,request.region,request.strain,request.vector,request.kind==.Weaken);!strained {continue}
-            }
-            if !cosmetic {event_applied(c,target,entry,event,true)}
+            asked.piece=piece
+            event,changed,strained:=physics.break_apply(c.state,asked)
+            if (changed || strained) && !cosmetic {event_applied(c,target,entry,event,true)}
         }
     }}
 }

@@ -28,18 +28,6 @@ hostile_vec3 :: proc "contextless" (h:^base.Hostile,wild:bool) -> math.Vec3 {
 }
 
 @(private="file")
-hostile_cell :: proc "contextless" (h:^base.Hostile,size:int) -> Cell {
-    switch base.hostile_int(h,10) {
-    case 0: return {-1,-1}
-    case 1: return {max(i32),max(i32)}
-    case 2: return {min(i32),min(i32)}
-    case 3: return {i32(size),i32(size)}
-    case 4: return {0,i32(size)}
-    }
-    return {i32(base.hostile_int(h,max(size,1))),i32(base.hostile_int(h,max(size,1)))}
-}
-
-@(private="file")
 hostile_count :: proc "contextless" (h:^base.Hostile) -> int {
     switch base.hostile_int(h,10) {
     case 0: return -1
@@ -61,128 +49,14 @@ hostile_extent :: proc "contextless" (h:^base.Hostile) -> int {
     return 1+base.hostile_int(h,40)
 }
 
-@(private="file")
-hostile_grid :: proc(h:^base.Hostile,g:^Grid) -> bool {
-    w,height:=1+base.hostile_int(h,12),1+base.hostile_int(h,12)
-    if !grid_init(g,w,height,u8(base.hostile_int(h,3)==0?base.hostile_int(h,256):1)) {return false}
-    for _ in 0..<base.hostile_int(h,10) {
-        low:=hostile_cell(h,w)
-        grid_fill(g,low,low+Cell{i32(base.hostile_int(h,5)),i32(base.hostile_int(h,5))},u8(base.hostile_int(h,3)==0?base.hostile_int(h,256):0))
-        _=grid_set(g,hostile_cell(h,w),u8(base.hostile_int(h,256)))
-    }
-    return true
-}
-
-@(test)
-hostile_cells_through_the_grid_search :: proc(t:^testing.T) {
-    h:=base.Hostile{1}
-    path:[dynamic]Cell
-    defer delete(path)
-    for _ in 0..<HOSTILE_ROUNDS {
-        g:Grid
-        if !hostile_grid(&h,&g) {continue}
-        s:Search
-        nodes:=len(g.cost)+base.hostile_int(&h,3)-1
-        if !search_init(&s,{nodes=nodes,open=base.hostile_int(&h,3)==0?base.hostile_int(&h,6):0,max_edges=base.hostile_int(&h,3)==0?base.hostile_int(&h,10)-2:0}) {
-            grid_destroy(&g)
-            continue
-        }
-        for _ in 0..<8 {
-            resize(&path,base.hostile_int(&h,4)==0?base.hostile_int(&h,5):len(g.cost))
-            start,goal:=hostile_cell(&h,g.width),hostile_cell(&h,g.height)
-            if base.hostile_int(&h,6)==0 {goal=start}
-            hood:=Neighborhood(base.hostile_int(&h,2))
-            count,status:=grid_find_path(&s,&g,start,goal,hood,path[:])
-            if status==.Found {
-                testing.expect(t,count>=1&&count<=len(path),"path does not fit")
-                if count>=1&&count<=len(path) {
-                    testing.expect(t,path[0]==start&&path[count-1]==goal,"path does not join the ends")
-                }
-            }
-            steps:[8]Cell
-            lengths:[8]f32
-            _=grid_steps(&g,hostile_cell(&h,g.width),hood,&steps,&lengths)
-            _=grid_cost(&g,hostile_cell(&h,g.width))
-            _=grid_passable(&g,hostile_cell(&h,g.width))
-            _=grid_in_bounds(&g,hostile_cell(&h,g.width))
-            _=grid_index(&g,hostile_cell(&h,g.width))
-            _=grid_cell(&g,base.hostile_int(&h,len(g.cost)))
-            _=search_cost(&s)
-            _=search_nodes(&s)
-            out:[8]u64
-            _,_=search_path(&s,out[:base.hostile_int(&h,9)])
-        }
-        search_destroy(&s)
-        grid_destroy(&g)
-    }
-}
-
-@(test)
-hostile_calls_through_empty_grids :: proc(t:^testing.T) {
-    h:=base.Hostile{2}
-    for _ in 0..<HOSTILE_ROUNDS/8 {
-        g:Grid
-        s:Search
-        f:Flow_Field
-        out:[4]Cell
-        steps:[8]Cell
-        lengths:[8]f32
-        _,found:=grid_find_path(&s,&g,hostile_cell(&h,3),hostile_cell(&h,3),.Eight,out[:])
-        grid_fill(&g,hostile_cell(&h,3),hostile_cell(&h,3),1)
-        empty:=found!=.Found && grid_cost(&g,hostile_cell(&h,3))==0 && !grid_passable(&g,hostile_cell(&h,3)) && !grid_set(&g,hostile_cell(&h,3),1)
-        empty&&=grid_steps(&g,hostile_cell(&h,3),.Eight,&steps,&lengths)==0 && grid_cell(&g,base.hostile_int(&h,9)-4)=={}
-        testing.expect(t,empty,"A zeroed grid has cells")
-        empty=flow_field_build(&f,&g,out[:],.Eight)!=.Found && flow_field_direction(&f,hostile_cell(&h,3))=={} && flow_field_sample(&f,hostile_vec2(&h,true))=={}
-        _=flow_field_cost(&f,hostile_cell(&h,3))
-        testing.expect(t,empty,"A zeroed flow field points somewhere")
-        ran:=search_run(&s,0,0,&g,proc(g:^Grid,n:u64,e:^Edge_List){},proc(g:^Grid,n,goal:u64) -> f32 {return 0})
-        count,status:=search_path(&s,nil)
-        _,_,popped:=open_pop(&s.open)
-        empty=ran!=.Found && count==0 && status!=.Found && !open_contains(&s.open,0) && !open_push(&s.open,0,1) && !popped
-        testing.expect(t,empty,"A zeroed search finds a path")
-        open_clear(&s.open)
-        grid_destroy(&g);search_destroy(&s);flow_field_destroy(&f)
-    }
-}
-
-@(test)
-hostile_sizes_through_the_grid_init :: proc(t:^testing.T) {
-    h:=base.Hostile{3}
-    for _ in 0..<HOSTILE_ROUNDS {
-        g:Grid
-        w,height:=hostile_extent(&h),hostile_extent(&h)
-        made:=grid_init(&g,w,height)
-        if !testing.expect(t,made==(w>0 && height>0) && len(g.cost)==(w*height if made else 0),"A grid has a cell for every place of its two positive sides, or none") {return}
-        if made {
-            at:=Cell{i32(base.hostile_int(&h,100)),i32(base.hostile_int(&h,100))}
-            inside:=int(at.x)<w && int(at.y)<height
-            testing.expect(t,grid_set(&g,at,3)==inside && grid_cost(&g,at)==(3 if inside else 0),"Only a cell of the grid takes a cost")
-            grid_fill(&g,{0,0},{1<<20,1<<20},2)
-            testing.expect(t,grid_cost(&g,{0,0})==2 && grid_cost(&g,{i32(w-1),i32(height-1)})==2 && grid_cost(&g,{i32(w),0})==0,"A fill past the grid sets the cells of the grid")
-        }
-        grid_destroy(&g)
-    }
-}
-
 // Whether an init took a size, in the place this family gives it, that overflows what the structure counts with.
 @(private="file")
 Hostile_Overflow :: struct {name:string,sizes:[]int,took:proc(size:int) -> bool}
 
 @(test)
 hostile_sizes_that_overflow_are_refused :: proc(t:^testing.T) {
-    cells:=[]int{1<<32,(1<<32)+1,1<<44,1<<62,max(int)}
     counts:=[]int{1<<61,1<<62,max(int)}
     families:=[?]Hostile_Overflow{
-        {"grid",cells,proc(size:int) -> bool {
-            g:Grid
-            defer grid_destroy(&g)
-            return grid_init(&g,size,size) || grid_init(&g,size,3) || grid_init(&g,2,size)
-        }},
-        {"flow field",cells,proc(size:int) -> bool {
-            f:Flow_Field
-            defer flow_field_destroy(&f)
-            return flow_field_init(&f,size,size) || flow_field_init(&f,size,3) || flow_field_init(&f,2,size)
-        }},
         {"search nodes",counts,proc(size:int) -> bool {s:Search;defer search_destroy(&s);return search_init(&s,{nodes=size})}},
         {"search edges",counts,proc(size:int) -> bool {s:Search;defer search_destroy(&s);return search_init(&s,{nodes=4,max_edges=size})}},
         {"search open set",counts,proc(size:int) -> bool {s:Search;defer search_destroy(&s);return search_init(&s,{nodes=4,open=size})}},
@@ -191,30 +65,11 @@ hostile_sizes_that_overflow_are_refused :: proc(t:^testing.T) {
             defer open_destroy(&o)
             return open_init(&o,size,4) || open_init(&o,4,size)
         }},
-        {"utility",{1<<59,1<<61,1<<62,max(int)},proc(size:int) -> bool {
-            u:Utility
-            defer utility_destroy(&u)
-            return utility_init(&u,{max_actions=size}) || utility_init(&u,{max_actions=1,max_considerations=size})
-        }},
     }
     for family in families {
         for size in family.sizes {
             testing.expectf(t,!family.took(size),"%s: took the size %d",family.name,size)
         }
-    }
-}
-
-@(test)
-hostile_sizes_through_the_flow_field_init :: proc(t:^testing.T) {
-    h:=base.Hostile{4}
-    for _ in 0..<HOSTILE_ROUNDS {
-        f:Flow_Field
-        w,height:=hostile_extent(&h),hostile_extent(&h)
-        made:=flow_field_init(&f,w,height)
-        testing.expect(t,made==(w>0 && height>0),"A flow field has two positive sides")
-        _=flow_field_cost(&f,{0,0})
-        testing.expect(t,flow_field_direction(&f,{0,0})=={} && flow_field_sample(&f,hostile_vec2(&h,true))=={},"A flow field that was not built points somewhere")
-        flow_field_destroy(&f)
     }
 }
 
@@ -346,44 +201,6 @@ hostile_keys_through_the_open_set :: proc(t:^testing.T) {
         }
         testing.expect_value(t,count,0)
         open_destroy(&o)
-    }
-}
-
-@(test)
-hostile_goals_through_the_flow_field :: proc(t:^testing.T) {
-    h:=base.Hostile{8}
-    goals:[dynamic]Cell
-    defer delete(goals)
-    for _ in 0..<HOSTILE_ROUNDS {
-        if testing.failed(t) {return}
-        g:Grid
-        if !hostile_grid(&h,&g) {continue}
-        f:Flow_Field
-        w,height:=g.width,g.height
-        if base.hostile_int(&h,6)==0 {w+=base.hostile_int(&h,3)-1}
-        if !flow_field_init(&f,max(w,1),height) {grid_destroy(&g);continue}
-        clear(&goals)
-        reachable:=false
-        for _ in 0..<base.hostile_int(&h,5) {
-            append(&goals,hostile_cell(&h,g.width))
-            reachable||=grid_passable(&g,goals[len(goals)-1])
-        }
-        status:=flow_field_build(&f,&g,goals[:],Neighborhood(base.hostile_int(&h,2)))
-        testing.expect(t,(status==.Found)==(reachable && max(w,1)==g.width),"A field is built exactly when its size is that of the grid and a goal is a cell to walk")
-        for goal in goals {
-            if status==.Found && grid_passable(&g,goal) {testing.expect(t,flow_field_cost(&f,goal)==0 && flow_field_direction(&f,goal)=={},"A goal is not where its field ends")}
-        }
-        for _ in 0..<10 {
-            c:=hostile_cell(&h,g.width)
-            _=flow_field_cost(&f,c)
-            direction:=flow_field_direction(&f,c)
-            sample:=flow_field_sample(&f,hostile_vec2(&h,base.hostile_int(&h,2)==0))
-            testing.expect(t,linalg.length(direction)<=1.5 && linalg.length(sample)<=1.001,"A direction of the field is longer than a step")
-            testing.expect(t,status==.Found || (direction=={} && sample=={}),"A field that was not built points somewhere")
-            testing.expect(t,grid_in_bounds(&g,c) || direction=={},"A cell outside the field has a direction")
-        }
-        flow_field_destroy(&f)
-        grid_destroy(&g)
     }
 }
 
@@ -673,107 +490,6 @@ hostile_corridors_forged_and_followed :: proc(t:^testing.T) {
     }
 }
 
-@(private="file")
-hostile_steer_vec2 :: proc(t:^testing.T,h:^base.Hostile) {
-    V :: math.Vec2
-    // A force of numbers is no longer than the largest it was allowed.
-    limited :: proc(force:V,max_force:f32,inputs:..V) -> bool {
-        if !(max_force>=0 && max_force<=1e30) {return true}
-        for input in inputs {if input-input!={} {return true}}
-        return force-force=={} && linalg.length(force)<=max_force*1.001+1e-6
-    }
-    wild:=base.hostile_int(h,2)==0
-    p,v,o:=hostile_vec2(h,wild),hostile_vec2(h,wild),hostile_vec2(h,wild)
-    other:=hostile_vec2(h,wild)
-    ms,mf:=base.hostile_f32(h),base.hostile_f32(h)
-    numbers:=ms-ms==0
-    testing.expect(t,!numbers || limited(seek(p,v,o,ms,mf),mf,p,v,o),"seek is stronger than its largest force")
-    testing.expect(t,!numbers || limited(flee(p,v,o,ms,mf),mf,p,v,o),"flee is stronger than its largest force")
-    slow:=base.hostile_f32(h)
-    testing.expect(t,!numbers || slow-slow!=0 || limited(arrive(p,v,o,ms,mf,slow),mf,p,v,o),"arrive is stronger than its largest force")
-    testing.expect(t,!numbers || slow-slow!=0 || limited(pursue(p,v,o,other,ms,mf,slow),mf,p,v,o,other),"pursue is stronger than its largest force")
-    testing.expect(t,!numbers || slow-slow!=0 || limited(evade(p,v,o,other,ms,mf,slow),mf,p,v,o,other),"evade is stronger than its largest force")
-    displacement:=hostile_vec2(h,wild)
-    rng:=math.rng_make(base.hostile_next(h))
-    a,b,c:=base.hostile_f32(h),base.hostile_f32(h),base.hostile_f32(h)
-    testing.expect(t,a-a!=0 || b-b!=0 || c-c!=0 || limited(wander(&displacement,v,a,b,c,mf,&rng),mf,v,displacement),"wander is stronger than its largest force")
-    kept:=displacement
-    testing.expect(t,wander(&displacement,v,a,b,c,mf,nil)=={} && (displacement==kept || kept-kept!={}),"wander without a generator pushes, or moves its point")
-    boids:[6]Boid(V)
-    for &boid in boids {boid={hostile_vec2(h,wild),hostile_vec2(h,wild)}}
-    n:=boids[:base.hostile_int(h,7)]
-    radius:=base.hostile_f32(h)
-    flock:=radius-radius==0
-    for boid in n {flock&&=boid.position-boid.position=={} && boid.velocity-boid.velocity=={}}
-    testing.expect(t,!flock || limited(separation(p,n,radius,mf),mf,p),"separation is stronger than its largest force")
-    testing.expect(t,!flock || !numbers || limited(alignment(p,v,n,radius,ms,mf),mf,p,v),"alignment is stronger than its largest force")
-    testing.expect(t,!flock || !numbers || limited(cohesion(p,v,n,radius,ms,mf),mf,p,v),"cohesion is stronger than its largest force")
-    obstacles:[4]Obstacle(V)
-    for &ob in obstacles {ob={hostile_vec2(h,wild),base.hostile_f32(h)}}
-    blocked:=obstacles[:base.hostile_int(h,5)]
-    ahead,size:=base.hostile_f32(h),base.hostile_f32(h)
-    clear_numbers:=ahead-ahead==0 && size-size==0
-    for ob in blocked {clear_numbers&&=ob.center-ob.center=={} && ob.radius-ob.radius==0}
-    testing.expect(t,!clear_numbers || limited(avoid_obstacles(p,v,blocked,ahead,size,mf),mf,p,v),"avoid_obstacles is stronger than its largest force")
-    _,_=steering_integrate(p,v,o,ms,base.hostile_f32(h))
-    testing.expect(t,!numbers || ms<0 || p-p!={} || linalg.length(limit_length(p,ms))<=ms*1.001+1e-6,"limit_length is longer than its limit")
-}
-
-@(private="file")
-hostile_steer_vec3 :: proc(t:^testing.T,h:^base.Hostile) {
-    V :: math.Vec3
-    // A force of numbers is no longer than the largest it was allowed.
-    limited :: proc(force:V,max_force:f32,inputs:..V) -> bool {
-        if !(max_force>=0 && max_force<=1e30) {return true}
-        for input in inputs {if input-input!={} {return true}}
-        return force-force=={} && linalg.length(force)<=max_force*1.001+1e-6
-    }
-    wild:=base.hostile_int(h,2)==0
-    p,v,o:=hostile_vec3(h,wild),hostile_vec3(h,wild),hostile_vec3(h,wild)
-    other:=hostile_vec3(h,wild)
-    ms,mf:=base.hostile_f32(h),base.hostile_f32(h)
-    numbers:=ms-ms==0
-    testing.expect(t,!numbers || limited(seek(p,v,o,ms,mf),mf,p,v,o),"seek is stronger than its largest force")
-    testing.expect(t,!numbers || limited(flee(p,v,o,ms,mf),mf,p,v,o),"flee is stronger than its largest force")
-    slow:=base.hostile_f32(h)
-    testing.expect(t,!numbers || slow-slow!=0 || limited(arrive(p,v,o,ms,mf,slow),mf,p,v,o),"arrive is stronger than its largest force")
-    testing.expect(t,!numbers || slow-slow!=0 || limited(pursue(p,v,o,other,ms,mf,slow),mf,p,v,o,other),"pursue is stronger than its largest force")
-    testing.expect(t,!numbers || slow-slow!=0 || limited(evade(p,v,o,other,ms,mf,slow),mf,p,v,o,other),"evade is stronger than its largest force")
-    displacement:=hostile_vec3(h,wild)
-    rng:=math.rng_make(base.hostile_next(h))
-    a,b,c:=base.hostile_f32(h),base.hostile_f32(h),base.hostile_f32(h)
-    testing.expect(t,a-a!=0 || b-b!=0 || c-c!=0 || limited(wander(&displacement,v,a,b,c,mf,&rng),mf,v,displacement),"wander is stronger than its largest force")
-    kept:=displacement
-    testing.expect(t,wander(&displacement,v,a,b,c,mf,nil)=={} && (displacement==kept || kept-kept!={}),"wander without a generator pushes, or moves its point")
-    boids:[6]Boid(V)
-    for &boid in boids {boid={hostile_vec3(h,wild),hostile_vec3(h,wild)}}
-    n:=boids[:base.hostile_int(h,7)]
-    radius:=base.hostile_f32(h)
-    flock:=radius-radius==0
-    for boid in n {flock&&=boid.position-boid.position=={} && boid.velocity-boid.velocity=={}}
-    testing.expect(t,!flock || limited(separation(p,n,radius,mf),mf,p),"separation is stronger than its largest force")
-    testing.expect(t,!flock || !numbers || limited(alignment(p,v,n,radius,ms,mf),mf,p,v),"alignment is stronger than its largest force")
-    testing.expect(t,!flock || !numbers || limited(cohesion(p,v,n,radius,ms,mf),mf,p,v),"cohesion is stronger than its largest force")
-    obstacles:[4]Obstacle(V)
-    for &ob in obstacles {ob={hostile_vec3(h,wild),base.hostile_f32(h)}}
-    blocked:=obstacles[:base.hostile_int(h,5)]
-    ahead,size:=base.hostile_f32(h),base.hostile_f32(h)
-    clear_numbers:=ahead-ahead==0 && size-size==0
-    for ob in blocked {clear_numbers&&=ob.center-ob.center=={} && ob.radius-ob.radius==0}
-    testing.expect(t,!clear_numbers || limited(avoid_obstacles(p,v,blocked,ahead,size,mf),mf,p,v),"avoid_obstacles is stronger than its largest force")
-    _,_=steering_integrate(p,v,o,ms,base.hostile_f32(h))
-    testing.expect(t,!numbers || ms<0 || p-p!={} || linalg.length(limit_length(p,ms))<=ms*1.001+1e-6,"limit_length is longer than its limit")
-}
-
-@(test)
-hostile_values_through_the_steering :: proc(t:^testing.T) {
-    h:=base.Hostile{12}
-    for _ in 0..<HOSTILE_ROUNDS {
-        hostile_steer_vec2(t,&h)
-        hostile_steer_vec3(t,&h)
-    }
-}
-
 @(test)
 hostile_neighbors_through_the_avoidance :: proc(t:^testing.T) {
     h:=base.Hostile{13}
@@ -812,52 +528,24 @@ hostile_response :: proc(h:^base.Hostile) -> Response {
 }
 
 @(test)
-hostile_considerations_through_the_utility :: proc(t:^testing.T) {
+hostile_considerations_through_their_score :: proc(t:^testing.T) {
     h:=base.Hostile{22}
     considerations:[dynamic]Consideration
-    inputs,scores:[dynamic]f32
-    defer {delete(considerations);delete(inputs);delete(scores)}
-    for _ in 0..<HOSTILE_ROUNDS {
+    inputs:[dynamic]f32
+    defer {delete(considerations);delete(inputs)}
+    for _ in 0..<HOSTILE_ROUNDS*8 {
         if testing.failed(t) {return}
-        u:Utility
-        max_actions:=base.hostile_int(&h,3)==0?hostile_count(&h):1+base.hostile_int(&h,8)
-        if !utility_init(&u,{max_actions=max_actions,max_considerations=base.hostile_int(&h,3)==0?hostile_count(&h):base.hostile_int(&h,20)}) {
-            utility_destroy(&u)
-            continue
+        clear(&considerations)
+        for _ in 0..<base.hostile_int(&h,5) {append(&considerations,Consideration{input=u16(base.hostile_int(&h,base.hostile_int(&h,8)==0?70000:6)),min=base.hostile_f32(&h),max=base.hostile_f32(&h),response=hostile_response(&h)})}
+        resize(&inputs,base.hostile_int(&h,6))
+        for &x in inputs {x=base.hostile_f32(&h)}
+        weight:=base.hostile_f32(&h)
+        score:=score_considerations(considerations[:],weight,inputs[:])
+        testing.expect(t,len(considerations)>0 || score==weight || weight!=weight,"A choice without considerations is not worth its weight")
+        curve,x:=hostile_response(&h),base.hostile_f32(&h)
+        if y:=response_evaluate(curve,x);x==x && numbers_all(curve.slope,curve.shift_x,curve.shift_y) {
+            testing.expectf(t,y>=0 && y<=1,"The response %v at %v left 0..1: %v",curve,x,y)
         }
-        rng:=math.rng_make(base.hostile_next(&h))
-        added:=0
-        for _ in 0..<20 {
-            clear(&considerations)
-            for _ in 0..<base.hostile_int(&h,5) {append(&considerations,Consideration{input=u16(base.hostile_int(&h,base.hostile_int(&h,8)==0?70000:6)),min=base.hostile_f32(&h),max=base.hostile_f32(&h),response=hostile_response(&h)})}
-            index:=utility_add_action(&u,u32(added),base.hostile_f32(&h),considerations[:])
-            testing.expect(t,index==added || (index==-1 && (added>=max_actions || len(considerations)>0)),"An action gets the next index, or none when there is no room")
-            if index==added {added+=1}
-            resize(&inputs,base.hostile_int(&h,6))
-            for &x in inputs {x=base.hostile_f32(&h)}
-            resize(&scores,added+base.hostile_int(&h,3))
-            outside:=added+base.hostile_int(&h,3) if base.hostile_int(&h,2)==0 else -1-base.hostile_int(&h,3)
-            testing.expect(t,utility_score(&u,outside,inputs[:])==0,"An action that does not exist has a score")
-            written:=utility_scores(&u,inputs[:],scores[:base.hostile_int(&h,len(scores)+1)])
-            testing.expect(t,written>=0 && written<=added,"More scores were written than there are actions")
-            testing.expect_value(t,utility_scores(&u,inputs[:],scores[:]),added)
-            best,ordered:=f32(0),true
-            for score in scores[:added] {
-                ordered&&=score==score
-                if score>best {best=score}
-            }
-            id,score,selected:=utility_select(&u,inputs[:])
-            testing.expect(t,!ordered || (selected==(best>0) && (!selected || (score==best && int(id)<added))),"The action selected is not the one with the highest score above 0")
-            picked,any:=utility_pick(&u,inputs[:],scores[:],&rng)
-            testing.expect(t,!any || (int(picked)<added && (!ordered || best>0)),"An action was picked that has no score above 0")
-            _,any=utility_pick(&u,inputs[:],scores[:],nil)
-            testing.expect(t,!any,"An action was picked without a generator")
-            curve,x:=hostile_response(&h),base.hostile_f32(&h)
-            if y:=response_evaluate(curve,x);x==x && numbers_all(curve.slope,curve.shift_x,curve.shift_y) {
-                testing.expectf(t,y>=0 && y<=1,"The response %v at %v left 0..1: %v",curve,x,y)
-            }
-        }
-        utility_destroy(&u)
     }
 }
 
@@ -865,24 +553,6 @@ hostile_considerations_through_the_utility :: proc(t:^testing.T) {
 numbers_all :: proc(values:..f32) -> bool {
     for value in values {if value!=value {return false}}
     return true
-}
-
-@(test)
-hostile_calls_through_an_empty_utility :: proc(t:^testing.T) {
-    h:=base.Hostile{23}
-    for _ in 0..<HOSTILE_ROUNDS/8 {
-        u:Utility
-        rng:=math.rng_make(1)
-        scores:[4]f32
-        inputs:[3]f32
-        _,_,selected:=utility_select(&u,inputs[:])
-        _,picked:=utility_pick(&u,inputs[:],scores[:],&rng)
-        empty:=utility_add_action(&u,1,1,nil)==-1 && utility_add_action(&u,1,1,[]Consideration{{}})==-1 && utility_score(&u,base.hostile_int(&h,5)-2,inputs[:])==0
-        testing.expect(t,empty && utility_scores(&u,inputs[:],scores[:])==0 && !selected && !picked,"A zeroed utility has actions")
-        utility_destroy(&u)
-        testing.expect(t,!utility_init(&u,{max_actions=0}) && !utility_init(&u,{max_actions=1,max_considerations=-1}),"A utility without room for an action, or with less than no considerations, was made")
-        utility_destroy(&u)
-    }
 }
 
 @(test)
@@ -895,13 +565,6 @@ hostile_unallocatable_sizes_through_the_inits :: proc(t:^testing.T) {
     o:Open_Set
     testing.expect(t,!open_init(&o,size,4))
     testing.expect(t,!open_init(&o,4,size))
-    g:Grid
-    testing.expect(t,!grid_init(&g,size,1))
-    f:Flow_Field
-    testing.expect(t,!flow_field_init(&f,size,1))
-    u:Utility
-    testing.expect(t,!utility_init(&u,{max_actions=size}))
-    testing.expect(t,!utility_init(&u,{max_actions=1,max_considerations=size}))
     m:Nav_Mesh
     testing.expect(t,!nav_mesh_init(&m,{tile_width=1,max_tiles=size}))
     q:Nav_Query

@@ -47,7 +47,7 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
   stamps, displacement of the ground meshes as seen by rays):
   [the field](references/imprint.md#the-field), [stamps](references/imprint.md#stamps),
   [what is drawn](references/imprint.md#what-is-drawn) and [scene](references/imprint.md#scene)
-- `water` (the `Fluid_Volume`s drawn as water: glass surface, `fog` medium, caustics, foam,
+- `water` (the `Fluid`s drawn as water: glass surface, `fog` medium, caustics, foam,
   splashes and wakes from physics): [appearance](references/water.md#appearance),
   [what physics shows](references/water.md#what-physics-shows),
   [sound](references/water.md#sound), [scene](references/water.md#scene) and
@@ -99,7 +99,7 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
   [influence maps](references/behavior.md#influence-maps),
   [perception](references/behavior.md#perception), [places](references/behavior.md#places) and
   [API](references/behavior.md#api)
-- The library under navigation and minds (A*, tiled navmesh, steering, the `Mind` loop and its
+- The library under navigation and minds (A*, tiled navmesh, avoidance, the `Mind` loop and its
   actions): [minds](../mirai-std/references/ai.md#decisions-minds-mindodin) and
   [navigation](../mirai-std/references/ai.md#navigation) of `std/ai`
 - `shapes` (editable outlines and solids of brush entities saved as source, stamps and vertex

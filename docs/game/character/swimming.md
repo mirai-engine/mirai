@@ -1,8 +1,8 @@
 # Swimming and the surface of the water
 
-Water is a `phys.Fluid_Volume`: an analytic volume with a surface that physics answers for, the
-same one bodies float on and characters swim in. The `water` plugin draws it (scene authoring:
-[world](../world.md)).
+Water is a `phys.Fluid` in the `Volume` of its entity: an analytic volume with a surface that
+physics answers for, the same one bodies float on and characters swim in. The `water` plugin draws
+it (scene authoring: [world](../world.md)).
 
 ## A character that swims
 
@@ -35,7 +35,7 @@ run when it falls in: [the rules of a game](../third-person/rules-test.md#the-ru
 sample,volume,found:=phys.fluid_at(physics,at)
 under:=sample.density>0              // 0 above the surface and inside a dry box
 // sample.height: world y of the surface; also sample.normal, sample.current;
-// volume is the entity of the Fluid_Volume
+// volume is the entity of the Fluid
 ```
 
 `phys.fluid_at` includes the waves at the world's time, so a boat or a splash follows the drawn
@@ -46,11 +46,12 @@ splashes and wakes (presentation only).
 ## Floating things
 
 A dynamic body with a `Collider` floats by density against the volume's: `Collider.density`
-below `Fluid_Volume.density` (1000 fresh, 1025 sea) floats. `Rigid_Body.gravity_scale` scales
+below `Fluid.density` (1000 fresh, 1025 sea) floats. `Rigid_Body.gravity_scale` scales
 buoyancy too. A volume's `current` carries what is in it.
 
 ## Pitfalls that fail silently
 
 - No `Swim` on the prefab: the character wades and walks on the bottom.
-- A dry box (`phys.fluid_volume_dry`) removes the fluid of lower priority inside it, the air of
-  a base under the sea. Volumes that overlap wrongly are the problem `physics.fluid_overlap`.
+- A dry box (a `Fluid` of density 0 in a `Box` volume) removes the fluid of lower `priority`
+  inside it, the air of a base under the sea. Two fluids that meet at the same priority are the
+  problem `physics.fluid_overlap`.

@@ -388,7 +388,7 @@ ai_line_measure :: proc(s:^Session,task:^Ai_Task,index,steps:int,open:bool,width
     case .Prompt:
         message:=ai_message_text(t,index,shown,held_first)
         room,_:=ai_bubble_room(ctx,message,width,size)
-        return gap+ui.paragraph_height(ctx,ai_chat_paragraph_text(ctx,message,room,size),room,size)+10
+        return gap+ui.text_height(ctx,ai_chat_paragraph_text(ctx,message,room,size),ui.prose(ctx,size),room)+10
     case .Output:
         return gap+ui.markdown_height(ctx,ai_message_text(t,index,shown),width,ai_markdown_style(s,size))
     case .Report:
@@ -398,7 +398,7 @@ ai_line_measure :: proc(s:^Session,task:^Ai_Task,index,steps:int,open:bool,width
     case .Note:
         if strings.has_prefix(text,AI_REVIEWED_NOTE) {return gap+AI_STEP_ROW}
         note:=ai_note_size(th,size)
-        return gap+ui.paragraph_height(ctx,ai_chat_paragraph_text(ctx,text,width,note),width,note)
+        return gap+ui.text_height(ctx,ai_chat_paragraph_text(ctx,text,width,note),ui.prose(ctx,note),width)
     }
     return gap
 }
@@ -568,7 +568,7 @@ ai_transcript_draw :: proc(s:^Session,m:^Ai,task:^Ai_Task,height,width:f32,size:
             if ui.box(ctx,{width=ui.GROW,height=ui.GROW}) {
                 ui.spacer(ctx)
                 if ui.box(ctx,{width=ui.fixed(bubble),height=ui.GROW,direction=.Column,padding={10,5,10,5},fill=held?{}:th.field,radius=th.radius_popup}) {
-                    ui.paragraph(ctx,ai_chat_paragraph_text(ctx,message,room,size),size,held?th.text_body:th.text)
+                    ui.text(ctx,ai_chat_paragraph_text(ctx,message,room,size),ui.prose(ctx,size,held?th.text_body:th.text))
                     if held {
                         if ui.box(ctx,{width=ui.fixed(bubble),height=ui.fixed(rows[index]-gap),float={to=.Parent}}) {
                             ui.canvas(ctx,ui.id(ctx,"held",index),ui.GROW,ui.GROW,u32(User_Icon.Dashed_Box),u64(transmute(u32)th.well_stroke_hover),{.Passive})
@@ -596,7 +596,7 @@ ai_transcript_draw :: proc(s:^Session,m:^Ai,task:^Ai_Task,height,width:f32,size:
                 ui.label(ctx,text,note,th.text_faint,0)
             }
         case:
-            ui.paragraph(ctx,ai_chat_paragraph_text(ctx,text,width,note),note,task.state==.Failed?th.danger:th.text_faint)
+            ui.text(ctx,ai_chat_paragraph_text(ctx,text,width,note),ui.prose(ctx,note,task.state==.Failed?th.danger:th.text_faint))
         }
         // The changes the user reverted: one click takes them back for review.
         if index==declined && ui.button(ctx,ui.id(ctx,"declined",task.id),{label="Restore",icon=.Revert,icon_color=ai_agent_color(task),icon_size=12,style=.Field,height=AI_DECLINED_HEIGHT-6,size=th.font_small}).clicked {
@@ -699,7 +699,7 @@ ai_permission_height :: proc(ctx:^ui.Context,m:^Ai,task:^Ai_Task,width:f32) -> f
     if index<0 {return 0}
     p:=&m.permissions[index]
     th:=&ctx.theme
-    title:=ui.paragraph_height(ctx,base.text_get(p.title[:]),width-18-20,th.font_small,ui.FONT_SEMIBOLD)
+    title:=ui.text_height(ctx,base.text_get(p.title[:]),ui.prose(ctx,th.font_small,{},ui.FONT_SEMIBOLD),width-18-20)
     return 18+max(title,16)+8+f32(ai_permission_rows(ctx,p,width-18))*(AI_PERMISSION_BUTTON+5)-5
 }
 
@@ -733,7 +733,7 @@ ai_permission_build :: proc(s:^Session,task:^Ai_Task,width:f32) {
     if ui.box(ctx,{width=ui.fixed(width),height=ui.fixed(ai_permission_height(ctx,m,task,width)),direction=.Column,gap=8,padding=ui.padding_all(9),fill=ui.color_alpha(color,13),stroke=ui.color_alpha(color,102),stroke_width=1,radius=th.radius_popup}) {
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=7}) {
             ui.icon(ctx,ui.icon_user(u8(User_Icon.Shield)),color,13)
-            ui.paragraph(ctx,base.text_get(p.title[:]),th.font_small,th.text,ui.FONT_SEMIBOLD)
+            ui.text(ctx,base.text_get(p.title[:]),ui.prose(ctx,th.font_small,th.text,ui.FONT_SEMIBOLD))
         }
         used:=f32(0);open:=false
         room:=width-18
