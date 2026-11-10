@@ -32,7 +32,11 @@ Usually its prefab carries it: everything that appears from that prefab is repli
   - its driver (its `input.Move_Input`, published when it changes) if it has `Move_Input`;
   - each of its `@(component,replicated)` components, on or off.
 - Each distinct set is a protocol type that both ends compose from the list its creation carries
-  ([types](networking.md#protocol-and-descriptors)). A component added later does not travel.
+  ([types](networking.md#protocol-and-descriptors)). When a replicated component, its motion or
+  its `Move_Input` comes or goes later, the server gives the object the type of what the entity
+  has now (`server_kinds`, [re-typing](networking.md#replication)) with its whole state, and each
+  replica goes on with its entity, which gains or loses the component. What a client holds is
+  re-typed when it comes back, and of what each end simulates only the creation travels.
 - `replicated="owner"` sends it only to the owner, `replicated="others"` to everyone but the owner.
   The `local` field does not travel; `precision`, `bits`, `min` and `max` of the tag choose the
   serializer ([serial](networking.md)).
@@ -65,19 +69,19 @@ Usually its prefab carries it: everything that appears from that prefab is repli
 - `update_hz` limits the server's state frequency to whole intervals of ticks, kept like the
   [object turns](networking.md#replication): entities of the same frequency publish on different
   ticks. `simulation` says who simulates (`Server`, the owner predicts; `Lent`, lendable to a
-  client; `Each`, only the creation is replicated) and `audience` who sees it (`Near`, `Always`,
-  `Owner`, `Custom`). `radius` is added to the view radius for `Near`; changing it does not rebuild
-  cells or resend components.
-- `Custom` leaves relevance to the game: `multiplayer.relevance_set` (server) says whether a
-  connection sees the entity, and it is the only per entity-connection primitive; fog of war, teams
-  or what is private to a player are resolved with it when it changes, without a call per object on
-  every tick. What is requested before the network makes the object waits in the session until the
-  end of the tick, in order (if the entity is not replicated by then, it is `net.relevance`). A new
-  entity, one that is replicated again and a connection that arrives start with none; with another
-  audience what was requested is kept without counting.
+  client; `Each`, only the creation is replicated), `audience` who sees it (`Near`, `Always`,
+  `Owner`) and `predict` that clients predict it always. `radius` is added to the view radius for
+  `Near`; changing it does not rebuild cells or resend components.
+- **`Visibility`** says who sees what as data, like collision layers: `mask` on a replicated
+  entity, `sees` on the seat of a player (`input.Seat`). Of the connections its audience reaches,
+  an entity with a mask reaches those whose seat shares a bit with it; without `Visibility`, or
+  with `mask` 0, it asks for none, and a seat without it has none. The server reads it when the
+  table of `Visibility` or of seats changes (`server_visibility`), never per tick and object; it
+  does not travel.
 - **Network parent.** The one of a replicated entity is its closest ancestor with `Replicate` in
   the hierarchy, even if there are entities without `Replicate` between the two; an object that is
-  seen somewhere else without hanging from it (an item in someone else's inventory) is `Custom`.
+  seen somewhere else without hanging from it (an item in someone else's inventory) has a
+  `Visibility` of its own.
   - The child follows the visibility of that ancestor, above its own audience, and arrives after
     it: while the ancestor has no object, the child is not created and one that already existed is
     seen by nobody.
@@ -111,9 +115,11 @@ only about entities it owns. `reliable` delivers it once and in order.
 Ask :: struct {id:base.Entity_Id}
 ```
 
-- It is sent with `multiplayer.send(&outbox, time, value, about?, to?)` and read with
-  `multiplayer.event_read(item, T)` from `Net_Events.received`. `send` returns `false` and does not
-  enqueue while `time.resimulating`: the tick being repeated already sent it.
+- It is sent with `multiplayer.send(&outbox, value, about?, to?)` and read with
+  `multiplayer.event_read(item, T)` from `Net_Events.received`, which has at the start of each
+  tick the messages that arrived since the tick before, like
+  [`Net_Connections`](#connection-events): `fixed` functions read it. `send` returns `false` and
+  does not enqueue in a tick that runs again (`Net_Outbox.replaying`): it sent the first time.
 - `Net_Outbox` (`copy=false`) is not copied with the world: a correction does not lose what is
   waiting. A `reliable` message the host rejects because the queue is full (`Full`) waits there,
   with the ones that follow, until the next frame; the other rejections are the `net.event_send`
@@ -134,7 +140,7 @@ takes the default:
 - Tolerances: position 0.05 m, velocity 0.5 m/s and rad/s, rotation 0.07 rad, scale 0.001.
 - `max_resimulate`: ticks repeated in one frame, 0.3 s of ticks (at most the history).
   `resimulate_budget`: one second of ticks per second. `critical_ticks`: half a second.
-- `correction_time`: 0.1 s. `sync_test`: 0 (off).
+- `sync_test`: 0 (off). `input_delay`: 0 ticks. `rewind_entities`: 64.
 - `absent_seconds`: 300 s that the seat of a player who left waits for them; negative, none.
 
 ## What another library simulates
@@ -377,7 +383,8 @@ input  -1000     opens the network; datagrams are changes to the world; a client
                  server's states with what it predicted and, if they differ, goes back and
                  repeats; it keeps the world clock with that of the connection
 input  -800      client: goes back to the oldest tick a library asked for (rewind) and repeats
-fixed  -100000   who arrived and who left since the previous tick (Net_Connections)
+fixed  -100000   who arrived and who left, and the messages that arrived, since the previous
+                 tick (Net_Connections, Net_Events)
                  server: the input each connection sent for this tick
                  client: copy of the world as the tick found it; interpolated replicas go to
                  where they are shown at that tick
@@ -409,9 +416,9 @@ A paused game runs no phases: whoever pauses it calls `pump` every frame (the ed
 `game_tick`) so that connections continue. It opens the requested session (`Session_Request`) if no
 frame has opened it yet. It takes what was received as the input phase, without the correction or
 the client clock, and the host sends and receives; a pumped server tells its clients that its clock
-is paused, because its ticks do not advance, so their estimate does not run ahead; what it left in
-`Net_Events` waits for the next frame that runs, up to `PAUSED_EVENTS` messages: those that arrive
-later are discarded (`Net_Stats.events_dropped`) and are the `net.events_paused` problem. A
+is paused, because its ticks do not advance, so their estimate does not run ahead; the messages
+wait in the session for the next tick that runs, up to `PENDING_EVENTS`: those that arrive later
+are discarded (`Net_Stats.events_dropped`) and are the `net.events_pending` problem. A
 windowless editor that drives the API (`mirai session`) calls `pump` of each run between its steps,
 so a player who joins while no frame runs gets an answer.
 
@@ -440,9 +447,10 @@ so a player who joins while no frame runs gets an answer.
   `net.input_axes`.
 - Two more values travel with the input ([lag compensation](#lag-compensation)):
   - the look of the `Move_Input` of the body the local seat of the client drives, with the yaw
-    wrapped to a turn; the server applies it to that body in the `intent` stage (`remote_look`,
-    `server.odin`), after the seat and before locomotion, by the shortest turn, so the body keeps
-    its whole turns;
+    wrapped to a turn, and how many ticks before the input it is of (the input delay); the server
+    puts right what it differs by from the look it had at that tick, in the `intent` stage
+    (`remote_look`, `server.odin`), after the seat and before locomotion, by the shortest turn, so
+    the body keeps its whole turns, and a turn the server lost is corrected once;
   - how many ticks before its own the client showed the others (`Clock.display`), which becomes
     `Remote_Input.view` as a tick of the server.
 - `phys.Collider` travels whole: a change of collision, of per-contact rules or of shape on the
@@ -467,15 +475,24 @@ destructible, with the `Id` both ends compute) asks for it with `multiplayer.ado
 `^multiplayer.Net_Adoptions`: at the end of the tick that entity takes the place of the replica's,
 which is destroyed.
 
-How it lives depends on its role (`wire.Role`) and on who simulates it:
+One rule says how it lives (`replica_wanted`):
 
-- **Interpolated** (`core.Pose_Target` with `follow`): another's, shown between the server's
+- **Simulated here** (without `core.Pose_Target`): `Each` or `Held`. It is not corrected.
+- **Predicted** (`core.Pose_Target` without `follow`): what this client drives (`Predicted`); what
+  a simulation moves on the server while it shared a simulation group (`core.Motion.island`) with
+  what this client drives in the last `critical_ticks`: what it touches or is joined to; what
+  `Replicate.predict` asks always; and what this client spawned ahead of the server. The client
+  simulates it ahead of the server, which corrects it. More than `predicted_capacity` at once is
+  the `net.predicted` problem, and the rest stay interpolated.
+- **Interpolated** (`core.Pose_Target` with `follow`): everything else, shown between the server's
   states.
   - On each tick it goes to the state of the display tick of that tick (`clock_interpolation_tick`)
     minus its delay, which shows it further back if its states arrive more spaced out (a low
-    `update_hz`), and the frame draws it between the last two ticks like everything. The tick's
-    copy keeps the display tick and the delay of each replica: a correction repeats each tick with
-    its own.
+    `update_hz`), and the frame draws it between the last two ticks like everything. Its
+    components and its `Move_Input` are those of the newest state the display reached
+    (`replica_show`), not of the newest received: what is seen of it is one instant.
+  - The tick's copy keeps the display tick, and of each replica its delay and the state its
+    components were of: a correction repeats each tick with its own.
   - Without new states it continues for a while with its last velocity and then stays still.
   - A body is kinematic, reaches the pose in the tick and pushes what it touches (a large jump is
     placed); a character stays at the pose after every step; without a body,
@@ -483,10 +500,13 @@ How it lives depends on its role (`wire.Role`) and on who simulates it:
   - Following goes before a manipulation by the game (an animated ragdoll, a tool): the server
     already applied it and the client shows what resulted. The manipulation is kept and grips the
     body again when this client simulates it.
-- **Predicted** (`core.Pose_Target` without `follow`): one's own (`Predicted`) and what a simulation
-  moves on the server (`Server`). The client simulates it ahead of the server, which corrects it;
-  it carries `render.Draw_Offset` to hide corrections.
-- **Simulated here** (without `core.Pose_Target`): `Each` or `Held`. It is not corrected.
+- **A replica that goes from one timeline to the other** (`replica_switch`, at the comparison of
+  each frame) keeps its states of the server while it is predicted, to return to them.
+  - Turning predicted, the world goes back to its newest state and the ticks since run again with
+    it simulated, as a correction; without a tick to run again it takes that state in the present.
+  - Turning interpolated, it is placed where its states have it at the tick shown.
+  - Either way the pose it was drawn at stays as the error of its `render.Draw_Offset`, which
+    fades slower than a correction's (`SWITCH_HALF_LIFE`).
 
 **Prediction and correction.**
 
@@ -502,12 +522,11 @@ How it lives depends on its role (`wire.Role`) and on who simulates it:
     only when the server announces a different history on connecting; quantization reuses the
     previous record when the row, the layout or its links do not change.
 - It compares position, rotation and scale of all the predicted ones, velocities of bodies and the
-  quantized words of joints and components, with the tolerances of `Net_Settings`.
-- If it differs and the replica is **critical**, the world goes back to the copy of the next tick
-  and applies the available authoritative base, if the ticks to repeat fit in what remains of
-  `max_resimulate` in the frame, in `resimulate_budget` and in the history.
-  - Critical: one's own, or one that shared a simulation group (`core.Motion`) with what the client
-    drives in the last `critical_ticks`: what touched it or is joined to it by a joint.
+  quantized words of joints and components, with the tolerances of `Net_Settings`. A state of rest
+  the server does not repeat is compared again at a later tick, once news that old confirm it.
+- If one differs, the world goes back to the copy of the next tick and applies the available
+  authoritative base, if the ticks to repeat fit in what remains of `max_resimulate` in the frame,
+  in `resimulate_budget` and in the history.
   - The return is `host.app_world_replace` with the marks of that copy, which copies into a
     separate world what changed since and swaps it; without memory the world does not change, the
     correction is deferred and it is the `net.rollback` problem.
@@ -517,22 +536,14 @@ How it lives depends on its role (`wire.Role`) and on who simulates it:
   - Each repeated tick is `host.app_tick_replay`. `core.Time` returns with the copy and each tick
     advances it, so it ends where it was; `core.Frame_Time` is not part of the copy, and of the
     present only the frame's `Input` is kept by hand.
-  - The latest components of the non-predicted replicas are restored at the end: a component
-    received after the copy does not disappear nor is used ahead of time.
-- What else differs is **closed** in the present without simulating, and also the critical that
-  does not fit:
-  - the velocity takes its error immediately, as an impulse;
-  - the pose error, brought to the present with the velocity one, is closed before each tick that
-    runs for the first time, a part `dt/correction_time` of what remains, without suddenly crossing
-    what it touches;
-  - the records after the compared tick are shifted by the error, and those taken while it closes
-    include what is missing: the server's next state does not find it again;
-  - a body the server has at rest is put at that pose and put to sleep, and an error larger than
-    the distance at which smoothing gives up is applied at once.
-- A rollback leaves to the correction what the replicas it repeats were closing. A state older than
-  the history cannot be compared (`unverified`). The pose jump of a predicted one in a rollback or
-  when placing it accumulates in a smoothing that `Draw_Offset` draws without touching what is
-  simulated; what is closed tick by tick does not pass through the smoothing.
+  - A replica re-typed since the copy loses there the components of the type it had then.
+- What cannot go back (the frame or the budget have no room, or the state is older than the
+  history, `unverified`) takes the state in the present (`replica_place_now`): it moves by what it
+  was off at the tick of the state, with the velocity error carried to now, or, without a record
+  of that tick or at rest on the server, goes where the state has it, carried by its velocity. Its
+  records until then are dropped, so nothing is compared twice.
+- The pose jump of a predicted one, in a rollback or when placing it, accumulates in a smoothing
+  that `Draw_Offset` draws without touching what is simulated.
 - A library that learns that already simulated ticks were different because of something the
   network does not compare (a server fracture) asks for it with `multiplayer.rewind` in
   `^Net_Rewinds`: `net_rewind` goes back in that same frame to the copy of the oldest and repeats
@@ -548,6 +559,32 @@ How it lives depends on its role (`wire.Role`) and on who simulates it:
   events and what remains in the `World` follow the rule of
   [`core.Time.resimulating`](../../mirai-core/references/core.md#core-storages).
 
+## Predicted spawns and input delay
+
+**Predicted spawns.** A `fixed` function that makes an entity on both ends in the tick of the
+input that causes it (a projectile) marks it with `multiplayer.predict_spawn`: it gets the `Id`
+both ends draw from the connection, the tick and a sequence (`spawn_id`) and, on a client,
+`Predicted_Spawn`.
+
+- The replica the server sends takes that entity instead of making one (`replica_adoptable`, by
+  its `Id`), as its own: it goes with the replica. It is predicted while it lives.
+- A correction that goes back past the tick of the spawn runs it again: the replica waits without
+  an entity for that tick to make it (`replicas_relink`) and takes it at its end
+  (`spawns_settle`); if the ticks that run again no longer make it, the replica makes its own.
+- One no replica took within the history was not made by the server, and is destroyed.
+
+**Input delay.** With `Net_Settings.input_delay` a client acts on its input that many ticks after
+taking it, and submits it for that tick at once, so its tick runs that many less ahead of the
+server ([clock](networking.md#time-and-inputs)).
+
+- The seat it drives with keeps two lines of what it held: the one its devices feed, outside the
+  `World` (it only advances when a tick runs first), and the delayed one the game sees
+  (`net_input_take`, `net_input_delay`, around `input_seats`). The delayed one takes the actions
+  with `input.seat_receive`, as the seat of that connection does on the server: both ends derive
+  the same edges.
+- The look it sends is the one its body had after the tick it took the input in
+  (`Input_Packet.look_behind`); the server compares it with the look it had then (`remote_look`).
+
 Body intent and inputs: the driver fragment carries only the `input.Move_Input` of the body, and
 for the replicas of others the client uses the last historical one not later than the tick it
 simulates (without it, the last received). Device input goes only to the server, and its
@@ -560,16 +597,10 @@ the rollback repeats the whole world, not a solver island.
 `rewind.odin`. The server sees the world as a player saw it, to judge an instant hit (a shot, a
 melee swing) where that player aimed.
 
-**What a client shows of the others.** There are two models:
-
-- **By default, it predicts them.** What the server simulates with motion (`simulation=.Server`) is
-  shown simulated up to the client's tick, with the last known input of each: it is where it
-  probably is now, and it misses when the other changes direction. A hit is judged in the present;
-  compensating does not apply, because the rewound pose was never on screen.
-- **With `Net_Settings.interpolate_others`, it interpolates them.** What the client does not drive
-  is shown interpolated at `Clock.display` (half the round trip, two jitters and
-  `interpolation_delay` behind the server): it is where it was, without missing, but in the past,
-  and a hit is judged in that past.
+**What a client shows of the others** is in the past: what it does not drive is interpolated at
+`Clock.display` (half the round trip, two jitters and `interpolation_delay` behind the server),
+so a hit is judged in that past. What it predicts (what it pushes, `Replicate.predict`) it saw in
+the present: for that the rewound pose was never on screen.
 
 **How it works.**
 
@@ -582,9 +613,11 @@ melee swing) where that player aimed.
   Negative, the client is believed within `REWIND_SECONDS`.
 - At the end of every tick, under its number, the server keeps in `Rewind_History` the `Transform`
   it publishes of each entity with the `Rewind` component, in a ring as deep as the history,
-  made when the session opens, and `REWIND_ENTITIES` entities per tick; those that do not fit are a
-  problem. `rewind_record` writes
+  made when the session opens, and `Net_Settings.rewind_entities` entities per tick; those that do
+  not fit are a problem. `rewind_record` writes
   it before `net_tick_tail`, only on the server; it is not copied with the world.
+- The `physics_multiplayer` bridge tests a ray against the colliders at those poses
+  (`rewind_raycast`, over `phys.raycast_at`).
 - It keeps the pose of the entity, not that of its bones: a hit is tested against shapes placed
   from that pose.
 - With no entity with `Rewind`, a client does not work out its view, and a game that does not
@@ -603,7 +636,7 @@ melee swing) where that player aimed.
 
 - It marks with `Rewind` what can be hit (the bodies of the players).
 - When firing on the server, it finds the shooter's connection (`Seat.peer` of its seat), asks for
-  `rewind_tick` and tests the shot against `rewind_pose` of each target.
+  `rewind_tick` and tests the shot with `rewind_raycast`, or against `rewind_pose` of each target.
 - Nothing moves: the world never goes back and physics does not notice.
 
 ## What it demands of the rest of the game
@@ -637,7 +670,8 @@ and the others interpolate it. The server puts what arrives in `core.Pose_Target
 - `Net_Connections.events` brings `Connected`/`Disconnected` with the connection and the reason,
   and on the server `Entered` when a connection enters its world (on arriving and after each scene
   change): from then on what the game sends reaches it. `fixed` functions read it directly: at the
-  start of each tick the network leaves there what happened since the previous one. A frame without
+  start of each tick the network leaves there what happened since the previous one, and in
+  `Net_Events` the messages that arrived. A frame without
   ticks keeps it for the next and of a frame with several only the first has it; a tick that
   repeats has the ones it had.
 - The identity of a player between one connection and the next is that of its seat
@@ -659,11 +693,11 @@ one set by whoever tests those functions by hand).
 - On opening: `net.settings`, a `Net_Settings` value the host rejects, with the field and its range
   (`Host.refused`); the reason for the player says the same.
 - Client: `net.replicas` (what the server replicates does not fit), `net.predicted` (a replica that
-  does not fit in `predicted_capacity` is interpolated), `net.snapshot` and `net.rollback` (history
+  does not fit in `predicted_capacity` stays interpolated), `net.snapshot` and `net.rollback`
+  (history
   memory) and `net.sync_test` (a tick that, repeated, leaves something else).
 - Messages: `net.event` (a type that is not `@(net_message)`), `net.event_about` (about an entity
   that is not replicated) and `net.event_send` (the host rejected it).
-- Relevance: `net.relevance` (`relevance_set` named an entity that is not replicated).
 - Scene: `net.scene` (a client that could not load the server's scene, or whose world was replaced
   by a scene the server did not ask for) and `net.sections` (more sections than groups).
 - The player's status line (`--status`) reports `problems=` with the world's count.
@@ -693,16 +727,17 @@ one set by whoever tests those functions by hand).
 - Lag compensation (`rewind_test.odin`):
   `rewind_pose_interpolates_between_ticks_and_not_across_a_teleport`,
   `rewind_tick_is_what_the_client_showed_within_the_limit` and
-  `interpolate_others_shows_bodies_of_others_in_the_past`; in `input_packet_test.odin`,
-  `a_claimed_view_far_from_the_latency_takes_the_expected_one`; a state older than the history:
+  `what_a_client_does_not_drive_is_shown_in_the_past_unless_it_is_asked_to_predict_it`; in
+  `input_packet_test.odin`, `a_claimed_view_far_from_the_latency_takes_the_expected_one`,
+  `an_input_delay_acts_on_what_the_devices_gave_that_many_ticks_ago` and
+  `a_look_of_some_ticks_ago_corrects_the_look_of_the_server_once`; a state older than the history:
   `a_state_older_than_the_history_puts_the_replica_where_the_server_had_it`; in `physics`,
   `a_following_target_leads_a_character_where_it_says`.
 - Entity disabled on the server (the replica continues, disabled, with its mesh, and returns where
   the server enabled it; what a section disables ends its object):
   `an_entity_off_on_the_server_stays_off_on_the_clients_and_comes_back_where_it_got`.
-- `scope_test.odin`: `Custom` relevance with requests before the object and the `net.relevance`
-  problem
-  (`custom_relevance_replicates_an_entity_only_to_the_connections_the_game_names`) and staggered
+- `scope_test.odin`: `Visibility` bits of entities and seats
+  (`visibility_replicates_an_entity_only_to_the_connections_whose_seat_shares_a_bit`) and staggered
   turns of `update_hz`
   (`entities_of_the_same_frequency_take_turns_instead_of_publishing_together`).
 - Network parent: `the_parent_on_the_network_is_the_closest_replicated_ancestor` (intermediate
@@ -710,16 +745,18 @@ one set by whoever tests those functions by hand).
   table) and, with a client,
   `object_scope_controls_relevance_radius_and_follows_the_replicated_ancestor`.
 - Rollback: `a_rollback_replays_its_ticks_and_leaves_the_clock_and_the_frame_where_they_were` (the
-  clock, the repeated ticks with `resimulating`), `a_tick_that_runs_again_sends_nothing`,
+  clock, the repeated ticks with `resimulating`),
   `rollback_copy_failure_keeps_live_world_and_warm_publication_does_not_allocate`,
   `history_copies_of_what_changed_equal_whole_copies_through_writes_layout_changes_and_corrections`
   and `a_tick_a_library_asks_to_go_back_to_runs_again_from_the_copy_it_started_from` (rewind).
-- Correction without simulating:
-  `an_error_too_deep_for_the_frame_is_closed_over_the_next_ticks_without_a_teleport` and
-  `an_error_of_a_body_out_of_reach_is_closed_over_the_next_ticks_and_its_records_follow`. With a
+- The display rule and predicted spawns (`switch_test.odin`):
+  `a_replica_changes_between_interpolated_and_predicted_without_a_jump_in_what_is_drawn` and
+  `a_predicted_spawn_is_taken_by_its_replica_also_across_a_correction`.
+- Correction without going back:
+  `an_error_too_deep_for_the_frame_puts_the_replica_where_the_server_carries_it`. With a
   `Conditioner` of 100 ms per direction, 20 ms of jitter and 5% loss, a client pushes boxes while
   the server pushes another body:
-  `corrections_on_a_damaged_link_fit_the_frame_and_are_closed_without_teleports`; the tolerance
+  `corrections_on_a_damaged_link_fit_the_frame_and_go_back_instead_of_placing`; the tolerance
   sweep, optional, `corrections_on_a_conditioned_link_by_tolerance`
   (`-define:NET_CORRECTION_SWEEP=true`).
 - Interpolation delay in a correction:
@@ -765,7 +802,7 @@ one set by whoever tests those functions by hand).
   (replicated seat, hold until the notice, nothing of the previous world names the new one),
   `a_client_without_the_scene_of_its_server_leaves_saying_so`,
   `a_client_follows_the_pause_and_the_time_scale_of_its_server` and
-  `the_connections_that_come_and_go_reach_the_first_tick_after_them`. Sections:
+  `the_connections_and_the_messages_that_arrive_reach_the_first_tick_after_them`. Sections:
   `what_is_in_a_section_reaches_a_client_while_it_has_the_section_loaded`,
   `a_replica_of_a_section_that_is_not_loaded_waits_for_it`,
   `what_is_in_sections_that_overlap_reaches_a_client_that_has_either` and
@@ -789,14 +826,14 @@ one set by whoever tests those functions by hand).
   - `authority_test.odin` and `players_test.odin`: role, `core.Remote`, components that do not fit
     in the protocol or in an object, seats of the connections and owners by seat. In `net`,
     `a_client_composes_the_type_of_a_creation_from_its_fragments`.
-  - `scope_test.odin`: `Custom` relevance with requests before the object, `update_hz` turns and
+  - `scope_test.odin`: `Visibility` bits, `update_hz` turns and
     network parent (intermediate ancestor without `Replicate`, the one that gains or loses it,
     parent change).
-  - `world_copy_test.odin`: rollback (the clock and the frame where they were, a repeated tick does
-    not send, a copy that fails, the history of what changed, a library's rewind, the delay of the
+  - `world_copy_test.odin`: rollback (the clock and the frame where they were, a copy that fails,
+    the history of what changed, a library's rewind, the delay of the
     interpolated ones) and SyncTest (the function that reads outside the world, late states, after a
     correction).
-  - `correction_test.odin`: errors closed over the following ticks without a teleport, also with a
+  - `correction_test.odin`: errors that go back or are placed, also with a
     damaged `Conditioner` while client and server push bodies; the tolerance sweep is optional
     (`corrections_on_a_conditioned_link_by_tolerance`, `-define:NET_CORRECTION_SWEEP=true`).
   - `timing_test.odin` (the client through the `host` loop): alpha in [0, 1) and what is predicted
@@ -807,7 +844,8 @@ one set by whoever tests those functions by hand).
     predicted, references after linking and destroying, publication of what changed at the object's
     frequency, remote character replay, joints that wait for their destination, criticality with
     several driven bodies, scope that follows the replicated ancestor and in-memory convergence
-    with loss, duplicates and reordering, and with two real UDP sockets on `127.0.0.1` without GPU.
+    with loss, duplicates and reordering, and with two real UDP sockets on `127.0.0.1` without GPU;
+    both gain, change and lose a replicated component long after the creation.
   - `api_test`: collections from a package that imports only `multiplayer`; their deltas and their
     convergence with loss are in `net`.
   - Cost of the history, optional: `cost_of_the_history_of_a_client`

@@ -30,22 +30,22 @@ Reflections :: enum u8 {
 
 @(storage,shared,setting="machine")
 Graphics_Settings :: struct {
-    render_scale:f32 `mirai:"min=0,max=2,section=Resolution"`, // the 3D image per point of the window along each axis, 0.25 to 2; 0 follows the target of the preset (preset_height), and above 0 it is used as it is and the target counts for nothing
+    render_scale:f32 `mirai:"min=0,max=2,section=Resolution,graphics=Resolution,choices=Auto:0|50%:0.5|75%:0.75|100%:1"`, // the 3D image per point of the window along each axis, 0.25 to 2; 0 follows the target of the preset (preset_height), and above 0 it is used as it is and the target counts for nothing
     preset_height:u32 `mirai:"min=0,max=16384,advanced"`,  // the lines the last preset aims for in the views of the window, never above one pixel per point (only graphics_preset_apply writes it); 0: one per point
-    antialiasing:[gpu.ANTIALIASING_NAME_BYTES]u8 `mirai:"text"`, // the technique that resolves the image and upscales it: "off", "taa" or one a plugin offers (antialiasing_offer); one no plugin resolves is the TAA
-    indirect_light:Indirect_Light `mirai:"section=Lighting"`,
-    light_probes:Light_Probes,
-    reflections:Reflections,
+    antialiasing:[gpu.ANTIALIASING_NAME_BYTES]u8 `mirai:"text,graphics=Antialiasing"`, // the technique that resolves the image and upscales it: "off", "taa" or one a plugin offers (antialiasing_offer); one no plugin resolves is the TAA
+    indirect_light:Indirect_Light `mirai:"section=Lighting,graphics=Indirect light"`,
+    light_probes:Light_Probes `mirai:"graphics=Light probes"`,
+    reflections:Reflections `mirai:"graphics=Reflections"`,
     sun_shadows:bool,                          // the sun casts shadows; off, no ray goes to it and it lights everything it faces
-    shadowed_lights:u32 `mirai:"min=1,max=32"`, // shadow rays of a place, each to a light that reaches it or to a group of far ones that stands for them
-    glass_shadows:bool,                        // blended surfaces color the light that crosses them
-    glass_layers:u32 `mirai:"min=1,max=2"`,
-    textures:Textures `mirai:"section=Detail"`,
-    detail:Detail,
-    frame_limit:u32 `mirai:"section=Frames"`, // frames per second; 0: none
-    vsync:bool,
-    frame_generation:bool,                     // a technique that generates frames (FSR 3.1) shows one between each two, with the memory of its passes and half a frame more of latency; frame_limit and vsync count the frames shown
-    show_fps:bool,                             // the frames per second in the editor and the game
+    shadowed_lights:u32 `mirai:"min=1,max=32,graphics=Shadowed lights,choices=2|4|8|16"`, // shadow rays of a place, each to a light that reaches it or to a group of far ones that stands for them
+    glass_shadows:bool `mirai:"graphics=Glass shadows,choices=Off|Colored"`, // blended surfaces color the light that crosses them
+    glass_layers:u32 `mirai:"min=1,max=2,graphics=Glass layers,choices=1|2"`,
+    textures:Textures `mirai:"section=Detail,graphics=Textures,choices=1K|2K|4K|8K"`,
+    detail:Detail `mirai:"graphics=Detail"`,
+    frame_limit:u32 `mirai:"section=Frames,graphics=Frame limit,choices=30|60|120|144|240|Off:0"`, // frames per second; 0: none
+    vsync:bool `mirai:"graphics=VSync"`,
+    frame_generation:bool `mirai:"graphics=Frame generation"`, // a technique that generates frames (FSR 3.1) shows one between each two, with the memory of its passes and half a frame more of latency; frame_limit and vsync count the frames shown
+    show_fps:bool `mirai:"graphics=Show FPS"`, // the frames per second in the editor and the game
     texture_memory:u32 `mirai:"min=0,max=65536,unit=MB,section=Memory,advanced"`, // GPU memory of textures, past which they load without their largest levels; 0: a share of the device's (GRAPHICS_TEXTURE_POOL_SHARE)
     geometry_memory:u32 `mirai:"min=0,max=4096,unit=MB,advanced"`, // GPU memory of the pages of streamed meshes, taken when the first one loads: a later change waits until the renderer starts again; 0: that of gpu.DEFAULT_SETTINGS
 }

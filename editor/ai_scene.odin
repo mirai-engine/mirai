@@ -112,7 +112,7 @@ ai_scene_place :: proc(s:^Session,task:^Ai_Task,w:core.World_Ref,point:[3]f32,en
     if g.visible {direction=g.axes[axis]}
     distance:=max(f32(1.25),g.size+0.55)
     height:=point.y+g.size+0.35
-    if len(entities)>0 && s.picker!=nil && s.app!=nil && s.app.assets!=nil {
+    if len(entities)>0 && s.app!=nil && s.app.assets!=nil {
         if low,high,found:=entities_bounds(s,w,entities);found {
             edge:=[3]f32{direction.x>=0?high.x:low.x,direction.y>=0?high.y:low.y,direction.z>=0?high.z:low.z}
             distance=max(distance,direction.x*(edge.x-point.x)+direction.y*(edge.y-point.y)+direction.z*(edge.z-point.z)+0.55)

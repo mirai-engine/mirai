@@ -533,16 +533,9 @@ the reverb of the room where the listener is and what covers each source.
   `audio.sound`, `audio.bus`, `audio.voices` or `audio.memory`.
 - `Mixer_Listener` (host) is the mixer's listener, one per application: it is set by the world whose
   listener moved, or the one that runs after another.
-- A loose sound: `audio.play_asset(app,time,path_or_id,...)` and `play_asset_at`, with `.sound`
-  or `.sound_set`; `play_source` plays an `Audio_Source` as configured, without a place, and
-  `play_source_at` at a point of the world with its curve (a loop that follows something:
-  `source_place` moves it); `source_tune` passes either its changes; `stop` and `playing` on the
-  voice they return. Playing takes `^host.App`, which loads the sound; what acts on a voice
-  (`stop`, `playing`, `source_place`, `source_tune`) takes the mixer, `^audio.Mixer`. `buses_apply`
-  is what `audio_buses` does every frame, for whoever sounds outside the game (the editor). They
-  return zero if there is no mixer, the asset does not load or there is no free voice, or if a
-  rollback repeats the tick (`time.resimulating`): it already sounded the first time. They belong
-  to the game thread: only from the functions of the loop.
+- A loose sound is a one-shot of `Sound_Requests` (above). `buses_apply` is what `audio_buses`
+  does every frame, for whoever sounds outside the game (the editor), which starts what it plays
+  to be heard with `voice_start`.
 
 ## `anim`
 

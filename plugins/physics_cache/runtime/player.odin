@@ -106,7 +106,7 @@ cache_content_find :: proc(library:^Cache_Library,assets:^host.Assets,allocator:
     if content.checked!=0 && stamp==content.stamp {content.checked=revision;return content,content.error}
     fresh:=Cache_Content{source=id,stamp=stamp,checked=revision,error=.Not_Found}
     if found {
-        fresh.error=host.assets_file(assets,id,asset.KIND_PHYSICS_CACHE,&fresh.file)
+        fresh.error=host.assets_file(assets,id,CACHE_KIND,&fresh.file)
         if fresh.error==.None {
             if fresh.file.blob.header.id!=id || !asset.blob_verify_hash(&fresh.file.blob) {fresh.error=.Corrupt}
             else {fresh.view,fresh.error=cache_view(&fresh.file,&assets.types)}

@@ -7,8 +7,10 @@ are not messages: they travel as the actions of the seat.
 
 - Only the server sends by default; `from="client"` lets a client send it to the server,
   `from="owner"` only about an entity it owns. `reliable` delivers once and in order.
-- `multiplayer.send(outbox,time,value,about?,to?)`: without `to` a server sends to every connection
+- `multiplayer.send(outbox,value,about?,to?)`: without `to` a server sends to every connection
   that has `about` (or all), a client to the server.
+- `multiplayer.Net_Events` has, at the start of each tick, the messages that arrived since the tick
+  before: read it in `fixed`.
 
 ```odin
 @(net_message,reliable)
@@ -17,11 +19,11 @@ Round_Over :: struct {winner:u32}
 Vote :: struct {choice:u8}
 
 @(step="fixed",server)
-round_end :: proc(outbox:^multiplayer.Net_Outbox,time:core.Time) {
-    multiplayer.send(outbox,time,Round_Over{winner=2})
+round_end :: proc(outbox:^multiplayer.Net_Outbox) {
+    multiplayer.send(outbox,Round_Over{winner=2})
 }
 
-@(step="input",stage="begin")
+@(step="fixed")
 messages :: proc(events:core.Ref(multiplayer.Net_Events),network:core.Ref(core.Network)) {
     for item in events.received.items {
         if over,ok:=multiplayer.event_read(item,Round_Over);ok {}   // on clients
@@ -37,20 +39,18 @@ messages :: proc(events:core.Ref(multiplayer.Net_Events),network:core.Ref(core.N
 
 ```odin
 @(step="fixed",server)
-arrivals :: proc(connections:core.Ref(multiplayer.Net_Connections),
-    outbox:^multiplayer.Net_Outbox,time:core.Time) {
+arrivals :: proc(connections:core.Ref(multiplayer.Net_Connections),outbox:^multiplayer.Net_Outbox) {
     for event in connections.events.items {
-        if event.kind==.Entered {multiplayer.send(outbox,time,Round_Over{},to=event.connection)}
+        if event.kind==.Entered {multiplayer.send(outbox,Round_Over{},to=event.connection)}
     }
 }
 ```
 
 ## Pitfalls
 
-- `Net_Events.received` is cleared every frame and a frame has none or several ticks: read it in
-  `input`, as above, not in `fixed`, or a message is handled twice or lost.
-- `send` returns false while a tick repeats after a correction: do not count on it, and keep what
-  the receiver does a function of world state.
+- A tick that repeats after a correction has the messages it had, and `send` returns false in it:
+  what a message makes outside the world (a sound, a counter in a host storage) checks
+  `time.resimulating`.
 - A type that is not a `net_message` is not sent: the problem `net.event`.
 - A message about an entity that is not replicated is the problem `net.event_about`.
 - A message from another world (before the client entered a new scene) is discarded.
