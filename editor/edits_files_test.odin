@@ -14,7 +14,7 @@ import "mirai:std/base"
 import "mirai:std/serial"
 
 Files_Test_World :: struct {
-    entities:core.Entities,
+    using world:core.Test_World,
     ids:core.Table(core.Id),
 }
 
@@ -22,45 +22,28 @@ Files_Test_World :: struct {
 @(private)
 Files_Test :: struct {
     world:Files_Test_World,
-    info:core.World_Info,
-    tables:[1]core.Table_Info,
-    edits:history.Edits,
-    selection:history.Selection,
-    viewport:Viewport,
-    gui:Editor_Ui,
-    document:Document,
+    using edited:Test_Session,
     ai:^Ai,
-    s:Session,
     root:string,
 }
 
 @(private)
-files_test_open :: proc(f:^Files_Test,name:string) {
-    w:=&f.world
-    core.entities_init(&w.entities)
-    core.table_init(&w.ids,"Id")
-    f.tables[0]={name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Files_Test_World,ids)}
-    f.info={entities=offset_of(Files_Test_World,entities),tables=f.tables[:]}
-    history.edits_reset(&f.edits,{data=w,info=&f.info})
+files_test_open :: proc(t:^testing.T,f:^Files_Test,name:string) -> bool {
+    f.root=base.test_folder(t,name)
+    if f.root=="" || !core.test_world_init(t,&f.world) {return false}
     f.ai=new(Ai)
-    temporary,_:=os.temp_directory(context.temp_allocator)
-    root,_:=strings.replace_all(project.path(temporary,name,allocator=context.temp_allocator),"\\","/",context.temp_allocator)
-    f.root=strings.clone(root)
-    os.remove_all(f.root)
     os.make_directory_all(project.path(f.root,"assets",allocator=context.temp_allocator))
-    f.s=Session{info=&f.info,edit_world=w,edits=&f.edits,selection=&f.selection,viewport=&f.viewport,gui=&f.gui,document=&f.document,ai=f.ai,project_root=f.root}
+    test_session_open(&f.edited,core.test_world_ref(&f.world))
+    f.s.ai,f.s.project_root=f.ai,f.root
+    return true
 }
 
 @(private)
 files_test_close :: proc(f:^Files_Test) {
     for &task in f.ai.tasks {ai_review_free(&task.review)}
     free(f.ai)
-    history.edits_free(&f.edits)
-    delete(f.selection.entities)
-    core.table_destroy(&f.world.ids)
-    core.entities_destroy(&f.world.entities)
-    os.remove_all(f.root)
-    delete(f.root)
+    test_session_close(&f.edited)
+    core.test_world_destroy(&f.world)
 }
 
 @(private="file")
@@ -78,7 +61,7 @@ files_test_commit :: proc(f:^Files_Test) {
 @(test)
 files_of_a_gesture_are_one_step_and_undo_keeps_what_changed_outside :: proc(t:^testing.T) {
     f:Files_Test
-    files_test_open(&f,"mirai-files-history")
+    if !files_test_open(t,&f,"files-history") {return}
     defer files_test_close(&f)
     s:=&f.s
     w:=edited_world(s)
@@ -171,7 +154,7 @@ provenance_task :: proc(t:^testing.T,f:^Files_Test) -> ^Ai_Task {
 @(test)
 a_transaction_of_a_turn_says_who_changed_its_entities_and_assets :: proc(t:^testing.T) {
     f:Files_Test
-    files_test_open(&f,"mirai-provenance")
+    if !files_test_open(t,&f,"provenance") {return}
     defer files_test_close(&f)
     m:=f.ai
     task:=provenance_task(t,&f)
@@ -212,7 +195,7 @@ a_transaction_of_a_turn_says_who_changed_its_entities_and_assets :: proc(t:^test
 @(test)
 the_browser_marks_are_the_assets_of_the_units_that_wait_for_review :: proc(t:^testing.T) {
     f:Files_Test
-    files_test_open(&f,"mirai-browser-marks")
+    if !files_test_open(t,&f,"browser-marks") {return}
     defer files_test_close(&f)
     m:=f.ai
     defer delete(m.asset_marks)
@@ -236,7 +219,7 @@ the_browser_marks_are_the_assets_of_the_units_that_wait_for_review :: proc(t:^te
 @(test)
 ai_review_reverts_restores_and_resolves_the_files_of_a_turn :: proc(t:^testing.T) {
     f:Files_Test
-    files_test_open(&f,"mirai-files-review")
+    if !files_test_open(t,&f,"files-review") {return}
     defer files_test_close(&f)
     s:=&f.s
     m:=f.ai
@@ -308,7 +291,7 @@ ai_review_reverts_restores_and_resolves_the_files_of_a_turn :: proc(t:^testing.T
 @(test)
 asset_files_of_edits_stay_in_memory_until_they_are_saved :: proc(t:^testing.T) {
     f:Files_Test
-    files_test_open(&f,"mirai-files-memory")
+    if !files_test_open(t,&f,"files-memory") {return}
     defer files_test_close(&f)
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=project.path(f.root,"assets",allocator=context.temp_allocator),capacity=8})) {return}
@@ -384,7 +367,7 @@ asset_files_of_edits_stay_in_memory_until_they_are_saved :: proc(t:^testing.T) {
 @(test)
 program_sources_stay_in_memory_until_they_are_saved :: proc(t:^testing.T) {
     f:Files_Test
-    files_test_open(&f,"mirai-files-programs")
+    if !files_test_open(t,&f,"files-programs") {return}
     defer files_test_close(&f)
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=project.path(f.root,"assets",allocator=context.temp_allocator),capacity=8})) {return}
@@ -457,7 +440,7 @@ program_sources_stay_in_memory_until_they_are_saved :: proc(t:^testing.T) {
 @(test)
 another_asset_of_the_kind_in_front_takes_its_tab_while_it_has_no_history :: proc(t:^testing.T) {
     f:Files_Test
-    files_test_open(&f,"mirai-files-asset-reuse")
+    if !files_test_open(t,&f,"files-asset-reuse") {return}
     defer files_test_close(&f)
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=project.path(f.root,"assets",allocator=context.temp_allocator),capacity=8})) {return}
@@ -491,7 +474,7 @@ another_asset_of_the_kind_in_front_takes_its_tab_while_it_has_no_history :: proc
 @(test)
 files_an_asset_document_writes_are_steps_of_its_own_history :: proc(t:^testing.T) {
     f:Files_Test
-    files_test_open(&f,"mirai-files-asset-document")
+    if !files_test_open(t,&f,"files-asset-document") {return}
     defer files_test_close(&f)
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=project.path(f.root,"assets",allocator=context.temp_allocator),capacity=8})) {return}

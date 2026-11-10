@@ -11,8 +11,12 @@ import "mirai:project"
 import "mirai:std/base"
 import "mirai:ui"
 
+@(private="file")
 Create_Test_Provider :: struct {provider:Asset_Document_Provider}
-create_test_provider :: proc(dst:rawptr) {(^Create_Test_Provider)(dst)^={provider={kinds={0=asset.KIND_UI},count=1,creates={0},create=create_test_file}}}
+@(private="file")
+create_test_types :: proc(types:^[dynamic]core.Test_Type) {
+    append(types,core.test_type(Create_Test_Provider,default=proc(dst:^Create_Test_Provider) {dst^={provider={kinds={0=asset.KIND_UI},count=1,creates={0},create=create_test_file}}}))
+}
 // The empty .ui of the test plugin; none for the id that stands for a failure.
 @(private="file")
 create_test_file :: proc(s:^Session,kind:asset.Fourcc,id:base.Asset_Id) -> []u8 {
@@ -31,7 +35,7 @@ create_test_file :: proc(s:^Session,kind:asset.Fourcc,id:base.Asset_Id) -> []u8 
 @(test)
 create_makes_each_kind_with_a_free_name_where_it_says :: proc(t:^testing.T) {
     f:Files_Test
-    files_test_open(&f,"mirai-asset-create")
+    if !files_test_open(t,&f,"asset-create") {return}
     defer files_test_close(&f)
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=project.path(f.root,"assets",allocator=context.temp_allocator),capacity=8})) {return}
@@ -95,10 +99,12 @@ create_makes_each_kind_with_a_free_name_where_it_says :: proc(t:^testing.T) {
 @(test)
 a_plugin_gives_the_empty_file_of_a_kind_it_creates :: proc(t:^testing.T) {
     f:Files_Test
-    files_test_open(&f,"mirai-asset-create-plugin")
+    if !files_test_open(t,&f,"asset-create-plugin") {return}
     defer files_test_close(&f)
-    storages:=[1]core.Storage_Info{{info=type_info_of(Create_Test_Provider),place=.Editor,default=create_test_provider}}
-    f.info.storages=storages[:]
+    info,made:=core.test_info(t,Files_Test_World,core.Test_None,struct {provider:Create_Test_Provider},create_test_types)
+    if !made {return}
+    defer core.test_info_destroy(&info)
+    f.s.info=&info
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=project.path(f.root,"assets",allocator=context.temp_allocator),capacity=8})) {return}
     defer host.assets_destroy(&assets)
