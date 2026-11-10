@@ -17,8 +17,9 @@ schema_failure_allocator :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,al
     return state.owner.procedure(state.owner.data,mode,size,alignment,old_memory,old_size,loc)
 }
 
-// A schema read or cloned with the memory ending at each request in turn:
-// Out_Of_Memory, nothing of it kept, and with memory enough the schema whole.
+// A schema read, cloned or added to with the memory ending at each request in
+// turn: Out_Of_Memory, nothing of it kept (an add keeps whole the types it had
+// added), and with memory enough the schema whole.
 @(test)
 schema_read_and_clone_release_every_partial_allocation_and_hashes_retry_without_memory :: proc(t:^testing.T) {
     Kind :: enum u8 {First,Second}
@@ -29,7 +30,7 @@ schema_read_and_clone_release_every_partial_allocation_and_hashes_retry_without_
     schema_write(&bytes,&original)
     failure:=Schema_Allocation_Failure{owner=context.allocator}
     allocator:=runtime.Allocator{schema_failure_allocator,&failure}
-    Call :: enum {Read,Clone}
+    Call :: enum {Read,Clone,Add}
     for call in Call {
         succeeded,refused:=false,false
         for budget in 0..<128 {
@@ -42,10 +43,19 @@ schema_read_and_clone_release_every_partial_allocation_and_hashes_retry_without_
                 error=schema_read(&reader,&loaded,allocator)
             case .Clone:
                 error=schema_clone(&loaded,&original,allocator)
+            case .Add:
+                schema_init(&loaded,allocator)
+                if _,added:=schema_add(&loaded,Sample);!added {error=.Out_Of_Memory}
             }
             if error!=.None {
                 refused=true
                 testing.expectf(t,error==.Out_Of_Memory,"%v with %d requests served: %v",call,budget,error)
+                if call==.Add {
+                    failure.remaining=128
+                    testing.expectf(t,schema_validate(&loaded)==.None,"an add with %d requests served left a type cut short",budget)
+                    schema_destroy(&loaded)
+                    continue
+                }
                 testing.expectf(t,loaded.types==nil && loaded.fields==nil && loaded.choices==nil,"%v with %d requests served kept a part",call,budget)
                 continue
             }

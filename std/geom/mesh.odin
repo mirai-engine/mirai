@@ -140,21 +140,30 @@ positions_weld :: proc(positions:[]Vec3,tolerance:f32,remap:[]u32) -> int #no_bo
 // their representative, without unreferenced vertices or triangles that lost a
 // corner. With keep_seams, vertices only merge when their normal, uv and color
 // are also equal, so attribute seams survive. An index out of range writes an
-// empty mesh.
-mesh_weld :: proc(mesh:Mesh,tolerance:f32,out:^Mesh_Buffer,keep_seams:=false) {
+// empty mesh. False, with an empty mesh, without memory.
+mesh_weld :: proc(mesh:Mesh,tolerance:f32,out:^Mesh_Buffer,keep_seams:=false) -> bool {
     mesh_buffer_clear(out)
     n:=len(mesh.positions)
     for i in mesh.indices {
-        if int(i)>=n {return}
+        if int(i)>=n {return true}
     }
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD(ignore=temp_is(out.positions.allocator))
-    remap:=make([]u32,n,context.temp_allocator)
+    remap,no_remap:=make([]u32,n,context.temp_allocator)
+    first,no_first:=make([]u32,n,context.temp_allocator)
+    target,no_target:=make([]u32,n,context.temp_allocator)
+    chain,no_chain:=make([dynamic]u32,0,n,context.temp_allocator)
+    if no_remap!=nil || no_first!=nil || no_target!=nil || no_chain!=nil {return false}
     positions_weld(mesh.positions,tolerance,remap)
-    first:=make([]u32,n,context.temp_allocator)
-    target:=make([]u32,n,context.temp_allocator)
-    chain:=make([dynamic]u32,0,n,context.temp_allocator)
     for i in 0..<n {first[i]=NONE;target[i]=NONE}
     has_normals,has_uvs,has_colors:=len(mesh.normals)==n,len(mesh.uvs)==n,len(mesh.colors)==n
+    has_materials:=len(mesh.materials)==len(mesh.indices)/3
+    // A vertex of the mesh gives one of the weld at most, and a triangle one.
+    roomy:=reserve(&out.positions,n)==nil && reserve(&out.indices,len(mesh.indices))==nil
+    roomy&&=!has_normals || reserve(&out.normals,n)==nil
+    roomy&&=!has_uvs || reserve(&out.uvs,n)==nil
+    roomy&&=!has_colors || reserve(&out.colors,n)==nil
+    roomy&&=!has_materials || reserve(&out.materials,len(mesh.indices)/3)==nil
+    if !roomy {return false}
     resolve :: proc(mesh:Mesh,out:^Mesh_Buffer,i:u32,remap,first,target:[]u32,chain:^[dynamic]u32,keep_seams,has_normals,has_uvs,has_colors:bool) -> u32 {
         if target[i]!=NONE {return target[i]}
         r:=remap[i]
@@ -178,7 +187,6 @@ mesh_weld :: proc(mesh:Mesh,tolerance:f32,out:^Mesh_Buffer,keep_seams:=false) {
         target[i]=v
         return v
     }
-    has_materials:=len(mesh.materials)==len(mesh.indices)/3
     for t:=0;t+2<len(mesh.indices);t+=3 {
         ia,ib,ic:=mesh.indices[t],mesh.indices[t+1],mesh.indices[t+2]
         if remap[ia]==remap[ib] || remap[ib]==remap[ic] || remap[ia]==remap[ic] {continue}
@@ -188,6 +196,7 @@ mesh_weld :: proc(mesh:Mesh,tolerance:f32,out:^Mesh_Buffer,keep_seams:=false) {
         append(&out.indices,a,b,c)
         if has_materials {append(&out.materials,mesh.materials[t/3])}
     }
+    return true
 }
 
 // Area-weighted vertex normals. Vertices that share an index are smoothed;

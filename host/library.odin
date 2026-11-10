@@ -23,12 +23,13 @@ Project_Library :: struct {
 // The procedure every library of a project exports (cook/build generates it).
 PROJECT_INFO_SYMBOL :: "mirai_project_info"
 
-Library_Error :: enum u8 {None,Missing,Copy_Failed,Load_Failed,Not_A_Project}
+Library_Error :: enum u8 {None,Missing,Copy_Failed,Load_Failed,Not_A_Project,Out_Of_Memory}
 
 // Loads the library at path as its generation-th copy of this process.
 project_library_load :: proc(path:string,generation:int,allocator:=context.allocator) -> (library:Project_Library,error:Library_Error) {
     if !os.is_file(path) {return {},.Missing}
     copy:=library_copy_name(path,generation,allocator)
+    if copy=="" {return {},.Out_Of_Memory}
     _=os.remove(copy)
     if os.copy_file(copy,path)!=nil {
         delete(copy,allocator)
@@ -71,12 +72,13 @@ library_error_text :: proc(error:Library_Error,path:string) -> string {
     case .Copy_Failed:   return fmt.tprintf("%s could not be copied to be loaded",path)
     case .Load_Failed:   return fmt.tprintf("%s could not be loaded: %s",path,dynlib.last_error())
     case .Not_A_Project: return fmt.tprintf("%s exports no %s: it is not a library of a project",path,PROJECT_INFO_SYMBOL)
+    case .Out_Of_Memory: return fmt.tprintf("there is no memory to load %s: free memory and try again",path)
     }
     return ""
 }
 
 // <folder>/<name>-live-<pid>-<generation><ext>. Copies a process that ended
-// badly left behind are removed first.
+// badly left behind are removed first. "" without memory for it.
 @(private="file")
 library_copy_name :: proc(path:string,generation:int,allocator:=context.allocator) -> string {
     folder:=filepath.dir(path)
@@ -96,5 +98,7 @@ library_copy_name :: proc(path:string,generation:int,allocator:=context.allocato
             _=os.remove(entry.fullpath)
         }
     }
-    return fmt.aprintf("%s/%s-live-%d-%d%s",folder,stem,os.get_pid(),generation,extension,allocator=allocator)
+    name,error:=strings.clone(fmt.tprintf("%s/%s-live-%d-%d%s",folder,stem,os.get_pid(),generation,extension),allocator)
+    if error!=nil {return ""}
+    return name
 }

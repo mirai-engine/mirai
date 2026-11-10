@@ -230,13 +230,16 @@ shader_assets_load :: proc(directory:string,allocator:=context.allocator)->(asse
             if assets.codes[id].name!="" {error="duplicate shader id";break}
             code=&assets.codes[id]
         }
-        code.name=strings.clone(text(item["name"]),allocator)
+        no_name:runtime.Allocator_Error
+        if code.name,no_name=strings.clone(text(item["name"]),allocator);no_name!=nil {error="out of memory for the name of a shader";break}
         stage,valid_stage:=reflect.enum_from_name(rhi.Shader_Stage,text(item["stage"]));if !valid_stage {error="invalid shader stage";break};code.stage=stage
         key := "msl" when ODIN_OS==.Darwin else "spv"
         file,_:=filepath.join({directory,text(item[key])},context.temp_allocator)
         data,problem:=os.read_entire_file(file,allocator);if problem!=nil {error=fmt.tprintf("cannot read %s",file);break}
         when ODIN_OS==.Darwin {
-            code.msl=string(data);code.msl_entry=strings.clone(text(item["entry"]),allocator)
+            code.msl=string(data)
+            no_entry:runtime.Allocator_Error
+            if code.msl_entry,no_entry=strings.clone(text(item["entry"]),allocator);no_entry!=nil {error=fmt.tprintf("out of memory for the entry point of shader %s",code.name);break}
             if code.msl_entry=="" {error="shader has no Metal entry point";break}
         } else {code.spirv=data}
         group:=item["group"].(json.Array) or_else nil

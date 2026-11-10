@@ -603,8 +603,9 @@ section_load_end :: proc(job:^Load_Job,w:core.World_Ref,e:core.Entity) -> (repor
         }
     }
     // Records, each with the shapes of its entities as they joined: of each section that loaded with it, and its own.
-    record_fill :: proc(record:^Section_Record,apart:core.World_Ref,section:core.Entity,of,made:[]core.Entity,fresh:[]bool,took:[]core.Entity) {
-        record.fresh=slice.clone(fresh)
+    record_fill :: proc(record:^Section_Record,apart:core.World_Ref,section:core.Entity,of,made:[]core.Entity,fresh:[]bool,took:[]core.Entity) -> bool {
+        no_fresh:runtime.Allocator_Error
+        if record.fresh,no_fresh=slice.clone(fresh);no_fresh!=nil {return false}
         es:=core.world_entities(apart)
         mine:=make([dynamic]core.Entity,context.temp_allocator)
         into:=make([dynamic]core.Entity,context.temp_allocator)
@@ -617,14 +618,18 @@ section_load_end :: proc(job:^Load_Job,w:core.World_Ref,e:core.Entity) -> (repor
         shapes_take(apart,&record.shapes,mine[:],into[:])
         record.shaped=true
         for x in took {if of[core.entity_index(x)]==section {append(&record.changed,made[core.entity_index(x)])}}
+        return true
     }
+    recorded:=true
     if inners:=core.world_storage_of(apart,Section_Records);inners!=nil {
         for &record in inners.items {
-            if added:=records_add(w,joined(made[:],record.reference),record.locals);added!=nil {record_fill(added,apart,record.reference,of,made[:],fresh,sleepers.took[:])}
+            added,listed:=records_add(w,joined(made[:],record.reference),record.locals)
+            recorded&&=listed && (added==nil || record_fill(added,apart,record.reference,of,made[:],fresh,sleepers.took[:]))
         }
     }
-    if own:=records_add(w,e,locals);own!=nil {record_fill(own,apart,core.NONE,of,made[:],fresh,sleepers.took[:])}
-    return job.report,.None
+    own,listed:=records_add(w,e,locals)
+    recorded&&=listed && (own==nil || record_fill(own,apart,core.NONE,of,made[:],fresh,sleepers.took[:]))
+    return job.report,.None if recorded else .Out_Of_Memory
 }
 
 // The record of a section load that ended (host.load_section).

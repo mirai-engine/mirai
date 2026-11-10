@@ -24,7 +24,8 @@ they share.
   (vertices, split triangles, border edges, sites) and then fill without growing: a write without
   bounds check is inside what was reserved. A new array filled in such a loop gets its bound first.
 - Without that memory the operation returns the `Out_Of_Memory` of its error (`polygon_triangulate`
-  gives no triangles and `mesh_tangents` false), leaves its outputs empty and keeps nothing; its
+  gives no triangles; `mesh_tangents`, `mesh_weld`, `hull_append_mesh` and the built-in shapes give
+  false and append nothing), leaves its outputs empty and keeps nothing; its
   workspace gives, with memory again, what a new one gives. The temporary allocator is not covered:
   `positions_weld` gives 0 and `mesh_topology` an open mesh without it, and the rest assume it.
 

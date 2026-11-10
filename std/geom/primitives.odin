@@ -9,10 +9,17 @@ import "core:math/linalg"
 // normals, texture coordinates and indices to a buffer that holds nothing or
 // a mesh with exactly those streams. Flat faces show the whole image; round
 // surfaces wrap it once around the Y axis. Angles come from turn_sincos, so
-// the vertices are the same bits on every machine.
+// the vertices are the same bits on every machine. A shape takes the room of
+// all it appends first: without memory it appends nothing and answers false.
 
 SHAPE_SEGMENTS :: 32 // around the Y axis
 SHAPE_RINGS    :: 16 // latitude bands of the sphere
+
+// Room for the vertices and indices a shape appends at most: its appends
+// stay inside it.
+@(private) shape_room :: proc(out:^Mesh_Buffer,vertices,indices:int) -> bool {
+    return reserve_more(&out.positions,vertices)==nil && reserve_more(&out.normals,vertices)==nil && reserve_more(&out.uvs,vertices)==nil && reserve_more(&out.indices,indices)==nil
+}
 
 @(private) vertex :: #force_inline proc(out:^Mesh_Buffer,position,normal:Vec3,uv:Vec2) {
     append(&out.positions,position)
@@ -68,18 +75,21 @@ SHAPE_RINGS    :: 16 // latitude bands of the sphere
     for i in 0..<segments {triangle(out,center,center+1+u32(i),center+1+u32((i+1)%segments))}
 }
 
-cube_build :: proc(out:^Mesh_Buffer,size:Vec3={1,1,1}) {
+cube_build :: proc(out:^Mesh_Buffer,size:Vec3={1,1,1}) -> bool {
+    shape_room(out,24,36) or_return
     for n in ([6]Vec3{{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}}) {
         u:=Vec3{n.y,n.z,n.x}
         w:=linalg.cross(n,u)
         face(out,{(n-u-w)*0.5,(n+u-w)*0.5,(n+u+w)*0.5,(n-u+w)*0.5},size)
     }
+    return true
 }
 
 // Latitude and longitude sphere: `segments` around the Y axis and `rings`
 // from the north pole to the south pole.
-sphere_build :: proc(out:^Mesh_Buffer,radius:f32=0.5,segments:=SHAPE_SEGMENTS,rings:=SHAPE_RINGS) {
+sphere_build :: proc(out:^Mesh_Buffer,radius:f32=0.5,segments:=SHAPE_SEGMENTS,rings:=SHAPE_RINGS) -> bool {
     segments,rings:=max(segments,3),max(rings,2)
+    shape_room(out,(rings+1)*(segments+1),rings*segments*6) or_return
     base:=u32(len(out.positions))
     for ring in 0..=rings {
         st,ct:=turn_sincos(f64(ring)/f64(2*rings))
@@ -98,12 +108,13 @@ sphere_build :: proc(out:^Mesh_Buffer,radius:f32=0.5,segments:=SHAPE_SEGMENTS,ri
             triangle(out,a,b+1,a+1)
         }
     }
+    return true
 }
 
 // Subdivided icosahedron: 20*4^subdivisions triangles of similar size.
 // Texture coordinates follow the sphere; vertices are repeated along the seam
-// and at the poles. Without temporary memory nothing is appended.
-icosphere_build :: proc(out:^Mesh_Buffer,radius:f32=0.5,subdivisions:=2) {
+// and at the poles.
+icosphere_build :: proc(out:^Mesh_Buffer,radius:f32=0.5,subdivisions:=2) -> bool {
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD(ignore=temp_is(out.positions.allocator))
     scratch:=context.temp_allocator
     subdivisions:=clamp(subdivisions,0,7)
@@ -131,7 +142,7 @@ icosphere_build :: proc(out:^Mesh_Buffer,radius:f32=0.5,subdivisions:=2) {
     next:=make([dynamic][3]u32,0,80,scratch)
     for _ in 0..<subdivisions {
         // Three edges per face, each shared by two.
-        if key_map_reset(&midpoints,len(faces)*2)!=nil {return}
+        if key_map_reset(&midpoints,len(faces)*2)!=nil {return false}
         clear(&next)
         for f in faces {
             m:[3]u32
@@ -152,6 +163,7 @@ icosphere_build :: proc(out:^Mesh_Buffer,radius:f32=0.5,subdivisions:=2) {
         turn:=math.atan2(p.z,p.x)/(2*math.PI)
         return turn+1 if turn<0 else turn
     }
+    shape_room(out,3*len(faces),3*len(faces)) or_return
     for f in faces {
         corners:=[3]DVec3{points[f[0]],points[f[1]],points[f[2]]}
         turns:[3]f64
@@ -180,10 +192,12 @@ icosphere_build :: proc(out:^Mesh_Buffer,radius:f32=0.5,subdivisions:=2) {
         }
         append(&out.indices,base,base+1,base+2)
     }
+    return true
 }
 
-cylinder_build :: proc(out:^Mesh_Buffer,radius:f32=0.5,height:f32=1,segments:=SHAPE_SEGMENTS) {
+cylinder_build :: proc(out:^Mesh_Buffer,radius:f32=0.5,height:f32=1,segments:=SHAPE_SEGMENTS) -> bool {
     segments:=max(segments,3)
+    shape_room(out,4*(segments+1),12*segments) or_return
     base:=u32(len(out.positions))
     for i in 0..=segments {
         s,c:=turn_sincos(f64(i)/f64(segments))
@@ -199,12 +213,14 @@ cylinder_build :: proc(out:^Mesh_Buffer,radius:f32=0.5,height:f32=1,segments:=SH
     }
     disc(out,0.5,radius,height,segments)
     disc(out,-0.5,radius,height,segments)
+    return true
 }
 
 // The apex is at +Y. Each side triangle has its own apex vertex, with the
 // normal of the middle of the triangle.
-cone_build :: proc(out:^Mesh_Buffer,radius:f32=0.5,height:f32=1,segments:=SHAPE_SEGMENTS) {
+cone_build :: proc(out:^Mesh_Buffer,radius:f32=0.5,height:f32=1,segments:=SHAPE_SEGMENTS) -> bool {
     segments:=max(segments,3)
+    shape_room(out,4*segments+1,6*segments) or_return
     base:=u32(len(out.positions))
     for i in 0..<segments {
         s0,c0:=turn_sincos(f64(i)/f64(segments))
@@ -219,10 +235,12 @@ cone_build :: proc(out:^Mesh_Buffer,radius:f32=0.5,height:f32=1,segments:=SHAPE_
         triangle(out,a,a+1,a+2)
     }
     disc(out,-0.5,radius,height,segments)
+    return true
 }
 
 // Triangular prism: the triangle faces the Z axis, with an edge on top.
-prism_build :: proc(out:^Mesh_Buffer,size:Vec3={1,1,1}) {
+prism_build :: proc(out:^Mesh_Buffer,size:Vec3={1,1,1}) -> bool {
+    shape_room(out,18,24) or_return
     front:=[3]Vec3{{-0.5,-0.5,0.5},{0.5,-0.5,0.5},{0,0.5,0.5}}
     back:=[3]Vec3{{-0.5,-0.5,-0.5},{0.5,-0.5,-0.5},{0,0.5,-0.5}}
     face(out,front[:],size)
@@ -231,25 +249,29 @@ prism_build :: proc(out:^Mesh_Buffer,size:Vec3={1,1,1}) {
         j:=(i+1)%3
         face(out,{front[i],front[j],back[j],back[i]},size)
     }
+    return true
 }
 
 // Square pyramid with its apex at +Y.
-pyramid_build :: proc(out:^Mesh_Buffer,size:Vec3={1,1,1}) {
+pyramid_build :: proc(out:^Mesh_Buffer,size:Vec3={1,1,1}) -> bool {
+    shape_room(out,16,18) or_return
     apex:=Vec3{0,0.5,0}
     floor:=[4]Vec3{{-0.5,-0.5,-0.5},{0.5,-0.5,-0.5},{0.5,-0.5,0.5},{-0.5,-0.5,0.5}}
     face(out,floor[:],size)
     for i in 0..<4 {face(out,{floor[i],floor[(i+1)%4],apex},size)}
+    return true
 }
 
 // Cylinder along Y closed by two hemispheres; `height` includes them and is
 // at least the diameter. `rings` are the latitude bands of each hemisphere.
 // v follows the length of the profile from the north pole to the south pole.
-capsule_build :: proc(out:^Mesh_Buffer,radius:f32=0.25,height:f32=1,segments:=SHAPE_SEGMENTS,rings:=SHAPE_RINGS/2) {
+capsule_build :: proc(out:^Mesh_Buffer,radius:f32=0.25,height:f32=1,segments:=SHAPE_SEGMENTS,rings:=SHAPE_RINGS/2) -> bool {
     segments,rings:=max(segments,3),max(rings,1)
     straight:=max(height-2*radius,0)
     profile:=math.PI*f64(radius)+f64(straight)
     base:=u32(len(out.positions))
     rows:=2*rings+2
+    shape_room(out,rows*(segments+1),(rows-1)*segments*6) or_return
     for row in 0..<rows {
         south:=row>rings
         ring:=row-1 if south else row
@@ -271,12 +293,14 @@ capsule_build :: proc(out:^Mesh_Buffer,radius:f32=0.25,height:f32=1,segments:=SH
             triangle(out,a,b+1,a+1)
         }
     }
+    return true
 }
 
 // Rectangle on the XZ plane that faces +Y, split in columns along X and rows
 // along Z. It is the only shape that is not closed.
-plane_build :: proc(out:^Mesh_Buffer,size:Vec2={1,1},columns:=1,rows:=1) {
+plane_build :: proc(out:^Mesh_Buffer,size:Vec2={1,1},columns:=1,rows:=1) -> bool {
     columns,rows:=max(columns,1),max(rows,1)
+    shape_room(out,(rows+1)*(columns+1),rows*columns*6) or_return
     base:=u32(len(out.positions))
     for r in 0..=rows {
         for c in 0..=columns {
@@ -292,13 +316,15 @@ plane_build :: proc(out:^Mesh_Buffer,size:Vec2={1,1},columns:=1,rows:=1) {
             append(&out.indices,a,b,b+1,a,b+1,a+1)
         }
     }
+    return true
 }
 
 // Ring around the Y axis: `radius` from the axis to the middle of the tube
 // and `tube` the radius of the tube. u goes around the axis and v around the
 // tube, from its outer equator over the top.
-torus_build :: proc(out:^Mesh_Buffer,radius:f32=0.375,tube:f32=0.125,segments:=SHAPE_SEGMENTS,sides:=SHAPE_RINGS) {
+torus_build :: proc(out:^Mesh_Buffer,radius:f32=0.375,tube:f32=0.125,segments:=SHAPE_SEGMENTS,sides:=SHAPE_RINGS) -> bool {
     segments,sides:=max(segments,3),max(sides,3)
+    shape_room(out,(segments+1)*(sides+1),segments*sides*6) or_return
     base:=u32(len(out.positions))
     for i in 0..=segments {
         s,c:=turn_sincos(f64(i)/f64(segments))
@@ -317,4 +343,5 @@ torus_build :: proc(out:^Mesh_Buffer,radius:f32=0.375,tube:f32=0.125,segments:=S
             append(&out.indices,a,a+1,b+1,a,b+1,b)
         }
     }
+    return true
 }

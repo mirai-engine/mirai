@@ -75,7 +75,7 @@ mesh_decompose :: proc(mesh:Mesh,desc:Decompose_Desc={},allocator:=context.alloc
     // One vertex per point, so that islands and cuts see the surface whole.
     source:Mesh_Buffer
     mesh_buffer_init(&source,scratch)
-    mesh_weld({positions=mesh.positions,indices=mesh.indices},0,&source)
+    if !mesh_weld({positions=mesh.positions,indices=mesh.indices},0,&source) {return {},.Out_Of_Memory}
     tolerance:=max(desc.tolerance,tolerance_noise(positions_max_abs(source.positions[:])))
     whole_hull:=points_hull_volume(source.positions[:],{tolerance=tolerance})
     if !(whole_hull>0) {return {},.No_Volume}

@@ -121,7 +121,10 @@ name_problem :: proc(name,noun:string,candidates:[]string,allocator:=context.tem
     }
     if len(fits)>1 {
         strings.write_string(&b," fits several: ")
-        strings.write_string(&b,strings.join(fits[:],", ",allocator))
+        for fit,i in fits {
+            if i>0 {strings.write_string(&b,", ")}
+            strings.write_string(&b,fit)
+        }
         strings.write_string(&b,"; write one of them as it is")
         return strings.to_string(b)
     }

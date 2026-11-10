@@ -212,7 +212,11 @@ type_register :: proc(p:^Protocol,name:string,fragments:[]Fragment_Desc) -> (Typ
         type^={}
         return TYPE_NONE,false
     }
-    type.name=strings.clone(name,p.allocator)
+    if type.name,error=strings.clone(name,p.allocator);error!=nil {
+        delete(type.leaves,p.allocator)
+        type^={}
+        return TYPE_NONE,false
+    }
     type.name_hash=base.name_hash(name)
     p.type_count+=1
     return Type_Id(p.type_count-1),true
@@ -444,7 +448,8 @@ descriptor_build :: proc(p:^Protocol,name:string,fragments:[]Fragment_Desc,max_b
     type.words=words
     if words>MAX_STATE_WORDS {return}
     type_finish(p,&type,p.leaves[first:],max_bytes,parts) or_return
-    type.name=strings.clone(name,p.allocator)
+    no_name:runtime.Allocator_Error
+    if type.name,no_name=strings.clone(name,p.allocator);no_name!=nil {return}
     return type,true
 }
 

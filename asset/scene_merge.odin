@@ -85,7 +85,7 @@ parents_fix :: proc(m:^Merge,doc:^Document,before:map[base.Entity_Id]base.Entity
     for &parent,row in parents {
         if parent==0 || parent in rows {continue}
         parent=0
-        merge_conflict_add(m,.Removed,doc,table,row,true,true,".parent")
+        if !merge_conflict_add(m,.Removed,doc,table,row,true,true,".parent") {return .Out_Of_Memory}
     }
     for {
         mem.zero_slice(state)
@@ -113,7 +113,7 @@ parents_fix :: proc(m:^Merge,doc:^Document,before:map[base.Entity_Id]base.Entity
             if parents[row]!=original {
                 parents[row]=original
                 if original!=0 && !(original in rows) {parents[row]=0}
-                merge_conflict_add(m,.Value,doc,table,row,true,true,".parent")
+                if !merge_conflict_add(m,.Value,doc,table,row,true,true,".parent") {return .Out_Of_Memory}
                 opened=true
             }
             row=next
@@ -121,7 +121,7 @@ parents_fix :: proc(m:^Merge,doc:^Document,before:map[base.Entity_Id]base.Entity
         }
         if !opened {
             parents[looped]=0
-            merge_conflict_add(m,.Value,doc,table,looped,true,true,".parent")
+            if !merge_conflict_add(m,.Value,doc,table,looped,true,true,".parent") {return .Out_Of_Memory}
         }
     }
 }

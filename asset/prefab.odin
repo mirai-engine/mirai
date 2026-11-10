@@ -615,10 +615,11 @@ scene_child_revert :: proc(scene:^Scene,instance:u32,entity:base.Entity_Id) -> E
 // ------------------------------------------------------------------ resolution
 
 // Where instances find their prefabs: the open file of each, by id, which
-// outlives the resolution; nil when there is none.
+// outlives the resolution; nil when there is none, and Out_Of_Memory when
+// there is one and no memory to open it.
 Prefab_Files :: struct {
     data:rawptr,
-    open:proc(data:rawptr,id:base.Asset_Id) -> ^Asset,
+    open:proc(data:rawptr,id:base.Asset_Id) -> (^Asset,Error),
 }
 
 Resolve_State :: enum u8 {
@@ -641,6 +642,9 @@ Prefab_Resolver :: struct {
     types:^Types,
     files:Prefab_Files,
     prefabs:map[base.Asset_Id]Resolved_Prefab,
+    // Why a prefab that is there was not opened, from then on: its instances
+    // read as up to date, and resolver_prefab and scene_resolve answer it.
+    error:Error,
     allocator:runtime.Allocator,
 }
 
@@ -682,7 +686,13 @@ resolver_check :: proc(r:^Prefab_Resolver,id:base.Asset_Id) -> Resolved_Prefab {
     if known,found:=r.prefabs[id];found {return known}
     r.prefabs[id]={state=.Checking}
     checked:=Resolved_Prefab{state=.Missing}
-    if file:=r.files.open(r.files.data,id);file!=nil && file.blob.header.kind==KIND_PREFAB {
+    file,error:=r.files.open(r.files.data,id)
+    if error!=.None {
+        r.error=error
+        delete_key(&r.prefabs,id)
+        return checked
+    }
+    if file!=nil && file.blob.header.kind==KIND_PREFAB {
         checked.stamp=file.blob.header.content_hash
         checked.state=resolver_instances_stale(r,instances_of(file,r.types))?.Stale:.Current
     }
@@ -706,7 +716,8 @@ resolver_instances_stale :: proc(r:^Prefab_Resolver,instances:[]Instance) -> boo
     return false
 }
 
-// Whether an open document holds a stale instance.
+// Whether an open document holds a stale instance. Prefab_Resolver.error
+// tells when a prefab could not be asked.
 resolver_stale :: proc(r:^Prefab_Resolver,a:^Asset) -> bool {
     return resolver_instances_stale(r,instances_of(a,r.types))
 }
@@ -731,10 +742,13 @@ prefab_holds :: proc(files:Prefab_Files,types:^Types,id,target:base.Asset_Id,dep
 // it is missing.
 resolver_prefab :: proc(r:^Prefab_Resolver,id:base.Asset_Id) -> (prefab:^Scene,error:Error) {
     checked:=resolver_check(r,id)
+    if r.error!=.None {return nil,r.error}
     if checked.state!=.Current && checked.state!=.Stale {return nil,.None}
     if checked.scene!=nil {return checked.scene,.None}
-    file:=r.files.open(r.files.data,id)
+    file:=r.files.open(r.files.data,id) or_return
     if file==nil {return nil,.None}
+    kept:=&r.prefabs[id]
+    if kept==nil {return nil,.Out_Of_Memory}
     no_scene:runtime.Allocator_Error
     if prefab,no_scene=new(Scene,r.allocator);no_scene!=nil {return nil,.Out_Of_Memory}
     if error=scene_from_asset(prefab,r.types,file,r.allocator);error!=.None {
@@ -742,7 +756,7 @@ resolver_prefab :: proc(r:^Prefab_Resolver,id:base.Asset_Id) -> (prefab:^Scene,e
         return nil,error
     }
     // Kept before resolving it: a prefab that holds itself gets this one.
-    (&r.prefabs[id]).scene=prefab
+    kept.scene=prefab
     if checked.state==.Stale {scene_resolve(r,prefab) or_return}
     return prefab,.None
 }
@@ -762,6 +776,7 @@ scene_resolve :: proc(r:^Prefab_Resolver,scene:^Scene) -> (changed:bool,error:Er
     for instance in scene.instances {
         if resolver_instance_stale(r,instance) {append(&stale,instance.id)}
     }
+    if r.error!=.None {return false,r.error}
     for id in stale {
         at:=scene_instance_find(scene,id)
         if at<0 {continue}
@@ -797,22 +812,32 @@ registry_prefabs_destroy :: proc(files:^Registry_Prefabs) {
 }
 
 registry_prefab_files :: proc(files:^Registry_Prefabs) -> Prefab_Files {
-    open :: proc(data:rawptr,id:base.Asset_Id) -> ^Asset {
+    open :: proc(data:rawptr,id:base.Asset_Id) -> (^Asset,Error) {
         files:=(^Registry_Prefabs)(data)
-        if opened,known:=files.opened[id];known {return opened}
+        if opened,known:=files.opened[id];known {return opened,.None}
         a:^Asset
         if file,found:=registry_find(files.registry,id);found && file.kind==KIND_PREFAB {
-            // What the registry holds of it unsaved, else the disk.
             no_asset:runtime.Allocator_Error
-            a,no_asset=new(Asset,files.allocator)
-            data,read_error:=registry_read(files.registry,file.path,files.allocator)
-            if no_asset!=nil || read_error!=.None || asset_take(a,data,files.allocator)!=.None {
+            if a,no_asset=new(Asset,files.allocator);no_asset!=nil {return nil,.Out_Of_Memory}
+            // What the registry holds of it unsaved, else the disk.
+            data,error:=registry_read(files.registry,file.path,files.allocator)
+            if error==.None {error=asset_take(a,data,files.allocator)}
+            if error!=.None {
                 free(a,files.allocator)
+                // A file that cannot be read is no prefab; one there was no memory for is asked again.
+                if error==.Out_Of_Memory {return nil,.Out_Of_Memory}
                 a=nil
             }
         }
+        if reserve(&files.opened,len(files.opened)+1)!=nil {
+            if a!=nil {
+                asset_close(a)
+                free(a,files.allocator)
+            }
+            return nil,.Out_Of_Memory
+        }
         files.opened[id]=a
-        return a
+        return a,.None
     }
     return {files,open}
 }

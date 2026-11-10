@@ -5,7 +5,7 @@ import "core:mem"
 import "core:testing"
 
 @(private="file")
-Memory_Call :: enum {Slice,Slice_Whole,Fracture,Hull,Hull_Flat,Decompose,Tangents,Triangulate,Cluster_Dag,Cluster_Levels,Surface_Edit,Surface_Refine}
+Memory_Call :: enum {Slice,Slice_Whole,Fracture,Hull,Hull_Flat,Decompose,Tangents,Triangulate,Cluster_Dag,Cluster_Levels,Surface_Edit,Surface_Refine,Primitives,Weld,Hull_Mesh}
 
 // The most requests a call of the test makes of its allocator.
 @(private="file")
@@ -14,6 +14,7 @@ MEMORY_REQUESTS :: 1024
 @(private="file")
 Memory_Source :: struct {
     cube,bracket,ball:Mesh_Buffer,
+    hull:Hull,
     sites:[5]Vec3,
     flat:[6]Vec3,
     outline:[8]Vec2, // a square and a hole in it
@@ -27,6 +28,7 @@ memory_source_init :: proc(s:^Memory_Source) {
     defer mesh_buffer_destroy(&raw)
     icosphere_build(&raw,1,3)
     mesh_weld(mesh_buffer_view(&raw),0,&s.ball)
+    s.hull,_=hull_build(s.ball.positions[:],{})
     s.sites={{-0.5,-0.4,-0.3},{0.6,-0.2,0.1},{0.1,0.7,-0.5},{-0.3,0.2,0.6},{0.4,0.5,0.5}}
     s.flat={{0,0,0},{2,0,0},{2,0,1},{1,0,2},{0,0,1},{1,0,0.5}}
     s.outline={{0,0},{4,0},{4,4},{0,4},{1,1},{1,3},{3,3},{3,1}}
@@ -35,6 +37,7 @@ memory_source_init :: proc(s:^Memory_Source) {
 @(private="file")
 memory_source_destroy :: proc(s:^Memory_Source) {
     mesh_buffer_destroy(&s.cube);mesh_buffer_destroy(&s.bracket);mesh_buffer_destroy(&s.ball)
+    hull_destroy(&s.hull)
 }
 
 // What the calls write and the workspaces they keep, all in one allocator.
@@ -117,6 +120,30 @@ memory_call :: proc(t:^testing.T,r:^Memory_Rig,s:^Memory_Source,call:Memory_Call
     case .Surface_Refine:
         _,error:=mesh_surface_refine(&r.work,cube,{radius=2,max_edge_length=0.5,max_triangles=100},&r.buffers[0])
         refused,other=error==.Out_Of_Memory,error!=.None && error!=.Out_Of_Memory
+    case .Primitives:
+        out:=&r.buffers[0]
+        mesh_buffer_clear(out)
+        Shape :: proc(out:^Mesh_Buffer) -> bool
+        shapes:=[]Shape{
+            proc(out:^Mesh_Buffer) -> bool {return cube_build(out)},proc(out:^Mesh_Buffer) -> bool {return sphere_build(out)},
+            proc(out:^Mesh_Buffer) -> bool {return icosphere_build(out)},proc(out:^Mesh_Buffer) -> bool {return cylinder_build(out)},
+            proc(out:^Mesh_Buffer) -> bool {return cone_build(out)},proc(out:^Mesh_Buffer) -> bool {return prism_build(out)},
+            proc(out:^Mesh_Buffer) -> bool {return pyramid_build(out)},proc(out:^Mesh_Buffer) -> bool {return capsule_build(out)},
+            proc(out:^Mesh_Buffer) -> bool {return plane_build(out,{1,1},3,3)},proc(out:^Mesh_Buffer) -> bool {return torus_build(out)},
+        }
+        for shape,i in shapes {
+            held:=[4]int{len(out.positions),len(out.normals),len(out.uvs),len(out.indices)}
+            if shape(out) {continue}
+            refused=true
+            testing.expectf(t,held==[4]int{len(out.positions),len(out.normals),len(out.uvs),len(out.indices)},"the shape %d that was refused appended a part of itself",i,loc=loc)
+            mesh_buffer_clear(out)
+            break
+        }
+    case .Weld:
+        refused=!mesh_weld(cube,0,&r.buffers[0])
+    case .Hull_Mesh:
+        mesh_buffer_clear(&r.buffers[0])
+        refused=!hull_append_mesh(s.hull,&r.buffers[0])
     }
     testing.expectf(t,!other,"%v: an error that is not of memory",call,loc=loc)
     return
@@ -127,8 +154,7 @@ buffer_empty :: proc(b:^Mesh_Buffer) -> bool {
     return len(b.positions)+len(b.normals)+len(b.uvs)+len(b.colors)+len(b.indices)+len(b.materials)==0
 }
 
-// A call that was refused left nothing of what it writes. The DAG keeps what
-// it had built: its owner destroys it.
+// A call that was refused left nothing of what it writes.
 @(private="file")
 memory_rig_empty :: proc(r:^Memory_Rig,call:Memory_Call) -> bool {
     switch call {
@@ -138,8 +164,9 @@ memory_rig_empty :: proc(r:^Memory_Rig,call:Memory_Call) -> bool {
     case .Decompose:                    return r.parts.hulls==nil
     case .Tangents:                     return buffer_empty(&r.buffers[0]) && len(r.tangents)==0
     case .Triangulate:                  return len(r.triangles)==0
-    case .Cluster_Dag,.Cluster_Levels:  return true
+    case .Cluster_Dag,.Cluster_Levels:  return len(r.dag.clusters)+len(r.dag.vertices)+len(r.dag.triangles)+r.dag.groups+r.dag.levels==0
     case .Surface_Edit,.Surface_Refine: return buffer_empty(&r.buffers[0])
+    case .Primitives,.Weld,.Hull_Mesh:  return buffer_empty(&r.buffers[0])
     }
     return false
 }
@@ -167,7 +194,7 @@ memory_rig_equal :: proc(a,b:^Memory_Rig,call:Memory_Call) -> bool {
     case .Cluster_Dag,.Cluster_Levels:
         return bytes_equal(a.dag.clusters[:],b.dag.clusters[:]) && bytes_equal(a.dag.vertices[:],b.dag.vertices[:]) && bytes_equal(a.dag.triangles[:],b.dag.triangles[:]) &&
             a.dag.groups==b.dag.groups && a.dag.levels==b.dag.levels
-    case .Surface_Edit,.Surface_Refine:
+    case .Surface_Edit,.Surface_Refine,.Primitives,.Weld,.Hull_Mesh:
         return buffers_equal(&a.buffers[0],&b.buffers[0])
     }
     return false

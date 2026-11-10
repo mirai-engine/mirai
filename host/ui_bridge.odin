@@ -68,7 +68,7 @@ app_ui_font_ready :: proc(app:^App) -> bool {
 ui_clipboard_get :: proc(user:rawptr,buffer:[]u8) -> int {
     app:=(^App)(user)
     if app==nil || app.platform==nil {return 0}
-    text,ok:=platform.clipboard_get(app.platform,context.temp_allocator)
+    text,ok:=platform.clipboard_get(app.platform)
     if !ok {return 0}
     return copy(buffer,text)
 }

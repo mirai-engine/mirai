@@ -327,7 +327,7 @@ client_commands :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,commands:[
             s.joined+=1
             append(&s.arrived,Connection_Event{kind=.Connected,connection=command.connection})
         case .Disconnected:
-            client_end(s,w,app,command.connection,command.reason,reason_text(command.reason,s.address,s.protocol.hash,app.allocator))
+            client_end(s,w,app,command.connection,command.reason,reason_text(command.reason,s.address,s.protocol.hash))
         case .Object_Created:
             replica_create(s,w,app,&command)
         case .Object_Updated:

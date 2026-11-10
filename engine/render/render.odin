@@ -623,13 +623,13 @@ render_sync :: proc(
             for i in 0..<instance.overlays.count {host.assets_material_retain(a,u32(instance.overlays.entries[i].material))}
             append(&sync.instances,instance);append(&sync.highlights,instance.highlight)
         }
-        lights_build(sync,a,worlds,lights,emissions,meshes,hidden,parents,extras,view.position.y)
+        lit:=lights_build(sync,a,worlds,lights,emissions,meshes,hidden,parents,extras,view.position.y)
         sync.lights_seen=lights_seen
         host.assets_appearance_end(a)
         host.assets_commit(a)
         sync.assets_structure,sync.assets_appearance=a.structure,a.appearance
         composed,fits:=instances_composed(sync,extras)
-        if !fits || !gpu.scene_set(r,composed,sync.lights[:],sync.sun,environment) {
+        if !lit || !fits || !gpu.scene_set(r,composed,sync.lights[:],sync.sun,environment) {
             gpu.scene_set(r,nil,nil,{},environment)
             sync.synced=false
             return
@@ -715,7 +715,11 @@ render_sync :: proc(
             // Without memory to keep the lights of before, they are set as if they had changed.
             compared:=resize(&sync.previous_lights,len(sync.lights))==nil
             if compared {copy(sync.previous_lights[:],sync.lights[:])}
-            lights_build(sync,a,worlds,lights,emissions,meshes,hidden,parents,extras,view.position.y)
+            // Without memory for the lights a later frame makes the scene again.
+            if !lights_build(sync,a,worlds,lights,emissions,meshes,hidden,parents,extras,view.position.y) {
+                sync.synced=false
+                return
+            }
             if !compared || sync.sun!=previous_sun || !slice.equal(sync.lights[:],sync.previous_lights[:]) {
                 // Without memory in the renderer for the lights a later frame makes the scene again.
                 if !gpu.scene_set_lights(r,sync.lights[:],sync.sun,environment) {
@@ -1244,8 +1248,9 @@ sun_on :: proc(worlds:core.Read(core.World_Transform),lights:Lights,hidden:core.
     return
 }
 
+// The lights of the frame and its sun. False, with no light, without memory for them.
 @(private)
-lights_build :: proc(sync:^Render_Sync,a:^host.Assets,worlds:core.Read(core.World_Transform),lights:Lights,emissions:core.Read(Light_Emission),meshes:core.Read(Mesh_Renderer),hidden:core.Read(Hidden),parents:core.Read(core.Parent),extras:[]gpu.Instance_Desc,height:f32) {
+lights_build :: proc(sync:^Render_Sync,a:^host.Assets,worlds:core.Read(core.World_Transform),lights:Lights,emissions:core.Read(Light_Emission),meshes:core.Read(Mesh_Renderer),hidden:core.Read(Hidden),parents:core.Read(core.Parent),extras:[]gpu.Instance_Desc,height:f32) -> bool {
     clear(&sync.lights)
     sync.sun={}
     sync.sun_fade={}
@@ -1258,6 +1263,8 @@ lights_build :: proc(sync:^Render_Sync,a:^host.Assets,worlds:core.Read(core.Worl
         sync.sun={direction=direction,color=sun.color,illuminance=sun.illuminance,enabled=true,disc=sun.disc}
         sync.sun_fade=sun.height_fade
     }
+    // Room for every light there may be: none is left out for lack of it.
+    if reserve(&sync.lights,core.count(lights.points)+core.count(lights.spots)+core.count(lights.rects))!=nil {return false}
     for row in 0..<core.count(lights.points) {
         e:=core.entity_at(lights.points,row)
         world,placed:=core.get(worlds,e)
@@ -1282,6 +1289,7 @@ lights_build :: proc(sync:^Render_Sync,a:^host.Assets,worlds:core.Read(core.Worl
         if emission,shows:=core.get(emissions,e);shows {desc.material=emission_material(sync,a,meshes,extras,e,u32(emission.slot))}
         append(&sync.lights,desc)
     }
+    return true
 }
 
 // A point or a spot in the world: a sphere the scale of its entity draws

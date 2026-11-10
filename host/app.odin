@@ -252,9 +252,17 @@ app_create :: proc(desc:App_Desc) -> (app:^App,error:App_Error) {
     }
     app.density=1
     app.pixel_density=1
-    app.root,app.engine_root=strings.clone(desc.root,allocator),strings.clone(desc.engine_root,allocator)
-    app.options=strings.clone(desc.options,allocator)
-    app.animation_cache=strings.clone(desc.animation_cache,allocator)
+    texts:[4]runtime.Allocator_Error
+    app.root,texts[0]=strings.clone(desc.root,allocator)
+    app.engine_root,texts[1]=strings.clone(desc.engine_root,allocator)
+    app.options,texts[2]=strings.clone(desc.options,allocator)
+    app.animation_cache,texts[3]=strings.clone(desc.animation_cache,allocator)
+    for text in texts {
+        if text!=nil {
+            app_destroy(app)
+            return nil,.Out_Of_Memory
+        }
+    }
     app.paced=desc.window && desc.fixed_dt<=0
     app.game_window=desc.window && desc.game_window
     app.window=desc.window_desc
