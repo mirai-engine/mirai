@@ -8,12 +8,11 @@ import "mirai:cook/build"
 import "mirai:project"
 import "mirai:std/base"
 
-// A run of the tests that build.test asks for holds neither the call nor a
-// frame: it returns while its job opens the project, plans and compiles, in a
-// thread of its own, one at a time, against the libraries this editor builds
+// A run of the tests, as every build action, holds no frame: it starts while
+// its job opens the project, plans and compiles in the one build thread, one at a time, against the libraries this editor builds
 // and loads whatever the manifest optimizes for.
 @(test)
-a_run_of_the_tests_starts_without_waiting_against_the_libraries_of_the_editor :: proc(t:^testing.T) {
+a_run_of_the_tests_runs_off_the_frame_against_the_libraries_of_the_editor :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
     folder:=base.test_folder(t,"probe")
     if folder=="" {return}
@@ -31,15 +30,15 @@ a_run_of_the_tests_starts_without_waiting_against_the_libraries_of_the_editor ::
     }
     b:Build_State
     s:=Session{build=&b,has_project=true,project_root=project.path_absolute(root),engine_root=project.path_absolute(engine)}
-    defer probe_free(&b)
+    defer build_run_free(&b)
     game:=project.path_absolute(project.path(root,"game"))
-    testing.expect_value(t,code_probe_start(&s,.Test,game,nil,60),"")
-    testing.expect(t,probe_running(&b),"it returns while the job runs")
-    testing.expect(t,code_probe_start(&s,.Test,game,nil,60)!="","one at a time")
+    testing.expect_value(t,build_run_start(&s,.Test,.Editor,"",game,nil,60),"")
+    testing.expect(t,build_busy(&b),"it returns while the job runs")
+    testing.expect(t,build_run_start(&s,.Test,.Editor,"",game,nil,60)!="","one at a time")
     started:=time.tick_now()
-    for probe_running(&b) && time.tick_since(started)<2*time.Minute {time.sleep(10*time.Millisecond)}
-    probe_poll(&s)
-    job:=probe_job(&b)
+    for build_busy(&b) && time.tick_since(started)<2*time.Minute {time.sleep(10*time.Millisecond)}
+    build_run_join(&b)
+    job:=build_run_job(&b)
     if !testing.expect(t,job!=nil,"the job ended and its thread joined") {return}
     mode:="minimal" if build.ENGINE_MODE_HERE==.Dev else "speed"
     plugins:=""

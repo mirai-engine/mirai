@@ -140,8 +140,8 @@ The field of each type is its `snake_case` name, with the package in front if tw
 ```odin
 @(step="fixed", stage="react")
 door_move :: proc(
-    doors:core.Read(Door), states:^core.Table(Door_State),
-    transforms:^core.Table(core.Transform), requests:^Door_Requests, time:core.Time,
+    doors:^core.Table(Door), transforms:^core.Table(core.Transform),
+    requests:^Door_Requests, time:core.Time,
 ) {...}
 ```
 

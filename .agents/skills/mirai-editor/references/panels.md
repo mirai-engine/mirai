@@ -925,9 +925,9 @@ plugins and the game, with the Details rows.
   the new world.
 - Input (`input_settings.odin`, only in the Project layer): a card per action declared by the code
   of the game or an active plugin, with its type, its bindings and the arrow that returns it to the
-  code's default, and one for the tap and hold ticks. What the window edits and writes is
-  [`input.mirai`](../../mirai-gameplay/references/control.md#actions); the key images are another
-  thing, of UI (`UI_Settings.prompt_images`).
+  code's default, and one for the tap and hold seconds. What the window edits is the setting
+  [`Input_Settings`](../../mirai-gameplay/references/control.md#actions), which the generic
+  categories leave out; the key images are another thing, of UI (`UI_Settings.prompt_images`).
   - The card is that of the other categories, with a rule between rows. A binding shows its device
     in the label column and each input with the prompt the game would draw (the image from
     `prompt_images` or from the pack of `UI_Settings.prompts`, or the drawing), and its label
@@ -942,9 +942,10 @@ plugins and the game, with the Details rows.
     two or four consecutive keys; a key of a key binding is changed alone. What does not serve the
     type is ignored; Escape cancels and a click while listening binds the mouse button without
     doing anything else.
-  - A change takes effect when its gesture ends; a file that cannot be read is shown and blocks
-    editing.
-- API: `settings.get` and `settings.set`; input, `input.get` and `input.set`; the manifest and the
+  - A change takes effect at once in the edited world and the Plays, and the project's file takes
+    it when its gesture ends; an action back to the code's default leaves the setting.
+- API: `settings.get` and `settings.set` (the bindings too, in `Input_Settings`); `input.get` lists
+  every action with what drives it; the manifest and the
   plugins, `project.get` and `project.set`
   ([catalog](../../mirai-agent-api/references/methods.md#project)).
 

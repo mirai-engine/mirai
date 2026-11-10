@@ -374,7 +374,7 @@ load_named :: proc(job:^Load_Job) {
     job.items=job.items[:count]
     host.content_animations_start(app,job.names[:],&job.animations)
     // A section loads ahead, far away: its textures come with their smallest
-    // levels, and their distance asks for the others once it shows them.
+    // levels, and the frames that sample them ask for the others.
     job.limits=host.assets_limits(a,tail=job.salt!=0)
     job.phase=.Warming
     job.budget=host.assets_load_open(a)

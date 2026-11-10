@@ -93,7 +93,7 @@ Project :: struct {
 }
 
 // What builds the library the types of a game come from.
-BUILD_FIX :: "mirai build editor <project> --dev builds it"
+BUILD_FIX :: "mirai build editor <project> builds it"
 
 
 // Opens the project at root with the assets of its plugins. library false

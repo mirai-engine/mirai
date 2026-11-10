@@ -12,6 +12,8 @@
 #ifndef MIRAI_GLASS_LAYERS
 #define MIRAI_MATERIAL_NO_LAYERS true
 #endif
+// It reports the levels it samples of each texture (texture_feedback in scene.slang).
+#define MIRAI_TEXTURE_FEEDBACK
 #include "raster.slang"
 #include "gbuffer.slang"
 #include "depth.slang"

@@ -125,7 +125,7 @@ the assets.
   in the usual order. Importing with or without the job system gives the same files.
 - **Without an optimizer, close and with the same bytes.** The hot loops (BLAKE3 of the payloads,
   the quadrics of simplification) do four values per instruction with `#simd[4]` and add in the
-  order of the scalar loop: the tool and the `--dev` engine (`-o:minimal`) write the same as
+  order of the scalar loop: the tool and the dev engine (`-o:minimal`) write the same as
   `--release`.
 - **Importing is a transaction.** `import_model` leaves nothing if it fails (own arena, freed by
   `model_destroy`); `import_write` removes the files it created if it fails midway. Errors name
@@ -210,7 +210,7 @@ the assets.
   of a scan), `cook/import/sources/settings_test.odin` (a sidecar that is not one is refused) and
   `cook/import/sources/write_test.odin` (importing again keeps what was changed in a material and
   takes the rest from the source). After changing what an import writes, prove it on the demo:
-  delete `demo/.mirai/imported`, `mirai build editor demo --dev`, and `git status` shows no sidecar
+  delete `demo/.mirai/imported`, `mirai build editor demo`, and `git status` shows no sidecar
   or document changed.
 - `cook/import/sources/cli_test.odin` needs `MIRAI_ROOT` (defined by `mirai test`); run it when
   touching `cook/import/sources/command.odin`. It imports in-process with `command`; the whole

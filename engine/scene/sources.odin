@@ -13,8 +13,7 @@ import mm "mirai:std/math"
 // each also where its motion takes it in SOURCE_PREFETCH seconds (the view,
 // where it went since the frame before, unless it jumped: View.cut). What
 // comes within reach of a source is resident, and goes once every source is
-// RESIDENT_KEEP times its reach away; past a budget, the nearest stay. The
-// levels of textures follow them too (render.texture_sources).
+// RESIDENT_KEEP times its reach away; past a budget, the nearest stay.
 
 SOURCES_MAX :: 64
 SOURCE_PREFETCH :: 1 // s

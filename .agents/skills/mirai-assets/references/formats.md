@@ -36,7 +36,7 @@ terrain sends over the network, editor thumbnails, the shaders the executables e
 - **Packs.** A write says how hard it compresses (`Pack`): `PACK_EDIT` for what the editor,
   imports and the game save. A cook hands the packs of `cook/compressor/lz`: `SHIP` for the
   cooking of a shipped game, which writes every asset again with `document_repack` (its chunks
-  and the pages of a mesh), and `QUICK` for the cook of a `--dev` game, a few times faster and a
+  and the pages of a mesh), and `QUICK` for the cook of a dev game, a few times faster and a
   little larger. All decode the same way.
 - **Pieces.** A chunk over `PACK_PIECE` is a run of LZ streams of that many raw bytes, each
   decoding without the others (the library's `seekChunkReset`): a scene load decodes them at once
