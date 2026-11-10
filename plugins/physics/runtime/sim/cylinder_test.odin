@@ -274,13 +274,13 @@ a_snapshot_of_rolling_cylinders_replays_the_same_steps :: proc(t:^testing.T) {
     }
     test_shape_body(&w,Box{{0.3,0.3,0.3}},{0,3,0},convex_radius=0.05)
     test_steps(&w,30)
-    buffer:=make([]byte,world_snapshot_capacity(&w))
-    defer delete(buffer)
-    size,saved:=world_snapshot(&w,buffer)
+    buffer:World
+    defer world_destroy(&buffer)
+    saved:=test_keep(&buffer,&w)
     testing.expect(t,saved)
     test_steps(&w,60)
     after:=world_hash(&w)
-    testing.expect(t,world_restore(&w,buffer[:size]))
+    testing.expect(t,test_restore(&w,&buffer))
     test_steps(&w,60)
     testing.expect_value(t,world_hash(&w),after)
 }

@@ -362,28 +362,26 @@ geometry.
 
 ## Snapshot and determinism
 
-- `world_snapshot_size`, `world_snapshot_capacity`, `world_snapshot(&w,buffer)` and
-  `world_restore(&w,buffer)` copy in blocks bodies, shapes, contacts, joints, joint axes, islands,
-  manifold blocks, characters, fluids, breakables, pieces, bonds and the two trees.
-- The block table is `snapshot_blocks`: a new state array is added there, with its counter in
-  `World_State`, which also stores gravity and the push rules. `world_hash` hashes that same state.
-- Restoring and simulating again repeats the original trajectory bit for bit in the same binary. A
-  snapshot can be restored in another world of the same capacities.
-- `world_state_copy(&dst, &src)` leaves in `dst` what `world_restore` would leave from a snapshot of
-  `src`, without the intermediate bytes or their hashes: the same blocks, trees and validations
-  (other capacities, geometry that `dst` does not have alive or pieces with another hull) and the
-  same count at the end. `dst` must already have the geometry that `src` names.
-- The header carries an XXH3 hash of itself and of all the content.
-- `world_restore` validates everything before writing and returns `false` with the world intact on:
-  - a short buffer or one with any byte changed;
-  - another version, other capacities or other element sizes;
-  - trees that do not fit;
-  - shapes that name hulls, meshes or heightfields that this world does not have alive;
-  - shapes that name a hull rebuilt later (`hull_rebuild` and `hull_set_mass` change the revision of
-    the slot, which the snapshot stores; `world_state_copy` compares it between the two worlds).
-- Outside the snapshot: the shared geometries (they must stay alive while a snapshot that uses them
-  exists), the events, the geometry of the manifolds, which is recomputed in the next step, and the
-  [static change log](#static-collision), which a restore leaves behind for all its readers.
+- The state is the arrays of `state_arrays` (bodies, shapes, contacts, joints and their axes,
+  islands, manifold blocks, characters, fluids, breakables, pieces, bonds), the two trees and
+  `World_State`, which also stores gravity, the push rules, twins and cuts. A new state array is
+  added to `state_arrays`, with its counter in `World_State`. `world_hash` hashes that state.
+- `world_state_copy(&dst,&src)` makes `dst` what `src` is; stepping both repeats the same steps bit
+  for bit. A snapshot is a world kept with `world_kept_init` (pools sized to what `src` uses, never
+  stepped) that takes a copy and gives it back. It returns the bytes written.
+- Each pool keeps a stamp per chunk of 64 slots: whoever writes a slot stamps its chunk (`stamp`,
+  the `*_get` accessors; `*_read` only reads). Two worlds of one timeline, a kept world and the one
+  it mirrors, copy only the chunks whose stamps differ; any other pair copies everything. A step
+  where nothing moved writes nothing, so its copy writes nothing.
+- A world put back keeps the hulls its piece slots own (newer geometry that a repeated cut rebuilds
+  under the same handle); slots used after its copy go back to zero, so generations repeat.
+- `dst` fails unchanged on other capacities, trees that do not fit, a world never made and, unless
+  it is a kept world, shapes that name hulls, meshes or heightfields it does not have alive or a
+  hull rebuilt since the copy (`hull_rebuild` and `hull_set_mass` change the revision of the slot,
+  which a kept world records).
+- Outside the state: the shared geometry, the events, the geometry of the manifolds, recomputed in
+  the next step, and the [static change log](#static-collision), which a copy that wrote anything
+  restarts for all its readers.
 - The result does not change with the number of workers.
 
 ## Queries
@@ -443,10 +441,10 @@ What whoever builds from the level needs, like the navmesh, without allocating.
   cursor `since`, from oldest to newest, and gives the cursor of the next read. Each reader keeps
   its own, zero at the start; a read that fills `out` leaves the rest for the next one.
   - `overflow`, without writing anything and with `next` at the newest: the reader fell behind more
-    than the ring, its cursor is not from this log, or since then a snapshot was restored or a state
-    was copied (`world_restore`, `world_state_copy`). The reader takes everything as changed.
-  - It is scratch: it is not in the snapshot or in `world_hash` and the simulation does not read it,
-    so it changes no result.
+    than the ring, its cursor is not from this log, or since then a state copy wrote into the world
+    (`world_state_copy`). The reader takes everything as changed.
+  - It is scratch: it is not in the state copy or in `world_hash` and the simulation does not read
+    it, so it changes no result.
 
 ## Events and diagnostics
 
@@ -471,7 +469,8 @@ not fit, uncolored constraints, shared consequences) runs on the calling thread,
 - Boxes are `math.Aabb` of `std/math`; `std/spatial` adds area, center, rays and sweeps.
 - `Dynamic_Tree`: AABB tree with insertion by area cost and rotations, and iterators without
   allocation. A proxy that is not a live leaf of the tree is ignored: reads give zero and changes do
-  nothing. `dynamic_tree_snapshot` and `dynamic_tree_restore` copy `nodes[:node_high]`.
+  nothing. Its nodes carry stamps by chunk (`std/base` `chunk_stamp`), and `dynamic_tree_copy`
+  takes the chunks whose stamps differ.
 - `Bvh`: static SAH BVH with bins and flat nodes; its queries deliver one leaf per call.
 
 ## Debug draw

@@ -186,8 +186,8 @@ Overlaps:
 
 - `overlap_begin` and `overlap_end`, one per side; not one per tick of permanence. Static–static
   pairs are omitted; a static zone detects a player even if still.
-- They are evaluated when at least one body is awake. A `Character` never sleeps; a zone that
-  appears over a sleeping dynamic may not emit an entry until it wakes. Gameplay keeps its occupants
+- They are evaluated when at least one body is awake. A zone that appears over a sleeping dynamic
+  body or an idle `Character` may not emit an entry until it wakes. Gameplay keeps its occupants
   if it needs to know who is still inside.
 - A `bullet` that crosses a trigger in one tick emits both events in that tick, with `crossed`:
   whoever counts occupants processes the `overlap_begin` before the `overlap_end`. A body that is

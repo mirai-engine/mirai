@@ -588,10 +588,7 @@ state_copy_kept :: proc(dst,src:^Physics_State) -> bool {return state_copy_as(ds
 state_copy_as :: proc(dst,src:^Physics_State,kept:bool) -> bool {
     if dst==src {return true}
     if !core.entity_map_copy(&dst.links,&src.links) || !core.entity_map_copy(&dst.joints,&src.joints) || !core.entity_map_copy(&dst.fluids,&src.fluids) {return false}
-    if !core.value_copy(&dst.sources,&src.sources,type_info_of([dynamic]Geometry_Source)) {return false}
-    if !core.value_copy(&dst.pieces,&src.pieces,type_info_of([dynamic]Piece)) {return false}
-    if !core.value_copy(&dst.proxies,&src.proxies,type_info_of([dynamic]core.Entity)) {return false}
-    if !core.value_copy(&dst.owned,&src.owned,type_info_of([dynamic]Owned)) {return false}
+    if !array_copy(&dst.sources,src.sources[:]) || !array_copy(&dst.pieces,src.pieces[:]) || !array_copy(&dst.proxies,src.proxies[:]) || !array_copy(&dst.owned,src.owned[:]) {return false}
     dst.touched_all=true
     dst.world_body,dst.pass,dst.stats,dst.collision,dst.targets_seen=src.world_body,src.pass,src.stats,src.collision,src.targets_seen
     dst.forwarded={}
@@ -624,7 +621,7 @@ state_copy_as :: proc(dst,src:^Physics_State,kept:bool) -> bool {
     dst.pushes_set=src.pushes_set
     dst.own_gravity=src.own_gravity
     dst.gravity.index.made=false
-    if !sim.world_state_copy(&dst.world,&src.world) {return false}
+    if _,copied:=sim.world_state_copy(&dst.world,&src.world);!copied {return false}
     dst.synced,dst.fluids_synced=src.synced,src.fluids_synced
     dst.sealed_key,dst.transforms_seen,dst.unmade=0,{},src.unmade
     dst.epoch=max(dst.epoch,src.epoch)+1;if dst.epoch==0 {dst.epoch=1}
@@ -636,6 +633,11 @@ state_swap :: proc(a,b:^Physics_State) {
     epoch:=max(a.epoch,b.epoch)+1;if epoch==0 {epoch=1}
     a^,b^=b^,a^
     a.epoch,b.epoch=epoch,epoch
+    // A world put back from its history through a staged copy goes on with the timeline of the history.
+    if a.ready && b.ready {
+        sim.world_succeed(&a.world,&b.world)
+        sim.world_succeed(&b.world,&a.world)
+    }
 }
 
 // Frees the simulation of a world.
@@ -666,7 +668,8 @@ state_reset :: proc(state:^Physics_State) {
 
 // Shared geometry of src, slot by slot, in dst. The state copy does not hold
 // it. A slot is copied when what it holds differs: by its generation and the
-// hash of its geometry, each taken once per generation in its own world.
+// hash of its geometry, each taken once per generation in its own world. The
+// shapes that use a slot are counted by the state copy that follows.
 @(private)
 geometry_copy :: proc(dst_state,src_state:^Physics_State) -> bool {
     dst,src:=&dst_state.world,&src_state.world
@@ -680,7 +683,7 @@ geometry_copy :: proc(dst_state,src_state:^Physics_State) -> bool {
         next:sim.Hull
         if live {ok:bool;next,ok=hull_clone(s.hull,a);if !ok {return false}}
         if d.generation&1!=0 {sim.hull_free(&d.hull,a)}
-        d.generation,d.refs,d.revision=s.generation,0,s.revision
+        d.generation,d.revision=s.generation,s.revision
         d.hull=next
         dst_state.geometry[i]=src_state.geometry[i]
     }
@@ -691,7 +694,7 @@ geometry_copy :: proc(dst_state,src_state:^Physics_State) -> bool {
         next:sim.Mesh
         if live {ok:bool;next,ok=mesh_clone(s.mesh,a);if !ok {return false}}
         if d.generation&1!=0 {sim.mesh_release(&d.mesh,a)}
-        d.generation,d.refs=s.generation,0
+        d.generation=s.generation
         d.mesh=next
         dst_state.geometry[len(dst.hulls)+i]=src_state.geometry[hulls+i]
     }
@@ -711,7 +714,7 @@ geometry_copy :: proc(dst_state,src_state:^Physics_State) -> bool {
         delete(d.field.disabled_borders,a)
         delete(d.field.holes,a)
         d.field=next
-        d.generation,d.refs=s.generation,0
+        d.generation=s.generation
         dst_state.geometry[len(dst.hulls)+len(dst.meshes)+i]=src_state.geometry[hulls+meshes+i]
     }
     return true
@@ -753,6 +756,14 @@ geometry_marks :: proc(state:^Physics_State) -> bool {
 @(private)
 geometry_hash :: proc(values:[]$T,seed:u64) -> u64 {
     return len(values)==0?seed:xxhash.XXH3_64_with_seed(mem.slice_to_bytes(values),seed)
+}
+
+// dst as long as src with its values, reusing its memory.
+@(private)
+array_copy :: proc(dst:^[dynamic]$T,src:[]T) -> bool {
+    if non_zero_resize(dst,len(src))!=nil {return false}
+    copy(dst[:],src)
+    return true
 }
 
 @(private)
