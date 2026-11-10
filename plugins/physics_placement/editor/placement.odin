@@ -7,7 +7,6 @@ import destruct "plugins:destruct/runtime"
 import phys "plugins:physics/runtime"
 import erender "mirai:engine/render"
 import "mirai:host"
-import gpu "mirai:render"
 import "mirai:std/geom"
 import mm "mirai:std/math"
 import "mirai:ui"
@@ -46,7 +45,7 @@ Physics_Placement :: struct {
     measured_revision:u64,
     bounds:mm.Aabb,
     measured:bool,
-    lines:[50]gpu.Debug_Vertex,
+    lines:[50]erender.Debug_Vertex,
 }
 
 physics_placement_free :: proc(tool:^Physics_Placement) {
@@ -284,7 +283,7 @@ physics_placement_frame :: proc(s:^editor.Session,tool:^Physics_Placement,world:
 @(private)
 placement_hover :: proc(s:^editor.Session,tool:^Physics_Placement,desc:Placement_Desc) {
     bounds:=tool.bounds
-    lines:=gpu.debug_lines_make(tool.lines[:],false)
+    lines:=erender.debug_lines_make(tool.lines[:],false)
     color:=[4]f32{1,0.71,0.28,1}
     {
         pose:=placement_pose(desc,bounds)
@@ -293,12 +292,12 @@ placement_hover :: proc(s:^editor.Session,tool:^Physics_Placement,desc:Placement
             instance.copy_owner,instance.copy_variant=0x70687973706c6163,1
             host.extras_instance_add(&s.app.extras,instance)
         }
-        gpu.debug_box_transformed(&lines,transform,bounds.min,bounds.max,color)
+        erender.debug_box_transformed(&lines,transform,bounds.min,bounds.max,color)
     }
     size:=(bounds.max-bounds.min)*desc.scale*0.5
     low,high:=desc.point-[3]f32{size.x,0,size.z},desc.point+[3]f32{size.x,0,size.z}
-    gpu.debug_box(&lines,low,high,color)
-    gpu.debug_line(&lines,desc.point,desc.point+[3]f32{0,desc.height,0},color)
+    erender.debug_box(&lines,low,high,color)
+    erender.debug_line(&lines,desc.point,desc.point+[3]f32{0,desc.height,0},color)
     host.extras_debug_lines_add(&s.app.extras,lines)
     host.assets_commit(s.app.assets)
 }
