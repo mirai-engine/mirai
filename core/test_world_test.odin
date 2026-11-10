@@ -17,7 +17,10 @@ import "core:testing"
 // T say is read from the source that declares it, with declared_read as the
 // generator does, so a test world marks no table or storage by hand. A type
 // a test file declares may have no attribute: a plain component or storage.
-// The tag `mirai:"game"` on a field says the game of a project declares it.
+// The tag of a field takes two options: `mirai:"game"`, the game of a
+// project declares it, and `mirai:"name=Spin"`, the name its table or
+// storage goes by when its type is named otherwise, as two versions of one
+// library in a test are.
 //
 // A test that needs what the application or the editor hold gives two more
 // structs: one of the @(storage,host), where a by_world one is a
@@ -91,10 +94,14 @@ test_types_core :: proc(types:^[dynamic]Test_Type) {
 // Its init, destroy, copy, copy_changed, swap, clear, attach and detach do
 // what the generated ones do; the test adds what it needs of the rest
 // (steps, messages, names, records). test_info_destroy frees it.
-test_info :: proc{test_info_core,test_info_types,test_info_places}
+test_info :: proc{test_info_core,test_info_types,test_info_app,test_info_places}
 
 test_info_core :: proc(t:^testing.T,$W:typeid,allocator:=context.allocator,loc:=#caller_location) -> (info:World_Info,ok:bool) {
     return test_info_places(t,W,Test_None,Test_None,test_types_none,allocator,loc)
+}
+
+test_info_app :: proc(t:^testing.T,$W,$S,$E:typeid,allocator:=context.allocator,loc:=#caller_location) -> (info:World_Info,ok:bool) {
+    return test_info_places(t,W,S,E,test_types_none,allocator,loc)
 }
 
 test_info_types :: proc(t:^testing.T,$W:typeid,$TYPES:Test_Types,allocator:=context.allocator,loc:=#caller_location) -> (info:World_Info,ok:bool) {
@@ -108,6 +115,15 @@ test_info_places :: proc(t:^testing.T,$W,$S,$E:typeid,$TYPES:Test_Types,allocato
     made_destroy(made)
     testing.expect(t,ok,"no memory for the World_Info of a test world",loc=loc)
     return
+}
+
+// Indexes a World_Info again after the test gave it names, records or name
+// bits, which its schema holds.
+test_info_index :: proc(info:^World_Info,allocator:=context.allocator) {
+    world_schema_destroy(info.schema)
+    delete(info.tables_by_type);delete(info.storages_by_type)
+    info.schema,info.tables_by_type,info.storages_by_type=nil,nil,nil
+    world_info_index(info,allocator)
 }
 
 test_info_destroy :: proc(info:^World_Info,allocator:=context.allocator) {
@@ -326,7 +342,7 @@ made_build :: proc(structs:[Place]^runtime.Type_Info,types:Test_Types,read:bit_s
         for i in 0..<int(layout.field_count) {
             if layout.names[i]=="_" || layout.types[i].id==Test_World {continue}
             f:=Test_Field{place=place,offset=layout.offsets[i],info=layout.types[i],name=layout.names[i]}
-            f.game=strings.contains(reflect.struct_tag_get(reflect.Struct_Tag(layout.tags[i]),"mirai"),"game")
+            _,f.game=field_option(reflect.Struct_Tag(layout.tags[i]),"game")
             if held,kind:=field_held(layout.types[i]);held!=nil {
                 f.kind,f.info=kind,held
                 if kind==.Table {f.values=runtime.type_info_base(layout.types[i]).variant.(runtime.Type_Info_Struct).types[0]}
@@ -337,6 +353,7 @@ made_build :: proc(structs:[Place]^runtime.Type_Info,types:Test_Types,read:bit_s
             f.type=f.info.id
             named,is_named:=f.info.variant.(runtime.Type_Info_Named)
             if is_named {f.name,f.library=named.name,named.pkg}
+            if name,renamed:=field_option(reflect.Struct_Tag(layout.tags[i]),"name");renamed {f.name=name}
             for type in given {
                 if type.type==f.type {
                     f.procs=type
@@ -584,7 +601,7 @@ made_locks :: proc(made:^Test_Made) -> bool {
 made_destroy :: proc(made:^Test_Made) {
     if made==nil {return}
     allocator:=made.allocator
-    if made.info.tables!=nil {test_info_destroy(&made.info,allocator)}
+    if made.info.init[.World]!=nil {test_info_destroy(&made.info,allocator)}
     for f in made.fields {
         delete(f.locks,allocator)
         delete(f.declared.description,allocator)
@@ -818,5 +835,70 @@ made_detach :: proc(world,shared:rawptr) {
             field_free(&f,value)
             by_world_release(held,value)
         }
+    }
+}
+
+@(private="file") @(storage,reset="described_reset") Described_Reset :: struct {value:i32}
+
+@(private="file")
+Described_World :: struct {
+    using world:Test_World,
+    transforms:Table(Transform),
+    paces:Table(Own_Pace),
+    disabled:Table(Disabled),
+    hierarchy:Hierarchy,
+    time:Time,
+    frame:Frame_Time,
+    clock:Clock,
+}
+
+@(private="file")
+Described_Shared :: struct {
+    settings:Simulation_Settings,
+    problems:By_World(Problems),
+}
+
+// A test world says of each table and storage what the attributes of its
+// type say, starts and copies them as a generated one does, and one that a
+// generated World could not be is refused saying which type is wrong.
+@(test)
+a_test_world_is_described_as_the_declarations_of_its_types_say :: proc(t:^testing.T) {
+    info,ok:=test_info(t,Described_World,Described_Shared,Test_None)
+    if !ok {return}
+    defer test_info_destroy(&info)
+    transforms,paces:=info.tables[0],info.tables[1]
+    testing.expect(t,transforms.name=="Transform" && transforms.library=="core" && transforms.shared && transforms.replicated==.None && transforms.default!=nil && transforms.description!="")
+    testing.expect(t,paces.replicated==.All && !paces.shared)
+    time,settings,problems:=info.storages[1],info.storages[4],info.storages[5]
+    testing.expect(t,time.keep && time.place==.World && time.setting==.None)
+    testing.expect(t,settings.place==.Shared && settings.setting==.Project && settings.default!=nil)
+    testing.expect(t,problems.by_world && problems.place==.Shared)
+
+    a,b:Described_World
+    testing.expect(t,info.init[.World](&a,context.allocator) && info.init[.World](&b,context.allocator))
+    defer info.destroy[.World](&a)
+    defer info.destroy[.World](&b)
+    testing.expect(t,a.transforms.base && a.disabled.base && a.paces.base,"the components of core are the base of every entity")
+    testing.expect(t,a.clock.scale==1 && a.frame.alpha==1,"a storage starts as its default")
+    a.time.tick,a.frame.alpha,a.clock.scale=7,0.5,2
+    testing.expect(t,info.copy(&b,&a))
+    testing.expect(t,b.time.tick==7 && b.clock.scale==2 && b.frame.alpha==1,"what says copy=false stays")
+    testing.expect(t,info.clear(&a))
+    testing.expect(t,a.time.tick==7 && a.clock.scale==2,"what says keep survives clearing the World")
+
+    Case :: struct {what:string,world:^runtime.Type_Info,shared:^runtime.Type_Info,names:string}
+    cases:=[]Case{
+        {"no header",type_info_of(struct {transforms:Table(Transform)}),nil,"Test_World"},
+        {"a storage held as a table",type_info_of(struct {using world:Test_World,hierarchy:Table(Hierarchy)}),nil,"Hierarchy"},
+        {"a component held as a value",type_info_of(struct {using world:Test_World,transform:Transform}),nil,"Transform"},
+        {"a storage of the application in the World",type_info_of(struct {using world:Test_World,settings:Simulation_Settings}),nil,"Simulation_Settings"},
+        {"a by_world storage held as a value",type_info_of(struct {using world:Test_World}),type_info_of(struct {problems:Problems}),"Problems"},
+        {"a type that is no component or storage",type_info_of(struct {using world:Test_World,seen:Seen}),nil,"Seen"},
+        {"a procedure its attributes name was not given",type_info_of(struct {using world:Test_World,reset:Described_Reset}),nil,"described_reset"},
+    }
+    for c in cases {
+        made,problem:=made_build({.World=c.world,.Shared=c.shared,.Editor=nil},test_types_none,{.World,.Shared},true,context.allocator)
+        testing.expectf(t,made==nil && strings.contains(problem,c.names),"%s: %q",c.what,problem)
+        made_destroy(made)
     }
 }
