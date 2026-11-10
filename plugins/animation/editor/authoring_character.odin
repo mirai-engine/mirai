@@ -20,18 +20,17 @@ character_open :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id,file:^A
 }
 
 // The .character a set method edits: the one at path, whose other parts it keeps, or a new one
-// there whose clips are those of animation.
+// there whose clips are those of animation; without clips, a new one of only modifiers may have none.
 @(private)
-character_target :: proc(s:^editor.Session,call:^api.Call,path:string,animation:base.Asset_Id,file:^Authoring_File) -> (set:anim.Character_Set,id:base.Asset_Id,ok:bool) {
+character_target :: proc(s:^editor.Session,call:^api.Call,path:string,animation:base.Asset_Id,file:^Authoring_File,clips:=true) -> (set:anim.Character_Set,id:base.Asset_Id,ok:bool) {
     id,ok=authoring_set_target(s,call,path,anim.CHARACTER_KIND,".character",file);if !ok {return}
     if file.replaced {
         if set,ok=character_open(s,call,id,file);!ok {return}
         if animation!={} {set.info.animation=animation}
         return set,id,true
     }
-    if animation=={} {authoring_failure(call,"animation","Required","the .anim of the clips of a new .character","empty","A new .character needs the animation of its clips");return {},{},false}
-    set={info={animation=animation},match={info=anim.MATCH_INFO_DEFAULT},motion={warp=anim.POSE_WARP_PROFILE_DEFAULT}}
-    return set,id,true
+    if animation=={} && clips {authoring_failure(call,"animation","Required","the .anim of the clips of a new .character","empty","A new .character needs the animation of its clips");return {},{},false}
+    return anim.character_set_make(animation),id,true
 }
 
 // Publishes a set as a step of the history; false, with the failure of the call, when it is
@@ -52,11 +51,12 @@ character_publish :: proc(s:^editor.Session,call:^api.Call,file:Authoring_File,i
 character_inspect :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id,table:Profile_Table,offset,limit:u32) {
     file:Authoring_File;defer asset.asset_close(&file.file)
     set,ok:=character_open(s,call,id,&file);if !ok {return}
+    sections:=make([]Action_Section_Params,len(set.actions.sections),call.allocator)
+    if len(set.actions.sections)>0 && sections==nil {authoring_failure(call,"sections","Out_Of_Memory","memory for the sections","allocation failed","The sections could not be listed",api.SERVER_ERROR);return}
     out:=call.out
     serial.text_write_raw(out,"{");authoring_result(call,id,file.path)
     api.write_key(out,"animation");serial.write_u8(out,'"');serial.text_write_asset_id(out,set.info.animation);serial.write_u8(out,'"')
     character_match_write(s,call,id,set.match,offset,limit)
-    sections:=make([]Action_Section_Params,len(set.actions.sections),call.allocator)
     for section,i in set.actions.sections {sections[i]={action=set.actions.actions[section.action].name,name=section.name};if section.next>=0 {sections[i].next=set.actions.sections[section.next].name}}
     api.write_uint(out,"layers_total",u64(len(set.actions.layers)));api.write_uint(out,"actions_total",u64(len(set.actions.actions)));api.write_uint(out,"sections_total",u64(len(sections)))
     program_rows(call,"layers",set.actions.layers,offset,limit);program_rows(call,"actions",set.actions.actions,offset,limit);program_rows(call,"sections",sections,offset,limit)
@@ -122,7 +122,7 @@ character_match_write :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id,
         serial.write_u8(out,'}')
     }
     serial.text_write_raw(out,"]");api.write_key(out,"databases");serial.write_u8(out,'[');written:=0
-    if cache:=core.world_storage_of(core.world_ref(s.app.shared,s.info,.Shared),anim.Character_Assets);cache!=nil {
+    if s.info!=nil {if cache:=core.world_storage_of(core.world_ref(s.app.shared,s.info,.Shared),anim.Character_Assets);cache!=nil {
         for &content in cache.contents {
             if content.id!=id {continue}
             for &built in content.databases {
@@ -132,6 +132,6 @@ character_match_write :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id,
                 authoring_write_value(call,&row,type_info_of(Asset_Match_Database))
             }
         }
-    }
+    }}
     serial.write_u8(out,']')
 }

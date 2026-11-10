@@ -506,7 +506,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
         file.replaced=true
     }
     if file.id=={} {rng:=base.rng_make(s.id_state~platform.clock_ns());file.id=base.asset_id_random(&rng);s.id_state=rng.state}
-    set:=anim.Character_Set{info={animation=library},match={info=anim.MATCH_INFO_DEFAULT},motion={warp=anim.POSE_WARP_PROFILE_DEFAULT},pose=pose}
+    set:=anim.character_set_make(library);set.pose=pose
     if locomotion {
         info:=&set.match.info
         // A loop keeps its phase and a body that does not move stands: searching inside a loop

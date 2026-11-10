@@ -420,7 +420,7 @@ request_source_check :: proc(s:^editor.Session,call:^api.Call,world:core.World_R
     animation,present:=editor.entity_get(world,entity,anim.Animation)
     if !present || animation.asset=={} {return true}
     source,ok:=program_source(s,call,animation.asset,animation.library);if !ok {return false}
-    if host.content_animation_wait(s.app,source)==nil {authoring_failure(call,"asset","Invalid_Asset","a loadable source .anim","source load failed","The animation source could not be loaded");return false}
+    if source!={} && host.content_animation_wait(s.app,source)==nil {authoring_failure(call,"asset","Invalid_Asset","a loadable source .anim","source load failed","The animation source could not be loaded");return false}
     return true
 }
 

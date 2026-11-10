@@ -118,7 +118,8 @@ pose_bake_sample :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,e
     animation,_:=editor.entity_get(world,entity,anim.Animation)
     if animation.asset!={} {
         valid:bool;trace.primary,valid=program_source(s,call,animation.asset,animation.library);if !valid {return false}
-        trace.view,valid=program_animation_open(s,call,trace.primary,&source_file);if !valid {return false}
+        // A .character of only modifiers has no clips.
+        if trace.primary!={} {trace.view,valid=program_animation_open(s,call,trace.primary,&source_file);if !valid {return false}}
     }
     tracks:=make([dynamic]Pose_Bake_Track,call.allocator);frames:=int(preview.ticks)+1
     skeleton:^anim.Skeleton_Content

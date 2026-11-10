@@ -13,7 +13,7 @@ Profile_Table :: enum u8 {IK,Look,Limit,Grounding,Chain_IK,Twist,Spring,Multi_IK
 Profile_Counts :: struct {IK,Look,Limit,Grounding,Chain_IK,Twist,Spring,Multi_IK,Chain_Retarget,Spline_IK,Corrective,Follow,Curve_Pose,Curve_Drive,Curve_Material:u32}
 Profile_Set_Params :: struct {
     path:[1024]u8 `mirai:"text,label=Ending in .character: its other tables are kept"`,
-    animation:base.Asset_Id `mirai:"optional,label=The .anim of the clips of a new .character"`,
+    animation:base.Asset_Id `mirai:"optional,label=The .anim of the clips of a new .character; none for one of only modifiers"`,
     table:Profile_Table `mirai:"label=The table; the field named after it holds the value and the lengths of its arrays are its counts. A row with the key of that value is replaced or removed and otherwise appended: end for IK; bone for Look and Limit; name for the tables that name rows; curve and bone for Curve_Pose; from with and to for Curve_Drive; curve parameter and slot for Curve_Material; Grounding is the one rig. A table holds 256 rows; Curve_Pose, Curve_Drive and Curve_Material 4096; Grounding one rig of up to 16 legs"`,
     ik:anim.IK_Constraint `mirai:"optional"`,
     look:anim.Look_Constraint `mirai:"optional"`,
@@ -87,7 +87,7 @@ authoring_profile_set :: proc(s:^editor.Session,call:^api.Call) {
     fields:=[Profile_Table]string{.IK="ik",.Look="look",.Limit="limit",.Grounding="grounding",.Chain_IK="chain_ik",.Twist="twist",.Spring="spring",.Multi_IK="multi_ik",.Chain_Retarget="retarget_chain",.Spline_IK="spline_ik",.Corrective="corrective",.Follow="follow",.Curve_Pose="curve_pose",.Curve_Drive="curve_drive",.Curve_Material="curve_material"}
     if p.table>max(Profile_Table) || !(p.remove && p.table==.Grounding) && !authoring_field_present(call,fields[p.table]) {authoring_failure(call,"table","Required","the constraint field selected by table","missing or invalid table","Supply the constraint field selected by table");return}
     file:Authoring_File;defer asset.asset_close(&file.file)
-    set,id,ok:=character_target(s,call,base.text_get(p.path[:]),p.animation,&file);if !ok {return}
+    set,id,ok:=character_target(s,call,base.text_get(p.path[:]),p.animation,&file,clips=false);if !ok {return}
     profile:=&set.pose
     replaced:=false
     capacity:=anim.POSE_CONSTRAINTS

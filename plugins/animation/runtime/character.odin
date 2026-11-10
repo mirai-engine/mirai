@@ -29,6 +29,10 @@ Character_Set :: struct {
     motion:Motion_Profile,
     pose:Pose_Profile,
 }
+// A set over the clips of animation whose locomotion and warping take their defaults.
+character_set_make :: proc(animation:base.Asset_Id) -> Character_Set {
+    return {info={animation=animation},match={info=MATCH_INFO_DEFAULT},motion={warp=POSE_WARP_PROFILE_DEFAULT}}
+}
 
 character_check :: proc(set:Character_Set) -> bool {
     clipless:=len(set.match.clips)+len(set.actions.actions)+len(set.actions.layers)+len(set.spaces)+len(set.motion.distances)==0

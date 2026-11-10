@@ -27,9 +27,9 @@ MOTION_WARP_FADE_SPEED :: .3
 // warped to end at the target of that name (motion_target).
 Motion_Window :: struct {
     name:[32]u8 `mirai:"text"`,
-    translation,rotation:bool,
-    axes:[3]bool,
-    weight:f32 `mirai:"min=0,max=1"`,
+    translation,rotation:bool `mirai:"optional"`,
+    axes:[3]bool `mirai:"optional"`,
+    weight:f32 `mirai:"optional,min=0,max=1"`,
 }
 MOTION_WINDOW_DEFAULT :: Motion_Window{translation=true,rotation=true,axes={true,true,true},weight=1}
 Motion_Distance :: struct {clip:[64]u8 `mirai:"text"`,name:[32]u8 `mirai:"text"`,first,count:u32,animation:base.Asset_Id}
