@@ -39,8 +39,8 @@ time. The first step that fails ends it.
 - The subject is an `entity`, by its name, a path Parent/Child, its id or its handle, or a
   `storage`. `field` names the value inside it: `Component.field.0.field` for an entity
   (`Motion.linear.1`, where `a[0].b` is `a.0.b`), and `play.get` takes the same path.
-- `compare`: `Exists` (the default), `Gone`, `Equal`, `Not_Equal`, `Below`, `At_Most`, `Above`,
-  `At_Least`. A number is `number` (a bool is 1 or 0); an enum member or a text is `text`.
+- `compare` is `Exists` unless given; `mirai rpc --project . describe play.check` lists the
+  operators. A number is `number` (a bool is 1 or 0); an enum member or a text is `text`.
 - Names of components, storages and fields: `component.list` and `play.inspect`; `Open`,
   `Door` and `Pickup` above stand for your own.
 
@@ -56,9 +56,8 @@ none run when they hold already. If they never hold, the step and the scenario f
 
 ## Input
 
-- `keys` are held on every tick of the step, `tap_keys` pressed and released inside its first
-  tick, `mouse_buttons` and `tap_buttons` likewise; `mouse_position` is in window points from the
-  top left and stays; `mouse_delta` turns the view; `text` types into a focused field.
+- The params of `play.step` (`describe play.step`) hold devices on every tick of the step or tap
+  them inside its first tick; `mouse_position` is in window points from the top left and stays.
 - `segments` change the input along the step, each for its `for`:
 
 ```json
@@ -78,8 +77,8 @@ none run when they hold already. If they never hold, the step and the scenario f
 `drive` in `play.step` walks the focused player to a target by the game's own move action, re-aimed
 every tick: an `entity`, followed where it goes, or a `position`. It takes off at the edge of a gap
 and when blocked, holding the jump as long as it still rises, then tries each side; it stops within
-`within` meters across the ground (1 by default), at the `for` of the step (30 s if
-neither is given), when `until` holds, or when it gets no closer:
+`within` meters across the ground, at the `for` of the step, when `until` holds, or when it gets
+no closer (`describe play.step` gives the defaults):
 `{"drive": {"entity": "Checkpoint 2", "within": 1.5}, "for": "20s"}`.
 
 - An `entity` with a solid top raised off the floor, or out of reach above or below its feet
@@ -98,8 +97,8 @@ neither is given), when `until` holds, or when it gets no closer:
 mirai play test . shell            # one scenario by name; no name: all of tests/scenarios
 ```
 
-One line per file, `PASS` or `FAIL` with the step and what its method answered; exit 0 all
-passed, 1 one failed, 2 could not run. `play.scenario.run` (`path`: a file or a folder) answers
+One line per file, `PASS` or `FAIL` with the step and what its method answered; the exit code is
+0 only when all passed. `play.scenario.run` (`path`: a file or a folder) answers
 every step with its tick and result; a file its methods would not take fails whole before the
 game starts, and it fails while a game of the caller already plays or when the game does not build.
 Outside a turn it opens the scene of the scenario if the document is another without unsaved

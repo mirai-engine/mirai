@@ -1,8 +1,8 @@
 # Shapes
 
 `shapes` (`Runtime` and `Editor`; depends on `physics`) makes editable solids for any game: level
-blockout, and games where players stamp squares, circles, stars and other shapes onto flat outlines to add or
-cut material, drag vertices, and make pieces static or physical.
+blockout, and games where players stamp squares, circles, stars and other shapes onto flat outlines
+to add or cut material, drag vertices, and make pieces static or physical.
 
 ## Source and derived
 
@@ -126,10 +126,12 @@ the plane of the shape selected last (its local XY at z = 0) or, with no shape s
 plane z = 0 of the world. W, E and R lend the scene to the gizmo and the selection; a mode takes
 it back.
 
-- **Stamp** (1): a kind of `Stamp_Kind` (square, circle, triangle, star, heart...), size, angle, Add or Cut (X) and the material of new
+- **Stamp** (1): a kind of `Stamp_Kind` (square, circle, triangle, star, heart...), size, angle, Add
+  or Cut (X) and the material of new
   shapes. A press and its drag are one stroke, its tolerance two points of the window on the plane
   under the pointer. The stroke is a `Shape_Edit` given the Outline shapes of the plane when it
-  begins, and writes what changed each frame through the edits of the step. Adding joins the first of them the
+  begins, and writes what changed each frame through the edits of the step. Adding joins the first
+  of them the
   stamp touches at the press, the selected one first, or makes a shape entity there (`Id`,
   `Transform` at the press, `Shape` of `depth` 1); the whole stroke goes into that shape.
   Cutting takes the area out of every Outline shape of the plane it reaches: each other polygon

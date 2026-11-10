@@ -137,7 +137,8 @@ saved with the chat.
 - **Over the composer**, the review of the unit shown, folded, says how many changes remain, with
   Revert all and Accept all. A finished subagent also offers it in its report card, and the
   status line, the bar and the expanded chat count it. Unfolded, one row per change with git's
-  letter (A created, M changed, D deleted), up to `AI_CHANGE_ROWS` and the rest with scroll. A click on a row walks to it; with the
+  letter (A created, M changed, D deleted), up to `AI_CHANGE_ROWS` and the rest with scroll. A click
+  on a row walks to it; with the
   pointer over the row or with the walkthrough on it appear its ↶, which reverts only that change,
   and its ✓, which accepts it. Reverting an entity the turn created takes it out of the scene with
   what hangs from it. Without changes to review the review is not shown and ends as with Accept

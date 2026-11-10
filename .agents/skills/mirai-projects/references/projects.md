@@ -269,7 +269,8 @@ Each mode has its folder: switching between them compiles nothing.
   are [plugin libraries](#plugin-libraries).
 - **What crosses between libraries** is what crosses to a project: calls, with the context and
   its allocators, and data. Each library has its own Odin runtime and type table, so none looks up
-  a type of another by `typeid` ([reflection](../../../../docs/ARCHITECTURE.md#the-generated-world)),
+  a type of another by `typeid`
+  ([reflection](../../../../docs/ARCHITECTURE.md#the-generated-world)),
   and a package-level variable would be one per library that reads it.
 - `decl/` has the declarations of every library, the `mirai` collection of the project libraries,
   with the `#load` relative to each declaration so the cache serves any checkout. `engine.stamp`
@@ -304,7 +305,8 @@ Each mode has its folder: switching between them compiles nothing.
   declarations of the libraries it needs; a build without a stamp of its version, `--force` and a
   copy from the shared cache remove the stages.
 - **Mode.** `build`, `edit`, `play` and `session start|restart` accept `--dev` (everything at
-  `-o:minimal`, to check changes) or `--release` (`-o:speed`, for the CPU figures and to ship), not both.
+  `-o:minimal`, to check changes) or `--release` (`-o:speed`, for the CPU figures and to ship), not
+  both.
   Without either, `edit` and `play` use `--release` (a person runs them); `build`, `session start`
   and `import`, the last compiled mode (`Keep`) and the manifest's optimization; `session
   restart`, that of the previous session. An agent always passes `--dev`. `build.engine_current`
@@ -576,7 +578,9 @@ any user and nothing in the engine depends on them; bash remains only in the lau
 - A script that measures times runs with `mirai measure -- uv run scripts/<script>.py`
   ([turns](build.md#turns-between-processes)); `mirai measure -- ./mirai <args>` also works on
   Windows, with the Git Bash of `mirai.cmd`.
-- `scripts/check_docs.py` valida la documentación.
+- `scripts/check_docs.py` checks the documentation: links and anchors, frontmatter, line width,
+  repeated headings, files and tests it names, the skill table of `README.md` and the import of
+  `AGENTS.md`. Its rules are tested by `scripts/tests/test_check_docs.py`.
 - `scripts/video_frames.py` takes the frames (a labelled strip like those of `play.capture`) and
   the sound of a section of a YouTube or X video, or of a file, to compare with Mirai captures. It
   needs Windows, and what it downloads stays in `.mirai/tmp/video_frames`, never in git.

@@ -1,7 +1,7 @@
 # Animation gallery
 
-`demo/assets/animation_gallery/animation.scene` is the only animation scene of the demo: a hall that the
-player walks with Mirai (`source/models/mirai/mirai.glb`), with one numbered station per feature
+`demo/assets/animation_gallery/animation.scene` is the only animation scene of the demo: a hall that
+the player walks with Mirai (`source/models/mirai/mirai.glb`), with one numbered station per feature
 on each side of the walkway. `tools/demo_content --animation-only` writes it with its clips,
 programs and profiles ([generated content](demo.md#generated-content)).
 
@@ -54,8 +54,8 @@ programs and profiles ([generated content](demo.md#generated-content)).
 
 ## API walkthrough
 
-Open the editor with `--scene animation_gallery/animation.scene`, query `engine.describe` for the schemas and
-`scene.inspect` for the ids of the stations, which are named after what they show. Start
+Open the editor with `--scene animation_gallery/animation.scene`, query `engine.describe` for the
+schemas and `scene.inspect` for the ids of the stations, which are named after what they show. Start
 `play.start`, pause and advance with `play.step`.
 
 1. `Mirai warp to a target`: `animation.request` with
@@ -68,7 +68,8 @@ Open the editor with `--scene animation_gallery/animation.scene`, query `engine.
    starts the `Greeting` section; `Step` emits `Movement` windows. `animation.inspect` part
    `Actions` after one tick reads state and events.
 3. `Mirai matching by speed`: `animation.request` with
-   `{"entity":"<rig>","plays":[{"clip":"wave","fade":0.35}]}` plays the greeting and matching resumes at
+   `{"entity":"<rig>","plays":[{"clip":"wave","fade":0.35}]}` plays the greeting and matching
+   resumes at
    the end; `animation.inspect` part `Match` gives the clip, whether it is forced, and the jumps.
    `priority` or `wait` reject or delay an interruption.
 4. A physical Mirai: `animation.request` with

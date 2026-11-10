@@ -231,8 +231,8 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
 
   ```json
   {
-    "roots": ["surfaces/metal/Chrome.mat", "characters/player/", "3b4cb4195321a2f7fe61aa57ece0c255"],
-    "textures": "blocks"
+    "roots": ["surfaces/metal/Chrome.mat", "characters/player/",
+    "3b4cb4195321a2f7fe61aa57ece0c255"], "textures": "blocks"
   }
   ```
 
@@ -257,7 +257,8 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
   the settings of its `.import`) into a temporary folder and writes the texture of the same image
   with the id it has. The import runs in the engine's import program (`Cook_Desc.import_program`,
   what `mirai import` runs), since the tool builds without the importers; `import_source` lets a
-  caller that has them import in-process. The import fills the texture cache, so the editor takes that Final from
+  caller that has them import in-process. The import fills the texture cache, so the editor takes
+  that Final from
   then on. A source that is missing, no longer has the image or builds another texture fails the
   cook with `Source_Failed` and says how to fix it.
 - **Animations.** An `.anim` is written cooked: its clips sampled as the runtime plays them

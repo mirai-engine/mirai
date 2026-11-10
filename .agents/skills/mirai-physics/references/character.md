@@ -22,7 +22,8 @@ The same `world_step` serves the server, the predicting client and resimulation.
   - `air`: a `Drive` in the world, transverse to its vertical except with `Drive_Vertical`, valid
     in the air.
   - `launch`: m/s added at once; a supported character pushes the ground backwards.
-  - `yaw`, the heading around its vertical, measured as a look (-Z at 0), and `flags`: `Airborne` (it does not
+  - `yaw`, the heading around its vertical, measured as a look (-Z at 0), and `flags`: `Airborne`
+    (it does not
     support itself even if it could: a jump starting, a flight), `Drive_Vertical`, `No_Gravity` and
     `Float` (in a fluid, it holds the head `float_height` above the surface).
   - A `Drive` without force leaves the velocity as it is. A new character brakes against the ground
@@ -171,7 +172,8 @@ accumulates in the body for one tick; the support constraint keeps its own adhes
   - Both impulses are applied opposite to the ground body at the support point: the character
     pushes what it stands on and travels with platforms that move and turn (the target includes the
     half-step centripetal term).
-  - The body faces the move's `yaw` with its -Z and nothing else. The ground turn stays in `ground_turn`;
+  - The body faces the move's `yaw` with its -Z and nothing else. The ground turn stays in
+    `ground_turn`;
     whoever writes the move adds it to the yaw every step so that body, walk and camera turn
     together. If it does not add it, the character travels with the platform without turning.
 - **In the air**: it brings the velocity transverse to its up (or the three axes with

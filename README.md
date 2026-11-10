@@ -24,16 +24,19 @@
 </p>
 
 <p align="center">
-  <a href="https://discord.gg/xeq5unRgG"><img alt="Discord" src="https://img.shields.io/badge/Discord-join-5865f2?logo=discord&logoColor=white"></a>
-  <a href="https://x.com/mirai3d"><img alt="X" src="https://img.shields.io/badge/X-@mirai3d-000000?logo=x&logoColor=white"></a>
-  <a href="https://github.com/sponsors/tomaszbk"><img alt="Sponsor" src="https://img.shields.io/badge/Sponsor-%E2%99%A5-db61a2?logo=githubsponsors&logoColor=white"></a>
+  <a href="https://discord.gg/xeq5unRgG"><img alt="Discord"
+    src="https://img.shields.io/badge/Discord-join-5865f2?logo=discord&logoColor=white"></a>
+  <a href="https://x.com/mirai3d"><img alt="X"
+    src="https://img.shields.io/badge/X-@mirai3d-000000?logo=x&logoColor=white"></a>
+  <a href="https://github.com/sponsors/tomaszbk"><img alt="Sponsor"
+    src="https://img.shields.io/badge/Sponsor-%E2%99%A5-db61a2?logo=githubsponsors&logoColor=white"></a>
 </p>
 
 ---
 
 Mirai is a native 3D engine and editor where people and AI agents build the same game, in the
-same scene, at the same time. Connect your favorite agent inside the editor, or connect it externally via MCP or JSON-RPC. 
-<p align="center">
+same scene, at the same time. Connect your favorite agent inside the editor, or connect it
+externally via MCP or JSON-RPC.  <p align="center">
   <img src=".github/media/agents.png" alt="Three AI agents working in the Mirai editor"
     width="100%">
 </p>
@@ -83,7 +86,8 @@ same scene, at the same time. Connect your favorite agent inside the editor, or 
 
 ### Modern, fast to build
 
-- **All in [Odin](https://odin-lang.org).** One fast compiler, readable code, no header soup and no multi-hour engine rebuilds.
+- **All in [Odin](https://odin-lang.org).** One fast compiler, readable code, no header soup and no
+  multi-hour engine rebuilds.
 - **Code reloads into the running editor.** Change your game, build, and keep editing the same
   scene.
 - **One implementation of everything.** No per-platform or per-API copies: one renderer for Vulkan
