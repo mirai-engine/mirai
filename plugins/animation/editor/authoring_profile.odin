@@ -51,13 +51,14 @@ authoring_profile_register :: proc(s:^editor.Session) {
 character_modifiers_write :: proc(call:^api.Call,profile:anim.Pose_Profile,table:Profile_Table,offset,limit:u32) {
     out:=call.out
     api.write_key(out,"counts");serial.text_write_raw(out,"{")
-    api.write_uint(out,"IK",u64(len(profile.ik)),true);api.write_uint(out,"Look",u64(len(profile.look)));api.write_uint(out,"Limit",u64(len(profile.limits)));api.write_uint(out,"Grounding",u64(len(profile.grounding)));api.write_uint(out,"Chain_IK",u64(len(profile.chain_ik)));api.write_uint(out,"Twist",u64(len(profile.twist)));api.write_uint(out,"Spring",u64(len(profile.springs)));api.write_uint(out,"Multi_IK",u64(len(profile.multi_ik)));api.write_uint(out,"Chain_Retarget",u64(len(profile.retarget_chains)));api.write_uint(out,"Spline_IK",u64(len(profile.spline_ik)));api.write_uint(out,"Corrective",u64(len(profile.correctives)));api.write_uint(out,"Follow",u64(len(profile.follow)));api.write_uint(out,"Curve_Pose",u64(len(profile.curve_poses)));api.write_uint(out,"Curve_Drive",u64(len(profile.curve_drives)));api.write_uint(out,"Curve_Material",u64(len(profile.curve_materials)));serial.text_write_raw(out,"}")
+    api.write_uint(out,"IK",u64(len(profile.ik)),true);api.write_uint(out,"Look",u64(len(profile.look)));api.write_uint(out,"Limit",u64(len(profile.limits)));api.write_uint(out,"Grounding",u64(1 if profile.grounding.count>0 else 0));api.write_uint(out,"Chain_IK",u64(len(profile.chain_ik)));api.write_uint(out,"Twist",u64(len(profile.twist)));api.write_uint(out,"Spring",u64(len(profile.springs)));api.write_uint(out,"Multi_IK",u64(len(profile.multi_ik)));api.write_uint(out,"Chain_Retarget",u64(len(profile.retarget_chains)));api.write_uint(out,"Spline_IK",u64(len(profile.spline_ik)));api.write_uint(out,"Corrective",u64(len(profile.correctives)));api.write_uint(out,"Follow",u64(len(profile.follow)));api.write_uint(out,"Curve_Pose",u64(len(profile.curve_poses)));api.write_uint(out,"Curve_Drive",u64(len(profile.curve_drives)));api.write_uint(out,"Curve_Material",u64(len(profile.curve_materials)));serial.text_write_raw(out,"}")
     table:=table
     api.write_key(out,"table");authoring_write_value(call,&table,type_info_of(Profile_Table))
     program_rows(call,"ik",profile.ik if table==.IK else nil,offset,limit)
     program_rows(call,"look",profile.look if table==.Look else nil,offset,limit)
     program_rows(call,"limits",profile.limits if table==.Limit else nil,offset,limit)
-    profile_constraint_rows(call,"grounding",profile.grounding if table==.Grounding else nil,offset,limit)
+    grounding:=[1]anim.Foot_Grounding{profile.grounding}
+    profile_constraint_rows(call,"grounding",grounding[:1 if profile.grounding.count>0 && table==.Grounding else 0],offset,limit)
     profile_constraint_rows(call,"chain_ik",profile.chain_ik if table==.Chain_IK else nil,offset,limit)
     profile_constraint_rows(call,"twist",profile.twist if table==.Twist else nil,offset,limit)
     profile_constraint_rows(call,"springs",profile.springs if table==.Spring else nil,offset,limit)
@@ -95,7 +96,7 @@ authoring_profile_set :: proc(s:^editor.Session,call:^api.Call) {
     case .IK: profile.ik,replaced=profile_row(profile.ik,p.ik,proc(a,b:anim.IK_Constraint) -> bool {return a.end==b.end},p.remove,capacity,call.allocator)
     case .Look: profile.look,replaced=profile_row(profile.look,p.look,proc(a,b:anim.Look_Constraint) -> bool {return a.bone==b.bone},p.remove,capacity,call.allocator)
     case .Limit: profile.limits,replaced=profile_row(profile.limits,p.limit,proc(a,b:anim.Rotation_Constraint) -> bool {return a.bone==b.bone},p.remove,capacity,call.allocator)
-    case .Grounding: profile.grounding,replaced=profile_row(profile.grounding,profile_grounding_value(call,p.grounding),proc(a,b:anim.Foot_Grounding) -> bool {return true},p.remove,1,call.allocator)
+    case .Grounding: profile.grounding,replaced=(anim.Foot_Grounding{} if p.remove else profile_grounding_value(call,p.grounding)),true
     case .Chain_IK: profile.chain_ik,replaced=profile_row(profile.chain_ik,profile_chain_value(call,p.chain_ik),proc(a,b:anim.Chain_IK_Constraint) -> bool {return a.name==b.name},p.remove,capacity,call.allocator)
     case .Twist: profile.twist,replaced=profile_row(profile.twist,profile_twist_value(call,p.twist),proc(a,b:anim.Twist_Constraint) -> bool {return a.name==b.name},p.remove,capacity,call.allocator)
     case .Spring: profile.springs,replaced=profile_row(profile.springs,profile_spring_value(call,p.spring),proc(a,b:anim.Spring_Constraint) -> bool {return a.name==b.name},p.remove,capacity,call.allocator)

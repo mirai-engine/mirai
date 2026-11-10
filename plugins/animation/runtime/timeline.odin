@@ -12,70 +12,59 @@ import "mirai:std/serial"
 // A timeline is the clip of an Animation: the keys of std/anim on tracks that
 // move the transforms of entities and the fields of their components. A door,
 // a lift, the cameras and actors of a cinematic and a light that dims are all
-// that. One queue asks any of them to play, pause, resume, stop or seek; the
-// game, the one writer of Animation, may also write its playing.
+// that. Animation.playing only starts it by itself; one queue of commands
+// plays, pauses, resumes, stops, reverses and seeks it from then on.
 
 Timeline_Command :: enum u8 {
     Seek,   // jumps to time, without firing the markers it skips
-    Play,   // from its start
+    Play,   // from its start, at speed
     Pause,  // stays where it is
-    Resume, // goes on from where it is
+    Resume, // goes on from where it is, at speed
     Stop,   // goes back to its start and waits there
 }
 
 Animation_Command :: struct {
     entity:core.Entity,
-    time:f32, // Seek: seconds into the clip
+    time:f32,  // Seek: seconds into the clip
+    speed:f32, // Play and Resume: negative plays backwards
     command:Timeline_Command,
 }
 
-// What the last command left a clip doing, in place of Animation.playing, until the game changes
-// that field: the component is the game's, and what others ask is kept here.
-Timeline_Transport :: enum u8 {Component,Play,Pause}
-
-// Asks the clip of an entity for a command in the next tick. Play, Pause, Resume and Stop hold
-// until the game changes Animation.playing. The editor, which does not play, takes only Seek.
-animation_command :: proc(requests:^Animation_Requests,entity:core.Entity,command:Timeline_Command,time:f32=0) {
+// Asks the clip of an entity for a command in the next tick: a door opens with Play and closes
+// with Resume at speed -1 from wherever it is. The editor, which does not play, takes only Seek.
+animation_command :: proc(requests:^Animation_Requests,entity:core.Entity,command:Timeline_Command,time:f32=0,speed:f32=1) {
     if requests==nil {return}
-    if entity==core.NONE || command>max(Timeline_Command) || !finite(time) {core.refuse(&requests.timeline);return}
-    core.offer(&requests.timeline,Animation_Command{entity,time,command})
+    if entity==core.NONE || command>max(Timeline_Command) || !finite(time) || !finite(speed) {core.refuse(&requests.timeline);return}
+    core.offer(&requests.timeline,Animation_Command{entity,time,speed,command})
 }
 
 // Asks for the entity to be at a time of its clip in the next tick, without firing the markers it skips.
 animation_seek :: proc(requests:^Animation_Requests,entity:core.Entity,time:f32) {animation_command(requests,entity,.Seek,time)}
 
-// Whether the clip of an entity plays in this tick: what its Animation says, or the last command
-// since. False for an entity that plays nothing.
+// Whether the clip of an entity plays in this tick. False for an entity that plays nothing.
 animation_playing :: proc(playback:^Playback,entity:core.Entity) -> bool {
     if playback==nil {return false}
     state:=constraint_playing(playback,entity)
     return state!=nil && state.seen==playback.frame && state.playing
 }
 
-// Takes the commands of the tick for a state: whether its clip plays, in animation, and the seeks
-// they leave in the queue for the tick to read.
+// Takes the commands of the tick for a state into animation: whether its clip plays and at what
+// speed, which Animation gives when it starts to play, and the seeks Play and Stop leave in the
+// queue for the tick to read. In the editor its Animation says it.
 @(private)
-timeline_transport :: proc(state:^Playing,animation:^Animation,commands:[]Animation_Command,running:bool) {
-    if running {
-        if animation.playing!=state.component_playing {state.transport=.Component}
-        state.component_playing=animation.playing
-    }
+timeline_take :: proc(state:^Playing,animation:^Animation,commands:[]Animation_Command,running:bool) {
+    if !running || !state.started {state.playing,state.speed=animation.playing,animation.speed}
+    state.started=running
     for &asked in commands {
         if asked.entity!=state.entity || asked.command==.Seek {continue}
         command:=asked.command
         asked.entity=core.NONE
         if !running {continue}
-        state.transport=.Play if command==.Play || command==.Resume else .Pause
-        if command==.Play || command==.Stop {asked={state.entity,0,.Seek}}
+        state.playing=command==.Play || command==.Resume
+        if state.playing {state.speed=asked.speed}
+        if command==.Play || command==.Stop {asked={entity=state.entity,command=.Seek}}
     }
-    if running {
-        switch state.transport {
-        case .Component:
-        case .Play: animation.playing=true
-        case .Pause: animation.playing=false
-        }
-    }
-    state.playing=animation.playing
+    animation.playing,animation.speed=state.playing,state.speed
 }
 
 // The commands no state took were asked of entities that play nothing.

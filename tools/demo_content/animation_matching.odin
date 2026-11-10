@@ -23,5 +23,5 @@ gallery_mirai_matching :: proc(o:^Out,model:^importer.Imported_Model,animation:b
     // Cover both the slow automatic path and the player's full walking speed.
     info.min_rate=.05;info.max_rate=1.3
     warp:=anim.POSE_WARP_PROFILE_DEFAULT;warp.orientation,warp.stride=true,true;warp.max_angle=mm.PI*.4;warp.min_stride,warp.max_stride=.05,1.5
-    gallery_set(o,"characters/mirai","mirai_matching",animation,{match={info=info,clips=clips[:]},motion={warp=warp},pose={grounding={mirai_feet(model)}}})
+    gallery_set(o,"characters/mirai","mirai_matching",animation,{match={info=info,clips=clips[:]},motion={warp=warp},pose={grounding=mirai_feet(model)}})
 }

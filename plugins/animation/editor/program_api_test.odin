@@ -92,7 +92,6 @@ Program_Test_World :: struct {
     ids:core.Table(core.Id),
     animations:core.Table(anim.Animation),
     animation_requests:anim.Animation_Requests,
-    modifier_requests:anim.Modifier_Requests,
     modifier_runtime:anim.Modifier_Runtime,
 }
 // The World_Info of a document and of the World its Play runs, and both made.
@@ -168,8 +167,8 @@ program_runtime_api_sets_named_parameters_and_keeps_actions_and_modifier_control
     testing.expect_value(t,len(play.animation_requests.plays.items),3)
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","controls":[{"kind":"Look","slot":1,"weight":0.3}]}`).code,api.INVALID_PARAMS)
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","controls":[{"kind":"Look","name":"head","weight":0.3,"fade":0.2}]}`).code,0)
-    testing.expect_value(t,len(play.modifier_requests.controls.items),1);testing.expect_value(t,len(document.modifier_requests.controls.items),0)
-    testing.expect_value(t,play.modifier_requests.controls.items[0].fade,f32(.2))
+    testing.expect_value(t,len(play.animation_requests.controls.items),1);testing.expect_value(t,len(document.animation_requests.controls.items),0)
+    testing.expect_value(t,play.animation_requests.controls.items[0].fade,f32(.2))
     testing.expect_value(t,authoring_test_execute(f,"inspect",`{"entity":"0000000000000011"}`).code,0)
     text:=string(serial.writer_bytes(&f.out));testing.expect(t,strings.contains(text,`"kind":"Look"`) && strings.contains(text,`"name":"head"`) && !strings.contains(text,`"slot"`) && !strings.contains(text,`"diagnostic"`))
     // Edit changes the document: what only a running world takes is refused there.
@@ -178,15 +177,15 @@ program_runtime_api_sets_named_parameters_and_keeps_actions_and_modifier_control
         result:=authoring_test_execute(f,"request",fmt.tprintf(`{{"entity":"0000000000000011",%s}}`,runtime))
         testing.expectf(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,"Runtime_Required"),"%s: %s",runtime,result.data)
     }
-    testing.expect_value(t,len(document.animation_requests.plays.items),0);testing.expect_value(t,len(document.animation_requests.values.items),0);testing.expect_value(t,len(document.modifier_requests.controls.items),0)
+    testing.expect_value(t,len(document.animation_requests.plays.items),0);testing.expect_value(t,len(document.animation_requests.values.items),0);testing.expect_value(t,len(document.animation_requests.controls.items),0)
     temporary:Preview_Params;copy(temporary.entity[:],"0000000000000011")
     base.text_set(temporary.parameters[0].name[:],"Arm");temporary.parameters[0].value=.4
     temporary.controls[0]={kind=.Look,weight=.2,enabled=false};base.text_set(temporary.controls[0].name[:],"head")
     preview_call:=api.Call{raw=`{"parameters":[{"name":"Arm","value":0.4}],"controls":[{"kind":"Look","name":"head","weight":0.2,"enabled":false}]}`,allocator=context.temp_allocator}
     testing.expect(t,request_apply(&f.session,&preview_call,core.world_ref(&play,&world_info),play.ids.entities[0],&temporary,0,nil))
     if testing.expect_value(t,len(play.animation_requests.values.items),2) {testing.expect_value(t,play.animation_requests.values.items[1].value,f32(.4))}
-    testing.expect_value(t,len(play.modifier_requests.controls.items),2)
-    testing.expect_value(t,len(document.animation_requests.values.items),0);testing.expect_value(t,len(document.modifier_requests.controls.items),0)
+    testing.expect_value(t,len(play.animation_requests.controls.items),2)
+    testing.expect_value(t,len(document.animation_requests.values.items),0);testing.expect_value(t,len(document.animation_requests.controls.items),0)
 }
 
 @(test)
@@ -198,7 +197,7 @@ modifier_goal_api_resolves_targets_in_the_running_world_accepts_the_origin_and_k
     other:=look;other.bone=anim.bone_ref("eyes")
     // Grounding over the legs of the body of the skeleton.
     grounding:=anim.FOOT_GROUNDING_DEFAULT;grounding.count=2;grounding.legs[0],grounding.legs[1]=anim.GROUNDED_LEG_DEFAULT,anim.GROUNDED_LEG_DEFAULT
-    set:=anim.character_set_make({});set.pose={ik={ik},look={other,look},grounding={grounding}}
+    set:=anim.character_set_make({});set.pose={ik={ik},look={other,look},grounding=grounding}
     testing.expect_value(t,anim.character_save(fmt.tprintf("%s/goals.character",f.root),&f.assets.types,pose_id,set),asset.Error.None)
     testing.expect(t,host.assets_scan(&f.assets))
     document,play:Program_Test_World;info:core.World_Info;defer program_test_worlds_destroy(&info,&document,&play)
@@ -213,20 +212,20 @@ modifier_goal_api_resolves_targets_in_the_running_world_accepts_the_origin_and_k
     f.session.info,f.session.edit_world,f.session.mode=&info,&document,.Play;f.session.runs[0]={world=&play}
     requested:=request_defaults();authoring_test_register(f,t,"request",Request_Params,request,requested)
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","goals":[{"kind":"Look","name":"head","target":{"kind":"Entity","entity":"0000000000000012"}}]}`).code,0)
-    if !testing.expect_value(t,len(play.modifier_requests.queue.items),1) {return}
-    goal:=play.modifier_requests.queue.items[0]
+    if !testing.expect_value(t,len(play.animation_requests.goals.items),1) {return}
+    goal:=play.animation_requests.goals.items[0]
     testing.expect(t,goal.rig==play.ids.entities[0] && goal.target.kind==.Entity && goal.target.entity==play.ids.entities[1] && goal.target.entity!=document.ids.entities[1])
     testing.expect(t,goal.slot==1 && goal.weight==.4 && goal.enabled)
     ik_result:=authoring_test_execute(f,"request",`{"entity":"0000000000000011","goals":[{"kind":"IK","name":"foot","target":{"position":[0,0,0]}}]}`)
     if !testing.expectf(t,ik_result.code==0,"%s %s",ik_result.message,ik_result.data) {return}
-    goal=play.modifier_requests.queue.items[1]
+    goal=play.animation_requests.goals.items[1]
     testing.expect(t,goal.target.kind==.World && goal.target.position=={} && goal.target.rotation==1 && goal.weight==1 && goal.enabled)
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","controls":[{"kind":"Grounding","name":"grounding","weight":0.2}]}`).code,0)
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","goals":[{"kind":"Grounding","name":"grounding","contact":0.7,"grounded":true}]}`).code,0)
-    goal=play.modifier_requests.queue.items[2]
+    goal=play.animation_requests.goals.items[2]
     testing.expect(t,goal.kind==.Grounding && goal.weight==.7 && goal.enabled)
-    testing.expect_value(t,len(play.modifier_requests.controls.items),1)
-    testing.expect_value(t,play.modifier_requests.controls.items[0].weight,f32(.2))
+    testing.expect_value(t,len(play.animation_requests.controls.items),1)
+    testing.expect_value(t,play.animation_requests.controls.items[0].weight,f32(.2))
     for request in ([8]string{
         `{"entity":"0000000000000011","goals":[{"kind":"Look","name":"missing"}]}`,
         `{"entity":"0000000000000011","goals":[{"kind":"Look","name":"head","target":{"kind":"Entity","entity":"0000000000000099"}}]}`,
@@ -237,25 +236,25 @@ modifier_goal_api_resolves_targets_in_the_running_world_accepts_the_origin_and_k
         `{"entity":"0000000000000011","goals":[{"kind":"Look","name":"head","enabled":false}]}`,
         `{"entity":"0000000000000011","goals":[{"kind":"Look","name":"head","target":{"kind":"Entity","entity":"0000000000000012"},"position":[0,0,0]}]}`,
     }) {testing.expect_value(t,authoring_test_execute(f,"request",request).code,api.INVALID_PARAMS)}
-    testing.expect_value(t,len(play.modifier_requests.queue.items),3)
+    testing.expect_value(t,len(play.animation_requests.goals.items),3)
     f.session.mode=.Simulate
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","goals":[{"kind":"Grounding","name":"grounding","grounded":false}]}`).code,0)
-    testing.expect(t,len(play.modifier_requests.queue.items)==4 && !play.modifier_requests.queue.items[3].enabled)
+    testing.expect(t,len(play.animation_requests.goals.items)==4 && !play.animation_requests.goals.items[3].enabled)
     f.session.mode=.Edit
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","goals":[{"kind":"Look","name":"head"}]}`).code,api.INVALID_PARAMS)
-    testing.expect_value(t,len(play.modifier_requests.queue.items),4)
-    testing.expect(t,len(document.modifier_requests.queue.items)==0 && len(document.modifier_requests.controls.items)==0)
+    testing.expect_value(t,len(play.animation_requests.goals.items),4)
+    testing.expect(t,len(document.animation_requests.goals.items)==0 && len(document.animation_requests.controls.items)==0)
     preview:Preview_Params;copy(preview.entity[:],"0000000000000011")
     preview.goals[0]={kind=.Look,target={kind=.Entity,rotation=1,scale={1,1,1}}};copy(preview.goals[0].target.entity[:],"0000000000000012");base.text_set(preview.goals[0].name[:],"head")
     call:=api.Call{raw=`{"goals":[{"kind":"Look","name":"head","target":{"kind":"Entity","entity":"0000000000000012"}}]}`,allocator=context.temp_allocator}
     testing.expect(t,request_apply(&f.session,&call,core.world_ref(&play,&info),play.ids.entities[0],&preview,0,nil))
-    testing.expect(t,len(play.modifier_requests.queue.items)==5 && play.modifier_requests.queue.items[4].target.entity==play.ids.entities[1])
-    testing.expect_value(t,len(document.modifier_requests.queue.items),0)
+    testing.expect(t,len(play.animation_requests.goals.items)==5 && play.animation_requests.goals.items[4].target.entity==play.ids.entities[1])
+    testing.expect_value(t,len(document.animation_requests.goals.items),0)
     f.session.mode=.Play
     set.pose={look={look,look}}
     testing.expect_value(t,anim.character_save(fmt.tprintf("%s/goals.character",f.root),&f.assets.types,pose_id,set),asset.Error.None)
     testing.expect(t,host.assets_scan(&f.assets))
     ambiguous:=authoring_test_execute(f,"request",`{"entity":"0000000000000011","goals":[{"kind":"Look","name":"head","target":{"kind":"Entity","entity":"0000000000000012"}}]}`)
     testing.expect_value(t,ambiguous.code,api.INVALID_PARAMS);testing.expect(t,strings.contains(ambiguous.data,"Ambiguous_Reference"))
-    testing.expect_value(t,len(play.modifier_requests.queue.items),5)
+    testing.expect_value(t,len(play.animation_requests.goals.items),5)
 }

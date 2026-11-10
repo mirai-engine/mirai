@@ -15,7 +15,7 @@ import "base:runtime"
 // limbs are those of the body of the skeleton (@foot_l, @pelvis); the sections and windows of its
 // actions and its warp windows are spans of its clips.
 CHARACTER_KIND :: asset.Fourcc(u32('C')|u32('H')<<8|u32('A')<<16|u32('R')<<24)
-CHARACTER_VERSION :: 1
+CHARACTER_VERSION :: 2
 
 Character_Info :: struct {animation:base.Asset_Id} // the .anim of its clips; empty for a set that names none (the modifiers of a rope)
 // spaces: the aim offsets and additive poses its layers sample, each with its samples in
@@ -72,7 +72,7 @@ character_document :: proc(doc:^asset.Document,types:^asset.Types,id:base.Asset_
 }
 @(private)
 character_tables :: proc(doc:^asset.Document,types:^asset.Types,set:Character_Set) -> asset.Error {
-    info,locomotion,warp:=set.info,set.match.info,set.motion.warp
+    info,locomotion,warp,grounding:=set.info,set.match.info,set.motion.warp,set.pose.grounding
     pose:=set.pose
     asset.document_put_row(doc,types,"info",&info) or_return
     asset.document_put_row(doc,types,"match",&locomotion) or_return
@@ -90,7 +90,7 @@ character_tables :: proc(doc:^asset.Document,types:^asset.Types,set:Character_Se
     asset.document_put(doc,types,"ik",pose.ik) or_return
     asset.document_put(doc,types,"look",pose.look) or_return
     asset.document_put(doc,types,"limits",pose.limits) or_return
-    asset.document_put(doc,types,"grounding",pose.grounding) or_return
+    asset.document_put_row(doc,types,"grounding",&grounding) or_return
     asset.document_put(doc,types,"chain_ik",pose.chain_ik) or_return
     asset.document_put(doc,types,"twist",pose.twist) or_return
     asset.document_put(doc,types,"springs",pose.springs) or_return
@@ -130,7 +130,7 @@ character_view :: proc(file:^asset.Asset,types:^asset.Types) -> (set:Character_S
     pose.ik=asset.asset_rows(file,types,"ik","",IK_Constraint) or_return
     pose.look=asset.asset_rows(file,types,"look","",Look_Constraint) or_return
     pose.limits=asset.asset_rows(file,types,"limits","",Rotation_Constraint) or_return
-    pose.grounding=asset.asset_rows(file,types,"grounding","",Foot_Grounding) or_return
+    pose.grounding=(asset.asset_row(file,types,"grounding",Foot_Grounding) or_return)^
     pose.chain_ik=asset.asset_rows(file,types,"chain_ik","",Chain_IK_Constraint) or_return
     pose.twist=asset.asset_rows(file,types,"twist","",Twist_Constraint) or_return
     pose.springs=asset.asset_rows(file,types,"springs","",Spring_Constraint) or_return

@@ -72,7 +72,6 @@ Constraint_Inputs :: struct {
     look:core.Read(Look_Constraint),
     limits:core.Read(Rotation_Constraint),
     sockets:core.Read(Bone_Binding),
-    roots:core.Read(Root_Motion),
     worlds:core.Read(core.World_Transform),
     geometry:u64,
     skeletons:^Skeleton_Assets, // the sockets targets name
@@ -207,17 +206,9 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
     // A rig that takes the sampled pose of another takes it through the chains of its set, or by
     // the names of their bones.
     chained:=rig_runtime!=nil && rigs_retarget(state,playback,rig_runtime,problems)
-    {
-        // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
-        root:=state.base_root;ok:=state.has_base_root;sampled:=state.clips_in_place
-        if inputs.roots.table!=nil {if supplied,exists:=core.get(inputs.roots,state.entity);exists {root=supplied;ok=true;sampled=false}}
-        if state.program.ready && state.program.has_root {root=state.program.root;ok=true;sampled=false}
-        if state.has_action_root {root=state.action_root;ok=true;sampled=false}
-        if state.has_action_in_place {root=state.action_in_place_root;ok=true;sampled=false}
-        if ok && !sampled && (root.in_place || state.has_action_in_place) {
-            if bone,reference,valid:=animation_root_reference(state,root,state.local[:],core.read(transforms));valid {state.local[bone]=reference}
-        }
-    }
+    // A root bound to the entity keeps, on the channels its base keeps in place, where the owner of
+    // its Transform put it after the pose was sampled.
+    if state.root.in_place {if bone,reference,ok:=animation_root_reference(state,state.root,state.local[:],core.read(transforms));ok && bone==0 {state.local[0]=reference}}
     parent_world:=mm.TRANSFORM_IDENTITY
     if parents.table!=nil {
         if parent,ok:=core.get(parents,state.entity);ok && parent.entity!=core.NONE {
@@ -349,22 +340,15 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
     }
 }
 
-// The local transform of a root bone with the channels its root motion keeps
-// in place pinned: to the retired pose of the actions that project that bone,
-// or else, for an in-place root, to the rest (the entity's own transform for a
-// root bound to it). The other channels are those of pose.
+// The local transform of a root bone in pose with the channels an in-place root motion keeps
+// pinned to its reference (root_reference); the other channels are those of pose.
 animation_root_reference :: proc(state:^Playing,root:Root_Motion,pose:[]mm.Transform,transforms:core.Read(core.Transform)) -> (bone:int,reference:mm.Transform,ok:bool) {
     if state==nil {return -1,mm.TRANSFORM_IDENTITY,false}
     bone=bone_resolve(state,root.bone)
     if bone<0 || bone>=len(pose) || bone>=len(state.rest) {return -1,mm.TRANSFORM_IDENTITY,false}
     reference=pose[bone]
-    pinned:mm.Transform
-    if state.has_action_in_place && bone_resolve(state,state.action_in_place_root.bone)==bone {pinned=state.action_in_place_local} else if root.in_place {
-        pinned=state.rest[bone]
-        if bone==0 && state.parents[bone]<0 && state.bindings[bone].entity==state.entity {
-            if current,exists:=core.get(transforms,state.entity);exists {pinned=core.to_math(current)}
-        }
-    } else {return bone,reference,true}
+    if !root.in_place {return bone,reference,true}
+    pinned:=root_reference(state,bone,transforms)
     if root.translation {reference.position=pinned.position}
     if root.rotation {reference.rotation=pinned.rotation}
     return bone,reference,true

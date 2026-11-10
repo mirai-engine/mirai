@@ -23,7 +23,7 @@ Modifier_Control_State :: struct {
     base_enabled,enabled:bool,
 }
 
-modifier_control :: proc(requests:^Modifier_Requests,control:Modifier_Control) {
+modifier_control :: proc(requests:^Animation_Requests,control:Modifier_Control) {
     if requests==nil {return}
     control:=control
     if !blend_text_valid(control.name[:],true) || control.rig==core.NONE || control.kind>max(Modifier_Kind) || control.slot>=POSE_CONSTRAINTS || control.kind==.Grounding && control.slot!=0 || !profile_weight(control.weight) || !finite(control.fade) || control.fade<0 {
@@ -64,7 +64,7 @@ modifier_controls_prepare :: proc(next,previous:^Modifier_Runtime) -> bool {
         slot:u16
         rig:=core.NONE
         for &value,row in table.values {
-            if rig!=value.rig {rig=value.rig;slot=0}
+            if rig!=table.entities[row] {rig=table.entities[row];slot=0}
             state:=Modifier_Control_State{rig=rig,kind=kind,slot=slot,row=row,base_weight=value.weight,base_enabled=value.enabled,weight=1,start=1,target=1,enabled=true}
             if found:=modifier_control_state(previous,rig,kind,slot);found!=nil && modifier_same_operation(previous,next,rig,kind,slot) {
                 state.weight,state.start,state.target,state.elapsed,state.duration,state.enabled=found.weight,found.start,found.target,found.elapsed,found.duration,found.enabled
@@ -120,7 +120,7 @@ modifier_fade_remove :: proc(runtime:^Modifier_Runtime,state:^Modifier_Control_S
 }
 
 @(private)
-modifier_controls_take :: proc(runtime:^Modifier_Runtime,requests:^Modifier_Requests,problems:^core.Problems,dt:f32) {
+modifier_controls_take :: proc(runtime:^Modifier_Runtime,requests:^Animation_Requests,problems:^core.Problems,dt:f32) {
     if requests==nil {return}
     for control in core.take(&requests.controls) {
         control:=control

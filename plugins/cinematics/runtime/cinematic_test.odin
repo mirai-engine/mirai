@@ -39,10 +39,10 @@ Cinematic_World :: struct {
     events:anim.Animation_Events,
     constraints:anim.Animation_Constraints,
     modifier_runtime:anim.Modifier_Runtime,
-    modifier_requests:anim.Modifier_Requests,
     grounding:anim.Grounding_Runtime,
     actions:anim.Action_Runtime,
-    motion_requests:anim.Motion_Requests,
+    motion:anim.Motion_Runtime,
+    played:core.Table(anim.Animation_Played),
     shown:camera.Cameras,
     seat_state:input.Seats,
     camera_requests:camera.Camera_Requests,
@@ -67,10 +67,10 @@ Cinematic_Shared :: struct {
 @(private="file")
 cinematic_tick :: proc(w:^Cinematic_World,s:^Cinematic_Shared,app:^host.App,problems:^core.Problems,tick:u64,dt:f32) {
     time:=core.Time{dt=dt,tick=tick,playing=true}
-    anim.animation_sample(core.read(&w.animations),&w.progress,core.read(&w.attachments),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),core.read(&w.targets),core.read(&w.meshes),core.read(&w.sources),&w.requests,&w.events,&w.modifier_requests,&w.modifier_runtime,&w.playback,&s.characters,&s.skeletons,app,time,{},problems,&w.actions,nil,&w.motion_requests,&s.sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
+    anim.animation_sample(core.read(&w.animations),&w.progress,&w.played,core.read(&w.attachments),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),core.read(&w.targets),core.read(&w.meshes),core.read(&w.sources),core.read(&w.remotes),&w.requests,&w.events,&w.modifier_runtime,&w.playback,&s.characters,&s.skeletons,app,time,{},problems,&w.actions,&w.motion,&s.sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
     core.test_world_settle(w)
     anim.animation_fields(core.test_world_ref(w),core.ref(&w.playback),&w.fields,core.ref(&s.sources),app,problems)
-    anim.animation_advance(&w.transforms,core.read(&w.parents),{},&w.modifier_requests,&w.modifier_runtime,&w.playback,&w.constraints,&w.grounding,{},{},time,&w.requests,core.ref(&s.skeletons),problems,nil,&s.characters,{},{},core.CLOCK_DEFAULT,nil)
+    anim.animation_advance(&w.transforms,core.read(&w.parents),{},&w.requests,&w.modifier_runtime,&w.playback,&w.constraints,&w.grounding,{},{},time,core.ref(&s.skeletons),problems,&w.motion,&s.characters,{},{},core.CLOCK_DEFAULT,nil)
     cinematic_advance(core.ref(&w.entities),&w.cinematics,core.read(&w.shots),core.read(&w.viewers),&w.views,core.read(&w.cameras),core.read(&w.drivables),&w.transforms,core.read(&w.parents),core.read(&w.animations),core.ref(&w.playback),core.ref(&w.shown),core.ref(&w.seat_state),&w.camera_requests,&w.seat_requests,core.read(&w.seats),time,core.read(&w.remotes),problems)
     core.test_world_settle(w)
 }
@@ -182,12 +182,12 @@ a_viewer_shows_the_shots_of_a_clip_while_it_plays :: proc(t:^testing.T) {
     clear(&w.requests.timeline.items)
     cinematic_follow(core.read(&w.cinematics),core.read(&w.animations),core.ref(&w.playback),&w.requests,{dt=DT,tick=11,playing=true},core.read(&w.remotes))
     commands:=w.requests.timeline.items[:]
-    testing.expect(t,len(commands)==1 && commands[0]==anim.Animation_Command{timeline,.25,.Seek},"a clip that plays is sought a tick before the half second the anchor gives the end of the tick")
+    testing.expect(t,len(commands)==1 && commands[0]==anim.Animation_Command{timeline,.25,1,.Seek},"a clip that plays is sought a tick before the half second the anchor gives the end of the tick")
     clear(&w.requests.timeline.items)
     remote.status,remote.anchor_time,remote.anchor_rate=.Paused,.75,0
     cinematic_follow(core.read(&w.cinematics),core.read(&w.animations),core.ref(&w.playback),&w.requests,{dt=DT,tick=40,playing=true},core.read(&w.remotes))
     commands=w.requests.timeline.items[:]
-    testing.expect(t,len(commands)==2 && commands[0].command==.Pause && commands[1]==anim.Animation_Command{timeline,.75,.Seek},"paused by the server, it pauses where the anchor is")
+    testing.expect(t,len(commands)==2 && commands[0].command==.Pause && commands[1]==anim.Animation_Command{timeline,.75,1,.Seek},"paused by the server, it pauses where the anchor is")
     clear(&w.requests.timeline.items)
     core.remove(&w.remotes,timeline);core.test_world_settle(&w)
 

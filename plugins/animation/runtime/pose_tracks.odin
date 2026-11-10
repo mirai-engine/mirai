@@ -172,10 +172,11 @@ pose_row :: proc(playback:^Playback,row:^Pose_Row,transforms:core.Read(core.Tran
     content:=&playback.work_contents[row.content-1]
     if row.programmed {
         if !program_pose(playback,state,content,row.animation,&state.program.output,worker) {row.faults.program=true;return}
-        row.faults=pose_layers(playback,state,&content.lib,row.animation,transforms,worker)
+        if root:=state.program.root;state.program.has_root && root.in_place {if bone,reference,ok:=animation_root_reference(state,root,state.local[:],transforms);ok {state.local[bone]=reference}}
+        row.faults=pose_layers(playback,state,content,row.animation,transforms,worker)
         sample_layer_curves(state,content,row.animation)
     } else {
-        row.faults=pose_sample(playback,state,&content.lib,row.animation,transforms,content,worker)
+        row.faults=pose_sample(playback,state,content,row.animation,transforms,worker)
         sample_curves(state,content,row.animation.weight,row.animation)
     }
     if row.animation.mirror && !playing_mirror(state,state.local[:]) {row.faults.mirror=true}

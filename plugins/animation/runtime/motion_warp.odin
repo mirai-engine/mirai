@@ -60,18 +60,17 @@ Motion_Target :: struct {name:[32]u8 `mirai:"text"`,target:Spatial_Target,enable
 Motion_Target_Request :: struct {rig:core.Entity,target:Motion_Target}
 Motion_Locomotion :: struct {rig:core.Entity,velocity,source_velocity:mm.Vec3,weight:f32,enabled:bool}
 MOTION_LOCOMOTION_DEFAULT :: Motion_Locomotion{weight=1,enabled=true}
-@(storage,queue)
-Motion_Requests :: struct {targets:core.Queue(Motion_Target_Request),locomotion:core.Queue(Motion_Locomotion)}
 
-motion_target :: proc(requests:^Motion_Requests,rig:core.Entity,name:string,target:Spatial_Target,enabled:bool=true) {
+// Gives the warp windows of name of the .character of rig a target: their root motion ends there.
+motion_target :: proc(requests:^Animation_Requests,rig:core.Entity,name:string,target:Spatial_Target,enabled:bool=true) {
     if requests==nil {return}
     valid:=rig!=core.NONE && len(name)>0 && len(name)<32 && spatial_target_valid(target)
     for byte in name {valid&&=byte!=0}
-    if !valid {core.refuse(&requests.targets);return}
+    if !valid {core.refuse(&requests.warps);return}
     value:=Motion_Target{target=target,enabled=enabled};copy(value.name[:],transmute([]u8)name)
-    core.offer(&requests.targets,Motion_Target_Request{rig=rig,target=value})
+    core.offer(&requests.warps,Motion_Target_Request{rig=rig,target=value})
 }
-motion_locomotion :: proc(requests:^Motion_Requests,value:Motion_Locomotion) {
+motion_locomotion :: proc(requests:^Animation_Requests,value:Motion_Locomotion) {
     if requests==nil {return}
     if value.rig==core.NONE || !profile_vector(value.velocity) || !profile_vector(value.source_velocity) || !profile_weight(value.weight) {core.refuse(&requests.locomotion);return}
     core.offer(&requests.locomotion,value)
@@ -160,9 +159,8 @@ motion_bind :: proc(instance:^Motion_Instance,state:^Playing,content:^Character_
     return true
 }
 
-motion_take_requests :: proc(runtime:^Motion_Runtime,requests:^Motion_Requests,problems:^core.Problems) {
-    if runtime==nil || requests==nil {return}
-    for request in requests.targets.items {
+motion_take_requests :: proc(runtime:^Motion_Runtime,requests:^Animation_Requests,problems:^core.Problems) {
+    for request in core.take(&requests.warps) {
         instance:=motion_instance(runtime,request.rig)
         if instance==nil {
             core.report(problems,request.rig,"animation.motion_owner","a motion target was given for this entity, and its Animation plays no .character; set Animation.asset to one, or give it to the entity that has one")
@@ -180,14 +178,13 @@ motion_take_requests :: proc(runtime:^Motion_Runtime,requests:^Motion_Requests,p
         target.resolved=target.target.kind==.World
         target.world=spatial_offset(target.target)
     }
-    for request in requests.locomotion.items {
+    for request in core.take(&requests.locomotion) {
         if instance:=motion_instance(runtime,request.rig);instance!=nil {
             instance.locomotion=request
         } else {
             core.report(problems,request.rig,"animation.motion_owner","a motion locomotion was given for this entity, and its Animation plays no .character; set Animation.asset to one, or give it to the entity that has one")
         }
     }
-    clear(&requests.targets.items);clear(&requests.locomotion.items)
 }
 
 @(private)
@@ -222,7 +219,7 @@ motion_discover :: proc(runtime:^Motion_Runtime,animations:core.Read(Animation),
     return true
 }
 
-motion_prepare :: proc(runtime:^Motion_Runtime,requests:^Motion_Requests,animations:core.Read(Animation),playback:^Playback,characters:^Character_Assets,loaded:^host.Assets,allocator:mem.Allocator,problems:^core.Problems) -> bool {
+motion_prepare :: proc(runtime:^Motion_Runtime,requests:^Animation_Requests,animations:core.Read(Animation),playback:^Playback,characters:^Character_Assets,loaded:^host.Assets,allocator:mem.Allocator,problems:^core.Problems) -> bool {
     if runtime==nil || playback==nil || animations.table==nil {return false}
     if allocator.procedure!=nil {context.allocator=allocator}
     runtime.frame+=1

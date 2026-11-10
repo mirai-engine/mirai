@@ -163,6 +163,7 @@ main :: proc() {
         write_control_intro(&o)
         write_physics_gallery(&o)
         write_horde_records(&o)
+        write_arena_agent(&o)
         if !o.content.failed {write_animation_assets(&o)}
         write_feature_meshes(&o)
         write_decal_images(&o)
@@ -176,7 +177,7 @@ main :: proc() {
     case "--animation-only": import_model(&o,"mirai/mirai.glb");if !o.content.failed {write_animation_assets(&o)}
     case "--interface-only": write_interface_assets(&o)
     case "--dig-only":       write_dig_assets(&o)
-    case "--ai-only":        write_horde_records(&o)
+    case "--ai-only":        write_horde_records(&o);write_arena_agent(&o)
     case:
         fmt.eprintfln("demo_content: unknown option %s",os.args[2])
         o.content.failed=true
