@@ -42,11 +42,16 @@ Second.
 Last body.
 `
 
+// The fixture in a folder of its own, named after who asks: every test of a
+// run draws the same random names, so two that shared a pattern would ask for
+// the same folder, and one being removed refuses the other. Without a folder
+// there is no root: an empty one is the working folder, whose docs are the
+// engine's.
 @(private="file")
-docs_root :: proc(t:^testing.T) -> string {
-    directory,error:=os.make_directory_temp("","mirai-docs-*",context.temp_allocator)
-    testing.expect(t,error==nil)
-    root:=project.path_absolute(directory,context.temp_allocator)
+docs_root :: proc(t:^testing.T,name:string) -> (root:string,ok:bool) {
+    directory,error:=os.make_directory_temp("",name,context.temp_allocator)
+    if !testing.expectf(t,error==nil && directory!="","no temporary folder: %v",error) {return}
+    root=project.path_absolute(directory,context.temp_allocator)
     write :: proc(t:^testing.T,root,name,text:string) {
         file:=project.path(root,api.DOCS_FOLDER,name,allocator=context.temp_allocator)
         testing.expect(t,os.make_directory_all(file[:strings.last_index_byte(file,'/')])==nil)
@@ -55,7 +60,7 @@ docs_root :: proc(t:^testing.T) -> string {
     write(t,root,"core.md",DOCS_TOPIC)
     write(t,root,"core/prefabs.md","# Prefabs and spawning\n\nPrefab body.\n")
     write(t,root,"ship.md","---\nname: ship\ndescription: Ship a game.\n---\n\n# Ship\n")
-    return root
+    return root,true
 }
 
 // A section is its heading and what is under it, by the anchor of the heading,
@@ -63,7 +68,8 @@ docs_root :: proc(t:^testing.T) -> string {
 @(test)
 docs_finds_one_section_and_names_what_is_valid :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    root:=docs_root(t)
+    root,made:=docs_root(t,"mirai-docs-sections-*")
+    if !made {return}
     defer os.remove_all(root)
 
     found:=[?]struct{section,has,lacks:string}{
@@ -100,7 +106,8 @@ docs_finds_one_section_and_names_what_is_valid :: proc(t:^testing.T) {
     testing.expect(t,strings.contains(index,"Core of a game - components, steps and phases."),index)
     testing.expect(t,strings.contains(index,"\n  core prefabs: Prefabs and spawning\nship"),index)
 
-    empty,_:=os.make_directory_temp("","mirai-docs-*",context.temp_allocator)
+    empty,empty_error:=os.make_directory_temp("","mirai-docs-empty-*",context.temp_allocator)
+    if !testing.expectf(t,empty_error==nil && empty!="","no temporary folder: %v",empty_error) {return}
     defer os.remove_all(empty)
     _,ok:=api.docs_answer(empty,"","")
     testing.expect(t,!ok)
@@ -112,7 +119,8 @@ docs_finds_one_section_and_names_what_is_valid :: proc(t:^testing.T) {
 @(test)
 the_docs_tool_is_answered_by_the_bridge :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    root:=docs_root(t)
+    root,made:=docs_root(t,"mirai-docs-bridge-*")
+    if !made {return}
     defer os.remove_all(root)
 
     call :: proc(root,arguments:string) -> (text,error:string,answered:bool) {
