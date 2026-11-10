@@ -191,7 +191,7 @@ a_screen_on_the_body_of_a_player_shows_in_the_part_of_that_player :: proc(t:^tes
     testing.expect(t,f.gui.skipped==before+3 && before>skipped,"The frames skipped are counted")
 
     // What one body shows changes: its player builds again, the other does not.
-    core.get(&w.huds,bodies[1]).coins=8
+    core.edit(&w.huds,bodies[1]).coins=8
     core.test_world_settle(w)
     players_frame(f)
     testing.expect(t,second.open && context_shows(second.ctx,"8") && first.skipped,"Only the player whose HUD changed is built")

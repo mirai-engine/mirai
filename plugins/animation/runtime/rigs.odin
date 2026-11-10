@@ -424,7 +424,7 @@ rigs_apply_goal :: proc(runtime:^Modifier_Runtime,goal:Modifier_Goal,weight:f32,
     #partial switch goal.kind {
     case .Chain_IK:
         if row:=rig_slot_row(&runtime.chain_ik,goal.rig,goal.slot);row>=0 {
-            out:=core.at(&runtime.chain_ik,row)
+            out:=core.edit_at(&runtime.chain_ik,row)
             out.target=goal.target
             out.weight,out.enabled=weight,enabled
         }
@@ -435,7 +435,7 @@ rigs_apply_goal :: proc(runtime:^Modifier_Runtime,goal:Modifier_Goal,weight:f32,
                 core.report(problems,goal.rig,"animation.modifier_effector","a goal for effector %d of Multi IK '%s' was refused: it has %d effectors; name one of them",goal.effector,base.text_get(config.name[:]),config.effector_count)
                 return
             }
-            out:=core.at(&runtime.multi_ik,row)
+            out:=core.edit_at(&runtime.multi_ik,row)
             out.effectors[goal.effector].target=goal.target
             out.weight,out.enabled=weight,enabled
         }
@@ -445,24 +445,24 @@ rigs_apply_goal :: proc(runtime:^Modifier_Runtime,goal:Modifier_Goal,weight:f32,
                 core.report(problems,goal.rig,"animation.modifier_effector","a goal for control %d of Spline IK '%s' was refused: it has %d controls; name one of 0 to %d",goal.effector,modifier_operation_name(&runtime.spline_ik.values[row]),len(SPLINE_CONTROLS),len(SPLINE_CONTROLS)-1)
                 return
             }
-            out:=core.at(&runtime.spline_ik,row)
+            out:=core.edit_at(&runtime.spline_ik,row)
             out.controls[goal.effector]=goal.target
             out.weight,out.enabled=weight,enabled
         }
     case .Follow:
         if row:=rig_slot_row(&runtime.follow,goal.rig,goal.slot);row>=0 {
-            out:=core.at(&runtime.follow,row)
+            out:=core.edit_at(&runtime.follow,row)
             out.target=goal.target
             out.weight,out.enabled=weight,enabled
         }
     case .Corrective:
-        if row:=rig_slot_row(&runtime.correctives,goal.rig,goal.slot);row>=0 {out:=core.at(&runtime.correctives,row);out.weight,out.enabled=weight,enabled}
+        if row:=rig_slot_row(&runtime.correctives,goal.rig,goal.slot);row>=0 {out:=core.edit_at(&runtime.correctives,row);out.weight,out.enabled=weight,enabled}
     case .Twist:
-        if row:=rig_slot_row(&runtime.twist,goal.rig,goal.slot);row>=0 {out:=core.at(&runtime.twist,row);out.weight,out.enabled=weight,enabled}
+        if row:=rig_slot_row(&runtime.twist,goal.rig,goal.slot);row>=0 {out:=core.edit_at(&runtime.twist,row);out.weight,out.enabled=weight,enabled}
     case .Spring:
-        if row:=rig_slot_row(&runtime.springs,goal.rig,goal.slot);row>=0 {out:=core.at(&runtime.springs,row);out.settings.force=goal.position;out.weight,out.enabled=weight,enabled}
+        if row:=rig_slot_row(&runtime.springs,goal.rig,goal.slot);row>=0 {out:=core.edit_at(&runtime.springs,row);out.settings.force=goal.position;out.weight,out.enabled=weight,enabled}
     case .Chain_Retarget:
-        if row:=rig_slot_row(&runtime.retarget_chains,goal.rig,goal.slot);row>=0 {out:=core.at(&runtime.retarget_chains,row);out.weight,out.enabled=weight,enabled}
+        if row:=rig_slot_row(&runtime.retarget_chains,goal.rig,goal.slot);row>=0 {out:=core.edit_at(&runtime.retarget_chains,row);out.weight,out.enabled=weight,enabled}
     }
 }
 

@@ -132,14 +132,14 @@ a_section_turned_on_or_off_in_the_view_is_no_edit_and_its_reference_keeps_what_i
     testing.expect(t,overridden && state==.Active)
     testing.expect_value(t,section_shown(s,w,f.r),Section_Shown.Loading)
     // scene_sections reads the view over the reference, which keeps what it asks.
-    reference:=core.get(&f.world.references,f.r)
+    reference:=core.edit(&f.world.references,f.r)
     testing.expect_value(t,scene.section_wanted(&f.world.views,f.r,reference^),scene.Section_State.Active)
     sections_watch(s,&f.watch,w)
     c:=sections_test_entity(f,SECTIONS_TEST_LOCAL,"Crate",f.r,{1,0,0})
     reference.loaded=f.x
     core.world_settle(w)
     sections_watched(s,&f.watch,w)
-    reference=core.get(&f.world.references,f.r)
+    reference=core.edit(&f.world.references,f.r)
     testing.expect(t,reference.state==.Unloaded && reference.rule==.Manual,"the reference keeps what it asks")
     testing.expect_value(t,section_shown(s,w,f.r),Section_Shown.Active)
     testing.expect(t,!history.edits_commit(&f.edits,w,&f.selection) && f.edits.error==.No_Change,"what the section loaded is no step")
@@ -155,7 +155,7 @@ a_section_turned_on_or_off_in_the_view_is_no_edit_and_its_reference_keeps_what_i
     testing.expect_value(t,section_view_set(s,w,f.r,.Unloaded),"")
     sections_watch(s,&f.watch,w)
     core.world_destroy_tree(w,c)
-    core.get(&f.world.references,f.r).loaded={}
+    core.edit(&f.world.references,f.r).loaded={}
     core.world_settle(w)
     sections_watched(s,&f.watch,w)
     testing.expect(t,!entity_alive(w,c))
@@ -164,12 +164,12 @@ a_section_turned_on_or_off_in_the_view_is_no_edit_and_its_reference_keeps_what_i
     testing.expect_value(t,section_view_set(s,w,f.r,.Active,true),"")
     _,overridden=section_view(s,w,f.r)
     testing.expect(t,!overridden && len(f.world.views.items)==0)
-    core.get(&f.world.references,f.r).rule=.Spatial
+    core.edit(&f.world.references,f.r).rule=.Spatial
     history.edits_reset(&f.edits,w)
     testing.expect_value(t,section_view_set(s,w,f.r,.Loaded),"")
     sections_watch(s,&f.watch,w)
     sections_watched(s,&f.watch,w)
-    reference=core.get(&f.world.references,f.r)
+    reference=core.edit(&f.world.references,f.r)
     testing.expect(t,reference.rule==.Spatial && reference.state==.Unloaded && reference.streamed==.Active)
     testing.expect_value(t,scene.section_wanted(&f.world.views,f.r,reference^),scene.Section_State.Loaded)
     testing.expect(t,!history.edits_commit(&f.edits,w,&f.selection) && f.edits.error==.No_Change)
@@ -243,12 +243,12 @@ the_camera_travels_to_a_section_and_turns_it_on_in_the_view :: proc(t:^testing.T
     testing.expect(t,linalg.length(o.target-center)<15 && o.distance>10 && o.distance<SECTION_TRAVEL_DISTANCE,fmt.tprint(o))
     testing.expect(t,!history.edits_commit(&f.edits,w,&f.selection) && f.edits.error==.No_Change,"travel is no edit")
     // Into a big one, at its middle.
-    core.get(&f.world.references,f.r).extents={2000,300,2000}
+    core.edit(&f.world.references,f.r).extents={2000,300,2000}
     testing.expect_value(t,section_travel(s,w,f.r),"")
     testing.expect(t,f.viewport.orbit.target==center && f.viewport.orbit.distance==SECTION_TRAVEL_DISTANCE)
     // One its reference asks on needs nothing of the view.
     testing.expect_value(t,section_view_set(s,w,f.r,.Active,true),"")
-    core.get(&f.world.references,f.r).state=.Active
+    core.edit(&f.world.references,f.r).state=.Active
     testing.expect_value(t,section_travel(s,w,f.r),"")
     testing.expect_value(t,len(f.world.views.items),0)
 }
@@ -301,7 +301,7 @@ save_writes_each_section_edited_in_its_world_that_changed_and_stays_unsaved_when
     section_edit_set(s,f.r)
     testing.expect(t,transform_set(s,f.c,{{11,0,0},1,{1,1,1}}))
     testing.expect(t,history.edits_commit(&f.edits,w,&f.selection))
-    core.get(&f.world.references,f.r).held=true
+    core.edit(&f.world.references,f.r).held=true
     testing.expect_value(t,scene_save(s,"world.scene"),Document_Error.None)
     testing.expect(t,document_dirty(s),"a section not written keeps the document unsaved")
     testing.expect(t,strings.contains(string(s.toast[:s.toast_length]),"was not saved"))
@@ -318,7 +318,7 @@ the_map_shows_each_section_by_its_box_and_the_api_reads_it_and_turns_it_in_the_v
     m:World_Map
     defer core.value_free(&m,type_info_of(World_Map))
     // From above a box turned around the vertical is its four corners; from a side, its height down the map.
-    turned:=core.get(&f.world.transforms,f.r)
+    turned:=core.edit(&f.world.transforms,f.r)
     turned.rotation=quaternion(x=0,y=0.38268343,z=0,w=0.9238795)
     world_map_gather(s,&m,w)
     testing.expect_value(t,len(m.items),1)
@@ -368,16 +368,16 @@ a_reference_a_step_makes_loads_in_that_step_and_what_hangs_from_a_reference_gone
     edit_close(s,opened)
     core.world_settle(w)
     sections_watch(s,&f.watch,w)
-    testing.expect_value(t,scene.section_wanted(&f.world.views,pasted,core.get(&f.world.references,pasted)^),scene.Section_State.Unloaded)
+    testing.expect_value(t,scene.section_wanted(&f.world.views,pasted,core.at(&f.world.references,core.row_of(&f.world.references,pasted))),scene.Section_State.Unloaded)
     sections_watched(s,&f.watch,w)
-    testing.expect_value(t,core.get(&f.world.references,pasted).state,scene.Section_State.Active)
+    testing.expect_value(t,core.at(&f.world.references,core.row_of(&f.world.references,pasted)).state,scene.Section_State.Active)
     _,overridden:=section_view(s,w,pasted)
     testing.expect(t,!overridden,"waiting for its step is no view of the user")
     sections_sync(s)
     testing.expect(t,history.edits_commit(&f.edits,w,&f.selection))
     core.world_settle(w)
     loaded:=entity_children(w,pasted)
-    testing.expect(t,len(loaded)==1 && core.get(&f.world.references,pasted).loaded==f.x,"the step loaded it")
+    testing.expect(t,len(loaded)==1 && core.at(&f.world.references,core.row_of(&f.world.references,pasted)).loaded==f.x,"the step loaded it")
     sections_watch(s,&f.watch,w)
     sections_watched(s,&f.watch,w)
     testing.expect(t,len(f.world.views.items)==0 && len(f.watch.made)==0,"after its step the view gives it back")
@@ -390,7 +390,7 @@ a_reference_a_step_makes_loads_in_that_step_and_what_hangs_from_a_reference_gone
     sections_watch(s,&f.watch,w)
     sections_watched(s,&f.watch,w)
     hung:=sections_test_entity(f,0x99,"Crate",f.r,{})
-    core.get(&f.world.references,f.r).loaded=f.x
+    core.edit(&f.world.references,f.r).loaded=f.x
     core.world_settle(w)
     history.edits_reset(&f.edits,w)
     core.destroy(core.world_entities(w),f.r)
@@ -411,7 +411,7 @@ what_a_library_derives_in_edit_is_no_part_of_the_next_step :: proc(t:^testing.T)
     w:=edited_world(s)
     history.edits_reset(&f.edits,w)
     // A library moves the entity in Edit, as a Bone_Attachment does, and the journal takes it.
-    core.get(&f.world.transforms,f.a).position={0,2,0}
+    core.edit(&f.world.transforms,f.a).position={0,2,0}
     history.edits_take_derived(&f.edits,w,core.Transform,f.a)
     testing.expect(t,!history.edits_commit(&f.edits,w,&f.selection) && f.edits.error==.No_Change,"what a library derived is no step")
     // An edit of the user stays a step, and its undo goes back to where the library put it.
@@ -422,7 +422,7 @@ what_a_library_derives_in_edit_is_no_part_of_the_next_step :: proc(t:^testing.T)
     // While a gesture is open what changed is the user's, and the journal does not take it.
     opened,ready:=edit_open(s,"Transform")
     testing.expect(t,ready)
-    core.get(&f.world.transforms,f.a).position={5,0,0}
+    core.edit(&f.world.transforms,f.a).position={5,0,0}
     history.edits_take_derived(&f.edits,w,core.Transform,f.a)
     edit_close(s,opened)
     testing.expect(t,history.edits_commit(&f.edits,w,&f.selection),"the edit inside the gesture stays a step")
@@ -445,7 +445,7 @@ what_a_section_load_resolves_in_the_document_is_no_part_of_the_next_step :: proc
     append(&f.world.unresolved.items,scene.Unresolved_Reference{entity=f.a,table=base.name_hash("Sections_Link"),offset=0,target=SECTIONS_TEST_LOCAL})
     // The section loads and the resolve gives the field its entity.
     scene.references_resolve(w)
-    link,_:=core.get(core.read(&f.world.links),f.a)
+    link,_:=core.get(&f.world.links,f.a)
     testing.expect_value(t,link.target,f.c)
     testing.expect_value(t,len(f.world.unresolved.resolved),1)
     sections_resolved(s,w)
@@ -458,20 +458,20 @@ what_a_section_load_resolves_in_the_document_is_no_part_of_the_next_step :: proc
         testing.expect(t,rows.table!=links_table,"the step does not hold the field the load resolved")
     }
     testing.expect(t,history.undo(&f.edits,w,&f.selection))
-    link,_=core.get(core.read(&f.world.links),f.a)
+    link,_=core.get(&f.world.links,f.a)
     testing.expect(t,link.target==f.c && entity_local(w,f.a).position==[3]f32{0,0,0})
     // Once taken, the same resolve is not taken again over an edit of the user.
-    core.get(&f.world.links,f.a).target=f.r
+    core.edit(&f.world.links,f.a).target=f.r
     sections_resolved(s,w)
     testing.expect(t,history.edits_commit(&f.edits,w,&f.selection),"the edit of the user stays a step")
     // The drop of the section gives the field none back, outside the undo too.
-    core.get(&f.world.links,f.a).target=f.c
+    core.edit(&f.world.links,f.a).target=f.c
     testing.expect(t,history.edits_commit(&f.edits,w,&f.selection))
     steps:=len(f.edits.steps)
     inside:=make([]bool,int(core.entity_index(f.c))+1,context.temp_allocator)
     inside[core.entity_index(f.c)]=true
     scene.references_release(w,inside,nil)
-    link,_=core.get(core.read(&f.world.links),f.a)
+    link,_=core.get(&f.world.links,f.a)
     testing.expect_value(t,link.target,core.NONE)
     sections_resolved(s,w)
     testing.expect(t,!history.edits_commit(&f.edits,w,&f.selection) && f.edits.error==.No_Change,"what the drop released is no step")

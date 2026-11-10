@@ -93,20 +93,20 @@ terrain_initial_asset_revision_is_the_baseline_of_the_first_undo :: proc(t:^test
     core.test_world_settle(&world)
     history.edits_reset(&edits,ref)
     initial:=history.edits_state(&edits)
-    core.get(&world.terrains,owner).revision=7
+    core.edit(&world.terrains,owner).revision=7
     tool:Terrain_Tool;defer terrain_tool_free(&tool)
     terrain_sync(&session,&tool,core.read(&world.terrains),app.assets)
     testing.expect_value(t,history.edits_state(&edits),initial)
     testing.expect_value(t,len(edits.steps),0)
     history.edits_begin(&edits,&selection,"Sculpt")
-    core.get(&world.terrains,owner).revision=8
+    core.edit(&world.terrains,owner).revision=8
     testing.expect(t,!history.edits_sync_initial(&edits,ref))
     history.edits_end(&edits)
     testing.expect(t,history.edits_commit(&edits,ref,&selection))
     testing.expect(t,history.undo(&edits,ref,&selection))
-    testing.expect_value(t,core.get(&world.terrains,owner).revision,u32(7))
+    testing.expect_value(t,core.at(&world.terrains,core.row_of(&world.terrains,owner)).revision,u32(7))
     testing.expect(t,!history.edits_sync_initial(&edits,ref))
     testing.expect(t,history.redo(&edits,ref,&selection))
-    testing.expect_value(t,core.get(&world.terrains,owner).revision,u32(8))
+    testing.expect_value(t,core.at(&world.terrains,core.row_of(&world.terrains,owner)).revision,u32(8))
     testing.expect(t,!history.edits_sync_initial(nil,{}))
 }

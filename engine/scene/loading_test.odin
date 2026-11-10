@@ -174,7 +174,7 @@ a_load_reads_in_jobs_and_a_large_asset_goes_in_a_frame_alone :: proc(t:^testing.
     testing.expect_value(t,p.assets.stats.loads,4)
     _,error=load_end(job,host.app_world_ref(&p.app,p.world))
     testing.expect_value(t,error,Error.None)
-    testing.expect_value(t,core.count(core.read(&p.world.models)),2)
+    testing.expect_value(t,core.count(&p.world.models),2)
 }
 
 // A load in phases is the record of the scene: the documents and entities
@@ -400,9 +400,9 @@ the_sections_loading_tell_how_far_they_are :: proc(t:^testing.T) {
     testing.expect(t,item.loading.done==1 && item.loading.total==2,"one of its two meshes")
     step(&p,world,&requests,&loads,&loading,&problems)
     testing.expect_value(t,loading.count,0)
-    reference,_:=core.get(core.read(&w.references),e)
+    reference,_:=core.get(&w.references,e)
     testing.expect_value(t,reference.loaded,ROOM)
-    testing.expect_value(t,core.count(core.read(&w.models)),2)
+    testing.expect_value(t,core.count(&w.models),2)
 }
 
 // A section load that waits for the libraries ends once a frame passed in

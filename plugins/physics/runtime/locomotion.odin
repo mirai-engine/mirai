@@ -155,7 +155,7 @@ locomotion_step :: proc(
     paces:core.Read(core.Own_Pace),walk_actions:input.Input_Of(Walk_Action),requests:^Locomotion_Requests,time:core.Time,clock:core.Clock,problems:^core.Problems,
 ) {
     for asked in core.take(&requests.queue) {
-        c:=core.get(characters,asked.entity)
+        c:=core.edit(characters,asked.entity)
         if c==nil {
             core.report(problems,asked.entity,"locomotion.request","a layered move or a mode was asked for this entity, which has no Character; give it one")
             continue
@@ -187,9 +187,9 @@ locomotion_step :: proc(
     if !time.playing || time.dt<=0 {return}
     for row in 0..<core.count(characters) {
         e:=core.entity_at(characters,row)
-        c:=core.at(characters,row)
+        c:=core.edit_at(characters,row)
         frame:=up_frame_of(physics,e)
-        move_input:=core.get(inputs,e)
+        move_input:=core.edit(inputs,e)
         if move_input==nil {
             // Whoever drives it writes into the one it gets here, looking where it stands: by its
             // Transform, since a body spawned in this tick has no World_Transform yet.
@@ -252,7 +252,7 @@ locomotion_step :: proc(
             layers_apply(c,&next.value if c.mode==MODE_MANTLING else &spent,c.traction_force,pace)
             move_paced(&next.value,c,pace,motion.linear,ground,frame)
         } else if c.mode>MODE_ENGINE_LAST {
-            if written:=core.get(moves,e);written!=nil {next=written^}
+            if written,has_written:=core.get(moves,e);has_written {next=written}
             layers_apply(c,&next.value,c.traction_force,pace)
             move_paced(&next.value,c,pace,motion.linear,ground,frame)
         } else {
@@ -262,7 +262,7 @@ locomotion_step :: proc(
         if walking,ok:=walk.?;ok && c.crouched {next.height=walking.crouch_height}
         if row:=core.row_of(moves,e);row<0 {
             core.add(moves,e,next)
-        } else if moves.values[row]!=next {core.at(moves,row)^=next}
+        } else if moves.values[row]!=next {core.edit_at(moves,row)^=next}
     }
 }
 

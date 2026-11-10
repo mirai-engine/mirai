@@ -89,7 +89,7 @@ terrain_history_follows_a_save_and_a_discard_of_its_file :: proc(t:^testing.T) {
     // Discard takes back the disk: the revision the owners are at holds it,
     // and redo does not bring the discarded stroke back.
     sculpt(t,&s,&tool,ref,&world,owner,5)
-    testing.expect_value(t,core.get(&world.terrains,owner).revision,u32(3))
+    testing.expect_value(t,core.at(&world.terrains,core.row_of(&world.terrains,owner)).revision,u32(3))
     testing.expect(t,unsaved(&assets,relative))
     testing.expect_value(t,editor.assets_discard(&s,{relative}),1)
     terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)

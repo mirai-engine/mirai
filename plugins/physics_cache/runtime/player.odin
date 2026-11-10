@@ -173,7 +173,7 @@ player_advance :: proc(player:^Geometry_Playback,duration,dt:f32) {
 @(step="fixed",stage="react")
 physics_cache_update :: proc(players:^core.Table(Geometry_Playback),requests:^Geometry_Requests,library:^Cache_Library,time:core.Time,assets:^host.Assets,allocator:runtime.Allocator) {
     for request in core.take(&requests.queue) {
-        player:=core.get(players,request.entity)
+        player:=core.edit(players,request.entity)
         if player==nil {continue}
         if !finite(request.value) {continue}
         switch request.kind {
@@ -186,12 +186,12 @@ physics_cache_update :: proc(players:^core.Table(Geometry_Playback),requests:^Ge
         }
     }
     for index in 0..<core.count(players) {
-        player:=core.at(core.read(players),index)
+        player:=core.at(players,index)
         view:=cache_content(library,assets,allocator,player.source)
         if view==nil {continue}
         next:=player
         player_advance(&next,view.info.duration,time.dt)
-        if next!=player {core.at(players,index)^=next}
+        if next!=player {core.edit_at(players,index)^=next}
     }
 }
 

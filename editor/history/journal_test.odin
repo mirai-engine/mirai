@@ -19,8 +19,8 @@ journal_readers_keep_cursors_of_their_own :: proc(t:^testing.T) {
     // Undo reads the steps, the review of an agent and prefabs the state of a step, collaboration the changes.
     review:=edits_state(&f.edits)
     testing.expect(t,edits_begin(&f.edits,&f.selection,"Move"))
-    core.get(&f.world.transforms,first).position.y=5
-    core.get(&f.world.lamps,first).glow=99 // transient: not a change
+    core.edit(&f.world.transforms,first).position.y=5
+    core.edit(&f.world.lamps,first).glow=99 // transient: not a change
     edits_end(&f.edits)
     testing.expect(t,edits_commit(&f.edits,w,&f.selection))
     testing.expect_value(t,f.edits.cursor,1)
@@ -56,14 +56,14 @@ journal_readers_keep_cursors_of_their_own :: proc(t:^testing.T) {
     journal_read_done(&f.edits,collab)
     testing.expect(t,edits_begin(&f.edits,&f.selection,"Cancelled"))
     testing.expect_value(t,edits_cancel_prepare(&f.edits,w),Edit_Error.None)
-    core.get(&f.world.transforms,first).position.y=7
+    core.edit(&f.world.transforms,first).position.y=7
     edits_cancel(&f.edits,w)
-    testing.expect_value(t,core.get(&f.world.transforms,first).position.y,f32(5))
+    testing.expect_value(t,core.at(&f.world.transforms,core.row_of(&f.world.transforms,first)).position.y,f32(5))
     testing.expect_value(t,len(journal_read(&f.edits,&collab)),0)
     testing.expect(t,journal_settled(&f.edits,w))
     journal_reading(&f.edits,false)
     testing.expect(t,edits_begin(&f.edits,&f.selection,"Unread"))
-    core.get(&f.world.transforms,first).position.y=8
+    core.edit(&f.world.transforms,first).position.y=8
     edits_end(&f.edits)
     testing.expect(t,edits_commit(&f.edits,w,&f.selection))
     testing.expect(t,len(f.edits.changes)==0 && len(f.edits.change_values)==0)
@@ -97,14 +97,14 @@ journal_steps_hold_what_changed_whatever_the_size_of_the_world :: proc(t:^testin
     testing.expect_value(t,rows,5) // Id, Transform and Lamp of the one gone; Id and Transform of the one made
     testing.expect(t,undo(&f.edits,w,&f.selection))
     testing.expect(t,core.alive(&f.world.entities,gone) && !core.alive(&f.world.entities,made) && !core.alive(&f.world.entities,derived))
-    testing.expect_value(t,core.get(&f.world.transforms,gone).position.x,f32(51))
+    testing.expect_value(t,core.at(&f.world.transforms,core.row_of(&f.world.transforms,gone)).position.x,f32(51))
     testing.expect(t,redo(&f.edits,w,&f.selection))
     testing.expect(t,!core.alive(&f.world.entities,gone) && core.alive(&f.world.entities,made) && core.has(&f.world.ids,made))
     testing.expect(t,!core.alive(&f.world.entities,derived),"what a library derived is derived again")
     testing.expect(t,journal_settled(&f.edits,w))
     // A move of a World this size compares only the row it wrote.
     testing.expect(t,edits_begin(&f.edits,&f.selection,"Move"))
-    core.get(&f.world.transforms,test_journal_entity(f,7)).position.z=3
+    core.edit(&f.world.transforms,test_journal_entity(f,7)).position.z=3
     edits_end(&f.edits)
     compared:=f.edits.stats.compared
     testing.expect(t,edits_commit(&f.edits,w,&f.selection))
@@ -142,7 +142,7 @@ journal_cancel_and_undo_put_the_world_back_in_the_room_they_reserved :: proc(t:^
     testing.expect(t,edits_begin(&f.edits,&f.selection,"Everything"))
     testing.expect_value(t,edits_cancel_prepare(&f.edits,w,2),Edit_Error.None)
     core.disable(&f.world.lamps,lamp)
-    core.get(&f.world.transforms,moved).position.y=4
+    core.edit(&f.world.transforms,moved).position.y=4
     core.add(&f.world.parents,moved,{entity=parent})
     core.destroy(&f.world.entities,gone)
     core.test_world_settle(&f.world)
@@ -164,7 +164,7 @@ journal_cancel_and_undo_put_the_world_back_in_the_room_they_reserved :: proc(t:^
     _,off,found:=core.raw_state(core.raw(&f.world.lamps),gone)
     testing.expect(t,found && off,"an off row that went comes back off")
     testing.expect(t,core.has(&f.world.lamps,lamp) && !core.has(&f.world.parents,moved))
-    testing.expect_value(t,core.get(&f.world.transforms,moved).position.y,f32(0))
+    testing.expect_value(t,core.at(&f.world.transforms,core.row_of(&f.world.transforms,moved)).position.y,f32(0))
     // Undo and redo of that gesture, committed, do not allocate either once prepared.
     testing.expect(t,edits_begin(&f.edits,&f.selection,"Everything"))
     core.disable(&f.world.lamps,lamp)

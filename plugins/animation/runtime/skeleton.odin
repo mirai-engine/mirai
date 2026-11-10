@@ -202,7 +202,7 @@ skeleton_mirror_pairs :: proc(bones:[]asset.Skeleton_Bone,allocator:=context.all
 }
 
 skeleton_bind :: proc(playback:^Playback,state:^Playing,content:^Skeleton_Content,clip:^host.Content_Animation,transforms:^core.Table(core.Transform)) -> bool {
-    root,exists:=core.get(core.read(transforms),state.entity)
+    root,exists:=core.get(transforms,state.entity)
     if !exists {return false}
     count:=len(content.bones)+1
     next:Playing

@@ -95,7 +95,7 @@ near3 :: proc(a,b:[3]f32) -> bool {return linalg.length(a-b)<1e-3}
 
 @(private)
 spatial_y :: proc(f:^Spatial_Fixture,e:core.Entity) -> f32 {
-    value,_:=core.get(core.read(&f.w.transforms),e)
+    value,_:=core.get(&f.w.transforms,e)
     return value.position.y
 }
 
@@ -165,7 +165,7 @@ entities_are_named_by_name_path_id_or_handle :: proc(t:^testing.T) {
     if !spatial_open(t,f) {return}
     defer spatial_close(f)
     w:=edited_world(&f.s)
-    core.get(&f.w.names,f.lid)^=core.name_make("Crate")
+    core.edit(&f.w.names,f.lid)^=core.name_make("Crate")
     cases:=[?]struct{text:string,want:core.Entity,says:string}{
         {"Lamp",f.lamp,""},
         {"Crate/Crate",f.lid,""},

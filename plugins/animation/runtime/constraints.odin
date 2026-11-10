@@ -461,7 +461,7 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
                 }
             }
         }
-        current,exists:=core.get(core.read(transforms),entity)
+        current,exists:=core.get(transforms,entity)
         if exists && core.to_math(current)==transform {continue}
         output:=core.free(transforms,entity)
         if output==nil {

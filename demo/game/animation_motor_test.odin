@@ -84,20 +84,20 @@ animation_motor_drives_the_sampled_root_motion_and_leaves_other_bodies_as_they_w
     core.table_settle(&f.inputs,&f.entities);core.table_settle(&f.characters,&f.entities);core.table_settle(&f.walks,&f.entities);core.table_settle(&f.transforms,&f.entities);core.table_settle(&f.parents,&f.entities);core.table_settle(&f.names,&f.entities);core.table_settle(&f.motors,&f.entities);core.table_settle(&f.colliders,&f.entities);core.table_settle(&f.animations,&f.entities);core.table_settle(&f.roots,&f.entities)
     time:=core.Time{dt=1.0/60,playing=true}
     for i in 0..<16 {time.tick=u64(i);animation_input_physics(&f,time)}
-    core.get(&f.inputs,controlled).move={.2,0,0}
-    anim.animation_play(core.get(&f.animations,motor),"advance",fade=0,loop=false)
+    core.edit(&f.inputs,controlled).move={.2,0,0}
+    anim.animation_play(core.edit(&f.animations,motor),"advance",fade=0,loop=false)
     progress:core.Table(anim.Animation_Progress);defer core.table_destroy(&progress)
     anim.animation_sample(core.read(&f.animations),&progress,core.read(&f.pose_configs),core.read(&f.attachments),&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.meshes),core.read(&f.sources),&f.requests,&f.events,&f.modifier_requests,&f.modifiers,&f.playback,&f.pose_assets,&f.skeletons,&f.app,time,{},nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
     delta,present:=anim.animation_root_delta(&f.playback,motor)
     testing.expect(t,present && abs(delta.translation.x-time.dt)<1e-5 && abs(f.playback.states[0].local[1].position.x-time.dt)<1e-5)
-    before_control,_:=core.get(core.read(&f.transforms),controlled);before_motor,_:=core.get(core.read(&f.transforms),motor)
+    before_control,_:=core.get(&f.transforms,controlled);before_motor,_:=core.get(&f.transforms,motor)
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     animation_motor_drive(core.read(&f.motors),&f.inputs,core.read(&f.walks),core.read(&f.worlds),{&f.playback},time)
     context=saved
-    published_control,_:=core.get(core.read(&f.inputs),controlled);published_motor,_:=core.get(core.read(&f.inputs),motor)
+    published_control,_:=core.get(&f.inputs,controlled);published_motor,_:=core.get(&f.inputs,motor)
     testing.expect(t,published_control.move.x==.2 && abs(published_motor.move.x-.2)<1e-5)
     time.tick+=1;animation_input_physics(&f,time)
-    after_control,_:=core.get(core.read(&f.transforms),controlled);after_motor,_:=core.get(core.read(&f.transforms),motor)
+    after_control,_:=core.get(&f.transforms,controlled);after_motor,_:=core.get(&f.transforms,motor)
     testing.expect(t,after_control.position.x>before_control.position.x && after_motor.position.x>before_motor.position.x)
     testing.expect_value(t,f.problems.count,0)
 }

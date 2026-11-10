@@ -64,14 +64,15 @@ completes or is interrupted (not while it fades out).
 
 Discovery and memory:
 
-- It is discovered by the `layout/version` stamp of `Animation`: without writes it does not walk the
-  table. The ticks prepare only the states with a profile or a pending fade; an index per entity and
+- It is discovered from the `core.changes` of `Animation`: it looks only at the rows written since.
+  The ticks prepare only the states with a profile or a pending fade; an index per entity and
   generation resolves requests and sampling in constant time and is updated when compacting.
 - Plans and states are copied with the world without pointers to the host cache, whose indices check
   the full id.
 - Preparing may allocate on load or reload; stable ticks reuse capacity. If it cannot be prepared,
-  the request queue stays and the stamp is not confirmed; an OOM when preparing a plan keeps the
-  previous plan and state and the requests of that entity wait, also before the first bind.
+  the request queue stays and what it saw of `Animation` is not kept; an OOM when preparing a plan
+  keeps the previous plan and state and the requests of that entity wait, also before the first
+  bind.
 
 ## Root and movement
 

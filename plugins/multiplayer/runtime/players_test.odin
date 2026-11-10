@@ -71,8 +71,8 @@ a_seat_waits_for_its_player_and_is_given_back_when_it_connects_again :: proc(t:^
     seated_tick(&w,&settings)
     if !testing.expect_value(t,core.count(&w.seats),1) {return}
     seat:=core.entity_at(&w.seats,0)
-    testing.expect_value(t,core.at(core.read(&w.seats),0),input.Seat{peer=u64(first),player=42})
-    replicate,replicated:=core.get(core.read(&w.objects),seat)
+    testing.expect_value(t,core.at(&w.seats,0),input.Seat{peer=u64(first),player=42})
+    replicate,replicated:=core.get(&w.objects,seat)
     testing.expect(t,replicated && replicate.audience==.Always && core.has(&w.transforms,seat) && core.has(&w.keeps,seat))
     body:=core.create(&w.entities)
     core.add(&w.drivables,body,input.Drivable{seat=seat})
@@ -91,7 +91,7 @@ a_seat_waits_for_its_player_and_is_given_back_when_it_connects_again :: proc(t:^
     seated_tick(&w,&settings)
     if !testing.expect_value(t,core.count(&w.seats),1) {return}
     testing.expect_value(t,core.entity_at(&w.seats,0),seat)
-    testing.expect_value(t,core.at(core.read(&w.seats),0).peer,u64(second))
+    testing.expect_value(t,core.at(&w.seats,0).peer,u64(second))
     testing.expect(t,!core.has(&w.disabled,seat) && len(w.absents.entities)==0)
 
     clear(&w.connections.entries)
@@ -125,7 +125,7 @@ the_seats_of_a_saved_game_wait_for_their_players :: proc(t:^testing.T) {
     seated_connect(&w,connection,42)
     seated_tick(&w,&settings)
     if !testing.expect_value(t,core.count(&w.seats),1) {return}
-    testing.expect_value(t,core.at(core.read(&w.seats),0),input.Seat{peer=u64(connection),player=42})
+    testing.expect_value(t,core.at(&w.seats,0),input.Seat{peer=u64(connection),player=42})
     testing.expect(t,core.alive(&w.entities,other) && core.raw_find(core.raw(&w.absents),type_info_of(Seat_Absent),other)!=nil)
     for _ in 0..<600 {seated_tick(&w,&settings)}
     testing.expect(t,core.alive(&w.entities,other),"a seat of a saved game waits without limit")
@@ -165,7 +165,7 @@ a_server_owns_each_body_to_the_connection_of_its_seat :: proc(t:^testing.T) {
     core.settle(&info,&world,nil)
     ref:=core.world_ref(&world,&info)
     testing.expect_value(t,owner_of(ref,body),connection)
-    driven,_:=core.get(core.read(&world.drivables),body)
+    driven,_:=core.get(&world.drivables,body)
     testing.expect_value(t,owner_of(ref,driven.seat),connection)
     testing.expect_value(t,owner_of(ref,free),Connection(0))
 }

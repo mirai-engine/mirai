@@ -41,12 +41,11 @@ physics_pose_targets :: proc(
             link_touch(state,l)
         }
     }
-    for row in 0..<core.count(targets) {
-        if !core.changed(targets,c,row) {continue}
+    for row in core.each_changed(targets,&c) {
         e:=core.entity_at(targets,row)
         if core.has(parents,e) || !core.has(rigids,e) && !core.has(characters,e) && !proxied(state,e) {continue}
         target:=core.at(targets,row)
-        local:=core.get(transforms,e)
+        local:=core.edit(transforms,e)
         if local==nil {continue}
         rotation:=target.rotation==0?mm.QUAT_IDENTITY:linalg.normalize(target.rotation)
         local.scale=target.scale
