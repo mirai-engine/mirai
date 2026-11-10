@@ -1,13 +1,16 @@
 package asset
 
 import "core:mem"
+import "core:strings"
 import "mirai:std/base"
+import "mirai:std/serial"
 
 // document_merge of two scenes or prefabs, and what a scene needs that a
 // merge of rows does not give: parents that exist and close no loop, records
-// of instances whose entities exist, the instance ids each side gave on its
-// own made distinct, and the counters of Scene_Info at the highest of the
-// three. Another kind of document merges as document_merge does.
+// about entities that exist, members whose root is still the root of an
+// instance, an instance both sides brought up to date marked as not known to
+// be, and the counter of Scene_Info at the highest of the three. Another kind
+// of document merges as document_merge does.
 scene_merge :: proc(m:^Merge,types:^Types,ours,origin,theirs:^Document) -> Error {
     if ours.kind!=KIND_SCENE && ours.kind!=KIND_PREFAB {return document_merge(m,ours,origin,theirs)}
     before:Scene_Records
@@ -26,8 +29,6 @@ scene_merge :: proc(m:^Merge,types:^Types,ours,origin,theirs:^Document) -> Error
 @(private="file")
 Scene_Records :: struct {
     info:[dynamic]Scene_Info,
-    instances:[dynamic]Instance,
-    members:[dynamic]Member,
     overrides:[dynamic]Override,
     off:[dynamic]Component_Off,
 }
@@ -37,8 +38,6 @@ records_read :: proc(doc:^Document,types:^Types,out:^Scene_Records) -> Error {
     allocator:=doc!=nil?doc.allocator:context.allocator
     out^={}
     out.info=make([dynamic]Scene_Info,allocator)
-    out.instances=make([dynamic]Instance,allocator)
-    out.members=make([dynamic]Member,allocator)
     out.overrides=make([dynamic]Override,allocator)
     out.off=make([dynamic]Component_Off,allocator)
     if doc==nil {return .None}
@@ -47,15 +46,13 @@ records_read :: proc(doc:^Document,types:^Types,out:^Scene_Records) -> Error {
         return document_rows(doc,types,name,out)
     }
     read(doc,types,TABLE_SCENE,&out.info) or_return
-    read(doc,types,TABLE_INSTANCES,&out.instances) or_return
-    read(doc,types,TABLE_MEMBERS,&out.members) or_return
     read(doc,types,TABLE_OVERRIDES,&out.overrides) or_return
     return read(doc,types,TABLE_OFF,&out.off)
 }
 
 @(private="file")
 records_destroy :: proc(records:^Scene_Records) {
-    delete(records.info);delete(records.instances);delete(records.members);delete(records.overrides);delete(records.off)
+    delete(records.info);delete(records.overrides);delete(records.off)
 }
 
 @(private="file")
@@ -140,66 +137,11 @@ records_fix :: proc(m:^Merge,doc,origin,theirs:^Document,types:^Types,before:^Sc
     defer delete(exists)
     if no_exists!=nil {return .Out_Of_Memory}
     for id in ids {exists[id]=true}
-    ours_had :: proc(list:[]$T,value:T) -> bool {
-        for each in list {if each==value {return true}}
-        return false
-    }
 
-    // Instances theirs placed take ids after every other when ours gave theirs.
-    highest:u32
-    for instance in now.instances {highest=max(highest,instance.id)}
-    taken,no_taken:=make(map[u32]bool,len(now.instances),doc.allocator)
-    defer delete(taken)
-    if no_taken!=nil {return .Out_Of_Memory}
-    for instance in now.instances {
-        if ours_had(before.instances[:],instance) {taken[instance.id]=true}
-    }
-    renumbered:=make(map[u32]u32,doc.allocator)
-    defer delete(renumbered)
-    for &instance in now.instances {
-        if ours_had(before.instances[:],instance) {continue}
-        if instance.id in taken {
-            highest+=1
-            renumbered[instance.id]=highest
-            instance.id=highest
-        }
-        taken[instance.id]=true
-    }
-    for &instance in now.instances {
-        if !ours_had(before.instances[:],instance) {instance.outer=renumbered[instance.outer] or_else instance.outer}
-    }
-    for &member in now.members {
-        if !ours_had(before.members[:],member) {member.instance=renumbered[member.instance] or_else member.instance}
-    }
-    for &override in now.overrides {
-        if !ours_had(before.overrides[:],override) {override.instance=renumbered[override.instance] or_else override.instance}
-    }
-
-    // Records go with the entities and instances they are about.
+    // Records go with the entities they are about.
     kept:=0
-    for instance in now.instances {
-        if !exists[instance.root] {continue}
-        now.instances[kept]=instance
-        kept+=1
-    }
-    base.truncate(&now.instances,kept)
-    instance_known :: proc(instances:[]Instance,id:u32) -> bool {
-        for instance in instances {if instance.id==id {return true}}
-        return false
-    }
-    for &instance in now.instances {
-        if instance.outer!=0 && (!instance_known(now.instances[:],instance.outer) || instance.outer>=instance.id) {instance.outer=0}
-    }
-    kept=0
-    for member in now.members {
-        if !exists[member.entity] || !instance_known(now.instances[:],member.instance) {continue}
-        now.members[kept]=member
-        kept+=1
-    }
-    base.truncate(&now.members,kept)
-    kept=0
     for override in now.overrides {
-        if !exists[override.entity] || !instance_known(now.instances[:],override.instance) {continue}
+        if !exists[override.entity] {continue}
         now.overrides[kept]=override
         kept+=1
     }
@@ -212,31 +154,79 @@ records_fix :: proc(m:^Merge,doc,origin,theirs:^Document,types:^Types,before:^Sc
     }
     base.truncate(&now.off,kept)
 
-    // The counters only grow: the highest of the three, and no conflict over them.
+    // The counter only grows: the highest of the three, and no conflict over it.
     info:Scene_Info
     if len(now.info)>0 {info=now.info[0]}
     for list in ([][]Scene_Info{before.info[:],base_records.info[:],theirs_records.info[:]}) {
-        for other in list {
-            info.id_counter=max(info.id_counter,other.id_counter)
-            info.last_instance=max(info.last_instance,other.last_instance)
-        }
+        for other in list {info.id_counter=max(info.id_counter,other.id_counter)}
     }
-    for instance in now.instances {info.last_instance=max(info.last_instance,instance.id)}
     for i:=len(m.conflicts)-1;i>=0;i-=1 {
         conflict:=m.conflicts[i]
-        if conflict.table!=TABLE_SCENE || (conflict.path!="scene.value.id_counter" && conflict.path!="scene.value.last_instance" && conflict.path!="scene.id_counter" && conflict.path!="scene.last_instance") {continue}
+        counter:=conflict.table==TABLE_SCENE && (conflict.path=="scene.value.id_counter" || conflict.path=="scene.id_counter")
+        // Each side brought the instance up to date with another file: what the rows hold is of neither.
+        stale:=conflict.table==COMPONENT_INSTANCE && strings.has_suffix(conflict.path,".value.stamp")
+        if !counter && !stale {continue}
+        if stale {instance_stamp_forget(doc,base.Entity_Id(conflict.key))}
         delete(conflict.path,m.conflicts.allocator)
         delete(conflict.table,m.conflicts.allocator)
         ordered_remove(&m.conflicts,i)
     }
 
-    for name in ([]string{TABLE_SCENE,TABLE_INSTANCES,TABLE_MEMBERS,TABLE_OVERRIDES,TABLE_OFF}) {
+    for name in ([]string{TABLE_SCENE,TABLE_OVERRIDES,TABLE_OFF}) {
         if table,found:=document_table(doc,name);found {document_table_remove(doc,table)}
     }
     if len(now.info)>0 || len(before.info)>0 {document_put_row(doc,types,TABLE_SCENE,&info) or_return}
-    if len(now.instances)>0 {document_put(doc,types,TABLE_INSTANCES,now.instances[:],{},.LZ) or_return}
-    if len(now.members)>0 {document_put(doc,types,TABLE_MEMBERS,now.members[:],{},.LZ) or_return}
     if len(now.overrides)>0 {document_put(doc,types,TABLE_OVERRIDES,now.overrides[:],{},.LZ) or_return}
     if len(now.off)>0 {document_put(doc,types,TABLE_OFF,now.off[:],{},.LZ) or_return}
+    return members_fix(doc)
+}
+
+// A component table of the document and the entity each of its rows is of.
+@(private="file")
+component_rows_of :: proc(doc:^Document,name:string) -> (table:int,rows:[]u32,ids:[]base.Entity_Id,found:bool) {
+    table=document_table(doc,name) or_return
+    target:=&doc.tables[table]
+    if len(target.columns)!=2 || target.columns[0].size!=size_of(u32) {return}
+    ids,_,found=entity_columns(doc)
+    return table,mem.slice_data_cast([]u32,target.columns[0].data),ids,found
+}
+
+// The part of the value of a row that a field holds; nil without it.
+@(private="file")
+component_field :: proc(doc:^Document,table,row:int,field:string) -> []u8 {
+    column:=&doc.tables[table].columns[1]
+    _,part,error:=serial.value_slice(&doc.schema,column.type,column.data[row*column.size:][:column.size],field)
+    return error==.None?part:nil
+}
+
+// The instance rooted at an entity is not known to be up to date with any file.
+@(private="file")
+instance_stamp_forget :: proc(doc:^Document,root:base.Entity_Id) {
+    table,rows,ids,found:=component_rows_of(doc,COMPONENT_INSTANCE)
+    if !found {return}
+    for entity,row in rows {
+        if int(entity)<len(ids) && ids[entity]==root {mem.zero_slice(component_field(doc,table,row,"stamp"))}
+    }
+}
+
+// A member goes with the instance that placed it: one whose root the merge
+// left without its instance is an ordinary entity.
+@(private="file")
+members_fix :: proc(doc:^Document) -> Error {
+    table,rows,ids,found:=component_rows_of(doc,COMPONENT_MEMBER)
+    if !found {return .None}
+    roots,no_roots:=make(map[base.Entity_Id]bool,len(rows),doc.allocator)
+    defer delete(roots)
+    if no_roots!=nil {return .Out_Of_Memory}
+    if _,placed,_,any:=component_rows_of(doc,COMPONENT_INSTANCE);any {
+        for entity in placed {
+            if int(entity)<len(ids) {roots[ids[entity]]=true}
+        }
+    }
+    for row:=len(rows)-1;row>=0;row-=1 {
+        root:u64
+        if part:=component_field(doc,table,row,"instance");len(part)==size_of(u64) {mem.copy(&root,raw_data(part),size_of(u64))}
+        if !roots[base.Entity_Id(root)] {document_rows_remove(doc,table,row,1) or_return}
+    }
     return .None
 }

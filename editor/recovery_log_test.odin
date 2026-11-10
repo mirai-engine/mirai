@@ -127,7 +127,7 @@ every_tab_with_changes_keeps_its_chain_and_a_start_recovers_them_all :: proc(t:^
     plain:=entity_create(s,{name="Plain",named=true})
     core.world_settle(w)
     edits_reset(&f.edits,w)
-    prefabs_follow(s,&f.prefabs)
+
     plain_id:=api_entity_id(w,plain)
     _,created:=prefab_create(s,root,"kept")
     if !testing.expect_value(t,created,Prefab_Error.None) {return}
@@ -200,7 +200,7 @@ a_pending_recovery_stays_aside_while_the_document_is_edited_and_saved :: proc(t:
     plain:=entity_create(s,{name="Plain",named=true})
     core.world_settle(w)
     edits_reset(&f.edits,w)
-    prefabs_follow(s,&f.prefabs)
+
     plain_id:=api_entity_id(w,plain)
     if !testing.expect_value(t,scene_save(s,"crashed.scene"),Document_Error.None) {return}
     recovery_update(s)
@@ -233,7 +233,7 @@ a_pending_recovery_stays_aside_while_the_document_is_edited_and_saved :: proc(t:
     later:=entity_create(s,{name="Later",named=true})
     core.world_settle(w)
     edits_reset(&f.edits,w)
-    prefabs_follow(s,&f.prefabs)
+
     entity_rename(s,later,"Edited meanwhile")
     prefab_fixture_step(f)
     testing.expect_value(t,scene_save(s,"later.scene"),Document_Error.None)
@@ -264,7 +264,7 @@ a_pending_recovery_stays_aside_while_the_document_is_edited_and_saved :: proc(t:
     other:=entity_create(s,{name="Other",named=true})
     core.world_settle(w)
     edits_reset(&f.edits,w)
-    prefabs_follow(s,&f.prefabs)
+
     entity_rename(s,other,"Mine")
     prefab_fixture_step(f)
     recovery_update(s)

@@ -255,11 +255,10 @@ scene_mark :: proc(f:^Scene_File,name:string,id:base.Entity_Id,on:bool) -> bool 
 // The prefab an entity is of in the file: the instance it is a member of.
 @(private="file")
 scene_link :: proc(f:^Scene_File,id:base.Entity_Id) -> (prefab:base.Asset_Id,root,linked:bool) {
-    instance:=asset.scene_entity_instance(&f.scene,id)
-    if instance==0 {return}
-    at:=asset.scene_instance_find(&f.scene,instance)
-    if at<0 {return}
-    return f.scene.instances[at].prefab,f.scene.instances[at].root==id,true
+    placed:=asset.scene_entity_instance(&f.scene,id)
+    if placed==0 {return}
+    instance,_:=asset.scene_instance(&f.scene,placed)
+    return instance.prefab,placed==id,true
 }
 
 @(private="file")
@@ -481,7 +480,7 @@ Scene_Apply :: struct {
     decls:[dynamic]Scene_Entity,
     taken:map[base.Entity_Id]bool,
     parts:map[int][]Part,      // by recipe: the components it gives, as the file keeps them
-    placed:map[u32]bool,       // the instances the document names by their prefab alone: what it leaves out of them stays
+    placed:map[base.Entity_Id]bool, // the instances, by their roots, the document names by their prefab alone: what it leaves out of them stays
 }
 
 // Whether an entity is of an instance of a prefab, and not its root.
@@ -538,7 +537,7 @@ scene_apply :: proc(f:^Scene_File,reading:^Reading,text:string,written:^Written)
     a.decls=make([dynamic]Scene_Entity,reading.allocator)
     a.taken=make(map[base.Entity_Id]bool,reading.allocator)
     a.parts=make(map[int][]Part,reading.allocator)
-    a.placed=make(map[u32]bool,reading.allocator)
+    a.placed=make(map[base.Entity_Id]bool,reading.allocator)
     scene_entities_read(reading,entities,-1,"entities",&a.decls) or_return
     decls:=a.decls[:]
 
@@ -688,10 +687,10 @@ scene_place :: proc(a:^Scene_Apply,d:^Scene_Entity,parent:base.Entity_Id) -> boo
     prefab:asset.Scene
     scene_prefab_open(reading,{&f.p.registry,&f.p.types},d.given,d.path,f.scene.doc.id,&prefab) or_return
     before:=asset.scene_entity_count(&f.scene)
-    instance,root,error:=asset.scene_instantiate(&f.scene,&prefab,d.given.asset,parent)
+    root,error:=asset.scene_instantiate(&f.scene,&prefab,d.given.asset,parent)
     if error!=.None {reading_brokef(reading,"%s.prefab: %s could not be placed (%v)",d.path,d.given.named,error);return false}
     d.e,d.placed,d.made=root,true,true
-    a.placed[instance]=true
+    a.placed[root]=true
     a.taken[root]=true
     a.written.made+=asset.scene_entity_count(&f.scene)-before
     return true

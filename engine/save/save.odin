@@ -485,7 +485,8 @@ capture :: proc(w:core.World_Ref,app:^host.App,out:^serial.Writer,kind:=Slot_Kin
     defer if types==&local {asset.types_destroy(&local)}
     document:asset.Scene
     // What a network session keeps on entities is of the session, not of the game.
-    excluded:=[]typeid{core.Remote,core.Pose_Target}
+    // A saved game holds no instances: nothing brings it up to date with a prefab.
+    excluded:=[]typeid{core.Remote,core.Pose_Target,scene.Prefab_Instance,scene.Prefab_Member}
     report,error:=scene.capture(w,&document,types,{kind=asset.KIND_SCENE,id=DOCUMENT,sections=true,excluded=excluded},app.allocator)
     if error!=.None {return .Failed}
     defer asset.scene_destroy(&document)

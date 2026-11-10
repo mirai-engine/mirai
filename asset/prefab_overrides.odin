@@ -23,13 +23,14 @@ Override_Pair :: struct {
 component_tables :: proc(scene:^Scene) -> []int {
     found:=make([dynamic]int,context.temp_allocator)
     for table,at in scene.doc.tables {
-        if at==0 {continue}
+        if at==0 || membership_hash(table.name_hash) {continue}
         if _,is_component:=scene_component(scene,table.name);is_component {append(&found,at)}
     }
     return found[:]
 }
 
-// The pairs of component tables of a scene and of a prefab, in temporary memory.
+// The pairs of component tables of a scene and of a prefab, those of the
+// instances aside, in temporary memory.
 @(private)
 override_pairs :: proc(scene,prefab:^Scene) -> (pairs:[]Override_Pair,error:Error) {
     out:=make([dynamic]Override_Pair,context.temp_allocator)
@@ -76,77 +77,126 @@ pair_image :: proc(pair:^Override_Pair,prefab:^Scene,source:base.Entity_Id,remap
     return image,true
 }
 
-override_make :: proc(instance:u32,entity:base.Entity_Id,component:u64,kind:Override_Kind,path:string) -> (override:Override) {
-    override={instance=instance,entity=entity,component=component,kind=kind}
+override_make :: proc(entity:base.Entity_Id,component:u64,kind:Override_Kind,path:string) -> (override:Override) {
+    override={entity=entity,component=component,kind=kind}
     if len(path)<len(override.path) {copy(override.path[:],path)}
     return
 }
 
-// What an instance placed in a document holds apart from a prefab: for each
-// member the document has, its name and the components it adds, lacks, turns
-// or gives other values; with children, the entities it placed under its
-// members. The placement of the root is the instance's own and is never one.
-scene_overrides_derive :: proc(out:^[dynamic]Override,scene:^Scene,instance:u32,prefab:^Scene,children:=true) -> Error {
-    at:=scene_instance_find(scene,instance)
-    if at<0 || scene==prefab {return .Invalid}
-    root:=scene.instances[at].root
-    pairs:=override_pairs(scene,prefab) or_return
-    remap:=make(map[base.Entity_Id]base.Entity_Id,context.temp_allocator)
-    inside:=make(map[base.Entity_Id]bool,context.temp_allocator)
-    for member in scene.members {
-        if member.instance==instance {remap[member.source],inside[member.entity]=member.entity,true}
+// Where a derivation finds the base of an instance: the prefab as the
+// instance was last brought up to date, by its root; nil when it is not
+// known, and the instance is left out.
+Override_Bases :: struct {
+    data:rawptr,
+    base:proc(data:rawptr,root:base.Entity_Id,instance:Instance) -> ^Scene,
+}
+
+// What the instances placed in a document hold apart from their bases: for
+// each member, its name and the components it adds, lacks, turns or gives
+// other values, and the entities placed under its members. The placement of
+// a root is the instance's own and is never one. only: that instance alone.
+scene_overrides_derive :: proc(out:^[dynamic]Override,scene:^Scene,bases:Override_Bases,only:=base.Entity_Id(0)) -> Error {
+    rows,values:=member_rows(scene) or_return
+    if len(rows)==0 {return .None}
+    ids,parents:=scene_ids(scene),scene_parents(scene)
+    // The members of each instance, one after another.
+    Group :: struct {first,count:int,prefab:^Scene,instance:Instance}
+    groups:=make(map[base.Entity_Id]Group,context.temp_allocator)
+    order:=make([dynamic]base.Entity_Id,context.temp_allocator) // of the roots: what is derived does not depend on the map
+    for value in values {
+        root:=base.Entity_Id(value.instance)
+        if only!=0 && root!=only {continue}
+        group,known:=groups[root]
+        if !known {append(&order,root)}
+        group.count+=1
+        groups[root]=group
     }
-    placement:=base.name_hash(INSTANCE_PLACEMENT)
+    total:=0
+    for root in order {
+        group:=&groups[root]
+        group.first,total=total,total+group.count
+        group.count=0
+        placed:bool
+        if group.instance,placed=scene_instance(scene,root);placed && root in scene.index {group.prefab=bases.base(bases.data,root,group.instance)}
+        if group.prefab==scene {group.prefab=nil}
+    }
+    members,no_members:=make([]Placed,total,context.temp_allocator)
+    if no_members!=nil {return .Out_Of_Memory}
+    for value,at in values {
+        group,grouped:=&groups[base.Entity_Id(value.instance)]
+        if !grouped {continue}
+        members[group.first+group.count]={ids[rows[at]],base.Entity_Id(value.source)}
+        group.count+=1
+    }
+    pairs:=make(map[^Scene][]Override_Pair,context.temp_allocator)
+    remap:=make(map[base.Entity_Id]base.Entity_Id,context.temp_allocator)
     marked:=make([dynamic]string,context.temp_allocator)
-    for member in scene.members {
-        if member.instance!=instance {continue}
-        entity,source:=member.entity,member.source
-        row,in_scene:=scene_entity_find(scene,entity)
-        prefab_row,in_prefab:=scene_entity_find(prefab,source)
-        if !in_scene || !in_prefab {continue}
-        if scene_names(scene)[row]!=scene_names(prefab)[prefab_row] {append(out,override_make(instance,entity,0,.Field,"name"))}
-        for &pair in pairs {
-            if entity==root && pair.hash==placement {continue}
-            value:[]u8
-            has,inherited:=false,false
-            if pair.scene_table>=0 {value,has=scene_component_get(scene,pair.scene_table,entity)}
-            if pair.prefab_table>=0 {_,inherited=scene_component_get(prefab,pair.prefab_table,source)}
-            switch {
-            case has && !inherited:
-                append(out,override_make(instance,entity,pair.hash,.Added,""))
-            case !has && inherited:
-                append(out,override_make(instance,entity,pair.hash,.Removed,""))
-            case has && inherited:
-                if scene_component_off(scene,entity,pair.hash)!=scene_component_off(prefab,source,pair.hash) {
-                    append(out,override_make(instance,entity,pair.hash,.Turned,""))
+    placement:=base.name_hash(INSTANCE_PLACEMENT)
+    for root in order {
+        group:=groups[root]
+        prefab:=group.prefab
+        if prefab==nil {continue}
+        if !(prefab in pairs) {pairs[prefab]=override_pairs(scene,prefab) or_return}
+        clear(&remap)
+        for member in members[group.first:][:group.count] {remap[member.source]=member.entity}
+        for member in members[group.first:][:group.count] {
+            entity,source:=member.entity,member.source
+            row,_:=scene_entity_find(scene,entity)
+            prefab_row,in_prefab:=scene_entity_find(prefab,source)
+            if !in_prefab {continue}
+            if scene_names(scene)[row]!=scene_names(prefab)[prefab_row] {append(out,override_make(entity,0,.Field,"name"))}
+            for &pair in pairs[prefab] {
+                if entity==root && pair.hash==placement {continue}
+                value:[]u8
+                has,inherited:=false,false
+                if pair.scene_table>=0 {value,has=scene_component_get(scene,pair.scene_table,entity)}
+                if pair.prefab_table>=0 {_,inherited=scene_component_get(prefab,pair.prefab_table,source)}
+                switch {
+                case has && !inherited:
+                    append(out,override_make(entity,pair.hash,.Added,""))
+                case !has && inherited:
+                    append(out,override_make(entity,pair.hash,.Removed,""))
+                case has && inherited:
+                    if scene_component_off(scene,entity,pair.hash)!=scene_component_off(prefab,source,pair.hash) {
+                        append(out,override_make(entity,pair.hash,.Turned,""))
+                    }
+                    image,_:=pair_image(&pair,prefab,source,remap)
+                    clear(&marked)
+                    overrides_mark(pair.leaves[:],value,image,&marked)
+                    for path in marked {append(out,override_make(entity,pair.hash,.Field,len(path)<OVERRIDE_PATH_BYTES?path:""))}
                 }
-                image,_:=pair_image(&pair,prefab,source,remap)
-                clear(&marked)
-                overrides_mark(pair.leaves[:],value,image,&marked)
-                for path in marked {append(out,override_make(instance,entity,pair.hash,.Field,len(path)<OVERRIDE_PATH_BYTES?path:""))}
             }
         }
     }
-    if children {
-        for entity,row in scene_ids(scene) {
-            if !inside[entity] && inside[scene_parents(scene)[row]] {append(out,override_make(instance,entity,0,.Child,""))}
-        }
+    // An entity under a member that its instance did not place was added there.
+    member_of:=make(map[base.Entity_Id]base.Entity_Id,len(values),context.temp_allocator)
+    for value,at in values {member_of[ids[rows[at]]]=base.Entity_Id(value.instance)}
+    for entity,row in ids {
+        above,under:=member_of[parents[row]]
+        if !under || member_of[entity]==above {continue}
+        if group,derived:=groups[above];derived && group.prefab!=nil {append(out,override_make(entity,0,.Child,""))}
     }
     return .None
+}
+
+// scene_overrides_derive of one instance against a prefab.
+scene_instance_overrides :: proc(out:^[dynamic]Override,scene:^Scene,root:base.Entity_Id,prefab:^Scene) -> Error {
+    if _,placed:=scene_instance(scene,root);!placed || scene==prefab {return .Invalid}
+    one :: proc(data:rawptr,root:base.Entity_Id,instance:Instance) -> ^Scene {return (^Scene)(data)}
+    return scene_overrides_derive(out,scene,{prefab,one},root)
 }
 
 // Writes overrides of an instance placed in a scene into its prefab: first
 // the entities it added, which the values of members may name, then names,
 // values and components. The prefab is as it was when an error comes back
 // from a value; the entities added before it stay.
-scene_overrides_apply :: proc(scene:^Scene,instance:u32,selected:[]Override,prefab:^Scene) -> Error {
+scene_overrides_apply :: proc(scene:^Scene,root:base.Entity_Id,selected:[]Override,prefab:^Scene) -> Error {
     for override in selected {
-        if override.kind==.Child {scene_child_apply(scene,instance,override.entity,prefab) or_return}
+        if override.kind==.Child {scene_child_apply(scene,root,override.entity,prefab) or_return}
     }
     inverse:=make(map[base.Entity_Id]base.Entity_Id,context.temp_allocator)
-    for member in scene.members {
-        if member.instance==instance {inverse[member.entity]=member.source}
-    }
+    members:=scene_instance_members(scene,root) or_return
+    for member in members {inverse[member.entity]=member.source}
     pairs:=override_pairs(scene,prefab) or_return
     for &override in selected {
         if override.kind>=.Child {continue}

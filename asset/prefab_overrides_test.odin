@@ -24,17 +24,18 @@ lamp :: proc(prefab:^Scene,types:^Types,range:f32) {
 }
 
 @(private="file")
-member_of :: proc(scene:^Scene,instance:u32,source:base.Entity_Id) -> base.Entity_Id {
-    for candidate in scene.members {
-        if candidate.instance==instance && candidate.source==source {return candidate.entity}
+member_of :: proc(scene:^Scene,root,source:base.Entity_Id) -> base.Entity_Id {
+    members,_:=scene_instance_members(scene,root)
+    for candidate in members {
+        if candidate.source==source {return candidate.entity}
     }
     return 0
 }
 
 @(private="file")
-derived :: proc(t:^testing.T,scene:^Scene,instance:u32,prefab:^Scene) -> []Override {
+derived :: proc(t:^testing.T,scene:^Scene,instance:base.Entity_Id,prefab:^Scene) -> []Override {
     out:=make([dynamic]Override,context.temp_allocator)
-    testing.expect_value(t,scene_overrides_derive(&out,scene,instance,prefab),Error.None)
+    testing.expect_value(t,scene_instance_overrides(&out,scene,instance,prefab),Error.None)
     return out[:]
 }
 
@@ -43,7 +44,8 @@ prefab_overrides_derive_from_the_members_survive_an_update_and_go_into_the_prefa
     types:Types;types_init(&types);defer types_destroy(&types)
     prefab:Scene;lamp(&prefab,&types,1);defer scene_destroy(&prefab)
     scene:Scene;scene_init(&scene,&types,KIND_SCENE,{0xb,0xb});defer scene_destroy(&scene)
-    instance,root,_:=scene_instantiate(&scene,&prefab,LAMP,0)
+    root,_:=scene_instantiate(&scene,&prefab,LAMP,0)
+    instance:=root
     bulb,shade:=member_of(&scene,instance,2),member_of(&scene,instance,3)
     testing.expect_value(t,len(derived(t,&scene,instance,&prefab)),0)
 
@@ -79,7 +81,7 @@ prefab_overrides_derive_from_the_members_survive_an_update_and_go_into_the_prefa
         seen:=false
         for &override in found {
             path:=override.path
-            seen||=override.instance==instance && override.entity==e.entity && override.component==hash && override.kind==e.kind && base.text_get(path[:])==e.path
+            seen||=override.entity==e.entity && override.component==hash && override.kind==e.kind && base.text_get(path[:])==e.path
         }
         testing.expectf(t,seen,"%v %s %v %q is derived",e.entity,e.component,e.kind,e.path)
     }
@@ -102,16 +104,9 @@ prefab_overrides_derive_from_the_members_survive_an_update_and_go_into_the_prefa
     testing.expect_value(t,scene_overrides_apply(&scene,instance,derived(t,&scene,instance,&next),&next),Error.None)
     testing.expect_value(t,len(derived(t,&scene,instance,&next)),0)
     applied,_:=scene_get(&next,2,"Light",Test_Light)
-    aimed,_:=scene_get(&next,member_source(&scene,instance,sticker),"Follow",Test_Follow)
+    _,sticker_source,_:=scene_member(&scene,sticker)
+    aimed,_:=scene_get(&next,sticker_source,"Follow",Test_Follow)
     testing.expect(t,applied.range==2 && scene_entity_count(&next)==4 && aimed.target==base.Entity(3))
-}
-
-@(private="file")
-member_source :: proc(scene:^Scene,instance:u32,entity:base.Entity_Id) -> base.Entity_Id {
-    for candidate in scene.members {
-        if candidate.instance==instance && candidate.entity==entity {return candidate.source}
-    }
-    return 0
 }
 
 @(private="file")

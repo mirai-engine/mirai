@@ -1,30 +1,30 @@
 package editor
 
 import "core:fmt"
-import "core:os"
 import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
 import scene "mirai:engine/scene"
-import "mirai:host"
-import "mirai:project"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
 
 // Linked prefabs. The World holds every entity of an instance with its
-// effective values; what it cannot hold are the records of the instances
-// (Instance, Member, Override of asset.Scene), which the Document keeps in
-// the scene it was read as. An operation captures the World once together
-// with those records, changes the capture with the procedures of asset, and
-// replaces the World by what the capture says as one step of the history.
+// effective values and, as two components, which instance placed it
+// (scene.Prefab_Instance on the root, scene.Prefab_Member on every entity it
+// placed): the history, a shared session and the recovery log carry them as
+// any other row. What an instance holds on its own, its overrides, is not
+// kept: it is what its members hold apart from the prefab as the instance
+// was last brought up to date (its base), compared when it is asked for.
 //
-// Overrides are marked by comparing the members of an instance with the
-// prefab as the instance was last brought up to date (its base): after the
-// steps of the history, from the rows each one changed, before an operation
-// that brings values from the prefab, and before the scene is written.
+// An operation works on one instance: it captures the entities under its
+// root as a document, changes that document with the procedures of asset,
+// and writes it back onto the same entities (scene.update) inside one
+// gesture, whose step holds the rows that changed and the prefab files it
+// wrote. A prefab file an operation writes stays in memory, unsaved, as any
+// asset an edit changes.
 //
 // The hierarchy of an instance is the one of the prefab and the entities it
 // added under its members. A member that is not the root is not deleted nor
@@ -75,51 +75,29 @@ prefab_error_text :: proc(error:Prefab_Error) -> string {
     return ""
 }
 
-// A prefab as its instances were last brought up to date with it.
+// A prefab as instances were brought up to date with it: by the content hash
+// of its file then, which is the stamp of those instances.
 Prefab_Base :: struct {
     id:base.Asset_Id,
+    stamp:u64,
     scene:^asset.Scene,
-    size,time:i64, // of its file then
-    serial:u64,    // Prefabs.bases_serial when it was set
+    revision:u64, // of the registry when the prefabs it places were last known to be up to date in it
 }
 
-// The records of the instances of a document at a point of the history.
-Prefab_Records :: struct {
-    instances:[dynamic]asset.Instance,
-    members:[dynamic]asset.Member,
+// The overrides of one instance, as last derived.
+Prefab_Derived :: struct {
+    root:core.Entity,
+    key:[4]u64, // what they were derived from: the history, the bases, the edits of others
     overrides:[dynamic]asset.Override,
-    last_instance:u32,
-}
-
-// What a step of the history changed of the records, kept while the history
-// holds the step: undo takes out what came and puts back what went, redo the
-// other way.
-Prefab_Version :: struct {
-    before_state,after_state:u64, // of the history
-    gone:Prefab_Records,          // what the step took out, with the last instance before it
-    came:Prefab_Records,          // what it put in, with the last instance after it
-    files:[dynamic]Prefab_File,   // written by the step: undo gives them back
+    known:bool, // the base of the instance was there to compare with
 }
 
 @(storage)
 Prefabs :: struct {
     bases:[dynamic]Prefab_Base,
-    bases_serial:u64,
-    versions:[dynamic]Prefab_Version,
-    epoch:u64,          // of the history of the document these follow
-    last_state:u64,     // the state of the history they were made current for
-    pending:Prefab_Records, // records before a change that waits for its step
-    pending_state:u64,
-    has_pending:bool,
-    // The last observation of overrides: the turn of the history, its first
-    // state and the bases it compared with. Not observed: the next is whole.
-    observed:bool,
-    observed_turns,observed_initial,observed_bases:u64,
-    observe_error:Prefab_Error, // of that observation: the overrides are the ones before it
-    // What the edits of other editors of a session changed since: they are
-    // not steps of this history.
-    remote:map[base.Entity_Id]bool,
-    remote_places:bool, // an Id or a parent
+    bases_serial:u64, // counts the changes of the bases
+    changes:u64,      // counts the edits that are not steps of the history: those of the others of a session
+    derived:Prefab_Derived,
 }
 
 @(private)
@@ -138,10 +116,7 @@ prefabs_free :: proc(s:^Session) {
 prefabs_state_free :: proc(p:^Prefabs) {
     for &b in p.bases {prefab_scene_free(b.scene)}
     delete(p.bases)
-    for &v in p.versions {prefab_version_free(&v)}
-    delete(p.versions)
-    prefab_records_free(&p.pending)
-    delete(p.remote)
+    delete(p.derived.overrides)
     p^={}
 }
 
@@ -152,99 +127,49 @@ prefab_scene_free :: proc(sc:^asset.Scene) {
     free(sc)
 }
 
+// A document was opened: the bases of the one before are not of it, and
+// those of the prefabs it places are taken now, while their files are what
+// its instances were read with.
 @(private)
-prefab_records_free :: proc(r:^Prefab_Records) {
-    delete(r.instances);delete(r.members);delete(r.overrides)
-    r^={}
-}
-
-// ---------------------------------------------------------------- records of the document
-
-// The scene the document was read as, made when it has none: it holds the records.
-@(private)
-prefab_previous :: proc(s:^Session) -> ^asset.Scene {
-    d:=s.document
-    if d.previous!=nil {return d.previous}
-    a:=s.app.assets
-    if a==nil {return nil}
-    previous:=new(asset.Scene)
-    id:=d.id
-    if id=={} {id=asset_id_new(s)}
-    if asset.scene_init(previous,&a.types,asset.KIND_SCENE,id)!=.None {
-        free(previous)
-        return nil
+prefabs_opened :: proc(s:^Session) {
+    p:=prefabs_of(s)
+    if p==nil {return}
+    serial_before:=p.bases_serial
+    prefabs_state_free(p)
+    p.bases_serial=serial_before+1
+    if s.app.assets==nil {return}
+    w:=edited_world(s)
+    for root in prefab_roots(w,{}) {
+        if instance,placed:=scene.prefab_instance(w,root);placed {_=prefab_base_of(s,instance)}
     }
-    d.previous=previous
-    return previous
 }
 
+// An edit that is no step of the history changed the World: what was derived is of before it.
 @(private)
-prefab_records_take :: proc(from:^asset.Scene) -> (r:Prefab_Records) {
-    if from==nil {return}
-    append(&r.instances,..from.instances[:])
-    append(&r.members,..from.members[:])
-    append(&r.overrides,..from.overrides[:])
-    r.last_instance=from.info.last_instance
-    return
+prefabs_changed :: proc(s:^Session) {
+    if p:=prefabs_of(s);p!=nil {p.changes+=1}
 }
 
-@(private)
-prefab_records_put :: proc(into:^asset.Scene,r:^Prefab_Records) {
-    clear(&into.instances);clear(&into.members);clear(&into.overrides)
-    append(&into.instances,..r.instances[:])
-    append(&into.members,..r.members[:])
-    append(&into.overrides,..r.overrides[:])
-    into.info.last_instance=r.last_instance
-}
-
-// True when the document has instances of prefabs.
-prefab_linked :: proc(s:^Session) -> bool {
-    return s.document.previous!=nil && len(s.document.previous.instances)>0
-}
+// ---------------------------------------------------------------- the instances of a World
 
 Prefab_Link :: struct {
-    instance:u32,
+    instance:core.Entity,  // the root of the instance
     asset:base.Asset_Id,
     source:base.Entity_Id, // the entity of the prefab this one stands for
     root:bool,             // the root of the instance
 }
 
-// The instance placed in the document that an entity belongs to.
-prefab_link_of :: proc(s:^Session,id:base.Entity_Id) -> (link:Prefab_Link,found:bool) {
-    if s.document==nil {return}
-    previous:=s.document.previous
-    if previous==nil || id==0 || len(previous.instances)==0 {return}
-    for member in previous.members {
-        if member.entity!=id {continue}
-        at:=asset.scene_instance_find(previous,member.instance)
-        if at<0 || previous.instances[at].outer!=0 {continue}
-        return {member.instance,previous.instances[at].prefab,member.source,previous.instances[at].root==id},true
-    }
-    return
+// The instance that placed an entity.
+prefab_link_of :: proc(w:core.World_Ref,e:core.Entity) -> (link:Prefab_Link,found:bool) {
+    root,instance,member:=scene.prefab_instance_of(w,e)
+    if root==core.NONE {return}
+    return {root,instance.prefab,base.Entity_Id(member.source),root==e},true
 }
 
-// The link of every entity an instance placed in the document, for many
-// lookups while the document does not change. Empty when prefab_member_locked
-// would not lock anything.
-prefab_links :: proc(s:^Session,w:core.World_Ref,allocator:=context.temp_allocator) -> map[base.Entity_Id]Prefab_Link {
-    links:=make(map[base.Entity_Id]Prefab_Link,allocator)
-    previous:=s.document.previous
-    if w.data!=s.edit_world || previous==nil || len(previous.instances)==0 || !prefab_linked(s) {return links}
-    placed:=make(map[u32]int,len(previous.instances),context.temp_allocator)
-    for instance,at in previous.instances {if instance.outer==0 && !(instance.id in placed) {placed[instance.id]=at}}
-    for member in previous.members {
-        at,found:=placed[member.instance]
-        if !found || member.entity==0 || member.entity in links {continue}
-        links[member.entity]={member.instance,previous.instances[at].prefab,member.source,previous.instances[at].root==member.entity}
-    }
-    return links
-}
-
-// prefab_member_locked over the links prefab_links gave.
-prefab_member_locked_in :: proc(s:^Session,links:map[base.Entity_Id]Prefab_Link,w:core.World_Ref,e:core.Entity) -> bool {
-    if section_locked(s,w,e) {return true}
-    link,linked:=links[api_entity_id(w,e)]
-    return linked && !link.root
+// True when the document has instances of prefabs.
+prefab_linked :: proc(s:^Session) -> bool {
+    instances:=core.world_table_of(edited_world(s),scene.Prefab_Instance)
+    return instances!=nil && len(core.raw(instances).entities)>0
 }
 
 // An entity of an instance that is not its root: it keeps the place its
@@ -252,21 +177,66 @@ prefab_member_locked_in :: proc(s:^Session,links:map[base.Entity_Id]Prefab_Link,
 prefab_member_locked :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> bool {
     if w.data!=s.edit_world {return false}
     // An entity of a section is edited in its own scene, or in its world while its section is.
-    if section_locked(s,edited_world(s),e) {return true}
-    if !prefab_linked(s) {return false}
-    link,linked:=prefab_link_of(s,api_entity_id(edited_world(s),e))
+    if section_locked(s,w,e) {return true}
+    link,linked:=prefab_link_of(w,e)
     return linked && !link.root
 }
 
-// The instance placed in a document an entity is part of: the one of the
-// member, or the one that added it under a member; 0 for none.
+// The root of the instance an entity is part of: the one that placed it, or
+// the one that holds it as an entity added under a member; NONE for neither.
 @(private)
-prefab_instance_of :: proc(sc:^asset.Scene,id:base.Entity_Id) -> u32 {
-    if instance:=asset.scene_entity_instance(sc,id);instance!=0 {return instance}
-    for override in sc.overrides {
-        if override.kind==.Child && override.entity==id {return override.instance}
+prefab_instance_for :: proc(w:core.World_Ref,e:core.Entity) -> core.Entity {
+    if link,linked:=prefab_link_of(w,e);linked {return link.instance}
+    if link,linked:=prefab_link_of(w,entity_parent(w,e));linked {return link.instance}
+    return core.NONE
+}
+
+@(private)
+Prefab_Member_Entity :: struct {entity:core.Entity,source:base.Entity_Id}
+
+// The members of an instance: they hang where the prefab puts them, so they
+// are found under the root, past no entity that is not one of them.
+@(private)
+prefab_members :: proc(w:core.World_Ref,root:core.Entity,allocator:=context.temp_allocator) -> []Prefab_Member_Entity {
+    found:=make([dynamic]Prefab_Member_Entity,allocator)
+    storage:=core.world_storage_of(w,core.Hierarchy)
+    if storage==nil {return found[:]}
+    hierarchy:=core.ref(storage)
+    pending:=make([dynamic]core.Entity,context.temp_allocator)
+    append(&pending,root)
+    for len(pending)>0 {
+        e:=pop(&pending)
+        member,placed:=scene.prefab_member(w,e)
+        if !placed || member.instance!=root {continue}
+        append(&found,Prefab_Member_Entity{e,base.Entity_Id(member.source)})
+        for child:=core.first_child(hierarchy,e);child!=core.NONE;child=core.next_sibling(hierarchy,child) {append(&pending,child)}
     }
-    return 0
+    return found[:]
+}
+
+// The member of an instance that stands for an entity of its prefab; NONE without one.
+@(private)
+prefab_member_entity :: proc(w:core.World_Ref,root:core.Entity,source:base.Entity_Id) -> core.Entity {
+    for member in prefab_members(w,root) {
+        if member.source==source {return member.entity}
+    }
+    return core.NONE
+}
+
+// After entities were copied: a copy of a member whose root was not copied
+// with it is an entity its instance added, not another member.
+@(private)
+prefab_copies_settle :: proc(w:core.World_Ref,copies:[]core.Entity) {
+    table:=core.world_table_of(w,scene.Prefab_Member)
+    if table==nil || len(core.raw(table).entities)==0 {return}
+    removed:=false
+    for copy in copies {
+        member,placed:=scene.prefab_member(w,copy)
+        if !placed || slice.contains(copies,member.instance) {continue}
+        core.remove(table,copy)
+        removed=true
+    }
+    if removed {core.world_settle(w)}
 }
 
 // ---------------------------------------------------------------- prefab files
@@ -287,8 +257,9 @@ assets_rescan :: proc(s:^Session) {
     if a!=nil && !a.indexed {_=asset.registry_scan(&a.registry)}
 }
 
-// The prefab as its file holds it now, with the instances it holds up to
-// date with their prefabs and its components in the layout of the program.
+// The prefab as its file holds it now, unsaved or on disk, with the instances
+// it holds up to date with their prefabs and its components in the layout of
+// the program.
 @(private)
 prefab_scene_load :: proc(s:^Session,id:base.Asset_Id) -> (loaded:^asset.Scene,ok:bool) {
     if s.app.assets==nil {return}
@@ -302,6 +273,16 @@ prefab_scene_load :: proc(s:^Session,id:base.Asset_Id) -> (loaded:^asset.Scene,o
         return nil,false
     }
     return taken,true
+}
+
+@(private)
+prefab_component_tables :: proc(sc:^asset.Scene) -> []int {
+    found:=make([dynamic]int,context.temp_allocator)
+    for table,at in sc.doc.tables {
+        if at==0 {continue}
+        if _,is_component:=asset.scene_component(sc,table.name);is_component {append(&found,at)}
+    }
+    return found[:]
 }
 
 // Brings the component tables of a prefab read from its file to the layout the program gives each component,
@@ -353,38 +334,6 @@ prefab_reader_end :: proc(reader:^Prefab_Reader) {
     asset.registry_prefabs_destroy(&reader.files)
 }
 
-@(private)
-prefab_base_find :: proc(p:^Prefabs,id:base.Asset_Id) -> ^Prefab_Base {
-    for &b in p.bases {
-        if b.id==id {return &b}
-    }
-    return nil
-}
-
-// The prefab as the instances were last updated from it. Takes the scene.
-@(private)
-prefab_base_set :: proc(s:^Session,id:base.Asset_Id,loaded:^asset.Scene) {
-    p:=prefabs_of(s)
-    p.bases_serial+=1
-    file,_,_:=prefab_file(s,id)
-    stamp:[2]i64
-    if file!=nil {stamp={file.size,file.time}}
-    if b:=prefab_base_find(p,id);b!=nil {
-        prefab_scene_free(b.scene)
-        b^={id=id,scene=loaded,size=stamp[0],time=stamp[1],serial=p.bases_serial}
-        return
-    }
-    append(&p.bases,Prefab_Base{id=id,scene=loaded,size=stamp[0],time=stamp[1],serial=p.bases_serial})
-}
-
-// The file of a prefab is not what the instances were updated from.
-prefab_stale :: proc(s:^Session,id:base.Asset_Id) -> bool {
-    b:=prefab_base_find(prefabs_of(s),id)
-    file,_,ok:=prefab_file(s,id)
-    if !ok || b==nil {return false}
-    return b.size!=file.size || b.time!=file.time
-}
-
 // Whether a prefab holds the one given: it is that one, or places it, itself or through the prefabs it places.
 @(private)
 prefab_contains :: proc(s:^Session,id,target:base.Asset_Id) -> bool {
@@ -395,685 +344,366 @@ prefab_contains :: proc(s:^Session,id,target:base.Asset_Id) -> bool {
     return holds || error!=.None
 }
 
-// ---------------------------------------------------------------- the capture an operation works on
-
+// Whether a prefab places, itself or through the prefabs it places, one whose file is not what it was placed with.
 @(private)
-Prefab_Edit :: struct {
-    s:^Session,
-    cap:^asset.Scene,
-    before:[]u8,
-    records:Prefab_Records, // of the document when the operation began
-    files:[dynamic]Prefab_File,
-    joined:bool,            // part of the gesture that was open: its step holds the operation
+prefab_places_stale :: proc(s:^Session,id:base.Asset_Id) -> bool {
+    reader:Prefab_Reader
+    prefab_reader_begin(s,&reader)
+    defer prefab_reader_end(&reader)
+    return asset.resolver_check(&reader.resolver,id).state==.Stale
 }
 
-@(private)
-prefab_bytes :: proc(sc:^asset.Scene) -> []u8 {
-    w:serial.Writer
-    serial.writer_init(&w,0,context.temp_allocator)
-    if asset.scene_write(sc,&w)!=.None {return nil}
-    return serial.writer_bytes(&w)
-}
-
-// Marks the overrides of the edits made so far and captures the World with the records of the document.
-// joined: the gesture that is open goes on, and the operation is part of its step; otherwise it is cancelled.
-@(private)
-prefab_begin :: proc(s:^Session,joined:=false) -> (e:Prefab_Edit,error:Prefab_Error) {
-    a:=s.app.assets
-    if a==nil {return {},.No_Assets}
-    if import_busy(s)!="" {return {},.Importing}
-    if prefab_previous(s)==nil {return {},.Out_Of_Memory}
-    // A history replaced since the prefabs last followed it (the scene of a
-    // host, without a frame between): they take it before the step whose
-    // version they keep, or the next frame would drop that version.
-    p:=prefabs_of(s)
-    if p.epoch!=s.edits.epoch {prefabs_follow(s,p)}
-    prefabs_sync(s,p)
-    w:=edited_world(s)
-    e.joined=joined && s.edits.open && !s.edits.preview
-    if !e.joined {
-        tools_release(s)
-        edits_cancel(s.edits,w)
-    }
-    core.world_settle(w)
-    prefab_observe(s) or_return
-    e.s=s
-    e.cap=new(asset.Scene)
-    d:=s.document
-    if _,capture_error:=scene.capture(w,e.cap,&a.types,{previous=d.previous,id=d.id});capture_error!=.None {
-        free(e.cap)
-        return {},.Capture_Failed
-    }
-    e.records=prefab_records_take(d.previous)
-    e.before=prefab_bytes(e.cap)
-    return e,.None
-}
+// ---------------------------------------------------------------- bases
 
 @(private)
-prefab_files_free :: proc(files:^[dynamic]Prefab_File) {
-    for file in files {
-        delete(file.path);delete(file.before);delete(file.after)
-    }
-    delete(files^)
-    files^={}
-}
-
-@(private)
-prefab_abort :: proc(e:^Prefab_Edit) {
-    prefab_files_free(&e.files)
-    prefab_scene_free(e.cap)
-    prefab_records_free(&e.records)
-    e.cap=nil
-}
-
-// Replaces the World by the capture, selecting the entities that were selected, in a step when it changed.
-// It is the same scene edited, not a cut: the image keeps its history.
-@(private)
-prefab_world_replace :: proc(s:^Session,cap:^asset.Scene) -> Prefab_Error {
-    a:=s.app.assets
-    w:=edited_world(s)
-    data:=prefab_bytes(cap)
-    if data==nil {return .Write_Failed}
-    source:asset.Asset
-    if asset.asset_open(&source,data)!=.None {return .Rejected}
-    defer asset.asset_close(&source)
-    view,view_error:=asset.scene_view(&source,&a.types)
-    if view_error!=.None || asset.scene_view_check(view,context.temp_allocator)!=.None {return .Rejected}
-    selection:=document_selection(s)
-    selected:=make([dynamic]base.Entity_Id,context.temp_allocator)
-    for e in selection.entities {
-        if id:=api_entity_id(w,e);id!=0 {append(&selected,id)}
-    }
-    if !w.info.clear(w.data) {return .Out_Of_Memory}
-    _,error:=scene.instantiate(w,&source,&a.types)
-    core.world_settle(w)
-    if error!=.None {return .Rejected}
-    scene.propagate(w,s.app)
-    picked:=make([dynamic]core.Entity,context.temp_allocator)
-    for id in selected {
-        if e:=api_entity(w,id);e!=core.NONE {append(&picked,e)}
-    }
-    selection_set(selection,picked[:])
-    return .None
-}
-
-// Ends an operation: the capture becomes the scene the document was read as and, when it differs from
-// the World, the World follows as one step of undo. Takes the edit.
-@(private)
-prefab_finish :: proc(e:^Prefab_Edit,label:string) -> Prefab_Error {
-    s:=e.s
-    d:=s.document
-    p:=prefabs_of(s)
-    cap:=e.cap
-    defer prefab_records_free(&e.records)
-    defer prefab_files_free(&e.files)
-    after:=prefab_bytes(cap)
-    changed:=after==nil || !slice.equal(after,e.before)
-    error:=Prefab_Error.None
-    if e.joined {
-        // The World follows inside the open gesture, and the records wait for its step as those of a copy do.
-        if changed {error=prefab_world_replace(s,cap)}
-        if error!=.None {
-            prefab_scene_free(cap)
-            return error
-        }
-        document_previous_free(d)
-        d.previous=cap
-        if !p.has_pending {
-            p.pending,e.records=e.records,{}
-            p.pending_state=edits_scene_state(s.edits)
-            p.has_pending=true
-        }
-        e.cap=nil
-        return .None
-    }
-    // A step that only writes prefab files still has its place in the history: its undo takes them back.
-    if changed || len(e.files)>0 {
-        before_state:=edits_scene_state(s.edits)
-        _,edit_ready:=edit_open(s,label,document=true)
-        if !edit_ready {prefab_scene_free(cap);return .Out_Of_Memory}
-        if changed {error=prefab_world_replace(s,cap)}
-        edits_end(s.edits)
-        if error!=.None {
-            edits_cancel(s.edits,edited_world(s))
-            prefab_scene_free(cap)
-            return error
-        }
-        if !edits_commit(s.edits,edited_world(s),document_selection(s),true) {
-            edits_cancel(s.edits,edited_world(s))
-            prefab_scene_free(cap)
-            return .Out_Of_Memory
-        }
-        after_state:=edits_scene_state(s.edits)
-        document_previous_free(d)
-        d.previous=cap
-        if after_state!=before_state {
-            version:=prefab_version_make(&e.records,cap,before_state,after_state)
-            version.files=e.files
-            e.files={}
-            append(&p.versions,version)
-            collab_prefab_step(s,&p.versions[len(p.versions)-1],true)
-            prefab_versions_prune(p,s.edits)
-            p.last_state=after_state
-        }
-    } else {
-        document_previous_free(d)
-        d.previous=cap
-    }
-    e.cap=nil
-    return .None
-}
-
-// ---------------------------------------------------------------- following the document
-
-// Makes the records, and the files, of the point of the history current, compares overrides after the
-// edits that may have changed them, and brings a document just opened up to date with its prefabs.
-@(step="input")
-prefabs_follow :: proc(s:^Session,p:^Prefabs) {
-    if s.app.assets==nil {return}
-    edits:=s.edits
-    if p.epoch!=edits.epoch {
-        p.epoch=edits.epoch
-        for &v in p.versions {prefab_version_free(&v)}
-        clear(&p.versions)
-        prefab_records_free(&p.pending)
-        p.has_pending=false
-        p.last_state=edits_scene_state(edits)
-        p.observed=false
-        clear(&p.remote)
-        p.remote_places=false
-        if prefab_linked(s) {prefab_refresh(s,{},true)}
-        return
-    }
-    prefabs_sync(s,p)
-    if !edits.open && !edits.commit {prefab_observe(s)}
-}
-
-@(private)
-prefabs_pending_cancel :: proc(s:^Session) {
-    p:=prefabs_of(s)
-    if p==nil || !p.has_pending {return}
-    if s.document.previous!=nil {prefab_records_put(s.document.previous,&p.pending)}
-    prefab_records_free(&p.pending)
-    p.has_pending=false
-}
-
-// The history moved: the records and the files of the step it is at. Only
-// the steps in order move it (history_prefab_step): an undo goes back across
-// each version it took back, newest first, and a redo forward across each it
-// brought again, oldest first.
-@(private)
-prefabs_sync :: proc(s:^Session,p:^Prefabs) {
-    edits:=s.edits
-    if p.epoch!=edits.epoch || s.document.previous==nil && !p.has_pending {return}
-    state:=edits_scene_state(edits)
-    if p.has_pending && !edits.open && state==p.pending_state {prefabs_pending_cancel(s)}
-    if state==p.last_state {return}
-    before:=p.last_state
-    p.last_state=state
-    previous:=s.document.previous
-    if state<before {
-        #reverse for step in edits.steps[edits.cursor:] {
-            if step.state>before || step.state<=state {continue}
-            if v:=prefab_version_of(p,step.state);v!=nil {
-                prefab_records_move(previous,v,false)
-                prefab_files_restore(s,v.files[:],false)
-                collab_prefab_step(s,v,false)
-            }
-        }
-    } else {
-        for step in edits.steps[:edits.cursor] {
-            if step.swapped || step.state<=before || step.state>state {continue}
-            if v:=prefab_version_of(p,step.state);v!=nil {
-                prefab_records_move(previous,v,true)
-                prefab_files_restore(s,v.files[:],true)
-                collab_prefab_step(s,v,true)
-            }
-        }
-    }
-    if p.has_pending && previous!=nil {
-        append(&p.versions,prefab_version_make(&p.pending,previous,p.pending_state,state))
-        collab_prefab_step(s,&p.versions[len(p.versions)-1],true)
-        prefab_records_free(&p.pending)
-        p.has_pending=false
-    }
-    prefab_versions_prune(p,edits)
-}
-
-@(private)
-prefab_version_of :: proc(p:^Prefabs,state:u64) -> ^Prefab_Version {
-    for &v in p.versions {
-        if v.after_state==state {return &v}
+prefab_base_find :: proc(p:^Prefabs,id:base.Asset_Id,stamp:u64) -> ^Prefab_Base {
+    for &b in p.bases {
+        if b.id==id && b.stamp==stamp {return &b}
     }
     return nil
 }
 
-// Forgets the versions of the steps the history no longer holds: those it
-// dropped as the oldest, and those undone that a new step left without redo.
+// The prefab as instances are brought up to date with it now. Takes the scene.
 @(private)
-prefab_versions_prune :: proc(p:^Prefabs,edits:^Edits) {
-    if len(p.versions)==0 {return}
-    held:=make(map[u64]bool,len(edits.steps),context.temp_allocator)
-    for step in edits.steps {held[step.state]=true}
+prefab_base_set :: proc(s:^Session,id:base.Asset_Id,loaded:^asset.Scene) {
+    p:=prefabs_of(s)
+    p.bases_serial+=1
+    entry:=Prefab_Base{id=id,stamp=loaded.stamp,scene=loaded,revision=s.app.assets.registry.revision}
+    if b:=prefab_base_find(p,id,loaded.stamp);b!=nil {
+        prefab_scene_free(b.scene)
+        b^=entry
+        return
+    }
+    append(&p.bases,entry)
+}
+
+// The base of an instance: the prefab as its file was when the instance was
+// last brought up to date. nil when this editor does not hold it and the
+// file is another by now: nothing says then what the instance set itself.
+@(private)
+prefab_base_of :: proc(s:^Session,instance:scene.Prefab_Instance) -> ^asset.Scene {
+    p:=prefabs_of(s)
+    if p==nil || s.app.assets==nil {return nil}
+    if b:=prefab_base_find(p,instance.prefab,instance.stamp);b!=nil {return b.scene}
+    file,_,located:=prefab_file(s,instance.prefab)
+    if !located || file.content_hash!=instance.stamp {return nil}
+    loaded,ok:=prefab_scene_load(s,instance.prefab)
+    if !ok {return nil}
+    if loaded.stamp!=instance.stamp {
+        prefab_scene_free(loaded)
+        return nil
+    }
+    prefab_base_set(s,instance.prefab,loaded)
+    return loaded
+}
+
+// Forgets the bases no instance is at: neither one of the World nor one a
+// step of the history would bring back.
+@(private)
+prefab_bases_prune :: proc(s:^Session) {
+    p:=prefabs_of(s)
+    if p==nil || len(p.bases)<=1 {return}
+    w:=edited_world(s)
+    Held :: struct {id:base.Asset_Id,stamp:u64}
+    held:=make(map[Held]bool,context.temp_allocator)
+    index:=-1
+    for root in prefab_roots(w,{}) {
+        instance,_:=scene.prefab_instance(w,root)
+        held[{instance.prefab,instance.stamp}]=true
+    }
+    for &t,at in w.info.tables {
+        if t.place==w.place && t.type==scene.Prefab_Instance {index=at}
+    }
+    size:=size_of(scene.Prefab_Instance)
+    for &step in s.edits.steps {
+        for &rows in step.tables {
+            if rows.table!=index {continue}
+            for k in 0..<len(rows.entities) {
+                for side in ([2]^Step_Side{&rows.other,&rows.held}) {
+                    if !side.present[k] {continue}
+                    instance:=(^scene.Prefab_Instance)(&side.values[k*size])^
+                    held[{instance.prefab,instance.stamp}]=true
+                }
+            }
+        }
+    }
     left:=0
-    for &v in p.versions {
-        if !(v.after_state in held) {
-            prefab_version_free(&v)
+    for &b in p.bases {
+        if !held[{b.id,b.stamp}] {
+            prefab_scene_free(b.scene)
             continue
         }
-        p.versions[left]=v
+        p.bases[left]=b
         left+=1
     }
-    resize(&p.versions,left)
+    resize(&p.bases,left)
 }
 
-// The version of a step from the records before it and the scene that holds those after it.
+// ---------------------------------------------------------------- one instance as a document
+
+// The entities under the root of an instance, captured to be changed as a
+// document and written back onto them.
 @(private)
-prefab_version_make :: proc(before:^Prefab_Records,after:^asset.Scene,before_state,after_state:u64) -> (v:Prefab_Version) {
-    v.before_state,v.after_state=before_state,after_state
-    records_minus(&v.gone.instances,before.instances[:],after.instances[:],instance_less)
-    records_minus(&v.gone.members,before.members[:],after.members[:],member_less)
-    records_minus(&v.gone.overrides,before.overrides[:],after.overrides[:],override_less)
-    records_minus(&v.came.instances,after.instances[:],before.instances[:],instance_less)
-    records_minus(&v.came.members,after.members[:],before.members[:],member_less)
-    records_minus(&v.came.overrides,after.overrides[:],before.overrides[:],override_less)
-    v.gone.last_instance,v.came.last_instance=before.last_instance,after.info.last_instance
-    return
-}
-
-// Moves the records of a document across the step of a version: forward,
-// from before it to after it; back, from after it to before it.
-@(private)
-prefab_records_move :: proc(into:^asset.Scene,v:^Prefab_Version,forward:bool) {
-    if into==nil {return}
-    out,back:=&v.came,&v.gone
-    if forward {out,back=&v.gone,&v.came}
-    records_swap(&into.instances,out.instances[:],back.instances[:])
-    records_swap(&into.members,out.members[:],back.members[:])
-    records_swap(&into.overrides,out.overrides[:],back.overrides[:])
-    into.info.last_instance=back.last_instance
-}
-
-// Appends to out what from has that without does not, each as many times as
-// from has it more. less orders by every field, so two records the order
-// does not tell apart are the same.
-@(private="file")
-records_minus :: proc(out:^[dynamic]$T,from,without:[]T,less:proc(a,b:T) -> bool) {
-    a,b:=slice.clone(from,context.temp_allocator),slice.clone(without,context.temp_allocator)
-    slice.sort_by(a,less)
-    slice.sort_by(b,less)
-    j:=0
-    for x in a {
-        for j<len(b) && less(b[j],x) {j+=1}
-        if j<len(b) && !less(x,b[j]) {
-            j+=1
-            continue
-        }
-        append(out,x)
-    }
-}
-
-// Takes out of the records one of each of out, and puts in each of back they do not hold.
-@(private="file")
-records_swap :: proc(records:^[dynamic]$T,out,back:[]T) {
-    for x in out {
-        if at,found:=slice.linear_search(records[:],x);found {ordered_remove(records,at)}
-    }
-    for x in back {
-        if !slice.contains(records[:],x) {append(records,x)}
-    }
-}
-
-@(private="file")
-instance_less :: proc(a,b:asset.Instance) -> bool {
-    if a.id!=b.id {return a.id<b.id}
-    if a.prefab[0]!=b.prefab[0] {return a.prefab[0]<b.prefab[0]}
-    if a.prefab[1]!=b.prefab[1] {return a.prefab[1]<b.prefab[1]}
-    if a.root!=b.root {return a.root<b.root}
-    if a.outer!=b.outer {return a.outer<b.outer}
-    return a.stamp<b.stamp
-}
-
-@(private="file")
-member_less :: proc(a,b:asset.Member) -> bool {
-    if a.instance!=b.instance {return a.instance<b.instance}
-    if a.entity!=b.entity {return a.entity<b.entity}
-    return a.source<b.source
-}
-
-@(private="file")
-override_less :: proc(a,b:asset.Override) -> bool {
-    if a.instance!=b.instance {return a.instance<b.instance}
-    if a.entity!=b.entity {return a.entity<b.entity}
-    if a.component!=b.component {return a.component<b.component}
-    if a.kind!=b.kind {return a.kind<b.kind}
-    for i in 0..<len(a.path) {
-        if a.path[i]!=b.path[i] {return a.path[i]<b.path[i]}
-    }
-    return false
+Prefab_Work :: struct {
+    root:core.Entity,
+    root_id:base.Entity_Id,
+    instance:scene.Prefab_Instance,
+    doc:asset.Scene,
+    scope:[]base.Entity_Id, // what was captured
 }
 
 @(private)
-prefab_version_free :: proc(v:^Prefab_Version) {
-    prefab_records_free(&v.gone);prefab_records_free(&v.came)
-    for file in v.files {
-        delete(file.path);delete(file.before);delete(file.after)
-    }
-    delete(v.files)
-}
-
-// A prefab file written by an operation, with the bytes it had and the ones it got.
-Prefab_File :: struct {
-    path:string,
-    before,after:[]u8, // nil: it did not exist
-}
-
-// Writes a prefab and remembers what it replaced.
-@(private)
-prefab_file_save :: proc(prefab:^asset.Scene,path:string,files:^[dynamic]Prefab_File) -> bool {
-    before,read_error:=os.read_entire_file(path,context.allocator)
-    had:=read_error==nil
-    if asset.scene_save(prefab,path)!=.None {
-        delete(before)
-        return false
-    }
-    after,_:=os.read_entire_file(path,context.allocator)
-    kept:=strings.clone(path)
-    append(files,Prefab_File{path=kept,before=had?before:nil,after=after})
-    return true
-}
-
-@(private)
-prefab_files_wrote :: proc(s:^Session,files:[]Prefab_File) {
-    paths:=make([]string,len(files),context.temp_allocator)
-    for file,at in files {paths[at]=file.path}
-    assets_wrote(s,..paths)
-}
-
-// Gives the files of a step the bytes they had before it or after it, unless they were changed by other means.
-@(private)
-prefab_files_restore :: proc(s:^Session,files:[]Prefab_File,after:bool) {
+prefab_work_begin :: proc(s:^Session,root:core.Entity) -> (work:Prefab_Work,error:Prefab_Error) {
     a:=s.app.assets
-    if len(files)==0 || a==nil {return}
-    for file in files {
-        expected,wanted:=file.before,file.after
-        if !after {expected,wanted=file.after,file.before}
-        current,current_error:=os.read_entire_file(file.path,context.temp_allocator)
-        exists:=current_error==nil
-        matches:=(expected==nil && !exists) || (expected!=nil && exists && slice.equal(current,expected))
-        if !matches {continue}
-        if wanted==nil?os.remove(file.path)!=nil:serial.file_write_atomic(file.path,wanted)!=.None {
-            notify(s,fmt.tprintf("%s could not be restored",file.path))
-        }
-    }
-    paths:=make([]string,len(files),context.temp_allocator)
-    for file,at in files {paths[at]=file.path}
-    prefab_files_reload(s,paths)
-}
-
-// The prefabs of files written are read again, and the instances compared with them.
-@(private)
-prefab_files_reload :: proc(s:^Session,paths:[]string) {
-    a:=s.app.assets
-    if len(paths)==0 || a==nil {return}
-    assets_wrote(s,..paths)
-    for path in paths {
-        id:base.Asset_Id
-        found:=false
-        for &entry in a.registry.files {
-            if entry.kind==asset.KIND_PREFAB && asset.registry_file_path(&a.registry,entry.path,context.temp_allocator)==path {
-                id,found=entry.id,true
-                break
-            }
-        }
-        if !found {continue}
-        _=host.assets_reload(a,id)
-        if loaded,ok:=prefab_scene_load(s,id);ok {prefab_base_set(s,id,loaded)}
-    }
-}
-
-// Marks the overrides of the instances placed in the document from the World:
-// what their members hold that the prefab they were last brought up to date
-// from does not. It looks again only at what the steps of the history since
-// the last observation changed (their Step_Rows) and at the instances whose
-// prefab was read again since; at everything when the history does not say,
-// or while edits wait for their step. On an error the overrides stay as they
-// were, and the next calls give it until something changes.
-prefab_observe :: proc(s:^Session) -> Prefab_Error {
-    if s.app.assets==nil {return .None}
-    p:=prefabs_of(s)
-    edits:=s.edits
     w:=edited_world(s)
-    prefabs_sync(s,p)
-    if !prefab_linked(s) {return .None}
-    pending:=edits.open || edits.commit || w.data!=edits.world
-    remote:=len(p.remote)>0 || p.remote_places
-    if !pending && !remote && p.observed && p.observed_turns==edits.turns && p.observed_initial==edits.initial && p.observed_bases==p.bases_serial {return p.observe_error}
+    if a==nil {return {},.No_Assets}
     core.world_settle(w)
-    touched,whole:=prefab_touched(s,p)
-    error:=prefab_observe_world(s,p,&touched,whole || pending)
-    clear(&p.remote)
-    p.remote_places=false
-    p.observed,p.observed_turns,p.observed_initial,p.observed_bases,p.observe_error=!pending,edits.turns,edits.initial,p.bases_serial,error
-    return error
+    placed:bool
+    if work.instance,placed=scene.prefab_instance(w,root);!placed {return {},.Not_Instance}
+    work.root,work.root_id=root,api_entity_id(w,root)
+    if _,failed:=scene.capture(w,&work.doc,&a.types,{root=root,outside=true,kind=asset.KIND_SCENE,id=s.document.id});failed!=.None {
+        return {},failed==.Out_Of_Memory?.Out_Of_Memory:.Capture_Failed
+    }
+    work.scope=slice.clone(asset.scene_ids(&work.doc),context.temp_allocator)
+    return work,.None
 }
 
-// The entities the steps of the history changed since the last observation
-// (their turn is later), by handle and by Id.
 @(private)
-Prefab_Touched :: struct {
-    entities:map[core.Entity]bool,
-    ids:map[base.Entity_Id]bool,
-    places:bool, // an Id or a parent changed, or which entities are alive
+prefab_work_end :: proc(work:^Prefab_Work) {
+    if work.root!=core.NONE {asset.scene_destroy(&work.doc)}
+    work^={}
 }
 
-// whole: the history does not hold the steps since the last observation.
+// What the instance holds apart from a base, as the overrides of its document.
 @(private)
-prefab_touched :: proc(s:^Session,p:^Prefabs) -> (touched:Prefab_Touched,whole:bool) {
-    edits:=s.edits
-    if !p.observed || p.observed_initial!=edits.initial {return {},true}
+prefab_work_derive :: proc(work:^Prefab_Work,from:^asset.Scene) -> Prefab_Error {
+    clear(&work.doc.overrides)
+    return prefab_place_error(asset.scene_instance_overrides(&work.doc.overrides,&work.doc,work.root_id,from))
+}
+
+// Writes the document back onto the entities it was captured from. An entity
+// it gained is new to the World: its Id is of no other.
+@(private)
+prefab_work_put :: proc(s:^Session,work:^Prefab_Work) -> Prefab_Error {
+    a:=s.app.assets
     w:=edited_world(s)
-    ids:=core.world_table_of(w,core.Id)
-    id_table,parent_table:=-1,-1
-    for t,i in w.info.tables {
-        if t.place!=w.place {continue}
-        if t.type==core.Id {id_table=i} else if t.type==core.Parent {parent_table=i}
+    es:=core.world_entities(w)
+    known:=make(map[base.Entity_Id]bool,len(work.scope),context.temp_allocator)
+    for id in work.scope {known[id]=true}
+    for id in asset.scene_ids(&work.doc) {
+        if !known[id] && core.entity_of(es,id)!=core.NONE {return .Rejected}
     }
-    touched.entities=make(map[core.Entity]bool,context.temp_allocator)
-    touched.ids=make(map[base.Entity_Id]bool,context.temp_allocator)
-    for &step in edits.steps {
-        if step.turned<=p.observed_turns {continue}
-        touched.places||=len(step.entities.indices)>0
-        for &rows in step.tables {
-            touched.places||=rows.table==id_table || rows.table==parent_table
-            size:=w.info.tables[rows.table].info.size
-            for e,k in rows.entities {
-                touched.entities[e]=true
-                // One no longer alive has its Id in the rows of the step that destroyed it.
-                if id:=core.id_of(core.read(ids),e);id!=0 {touched.ids[id]=true}
-                else if rows.table==id_table && rows.present[k] {touched.ids[(^core.Id)(&rows.values[k*size]).value]=true}
-            }
-        }
+    data,encoded:=asset.scene_bytes(&work.doc,context.temp_allocator)
+    if encoded!=.None {return encoded==.Out_Of_Memory?.Out_Of_Memory:.Write_Failed}
+    file:asset.Asset
+    if asset.asset_open(&file,data)!=.None {return .Rejected}
+    defer asset.asset_close(&file)
+    _,failed:=scene.update(w,&file,&a.types,{scope=work.scope})
+    core.world_settle(w)
+    #partial switch failed {
+    case .None:          return .None
+    case .Out_Of_Memory: return .Out_Of_Memory
     }
-    touched.places||=p.remote_places
-    for id in p.remote {
-        touched.ids[id]=true
-        if e:=api_entity(w,id);e!=core.NONE {touched.entities[e]=true}
-    }
-    return touched,false
+    return .Rejected
 }
 
-// The entities, by Id, that an edit of another editor of the session
-// changed; places: it changed an Id or a parent.
-prefabs_remote_edited :: proc(s:^Session,ids:[]base.Entity_Id,places:bool) {
-    p:=prefabs_of(s)
-    if p==nil || s.document==nil || s.document.previous==nil || len(s.document.previous.instances)==0 {return}
-    for id in ids {p.remote[id]=true}
-    p.remote_places||=places
+// Brings one instance from a base to a prefab: what it holds apart from the
+// base stays over what the prefab gives.
+@(private)
+prefab_instance_update :: proc(s:^Session,root:core.Entity,from,to:^asset.Scene) -> Prefab_Error {
+    work:=prefab_work_begin(s,root) or_return
+    defer prefab_work_end(&work)
+    prefab_work_derive(&work,from) or_return
+    prefab_place_error(asset.scene_instance_update(&work.doc,work.root_id,to)) or_return
+    return prefab_work_put(s,&work)
+}
+
+// The gesture of an operation: its own, recorded when it ends, or the one
+// that is open when it is joined to it.
+@(private)
+Prefab_Gesture :: struct {
+    s:^Session,
+    joined:bool,
 }
 
 @(private)
-prefab_observe_world :: proc(s:^Session,p:^Prefabs,touched:^Prefab_Touched,whole:bool) -> Prefab_Error {
-    previous:=s.document.previous
+prefab_gesture_begin :: proc(s:^Session,label:string,joined:=false) -> (g:Prefab_Gesture,error:Prefab_Error) {
+    if s.app.assets==nil {return {},.No_Assets}
+    if import_busy(s)!="" {return {},.Importing}
     w:=edited_world(s)
-    // The instance placed in the document and the entity of the prefab of each member.
-    Placed :: struct {instance:u32,source:base.Entity_Id}
-    members:=make(map[base.Entity_Id]Placed,context.temp_allocator)
-    based:=make(map[u32]^Prefab_Base,context.temp_allocator)
-    for instance in previous.instances {
-        if instance.outer!=0 {continue}
-        if b:=prefab_base_find(p,instance.prefab);b!=nil {based[instance.id]=b}
+    g={s=s,joined=joined && s.edits.open && !s.edits.preview}
+    if !g.joined {
+        tools_release(s)
+        edits_cancel(s.edits,w)
     }
-    for member in previous.members {
-        if member.instance in based {members[member.entity]={member.instance,member.source}}
+    core.world_settle(w)
+    if !g.joined {
+        if _,ready:=edit_open(s,label,document=true);!ready {return g,.Out_Of_Memory}
     }
-    // What is looked at again of each instance: its places, and the values of all its members or of those touched.
-    Scope :: struct {places,all:bool}
-    scopes:=make(map[u32]Scope,context.temp_allocator)
-    for instance,b in based {
-        if whole || b.serial>p.observed_bases {scopes[instance]={true,true}}
+    return g,.None
+}
+
+// Ends the gesture of an operation with what it answers: a step when it
+// changed something, and the World as it was when it failed.
+@(private)
+prefab_gesture_end :: proc(g:^Prefab_Gesture,error:Prefab_Error) -> Prefab_Error {
+    s:=g.s
+    w:=edited_world(s)
+    core.world_settle(w)
+    if g.joined {return error}
+    if error!=.None {
+        edits_cancel(s.edits,w)
+        selection_prune(document_selection(s),w)
+        return error
     }
-    touched_values:=make(map[base.Entity_Id]bool,context.temp_allocator)
-    if !whole {
-        reach :: proc(scopes:^map[u32]Scope,instance:u32,places:bool) {
-            scope:=scopes[instance]
-            scope.places||=places
-            scopes[instance]=scope
-        }
-        for id in touched.ids {
-            if placed,member:=members[id];member {
-                reach(&scopes,placed.instance,touched.places)
-                touched_values[id]=true
-            }
-        }
-        for override in previous.overrides {
-            if override.entity in touched.ids && override.instance in based {reach(&scopes,override.instance,touched.places)}
-        }
-        if touched.places {
-            for e in touched.entities {
-                if !entity_alive(w,e) {continue}
-                if placed,member:=members[api_entity_id(w,entity_parent(w,e))];member {reach(&scopes,placed.instance,true)}
-            }
-        }
+    scene.propagate(w,s.app)
+    selection_prune(document_selection(s),w)
+    edits_end(s.edits)
+    if !edits_commit(s.edits,w,document_selection(s)) && s.edits.error!=.No_Change {
+        edits_cancel(s.edits,w)
+        return .Out_Of_Memory
     }
-    if len(scopes)==0 {return .None}
-    compared:=make([dynamic]core.Entity,context.temp_allocator)
-    compared_ids:=make(map[base.Entity_Id]bool,context.temp_allocator)
-    for member in previous.members {
-        placed,known:=members[member.entity]
-        scope,looked:=scopes[placed.instance]
-        if !known || member.instance!=placed.instance || !looked || !scope.all && !touched_values[member.entity] || member.entity in compared_ids {continue}
-        if e:=api_entity(w,member.entity);e!=core.NONE {
-            append(&compared,e)
-            compared_ids[member.entity]=true
-        }
-    }
-    fresh:=make([dynamic]asset.Override,context.temp_allocator)
-    if len(compared)>0 {
-        cap:asset.Scene
-        if _,error:=scene.capture(w,&cap,&s.app.assets.types,{entities=compared[:],kind=asset.KIND_PREFAB});error!=.None {return .Capture_Failed}
-        defer asset.scene_destroy(&cap)
-        // The captured members with the records of their instances, whose other members their references name.
-        for instance in previous.instances {
-            b,placed:=based[instance.id]
-            if _,looked:=scopes[instance.id];!looked || !placed {continue}
-            append(&cap.instances,instance)
-            for member in previous.members {
-                if member.instance==instance.id {append(&cap.members,member)}
-            }
-            prefab_place_error(asset.scene_overrides_derive(&fresh,&cap,instance.id,b.scene,false)) or_return
-        }
-    }
-    for instance in previous.instances {
-        if scope,looked:=scopes[instance.id];looked && scope.places {prefab_places_observe(&fresh,w,instance,previous)}
-    }
-    // The fresh overrides take the place of those of what was looked at; the
-    // rest stay, those of members the World does not have now too: an undo
-    // may bring them back. The placement of a root is never an override.
-    kept:=make([dynamic]asset.Override,context.temp_allocator)
-    for &override in previous.overrides {
-        if at:=asset.scene_instance_find(previous,override.instance);at>=0 && prefab_placement(&override,previous.instances[at].root) {continue}
-        scope,looked:=scopes[override.instance]
-        if looked && (override.kind>=.Child ? scope.places : compared_ids[override.entity]) {continue}
-        append(&kept,override)
-    }
-    append(&kept,..fresh[:])
-    clear(&previous.overrides)
-    append(&previous.overrides,..kept[:])
+    prefab_bases_prune(s)
     return .None
 }
 
-// Marks the entities a placed instance added under its members (Child), in
-// the order of its members and of their children.
+// The roots of the instances of a prefab in the document; of every prefab with a zero id.
 @(private)
-prefab_places_observe :: proc(out:^[dynamic]asset.Override,w:core.World_Ref,instance:asset.Instance,previous:^asset.Scene) {
-    inside:=make(map[core.Entity]bool,context.temp_allocator)
-    for member in previous.members {
-        if member.instance!=instance.id {continue}
-        if e:=api_entity(w,member.entity);e!=core.NONE {inside[e]=true}
+prefab_roots :: proc(w:core.World_Ref,id:base.Asset_Id,allocator:=context.temp_allocator) -> []core.Entity {
+    roots:=make([dynamic]core.Entity,allocator)
+    table:=core.world_table_of(w,scene.Prefab_Instance)
+    if table==nil {return roots[:]}
+    // Every row, those of the entities that are off among them.
+    for root in core.raw(table).entities {
+        if instance,_:=scene.prefab_instance(w,root);id=={} || instance.prefab==id {append(&roots,root)}
     }
-    ids:=core.read(core.world_table_of(w,core.Id))
-    for member in previous.members {
-        if member.instance!=instance.id {continue}
-        e:=api_entity(w,member.entity)
-        if e==core.NONE {continue}
-        for child in entity_children(w,e) {
-            if child in inside {continue}
-            if id:=core.id_of(ids,child);id!=0 {append(out,asset.override_make(instance.id,id,0,.Child,""))}
-        }
-    }
+    return roots[:]
 }
 
+// Brings the instances of a prefab in the document up to date with its file,
+// inside a gesture, and keeps the prefab as it is now as their base. An
+// instance whose base this editor does not hold keeps everything it has that
+// the prefab does not give.
 @(private)
-prefab_component_tables :: proc(sc:^asset.Scene) -> []int {
-    found:=make([dynamic]int,context.temp_allocator)
-    for table,at in sc.doc.tables {
-        if at==0 {continue}
-        if _,is_component:=asset.scene_component(sc,table.name);is_component {append(&found,at)}
+prefab_sync :: proc(s:^Session,id:base.Asset_Id) -> (current:^asset.Scene,updated,failed:int,error:Prefab_Error) {
+    p:=prefabs_of(s)
+    w:=edited_world(s)
+    file,_,located:=prefab_file(s,id)
+    if !located {return nil,0,0,.Not_Found}
+    stamp:=file.content_hash
+    held:=prefab_base_find(p,id,stamp)
+    superseded:=false
+    if held!=nil && held.revision!=s.app.assets.registry.revision {
+        // Its file is the same, and a prefab it places may not be.
+        superseded=prefab_places_stale(s,id)
+        if !superseded {held.revision=s.app.assets.registry.revision}
     }
-    return found[:]
+    stale:=make([dynamic]core.Entity,context.temp_allocator)
+    for root in prefab_roots(w,id) {
+        if instance,_:=scene.prefab_instance(w,root);superseded || instance.stamp!=stamp {append(&stale,root)}
+    }
+    if held!=nil && !superseded && len(stale)==0 {return held.scene,0,0,.None}
+    loaded,ok:=prefab_scene_load(s,id)
+    if !ok {return nil,0,0,.Not_Found}
+    for root in stale {
+        instance,_:=scene.prefab_instance(w,root)
+        from:=loaded
+        if b:=prefab_base_find(p,id,instance.stamp);b!=nil {from=b.scene}
+        if prefab_instance_update(s,root,from,loaded)!=.None {failed+=1} else {updated+=1}
+    }
+    prefab_base_set(s,id,loaded)
+    return loaded,updated,failed,.None
 }
 
-@(private)
-prefab_override_text :: proc(override:^asset.Override) -> string {return serial.text_field(override.path[:])}
+// ---------------------------------------------------------------- overrides
 
-// ---------------------------------------------------------------- queries
+// What an instance holds apart from its base, as last derived: again when
+// the history, the bases or the edits of others moved since. known false
+// when its base is not there to compare with.
+prefab_overrides_of :: proc(s:^Session,root:core.Entity) -> (overrides:[]asset.Override,known:bool) {
+    p:=prefabs_of(s)
+    w:=edited_world(s)
+    if p==nil || s.app.assets==nil {return}
+    d:=&p.derived
+    key:=[4]u64{s.edits.turns,p.bases_serial,p.changes,s.edits.epoch<<1|u64(s.edits.open || s.edits.commit)}
+    if d.root==root && d.key==key {return d.overrides[:],d.known}
+    d.root,d.key,d.known=root,key,false
+    clear(&d.overrides)
+    instance,placed:=scene.prefab_instance(w,root)
+    if !placed {return}
+    from:=prefab_base_of(s,instance)
+    // Taking a base counts as a change of them: the key is of after it.
+    d.key[1]=p.bases_serial
+    if from==nil {return}
+    work,error:=prefab_work_begin(s,root)
+    if error!=.None {return}
+    defer prefab_work_end(&work)
+    if prefab_work_derive(&work,from)!=.None {return}
+    append(&d.overrides,..work.doc.overrides[:])
+    d.known=true
+    return d.overrides[:],true
+}
+
+// Gives a document captured from the World the overrides of its instances as
+// a file keeps them: derived against the base of each, and for an instance
+// whose base this editor does not hold, the ones in kept, which the file
+// they were read from held.
+@(private)
+prefab_overrides_put :: proc(s:^Session,captured:^asset.Scene,kept:[]asset.Override) -> Prefab_Error {
+    State :: struct {s:^Session,unknown:map[base.Entity_Id]bool}
+    state:=State{s=s}
+    state.unknown=make(map[base.Entity_Id]bool,context.temp_allocator)
+    from :: proc(data:rawptr,root:base.Entity_Id,instance:asset.Instance) -> ^asset.Scene {
+        state:=(^State)(data)
+        found:=prefab_base_of(state.s,{prefab=instance.prefab,stamp=instance.stamp})
+        if found==nil {state.unknown[root]=true}
+        return found
+    }
+    clear(&captured.overrides)
+    prefab_place_error(asset.scene_overrides_derive(&captured.overrides,captured,{&state,from})) or_return
+    if len(state.unknown)==0 {return .None}
+    for override in kept {
+        row,exists:=asset.scene_entity_find(captured,override.entity)
+        if !exists {continue}
+        about:=override.kind==.Child?asset.scene_parents(captured)[row]:override.entity
+        if state.unknown[asset.scene_entity_instance(captured,about)] {append(&captured.overrides,override)}
+    }
+    return .None
+}
 
 Prefab_Instance_State :: struct {
-    instance:u32,
     asset:base.Asset_Id,
     path:string,
     root:base.Entity_Id,
-    outer:u32,
-    members,overrides:int,
+    members:int,
     missing,stale:bool,
 }
 
-// The instances of the document whose root exists. Overrides are counted
-// without the placement. One placed in the document is stale when its stamp
-// is not the content hash of the file of its prefab, or when that prefab
-// holds a stale instance.
+// The instances of the document. One is stale when its stamp is not the
+// content hash of the file of its prefab, or when that prefab holds a stale
+// instance.
 prefab_instances :: proc(s:^Session,allocator:=context.temp_allocator) -> []Prefab_Instance_State {
     out:=make([dynamic]Prefab_Instance_State,allocator)
-    previous:=s.document.previous
-    if previous==nil || s.app.assets==nil {return out[:]}
+    w:=edited_world(s)
+    roots:=prefab_roots(w,{})
+    if s.app.assets==nil || len(roots)==0 {return out[:]}
     assets_rescan(s)
     reader:Prefab_Reader
     prefab_reader_begin(s,&reader)
     defer prefab_reader_end(&reader)
-    for instance in previous.instances {
-        if api_entity(edited_world(s),instance.root)==core.NONE {continue}
-        state:=Prefab_Instance_State{instance=instance.id,asset=instance.prefab,root=instance.root,outer=instance.outer}
+    counts:=make(map[core.Entity]int,context.temp_allocator)
+    if members:=core.world_table_of(w,scene.Prefab_Member);members!=nil {
+        for e in core.raw(members).entities {
+            if member,placed:=scene.prefab_member(w,e);placed {counts[member.instance]+=1}
+        }
+    }
+    for root in roots {
+        instance,_:=scene.prefab_instance(w,root)
+        state:=Prefab_Instance_State{asset=instance.prefab,root=api_entity_id(w,root),members=counts[root]}
         file,_,found:=prefab_file(s,instance.prefab)
         state.missing=!found
         if found {state.path=file.path}
-        state.stale=asset.resolver_instance_stale(&reader.resolver,instance)
-        for member in previous.members {
-            if member.instance==instance.id {state.members+=1}
-        }
-        for &override in previous.overrides {
-            if override.instance==instance.id && !prefab_placement(&override,instance.root) {state.overrides+=1}
-        }
+        state.stale=asset.resolver_instance_stale(&reader.resolver,{prefab=instance.prefab,stamp=instance.stamp})
         append(&out,state)
     }
     return out[:]
@@ -1089,6 +719,9 @@ prefab_placement :: proc(override:^asset.Override,root:base.Entity_Id) -> bool {
 @(private)
 prefab_place_name :: proc(kind:asset.Override_Kind) -> string {return kind==.Child?"child":"name"}
 
+@(private)
+prefab_override_text :: proc(override:^asset.Override) -> string {return serial.text_field(override.path[:])}
+
 // "Spot_Light.intensity", "Spot_Light", "name", "child": how an override is named.
 prefab_override_name :: proc(s:^Session,override:^asset.Override,allocator:=context.temp_allocator) -> string {
     if override.component==0 {return strings.clone(prefab_place_name(override.kind),allocator)}
@@ -1102,69 +735,49 @@ prefab_override_name :: proc(s:^Session,override:^asset.Override,allocator:=cont
     return strings.concatenate({name,".",path},allocator)
 }
 
-// ---------------------------------------------------------------- operations
-
-// entity 0 selects the entire instance; no paths selects every override in that scope.
+// The overrides of an instance that paths name, of one entity or, with entity 0, of all of it; no paths
+// selects every override in that scope. In the temporary allocator.
 @(private)
-prefab_overrides_select :: proc(cap:^asset.Scene,instance:u32,entity:base.Entity_Id,paths:[]string,hashes:map[u64]string) -> (indices:[dynamic]int,error:Prefab_Error) {
-    indices.allocator=context.temp_allocator
-    at:=asset.scene_instance_find(cap,instance)
-    root:=at>=0?cap.instances[at].root:base.Entity_Id(0)
-    for &override,at in cap.overrides {
-        if override.instance!=instance || entity!=0 && override.entity!=entity {continue}
-        if prefab_placement(&override,root) {continue}
+prefab_overrides_take :: proc(s:^Session,overrides:[]asset.Override,root,entity:base.Entity_Id,paths:[]string) -> (selected:[]asset.Override,error:Prefab_Error) {
+    names:=make(map[u64]string,context.temp_allocator)
+    for t in s.info.tables {names[base.name_hash(t.name)]=t.name}
+    taken:=make([dynamic]asset.Override,context.temp_allocator)
+    for &override in overrides {
+        if entity!=0 && override.entity!=entity || prefab_placement(&override,root) {continue}
         if len(paths)==0 {
-            append(&indices,at)
+            append(&taken,override)
             continue
         }
         for path in paths {
             name,_,field:=strings.partition(path,".")
-            selected:=false
+            chosen:=false
             switch {
             case override.component==0:
-                selected=strings.equal_fold(path,prefab_place_name(override.kind))
+                chosen=strings.equal_fold(path,prefab_place_name(override.kind))
             case:
-                component:=hashes[override.component]
-                selected=strings.equal_fold(component,name) && (field=="" || override.kind==.Field && asset.path_covers(field,prefab_override_text(&override)))
+                chosen=strings.equal_fold(names[override.component],name) && (field=="" || override.kind==.Field && asset.path_covers(field,prefab_override_text(&override)))
             }
-            if selected {append(&indices,at);break}
+            if chosen {append(&taken,override);break}
         }
     }
-    if len(paths)>0 && len(indices)==0 {return indices,.Unknown_Path}
-    return indices,.None
+    if len(paths)>0 && len(taken)==0 {return nil,.Unknown_Path}
+    return taken[:],.None
 }
 
 @(private)
-prefab_component_names :: proc(s:^Session) -> map[u64]string {
-    names:=make(map[u64]string,context.temp_allocator)
-    for t in s.info.tables {names[base.name_hash(t.name)]=t.name}
-    return names
-}
-
-// The overrides prefab_overrides_select names, as they are now: what an operation applies or forgets
-// while it changes the records.
-@(private)
-prefab_overrides_take :: proc(cap:^asset.Scene,instance:u32,entity:base.Entity_Id,paths:[]string,hashes:map[u64]string) -> (selected:[]asset.Override,error:Prefab_Error) {
-    indices:=prefab_overrides_select(cap,instance,entity,paths,hashes) or_return
-    selected=make([]asset.Override,len(indices),context.temp_allocator)
-    for i,at in indices {selected[at]=cap.overrides[i]}
-    return selected,.None
-}
-
-@(private)
-prefab_overrides_drop :: proc(cap:^asset.Scene,selected:[]asset.Override) {
+prefab_overrides_drop :: proc(sc:^asset.Scene,selected:[]asset.Override) {
     left:=0
-    next: for override in cap.overrides {
+    next: for override in sc.overrides {
         for chosen in selected {
             if override==chosen {continue next}
         }
-        cap.overrides[left]=override
+        sc.overrides[left]=override
         left+=1
     }
-    resize(&cap.overrides,left)
+    resize(&sc.overrides,left)
 }
 
-// What writing an entity an instance added into its prefab answers.
+// What a procedure of asset answers, as an operation gives it.
 @(private)
 prefab_place_error :: proc(error:asset.Error) -> Prefab_Error {
     #partial switch error {
@@ -1190,11 +803,21 @@ prefab_new_file :: proc(s:^Session,path:string) -> (file:string,error:Prefab_Err
     if !strings.has_suffix(file,PREFAB_EXTENSION) {file=strings.concatenate({file,PREFAB_EXTENSION},context.temp_allocator)}
     inside:=strings.has_prefix(strings.to_lower(file,context.temp_allocator),strings.to_lower(s.assets_root,context.temp_allocator))
     if !inside {return "",.Outside_Assets}
-    if os.exists(file) {return "",.Exists}
+    if file_exists(s,file) {return "",.Exists}
     return file,.None
 }
 
-// Writes the subtree of an entity as a prefab of the assets and links the entity as its first instance.
+// Writes a prefab into its file, unsaved, as part of the open gesture.
+@(private)
+prefab_file_write :: proc(s:^Session,prefab:^asset.Scene,path,label:string) -> Prefab_Error {
+    data,encoded:=asset.scene_bytes(prefab,context.temp_allocator)
+    if encoded!=.None {return encoded==.Out_Of_Memory?.Out_Of_Memory:.Write_Failed}
+    return file_write(s,path,data,label)?.None:.Write_Failed
+}
+
+// ---------------------------------------------------------------- operations
+
+// Makes the subtree of an entity a prefab of the assets and links the entity as its first instance.
 prefab_create :: proc(s:^Session,root:core.Entity,path:string) -> (id:base.Asset_Id,error:Prefab_Error) {
     return prefab_create_entities(s,{root},path)
 }
@@ -1203,97 +826,69 @@ prefab_create_entities :: proc(s:^Session,entities:[]core.Entity,path:string) ->
     a:=s.app.assets
     if a==nil {return {},.No_Assets}
     if len(entities)==0 {return {},.Unknown_Entity}
-    selected:=Selection{}
-    selected.entities.allocator=context.temp_allocator
-    append(&selected.entities,..entities)
-    roots:=selection_roots(&selected,edited_world(s))
+    w:=edited_world(s)
+    chosen:=Selection{}
+    chosen.entities.allocator=context.temp_allocator
+    append(&chosen.entities,..entities)
+    roots:=selection_roots(&chosen,w)
     if len(roots)==0 {return {},.Unknown_Entity}
     for e in roots {
         _=prefab_entity_id(s,e) or_return
-        if prefab_member_locked(s,edited_world(s),e) {return {},.Member_Locked}
+        if prefab_member_locked(s,w,e) {return {},.Member_Locked}
     }
     file:=prefab_new_file(s,path) or_return
-    edit:=prefab_begin(s) or_return
-    root:=roots[0]
-    w:=edited_world(s)
+    LABEL :: "Create prefab"
+    g:=prefab_gesture_begin(s,LABEL) or_return
     grouped:=len(roots)>1
-    defer {
-        if error!=.None && grouped {
-            edits_cancel(s.edits,w)
-            selection_restore(s.selection,w,s.edits.selection[:])
-        }
+    selected:=slice.clone(s.selection.entities[:],context.temp_allocator)
+    id,error=prefab_create_in(s,roots,file,LABEL)
+    if error=prefab_gesture_end(&g,error);error!=.None {
+        if grouped {selection_restore(s.selection,w,selected)}
+        return {},error
     }
-    if grouped {
-        _,edit_ready:=edit_open(s,"Create prefab")
-        if !edit_ready {prefab_abort(&edit);return {},.Out_Of_Memory}
+    return id,.None
+}
+
+@(private)
+prefab_create_in :: proc(s:^Session,roots:[]core.Entity,file,label:string) -> (id:base.Asset_Id,error:Prefab_Error) {
+    a:=s.app.assets
+    w:=edited_world(s)
+    root:=roots[0]
+    if len(roots)>1 {
         selection_set(s.selection,roots)
         selection_group(s,w)
         core.world_settle(w)
         root=selection_active(s.selection)
         for e in roots {
-            if entity_parent(w,e)!=root {
-                prefab_abort(&edit)
-                return {},.Rejected
-            }
+            if entity_parent(w,e)!=root {return {},.Rejected}
         }
-        captured:=new(asset.Scene)
-        if _,capture_error:=scene.capture(w,captured,&a.types,{previous=edit.cap,id=s.document.id});capture_error!=.None {
-            prefab_scene_free(captured)
-            prefab_abort(&edit)
-            return {},.Capture_Failed
-        }
-        prefab_scene_free(edit.cap)
-        edit.cap=captured
     }
     root_id:=api_entity_id(w,root)
-    cap:=edit.cap
     sub:asset.Scene
     id=asset_id_new(s)
-    if _,capture_error:=scene.capture(w,&sub,&a.types,{root=root,kind=asset.KIND_PREFAB,id=id});capture_error!=.None {
-        prefab_abort(&edit)
-        return {},.Capture_Failed
-    }
+    if _,failed:=scene.capture(w,&sub,&a.types,{root=root,kind=asset.KIND_PREFAB,id=id});failed!=.None {return {},.Capture_Failed}
     defer asset.scene_destroy(&sub)
     // The root stands at the origin, upright, with its scale.
     if placed,has:=asset.scene_get(&sub,root_id,"Transform",core.Transform);has {
         placed.position,placed.rotation=0,1
         asset.scene_set(&sub,root_id,"Transform",&placed)
     }
-    // The instances inside the subtree come with it, as the ones it brings in.
-    inside_ids:=make(map[base.Entity_Id]bool,context.temp_allocator)
-    for entity in asset.scene_ids(&sub) {inside_ids[entity]=true}
-    included:=make(map[u32]bool,context.temp_allocator)
-    for instance in cap.instances {
-        if instance.root in inside_ids {
-            included[instance.id]=true
-            append(&sub.instances,instance)
-            sub.info.last_instance=max(sub.info.last_instance,instance.id)
-        }
+    // The instances inside the subtree are the prefab's from now on, with what they hold on their own.
+    prefab_overrides_put(s,&sub,nil) or_return
+    prefab_file_write(s,&sub,file,label) or_return
+    instances,members:=core.world_table_of(w,scene.Prefab_Instance),core.world_table_of(w,scene.Prefab_Member)
+    if instances==nil || members==nil {return {},.Rejected}
+    es:=core.world_entities(w)
+    for entity in asset.scene_ids(&sub) {
+        e:=core.entity_of(es,entity)
+        if e==core.NONE {return {},.Rejected}
+        if e!=root && core.has(instances,e) {core.remove(instances,e)}
+        core.add(members,e,scene.Prefab_Member{root,u64(entity)})
     }
-    for member in cap.members {
-        if included[member.instance] && member.entity in inside_ids {append(&sub.members,member)}
-    }
-    for override in cap.overrides {
-        if included[override.instance] && override.entity in inside_ids {append(&sub.overrides,override)}
-    }
-    os.make_directory_all(file[:max(strings.last_index_byte(file,'/'),0)])
-    if !prefab_file_save(&sub,file,&edit.files) {
-        prefab_abort(&edit)
-        return {},.Write_Failed
-    }
-    assets_wrote(s,file)
-    // The new instance is the first of the document; the ones it brings in follow it.
-    for &instance in cap.instances {instance.id+=1;if instance.outer!=0 {instance.outer+=1}}
-    for &member in cap.members {member.instance+=1}
-    for &override in cap.overrides {override.instance+=1}
-    cap.info.last_instance+=1
-    for &instance in cap.instances {
-        if instance.id-1 in included && instance.outer==0 {instance.outer=1}
-    }
-    append(&cap.instances,asset.Instance{id=1,prefab=id,root=root_id,stamp=sub.stamp})
-    for entity in asset.scene_ids(&sub) {append(&cap.members,asset.Member{instance=1,source=entity,entity=entity})}
+    core.add(instances,root,scene.Prefab_Instance{id,sub.stamp})
+    core.world_settle(w)
     if loaded,ok:=prefab_scene_load(s,id);ok {prefab_base_set(s,id,loaded)}
-    return id,prefab_finish(&edit,"Create prefab")
+    return id,.None
 }
 
 // Writes a variant of a prefab: a new prefab whose root is an instance of it,
@@ -1308,31 +903,21 @@ prefab_variant_create :: proc(s:^Session,base_id:base.Asset_Id,path:string) -> (
     loaded,found:=prefab_scene_load(s,base_id)
     if !found {return {},.Not_Found}
     defer prefab_scene_free(loaded)
-    edit:=prefab_begin(s) or_return
     variant:asset.Scene
     id=asset_id_new(s)
-    if asset.scene_init(&variant,&a.types,asset.KIND_PREFAB,id)!=.None {
-        prefab_abort(&edit)
-        return {},.Out_Of_Memory
-    }
+    if asset.scene_init(&variant,&a.types,asset.KIND_PREFAB,id)!=.None {return {},.Out_Of_Memory}
     defer asset.scene_destroy(&variant)
-    _,root,place_error:=asset.scene_instantiate(&variant,loaded,base_id,0)
-    if place_error!=.None {
-        prefab_abort(&edit)
-        return {},prefab_place_error(place_error)
-    }
+    root,placed:=asset.scene_instantiate(&variant,loaded,base_id,0)
+    if placed!=.None {return {},prefab_place_error(placed)}
     variant.info.root=root
-    if placed,has:=asset.scene_get(&variant,root,asset.INSTANCE_PLACEMENT,core.Transform);has {
-        placed.position,placed.rotation=0,1
-        asset.scene_set(&variant,root,asset.INSTANCE_PLACEMENT,&placed)
+    if local,has:=asset.scene_get(&variant,root,asset.INSTANCE_PLACEMENT,core.Transform);has {
+        local.position,local.rotation=0,1
+        asset.scene_set(&variant,root,asset.INSTANCE_PLACEMENT,&local)
     }
-    os.make_directory_all(file[:max(strings.last_index_byte(file,'/'),0)])
-    if !prefab_file_save(&variant,file,&edit.files) {
-        prefab_abort(&edit)
-        return {},.Write_Failed
-    }
-    assets_wrote(s,file)
-    return id,prefab_finish(&edit,"Create prefab variant")
+    LABEL :: "Create prefab variant"
+    g:=prefab_gesture_begin(s,LABEL) or_return
+    error=prefab_gesture_end(&g,prefab_file_write(s,&variant,file,LABEL))
+    return id,error
 }
 
 // A free path for a variant of a prefab: beside it, named after it.
@@ -1342,7 +927,7 @@ prefab_variant_path :: proc(s:^Session,base_id:base.Asset_Id) -> string {
     stem:=file.path[:len(file.path)-len(PREFAB_EXTENSION)] if strings.has_suffix(file.path,PREFAB_EXTENSION) else file.path
     for n in 1..<10000 {
         path:=n==1?fmt.tprintf("%s_variant",stem):fmt.tprintf("%s_variant_%d",stem,n)
-        if !os.exists(scene_file(s,strings.concatenate({path,PREFAB_EXTENSION},context.temp_allocator))) {return path}
+        if !file_exists(s,scene_file(s,strings.concatenate({path,PREFAB_EXTENSION},context.temp_allocator))) {return path}
     }
     return fmt.tprintf("%s_variant",stem)
 }
@@ -1354,33 +939,31 @@ prefab_variant_chain :: proc(s:^Session,id:base.Asset_Id,allocator:=context.temp
     for _ in 0..<asset.PREFAB_DEPTH {
         loaded,found:=prefab_scene_load(s,at)
         if !found {break}
-        _,next:=asset.prefab_variant_base(loaded)
+        next,variant:=asset.prefab_variant_base(loaded)
         prefab_scene_free(loaded)
-        if next=={} || slice.contains(chain[:],next) || next==id {break}
+        if !variant || slice.contains(chain[:],next) || next==id {break}
         append(&chain,next)
         at=next
     }
     return chain[:]
 }
 
-// The base of a prefab placed in the document, as its instances were last
-// updated from it; none when it is not a variant or not known.
-prefab_placed_base :: proc(s:^Session,prefab_id:base.Asset_Id) -> base.Asset_Id {
-    p:=prefabs_of(s)
-    if p==nil {return {}}
-    b:=prefab_base_find(p,prefab_id)
-    if b==nil || b.scene==nil {return {}}
-    _,variant_base:=asset.prefab_variant_base(b.scene)
+// The base of the variant an entity is the root of: of the prefab its
+// instance places or, in the document of a variant, of the document itself.
+// Zero when it is not a variant or its base is not known.
+prefab_variant_of :: proc(s:^Session,w:core.World_Ref,link:Prefab_Link) -> base.Asset_Id {
+    if !link.root {return {}}
+    if document_is_prefab(s) && document_root(s,w)==link.instance {return link.asset}
+    from:=prefab_link_base(s,w,link)
+    if from==nil {return {}}
+    variant_base,_:=asset.prefab_variant_base(from)
     return variant_base
 }
 
-// The base of the variant an entity is the root of: of the prefab its
-// instance places or, in the document of a variant, of the document itself.
-prefab_variant_of :: proc(s:^Session,link:Prefab_Link,id:base.Entity_Id) -> base.Asset_Id {
-    if !link.root {return {}}
-    previous:=s.document.previous
-    if previous!=nil && previous.doc.kind==asset.KIND_PREFAB && previous.info.root==id {return link.asset}
-    return prefab_placed_base(s,link.asset)
+// The base of the instance of a link; nil when this editor does not hold it.
+prefab_link_base :: proc(s:^Session,w:core.World_Ref,link:Prefab_Link) -> ^asset.Scene {
+    instance,placed:=scene.prefab_instance(w,link.instance)
+    return placed?prefab_base_of(s,instance):nil
 }
 
 Prefab_Placement :: struct {
@@ -1391,57 +974,60 @@ Prefab_Placement :: struct {
 }
 
 // Places an instance of a prefab: new entities with new ids, the root where the placement says.
-// joined: inside the gesture that is open, whose step holds it; the World is replaced, so the
-// entities are found again by their ids.
+// joined: inside the gesture that is open, whose step holds it.
 prefab_instantiate :: proc(s:^Session,prefab_id:base.Asset_Id,placement:Prefab_Placement,joined:=false) -> (root:base.Entity_Id,error:Prefab_Error) {
     a:=s.app.assets
     if a==nil {return 0,.No_Assets}
+    w:=edited_world(s)
     placement:=placement
-    automatic_parent:=placement.parent==core.NONE?document_root(s,edited_world(s)):core.NONE
-    if automatic_parent!=core.NONE {placement.parent=automatic_parent}
-    loaded,found:=prefab_scene_load(s,prefab_id)
-    if !found {return 0,.Not_Found}
-    parent_id:base.Entity_Id
-    if placement.parent!=core.NONE {
-        parent_id=prefab_entity_id(s,placement.parent) or_return
-    }
-    if s.document.id==prefab_id || document_is_prefab(s) && prefab_contains(s,prefab_id,s.document.id) {
-        prefab_scene_free(loaded)
-        return 0,.Cycle
-    }
-    edit,begin_error:=prefab_begin(s,joined)
-    if begin_error!=.None {
-        prefab_scene_free(loaded)
-        return 0,begin_error
-    }
-    cap:=edit.cap
-    refresh_others:=prefab_stale(s,prefab_id)
-    instance,placed,instance_error:=asset.scene_instantiate(cap,loaded,prefab_id,parent_id)
-    if instance_error!=.None {
-        prefab_scene_free(loaded)
-        prefab_abort(&edit)
-        return 0,.Rejected
-    }
-    local,_:=asset.scene_get(cap,placed,"Transform",core.Transform)
-    if placement.rotation!={} {local.rotation=quaternion(x=placement.rotation.x,y=placement.rotation.y,z=placement.rotation.z,w=placement.rotation.w)} else {local.rotation=1}
-    local.position=placement.position
-    if placement.scale_multiplier!={} {local.scale*=placement.scale_multiplier}
-    if automatic_parent!=core.NONE {
-        relative,ok:=mm.transform_relative(core.to_math(local),entity_world(edited_world(s),automatic_parent))
-        if !ok {prefab_scene_free(loaded);prefab_abort(&edit);return 0,.Rejected}
-        local=core.from_math(relative)
-    }
-    asset.scene_set(cap,placed,"Transform",&local)
-    if refresh_others {
-        others:=make([dynamic]u32,context.temp_allocator)
-        for other in cap.instances {
-            if other.prefab==prefab_id && other.outer==0 && other.id!=instance {append(&others,other.id)}
+    automatic:=placement.parent==core.NONE?document_root(s,w):core.NONE
+    if automatic!=core.NONE {placement.parent=automatic}
+    if _,_,located:=prefab_file(s,prefab_id);!located {return 0,.Not_Found}
+    if placement.parent!=core.NONE {_=prefab_entity_id(s,placement.parent) or_return}
+    if s.document.id==prefab_id || document_is_prefab(s) && prefab_contains(s,prefab_id,s.document.id) {return 0,.Cycle}
+    g:=prefab_gesture_begin(s,"Instantiate prefab",joined) or_return
+    placed:core.Entity
+    placed,error=prefab_instantiate_in(s,prefab_id,placement,automatic)
+    if error=prefab_gesture_end(&g,error);error!=.None {return 0,error}
+    return api_entity_id(w,placed),.None
+}
+
+@(private)
+prefab_instantiate_in :: proc(s:^Session,prefab_id:base.Asset_Id,placement:Prefab_Placement,automatic:core.Entity) -> (root:core.Entity,error:Prefab_Error) {
+    a:=s.app.assets
+    w:=edited_world(s)
+    instances,members,transforms:=core.world_table_of(w,scene.Prefab_Instance),core.world_table_of(w,scene.Prefab_Member),core.world_table_of(w,core.Transform)
+    if instances==nil || members==nil {return core.NONE,.Rejected}
+    // The other instances of the prefab follow its file with this one.
+    current,_,_:=prefab_sync(s,prefab_id) or_return
+    data,encoded:=asset.scene_bytes(current,context.temp_allocator)
+    if encoded!=.None {return core.NONE,encoded==.Out_Of_Memory?.Out_Of_Memory:.Rejected}
+    file:asset.Asset
+    if asset.asset_open(&file,data)!=.None {return core.NONE,.Rejected}
+    defer asset.asset_close(&file)
+    view,viewed:=asset.scene_view(&file,&a.types)
+    if viewed!=.None {return core.NONE,.Rejected}
+    entities:=make([]core.Entity,len(view.ids),context.temp_allocator)
+    report,failed:=scene.instantiate(w,&file,&a.types,{parent=placement.parent,fresh=true,entities=entities})
+    core.world_settle(w)
+    if failed!=.None {return core.NONE,failed==.Out_Of_Memory?.Out_Of_Memory:.Rejected}
+    root=report.root
+    for e,row in entities {core.add(members,e,scene.Prefab_Member{root,u64(view.ids[row])})}
+    core.add(instances,root,scene.Prefab_Instance{prefab_id,current.stamp})
+    if transforms!=nil {
+        if local:=core.get(transforms,root);local!=nil {
+            if placement.rotation!={} {local.rotation=quaternion(x=placement.rotation.x,y=placement.rotation.y,z=placement.rotation.z,w=placement.rotation.w)} else {local.rotation=1}
+            local.position=placement.position
+            if placement.scale_multiplier!={} {local.scale*=placement.scale_multiplier}
+            if automatic!=core.NONE {
+                relative,ok:=mm.transform_relative(core.to_math(local^),entity_world(w,automatic))
+                if !ok {return core.NONE,.Rejected}
+                local^=core.from_math(relative)
+            }
         }
-        for other in others {asset.scene_instance_update(cap,other,loaded)}
     }
-    prefab_base_set(s,prefab_id,loaded)
-    error=prefab_finish(&edit,"Instantiate prefab")
-    return placed,error
+    core.world_settle(w)
+    return root,.None
 }
 
 Prefab_Report :: struct {
@@ -1449,119 +1035,80 @@ Prefab_Report :: struct {
 }
 
 // Brings the instances of a prefab, or of all of them, up to date with its file: the members follow the
-// prefab except in what the instance holds on its own. quiet: the same, without a step of undo to hold it.
-prefab_refresh :: proc(s:^Session,prefab_id:base.Asset_Id,quiet:=false) -> (report:Prefab_Report,error:Prefab_Error) {
+// prefab except in what the instance holds on its own.
+prefab_refresh :: proc(s:^Session,prefab_id:base.Asset_Id) -> (report:Prefab_Report,error:Prefab_Error) {
     a:=s.app.assets
     if a==nil {return {},.No_Assets}
     if !prefab_linked(s) {return}
     assets_rescan(s)
-    edit:=prefab_begin(s) or_return
-    cap:=edit.cap
-    done:=make(map[base.Asset_Id]bool,context.temp_allocator)
-    // An update changes the instances its instance brought in: the placed ones are listed first.
-    placed:=make([dynamic]asset.Instance,context.temp_allocator)
-    for instance in cap.instances {
-        if instance.outer==0 {append(&placed,instance)}
+    w:=edited_world(s)
+    g:=prefab_gesture_begin(s,"Refresh prefabs") or_return
+    placed:=make([dynamic]base.Asset_Id,context.temp_allocator)
+    for root in prefab_roots(w,prefab_id) {
+        if instance,_:=scene.prefab_instance(w,root);!slice.contains(placed[:],instance.prefab) {append(&placed,instance.prefab)}
     }
-    for instance in placed {
-        if prefab_id!={} && instance.prefab!=prefab_id || done[instance.prefab] {continue}
-        done[instance.prefab]=true
+    for id in placed {
         report.prefabs+=1
-        loaded,found:=prefab_scene_load(s,instance.prefab)
-        if !found {
+        _,updated,failed,synced:=prefab_sync(s,id)
+        if synced!=.None {
             report.missing+=1
             continue
         }
-        failed:=false
-        for other in placed {
-            if other.prefab!=instance.prefab {continue}
-            if asset.scene_instance_update(cap,other.id,loaded)!=.None {
-                failed=true
-                report.failed+=1
-            } else {
-                report.instances+=1
-            }
-        }
-        if failed {
-            prefab_scene_free(loaded)
-        } else {
-            prefab_base_set(s,instance.prefab,loaded)
-        }
+        report.instances+=updated
+        report.failed+=failed
     }
-    // The bases of what was not loaded stay as they were; the records of an instance whose update failed too.
-    error=prefab_finish(&edit,"Refresh prefabs")
-    _=quiet
+    error=prefab_gesture_end(&g,.None)
     return
 }
 
 // Forgets overrides of an entity of an instance and gives back what the prefab has: its values, and its
-// places: an entity the instance added goes, one it does not have comes back, one it moved goes back.
+// places: an entity the instance added goes, one it does not have comes back.
 prefab_revert :: proc(s:^Session,entity:core.Entity,paths:[]string,all_members:=false) -> (count:int,error:Prefab_Error) {
     id:=prefab_entity_id(s,entity) or_return
-    edit:=prefab_begin(s) or_return
-    cap:=edit.cap
-    instance:=prefab_instance_of(cap,id)
-    if instance==0 {
-        prefab_abort(&edit)
-        return 0,.Not_Instance
-    }
-    selected,select_error:=prefab_overrides_take(cap,instance,all_members?base.Entity_Id(0):id,paths,prefab_component_names(s))
-    if select_error!=.None {
-        prefab_abort(&edit)
-        return 0,select_error
-    }
-    count=len(selected)
-    for override in selected {
-        if override.kind==.Child {asset.scene_child_revert(cap,instance,override.entity)}
-    }
-    prefab_overrides_drop(cap,selected)
-    at:=asset.scene_instance_find(cap,instance)
-    loaded,found:=prefab_scene_load(s,cap.instances[at].prefab)
-    if !found {
-        prefab_abort(&edit)
-        return 0,.Not_Found
-    }
-    if asset.scene_instance_update(cap,instance,loaded)!=.None {
-        prefab_scene_free(loaded)
-        prefab_abort(&edit)
-        return 0,.Rejected
-    }
-    prefab_base_set(s,cap.instances[at].prefab,loaded)
-    return count,prefab_finish(&edit,"Revert prefab overrides")
+    w:=edited_world(s)
+    root:=prefab_instance_for(w,entity)
+    if root==core.NONE {return 0,.Not_Instance}
+    g:=prefab_gesture_begin(s,"Revert prefab overrides") or_return
+    count,error=prefab_revert_in(s,root,all_members?0:id,paths)
+    error=prefab_gesture_end(&g,error)
+    return error==.None?count:0,error
 }
 
-// Makes the members of the instance ordinary entities. With recursive the instances it brought in too.
+@(private)
+prefab_revert_in :: proc(s:^Session,root:core.Entity,entity:base.Entity_Id,paths:[]string) -> (count:int,error:Prefab_Error) {
+    instance,_:=scene.prefab_instance(edited_world(s),root)
+    current,_,_:=prefab_sync(s,instance.prefab) or_return
+    work:=prefab_work_begin(s,root) or_return
+    defer prefab_work_end(&work)
+    prefab_work_derive(&work,current) or_return
+    selected:=prefab_overrides_take(s,work.doc.overrides[:],work.root_id,entity,paths) or_return
+    for override in selected {
+        if override.kind==.Child {asset.scene_child_revert(&work.doc,work.root_id,override.entity)}
+    }
+    prefab_overrides_drop(&work.doc,selected)
+    prefab_place_error(asset.scene_instance_update(&work.doc,work.root_id,current)) or_return
+    prefab_work_put(s,&work) or_return
+    return len(selected),.None
+}
+
+// Makes the members of the instance ordinary entities. The instances its prefab places stay, as instances
+// of the document; with recursive they are unlinked too.
 prefab_unlink :: proc(s:^Session,entity:core.Entity,recursive:bool) -> (error:Prefab_Error) {
-    id:=prefab_entity_id(s,entity) or_return
-    edit:=prefab_begin(s) or_return
-    cap:=edit.cap
-    instance:=asset.scene_entity_instance(cap,id)
-    if instance==0 {
-        prefab_abort(&edit)
-        return .Not_Instance
-    }
-    nested:=make([dynamic]u32,context.temp_allocator)
-    pending:=make([dynamic]u32,context.temp_allocator)
-    append(&pending,instance)
-    for len(pending)>0 {
-        at:=pop(&pending)
-        for other in cap.instances {
-            if other.outer==at {
-                append(&nested,other.id)
-                append(&pending,other.id)
-            }
-        }
-    }
-    if asset.scene_instance_unlink(cap,instance)!=.None {
-        prefab_abort(&edit)
-        return .Rejected
-    }
-    if recursive {
-        for inner in nested {
-            if asset.scene_instance_find(cap,inner)>=0 {asset.scene_instance_unlink(cap,inner)}
-        }
-    }
-    return prefab_finish(&edit,"Unlink prefab")
+    _=prefab_entity_id(s,entity) or_return
+    link,linked:=prefab_link_of(edited_world(s),entity)
+    if !linked {return .Not_Instance}
+    g:=prefab_gesture_begin(s,"Unlink prefab") or_return
+    return prefab_gesture_end(&g,prefab_unlink_in(s,link.instance,recursive))
+}
+
+@(private)
+prefab_unlink_in :: proc(s:^Session,root:core.Entity,recursive:bool) -> Prefab_Error {
+    work:=prefab_work_begin(s,root) or_return
+    defer prefab_work_end(&work)
+    from:=prefab_base_of(s,work.instance)
+    if from!=nil {prefab_work_derive(&work,from) or_return}
+    prefab_place_error(asset.scene_instance_unlink(&work.doc,work.root_id,from,recursive)) or_return
+    return prefab_work_put(s,&work)
 }
 
 // Where Apply writes the overrides of an instance.
@@ -1570,135 +1117,85 @@ Prefab_Apply_Target :: enum u8 {
     Base,   // through that prefab, a variant, into its base
 }
 
-// Writes the overrides of an entity into the file of its prefab, ends them, and brings every instance up to
-// date, the prefabs that place this one included. Base: the variant takes them first and its base then
-// takes, of what the variant holds as the overrides of its root, what they changed.
+// Writes the overrides of an entity into its prefab, ends them, and brings every instance up to date, the
+// prefabs that place this one included. Base: the variant takes them first and its base then takes, of what
+// the variant holds as the overrides of its root, what they changed. The files stay unsaved.
 prefab_apply :: proc(s:^Session,entity:core.Entity,paths:[]string,all_members:=false,target:=Prefab_Apply_Target.Prefab) -> (count:int,error:Prefab_Error) {
     id:=prefab_entity_id(s,entity) or_return
-    edit:=prefab_begin(s) or_return
-    cap:=edit.cap
-    instance:=prefab_instance_of(cap,id)
-    if instance==0 {
-        prefab_abort(&edit)
-        return 0,.Not_Instance
-    }
-    at:=asset.scene_instance_find(cap,instance)
-    prefab_id:=cap.instances[at].prefab
-    selected,select_error:=prefab_overrides_take(cap,instance,all_members?base.Entity_Id(0):id,paths,prefab_component_names(s))
-    if select_error!=.None {
-        prefab_abort(&edit)
-        return 0,select_error
-    }
-    _,path,located:=prefab_file(s,prefab_id)
-    prefab,loaded:=prefab_scene_load(s,prefab_id)
-    if !located || !loaded {
-        if loaded {prefab_scene_free(prefab)}
-        prefab_abort(&edit)
-        return 0,.Not_Found
-    }
-    defer prefab_scene_free(prefab)
-    based,base_id:=asset.prefab_variant_base(prefab)
-    if target==.Base && based==0 {
-        prefab_abort(&edit)
-        return 0,.Not_Variant
-    }
-    if error=prefab_place_error(asset.scene_overrides_apply(cap,instance,selected,prefab));error!=.None {prefab_abort(&edit);return 0,error}
-    count=len(selected)
-    prefab_overrides_drop(cap,selected)
-    if error=prefab_scene_mark(s,prefab);error!=.None {prefab_abort(&edit);return 0,error}
-    changed:=make(map[base.Asset_Id]^asset.Scene,context.temp_allocator)
-    owned:=make([dynamic]base.Asset_Id,context.temp_allocator)
-    base_scene:^asset.Scene
-    defer if base_scene!=nil {prefab_scene_free(base_scene)}
-    if target==.Base {
-        chosen:=prefab_variant_overrides(cap,instance,selected,prefab,based)
-        if len(chosen)>0 {
-            _,base_path,base_located:=prefab_file(s,base_id)
-            base_loaded:bool
-            base_scene,base_loaded=prefab_scene_load(s,base_id)
-            if !base_loaded {base_scene=nil}
-            if !base_located || !base_loaded {
-                prefab_abort(&edit)
-                return 0,.Not_Found
-            }
-            if error=prefab_place_error(asset.scene_overrides_apply(prefab,based,chosen,base_scene));error!=.None {prefab_abort(&edit);return 0,error}
-            prefab_overrides_drop(prefab,chosen)
-            if error=prefab_scene_mark(s,base_scene);error!=.None {prefab_abort(&edit);return 0,error}
-            if !prefab_file_save(base_scene,base_path,&edit.files) {
-                prefab_abort(&edit)
-                return 0,.Write_Failed
-            }
-            if asset.scene_instance_update(prefab,based,base_scene)!=.None {
-                prefab_abort(&edit)
-                return 0,.Rejected
-            }
-            changed[base_id]=base_scene
-            append(&owned,base_id)
-        }
-    }
-    if !prefab_file_save(prefab,path,&edit.files) {
-        prefab_abort(&edit)
-        return 0,.Write_Failed
-    }
-    changed[prefab_id]=prefab
-    append(&owned,prefab_id)
-    for key in owned {prefab_propagate(s,key,changed[key],&changed,&edit.files)}
-    prefab_files_wrote(s,edit.files[:])
-    updated:=make([dynamic]asset.Instance,context.temp_allocator)
-    for other in cap.instances {
-        if other.outer==0 && other.prefab in changed {append(&updated,other)}
-    }
-    for other in updated {asset.scene_instance_update(cap,other.id,changed[other.prefab])}
-    for key,loaded_scene in changed {
-        if slice.contains(owned[:],key) {
-            reloaded,ok:=prefab_scene_load(s,key)
-            if ok {prefab_base_set(s,key,reloaded)}
-        } else {
-            prefab_base_set(s,key,loaded_scene)
-        }
-    }
-    error=prefab_finish(&edit,target==.Base?"Apply prefab overrides to base":"Apply prefab overrides")
-    return
+    w:=edited_world(s)
+    root:=prefab_instance_for(w,entity)
+    if root==core.NONE {return 0,.Not_Instance}
+    label:=target==.Base?"Apply prefab overrides to base":"Apply prefab overrides"
+    g:=prefab_gesture_begin(s,label) or_return
+    count,error=prefab_apply_in(s,root,all_members?0:id,paths,target,label)
+    error=prefab_gesture_end(&g,error)
+    return error==.None?count:0,error
 }
 
-// Marks again the overrides of the instances placed in a prefab against their prefabs as they are now, as
-// the observation of an open document does: what an apply wrote on their members stays the prefab's own
-// when the prefab they place changes.
 @(private)
-prefab_scene_mark :: proc(s:^Session,sc:^asset.Scene) -> Prefab_Error {
-    fresh:=make([dynamic]asset.Override,context.temp_allocator)
-    marked:=make(map[u32]bool,context.temp_allocator)
-    for instance in sc.instances {
-        if instance.outer!=0 {continue}
-        inner,loaded:=prefab_scene_load(s,instance.prefab)
-        if !loaded {continue}
-        defer prefab_scene_free(inner)
-        prefab_place_error(asset.scene_overrides_derive(&fresh,sc,instance.id,inner)) or_return
-        marked[instance.id]=true
+prefab_apply_in :: proc(s:^Session,root:core.Entity,entity:base.Entity_Id,paths:[]string,target:Prefab_Apply_Target,label:string) -> (count:int,error:Prefab_Error) {
+    instance,_:=scene.prefab_instance(edited_world(s),root)
+    prefab_id:=instance.prefab
+    _,path,located:=prefab_file(s,prefab_id)
+    if !located {return 0,.Not_Found}
+    changed:=make([dynamic]base.Asset_Id,context.temp_allocator)
+    {
+        current,_,_:=prefab_sync(s,prefab_id) or_return
+        work:=prefab_work_begin(s,root) or_return
+        defer prefab_work_end(&work)
+        prefab_work_derive(&work,current) or_return
+        selected:=prefab_overrides_take(s,work.doc.overrides[:],work.root_id,entity,paths) or_return
+        count=len(selected)
+        prefab,loaded:=prefab_scene_load(s,prefab_id)
+        if !loaded {return 0,.Not_Found}
+        defer prefab_scene_free(prefab)
+        base_id,variant:=asset.prefab_variant_base(prefab)
+        if target==.Base && !variant {return 0,.Not_Variant}
+        prefab_place_error(asset.scene_overrides_apply(&work.doc,work.root_id,selected,prefab)) or_return
+        // The entities applied are members from here on.
+        prefab_work_put(s,&work) or_return
+        prefab_overrides_put(s,prefab,slice.clone(prefab.overrides[:],context.temp_allocator)) or_return
+        if target==.Base {
+            variant_root,_:=asset.prefab_root(prefab)
+            chosen:=prefab_variant_overrides(&work.doc,work.root_id,selected,prefab,variant_root)
+            if len(chosen)>0 {
+                _,base_path,base_located:=prefab_file(s,base_id)
+                base_scene,base_loaded:=prefab_scene_load(s,base_id)
+                if !base_located || !base_loaded {return 0,.Not_Found}
+                defer prefab_scene_free(base_scene)
+                prefab_place_error(asset.scene_overrides_apply(prefab,variant_root,chosen,base_scene)) or_return
+                prefab_overrides_drop(prefab,chosen)
+                prefab_overrides_put(s,base_scene,slice.clone(base_scene.overrides[:],context.temp_allocator)) or_return
+                prefab_file_write(s,base_scene,base_path,label) or_return
+                prefab_place_error(asset.scene_instance_update(prefab,variant_root,base_scene)) or_return
+                append(&changed,base_id)
+            }
+        }
+        prefab_file_write(s,prefab,path,label) or_return
+        append(&changed,prefab_id)
     }
-    left:=0
-    for override in sc.overrides {
-        if marked[override.instance] {continue}
-        sc.overrides[left]=override
-        left+=1
+    // The prefabs that place what changed follow it, and the instances of the document all of them.
+    for at:=0;at<len(changed);at+=1 {prefab_propagate(s,changed[at],&changed,label)}
+    for id in changed {
+        if len(prefab_roots(edited_world(s),id))>0 {prefab_sync(s,id) or_return}
     }
-    resize(&sc.overrides,left)
-    append(&sc.overrides,..fresh[:])
-    return .None
+    return count,.None
 }
 
 // The overrides of the instance at the root of a variant that stand for overrides of an instance of the
 // variant just written into it: of the same members and parts, and the entities it added. What the instance
 // changed of an entity the variant added is the variant's alone.
 @(private)
-prefab_variant_overrides :: proc(cap:^asset.Scene,instance:u32,selected:[]asset.Override,variant:^asset.Scene,based:u32) -> []asset.Override {
+prefab_variant_overrides :: proc(doc:^asset.Scene,root:base.Entity_Id,selected:[]asset.Override,variant:^asset.Scene,variant_root:base.Entity_Id) -> []asset.Override {
     sources:=make(map[base.Entity_Id]base.Entity_Id,context.temp_allocator)
-    for member in cap.members {
-        if member.instance==instance {sources[member.entity]=member.source}
-    }
+    members,_:=asset.scene_instance_members(doc,root)
+    for member in members {sources[member.entity]=member.source}
     chosen:=make([dynamic]asset.Override,context.temp_allocator)
     for &override in variant.overrides {
-        if override.instance!=based {continue}
+        row,exists:=asset.scene_entity_find(variant,override.entity)
+        if !exists {continue}
+        about:=override.kind==.Child?asset.scene_parents(variant)[row]:override.entity
+        if asset.scene_entity_instance(variant,about)!=variant_root {continue}
         for &wanted in selected {
             entity:=sources[wanted.entity]
             if entity==0 || override.entity!=entity || override.kind!=wanted.kind || override.component!=wanted.component {continue}
@@ -1710,38 +1207,28 @@ prefab_variant_overrides :: proc(cap:^asset.Scene,instance:u32,selected:[]asset.
     return chosen[:]
 }
 
-// The prefabs of the registry that place a prefab that changed are updated from it and written, outwards.
+// The prefabs that place a prefab that changed, found by what the files of the assets depend on, are
+// brought up to date with it and written, unsaved; done takes them, for those that place them in turn.
 @(private)
-prefab_propagate :: proc(s:^Session,changed_id:base.Asset_Id,changed:^asset.Scene,done:^map[base.Asset_Id]^asset.Scene,files:^[dynamic]Prefab_File,depth:=0) {
-    a:=s.app.assets
-    if depth>asset.PREFAB_DEPTH {return}
-    for &file in a.registry.files {
-        if file.state!=.Asset || file.kind!=asset.KIND_PREFAB || file.id in done^ {continue}
-        outer,loaded:=prefab_scene_load(s,file.id)
+prefab_propagate :: proc(s:^Session,changed:base.Asset_Id,done:^[dynamic]base.Asset_Id,label:string) {
+    registry:=&s.app.assets.registry
+    placers:=make([dynamic]base.Asset_Id,context.temp_allocator)
+    for index in asset.registry_dependents(registry,changed) {
+        file:=&registry.files[index]
+        if file.state==.Asset && file.kind==asset.KIND_PREFAB && !slice.contains(done[:],file.id) {append(&placers,file.id)}
+    }
+    for id in placers {
+        _,path,located:=prefab_file(s,id)
+        if !located || slice.contains(done[:],id) || !prefab_places_stale(s,id) {continue}
+        outer,loaded:=prefab_scene_load(s,id)
         if !loaded {continue}
-        touched:=false
-        placed:=make([dynamic]u32,context.temp_allocator)
-        for instance in outer.instances {
-            if instance.prefab==changed_id && instance.outer==0 {append(&placed,instance.id)}
-        }
-        for instance in placed {
-            if asset.scene_instance_update(outer,instance,changed)==.None {touched=true}
-        }
-        if !touched {
-            prefab_scene_free(outer)
-            continue
-        }
-        path:=asset.registry_file_path(&a.registry,file.path,context.temp_allocator)
-        if !prefab_file_save(outer,path,files) {
-            prefab_scene_free(outer)
-            continue
-        }
-        done^[file.id]=outer
-        prefab_propagate(s,file.id,outer,done,files,depth+1)
+        written:=prefab_file_write(s,outer,path,label)
+        prefab_scene_free(outer)
+        if written==.None {append(done,id)}
     }
 }
 
-// ---------------------------------------------------------------- placing and copying
+// ---------------------------------------------------------------- placing
 
 // A prefab of the assets placed in the scene as an instance linked to it. The root of the instance is returned.
 prefab_place_linked :: proc(s:^Session,prefab_id:base.Asset_Id,point:[3]f32) -> core.Entity {
@@ -1751,56 +1238,6 @@ prefab_place_linked :: proc(s:^Session,prefab_id:base.Asset_Id,point:[3]f32) -> 
         return core.NONE
     }
     return api_entity(edited_world(s),root)
-}
-
-// Called when entities were copied: the instances whose root was copied are registered again in the
-// copy, with their members and overrides. sources and copies are parallel.
-prefab_copied :: proc(s:^Session,w:core.World_Ref,sources,copies:[]core.Entity) {
-    previous:=s.document.previous
-    if w.data!=s.edit_world || previous==nil || len(previous.instances)==0 {return}
-    mapped:=make(map[base.Entity_Id]base.Entity_Id,context.temp_allocator)
-    for source,i in sources {
-        from,to:=api_entity_id(w,source),api_entity_id(w,copies[i])
-        if from!=0 && to!=0 {mapped[from]=to}
-    }
-    p:=prefabs_of(s)
-    before:=prefab_records_take(previous)
-    wanted:=make([dynamic]asset.Instance,context.temp_allocator)
-    for instance in previous.instances {
-        if instance.root in mapped {append(&wanted,instance)}
-    }
-    if len(wanted)==0 {
-        prefab_records_free(&before)
-        return
-    }
-    slice.sort_by(wanted[:],proc(a,b:asset.Instance) -> bool {return a.id<b.id})
-    renumber:=make(map[u32]u32,context.temp_allocator)
-    for instance in wanted {
-        previous.info.last_instance+=1
-        renumber[instance.id]=previous.info.last_instance
-        outer:=u32(0)
-        if instance.outer!=0 {outer=renumber[instance.outer]}
-        append(&previous.instances,asset.Instance{id=previous.info.last_instance,prefab=instance.prefab,root=mapped[instance.root],outer=outer})
-    }
-    for member in slice.clone(previous.members[:],context.temp_allocator) {
-        if member.instance in renumber && member.entity in mapped {
-            append(&previous.members,asset.Member{instance=renumber[member.instance],source=member.source,entity=mapped[member.entity]})
-        }
-    }
-    for override in slice.clone(previous.overrides[:],context.temp_allocator) {
-        if override.instance in renumber && override.entity in mapped {
-            copied:=override
-            copied.instance,copied.entity=renumber[override.instance],mapped[override.entity]
-            append(&previous.overrides,copied)
-        }
-    }
-    if p.has_pending {
-        prefab_records_free(&before)
-    } else {
-        p.pending=before
-        p.pending_state=edits_scene_state(s.edits)
-        p.has_pending=true
-    }
 }
 
 // ---------------------------------------------------------------- actions of the editor
@@ -1815,31 +1252,30 @@ prefab_target :: proc(s:^Session) -> core.Entity {
 @(private)
 prefab_action_disabled :: proc(s:^Session,action:Action) -> bool {
     if s.mode!=.Edit || s.app.assets==nil {return true}
+    w:=edited_world(s)
     if action==.Prefab_Create {
-        roots:=selection_roots(s.selection,edited_world(s))
+        roots:=selection_roots(s.selection,w)
         if len(roots)==0 {return true}
         for e in roots {
-            if prefab_member_locked(s,edited_world(s),e) || api_entity_id(edited_world(s),e)==0 {return true}
+            if prefab_member_locked(s,w,e) || api_entity_id(w,e)==0 {return true}
         }
         return false
     }
     if len(s.selection.entities)!=1 {return true}
     e:=prefab_target(s)
     if e==core.NONE {return true}
-    w:=edited_world(s)
     id:=api_entity_id(w,e)
     if id==0 {return true}
-    link,linked:=prefab_link_of(s,id)
+    link,linked:=prefab_link_of(w,e)
     #partial switch action {
     case .Prefab_Apply,.Prefab_Revert,.Prefab_Apply_Base:
         // A member with overrides, or an entity an instance added; to a base, the root of an instance of a variant.
-        if s.document.previous==nil || action==.Prefab_Apply_Base && (!link.root || prefab_placed_base(s,link.asset)=={}) {return true}
-        for &override in s.document.previous.overrides {
-            if !linked {
-                if override.kind==.Child && override.entity==id {return false}
-                continue
-            }
-            if (link.root || override.entity==id) && override.instance==link.instance && !(link.root && prefab_placement(&override,id)) {return false}
+        if action==.Prefab_Apply_Base && prefab_variant_of(s,w,link)=={} {return true}
+        root:=prefab_instance_for(w,e)
+        if root==core.NONE {return true}
+        overrides,_:=prefab_overrides_of(s,root)
+        for &override in overrides {
+            if linked && link.root || override.entity==id {return false}
         }
         return true
     case .Prefab_Unlink: return !linked
@@ -1867,7 +1303,7 @@ prefab_name_free :: proc(s:^Session,folder,name:string) -> string {
     }
     for n in 1..<10000 {
         path:=n==1?fmt.tprintf("%s%s",prefix,string(cleaned)):fmt.tprintf("%s%s_%d",prefix,string(cleaned),n)
-        if !os.exists(scene_file(s,strings.concatenate({path,PREFAB_EXTENSION},context.temp_allocator))) {return path}
+        if !file_exists(s,scene_file(s,strings.concatenate({path,PREFAB_EXTENSION},context.temp_allocator))) {return path}
     }
     return fmt.tprintf("%sPrefab",prefix)
 }
@@ -1875,16 +1311,17 @@ prefab_name_free :: proc(s:^Session,folder,name:string) -> string {
 @(private)
 prefab_action_run :: proc(s:^Session,action:Action) {
     e:=prefab_target(s)
+    w:=edited_world(s)
     error:=Prefab_Error.None
     message:string
+    link,_:=prefab_link_of(w,e)
     #partial switch action {
     case .Prefab_Create:
-        path:=prefab_name_free(s,prefab_folder(s),entity_name(edited_world(s),e))
+        path:=prefab_name_free(s,prefab_folder(s),entity_name(w,e))
         _,error=prefab_create_entities(s,s.selection.entities[:],path)
         message=fmt.tprintf("Prefab %s created",path)
     case .Prefab_Apply:
         count:int
-        link,_:=prefab_link_of(s,api_entity_id(edited_world(s),e))
         count,error=prefab_apply(s,e,nil,link.root)
         message=fmt.tprintf("%d overrides applied",count)
     case .Prefab_Apply_Base:
@@ -1893,7 +1330,6 @@ prefab_action_run :: proc(s:^Session,action:Action) {
         message=fmt.tprintf("%d overrides applied to the base",count)
     case .Prefab_Revert:
         count:int
-        link,_:=prefab_link_of(s,api_entity_id(edited_world(s),e))
         count,error=prefab_revert(s,e,nil,link.root)
         message=fmt.tprintf("%d overrides reverted",count)
     case .Prefab_Unlink:

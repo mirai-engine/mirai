@@ -405,9 +405,12 @@ a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testin
     prefab:asset.Scene
     if !testing.expect_value(t,asset.scene_load(&prefab,&p.types,project.path(p.assets_root,"player/Player.prefab",allocator=context.temp_allocator),context.temp_allocator),asset.Error.None) {return}
     testing.expect_value(t,written.made,3+asset.scene_entity_count(&prefab))
-    if !testing.expect_value(t,len(yard.instances),1) {return}
-    testing.expect(t,yard.instances[0].root==hero && yard.instances[0].prefab==prefab.doc.id)
-    testing.expect_value(t,len(yard.members),asset.scene_entity_count(&prefab))
+    roots:=asset.scene_instance_roots(&yard)
+    if !testing.expect_value(t,len(roots),1) {return}
+    linked,_:=asset.scene_instance(&yard,hero)
+    members,_:=asset.scene_instance_members(&yard,hero)
+    testing.expect(t,roots[0]==hero && linked.prefab==prefab.doc.id)
+    testing.expect_value(t,len(members),asset.scene_entity_count(&prefab))
     where_,_:=asset.scene_get(&yard,hero,"Transform",core.Transform)
     testing.expect_value(t,where_.position,[3]f32{1,2,3})
     // The document that placed it, written again, changes nothing: what it leaves out of the instance is what its prefab gives.
@@ -424,12 +427,14 @@ a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testin
     testing.expect_value(t,scene_read(&p,"arena/yard.scene",&out),"")
     text:=string(serial.writer_bytes(&out))
     testing.expect(t,strings.contains(text,`"root":true`),text)
+    testing.expect(t,!strings.contains(text,asset.COMPONENT_INSTANCE) && !strings.contains(text,asset.COMPONENT_MEMBER),"a document names the prefab of an instance, not the components that hold it")
     moved,_:=strings.replace_all(text,`"position":[1,2,3]`,`"position":[4,2,3]`,context.temp_allocator)
     again,why:=scene_write(&p,"arena/yard.scene",moved)
     testing.expect(t,why=="" && again.made==0 && again.removed==0 && !again.same,fmt.tprintf("%s %v",why,again))
     after:asset.Scene
     if !testing.expect_value(t,asset.scene_load(&after,&p.types,file,context.temp_allocator),asset.Error.None) {return}
-    testing.expect(t,len(after.instances)==1 && len(after.members)==len(yard.members))
+    after_members,_:=asset.scene_instance_members(&after,hero)
+    testing.expect(t,len(asset.scene_instance_roots(&after))==1 && len(after_members)==len(members))
 
     // What the document says of a member, however deep, by its name, the instance holds on its own.
     _,gate_why:=scene_write(&p,"arena/Gate.prefab",`{"entities":[{"name":"Gate","children":[{"name":"Frame","children":[{"name":"Lamp","preset":"point_light"}]}]}]}`)

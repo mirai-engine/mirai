@@ -17,13 +17,15 @@ Update_World :: struct {
     parents:core.Table(core.Parent),
     lamps:core.Table(Update_Lamp),
     links:core.Table(Update_Link),
+    instances:core.Table(Prefab_Instance),
+    members:core.Table(Prefab_Member),
     hierarchy:core.Hierarchy,
 }
 
 @(private="file")
 Update_Fixture :: struct {
     w:Update_World,
-    tables:[6]core.Table_Info,
+    tables:[8]core.Table_Info,
     storages:[1]core.Storage_Info,
     info:core.World_Info,
     types:asset.Types,
@@ -35,6 +37,7 @@ update_fixture_init :: proc(f:^Update_Fixture) -> core.World_Ref {
     core.entities_init(&w.entities)
     core.table_init(&w.ids,"Id");core.table_init(&w.names,"Name");core.table_init(&w.transforms,"Transform")
     core.table_init(&w.parents,"Parent");core.table_init(&w.lamps,"Update_Lamp");core.table_init(&w.links,"Update_Link")
+    core.table_init(&w.instances,"Prefab_Instance");core.table_init(&w.members,"Prefab_Member")
     f.tables={
         {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Update_World,ids)},
         {name="Name",type=core.Name,info=type_info_of(core.Name),offset=offset_of(Update_World,names)},
@@ -42,6 +45,8 @@ update_fixture_init :: proc(f:^Update_Fixture) -> core.World_Ref {
         {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Update_World,parents)},
         {name="Update_Lamp",type=Update_Lamp,info=type_info_of(Update_Lamp),offset=offset_of(Update_World,lamps)},
         {name="Update_Link",type=Update_Link,info=type_info_of(Update_Link),offset=offset_of(Update_World,links)},
+        {name="Prefab_Instance",type=Prefab_Instance,info=type_info_of(Prefab_Instance),offset=offset_of(Update_World,instances)},
+        {name="Prefab_Member",type=Prefab_Member,info=type_info_of(Prefab_Member),offset=offset_of(Update_World,members)},
     }
     f.storages={{name="Hierarchy",type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Update_World,hierarchy)}}
     f.info={entities=offset_of(Update_World,entities),tables=f.tables[:],storages=f.storages[:]}
@@ -55,6 +60,7 @@ update_fixture_destroy :: proc(f:^Update_Fixture) {
     asset.types_destroy(&f.types)
     core.table_destroy(&w.ids);core.table_destroy(&w.names);core.table_destroy(&w.transforms)
     core.table_destroy(&w.parents);core.table_destroy(&w.lamps);core.table_destroy(&w.links)
+    core.table_destroy(&w.instances);core.table_destroy(&w.members)
     core.value_free(&w.hierarchy,type_info_of(core.Hierarchy))
     core.entities_destroy(&w.entities)
 }
@@ -63,6 +69,7 @@ update_fixture_destroy :: proc(f:^Update_Fixture) {
 update_settle :: proc(w:^Update_World) {
     core.table_settle(&w.ids,&w.entities);core.table_settle(&w.names,&w.entities);core.table_settle(&w.transforms,&w.entities)
     core.table_settle(&w.parents,&w.entities);core.table_settle(&w.lamps,&w.entities);core.table_settle(&w.links,&w.entities)
+    core.table_settle(&w.instances,&w.entities);core.table_settle(&w.members,&w.entities)
     core.hierarchy_settle(&w.hierarchy,core.read(&w.parents),&w.entities)
     core.entities_settle(&w.entities)
 }
@@ -158,4 +165,88 @@ an_update_writes_what_differs_onto_the_entities_that_have_the_ids_of_a_document 
     asset.scene_entities_remove(&document,{50})
     report,error=update_put(t,&f,ref,&document,nil)
     testing.expect(t,error==.None && report.dangling==1 && core.get(&w.links,bulb).target==core.NONE)
+}
+
+// asset declares the two components of the instances for a document, where
+// it cannot name the ones of a world: any drift of names, kinds or order
+// between them would read one as the other wrongly.
+@(test)
+the_components_of_prefab_instances_are_the_ones_asset_declares :: proc(t:^testing.T) {
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    Pair :: struct {world,document:typeid}
+    for pair in ([]Pair{{Prefab_Instance,asset.Instance},{Prefab_Member,asset.Member}}) {
+        world,document:=type_info_of(pair.world),type_info_of(pair.document)
+        testing.expect(t,world.size==document.size && world.align==document.align)
+    }
+    world_instance,_:=asset.types_index(&types,Prefab_Instance)
+    document_instance,_:=asset.types_index(&types,asset.Instance)
+    world_member,_:=asset.types_index(&types,Prefab_Member)
+    document_member,_:=asset.types_index(&types,asset.Member)
+    testing.expect_value(t,types.hashes[world_instance],types.hashes[document_instance])
+    testing.expect_value(t,types.hashes[world_member],types.hashes[document_member])
+    testing.expect(t,types.hashes[world_instance]!=types.hashes[world_member])
+    testing.expect_value(t,asset.COMPONENT_INSTANCE,"Prefab_Instance")
+    testing.expect_value(t,asset.COMPONENT_MEMBER,"Prefab_Member")
+}
+
+@(private="file")
+update_file :: proc(t:^testing.T,document:^asset.Scene,file:^asset.Asset) -> bool {
+    data,bytes_error:=asset.scene_bytes(document,context.temp_allocator)
+    return testing.expect_value(t,bytes_error,asset.Error.None) && testing.expect_value(t,asset.asset_open(file,data),asset.Error.None)
+}
+
+@(test)
+the_instances_of_a_document_are_components_of_its_entities_and_a_copy_has_none :: proc(t:^testing.T) {
+    f:Update_Fixture
+    ref:=update_fixture_init(&f)
+    defer update_fixture_destroy(&f)
+    w:=&f.w
+    LAMP :: base.Asset_Id{0x1a,2}
+    lamp,level:asset.Scene
+    asset.scene_init(&lamp,&f.types,asset.KIND_PREFAB,LAMP);defer asset.scene_destroy(&lamp)
+    asset.scene_entity_add(&lamp,1,0,"Lamp")
+    asset.scene_entity_add(&lamp,2,1,"Bulb")
+    lamp.info.root=1
+    asset.scene_init(&level,&f.types,asset.KIND_SCENE,{0x1a,3});defer asset.scene_destroy(&level)
+    asset.scene_entity_add(&level,100,0,"Room")
+    root_id,placed:=asset.scene_instantiate(&level,&lamp,LAMP,100)
+    testing.expect_value(t,placed,asset.Error.None)
+    bulb_id:base.Entity_Id
+    members,_:=asset.scene_instance_members(&level,root_id)
+    for member in members {if member.source==2 {bulb_id=member.entity}}
+
+    file:asset.Asset
+    if !update_file(t,&level,&file) {return}
+    defer asset.asset_close(&file)
+    _,error:=instantiate(ref,&file,&f.types)
+    update_settle(w)
+    testing.expect_value(t,error,Error.None)
+    root,bulb:=core.entity_of(&w.entities,root_id),core.entity_of(&w.entities,bulb_id)
+    of_bulb,instance,member:=prefab_instance_of(ref,bulb)
+    testing.expect(t,root!=core.NONE && of_bulb==root && instance.prefab==LAMP && member.source==2)
+    of_room,_,_:=prefab_instance_of(ref,core.entity_of(&w.entities,100))
+    testing.expect_value(t,of_room,core.NONE)
+
+    // A capture gives the document its instances back.
+    captured:asset.Scene
+    _,error=capture(ref,&captured,&f.types,{kind=asset.KIND_SCENE,id={0x1a,3}})
+    testing.expect_value(t,error,Error.None)
+    defer asset.scene_destroy(&captured)
+    _,source,linked:=asset.scene_member(&captured,bulb_id)
+    testing.expect(t,asset.scene_entity_instance(&captured,bulb_id)==root_id && linked && source==2)
+
+    // A prefab that places the Lamp, copied while the world runs: its entities are of no instance.
+    desk:asset.Scene
+    asset.scene_init(&desk,&f.types,asset.KIND_PREFAB,{0x1a,4});defer asset.scene_destroy(&desk)
+    asset.scene_entity_add(&desk,1,0,"Desk")
+    desk.info.root=1
+    asset.scene_instantiate(&desk,&lamp,LAMP,1)
+    copied:asset.Asset
+    if !update_file(t,&desk,&copied) {return}
+    defer asset.asset_close(&copied)
+    rows:=[2]int{core.count(&w.instances),core.count(&w.members)}
+    report:Report
+    report,error=instantiate(ref,&copied,&f.types,{fresh=true})
+    update_settle(w)
+    testing.expect(t,error==.None && report.entities==3 && rows==[2]int{core.count(&w.instances),core.count(&w.members)})
 }

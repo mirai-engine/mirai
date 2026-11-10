@@ -248,8 +248,8 @@ api_entity_write :: proc(s:^Session,w:core.World_Ref,out:^serial.Writer,e:core.E
     }
     if !off_first {serial.write_u8(out,']')}
     if !play {
-        if link,linked:=prefab_link_of(s,id);linked {
-            api.write_key(out,"prefab");serial.text_write_raw(out,`{"instance":`);serial.text_write_uint(out,u64(link.instance))
+        if link,linked:=prefab_link_of(w,e);linked {
+            api.write_key(out,"prefab");serial.text_write_raw(out,`{"instance":`);api.write_id(out,api_entity_id(w,link.instance))
             api.write_key(out,"asset");api_asset_write(out,link.asset)
             api.write_key(out,"source");api.write_id(out,link.source)
             api.write_key(out,"root");api.write_flag(out,link.root)
@@ -978,9 +978,6 @@ api_scene_open :: proc(s:^Session,call:^api.Call) {
         api_document_fail(call,error,target)
         return
     }
-    following:=host.load_phase_begin(s.app,.Editor)
-    prefabs_follow(s,prefabs_of(s))
-    host.load_phase_end(s.app,following)
     host.load_ready(s.app,.Scene,core.world_entities(edited_world(s)).alive)
     api_file_result(s,call)
 }

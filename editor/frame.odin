@@ -356,9 +356,7 @@ action_run :: proc(s:^Session,action:Action) -> bool {
         anchor,_:=ui.widget_rect(g.ctx,shell_id(g,"graphics"))
         ui.popup_open(g.ctx,graphics_popup(g),anchor)
     case .Prefab_Create,.Prefab_Apply,.Prefab_Revert,.Prefab_Unlink,.Prefab_Apply_Base:
-        // They replace the World: between frames, so no frame draws it before its fixed phase ran.
-        s.prefab_action=action
-        s.requests+={.Prefab_Action}
+        prefab_action_run(s,action)
     }
     return true
 }
