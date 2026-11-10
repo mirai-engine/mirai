@@ -129,3 +129,44 @@ import "mirai:core"
     }
     testing.expectf(t,found==[5]bool{true,true,true,true,true},"%v",errors)
 }
+
+// What the application owns reaches a step by the type that names it, alone
+// or in a @(params): the call hands out what host.App holds. Asked for in
+// another form, the error says which form to receive.
+@(test)
+a_part_of_the_application_reaches_a_step_by_its_type :: proc(t:^testing.T) {
+    folder,error:=os.make_directory_temp("","mirai-params-*",context.temp_allocator)
+    if !testing.expect(t,error==nil) {return}
+    defer os.remove_all(folder)
+    game_source:=`package game
+import "base:runtime"
+import "mirai:core"
+import "mirai:host"
+import mixer "mirai:audio"
+import erender "mirai:engine/render"
+import "mirai:std/jobs"
+@(params) Loader :: struct {assets:^host.Assets,allocator:runtime.Allocator,spots:core.Read(core.Spot)}
+@(step="frame") game_load :: proc(loader:Loader,job_system:^jobs.Job_System) {}
+@(step="render") game_draw :: proc(renderer:^erender.Renderer,extras:^host.Frame_Extras,m:^mixer.Mixer,app:^host.App) {}
+`
+    p,ok:=params_project(t,folder,PARAMS_CORE,game_source)
+    if !ok {return}
+    output:=world_generate(&p,context.temp_allocator)
+    if !testing.expectf(t,len(output.errors)==0,"%v",output.errors) {return}
+    for text in ([]string{output.game_world,output.editor_world}) {
+        testing.expect(t,strings.contains(text,"p_game.game_load(p_game.Loader{assets=app.assets,allocator=app.allocator,spots=p_core.read(&w.spot)},&app.jobs)"))
+        testing.expect(t,strings.contains(text,"p_game.game_draw(app.renderer,&app.extras,app.mixer,app)"))
+    }
+    errors:=params_errors(t,&p,`package game
+import "base:runtime"
+import "mirai:host"
+@(step="frame") game_load :: proc(assets:host.Assets,allocator:^runtime.Allocator,content:^host.Content) {}
+`)
+    found:[3]bool
+    for message in errors {
+        found[0]||=strings.contains(message,"the parameter assets of game_load is host.Assets, and the application hands that part out as ^host.Assets: receive ^host.Assets")
+        found[1]||=strings.contains(message,"the parameter allocator of game_load is ^runtime.Allocator, and the application hands that part out as runtime.Allocator")
+        found[2]||=strings.contains(message,"the parameter content of game_load is ^host.Content") && strings.contains(message,"a part of the application (^host.Assets")
+    }
+    testing.expectf(t,found==[3]bool{true,true,true},"%v",errors)
+}
