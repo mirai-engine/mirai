@@ -50,18 +50,7 @@ Engine_Layer :: enum u8 {
 }
 
 @(private)
-Engine_Layer_Info :: struct {
-    name:string,
-    engine_time:bool, // no game contains its packages
-}
-
-@(private)
-ENGINE_LAYERS :: [Engine_Layer]Engine_Layer_Info{
-    .Base={name="base"},
-    .Engine={name="engine"},
-    .Cook={name="cook",engine_time=true},
-    .Editor={name="editor",engine_time=true},
-}
+ENGINE_LAYER_NAMES :: [Engine_Layer]string{.Base="base",.Engine="engine",.Cook="cook",.Editor="editor"}
 
 Engine_Package :: struct {
     layer:Engine_Layer,
@@ -116,10 +105,10 @@ engine_package_index :: proc(path:string) -> (index:int,found:bool) {
 
 // The packages a game binary can contain: those of the layers that are not engine-time.
 engine_runtime_packages :: proc(allocator:=context.allocator) -> []string {
-    packages,layers:=ENGINE_PACKAGES,ENGINE_LAYERS
+    packages:=ENGINE_PACKAGES
     list:=make([dynamic]string,allocator)
     for entry in packages {
-        if !layers[entry.layer].engine_time {append(&list,entry.path)}
+        if entry.layer<.Cook {append(&list,entry.path)}
     }
     return list[:]
 }
@@ -134,12 +123,12 @@ Engine_Library :: struct {
 
 // The libraries of a mode, each after the ones it needs.
 engine_libraries :: proc(mode:Engine_Mode,allocator:=context.allocator) -> []Engine_Library {
-    packages,layers:=ENGINE_PACKAGES,ENGINE_LAYERS
+    packages,layers:=ENGINE_PACKAGES,ENGINE_LAYER_NAMES
     list:=make([dynamic]Engine_Library,allocator)
     paths:=make([dynamic]string,0,len(packages),allocator)
     previous:=""
     for entry,index in packages {
-        name:=layers[entry.layer].name
+        name:=layers[entry.layer]
         if mode==.Dev {
             name=entry.unit
             if name=="" {name,_=strings.replace_all(entry.path,"/","-",allocator)}
@@ -200,11 +189,6 @@ engine_library_files :: proc(paths:Engine_Paths,library:Engine_Library,allocator
 @(private)
 library_present :: proc(library,linked_against:string) -> bool {
     return os.is_file(library) && os.is_file(linked_against)
-}
-
-@(private)
-engine_library_present :: proc(paths:Engine_Paths,library:Engine_Library) -> bool {
-    return library_present(engine_library_files(paths,library,context.temp_allocator))
 }
 
 // Release unless --dev is asked for: no command takes its mode from what was built before.
@@ -337,9 +321,9 @@ engine_plan :: proc(root,compiler:string,mode:Engine_Mode,paths:Engine_Paths,lib
     }
     plan.previous,plan.stamped=previous,true
     // Sources that are the ones of the stamp declare what they did: what each library names stands too.
-    plan.current=previous.programs==plan.programs && previous.programs_against!=0
+    plan.current=previous.programs==plan.programs
     for library,which in plan.libraries {
-        plan.current&&=previous.libraries[which].sources==library.sources && engine_library_present(paths,libraries[which])
+        plan.current&&=previous.libraries[which].sources==library.sources && library_present(engine_library_files(paths,libraries[which],context.temp_allocator))
     }
     for program in engine_programs(paths) {plan.current&&=os.is_file(program)}
     return
@@ -428,24 +412,21 @@ engine_library_entry :: proc(library:Engine_Library,allocator:=context.allocator
 @(private)
 Engine_Reach :: struct {
     names:[]map[string]bool,
-    followed:[]bool,  // false: it names declarations no hash follows
-    needs:[][]bool,   // [library][library before it]
+    needs:[][]bool, // [library][library before it]
 }
 
 // only: the libraries to read, when no declaration moved: the others name
 // what they named, and those read link one after another, which asks for no
 // more than the few of them there are. nil: every library.
 @(private)
-engine_reach :: proc(root:string,paths:Engine_Paths,libraries:[]Engine_Library,only:[]bool=nil) -> (reach:Engine_Reach) {
+engine_reach :: proc(root:string,libraries:[]Engine_Library,only:[]bool=nil) -> (reach:Engine_Reach) {
     a:=context.temp_allocator
     reach.names=make([]map[string]bool,len(libraries),a)
-    reach.followed=make([]bool,len(libraries),a)
     reach.needs=make([][]bool,len(libraries),a)
     packages:=make([][ENGINE_PACKAGE_COUNT]bool,ENGINE_PACKAGE_COUNT,a)
     owner:[ENGINE_PACKAGE_COUNT]int
     for library,which in libraries {
         reach.names[which]=make(map[string]bool,a)
-        reach.followed[which]=true
         reach.needs[which]=make([]bool,len(libraries),a)
         if only!=nil {
             if !only[which] {continue}
@@ -455,7 +436,7 @@ engine_reach :: proc(root:string,paths:Engine_Paths,libraries:[]Engine_Library,o
             index:=library.first+at
             owner[index]=which
             row:=&packages[index]
-            reach.followed[which]&&=declared_names_of(paths.decl,engine_sources(root,{path}),library.packages,&reach.names[which],row,index)
+            declared_names_of(engine_sources(root,{path}),library.packages,&reach.names[which],row,index)
             if only!=nil {continue}
             for other in 0..<index {
                 if !row[other] {continue}
@@ -532,10 +513,10 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
     if file,unlocked:=engine_unlock(paths.folder);!unlocked {
         return engine_fail(.Write_Failed,"binaries of the engine",fmt.tprintf("%s runs and could not be moved aside: close what runs it",file))
     }
-    // No stamp says what the binaries, the stage, the declarations and the programs there were built from.
+    // No stamp says what the stage, the declarations and the programs there were written from.
     if desc.force || !plan.stamped {
         for folder in ([3]string{paths.stage,paths.decl,project.path(paths.folder,"programs",allocator=context.temp_allocator)}) {_=base.remove_all(folder)}
-        engine_binaries_remove(paths.folder)
+        _=os.remove(paths.declared)
     }
     if os.make_directory_all(paths.folder)!=nil && !os.is_dir(paths.folder) {
         result.status,result.failure=.Failed,.Write_Failed
@@ -557,7 +538,7 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
         return written,{},true
     }
     for library,which in libraries {
-        present:=engine_library_present(paths,library)
+        present:=library_present(engine_library_files(paths,library,context.temp_allocator))
         was:=stamp.libraries[which]
         if !desc.force && present && was.sources==plan.libraries[which].sources {continue}
         stamp.libraries[which]={}
@@ -570,7 +551,7 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
         declarations_moved||=changed.decl
         // The stage may be the same while the compiler, the flags or what the
         // library embeds moved: it is compiled again anyway.
-        compile[which]=engine_library_compile(desc.force,present,changed.stage,was.tools!=plan.libraries[which].tools)
+        compile[which]=desc.force || !present || changed.stage || was.tools!=plan.libraries[which].tools
     }
     _=engine_stamp_write(paths.stamp,stamp,libraries)
     if declarations_moved && !declared_write(paths.decl,paths.declared) {return engine_fail(.Write_Failed,paths.declared,"")}
@@ -580,17 +561,15 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
     // again, unless another checkout built it from the same: it is copied.
     // With no declaration moved, the libraries whose sources stand name what
     // they named: only the others are read.
-    all:=declarations_moved || !declared.known || plan.previous.programs_against==0
-    for was,which in plan.previous.libraries {all||=!staged[which] && was.against==0}
-    reach:=engine_reach(root,paths,libraries,nil if all else staged)
+    reach:=engine_reach(root,libraries,nil if declarations_moved else staged)
     against:=make([]u64,len(libraries),context.temp_allocator)
     for library,which in libraries {
-        if !all && !staged[which] {
+        if !declarations_moved && !staged[which] {
             against[which]=plan.previous.libraries[which].against
             continue
         }
-        if reach.followed[which] && declared.known {against[which]=declared_key(&declared,reach.names[which])}
-        if against[which]!=0 && against[which]==plan.previous.libraries[which].against {continue}
+        against[which]=declared_key(&declared,reach.names[which])
+        if against[which]==plan.previous.libraries[which].against {continue}
         if !staged[which] {
             if _,failed,ok:=stage(root,paths,library);!ok {return failed}
         }
@@ -598,7 +577,7 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
     }
     entries:=make([]string,len(libraries),context.temp_allocator)
     for library,which in libraries {
-        if !compile[which] || against[which]==0 {continue}
+        if !compile[which] {continue}
         entries[which]=engine_cache_entry(root,library,mode,plan.libraries[which],against[which])
         if !desc.force && engine_cache_take(entries[which],paths,library) {
             compile[which]=false
@@ -606,14 +585,10 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
         }
     }
     programs:=engine_program_sources(paths)
-    programs_against:=plan.previous.programs_against
-    if all {
-        program_names:=make(map[string]bool,context.temp_allocator)
-        programs_followed:=declared.known
-        for program in programs {programs_followed&&=declared_names(paths.decl,program.source,nil,&program_names)}
-        programs_against=declared_key(&declared,program_names) if programs_followed else 0
-    }
-    build_programs:=desc.force || stamp.programs!=plan.programs || programs_against==0 || stamp.programs_against!=programs_against
+    program_names:=make(map[string]bool,context.temp_allocator)
+    for program in programs {declared_names(program.source,nil,&program_names)}
+    programs_against:=declared_key(&declared,program_names)
+    build_programs:=desc.force || stamp.programs!=plan.programs || stamp.programs_against!=programs_against
     for program in programs {
         folder:=project.path(paths.folder,"programs",program.package_name,allocator=context.temp_allocator)
         if os.make_directory_all(folder)!=nil && !os.is_dir(folder) {return engine_fail(.Write_Failed,program.name,"")}
@@ -670,7 +645,7 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
         run.stamp.libraries[which]={run.plan.libraries[which].sources,run.plan.libraries[which].tools,run.against[which]}
         _=engine_stamp_write(run.paths.stamp,run.stamp^,run.libraries)
         append(run.compiled,strings.clone(run.libraries[which].file,run.compiled.allocator))
-        if run.entries[which]!="" {engine_cache_store(run.entries[which],run.paths,run.libraries[which])}
+        engine_cache_store(run.entries[which],run.paths,run.libraries[which])
     })
     if len(compiled)>0 {cache_trim(workspace.cache_folder(root,ENGINE_CACHE,context.temp_allocator),ENGINE_CACHE_ENTRIES)}
     if !built {return failed}
@@ -683,18 +658,6 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
     _=engine_stamp_write(paths.stamp,stamp,libraries)
     result.status=.Built
     return
-}
-
-// Removes the binaries of a folder of the engine, of whatever libraries:
-// nothing says what they were built from. One a program runs stays until it ends.
-@(private)
-engine_binaries_remove :: proc(folder:string) {
-    entries,_:=os.read_all_directory_by_path(folder,context.temp_allocator)
-    for entry in entries {
-        if entry.type==.Directory || !strings.has_prefix(entry.name,"mirai-") && !strings.has_prefix(entry.name,strings.concatenate({project.LIBRARY_PREFIX,"mirai-"},context.temp_allocator)) {continue}
-        _=os.remove(entry.fullpath)
-    }
-    _=os.remove(project.path(folder,"engine.declared",allocator=context.temp_allocator))
 }
 
 // A compiler the build of the engine runs: of a library, or of a program.
@@ -843,7 +806,7 @@ engine_program_command :: proc(compiler:string,paths:Engine_Paths,program:Engine
 engine_installed_present :: proc(root:string) -> bool {
     paths:=engine_paths(root,ENGINE_MODE_INSTALLED,context.temp_allocator)
     present:=os.is_dir(paths.decl) && os.is_file(paths.stamp)
-    for library in engine_libraries(ENGINE_MODE_INSTALLED,context.temp_allocator) {present&&=engine_library_present(paths,library)}
+    for library in engine_libraries(ENGINE_MODE_INSTALLED,context.temp_allocator) {present&&=library_present(engine_library_files(paths,library,context.temp_allocator))}
     for program in engine_programs(paths) {present&&=os.is_file(program)}
     return present
 }
@@ -1113,13 +1076,6 @@ entry_imports :: proc(collection:string,packages:[]string) -> [dynamic]string {
     imports:=make([dynamic]string,0,len(packages),context.temp_allocator)
     for path in packages {append(&imports,fmt.tprintf("%s:%s",collection,path))}
     return imports
-}
-
-// A library is compiled again when it is missing, its stage moved, or the
-// compiler, the flags or what it embeds moved.
-@(private)
-engine_library_compile :: proc(force,present,stage_changed,tools_changed:bool) -> bool {
-    return force || !present || stage_changed || tools_changed
 }
 
 @(private="file")

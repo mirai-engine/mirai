@@ -222,12 +222,9 @@ declared_read :: proc(file:string,allocator:=context.allocator) -> (declared:Dec
 // after `import` and the name it may give it: the text of a program a source
 // carries imports nothing. The packages of skip are not followed: they are
 // compiled with the source. A package of the engine imports only the ones
-// before it, those under limit. reached, when given, marks the packages imported. followed is
-// false when the source names declarations decl has that are of no package
-// of the engine: what imports them compiles against something no hash follows.
+// before it, those under limit. reached, when given, marks the packages imported.
 @(private)
-declared_names :: proc(decl,source:string,skip:[]string,names:^map[string]bool,reached:^[ENGINE_PACKAGE_COUNT]bool=nil,limit:=ENGINE_PACKAGE_COUNT) -> (followed:bool) {
-    followed=true
+declared_names :: proc(source:string,skip:[]string,names:^map[string]bool,reached:^[ENGINE_PACKAGE_COUNT]bool=nil,limit:=ENGINE_PACKAGE_COUNT) {
     Alias :: struct {name,path:string}
     aliases:=make([dynamic]Alias,context.temp_allocator)
     at:=0
@@ -237,16 +234,12 @@ declared_names :: proc(decl,source:string,skip:[]string,names:^map[string]bool,r
         start:=at+found
         at=start+len(ENGINE_COLLECTION)
         quote:=source[start-1] if start>0 else 0
-        if quote!='"' && quote!='`' || start>1 && source[start-2]=='\\' {continue}
+        if quote!='"' && quote!='`' {continue}
         end:=strings.index_byte(source[at:],quote)
         if end<=0 {continue}
         path:=source[at:at+end]
         index,is_package:=engine_package_index(path)
-        if !is_package {
-            if import_path(path) && len(engine_sources(decl,{path}))>0 {followed=false}
-            continue
-        }
-        if index>=limit {continue}
+        if !is_package || index>=limit {continue}
         // `import "mirai:core"` or `import name "mirai:core"`: anything else is no import.
         before:=strings.trim_right(source[:start-1]," \t")
         first:=word_before(before)
@@ -275,8 +268,7 @@ declared_names :: proc(decl,source:string,skip:[]string,names:^map[string]bool,r
             first:=blank_skip(source,dot+1)
             last:=first
             for last<len(source) && name_byte(source[last]) {last+=1}
-            if last==first {continue}
-            names[strings.concatenate({alias.path,".",source[first:last]},context.temp_allocator)]=true
+            if last>first {names[strings.concatenate({alias.path,".",source[first:last]},context.temp_allocator)]=true}
         }
     }
     return
@@ -291,38 +283,21 @@ declared_names :: proc(decl,source:string,skip:[]string,names:^map[string]bool,r
         for at<len(text) && (text[at]==' ' || text[at]=='\t' || text[at]=='\n' || text[at]=='\r') {at+=1}
         return at
     }
-}
-
-@(private)
-name_byte :: proc(c:u8) -> bool {
-    switch c {
-    case 'a'..='z','A'..='Z','0'..='9','_',0x80..=0xff: return true
-    }
-    return false
-}
-
-// Whether a literal can be the path of an import: a field tag, a format or a
-// message is not, and is not looked for in the declarations.
-@(private)
-import_path :: proc(path:string) -> bool {
-    for c in transmute([]u8)path {
+    name_byte :: proc(c:u8) -> bool {
         switch c {
-        case 'a'..='z','A'..='Z','0'..='9','_','-','.','/':
-        case: return false
+        case 'a'..='z','A'..='Z','0'..='9','_',0x80..=0xff: return true
         }
+        return false
     }
-    return true
 }
 
-// The names of the files given, with declared_names.
+// The names of the files given, with declared_names. A file that cannot be read names nothing.
 @(private)
-declared_names_of :: proc(decl:string,files:[]string,skip:[]string,names:^map[string]bool,reached:^[ENGINE_PACKAGE_COUNT]bool=nil,limit:=ENGINE_PACKAGE_COUNT) -> (followed:bool) {
-    followed=true
+declared_names_of :: proc(files:[]string,skip:[]string,names:^map[string]bool,reached:^[ENGINE_PACKAGE_COUNT]bool=nil,limit:=ENGINE_PACKAGE_COUNT) {
     for file in files {
-        data,error:=os.read_entire_file(file,context.temp_allocator)
-        followed&&=error==nil && declared_names(decl,string(data),skip,names,reached,limit)
+        data,_:=os.read_entire_file(file,context.temp_allocator)
+        declared_names(string(data),skip,names,reached,limit)
     }
-    return
 }
 
 // The hash of the declarations named, as the index has them: what whoever

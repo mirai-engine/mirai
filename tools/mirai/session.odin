@@ -135,15 +135,10 @@ process_end :: proc(pid:int,wait:time.Duration) {
 
 // The session of the project that answers, or one opened for a command, which
 // closes it when reused is false; code is not 0 after saying why there is none.
-// The open session is taken in the mode it was opened in, unless one is asked for.
-session_borrow :: proc(root,folder:string,mode:Build_Mode,mode_asked:bool,command:string) -> (file:api.Port_File,reused:bool,code:int) {
+session_borrow :: proc(root,folder:string,mode:Build_Mode,command:string) -> (file:api.Port_File,reused:bool,code:int) {
     alive:bool
     file,alive=session_find(folder)
     reused=alive && session_answers(file.port)
-    mode:=mode
-    if record,recorded:=session_record(folder);reused && recorded && !mode_asked {
-        if opened_in,named:=session_record_mode(record);named {mode=opened_in}
-    }
     if reused && !session_reusable(root,folder,mode,file,command) {return file,reused,1}
     if !reused {file,code=session_open(root,folder,mode,false,180,{})}
     return

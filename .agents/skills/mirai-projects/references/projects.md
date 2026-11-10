@@ -314,12 +314,11 @@ Each mode has its folder: switching between them compiles nothing.
   once (`compilers_at_once`), each once the libraries it links against stand. `stage/` is what
   the libraries compile from, as the collection `staged`: the packages of a library import each
   other through it and every other package is its declarations. A build without a stamp of its
-  version and `--force` remove the binaries, the stage and the declarations.
+  version and `--force` remove the stage and the declarations.
 - **Mode.** Every command that builds accepts `--dev` (everything at `-o:minimal`, to check
   changes) or `--release` (`-o:speed`, for the CPU figures and to ship), not both, and without
-  either it is `--release`: no command takes its mode from what was built before. A command that
-  uses the open session (`session restart`, `capture`, `record`, `play test`) takes it, without
-  either, as it was opened. An agent always passes `--dev`.
+  either it is `--release`: no command takes its mode from what was built before. `session
+  restart` without either opens the session as it was opened. An agent always passes `--dev`.
   `build.engine_current` says whether `engine_build` would do nothing, without taking a turn or
   writing.
 - **Shared cache.** `<main>/.mirai/cache/engine-libraries/<library>-<mode>-<fingerprint>/` stores

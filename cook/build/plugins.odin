@@ -238,11 +238,11 @@ plugin_library_hash_of :: proc(p:^project.Project,lib:^Plugin_Library,compiler:s
 	plugins_declared,_:=fingerprint(decl,"",nil,needed,masked=decl if masked else "")
 	append(&hashed,fmt.tprintf("<plugin declarations %x>",plugins_declared))
 	names:=make(map[string]bool,context.temp_allocator)
-	own_followed:=declared_names_of(engine.decl,sources[:],nil,&names)
-	needed_followed:=declared_names_of(engine.decl,needed,nil,&names)
+	declared_names_of(sources[:],nil,&names)
+	declared_names_of(needed,nil,&names)
 	append(&hashed,fmt.tprintf("<%sdeclarations %v %x>",ENGINE_COLLECTION,engine.mode,declared_key(declared,names)))
-	// Without the hash of something it names, every build of the engine builds it again.
-	if !declared.known || !own_followed || !needed_followed {append(&sources,engine.stamp)}
+	// Without the hashes of what it names, every build of the engine builds it again.
+	if !declared.known {append(&sources,engine.stamp)}
 	hash,_:=fingerprint(p.engine_root,compiler,hashed[:],sources[:])
 	return hash
 }

@@ -23,8 +23,7 @@ engine_modes_have_folders_and_libraries_of_their_own :: proc(t:^testing.T) {
     testing.expect(t,dev.folder!=release.folder && dev.decl!=release.decl)
     testing.expect_value(t,engine_mode_resolve(root,.Dev),Engine_Mode.Dev)
     testing.expect_value(t,engine_mode_resolve(root,Engine_Mode{}),Engine_Mode.Release)
-    layers:=ENGINE_LAYERS
-    testing.expect_value(t,len(engine_libraries(.Release)),len(layers))
+    testing.expect_value(t,len(engine_libraries(.Release)),len(Engine_Layer))
     for mode in Engine_Mode {
         libraries:=engine_libraries(mode)
         next:=0
@@ -529,18 +528,6 @@ a_stamp_that_is_not_the_one_of_a_build_is_not_read :: proc(t:^testing.T) {
     }
 }
 
-// What the build decides of a library once declare has run: the library
-// follows its stage, so sources that stage the same do not compile again;
-// what moved the compiler or the flags compiles it anyway.
-@(test)
-a_library_of_the_engine_follows_its_stage :: proc(t:^testing.T) {
-    testing.expect(t,!engine_library_compile(false,true,false,false),"a stage that did not change is not compiled")
-    testing.expect(t,engine_library_compile(false,true,true,false),"the stage that changed is compiled")
-    testing.expect(t,engine_library_compile(true,true,false,false),"--force compiles the library")
-    testing.expect(t,engine_library_compile(false,true,false,true),"a changed compiler or flags compiles the library")
-    testing.expect(t,engine_library_compile(false,false,false,false),"a library that is not there is compiled")
-}
-
 // A library links against the libraries its imports reach before it, directly
 // or through another, and names the declarations of those its sources write
 // after the name of an import: what it is built again by. A literal that
@@ -556,7 +543,7 @@ a_library_needs_the_libraries_it_reaches_and_names_what_it_writes :: proc(t:^tes
     source_write(t,root,"editor","editor.odin","package editor\n\nimport \"mirai:ui\"\nimport _ \"mirai:cook/build\"\n")
     for mode in Engine_Mode {
         libraries:=engine_libraries(mode)
-        reach:=engine_reach(root,engine_paths(root,mode),libraries)
+        reach:=engine_reach(root,libraries)
         of :: proc(t:^testing.T,libraries:[]Engine_Library,path:string) -> int {
             for library,which in libraries {
                 if slice.contains(library.packages,path) {return which}
@@ -579,14 +566,13 @@ a_library_needs_the_libraries_it_reaches_and_names_what_it_writes :: proc(t:^tes
             // With no declaration moved only the libraries whose sources changed are read, and they link in order.
             only:=make([]bool,len(libraries))
             only[core],only[cook]=true,true
-            read:=engine_reach(root,engine_paths(root,mode),libraries,only)
+            read:=engine_reach(root,libraries,only)
             testing.expect(t,"render.frames" in read.names[cook] && len(read.names[render])==0 && len(read.names[editor])==0,"the others name what they named")
             testing.expect(t,read.needs[cook][core] && !read.needs[cook][render] && !slice.contains(read.needs[editor],true))
         } else {
             // In release render and core are one library: the first compiles the second from the stage.
             testing.expect(t,core!=render || len(reach.names[core])==0)
         }
-        testing.expect(t,reach.followed[cook] && reach.followed[editor])
     }
 }
 
@@ -624,7 +610,7 @@ what_names_a_declaration_follows_it_and_what_it_reaches :: proc(t:^testing.T) {
         testing.expect(t,declared.known && "core.Entity" in declared.hashes && "render.draw" in declared.hashes)
         for source,consumer in consumers {
             names:=make(map[string]bool,context.temp_allocator)
-            testing.expect(t,declared_names(desc.decl,source,nil,&names))
+            declared_names(source,nil,&names)
             keys[consumer]=declared_key(&declared,names)
         }
         return
@@ -652,7 +638,7 @@ what_names_a_declaration_follows_it_and_what_it_reaches :: proc(t:^testing.T) {
     missing:=declared_read(project.path(root,"none"),context.temp_allocator)
     testing.expect(t,!missing.known)
     names:=make(map[string]bool,context.temp_allocator)
-    testing.expect(t,declared_names(desc.decl,"package game\n\nimport \"mirai:core\"\n\nrun :: proc() {core.extra()}\n",nil,&names))
+    declared_names("package game\n\nimport \"mirai:core\"\n\nrun :: proc() {core.extra()}\n",nil,&names)
     declared:=declared_read(index,context.temp_allocator)
     without:=declared_key(&declared,names)
     _=keys(t,root,desc,index,consumers,{7="\nextra :: proc() {}\n"},"")
@@ -747,10 +733,6 @@ a_library_of_the_engine_is_shared_by_what_it_is_built_from :: proc(t:^testing.T)
     here,there:=engine_cache_entry(first,library,.Dev,built,3),engine_cache_entry(second,library,.Dev,built,3)
     testing.expect_value(t,here[strings.last_index_byte(here,'/'):],there[strings.last_index_byte(there,'/'):])
 
-    // A build without a stamp removes the binaries there, of whatever libraries.
-    testing.expect(t,os.write_entire_file(project.path(restored.folder,"SDL3.dll"),"sdl")==nil)
-    engine_binaries_remove(restored.folder)
-    testing.expect(t,!os.exists(file) && os.is_file(project.path(restored.folder,"SDL3.dll")),"what is not of the engine stays")
 }
 
 // A source without a package clause, a comment alone, is an error that names the file for the

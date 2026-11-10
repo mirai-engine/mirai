@@ -91,6 +91,7 @@ Value_Kind :: enum u8 {
 @(private="file")
 Names :: struct {
     file,all:^map[string]bool,
+    imports:^map[string]string, // given: what is selected of a package the file imports counts, as `<package>.<name>`
 }
 
 // A private procedure that is declared foreign if the declarations name it.
@@ -146,7 +147,7 @@ declare_package :: proc(d:^Declare,path:string) {
         }
         for tag in file.tags {
             text:=strings.trim_space(tag.text)
-            head_hash=base.hash_combine(head_hash,text_hash(text))
+            head_hash=base.hash_combine(head_hash,xxhash.XXH3_64_default(transmute([]u8)text))
             if strings.has_prefix(text,"#+private") {
                 if strings.contains(text,"file") {scope.private_file=true} else {scope.private_package=true}
             }
@@ -190,87 +191,26 @@ import_package :: proc(desc:^Declare_Desc,imp:^ast.Import_Decl) -> (path:string,
     return literal[len(desc.binary)+1:],true
 }
 
-// The hash of a text whatever its line endings: checkouts of the same commit can differ in them.
-@(private)
-text_hash :: proc(text:string) -> u64 {
-    if strings.index_byte(text,'\r')<0 {return xxhash.XXH3_64_default(transmute([]u8)text)}
-    kept:=make([dynamic]u8,0,len(text),context.temp_allocator)
-    for b in transmute([]u8)text {
-        if b!='\r' {append(&kept,b)}
-    }
-    return xxhash.XXH3_64_default(kept[:])
-}
-
 // The line of DECLARED_NAMES of what was declared as text under names: its
 // hash, with the conditions of the when blocks around it, and the names it
-// and they carry, each once: one of its package bare, one of a package it
-// imports with the path of that package.
+// and they carry: one of its package bare, one of a package its file imports
+// with the path of that package.
 @(private="file")
 names_line :: proc(scope:^File_Scope,out:^Output,names:[]string,text:string,nodes:..^ast.Node) {
     if out.names==nil {return}
-    hash:=text_hash(text)
-    refs:=Refs{scope=scope,seen=make(map[string]bool,context.temp_allocator)}
-    strings.builder_init(&refs.text,context.temp_allocator)
+    hash:=xxhash.XXH3_64_default(transmute([]u8)text)
+    carried:=make(map[string]bool,context.temp_allocator)
+    found:=Names{file=&carried,all=&carried,imports=&scope.imports}
     for condition in scope.conditions {
-        hash=base.hash_combine(hash,text_hash(node_text(scope,condition)))
-        refs_add(&refs,condition)
+        hash=base.hash_combine(hash,xxhash.XXH3_64_default(transmute([]u8)node_text(scope,condition)))
+        names_add(&found,condition)
     }
-    for node in nodes {refs_add(&refs,node)}
+    for node in nodes {names_add(&found,node)}
+    sorted,_:=slice.map_keys(carried,context.temp_allocator)
+    slice.sort(sorted)
     for name in names {
-        if name=="" || name=="_" {continue}
-        fmt.sbprintfln(out.names,"%s %x%s",name,hash,strings.to_string(refs.text))
+        if name!="" && name!="_" {fmt.sbprintfln(out.names,"%s %x %s",name,hash,strings.join(sorted," ",context.temp_allocator))}
     }
-}
-
-@(private="file")
-Refs :: struct {
-    scope:^File_Scope,
-    seen:map[string]bool,
-    text:strings.Builder,
-}
-
-@(private="file")
-refs_add :: proc(refs:^Refs,node:^ast.Node) {
-    if node==nil {return}
-    add :: proc(refs:^Refs,name:string) {
-        if name=="" || name=="_" || refs.seen[name] {return}
-        refs.seen[name]=true
-        fmt.sbprintf(&refs.text," %s",name)
-    }
-    visit :: proc(v:^ast.Visitor,node:^ast.Node) -> ^ast.Visitor {
-        if node==nil {return nil}
-        refs:=cast(^Refs)v.data
-        #partial switch n in node.derived {
-        case ^ast.Ident:
-            add(refs,n.name)
-        // What is selected of a package this file imports is a declaration of
-        // that package; of anything else, a field.
-        case ^ast.Selector_Expr:
-            if of,is_name:=n.expr.derived.(^ast.Ident);is_name && n.field!=nil {
-                if path,imported:=refs.scope.imports[of.name];imported {
-                    add(refs,fmt.tprintf("%s.%s",path,n.field.name))
-                    return nil
-                }
-            }
-            ast.walk(v,n.expr)
-            return nil
-        case ^ast.Implicit_Selector_Expr:
-            return nil
-        case ^ast.Field:
-            if n.type==nil && n.default_value==nil {break}
-            ast.walk(v,n.type)
-            ast.walk(v,n.default_value)
-            return nil
-        case ^ast.Attribute:
-            for elem in n.elems {
-                if pair,is_pair:=elem.derived.(^ast.Field_Value);is_pair {ast.walk(v,pair.value)}
-            }
-            return nil
-        }
-        return v
-    }
-    v:=ast.Visitor{visit=visit,data=refs}
-    ast.walk(&v,node)
 }
 
 // Removes the files of a folder of the package that this declaration did not
@@ -314,7 +254,7 @@ decls_write :: proc(d:^Declare,scope:^File_Scope,out:^Output,stmts:[]^ast.Stmt,i
         case ^ast.Expr_Stmt:
             text:=rewritten_text(scope,s)
             fmt.sbprintfln(&out.decl,"%s%s",indent,text)
-            if out.head_hash!=nil {out.head_hash^=base.hash_combine(out.head_hash^,text_hash(text))}
+            if out.head_hash!=nil {out.head_hash^=base.hash_combine(out.head_hash^,xxhash.XXH3_64_default(transmute([]u8)text))}
         case:
             append(&d.errors,fmt.aprintf("%s(%d): a declaration of a kind that cannot be declared",scope.file.fullpath,stmt.pos.line))
         }
@@ -527,6 +467,12 @@ names_add :: proc(names:^Names,node:^ast.Node) {
         // of a field with a type or a value are its own, and the key of an
         // attribute is no name: none is a procedure of this package.
         case ^ast.Selector_Expr:
+            if of,is_name:=n.expr.derived.(^ast.Ident);is_name && names.imports!=nil && n.field!=nil {
+                if path,imported:=names.imports[of.name];imported {
+                    names.file[fmt.tprintf("%s.%s",path,n.field.name)]=true
+                    return nil
+                }
+            }
             ast.walk(v,n.expr)
             return nil
         case ^ast.Implicit_Selector_Expr:
