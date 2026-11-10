@@ -325,10 +325,12 @@ context_set_density :: proc(ctx:^Context,density:f32) -> bool {
 
 // ---------------------------------------------------------------- ids
 
+@(private) ID_SEED :: u32(0x811c9dc5) // of an element outside every scope: the start of FNV-1a 32
+
 // Identity of an element from a name and an index, inside the scopes pushed
 // with id_push.
 id :: proc(ctx:^Context,name:string,index:int=0) -> Id {
-    seed:=ctx.id_stack[ctx.id_depth-1] if ctx.id_depth>0 else u32(0x811c9dc5)
+    seed:=ctx.id_stack[ctx.id_depth-1] if ctx.id_depth>0 else ID_SEED
     value:=hash.fnv32a(transmute([]byte)name,seed)
     if index!=0 {
         number:=u32(index)

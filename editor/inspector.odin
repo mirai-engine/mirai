@@ -924,8 +924,8 @@ geometry_field :: proc(s:^Session,id:ui.Id,mesh:^erender.Mesh_Renderer,mixed:=fa
     appearance:=ui.Node_Style{radius=th.radius_control,text={size=th.font_small,color=th.text}}
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(MATERIAL_ROW),gap=0,fill=th.well,stroke=open?th.accent:(hot?th.well_stroke_hover:th.well_stroke),radius=th.radius_control}) {
         // The thumbnail beside it shows the geometry (geometry_row).
-        clicked:=ui.button(ctx,id,{label=label,width=-1,height=MATERIAL_ROW,size=th.font_small,padding=7,active=open,use_appearance=true,appearance=appearance}).clicked
-        clicked|=ui.button(ctx,arrow,{icon=.Chevron_Down,icon_size=13,icon_color=th.text_muted,width=18,height=MATERIAL_ROW,active=open,use_appearance=true,appearance=appearance}).clicked
+        clicked:=ui.button(ctx,id,{label=label,width=-1,height=MATERIAL_ROW,size=th.font_small,padding=7,active=open,look=&appearance}).clicked
+        clicked|=ui.button(ctx,arrow,{icon=.Chevron_Down,icon_size=13,icon_color=th.text_muted,width=18,height=MATERIAL_ROW,active=open,look=&appearance}).clicked
         if clicked && !open {
             anchor,_:=ui.widget_rect(ctx,id)
             anchor.w+=18

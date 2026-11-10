@@ -21,7 +21,7 @@ alloc_lint_applies :: proc(root,folder:string) -> bool {
     if !path_inside(inside,engine) || len(inside)<=len(engine) {return false}
     relative:=inside[len(engine)+1:]
     for name in build.engine_runtime_packages(context.temp_allocator) {
-        if !strings.has_prefix(name,"third_party/") && path_same(relative,name) {return true}
+        if !strings.has_prefix(name,"third_party/") && project.path_same(relative,name) {return true}
     }
     parts:=strings.split(relative,"/",context.temp_allocator)
     if len(parts)>=3 && parts[0]=="plugins" && parts[2]=="runtime" {return true}

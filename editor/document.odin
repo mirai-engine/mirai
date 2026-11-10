@@ -108,9 +108,7 @@ scene_file :: proc(s:^Session,path:string,allocator:=context.temp_allocator) -> 
 // A file as the document names it: relative to the assets folder when it is inside.
 scene_path :: proc(s:^Session,file:string) -> string {
     root:=s.assets_root
-    when ODIN_OS==.Windows {inside:=len(file)>len(root) && strings.equal_fold(file[:len(root)],root)}
-    else {inside:=len(file)>len(root) && file[:len(root)]==root}
-    if inside && file[len(root)]=='/' {return file[len(root)+1:]}
+    if len(file)>len(root) && file[len(root)]=='/' && project.path_same(file[:len(root)],root) {return file[len(root)+1:]}
     return file
 }
 
@@ -613,13 +611,6 @@ document_name :: proc(d:^Document,path,file:string) {
 
 // A new id for an asset made in the editor.
 asset_id_new :: proc(s:^Session) -> base.Asset_Id {
-    next :: proc(state:^u64) -> u64 {
-        state^+=0x9e3779b97f4a7c15
-        z:=state^
-        z=(z~(z>>30))*0xbf58476d1ce4e5b9
-        z=(z~(z>>27))*0x94d049bb133111eb
-        return z~(z>>31)
-    }
     s.id_state~=platform.clock_ns()
-    return {next(&s.id_state),next(&s.id_state)}
+    return {base.splitmix_next(&s.id_state),base.splitmix_next(&s.id_state)}
 }

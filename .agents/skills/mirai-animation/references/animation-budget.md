@@ -49,8 +49,24 @@ names or reference pose) and calls `pose_palette_batch`.
   `animation.budget_policy` of the rig.
 - Capacity changes or reloads may allocate; the stable path reuses jobs, scratch and palettes.
 
+`animation_sample` blends the poses of the tick the same way, between two passes of the owner
+thread: the first advances the clocks, events, actions and layers of each entity in order and the
+last takes pose requests, root motion and warping.
+
+- A pose job blends the clips, layers and program of its entities and samples their curves: it
+  writes only the state of each entity and the scratch of its job (`Pose_Scratch`, sized when
+  bindings are built), reads the libraries and the transforms of the tick, and does not allocate,
+  touch requests or events, or report: what it could not do (`Pose_Faults`) is reported after the
+  barrier, in the order of the entities.
+- Each entity is independent, so the poses do not depend on `job_grain`, on the workers or on
+  `parallel`.
+
 ## Verification
 
+- `rig_poses_do_not_depend_on_how_their_jobs_are_split` (`skeleton_test.odin`): the same poses on
+  the owner thread and in jobs of two grains, without allocations in a stable tick;
+  `poses_by_track_match_the_pose_found_by_name` (`pose_tracks_test.odin`): the blend by bone against
+  a `Pose` by name under cross-fades, masks and additive layers.
 - `budget_test.odin` (`plugins/animation/runtime`): period, priority, limit, forced update, frame
   going backwards, sparse slots, copies without allocations, identical poses and palettes with zero
   and two workers, rejection of aliases and invalid inputs, and workspace intact on a growth

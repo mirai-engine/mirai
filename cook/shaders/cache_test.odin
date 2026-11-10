@@ -8,6 +8,7 @@ import "core:testing"
 import "core:thread"
 import "core:time"
 import "mirai:std/base"
+import "mirai:project"
 
 @(private)
 ENGINE_ROOT :: #directory+"/../.."
@@ -377,7 +378,7 @@ shared_cache_prunes_entries_unused_for_a_month_at_most_once_a_day :: proc(t:^tes
 tool_of_the_checkout_is_found_before_path :: proc(t:^testing.T) {
     root:=base.test_folder(t,"shaders")
     if root=="" {return}
-    executable:=strings.concatenate({"spirv-val",EXECUTABLE_SUFFIX},context.temp_allocator)
+    executable:=strings.concatenate({"spirv-val",project.EXECUTABLE_SUFFIX},context.temp_allocator)
     fixture_write(t,root,strings.concatenate({".deps/sdk-b/deep/bin/",executable},context.temp_allocator),"tool")
     found,ok:=tool_find(root,.Spirv_Val,context.temp_allocator)
     testing.expect(t,ok)
@@ -388,15 +389,15 @@ tool_of_the_checkout_is_found_before_path :: proc(t:^testing.T) {
     found,ok=tool_find(root,.Spirv_Val,context.temp_allocator)
     testing.expect_value(t,found,path_join(root,".deps/sdk-a/Bin",executable,allocator=context.temp_allocator))
     // The compiler is only the one installed in .deps/slang.
-    fixture_write(t,root,strings.concatenate({".deps/sdk-a/Bin/slangc",EXECUTABLE_SUFFIX},context.temp_allocator),"tool")
+    fixture_write(t,root,strings.concatenate({".deps/sdk-a/Bin/slangc",project.EXECUTABLE_SUFFIX},context.temp_allocator),"tool")
     compiler,compiler_found:=tool_find(root,.Slangc,context.temp_allocator)
     testing.expect(t,!compiler_found || !path_inside(compiler,root),"a slangc of an SDK is not the pinned one")
-    fixture_write(t,root,strings.concatenate({".deps/slang/bin/slangc",EXECUTABLE_SUFFIX},context.temp_allocator),"tool")
+    fixture_write(t,root,strings.concatenate({".deps/slang/bin/slangc",project.EXECUTABLE_SUFFIX},context.temp_allocator),"tool")
     compiler,compiler_found=tool_find(root,.Slangc,context.temp_allocator)
     if _,configured:=os.lookup_env("MIRAI_SLANGC",context.temp_allocator);configured {log.info("MIRAI_SLANGC is set: the pinned compiler is not looked up");return}
     if _,configured:=os.lookup_env("MIRAI_SLANG",context.temp_allocator);configured {log.info("MIRAI_SLANG is set: the pinned compiler is not looked up");return}
     testing.expect(t,compiler_found)
-    testing.expect_value(t,compiler,path_join(root,".deps/slang/bin",strings.concatenate({"slangc",EXECUTABLE_SUFFIX},context.temp_allocator),allocator=context.temp_allocator))
+    testing.expect_value(t,compiler,path_join(root,".deps/slang/bin",strings.concatenate({"slangc",project.EXECUTABLE_SUFFIX},context.temp_allocator),allocator=context.temp_allocator))
 }
 
 @(test)

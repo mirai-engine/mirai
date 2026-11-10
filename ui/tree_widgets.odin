@@ -8,8 +8,8 @@ import "mirai:std/base"
 
 // What each kind of node of a tree builds when it holds no other nodes, how
 // a node takes part in navigation and how it is dragged and dropped. The
-// controls are those of a game (game.odin), in the parts of the style the
-// node resolves to.
+// controls are those of the package, with the style the node resolves to as
+// their look.
 
 // A Text: what its style fills, strokes or shades goes behind it as on a Box, a
 // box of the size of the node with its padding around the text.
@@ -74,7 +74,7 @@ tree_build_leaf :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,nod
         tree_button(ctx,b,node,index,slot,node_id,item,base_style,style,image_ref,content,selected,disabled)
     case .Checkbox:
         value:=bound.value.bound && current!=0
-        if game_checkbox(ctx,node_id,&value,control) {
+        if checkbox(ctx,node_id,&value,disabled,style,node.layout.width,node.layout.height) {
             bound_write(values,bound.value,1 if value else 0)
             changed(ctx,b,node,index,item,base_style,1 if value else 0,value)
         }
@@ -87,7 +87,13 @@ tree_build_leaf :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,nod
         if !bound.value.bound && hi>lo {current=lo}
         value:=f64(anim.value) if anim!=nil && .Value in anim.set else current
         moved:bool
-        if node.kind==.Slider {moved=game_slider(ctx,node_id,&value,{lo,hi,step},control)} else {moved=game_number(ctx,node_id,&value,{lo,hi,step},control)}
+        if node.kind==.Slider {
+            moved=slider(ctx,node_id,&value,{min=lo,max=hi,step=step,width=node.layout.width,height=node.layout.height,look=style,disabled=disabled}).changed
+        } else {
+            height:=node.layout.height
+            moved=number_field(ctx,node_id,&value,{width=node.layout.width,height=height.value if height.kind==.Fixed else 0,decimals=number_decimals(step),
+                min=lo,max=hi,has_min=hi>lo,has_max=hi>lo,step=step,stepper=true,look=style,disabled=disabled}).changed
+        }
         if bound.value.kind==.Int || bound.value.kind==.Uint {value=math.round(value)}
         if moved && value!=current {
             bound_write(values,bound.value,value)
@@ -181,7 +187,7 @@ tree_own_text :: proc(b:^Tree_Build,node:^Node,index:int) -> string {
 tree_button :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,node_id:Id,item:i32,base_style,style:^Node_Style,image_ref:Node_Image,content:string,selected,disabled:bool) {
     instance:=b.instance
     state:=&instance.slot[slot]
-    it:=styled_button(ctx,node_id,content,style^,layout=node.layout,selected=selected,disabled=disabled,image_ref=image_ref)
+    it:=button(ctx,node_id,{label=content,look=style,layout=&node.layout,image=image_ref,block=true,disabled=disabled})
     takes:=node.action!=0 && !b.desc.passive && !disabled
     down,pressed:bool
     if takes && ctx.game.action!=nil {down,pressed=ctx.game.action(ctx.game.user,node.action)}
@@ -200,7 +206,7 @@ tree_button :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,node_id
         }
         if state.held>0 && !state.latched {
             if r,found:=widget_rect(ctx,node_id);found {
-                bar:=max(game_em(ctx,style)*0.2,1)
+                bar:=max(control_em(ctx,style)*0.2,1)
                 element_leaf(ctx,{layout={width=fixed(r.w*clamp(state.held/node.hold,0,1)),height=fixed(bar)},float={to=.Surface,offset={r.x,r.y+r.h-bar},layer=ctx.layer+1},custom=paint_add(ctx,{kind=.Rect,fill=style.mark})})
             }
         }
@@ -462,16 +468,11 @@ rich_parse :: proc(content:string,base_style:Text_Style,out:[]Rich_Span) -> (cou
     return count,false
 }
 
-// A run of a span on a line: its bytes, or its prompt or image.
-@(private)
-Rich_Piece :: struct {span,start,end:int,width:f32}
 @(private)
 Rich_Build :: struct {
     id:Id,
     spans:[]Rich_Span,
-    line:[RICH_SPANS]Rich_Piece,
-    pieces:int,
-    used:f32,
+    flow:Flow(int),          // the line being filled; the run of a piece is its span
     align:Align,
     height:f32,              // of an empty line
     images:[]Node_Image,
@@ -502,6 +503,7 @@ rich_text :: proc(ctx:^Context,id:Id,content:string,style:Text_Style,layout:Layo
         return
     }
     r:=Rich_Build{id=id,spans=spans[:count],align=style.align_x,height=style.size*TEXT_LINE,images=images,link=link,left=-1}
+    r.flow.width=width
     if reveal<1 {
         total:=0
         for &span in r.spans {total+=utf8.rune_count_in_string(span.text) if span.prompt==0 && span.image==0 else 1}
@@ -510,11 +512,7 @@ rich_text :: proc(ctx:^Context,id:Id,content:string,style:Text_Style,layout:Layo
     font:=&ctx.font
     for &span,index in r.spans {
         if span.prompt!=0 || span.image!=0 {
-            w:=rich_inline_width(&r,&span)
-            if r.pieces>0 && r.used+w>width {rich_flush(ctx,&r)}
-            r.line[r.pieces]={span=index,width=w}
-            r.pieces+=1
-            r.used+=w
+            rich_put(ctx,&r,{width=rich_inline_width(&r,&span),box=true,run=index})
             continue
         }
         face:=int(span.style.font)
@@ -523,19 +521,10 @@ rich_text :: proc(ctx:^Context,id:Id,content:string,style:Text_Style,layout:Layo
             word,_,more:=layout_walk(&walk)
             if !more {break}
             if word.length==0 {rich_flush(ctx,&r);continue}
-            // A word that does not fit starts the next line, as the layout breaks its text.
-            if r.pieces>0 && r.used+word.width>width {rich_flush(ctx,&r)}
-            start,end:=int(word.start),int(word.start+word.length)
-            if last:=&r.line[max(r.pieces-1,0)];r.pieces>0 && last.span==index {
-                last.end,last.width=end,last.width+word.width
-            } else {
-                r.line[r.pieces]={span=index,start=start,end=end,width=word.width}
-                r.pieces+=1
-            }
-            r.used+=word.width
+            rich_put(ctx,&r,{text=span.text[word.start:][:word.length],width=word.width,size=span.style.size,font=span.style.font,run=index})
         }
     }
-    if r.pieces>0 {rich_flush(ctx,&r)}
+    if r.flow.count>0 {rich_flush(ctx,&r)}
     element_close(ctx)
     for paint,i in r.links[:r.link_count] {
         if r.named[i]==r.hot && paint!=nil {paint.decoration+={.Underline}}
@@ -554,24 +543,22 @@ rich_inline_width :: proc(r:^Rich_Build,span:^Rich_Span) -> f32 {
     return high
 }
 
-// Builds the pieces of a line of a rich text in a row as tall as its
-// tallest; a space that ends the line takes no room.
+// Puts a piece on the line, after building the lines it does not fit in.
+@(private)
+rich_put :: proc(ctx:^Context,r:^Rich_Build,piece:Flow_Piece(int)) {
+    piece:=piece
+    for !flow_put(&r.flow,&ctx.font,&piece) {rich_flush(ctx,r)}
+}
+
+// Builds the pieces of a line of a rich text in a row as tall as its tallest.
 @(private)
 rich_flush :: proc(ctx:^Context,r:^Rich_Build) {
-    line:=r.line[:r.pieces]
+    line:=flow_line(&r.flow,&ctx.font)
     high:=r.height if len(line)==0 else 0
-    for piece in line {high=max(high,r.spans[piece.span].style.size*TEXT_LINE)}
-    if len(line)>0 {
-        last:=&line[len(line)-1]
-        span:=&r.spans[last.span]
-        if span.prompt==0 && span.image==0 && last.end>last.start && span.text[last.end-1]==' ' {
-            last.end-=1
-            last.width-=text_width(&ctx.font," ",span.style.size,int(span.style.font))
-        }
-    }
+    for piece in line {high=max(high,r.spans[piece.run].style.size*TEXT_LINE)}
     box_begin(ctx,{layout={width=GROW,height=fixed(max(high,1)),direction=.Row,align_x=r.align,align_y=.Center}})
     for &piece in line {
-        span:=&r.spans[piece.span]
+        span:=&r.spans[piece.run]
         shown:=r.left!=0
         if span.prompt!=0 || span.image!=0 {
             if r.left>0 {r.left-=1}
@@ -590,7 +577,7 @@ rich_flush :: proc(ctx:^Context,r:^Rich_Build) {
             rich_piece(ctx,r,span,{layout={width=fixed(piece.width),height=fixed(span.style.size*TEXT_LINE)}},paint)
             continue
         }
-        text:=span.text[piece.start:piece.end]
+        text:=piece.text
         style:=span.style
         style.align_x,style.align_y,style.wrap,style.ellipsis=.Start,.Start,.None,false
         if span.link!=0 && r.link[3]>0 {style.color=r.link}
@@ -603,7 +590,7 @@ rich_flush :: proc(ctx:^Context,r:^Rich_Build) {
         rich_piece(ctx,r,span,{layout={width=fixed(piece.width),height=fixed(span.style.size*TEXT_LINE)}},paint)
     }
     box_end(ctx,{})
-    r.pieces,r.used=0,0
+    flow_next(&r.flow)
 }
 
 // A piece of a rich text: one of a link takes the pointer.

@@ -194,7 +194,7 @@ a_part_with_folders_is_one_library_that_the_shared_cache_keeps :: proc(t:^testin
     program:=project.path(folder,"program")
     testing.expect(t,os.make_directory_all(program)==nil)
     testing.expect(t,os.write_entire_file(project.path(program,"main.odin"),"package main\n\nimport \"core:os\"\nimport thing \"plugins:thing/runtime\"\nimport \"plugins:thing/runtime/sim\"\n\nmain :: proc() {os.exit(int(thing.doubled(2))-int(sim.answer())+21)}\n")==nil)
-    executable:=project.path(plugins_libraries_folder(p.root),strings.concatenate({"split",EXECUTABLE_EXTENSION}))
+    executable:=project.path(plugins_libraries_folder(p.root),strings.concatenate({"split",project.EXECUTABLE_SUFFIX}))
     command:=make([dynamic]string)
     append(&command,compiler,"build",program,fmt.tprintf("-collection:plugins=%s",plugins_decl(p.root,"minimal")),fmt.tprintf("-collection:mirai=%s",engine_paths(engine,.Dev).decl),fmt.tprintf("-out:%s",executable),"-o:minimal",fmt.tprintf("-custom-attribute:%s",CUSTOM_ATTRIBUTES))
     when ODIN_OS==.Linux {linker_flags_append(&command,"-Wl,-rpath,$ORIGIN")}
@@ -336,7 +336,7 @@ a_plugin_step_receives_a_params_struct_through_its_library :: proc(t:^testing.T)
     program:=project.path(folder,"program")
     testing.expect(t,os.make_directory_all(program)==nil)
     testing.expect(t,os.write_entire_file(project.path(program,"main.odin"),"package main\n\nimport \"core:os\"\nimport \"mirai:core\"\nimport thing \"plugins:thing/runtime\"\n\nmain :: proc() {\n    probes:core.Table(core.Probe)\n    asks:core.Asks\n    thing.thing_probe(core.Prober{probes=&probes,asks=&asks})\n    os.exit(int(probes.values[1].value)+int(asks.count))\n}\n")==nil)
-    executable:=project.path(plugins_libraries_folder(p.root),strings.concatenate({"params",EXECUTABLE_EXTENSION}))
+    executable:=project.path(plugins_libraries_folder(p.root),strings.concatenate({"params",project.EXECUTABLE_SUFFIX}))
     command:=make([dynamic]string)
     append(&command,compiler,"build",program,fmt.tprintf("-collection:plugins=%s",plugins_decl(p.root,"minimal")),fmt.tprintf("-collection:mirai=%s",decl),fmt.tprintf("-out:%s",executable),"-o:minimal",fmt.tprintf("-custom-attribute:%s",CUSTOM_ATTRIBUTES))
     when ODIN_OS==.Linux {linker_flags_append(&command,"-Wl,-rpath,$ORIGIN")}
@@ -391,7 +391,7 @@ an_any_of_a_type_of_what_links_against_a_library_formats_where_it_is_called :: p
     testing.expect(t,os.make_directory_all(program)==nil)
     main_text:="package main\n\nimport \"core:os\"\nimport \"mirai:thing\"\n\nKind :: enum u8 {Fire,Cancel,Section}\nRequest :: struct {kind:Kind,at:i32}\n\nmain :: proc() {\n    buffer:[128]u8\n    text:=thing.report(buffer[:],\"a %v of %v, %d\",Kind.Cancel,Request{.Section,7},thing.count(41))\n    os.write(os.stdout,transmute([]u8)text)\n}\n"
     testing.expect(t,os.write_entire_file(project.path(program,"main.odin"),main_text)==nil)
-    executable:=project.path(out,strings.concatenate({"program",EXECUTABLE_EXTENSION}))
+    executable:=project.path(out,strings.concatenate({"program",project.EXECUTABLE_SUFFIX}))
     command:=make([dynamic]string)
     append(&command,compiler,"build",program,fmt.tprintf("-collection:mirai=%s",decl),fmt.tprintf("-out:%s",executable),"-o:minimal")
     when ODIN_OS==.Linux {linker_flags_append(&command,"-Wl,-rpath,$ORIGIN")}

@@ -95,7 +95,6 @@ join :: proc(parts:..string) -> string {
     return path
 }
 
-EXE :: ".exe" when ODIN_OS==.Windows else ""
 
 // The compiler of cook/build: MIRAI_ODIN, the one pinned under .deps (also
 // the one of the main checkout from a worktree), or odin in PATH.
@@ -181,9 +180,9 @@ cmd_build :: proc(root:string,args:[]string) -> int {
         }
         if os.make_directory_all(join(root,"bin"))!=nil && !os.is_dir(join(root,"bin")) {return 1}
         // A failed build never replaces the previous executable.
-        staging:=join(root,"bin",fmt.aprintf(".%s-build-%d%s",target.output,os.get_pid(),EXE))
+        staging:=join(root,"bin",fmt.aprintf(".%s-build-%d%s",target.output,os.get_pid(),project.EXECUTABLE_SUFFIX))
         staged_sources:=fmt.aprintf("%s.sources.json",staging)
-        final:=join(root,"bin",fmt.aprintf("%s%s",target.output,EXE))
+        final:=join(root,"bin",fmt.aprintf("%s%s",target.output,project.EXECUTABLE_SUFFIX))
         command:=tool_command(root,target.package_path,debug?"-debug":"-o:speed",staging,staged_sources)
         if code:=run_compiler(root,command[:],"mirai build tools");code!=0 {os.remove(staging);os.remove(staged_sources);return code}
         if !executable_publish(root,staging,final,staged_sources,build_sources_file(root,target.output)) {return 1}
@@ -197,7 +196,7 @@ cmd_build :: proc(root:string,args:[]string) -> int {
 // is older than its sources, and that it was built when it is no longer there.
 // Named after the executable, so that Windows and WSL on one checkout keep theirs.
 build_sources_file :: proc(root,output:string) -> string {
-    return join(root,"bin",fmt.aprintf("%s%s.sources.json",output,EXE))
+    return join(root,"bin",fmt.aprintf("%s%s.sources.json",output,project.EXECUTABLE_SUFFIX))
 }
 
 // Puts a built executable and the list of its sources in their place. One
@@ -217,7 +216,7 @@ executable_publish :: proc(root,staging,final,staged_sources,sources:string) -> 
         }
     }
     if os.rename(staging,final)!=nil {
-        retired:=join(bin,fmt.aprintf(".retired-%d-%x%s",os.get_pid(),u64(time.to_unix_nanoseconds(time.now())),EXE))
+        retired:=join(bin,fmt.aprintf(".retired-%d-%x%s",os.get_pid(),u64(time.to_unix_nanoseconds(time.now())),project.EXECUTABLE_SUFFIX))
         if os.rename(final,retired)!=nil || os.rename(staging,final)!=nil {
             fmt.eprintfln("mirai: could not replace %s",final)
             os.remove(staging);os.remove(staged_sources)

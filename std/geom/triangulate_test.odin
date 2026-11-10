@@ -1,6 +1,8 @@
 package geom
 
 import "core:testing"
+import "mirai:std/base"
+import mm "mirai:std/math"
 
 @(private) loop_area :: proc(points:[]Vec2) -> f64 {
     area:f64
@@ -150,23 +152,23 @@ ear_clipping_survives_random_polygons :: proc(t:^testing.T) {
     points:[dynamic]Vec2
     defer delete(out)
     defer delete(points)
-    rng:=rng_make(0xea5)
+    rng:=base.rng_make(0xea5)
     for round in 0..<200 {
         // Star-shaped outline with a star-shaped hole, on a coarse grid in
         // half of the rounds so that points repeat and line up.
-        count:=3+int(rng_u32(&rng)%40)
-        hole:=3+int(rng_u32(&rng)%12) if round%3==0 else 0
+        count:=3+int(base.rng_u32(&rng)%40)
+        hole:=3+int(base.rng_u32(&rng)%12) if round%3==0 else 0
         clear(&points)
         for i in 0..<count {
             s,c:=turn_sincos(f64(i)/f64(count))
-            radius:=3+rng_f32(&rng)*7
+            radius:=3+mm.random_f32(&rng)*7
             p:=Vec2{f32(c)*radius,f32(s)*radius}
             if round%2==0 {p={f32(int(p.x*2))/2,f32(int(p.y*2))/2}}
             append(&points,p)
         }
         for i in 0..<hole {
             s,c:=turn_sincos(f64(i)/f64(hole))
-            radius:=0.5+rng_f32(&rng)*2
+            radius:=0.5+mm.random_f32(&rng)*2
             append(&points,Vec2{f32(c)*radius,-f32(s)*radius})
         }
         sizes:=[]int{count,hole} if hole>0 else []int{count}

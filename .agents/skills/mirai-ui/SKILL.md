@@ -104,7 +104,11 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
   only between frames, because they move the tables that the contexts copy in `frame_begin`, and the
   atlas grows only between frames. An added font or face is not removed.
 - **The editor theme is not changed for a game**: a game passes its own `Theme` or uses the widgets
-  with their own style (`text`, `image`, `skin_button`, game controls, tree nodes).
+  with their own style (`text`, `image`, a control with a `look`, game controls, tree nodes).
+- **One procedure per kind of control.** `button`, `checkbox`, `slider` and `number_field` serve
+  the editor and a game: each takes a `look`, the `Node_Style` resolved for the state it is in
+  (`style_resolve` with `widget_states`, or `skin_look`), and without one draws what the theme
+  gives it. A change to how one behaves reaches both.
 - **A `.ui` is written by names**, by one route: the document `ui.inspect` gives and `ui.write`
   takes; the human edits the same file in the visual editor and neither regenerates over the other.
   Tokens, `extends`, states that extend states, the layout of a style and the parameters of a

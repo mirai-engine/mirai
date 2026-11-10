@@ -32,7 +32,7 @@ bench_rig_dispatch_and_multi_ik_scaling :: proc(t:^testing.T) {
                     multi.enabled=variant==2
                     for &joint,j in multi.joints[:multi.joint_count] {joint=MULTI_IK_JOINT_DEFAULT;joint.bone=bone_ref(fmt.tprintf("joint%d",j+1))}
                     multi.effectors[0]=MULTI_IK_EFFECTOR_DEFAULT
-                    multi.effectors[0].bone,multi.effectors[0].position=bone_ref("joint4"),{.3,.5,0}
+                    multi.effectors[0].bone,multi.effectors[0].target=bone_ref("joint4"),spatial_point({.3,.5,0})
                     base.text_set(multi.name[:],fmt.tprintf("body%d",operation))
                     if !testing.expect(t,modifier_append(&modifiers.multi_ik,entity,multi)) {return}
                     if variant==2 {continue}

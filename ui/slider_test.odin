@@ -121,3 +121,57 @@ searchable_dropdown_filters_and_chooses_with_keyboard :: proc(t:^testing.T) {
     testing.expect_value(t,s.changes,2)
     testing.expect_value(t,ctx.stats.layout_errors,u32(0))
 }
+
+@(test)
+a_slider_drags_cancels_and_steps_the_same_with_any_look :: proc(t:^testing.T) {
+    Looked :: struct {value:f64,result:Number_Result,look:^Node_Style}
+    build :: proc(ctx:^Context,user:rawptr) {
+        s:=cast(^Looked)user
+        if panel(ctx,id(ctx,"panel"),{width=fixed(240),height=FIT,padding=padding_all(8)}) {
+            s.result=slider(ctx,id(ctx,"value"),&s.value,{min=0,max=8,step=2,width=fixed(200),look=s.look})
+        }
+    }
+    style:=TEST_CONTROL_STYLE
+    for look in ([]^Node_Style{nil,&style}) {
+        ctx:Context
+        testing.expect(t,context_init(&ctx,TEST_SMALL))
+        defer context_destroy(&ctx)
+        s:=Looked{value=2,look=look}
+        input:=test_input()
+        test_frame(&ctx,&input,build,&s)
+        value:=id(&ctx,"value")
+        rect:=test_rect(t,&ctx,value)
+        input.pointer={rect.x+rect.w-1,rect.y+rect.h*0.5}
+        test_frame(&ctx,&input,build,&s)
+        test_press(&input)
+        test_frame(&ctx,&input,build,&s)
+        testing.expect(t,s.result.began && s.result.changed && s.result.scrubbing && s.value==8,"The press takes the knob to the pointer")
+        input.pointer.x=rect.x+rect.w*0.4
+        test_frame(&ctx,&input,build,&s)
+        testing.expect_value(t,s.value,4.0)
+        test_key(&input,.Escape)
+        test_frame(&ctx,&input,build,&s)
+        testing.expect(t,s.result.cancelled && s.result.ended && s.value==2,"Escape puts back the value the drag began with")
+        test_release(&input)
+        test_frame(&ctx,&input,build,&s)
+        ctx.focus=value
+        test_key(&input,.Right)
+        test_frame(&ctx,&input,build,&s)
+        testing.expect(t,s.value==4 && s.result.began && s.result.ended,"A key steps it by its step, as one edit")
+        test_key(&input,.Left)
+        test_frame(&ctx,&input,build,&s)
+        test_key(&input,.Left)
+        test_frame(&ctx,&input,build,&s)
+        test_key(&input,.Left)
+        test_frame(&ctx,&input,build,&s)
+        testing.expect(t,s.value==0 && !s.result.changed,"It stays in its range")
+        paint:^Paint
+        for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Slider {paint=&p}}
+        if !testing.expect(t,paint!=nil) {continue}
+        if look==nil {
+            testing.expect(t,paint.fill2==ctx.theme.accent && paint.radius*2==SLIDER_KNOB,"Without a look it is the slider of the theme")
+        } else {
+            testing.expect(t,paint.fill==look.track && paint.fill2==look.mark && paint.stroke==look.knob && test_near(paint.radius*2,rect.h),"With one, every color is its look's and the knob is as tall as it")
+        }
+    }
+}

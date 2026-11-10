@@ -4,6 +4,7 @@ import "core:math/linalg"
 import "core:slice"
 import "mirai:core"
 import "mirai:host"
+import "mirai:std/base"
 import render "mirai:engine/render"
 import sim "plugins:physics/runtime/sim"
 import volume "mirai:engine/volume"
@@ -277,7 +278,7 @@ sealed_key :: proc(s:^Sync,structure:u64) -> u64 {
     key:=structure
     revision:=s.app.assets!=nil?s.app.assets.revision:0
     for value in ([5]u64{u64(s.playing),core.layout(s.motions),core.layout(s.character_states),u64(s.state.world.body_count),revision}) {
-        key=(key~value)*0x100000001b3
+        key=base.hash_mix(key,value)
     }
     return key
 }
@@ -344,9 +345,9 @@ sync_order :: proc(s:^Sync,e:core.Entity) -> (order:u64,body:bool) {
 characters_seen :: proc(characters:core.Read(Character)) -> (seen:u64) {
     for c in characters.table.values[:core.count(characters)] {
         for field in ([9]f32{c.mass,c.max_slope,c.step_height,c.traction_force,c.adhesion_force,c.gravity_scale,c.push_force,c.density,c.up_speed}) {
-            seen=(seen~u64(transmute(u32)field))*0x100000001b3
+            seen=base.hash_mix(seen,u64(transmute(u32)field))
         }
-        seen=(seen~u64(transmute(u8)c.locks))*0x100000001b3
+        seen=base.hash_mix(seen,u64(transmute(u8)c.locks))
     }
     return
 }

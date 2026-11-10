@@ -48,7 +48,7 @@ program_bench_step :: proc(state:^Playing,playback:^Playback,content:^host.Conte
         if !program_players(state,output,content,animation,events,playback,1.0/60,-1,nil) {return false}
         if !program_pose(playback,state,content,animation,output,{}) {return false}
         layers_advance(playback,state,content,animation,events,1.0/60,nil)
-        pose_layers(playback,state,&content.lib,animation,nil)
+        pose_layers(playback,state,&content.lib,animation)
     } else {
         advance(playback,state,content,animation,events,1.0/60,nil)
         layers_advance(playback,state,content,animation,events,1.0/60,nil)
@@ -103,7 +103,7 @@ bench_animation_programs_64_bones :: proc(t:^testing.T) {
     for id,case_index in ids {
         state:=program_bench_state();defer playing_free(&state)
         playback:Playback;defer playback_free(&playback)
-        if !testing.expect(t,lib.pose_init(&playback.pose,256)) {return}
+        if !testing.expect(t,tracks_bind(&playback,&state,content)) {return}
         events:Animation_Events;defer delete(events.items)
         animation:=ANIMATION_DEFAULT;animation.asset=id
         if id==blend_id {animation_parameter(&animation,"blend",.5)}
@@ -121,7 +121,7 @@ bench_animation_programs_64_bones :: proc(t:^testing.T) {
             best=min(best,time.tick_since(start))
         }
         context=saved;allocation.remaining=100000
-        testing.expect(t,stable && playback.pose.failed==0 && allocation.calls==allocations)
+        testing.expect(t,stable && allocation.calls==allocations)
         results[case_index]=f64(time.duration_nanoseconds(best))/REPEATS
         log.infof("animation program, 64 bones / position+rotation, %s: %.2f ns/pose (check %v)",labels[case_index],results[case_index],sink)
     }
@@ -130,7 +130,6 @@ bench_animation_programs_64_bones :: proc(t:^testing.T) {
         for workload in 0..<2 {
             states:=make([]Playing,actor_count)
             playback:Playback;events:Animation_Events
-            if !testing.expect(t,lib.pose_init(&playback.pose,256)) {delete(states);return}
             allocation.remaining=100000
             saved:=context;context.allocator={runtime_failure_allocator,&allocation};context.temp_allocator=context.allocator
             animation:=ANIMATION_DEFAULT
@@ -139,6 +138,7 @@ bench_animation_programs_64_bones :: proc(t:^testing.T) {
             valid:=true
             for &state,i in states {
                 state=program_bench_state();state.entity=core.Entity(i+1)
+                valid &&=tracks_bind(&playback,&state,content)
                 for _ in 0..<128 {valid &&=program_bench_step(&state,&playback,content,animation,&events,&app,&blends,&graphs)}
             }
             context=saved
@@ -162,7 +162,7 @@ bench_animation_programs_64_bones :: proc(t:^testing.T) {
             labels:=[2]string{"cached one clip","changing blend parameter"}
             pose_hash:=program_bench_pose_hash(states[0].local[:])
             for state in states {testing.expect_value(t,program_bench_pose_hash(state.local[:]),pose_hash)}
-            testing.expect(t,valid && finite(check) && playback.pose.failed==0 && allocation.calls==allocations)
+            testing.expect(t,valid && finite(check) && allocation.calls==allocations)
             log.infof("animation program multiactor, 64 bones, %s, actors %d: %.2f ns/actor/tick, output %d B/actor, Program_Output %d B, pose %x, check %.6f",labels[workload],actor_count,f64(time.duration_nanoseconds(best))/f64(256*actor_count),resident,size_of(Program_Output),pose_hash,check)
             for &state in states {playing_free(&state)}
             delete(states);delete(events.items);playback_free(&playback)

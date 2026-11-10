@@ -134,7 +134,6 @@ mirror_fixture :: proc(t:^testing.T,f:^Mirror_Fixture) -> ^Playing {
     testing.expect(t,kick!=0)
     f.content.lib.clips[1]=f.content.lib.clips[0];f.content.lib.clips[1].loop=.Loop;f.content.lib.clip_count=2;f.content.clip_count=1
     f.content.roots=make([]asset.Animation_Root,1);base.text_set(f.content.roots[0].bone[:],"pelvis");f.content.roots[0].translation=true
-    testing.expect(t,lib.pose_init(&f.playback.pose,64))
     state:=state_get(&f.playback,f.rig)
     testing.expect(t,skeleton_bind(&f.playback,state,&f.definition,&f.content,&f.transforms))
     return state
@@ -183,6 +182,7 @@ mirrored_graph_sources_and_rigs_swap_sides_and_reflect_root_motion :: proc(t:^te
     output:=new(Program_Output);defer {program_output_free(output);mem.free(output)}
     testing.expect(t,program_node(output,plain_profile,0,nil,nil,nil,{}))
     f.playback.frame+=1;plain.program.ready=true
+    testing.expect(t,tracks_bind(&f.playback,&plain,&content))
     testing.expect(t,program_players(&plain,output,&content,ANIMATION_DEFAULT,&events,&f.playback,.1,-1,nil))
     testing.expect(t,!program_pose(&f.playback,&plain,&content,ANIMATION_DEFAULT,output,{}) && plain.program.error==.Unsupported_Mirror,"a rig without skeleton cannot mirror")
     testing.expect(t,!playing_mirror(&plain,plain.local[:]))

@@ -18,11 +18,11 @@ test_controls_build :: proc(ctx:^Context,user:rawptr) {
     s:=cast(^Test_Controls)user
     c:=Game_Control{style=&s.style}
     if box(ctx,{direction=.Column,gap=4,padding=padding_all(8)}) {
-        game_slider(ctx,id(ctx,"volume"),&s.volume,{0,1,0.25},c)
-        game_checkbox(ctx,id(ctx,"on"),&s.on,c)
+        slider(ctx,id(ctx,"volume"),&s.volume,{min=0,max=1,step=0.25,look=&s.style})
+        checkbox(ctx,id(ctx,"on"),&s.on,look=&s.style)
         if game_radio(ctx,id(ctx,"radio"),s.radio,c) {s.radio_clicks+=1}
         game_selector(ctx,id(ctx,"quality"),{joined=TEST_CONTROL_OPTIONS},&s.choice,c)
-        game_number(ctx,id(ctx,"count"),&s.count,{0,10,2},c)
+        number_field(ctx,id(ctx,"count"),&s.count,{min=0,max=10,has_min=true,has_max=true,step=2,stepper=true,look=&s.style})
         game_field(ctx,id(ctx,"name"),s.name[:],&s.name_length,{control=c,placeholder="Name",limit=4})
         game_field(ctx,id(ctx,"secret"),s.secret[:],&s.secret_length,{control=c,password=true})
         game_dropdown(ctx,id(ctx,"pick"),{joined=TEST_CONTROL_OPTIONS},&s.picked,c)

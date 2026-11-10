@@ -58,7 +58,7 @@ path_find :: proc(name:string) -> (path:string,found:bool) {
     directories,_:=os.split_path_list(search,context.allocator)
     for directory in directories {
         if directory=="" {continue}
-        for extension in ([2]string{"",EXE}) {
+        for extension in ([2]string{"",project.EXECUTABLE_SUFFIX}) {
             candidate:=fmt.aprintf("%s/%s%s",strings.trim_right(directory,"/\\"),name,extension)
             if os.is_file(candidate) {return candidate,true}
         }
@@ -280,12 +280,6 @@ ensure_c_library :: proc(root:string,library:C_Library,log:^strings.Builder) -> 
         if os.copy_file(staged,library_file)!=nil || os.rename(staged,cached)!=nil {_=os.remove(staged)}
     }
     return os.write_entire_file(files.key,key)==nil
-}
-
-path_same :: proc(a,b:string) -> bool {
-    x,_:=strings.replace_all(strings.trim_right(a,"/\\"),"\\","/",context.temp_allocator)
-    y,_:=strings.replace_all(strings.trim_right(b,"/\\"),"\\","/",context.temp_allocator)
-    when ODIN_OS==.Windows {return strings.equal_fold(x,y)} else {return x==y}
 }
 
 // Windows loads SDL3.dll from the folder of the executable: copy the one of the Odin installation there.

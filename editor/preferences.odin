@@ -1,11 +1,11 @@
 package editor
 
 import "base:runtime"
-import "core:hash"
 import "core:mem"
 import "core:strings"
 import "mirai:editor/api"
 import "mirai:project"
+import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:ui"
 
@@ -71,8 +71,8 @@ marks_list :: proc(s:^Session,navigation:^Content_Navigation) -> []project.Setti
 
 @(private)
 preferences_hash :: proc(list:[]project.Setting) -> (h:u64) {
-    h=0xcbf29ce484222325
-    for setting in list {h=hash.fnv64a(([^]u8)(setting.value)[:setting.info.size],h)}
+    h=base.HASH_SEED
+    for setting in list {h=base.hash64(([^]u8)(setting.value)[:setting.info.size],h)}
     return
 }
 

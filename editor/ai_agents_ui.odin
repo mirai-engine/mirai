@@ -527,7 +527,7 @@ ai_review_bar :: proc(s:^Session,task:^Ai_Task,id:base.Entity_Id,width:f32) {
             if message:=ai_review_entity_revert(s,m,task,id);message!="" {notify(s,message);return}
             ai_review_resolved(s,task,id,walked)
         }
-        if ui.button(ctx,ui.id(ctx,"accept_entity"),{icon=.Check,icon_color=color,style=.Ghost,width=24,height=24,use_appearance=true,appearance={fill=ui.color_alpha(color,32),stroke=ui.color_alpha(color,65),radius=th.radius_control}}).clicked {
+        if ui.button(ctx,ui.id(ctx,"accept_entity"),{icon=.Check,icon_color=color,style=.Ghost,width=24,height=24,look=&ui.Node_Style{fill=ui.color_alpha(color,32),stroke=ui.color_alpha(color,65),radius=th.radius_control}}).clicked {
             ai_review_entity_accept(s,m,task,id)
             ai_review_resolved(s,task,id,walked)
         }
@@ -706,14 +706,14 @@ ai_chat_question_build :: proc(s:^Session,task:^Ai_Task,width:f32) {
         for label,index in ([2]string{"Yes","No"}) {
             size:=ui.text_width(&ctx.font,label,th.font_small)+22
             place(ctx,&open,&used,width,size)
-            if ui.button(ctx,ui.id(ctx,"confirm",index+1),{label=label,width=size,height=ctx.theme.control,size=th.font_small,center=true,use_appearance=true,appearance=appearance}).clicked {answer(s,task,label)}
+            if ui.button(ctx,ui.id(ctx,"confirm",index+1),{label=label,width=size,height=ctx.theme.control,size=th.font_small,center=true,look=&appearance}).clicked {answer(s,task,label)}
         }
     case .Single:
         for index in 0..<count {
             label:=string(options[index])
             size:=min(ui.text_width(&ctx.font,label,th.font_small)+22,width)
             place(ctx,&open,&used,width,size)
-            if ui.button(ctx,ui.id(ctx,"choice",index+1),{label=ai_chat_menu_label(ctx,label,size-22),width=size,height=ctx.theme.control,size=th.font_small,center=true,use_appearance=true,appearance=appearance}).clicked {answer(s,task,label)}
+            if ui.button(ctx,ui.id(ctx,"choice",index+1),{label=ai_chat_menu_label(ctx,label,size-22),width=size,height=ctx.theme.control,size=th.font_small,center=true,look=&appearance}).clicked {answer(s,task,label)}
         }
     case .Multi:
         for index in 0..<count {
@@ -723,7 +723,7 @@ ai_chat_question_build :: proc(s:^Session,task:^Ai_Task,width:f32) {
             picked:=&m.picked[index]
             style:=appearance
             if !picked^ {style={fill=ui.color_alpha(color,8),stroke=ui.color_alpha(color,40),radius=13,text=appearance.text}}
-            if ui.button(ctx,ui.id(ctx,"choice",index+1),{label=ai_chat_menu_label(ctx,label,size-34),icon=picked^?.Checkbox_Checked:.Checkbox,icon_color=color,icon_size=12,width=size,height=ctx.theme.control,size=th.font_small,use_appearance=true,appearance=style}).clicked {picked^=!picked^}
+            if ui.button(ctx,ui.id(ctx,"choice",index+1),{label=ai_chat_menu_label(ctx,label,size-34),icon=picked^?.Checkbox_Checked:.Checkbox,icon_color=color,icon_size=12,width=size,height=ctx.theme.control,size=th.font_small,look=&style}).clicked {picked^=!picked^}
         }
         chosen:[AI_QUESTION_BYTES]u8
         length:=0

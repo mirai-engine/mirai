@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:os"
 import "core:slice"
 import "core:strings"
+import "mirai:project"
 
 // A test the sources of a package declare. here: its file builds for this
 // system. device: it reaches the device of the GPU tests (device_mark), told
@@ -38,7 +39,7 @@ test_declared :: proc(folder:string,files:[]string={},device:=false,allocator:=c
 // Whether a file of a package is one of those asked, as the system tells names apart.
 test_file_among :: proc(files:[]string,name:string) -> bool {
     for file in files {
-        if path_same(file,name) {return true}
+        if project.path_same(file,name) {return true}
     }
     return false
 }

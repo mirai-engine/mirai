@@ -199,17 +199,19 @@ a_tree_keeps_the_rules_of_each_style_in_the_order_they_resolve :: proc(t:^testin
 }
 
 @(test)
-button_appearance_draws_its_gradient_border_shadow_and_disabled_variant :: proc(t:^testing.T) {
+a_button_draws_the_gradient_border_shadow_and_disabled_variant_of_its_look :: proc(t:^testing.T) {
     Scene :: struct {disabled:bool,clicks:int}
     scene:Scene
     build :: proc(ctx:^Context,user:rawptr) {
         s:=cast(^Scene)user
         rules:=[1]Style_Variant{{states={.Disabled},patch={fields={.Fill,.Fill2,.Stroke},values={fill={40,40,40,255},fill2={40,40,40,255},stroke={90,90,90,255}}}}}
         if box(ctx,{width=fixed(96),height=fixed(64),padding=padding_all(8)}) {
-            it:=button(ctx,id(ctx,"styled"),{width=80,height=48,disabled=s.disabled,use_appearance=true,variants=rules[:],appearance={
+            styled:=id(ctx,"styled")
+            look:=style_resolve(&ctx.theme,{
                 fill={255,0,0,255},fill2={0,0,255,255},stroke={0,255,0,255},radius=12,stroke_width=4,
                 shadow=true,shadow_color={255,255,255,255},shadow_blur=3,
-            }})
+            },rules[:],states=widget_states(ctx,styled,false,s.disabled))
+            it:=button(ctx,styled,{width=80,height=48,disabled=s.disabled,look=&look})
             if it.clicked {s.clicks+=1}
         }
     }

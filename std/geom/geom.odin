@@ -23,6 +23,7 @@ package geom
 import "base:runtime"
 import "core:math"
 import "core:math/linalg"
+import "mirai:std/base"
 
 Vec2 :: [2]f32
 Vec3 :: [3]f32
@@ -115,43 +116,10 @@ plane_distance :: proc "contextless" (plane:Plane,p:Vec3) -> f32 {
     return -cr,sr
 }
 
-@(private) hash_u64 :: #force_inline proc "contextless" (x:u64) -> u64 {
-    z:=x+0x9e3779b97f4a7c15
-    z=(z~(z>>30))*0xbf58476d1ce4e5b9
-    z=(z~(z>>27))*0x94d049bb133111eb
-    return z~(z>>31)
-}
-
 @(private) position_hash :: #force_inline proc "contextless" (p:Vec3) -> u64 {
     // Adding zero folds -0 into +0, which compare equal.
     x,y,z:=transmute(u32)(p.x+0),transmute(u32)(p.y+0),transmute(u32)(p.z+0)
-    return hash_u64(hash_u64(u64(x)|u64(y)<<32)~u64(z))
-}
-
-// PCG32. The sequence depends only on the seed.
-@(private) Rng :: struct {state:u64}
-@(private) rng_make :: proc "contextless" (seed:u64) -> Rng {
-    r:=Rng{hash_u64(seed)}
-    rng_u32(&r)
-    return r
-}
-@(private) rng_u32 :: proc "contextless" (r:^Rng) -> u32 {
-    old:=r.state
-    r.state=old*6364136223846793005+1442695040888963407
-    x:=u32(((old>>18)~old)>>27)
-    rot:=u32(old>>59)
-    return (x>>rot)|(x<<((32-rot)&31))
-}
-// Uniform in [0,1) with 24 bits, exact in f32.
-@(private) rng_f32 :: proc "contextless" (r:^Rng) -> f32 {return f32(rng_u32(r)>>8)*(1.0/16777216.0)}
-@(private) rng_range :: proc "contextless" (r:^Rng,lo,hi:f32) -> f32 {return lo+(hi-lo)*rng_f32(r)}
-// Uniform inside the unit ball, by rejection.
-@(private) rng_ball :: proc "contextless" (r:^Rng) -> Vec3 {
-    for _ in 0..<64 {
-        p:=Vec3{rng_f32(r)*2-1,rng_f32(r)*2-1,rng_f32(r)*2-1}
-        if linalg.dot(p,p)<=1 {return p}
-    }
-    return {}
+    return base.hash_u64(base.hash_u64(u64(x)|u64(y)<<32)~u64(z))
 }
 
 // Open addressing map from a u64 key to a u32. Lookups depend only on the
@@ -189,7 +157,7 @@ plane_distance :: proc "contextless" (plane:Plane,p:Vec3) -> f32 {
 // pointer is valid until the next reset.
 @(private) key_map_entry :: proc(m:^Key_Map,key:u64,value:u32) -> (entry:^u32,inserted:bool) #no_bounds_check {
     mask:=u64(len(m.keys)-1)
-    slot:=hash_u64(key)&mask
+    slot:=base.hash_u64(key)&mask
     for {
         k:=m.keys[slot]
         if k==key {return &m.values[slot],false}
@@ -202,7 +170,7 @@ plane_distance :: proc "contextless" (plane:Plane,p:Vec3) -> f32 {
 @(private) key_map_find :: proc(m:^Key_Map,key:u64) -> (value:u32,found:bool) #no_bounds_check {
     if len(m.keys)==0 {return 0,false}
     mask:=u64(len(m.keys)-1)
-    slot:=hash_u64(key)&mask
+    slot:=base.hash_u64(key)&mask
     for {
         k:=m.keys[slot]
         if k==key {return m.values[slot],true}

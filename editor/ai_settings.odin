@@ -170,7 +170,7 @@ ai_codex_model_supported :: proc(model:string) -> bool {
 // in PATH or a usual folder, where Anthropic's installer puts it, or in the
 // package npm installs. Empty when missing.
 ai_claude_binary :: proc(allocator:=context.temp_allocator) -> string {
-    name:="claude"+(".exe" when ODIN_OS==.Windows else "")
+    name:="claude"+project.EXECUTABLE_SUFFIX
     for folder in ai_user_folders(allocator) {
         if path:=project.path(folder,name,allocator=allocator);os.is_file(path) {return path}
         // On Windows npm puts a script in the folder and the program in its package.
@@ -231,7 +231,7 @@ ai_agent_entry :: proc(m:^Ai,agent:Ai_Agent,runtime:Ai_Runtime,allocator:=contex
     ids,packages:=AI_AGENT_IDS,AI_AGENT_PACKAGES
     folder:=ai_agents_folder(m,ids[agent],allocator)
     if folder=="" {return ""}
-    if runtime==.Bundled {return project.path(folder,"agent"+(".exe" when ODIN_OS==.Windows else ""),allocator=allocator)}
+    if runtime==.Bundled {return project.path(folder,"agent"+project.EXECUTABLE_SUFFIX,allocator=allocator)}
     return project.path(folder,"node_modules",packages[agent],"dist","index.js",allocator=allocator)
 }
 ai_runtime_path :: proc(s:^Session,runtime:Ai_Runtime) -> (path:string,found:bool) {
@@ -242,7 +242,7 @@ ai_runtime_path :: proc(s:^Session,runtime:Ai_Runtime) -> (path:string,found:boo
     if found {return}
     home:=ai_agents_home(s.ai)
     if home=="" {return "",false}
-    path=project.path(home,"runtime","bun"+(".exe" when ODIN_OS==.Windows else ""),allocator=context.temp_allocator)
+    path=project.path(home,"runtime","bun"+project.EXECUTABLE_SUFFIX,allocator=context.temp_allocator)
     return path,os.is_file(path)
 }
 ai_runtime_resolve :: proc(s:^Session,requested:Ai_Runtime) -> (runtime:Ai_Runtime,found:bool) {

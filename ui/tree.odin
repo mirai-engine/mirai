@@ -620,7 +620,7 @@ tree_node_id :: proc(ctx:^Context,node:^Node,index:int) -> Id {
 @(private)
 tree_name_id :: proc(ctx:^Context,name:u64) -> Id {
     name:=name
-    seed:=ctx.id_stack[ctx.id_depth-1] if ctx.id_depth>0 else u32(0x811c9dc5)
+    seed:=ctx.id_stack[ctx.id_depth-1] if ctx.id_depth>0 else ID_SEED
     value:=hash.fnv32a(mem.ptr_to_bytes(&name),seed)
     return Id(value) if value!=0 else Id(1)
 }
@@ -1206,7 +1206,8 @@ tree_build_tabs :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next,slot:in
             if label=="" {label=tree_node_text(ctx,b,c,child,int(instance.slots[child])+copy,values)}
             if label=="" {label=string(tree.strings[c.tab.offset:][:c.tab.length])}
             if label=="" {label=number_text(ctx,f64(at+1),0)}
-            if styled_button(ctx,tab,label,base_style,tree_style_rules(tree,node.style),node.style,variant,{padding=TREE_TAB_PADDING},at==chosen).clicked {picked=at}
+            look:=style_resolve(&ctx.theme,base_style,tree_style_rules(tree,node.style),node.style,variant,widget_states(ctx,tab,at==chosen))
+            if button(ctx,tab,{label=label,look=&look,layout=&Layout{padding=TREE_TAB_PADDING},block=true}).clicked {picked=at}
             if ctx.focus==tab && ctx.focus_moved {picked=at}
             child+=int(c.subtree)+1
         }

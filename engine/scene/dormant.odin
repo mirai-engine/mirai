@@ -182,13 +182,13 @@ fold_skips :: proc(info:^core.Table_Info,value_type:^core.Value_Schema) -> bool 
 // and where it hangs is told by the stamps of Parent.
 @(private)
 shape_of :: proc(w:core.World_Ref,types:^core.World_Schema,held:^core.Table(Section_Held),e:core.Entity) -> u64 {
-    shape:=u64(0xcbf29ce484222325)
+    shape:=base.HASH_SEED
     for &info,at in w.info.tables {
         if info.place!=w.place || info.type==core.Parent || fold_skips(&info,&types.tables[at]) {continue}
         t:=core.world_table_at(w,&info)
         row:=core.raw_row(t,e)
         if row<0 || info.type==core.Disabled && row_has(held,e) {continue}
-        shape=(shape~(u64(at)<<1|u64(t.off[row])))*0x100000001b3
+        shape=base.hash_mix(shape,u64(at)<<1|u64(t.off[row]))
     }
     return shape
 }

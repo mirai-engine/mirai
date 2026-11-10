@@ -201,23 +201,44 @@ font_takes_several_fonts_and_sizes :: proc(t:^testing.T) {
 
 @(test)
 text_wraps_at_words_and_newlines :: proc(t:^testing.T) {
-    // Without an atlas every character but the space is half a size wide.
+    // Without an atlas every character but the space is half a size wide, and a space a quarter.
     font:Font
-    line,rest,width:=text_line(&font,"alpha beta gamma",10,60,.Words)
-    testing.expect_value(t,line,"alpha beta")
-    testing.expect_value(t,rest,"gamma")
+    Case :: struct {text:string,width:f32,wrap:Text_Wrap,lines:[]string}
+    cases:=[]Case{
+        {"alpha beta gamma",60,.Words,{"alpha beta","gamma"}},
+        {"alpha beta gamma",30,.Words,{"alpha","beta","gamma"}},
+        {"alpha beta gamma",60,.None,{"alpha beta gamma"}},
+        {"one\ntwo",1000,.Words,{"one","two"}},
+        {"",100,.Words,{""}},
+        // A word and the space after it fit, or the word starts the next line.
+        {"alpha beta",49,.Words,{"alpha beta"}},
+        {"alpha beta gamma",49,.Words,{"alpha","beta gamma"}},
+        // A word wider than the line takes one of its own, whole.
+        {"unbreakable word",20,.Words,{"unbreakable","word"}},
+        {"a unbreakable b",20,.Words,{"a","unbreakable","b"}},
+        // A line ends before the spaces it breaks at; one that does not fit after a word starts the next line.
+        {"aaaa  bbbb",25,.Words,{"aaaa","bbbb"}},
+        {"aaaa  bbbb",24,.Words,{"aaaa"," bbbb"}},
+        {"a  b",100,.Words,{"a  b"}},
+        // The spaces before a newline stay in their line, and a newline that ends the text starts an empty line.
+        {"ab  \ncd",100,.Words,{"ab  ","cd"}},
+        {"a\n\nb",100,.None,{"a","","b"}},
+        {"a\n",100,.Words,{"a",""}},
+        {"\n",100,.Words,{"",""}},
+    }
+    for c in cases {
+        it:=text_lines(&font,c.text,10,c.width,c.wrap)
+        for {
+            start,end,ok:=text_lines_next(&it)
+            if !ok {break}
+            testing.expectf(t,it.row<len(c.lines) && c.text[start:end]==c.lines[min(it.row,len(c.lines)-1)],"%q at %v: line %d is %q",c.text,c.width,it.row,c.text[start:end])
+        }
+        testing.expectf(t,it.row+1==len(c.lines),"%q at %v: %d lines",c.text,c.width,it.row+1)
+    }
+    _,_,width:=text_line(&font,"alpha beta gamma",10,60,.Words)
     testing.expect_value(t,width,f32(47.5))
-    line,rest,_=text_line(&font,"alpha beta gamma",10,60,.None)
-    testing.expect_value(t,line,"alpha beta gamma")
-    testing.expect_value(t,rest,"")
-    line,rest,_=text_line(&font,"one\ntwo",10,1000,.Words)
-    testing.expect_value(t,line,"one")
-    testing.expect_value(t,rest,"two")
-    line,rest,_=text_line(&font,"unbreakable word",10,20,.Words)
-    testing.expect_value(t,line,"unbreakable")
-    testing.expect_value(t,rest,"word")
-    testing.expect_value(t,text_line_count(&font,"alpha beta gamma",10,60,.Words),2)
-    testing.expect_value(t,text_line_count(&font,"alpha beta gamma",10,30,.Words),3)
+    // The empty line a newline at the end starts is the caret's: the text itself is no taller.
+    testing.expect_value(t,text_line_count(&font,"a\n",10,100,.Words),1)
     testing.expect_value(t,text_line_count(&font,"a\n\nb",10,100,.None),3)
     testing.expect_value(t,text_line_count(&font,"",10,100,.Words),1)
 }
