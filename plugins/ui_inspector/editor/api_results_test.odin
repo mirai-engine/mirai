@@ -12,20 +12,20 @@ every_result_of_the_ui_methods_registers_with_its_schema :: proc(t:^testing.T) {
     s:api.Server
     if !testing.expect_value(t,api.server_init(&s,{}),api.Init_Error.None) {return}
     defer api.server_destroy(&s)
-    Result :: struct {info:^runtime.Type_Info,writes:bool,part:string}
+    Result :: struct {info:^runtime.Type_Info,part:string}
     results:=[?]Result{
-        {type_info_of(Tree_Inspect),true,`"required":["name"]`},
-        {type_info_of(Ui_Ok),false,`"required":["ok"]`},
-        {type_info_of(Tree_Write_Answer),false,`"required":["ok","made","removed"]`},
-        {type_info_of(Ui_Paths_Result),true,`"required":["name","path","fits","navigable"]`},
-        {type_info_of(Ui_Check_Result),true,`"required":["asset","node","binding","path","loads","message"]`},
-        {type_info_of(Ui_Rename_Result),true,`"files":{"type":"array","items":{"type":"string","maxLength":1024}`},
+        {type_info_of(Tree_Inspect),`"required":["document"]`},
+        {type_info_of(Ui_Ok),`"required":["ok"]`},
+        {type_info_of(Tree_Write_Answer),`"required":["ok","made","removed"]`},
+        {type_info_of(Ui_Paths_Result),`"required":["name","path","fits","navigable"]`},
+        {type_info_of(Ui_Check_Result),`"required":["asset","node","binding","path","loads","message"]`},
+        {type_info_of(Ui_Rename_Result),`"files":{"type":"array","items":{"type":"string"}`},
     }
     buffer:=make([]u8,1<<16,context.temp_allocator)
     for r,i in results {
         name:=fmt.tprintf("ui.m%d",i)
         handler :: proc(call:^api.Call) {}
-        testing.expect_value(t,api.method_register(&s,{name=name,result=r.info,writes_result=r.writes,handler=handler}),api.Register_Error.None)
+        testing.expect_value(t,api.method_register(&s,{name=name,result=r.info,handler=handler}),api.Register_Error.None)
         method:=api.method_find(&s,name)
         if method==nil {continue}
         w:serial.Writer

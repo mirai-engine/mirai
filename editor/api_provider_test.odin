@@ -43,8 +43,6 @@ api_test_run_v2 :: proc(s:^Session,call:^api.Call) {api.call_result(call,Api_Tes
 @(private="file")
 API_HAND_WRITTEN :: [?]struct{file,pattern:string,count:int}{
     {"editor/api/rpc.odin","writes_result=true",1},
-    {"plugins/ui_inspector/editor/api_tree.odin","writes_result=true",1},
-    {"plugins/ui_inspector/editor/bindings.odin","writes_result=true",3},
     {"editor/api_material_instance.odin","rpc_init(",2},
     {"editor/api_play_edit.odin","rpc_init(",1},
 }

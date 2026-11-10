@@ -712,19 +712,3 @@ document_bytes :: proc(args:^Tree_Args,id:base.Asset_Id,r:^Records) -> (bytes:[]
     return
 }
 
-// The problems of a check as ui.check and mirai ui check give them.
-problems_write :: proc(out:^serial.Writer,a:Assets,problems:[]Bind_Problem) {
-    serial.text_write_raw(out,`{"problems":[`)
-    for &problem,i in problems {
-        if i>0 {serial.write_u8(out,',')}
-        serial.write_u8(out,'{')
-        serial.json_text(out,"asset",file_name_of(a,problem.asset,"missing") if problem.fault!=.Code else "",true)
-        serial.json_text(out,"node",serial.text_field(problem.name[:]))
-        serial.json_text(out,"binding","Text (in braces)" if problem.fault==.Template else fmt.tprintf("%v",problem.binding) if problem.fault==.Path else "")
-        serial.json_text(out,"path",serial.text_field(problem.path[:]) if problem.fault==.Path else "")
-        serial.json_bool(out,"loads",problem.fault!=.Widget && problem.fault!=.Load)
-        serial.json_text(out,"message",bind_problem_text(a,&problem))
-        serial.write_u8(out,'}')
-    }
-    serial.text_write_raw(out,"]}")
-}

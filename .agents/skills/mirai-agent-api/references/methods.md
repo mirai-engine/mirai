@@ -1030,7 +1030,7 @@ Project Settings > Input
 ([panel](../../mirai-editor/references/panels.md#project-settings)).
 
 - `input.get` (read-only): each action the code declares, with its type, its bindings in effect as
-  `input.mirai` writes them, and `source`: `code` if they are the code's, `file` if the file
+  `input.mirai` writes them, and `source`: `Code` if they are the code's, `File` if the file
   changes them. `problem` says why the file was not read.
 - `input.set`: `action` with `bindings` (and `kind` to change the type) replaces them, `[]` removes
   them; `action` with `reset: true` gives it back to the code; `tap_ticks` and `hold_ticks` go
