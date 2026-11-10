@@ -2,6 +2,7 @@ package playtest_editor
 
 import "base:runtime"
 import "core:fmt"
+import "core:strings"
 import "core:math/linalg"
 import "mirai:core"
 import "mirai:editor"
@@ -57,7 +58,7 @@ Api_Play_Qa_Report :: struct {
     tick:u64 `mirai:"label=The tick of the game now"`,
     violations:[]Api_Play_Qa_Violation,
     dropped:int `mirai:"optional,label=Violations that did not fit"`,
-    repro:[editor.API_PATH_BYTES]u8 `mirai:"optional,text,label=The scenario written"`,
+    repro:string `mirai:"optional,label=The scenario written"`,
     filmstrip:editor.Api_Capture_Result `mirai:"optional,label=The filmstrip written"`,
 }
 Api_Play_Qa_Violation :: struct {
@@ -70,9 +71,9 @@ Api_Play_Qa_Violation :: struct {
     limit:f32 `mirai:"label=What it passed"`,
     count:int `mirai:"optional,label=Times it repeated"`,
     last_tick:u64 `mirai:"optional,label=Of its last time when it repeated"`,
-    entity:[editor.API_HANDLE_TEXT]u8 `mirai:"optional,text,label=The entity it is about"`,
-    code:[core.PROBLEM_CODE]u8 `mirai:"optional,text,label=Of a problem"`,
-    text:[core.PROBLEM_TEXT]u8 `mirai:"optional,text,label=What the problem says"`,
+    entity:core.Entity `mirai:"optional,label=The entity it is about"`,
+    code:string `mirai:"optional,label=Of a problem"`,
+    text:string `mirai:"optional,label=What the problem says"`,
 }
 
 // What play.qa.start asked.
@@ -138,7 +139,7 @@ qa_api_register :: proc(s:^editor.Session) {
     defaults:=Api_Play_Qa_Start_Params{stuck_seconds=3,falls=true,non_finite=true,problems=true}
     report:=Api_Play_Qa_Report_Params{violation=-1}
     editor.api_method_register(s,{params=type_info_of(Api_Play_Qa_Start_Params),result=type_info_of(Api_Play_Qa_Start_Result),name="play.qa.start",summary="Starts monitors on the game of the caller, for the ticks the API runs: frame time, memory, stuck, falling, non-finite transforms and core.report problems. A violation can write a repro whenever they start, as long as the API drove the game from its first tick.",defaults=&defaults,run=api_play_qa_start})
-    editor.api_method_register(s,{params=type_info_of(Api_Play_Qa_Report_Params),result=type_info_of(Api_Play_Qa_Report),name="play.qa.report",summary="The violations the monitors of play.qa.start saw, with tick, place and severity; for one of them writes a repro scenario or a filmstrip around its tick.",writes_result=true,defaults=&report,run=api_play_qa_report})
+    editor.api_method_register(s,{params=type_info_of(Api_Play_Qa_Report_Params),result=type_info_of(Api_Play_Qa_Report),name="play.qa.report",summary="The violations the monitors of play.qa.start saw, with tick, place and severity; for one of them writes a repro scenario or a filmstrip around its tick.",defaults=&report,run=api_play_qa_report})
 }
 
 // Whether a body is asked to move this tick, by a seat or by whatever drives it.
@@ -439,34 +440,15 @@ api_play_qa_start :: proc(s:^editor.Session,call:^api.Call) {
 
 // The violations, with the index of each.
 @(private)
-qa_violations_write :: proc(s:^editor.Session,out:^serial.Writer,q:^Run_Qa) {
-    w:=q.violations[:q.violation_count]
-    api.write_key(out,"violations");serial.write_u8(out,'[')
-    for &v,i in w {
-        if i>0 {serial.write_u8(out,',')}
-        serial.write_u8(out,'{')
-        api.write_int(out,"index",i64(i),true)
-        api.write_text(out,"kind",fmt.tprint(v.kind))
-        api.write_text(out,"severity",fmt.tprint(v.severity))
-        api.write_uint(out,"tick",v.tick)
-        observe_vector_write(out,"position",v.position[:])
-        api.write_key(out,"value");api.write_number(out,observe_round(v.value))
-        api.write_key(out,"limit");api.write_number(out,observe_round(v.limit))
-        if v.count>1 {
-            api.write_int(out,"count",i64(v.count))
-            api.write_uint(out,"last_tick",v.last_tick)
-        }
-        if v.entity!=core.NONE {
-            api.write_key(out,"entity")
-            serial.write_u8(out,'"');serial.text_write_hex(out,u64(v.entity));serial.write_u8(out,'"')
-        }
-        if v.has_problem {
-            api.write_text(out,"code",core.problem_code(&v.problem))
-            api.write_text(out,"text",core.problem_text(&v.problem))
-        }
-        serial.write_u8(out,'}')
+qa_violations :: proc(q:^Run_Qa,allocator:=context.temp_allocator) -> []Api_Play_Qa_Violation {
+    rows:=make([]Api_Play_Qa_Violation,q.violation_count,allocator)
+    for &row,i in rows {
+        v:=&q.violations[i]
+        row={index=i,kind=v.kind,severity=v.severity,tick=v.tick,position=observe_vector(v.position),value=observe_round(v.value),limit=observe_round(v.limit),entity=v.entity}
+        if v.count>1 {row.count,row.last_tick=v.count,v.last_tick}
+        if v.has_problem {row.code,row.text=strings.clone(core.problem_code(&v.problem),allocator),strings.clone(core.problem_text(&v.problem),allocator)}
     }
-    serial.write_u8(out,']')
+    return rows
 }
 
 @(private)
@@ -481,25 +463,16 @@ api_play_qa_report :: proc(s:^editor.Session,call:^api.Call) {
         api.call_failf(call,api.INVALID_PARAMS,"violation %d: repro and filmstrip are of one violation; give its index, 0 to %d",p.violation,q.violation_count-1)
         return
     }
-    repro,strip:string
+    report:=Api_Play_Qa_Report{passed=q.violation_count==0 && q.dropped==0,tick=q.tick,violations=qa_violations(q,call.allocator),dropped=q.dropped}
     if p.repro {
-        file,problem:=qa_repro_write(s,call,r,&q.violations[p.violation],call.allocator)
-        if problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return}
-        repro=file
+        problem:string
+        if report.repro,problem=qa_repro_write(s,call,r,&q.violations[p.violation],call.allocator);problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return}
     }
     if strip_path!="" {
-        strip=editor.api_filmstrip_around(s,call,r,q.violations[p.violation].tick,strip_path)
-        if strip=="" {return}
+        report.filmstrip=editor.api_filmstrip_around(s,call,r,q.violations[p.violation].tick,strip_path)
+        if call.failed {return}
     }
-    out:=call.out
-    serial.write_u8(out,'{')
-    api.write_bool(out,"passed",q.violation_count==0 && q.dropped==0,true)
-    api.write_uint(out,"tick",q.tick)
-    qa_violations_write(s,out,q)
-    if q.dropped>0 {api.write_int(out,"dropped",i64(q.dropped))}
-    if repro!="" {api.write_text(out,"repro",repro)}
-    if strip!="" {api.write_key(out,"filmstrip");serial.text_write_raw(out,strip)}
-    serial.write_u8(out,'}')
+    api.call_result(call,Api_Play_Qa_Report)^=report
 }
 
 // ---------------------------------------------------------------- repro

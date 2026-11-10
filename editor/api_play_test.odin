@@ -857,16 +857,7 @@ a_filmstrip_cell_comes_before_the_first_tick_and_every_every_ticks_around_its_en
     cells:=[2]Api_Filmstrip_Cell{{tick=3,at={1,2},seen=true},{tick=6}}
     sheet:=img.Sheet{image={width=128,height=32},columns=2,rows=1,tile={64,32}}
     answer:=api_filmstrip_result("strip.png",sheet,cells[:],true,context.temp_allocator,Api_Capture_Seen{textures_pending=1})
-    parsed,parse_error:=json.parse_string(answer,allocator=context.temp_allocator)
-    testing.expectf(t,parse_error==.None,"the answer is not JSON: %s",answer)
-    if object,is:=parsed.(json.Object);is {
-        grid,listed:=object["cell"].(json.Array);testing.expect(t,listed && len(grid)==2,answer)
-        taken,_:=object["cells"].(json.Array);testing.expect(t,len(taken)==2,answer)
-        testing.expect(t,strings.contains(answer,`"textures_pending":1`),answer)
-    }
-    api_result_shape_expect(t,answer,Api_Capture_Result)
-    complete:=api_filmstrip_result("strip.png",sheet,cells[:],true,context.temp_allocator,Api_Capture_Seen{instances_drawn=4})
-    testing.expect(t,!strings.contains(complete,"instances_drawn") && !strings.contains(complete,"textures_pending"),complete)
+    testing.expect(t,answer.cell==[2]int{64,32} && len(answer.cells)==2 && len(answer.cells[0].at)==2 && answer.cells[1].at==nil && answer.textures_pending==1)
     // Segments say how long it runs: nothing else is padded or refused.
     spread:=[?]struct{given,every,count:int,ticks:[]int}{
         {30,0,4,{0,10,20,30}},

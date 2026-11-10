@@ -40,7 +40,7 @@ UI_CAPTURE_SIZE :: [2]f32{1920,1080} // without a reference of the project
 @(private)
 capture_api_register :: proc(s:^editor.Session) {
     defaults:=Ui_Capture_Params{seconds=1}
-    editor.api_method_register(s,{name="ui.capture",summary="Draws a .ui alone at the size the game lays it out at, with samples of the data of the game, over the scene the viewport sees or a background, and writes it as a PNG, which MCP also returns as an image. Requires GPU.",params=type_info_of(Ui_Capture_Params),result=type_info_of(editor.Api_Capture_Result),writes_result=true,defaults=&defaults,flags={.Read_Only,.Draws},run=api_ui_capture})
+    editor.api_method_register(s,{name="ui.capture",summary="Draws a .ui alone at the size the game lays it out at, with samples of the data of the game, over the scene the viewport sees or a background, and writes it as a PNG, which MCP also returns as an image. Requires GPU.",params=type_info_of(Ui_Capture_Params),result=type_info_of(editor.Api_Capture_Result),defaults=&defaults,flags={.Read_Only,.Draws},run=api_ui_capture})
 }
 
 @(private)

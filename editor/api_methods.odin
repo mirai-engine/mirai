@@ -971,7 +971,7 @@ api_camera_set :: proc(s:^Session,call:^api.Call) {
 // Writes pixels of the allocator of the application as the PNG at file, of
 // api_output_file, and answers the call with it as capture does: its path and
 // size and, when shown, the image over MCP.
-api_capture_answer :: proc(s:^Session,call:^api.Call,file:string,pixels:[]u8,width,height:int,shown:=true,seen:Maybe(Api_Capture_Seen)=nil) {
+api_capture_answer :: proc(s:^Session,call:^api.Call,file:string,pixels:[]u8,width,height:int,shown:=true,seen:=Api_Capture_Seen{}) {
     if problem:=api_png_write(s,file,pixels,width,height);problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return}
     api_capture_reply(call,file,width,height,shown,seen)
 }
