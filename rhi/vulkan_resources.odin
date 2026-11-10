@@ -555,6 +555,44 @@ vk_pipeline_room :: proc(d: ^Device) -> bool {
 	return device_room(d, &d.pipelines, "pipelines")
 }
 
+// A pipeline cache for one pipeline, holding the blob the device keeps for
+// key: what the driver puts in it is that pipeline alone. 0 without a store.
+@(private)
+vk_pipeline_cache_open :: proc(d: ^Device, key: u64) -> (cache: vk.PipelineCache) {
+	if d.store_path_len == 0 {return 0}
+	info := vk.PipelineCacheCreateInfo{sType = .PIPELINE_CACHE_CREATE_INFO}
+	sync.lock(&d.pipelines_kept.lock)
+	blob := pipeline_store_find(&d.pipelines_kept, key, d.allocator)
+	sync.unlock(&d.pipelines_kept.lock)
+	if blob != nil {
+		info.initialDataSize, info.pInitialData = len(blob), raw_data(blob)
+		// The driver checks the header and ignores a blob it cannot use.
+		if d.dvk.CreatePipelineCache(d.handle, &info, nil, &cache) != .SUCCESS {cache = 0}
+		delete(blob, d.allocator)
+	}
+	if cache != 0 {return cache}
+	info.initialDataSize, info.pInitialData = 0, nil
+	if d.dvk.CreatePipelineCache(d.handle, &info, nil, &cache) != .SUCCESS {return 0}
+	return cache
+}
+
+// Keeps what the driver compiled into cache under key, unless the pipeline came
+// from the blob kept for it, and destroys cache.
+@(private)
+vk_pipeline_cache_close :: proc(d: ^Device, key: u64, cache: vk.PipelineCache, feedback: vk.PipelineCreationFeedback, created: bool) {
+	if cache == 0 {return}
+	defer d.dvk.DestroyPipelineCache(d.handle, cache, nil)
+	if !created || feedback.flags >= {.VALID, .APPLICATION_PIPELINE_CACHE_HIT} {return}
+	size: int
+	if d.dvk.GetPipelineCacheData(d.handle, cache, &size, nil) != .SUCCESS || size == 0 {return}
+	data, error := make([]u8, size, d.allocator)
+	if error != nil {return}
+	if d.dvk.GetPipelineCacheData(d.handle, cache, &size, raw_data(data)) != .SUCCESS || size == 0 {delete(data, d.allocator); return}
+	defer delete(data, d.allocator)
+	sync.guard(&d.pipelines_kept.lock)
+	pipeline_store_put(&d.pipelines_kept, key, data[:size])
+}
+
 pipeline_create_compute :: proc(d: ^Device, desc: Compute_Pipeline_Desc) -> Pipeline {
 	if !vk_pipeline_room(d) {return 0}
 	p := Vk_Pipeline{bind_point = .COMPUTE, name = desc.name}
@@ -563,12 +601,18 @@ pipeline_create_compute :: proc(d: ^Device, desc: Compute_Pipeline_Desc) -> Pipe
 	module := vk_shader_module(d, desc.shader)
 	if module == 0 {vk_release_pipeline(d, &p); return 0}
 	defer d.dvk.DestroyShaderModule(d.handle, module, nil)
+	feedback: vk.PipelineCreationFeedback
+	feedback_info := vk.PipelineCreationFeedbackCreateInfo{sType = .PIPELINE_CREATION_FEEDBACK_CREATE_INFO, pPipelineCreationFeedback = &feedback}
 	info := vk.ComputePipelineCreateInfo{
-		sType = .COMPUTE_PIPELINE_CREATE_INFO,
+		sType = .COMPUTE_PIPELINE_CREATE_INFO, pNext = &feedback_info,
 		stage = {sType = .PIPELINE_SHADER_STAGE_CREATE_INFO, stage = {.COMPUTE}, module = module, pName = "main"},
 		layout = p.layout,
 	}
-	if !vk_check(d, d.dvk.CreateComputePipelines(d.handle, d.pipeline_cache, 1, &info, nil, &p.handle), desc.name) {vk_release_pipeline(d, &p); return 0}
+	key := pipeline_key_compute(desc)
+	cache := vk_pipeline_cache_open(d, key)
+	created := vk_check(d, d.dvk.CreateComputePipelines(d.handle, cache, 1, &info, nil, &p.handle), desc.name)
+	vk_pipeline_cache_close(d, key, cache, feedback, created)
+	if !created {vk_release_pipeline(d, &p); return 0}
 	vk_set_name(d, .PIPELINE, u64(p.handle), desc.name)
 	return vk_pipeline_add(d, &p)
 }
@@ -648,8 +692,10 @@ pipeline_create_graphics :: proc(d: ^Device, desc: Graphics_Pipeline_Desc) -> Pi
 	blend := vk.PipelineColorBlendStateCreateInfo{sType = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, attachmentCount = u32(desc.color_count), pAttachments = &attachments[0]}
 	dynamic_states := [2]vk.DynamicState{.VIEWPORT, .SCISSOR}
 	dynamic_info := vk.PipelineDynamicStateCreateInfo{sType = .PIPELINE_DYNAMIC_STATE_CREATE_INFO, dynamicStateCount = 2, pDynamicStates = &dynamic_states[0]}
+	feedback: vk.PipelineCreationFeedback
+	feedback_info := vk.PipelineCreationFeedbackCreateInfo{sType = .PIPELINE_CREATION_FEEDBACK_CREATE_INFO, pPipelineCreationFeedback = &feedback}
 	rendering := vk.PipelineRenderingCreateInfo{
-		sType = .PIPELINE_RENDERING_CREATE_INFO, colorAttachmentCount = u32(desc.color_count), pColorAttachmentFormats = &formats[0],
+		sType = .PIPELINE_RENDERING_CREATE_INFO, pNext = &feedback_info, colorAttachmentCount = u32(desc.color_count), pColorAttachmentFormats = &formats[0],
 		depthAttachmentFormat = vk_format(desc.depth_format),
 	}
 	info := vk.GraphicsPipelineCreateInfo{
@@ -659,7 +705,11 @@ pipeline_create_graphics :: proc(d: ^Device, desc: Graphics_Pipeline_Desc) -> Pi
 		pRasterizationState = &raster, pMultisampleState = &multisample, pDepthStencilState = &depth,
 		pColorBlendState = &blend, pDynamicState = &dynamic_info, layout = p.layout,
 	}
-	if !vk_check(d, d.dvk.CreateGraphicsPipelines(d.handle, d.pipeline_cache, 1, &info, nil, &p.handle), desc.name) {vk_release_pipeline(d, &p); return 0}
+	key := pipeline_key_graphics(desc)
+	cache := vk_pipeline_cache_open(d, key)
+	created := vk_check(d, d.dvk.CreateGraphicsPipelines(d.handle, cache, 1, &info, nil, &p.handle), desc.name)
+	vk_pipeline_cache_close(d, key, cache, feedback, created)
+	if !created {vk_release_pipeline(d, &p); return 0}
 	vk_set_name(d, .PIPELINE, u64(p.handle), desc.name)
 	return vk_pipeline_add(d, &p)
 }

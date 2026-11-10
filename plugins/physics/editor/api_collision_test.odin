@@ -31,8 +31,8 @@ collision_api_reads_and_edits_presets_masks_and_queries_by_name_in_one_undo_step
     if !described {return}
     defer core.test_info_destroy(&info)
     world:Collision_Test_World
-    if !testing.expect(t,info.init[.World](&world,context.allocator)) {return}
-    defer info.destroy[.World](&world)
+    if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator)) {return}
+    defer core.world_destroy(&info,.World,&world)
     world.settings.presets[4]={preset=9,belongs=1,collides=2}
     names:=[7]core.Name_Info{
         {type=phys.Collision_Category,value=0,name="default"},{type=phys.Collision_Category,value=1,name="player"},

@@ -73,10 +73,10 @@ image_options :: proc(command:string,args:[]string,flags:[]string) -> (options:I
     options.factor=ZOOM_FACTOR
     for at:=0;at<len(args);at+=1 {
         arg:=args[at]
-        if !strings.has_prefix(arg,"--") {append(&options.files,arg);continue}
+        if positional(arg) {append(&options.files,arg);continue}
         accepted:=false
         for flag in flags {accepted||=flag==arg}
-        if !accepted {fmt.eprintfln("mirai image %s: unknown option '%s'",command,arg);return {},false}
+        if !accepted {argument_refuse(fmt.tprintf("image %s",command),arg);return {},false}
         at+=1
         if at>=len(args) {fmt.eprintfln("mirai image %s: %s needs a value",command,arg);return {},false}
         value:=args[at]

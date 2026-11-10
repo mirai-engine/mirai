@@ -3,6 +3,7 @@ package bc7
 import "core:math"
 import "base:intrinsics"
 import "core:simd"
+import "mirai:asset"
 import "mirai:cook/compressor/texture/bc67"
 import "mirai:cook/compressor/texture/common"
 
@@ -19,7 +20,7 @@ count_mask :: #force_inline proc "contextless" (n:int) -> V16b {
 // The lerp weight of each texel of the subset (0 past it).
 @(private)
 lerp_weights16 :: #force_inline proc "contextless" (indices:^[16]u8,n,ib:int) -> V16b {
-    lut:=transmute(V16b)bc67.LERP_FACTOR[ib&7]
+    lut:=transmute(V16b)asset.BC7_WEIGHTS[ib&7]
     idx:=intrinsics.unaligned_load((^V16b)(indices))&V16b(15)
     return simd.runtime_swizzle(lut,idx)&count_mask(n)
 }

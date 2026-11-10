@@ -14,7 +14,7 @@ core_calls_without_memory_fail_whole :: proc(t:^testing.T) {
     to_tables:=[]Table_Info{{name="Kept",type=i64,info=type_info_of(i64)},{name="Added",type=u8,info=type_info_of(u8)}}
     storages:=[]Storage_Info{{name="Score",type=i32,info=type_info_of(i32)}}
     from,to:=World_Info{tables=from_tables,storages=storages},World_Info{tables=to_tables,storages=storages}
-    Call :: enum {Table_Init,Entities_Clear,Map_Reserve,Offer,Migration}
+    Call :: enum {Table_Settle,Entities_Clear,Map_Reserve,Offer,Migration}
     for call in Call {
         done,refused:=false,false
         for served in 0..<64 {
@@ -24,12 +24,35 @@ core_calls_without_memory_fail_whole :: proc(t:^testing.T) {
             limited:=runtime.Allocator{copy_allocator,&allocation}
             ok:bool
             switch call {
-            case .Table_Init:
+            case .Table_Settle:
+                es:Entities
+                if !testing.expect(t,entities_init(&es,limited)) {return}
                 table:Table(i32)
+                allocation.remaining=0
+                table_init(&table,"Low",limited)
+                allocation.remaining=max(int)
+                // An entity of a far page of the rows by entity.
+                e:Entity
+                for _ in 0..<ROWS_PAGE+1 {e=create(&es)}
+                add(&table,e,7)
                 allocation.remaining=served
-                ok=table_init(&table,"Low",limited)
-                testing.expectf(t,ok==(cap(table.gone)>0),"%d requests served: a table is made with the room its settle needs",served)
+                table_settle(&table,&es)
+                ok=has(&table,e)
+                testing.expectf(t,ok?len(table.pending)==0:len(table.pending)==1 && count(&table)==0,"%d requests served: an add without room waits whole for the next settle",served)
+                if ok {
+                    // The first entity that goes makes the room of those gone: without it, readers read the table whole.
+                    seen:Seen
+                    _=changes(&table,&seen)
+                    allocation.remaining=max(int)
+                    remove(&table,e)
+                    allocation.remaining=0
+                    table_settle(&table,&es)
+                    c:=changes(&table,&seen)
+                    testing.expect(t,!has(&table,e) && c.all && cap(table.gone)==0)
+                }
+                allocation.remaining=max(int)
                 table_destroy(&table)
+                entities_destroy(&es)
             case .Entities_Clear:
                 es:Entities
                 if !testing.expect(t,entities_init(&es,limited)) {return}

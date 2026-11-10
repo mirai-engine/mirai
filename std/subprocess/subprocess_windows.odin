@@ -209,3 +209,5 @@ environment_block :: proc(env:[]string,allocator:=context.allocator) -> []u16 {
     strings.write_byte(&b,0)
     return win.utf8_to_utf16(strings.to_string(b),allocator)
 }
+
+process_close :: proc(process:os.Process) {_=win.CloseHandle(win.HANDLE(process.handle))}

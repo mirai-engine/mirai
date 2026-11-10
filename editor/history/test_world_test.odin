@@ -93,7 +93,7 @@ test_memory_init :: proc(t:^testing.T,f:^Test_Memory) -> bool {
     described:bool
     f.info,described=core.test_info(t,Test_Memory_World,core.Test_None,Test_Memory_Editor)
     if !described {return false}
-    if !testing.expect(t,f.info.init[.World](&f.world,context.allocator)) {
+    if !testing.expect(t,core.world_init(&f.info,.World,&f.world,context.allocator)) {
         test_memory_free(f)
         return false
     }
@@ -110,7 +110,7 @@ test_memory_init :: proc(t:^testing.T,f:^Test_Memory) -> bool {
 test_memory_free :: proc(f:^Test_Memory) {
     edits_free(&f.edits)
     delete(f.selection.entities)
-    if f.info.destroy[.World]!=nil {f.info.destroy[.World](&f.world)}
+    if f.info.sizes[.World]>0 {core.world_destroy(&f.info,.World,&f.world)}
     core.test_info_destroy(&f.info)
 }
 

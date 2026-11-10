@@ -8,6 +8,7 @@ import "core:slice"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
+import lz_optimal "mirai:cook/compressor/lz"
 import anim "mirai:std/anim"
 import mm "mirai:std/math"
 import "mirai:std/base"
@@ -153,7 +154,7 @@ a_cook_ships_what_the_scenes_and_the_roots_reach_as_the_runtime_loads_it :: proc
     // Any other asset is the same document, compressed for shipping.
     source,_:=os.read_entire_file(fmt.tprintf("%s/models/crate.mesh",assets),context.temp_allocator)
     shipped,_:=os.read_entire_file(fmt.tprintf("%s/models/crate.mesh",output),context.temp_allocator)
-    repacked,repack_error:=asset.document_repack(source,.Ship,context.temp_allocator)
+    repacked,repack_error:=asset.document_repack(source,lz_optimal.SHIP,context.temp_allocator)
     testing.expect(t,len(source)>0 && repack_error==.None && string(repacked)==string(shipped))
 
     // The index is what a scan of the output finds.

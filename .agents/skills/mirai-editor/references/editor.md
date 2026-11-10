@@ -78,8 +78,8 @@ Editor steps, in order; a plugin step orders itself against them with `after`
 - Play and Simulate run a copy of the `World` in the editor process, with the same application,
   GPU and library. Each run has an owner: the user or an AI turn.
 - `play_start` ends the open edit, writes the recovery copy if there are unsaved changes, creates
-  the world with `info.copy` (which brings the clock of `edit_world`, at zero: the editor loop
-  does not advance it) and keeps camera and selection for Stop. Document and history stay in
+  the world with `core.world_copy` (which brings the clock of `edit_world`, at zero: the editor
+  loop does not advance it) and keeps camera and selection for Stop. Document and history stay in
   `edit_world`. If it cannot write the recovery or create the world, memory included, it does not
   start ([recovery](document.md#recovery-and-failures)).
 - Opening a scene starts the first compression of the `.anim` its world can play, and

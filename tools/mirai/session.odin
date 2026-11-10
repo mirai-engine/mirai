@@ -116,13 +116,13 @@ session_find :: proc(folder:string) -> (file:api.Port_File,alive:bool) {
     data,error:=os.read_entire_file(path,context.temp_allocator)
     if error!=nil {return}
     if json.unmarshal(data,&file,allocator=context.temp_allocator)!=nil || file.port<=0 || file.pid<=0 {return}
-    return file,workspace.process_alive(file.pid)
+    return file,subprocess.process_alive(file.pid)
 }
 
 // Waits up to wait for a process to end, and ends it when it does not.
 process_end :: proc(pid:int,wait:time.Duration) {
     start:=time.tick_now()
-    for workspace.process_alive(pid) {
+    for subprocess.process_alive(pid) {
         if time.tick_since(start)>=wait {
             process_kill_pid(pid)
             return
@@ -352,8 +352,8 @@ session_close :: proc(folder:string,file:api.Port_File,discard:bool,command:="se
     }
     _,err,called:=api.rpc_call(file.port,"engine.shutdown",params,1,10000,context.temp_allocator)
     // An editor that shuts down may close the connection before it answers.
-    if !called {for at:=time.tick_now();workspace.process_alive(file.pid) && time.tick_since(at)<3*time.Second; {time.sleep(50*time.Millisecond)}}
-    if !called && !discard && workspace.process_alive(file.pid) {
+    if !called {for at:=time.tick_now();subprocess.process_alive(file.pid) && time.tick_since(at)<3*time.Second; {time.sleep(50*time.Millisecond)}}
+    if !called && !discard && subprocess.process_alive(file.pid) {
         fmt.eprintfln("mirai %s: the editor (pid %d) did not close: %s; `%s` closes it anyway and loses what it did not save",command,file.pid,api.error_text(err,context.temp_allocator),retry)
         return false,0
     }
@@ -520,7 +520,7 @@ session_copy_live :: proc(copy:string) -> bool {
 // Whether pid is a program that runs and opens the copy: a pid reused by another
 // process does not keep a copy. One whose arguments cannot be read does.
 session_copy_editor :: proc(copy:string,pid:int) -> bool {
-    if pid<=0 || !workspace.process_alive(pid) {return false}
+    if pid<=0 || !subprocess.process_alive(pid) {return false}
     info,error:=os.process_info_by_pid(pid,{.Command_Args,.Working_Dir},context.temp_allocator)
     if error!=nil || .Command_Args not_in info.fields {return true}
     opened,_:=engine_arguments(info.command_args,info.working_dir)
@@ -578,7 +578,7 @@ session_stop :: proc(root,folder:string,args:[]string) -> int {
         switch arg {
         case "--discard": discard=true
         case "--orphans": orphans=true
-        case: fmt.eprintfln("Usage: mirai %s",SESSION_USAGE);return 2
+        case: return argument_unknown("session stop",arg)
         }
     }
     if orphans {return session_stop_orphans(root,folder)}

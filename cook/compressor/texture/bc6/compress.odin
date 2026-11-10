@@ -2,6 +2,7 @@ package bc6
 
 import "base:intrinsics"
 import "core:simd"
+import "mirai:asset"
 import "mirai:cook/compressor/texture/bc67"
 import "mirai:cook/compressor/texture/common"
 
@@ -389,7 +390,7 @@ color_set_init :: proc "contextless" (set:^Color_Set,ep:^Endpoints,mode:^Mode_De
     V :: #simd[16]i32
     VU :: #simd[16]u32
     VF :: #simd[16]f32
-    lerp:=cast(V)transmute(#simd[16]u8)bc67.LERP_FACTOR[IB]
+    lerp:=cast(V)transmute(#simd[16]u8)asset.BC7_WEIGHTS[IB]
     for s in 0..<ns {
         for c in 0..<3 {
             ep0:=dequant(mode.epb,ep.quant[s*2+0][c])
@@ -558,7 +559,7 @@ calc_indexes_anchor_zero :: proc "contextless" (input:^Input,st:^Block_State,set
     IB :: uint(5-ns)
     ANCHOR_BIT :: u8(1<<(IB-1))
     err:=calc_indexes(input,st,set,ns)
-    anchor2:=ns==1 ? 0 : int(bc67.ANCHOR_2_2[st.p])
+    anchor2:=ns==1 ? 0 : int(asset.BC7_ANCHORS_2[st.p])
     if (st.idxs[0]|st.idxs[anchor2])&ANCHOR_BIT!=0 {
         if st.idxs[0]&ANCHOR_BIT!=0 {st.idxs[0]=ANCHOR_BIT-1}
         if st.idxs[anchor2]&ANCHOR_BIT!=0 {st.idxs[anchor2]=ANCHOR_BIT-1}
@@ -996,7 +997,7 @@ canonicalize :: proc "contextless" (st:^Block_State) {
         swap_endpoints(&st.endpoints,0,1)
     }
     if ns==2 {
-        pos:=bc67.ANCHOR_2_2[st.p&63]
+        pos:=asset.BC7_ANCHORS_2[st.p&63]
         if st.idxs[pos]&anchor_bit!=0 {
             flip_subset_inds(&st.idxs,subset_mask,1,flip_bits)
             swap_endpoints(&st.endpoints,2,3)
@@ -1032,7 +1033,7 @@ emit :: proc "contextless" (out:^[16]u8,st:^Block_State) {
     idxs:u64
     for i in 0..<16 {idxs|=u64(st.idxs[i])<<(uint(i)*ib)}
     anchor0:=u64(1)<<(ib-1)
-    anchor1:=u64(1)<<(ib*(uint(bc67.ANCHOR_2_2[st.p&63])+1)-1)
+    anchor1:=u64(1)<<(ib*(uint(asset.BC7_ANCHORS_2[st.p&63])+1)-1)
     idxs=remove_anchor_bit(idxs,anchor0)
     if ns>=2 {
         anchor1>>=1
@@ -1267,20 +1268,20 @@ compress :: proc(to:[]u8,from:[]common.Half_Block,level:common.Level,
 
 // The state of a well-formed block; false (and a zero state) otherwise.
 state_from_bits :: proc "contextless" (st:^Block_State,bits:^[16]u8) -> bool {
-    desc:bc67.BC6H_Block_Raw_Desc
-    if !bc67.bc6h_analyze_block_raw(&desc,false,bits) {
+    fields,ok:=asset.texture_bc6h_block_fields(bits^)
+    if !ok {
         st^={}
         return false
     }
-    m:=desc.mode
-    st.mode=m.linmode
-    st.p=desc.partition_id
+    modes:=asset.BC6H_MODES
+    st.mode=u8(fields.mode)
+    st.p=u8(fields.partition)
     st.err=0
-    st.idxs=desc.inds
-    for i in 0..<int(m.ns)*2 {
+    st.idxs=fields.indices
+    for i in 0..<int(modes[fields.mode].ns)*2 {
         for c in 0..<3 {
-            st.endpoints.quant[i][c]=desc.endpoints_quant[c][i]
-            st.endpoints.raw[i][c]=i16(u16(scaled_to_half(int(desc.endpoints_internal[c][i]))))
+            st.endpoints.quant[i][c]=fields.quant[c][i]
+            st.endpoints.raw[i][c]=i16(u16(scaled_to_half(int(fields.endpoints[c][i]))))
         }
     }
     return true

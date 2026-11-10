@@ -41,7 +41,7 @@ time:
 - `entity_of` answers according to the last settle of the `Id` table: one that was added and not
   yet settled is not found; a destroyed entity stops being found immediately. `id_of` reads without
   stamping the row.
-- The index follows the `changes` of the `Id` table; the generated `copy` and `swap` carry it with
+- The index follows the `changes` of the `Id` table; `world_copy` and `world_swap` carry it with
   the world without rereading it (`ids_moved`), and a hand-copied world rereads its table.
 - If two entities have the same `Id`, the first one indexed has it and, when it leaves, another.
   Without memory it is rebuilt at the next settle and in the meantime it does not find what it did
@@ -57,8 +57,10 @@ the id of the asset and its `id_counter`.
 ## Tables
 
 `core.Table(T)` stores values, entities and stamps, dense and parallel, with an index map from
-entity to row. The enabled rows come first: walking a component is walking `0..<count(t)`. Removing
-a row moves another into its place, with its stamp, without mixing the two sections.
+entity to row. The map comes in pages made for the entities that have had a row, and an empty
+table holds no memory: a table costs what its rows cost, not what the entities of its world would.
+The enabled rows come first: walking a component is walking `0..<count(t)`. Removing a row moves
+another into its place, with its stamp, without mixing the two sections.
 
 - **Writing is requesting the row.** `get`, `at` and `writable` on `^Table`, and `free` on a
   `shared` table, give `^T` and stamp the row with a new `version`; on a `Read` they give the value.
@@ -81,7 +83,9 @@ a row moves another into its place, with its stamp, without mixing the two secti
   It relies on the stamps identifying the write across copies of the same world, even after a
   `table_swap`: a world into which another one of a different origin was copied is copied whole
   before it is used again. After `host.app_world_replace`, `copy_marks_follow` keeps the marks
-  valid.
+  valid. Going back to such a copy with its marks brings back only what the world changed since
+  ([replace](host.md#the-application)): a table says it changed with its `version` and its
+  `layout`, which also move when who owns its rows does, and a storage with its revision.
 - **Owners.** `@(component,locks="core.Transform")` makes each row the owner of the `Transform` row
   of its entity; the others write with `free`, which gives `nil` on an owned row. The lock names the
   locked table by its distance within the world, not by a pointer, because the world is copied in
@@ -97,11 +101,13 @@ A reader keeps one `core.Seen` per table and calls `changes(t, &seen)`, which ad
   back, among the stamped ones); valid until the next settle.
 - `all`: the reader did not see the rows that exist (the table was copied, swapped or cleared, or
   the log discarded entries) and walks all of them.
-- The `gone` log never allocates in a settle: its room grows with the rows, when they are reserved
-  (twice those that exist, `GONE_CAPACITY` at least), and when full it discards its oldest half.
-  What leaves between two reads, the rows that existed and those that arrived, fits in the half that
-  remains: a load that creates and removes many entities does not make whoever reads every frame
-  read the whole table. A reader that falls behind more than that reads it whole.
+- The `gone` log gets its room when the first entity leaves a table, and from then on never
+  allocates in a settle: its room grows with the rows, when they are reserved (twice those that
+  exist, `GONE_CAPACITY` at least), and when full it discards its oldest half. What leaves between
+  two reads, the rows that existed and those that arrived, fits in the half that remains: a load
+  that creates and removes many entities does not make whoever reads every frame read the whole
+  table. A reader that falls behind more than that, or a log left without memory for its room,
+  reads it whole.
 
 ### Per-entity maps
 
@@ -363,21 +369,24 @@ library.
 - `world_info_index` completes the generated `World_Info` once with the indices per type and the
   `World_Schema` of each table and `scene` storage (without `transient` fields; another layout hash
   migrates by field names), which scenes and saves use without rebuilding it.
-- `World_Info.init` and `copy` can fail without memory and leave a world that `destroy` releases;
-  `swap` does not allocate and what is not copied stays in its world. `clear` takes the derived
-  storages to their start ([classes](generator.md#attributes)).
-- `copy_changed` takes only the tables that changed and the storages that were written, with their
-  `copy_kept` if they have one, and keeps `copy_marks_count` marks for it. A `World` holds a
-  revision for each storage, which moves when a function receives the storage with `^S`
+- A world of any project is made, freed, copied, swapped and cleared by `core` from its
+  `World_Info` (`core/world_data.odin`). `world_init` and `world_copy` can fail without memory and
+  leave a world that `world_destroy` releases; `world_swap` does not allocate and what is not
+  copied stays in its world. `world_clear` takes the derived storages to their start
+  ([classes](generator.md#attributes)).
+- `world_copy_changed` takes only the tables that changed and the storages that were written,
+  with their `copy_kept` if they have one, and keeps `copy_marks_count` marks for it. A `World`
+  holds a revision for each storage, which moves when a function receives the storage with `^S`
   ([generated functions](generator.md#generated-functions)), when code outside the loop asks for it
   (`world_storage`, `world_storage_of`, `world_storage_at`: what writes a storage outside the loop
   reaches it through one of these), when `core.settle` changes the `Hierarchy`, and when the world
   is copied over, swapped or cleared. A storage written through a `core.Ref`, or through a pointer
-  kept from an earlier function, changes without it: `MIRAI_CHECK_WRITES` makes `copy_changed`
-  compare the storages it left alone and `core.fail` on one that differs. A World made by hand has
-  no revisions (`World_Info.revisions`), and its storages are copied every time.
-- The `by_world` values of a world are given and taken by `attach`/`detach`; `world_storage` does
-  not return them: `host.app_world_storage` looks up that of a world.
+  kept from an earlier function, changes without it: `MIRAI_CHECK_WRITES` makes
+  `world_copy_changed` compare the storages it left alone and `core.fail` on one that differs. A
+  World made by hand has no revisions (`World_Info.revisions`), and its storages are copied every
+  time.
+- The `by_world` values of a world are given and taken by `world_attach`/`world_detach`;
+  `world_storage` does not return them: `host.app_world_storage` looks up that of a world.
 
 ## Joining one world into another
 
@@ -505,8 +514,8 @@ destroy, settle, copy and swap of its tables.
 - What the application and the editor hold go in two more structs, given to `core.test_info`: a
   `@(storage,host)` as a value, a `by_world` one as a `core.By_World(T)`.
 - `core.test_world_init` makes a world that holds its own `World_Info`, for a test of one world;
-  `core.test_info` gives the `World_Info` alone, whose `init`, `copy`, `swap` and `clear` do what
-  the generated ones do, for a test that hands it to the application, the editor or a history.
+  `core.test_info` gives the `World_Info` alone, which says of each table and storage what a
+  generated one says, for a test that hands it to the application, the editor or a history.
 - Reflection does not find the defaults (`NAME_DEFAULT`, `name_default()`) nor the procedures the
   attributes name. A library that declares them exports `test_types` from a test file, which adds
   them with `core.test_type` and calls the `test_types` of the libraries it uses; the world is

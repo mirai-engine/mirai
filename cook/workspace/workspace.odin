@@ -37,14 +37,6 @@ deps_compiler :: proc(root:string,allocator:=context.allocator) -> (path:string,
     return "",false
 }
 
-process_alive :: proc(pid:int) -> bool {
-    process,error:=os.process_open(pid)
-    // Odin workaround (docs/ODIN_WORKAROUNDS.md): on Windows a process that is gone opens without an error and with no handle.
-    if error!=nil || process.handle==0 {return false}
-    state,_:=os.process_wait(process,0)
-    return !state.exited
-}
-
 // A lock between processes: who holds it is the only one that runs what it
 // guards, whatever checkout it comes from. The system releases it when its
 // process ends.

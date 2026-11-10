@@ -2,17 +2,18 @@ package core
 
 import "base:intrinsics"
 
-// What the settle of a World looks for in its World_Info: world_info_index
-// finds it once, and a World_Info made by hand has it found at every settle.
+// What the settle, the copy and the swap of a World look for in its
+// World_Info: world_info_index finds it once, and a World_Info made by hand
+// has it found each time.
 Settle_Info :: struct {
     disabled,parent,id:int, // their tables, by index; -1 without one
-    hierarchy:int,          // its storage, by index; -1 without one
+    hierarchy,world_id:int, // their storages, by index; -1 without one
     editor:bool,            // the editor holds tables
     found:bool,
 }
 
 settle_info :: proc "contextless" (info:^World_Info) -> (s:Settle_Info) {
-    s={disabled=-1,parent=-1,id=-1,hierarchy=-1,found=true}
+    s={disabled=-1,parent=-1,id=-1,hierarchy=-1,world_id=-1,found=true}
     for &t,i in info.tables {
         switch t.place {
         case .World:
@@ -26,9 +27,17 @@ settle_info :: proc "contextless" (info:^World_Info) -> (s:Settle_Info) {
         }
     }
     for &storage,i in info.storages {
-        if storage.type==Hierarchy && storage.place==.World && !storage.by_world {s.hierarchy=i}
+        if storage.place!=.World || storage.by_world {continue}
+        switch storage.type {
+        case Hierarchy: s.hierarchy=i
+        case World_Id:  s.world_id=i
+        }
     }
     return
+}
+
+settles :: #force_inline proc "contextless" (info:^World_Info) -> Settle_Info {
+    return info.settles.found?info.settles:settle_info(info)
 }
 
 // Applies what the functions and the editor added, removed, turned and
@@ -41,8 +50,7 @@ settle_info :: proc "contextless" (info:^World_Info) -> (s:Settle_Info) {
 // many tables it came to.
 settle :: proc(info:^World_Info,world,editor:rawptr) -> (settled:int) {
     es:=cast(^Entities)(uintptr(world)+info.entities)
-    s:=info.settles
-    if !s.found {s=settle_info(info)}
+    s:=settles(info)
     marks:=es.pending[:]
     linked:=len(marks)>0 && len(marks)>=len(info.tables)
     if linked {settle_mark(info,world,marks,es.doomed[:],false)}
@@ -108,7 +116,7 @@ settle_mark :: proc "contextless" (info:^World_Info,world:rawptr,marks:[]bool,en
         for &t,at in info.tables {
             if marks[at] || t.place!=.World {continue}
             table:=cast(^Raw_Table)(uintptr(world)+t.offset)
-            if i<len(table.rows) && table.rows[i]!=0 && !(turned && table.base) {marks[at]=true}
+            if rows_at(table,i)!=0 && !(turned && table.base) {marks[at]=true}
         }
     }
 }

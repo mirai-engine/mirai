@@ -25,8 +25,8 @@ play_player_reads_the_live_seat_without_changing_the_document :: proc(t:^testing
     if !described {return}
     defer core.test_info_destroy(&info)
     edited,running:Player_Inspect_World
-    if !testing.expect(t,info.init[.World](&edited,context.allocator) && info.init[.World](&running,context.allocator)) {return}
-    defer {info.destroy[.World](&edited);info.destroy[.World](&running)}
+    if !testing.expect(t,core.world_init(&info,.World,&edited,context.allocator) && core.world_init(&info,.World,&running,context.allocator)) {return}
+    defer {core.world_destroy(&info,.World,&edited);core.world_destroy(&info,.World,&running)}
     seat:=core.create(&running.entities)
     body:=core.create(&running.entities)
     camera:=core.create(&running.entities)

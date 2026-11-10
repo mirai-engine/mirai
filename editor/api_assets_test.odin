@@ -34,8 +34,8 @@ component_list_fields_say_their_kind_unit_and_description :: proc(t:^testing.T) 
     state:Api_State
     editor:=List_Editor{api={state=&state}}
     world:List_World
-    if !testing.expect(t,info.init[.World](&world,context.allocator)) {return}
-    defer info.destroy[.World](&world)
+    if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator)) {return}
+    defer core.world_destroy(&info,.World,&world)
     session:=Session{info=&info,editor_world=&editor,edit_world=&world}
     api_schema_build(&session,&state)
     defer api_schema_free(&state)

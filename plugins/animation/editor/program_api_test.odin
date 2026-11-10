@@ -181,11 +181,11 @@ Program_Test_World :: struct {
 @(private="file")
 program_test_worlds :: proc(t:^testing.T,info:^core.World_Info,document,play:^Program_Test_World) -> bool {
     info^=core.test_info(t,Program_Test_World,anim.test_types) or_return
-    return testing.expect(t,info.init[.World](document,context.allocator) && info.init[.World](play,context.allocator))
+    return testing.expect(t,core.world_init(info,.World,document,context.allocator) && core.world_init(info,.World,play,context.allocator))
 }
 @(private="file")
 program_test_worlds_destroy :: proc(info:^core.World_Info,document,play:^Program_Test_World) {
-    if info.destroy[.World]!=nil {info.destroy[.World](document);info.destroy[.World](play)}
+    if info.sizes[.World]>0 {core.world_destroy(info,.World,document);core.world_destroy(info,.World,play)}
     core.test_info_destroy(info)
 }
 @(private)

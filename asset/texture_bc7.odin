@@ -9,38 +9,40 @@ import "core:simd"
 // block decodes to follows the Khronos Data Format Specification. BC6H
 // shares its partitions of two subsets, their anchors and its weights.
 
-Bc7_Mode_Info :: struct {
-    subsets:u32,        // 1 to 3, by a partition of the block
-    partition_bits:u32,
-    rotation_bits:u32,  // modes 4 and 5: the color channel alpha swaps with
-    selector_bit:u32,   // mode 4: which of the two index sets is the color's
-    color_bits:u32,     // per endpoint and channel, before a p-bit
-    alpha_bits:u32,     // 0: alpha is 255
-    endpoint_pbits:bool,// a low bit of its own for each endpoint
-    shared_pbits:bool,  // a low bit shared by the two endpoints of a subset
-    index_bits:u32,
-    index_bits2:u32,    // of the second index set of modes 4 and 5
+// A mode, with the field names of the specification. This file is the description of the block
+// format: what encodes blocks (cook/compressor/texture) reads these tables.
+Bc7_Mode :: struct {
+    ns:u8,  // subsets: 1 to 3, by a partition of the block
+    pb:u8,  // partition bits
+    rb:u8,  // rotation bits (modes 4 and 5): the color channel alpha swaps with
+    isb:u8, // index selection bit (mode 4): which of the two index sets is the color's
+    cb:u8,  // color bits per endpoint and channel, before a p-bit
+    ab:u8,  // alpha bits; 0: alpha is 255
+    epb:u8, // 1: a low bit of its own for each endpoint
+    spb:u8, // 1: a low bit shared by the two endpoints of a subset
+    ib:u8,  // index bits
+    ib2:u8, // of the second index set of modes 4 and 5
 }
 
-@(rodata)
-BC7_MODES := [8]Bc7_Mode_Info{
-    {subsets=3,partition_bits=4,color_bits=4,endpoint_pbits=true,index_bits=3},
-    {subsets=2,partition_bits=6,color_bits=6,shared_pbits=true,index_bits=3},
-    {subsets=3,partition_bits=6,color_bits=5,index_bits=2},
-    {subsets=2,partition_bits=6,color_bits=7,endpoint_pbits=true,index_bits=2},
-    {subsets=1,rotation_bits=2,selector_bit=1,color_bits=5,alpha_bits=6,index_bits=2,index_bits2=3},
-    {subsets=1,rotation_bits=2,color_bits=7,alpha_bits=8,index_bits=2,index_bits2=2},
-    {subsets=1,color_bits=7,alpha_bits=7,endpoint_pbits=true,index_bits=4},
-    {subsets=2,partition_bits=6,color_bits=5,alpha_bits=5,endpoint_pbits=true,index_bits=2},
+BC7_MODES :: [8]Bc7_Mode{
+    // ns,pb,rb,isb,cb,ab,epb,spb,ib,ib2
+    {3,4,0,0,4,0,1,0,3,0},
+    {2,6,0,0,6,0,0,1,3,0},
+    {3,6,0,0,5,0,0,0,2,0},
+    {2,6,0,0,7,0,1,0,2,0},
+    {1,0,2,1,5,6,0,0,2,3},
+    {1,0,2,0,7,8,0,0,2,2},
+    {1,0,0,0,7,7,1,0,4,0},
+    {2,6,0,0,5,5,1,0,2,0},
 }
 
-// The weight of the second endpoint, out of 64, for each index of 2, 3 and 4 bits.
+// The weight of the second endpoint, out of 64, for each index, by the bits of the index: 2, 3
+// and 4.
 @(rodata)
-BC7_WEIGHTS_2 := [4]u32{0,21,43,64}
-@(rodata)
-BC7_WEIGHTS_3 := [8]u32{0,9,18,27,37,46,55,64}
-@(rodata)
-BC7_WEIGHTS_4 := [16]u32{0,4,9,13,17,21,26,30,34,38,43,47,51,55,60,64}
+BC7_WEIGHTS := [5][16]u8{
+    {},{},{0,21,43,64,0,0,0,0,0,0,0,0,0,0,0,0},{0,9,18,27,37,46,55,64,0,0,0,0,0,0,0,0},
+    {0,4,9,13,17,21,26,30,34,38,43,47,51,55,60,64},
+}
 
 // The subset of each texel, row by row, for the 64 partitions of two and of
 // three subsets.
@@ -226,20 +228,6 @@ texture_bc7_block_decode :: proc "contextless" (block:[16]u8) -> (texels:[16][4]
     return
 }
 
-// subsets, partition bits, rotation bits, selector bit, color bits, alpha bits, endpoint
-// p-bits, shared p-bits, index bits and second index bits of each mode, as BC7_MODES.
-@(private="file")
-BC7_LAYOUT :: [8][10]int{
-    {3,4,0,0,4,0,1,0,3,0},
-    {2,6,0,0,6,0,0,1,3,0},
-    {3,6,0,0,5,0,0,0,2,0},
-    {2,6,0,0,7,0,1,0,2,0},
-    {1,0,2,1,5,6,0,0,2,3},
-    {1,0,2,0,7,8,0,0,2,2},
-    {1,0,0,0,7,7,1,0,4,0},
-    {2,6,0,0,5,5,1,0,2,0},
-}
-
 @(private="file")
 bc7_field :: #force_inline proc "contextless" (bits:u128,at:int,$N:int) -> u32 {
     return u32(bits>>uint(at))&u32((1<<uint(N))-1)
@@ -253,18 +241,11 @@ bc7_insert_zero :: #force_inline proc "contextless" (v:u64,pos:u32) -> u64 {
 }
 
 @(private="file")
-bc7_weights :: #force_inline proc "contextless" ($IB:int) -> ^[1<<uint(IB)]u32 {
-    when IB==2 {return &BC7_WEIGHTS_2} else when IB==3 {return &BC7_WEIGHTS_3} else {
-        return &BC7_WEIGHTS_4
-    }
-}
-
-@(private="file")
 bc7_decode_mode :: #force_inline proc "contextless" (block:[16]u8,
     $M:int) -> (texels:[16][4]u8) #no_bounds_check {
-    L :: BC7_LAYOUT[M]
-    NS :: L[0]; PB :: L[1]; RB :: L[2]; ISB :: L[3]; CB :: L[4]; AB :: L[5]
-    EPB :: L[6]; SPB :: L[7]; IB :: L[8]; IB2 :: L[9]
+    L :: BC7_MODES[M]
+    NS :: int(L.ns); PB :: int(L.pb); RB :: int(L.rb); ISB :: int(L.isb); CB :: int(L.cb)
+    AB :: int(L.ab); EPB :: int(L.epb); SPB :: int(L.spb); IB :: int(L.ib); IB2 :: int(L.ib2)
     bits:=transmute(u128)block
     partition:=bc7_field(bits,M+1,PB)
     rotation:=bc7_field(bits,M+1+PB,RB)
@@ -309,17 +290,17 @@ bc7_decode_mode :: #force_inline proc "contextless" (block:[16]u8,
     when IB2>0 {
         f1:=u64(bits>>uint(128-I1))&((u64(1)<<uint(I1))-1)
         f1=bc7_insert_zero(f1,u32(IB2-1))
-        w0:=bc7_weights(IB)
-        w1:=bc7_weights(IB2)
+        w0:=&BC7_WEIGHTS[IB]
+        w1:=&BC7_WEIGHTS[IB2]
         for i in 0..<16 {
-            c:=w0[(f0>>uint(i*IB))&((1<<uint(IB))-1)]
-            a:=w1[(f1>>uint(i*IB2))&((1<<uint(IB2))-1)]
+            c:=u32(w0[(f0>>uint(i*IB))&((1<<uint(IB))-1)])
+            a:=u32(w1[(f1>>uint(i*IB2))&((1<<uint(IB2))-1)])
             if selector==1 {c,a=a,c}
             w[i]=c|c<<8|c<<16|a<<24
         }
     } else {
-        w0:=bc7_weights(IB)
-        for i in 0..<16 {w[i]=w0[(f0>>uint(i*IB))&((1<<uint(IB))-1)]*0x01010101}
+        w0:=&BC7_WEIGHTS[IB]
+        for i in 0..<16 {w[i]=u32(w0[(f0>>uint(i*IB))&((1<<uint(IB))-1)])*0x01010101}
     }
     for i in 0..<16 {
         s:=0

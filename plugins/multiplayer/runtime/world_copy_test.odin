@@ -28,7 +28,7 @@ rollback_copy_failure_keeps_live_world_and_warm_publication_does_not_allocate ::
     info,described:=net_test_info(t)
     if !described {return}
     defer core.test_info_destroy(&info)
-    world:Net_Test_World;testing.expect(t,net_test_init(&world,&info));defer info.destroy[.World](&world)
+    world:Net_Test_World;testing.expect(t,net_test_init(&world,&info));defer core.world_destroy(&info,.World,&world)
     entity:=net_test_body(&world,&info,1)
     shared:=Net_Test_Shared{info=&info};defer phys.collider_meshes_destroy(&shared.colliders)
     allocation:=Rollback_Allocation{owner=context.allocator,remaining=100000}
@@ -46,7 +46,7 @@ rollback_copy_failure_keeps_live_world_and_warm_publication_does_not_allocate ::
     c.any,c.newest=true,2
     frame:=&c.frames[2]
     world.time.tick=2
-    testing.expect(t,info.copy(frame.world,&world))
+    testing.expect(t,core.world_copy(&info,frame.world,&world))
     frame.valid,frame.tick=true,2
     world.time.tick=3
     before,_:=core.get(core.read(&world.transforms),entity)
@@ -96,7 +96,7 @@ a_rollback_replays_its_ticks_and_leaves_the_clock_and_the_frame_where_they_were 
     if !described {return}
     defer core.test_info_destroy(&info)
     info.loops[.Game][.Fixed]=clock_test_fixed
-    world:Net_Test_World;testing.expect(t,net_test_init(&world,&info));defer info.destroy[.World](&world)
+    world:Net_Test_World;testing.expect(t,net_test_init(&world,&info));defer core.world_destroy(&info,.World,&world)
     net_test_body(&world,&info,1)
     shared:=Clock_Test_Shared{net={info=&info}};defer phys.collider_meshes_destroy(&shared.colliders);defer delete(shared.seen)
     app:=host.App{info=&info,allocator=context.allocator,tick_dt=1.0/60,shared=&shared}
@@ -149,7 +149,7 @@ a_tick_a_library_asks_to_go_back_to_runs_again_from_the_copy_it_started_from :: 
     if !described {return}
     defer core.test_info_destroy(&info)
     info.loops[.Game][.Fixed]=clock_test_fixed
-    world:Net_Test_World;testing.expect(t,net_test_init(&world,&info));defer info.destroy[.World](&world)
+    world:Net_Test_World;testing.expect(t,net_test_init(&world,&info));defer core.world_destroy(&info,.World,&world)
     net_test_body(&world,&info,1)
     shared:=Clock_Test_Shared{net={info=&info}};defer phys.collider_meshes_destroy(&shared.colliders);defer delete(shared.seen)
     app:=host.App{info=&info,allocator=context.allocator,tick_dt=1.0/60,shared=&shared}
@@ -205,7 +205,7 @@ history_copies_of_what_changed_equal_whole_copies_through_writes_layout_changes_
     info,described:=net_test_info(t)
     if !described {return}
     defer core.test_info_destroy(&info)
-    world:Net_Test_World;testing.expect(t,net_test_init(&world,&info));defer info.destroy[.World](&world)
+    world:Net_Test_World;testing.expect(t,net_test_init(&world,&info));defer core.world_destroy(&info,.World,&world)
     first:=net_test_body(&world,&info,1)
     second:=net_test_body(&world,&info,2,{1,0,0})
     shared:=Net_Test_Shared{info=&info};defer phys.collider_meshes_destroy(&shared.colliders)
@@ -220,8 +220,8 @@ history_copies_of_what_changed_equal_whole_copies_through_writes_layout_changes_
     defer session_destroy(&session)
     shared.session=&session
     expected:Net_Test_World
-    info.init[.World](&expected,context.allocator)
-    defer info.destroy[.World](&expected)
+    core.world_init(&info,.World,&expected,context.allocator)
+    defer core.world_destroy(&info,.World,&expected)
     c:=&session.client
     for tick in 1..=48 {
         switch tick {
@@ -236,7 +236,7 @@ history_copies_of_what_changed_equal_whole_copies_through_writes_layout_changes_
         }
         core.settle(&info,&world,nil)
         world.time.tick=u64(tick)
-        testing.expect(t,info.copy(&expected,&world))
+        testing.expect(t,core.world_copy(&info,&expected,&world))
         net_test_fixed(&world,&shared,nil,&app)
         frame:=&c.frames[tick%len(c.frames)]
         testing.expectf(t,frame.valid && frame.tick==u32(tick) && net_test_same(&info,cast(^Net_Test_World)frame.world,&expected),"the copy of tick %d is not the world as the tick found it",tick)
@@ -277,7 +277,7 @@ sync_test_run :: proc(t:^testing.T,outside:bool,late:=false) -> (problems:core.P
     if !described {return}
     defer core.test_info_destroy(&info)
     info.loops[.Game][.Fixed]=sync_test_fixed
-    world:Net_Test_World;testing.expect(t,net_test_init(&world,&info));defer info.destroy[.World](&world)
+    world:Net_Test_World;testing.expect(t,net_test_init(&world,&info));defer core.world_destroy(&info,.World,&world)
     body=net_test_body(&world,&info,1)
     net_test_body(&world,&info,2,{3,0,0})
     shared:=Sync_Test_Shared{net={info=&info},body=body,outside=outside};defer phys.collider_meshes_destroy(&shared.colliders)
@@ -371,7 +371,7 @@ a_rollback_places_interpolated_replicas_as_far_behind_as_each_tick_did :: proc(t
     info,described:=net_test_info(t)
     if !described {return}
     defer core.test_info_destroy(&info)
-    world:Net_Test_World;testing.expect(t,net_test_init(&world,&info));defer info.destroy[.World](&world)
+    world:Net_Test_World;testing.expect(t,net_test_init(&world,&info));defer core.world_destroy(&info,.World,&world)
     net_test_body(&world,&info,1)
     shown:=core.create(&world.entities)
     core.add(&world.transforms,shown,core.Transform{rotation=1,scale={1,1,1}})

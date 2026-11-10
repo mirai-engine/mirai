@@ -21,8 +21,8 @@ a_resimulated_tick_counts_a_known_problem_once_and_keeps_a_new_one :: proc(t:^te
     defer core.test_info_destroy(&info)
     info.loops[.Game][.Fixed]=replay_world_fixed
     shared:Replay_Shared
-    if !testing.expect(t,info.init[.Shared](&shared,context.allocator)) {return}
-    defer info.destroy[.Shared](&shared)
+    if !testing.expect(t,core.world_init(&info,.Shared,&shared,context.allocator)) {return}
+    defer core.world_destroy(&info,.Shared,&shared)
     app:=App{info=&info,allocator=context.allocator,shared=&shared}
     defer delete(app.worlds)
     world:=cast(^Replay_World)app_world_create(&app)

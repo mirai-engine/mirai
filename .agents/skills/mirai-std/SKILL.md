@@ -185,9 +185,9 @@ description: Mirai standard library for games, with the packages `std/base`, `st
 - The `hostile_test.odin` of each package except `subprocess` calls its public functions with random
   inputs from `base.Hostile` and holds every result to its contract: a reference model, the
   documented range, a structure unchanged by what it refused, nothing left allocated
-  (`-define:<PACKAGE>_HOSTILE_ROUNDS=n`, e.g. `BASE_HOSTILE_ROUNDS`). After touching a validation or
-  a path with `#no_bounds_check`, repeat them with `--release` and 20000 rounds, and once over a copy
-  of the package without `#no_bounds_check`.
+  (`-define:<PACKAGE>_HOSTILE_ROUNDS=n`, e.g. `BASE_HOSTILE_ROUNDS`). After touching a validation
+  or a path with `#no_bounds_check`, repeat them with `--release` and 20000 rounds, and once over a
+  copy of the package without `#no_bounds_check`.
 - `random_values_repeat_for_a_seed` and `lattice_noise_is_bounded_smooth_and_repeatable` pin exact
   values recorded on Windows x86-64: if they fail on another platform, reproducibility broke, not
   the test.

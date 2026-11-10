@@ -220,9 +220,9 @@ Device :: struct {
 	table_taken:       []u32, // as long as the table: what a copy takes
 	table_limit:       int,   // the most entries the table grows to on this device
 	table_default:     Texture,
-	pipeline_cache:    vk.PipelineCache,
-	cache_path:        [512]u8,
-	cache_path_len:    int,
+	pipelines_kept:    Pipeline_Store, // with a path, read when created and written when destroyed
+	store_path:        [512]u8,
+	store_path_len:    int,
 	timings:           [MAX_TIMESTAMPS]Gpu_Timing,
 	timing_bytes:      [MAX_TIMESTAMPS][MAX_TIMESTAMP_NAME_BYTES]u8, // the names of timings, kept until the next ones
 	timing_count:      int,
@@ -739,21 +739,12 @@ vk_create_logical_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 		d.ivk.GetPhysicalDeviceProperties2(d.physical, &props2)
 		d.scratch_alignment = max(u64(as_props.minAccelerationStructureScratchOffsetAlignment), 256)
 	}
-	// The driver validates the header (vendor, device, cache UUID) and ignores
-	// data from another GPU or driver version.
-	cache_info := vk.PipelineCacheCreateInfo{sType = .PIPELINE_CACHE_CREATE_INFO}
-	// A path that does not fit, cut, would name another file: memory only.
-	if len(desc.pipeline_cache_path) <= len(d.cache_path) {d.cache_path_len = copy(d.cache_path[:], desc.pipeline_cache_path)}
-	if d.cache_path_len > 0 {
-		if data, err := os.read_entire_file(desc.pipeline_cache_path, context.temp_allocator); err == nil && len(data) > 0 {
-			cache_info.initialDataSize = len(data)
-			cache_info.pInitialData = raw_data(data)
-		}
-	}
-	if d.dvk.CreatePipelineCache(d.handle, &cache_info, nil, &d.pipeline_cache) != .SUCCESS {
-		cache_info.initialDataSize = 0
-		cache_info.pInitialData = nil
-		d.dvk.CreatePipelineCache(d.handle, &cache_info, nil, &d.pipeline_cache)
+	// A path that does not fit, cut, would name another file: nothing is kept.
+	if len(desc.pipeline_cache_path) <= len(d.store_path) {d.store_path_len = copy(d.store_path[:], desc.pipeline_cache_path)}
+	if d.store_path_len > 0 {
+		p := d.properties
+		pipeline_store_init(&d.pipelines_kept, {vendor = p.vendorID, device = p.deviceID, driver = p.driverVersion, uuid = p.pipelineCacheUUID}, allocator = d.allocator)
+		pipeline_store_load(&d.pipelines_kept, desc.pipeline_cache_path)
 	}
 	return true
 }
@@ -839,10 +830,7 @@ device_destroy :: proc(d: ^Device) {
 		if d.immediate_fence != 0 {d.dvk.DestroyFence(d.handle, d.immediate_fence, nil)}
 		if d.timeline != 0 {d.dvk.DestroySemaphore(d.handle, d.timeline, nil)}
 		vk_memory_shutdown(d, true)
-		if d.pipeline_cache != 0 {
-			vk_save_pipeline_cache(d)
-			d.dvk.DestroyPipelineCache(d.handle, d.pipeline_cache, nil)
-		}
+		if d.store_path_len > 0 {_ = pipeline_store_save(&d.pipelines_kept, string(d.store_path[:d.store_path_len]))}
 		vk_loader_lock(d)
 		d.dvk.DestroyDevice(d.handle, nil)
 		vk_loader_unlock(d)
@@ -853,6 +841,7 @@ device_destroy :: proc(d: ^Device) {
 	if d.library != nil {dynlib.unload_library(d.library)}
 	vk_loader_unlock(d)
 	vk_memory_shutdown(d, false)
+	pipeline_store_destroy(&d.pipelines_kept)
 	delete(d.fresh)
 	for &f in d.frames {delete(f.deletions)}
 	delete(d.swapchain.images)
@@ -863,21 +852,6 @@ device_destroy :: proc(d: ^Device) {
 	pool_destroy(&d.pipelines, d.allocator)
 	pool_destroy(&d.accels, d.allocator)
 	free(d, d.allocator)
-}
-
-@(private)
-vk_save_pipeline_cache :: proc(d: ^Device) {
-	if d.cache_path_len == 0 {return}
-	size: int
-	if d.dvk.GetPipelineCacheData(d.handle, d.pipeline_cache, &size, nil) != .SUCCESS || size == 0 {return}
-	data, data_error := make([]u8, size, d.allocator)
-	defer delete(data, d.allocator)
-	if data_error != nil || d.dvk.GetPipelineCacheData(d.handle, d.pipeline_cache, &size, raw_data(data)) != .SUCCESS {return}
-	// Several processes share the file: each writes its own and replaces it
-	// whole, so none reads a half-written one.
-	path := string(d.cache_path[:d.cache_path_len])
-	staged := fmt.tprintf("%s.%d.tmp", path, os.get_pid())
-	if os.write_entire_file(staged, data[:size]) != nil || os.rename(staged, path) != nil {_ = os.remove(staged)}
 }
 
 device_info :: proc(d: ^Device) -> ^Device_Info {return &d.info}

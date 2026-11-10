@@ -111,3 +111,16 @@ single_color_decodes_close :: proc(t:^testing.T) {
         }
     }
 }
+
+// The endpoint and delta bits the encoder fits each mode to are those of the format.
+@(test)
+the_modes_of_the_encoder_are_those_of_the_format :: proc(t:^testing.T) {
+    modes:=asset.BC6H_MODES
+    for mode,i in modes {
+        desc:=MODE_DESC[i]
+        testing.expect(t,desc.epb==int(mode.epb) && desc.is_two_subset==(mode.ns==2),"endpoint bits and subsets")
+        for c in 0..<3 {
+            testing.expect_value(t,desc.db[c],mode.db==0 ? 0 : int(mode.db)+int(c==int(mode.bc)))
+        }
+    }
+}

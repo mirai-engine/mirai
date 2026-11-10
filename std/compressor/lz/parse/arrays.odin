@@ -8,7 +8,6 @@ import "mirai:std/compressor"
 // The streams one chunk parse produces before entropy coding, in one scratch block sized for
 // the worst case: literals chunk_len, packets chunk_len/2 (all LRL 0 + len 2 rep matches),
 // offsets chunk_len/3, excess u8s chunk_len/5, excess u32s chunk_len/256.
-@(private)
 Encoder_Arrays :: struct {
     literals_space_raw,literals_ptr_raw:[^]u8,
     literals_space_sub,literals_ptr_sub:[^]u8,
@@ -28,10 +27,9 @@ Encoder_Arrays :: struct {
 Parse :: struct {lastoffset,lrl,ml,offset:i32}
 
 // Rep offsets of the encoder; lasts[3] is room for the decoder's normal offset slot.
-@(private)
 LOs :: struct {lasts:[4]i32}
 
-@(private) los_reset :: #force_inline proc "contextless" (l:^LOs) {
+los_reset :: #force_inline proc "contextless" (l:^LOs) {
     l.lasts={compressor.MIN_OFFSET,compressor.MIN_OFFSET,compressor.MIN_OFFSET,0}
 }
 
@@ -49,7 +47,6 @@ los_add :: #force_inline proc "contextless" (l:^LOs,offset:i32) {
     l.lasts[2]=l.lasts[1];l.lasts[1]=l.lasts[0];l.lasts[0]=offset
 }
 
-@(private)
 arrays_point_to_scratch :: proc "contextless" (ea:^Encoder_Arrays, scratch:[^]u8, chunk_len:int,
     chunk_ptr:[^]u8, bitstream_flags:u32) {
     align4 :: #force_inline proc "contextless" (p:[^]u8) -> [^]u8 {
@@ -90,7 +87,6 @@ arrays_put_excess :: #force_inline proc "contextless" (ea:^Encoder_Arrays, val:i
     }
 }
 
-@(private)
 arrays_put_packet :: #force_inline proc "contextless" (ea:^Encoder_Arrays, los:^LOs, lrl,ml,
     offset:int,
     literals_start:[^]u8, $LO0_ONLY:bool, $SUB_LITS:bool) #no_bounds_check {
@@ -144,7 +140,6 @@ arrays_put_packet :: #force_inline proc "contextless" (ea:^Encoder_Arrays, los:^
     ea.packets_ptr[0]=u8(packet);ea.packets_ptr=ea.packets_ptr[1:]
 }
 
-@(private)
 arrays_finish_chunk :: proc "contextless" (ea:^Encoder_Arrays, literals_start:[^]u8,
     $SUB_LITS:bool) {
     final_lrl:=pdiff(ea.chunk_ptr,literals_start)+ea.chunk_len
@@ -179,7 +174,6 @@ scratch_mem_size :: proc "contextless" (raw_len:int) -> int {
 
 // newLZ_encoder_arrays_output: entropy codes the arrays into comp. Returns the comp length,
 // chunk_len when expanded, -1 on failure.
-@(private)
 arrays_output :: proc(c:^Chunk, pJ:^f32, pchunktype:^i32, passinfo:^Passinfo, comp,
     comp_end_in:[^]u8,
     ea:^Encoder_Arrays, level:i32, entropy_flags:u32) -> int {
@@ -340,25 +334,4 @@ arrays_output :: proc(c:^Chunk, pJ:^f32, pchunktype:^i32, passinfo:^Passinfo, co
     total_J+=lambda*entropy.speedfit_get_excesses(excesses_u8_count,excesses_u32_count)
     pJ^=total_J
     return total_comp
-}
-
-// newLZ_put_parse: replays a parse into the arrays and outputs them.
-@(private)
-put_parse :: proc(c:^Chunk, pJ:^f32, pchunktype:^i32, comp,comp_end:[^]u8, parsevec:[]Parse,
-    passinfo:^Passinfo) -> int {
-    pJ^=entropy.LAGRANGE_COST_INVALID
-    if len(parsevec)==0 {return c.chunk_len}
-    e:=c.e
-    ea:Encoder_Arrays
-    arrays_point_to_scratch(&ea,raw_data(e.arrays_space),c.chunk_len,c.chunk_ptr,e.bitstream_flags)
-    dummy:LOs
-    los_reset(&dummy)
-    start_pos:=c.chunk_pos==0 ? compressor.MIN_OFFSET : 0
-    literals_start:=c.chunk_ptr[start_pos:]
-    for &p in parsevec {
-        arrays_put_packet(&ea,&dummy,int(p.lrl),int(p.ml),int(p.offset),literals_start,false,true)
-        literals_start=literals_start[p.lrl+p.ml:]
-    }
-    arrays_finish_chunk(&ea,literals_start,true)
-    return arrays_output(c,pJ,pchunktype,passinfo,comp,comp_end,&ea,e.level,e.entropy_flags)
 }

@@ -88,8 +88,8 @@ a_world_is_made_with_the_tick_rate_of_the_settings :: proc(t:^testing.T) {
     if !described {return}
     defer core.test_info_destroy(&info)
     shared:Simulation_Shared
-    if !testing.expect(t,info.init[.Shared](&shared,context.allocator)) {return}
-    defer info.destroy[.Shared](&shared)
+    if !testing.expect(t,core.world_init(&info,.Shared,&shared,context.allocator)) {return}
+    defer core.world_destroy(&info,.Shared,&shared)
     app:=App{info=&info,shared=&shared,tick_dt=1}
     tick_rate_follow(&app)
     testing.expect_value(t,app.tick_dt,f32(1)/60)

@@ -208,8 +208,19 @@ For a renderer that generates frames (`rhi/present.odin`):
 
 ## Pipeline cache
 
-- Vulkan saves the `VkPipelineCache` in `Device_Desc.pipeline_cache_path` when destroying the
-  device, replacing the whole file: several processes share it. `host` uses `pipelines.bin` in the
+- Vulkan keeps in `Device_Desc.pipeline_cache_path` one driver blob per pipeline
+  (`rhi/pipeline_store.odin`), under a key of the code and state it compiles, never its name: each
+  pipeline is created with a `VkPipelineCache` of its own, because a driver cache returns every
+  entry it was ever given and grows without end. Blobs are stored as chunks cut by their content,
+  each once: a driver repeats in every blob what they all share (NVIDIA a dictionary of megabytes).
+- The file belongs to one device, driver and cache UUID, and is read whole or not at all: another
+  device, another version or a file that does not read back exactly is ignored and replaced.
+- Destroying the device rewrites it in one rename: the blobs this run used, the last used first,
+  then those of earlier runs that are still young; a pipeline no run asks for (its shader changed)
+  ages out, and nothing past `PIPELINE_STORE_BYTES` goes in. Several processes share the file and
+  the last to end writes it.
+- Reading it removes the staging files of writers that ended (`serial.file_remove_stale`); that
+  of a process that runs stays. `host` uses `pipelines.bin` in the
   [project user folder](../../mirai-core/references/host.md#the-application).
 - Metal shares library and function between identical sources; the caller may free `Shader_Code`
   after creating the pipeline.
@@ -219,7 +230,7 @@ For a renderer that generates frames (`rhi/present.odin`):
 - The device is used from the thread that records the frames, except `pipeline_create_compute`
   and `pipeline_create_graphics`, which run on other threads, several at a time, while that one
   records: the driver takes seconds for a shader generation
-  ([loading in host](shaders.md#loading-in-host)). The Vulkan pipeline cache is created without
+  ([loading in host](shaders.md#loading-in-host)). The Vulkan pipeline caches are created without
   `EXTERNALLY_SYNCHRONIZED`: the driver synchronizes it.
 - `Device.pipeline_lock` guards the pipeline pool and `message_lock` the messages; `pool_get`
   reads only the slot of its handle, so a new pipeline does not touch the ones the frame uses.

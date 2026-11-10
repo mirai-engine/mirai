@@ -138,7 +138,7 @@ correction_run :: proc(t:^testing.T,settings:Net_Settings,link:Correction_Link,s
         net_test_physics(&world,&shares[index],&apps[index])
     }
     net_test_player(&worlds[1],&info)
-    defer for &world in worlds {info.destroy[.World](&world)}
+    defer for &world in worlds {core.world_destroy(&info,.World,&world)}
     defer for &app in apps {host.app_world_scratch_free(&app);delete(app.worlds)}
     defer for &share in shares {phys.collider_meshes_destroy(&share.colliders)}
     network:wire.Sim_Network
@@ -316,8 +316,8 @@ correction_fixture_destroy :: proc(f:^Correction_Fixture) {
     wire.sim_network_destroy(&f.network)
     host.app_world_scratch_free(&f.app);delete(f.app.worlds)
     phys.collider_meshes_destroy(&f.shared.colliders)
-    if f.info.destroy[.World]==nil {return}
-    f.info.destroy[.World](&f.world)
+    if f.info.sizes[.World]<=0 {return}
+    core.world_destroy(&f.info,.World,&f.world)
     core.test_info_destroy(&f.info)
 }
 
@@ -376,7 +376,7 @@ a_client_keeps_the_history_of_its_server :: proc(t:^testing.T) {
     apps:[2]host.App
     sessions:[2]Net_Session
     for &world,index in worlds {net_test_init(&world,&info);apps[index]={info=&info,allocator=context.allocator,tick_dt=1.0/240}}
-    defer for &world in worlds {info.destroy[.World](&world)}
+    defer for &world in worlds {core.world_destroy(&info,.World,&world)}
     defer for &app in apps {host.app_world_scratch_free(&app);delete(app.worlds)}
     network:wire.Sim_Network
     testing.expect(t,wire.sim_network_init(&network,{seed=5,endpoints=2,packets=256}))
@@ -410,9 +410,9 @@ an_error_too_deep_for_the_frame_is_closed_over_the_next_ticks_without_a_teleport
     defer correction_fixture_destroy(&f)
     if !correction_fixture_init(t,&f,.Predicted,{max_objects=8,predicted_capacity=8,replication={history_seconds=0.5},max_resimulate=4}) {return}
     expected:Net_Test_World
-    f.info.init[.World](&expected,context.allocator)
-    f.info.copy(&expected,&f.world)
-    defer f.info.destroy[.World](&expected)
+    core.world_init(&f.info,.World,&expected,context.allocator)
+    core.world_copy(&f.info,&expected,&f.world)
+    defer core.world_destroy(&f.info,.World,&expected)
     reference:=Net_Test_Shared{info=&f.info}
     defer phys.collider_meshes_destroy(&reference.colliders)
     before:=correction_fixture_position(&f)
@@ -441,9 +441,9 @@ an_error_of_a_body_out_of_reach_is_closed_over_the_next_ticks_and_its_records_fo
     eighth,_:=record_of(c,&f.session.desc,&c.replicas[1],8)
     at_four,at_eight:=fourth^,eighth^
     expected:Net_Test_World
-    f.info.init[.World](&expected,context.allocator)
-    f.info.copy(&expected,&f.world)
-    defer f.info.destroy[.World](&expected)
+    core.world_init(&f.info,.World,&expected,context.allocator)
+    core.world_copy(&f.info,&expected,&f.world)
+    defer core.world_destroy(&f.info,.World,&expected)
     reference:=Net_Test_Shared{info=&f.info}
     defer phys.collider_meshes_destroy(&reference.colliders)
     expected.time.tick=11
@@ -493,4 +493,42 @@ a_state_older_than_the_history_puts_the_replica_where_the_server_had_it :: proc(
     now,_:=replica_now(&f.session,core.world_ref(&f.world,&f.info),&c.replicas[1])
     got:=now.position
     testing.expectf(t,linalg.length(got-wanted)<0.002,"the replica is at %v, and the server had it at %v nine ticks ago",got,wanted)
+}
+
+// The states of the server of a predicted replica are kept at the slot of
+// their tick: that of a tick is found there, the newest at or before a tick
+// going back from it, and one a whole history newer takes the slot of the
+// older. A replica that takes the record slot starts without them.
+@(test)
+authoritative_states_are_found_by_their_tick_and_the_newest_before_it :: proc(t:^testing.T) {
+    HISTORY :: 8
+    s:Net_Session
+    c:=&s.client
+    c.history,c.words_per=HISTORY,1
+    records:[2*HISTORY]Authoritative
+    words:[2*HISTORY]u32
+    c.authoritative,c.authoritative_words=records[:],words[:]
+    r:=Replica{object=3,mode=.Predicted,slot=1}
+    state :: proc(s:^Net_Session,r:^Replica,tick,word:u32) {
+        held:=[1]u32{word}
+        command:=wire.Command{tick=tick,mask=1,words=held[:]}
+        authoritative_capture(s,r,&command)
+    }
+    for tick in ([]u32{10,12,13}) {state(&s,&r,tick,tick*2)}
+    Case :: struct {tick:u32,exact:bool,found:u32} // found: the tick of the state; 0: none
+    check :: proc(t:^testing.T,s:^Net_Session,r:^Replica,cases:[]Case,word:proc(tick:u32) -> u32) {
+        for k in cases {
+            command,found:=authoritative_command(s,r,k.tick,k.exact)
+            testing.expectf(t,found==(k.found!=0) && (!found || command.tick==k.found && command.words[0]==word(k.found)),"tick %d, exact %v: found %v, of tick %d",k.tick,k.exact,found,command.tick)
+        }
+    }
+    check(t,&s,&r,{{12,true,12},{11,true,0},{11,false,10},{13,false,13},{17,false,13},{9,false,0}},proc(tick:u32) -> u32 {return tick*2})
+    state(&s,&r,10+HISTORY,7)
+    check(t,&s,&r,{{10,true,0},{17,false,13},{10+HISTORY,false,10+HISTORY},{25,false,10+HISTORY},{60,false,10+HISTORY}},proc(tick:u32) -> u32 {return tick==10+HISTORY?7:tick*2})
+    // The slot of a replica that is not predicted is of the interpolation: it has no states here.
+    shown:=Replica{object=3,mode=.Interpolated,slot=40}
+    check(t,&s,&shown,{{13,false,0}},proc(tick:u32) -> u32 {return 0})
+    other:=Replica{object=3,mode=.Predicted,slot=1}
+    authority_clear(&s,&other)
+    check(t,&s,&other,{{60,false,0}},proc(tick:u32) -> u32 {return 0})
 }

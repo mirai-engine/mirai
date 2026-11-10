@@ -921,7 +921,7 @@ run_create :: proc(s:^Session,owner,player:int) -> ^Run {
     if world==nil {return nil}
     // Physics takes the edits since the last frame as its own, or the copy reads them as written by another.
     simulation_settle(s,edited_world(s))
-    if !s.info.copy(world,s.edit_world) {host.app_world_free(s.app,world);return nil}
+    if !core.world_copy(s.info,world,s.edit_world) {host.app_world_free(s.app,world);return nil}
     s.run_serial+=1
     r^={world=world,id=s.run_serial,owner=owner,player=player,document=history.edits_scene_state(s.edits)}
     return r

@@ -153,7 +153,7 @@ timing_init :: proc(x:^Timing,t:^testing.T,conditions:wire.Sim_Conditions,update
 @(private)
 timing_destroy :: proc(x:^Timing) {
     for &session in x.sessions {if session.host_ready {session_destroy(&session)}}
-    for &world in x.worlds {x.info.destroy[.World](&world)}
+    for &world in x.worlds {core.world_destroy(&x.info,.World,&world)}
     for &share in x.shares {
         core.value_free(&share.events,type_info_of(Net_Events))
         core.value_free(&share.propagation,type_info_of(core.Propagation))
@@ -338,7 +338,7 @@ an_interpolated_body_is_kinematic_until_this_client_simulates_it :: proc(t:^test
     defer core.test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
-    defer info.destroy[.World](&world)
+    defer core.world_destroy(&info,.World,&world)
     e:=net_test_body(&world,&info,1)
     world.values.values[0].force=0
     shared:=Net_Test_Shared{info=&info}
@@ -398,7 +398,7 @@ an_interpolated_body_follows_the_server_over_a_manipulation_of_the_game_and_give
     defer core.test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
-    defer info.destroy[.World](&world)
+    defer core.world_destroy(&info,.World,&world)
     e:=net_test_body(&world,&info,1)
     world.values.values[0].force=0
     shared:=Net_Test_Shared{info=&info}

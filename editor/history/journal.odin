@@ -163,7 +163,9 @@ journal_table_take :: proc(image:^Journal_Table,t:^core.Raw_Table,size:int,autho
     image.seen={}
     _=core.raw_changes(t,&image.seen)
     clear(&image.rows)
-    if resize(&image.values,kept*size)!=nil || resize(&image.entities,kept)!=nil || resize(&image.off,kept)!=nil || resize(&image.rows,len(t.rows))!=nil {
+    indices:=0
+    for e in t.entities {indices=max(indices,core.entity_index(e)+1)}
+    if resize(&image.values,kept*size)!=nil || resize(&image.entities,kept)!=nil || resize(&image.off,kept)!=nil || resize(&image.rows,indices)!=nil {
         clear(&image.values);clear(&image.entities);clear(&image.off);clear(&image.rows)
         return false
     }
@@ -171,7 +173,7 @@ journal_table_take :: proc(image:^Journal_Table,t:^core.Raw_Table,size:int,autho
         if n*size>0 {mem.copy(raw_data(image.values),t.values.data,n*size)}
         copy(image.entities[:],t.entities[:])
         copy(image.off[:],t.off[:])
-        copy(image.rows[:],t.rows[:])
+        for e,row in t.entities {image.rows[core.entity_index(e)]=i32(row+1)}
         return true
     }
     at:=0
@@ -183,6 +185,22 @@ journal_table_take :: proc(image:^Journal_Table,t:^core.Raw_Table,size:int,autho
         at+=1
     }
     return true
+}
+
+// Takes, in every table, the rows of the entities turned, up to index bound,
+// that are not alive.
+@(private)
+turned_rows_drop :: proc(w:core.World_Ref,es:^core.Entities,marks:[]u8,bound:int) {
+    for &t in w.info.tables {
+        if t.place!=w.place {continue}
+        table:=core.world_table_at(w,&t)
+        // From the last: a row taken leaves in its place one already seen.
+        for row:=len(table.entities)-1;row>=0;row-=1 {
+            e:=table.entities[row]
+            i:=core.entity_index(e)
+            if i<bound && entity_turned(es,marks,i) && !core.alive(es,e) {core.raw_drop(table,t.info,e)}
+        }
+    }
 }
 
 // Whether a table changed since its image was taken.
@@ -536,14 +554,7 @@ world_turned_prune :: proc(w:core.World_Ref,marks:[]u8,bound:int,transforms:core
     core.world_settle(w)
     es:=core.world_entities(w)
     n:=min(len(marks),len(es.generation))
-    for &t in w.info.tables {
-        if t.place!=w.place {continue}
-        table:=core.world_table_at(w,&t)
-        for i in 1..<min(bound,len(table.rows)) {
-            if table.rows[i]==0 || !entity_turned(es,marks,i) {continue}
-            if e:=table.entities[table.rows[i]-1];!core.alive(es,e) {core.raw_drop(table,t.info,e)}
-        }
-    }
+    turned_rows_drop(w,es,marks,bound)
     locals,poses:=core.world_table_of(w,core.Transform),core.world_table_of(w,core.World_Transform)
     if locals!=nil && poses!=nil {
         drop :: proc(locals:^core.Table(core.Transform),poses:^core.Table(core.World_Transform),e:core.Entity) {

@@ -3,6 +3,8 @@ package serial
 import "core:fmt"
 import "core:os"
 import "core:testing"
+import "core:time"
+import "mirai:std/base"
 
 // xorshift64*: the same sequence on every run and platform.
 @(private)
@@ -202,4 +204,35 @@ file_errors_name_what_failed :: proc(t:^testing.T) {
     testing.expect_value(t,file_write_atomic(empty,nil),File_Error.None)
     nothing,empty_error:=file_read(empty)
     testing.expect(t,nothing==nil && empty_error==.None)
+}
+
+// A staging file outlives a process that ended or was killed while it wrote:
+// a later process removes it, and keeps the one of a process that runs.
+@(test)
+staging_files_of_ended_processes_are_removed :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"serial-staging")
+    if folder=="" {return}
+    path:=fmt.tprintf("%s/pipelines.bin",folder)
+    data:=[?]u8{1,2,3}
+    testing.expect_value(t,file_write_atomic(path,data[:]),File_Error.None)
+    Case :: struct {name:string,old,kept:bool}
+    cases:=[?]Case{
+        {fmt.tprintf("pipelines.bin.%d.tmp",1<<30),false,false}, // no process has that pid
+        {fmt.tprintf("pipelines.bin.%d.tmp",os.get_pid()),false,true}, // a process that runs may be writing it
+        {fmt.tprintf("pipelines.bin.%d.tmp",os.get_ppid()),true,false}, // its pid was given to another process
+        {"pipelines.bin.12ab.tmp",false,true},
+        {"pipelines.bin.tmp",false,true},
+        {"other.bin.1073741824.tmp",false,true},
+    }
+    for c in cases {
+        staged:=fmt.tprintf("%s/%s",folder,c.name)
+        testing.expect_value(t,os.write_entire_file(staged,data[:]),nil)
+        if c.old {
+            past:=time.time_add(time.now(),-2*STAGING_STALE)
+            testing.expect_value(t,os.change_times(staged,past,past),nil)
+        }
+    }
+    file_remove_stale(path)
+    for c in cases {testing.expectf(t,os.exists(fmt.tprintf("%s/%s",folder,c.name))==c.kept,"%s kept: %v",c.name,c.kept)}
+    testing.expect(t,os.exists(path))
 }

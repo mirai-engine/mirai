@@ -24,7 +24,6 @@ hash_n_bytes :: #force_inline proc "contextless" (ptr:[^]u8,$LEN:int,bits:int) -
 
 CACHE_LINE :: 64
 
-@(private)
 alloc_aligned :: proc(arena:^entropy.Arena,$T:typeid,n:int) -> (mem:[]u8,data:[]T) {
     mem=entropy.arena_alloc(arena,u8,n*size_of(T)+CACHE_LINE)
     if mem==nil {return}

@@ -2,6 +2,7 @@ package bc7
 
 import "base:intrinsics"
 import "core:simd"
+import "mirai:asset"
 import "mirai:cook/compressor/texture/bc67"
 
 // The block encoder: candidate trials, ranking, refinement and bit packing.
@@ -396,11 +397,11 @@ emit_bits :: proc "contextless" (out:^[16]u8,st:^Block_State,$M:int) {
     }
     anchor1_bit,anchor2_bit:u64
     when NS>=2 {
-        a1:=NS==2 ? bc67.ANCHOR_2_2[p] : bc67.ANCHOR_3_2[p]
+        a1:=NS==2 ? asset.BC7_ANCHORS_2[p] : asset.BC7_ANCHORS_3[p][0]
         anchor1_bit=u64(1)<<uint(IB*(int(a1)+1)-1)
     }
     when NS>=3 {
-        anchor2_bit=u64(1)<<uint(IB*(int(bc67.ANCHOR_3_3[p])+1)-1)
+        anchor2_bit=u64(1)<<uint(IB*(int(asset.BC7_ANCHORS_3[p][1])+1)-1)
     }
     idxs=remove_anchor_bit(idxs,max(anchor1_bit,anchor2_bit))
     idxs=remove_anchor_bit(idxs,min(anchor1_bit,anchor2_bit))

@@ -6,12 +6,10 @@ import "mirai:std/compressor/lz/match"
 import "mirai:std/compressor"
 
 // A chosen match: off > 0 is a normal offset, -i is last offset i.
-@(private)
 Match :: struct {ml,off:i32}
 
-@(private) is_lo :: #force_inline proc "contextless" (m:Match) -> bool {return m.off<=0}
+is_lo :: #force_inline proc "contextless" (m:Match) -> bool {return m.off<=0}
 
-@(private)
 is_allowed_normal_match_optimal :: #force_inline proc "contextless" (ml:i32,off:u32,
     o:^Options) -> bool {
     if o.far_match_offset_log2>0 && o.far_match_offset_log2<32 &&
@@ -26,7 +24,6 @@ is_allowed_normal_match_optimal :: #force_inline proc "contextless" (ml:i32,off:
     return true
 }
 
-@(private)
 is_allowed_normal_match :: #force_inline proc "contextless" (ml:i32,off:u32,o:^Options) -> bool {
     if !is_allowed_normal_match_optimal(ml,off,o) {return false}
     if ml>5 {return true}
@@ -35,7 +32,6 @@ is_allowed_normal_match :: #force_inline proc "contextless" (ml:i32,off:u32,o:^O
     return off<max_offset[ml]
 }
 
-@(private)
 is_normal_match_better :: #force_inline proc "contextless" (ml:i32,off:u32,bestml:i32,
     bestoff:u32) -> bool {
     if ml<bestml {return false}
@@ -44,14 +40,12 @@ is_normal_match_better :: #force_inline proc "contextless" (ml:i32,off:u32,bestm
     return (off>>7)<=bestoff
 }
 
-@(private)
 is_lo_match_better :: #force_inline proc "contextless" (rep_len,main_len:i32,
     main_dist:u32) -> bool {
     return rep_len>=2 && (rep_len+1>=main_len || (rep_len+2>=main_len && main_dist>=(1<<10)) ||
         (rep_len+3>=main_len && main_dist>=(1<<16)))
 }
 
-@(private)
 lazy_match_delta :: #force_inline proc "contextless" (new_ml:i32,new_off:i32,new_is_last:bool,
     old_ml:i32,old_off:i32,old_is_last:bool) -> i32 {
     if new_ml==0 {return 0}

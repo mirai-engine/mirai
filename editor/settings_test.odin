@@ -44,8 +44,8 @@ settings_are_written_by_layer_and_the_project_wins :: proc(t:^testing.T) {
     if !made {return}
     defer core.test_info_destroy(&info)
     world:Layer_World
-    if !testing.expect(t,info.init[.World](&world,context.allocator)) {return}
-    defer info.destroy[.World](&world)
+    if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator)) {return}
+    defer core.world_destroy(&info,.World,&world)
     setting_at,rule_at:=info.storages_by_type[Layer_Setting],info.storages_by_type[Layer_Rule]
     selection:history.Selection;defer delete(selection.entities)
     viewport:Viewport;gui:Editor_Ui;edits:history.Edits;defer history.edits_free(&edits)

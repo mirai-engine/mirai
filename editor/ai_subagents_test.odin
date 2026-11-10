@@ -35,8 +35,8 @@ fixture_open :: proc(t:^testing.T,name:string) -> ^Fixture {
     f.root=base.test_folder(t,fmt.tprintf("ai-%s",name))
     described:bool
     f.info,described=ai_context_test_info(t)
-    if !described || !testing.expect(t,f.info.init[.World](&f.world,context.allocator)) || f.root=="" {
-        if described {f.info.destroy[.World](&f.world);core.test_info_destroy(&f.info)}
+    if !described || !testing.expect(t,core.world_init(&f.info,.World,&f.world,context.allocator)) || f.root=="" {
+        if described {core.world_destroy(&f.info,.World,&f.world);core.test_info_destroy(&f.info)}
         free(f)
         return nil
     }
@@ -61,7 +61,7 @@ fixture_close :: proc(f:^Fixture) {
     for &task in f.ai.tasks[:f.ai.task_count] {ai_review_free(&task.review);ai_steers_free(&task)}
     ai_store.close(&f.ai.store)
     test_session_close(&f.edited)
-    f.info.destroy[.World](&f.world)
+    core.world_destroy(&f.info,.World,&f.world)
     core.test_info_destroy(&f.info)
     free(f.ai)
     free(f)

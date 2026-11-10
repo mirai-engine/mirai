@@ -20,7 +20,7 @@ remote_follows_what_a_client_holds_on_a_server_and_a_new_role_clears_it :: proc(
     defer core.test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
-    defer info.destroy[.World](&world)
+    defer core.world_destroy(&info,.World,&world)
     e:=net_test_body(&world,&info,1)
     app:=host.App{info=&info,allocator=context.allocator,tick_dt=1.0/60}
     defer {host.app_world_scratch_free(&app);delete(app.worlds)}
@@ -69,7 +69,7 @@ remote_follows_the_replicas_a_client_neither_predicts_nor_holds :: proc(t:^testi
     defer core.test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
-    defer info.destroy[.World](&world)
+    defer core.world_destroy(&info,.World,&world)
     e:=net_test_body(&world,&info,1)
     shared:=Net_Test_Shared{info=&info}
     defer phys.collider_meshes_destroy(&shared.colliders)

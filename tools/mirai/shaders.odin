@@ -47,8 +47,7 @@ cmd_shaders :: proc(root:string,args:[]string) -> int {
             }
             continue
         }
-        fmt.eprintfln("mirai shaders: unknown argument '%s'\nUsage: mirai %s",args[i],SHADERS_USAGE)
-        return 2
+        return argument_unknown("shaders",args[i])
     }
     if options.project=="" && project.engine_installed(root) {
         fmt.eprintln("mirai shaders: an installed engine carries its shaders already generated; --project generates those of a project")
@@ -115,7 +114,7 @@ shaders_check :: proc(root:string,args:[]string) -> int {
             folder=value
             continue
         }
-        if path!="" || strings.has_prefix(args[i],"--") {fmt.eprintfln("Usage: mirai %s",SHADERS_USAGE);return 2}
+        if path!="" || !positional(args[i]) {return argument_unknown("shaders check",args[i])}
         path=args[i]
     }
     if path=="" {fmt.eprintfln("Usage: mirai %s",SHADERS_USAGE);return 2}
@@ -182,7 +181,8 @@ cmd_setup :: proc(root:string,args:[]string) -> int {
     archive:string
     for i:=1;i<len(args);i+=1 {
         value,matched,ok:=option_value(args,&i,"--archive")
-        if !matched || !ok || value=="" {fmt.eprintfln("Usage: mirai %s",SETUP_USAGE);return 2}
+        if !matched {return argument_unknown("setup",args[i])}
+        if !ok || value=="" {fmt.eprintfln("Usage: mirai %s",SETUP_USAGE);return 2}
         archive=value
     }
     if args[0]!="slang" {return setup_ripgrep(root,archive)}

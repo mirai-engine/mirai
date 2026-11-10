@@ -1,9 +1,10 @@
-package parse
+package lz_optimal
 
 import "base:runtime"
 import "mirai:std/compressor/lz/entropy"
 import "mirai:std/compressor/lz/match"
 import "mirai:std/compressor"
+import "mirai:std/compressor/lz/parse"
 
 // Optimal parse (Optimal1-5): a greedy/lazy seed parse over the found matches gives the starting
 // statistics, then a forward arrival parse in pieces of ~256 bytes re-costs with the running
@@ -120,19 +121,19 @@ cost_offset :: #force_inline proc "contextless" (offset:u32,
     cc:^Codecosts) -> i32 #no_bounds_check {
     cost:i32
     if cc.offset_alt_modulo==0 {
-        c:=offset44_pack_u8(i32(offset))
+        c:=parse.offset44_pack_u8(i32(offset))
         cost+=cc.codecost_offset1[c]
-        cost+=i32(offset44_unpack_numrawbits(c))*entropy.COST_ONE_BIT
-        if offset>=ESCAPE_OFFSET_MIN {cost+=COST_PENALTY_EXCESS}
+        cost+=i32(parse.offset44_unpack_numrawbits(c))*entropy.COST_ONE_BIT
+        if offset>=parse.ESCAPE_OFFSET_MIN {cost+=COST_PENALTY_EXCESS}
     } else if cc.offset_alt_modulo==1 {
-        c:=alt_offset_pack_u8_modulo1(offset)
+        c:=parse.alt_offset_pack_u8_modulo1(offset)
         cost+=cc.codecost_offset1[c]
-        cost+=i32(alt_offset_unpack_numrawbits(c))*entropy.COST_ONE_BIT
+        cost+=i32(parse.alt_offset_unpack_numrawbits(c))*entropy.COST_ONE_BIT
     } else {
-        top,bot:=alt_offset_pack_u8s(offset,u32(cc.offset_alt_modulo))
+        top,bot:=parse.alt_offset_pack_u8s(offset,u32(cc.offset_alt_modulo))
         cost+=cc.codecost_offset1[top]
         cost+=cc.codecost_offset2[bot]
-        cost+=i32(alt_offset_unpack_numrawbits(top))*entropy.COST_ONE_BIT
+        cost+=i32(parse.alt_offset_unpack_numrawbits(top))*entropy.COST_ONE_BIT
     }
     return cost
 }
@@ -274,10 +275,10 @@ try_two_step_arrival_tll :: #force_inline proc "contextless" (arr:^Arrivals, $NU
 
 // The seed heuristic over the found matches: same rules as the CTMF heuristic.
 @(private)
-get_match_heuristic_pairs :: proc "contextless" (rec:^Match_Parse_Record, los:^LOs, ptr,
+get_match_heuristic_pairs :: proc "contextless" (rec:^Match_Parse_Record, los:^parse.LOs, ptr,
     ptr_matchend:[^]u8,
     mml_in:int, lrl:int, dictionary_base:[^]u8, dictionary_size:u32,
-        o:^Options) -> Match #no_bounds_check {
+        o:^parse.Options) -> parse.Match #no_bounds_check {
     mml:=mml_in
     ptr32:=load32(ptr)
     lo_index:=-1
@@ -289,8 +290,8 @@ get_match_heuristic_pairs :: proc "contextless" (rec:^Match_Parse_Record, los:^L
             if i==0 || ml>lo_ml {lo_ml=ml;lo_index=i}
         }
     }
-    if lo_ml>=LOML_GOOD_ENOUGH {return Match{i32(lo_ml),-i32(lo_index)}}
-    if lrl>=LRL_FOR_LONGER_MML {
+    if lo_ml>=parse.LOML_GOOD_ENOUGH {return parse.Match{i32(lo_ml),-i32(lo_index)}}
+    if lrl>=parse.LRL_FOR_LONGER_MML {
         if lo_ml<=2 {lo_ml=0}
         mml+=1
     }
@@ -307,35 +308,35 @@ get_match_heuristic_pairs :: proc "contextless" (rec:^Match_Parse_Record, los:^L
         offset:=u32(rec.pairs[m].offset)
         if offset>=dictionary_size {continue}
         if offset<compressor.MIN_OFFSET {
-            offset=match.round_up_small_offset(offset)
+            offset=round_up_small_offset(offset)
             if int(offset)>avail {continue}
             l=match.getmatchlen_mml3_one32(ptr32,ptr,padd(ptr,-int(offset)),ptr_matchend)
             if l<mml {continue}
         } else if int(offset)>avail {continue}
         l32:=i32(l)
-        if is_allowed_normal_match(l32,offset,o) && is_normal_match_better(l32,offset,bestml,
+        if parse.is_allowed_normal_match(l32,offset,o) && parse.is_normal_match_better(l32,offset,bestml,
             bestoff) {
             bestml=l32;bestoff=offset
         }
     }
-    if is_lo_match_better(i32(lo_ml),bestml,bestoff) {return Match{i32(lo_ml),-i32(lo_index)}}
-    return Match{bestml,i32(bestoff)}
+    if parse.is_lo_match_better(i32(lo_ml),bestml,bestoff) {return parse.Match{i32(lo_ml),-i32(lo_index)}}
+    return parse.Match{bestml,i32(bestoff)}
 }
 
 // The greedy/lazy2 seed parse of the optimal levels, output as Normal without splits.
 @(private)
-encode_chunk_optimal_greedy :: proc(c:^Chunk, pJ:^f32, pchunktype:^i32, passinfo:^Passinfo,
+encode_chunk_optimal_greedy :: proc(c:^parse.Chunk, pJ:^f32, pchunktype:^i32, passinfo:^parse.Passinfo,
     comp,comp_end:[^]u8, mml:int, matches:[^]Match_Parse_Record) -> int {
     e:=c.e
     o:=&e.options
     chunk_ptr:=c.chunk_ptr
     chunk_len:=c.chunk_len
-    ea:Encoder_Arrays
-    arrays_point_to_scratch(&ea,raw_data(e.arrays_space),chunk_len,chunk_ptr,e.bitstream_flags)
-    los:LOs
-    los_reset(&los)
+    ea:parse.Encoder_Arrays
+    parse.arrays_point_to_scratch(&ea,raw_data(e.arrays_space),chunk_len,chunk_ptr,e.bitstream_flags)
+    los:parse.LOs
+    parse.los_reset(&los)
     start_pos:=c.chunk_pos==0 ? compressor.MIN_OFFSET : 0
-    dict_size:=dictionary_size(o)
+    dict_size:=parse.dictionary_size(o)
     parse_end_pos:=chunk_len-compressor.LZ_NO_MATCH_ZONE
     ptr_matchend:=chunk_ptr[chunk_len-compressor.LZ_MATCH_END_PAD:]
     literals_start:=start_pos
@@ -349,7 +350,7 @@ encode_chunk_optimal_greedy :: proc(c:^Chunk, pJ:^f32, pchunktype:^i32, passinfo
             lazy:=get_match_heuristic_pairs(&matches[pos+1],&los,ptr[1:],ptr_matchend,mml,
                 pos+1-literals_start,
                 c.dictionary_base,dict_size,o)
-            if lazy_match_delta(lazy.ml,lazy.off,is_lo(lazy),chosen.ml,chosen.off,is_lo(chosen))>0 {
+            if parse.lazy_match_delta(lazy.ml,lazy.off,parse.is_lo(lazy),chosen.ml,chosen.off,parse.is_lo(chosen))>0 {
                 ptr=ptr[1:];pos+=1
                 chosen=lazy
             } else {
@@ -357,8 +358,8 @@ encode_chunk_optimal_greedy :: proc(c:^Chunk, pJ:^f32, pchunktype:^i32, passinfo
                 lazy=get_match_heuristic_pairs(&matches[pos+2],&los,ptr[2:],ptr_matchend,mml,
                     pos+2-literals_start,
                     c.dictionary_base,dict_size,o)
-                if lazy_match_delta(lazy.ml,lazy.off,is_lo(lazy),chosen.ml,chosen.off,
-                    is_lo(chosen))>LAZYBETTER_LAZY2 {
+                if parse.lazy_match_delta(lazy.ml,lazy.off,parse.is_lo(lazy),chosen.ml,chosen.off,
+                    parse.is_lo(chosen))>parse.LAZYBETTER_LAZY2 {
                     ptr=ptr[2:];pos+=2
                     chosen=lazy
                 } else {
@@ -370,13 +371,13 @@ encode_chunk_optimal_greedy :: proc(c:^Chunk, pJ:^f32, pchunktype:^i32, passinfo
             if los.lasts[1]==los.lasts[0] {chosen.off=-1} else {chosen.off=los.lasts[0]}
         }
         lrl:=pos-literals_start
-        arrays_put_packet(&ea,&los,lrl,int(chosen.ml),int(chosen.off),chunk_ptr[literals_start:],
+        parse.arrays_put_packet(&ea,&los,lrl,int(chosen.ml),int(chosen.off),chunk_ptr[literals_start:],
             false,true)
         pos+=int(chosen.ml)
         literals_start=pos
     }
-    arrays_finish_chunk(&ea,chunk_ptr[literals_start:],true)
-    return arrays_output(c,pJ,pchunktype,passinfo,comp,comp_end,&ea,compressor.LEVEL_NORMAL,
+    parse.arrays_finish_chunk(&ea,chunk_ptr[literals_start:],true)
+    return parse.arrays_output(c,pJ,pchunktype,passinfo,comp,comp_end,&ea,compressor.LEVEL_NORMAL,
         e.entropy_flags&~entropy.ARRAY_FLAG_ALLOW_SPLIT)
 }
 
@@ -384,7 +385,7 @@ encode_chunk_optimal_greedy :: proc(c:^Chunk, pJ:^f32, pchunktype:^i32, passinfo
 
 // Adds the literals, packets, offsets and excesses of a parse piece to the running histograms.
 @(private)
-optimal_update_passinfo :: proc "contextless" (parsevec:[]Parse, parse_start_pos:int, pi:^Passinfo,
+optimal_update_passinfo :: proc "contextless" (parsevec:[]parse.Parse, parse_start_pos:int, pi:^parse.Passinfo,
     chunk:[^]u8) #no_bounds_check {
     start:=parse_start_pos
     for &p in parsevec {
@@ -409,11 +410,11 @@ optimal_update_passinfo :: proc "contextless" (parsevec:[]Parse, parse_start_pos
             packet+=3<<6
             off:=u32(p.offset)
             if pi.offset_alt_modulo==0 {
-                pi.offset_histo1[offset44_pack_u8(p.offset)]+=HISTO_INC
+                pi.offset_histo1[parse.offset44_pack_u8(p.offset)]+=HISTO_INC
             } else if pi.offset_alt_modulo==1 {
-                pi.offset_histo1[alt_offset_pack_u8_modulo1(off)]+=HISTO_INC
+                pi.offset_histo1[parse.alt_offset_pack_u8_modulo1(off)]+=HISTO_INC
             } else {
-                top,bot:=alt_offset_pack_u8s(off,u32(pi.offset_alt_modulo))
+                top,bot:=parse.alt_offset_pack_u8s(off,u32(pi.offset_alt_modulo))
                 pi.offset_histo1[top]+=HISTO_INC
                 pi.offset_histo2[bot]+=HISTO_INC
             }
@@ -428,7 +429,7 @@ optimal_update_passinfo :: proc "contextless" (parsevec:[]Parse, parse_start_pos
 }
 
 @(private)
-optimal_passinfo_to_codecost :: proc(pi:^Passinfo, cc:^Codecosts, mml:int) {
+optimal_passinfo_to_codecost :: proc(pi:^parse.Passinfo, cc:^Codecosts, mml:int) {
     threshold:=entropy.COST_ONE_BYTE-1
     ent_histo_to_codecost(pi.offset_histo1[:],cc.codecost_offset1[:],COST_PENALTY_NORMAL_MATCH,
         threshold)
@@ -467,7 +468,7 @@ rescale_histo2 :: proc "contextless" (h1:^[256]u32,
     h2:^[256]u32) {for i in 0..<256 {h1[i]=1+((h1[i]+h2[i])>>5)}}
 
 @(private)
-optimal_rescale_passinfo :: proc "contextless" (pi:^Passinfo) {
+optimal_rescale_passinfo :: proc "contextless" (pi:^parse.Passinfo) {
     rescale_histo(&pi.literal_histo_raw)
     rescale_histo(&pi.literal_histo_sub)
     rescale_histo(&pi.offset_histo1)
@@ -478,7 +479,7 @@ optimal_rescale_passinfo :: proc "contextless" (pi:^Passinfo) {
 
 // pi1 = this chunk's greedy pass, pi2 = the previous chunk's optimal pass.
 @(private)
-optimal_rescale_passinfo2 :: proc "contextless" (pi1:^Passinfo, pi2:^Passinfo, literals_same:bool) {
+optimal_rescale_passinfo2 :: proc "contextless" (pi1:^parse.Passinfo, pi2:^parse.Passinfo, literals_same:bool) {
     if literals_same {
         rescale_histo2(&pi1.literal_histo_raw,&pi2.literal_histo_raw)
         rescale_histo2(&pi1.literal_histo_sub,&pi2.literal_histo_sub)
@@ -508,10 +509,10 @@ Parse_Ctx :: struct {
     dictionary_base:[^]u8, dictionary_size:u32,
     matches:[^]Match_Parse_Record, mml:int, max_search_lrl:int,
     arr:^Arrivals, last_tll:int, last_tll_len:[^]i32,
-    level:i32, o:^Options,
-    passinfo:^Passinfo, cc:^Codecosts,
-    parsevec:[]Parse, parsevec_len:int,
-    chunk_parsevec:[]Parse,
+    level:i32, o:^parse.Options,
+    passinfo:^parse.Passinfo, cc:^Codecosts,
+    parsevec:[]parse.Parse, parsevec_len:int,
+    chunk_parsevec:[]parse.Parse,
 }
 
 @(private)
@@ -751,7 +752,7 @@ parse_tll_core :: proc(x:^Parse_Ctx, $NUM_TLLS:int) -> bool #no_bounds_check {
                         if offset>=x.dictionary_size {continue}
                         avail:=pdiff(ptr,avail_base)
                         if offset<compressor.MIN_OFFSET {
-                            offset=match.round_up_small_offset(offset)
+                            offset=round_up_small_offset(offset)
                             if int(offset)>avail {continue}
                             ml=match.getmatchlen_mml4_one32(ptr32,ptr,padd(ptr,-int(offset)),
                                 ptr_matchend)
@@ -762,7 +763,7 @@ parse_tll_core :: proc(x:^Parse_Ctx, $NUM_TLLS:int) -> bool #no_bounds_check {
                             }
                             if ml<mml {continue}
                         } else if int(offset)>avail {continue}
-                        if !is_allowed_normal_match_optimal(i32(ml),offset,x.o) {continue}
+                        if !parse.is_allowed_normal_match_optimal(i32(ml),offset,x.o) {continue}
                         best_cost:=S32_MAX
                         best_i:=-1
                         for i in 0..<ncand {
@@ -893,7 +894,7 @@ parse_tll_core :: proc(x:^Parse_Ctx, $NUM_TLLS:int) -> bool #no_bounds_check {
             if ar.twostep!=0 {
                 tl:=int(ar.twostep&0xFF)
                 tm:=int(ar.twostep>>8)
-                cpv[n]=Parse{lastoffset=ar.los.lasts[0],offset=0,ml=i32(tm),lrl=i32(tl)}
+                cpv[n]=parse.Parse{lastoffset=ar.los.lasts[0],offset=0,ml=i32(tm),lrl=i32(tl)}
                 n+=1
                 rpos-=tm+tl
             }
@@ -904,7 +905,7 @@ parse_tll_core :: proc(x:^Parse_Ctx, $NUM_TLLS:int) -> bool #no_bounds_check {
             offset:=ar.los.lasts[0]
             loi:=nopad_find(&prev.los,offset)
             if loi>=0 {offset=-i32(loi)}
-            cpv[n]=Parse{lastoffset=prev.los.lasts[0],lrl=ar.lrl,ml=ar.ml,offset=offset}
+            cpv[n]=parse.Parse{lastoffset=prev.los.lasts[0],lrl=ar.lrl,ml=ar.ml,offset=offset}
             n+=1
             rpos=prev_pos
             rindex=prev_index
@@ -927,7 +928,7 @@ parse_tll_core :: proc(x:^Parse_Ctx, $NUM_TLLS:int) -> bool #no_bounds_check {
 
 // newLZ_encode_chunk_optimal_tll
 @(private)
-encode_chunk_optimal_tll :: proc(c:^Chunk, matches:[^]Match_Parse_Record, pchunktype:^i32,
+encode_chunk_optimal_tll :: proc(c:^parse.Chunk, matches:[^]Match_Parse_Record, pchunktype:^i32,
     pJ:^f32) -> int {
     pchunktype^=0
     chunk_len:=c.chunk_len
@@ -945,7 +946,7 @@ encode_chunk_optimal_tll :: proc(c:^Chunk, matches:[^]Match_Parse_Record, pchunk
         max_search_lrl=level>=compressor.LEVEL_OPTIMAL2 ? 3 : 1
     }
     if num_tlls>1 && e.last_tll_len_space==nil {return chunk_len}
-    dict_size:=dictionary_size(o)
+    dict_size:=parse.dictionary_size(o)
     start_pos:=c.chunk_pos==0 ? compressor.MIN_OFFSET : 0
 
     arrivals_count:=num_tlls*(chunk_len+1)
@@ -955,7 +956,7 @@ encode_chunk_optimal_tll :: proc(c:^Chunk, matches:[^]Match_Parse_Record, pchunk
         a=([^]Arrival)(padd(raw_data(e.arrivals_space),arrivals_count*size_of(i32)))}
 
     comp_room:=pdiff(c.comp_end,c.comp)
-    passinfo,passinfo_mml_alt:Passinfo
+    passinfo,passinfo_mml_alt:parse.Passinfo
     mml:=int(max(4,o.min_match_len))
     greedy_J:=entropy.LAGRANGE_COST_INVALID
     greedy_complen:=encode_chunk_optimal_greedy(c,&greedy_J,pchunktype,&passinfo,c.comp,c.comp_end,
@@ -1064,4 +1065,31 @@ encode_chunk_optimal_tll :: proc(c:^Chunk, matches:[^]Match_Parse_Record, pchunk
         pJ^=greedy_J
         return greedy_complen
     }
+}
+
+// newLZ_put_parse: replays a parse into the arrays and outputs them.
+@(private)
+put_parse :: proc(c:^parse.Chunk, pJ:^f32, pchunktype:^i32, comp,comp_end:[^]u8, parsevec:[]parse.Parse,
+    passinfo:^parse.Passinfo) -> int {
+    pJ^=entropy.LAGRANGE_COST_INVALID
+    if len(parsevec)==0 {return c.chunk_len}
+    e:=c.e
+    ea:parse.Encoder_Arrays
+    parse.arrays_point_to_scratch(&ea,raw_data(e.arrays_space),c.chunk_len,c.chunk_ptr,e.bitstream_flags)
+    dummy:parse.LOs
+    parse.los_reset(&dummy)
+    start_pos:=c.chunk_pos==0 ? compressor.MIN_OFFSET : 0
+    literals_start:=c.chunk_ptr[start_pos:]
+    for &p in parsevec {
+        parse.arrays_put_packet(&ea,&dummy,int(p.lrl),int(p.ml),int(p.offset),literals_start,false,true)
+        literals_start=literals_start[p.lrl+p.ml:]
+    }
+    parse.arrays_finish_chunk(&ea,literals_start,true)
+    return parse.arrays_output(c,pJ,pchunktype,passinfo,comp,comp_end,&ea,e.level,e.entropy_flags)
+}
+
+@(private)
+ent_histo_to_codecost :: #force_inline proc "contextless" (histo:[]u32, codecost:[]i32,
+    add_cost:int, threshold:int) {
+    entropy.histo_to_codecost(histo,codecost,len(histo),add_cost,threshold)
 }

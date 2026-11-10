@@ -105,7 +105,7 @@ net_test_info :: proc(t:^testing.T,follows:=false,loc:=#caller_location) -> (inf
 // gives it one, with room for a few bodies and the actions a seat sends.
 @(private)
 net_test_init :: proc(w:^$W,info:^core.World_Info) -> bool {
-    if !info.init[.World](w,context.allocator) {return false}
+    if !core.world_init(info,.World,w,context.allocator) {return false}
     core.add(&w.gravities,core.create(&w.entities),volume.Gravity{})
     core.settle(info,w,nil)
     w.settings={bodies=8,shapes=8,contacts=32,joints=8,characters=4,hulls=1,meshes=1,heightfields=1}
@@ -322,7 +322,7 @@ authoritative_components_replay_at_their_ticks_with_real_physics :: proc(t:^test
     defer core.test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
-    defer info.destroy[.World](&world)
+    defer core.world_destroy(&info,.World,&world)
     e:=net_test_body(&world,&info,1)
     shared:=Net_Test_Shared{info=&info}
     defer phys.collider_meshes_destroy(&shared.colliders)
@@ -344,9 +344,9 @@ authoritative_components_replay_at_their_ticks_with_real_physics :: proc(t:^test
     first:=cast(^Net_Test_World)s.client.frames[2].world
     third:=cast(^Net_Test_World)s.client.frames[4].world
     expected:Net_Test_World
-    info.init[.World](&expected,context.allocator)
-    info.copy(&expected,first)
-    defer info.destroy[.World](&expected)
+    core.world_init(&info,.World,&expected,context.allocator)
+    core.world_copy(&info,&expected,first)
+    defer core.world_destroy(&info,.World,&expected)
     expected.values.values[0].force=4
     reference_shared:=Net_Test_Shared{info=&info}
     defer phys.collider_meshes_destroy(&reference_shared.colliders)
@@ -403,7 +403,7 @@ component_references_resolve_after_binding_and_clear_after_destruction :: proc(t
     defer core.test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
-    defer info.destroy[.World](&world)
+    defer core.world_destroy(&info,.World,&world)
     source:=net_test_body(&world,&info,1)
     target:=net_test_body(&world,&info,2,{1,0,0})
     app:=host.App{info=&info,allocator=context.allocator,tick_dt=1.0/60}
@@ -456,7 +456,7 @@ server_publishes_only_changed_rows_at_the_objects_frequency :: proc(t:^testing.T
     defer core.test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
-    defer info.destroy[.World](&world)
+    defer core.world_destroy(&info,.World,&world)
     first:=net_test_body(&world,&info,1)
     second:=net_test_body(&world,&info,2,{1,0,0})
     core.add(&world.objects,first,net_test_replicate(audience=.Always))
@@ -538,7 +538,7 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
         core.get(&world.values,entities[index][1]).force=0
     }
     net_test_player(&worlds[1],&info)
-    defer for &world in worlds {info.destroy[.World](&world)}
+    defer for &world in worlds {core.world_destroy(&info,.World,&world)}
     defer for &app in apps {host.app_world_scratch_free(&app);delete(app.worlds)}
     defer for &share in shares {phys.collider_meshes_destroy(&share.colliders)}
     network:wire.Sim_Network
@@ -670,7 +670,7 @@ remote_character_intent_is_replayed_from_its_authoritative_tick :: proc(t:^testi
     defer core.test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
-    defer info.destroy[.World](&world)
+    defer core.world_destroy(&info,.World,&world)
     e:=net_test_body(&world,&info,1)
     core.remove(&world.rigids,e)
     core.add(&world.colliders,e,phys.collider_character())
@@ -725,7 +725,7 @@ replicas_joined_to_any_of_many_driven_bodies_are_critical :: proc(t:^testing.T) 
     defer core.test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
-    defer info.destroy[.World](&world)
+    defer core.world_destroy(&info,.World,&world)
     world.settings.bodies,world.settings.shapes,world.settings.joints=64,64,32
     driven,joined:[PAIRS]core.Entity
     // The bodies of a client are replicas: the simulation groups them for the network.
@@ -764,6 +764,7 @@ replicas_joined_to_any_of_many_driven_bodies_are_critical :: proc(t:^testing.T) 
     }
     replica(c,1+2*PAIRS,alone,.Shown)
     c.replica_high=2+2*PAIRS
+    driven_list(c)
     records_capture(&s,core.world_ref(&world,&info),1)
     for k in 0..<PAIRS {testing.expectf(t,replica_critical(&s.desc,&c.replicas[1+PAIRS+k],1),"the replica joined to body %d is not critical",k)}
     testing.expect(t,!replica_critical(&s.desc,&c.replicas[1+2*PAIRS],1))
@@ -781,7 +782,7 @@ object_scope_controls_relevance_radius_and_follows_the_replicated_ancestor :: pr
     apps:[2]host.App
     sessions:[2]Net_Session
     for &world,index in worlds {net_test_init(&world,&info);apps[index]={allocator=context.allocator,tick_dt=1.0/60}}
-    defer for &world in worlds {info.destroy[.World](&world)}
+    defer for &world in worlds {core.world_destroy(&info,.World,&world)}
     defer for &app in apps {host.app_world_scratch_free(&app);delete(app.worlds)}
     network:wire.Sim_Network
     testing.expect(t,wire.sim_network_init(&network,{seed=72,endpoints=2,packets=1024}))
@@ -871,7 +872,7 @@ replicated_joint_waits_for_its_target_and_preserves_authoritative_frames_on_reta
     info,described:=net_test_info(t)
     if !described {return}
     defer core.test_info_destroy(&info)
-    world:Net_Test_World;net_test_init(&world,&info);defer info.destroy[.World](&world)
+    world:Net_Test_World;net_test_init(&world,&info);defer core.world_destroy(&info,.World,&world)
     source:=net_test_body(&world,&info,1)
     initial:=net_test_body(&world,&info,2,{1,0,0})
     target:=net_test_body(&world,&info,3,{0,0,2})

@@ -200,7 +200,7 @@ cost_of_the_history_of_a_client :: proc(t:^testing.T) {
     world:=new(History_Bench_World)
     defer free(world)
     history_bench_world(world,&shared,&app)
-    defer info.destroy[.World](world)
+    defer core.world_destroy(&info,.World,world)
     whole:=make([]History_Bench_World,HISTORY_BENCH_SLOTS)
     defer delete(whole)
     changed:=make([]History_Bench_World,HISTORY_BENCH_SLOTS)
@@ -214,17 +214,17 @@ cost_of_the_history_of_a_client :: proc(t:^testing.T) {
         history_bench_init(&changed[i],&info)
         marks[i]=make([]core.Copy_Mark,core.copy_marks_count(&info))
     }
-    defer for i in 0..<HISTORY_BENCH_SLOTS {info.destroy[.World](&whole[i]);info.destroy[.World](&changed[i]);delete(marks[i])}
+    defer for i in 0..<HISTORY_BENCH_SLOTS {core.world_destroy(&info,.World,&whole[i]);core.world_destroy(&info,.World,&changed[i]);delete(marks[i])}
     defer for &state in physics {phys.state_destroy(&state)}
     // Each tick copies its world whole to one ring and what changed to another, in turns.
     copies :: proc(t:^testing.T,info:^core.World_Info,world:^History_Bench_World,whole,changed:^History_Bench_World,marks:[]core.Copy_Mark,tick:int,measured:bool,full,part:^History_Bench_Cost) {
         for turn in 0..<2 {
             started:=time.tick_now()
             if (turn+tick)%2==0 {
-                testing.expect(t,info.copy(whole,world))
+                testing.expect(t,core.world_copy(info,whole,world))
                 if measured {history_bench_add(full,started)}
             } else {
-                testing.expect(t,info.copy_changed(changed,world,marks))
+                testing.expect(t,core.world_copy_changed(info,changed,world,marks))
                 if measured {history_bench_add(part,started)}
             }
         }

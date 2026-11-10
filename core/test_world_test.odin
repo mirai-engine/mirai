@@ -2,7 +2,6 @@ package core
 
 import "base:runtime"
 import "core:fmt"
-import "core:mem"
 import "core:os"
 import "core:reflect"
 import "core:slice"
@@ -32,7 +31,13 @@ import "core:testing"
 Test_World :: struct {
     entities:Entities,
     storage_revisions:[TEST_STORAGES]u64,
-    made_of:^Test_Made,
+    made_of:^Test_Own, // of a world test_world_init made
+}
+
+// The World_Info a world test_world_init made holds.
+Test_Own :: struct {
+    info:World_Info,
+    allocator:runtime.Allocator,
 }
 
 // The storages a test world may hold, with those of its application and editor.
@@ -90,10 +95,11 @@ test_types_core :: proc(types:^[dynamic]Test_Type) {
 }
 
 // The World_Info of a test world, with those of core alone, with the types
-// of other packages, or with what its application and its editor hold.
-// Its init, destroy, copy, copy_changed, swap, clear, attach and detach do
-// what the generated ones do; the test adds what it needs of the rest
-// (steps, messages, names, records). test_info_destroy frees it.
+// of other packages, or with what its application and its editor hold. It
+// says of its tables and storages what a generated one says, so world_init,
+// world_copy and the others treat its worlds alike; the test adds what it
+// needs of the rest (steps, messages, names, records). test_info_destroy
+// frees it.
 test_info :: proc{test_info_core,test_info_types,test_info_app,test_info_places}
 
 test_info_core :: proc(t:^testing.T,$W:typeid,allocator:=context.allocator,loc:=#caller_location) -> (info:World_Info,ok:bool) {
@@ -109,9 +115,9 @@ test_info_types :: proc(t:^testing.T,$W:typeid,$TYPES:Test_Types,allocator:=cont
 }
 
 test_info_places :: proc(t:^testing.T,$W,$S,$E:typeid,$TYPES:Test_Types,allocator:=context.allocator,loc:=#caller_location) -> (info:World_Info,ok:bool) {
-    made,problem:=made_build({.World=type_info_of(W),.Shared=type_info_of(S),.Editor=type_info_of(E)},TYPES,{.World,.Shared,.Editor},true,allocator)
+    made,problem:=made_build({.World=type_info_of(W),.Shared=type_info_of(S),.Editor=type_info_of(E)},TYPES,allocator)
     if !testing.expect(t,made!=nil,problem,loc=loc) {return}
-    info,ok=made_info(made,test_procs(W,S,E,TYPES),allocator)
+    info,ok=made_info(made,{.World=size_of(W),.Shared=size_of(S),.Editor=size_of(E)},{.World=align_of(W),.Shared=align_of(S),.Editor=align_of(E)},allocator)
     made_destroy(made)
     testing.expect(t,ok,"no memory for the World_Info of a test world",loc=loc)
     return
@@ -129,7 +135,14 @@ test_info_index :: proc(info:^World_Info,allocator:=context.allocator) {
 test_info_destroy :: proc(info:^World_Info,allocator:=context.allocator) {
     world_schema_destroy(info.schema)
     delete(info.tables_by_type);delete(info.storages_by_type)
-    for table in info.tables {delete(table.description,allocator)}
+    lock_names:[]string
+    for table in info.tables {
+        delete(table.description,allocator)
+        if len(table.locks)>0 {lock_names=table.locks[0].names}
+        delete(table.locks,allocator)
+    }
+    for name in lock_names {delete(name,allocator)}
+    delete(lock_names,allocator)
     delete(info.tables,allocator);delete(info.storages,allocator)
     info^={}
 }
@@ -144,20 +157,34 @@ test_world_init_core :: proc(t:^testing.T,w:^$W,allocator:=context.allocator,loc
 }
 
 test_world_init_types :: proc(t:^testing.T,w:^$W,$TYPES:Test_Types,allocator:=context.allocator,loc:=#caller_location) -> bool {
-    made,problem:=made_build({.World=type_info_of(W),.Shared=type_info_of(Test_None),.Editor=type_info_of(Test_None)},TYPES,{.World},true,allocator)
+    made,problem:=made_build({.World=type_info_of(W),.Shared=type_info_of(Test_None),.Editor=type_info_of(Test_None)},TYPES,allocator)
     if !testing.expect(t,made!=nil,problem,loc=loc) {return false}
-    ok:bool
-    made.info,ok=made_info(made,test_procs(W,Test_None,Test_None,TYPES),allocator)
-    if !ok {
-        made_destroy(made)
-    } else if !made_world_init(made,w,allocator) {
-        made_world_destroy(w)
-        ok=false
+    own,error:=new(Test_Own,allocator)
+    ok:=error==nil
+    if ok {
+        own.allocator=allocator
+        own.info,ok=made_info(made,{.World=size_of(W),.Shared=size_of(Test_None),.Editor=size_of(Test_None)},{.World=align_of(W),.Shared=align_of(Test_None),.Editor=align_of(Test_None)},allocator)
     }
+    made_destroy(made)
+    if ok {
+        w.made_of=own
+        if !world_init(&own.info,.World,w,allocator) {
+            test_world_destroy(w)
+            ok=false
+        }
+    } else if own!=nil {_=runtime.mem_free(own,allocator)}
     return testing.expect(t,ok,"no memory for a test world",loc=loc)
 }
 
-test_world_destroy :: proc(w:^$W) {made_world_destroy(w)}
+test_world_destroy :: proc(w:^$W) {
+    own:=w.made_of
+    if own==nil {return}
+    world_destroy(&own.info,.World,w)
+    allocator:=own.allocator
+    test_info_destroy(&own.info,allocator)
+    _=runtime.mem_free(own,allocator)
+    w.made_of=nil
+}
 
 // The World_Info of a world test_world_init made.
 test_world_info :: proc(w:^$W) -> ^World_Info {return &w.made_of.info}
@@ -167,13 +194,13 @@ test_world_ref :: proc(w:^$W) -> World_Ref {return {w,&w.made_of.info,.World}}
 // The settle of a world test_world_init made: how many tables it came to.
 test_world_settle :: proc(w:^$W) -> int {return settle(&w.made_of.info,w,nil)}
 
-test_world_copy :: proc(dst,src:^$W) -> bool {return made_copy(dst,src)}
+test_world_copy :: proc(dst,src:^$W) -> bool {return world_copy(&src.made_of.info,dst,src)}
 
-test_world_copy_changed :: proc(dst,src:^$W,marks:[]Copy_Mark) -> bool {return made_copy_changed(dst,src,marks)}
+test_world_copy_changed :: proc(dst,src:^$W,marks:[]Copy_Mark) -> bool {return world_copy_changed(&src.made_of.info,dst,src,marks)}
 
-test_world_swap :: proc(a,b:^$W) {made_swap(a,b)}
+test_world_swap :: proc(a,b:^$W) {world_swap(&a.made_of.info,a,b)}
 
-test_world_clear :: proc(w:^$W) -> bool {return made_clear(w)}
+test_world_clear :: proc(w:^$W) -> bool {return world_clear(&w.made_of.info,w)}
 
 // The options of the attributes of the declaration whose name is at a line
 // and a column of a source: those before it on its line and those on the
@@ -254,7 +281,6 @@ Test_Field :: struct {
     name,library,plugin:string,
     type:typeid,
     info:^runtime.Type_Info,   // of the component or the storage
-    values:^runtime.Type_Info, // a table: of the dynamic array of its values
     file:string,               // where a type with attributes is declared; "" for a plain one
     declared:Declared,
     procs:Test_Type,
@@ -265,76 +291,23 @@ Test_Field :: struct {
 // What a test world is made of: its tables as its World_Info lists them,
 // those of the World and then those of the editor, and after them its
 // storages, those of the World, of the application and of the editor.
+@(private="file")
 Test_Made :: struct {
     fields:[]Test_Field,
     tables:int,
-    id:int,       // the table of Id of the World; -1 without one
-    world_id:int, // the storage World_Id of the World; -1 without one
     lock_names:[]string,
     allocator:runtime.Allocator,
-    info:World_Info, // of a world test_world_init made
-}
-
-@(private="file")
-Test_Procs :: struct {
-    sizes,aligns:[Place]int,
-    init:[Place]proc(data:rawptr,allocator:runtime.Allocator) -> bool,
-    destroy:[Place]proc(data:rawptr),
-}
-
-@(private="file")
-test_procs :: proc($W,$S,$E:typeid,$TYPES:Test_Types) -> Test_Procs {
-    return {
-        sizes={.World=size_of(W),.Shared=size_of(S),.Editor=size_of(E)},
-        aligns={.World=align_of(W),.Shared=align_of(S),.Editor=align_of(E)},
-        init={
-            .World=proc(data:rawptr,allocator:runtime.Allocator) -> bool {
-                made,_:=made_build({.World=type_info_of(W),.Shared=type_info_of(S),.Editor=type_info_of(E)},TYPES,{.World},false,allocator)
-                if made==nil {return false}
-                return made_world_init(made,data,allocator)
-            },
-            .Shared=proc(data:rawptr,allocator:runtime.Allocator) -> bool {
-                made,_:=made_build({.World=nil,.Shared=type_info_of(S),.Editor=nil},TYPES,{},false,allocator)
-                if made==nil {return false}
-                defer made_destroy(made)
-                return made_place_init(made,.Shared,data,allocator)
-            },
-            .Editor=proc(data:rawptr,allocator:runtime.Allocator) -> bool {
-                made,_:=made_build({.World=nil,.Shared=nil,.Editor=type_info_of(E)},TYPES,{.Editor},false,allocator)
-                if made==nil {return false}
-                defer made_destroy(made)
-                return made_place_init(made,.Editor,data,allocator)
-            },
-        },
-        destroy={
-            .World=made_world_destroy,
-            .Shared=proc(data:rawptr) {
-                made,_:=made_build({.World=nil,.Shared=type_info_of(S),.Editor=nil},TYPES,{},false,context.allocator)
-                if made==nil {return}
-                made_place_destroy(made,.Shared,data)
-                made_destroy(made)
-            },
-            .Editor=proc(data:rawptr) {
-                made,_:=made_build({.World=nil,.Shared=nil,.Editor=type_info_of(E)},TYPES,{},false,context.allocator)
-                if made==nil {return}
-                made_place_destroy(made,.Editor,data)
-                made_destroy(made)
-            },
-        },
-    }
 }
 
 @(private="file")
 Source :: struct {path,text:string}
 
-// The fields of the structs of a test world. read: the places whose types
-// are looked up in their sources; the others give only what reflection
-// says. verify: also that every default the sources declare was given.
-// nil with what is wrong, in the temp allocator.
+// The fields of the structs of a test world, each with what the source of
+// its type says of it. nil with what is wrong, in the temp allocator.
 @(private="file")
-made_build :: proc(structs:[Place]^runtime.Type_Info,types:Test_Types,read:bit_set[Place],verify:bool,allocator:runtime.Allocator) -> (made:^Test_Made,problem:string) {
+made_build :: proc(structs:[Place]^runtime.Type_Info,types:Test_Types,allocator:runtime.Allocator) -> (made:^Test_Made,problem:string) {
     b:Build
-    b.read,b.allocator=read,allocator
+    b.allocator=allocator
     b.given=make([dynamic]Test_Type,context.temp_allocator)
     test_types_core(&b.given)
     types(&b.given)
@@ -360,19 +333,17 @@ made_build :: proc(structs:[Place]^runtime.Type_Info,types:Test_Types,read:bit_s
         }
     }
     if len(storages)>TEST_STORAGES {return nil,fmt.tprintf("a test world of %d storages: TEST_STORAGES holds the revisions of %d",len(storages),TEST_STORAGES)}
-    if verify {
-        folders:=make([dynamic]Folder,context.temp_allocator)
-        for &f in tables {
-            if problem=field_defaults(&f,&folders,&b.sources,allocator);problem!="" {return nil,problem}
-        }
-        for &f in storages {
-            if problem=field_defaults(&f,&folders,&b.sources,allocator);problem!="" {return nil,problem}
-        }
+    folders:=make([dynamic]Folder,context.temp_allocator)
+    for &f in tables {
+        if problem=field_defaults(&f,&folders,&b.sources,allocator);problem!="" {return nil,problem}
+    }
+    for &f in storages {
+        if problem=field_defaults(&f,&folders,&b.sources,allocator);problem!="" {return nil,problem}
     }
     error:runtime.Allocator_Error
     made,error=new(Test_Made,allocator)
     if error!=nil {return nil,"no memory for a test world"}
-    made.allocator,made.tables,made.id,made.world_id=allocator,len(tables),-1,-1
+    made.allocator,made.tables=allocator,len(tables)
     made.fields,error=make([]Test_Field,len(tables)+len(storages),allocator)
     if error!=nil {
         made_destroy(made)
@@ -380,11 +351,6 @@ made_build :: proc(structs:[Place]^runtime.Type_Info,types:Test_Types,read:bit_s
     }
     copy(made.fields,tables[:])
     copy(made.fields[len(tables):],storages[:])
-    for &f,index in made.fields {
-        if f.place!=.World {continue}
-        if f.kind==.Table && f.type==Id {made.id=index}
-        if f.kind==.Storage && f.type==World_Id {made.world_id=index}
-    }
     if !made_locks(made) {
         made_destroy(made)
         return nil,"no memory for a test world"
@@ -393,7 +359,7 @@ made_build :: proc(structs:[Place]^runtime.Type_Info,types:Test_Types,read:bit_s
         description:=f.declared.description
         f.declared={single=f.declared.single,keep=f.declared.keep,persist=f.declared.persist,setting=f.declared.setting,shared=f.declared.shared,far=f.declared.far,replication=f.declared.replication,by_world=f.declared.by_world,host=f.declared.host,copy=f.declared.copy=="false"?"false":""}
         f.file=""
-        if verify {f.declared.description=strings.clone(description,allocator)}
+        f.declared.description=strings.clone(description,allocator)
     }
     return made,""
 }
@@ -403,7 +369,6 @@ Build :: struct {
     given:[dynamic]Test_Type,
     sources:[dynamic]Source,
     tables,storages:[dynamic]Test_Field,
-    read:bit_set[Place],
     allocator:runtime.Allocator,
 }
 
@@ -422,10 +387,7 @@ build_fields :: proc(b:^Build,place:Place,layout:runtime.Type_Info_Struct,base:u
         tag:=reflect.Struct_Tag(layout.tags[i])
         f:=Test_Field{place=place,offset=base+layout.offsets[i],info=layout.types[i],name=layout.names[i]}
         _,f.game=field_option(tag,"game")
-        if held!=nil {
-            f.kind,f.info=kind,held
-            if kind==.Table {f.values=runtime.type_info_base(layout.types[i]).variant.(runtime.Type_Info_Struct).types[0]}
-        }
+        if held!=nil {f.kind,f.info=kind,held}
         if f.kind==.Table && place==.Shared || f.kind==.By_World && place!=.Shared {
             return fmt.tprintf("%s: a table goes in the World or in the editor, and a By_World in the struct of the application",layout.names[i])
         }
@@ -439,7 +401,7 @@ build_fields :: proc(b:^Build,place:Place,layout:runtime.Type_Info_Struct,base:u
                 break
             }
         }
-        if is_named && named.loc!=nil && place in b.read {
+        if is_named && named.loc!=nil {
             if problem=field_declared(&f,named.loc^,&b.sources,b.allocator);problem!="" {return}
         }
         if f.file!="" {
@@ -641,7 +603,6 @@ made_locks :: proc(made:^Test_Made) -> bool {
 made_destroy :: proc(made:^Test_Made) {
     if made==nil {return}
     allocator:=made.allocator
-    if made.info.init[.World]!=nil {test_info_destroy(&made.info,allocator)}
     for f in made.fields {
         delete(f.locks,allocator)
         delete(f.declared.description,allocator)
@@ -651,231 +612,32 @@ made_destroy :: proc(made:^Test_Made) {
     _=runtime.mem_free(made,allocator)
 }
 
+// The World_Info of what was made, which takes its locks from it.
 @(private="file")
-made_info :: proc(made:^Test_Made,procs:Test_Procs,allocator:runtime.Allocator) -> (info:World_Info,ok:bool) {
+made_info :: proc(made:^Test_Made,sizes,aligns:[Place]int,allocator:runtime.Allocator) -> (info:World_Info,ok:bool) {
     tables,tables_error:=make([]Table_Info,made.tables,allocator)
     storages,storages_error:=make([]Storage_Info,len(made.fields)-made.tables,allocator)
     if tables_error!=nil || storages_error!=nil {
         delete(tables,allocator);delete(storages,allocator)
         return
     }
+    locked:=false
     for &f,index in made.fields {
         d:=f.declared
         if index<made.tables {
-            tables[index]={name=f.name,library=f.library,type=f.type,info=f.info,offset=f.offset,place=f.place,shared=d.shared,replicated=d.replication,game=f.game,default=f.procs.default,description=strings.clone(d.description,allocator),single=d.single,far=d.far}
+            tables[index]={name=f.name,library=f.library,type=f.type,info=f.info,offset=f.offset,place=f.place,shared=d.shared,replicated=d.replication,game=f.game,default=f.procs.default,description=strings.clone(d.description,allocator),single=d.single,far=d.far,base=f.base,locks=f.locks}
+            locked||=len(f.locks)>0
+            f.locks=nil
         } else {
-            storages[index-made.tables]={name=f.name,library=f.library,type=f.type,info=f.info,offset=f.offset,place=f.place,setting=d.setting,default=f.procs.default,by_world=f.kind==.By_World,for_device=f.procs.for_device,persist=d.persist,keep=d.keep,plugin=f.plugin,game=f.game}
+            storages[index-made.tables]={name=f.name,library=f.library,type=f.type,info=f.info,offset=f.offset,place=f.place,setting=d.setting,default=f.procs.default,by_world=f.kind==.By_World,for_device=f.procs.for_device,persist=d.persist,keep=d.keep,plugin=f.plugin,game=f.game,local=d.copy=="false",procs={f.procs.copy,f.procs.copy_kept,f.procs.swap,f.procs.free,f.procs.reset}}
         }
     }
-    info.sizes,info.aligns=procs.sizes,procs.aligns
+    if locked {made.lock_names=nil}
+    info.sizes,info.aligns=sizes,aligns
     info.entities,info.revisions=offset_of(Test_World,entities),offset_of(Test_World,storage_revisions)
     info.tables,info.storages=tables,storages
-    info.init,info.destroy=procs.init,procs.destroy
-    info.copy,info.copy_changed,info.swap,info.clear=made_copy,made_copy_changed,made_swap,made_clear
-    info.attach,info.detach=made_attach,made_detach
     world_info_index(&info,allocator)
     return info,true
-}
-
-@(private="file")
-field_at :: #force_inline proc "contextless" (data:rawptr,f:^Test_Field) -> rawptr {return rawptr(uintptr(data)+f.offset)}
-
-@(private="file")
-field_free :: proc(f:^Test_Field,value:rawptr) {
-    if f.procs.free!=nil {f.procs.free(value)} else {value_free(value,f.info)}
-}
-
-// The world keeps made, also when it fails: its destroy frees it.
-@(private="file")
-made_world_init :: proc(made:^Test_Made,data:rawptr,allocator:runtime.Allocator) -> bool {
-    w:=cast(^Test_World)data
-    w.made_of=made
-    context.allocator=allocator
-    if !entities_init(&w.entities,allocator) || !entities_tables(&w.entities,made.tables) {return false}
-    return made_place_init(made,.World,data,allocator)
-}
-
-@(private="file")
-made_place_init :: proc(made:^Test_Made,place:Place,data:rawptr,allocator:runtime.Allocator) -> bool {
-    context.allocator=allocator
-    for &f,index in made.fields {
-        if f.place!=place {continue}
-        switch f.kind {
-        case .Table:
-            table:=cast(^Raw_Table)field_at(data,&f)
-            if !raw_init(table,f.name,allocator) {return false}
-            if place==.World {raw_follow(table,&(cast(^Test_World)data).entities,index)}
-            table.base,table.single,table.locks=f.base,f.declared.single,f.locks
-        case .Storage:
-            if f.procs.default!=nil {f.procs.default(field_at(data,&f))}
-        case .By_World:
-        }
-    }
-    return true
-}
-
-@(private="file")
-made_place_destroy :: proc(made:^Test_Made,place:Place,data:rawptr) {
-    for &f in made.fields {
-        if f.place!=place {continue}
-        switch f.kind {
-        case .Table:
-            raw_destroy(cast(^Raw_Table)field_at(data,&f),f.info.size)
-        case .Storage:
-            field_free(&f,field_at(data,&f))
-        case .By_World:
-            held:=cast(^By_World(u8))field_at(data,&f)
-            for entry in held.entries {
-                if entry.value==nil {continue}
-                field_free(&f,entry.value)
-                by_world_release(held,entry.value)
-            }
-            delete(held.entries)
-        }
-    }
-}
-
-@(private="file")
-made_world_destroy :: proc(data:rawptr) {
-    w:=cast(^Test_World)data
-    if w.made_of==nil {return}
-    made_place_destroy(w.made_of,.World,data)
-    entities_destroy(&w.entities)
-    made_destroy(w.made_of)
-    w.made_of=nil
-}
-
-@(private="file")
-made_ids :: proc "contextless" (made:^Test_Made,data:rawptr) -> Read(Id) {
-    return {cast(^Table(Id))field_at(data,&made.fields[made.id])}
-}
-
-@(private="file")
-made_copy :: proc(dst_data,src_data:rawptr) -> bool {return made_copy_marked(dst_data,src_data,nil)}
-
-@(private="file")
-made_copy_changed :: proc(dst_data,src_data:rawptr,marks:[]Copy_Mark) -> bool {
-    made:=(cast(^Test_World)src_data).made_of
-    return made_copy_marked(dst_data,src_data,len(marks)<len(made.fields)?nil:marks)
-}
-
-// marks: of the copy of what changed; nil copies it whole.
-@(private="file")
-made_copy_marked :: proc(dst_data,src_data:rawptr,marks:[]Copy_Mark) -> bool {
-    if dst_data==src_data {return true}
-    dst,src:=cast(^Test_World)dst_data,cast(^Test_World)src_data
-    made:=src.made_of
-    changed:=marks!=nil
-    context.allocator=dst.entities.generation.allocator
-    synced:=made.id>=0 && ids_synced(&src.entities,made_ids(made,src_data))
-    if !entities_copy(&dst.entities,&src.entities) {return false}
-    for &f,index in made.fields {
-        if f.place!=.World {continue}
-        to,from:=field_at(dst_data,&f),field_at(src_data,&f)
-        if f.kind==.Table {
-            if changed {
-                if !raw_copy_changed(cast(^Raw_Table)to,cast(^Raw_Table)from,f.info,f.values,f.info.size,&marks[index]) {return false}
-            } else if !raw_copy(cast(^Raw_Table)to,cast(^Raw_Table)from,f.values) {return false}
-            continue
-        }
-        if f.declared.copy=="false" {continue}
-        k:=index-made.tables
-        if changed && !storage_changed(&marks[index],src.storage_revisions[k]) {
-            when CHECK_WRITES {if f.procs.copy==nil && f.procs.copy_kept==nil {storage_check(to,from,f.info,f.name)}}
-            continue
-        }
-        copy:=changed && f.procs.copy_kept!=nil?f.procs.copy_kept:f.procs.copy
-        if copy!=nil {
-            if !copy(to,from) {return false}
-        } else if !value_copy(to,from,f.info) {return false}
-        if changed {storage_copied(&marks[index],&dst.storage_revisions[k],src.storage_revisions[k])}
-    }
-    count:=len(made.fields)-made.tables
-    if !changed {revisions_copied(dst.storage_revisions[:count],src.storage_revisions[:count])}
-    if made.id>=0 {ids_moved(&dst.entities,made_ids(made,dst_data),synced)}
-    return true
-}
-
-@(private="file")
-made_swap :: proc(a_data,b_data:rawptr) {
-    if a_data==b_data {return}
-    a,b:=cast(^Test_World)a_data,cast(^Test_World)b_data
-    made:=a.made_of
-    a_synced:=made.id>=0 && ids_synced(&a.entities,made_ids(made,a_data))
-    b_synced:=made.id>=0 && ids_synced(&b.entities,made_ids(made,b_data))
-    slice.ptr_swap_non_overlapping(&a.entities,&b.entities,size_of(Entities))
-    for &f in made.fields {
-        if f.place!=.World {continue}
-        x,y:=field_at(a_data,&f),field_at(b_data,&f)
-        switch {
-        case f.kind==.Table:         raw_swap(cast(^Raw_Table)x,cast(^Raw_Table)y)
-        case f.declared.copy=="false":
-        case f.procs.swap!=nil:      f.procs.swap(x,y)
-        case:                        slice.ptr_swap_non_overlapping(x,y,f.info.size)
-        }
-    }
-    count:=len(made.fields)-made.tables
-    revisions_swapped(a.storage_revisions[:count],b.storage_revisions[:count])
-    if made.id>=0 {
-        ids_moved(&a.entities,made_ids(made,a_data),b_synced)
-        ids_moved(&b.entities,made_ids(made,b_data),a_synced)
-    }
-}
-
-@(private="file")
-made_clear :: proc(data:rawptr) -> bool {
-    w:=cast(^Test_World)data
-    made:=w.made_of
-    if !entities_clear(&w.entities) {return false}
-    for &f in made.fields[:made.tables] {
-        if f.place==.World {raw_clear(cast(^Raw_Table)field_at(data,&f))}
-    }
-    for &f in made.fields[made.tables:] {
-        d:=f.declared
-        if f.place!=.World || d.keep || d.setting!=.None || d.copy=="false" {continue}
-        value:=field_at(data,&f)
-        if f.procs.reset!=nil {
-            f.procs.reset(value)
-            continue
-        }
-        field_free(&f,value)
-        mem.zero(value,f.info.size)
-        if f.procs.default!=nil {f.procs.default(value)}
-    }
-    revisions_moved(w.storage_revisions[:len(made.fields)-made.tables])
-    return true
-}
-
-@(private="file")
-made_attach :: proc(world,shared:rawptr,allocator:runtime.Allocator) -> bool {
-    made:=(cast(^Test_World)world).made_of
-    if made.world_id<0 {return true}
-    id:=(cast(^World_Id)field_at(world,&made.fields[made.world_id]))^
-    if id.generation==0 {return true}
-    context.allocator=allocator
-    for &f in made.fields[made.tables:] {
-        if f.kind!=.By_World {continue}
-        value:=by_world_room(cast(^By_World(u8))field_at(shared,&f),id,f.info.size,f.info.align,allocator)
-        if value==nil {return false}
-        mem.zero(value,f.info.size)
-        if f.procs.default!=nil {f.procs.default(value)}
-    }
-    return true
-}
-
-@(private="file")
-made_detach :: proc(world,shared:rawptr) {
-    made:=(cast(^Test_World)world).made_of
-    if made.world_id<0 {return}
-    id:=(cast(^World_Id)field_at(world,&made.fields[made.world_id]))^
-    for &f in made.fields[made.tables:] {
-        if f.kind!=.By_World {continue}
-        held:=cast(^By_World(u8))field_at(shared,&f)
-        if value:=by_world_detach(held,id);value!=nil {
-            field_free(&f,value)
-            by_world_release(held,value)
-        }
-    }
 }
 
 @(private="file") @(storage,reset="described_reset") Described_Reset :: struct {value:i32}
@@ -907,6 +669,16 @@ Described_World :: struct {
     time:Time,
     frame:Frame_Time,
     clock:Clock,
+    plain:Described_Plain,
+    reset:Described_Reset,
+}
+
+@(private="file")
+described_types :: proc(types:^[dynamic]Test_Type) {
+    append(types,
+        test_type(Described_Plain,default=proc(dst:^Described_Plain) {dst.value=3}),
+        test_type(Described_Reset,reset=proc(value:^Described_Reset) {value.value=-1}),
+    )
 }
 
 @(private="file")
@@ -920,28 +692,31 @@ Described_Shared :: struct {
 // generated World could not be is refused saying which type is wrong.
 @(test)
 a_test_world_is_described_as_the_declarations_of_its_types_say :: proc(t:^testing.T) {
-    info,ok:=test_info(t,Described_World,Described_Shared,Test_None)
+    info,ok:=test_info(t,Described_World,Described_Shared,Test_None,described_types)
     if !ok {return}
     defer test_info_destroy(&info)
     transforms,paces:=info.tables[0],info.tables[1]
     testing.expect(t,transforms.name=="Transform" && transforms.library=="core" && transforms.shared && transforms.replicated==.None && transforms.default!=nil && transforms.description!="")
     testing.expect(t,paces.replicated==.All && !paces.shared)
-    time,settings,problems:=info.storages[1],info.storages[4],info.storages[5]
+    time,settings,problems:=info.storages[1],info.storages[6],info.storages[7]
     testing.expect(t,time.keep && time.place==.World && time.setting==.None)
     testing.expect(t,settings.place==.Shared && settings.setting==.Project && settings.default!=nil)
     testing.expect(t,problems.by_world && problems.place==.Shared)
 
     a,b:Described_World
-    testing.expect(t,info.init[.World](&a,context.allocator) && info.init[.World](&b,context.allocator))
-    defer info.destroy[.World](&a)
-    defer info.destroy[.World](&b)
+    testing.expect(t,world_init(&info,.World,&a,context.allocator) && world_init(&info,.World,&b,context.allocator))
+    defer world_destroy(&info,.World,&a)
+    defer world_destroy(&info,.World,&b)
     testing.expect(t,a.transforms.base && a.disabled.base && a.paces.base,"the components of core are the base of every entity")
-    testing.expect(t,a.clock.scale==1 && a.frame.alpha==1,"a storage starts as its default")
-    a.time.tick,a.frame.alpha,a.clock.scale=7,0.5,2
-    testing.expect(t,info.copy(&b,&a))
-    testing.expect(t,b.time.tick==7 && b.clock.scale==2 && b.frame.alpha==1,"what says copy=false stays")
-    testing.expect(t,info.clear(&a))
+    testing.expect(t,a.clock.scale==1 && a.frame.alpha==1 && a.plain.value==3,"a storage starts as its default")
+    a.time.tick,a.frame.alpha,a.clock.scale,a.plain.value,a.reset.value=7,0.5,2,9,9
+    testing.expect(t,world_copy(&info,&b,&a))
+    testing.expect(t,b.time.tick==7 && b.clock.scale==2 && b.plain.value==9 && b.frame.alpha==1,"what says copy=false stays")
+    testing.expect(t,world_clear(&info,&a))
     testing.expect(t,a.time.tick==7 && a.clock.scale==2,"what says keep survives clearing the World")
+    testing.expect(t,a.plain.value==3 && a.reset.value==-1,"a derived storage goes back to its default, or to what its reset leaves")
+    world_swap(&info,&a,&b)
+    testing.expect(t,a.plain.value==9 && b.plain.value==3 && a.frame.alpha==0.5 && b.frame.alpha==1,"a swap trades what two Worlds hold, but for what says copy=false")
 
     if lines,read:=test_info(t,Described_Lines);read {
         defer test_info_destroy(&lines)
@@ -962,7 +737,7 @@ a_test_world_is_described_as_the_declarations_of_its_types_say :: proc(t:^testin
         {"a procedure its attributes name was not given",type_info_of(struct {using world:Test_World,reset:Described_Reset}),nil,"described_reset"},
     }
     for c in cases {
-        made,problem:=made_build({.World=c.world,.Shared=c.shared,.Editor=nil},test_types_none,{.World,.Shared},true,context.allocator)
+        made,problem:=made_build({.World=c.world,.Shared=c.shared,.Editor=nil},test_types_none,context.allocator)
         testing.expectf(t,made==nil && strings.contains(problem,c.names),"%s: %q",c.what,problem)
         made_destroy(made)
     }

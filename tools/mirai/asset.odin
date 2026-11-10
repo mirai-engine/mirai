@@ -50,6 +50,21 @@ misuse :: proc(command:string) -> int {
     return 2
 }
 
+// argument_unknown with the usage of the subcommand.
+@(private="file")
+unknown :: proc(command,arg:string) -> int {
+    argument_refuse(fmt.tprintf("asset %s",command),arg)
+    return misuse(command)
+}
+
+@(private="file")
+positionals :: proc(command:string,args:[]string) -> int {
+    for arg in args {
+        if !positional(arg) {return unknown(command,arg)}
+    }
+    return 0
+}
+
 @(private="file")
 failed :: proc(command,file,reason:string,args:..any) -> int {
     fmt.eprintf("mirai asset %s: %s: ",command,file)
@@ -165,6 +180,7 @@ write_kind :: proc(w:^serial.Writer,kind:asset.Fourcc) {
 }
 
 asset_info :: proc(args:[]string) -> int {
+    if code:=positionals("info",args);code!=0 {return code}
     if len(args)!=1 {return misuse("info")}
     a:asset.Asset
     if error:=asset.asset_load(&a,args[0]);error!=.None {return failed("info",args[0],error_text(error))}
@@ -215,7 +231,8 @@ asset_ls :: proc(args:[]string) -> int {
     for i:=0;i<len(args);i+=1 {
         switch {
         case args[i]=="--cache" && i+1<len(args): i+=1;cache=args[i]
-        case folder=="" && !strings.has_prefix(args[i],"--"): folder=args[i]
+        case !positional(args[i]): return unknown("ls",args[i])
+        case folder=="": folder=args[i]
         case: return misuse("ls")
         }
     }
@@ -259,7 +276,8 @@ asset_deps :: proc(args:[]string) -> int {
         case args[i]=="--root" && i+1<len(args): i+=1;folder=args[i]
         case args[i]=="--all": all=true
         case args[i]=="--users": users=true
-        case file=="" && !strings.has_prefix(args[i],"--"): file=args[i]
+        case !positional(args[i]): return unknown("deps",args[i])
+        case file=="": file=args[i]
         case: return misuse("deps")
         }
     }
@@ -386,6 +404,7 @@ schema_limits :: proc(s:^serial.Schema,type:serial.Type_Index) -> bool {
 }
 
 asset_verify :: proc(args:[]string) -> int {
+    if code:=positionals("verify",args);code!=0 {return code}
     if len(args)==0 {return misuse("verify")}
     types:asset.Types
     asset.types_init(&types)
@@ -411,7 +430,8 @@ asset_dump :: proc(args:[]string) -> int {
         switch {
         case arg=="--schema": options.schema=true
         case arg=="--textconv": options.diff=true
-        case file=="" && !strings.has_prefix(arg,"--"): file=arg
+        case !positional(arg): return unknown("dump",arg)
+        case file=="": file=arg
         case: return misuse("dump")
         }
     }
@@ -430,6 +450,7 @@ asset_dump :: proc(args:[]string) -> int {
 }
 
 asset_get :: proc(args:[]string) -> int {
+    if code:=positionals("get",args);code!=0 {return code}
     if len(args)!=2 {return misuse("get")}
     doc:asset.Document
     if !load("get",args[0],&doc) {return 1}
@@ -464,6 +485,7 @@ value_json :: proc(doc:^asset.Document,location:asset.Location,value:string) -> 
 }
 
 asset_set :: proc(args:[]string) -> int {
+    if code:=positionals("set",args);code!=0 {return code}
     if len(args)<2 {return misuse("set")}
     doc:asset.Document
     if !load("set",args[0],&doc) {return 1}
@@ -493,6 +515,7 @@ asset_set :: proc(args:[]string) -> int {
 }
 
 asset_diff :: proc(args:[]string) -> int {
+    if code:=positionals("diff",args);code!=0 {return code}
     if len(args)!=2 {return misuse("diff")}
     a,b:asset.Document
     if !load("diff",args[0],&a) || !load("diff",args[1],&b) {return 2}
@@ -513,6 +536,7 @@ asset_merge :: proc(args:[]string) -> int {
     out:=""
     for i:=0;i<len(args);i+=1 {
         if args[i]=="--out" && i+1<len(args) {out=args[i+1];i+=1;continue}
+        if !positional(args[i]) {return unknown("merge",args[i])}
         append(&files,args[i])
     }
     if len(files)!=3 {return misuse("merge")}
@@ -561,6 +585,7 @@ asset_merge :: proc(args:[]string) -> int {
 MANIFEST :: "asset.json"
 
 asset_unpack :: proc(args:[]string) -> int {
+    if code:=positionals("unpack",args);code!=0 {return code}
     if len(args)!=2 {return misuse("unpack")}
     doc:asset.Document
     if !load("unpack",args[0],&doc) {return 1}
@@ -579,6 +604,7 @@ asset_unpack :: proc(args:[]string) -> int {
 }
 
 asset_pack :: proc(args:[]string) -> int {
+    if code:=positionals("pack",args);code!=0 {return code}
     if len(args)!=2 {return misuse("pack")}
     manifest:=join(args[0],MANIFEST)
     text,read_error:=serial.file_read(manifest)

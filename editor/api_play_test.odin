@@ -219,7 +219,7 @@ probe_close :: proc(f:^Probe) {
     host.app_world_scratch_free(&f.app)
     host.app_world_free(&f.app,f.data)
     delete(f.app.worlds)
-    f.info.destroy[.Shared](&f.shared)
+    core.world_destroy(&f.info,.Shared,&f.shared)
     platform.destroy(f.p)
     core.test_info_destroy(&f.info)
 }
