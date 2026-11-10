@@ -11,7 +11,7 @@ Node_Kind :: enum u8 {
     Text,
     Image,
     Progress, // shows its bound value, 0 to 1
-    Button,   // reports Clicked
+    Button,   // reports Clicked; one that binds a value writes choice there when clicked
     Checkbox, // edits its bound bool and reports Changed
     Spacer,
     Component, // authoring only: expanded into a Box subtree at load
@@ -35,6 +35,7 @@ Node_Kind :: enum u8 {
     Context_Menu, // a container that opens at the pointer when its parent is clicked with the right button
     Radial,   // a container that places what it holds on a circle, chosen by direction
     Particles, // a .particle of the project, playing in its rectangle
+    Draw,     // a rectangle the procedure of the game its draw names draws, with the colors of its style and the bytes of the value it binds
 }
 Node_Kinds :: bit_set[Node_Kind;u32]
 
@@ -42,7 +43,7 @@ Node_Kinds :: bit_set[Node_Kind;u32]
 node_kind_holds :: #force_inline proc "contextless" (kind:Node_Kind) -> bool {
     switch kind {
     case .Box,.Scroll,.Switcher,.List,.Tooltip,.Tabs,.Popup,.Modal,.Context_Menu,.Radial: return true
-    case .Text,.Image,.Progress,.Button,.Checkbox,.Spacer,.Component,.Prompt,.Slider,.Field,.Selector,.Dropdown,.Radio,.Rich_Text,.View,.Action_Bar,.Number,.Particles:
+    case .Text,.Image,.Progress,.Button,.Checkbox,.Spacer,.Component,.Prompt,.Slider,.Field,.Selector,.Dropdown,.Radio,.Rich_Text,.View,.Action_Bar,.Number,.Particles,.Draw:
     }
     return false
 }
@@ -50,7 +51,7 @@ node_kind_holds :: #force_inline proc "contextless" (kind:Node_Kind) -> bool {
 // What a use of a widget, or an override of one of its nodes, sets.
 Node_Field :: enum u8 {
     Text, Style, Layout, Float, Image, Animations, Bindings, Visibility, Variant, Layer, Clip, Block,
-    Values, // index, count, choice, range, limit, delay and particle
+    Values, // index, count, choice, range, limit, delay, particle and draw
     Action, // action and hold
     Focus,  // nav, order and flags
     Drag,   // tag, accepts and ghost

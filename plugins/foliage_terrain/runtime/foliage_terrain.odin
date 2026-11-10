@@ -276,7 +276,7 @@ region_add :: proc(state:^Foliage_Terrain,m:mm.Mat4,low,high:[3]f32) {
 // Writes the ground of the foliage where the terrains under it changed, the
 // cells a Foliage gains and those asked for. A frame where none of them
 // changed reads nothing.
-@(step="fixed frame",loops="game editor",stage="simulate",after="terrain_update foliage_load",before="physics_prepare")
+@(step="fixed frame",loops="game editor",stage="simulate",before="physics_prepare")
 foliage_terrain_ground :: proc(
     state:^Foliage_Terrain,ground:^foliage.Foliage_Ground,requests:^foliage.Foliage_Ground_Requests,
     data:core.Ref(foliage.Foliage_Data),foliages:core.Read(foliage.Foliage),

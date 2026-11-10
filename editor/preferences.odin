@@ -39,11 +39,12 @@ Preferences :: struct {
 @(private)
 preferences_list :: proc(s:^Session) -> []project.Setting {
     Area :: struct {name:string,info:^runtime.Type_Info,value:rawptr,default:proc(dst:rawptr)}
+    // An editor without one of the storages (a session of a test) keeps no area of it.
     areas:=[?]Area{
-        {"Layout",type_info_of(Layout),&s.gui.layout,proc(dst:rawptr) {(^Layout)(dst)^=LAYOUT_DEFAULT}},
-        {"Content_View",type_info_of(Content_View),&s.content.view,proc(dst:rawptr) {(^Content_View)(dst)^=CONTENT_VIEW_DEFAULT}},
-        {"Viewport_Preferences",type_info_of(Viewport_Preferences),&s.viewport.preferences,proc(dst:rawptr) {(^Viewport_Preferences)(dst)^=VIEWPORT_PREFERENCES_DEFAULT}},
-        {"Console_Filter",type_info_of(Console_Filter),&s.console.filter,proc(dst:rawptr) {(^Console_Filter)(dst)^=CONSOLE_DEFAULT.filter}},
+        {"Layout",type_info_of(Layout),s.gui!=nil?&s.gui.layout:nil,proc(dst:rawptr) {(^Layout)(dst)^=LAYOUT_DEFAULT}},
+        {"Content_View",type_info_of(Content_View),s.content!=nil?&s.content.view:nil,proc(dst:rawptr) {(^Content_View)(dst)^=CONTENT_VIEW_DEFAULT}},
+        {"Viewport_Preferences",type_info_of(Viewport_Preferences),s.viewport!=nil?&s.viewport.preferences:nil,proc(dst:rawptr) {(^Viewport_Preferences)(dst)^=VIEWPORT_PREFERENCES_DEFAULT}},
+        {"Console_Filter",type_info_of(Console_Filter),s.console!=nil?&s.console.filter:nil,proc(dst:rawptr) {(^Console_Filter)(dst)^=CONSOLE_DEFAULT.filter}},
         {"Play_Players",type_info_of(Play_Players),s.play_players,proc(dst:rawptr) {(^Play_Players)(dst)^=PLAY_PLAYERS_DEFAULT}},
         {"Play_History",type_info_of(Play_History),s.play_history,proc(dst:rawptr) {(^Play_History)(dst)^=PLAY_HISTORY_DEFAULT}},
         {"Ai_View",type_info_of(Ai_View),ai_view_preferences(s.ai),proc(dst:rawptr) {(^Ai_View)(dst)^=AI_VIEW_DEFAULT}},
@@ -52,7 +53,9 @@ preferences_list :: proc(s:^Session) -> []project.Setting {
     provided:[PROVIDER_CAPACITY]Preferences_Provider
     plugins:=provided[:provided_all(s,provided[:])]
     list:=make([dynamic]project.Setting,0,len(areas)+len(plugins),context.temp_allocator)
-    for area in areas {append(&list,project.Setting{name=area.name,info=area.info,value=area.value,default=area.default})}
+    for area in areas {
+        if area.value!=nil {append(&list,project.Setting{name=area.name,info=area.info,value=area.value,default=area.default})}
+    }
     for area in plugins {
         if value:=area.value!=nil?area.value(s):nil;value!=nil && area.info!=nil {append(&list,project.Setting{name=area.name,info=area.info,value=value,default=area.default})}
     }

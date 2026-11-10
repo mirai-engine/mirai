@@ -4,7 +4,7 @@ import "core:math"
 import "core:math/linalg"
 import "mirai:core"
 import cam "mirai:engine/camera"
-import cine "plugins:cinematics/runtime"
+import anim "plugins:animation/runtime"
 import inp "mirai:engine/input"
 import render "mirai:engine/render"
 import "mirai:engine/scene"
@@ -40,8 +40,10 @@ FOLLOW_DEFAULT :: Follow{distance=2}
 @(component,replicated)
 Barker :: struct {
     count:u32,
-    flash_ticks:u32,
+    flash_until:u64, // the tick its nose stops glowing at
 }
+
+BARK_FLASH_SECONDS :: 0.3
 
 // Marks the root of the scene of the person and the dog.
 @(component)
@@ -161,17 +163,15 @@ game_follow :: proc(
 // A bark counts when its seat presses bark or the intro asks for it, and flashes the nose for a moment.
 @(step="fixed",stage="react")
 game_barker :: proc(
-    barkers:^core.Table(Barker),actions:inp.Input_Of(Action),events:core.Ref(cine.Cinematic_Events),
+    barkers:^core.Table(Barker),actions:inp.Input_Of(Action),events:core.Ref(anim.Animation_Events),time:core.Time,
 ) {
     intro_bark:=false
-    for event in events.items {intro_bark ||= event.id==base.name_hash("intro.bark")}
+    for event in events.items {intro_bark ||= event.marker==base.name_hash("intro.bark")}
     for row in 0..<core.count(barkers) {
         if intro_bark || inp.pressed(actions,core.entity_at(barkers,row),.Bark) {
             barker:=core.at(barkers,row)
             barker.count+=1
-            barker.flash_ticks=18
-        } else if barkers.values[row].flash_ticks>0 {
-            core.at(barkers,row).flash_ticks-=1
+            barker.flash_until=core.deadline(time,BARK_FLASH_SECONDS)
         }
     }
 }

@@ -38,7 +38,7 @@ screen_make :: proc(s:^editor.Session,w:core.World_Ref,e:core.Entity) {
 Monitors_Gizmo :: struct {vertices:[GIZMO_VERTICES]erender.Debug_Vertex}
 
 // From each selected screen to the camera it shows.
-@(step="frame",after="editor_tools")
+@(step="frame")
 monitors_gizmo :: proc(s:^editor.Session,gizmo:^Monitors_Gizmo,app:^host.App) {
     draw :: proc(lines:^erender.Debug_Lines,w:core.World_Ref,e:core.Entity,screen:monitors.Screen) {
         if !editor.entity_alive(w,screen.camera) {return}

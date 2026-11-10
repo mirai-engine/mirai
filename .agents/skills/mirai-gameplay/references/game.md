@@ -29,8 +29,8 @@ of its owner and is taken by the function in parentheses:
   (`camera_follow`), with a preset or a `Camera_Setup` and a transition.
 - **Make a body appear**: `spawn.spawn`, `respawn` in `^spawn.Spawn_Requests`
   (`spawn_step`, plugin `spawn`).
-- **Play a cinematic**: `cinematics.cinematic_play` and its companions in
-  `^cinematics.Cinematic_Requests` (`cinematic_advance`, plugin `cinematics`).
+- **Play a clip or a cinematic**: `anim.animation_command` in `^anim.Animation_Requests`
+  (`animation_sample`, plugin `animation`).
 - **Change scene**: `scene.request(&r, id)`, `request_path` or `request_restart` in
   `^scene.Scene_Requests` (`scene_requests`); the result arrives in `scene.Scene_Results`.
 - **Instantiate a prefab**: `scene.spawn(spawner, path_or_id, at)`, which gives the root.
@@ -42,12 +42,12 @@ of its owner and is taken by the function in parentheses:
 
 Events the libraries emit: `phys.Physics_Events` (`contact_begin`, `overlap_begin`, `sleep`,
 `joint_break`...), `destruct.Destruct_Events`, `gui.UI_Events`, `anim.Animation_Events`,
-`cinematics.Cinematic_Events`, `save.Save_Results`, `scene.Scene_Results`, `net.Net_Events`. They
+`save.Save_Results`, `scene.Scene_Results`, `net.Net_Events`. They
 are cleared and filled once per tick or frame; those of the frame (`Save_Results`, `Scene_Results`)
 are read in a `frame` step, the others with `core.Ref(...)` in the same tick,
-in a function that runs after the emitting one: those of physics and destruction in the `react`
-stage ([order](../../mirai-core/references/generator.md#order)), those of animation with
-`stage="react",after="animation_advance"`.
+in the stage of the emitting function or a later one, where the reader runs after it
+([order](../../mirai-core/references/generator.md#order)): those of physics, destruction and
+animation in the `react` stage.
 
 Scenes, prefabs and input: [scene](libraries.md#scene) and [input](libraries.md#input); a player's
 actions are read from the seat that drives the body, with its blocks ([control](control.md)).

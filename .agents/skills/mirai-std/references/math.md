@@ -74,9 +74,10 @@ applied X, then Y, then Z (R = Rz·Ry·Rx).
 
 - Penner's set. Back, elastic and bounce are own: those of `core:math/ease` do not use Penner's
   constants.
-- `Ease` is the `u8` enum for data, with fixed values (0 is `Linear`).
-- `Curve_Key.interpolation` is that of the segment that starts at the key; `curve_evaluate` holds
-  the ends and `curve_evaluate_from` is for playback.
+- `Ease` is the `u8` enum for data, with fixed values (0 is `Linear`): the only one, which the
+  keys of a clip, of an interface and every blend store.
+- `curve.odin` has the parametric curves of one segment. A value keyed over time is a track of
+  [std/anim](anim.md#tracks-keys-and-clips-trackodin-clipodin).
 
 ## Random and noise (`random.odin`, `noise.odin`)
 

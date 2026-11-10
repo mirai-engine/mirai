@@ -28,9 +28,9 @@ team), `behavior.Mind_Agent{mind=behavior.mind_name("zombie")}` and `behavior.Mi
 The agent's navigation class is chosen from its capsule; with none that fits, the problem
 `navigation.agent_class` says what size is missing.
 
-- The navmesh builds itself from the world's static collision (a `Nav_Bounds` box limits it). A
-  mover that must block ways is a `Nav_Obstacle`; a costlier or forbidden zone is a `Nav_Area`;
-  jumps, ladders and doors are `Nav_Link`s.
+- The navmesh builds itself from the world's static collision (a `Nav_Bounds` limits it). A mover
+  that blocks ways is a `Nav_Obstacle`, a costlier or forbidden zone a `Nav_Area`: each a `Box`
+  `Volume` on its entity ([regions](world/regions.md)). Jumps, ladders, doors: `Nav_Link`s.
 - Perception: `Perceiver.notices` is a `Teams` mask; the subject has a `Perceivable` with a team
   and a collider, so the sight ray reaches it. Sight is a cone along the body's -Z.
 
@@ -48,7 +48,7 @@ The agent's navigation class is chosen from its capsule; with none that fits, th
   proposes the reaction above the rest and the action clears the field on `Enter`.
 - **Boss phases:** health is data that changes what `think` proposes; an attack calls
   `ai.commit(a, score)` on `Enter` so it finishes; stun and death propose above everything.
-- **Cooldowns:** `ai.mind_ready(&agent.state, .Slam, time.seconds, 5)`, `agent` a `Mind_Agent`.
+- **Cooldowns:** `ai.mind_ready(&agent.state,.Slam,time.tick,time.dt,5)`, `agent` a `Mind_Agent`.
 - **Hordes:** the attack takes `ai.token_take(a, u64(target), N)` and `think` proposes it only if
   `ai.reserve_free(t, target, N)`; the rest circle. Tokens release on `Exit`.
 - **Hearing:** `behavior.noise(noises, position, loudness, maker)`; a `Perceiver` hears

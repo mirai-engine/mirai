@@ -96,7 +96,7 @@ test_editor_build :: proc(ctx:^Context,user:rawptr) {
             }
         case 2:
             label(ctx,"AI",th.font_title,th.text)
-            paragraph(ctx,"Floating block",th.font_small,th.text_muted)
+            text(ctx,"Floating block",prose(ctx,th.font_small,th.text_muted))
             label(ctx,"Message",th.font_small,th.text_faint)
         }
     }

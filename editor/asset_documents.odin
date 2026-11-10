@@ -11,7 +11,7 @@ import "mirai:project"
 import "mirai:std/base"
 import "mirai:ui"
 
-// Assets open in tabs next to the scenes, as the prototype opens them. The
+// Assets open in tabs next to the scenes. The
 // document in front takes the place of the scene: the scene that was active
 // stays loaded under it, with its history, its Play stopped and its tools
 // quiet, and the API and the agents keep working on it. The left panel stays;
@@ -62,12 +62,14 @@ Asset_Document :: struct {
     // its time of an animation. The plugin of its kind writes it while the
     // document is in front.
     shown:[256]u8,
-    // The last action of the Edit menu run on it (Asset_Document_Provider.actions):
-    // its plugin runs it once for each serial.
-    request:Action,
+    // The last entry run on it of those its documents take in place of the
+    // scene (Asset_Document_Provider.takes), by its name: its plugin runs it
+    // once for each serial.
+    request:string,
     request_serial:u64,
 }
 ASSET_DOCUMENT_PICKS :: 8
+ASSET_DOCUMENT_TAKES :: 8
 
 // A storage of an editor package whose sole field is this declares, in its
 // default, the kinds of asset its steps draw as documents, of those the ones
@@ -75,9 +77,10 @@ ASSET_DOCUMENT_PICKS :: 8
 // world (flat: the bar leaves Graphics out), the ones Create of the content
 // browser and asset.create make (creates: kinds of asset.KINDS, whose empty
 // file create gives, made with the id it is given; nil: it could not), and the
-// actions of the Edit menu its documents take: the editor runs none of them
-// on the scene while one is in front, and hands them over as
-// Asset_Document.request. between, when given, runs between frames while one
+// entries that work on the scene its documents take instead (copy, paste,
+// duplicate, delete, rename, select_all, deselect), by their names: with one
+// in front their keys work on what the document has chosen, inside its panel,
+// and reach its plugin as Asset_Document.request. between, when given, runs between frames while one
 // of its documents is in front: what needs frames of its own (a world drawn
 // into a texture, host.app_world_draw).
 Asset_Document_Provider :: struct {
@@ -87,7 +90,7 @@ Asset_Document_Provider :: struct {
     flat:bit_set[0..<ASSET_DOCUMENT_KINDS],
     creates:bit_set[0..<ASSET_DOCUMENT_KINDS],
     create:proc(s:^Session,kind:asset.Fourcc,id:base.Asset_Id) -> []u8, // in the temporary allocator
-    actions:bit_set[Action],
+    takes:[ASSET_DOCUMENT_TAKES]string,
     between:proc(s:^Session,d:^Asset_Document),
 }
 
@@ -310,16 +313,16 @@ asset_document_kinds :: proc(s:^Session,allocator:=context.temp_allocator) -> []
     return kinds[:]
 }
 
-// The actions of the Edit menu the documents of a kind take.
-asset_document_actions :: proc(s:^Session,kind:asset.Fourcc) -> (actions:bit_set[Action]) {
-    if s.info==nil {return}
+// Whether the documents of a kind take an entry that works on the scene.
+asset_document_takes :: proc(s:^Session,kind:asset.Fourcc,name:string) -> bool {
+    if s.info==nil {return false}
     found:[PROVIDER_CAPACITY]Asset_Document_Provider
     for &provider in found[:provided_all(s,found[:])] {
         for i in 0..<clamp(provider.count,0,len(provider.kinds)) {
-            if provider.kinds[i]==kind {actions|=provider.actions}
+            if provider.kinds[i]==kind && slice.contains(provider.takes[:],name) {return true}
         }
     }
-    return
+    return false
 }
 
 // Whether the documents of a kind show a hierarchy their plugin builds.
@@ -675,7 +678,7 @@ asset_toolbar_whole :: proc(g:^Editor_Ui) -> (rect:ui.Rect,ok:bool) {
 
 ASSET_HEADING :: f32(33)
 
-// The row of the heading of a part of a document, as the prototype draws it:
+// The row of the heading of a part of a document:
 // the caller fills it, and asset_heading_end draws the line under it.
 asset_heading_box :: proc(ctx:^ui.Context,id:ui.Id=0) -> ui.Box {
     return {id=id,width=ui.GROW,height=ui.fixed(ASSET_HEADING-1),padding={12,0,12,0},gap=8,align_y=.Center,fill=ctx.theme.card}

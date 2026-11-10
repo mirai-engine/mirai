@@ -80,8 +80,8 @@ ai_chat_ask :: proc(s:^Session,m:^Ai,text:string) -> bool {
     return ai_chat_send(s)
 }
 
-// What the editor shows of the agents, which its preferences keep.
-ai_view_preferences :: proc(m:^Ai) -> ^Ai_View {return &m.view}
+// What the editor shows of the agents, which its preferences keep; nil without chats.
+ai_view_preferences :: proc(m:^Ai) -> ^Ai_View {return &m.view if m!=nil else nil}
 
 // The reviews of the chats follow the scene that was opened.
 ai_reviews_reconcile :: proc(s:^Session,m:^Ai) {for &task in ai_tasks(m) {ai_review_reconcile(s,m,&task)}}
