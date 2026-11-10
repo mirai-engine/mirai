@@ -250,10 +250,9 @@ A `--<part>-only` flag after `--` regenerates only one part
   `church_fog`, with the meshes of the render plugins' scenes.
 - `--ai-only`: scene `ai` and the horde's wave and zombie-kind tables.
 - `--sky-only`: scene `sky`, the atmosphere over a plain with mountains.
-- `--interface-only`: scene `interface`, the English texts of its `.ui` (which are the source) and
-  their Spanish
-  translation (`INTERFACE_TEXTS`, by key), the icons of its objects and the tables of objects and
-  of the conversation (`tools/demo_content/records.odin` writes a table with fixed ids).
+- `--interface-only`: scene `interface`, the icons of its objects, the tables of objects and of
+  the conversation (`tools/demo_content/records.odin` writes a table with fixed ids) and the
+  `.strings` of their texts, in English and Spanish.
 - `--animation-only`: imports Mirai and writes the [animation gallery](animation-gallery.md): the
   locomotion and gallery clips of Mirai and their programs, the taller
   Mirai and its baked clips, the spider, the rig chains, the morph jellies and the scene
