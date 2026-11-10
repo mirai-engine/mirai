@@ -130,6 +130,13 @@ constants_are_the_constant_lines_of_the_source_by_id :: proc(t:^testing.T) {
         problem:=constants_problem(c.declared,context.temp_allocator)
         testing.expectf(t,(problem=="")==(c.says=="") && strings.contains(problem,c.says),"%s: %s",c.name,problem)
     }
+    // native.slang declares the constant of each id a pipeline sets, and no other.
+    native,_:=os.read_entire_file(path_join(path_clean(ENGINE_ROOT,context.temp_allocator),"shaders/include/native.slang",allocator=context.temp_allocator),context.temp_allocator)
+    testing.expect_value(t,strings.count(string(native),"[vk::constant_id("),rhi.MAX_SHADER_CONSTANTS)
+    for id in 0..<rhi.MAX_SHADER_CONSTANTS {
+        declared:=fmt.tprintf("[vk::constant_id(%d)] const bool "+CONSTANT_SYMBOL+" = false;",id,id)
+        testing.expectf(t,strings.contains(string(native),declared),"native.slang declares %s",declared)
+    }
 }
 
 @(test)
