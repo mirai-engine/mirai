@@ -218,18 +218,20 @@ A texture of an asset resides with the levels the GPU samples of it
   stream), first those that need more levels (those that free memory if the pool is exceeded) and
   those farthest from their levels, and gives them to the renderer with the
   [load budget](../../mirai-core/references/host.md#loaded-assets).
-- **Transaction.** `texture_levels_set` creates a texture with the new levels, puts it in the table
-  entry and destroys the previous one: the handle and the material rows do not change. A request
-  whose texture changed since then (`stamp`) does nothing; a texture whose file is no longer read
-  stops following the distance (`texture_stream_stop`).
-- `host` gives them with `texture_levels_queue`: their rows are uploaded in the list of the
-  following frames, among all of them their share of `UPLOAD_FRAME_BYTES` per frame, which they
-  share with the [geometry over several frames](scene.md#geometry-over-several-frames), and up to
-  `TEXTURE_UPLOADS` textures at a time; the texture takes its entry between frames once all of
-  them were uploaded (`texture_uploads_install`). What the job read stays while
-  `texture_upload_pending`; a large level does not stall a frame.
-- What a section load brings arrives with the levels of side `TEXTURE_TAIL` and its distance asks
-  for the others; the main scene and direct loads arrive whole.
+- **Transaction.** A texture with the new levels takes the table entry and the previous one is
+  destroyed: the handle and the material rows do not change. A request whose texture changed since
+  then (`stamp`) does nothing; a texture whose file is no longer read stops streaming
+  (`texture_stream_stop`).
+- `host` reads only for more levels and gives them with `texture_levels_queue`: the rows of the
+  levels the texture lacks are uploaded in the list of the following frames, among all of them
+  their share of `UPLOAD_FRAME_BYTES` per frame, which they share with the
+  [geometry over several frames](scene.md#geometry-over-several-frames), and up to
+  `TEXTURE_UPLOADS` textures at a time; then the levels it holds are copied on the GPU and it takes
+  its entry between frames (`texture_uploads_install`). Fewer levels need no read: the renderer
+  copies them from those it holds through the same queue (`textures_shrink`). What the job read
+  stays while `texture_upload_pending`; a large level does not stall a frame.
+- What a section load brings arrives with the levels of side `TEXTURE_TAIL` and the frames that
+  sample it ask for the others; the main scene and direct loads arrive whole.
 - A texture that a load gives over several frames (`texture_add_over_frames`) enters with its
   levels of side `TEXTURE_TAIL` or less and the larger ones go through the same queue: until all
   were uploaded the small ones are shown, never a half level. Those that the pool has no room for

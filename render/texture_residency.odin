@@ -8,21 +8,22 @@ import "mirai:rhi"
 
 // Residency of the levels of a texture by what the GPU samples. A texture
 // whose levels its loader can read again (Texture_Data.source) is streamed: it
-// holds the levels of its source from the one the frames sampled it at, and
-// its loader reads and gives another range of levels (texture_requests,
-// texture_levels_set) when that changes. The passes that shade surfaces (the
-// G-buffer, the glass layers, traced reflections and lighting, the probe
-// rays, the material points of programs) write, for each texture they sample,
-// the finest level they read into a buffer with an atomic minimum
-// (texture_feedback in scene.slang), which comes back to the CPU as the page
-// requests do. A raster sample reports the level its footprint and the bias
-// read; a ray the level its cone at the hit reads; a program, every level.
-// A texture asks for a finer level as soon as a frame reads it and lets one
-// go only when TEXTURE_FEEDBACK_FRAMES frames read it TEXTURE_KEEP_LEVELS
-// coarser; one no frame reads keeps the levels it has, and while the pool of
-// textures has no room those give levels up first (texture_targets). Giving
-// a range of levels is a transaction: a texture of its own replaces the
-// entry, whose handle stays.
+// holds the levels of its source from the one the frames sample. The passes
+// that shade surfaces (the G-buffer, the glass layers, traced reflections,
+// the probe rays, the material points of programs) write, for each texture
+// they sample, the finest level they read into a buffer with an atomic
+// minimum (texture_feedback in scene.slang), which comes back to the CPU as
+// the page requests do. A raster sample reports the level its footprint and
+// bias read; a ray the level its cone at the hit reads; a program, every
+// level. A texture asks for a finer level as soon as a frame reads it and
+// lets one go only when TEXTURE_FEEDBACK_FRAMES frames read it
+// TEXTURE_KEEP_LEVELS coarser; one no frame reads keeps the levels it has,
+// and while the pool of textures has no room those give levels up first
+// (texture_targets). Its loader reads only the levels it lacks
+// (texture_requests, texture_levels_queue); the levels it keeps are copied
+// on the GPU, and fewer levels need no read (textures_shrink). Giving a range
+// of levels is a transaction: a texture of its own replaces the entry, whose
+// handle stays.
 
 // Texels of side of the levels a streamed texture holds whatever it shows:
 // what a load brings first (assets of a section). A .tex stores them so that
@@ -60,7 +61,7 @@ Texture_Stream :: struct {
 Texture_Request :: struct {
 	handle: Texture_Handle,
 	level:  int,
-	stamp:  u32, // texture_levels_set refuses a request whose texture changed since
+	stamp:  u32, // texture_levels_queue refuses a request whose texture changed since
 }
 
 Texture_Residency :: struct {
@@ -86,19 +87,19 @@ Texture_Residency :: struct {
 TEXTURE_UPLOADS :: 8 // streamed textures that take their levels over frames at once
 
 // A streamed texture that takes the levels a request asked for over frames
-// (texture_levels_queue): its rows go to the GPU in the list of the frame,
-// those of all of them the part of UPLOAD_FRAME_BYTES textures_upload_budget
-// gives, and once all of them are there the texture takes its entry of the
-// table. The caller keeps the levels until texture_upload_pending says they
-// went.
+// (texture_levels_queue): the rows of those it did not hold go to the GPU in
+// the list of the frame, those of all of them the part of UPLOAD_FRAME_BYTES
+// textures_upload_budget gives; once all of them are there it copies the
+// others from the texture it replaces and takes its entry of the table. The
+// caller keeps the levels until texture_upload_pending says they went.
 @(private)
 Texture_Upload :: struct {
 	request: Texture_Request,
 	texture: rhi.Texture,
 	data:    Texture_Data,
+	fresh:   int, // its first levels, which data brings; the others come from the texture it replaces
 	mip:     int,
 	row:     u32, // of rows of blocks, or of texels, of its mip
-	bytes:   u64,
 	active:  bool,
 	done:    bool, // its rows went in a frame: it takes its entry before the next (texture_uploads_install)
 }
@@ -252,6 +253,7 @@ textures_update :: proc(r: ^Renderer) -> int {
 		}
 		t.reduced, t.pending = texture_targets(streams, texture_limits(r).max_size, room)
 	}
+	if t.pending > 0 && r.device != nil {textures_shrink(r)}
 	return t.pending + int(t.read < t.changed)
 }
 
@@ -321,34 +323,41 @@ texture_level_range :: proc "contextless" (stream: ^Texture_Stream, max_size: in
 }
 
 
-// Streamed textures to read the levels of, the most urgent first: those
-// that need more levels before those that have too many, unless the pool is
-// past its room; the ones farthest from their target first. busy: textures
-// whose levels are being read. Between frames, after textures_update.
+// Streamed textures to read more levels of, the farthest from their target
+// first; none while the textures take more than the pool, until the renderer
+// gave levels up (textures_shrink). busy: textures whose levels are being
+// read. Between frames, after textures_update.
 texture_requests :: proc(r: ^Renderer, out: []Texture_Request, busy: []Texture_Handle) -> int {
 	t := &r.textures.residency
 	if t.pending == 0 || len(out) == 0 {return 0}
-	shrink_first := false
-	if pool, limited := texture_pool_room(r); limited {shrink_first = r.textures.bytes > pool}
-	urgency :: proc "contextless" (stream: ^Texture_Stream, shrink_first: bool) -> int {
-		grow := stream.target < stream.top
-		steps := abs(int(stream.top) - int(stream.target))
-		return steps + (rhi.MAX_TEXTURE_MIPS if grow != shrink_first else 0)
-	}
+	if pool, limited := texture_pool_room(r); limited && r.textures.bytes > pool {return 0}
 	count := 0
 	each: for &stream, index in t.streams[:r.textures.count] {
-		if stream.levels == 0 || stream.target == stream.top {continue}
+		if stream.levels == 0 || stream.target >= stream.top {continue}
 		handle := Texture_Handle(index + 1)
 		for held in busy {if held == handle {continue each}}
 		at := count
-		weight := urgency(&stream, shrink_first)
-		for at > 0 && urgency(&t.streams[out[at - 1].handle - 1], shrink_first) < weight {at -= 1}
+		for at > 0 && t.streams[out[at - 1].handle - 1].top - t.streams[out[at - 1].handle - 1].target < stream.top - stream.target {at -= 1}
 		if at >= len(out) {continue}
 		if count < len(out) {count += 1}
 		copy(out[at + 1:count], out[at:count - 1])
 		out[at] = {handle = handle, level = int(stream.target), stamp = stream.stamp}
 	}
 	return count
+}
+
+// The streamed textures that should hold fewer levels take them over the
+// frames that follow from the levels they hold, on the GPU, as many at once
+// as there is room for uploads: their loader reads nothing. Between frames,
+// after textures_update.
+@(private)
+textures_shrink :: proc(r: ^Renderer) {
+	t := &r.textures.residency
+	for &stream, index in t.streams[:r.textures.count] {
+		if stream.levels == 0 || stream.target <= stream.top {continue}
+		request := Texture_Request{handle = Texture_Handle(index + 1), level = int(stream.target), stamp = stream.stamp}
+		if texture_levels_queue(r, request, {}) == .Busy && !texture_upload_room(r) {return}
+	}
 }
 
 Texture_Levels_Result :: enum u8 {
@@ -359,23 +368,9 @@ Texture_Levels_Result :: enum u8 {
 	Busy,     // TEXTURE_UPLOADS textures take levels already: ask again later
 }
 
-// What a request may become: the texture with those levels, or why not.
-@(private = "file")
-texture_levels_check :: proc(r: ^Renderer, request: Texture_Request, data: Texture_Data) -> (texture: rhi.Texture, result: Texture_Levels_Result) {
-	state := &r.textures
-	index := int(request.handle) - 1
-	if index < 0 || index >= state.count || state.textures[index] == 0 {return 0, .Stale}
-	stream := &state.residency.streams[index]
-	if stream.levels == 0 || stream.stamp != request.stamp {return 0, .Stale}
-	if data.level != request.level || data.source != {int(stream.size.x), int(stream.size.y)} || len(data.levels) == 0 || data.level + len(data.levels) != int(stream.levels) {return 0, .Mismatch}
-	texture = rhi.texture_create(r.device, {width = u32(data.width), height = u32(data.height), mip_levels = u32(len(data.levels)), format = data.format, usage = {.Sampled}, name = "streamed texture"})
-	if texture == 0 {set_error(r, "texture levels: %s", rhi.device_error(r.device));return 0, .Failed}
-	return texture, .Set
-}
-
 // The texture with the levels of a request takes its entry of the table.
 @(private = "file")
-texture_levels_install :: proc(r: ^Renderer, request: Texture_Request, data: Texture_Data, texture: rhi.Texture, bytes: u64) -> Texture_Levels_Result {
+texture_levels_install :: proc(r: ^Renderer, request: Texture_Request, texture: rhi.Texture) -> Texture_Levels_Result {
 	state := &r.textures
 	index := int(request.handle) - 1
 	if index < 0 || index >= state.count || state.textures[index] == 0 || state.residency.streams[index].stamp != request.stamp {
@@ -389,20 +384,22 @@ texture_levels_install :: proc(r: ^Renderer, request: Texture_Request, data: Tex
 		return .Failed
 	}
 	rhi.texture_destroy(r.device, state.textures[index])
+	bytes := stream.chain[request.level]
 	state.textures[index] = texture
 	state.bytes = state.bytes - state.stored[index] + bytes
 	state.stored[index] = bytes
 	was := stream.target != stream.top
-	stream.top, stream.format = u8(data.level), data.format
-	texture_chain(stream)
+	stream.top = u8(request.level)
 	stream.stamp += 1
 	state.residency.pending = max(state.residency.pending + int(stream.target != stream.top) - int(was), 0)
 	return .Set
 }
 
-// Gives a streamed texture the levels of its source a request asked for over
-// the frames that follow (texture_uploads_record): Set when they will go,
-// and data is to stay as it is until texture_upload_pending is false.
+// Gives a streamed texture the levels of its source from the one a request
+// asked for, over the frames that follow (texture_uploads_record): those
+// data brings before the first it holds, which data begins with, and the
+// others from the levels it holds, on the GPU. Set when they will go, and
+// data is to stay as it is until texture_upload_pending is false.
 texture_levels_queue :: proc(r: ^Renderer, request: Texture_Request, data: Texture_Data) -> Texture_Levels_Result {
 	t := &r.textures.residency
 	slot := -1
@@ -411,9 +408,21 @@ texture_levels_queue :: proc(r: ^Renderer, request: Texture_Request, data: Textu
 		if !upload.active && slot < 0 {slot = i}
 	}
 	if slot < 0 {return .Busy}
-	texture, result := texture_levels_check(r, request, data)
-	if result != .Set {return result}
-	t.uploads[slot] = {request = request, texture = texture, data = data, active = true}
+	state := &r.textures
+	index := int(request.handle) - 1
+	if index < 0 || index >= state.count || state.textures[index] == 0 {return .Stale}
+	stream := &t.streams[index]
+	if stream.levels == 0 || stream.stamp != request.stamp {return .Stale}
+	if request.level < 0 || request.level >= int(stream.levels) {return .Mismatch}
+	fresh := max(int(stream.top) - request.level, 0)
+	if fresh > 0 && (data.level != request.level || data.source != {int(stream.size.x), int(stream.size.y)} || len(data.levels) < fresh || data.format != stream.format) {return .Mismatch}
+	width, height := max(stream.size.x >> uint(request.level), 1), max(stream.size.y >> uint(request.level), 1)
+	texture := rhi.texture_create(r.device, {width = width, height = height, mip_levels = u32(int(stream.levels) - request.level), format = stream.format, usage = {.Sampled}, name = "streamed texture"})
+	if texture == 0 {
+		set_error(r, "texture levels: %s", rhi.device_error(r.device))
+		return .Failed
+	}
+	t.uploads[slot] = {request = request, texture = texture, data = data, fresh = fresh, active = true}
 	return .Set
 }
 
@@ -446,7 +455,7 @@ texture_tail_first :: proc "contextless" (data: Texture_Data) -> int {
 // - Mismatch: data has no larger level to give later; nothing was added.
 // - Failed with no handle: the texture was not added (Renderer.error).
 // Any other result with a handle leaves the texture with its small levels,
-// which its distance can widen.
+// which what the frames sample can widen.
 texture_add_over_frames :: proc(r: ^Renderer, data: ^Texture_Data, name: string) -> (handle: Texture_Handle, request: Texture_Request, result: Texture_Levels_Result) {
 	if !texture_upload_room(r) {return 0, {}, .Busy}
 	skip, _ := texture_pool_first(r, data^)
@@ -484,7 +493,8 @@ texture_uploads_cancel :: proc(r: ^Renderer) {
 
 // Rows of the levels that go, their part of UPLOAD_FRAME_BYTES
 // (textures_upload_budget), through the ring of the frame into the list of
-// the frame; a texture whose rows all went takes its entry of the table
+// the frame; once all of them went, the levels the texture holds past them
+// are copied from the one it replaces, and it takes its entry of the table
 // before the next frame. One whose request is stale goes.
 @(private)
 texture_uploads_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) {
@@ -500,7 +510,7 @@ texture_uploads_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) {
 			upload = {}
 			continue
 		}
-		for upload.mip < len(upload.data.levels) && budget > 0 {
+		for upload.mip < upload.fresh && budget > 0 {
 			width, height := u32(max(upload.data.width >> uint(upload.mip), 1)), u32(max(upload.data.height >> uint(upload.mip), 1))
 			row, rows := rhi.format_rows(upload.data.format, width, height)
 			block := u32(4) if rhi.format_block_size(upload.data.format) > 0 else 1
@@ -513,41 +523,29 @@ texture_uploads_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) {
 			y := upload.row * block
 			rhi.cmd_copy_buffer_to_texture(cmd, ring.buffer, ring.offset, upload.texture, u32(upload.mip), {0, y, width, min(count * block, height - y)})
 			budget -= min(bytes, budget)
-			upload.bytes += bytes
 			upload.row += count
 			if u64(upload.row) >= u64(rows) {upload.mip, upload.row = upload.mip + 1, 0}
 		}
-		if upload.mip < len(upload.data.levels) {continue}
+		if upload.mip < upload.fresh {continue}
+		stream := &state.residency.streams[index]
+		first := upload.request.level + upload.fresh
+		held := state.textures[index]
+		rhi.cmd_copy_texture(cmd, held, upload.texture, u32(first - int(stream.top)), u32(upload.fresh), u32(int(stream.levels) - first))
+		rhi.cmd_barrier_texture(cmd, held, .Shader_Read)
 		rhi.cmd_barrier_texture(cmd, upload.texture, .Shader_Read)
 		upload.done = true
 	}
 }
 
-// The textures whose rows all went take their entries of the table, between
-// frames: the frame after them reads them.
+// The textures whose levels all went take their entries of the table,
+// between frames: the frame after them reads them.
 @(private)
 texture_uploads_install :: proc(r: ^Renderer) {
 	for &upload in r.textures.residency.uploads {
 		if !upload.active || !upload.done {continue}
-		texture_levels_install(r, upload.request, upload.data, upload.texture, upload.bytes)
+		texture_levels_install(r, upload.request, upload.texture)
 		upload = {}
 	}
-}
-
-// Gives a streamed texture the levels of its source a request asked for,
-// as a transaction between frames: a texture with those levels takes its
-// entry of the table, and its handle stays. Anything but Set changes nothing.
-texture_levels_set :: proc(r: ^Renderer, request: Texture_Request, data: Texture_Data) -> Texture_Levels_Result {
-	texture, result := texture_levels_check(r, request, data)
-	if result != .Set {return result}
-	bytes: u64
-	for level in data.levels {bytes += u64(len(level))}
-	if !rhi.texture_upload_levels(r.device, texture, data.levels[:]) {
-		set_error(r, "texture levels: %s", rhi.device_error(r.device))
-		rhi.texture_destroy(r.device, texture)
-		return .Failed
-	}
-	return texture_levels_install(r, request, data, texture, bytes)
 }
 
 // The texture of a request keeps the levels it has from now on: its loader

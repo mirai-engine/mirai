@@ -133,7 +133,8 @@ a_texture_holds_the_levels_the_frames_sample :: proc(t:^testing.T) {
             if !testing.expect(t,found,loc=loc) {return}
             assets_prepare(&prepared,assets_limits(a),types)
             defer assets_prepared_free(&prepared)
-            testing.expect_value(t,render.texture_levels_set(r,requests[0],prepared.levels.data),render.Texture_Levels_Result.Set,loc=loc)
+            testing.expect_value(t,render.texture_levels_queue(r,requests[0],prepared.levels.data),render.Texture_Levels_Result.Set,loc=loc)
+            for render.texture_upload_pending(r,requests[0]) {testing.expect(t,render.renderer_frame(r,{camera=camera}),r.error,loc=loc)}
         }
         testing.fail_now(t,"the levels did not settle",loc=loc)
     }
@@ -148,12 +149,21 @@ a_texture_holds_the_levels_the_frames_sample :: proc(t:^testing.T) {
     testing.expect_value(t,width(r,texture),u32(SIZE))
     testing.expect_value(t,render.textures_update(r),0)
 
-    // Queued, the levels go with the frames that follow, and the texture
-    // takes them once they went: fewer, once a window of frames sampled it
-    // coarser.
+    // Fewer levels, once a window of frames sampled it coarser, the renderer
+    // copies from those it holds: nothing is read.
     requests:[1]render.Texture_Request
-    for frames:=0;frames<2*render.TEXTURE_FEEDBACK_FRAMES;frames+=1 {
+    for frames:=0;frames<2*render.TEXTURE_FEEDBACK_FRAMES && width(r,texture)!=u32(render.TEXTURE_TAIL);frames+=1 {
         testing.expect(t,render.renderer_frame(r,{camera=look(10)}),r.error)
+        render.textures_update(r)
+        testing.expect_value(t,render.texture_requests(r,requests[:],nil),0)
+    }
+    testing.expect_value(t,width(r,texture),u32(render.TEXTURE_TAIL))
+    testing.expect(t,texture.handle==handle,"the handle stays")
+
+    // Queued, the levels it lacks go with the frames that follow, and the
+    // texture takes them once they went.
+    for frames:=0;frames<16;frames+=1 {
+        testing.expect(t,render.renderer_frame(r,{camera=look(0.06)}),r.error)
         if render.textures_update(r)>0 && render.texture_requests(r,requests[:],nil)==1 {break}
     }
     if !testing.expect(t,requests[0].handle==handle) {return}
@@ -165,11 +175,11 @@ a_texture_holds_the_levels_the_frames_sample :: proc(t:^testing.T) {
     defer assets_prepared_free(&prepared)
     testing.expect_value(t,render.texture_levels_queue(r,requests[0],prepared.levels.data),render.Texture_Levels_Result.Set)
     testing.expect_value(t,render.texture_levels_queue(r,requests[0],prepared.levels.data),render.Texture_Levels_Result.Busy)
-    testing.expect(t,render.texture_upload_pending(r,requests[0]) && width(r,texture)==u32(SIZE),"the levels have not gone yet")
-    for frames:=0;frames<8 && render.texture_upload_pending(r,requests[0]);frames+=1 {testing.expect(t,render.renderer_frame(r,{camera=look(10)}),r.error)}
+    testing.expect(t,render.texture_upload_pending(r,requests[0]) && width(r,texture)==u32(render.TEXTURE_TAIL),"the levels have not gone yet")
+    for frames:=0;frames<8 && render.texture_upload_pending(r,requests[0]);frames+=1 {testing.expect(t,render.renderer_frame(r,{camera=look(0.06)}),r.error)}
     testing.expect(t,!render.texture_upload_pending(r,requests[0]),"they went")
-    testing.expect_value(t,width(r,texture),u32(render.TEXTURE_TAIL))
-    testing.expect(t,render.renderer_frame(r,{camera=look(10)}),r.error)
+    testing.expect_value(t,width(r,texture),u32(SIZE))
+    testing.expect(t,render.renderer_frame(r,{camera=look(0.06)}),r.error)
     testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))
 }
 

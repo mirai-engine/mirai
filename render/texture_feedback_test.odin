@@ -32,30 +32,43 @@ noise_texture :: proc(t: ^testing.T, r: ^Renderer, width, height: int, first := 
 	return
 }
 
-// The levels of a texture of every level from `first`, borrowed.
+// The levels of a texture of every level from `first`, borrowed; the list
+// of them, kept until the test ends (`kept`) or freed by the caller.
 @(private = "file")
-texture_levels_from :: proc(whole: Texture_Data, first: int) -> (data: Texture_Data) {
+texture_levels_from :: proc(whole: Texture_Data, first: int, kept: ^[dynamic][dynamic][]u8 = nil, count := -1) -> (data: Texture_Data) {
 	data = whole
 	data.width, data.height, data.level = max(whole.width >> uint(first), 1), max(whole.height >> uint(first), 1), first
-	data.levels = make([dynamic][]u8, 0, len(whole.levels) - first, context.temp_allocator)
-	append(&data.levels, ..whole.levels[first:])
+	last := len(whole.levels) if count < 0 else first + count
+	data.levels = make([dynamic][]u8, 0, last - first, context.temp_allocator if kept == nil else context.allocator)
+	append(&data.levels, ..whole.levels[first:last])
+	if kept != nil {append(kept, data.levels)}
 	return
 }
 
 // What the streamer of the application does between frames, at once: frames
 // of a view until the textures hold what the feedback of that view asks for.
+// Each read gives only the levels a texture lacks; the renderer copies the
+// others, and gives levels up alone.
 @(private = "file")
 feedback_settle :: proc(t: ^testing.T, r: ^Renderer, camera: Camera, textures: []Texture_Data, loc := #caller_location) {
-	for _ in 0 ..< 32 {
+	kept: [dynamic][dynamic][]u8
+	defer {
+		for levels in kept {delete(levels)}
+		delete(kept)
+	}
+	for _ in 0 ..< 48 {
 		testing.expect(t, renderer_frame(r, {camera = camera}), r.error, loc = loc)
-		if textures_update(r) == 0 {return}
+		busy := false
+		for upload in r.textures.residency.uploads {busy ||= upload.active}
+		if textures_update(r) == 0 && !busy {return}
 		requests: [8]Texture_Request
 		for request in requests[:texture_requests(r, requests[:], nil)] {
-			result := texture_levels_set(r, request, texture_levels_from(textures[request.handle - 1], request.level))
-			testing.expect_value(t, result, Texture_Levels_Result.Set, loc = loc)
+			lacking := int(r.textures.residency.streams[request.handle - 1].top) - request.level
+			result := texture_levels_queue(r, request, texture_levels_from(textures[request.handle - 1], request.level, &kept, lacking))
+			testing.expectf(t, result == .Set || result == .Busy, "%v", result, loc = loc)
 		}
 	}
-	testing.fail_now(t, "the textures did not settle", loc = loc)
+	testing.expect(t, false, "the textures did not settle", loc = loc)
 }
 
 @(private = "file")
@@ -109,9 +122,19 @@ texture_feedback_keeps_every_level_the_image_reads :: proc(t: ^testing.T) {
 		{"grazing", {position = {0, 0.3, 3}, forward = {0, -0.15, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}},
 	}
 	stream := &r.textures.residency.streams[texture - 1]
+	kept: [dynamic][dynamic][]u8
+	defer {
+		for levels in kept {delete(levels)}
+		delete(kept)
+	}
 	for c in cases {
 		every := Texture_Request{handle = texture, level = 0, stamp = stream.stamp}
-		testing.expect_value(t, texture_levels_set(r, every, texture_levels_from(whole, 0)), Texture_Levels_Result.Set)
+		levels := texture_levels_from(whole, 0, &kept, int(stream.top))
+		if stream.top > 0 {
+			testing.expect_value(t, texture_levels_queue(r, every, levels), Texture_Levels_Result.Set)
+			for texture_upload_pending(r, every) {testing.expect(t, renderer_frame(r, {camera = c.camera}), r.error)}
+		}
+		testing.expect_value(t, stream.top, 0)
 		before := feedback_image(t, r, c.camera)
 		feedback_settle(t, r, c.camera, {whole})
 		after := feedback_image(t, r, c.camera)
