@@ -14,7 +14,7 @@ terrain_held_brush_keeps_raising_under_the_pointer :: proc(t:^testing.T) {
     world:Create_Test_World
     create_test_world_init(&world);defer create_test_world_destroy(&world)
     tables:=create_test_tables()
-    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:],settle=create_test_settle}
+    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:]}
     ref:=core.world_ref(&world,&info)
     ctx:ui.Context
     if !testing.expect(t,ui.context_init(&ctx,{})) {return}

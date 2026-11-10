@@ -244,8 +244,8 @@ fracture_cells :: proc(f:^Fracture,mesh:Mesh,sites:[]Vec3,options:Fracture_Optio
         cell:=&f.work[0]
         mesh_buffer_clear(cell)
         corners:=box_corners(box_lo,box_hi)
-        append(&cell.positions,..corners[:])
-        append(&cell.indices,0,2,1, 1,2,3, 4,5,6, 5,7,6, 0,1,4, 1,5,4, 2,6,3, 3,6,7, 0,4,2, 2,4,6, 1,3,5, 3,7,5)
+        append(&cell.positions,..corners[:]) or_return
+        append(&cell.indices,0,2,1, 1,2,3, 4,5,6, 5,7,6, 0,1,4, 1,5,4, 2,6,3, 3,6,7, 0,4,2, 2,4,6, 1,3,5, 3,7,5) or_return
         resize(&f.tags[0],12) or_return
         for &tag in f.tags[0] {tag=NONE}
         current:=0
@@ -344,13 +344,13 @@ fracture_emit :: proc(f:^Fracture,source:Mesh,tags:[]u32,site:u32,min_volume:f32
     for chunk in 0..<chunks {
         first_vertex,first_index:=len(f.mesh.positions),len(f.mesh.indices)
         if chunks==1 {
-            append(&f.mesh.positions,..source.positions)
-            if has_normals {append(&f.mesh.normals,..source.normals)}
-            if has_uvs {append(&f.mesh.uvs,..source.uvs)}
-            if has_colors {append(&f.mesh.colors,..source.colors)}
-            append(&f.mesh.indices,..source.indices)
-            if has_materials {append(&f.mesh.materials,..source.materials)} else {
-                for _ in 0..<triangles {append(&f.mesh.materials,0)}
+            append(&f.mesh.positions,..source.positions) or_return
+            if has_normals {append(&f.mesh.normals,..source.normals) or_return}
+            if has_uvs {append(&f.mesh.uvs,..source.uvs) or_return}
+            if has_colors {append(&f.mesh.colors,..source.colors) or_return}
+            append(&f.mesh.indices,..source.indices) or_return
+            if has_materials {append(&f.mesh.materials,..source.materials) or_return} else {
+                for _ in 0..<triangles {append(&f.mesh.materials,0) or_return}
             }
         } else {
             for t in 0..<triangles {
@@ -358,14 +358,14 @@ fracture_emit :: proc(f:^Fracture,source:Mesh,tags:[]u32,site:u32,min_volume:f32
                 for v in source.indices[t*3:][:3] {
                     if f.remap[v]==NONE {
                         f.remap[v]=u32(len(f.mesh.positions)-first_vertex)
-                        append(&f.mesh.positions,source.positions[v])
-                        if has_normals {append(&f.mesh.normals,source.normals[v])}
-                        if has_uvs {append(&f.mesh.uvs,source.uvs[v])}
-                        if has_colors {append(&f.mesh.colors,source.colors[v])}
+                        append(&f.mesh.positions,source.positions[v]) or_return
+                        if has_normals {append(&f.mesh.normals,source.normals[v]) or_return}
+                        if has_uvs {append(&f.mesh.uvs,source.uvs[v]) or_return}
+                        if has_colors {append(&f.mesh.colors,source.colors[v]) or_return}
                     }
-                    append(&f.mesh.indices,f.remap[v])
+                    append(&f.mesh.indices,f.remap[v]) or_return
                 }
-                append(&f.mesh.materials,source.materials[t] if has_materials else 0)
+                append(&f.mesh.materials,source.materials[t] if has_materials else 0) or_return
             }
         }
         positions,indices:=f.mesh.positions[first_vertex:],f.mesh.indices[first_index:]

@@ -1,7 +1,6 @@
 # Collaboration
 
-Code: `collab.odin`, `collab_api.odin` and `collab_watch.odin` (the host's Play and networked
-games).
+Code: `collab.odin`, `collab_api.odin` and `collab_play.odin` (the host's networked games).
 
 - Several editors share one's scene. The **host** owns the file and orders the edits; a **guest**
   receives the whole scene on entering and keeps its copy in memory.
@@ -44,18 +43,23 @@ games).
 - The network half of the session runs in its own thread (`worker_start`): an editor busy for a
   while (generating a game's world, a long frame) keeps responding and nobody gives it up for gone.
 - Reliable data waits in each peer's queue (`Collab_Peer.out`) and enters the channel as long as it
-  fits (`message_send` returns `Full`): a scene or a Watch larger than the queue take longer, they
-  do not cut the connection.
+  fits (`message_send` returns `Full`): a scene larger than the queue takes longer, it does not
+  cut the connection.
 - **The differences**, every `COLLAB_EDIT_INTERVAL`: per component and entity, identified by
-  `core.Id`, the bytes of each row that changed (`core.Entity` fields as `Id`, `transient` bytes at
-  zero), whether it was turned off or on by itself and the `Id`s of the rows that left. Only the
-  tables a scene stores. An entity reborn with its `Id` (a prefab operation replaces the world)
-  does not leave: the rows of its previous handle do not delete it.
-- They come out of the [document's journal](document.md#edits-and-undo), without a copy of their
-  own: the rows the journal took since the previous read (commits, undo, redo), with their previous
-  state and the `Id` of an entity that is no longer there; those the world and the journal do not
-  share yet (an open gesture travels live); and those that were counted that way in the previous
-  send (`Collab_State.told`), so that a cancellation also travels. Each goes as it is now; the off
+  `core.Id`, the fields of each row that changed (`core.Entity` fields as `Id`), the whole row when
+  the others have none, whether it was turned off or on by itself and the `Id`s of the rows that
+  left. Only the tables a scene stores. An entity reborn with its `Id` (a prefab operation replaces
+  the world) does not leave: the rows of its previous handle do not delete it.
+- **By field.** A field is what `saved_fields` lists of the component: each non-`transient` field,
+  those of a nested struct one by one, an array whole. Whoever receives a difference writes those
+  fields and leaves the rest of the row as it has it, so two editors that change different fields
+  of one component of one entity both keep their change.
+- They come out of the [document's journal](document.md#edits-and-undo), without a copy of the
+  world: the rows the journal took since the previous read (commits, undo, redo), with what they
+  held before and the `Id` of an entity that is no longer there; those the world and the journal
+  do not share yet (an open gesture travels live); and those that were counted that way in the
+  previous send (`Collab_State.told`, with what was told of them), so that a cancellation also
+  travels. Each is compared with what the others have of it and only what differs goes; the off
   state travels when it differs from the one the others have.
 - **Presence**, every 1/12 s over the unreliable channel: camera, up to 16 selection ids (in Edit
   only), whether it is in a Play or Simulate of its own, whether it plays the host's game and, if
@@ -65,11 +69,9 @@ games).
   name. They are forgotten after 3 s without data.
 - Whoever is in their own Play or Simulate also carries a ring under the figure and shows no
   selection; whoever plays the host's game, the ring in the host's color.
-- **What is selected belongs to whoever selected it** (`collab_hold.odin`): the others see it with
-  the outline of their color and do not edit it until they select something else. The edit
-  procedures (`edit_held`) reject it with a toast that says who has it, the inspector shows it
-  read-only, the gizmo does not appear and an API call, also from an agent, fails with that
-  message. What hangs from it stays editable, and a run edits a copy that belongs to nobody.
+- **Selecting holds nothing.** What another editor selected is outlined in their color
+  (`collab_highlights`), also over the selection of whoever looks, and that is all: every editor
+  and every agent edits it like the rest.
 - **Each editor's agents** (`collab_agents.odin`, `Agents` message, reliable): figure, color,
   glyph, name and what the turn changed while awaiting review (up to `COLLAB_AGENT_IDS`). Each
   editor sends its own on changing and every so often while it has any, so whoever enters later
@@ -85,8 +87,12 @@ games).
 - **Asset files** (`collab_files.odin`, `File` message in chunks): what changes an asset file in
   an editor (an agent's material, a painted texture, an undo) travels to the others and stays in the
   memory of their registry, unsaved, as where it was edited (`file_changed`, `file_set`). The host
-  forwards it and, to whoever enters, sends its unsaved files after the scene. One larger than
-  `COLLAB_FILE_BYTES` does not travel.
+  forwards it and, to whoever enters, sends its unsaved files after the scene.
+- **A file that cannot travel** (larger than `COLLAB_FILE_BYTES`) stays where it was edited and
+  every editor is told (`File_Unsent`, `Collab_State.unsent`): a toast when it happens, a line of
+  Session while it lasts and `unsent` of `collab.status`, with the file, who changed it and what
+  makes it the same for all: saving it and sharing it through the project's repository. It leaves
+  the list when it travels or when whoever changed it leaves.
 - Bar avatars in [panels](panels.md#layout).
 
 Edits:
@@ -95,11 +101,15 @@ Edits:
   from the document and those of others are applied while someone plays. If the host replaces the
   scene, the run of whoever receives it stops ([Play](editor.md#play)).
 - A guest sends its edits to the host, which applies them and forwards them to all, sender
-  included: all converge to the host's order. Before applying what arrives, each editor sends its
-  own. What was applied is taken by the journal row by row, without a step or reader: it does not
-  come back as its own.
+  included: all converge to the host's order, which decides a field two editors changed. Before
+  applying what arrives, each editor sends its own. What was applied is taken by the journal field
+  by field, without a step or reader: it does not come back as its own.
+- A guest already has what comes back of its own edits, or something newer, and skips it; except in
+  the rows another editor wrote while they were on their way (`Collab_State.crossed`), where the
+  host put its edit after theirs: there it writes it again, but for the fields it is editing now.
 - The edits of others do not enter the history of whoever receives them, nor in a gesture it had
-  open. Each editor's undo undoes its own steps and keeps what the others wrote afterwards
+  open: the step of that gesture holds its own fields. Each editor's undo undoes its own steps and
+  keeps what the others wrote afterwards, also in the field it wrote
   ([undo by author](document.md#undo-by-author)); what it changes travels like any edit.
 - The host marks the document with unsaved changes and only it writes the file.
 
@@ -114,32 +124,6 @@ Edits:
 
 If the host replaces its document (open, new scene), it sends the new scene to the guests; if a
 guest replaces its own, its session ends.
-
-## Watching the host's Play
-
-A guest watches the host's Play or Simulate from the
-[menu of its figure](editor.md#figures-of-whoever-works) (Watch Play) or with `editor.watch` and
-`host:true` ([watching another run](editor.md#watching-another-run)).
-
-- The guest requests `Watch`. The host sends over the reliable channel all the rows of its world
-  (`Watch_Begin`, `Watch_Rows`) and afterwards, every `COLLAB_WATCH_INTERVAL`, what changed and its
-  view (`Watch_View`).
-- What changed is told by `core.changes` of each table since the previous send
-  (`collab_watch_diff`), without a copy of the world: the rows written, added or turned on and
-  those that left or were turned off. A row requested for writing travels even if it stays equal,
-  and an entity that loses its last row is destroyed.
-- Rows are identified by the `Entity` of the host's world, not by `Id`: what the game creates
-  without `Id` also travels, and the guest translates the `Entity` fields to its own entities. Only
-  the tables a scene stores travel; the storages do not, except the view.
-- What was sent (a `core.Seen` per table) is one for all who watch. If any has more than
-  `COLLAB_WATCH_BACKLOG` reliable messages waiting, the send waits and the next carries what
-  accumulated. If a table has rows the previous send did not see (more than `GONE_CAPACITY` gone,
-  or the table replaced), all who watch start again with all the rows.
-- The guest draws that world with the editor loop, without running its game or the host's game UI,
-  and the viewport camera follows the received view.
-- When the host stops its Play or starts another, it sends `Watch_End` and those who watch receive
-  everything again with the next one; when presence says it stopped playing, the guest stops
-  watching.
 
 ## The host's networked games
 
@@ -161,8 +145,8 @@ online players. How a guest joins:
 
 ## Where each one plays
 
-- Each editor plays its own copy: a guest's Play or Simulate is a world of its own, which neither
-  travels nor changes anyone's. Edits keep traveling while it plays.
+- Each editor plays its own copy: a Play or Simulate is a world of its own, which neither travels
+  nor changes anyone's, and nobody else sees it. Edits keep traveling while it plays.
 - A guest joins the host's game with **Join game** of its figure's menu or `play.join`, as a
   `multiplayer` client with its own seat and its prediction, and leaves with **Leave game**, Esc or
   Stop. Joining starts from Edit.
@@ -174,6 +158,7 @@ online players. How a guest joins:
 ## Limits
 
 - An editor that restarts for a Build loses the session.
-- Only the host's Play is watched and only its networked game is joined: a guest's Play is its own.
+- Only the host's networked game is joined, and a game is seen by whoever plays it: the Play of
+  another editor is not shown.
 - `collab.status` and the `collab` summary of `engine.status` report role, phase, editors and
   counters.

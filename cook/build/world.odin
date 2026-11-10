@@ -1283,7 +1283,9 @@ rules_check :: proc(g:^Generator) {
                     if param.type.replication!=.None {
                         append(&g.errors,fmt.aprintf("%s: %s runs only in ui or render and writes %s, which is replicated: a dedicated server runs neither and would send what the scene says; write it in input, fixed, frame or late",s.where_,s.name,param.type.name))
                     }
-                case .Entities,.Commands:
+                case .Entities:
+                    append(&g.errors,fmt.aprintf("%s: %s runs only in ui or render and receives ^core.Entities, which creates and destroys entities, as a dedicated server would not: create them in input, fixed, frame or late; to ask only whether an entity is alive or off, receive core.Ref(core.Entities), which also leaves the tables unsettled after it",s.where_,s.name))
+                case .Commands:
                     append(&g.errors,fmt.aprintf("%s: %s runs only in ui or render and creates or destroys entities, which a dedicated server would not: create them in input, fixed, frame or late",s.where_,s.name))
                 }
             }
@@ -1618,9 +1620,15 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
 
     places:=[3]core.Place{.World,.Shared,.Editor}
     struct_names:=[3]string{"World","Shared","Editor"}
+    // Each storage by its index in info.storages, where its revision is.
+    storage_index:=make(map[^Type]int,context.temp_allocator)
+    for t in g.types {
+        if t.kind==.Storage && included(t,editor) {storage_index[t]=len(storage_index)}
+    }
+    tables:=count_kind(g,.Component,editor)
     for place,pi in places {
         fmt.sbprintf(w,"%s :: struct {{\n",struct_names[pi])
-        if place==.World {fmt.sbprintf(w,"    entities:%s.Entities,\n",core_alias)}
+        if place==.World {fmt.sbprintf(w,"    entities:%s.Entities,\n    storage_revisions:[%d]u64,\n",core_alias,len(storage_index))}
         for t in g.types {
             if t.place!=place || !included(t,editor) {continue}
             if t.kind==.Component {fmt.sbprintf(w,"    %s:%s.Table(%s.%s),\n",t.field,core_alias,t.pkg.alias,t.name)}
@@ -1641,10 +1649,15 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     // init
     for place,pi in places {
         fmt.sbprintf(w,"init_%s :: proc(data:rawptr,allocator:runtime.Allocator) -> bool {{\n    w:=cast(^%s)data\n    context.allocator=allocator\n",struct_names[pi],struct_names[pi])
-        if place==.World {fmt.sbprintf(w,"    if !%s.entities_init(&w.entities,allocator) {{return false}}\n",core_alias)}
+        if place==.World {fmt.sbprintf(w,"    if !%s.entities_init(&w.entities,allocator) || !%s.entities_tables(&w.entities,%d) {{return false}}\n",core_alias,core_alias,count_kind(g,.Component,editor))}
+        table_index:=0
         for t in g.types {
+            at:=table_index
+            if t.kind==.Component && included(t,editor) {table_index+=1}
             if t.place!=place || t.kind!=.Component || !included(t,editor) {continue}
             fmt.sbprintf(w,"    if !%s.table_init(&w.%s,\"%s\",allocator) {{return false}}\n",core_alias,t.field,t.name)
+            // Its place in info.tables is where core.settle finds what it has pending.
+            if place==.World {fmt.sbprintf(w,"    %s.table_follow(&w.%s,&w.entities,%d)\n",core_alias,t.field,at)}
             // The components of core are the base of every entity: on while it is disabled.
             if t.pkg.path=="mirai:core" {fmt.sbprintf(w,"    w.%s.base=true\n",t.field)}
             if t.single {fmt.sbprintf(w,"    w.%s.single=true\n",t.field)}
@@ -1684,13 +1697,14 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     // copy and clear of World; the index of the entities by Id comes with
     // them and goes on following the table of Id that comes with it. The
     // copy of what changed takes again only the tables that changed since the
-    // marks, one per table by its index in info.tables, and is the copy a
-    // history keeps: it takes the copy_kept of the storages that have one
+    // marks, one per table by its index in info.tables, and the storages a
+    // function received to write since theirs, which follow those of the
+    // tables; it is the copy a history keeps: it takes the copy_kept of the
+    // storages that have one
     identity:=g.by_key["mirai:core.Id"]
-    tables:=count_kind(g,.Component,editor)
     for changed in ([2]bool{false,true}) {
         if changed {
-            fmt.sbprintf(w,"copy_changed_world :: proc(dst_data,src_data:rawptr,marks:[]%s.Copy_Mark) -> bool {{\n    if dst_data==src_data {{return true}}\n    if len(marks)<%d {{return copy_world(dst_data,src_data)}}\n",core_alias,tables)
+            fmt.sbprintf(w,"copy_changed_world :: proc(dst_data,src_data:rawptr,marks:[]%s.Copy_Mark) -> bool {{\n    if dst_data==src_data {{return true}}\n    if len(marks)<%d {{return copy_world(dst_data,src_data)}}\n",core_alias,tables+len(storage_index))
         } else {
             fmt.sbprint(w,"copy_world :: proc(dst_data,src_data:rawptr) -> bool {\n    if dst_data==src_data {return true}\n")
         }
@@ -1707,14 +1721,27 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
                 else {fmt.sbprintf(w,"    if !%s.table_copy(&dst.%s,&src.%s) {{return false}}\n",core_alias,t.field,t.field)}
             } else if t.copy=="false" {
                 continue
-            } else if changed && t.copy_kept!="" {
-                fmt.sbprintf(w,"    if !%s.%s(&dst.%s,&src.%s) {{return false}}\n",t.pkg.alias,t.copy_kept,t.field,t.field)
-            } else if t.copy!="" {
-                fmt.sbprintf(w,"    if !%s.%s(&dst.%s,&src.%s) {{return false}}\n",t.pkg.alias,t.copy,t.field,t.field)
             } else {
-                fmt.sbprintf(w,"    if !%s.value_copy(&dst.%s,&src.%s,type_info_of(%s.%s)) {{return false}}\n",core_alias,t.field,t.field,t.pkg.alias,t.name)
+                // The copy of what changed takes a storage again only when its
+                // revision moved since the mark of this copy.
+                copy:=fmt.tprintf("%s.value_copy(&dst.%s,&src.%s,type_info_of(%s.%s))",core_alias,t.field,t.field,t.pkg.alias,t.name)
+                if changed && t.copy_kept!="" {
+                    copy=fmt.tprintf("%s.%s(&dst.%s,&src.%s)",t.pkg.alias,t.copy_kept,t.field,t.field)
+                } else if t.copy!="" {
+                    copy=fmt.tprintf("%s.%s(&dst.%s,&src.%s)",t.pkg.alias,t.copy,t.field,t.field)
+                }
+                if !changed {
+                    fmt.sbprintf(w,"    if !%s {{return false}}\n",copy)
+                    continue
+                }
+                k:=storage_index[t]
+                fmt.sbprintf(w,"    if %s.storage_changed(&marks[%d],src.storage_revisions[%d]) {{\n        if !%s {{return false}}\n        %s.storage_copied(&marks[%d],&dst.storage_revisions[%d],src.storage_revisions[%d])\n    }}\n",core_alias,tables+k,k,copy,core_alias,tables+k,k,k)
+                if t.copy=="" && t.copy_kept=="" {
+                    fmt.sbprintf(w,"    when %s.CHECK_WRITES {{%s.storage_check(&dst.%s,&src.%s,type_info_of(%s.%s),\"%s\")}}\n",core_alias,core_alias,t.field,t.field,t.pkg.alias,t.name,t.name)
+                }
             }
         }
+        if !changed {fmt.sbprintf(w,"    %s.revisions_copied(dst.storage_revisions[:],src.storage_revisions[:])\n",core_alias)}
         if identity!=nil {fmt.sbprintf(w,"    %s.ids_moved(&dst.entities,%s.read(&dst.%s),synced)\n",core_alias,core_alias,identity.field)}
         fmt.sbprint(w,"    return true\n}\n\n")
     }
@@ -1731,6 +1758,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
         else if t.swap!="" {fmt.sbprintf(w,"    %s.%s(&a.%s,&b.%s)\n",t.pkg.alias,t.swap,t.field,t.field)}
         else {fmt.sbprintf(w,"    gen_slice.ptr_swap_non_overlapping(&a.%s,&b.%s,size_of(a.%s))\n",t.field,t.field,t.field)}
     }
+    fmt.sbprintf(w,"    %s.revisions_swapped(a.storage_revisions[:],b.storage_revisions[:])\n",core_alias)
     if identity!=nil {fmt.sbprintf(w,"    %s.ids_moved(&a.entities,%s.read(&a.%s),b_synced)\n    %s.ids_moved(&b.entities,%s.read(&b.%s),a_synced)\n",core_alias,core_alias,identity.field,core_alias,core_alias,identity.field)}
     fmt.sbprint(w,"}\n\n")
     // Clearing a World takes its entities, and the storages derived from them
@@ -1751,6 +1779,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
         value,found:=default_value(t)
         fmt.sbprintf(w,"    w.%s=%s\n",t.field,found?value:"{}")
     }
+    fmt.sbprintf(w,"    %s.revisions_moved(w.storage_revisions[:])\n",core_alias)
     fmt.sbprint(w,"    return true\n}\n\n")
 
     // The values of the by_world storages of a World, by its id
@@ -1769,28 +1798,6 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
         fmt.sbprintf(w,"    if value:=%s.by_world_detach(&s.%s,w.%s);value!=nil {{\n        %s\n        %s.by_world_release(&s.%s,value)\n    }}\n",core_alias,t.field,world_id.field,value_free_call(t,core_alias,"value"),core_alias,t.field)
     }
     fmt.sbprint(w,"}\n\n")
-
-    // settle: the tables of every place follow the entities of the world;
-    // Disabled, Parent and its Hierarchy first, which say what of them is off
-    disabled:=g.by_key["mirai:core.Disabled"]
-    parent:=g.by_key["mirai:core.Parent"]
-    hierarchy:=g.by_key["mirai:core.Hierarchy"]
-    fmt.sbprint(w,"settle :: proc(world,shared,editor:rawptr) {\n    w:=cast(^World)world\n")
-    fmt.sbprint(w,"    e:=cast(^Editor)editor\n    _=e\n")
-    if disabled!=nil && parent!=nil && hierarchy!=nil {
-        fmt.sbprintf(w,"    %s.table_settle(&w.%s,&w.entities)\n    %s.table_settle(&w.%s,&w.entities)\n",core_alias,disabled.field,core_alias,parent.field)
-        fmt.sbprintf(w,"    _=%s.hierarchy_settle(&w.%s,%s.read(&w.%s),&w.entities)\n",core_alias,hierarchy.field,core_alias,parent.field)
-        fmt.sbprintf(w,"    _=%s.entities_activity(&w.entities,%s.read(&w.%s),%s.ref(&w.%s))\n",core_alias,core_alias,disabled.field,core_alias,hierarchy.field)
-    }
-    for t in g.types {
-        if t.kind!=.Component || !included(t,editor) {continue}
-        switch t.place {
-        case .World: fmt.sbprintf(w,"    %s.table_settle(&w.%s,&w.entities)\n",core_alias,t.field)
-        case .Editor: fmt.sbprintf(w,"    if e!=nil {{%s.table_settle(&e.%s,&w.entities)}}\n",core_alias,t.field)
-        case .Shared:
-        }
-    }
-    fmt.sbprintf(w,"    %s.entities_settle(&w.entities)\n}}\n\n",core_alias)
 
     // The functions as info.steps lists them: where each one adds its time.
     kept:=make([dynamic]^Step,context.temp_allocator)
@@ -1863,6 +1870,14 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
         fmt.sbprintf(w,"    w:=cast(^World)world\n    s:=cast(^Shared)shared\n    e:=cast(^Editor)editor\n    app:=cast(^%s.App)app_data\n    _,_,_=s,e,app\n",host_alias)
         // A client neither runs nor resimulates what the server or a game alone decides.
         if step.server {fmt.sbprintf(w,"    if w.%s.role==.Client {{return}}\n",g.by_key["mirai:core.Network"].field)}
+        // A storage of the World handed out to write is another from here on:
+        // the copy of what changed takes it again (copy_changed_world).
+        for param,pi in step.params {
+            if param.kind!=.Storage_Write || param.type.place!=.World || param.type.by_world || param.type.copy=="false" {continue}
+            again:=false
+            for other in step.params[:pi] {again||=other.kind==.Storage_Write && other.type==param.type}
+            if !again {fmt.sbprintf(w,"    w.storage_revisions[%d]+=1\n",storage_index[param.type])}
+        }
         fmt.sbprintf(w,"    started:=gen_time.tick_now()\n    zone:=%s.profile_step_begin(app,%d,worker)\n",host_alias,si)
         if strings.builder_len(checks)>0 {
             fmt.sbprintf(w,"    when %s.CHECK_WRITES {{\n        checks:=[?]%s.Write_Check{{%s}}\n        %s\n        %s.write_check_end(checks[:],\"%s\")\n    }} else {{%s}}\n",core_alias,core_alias,strings.to_string(checks),call,core_alias,step.name,call)
@@ -1878,7 +1893,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
             holder:=param.type.place==.Editor?"e":"w"
             fmt.sbprintf(w,"    %s.table_settle(&%s.%s,&w.entities)\n",core_alias,holder,param.type.field)
         }
-        if whole {fmt.sbprint(w,"    settle(w,s,e)\n")}
+        if whole {fmt.sbprintf(w,"    %s.settle(app.info,w,e)\n",core_alias)}
         fmt.sbprintf(w,"    %s.profile_step_end(zone)\n",host_alias)
         fmt.sbprintf(w,"    if %d<len(app.step_ns) {{app.step_ns[%d]+=u64(gen_time.tick_since(started))}}\n}}\n\n",si,si)
     }
@@ -2045,13 +2060,13 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     fmt.sbprintf(w,"    info:%s.World_Info\n",core_alias)
     fmt.sbprint(w,"    info.sizes={.World=size_of(World),.Shared=size_of(Shared),.Editor=size_of(Editor)}\n")
     fmt.sbprint(w,"    info.aligns={.World=align_of(World),.Shared=align_of(Shared),.Editor=align_of(Editor)}\n")
-    fmt.sbprint(w,"    info.entities=offset_of(World,entities)\n")
+    fmt.sbprint(w,"    info.entities,info.revisions=offset_of(World,entities),offset_of(World,storage_revisions)\n")
     fmt.sbprint(w,"    info.tables,info.storages,info.messages,info.steps=tables,storages,messages,steps\n")
     fmt.sbprint(w,"    info.named_types,info.names,info.name_bits,info.actions=named_types,names,name_bits,actions\n")
     fmt.sbprint(w,"    info.records=records\n")
     fmt.sbprint(w,"    info.init={.World=init_World,.Shared=init_Shared,.Editor=init_Editor}\n")
     fmt.sbprint(w,"    info.destroy={.World=destroy_World,.Shared=destroy_Shared,.Editor=destroy_Editor}\n")
-    fmt.sbprint(w,"    info.copy,info.copy_changed=copy_world,copy_changed_world\n    info.swap=swap_world\n    info.clear=clear_world\n    info.settle=settle\n    info.attach,info.detach=attach_World,detach_World\n")
+    fmt.sbprint(w,"    info.copy,info.copy_changed=copy_world,copy_changed_world\n    info.swap=swap_world\n    info.clear=clear_world\n    info.attach,info.detach=attach_World,detach_World\n")
     for loop in 0..<(editor?2:1) {
         for phase in 0..<len(PHASES) {
             if defined[loop][phase] {fmt.sbprintf(w,"    info.loops[.%s][.%s],info.order[.%s][.%s]=%s_%s,order_%s_%s[:]\n",loop==0?"Game":"Editor",titles[phase],loop==0?"Game":"Editor",titles[phase],loops[loop],phases[phase],loops[loop],phases[phase])}

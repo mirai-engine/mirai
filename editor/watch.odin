@@ -5,16 +5,14 @@ import "core:strings"
 import "mirai:std/base"
 import "mirai:ui"
 
-// Watching the run of another: the run of an agent, which is already in this
-// editor, or the Play of the host of the session, which arrives through the
-// session (collab_watch.odin). The viewport shows it without stopping any
-// run: the game of the user, if any, goes on unseen and without input, and
-// the watched run gets no input of the user and is not edited.
+// Watching the run of an agent, which is already in this editor. The viewport
+// shows it without stopping any run: the game of the user, if any, goes on
+// unseen and without input, and the watched run gets no input of the user and
+// is not edited.
 
 // What the editor watches and what it returns to.
 Watch :: struct {
     task:int,   // the AI task whose run is shown; 0: none
-    host:bool,  // the Play of the host of the session
     from:Mode,  // the mode it returns to
     orbit:Orbit,
 }
@@ -22,26 +20,20 @@ Watch :: struct {
 // What is watched belongs to another: the editor does not edit it.
 watching :: proc "contextless" (s:^Session) -> bool {return s.mode==.Watch}
 
-// The World being watched; nil while the Play of the host has not arrived.
+// The World being watched; nil once its run ended.
 watch_world :: proc(s:^Session) -> rawptr {
     if s.mode!=.Watch {return nil}
-    if s.watch.task!=0 {
-        if r:=run_find(s,s.watch.task);r!=nil {return r.world}
-        return nil
-    }
-    if s.watch.host {return collab_watch_world(s)}
+    if r:=run_find(s,s.watch.task);r!=nil && s.watch.task!=0 {return r.world}
     return nil
 }
 
-// Shows the run of an agent (task) or the Play of the host. From Edit the
-// selection of the document is kept for the return; from a game of the user,
-// that game goes on, released.
-watch_start :: proc(s:^Session,task:int,host:bool) -> bool {
-    if task==0 && !host {return false}
-    if task!=0 && run_find(s,task)==nil {return false}
-    if host && !collab_host_playing(s) {return false}
+// Shows the run of an agent (task). From Edit the selection of the document
+// is kept for the return; from a game of the user, that game goes on,
+// released.
+watch_start :: proc(s:^Session,task:int) -> bool {
+    if task==0 || run_find(s,task)==nil {return false}
     if s.mode==.Watch {
-        if s.watch.task==task && s.watch.host==host {return true}
+        if s.watch.task==task {return true}
         watch_stop(s)
     }
     asset_document_activate(s,-1)
@@ -51,8 +43,7 @@ watch_start :: proc(s:^Session,task:int,host:bool) -> bool {
         selection_set(&s.edit_selection,s.selection.entities[:])
     }
     if s.mode==.Play {play_release_input(s)}
-    if host && !collab_watch_request(s,true) {return false}
-    s.watch={task=task,host=host,from=s.mode,orbit=s.viewport.orbit}
+    s.watch={task=task,from=s.mode,orbit=s.viewport.orbit}
     selection_clear(s.selection)
     if s.gui.ctx!=nil {s.gui.ctx.edit={};ui.popup_close(s.gui.ctx)}
     s.mode=.Watch
@@ -65,7 +56,6 @@ watch_start :: proc(s:^Session,task:int,host:bool) -> bool {
 watch_stop :: proc(s:^Session) {
     if s.mode!=.Watch {return}
     w:=s.watch
-    if w.host {collab_watch_request(s,false)}
     tools_release(s)
     selection_clear(s.selection)
     s.watch={}
@@ -84,32 +74,18 @@ watch_stop :: proc(s:^Session) {
 
 // Between frames: what is watched may have ended.
 watch_update :: proc(s:^Session) {
-    if s.mode!=.Watch {return}
-    switch {
-    case s.watch.task!=0:
-        if run_find(s,s.watch.task)==nil {
-            watch_stop(s)
-            notify(s,"The agent stopped playing")
-        }
-    case s.watch.host:
-        if !collab_host_playing(s) {
-            watch_stop(s)
-            notify(s,"The host stopped playing")
-        }
-    case: watch_stop(s)
-    }
+    if s.mode!=.Watch || run_find(s,s.watch.task)!=nil && s.watch.task!=0 {return}
+    watch_stop(s)
+    notify(s,"The agent stopped playing")
 }
 
 // Who is watched, for the bar.
 watch_name :: proc(s:^Session) -> string {
-    if s.watch.task!=0 {
-        if s.ai!=nil {
-            if task:=ai_task_find(s.ai,s.watch.task);task!=nil {return base.text_get(task.title[:])}
-        }
-        return "an agent"
+    if s.watch.task==0 {return ""}
+    if s.ai!=nil {
+        if task:=ai_task_find(s.ai,s.watch.task);task!=nil {return base.text_get(task.title[:])}
     }
-    if s.watch.host {return collab_peer_name(s,0)}
-    return ""
+    return "an agent"
 }
 
 // ---------------------------------------------------------------- the bar
@@ -209,10 +185,9 @@ watch_bar_build :: proc(s:^Session) {
         name:=string(peer.name[:peer.name_length])
         initial:=strings.to_upper(name[:min(len(name),1)] if name!="" else "?",context.temp_allocator)
         id:=shell_id(g,"watch_peer",i)
-        watched:=i==0 && s.mode==.Watch && s.watch.host
         open:=ui.popup_is_open(ctx,presence_menu_popup(g)) && g.presence_menu.kind==.Peer && g.presence_menu.peer==i
         if ui.box(ctx,{width=ui.FIT,height=ui.fixed(26),gap=1,align_y=.Center}) {
-            if presence_glyph(ctx,id,color,watched || open,.None,initial,name).clicked {
+            if presence_glyph(ctx,id,color,open,.None,initial,name).clicked {
                 anchor,_:=ui.widget_rect(ctx,id)
                 presence_menu_open(s,{kind=.Peer,peer=i},anchor)
             }

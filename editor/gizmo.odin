@@ -111,7 +111,7 @@ selection_pivot :: proc(s:^Session,w:core.World_Ref) -> (pivot:[3]f32,found:bool
 
 gizmo_frame :: proc(s:^Session,w:core.World_Ref,tool:Tool) -> (g:Gizmo) {
     v:=s.viewport
-    if v.pick.active || selection_held(s) || selection_section_locked(s,w) {return}
+    if v.pick.active || selection_section_locked(s,w) {return}
     active:=selection_active(s.selection)
     origin,found:=selection_pivot(s,w)
     if !found || !finite3(origin) {return}

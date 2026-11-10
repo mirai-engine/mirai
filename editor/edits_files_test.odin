@@ -16,13 +16,6 @@ Files_Test_World :: struct {
     ids:core.Table(core.Id),
 }
 
-@(private="file")
-files_test_settle :: proc(data,shared,editor:rawptr) {
-    w:=cast(^Files_Test_World)data
-    core.table_settle(&w.ids,&w.entities)
-    core.entities_settle(&w.entities)
-}
-
 // A session over a world of ids with its project in a folder of its own.
 @(private)
 Files_Test :: struct {
@@ -45,7 +38,7 @@ files_test_open :: proc(f:^Files_Test,name:string) {
     core.entities_init(&w.entities)
     core.table_init(&w.ids,"Id")
     f.tables[0]={name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Files_Test_World,ids)}
-    f.info={entities=offset_of(Files_Test_World,entities),tables=f.tables[:],settle=files_test_settle}
+    f.info={entities=offset_of(Files_Test_World,entities),tables=f.tables[:]}
     edits_reset(&f.edits,{data=w,info=&f.info})
     f.ai=new(Ai)
     temporary,_:=os.temp_directory(context.temp_allocator)

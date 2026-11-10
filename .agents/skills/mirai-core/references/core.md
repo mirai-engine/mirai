@@ -25,8 +25,8 @@ comes from here or from a library.
 - The own state (`Disabled`) and the effective one (`entity_off`) are kept apart: turning a parent
   on does not turn on a child with its own `Disabled`, nor a component that was disabled by itself.
   A new entity under a disabled parent is born disabled.
-- The generated `settle` recomputes what is off only if `Disabled` or the tree changed, and each
-  table moves the rows that changed state in that same settle.
+- `core.settle` recomputes what is off only if `Disabled` or the tree changed, and the tables
+  that hold a row of an entity that changed state move it in that same settle.
 - Libraries have no turn-on callbacks: they see it as a remove and an add (physics rebuilds the body
   with the velocity of `core.Motion`, audio cuts the voice). The network keeps its object and turns
   off the replica, except for what its section turns off
@@ -292,7 +292,7 @@ owned one is requested in the `Places` queue. `core.Placer` is a
 
 ### The `Hierarchy`
 
-The child index of `Parent`, in `order` order. Only the generated `settle` writes it, when settling
+The child index of `Parent`, in `order` order. Only `core.settle` writes it, when settling
 `Parent` and following its `changes`; a function reads it with `core.Ref(core.Hierarchy)` and code
 outside the loop with `core.world_storage_of`. It reflects `Parent` as of the last settle: a change
 inside a function is seen after it.
@@ -336,7 +336,8 @@ saving, network, the binding of an interface by name, editor) works with
 requests changes does not receive it: it uses `core.Commands` and the requests of the owning
 library.
 
-- `world_settle` applies what is pending outside the loop, only on a `World`.
+- `world_settle` applies what is pending outside the loop, only on a `World`: it is `core.settle`,
+  [the settle the loop runs](generator.md#generated-functions), without the tables of the editor.
 - `world_run` runs outside the loop the functions of some libraries in a phase, with their order,
   their binding and their settle, and with the given `Time` while they run: this is how
   `physics.step_world` and `anim.animation_evaluate` advance a preview or a copy.
@@ -362,9 +363,18 @@ library.
   `World_Schema` of each table and `scene` storage (without `transient` fields; another layout hash
   migrates by field names), which scenes and saves use without rebuilding it.
 - `World_Info.init` and `copy` can fail without memory and leave a world that `destroy` releases;
-  `swap` does not allocate and what is not copied stays in its world. `copy_changed` takes only the
-  tables that changed; storages are always copied, with their `copy_kept` if they have one. `clear`
-  takes the derived storages to their start ([classes](generator.md#attributes)).
+  `swap` does not allocate and what is not copied stays in its world. `clear` takes the derived
+  storages to their start ([classes](generator.md#attributes)).
+- `copy_changed` takes only the tables that changed and the storages that were written, with their
+  `copy_kept` if they have one, and keeps `copy_marks_count` marks for it. A `World` holds a
+  revision for each storage, which moves when a function receives the storage with `^S`
+  ([generated functions](generator.md#generated-functions)), when code outside the loop asks for it
+  (`world_storage`, `world_storage_of`, `world_storage_at`: what writes a storage outside the loop
+  reaches it through one of these), when `core.settle` changes the `Hierarchy`, and when the world
+  is copied over, swapped or cleared. A storage written through a `core.Ref`, or through a pointer
+  kept from an earlier function, changes without it: `MIRAI_CHECK_WRITES` makes `copy_changed`
+  compare the storages it left alone and `core.fail` on one that differs. A World made by hand has
+  no revisions (`World_Info.revisions`), and its storages are copied every time.
 - The `by_world` values of a world are given and taken by `attach`/`detach`; `world_storage` does
   not return them: `host.app_world_storage` looks up that of a world.
 

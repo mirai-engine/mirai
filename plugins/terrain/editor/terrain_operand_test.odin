@@ -42,7 +42,7 @@ terrain_conversion_requires_its_owner_to_remain_selected :: proc(t:^testing.T) {
     world:Create_Test_World
     create_test_world_init(&world);defer create_test_world_destroy(&world)
     tables:=create_test_tables()
-    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:],settle=create_test_settle}
+    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:]}
     ref:=core.world_ref(&world,&info)
     source:terrain.Source;defer terrain.source_destroy(&source)
     if !testing.expect(t,terrain.source_make(&source,.Heightfield,{5,1,5},1,4)) {return}
@@ -103,14 +103,6 @@ test_held :: proc(t:^testing.T,assets:^host.Assets,relative:string) -> []u8 {
     return data
 }
 
-@(private)
-operand_test_settle :: proc(world,shared,ed:rawptr) {
-    w:=cast(^Operand_Test_World)world
-    create_test_settle(&w.base,shared,ed)
-    core.table_settle(&w.worlds,&w.entities)
-    core.table_settle(&w.overrides,&w.entities)
-}
-
 @(test)
 terrain_boolean_consumes_a_transformed_operand_and_undo_restores_geometry_materials_and_selection :: proc(t:^testing.T) {
     directory,_:=os.temp_directory(context.temp_allocator)
@@ -129,7 +121,7 @@ terrain_boolean_consumes_a_transformed_operand_and_undo_restores_geometry_materi
         core.table_init(&world.worlds,"World_Transform");defer core.table_destroy(&world.worlds)
         core.table_init(&world.overrides,"Material_Override");defer core.table_destroy(&world.overrides)
         tables:=operand_test_tables()
-        info:=core.World_Info{entities=offset_of(Operand_Test_World,base)+offset_of(Create_Test_World,entities),tables=tables[:],settle=operand_test_settle}
+        info:=core.World_Info{entities=offset_of(Operand_Test_World,base)+offset_of(Create_Test_World,entities),tables=tables[:]}
         ref:=core.world_ref(&world,&info)
         geometry:geom.Mesh_Buffer
         geom.mesh_buffer_init(&geometry);defer geom.mesh_buffer_destroy(&geometry)

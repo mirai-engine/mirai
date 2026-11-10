@@ -178,7 +178,7 @@ Channel_Started :: struct {
 // The births of each channel the GPU did not start, into the births of the
 // frame, and where each channel has them. now: the seconds of the world.
 @(private)
-channels_sync :: proc(sync:^Particle_Sync,clocks:^Particle_Clocks,now:f64) {
+channels_sync :: proc(sync:^Particle_Sync,clocks:^Particle_Clocks,now:f64,problems:^core.Problems) {
     clear(&sync.births)
     clear(&sync.regions)
     if clocks==nil {return}
@@ -186,7 +186,10 @@ channels_sync :: proc(sync:^Particle_Sync,clocks:^Particle_Clocks,now:f64) {
         started:^u64
         for &entry in sync.started {if entry.name==ring.name {started=&entry.started}}
         if started==nil {
-            append(&sync.started,Channel_Started{name=ring.name})
+            if _,err:=append(&sync.started,Channel_Started{name=ring.name});err!=nil {
+                core.report(problems,core.NONE,"vfx.memory","out of memory for a channel of particles; its births wait for the next frame: free memory")
+                continue
+            }
             started=&sync.started[len(sync.started)-1].started
         }
         // A rollback that pushed again fewer than were started: what comes next starts.

@@ -112,7 +112,10 @@ receives the place of its origin: a type or a function of an editor package neve
 - `copy_kept="proc"`: a `World` storage that is copied; a procedure of the package
   `(dst, src: ^S) -> bool` that `copy_changed` uses, the copy that a history keeps and that is only
   copied back with `copy`: it may store only what that return trip needs (physics, its pools sized
-  to what is used and not to their capacities).
+  to what is used and not to their capacities). `copy_changed` calls it only when the storage was
+  [received to write](core.md#world-reflection) since the last copy; a storage its owner receives
+  on every tick tells there what of it changed, by an identity of its own that no world of another
+  timeline repeats (navigation: the uid and the revision of its meshes).
 - `copy=false`: the storage is neither copied nor swapped: it stays in its world (what a world is
   and not its content).
 - `swap="proc"`: a procedure of the package `(a, b: ^S)` that replaces the default swap (the bytes),
@@ -317,11 +320,17 @@ parameters by hand.
 - After each function it applies the pending changes with `table_settle` of each `^core.Table` it
   received.
 - A function with `^core.Entities`, `core.Commands` or `core.World_Ref`, or that writes `Disabled`
-  or `Parent`, may touch any table, destroy entities or change what is disabled: after it `settle`
-  runs on all of them and releases the destroyed indices.
-- `settle` settles `Disabled` and `Parent` first, follows `Parent` into the `Hierarchy`, recomputes
-  what is disabled and then settles the others, which move the rows of the entities that were
-  disabled or enabled.
+  or `Parent`, may touch any table, destroy entities or change what is disabled: after it
+  `core.settle` runs on the World and releases the destroyed indices. One that only asks whether an
+  entity is alive or off receives `core.Ref(core.Entities)`: it asks for no settle of the World
+  and does not wait for every other function.
+- `core.settle` is one loop over the `World_Info`, the same for every project. It settles
+  `Disabled` and `Parent` first, follows `Parent` into the `Hierarchy`, recomputes what is disabled
+  and then settles the others, which move the rows of the entities that were disabled or enabled.
+  It comes only to the tables that wait: `add`, `remove`, `enable` and `disable` mark their table
+  in the `Entities` of its World (`init_World` gives each table its mark with `table_follow`), and
+  an entity destroyed or turned marks the tables that hold a row of it. A World made by hand has no
+  marks, and its settle looks at every table.
 - It adds the time of each function to `app.step_ns` (`engine.status` reports the most expensive
   ones) and opens its profile zone in the ring of the worker that runs it, which records only
   during a capture ([profiling](host.md#the-frame)).
@@ -329,7 +338,10 @@ parameters by hand.
   `write_check_begin`/`write_check_end`.
 
 The generated code does not touch `version`: each row requested for writing bumps it
-([stamps](core.md#tables)). Receiving a table with `^` and not writing it does not move it.
+([stamps](core.md#tables)). Receiving a table with `^` and not writing it does not move it. A
+storage has no rows to stamp: receiving a `World` storage with `^S` moves its revision before the
+function runs, written or not, and `copy_changed` takes it again
+([reflection](core.md#world-reflection)).
 
 ### Order
 

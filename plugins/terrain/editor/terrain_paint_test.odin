@@ -24,7 +24,7 @@ terrain_layers_paint_and_holes_are_steps_of_undo_kept_unsaved :: proc(t:^testing
     world:Create_Test_World
     create_test_world_init(&world);defer create_test_world_destroy(&world)
     tables:=create_test_tables()
-    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:],settle=create_test_settle}
+    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:]}
     ref:=core.world_ref(&world,&info)
     source:terrain.Source;defer terrain.source_destroy(&source)
     if !testing.expect(t,terrain.source_make(&source,.Heightfield,{9,1,9},1,4)) {return}

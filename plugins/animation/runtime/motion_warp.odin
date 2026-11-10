@@ -127,7 +127,7 @@ motion_content :: proc(cache:^Motion_Assets,app:^host.App,id:base.Asset_Id,hint:
     if cache==nil || app==nil || app.assets==nil || id=={} {return nil}
     context.allocator=app.allocator;cache.allocator=app.allocator
     content:=motion_cached_content(cache,id,hint)
-    if content==nil {if !program_array_reserve(&cache.contents,len(cache.contents)+1) {return nil};append(&cache.contents,Motion_Content{id=id});content=&cache.contents[len(cache.contents)-1];if hint!=nil {hint^=i32(len(cache.contents))}}
+    if content==nil {if !program_array_reserve(&cache.contents,len(cache.contents)+1) || append(&cache.contents,Motion_Content{id=id})!=1 {return nil};content=&cache.contents[len(cache.contents)-1];if hint!=nil {hint^=i32(len(cache.contents))}}
     if content.checked==assets_stamp(app) {return content if content.valid else nil}
     record,found:=asset.registry_find(&app.assets.registry,id)
     stamp:=[2]i64{};if found {stamp={record.size,record.time}}
@@ -278,7 +278,8 @@ motion_take_requests :: proc(runtime:^Motion_Runtime,requests:^Motion_Requests,p
         if found<0 {
             if len(instance.targets)>=MOTION_WINDOWS {instance.error=.Capacity;motion_problem(problems,request.rig,.Capacity);continue}
             if !program_array_reserve(&instance.targets,len(instance.targets)+1) || len(instance.bindings)<=len(instance.targets) && !program_array_resize(&instance.bindings,len(instance.targets)+1) {instance.error=.Out_Of_Memory;motion_problem(problems,request.rig,.Out_Of_Memory);continue}
-            found=len(instance.targets);append(&instance.targets,request.target)
+            found=len(instance.targets)
+            if append(&instance.targets,request.target)!=1 {instance.error=.Out_Of_Memory;motion_problem(problems,request.rig,.Out_Of_Memory);continue}
         } else {instance.targets[found]=request.target}
         target:=&instance.targets[found]
         target.resolved=target.target.kind==.World
@@ -309,7 +310,10 @@ motion_discover :: proc(runtime:^Motion_Runtime,animations:core.Read(Animation),
     for row in 0..<core.count(animations) {
         if !layout && core.stamp(animations,row)<=runtime.animation_version || animations.table.values[row].motion=={} {continue}
         entity:=core.entity_at(animations,row);index:=core.entity_index(entity);slot:=int(runtime.rows[index])-1
-        if slot<0 || slot>=len(runtime.instances) || core.entity_index(runtime.instances[slot].entity)!=index {slot=len(runtime.instances);append(&runtime.instances,Motion_Instance{entity=entity,window=-1})} else if runtime.instances[slot].entity!=entity {
+        if slot<0 || slot>=len(runtime.instances) || core.entity_index(runtime.instances[slot].entity)!=index {
+            slot=len(runtime.instances)
+            if append(&runtime.instances,Motion_Instance{entity=entity,window=-1})!=1 {memory_problem(problems,core.NONE,"the entities with a motion profile, so none applies");return false}
+        } else if runtime.instances[slot].entity!=entity {
             // A new entity in the slot keeps the memory of its targets.
             reused:=&runtime.instances[slot];targets,bindings:=reused.targets,reused.bindings
             clear(&targets);reused^={entity=entity,window=-1};reused.targets=targets;reused.bindings=bindings

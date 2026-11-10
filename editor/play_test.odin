@@ -100,7 +100,7 @@ play_test_open :: proc(t:^testing.T,f:^Play_Test) -> bool {
         {name="Input",type=core.Input,info=type_info_of(core.Input),offset=offset_of(Play_Test_World,input)},
         {name="Frame_Time",type=core.Frame_Time,info=type_info_of(core.Frame_Time),offset=offset_of(Play_Test_World,frame)},
     }
-    f.info={tables=f.tables[:],storages=f.storages[:],copy=play_test_copy,swap=play_test_swap,settle=play_test_settle,clear=play_test_clear}
+    f.info={tables=f.tables[:],storages=f.storages[:],copy=play_test_copy,swap=play_test_swap,clear=play_test_clear}
     f.info.sizes[.World],f.info.aligns[.World]=size_of(Play_Test_World),align_of(Play_Test_World)
     f.info.init[.World],f.info.destroy[.World]=play_test_init,play_test_free
     f.info.loops[.Game][.Fixed]=play_test_tick

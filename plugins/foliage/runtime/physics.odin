@@ -257,7 +257,10 @@ foliage_physics :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,collisi
         owner:^Physics_Owner
         for &held in fp.owners {if held.entity==e {owner=&held;break}}
         if owner==nil {
-            append(&fp.owners,Physics_Owner{entity=e,source=f.source})
+            if _,err:=append(&fp.owners,Physics_Owner{entity=e,source=f.source});err!=nil {
+                memory_problem(problems,e,"the collision of its foliage, which does not collide")
+                continue
+            }
             owner=&fp.owners[len(fp.owners)-1]
         } else if owner.epoch==entry.epoch && owner.loads==entry.loads && owner.ground==revision && owner.transform==world.transform && owner.sources==streamed && owner.removed==removed {continue}
         // A source read again, a ground that changed, instances taken out or sources that moved build only the cells that changed.

@@ -164,15 +164,9 @@ api_part_kept :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> bool {
     return api_entity_id(w,e)!=0 && !section_locked(s,w,e)
 }
 
-// Whether the entity can change now: false, failing the call, when another
-// editor of the session holds it or a section keeps it.
+// Whether the entity can change now: false, failing the call, when a section keeps it.
 @(private)
 api_write_editable :: proc(s:^Session,call:^api.Call,w:core.World_Ref,e:core.Entity,path:string) -> bool {
-    if peer,held:=collab_holder(s,e);held {
-        st:=collab_state(s)
-        api.call_failf(call,api.SERVER_ERROR,"%s: %s has %s selected; write it once they select something else",path,string(st.peers[peer].name[:st.peers[peer].name_length]),entity_label(w,e))
-        return false
-    }
     if text:=section_lock_text(s,w,e,true);text!="" {
         api.call_failf(call,api.SERVER_ERROR,"%s: %s",path,text)
         return false

@@ -24,7 +24,7 @@ a_stroke_keeps_the_pages_it_changed_and_undo_and_redo_trade_them :: proc(t:^test
     world:Create_Test_World
     create_test_world_init(&world);defer create_test_world_destroy(&world)
     tables:=create_test_tables()
-    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:],settle=create_test_settle}
+    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:]}
     ref:=core.world_ref(&world,&info)
     // 257 samples on a side: 25 pages of heights, a stroke in one of them.
     source:terrain.Source;defer terrain.source_destroy(&source)

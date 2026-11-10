@@ -79,12 +79,28 @@ Api :: struct {
     state:^Api_State,
     // The parts of the last frame of the editor loop, in ms.
     begin_ms,tools_ms,panels_ms,end_ms:f32,
+    unedited:[256]u8, // why an edit of the call that runs did not happen (edit_refusal)
+    unedited_length:int,
 }
 
 @(private)
 api_of :: proc(s:^Session) -> ^Api {
     if s.info==nil || s.editor_world==nil {return nil}
     return core.world_storage_of(core.world_ref(s.editor_world,s.info,.Editor),Api)
+}
+
+// The call of the API whose edit was refused fails with the reason, also
+// when the method failed by itself because its edit did not happen.
+@(private)
+api_refusal_begin :: proc(s:^Session) {
+    if a:=api_of(s);a!=nil {a.unedited_length=0}
+}
+
+@(private)
+api_refusal_end :: proc(s:^Session,call:^api.Call) {
+    a:=api_of(s)
+    if a==nil || a.unedited_length==0 {return}
+    api.call_fail(call,api.INVALID_PARAMS,string(a.unedited[:a.unedited_length]))
 }
 
 api_state :: proc(s:^Session) -> ^Api_State {
@@ -429,10 +445,10 @@ api_trampoline :: proc(call:^api.Call) {
     serial_before:=edits!=nil?edits.serial:0
     started:=time.tick_now()
     if edits!=nil && !api_call_as_user(call) {edits.author=turn!=nil?Edit_Author(turn.id):EDIT_AUTHOR_API}
-    collab_held_begin(entry.session)
+    api_refusal_begin(entry.session)
     event(entry.session,"api",call.method.name)
     if st.in_call>1 || api_disk_sync(entry.session,call) {entry.run(entry.session,call)}
-    collab_held_end(entry.session,call)
+    api_refusal_end(entry.session,call)
     if edits!=nil {
         // A gesture the call opened and ended is its step, without waiting for the frame.
         if edits.commit && edits.opener==edits.author {

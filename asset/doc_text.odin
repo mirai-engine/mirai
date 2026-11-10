@@ -364,7 +364,7 @@ schema_text_read :: proc(state:^Text_State) -> bool {
             start:=r.offset
             if len(s.types)>=int(serial.TYPE_NONE)-1 {return fail(state,.Too_Many_Types,start)}
             // Appended at once, so a failure further on leaves its name to the schema.
-            append(&s.types,serial.Type{elem=serial.TYPE_NONE})
+            if _,err:=append(&s.types,serial.Type{elem=serial.TYPE_NONE});err!=nil {return fail(state,.Out_Of_Memory,start)}
             type:=&s.types[len(s.types)-1]
             serial.text_expect(r,'{') or_return
             type.first=u32(len(s.fields))
@@ -405,7 +405,7 @@ schema_text_read :: proc(state:^Text_State) -> bool {
                     serial.text_expect(r,'[') or_return
                     if !serial.text_accept(r,']') {
                         for {
-                            append(&s.choices,serial.Choice{})
+                            if _,err:=append(&s.choices,serial.Choice{});err!=nil {return fail(state,.Out_Of_Memory)}
                             type.count+=1
                             choice:=&s.choices[len(s.choices)-1]
                             serial.text_expect(r,'{') or_return
@@ -437,7 +437,7 @@ schema_text_read :: proc(state:^Text_State) -> bool {
                         for {
                             field:serial.Field
                             // Appended at once, so a failure further on leaves its strings to the schema.
-                            append(&s.fields,field)
+                            if _,err:=append(&s.fields,field);err!=nil {return fail(state,.Out_Of_Memory)}
                             type.count+=1
                             target:=&s.fields[len(s.fields)-1]
                             serial.text_expect(r,'{') or_return

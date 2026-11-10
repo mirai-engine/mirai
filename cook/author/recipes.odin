@@ -84,7 +84,7 @@ Scratch_World :: struct {
 }
 
 scratch_world_make :: proc(info:^core.World_Info,allocator:=context.allocator) -> (scratch:Scratch_World,ok:bool) {
-    if info==nil || info.init[.World]==nil || info.settle==nil || info.sizes[.World]<=0 {return}
+    if info==nil || info.init[.World]==nil || info.sizes[.World]<=0 {return}
     data,error:=mem.alloc(info.sizes[.World],max(info.aligns[.World],1),allocator)
     if error!=nil {return}
     if !info.init[.World](data,allocator) {

@@ -51,8 +51,9 @@ entity_map_put :: proc(m:^Entity_Map($T),e:Entity,value:T) -> (^T,bool) {
         return &m.values[at],true
     }
     if !entity_map_reserve(m,len(m.values)+1,i+1) {return nil,false}
-    append(&m.values,value)
-    append(&m.entities,e)
+    // Reserved: neither asks for memory.
+    if _,err:=append(&m.values,value);err!=nil {return nil,false}
+    if _,err:=append(&m.entities,e);err!=nil {pop(&m.values);return nil,false}
     m.rows[i]=i32(len(m.values))
     return &m.values[len(m.values)-1],true
 }
@@ -68,6 +69,17 @@ entity_map_reserve :: proc(m:^Entity_Map($T),count:int,indices:=0) -> bool {
         if indices>cap(m.rows) && reserve(&m.rows,max(indices,2*cap(m.rows)))!=nil {return false}
         if resize(&m.rows,indices)!=nil {return false}
     }
+    return true
+}
+
+// Makes dst hold what src holds, for plain values: a copy of their bytes,
+// which allocates only when dst lacks the room. False without memory.
+entity_map_copy :: proc(dst,src:^Entity_Map($T)) -> bool {
+    if dst==src {return true}
+    if non_zero_resize(&dst.values,len(src.values))!=nil || non_zero_resize(&dst.entities,len(src.entities))!=nil || non_zero_resize(&dst.rows,len(src.rows))!=nil {return false}
+    copy(dst.values[:],src.values[:])
+    copy(dst.entities[:],src.entities[:])
+    copy(dst.rows[:],src.rows[:])
     return true
 }
 

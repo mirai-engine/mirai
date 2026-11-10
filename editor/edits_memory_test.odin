@@ -49,7 +49,7 @@ edit_memory_init :: proc(f:^Edit_Memory_Fixture) {
         {name="Other",type=Edit_Memory_Other,info=type_info_of(Edit_Memory_Other),offset=offset_of(Edit_Memory_World,others)},
         {name="Editor_Only",type=core.Name,info=type_info_of(core.Name),place=.Editor},
     }
-    f.info={entities=offset_of(Edit_Memory_World,entities),tables=f.tables[:],settle=edit_memory_settle}
+    f.info={entities=offset_of(Edit_Memory_World,entities),tables=f.tables[:]}
     f.entity=core.create(&f.world.entities)
     core.add(&f.world.ids,f.entity,{value=1})
     core.add(&f.world.values,f.entity,{value=10,derived=5})

@@ -279,7 +279,7 @@ sight_destroy :: proc(f:^Sight_Test) {
 @(private="file")
 sight_tick :: proc(f:^Sight_Test,seconds:f64) {
     core.table_settle(&f.perceivers,&f.es);core.table_settle(&f.perceptions,&f.es);core.table_settle(&f.perceivables,&f.es);core.table_settle(&f.worlds,&f.es)
-    perception_update(core.read(&f.perceivers),&f.perceptions,core.read(&f.perceivables),core.read(&f.worlds),core.ref(&f.settings),&f.turns,&f.noises,&f.events,core.ref(&f.physics),{},&f.es,{seconds=seconds,dt=1.0/60,playing=true})
+    perception_update(core.read(&f.perceivers),&f.perceptions,core.read(&f.perceivables),core.read(&f.worlds),core.ref(&f.settings),&f.turns,&f.noises,&f.events,core.ref(&f.physics),{},core.ref(&f.es),{seconds=seconds,dt=1.0/60,playing=true})
     core.table_settle(&f.perceptions,&f.es)
 }
 

@@ -2,6 +2,7 @@ package navigation
 
 import "core:fmt"
 import "core:math/linalg"
+import "core:mem"
 import "core:os"
 import "core:testing"
 import "mirai:asset"
@@ -1750,4 +1751,89 @@ walkers_that_crowd_at_the_start_of_a_link_keep_to_the_mesh :: proc(t:^testing.T)
     arrived,_,_,_=agents_test_travel(&f,&g,e,30)
     testing.expect(t,arrived,"it goes on from where it lands")
     testing.expect_value(t,f.problems.count,0)
+}
+
+// Whether a copy holds what another does: the meshes, and what the looks keep of them.
+@(private="file")
+nav_test_same :: proc(a,b:^Navigation) -> bool {
+    if a.count!=b.count || a.ready!=b.ready || a.revision!=b.revision || a.settings!=b.settings || a.stats!=b.stats || a.uid!=b.uid {return false}
+    for i in 0..<a.count {
+        x,y:=&a.classes[i],&b.classes[i]
+        if x.class!=y.class || x.filter!=y.filter || x.config!=y.config || x.volume_config!=y.volume_config {return false}
+        if x.pending!=y.pending || x.ready!=y.ready || x.loading!=y.loading || x.linking!=y.linking || x.marks.count!=y.marks.count {return false}
+        it:=base.hash_map_iterator(&x.marks)
+        for key,mark in base.hash_map_iterate(&it) {
+            other:=base.hash_map_ptr(&y.marks,key)
+            if other==nil || other^!=mark^ {return false}
+        }
+        if !core.value_equal(&x.mesh,&y.mesh,type_info_of(ai.Nav_Mesh)) || !core.value_equal(&x.volume,&y.volume,type_info_of(ai.Nav_Volume)) || !core.value_equal(&x.coarse,&y.coarse,type_info_of(ai.Nav_Coarse)) {return false}
+    }
+    return true
+}
+
+// The copy a history keeps takes the meshes again only when a build changed
+// them, and always holds what a whole copy does: also of a world that went
+// back to an older copy and built other meshes from there.
+@(test)
+a_kept_navigation_copies_its_meshes_again_only_when_a_build_changed_them :: proc(t:^testing.T) {
+    tracking:mem.Tracking_Allocator
+    mem.tracking_allocator_init(&tracking,context.allocator)
+    defer mem.tracking_allocator_destroy(&tracking)
+    kept,whole,first:Navigation
+    defer {navigation_free(&kept);navigation_free(&whole);navigation_free(&first)}
+    f:Nav_Test
+    nav_test_init(&f)
+    defer nav_test_destroy(&f)
+    nav_test_box(&f,{0,-0.5,0},{10,0.5,10})
+    nav_test_settled(t,&f)
+    // How many allocations the copy a history keeps makes of the world as it is, and whether it is what a whole copy holds.
+    copies :: proc(t:^testing.T,f:^Nav_Test,tracking:^mem.Tracking_Allocator,kept,whole:^Navigation,what:string) -> (allocations:i64) {
+        {
+            context.allocator=mem.tracking_allocator(tracking)
+            before:=tracking.total_allocation_count
+            testing.expectf(t,navigation_copy_kept(kept,&f.nav),"%s: no copy",what)
+            allocations=tracking.total_allocation_count-before
+            testing.expect(t,navigation_copy(whole,&f.nav))
+        }
+        testing.expectf(t,nav_test_same(kept,whole),"%s: the copy a history keeps is not what a whole copy holds",what)
+        return
+    }
+    testing.expect(t,navigation_copy(&first,&f.nav))
+    testing.expect(t,copies(t,&f,&tracking,&kept,&whole,"the first copy")>0)
+    testing.expect_value(t,kept.uid,u64(0))
+    // Another copy a history keeps, of the same tick as first.
+    early,early_whole:Navigation
+    defer {navigation_free(&early);navigation_free(&early_whole)}
+    testing.expect(t,copies(t,&f,&tracking,&early,&early_whole,"another copy")>0)
+    nav_test_step(&f,3)
+    testing.expect_value(t,copies(t,&f,&tracking,&kept,&whole,"ticks that build nothing"),0)
+    // A wall marks its tiles before any is built: the marks come with the copy, the meshes stay.
+    revision:=f.nav.revision
+    nav_test_box(&f,{2,1,0},{0.3,1,3})
+    nav_test_step(&f)
+    copies(t,&f,&tracking,&kept,&whole,"tiles marked")
+    nav_test_settled(t,&f)
+    testing.expect(t,f.nav.revision>revision)
+    testing.expect(t,copies(t,&f,&tracking,&kept,&whole,"tiles built")>0)
+    testing.expect_value(t,copies(t,&f,&tracking,&kept,&whole,"the same tiles"),0)
+    // Other settings make every mesh again, for the same uid: the revision goes on, and the copy takes them.
+    f.settings.classes[0].radius+=0.1
+    nav_test_settled(t,&f)
+    testing.expect(t,f.nav.uid==kept.kept[0] && f.nav.revision>kept.kept[1])
+    testing.expect(t,copies(t,&f,&tracking,&kept,&whole,"meshes of other settings")>0)
+    // The world goes back to its first copy, before any build looks at it: the copy of that tick
+    // holds its meshes already, and the one of the last tick takes them.
+    built:=f.nav.revision
+    f.settings.classes[0].radius-=0.1
+    testing.expect(t,navigation_copy(&f.nav,&first))
+    testing.expect_value(t,f.nav.uid,u64(0))
+    testing.expect_value(t,copies(t,&f,&tracking,&early,&early_whole,"the copy of the tick it went back to"),0)
+    testing.expect(t,copies(t,&f,&tracking,&kept,&whole,"a later copy of a world that went back")>0)
+    testing.expect_value(t,copies(t,&f,&tracking,&kept,&whole,"the same meshes"),0)
+    // From there it builds the wall again, under another uid: other meshes, whatever the revision.
+    nav_test_settled(t,&f)
+    testing.expect(t,f.nav.uid!=0 && f.nav.uid!=first.kept[0] && f.nav.revision!=first.revision)
+    f.nav.revision=built
+    testing.expect(t,copies(t,&f,&tracking,&kept,&whole,"other meshes at the same revision")>0)
+    testing.expect(t,copies(t,&f,&tracking,&early,&early_whole,"other meshes than those of the first tick")>0)
 }

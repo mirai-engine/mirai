@@ -56,7 +56,7 @@ collision_api_reads_and_edits_presets_masks_and_queries_by_name_in_one_undo_step
         {type=editor.Api,info=type_info_of(editor.Api),place=.Editor},
         {type=phys.Collision_Settings,info=type_info_of(phys.Collision_Settings),offset=offset_of(Collision_Test_World,settings)},
     }
-    info:=core.World_Info{entities=offset_of(Collision_Test_World,entities),tables=tables[:],storages=storages[:],settle=collision_test_settle,names=names[:],named_types=named_types[:]}
+    info:=core.World_Info{entities=offset_of(Collision_Test_World,entities),tables=tables[:],storages=storages[:],names=names[:],named_types=named_types[:]}
     entity,held:=core.create(&world.entities),core.create(&world.entities)
     alone:=core.create(&world.entities)
     collider:=phys.COLLIDER_DEFAULT;collider.group=held;collider.friction=.8

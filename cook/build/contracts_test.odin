@@ -19,8 +19,10 @@ contracts_project :: proc(t:^testing.T,folder,core_source,game_source:string) ->
 
 // A storage is the state of one library: another pushes to it when it is a
 // queue, or writes it in the order of the loop when it says it is shared.
-// core.Commands makes entities with rows of any component and settles every
-// table after the function; core.Ref(core.Entities) reads which are alive.
+// core.Commands makes entities with rows of any component, and after the
+// function core.settle comes to the tables that wait, which say so where the
+// World was made; core.Ref(core.Entities) reads which are alive and asks for
+// no settle of the World.
 @(test)
 storages_have_one_writing_library_and_commands_make_entities :: proc(t:^testing.T) {
     folder,error:=os.make_directory_temp("","mirai-contracts-*",context.temp_allocator)
@@ -34,6 +36,7 @@ storages_have_one_writing_library_and_commands_make_entities :: proc(t:^testing.
 @(component) Thing :: struct {value:f32}
 @(step="fixed") state_step :: proc(state:^State,requests:^Requests,board:^Board,reports:^Reports) {}
 @(step="fixed") things_make :: proc(commands:Commands,entities:Ref(Entities),things:Read(Thing)) {}
+@(step="fixed") things_count :: proc(entities:Ref(Entities),things:^Table(Thing)) {}
 `
     game_source:=`package game
 import "mirai:core"
@@ -46,7 +49,14 @@ import "mirai:core"
     for text in ([]string{output.game_world,output.editor_world}) {
         testing.expect(t,strings.contains(text,"p_core.things_make(p_core.commands(w,app.info),p_core.ref(&w.entities),p_core.read(&w.thing))"),text)
         at:=strings.index(text,"p_core.things_make(")
-        testing.expect(t,at>=0 && strings.contains(text[at:][:400],"settle(w,s,e)"))
+        testing.expect(t,at>=0 && strings.contains(text[at:][:400],"p_core.settle(app.info,w,e)"))
+        // The settle is one loop of core over the tables of the World: none is written for it.
+        testing.expect(t,!strings.contains(text,"settle :: proc") && !strings.contains(text,"info.settle"),text)
+        testing.expect(t,strings.contains(text,"!p_core.entities_tables(&w.entities,1)") && strings.contains(text,"p_core.table_follow(&w.thing,&w.entities,0)"),text)
+        count:=strings.index(text,"p_core.things_count(")
+        _,_,after:=strings.partition(text[max(count,0):],"}\n\n")
+        call:=text[max(count,0):][:len(text[max(count,0):])-len(after)]
+        testing.expect(t,count>=0 && strings.contains(call,"p_core.table_settle(&w.thing,&w.entities)") && !strings.contains(call,"p_core.settle("),call)
     }
     // The state of a library written by another one is an error that says what to do.
     wrong:=`package game

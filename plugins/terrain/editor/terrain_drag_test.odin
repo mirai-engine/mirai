@@ -81,7 +81,7 @@ terrain_initial_asset_revision_is_the_baseline_of_the_first_undo :: proc(t:^test
     world:Create_Test_World
     create_test_world_init(&world);defer create_test_world_destroy(&world)
     tables:=create_test_tables()
-    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:],settle=create_test_settle}
+    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:]}
     ref:=core.world_ref(&world,&info)
     edits:editor.Edits;defer editor.edits_free(&edits)
     selection:editor.Selection;defer delete(selection.entities)

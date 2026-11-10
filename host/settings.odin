@@ -19,7 +19,7 @@ app_settings :: proc(info:^core.World_Info,data:rawptr,place:core.Place,device:^
     list:=make([dynamic]project.Setting,allocator)
     named:map[typeid]serial.Named
     if info.schema!=nil {named=info.schema.schema.named}
-    for s in info.storages {
+    for s,index in info.storages {
         if s.setting==.None || s.place!=place {continue}
         base:rawptr
         if s.for_device!=nil && device!=nil {
@@ -28,7 +28,7 @@ app_settings :: proc(info:^core.World_Info,data:rawptr,place:core.Place,device:^
                 s.for_device(base,rhi.device_info(device))
             }
         }
-        append(&list,project.Setting{s.name,s.info,rawptr(uintptr(data)+s.offset),s.default,s.setting==.Machine,base,named})
+        append(&list,project.Setting{s.name,s.info,core.world_storage_at({data,info,place},index),s.default,s.setting==.Machine,base,named})
     }
     return list[:]
 }

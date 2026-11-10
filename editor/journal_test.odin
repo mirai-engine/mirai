@@ -24,6 +24,7 @@ Journal_Fixture :: struct {
     info:core.World_Info,
     edits:Edits,
     selection:Selection,
+    document:Document,
     s:Session,
 }
 
@@ -48,7 +49,7 @@ journal_init :: proc(f:^Journal_Fixture,count:int) {
         {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Journal_World,parents)},
         {name="Lamp",type=Journal_Lamp,info=type_info_of(Journal_Lamp),offset=offset_of(Journal_World,lamps)},
     }
-    f.info={entities=offset_of(Journal_World,entities),tables=f.tables[:],settle=journal_settle}
+    f.info={entities=offset_of(Journal_World,entities),tables=f.tables[:]}
     for i in 0..<count {
         e:=core.create(&w.entities)
         if i%10!=9 {core.add(&w.ids,e,{value=base.Entity_Id(i+1)})}
@@ -56,7 +57,7 @@ journal_init :: proc(f:^Journal_Fixture,count:int) {
         core.add(&w.lamps,e,{power=1,glow=f32(i)})
     }
     journal_settle(w,nil,nil)
-    f.s=Session{info=&f.info,edit_world=w,edits=&f.edits,selection=&f.selection}
+    f.s=Session{info=&f.info,edit_world=w,edits=&f.edits,selection=&f.selection,document=&f.document}
     edits_reset(&f.edits,journal_world(f))
 }
 
@@ -98,8 +99,12 @@ journal_readers_keep_cursors_of_their_own :: proc(t:^testing.T) {
     testing.expect_value(t,f.edits.cursor,1)
     read:=journal_read(&f.edits,&collab)
     testing.expect(t,len(read)==1 && read[0].entity==first && read[0].table==1 && read[0].present && read[0].id==1)
+    // The change keeps the row as it was, until its readers are done with it.
+    if before,kept:=journal_change_value(&f.edits,read[0],size_of(core.Transform));testing.expect(t,kept) {
+        testing.expect_value(t,(^core.Transform)(raw_data(before)).position,[3]f32{1,0,0})
+    }
     journal_read_done(&f.edits,collab)
-    testing.expect_value(t,len(f.edits.changes),0)
+    testing.expect(t,len(f.edits.changes)==0 && len(f.edits.change_values)==0)
     observed:=edits_state(&f.edits)
     testing.expect(t,edits_begin(&f.edits,&f.selection,"Turn off"))
     core.disable(&f.world.lamps,journal_entity(f,2))
@@ -134,7 +139,7 @@ journal_readers_keep_cursors_of_their_own :: proc(t:^testing.T) {
     core.get(&f.world.transforms,first).position.y=8
     edits_end(&f.edits)
     testing.expect(t,edits_commit(&f.edits,w,&f.selection))
-    testing.expect_value(t,len(f.edits.changes),0)
+    testing.expect(t,len(f.edits.changes)==0 && len(f.edits.change_values)==0)
 }
 
 @(test)
@@ -262,8 +267,8 @@ journal_cancel_and_undo_put_the_world_back_in_the_room_they_reserved :: proc(t:^
 }
 
 // Two ends of a session, each with its document: what one edits reaches the
-// other from the journal, as Sets, Turns and Removes, and what arrives is not
-// sent back.
+// other from the journal, as Sets, Fields, Turns and Removes, and what
+// arrives is not sent back.
 @(private="file")
 Journal_End :: struct {f:Journal_Fixture,st:^Collab_State}
 
@@ -278,8 +283,10 @@ journal_end_open :: proc(end:^Journal_End) {
 
 @(private="file")
 journal_end_close :: proc(end:^Journal_End) {
-    for message in end.st.peers[0].out {delete(message)}
-    delete(end.st.peers[0].out)
+    for &peer in end.st.peers {
+        for message in peer.out {delete(message)}
+        delete(peer.out)
+    }
     collab_tables_free(end.st)
     free(end.st)
     journal_free(&end.f)
@@ -430,4 +437,194 @@ undo_at_each_end_keeps_what_the_other_end_wrote_since :: proc(t:^testing.T) {
     testing.expect_value(t,journal_end_send(a,b),1)
     testing.expect(t,at(a,100)==core.NONE && at(b,100)==core.NONE)
     testing.expect(t,journal_settled(&a.f.edits,journal_world(&a.f)) && journal_settled(&b.f.edits,journal_world(&b.f)))
+}
+
+// A session of several ends, the host first, each with its document: what a
+// guest edits goes to the host, which applies it and sends it to every
+// guest, the sender included.
+@(private="file")
+journal_session_open :: proc(ends:[]^Journal_End) {
+    for end,i in ends {
+        journal_end_open(end)
+        end.st.self=u8(i)
+        if i>0 {continue}
+        end.st.role=.Host
+        for &peer in end.st.peers[:len(ends)] {peer.used,peer.joined=true,true}
+    }
+}
+
+// What the ends of order edited reaches the host in that order (0: the host
+// tells its own then; it tells it anyway before it applies what arrives).
+@(private="file")
+journal_session_up :: proc(ends:[]^Journal_End,order:..int) {
+    host:=ends[0]
+    for from in order {
+        if from==0 {
+            collab_edits_send(&host.f.s,host.st)
+            continue
+        }
+        guest:=ends[from]
+        collab_edits_send(&guest.f.s,guest.st)
+        out:=&guest.st.peers[0].out
+        for message in out {
+            collab_receive(&host.f.s,host.st,from,message,0)
+            delete(message)
+        }
+        clear(out)
+    }
+    collab_edits_send(&host.f.s,host.st)
+}
+
+// Every guest takes what the host sent it.
+@(private="file")
+journal_session_down :: proc(ends:[]^Journal_End) {
+    host:=ends[0]
+    for end,i in ends[1:] {
+        out:=&host.st.peers[i+1].out
+        for message in out {
+            collab_receive(&end.f.s,end.st,-1,message,0)
+            delete(message)
+        }
+        clear(out)
+    }
+}
+
+// Both ways; how many messages the ends sent of their own.
+@(private="file")
+journal_session_sync :: proc(ends:[]^Journal_End,order:..int) -> (sent:int) {
+    for end in ends {sent-=int(end.st.sent_edits)}
+    journal_session_up(ends,..order)
+    journal_session_down(ends)
+    for end in ends {sent+=int(end.st.sent_edits)}
+    return
+}
+
+@(private="file")
+Journal_Field :: enum u8 {Position,Rotation,Scale}
+
+// A field of the Transform of an entity, written whole from one number.
+@(private="file")
+journal_field_write :: proc(end:^Journal_End,id:base.Entity_Id,field:Journal_Field,value:f32) {
+    local:=core.get(&end.f.world.transforms,journal_entity(&end.f,id))
+    switch field {
+    case .Position: local.position={value,value,value}
+    case .Rotation: local.rotation=quaternion(w=value,x=0,y=0,z=0)
+    case .Scale:    local.scale={value,value,value}
+    }
+}
+
+// The same three numbers of the Transform every end has of an entity.
+@(private="file")
+journal_session_expect :: proc(t:^testing.T,ends:[]^Journal_End,id:base.Entity_Id,want:[Journal_Field]f32,what:string,loc:=#caller_location) {
+    for end,i in ends {
+        local:=core.get(&end.f.world.transforms,journal_entity(&end.f,id))
+        got:=[Journal_Field]f32{.Position=local.position.x,.Rotation=real(local.rotation),.Scale=local.scale.x}
+        testing.expectf(t,got==want,"%s, end %d: %v, not %v",what,i,got,want,loc=loc)
+    }
+}
+
+// Two ends that change different fields of one row both keep theirs at every
+// end; a field both changed is the one the host took last. Then one of them
+// undoes its step: its field goes back and what the others wrote stays, also
+// in the field it wrote when another wrote it afterwards.
+@(test)
+fields_changed_at_several_ends_stay_and_a_field_two_changed_follows_the_host :: proc(t:^testing.T) {
+    ends:=[3]^Journal_End{new(Journal_End),new(Journal_End),new(Journal_End)}
+    defer for end in ends {free(end)}
+    journal_session_open(ends[:])
+    defer for end in ends {journal_end_close(end)}
+    Change :: struct {end:int,field:Journal_Field,value:f32}
+    // Each case edits the entity of its place, whose position starts at its id.
+    cases:=[?]struct {
+        name:string,
+        changes:[]Change,
+        order:[]int, // in which what the guests edited reaches the host
+        want:[Journal_Field]f32,
+        undoes,kept:int,
+        after:[Journal_Field]f32,
+    }{
+        {"two guests, a field each",{{1,.Position,5},{2,.Scale,3}},{1,2},{.Position=5,.Rotation=1,.Scale=3},1,0,{.Position=1,.Rotation=1,.Scale=3}},
+        {"the host and a guest, a field each",{{0,.Rotation,0.5},{1,.Scale,4}},{1},{.Position=2,.Rotation=0.5,.Scale=4},0,0,{.Position=2,.Rotation=1,.Scale=4}},
+        {"three ends, a field each",{{0,.Position,7},{1,.Rotation,0.25},{2,.Scale,2}},{2,1},{.Position=7,.Rotation=0.25,.Scale=2},2,0,{.Position=7,.Rotation=0.25,.Scale=1}},
+        {"two guests, one field: the second the host took",{{1,.Position,5},{2,.Position,6}},{1,2},{.Position=6,.Rotation=1,.Scale=1},1,1,{.Position=6,.Rotation=1,.Scale=1}},
+        {"two guests, one field, the other order",{{1,.Position,8},{2,.Position,9}},{2,1},{.Position=8,.Rotation=1,.Scale=1},1,0,{.Position=5,.Rotation=1,.Scale=1}},
+        {"the host and a guest, one field: the guest's reached the host after its own",{{0,.Scale,2},{1,.Scale,3}},{1},{.Position=6,.Rotation=1,.Scale=3},0,1,{.Position=6,.Rotation=1,.Scale=3}},
+    }
+    for c,at in cases {
+        id:=base.Entity_Id(at+1)
+        for change in c.changes {
+            end:=ends[change.end]
+            testing.expect(t,edits_begin(&end.f.edits,&end.f.selection,c.name))
+            journal_field_write(end,id,change.field,change.value)
+            edits_end(&end.f.edits)
+            testing.expect(t,edits_commit(&end.f.edits,journal_world(&end.f),&end.f.selection),c.name)
+        }
+        journal_session_sync(ends[:],..c.order)
+        journal_session_expect(t,ends[:],id,c.want,c.name)
+        testing.expectf(t,journal_session_sync(ends[:],1,2)==0,"%s: what arrived is not told again",c.name)
+        move:=history_undo(&ends[c.undoes].f.s)
+        testing.expectf(t,move.done && move.kept==c.kept,"%s: undo kept %d",c.name,move.kept)
+        journal_session_sync(ends[:],c.undoes)
+        journal_session_expect(t,ends[:],id,c.after,c.name)
+    }
+    // An edit that comes back from the host to the end that made it does not
+    // take that end back to it: it has made another since.
+    guest:=ends[1]
+    for value in ([2]f32{5,8}) {
+        testing.expect(t,edits_begin(&guest.f.edits,&guest.f.selection,"Twice"))
+        journal_field_write(guest,7,.Scale,value)
+        edits_end(&guest.f.edits)
+        testing.expect(t,edits_commit(&guest.f.edits,journal_world(&guest.f),&guest.f.selection))
+        if value==5 {journal_session_up(ends[:],1)}
+    }
+    journal_session_down(ends[:])
+    testing.expect_value(t,core.get(&guest.f.world.transforms,journal_entity(&guest.f,7)).scale.x,f32(8))
+    journal_session_sync(ends[:],1)
+    journal_session_expect(t,ends[:],7,{.Position=7,.Rotation=1,.Scale=8},"two edits in a row")
+    for end in ends {testing.expect(t,journal_settled(&end.f.edits,journal_world(&end.f)))}
+}
+
+// A gesture one end leaves open tells its field as it goes; a field of the
+// same row another end changes meanwhile stays, at every end and in the
+// row of the gesture, whose step holds its own field alone.
+@(test)
+a_gesture_left_open_keeps_what_another_end_writes_to_another_field :: proc(t:^testing.T) {
+    for cancel in ([2]bool{false,true}) {
+        ends:=[3]^Journal_End{new(Journal_End),new(Journal_End),new(Journal_End)}
+        defer for end in ends {free(end)}
+        journal_session_open(ends[:])
+        defer for end in ends {journal_end_close(end)}
+        dragging,other:=ends[1],ends[2]
+        w:=journal_world(&dragging.f)
+        testing.expect(t,edits_begin(&dragging.f.edits,&dragging.f.selection,"Drag"))
+        testing.expect_value(t,edits_cancel_prepare(&dragging.f.edits,w),Edit_Error.None)
+        journal_field_write(dragging,1,.Position,5)
+        testing.expect(t,edits_begin(&other.f.edits,&other.f.selection,"Scale"))
+        journal_field_write(other,1,.Scale,3)
+        edits_end(&other.f.edits)
+        testing.expect(t,edits_commit(&other.f.edits,journal_world(&other.f),&other.f.selection))
+        journal_session_sync(ends[:],1,2)
+        journal_session_expect(t,ends[:],1,{.Position=5,.Rotation=1,.Scale=3},"both fields")
+        // The drag goes on: what arrived of the other field is not its edit.
+        journal_field_write(dragging,1,.Position,6)
+        testing.expect_value(t,journal_session_sync(ends[:],1),1)
+        journal_session_expect(t,ends[:],1,{.Position=6,.Rotation=1,.Scale=3},"the drag goes on")
+        testing.expect_value(t,journal_session_sync(ends[:],1,2),0)
+        if cancel {
+            edits_cancel(&dragging.f.edits,w)
+            journal_session_sync(ends[:],1)
+            journal_session_expect(t,ends[:],1,{.Position=1,.Rotation=1,.Scale=3},"the drag cancelled")
+            testing.expect_value(t,len(dragging.f.edits.steps),0)
+            continue
+        }
+        edits_end(&dragging.f.edits)
+        testing.expect(t,edits_commit(&dragging.f.edits,w,&dragging.f.selection))
+        testing.expect_value(t,journal_session_sync(ends[:],1),0)
+        testing.expect(t,history_undo(&dragging.f.s).done)
+        journal_session_sync(ends[:],1)
+        journal_session_expect(t,ends[:],1,{.Position=1,.Rotation=1,.Scale=3},"the drag undone")
+        testing.expect(t,history_undo(&other.f.s).done)
+        journal_session_sync(ends[:],2)
+        journal_session_expect(t,ends[:],1,{.Position=1,.Rotation=1,.Scale=1},"the scale undone")
+    }
 }

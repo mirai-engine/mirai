@@ -176,7 +176,7 @@ placement_test_open :: proc(f:^Placement_Test) {
     f.steps={{name="physics_step",library="physics",call=placement_test_physics}}
     f.info={
         tables=f.tables[:],storages=f.storages[:],steps=f.steps[:],
-        copy=placement_test_copy,swap=placement_test_swap,settle=placement_test_settle,
+        copy=placement_test_copy,swap=placement_test_swap,
     }
     f.info.order[.Editor][.Fixed]=f.order[:]
     f.info.sizes[.World]=size_of(Placement_Test_World)

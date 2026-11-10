@@ -64,7 +64,7 @@ Each `world` has:
   `World` stays plain data copied in blocks; sockets and pointers live outside.
 - `Editor` (only in `editor_world`): the components and storages of the editor packages.
 - `init_*`, `destroy_*`, `copy_world`, `swap_world`, `clear_world` (entities, rows and derived
-  storages), `settle`, the loops per phase and `info()`. `init_*` and `copy_world` return `false`
+  storages), the loops per phase and `info()`. `init_*` and `copy_world` return `false`
   without memory and leave a world that `destroy_*` frees.
   `info()` returns the `core.World_Info`, which describes types, tables, storages, functions and
   loops for generic code (editor, scenes, network, saving) without knowing the game's types.

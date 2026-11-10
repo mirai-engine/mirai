@@ -76,7 +76,7 @@ destructible_geometry_and_detached_group_poses_play_after_the_source_world_is_de
         {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Cache_Test_World,parents)},
         {name="Tint",type=render.Tint,info=type_info_of(render.Tint),offset=offset_of(Cache_Test_World,tints)},
     }
-    info:=core.World_Info{entities=offset_of(Cache_Test_World,es),tables=tables[:],settle=cache_test_settle}
+    info:=core.World_Info{entities=offset_of(Cache_Test_World,es),tables=tables[:]}
     physics:=phys.Physics_State{}
     if !testing.expect(t,sim.world_init(&physics.world,{body_capacity=32,shape_capacity=64,contact_capacity=128,joint_capacity=8,hull_capacity=64,event_capacity=32,gravity={0,-9.81,0}})) {return}
     physics.ready=true

@@ -25,17 +25,6 @@ Spatial_World :: struct {
     hierarchy:core.Hierarchy,
 }
 
-@(private="file")
-spatial_world_settle :: proc(data,shared,editor:rawptr) {
-    w:=cast(^Spatial_World)data
-    core.table_settle(&w.disabled,&w.entities);core.table_settle(&w.parents,&w.entities)
-    core.hierarchy_settle(&w.hierarchy,core.read(&w.parents),&w.entities)
-    core.entities_activity(&w.entities,core.read(&w.disabled),core.ref(&w.hierarchy))
-    core.table_settle(&w.ids,&w.entities);core.table_settle(&w.names,&w.entities)
-    core.table_settle(&w.transforms,&w.entities);core.table_settle(&w.meshes,&w.entities)
-    core.entities_settle(&w.entities)
-}
-
 // A floor whose top is at 0, a crate over it with a lid, a lamp without a
 // mesh and a ramp turned 30 degrees about Z far to the side.
 @(private="file")
@@ -67,7 +56,7 @@ spatial_open :: proc(f:^Spatial_Fixture) {
     f.tables[3]={name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Spatial_World,parents)}
     f.tables[4]={name="Disabled",type=core.Disabled,info=type_info_of(core.Disabled),offset=offset_of(Spatial_World,disabled)}
     f.tables[5]={name="Mesh_Renderer",type=erender.Mesh_Renderer,info=type_info_of(erender.Mesh_Renderer),offset=offset_of(Spatial_World,meshes)}
-    f.info={entities=offset_of(Spatial_World,entities),tables=f.tables[:],settle=spatial_world_settle}
+    f.info={entities=offset_of(Spatial_World,entities),tables=f.tables[:]}
     entity :: proc(w:^Spatial_World,id:u64,name:string,place:core.Transform,cube:bool,parent:=core.NONE) -> core.Entity {
         e:=core.create(&w.entities)
         core.add(&w.ids,e,core.Id{base.Entity_Id(id)})

@@ -278,7 +278,7 @@ history_key :: proc(s:^Session,h:^Run_History,w:core.World_Ref,t:^core.Time,edit
             data,error:=mem.alloc(max(s.info.sizes[.World],1),max(s.info.aligns[.World],1),allocator)
             if error==nil && data!=nil {
                 slot.world=data
-                marks,marks_error:=make([]core.Copy_Mark,len(s.info.tables),allocator)
+                marks,marks_error:=make([]core.Copy_Mark,core.copy_marks_count(s.info),allocator)
                 slot.marks=marks
                 if marks_error!=nil || !s.info.init[.World](data,allocator) {history_slot_free(s,h,slot)}
             }

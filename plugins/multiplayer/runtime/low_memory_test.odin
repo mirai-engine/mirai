@@ -1,6 +1,7 @@
 package multiplayer
 
 import "base:runtime"
+import "core:log"
 import "core:testing"
 import "mirai:core"
 import "mirai:host"
@@ -9,7 +10,9 @@ import wire "mirai:net"
 // The protocol of a session with the memory ending at each request in turn:
 // the session is refused and frees what it took, and with memory it is built.
 // And a connection that arrives without memory for the inputs of its player:
-// it is closed with a problem, and seated once there is memory.
+// it is closed with a problem, and seated once there is memory. And a
+// launched player whose session ends without memory for the text of why: it
+// still ends, with the code of the network.
 @(test)
 a_session_without_memory_is_refused_and_a_connection_without_room_is_closed :: proc(t:^testing.T) {
     info:=net_test_info();defer delete(info.tables);defer delete(info.storages)
@@ -52,5 +55,20 @@ a_session_without_memory_is_refused_and_a_connection_without_room_is_closed :: p
         server_commands(&s,ref,nil,connected,&events,&world.remote)
         failure.remaining=max(int)
         testing.expectf(t,problems.count==1 && (remote_entry(&world.remote,3)!=nil)==(budget!=0),"with %d requests served: %d problems, seated %v",budget,problems.count,remote_entry(&world.remote,3)!=nil)
+    }
+
+    for mode in ([2]wire.Mode{.Client,.Server}) {
+        ended:=Net_Session{allocator=limited,launched=true,mode=mode,problems=&problems}
+        player:=host.App{allocator=limited}
+        failure.remaining=0
+        // The player is told with an error in the log, which would fail the test.
+        logger:=context.logger
+        context.logger=log.nil_logger()
+        session_fail(&ended,&player,"the server went away")
+        context.logger=logger
+        failure.remaining=max(int)
+        testing.expectf(t,ended.reason_text=="" && core.problem_find(&problems,core.NONE,"net.reason")!=nil,"%v: the reason found memory, or no problem says it did not",mode)
+        report_update(&ended,&player)
+        testing.expectf(t,player.quit && player.exit_code==PLAYER_NET,"%v: quit %v with code %d",mode,player.quit,player.exit_code)
     }
 }

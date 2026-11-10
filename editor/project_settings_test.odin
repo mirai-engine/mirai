@@ -13,9 +13,6 @@ import "mirai:std/serial"
 @(private="file") Api_Test_World :: struct {entities:core.Entities}
 
 @(private="file")
-api_test_settle :: proc(data,shared,editor:rawptr) {core.entities_settle(&(^Api_Test_World)(data).entities)}
-
-@(private="file")
 api_test_execute :: proc(state:^Api_State,out:^serial.Writer,name,params:string) -> api.Error {
     base.arena_reset(&state.server.scratch);serial.writer_reset(out)
     error,_:=api.method_execute(&state.server,api.method_find(&state.server,name),params,out)
@@ -53,7 +50,7 @@ project_set_writes_project_mirai_only_when_all_of_it_is_valid :: proc(t:^testing
     world:Api_Test_World
     core.entities_init(&world.entities);defer core.entities_destroy(&world.entities)
     storages:=[1]core.Storage_Info{{type=Api,info=type_info_of(Api),place=.Editor}}
-    info:=core.World_Info{entities=offset_of(Api_Test_World,entities),storages=storages[:],settle=api_test_settle}
+    info:=core.World_Info{entities=offset_of(Api_Test_World,entities),storages=storages[:]}
     selection:Selection;defer delete(selection.entities)
     viewport:Viewport;gui:Editor_Ui;edits:Edits;defer edits_free(&edits)
     inspector:Inspector

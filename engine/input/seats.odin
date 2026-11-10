@@ -324,10 +324,10 @@ Apply :: struct {
 // blocks take.
 @(step="fixed",stage="input")
 input_drive :: proc(
-    es:^core.Entities,drivables:^core.Table(Drivable),seats:^core.Table(Seat),state:^Seats,requests:^Seat_Requests,
+    es:core.Ref(core.Entities),drivables:^core.Table(Drivable),seats:^core.Table(Seat),state:^Seats,requests:^Seat_Requests,
     network:core.Ref(core.Network),elsewhere:core.Read(core.Remote),problems:^core.Problems,
 ) {
-    a:=Apply{es=es,drivables=drivables,seats=seats,state=state,role=network.role,elsewhere=elsewhere,problems=problems}
+    a:=Apply{es=es.ptr,drivables=drivables,seats=seats,state=state,role=network.role,elsewhere=elsewhere,problems=problems}
     for request in core.take(&requests.queue) {request_apply(&a,request)}
     upkeep(&a)
     blocks_apply(seats,state)

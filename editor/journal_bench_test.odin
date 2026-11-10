@@ -70,7 +70,7 @@ journal_memory_of_a_large_scene :: proc(t:^testing.T) {
         {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Bench_World,parents)},
         {name="Mesh_Renderer",type=erender.Mesh_Renderer,info=type_info_of(erender.Mesh_Renderer),offset=offset_of(Bench_World,meshes)},
     }
-    info:=core.World_Info{entities=offset_of(Bench_World,entities),tables=tables,settle=bench_settle}
+    info:=core.World_Info{entities=offset_of(Bench_World,entities),tables=tables}
     w:=core.world_ref(world,&info)
     // Groups of ten cubes under the first, and a derived cube in each group.
     group:=core.NONE
@@ -92,7 +92,7 @@ journal_memory_of_a_large_scene :: proc(t:^testing.T) {
     world_bytes:=tracking.current_memory_allocated
     edits:Edits
     selection:Selection
-    image,history,cancel,collab_bytes,watch_bytes:i64
+    image,history,cancel,collab_bytes:i64
     step_bytes:int
     reset_ms,commit_ms,undo_ms,tick_ms:f64
     {
@@ -146,12 +146,6 @@ journal_memory_of_a_large_scene :: proc(t:^testing.T) {
         for message in st.peers[0].out {delete(message)}
         clear(&st.peers[0].out)
         free_all(context.temp_allocator)
-        base=tracking.current_memory_allocated
-        ops:Collab_Ops
-        collab_ops_begin(&ops)
-        collab_watch_diff(st,w,st.watch.seen,&ops)
-        free_all(context.temp_allocator)
-        watch_bytes=tracking.current_memory_allocated-base
         delete(st.peers[0].out)
         collab_tables_free(st)
         free(st)
@@ -159,8 +153,8 @@ journal_memory_of_a_large_scene :: proc(t:^testing.T) {
         delete(selection.entities)
     }
     MB::1024.0*1024.0
-    fmt.printfln("journal: %d entities, World %.2f MB; image %.2f MB; 200 steps %.2f MB (%.2f MB in the steps); cancel reserve %.2f MB; collab %.2f MB; watch %.2f MB; reset %.2f ms; delete commit %.3f ms; undo %.3f ms; collab tick %.3f ms",
-        ENTITIES,f64(world_bytes)/MB,f64(image)/MB,f64(history)/MB,f64(step_bytes)/MB,f64(cancel)/MB,f64(collab_bytes)/MB,f64(watch_bytes)/MB,reset_ms,commit_ms,undo_ms,tick_ms)
+    fmt.printfln("journal: %d entities, World %.2f MB; image %.2f MB; 200 steps %.2f MB (%.2f MB in the steps); cancel reserve %.2f MB; collab %.2f MB; reset %.2f ms; delete commit %.3f ms; undo %.3f ms; collab tick %.3f ms",
+        ENTITIES,f64(world_bytes)/MB,f64(image)/MB,f64(history)/MB,f64(step_bytes)/MB,f64(cancel)/MB,f64(collab_bytes)/MB,reset_ms,commit_ms,undo_ms,tick_ms)
     core.table_destroy(&world.ids);core.table_destroy(&world.names);core.table_destroy(&world.transforms)
     core.table_destroy(&world.poses);core.table_destroy(&world.parents);core.table_destroy(&world.meshes)
     core.entities_destroy(&world.entities)

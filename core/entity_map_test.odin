@@ -1,5 +1,6 @@
 package core
 
+import "base:runtime"
 import "core:testing"
 
 @(test)
@@ -13,6 +14,16 @@ an_entity_map_finds_each_generation_and_fills_a_hole_with_the_last_value :: proc
     testing.expect(t,entity_map_get(&m,a)^==10 && entity_map_get(&m,b)^==20 && entity_map_get(&m,c)^==30)
     testing.expect_value(t,entity_map_index(&m,c),2)
     testing.expect(t,entity_map_get(&m,entity_make(3,2))==nil && entity_map_get(&m,entity_make(9,1))==nil)
+
+    // A copy finds the same values of its own, and with room for them allocates nothing.
+    copied:Entity_Map(int);defer entity_map_destroy(&copied)
+    testing.expect(t,entity_map_copy(&copied,&m))
+    entity_map_get(&copied,b)^=21
+    testing.expect(t,entity_map_get(&m,b)^==20 && entity_map_get(&copied,a)^==10 && entity_map_index(&copied,c)==2)
+    {
+        context.allocator=runtime.nil_allocator()
+        testing.expect(t,entity_map_copy(&copied,&m) && entity_map_get(&copied,b)^==20)
+    }
 
     // A newer generation of an index takes the place of the older one.
     newer:=entity_make(3,2)

@@ -36,9 +36,6 @@ input_test_actions :: proc() -> []core.Actions_Info {
 }
 
 @(private="file")
-input_settle :: proc(data,shared,editor:rawptr) {core.entities_settle(&(^Input_World)(data).entities)}
-
-@(private="file")
 Input_Fixture :: struct {
     folder:string,
     world:Input_World,
@@ -73,7 +70,7 @@ input_fixture :: proc(t:^testing.T,f:^Input_Fixture) -> bool {
         {name="Input_Map",type=input.Input_Map,info=type_info_of(input.Input_Map),offset=offset_of(Input_World,bindings)},
         {name="Input_Defaults",type=Input_Defaults,info=type_info_of(Input_Defaults),offset=offset_of(Input_World,defaults),default=input_defaults},
     }
-    f.info={entities=offset_of(Input_World,entities),names=f.names[:],storages=f.storages[:],actions=input_test_actions(),settle=input_settle}
+    f.info={entities=offset_of(Input_World,entities),names=f.names[:],storages=f.storages[:],actions=input_test_actions()}
     core.entities_init(&f.world.entities)
     f.session=Session{info=&f.info,edit_world=&f.world,editor_world=&f.api_storage,app=&f.app,selection=&f.selection,viewport=&f.viewport,gui=&f.gui,edits=&f.edits,inspector=&f.inspector,project_root=folder,has_project=true}
     edits_reset(&f.edits,edited_world(&f.session))

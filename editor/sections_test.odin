@@ -100,7 +100,7 @@ sections_fixture_init :: proc(f:^Sections_Fixture,name:string,state:=scene.Secti
         {type=scene.Section_Views,info=type_info_of(scene.Section_Views),offset=offset_of(Sections_World,views)},
         {type=scene.Unresolved_References,info=type_info_of(scene.Unresolved_References),offset=offset_of(Sections_World,unresolved)},
     }
-    f.info=core.World_Info{entities=offset_of(Sections_World,entities),tables=f.tables[:],storages=f.storages[:],settle=sections_world_settle}
+    f.info=core.World_Info{entities=offset_of(Sections_World,entities),tables=f.tables[:],storages=f.storages[:]}
     temporary,_:=os.temp_directory(context.temp_allocator)
     f.root,_=strings.replace_all(project.path(temporary,fmt.tprintf("mirai-sections-%s-%d",name,os.get_pid()),allocator=context.temp_allocator),"\\","/")
     os.remove_all(f.root)

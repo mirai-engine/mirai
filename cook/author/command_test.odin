@@ -94,23 +94,6 @@ game_world_destroy :: proc(data:rawptr) {
     core.value_free(&w.hierarchy,type_info_of(core.Hierarchy))
 }
 
-@(private="file")
-game_world_settle :: proc(data,shared,editor:rawptr) {
-    w:=cast(^Game_World)data
-    core.table_settle(&w.transforms,&w.entities)
-    core.table_settle(&w.hidden,&w.entities)
-    core.table_settle(&w.disabled,&w.entities)
-    core.table_settle(&w.meshes,&w.entities)
-    core.table_settle(&w.tints,&w.entities)
-    core.table_settle(&w.point_lights,&w.entities)
-    core.table_settle(&w.statuses,&w.entities)
-    core.table_settle(&w.names,&w.entities)
-    core.table_settle(&w.parents,&w.entities)
-    core.hierarchy_settle(&w.hierarchy,core.read(&w.parents),&w.entities)
-    core.entities_activity(&w.entities,core.read(&w.disabled),core.ref(&w.hierarchy))
-    core.entities_settle(&w.entities)
-}
-
 // The types of a game with the Status the interfaces of the template bind
 // and the components of the engine its scene has.
 @(private="file")
@@ -127,7 +110,7 @@ game_info :: proc(info:^core.World_Info) {
     tables[8]={name="Parent",type=core.Parent,info=type_info_of(core.Parent),place=.World,offset=offset_of(Game_World,parents)}
     storages:=make([]core.Storage_Info,1,context.temp_allocator)
     storages[0]={type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Game_World,hierarchy)}
-    info^={tables=tables,storages=storages,settle=game_world_settle,
+    info^={tables=tables,storages=storages,
         sizes={.World=size_of(Game_World),.Shared=0,.Editor=0},aligns={.World=align_of(Game_World),.Shared=1,.Editor=1},
         init={.World=game_world_init,.Shared=nil,.Editor=nil},destroy={.World=game_world_destroy,.Shared=nil,.Editor=nil}}
     core.world_info_index(info,context.temp_allocator)

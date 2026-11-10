@@ -49,7 +49,7 @@ history_init :: proc(f:^History_Fixture,count:int) {
         {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(History_World,parents)},
         {name="Lamp",type=History_Lamp,info=type_info_of(History_Lamp),offset=offset_of(History_World,lamps)},
     }
-    f.info={entities=offset_of(History_World,entities),tables=f.tables[:],settle=history_settle}
+    f.info={entities=offset_of(History_World,entities),tables=f.tables[:]}
     for i in 0..<count {history_entity(f,base.Entity_Id(i+1))}
     history_settle(w,nil,nil)
     f.s=Session{info=&f.info,edit_world=w,edits=&f.edits,selection=&f.selection}

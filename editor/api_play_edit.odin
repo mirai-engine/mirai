@@ -320,7 +320,7 @@ api_play_push :: proc(s:^Session,call:^api.Call) {
             break
         }
     }
-    queue:=cast(^runtime.Raw_Dynamic_Array)(uintptr(w.data)+info.offset+offset)
+    queue:=cast(^runtime.Raw_Dynamic_Array)(uintptr(core.world_storage_at(w,at))+offset)
     if queue.allocator.procedure==nil {queue.allocator=s.app.allocator}
     for i in 0..<count {
         runtime.__dynamic_array_append(queue,size,item.align,&values[i*size],1)

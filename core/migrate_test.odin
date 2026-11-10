@@ -34,6 +34,8 @@ before_init :: proc(data:rawptr,allocator:runtime.Allocator) -> bool {
     entities_init(&w.entities,allocator) or_return
     table_init(&w.spin,"Spin",allocator)
     table_init(&w.kept,"Kept_Tag",allocator)
+    entities_tables(&w.entities,2) or_return
+    table_follow(&w.spin,&w.entities,0);table_follow(&w.kept,&w.entities,1)
     return true
 }
 
@@ -52,6 +54,8 @@ after_init :: proc(data:rawptr,allocator:runtime.Allocator) -> bool {
     table_init(&w.kept,"Kept_Tag",allocator)
     table_init(&w.added,"Added_Tag",allocator)
     table_init(&w.spin,"Spin",allocator)
+    entities_tables(&w.entities,3) or_return
+    table_follow(&w.kept,&w.entities,0);table_follow(&w.added,&w.entities,1);table_follow(&w.spin,&w.entities,2)
     w.score.lives=3
     return true
 }
@@ -133,6 +137,8 @@ a_world_migrates_to_another_layout_by_names :: proc(t:^testing.T) {
     // The table takes rows again with the new type.
     c:=create(&fresh.entities)
     add(&fresh.spin,c,After_Spin{speed=9})
+    // It says that it waits where the new World looks for it, not where the old one did.
+    testing.expect(t,fresh.entities.pending[2] && !fresh.entities.pending[0] && !fresh.entities.pending[1])
     testing.expect(t,table_settle(&fresh.spin,&fresh.entities))
     testing.expect(t,(get(read(&fresh.spin),c) or_else After_Spin{}).speed==9)
     after_destroy(fresh)

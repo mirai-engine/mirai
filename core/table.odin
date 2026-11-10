@@ -48,6 +48,36 @@ Table :: struct($T:typeid) {
     owners:[dynamic]Row_Owner, // shared tables: by index, the generation and lock that own the row
     locks:[]Lock,             // rows of other tables a row on of this one owns
     name:string,
+    waits:Waits,
+}
+
+// Where a table of a World says that it has adds, removes or turns pending,
+// for the settle of the World to come only to the tables that do: its place
+// in the pending of the Entities offset bytes away from it, in the same
+// World (by distance, as a lock: a World is copied in blocks). Zero in a
+// table by itself and in a World made by hand, whose settle looks at every
+// table.
+Waits :: struct {
+    offset:int,
+    index:int,
+}
+
+// Makes a table of a World say what it has pending in es.pending[index]:
+// entities_tables gave it room.
+table_follow :: proc "contextless" (t:^Table($T),es:^Entities,index:int) {
+    t.waits={int(uintptr(es))-int(uintptr(t)),index}
+}
+
+// Every change that waits for the settle goes through here.
+@(private)
+pending_push :: #force_inline proc(t:^Raw_Table,p:Pending) {
+    append(&t.pending,p)
+    table_waits(t)
+}
+
+@(private)
+table_waits :: #force_inline proc "contextless" (t:^Raw_Table,waits:=true) {
+    if t.waits.offset!=0 {(cast(^Entities)rawptr(uintptr(int(uintptr(t))+t.waits.offset))).pending[t.waits.index]=waits}
 }
 
 Pending :: struct {
@@ -201,12 +231,12 @@ layout :: proc{table_layout,read_layout}
 // function. A component that was off stays off.
 add :: proc(t:^Table($T),e:Entity,value:T) {
     append(&t.added,value)
-    append(&t.pending,Pending{e,i32(len(t.added)-1)})
+    pending_push(raw(t),Pending{e,i32(len(t.added)-1)})
 }
 
 // Takes the component from the entity at the end of the function.
 remove :: proc(t:^Table($T),e:Entity) {
-    append(&t.pending,Pending{e,PENDING_REMOVE})
+    pending_push(raw(t),Pending{e,PENDING_REMOVE})
 }
 
 // The value the last add of this function waits to give an entity, to write
@@ -658,6 +688,8 @@ table_swap :: proc(a,b:^Table($T)) {
     a.pending,b.pending=b.pending,a.pending
     a.added,b.added=b.added,a.added
     a.on,b.on=b.on,a.on
+    table_waits(raw(a),len(a.pending)>0)
+    table_waits(raw(b),len(b.pending)>0)
     clear(&a.gone);clear(&b.gone)
     a.gone_first,b.gone_first=first,first
     a.version,b.version=version,version
@@ -726,6 +758,7 @@ Raw_Table :: struct {
     owners:[dynamic]Row_Owner,
     locks:[]Lock,
     name:string,
+    waits:Waits,
 }
 #assert(size_of(Raw_Table)==size_of(Table(u8)))
 #assert(offset_of(Raw_Table,stamps)==offset_of(Table(u8),stamps))
@@ -733,6 +766,7 @@ Raw_Table :: struct {
 #assert(offset_of(Raw_Table,gone)==offset_of(Table(u8),gone))
 #assert(offset_of(Raw_Table,on)==offset_of(Table(u8),on))
 #assert(offset_of(Raw_Table,name)==offset_of(Table(u8),name))
+#assert(offset_of(Raw_Table,waits)==offset_of(Table(u8),waits))
 
 raw :: #force_inline proc "contextless" (t:^Table($T)) -> ^Raw_Table {return cast(^Raw_Table)t}
 
@@ -791,10 +825,10 @@ raw_add :: proc(t:^Raw_Table,info:^runtime.Type_Info,e:Entity,value:rawptr) {
     case value==nil:   runtime.__dynamic_array_append_nothing(&t.added,info.size,info.align)
     case:              runtime.__dynamic_array_append(&t.added,info.size,info.align,value,1)
     }
-    append(&t.pending,Pending{e,i32(t.added.len-1)})
+    pending_push(t,Pending{e,i32(t.added.len-1)})
 }
 
-raw_remove :: proc(t:^Raw_Table,e:Entity) {append(&t.pending,Pending{e,PENDING_REMOVE})}
+raw_remove :: proc(t:^Raw_Table,e:Entity) {pending_push(t,Pending{e,PENDING_REMOVE})}
 
 // The value the last add of the function waits to give an entity; nil without
 // one, or when a remove follows it. Valid until the next add to the table.
@@ -819,11 +853,11 @@ raw_disable :: proc(t:^Raw_Table,e:Entity) {
         fail("%s is the base of every entity and does not turn off: give the entity core.Disabled to turn it off",t.name)
         return
     }
-    append(&t.pending,Pending{e,PENDING_OFF})
+    pending_push(t,Pending{e,PENDING_OFF})
 }
 
 raw_enable :: proc(t:^Raw_Table,e:Entity) {
-    if !t.base {append(&t.pending,Pending{e,PENDING_ON})}
+    if !t.base {pending_push(t,Pending{e,PENDING_ON})}
 }
 
 // Takes the row of an entity at once, between functions: what an undo puts

@@ -148,14 +148,15 @@ source_type :: proc "contextless" (s:^Source,id:u32) -> (^Foliage_Type,int) {
     return nil,-1
 }
 
-// A new type with the next id; its defaults are FOLIAGE_TYPE_DEFAULT.
+// A new type with the next id; its defaults are FOLIAGE_TYPE_DEFAULT. nil
+// without memory, with the source as it was.
 source_type_add :: proc(s:^Source,name:string,mesh:base.Asset_Id) -> ^Foliage_Type {
     t:=FOLIAGE_TYPE_DEFAULT
     t.id=s.info.next_type
-    s.info.next_type+=1
     t.mesh=mesh
     base.text_set(t.name[:],name)
-    append(&s.types,t)
+    if _,err:=append(&s.types,t);err!=nil {return nil}
+    s.info.next_type+=1
     return &s.types[len(s.types)-1]
 }
 
@@ -557,7 +558,11 @@ source_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=co
             source_destroy(&temporary)
             return
         }
-        append(&temporary.cells,held)
+        if _,err:=append(&temporary.cells,held);err!=nil {
+            delete(held.manual);delete(held.overrides)
+            source_destroy(&temporary)
+            return
+        }
         added:=&temporary.cells[len(temporary.cells)-1]
         manual_planes.in_cell,override_planes.in_cell=false,false
         for i in cell.manual_first..<cell.manual_first+cell.manual_count {
