@@ -7,33 +7,42 @@ import mm "mirai:std/math"
 
 // Hides corrections from the eye: when the simulated pose jumps, the offset
 // to where it was shown is kept and fades out, while the simulation itself
-// stays exactly where the correction put it.
+// stays exactly where the correction put it. A jump is a correction of what
+// was predicted, or an object going from one timeline to the other (shown in
+// the past, simulated in the present): one error, one fade. An error that
+// asks to fade slower than the one under way slows the whole of it, and none
+// speeds it up, until it is gone.
 Smoothing :: struct {
     offset:[3]f32,
     rotation:quaternion128,
     half_life:f32,     // seconds for an error to halve, default 0.08
+    fading:f32,        // seconds in which the error under way halves: the longest its corrections asked for; 0: none is under way
     snap_distance:f32, // meters beyond which the error is not smoothed, default 4
 }
+
+@(private) SMOOTHING_DONE :: 1e-4 // meters, and the part of a turn, below which an error is gone
 
 smoothing_init :: proc "contextless" (s:^Smoothing,half_life:f32=0.08,snap_distance:f32=4) {
     s^={rotation=quaternion(w=1,x=0,y=0,z=0),half_life=half_life,snap_distance=snap_distance}
 }
-// The simulated pose went from before to after without the object having moved: a correction.
-smoothing_correct :: proc "contextless" (s:^Smoothing,before_position,after_position:[3]f32,before_rotation,after_rotation:quaternion128) {
+// The simulated pose went from before to after without the object having moved: a correction. half_life is the
+// seconds in which this error should halve; 0: that of the smoothing.
+smoothing_correct :: proc "contextless" (s:^Smoothing,before_position,after_position:[3]f32,before_rotation,after_rotation:quaternion128,half_life:f32=0) {
     s.offset+=before_position-after_position
     s.rotation=s.rotation*before_rotation*conj(after_rotation)
+    s.fading=max(s.fading,half_life>0?half_life:s.half_life)
     if s.offset.x*s.offset.x+s.offset.y*s.offset.y+s.offset.z*s.offset.z>s.snap_distance*s.snap_distance {
-        s.offset,s.rotation={},quaternion(w=1,x=0,y=0,z=0)
+        s.offset,s.rotation,s.fading={},quaternion(w=1,x=0,y=0,z=0),0
     }
 }
 smoothing_update :: proc "contextless" (s:^Smoothing,dt:f32) {
-    keep:=s.half_life>0?math.pow(0.5,dt/s.half_life):0
+    if s.fading<=0 {return}
+    keep:=math.pow(0.5,dt/s.fading)
     s.offset*=keep
     s.rotation=mm.quat_nlerp(1,s.rotation,keep)
-}
-// Where to draw an object whose simulated pose is position and rotation.
-smoothing_apply :: proc "contextless" (s:^Smoothing,position:[3]f32,rotation:quaternion128) -> ([3]f32,quaternion128) {
-    return position+s.offset,s.rotation*rotation
+    if abs(s.offset.x)+abs(s.offset.y)+abs(s.offset.z)<SMOOTHING_DONE && abs(s.rotation.w)>1-SMOOTHING_DONE {
+        s.offset,s.rotation,s.fading={},quaternion(w=1,x=0,y=0,z=0),0
+    }
 }
 
 // Snapshots of remote objects by server tick, to draw them between two known
@@ -149,6 +158,17 @@ interpolation_newest :: proc(i:^Interpolation,slot:int) -> (state:[]u8,tick:u32,
     d:=&i.desc
     if slot<0 || slot>=len(i.used) || !i.used[slot] || i.count[slot]==0 {return}
     at:=slot*d.depth+(int(i.head[slot])+int(i.count[slot])-1)%d.depth
+    return i.data[at*d.state_size:][:d.state_size],i.ticks[at],true
+}
+// How many snapshots a slot keeps, and each of them from the oldest (index 0) with its tick.
+interpolation_count :: proc(i:^Interpolation,slot:int) -> int {
+    if slot<0 || slot>=len(i.used) || !i.used[slot] {return 0}
+    return int(i.count[slot])
+}
+interpolation_entry :: proc(i:^Interpolation,slot,index:int) -> (state:[]u8,tick:u32,ok:bool) {
+    d:=&i.desc
+    if slot<0 || slot>=len(i.used) || !i.used[slot] || index<0 || index>=int(i.count[slot]) {return}
+    at:=slot*d.depth+(int(i.head[slot])+index)%d.depth
     return i.data[at*d.state_size:][:d.state_size],i.ticks[at],true
 }
 // Ticks between the snapshots of a slot: at once the longest gap, and slowly a shorter one. 0 before the second.
