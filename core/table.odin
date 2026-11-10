@@ -549,6 +549,47 @@ table_changed :: #force_inline proc "contextless" (t:^Table($T),c:Changes,row:in
 read_changed :: #force_inline proc "contextless" (r:Read($T),c:Changes,row:int) -> bool {return c.all || r.table.stamps[row]>c.since}
 changed :: proc{table_changed,read_changed}
 
+// The entities whose component of a, and of b and c, is on, with the value of
+// each, for a `for` over the rows of a, the first table, in order: the one
+// with the fewest rows goes first. row is the row of a the loop is at, which
+// a writer of a asks for with edit_at:
+//     j:=core.join(vels,masses,worlds)
+//     for e,v,m,w in core.each_joined(&j) {core.edit_at(vels,j.row).y-=m.g*dt}
+Join2 :: struct($A,$B:typeid) {a:^Table(A),b:^Table(B),row:int}
+Join3 :: struct($A,$B,$C:typeid) {a:^Table(A),b:^Table(B),c:^Table(C),row:int}
+
+join_tt :: proc "contextless" (a:^Table($A),b:^Table($B)) -> Join2(A,B) {return {a,b,-1}}
+join_tr :: proc "contextless" (a:^Table($A),b:Read($B)) -> Join2(A,B) {return {a,b.table,-1}}
+join_rt :: proc "contextless" (a:Read($A),b:^Table($B)) -> Join2(A,B) {return {a.table,b,-1}}
+join_rr :: proc "contextless" (a:Read($A),b:Read($B)) -> Join2(A,B) {return {a.table,b.table,-1}}
+join_ttt :: proc "contextless" (a:^Table($A),b:^Table($B),c:^Table($C)) -> Join3(A,B,C) {return {a,b,c,-1}}
+join_ttr :: proc "contextless" (a:^Table($A),b:^Table($B),c:Read($C)) -> Join3(A,B,C) {return {a,b,c.table,-1}}
+join_trt :: proc "contextless" (a:^Table($A),b:Read($B),c:^Table($C)) -> Join3(A,B,C) {return {a,b.table,c,-1}}
+join_trr :: proc "contextless" (a:^Table($A),b:Read($B),c:Read($C)) -> Join3(A,B,C) {return {a,b.table,c.table,-1}}
+join_rtt :: proc "contextless" (a:Read($A),b:^Table($B),c:^Table($C)) -> Join3(A,B,C) {return {a.table,b,c,-1}}
+join_rtr :: proc "contextless" (a:Read($A),b:^Table($B),c:Read($C)) -> Join3(A,B,C) {return {a.table,b,c.table,-1}}
+join_rrt :: proc "contextless" (a:Read($A),b:Read($B),c:^Table($C)) -> Join3(A,B,C) {return {a.table,b.table,c,-1}}
+join_rrr :: proc "contextless" (a:Read($A),b:Read($B),c:Read($C)) -> Join3(A,B,C) {return {a.table,b.table,c.table,-1}}
+join :: proc{join_tt,join_tr,join_rt,join_rr,join_ttt,join_ttr,join_trt,join_trr,join_rtt,join_rtr,join_rrt,join_rrr}
+
+joined2 :: proc "contextless" (j:^Join2($A,$B)) -> (e:Entity,a:A,b:B,ok:bool) {
+    for j.row+=1;j.row<j.a.on;j.row+=1 {
+        e=j.a.entities[j.row]
+        if rb:=table_row(j.b,e);rb>=0 {return e,j.a.values[j.row],j.b.values[rb],true}
+    }
+    return
+}
+joined3 :: proc "contextless" (j:^Join3($A,$B,$C)) -> (e:Entity,a:A,b:B,c:C,ok:bool) {
+    for j.row+=1;j.row<j.a.on;j.row+=1 {
+        e=j.a.entities[j.row]
+        rb:=table_row(j.b,e)
+        if rb<0 {continue}
+        if rc:=table_row(j.c,e);rc>=0 {return e,j.a.values[j.row],j.b.values[rb],j.c.values[rc],true}
+    }
+    return
+}
+each_joined :: proc{joined2,joined3}
+
 // Whether anything changed in a table since seen, which it moves to now:
 // what a reader asks that makes again whole what it derives from the table.
 raw_touched :: proc "contextless" (t:^Raw_Table,seen:^Seen) -> bool {
