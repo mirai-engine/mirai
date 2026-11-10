@@ -112,14 +112,14 @@ portals_render :: proc(
         if state.count>=PORTAL_CAPACITY {break}
         e:=core.entity_at(portals,row)
         portal:=core.at(portals,row)
+        mirror:=portal.mirror
         world,placed:=core.get(worlds,e)
-        exit_world,has_exit:=core.get(worlds,portal.exit)
+        exit_world,has_exit:=core.get(worlds,mirror?e:portal.exit)
         if !placed || !has_exit || erender.is_hidden(hidden,parents,e) {continue}
         entrance,exit:=erender.drawn_transform(world,frame),erender.drawn_transform(exit_world,frame)
         size:=[2]f32{abs(entrance.scale.x),abs(entrance.scale.y)}
         _,invertible:=mm.transform_inverse_matrix({entrance.position,entrance.rotation,{size.x,size.y,1}})
         if size.x<1e-5 || size.y<1e-5 || !invertible {continue}
-        mirror:=portal.exit==e
         normal:=mm.quat_rotate(entrance.rotation,[3]f32{0,0,1})
         if mirror && has_material {
             // The cylinder stands along its Y: lying down, its caps are the ellipse.
@@ -135,7 +135,6 @@ portals_render :: proc(
             }
         }
         if state.pipeline==0 {continue}
-        if mirror {exit=entrance}
         exit_normal:=mm.quat_rotate(exit.rotation,[3]f32{0,0,1})
         gate:=&state.gates[state.count]
         gate^={

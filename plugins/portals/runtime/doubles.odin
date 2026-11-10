@@ -24,7 +24,7 @@ portals_doubles :: proc(
         portal:=core.at(portals,row)
         world,placed:=core.get(worlds,e)
         exit_world,has_exit:=core.get(worlds,portal.exit)
-        if !placed || !has_exit || portal.exit==e || erender.is_hidden(hidden,parents,e) {continue}
+        if !placed || !has_exit || portal.mirror || erender.is_hidden(hidden,parents,e) {continue}
         entrance:=erender.drawn_transform(world,frame)
         through:=mm.transform_matrix(through_of(entrance,erender.drawn_transform(exit_world,frame)))
         for t in 0..<core.count(travelers) {

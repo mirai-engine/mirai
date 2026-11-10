@@ -153,7 +153,7 @@ portals_collision :: proc(
         portal:=core.at(portals,row)
         placed,has_place:=core.get(worlds,e)
         exit,has_exit:=core.get(worlds,portal.exit)
-        if !has_place || !has_exit || portal.exit==e || opening_count==len(openings) {continue}
+        if !has_place || !has_exit || portal.mirror || opening_count==len(openings) {continue}
         opening:=Opening{entity=e,entrance=placed.transform,exit=exit.transform}
         wall,has_wall:=core.get(worlds,portal.wall)
         held,framed:=core.get(frames,e)
@@ -196,7 +196,7 @@ portals_collision :: proc(
     for row:=core.count(frames)-1;row>=0;row-=1 {
         e:=core.entity_at(frames,row)
         portal,is_portal:=core.get(portals,e)
-        if is_portal && core.has(worlds,e) && core.has(worlds,portal.exit) && portal.exit!=e && portal.wall!=core.NONE {continue}
+        if is_portal && core.has(worlds,e) && core.has(worlds,portal.exit) && !portal.mirror && portal.wall!=core.NONE {continue}
         frame_drop(es,frames,e,core.at(frames,row))
     }
     for wall in walls[:wall_count] {cuts_put(cuts,wall.entity,wall.cuts)}

@@ -99,16 +99,16 @@ reads as it likes. Without the stage in the shaders in use, the mesh is drawn at
 
 ## Portals
 
-`Portal{exit, ellipse, layers, wall}` is an opening that shows the place of another entity and
-leads to it: the unit square of its entity seen from its +Z, of its scale (`ellipse`: the
+`Portal{exit, mirror, ellipse, layers, wall}` is an opening that shows the place of another entity
+and leads to it: the unit square of its entity seen from its +Z, of its scale (`ellipse`: the
 inscribed ellipse).
 
 - `exit` is the exit slot: another portal or any entity; without it nothing is shown. What is in
   front continues behind `exit`, turned half a turn about its local Y and without scale
   (`through_of`). Two portals that name each other join two places, also a floor with a wall.
-- A portal whose `exit` is its own entity is a flat mirror: its exit is its plane, reflected
-  (`reflection`). It is drawn and traced like any portal; nothing travels through it, it cuts no
-  wall and brings no lights (their reflection would be a caustic). The Mirror card makes one.
+- With `mirror` it is a flat mirror: its exit is its own plane, reflected (`reflection`), and
+  `exit` is not read. It is drawn and traced like any portal; nothing travels through it, it cuts
+  no wall and brings no lights (their reflection would be a caustic). The Mirror card makes one.
 - `wall` is the collider in which it is open, of any type, or `NONE`. `Traveler{point}` goes
   through the portals that its point crosses.
 

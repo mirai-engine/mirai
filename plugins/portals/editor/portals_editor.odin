@@ -48,7 +48,7 @@ portal_make :: proc(s:^editor.Session,w:core.World_Ref,e:core.Entity) {
 
 @(private)
 mirror_make :: proc(s:^editor.Session,w:core.World_Ref,e:core.Entity) {
-    if t:=core.world_table_of(w,portals.Portal);t!=nil {core.add(t,e,portals.Portal{exit=e})}
+    if t:=core.world_table_of(w,portals.Portal);t!=nil {core.add(t,e,portals.Portal{mirror=true})}
 }
 
 @(storage)
@@ -60,7 +60,7 @@ portals_gizmo :: proc(s:^editor.Session,gizmo:^Portals_Gizmo,app:^host.App) {
     draw :: proc(lines:^erender.Debug_Lines,w:core.World_Ref,e:core.Entity,portal:portals.Portal) {
         SEGMENTS :: 32
         placed:=editor.entity_world(w,e)
-        color:=portal.exit==e?MIRROR_COLOR:GIZMO_COLOR
+        color:=portal.mirror?MIRROR_COLOR:GIZMO_COLOR
         if portal.ellipse {
             previous:=mm.transform_point(placed,{0.5,0,0})
             for i in 1..=SEGMENTS {
@@ -76,7 +76,7 @@ portals_gizmo :: proc(s:^editor.Session,gizmo:^Portals_Gizmo,app:^host.App) {
             }
         }
         erender.debug_arrow(lines,placed.position,placed.position+mm.quat_rotate(placed.rotation,[3]f32{0,0,1})*0.75,color)
-        if portal.exit!=e && editor.entity_alive(w,portal.exit) {
+        if !portal.mirror && editor.entity_alive(w,portal.exit) {
             erender.debug_arrow(lines,placed.position,editor.entity_world(w,portal.exit).position,color,0.3)
         }
     }
