@@ -100,14 +100,14 @@ Boss :: struct {
     health:f32 `mirai:"transient,readonly"`,
     hero:core.Entity `mirai:"transient,hidden"`,
     slams,charges,summons,roars,deaths:u32 `mirai:"transient,readonly"`,
-    dead:f64 `mirai:"transient,hidden"`,      // when it fell
+    rises:u64 `mirai:"transient,hidden"`,     // the tick it rises again at; 0 while it stands
     staggered:bool `mirai:"transient,hidden"`, // by the hero: it is stunned at its next decision
 }
 
 @(component,description="What the AI of an arena chases or fights: it walks its round and hurts the boss near it.")
 Arena_Target :: struct {
     next:i32 `mirai:"transient,hidden"`,
-    timer:f64 `mirai:"transient,hidden"`,
+    again:u64 `mirai:"transient,hidden"`, // the tick the hero picks another point at
     center:[3]f32 `mirai:"transient,hidden"`,
 }
 
@@ -487,7 +487,7 @@ boss_think :: proc(t:^ai.Think(Boss_Act)) {
     if alive && first {
         ai.propose(t,.Slam,0.1+0.9*near)
         ai.propose(t,.Charge,1-0.9*near)
-        if ai.mind_ready(t.mind,Boss_Act.Summon,t.time,6) {ai.propose(t,.Summon,0.6*(1-f32(b.summons%4)/3))}
+        if ai.mind_ready(t.mind,Boss_Act.Summon,t.tick,t.dt,6) {ai.propose(t,.Summon,0.6*(1-f32(b.summons%4)/3))}
     }
 }
 
@@ -1034,8 +1034,8 @@ arena_targets :: proc(
         hunting:=false
         for b in bosses.table.values[:core.count(bosses)] {hunting|=b.hero==e}
         if hunting {
-            if time.seconds-t.timer>2.5 {
-                t.timer=time.seconds
+            if core.due(time,t.again) {
+                t.again=core.deadline(time,2.5)
                 angle:=mm.random_range(&state.rng,0,2*math.PI)
                 s,c:=mm.sincos_det(angle)
                 nav.nav_move_to(requests,e,t.center+{0,0,-14}+{c,0,s}*6)
@@ -1068,13 +1068,13 @@ arena_think :: proc(
         e:=core.entity_at(bosses,row)
         b:=core.at(bosses,row)
         if b.health<=0 {
-            if b.dead==0 {b.dead=time.seconds;b.deaths+=1}
-            if time.seconds-b.dead>3 {b.health,b.dead=BOSS_HEALTH,0}
+            if b.rises==0 {b.rises=core.deadline(time,3);b.deaths+=1}
+            if core.due(time,b.rises) {b.health,b.rises=BOSS_HEALTH,0}
             continue
         }
         if linalg.length(arena_position(&w,e)-arena_position(&w,b.hero))<12 {
             b.health-=6*time.dt
-            if time.tick%180==0 {b.staggered=true}
+            if every:=core.ticks_of(time,3);every>0 && time.tick%every==0 {b.staggered=true}
         }
     }
     ctx:=ai.Mind_Context{user=&w,keep=0.05,reservations=&world.claims.reservations}

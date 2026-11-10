@@ -20,7 +20,7 @@ import mm "mirai:std/math"
 // any point.
 
 SPAWN_CAPACITY :: 8 // bodies that appear for seats in one tick
-SPAWN_RETRY :: 30   // ticks the seats wait after a body could not appear for one
+SPAWN_RETRY :: 0.5  // s the seats wait after a body could not appear for one
 
 @(component,description="A place where the bodies of the players appear: a body of its prefab, for each seat that has none when the project setting Spawn_Settings.players is on.")
 Spawn_Point :: struct {
@@ -136,7 +136,7 @@ spawn_step :: proc(
             respawn_body(&a,request)
         }
     }
-    if client || !settings.players || time.tick<spawning.retry_after {return}
+    if client || !settings.players || !core.due(time,spawning.retry_after) {return}
     for row in 0..<core.count(seats) {
         seat:=core.entity_at(seats,row)
         if input.body_of(drivables,seat)!=core.NONE {continue}
@@ -144,7 +144,7 @@ spawn_step :: proc(
         for other in a.given[:a.given_count] {given ||= other==seat}
         if given {continue}
         if !spawn_body(&a,{kind=.Spawn,seat=seat}) {
-            spawning.retry_after=time.tick+SPAWN_RETRY
+            spawning.retry_after=core.deadline(time,SPAWN_RETRY)
             return
         }
     }

@@ -100,7 +100,8 @@ Door_State :: struct {
 @(component)
 Projectile :: struct {
     speed:f32 `mirai:"min=0,unit=m/s"`, // along the forward of the entity
-    seconds_left:f32,
+    seconds_left:f32 `mirai:"min=0,unit=s"`, // it goes this long after it is seen first
+    until:u64 `mirai:"readonly,hidden"`,    // the tick it goes at; 0 until it is seen first
     velocity:[3]f32 `mirai:"transient"`,
     launched:bool `mirai:"transient"`,
 }
@@ -389,7 +390,7 @@ game_glow :: proc(
         if tint,has:=core.get(core.read(tints),button.plate);has && tint.emission!=glow {core.get(tints,button.plate).emission=glow}
     }
     for row in 0..<core.count(barkers) {
-        flashing:=core.at(barkers,row).flash_ticks>0
+        flashing:=!core.due(time,core.at(barkers,row).flash_until)
         for child:=core.first_child(hierarchy,core.entity_at(barkers,row));child!=core.NONE;child=core.next_sibling(hierarchy,child) {
             if core.name_get(names,child)!="Nose" {continue}
             if tint:=core.get(tints,child);tint!=nil {tint.emission=flashing?BARK_GLOW:[3]f32{}}
@@ -428,8 +429,11 @@ game_projectiles :: proc(
                 projectile.launched=true
             }
         }
-        projectile.seconds_left-=time.dt
-        if projectile.seconds_left<=0 {core.destroy(es,e)}
+        if projectile.until==0 {
+            projectile.until=max(core.deadline(time,projectile.seconds_left),1)
+        } else if core.due(time,projectile.until) {
+            core.destroy(es,e)
+        }
     }
 }
 

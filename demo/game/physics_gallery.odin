@@ -156,7 +156,7 @@ physics_gallery_fade :: proc(stations:core.Read(Physics_Gallery),view:destruct.D
         count:=min(destruct.groups(view,station.target,poses[:]),len(poses))
         for group in poses[:count] {
             if !group.expires {continue}
-            alpha:=clamp(f32(group.remaining_ticks)*time.dt/station.fade_seconds,0,1)
+            alpha:=clamp(core.seconds_of(time,u64(group.remaining_ticks))/station.fade_seconds,0,1)
             tint,has:=core.get(core.read(tints),group.entity)
             if !has {tint=render.TINT_DEFAULT}
             if tint.color.a==alpha {continue}
