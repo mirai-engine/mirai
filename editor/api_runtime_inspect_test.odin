@@ -97,13 +97,9 @@ api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: p
     config,_:=core.get(&world.config,entity)
     testing.expect_value(t,config.diagnostics,u32(13))
     testing.expect_value(t,config.compiled,[2]u32{8,9})
-    out.count=0;first:=true
-    api_fields_write(&out,&state.schema,state.types[2],"",&first)
-    text=string(serial.writer_bytes(&out))
+    text=api_fields_text(&state.schema,state.types[2])
     testing.expect(t,strings.contains(text,`"path":"speed"`) && !strings.contains(text,"compiled") && !strings.contains(text,"diagnostics"))
-    out.count=0;first=true
-    api_fields_write(&out,&state.schema,state.types[2],"",&first,true)
-    text=string(serial.writer_bytes(&out))
+    text=api_fields_text(&state.schema,state.types[2],true)
     testing.expect(t,strings.contains(text,"compiled") && strings.contains(text,"diagnostics"))
     testing.expect(t,core.world_copy(&info,&running,&world))
     core.edit(&running.transforms,entity).position.x=8
@@ -249,7 +245,7 @@ inspect_filters_by_name_and_component_and_summarizes_without_values :: proc(t:^t
     _,result,_=inspect(state,&out,"play.inspect",`{"name":"Body*"}`)
     testing.expect_value(t,number(result["shown"]),API_INSPECT_DEFAULT)
     _,result,text=inspect(state,&out,"component.list",`{}`)
-    testing.expectf(t,strings.contains(text,`"name":"Camera"`) && !strings.contains(text,`"fields"`) && strings.contains(text,`"left_out"`),"the index of the components: %s",text)
+    testing.expectf(t,strings.contains(text,`"name": "Camera"`) && !strings.contains(text,`"fields"`) && strings.contains(text,`"left_out"`),"the index of the components: %s",text)
     _,result,text=inspect(state,&out,"component.list",`{"name":"Camera"}`)
     testing.expectf(t,strings.contains(text,`"default"`) && strings.contains(text,`"fields"`) && !strings.contains(text,`"left_out"`),"one whole: %s",text)
     _,result,text=inspect(state,&out,"component.list",`{"names":["Camera","Transform"]}`)

@@ -811,7 +811,7 @@ one root is none: the error says so), nonexistent override and "is not part of a
   - `type` is `Color` for a color, `Quaternion` for a rotation and `Text` for a text; the other
     arrays are `Array` with `element` and `count`. An angle carries `unit:"rad"`.
   - `default`: the value it starts with when added.
-  - A component that is not plain data brings `plain_data:false`, without `default` or `fields`.
+  - A component that is not plain data brings `opaque:true`, without `default` or `fields`.
   - A derived component (all its fields transient: the engine computes them and `play.inspect`
     reads them) and hidden and transient fields appear only with `include_runtime:true`; asking
     for a derived one by `name` without it fails saying so.
