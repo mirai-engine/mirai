@@ -6,7 +6,9 @@ import "mirai:core"
 import render "mirai:engine/render"
 import volume "mirai:engine/volume"
 import "mirai:std/ai"
+import "mirai:std/base"
 import mm "mirai:std/math"
+import anim "plugins:animation/runtime"
 import behavior "plugins:behavior/runtime"
 import nav "plugins:navigation/runtime"
 import phys "plugins:physics/runtime"
@@ -35,6 +37,10 @@ import phys "plugins:physics/runtime"
 //   and forget them when they stop.
 
 Arena_Kind :: enum u8 {Horde,Firefight,Boss,Swarm,Paths,Senses}
+
+// The .character of the zombies and the boss (demo_content writes it): the moves their minds play
+// over the body that shows them, and its look.
+ARENA_AGENT :: base.Asset_Id{0x41524541_4147454e,0x54_0000_0001}
 
 @(component,description="Builds an arena of AI when the world runs: a block of roofs with a horde, two squads in a firefight, a boss fight, a swarm of drones, patrollers on the ways of navigation, or listeners and bells. Without place, the scene holds its place.")
 AI_Arena :: struct {
@@ -223,14 +229,15 @@ zombie_chase :: proc(a:^ai.Act(Zombie_Act),w:Arena) -> ai.Status {
 
 // Bites now and again 0.8 s later, holding one of the places to bite its target.
 @(act="Bite")
-zombie_bite :: proc(a:^ai.Act(Zombie_Act),w:Arena,zombies:^core.Table(Zombie)) -> ai.Status {
-    if a.phase==.Exit {return .Success}
+zombie_bite :: proc(a:^ai.Act(Zombie_Act),w:Arena,zombies:^core.Table(Zombie),requests:^anim.Animation_Requests) -> ai.Status {
+    e:=behavior.agent(a)
+    if a.phase==.Exit {anim.look(requests,e,anim.spatial_point({}),0);return .Success}
     if a.phase==.Enter {
-        e:=behavior.agent(a)
         subject,_,_:=arena_seen(w,e)
         if subject==core.NONE || !ai.token_take(a,u64(subject),ZOMBIE_BITERS) {return .Failure}
         if z:=core.edit(zombies,e);z!=nil {z.bites+=1}
-        behavior.present_look(a,subject)
+        anim.look(requests,e,anim.spatial_entity(subject))
+        anim.play(requests,e,"Bite")
     }
     return ai.after(a,0.8)
 }
@@ -462,8 +469,9 @@ boss_think :: proc(t:^ai.Think(Boss_Act),w:Arena,bosses:core.Read(Boss)) {
 }
 
 @(act="Slam Charge Summon Roar")
-boss_attack :: proc(a:^ai.Act(Boss_Act),w:Arena,bosses:^core.Table(Boss)) -> ai.Status {
-    b:=core.edit(bosses,behavior.agent(a))
+boss_attack :: proc(a:^ai.Act(Boss_Act),w:Arena,bosses:^core.Table(Boss),requests:^anim.Animation_Requests) -> ai.Status {
+    e:=behavior.agent(a)
+    b:=core.edit(bosses,e)
     if b==nil {return .Failure if a.phase!=.Exit else .Success}
     if a.action==.Charge {
         if a.phase==.Enter {
@@ -478,11 +486,10 @@ boss_attack :: proc(a:^ai.Act(Boss_Act),w:Arena,bosses:^core.Table(Boss)) -> ai.
     case .Enter:
         ai.commit(a,BOSS_COMMITTED)
         #partial switch a.action {
-        case .Slam: b.slams+=1
-        case .Summon: b.summons+=1
-        case .Roar: b.roars+=1
+        case .Slam: b.slams+=1;anim.play(requests,e,"Slam")
+        case .Summon: b.summons+=1;anim.play(requests,e,"Summon")
+        case .Roar: b.roars+=1;anim.play(requests,e,"Roar")
         }
-        behavior.present_animation(a,u16(a.action))
         return .Running
     case .Update: return ai.after(a,1)
     case .Exit:
@@ -753,12 +760,28 @@ arena_body :: proc(c:core.Commands,position:mm.Vec3,color:[4]f32,speed:f32=4) ->
     walk.max_speed=speed
     core.commands_add(c,e,walk)
     core.commands_add_default(c,e,nav.Nav_Agent)
+    arena_shown(c,e,{{0,0.9,0},1,{0.6,0.9,0.6}},color)
+    return e
+}
+
+// The capsule that shows an agent: the Body its moves turn.
+@(private)
+arena_shown :: proc(c:core.Commands,e:core.Entity,transform:core.Transform,color:[4]f32) {
     look:=core.commands_create(c)
-    core.commands_add(c,look,core.Transform{{0,0.9,0},1,{0.6,0.9,0.6}})
+    name:core.Name;base.text_set(name.text[:],"Body")
+    core.commands_add(c,look,transform)
+    core.commands_add(c,look,name)
     core.commands_add(c,look,core.Parent{entity=e})
     core.commands_add(c,look,render.Mesh_Renderer{shape=.Capsule})
     core.commands_add(c,look,render.Tint{color=color})
-    return e
+}
+
+// An agent whose mind plays the moves of ARENA_AGENT.
+@(private)
+arena_animated :: proc(c:core.Commands,e:core.Entity) {
+    animation:=core.default(c,anim.Animation)
+    animation.asset=ARENA_AGENT
+    core.commands_add(c,e,animation)
 }
 
 @(private)
@@ -847,7 +870,7 @@ horde_spot :: proc(origin:mm.Vec3,i:int) -> mm.Vec3 {
 arena_zombie :: proc(c:core.Commands,e:core.Entity,sight:f32,hearing:f32=1,forget:f32=8) {
     core.commands_add(c,e,Zombie{})
     core.commands_add(c,e,behavior.Mind_Agent{mind=behavior.mind_name("zombie")})
-    core.commands_add_default(c,e,behavior.Mind_Presentation)
+    arena_animated(c,e)
     perceiver:=behavior.PERCEIVER_DEFAULT
     perceiver.notices=behavior.Teams(1<<u32(TEAM_RUNNER))
     perceiver.sight,perceiver.hearing,perceiver.forget=sight,hearing,forget
@@ -880,7 +903,6 @@ arena_agents :: proc(c:core.Commands,kind:Arena_Kind,origin:mm.Vec3,count:int) {
                 e:=arena_body(c,origin+{f32(i)*2.5-f32(count)*1.25,0.05,side*18},{0.9,0.3,0.25,1} if team==0 else {0.3,0.45,0.9,1},4.5)
                 core.commands_add(c,e,Soldier{health=100,ammo=SOLDIER_MAG,reserve=SOLDIER_MAG,ahead=-side})
                 core.commands_add(c,e,behavior.Mind_Agent{mind=behavior.mind_name("soldier")})
-                core.commands_add_default(c,e,behavior.Mind_Presentation)
                 mine,theirs:=TEAM_RED,TEAM_BLUE
                 if team==1 {mine,theirs=TEAM_BLUE,TEAM_RED}
                 perceiver:=behavior.PERCEIVER_DEFAULT
@@ -896,7 +918,7 @@ arena_agents :: proc(c:core.Commands,kind:Arena_Kind,origin:mm.Vec3,count:int) {
         boss:=arena_body(c,origin+{0,0.05,-6},{0.6,0.15,0.6,1},3)
         core.commands_add(c,boss,Boss{health=BOSS_HEALTH,hero=hero})
         core.commands_add(c,boss,behavior.Mind_Agent{mind=behavior.mind_name("boss")})
-        core.commands_add_default(c,boss,behavior.Mind_Presentation)
+        arena_animated(c,boss)
     case .Swarm:
         arena_target(c,origin+{-22,0,-22},TEAM_RUNNER)
         for i in 0..<count {arena_zombie(c,arena_drone(c,origin+{f32(i%8)*4-14,4+f32((i/8)%3)*3,8+f32(i/24)*3}),30)}
@@ -910,7 +932,6 @@ arena_agents :: proc(c:core.Commands,kind:Arena_Kind,origin:mm.Vec3,count:int) {
             core.commands_add(c,e,agent)
             core.commands_add(c,e,Arena_Patrol{points=points,next=i32(i%4)})
             core.commands_add(c,e,behavior.Mind_Agent{mind=behavior.mind_name("guard")})
-            core.commands_add_default(c,e,behavior.Mind_Presentation)
         }
     case .Senses:
         // Bells ring in turn behind the walls; listeners that barely see go to what they hear and forget it.
@@ -942,11 +963,7 @@ arena_drone :: proc(c:core.Commands,position:mm.Vec3) -> core.Entity {
     core.commands_add_default(c,e,phys.Walk)
     core.commands_add(c,e,phys.Fly{speed=5,acceleration=20})
     core.commands_add_default(c,e,nav.Nav_Agent)
-    look:=core.commands_create(c)
-    core.commands_add(c,look,core.Transform{{0,0.4,0},1,{0.5,0.4,0.5}})
-    core.commands_add(c,look,core.Parent{entity=e})
-    core.commands_add(c,look,render.Mesh_Renderer{shape=.Capsule})
-    core.commands_add(c,look,render.Tint{color={0.95,0.6,0.2,1}})
+    arena_shown(c,e,{{0,0.4,0},1,{0.5,0.4,0.5}},{0.95,0.6,0.2,1})
     return e
 }
 

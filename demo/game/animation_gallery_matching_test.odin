@@ -41,8 +41,8 @@ gallery_mirai_matching_plays_idle_walk_and_jog_by_the_speed_it_is_asked :: proc(
     time:=core.Time{dt=1.0/60,playing=true}
     tick :: proc(t:^testing.T,f:^Animation_Input_Fixture,gallery:^core.Table(Animation_Gallery),graphs:^anim.Character_Assets,progress:^core.Table(anim.Animation_Progress),panel:^Gallery_UI,problems:^core.Problems,time:core.Time) -> (anim.Animation_Match,bool) {
         ui_events:gui.UI_Events
-        gallery_animate(core.read(gallery),&f.animations,core.read(&f.worlds),time,&f.requests,&f.modifier_requests,nil,{},nil,{&ui_events},core.read(&f.names),{panel},{},nil)
-        anim.animation_sample(core.read(&f.animations),progress,core.read(&f.attachments),&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.meshes),core.read(&f.sources),&f.requests,&f.events,&f.modifier_requests,&f.modifiers,&f.playback,graphs,&f.skeletons,&f.app,time,{},problems,nil,nil,nil,nil,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
+        gallery_animate(core.read(gallery),&f.animations,core.read(&f.worlds),time,&f.requests,core.read(progress),{},nil,{&ui_events},core.read(&f.names),{panel},{},nil)
+        anim.animation_sample(core.read(&f.animations),progress,&f.played,core.read(&f.attachments),&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.meshes),core.read(&f.sources),core.read(&f.remotes),&f.requests,&f.events,&f.modifiers,&f.playback,graphs,&f.skeletons,&f.app,time,{},problems,&f.actions,&f.motion,&f.content_sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
         return anim.animation_match(&f.playback,core.entity_at(gallery,0))
     }
     // The rig binds its skeleton in its first ticks; then its database says how fast each clip walks.

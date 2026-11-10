@@ -39,14 +39,16 @@ Animation_Input_Fixture :: struct {
     characters:core.Table(phys.Character),rigids:core.Table(phys.Rigid_Body),colliders:core.Table(phys.Collider),joints:core.Table(phys.Joint),meshes:core.Table(render.Mesh_Renderer),
     body_states:core.Table(core.Motion),replicas:core.Table(core.Pose_Target),character_states:core.Table(phys.Character_State),joint_states:core.Table(phys.Joint_State),
     physics:phys.Physics_State,settings:phys.Physics_Settings,body_requests:phys.Body_Requests,body_events:phys.Physics_Events,collider_meshes:phys.Collider_Meshes,problems:core.Problems,
-    animations:core.Table(anim.Animation),targets:core.Table(anim.Animation_Target),roots:core.Table(anim.Root_Motion),requests:anim.Animation_Requests,events:anim.Animation_Events,playback:anim.Playback,skeletons:anim.Skeleton_Assets,
-    attachments:core.Table(anim.Bone_Attachment),sources:core.Table(anim.Pose_Source),modifiers:anim.Modifier_Runtime,modifier_requests:anim.Modifier_Requests,
+    animations:core.Table(anim.Animation),targets:core.Table(anim.Animation_Target),played:core.Table(anim.Animation_Played),requests:anim.Animation_Requests,events:anim.Animation_Events,playback:anim.Playback,skeletons:anim.Skeleton_Assets,
+    attachments:core.Table(anim.Bone_Attachment),sources:core.Table(anim.Pose_Source),modifiers:anim.Modifier_Runtime,
+    actions:anim.Action_Runtime,motion:anim.Motion_Runtime,content_sources:anim.Source_Assets,
 }
 
 @(private)
 animation_input_fixture_destroy :: proc(f:^Animation_Input_Fixture) {
     host.app_content_destroy(&f.app);phys.state_destroy(&f.physics);phys.collider_meshes_destroy(&f.collider_meshes);host.assets_destroy(&f.assets)
     anim.playback_free(&f.playback);anim.skeleton_assets_free(&f.skeletons)
+    anim.actions_runtime_free(&f.actions);anim.motion_runtime_free(&f.motion);anim.source_assets_free(&f.content_sources)
     core.value_free(f,type_info_of(Animation_Input_Fixture))
 }
 
@@ -80,15 +82,15 @@ animation_motor_drives_the_sampled_root_motion_and_leaves_other_bodies_as_they_w
     source.roots=make([]asset.Animation_Root,1);base.text_set(source.roots[0].bone[:],"hip");source.roots[0].translation=true
     content:=host.app_content(&f.app);append(&content.animations,source);content.index[source.id]={kind=.Animation,index=0}
     animation:=anim.ANIMATION_DEFAULT;animation.asset=source.id;animation.root_motion=.Extract;animation.loop,animation.playing=false,false;base.text_set(animation.clip[:],"advance");core.add(&f.animations,motor,animation)
-    core.add(&f.roots,motor,{bone=anim.bone_ref("hip"),translation=true,in_place=true})
-    core.table_settle(&f.inputs,&f.entities);core.table_settle(&f.characters,&f.entities);core.table_settle(&f.walks,&f.entities);core.table_settle(&f.transforms,&f.entities);core.table_settle(&f.parents,&f.entities);core.table_settle(&f.names,&f.entities);core.table_settle(&f.motors,&f.entities);core.table_settle(&f.colliders,&f.entities);core.table_settle(&f.animations,&f.entities);core.table_settle(&f.roots,&f.entities)
+    core.table_settle(&f.inputs,&f.entities);core.table_settle(&f.characters,&f.entities);core.table_settle(&f.walks,&f.entities);core.table_settle(&f.transforms,&f.entities);core.table_settle(&f.parents,&f.entities);core.table_settle(&f.names,&f.entities);core.table_settle(&f.motors,&f.entities);core.table_settle(&f.colliders,&f.entities);core.table_settle(&f.animations,&f.entities)
     time:=core.Time{dt=1.0/60,playing=true}
     for i in 0..<16 {time.tick=u64(i);animation_input_physics(&f,time)}
     core.edit(&f.inputs,controlled).move={.2,0,0}
     anim.animation_clip(core.edit(&f.animations,motor),"advance",fade=0,loop=false)
+    anim.animation_command(&f.requests,motor,.Play)
     progress:core.Table(anim.Animation_Progress);defer core.table_destroy(&progress)
     characters:anim.Character_Assets;defer anim.character_assets_free(&characters)
-    anim.animation_sample(core.read(&f.animations),&progress,core.read(&f.attachments),&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.meshes),core.read(&f.sources),&f.requests,&f.events,&f.modifier_requests,&f.modifiers,&f.playback,&characters,&f.skeletons,&f.app,time,{},nil,nil,nil,nil,nil,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
+    anim.animation_sample(core.read(&f.animations),&progress,&f.played,core.read(&f.attachments),&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.meshes),core.read(&f.sources),core.read(&f.remotes),&f.requests,&f.events,&f.modifiers,&f.playback,&characters,&f.skeletons,&f.app,time,{},nil,&f.actions,&f.motion,&f.content_sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
     delta,present:=anim.animation_root_delta(&f.playback,motor)
     testing.expect(t,present && abs(delta.translation.x-time.dt)<1e-5 && abs(f.playback.states[0].local[1].position.x-time.dt)<1e-5)
     before_control,_:=core.get(&f.transforms,controlled);before_motor,_:=core.get(&f.transforms,motor)
