@@ -182,6 +182,11 @@ With `backdrop_blur` the layer takes a filtered copy of its parent's background.
   [host](../../mirai-core/references/host.md#bridge-with-ui).
 - The text measures (`text_width`, `text_line`, `text_lines`, `text_index_at`…) are in layout units
   with the kerning and do not depend on the density. A text has no line limit.
+- **One word breaker.** Every text that wraps at words walks them with `layout_walk` and breaks
+  where the layout breaks a paragraph (`layout_break_next`): a word goes to the next line unless it
+  fits with the space after it, and one wider than the line takes a line of its own. `text_line`
+  is that break for a text with a style; rich text and Markdown fill their lines with the same
+  builder (`Flow`), which keeps on one line what no space parts.
 - **Lines like CSS.** `TEXT_LINE` (Inter's ascent plus descent) is the `normal` line height and the
   box of a line; `text_leading` centers it in a height with half the excess above, like CSS. A row
   centers its text this way, `Text_Style.line_height` distributes the excess of each line and a
@@ -237,8 +242,8 @@ All take the context, an id and their state by parameter.
     until the frame is drawn. What it does not recognize (HTML, tables) stays as text; italic has no
     face and its marks are removed. Bold and italic open and close on the same line.
   - Words are split as the layout splits a paragraph; one longer than the line is cut where the line
-    ends, and fenced code is cut by characters, so the height does not depend on where the spaces
-    fall. What does not fit in its buffers passes to the next line or word, never lost.
+    ends (`Flow.cut`), and fenced code is cut by characters, so the height does not depend on where
+    the spaces fall. A line that holds more pieces than its buffer goes on in the next, never lost.
   - Each link goes through `Markdown_Style.resolve`, which is called when measuring and when
     building and must give the same answer for the same destination in a frame. A `pill` link is not
     split: it passes whole to the next line and, if it is wider than a line, it is cut to it; a

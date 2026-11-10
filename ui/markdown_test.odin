@@ -250,6 +250,36 @@ markdown_wraps_a_long_line_of_code_at_characters :: proc(t:^testing.T) {
 }
 
 @(test)
+markdown_breaks_lines_at_spaces_and_inside_a_word_wider_than_the_line :: proc(t:^testing.T) {
+    ctx:Context
+    owner:Font
+    if !test_markdown_context(t,&ctx,&owner) {return}
+    defer {context_destroy(&ctx);font_destroy(&owner)}
+    body:=ctx.theme.font_small
+    line:=math.floor(body*PARAGRAPH_LINE)
+    width :: proc(ctx:^Context,text:string) -> f32 {return text_width(&ctx.font,text,ctx.theme.font_small)}
+    // fits: the widest text that still fits its line; first: what the first line then shows.
+    Case :: struct {text,fits,first:string,lines:f32}
+    cases:=[]Case{
+        {"one two three","one two three","one two three",1},
+        {"one two three","one two thre","one two",2},
+        // What no space parts moves to the next line together, whatever its styles.
+        {"one two**bold**.","one twobold","one",2},
+        {"one two[link](target).","one twolink","one",2},
+        // A word wider than the line goes on in the next one.
+        {"aaaaaaaaaaaaaaaaaaaa","aaaaaaaaaa","aaaaaaaaaa",2},
+        {"x aaaaaaaaaaaaaaaaaaaa","aaaaaaaaaa","x",3},
+    }
+    input:=test_input(800,600)
+    for c in cases {
+        s:=Test_Markdown{text=c.text,width=width(&ctx,c.fits)+0.5}
+        testing.expectf(t,markdown_height(&ctx,s.text,s.width)==c.lines*line,"%q in the width of %q: %v lines",c.text,c.fits,markdown_height(&ctx,s.text,s.width)/line)
+        test_frame(&ctx,&input,test_markdown_build,&s)
+        testing.expectf(t,test_markdown_paint(&ctx,c.first)!=nil,"%q in the width of %q starts with %q",c.text,c.fits,c.first)
+    }
+}
+
+@(test)
 markdown_copies_the_code_of_a_block_under_the_pointer :: proc(t:^testing.T) {
     ctx:Context
     owner:Font

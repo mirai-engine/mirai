@@ -382,6 +382,61 @@ paragraph_height_matches :: proc(t:^testing.T,desc:Context_Desc) {
 }
 
 @(test)
+text_breaks_into_the_same_lines_wherever_it_is_shown :: proc(t:^testing.T) {
+    ctx:Context
+    desc:=TEST_FONT
+    desc.max_elements=8192
+    testing.expect(t,context_init(&ctx,desc))
+    defer context_destroy(&ctx)
+    // markdown: the text is also a paragraph of Markdown, which trims it and joins its lines.
+    Case :: struct {text:string,markdown:bool}
+    Shown :: struct {text:string,width:f32}
+    Test_Lines :: struct {shown:[64]Shown,count:int,size:f32}
+    cases:=[]Case{
+        {"One line",true},
+        {"The agent changed the material of the cube and moved the sphere half a metre to the right.",true},
+        {"Two  spaces between  words that wrap  at different   places",true},
+        {"Averyveryverylongwordthatdoesnotfitinanynarrowline next to short ones",true},
+        {"a b c d e f g h i j k l m n o p q r s t u v w x y z",true},
+        {" ",false},
+        {"Ends with a space ",false},
+        {"  starts with two spaces",false},
+        {"A line\nand another\n\nafter an empty one\n",false},
+        {"spaces before a break   \nand after it",false},
+    }
+    widths:=[]f32{40,73.5,120,181,260,600}
+    s:Test_Lines
+    s.size=ctx.theme.font_small
+    for c in cases {
+        m:=layout_measure(&ctx.layout,&ctx.font,c.text,s.size,0)
+        for width in widths {
+            // A paragraph is no narrower than its widest word and no wider than its text.
+            s.shown[s.count]={c.text,max(m.min_width,min(m.width,width))}
+            s.count+=1
+        }
+    }
+    build :: proc(ctx:^Context,user:rawptr) {
+        s:=cast(^Test_Lines)user
+        if panel(ctx,id(ctx,"panel"),{width=fixed(700),height=FIT,offset={0,0}}) {
+            for c,i in s.shown[:s.count] {rich_text(ctx,id(ctx,"rich",i+1),c.text,{size=s.size},{width=fixed(c.width)})}
+        }
+    }
+    input:=test_input(800,20000)
+    test_frame(&ctx,&input,build,&s)
+    test_frame(&ctx,&input,build,&s)
+    testing.expect_value(t,dropped_total(&ctx.stats),u32(0))
+    for c,i in s.shown[:s.count] {
+        lines:=int(paragraph_height(&ctx,c.text,c.width,s.size)/paragraph_line(s.size,0)+0.5)
+        testing.expectf(t,text_line_count(&ctx.font,c.text,s.size,c.width,.Words)==lines,"%q at %v: a text takes %d lines, a paragraph %d",c.text,c.width,text_line_count(&ctx.font,c.text,s.size,c.width,.Words),lines)
+        rich:=int(test_rect(t,&ctx,id(&ctx,"rich",i+1)).h/(s.size*TEXT_LINE)+0.5)
+        testing.expectf(t,rich==lines,"%q at %v: a rich text takes %d lines, a paragraph %d",c.text,c.width,rich,lines)
+        if !cases[i/len(widths)].markdown {continue}
+        marked:=int(markdown_height(&ctx,c.text,c.width,{size=s.size})/paragraph_line(s.size,0)+0.5)
+        testing.expectf(t,marked==lines,"%q at %v: Markdown takes %d lines, a paragraph %d",c.text,c.width,marked,lines)
+    }
+}
+
+@(test)
 a_scaled_button_inside_a_clipped_box_takes_the_pointer :: proc(t:^testing.T) {
     ctx:Context
     testing.expect(t,context_init(&ctx,TEST_SMALL))

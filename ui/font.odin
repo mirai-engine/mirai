@@ -766,25 +766,22 @@ text_leading :: proc "contextless" (size,height:f32) -> f32 {
 }
 
 // The next line of text no wider than width: broken at a newline, or with
-// Words at the last space that fits. A word wider than the line is not split.
+// Words where the layout breaks a paragraph (layout_break_next). A line keeps
+// the spaces before its newline and none of those it wraps at.
 text_line :: proc "contextless" (font:^Font,text:string,size,width:f32,wrap:Text_Wrap,f:int=0) -> (line,rest:string,line_width:f32) {
-    x:f32
-    space,space_end:=-1,-1
-    space_width:f32
-    pen:=text_pen(font,size,f)
-    for character,i in text {
-        if character=='\n' {return text[:i],text[i+1:],x}
-        kern,advance:=text_pen_step(&pen,character)
-        if wrap==.Words && character!=' ' && x+kern+advance>width+0.01 && space>=0 {
-            return text[:space],text[space_end:],space_width
-        }
-        if character==' ' {
-            if i==0 || text[i-1]!=' ' {space=i;space_width=x}
-            space_end=i+1
-        }
-        x+=kern+advance
+    space:=text_width(font," ",size,f)
+    b:=layout_break(font,text,size,f,space,width if wrap==.Words else max(f32))
+    start,length,taken,_:=layout_break_next(&b)
+    end:=int(start+length)
+    switch {
+    case end+1<len(text) && text[end]==' ' && text[end+1]=='\n':
+        end+=1
+        taken+=space
+    case b.more:
+        for end>int(start) && text[end-1]==' ' {end-=1;taken-=space}
     }
-    return text,"",x
+    if b.more {rest=text[b.start:]}
+    return text[start:end],rest,taken
 }
 
 // Walks the lines of a wrapped text in order without storing them: each call
@@ -838,15 +835,19 @@ ELLIPSIS :: "…"
 // The longest prefix of one line of text that leaves room for the ellipsis
 // inside width.
 text_cut :: proc "contextless" (font:^Font,text:string,size,width:f32,f:int=0) -> string {
-    room:=width-text_width(font,ELLIPSIS,size,f)
-    x:f32
+    cut,_:=text_prefix(font,text,size,width-text_width(font,ELLIPSIS,size,f),f)
+    return text[:cut]
+}
+
+// The longest start of one line of text no wider than width: its bytes and its width.
+text_prefix :: proc "contextless" (font:^Font,text:string,size,width:f32,f:int=0) -> (cut:int,cut_width:f32) {
     pen:=text_pen(font,size,f)
     for character,i in text {
         kern,advance:=text_pen_step(&pen,character)
-        if x+kern+advance>room+0.01 {return text[:i]}
-        x+=kern+advance
+        if cut_width+kern+advance>width+0.01 {return i,cut_width}
+        cut_width+=kern+advance
     }
-    return text
+    return len(text),cut_width
 }
 
 // Caret position nearest to x in a line that starts at 0. cell: the
