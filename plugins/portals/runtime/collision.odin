@@ -156,7 +156,8 @@ portals_collision :: proc(
         if !has_place || !has_exit || opening_count==len(openings) {continue}
         opening:=Opening{entity=e,entrance=placed.transform,exit=exit.transform}
         wall,has_wall:=core.get(worlds,portal.wall)
-        frame,framed:=core.get(frames,e)
+        held,framed:=core.get(frames,e)
+        frame:=held // the one the portal has when this ends
         if portal.wall!=core.NONE && has_wall && phys.collider_ready(physics,portal.wall) {
             collider,_:=core.get(colliders,portal.wall)
             key:=frame_key(placed.transform,wall.transform,collider)
