@@ -51,7 +51,6 @@ API_HAND_WRITTEN :: [?]struct{file,pattern:string,count:int}{
     {"editor/api_play_wait.odin","writes_result=true",2},
     {"editor/api_profile.odin","writes_result=true",8},
     {"editor/api_programs.odin","writes_result=true",4},
-    {"editor/api_scene.odin","writes_result=true",3},
     {"editor/api_viewport.odin","writes_result=true",2},
     {"editor/input_settings.odin","writes_result=true",2},
     {"plugins/playtest/editor/explore.odin","writes_result=true",1},

@@ -85,14 +85,14 @@ api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: p
     version:=world.config.version
     api_entity_write(&session,w,&out,entity,true,scratch,true)
     text:=string(serial.writer_bytes(&out))
-    testing.expect(t,strings.contains(text,`"Inspect_Config":{"speed": 2}`))
+    testing.expect(t,strings.contains(text,`"Inspect_Config": {"speed": 2}`))
     testing.expect(t,!strings.contains(text,"compiled") && !strings.contains(text,"diagnostics") && !strings.contains(text,"Inspect_Runtime"))
     out.count=0
     api_entity_write(&session,w,&out,entity,true,scratch,true,true)
     text=string(serial.writer_bytes(&out))
     testing.expect(t,strings.contains(text,`"diagnostics": 13`))
     testing.expect(t,strings.contains(text,`"compiled": [8, 9]`))
-    testing.expect(t,strings.contains(text,`"Inspect_Runtime":{"ticks": 21}`))
+    testing.expect(t,strings.contains(text,`"Inspect_Runtime": {"ticks": 21}`))
     testing.expect_value(t,world.config.version,version)
     config,_:=core.get(&world.config,entity)
     testing.expect_value(t,config.diagnostics,u32(13))
@@ -112,10 +112,10 @@ api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: p
     session.mode=.Play
     session.runs[0]={world=&running}
     params:=Api_Inspect_Params{include_runtime=true,limit=1}
-    method:=api.Method{params_id=Api_Inspect_Params}
+    method:=api.Method{params_id=Api_Inspect_Params,result_id=Api_Inspect_Result}
     selections:=[]struct{raw,has,lacks,fails:string}{
         {`{"components":true}`,`"ticks": 42`,"",""},
-        {`{}`,`"components":["`,`"ticks"`,""},
+        {`{}`,`"components": ["`,`"ticks"`,""},
         {`{"components":false}`,"","","components must be true"},
         {`{"components":["inspect config"]}`,`"speed"`,`"ticks"`,""},
         {`{"components":"Inspect_Runtime"}`,`"ticks": 42`,`"speed"`,""},
@@ -125,9 +125,7 @@ api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: p
     }
     for selection in selections {
         call:=api.Call{method=&method,raw=selection.raw,params=&params,out=&out,allocator=context.temp_allocator}
-        out.count=0
-        api_play_inspect(&session,&call)
-        text:=string(serial.writer_bytes(&out))
+        text:=api_inspect_text(&session,&call,true)
         if selection.fails!="" {
             testing.expectf(t,call.failed && strings.contains(call.error.message,selection.fails),"%s: %s",selection.raw,call.error.message)
             continue
@@ -137,16 +135,12 @@ api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: p
         testing.expectf(t,selection.lacks=="" || !strings.contains(text,selection.lacks),"%s: %s",selection.raw,text)
     }
     call:=api.Call{method=&method,raw=`{"components":true}`,params=&params,out=&out,allocator=context.temp_allocator}
-    out.count=0
-    api_play_inspect(&session,&call)
+    text=api_inspect_text(&session,&call,true)
     testing.expect(t,!call.failed,call.error.message)
-    text=string(serial.writer_bytes(&out))
-    testing.expect(t,strings.contains(text,`"position":[8,0,0]`),text)
+    testing.expect(t,strings.contains(text,`"position": [8, 0, 0]`),text)
     testing.expect(t,strings.contains(text,`"diagnostics": 99`) && strings.contains(text,`"ticks": 42`))
-    out.count=0
-    api_scene_inspect(&session,&call)
-    text=string(serial.writer_bytes(&out))
-    testing.expect(t,strings.contains(text,`"position":[0,0,0]`))
+    text=api_inspect_text(&session,&call,false)
+    testing.expect(t,strings.contains(text,`"position": [0, 0, 0]`))
     testing.expect(t,strings.contains(text,`"diagnostics": 13`) && strings.contains(text,`"ticks": 21`))
     testing.expect_value(t,world.config.version,version)
     config,_=core.get(&world.config,entity)
@@ -230,10 +224,10 @@ inspect_filters_by_name_and_component_and_summarizes_without_values :: proc(t:^t
     testing.expect_value(t,names(result),"Main Camera")
     error,result,text=inspect(state,&out,"scene.inspect",`{"component":"Camera"}`)
     testing.expect_value(t,names(result),"Main Camera")
-    testing.expectf(t,strings.contains(text,`"parent":"0x0000000000000001","position":[`) && strings.contains(text,`"components":["Camera"]}`),"the place and the names of the components: %s",text)
+    testing.expectf(t,strings.contains(text,`"parent": "0x0000000000000001", "position": [`) && strings.contains(text,`"components": ["Camera"]}`),"the place and the names of the components: %s",text)
     testing.expectf(t,!strings.contains(text,"near"),"without the values: %s",text)
     _,result,text=inspect(state,&out,"scene.inspect",`{"component":"Camera","components":true}`)
-    testing.expect(t,strings.contains(text,`"components":{"Camera":{`) && strings.contains(text,`"near"`),"the values when it asks for them")
+    testing.expect(t,strings.contains(text,`"components": {"Camera": {`) && strings.contains(text,`"near"`),"the values when it asks for them")
     error,_,text=inspect(state,&out,"scene.inspect",`{"component":"Light"}`)
     testing.expect_value(t,error.code,api.INVALID_PARAMS)
     testing.expect(t,strings.contains(error.message,"component.list"),"the error says where the components are")
@@ -305,11 +299,22 @@ play_inspection_names_the_references_of_spawned_entities_by_handle :: proc(t:^te
     out.count=0
     api_entity_write(&session,w,&out,camera,false,scratch,true)
     text=string(serial.writer_bytes(&out))
-    testing.expectf(t,strings.contains(text,fmt.tprintf(`"parent":"0x%016x"`,u64(root))),"the parent is the handle: %s",text)
+    testing.expectf(t,strings.contains(text,fmt.tprintf(`"parent": "0x%016x"`,u64(root))),"the parent is the handle: %s",text)
     core.add(&world.ids,root,core.Id{5});core.add(&world.ids,camera,core.Id{6})
     core.settle(&info,&world,nil)
     out.count=0
     api_entity_write(&session,w,&out,root,true,scratch,false)
     text=string(serial.writer_bytes(&out))
     testing.expectf(t,strings.contains(text,`"camera": "0x0000000000000006"`),"an edited world shows Ids: %s",text)
+}
+
+// The answer of scene.inspect, or with play of play.inspect, as the API writes it.
+@(private)
+api_inspect_text :: proc(s:^Session,call:^api.Call,play:bool) -> string {
+    result:Api_Inspect_Result
+    call.result=&result
+    defer call.result=nil
+    if play {api_play_inspect(s,call)} else {api_scene_inspect(s,call)}
+    text,_:=serial.text_encode(result,.Line,context.temp_allocator,sparse=true)
+    return string(text)
 }

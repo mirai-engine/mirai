@@ -243,11 +243,11 @@ the_game_that_plays_is_changed_and_read_by_its_storages_and_conditions :: proc(t
     // Storages of the game, by name.
     error,text:=probe_call(f,"play.inspect",`{"storage":"Probe_*","limit":1}`)
     testing.expect_value(t,error.code,0)
-    testing.expect(t,strings.contains(text,`"storages":{"Probe_Score":{"points": 0, "state": "Waiting", "seen": {"version": 0, "gone": 0}}`),text)
-    testing.expect(t,strings.contains(text,`"entities":[]`) && strings.contains(text,`"matched":0`) && strings.contains(text,`"left_out"`),"a storage named answers no entities")
+    testing.expect(t,strings.contains(text,`"storages": {"Probe_Score": {"points": 0, "state": "Waiting", "seen": {"version": 0, "gone": 0}}`),text)
+    testing.expect(t,strings.contains(text,`"entities": []`) && strings.contains(text,`"matched": 0`) && strings.contains(text,`"left_out"`),"a storage named answers no entities")
     error,text=probe_call(f,"play.inspect",`{"storage":"Probe_*","name":"Hero"}`)
     testing.expect_value(t,error.code,0)
-    testing.expect(t,strings.contains(text,`"name":"Hero"`) && strings.contains(text,`"storages"`),"entities named too keep them")
+    testing.expect(t,strings.contains(text,`"name": "Hero"`) && strings.contains(text,`"storages"`),"entities named too keep them")
     error,_=probe_call(f,"play.inspect",`{"storage":"Score"}`)
     testing.expect_value(t,error.code,api.INVALID_PARAMS)
     // A component and a teleport, without the document.

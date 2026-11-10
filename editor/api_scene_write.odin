@@ -345,19 +345,15 @@ api_inspect_tree :: proc(s:^Session,call:^api.Call,w:core.World_Ref,params:^Api_
     a:Api_Write
     target,ready:=api_write_target(s,call,&a)
     if !ready {return}
-    out:=call.out
-    serial.text_write_raw(out,`{"path":`);serial.text_write_string(out,document_path(s.document))
-    api.write_key(out,"dirty");api.write_flag(out,document_dirty(s))
-    api.write_key(out,"playing");api.write_flag(out,s.mode!=.Edit)
-    api.write_key(out,"total");serial.text_write_int(out,i64(core.world_entities(w).alive))
-    api.write_key(out,"offset");serial.write_u8(out,'0')
-    api.write_key(out,"entities");serial.write_u8(out,'[')
-    author.scene_entity_write(&target,out,author.Node(root),values.only if values.listed else target.tables)
-    serial.write_u8(out,']')
-    api.write_key(out,"shown");serial.text_write_int(out,i64(len(part)))
-    api.write_key(out,"matched");serial.text_write_int(out,i64(len(part)))
-    api.write_key(out,"omitted");serial.write_u8(out,'0')
-    serial.write_u8(out,'}')
+    tree:serial.Writer
+    serial.writer_init(&tree,0,call.allocator)
+    serial.write_u8(&tree,'[')
+    author.scene_entity_write(&target,&tree,author.Node(root),values.only if values.listed else target.tables)
+    serial.write_u8(&tree,']')
+    r:=api.call_result(call,Api_Inspect_Result)
+    base.text_set(r.path[:],document_path(s.document))
+    r.dirty,r.playing,r.total=document_dirty(s),s.mode!=.Edit,core.world_entities(w).alive
+    r.shown,r.matched,r.tree=len(part),len(part),serial.Json(string(serial.writer_bytes(&tree)))
 }
 
 // The shape of the params of scene.write.

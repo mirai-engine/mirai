@@ -61,19 +61,16 @@ write_scene_made :: proc(f:^Prefab_Fixture,raw:string) -> (result:Write_Answer,c
 write_tree :: proc(t:^testing.T,f:^Prefab_Fixture,root:base.Entity_Id,components:=true) -> (tree:json.Object,entities:string) {
     params:=Api_Inspect_Params{limit=API_INSPECT_DEFAULT}
     copy(params.root[:],fmt.tprintf("0x%016x",u64(root)))
-    method:=api.Method{params_id=Api_Inspect_Params}
-    out:serial.Writer
-    serial.writer_init(&out,0,context.temp_allocator)
-    call:=api.Call{method=&method,raw=components?"{}":`{"components":[]}`,params=&params,out=&out,allocator=context.temp_allocator}
-    api_scene_inspect(&f.s,&call)
+    method:=api.Method{params_id=Api_Inspect_Params,result_id=Api_Inspect_Result}
+    call:=api.Call{method=&method,raw=components?"{}":`{"components":[]}`,params=&params,allocator=context.temp_allocator}
+    text:=api_inspect_text(&f.s,&call,false)
     if !testing.expect(t,!call.failed,call.error.message) {return}
-    text:=string(serial.writer_bytes(&out))
     api_result_shape_expect(t,text,Api_Inspect_Result)
     value,error:=json.parse_string(text,allocator=context.temp_allocator)
     if error!=nil {return}
-    start:=strings.index(text,`"entities":`)+len(`"entities":`)
-    tree=value.(json.Object)["entities"].(json.Array)[0].(json.Object)
-    return tree,text[start:strings.last_index(text,`,"shown":`)]
+    start:=strings.index(text,`"tree": `)+len(`"tree": `)
+    tree=value.(json.Object)["tree"].(json.Array)[0].(json.Object)
+    return tree,text[start:strings.last_index(text,`}`)]
 }
 
 @(private="file")

@@ -38,7 +38,8 @@ A widget is a file of its own, named in `use` by its path under `assets/`. Writi
 ## A scene
 
 The entities at the top of the scene, nesting by `children`. It is the document `scene.write` of
-the editor takes and `scene.inspect` with `root` gives: one grammar, with or without an editor.
+the editor takes and the `tree` of `scene.inspect` with `root` gives:
+one grammar, with or without an editor.
 
 ```json
 {"entities": [
