@@ -103,7 +103,7 @@ WORLD_WIDGET_DEFAULT :: World_Widget{size={200,100},scale=0.01,facing=.Billboard
 Language :: enum u8 {English,Russian,Spanish,Latam_Spanish,German,French,Portuguese,Italian}
 Languages :: bit_set[Language;u16]
 
-// The code of each language: what a translation of a .ui names.
+// The code of each language: what a .strings names it by.
 LANGUAGE_CODES :: [Language]string{
     .English="en",.Russian="ru",.Spanish="es",.Latam_Spanish="es-419",
     .German="de",.French="fr",.Portuguese="pt-BR",.Italian="it",
@@ -113,8 +113,8 @@ LANGUAGE_CODES :: [Language]string{
 @(storage,setting)
 UI_Settings :: struct {
     reference:[2]f32 `mirai:"min=0"`, // the size in points the interfaces are designed for: they scale to fit the window, or the part of a player; zero: one unit per point
-    languages:Languages, // the languages the game is in: a localized text has a translation for each
-    source:Language,     // the one the texts of the interfaces are written in
+    languages:Languages, // the languages the game is in: a key of its .strings has a text for each
+    source:Language,     // the one its texts are written in: the first of its .strings, what a key shows where another lacks it
     prompts:base.Asset_Id, // the images of the prompts (.prompts); none: they are drawn
     // Images of inputs that win over those of the pack: Project Settings > UI
     // shows them with the inputs the game binds.

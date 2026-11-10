@@ -96,9 +96,9 @@ Interface_Demo :: struct {
     choices:[INTERFACE_CHOICES]Interface_Choice `mirai:"transient,readonly"`,
     choice_count:i32 `mirai:"transient,readonly"`,
     goes_on:bool `mirai:"transient,hidden"`, // a line without answers: the dialogue shows Continue
-    // The generations of the tables and the language the texts shown are of:
-    // they are made again when one changes.
-    shown:[4]u64 `mirai:"transient,hidden"`,
+    // The generations of the tables and of the texts and the language the
+    // texts shown are of: they are made again when one changes.
+    shown:[5]u64 `mirai:"transient,hidden"`,
 }
 
 // What the interfaces asked for, the actions that open them and the time
@@ -108,7 +108,7 @@ interface_demo :: proc(
     demos:^core.Table(Interface_Demo),screens:^core.Table(gui.UI_Screen),hidden:^core.Table(render.Hidden),
     names:core.Read(core.Name),ui_events:core.Ref(gui.UI_Events),actions:inp.Input_Of(Action),time:core.Time,
     ui_settings:core.Ref(gui.UI_Settings),preferences:^gui.UI_Preferences,
-    items:core.Records(Item),lines:core.Records(Dialogue_Line),answers:core.Records(Dialogue_Choice),problems:^core.Problems,
+    items:core.Records(Item),lines:core.Records(Dialogue_Line),answers:core.Records(Dialogue_Choice),texts:^core.Texts,problems:^core.Problems,
 ) {
     holder,found:=core.sole(demos)
     if !found {return}
@@ -194,25 +194,25 @@ interface_demo :: proc(
     // The HUD shows the style chosen.
     if screen:=core.edit(screens,hud);screen!=nil {base.text_set(screen.variant[:],styles[clamp(int(demo.style),0,len(styles)-1)])}
 
-    // The texts of the rows, made again when a table loads again, the
-    // language changes or the conversation moves.
+    // The texts of the rows, made again when a table or the texts load again,
+    // the language changes or the conversation moves.
     language:=gui.ui_language(ui_settings.ptr,preferences)
-    loaded:=[4]u64{u64(core.records_generation(items)),u64(core.records_generation(lines)),u64(core.records_generation(answers)),language}
+    loaded:=[5]u64{u64(core.records_generation(items)),u64(core.records_generation(lines)),u64(core.records_generation(answers)),u64(texts.generation),language}
     if demo.shown==loaded {return}
     demo.shown=loaded
-    for &slot in demo.items {interface_item_show(&slot,items,language,problems,holder)}
-    interface_item_show(&demo.equipped,items,language,problems,holder)
-    interface_dialogue_show(demo,lines,answers,language,problems,holder)
+    for &slot in demo.items {interface_item_show(&slot,items,texts,language,problems,holder)}
+    interface_item_show(&demo.equipped,items,texts,language,problems,holder)
+    interface_dialogue_show(demo,lines,answers,texts,language,problems,holder)
 }
 
 // What a slot shows of its row.
 @(private)
-interface_item_show :: proc(slot:^Interface_Item,items:core.Records(Item),language:u64,problems:^core.Problems,holder:core.Entity) {
+interface_item_show :: proc(slot:^Interface_Item,items:core.Records(Item),texts:^core.Texts,language:u64,problems:^core.Problems,holder:core.Entity) {
     slot.name,slot.icon,slot.rarity={},{},{}
     if slot.item=={} {return}
     row,found:=core.record(items,slot.item,problems,holder)
     if !found {return}
-    if name,ok:=core.record_text(items,row.title,language);ok {base.text_set(slot.name[:],name)}
+    if name,ok:=core.text(texts,row.title,language);ok {base.text_set(slot.name[:],name)}
     slot.icon=row.icon
     rarities:=[Item_Rarity]string{.Common="",.Rare="rare",.Epic="epic"}
     base.text_set(slot.rarity[:],rarities[row.rarity])
@@ -221,20 +221,20 @@ interface_item_show :: proc(slot:^Interface_Item,items:core.Records(Item),langua
 // What the dialogue shows of the line the conversation is at: who says it,
 // what, and the answers the flags allow, in the order of their rows.
 @(private)
-interface_dialogue_show :: proc(demo:^Interface_Demo,lines:core.Records(Dialogue_Line),answers:core.Records(Dialogue_Choice),language:u64,problems:^core.Problems,holder:core.Entity) {
+interface_dialogue_show :: proc(demo:^Interface_Demo,lines:core.Records(Dialogue_Line),answers:core.Records(Dialogue_Choice),texts:^core.Texts,language:u64,problems:^core.Problems,holder:core.Entity) {
     demo.speaker,demo.said,demo.choice_count,demo.goes_on={},{},0,false
     if demo.line=={} {return}
     line,found:=core.record(lines,demo.line,problems,holder)
     if !found {return}
-    if text,ok:=core.record_text(lines,line.speaker,language);ok {base.text_set(demo.speaker[:],text)}
-    if text,ok:=core.record_text(lines,line.text,language);ok {base.text_set(demo.said[:],text)}
+    if text,ok:=core.text(texts,line.speaker,language);ok {base.text_set(demo.speaker[:],text)}
+    if text,ok:=core.text(texts,line.text,language);ok {base.text_set(demo.said[:],text)}
     for i in 0..<core.records_count(answers) {
         answer,ref:=core.records_at(answers,i)
         if answer.line!=demo.line || !interface_offered(demo,answer) {continue}
         if int(demo.choice_count)>=INTERFACE_CHOICES {break}
         offered:=&demo.choices[demo.choice_count]
         offered^={choice=ref}
-        if text,ok:=core.record_text(answers,answer.text,language);ok {base.text_set(offered.text[:],text)}
+        if text,ok:=core.text(texts,answer.text,language);ok {base.text_set(offered.text[:],text)}
         demo.choice_count+=1
     }
     demo.goes_on=demo.choice_count==0

@@ -18,7 +18,7 @@ records_name :: proc(text:string) -> (name:Records_Name) {
     return
 }
 
-// A table keeps its rows, names, ids and texts, depends on the assets its
+// A table keeps its rows, names and ids, depends on the assets its
 // rows name, and reads into the struct of the code by field names when the
 // struct changed: a field the file lacks takes the default.
 @(test)
@@ -29,13 +29,10 @@ records_keep_their_rows_and_migrate_by_field_names :: proc(t:^testing.T) {
     defer serial.schema_destroy(&schema)
     v1,_:=serial.schema_add_type_info(&schema,type_info_of(Weapon_V1))
     values:=[]Weapon_V1{{damage=10,rarity=2,prefab={5,6}},{damage=25,rarity=1}}
-    texts:=[]Records_Text{{text=3,offset=0,length=5},{text=3,offset=5,length=6}}
-    base.text_set(texts[1].language[:],"es")
     desc:=Records_Desc{
         id={7,8},type="game.Weapon",
         ids={11,12},names={records_name("iron_sword"),records_name("bow")},
         schema=&schema,value_type=v1,images=mem.slice_to_bytes(values),
-        texts=texts,text=transmute([]u8)string("SwordEspada"),
     }
     bytes,error:=records_bytes(&types,desc,context.temp_allocator)
     if !testing.expect_value(t,error,Error.None) {return}
@@ -47,7 +44,6 @@ records_keep_their_rows_and_migrate_by_field_names :: proc(t:^testing.T) {
     testing.expect_value(t,records_type(view),"game.Weapon")
     testing.expect(t,len(view.ids)==2 && view.ids[1]==12)
     testing.expect_value(t,serial.text_field(view.names[0][:]),"iron_sword")
-    testing.expect(t,len(view.texts)==2 && string(view.text[view.texts[1].offset:][:view.texts[1].length])=="Espada")
     testing.expect(t,len(a.dependencies)==1 && a.dependencies[0]==base.Asset_Id{5,6})
     // The rows table merges by id.
     rows,_:=asset_table(&a,TABLE_ROWS)
@@ -61,9 +57,9 @@ records_keep_their_rows_and_migrate_by_field_names :: proc(t:^testing.T) {
     testing.expect(t,read[1]==Weapon_V2{weight=1.5,damage=25})
 }
 
-// Ids are not 0 and once each, names are words once each and texts come in
-// order: a table that breaks one is not written, and records_problem says
-// which row and how to fix it.
+// Ids are not 0 and once each and names are words once each: a table that
+// breaks one is not written, and records_problem says which row and how to
+// fix it.
 @(test)
 records_refuse_repeated_or_empty_ids_and_names :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
@@ -87,9 +83,6 @@ records_refuse_repeated_or_empty_ids_and_names :: proc(t:^testing.T) {
         _,error:=records_bytes(&types,{id={1,1},type="game.Weapon",ids=c.ids,names=c.names,schema=&schema,value_type=v1,images=mem.slice_to_bytes(values)},context.temp_allocator)
         testing.expect_value(t,error,Error.Invalid)
     }
-    unordered:=[]Records_Text{{text=4,length=1},{text=3,length=1}}
-    _,message:=records_problem({info=&info,texts=unordered,text={'a'}})
-    testing.expect(t,message!="")
-    _,message=records_problem({info=&info})
+    _,message:=records_problem({info=&info})
     testing.expect_value(t,message,"")
 }

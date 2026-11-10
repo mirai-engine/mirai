@@ -15,12 +15,11 @@ import uf "mirai:std/ui_format"
 //   parts       the animations a sequence or a parallel plays
 //   anim_sets   the animation a node plays when it is shown, hidden or clicked
 //   fonts       the .font assets the styles name
-//   translations the text of a localized node in the other languages of the game, by its text_id
 //   grid_tracks  the widths of the columns of the grids that name them
 //   tokens       values by name that styles and other files take
 //   token_uses   which values of styles name them
 //   params       the parameters of the widget this file is, and where each goes
-//   text        bulk u8: the texts of nodes and translations, UTF-8, by offset and length
+//   text        bulk u8: the texts of nodes, UTF-8, by offset and length; that of a localized node is its key in the .strings
 //
 // A component names another .ui, once: nodes are uses of the widget that file
 // is, and a style or a token can come from it. What a use expands into joins
@@ -32,7 +31,7 @@ import uf "mirai:std/ui_format"
 // that links both reads and writes the file: runtime.ui_tree_document and
 // runtime.ui_tree_view.
 
-UI_VERSION :: 6
+UI_VERSION :: 7
 
 UI_TABLE_NODES :: "nodes"
 UI_TABLE_STYLES :: "styles"
@@ -47,7 +46,6 @@ UI_TABLE_PARTS :: "parts"
 UI_TABLE_ANIM_SETS :: "anim_sets"
 UI_TABLE_FONTS :: "fonts"
 UI_TABLE_STYLE_INFOS :: "style_infos"
-UI_TABLE_TRANSLATIONS :: "translations"
 UI_TABLE_GRID_TRACKS :: "grid_tracks"
 UI_TABLE_TOKENS :: "tokens"
 UI_TABLE_TOKEN_USES :: "token_uses"
@@ -59,7 +57,6 @@ UI_TABLE_TEXT :: "text"
 @(private="file") Ui_String_Links :: struct {offset,length:u32}
 @(private="file") Ui_Layout_Links :: struct {tracks:u16}
 @(private="file") Ui_Node_Links :: struct {kind:u8,parent:i32,style,image,anims,component:u16,component_fields:u32,name:[64]u8 `mirai:"text"`,text:Ui_String_Links,layout:Ui_Layout_Links,flags:u16}
-@(private="file") Ui_Translation_Links :: struct {text:Ui_String_Links}
 @(private="file") Ui_Component_Links :: struct {name:[64]u8 `mirai:"text"`,widget:base.Asset_Id}
 @(private="file") Ui_Override_Links :: struct {instance:u32,node:[64]u8 `mirai:"text"`,fields:u32,values:Ui_Node_Links}
 @(private="file") Ui_Font_Links :: struct {font:u8}
@@ -106,11 +103,9 @@ ui_check :: proc(a:^Asset,types:^Types) -> bool {
     variants:=rows(a,types,UI_TABLE_VARIANTS,Ui_Variant_Links) or_return
     styled:=rows(a,types,UI_TABLE_STYLES,Ui_Style_Links) or_return
     infos:=rows(a,types,UI_TABLE_STYLE_INFOS,Ui_Style_Info_Links) or_return
-    translations:=rows(a,types,UI_TABLE_TRANSLATIONS,Ui_Translation_Links) or_return
     font_rows:=rows(a,types,UI_TABLE_FONTS,Ui_Font_Row) or_return
     styles,images,fonts:=count(a,UI_TABLE_STYLES),count(a,UI_TABLE_IMAGES),len(font_rows)
     text,grids:=u64(count(a,UI_TABLE_TEXT)),count(a,UI_TABLE_GRID_TRACKS)
-    for t in translations {if !ui_inside(t.text,text) {return false}}
     for font in font_rows {if font.font=={} {return false}}
     for variant in variants {if int(variant.style)>=max(styles,1) || !uf.style_font_exists(variant.patch.values.text.font,fonts) {return false}}
     for style in styled {if !uf.style_font_exists(style.text.font,fonts) {return false}}

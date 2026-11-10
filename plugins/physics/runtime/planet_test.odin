@@ -182,9 +182,10 @@ a_restored_snapshot_repeats_a_walk_around_a_planet_exactly :: proc(t:^testing.T)
     script :: proc(f:^Planet_Test,tick:int) {planet_tick(f,{0.3*f32(tick%50<25?1:-1),0,-1},tick%90==40)}
     for tick in 0..<200 {script(f,tick)}
     testing.expect(t,sim.character_state(&f.w,f.ch).up_frame!=mm.QUAT_IDENTITY)
-    buffer:=make([]byte,sim.world_snapshot_capacity(&f.w))
-    defer delete(buffer)
-    size,ok:=sim.world_snapshot(&f.w,buffer)
+    buffer:sim.World
+    defer sim.world_destroy(&buffer)
+    testing.expect(t,sim.world_kept_init(&buffer,&f.w,context.allocator))
+    _,ok:=sim.world_state_copy(&buffer,&f.w)
     testing.expect(t,ok)
     loco:=f.loco
     Sample :: struct {feet:[3]f32,frame:mm.Quat,hash:u64}
@@ -193,7 +194,8 @@ a_restored_snapshot_repeats_a_walk_around_a_planet_exactly :: proc(t:^testing.T)
         script(f,200+i)
         sample={sim.character_position(&f.w,f.ch),sim.character_state(&f.w,f.ch).up_frame,sim.world_hash(&f.w)}
     }
-    testing.expect(t,sim.world_restore(&f.w,buffer[:size]))
+    _,restored:=sim.world_state_copy(&f.w,&buffer)
+    testing.expect(t,restored)
     f.loco=loco
     for sample,i in first {
         script(f,200+i)

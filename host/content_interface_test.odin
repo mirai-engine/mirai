@@ -3,6 +3,7 @@ package host
 import "core:fmt"
 import "core:testing"
 import "mirai:asset"
+import "mirai:core"
 import "mirai:std/base"
 import "mirai:ui"
 
@@ -68,6 +69,7 @@ interface_fixture :: proc(t:^testing.T,f:^Interface_Fixture,name:string) -> bool
 interface_fixture_destroy :: proc(f:^Interface_Fixture) {
     ui.font_destroy(&f.app.ui_font)
     app_content_destroy(&f.app)
+    app_texts_destroy(&f.app)
     assets_destroy(&f.assets)
 }
 
@@ -115,29 +117,66 @@ fonts_of_interfaces_join_the_font_of_the_application_between_frames :: proc(t:^t
     testing.expect_value(t,face2,face)
 }
 
+// Every .strings of the assets is one table: a node of a .ui and a field of
+// a row that name one key say the same in each language, and change
+// together with it. A language that lacks a key, and no language, give what
+// it says in the first language of its file; a key two files have keeps the
+// first; a key no file has leaves the node its key; a file that changes is
+// read again.
 @(test)
-texts_are_found_by_language_and_key_without_allocating :: proc(t:^testing.T) {
+a_node_and_a_row_read_one_key_of_every_strings_in_each_language :: proc(t:^testing.T) {
     f:Interface_Fixture
     if !interface_fixture(t,&f,"texts") {return}
     defer interface_fixture_destroy(&f)
-    s:=content_strings(&f.app,TEXTS_ID)
-    if !testing.expect(t,s!=nil) {return}
-    testing.expect(t,content_strings(&f.app,FONT_ID)==nil,"A font is no table of texts")
-    testing.expect(t,assets_scan(f.app.assets) && content_strings(&f.app,"menu.strings")==s,"by its path, the same texts")
-    testing.expect(t,content_strings(&f.app,"missing.strings")==nil)
-    es,en,play,quit:=base.name_hash("es"),base.name_hash("en"),base.name_hash("menu.play"),base.name_hash("menu.quit")
-    text,found:=strings_text(s,es,play)
-    testing.expect(t,found && text=="Jugar")
-    text,found=strings_text(s,en,play)
-    testing.expect(t,found && text=="Play")
-    text,found=strings_text(s,es,quit)
-    testing.expect(t,found && text=="Salir")
-    _,found=strings_text(s,en,quit)
-    testing.expect(t,!found,"A language without the text of a key")
-    _,found=strings_text(s,base.name_hash("fr"),play)
-    testing.expect(t,!found)
-    _,found=strings_text(nil,es,play)
-    testing.expect(t,!found)
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    extra :: proc(t:^testing.T,f:^Interface_Fixture,types:^asset.Types,back:string) -> bool {
+        languages:=[1]asset.String_Language{}
+        asset.text_set(languages[0].code[:],"en")
+        keys:=[2]asset.String_Key{}
+        asset.text_set(keys[0].name[:],"menu.back");asset.text_set(keys[1].name[:],"menu.play")
+        entries:=[2]asset.String_Entry{{0,0,0,u32(len(back))},{1,0,u32(len(back)),5}}
+        text:=fmt.tprintf("%sOther",back)
+        return testing.expect_value(t,asset.strings_save(fmt.tprintf("%s/z_extra.strings",f.root),types,{id={0x58,1},languages=languages[:],keys=keys[:],entries=entries[:],text=transmute([]u8)text}),asset.Error.None)
+    }
+    if !extra(t,&f,&types,"Back") {return}
+    assets_scan(&f.assets)
+    texts:=app_texts(&f.app)
+    if !testing.expect(t,texts!=nil && texts.generation==1) {return}
+    testing.expect(t,app_texts(&f.app)==texts && texts.generation==1,"Asking again without changes keeps the table")
+
+    tree:ui.Widget_Tree
+    if !testing.expect(t,ui.tree_init(&tree)) {return}
+    defer ui.tree_destroy(&tree)
+    root:=ui.tree_node(&tree,-1,{kind=.Box})
+    nodes:=[4]i32{}
+    title:[4]core.Text
+    for key,i in ([4]string{"menu.play","menu.quit","menu.back","menu.none"}) {
+        nodes[i]=ui.tree_node(&tree,root,{kind=.Text,text=key,flags={.Localized}})
+        base.text_set(title[i].key[:],key)
+    }
+    cases:=[]struct{language:string,said:[4]string}{
+        {"es",{"Jugar","Salir","Back","menu.none"}},
+        {"en",{"Play","Salir","Back","menu.none"}},
+        {"fr",{"Jugar","Salir","Back","menu.none"}},
+        {"",{"Jugar","Salir","Back","menu.none"}},
+    }
+    for c in cases {
+        language:=base.name_hash(c.language) if c.language!="" else 0
+        instance:ui.Tree_Instance
+        if !testing.expect(t,ui.tree_instance_init(&instance,&tree,nil,texts,language)) {return}
+        defer ui.tree_instance_destroy(&instance)
+        for node,i in nodes {
+            row,found:=core.text(texts,title[i],language)
+            testing.expectf(t,instance.texts[node]==c.said[i],"the node of %s in %q says %q",base.text_get(title[i].key[:]),c.language,instance.texts[node])
+            testing.expectf(t,found==(i<3) && (!found || row==c.said[i]),"the row of %s in %q says %q",base.text_get(title[i].key[:]),c.language,row)
+        }
+    }
+
+    if !extra(t,&f,&types,"Return") {return}
+    testing.expect(t,assets_refresh(&f.assets,{"z_extra.strings"}))
+    testing.expect(t,app_texts(&f.app)==texts && texts.generation==2)
+    said,_:=core.text(texts,"menu.back",base.name_hash("es"))
+    testing.expect_value(t,said,"Return")
 }
 
 @(test)

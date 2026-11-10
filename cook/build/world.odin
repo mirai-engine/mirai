@@ -119,10 +119,11 @@ APP_PARTS :: [?]App_Part{
     {"mirai:std/jobs.Job_System","^jobs.Job_System","&app.jobs"},
     {"base:runtime.Allocator","runtime.Allocator","app.allocator"},
     {"core:mem.Allocator","mem.Allocator","app.allocator"},
+    {"mirai:core.Texts","^core.Texts","host.app_texts(app)"},
 }
 
 @(private="file")
-PARAM_FORMS :: "^core.Table(T), core.Read(T), ^S, core.Ref(S), S, core.Stamp(S), core.Ref(core.Entities), core.Commands, core.World_Ref, a part of the application (^host.Assets, ^host.Frame_Extras, ^render.Renderer, ^audio.Mixer, ^jobs.Job_System, runtime.Allocator) or ^host.App"
+PARAM_FORMS :: "^core.Table(T), core.Read(T), ^S, core.Ref(S), S, core.Stamp(S), core.Ref(core.Entities), core.Commands, core.World_Ref, a part of the application (^host.Assets, ^host.Frame_Extras, ^render.Renderer, ^audio.Mixer, ^jobs.Job_System, runtime.Allocator, ^core.Texts) or ^host.App"
 
 @(private="file")
 Param :: struct {
@@ -1809,7 +1810,8 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
             case .App: fmt.sbprint(&args,"app")
             case .App_Part:
                 parts:=APP_PARTS
-                fmt.sbprint(&args,parts[param.part].value)
+                value:=parts[param.part].value
+                if strings.has_prefix(value,"host.") {fmt.sbprintf(&args,"%s.%s",host_alias,value[5:])} else {fmt.sbprint(&args,value)}
             case .Records:
                 index,_:=slice.linear_search(g.records[:],param.record)
                 fmt.sbprintf(&args,"%s.Records(%s.%s){{%s.app_record_set(app,%d)}}",core_alias,param.record.pkg.alias,param.record.name,host_alias,index)
