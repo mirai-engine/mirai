@@ -28,7 +28,7 @@ recent_setting :: proc(recent:^Recent_Projects) -> [1]Setting {
 
 recent_file :: proc(engine_root:string,allocator:=context.allocator) -> string {
     folder:=machine_folder(engine_root,context.temp_allocator)
-    if folder=="" {return strings.clone("",allocator)}
+    if folder=="" {return ""}
     return path(folder,RECENT_FILE,allocator=allocator)
 }
 

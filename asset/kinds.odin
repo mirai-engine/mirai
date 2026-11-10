@@ -97,8 +97,13 @@ kind_check :: proc "contextless" (a:^Asset,kind:Fourcc,version:u16) -> Error {
 // for an imported one the command that imports its source again into its
 // folder, for one newer than the build a newer engine. path: the file of the
 // asset; current: the version its kind reads, that of KINDS for a kind of the
-// engine when it is 0.
+// engine when it is 0. "" without memory for it.
 version_message :: proc(a:^Asset,types:^Types,path:string,current:u16=0,allocator:=context.allocator) -> string {
+    copied :: proc(text:string,allocator:mem.Allocator) -> string {
+        result,error:=strings.clone(text,allocator)
+        if error!=nil {return ""}
+        return result
+    }
     slashed :: proc(path:string) -> string {
         result,_:=strings.replace_all(path,"\\","/",context.temp_allocator)
         return result
@@ -119,26 +124,26 @@ version_message :: proc(a:^Asset,types:^Types,path:string,current:u16=0,allocato
     version:=a.blob.header.kind_version
     stale:=fmt.tprintf("%s is a %s of version %d, which this build does not read",slashed(path),kind,version)
     if current!=0 {
-        if version>current {return fmt.aprintf("%s is a %s of version %d, newer than this build, which reads version %d: open it with a newer engine",slashed(path),kind,version,current,allocator=allocator)}
+        if version>current {return copied(fmt.tprintf("%s is a %s of version %d, newer than this build, which reads version %d: open it with a newer engine",slashed(path),kind,version,current),allocator)}
         stale=fmt.tprintf("%s is a %s of version %d, older than this build reads (version %d)",slashed(path),kind,version,current)
         if version==current {stale=fmt.tprintf("%s is a %s of version %d that does not store every field of that version",slashed(path),kind,version)}
     }
     if a.lacking[1]!="" {stale=fmt.tprintf("%s is a %s whose table %s does not store the field %s of version %d",slashed(path),kind,a.lacking[0],a.lacking[1],version)}
     info,_:=import_info(a,types)
-    if info==nil {return fmt.aprintf("%s; it was not imported: make it again",stale,allocator=allocator)}
+    if info==nil {return copied(fmt.tprintf("%s; it was not imported: make it again",stale),allocator)}
     source:=serial.text_field(info.source[:])
     folder:=parent(path)
-    if filepath.is_abs(source) {return fmt.aprintf("%s; import its source again: mirai import %s --out %s",stale,source,folder,allocator=allocator)}
+    if filepath.is_abs(source) {return copied(fmt.tprintf("%s; import its source again: mirai import %s --out %s",stale,source,folder),allocator)}
     // The source is named relative to the root of the import: the first folder above the asset that holds it.
     root:=folder
     for {
         joined,_:=filepath.join({root,source},context.temp_allocator)
-        if os.exists(joined) {return fmt.aprintf("%s; import its source again: mirai import %s --out %s --root %s",stale,slashed(joined),folder,root,allocator=allocator)}
+        if os.exists(joined) {return copied(fmt.tprintf("%s; import its source again: mirai import %s --out %s --root %s",stale,slashed(joined),folder,root),allocator)}
         up:=parent(root)
         if up==root {break}
         root=up
     }
-    return fmt.aprintf("%s; import its source %s again with mirai import into %s",stale,source,folder,allocator=allocator)
+    return copied(fmt.tprintf("%s; import its source %s again with mirai import into %s",stale,source,folder),allocator)
 }
 
 // Where an asset built from a source file came from: what an importer needs

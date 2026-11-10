@@ -18,7 +18,9 @@ Resolve :: struct {
 
 // "example.com:7777", "localhost:7777" or an address as address_parse takes it. False when no thread starts.
 resolve_start :: proc(r:^Resolve,text:string) -> bool {
-    r^={text=strings.clone(text)}
+    kept,error:=strings.clone(text)
+    if error!=nil {return false}
+    r^={text=kept}
     r.worker=thread.create(proc(t:^thread.Thread) {
         r:=(^Resolve)(t.data)
         ep4,ep6,_:=cnet.resolve(r.text)

@@ -234,7 +234,7 @@ session_start :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,settings:^Ne
     port:=wanted.port>0?wanted.port:s.desc.port
     if _,valid:=settings_port(settings^);!valid {
         core.report(s.problems,core.NONE,"net.settings","the network did not open: Net_Settings.port %d is not a UDP port; give it one from 1 to 65535, or 0 for %d",settings.port,DEFAULT_PORT)
-        session_fail(s,app,fmt.aprintf("the network did not open: Net_Settings.port %d is not a UDP port",settings.port,allocator=app.allocator))
+        session_fail(s,app,fmt.tprintf("the network did not open: Net_Settings.port %d is not a UDP port",settings.port))
         return
     }
     if wanted.timeout>0 {s.desc.timeout,s.desc.connect_timeout=wanted.timeout,wanted.timeout}
@@ -243,20 +243,20 @@ session_start :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,settings:^Ne
     switch error {
     case .None:
     case .Transport_Failed:
-        if wanted.server {session_fail(s,app,fmt.aprintf("could not open the UDP port %d: is another server on it?",port,allocator=app.allocator))}
-        else {session_fail(s,app,fmt.aprintf("\"%s\" is neither an invitation nor an address: give a code like K7Q2-9XMA-PL3F-0B2C, 1.2.3.4:27500 or [::1]:27500",connect,allocator=app.allocator))}
+        if wanted.server {session_fail(s,app,fmt.tprintf("could not open the UDP port %d: is another server on it?",port))}
+        else {session_fail(s,app,fmt.tprintf("\"%s\" is neither an invitation nor an address: give a code like K7Q2-9XMA-PL3F-0B2C, 1.2.3.4:27500 or [::1]:27500",connect))}
     case .Protocol_Failed:
         if refusal:=base.text_get(s.refusal[:]);refusal!="" {
-            session_fail(s,app,fmt.aprintf("the libraries do not describe a network protocol: %s",refusal,allocator=app.allocator))
+            session_fail(s,app,fmt.tprintf("the libraries do not describe a network protocol: %s",refusal))
         } else {
-            session_fail(s,app,strings.clone("the libraries do not describe a network protocol: a replicated component or a message does not fit in a datagram",app.allocator))
+            session_fail(s,app,"the libraries do not describe a network protocol: a replicated component or a message does not fit in a datagram")
         }
     case .Host_Failed,.Out_Of_Memory:
         if refused.field!="" {
             owner,field:=setting_of(refused.field)
             core.report(s.problems,core.NONE,"net.settings","the network did not open: %s%s is out of its range (%s); change it",owner,field,refused.range)
-            session_fail(s,app,fmt.aprintf("the network did not open: %s%s is out of its range (%s)",owner,field,refused.range,allocator=app.allocator))
-        } else {session_fail(s,app,fmt.aprintf("the network did not open: %v",error,allocator=app.allocator))}
+            session_fail(s,app,fmt.tprintf("the network did not open: %s%s is out of its range (%s)",owner,field,refused.range))
+        } else {session_fail(s,app,fmt.tprintf("the network did not open: %v",error))}
     }
     if s.launched && s.status_path!="" && s.opened && s.status!=.Disconnected {
         file,open_error:=os.open(s.status_path,{.Write,.Create,.Append},os.Permissions_Default_File)
@@ -264,11 +264,21 @@ session_start :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,settings:^Ne
     }
 }
 
+// Keeps a copy of why the session ended, for a person; without memory for
+// it, the problems say it.
+@(private)
+reason_keep :: proc(s:^Net_Session,app:^host.App,reason:string) {
+    delete(s.reason_text,app.allocator)
+    error:runtime.Allocator_Error
+    if s.reason_text,error=strings.clone(reason,app.allocator);error!=nil {
+        core.report(s.problems,core.NONE,"net.reason","the session ended and there is no memory to keep why: %s",reason)
+    }
+}
+
 @(private)
 session_fail :: proc(s:^Net_Session,app:^host.App,reason:string) {
     log.errorf("net: %s",reason)
-    delete(s.reason_text,app.allocator)
-    s.reason_text=reason
+    reason_keep(s,app,reason)
     s.status=.Disconnected
     s.ended=true
     session_destroy(s)
@@ -299,7 +309,11 @@ session_open :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,port:int) -> 
         if target.port==0 {target.port=u16(port)}
         bind:=target.kind==.IP6?wire.address_any6(0):wire.address_ip4(0,0,0,0,0)
         if !wire.udp_open(&s.udp,bind) {return .Transport_Failed,{}}
-        s.address=strings.clone(connect,allocator)
+        no_address:runtime.Allocator_Error
+        if s.address,no_address=strings.clone(connect,allocator);no_address!=nil {
+            session_destroy(s)
+            return .Out_Of_Memory,{}
+        }
     }
     if !protocol_build(s,w) {
         session_destroy(s)
@@ -518,24 +532,24 @@ close :: proc(s:^Net_Session,app:^host.App) {
     s.status=.Offline
 }
 
-// Why a client is without its server, for a person.
+// Why a client is without its server, for a person, in the temporary allocator.
 @(private)
-reason_text :: proc(reason:Disconnect_Reason,address:string,protocol:u64,allocator:runtime.Allocator) -> string {
+reason_text :: proc(reason:Disconnect_Reason,address:string,protocol:u64) -> string {
     #partial switch reason {
-    case .Connect_Timeout:   return fmt.aprintf("the server %s does not answer",address,allocator=allocator)
-    case .Denied_Protocol:   return fmt.aprintf("the server %s refused the connection: its libraries do not produce the same network protocol as those of this project (here %016x); build both ends from the same sources",address,protocol,allocator=allocator)
-    case .Denied_Version:    return fmt.aprintf("the server %s refused the connection: it is of another version",address,allocator=allocator)
-    case .Denied_Full:       return fmt.aprintf("the server %s is full",address,allocator=allocator)
-    case .Denied_Invite:     return fmt.aprintf("the server %s refused the connection: the invitation is not the one of its game",address,allocator=allocator)
-    case .Denied_Security:   return fmt.aprintf("the server %s refused the connection: one end encrypts and the other does not",address,allocator=allocator)
-    case .Closed:            return fmt.aprintf("the server %s closed the connection",address,allocator=allocator)
-    case .Timeout:           return fmt.aprintf("the connection to the server %s was lost: it stopped answering",address,allocator=allocator)
-    case .Kicked:            return fmt.aprintf("the server %s kicked this client",address,allocator=allocator)
-    case .Replaced:          return fmt.aprintf("the server %s took another connection of the same player",address,allocator=allocator)
-    case .Denied_Player:     return fmt.aprintf("the server %s refused the connection: this client presented no player, or two",address,allocator=allocator)
-    case .Capacity:          return fmt.aprintf("the connection to the server %s ended: this client has no room for what the server has (more objects than Net_Settings.max_objects, or a history longer than %v s at its tick rate); raise them, or lower them on the server",address,wire.HISTORY_MAX_SECONDS,allocator=allocator)
+    case .Connect_Timeout:   return fmt.tprintf("the server %s does not answer",address)
+    case .Denied_Protocol:   return fmt.tprintf("the server %s refused the connection: its libraries do not produce the same network protocol as those of this project (here %016x); build both ends from the same sources",address,protocol)
+    case .Denied_Version:    return fmt.tprintf("the server %s refused the connection: it is of another version",address)
+    case .Denied_Full:       return fmt.tprintf("the server %s is full",address)
+    case .Denied_Invite:     return fmt.tprintf("the server %s refused the connection: the invitation is not the one of its game",address)
+    case .Denied_Security:   return fmt.tprintf("the server %s refused the connection: one end encrypts and the other does not",address)
+    case .Closed:            return fmt.tprintf("the server %s closed the connection",address)
+    case .Timeout:           return fmt.tprintf("the connection to the server %s was lost: it stopped answering",address)
+    case .Kicked:            return fmt.tprintf("the server %s kicked this client",address)
+    case .Replaced:          return fmt.tprintf("the server %s took another connection of the same player",address)
+    case .Denied_Player:     return fmt.tprintf("the server %s refused the connection: this client presented no player, or two",address)
+    case .Capacity:          return fmt.tprintf("the connection to the server %s ended: this client has no room for what the server has (more objects than Net_Settings.max_objects, or a history longer than %v s at its tick rate); raise them, or lower them on the server",address,wire.HISTORY_MAX_SECONDS)
     }
-    return fmt.aprintf("the connection to the server %s was lost: %v",address,reason,allocator=allocator)
+    return fmt.tprintf("the connection to the server %s was lost: %v",address,reason)
 }
 
 // Tells whoever launched the player how the network stands, and ends the
@@ -778,7 +792,8 @@ launch_read :: proc(s:^Net_Session,app:^host.App) -> bool {
     if at,on:=host.launch_flag(launch,"--status");on {
         text,given:=host.launch_value(launch,at)
         if !given {return fail("--status takes the file the network status is appended to")}
-        s.status_path=strings.clone(text,app.allocator)
+        no_path:runtime.Allocator_Error
+        if s.status_path,no_path=strings.clone(text,app.allocator);no_path!=nil {return fail("there is no memory for the file of --status")}
     }
     if at,on:=host.launch_flag(launch,"--status-ticks");on {
         text,given:=host.launch_value(launch,at)

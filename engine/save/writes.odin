@@ -112,14 +112,17 @@ writes_of :: proc(work:^Save_Work,path:string) -> bool {
 // Takes the thumbnail that came back, starts the next write and collects the
 // one that ended, pushing its Result.
 @(private)
-writes_step :: proc(work:^Save_Work,app:^host.App,results:^Save_Results) {
+writes_step :: proc(work:^Save_Work,app:^host.App,results:^Save_Results,problems:^core.Problems) {
     if work.drawn!=0 {
         pixels,frame,came:=erender.view_texture_pixels(app,work.texture)
         came&&=frame>work.seen
         if came {
             for w in work.writes {
                 if w.phase!=.Thumbnail || w.asked>work.drawn {continue}
-                w.pixels=slice.clone(pixels,w.allocator)
+                no_pixels:runtime.Allocator_Error
+                if w.pixels,no_pixels=slice.clone(pixels,w.allocator);no_pixels!=nil {
+                    core.report(problems,core.NONE,"save.thumbnail","the slot %s is written without its thumbnail: there is no memory for the image; free memory and save again",base.text_get(w.result.slot[:]))
+                }
                 w.phase=.Ready
             }
         }

@@ -226,10 +226,13 @@ request_error :: proc(op:Op,slot:string,kind:=Slot_Kind.Manual,label:="") -> Err
 }
 
 // Where the slots are kept from now on; made when the first one is written.
-folder_set :: proc(state:^Save_State,app:^host.App,path:string) {
+// False, with no folder for them, without memory for its name.
+folder_set :: proc(state:^Save_State,app:^host.App,path:string) -> bool {
     delete(state.folder,app.allocator)
-    state.folder=strings.clone(path,app.allocator)
+    error:mem.Allocator_Error
+    state.folder,error=strings.clone(path,app.allocator)
     state.resolved=true
+    return error==nil
 }
 
 // The folder of the slots, "" when there is none.
@@ -238,7 +241,10 @@ folder :: proc(state:^Save_State,app:^host.App) -> string {
     state.resolved=true
     user:=host.app_user_folder(app.root,context.temp_allocator)
     if user=="" {return ""}
-    state.folder,_=filepath.join({user,FOLDER},app.allocator)
+    joined,error:=filepath.join({user,FOLDER},app.allocator)
+    // Asked again: there is one, and no memory for its name now.
+    if error!=nil {state.resolved=false}
+    state.folder=joined
     return state.folder
 }
 
@@ -319,7 +325,9 @@ slot_thumbnail :: proc(state:^Save_State,app:^host.App,slot:string,allocator:=co
     buffer:=make([]u8,at+int(header.thumbnail),context.temp_allocator)
     head,_,read_error:=serial.file_read_head(path,buffer)
     if read_error!=.None || len(head)<len(buffer) {return nil,.Corrupt}
-    return slice.clone(head[at:],allocator),.None
+    copied,no_copy:=slice.clone(head[at:],allocator)
+    if no_copy!=nil {return nil,.Failed}
+    return copied,.None
 }
 
 delete_slot :: proc(state:^Save_State,app:^host.App,slot:string) -> Error {
@@ -350,7 +358,7 @@ saves_serve :: proc(
     if !game.off && !clock.paused {game.played+=f64(frame.dt)}
     if work!=nil {
         work.frame+=1
-        writes_step(work,app,results)
+        writes_step(work,app,results,problems)
     }
     // A load replaces the world, and with it the buffer the requests were taken from.
     asked,_:=slice.clone(core.take(&requests.queue),context.temp_allocator)
@@ -397,7 +405,7 @@ saves_serve :: proc(
         work.due=result.error==.Busy
         if !work.due {game.saved=game.played}
     }
-    writes_step(work,app,results)
+    writes_step(work,app,results,problems)
 }
 
 // Captures the world into a slot: queued to be written with its thumbnail in

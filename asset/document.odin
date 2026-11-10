@@ -125,8 +125,9 @@ document_column :: proc(doc:^Document,table:int,name:string) -> (column:int,foun
 document_table_add :: proc(doc:^Document,name:string,flags:=Table_Flags{}) -> (table:int,error:Error) {
     if !name_valid(name) || len(doc.tables)>=MAX_TABLES {return -1,.Invalid}
     if _,exists:=document_table(doc,name);exists {return -1,.Invalid}
-    added:=Doc_Table{name=strings.clone(name,doc.allocator),name_hash=base.name_hash(name),flags=flags,key=-1}
-    if len(added.name)!=len(name) {return -1,.Out_Of_Memory}
+    copied,no_name:=strings.clone(name,doc.allocator)
+    if no_name!=nil {return -1,.Out_Of_Memory}
+    added:=Doc_Table{name=copied,name_hash=base.name_hash(name),flags=flags,key=-1}
     added.rows=.Single in flags?1:0
     added.columns=make([dynamic]Doc_Column,doc.allocator)
     if append(&doc.tables,added)!=1 {delete(added.name,doc.allocator);delete(added.columns);return -1,.Out_Of_Memory}
@@ -156,8 +157,9 @@ document_column_add :: proc(doc:^Document,table:int,name:string,type:serial.Type
     stored:=doc.schema.types[type]
     wanted:=max(alignment,int(stored.align),1)
     if wanted&(wanted-1)!=0 || wanted>1<<MAX_ALIGNMENT_LOG2 {return -1,.Invalid}
-    added:=Doc_Column{name=strings.clone(name,doc.allocator),type=type,size=int(stored.size),flags=flags,ref=-1,alignment=wanted,compression=compression}
-    if len(added.name)!=len(name) {return -1,.Out_Of_Memory}
+    copied,no_name:=strings.clone(name,doc.allocator)
+    if no_name!=nil {return -1,.Out_Of_Memory}
+    added:=Doc_Column{name=copied,type=type,size=int(stored.size),flags=flags,ref=-1,alignment=wanted,compression=compression}
     if error=column_size(doc,&added,target.rows*added.size);error!=.None {
         delete(added.name,doc.allocator)
         return -1,error
@@ -411,17 +413,21 @@ document_from_asset :: proc(doc:^Document,a:^Asset,allocator:=context.allocator)
     no_tables:runtime.Allocator_Error
     if doc.tables,no_tables=make([dynamic]Doc_Table,0,len(a.tables),allocator);no_tables!=nil {document_destroy(doc);return .Out_Of_Memory}
     for &source in a.tables {
-        table:=Doc_Table{name=strings.clone(source.name,allocator),name_hash=source.name_hash,flags=source.flags,rows=source.rows,key=source.key}
-        no_columns:runtime.Allocator_Error
+        table:=Doc_Table{name_hash=source.name_hash,flags=source.flags,rows=source.rows,key=source.key}
+        no_name,no_columns:runtime.Allocator_Error
+        table.name,no_name=strings.clone(source.name,allocator)
         table.columns,no_columns=make([dynamic]Doc_Column,0,len(source.columns),allocator)
         append(&doc.tables,table)
-        if no_columns!=nil {document_destroy(doc);return .Out_Of_Memory}
+        if no_name!=nil || no_columns!=nil {document_destroy(doc);return .Out_Of_Memory}
         target:=&doc.tables[len(doc.tables)-1]
         for from,at in source.columns {
             entry:=blob_chunk(&a.blob,from.chunk)
-            column:=Doc_Column{name=strings.clone(from.name,allocator),type=from.type,size=from.size,flags=from.flags,ref=from.ref,alignment=1<<entry.alignment_log2,compression=entry.compression}
+            column:=Doc_Column{type=from.type,size=from.size,flags=from.flags,ref=from.ref,alignment=1<<entry.alignment_log2,compression=entry.compression}
+            no_column_name:runtime.Allocator_Error
+            column.name,no_column_name=strings.clone(from.name,allocator)
             error:=column_size(doc,&column,source.rows*from.size)
             append(&target.columns,column)
+            if no_column_name!=nil {error=.Out_Of_Memory}
             decoder:^Decoder
             if error==.None && entry.compression!=.None {decoder,error=asset_decoder(a)}
             if error==.None {error=blob_read(&a.blob,entry,target.columns[at].data,decoder)}

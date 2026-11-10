@@ -253,7 +253,8 @@ content_animation_read :: proc(
     text:[base.ASSET_ID_TEXT]u8
     digits:[16]u8
     name,hex:=base.asset_id_format(entry.id,text[:]),base.hex_format_u64(key,digits[:])
-    load.path=fmt.aprintf("%s/%s-%s.anim",app.animation_cache,name,hex,allocator=load.allocator)
+    no_path:runtime.Allocator_Error
+    if load.path,no_path=strings.clone(fmt.tprintf("%s/%s-%s.anim",app.animation_cache,name,hex),load.allocator);no_path!=nil {return false}
     cached:asset.Asset
     if asset.asset_load(&cached,load.path,a.allocator)!=.None {return true}
     header:=cached.blob.header

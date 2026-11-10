@@ -275,7 +275,7 @@ player_capture_problem :: proc(app:^App,path:string) -> string {
 // file of the player's options when one applied, so that a run those options
 // changed shows at once, and how long a frame took.
 @(private)
-player_run_summary :: proc(app:^App,frames:int,seconds:f64,allocator:=context.temp_allocator) -> string {
+player_run_summary :: proc(app:^App,frames:int,seconds:f64) -> string {
     quality:="unknown"
     size:[2]f32
     if app.world!=nil {
@@ -291,7 +291,7 @@ player_run_summary :: proc(app:^App,frames:int,seconds:f64,allocator:=context.te
     file:=project.settings_file(.Player,app.root,app.engine_root,context.temp_allocator,player=app.options)
     applied:=file!="" && os.exists(file)?fmt.tprintf(", player options %s",file):", no player options"
     mean:=frames>0?1000*seconds/f64(frames):0
-    return fmt.aprintf("mirai: %d frames, graphics preset %s, mean frame time %.2f ms, drawn at %vx%v%s",frames,quality,mean,int(size.x),int(size.y),applied,allocator=allocator)
+    return fmt.tprintf("mirai: %d frames, graphics preset %s, mean frame time %.2f ms, drawn at %vx%v%s",frames,quality,mean,int(size.x),int(size.y),applied)
 }
 
 // The icon of the window: a PNG, read as 8 bits per channel with alpha.
@@ -338,7 +338,11 @@ player_run :: proc(info:^core.World_Info,project_root,engine_root:string,args:[]
         }
     }
     root:=options.project!=""?options.project:(project_root!=""?project_root:".")
-    assets,_:=filepath.join({root,PLAYER_ASSETS},context.allocator)
+    assets,no_assets:=filepath.join({root,PLAYER_ASSETS},context.allocator)
+    if no_assets!=nil {
+        fmt.eprintln(PLAYER_MEMORY_TEXT)
+        return PLAYER_FAILED
+    }
     defer delete(assets)
 
     window:=platform.Window_Desc{title=filepath.base(root),rect=options.window}

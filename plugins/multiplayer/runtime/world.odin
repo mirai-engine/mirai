@@ -372,19 +372,18 @@ client_lacks :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,error:scene.E
     if app.assets!=nil {what=host.assets_name(app.assets,s.client.scene,&name)}
     core.report(s.problems,core.NONE,"net.scene","the server is in scene %s, which this client could not load (%v): a client needs the assets of its server; run it from the same project",what,error)
     wire.host_disconnect(&s.host,0,.Scene_Missing)
-    client_end(s,w,app,0,.Scene_Missing,fmt.aprintf("the server %s is in scene %s, which this client could not load (%s): a client needs the assets of its server; run it from the same project",s.address,what,scene.error_text(error),allocator=app.allocator))
+    client_end(s,w,app,0,.Scene_Missing,fmt.tprintf("the server %s is in scene %s, which this client could not load (%s): a client needs the assets of its server; run it from the same project",s.address,what,scene.error_text(error)))
 }
 
 // Client: the session ends, with the reason for a person (text, which it
-// takes); what came of the server goes, or stays as an entity of the scene.
+// copies); what came of the server goes, or stays as an entity of the scene.
 @(private)
 client_end :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,connection:Connection,reason:Disconnect_Reason,text:string) {
     was:=s.status==.Connected
     s.left+=u64(was)
     s.lost+=u64(was && reason!=.Closed && reason!=.Scene_Missing)
     s.status,s.reason=.Disconnected,reason
-    delete(s.reason_text,app.allocator)
-    s.reason_text=text
+    reason_keep(s,app,text)
     for &r in s.client.replicas[:s.client.replica_high] {
         if r.object!=0 {replica_destroy(s,w,r.object,.Leave)}
     }

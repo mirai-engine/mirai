@@ -242,7 +242,9 @@ sides_read :: proc(g:^Merger,at:int) -> Error {
                 if have.ref<0 {continue}
                 for row in 0..<side.rows {
                     index:=int(index_load(have.data,row,have.size))
-                    if index<side.doc.tables[have.ref].rows {side.refs[c][row]=strings.clone(string(identity(side.doc,have.ref,index)),g.scratch)}
+                    if index>=side.doc.tables[have.ref].rows {continue}
+                    no_ref:runtime.Allocator_Error
+                    if side.refs[c][row],no_ref=strings.clone(string(identity(side.doc,have.ref,index)),g.scratch);no_ref!=nil {return .Out_Of_Memory}
                 }
                 continue
             }
@@ -258,7 +260,10 @@ sides_read :: proc(g:^Merger,at:int) -> Error {
             side.data[c]=migrated
         }
         if key_column<0 || .Single in target.flags {continue}
-        for row in 0..<side.rows {side.keys[row]=strings.clone(string(identity(side.doc,side.table,row)),g.scratch)}
+        for row in 0..<side.rows {
+            no_key:runtime.Allocator_Error
+            if side.keys[row],no_key=strings.clone(string(identity(side.doc,side.table,row)),g.scratch);no_key!=nil {return .Out_Of_Memory}
+        }
     }
     return .None
 }
@@ -605,13 +610,14 @@ conflict :: proc(g:^Merger,kind:Merge_Kind,doc:^Document,table,row:int,ours,thei
         if column!="" {serial.write_u8(&g.text,'.');serial.text_write_raw(&g.text,column)}
         serial.write_bytes(&g.text,g.path[:])
     }
-    merge_conflict_add(g.m,kind,doc,table,row,ours,theirs,string(serial.writer_bytes(&g.text)))
+    if !merge_conflict_add(g.m,kind,doc,table,row,ours,theirs,string(serial.writer_bytes(&g.text))) {g.exhausted=true}
 }
 
 // Lists a conflict once: the row of a table of doc, the table when row is
 // -1, and field the column and fields under the row (".value.position").
+// False without memory to list it.
 @(private)
-merge_conflict_add :: proc(m:^Merge,kind:Merge_Kind,doc:^Document,table,row:int,ours,theirs:bool,field:="") {
+merge_conflict_add :: proc(m:^Merge,kind:Merge_Kind,doc:^Document,table,row:int,ours,theirs:bool,field:="") -> bool {
     text:serial.Writer
     serial.writer_init(&text,allocator=context.temp_allocator)
     target:=&doc.tables[table]
@@ -626,8 +632,15 @@ merge_conflict_add :: proc(m:^Merge,kind:Merge_Kind,doc:^Document,table,row:int,
     serial.text_write_raw(&text,field)
     path:=string(serial.writer_bytes(&text))
     for known in m.conflicts {
-        if known.kind==kind && known.path==path {return}
+        if known.kind==kind && known.path==path {return true}
     }
     allocator:=m.conflicts.allocator
-    append(&m.conflicts,Merge_Conflict{kind=kind,path=strings.clone(path,allocator),table=strings.clone(target.name,allocator),key=key,ours=ours,theirs=theirs})
+    copied,no_path:=strings.clone(path,allocator)
+    named,no_table:=strings.clone(target.name,allocator)
+    if no_path==nil && no_table==nil {
+        if _,no_room:=append(&m.conflicts,Merge_Conflict{kind=kind,path=copied,table=named,key=key,ours=ours,theirs=theirs});no_room==nil {return true}
+    }
+    delete(copied,allocator)
+    delete(named,allocator)
+    return false
 }

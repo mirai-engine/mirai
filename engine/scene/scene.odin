@@ -491,7 +491,9 @@ instantiate :: proc(w:core.World_Ref,a:^asset.Asset,asset_types:^asset.Types,des
     report.entities=0
     for k in kept {report.entities+=int(k)}
     // A section that loads with what holds it knows what its scene brought.
-    if desc.parent!=core.NONE && desc.salt!=0 && !desc.transient && desc.only==0 {records_add(w,desc.parent,view.ids)}
+    if desc.parent!=core.NONE && desc.salt!=0 && !desc.transient && desc.only==0 {
+        if _,recorded:=records_add(w,desc.parent,view.ids);!recorded {return report,.Out_Of_Memory}
+    }
     if len(sections)>0 {
         if a.blob.header.kind==asset.KIND_PREFAB {return report,.Invalid}
         sections_error:=sections_load(w,a,asset_types,desc,sections[:],&report)

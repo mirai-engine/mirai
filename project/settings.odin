@@ -166,7 +166,7 @@ settings_load :: proc(settings:[]Setting,root,engine_root:string,layers:=Setting
 // The sections of the file of the engine that name a setting of the project:
 // that file holds only the settings of the machine, so they are not read. They
 // belong in the file of the project.
-settings_misplaced :: proc(settings:[]Setting,root,engine_root:string,allocator:=context.temp_allocator) -> []string {
+settings_misplaced :: proc(settings:[]Setting,root,engine_root:string) -> []string {
     file:=settings_file(.Engine,root,engine_root,context.temp_allocator)
     if file=="" {return nil}
     data,file_error:=serial.file_read(file,context.temp_allocator)
@@ -176,10 +176,10 @@ settings_misplaced :: proc(settings:[]Setting,root,engine_root:string,allocator:
     serial.text_reader_init(&r,string(data),context.temp_allocator)
     sections_read(&r,settings_held(settings,.Engine),&kept,false)
     serial.text_reader_destroy(&r)
-    misplaced:=make([dynamic]string,allocator)
+    misplaced:=make([dynamic]string,context.temp_allocator)
     for section in kept {
         for setting in settings {
-            if setting.name==section.name {append(&misplaced,strings.clone(section.name,allocator));break}
+            if setting.name==section.name {append(&misplaced,strings.clone(section.name,context.temp_allocator));break}
         }
     }
     return misplaced[:]

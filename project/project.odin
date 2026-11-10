@@ -294,9 +294,12 @@ when ODIN_OS==.Windows {
     LIBRARY_SUFFIX :: ".so"
 }
 
-// The file of a dynamic library on this system: mirai-engine.dll, libmirai-engine.so.
+// The file of a dynamic library on this system: mirai-engine.dll,
+// libmirai-engine.so. "" without memory for it.
 library_file :: proc(name:string,allocator:=context.allocator) -> string {
-    return strings.concatenate({LIBRARY_PREFIX,name,LIBRARY_SUFFIX},allocator)
+    file,error:=strings.concatenate({LIBRARY_PREFIX,name,LIBRARY_SUFFIX},allocator)
+    if error!=nil {return ""}
+    return file
 }
 
 // A library of the project, in .mirai: editor, which the editor loads, or
@@ -327,7 +330,9 @@ folder_path :: proc(root:string,folder:Folder,allocator:=context.allocator) -> s
 start_scene :: proc(root:string,allocator:=context.allocator) -> string {
     m,error:=manifest_read(path(root,PROJECT_FILE,allocator=context.temp_allocator))
     if error.code!=.None {return ""}
-    return strings.clone(base.text_get(m.start_scene[:]),allocator)
+    scene,scene_error:=strings.clone(base.text_get(m.start_scene[:]),allocator)
+    if scene_error!=nil {return ""}
+    return scene
 }
 
 // Whether two absolute paths name the same file: without case on Windows and macOS.
@@ -335,7 +340,7 @@ path_same :: proc(a,b:string) -> bool {
     when ODIN_OS==.Windows || ODIN_OS==.Darwin {return strings.equal_fold(a,b)} else {return a==b}
 }
 
-// Absolute, with forward slashes and no trailing one.
+// Absolute, with forward slashes and no trailing one. "" without memory for it.
 path_absolute :: proc(location:string,allocator:=context.allocator) -> string {
     absolute,error:=os.get_absolute_path(location,context.temp_allocator)
     if error!=nil {
@@ -348,7 +353,9 @@ path_absolute :: proc(location:string,allocator:=context.allocator) -> string {
     }
     result,_:=strings.replace_all(absolute,"\\","/",context.temp_allocator)
     for len(result)>1 && result[len(result)-1]=='/' {result=result[:len(result)-1]}
-    return strings.clone(result,allocator)
+    copy,copy_error:=strings.clone(result,allocator)
+    if copy_error!=nil {return ""}
+    return copy
 }
 
 // A folder of assets of a project, and the path its files have among the

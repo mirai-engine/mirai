@@ -55,7 +55,7 @@ engine_root_find :: proc(given:string,allocator:=context.allocator) -> string {
             folder=parent
         }
     }
-    return strings.clone("",allocator)
+    return ""
 }
 
 // The mirai tool of an engine: what the editor runs for its agents and installers.

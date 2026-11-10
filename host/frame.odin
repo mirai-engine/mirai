@@ -127,7 +127,12 @@ app_gpu_create :: proc(app:^App,desc:App_Desc) -> App_Error {
     if allocation_error!=nil {return .Out_Of_Memory}
     app.renderer=renderer
     generation:render.Shader_Assets
-    shaders:=app_shaders_open(app,desc,&generation)
+    shaders,opened:=app_shaders_open(app,desc,&generation)
+    if !opened {
+        app.renderer=nil
+        free(renderer,app.allocator)
+        return .Out_Of_Memory
+    }
     if !render.renderer_init(renderer,{
         device=device,width=u32(app.drawable.x),height=u32(app.drawable.y),
         settings=desc.render_settings,allocator=app.allocator,shaders=shaders,
@@ -909,9 +914,15 @@ Png_Write :: struct {
 }
 
 // Starts writing pixels, allocated with the allocator of the application, as
-// the PNG at path, or the JPEG of quality; the write takes them.
+// the PNG at path, or the JPEG of quality; the write takes them. Without
+// memory for the path nothing is written and the write ends with that error.
 app_png_write_start :: proc(app:^App,w:^Png_Write,path:string,pixels:[]u8,width,height:int,quality:=0) {
-    w^={path=strings.clone(path,app.allocator),pixels=pixels,width=width,height=height,quality=quality,busy=true}
+    kept,no_path:=strings.clone(path,app.allocator)
+    w^={path=kept,pixels=pixels,width=width,height=height,quality=quality,busy=true}
+    if no_path!=nil {
+        w.error=no_path
+        return
+    }
     jobs.run(&app.jobs,jobs.OWNER,png_write,w,&w.counter)
 }
 

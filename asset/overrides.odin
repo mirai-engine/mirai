@@ -16,13 +16,13 @@ Value_Leaf :: struct {
     offset,size:int,
 }
 
-// The leaves of a type, without its transient fields. Paths from allocator.
-value_leaves :: proc(schema:^serial.Schema,type:serial.Type_Index,out:^[dynamic]Value_Leaf,allocator:=context.temp_allocator) {
-    leaves_add(schema,type,"",0,out,allocator)
+// The leaves of a type, without its transient fields. Paths from the temporary allocator.
+value_leaves :: proc(schema:^serial.Schema,type:serial.Type_Index,out:^[dynamic]Value_Leaf) {
+    leaves_add(schema,type,"",0,out)
 }
 
 @(private="file")
-leaves_add :: proc(schema:^serial.Schema,type:serial.Type_Index,prefix:string,offset:u32,out:^[dynamic]Value_Leaf,allocator:=context.temp_allocator) {
+leaves_add :: proc(schema:^serial.Schema,type:serial.Type_Index,prefix:string,offset:u32,out:^[dynamic]Value_Leaf) {
     t:=schema.types[type]
     if t.kind!=.Struct {
         append(out,Value_Leaf{prefix,int(offset),int(t.size)})
@@ -30,8 +30,8 @@ leaves_add :: proc(schema:^serial.Schema,type:serial.Type_Index,prefix:string,of
     }
     for field in schema.fields[t.first:][:t.count] {
         if .Transient in field.flags {continue}
-        path:=prefix==""?field.name:strings.concatenate({prefix,".",field.name},allocator)
-        leaves_add(schema,field.type,path,offset+field.offset,out,allocator)
+        path:=prefix==""?field.name:strings.concatenate({prefix,".",field.name},context.temp_allocator)
+        leaves_add(schema,field.type,path,offset+field.offset,out)
     }
 }
 
