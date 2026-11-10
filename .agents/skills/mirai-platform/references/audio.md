@@ -160,10 +160,10 @@ binaural and panning effects.
   late whatever size the render has. A source that turned less than a quarter of the finest spacing
   of the measurements keeps its filters. On speakers the direction, brought to the horizontal plane,
   pans with constant power; a mono output plays it centered.
-- The HRTF is the one Steam Audio ships (`audio/hrtf/cipic_124.hrtf`, CIPIC database), kept at the
-  mixer's default rate only: headphones are refused at another rate. It is loaded and transformed,
-  and the binaural state of every voice slot reserved, the first time the output is headphones;
-  speakers never pay for it.
+- The HRTF is the one Steam Audio ships (`audio/hrtf/cipic_124.hrtf`, CIPIC database), at
+  `MIXER_RATE`, the one rate the mixer renders at; the device stream converts it to the rate of
+  the output, so headphones work on any. It is loaded and transformed, and the binaural state of
+  every voice slot reserved, the first time the output is headphones; speakers never pay for it.
 - A source at the listener comes from above. A place, velocity, rotation or occlusion that is not
   a number is refused by `voice_play`, `voice_set_position`, `voice_set_occlusion` and
   `listener_set`.

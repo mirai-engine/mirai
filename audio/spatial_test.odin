@@ -151,16 +151,10 @@ hrtf_covers_every_direction_with_weights_that_add_up_to_one :: proc(t:^testing.T
     other:Hrtf
     testing.expect_value(t,hrtf_load(&other,44100,context.allocator),Error.Unsupported_Format)
     hrtf_destroy(&other,context.allocator)
-    // Speakers build no HRTF, at any rate; headphones at a rate without measurements are refused.
-    m,error:=mixer_create({sample_rate=44100})
-    testing.expect(t,error==.None && m.conv.n==0 && m.binaural_spectra==nil)
-    testing.expect(t,!mixer_set_output(m,.Headphones) && mixer_output(m)==.Speakers && m.conv.n==0)
-    mixer_destroy(m)
-    _,error=mixer_create({sample_rate=44100,output=.Headphones})
-    testing.expect_value(t,error,Error.Invalid_Desc)
-    m=test_mixer(t)
+    // Speakers build no HRTF; headphones build it the first time they are chosen.
+    m:=test_mixer(t)
     defer mixer_destroy(m)
-    testing.expect(t,m.conv.n==0 && mixer_set_output(m,.Headphones) && m.conv.n>0)
+    testing.expect(t,m.conv.n==0 && m.binaural_spectra==nil && mixer_set_output(m,.Headphones) && m.conv.n>0)
 }
 
 // The part of each band the source keeps: what the direct effect does to it.

@@ -26,8 +26,11 @@ Error :: enum u8 {
     Unsupported_Format, // a sample format or channel count the mixer does not play
 }
 
+// Frames a second the mixer renders: those its HRTF was measured at. The
+// device converts them to its own rate (platform.audio_device_open).
+MIXER_RATE :: 48000
+
 Mixer_Desc :: struct {
-    sample_rate:int,      // 24000, 44100 or 48000, those the HRTF was measured at; 48000 when zero
     channels:int,         // 1 or 2; 2 when zero
     voice_capacity:int,   // 64 when zero
     bus_capacity:int,     // the master included; 8 when zero
@@ -172,13 +175,13 @@ mixer_create :: proc(desc:Mixer_Desc) -> (m:^Mixer,error:Error) {
     allocator:=desc.allocator
     if allocator.procedure==nil {allocator=context.allocator}
     channels:=desc.channels if desc.channels!=0 else 2
-    if channels<1 || channels>2 || desc.sample_rate<0 || desc.sample_rate>384000 {return nil,.Invalid_Desc}
+    if channels<1 || channels>2 {return nil,.Invalid_Desc}
     if desc.voice_capacity<0 || desc.bus_capacity<0 || desc.bus_capacity>int(max(u16)) || desc.sound_capacity<0 || desc.stream_capacity<0 || desc.feed_capacity<0 || desc.feed_capacity>MIXER_CAPACITY_MAX || desc.voice_capacity>MIXER_CAPACITY_MAX || desc.stream_capacity>MIXER_CAPACITY_MAX || desc.command_capacity>MIXER_CAPACITY_MAX {return nil,.Invalid_Desc}
     if desc.feed_frames<0 || desc.feed_frames>MIXER_RING_FRAMES_MAX || desc.stream_frames<0 || desc.stream_frames>MIXER_RING_FRAMES_MAX {return nil,.Invalid_Desc}
     failed:runtime.Allocator_Error
     if m,failed=new(Mixer,allocator);failed!=nil {return nil,.Out_Of_Memory}
     m.allocator=allocator
-    m.sample_rate=desc.sample_rate if desc.sample_rate>0 else 48000
+    m.sample_rate=MIXER_RATE
     m.channels=channels
     m.speed_of_sound=desc.speed_of_sound if desc.speed_of_sound>0 else 343
     if desc.output!=.Headphones && desc.output!=.Speakers {mixer_destroy(m);return nil,.Invalid_Desc}
@@ -269,9 +272,8 @@ mixer_init :: proc(m:^Mixer,desc:Mixer_Desc) -> Error {
     return .None
 }
 
-// The HRTF at the rate of the mixer and what binaural output needs per voice
-// and bus, built the first time the output is headphones and kept after:
-// Invalid_Desc for a rate the HRTF has no measurements at.
+// The HRTF and what binaural output needs per voice and bus, built the first
+// time the output is headphones and kept after.
 @(private)
 binaural_init :: proc(m:^Mixer) -> (error:Error) {
     if m.conv.n>0 {return .None}
@@ -279,7 +281,7 @@ binaural_init :: proc(m:^Mixer) -> (error:Error) {
     allocator:=m.allocator
     failed:runtime.Allocator_Error
     voices,buses:=len(m.voices),len(m.buses)
-    if error=hrtf_load(&m.hrtf,m.sample_rate,allocator);error!=.None {return .Invalid_Desc if error==.Unsupported_Format else error}
+    hrtf_load(&m.hrtf,MIXER_RATE,allocator) or_return
     fft_init(&m.conv,BINAURAL_WINDOW+m.hrtf.samples-1,allocator) or_return
     bins:=m.conv.n/2+1
     m.binaural_ring=next_pow2(m.conv.n+BINAURAL_OVERLAP)

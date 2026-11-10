@@ -9,8 +9,7 @@ import "core:math"
 // is the HRTF Steam Audio ships (cipic_124.inl, from the CIPIC database), in its
 // format: 'HRTF', version, directions (elevation and azimuth in degrees,
 // canonical), sampling rates with their HRIR lengths, then per rate, per ear and
-// per direction an HRIR of f32. Only the rate of the mixer's default is kept:
-// the device resamples it.
+// per direction an HRIR of f32. Only MIXER_RATE is kept.
 
 HRTF_DATA :: #load("hrtf/cipic_124.hrtf")
 
