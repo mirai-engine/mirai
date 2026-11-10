@@ -420,3 +420,80 @@ a_client_that_stalls_past_the_acknowledgement_window_keeps_its_replicas :: proc(
     }
     testing.expect(t,stats.packets_sent>=60,"the server kept sending while the client was stalled")
 }
+
+// An object that changes type keeps its replica on every connection: no end
+// sees it destroyed, what the client bound it to stays, and its words and
+// baselines are those of the new type, also when the creations are lost.
+@(test)
+an_object_retyped_keeps_its_replica_and_takes_the_fragments_of_its_new_type :: proc(t:^testing.T) {
+    Seen :: struct {destroyed,retyped,created:int}
+    visit :: proc(client:int,command:^Command,user:rawptr) {
+        seen:=(^Seen)(user)
+        #partial switch command.kind {
+        case .Object_Destroyed: seen.destroyed+=1
+        case .Object_Created:   if command.retyped {seen.retyped+=1} else {seen.created+=1}
+        }
+    }
+    harsh:=Sim_Conditions{latency=0.05,jitter=0.02,loss=0.3,duplicate=0.1,reorder=0.2,reorder_delay=0.04}
+    for conditions,index in ([]Sim_Conditions{{},harsh}) {
+        s:=new(Scene);defer free(s)
+        scene_init(s,2,{max_objects=16},seed=u64(40+index));defer scene_destroy(s)
+        transforms:[4]Test_Transform
+        vitals:[4]Test_Vitals
+        secrets:[4]Test_Secret
+        objects:[4]Object
+        actor:[4]bool
+        for &object,i in objects {
+            transforms[i]={position={f32(i),0,0},rotation=quaternion(w=1,x=0,y=0,z=0)}
+            error:Error
+            object,error=object_create(s.server,{type=s.tp.prop,sources={0=&transforms[i]},poll=true,owner=i==0?s.on_server[0]:0})
+            testing.expect_value(t,error,Error.None)
+        }
+        seen:Seen
+        tick:=u32(0)
+        for _ in 0..<40 {scene_tick(s,&tick,visit,&seen)}
+        testing.expect_value(t,seen.created,8)
+        for object in objects {testing.expect_value(t,object_bind(s.clients[0],object,u64(object)+100),Error.None)}
+        for endpoint in 0..=2 {sim_endpoint_conditions(&s.w.sim,endpoint,conditions)}
+        state:=u64(9+index)
+        unsound:=0
+        for step in 0..<400 {
+            i:=int(base.splitmix_next(&state)%4)
+            transforms[i].position.x+=1
+            vitals[i].health=i32(base.splitmix_next(&state)%1000)
+            secrets[i].ammo+=1
+            if step%7==0 {
+                k:=int(base.splitmix_next(&state)%4)
+                sources:[MAX_FRAGMENTS]rawptr
+                sources[0]=&transforms[k]
+                if !actor[k] {sources[1],sources[2]=&vitals[k],&secrets[k]}
+                if object_retype(s.server,objects[k],actor[k]?s.tp.prop:s.tp.actor,sources)==.None {actor[k]=!actor[k]}
+            }
+            scene_tick(s,&tick,visit,&seen)
+            unsound+=int(!test_baselines_counted(s.server))
+            for client,k in s.clients[:s.count] {unsound+=int(!test_baselines_match(s.server,client,s.on_server[k]))}
+        }
+        for endpoint in 0..=2 {sim_endpoint_conditions(&s.w.sim,endpoint,{})}
+        for _ in 0..<200 {scene_tick(s,&tick,visit,&seen)}
+        testing.expectf(t,unsound==0,"conditions %d: %d ticks with a baseline of another type or miscounted",index,unsound)
+        testing.expectf(t,seen.destroyed==0 && seen.created==8 && seen.retyped>0,"conditions %d: %d replicas destroyed, %d created and %d retyped",index,seen.destroyed,seen.created,seen.retyped)
+        for object,i in objects {
+            testing.expect_value(t,object_type(s.server,object),actor[i]?s.tp.actor:s.tp.prop)
+            for client,k in s.clients[:s.count] {
+                testing.expectf(t,test_replica_matches(s.server,client,object,i==0 && k==0),"conditions %d: client %d differs on object %d",index,k,i)
+            }
+            testing.expect_value(t,object_user(s.clients[0],object),u64(object)+100)
+        }
+        testing.expect(t,s.server.back.repl.state_failures==0)
+        testing.expect_value(t,host_stats(s.server).connections,2)
+    }
+    // Hostile: what is not an object of this server, or not a type.
+    s:=new(Scene);defer free(s)
+    scene_init(s,1,{max_objects=4});defer scene_destroy(s)
+    transform:Test_Transform
+    object,_:=object_create(s.server,{type=s.tp.prop,sources={0=&transform}})
+    testing.expect_value(t,object_retype(s.server,Object(12345),s.tp.actor,{}),Error.Invalid)
+    testing.expect_value(t,object_retype(s.server,object,Type_Id(200),{}),Error.Invalid)
+    testing.expect_value(t,object_retype(s.clients[0],object,s.tp.actor,{}),Error.Invalid)
+    testing.expect_value(t,object_retype(s.server,object,s.tp.prop,{}),Error.None)
+}

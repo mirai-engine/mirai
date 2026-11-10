@@ -23,6 +23,7 @@ import "mirai:std/serial"
 @(private) Link :: enum u8 {None,Pending_Create,Creating,Created,Pending_Destroy,Destroying}
 @(private) LINK_ROLE :: 1 // the role has to be sent
 @(private) LINK_FULL :: 2 // the whole state has to be sent, even to the holder of the authority
+@(private) LINK_RETYPE :: 4 // the replica the connection has, or is being sent, is of the type before: it takes the creation again
 @(private) GENERATION_WIDTHS :: [4]u8{4,8,16,32}
 @(private) BASELINES_LOOSE :: 3
 @(private) FILL_TRIES :: 10    // objects behind one that did not fit that may fail to fit too before the datagram is closed
@@ -127,6 +128,7 @@ Repl :: struct {
     live:[]u8,
     generation:[]u32,
     type:[]Type_Id,
+    type_before:[]Type_Id, // server, per object: the one before it was last retyped; what an older epoch still sends is of it
     simulation:[]Simulation,
     role:[]Role, // client
     epoch:[]u8,
@@ -137,6 +139,7 @@ Repl :: struct {
     filter:[]Filter,
     auto:[]bool,
     groups:[]Groups, // server, per object: a connection must have one of them to see it; none: of no group
+    visibility:[]u32, // server, per object: a connection must share a bit with it to see it; 0: any
     parent:[]u32,
     refs:[]u16,
     lease:[]u32,
@@ -179,7 +182,7 @@ Peer_Repl :: struct {
     base_tick:[]u32,
     accum:[]f64,
     scope,work,done:[]u64,
-    relevant:[]u64, // objects of Custom filter the game lets this connection see
+    visibility:u32, // the visibility bits it has
     groups:[]u64,   // the groups it has, by number
     position:[3]f32,
     view_radius:f32,
@@ -216,7 +219,7 @@ back_init :: proc(h:^Host) -> Error {
     } else {
         pool_init(h,&r.bases,d.baseline_words,n*2)
     }
-    r.live=host_make(h,u8,n);r.generation=host_make(h,u32,n);r.type=host_make(h,Type_Id,n)
+    r.live=host_make(h,u8,n);r.generation=host_make(h,u32,n);r.type=host_make(h,Type_Id,n);r.type_before=host_make(h,Type_Id,n)
     r.simulation=host_make(h,Simulation,n);r.role=host_make(h,Role,n);r.epoch=host_make(h,u8,n)
     r.type_stats=host_make(h,Type_Stats,TYPE_CAPACITY)
     if d.object_stats {r.object_bits=host_make(h,u64,n);r.shared_bits=host_make(h,u64,n)}
@@ -224,6 +227,7 @@ back_init :: proc(h:^Host) -> Error {
         r.owner=host_make(h,Connection,n);r.holder=host_make(h,Connection,n)
         r.priority=host_make(h,f32,n);r.radius=host_make(h,f32,n);r.position=host_make(h,[3]f32,n)
         r.nonzero=host_make(h,u64,n);r.filter=host_make(h,Filter,n);r.auto=host_make(h,bool,n);r.groups=host_make(h,Groups,n)
+        r.visibility=host_make(h,u32,n)
         r.parent=host_make(h,u32,n);r.refs=host_make(h,u16,n);r.lease=host_make(h,u32,n)
         r.watchers=host_make(h,u64,n*r.peer_words)
         r.always=host_make(h,u64,(n+63)/64);r.wanted=host_make(h,u64,(n+63)/64)
@@ -251,9 +255,9 @@ back_destroy :: proc(h:^Host) {
     r:=&h.back.repl
     a:=h.allocator
     pool_destroy(&r.states,a);pool_destroy(&r.bases,a);delete(r.base_refs,a);delete(r.base_free,a);delete(r.fresh,a);delete(r.base_count,a)
-    delete(r.live,a);delete(r.generation,a);delete(r.type,a);delete(r.simulation,a);delete(r.role,a)
+    delete(r.live,a);delete(r.generation,a);delete(r.type,a);delete(r.type_before,a);delete(r.simulation,a);delete(r.role,a)
     delete(r.epoch,a);delete(r.type_stats,a);delete(r.object_bits,a);delete(r.shared_bits,a);delete(r.owner,a);delete(r.holder,a)
-    delete(r.priority,a);delete(r.radius,a);delete(r.position,a);delete(r.nonzero,a);delete(r.filter,a);delete(r.auto,a);delete(r.groups,a)
+    delete(r.priority,a);delete(r.radius,a);delete(r.position,a);delete(r.nonzero,a);delete(r.filter,a);delete(r.auto,a);delete(r.groups,a);delete(r.visibility,a)
     delete(r.parent,a);delete(r.refs,a);delete(r.lease,a);delete(r.watchers,a);delete(r.always,a);delete(r.wanted,a)
     base.hash_map_destroy(&r.grid);delete(r.grid_next,a);delete(r.grid_prev,a);delete(r.grid_cell,a);delete(r.grid_listed,a);delete(r.grid_dirty,a)
     delete(r.keys,a);delete(r.events.data,a);delete(r.special,a);delete(r.dying,a);delete(r.deferred.data,a)
@@ -269,7 +273,7 @@ repl_peer_allocate :: proc(h:^Host,p:^Peer) {
         pr.active=host_make(h,u8,n);pr.pending=host_make(h,u8,n);pr.away=host_make(h,u8,n);pr.request=host_make(h,u8,n);pr.flight=host_make(h,u16,n)
         pr.since_base=host_make(h,u64,n);pr.since_pending=host_make(h,u64,n)
         pr.base[0]=host_make(h,u32,n);pr.base[1]=host_make(h,u32,n);pr.base_tick=host_make(h,u32,n);pr.accum=host_make(h,f64,n)
-        pr.scope=host_make(h,u64,sets);pr.done=host_make(h,u64,sets);pr.relevant=host_make(h,u64,sets)
+        pr.scope=host_make(h,u64,sets);pr.done=host_make(h,u64,sets)
         pr.groups=host_make(h,u64,(h.desc.replication.groups+64)/64)
     } else if h.desc.protocol.has_input {
         pr.inputs=host_make(h,u32,INPUT_RING*h.desc.protocol.input.words)
@@ -282,7 +286,7 @@ repl_peer_release :: proc(h:^Host,p:^Peer) {
     delete(pr.link,a);delete(pr.flags,a);delete(pr.dirty,a);delete(pr.work,a);delete(pr.active,a);delete(pr.pending,a);delete(pr.away,a);delete(pr.request,a)
     delete(pr.flight,a);delete(pr.since_base,a);delete(pr.since_pending,a);delete(pr.base[0],a);delete(pr.base[1],a)
     delete(pr.base_tick,a);delete(pr.accum,a);delete(pr.scope,a);delete(pr.done,a)
-    delete(pr.inputs,a);delete(pr.relevant,a);delete(pr.groups,a)
+    delete(pr.inputs,a);delete(pr.groups,a)
 }
 
 @(private)
@@ -292,8 +296,8 @@ repl_peer_connected :: proc(h:^Host,p:^Peer) {
     mem.zero_slice(pr.link);mem.zero_slice(pr.flags);mem.zero_slice(pr.dirty);mem.zero_slice(pr.work)
     mem.zero_slice(pr.active);mem.zero_slice(pr.pending);mem.zero_slice(pr.away);mem.zero_slice(pr.since_base)
     mem.zero_slice(pr.since_pending);mem.zero_slice(pr.base[0]);mem.zero_slice(pr.base[1]);mem.zero_slice(pr.accum)
-    mem.zero_slice(pr.scope);mem.zero_slice(pr.done);mem.zero_slice(pr.relevant);mem.zero_slice(pr.groups)
-    pr.position,pr.view_radius,pr.has_view,pr.everywhere={},0,false,false
+    mem.zero_slice(pr.scope);mem.zero_slice(pr.done);mem.zero_slice(pr.groups)
+    pr.position,pr.view_radius,pr.has_view,pr.everywhere,pr.visibility={},0,false,false,0
     pr.filter_due,pr.in_scope=true,0
     pr.held=h.desc.hold
     pr.input_ticks={}
@@ -428,13 +432,29 @@ link_sync :: proc(h:^Host,p:^Peer,o:int) {
             bitset_set(pr.work,o)
         }
     case .Pending_Destroy:
-        if wanted {
+        if wanted && pr.flags[o]&LINK_RETYPE!=0 {
+            pr.link[o],pr.flags[o],pr.dirty[o],pr.accum[o]=.Pending_Create,0,0,0
+        } else if wanted {
             pr.link[o]=.Created
             r.watchers[o*r.peer_words+int(p.index)>>6]|=1<<(p.index&63)
             pr.dirty[o],pr.flags[o]=type.all,LINK_ROLE|LINK_FULL
         }
         bitset_set(pr.work,o)
     }
+}
+
+// The replica the connection has is of the type the object had before: it
+// takes the creation again, which carries the type, or goes when the
+// connection should not have it.
+@(private)
+link_retype :: proc(h:^Host,p:^Peer,o:int) {
+    r:=&h.back.repl
+    pr:=&p.repl
+    baselines_drop(r,pr,o)
+    r.watchers[o*r.peer_words+int(p.index)>>6]&~=1<<(p.index&63)
+    wanted:=r.live[o]==1 && pool_has(&r.states,o) && bitset_test(pr.scope,o) && !bitset_test(pr.done,o)
+    pr.link[o],pr.flags[o],pr.dirty[o],pr.accum[o]=wanted?.Pending_Create:.Pending_Destroy,wanted?0:LINK_RETYPE,0,0
+    bitset_set(pr.work,o)
 }
 
 // What the connection is to the object changed: send the role and everything it may now see.
@@ -501,10 +521,11 @@ repl_op :: proc(h:^Host,frame:^Frame,op:^Op) {
         o:=int(base.handle_index(base.Handle(op.handle)))
         type:=&r.protocol.types[payload.type]
         r.live[o],r.generation[o],r.type[o]=1,base.handle_generation(base.Handle(op.handle)),payload.type
+        r.type_before[o]=payload.type
         r.simulation[o],r.owner[o],r.holder[o],r.epoch[o],r.lease[o]=payload.simulation,payload.owner,0,0,0
         r.priority[o],r.radius[o],r.position[o],r.filter[o]=payload.priority,payload.radius,payload.position,payload.filter
         r.auto[o],r.refs[o]=payload.auto,0
-        r.groups[o]=payload.groups
+        r.groups[o],r.visibility[o]=payload.groups,payload.visibility
         r.parent[o]=0
         if parent,ok:=object_from(r,u64(payload.parent));ok {r.parent[o]=u32(parent)+1}
         r.fresh[o]=0
@@ -518,12 +539,43 @@ repl_op :: proc(h:^Host,frame:^Frame,op:^Op) {
         if payload.filter==.Always {bitset_set(r.always,o)}
         if len(r.object_bits)>0 {r.object_bits[o]=0}
         for &p in b.peers {
-            if p.state==.Connected {bitset_clear(p.repl.done,o);bitset_clear(p.repl.scope,o);bitset_clear(p.repl.relevant,o)}
+            if p.state==.Connected {bitset_clear(p.repl.done,o);bitset_clear(p.repl.scope,o)}
         }
         r.high=max(r.high,o+1)
         grid_mark(r,o)
         r.radius_stale=true
         r.scope_stale,r.special_stale=true,true
+    case .Object_Retype:
+        o,ok:=object_from(r,op.handle)
+        if !ok || !r.server {return}
+        data:=op_data(frame,op)
+        payload:Create_Payload
+        mem.copy(&payload,raw_data(data),size_of(Create_Payload))
+        type:=&r.protocol.types[payload.type]
+        // Whoever held it simulates the type before: the server takes it back, and
+        // the epoch tells apart what that client still sends.
+        if r.holder[o]!=0 {authority_set(h,o,0,0)}
+        r.type_before[o],r.type[o]=r.type[o],payload.type
+        r.epoch[o]=(r.epoch[o]+1)&15
+        r.fresh[o]=0
+        pool_free(&r.states,o)
+        if !pool_alloc(&r.states,o,type.words) {
+            r.state_failures+=1
+        } else {
+            words:=pool_words(&r.states,o)
+            mem.copy(raw_data(words),raw_data(data[offset_of(Create_Buffer,words):]),type.words*4)
+            r.nonzero[o]=state_nonzero(type,words)
+        }
+        for &p in b.peers {
+            if p.state!=.Connected {continue}
+            #partial switch p.repl.link[o] {
+            case .Created:
+                link_retype(h,&p,o)
+            case .Creating,.Pending_Destroy,.Destroying:
+                baselines_drop(r,&p.repl,o)
+                p.repl.flags[o]|=LINK_RETYPE
+            }
+        }
     case .Object_State:
         if r.server {
             o,ok:=object_from(r,op.handle)
@@ -610,8 +662,14 @@ repl_op :: proc(h:^Host,frame:^Frame,op:^Op) {
         if p:=peer_from(h,Connection(op.handle));p!=nil {
             p.repl.position,p.repl.view_radius,p.repl.has_view,p.repl.everywhere={op.v[0],op.v[1],op.v[2]},max(op.v[3],0),true,op.v[3]<0
         }
-    case .Object_Relevance:
-        relevance_apply(h,op)
+    case .Object_Visibility:
+        if o,ok:=object_from(r,op.handle);ok && r.visibility[o]!=op.c {
+            r.visibility[o]=op.c
+            r.scope_stale,r.special_stale=true,true
+        }
+    case .Connection_Visibility:
+        // Also while the server's clock is paused: what it sees changes now.
+        if p:=peer_from(h,Connection(op.handle));p!=nil && p.repl.visibility!=op.c {p.repl.visibility,p.repl.filter_due,b.send_pending=op.c,true,true}
     case .Object_Group:
         if o,ok:=object_from(r,op.handle);ok && r.groups[o]!=transmute(Groups)op.value {
             r.groups[o]=transmute(Groups)op.value
@@ -988,7 +1046,10 @@ repl_resolve :: proc(h:^Host,p:^Peer,record:Record,seq:u16,received:bool) {
             baselines_drop(r,pr,o)
             r.watchers[o*r.peer_words+int(p.index)>>6]&~=1<<(p.index&63)
             pr.link[o]=.Pending_Create
+            pr.flags[o]&~=LINK_RETYPE
             bitset_set(pr.work,o)
+        } else if pr.flags[o]&LINK_RETYPE!=0 {
+            link_retype(h,p,o)
         } else if r.simulation[o]==.Each {
             link_clear(h,p,o)
             bitset_set(pr.done,o)
@@ -1066,14 +1127,15 @@ objects_read :: proc(h:^Host,p:^Peer,rd:^serial.Bit_Reader) -> bool {
         p.stats.objects_received+=1
         if r.server {
             if r.live[o]==0 {return false}
-            type:=&r.protocol.types[r.type[o]]
             epoch:=u8(serial.bit_read(rd,4))
+            // What an epoch before a retype still sends is of the type before, and is read to be dropped.
+            type:=&r.protocol.types[epoch==r.epoch[o]?r.type[o]:r.type_before[o]]
             mask:=mask_read(rd,type) or_return
             scratch:=r.words[:type.words]
-            current:=r.live[o]==1 && pool_has(&r.states,o)
+            current:=epoch==r.epoch[o] && r.live[o]==1 && pool_has(&r.states,o)
             if current {copy(scratch,pool_words(&r.states,o))}
             state_read(rd,type,mask,scratch,nil) or_return
-            if !current || r.holder[o]!=handle || epoch!=r.epoch[o] {continue}
+            if !current || r.holder[o]!=handle {continue}
             words:=pool_words(&r.states,o)
             changed:=state_diff(type,scratch,words,mask)
             r.lease[o]=r_lease(h,0)
@@ -1100,10 +1162,18 @@ objects_read :: proc(h:^Host,p:^Peer,rd:^serial.Bit_Reader) -> bool {
             scratch:=r.words[:type.words]
             mem.zero_slice(scratch)
             state_read(rd,type,mask,scratch,nil) or_return
-            if r.live[o]!=0 {replica_remove(h,p,o,true)}
+            // The creation of a replica this end has, again: its object goes on, of this type from now on.
+            retyped:=r.live[o]==1 && r.generation[o]==generation
+            if retyped {
+                pool_free(&r.states,o);pool_free(&r.bases,o*2);pool_free(&r.bases,o*2+1)
+                pr.dirty[o]=0
+                bitset_clear(pr.work,o)
+            } else if r.live[o]!=0 {
+                replica_remove(h,p,o,true)
+            }
             stored:=pool_alloc(&r.states,o,type.words) && (!keep || pool_alloc(&r.bases,o*2,type.words))
             command:=command_push(h,{kind=.Object_Created,type=Type_Id(index),role=role,simulation=Simulation(simulation),tick=r.remote_tick,
-                mask=type.all,connection=handle,object=Object(base.handle_make(u32(o),generation))},nil,type.words)
+                mask=type.all,connection=handle,object=Object(base.handle_make(u32(o),generation)),retyped=retyped},nil,type.words)
             if !stored || command==nil {
                 pool_free(&r.states,o);pool_free(&r.bases,o*2)
                 peer_drop(h,p,.Capacity,true)

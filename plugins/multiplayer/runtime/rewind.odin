@@ -18,8 +18,6 @@ import mm "mirai:std/math"
 // target was then, and judges against that: nothing moves, and the world is
 // never put back.
 
-// The entities with Rewind a tick remembers; the rest of a tick is a problem.
-REWIND_ENTITIES :: 64
 // How far back a player can be seen by default, within the history of the session.
 REWIND_SECONDS :: f32(0.5)
 // A move longer than this between two ticks is a teleport, metres: the pose
@@ -38,7 +36,7 @@ Rewind_Pose :: struct {
 Rewind_Frame :: struct {
     tick:u64, // 0: empty
     count:int,
-    poses:[REWIND_ENTITIES]Rewind_Pose,
+    poses:[]Rewind_Pose, // room for Net_Settings.rewind_entities
 }
 
 // Server: the poses of the entities with Rewind, a frame per tick in a ring as
@@ -47,28 +45,36 @@ Rewind_Frame :: struct {
 @(storage,host,by_world,free="rewind_free")
 Rewind_History :: struct {
     frames:[]Rewind_Frame, // by tick modulo its length
+    poses:[]Rewind_Pose,   // of every frame
     allocator:runtime.Allocator,
 }
 
 rewind_free :: proc(history:^Rewind_History) {
     delete(history.frames,history.allocator)
+    delete(history.poses,history.allocator)
     history^={}
+}
+
+// The ring of slots ticks, each with room for the poses of entities entities. Made when the session opens, as
+// a load: a stable tick does not allocate. False without memory.
+rewind_make :: proc(history:^Rewind_History,slots,entities:int,allocator:runtime.Allocator) -> bool {
+    rewind_free(history)
+    history.allocator=allocator
+    error:runtime.Allocator_Error
+    if history.frames,error=make([]Rewind_Frame,slots,allocator);error!=nil {return false}
+    if history.poses,error=make([]Rewind_Pose,slots*entities,allocator);error!=nil {rewind_free(history);return false}
+    for &frame,index in history.frames {frame.poses=history.poses[index*entities:][:entities]}
+    return true
 }
 
 // At the end of a tick, with what the server publishes: the Transform of
 // every entity with Rewind, under the number of the tick.
 @(step="fixed",loops="game",stage="end",before="net_tick_tail")
-rewind_record :: proc(session:core.Ref(Net_Session),time:core.Time,marked:core.Read(Rewind),transforms:core.Read(core.Transform),history:^Rewind_History,problems:^core.Problems) {
+rewind_record :: proc(session:core.Ref(Net_Session),time:core.Time,marked:core.Read(Rewind),transforms:core.Read(core.Transform),history:^Rewind_History,allocator:runtime.Allocator,problems:^core.Problems) {
     if session.ptr==nil || !session.host_ready || session.mode!=.Server || time.resimulating {return}
-    if slots:=session_history(session)+1;len(history.frames)!=slots {
-        // Made when the session opens, as a load; a stable tick does not allocate.
-        rewind_free(history)
-        frames,error:=make([]Rewind_Frame,slots)
-        if error!=nil {
-            core.report(problems,core.NONE,"multiplayer.rewind","the poses of %d ticks for lag compensation were not made (out of memory); free memory, or lower Net_Settings.replication.history_seconds",slots-1)
-            return
-        }
-        history^={frames=frames,allocator=context.allocator}
+    if slots:=session_history(session)+1;len(history.frames)!=slots && !rewind_make(history,slots,session.desc.rewind_entities,allocator) {
+        core.report(problems,core.NONE,"multiplayer.rewind","the poses of %d ticks for lag compensation were not made (out of memory); free memory, or lower Net_Settings.replication.history_seconds or rewind_entities",slots-1)
+        return
     }
     frame:=&history.frames[time.tick%u64(len(history.frames))]
     frame.tick,frame.count=time.tick,0
@@ -76,8 +82,8 @@ rewind_record :: proc(session:core.Ref(Net_Session),time:core.Time,marked:core.R
         e:=core.entity_at(marked,row)
         placed,has:=core.get(transforms,e)
         if !has {continue}
-        if frame.count==REWIND_ENTITIES {
-            core.report(problems,e,"multiplayer.rewind","its pose is not remembered for lag compensation: more than %d entities have Rewind; give it to fewer",REWIND_ENTITIES)
+        if frame.count==len(frame.poses) {
+            core.report(problems,e,"multiplayer.rewind","its pose is not remembered for lag compensation: more than %d entities have Rewind; give it to fewer, or raise Net_Settings.rewind_entities",len(frame.poses))
             continue
         }
         frame.poses[frame.count]={e,placed.position,placed.rotation}

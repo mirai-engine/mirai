@@ -20,6 +20,10 @@ import "mirai:std/base"
 @(component,replicated)
 Net_Test_Value :: struct {force:f32,target:core.Entity}
 
+// A component an entity gains after it is first replicated.
+@(component,replicated)
+Net_Test_Late :: struct {level:i32}
+
 // The forces net_test_physics applied, added up.
 @(private)
 Net_Test_Force :: struct {total:f32}
@@ -30,6 +34,7 @@ Net_Test_Force :: struct {total:f32}
 Net_Test_Tables :: struct {
     using physics:phys.Test_Physics,
     values:core.Table(Net_Test_Value),
+    lates:core.Table(Net_Test_Late),
     identities:core.Table(core.Id),
     objects:core.Table(Replicate),
     links:core.Table(Net_Link),
@@ -40,6 +45,8 @@ Net_Test_Tables :: struct {
     drivables:core.Table(inp.Drivable),
     seats:core.Table(inp.Seat),
     absents:core.Table(Seat_Absent),
+    visibility:core.Table(Visibility),
+    spawns:core.Table(Predicted_Spawn),
     references:core.Table(scene.Scene_Reference),
     tombstones:core.Table(scene.Tombstone),
     held:core.Table(scene.Section_Held),
@@ -49,6 +56,7 @@ Net_Test_Tables :: struct {
     bindings:inp.Input_Map,
     remote:Remote_Inputs,
     received:Net_Events,
+    outbox:Net_Outbox,
     request:Session_Request,
     network:core.Network,
     places:core.Pose_Target_Places,
@@ -70,7 +78,13 @@ Net_Test_World :: struct {
 
 // What the fixed loop of a test takes that its World does not hold.
 @(private)
-Net_Test_Shared :: struct {session:^Net_Session,info:^core.World_Info,colliders:phys.Collider_Meshes}
+Net_Test_Shared :: struct {
+    session:^Net_Session,
+    info:^core.World_Info,
+    colliders:phys.Collider_Meshes,
+    spawn_at:u64, // the tick in which the game makes an entity on both ends (predict_spawn); 0: none
+    sent:int,     // the messages it sent with them
+}
 
 @(private)
 net_test_types :: proc(types:^[dynamic]core.Test_Type) {
@@ -178,10 +192,18 @@ net_test_fixed :: proc(world,shared,editor,application:rawptr) {
     ref:=core.world_ref(w,sh.info)
     core.revisions_moved(w.storage_revisions[:])
     if sh.session!=nil {
-        net_tick_head(ref,app,sh.session,&w.remote,nil,sh.session.problems)
+        net_tick_head(ref,app,sh.session,&w.remote,nil,nil,sh.session.problems)
         core.settle(sh.info,w,nil)
     }
     net_test_feed(w)
+    if sh.spawn_at!=0 && w.time.tick==sh.spawn_at {
+        e:=core.create(&w.entities)
+        core.add(&w.transforms,e,core.Transform{position={0,5,0},rotation=1,scale={1,1,1}})
+        core.add(&w.values,e,Net_Test_Value{})
+        predict_spawn(core.ref(sh.session),&w.identities,&w.spawns,e,0,w.time)
+        sh.sent+=int(send(&w.outbox,u32(1)))
+        core.settle(sh.info,w,nil)
+    }
     net_test_physics(w,sh,app)
     if sh.session!=nil {
         outbox:Net_Outbox
@@ -267,7 +289,7 @@ net_test_fragment :: proc(s:^Net_Session,type:wire.Type_Id,component:typeid) -> 
 net_test_replica :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity,role:Role,simulation:Simulation) -> ^Replica {
     r:=&s.client.replicas[1]
     local,_:=core.get(core.read(core.world_table_of(w,core.Transform)),e)
-    r^={object=1,entity=e,type=net_test_type(s,w,e),role=role,simulation=simulation,slot=-1}
+    r^={object=1,entity=e,type=net_test_type(s,w,e),role=role,simulation=simulation,slot=-1,samples=-1}
     r.pose={id=core.id_of(core.read(core.world_table_of(w,core.Id)),e),position=local.position,rotation=local.rotation,scale=local.scale}
     r.motion,_=motion_read(w,e)
     wire.smoothing_init(&r.smoothing)
@@ -574,8 +596,8 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
             now:=wire.host_time(&sessions[0].host)
             for &session in sessions {wire.host_update(&session.host,now)}
             server_events,client_events:Net_Events
-            server_commands(&sessions[0],core.world_ref(&worlds[0],&info),nil,wire.host_poll(&sessions[0].host),&server_events,&worlds[0].remote)
-            client_commands(&sessions[1],core.world_ref(&worlds[1],&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host),&client_events)
+            server_commands(&sessions[0],core.world_ref(&worlds[0],&info),nil,wire.host_poll(&sessions[0].host),&worlds[0].remote)
+            client_commands(&sessions[1],core.world_ref(&worlds[1],&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host))
             for event in net_test_arrived(&sessions[0]) {if event.kind==.Connected {connected=event.connection}}
             core.value_free(&server_events,type_info_of(Net_Events));core.value_free(&client_events,type_info_of(Net_Events))
             if connected!=0 && sessions[1].status==.Connected {break}
@@ -592,14 +614,14 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
         if !udp {wire.sim_network_advance(&network,now)}
         for &session in sessions {wire.host_update(&session.host,now)}
         server_events,client_events:Net_Events
-        server_commands(&sessions[0],core.world_ref(&worlds[0],&info),nil,wire.host_poll(&sessions[0].host),&server_events,&worlds[0].remote)
+        server_commands(&sessions[0],core.world_ref(&worlds[0],&info),nil,wire.host_poll(&sessions[0].host),&worlds[0].remote)
         for event in net_test_arrived(&sessions[0]) {
             if event.kind==.Connected {
                 connected=event.connection
                 net_test_physical_objects(&worlds[0],&info,entities[0],connected)
             }
         }
-        client_commands(&sessions[1],core.world_ref(&worlds[1],&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host),&client_events)
+        client_commands(&sessions[1],core.world_ref(&worlds[1],&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host))
         client_reconcile(&sessions[1],core.world_ref(&worlds[1],&info),&apps[1],1.0/60)
         core.value_free(&server_events,type_info_of(Net_Events))
         core.value_free(&client_events,type_info_of(Net_Events))
@@ -614,6 +636,10 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
         }
         if tick==200 {core.edit(&worlds[0].joints,entities[0][0]).motor_speed=-1}
         if tick==260 {core.disable(&worlds[0].joints,entities[0][0])}
+        // Components the entities gain and lose long after they were first replicated.
+        if tick==320 {for e in entities[0] {core.add(&worlds[0].lates,e,Net_Test_Late{level=7})}}
+        if tick==400 {core.edit(&worlds[0].lates,entities[0][1]).level=9}
+        if tick==480 {core.remove(&worlds[0].lates,entities[0][0])}
         worlds[1].input.gamepads[0]={connected=true,down={.South},axes={.Left_X=0.75,.Left_Y=0,.Right_X=0,.Right_Y=0,.Left_Trigger=0,.Right_Trigger=0}}
         for &world,index in worlds {
             core.settle(&info,&world,nil)
@@ -648,6 +674,10 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
         client_pose,_:=core.get(&worlds[1].transforms,entities[1][index])
         testing.expectf(t,linalg.length(server_pose.position-client_pose.position)<0.02,"body %d server %v client %v",index,server_pose.position,client_pose.position)
     }
+    late,has_late:=core.get(core.read(&worlds[1].lates),entities[1][1])
+    testing.expectf(t,has_late && late.level==9 && !core.has(&worlds[1].lates,entities[1][0]),"the client has the late component of the second body %v at level %d, and that of the first %v",has_late,late.level,core.has(&worlds[1].lates,entities[1][0]))
+    testing.expect_value(t,sessions[0].stats.retyped,u64(3))
+    testing.expect_value(t,sessions[1].stats.spawned,u64(2))
     testing.expect(t,sessions[1].stats.corrected>0)
     testing.expect_value(t,problems[0].count,0)
     testing.expect_value(t,problems[1].count,0)
@@ -691,6 +721,9 @@ remote_character_intent_is_replayed_from_its_authoritative_tick :: proc(t:^testi
     if !testing.expect(t,net_test_session(&s,&world,&info,&app,&network,1,.Client)) {return}
     defer session_destroy(&s)
     r:=net_test_replica(&s,core.world_ref(&world,&info),e,.Shown,.Server)
+    // Predicted, as while it is within reach of what this client drives.
+    r.pose.predict=true
+    replica_classify(&s,core.world_ref(&world,&info),r)
     driver_fragment:=net_type(&s,r.type).driver
     if !testing.expect(t,driver_fragment>=0,"a Move_Input replicates its driver") {return}
     words:=make([]u32,s.client.words_per)
@@ -754,20 +787,29 @@ replicas_joined_to_any_of_many_driven_bodies_are_critical :: proc(t:^testing.T) 
     if !testing.expect(t,net_test_session(&s,&world,&info,&app,&network,1,.Client,settings={max_objects=64,predicted_capacity=8,replication={history_seconds=0.25}})) {return}
     defer session_destroy(&s)
     c:=&s.client
-    replica :: proc(c:^Client,index:int,e:core.Entity,role:Role) {c.replicas[index]={object=Object(index),entity=e,role=role,slot=-1}}
+    ref:=core.world_ref(&world,&info)
+    replica :: proc(s:^Net_Session,w:core.World_Ref,index:int,e:core.Entity,role:Role) {
+        s.client.replicas[index]={object=Object(index),entity=e,role=role,type=net_test_type(s,w,e),slot=-1,samples=-1}
+    }
     for k in 0..<PAIRS {
         a,_:=core.get(&world.bodies,driven[k])
         b,_:=core.get(&world.bodies,joined[k])
         testing.expectf(t,a.island!=0 && a.island==b.island,"pair %d: islands %d and %d",k,a.island,b.island)
-        replica(c,1+k,driven[k],.Predicted)
-        replica(c,1+PAIRS+k,joined[k],.Shown)
+        replica(&s,ref,1+k,driven[k],.Predicted)
+        replica(&s,ref,1+PAIRS+k,joined[k],.Shown)
     }
-    replica(c,1+2*PAIRS,alone,.Shown)
+    replica(&s,ref,1+2*PAIRS,alone,.Shown)
     c.replica_high=2+2*PAIRS
     driven_list(c)
-    records_capture(&s,core.world_ref(&world,&info),1)
-    for k in 0..<PAIRS {testing.expectf(t,replica_critical(&s.desc,&c.replicas[1+PAIRS+k],1),"the replica joined to body %d is not critical",k)}
-    testing.expect(t,!replica_critical(&s.desc,&c.replicas[1+2*PAIRS],1))
+    records_capture(&s,ref,1)
+    c.newest,c.any=1,true
+    for k in 0..<PAIRS {testing.expectf(t,replica_wanted(&s,&c.replicas[1+PAIRS+k])==.Predicted,"the replica joined to body %d is not predicted",k)}
+    testing.expect_value(t,replica_wanted(&s,&c.replicas[1+2*PAIRS]),Mode.Interpolated)
+    // And it is interpolated again once it has been out of reach for critical_ticks.
+    c.newest=1+u32(s.desc.critical_ticks)
+    testing.expect_value(t,replica_wanted(&s,&c.replicas[1+PAIRS]),Mode.Predicted)
+    c.newest+=1
+    testing.expect_value(t,replica_wanted(&s,&c.replicas[1+PAIRS]),Mode.Interpolated)
 }
 
 // The child hangs from parent in the hierarchy: a root while parent does not
@@ -803,27 +845,35 @@ object_scope_controls_relevance_radius_and_follows_the_replicated_ancestor :: pr
     outbox:Net_Outbox;defer core.value_free(&outbox,type_info_of(Net_Outbox))
     connected:Connection
     replacement:=core.NONE
+    // The seat of the connection: its bits say whether it sees parent.
+    seat:=core.create(&world.entities)
     first_parent,child_object,large_object:Object
     for tick in 1..<200 {
         now:=f64(tick)/60
         wire.sim_network_advance(&network,now)
         for &session in sessions {wire.host_update(&session.host,now)}
-        for command in wire.host_poll(&sessions[0].host) {
+        commands:=wire.host_poll(&sessions[0].host)
+        server_commands(&sessions[0],core.world_ref(world,&info),nil,commands,&world.remote)
+        for command in commands {
             if command.kind==.Connected {
                 connected=command.connection
                 testing.expect(t,view_set(&sessions[0],connected,{},1))
             }
         }
         wire.host_poll(&sessions[1].host)
-        if tick==20 {core.add(&world.objects,parent,net_test_replicate(audience=.Custom))}
-        if tick==40 {testing.expect(t,relevance_set(&sessions[0],parent,connected,true))}
-        if tick==70 {testing.expect(t,relevance_set(&sessions[0],parent,connected,false))}
-        if tick==100 {testing.expect(t,relevance_set(&sessions[0],parent,connected,true));core.edit(&world.objects,large).radius=10}
+        if tick==20 {
+            core.add(&world.objects,parent,net_test_replicate(audience=.Always))
+            core.add(&world.visibility,parent,Visibility{mask=1})
+            core.add(&world.seats,seat,inp.Seat{peer=u64(connected)})
+        }
+        if tick==40 {core.add(&world.visibility,seat,Visibility{sees=1})}
+        if tick==70 {core.add(&world.visibility,seat,Visibility{})}
+        if tick==100 {core.add(&world.visibility,seat,Visibility{sees=1});core.edit(&world.objects,large).radius=10}
         if tick==120 {core.destroy(&world.entities,parent)}
         if tick==121 {
             replacement=net_test_body(world,&info,4,{100,0,0})
-            core.add(&world.objects,replacement,net_test_replicate(audience=.Custom))
-            testing.expect(t,relevance_set(&sessions[0],replacement,connected,true))
+            core.add(&world.objects,replacement,net_test_replicate(audience=.Always))
+            core.add(&world.visibility,replacement,Visibility{mask=1})
             testing.expect(t,replacement!=parent && core.entity_index(replacement)==core.entity_index(parent))
         }
         if tick==165 {core.add(&world.parents,child,core.Parent{entity=replacement})}

@@ -2,18 +2,15 @@ package importer
 
 import "core:fmt"
 import "core:mem"
-import "core:os"
 import "core:strings"
 import "mirai:cook/textures"
 import "mirai:std/base"
 import "mirai:std/geom"
-import "mirai:std/serial"
 
-// How a source becomes assets. The settings of a source are kept in a small
-// text file next to it, <source>.import, so importing it again gives the same
-// assets whoever does it: an import reads that file when it exists and uses
-// its settings instead of those of its options, and whoever imports writes it
-// with settings_save. The zero value is the default of every setting.
+// How a source becomes assets. The settings of a source are kept in its
+// sidecar (sidecar.odin), so importing it again gives the same assets whoever
+// does it: an import reads them when the sidecar exists and uses them instead
+// of those of its options. The zero value is the default of every setting.
 
 Lods :: enum u8 {
     Auto, // simplified levels are stored after level 0 (mesh_levels)
@@ -88,68 +85,6 @@ Import_Settings :: struct {
     rig:Rig,
     rig_crotch,rig_neck:f32,    // of a Humanoid rig, above 0: the heights in meters in the model of the crotch and the neck, in place of where the fit finds them
     skeleton:base.Asset_Id,     // of a model, not zero: its clips play on this skeleton the project has (with the same bones), and the import writes only its .anim, bound to it: no textures, materials, skeletons, meshes or prefab
-}
-
-SETTINGS_EXTENSION :: ".import"
-
-settings_path :: proc(source:string,allocator:=context.allocator) -> string {
-    return strings.concatenate({source,SETTINGS_EXTENSION},allocator)
-}
-
-@(private="file")
-settings_valid :: proc(settings:Import_Settings) -> bool {
-    return settings.max_texture_size>=0 && settings.max_triangles>=0 && settings.collision_hulls>=0 && settings.textures<=max(textures.Encoding) && settings.rdo_lambda<=textures.RDO_LAMBDA_MAX &&
-        settings.image<=max(Image_Use) && settings.alpha_coverage>=0 && settings.alpha_coverage<=1 && settings.lods<=max(Lods) && settings.collision<=max(Collision) && settings.parts<=max(Parts) && settings.front<=max(Front) && settings.rig<=max(Rig) &&
-        settings.rig_crotch>=0 && settings.rig_neck>=0 && (settings.rig==.Humanoid || settings.rig_crotch==0 && settings.rig_neck==0)
-}
-
-settings_text :: proc(settings:Import_Settings,allocator:=context.allocator) -> string {
-    settings:=settings
-    schema:serial.Schema
-    serial.schema_init(&schema,context.temp_allocator)
-    defer serial.schema_destroy(&schema)
-    type,_:=serial.schema_add(&schema,Import_Settings)
-    w:serial.Writer
-    serial.writer_init(&w,256,allocator)
-    serial.text_write(&w,&schema,type,([^]u8)(&settings)[:size_of(Import_Settings)])
-    serial.write_u8(&w,'\n')
-    return string(serial.writer_take(&w))
-}
-
-// False for a text that is not the settings of a source: a field or a value this build does not know.
-settings_parse :: proc(text:string) -> (settings:Import_Settings,ok:bool) {
-    schema:serial.Schema
-    serial.schema_init(&schema,context.temp_allocator)
-    defer serial.schema_destroy(&schema)
-    type,_:=serial.schema_add(&schema,Import_Settings)
-    r:serial.Text_Reader
-    serial.text_reader_init(&r,text,context.temp_allocator)
-    defer serial.text_reader_destroy(&r)
-    if !serial.text_read(&r,&schema,type,([^]u8)(&settings)[:size_of(Import_Settings)]) || !serial.text_end(&r) || !settings_valid(settings) {return {},false}
-    return settings,true
-}
-
-// The settings kept next to a source. found is false, with the defaults, when
-// it has none; a file that cannot be read as settings is an error, not the
-// defaults, so a source is never imported in a way nobody chose.
-settings_load :: proc(source:string) -> (settings:Import_Settings,found:bool,error:Error) {
-    // A source that names a device has no file next to it.
-    if unsafe_path(source) {return}
-    path:=settings_path(source,context.temp_allocator)
-    data,file_error:=serial.file_read(path,context.temp_allocator)
-    if file_error==.Not_Found {return}
-    if file_error!=.None {return {},false,error_make(.Not_Found,"%s could not be read",path)}
-    parsed,valid:=settings_parse(string(data))
-    if !valid {return {},false,error_make(.Malformed,"%s is not the settings of an import",path)}
-    return parsed,true,{}
-}
-
-// Writes the settings next to the source, unless the file already says the same.
-settings_save :: proc(source:string,settings:Import_Settings) -> bool {
-    path:=settings_path(source,context.temp_allocator)
-    text:=settings_text(settings,context.temp_allocator)
-    if data,read_error:=os.read_entire_file(path,context.temp_allocator);read_error==nil && string(data)==text {return true}
-    return serial.file_write_atomic(path,transmute([]u8)text)==.None
 }
 
 // What an asset records in Import_Info.settings_hash is the identity of the

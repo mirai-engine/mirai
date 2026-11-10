@@ -70,6 +70,7 @@ end_tick :: proc(f:^End,resimulating:=false) {
     core.test_world_settle(&f.w)
     f.tick+=1
     time:=core.Time{dt=1.0/60,playing=true,tick=f.tick,resimulating=resimulating}
+    f.outbox.replaying=resimulating // as a correction of the network leaves it
     commands:=core.commands_of(core.test_world_ref(&f.w))
     destruct_net_follow(core.ref(&f.authority),&f.net,time,&f.requests,core.ref(&f.physics),core.read(&f.configs),core.read(&f.states),core.read(&f.ids),core.ref(&f.root))
     destruct.test_step(&f.rows,&f.application,commands,time)
