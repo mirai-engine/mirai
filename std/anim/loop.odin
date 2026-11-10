@@ -22,7 +22,8 @@ loop_time :: proc "contextless" (loop:Loop,duration,time:f32) -> (clip_time:f32,
 // The timeline position folded into [0, period).
 loop_wrap :: proc "contextless" (time,period:f32) -> f32 {
     wrapped:=time-cmath.floor(time/period)*period
-    return wrapped if wrapped<period else 0
+    // Rounding, or a time too many periods away to tell where it falls, can leave it outside.
+    return wrapped if wrapped>=0 && wrapped<period else 0
 }
 // Length of the timeline a playback repeats over: 0 for Once.
 loop_period :: proc "contextless" (loop:Loop,duration:f32) -> f32 {
