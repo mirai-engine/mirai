@@ -21,6 +21,12 @@ FAR_TEXTURE_SIZE :: 64 // texels a side of the level of a texture a far mesh rea
 // normal (x, y, z), then the base color (r, g, b).
 FAR_SIMPLIFY_WEIGHTS :: [6]f32{0.5,0.5,0.5,0.5,0.5,0.5}
 
+// The id of the far mesh of a scene, which the cook writes beside it (cook/far).
+far_mesh_id :: proc "contextless" (scene:base.Asset_Id) -> base.Asset_Id {
+    SALT :: 0x6661725f6d657368 // "far_mesh"
+    return {base.hash_combine(scene[0],SALT),base.hash_combine(scene[1],SALT)}
+}
+
 // A level of a texture as a far mesh reads it: linear when the texture is sRGB.
 Far_Texture :: struct {
     width,height:int,
