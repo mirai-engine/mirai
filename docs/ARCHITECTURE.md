@@ -350,25 +350,17 @@ Numbered layers; a package only imports lower layers.
 - **6** `editor` and `editor/*`: engine-time; the editor, the JSON-RPC and MCP API,
   collaboration, prefabs and AI, whose chat search uses the C library of `third_party/sqlite`.
 - **7** `plugins/<name>`: first-party plugins, imported as `plugins:<name>/runtime` and
-  `plugins:<name>/editor`. Physics, game networking and player spawning are plugins:
-  - `physics`: the integration with the world, the solver as its own package
-    (`plugins:physics/runtime/sim`, without `core`), character locomotion and its editor part;
-    `destruct` depends on it.
-  - `multiplayer`: replicas, prediction, rollback, connection seats and the player's network
-    arguments, without physics; with `physics` they understand each other through `core` tables
-    (`Pose_Target`, `Motion`).
-  - Automatic bridges, active when their dependencies are present: `destruct_multiplayer`
-    (replicated fractures), `animation_physics` (each `Character`'s mode and speed feed its motion
-    matching) and `spawn_physics` (the body that the editor's Play places at a spot, resting on
-    its collider).
-  - `navigation` (automatic navmesh, links and agents; depends on `physics`) and `behavior`
-    (minds, perception, smart objects, places and influence; depends on `navigation`).
-  - `spawn` (spawn points and player bodies) and `cinematics`.
-  - `vfx`: GPU particles, the `.particle` format and its editor; it extends the renderer through
-    `engine/render` (a world's buffers and the `Simulate`, `Gbuffer` and `Blend` stages).
-- **no layer** `tools/mirai`: CLI with `generate`, `build` (`tools`, `engine`, `editor`, `game`),
-  `edit`, `play`, `new`, `worktree`, `doctor`, `test`, `check`, `deps`, `setup`, `shaders`,
-  `asset`, `image`, `import`, `ui`, `scene`, `session`, `capture`, `record`, `rpc`, `mcp`.
+  `plugins:<name>/editor`. What only some games use is a plugin and adds nothing to the core, so
+  physics, game networking and player spawning are plugins too. A plugin imports the layers below
+  and only the plugins in the `dependencies` of its `plugin.mirai`, which the generator enforces;
+  one that only joins two others is an automatic bridge and neither of them knows the other. A
+  plugin extends the renderer through `engine/render`, never by importing `render`. The solver is
+  its own package (`plugins:physics/runtime/sim`, without `core`), and `physics` and `multiplayer`
+  understand each other only through `core` tables (`Pose_Target`, `Motion`).
+  `plugins/*/plugin.mirai` lists the plugins with their parts and dependencies;
+  [first-party plugins](../.agents/skills/mirai-plugins/references/plugins.md#first-party-plugins)
+  says what each one does.
+- **no layer** `tools/mirai`: the `mirai` CLI; `mirai --help` lists its commands.
 - **no layer** `demo`, `templates`, `tools/demo_content`: the demo project, the `mirai new`
   templates and the generator of the demo's assets.
 - **no layer** `shaders/`: the single Slang source.
