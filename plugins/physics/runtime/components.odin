@@ -153,8 +153,6 @@ character_default :: proc "contextless" () -> Character {
 }
 
 Drive :: sim.Drive
-Move_Flag :: sim.Move_Flag
-Move_Flags :: sim.Move_Flags
 Character_Drive :: sim.Character_Move
 
 // What drives a Character from the next step on: the locomotion plugin or a
@@ -190,14 +188,6 @@ Character_State :: struct {
     height:f32 `mirai:"transient,readonly,hidden,unit=m"`, // of its capsule now, from the feet to the top of the head
     cramped:bool `mirai:"transient,readonly"`,             // shorter than the height its Character_Move asks: what is over it keeps it down
     velocity:[3]f32 `mirai:"transient,readonly,unit=m/s"`, // of the character itself after the last step, vertical speed included
-}
-
-character_state_of :: proc "contextless" (found:sim.Character_State) -> Character_State {
-    return {
-        standing=.Standing in found.ground,walkable=.Walkable in found.ground,ground_distance=found.ground_distance,
-        ground_normal=found.ground_normal,ground_velocity=found.ground_velocity,ground_turn=found.ground_turn,wall_normal=found.wall_normal,
-        fluid=found.fluid,submersion=found.submersion,head_depth=found.head_depth,depth=found.depth,fluid_velocity=found.fluid_velocity,
-    }
 }
 
 Joint_Motion :: sim.Joint_Motion

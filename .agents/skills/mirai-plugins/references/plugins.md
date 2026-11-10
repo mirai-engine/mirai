@@ -197,7 +197,7 @@ demo enables. How an `editor/` adds steps, panels and tools:
   - GPU skinning isolated from the world and its histories; what they edit is a step of the
     document.
 - **`animation`** (`Runtime`, `Editor`)
-  - Game: clips, motion matching, the layers and actions of an action set, dense poses, GPU
+  - Game: clips, the one `.character` set (motion matching, layers and actions), dense poses, GPU
     skinning, root motion and constraints. Contract in
     [animation](../../mirai-animation/references/animation.md).
   - Editor: per-instance inspector and
@@ -240,10 +240,10 @@ demo enables. How an `editor/` adds steps, panels and tools:
 - **`imprint`** (`Runtime`, `Shaders`; depends on `vfx` and `physics`): snow, mud and sand
   [footprints](../../mirai-world/references/imprint.md) in a height clipmap on a `vfx` grid, with
   the ground meshes displaced on the GPU for the raster and the rays.
-- **`decals`, `deform`, `monitors`, `portals`, `mirror`, `fog`**
+- **`decals`, `deform`, `monitors`, `portals`, `fog`**
   - Parts: `Runtime`; `Shaders` except `monitors`; `Editor` except `deform`.
   - Renderer extensions: decals on the G-buffer, meshes deformed on the GPU with their own
-    equations, screens that show cameras, portals, flat mirrors and volumetric fog. Contract in
+    equations, screens that show cameras, portals and flat mirrors, and volumetric fog. Contract in
     [render plugins](render-plugins.md).
   - Editor: Decal, Screen, Portal, Mirror and Fog cards of Create, with their icon and what they
     show when selected.

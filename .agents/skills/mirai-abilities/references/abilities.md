@@ -22,8 +22,8 @@ An `Ability` is a `@(record)` row; its fields read top to bottom as the sheet of
   of the user's `Character` (none: any); `conditions` bound attributes; `costs` are taken from
   attribute bases when it starts and it cannot start with less; `cooldown` is per ability row.
 - `duration` in seconds; `hold` ends it when its input is let go.
-- `action` names an action of the user's `Animation` (a layer over locomotion); `clip` names a
-  clip of its `.match` played over the whole body. One of them, or none.
+- `action` names an action of the user's `.character`: in its layer over locomotion, or over the
+  whole body when it names no layer. Empty plays nothing.
 - `windows`: spans `[from, to)` in seconds from the start, inside the duration. `clock` says what
   the seconds count: `world` (the fixed step) or `own`, the user's own time (`core.Own_Pace`) as
   its animation counts it, for a window that follows a clip played slower or faster (the branch of
@@ -97,8 +97,8 @@ reports for each ability of the kit.
   `Canceled`, `Window_Begin` and `Window_End` with the window and its cue, `Hit` with the target,
   `Depleted` with the attribute, `Effect_Begin` and `Effect_End` with the cue of a timer (at the
   end that decides the user). VFX, sound and camera shake are the game's answer to cues.
-- Animation: `anim.play` / `anim.stop` of the action of the user's action set that `action` (one
-  in a layer) or `clip` (one over the whole body) names. The animation action should allow
+- Animation: `anim.play` / `anim.stop` of the action of the user's `.character` that `action`
+  names. The animation action should allow
   cancellation: the ability decides the timing and the animation follows. An ability interrupted
   or cancelled stops its action unless the one that follows plays the same action: in another
   layer nothing else would end it, and a looping section would play on.

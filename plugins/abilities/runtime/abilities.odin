@@ -175,8 +175,7 @@ Ability :: struct {
     cooldown:f32 `mirai:"min=0,unit=s"`,
     duration:f32 `mirai:"min=0,unit=s"`,
     hold:bool, // it ends when its input is let go
-    action:[ABILITY_NAME]u8 `mirai:"text"`, // an action of the user's action set, in a layer over locomotion
-    clip:[ABILITY_NAME]u8 `mirai:"text"`,   // an action of its action set that names no layer: it takes the whole body
+    action:[ABILITY_NAME]u8 `mirai:"text"`, // an action of the user's .character: in its layer over locomotion, or the whole body when it names none
     windows:[ABILITY_WINDOWS]Ability_Window,
     next:core.Record(Ability), // asked for when it completes, in the statuses its windows gave on its last tick
 }

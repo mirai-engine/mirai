@@ -119,11 +119,10 @@ Route_Provider :: struct {
     next:proc(s:^Session,w:core.World_Ref,body:core.Entity,goal:[3]f32) -> Route,
 }
 
-// What the plugins that make and move a body of a game say of it (physics:
-// whether its characters stand and their size; locomotion: how fast they walk
-// and jump): the drive of play.step and the playtest plugin read it with
+// What the plugins that move a body of a game say of it (physics, locomotion:
+// characters): the drive of play.step and the playtest plugin read it with
 // play_stance and play_body_measure, never by the name of a component. known
-// is false for a body that is not one it knows.
+// is false for a body that is not one it moves.
 Body_Provider :: struct {
     standing:proc(w:core.World_Ref,body:core.Entity) -> (standing,known:bool),
     measure:proc(w:core.World_Ref,body:core.Entity) -> (measure:Body_Measure,known:bool),
@@ -336,19 +335,14 @@ play_stance :: proc(s:^Session,w:core.World_Ref,body:core.Entity) -> Stance {
     return .Unknown
 }
 
-// The measures of a body of a game, each as the first plugin that says it
-// (physics its size, the one that moves it its speed); those of BODY_PERSON
-// for what none says.
+// The measures of a body of a game, as the plugin that moves it says; those
+// of BODY_PERSON for a body none answers for and for what it leaves at 0.
 play_body_measure :: proc(s:^Session,w:core.World_Ref,body:core.Entity) -> Body_Measure {
     said:Body_Measure
     p:=providers(s)
     for &each in p.bodies[:p.body_count] {
         if each.measure==nil {continue}
-        measure:=each.measure(w,body) or_continue
-        if said.height<=0 {said.height=measure.height}
-        if said.step_height<=0 {said.step_height=measure.step_height}
-        if said.speed<=0 {said.speed=measure.speed}
-        if said.jump_height<=0 {said.jump_height=measure.jump_height}
+        if measure,known:=each.measure(w,body);known {said=measure;break}
     }
     person:=BODY_PERSON
     return {

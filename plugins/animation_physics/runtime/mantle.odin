@@ -5,10 +5,11 @@ import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
 import locomotion "plugins:locomotion/runtime"
 
-// A climb animated with root motion. While a Character mantles, the motion warping of its Animation
-// takes the root of the clip that plays onto where the climb ends (Locomotion_State.mantle_to), through a
-// window named MANTLE_WINDOW in its Animation.motion on the clip of the climb (animation_locomotion
-// gives the target), and the root motion of every tick drives the climb (an Override layered move),
+// A climb animated with root motion. While a Character mantles, the motion warping of its
+// .character takes the root of the clip that plays onto where the climb ends (Locomotion_State.mantle_to),
+// through its warp window named MANTLE_WINDOW over the span of that name on the clip of the climb
+// (animation_locomotion gives the target), and the root motion of every tick drives the climb (an
+// Override layered move),
 // so the body climbs as the clip does and lands on the ledge. A climb without root motion follows
 // its own way (locomotion.mantle_move).
 MANTLE_WINDOW :: "mantle"

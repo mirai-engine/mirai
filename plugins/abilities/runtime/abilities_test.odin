@@ -100,7 +100,7 @@ blade :: proc(f:^Fixture) {
     s[CHARGE].conditions[0]={attribute=CHARGES,at_least=1}
     s[CHARGE].windows[0]={from=0,to=1,statuses=status_bit(CHARGING),cancel_into=tag_bit(DASH_ATTACK)}
     s[DASH_STRIKE]={input={action=SECONDARY,on=.Released},tags=tag_bit(DASH_ATTACK),duration=0.4,cooldown=0.1}
-    base.text_set(s[DASH_STRIKE].clip[:],"dash")
+    base.text_set(s[DASH_STRIKE].action[:],"dash")
     s[DASH_STRIKE].costs[0]={CHARGES,1}
     s[DASH_STRIKE].costs[1]={DURABILITY,10}
     s[DASH_STRIKE].windows[0]={from=0,to=0.24,move={velocity={0,0,-40},mix=.Override},hitbox={shape=.Box,center={0,1,-1},size={0.5,1,1},effect={attribute=HEALTH,amount=-60}}}
@@ -382,7 +382,6 @@ invalid_sheets_and_requests_are_problems_and_never_run :: proc(t:^testing.T) {
         {proc(a:^Ability,nan:f32) {a.windows[5].cue=SLASH},"to is 0"},
         {proc(a:^Ability,nan:f32) {a.costs[1]={ATTRIBUTE_NONE,4}},"costs[1]"},
         {proc(a:^Ability,nan:f32) {a.conditions[0]={HEALTH,10,5}},"conditions[0]"},
-        {proc(a:^Ability,nan:f32) {base.text_set(a.clip[:],"also")},"both"},
         {proc(a:^Ability,nan:f32) {a.windows[0].hitbox.effect.period=nan},"period"},
         {proc(a:^Ability,nan:f32) {a.windows[0].hitbox.effect.max_stacks=3},"stacks but has no tags"},
         {proc(a:^Ability,nan:f32) {a.windows[0].hitbox.effect.cue=SLASH},"lasts 0 seconds"},

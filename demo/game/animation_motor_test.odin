@@ -41,7 +41,7 @@ Animation_Input_Fixture :: struct {
     body_states:core.Table(core.Motion),replicas:core.Table(core.Pose_Target),character_states:core.Table(phys.Character_State),joint_states:core.Table(phys.Joint_State),
     physics:phys.Physics_State,settings:phys.Physics_Settings,body_requests:phys.Body_Requests,body_events:phys.Physics_Events,collider_meshes:phys.Collider_Meshes,problems:core.Problems,
     animations:core.Table(anim.Animation),targets:core.Table(anim.Animation_Target),roots:core.Table(anim.Root_Motion),requests:anim.Animation_Requests,events:anim.Animation_Events,playback:anim.Playback,skeletons:anim.Skeleton_Assets,
-    pose_configs:core.Table(anim.Pose_Modifiers),attachments:core.Table(anim.Bone_Attachment),sources:core.Table(anim.Pose_Source),pose_assets:anim.Pose_Assets,modifiers:anim.Modifier_Runtime,modifier_requests:anim.Modifier_Requests,
+    attachments:core.Table(anim.Bone_Attachment),sources:core.Table(anim.Pose_Source),modifiers:anim.Modifier_Runtime,modifier_requests:anim.Modifier_Requests,
 }
 
 @(private)
@@ -88,7 +88,8 @@ animation_motor_drives_the_sampled_root_motion_and_leaves_other_bodies_as_they_w
     core.edit(&f.inputs,controlled).move={.2,0,0}
     anim.animation_clip(core.edit(&f.animations,motor),"advance",fade=0,loop=false)
     progress:core.Table(anim.Animation_Progress);defer core.table_destroy(&progress)
-    anim.animation_sample(core.read(&f.animations),&progress,core.read(&f.pose_configs),core.read(&f.attachments),&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.meshes),core.read(&f.sources),&f.requests,&f.events,&f.modifier_requests,&f.modifiers,&f.playback,&f.pose_assets,&f.skeletons,&f.app,time,{},nil,nil,nil,nil,nil,nil,nil,nil,nil,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
+    characters:anim.Character_Assets;defer anim.character_assets_free(&characters)
+    anim.animation_sample(core.read(&f.animations),&progress,core.read(&f.attachments),&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.meshes),core.read(&f.sources),&f.requests,&f.events,&f.modifier_requests,&f.modifiers,&f.playback,&characters,&f.skeletons,&f.app,time,{},nil,nil,nil,nil,nil,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
     delta,present:=anim.animation_root_delta(&f.playback,motor)
     testing.expect(t,present && abs(delta.translation.x-time.dt)<1e-5 && abs(f.playback.states[0].local[1].position.x-time.dt)<1e-5)
     before_control,_:=core.get(&f.transforms,controlled);before_motor,_:=core.get(&f.transforms,motor)

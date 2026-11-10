@@ -1174,9 +1174,13 @@ link_write :: proc(s:^Sync,l:^Link,e:core.Entity) -> (again:bool) {
     case .Character:
         if !sim.character_valid(w,l.character) {return}
         if row:=core.row_of(s.character_states,e);row>=0 {
-            next:=character_state_of(sim.character_state(w,l.character))
-            next.height=sim.character_desc(w,l.character).height
-            next.velocity=sim.character_velocity(w,l.character)
+            found:=sim.character_state(w,l.character)
+            next:=Character_State{
+                standing=.Standing in found.ground,walkable=.Walkable in found.ground,ground_distance=found.ground_distance,
+                ground_normal=found.ground_normal,ground_velocity=found.ground_velocity,ground_turn=found.ground_turn,wall_normal=found.wall_normal,
+                fluid=found.fluid,submersion=found.submersion,head_depth=found.head_depth,depth=found.depth,fluid_velocity=found.fluid_velocity,
+                height=sim.character_desc(w,l.character).height,velocity=sim.character_velocity(w,l.character),
+            }
             next.cramped=next.height<l.height_asked-HEIGHT_EPSILON
             if s.character_states.values[row]!=next {core.edit_at(s.character_states,row)^=next}
         }

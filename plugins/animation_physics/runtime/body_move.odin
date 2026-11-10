@@ -8,7 +8,7 @@ import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
 // Actions that move their body. While an action whose body_move is not None plays on a Character,
-// in a layer or over the whole body of its .match (a lunge, a slash that steps in, a vault, a death
+// in a layer or over the whole body of the locomotion of its .character (a lunge, a slash that steps in, a vault, a death
 // that falls forward), the root motion its actions give the body in this tick
 // (anim.animation_body_motion: by their share of the root, mirrored and warped with it) becomes a
 // one-tick layered move of its mix, across the up of the Character unless the action keeps the

@@ -5,7 +5,6 @@ import "mirai:core"
 import "mirai:editor"
 import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
-import phys_editor "plugins:physics/editor"
 
 @(private="file")
 Bodies_Test_World :: struct {
@@ -15,10 +14,10 @@ Bodies_Test_World :: struct {
     walks:core.Table(locomotion.Walk),
 }
 
-@(private="file") Bodies_Test_Editor :: struct {physics:phys_editor.Physics_Bodies,bodies:Locomotion_Bodies}
+@(private="file") Bodies_Test_Editor :: struct {bodies:Locomotion_Bodies}
 
-// The editor measures a walker by what physics says of its Character and what locomotion says of its
-// Walk, and what neither says as a person.
+// The editor measures a walker by its Walk, its Character and the height its capsule took, and a body
+// that does not walk as a person.
 @(test)
 a_walker_is_measured_by_its_character_and_its_walk :: proc(t:^testing.T) {
     info,described:=core.test_info(t,Bodies_Test_World,core.Test_None,Bodies_Test_Editor,test_types)
@@ -34,7 +33,7 @@ a_walker_is_measured_by_its_character_and_its_walk :: proc(t:^testing.T) {
     core.add(&world.characters,walker,giant)
     core.add(&world.walks,walker,stride)
     core.settle(&info,&world,nil)
-    tools:=Bodies_Test_Editor{phys_editor.PHYSICS_BODIES_DEFAULT,LOCOMOTION_BODIES_DEFAULT}
+    tools:=Bodies_Test_Editor{LOCOMOTION_BODIES_DEFAULT}
     session:=editor.Session{info=&info,editor_world=&tools}
     w:=core.world_ref(&world,&info)
     person:=editor.BODY_PERSON

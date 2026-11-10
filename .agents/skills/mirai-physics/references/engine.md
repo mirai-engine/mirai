@@ -451,7 +451,7 @@ the solver. A game with bodies and no walkers leaves the plugin out.
     than the capsule (a built wall) counts, and puts the feet a radius past the face or in the
     middle of a narrower top. An `Override` layered move takes the climb off its own way for its
     `time` (the root motion of the climb's clip: `animation_physics` warps it onto `mantle_to`
-    through the window `mantle` of `Animation.motion`); the tick it ends it stops and falls.
+    through the warp window `mantle` of its `.character`); the tick it ends it stops and falls.
   - In the air: control bounded by `Walk.air_control`; it does not climb ground that is too steep.
   - Flying (`MODE_FLYING`, with `Fly`): velocity on the three axes according to yaw and pitch,
     `Airborne` and without gravity; it lasts until another mode is requested.

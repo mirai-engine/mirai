@@ -34,7 +34,7 @@ gallery_automatic :: proc(kind:Gallery_Kind,age:f32) -> (speed,value:f32) {
     return
 }
 
-// The parameter of the action set a station sets with anim.set: the axis of its wave space, or the
+// The parameter of the .character a station sets with anim.set: the axis of its wave space, or the
 // weight of its layer. Its value is values[0] of the station.
 gallery_parameter :: proc "contextless" (kind:Gallery_Kind) -> string {
     #partial switch kind {

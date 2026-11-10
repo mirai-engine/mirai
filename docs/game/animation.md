@@ -16,7 +16,7 @@ plus requests queued from a `fixed` step; what is invalid or full shows in `engi
 - Walk, jump, swim, fall: [Locomotion](#locomotion).
 - Vault, hit, death, reload, wave, aim, look, and reacting to them: [Four calls](#four-calls)
   and [One event loop](#one-event-loop).
-- The action set, its layers, sections and windows: [actions.md](animation/actions.md).
+- The layers and actions of the set, sections and windows: [actions.md](animation/actions.md).
 - A door, a lift or a light moved by a clip, a cutscene with cameras and shots, curves, root
   motion of a body that is not a `Character`: [props.md](animation/props.md).
 - IK, feet on the ground, warp to a target, held objects, retarget, mirror, distant characters:
@@ -24,13 +24,13 @@ plus requests queued from a `fixed` step; what is invalid or full shows in `engi
 
 ## Locomotion
 
-An entity with `Character`, a mesh with a skeleton and `Animation.asset` set to a `.match` walks,
-jumps and swims with no game code: physics tells the match the mode and velocity.
-`animation.character.setup` (editor API) writes it from the clip names (idle, walk, run, sprint,
-fall, jump, land, swim); check it with `animation.inspect` part `Match`. The game sets how fast
-the body goes (`Walk.max_speed`), never which clip plays: a faster gait is a higher speed.
-Without a `Character` (a scripted walker) a `fixed` step tells the match what the body does,
-velocity in world axes and m/s (the model faces -Z):
+A character animates from the `.anim` of its clips and one `.character` set: its locomotion,
+layers, actions, aim spaces, warping, IK, look and feet. With `Character`, a skinned mesh and
+`Animation.asset` set to its `.character` it walks, jumps and swims with no game code.
+`animation.character.setup` (editor API) writes the set from the clip names (idle, walk, run,
+sprint, fall, jump, land, swim) and the skeleton body, which names the legs. The game sets how
+fast the body goes (`Walk.max_speed`), never which clip plays. Without a `Character` (a scripted
+walker) a `fixed` step tells the set what the body does (world axes, m/s; the model faces -Z):
 
 ```odin
 anim.match_goal(requests,{rig=e,mode=u16(locomotion.MODE_WALKING), // ^anim.Animation_Requests
@@ -40,8 +40,8 @@ anim.match_goal(requests,{rig=e,mode=u16(locomotion.MODE_WALKING), // ^anim.Anim
 ## Four calls
 
 Everything a character does over its locomotion goes through `^anim.Animation_Requests`, by the
-names its action set (`Animation.actions`, an `.action`) gives its actions and layers. There are
-no states, transitions, triggers, graphs or locomotion blend spaces.
+names its `.character` gives its actions and layers. There are no states, transitions, triggers,
+graphs or locomotion blend spaces.
 
 ```odin
 anim.play(requests,e,"Vault")              // an action: a clip once, in its layer or whole body
@@ -50,11 +50,11 @@ anim.set(requests,e,"aim_yaw",yaw)         // an axis of an aim space, or the we
 anim.look(requests,e,anim.spatial_entity(target))   // the head turns to it; weight 0 lets go
 ```
 
-- An action without a layer takes the whole body: over a `.match` it leaves the search and comes
+- An action without a layer takes the whole body: over locomotion it leaves the search and comes
   back by an inertial blend, in any locomotion mode. One in a layer plays over a part of the body
   while it walks. With `root_motion` and `body_move` its clip moves the `Character` (a lunge).
 - `set` stays until set again; past the range of an axis it is the end of the range.
-- `look` needs a `Look` in the pose profile (`animation.character.setup` writes one).
+- `look` needs a `Look` in the set (`animation.character.setup` writes one).
 
 ## One event loop
 
