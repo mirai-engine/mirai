@@ -331,7 +331,9 @@ no GOAP. What those models gave is written this way, without implementing them o
 - `steps(a, x, y, z)` runs other actions of the same mind as steps, one after the other, the next
   in the same tick in which the previous one ends: `Success` when the last ends, `Failure` on the
   first that fails. A step has no steps; the list is the same on each tick.
-- `mind_since` and `mind_ready` give the seconds since an action exited: cooldowns.
+- `mind_since` and `mind_ready` give the seconds since an action exited: cooldowns. A mind counts
+  in ticks (`Mind_Context.tick` and `dt`): `after` and `mind_ready` last the same at any tick
+  rate.
 
 ### Reservations: attack tokens and objects
 

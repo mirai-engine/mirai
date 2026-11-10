@@ -31,7 +31,7 @@ the body goes (`Walk.max_speed`), never which clip plays: a faster gait is a hig
 Without a `Character` (a scripted walker) the step tells the match what the body does:
 
 ```odin
-@(step="fixed",before="animation_sample")
+@(step="fixed")
 walkers :: proc(items:core.Read(Walker),requests:^anim.Animation_Requests) {
     for row in 0..<core.count(items) {
         w:=core.at(items,row)   // velocity in world axes, m/s; the model faces -Z
@@ -70,8 +70,6 @@ aim offsets and additives are a `.blend` under an `Additive` of an `.agraph`.
 
 ## Pitfalls
 
-- A literal for `match_play` options drops the defaults (`phase` 0: the clip ends at once): copy
-  `MATCH_PLAY_OPTIONS_DEFAULT` and change fields.
 - With a `Character`, never call `match_goal`: physics does. A lower `priority` than the move
   playing is refused (`animation.match_busy`); use `wait`.
 - Events live one tick: read them in a `fixed` step; compare names by hash. Rejected requests

@@ -175,7 +175,8 @@ gallery_direct_clips :: proc(gallery:core.Read(Animation_Gallery),animations:^co
 }
 
 // The bodies that walk by their physics plant their feet only while they stand on the ground.
-@(step="fixed",stage="react",before="animation_advance")
+// It reads the gallery as gallery_observe left it in the last tick.
+@(step="fixed",stage="react",before="gallery_observe")
 gallery_control :: proc(gallery:core.Read(Animation_Gallery),players:core.Read(Gallery_Player),characters:core.Read(phys.Character_State),requests:^anim.Modifier_Requests) {
     ground :: proc(characters:core.Read(phys.Character_State),requests:^anim.Modifier_Requests,entity:core.Entity) {
         character,exists:=core.get(characters,entity)
@@ -191,7 +192,7 @@ gallery_control :: proc(gallery:core.Read(Animation_Gallery),players:core.Read(G
 // The matching station is told the speed it walks at and now and then plays a wave that it
 // leaves by inertialization; the additive and the graph their Wave, and the graph greets by its
 // action every 8 s; the actions station greets and steps; the warp station strides to its goal.
-@(step="fixed",before="animation_sample")
+@(step="fixed")
 gallery_animate :: proc(gallery:core.Read(Animation_Gallery),animations:^core.Table(anim.Animation),worlds:core.Read(core.World_Transform),time:core.Time,requests:^anim.Animation_Requests,actions:^anim.Action_Requests,goals:^anim.Modifier_Requests,motion:^anim.Motion_Requests,playback:core.Ref(anim.Playback),motors:^core.Table(Animation_Motor),ui_events:core.Ref(gui.UI_Events),names:core.Read(core.Name),panel:core.Ref(Gallery_UI),morphs:core.Read(Morph_Playground),morph_weights:^core.Table(anim.Morph_Weights)) {
     if morphs.table!=nil && morph_weights!=nil {morph_playground_animate(morphs,animations,morph_weights,time)}
     for event in ui_events.items {if event.kind==.Clicked && event.name==base.name_hash("toggle") {if value:=core.get(animations,core.entity_named(names,SHOWCASE_LIFT));value!=nil {value.playing=!value.playing}}}
@@ -246,7 +247,7 @@ gallery_animate :: proc(gallery:core.Read(Animation_Gallery),animations:^core.Ta
     }
 }
 
-@(step="fixed",stage="apply",after="animation_sample")
+@(step="fixed",stage="apply")
 gallery_root_motion :: proc(gallery:core.Read(Animation_Gallery),transforms:^core.Table(core.Transform),playback:core.Ref(anim.Playback)) {
     for row in 0..<core.count(gallery) {
         item:=core.at(gallery,row)
@@ -272,7 +273,7 @@ gallery_ik_target :: proc(item:Animation_Gallery) -> mm.Vec3 {
     return {.42-.15*math.sin(item.age),1.3+.12*math.cos(item.age),-.42}
 }
 
-@(step="fixed",stage="react",after="animation_advance")
+@(step="fixed",stage="react")
 gallery_observe :: proc(gallery:^core.Table(Animation_Gallery),transforms:^core.Table(core.Transform),characters:core.Read(phys.Character_State),moving:core.Read(core.Motion),events:core.Ref(anim.Animation_Events),playback:core.Ref(anim.Playback),grounding:core.Ref(anim.Grounding_Runtime),modifiers:core.Ref(anim.Modifier_Runtime),time:core.Time,panel:^Gallery_UI) {
     if !time.playing {return}
     feet:=core.read(&modifiers.grounding)

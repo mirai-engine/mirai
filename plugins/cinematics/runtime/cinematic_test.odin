@@ -74,9 +74,9 @@ cinematic_tick :: proc(w:^Cinematic_World,s:^Cinematic_Shared,app:^host.App,prob
     time:=core.Time{dt=dt,tick=tick,playing=true}
     anim.animation_sample(core.read(&w.animations),&w.progress,core.read(&w.modifiers),core.read(&w.attachments),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),core.read(&w.targets),core.read(&w.meshes),core.read(&w.sources),&w.requests,&w.events,&w.modifier_requests,&w.modifier_runtime,&w.playback,&s.poses,&s.skeletons,app,time,{},problems,&s.blends,&s.graphs,&w.actions,&w.action_requests,&s.actions,nil,&w.motion_requests,nil,&s.sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
     core.test_world_settle(w)
-    anim.animation_fields(core.test_world_ref(w),&w.playback,&w.fields,&s.sources,app,problems)
+    anim.animation_fields(core.test_world_ref(w),core.ref(&w.playback),&w.fields,core.ref(&s.sources),app,problems)
     anim.animation_advance(core.read(&w.modifiers),&w.transforms,core.read(&w.parents),{},&w.modifier_requests,&w.modifier_runtime,&w.playback,&w.constraints,&w.grounding,{},{},time,&w.requests,core.ref(&s.skeletons),problems,nil,nil,{},{},core.CLOCK_DEFAULT,nil)
-    cinematic_advance(core.ref(&w.entities),&w.cinematics,core.read(&w.shots),core.read(&w.viewers),&w.views,core.read(&w.cameras),core.read(&w.drivables),&w.transforms,core.read(&w.parents),core.read(&w.animations),core.ref(&w.playback),&w.requests,core.ref(&w.shown),core.ref(&w.seat_state),&w.camera_requests,&w.seat_requests,core.read(&w.seats),time,core.read(&w.remotes),problems)
+    cinematic_advance(core.ref(&w.entities),&w.cinematics,core.read(&w.shots),core.read(&w.viewers),&w.views,core.read(&w.cameras),core.read(&w.drivables),&w.transforms,core.read(&w.parents),core.read(&w.animations),core.ref(&w.playback),core.ref(&w.shown),core.ref(&w.seat_state),&w.camera_requests,&w.seat_requests,core.read(&w.seats),time,core.read(&w.remotes),problems)
     core.test_world_settle(w)
 }
 
@@ -179,6 +179,22 @@ a_viewer_shows_the_shots_of_a_clip_while_it_plays :: proc(t:^testing.T) {
     testing.expect(t,c.status==.Completed && c.time==1 && !core.has(&w.views,output))
     testing.expect(t,len(w.camera_requests.items)==1 && !w.camera_requests.items[0].add && w.camera_requests.items[0].override.owner==output)
     testing.expect(t,problems.count==0)
+
+    // On an end that does not decide the timeline, the clip is asked to go where the anchor says.
+    core.add(&w.remotes,timeline,core.Remote{});core.test_world_settle(&w)
+    remote:=core.get(&w.cinematics,timeline)
+    remote.status,remote.anchor_tick,remote.anchor_time,remote.anchor_rate=.Playing,10,.25,1
+    clear(&w.requests.timeline.items)
+    cinematic_follow(core.read(&w.cinematics),core.read(&w.animations),core.ref(&w.playback),&w.requests,{dt=DT,tick=11,playing=true},core.read(&w.remotes))
+    commands:=w.requests.timeline.items[:]
+    testing.expect(t,len(commands)==1 && commands[0]==anim.Animation_Command{timeline,.25,.Seek},"a clip that plays is sought a tick before the half second the anchor gives the end of the tick")
+    clear(&w.requests.timeline.items)
+    remote.status,remote.anchor_time,remote.anchor_rate=.Paused,.75,0
+    cinematic_follow(core.read(&w.cinematics),core.read(&w.animations),core.ref(&w.playback),&w.requests,{dt=DT,tick=40,playing=true},core.read(&w.remotes))
+    commands=w.requests.timeline.items[:]
+    testing.expect(t,len(commands)==2 && commands[0].command==.Pause && commands[1]==anim.Animation_Command{timeline,.75,.Seek},"paused by the server, it pauses where the anchor is")
+    clear(&w.requests.timeline.items)
+    core.remove(&w.remotes,timeline);core.test_world_settle(&w)
 
     // A Cinematic whose entity has no Animation says so.
     bare:=core.create(es)

@@ -7,9 +7,10 @@ of the `Animation` of an entity: its tracks move the cameras and the actors and 
 (a lens is `<camera>/@field/Camera.fov`), `anim.animation_command` plays, pauses, stops and seeks it
 as any other clip, and its markers arrive in `anim.Animation_Events`. A scene contains the
 components and the game controls playback through code; the editor builds them with the Cinematics
-tool and the API ([editor and API](#editor-and-api)). `cinematic_advance` runs in `fixed` (`react`,
-after `animation_advance`, so it sees what the clip wrote in the tick) and only while playing
-(`Time.playing`).
+tool and the API ([editor and API](#editor-and-api)). `cinematic_advance` runs in `fixed` (`react`):
+it reads the `Playback` that `animation_advance` writes, so it sees what the clip wrote in the tick.
+`cinematic_follow` asks the clip of a client to go where the server's is. Both run only while
+playing (`Time.playing`).
 
 ## Components
 

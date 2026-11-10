@@ -45,9 +45,9 @@ Events the libraries emit: `phys.Physics_Events` (`contact_begin`, `overlap_begi
 `save.Save_Results`, `scene.Scene_Results`, `net.Net_Events`. They
 are cleared and filled once per tick or frame; those of the frame (`Save_Results`, `Scene_Results`)
 are read in a `frame` step, the others with `core.Ref(...)` in the same tick,
-in a function that runs after the emitting one: those of physics and destruction in the `react`
-stage ([order](../../mirai-core/references/generator.md#order)), those of animation with
-`stage="react",after="animation_advance"`.
+in the stage of the emitting function or a later one, where the reader runs after it
+([order](../../mirai-core/references/generator.md#order)): those of physics, destruction and
+animation in the `react` stage.
 
 Scenes, prefabs and input: [scene](libraries.md#scene) and [input](libraries.md#input); a player's
 actions are read from the seat that drives the body, with its blocks ([control](control.md)).

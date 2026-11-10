@@ -127,11 +127,36 @@ clip_apart :: proc "contextless" (a,b,duration:f32,loop:bool) -> f32 {
     return min(apart,abs(duration-apart)) if loop && duration>0 else apart
 }
 
-@(step="fixed",stage="react",after="animation_advance")
+// On an end that does not decide a timeline, its clip goes where the anchor says it is at the end
+// of this tick: asked before animation_sample, which seeks and then advances a clip that plays.
+@(step="fixed")
+cinematic_follow :: proc(cinematics:core.Read(Cinematic),animations:core.Read(anim.Animation),playback:core.Ref(anim.Playback),requests:^anim.Animation_Requests,time:core.Time,remotes:core.Read(core.Remote)) {
+    if !time.playing {return}
+    for row in 0..<core.count(cinematics) {
+        e:=core.entity_at(cinematics,row)
+        if core.owned(remotes,e) {continue}
+        c:=core.at(cinematics,row)
+        animation,animated:=core.get(animations,e)
+        at,duration,_,clipped:=anim.animation_progress(playback.ptr,e)
+        if !animated || !clipped {continue}
+        playing:=c.status==.Playing
+        if anim.animation_playing(playback.ptr,e)!=playing {anim.animation_command(requests,e,.Resume if playing else .Pause)}
+        want:=cinematic_anchored(c,time.tick,time.dt,duration,animation.loop)
+        step:=time.dt*animation.speed if playing else 0
+        ahead:=Cinematic{anchor_time=at,anchor_rate=1}
+        if clip_apart(want,cinematic_anchored(ahead,1,step,duration,animation.loop),duration,animation.loop)>time.dt*max(abs(c.anchor_rate),1)*.5 {
+            anim.animation_seek(requests,e,max(want-step,0))
+        }
+    }
+}
+
+// Runs after animation_advance, whose Playback it reads: the viewers see the cameras where the clip
+// put them in this tick.
+@(step="fixed",stage="react")
 cinematic_advance :: proc(
     entities:core.Ref(core.Entities),cinematics:^core.Table(Cinematic),shots:core.Read(Cinematic_Shot),viewers:core.Read(Cinematic_Viewer),
     views:^core.Table(Cinematic_View),cameras:core.Read(render.Camera),drivables:core.Read(input.Drivable),transforms:^core.Table(core.Transform),
-    parents:core.Read(core.Parent),animations:core.Read(anim.Animation),playback:core.Ref(anim.Playback),requests:^anim.Animation_Requests,
+    parents:core.Read(core.Parent),animations:core.Read(anim.Animation),playback:core.Ref(anim.Playback),
     shown:core.Ref(camera.Cameras),seat_state:core.Ref(input.Seats),camera_requests:^camera.Camera_Requests,seat_requests:^input.Seat_Requests,
     seats:core.Read(input.Seat),time:core.Time,remotes:core.Read(core.Remote),problems:^core.Problems,
 ) {
@@ -155,23 +180,11 @@ cinematic_advance :: proc(
         if !clipped {continue}
         next:=was
         next.time,next.duration=at,duration
-        clip_playing:=anim.animation_playing(playback.ptr,e)
         if core.owned(remotes,e) {
-            next.status=cinematic_status(clip_playing,ended,at)
+            next.status=cinematic_status(anim.animation_playing(playback.ptr,e),ended,at)
             rate:=animation.speed if next.status==.Playing else 0
             if next.status!=was.status || rate!=was.anchor_rate || time.tick<was.anchor_tick || clip_apart(cinematic_anchored(was,time.tick,time.dt,duration,animation.loop),at,duration,animation.loop)>time.dt*max(abs(rate),1)*.5 {
                 next.anchor_tick,next.anchor_time,next.anchor_rate=time.tick,at,rate
-            }
-        } else {
-            // The clip of this end goes where the server's is: what it is asked now it does in
-            // the next tick, in which a clip that plays advances after it is sought.
-            want:=cinematic_anchored(was,time.tick+1,time.dt,duration,animation.loop)
-            playing:=was.status==.Playing
-            if clip_playing!=playing {anim.animation_command(requests,e,.Resume if playing else .Pause)}
-            step:=time.dt*animation.speed if playing else 0
-            ahead:=Cinematic{anchor_time=at,anchor_rate=1}
-            if clip_apart(want,cinematic_anchored(ahead,1,step,duration,animation.loop),duration,animation.loop)>time.dt*max(abs(was.anchor_rate),1)*.5 {
-                anim.animation_seek(requests,e,max(want-step,0))
             }
         }
         if next!=was {core.at(cinematics,row)^=next}

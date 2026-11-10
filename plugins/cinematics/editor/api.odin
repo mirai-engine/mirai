@@ -75,6 +75,7 @@ Add_Result :: struct {id:base.Entity_Id}
 
 @(private)
 register :: proc(s:^editor.Session) {
+    editor.tool_entry(s,TOOL,"Cinematics",.Play)
     inspect_defaults:=Inspect_Params{time=-1}
     editor.api_method_register(s,{name="cinematics.inspect",summary="A timeline: the clip of its Animation and where it is, its shots, the actors its clip moves, its viewers, what the viewers show at a time, and the preview of the editor. The keys and markers are of the clip: animation.asset.inspect reads them.",params=Inspect_Params,params_info=type_info_of(Inspect_Params),result=Inspect_Result,result_info=type_info_of(Inspect_Result),defaults=&inspect_defaults,writes_result=true,flags={.Read_Only},run=api_inspect})
     editor.api_method_register(s,{name="cinematics.control",summary="Plays, pauses, resumes, stops or seeks the clip of a timeline: in Edit the preview of the Cinematics tool, which seeks the clip in the scene without changing the document; in Play the running world, as anim.animation_command does.",params=Control_Params,params_info=type_info_of(Control_Params),result=Control_Result,result_info=type_info_of(Control_Result),run=api_control})

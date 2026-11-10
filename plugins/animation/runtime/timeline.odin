@@ -232,9 +232,10 @@ field_write :: proc "contextless" (bound:Field_Bound,data:[^]u8,value:mm.Vec4) -
 }
 
 // Writes the fields the "@field" curves of the playing clips drive, on the ticks their clip moves.
-@(step="fixed",loops="game editor",stage="apply",after="animation_sample")
-animation_fields :: proc(world:core.World_Ref,playback:^Playback,fields:^Field_Playback,sources:^Source_Assets,app:^host.App,problems:^core.Problems) {
+@(step="fixed",loops="game editor",stage="apply")
+animation_fields :: proc(world:core.World_Ref,playing:core.Ref(Playback),fields:^Field_Playback,content_sources:core.Ref(Source_Assets),app:^host.App,problems:^core.Problems) {
     if app==nil || app.assets==nil {return}
+    playback,sources:=playing.ptr,content_sources.ptr
     if stamp:=fields_stamp(playback);stamp!=fields.stamp || fields.info!=world.info {
         if !fields_bind(fields,world,playback,sources,app,problems) {
             clear(&fields.fields);fields.stamp=0

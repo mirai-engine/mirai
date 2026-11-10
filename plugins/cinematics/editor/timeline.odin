@@ -26,6 +26,7 @@ Cinematic_Editor :: struct {
     head:f32, // ticks
     playing,loop:bool,
     speed:f32,
+    active:bool,     // its tool was on in the last frame
     previewing:bool, // the scene shows the timeline at the head
     shown:f32,       // the head the clip was sought at; <0: it has to be sought
     shot_view:bool,  // the viewport looks through the shot at the head
@@ -91,7 +92,7 @@ actors_of :: proc(w:core.World_Ref,timeline:core.Entity) -> (entities:[]core.Ent
     return e[:],v[:]
 }
 
-@(step="frame",after="editor_tools")
+@(step="frame")
 cinematics_frame :: proc(s:^editor.Session,c:^Cinematic_Editor,frame:core.Frame_Time) {
     if editor.playing(s) || !editor.tool_on(s,TOOL) {
         view_restore(s,c)
@@ -131,12 +132,11 @@ cinematics_panel :: proc(s:^editor.Session,c:^Cinematic_Editor) {
     g:=s.gui
     if !g.begun || editor.playing(s) {return}
     ctx:=g.ctx;th:=&ctx.theme
+    // Turned on, it previews and shows no timeline yet.
     active:=editor.tool_on(s,TOOL)
-    if editor.tool_button(g,ui.id_derive(ctx,SCOPE,"tool"),.Play,"Cinematics","",active) {
-        editor.tool_set(s,TOOL,!active)
-        if !active {c.previewing,c.shown=true,-1}
-    }
-    if !editor.tool_on(s,TOOL) || s.viewport.pick.active {return}
+    if active && !c.active {c.previewing,c.shown=true,-1}
+    c.active=active
+    if !active || s.viewport.pick.active {return}
     w:=editor.edited_world(s)
     timeline_choose(s,c,w)
     id:=ui.id_derive(ctx,SCOPE,"panel")

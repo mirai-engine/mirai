@@ -136,8 +136,8 @@ gallery_controls :: proc(kind:Gallery_Kind) -> (rows:[GALLERY_PANEL_ROWS]Gallery
 
 // What a slider or a button of a panel asked becomes a command of its station; Play / pause asks
 // for the other of what its clip does.
-@(step="fixed",before="gallery_animate")
-gallery_panel_input :: proc(panels:core.Read(Gallery_Panel),gallery:core.Read(Animation_Gallery),ui_events:core.Ref(gui.UI_Events),playback:core.Ref(anim.Playback),animations:core.Read(anim.Animation),panel:^Gallery_UI) {
+@(step="fixed")
+gallery_panel_input :: proc(panels:core.Read(Gallery_Panel),gallery:core.Read(Animation_Gallery),ui_events:core.Ref(gui.UI_Events),playback:core.Ref(anim.Playback),panel:^Gallery_UI) {
     for event in ui_events.items {
         value,found:=core.get(panels,event.entity)
         if !found || event.item<0 {continue}
@@ -152,14 +152,13 @@ gallery_panel_input :: proc(panels:core.Read(Gallery_Panel),gallery:core.Read(An
             gallery_request(panel,row.command,value.station,value=amount,slot=row.slot,modifier=row.modifier,enabled=amount>0 || row.command!=.Modifier)
         } else if event.kind==.Clicked && event.name==base.name_hash("button") && int(event.item)<button_count {
             button:=buttons[event.item]
-            animation,_:=core.get(animations,value.station)
-            gallery_request(panel,button.command,value.station,name=button.name,enabled=button.command!=.Playing || !animation.playing)
+            gallery_request(panel,button.command,value.station,name=button.name,enabled=button.command!=.Playing || !anim.animation_playing(playback.ptr,value.station))
         }
     }
 }
 
 // Fills each panel with the rows and buttons of its station and what the station does now.
-@(step="fixed",stage="react",after="gallery_observe")
+@(step="fixed",stage="react")
 gallery_panels :: proc(panels:^core.Table(Gallery_Panel),gallery:core.Read(Animation_Gallery),animations:core.Read(anim.Animation),playback:core.Ref(anim.Playback),modifiers:core.Ref(anim.Modifier_Runtime)) {
     for row in 0..<core.count(panels) {
         current:=core.at(core.read(panels),row)

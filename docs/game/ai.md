@@ -48,7 +48,7 @@ The agent's navigation class is chosen from its capsule; with none that fits, th
   proposes the reaction above the rest and the action clears the field on `Enter`.
 - **Boss phases:** health is data that changes what `think` proposes; an attack calls
   `ai.commit(a, score)` on `Enter` so it finishes; stun and death propose above everything.
-- **Cooldowns:** `ai.mind_ready(&agent.state, .Slam, time.seconds, 5)`, `agent` a `Mind_Agent`.
+- **Cooldowns:** `ai.mind_ready(&agent.state,.Slam,time.tick,time.dt,5)`, `agent` a `Mind_Agent`.
 - **Hordes:** the attack takes `ai.token_take(a, u64(target), N)` and `think` proposes it only if
   `ai.reserve_free(t, target, N)`; the rest circle. Tokens release on `Exit`.
 - **Hearing:** `behavior.noise(noises, position, loudness, maker)`; a `Perceiver` hears

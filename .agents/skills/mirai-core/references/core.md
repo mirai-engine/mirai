@@ -149,6 +149,24 @@ write: a prefab, a piece of terrain, a piece of something broken.
 - `Ref(S)` is a read-only pointer to a storage: writing through it is a bug that the generator does
   not see.
 
+## Waiting
+
+A wait is the tick it ends at, plain data in a component or a storage: it is copied and rolled
+back with the world, and a save keeps it with the clock.
+
+- `deadline(time, seconds)` is the tick that many seconds after the one that runs, and
+  `due(time, at)` says whether it came; a deadline nobody set, 0, has, and `NEVER` never does.
+  `elapsed(time, since)` gives the seconds since a tick; `ticks_of` and `seconds_of` convert.
+  Seconds become ticks with the `dt` of the clock, so a wait lasts the same at any tick rate.
+- The row is written when the wait starts and when it ends: nothing counts down tick by tick.
+- An entity with an `Own_Pace` waits on `own_time(time, clock, paces, e)`, the clock at the pace it
+  has now. What must follow a pace that changes during the wait adds its own time up every tick.
+- A request waits in its queue: `later(&q, time, seconds, item)`, and its owner takes with
+  `take_due(&q, time)` what was pushed and what is due. An owner that takes with `take` refuses
+  what was pushed for later, and its `queue_serve` reports it. A queue is not saved: a wait that
+  a save must keep is a deadline in a component.
+- There is no coroutine and no `await`: what waits and then acts is a component with its tick.
+
 ## Core storages
 
 `Time`, `Input` and `View` are `keep`: clearing the world does not touch them (loading a scene
@@ -290,9 +308,10 @@ owned one is requested in the `Places` queue. `core.Placer` is a
 
 - With `teleport` it is a jump (`jump`) and the drawing does not interpolate the path;
   `teleport=false` is for what moves frame by frame (a cinematic).
-- The owning library takes its requests in `fixed` with `before="places_drop"` and leaves the
-  others. `places_drop` (`simulate`) reports what nobody took as the problem `core.place`; what is
-  requested afterwards waits for the next tick.
+- The owning library takes its requests in `fixed`, in the `simulate` stage, and leaves the
+  others: a function that receives `^core.Places` runs before `places_drop`, which reports what
+  nobody took as the problem `core.place`. What is requested in a later stage waits for the next
+  tick.
 - `at_rest` stops what the owner moves (a respawn, a reset); the owner takes it from the request.
   The default keeps the velocity, which a portal needs.
 - This is how the `spawn` plugin, portals and cinematics place things without importing physics.

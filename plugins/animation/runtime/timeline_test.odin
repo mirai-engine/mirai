@@ -74,7 +74,7 @@ timeline_content :: proc(t:^testing.T,app:^host.App,id:base.Asset_Id,tracks:[]Ti
 timeline_tick :: proc(w:^Timeline_World,app:^host.App,problems:^core.Problems,dt:f32=.25) {
     time:=core.Time{dt=dt,playing=true}
     animation_tick(core.read(&w.animations),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),&w.requests,&w.events,core.read(&w.targets),{},&w.playback,app,time,{},nil,problems)
-    animation_fields(core.test_world_ref(w),&w.playback,&w.fields,nil,app,problems)
+    animation_fields(core.test_world_ref(w),core.ref(&w.playback),&w.fields,{},app,problems)
     animation_finish(&w.playback,{problems=problems},&w.constraints,&w.transforms,core.read(&w.parents),dt,nil,{},places=&w.places)
     core.test_world_settle(w)
 }
