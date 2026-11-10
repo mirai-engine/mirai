@@ -18,7 +18,8 @@ Authoring_Page :: struct($T:typeid) {index:u32,value:T}
 
 authoring_method_register :: proc(s:^editor.Session,desc:editor.Api_Method,T:typeid,info:^runtime.Type_Info) {
     desc:=desc
-    desc.result,desc.result_info,desc.writes_result=T,info,true
+    desc.result,desc.result_info=T,info
+    desc.writes_result=true
     editor.api_method_register(s,desc)
 }
 

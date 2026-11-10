@@ -1,5 +1,8 @@
 package editor
 
+import "core:os"
+import "core:path/filepath"
+import "core:strings"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor/api"
@@ -31,6 +34,80 @@ api_test_run_v1 :: proc(s:^Session,call:^api.Call) {
     if api_person(s) {s.frames=int(value)}
 }
 api_test_run_v2 :: proc(s:^Session,call:^api.Call) {api.call_result(call,Api_Test_Result).value=2*api.call_params(call,Api_Test_Params).value}
+
+// The methods that still describe, read or write by hand what their structs
+// say: a result written into call.out (engine.describe writes the schemas
+// themselves; the scene methods are rewritten into scene.write), params read
+// from the text (what remains reads an object whose keys the world or a
+// program names). A file holds at most these; one that holds fewer lowers its
+// count here, and none is added.
+@(private="file")
+API_HAND_WRITTEN :: [?]struct{file,pattern:string,count:int}{
+    {"editor/api/rpc.odin","writes_result=true",1},
+    {"editor/api_assets.odin","writes_result=true",1},
+    {"editor/api_methods.odin","writes_result=true",3},
+    {"editor/api_play_history.odin","writes_result=true",1},
+    {"editor/api_play_observe.odin","writes_result=true",2},
+    {"editor/api_play_scenario.odin","writes_result=true",1},
+    {"editor/api_play_wait.odin","writes_result=true",2},
+    {"editor/api_profile.odin","writes_result=true",8},
+    {"editor/api_programs.odin","writes_result=true",4},
+    {"editor/api_scene.odin","writes_result=true",4},
+    {"editor/api_scene_write.odin","writes_result=true",1},
+    {"editor/api_viewport.odin","writes_result=true",2},
+    {"editor/input_settings.odin","writes_result=true",2},
+    {"plugins/animation/editor/authoring_schema.odin","writes_result=true",1},
+    {"plugins/playtest/editor/explore.odin","writes_result=true",1},
+    {"plugins/playtest/editor/observe.odin","writes_result=true",1},
+    {"plugins/playtest/editor/qa.odin","writes_result=true",1},
+    {"plugins/previews/editor/capture.odin","writes_result=true",1},
+    {"plugins/ui_inspector/editor/api_tree.odin","writes_result=true",1},
+    {"plugins/ui_inspector/editor/bindings.odin","writes_result=true",3},
+    {"plugins/ui_inspector/editor/capture.odin","writes_result=true",1},
+    {"plugins/ui_inspector/editor/texts.odin","writes_result=true",2},
+    {"editor/api_material_instance.odin","rpc_init(",2},
+    {"editor/api_methods.odin","rpc_init(",1},
+    {"editor/api_play_edit.odin","rpc_init(",1},
+    {"editor/api_programs.odin","rpc_init(",1},
+    {"editor/api_scene.odin","rpc_init(",6},
+    {"editor/api_scene_write.odin","rpc_init(",4},
+}
+
+// No method is described, read or written by hand past the files above.
+@(test)
+methods_are_described_read_and_written_by_their_structs :: proc(t:^testing.T) {
+    root,_:=filepath.join({#directory,".."},context.temp_allocator)
+    patterns:=[?]string{"writes_result=true","rpc_init(","result=serial.Json","params_schema=","result_schema="}
+    files:=make([dynamic]string,context.temp_allocator)
+    walk :: proc(folder:string,files:^[dynamic]string) {
+        entries,error:=os.read_all_directory_by_path(folder,context.temp_allocator)
+        if error!=nil {return}
+        for entry in entries {
+            if entry.type==.Directory {walk(entry.fullpath,files);continue}
+            if strings.has_suffix(entry.name,".odin") && !strings.has_suffix(entry.name,"_test.odin") {append(files,entry.fullpath)}
+        }
+    }
+    for folder in ([?]string{"editor","plugins"}) {
+        path,_:=filepath.join({root,folder},context.temp_allocator)
+        walk(path,&files)
+    }
+    testing.expect(t,len(files)>100,"the sources of the editor and the plugins are found")
+    allowed:=API_HAND_WRITTEN
+    for path in files {
+        data,error:=os.read_entire_file(path,context.temp_allocator)
+        if error!=nil {continue}
+        relative,_:=filepath.rel(root,path,context.temp_allocator)
+        relative,_=strings.replace_all(relative,"\\","/",context.temp_allocator)
+        for pattern in patterns {
+            count:=strings.count(string(data),pattern)
+            limit:=0
+            for entry in allowed {
+                if entry.file==relative && entry.pattern==pattern {limit=entry.count}
+            }
+            testing.expectf(t,count==limit,"%s has %d of %q and may have %d: a method takes a struct for its params and fills one for its result",relative,count,pattern,limit)
+        }
+    }
+}
 
 @(private="file")
 Api_Test_World :: struct {using world:core.Test_World}
