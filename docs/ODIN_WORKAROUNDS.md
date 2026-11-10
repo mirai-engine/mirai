@@ -5,10 +5,6 @@ test each one without its workaround and remove those that are no longer needed,
 and their mention in the skills. An entry without an issue is not yet reported; publishing it
 requires the user's confirmation.
 
-`-use-separate-modules` is for the libraries of a project and, in dev builds (`-o:minimal` and
-`-o:none`), those of plugins (`cook/build/build.odin`, `plugin_flags` in `cook/build/plugins.odin`);
-the optimized engine is compiled whole, because splitting loses `#force_inline` across packages.
-
 ## Odin
 
 Entries are for Odin `dev-2026-11`.

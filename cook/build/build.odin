@@ -180,6 +180,19 @@ OPTIMIZATION_FLAGS :: [project.Optimization]string{
     .Minimal="-o:minimal",.None="-o:none",.Size="-o:size",.Speed="-o:speed",.Aggressive="-o:aggressive",
 }
 
+// The optimization of a library of a project or of a plugin. Optimized, a
+// library is one module, as the game that ships compiles it: a #force_inline
+// procedure of another package is not inlined across modules. Unoptimized, one
+// module per package compiles it in parallel.
+@(private)
+library_optimization_append :: proc(flags:^[dynamic]string,p:^project.Project,dev:bool) {
+    optimization:=project.Optimization.Minimal if dev else p.manifest.build.optimization
+    if optimization==.Minimal || optimization==.None {append(flags,"-use-separate-modules")}
+    optimizations:=OPTIMIZATION_FLAGS
+    append(flags,optimizations[optimization])
+    if p.manifest.build.debug {append(flags,"-debug")}
+}
+
 // Generates the root package of the target and starts the compiler, unless
 // the output of the last build still stands. Never blocks on the compiler:
 // job_poll says when it is done.
@@ -809,15 +822,11 @@ target_flags :: proc(p:^project.Project,target:Target,extra:[]string,a:runtime.A
             else when ODIN_OS==.Darwin {linker_flags_append(&flags,"-Wl,-rpath,@executable_path",a)}
         }
     } else {
-        // The engine runs optimized whole in its own binary; what a project
-        // compiles is little, and one module per package builds it in parallel.
-        append(&flags,"-build-mode:dll","-use-separate-modules")
+        append(&flags,"-build-mode:dll")
         // The libraries of the engine's plugins.
         when ODIN_OS==.Linux {linker_flags_append(&flags,fmt.tprintf("-Wl,-rpath,$ORIGIN/%s %s",project.PLUGIN_LIBRARIES,LIBRARY_OWN_RUNTIME),a)}
         else when ODIN_OS==.Darwin {linker_flags_append(&flags,fmt.tprintf("-Wl,-rpath,@loader_path/%s %s",project.PLUGIN_LIBRARIES,LIBRARY_OWN_RUNTIME),a)}
-        optimizations:=OPTIMIZATION_FLAGS
-        append(&flags,dev?"-o:minimal":optimizations[p.manifest.build.optimization])
-        if p.manifest.build.debug {append(&flags,"-debug")}
+        library_optimization_append(&flags,p,dev)
     }
     for &define in p.manifest.build.defines {
         if text:=base.text_get(define[:]);text!="" {append(&flags,fmt.aprintf("-define:%s",text,allocator=a))}
