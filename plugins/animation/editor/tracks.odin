@@ -24,7 +24,7 @@ import anim "plugins:animation/runtime"
 
 TRACKS_TOOL :: "tracks"
 TRACKS_SCOPE :: ui.Id(0x74726b73)
-TRACKS_SECONDS :: 5 // the least the ruler shows past the clip: room to key after its end
+TRACKS_SECONDS :: 2 // the least the ruler shows; past a longer clip it shows a quarter more, to key after its end
 TRACKS_LANES :: 6   // tracks the strip shows at once
 TRACKS_FIELDS :: 64 // values of the selected entity the list of a new track offers
 
@@ -145,12 +145,12 @@ tracks_animated :: proc(w:core.World_Ref,e:core.Entity) -> core.Entity {
     return core.NONE
 }
 
+// What a track moves: its target and field, or only the field of the entity that plays the clip.
 @(private)
-track_label :: proc(w:core.World_Ref,animated:core.Entity,track:^aa.Animation_Track) -> string {
+track_label :: proc(track:^aa.Animation_Track) -> string {
     node,component,field:=track_parts(base.text_get(track.target[:]))
-    who:=node if node!="" else editor.entity_label(w,animated)
-    if component=="" {return fmt.tprintf("%s %v",who,track.property)}
-    return fmt.tprintf("%s %s.%s",who,component,field)
+    what:=fmt.tprintf("%v",track.property) if component=="" else fmt.tprintf("%s.%s",component,field)
+    return what if node=="" else fmt.tprintf("%s %s",node,what)
 }
 
 // The params that name a track of the clip shown, for animation.key.set and animation.track.set.
@@ -188,7 +188,7 @@ tracks_frame :: proc(s:^editor.Session,t:^Tracks,frame:core.Frame_Time) {
     t.on=true
     view,clip,ok:=tracks_clip(s,t,w)
     duration:=tracks_duration(view,clip) if ok else 0
-    span:=duration+TRACKS_SECONDS
+    span:=max(duration*1.25,TRACKS_SECONDS)
     if t.playing && duration>0 {
         t.head+=frame.dt*max(t.speed,0)
         if t.head>=duration {
@@ -269,7 +269,7 @@ tracks_strip :: proc(s:^editor.Session,t:^Tracks,w:core.World_Ref,view:aa.Animat
             marks[j].frame=key.time*rate
             if t.first+i==t.track && t.key>=0 && abs(key.time-t.key)<=AUTHORING_TIME_EPSILON {t.strip.mark={i,j+1}}
         }
-        lanes[i]={name=track_label(w,t.entity,&track),marks=marks,add=true}
+        lanes[i]={name=track_label(&track),marks=marks,add=true}
     }
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),padding={12,0,12,0},gap=8,align_y=.Center}) {
         ui.label(ctx,editor.entity_label(w,t.entity),th.font_small,th.text,font=ui.FONT_SEMIBOLD)
@@ -347,7 +347,7 @@ tracks_rows :: proc(s:^editor.Session) {
     tracks:=view.tracks[c.first_track:][:c.track_count]
     if ui.scroll_area(ctx,ui.id(ctx,"tracks"),&t.scroll,{width=ui.GROW,height=ui.FIT,direction=.Column,max_height=8*th.row}) {
         for &track,i in tracks {
-            if ui.row(ctx,ui.id(ctx,"track",i+1),{label=track_label(w,t.entity,&track),detail=fmt.tprintf("%d",track.key_count),selected=t.track==i}).clicked {
+            if ui.row(ctx,ui.id(ctx,"track",i+1),{label=track_label(&track),detail=fmt.tprintf("%d",track.key_count),selected=t.track==i}).clicked {
                 if t.track!=i {t.track,t.key=i,-1}
             }
         }
@@ -396,7 +396,7 @@ tracks_rows :: proc(s:^editor.Session) {
         for &track in tracks {if base.text_get(track.target[:])==fields[t.field].target && track.property==fields[t.field].property {taken=true}}
     }
     ui.section(ctx,"New track")
-    if ui.property(ctx,editor.entity_label(w,e) if e!=core.NONE else "Value") {
+    if ui.property(ctx,"Value") {
         ui.dropdown(ctx,ui.id(ctx,"field"),{list=labels},&t.field,{width=-1,empty="None",disabled=len(fields)==0,searchable=true})
     }
     if ui.button(ctx,ui.id(ctx,"track_add"),{label="Add track",icon=.Plus,style=.Field,width=-1,center=true,disabled=t.field<0 || taken}).clicked {
