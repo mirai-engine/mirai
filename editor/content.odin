@@ -2536,7 +2536,7 @@ content_menu :: proc(s:^Session,w:core.World_Ref) -> (open:string) {
                 return // writing the file may move the entries of the registry
             }
         }
-        if file.kind==asset.KIND_SCENE && scene_tab(s,file.id)>=0 {
+        if file.kind==asset.KIND_SCENE && !asset.registry_prefab(file) && scene_tab(s,file.id)>=0 {
             if ui.menu_item(ctx,ui.id(ctx,"thumbnail"),"Update thumbnail",{icon=action_icon(.Scene_Thumbnail),disabled=s.mode!=.Edit || !scene_thumbnails_kept(s)}) {scene_thumbnail_update(s,file.id)}
         }
         asset_plugin_menus(s,file)

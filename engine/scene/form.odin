@@ -20,7 +20,6 @@ import "mirai:std/serial"
 @(private)
 Form :: struct {
     scene:base.Asset_Id,
-    roots:int,                 // entities without a parent: one in a prefab
     root:u32,                  // the row of its first root; NONE_ROW in an empty one
     ids:[]base.Entity_Id,
     names:[]asset.Entity_Name,
@@ -102,7 +101,7 @@ form_make :: proc(w:core.World_Ref,a:^asset.Asset,asset_types:^asset.Types,alloc
 @(private)
 form_read :: proc(m:^Form_Memory,form:^Form,w:core.World_Ref,a:^asset.Asset,view:asset.Scene_View,types:^core.World_Schema) -> Error {
     count:=len(view.ids)
-    form.scene,form.roots,form.root=a.blob.header.id,view.roots,NONE_ROW
+    form.scene,form.root=a.blob.header.id,NONE_ROW
     form.ids=form_take(m,base.Entity_Id,count)
     form.names=form_take(m,asset.Entity_Name,count)
     form.parents=form_take(m,u32,count)

@@ -969,6 +969,72 @@ stale_prefab_instances_resolve_against_the_files_of_their_prefabs :: proc(t:^tes
     testing.expect(t,!resolver_instance_stale(&other,of_room))
 }
 
+// A prefab is a scene while it has one root, and nothing more: a variant is
+// a prefab whose root is an instance of another, entities that are there
+// become an instance of a prefab that says which of its entities each stands
+// for, and a prefab that gains a second root places nothing from then on,
+// while what it placed before stays as it is.
+@(test)
+a_prefab_is_a_scene_with_one_root_and_stops_being_one_with_a_second :: proc(t:^testing.T) {
+    types:Types;types_init(&types);defer types_destroy(&types)
+    files:Test_Files
+    files.assets=make(map[base.Asset_Id]^Asset)
+    defer {
+        for _,a in files.assets {asset_close(a);free(a)}
+        delete(files.assets)
+    }
+    LAMP,TALL :: base.Asset_Id{0xa,0xa},base.Asset_Id{0xc,0xc}
+    lamp:Scene;lamp_prefab(&lamp,&types,1,{1,1,1});defer scene_destroy(&lamp)
+    test_file_put(t,&files,&lamp)
+    testing.expect(t,asset_prefab(files.assets[LAMP]))
+
+    tall:Scene;scene_init(&tall,&types,TALL);defer scene_destroy(&tall)
+    _,placed:=scene_instantiate(&tall,&lamp,LAMP,0)
+    testing.expect_value(t,placed,Error.None)
+    base_of,variant:=prefab_variant_base(&tall)
+    testing.expect(t,variant && base_of==LAMP)
+    _,plain:=prefab_variant_base(&lamp)
+    testing.expect(t,!plain)
+    test_file_put(t,&files,&tall)
+    testing.expect(t,asset_prefab(files.assets[TALL]),"a variant is a prefab as any other")
+    holds,asked:=prefab_holds({&files,test_files_open},&types,TALL,LAMP)
+    testing.expect(t,holds && asked==.None)
+
+    // A post that is there, a lamp in all but the range of its glow, becomes an instance of the lamp.
+    level:Scene;scene_init(&level,&types,{0xd,0xd});defer scene_destroy(&level)
+    scene_entity_add(&level,20,0,"Floor")
+    there:=make(map[base.Entity_Id]base.Entity_Id,context.temp_allocator)
+    there[1],there[2],there[3]=10,11,12
+    testing.expect_value(t,scene_copy(&level,&lamp,&there),Error.None)
+    glow,_:=scene_get(&level,11,LIGHT,Test_Light)
+    glow.range=9
+    scene_set(&level,11,LIGHT,&glow)
+    short:=make(map[base.Entity_Id]base.Entity_Id,context.temp_allocator)
+    short[1],short[2]=10,11
+    _,refused:=scene_instance_adopt(&level,&lamp,LAMP,&short)
+    testing.expect_value(t,refused,Error.Invalid)
+    root,adopted:=scene_instance_adopt(&level,&lamp,LAMP,&there)
+    testing.expect(t,adopted==.None && root==10)
+    held,_:=scene_instance(&level,root)
+    testing.expect(t,held==Prefab_Instance{LAMP,lamp.stamp} && member(&level,root,2)==11 && member(&level,root,3)==12)
+    testing.expect(t,scene_overridden(&level,11,light_hash(),"range") && !scene_overridden(&level,11,light_hash(),"intensity"))
+
+    // The lamp gains a second root: it is a scene, and no prefab.
+    scene_entity_add(&lamp,4,0,"Second root")
+    test_file_put(t,&files,&lamp)
+    testing.expect(t,!asset_prefab(files.assets[LAMP]))
+    _,rooted:=prefab_root(&lamp)
+    testing.expect(t,!rooted)
+    _,again:=scene_instantiate(&level,&lamp,LAMP,0)
+    testing.expect_value(t,again,Error.Invalid)
+    r:Prefab_Resolver;resolver_init(&r,&types,{&files,test_files_open});defer resolver_destroy(&r)
+    testing.expect_value(t,resolver_check(&r,LAMP).state,Resolve_State.Missing)
+    testing.expect(t,!resolver_instance_stale(&r,held))
+    before:=scene_entity_count(&level)
+    changed,error:=scene_resolve(&r,&level)
+    testing.expect(t,!changed && error==.None && scene_entity_count(&level)==before,"what it placed stays as it is")
+}
+
 // Reading the view of an open scene again, as every spawn of a prefab does,
 // takes no more of the memory of the asset.
 @(test)

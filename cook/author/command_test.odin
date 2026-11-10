@@ -277,11 +277,11 @@ the_document_of_a_scene_writes_it_back_and_declares_what_its_file_has :: proc(t:
     scene_file,_:=asset.registry_find_path(&p.registry,"arena/main.scene")
     scene_id:[base.ASSET_ID_TEXT]u8
     cases:=[]struct{document,message:string}{
-        {fmt.tprintf(`{{"entities":[{{"name":"x","prefab":"%s"}}]}}`,base.asset_id_format(scene_file.id,scene_id[:])),"is no prefab of the project; give the path or the id of a .scene"},
+        {fmt.tprintf(`{{"entities":[{{"name":"x","prefab":"%s"}}]}}`,base.asset_id_format(scene_file.id,scene_id[:])),"arena/main.scene has no single entity at its top to place; give it one, with the rest under it, or hang it whole from a Scene_Reference"},
         {`{"entities":[{"name":"x","components":{"Nope":{}}}]}`,"entities[0].components.Nope: the game of this build has no component 'Nope'"},
         {`{"entities":[{"name":"x","preset":"cubes"}]}`,"entities[0].preset: "},
         {`{"entities":[{"name":"x","prefab":"player/Nobody.scene"}]}`,"entities[0].prefab: "},
-        {`{"entities":[{"name":"x","prefab":"arena/main.scene"}]}`,`entities[0].prefab: "arena/main.scene" is no .scene asset`},
+        {`{"entities":[{"name":"x","prefab":"arena/main.scene"}]}`,"entities[0].prefab: arena/main.scene has no single entity at its top to place"},
         {`{"entities":[{"name":"x","prefab":{"asset":"player/Player.scene","size":2}}]}`,"entities[0].prefab has no 'size'"},
         {`{"entities":[{"id":"0x00000000000000ff"}]}`,"entities[0].id: 0x00000000000000ff is no entity of the file"},
         {`{"entities":[{"name":"x","components":{"Tint":{"colour":[1,1,1,1]}}}]}`,"entities[0].components.Tint"},

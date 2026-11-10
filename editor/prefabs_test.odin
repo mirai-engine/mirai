@@ -1366,3 +1366,52 @@ an_asset_is_named_by_its_path_with_or_without_its_extension_or_by_its_id :: proc
         if c.says=="" {testing.expect_value(t,got,crate)}
     }
 }
+
+// One kind of file, told apart by its roots: a scene with one is a prefab to
+// the browser, to a field of prefabs and to what places it. With a second
+// root it is a scene, which nothing places as an instance or makes a variant
+// of, and the instance it placed before stays linked.
+@(test)
+the_editor_tells_a_prefab_from_a_scene_by_its_one_root :: proc(t:^testing.T) {
+    f:=new(Prefab_Fixture);defer free(f)
+    if !testing.expect(t,prefab_fixture_init(t,f,"one-root")) {return}
+    defer prefab_fixture_destroy(f)
+    s:=&f.s
+    w:=edited_world(s)
+    crate,_,_:=prefab_test_crate(f)
+    core.world_settle(w)
+    history.edits_reset(&f.edits,w)
+    id,created:=prefab_create(s,crate,"crate")
+    if !testing.expect_value(t,created,Prefab_Error.None) {return}
+    registry:=&f.assets.registry
+    shown :: proc(t:^testing.T,s:^Session,registry:^asset.Registry,id:base.Asset_Id,prefab:bool) {
+        file,found:=asset.registry_find(registry,id)
+        if !testing.expect(t,found) {return}
+        kind:=shown_kind(file)
+        category,_:=content_category(kind)
+        testing.expect_value(t,file.kind,asset.KIND_SCENE)
+        testing.expect_value(t,kind,prefab?SHOWN_PREFAB:asset.KIND_SCENE)
+        testing.expect_value(t,category,prefab?Content_Category.Prefab:Content_Category.Scene)
+        testing.expect_value(t,path_is_prefab(s,file.path),prefab)
+        testing.expect_value(t,asset_kind_takes({0=SHOWN_PREFAB},kind),prefab)
+        testing.expect(t,asset_kind_takes({0=asset.KIND_SCENE},kind),"a field of scenes takes a prefab, which is one")
+        testing.expect(t,asset_color(kind)==asset_color(prefab?SHOWN_PREFAB:asset.KIND_SCENE) && asset_color(SHOWN_PREFAB)!=asset_color(asset.KIND_SCENE))
+    }
+    shown(t,s,registry,id,true)
+
+    data,read:=asset.registry_read(registry,"crate.scene",context.temp_allocator)
+    edited:asset.Scene
+    if !testing.expect(t,read==.None && asset.scene_read(&edited,&f.assets.types,data)==.None) {return}
+    defer asset.scene_destroy(&edited)
+    _,added:=asset.scene_entity_add(&edited,asset.scene_new_id(&edited),0,"Second root")
+    bytes,encoded:=asset.scene_bytes(&edited,context.temp_allocator)
+    testing.expect(t,added==.None && encoded==.None)
+    testing.expect_value(t,asset.registry_memory_set(registry,"crate.scene",bytes),asset.Error.None)
+    shown(t,s,registry,id,false)
+    _,placed:=prefab_instantiate(s,id,{})
+    testing.expect_value(t,placed,Prefab_Error.Not_One_Root)
+    _,varied:=prefab_variant_create(s,id,"crate_variant")
+    testing.expect_value(t,varied,Prefab_Error.Not_One_Root)
+    link,linked:=prefab_link_of(w,crate)
+    testing.expect(t,linked && link.root && link.asset==id)
+}

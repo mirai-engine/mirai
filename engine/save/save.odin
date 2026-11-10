@@ -47,7 +47,7 @@ SLOT_CAPACITY :: 48
 LABEL_CAPACITY :: 64
 EXTENSION :: ".save"
 FOLDER :: "saves"
-VERSION :: u32(6)
+VERSION :: u32(7)
 CHECKPOINT :: "checkpoint" // the slot of the last checkpoint
 
 @(private) MAGIC :: [4]u8{'M','S','A','V'}

@@ -97,7 +97,7 @@ api_document :: proc(s:^Session,call:^api.Call) {
         // An asset that is not a scene opens as an asset document.
         if !strings.has_suffix(path,".scene") {
             if file,found:=asset_document_file(s,path);found {
-                if !asset_document_opens(s,file.kind) {api.call_failf(call,api.INVALID_PARAMS,"%s opens no document: scenes, prefabs, materials and the kinds of the plugins do",path);return}
+                if !asset_document_opens(s,file.kind) {api.call_failf(call,api.INVALID_PARAMS,"%s opens no document: scenes, materials and the kinds of the plugins do",path);return}
                 asset_document_show(s,file.id)
                 api_documents(s,call)
                 return

@@ -260,9 +260,10 @@ spawn_placed :: proc(c:core.Commands,assets:^host.Assets,s:Spawn,forms:^Prefab_F
     file:=host.assets_scene(assets,s.prefab)
     if file==nil {return {},.Not_Found}
     if s.parent!=core.NONE && !core.alive(c.entities,s.parent) {return {},.Invalid}
+    // A copy is placed by its one root: the header says it, and reading the document holds it to that.
+    if !asset.asset_prefab(file) {return {},.Not_One_Root}
     w:=core.world_ref(c.data,c.info)
     form,entities:=prefab_form(forms,w,assets,s.prefab,file) or_return
-    if form.roots!=1 {return {},.Not_One_Root}
     report,error=form_place(w,form,&assets.types,{parent=s.parent,transient=s.transient,fresh=!s.transient,documents=assets_documents(assets)},entities)
     if error!=.None {return}
     if root:=core.commands_added(c,report.root,core.Transform);root!=nil {
