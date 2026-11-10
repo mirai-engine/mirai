@@ -259,7 +259,7 @@ class Bench:
             if demo:
                 project = checkout / "demo"
                 command = [str(compiler(checkout)), "build", str(project / ".mirai/gen/editor"), "-build-mode:dll",
-                           "-use-separate-modules", "-o:speed", f"-collection:mirai={release / 'decl'}",
+                           "-o:speed", f"-collection:mirai={release / 'decl'}",
                            f"-collection:project={project}", f"-collection:plugins={checkout / 'plugins'}",
                            f"-collection:generated={project / '.mirai/gen'}", attribute]
             else:
