@@ -26,20 +26,17 @@ Game_Source :: struct {
     particles:proc(user:rawptr,id:Id,effect:base.Asset_Id,size:[2]f32) -> Quad,
     // Plays a sound a style names.
     sound:proc(user:rawptr,id:base.Asset_Id),
-    // Draws a Draw node with the draw_* procedures of the package, as the
-    // frame ends and the layout has placed it.
-    draw:proc(user:rawptr,ctx:^Context,node:Draw_Node),
 }
 
-// What a Draw node hands the procedure of the game that draws it: where the
-// layout put it, the colors and the text of its style and the bytes of the
-// value it binds, as the interface copied them last. What it draws outside
+// What Context.draw_user is handed to draw a canvas, an icon or a Draw node: where
+// the layout put it and, of a Draw node, the colors and the text of its style
+// and the bytes of the value it binds, as the interface copied them last. What it draws outside
 // the container that clips the node is cut. A screen that did not change is
 // shown again from what it drew: the procedure runs when the node is built,
 // so it draws from node alone, and what it reads of the game is what the
 // node binds.
 Draw_Node :: struct {
-    name:u64,          // name_hash of the name the node draws by
+    name:u64,          // what draws it: of a Draw node, name_hash of its draw
     rect:Rect,         // in layout units
     fill,stroke,track,knob,mark:Color,
     text:Text_Style,

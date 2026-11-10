@@ -170,10 +170,9 @@ first when it is not current, as `mirai import` does. What a game-writing agent 
   file stays as it was; a file that already says the document is not written. An asset that does
   not exist is made with an id that follows from its path. A `.ui` written with other `params`
   takes along the files that use it as a widget, as the editor does.
-- **`ui check` reads the code too.** Checking every `.ui`, it also parses the Odin of `game/`
-  (`cook/author/ui_code_names.odin`): a literal a call of `gui.clicked` and its like names a node
-  by is a node of some `.ui` of the project, a node inside a widget as `use/node`; and the `draw`
-  of each `Draw` node is a `@(draw)` procedure of the built game.
+- **`ui check` checks the `draw` of each `Draw` node** against the `@(draw)` procedures of the
+  built game. The node names game code asks a screen for are checked at run time, per screen:
+  `gui.names` in `engine.diagnostics`.
 - **Types of the game.** The paths an interface binds and the components of a scene are read
   against the `editor` library of the project, which also has the cards of its plugins. Only
   `ui read` runs without it: the tool refuses every other command, with the `mirai build editor`
