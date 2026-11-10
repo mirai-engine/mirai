@@ -9,8 +9,8 @@ import mm "mirai:std/math"
 
 // A brush of the given full size at a point of the frame of its solid.
 @(private="file")
-brush_at :: proc(kind:Brush_Kind,position,size:[3]f32,subtract:=false) -> Brush {
-    return {kind=kind,subtract=subtract,place={position,mm.QUAT_IDENTITY,size}}
+brush_at :: proc(kind:Brush_Kind,position,size:[3]f32,op:=geom.Boolean_Op.Union) -> Brush {
+    return {kind=kind,op=op,place={position,mm.QUAT_IDENTITY,size}}
 }
 
 // Six times the volume the triangles enclose: positive when they face out.
@@ -53,7 +53,7 @@ built_shapes_are_closed_and_face_out :: proc(t:^testing.T) {
     solid:=Shape{kind=.Solid,uv_scale=2}
     brushes:=[]Brush{
         brush_at(.Box,{0,0,0},{2,2,2}),
-        brush_at(.Sphere,{1,1,1},{1.6,1.6,1.6},true),
+        brush_at(.Sphere,{1,1,1},{1.6,1.6,1.6},.Subtract),
         brush_at(.Cylinder,{0,1.5,0},{0.6,1,0.6}),
     }
     Case :: struct {name:string,shape:Shape,brushes:[]Brush,volume_min,volume_max:f64}
@@ -62,6 +62,9 @@ built_shapes_are_closed_and_face_out :: proc(t:^testing.T) {
         {"clockwise square",reversed,nil,1-1e-4,1+1e-4},
         {"square with a hole",holed,nil,0.75,0.81},
         {"solid with a subtracted sphere and an added cylinder",solid,brushes,7.95,8.05},
+        // The polygon is the first brush of its solid.
+        {"square and an added box",SHAPE_DEFAULT,{brush_at(.Box,{1,0,0},{1,1,1})},2-1e-3,2+1e-3},
+        {"square intersected with a box",SHAPE_DEFAULT,{brush_at(.Box,{0.5,0,0},{1,2,2},.Intersect)},0.5-1e-3,0.5+1e-3},
     }
     g:Shape_Geometry
     shape_geometry_init(&g)
@@ -98,7 +101,7 @@ a_shape_that_cannot_be_built_says_why :: proc(t:^testing.T) {
     counts.loops[0]=5
     nan:=SHAPE_DEFAULT
     nan.points[0].x=0/flat.depth
-    cuts:=[]Brush{brush_at(.Box,{},{2,2,2},true)}
+    cuts:=[]Brush{brush_at(.Box,{},{2,2,2},.Subtract),brush_at(.Box,{},{2,2,2},.Intersect)}
     flat_brush:=[]Brush{brush_at(.Box,{},{2,0,2})}
     bevels:[7]Shape
     for &b in bevels {b=SHAPE_DEFAULT;b.bevel=0.1}
@@ -118,7 +121,7 @@ a_shape_that_cannot_be_built_says_why :: proc(t:^testing.T) {
         {"counts",counts,nil,.Invalid},
         {"not finite",nan,nil,.Invalid},
         {"empty",{},nil,.Empty},
-        {"only subtracts",{kind=.Solid},cuts,.Empty},
+        {"only cuts and intersections",{kind=.Solid},cuts,.Empty},
         {"no brushes",{kind=.Solid},nil,.Empty},
         {"a brush without volume",{kind=.Solid},flat_brush,.Invalid},
         {"negative bevel",bevels[0],nil,.Invalid},
@@ -147,9 +150,9 @@ bodies_are_convex_pieces_that_cover_the_shape :: proc(t:^testing.T) {
     l.points[0],l.points[1],l.points[2],l.points[3],l.points[4],l.points[5]={0,0},{2,0},{2,1},{1,1},{1,2},{0,2}
     solid:=Shape{kind=.Solid}
     added:=[]Brush{brush_at(.Box,{},{2,2,2}),brush_at(.Sphere,{1,1,0},{1,1,1})}
-    cut:=[]Brush{added[0],added[1],brush_at(.Box,{0,0,1},{1,1,1},true)}
+    cut:=[]Brush{added[0],added[1],brush_at(.Box,{0,0,1},{1,1,1},.Subtract)}
     Case :: struct {name:string,shape:Shape,brushes:[]Brush,pieces:int}
-    cases:=[]Case{{"L outline",l,nil,2},{"brushes",solid,added,2},{"subtracted",solid,cut,2}}
+    cases:=[]Case{{"L polygon",l,nil,2},{"brushes",solid,added,2},{"subtracted",solid,cut,2},{"L polygon and a box",l,{brush_at(.Box,{3,0,0},{1,1,1})},3}}
     g:Shape_Geometry
     shape_geometry_init(&g)
     defer shape_geometry_destroy(&g)

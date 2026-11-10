@@ -15,25 +15,32 @@ names the Surface program of a water without its own material (empty or unknown:
 - `Water` on the `Fluid` entity changes its appearance; without it, `WATER_DEFAULT`.
   `material` is a `.mat` like any other; without it, a glass derived with the water's IOR, the
   `Water_Surface` program and the absorption and scattering of `Water`.
-- **Surface.** A [glass](../../mirai-rendering/references/materials.md#glass) solid: that of a
-  plane is a sheet open underneath, a grid generated once (`surface_build`) that follows the
-  camera in steps of `SURFACE_STEP`, with cells that double outward by rings and whose edges
-  between levels share vertices; that of a box, its cube. They are added as frame instances
-  (`instance_add`) before `render_sync`.
-- **Waves.** Those of a plane are those of physics ([`Fluid_Waves`][waves]): `water_render` uploads
+- **Surface.** A [glass](../../mirai-rendering/references/materials.md#glass) solid: a sheet open
+  underneath, a grid generated once (`surface_build`) that follows the camera in steps of
+  `SURFACE_STEP`, with cells that double outward by rings and whose edges between levels share
+  vertices. That of a plane goes on to the horizon; that of a box ends at its walls (its vertices
+  past them go onto them), so a box is a lake that sits in its basin, and its walls are the ground
+  or the banks around it. Water along a path (a `Spline` with a `Fluid`: a river) is a ribbon
+  along the samples the physics follows (`phys.fluid_path`, `river.odin`), level across, made
+  again only when they or the waters it meets change, ending where a water of higher priority
+  takes it; its vertex colors carry the current, which its small waves drift with. They are added
+  as frame instances (`instance_add`) before `render_sync`.
+- **Waves.** Those of a fluid are those of physics ([`Fluid_Waves`][waves]): `water_render` uploads
   with each body its `wave_terms`, measured from the origin of each pass at the time the frame
   shows (that of physics between its last two steps, like the poses; without Play, the
   application clock), and `water_waves.slang`, twin of `wave_point` and `wave_surface`, evaluates
-  them. A plane with waves, or that a dry box crosses, is drawn through a deformable copy of its
-  grid (`Sheet`) that the `water_sheet` step of `Geometry` writes each frame (without waves, only
-  when the grid or the boxes move): each vertex goes where the water that rests on it is, and a
+  them. A box, a plane with waves or one that a dry box crosses is drawn through a deformable copy
+  of its grid (`Sheet`) that the `water_sheet` step of `Geometry` writes each frame (without waves,
+  only when the grid or the boxes move): each vertex goes where the water that rests on it is, on
+  the slope of the still surface, and a
   wave fades where the ring's cells measure more than a quarter of its length. Raster, rays,
   shadows and glass see the same surface in which bodies float.
 - **`Water_Surface`** (`shaders/water_surface.slang`): bends the normal with the small-wave trains
   of `water.slang`, the same ones that the caustics follow.
 - **Medium.** The glass solid absorbs and scatters on every path through the water, from above, from
   below and in what it traces ([glass](../../mirai-rendering/references/materials.md#glass)). Each
-  fluid also hands `fog` a medium of its box (a plane, a box around the camera under its troughs)
+  fluid also hands `fog` a medium of its box under its lowest trough (that of a plane, a box around
+  the camera)
   that only gives the sun shafts (`shafts`), that is cut by the dry boxes of higher priority and
   that turns off the sunlight on the way down according to the water's absorption ([media from other
   plugins](../../mirai-plugins/references/render-plugins.md#media-from-other-plugins)).
@@ -55,7 +62,7 @@ names the Surface program of a water without its own material (empty or unknown:
   (`water_detail_place`), which far from the center keeps precision.
 - **Dry boxes.** They cut the shafts and the sun that turns off with the priority rules of
   physics. The air floor of a dry box inside a fluid is drawn as a surface of that fluid. A dry
-  box of higher priority that crosses a plane's surface cuts it in `water_sheet`: what stays
+  box of higher priority that crosses a water's surface cuts it in `water_sheet`: what stays
   inside goes down to its floor, which is the surface, and what stays within a ring and a half of
   a wall sticks to it. With the camera inside, the box is drawn as an air solid (IOR 1, no
   medium), which the glass takes as the camera's solid instead of the water: inside there is no
@@ -99,12 +106,14 @@ dry box, the master loses the highs (`UNDER_LOWPASS`) and the water reverb sound
 A scene with water has the `Fluid` entity with its `Volume` (with `Water` if its appearance
 changes and `Fluid_Waves` if it has waves) and, for splashes, bubbles and suspended particles, an
 emitter with a `Particle_Channel` `splashes`, `bubbles` or `motes`, as the `raft` scene of the
-demo has them.
+demo has them. Station 22 of its physics gallery has a pool in its basin and a river that bends
+on open ground.
 
 ## Limits
 
-- A box is drawn as a cube of water: its sides are seen from outside, and it has no waves.
-- In the corner of a dry box that crosses a plane a triangle of water of at most one ring cell can
+- A box draws only its surface: the ground, a basin or banks around it are its walls. Its medium
+  does not follow its slope: upstream, the shafts of a sloped box start under its surface.
+- In the corner of a dry box that crosses a water a triangle of water of at most one ring cell can
   remain, inclined between the two walls.
 - Far from the camera, the waves that the ring does not show fade from the drawing and not from
   physics: there what floats can depart from the drawn surface.

@@ -25,13 +25,14 @@ particles_volumes :: proc(pass:^erender.Pass,user:rawptr) {
     sync:=cast(^Particle_Sync)user
     pool:=&sync.pool
     if pass.world!=sync.world || pool.volume_count==0 || !pool_drawable(pass,sync) {return}
+    media:=erender.pass_media(pass,MEDIA_SLOT)
     erender.pass_blend_begin(pass,"particle volumes")
     pool_bind_frame(pass,sync)
     erender.pass_surface_read(pass,7,.Linear_Depth)
     erender.pass_surface_read(pass,8,.Glass_Depth)
     erender.pass_pipeline(pass,sync.pipelines.volume)
-    Params :: struct {volumes,count,pass,pad:u32}
-    params:=Params{pool.volumes_at,pool.volume_count,u32(pass.glass),0}
+    Params :: struct {volumes,count,pass,pad:u32,media:erender.Media_Grid}
+    params:=Params{pool.volumes_at,pool.volume_count,u32(pass.glass),0,media}
     erender.pass_params(pass,&params,size_of(params))
     erender.pass_draw(pass,3)
     erender.pass_end(pass)

@@ -7,6 +7,7 @@ import "mirai:editor"
 import "mirai:editor/history"
 import shapes "plugins:shapes/runtime"
 import "mirai:std/base"
+import "mirai:std/geom"
 import mm "mirai:std/math"
 
 // The brushes of Solid shapes are entities: a child of the solid with
@@ -14,29 +15,33 @@ import mm "mirai:std/math"
 // under the pointer, as one step, and finds the one under the pointer so the
 // editor's gizmo can take it.
 
-BRUSH_NAMES :: [shapes.Brush_Kind]string{.Box="Box",.Sphere="Sphere",.Cylinder="Cylinder"}
+BRUSH_NAMES :: [geom.Boolean_Op][shapes.Brush_Kind]string{
+    .Union={.Box="Box",.Sphere="Sphere",.Cylinder="Cylinder"},
+    .Subtract={.Box="Cut box",.Sphere="Cut sphere",.Cylinder="Cut cylinder"},
+    .Intersect={.Box="Intersect box",.Sphere="Intersect sphere",.Cylinder="Intersect cylinder"},
+}
 
 // Where a brush goes for a point of a surface of the world and the normal
 // there: its Y along the normal, turned by angle around it, size across (half
-// its width or its radius), an added brush resting on the surface and a cut
-// one centered on it.
-brush_place_at :: proc(subtract:bool,at,normal:[3]f32,size,angle:f32) -> mm.Transform {
+// its width or its radius), an added brush resting on the surface and one that
+// cuts or intersects centered on it.
+brush_place_at :: proc(op:geom.Boolean_Op,at,normal:[3]f32,size,angle:f32) -> mm.Transform {
     n:=linalg.normalize0(normal)
     if n=={} {n={0,0,1}}
     turn:=mm.quat_between({0,1,0},n)*mm.quat_axis_angle({0,1,0},angle)
-    return {subtract?at:at+n*size,turn,{2*size,2*size,2*size}}
+    return {op!=.Union?at:at+n*size,turn,{2*size,2*size,2*size}}
 }
 
 // Adds a brush placed in the world as the last child of the Solid target or,
 // when target is NONE, makes a Solid at the point at with the brush as its
 // first. One step; the brush entity, or NONE with the reason.
-brush_place :: proc(s:^editor.Session,place:mm.Transform,at:[3]f32,kind:shapes.Brush_Kind,subtract:bool,material:base.Asset_Id,target:core.Entity) -> (brush:core.Entity,error:shapes.Shape_Error) {
+brush_place :: proc(s:^editor.Session,place:mm.Transform,at:[3]f32,kind:shapes.Brush_Kind,op:geom.Boolean_Op,material:base.Asset_Id,target:core.Entity) -> (brush:core.Entity,error:shapes.Shape_Error) {
     w:=editor.editing_world(s)
     _,shape_info:=core.world_table(w,shapes.Shape)
     _,brush_info:=core.world_table(w,shapes.Shape_Brush)
     if shape_info==nil || brush_info==nil || !(min(place.scale.x,place.scale.y,place.scale.z)>0) {return core.NONE,.Invalid}
-    // Nothing to cut from.
-    if target==core.NONE && subtract {return core.NONE,.Empty}
+    // Nothing to cut from or intersect with.
+    if target==core.NONE && op!=.Union {return core.NONE,.Empty}
     solid_world:=mm.Transform{at,mm.QUAT_IDENTITY,{1,1,1}}
     if target!=core.NONE {
         shape,found:=editor.entity_get(w,target,shapes.Shape)
@@ -46,12 +51,12 @@ brush_place :: proc(s:^editor.Session,place:mm.Transform,at:[3]f32,kind:shapes.B
     local,usable:=mm.transform_relative(place,solid_world)
     if !usable {return core.NONE,.Invalid}
     opened:=!s.edits.open
-    if opened && !history.edits_begin(s.edits,s.selection,subtract?"Cut brush":"Add brush") {return core.NONE,.Invalid}
+    if opened && !history.edits_begin(s.edits,s.selection,op==.Union?"Add brush":op==.Subtract?"Cut brush":"Intersect brush") {return core.NONE,.Invalid}
     solid:=target
     if solid==core.NONE {
         solid=editor.entity_create(s,{preset=.Empty,name="Solid",transform=core.from_math(solid_world)})
         if solid!=core.NONE {
-            // A solid takes its form from its brushes: none of the outline of the default.
+            // A solid takes its form from its brushes: none of the polygon of the default.
             shape:shapes.Shape
             shape.kind,shape.uv_scale,shape.material=.Solid,1,material
             editor.component_add(s,solid,shape_info,&shape)
@@ -59,11 +64,9 @@ brush_place :: proc(s:^editor.Session,place:mm.Transform,at:[3]f32,kind:shapes.B
     }
     if solid!=core.NONE {
         names:=BRUSH_NAMES
-        name:=names[kind]
-        if subtract {name=kind==.Box?"Cut box":kind==.Sphere?"Cut sphere":"Cut cylinder"}
-        brush=editor.entity_create(s,{preset=.Empty,name=name,parent=solid,transform=core.from_math(local)})
+        brush=editor.entity_create(s,{preset=.Empty,name=names[op][kind],parent=solid,transform=core.from_math(local)})
         if brush!=core.NONE {
-            value:=shapes.Shape_Brush{kind=kind,subtract=subtract}
+            value:=shapes.Shape_Brush{kind=kind,op=op}
             editor.component_add(s,brush,brush_info,&value)
         }
     }
@@ -97,8 +100,8 @@ brush_world :: proc(w:core.World_Ref,solid,brush:core.Entity) -> mm.Transform {
 }
 
 // The brush of a Solid whose surface a ray meets at distance along it: the
-// one whose primitive the ray enters or leaves nearest there (a cut brush
-// makes the surface where the ray leaves it).
+// one whose primitive the ray enters or leaves nearest there (a brush that
+// cuts makes the surface where the ray leaves it).
 brush_under :: proc(w:core.World_Ref,solid:core.Entity,ray:mm.Ray,distance:f32) -> (brush:core.Entity,kind:shapes.Brush_Kind,place:mm.Transform,found:bool) {
     best:=f32(math.INF_F32)
     for child in editor.entity_children(w,solid) {

@@ -123,9 +123,14 @@ a_polygon_with_more_points_than_a_shape_holds_is_refused :: proc(t:^testing.T) {
     testing.expect_value(t,s.point_count,u16(4))
 }
 
+// The polygon of a Solid stays simple; the path of a Spline is open, may cross
+// itself and keeps two points.
 @(test)
-vertex_edits_keep_the_outline_simple :: proc(t:^testing.T) {
+vertex_edits_keep_the_polygon_simple_and_the_spline_open :: proc(t:^testing.T) {
     defer free_all(context.temp_allocator)
+    bent:=SPLINE_DEFAULT
+    bent.point_count,bent.loops[0]=3,3
+    bent.points[2],bent.widths[2],bent.heights[2]={6,-12},3,0.05
     // A pentagon with a small hole under its peak.
     pentagon:=SHAPE_DEFAULT
     pentagon.point_count,pentagon.loop_count,pentagon.loops=8,2,{0=5,1=3}
@@ -145,6 +150,11 @@ vertex_edits_keep_the_outline_simple :: proc(t:^testing.T) {
         {"remove from a triangle",pentagon,.Remove,6,{},.Invalid,8},
         {"remove leaves the hole out",pentagon,.Remove,3,{},.Self_Intersecting,8},
         {"out of range",square(1),.Remove,4,{},.Invalid,4},
+        {"move a spline point across its path",bent,.Move,0,{3,-14},.None,3},
+        {"insert on a spline",SPLINE_DEFAULT,.Insert,0,{1,-6},.None,3},
+        {"insert past the end of a spline",SPLINE_DEFAULT,.Insert,1,{0,-14},.Invalid,2},
+        {"remove from a spline",bent,.Remove,1,{},.None,2},
+        {"remove from a spline of two",SPLINE_DEFAULT,.Remove,0,{},.Invalid,2},
     }
     for c in cases {
         s:=c.shape
@@ -159,10 +169,17 @@ vertex_edits_keep_the_outline_simple :: proc(t:^testing.T) {
         testing.expectf(t,int(s.point_count)==c.points,"%s: %d points",c.name,s.point_count)
         if error!=.None {
             testing.expectf(t,s==before,"%s: a refused edit keeps the shape",c.name)
-        } else {
+        } else if s.kind==.Solid {
             testing.expectf(t,outline_ok(&s),"%s: valid",c.name)
         }
     }
+    // A point inserted on a spline takes the width and height in proportion.
+    spline:=SPLINE_DEFAULT
+    spline.widths[1],spline.heights[1]=5,1
+    testing.expect(t,shape_vertex_insert(&spline,0,{0,-3})==.None && spline.points[1]==geom.Vec2{0,-3})
+    testing.expectf(t,abs(spline.widths[1]-3.5)<1e-5 && abs(spline.heights[1]-0.2875)<1e-5 && spline.widths[2]==5,"%v %v",spline.widths[:3],spline.heights[:3])
+    _,_,near_end:=shape_edge_near(&bent,{3,-6},0.5)
+    testing.expect(t,!near_end,"the last point of a spline ends it: no edge back to the first")
     s:=square(1)
     testing.expect(t,shape_vertex_insert(&s,3,{-1.2,0})==.None && s.points[4]==geom.Vec2{-1.2,0})
     vertex,found:=shape_vertex_near(&s,{0.95,1.05},0.1)

@@ -381,12 +381,13 @@ hostile_strokes_do_not_crash :: proc(t:^testing.T) {
     tilted.rotation=mm.quat_axis_angle({1,0,0},0.5)
     bad:=SHAPE_DEFAULT
     bad.point_count=SHAPE_POINTS+1
-    solid:=SHAPE_DEFAULT
-    solid.kind=.Solid
+    // A spline and a solid of brushes alone have no polygon to stamp.
+    solid:=Shape{kind=.Solid}
     testing.expect(t,!shape_edit_piece(&e,core.Entity(1),tilted,SHAPE_DEFAULT))
     testing.expect(t,!shape_edit_piece(&e,core.Entity(1),lost,SHAPE_DEFAULT))
     testing.expect(t,!shape_edit_piece(&e,core.Entity(1),mm.TRANSFORM_IDENTITY,bad))
     testing.expect(t,!shape_edit_piece(&e,core.Entity(1),mm.TRANSFORM_IDENTITY,solid))
+    testing.expect(t,!shape_edit_piece(&e,core.Entity(1),mm.TRANSFORM_IDENTITY,SPLINE_DEFAULT))
     for p in ([]geom.Vec2{{nan,0},{1e30,-1e30},{0,0}}) {shape_edit_to(&e,p)}
     testing.expect_value(t,len(e.pieces),0)
 }
