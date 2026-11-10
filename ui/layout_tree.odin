@@ -176,7 +176,6 @@ Layout_Tree :: struct {
     measured,reused:int, // runs measured anew and found measured, until frame_end reads them
     overflow:bool, // a line or a command did not fit this frame
     tracks:[]Grid_Tracks,track_count:int, // the widths of the columns of the grids of the frame (grid_tracks_add)
-    row_tracks:[]Grid_Rows,row_track_count:int, // and the heights of their rows (grid_rows_add)
     aspects:bool,  // an element of the frame keeps an aspect
     allocator:mem.Allocator,
 }
@@ -203,7 +202,6 @@ layout_init :: proc(t:^Layout_Tree,allocator:mem.Allocator,max_elements,max_word
     t.lines=alloc(Layout_Line,max_elements*4,a,&ok)
     t.commands=alloc(Layout_Command,max_elements*4,a,&ok)
     t.tracks=alloc(Grid_Tracks,max_tracks,a,&ok)
-    t.row_tracks=alloc(Grid_Rows,max_tracks,a,&ok)
     if !id_table_init(&t.ids,max_elements,a) {ok=false}
     // A frame has fewer runs than elements.
     slots:=16
@@ -230,7 +228,7 @@ layout_init :: proc(t:^Layout_Tree,allocator:mem.Allocator,max_elements,max_word
 layout_destroy :: proc(t:^Layout_Tree) {
     a:=t.allocator
     delete(t.nodes,a);delete(t.texts,a);delete(t.spans,a);delete(t.pieces,a);delete(t.kids,a);delete(t.pending,a);delete(t.scratch,a)
-    delete(t.roots,a);delete(t.lines,a);delete(t.commands,a);delete(t.tracks,a);delete(t.row_tracks,a)
+    delete(t.roots,a);delete(t.lines,a);delete(t.commands,a);delete(t.tracks,a)
     id_table_destroy(&t.ids,a)
     for g in t.measures {
         delete(g.keys,a);delete(g.entries,a);delete(g.generations,a);delete(g.words,a);delete(g.chars,a)
@@ -1571,9 +1569,9 @@ grid_tracks_of :: #force_inline proc "contextless" (t:^Layout_Tree,l:^Layout) ->
 }
 // The tracks of the rows of a Grid, when it names a row of those of the frame that has rows.
 @(private)
-grid_row_tracks_of :: #force_inline proc "contextless" (t:^Layout_Tree,n:^Layout_Node) -> ^Grid_Rows {
-    if n.row_tracks==0 || int(n.row_tracks)>t.row_track_count || t.row_tracks[n.row_tracks-1].count==0 {return nil}
-    return &t.row_tracks[n.row_tracks-1]
+grid_row_tracks_of :: #force_inline proc "contextless" (t:^Layout_Tree,n:^Layout_Node) -> ^Grid_Tracks {
+    if n.row_tracks==0 || int(n.row_tracks)>t.track_count || t.tracks[n.row_tracks-1].count==0 {return nil}
+    return &t.tracks[n.row_tracks-1]
 }
 @(private)
 grid_columns :: #force_inline proc "contextless" (t:^Layout_Tree,l:^Layout) -> int {
@@ -1702,7 +1700,7 @@ grid_rows :: proc "contextless" (t:^Layout_Tree,n:^Layout_Node,kids:[]i32,height
     inner:=max(n.dim.y-l.padding[1]-l.padding[3]-f32(max(rows-1,0))*l.gap,0)
     if tracks!=nil {
         tracked=min(rows,int(tracks.count),GRID_TRACKS)
-        for track,r in tracks.rows[:tracked] {
+        for track,r in tracks.columns[:tracked] {
             switch track.kind {
             case .Fixed:    heights[r]=track.value
             case .Percent:  if final {heights[r]=inner*track.value}
@@ -1717,7 +1715,7 @@ grid_rows :: proc "contextless" (t:^Layout_Tree,n:^Layout_Node,kids:[]i32,height
             if !more {break}
             if c.rows<=1 || c.row>=rows {continue}
             last:=min(c.row+c.rows,rows)-1
-            if last<tracked && tracks.rows[last].kind==.Fixed {continue}
+            if last<tracked && tracks.columns[last].kind==.Fixed {continue}
             if need:=grid_child_height(&t.nodes[c.kid],mode)-grid_span_height(heights[:rows],c,l.gap);need>0 {heights[last]+=need}
         }
     }
@@ -1726,12 +1724,12 @@ grid_rows :: proc "contextless" (t:^Layout_Tree,n:^Layout_Node,kids:[]i32,height
     for high in heights[:rows] {left-=high}
     for left>LAYOUT_EPSILON {
         weights:f32
-        for track,r in tracks.rows[:tracked] {
+        for track,r in tracks.columns[:tracked] {
             if track.kind==.Grow && heights[r]<axis_max(track)-LAYOUT_EPSILON {weights+=grow_weight(track)}
         }
         if weights==0 {break}
         given:f32
-        for track,r in tracks.rows[:tracked] {
+        for track,r in tracks.columns[:tracked] {
             if track.kind!=.Grow || heights[r]>=axis_max(track)-LAYOUT_EPSILON {continue}
             before:=heights[r]
             heights[r]=min(axis_max(track),heights[r]+left*grow_weight(track)/weights)

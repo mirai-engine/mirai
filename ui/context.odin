@@ -424,17 +424,6 @@ grid_tracks_add :: proc(ctx:^Context,tracks:Grid_Tracks) -> u16 {
     return u16(t.track_count)
 }
 
-// Adds the heights of the rows of a Grid to the frame and returns what its
-// Box.row_tracks names them by; 0 when the frame holds no more (counted in
-// Stats.dropped_tracks), and each row is as high as its highest child.
-grid_rows_add :: proc(ctx:^Context,rows:Grid_Rows) -> u16 {
-    t:=&ctx.layout
-    if t.row_track_count>=len(t.row_tracks) || t.row_track_count>=int(max(u16)) {ctx.stats.dropped_tracks+=1;return 0}
-    t.row_tracks[t.row_track_count]=rows
-    t.row_track_count+=1
-    return u16(t.row_track_count)
-}
-
 // ---------------------------------------------------------------- frame storage
 
 // Copies text so it lasts until the frame is drawn, whatever buffer it came from.
@@ -584,7 +573,7 @@ frame_begin :: proc(ctx:^Context,input:Input) {
     ctx.tooltip="";ctx.modal_open=false;ctx.activate=0
     ctx.press_used=false;ctx.right_press_used=false;ctx.escape_used=false
     ctx.popup.depth=0
-    ctx.layout.track_count,ctx.layout.row_track_count=0,0
+    ctx.layout.track_count=0
     draw_reset(&ctx.draw,{0,0,ctx.size.x,ctx.size.y},ctx.scale,ctx.font.density)
 
     // A drag ends when the button that holds it is let go: a Drop under the
