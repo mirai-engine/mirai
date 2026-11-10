@@ -113,9 +113,15 @@ collision_settings_reject_repeated_presets_custom_entries_and_bad_pushes :: proc
 // code declares, and keep the numbers.
 @(test)
 categories_and_presets_take_the_names_the_code_declares_in_text :: proc(t:^testing.T) {
+    Named_World :: struct {
+        using world:core.Test_World,
+        colliders:core.Table(Collider),
+    }
     names,types,bits:=collision_test_names()
-    tables:=[1]core.Table_Info{{name="Collider",type=Collider,info=type_info_of(Collider)}}
-    info:=core.World_Info{tables=tables[:],names=names[:],named_types=types[:],name_bits=bits[:]}
+    info,described:=core.test_info(t,Named_World,test_types)
+    if !described {return}
+    defer core.test_info_destroy(&info)
+    info.names,info.named_types,info.name_bits=names[:],types[:],bits[:]
     ws:=core.world_schema_make(&info,context.temp_allocator)
     if !testing.expect(t,ws!=nil) {return}
     defer core.world_schema_destroy(ws)

@@ -5,17 +5,16 @@ import "core:math/linalg"
 import "core:strings"
 import "core:testing"
 import "mirai:core"
-import "mirai:host"
 import phys "plugins:physics/runtime"
-import render "mirai:engine/render"
-import volume "mirai:engine/volume"
 import mm "mirai:std/math"
 import "mirai:std/base"
 import anim "plugins:animation/runtime"
 
 @(test)
 physical_animation_rejects_a_stale_parent_binding_and_invalid_parent_offsets :: proc(t:^testing.T) {
-    f:Ragdoll_Fixture;ragdoll_fixture_init(&f);defer ragdoll_fixture_free(&f)
+    f:Ragdoll_Fixture
+    if !ragdoll_fixture_init(t,&f) {return}
+    defer ragdoll_fixture_free(&f)
     core.get(&f.configs,f.rig).mode=.Driven
     ragdoll_fixture_step(&f)
     child,_:=core.get(core.read(&f.states),f.lower)
@@ -37,35 +36,32 @@ physical_animation_rejects_a_stale_parent_binding_and_invalid_parent_offsets :: 
 }
 
 @(private)
+Ragdoll_World :: struct {
+    using world:core.Test_World,
+    using physics:phys.Test_Physics,
+    configs:core.Table(Ragdoll),
+    bones:core.Table(Ragdoll_Bone),
+    states:core.Table(Ragdoll_State),
+    playback:anim.Playback,
+    poses:anim.Animation_Requests,
+    ragdoll:Ragdoll_Runtime,
+}
+
+// A rig of two bodies, one under the other, in a world without gravity.
+@(private)
 Ragdoll_Fixture :: struct {
-    entities:core.Entities,
-    transforms:core.Table(core.Transform),parents:core.Table(core.Parent),names:core.Table(core.Name),
-    rigids:core.Table(phys.Rigid_Body),colliders:core.Table(phys.Collider),body_states:core.Table(core.Motion),replicas:core.Table(core.Pose_Target),
-    characters:core.Table(phys.Character),moves:core.Table(phys.Character_Move),character_states:core.Table(phys.Character_State),
-    joints:core.Table(phys.Joint),joint_states:core.Table(phys.Joint_State),meshes:core.Table(render.Mesh_Renderer),
-    configs:core.Table(Ragdoll),bones:core.Table(Ragdoll_Bone),states:core.Table(Ragdoll_State),
-    physics:phys.Physics_State,settings:phys.Physics_Settings,requests:phys.Body_Requests,joint_requests:phys.Joint_Requests,problems:core.Problems,
-    events:phys.Physics_Events,geometry:phys.Collider_Meshes,app:host.App,
-    playback:anim.Playback,poses:anim.Animation_Requests,ragdoll:Ragdoll_Runtime,
-    gravities:core.Table(volume.Gravity),gravity_places:core.Table(volume.Volume),worlds:core.Table(core.World_Transform), // a world without gravity
+    using w:Ragdoll_World,
+    using host:phys.Test_Physics_Host,
     rig,upper,lower:core.Entity,
 }
 
 @(private)
-ragdoll_fixture_settle :: proc(f:^Ragdoll_Fixture) {
-    core.table_settle(&f.transforms,&f.entities);core.table_settle(&f.parents,&f.entities);core.table_settle(&f.names,&f.entities)
-    core.table_settle(&f.rigids,&f.entities);core.table_settle(&f.colliders,&f.entities);core.table_settle(&f.body_states,&f.entities)
-    core.table_settle(&f.characters,&f.entities);core.table_settle(&f.moves,&f.entities);core.table_settle(&f.character_states,&f.entities)
-    core.table_settle(&f.joints,&f.entities);core.table_settle(&f.joint_states,&f.entities);core.table_settle(&f.meshes,&f.entities)
-    core.table_settle(&f.configs,&f.entities);core.table_settle(&f.bones,&f.entities);core.table_settle(&f.states,&f.entities)
-    core.entities_settle(&f.entities)
-}
+ragdoll_fixture_settle :: proc(f:^Ragdoll_Fixture) {core.test_world_settle(&f.w)}
 
 @(private)
-ragdoll_fixture_init :: proc(f:^Ragdoll_Fixture) {
-    core.entities_init(&f.entities)
-    core.add(&f.gravities,core.create(&f.entities),volume.Gravity{})
-    core.table_settle(&f.gravities,&f.entities)
+ragdoll_fixture_init :: proc(t:^testing.T,f:^Ragdoll_Fixture) -> bool {
+    if !core.test_world_init(t,&f.w,test_types) {return false}
+    f.whole=true
     f.rig,f.upper,f.lower=core.create(&f.entities),core.create(&f.entities),core.create(&f.entities)
     core.add(&f.transforms,f.rig,core.from_math(mm.TRANSFORM_IDENTITY))
     for entity,i in ([2]core.Entity{f.upper,f.lower}) {
@@ -92,12 +88,13 @@ ragdoll_fixture_init :: proc(f:^Ragdoll_Fixture) {
     append(&f.playback.states,state)
     resize(&f.playback.rows,core.entity_index(f.rig)+1);f.playback.rows[core.entity_index(f.rig)]=1
     ragdoll_fixture_settle(f)
+    return true
 }
 
 @(private)
 ragdoll_fixture_free :: proc(f:^Ragdoll_Fixture) {
-    phys.state_destroy(&f.physics);phys.collider_meshes_destroy(&f.geometry);anim.playback_free(&f.playback)
-    core.value_free(f,type_info_of(Ragdoll_Fixture))
+    phys.test_host_destroy(&f.host)
+    core.test_world_destroy(&f.w)
 }
 
 @(private)
@@ -106,22 +103,22 @@ ragdoll_fixture_step :: proc(f:^Ragdoll_Fixture) {
     time:=core.Time{dt=1.0/60,playing=true}
     ragdoll_prepare(core.read(&f.configs),core.read(&f.bones),&f.states,core.read(&f.rigids),core.read(&f.joints),core.read(&f.transforms),core.read(&f.parents),core.ref(&f.playback),&f.ragdoll,core.ref(&settings),&f.requests,&f.joint_requests,time,&f.poses,&f.problems)
     ragdoll_fixture_settle(f)
-    phys.physics_step(&f.physics,core.ref(&f.settings),&f.requests,&f.events,&f.geometry,&f.app,time,
-        core.read(&f.rigids),core.read(&f.colliders),core.read(&f.characters),core.read(&f.moves),&f.joints,core.read(&f.meshes),core.read(&f.parents),core.read(&f.names),&f.transforms,&f.body_states,core.read(&f.replicas),&f.character_states,&f.joint_states,{},&f.joint_requests,{},{},nil,nil,&f.problems,
-        core.read(&f.gravities),core.read(&f.gravity_places),core.read(&f.worlds),{},{},{})
+    phys.test_step(&f.physics,&f.host,time.dt)
     ragdoll_fixture_settle(f)
     ragdoll_pose(core.read(&f.configs),core.read(&f.bones),core.read(&f.states),core.read(&f.transforms),core.read(&f.parents),&f.poses,time,&f.problems)
 }
 
 @(test)
 ragdolls_follow_current_animation_preserve_handoff_velocity_and_drive_real_joints :: proc(t:^testing.T) {
-    f:Ragdoll_Fixture;ragdoll_fixture_init(&f);defer ragdoll_fixture_free(&f)
+    f:Ragdoll_Fixture
+    if !ragdoll_fixture_init(t,&f) {return}
+    defer ragdoll_fixture_free(&f)
     ragdoll_fixture_step(&f)
     f.playback.states[0].sampled[1].position.x=.1
     ragdoll_fixture_step(&f)
     upper,_:=core.get(core.read(&f.transforms),f.upper)
     testing.expect(t,abs(upper.position.x-.1)<.001)
-    velocity,_:=core.get(core.read(&f.body_states),f.upper)
+    velocity,_:=core.get(core.read(&f.bodies),f.upper)
     testing.expect(t,velocity.linear.x>5)
     core.get(&f.configs,f.rig).mode=.Simulated
     ragdoll_fixture_step(&f)
@@ -156,7 +153,9 @@ ragdolls_follow_current_animation_preserve_handoff_velocity_and_drive_real_joint
 
 @(test)
 invalid_bindings_and_removed_configuration_release_kinematic_bodies :: proc(t:^testing.T) {
-    f:Ragdoll_Fixture;ragdoll_fixture_init(&f);defer ragdoll_fixture_free(&f)
+    f:Ragdoll_Fixture
+    if !ragdoll_fixture_init(t,&f) {return}
+    defer ragdoll_fixture_free(&f)
     ragdoll_fixture_step(&f)
     core.get(&f.bones,f.lower).bone=anim.bone_ref("missing")
     ragdoll_fixture_step(&f)
@@ -176,9 +175,13 @@ invalid_bindings_and_removed_configuration_release_kinematic_bodies :: proc(t:^t
 physical_animation_uses_current_auto_frames_and_reuses_world_buffers :: proc(t:^testing.T) {
     track:mem.Tracking_Allocator
     mem.tracking_allocator_init(&track,context.allocator);defer mem.tracking_allocator_destroy(&track)
-    previous_context:=context;context.allocator=mem.tracking_allocator(&track);context.temp_allocator=context.allocator
+    previous_context:=context;context.allocator=mem.tracking_allocator(&track)
     defer context=previous_context
-    f:Ragdoll_Fixture;ragdoll_fixture_init(&f);defer ragdoll_fixture_free(&f)
+    f:Ragdoll_Fixture
+    if !ragdoll_fixture_init(t,&f) {return}
+    defer ragdoll_fixture_free(&f)
+    // After the world is made: making it reads its sources into the temporary allocator.
+    context.temp_allocator=context.allocator
     core.get(&f.configs,f.rig).mode=.Driven
     core.get(&f.joints,f.lower).auto_target=true
     turn:=mm.quat_axis_angle({0,1,0},.4)

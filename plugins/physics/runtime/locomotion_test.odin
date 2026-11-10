@@ -356,53 +356,72 @@ layered_moves_go_on_top_of_the_move_of_a_mode_of_the_game :: proc(t:^testing.T) 
     testing.expect_value(t,move,swim)
 }
 
+// What locomotion_step reads and writes, to run it alone.
+@(private="file")
+Loco_World :: struct {
+    using world:core.Test_World,
+    characters:core.Table(Character),
+    moves:core.Table(Character_Move),
+    inputs:core.Table(input.Move_Input),
+    walks:core.Table(Walk),
+    flights:core.Table(Fly),
+    swims:core.Table(Swim),
+    slides:core.Table(Slide),
+    mantles:core.Table(Mantle),
+    tacticals:core.Table(Tactical_Sprint),
+    ledges:core.Table(Ledge_Jump),
+    found:core.Table(Character_State),
+    motions:core.Table(core.Motion),
+    locals:core.Table(core.Transform),
+    parents:core.Table(core.Parent),
+    remotes:core.Table(core.Remote),
+    physics:Physics_State,
+    requests:Locomotion_Requests,
+}
+
+@(private="file")
+Loco_Step_Test :: struct {
+    using w:Loco_World,
+    problems:core.Problems,
+}
+
+@(private="file")
+loco_step_test_run :: proc(f:^Loco_Step_Test,playing:bool) {
+    locomotion_step(&f.characters,&f.moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),core.read(&f.mantles),core.read(&f.tacticals),core.read(&f.ledges),core.read(&f.found),core.read(&f.motions),core.read(&f.locals),core.read(&f.parents),core.read(&f.remotes),core.ref(&f.physics),{},{base=TEST_WALK_BASE},&f.requests,{playing=playing,dt=1.0/60},core.CLOCK_DEFAULT,&f.problems)
+}
+
 // A mode needs the component of its parameters: flying without a Fly, asked
 // for or started in, is a problem and the character does not fly. Its first
 // look is where its Transform turns it, also before a World_Transform is
 // propagated for it, as for a body spawned in this tick.
 @(test)
 a_mode_needs_its_component :: proc(t:^testing.T) {
-    es:core.Entities
-    core.entities_init(&es)
-    defer core.entities_destroy(&es)
-    moves:core.Table(Character_Move);inputs:core.Table(input.Move_Input)
-    walks:core.Table(Walk);flights:core.Table(Fly);swims:core.Table(Swim);characters:core.Table(Character);found:core.Table(Character_State)
-    motions:core.Table(core.Motion);locals:core.Table(core.Transform);parents:core.Table(core.Parent);remotes:core.Table(core.Remote)
-    core.table_init(&moves,"Character_Move");core.table_init(&inputs,"Move_Input")
-    core.table_init(&walks,"Walk");core.table_init(&flights,"Fly");core.table_init(&swims,"Swim");core.table_init(&characters,"Character");core.table_init(&found,"Character_State")
-    core.table_init(&motions,"Motion");core.table_init(&locals,"Transform");core.table_init(&parents,"Parent");core.table_init(&remotes,"Remote")
-    defer {
-        core.table_destroy(&moves);core.table_destroy(&inputs);core.table_destroy(&walks);core.table_destroy(&flights);core.table_destroy(&swims);core.table_destroy(&characters)
-        core.table_destroy(&found);core.table_destroy(&motions);core.table_destroy(&locals);core.table_destroy(&parents);core.table_destroy(&remotes)
-    }
-    walker,flier:=core.create(&es),core.create(&es)
+    f:Loco_Step_Test
+    if !core.test_world_init(t,&f.w,test_types) {return}
+    defer core.test_world_destroy(&f.w)
+    walker,flier:=core.create(&f.entities),core.create(&f.entities)
     starts_flying:=character_default()
     starts_flying.mode=MODE_FLYING
-    core.add(&characters,walker,starts_flying)
-    core.add(&characters,flier,character_default())
-    core.add(&flights,flier,FLY_DEFAULT)
-    for e in ([2]core.Entity{walker,flier}) {core.add(&walks,e,WALK_DEFAULT)}
-    core.add(&locals,walker,core.Transform{{0,0,0},mm.quat_axis_angle({0,1,0},2.5),{1,1,1}})
-    core.table_settle(&walks,&es);core.table_settle(&flights,&es);core.table_settle(&characters,&es);core.table_settle(&locals,&es)
-    requests:Locomotion_Requests
-    defer delete(requests.queue.items)
-    set_mode(&requests,flier,MODE_FLYING)
-    physics:Physics_State
-    problems:core.Problems
-    no_slides:core.Table(Slide);no_mantles:core.Table(Mantle);no_tacticals:core.Table(Tactical_Sprint);no_ledges:core.Table(Ledge_Jump)
-    locomotion_step(&characters,&moves,&inputs,core.read(&walks),core.read(&flights),core.read(&swims),core.read(&no_slides),core.read(&no_mantles),core.read(&no_tacticals),core.read(&no_ledges),core.read(&found),core.read(&motions),core.read(&locals),core.read(&parents),core.read(&remotes),core.ref(&physics),{},{base=TEST_WALK_BASE},&requests,{playing=true,dt=1.0/60},core.CLOCK_DEFAULT,&problems)
-    walking,_:=core.get(core.read(&characters),walker)
-    flying,_:=core.get(core.read(&characters),flier)
+    core.add(&f.characters,walker,starts_flying)
+    core.add(&f.characters,flier,character_default())
+    core.add(&f.flights,flier,FLY_DEFAULT)
+    for e in ([2]core.Entity{walker,flier}) {core.add(&f.walks,e,WALK_DEFAULT)}
+    core.add(&f.locals,walker,core.Transform{{0,0,0},mm.quat_axis_angle({0,1,0},2.5),{1,1,1}})
+    core.test_world_settle(&f.w)
+    set_mode(&f.requests,flier,MODE_FLYING)
+    loco_step_test_run(&f,true)
+    walking,_:=core.get(core.read(&f.characters),walker)
+    flying,_:=core.get(core.read(&f.characters),flier)
     testing.expect(t,walking.mode!=MODE_FLYING,"without a Fly it does not fly")
     testing.expect_value(t,flying.mode,MODE_FLYING)
-    testing.expect(t,core.problem_find(&problems,walker,"locomotion.mode_component")!=nil)
-    set_mode(&requests,walker,MODE_FLYING)
-    locomotion_step(&characters,&moves,&inputs,core.read(&walks),core.read(&flights),core.read(&swims),core.read(&no_slides),core.read(&no_mantles),core.read(&no_tacticals),core.read(&no_ledges),core.read(&found),core.read(&motions),core.read(&locals),core.read(&parents),core.read(&remotes),core.ref(&physics),{},{base=TEST_WALK_BASE},&requests,{playing=true,dt=1.0/60},core.CLOCK_DEFAULT,&problems)
-    walking,_=core.get(core.read(&characters),walker)
+    testing.expect(t,core.problem_find(&f.problems,walker,"locomotion.mode_component")!=nil)
+    set_mode(&f.requests,walker,MODE_FLYING)
+    loco_step_test_run(&f,true)
+    walking,_=core.get(core.read(&f.characters),walker)
     testing.expect(t,walking.mode!=MODE_FLYING,"asking for flying without a Fly is refused")
-    core.table_settle(&inputs,&es);core.table_settle(&moves,&es)
-    testing.expect(t,core.has(&inputs,walker) && core.has(&moves,walker),"playing adds its Move_Input and its Character_Move")
-    looking,_:=core.get(core.read(&inputs),walker)
+    core.test_world_settle(&f.w)
+    testing.expect(t,core.has(&f.inputs,walker) && core.has(&f.moves,walker),"playing adds its Move_Input and its Character_Move")
+    looking,_:=core.get(core.read(&f.inputs),walker)
     testing.expectf(t,abs(looking.look_yaw-mm.angle_wrap(2.5))<1e-4,"it looks where its Transform turns its body, not %v",looking.look_yaw)
 }
 
@@ -410,45 +429,27 @@ a_mode_needs_its_component :: proc(t:^testing.T) {
 // the scale holds until asked again, and one that is not finite is a problem that changes nothing.
 @(test)
 a_requested_gravity_scale_holds_until_asked_again :: proc(t:^testing.T) {
-    es:core.Entities
-    core.entities_init(&es)
-    defer core.entities_destroy(&es)
-    moves:core.Table(Character_Move);inputs:core.Table(input.Move_Input)
-    walks:core.Table(Walk);flights:core.Table(Fly);swims:core.Table(Swim);characters:core.Table(Character);found:core.Table(Character_State)
-    motions:core.Table(core.Motion);locals:core.Table(core.Transform);parents:core.Table(core.Parent);remotes:core.Table(core.Remote)
-    core.table_init(&moves,"Character_Move");core.table_init(&inputs,"Move_Input")
-    core.table_init(&walks,"Walk");core.table_init(&flights,"Fly");core.table_init(&swims,"Swim");core.table_init(&characters,"Character");core.table_init(&found,"Character_State")
-    core.table_init(&motions,"Motion");core.table_init(&locals,"Transform");core.table_init(&parents,"Parent");core.table_init(&remotes,"Remote")
-    defer {
-        core.table_destroy(&moves);core.table_destroy(&inputs);core.table_destroy(&walks);core.table_destroy(&flights);core.table_destroy(&swims);core.table_destroy(&characters)
-        core.table_destroy(&found);core.table_destroy(&motions);core.table_destroy(&locals);core.table_destroy(&parents);core.table_destroy(&remotes)
-    }
-    walker:=core.create(&es)
-    core.add(&characters,walker,character_default())
-    core.add(&walks,walker,WALK_DEFAULT)
-    core.table_settle(&walks,&es);core.table_settle(&characters,&es)
-    requests:Locomotion_Requests
-    defer delete(requests.queue.items)
-    physics:Physics_State
-    problems:core.Problems
-    run :: proc(characters:^core.Table(Character),moves:^core.Table(Character_Move),inputs:^core.Table(input.Move_Input),walks:^core.Table(Walk),flights:^core.Table(Fly),swims:^core.Table(Swim),found:^core.Table(Character_State),motions:^core.Table(core.Motion),locals:^core.Table(core.Transform),parents:^core.Table(core.Parent),remotes:^core.Table(core.Remote),physics:^Physics_State,requests:^Locomotion_Requests,problems:^core.Problems) {
-        no_slides:core.Table(Slide);no_mantles:core.Table(Mantle);no_tacticals:core.Table(Tactical_Sprint);no_ledges:core.Table(Ledge_Jump)
-        locomotion_step(characters,moves,inputs,core.read(walks),core.read(flights),core.read(swims),core.read(&no_slides),core.read(&no_mantles),core.read(&no_tacticals),core.read(&no_ledges),core.read(found),core.read(motions),core.read(locals),core.read(parents),core.read(remotes),core.ref(physics),{},{base=TEST_WALK_BASE},requests,{playing=false,dt=1.0/60},core.CLOCK_DEFAULT,problems)
-    }
-    scale_of :: proc(characters:^core.Table(Character),e:core.Entity) -> f32 {c,_:=core.get(core.read(characters),e);return c.gravity_scale}
-    testing.expect_value(t,scale_of(&characters,walker),f32(1))
-    set_gravity_scale(&requests,walker,0.4)
-    run(&characters,&moves,&inputs,&walks,&flights,&swims,&found,&motions,&locals,&parents,&remotes,&physics,&requests,&problems)
-    testing.expect_value(t,scale_of(&characters,walker),f32(0.4))
-    run(&characters,&moves,&inputs,&walks,&flights,&swims,&found,&motions,&locals,&parents,&remotes,&physics,&requests,&problems)
-    testing.expect_value(t,scale_of(&characters,walker),f32(0.4))
-    set_gravity_scale(&requests,walker,f32(cmath.inf_f32(1)))
-    run(&characters,&moves,&inputs,&walks,&flights,&swims,&found,&motions,&locals,&parents,&remotes,&physics,&requests,&problems)
-    testing.expect_value(t,scale_of(&characters,walker),f32(0.4))
-    testing.expect(t,core.problem_find(&problems,walker,"locomotion.request")!=nil)
-    set_gravity_scale(&requests,walker,1)
-    run(&characters,&moves,&inputs,&walks,&flights,&swims,&found,&motions,&locals,&parents,&remotes,&physics,&requests,&problems)
-    testing.expect_value(t,scale_of(&characters,walker),f32(1))
+    f:Loco_Step_Test
+    if !core.test_world_init(t,&f.w,test_types) {return}
+    defer core.test_world_destroy(&f.w)
+    walker:=core.create(&f.entities)
+    core.add(&f.characters,walker,character_default())
+    core.add(&f.walks,walker,WALK_DEFAULT)
+    core.test_world_settle(&f.w)
+    scale_of :: proc(f:^Loco_Step_Test,e:core.Entity) -> f32 {c,_:=core.get(core.read(&f.characters),e);return c.gravity_scale}
+    testing.expect_value(t,scale_of(&f,walker),f32(1))
+    set_gravity_scale(&f.requests,walker,0.4)
+    loco_step_test_run(&f,false)
+    testing.expect_value(t,scale_of(&f,walker),f32(0.4))
+    loco_step_test_run(&f,false)
+    testing.expect_value(t,scale_of(&f,walker),f32(0.4))
+    set_gravity_scale(&f.requests,walker,f32(cmath.inf_f32(1)))
+    loco_step_test_run(&f,false)
+    testing.expect_value(t,scale_of(&f,walker),f32(0.4))
+    testing.expect(t,core.problem_find(&f.problems,walker,"locomotion.request")!=nil)
+    set_gravity_scale(&f.requests,walker,1)
+    loco_step_test_run(&f,false)
+    testing.expect_value(t,scale_of(&f,walker),f32(1))
 }
 
 // Walks in from the shallows, swims on the surface with its head out, dives,
