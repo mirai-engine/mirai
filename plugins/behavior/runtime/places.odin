@@ -129,6 +129,7 @@ places_run :: proc(
     navigation:core.Ref(nav.Navigation),physics:core.Ref(phys.Physics_State),
     objects:core.Read(Smart_Object),states:core.Read(Smart_State),claims:^Claims,influence:core.Ref(Influence),time:core.Time,problems:^core.Problems,
 ) {
+    if len(requests.queue.items)==0 && len(places.waiting)==0 {return}
     for query in core.take(&requests.queue) {
         append(&places.waiting,query)
         result:=core.staged(results,query.querier)

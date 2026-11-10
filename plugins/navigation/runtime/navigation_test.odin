@@ -49,6 +49,7 @@ Nav_World :: struct {
     nav_settings:Navigation_Settings,
     nav_requests:Nav_Requests,
     nav_events:Nav_Events,
+    nav_crossings:Nav_Crossings,
     loco:phys.Locomotion_Requests,
 }
 
@@ -705,9 +706,9 @@ agents_test_step :: proc(f:^Nav_Test) {
     nav_test_settle(f)
     navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.unloaded),core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
     navigation_agents(core.ref(&f.nav),&f.run,core.read(&f.agents),&f.paths,&f.nav_requests,&f.nav_events,&f.inputs,core.read(&f.drivables),core.read(&f.characters),core.read(&f.colliders),core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.worlds),core.read(&f.obstacles),&f.loco,core.ref(&f.state),core.ref(&f.builds),&f.fars,
-        &f.roamings,&f.disabled,{&f.transforms,core.read(&f.parents),&f.places,&f.jumps},&f.requests,time,&f.problems)
+        &f.roamings,&f.disabled,{&f.transforms,core.read(&f.parents),&f.places,&f.jumps},&f.requests,&f.nav_crossings,time,&f.problems)
     nav_test_settle(f)
-    navigation_crossing(core.read(&f.paths),&f.moves,core.read(&f.characters),core.read(&f.walks),core.read(&f.bodies),core.read(&f.worlds),core.ref(&f.state),time)
+    navigation_crossing(core.read(&f.paths),&f.moves,core.read(&f.characters),core.read(&f.walks),core.read(&f.bodies),core.read(&f.worlds),core.ref(&f.state),core.ref(&f.nav_crossings),time)
     phys.locomotion_step(&f.characters,&f.moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),core.read(&f.mantles),core.read(&f.tacticals),core.read(&f.ledges),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.transforms),core.read(&f.parents),core.read(&f.remotes),core.ref(&f.state),{},{},&f.loco,time,core.CLOCK_DEFAULT,&f.problems)
     nav_test_settle(f)
     phys.physics_step(
