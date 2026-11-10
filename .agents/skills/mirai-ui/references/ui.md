@@ -214,10 +214,10 @@ With `backdrop_blur` the layer takes a filtered copy of its parent's background.
 - The text measures (`text_width`, `text_line`, `text_lines`, `text_index_at`…) are in layout units
   with the kerning and do not depend on the density. A text has no line limit.
 - **One word breaker.** Every text that wraps at words walks them with `layout_walk` and breaks
-  where Clay breaks a text (`layout_break_next`): a word goes to the next line unless it fits with
-  the space after it, and one wider than the line takes a line of its own. A text of several spans
-  fills its lines with `Flow`, which breaks at the same places and keeps on one line what no space
-  parts. `text_line` is that break for the text a field edits.
+  with one `Flow`, whatever its spans: a word goes to the next line unless it fits with the space
+  after it, one wider than the line takes a line of its own, a line gives up the space it breaks
+  or ends at, and what no space parts stays on one line. `text_line` is that break for the text a
+  field edits, which keeps the spaces of its last line.
 - **Lines like CSS.** `TEXT_LINE` (Inter's ascent plus descent) is the `normal` line height and the
   box of a line; `text_leading` centers it in a height with half the excess above, like CSS. A row
   centers its text this way and `Text_Style.line_height` distributes the excess of each line;

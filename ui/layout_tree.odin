@@ -400,20 +400,11 @@ layout_text_end :: proc(t:^Layout_Tree,font:^Font,e:Element) -> bool {
 }
 // The words of a span in order: those its measure kept, or the span walked again.
 @(private)
-Layout_Words :: struct {words:[]Layout_Word,index:int,walk:Layout_Walk,walked:bool}
-@(private)
-layout_words :: proc "contextless" (t:^Layout_Tree,font:^Font,s:^Layout_Span) -> (w:Layout_Words) {
+layout_span_walk :: proc "contextless" (t:^Layout_Tree,font:^Font,s:^Layout_Span) -> (w:Layout_Walk) {
     m:=&s.measure
-    if m.words_first>=0 {w.words=t.measures[0].words[m.words_first:][:m.words_len];return}
-    w.walked,w.walk=true,{font=font,text=s.text,size=s.size,face=int(s.font),space=m.space}
+    w={font=font,text=s.text,size=s.size,face=int(s.font),space=m.space}
+    if m.words_first>=0 {w.words=t.measures[0].words[m.words_first:][:m.words_len]}
     return
-}
-@(private)
-layout_words_next :: #force_inline proc "contextless" (w:^Layout_Words) -> (word:Layout_Word,ok:bool) {
-    if w.walked {word,_,ok=layout_walk(&w.walk);return}
-    if w.index>=len(w.words) {return}
-    w.index+=1
-    return w.words[w.index-1],true
 }
 
 // What a text asks for: the width of its widest line when nothing but its own
@@ -431,9 +422,9 @@ layout_text_ask :: proc "contextless" (t:^Layout_Tree,font:^Font,text:^Layout_Te
         }
         if !text.cut {least=max(least,m.min_width)}
         if len(spans)==1 {wide=m.width;continue}
-        words:=layout_words(t,font,&s)
+        words:=layout_span_walk(t,font,&s)
         for {
-            w,ok:=layout_words_next(&words)
+            w,_,ok:=layout_walk(&words)
             if !ok {break}
             if w.length==0 {wide=max(wide,line);line=0} else {line+=w.width}
         }
@@ -554,11 +545,17 @@ layout_measure_run :: proc(g:^Layout_Measures,font:^Font,text:string,size:f32,fa
 @(private)
 Layout_Walk :: struct {
     font:^Font,text:string,size:f32,face:int,space:f32,
-    at:int,
+    words:[]Layout_Word, // those a measure kept, given instead of walking the text
+    at:int,     // the byte of text, or the word of words, it goes on from
     broke:bool, // a word before a line break was given: the break comes next
 }
 @(private)
 layout_walk :: proc "contextless" (w:^Layout_Walk) -> (word:Layout_Word,bare:f32,ok:bool) {
+    if len(w.words)>0 {
+        if w.at>=len(w.words) {return}
+        w.at+=1
+        return w.words[w.at-1],0,true
+    }
     if w.broke {
         w.broke=false
         return {i32(w.at),0,0},0,true
@@ -580,60 +577,6 @@ layout_walk :: proc "contextless" (w:^Layout_Walk) -> (word:Layout_Word,bare:f32
         return {i32(start),i32(len(w.text)-start),bare},bare,true
     }
     return
-}
-
-// The lines the words of a run take in a width, one per call of
-// layout_break_next: a word that does not fit starts the next line, a word
-// wider than the line takes one of its own, and a line gives up the space it
-// breaks at. The words are those the measure of the run kept, or the run
-// walked again. Every text that wraps at words breaks here.
-@(private)
-Layout_Break :: struct {
-    text:string,
-    walk:Layout_Walk,
-    words:[]Layout_Word,
-    walked:bool,      // the words come from walk instead
-    index:int,
-    width,space:f32,
-    word:Layout_Word, // the one after the lines given so far
-    more:bool,
-    start:i32,        // where the line after them starts
-}
-@(private)
-layout_break :: proc "contextless" (font:^Font,text:string,size:f32,face:int,space,width:f32) -> (b:Layout_Break) {
-    b={text=text,walk={font=font,text=text,size=size,face=face,space=space},walked=true,width=width,space=space}
-    layout_break_word(&b)
-    return
-}
-@(private)
-layout_break_word :: #force_inline proc "contextless" (b:^Layout_Break) {
-    if b.walked {b.word,_,b.more=layout_walk(&b.walk);return}
-    b.more=b.index<len(b.words)
-    if b.more {b.word=b.words[b.index];b.index+=1}
-}
-@(private)
-layout_break_next :: proc "contextless" (b:^Layout_Break) -> (start,length:i32,width:f32,ok:bool) {
-    chars:i32
-    for b.more {
-        w:=b.word
-        if chars==0 && w.width>b.width {
-            b.start=w.start+w.length
-            layout_break_word(b)
-            return w.start,w.length,w.width,true
-        }
-        if w.length==0 || width+w.width>b.width {
-            spaced:=chars>0 && b.text[b.start+chars-1]==' '
-            start,length=b.start,chars-(1 if spaced else 0)
-            if spaced {width-=b.space}
-            b.start=w.start
-            if w.length==0 {layout_break_word(b)}
-            return start,length,width,true
-        }
-        width+=w.width
-        chars+=w.length
-        layout_break_word(b)
-    }
-    return b.start,chars,width,chars>0
 }
 
 // Where the baseline of a line of text of a face is under its top, in sizes.
@@ -689,80 +632,57 @@ layout_piece :: #force_inline proc(t:^Layout_Tree,p:Layout_Piece) {
 }
 // Ends the line a flow filled, or all it holds.
 @(private)
-layout_flow_line :: proc(t:^Layout_Tree,font:^Font,text:^Layout_Text,keep:bool,f:^Flow(i32),y:^f32) {
+layout_flow_line :: proc(t:^Layout_Tree,font:^Font,text:^Layout_Text,keep:bool,f:^Flow,y:^f32) {
     line:=flow_line(f,font)
     if keep {
         first:=t.piece_count
         width:f32
         for &p in line {
-            s:=&t.spans[p.run]
+            s:=&f.spans[p.span]
             start:=i32(uintptr(raw_data(p.text))-uintptr(raw_data(s.text))) if p.text!="" else 0
-            layout_piece(t,{span=p.run,start=start,length=i32(len(p.text)),x=p.x,width=p.width})
+            layout_piece(t,{span=text.spans_first+p.span,start=start,length=i32(len(p.text)),x=p.x,width=p.width})
             width=p.x+p.width
         }
         layout_line_end(t,font,text,first,width,y)
     } else {
         high:=text.line
-        for &p in line {high=max(high,layout_span_line(text,&t.spans[p.run]))}
+        for &p in line {high=max(high,layout_span_line(text,&f.spans[p.span]))}
         y^+=high
     }
     flow_next(f)
 }
 
 // Breaks a text into the lines it takes in width and returns their height.
-// keep: the lines and their pieces stay for it. A text of one span of words
-// breaks as Clay breaks a text; any other fills its lines with a Flow.
+// keep: the lines and their pieces stay for it.
 @(private)
 layout_text_wrap :: proc(t:^Layout_Tree,font:^Font,text:^Layout_Text,width:f32,keep:bool) -> (height:f32) {
     if keep {text.lines_first,text.lines_len=i32(t.line_count),0}
     spans:=t.spans[text.spans_first:][:text.spans_len]
-    room:=width if text.wrap==.Words else max(f32)
     y:f32
     defer if keep {text.height=max(y,text.line)}
-    if len(spans)==1 && !spans[0].box && spans[0].pad==0 && !spans[0].solid && !text.cut {
-        s:=&spans[0]
-        m:=&s.measure
-        if s.text=="" {return text.line}
-        line:=layout_span_line(text,s)
-        if !m.breaks && m.width<=room {
-            if keep {
-                first:=t.piece_count
-                layout_piece(t,{span=text.spans_first,length=i32(len(s.text)),width=m.width})
-                layout_line_end(t,font,text,first,m.width,&y)
-            } else {y=line}
-            return max(y,text.line)
-        }
-        b:=Layout_Break{text=s.text,walk={font=font,text=s.text,size=s.size,face=int(s.font),space=m.space},walked=m.words_first<0,width=room,space=m.space}
-        if !b.walked {b.words=t.measures[0].words[m.words_first:][:m.words_len]}
-        layout_break_word(&b)
-        for {
-            start,length,line_width,ok:=layout_break_next(&b)
-            if !ok {break}
-            if !keep {y+=line;continue}
-            first:=t.piece_count
-            if length>0 {layout_piece(t,{span=text.spans_first,start=start,length=length,width=line_width})}
-            layout_line_end(t,font,text,first,line_width,&y)
-        }
-        return max(y,text.line)
-    }
-    f:Flow(i32)
-    f.width,f.cut=room,text.cut
+    f:=Flow{spans=spans,width=width if text.wrap==.Words else max(f32),cut=text.cut}
     for &s,i in spans {
-        index:=text.spans_first+i32(i)
+        p:=Flow_Piece{span=i32(i),text=s.text,width=s.width,gap=s.gap}
         if s.box || s.pad>0 || s.solid {
-            p:=Flow_Piece(i32){text=s.text,width=s.width,gap=s.gap,pad=s.pad,size=s.size,font=s.font,box=s.box,run=index}
             // What is solid fills the line it starts on, whatever it follows.
             if s.solid {f.glued,f.unit,f.unit_at,f.unit_x=true,f.count,0,0}
             for !flow_put(&f,font,&p) {layout_flow_line(t,font,text,keep,&f,&y)}
             continue
         }
         if s.text=="" {flow_space(&f,s.width);continue}
-        words:=layout_words(t,font,&s)
+        // A text of one run that fits is as wide as it was measured, with the
+        // kerning across its spaces: the width it asked for.
+        if len(spans)==1 && !s.measure.breaks && s.measure.width<=f.width {
+            p.width,p.gap=s.measure.width,0
+            flow_put(&f,font,&p)
+            continue
+        }
+        words:=layout_span_walk(t,font,&s)
         for {
-            w,ok:=layout_words_next(&words)
+            w,_,ok:=layout_walk(&words)
             if !ok {break}
             if w.length==0 {layout_flow_line(t,font,text,keep,&f,&y);continue}
-            p:=Flow_Piece(i32){text=s.text[w.start:][:w.length],width=w.width,size=s.size,font=s.font,run=index}
+            p.text,p.width,p.gap=s.text[w.start:][:w.length],w.width,0
             for !flow_put(&f,font,&p) {layout_flow_line(t,font,text,keep,&f,&y)}
         }
     }
@@ -772,26 +692,24 @@ layout_text_wrap :: proc(t:^Layout_Tree,font:^Font,text:^Layout_Text,width:f32,k
 
 FLOW_PIECES :: 64 // pieces of one line of spans; a line that holds more goes on in the next
 
-// A piece of a line of spans: the words of one span that are on it, or a box.
+// A piece of a line: the words of one span that are on it, or a box.
 @(private)
-Flow_Piece :: struct($Run:typeid) {
-    text:string,
+Flow_Piece :: struct {
+    span:i32,    // in the spans of its flow
+    text:string, // of its span
     x,width:f32, // in its line; width: with the spaces its text ends in
     gap:f32,     // room after it that is no part of it
-    pad:f32,     // of its width, what is no text: a chip. Its text is not words
-    size:f32,
-    font:u8,
-    box:bool,    // it does not break: a pill, an image
-    run:Run,     // what its owner draws it with
 }
-// A line being filled with the words of spans of different styles: how a text
-// of several spans breaks. Words come from layout_walk and break as a text of
-// one span does; pieces that no space parts stay on one line. When flow_put
-// refuses a piece the line is full: its owner keeps what flow_line gives,
-// calls flow_next and puts the piece again.
+// A line being filled with the words of spans: how every text breaks. Words
+// come from layout_walk; a word that does not fit starts the next line, a
+// word wider than the line takes one of its own (or goes on in the next with
+// cut), a line gives up the space it breaks at, and pieces that no space
+// parts stay on one line. When flow_put refuses a piece the line is full: its
+// owner keeps what flow_line gives, calls flow_next and puts the piece again.
 @(private)
-Flow :: struct($Run:typeid) {
-    pieces:[FLOW_PIECES]Flow_Piece(Run),
+Flow :: struct {
+    spans:[]Layout_Span, // what its pieces are of
+    pieces:[FLOW_PIECES]Flow_Piece,
     count:int,
     used,width:f32,
     cut:bool,     // a word wider than the line goes on in the next one instead of past its end
@@ -802,16 +720,21 @@ Flow :: struct($Run:typeid) {
     ready:int,    // pieces of the line that is full
 }
 
+// A piece a space can part: neither a box nor a chip.
 @(private)
-flow_joins :: proc "contextless" (f:^Flow($Run),p:^Flow_Piece(Run)) -> bool {
-    if f.count==0 || p.box || p.pad>0 {return false}
+flow_words :: #force_inline proc "contextless" (f:^Flow,p:^Flow_Piece) -> bool {
+    s:=&f.spans[p.span]
+    return !s.box && s.pad==0
+}
+@(private)
+flow_joins :: proc "contextless" (f:^Flow,p:^Flow_Piece) -> bool {
+    if f.count==0 || !flow_words(f,p) {return false}
     last:=&f.pieces[f.count-1]
-    return !last.box && last.pad==0 && last.gap==0 && last.run==p.run && last.size==p.size && last.font==p.font &&
-        uintptr(raw_data(last.text))+uintptr(len(last.text))==uintptr(raw_data(p.text))
+    return last.span==p.span && last.gap==0 && uintptr(raw_data(last.text))+uintptr(len(last.text))==uintptr(raw_data(p.text))
 }
 // Adds a piece where the line ends, whether it fits or not.
 @(private)
-flow_add :: proc "contextless" (f:^Flow($Run),p:Flow_Piece(Run)) {
+flow_add :: proc "contextless" (f:^Flow,p:Flow_Piece) {
     p:=p
     if flow_joins(f,&p) {
         last:=&f.pieces[f.count-1]
@@ -825,8 +748,9 @@ flow_add :: proc "contextless" (f:^Flow($Run),p:Flow_Piece(Run)) {
     f.used+=p.width+p.gap
 }
 @(private)
-flow_put :: proc "contextless" (f:^Flow($Run),font:^Font,p:^Flow_Piece(Run)) -> bool {
+flow_put :: proc "contextless" (f:^Flow,font:^Font,p:^Flow_Piece) -> bool {
     joins:=flow_joins(f,p)
+    s:=&f.spans[p.span]
     if !f.glued {
         f.unit,f.unit_at,f.unit_x=f.count,0,f.used
         if joins {f.unit,f.unit_at=f.count-1,len(f.pieces[f.count-1].text)}
@@ -851,20 +775,20 @@ flow_put :: proc "contextless" (f:^Flow($Run),font:^Font,p:^Flow_Piece(Run)) -> 
         }
         bare:=len(p.text)
         for bare>0 && p.text[bare-1]==' ' {bare-=1}
-        if f.cut && !p.box && bare>0 {
-            n,width:=text_prefix(font,p.text,p.size,room-p.pad,int(p.font))
+        if f.cut && !s.box && bare>0 {
+            n,width:=text_prefix(font,p.text,s.size,room-s.pad,int(s.font))
             if n<bare {
                 if n==0 && f.count==0 {
                     n=1
                     for n<len(p.text) && p.text[n]&0xc0==0x80 {n+=1}
-                    width=text_width(font,p.text[:n],p.size,int(p.font))
+                    width=text_width(font,p.text[:n],s.size,int(s.font))
                 }
                 if n>0 {
                     head:=p^
-                    head.text,head.width,head.gap=p.text[:n],width+p.pad,0
+                    head.text,head.width,head.gap=p.text[:n],width+s.pad,0
                     flow_add(f,head)
                     p.text=p.text[n:]
-                    p.width=text_width(font,p.text,p.size,int(p.font))+p.pad
+                    p.width=text_width(font,p.text,s.size,int(s.font))+s.pad
                 }
                 f.ready=f.count
                 return false
@@ -876,12 +800,12 @@ flow_put :: proc "contextless" (f:^Flow($Run),font:^Font,p:^Flow_Piece(Run)) -> 
     }
     if !joins && f.count==FLOW_PIECES {f.ready=f.count;return false}
     flow_add(f,p^)
-    f.glued=p.box || p.pad>0 || p.text=="" || p.text[len(p.text)-1]!=' '
+    f.glued=!flow_words(f,p) || p.text=="" || p.text[len(p.text)-1]!=' '
     return true
 }
 // Room as wide as a space after what the line holds: a word ends there.
 @(private)
-flow_space :: proc "contextless" (f:^Flow($Run),width:f32) {
+flow_space :: proc "contextless" (f:^Flow,width:f32) {
     f.glued=false
     if f.count==0 {return}
     f.pieces[f.count-1].gap+=width
@@ -890,14 +814,15 @@ flow_space :: proc "contextless" (f:^Flow($Run),width:f32) {
 // The pieces of the line that is full, or of all that was put when its owner
 // ends it; it gives up the space it ends at.
 @(private)
-flow_line :: proc "contextless" (f:^Flow($Run),font:^Font) -> []Flow_Piece(Run) {
+flow_line :: proc "contextless" (f:^Flow,font:^Font) -> []Flow_Piece {
     if f.ready==0 {f.ready,f.glued=f.count,false}
     n:=f.ready
     if n>0 {
         last:=&f.pieces[n-1]
-        if !last.box && last.pad==0 && len(last.text)>0 && last.text[len(last.text)-1]==' ' {
+        if flow_words(f,last) && len(last.text)>0 && last.text[len(last.text)-1]==' ' {
+            s:=&f.spans[last.span]
             last.text=last.text[:len(last.text)-1]
-            last.width-=text_width(font," ",last.size,int(last.font))
+            last.width-=text_width(font," ",s.size,int(s.font))
             if last.text=="" {n-=1}
         }
     }
@@ -905,7 +830,7 @@ flow_line :: proc "contextless" (f:^Flow($Run),font:^Font) -> []Flow_Piece(Run) 
 }
 // Starts the next line with what the full one left for it.
 @(private)
-flow_next :: proc "contextless" (f:^Flow($Run)) {
+flow_next :: proc "contextless" (f:^Flow) {
     left:=f.count-f.ready
     start:=f.pieces[f.ready].x if left>0 else f.used
     copy(f.pieces[:left],f.pieces[f.ready:f.count])
