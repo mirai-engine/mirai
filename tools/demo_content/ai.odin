@@ -14,7 +14,7 @@ write_horde_records :: proc(o:^Out) {
         {"runner",{speed=5.5,sight=30,color={0.85,0.55,0.25,1}}},
         {"brute",{speed=2.5,sight=18,color={0.55,0.25,0.25,1}}},
     }
-    write_records(o,ZOMBIES_FILE,"game.Zombie_Kind",game.Zombie_Kind,kinds,nil)
+    write_records(o,ZOMBIES_FILE,"game.Zombie_Kind",game.Zombie_Kind,kinds)
     kind :: proc(name:string,weight:f32) -> game.Horde_Wave_Kind {return {record_ref(game.Zombie_Kind,ZOMBIES_FILE,name),weight}}
     next :: proc(name:string) -> core.Record(game.Horde_Wave) {return record_ref(game.Horde_Wave,WAVES_FILE,name)}
     waves:=[]Row_Out(game.Horde_Wave){
@@ -22,5 +22,5 @@ write_horde_records :: proc(o:^Out) {
         {"second",{delay=20,interval=0.4,count=10,kinds={kind("walker",2),kind("runner",1),{},{}},next=next("last")}},
         {"last",{delay=30,interval=0.5,count=10,kinds={kind("walker",2),kind("runner",2),kind("brute",1),{}}}},
     }
-    write_records(o,WAVES_FILE,"game.Horde_Wave",game.Horde_Wave,waves,nil)
+    write_records(o,WAVES_FILE,"game.Horde_Wave",game.Horde_Wave,waves)
 }

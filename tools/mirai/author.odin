@@ -7,16 +7,18 @@ import "mirai:cook/workspace"
 import "mirai:project"
 
 UI_USAGE :: "ui read <asset> [--out <file>] | write <asset> <document> | check [<asset>...] [--project P]"
+TEXTS_USAGE :: "texts list | missing | set <key> <language> <text> | export <file.csv> | import <file.csv> [--project P]"
 SCENE_USAGE :: "scene read <asset> [--out <file>] | write <asset> <document> | check [<asset>...] [--project P]"
 
-// mirai ui and mirai scene: the documents of the interfaces and the scenes
-// of a project, read, checked and written with no editor. They
+// mirai ui, mirai scene and mirai texts: the documents of the interfaces and
+// the scenes of a project and the texts of its .strings, read, checked and
+// written with no editor. They
 // run in the author program of the engine (cook/author.command), which the
 // build of the engine makes next to the editor and the player: the documents
 // and the assets they write are engine code, and the tool builds without it.
 // The engine is built first unless it is current, as mirai import does; what
 // that build says goes to stderr. The project is not built: a command that
-// reads the types of its game (all but ui read) refuses, with what builds it,
+// reads the types of its game (all but ui read and texts) refuses, with what builds it,
 // a project that was never built or whose code changed since. The project is the one of --project, or the
 // one the current folder is in; the program runs in the current folder, so
 // the files it is given are named from there, and its exit code is the
@@ -24,6 +26,7 @@ SCENE_USAGE :: "scene read <asset> [--out <file>] | write <asset> <document> | c
 
 cmd_ui :: proc(root:string,args:[]string) -> int {return author_run(root,"ui",UI_USAGE,args)}
 cmd_scene :: proc(root:string,args:[]string) -> int {return author_run(root,"scene",SCENE_USAGE,args)}
+cmd_texts :: proc(root:string,args:[]string) -> int {return author_run(root,"texts",TEXTS_USAGE,args)}
 
 // What the author program takes besides the arguments of the command: the
 // project and the engine it belongs to.
@@ -47,8 +50,8 @@ author_project_take :: proc(args:[]string) -> (folder:string,rest:[]string,ok:bo
     return folder,list[:],true
 }
 
-// Whether a command reads the types of the game: all but reading an interface.
-author_needs_library :: proc(kind:string,rest:[]string) -> bool {return !(kind=="ui" && rest[0]=="read")}
+// Whether a command reads the types of the game: all but reading an interface and the texts.
+author_needs_library :: proc(kind:string,rest:[]string) -> bool {return kind!="texts" && !(kind=="ui" && rest[0]=="read")}
 
 // What keeps a command from reading the types of the game from the library of
 // the editor of the project, with the command that builds it; "" when the

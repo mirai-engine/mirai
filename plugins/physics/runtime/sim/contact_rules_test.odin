@@ -220,13 +220,13 @@ contact_rules_replay_identically_after_restore :: proc(t:^testing.T) {
     rules_box(&w,{0.25,0.25,0.25},{0.6,0.5,0},{0,9,0})
     body_set_bullet(&w,a,true)
     test_steps(&w,10)
-    buffer:=make([]byte,world_snapshot_capacity(&w))
-    defer delete(buffer)
-    _,ok:=world_snapshot(&w,buffer)
+    buffer:World
+    defer world_destroy(&buffer)
+    ok:=test_keep(&buffer,&w)
     testing.expect(t,ok)
     test_steps(&w,60)
     expected:=world_hash(&w)
-    testing.expect(t,world_restore(&w,buffer))
+    testing.expect(t,test_restore(&w,&buffer))
     test_steps(&w,60)
     testing.expect_value(t,world_hash(&w),expected)
 }

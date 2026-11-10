@@ -248,8 +248,9 @@ A `--<part>-only` flag after `--` regenerates only one part
 - `--features-only`: the meshes of the render plugins' scenes, the blockout slabs and the decal
   images.
 - `--ai-only`: the horde's wave and zombie-kind tables.
-- `--interface-only`: the icons of the items and the tables of items and of the conversation
-  (`tools/demo_content/records.odin` writes a table with fixed ids).
+- `--interface-only`: the icons of the items, the tables of items and of the conversation
+  (`tools/demo_content/records.odin` writes a table with fixed ids) and the `.strings` of their
+  texts, in English and Spanish.
 - `--dig-only`: the dig terrain, its layer materials and its dust.
 - `--animation-only`: imports Mirai and writes what the [animation gallery](animation-gallery.md)
   uses: the locomotion and gallery clips of Mirai and their programs, the taller Mirai and its

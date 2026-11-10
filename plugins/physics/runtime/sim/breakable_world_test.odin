@@ -21,8 +21,8 @@ a_hit_breaks_two_equal_worlds_alike_and_restoring_mid_break_repeats_the_rest :: 
         test_cannonball(w,{0,1.2,3},{0,0,-30})
     }
     hashes:[STEPS]u64
-    snapshot:[]byte
-    defer delete(snapshot)
+    snapshot:World
+    defer world_destroy(&snapshot)
     taken,size,kinds:=-1,0,bit_set[Break_Kind]{}
     for &hash,step in hashes {
         world_step(&a,1.0/60)
@@ -39,15 +39,12 @@ a_hit_breaks_two_equal_worlds_alike_and_restoring_mid_break_repeats_the_rest :: 
         if !testing.expectf(t,same,"the worlds broke apart at step %v",step) {return}
         // The step that broke the wall left it half way: pieces in the air, debris and groups that expire.
         if taken<0 && len(events)>0 {
-            snapshot=make([]byte,world_snapshot_size(&a))
-            saved:bool
-            size,saved=world_snapshot(&a,snapshot)
-            testing.expect(t,saved)
+            testing.expect(t,test_keep(&snapshot,&a))
             taken=step
         }
     }
     if !testing.expect(t,taken>=0 && kinds>={.Impact,.Remove},"the wall broke and what came off expired") {return}
-    testing.expect(t,world_restore(&a,snapshot[:size]))
+    testing.expect(t,test_restore(&a,&snapshot))
     testing.expect_value(t,world_hash(&a),hashes[taken])
     for step in taken+1..<STEPS {
         world_step(&a,1.0/60)
@@ -72,7 +69,7 @@ a_state_copy_takes_the_breakables_mid_break_and_steps_as_its_source :: proc(t:^t
     test_cannonball(&a,{0,1.2,3},{0,0,-30})
     for _ in 0..<20 {world_step(&a,1.0/60)}
     testing.expect(t,breakable_check(&a,walls[0])!=breakable_check(&b,walls[1]),"only the first wall was hit")
-    if !testing.expect(t,world_state_copy(&b,&a)) {return}
+    if _,copied:=world_state_copy(&b,&a);!testing.expect(t,copied) {return}
     testing.expect_value(t,world_hash(&b),world_hash(&a))
     testing.expect_value(t,breakable_check(&b,walls[0]),breakable_check(&a,walls[0]))
     pa,pb:[128]Piece_Info

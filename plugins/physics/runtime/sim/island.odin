@@ -14,12 +14,14 @@ island_alloc :: proc(w:^World) -> i32 {
         w.island_high+=1
     }
     w.island_count+=1
+    stamp(w,.Islands,id)
     w.islands[id]={head=-1,tail=-1}
     return id
 }
 
 @(private)
 island_release :: proc(w:^World,id:i32) {
+    stamp(w,.Islands,id)
     w.islands[id]={head=w.island_free,tail=-1}
     w.island_free=id
     w.island_count-=1
@@ -29,8 +31,10 @@ island_release :: proc(w:^World,id:i32) {
 island_append :: proc "contextless" (w:^World,id,index:i32) #no_bounds_check {
     island:=&w.islands[id]
     body:=&w.bodies[index]
+    stamp(w,.Islands,id)
+    stamp(w,body)
     body.island,body.island_prev,body.island_next=id,island.tail,-1
-    if island.tail>=0 {w.bodies[island.tail].island_next=index} else {island.head=index}
+    if island.tail>=0 {stamp(w,.Bodies,island.tail);w.bodies[island.tail].island_next=index} else {island.head=index}
     island.tail=index
     island.count+=1
 }
@@ -48,8 +52,10 @@ island_remove :: proc(w:^World,index:i32) -> i32 {
     id:=body.island
     if id<0 {return -1}
     island:=&w.islands[id]
-    if body.island_prev>=0 {w.bodies[body.island_prev].island_next=body.island_next} else {island.head=body.island_next}
-    if body.island_next>=0 {w.bodies[body.island_next].island_prev=body.island_prev} else {island.tail=body.island_prev}
+    stamp(w,.Islands,id)
+    stamp(w,body)
+    if body.island_prev>=0 {stamp(w,.Bodies,body.island_prev);w.bodies[body.island_prev].island_next=body.island_next} else {island.head=body.island_next}
+    if body.island_next>=0 {stamp(w,.Bodies,body.island_next);w.bodies[body.island_next].island_prev=body.island_prev} else {island.tail=body.island_prev}
     body.island,body.island_prev,body.island_next=-1,-1,-1
     island.count-=1
     island.removed+=1
@@ -70,7 +76,9 @@ island_link :: proc(w:^World,a,b:i32) #no_bounds_check {
     keep,gone:=body_a.island,body_b.island
     if count_keep,count_gone:=w.islands[keep].count,w.islands[gone].count;count_gone>count_keep || count_gone==count_keep && gone<keep {keep,gone=gone,keep}
     kept,moved:=&w.islands[keep],&w.islands[gone]
-    for i:=moved.head;i>=0;i=w.bodies[i].island_next {w.bodies[i].island=keep}
+    stamp(w,.Islands,keep)
+    for i:=moved.head;i>=0;i=w.bodies[i].island_next {stamp(w,.Bodies,i);w.bodies[i].island=keep}
+    stamp(w,.Bodies,kept.tail)
     w.bodies[kept.tail].island_next=moved.head
     w.bodies[moved.head].island_prev=kept.tail
     kept.tail=moved.tail
@@ -83,7 +91,7 @@ island_link :: proc(w:^World,a,b:i32) #no_bounds_check {
 @(private)
 island_unlink :: proc "contextless" (w:^World,a,b:i32) {
     id:=w.bodies[a].island
-    if id>=0 && id==w.bodies[b].island {w.islands[id].removed+=1}
+    if id>=0 && id==w.bodies[b].island {stamp(w,.Islands,id);w.islands[id].removed+=1}
 }
 
 // What a constraint does in a step to the islands of its bodies: two dynamic bodies share an island; a
@@ -99,11 +107,8 @@ island_constraint :: proc(w:^World,a,b:i32) #no_bounds_check {
     for pair in ([2][2]^Body{{body_a,body_b},{body_b,body_a}}) {
         mover,moved:=pair[0],pair[1]
         if moved.type!=.Dynamic || .Character in moved.flags {continue}
-        if .Character in mover.flags {
-            if length(mover.linear_velocity)>mover.sleep_threshold {moved.sleep_time=0}
-        } else if mover.type==.Kinematic && (mover.linear_velocity!={} || mover.angular_velocity!={}) {
-            moved.sleep_time=0
-        }
+        pushed:=.Character in mover.flags?length(mover.linear_velocity)>mover.sleep_threshold:mover.type==.Kinematic && (mover.linear_velocity!={} || mover.angular_velocity!={})
+        if pushed && moved.sleep_time!=0 {stamp(w,moved);moved.sleep_time=0}
     }
 }
 
@@ -151,7 +156,7 @@ island_split :: proc(w:^World,id:i32,edges:[][2]i32=nil) -> int #no_bounds_check
         return count
     }
     // -2 marks a body of the island that no group took yet.
-    for index in members[:count] {w.bodies[index].island=-2}
+    for index in members[:count] {stamp(w,.Bodies,index);w.bodies[index].island=-2}
     stack:=st.island_stack
     for seed in members[:count] {
         if w.bodies[seed].island!=-2 {continue}

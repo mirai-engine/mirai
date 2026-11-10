@@ -1,5 +1,6 @@
 package mirai_physics
 
+import "core:mem"
 import "mirai:std/base"
 import "mirai:std/spatial"
 import math "mirai:std/math"
@@ -65,9 +66,9 @@ world_set_cuts :: proc(w:^World,cuts:[]Cut) -> bool {
     if same {return true}
     // Bodies near the cuts that go away wake as well.
     for cut in w.cuts[:w.cut_count] {
-        if body,index:=body_get(w,cut.body);body!=nil {
+        if body,index:=body_read(w,cut.body);body!=nil {
             body_wake(w,index)
-        } else if shape,_:=shape_get(w,cut.shape);shape!=nil {
+        } else if shape,_:=shape_read(w,cut.shape);shape!=nil {
             body_wake(w,shape.body)
         }
     }
@@ -76,9 +77,9 @@ world_set_cuts :: proc(w:^World,cuts:[]Cut) -> bool {
     w.cut_count=i32(len(cuts))
     // Contacts that the cuts change come back at the next narrow phase; sleepers near them wake.
     for cut in cuts {
-        if body,index:=body_get(w,cut.body);body!=nil {
+        if body,index:=body_read(w,cut.body);body!=nil {
             body_wake(w,index)
-        } else if shape,_:=shape_get(w,cut.shape);shape!=nil {
+        } else if shape,_:=shape_read(w,cut.shape);shape!=nil {
             body_wake(w,shape.body)
         }
     }
@@ -136,7 +137,7 @@ body_clear_twin :: proc(w:^World,h:Body_Handle) {
 
 // The twin of the body: where it carries the body and the plane its copies collide in front of.
 body_twin :: proc(w:^World,h:Body_Handle) -> (through:Transform,point,normal:Vec3,ok:bool) {
-    body,index:=body_get(w,h)
+    body,index:=body_read(w,h)
     if body==nil {return}
     t:=twin_find(w,index)
     if t==nil {return}
@@ -153,7 +154,7 @@ world_twins :: proc(w:^World,out:[]Body_Handle) -> int {
 
 // The box of the shapes of the body as of the last step or teleport, without the copies of its twin.
 body_bounds :: proc(w:^World,h:Body_Handle) -> (box:Aabb,ok:bool) {
-    body,_:=body_get(w,h)
+    body,_:=body_read(w,h)
     if body==nil || body.shape_list<0 {return}
     box=w.shapes[body.shape_list].aabb
     for s:=w.shapes[body.shape_list].next;s>=0;s=w.shapes[s].next {box=math.aabb_merge(box,w.shapes[s].aabb)}
@@ -162,7 +163,7 @@ body_bounds :: proc(w:^World,h:Body_Handle) -> (box:Aabb,ok:bool) {
 
 // Whether the shape is a copy of a twin.
 shape_is_twin :: proc(w:^World,h:Shape_Handle) -> bool {
-    shape,_:=shape_get(w,h)
+    shape,_:=shape_read(w,h)
     return shape!=nil && .Twin in shape.flags
 }
 
@@ -197,13 +198,14 @@ twin_shape_create :: proc(w:^World,t:^Twin,source:i32) -> i32 {
     }
     w.shape_count+=1
     shape:=&w.shapes[index]
+    stamp(w,shape)
     generation:=shape.generation+1
     shape^=w.shapes[source]
     shape.generation=generation
     shape.flags+={.Moved,.Twin}
     shape.source=source
     shape.next,shape.prev=t.shapes,-1
-    if t.shapes>=0 {w.shapes[t.shapes].prev=index}
+    if t.shapes>=0 {stamp(w,.Shapes,t.shapes);w.shapes[t.shapes].prev=index}
     t.shapes=index
     t.count+=1
     if .Hits in shape.flags {w.hit_shapes+=1}
@@ -219,10 +221,11 @@ twin_shape_create :: proc(w:^World,t:^Twin,source:i32) -> i32 {
 twin_shape_destroy :: proc(w:^World,t:^Twin,index:i32) {
     w.grounds_stale=true
     shape:=&w.shapes[index]
+    stamp(w,shape)
     shape_destroy_contacts(w,index)
     spatial.dynamic_tree_remove(&w.trees[DYNAMIC_TREE],shape.proxy)
-    if shape.prev>=0 {w.shapes[shape.prev].next=shape.next} else {t.shapes=shape.next}
-    if shape.next>=0 {w.shapes[shape.next].prev=shape.prev}
+    if shape.prev>=0 {stamp(w,.Shapes,shape.prev);w.shapes[shape.prev].next=shape.next} else {t.shapes=shape.next}
+    if shape.next>=0 {stamp(w,.Shapes,shape.next);w.shapes[shape.next].prev=shape.prev}
     t.count-=1
     if .Hits in shape.flags {w.hit_shapes-=1}
     shape_refs_add(w,shape,-1)
@@ -252,7 +255,8 @@ twin_source_removed :: proc(w:^World,body,source:i32) {
 }
 
 // Takes what the shapes of the body are now into their copies and puts the copies where the twin
-// carries them. A copy that took another filter meets the others again.
+// carries them. A copy that took another filter meets the others again. A copy is written only when it
+// changes.
 @(private)
 twin_refresh :: proc(w:^World,t:^Twin) #no_bounds_check {
     body:=&w.bodies[base.handle_index(base.Handle(t.body))]
@@ -263,21 +267,25 @@ twin_refresh :: proc(w:^World,t:^Twin) #no_bounds_check {
         shape:=&w.shapes[s]
         source:=&w.shapes[shape.source]
         if shape.filter!=source.filter {
+            stamp(w,shape)
             shape.filter=source.filter
             shape_destroy_contacts(w,s)
             shape.flags+={.Moved}
         }
-        shape.local,shape.size,shape.radius=source.local,source.size,source.radius
-        shape.friction,shape.restitution,shape.rolling_resistance=source.friction,source.restitution,source.rolling_resistance
-        shape.surface_speed,shape.dominance,shape.drag=source.surface_speed,source.dominance,source.drag
-        shape.flags=shape.flags-{.One_Way}+(source.flags&{.One_Way})
-        shape.aabb=shape_aabb(w,shape,xf)
-        reach:=spatial.aabb_translate_extend(shape.aabb,motion)
-        if !math.aabb_contains(shape.fat,reach) {
-            shape.fat=shape_fat(reach)
-            shape.flags+={.Moved}
-            spatial.dynamic_tree_move(tree,shape.proxy,shape.fat)
+        next:=shape^
+        next.local,next.size,next.radius=source.local,source.size,source.radius
+        next.friction,next.restitution,next.rolling_resistance=source.friction,source.restitution,source.rolling_resistance
+        next.surface_speed,next.dominance,next.drag=source.surface_speed,source.dominance,source.drag
+        next.flags=next.flags-{.One_Way}+(source.flags&{.One_Way})
+        next.aabb=shape_aabb(w,&next,xf)
+        reach:=spatial.aabb_translate_extend(next.aabb,motion)
+        moved:=!math.aabb_contains(next.fat,reach)
+        if moved {
+            next.fat=shape_fat(reach)
+            next.flags+={.Moved}
         }
+        if mem.compare_ptrs(&next,shape,size_of(Shape))!=0 {stamp(w,shape);shape^=next}
+        if moved {spatial.dynamic_tree_move(tree,shape.proxy,shape.fat)}
     }
 }
 
