@@ -61,21 +61,23 @@ fluids_follow_their_rows_their_volumes_and_their_entities :: proc(t:^testing.T) 
     testing.expect_value(t,f.state.world.fluid_count,1)
 }
 
-// A fluid fills a plane or a box: without a Volume, in one of another shape, dry in a plane or in a box
-// without size it is not made, and says why. Two fluids that meet are a problem only at the same priority.
+// A fluid fills a plane or a box: without a Volume, in one of another shape, dry in a plane, in a box
+// without size or tilted past a fall it is not made, and says why. Two fluids that meet are a problem only at the same priority.
 @(test)
 a_fluid_that_cannot_be_made_or_meets_another_of_its_priority_is_a_problem :: proc(t:^testing.T) {
     f:Physics_Test
     if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
-    Case :: struct {fluid:Fluid,region:Maybe(volume.Volume),made:bool}
+    Case :: struct {fluid:Fluid,region:Maybe(volume.Volume),made:bool,tilt:f32}
     cases:=[?]Case{
-        {Fluid{density=1000},nil,false},
-        {Fluid{density=1000},volume.sphere(3),false},
-        {Fluid{density=1000},volume.world(),false},
-        {Fluid{},volume.plane(),false},
-        {Fluid{density=1000},volume.box({2,0,2}),false},
-        {Fluid{density=1000},volume.box({2,1,2}),true},
+        {Fluid{density=1000},nil,false,0},
+        {Fluid{density=1000},volume.sphere(3),false,0},
+        {Fluid{density=1000},volume.world(),false,0},
+        {Fluid{},volume.plane(),false,0},
+        {Fluid{density=1000},volume.box({2,0,2}),false,0},
+        {Fluid{density=1000},volume.box({2,1,2}),true,0},
+        {Fluid{density=1000},volume.box({2,1,2}),true,0.1},  // a stretch of river
+        {Fluid{density=1000},volume.box({2,1,2}),false,1.2}, // a fall
     }
     made:=0
     refused:[len(cases)]core.Entity
@@ -83,7 +85,7 @@ a_fluid_that_cannot_be_made_or_meets_another_of_its_priority_is_a_problem :: pro
         e:=core.create(&f.entities)
         core.add(&f.fluids,e,c.fluid)
         if region,has:=c.region.?;has {core.add(&f.volumes,e,region)}
-        core.add(&f.transforms,e,core.Transform{{f32(i)*100,0,0},1,{1,1,1}})
+        core.add(&f.transforms,e,core.Transform{{f32(i)*100,0,0},mm.quat_axis_angle({1,0,0},c.tilt),{1,1,1}})
         if c.made {made+=1} else {refused[i]=e}
     }
     a,b,over:=core.create(&f.entities),core.create(&f.entities),core.create(&f.entities)

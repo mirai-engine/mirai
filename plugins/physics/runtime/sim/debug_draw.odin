@@ -132,13 +132,14 @@ debug_kind :: proc "contextless" (shape:^Shape,body:^Body) -> Debug_Kind {
 debug_fluid_box :: proc "contextless" (out:^Debug_Draw,f:^Fluid,kind:Debug_Kind) {
     s,c:=cmath.sincos(f.yaw)
     x,z:=Vec3{c,0,-s}*f.half_extents.x,Vec3{s,0,c}*f.half_extents.z
-    y:=UP*f.half_extents.y
-    corner :: proc "contextless" (p,x,y,z:Vec3,i:int) -> Vec3 {
-        return p+(i&1!=0?x:-x)+(i&2!=0?y:-y)+(i&4!=0?z:-z)
+    corner :: proc "contextless" (f:^Fluid,x,z:Vec3,i:int) -> Vec3 {
+        p:=f.position+(i&1!=0?x:-x)+(i&4!=0?z:-z)
+        p.y=fluid_level(f,p.x,p.z)-(i&2!=0?0:2*f.half_extents.y)
+        return p
     }
     for i in 0..<8 {
         for bit in ([3]int{1,2,4}) {
-            if i&bit==0 {debug_line(out,corner(f.position,x,y,z,i),corner(f.position,x,y,z,i|bit),kind)}
+            if i&bit==0 {debug_line(out,corner(f,x,z,i),corner(f,x,z,i|bit),kind)}
         }
     }
 }

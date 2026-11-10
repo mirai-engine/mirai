@@ -76,7 +76,7 @@ a_body_floats_on_the_waves_and_repeats_from_a_snapshot :: proc(t:^testing.T) {
     waves.count,waves.steepness=1,0.5
     sea:=fluid_create(&w,{shape=.Plane,density=1000,waves=waves})
     testing.expect(t,sea!={})
-    testing.expect_value(t,fluid_create(&w,{shape=.Box,half_extents={1,1,1},density=1000,waves=waves}),Fluid_Handle{})
+    testing.expect(t,fluid_create(&w,{shape=.Box,position={0,0,100},half_extents={1,1,1},density=1000,waves=waves})!={},"a lake has waves as the sea does")
     desc:=BODY_DESC_DEFAULT
     body:=body_create(&w,desc)
     shape:=SHAPE_DESC_DEFAULT

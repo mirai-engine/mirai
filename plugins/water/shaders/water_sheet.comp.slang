@@ -1,8 +1,10 @@
 #include "native.slang"
-// The surface of a plane of water (water.sheet_record), a deformable copy of
-// its grid around the camera: each vertex where the water that rests there is
-// on the waves of the plane, and the waves a ring of the grid is too coarse to
-// show fade out. Where a dry box of more priority holds the surface, its floor
+// The surface of a water (water.sheet_record), a deformable copy of its grid
+// around the camera: each vertex where the water that rests there is on the
+// waves and the slope of its still surface, and the waves a ring of the grid
+// is too coarse to show fade out. The surface of a box ends at its walls: the
+// vertices past them go onto them, and the cells outside are folded away.
+// Where a dry box of more priority holds the surface, its floor
 // is the surface: the vertices inside it go down to its floor, and those
 // within a cell or so of its walls go onto them, so the sheet ends at them.
 #include "common.slang"
@@ -16,7 +18,7 @@ struct Sheet_Params {
     uint rest;    // words of the vertex pool where the vertices at rest are, and where those of now go
     uint written;
     uint count;
-    uint bodies;  // the plane, then the dry boxes
+    uint bodies;  // the water, then the dry boxes
     float2 eye;   // x and z of the camera from the middle of the grid
     float cell;   // m, of the finest cells
     float half_cells; // cells of a level from its middle to its edge
@@ -35,6 +37,12 @@ void main(uint3 id : SV_DispatchThreadID) {
     Posed_Vertex rest = posed_load(params.rest, id.x);
     float3 p = rest.position;
     Water_Body plane = bodies[0];
+    if (plane.surface.y < 0.5) {
+        float3 l = transform_point(plane.to_box, p);
+        float sx = length(plane.to_box[0].xyz), sz = length(plane.to_box[2].xyz);
+        float2 to = clamp(l.xz, -0.5, 0.5);
+        p += plane.to_box[0].xyz * ((to.x - l.x) / (sx * sx)) + plane.to_box[2].xyz * ((to.y - l.z) / (sz * sz));
+    }
     // A wave shows on cells of a quarter of its length; the cells double in each ring out from the camera.
     float far = max(abs(p.x - params.eye.x), abs(p.z - params.eye.y));
     float coarse = params.cell * max(1.0, 2.0 * far / (params.cell * params.half_cells));
@@ -44,8 +52,8 @@ void main(uint3 id : SV_DispatchThreadID) {
         weights[i] = saturate(6.2831853 / max(number, 1e-6) / (4.0 * coarse) - 1.0);
     }
     Water_Point w = water_wave_point(plane, p.xz, weights);
-    float3 moved = p + w.offset;
-    float3 n = w.normal;
+    float3 moved = float3(p.x, water_still(plane, p.xz), p.z) + w.offset;
+    float3 n = normalize(float3(w.normal.x - plane.slope.x * w.normal.y, w.normal.y, w.normal.z - plane.slope.y * w.normal.y));
     // The cell of the ring of the vertex, whose triangles reach that far from it.
     float ring = params.cell * exp2(max(0.0, ceil(log2(max(max(abs(p.x), abs(p.z)), 1e-6) / (params.cell * params.half_cells)))));
     float reach = 1.5 * ring;

@@ -51,13 +51,16 @@ struct Water_Params {
 
 [[vk::binding(SLOT_PASS4, 0)]] StructuredBuffer<Water_Body> bodies : register(MIRAI_REGISTER(t, SLOT_PASS4), space0);
 
+// Whether a point is under the surface of a body: of a box, also within its
+// walls and over its floor.
 bool water_inside(Water_Body b, float3 position) {
-    if (b.surface.y > 0.5) {
-        float reach = water_wave_reach(b);
-        if (position.y <= b.surface.x - reach || position.y > b.surface.x + reach) return position.y <= b.surface.x;
-        return position.y <= water_surface_at(b, position.xz);
+    if (b.surface.y < 0.5) {
+        float3 l = transform_point(b.to_box, position);
+        if (any(abs(l.xz) > 0.5) || l.y < -0.5) return false;
     }
-    return all(abs(transform_point(b.to_box, position)) <= 0.5);
+    float still = water_still(b, position.xz), reach = water_wave_reach(b);
+    if (position.y <= still - reach || position.y > still + reach) return position.y <= still;
+    return position.y <= water_surface_at(b, position.xz);
 }
 
 struct Water_Dry_Boxes : IDry_Boxes {

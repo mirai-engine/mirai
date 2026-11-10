@@ -29,14 +29,17 @@ waves_reach :: proc "contextless" (waves:Surface_Waves) -> f32 {
 
 // Water, or another fluid, that bodies float in by their density and
 // characters swim in, where the Volume of its entity says: a Plane is
-// everything under the height of the entity, a Box its volume, with the top
-// as the surface; the yaw of the entity turns a box and its current. With
+// everything under the height of the entity (a sea), a Box its volume with
+// the top as the surface (a lake in its basin, a pool, a stretch of river).
+// The yaw of the entity turns a box and its current; tilting the entity
+// slopes the surface and the floor of a box, whose walls stay upright, so a
+// river is boxes that follow its bed down, each with its current. With
 // density zero, the air of a box that takes the fluid of lower priority
 // (Volume.priority) out of where it is: a base under the sea, a room that
 // floods as the floor of its air rises. Where two fluids meet, or two dry
 // boxes, the one of higher priority decides. A fluid ends at its border: the
 // blend and the mode of its Volume do nothing to it.
-@(component,replicated,description="Water or another fluid in the Volume of its entity, a Plane (a sea) or a Box (a pool): bodies float in it by their density and characters swim in it. With density 0, a dry box that takes out the fluid of lower priority, as the air of a base under the sea.")
+@(component,replicated,description="Water or another fluid in the Volume of its entity, a Plane (a sea) or a Box (a lake, a pool, a stretch of river whose tilt slopes its surface): bodies float in it by their density and characters swim in it. With density 0, a dry box that takes out the fluid of lower priority, as the air of a base under the sea.")
 Fluid :: struct {
     density:f32 `mirai:"min=0,unit=kg/m3"`, // 1000 fresh water, 1025 the sea; 0: dry, only in a box
     current:[3]f32 `mirai:"unit=m/s"`,      // in the frame of the entity
@@ -44,12 +47,12 @@ Fluid :: struct {
 
 FLUID_DEFAULT :: Fluid{density=1000}
 
-// The waves on the surface of a Fluid whose Volume is a Plane, waves of
-// Gerstner: those the Wind of the world raises where the volume is, as a sea
-// that has felt it long (Pierson-Moskowitz), and its own, as a swell from far
-// away. Bodies float on them, characters swim in them and the water draws
-// them, all from the one surface of the simulation. A box holds still water.
-@(component,replicated,description="The waves of the Fluid of this entity, when its Volume is a Plane: those the Wind of the world raises where it is, and its own. Bodies float on them, characters swim in them and the water draws them.")
+// The waves on the surface of a Fluid, waves of Gerstner: those the Wind of
+// the world raises where the volume is, as a sea that has felt it long
+// (Pierson-Moskowitz), and its own, as a swell from far away. Bodies float on
+// them, characters swim in them and the water draws them, all from the one
+// surface of the simulation.
+@(component,replicated,description="The waves of the Fluid of this entity: those the Wind of the world raises where it is, and its own. Bodies float on them, characters swim in them and the water draws them.")
 Fluid_Waves :: struct {
     wind:f32 `mirai:"min=0,max=2"`,      // of the height of the sea the Wind where the volume is raises when it has blown long, the share it has; 0: no waves of the wind
     spread:f32 `mirai:"min=0,max=1"`,    // how far the waves of the wind stray from where it blows: 0 all along it, 1 up to across it
@@ -72,7 +75,7 @@ FLUID_WAVES_DEFAULT :: Fluid_Waves{wind=1,spread=0.5,steepness=0.6,speed=1}
 @(private) WAVE_PEAK_LOW :: f32(0.8) // of the frequency at the peak of the sea of the wind, the lowest of its waves
 @(private) WAVE_PEAK_HIGH :: f32(4)  // and the highest
 
-// The waves of the simulation for a Fluid_Waves of a plane whose yaw is `yaw`, under a wind of `wind` m/s
+// The waves of the simulation for a Fluid_Waves of a fluid whose yaw is `yaw`, under a wind of `wind` m/s
 // (x and z of the world): the waves of its own first, then those of the wind in the places left, from the
 // longest. The height of these is that of the sea of Pierson-Moskowitz under that wind, by Fluid_Waves.wind.
 fluid_waves_of :: proc "contextless" (waves:Fluid_Waves,yaw:f32,wind:[2]f32) -> (out:sim.Fluid_Waves) {
@@ -128,7 +131,7 @@ Fluid_Info :: struct {
     fluid:sim.Fluid_Handle,
     desc:sim.Fluid_Desc, // world position and yaw, half extents with the scale
     bounds:mm.Aabb,
-    top:f32,             // the height of its still surface, the top of a dry box; desc.waves move it
+    top:f32,             // the height of the highest point of its still surface, or of the top of a dry box; desc.waves move it
 }
 
 // The fluid at a point, through the one surface query the physics reads too: the surface over a point in
@@ -154,8 +157,9 @@ fluids_in :: proc(physics:core.Ref(Physics_State),box:mm.Aabb,out:[]Fluid_Info) 
         if batch<=0 {break}
         for handle,i in found[:batch] {
             desc,_:=sim.fluid_desc(w,handle)
-            top:=desc.position.y+(desc.shape==.Box?desc.half_extents.y:0)
-            out[written+i]={entity=core.Entity(desc.user_data),fluid=handle,desc=desc,bounds=sim.fluid_bounds(w,handle),top=top}
+            bounds:=sim.fluid_bounds(w,handle)
+            top:=desc.shape==.Box?bounds.max.y-waves_reach(desc.waves):desc.position.y
+            out[written+i]={entity=core.Entity(desc.user_data),fluid=handle,desc=desc,bounds=bounds,top=top}
         }
         written+=batch
     }
@@ -247,15 +251,16 @@ fluids_sync :: proc(
             shape=region.shape==.Plane?.Plane:.Box,position=world.position,yaw=yaw_of(world.rotation),
             density=fluid.density,current=fluid.current,priority=region.priority,user_data=u64(e),
         }
-        if shaped && region.shape==.Box {desc.half_extents=region.extents*linalg.abs(world.scale)}
+        if shaped && region.shape==.Box {
+            desc.half_extents=region.extents*linalg.abs(world.scale)
+            // Where the tilted up of the entity says the surface goes.
+            up:=mm.quat_rotate(world.rotation,{0,1,0})
+            desc.slope={-up.x/up.y,-up.z/up.y} if up.y>0 else {max(f32),max(f32)}
+        }
         raised:Fluid_Waves
         has_waves:=false
         if waves.table!=nil {raised,has_waves=core.get(waves,e)}
-        if has_waves && shaped && region.shape==.Plane {
-            desc.waves=fluid_waves_of(raised,desc.yaw,volume_wind(winds,volumes,worlds,world.position))
-        } else if has_waves && shaped {
-            core.report(problems,e,"physics.fluid_waves","its Fluid_Waves makes no waves: a Box holds still water; make its Volume a Plane, or remove the Fluid_Waves")
-        }
+        if has_waves && shaped {desc.waves=fluid_waves_of(raised,desc.yaw,volume_wind(winds,volumes,worlds,world.position))}
         l:=core.entity_map_get(&state.fluids,e)
         if l==nil {
             if held:=core.entity_map_held(&state.fluids,e);held!=core.NONE {
@@ -284,6 +289,8 @@ fluids_sync :: proc(
             core.report(problems,e,"physics.fluid","its Fluid is not made: a fluid fills a Volume of shape Plane (a sea: everything under its entity) or Box (a pool); add that Volume to its entity (volume.plane, volume.box)")
         } else if region.shape==.Plane && fluid.density<=0 || region.shape==.Box && (desc.half_extents.x<=0 || desc.half_extents.y<=0 || desc.half_extents.z<=0) {
             core.report(problems,e,"physics.fluid","its Fluid is not made: %s; give it %s",region.shape==.Plane?"a plane of density 0 would be dry everywhere":"a box needs extents above 0 on every axis","a density above 0, or a Volume of shape Box for a dry volume" if region.shape==.Plane else "extents")
+        } else if !(abs(desc.slope.x)<=sim.FLUID_SLOPE && abs(desc.slope.y)<=sim.FLUID_SLOPE) {
+            core.report(problems,e,"physics.fluid","its Fluid is not made: its entity is tilted so far that the surface would fall more than %v m a metre; tilt it less, or split the fall into stretches",sim.FLUID_SLOPE)
         } else {
             core.report(problems,e,"physics.fluids","its Fluid is not made: the %d fluids of Physics_Settings.fluids are in use, or its values are not finite; raise fluids",len(w.fluids))
         }

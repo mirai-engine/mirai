@@ -59,13 +59,12 @@ void main(uint3 id : SV_DispatchThreadID) {
     int at = water_at(position);
     if (at < 0) return;
     Water_Body b = bodies[at];
-    bool plane = b.surface.y > 0.5;
-    float under = (plane ? water_surface_at(b, position.xz) : b.surface.x) - position.y;
+    float under = water_surface_at(b, position.xz) - position.y;
     if (!(under > 0.0) || !(b.look.x > 0.0)) return;
     // Up along the light to where it crossed the surface: on the waves, once more from the height there.
     float3 down = water_sun_under(b.look.z);
     float2 crossed = position.xz - down.xz * (under / max(-down.y, 0.2));
-    if (plane && water_wave_count(b) > 0u) {
+    if (water_wave_count(b) > 0u || any(b.slope.xy != 0.0)) {
         under = max(water_surface_at(b, crossed) - position.y, 0.0);
         crossed = position.xz - down.xz * (under / max(-down.y, 0.2));
     }

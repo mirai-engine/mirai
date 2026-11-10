@@ -75,6 +75,41 @@ the_fluid_at_a_point_gives_the_surface_over_or_under_it_through_the_dry_boxes ::
     testing.expect_value(t,world_stats(&w).fluids,2)
 }
 
+// A box is water that ends at its walls, over a floor: a lake, or a stretch of
+// river whose surface and floor its slope tilts.
+@(test)
+a_box_holds_water_within_its_walls_and_its_slope_tilts_its_surface :: proc(t:^testing.T) {
+    w:World
+    testing.expect(t,test_world(&w))
+    defer world_destroy(&w)
+    river:=fluid_create(&w,{shape=.Box,half_extents={4,1,10},slope={0,-0.1},density=1000,current={0,0,1}})
+    testing.expect(t,river!={})
+    Case :: struct {p:Vec3,in_column:bool,height,density:f32}
+    for c in ([]Case{
+        {{0,0,5},true,0.5,1000},    // downstream the surface is lower
+        {{0,1,-5},true,1.5,1000},   // and upstream higher
+        {{0,1,5},true,0.5,0},       // over the surface
+        {{0,-1.6,5},true,-1.5,0},   // under the floor, which follows the slope
+        {{6,0,0},false,0,0},        // past a wall there is no water
+    }) {
+        sample,ok:=fluid_sample(&w,c.p)
+        testing.expectf(t,ok==c.in_column,"at %v",c.p)
+        if !ok {continue}
+        expect_near(t,sample.height,c.height,1e-4)
+        expect_near(t,sample.density,c.density,1e-4)
+    }
+    sample,_:=fluid_sample(&w,{0,0,0})
+    expect_near3(t,sample.normal,{0,0.995037,0.0995037},1e-4)
+    bounds:=fluid_bounds(&w,river)
+    expect_near(t,bounds.max.y,2,1e-4) // the top upstream
+    expect_near(t,bounds.min.y,-2,1e-4) // the floor downstream
+    for refused in ([]Fluid_Desc{
+        {shape=.Box,half_extents={1,1,1},slope={0,FLUID_SLOPE*2},density=1000},
+        {shape=.Box,half_extents={1,1,1},slope={cmath.nan_f32(),0},density=1000},
+        {shape=.Plane,slope={0.1,0},density=1000},
+    }) {testing.expect_value(t,fluid_create(&w,refused),Fluid_Handle{})}
+}
+
 @(test)
 boxes_and_hulls_cut_by_the_surface_keep_their_exact_volume :: proc(t:^testing.T) {
     w:World

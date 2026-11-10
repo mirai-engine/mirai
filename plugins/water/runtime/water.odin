@@ -14,8 +14,10 @@ import phys "plugins:physics/runtime"
 
 // Water: the Fluid rows of the physics drawn as water, from the same
 // fluids the physics floats bodies in. Each surface is a solid of the glass
-// of the renderer: a plane, an open grid around the camera on its waves; a
-// box, its cube. Under it, a medium of the fog plugin that takes the light of
+// of the renderer, an open grid around the camera on the waves and the slope
+// of its still surface: that of a plane goes on to the horizon, that of a box
+// ends at its walls, so a lake sits in its basin and a river follows its
+// bed. Under it, a medium of the fog plugin that takes the light of
 // the sun that crosses it; the dry boxes take both out of where they are, and
 // their floor of air under a surface is a surface of its own. The light of
 // the sun on what is under the water carries caustics. A volume draws as
@@ -51,13 +53,14 @@ WATER_DEFAULT :: Water{attenuation_color={0.3,0.7,0.75},attenuation_distance=4,s
 // water_waves.slang Water_Body: a fluid or a dry box of the frame.
 @(private)
 Gpu_Body :: struct {
-    to_box:[3][4]f32, // rows: from the world to its box, whose sides are 1
-    surface:[4]f32,   // x the height of its still surface, y 1 for a plane, z 1 for a dry box, w priority
+    to_box:[3][4]f32, // rows: from the world to its box, whose sides are 1, sheared by its slope
+    surface:[4]f32,   // x the height of its still surface at its middle (relative to an origin, at the origin), y 1 for a plane, z 1 for a dry box, w priority
+    slope:[4]f32,     // xy m its still surface rises for each metre along x and z; zw x and z of its middle (zero relative to an origin)
     look:[4]f32,      // x caustics, y 1/m it takes of white light, z the index of refraction of its surface, w its waves
     waves:[phys.FLUID_WAVES][4]f32, // physics.Wave_Term: k along x and z, amplitude, across
     phases:[2][4]f32, // of each wave, at the origin of the pass and the time of the frame
 }
-#assert(size_of(Gpu_Body)==240)
+#assert(size_of(Gpu_Body)==256)
 
 // water_light.comp.slang Water_Params.
 @(private)
@@ -142,7 +145,8 @@ bodies_relative :: proc "contextless" (state:^Water_Gpu,origin:[3]f32) -> (bodie
     for b,i in state.bodies[:state.count] {
         bodies[i]=b
         bodies[i].to_box=render.origin_from_world(b.to_box,origin)
-        bodies[i].surface.x=render.origin_point({0,b.surface.x,0},origin).y
+        bodies[i].surface.x=render.origin_point({0,still_at(b,origin.x,origin.z),0},origin).y
+        bodies[i].slope.zw=0
         terms,count:=phys.wave_terms(&state.waves[i],state.time,{f64(origin.x),f64(origin.z)})
         for term,k in terms[:count] {
             bodies[i].waves[k]={term.k.x,term.k.y,term.amplitude,term.across}
@@ -161,10 +165,16 @@ extinction :: proc "contextless" (look:Water) -> f32 {
     return taken/look.attenuation_distance
 }
 
-// The box of a fluid of the physics, whose sides are its scale.
+// The box of a fluid of the physics, whose sides are its scale, without its slope.
 @(private)
 fluid_box :: proc "contextless" (desc:phys.Fluid_Desc) -> mm.Transform {
     return {desc.position,mm.quat_axis_angle({0,1,0},desc.yaw),2*desc.half_extents}
+}
+
+// The still surface of a body of the frame, built in the world, over x and z of the world.
+@(private)
+still_at :: proc "contextless" (b:Gpu_Body,x,z:f32) -> f32 {
+    return b.surface.x+b.slope.x*(x-b.slope.z)+b.slope.y*(z-b.slope.w)
 }
 
 // How deep a plane reaches under its surface for its medium, and how far sideways from the camera.
@@ -222,17 +232,23 @@ water_render :: proc(
         made:=look_of(state,app.assets,info.entity,look,program)
         body:Gpu_Body
         box:=fluid_box(desc)
-        top:=info.top
         reach:=phys.waves_reach(desc.waves)
+        to_world:=mm.transform_matrix(box)
+        medium:=box
         if desc.shape==.Plane {
             // The plane follows the camera: its grid by whole steps, its medium as it is, from under its troughs.
-            box={{view.position.x,top-reach-0.5*PLANE_DEPTH,view.position.z},1,{2*PLANE_REACH,PLANE_DEPTH,2*PLANE_REACH}}
+            box={{view.position.x,info.top-reach-0.5*PLANE_DEPTH,view.position.z},1,{2*PLANE_REACH,PLANE_DEPTH,2*PLANE_REACH}}
+            to_world,medium=mm.transform_matrix(box),box
         } else if !dry {
-            if instance,usable:=render.mesh_instance(app.assets,{shape=.Cube},mm.transform_matrix(box));usable {
-                instance.material=render.Material_Handle(made.row)
-                instance.object_id,instance.copy_owner=u64(info.entity),base.name_hash("water")
-                render.instance_add(&app.extras,instance)
-            }
+            // The medium of a box, which cannot follow its slope, stays under the lowest of its troughs.
+            floor:=desc.position.y-desc.half_extents.y
+            low:=max(2*(desc.position.y+desc.half_extents.y)-info.top-reach,floor)
+            medium.position.y,medium.scale.y=0.5*(low+floor),low-floor
+        }
+        if desc.shape==.Box && desc.slope!={} {
+            // Sheared by its slope: what the box holds rises along it.
+            c,s:=desc.position,desc.slope
+            to_world=matrix[4,4]f32{1,0,0,0, s.x,1,s.y,-(s.x*c.x+s.y*c.z), 0,0,1,0, 0,0,0,1}*to_world
         }
         if dry && phys.fluid_holds(physics,info.fluid,view.position) {
             // The camera in a dry box is in its air: a solid of glass that bends and holds nothing, which the
@@ -254,17 +270,17 @@ water_render :: proc(
             // The solid of the glass absorbs and scatters what the view crosses; fog gives the shafts of the sun,
             // and the light of the sun that the water takes on its way down.
             shafts:=look.scatter_color/max(max(look.scatter_color.r,look.scatter_color.g,look.scatter_color.b),1e-3)
-            fog.medium_add(media,{box=box,density=look.shafts,color=shafts,anisotropy=0.6,priority=desc.priority,carved=true,sun_only=true,shade=extinction(look)})
+            if medium.scale.y>0 {fog.medium_add(media,{box=medium,density=look.shafts,color=shafts,anisotropy=0.6,priority=desc.priority,carved=true,sun_only=true,shade=extinction(look)})}
         } else {
             fog.medium_add(media,{box=box,priority=desc.priority,dry=true})
         }
-        to_world:=mm.transform_matrix(box)
         if abs(linalg.determinant(to_world))<1e-12 {continue}
         body.to_box=mm.mat4_rows(linalg.inverse(to_world))
-        body.surface={top,desc.shape==.Plane?1:0,dry?1:0,f32(desc.priority)}
+        body.surface={desc.position.y+(desc.shape==.Box?desc.half_extents.y:0),desc.shape==.Plane?1:0,dry?1:0,f32(desc.priority)}
+        body.slope={desc.slope.x,desc.slope.y,desc.position.x,desc.position.z}
         body.look={max(look.caustics,0),extinction(look),made.ior,f32(desc.waves.count)}
         if !state.caustic && !dry && look.caustics>0 {state.caustic,state.ior=true,made.ior}
-        lens||=!dry && abs(view.position.y-top)<=LENS_WIDTH+reach+lens_reach(view)
+        lens||=!dry && abs(view.position.y-still_at(body,view.position.x,view.position.z))<=LENS_WIDTH+reach+lens_reach(view)
         materials[state.count]=made.row
         kept[state.count]=info
         state.waves[state.count]=desc.waves
@@ -273,11 +289,11 @@ water_render :: proc(
     }
     for info,i in kept[:state.count] {
         desc:=info.desc
-        if desc.shape==.Plane {
-            sheet_place(state,app.assets,app.renderer,&app.extras,view,i,info.entity,materials[i])
-        } else if desc.density<=0 && !crosses_plane(state,i) && floor_in_fluid(physics,desc) {
+        if desc.density>0 {
+            sheet_place(state,app.assets,app.renderer,&app.extras,view,i,info,materials[i])
+        } else if !crosses_water(state,i) && floor_in_fluid(physics,desc) {
             // The floor of the air of a dry box in a fluid is a surface of that fluid, seen from over it; where the
-            // box crosses the surface of a plane, the sheet of the plane goes down to it instead.
+            // box crosses the surface of a water, its sheet goes down to it instead.
             box:=fluid_box(desc)
             floor:=mm.Transform{desc.position-{0,desc.half_extents.y,0},box.rotation,{box.scale.x,1,box.scale.z}}
             if instance,usable:=render.mesh_instance(app.assets,{shape=.Plane},mm.transform_matrix(floor));usable {

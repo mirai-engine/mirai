@@ -251,6 +251,24 @@ physics_gallery_extra :: proc(s:^asset.Scene_Builder,label:base.Asset_Id) {
     physics_gallery_floating(s,"Stone",origin+mm.Vec3{0,0.8,0},{.45,.45,.45},.Sphere,phys.collider_sphere(.5),2500,{.6,.6,.65,1})
     physics_gallery_floating(s,"Box in the dry bell",origin+mm.Vec3{1.4,1.2,-1.4},{.5,.5,.5},.Cube,phys.collider_box({.5,.5,.5}),500,{1,.5,.3,1})
     physics_gallery_item(s,label,22,"Fluid volumes and buoyancy","A pool of water: bodies float by their density, the stone sinks, and the air of a dry bell keeps the water out. E throws them up.",origin,floater)
+    // The basin the water sits in: a box of water draws its surface alone, within its walls.
+    stone:=mm.Vec4{.55,.55,.58,1}
+    for side in ([4]mm.Vec3{{2.6,0,0},{-2.6,0,0},{0,0,2.6},{0,0,-2.6}}) {
+        size:=mm.Vec3{0.2,1.4,5.4} if side.x!=0 else mm.Vec3{5.4,1.4,0.2}
+        gallery_cube(s,"Pool wall",{12,0.7,-40}+side,size,stone,true)
+    }
+    // A stretch of river down a ramp: the tilt of its entity slopes its surface and its floor, and its
+    // current carries what floats on it down to the pool.
+    tilt:=mm.quat_axis_angle({1,0,0},-0.08)
+    river_at:=mm.Vec3{12,0.75,-32}
+    up,right:=mm.quat_rotate(tilt,{0,1,0}),mm.Vec3{1,0,0}
+    river:=asset.builder_entity(s,"River",{position=river_at})
+    asset.builder_set(s,river,core.Transform{river_at,tilt,{1,1,1}})
+    asset.builder_set(s,river,phys.Fluid{density=1000,current={0,0,-1.5}})
+    asset.builder_set(s,river,volume.box({1,0.3,4}))
+    gallery_cube(s,"River bed",river_at-up*0.35,{2.4,0.1,8.2},stone,true,tilt)
+    for side in ([2]f32{-1,1}) {gallery_cube(s,"River bank",river_at+right*side*1.1+up*0.1,{0.2,0.9,8.2},stone,true,tilt)}
+    physics_gallery_floating(s,"Drifting crate",river_at+{0,0.6,3},{.4,.4,.4},.Cube,phys.collider_box({.5,.5,.5}),400,{.85,.6,.3,1})
 }
 
 @(private)

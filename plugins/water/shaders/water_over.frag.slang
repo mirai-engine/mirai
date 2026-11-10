@@ -24,10 +24,8 @@ Stage_Output main(float4 pixel_position : SV_Position) {
     for (uint i = 0u; i < water.count; i++) {
         Water_Body b = bodies[i];
         if (b.surface.z > 0.5) continue;
-        bool plane = b.surface.y > 0.5;
-        float top = plane ? water_surface_at(b, lens.xz) : b.surface.x;
-        float3 on_lens = float3(lens.x, top, lens.z);
-        bool over_column = plane || all(abs(transform_point(b.to_box, on_lens)) <= 0.5);
+        float top = water_surface_at(b, lens.xz);
+        bool over_column = b.surface.y > 0.5 || all(abs(transform_point(b.to_box, lens).xz) <= 0.5);
         // The surface across the near plane: a dark line, thinner away from where it is.
         float line = abs(lens.y - top);
         if (over_column && line < water.lens) {
