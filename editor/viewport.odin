@@ -507,7 +507,6 @@ tool_preview_begin :: proc(s:^Session,name,label:string) -> bool {
     if s.mode!=.Edit || !tool_on(s,name) || s.edits.preview {return false}
     tools_release(s)
     if !edits_commit(s.edits,edited_world(s),s.selection) && s.edits.error!=.No_Change {return false}
-    if p:=prefabs_of(s);p!=nil {prefabs_sync(s,p)}
     _,edit_ready:=edit_open(s,label)
     if !edit_ready {return false}
     s.edits.preview=true
@@ -524,7 +523,6 @@ tool_preview_end :: proc(s:^Session,name:string,apply:bool) -> bool {
     s.edits.preview=false
     edits_end(s.edits)
     if !edits_commit(s.edits,edited_world(s),s.selection) && s.edits.error!=.No_Change {s.edits.preview=true;return false}
-    if p:=prefabs_of(s);p!=nil {prefabs_sync(s,p)}
     return true
 }
 
@@ -534,7 +532,6 @@ tool_preview_cancel :: proc(s:^Session) {
     w:=edited_world(s)
     edits_cancel(s.edits,w)
     selection_restore(s.selection,w,s.edits.selection[:])
-    prefabs_pending_cancel(s)
 }
 
 // The tool that holds the pointer goes on or lets go; with none, a press on
@@ -734,11 +731,8 @@ placement_commit :: proc(s:^Session,w:core.World_Ref,d:Drag,hit:Pick,select:bool
     point:=placement_point(s,d,hit)
     if d.kind==.Asset {content_used(s,d.asset_id)}
     if d.kind==.Asset && d.asset_kind==asset.KIND_PREFAB {
-        // Placing an instance replaces the World (prefab_world_replace); in this frame its
-        // fixed phase already ran, and its render would draw the new World before it: the
-        // poses of every skinned mesh at their start.
-        s.prefab_place={prefab=d.asset_id,point=point,select=select}
-        s.requests+={.Prefab_Place}
+        root:=prefab_place_linked(s,d.asset_id,point)
+        if select && root!=core.NONE {selection_set(s.selection,{root})}
         return
     }
     if d.kind==.Asset && d.asset_kind==asset.KIND_SCENE {
@@ -777,21 +771,6 @@ ground_point :: proc(ray:mm.Ray) -> (point:[3]f32,ok:bool) {
     t,hit:=mm.ray_plane(ray,{{0,1,0},0})
     if !hit || t>200 {return}
     return mm.ray_at(ray,t),true
-}
-
-Prefab_Place_Request :: struct {
-    prefab:base.Asset_Id,
-    point:[3]f32,
-    select:bool,
-}
-
-// The prefab let go on the scene in the last frame, placed between frames.
-@(private)
-prefab_place_run :: proc(s:^Session) {
-    request:=s.prefab_place
-    s.prefab_place={}
-    root:=prefab_place_linked(s,request.prefab,request.point)
-    if request.select && root!=core.NONE {selection_set(s.selection,{root})}
 }
 
 // A prefab of the assets placed in the scene as an instance linked to it, as one step.

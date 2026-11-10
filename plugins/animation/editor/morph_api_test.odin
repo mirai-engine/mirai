@@ -13,8 +13,9 @@ import "mirai:std/base"
 import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
+@(private="file")
 Morph_Api_Test_World :: struct {
-    entities:core.Entities,
+    using world:core.Test_World,
     ids:core.Table(core.Id),
     parents:core.Table(core.Parent),
     meshes:core.Table(erender.Mesh_Renderer),
@@ -24,20 +25,8 @@ Morph_Api_Test_World :: struct {
     sources:core.Table(anim.Pose_Source),
     morphs:anim.Morph_Playback,
 }
+@(private="file")
 Morph_Api_Test_Shared :: struct {skin:anim.Skin_Runtime}
-
-@(private)
-morph_api_test_settle :: proc(data,shared,ed:rawptr) {
-    w:=(^Morph_Api_Test_World)(data)
-    core.table_settle(&w.ids,&w.entities);core.table_settle(&w.parents,&w.entities);core.table_settle(&w.meshes,&w.entities)
-    core.table_settle(&w.configs,&w.entities);core.table_settle(&w.animations,&w.entities);core.table_settle(&w.targets,&w.entities);core.table_settle(&w.sources,&w.entities)
-}
-@(private)
-morph_api_test_free :: proc(w:^Morph_Api_Test_World) {
-    core.table_destroy(&w.ids);core.table_destroy(&w.parents);core.table_destroy(&w.meshes)
-    core.table_destroy(&w.configs);core.table_destroy(&w.animations);core.table_destroy(&w.targets);core.table_destroy(&w.sources)
-    anim.morph_playback_free(&w.morphs);core.entities_destroy(&w.entities)
-}
 
 @(test)
 morph_api_inspects_named_defaults_final_weights_and_sources_and_controls_instances_with_scene_undo :: proc(t:^testing.T) {
@@ -48,29 +37,18 @@ morph_api_inspects_named_defaults_final_weights_and_sources_and_controls_instanc
     vertices:=[3]asset.Vertex{{position={0,0,0}},{position={1,0,0}},{position={0,1,0}}}
     if !testing.expect_value(t,source_mesh_save(fmt.tprintf("%s/face.mesh",f.root),&f.assets.types,{id=id},{vertices=vertices[:],morphs=targets[:]},{0,1,2}),asset.Error.None) {return}
     testing.expect(t,host.assets_scan(&f.assets))
+    info,described:=core.test_info(t,Morph_Api_Test_World,Morph_Api_Test_Shared,core.Test_None,anim.test_types)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     document,play:Morph_Api_Test_World
-    defer morph_api_test_free(&document);defer morph_api_test_free(&play)
-    tables:=[7]core.Table_Info{
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Morph_Api_Test_World,ids)},
-        {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Morph_Api_Test_World,parents)},
-        {name="Mesh_Renderer",type=erender.Mesh_Renderer,info=type_info_of(erender.Mesh_Renderer),offset=offset_of(Morph_Api_Test_World,meshes)},
-        {name="Morph_Weights",type=anim.Morph_Weights,info=type_info_of(anim.Morph_Weights),offset=offset_of(Morph_Api_Test_World,configs)},
-        {name="Animation",type=anim.Animation,info=type_info_of(anim.Animation),offset=offset_of(Morph_Api_Test_World,animations)},
-        {name="Animation_Target",type=anim.Animation_Target,info=type_info_of(anim.Animation_Target),offset=offset_of(Morph_Api_Test_World,targets)},
-        {name="Pose_Source",type=anim.Pose_Source,info=type_info_of(anim.Pose_Source),offset=offset_of(Morph_Api_Test_World,sources)},
-    }
-    storages:=[2]core.Storage_Info{
-        {type=anim.Morph_Playback,info=type_info_of(anim.Morph_Playback),offset=offset_of(Morph_Api_Test_World,morphs)},
-        {type=anim.Skin_Runtime,info=type_info_of(anim.Skin_Runtime),offset=offset_of(Morph_Api_Test_Shared,skin),place=.Shared},
-    }
-    info:=core.World_Info{tables=tables[:],storages=storages[:]}
+    defer for world in ([2]^Morph_Api_Test_World{&document,&play}) {info.destroy[.World](world)}
     for world in ([2]^Morph_Api_Test_World{&document,&play}) {
-        core.entities_init(&world.entities)
+        if !testing.expect(t,info.init[.World](world,context.allocator)) {return}
         source,mesh:=core.create(&world.entities),core.create(&world.entities)
         core.add(&world.ids,source,{17});core.add(&world.ids,mesh,{18});core.add(&world.parents,mesh,{entity=source})
         core.add(&world.meshes,mesh,{mesh=id});core.add(&world.animations,source,anim.ANIMATION_DEFAULT)
         target:anim.Animation_Target;base.text_set(target.path[:],"Face");core.add(&world.targets,mesh,target)
-        morph_api_test_settle(world,nil,nil)
+        core.settle(&info,world,nil)
     }
     shared:Morph_Api_Test_Shared;defer delete(shared.skin.rigs)
     record,_:=asset.registry_find(&f.assets.registry,id)

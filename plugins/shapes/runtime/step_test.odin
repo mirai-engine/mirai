@@ -12,8 +12,8 @@ import "mirai:std/geom"
 import mm "mirai:std/math"
 
 @(private="file")
-World :: struct {
-    entities:core.Entities,
+Step_World :: struct {
+    using world:core.Test_World,
     shapes:core.Table(Shape),
     brushes:core.Table(Shape_Brush),
     parts:core.Table(Shape_Part),
@@ -24,10 +24,14 @@ World :: struct {
     transforms:core.Table(core.Transform),
     ids:core.Table(core.Id),
     hierarchy:core.Hierarchy,
+}
+
+// A world of shapes with what its application holds for it.
+@(private="file")
+Step_Test :: struct {
+    using rows:Step_World,
     cache:Shapes_Cache,
     problems:core.Problems,
-    info:core.World_Info,
-    tables:[5]core.Table_Info,
     app:^host.App,
 }
 
@@ -51,50 +55,35 @@ app_destroy :: proc(a:^App) {
 }
 
 @(private="file")
-world_init :: proc(w:^World,app:^host.App) {
-    core.entities_init(&w.entities)
+world_init :: proc(t:^testing.T,w:^Step_Test,app:^host.App) -> bool {
     w.app=app
-    w.tables={
-        {type=Shape_Part,offset=offset_of(World,parts)},
-        {type=core.Parent,offset=offset_of(World,parents)},
-        {type=core.Transform,offset=offset_of(World,transforms)},
-        {type=render.Mesh_Renderer,offset=offset_of(World,meshes)},
-        {type=physics.Collider,offset=offset_of(World,colliders)},
-    }
-    w.info.tables=w.tables[:]
+    return core.test_world_init(t,&w.rows,test_types)
 }
 
 @(private="file")
-world_destroy :: proc(w:^World) {
+world_destroy :: proc(w:^Step_Test) {
     shapes_release(&w.cache,w.app.assets)
     shapes_cache_free(&w.cache)
-    core.table_destroy(&w.shapes);core.table_destroy(&w.brushes);core.table_destroy(&w.parts);core.table_destroy(&w.rigids);core.table_destroy(&w.colliders)
-    core.table_destroy(&w.meshes);core.table_destroy(&w.parents);core.table_destroy(&w.transforms);core.table_destroy(&w.ids)
-    delete(w.hierarchy.parent);delete(w.hierarchy.first_child);delete(w.hierarchy.last_child)
-    delete(w.hierarchy.next_sibling);delete(w.hierarchy.previous_sibling);delete(w.hierarchy.cut)
-    core.entities_destroy(&w.entities)
+    core.test_world_destroy(&w.rows)
 }
 
 @(private="file")
-world_settle :: proc(w:^World) {
-    core.table_settle(&w.shapes,&w.entities);core.table_settle(&w.brushes,&w.entities);core.table_settle(&w.parts,&w.entities);core.table_settle(&w.rigids,&w.entities)
-    core.table_settle(&w.colliders,&w.entities);core.table_settle(&w.meshes,&w.entities);core.table_settle(&w.parents,&w.entities)
-    core.table_settle(&w.transforms,&w.entities);core.table_settle(&w.ids,&w.entities)
+world_settle :: proc(w:^Step_Test) {
+    core.test_world_settle(&w.rows)
     core.hierarchy_settle(&w.hierarchy,core.read(&w.parents),&w.entities)
-    core.entities_settle(&w.entities)
 }
 
 @(private="file")
-world_step :: proc(w:^World) {
+world_step :: proc(w:^Step_Test) {
     world_settle(w)
-    shapes_update(&w.cache,w.app.assets,&w.app.jobs,w.app.allocator,core.commands(w,&w.info),core.read(&w.shapes),core.read(&w.brushes),core.read(&w.parts),core.read(&w.rigids),
+    shapes_update(&w.cache,w.app.assets,&w.app.jobs,w.app.allocator,core.commands(&w.rows,core.test_world_info(&w.rows)),core.read(&w.shapes),core.read(&w.brushes),core.read(&w.parts),core.read(&w.rigids),
         &w.colliders,&w.meshes,core.read(&w.transforms),core.read(&w.parents),core.ref(&w.hierarchy),&w.problems)
     world_settle(w)
 }
 
 // The children of a shape that draw it.
 @(private="file")
-parts_of :: proc(w:^World,e:core.Entity) -> (child:core.Entity,count:int) {
+parts_of :: proc(w:^Step_Test,e:core.Entity) -> (child:core.Entity,count:int) {
     for row in 0..<core.count(&w.parts) {
         c:=core.entity_at(&w.parts,row)
         if parent,has:=core.get(core.read(&w.parents),c);has && parent.entity==e {child,count=c,count+1}
@@ -103,7 +92,7 @@ parts_of :: proc(w:^World,e:core.Entity) -> (child:core.Entity,count:int) {
 }
 
 @(private="file")
-mesh_of :: proc(w:^World,child:core.Entity) -> base.Asset_Id {
+mesh_of :: proc(w:^Step_Test,child:core.Entity) -> base.Asset_Id {
     shown,_:=core.get(core.read(&w.meshes),child)
     return shown.mesh
 }
@@ -114,8 +103,8 @@ a_shape_shows_and_collides_through_one_unsaved_child :: proc(t:^testing.T) {
     a:App
     if !testing.expect(t,app_init(&a)) {return}
     defer app_destroy(&a)
-    w:World
-    world_init(&w,&a.app)
+    w:Step_Test
+    if !world_init(t,&w,&a.app) {return}
     defer world_destroy(&w)
     // An L: concave, so a body needs several pieces.
     l:=SHAPE_DEFAULT
@@ -163,8 +152,8 @@ a_change_builds_again_and_releases_only_what_the_world_made :: proc(t:^testing.T
     a:App
     if !testing.expect(t,app_init(&a)) {return}
     defer app_destroy(&a)
-    w:World
-    world_init(&w,&a.app)
+    w:Step_Test
+    if !world_init(t,&w,&a.app) {return}
     defer world_destroy(&w)
     e:=core.create(&w.entities)
     core.add(&w.shapes,e,SHAPE_DEFAULT)
@@ -201,12 +190,9 @@ a_change_builds_again_and_releases_only_what_the_world_made :: proc(t:^testing.T
     third:=mesh_of(&w,child)
 
     // A copy of the world finds the child, makes its own mesh and leaves the original's.
-    copy:World
-    world_init(&copy,&a.app)
-    testing.expect(t,core.entities_copy(&copy.entities,&w.entities))
-    testing.expect(t,core.table_copy(&copy.shapes,&w.shapes) && core.table_copy(&copy.parts,&w.parts) && core.table_copy(&copy.rigids,&w.rigids))
-    testing.expect(t,core.table_copy(&copy.colliders,&w.colliders) && core.table_copy(&copy.meshes,&w.meshes) && core.table_copy(&copy.parents,&w.parents))
-    testing.expect(t,core.table_copy(&copy.transforms,&w.transforms))
+    copy:Step_Test
+    if !world_init(t,&copy,&a.app) {return}
+    testing.expect(t,core.test_world_copy(&copy.rows,&w.rows))
     world_step(&copy)
     copied,copies:=parts_of(&copy,e)
     own:=mesh_of(&copy,copied)
@@ -226,7 +212,7 @@ a_change_builds_again_and_releases_only_what_the_world_made :: proc(t:^testing.T
 
 // A brush entity under a solid, as a scene saves it: Id, Parent, Transform and Shape_Brush.
 @(private="file")
-brush_add :: proc(w:^World,solid:core.Entity,order:i32,brush:Shape_Brush,position,size:[3]f32) -> core.Entity {
+brush_add :: proc(w:^Step_Test,solid:core.Entity,order:i32,brush:Shape_Brush,position,size:[3]f32) -> core.Entity {
     e:=core.create(&w.entities)
     core.add(&w.ids,e,core.Id{value=base.Entity_Id(100+order)})
     core.add(&w.parents,e,core.Parent{entity=solid,order=order})
@@ -250,7 +236,7 @@ volume_of :: proc(a:^App,mesh:base.Asset_Id) -> f64 {
 }
 
 @(private="file")
-reported :: proc(w:^World,e:core.Entity,code:string) -> bool {
+reported :: proc(w:^Step_Test,e:core.Entity,code:string) -> bool {
     for &p in core.problems_list(&w.problems) {
         if p.entity==e && base.text_equal(p.code[:],code) {return true}
     }
@@ -263,8 +249,8 @@ a_solid_is_made_of_its_brush_children_and_follows_their_changes :: proc(t:^testi
     a:App
     if !testing.expect(t,app_init(&a)) {return}
     defer app_destroy(&a)
-    w:World
-    world_init(&w,&a.app)
+    w:Step_Test
+    if !world_init(t,&w,&a.app) {return}
     defer world_destroy(&w)
     solid:=core.create(&w.entities)
     core.add(&w.ids,solid,core.Id{value=1})
@@ -319,8 +305,8 @@ a_body_of_brushes_that_only_add_has_a_piece_per_brush :: proc(t:^testing.T) {
     a:App
     if !testing.expect(t,app_init(&a)) {return}
     defer app_destroy(&a)
-    w:World
-    world_init(&w,&a.app)
+    w:Step_Test
+    if !world_init(t,&w,&a.app) {return}
     defer world_destroy(&w)
     solid:=core.create(&w.entities)
     core.add(&w.transforms,solid,core.TRANSFORM_IDENTITY)
@@ -352,8 +338,8 @@ outlines_without_brushes_do_no_work_and_allocate_nothing_while_nothing_changes :
     a:App
     if !testing.expect(t,app_init(&a)) {return}
     defer app_destroy(&a)
-    w:World
-    world_init(&w,&a.app)
+    w:Step_Test
+    if !world_init(t,&w,&a.app) {return}
     defer world_destroy(&w)
     for i in 0..<4 {
         e:=core.create(&w.entities)

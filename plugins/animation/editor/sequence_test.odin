@@ -10,47 +10,32 @@ import mm "mirai:std/math"
 import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
+@(private="file")
 Sequence_Test_World :: struct {
-    entities:core.Entities,
+    using world:core.Test_World,
     ids:core.Table(core.Id),
     parents:core.Table(core.Parent),
     transforms:core.Table(core.Transform),
     sequences:core.Table(anim.Keyframe_Path),
 }
 
-@(private)
-sequence_test_settle :: proc(data,shared,ed:rawptr) {
-    w:=(^Sequence_Test_World)(data)
-    core.table_settle(&w.ids,&w.entities);core.table_settle(&w.parents,&w.entities)
-    core.table_settle(&w.transforms,&w.entities);core.table_settle(&w.sequences,&w.entities)
-}
-
 @(test)
 sequence_capture_converts_parent_space_and_is_one_undoable_api_transaction :: proc(t:^testing.T) {
     w:Sequence_Test_World
-    core.entities_init(&w.entities)
-    defer core.entities_destroy(&w.entities)
-    defer core.table_destroy(&w.ids);defer core.table_destroy(&w.parents)
-    defer core.table_destroy(&w.transforms);defer core.table_destroy(&w.sequences)
-    tables:=[4]core.Table_Info{
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Sequence_Test_World,ids)},
-        {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Sequence_Test_World,parents)},
-        {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Sequence_Test_World,transforms)},
-        {name="Keyframe_Path",type=anim.Keyframe_Path,info=type_info_of(anim.Keyframe_Path),offset=offset_of(Sequence_Test_World,sequences)},
-    }
-    info:=core.World_Info{tables=tables[:]}
+    if !core.test_world_init(t,&w,anim.test_types) {return}
+    defer core.test_world_destroy(&w)
     root,owner,source:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     core.add(&w.ids,root,{1});core.add(&w.ids,owner,{2});core.add(&w.ids,source,{3})
     pose:=core.TRANSFORM_IDENTITY;pose.position.x=10;core.add(&w.transforms,root,pose)
     pose.position.x=2;core.add(&w.transforms,owner,pose)
     pose.position.x=16;core.add(&w.transforms,source,pose)
     core.add(&w.parents,owner,{entity=root});core.add(&w.sequences,owner,anim.keyframe_path_default())
-    sequence_test_settle(&w,nil,nil)
-    world:=core.world_ref(&w,&info)
+    core.test_world_settle(&w)
+    world:=core.test_world_ref(&w)
     selection:editor.Selection;defer delete(selection.entities)
     edits:editor.Edits;defer editor.edits_free(&edits)
     viewport:editor.Viewport;gui:editor.Editor_Ui
-    session:=editor.Session{edit_world=&w,info=&info,selection=&selection,edits=&edits,viewport=&viewport,gui=&gui}
+    session:=editor.Session{edit_world=&w,info=core.test_world_info(&w),selection=&selection,edits=&edits,viewport=&viewport,gui=&gui}
     editor.edits_reset(&edits,world)
     params:=Sequence_Capture_Params{frame=1};copy(params.entity[:],"0000000000000002");copy(params.source[:],"0000000000000003")
     captured_result:Sequence_Edit_Result

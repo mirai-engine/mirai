@@ -12,9 +12,7 @@ import "mirai:std/serial"
 //                column entity, the row of entities it belongs to, in
 //                increasing order, and column value, its data
 //   scene        Scene_Info, one row
-//   instances    Instance: prefabs placed in this document
-//   members      Member: which entity stands for which entity of a prefab
-//   overrides    Override: what an instance holds on its own
+//   overrides    Override: what an instance of a prefab holds on its own
 //   off          Component_Off: the components turned off by themselves; without
 //                it, every component is on
 //
@@ -23,25 +21,24 @@ import "mirai:std/serial"
 // setting of a version of the format before that: nothing reads it, and
 // saving the document drops it.
 //
-// Whatever is saved refers to an entity by its Entity_Id: parents, members,
+// Whatever is saved refers to an entity by its Entity_Id: parents,
 // overrides, and the Entity and Entity_Id fields of components. Only the
 // entity column of a component table is a position in the file.
 //
 // The document stores every entity with its effective values, those of its
-// prefab included, so a scene loads without its prefabs. An instance records
-// where its entities came from, which values and which places in its
-// hierarchy it set itself, and the content hash of the prefab file it was
-// last brought up to date with; updating it from its prefab replaces
-// everything else.
+// prefab included, so a scene loads without its prefabs. The instances of
+// prefabs are two components of its entities (prefab.odin): where each came
+// from, and on the root the content hash of the prefab file the instance was
+// last brought up to date with. The overrides say which values and which
+// places in its hierarchy an instance set itself as of that file; updating
+// it from its prefab replaces everything else.
 
-SCENE_VERSION :: 2
+SCENE_VERSION :: 3
 ENTITY_NAME_BYTES :: 64
 OVERRIDE_PATH_BYTES :: 96
 
 TABLE_ENTITIES :: "entities"
 TABLE_SCENE :: "scene"
-TABLE_INSTANCES :: "instances"
-TABLE_MEMBERS :: "members"
 TABLE_OVERRIDES :: "overrides"
 TABLE_OFF :: "off"
 COLUMN_ENTITY :: "entity"
@@ -52,21 +49,6 @@ Entity_Name :: [ENTITY_NAME_BYTES]u8
 Scene_Info :: struct {
     root:base.Entity_Id, // of a prefab: the entity an instance places
     id_counter:u64,      // the last one scene_new_id used
-    last_instance:u32,
-}
-
-Instance :: struct {
-    id:u32, // stable inside the document, never 0
-    prefab:base.Asset_Id,
-    root:base.Entity_Id,
-    outer:u32, // the instance that brought this one in; 0 when it was placed in this document
-    stamp:u64, // the content hash of the prefab file it was last updated from; 0: not known
-}
-
-Member :: struct {
-    instance:u32,
-    source:base.Entity_Id, // in the prefab
-    entity:base.Entity_Id, // in this document
 }
 
 Override_Kind :: enum u8 {
@@ -78,7 +60,6 @@ Override_Kind :: enum u8 {
 }
 
 Override :: struct {
-    instance:u32,
     entity:base.Entity_Id, // the member; Child: the entity added
     component:u64, // name hash; 0 is the entity itself: its name (path "name") and, for Child, its place
     kind:Override_Kind,
@@ -102,9 +83,7 @@ Scene :: struct {
     types:^Types,
     index:map[base.Entity_Id]u32, // id -> row of entities
     info:Scene_Info,
-    instances:[dynamic]Instance,
-    members:[dynamic]Member,
-    overrides:[dynamic]Override,
+    overrides:[dynamic]Override, // of the instances, as of the file each stamp names
     off:[dynamic]Component_Off,
     stamp:u64, // the content hash of the file it was read from or last written to; 0 for none
 }
@@ -141,14 +120,12 @@ scene_init :: proc(scene:^Scene,types:^Types,kind:Fourcc,id:base.Asset_Id,alloca
 scene_arrays_init :: proc(scene:^Scene) {
     allocator:=scene.doc.allocator
     scene.index=make(map[base.Entity_Id]u32,allocator)
-    scene.instances=make([dynamic]Instance,allocator)
-    scene.members=make([dynamic]Member,allocator)
     scene.overrides=make([dynamic]Override,allocator)
     scene.off=make([dynamic]Component_Off,allocator)
 }
 
 scene_destroy :: proc(scene:^Scene) {
-    delete(scene.index);delete(scene.instances);delete(scene.members);delete(scene.overrides);delete(scene.off)
+    delete(scene.index);delete(scene.overrides);delete(scene.off)
     document_destroy(&scene.doc)
     scene^={}
 }
@@ -257,7 +234,7 @@ scene_component_add :: proc(scene:^Scene,name:string,source:^serial.Schema,type:
 
 @(private="file")
 scene_component_create :: proc(scene:^Scene,name:string,type:serial.Type_Index) -> (table:int,error:Error) {
-    if name==TABLE_SCENE || name==TABLE_INSTANCES || name==TABLE_MEMBERS || name==TABLE_OVERRIDES {return -1,.Invalid}
+    if name==TABLE_SCENE || name==TABLE_OVERRIDES {return -1,.Invalid}
     row_type,imported:=document_type(&scene.doc,scene.types,u32)
     if !imported {return -1,.Out_Of_Memory}
     table=document_table_add(&scene.doc,name) or_return
@@ -416,7 +393,7 @@ scene_fill :: proc(scene:^Scene,name:string,rows:[]u32,values:[]$T) -> Error {
 }
 
 // Removes entities and, with descendants, everything under them: their
-// components, the instances rooted at them and what those recorded. What
+// components, and what the instances rooted at them recorded. What
 // named them names none. Out_Of_Memory removes nothing. What it works with
 // is temporary, so that it also takes back what a call without memory added.
 scene_entities_remove :: proc(scene:^Scene,ids:[]base.Entity_Id,descendants:=true) -> (removed:int,error:Error) {
@@ -483,14 +460,6 @@ scene_entities_remove :: proc(scene:^Scene,ids:[]base.Entity_Id,descendants:=tru
         if parent!=0 && !(parent in scene.index) {parent=0}
     }
     if scene.info.root!=0 && !(scene.info.root in scene.index) {scene.info.root=0}
-    for {
-        rootless:=u32(0)
-        for instance in scene.instances {
-            if !(instance.root in scene.index) {rootless=instance.id;break}
-        }
-        if rootless==0 {break}
-        scene_instance_forget(scene,rootless)
-    }
     scene_records_prune(scene)
     return removed,.None
 }
@@ -515,67 +484,16 @@ references_empty :: proc(scene:^Scene,targets:map[base.Entity_Id]bool) {
     }
 }
 
-// Drops members and overrides whose entity or instance is gone.
-@(private)
-scene_records_prune :: proc(scene:^Scene) {
-    known :: proc(scene:^Scene,instance:u32) -> bool {
-        for candidate in scene.instances {
-            if candidate.id==instance {return true}
-        }
-        return false
-    }
-    left:=0
-    for member in scene.members {
-        if !(member.entity in scene.index) || !known(scene,member.instance) {continue}
-        scene.members[left]=member
-        left+=1
-    }
-    base.truncate(&scene.members,left)
-    left=0
-    for override in scene.overrides {
-        if !(override.entity in scene.index) || !known(scene,override.instance) {continue}
-        scene.overrides[left]=override
-        left+=1
-    }
-    base.truncate(&scene.overrides,left)
-    left=0
-    for record in scene.off {
-        if !(record.entity in scene.index) {continue}
-        scene.off[left]=record
-        left+=1
-    }
-    base.truncate(&scene.off,left)
-}
-
-// Removes an instance and those it brought in from the records, not its
-// entities. An instance has a larger id than the one that brought it in.
-@(private)
-scene_instance_forget :: proc(scene:^Scene,instance:u32) {
-    for {
-        nested:=u32(0)
-        for candidate in scene.instances {
-            if candidate.outer==instance && candidate.id>instance {nested=candidate.id;break}
-        }
-        if nested==0 {break}
-        scene_instance_forget(scene,nested)
-    }
-    for candidate,at in scene.instances {
-        if candidate.id==instance {ordered_remove(&scene.instances,at);break}
-    }
-}
-
 // -------------------------------------------------------------------- files
 
-// Puts the instances, members, overrides and components off of the scene into its document,
-// which can then be written without the types.
+// Puts the overrides and the components off of the scene into its document, which can then be
+// written without the types.
 scene_records_put :: proc(scene:^Scene) -> Error {
     doc:=&scene.doc
-    for name in ([]string{TABLE_SCENE,TABLE_INSTANCES,TABLE_MEMBERS,TABLE_OVERRIDES,TABLE_OFF}) {
+    for name in ([]string{TABLE_SCENE,TABLE_OVERRIDES,TABLE_OFF}) {
         if table,found:=document_table(doc,name);found {document_table_remove(doc,table)}
     }
     document_put_row(doc,scene.types,TABLE_SCENE,&scene.info) or_return
-    if len(scene.instances)>0 {document_put(doc,scene.types,TABLE_INSTANCES,scene.instances[:],{},.LZ) or_return}
-    if len(scene.members)>0 {document_put(doc,scene.types,TABLE_MEMBERS,scene.members[:],{},.LZ) or_return}
     if len(scene.overrides)>0 {document_put(doc,scene.types,TABLE_OVERRIDES,scene.overrides[:],{},.LZ) or_return}
     if len(scene.off)>0 {document_put(doc,scene.types,TABLE_OFF,scene.off[:],{},.LZ) or_return}
     return .None
@@ -708,34 +626,21 @@ scene_adopt :: proc(scene:^Scene) -> Error {
         if len(info)!=1 {return .Corrupt}
         scene.info=info[0]
     }
-    if _,has:=document_table(doc,TABLE_INSTANCES);has {document_rows(doc,types,TABLE_INSTANCES,&scene.instances) or_return}
-    if _,has:=document_table(doc,TABLE_MEMBERS);has {document_rows(doc,types,TABLE_MEMBERS,&scene.members) or_return}
     if _,has:=document_table(doc,TABLE_OVERRIDES);has {document_rows(doc,types,TABLE_OVERRIDES,&scene.overrides) or_return}
     if _,has:=document_table(doc,TABLE_OFF);has {document_rows(doc,types,TABLE_OFF,&scene.off) or_return}
     if scene.info.root!=0 && !(scene.info.root in scene.index) {return .Corrupt}
-    for instance,at in scene.instances {
-        if instance.id==0 || !(instance.root in scene.index) || instance.outer>=instance.id {return .Corrupt}
-        for other in scene.instances[:at] {
-            if other.id==instance.id {return .Corrupt}
-        }
-        scene.info.last_instance=max(scene.info.last_instance,instance.id)
-    }
-    for instance in scene.instances {
-        if instance.outer!=0 && scene_instance_find(scene,instance.outer)<0 {return .Corrupt}
-    }
-    for member in scene.members {
-        if scene_instance_find(scene,member.instance)<0 || !(member.entity in scene.index) {return .Corrupt}
-    }
     for &override in scene.overrides {
-        if scene_instance_find(scene,override.instance)<0 || !(override.entity in scene.index) || !override_valid(override) {return .Corrupt}
+        if !(override.entity in scene.index) || !override_valid(override) {return .Corrupt}
         override.path[len(override.path)-1]=0
     }
     for record in scene.off {
         if !(record.entity in scene.index) {return .Corrupt}
     }
-    for name in ([]string{TABLE_SCENE,TABLE_INSTANCES,TABLE_MEMBERS,TABLE_OVERRIDES,TABLE_OFF}) {
+    for name in ([]string{TABLE_SCENE,TABLE_OVERRIDES,TABLE_OFF}) {
         if table,has:=document_table(doc,name);has {document_table_remove(doc,table)}
     }
+    // A member whose root is not one, or an override of what no instance placed, is of no instance.
+    scene_records_prune(scene)
     return .None
 }
 
@@ -744,13 +649,6 @@ scene_adopt :: proc(scene:^Scene) -> Error {
 override_valid :: proc(override:Override) -> bool {
     if override.kind>max(Override_Kind) {return false}
     return override.kind!=.Child || override.component==0
-}
-
-scene_instance_find :: proc(scene:^Scene,id:u32) -> int {
-    for instance,at in scene.instances {
-        if instance.id==id {return at}
-    }
-    return -1
 }
 
 // ------------------------------------------------------------- read-only view
@@ -772,8 +670,9 @@ Scene_View :: struct {
     orders:[]u32,
     names:[]Entity_Name,
     components:[]Scene_Component,
-    instances:[]Instance,
-    members:[]Member,
+    instances:[]Instance,  // of the roots of the prefab instances
+    instance_rows:[]u32,   // the row of each root in the entities
+    member_rows:[]u32,     // the rows of the entities a prefab instance placed
     overrides:[]Override,
     off:[]Component_Off,
 }
@@ -800,8 +699,10 @@ scene_view_read :: proc(a:^Asset,types:^Types) -> (view:Scene_View,error:Error) 
     view.names=asset_rows(a,types,TABLE_ENTITIES,"name",Entity_Name) or_return
     if info,info_error:=table_rows(a,types,TABLE_SCENE,Scene_Info);info_error!=.None {return {},info_error}
     else if len(info)==1 {view.info=info[0]}
-    view.instances=table_rows(a,types,TABLE_INSTANCES,Instance) or_return
-    view.members=table_rows(a,types,TABLE_MEMBERS,Member) or_return
+    view.instances=table_rows(a,types,COMPONENT_INSTANCE,Instance,COLUMN_VALUE) or_return
+    view.instance_rows=table_rows(a,types,COMPONENT_INSTANCE,u32,COLUMN_ENTITY) or_return
+    view.member_rows=table_rows(a,types,COMPONENT_MEMBER,u32,COLUMN_ENTITY) or_return
+    if len(view.instances)!=len(view.instance_rows) {return {},.Corrupt}
     view.overrides=table_rows(a,types,TABLE_OVERRIDES,Override) or_return
     view.off=table_rows(a,types,TABLE_OFF,Component_Off) or_return
     entity_table:=-1
@@ -869,17 +770,13 @@ scene_view_check :: proc(view:Scene_View,allocator:=context.allocator) -> Error 
         if name[len(name)-1]!=0 {return .Corrupt}
     }
     if view.info.root!=0 && !(view.info.root in index) {return .Corrupt}
-    for instance,at in view.instances {
-        if instance.id==0 || !(instance.root in index) || instance.outer>=instance.id {return .Corrupt}
-        for other in view.instances[:at] {
-            if other.id==instance.id {return .Corrupt}
-        }
-    }
-    for member in view.members {
-        if !(member.entity in index) {return .Corrupt}
-    }
     for override in view.overrides {
         if !(override.entity in index) || !override_valid(override) {return .Corrupt}
+    }
+    for rows in ([][]u32{view.instance_rows,view.member_rows}) {
+        for row in rows {
+            if int(row)>=len(view.ids) {return .Corrupt}
+        }
     }
     for record in view.off {
         if !(record.entity in index) {return .Corrupt}

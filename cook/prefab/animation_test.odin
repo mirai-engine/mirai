@@ -1,7 +1,6 @@
 package prefab
 
 import "core:fmt"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import importer "mirai:cook/import"
@@ -18,9 +17,9 @@ imported_animation_prefab_preserves_targets_and_clip_asset :: proc(t:^testing.T)
     model,error:=importer.import_model(#directory+"/../../assets/fixtures/animation.gltf",GLTF[:])
     if !testing.expect_value(t,error.code,importer.Error_Code.None) {return}
     defer importer.model_destroy(&model)
-    temp,_:=os.temp_directory(context.temp_allocator)
-    path:=fmt.tprintf("%s/mirai-animation-prefab-%d.prefab",temp,os.get_pid())
-    defer os.remove(path)
+    folder:=base.test_folder(t,"animation-prefab")
+    if folder=="" {return}
+    path:=fmt.tprintf("%s/animation-prefab.prefab",folder)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     animation_id:=base.Asset_Id{17,29}
     assets:=importer.Import_Report{animation_id=animation_id}
@@ -44,9 +43,9 @@ an_animated_source_root_keeps_a_separate_prefab_placement :: proc(t:^testing.T) 
     nodes:=[1]importer.Imported_Node{{name="animated root",path="animated root",parent=-1,mesh=-1,transform=math.TRANSFORM_IDENTITY,target=123,visible=true}}
     nodes[0].transform.position={2,3,4}
     model:=importer.Imported_Model{nodes=nodes[:]}
-    temp,_:=os.temp_directory(context.temp_allocator)
-    path:=fmt.tprintf("%s/mirai-animation-placement-%d.prefab",temp,os.get_pid())
-    defer os.remove(path)
+    folder:=base.test_folder(t,"animation-placement")
+    if folder=="" {return}
+    path:=fmt.tprintf("%s/animation-placement.prefab",folder)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     assets:=importer.Import_Report{animation_id={1,3}}
     report,error:=model_prefab(&model,&assets,&types,{1,2},"placed",path)
@@ -73,9 +72,9 @@ a_skinned_source_without_clips_keeps_an_untargeted_placement_root :: proc(t:^tes
     model,import_error:=importer.import_model(#directory+"/../../assets/fixtures/skeletal-analytic.gltf",GLTF[:])
     if !testing.expect_value(t,import_error.code,importer.Error_Code.None) {return}
     defer importer.model_destroy(&model)
-    temp,_:=os.temp_directory(context.temp_allocator)
-    path:=fmt.tprintf("%s/mirai-skin-placement-%d.prefab",temp,os.get_pid())
-    defer os.remove(path)
+    folder:=base.test_folder(t,"skin-placement")
+    if folder=="" {return}
+    path:=fmt.tprintf("%s/skin-placement.prefab",folder)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     mesh_ids:=[1]base.Asset_Id{{13,31}}
     skeleton_ids:=[1]base.Asset_Id{{17,37}}

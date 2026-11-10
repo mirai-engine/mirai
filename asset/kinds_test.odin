@@ -3,7 +3,7 @@ package asset
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
-import "core:os"
+import "core:fmt"
 import "core:testing"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -61,8 +61,7 @@ mesh_round_trips_its_clusters_compressed :: proc(t:^testing.T) {
     source.index,source.source_size,source.importer_version=2,1234,3
     g:=test_geometry(vertices,indices,skin,{.Has_Uv1})
     desc:=Mesh_Desc{id={0xaaaa,0xbbbb},geometry=g,slots=slots[:],skeleton={7,7},joints=joints[:],colliders=colliders[:],collision_points=points[:],collision_indices=hull_indices[:],source=&source}
-    path:=test_path("grid.mesh")
-    defer os.remove(path)
+    path:=fmt.tprintf("%s/grid.mesh",base.test_folder(t,"asset"))
     testing.expect_value(t,mesh_save(path,&types,desc),Error.None)
 
     a:Asset
@@ -270,8 +269,7 @@ texture_round_trips_every_format_and_checks_level_sizes :: proc(t:^testing.T) {
     testing.expect_value(t,texture_mip_count(1,1),1)
     testing.expect_value(t,texture_mip_count(5,3),3)
 
-    path:=test_path("image.tex")
-    defer os.remove(path)
+    path:=fmt.tprintf("%s/image.tex",base.test_folder(t,"asset"))
     for format in Texture_Format {
         levels:[4][]u8
         state:=u64(1+int(format))
@@ -435,8 +433,7 @@ material_keeps_values_parameters_and_overlays :: proc(t:^testing.T) {
     hidden:[2]Material_Name
     text_set(hidden[0].name[:],"pbr")
     text_set(hidden[1].name[:],"foam")
-    path:=test_path("ocean.mat")
-    defer os.remove(path)
+    path:=fmt.tprintf("%s/ocean.mat",base.test_folder(t,"asset"))
     desc:=Material_Desc{id={8,8},info=info,parameters=parameters[:],overlays=overlays[:],hidden=hidden[:]}
     testing.expect_value(t,material_save(path,&types,desc),Error.None)
 

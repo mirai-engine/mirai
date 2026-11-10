@@ -1,7 +1,6 @@
 package terrain_editor
 
 import "core:fmt"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -12,20 +11,16 @@ import "mirai:std/base"
 
 @(test)
 a_stroke_keeps_the_pages_it_changed_and_undo_and_redo_trade_them :: proc(t:^testing.T) {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-terrain-history-%d",directory,os.get_pid())
+    root:=base.test_folder(t,"terrain")
     path:=fmt.tprintf("%s/wide.terrain",root)
     relative:="wide.terrain"
-    testing.expect_value(t,os.make_directory_all(root),nil)
-    defer os.remove(root);defer os.remove(path)
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
     defer host.assets_destroy(&assets)
     world:Create_Test_World
-    create_test_world_init(&world);defer create_test_world_destroy(&world)
-    tables:=create_test_tables()
-    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:]}
-    ref:=core.world_ref(&world,&info)
+    if !core.test_world_init(t,&world,test_types) {return}
+    defer core.test_world_destroy(&world)
+    ref:=core.test_world_ref(&world)
     // 257 samples on a side: 25 pages of heights, a stroke in one of them.
     source:terrain.Source;defer terrain.source_destroy(&source)
     if !testing.expect(t,terrain.source_make(&source,.Heightfield,{257,1,257},1,32)) {return}
@@ -43,15 +38,14 @@ a_stroke_keeps_the_pages_it_changed_and_undo_and_redo_trade_them :: proc(t:^test
     edits:editor.Edits;defer editor.edits_free(&edits)
     editor.edits_reset(&edits,ref)
     app:=host.App{allocator=context.allocator,assets=&assets}
-    s:=editor.Session{app=&app,info=&info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits}
+    s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits}
     tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
-    worlds:core.Table(core.World_Transform);core.table_init(&worlds,"World_Transform");defer core.table_destroy(&worlds)
-    core.add(&worlds,owner,core.World_Transform{transform={rotation=1,scale={1,1,1}}})
-    core.table_settle(&worlds,&world.entities)
+    core.add(&world.worlds,owner,core.World_Transform{transform={rotation=1,scale={1,1,1}}})
+    core.test_world_settle(&world)
 
-    stroke :: proc(t:^testing.T,s:^editor.Session,tool:^Terrain_Tool,ref:core.World_Ref,world:^Create_Test_World,worlds:^core.Table(core.World_Transform),owner:core.Entity,brush:terrain.Brush) {
+    stroke :: proc(t:^testing.T,s:^editor.Session,tool:^Terrain_Tool,ref:core.World_Ref,world:^Create_Test_World,owner:core.Entity,brush:terrain.Brush) {
         terrain_sync(s,tool,core.read(&world.terrains),s.app.assets)
-        if !testing.expect(t,stroke_prepare(tool,s.app.assets,s.app.allocator,core.read(&world.terrains),core.read(worlds),editor.Pick{entity=owner})) {return}
+        if !testing.expect(t,stroke_prepare(tool,s.app.assets,s.app.allocator,core.read(&world.terrains),core.read(&world.worlds),editor.Pick{entity=owner})) {return}
         if !testing.expect(t,stroke_baseline(tool)) {return}
         tool.stroke.active=true
         change:=terrain.source_edit(&tool.stroke.source,brush)
@@ -60,9 +54,9 @@ a_stroke_keeps_the_pages_it_changed_and_undo_and_redo_trade_them :: proc(t:^test
         stroke_end(s,tool,ref,s.app.assets)
         testing.expect(t,editor.edits_commit(s.edits,ref,s.selection))
     }
-    stroke(t,&s,&tool,ref,&world,&worlds,owner,{kind=.Raise,center={-100,0,-100},radius=3,amount=2})
+    stroke(t,&s,&tool,ref,&world,owner,{kind=.Raise,center={-100,0,-100},radius=3,amount=2})
     first:=test_held(t,&assets,relative);defer delete(first)
-    stroke(t,&s,&tool,ref,&world,&worlds,owner,{kind=.Lower,center={90,0,90},radius=3,amount=1})
+    stroke(t,&s,&tool,ref,&world,owner,{kind=.Lower,center={90,0,90},radius=3,amount=1})
     second:=test_held(t,&assets,relative);defer delete(second)
     if !testing.expect_value(t,len(tool.steps),2) {return}
     for &step in tool.steps {
@@ -84,7 +78,7 @@ a_stroke_keeps_the_pages_it_changed_and_undo_and_redo_trade_them :: proc(t:^test
     testing.expect(t,terrain.source_value(&tool.stroke.source,{218,0,218})<terrain.source_value(&source,{218,0,218}),"the source the tool edits follows its head")
     // A stroke after an undo replaces the history it undid.
     walk(t,&s,&tool,&world,&app,true)
-    stroke(t,&s,&tool,ref,&world,&worlds,owner,{kind=.Raise,center={0,0,0},radius=3,amount=1})
+    stroke(t,&s,&tool,ref,&world,owner,{kind=.Raise,center={0,0,0},radius=3,amount=1})
     testing.expect_value(t,len(tool.steps),2)
     testing.expect(t,editor.revision_find(&tool.history,id,2,3)>=0 && editor.revision_find(&tool.history,id,1,2)>=0)
 }

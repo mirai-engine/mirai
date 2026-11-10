@@ -5,6 +5,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "core:testing"
+import "mirai:std/base"
 
 // The kind_version of a file, changed in place: the header is outside its content hash.
 @(private="file")
@@ -35,8 +36,7 @@ stale_mesh :: proc(t:^testing.T,types:^Types,root:string) -> (path:string,ok:boo
 @(test)
 an_asset_of_another_version_says_which_it_is_and_how_to_import_it_again :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    root,_:=strings.replace_all(test_path("versions"),"\\","/",context.temp_allocator)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"versions")
     path,ok:=stale_mesh(t,&types,root)
     if !ok {return}
 
@@ -118,8 +118,7 @@ a_row_that_lacks_a_field_of_its_kind_is_refused :: proc(t:^testing.T) {
 @(test)
 an_asset_of_another_version_named_by_a_relative_path_says_how_to_import_it_again :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    root,_:=strings.replace_all(test_path("versions_relative"),"\\","/",context.temp_allocator)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"versions_relative")
     path,ok:=stale_mesh(t,&types,root)
     if !ok {return}
     a:Asset

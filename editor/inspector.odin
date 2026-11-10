@@ -514,21 +514,20 @@ identity_row :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> (changed:bool
     ins:=s.inspector
     ctx:=s.gui.ctx
     th:=&ctx.theme
-    link,linked:=prefab_link_of(s,api_entity_id(w,e))
+    link,linked:=prefab_link_of(w,e)
     {
         enabled:=!entity_has(w,e,core.Disabled)
         if ui.checkbox(ctx,ui.id(ctx,"enabled"),&enabled) {entity_enabled_set(s,e,enabled)}
         ui.spacer(ctx,4,1)
         {
             // The icon of the entity in the color of what holds it: a prefab instance, a section.
-            links:=prefab_links(s,w)
             icon,color:=entity_icon(s,w,e)
-            holder:=container_kind(links,w,e)
-            if holder==.None {holder=container_kind(links,w,container_of(links,w,e))}
+            holder:=container_kind(w,e)
+            if holder==.None {holder=container_kind(w,container_of(w,e))}
             if holder!=.None {color,_=container_color(s,holder)}
             // Inside a prefab instance or a section, it selects the root of what holds it;
             // on the root of an instance, a double click opens its prefab.
-            if up:=container_of(links,w,e);up!=core.NONE {
+            if up:=container_of(w,e);up!=core.NONE {
                 if ui.button(ctx,ui.id(ctx,"holder_root"),{icon=icon,icon_color=color,icon_size=15,style=.Ghost,width=22,height=ctx.theme.control}).clicked {selection_set(s.selection,{up})}
             } else if linked && link.root && s.mode==.Edit {
                 if ui.button(ctx,ui.id(ctx,"prefab_open"),{icon=icon,icon_color=color,icon_size=15,style=.Ghost,width=22,height=ctx.theme.control}).double {
@@ -562,7 +561,7 @@ identity_row :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> (changed:bool
                     variant_prompt_open(s,variant,link.asset,e)
                 }
                 changed|=action_button(s,.Prefab_Apply,{icon=.Save_Prefab,tip="Apply changes",icon_size=15,style=.Ghost,width=22,height=ctx.theme.control},1)
-                if prefab_placed_base(s,link.asset)!={} {changed|=action_button(s,.Prefab_Apply_Base,{icon=ui.icon_user(u8(User_Icon.Up)),tip="Apply to base",icon_size=15,style=.Ghost,width=22,height=ctx.theme.control},1)}
+                if prefab_variant_of(s,w,link)!={} {changed|=action_button(s,.Prefab_Apply_Base,{icon=ui.icon_user(u8(User_Icon.Up)),tip="Apply to base",icon_size=15,style=.Ghost,width=22,height=ctx.theme.control},1)}
                 changed|=action_button(s,.Prefab_Unlink,{icon=ui.icon_user(u8(User_Icon.Unlink)),tip="Unlink",icon_size=15,style=.Ghost,width=22,height=ctx.theme.control},1)
                 changed|=action_button(s,.Prefab_Revert,{icon=.Revert,tip="Revert all",icon_size=15,style=.Ghost,width=22,height=ctx.theme.control},1)
             } else {
@@ -579,10 +578,9 @@ identity_row :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> (changed:bool
 // The name of the base when the entity is the root of a variant; "" otherwise.
 @(private)
 inspector_variant_name :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> string {
-    id:=api_entity_id(w,e)
-    link,linked:=prefab_link_of(s,id)
+    link,linked:=prefab_link_of(w,e)
     if !linked {return ""}
-    variant_base:=prefab_variant_of(s,link,id)
+    variant_base:=prefab_variant_of(s,w,link)
     if variant_base=={} {return ""}
     file,_,found:=prefab_file(s,variant_base)
     return found?asset_name(file.path):"a missing prefab"
@@ -617,7 +615,6 @@ hierarchy_section :: proc(s:^Session,w:core.World_Ref,e:core.Entity,width:f32) {
     ctx:=s.gui.ctx
     th:=&ctx.theme
     card(s)
-    links:=prefab_links(s,w)
     ins:=s.inspector
     buttons:=[1]Section_Button{{icon=ui.icon_user(u8(User_Icon.List)),on=ins.hierarchy_tree}}
     pressed:int
@@ -629,10 +626,10 @@ hierarchy_section :: proc(s:^Session,w:core.World_Ref,e:core.Entity,width:f32) {
     if !open {return}
     card_body(s)
     if ins.hierarchy_tree {
-        hierarchy_tree(s,w,e,links)
+        hierarchy_tree(s,w,e)
         return
     }
-    editable:=!prefab_member_locked_in(s,links,w,e)
+    editable:=!prefab_member_locked(s,w,e)
     plus:=ui.Button{icon=.Plus,icon_size=12,icon_color=th.text_label,style=.Well,width=HIERARCHY_TILE,height=HIERARCHY_TILE,disabled=!editable}
     row:=ui.Box{width=ui.GROW,height=ui.fixed(HIERARCHY_TILE),gap=5,align_y=.Center}
     selected,release:=core.NONE,core.NONE
@@ -663,7 +660,7 @@ hierarchy_section :: proc(s:^Session,w:core.World_Ref,e:core.Entity,width:f32) {
                     continue
                 }
                 child:=children[cell]
-                clicked,unlink:=hierarchy_square(s,w,child,cell+1,!prefab_member_locked_in(s,links,w,child))
+                clicked,unlink:=hierarchy_square(s,w,child,cell+1,!prefab_member_locked(s,w,child))
                 if clicked {selected=child}
                 if unlink {release=child}
             }
@@ -680,7 +677,7 @@ HIERARCHY_TREE_HEIGHT :: f32(132)
 // The line of e: its parents from the farthest, e, and what hangs from it,
 // with scroll: its rows select. What is not its parent or under it is not there.
 @(private)
-hierarchy_tree :: proc(s:^Session,w:core.World_Ref,e:core.Entity,links:map[base.Entity_Id]Prefab_Link) {
+hierarchy_tree :: proc(s:^Session,w:core.World_Ref,e:core.Entity) {
     ctx:=s.gui.ctx
     th:=&ctx.theme
     ins:=s.inspector
@@ -699,7 +696,7 @@ hierarchy_tree :: proc(s:^Session,w:core.World_Ref,e:core.Entity,links:map[base.
     if ui.scroll_area(ctx,ui.id(ctx,"hierarchy_tree"),&ins.hierarchy_scroll,{height=ui.FIT,max_height=HIERARCHY_TREE_HEIGHT}) {
         for row,i in rows {
             icon,color:=entity_icon(s,w,row.entity)
-            kind:=container_kind(links,w,row.entity)
+            kind:=container_kind(w,row.entity)
             text:ui.Color
             if kind!=.None {color,text=container_color(s,kind)}
             if ui.row(ctx,ui.id(ctx,"hierarchy_tree_row",i+1),{label=entity_label(w,row.entity),icon=icon,icon_color=color,icon_size=13,text_color=text,font=kind!=.None?ui.FONT_SEMIBOLD:0,selected=row.entity==e,height=22,depth=row.depth}).clicked {picked=row.entity}

@@ -36,8 +36,8 @@ Code: `collab.odin`, `collab_api.odin` and `collab_play.odin` (the host's networ
 
 ## What travels
 
-- **The whole scene**, once on entering: what `scene.capture` writes, with the prefab records, in
-  chunks over the reliable channel. The guest loads it with `scene.replace`: one that does not fit
+- **The whole scene**, once on entering: what `scene.capture` writes, in chunks over the reliable
+  channel. The guest loads it with `scene.replace`: one that does not fit
   whole leaves its world as it was and ends the session. Assets do not travel, except the unsaved
   ones: both editors must have the same files.
 - The network half of the session runs in its own thread (`worker_start`): an editor busy for a
@@ -77,12 +77,10 @@ Code: `collab.odin`, `collab_api.odin` and `collab_play.odin` (the host's networ
   editor sends its own on changing and every so often while it has any, so whoever enters later
   sees them, and the host forwards them. The others draw the figure and outline what changed; the
   chat stays with whoever launched it.
-- **Prefab records** (`collab_prefabs.odin`, `Prefab` message in chunks): when an editor's history
-  crosses a `Prefab_Version` (placing, creating, applying, reverting, unlinking, refreshing or
-  duplicating an instance, and its undo or redo), what it removed and put of instances, members and
-  overrides and the prefab files it wrote go out after the rows of that update. Like the rows, the
-  host applies them and forwards them to all, sender included; whoever receives them writes the
-  file if it differs, rereads the prefab and observes the overrides again.
+- **Prefab instances** have no channel of their own: they are rows of their entities and travel
+  as edits, and the prefab an operation wrote travels as the unsaved asset file it is. Between
+  the two an editor may hold instances of a file it does not have yet: they read as stale and no
+  end refreshes them by itself ([overrides](prefabs.md#overrides)).
 - **Pings** (`collab_ping.odin`): [figures](editor.md#pings).
 - **Asset files** (`collab_files.odin`, `File` message in chunks): what changes an asset file in
   an editor (an agent's material, a painted texture, an undo) travels to the others and stays in the

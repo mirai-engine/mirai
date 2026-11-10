@@ -23,6 +23,7 @@ test_locomotion_modes :: proc(info:^core.World_Info) {
     types[0]={type=Test_Locomotion_Mode,name="Locomotion_Mode",path="plugins:physics/runtime",prefix="MODE_",limit=1<<16}
     for name,i in ([4]string{"FALLING","WALKING","FLYING","SWIMMING"}) {names[i]={type=Test_Locomotion_Mode,value=i64(i),name=name}}
     info.named_types,info.names=types,names
+    core.test_info_index(info)
 }
 
 @(test)
@@ -74,7 +75,7 @@ setup_test_character :: proc(f:^Pose_Bake_Test,t:^testing.T) -> base.Asset_Id {
     testing.expect_value(t,asset.animation_save(fmt.tprintf("%s/moves.anim",a.root),&a.assets.types,{id=source_id,clips=clips[:]}),asset.Error.None)
     testing.expect(t,host.assets_scan(&a.assets))
     core.add(&f.world.meshes,f.rig,erender.Mesh_Renderer{mesh=mesh_id})
-    pose_bake_test_settle(&f.world,nil,nil)
+    core.settle(&f.info,&f.world,nil)
     return source_id
 }
 
@@ -85,7 +86,7 @@ character_setup_builds_locomotion_look_feet_hands_and_gestures_from_the_body :: 
     a:=&f.authoring
     // What it played before: a clip, its rate and a parameter of another graph.
     stale:=anim.ANIMATION_DEFAULT;stale.speed=.65;base.text_set(stale.clip[:],"Walk");anim.animation_parameter(&stale,"Grounded",1)
-    core.add(&f.world.animations,f.rig,stale);pose_bake_test_settle(&f.world,nil,nil)
+    core.add(&f.world.animations,f.rig,stale);core.settle(&f.info,&f.world,nil)
     defaults:=Setup_Params{want=SETUP_ALL}
     authoring_test_register(a,t,"setup",Setup_Params,setup,&defaults)
     request:=fmt.tprintf(`{{"entity":"0000000000000011","library":"%s","folder":"characters"}}`,authoring_test_id_text(library))
@@ -151,7 +152,7 @@ character_setup_builds_locomotion_look_feet_hands_and_gestures_from_the_body :: 
     // What it plays already names its clips; a plain entity has no skeleton.
     result=authoring_test_execute(a,"setup",`{"entity":"0000000000000011","folder":"characters"}`)
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,"Already_Exists"))
-    plain:=core.create(&f.world.entities);core.add(&f.world.ids,plain,{value=19});pose_bake_test_settle(&f.world,nil,nil)
+    plain:=core.create(&f.world.entities);core.add(&f.world.ids,plain,{value=19});core.settle(&f.info,&f.world,nil)
     result=authoring_test_execute(a,"setup",`{"entity":"0000000000000013"}`)
     testing.expect(t,result.code!=0 && strings.contains(result.data,"Missing_Skeleton"))
 }

@@ -85,7 +85,6 @@ Collab_Message :: enum u8 {
     Ping,                                              // a point of the scene an editor pinged (collab_ping.odin)
     File,                                              // an asset file an editor changed, in chunks (collab_files.odin)
     File_Unsent,                                       // an asset file an editor changed that is too large to travel
-    Prefab,                                            // what a step changed of the prefab records, in chunks (collab_prefabs.odin)
 }
 
 // Set: the whole row, for whoever has none. Fields: runs of bytes of a row,
@@ -114,8 +113,6 @@ Collab_Peer :: struct {
     agents:Collab_Agents,
     file_bytes:[dynamic]u8, // a file it sends, as it arrives
     file_total:int,
-    prefab_bytes:[dynamic]u8, // a change of the prefab records it sends, as it arrives
-    prefab_total:int,
     out:[dynamic][]u8,   // reliable messages not sent yet
     head:int,
     connected_at:f64,
@@ -197,7 +194,6 @@ Collab_State :: struct {
     applying_file:bool,        // a file of another end is being put: its change is not this end's
     unsent:[COLLAB_UNSENT]Collab_Unsent, // the files that did not travel; the first unsent_count
     unsent_count:int,
-    prefabs_out:[dynamic][]u8, // what the steps here changed of the prefab records since the last update
 }
 
 @(storage)
@@ -427,12 +423,9 @@ collab_destroy :: proc(s:^Session) {
         for message in peer.out[peer.head:] {delete(message)}
         delete(peer.out)
         delete(peer.file_bytes)
-        delete(peer.prefab_bytes)
     }
     for path in st.files_out {delete(path)}
     delete(st.files_out)
-    for payload in st.prefabs_out {delete(payload)}
-    delete(st.prefabs_out)
     delete(st.snapshot)
     collab_tables_free(st)
     journal_reading(s.edits,false)
@@ -630,7 +623,6 @@ collab_update :: proc(s:^Session) {
     if st.phase==.Joined && now-st.edit_at>=COLLAB_EDIT_INTERVAL {
         st.edit_at=now
         collab_edits_send(s,st)
-        collab_prefabs_send(s,st)
         collab_files_send(s,st)
     }
     if st.phase==.Joined && now-st.presence_at>=COLLAB_PRESENCE_INTERVAL {
@@ -695,7 +687,6 @@ collab_command :: proc(s:^Session,st:^Collab_State,command:wire.Command,now:f64)
                 for message in peer.out[peer.head:] {delete(message)}
                 delete(peer.out)
                 delete(peer.file_bytes)
-                delete(peer.prefab_bytes)
                 peer={}
                 collab_roster_send(st)
             }
@@ -738,7 +729,6 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
             for message in other.out[other.head:] {delete(message)}
             delete(other.out)
             delete(other.file_bytes)
-            delete(other.prefab_bytes)
             other=st.peers[from]
             st.peers[from]={}
             from=i
@@ -781,7 +771,6 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
         if own {st.echoed_edits+=1}
         // What this end edited goes before what it applies, so the edits of the others are not taken for its own.
         collab_edits_send(s,st)
-        collab_prefabs_send(s,st)
         collab_edit_apply(s,st,data,own)
         // The host sends what a guest edited to everybody, the sender included.
         if st.role==.Host {
@@ -851,7 +840,6 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
             for message in peer.out[peer.head:] {delete(message)}
             delete(peer.out)
             delete(peer.file_bytes)
-            delete(peer.prefab_bytes)
             peer^={}
             collab_roster_send(st)
         }
@@ -873,8 +861,6 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
         if st.phase==.Joined && (st.role==.Guest || from>=0 && st.peers[from].joined) {collab_file_receive(s,st,from,&r)}
     case .File_Unsent:
         if st.phase==.Joined && (st.role==.Guest || from>=0 && st.peers[from].joined) {collab_unsent_receive(s,st,from,&r)}
-    case .Prefab:
-        if st.phase==.Joined && (st.role==.Guest || from>=0 && st.peers[from].joined) {collab_prefab_receive(s,st,from,&r)}
     }
 }
 
@@ -1287,16 +1273,8 @@ collab_edit_apply :: proc(s:^Session,st:^Collab_State,data:[]u8,own:=false) {
             collab_told_take(st,w,touch)
         }
     }
-    // What others changed of the members of an instance is observed as what this end changes.
-    if s.editor_world!=nil {
-        ids:=make([]base.Entity_Id,len(touched),context.temp_allocator)
-        places:=false
-        for touch,at in touched {
-            ids[at]=touch.id
-            places||=s.info.tables[touch.table].type==core.Id || s.info.tables[touch.table].type==core.Parent
-        }
-        prefabs_remote_edited(s,ids,places)
-    }
+    // What the others changed is no step of this history: the overrides derived before it are of before it.
+    if s.editor_world!=nil && len(touched)>0 {prefabs_changed(s)}
     selection_prune(s.selection,w)
     if st.role==.Host {s.document.unsaved=true}
 }

@@ -6,8 +6,8 @@ import "core:os"
 import "core:testing"
 import "core:time"
 import "mirai:core"
-import phys "plugins:physics/runtime"
 import "mirai:host"
+import "mirai:std/base"
 import "mirai:std/jobs"
 
 // The terrain of the synthetic world of alien-planet: its Landscape (2033 by
@@ -22,7 +22,7 @@ TERRAIN_LANDSCAPE :: #config(TERRAIN_LANDSCAPE,"C:/Users/tzbk/CODIGOS/mirai-proj
 @(test)
 bench_terrain_world_of_tiles :: proc(t:^testing.T) {
     when !TERRAIN_BENCH {return} else {
-        root:=source_test_path("world-bench");os.make_directory_all(root);defer os.remove_all(root)
+        root:=base.test_folder(t,"terrain")
         bytes,read:=os.read_entire_file(TERRAIN_LANDSCAPE,context.allocator)
         if !testing.expect(t,read==nil,"the Landscape of alien-planet is not there") {return}
         testing.expect(t,os.write_entire_file(fmt.tprintf("%s/Landscape.terrain",root),bytes)==nil)
@@ -35,32 +35,30 @@ bench_terrain_world_of_tiles :: proc(t:^testing.T) {
         id,loaded:=source_load(&probe,fmt.tprintf("%s/Landscape.terrain",root),&assets.types)
         if !testing.expect(t,loaded) {return}
         fmt.printfln("Landscape: %v samples, cell %v m, %d cells a chunk",probe.samples,probe.cell,probe.chunk_cells)
-        w:Terrain_Test_World;terrain_test_world_init(&w);defer terrain_test_world_free(&w)
-        core.table_init(&w.poses,"World_Transform")
+        w:Terrain_Test_World
+        if !terrain_test_world_init(t,&w) {return}
+        defer terrain_test_world_free(&w)
         resident:Terrain_Resident;defer terrain_resident_free(&resident)
         SPACING :: f32(335.28)
         for k in 0..<64 {
             e:=core.create(&w.entities)
             place:=core.TRANSFORM_IDENTITY
             place.position={(f32(k%8)-3.5)*SPACING,0,(f32(k/8)-3.5)*SPACING}
-            core.add(&w.locals,e,place)
-            core.add(&w.poses,e,core.World_Transform{transform={position=place.position,rotation=place.rotation,scale=place.scale}})
+            core.add(&w.transforms,e,place)
+            core.add(&w.worlds,e,core.World_Transform{transform={position=place.position,rotation=place.rotation,scale=place.scale}})
             core.add(&w.terrains,e,Terrain{source=id,solid=true})
         }
-        core.table_settle(&w.poses,&w.entities)
-        terrain_test_world_settle(&w)
-        w.physics_settings={} // the defaults of Physics_Settings
+        core.test_world_settle(&w.w)
+        w.settings={} // the defaults of Physics_Settings
         settings:=Terrain_Settings{}
         tick :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,settings:Terrain_Settings,view:core.View) {
-            c:=terrain_test_tables(w)
-            physics:=phys.Physics_Settings{}
-            terrain_update(c.commands,&w.terrains,c.chunks,c.locals,c.parents,c.ids,c.colliders,c.meshes,c.tints,c.overrides,&w.data,resident,&w.requests,&w.digs,settings,app,{playing=true},{phase=.Fixed},view,core.read(&w.poses),core.ref(&w.sources),{},physics,{},nil,&w.problems,{})
-            terrain_test_world_settle(w)
+            test_step(&w.terrain,core.commands_of(core.test_world_ref(&w.w)),resident,app,&w.problems,settings,view=view)
+            core.test_world_settle(&w.w)
         }
         for position in ([3][3]f32{{0,250,-700},{0,900,-1800},{-900,40,-900}}) {
             view:=core.VIEW_DEFAULT
             view.position,view.size=position,{1440,900}
-            w.sources.items[0]={position,position,0};w.sources.count=1;w.sources.revision+=1
+            w.streaming.items[0]={position,position,0};w.streaming.count=1;w.streaming.revision+=1
             start:=time.tick_now()
             ticks:=0
             for ticks<400 {

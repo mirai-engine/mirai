@@ -79,18 +79,17 @@ terrain_drag_axes_preserve_the_other_coordinates_and_reject_parallel_rays :: pro
 @(test)
 terrain_initial_asset_revision_is_the_baseline_of_the_first_undo :: proc(t:^testing.T) {
     world:Create_Test_World
-    create_test_world_init(&world);defer create_test_world_destroy(&world)
-    tables:=create_test_tables()
-    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:]}
-    ref:=core.world_ref(&world,&info)
+    if !core.test_world_init(t,&world,test_types) {return}
+    defer core.test_world_destroy(&world)
+    ref:=core.test_world_ref(&world)
     edits:editor.Edits;defer editor.edits_free(&edits)
     selection:editor.Selection;defer delete(selection.entities)
     assets:host.Assets
     app:=host.App{allocator=context.allocator,assets=&assets}
-    session:=editor.Session{app=&app,info=&info,edit_world=&world,selection=&selection,edits=&edits,id_state=42}
+    session:=editor.Session{app=&app,info=ref.info,edit_world=&world,selection=&selection,edits=&edits,id_state=42}
     owner:=editor.entity_create(&session,{name="Terrain"})
     core.add(&world.terrains,owner,{source={1,2},revision=1})
-    create_test_settle(&world,nil,nil)
+    core.test_world_settle(&world)
     editor.edits_reset(&edits,ref)
     initial:=editor.edits_state(&edits)
     core.get(&world.terrains,owner).revision=7

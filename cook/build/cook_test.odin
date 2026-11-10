@@ -301,10 +301,13 @@ glow_range :: proc(t:^testing.T,types:^asset.Types,path:string) -> f32 {
     level:asset.Scene
     if !testing.expect_value(t,asset.scene_load(&level,types,path),asset.Error.None) {return -1}
     defer asset.scene_destroy(&level)
-    for member in level.members {
-        if member.source!=2 {continue}
-        glow,_:=asset.scene_get(&level,member.entity,"Glow",Glow)
-        return glow.range
+    for root in asset.scene_instance_roots(&level) {
+        members,_:=asset.scene_instance_members(&level,root)
+        for member in members {
+            if member.source!=2 {continue}
+            glow,_:=asset.scene_get(&level,member.entity,"Glow",Glow)
+            return glow.range
+        }
     }
     return -1
 }
@@ -319,7 +322,7 @@ a_cook_brings_the_prefab_instances_of_what_it_ships_up_to_date :: proc(t:^testin
     lamp_path,level_path:=fmt.tprintf("%s/prefabs/lamp.prefab",assets),fmt.tprintf("%s/scenes/level.scene",assets)
     lamp:=glow_prefab_write(t,&types,lamp_path,1)
     level:asset.Scene;asset.scene_init(&level,&types,asset.KIND_SCENE,MAIN);defer asset.scene_destroy(&level)
-    _,_,placed:=asset.scene_instantiate(&level,&lamp,PROP,0)
+    _,placed:=asset.scene_instantiate(&level,&lamp,PROP,0)
     testing.expect_value(t,placed,asset.Error.None)
     testing.expect_value(t,asset.scene_save(&level,level_path),asset.Error.None)
     asset.scene_destroy(&lamp)
@@ -334,6 +337,16 @@ a_cook_brings_the_prefab_instances_of_what_it_ships_up_to_date :: proc(t:^testin
     for file in report.files {testing.expect_value(t,file.resolved,file.path=="scenes/level.scene")}
     testing.expect_value(t,glow_range(t,&types,fmt.tprintf("%s/scenes/level.scene",output)),f32(4))
     testing.expect_value(t,glow_range(t,&types,level_path),f32(1))
+
+    // The prefab an instance places is a dependency of its scene: the scenes are the roots of this cook,
+    // which reaches it through them, and a cook whose prefab is gone says so and ships the scene as it is.
+    reached:=false
+    for file in report.files {reached||=file.path=="prefabs/lamp.prefab"}
+    testing.expect(t,report.error==.None && reached && len(report.missing)==0)
+    testing.expect_value(t,os.remove(lamp_path),nil)
+    report=cook_assets({assets=assets,output=output,allocator=context.temp_allocator})
+    testing.expect(t,report.error==.None && len(report.missing)==1 && report.missing[0].id==PROP && report.scenes_resolved==0)
+    testing.expect_value(t,glow_range(t,&types,fmt.tprintf("%s/scenes/level.scene",output)),f32(1))
 }
 
 // Files cooked at once on many workers are the files and the report of a
@@ -354,7 +367,7 @@ a_cook_on_many_workers_writes_what_a_cook_on_one_does :: proc(t:^testing.T) {
     lamp:=glow_prefab_write(t,&types,lamp_path,1)
     for at in 0..<6 {
         level:asset.Scene;asset.scene_init(&level,&types,asset.KIND_SCENE,{11,u64(at)})
-        _,_,placed:=asset.scene_instantiate(&level,&lamp,PROP,0)
+        _,placed:=asset.scene_instantiate(&level,&lamp,PROP,0)
         testing.expect_value(t,placed,asset.Error.None)
         testing.expect_value(t,asset.scene_save(&level,fmt.tprintf("%s/scenes/level_%d.scene",assets,at)),asset.Error.None)
         asset.scene_destroy(&level)

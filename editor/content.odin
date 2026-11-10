@@ -658,11 +658,9 @@ content_selection_read :: proc(s:^Session,c:^Content,w:core.World_Ref,registry:^
     c.selection_key=key
     ids:=make([dynamic]base.Asset_Id,context.temp_allocator)
     if w.info!=nil {
-        table:=core.world_table_of(w,core.Id)
         for e in s.selection.entities {
             host.entity_asset_ids(w,e,&ids)
-            if table==nil {continue}
-            if link,found:=prefab_link_of(s,core.id_of(core.read(table),e));found {append(&ids,link.asset)}
+            if link,found:=prefab_link_of(w,e);found {append(&ids,link.asset)}
         }
     }
     content_selection_set(c,registry,ids[:])
@@ -703,7 +701,7 @@ content_variant_base :: proc(registry:^asset.Registry,types:^asset.Types,file:^a
     if !nests {return {}}
     scene:asset.Scene
     if asset.scene_load(&scene,types,asset.registry_file_path(registry,file.path,context.temp_allocator),context.temp_allocator)!=.None {return {}}
-    _,base_id:=asset.prefab_variant_base(&scene)
+    base_id,_:=asset.prefab_variant_base(&scene)
     return base_id
 }
 

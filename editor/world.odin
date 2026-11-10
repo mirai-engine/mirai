@@ -172,7 +172,7 @@ entity_hidden :: proc(w:core.World_Ref,e:core.Entity) -> bool {
 // The icon of what the components of an entity make of it: that of the card
 // of a plugin whose component it has, before those of the engine.
 entity_icon :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> (icon:ui.Icon,color:ui.Color) {
-    if link,linked:=prefab_link_of(s,api_entity_id(w,e));linked && link.root {return .Prefab,PREFAB_COLOR}
+    if link,linked:=prefab_link_of(w,e);linked && link.root {return .Prefab,PREFAB_COLOR}
     if card,found:=card_of_entity(s,w,e);found {return card.icon,card.color}
     icons:=SHAPE_ICONS
     if mesh,ok:=entity_get(w,e,erender.Mesh_Renderer);ok {return mesh.mesh!={}?.Mesh:icons[mesh.shape],MESH_COLOR}
@@ -313,19 +313,18 @@ entities_delete :: proc(s:^Session,entities:[]core.Entity) {
     opened,edit_ready:=edit_open(s,"Delete")
     if !edit_ready {return}
     defer edit_close(s,opened)
-    links:=prefab_links(s,w)
     kept:=false
     for e in entities {
         // What a section holds goes with its reference, which is among them.
         if section_locked(s,w,e) {continue}
-        if prefab_member_locked_in(s,links,w,e) {kept=true;continue}
+        if prefab_member_locked(s,w,e) {kept=true;continue}
         if e==document_root(s,w) {continue}
         core.world_destroy_tree(w,e)
     }
     if kept {notify(s,"A member of a prefab instance stays: turn it off, or unlink the instance")}
     selection:=w.data==s.edit_world?document_selection(s):s.selection
     for e in entities {
-        if e==document_root(s,w) || prefab_member_locked_in(s,links,w,e) {continue}
+        if e==document_root(s,w) || prefab_member_locked(s,w,e) {continue}
         for i:=len(selection.entities)-1;i>=0;i-=1 {
             if entity_under(w,selection.entities[i],e) {ordered_remove(&selection.entities,i)}
         }
@@ -420,7 +419,7 @@ entities_duplicate :: proc(s:^Session,entities:[]core.Entity,label:="Duplicate",
             }
             core.world_settle(w)
         }
-        prefab_copied(s,w,sources[:],copies)
+        prefab_copies_settle(w,copies)
     }
     result:=make([]core.Entity,len(roots),allocator)
     for r,i in roots {result[i]=copies[r]}

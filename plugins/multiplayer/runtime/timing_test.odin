@@ -24,7 +24,6 @@ Timing_Shared :: struct {
     now:f64,
     ran:int,               // ticks the client simulated
     events:Net_Events,
-    hierarchy:core.Hierarchy,
     propagation:core.Propagation,
     jumps:core.Jumps,
     mover:core.Entity,     // of the client alone: it moves a fixed step each tick
@@ -54,9 +53,8 @@ Timing :: struct {
 
 @(private)
 timing_propagate :: proc(w:^Net_Test_World,sh:^Timing_Shared) {
-    core.hierarchy_settle(&sh.hierarchy,core.read(&w.parents),&w.es)
-    core.transforms_propagate(core.read(&w.transforms),core.ref(&sh.hierarchy),&w.worlds,&sh.propagation,&sh.jumps,w.frame)
-    core.table_settle(&w.worlds,&w.es)
+    core.transforms_propagate(core.read(&w.transforms),core.ref(&w.hierarchy),&w.worlds,&sh.propagation,&sh.jumps,w.frame)
+    core.settle(sh.info,w,nil)
 }
 
 // The input phase of net_begin on a client, with the time of the test instead of the clock of the machine.
@@ -83,16 +81,17 @@ timing_fixed :: proc(world,shared,editor,application:rawptr) {
     if sh.bare {
         app:=cast(^host.App)application
         ref:=core.world_ref(w,sh.info)
+        core.revisions_moved(w.storage_revisions[:])
         net_tick_head(ref,app,sh.session,&w.remote,nil,sh.session.problems)
-        net_test_settle(w,nil,nil)
+        core.settle(sh.info,w,nil)
         core.pose_targets_place(core.read(&w.replicas),&w.transforms,&w.places)
-        net_test_settle(w,nil,nil)
+        core.settle(sh.info,w,nil)
         outbox:Net_Outbox
         adoptions:Net_Adoptions
         net_tick_tail(ref,sh.session,&outbox,&adoptions,sh.session.problems)
         core.value_free(&outbox,type_info_of(Net_Outbox))
         core.value_free(&adoptions,type_info_of(Net_Adoptions))
-        net_test_settle(w,nil,nil)
+        core.settle(sh.info,w,nil)
     } else {net_test_fixed(world,shared,editor,application)}
     timing_propagate(w,sh)
 }
@@ -111,7 +110,7 @@ timing_late :: proc(world,shared,editor,application:rawptr) {
 
 @(private)
 timing_init :: proc(x:^Timing,t:^testing.T,conditions:wire.Sim_Conditions,update_hz:f32=0,seed:u64=5,objects:=1) -> bool {
-    x.info=net_test_info()
+    x.info=net_test_info(t) or_return
     x.info.loops[.Game][.Input]=timing_input
     x.info.loops[.Game][.Fixed]=timing_fixed
     x.info.loops[.Game][.Frame]=timing_frame
@@ -120,7 +119,7 @@ timing_init :: proc(x:^Timing,t:^testing.T,conditions:wire.Sim_Conditions,update
     if !testing.expect_value(t,error,platform.Error.None) {return false}
     x.platform=p
     for &world,index in x.worlds {
-        net_test_init(&world,context.allocator)
+        net_test_init(&world,&x.info)
         x.shares[index].info=&x.info
         x.shares[index].mover=core.NONE
         x.apps[index]={info=&x.info,platform=p,allocator=context.allocator,tick_dt=1.0/60,max_ticks=8,shared=&x.shares[index]}
@@ -137,28 +136,27 @@ timing_init :: proc(x:^Timing,t:^testing.T,conditions:wire.Sim_Conditions,update
     server:=&x.worlds[0]
     x.speed=0.1
     for index in 0..<objects {
-        e:=core.create(&server.es)
+        e:=core.create(&server.entities)
         if index==0 {x.moved=e}
         core.add(&server.identities,e,core.Id{base.Entity_Id(7+index)})
         core.add(&server.transforms,e,core.Transform{position={0,0,f32(index)},rotation=1,scale={1,1,1}})
         core.add(&server.values,e,Net_Test_Value{})
         core.add(&server.objects,e,net_test_replicate(audience=.Always,update_hz=update_hz))
     }
-    net_test_settle(server,nil,nil)
+    core.settle(&x.info,server,nil)
     client:=&x.worlds[1]
-    x.shares[1].mover=core.create(&client.es)
+    x.shares[1].mover=core.create(&client.entities)
     core.add(&client.transforms,x.shares[1].mover,core.Transform{rotation=1,scale={1,1,1}})
-    net_test_settle(client,nil,nil)
+    core.settle(&x.info,client,nil)
     return true
 }
 
 @(private)
 timing_destroy :: proc(x:^Timing) {
     for &session in x.sessions {if session.host_ready {session_destroy(&session)}}
-    for &world in x.worlds {net_test_destroy(&world)}
+    for &world in x.worlds {x.info.destroy[.World](&world)}
     for &share in x.shares {
         core.value_free(&share.events,type_info_of(Net_Events))
-        core.value_free(&share.hierarchy,type_info_of(core.Hierarchy))
         core.value_free(&share.propagation,type_info_of(core.Propagation))
         core.value_free(&share.jumps,type_info_of(core.Jumps))
         phys.collider_meshes_destroy(&share.colliders)
@@ -168,8 +166,7 @@ timing_destroy :: proc(x:^Timing) {
     core.value_free(&x.server_events,type_info_of(Net_Events))
     wire.sim_network_destroy(&x.network)
     if x.platform!=nil {platform.destroy(x.platform)}
-    delete(x.info.tables)
-    delete(x.info.storages)
+    core.test_info_destroy(&x.info)
 }
 
 // One frame of the client of dt seconds, and the ticks of the server that time completes.
@@ -186,7 +183,7 @@ timing_frame_run :: proc(x:^Timing,dt:f32) {
         wire.host_update(&s.host,x.server_time)
         server_commands(s,core.world_ref(server,&x.info),nil,wire.host_poll(&s.host),&x.server_events,&server.remote)
         for row in 0..<core.count(&server.transforms) {core.at(&server.transforms,row).position.x+=x.speed}
-        net_test_settle(server,nil,nil)
+        core.settle(&x.info,server,nil)
         server_publish(s,core.world_ref(server,&x.info),&x.outbox,x.server_tick)
     }
     wire.host_update(&x.sessions[1].host,now)
@@ -337,11 +334,13 @@ an_interpolated_replica_over_a_jittery_link_keeps_moving :: proc(t:^testing.T) {
 // this client takes it over.
 @(test)
 an_interpolated_body_is_kinematic_until_this_client_simulates_it :: proc(t:^testing.T) {
-    info:=net_test_info();defer delete(info.tables);defer delete(info.storages)
+    info,described:=net_test_info(t)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     world:Net_Test_World
-    net_test_init(&world,context.allocator)
-    defer net_test_destroy(&world)
-    e:=net_test_body(&world,1)
+    net_test_init(&world,&info)
+    defer info.destroy[.World](&world)
+    e:=net_test_body(&world,&info,1)
     world.values.values[0].force=0
     shared:=Net_Test_Shared{info=&info}
     defer phys.collider_meshes_destroy(&shared.colliders)
@@ -369,18 +368,18 @@ an_interpolated_body_is_kinematic_until_this_client_simulates_it :: proc(t:^test
         replica_sample(&s,r)
     }
     body_type :: proc(w:^Net_Test_World,e:core.Entity) -> sim.Body_Type {
-        return sim.body_type(&w.physics.world,phys.body_of(core.ref(&w.physics),e))
+        return sim.body_type(&w.state.world,phys.body_of(core.ref(&w.state),e))
     }
     for tick in 1..<30 {
         world.time.tick=u64(tick)
         net_test_fixed(&world,&shared,nil,&app)
     }
     testing.expect_value(t,body_type(&world,e),sim.Body_Type.Kinematic)
-    motion,_:=core.get(core.read(&world.motions),e)
+    motion,_:=core.get(core.read(&world.bodies),e)
     testing.expectf(t,math.abs(motion.linear.x-3)<0.2 && math.abs(motion.linear.y)<0.2,"it goes as the interpolation does: %v",motion.linear)
     r.role=.Held
     replica_classify(&s,ref,r)
-    net_test_settle(&world,nil,nil)
+    core.settle(&info,&world,nil)
     for tick in 30..<32 {
         world.time.tick=u64(tick)
         net_test_fixed(&world,&shared,nil,&app)
@@ -394,11 +393,13 @@ an_interpolated_body_is_kinematic_until_this_client_simulates_it :: proc(t:^test
 // manipulation holds the body again when this client takes it over.
 @(test)
 an_interpolated_body_follows_the_server_over_a_manipulation_of_the_game_and_gives_it_back :: proc(t:^testing.T) {
-    info:=net_test_info();defer delete(info.tables);defer delete(info.storages)
+    info,described:=net_test_info(t)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     world:Net_Test_World
-    net_test_init(&world,context.allocator)
-    defer net_test_destroy(&world)
-    e:=net_test_body(&world,1)
+    net_test_init(&world,&info)
+    defer info.destroy[.World](&world)
+    e:=net_test_body(&world,&info,1)
     world.values.values[0].force=0
     shared:=Net_Test_Shared{info=&info}
     defer phys.collider_meshes_destroy(&shared.colliders)
@@ -430,14 +431,14 @@ an_interpolated_body_follows_the_server_over_a_manipulation_of_the_game_and_give
         net_test_fixed(&world,&shared,nil,&app)
     }
     local,_:=core.get(core.read(&world.transforms),e)
-    motion,_:=core.get(core.read(&world.motions),e)
+    motion,_:=core.get(core.read(&world.bodies),e)
     testing.expectf(t,abs(local.position.x-1.5)<0.1 && abs(local.position.y)<0.05,"it is where the server has it: %v",local.position)
     testing.expectf(t,abs(motion.linear.x-3)<0.2 && abs(motion.linear.y)<0.2,"it goes as the interpolation does: %v",motion.linear)
     r.role=.Held
     replica_classify(&s,ref,r)
-    net_test_settle(&world,nil,nil)
-    body:=phys.body_of(core.ref(&world.physics),e)
-    testing.expect_value(t,sim.body_type(&world.physics.world,body),sim.Body_Type.Kinematic)
+    core.settle(&info,&world,nil)
+    body:=phys.body_of(core.ref(&world.state),e)
+    testing.expect_value(t,sim.body_type(&world.state.world,body),sim.Body_Type.Kinematic)
     for tick in 30..<90 {
         world.time.tick=u64(tick)
         net_test_fixed(&world,&shared,nil,&app)
@@ -446,6 +447,6 @@ an_interpolated_body_follows_the_server_over_a_manipulation_of_the_game_and_give
     testing.expectf(t,linalg.length(local.position-held)<0.01,"the manipulation of the game holds it again: %v",local.position)
     phys.manipulation_end(&world.requests,e)
     net_test_fixed(&world,&shared,nil,&app)
-    testing.expect_value(t,sim.body_type(&world.physics.world,body),sim.Body_Type.Dynamic)
+    testing.expect_value(t,sim.body_type(&world.state.world,body),sim.Body_Type.Dynamic)
     testing.expect_value(t,problems.count,0)
 }

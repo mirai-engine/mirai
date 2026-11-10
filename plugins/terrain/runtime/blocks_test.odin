@@ -62,8 +62,7 @@ volume_blocks_all_air_or_all_solid_hold_no_values_through_brushes_and_the_file :
     neighbor:=BLOCKS_DEEP+1
     testing.expect(t,g.pages[neighbor].values!=nil,"a block the surface of the cavity crosses holds its values")
     // The file keeps a uniform block as its value and every other one as its own LZ block.
-    root:=source_test_path("blocks");defer os.remove_all(root)
-    os.make_directory_all(root)
+    root:=base.test_folder(t,"terrain")
     path:=fmt.tprintf("%s/volume.terrain",root)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     id:=base.Asset_Id{441,442}
@@ -88,8 +87,7 @@ volume_blocks_all_air_or_all_solid_hold_no_values_through_brushes_and_the_file :
 volume_files_of_another_version_or_with_distances_past_the_band_are_refused :: proc(t:^testing.T) {
     source,loaded:Source;defer source_destroy(&source);defer source_destroy(&loaded)
     if !testing.expect(t,source_make(&source,.Volume,{33,17,33},1,8)) {return}
-    root:=source_test_path("blocks-refused");defer os.remove_all(root)
-    os.make_directory_all(root)
+    root:=base.test_folder(t,"terrain")
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     id:=base.Asset_Id{443,444}
     path:=fmt.tprintf("%s/volume.terrain",root)
@@ -127,8 +125,7 @@ a_volume_read_by_pages_holds_only_the_blocks_it_reads_and_a_block_that_leaves_ke
     // Its weights, in blocks as its distances, page with them.
     testing.expect(t,source_layer_set(&source,0,LAYER_DEFAULT) && source_layer_set(&source,1,LAYER_DEFAULT))
     testing.expect(t,source_edit(&source,{kind=.Paint,center=[3]f32{40,48,40}-48,radius=3,amount=1,layer=1}).changed)
-    root:=source_test_path("blocks-paged");defer os.remove_all(root)
-    os.make_directory_all(root)
+    root:=base.test_folder(t,"terrain")
     path:=fmt.tprintf("%s/volume.terrain",root)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     id:=base.Asset_Id{445,446}

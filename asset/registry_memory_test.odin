@@ -22,9 +22,7 @@ material_bytes_of :: proc(t:^testing.T,types:^Types,id,texture:base.Asset_Id,rou
 @(test)
 registry_answers_with_files_held_in_memory_until_they_are_written_or_dropped :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    root:=test_path("registry-memory")
-    os.remove_all(root)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"registry-memory")
     os.make_directory_all(fmt.tprintf("%s/materials",root))
     stone,clay,brick:=base.Asset_Id{1,1},base.Asset_Id{2,2},base.Asset_Id{3,3}
     on_disk:=material_bytes_of(t,&types,stone,{},0.5)
@@ -73,9 +71,7 @@ registry_answers_with_files_held_in_memory_until_they_are_written_or_dropped :: 
 
 @(test)
 registry_holds_a_file_outside_its_folders_by_its_absolute_path :: proc(t:^testing.T) {
-    root:=test_path("registry-memory-outside")
-    os.remove_all(root)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"registry-memory-outside")
     os.make_directory_all(fmt.tprintf("%s/assets",root))
     os.make_directory_all(fmt.tprintf("%s/shaders",root))
     source:=fmt.tprintf("%s/shaders/rock.slang",root)
@@ -102,4 +98,34 @@ registry_holds_a_file_outside_its_folders_by_its_absolute_path :: proc(t:^testin
     testing.expect_value(t,registry_memory_write(&r,source),Error.None)
     stored,_:=os.read_entire_file(source,context.temp_allocator)
     testing.expect(t,string(stored)=="written" && len(r.memory)==0 && len(r.files)==0)
+}
+
+// What places a prefab depends on it, also while the placer is a file only
+// memory holds: who follows a prefab that changed is found without reading
+// every file of the assets.
+@(test)
+registry_tells_which_files_place_a_prefab_while_memory_holds_them :: proc(t:^testing.T) {
+    types:Types;types_init(&types);defer types_destroy(&types)
+    root:=base.test_folder(t,"registry-placers")
+    os.make_directory_all(root)
+    r:Registry
+    registry_init(&r,root)
+    defer registry_destroy(&r)
+    testing.expect_value(t,registry_scan(&r),Error.None)
+    lamp,yard_id:=base.Asset_Id{7,7},base.Asset_Id{8,8}
+    yard:Scene
+    testing.expect_value(t,scene_init(&yard,&types,KIND_PREFAB,yard_id),Error.None)
+    defer scene_destroy(&yard)
+    scene_entity_add(&yard,1,0,"Yard")
+    scene_entity_add(&yard,2,1,"Lamp")
+    testing.expect_value(t,scene_instance_set(&yard,2,{prefab=lamp}),Error.None)
+    testing.expect_value(t,scene_member_set(&yard,2,2,1),Error.None)
+    data,encoded:=scene_bytes(&yard,context.temp_allocator)
+    testing.expect_value(t,encoded,Error.None)
+    testing.expect_value(t,len(registry_dependents(&r,lamp)),0)
+    testing.expect_value(t,registry_memory_set(&r,"yard.prefab",data),Error.None)
+    placers:=registry_dependents(&r,lamp)
+    testing.expect(t,len(placers)==1 && r.files[placers[0]].id==yard_id && r.files[placers[0]].kind==KIND_PREFAB)
+    testing.expect_value(t,registry_memory_remove(&r,"yard.prefab"),Error.None)
+    testing.expect_value(t,len(registry_dependents(&r,lamp)),0)
 }

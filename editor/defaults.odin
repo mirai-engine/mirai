@@ -41,8 +41,7 @@ inspect_default :: proc(s:^Session,w:core.World_Ref,t:^core.Table_Info,e:core.En
         if entry.entity==e && entry.table==t {return entry.bytes[:]}
     }
     entry:=Inspector_Default{entity=e,table=t}
-    id,_:=entity_get(w,e,core.Id)
-    link,linked:=prefab_link_of(s,id.value)
+    link,linked:=prefab_link_of(w,e)
     if linked && link.root && t.type==core.Transform {
         append(&s.inspector.defaults,entry)
         return nil
@@ -51,9 +50,9 @@ inspect_default :: proc(s:^Session,w:core.World_Ref,t:^core.Table_Info,e:core.En
     bytes:=entry.bytes[:]
     if t.default!=nil {t.default(raw_data(bytes))} else {component_default(t.type,bytes)}
     if linked {
-        if b:=prefab_base_find(prefabs_of(s),link.asset);b!=nil {
-            if table,found:=asset.scene_component(b.scene,t.name);found {
-                if stored,present:=asset.scene_component_get(b.scene,table,link.source);present {
+        if from:=prefab_link_base(s,w,link);from!=nil {
+            if table,found:=asset.scene_component(from,t.name);found {
+                if stored,present:=asset.scene_component_get(from,table,link.source);present {
                     schema:serial.Schema
                     serial.schema_init(&schema,context.temp_allocator)
                     defer serial.schema_destroy(&schema)
@@ -62,27 +61,22 @@ inspect_default :: proc(s:^Session,w:core.World_Ref,t:^core.Table_Info,e:core.En
                     {
                         migration:serial.Migration
                         defer serial.migration_destroy(&migration)
-                        if serial.migration_init(&migration,&b.scene.doc.schema,b.scene.doc.tables[table].columns[1].type,&schema,target,context.temp_allocator)!=.None {
+                        if serial.migration_init(&migration,&from.doc.schema,from.doc.tables[table].columns[1].type,&schema,target,context.temp_allocator)!=.None {
                             delete(entry.bytes)
                             return nil
                         }
                         serial.migration_apply(&migration,bytes,stored,1)
                         for offset in entity_offsets(t.info) {
                             source:=(cast(^base.Entity_Id)&bytes[offset])^
-                            resolved:=core.NONE
-                            for member in s.document.previous.members {
-                                if member.instance!=link.instance || member.source!=source {continue}
-                                resolved=core.entity_of(core.world_entities(w),member.entity)
-                                break
-                            }
+                            resolved:=source!=0?prefab_member_entity(w,link.instance,source):core.NONE
                             (cast(^core.Entity)&bytes[offset])^=resolved
                         }
                     }
                 }
             }
             if t.type==core.Name {
-                if row,found:=asset.scene_entity_find(b.scene,link.source);found {
-                    name:=core.Name{asset.scene_names(b.scene)[row]}
+                if row,found:=asset.scene_entity_find(from,link.source);found {
+                    name:=core.Name{asset.scene_names(from)[row]}
                     mem.copy(raw_data(bytes),&name,size_of(core.Name))
                 }
             }

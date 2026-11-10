@@ -169,7 +169,7 @@ graph_sync_fields_belong_to_sources_and_inspection_matches_the_typed_result :: p
 }
 
 Program_Test_World :: struct {
-    entities:core.Entities,
+    using world:core.Test_World,
     ids:core.Table(core.Id),
     animations:core.Table(anim.Animation),
     modifiers:core.Table(anim.Pose_Modifiers),
@@ -177,17 +177,16 @@ Program_Test_World :: struct {
     modifier_requests:anim.Modifier_Requests,
     modifier_runtime:anim.Modifier_Runtime,
 }
-@(private)
-program_test_settle :: proc(world,shared,ed:rawptr) {
-    w:=(^Program_Test_World)(world)
-    core.table_settle(&w.ids,&w.entities);core.table_settle(&w.animations,&w.entities);core.table_settle(&w.modifiers,&w.entities)
+// The World_Info of a document and of the World its Play runs, and both made.
+@(private="file")
+program_test_worlds :: proc(t:^testing.T,info:^core.World_Info,document,play:^Program_Test_World) -> bool {
+    info^=core.test_info(t,Program_Test_World,anim.test_types) or_return
+    return testing.expect(t,info.init[.World](document,context.allocator) && info.init[.World](play,context.allocator))
 }
-@(private)
-program_test_destroy :: proc(w:^Program_Test_World) {
-    core.table_destroy(&w.ids);core.table_destroy(&w.animations);core.table_destroy(&w.modifiers)
-    delete(w.animation_requests.seeks.items);delete(w.animation_requests.poses.items);delete(w.animation_requests.match_plays.items)
-    delete(w.modifier_requests.queue.items);delete(w.modifier_requests.controls.items);anim.modifier_runtime_free(&w.modifier_runtime)
-    core.entities_destroy(&w.entities)
+@(private="file")
+program_test_worlds_destroy :: proc(info:^core.World_Info,document,play:^Program_Test_World) {
+    if info.destroy[.World]!=nil {info.destroy[.World](document);info.destroy[.World](play)}
+    core.test_info_destroy(info)
 }
 @(private)
 program_test_register_result :: proc(f:^Authoring_Test,t:^testing.T,name:string,$P,$R:typeid,run:editor.Api_Handler,defaults:^P=nil) {
@@ -209,15 +208,14 @@ program_runtime_api_sets_named_parameters_and_keeps_plays_and_modifier_controls_
     look:=anim.LOOK_CONSTRAINT_DEFAULT;look.bone=anim.bone_ref("head")
     testing.expect_value(t,anim.pose_profile_save(fmt.tprintf("%s/runtime.pose",f.root),&f.assets.types,pose_id,{look={look}}),asset.Error.None)
     testing.expect(t,host.assets_scan(&f.assets))
-    document,play:Program_Test_World;core.entities_init(&document.entities);core.entities_init(&play.entities);defer program_test_destroy(&document);defer program_test_destroy(&play)
-    tables:=[3]core.Table_Info{{type=core.Id,info=type_info_of(core.Id),offset=offset_of(Program_Test_World,ids)},{type=anim.Animation,info=type_info_of(anim.Animation),offset=offset_of(Program_Test_World,animations)},{type=anim.Pose_Modifiers,info=type_info_of(anim.Pose_Modifiers),offset=offset_of(Program_Test_World,modifiers)}}
-    storages:=[3]core.Storage_Info{{type=anim.Animation_Requests,info=type_info_of(anim.Animation_Requests),offset=offset_of(Program_Test_World,animation_requests)},{type=anim.Modifier_Requests,info=type_info_of(anim.Modifier_Requests),offset=offset_of(Program_Test_World,modifier_requests)},{type=anim.Modifier_Runtime,info=type_info_of(anim.Modifier_Runtime),offset=offset_of(Program_Test_World,modifier_runtime)}}
-    world_info:=core.World_Info{tables=tables[:],storages=storages[:]};test_locomotion_modes(&world_info)
+    document,play:Program_Test_World;world_info:core.World_Info;defer program_test_worlds_destroy(&world_info,&document,&play)
+    if !program_test_worlds(t,&world_info,&document,&play) {return}
+    test_locomotion_modes(&world_info)
     for world in ([2]^Program_Test_World{&document,&play}) {
         entity:=core.create(&world.entities);core.add(&world.ids,entity,{value=17})
         value:=anim.ANIMATION_DEFAULT;value.asset=graph_id;core.add(&world.animations,entity,value)
         modifier:=anim.POSE_MODIFIERS_DEFAULT;modifier.profile=pose_id;core.add(&world.modifiers,entity,modifier)
-        program_test_settle(world,nil,nil)
+        core.settle(&world_info,world,nil)
     }
     f.session.info,f.session.edit_world,f.session.mode=&world_info,&document,.Play;f.session.runs[0]={world=&play}
     requested:=request_defaults();authoring_test_register(f,t,"request",Request_Params,request,requested)
@@ -276,16 +274,14 @@ modifier_goal_api_resolves_targets_in_the_running_world_accepts_the_origin_and_k
     contact:=anim.FOOT_CONTACT_CONSTRAINT_DEFAULT;contact.root,contact.joint,contact.end,contact.pelvis=ik.root,ik.joint,ik.end,ik.root
     testing.expect_value(t,anim.pose_profile_save(fmt.tprintf("%s/goals.pose",f.root),&f.assets.types,pose_id,{ik={ik},look={other,look},contacts={contact}}),asset.Error.None)
     testing.expect(t,host.assets_scan(&f.assets))
-    document,play:Program_Test_World;core.entities_init(&document.entities);core.entities_init(&play.entities);defer program_test_destroy(&document);defer program_test_destroy(&play)
-    tables:=[3]core.Table_Info{{type=core.Id,info=type_info_of(core.Id),offset=offset_of(Program_Test_World,ids)},{type=anim.Animation,info=type_info_of(anim.Animation),offset=offset_of(Program_Test_World,animations)},{type=anim.Pose_Modifiers,info=type_info_of(anim.Pose_Modifiers),offset=offset_of(Program_Test_World,modifiers)}}
-    storages:=[3]core.Storage_Info{{type=anim.Animation_Requests,info=type_info_of(anim.Animation_Requests),offset=offset_of(Program_Test_World,animation_requests)},{type=anim.Modifier_Requests,info=type_info_of(anim.Modifier_Requests),offset=offset_of(Program_Test_World,modifier_requests)},{type=anim.Modifier_Runtime,info=type_info_of(anim.Modifier_Runtime),offset=offset_of(Program_Test_World,modifier_runtime)}}
-    info:=core.World_Info{tables=tables[:],storages=storages[:]}
+    document,play:Program_Test_World;info:core.World_Info;defer program_test_worlds_destroy(&info,&document,&play)
+    if !program_test_worlds(t,&info,&document,&play) {return}
     core.create(&play.entities)
     for world in ([2]^Program_Test_World{&document,&play}) {
         entity:=core.create(&world.entities);core.add(&world.ids,entity,{value=17})
         modifier:=anim.POSE_MODIFIERS_DEFAULT;modifier.profile=pose_id;core.add(&world.modifiers,entity,modifier)
         target:=core.create(&world.entities);core.add(&world.ids,target,{value=18})
-        program_test_settle(world,nil,nil)
+        core.settle(&info,world,nil)
     }
     f.session.info,f.session.edit_world,f.session.mode=&info,&document,.Play;f.session.runs[0]={world=&play}
     requested:=request_defaults();authoring_test_register(f,t,"request",Request_Params,request,requested)

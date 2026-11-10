@@ -2,7 +2,6 @@ package anim
 
 import "core:fmt"
 import "core:log"
-import "core:os"
 import "core:testing"
 import "core:time"
 import "mirai:asset"
@@ -63,7 +62,7 @@ when #config(MIRAI_BENCH,false) {
 @(test)
 bench_animation_programs_64_bones :: proc(t:^testing.T) {
     REPEATS :: 10000
-    directory:=fmt.tprintf(".mirai/bench-animation-program-%d",os.get_pid());os.make_directory_all(directory);defer os.remove_all(directory)
+    directory:=base.test_folder(t,"bench-animation-program")
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     positions,rotations:[64][2]lib.Keyframe
     tracks:[128]asset.Animation_Track_Desc

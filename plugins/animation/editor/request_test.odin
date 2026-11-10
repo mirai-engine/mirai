@@ -55,7 +55,7 @@ request_test_character :: proc(f:^Pose_Bake_Test,t:^testing.T) -> core.Entity {
     core.add(&f.world.modifiers,f.rig,{profile=pose_id,weight=1,enabled=true})
     core.add(&f.world.meshes,f.rig,erender.Mesh_Renderer{mesh=mesh_id})
     friend:=core.create(&f.world.entities);core.add(&f.world.ids,friend,{value=18})
-    pose_bake_test_settle(&f.world,nil,nil)
+    core.settle(&f.info,&f.world,nil)
     return friend
 }
 

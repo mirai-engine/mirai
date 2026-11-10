@@ -10,9 +10,9 @@ import "mirai:host"
 import shapes "plugins:shapes/runtime"
 import mm "mirai:std/math"
 
-@(private)
+@(private="file")
 Shapes_Test_World :: struct {
-    entities:core.Entities,
+    using world:core.Test_World,
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),
@@ -25,8 +25,6 @@ Shapes_Test_World :: struct {
 @(private)
 Shapes_Test :: struct {
     world:Shapes_Test_World,
-    tables:[6]core.Table_Info,
-    info:core.World_Info,
     ref:core.World_Ref,
     app:host.App,
     selection:editor.Selection,
@@ -39,35 +37,21 @@ Shapes_Test :: struct {
 }
 
 @(private)
-shapes_test_open :: proc(f:^Shapes_Test) {
-    w:=&f.world
-    core.entities_init(&w.entities)
-    core.table_init(&w.ids,"Id");core.table_init(&w.names,"Name")
-    core.table_init(&w.transforms,"Transform");core.table_init(&w.parents,"Parent")
-    core.table_init(&w.shapes,"Shape");core.table_init(&w.brushes,"Shape_Brush")
-    f.tables={
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Shapes_Test_World,ids)},
-        {name="Name",type=core.Name,info=type_info_of(core.Name),offset=offset_of(Shapes_Test_World,names)},
-        {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Shapes_Test_World,transforms)},
-        {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Shapes_Test_World,parents)},
-        {name="Shape",type=shapes.Shape,info=type_info_of(shapes.Shape),offset=offset_of(Shapes_Test_World,shapes)},
-        {name="Shape_Brush",type=shapes.Shape_Brush,info=type_info_of(shapes.Shape_Brush),offset=offset_of(Shapes_Test_World,brushes)},
-    }
-    f.info=core.World_Info{entities=offset_of(Shapes_Test_World,entities),tables=f.tables[:]}
-    f.ref=core.world_ref(&f.world,&f.info)
+shapes_test_open :: proc(t:^testing.T,f:^Shapes_Test) -> bool {
+    if !core.test_world_init(t,&f.world,test_types) {return false}
+    f.ref=core.test_world_ref(&f.world)
     f.app={allocator=context.allocator}
     f.document={previous=&f.previous}
     editor.edits_reset(&f.edits,f.ref)
-    f.session={app=&f.app,info=&f.info,edit_world=&f.world,headless=true,selection=&f.selection,edits=&f.edits,viewport=&f.viewport,gui=&f.gui,document=&f.document,id_state=101}
+    f.session={app=&f.app,info=f.ref.info,edit_world=&f.world,headless=true,selection=&f.selection,edits=&f.edits,viewport=&f.viewport,gui=&f.gui,document=&f.document,id_state=101}
+    return true
 }
 
 @(private)
 shapes_test_close :: proc(f:^Shapes_Test) {
     editor.edits_free(&f.edits)
     delete(f.selection.entities)
-    w:=&f.world
-    core.table_destroy(&w.shapes);core.table_destroy(&w.brushes);core.table_destroy(&w.parents);core.table_destroy(&w.transforms)
-    core.table_destroy(&w.names);core.table_destroy(&w.ids);core.entities_destroy(&w.entities)
+    core.test_world_destroy(&f.world)
 }
 
 // A shape entity with Id 7 at the origin, which the history starts with.
@@ -79,7 +63,7 @@ shapes_test_shape :: proc(f:^Shapes_Test,shape:shapes.Shape) -> core.Entity {
     core.add(&w.names,e,core.name_make("Shape"))
     core.add(&w.transforms,e,core.TRANSFORM_IDENTITY)
     core.add(&w.shapes,e,shape)
-    core.world_settle(f.ref)
+    core.test_world_settle(w)
     editor.edits_reset(&f.edits,f.ref)
     return e
 }
@@ -97,7 +81,7 @@ shapes_test_bounds :: proc(shape:shapes.Shape) -> (lo,hi:[2]f32) {
 a_stamp_stroke_is_one_step_that_undo_and_redo_take_back_and_forth :: proc(t:^testing.T) {
     f:=new(Shapes_Test)
     defer free(f)
-    shapes_test_open(f)
+    if !shapes_test_open(t,f) {return}
     defer shapes_test_close(f)
     s,w:=&f.session,&f.world
     tool:Shapes_Tool;tool_ready(&tool);defer shapes_tool_free(&tool)
@@ -107,10 +91,10 @@ a_stamp_stroke_is_one_step_that_undo_and_redo_take_back_and_forth :: proc(t:^tes
     if !testing.expect(t,stroke_begin(stroke,f.ref,mm.TRANSFORM_IDENTITY,core.NONE,false,.Square,0.5,0,0.01,{},context.allocator)) {return}
     testing.expect_value(t,stroke_to(stroke,{0,0}),shapes.Shape_Error.None)
     testing.expect(t,stroke_write(s,&tool))
-    core.world_settle(f.ref)
+    core.test_world_settle(&f.world)
     testing.expect_value(t,stroke_to(stroke,{1.5,0}),shapes.Shape_Error.None)
     testing.expect(t,stroke_write(s,&tool))
-    core.world_settle(f.ref)
+    core.test_world_settle(&f.world)
     testing.expect_value(t,stroke_to(stroke,{3,0}),shapes.Shape_Error.None)
     testing.expect(t,stroke_write(s,&tool))
     stroke_end(s,&tool)
@@ -136,7 +120,7 @@ a_stamp_stroke_is_one_step_that_undo_and_redo_take_back_and_forth :: proc(t:^tes
 a_cut_that_splits_makes_a_second_shape_and_undo_restores_one :: proc(t:^testing.T) {
     f:=new(Shapes_Test)
     defer free(f)
-    shapes_test_open(f)
+    if !shapes_test_open(t,f) {return}
     defer shapes_test_close(f)
     s,w:=&f.session,&f.world
     bar:=shapes.SHAPE_DEFAULT
@@ -172,7 +156,7 @@ a_cut_that_splits_makes_a_second_shape_and_undo_restores_one :: proc(t:^testing.
 escape_puts_back_every_shape_a_cut_stroke_changed :: proc(t:^testing.T) {
     f:=new(Shapes_Test)
     defer free(f)
-    shapes_test_open(f)
+    if !shapes_test_open(t,f) {return}
     defer shapes_test_close(f)
     s,w:=&f.session,&f.world
     bar:=shapes.SHAPE_DEFAULT
@@ -186,11 +170,11 @@ escape_puts_back_every_shape_a_cut_stroke_changed :: proc(t:^testing.T) {
     for i in 0..=20 {
         testing.expect_value(t,stroke_to(stroke,{0.05*f32(i%3),-1.5+0.15*f32(i)}),shapes.Shape_Error.None)
         testing.expect(t,stroke_write(s,&tool))
-        core.world_settle(f.ref)
+        core.test_world_settle(&f.world)
     }
     testing.expect_value(t,len(w.shapes.values),2)
     stroke_cancel(s,&tool)
-    core.world_settle(f.ref)
+    core.test_world_settle(&f.world)
     testing.expect(t,!stroke.active)
     testing.expect_value(t,w.entities.alive,1)
     if testing.expect_value(t,len(w.shapes.values),1) {testing.expect(t,core.get(&w.shapes,e)^==bar)}
@@ -201,7 +185,7 @@ escape_puts_back_every_shape_a_cut_stroke_changed :: proc(t:^testing.T) {
 a_corner_drag_is_one_step_and_a_move_that_crosses_does_not_apply :: proc(t:^testing.T) {
     f:=new(Shapes_Test)
     defer free(f)
-    shapes_test_open(f)
+    if !shapes_test_open(t,f) {return}
     defer shapes_test_close(f)
     s,w:=&f.session,&f.world
     e:=shapes_test_shape(f,shapes.SHAPE_DEFAULT)
@@ -233,7 +217,7 @@ a_corner_drag_is_one_step_and_a_move_that_crosses_does_not_apply :: proc(t:^test
 shapes_api_stamps_and_moves_corners_as_steps_of_undo :: proc(t:^testing.T) {
     f:=new(Shapes_Test)
     defer free(f)
-    shapes_test_open(f)
+    if !shapes_test_open(t,f) {return}
     defer shapes_test_close(f)
     s,w:=&f.session,&f.world
     stamp_method:=api.Method{params_id=Stamp_Params,result_id=Stamp_Result}
@@ -288,7 +272,7 @@ shapes_api_stamps_and_moves_corners_as_steps_of_undo :: proc(t:^testing.T) {
 a_brush_placed_on_a_surface_is_one_step_and_a_child_with_an_id :: proc(t:^testing.T) {
     f:=new(Shapes_Test)
     defer free(f)
-    shapes_test_open(f)
+    if !shapes_test_open(t,f) {return}
     defer shapes_test_close(f)
     s,w:=&f.session,&f.world
     solid:=shapes_test_shape(f,shapes.Shape{kind=.Solid,uv_scale=1})

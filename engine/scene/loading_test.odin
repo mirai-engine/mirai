@@ -1,8 +1,6 @@
 package scene
 
-import "base:runtime"
 import "core:fmt"
-import "core:os"
 import "core:testing"
 import "core:thread"
 import "core:time"
@@ -18,7 +16,7 @@ import mm "mirai:std/math"
 
 @(private)
 Loading_World :: struct {
-    entities:core.Entities,
+    using world:core.Test_World,
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),
@@ -27,63 +25,12 @@ Loading_World :: struct {
     references:core.Table(Scene_Reference),
 }
 
-@(private)
-loading_init :: proc(data:rawptr,allocator:runtime.Allocator) -> bool {
-    w:=cast(^Loading_World)data
-    w^={}
-    core.table_init(&w.ids,"Id",allocator);core.table_init(&w.names,"Name",allocator);core.table_init(&w.transforms,"Transform",allocator)
-    core.table_init(&w.parents,"Parent",allocator);core.table_init(&w.models,"Loading_Model",allocator)
-    core.table_init(&w.references,"Scene_Reference",allocator)
-    return core.entities_init(&w.entities,allocator)
-}
-
-@(private)
-loading_destroy :: proc(data:rawptr) {
-    w:=cast(^Loading_World)data
-    core.table_destroy(&w.ids);core.table_destroy(&w.names);core.table_destroy(&w.transforms);core.table_destroy(&w.parents)
-    core.table_destroy(&w.models);core.table_destroy(&w.references)
-    core.entities_destroy(&w.entities)
-}
-
-@(private)
-loading_copy :: proc(dst,src:rawptr) -> bool {
-    d,s:=cast(^Loading_World)dst,cast(^Loading_World)src
-    return core.entities_copy(&d.entities,&s.entities) && core.table_copy(&d.ids,&s.ids) && core.table_copy(&d.names,&s.names) &&
-        core.table_copy(&d.transforms,&s.transforms) && core.table_copy(&d.parents,&s.parents) && core.table_copy(&d.models,&s.models) &&
-        core.table_copy(&d.references,&s.references)
-}
-
-@(private)
-loading_swap :: proc(a,b:rawptr) {
-    a,b:=cast(^Loading_World)a,cast(^Loading_World)b
-    a.entities,b.entities=b.entities,a.entities
-    core.table_swap(&a.ids,&b.ids);core.table_swap(&a.names,&b.names);core.table_swap(&a.transforms,&b.transforms);core.table_swap(&a.parents,&b.parents)
-    core.table_swap(&a.models,&b.models);core.table_swap(&a.references,&b.references)
-}
-
-@(private)
-loading_settle :: proc(world,shared,editor:rawptr) {
-    w:=cast(^Loading_World)world
-    core.table_settle(&w.ids,&w.entities);core.table_settle(&w.names,&w.entities);core.table_settle(&w.transforms,&w.entities);core.table_settle(&w.parents,&w.entities)
-    core.table_settle(&w.models,&w.entities);core.table_settle(&w.references,&w.entities)
-    core.entities_settle(&w.entities)
-}
-
-@(private)
-loading_clear :: proc(data:rawptr) -> bool {
-    w:=cast(^Loading_World)data
-    core.table_clear(&w.ids);core.table_clear(&w.names);core.table_clear(&w.transforms);core.table_clear(&w.parents)
-    core.table_clear(&w.models);core.table_clear(&w.references)
-    return core.entities_clear(&w.entities)
-}
-
 // A project in a temporary folder of assets, with job threads or without,
 // and a World of it its application made.
 @(private)
 Loading_Project :: struct {
     folder:string,
     types:asset.Types,
-    tables:[6]core.Table_Info,
     info:core.World_Info,
     assets:host.Assets,
     app:host.App,
@@ -92,23 +39,10 @@ Loading_Project :: struct {
 
 @(private)
 loading_open :: proc(t:^testing.T,p:^Loading_Project,name:string,threads:int) -> bool {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    p.folder=fmt.tprintf("%s/mirai-loading-%s-%d",directory,name,os.get_pid())
-    os.remove_all(p.folder)
-    if !testing.expect(t,os.make_directory_all(p.folder)==nil) {return false}
+    p.folder=base.test_folder(t,fmt.tprintf("loading-%s",name))
+    if p.folder=="" {return false}
+    p.info=core.test_info(t,Loading_World,test_types) or_return
     asset.types_init(&p.types)
-    p.tables={
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Loading_World,ids)},
-        {name="Name",type=core.Name,info=type_info_of(core.Name),offset=offset_of(Loading_World,names)},
-        {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Loading_World,transforms)},
-        {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Loading_World,parents)},
-        {name="Loading_Model",type=Loading_Model,info=type_info_of(Loading_Model),offset=offset_of(Loading_World,models)},
-        {name="Scene_Reference",type=Scene_Reference,info=type_info_of(Scene_Reference),offset=offset_of(Loading_World,references)},
-    }
-    p.info={entities=offset_of(Loading_World,entities),tables=p.tables[:],copy=loading_copy,swap=loading_swap,clear=loading_clear}
-    p.info.sizes[.World],p.info.aligns[.World]=size_of(Loading_World),align_of(Loading_World)
-    p.info.init[.World],p.info.destroy[.World]=loading_init,loading_destroy
-    core.world_info_index(&p.info)
     if !testing.expect(t,host.assets_init(&p.assets,{root=p.folder,capacity=64})) {return false}
     p.app={info=&p.info,assets=&p.assets,allocator=context.allocator}
     if threads>0 && !testing.expect(t,jobs.system_init(&p.app.jobs,{threads=threads})) {return false}
@@ -126,9 +60,7 @@ loading_close :: proc(p:^Loading_Project) {
     host.assets_marks_free(&p.app.asset_marks)
     host.assets_destroy(&p.assets)
     asset.types_destroy(&p.types)
-    core.world_schema_destroy(p.info.schema)
-    delete(p.info.tables_by_type);delete(p.info.storages_by_type)
-    os.remove_all(p.folder)
+    core.test_info_destroy(&p.info)
 }
 
 // A mesh of about bytes of clusters, with the material of its slot.
@@ -431,7 +363,7 @@ the_sections_loading_tell_how_far_they_are :: proc(t:^testing.T) {
         room:asset.Scene;asset.scene_init(&room,&p.types,asset.KIND_SCENE,ROOM);defer asset.scene_destroy(&room)
         asset.scene_entity_add(&room,1,0,"Model")
         asset.scene_set(&room,1,"Loading_Model",&Loading_Model{meshes[0]})
-        _,_,placed:=asset.scene_instantiate(&room,&lamp,LAMP,0)
+        _,placed:=asset.scene_instantiate(&room,&lamp,LAMP,0)
         testing.expect_value(t,placed,asset.Error.None)
         testing.expect_value(t,asset.scene_save(&room,fmt.tprintf("%s/room.scene",p.folder)),asset.Error.None)
     }
@@ -442,7 +374,7 @@ the_sections_loading_tell_how_far_they_are :: proc(t:^testing.T) {
     e:=core.create(&w.entities)
     core.add(&w.ids,e,core.Id{9})
     core.add(&w.references,e,Scene_Reference{scene=ROOM,rule=.Manual})
-    loading_settle(w,nil,nil)
+    core.settle(&p.info,w,nil)
     requests:Section_Requests
     loads:Section_Loads
     loading:Section_Loading
@@ -452,7 +384,7 @@ the_sections_loading_tell_how_far_they_are :: proc(t:^testing.T) {
         p.app.stats.frames+=1
         w:=cast(^Loading_World)world.data
         scene_sections(world,&p.app,&w.references,requests,loads,loading,{},{},nil,problems)
-        loading_settle(w,nil,nil)
+        core.settle(&p.info,w,nil)
     }
     // Its scene is read and asks for the prefab its instance follows.
     step(&p,world,&requests,&loads,&loading,&problems)

@@ -15,11 +15,13 @@ import "mirai:std/base"
 // client holds now is decided there. A new role starts the marks again.
 @(test)
 remote_follows_what_a_client_holds_on_a_server_and_a_new_role_clears_it :: proc(t:^testing.T) {
-    info:=net_test_info();defer delete(info.tables);defer delete(info.storages)
+    info,described:=net_test_info(t)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     world:Net_Test_World
-    net_test_init(&world,context.allocator)
-    defer net_test_destroy(&world)
-    e:=net_test_body(&world,1)
+    net_test_init(&world,&info)
+    defer info.destroy[.World](&world)
+    e:=net_test_body(&world,&info,1)
     app:=host.App{info=&info,allocator=context.allocator,tick_dt=1.0/60}
     defer {host.app_world_scratch_free(&app);delete(app.worlds)}
     network:wire.Sim_Network
@@ -31,10 +33,10 @@ remote_follows_what_a_client_holds_on_a_server_and_a_new_role_clears_it :: proc(
     ref:=core.world_ref(&world,&info)
     core.add(&world.objects,e,net_test_replicate(simulation=.Lent))
     net_test_own(&world,e,3)
-    net_test_settle(&world,nil,nil)
+    core.settle(&info,&world,nil)
     s.host_ready=true
     authority_follow(&s,ref)
-    net_test_settle(&world,nil,nil)
+    core.settle(&info,&world,nil)
     testing.expect(t,core.owned(core.read(&world.remotes),e),"what a connection owns and predicts is decided here")
 
     s.server.objects[1]={object=Object(1),entity=e}
@@ -42,18 +44,18 @@ remote_follows_what_a_client_holds_on_a_server_and_a_new_role_clears_it :: proc(
     defer core.value_free(&events,type_info_of(Net_Events))
     held:=[]wire.Command{{kind=.Authority_Changed,object=Object(1),connection=3}}
     server_commands(&s,ref,nil,held,&events,&world.remote)
-    net_test_settle(&world,nil,nil)
+    core.settle(&info,&world,nil)
     testing.expect(t,!core.owned(core.read(&world.remotes),e),"what a client holds is decided there")
     back:=[]wire.Command{{kind=.Authority_Changed,object=Object(1),connection=0}}
     server_commands(&s,ref,nil,back,&events,&world.remote)
-    net_test_settle(&world,nil,nil)
+    core.settle(&info,&world,nil)
     testing.expect(t,core.owned(core.read(&world.remotes),e),"and here again when it gives it back")
 
     server_commands(&s,ref,nil,held,&events,&world.remote)
-    net_test_settle(&world,nil,nil)
+    core.settle(&info,&world,nil)
     session_destroy(&s)
     authority_follow(&s,ref)
-    net_test_settle(&world,nil,nil)
+    core.settle(&info,&world,nil)
     testing.expect(t,core.count(&world.remotes)==0,"a session that ends leaves every entity to this end")
     s.host_ready=true // its host is still there for session_destroy
 }
@@ -62,11 +64,13 @@ remote_follows_what_a_client_holds_on_a_server_and_a_new_role_clears_it :: proc(
 // as their roles change.
 @(test)
 remote_follows_the_replicas_a_client_neither_predicts_nor_holds :: proc(t:^testing.T) {
-    info:=net_test_info();defer delete(info.tables);defer delete(info.storages)
+    info,described:=net_test_info(t)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     world:Net_Test_World
-    net_test_init(&world,context.allocator)
-    defer net_test_destroy(&world)
-    e:=net_test_body(&world,1)
+    net_test_init(&world,&info)
+    defer info.destroy[.World](&world)
+    e:=net_test_body(&world,&info,1)
     shared:=Net_Test_Shared{info=&info}
     defer phys.collider_meshes_destroy(&shared.colliders)
     app:=host.App{info=&info,allocator=context.allocator,tick_dt=1.0/60,shared=&shared}
@@ -83,15 +87,15 @@ remote_follows_the_replicas_a_client_neither_predicts_nor_holds :: proc(t:^testi
     testing.expect(t,!core.owned(core.read(&world.remotes),e),"someone else's replica is decided by the server")
     r.role=.Held
     replica_classify(&s,ref,r)
-    net_test_settle(&world,nil,nil)
+    core.settle(&info,&world,nil)
     testing.expect(t,core.owned(core.read(&world.remotes),e),"what it holds is decided here")
     r.role=.Predicted
     replica_classify(&s,ref,r)
-    net_test_settle(&world,nil,nil)
+    core.settle(&info,&world,nil)
     testing.expect(t,core.owned(core.read(&world.remotes),e),"and what it predicts")
     r.role=.Shown
     replica_classify(&s,ref,r)
-    net_test_settle(&world,nil,nil)
+    core.settle(&info,&world,nil)
     testing.expect(t,!core.owned(core.read(&world.remotes),e))
 }
 

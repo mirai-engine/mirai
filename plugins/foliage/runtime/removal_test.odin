@@ -13,46 +13,28 @@ import sim "plugins:physics/runtime/sim"
 
 @(private="file")
 Removal_World :: struct {
-    entities:core.Entities,
+    using world:core.Test_World,
     ids:core.Table(core.Id),
     parents:core.Table(core.Parent),
     foliages:core.Table(Foliage),
     removed:core.Table(Foliage_Removed),
+    data:Foliage_Data,
+    removals:Foliage_Removals,
+    requests:Foliage_Requests,
+    network:core.Network,
 }
 
 @(private="file")
 Removal_Test :: struct {
-    w:Removal_World,
-    info:core.World_Info,
-    tables:[4]core.Table_Info,
-    data:Foliage_Data,
-    removals:Foliage_Removals,
-    requests:Foliage_Requests,
+    using w:Removal_World,
     problems:core.Problems,
-    network:core.Network,
     app:host.App,
 }
 
+// A world of Foliage and what is taken out of them, with one source of id: nil when it could not be made.
 @(private="file")
-removal_settle :: proc(w:^Removal_World) {
-    core.table_settle(&w.ids,&w.entities);core.table_settle(&w.parents,&w.entities)
-    core.table_settle(&w.foliages,&w.entities);core.table_settle(&w.removed,&w.entities)
-    core.entities_settle(&w.entities)
-}
-
-// A world of Foliage and what is taken out of them, with one source of id.
-@(private="file")
-removal_init :: proc(r:^Removal_Test,id:base.Asset_Id) -> ^Source {
-    w:=&r.w
-    core.entities_init(&w.entities)
-    core.table_init(&w.ids,"Id");core.table_init(&w.parents,"Parent");core.table_init(&w.foliages,"Foliage");core.table_init(&w.removed,"Foliage_Removed")
-    r.tables={
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Removal_World,ids)},
-        {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Removal_World,parents)},
-        {name="Foliage",type=Foliage,info=type_info_of(Foliage),offset=offset_of(Removal_World,foliages)},
-        {name="Foliage_Removed",type=Foliage_Removed,info=type_info_of(Foliage_Removed),offset=offset_of(Removal_World,removed)},
-    }
-    r.info=core.World_Info{entities=offset_of(Removal_World,entities),tables=r.tables[:]}
+removal_init :: proc(t:^testing.T,r:^Removal_Test,id:base.Asset_Id) -> ^Source {
+    if !core.test_world_init(t,&r.w,test_types) {return nil}
     r.app=host.App{allocator=context.allocator}
     r.network.role=.Server
     append(&r.data.entries,Data_Entry{id=id,epoch=1})
@@ -60,15 +42,7 @@ removal_init :: proc(r:^Removal_Test,id:base.Asset_Id) -> ^Source {
 }
 
 @(private="file")
-removal_destroy :: proc(r:^Removal_Test) {
-    w:=&r.w
-    core.table_destroy(&w.ids);core.table_destroy(&w.parents);core.table_destroy(&w.foliages);core.table_destroy(&w.removed)
-    core.entities_destroy(&w.entities)
-    for &entry in r.data.entries {source_destroy(&entry.source)}
-    delete(r.data.entries)
-    removals_destroy(&r.removals)
-    delete(r.requests.removes.items)
-}
+removal_destroy :: proc(r:^Removal_Test) {core.test_world_destroy(&r.w)}
 
 // A Foliage of the source of the world, with an Id when id is not 0.
 @(private="file")
@@ -76,15 +50,15 @@ removal_foliage :: proc(r:^Removal_Test,id:base.Entity_Id) -> core.Entity {
     e:=core.create(&r.w.entities)
     if id!=0 {core.add(&r.w.ids,e,core.Id{value=id})}
     core.add(&r.w.foliages,e,Foliage{source=r.data.entries[0].id})
-    removal_settle(&r.w)
+    core.test_world_settle(&r.w)
     return e
 }
 
 @(private="file")
 removal_step :: proc(r:^Removal_Test) {
     w:=&r.w
-    foliage_removals(&r.removals,&r.requests,&w.removed,core.read(&w.foliages),core.read(&w.ids),core.ref(&r.data),core.ref(&r.network),core.commands(w,&r.info),r.app.allocator,&r.problems)
-    removal_settle(w)
+    foliage_removals(&r.removals,&r.requests,&w.removed,core.read(&w.foliages),core.read(&w.ids),core.ref(&r.data),core.ref(&r.network),core.commands(w,core.test_world_info(w)),r.app.allocator,&r.problems)
+    core.test_world_settle(w)
 }
 
 // The game asks to take out a manual tree and generated instances: the end
@@ -95,7 +69,8 @@ removal_step :: proc(r:^Removal_Test) {
 instances_taken_out_are_one_entity_for_each_cell_that_the_cell_leaves_out :: proc(t:^testing.T) {
     r:Removal_Test
     defer removal_destroy(&r)
-    s:=removal_init(&r,{61,62})
+    s:=removal_init(t,&r,{61,62})
+    if s==nil {return}
     s.info.seed=7
     tree:=source_type_add(s,"tree",{2,2})
     tree.density,tree.collision,tree.size=0.01,.Capsule,{0.3,4,0}
@@ -178,7 +153,7 @@ instances_taken_out_are_one_entity_for_each_cell_that_the_cell_leaves_out :: pro
     for row in 0..<core.count(removed) {
         if core.at(removed,row).coord==coord {core.destroy(&r.w.entities,core.entity_at(removed,row));break}
     }
-    removal_settle(&r.w)
+    core.test_world_settle(&r.w)
     removal_step(&r)
     gone=removed_owner(&r.removals,wood)
     testing.expect(t,gone!=nil && len(gone.items)==2)
@@ -193,7 +168,8 @@ instances_taken_out_are_one_entity_for_each_cell_that_the_cell_leaves_out :: pro
 thousands_of_instances_taken_out_of_a_few_cells_are_a_few_entities :: proc(t:^testing.T) {
     r:Removal_Test
     defer removal_destroy(&r)
-    s:=removal_init(&r,{63,64})
+    s:=removal_init(t,&r,{63,64})
+    if s==nil {return}
     s.info.seed=3
     grass:=source_type_add(s,"grass",{1,1})
     grass.density=1
@@ -243,7 +219,8 @@ thousands_of_instances_taken_out_of_a_few_cells_are_a_few_entities :: proc(t:^te
 a_saved_game_takes_out_the_same_instance_after_its_source_is_edited :: proc(t:^testing.T) {
     r:Removal_Test
     defer removal_destroy(&r)
-    s:=removal_init(&r,{65,66})
+    s:=removal_init(t,&r,{65,66})
+    if s==nil {return}
     source_type_add(s,"bush",{3,3})
     rotation:=u32(mm.quat_pack(1,10))
     _,first:=source_instance_add(s,0,{2,0,2},rotation,{1,1})
@@ -277,7 +254,8 @@ a_saved_game_takes_out_the_same_instance_after_its_source_is_edited :: proc(t:^t
     // Loading the game: a world with the edited level and the saved entity.
     loaded:Removal_Test
     defer removal_destroy(&loaded)
-    level:=removal_init(&loaded,{65,66})
+    level:=removal_init(t,&loaded,{65,66})
+    if level==nil {return}
     file:asset.Asset
     testing.expect_value(t,asset.asset_open(&file,bytes),asset.Error.None)
     _,read:=source_read(level,&file,&types)
@@ -287,7 +265,7 @@ a_saved_game_takes_out_the_same_instance_after_its_source_is_edited :: proc(t:^t
     page:=core.create(&loaded.w.entities)
     core.add(&loaded.w.parents,page,core.Parent{entity=again})
     core.add(&loaded.w.removed,page,saved)
-    removal_settle(&loaded.w)
+    core.test_world_settle(&loaded.w)
     removal_step(&loaded)
     ids,_:=removed_cell(removed_owner(&loaded.removals,again),{0,0})
     work:Build_Work

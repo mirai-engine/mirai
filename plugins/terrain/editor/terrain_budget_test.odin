@@ -8,40 +8,20 @@ import sim "plugins:physics/runtime/sim"
 import terrain "plugins:terrain/runtime"
 import "mirai:std/base"
 
-@(private)
+@(private="file")
 Budget_World :: struct {
-    entities:core.Entities,
+    using world:core.Test_World,
     terrains:core.Table(terrain.Terrain),
     data:terrain.Terrain_Data,
     settings:terrain.Terrain_Settings,
     physics:phys.Physics_State,
-    tables:[1]core.Table_Info,
-    storages:[3]core.Storage_Info,
-    info:core.World_Info,
-}
-
-@(private)
-budget_world_init :: proc(w:^Budget_World) {
-    core.entities_init(&w.entities);core.table_init(&w.terrains,"Terrain")
-    w.tables={{type=terrain.Terrain,info=type_info_of(terrain.Terrain),offset=offset_of(Budget_World,terrains)}}
-    w.storages={
-        {type=terrain.Terrain_Data,info=type_info_of(terrain.Terrain_Data),offset=offset_of(Budget_World,data)},
-        {type=terrain.Terrain_Settings,info=type_info_of(terrain.Terrain_Settings),offset=offset_of(Budget_World,settings)},
-        {type=phys.Physics_State,info=type_info_of(phys.Physics_State),offset=offset_of(Budget_World,physics)},
-    }
-    w.info={entities=offset_of(Budget_World,entities),tables=w.tables[:],storages=w.storages[:]}
-    w.data.entries=make([dynamic]terrain.Data_Source)
-}
-
-@(private)
-budget_world_destroy :: proc(w:^Budget_World) {
-    terrain.terrain_data_free(&w.data);phys.state_destroy(&w.physics)
-    core.table_destroy(&w.terrains);core.entities_destroy(&w.entities)
 }
 
 @(test)
 terrain_editor_budget_counts_sources_chunks_and_replacement_without_double_charging :: proc(t:^testing.T) {
-    w:Budget_World;budget_world_init(&w);defer budget_world_destroy(&w)
+    w:Budget_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
     // A Heightfield costs the samples of its pages that hold their own values.
     w.settings={sources=2,chunks=8,samples=13000}
     ids:=[2]base.Asset_Id{{11,12},{13,14}}
@@ -59,7 +39,7 @@ terrain_editor_budget_counts_sources_chunks_and_replacement_without_double_charg
     page,cost:=terrain.source_cost(&w.data.entries[0].source),terrain.source_cost(&source)
     testing.expect(t,page==25 && cost==81)
     session:editor.Session
-    world:=core.world_ref(&w,&w.info)
+    world:=core.test_world_ref(&w)
     testing.expect_value(t,terrain_vertex_budget(world,{}),13000-2*page)
     testing.expect_value(t,terrain_vertex_budget(world,ids[0]),13000-page)
     testing.expect(t,!terrain_budget(&session,world,&source))
@@ -76,13 +56,15 @@ terrain_editor_budget_counts_sources_chunks_and_replacement_without_double_charg
 
 @(test)
 terrain_editor_budget_leaves_chunks_and_colliders_of_a_heightfield_to_the_runtime :: proc(t:^testing.T) {
-    w:Budget_World;budget_world_init(&w);defer budget_world_destroy(&w)
+    w:Budget_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
     testing.expect(t,sim.world_init(&w.physics.world,{body_capacity=4,shape_capacity=4,contact_capacity=4,joint_capacity=1,character_capacity=1,hull_capacity=1,mesh_capacity=1,heightfield_capacity=16}))
     w.physics.ready=true
-    w.settings.chunks=64
+    w.settings={chunks=64}
     source:terrain.Source;defer terrain.source_destroy(&source)
     testing.expect(t,terrain.source_make(&source,.Heightfield,{1025,1,1025},1,64))
-    world:=core.world_ref(&w,&w.info)
+    world:=core.test_world_ref(&w)
     session:editor.Session
     testing.expect(t,terrain_budget(&session,world,&source),"256 chunks show as nodes past 64 pieces, and the nearest take the 16 heightfields")
     // A Volume has no nodes to show in place of its chunks.

@@ -2,7 +2,6 @@ package terrain
 
 import "base:runtime"
 import "core:fmt"
-import "core:os"
 import "core:slice"
 import "core:testing"
 import "mirai:asset"
@@ -10,12 +9,6 @@ import "mirai:core"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/geom"
-
-@(private)
-source_test_path :: proc(name:string) -> string {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    return fmt.tprintf("%s/mirai-terrain-%d-%s",directory,os.get_pid(),name)
-}
 
 @(test)
 terrain_sources_save_load_and_clone_preserve_both_representations :: proc(t:^testing.T) {
@@ -29,7 +22,7 @@ terrain_sources_save_load_and_clone_preserve_both_representations :: proc(t:^tes
         original.layers[0].material={31,u64(kind)}
         at:=kind==.Heightfield?[3]int{8,0,1}:[3]int{8,1,0}
         testing.expect(t,source_set(&original,at,-0.75))
-        path:=source_test_path(fmt.tprintf("%v.terrain",kind));defer os.remove(path)
+        path:=fmt.tprintf("%s/%v.terrain",base.test_folder(t,"terrain"),kind)
         id:=base.Asset_Id{123,u64(kind)+4}
         testing.expect_value(t,source_save(&original,path,id,&types),asset.Error.None)
         got,ok:=source_load(&loaded,path,&types)
@@ -65,10 +58,11 @@ terrain_sources_reject_invalid_dimensions_values_and_unavailable_memory :: proc(
     testing.expect(t,source_make(&source,.Heightfield,{5,1,5},1,4))
     source.heights.pages[0].fill=f32(0h7fc00000)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    testing.expect_value(t,source_save(&source,source_test_path("invalid.terrain"),{1,2},&types),asset.Error.Invalid)
+    path:=fmt.tprintf("%s/invalid.terrain",base.test_folder(t,"terrain"))
+    testing.expect_value(t,source_save(&source,path,{1,2},&types),asset.Error.Invalid)
     source.heights.pages[0].fill=0
     testing.expect(t,source_set(&source,{0,0,0},HEIGHT_LIMIT+1))
-    testing.expect_value(t,source_save(&source,source_test_path("invalid.terrain"),{1,2},&types),asset.Error.Invalid)
+    testing.expect_value(t,source_save(&source,path,{1,2},&types),asset.Error.Invalid)
 }
 
 @(test)

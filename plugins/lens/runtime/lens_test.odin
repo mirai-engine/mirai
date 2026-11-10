@@ -8,32 +8,13 @@ import volume "mirai:engine/volume"
 
 @(private="file")
 Fixture :: struct {
-    es:core.Entities,
+    using world:core.Test_World,
     lenses:core.Table(Lens),
     zones:core.Table(Lens_Volume),
     places:core.Table(volume.Volume),
     worlds:core.Table(core.World_Transform),
     exposures:core.Table(render.Exposure),
     view_volumes:core.Table(render.View_Volume),
-}
-
-@(private="file")
-fixture_init :: proc(f:^Fixture) {
-    core.entities_init(&f.es)
-    core.table_init(&f.lenses,"Lens");core.table_init(&f.zones,"Lens_Volume");core.table_init(&f.places,"Volume")
-    core.table_init(&f.worlds,"World_Transform");core.table_init(&f.exposures,"Exposure");core.table_init(&f.view_volumes,"View_Volume")
-}
-
-@(private="file")
-fixture_destroy :: proc(f:^Fixture) {
-    core.table_destroy(&f.view_volumes);core.table_destroy(&f.exposures);core.table_destroy(&f.worlds)
-    core.table_destroy(&f.places);core.table_destroy(&f.zones);core.table_destroy(&f.lenses);core.entities_destroy(&f.es)
-}
-
-@(private="file")
-settle :: proc(f:^Fixture) {
-    core.table_settle(&f.lenses,&f.es);core.table_settle(&f.zones,&f.es);core.table_settle(&f.places,&f.es)
-    core.table_settle(&f.worlds,&f.es);core.table_settle(&f.exposures,&f.es);core.table_settle(&f.view_volumes,&f.es)
 }
 
 @(private="file")
@@ -74,16 +55,18 @@ the_circle_of_confusion_follows_the_aperture_and_the_focal_length :: proc(t:^tes
 // View_Volume there; through a camera with its own Lens and Exposure, those.
 @(test)
 a_camera_with_its_own_lens_and_exposure_keeps_them :: proc(t:^testing.T) {
-    f:Fixture;fixture_init(&f);defer fixture_destroy(&f)
-    zone:=core.create(&f.es)
+    f:Fixture
+    if !core.test_world_init(t,&f,test_types) {return}
+    defer core.test_world_destroy(&f)
+    zone:=core.create(&f.entities)
     core.add(&f.zones,zone,Lens_Volume{lens={bloom=0.04,focus=10,sensor=0.024}})
     view_volume:=render.VIEW_VOLUME_DEFAULT
     view_volume.exposure.aperture,view_volume.exposure.shutter=2.8,1.0/60
     core.add(&f.view_volumes,zone,view_volume)
     core.add(&f.worlds,zone,core.World_Transform{transform={rotation=1,scale=1}})
-    cam:=core.create(&f.es)
+    cam:=core.create(&f.entities)
     core.add(&f.worlds,cam,core.World_Transform{transform={rotation=1,scale=1}})
-    settle(&f)
+    core.test_world_settle(&f)
     free:=look(&f,core.View{position={0,1,0},camera=core.NONE})
     testing.expect(t,free.used)
     testing.expect_value(t,free.lens.bloom,f32(0.04))
@@ -93,13 +76,13 @@ a_camera_with_its_own_lens_and_exposure_keeps_them :: proc(t:^testing.T) {
     exposure:=render.EXPOSURE_DEFAULT
     exposure.aperture=1.4
     core.add(&f.exposures,cam,exposure)
-    settle(&f)
+    core.test_world_settle(&f)
     through:=look(&f,core.View{camera=cam})
     testing.expect(t,through.used && through.lens.depth_of_field && through.lens.bloom==0)
     testing.expect_value(t,through.aperture,f32(1.4))
     // A lens with every effect off draws nothing.
-    plain:=core.create(&f.es)
+    plain:=core.create(&f.entities)
     core.add(&f.lenses,plain,LENS_DEFAULT)
-    settle(&f)
+    core.test_world_settle(&f)
     testing.expect(t,!look(&f,core.View{camera=plain}).used)
 }

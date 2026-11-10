@@ -2,7 +2,6 @@ package terrain_editor
 
 import "core:fmt"
 import "core:math/linalg"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -15,35 +14,17 @@ import "mirai:std/geom"
 import mm "mirai:std/math"
 import "mirai:std/serial"
 
-@(private)
-Operand_Test_World :: struct {using base:Create_Test_World,worlds:core.Table(core.World_Transform),overrides:core.Table(erender.Material_Override)}
-
-@(private)
-operand_test_tables :: proc() -> [8]core.Table_Info {
-    tables:[8]core.Table_Info
-    shared:=create_test_tables()
-    copy(tables[:],shared[:])
-    for &table in tables[:6] {table.offset+=offset_of(Operand_Test_World,base)}
-    tables[6]={name="World_Transform",type=core.World_Transform,info=type_info_of(core.World_Transform),offset=offset_of(Operand_Test_World,worlds)}
-    tables[7]={name="Material_Override",type=erender.Material_Override,info=type_info_of(erender.Material_Override),offset=offset_of(Operand_Test_World,overrides)}
-    return tables
-}
-
 @(test)
 terrain_conversion_requires_its_owner_to_remain_selected :: proc(t:^testing.T) {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-terrain-convert-selection-%d",directory,os.get_pid())
+    root:=base.test_folder(t,"terrain")
     path:=fmt.tprintf("%s/heightfield.terrain",root)
-    testing.expect_value(t,os.make_directory_all(root),nil)
-    defer os.remove(root);defer os.remove(path)
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
     defer host.assets_destroy(&assets)
     world:Create_Test_World
-    create_test_world_init(&world);defer create_test_world_destroy(&world)
-    tables:=create_test_tables()
-    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:]}
-    ref:=core.world_ref(&world,&info)
+    if !core.test_world_init(t,&world,test_types) {return}
+    defer core.test_world_destroy(&world)
+    ref:=core.test_world_ref(&world)
     source:terrain.Source;defer terrain.source_destroy(&source)
     if !testing.expect(t,terrain.source_make(&source,.Heightfield,{5,1,5},1,4)) {return}
     id:=base.Asset_Id{61,62};source.revision=1
@@ -64,7 +45,7 @@ terrain_conversion_requires_its_owner_to_remain_selected :: proc(t:^testing.T) {
     edits:editor.Edits;defer editor.edits_free(&edits)
     editor.edits_reset(&edits,ref)
     app:=host.App{allocator=context.allocator,assets=&assets}
-    session:=editor.Session{app=&app,info=&info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits}
+    session:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits}
     tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
     tool.assets=&assets;tool.stroke.id,tool.stroke.entity,tool.stroke.revision=id,owner,1
     if !testing.expect(t,terrain.source_clone(&tool.stroke.source,&source)) {return}
@@ -105,24 +86,18 @@ test_held :: proc(t:^testing.T,assets:^host.Assets,relative:string) -> []u8 {
 
 @(test)
 terrain_boolean_consumes_a_transformed_operand_and_undo_restores_geometry_materials_and_selection :: proc(t:^testing.T) {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-terrain-operand-%d",directory,os.get_pid())
+    root:=base.test_folder(t,"terrain")
     path:=fmt.tprintf("%s/solid.terrain",root)
-    testing.expect_value(t,os.make_directory_all(root),nil)
-    defer os.remove(root);defer os.remove(path)
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=16})) {return}
     defer host.assets_destroy(&assets)
     for scenario in 0..<3 {
         brush:=scenario==1?terrain.Brush_Kind.Subtract:.Union
         shared_overrides:=scenario==2
-        world:Operand_Test_World
-        create_test_world_init(&world.base);defer create_test_world_destroy(&world.base)
-        core.table_init(&world.worlds,"World_Transform");defer core.table_destroy(&world.worlds)
-        core.table_init(&world.overrides,"Material_Override");defer core.table_destroy(&world.overrides)
-        tables:=operand_test_tables()
-        info:=core.World_Info{entities=offset_of(Operand_Test_World,base)+offset_of(Create_Test_World,entities),tables=tables[:]}
-        ref:=core.world_ref(&world,&info)
+        world:Create_Test_World
+        if !core.test_world_init(t,&world,test_types) {return}
+        defer core.test_world_destroy(&world)
+        ref:=core.test_world_ref(&world)
         geometry:geom.Mesh_Buffer
         geom.mesh_buffer_init(&geometry);defer geom.mesh_buffer_destroy(&geometry)
         geom.cube_build(&geometry,{8,6,8})
@@ -176,7 +151,7 @@ terrain_boolean_consumes_a_transformed_operand_and_undo_restores_geometry_materi
         editor.edits_reset(&edits,ref)
         app:=host.App{allocator=context.allocator,assets=&assets}
         document:editor.Document
-        session:=editor.Session{app=&app,info=&info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,document=&document}
+        session:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,document=&document}
         tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
         tool.brush=brush
         terrain_sync(&session,&tool,core.read(&world.terrains),app.assets)

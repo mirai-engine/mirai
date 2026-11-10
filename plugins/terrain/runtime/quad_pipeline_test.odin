@@ -3,7 +3,6 @@ package terrain
 import "base:runtime"
 import "core:fmt"
 import "core:math"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -16,23 +15,19 @@ import "mirai:std/jobs"
 // streaming source at viewer when it is given.
 @(private="file")
 quad_tick :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,settings:Terrain_Settings,view:=core.View{}) {
-    c:=terrain_test_tables(w)
-    physics:=w.physics_settings
-    if physics=={} {physics=phys.Physics_Settings{bodies=256,shapes=256,contacts=64,joints=1,characters=1,hulls=1,meshes=256,heightfields=256}}
-    terrain_update(c.commands,&w.terrains,c.chunks,c.locals,c.parents,c.ids,c.colliders,c.meshes,c.tints,c.overrides,&w.data,resident,&w.requests,&w.digs,settings,app,{playing=true},{phase=.Fixed},view,core.read(&w.poses),core.ref(&w.sources),{},physics,{},nil,&w.problems,{})
-    terrain_test_world_settle(w)
-    phys.physics_step(&w.physics,{&physics},&w.body_requests,&w.events,&w.collision_meshes,app,{},
-        core.read(&w.rigids),core.read(&w.colliders),core.read(&w.characters),core.read(&w.moves),&w.joints,
-        core.read(&w.statics),core.read(&w.parents),core.read(&w.names),&w.locals,&w.body_states,core.read(&w.replicas),&w.character_states,&w.joint_states,{},nil,{},{},nil,nil,&w.problems,{},{},{},{},{},{})
-    terrain_test_world_settle(w)
+    if w.settings=={} {w.settings={bodies=256,shapes=256,contacts=64,joints=1,characters=1,hulls=1,meshes=256,heightfields=256}}
+    test_step(&w.terrain,core.commands_of(core.test_world_ref(&w.w)),resident,app,&w.problems,settings,view=view)
+    core.test_world_settle(&w.w)
+    terrain_test_physics(w,app)
+    core.test_world_settle(&w.w)
 }
 
 @(private="file")
 quad_viewer :: proc(w:^Terrain_Test_World,position:[3]f32) {
-    if w.sources.count==1 && w.sources.items[0].position==position {return}
-    w.sources.items[0]={position,position,0}
-    w.sources.count=1
-    w.sources.revision+=1
+    if w.streaming.count==1 && w.streaming.items[0].position==position {return}
+    w.streaming.items[0]={position,position,0}
+    w.streaming.count=1
+    w.streaming.revision+=1
 }
 
 @(private="file")
@@ -65,7 +60,6 @@ quad_bump :: proc "contextless" (x,z:int) -> f32 {return f32((x*7+z*3)%5)*0.125}
 
 @(private="file")
 quad_source :: proc(t:^testing.T,root:string,samples,cells:int,id:base.Asset_Id,base_height:f32=0) {
-    os.make_directory_all(root)
     source:Source;testing.expect(t,source_make(&source,.Heightfield,{samples,1,samples},1,cells));defer source_destroy(&source)
     for z in 0..<samples {for x in 0..<samples {testing.expect(t,source_set(&source,{x,0,z},base_height+quad_bump(x,z)))}}
     source.revision=1
@@ -78,11 +72,10 @@ quad_owner :: proc(w:^Terrain_Test_World,id:base.Asset_Id,position:[3]f32={}) ->
     owner:=core.create(&w.entities)
     place:=core.TRANSFORM_IDENTITY
     place.position=position
-    core.add(&w.locals,owner,place)
-    core.add(&w.poses,owner,core.World_Transform{transform={position=place.position,rotation=place.rotation,scale=place.scale}})
+    core.add(&w.transforms,owner,place)
+    core.add(&w.worlds,owner,core.World_Transform{transform={position=place.position,rotation=place.rotation,scale=place.scale}})
     core.add(&w.terrains,owner,Terrain{source=id,solid=true})
-    core.table_settle(&w.poses,&w.entities)
-    terrain_test_world_settle(w)
+    core.test_world_settle(&w.w)
     return owner
 }
 
@@ -90,15 +83,16 @@ quad_owner :: proc(w:^Terrain_Test_World,id:base.Asset_Id,position:[3]f32={}) ->
 // terrain covers its region once at every tick as the viewer crosses it.
 @(test)
 a_streamed_terrain_never_disappears_far_away_and_covers_itself_once_as_the_viewer_crosses :: proc(t:^testing.T) {
-    root:=source_test_path("quadtree");defer os.remove_all(root)
+    root:=base.test_folder(t,"terrain")
     id:=base.Asset_Id{321,322}
     quad_source(t,root,257,16,id)
     counter:=Terrain_Test_Allocator{owner=runtime.heap_allocator()}
     context.allocator={terrain_test_allocator,&counter}
     assets:host.Assets;testing.expect(t,host.assets_init(&assets,{root=root,capacity=1024}));defer host.assets_destroy(&assets)
     app:=host.App{assets=&assets,allocator=context.allocator}
-    w:Terrain_Test_World;terrain_test_world_init(&w);defer terrain_test_world_free(&w)
-    core.table_init(&w.poses,"World_Transform")
+    w:Terrain_Test_World
+    if !terrain_test_world_init(t,&w) {return}
+    defer terrain_test_world_free(&w)
     resident:Terrain_Resident;defer terrain_resident_free(&resident)
     quad_owner(&w,id)
     settings:=Terrain_Settings{resident_distance=40}
@@ -118,9 +112,9 @@ a_streamed_terrain_never_disappears_far_away_and_covers_itself_once_as_the_viewe
     testing.expect_value(t,len(w.statics.values),nodes+chunks)
     s:=&w.data.entries[0].source
     testing.expect(t,grid_dense(&s.heights)<len(s.heights.pages)*PAGE*PAGE/2,"the pages far from the viewer are not in memory")
-    hit,ok:=phys.raycast({&w.physics},corner+{0,20,0},{0,-1,0})
+    hit,ok:=phys.raycast({&w.state},corner+{0,20,0},{0,-1,0})
     testing.expect(t,ok && abs(hit.point.y)<1)
-    _,ok=phys.raycast({&w.physics},{110,20,110},{0,-1,0})
+    _,ok=phys.raycast({&w.state},{110,20,110},{0,-1,0})
     testing.expect(t,!ok,"a node has no collider")
     // A frame that changes nothing builds and allocates nothing.
     calls,built:=counter.requests,resident.stats.built
@@ -138,9 +132,9 @@ a_streamed_terrain_never_disappears_far_away_and_covers_itself_once_as_the_viewe
         }
     }
     quad_settle(&w,&resident,&app,settings)
-    hit,ok=phys.raycast({&w.physics},{110,20,110},{0,-1,0})
+    hit,ok=phys.raycast({&w.state},{110,20,110},{0,-1,0})
     testing.expect(t,ok,"the chunks near the viewer collide")
-    _,ok=phys.raycast({&w.physics},corner+{0,20,0},{0,-1,0})
+    _,ok=phys.raycast({&w.state},corner+{0,20,0},{0,-1,0})
     testing.expect(t,!ok)
     testing.expect_value(t,w.problems.count,0)
 }
@@ -149,13 +143,14 @@ a_streamed_terrain_never_disappears_far_away_and_covers_itself_once_as_the_viewe
 // built: its distance takes the heights of its samples.
 @(test)
 an_elevated_chunk_becomes_resident_near_a_viewer_before_it_is_built :: proc(t:^testing.T) {
-    root:=source_test_path("elevated");defer os.remove_all(root)
+    root:=base.test_folder(t,"terrain")
     id:=base.Asset_Id{323,324}
     quad_source(t,root,129,16,id,800)
     assets:host.Assets;testing.expect(t,host.assets_init(&assets,{root=root,capacity=256}));defer host.assets_destroy(&assets)
     app:=host.App{assets=&assets,allocator=context.allocator}
-    w:Terrain_Test_World;terrain_test_world_init(&w);defer terrain_test_world_free(&w)
-    core.table_init(&w.poses,"World_Transform")
+    w:Terrain_Test_World
+    if !terrain_test_world_init(t,&w) {return}
+    defer terrain_test_world_free(&w)
     resident:Terrain_Resident;defer terrain_resident_free(&resident)
     quad_owner(&w,id)
     quad_viewer(&w,{0,801,0})
@@ -163,7 +158,7 @@ an_elevated_chunk_becomes_resident_near_a_viewer_before_it_is_built :: proc(t:^t
     quad_tick(&w,&resident,&app,settings)
     for range in w.data.entries[0].ranges {testing.expect(t,range.x>=800 && range.y<=801)}
     quad_settle(&w,&resident,&app,settings)
-    hit,ok:=phys.raycast({&w.physics},{0,900,0},{0,-1,0})
+    hit,ok:=phys.raycast({&w.state},{0,900,0},{0,-1,0})
     testing.expectf(t,ok && abs(hit.point.y-800)<1,"a viewer standing on it has ground: %v",hit.point)
     near:=0
     for node in resident.owners[0].nodes[:64] {if node.cut {near+=1}}
@@ -174,13 +169,14 @@ an_elevated_chunk_becomes_resident_near_a_viewer_before_it_is_built :: proc(t:^t
 // as coarser nodes, nearest first: nothing goes, whatever their index.
 @(test)
 past_the_chunk_budget_far_chunks_show_as_nodes_by_distance_not_by_index :: proc(t:^testing.T) {
-    root:=source_test_path("budget-nodes");defer os.remove_all(root)
+    root:=base.test_folder(t,"terrain")
     id:=base.Asset_Id{325,326}
     quad_source(t,root,129,16,id)
     assets:host.Assets;testing.expect(t,host.assets_init(&assets,{root=root,capacity=256}));defer host.assets_destroy(&assets)
     app:=host.App{assets=&assets,allocator=context.allocator}
-    w:Terrain_Test_World;terrain_test_world_init(&w);defer terrain_test_world_free(&w)
-    core.table_init(&w.poses,"World_Transform")
+    w:Terrain_Test_World
+    if !terrain_test_world_init(t,&w) {return}
+    defer terrain_test_world_free(&w)
     resident:Terrain_Resident;defer terrain_resident_free(&resident)
     owner:=quad_owner(&w,id)
     view:=core.VIEW_DEFAULT
@@ -212,7 +208,7 @@ past_the_chunk_budget_far_chunks_show_as_nodes_by_distance_not_by_index :: proc(
 // nothing allocates nothing.
 @(test)
 sixty_four_terrains_of_one_source_stream_without_holes_caps_or_allocations :: proc(t:^testing.T) {
-    root:=source_test_path("world");defer os.remove_all(root)
+    root:=base.test_folder(t,"terrain")
     id:=base.Asset_Id{327,328}
     quad_source(t,root,129,16,id)
     counter:=Terrain_Test_Allocator{owner=runtime.heap_allocator()}
@@ -221,8 +217,9 @@ sixty_four_terrains_of_one_source_stream_without_holes_caps_or_allocations :: pr
     app:=host.App{assets=&assets,allocator=context.allocator}
     testing.expect(t,jobs.system_init(&app.jobs,{threads=3,allocator=runtime.heap_allocator()}))
     defer jobs.system_destroy(&app.jobs)
-    w:Terrain_Test_World;terrain_test_world_init(&w);defer terrain_test_world_free(&w)
-    core.table_init(&w.poses,"World_Transform")
+    w:Terrain_Test_World
+    if !terrain_test_world_init(t,&w) {return}
+    defer terrain_test_world_free(&w)
     resident:Terrain_Resident;defer terrain_resident_free(&resident)
     for k in 0..<64 {quad_owner(&w,id,{f32(k%8)*128,0,f32(k/8)*128})}
     settings:=Terrain_Settings{resident_distance=60}
@@ -242,7 +239,7 @@ sixty_four_terrains_of_one_source_stream_without_holes_caps_or_allocations :: pr
     testing.expectf(t,pieces<64*64/4,"far from the viewer a terrain is a few pieces: %d",pieces)
     testing.expect_value(t,len(w.statics.values),pieces)
     testing.expect(t,len(w.colliders.values)>0 && len(w.colliders.values)<=256)
-    hit,ok:=phys.raycast({&w.physics},viewer+{0,20,0},{0,-1,0})
+    hit,ok:=phys.raycast({&w.state},viewer+{0,20,0},{0,-1,0})
     testing.expect(t,ok && abs(hit.point.y)<1,"the viewer stands on ground")
     for &p in core.problems_list(&w.problems) {testing.expectf(t,false,"%s",core.problem_text(&p))}
     calls,built:=counter.requests,resident.stats.built
@@ -263,8 +260,7 @@ sixty_four_terrains_of_one_source_stream_without_holes_caps_or_allocations :: pr
 // A streamed Mesh terrain shows its far sections as nodes that keep their border.
 @(test)
 a_streamed_mesh_terrain_shows_its_far_sections_as_nodes :: proc(t:^testing.T) {
-    root:=source_test_path("mesh-quadtree");defer os.remove_all(root)
-    os.make_directory_all(root)
+    root:=base.test_folder(t,"terrain")
     id:=base.Asset_Id{329,330}
     source:Source;defer source_destroy(&source)
     lod_mesh_source(t,&source,64,1,16,20)
@@ -273,8 +269,9 @@ a_streamed_mesh_terrain_shows_its_far_sections_as_nodes :: proc(t:^testing.T) {
     testing.expect_value(t,source_save(&source,fmt.tprintf("%s/source.terrain",root),id,&types),asset.Error.None)
     assets:host.Assets;testing.expect(t,host.assets_init(&assets,{root=root,capacity=256}));defer host.assets_destroy(&assets)
     app:=host.App{assets=&assets,allocator=context.allocator}
-    w:Terrain_Test_World;terrain_test_world_init(&w);defer terrain_test_world_free(&w)
-    core.table_init(&w.poses,"World_Transform")
+    w:Terrain_Test_World
+    if !terrain_test_world_init(t,&w) {return}
+    defer terrain_test_world_free(&w)
     resident:Terrain_Resident;defer terrain_resident_free(&resident)
     quad_owner(&w,id)
     low:=source.mesh_origin
@@ -298,11 +295,10 @@ a_streamed_mesh_terrain_shows_its_far_sections_as_nodes :: proc(t:^testing.T) {
 // cells, as imported landscapes have, do not line up with the pages.
 @(test)
 a_still_view_builds_nothing_once_settled_at_any_distance_for_chunks_of_odd_cells :: proc(t:^testing.T) {
-    root:=source_test_path("odd-cells");defer os.remove_all(root)
+    root:=base.test_folder(t,"terrain")
     id:=base.Asset_Id{333,334}
     samples:=253
     {
-        os.make_directory_all(root)
         source:Source;testing.expect(t,source_make(&source,.Heightfield,{samples,1,samples},1,63));defer source_destroy(&source)
         for z in 0..<samples {for x in 0..<samples {testing.expect(t,source_set(&source,{x,0,z},10*math.sin(f32(x)*0.37)*math.cos(f32(z)*0.29)))}}
         source.revision=1
@@ -311,8 +307,9 @@ a_still_view_builds_nothing_once_settled_at_any_distance_for_chunks_of_odd_cells
     }
     assets:host.Assets;testing.expect(t,host.assets_init(&assets,{root=root,capacity=1024}));defer host.assets_destroy(&assets)
     app:=host.App{assets=&assets,allocator=context.allocator}
-    w:Terrain_Test_World;terrain_test_world_init(&w);defer terrain_test_world_free(&w)
-    core.table_init(&w.poses,"World_Transform")
+    w:Terrain_Test_World
+    if !terrain_test_world_init(t,&w) {return}
+    defer terrain_test_world_free(&w)
     resident:Terrain_Resident;defer terrain_resident_free(&resident)
     // Without colliders no chunk is needed: the error and the spacing alone open the nodes.
     core.get(&w.terrains,quad_owner(&w,id)).solid=false

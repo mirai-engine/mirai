@@ -2,7 +2,6 @@ package anim
 
 import "core:fmt"
 import "core:mem"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:host"
@@ -54,8 +53,8 @@ blend_space_assets_roundtrip_cooked_topology_and_reject_invalid_names_and_ranges
 
 @(test)
 blend_space_content_shares_prepared_points_reloads_and_samples_without_allocations :: proc(t:^testing.T) {
-    directory:=fmt.tprintf(".mirai/test-blend-content-%d",os.get_pid());os.make_directory_all(directory);defer os.remove(directory)
-    path:=fmt.tprintf("%s/space.blend",directory);defer os.remove(path)
+    directory:=base.test_folder(t,"blend-content")
+    path:=fmt.tprintf("%s/space.blend",directory)
     profile:=blend_test_profile();defer blend_profile_free(&profile)
     testing.expect_value(t,blend_space_prepare(&profile),asset.Error.None)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
@@ -91,8 +90,8 @@ blend_space_content_shares_prepared_points_reloads_and_samples_without_allocatio
 
 @(test)
 blend_space_content_retries_allocation_failures_without_losing_the_previous_version :: proc(t:^testing.T) {
-    directory:=fmt.tprintf(".mirai/test-blend-retry-%d",os.get_pid());os.make_directory_all(directory);defer os.remove(directory)
-    path:=fmt.tprintf("%s/space.blend",directory);defer os.remove(path)
+    directory:=base.test_folder(t,"blend-retry")
+    path:=fmt.tprintf("%s/space.blend",directory)
     profile:=blend_test_profile();defer blend_profile_free(&profile)
     testing.expect_value(t,blend_space_prepare(&profile),asset.Error.None)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)

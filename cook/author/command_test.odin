@@ -1,6 +1,5 @@
 package author
 
-import "base:runtime"
 import "core:fmt"
 import "core:log"
 import "core:os"
@@ -36,9 +35,8 @@ template_copy :: proc(t:^testing.T,name:string) -> (root,engine:string,ok:bool) 
         log.warn("MIRAI_ROOT is not set: the commands of mirai ui and mirai scene were not run. Use `mirai test cook/author`.")
         return
     }
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root=project.path_absolute(fmt.tprintf("%s/mirai-author-%d-%s",directory,os.get_pid(),name),context.temp_allocator)
-    os.remove_all(root)
+    root=base.test_folder(t,fmt.tprintf("author-%s",name))
+    if root=="" {return}
     if !testing.expect(t,os.copy_directory_all(root,project.path(engine,"templates/game",allocator=context.temp_allocator))==nil,"the template is copied") {return}
     return root,engine,true
 }
@@ -48,72 +46,17 @@ template_copy :: proc(t:^testing.T,name:string) -> (root,engine:string,ok:bool) 
 // The world of the game of the tests: where a recipe is run.
 @(private="file")
 Game_World :: struct {
-    entities:core.Entities,
+    using world:core.Test_World,
     transforms:core.Table(core.Transform),
     hidden:core.Table(erender.Hidden),
     disabled:core.Table(core.Disabled),
     meshes:core.Table(erender.Mesh_Renderer),
     tints:core.Table(erender.Tint),
     point_lights:core.Table(erender.Point_Light),
-    statuses:core.Table(Game_Status),
+    statuses:core.Table(Game_Status) `mirai:"game,name=Status"`,
     names:core.Table(core.Name),
     parents:core.Table(core.Parent),
     hierarchy:core.Hierarchy,
-}
-
-@(private="file")
-game_world_init :: proc(data:rawptr,allocator:runtime.Allocator) -> bool {
-    context.allocator=allocator
-    w:=cast(^Game_World)data
-    core.entities_init(&w.entities)
-    core.table_init(&w.transforms,"Transform")
-    core.table_init(&w.hidden,"Hidden")
-    core.table_init(&w.disabled,"Disabled")
-    core.table_init(&w.meshes,"Mesh_Renderer")
-    core.table_init(&w.tints,"Tint")
-    core.table_init(&w.point_lights,"Point_Light")
-    core.table_init(&w.statuses,"Status")
-    core.table_init(&w.names,"Name")
-    core.table_init(&w.parents,"Parent")
-    return len(w.entities.generation)>0
-}
-
-@(private="file")
-game_world_destroy :: proc(data:rawptr) {
-    w:=cast(^Game_World)data
-    core.entities_destroy(&w.entities)
-    core.table_destroy(&w.transforms)
-    core.table_destroy(&w.hidden)
-    core.table_destroy(&w.disabled)
-    core.table_destroy(&w.meshes)
-    core.table_destroy(&w.tints)
-    core.table_destroy(&w.point_lights)
-    core.table_destroy(&w.statuses)
-    core.table_destroy(&w.names)
-    core.table_destroy(&w.parents)
-    core.value_free(&w.hierarchy,type_info_of(core.Hierarchy))
-}
-
-// The types of a game with the Status the interfaces of the template bind
-// and the components of the engine its scene has.
-@(private="file")
-game_info :: proc(info:^core.World_Info) {
-    tables:=make([]core.Table_Info,9,context.temp_allocator)
-    tables[0]={name="Transform",type=core.Transform,info=type_info_of(core.Transform),place=.World,offset=offset_of(Game_World,transforms)}
-    tables[1]={name="Hidden",type=erender.Hidden,info=type_info_of(erender.Hidden),place=.World,offset=offset_of(Game_World,hidden)}
-    tables[2]={name="Disabled",type=core.Disabled,info=type_info_of(core.Disabled),place=.World,offset=offset_of(Game_World,disabled)}
-    tables[3]={name="Mesh_Renderer",type=erender.Mesh_Renderer,info=type_info_of(erender.Mesh_Renderer),place=.World,offset=offset_of(Game_World,meshes)}
-    tables[4]={name="Tint",type=erender.Tint,info=type_info_of(erender.Tint),place=.World,offset=offset_of(Game_World,tints)}
-    tables[5]={name="Point_Light",type=erender.Point_Light,info=type_info_of(erender.Point_Light),place=.World,offset=offset_of(Game_World,point_lights)}
-    tables[6]={name="Status",library="game",type=Game_Status,info=type_info_of(Game_Status),place=.World,game=true,offset=offset_of(Game_World,statuses)}
-    tables[7]={name="Name",type=core.Name,info=type_info_of(core.Name),place=.World,offset=offset_of(Game_World,names)}
-    tables[8]={name="Parent",type=core.Parent,info=type_info_of(core.Parent),place=.World,offset=offset_of(Game_World,parents)}
-    storages:=make([]core.Storage_Info,1,context.temp_allocator)
-    storages[0]={type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Game_World,hierarchy)}
-    info^={tables=tables,storages=storages,
-        sizes={.World=size_of(Game_World),.Shared=0,.Editor=0},aligns={.World=align_of(Game_World),.Shared=1,.Editor=1},
-        init={.World=game_world_init,.Shared=nil,.Editor=nil},destroy={.World=game_world_destroy,.Shared=nil,.Editor=nil}}
-    core.world_info_index(info,context.temp_allocator)
 }
 
 @(private="file")
@@ -126,7 +69,6 @@ file_bytes :: proc(p:^Project,path:string) -> []u8 {
 the_document_of_each_interface_of_the_template_writes_it_back_as_it_is :: proc(t:^testing.T) {
     root,engine,copied:=template_copy(t,"ui")
     if !copied {return}
-    defer os.remove_all(root)
     p:Project
     if problem:=project_open(&p,root,engine,false);!testing.expect(t,problem=="",problem) {return}
     defer project_close(&p)
@@ -156,12 +98,12 @@ the_document_of_each_interface_of_the_template_writes_it_back_as_it_is :: proc(t
 a_path_the_game_lacks_is_refused_with_no_editor_as_ui_write_refuses_it :: proc(t:^testing.T) {
     root,engine,copied:=template_copy(t,"paths")
     if !copied {return}
-    defer os.remove_all(root)
+    info,described:=core.test_info(t,Game_World,erender.test_types)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     p:Project
     if problem:=project_open(&p,root,engine,false);!testing.expect(t,problem=="",problem) {return}
     defer project_close(&p)
-    info:core.World_Info
-    game_info(&info)
     p.info=&info
     out:serial.Writer
     serial.writer_init(&out,0,context.temp_allocator)
@@ -184,7 +126,6 @@ a_path_the_game_lacks_is_refused_with_no_editor_as_ui_write_refuses_it :: proc(t
 the_commands_read_write_and_check_the_documents_kept_under_source :: proc(t:^testing.T) {
     root,engine,copied:=template_copy(t,"command")
     if !copied {return}
-    defer os.remove_all(root)
     base_args:=[]string{"--project",root,"--engine",engine}
     run :: proc(base_args:[]string,args:..string) -> Run_Result {
         all:=make([dynamic]string,context.temp_allocator)
@@ -212,11 +153,12 @@ the_commands_read_write_and_check_the_documents_kept_under_source :: proc(t:^tes
 
     // With the types of the game: the folder of documents becomes the assets
     // in one command, each named by its file.
+    info,described:=core.test_info(t,Game_World,erender.test_types)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     p:Project
     if problem:=project_open(&p,root,engine,false);!testing.expect(t,problem=="",problem) {return}
     defer project_close(&p)
-    info:core.World_Info
-    game_info(&info)
     p.info=&info
     on :: proc(p:^Project,kind:Document_Kind,verb:string,args:..string) -> Run_Result {
         output,errors:=strings.builder_make(context.temp_allocator),strings.builder_make(context.temp_allocator)
@@ -256,7 +198,6 @@ file_bytes_at :: proc(root,path:string) -> []u8 {
 writing_a_widget_follows_its_parameters_in_the_files_that_use_it :: proc(t:^testing.T) {
     root,engine,copied:=template_copy(t,"follow")
     if !copied {return}
-    defer os.remove_all(root)
     p:Project
     if problem:=project_open(&p,root,engine,false);!testing.expect(t,problem=="",problem) {return}
     defer project_close(&p)
@@ -287,12 +228,12 @@ writing_a_widget_follows_its_parameters_in_the_files_that_use_it :: proc(t:^test
 the_document_of_a_scene_writes_it_back_and_declares_what_its_file_has :: proc(t:^testing.T) {
     root,engine,copied:=template_copy(t,"scene")
     if !copied {return}
-    defer os.remove_all(root)
+    info,described:=core.test_info(t,Game_World,erender.test_types)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     p:Project
     if problem:=project_open(&p,root,engine,false);!testing.expect(t,problem=="",problem) {return}
     defer project_close(&p)
-    info:core.World_Info
-    game_info(&info)
     p.info=&info
     for path in ([]string{"arena/main.scene","player/Player.prefab"}) {
         before:=slice.clone(file_bytes(&p,path),context.temp_allocator)
@@ -367,12 +308,12 @@ the_document_of_a_scene_writes_it_back_and_declares_what_its_file_has :: proc(t:
 a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testing.T) {
     root,engine,copied:=template_copy(t,"recipes")
     if !copied {return}
-    defer os.remove_all(root)
+    info,described:=core.test_info(t,Game_World,erender.test_types)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     p:Project
     if problem:=project_open(&p,root,engine,false);!testing.expect(t,problem=="",problem) {return}
     defer project_close(&p)
-    info:core.World_Info
-    game_info(&info)
     p.info=&info
     labels:=[]string{"Scoreboard"}
     scales:=[][3]f32{{2,2,2}}
@@ -405,9 +346,12 @@ a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testin
     prefab:asset.Scene
     if !testing.expect_value(t,asset.scene_load(&prefab,&p.types,project.path(p.assets_root,"player/Player.prefab",allocator=context.temp_allocator),context.temp_allocator),asset.Error.None) {return}
     testing.expect_value(t,written.made,3+asset.scene_entity_count(&prefab))
-    if !testing.expect_value(t,len(yard.instances),1) {return}
-    testing.expect(t,yard.instances[0].root==hero && yard.instances[0].prefab==prefab.doc.id)
-    testing.expect_value(t,len(yard.members),asset.scene_entity_count(&prefab))
+    roots:=asset.scene_instance_roots(&yard)
+    if !testing.expect_value(t,len(roots),1) {return}
+    linked,_:=asset.scene_instance(&yard,hero)
+    members,_:=asset.scene_instance_members(&yard,hero)
+    testing.expect(t,roots[0]==hero && linked.prefab==prefab.doc.id)
+    testing.expect_value(t,len(members),asset.scene_entity_count(&prefab))
     where_,_:=asset.scene_get(&yard,hero,"Transform",core.Transform)
     testing.expect_value(t,where_.position,[3]f32{1,2,3})
     // The document that placed it, written again, changes nothing: what it leaves out of the instance is what its prefab gives.
@@ -424,12 +368,14 @@ a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testin
     testing.expect_value(t,scene_read(&p,"arena/yard.scene",&out),"")
     text:=string(serial.writer_bytes(&out))
     testing.expect(t,strings.contains(text,`"root":true`),text)
+    testing.expect(t,!strings.contains(text,asset.COMPONENT_INSTANCE) && !strings.contains(text,asset.COMPONENT_MEMBER),"a document names the prefab of an instance, not the components that hold it")
     moved,_:=strings.replace_all(text,`"position":[1,2,3]`,`"position":[4,2,3]`,context.temp_allocator)
     again,why:=scene_write(&p,"arena/yard.scene",moved)
     testing.expect(t,why=="" && again.made==0 && again.removed==0 && !again.same,fmt.tprintf("%s %v",why,again))
     after:asset.Scene
     if !testing.expect_value(t,asset.scene_load(&after,&p.types,file,context.temp_allocator),asset.Error.None) {return}
-    testing.expect(t,len(after.instances)==1 && len(after.members)==len(yard.members))
+    after_members,_:=asset.scene_instance_members(&after,hero)
+    testing.expect(t,len(asset.scene_instance_roots(&after))==1 && len(after_members)==len(members))
 
     // What the document says of a member, however deep, by its name, the instance holds on its own.
     _,gate_why:=scene_write(&p,"arena/Gate.prefab",`{"entities":[{"name":"Gate","children":[{"name":"Frame","children":[{"name":"Lamp","preset":"point_light"}]}]}]}`)
@@ -490,8 +436,9 @@ the_documents_of_the_tracked_assets_write_back_the_files_they_were_read_from :: 
         log.warn("MIRAI_ROOT is not set: the tracked assets were not read. Use `mirai test cook/author`.")
         return
     }
-    info:core.World_Info
-    game_info(&info)
+    info,described:=core.test_info(t,Game_World,erender.test_types)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     for folder in ([]string{"templates/game","demo"}) {
         p:Project
         if problem:=project_open(&p,project.path(engine,folder,allocator=context.temp_allocator),engine,false);!testing.expectf(t,problem=="","%s: %s",folder,problem) {continue}
