@@ -40,16 +40,16 @@ blend_space_authoring_prepares_samples_preserves_identity_and_rejects_partial_ed
     neither:=authoring_test_execute(f,"set",fmt.tprintf(`{{%s}}`,definition))
     testing.expect_value(t,neither.code,api.INVALID_PARAMS)
     existing:=authoring_test_execute(f,"set",request)
-    testing.expect(t,existing.code==0 && strings.contains(string(serial.writer_bytes(&f.out)),`"replaced": true`) && authoring_test_id(f,"locomotion.blend")==id,existing.message)
+    testing.expect(t,existing.code==0 && strings.contains(api.json_compact(string(serial.writer_bytes(&f.out))),`"replaced":true`) && authoring_test_id(f,"locomotion.blend")==id,existing.message)
     file:asset.Asset
     testing.expect_value(t,authoring_test_load(f,"locomotion.blend",&file),asset.Error.None)
     profile,error:=anim.blend_space_view(&file,&f.assets.types)
     testing.expect_value(t,error,asset.Error.None);testing.expect_value(t,len(profile.segments),1);testing.expect_value(t,profile.samples[1].speed,f32(1))
     asset.asset_close(&file)
     testing.expect_value(t,authoring_test_execute(f,"sample",fmt.tprintf(`{{"asset":"%s","position":[1,0]}}`,identity)).code,0)
-    text:=string(serial.writer_bytes(&f.out));testing.expect(t,strings.contains(text,`"weight":0.5`) && strings.contains(text,`"clip":"idle"`) && strings.contains(text,`"clip":"walk"`))
+    text:=api.json_compact(string(serial.writer_bytes(&f.out)));testing.expect(t,strings.contains(text,`"weight":0.5`) && strings.contains(text,`"clip":"idle"`) && strings.contains(text,`"clip":"walk"`))
     testing.expect_value(t,authoring_test_execute(f,"inspect",fmt.tprintf(`{{"asset":"%s"}}`,identity)).code,0)
-    text=string(serial.writer_bytes(&f.out));testing.expect(t,strings.contains(text,`"samples_total":2`) && strings.contains(text,`"index":1`) && !strings.contains(text,`"index":0`))
+    text=api.json_compact(string(serial.writer_bytes(&f.out)));testing.expect(t,strings.contains(text,`"samples_total":2`) && strings.contains(text,`"index":1`) && !strings.contains(text,`"index":0`))
     revision:=authoring_test_revision(f,"locomotion.blend")
     bad,_:=strings.replace_all(definition,`"position":[2,0]`,`"position":[0,0]`,context.temp_allocator)
     testing.expect_value(t,authoring_test_execute(f,"set",fmt.tprintf(`{{"path":"locomotion.blend",%s}}`,bad)).code,api.INVALID_PARAMS)
@@ -79,9 +79,9 @@ two_dimensional_blend_authoring_bakes_triangles_and_rejects_collinear_replacemen
     id:=authoring_test_id(f,"locomotion.blend");identity:=authoring_test_id_text(id)
     revision:=authoring_test_revision(f,"locomotion.blend")
     testing.expect_value(t,authoring_test_execute(f,"inspect",fmt.tprintf(`{{"asset":"%s"}}`,identity)).code,0)
-    text:=string(serial.writer_bytes(&f.out));testing.expect(t,strings.contains(text,`"triangles_total":1`) && strings.contains(text,"direction") && strings.contains(text,"speed"))
+    text:=api.json_compact(string(serial.writer_bytes(&f.out)));testing.expect(t,strings.contains(text,`"triangles_total":1`) && strings.contains(text,"direction") && strings.contains(text,"speed"))
     testing.expect_value(t,authoring_test_execute(f,"sample",fmt.tprintf(`{{"asset":"%s","position":[0.25,0.25]}}`,identity)).code,0)
-    text=string(serial.writer_bytes(&f.out));testing.expect(t,strings.count(text,`"index":`)==3 && strings.contains(text,`"weight":0.5`) && strings.count(text,`"weight":0.25`)==2)
+    text=api.json_compact(string(serial.writer_bytes(&f.out)));testing.expect(t,strings.count(text,`"index":`)==3 && strings.contains(text,`"weight":0.5`) && strings.count(text,`"weight":0.25`)==2)
     collinear,_:=strings.replace_all(definition,`"position":[0,1]`,`"position":[0.5,0]`,context.temp_allocator)
     testing.expect_value(t,authoring_test_execute(f,"set",fmt.tprintf(`{{"path":"locomotion.blend",%s}}`,collinear)).code,api.INVALID_PARAMS)
     testing.expect_value(t,authoring_test_revision(f,"locomotion.blend"),revision)
@@ -144,7 +144,7 @@ program_runtime_api_sets_named_parameters_and_keeps_actions_and_modifier_control
     inspect:=Modifier_Inspect_Params{limit=128};authoring_test_register(f,t,"inspect",Modifier_Inspect_Params,program_modifier_inspect,&inspect)
     // A parameter is the weight of a layer of its set, asked of the running world.
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","parameters":[{"name":"Arm","value":0.6}]}`).code,0)
-    testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"kind":"Parameter","name":"Arm"`))
+    testing.expect(t,strings.contains(api.json_compact(string(serial.writer_bytes(&f.out))),`"kind":"Parameter","name":"Arm"`))
     if testing.expect_value(t,len(play.animation_requests.values.items),1) {
         queued:=play.animation_requests.values.items[0]
         testing.expect(t,queued.name==base.name_hash("Arm") && queued.value==.6)
@@ -158,7 +158,7 @@ program_runtime_api_sets_named_parameters_and_keeps_actions_and_modifier_control
     testing.expect_value(t,len(play.animation_requests.values.items),1);testing.expect_value(t,len(document.animation_requests.values.items),0)
     // An action is played and stopped by its name, in its layer or over the whole body.
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","actions":[{"name":"Vault"},{"name":"Wave"}]}`).code,0)
-    testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"kind":"Play","name":"Vault"`))
+    testing.expect(t,strings.contains(api.json_compact(string(serial.writer_bytes(&f.out))),`"kind":"Play","name":"Vault"`))
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","actions":[{"name":"Vault","stop":true}]}`).code,0)
     if testing.expect_value(t,len(play.animation_requests.plays.items),3) {
         plays:=play.animation_requests.plays.items
@@ -174,7 +174,7 @@ program_runtime_api_sets_named_parameters_and_keeps_actions_and_modifier_control
     testing.expect_value(t,len(play.modifier_requests.controls.items),1);testing.expect_value(t,len(document.modifier_requests.controls.items),0)
     testing.expect_value(t,play.modifier_requests.controls.items[0].fade,f32(.2))
     testing.expect_value(t,authoring_test_execute(f,"inspect",`{"entity":"0000000000000011"}`).code,0)
-    text:=string(serial.writer_bytes(&f.out));testing.expect(t,strings.contains(text,`"kind":"Look"`) && strings.contains(text,`"name":"head"`) && !strings.contains(text,`"slot"`) && !strings.contains(text,`"diagnostic"`))
+    text:=api.json_compact(string(serial.writer_bytes(&f.out)));testing.expect(t,strings.contains(text,`"kind":"Look"`) && strings.contains(text,`"name":"head"`) && !strings.contains(text,`"slot"`) && !strings.contains(text,`"diagnostic"`))
     // Edit changes the document: what only a running world takes is refused there.
     f.session.mode=.Edit
     for runtime in ([3]string{`"actions":[{"name":"Vault"}]`,`"parameters":[{"name":"Arm","value":0.5}]`,`"controls":[{"kind":"Look","name":"head"}]`}) {

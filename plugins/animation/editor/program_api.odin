@@ -23,8 +23,8 @@ Blend_Write_Params :: struct {
     dry_run:bool `mirai:"optional,label=Validates and answers without writing"`,
 }
 Blend_Sample_Params :: struct {asset:base.Asset_Id,position:mm.Vec2 `mirai:"label=Outside the hull it projects to the nearest edge"`}
-Blend_Contribution :: struct {index:u32 `mirai:"label=The sample"`,clip:[64]u8 `mirai:"text"`,animation:base.Asset_Id,weight:f32}
-Blend_Sample_Result :: struct {samples:[3]Blend_Contribution}
+Blend_Contribution :: struct {index:u32 `mirai:"label=The sample"`,clip:string,animation:base.Asset_Id,weight:f32}
+Blend_Sample_Result :: struct {samples:[]Blend_Contribution}
 Modifier_Inspect_Params :: struct {entity:editor.Api_Entity_Text `mirai:"text,entity"`,handle:core.Entity `mirai:"transient"`,offset:u32 `mirai:"optional"`,limit:u32 `mirai:"optional,min=1,max=256,clamp"`,diagnostics:bool `mirai:"optional"`}
 Modifier_Goal_Kind :: enum u8 {IK,Look,Contact,Grounding,Chain_IK,Spring,Multi_IK,Spline_IK,Follow}
 MODIFIER_GOAL_KINDS :: [Modifier_Goal_Kind]anim.Modifier_Kind{.IK=.IK,.Look=.Look,.Contact=.Contact,.Grounding=.Grounding,.Chain_IK=.Chain_IK,.Spring=.Spring,.Multi_IK=.Multi_IK,.Spline_IK=.Spline_IK,.Follow=.Follow}
@@ -46,7 +46,7 @@ program_register :: proc(s:^editor.Session) {
     if blend==nil {return}
     modifiers:=Modifier_Inspect_Params{limit=128}
     editor.api_method_register(s,Blend_Write_Params,Authoring_Write_Result,{name="animation.blend_space.set",summary="Makes or replaces a .blend: clips placed on one or two axes, its segments or triangles prepared from the samples. It plays as the space of a layer of an action set (animation.action.set): aim offsets or additive poses its axes sample, set by name. An invalid one changes nothing. In Edit.",defaults=blend,run=program_blend_set})
-    editor.api_method_register(s,Blend_Sample_Params,Blend_Sample_Result,{name="animation.blend_space.sample",summary="The samples of a blend space that contribute at a position and their weights, without advancing the world.",flags={.Read_Only},run=program_blend_sample,writes_result=true})
+    editor.api_method_register(s,Blend_Sample_Params,Blend_Sample_Result,{name="animation.blend_space.sample",summary="The samples of a blend space that contribute at a position and their weights, without advancing the world.",flags={.Read_Only},run=program_blend_sample})
 }
 
 @(private)
@@ -145,13 +145,12 @@ program_blend_sample :: proc(s:^editor.Session,call:^api.Call) {
     profile,ok:=program_blend_open(s,call,p.asset,&file);if !ok {return}
     weights,sampled:=anim.blend_sample(profile,p.position)
     if !sampled {authoring_failure(call,"position","Invalid_Value","a finite position",fmt.tprintf("%v",p.position),"The blend-space position must be finite");return}
-    serial.text_write_raw(call.out,`{"samples":[`)
+    samples:=make([]Blend_Contribution,weights.count,call.allocator)
     for weight,i in weights.weights[:weights.count] {
-        if i>0 {serial.text_write_raw(call.out,",")}
         sample:=profile.samples[weights.samples[i]]
-        serial.text_write_raw(call.out,"{");api.write_uint(call.out,"index",u64(weights.samples[i]),true);api.write_text(call.out,"clip",base.text_get(sample.clip[:]));api.write_key(call.out,"animation");serial.write_u8(call.out,'"');serial.text_write_asset_id(call.out,sample.animation if sample.animation!={} else profile.info.animation);serial.write_u8(call.out,'"');api.write_key(call.out,"weight");api.write_number(call.out,weight);serial.text_write_raw(call.out,"}")
+        samples[i]={u32(weights.samples[i]),strings.clone(base.text_get(sample.clip[:]),call.allocator),sample.animation if sample.animation!={} else profile.info.animation,weight}
     }
-    serial.text_write_raw(call.out,"]}")
+    api.call_result(call,Blend_Sample_Result).samples=samples
 }
 
 // Checks that the action set of the Animation declares a parameter with this name: a layer, whose

@@ -69,7 +69,7 @@ Request_Params :: struct {
     reach:[2]Intent_Reach `mirai:"optional,label=Reach with a hand"`,
 }
 Request_Applied :: struct {kind:[16]u8 `mirai:"text"`,name:[256]u8 `mirai:"text"`,value:f32}
-Request_Result :: struct {id:base.Entity_Id,playing:bool `mirai:"optional"`,time:f32 `mirai:"optional,unit=s"`,applied:[REQUEST_ROWS]Request_Applied `mirai:"label=What the request did"`}
+Request_Result :: struct {id:base.Entity_Id,playing:bool `mirai:"optional"`,time:f32 `mirai:"optional,unit=s"`,applied:[]Request_Applied `mirai:"label=What the request did"`}
 
 request_defaults :: proc() -> ^Request_Params {
     value:=new(Request_Params,context.temp_allocator);if value==nil {return nil}
@@ -91,7 +91,7 @@ request_rows_defaults :: proc(p:^$T) {
 @(private)
 request_register :: proc(s:^editor.Session) {
     defaults:=request_defaults();if defaults==nil {return}
-    editor.api_method_register(s,Request_Params,Request_Result,{name="animation.request",summary="Asks an animated entity what to do, from playback, the parameters and actions of its action set to intents. Edit takes only stop; the rest needs Play or Simulation.",defaults=defaults,run=request,writes_result=true})
+    editor.api_method_register(s,Request_Params,Request_Result,{name="animation.request",summary="Asks an animated entity what to do, from playback, the parameters and actions of its action set to intents. Edit takes only stop; the rest needs Play or Simulation.",defaults=defaults,run=request})
 }
 
 // Fields of a request that change the document in Edit; the rest change only a running world.
@@ -122,16 +122,10 @@ request :: proc(s:^editor.Session,call:^api.Call) {
         return
     }
     if s.mode==.Edit && !edit_end(s,call,w,true) {return}
-    out:=call.out
-    serial.text_write_raw(out,"{");api.write_key(out,"id",true);api.write_id(out,editor.api_entity_id(w,e))
-    if value,has:=editor.entity_get(w,e,anim.Animation);has {api.write_bool(out,"playing",value.playing)}
-    if time,_,_,has:=anim.animation_progress(core.world_storage_of(w,anim.Playback),e);has {api.write_key(out,"time");api.write_number(out,time)}
-    api.write_key(out,"applied");serial.text_write_raw(out,"[")
-    for &value,i in applied {
-        if i>0 {serial.text_write_raw(out,",")}
-        serial.text_write_raw(out,"{");api.write_text(out,"kind",base.text_get(value.kind[:]),true);api.write_text(out,"name",base.text_get(value.name[:]));api.write_key(out,"value");api.write_number(out,value.value);serial.text_write_raw(out,"}")
-    }
-    serial.text_write_raw(out,"]}")
+    r:=api.call_result(call,Request_Result)
+    r.id,r.applied=editor.api_entity_id(w,e),applied[:]
+    if value,has:=editor.entity_get(w,e,anim.Animation);has {r.playing=value.playing}
+    if time,_,_,has:=anim.animation_progress(core.world_storage_of(w,anim.Playback),e);has {r.time=time}
 }
 
 @(private)

@@ -50,6 +50,7 @@ authoring_test_register :: proc(f:^Authoring_Test,t:^testing.T,name:string,$T:ty
         {authoring_skeleton_create,Authoring_Write_Result},{authoring_bone_set,Authoring_Write_Result},{authoring_socket_set,Authoring_Write_Result},
         {authoring_action_set,Authoring_Write_Result},{authoring_pose_bake,Authoring_Write_Result},{program_blend_set,Authoring_Write_Result},
         {authoring_profile_poses,Profile_Poses_Result},{body_detect,Body_Result},{body_set,Body_Result},{clip_edit,Clip_Edit_Result},{clip_analyze,Metrics_Result},
+        {authoring_bone_add,Skeleton_Bone_Add_Result},{program_blend_sample,Blend_Sample_Result},{setup,Setup_Result},{request,Request_Result},
     }
     desc:=api.Method_Desc{name=name,params=T,params_info=type_info_of(T),result=serial.Json,writes_result=true,defaults=defaults,user=entry,handler=proc(call:^api.Call) {entry:=(^Authoring_Test_Entry)(call.user);entry.run(entry.session,call)}}
     for each in typed {

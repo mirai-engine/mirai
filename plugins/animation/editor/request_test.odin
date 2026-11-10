@@ -78,7 +78,7 @@ request_intents_compile_to_goals_controls_actions_parameters_and_motion :: proc(
     locomotion,targets:=f.world.motion_requests.locomotion.items,f.world.motion_requests.targets.items
     testing.expectf(t,len(locomotion)==1 && abs(locomotion[0].velocity.z+1.2)<1e-5 && abs(locomotion[0].velocity.x)<1e-5 && abs(locomotion[0].source_velocity.z+1.2)<1e-5,"locomotion %v",locomotion)
     testing.expect(t,len(targets)==1 && targets[0].target.target.kind==.World && targets[0].target.target.position=={0,0,-5})
-    text:=string(serial_bytes(a))
+    text:=api.json_compact(string(serial_bytes(a)))
     testing.expect(t,strings.contains(text,`"kind":"Look"`) && strings.contains(text,`"kind":"Reach"`) && strings.contains(text,`"kind":"Gesture","name":"wave"`) && strings.contains(text,`"kind":"Locomotion"`))
 
     // Letting go: the controls fade the operations out without new goals.
