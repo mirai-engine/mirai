@@ -55,7 +55,6 @@ Mix_Voice :: struct {
     eq_target,eq_gains:[BANDS]f32,
     eq:[2][BANDS]Biquad,eq_state:[2][BANDS]Biquad_State,eq_current:u8,
     eq_on:bool,
-    placed:bool, // it sounded in a chunk before: an EQ that comes in crossfades
     direction:[3]f32,
     binaural_live,binaural_direction_valid:bool,
     binaural_clock:u64, // the chunk its next block continues from
@@ -227,7 +226,6 @@ voice_mix_chunk :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
     if clock<v.start_frame {offset=int(v.start_frame-clock)}
     target:=voice_gains(m,v)
     if v.pausing || v.stopping {target={}}
-    v.placed=v.base_valid
     if !v.base_valid {v.base=target;v.base_valid=true}
     mixed:=target
     pans:[2][2]f32

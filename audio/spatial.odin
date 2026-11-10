@@ -109,18 +109,13 @@ spatial_gains :: proc "contextless" (m:^Mixer,v:^Mix_Voice) -> [4]f32 {
     return {sides[0],sides[1],0,0}
 }
 
-// The EQ of a voice is left out while all its bands are within EQ_FLAT of unity.
-@(private)
-eq_flat :: proc "contextless" (gains:[BANDS]f32) -> bool {
-    return gains[0]>=EQ_FLAT && gains[1]>=EQ_FLAT && gains[2]>=EQ_FLAT
-}
-
 // A spatial voice that goes through its EQ or its HRTF is mixed apart as one
 // source into the left channel: its gains (base and target) lose their pan,
 // which spatial_post applies. Any other is mixed as a panned voice.
 @(private)
 spatial_apart :: proc "contextless" (m:^Mixer,v:^Mix_Voice,base,target:^[4]f32) -> (pans:[2][2]f32,apart:bool) {
-    if !(m.output_now==.Headphones && m.channels==2) && !v.eq_on && eq_flat(v.eq_target) {return}
+    // Its EQ is left out while all its bands are within EQ_FLAT of unity.
+    if !(m.output_now==.Headphones && m.channels==2) && !v.eq_on && min(v.eq_target[0],v.eq_target[1],v.eq_target[2])>=EQ_FLAT {return}
     one :: proc "contextless" (g:^[4]f32,stereo:bool) -> [2]f32 {
         level:=math.sqrt(g[0]*g[0]+g[1]*g[1])
         pan:=[2]f32{math.SQRT_TWO/2,math.SQRT_TWO/2}
@@ -140,7 +135,7 @@ spatial_apart :: proc "contextless" (m:^Mixer,v:^Mix_Voice,base,target:^[4]f32) 
 spatial_post :: proc "contextless" (m:^Mixer,v:^Mix_Voice,out:[^]f32,from,to:int,pans:[2][2]f32,silent:bool) -> (binaural:bool) #no_bounds_check {
     count:=to-from
     binaural=m.output_now==.Headphones && m.channels==2
-    flat:=eq_flat(v.eq_target)
+    flat:=min(v.eq_target[0],v.eq_target[1],v.eq_target[2])>=EQ_FLAT
     if count<=0 || silent || binaural && !v.eq_on && flat {return}
     mono:=m.spatial_mono[:count]
     for i in 0..<count {mono[i]=out[(from+i)*2]}
@@ -153,7 +148,7 @@ spatial_post :: proc "contextless" (m:^Mixer,v:^Mix_Voice,out:[^]f32,from,to:int
         for i in 0..<BANDS {moved||=!(abs(v.eq_target[i]-v.eq_gains[i])<=EQ_GAIN_STEP*v.eq_gains[i])}
         switch {
         case !v.eq_on:
-            if v.placed {copy(old,mono)} else {old=nil}
+            copy(old,mono)
             v.eq_current,v.eq_gains,v.eq_state=0,v.eq_target,{}
             v.eq[0]=eq_filters(v.eq_gains,m.sample_rate)
             eq_run(&v.eq[0],&v.eq_state[0],mono)
