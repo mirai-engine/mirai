@@ -38,6 +38,14 @@ import "mirai:render/abi"
 
 Trace_Mode :: enum u8 {Auto, Software, Hardware}
 
+// Whether smooth surfaces trace their reflection; off, every reflection comes
+// from the probe volume.
+Reflections :: enum u8 {
+	Off,
+	Traced,   // from REFLECTION_SHARED_ROUGHNESS a block of 2x2 pixels shares one ray, which each frame a different pixel traces
+	Detailed, // every pixel traces its ray, and those sharper than REFLECTION_SHARED_ROUGHNESS show the glass it crosses and the gloss of what it finds
+}
+
 // What the views of the window draw the scene at: a scale of their points, or
 // a target of lines.
 Resolution :: union #no_nil {Render_Scale, Render_Lines}
@@ -69,11 +77,9 @@ Settings :: struct {
 	texture_max_size:     u32,    // larger images are loaded at the first mip level that fits
 	texture_pool_megabytes: u32,  // GPU memory for textures; past it they load without their largest levels (0: no limit)
 	page_pool_bytes:      u64,    // the slots of the vertex pool for the pages of streamed meshes out of their root, reserved when the first one loads (pages.odin); 0: they keep their root alone
-	reflections:          bool,   // trace the mirror ray of smooth surfaces (else every reflection comes from the probes)
+	reflections:          Reflections,
 	reflection_roughness: f32,    // surfaces at or above this roughness are not traced
-	reflection_half_resolution: bool, // surfaces from REFLECTION_SHARED_ROUGHNESS trace one ray per block of 2x2 pixels
 	reflection_light_budget: u32, // shadow rays at a reflected hit, each to a light or a group of them (at most LIGHT_CUT_MAX)
-	reflection_detail_roughness: f32, // reflections sharper than this show the glass their rays cross and the gloss of what they find (0: none)
 	sun_shadows:           bool, // rays go to the sun; off, it lights everything it faces
 	colored_shadows:       bool, // thin RGB filters along shadow rays through blended surfaces
 	glass_layers:          u32,  // nearest blended surfaces of a pixel lit once per pixel with traced reflection and refraction (1 to GLASS_LAYERS_MAX); the ones behind are drawn forward
@@ -109,8 +115,7 @@ DEFAULT_SETTINGS :: Settings{
 	gi_max_distance = 1e4, sun_shadows = true, light_budget = 8,
 	firefly_clamp = 20, texture_max_size = 2048,
 	texture_pool_megabytes = 1024, page_pool_bytes = 256 << 20,
-	reflections = true, reflection_roughness = 0.4, reflection_half_resolution = true, reflection_light_budget = 8,
-	reflection_detail_roughness = REFLECTION_SHARED_ROUGHNESS, glass_layers = 1,
+	reflection_roughness = 0.4, reflection_light_budget = 8, glass_layers = 1,
 	sun_radius = SUN_RADIUS,
 }
 
@@ -136,8 +141,7 @@ CPU_DEVICE_SETTINGS :: Settings{
 	gi_max_distance = 1e4, sun_shadows = true, light_budget = 4,
 	firefly_clamp = 20, texture_max_size = 1024,
 	texture_pool_megabytes = 256, page_pool_bytes = 128 << 20,
-	reflections = false, reflection_roughness = 0.4, reflection_half_resolution = true, reflection_light_budget = 4,
-	glass_layers = 1,
+	reflection_roughness = 0.4, reflection_light_budget = 4, glass_layers = 1,
 	sun_radius = SUN_RADIUS,
 }
 
@@ -1377,7 +1381,6 @@ renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
 	if settings.gi_strength < 0 || settings.probe_spacing <= 0 {return false}
 	if settings.probe_grid < 4 || settings.probe_grid > PROBE_GRID_MAX || settings.probe_grid % 2 != 0 || settings.probe_cascades < 1 || settings.probe_cascades > VOLUME_CASCADES_MAX {return false}
 	if !(settings.reflection_roughness >= 0 && settings.reflection_roughness <= 1) {return false}
-	if !(settings.reflection_detail_roughness >= 0 && settings.reflection_detail_roughness <= 1) {return false}
 	if settings.light_budget > LIGHT_CUT_MAX || settings.reflection_light_budget > LIGHT_CUT_MAX || settings.glass_layers < 1 || settings.glass_layers > GLASS_LAYERS_MAX {return false}
 	hardware, made := tracer_settle(r, settings, retry = settings.trace_mode != r.settings.trace_mode)
 	if !made {return false}
@@ -1394,7 +1397,7 @@ renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
 	if volume || gathered {world_light_destroy(r)}
 	shadows := old.reference_lights != settings.reference_lights || old.sun_shadows != settings.sun_shadows
 	reference := old.reference_gi != settings.reference_gi || old.sun_radius != settings.sun_radius
-	traced := old.colored_shadows != settings.colored_shadows || old.sun_shadows != settings.sun_shadows || old.reflection_light_budget != settings.reflection_light_budget || old.reflection_detail_roughness != settings.reflection_detail_roughness
+	traced := old.colored_shadows != settings.colored_shadows || old.sun_shadows != settings.sun_shadows || old.reflection_light_budget != settings.reflection_light_budget || old.reflections != settings.reflections
 	layers := old.glass_layers != settings.glass_layers
 	resolution := old.resolution != settings.resolution
 	// Targets a frame in flight may still read.

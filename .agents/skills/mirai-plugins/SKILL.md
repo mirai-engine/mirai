@@ -42,8 +42,8 @@ project world. Layout, manifests and build:
   [thumbnails](references/previews.md#animation-thumbnails),
   [capture](references/previews.md#animation-capture) and
   [sound documents](references/previews.md#sound-documents)
-- `animation_physics` (automatic bridge: the mode, velocity and request of each `Character` feed
-  the motion matching of its `Animation`):
+- `animation_physics` (automatic bridge of `animation` and `locomotion`: the mode, velocity and
+  request of each `Character` feed the motion matching of its `Animation`):
   [locomotion](../mirai-animation/references/animation.md#locomotion-by-motion-matching)
 - `unreal` and its `unreal_*` bridges (import Unreal packages and maps in the editor) are not part
   of the engine: they are installed from the catalog (`mirai plugin add unreal`); code and

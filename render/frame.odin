@@ -302,10 +302,11 @@ reflect_pass :: proc(p: ^Pass, normal, depth, albedo, history_previous, history_
 	s := &r.scene
 	settings := &r.settings
 	// pixel_spread: what the width of a pixel grows by per unit of distance.
-	params := Params{light_budget = settings.reflection_light_budget, max_distance = settings.gi_max_distance, firefly_clamp = settings.firefly_clamp, pixel_spread = p.frame.footprint.y, cached_below = cached_below, detail_below = settings.reflection_detail_roughness}
-	// Sharp reflections trace every pixel; the wider lobes one pixel per
-	// block of 2x2, in a dispatch of a quarter of the threads.
-	split := shared_from if settings.reflection_half_resolution else max(f32)
+	params := Params{light_budget = settings.reflection_light_budget, max_distance = settings.gi_max_distance, firefly_clamp = settings.firefly_clamp, pixel_spread = p.frame.footprint.y, cached_below = cached_below}
+	// Detailed traces every pixel; Traced the wider lobes one pixel per block
+	// of 2x2, in a dispatch of a quarter of the threads.
+	split := max(f32)
+	if settings.reflections == .Detailed {params.detail_below = REFLECTION_SHARED_ROUGHNESS} else {split = shared_from}
 	// Its rays shade what they hit with the layers of its material, and a
 	// layer of glass traces the lobe its own layers shape.
 	pipeline: rhi.Pipeline
@@ -328,7 +329,7 @@ reflect_pass :: proc(p: ^Pass, normal, depth, albedo, history_previous, history_
 		rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.reflect_raw)
 		trace(p, pipeline, &params, glass, false, groups(t.width, 8), groups(t.height, 8))
 	}
-	if settings.reflection_half_resolution {
+	if split < max(f32) {
 		params.block, params.roughness_from, params.roughness_to = 2, split, max(f32)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.reflect_shared)
 		trace(p, pipeline, &params, glass, true, groups(t.half_width, 8), groups(t.half_height, 8))
@@ -710,7 +711,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 	p.use_gi = settings.gi_enabled
 	p.use_probes = p.use_gi && g.valid
 	// Skipped while no material is smooth enough to have a pixel traced.
-	p.use_reflections = settings.reflections && len(s.materials) > 0 && s.smoothest < settings.reflection_roughness && .Reflections in p.plan.stages
+	p.use_reflections = settings.reflections != .Off && len(s.materials) > 0 && s.smoothest < settings.reflection_roughness && .Reflections in p.plan.stages
 
 	// The matrices of the view take a point from its eye (frame.camera_position,
 	// view_clip of scene.slang): far from the origin a point near the eye keeps
@@ -1740,9 +1741,9 @@ update_stats :: proc(r: ^Renderer) {
 		// The contact occlusion: CONTACT_RAYS short rays of each pixel.
 		rays += pixels * CONTACT_RAYS
 	}
-	if r.settings.reflections && r.scene.smoothest < r.settings.reflection_roughness {
+	if r.settings.reflections != .Off && r.scene.smoothest < r.settings.reflection_roughness {
 		// A pixel traces its own ray or takes its turn for its block, never both.
-		blocks_only := r.settings.reflection_half_resolution && r.scene.smoothest >= REFLECTION_SHARED_ROUGHNESS
+		blocks_only := r.settings.reflections == .Traced && r.scene.smoothest >= REFLECTION_SHARED_ROUGHNESS
 		rays += u64(t.half_width) * u64(t.half_height) if blocks_only else pixels
 	}
 	s.rays_per_frame = rays

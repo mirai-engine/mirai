@@ -23,7 +23,7 @@ preview_samples_compact_bones_and_frames_the_clip_without_changing_authored_pose
     device:=shared_device.take_or_skip(t,hardware_rt=false)
     if device==nil {return}
     renderer:gpu.Renderer
-    settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled,settings.reflections=false,false
+    settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled=false
     if !testing.expect(t,gpu.renderer_init(&renderer,{device=device,width=64,height=64,settings=settings}),renderer.error) {return}
     defer gpu.renderer_destroy(&renderer)
     p:Animation

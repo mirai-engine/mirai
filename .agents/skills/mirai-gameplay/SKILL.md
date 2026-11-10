@@ -130,10 +130,12 @@ the same attributes and no private paths. Declaration and parameter binding:
   The menu of the game is the engine's `Menu` action (`gui.menu_pressed`); pausing and capturing
   the mouse are the engine's too (`UI_Screen.pause`, `input=.Modal`), never game code.
 - **Seats and movement.** A player is a seat (`inp.Seat`), of this machine or of a connection,
-  without telling them apart; it drives a body with `Drivable` and carries its actions. Locomotion
-  turns the body's `Move_Input` into movement: the seat writes it according to `move_relative_to`,
-  the game does (with `Game`, from `inp.seat_*` or `inp.pressed(players, body, ...)`), or an AI for
-  its own bodies; an own mode (swimming, climbing) is requested with `phys.set_mode`. Player bodies
+  without telling them apart; it drives a body with `Drivable` and carries its actions. The
+  `locomotion` plugin turns the `Move_Input` of a `Character` with a `Walk` (or `Fly`, `Swim`)
+  into movement: the seat writes it according to the `move_relative_to` of the `Drivable`, the
+  game does (with `Game`, from `inp.seat_*` or `inp.pressed(players, body, ...)`), or an AI for
+  its own bodies; an own mode (swimming, climbing) is requested with `locomotion.set_mode`. Player
+  bodies
   appear at the `Spawn_Point`s of the `spawn` plugin, not through game code
   ([control](references/control.md)).
 - **Volumes: one algorithm and an unbounded base value.** Gravity, wind, reverb, view and fog

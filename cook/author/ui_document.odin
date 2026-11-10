@@ -1470,7 +1470,7 @@ document_anim_apply :: proc(args:^Tree_Args,r:^Records,name,text:string) -> bool
     reading:=args.reading
     anim:=args^
     keys,values:=tree_object(reading,text,"the animation") or_return
-    properties:=[ui.Anim_Property]string{.Offset="offset",.Scale="scale",.Rotation="rotation",.Opacity="opacity",.Color="color",.Width="width",.Height="height",.Value="value",.Frame="frame",.Reveal="reveal"}
+    properties:=[ui.Anim_Property]string{.Offset="offset",.Scale="scale",.Rotation="rotation",.Opacity="opacity",.Color="color",.Value="value",.Frame="frame",.Reveal="reveal"}
     short_tracks:=strings.builder_make(reading.allocator)
     seconds:=f32(-1)
     ease:="Linear"

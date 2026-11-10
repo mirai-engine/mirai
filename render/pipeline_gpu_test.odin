@@ -56,7 +56,7 @@ half_to_f32 :: proc(h: u16) -> f32 {
 @(test)
 pipeline_passes_run_between_stages_over_the_resources_they_declare :: proc(t: ^testing.T) {
 	settings := DEFAULT_SETTINGS
-	settings.gi_enabled, settings.reflections, settings.taa = false, false, false
+	settings.gi_enabled, settings.taa = false, false
 	f: Fixture
 	if !fixture_init(t, &f, 128, 64, settings) {return}
 	defer fixture_destroy(&f)
