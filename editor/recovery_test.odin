@@ -1,13 +1,11 @@
 package editor
 
-import "core:fmt"
 import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/history"
 import "mirai:host"
-import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/jobs"
 

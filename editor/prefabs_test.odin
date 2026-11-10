@@ -1,6 +1,5 @@
 package editor
 
-import "base:runtime"
 
 import "core:fmt"
 import "core:mem"
@@ -13,7 +12,6 @@ import "mirai:editor/history"
 import erender "mirai:engine/render"
 import scene "mirai:engine/scene"
 import "mirai:host"
-import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:ui"

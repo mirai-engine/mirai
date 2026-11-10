@@ -1,6 +1,5 @@
 package history
 
-import "base:runtime"
 import "core:testing"
 import "mirai:core"
 

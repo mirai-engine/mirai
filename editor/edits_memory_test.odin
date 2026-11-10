@@ -1,6 +1,5 @@
 package editor
 
-import "base:runtime"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor/api"
