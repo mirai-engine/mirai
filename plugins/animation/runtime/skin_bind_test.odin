@@ -81,6 +81,7 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     defer host.extras_free(&app.extras)
     cache:Skin_Runtime;defer skin_runtime_free(&cache)
     state:Skin_Instances;defer skin_instances_free(&state)
+    posed:erender.Posed_Meshes;defer core.value_free(&posed,type_info_of(erender.Posed_Meshes))
     skeleton_assets:Skeleton_Assets;defer skeleton_assets_free(&skeleton_assets)
     w:Bind_Pose_World
     if !core.test_world_init(t,&w,test_types) {return}
@@ -104,9 +105,10 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
         if !testing.expect(t,pose!=nil && skeleton_bind(&w.playback,pose,definition,nil,&w.transforms)) {return}
         copy(pose.previous[:],pose.local[:]);pose.pose_ready=true
     }
-    tick :: proc(app:^host.App,cache:^Skin_Runtime,state:^Skin_Instances,w:^Bind_Pose_World,problems:^core.Problems,modifiers:^Modifier_Runtime=nil) {
+    tick :: proc(app:^host.App,cache:^Skin_Runtime,state:^Skin_Instances,w:^Bind_Pose_World,problems:^core.Problems,posed:^erender.Posed_Meshes,modifiers:^Modifier_Runtime=nil) {
         clear(&app.extras.instances)
-        animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),core.read(&w.tints),core.read(&w.overrides),core.read(&w.hidden),core.read(&w.elsewhere),core.read(&w.highlights),core.read(&w.outlines),core.read(&w.offsets),cache,state,app.assets,app.renderer,&app.extras,&app.jobs,app.allocator,{},core.FRAME_TIME_DEFAULT,core.Ref(Playback){ptr=&w.playback},{},problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,{},{},{},core.Ref(Modifier_Runtime){ptr=modifiers})
+        animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),core.read(&w.overrides),core.read(&w.hidden),core.read(&w.elsewhere),cache,state,app.assets,app.renderer,posed,&app.jobs,app.allocator,{},core.FRAME_TIME_DEFAULT,core.Ref(Playback){ptr=&w.playback},{},problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,{},core.Ref(Modifier_Runtime){ptr=modifiers})
+        skin_shown(app,posed,core.read(&w.meshes),core.read(&w.worlds),core.read(&w.offsets),core.read(&w.parents),core.FRAME_TIME_DEFAULT)
     }
     measure :: proc(renderer:^gpu.Renderer,label:string) -> int {
         s:=&renderer.scene
@@ -115,7 +117,7 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
         return len(s.skinned)
     }
     measure(renderer,"loaded")
-    tick(&app,&cache,&state,&w,&problems)
+    tick(&app,&cache,&state,&w,&problems,&posed)
     testing.expect_value(t,problems.count,0)
     testing.expect_value(t,measure(renderer,"64 rigs at the bind pose"),0)
     testing.expect_value(t,len(host.extras_instances(&app.extras)),0)
@@ -125,7 +127,7 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     pose.local[1].position.y=0.5
     copy(pose.previous[:],pose.local[:])
     pose.changed+=1
-    tick(&app,&cache,&state,&w,&problems)
+    tick(&app,&cache,&state,&w,&problems,&posed)
     testing.expect_value(t,measure(renderer,"one rig posed"),1)
     if !testing.expect_value(t,len(host.extras_instances(&app.extras)),1) {return}
     gpu.scene_set(renderer,host.extras_instances(&app.extras),nil,{},gpu.Environment{sky={1,1,1}})
@@ -142,7 +144,7 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     blush:=CURVE_MATERIAL_DEFAULT;blush.rig,blush.every,blush.scale=roots[1],true,{1,0,0,0}
     base.text_set(blush.curve[:],"blush");base.text_set(blush.parameter[:],"base_color")
     testing.expect(t,modifier_append(&w.modifiers.curve_materials,roots[1],blush))
-    tick(&app,&cache,&state,&w,&problems,&w.modifiers)
+    tick(&app,&cache,&state,&w,&problems,&posed,&w.modifiers)
     testing.expect_value(t,measure(renderer,"one rig posed and one with curve materials"),2)
     testing.expect_value(t,len(host.extras_instances(&app.extras)),2)
     instance:=core.entity_map_get(&state.instances,draws[1])

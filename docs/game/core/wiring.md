@@ -22,8 +22,8 @@ server. Use it for rules; split what also has to run on clients.
 
 ## Request: ask the library that owns the data
 
-A table has one writing function and a storage one writing library. Everyone else pushes into a
-queue storage that its owner takes in its own step.
+A table and a storage have one writing library, whose functions write them in loop order. Every
+other library pushes into a queue storage that its owner takes in its own step.
 
 ```odin
 Hit :: struct {target:core.Entity, damage:f32}
@@ -59,13 +59,12 @@ Finding what to act on: `core.first(table)` and `core.sole(table)` return an ent
 @(storage)
 Score :: struct {points:i32}
 
-@(storage,events)
-Hit_Events :: struct {landed:core.Queue(Hit)}
+@(storage)
+Hit_Events :: struct {landed:core.Events(Hit)}
 
 @(step="fixed",stage="react")
 game_hit_events :: proc(events:^Hit_Events) {
-    core.queue_clear(&events.landed)               // the owner clears, then fills
-    // core.push(&events.landed,Hit{e,5})
+    // core.push(&events.landed,Hit{e,5})         // the owner pushes and never clears
 }
 
 @(step="fixed",stage="react")
@@ -74,18 +73,45 @@ game_score :: proc(events:core.Ref(Hit_Events),score:^Score) {
 }
 ```
 
-Readers take `core.Ref(Events)` in the stage of the owner or a later one: in its stage they run
-after it. Engine events:
+Readers take `core.Ref(Events)` (or `Events` by value) and find in `items` what came since they
+last ran: each event reaches each function once, in `fixed`, `frame` or `late`, with any number of
+ticks in a frame. In the stage of the owner a reader runs after it; one that runs before it gets
+the event in its next run. Engine events:
 `phys.Physics_Events` (contacts, overlaps, sleep), `anim.Animation_Events`,
-`destruct.Destruct_Events`; read them in `stage="react"` of the same tick.
-`save.Save_Results` and `scene.Scene_Results` are filled and emptied by frame: read them in a
-`frame` step. A `fixed` step that reads such a storage is a generator error.
+`destruct.Destruct_Events`, `save.Save_Results` and `scene.Scene_Results`.
+
+## Objects with a state
+
+Keep the phase an object is in and the tick it entered it; derive the rest from `core.Time`
+([waiting.md](waiting.md)). What a row starts with is set in its first tick, when `core.added`
+says the row is new; no field says it was set up:
+
+```odin
+@(component)
+Bob :: struct {height,speed:f32, base_y:f32 `mirai:"transient"`}
+
+@(step="fixed")
+game_bobs :: proc(bobs:^core.Table(Bob),transforms:^core.Table(core.Transform),time:core.Time) {
+    for row in 0..<core.count(bobs) {
+        local:=core.free(transforms,core.entity_at(bobs,row))
+        if local==nil {continue}
+        // New: asked before the row is written.
+        if core.added(bobs,row) {core.edit_at(bobs,row).base_y=local.position.y}
+        bob:=core.at(bobs,row)
+        local.position.y=bob.base_y+math.sin(f32(time.seconds)*bob.speed)*bob.height
+    }
+}
+```
+
+`core.added(table,row)` is true from the add that gave the row its value until the row is written
+(`edit`, `edit_at`, a `set` that changes it); it is for the library that writes the table.
 
 ## Pitfalls that fail silently
 
-- Two functions writing the same non-`shared` table, or two libraries writing a storage, is a
-  generator error: the second pushes a request.
-- A reader in an earlier stage than the owner's does not see this tick's events.
+- Two libraries writing the same non-`shared` table or storage is a generator error: the second
+  pushes a request.
+- A function that receives the storage of events to write (`^Events`) sees the whole log, not
+  what is new to it: read with `core.Ref(Events)`.
 - Waiting is a deadline tick, never a countdown: [waiting.md](waiting.md).
 - A request names a `core.Entity`: if it died before the owner ran, the request does nothing.
   Report it with `core.report(problems,e,"game.cause","what failed and how to fix it")`.

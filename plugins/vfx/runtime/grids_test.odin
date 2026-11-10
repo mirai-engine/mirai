@@ -107,7 +107,7 @@ emitters_read_the_grids_they_bind_or_their_own :: proc(t:^testing.T) {
     shown.needs.stages[0]={kind=.Cells,over=0}
     shown.needs.stages[1]={kind=.Cells,over=1}
     read :: proc(sync:^Particle_Sync,shown:^Emitter_Shown,bindings:^Particle_Bindings,e:core.Entity) -> (grids:[2]int) {
-        resources:=emitter_resources(sync,shown,&shown.info,nil,bindings,e,{},nil,{},{},{},nil,nil)
+        resources:=emitter_resources(sync,shown,&shown.info,nil,bindings,e,{},nil,nil,{},{},{},nil,nil)
         for &g,at in grids {g=resources[1+at].kind==.Grid?int(resources[1+at].first):-1}
         return
     }

@@ -92,7 +92,8 @@ reports for each ability of the kit.
 
 ## What it asks of others
 
-- `Ability_Events` (cleared and filled each tick): `Started`, `Completed`, `Interrupted`,
+- `Ability_Events` (a log: each reader gets what is new to it): `Started`, `Completed`,
+  `Interrupted`,
   `Canceled`, `Window_Begin` and `Window_End` with the window and its cue, `Hit` with the target,
   `Depleted` with the attribute, `Effect_Begin` and `Effect_End` with the cue of a timer (at the
   end that decides the user). VFX, sound and camera shake are the game's answer to cues.

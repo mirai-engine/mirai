@@ -21,11 +21,13 @@
 
 - `mesh_add`: static geometry, load transaction. `materials_set`: material table. `texture_add`:
   see [textures](materials.md#textures).
-- `scene_set(r, instances, lights, sun, environment)` replaces instances, lights and environment.
-  It pairs each instance with the previous one by identity (object and copy) and marks the light
-  change only around those that appear, disappear or show something else (transform, mesh,
-  material, tint, emission, flags; not the highlight); lights, sun and environment mark their own.
-  A `mesh_add` marks nothing: no instance shows the mesh yet.
+- `scene_set(r, instances, lights, sun, environment)` replaces instances, lights and environment:
+  what a tool or a test gives a renderer whole. `engine/render` never calls it
+  ([partial changes](#partial-scene-changes)). It pairs each instance with the previous one by
+  identity (object and copy) and marks the light change only around those that appear, disappear
+  or show something else (transform, mesh, material, tint, emission, flags; not the highlight);
+  lights, sun and environment mark their own. A `mesh_add` marks nothing: no instance shows the
+  mesh yet.
 - **Without memory** `scene_set`, `scene_update`, `scene_set_lights`, `materials_set` and
   `materials_update` take the room of all they write before they change anything: they return
   false with the scene as it was and the reason in `Renderer.error`, and the caller gives the
@@ -133,7 +135,11 @@
 ## Partial scene changes
 
 `scene_set` rebuilds the instance table, their boxes, the software TLAS (tracing in software) and
-the lights, and uploads the whole tables: it is used when what is drawn changes. For the rest:
+the lights, and uploads the whole tables. `render_sync` gives the world through these alone, from
+the rows that changed (`core.changes`): what stops being drawn leaves its place to the last
+instance of the world, what starts comes after them, the rest is made again in runs of
+`scene_update`, moves go to `scene_move` and colors to `scene_tint`; the visual instances of the
+frame follow those of the world, given whole in every frame.
 
 - **`scene_move(r, descs, transforms, anchors)`** moves instances of the last `scene_set`: `descs`
   are positions in the list it received and `transforms` the current transform of each one.
@@ -161,24 +167,27 @@ the lights, and uploads the whole tables: it is used when what is drawn changes.
   - When the count changes the tree is built again and the table is uploaded.
   - What the tree asks for (building, reclassifying or refitting) `tlas_settle` does once, when
     uploading the scene in the frame, whatever the calls before: each one alone would traverse
-    all the instances. Until then the tree is the previous one. Whoever adds or removes many
-    instances in a frame gives them in few calls: `render_sync` gathers those that leave and those
-    that arrive.
+    all the instances. Until then the tree is the previous one. Whoever changes many instances in
+    a frame gives them in few calls: `render_sync` gives each run of neighbours at once, and what
+    a range held leaves the lists of glass and of reflection in one pass per call.
+  - An instance given again as it is changes nothing and goes nowhere: whoever gives the same
+    ones in every frame (the visual instances) keeps no copy to compare them with.
   - Each mesh carries the doubly linked list of its instances: one leaves it without traversing
     it.
   - It returns `false` without mutating if the range or a mesh is invalid, or if the last
     `scene_set` omitted descriptors because of invalid meshes.
   - It neither modifies nor refits a geometry BLAS.
-  - It marks the light change around each touched instance, before and after, like `scene_tint`;
-    not in the whole scene. The reach is its box plus `LIGHT_CHANGE_SIZES` (10) times its radius,
+  - It marks the light change around each instance that comes, goes or shows something else
+    (as `scene_set` tells them: not the highlight), before and after, like `scene_tint`; not in
+    the whole scene. The reach is its box plus `LIGHT_CHANGE_SIZES` (10) times its radius,
     up to `LIGHT_CHANGE_REACH` (8 m): its shadow and the light it reflects fall with the square of
     the distance over its size. An instance that glows, or whose brightness changes, marks the
     whole `LIGHT_CHANGE_REACH`.
 - **`scene_set_lights(r, lights, sun, environment)`** replaces lights, sun and environment; it
   touches neither instances nor their tree. While each index names the same light it refits the
   light tree and uploads only what changed ([light tree](lights.md#light-tree)).
-- **`scene_set_highlights`** and **`scene_set_environment`** change highlights and environment;
-  only the instances whose level is another go to the GPU.
+- **`scene_set_environment`** changes the sun and the environment alone. An outline level is of
+  its instance: `scene_update` gives it again, and it goes to the GPU alone.
 - **What the scene answers.** `scene_instance_materials` (the rows an instance shows) and
   `scene_instance_placed` (its mesh and its transform into the world), by descriptor: whoever
   gave the scene keeps no copy of it. `scene_instance_was(r, descriptor, from)` gives an
@@ -211,10 +220,15 @@ the lights, and uploads the whole tables: it is used when what is drawn changes.
   shadow filters; a program still reads them as data. A translucent white copy is this flag with a
   white blend material and shares the resident geometry.
 - **Replacement** (`host.extras_instance_add` with `replace_source=true`): visually substitutes the
-  world mesh with the same `object_id`; `engine/render` hides the base sent to the GPU and when it
-  stops delivering it, draws it again. It uses `scene_update` without extracting the world again;
-  it does not change picking, colliders, scenes or undo; with `hidden=true` it also hides its
-  source.
+  world mesh with the same `object_id`, for a frame; `engine/render` hides the instance of the
+  entity while it keeps coming and shows it again in the frame it stops. It does not change
+  picking, colliders, scenes or undo; with `hidden=true` it also hides its source.
+- **Posed mesh** (`engine/render` `Posed_Meshes`, `posed_set` and `posed_drop`): the copy of its
+  mesh a library poses on the GPU for an entity, as a skin, is the mesh of the instance of that
+  entity, not a visual instance: `render_sync` places, tints, hides and outlines it as any mesh,
+  and makes it again only when the pose is given, changed or taken. With `materialed` it also
+  carries the values of its materials for the frame (the curves of an animation). The library
+  owns the mesh and takes the pose away before it removes it.
 
 ## Instance batches
 
@@ -400,9 +414,8 @@ rejecting another type or out of range. The result goes in `Material_Desc.custom
   of all levels, it deforms each and the GPU keeps choosing among them. A pose larger than what a
   frame uploads goes with its influences and targets
   [over several frames](#geometry-over-several-frames), and is not deformed until it has been
-  uploaded: its instance is not drawn, casts no shadow, rays do not see it and it has no outline,
-  and if it replaces the world mesh (`replace_source`) that one is not drawn either. It appears
-  already posed.
+  uploaded: its instance is not drawn, casts no shadow, rays do not see it and it has no outline.
+  It appears already posed.
 - The poses of the same source share bind vertices, influences and targets; one with other
   influences or targets needs another source. Each pose has joints, current and previous vertices
   and the ray structure of the tracer in use

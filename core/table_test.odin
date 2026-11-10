@@ -539,3 +539,69 @@ a_table_holds_rows_by_entity_only_where_it_has_rows :: proc(t:^testing.T) {
     testing.expect(t,table_copy(&copied,&names))
     testing.expect(t,!has(&copied,far) && has(&copied,near) && raw_row(raw(&copied),far)<0)
 }
+
+// A row is added, new to its writer, from the add that gives it its value
+// until it is written: by any write, and not by a read, a turn, a settle of
+// other rows or a move of its row. It is of the row, so a copy of the table,
+// a copy of what changed and a swap keep it, as a rollback does.
+@(test)
+a_row_is_added_until_its_writer_writes_it :: proc(t:^testing.T) {
+    es:Entities
+    entities_init(&es)
+    defer entities_destroy(&es)
+    names,kept,rolled:Table(Name)
+    table_init(&names,"Name");table_init(&kept,"Name");table_init(&rolled,"Name")
+    defer {table_destroy(&names);table_destroy(&kept);table_destroy(&rolled)}
+    entities:[6]Entity
+    for &e in entities {
+        e=create(&es)
+        add(&names,e,name_make("new"))
+    }
+    testing.expect(t,table_settle(&names,&es))
+    for row in 0..<count(&names) {testing.expect(t,added(&names,row) && added(read(&names),row))}
+    Write :: enum {Edit,Edit_At,Set,Set_Same,Raw_Edit,Raw_Touch}
+    for write in Write {
+        e:=entities[int(write)]
+        _,_=get(&names,e)
+        testing.expect(t,added(&names,row_of(&names,e)),"reading is not writing")
+        switch write {
+        case .Edit:      edit(&names,e)^=name_make("a")
+        case .Edit_At:   edit_at(&names,row_of(&names,e))^=name_make("b")
+        case .Set:       set(&names,e,name_make("c"))
+        case .Set_Same:  set(&names,e,name_make("new"))
+        case .Raw_Edit:  raw_edit(raw(&names),type_info_of(Name),e)
+        case .Raw_Touch: raw_touch(raw(&names),e)
+        }
+        testing.expectf(t,added(&names,row_of(&names,e))==(write==.Set_Same),"%v",write)
+    }
+    // A row turned off and on, and one whose row moved when another went, are as they were.
+    mark:Copy_Mark
+    testing.expect(t,table_copy_changed(&kept,&names,&mark))
+    disable(&names,entities[3]);remove(&names,entities[0])
+    testing.expect(t,table_settle(&names,&es))
+    enable(&names,entities[3])
+    testing.expect(t,table_settle(&names,&es))
+    testing.expect(t,added(&names,row_of(&names,entities[3])) && !added(&names,row_of(&names,entities[5])) && !added(&names,row_of(&names,entities[1])))
+    // An add over a row gives it a value again; writable hands out every row.
+    add(&names,entities[1],name_make("again"))
+    testing.expect(t,!table_settle(&names,&es) && added(&names,row_of(&names,entities[1])))
+    testing.expect(t,table_copy(&rolled,&names) && table_copy_changed(&kept,&names,&mark))
+    for other in ([2]^Table(Name){&rolled,&kept}) {
+        for row in 0..<count(&names) {testing.expect_value(t,added(other,row_of(other,entity_at(&names,row))),added(&names,row))}
+    }
+    _=writable(&names)
+    for row in 0..<count(&names) {testing.expect(t,!added(&names,row))}
+    table_swap(&names,&rolled)
+    testing.expect(t,added(&names,row_of(&names,entities[1])) && added(&names,row_of(&names,entities[3])))
+    // Every stamp a reader compares still grows.
+    seen:Seen
+    testing.expect(t,touched(&names,&seen))
+    add(&names,create(&es),name_make("late"))
+    testing.expect(t,table_settle(&names,&es) && touched(&names,&seen))
+    c:=changes(&names,&seen)
+    testing.expect(t,!c.written)
+    edit_at(&names,0).text[0]='z'
+    c=changes(&names,&seen)
+    row,found:=each_changed(&names,&c)
+    testing.expect(t,found && row==0 && !added(&names,0))
+}

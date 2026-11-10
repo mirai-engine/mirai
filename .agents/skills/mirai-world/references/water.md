@@ -98,8 +98,8 @@ dry box, the master loses the highs (`UNDER_LOWPASS`) and the water reverb sound
 
 A scene with water has the `Fluid` entity with its `Volume` (with `Water` if its appearance
 changes and `Fluid_Waves` if it has waves) and, for splashes, bubbles and suspended particles, an
-emitter with a `Particle_Channel` `splashes`, `bubbles` or `motes`. The `raft` scene of the demo
-builds them from `tools/demo_content`.
+emitter with a `Particle_Channel` `splashes`, `bubbles` or `motes`, as the `raft` scene of the
+demo has them.
 
 ## Limits
 

@@ -639,10 +639,12 @@ colliders_of_the_same_mesh_and_scale_share_one_slot_of_geometry :: proc(t:^testi
     for wall in walls {testing.expect(t,link_find(&copy,wall)!=nil && link_find(&copy,wall)^==link_find(&g.state,wall)^)}
     copied,_:=geometry_budget({&copy},.Hull)
     testing.expect_value(t,copied,2)
-    buffer:=make([]byte,sim.world_snapshot_capacity(&g.state.world))
-    defer delete(buffer)
-    written,saved:=sim.world_snapshot(&g.state.world,buffer)
-    testing.expect(t,saved && sim.world_restore(&g.state.world,buffer[:written]))
+    buffer:sim.World
+    defer sim.world_destroy(&buffer)
+    testing.expect(t,sim.world_kept_init(&buffer,&g.state.world,context.allocator))
+    _,saved:=sim.world_state_copy(&buffer,&g.state.world)
+    _,restored:=sim.world_state_copy(&g.state.world,&buffer)
+    testing.expect(t,saved && restored)
 
     // The slot goes with the last collider that uses it.
     for e in walls[:4] {core.remove(&g.colliders,e)}
@@ -858,10 +860,12 @@ the_pieces_of_a_hull_follow_their_mesh_copies_and_budgets :: proc(t:^testing.T) 
     testing.expect_value(t,hulls_used(&f),2)
     hit,hit_ok=raycast({&f.state},{1.5,5,0},{0,-1,0})
     testing.expect(t,hit_ok && hit.entity==e && abs(hit.point.y-1)<1e-3)
-    buffer:=make([]byte,sim.world_snapshot_capacity(w))
-    defer delete(buffer)
-    written,saved:=sim.world_snapshot(w,buffer)
-    testing.expect(t,saved && sim.world_restore(w,buffer[:written]))
+    buffer:sim.World
+    defer sim.world_destroy(&buffer)
+    testing.expect(t,sim.world_kept_init(&buffer,w,context.allocator))
+    _,saved:=sim.world_state_copy(&buffer,w)
+    _,restored:=sim.world_state_copy(w,&buffer)
+    testing.expect(t,saved && restored)
     // The rows lost the collider: the next step lets the copied pieces go.
     physics_test_step(&f,0)
     testing.expect_value(t,hulls_used(&f),0)
