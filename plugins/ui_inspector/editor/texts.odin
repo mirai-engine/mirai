@@ -57,10 +57,10 @@ node_text_in :: proc(s:^editor.Session,r:^author.Records,n:^ui.Tree_Node,languag
 }
 
 // Sets the text of a node in a language: of a localized one, what its key
-// says there, for everything that shows the key; of another, its own. False
-// after telling why it could not.
+// says there, for everything that shows the key, as a step of history of
+// its .strings; of another, its own. Whether the records of the .ui changed.
 @(private)
-node_text_set :: proc(s:^editor.Session,r:^author.Records,n:^ui.Tree_Node,language:gui.Language,text:string) -> bool {
+node_text_set :: proc(s:^editor.Session,r:^author.Records,n:^ui.Tree_Node,language:gui.Language,text:string) -> (records_changed:bool) {
     if .Localized not_in n.flags {
         author.records_text_set(r,&n.text,text)
         return true
@@ -70,7 +70,7 @@ node_text_set :: proc(s:^editor.Session,r:^author.Records,n:^ui.Tree_Node,langua
     problem:=author.texts_set(&texts,author.records_text(r,n.text),codes[language],text)
     if problem=="" {problem=editor.texts_write(s,&texts,"Text")}
     if problem!="" {editor.notify(s,problem)}
-    return problem==""
+    return false
 }
 
 // Makes a node localized, under the key its text makes (author.texts_key),
