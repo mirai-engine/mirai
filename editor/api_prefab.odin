@@ -145,21 +145,9 @@ prefab_api_register :: proc(s:^Session,st:^Api_State) {
 api_prefab_fail :: proc(call:^api.Call,error:Prefab_Error) {
     code:=api.SERVER_ERROR
     #partial switch error {
-    case .Unknown_Entity,.No_Id,.Not_Found,.Not_One_Root,.Unknown_Path,.Not_Instance,.Not_Variant: code=api.INVALID_PARAMS
+    case .Unknown_Entity,.No_Id,.Not_Found,.Unknown_Path,.Not_Instance,.Not_Variant: code=api.INVALID_PARAMS
     }
     api.call_fail(call,code,prefab_error_text(error))
-}
-
-// The prefab a call names by path or id: a scene of the assets with exactly
-// one root. A scene with another number of roots fails with what to do.
-@(private)
-prefab_named :: proc(s:^Session,call:^api.Call,name:string) -> (id:base.Asset_Id,ok:bool) {
-    id=asset_named(s,call,name,asset.KIND_SCENE,SCENE_EXTENSION,"a scene") or_return
-    if file,found:=asset.registry_find(&s.app.assets.registry,id);!found || !asset.registry_prefab(file) {
-        api.call_failf(call,api.INVALID_PARAMS,"%q is no prefab: %s (asset.list says which scenes are prefabs)",name,prefab_error_text(.Not_One_Root))
-        return {},false
-    }
-    return id,true
 }
 
 @(private)
@@ -247,7 +235,7 @@ api_prefab_inspect :: proc(s:^Session,call:^api.Call) {
         serial.write_u8(w,'}')
         return
     }
-    id,located:=prefab_named(s,call,base.text_get(params.asset[:]))
+    id,located:=asset_named(s,call,base.text_get(params.asset[:]),asset.KIND_SCENE,SCENE_EXTENSION,"a prefab")
     if !located {return}
     loaded,ok:=prefab_scene_load(s,id)
     if !ok {
@@ -315,7 +303,7 @@ api_prefab_create :: proc(s:^Session,call:^api.Call) {
 api_prefab_instantiate :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Prefab_Instantiate_Params)
     if !api_guard(s,call) {return}
-    id,located:=prefab_named(s,call,base.text_get(params.asset[:]))
+    id,located:=asset_named(s,call,base.text_get(params.asset[:]),asset.KIND_SCENE,SCENE_EXTENSION,"a prefab")
     if !located {return}
     placement:=Prefab_Placement{position=params.position,scale_multiplier=params.scale_multiplier}
     if params.parent[0]!=0 {
@@ -368,7 +356,7 @@ api_prefab_apply :: proc(s:^Session,call:^api.Call) {
 api_prefab_variant_create :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Prefab_Variant_Params)
     if !api_guard(s,call) {return}
-    base_id,located:=prefab_named(s,call,base.text_get(params.prefab[:]))
+    base_id,located:=asset_named(s,call,base.text_get(params.prefab[:]),asset.KIND_SCENE,SCENE_EXTENSION,"a prefab")
     if !located {return}
     path:=base.text_get(params.path[:])
     if path=="" {
@@ -407,7 +395,7 @@ api_prefab_refresh :: proc(s:^Session,call:^api.Call) {
     if !api_guard(s,call) {return}
     id:base.Asset_Id
     if named:=base.text_get(params.asset[:]);named!="" {
-        located,found:=prefab_named(s,call,named)
+        located,found:=asset_named(s,call,named,asset.KIND_SCENE,SCENE_EXTENSION,"a prefab")
         if !found {return}
         id=located
     }

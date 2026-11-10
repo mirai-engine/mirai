@@ -1647,7 +1647,6 @@ modal_asset_row :: proc(s:^Session,ctx:^ui.Context,file:^asset.Registry_File) {
     icon,_:=asset_icon(s,shown_kind(file))
     kind:="File"
     if info,known:=asset.kind_info(file.kind);known {kind=strings.to_upper_camel_case(info.name,context.temp_allocator)}
-    if asset.registry_prefab(file) {kind="Prefab"}
     modal_row(ctx,icon,asset_name(file.path),kind)
 }
 

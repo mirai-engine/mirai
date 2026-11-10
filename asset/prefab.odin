@@ -6,18 +6,14 @@ import "core:mem"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-// Prefab instances inside a scene. A prefab is a scene with exactly one root:
-// no kind of its own, only what a scene is while it has one (asset_prefab,
-// registry_prefab). A scene with another number of roots places no instances
-// and is placed by none; it hangs under a Scene_Reference.
+// Prefab instances inside a scene. A prefab is a scene with exactly one root.
 //
 // Instantiating copies the entities of the prefab with new ids, points their
 // references to each other at the copies and empties those that pointed
 // outside the prefab. The root of the instance keeps the prefab and the
-// content hash of the file it was last brought up to date with
-// (Prefab_Instance), and every entity it placed, the root among them, the
-// entity of the prefab it stands for (Prefab_Member): two components, saved
-// and merged as any other.
+// content hash of the file it was last brought up to date with (Prefab_Instance),
+// and every entity it placed, the root among them, the entity of the prefab
+// it stands for (Prefab_Member): two components, saved and merged as any other.
 // What it set on its own are its overrides: values and components, and the
 // entities it added under its members. Updating adds and removes members
 // with the prefab, and gives every member the parent, order, name and
@@ -42,11 +38,7 @@ COMPONENT_INSTANCE :: "Prefab_Instance"
 COMPONENT_MEMBER :: "Prefab_Member"
 
 // The component of the root of what a prefab placed, in a document and in a
-// world: the generator reads the two components of this package, which is
-// where the procedures that place, update and unlink instances are. The
-// root of an instance is a Prefab_Member of itself; the root of a copy
-// spawned while the world runs (scene.spawn) is a member of nothing, and no
-// document holds it.
+// world. The root of a copy spawned while the world runs is no Prefab_Member.
 @(component,description="The root of what a prefab placed: an instance linked to it in this scene, or a copy spawned while the world runs.")
 Prefab_Instance :: struct {
     prefab:base.Asset_Id `mirai:"readonly,hidden"`,
@@ -72,19 +64,11 @@ path_covers :: proc(path,part:string) -> bool {
     return len(part)>len(path) && part[:len(path)]==path && (part[len(path)]=='.' || part[len(path)]=='[')
 }
 
-// Whether an open asset is a prefab: a scene with one root, by its header.
-asset_prefab :: proc "contextless" (a:^Asset) -> bool {
-    return a.blob.header.kind==KIND_SCENE && .One_Root in a.blob.header.flags
-}
-
-// Whether a file of a registry is a prefab, by the header the registry read:
-// what a content browser asks without opening the file.
-registry_prefab :: proc "contextless" (file:^Registry_File) -> bool {
-    return file.state==.Asset && file.kind==KIND_SCENE && .One_Root in file.flags
-}
+// Whether an open asset, or a file as its registry read its header, is a prefab: a scene with one root.
+asset_prefab :: proc "contextless" (a:^Asset) -> bool {return a.blob.header.kind==KIND_SCENE && .One_Root in a.blob.header.flags}
+registry_prefab :: proc "contextless" (file:^Registry_File) -> bool {return file.state==.Asset && file.kind==KIND_SCENE && .One_Root in file.flags}
 
 // The entity an instance of a prefab places: its only entity without parent.
-// Not found in a scene with none or several, which is no prefab.
 prefab_root :: proc(prefab:^Scene) -> (root:base.Entity_Id,found:bool) {
     for parent,row in scene_parents(prefab) {
         if parent!=0 {continue}

@@ -38,7 +38,7 @@ Placement_Preview :: struct {
 
 @(private)
 placement_subject :: proc(d:Drag) -> bool {
-    return d.kind==.Preset || d.kind==.Asset && (d.asset_kind==asset.KIND_MESH || shown_scene(d.asset_kind) || placement_sound(d))
+    return d.kind==.Preset || d.kind==.Asset && (d.asset_kind==asset.KIND_MESH || d.asset_kind==SHOWN_PREFAB || d.asset_kind==asset.KIND_SCENE || placement_sound(d))
 }
 
 // A .sound or a .sound_set placed in the scene makes an entity of the Sound preset that plays it.
@@ -80,7 +80,7 @@ placement_prepare :: proc(s:^Session,d:Drag) -> ^Placement_Preview {
     } else if d.asset_kind==asset.KIND_MESH {
         part.mesh.mesh=d.asset_id
         placement_measure(s,p,part)
-    } else if shown_scene(d.asset_kind) {
+    } else if d.asset_kind==SHOWN_PREFAB || d.asset_kind==asset.KIND_SCENE {
         file:=host.assets_scene(a,d.asset_id)
         if file==nil {return p}
         data:=host.app_world_create(s.app)

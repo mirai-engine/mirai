@@ -1408,9 +1408,9 @@ the_editor_tells_a_prefab_from_a_scene_by_its_one_root :: proc(t:^testing.T) {
     testing.expect_value(t,asset.registry_memory_set(registry,"crate.scene",bytes),asset.Error.None)
     shown(t,s,registry,id,false)
     _,placed:=prefab_instantiate(s,id,{})
-    testing.expect_value(t,placed,Prefab_Error.Not_One_Root)
+    testing.expect_value(t,placed,Prefab_Error.Not_Found)
     _,varied:=prefab_variant_create(s,id,"crate_variant")
-    testing.expect_value(t,varied,Prefab_Error.Not_One_Root)
+    testing.expect_value(t,varied,Prefab_Error.Not_Found)
     link,linked:=prefab_link_of(w,crate)
     testing.expect(t,linked && link.root && link.asset==id)
 }

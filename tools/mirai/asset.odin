@@ -356,7 +356,7 @@ verify_asset :: proc(a:^asset.Asset,path:string,types:^asset.Types) -> string {
     if known,found:=asset.kind_info(a.blob.header.kind);found && known.version!=0 && a.blob.header.kind_version!=known.version {
         return asset.version_message(a,types,path,allocator=context.temp_allocator)
     }
-    if _,retired:=asset.kind_retired(a.blob.header.kind);retired {return asset.version_message(a,types,path,allocator=context.temp_allocator)}
+    if strings.has_suffix(path,".prefab") {return "a prefab is a .scene with exactly one root, and this build reads no other: import its source again, or make it again"}
     switch a.blob.header.kind {
     case asset.KIND_MESH:
         view,error:=asset.mesh_view(a,types)

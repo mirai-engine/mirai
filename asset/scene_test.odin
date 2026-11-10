@@ -29,7 +29,7 @@ scene_builder_names_components_by_type_and_stops_at_the_first_error :: proc(t:^t
     root:=builder_entity(&b,"Root",{position={1,2,3}})
     child:=builder_entity(&b,"Child",{scale={2,2,2}},root)
     builder_set(&b,child,Test_Light{{1,1,1},3,10})
-    testing.expect(t,scene_roots(&b.scene)==1 && !b.failed && !content.failed)
+    testing.expect(t,!b.failed && !content.failed)
     placed,found:=scene_get(&b.scene,root,"Transform",Test_Transform)
     testing.expect(t,found && placed==transform(1,2,3))
     scaled,_:=scene_get(&b.scene,child,"Transform",Test_Transform)

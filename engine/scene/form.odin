@@ -271,16 +271,13 @@ form_place :: proc(w:core.World_Ref,form:^Form,asset_types:^asset.Types,desc:Ins
             }
             if info.type==Scene_Reference && desc.only==0 {
                 reference:=(^Scene_Reference)(value)
-                // A copy without Ids has none for a section to be asked by later: its sections load with it.
-                if desc.transient {reference.rule=.With_Document}
+                if desc.transient {reference.rule=.With_Document} // without an Id to ask its section by later
                 if (desc.documents.open!=nil || desc.saved) && (reference.rule==.With_Document || desc.saved) && reference.state!=.Unloaded {reference.loaded=reference.scene}
                 // Only what loads with its document; the others wait for their state (scene_sections).
                 if reference.rule==.With_Document && reference.state!=.Unloaded {
-                    // The Ids of a section are made with the Id its reference has in the world, which in a copy is not the document's.
+                    // The Ids of a section are made with the Id of its reference in the world, which in a copy is not the document's.
                     salt:=id_in(desc.salt,form.ids[row])
-                    if desc.fresh && ids!=nil {
-                        if given:=(^core.Id)(core.raw_added(core.raw(ids),type_info_of(core.Id),e));given!=nil {salt=given.value}
-                    }
+                    if given:=desc.fresh && ids!=nil?(^core.Id)(core.raw_added(core.raw(ids),type_info_of(core.Id),e)):nil;given!=nil {salt=given.value}
                     append(&sections,Form_Section{e,reference^,salt})
                 }
             }

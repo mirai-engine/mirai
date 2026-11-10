@@ -20,21 +20,10 @@ Content_Categories :: bit_set[Content_Category;u16]
 CONTENT_STRIP_CATEGORIES :: [?]Content_Category{.Prefab,.Mesh,.Material,.Scene,.Plugin}
 CONTENT_MENU_CATEGORIES :: [?]Content_Category{.Texture,.Animation,.Sound,.Ui}
 CONTENT_CATEGORY_LABELS :: [Content_Category]string{.Prefab="Prefab",.Mesh="Model",.Material="Material",.Scene="Scene",.Plugin="Plugins",.Texture="Texture",.Animation="Animation",.Sound="Sound",.Ui="UI"}
-// What the editor shows a scene with exactly one root as: a prefab. It is no
-// kind of asset: every scene is asset.KIND_SCENE in its file, and is a prefab
-// while it has one root, which the registry knows from the header of the file
-// (asset.registry_prefab). This stands for that wherever the editor keys what
-// it shows by kind: the color, the icon and the filter of the browser, the
-// kinds a field takes and what a drag carries.
+// What a prefab, a scene with one root (asset.registry_prefab), is shown as wherever the editor keys by
+// kind: color, icon, filter, the kinds a field takes and what a drag carries. No kind of file.
 SHOWN_PREFAB :: asset.Fourcc(u32('P')|u32('R')<<8|u32('F')<<16|u32('B')<<24)
-
-// The kind a file of the registry is shown as: its own, or SHOWN_PREFAB.
-shown_kind :: proc "contextless" (file:^asset.Registry_File) -> asset.Fourcc {
-    return asset.registry_prefab(file)?SHOWN_PREFAB:file.kind
-}
-
-// Whether what is shown as a kind is a scene file: a scene, or a prefab.
-shown_scene :: proc "contextless" (kind:asset.Fourcc) -> bool {return kind==asset.KIND_SCENE || kind==SHOWN_PREFAB}
+shown_kind :: proc "contextless" (file:^asset.Registry_File) -> asset.Fourcc {return asset.registry_prefab(file)?SHOWN_PREFAB:file.kind}
 
 // The kind whose color a filter carries; the Plugins filter has its own.
 CONTENT_CATEGORY_KINDS :: [Content_Category]asset.Fourcc{.Prefab=SHOWN_PREFAB,.Mesh=asset.KIND_MESH,.Material=asset.KIND_MATERIAL,.Scene=asset.KIND_SCENE,.Plugin=0,.Texture=asset.KIND_TEXTURE,.Animation=asset.KIND_ANIMATION,.Sound=asset.KIND_SOUND,.Ui=asset.KIND_UI}
@@ -722,8 +711,7 @@ content_variant_base :: proc(registry:^asset.Registry,types:^asset.Types,file:^a
     return base_id
 }
 
-// Whether an asset is used by another. A scene is never unused: nothing holds
-// it, unless it is a prefab, which is placed.
+// Whether an asset is used by another. A scene that is no prefab is never unused: nothing holds it.
 @(private)
 content_referenced :: proc(c:^Content,file:^asset.Registry_File) -> bool {
     if file.kind==asset.KIND_SCENE && !asset.registry_prefab(file) {return true}

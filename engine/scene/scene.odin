@@ -14,10 +14,8 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
 
-// Scenes between their document and a world. A scene is loaded whole, hangs
-// under a Scene_Reference as a section, or, when it has exactly one root (a
-// prefab), is placed as a copy: spawned while the world runs, or as an
-// instance a document keeps linked to it.
+// Scenes between their document and a world: loaded whole, hung under a
+// Scene_Reference or, with exactly one root (a prefab), placed as a copy.
 //
 // A document names entities by Entity_Id and components by the name of their
 // type; a world names them by handle and by its tables. Instantiating creates
@@ -99,12 +97,10 @@ Spawner :: struct {
     problems:^core.Problems,
 }
 
-// Places a copy of a scene of the assets that has one root, a prefab, by its
-// path ("pets/Dog.scene") or its id, and gives back its root, whose rows wait
-// for the end of the function. The root has Prefab_Instance, which names the
-// scene; the scenes its Scene_References name load with the copy. A scene
-// with several roots is not spawned: it hangs under a Scene_Reference. NONE
-// when it did not spawn, which is the problem scene.spawn that says why.
+// Places a copy of a prefab, a scene of the assets with one root, by its path
+// ("pets/Dog.scene") or its id, and gives back its root, whose rows wait for
+// the end of the function. NONE when it did not spawn, which is the problem
+// scene.spawn that says why.
 spawn :: proc{spawn_path,spawn_id}
 
 spawn_path :: proc(s:Spawner,path:string,at:core.Transform={},parent:=core.NONE,transient:=false) -> core.Entity {
@@ -133,7 +129,6 @@ spawn_report :: proc(s:Spawner,order:Spawn,name:string,found:Error) -> core.Enti
     case .Not_Found:     fix="name a .scene of the assets by its path or id: import or create it, or fix the name"
     case .Invalid:       fix="spawn a .scene under a parent that is alive, or with no parent"
     case .Not_One_Root:  fix="put its entities under one root in the editor, or place it whole with a Scene_Reference (scene.section_request)"
-    case .Cycle:         fix="take out the Scene_Reference inside it that names the scene itself"
     case .Corrupt:       fix="open the scene in the editor and save it again"
     case .Out_Of_Memory: fix="free memory or spawn fewer scenes at once"
     }
@@ -260,7 +255,6 @@ spawn_placed :: proc(c:core.Commands,assets:^host.Assets,s:Spawn,forms:^Prefab_F
     file:=host.assets_scene(assets,s.prefab)
     if file==nil {return {},.Not_Found}
     if s.parent!=core.NONE && !core.alive(c.entities,s.parent) {return {},.Invalid}
-    // A copy is placed by its one root: the header says it, and reading the document holds it to that.
     if !asset.asset_prefab(file) {return {},.Not_One_Root}
     w:=core.world_ref(c.data,c.info)
     form,entities:=prefab_form(forms,w,assets,s.prefab,file) or_return
@@ -271,8 +265,7 @@ spawn_placed :: proc(c:core.Commands,assets:^host.Assets,s:Spawn,forms:^Prefab_F
         if root.rotation==0 {root.rotation=1}
         if root.scale=={} {root.scale={1,1,1}}
     }
-    // A copy is of its prefab without being an instance of a document: no stamp, no members.
-    core.commands_add(c,report.root,Prefab_Instance{prefab=s.prefab})
+    core.commands_add(c,report.root,Prefab_Instance{prefab=s.prefab}) // no stamp, no members: of its prefab, linked to no document
     return
 }
 
@@ -551,8 +544,7 @@ capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,des
         value_type:=&types.tables[at]
         if info.place!=w.place || is_structural(info.type) || value_type.type==serial.TYPE_NONE {continue}
         if info.type==Section_Member && !desc.sections {continue}
-        // The root of a copy spawned while the world ran is of no instance of a document.
-        linked:=info.type==Prefab_Instance?core.world_table_of(w,Prefab_Member):nil
+        linked:=info.type==Prefab_Instance?core.world_table_of(w,Prefab_Member):nil // a spawned copy has none: no document holds it
         if slice.contains(desc.excluded,info.type) {continue}
         size:=info.info.size
         if size>0 && len(value_type.layout.runs)==0 {continue}

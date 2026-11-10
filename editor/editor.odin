@@ -854,9 +854,7 @@ play_animations_load :: proc(s:^Session,wait:bool) {
     ids:=make([dynamic]base.Asset_Id,context.temp_allocator)
     host.world_asset_ids(edited_world(s),&ids)
     animations:=make([dynamic]base.Asset_Id,context.temp_allocator)
-    apart:=make([dynamic]base.Asset_Id,context.temp_allocator)
-    scene.section_scenes(edited_world(s),&apart)
-    host.content_animations_start(s.app,ids[:],&animations,apart[:])
+    host.content_animations_start(s.app,ids[:],&animations)
     if wait {_=host.content_animations_pending(s.app,animations[:],wait=true)}
 }
 

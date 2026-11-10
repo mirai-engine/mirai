@@ -48,7 +48,6 @@ Document :: struct {
     file_length:int,
     id:base.Asset_Id,
     previous:^asset.Scene,        // the document of the file; nil for a new scene
-    prefab:bool,                  // its file had one root when the tab opened it: the tab shows it as a prefab, beside the scene
     saved:u64,                    // the state of the history when it was saved or opened
     unsaved:bool,                 // changes from before a restart, or a section Save could not write
     source_stamp:[2]i64,
@@ -113,8 +112,8 @@ scene_path :: proc(s:^Session,file:string) -> string {
     return file
 }
 
-// Replaces the edited World with a scene, by file or by a path inside the
-// assets folder; with one root it opens as a prefab (Document.prefab). A Play is stopped first. On failure the World
+// Replaces the edited World with a scene, by file or by a path
+// inside the assets folder. A Play is stopped first. On failure the World
 // stays as it was only when the file could not be read.
 scene_open :: proc(s:^Session,path:string) -> Document_Error {
     a:=s.app.assets
@@ -141,11 +140,10 @@ scene_open :: proc(s:^Session,path:string) -> Document_Error {
     }
     document_previous_free(d)
     d.previous=loaded
-    d.prefab=asset.scene_roots(loaded)==1
     d.id=loaded.doc.id
     document_name(d,scene_path(s,file),file)
     document_opened(s)
-    if !d.prefab {thumbnail_scene_opened(s,d.id)}
+    if !document_is_prefab(s) {thumbnail_scene_opened(s,d.id)}
     log.infof("opened %s",file)
     return .None
 }
@@ -193,7 +191,6 @@ scene_save :: proc(s:^Session,path:="") -> Document_Error {
     }
     // A section that could not be written keeps the document unsaved.
     if !sections_save(s) {d.unsaved=true}
-    document_prefab_left(s)
     owned:=make([dynamic]string,context.temp_allocator)
     world_owned_unsaved(s,edited_world(s),&owned)
     if _,saved:=assets_save(s,owned[:]);!saved {notify(s,"Assets the scene makes could not be saved; they stay unsaved")}
@@ -202,22 +199,6 @@ scene_save :: proc(s:^Session,path:="") -> Document_Error {
     document_source_stamp(s)
     if !d.unsaved {notify(s,fmt.tprintf("Saved %s",document_title(d)))}
     return .None
-}
-
-// Says so when the file just saved, which other files place as a prefab, no
-// longer has the one root a prefab has: their instances stay as they are
-// until it has one again.
-@(private)
-document_prefab_left :: proc(s:^Session) {
-    d:=s.document
-    if !d.prefab || d.previous==nil || asset.scene_roots(d.previous)==1 {return}
-    placed:=0
-    if a:=s.app.assets;a!=nil {
-        for index in asset.registry_dependents(&a.registry,d.id) {
-            if a.registry.files[index].kind==asset.KIND_SCENE {placed+=1}
-        }
-    }
-    if placed>0 {notify(s,fmt.tprintf("%s has %d roots: it is no prefab until it has one, and the instances %d files place of it stay as they are",document_title(d),asset.scene_roots(d.previous),placed))}
 }
 
 // The edited World as a scene, with the overrides of its prefab instances
@@ -284,7 +265,6 @@ document_restore :: proc(s:^Session,file,path:string,unsaved:bool) -> Document_E
     d:=s.document
     document_previous_free(d)
     d.previous=loaded
-    d.prefab=asset.scene_roots(loaded)==1
     d.id=loaded.doc.id
     if path!="" {document_name(d,path,scene_file(s,path))} else {document_name(d,"","")}
     document_opened(s)
@@ -304,7 +284,6 @@ document_reset :: proc(s:^Session) {
     d:=s.document
     document_previous_free(d)
     d.id={}
-    d.prefab=false
     d.unsaved=false
     d.saved=history.edits_scene_state(s.edits)
     document_name(d,"","")

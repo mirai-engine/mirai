@@ -125,7 +125,7 @@ api_document :: proc(s:^Session,call:^api.Call) {
         document_close_active(s)
     case .Preview_Sun:
         d:=index==s.active_document?s.document:&s.documents[index].document
-        if !d.prefab {api.call_fail(call,api.INVALID_PARAMS,"The document is not a prefab: its scene did not have exactly one root when it was opened");return}
+        if d.previous==nil || .One_Root not_in d.previous.doc.flags {api.call_fail(call,api.INVALID_PARAMS,"The document is not a prefab");return}
         document_activate(s,index)
         s.viewport.preview_sun=p.enabled
         s.view_cut=true

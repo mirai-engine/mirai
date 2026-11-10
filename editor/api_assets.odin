@@ -47,7 +47,7 @@ Api_Component_Field :: struct {
 }
 
 Api_Asset_Params :: struct {
-    kind:[32]u8 `mirai:"text,optional,label=Only the assets of this kind as the results name it (mesh; material; sound set or one of a plugin), or prefab for the scenes with exactly one root; empty or all: every kind"`,
+    kind:[32]u8 `mirai:"text,optional,label=Only the assets of this kind as the results name it (mesh; material; sound set or one of a plugin); empty or all: every kind"`,
     folder:[256]u8 `mirai:"text,optional,label=Only the assets under this folder"`,
     offset:int `mirai:"optional,min=0,max=1000000"`,
     limit:int `mirai:"optional,min=1,max=1024,clamp"`,
@@ -272,9 +272,7 @@ api_asset_list :: proc(s:^Session,call:^api.Call) {
     api.write_key(w,"assets");serial.write_u8(w,'[')
     for &file in registry.files {
         if file.state==.Broken {broken+=1}
-        if file.state!=.Asset || !asset.registry_listed(&file) {continue}
-        // A prefab is no kind: it is asked for as one, and is a scene among the scenes.
-        if wanted:=base.text_get(params.kind[:]);strings.equal_fold(wanted,"prefab")?!asset.registry_prefab(&file):!api_asset_kind_matches(s,wanted,file.kind) {continue}
+        if file.state!=.Asset || !asset.registry_listed(&file) || !api_asset_kind_matches(s,base.text_get(params.kind[:]),file.kind) {continue}
         if folder!="" && !strings.has_prefix(file.path,folder) {continue}
         total+=1
         if total<=params.offset || shown>=params.limit {continue}

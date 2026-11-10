@@ -41,7 +41,6 @@ Prefab_Error :: enum u8 {
     Member_Locked,   // a member of an instance that is not its root
     Not_Instance,
     Not_Found,       // no prefab with that path or id
-    Not_One_Root,    // a scene with no root or several: no prefab to place or to make a variant of
     Exists,
     Outside_Assets,  // a prefab is written inside the assets folder
     Write_Failed,
@@ -63,8 +62,7 @@ prefab_error_text :: proc(error:Prefab_Error) -> string {
     case .No_Id:          return "the entity has no id: it is not an entity of the scene"
     case .Member_Locked:  return "the entity is inside an instance of a prefab: use the root of the instance, or unlink it"
     case .Not_Instance:   return "the entity is not part of an instance of a prefab"
-    case .Not_Found:      return "no prefab has that path or id"
-    case .Not_One_Root:   return "the scene does not have exactly one root, and a prefab is a scene with one: put its entities under one root, or hang it whole from a Scene_Reference"
+    case .Not_Found:      return "no prefab, a scene with exactly one root, has that path or id; a scene with several hangs whole from a Scene_Reference"
     case .Exists:         return "a file with that path exists already"
     case .Outside_Assets: return "a prefab is written inside the assets folder"
     case .Write_Failed:   return "the file could not be written"
@@ -296,16 +294,6 @@ prefab_file :: proc(s:^Session,id:base.Asset_Id) -> (file:^asset.Registry_File,p
     file,found=asset.registry_find(&a.registry,id)
     if !found || !asset.registry_prefab(file) {return}
     return file,asset.registry_file_path(&a.registry,file.path,context.temp_allocator),true
-}
-
-// Why an id names no prefab to place: no scene has it, or a scene without
-// exactly one root.
-@(private)
-prefab_missing :: proc(s:^Session,id:base.Asset_Id) -> Prefab_Error {
-    if a:=s.app.assets;a!=nil {
-        if file,found:=asset.registry_find(&a.registry,id);found && file.state==.Asset && file.kind==asset.KIND_SCENE {return .Not_One_Root}
-    }
-    return .Not_Found
 }
 
 @(private)
@@ -982,7 +970,7 @@ prefab_variant_create :: proc(s:^Session,base_id:base.Asset_Id,path:string) -> (
     a:=s.app.assets
     if a==nil {return {},.No_Assets}
     assets_rescan(s)
-    if _,_,known:=prefab_file(s,base_id);!known {return {},prefab_missing(s,base_id)}
+    if _,_,known:=prefab_file(s,base_id);!known {return {},.Not_Found}
     file:=prefab_new_file(s,path) or_return
     loaded,found:=prefab_scene_load(s,base_id)
     if !found {return {},.Not_Found}
@@ -1062,7 +1050,7 @@ prefab_instantiate :: proc(s:^Session,prefab_id:base.Asset_Id,placement:Prefab_P
     a:=s.app.assets
     if a==nil {return 0,.No_Assets}
     w:=edited_world(s)
-    if _,_,located:=prefab_file(s,prefab_id);!located {return 0,prefab_missing(s,prefab_id)}
+    if _,_,located:=prefab_file(s,prefab_id);!located {return 0,.Not_Found}
     if placement.parent!=core.NONE {_=prefab_entity_id(s,placement.parent) or_return}
     if s.document.id==prefab_id || document_is_prefab(s) && prefab_contains(s,prefab_id,s.document.id) {return 0,.Cycle}
     g:=prefab_gesture_begin(s,"Instantiate prefab",joined) or_return
@@ -1091,7 +1079,6 @@ prefab_instantiate_in :: proc(s:^Session,prefab_id:base.Asset_Id,placement:Prefa
     view,viewed:=asset.scene_view(&file,&a.types)
     if viewed!=.None {return core.NONE,.Rejected}
     entities:=make([]core.Entity,len(view.ids),context.temp_allocator)
-    // The sections the prefab holds load under the instance, as they do under a copy the game spawns.
     report,failed:=scene.instantiate(w,&file,&a.types,{parent=placement.parent,fresh=true,entities=entities,documents=scene.assets_documents(a)})
     core.world_settle(w)
     if failed!=.None {return core.NONE,failed==.Out_Of_Memory?.Out_Of_Memory:.Rejected}

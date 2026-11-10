@@ -201,7 +201,7 @@ api_play_spawn :: proc(s:^Session,call:^api.Call) {
     r,ok:=api_play_own_run(s,call,params.player)
     if !ok {return}
     w:=run_ref(s,r)
-    id,located:=prefab_named(s,call,base.text_get(params.asset[:]))
+    id,located:=asset_named(s,call,base.text_get(params.asset[:]),asset.KIND_SCENE,SCENE_EXTENSION,"a prefab")
     if !located {return}
     spawned:=scene.Spawn{prefab=id}
     if base.text_get(params.parent[:])!="" {

@@ -76,18 +76,6 @@ Section_Member :: struct {
 
 REFERENCE_DEPTH :: 16 // references inside referenced scenes, past which a load fails
 
-// The scenes the references of a world name, on or off, appended to out: its
-// sections, each of which loads what it takes when it loads. Any other scene
-// a world names is one something spawns, and is loaded with what names it.
-section_scenes :: proc(w:core.World_Ref,out:^[dynamic]base.Asset_Id) {
-    references:=core.world_table_of(w,Scene_Reference)
-    if references==nil {return}
-    rows:=core.raw(references)
-    for row in 0..<core.raw_count(rows) {
-        if scene:=(^Scene_Reference)(core.raw_value(rows,type_info_of(Scene_Reference),row)).scene;scene!={} {append(out,scene)}
-    }
-}
-
 // The scenes the section of reference e is inside, outermost first: the scene
 // of the world and that of each reference above e. A section whose scene is
 // among them would hold itself.

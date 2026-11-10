@@ -328,8 +328,8 @@ load_step :: proc(job:^Load_Job,all:=false) -> bool {
 // The World is instantiated: what reads it on this thread does, and the
 // assets it names that are not loaded, with what they take, are read in jobs:
 // also what the other assets it names take, as the meshes of a foliage
-// source or of a scene something spawns, but not what the scene of a
-// Scene_Reference takes, which is a section and loads what it takes with it.
+// source or of a prefab, but not what a scene of several roots takes, which
+// is a section of its own.
 @(private)
 load_named :: proc(job:^Load_Job) {
     app,a:=job.app,job.app.assets
@@ -344,9 +344,6 @@ load_named :: proc(job:^Load_Job) {
     lists:[3][dynamic]base.Asset_Id
     for &list in lists {list=make([dynamic]base.Asset_Id,context.temp_allocator)}
     seen:=make(map[base.Asset_Id]bool,context.temp_allocator)
-    apart:=make([dynamic]base.Asset_Id,context.temp_allocator)
-    section_scenes(w,&apart)
-    for id in apart {seen[id]=true}
     pending:=make([dynamic]base.Asset_Id,context.temp_allocator)
     append(&pending,..job.names[:])
     for len(pending)>0 {
@@ -354,7 +351,7 @@ load_named :: proc(job:^Load_Job) {
         if id in seen {continue}
         seen[id]=true
         file,found:=asset.registry_find(&a.registry,id)
-        if !found || host.assets_loaded(a,id) {continue}
+        if !found || host.assets_loaded(a,id) || file.kind==asset.KIND_SCENE && !asset.registry_prefab(file) {continue}
         for kind,at in kinds {if file.kind==kind {append(&lists[at],id)}}
         append(&pending,..asset.registry_dependencies(&a.registry,file))
     }
@@ -375,7 +372,7 @@ load_named :: proc(job:^Load_Job) {
         }
     }
     job.items=job.items[:count]
-    host.content_animations_start(app,job.names[:],&job.animations,apart[:])
+    host.content_animations_start(app,job.names[:],&job.animations)
     // A section loads ahead, far away: its textures come with their smallest
     // levels, and their distance asks for the others once it shows them.
     job.limits=host.assets_limits(a,tail=job.salt!=0)

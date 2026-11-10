@@ -2345,10 +2345,8 @@ FIELD_KINDS :: 4 // of asset one Asset_Id field takes
 // The kinds of asset a field takes, the first for its look while empty; none: every kind.
 Asset_Kinds :: [FIELD_KINDS]asset.Fourcc
 
-// Whether a field takes an asset shown as a kind (shown_kind): any when it
-// names none, a .sound_set where a .sound goes, since it plays as one, and a
-// prefab where a scene goes, since it is one; a field of prefabs takes only
-// the scenes with one root.
+// Whether a field takes an asset shown as a kind: any when it names none, a .sound_set where
+// a .sound goes, since it plays as one, and a prefab where a scene goes, since it is one.
 asset_kind_takes :: proc "contextless" (field:Asset_Kinds,kind:asset.Fourcc) -> bool {
     if field[0]==0 {return true}
     for each in field {
@@ -2359,8 +2357,7 @@ asset_kind_takes :: proc "contextless" (field:Asset_Kinds,kind:asset.Fourcc) -> 
 
 // The kinds of asset a field takes: the extensions its tag names, apart by
 // spaces (`kind=.anim .match`), each of the engine or one a plugin declares
-// (Asset_Kind_Provider), and the word prefab for the scenes with one root
-// (`kind=prefab`); without one known, what its name suggests.
+// (Asset_Kind_Provider), or prefab; without one known, what its name suggests.
 field_asset_kinds :: proc(s:^Session,tag:reflect.Struct_Tag,name:string) -> (kinds:Asset_Kinds) {
     if extensions,found:=core.field_option(tag,"kind");found {
         count:=0

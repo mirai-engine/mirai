@@ -757,17 +757,13 @@ scene_prefab_same :: proc(reading:^Reading,given:Scene_Prefab,path:string,prefab
 }
 
 // Reads the prefab a new entity names, to be placed in the file of id into:
-// a scene of the project that loads, has one entity at its top and does not
-// hold that file. prefab lives in the temporary allocator.
+// one of the project that loads, has one entity at its top and does not hold
+// that file. prefab lives in the temporary allocator.
 scene_prefab_open :: proc(reading:^Reading,a:Assets,given:Scene_Prefab,path:string,into:base.Asset_Id,prefab:^asset.Scene) -> bool {
     if given.asset=={} {reading_failf(reading,"%s.prefab must be the path or the id of a prefab of the project",path);return false}
     if a.registry==nil {reading_brokef(reading,"%s.prefab: the project has no assets folder to read a prefab from",path);return false}
     record,found:=asset.registry_find(a.registry,given.asset)
-    if !found || record.kind!=asset.KIND_SCENE {reading_failf(reading,"%s.prefab: %q is no scene of the project; give the path or the id of a .scene with one entity at its top",path,given.named);return false}
-    if record.state==.Asset && !asset.registry_prefab(record) {
-        reading_failf(reading,"%s.prefab: %s has no single entity at its top to place; give it one, with the rest under it, or hang it whole from a Scene_Reference",path,record.path)
-        return false
-    }
+    if !found || !asset.registry_prefab(record) {reading_failf(reading,"%s.prefab: %q is no prefab of the project; give the path or the id of a .scene with one entity at its top",path,given.named);return false}
     files:asset.Registry_Prefabs
     asset.registry_prefabs_init(&files,a.registry,context.temp_allocator)
     defer asset.registry_prefabs_destroy(&files)
@@ -779,7 +775,7 @@ scene_prefab_open :: proc(reading:^Reading,a:Assets,given:Scene_Prefab,path:stri
         return false
     }
     if _,rooted:=asset.prefab_root(prefab);!rooted {
-        reading_failf(reading,"%s.prefab: %s has no single entity at its top to place; give it one, with the rest under it, or hang it whole from a Scene_Reference",path,record.path)
+        reading_failf(reading,"%s.prefab: %s has no single entity at its top to place; give it one, with the rest under it",path,record.path)
         return false
     }
     holds,asking:=asset.prefab_holds(opened,a.types,given.asset,into)
