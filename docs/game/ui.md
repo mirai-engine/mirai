@@ -20,7 +20,7 @@ and extend them with [ui.write](ui/writing-ui.md); do not write another menu sys
 - A HUD, a counter or bar, a sign in the world, a panel on a mesh:
   [hud-panels.md](ui/hud-panels.md).
 - Named styles, tokens, states, widgets and animations: [styles.md](ui/styles.md).
-- Write or change a `.ui` (one document, ui.write): [writing-ui.md](ui/writing-ui.md).
+- Write a `.ui` (ui.write): [writing-ui.md](ui/writing-ui.md); translate: [texts.md](ui/texts.md).
 - Check a screen without playing it by hand: [testing](testing.md#ui-and-menus).
 - [Screens](#screens), [Events](#events), [Focus](#focus).
 
