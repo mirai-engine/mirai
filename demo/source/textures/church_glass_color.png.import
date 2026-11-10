@@ -18,8 +18,7 @@
     "rig_neck": 0,
     "skeleton": "00000000000000000000000000000000"
   },
-  "folder": "church",
   "outputs": [
-    {"kind": "TEX", "name": "church_glass_color", "index": 0, "id": "2767edae7841cea315b1e40d922c9950", "path": "church/church_glass_color.tex"}
+    {"kind": "TEX", "name": "church_glass_color", "index": 0, "id": "2767edae7841cea315b1e40d922c9950"}
   ]
 }

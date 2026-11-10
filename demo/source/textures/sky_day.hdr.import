@@ -18,8 +18,7 @@
     "rig_neck": 0,
     "skeleton": "00000000000000000000000000000000"
   },
-  "folder": "sky",
   "outputs": [
-    {"kind": "TEX", "name": "sky_day", "index": 0, "id": "39808e0def899c47a24a89a3fab89e64", "path": "sky/sky_day.tex"}
+    {"kind": "TEX", "name": "sky_day", "index": 0, "id": "39808e0def899c47a24a89a3fab89e64"}
   ]
 }

@@ -819,7 +819,7 @@ outside it keeps every asset in the assets folder, with its sidecar in `source/`
 ([identity](../../mirai-imports/references/imports.md#identity-and-reimport)). It goes to the
 folder of its type or to `folder` (`asset_folder_clean`). The imported folder is brought up to
 date with the sources by the build that opens the editor
-([sync](../../mirai-imports/references/imports.md#sync)), and the editor watches it.
+([sync](../../mirai-imports/references/imports.md#sync)).
 File > Import, the content browser, a file dropped on the window and `asset.import` call it. It
 imports in a thread of its own, with its own job system, while the editor keeps drawing; the
 content browser shows the dot of what works. `import_poll`, between frames, takes what it wrote on
@@ -850,8 +850,8 @@ output folders in [importers](../../mirai-imports/SKILL.md).
   (`editor/assets_parts.odin`, `asset.detach`) takes one out of its owner as an unsaved edit with
   undo: it only clears `owner`, and the import leaves it out; there is no UI that calls it yet.
 - **What an import keeps in the imported folder is not edited where it is.** Moving, renaming,
-  detaching or deleting it on its own is refused, saying to duplicate it; it moves with nothing
-  and stays at the path its sidecar lists when its prefab moves. Deleting the root of an import
+  detaching or deleting it on its own is refused, saying to duplicate it: it is listed where its
+  source is, and moves when the source does. Deleting the root of an import
   (its prefab, the texture of an image) gives the import up: its sidecar goes to the trash with
   what only the import can build, and the source stays. A
   copy made outside the editor receives an id of its own on scanning

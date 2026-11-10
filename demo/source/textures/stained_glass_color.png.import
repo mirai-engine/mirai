@@ -18,8 +18,7 @@
     "rig_neck": 0,
     "skeleton": "00000000000000000000000000000000"
   },
-  "folder": "surfaces/glass",
   "outputs": [
-    {"kind": "TEX", "name": "stained_glass_color", "index": 0, "id": "601bad68a6b7e349bc2655ac13c9196f", "path": "surfaces/glass/stained_glass_color.tex"}
+    {"kind": "TEX", "name": "stained_glass_color", "index": 0, "id": "601bad68a6b7e349bc2655ac13c9196f"}
   ]
 }

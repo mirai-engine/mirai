@@ -18,8 +18,7 @@
     "rig_neck": 0,
     "skeleton": "00000000000000000000000000000000"
   },
-  "folder": "sky",
   "outputs": [
-    {"kind": "TEX", "name": "sky_sunset", "index": 0, "id": "7b819d061e0487f04a17587b8ff0bce1", "path": "sky/sky_sunset.tex"}
+    {"kind": "TEX", "name": "sky_sunset", "index": 0, "id": "7b819d061e0487f04a17587b8ff0bce1"}
   ]
 }

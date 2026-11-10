@@ -18,8 +18,7 @@
     "rig_neck": 0,
     "skeleton": "00000000000000000000000000000000"
   },
-  "folder": "gallery",
   "outputs": [
-    {"kind": "TEX", "name": "leaves_color", "index": 0, "id": "df49540f1f9dbcf6fe2e612ea427757e", "path": "gallery/leaves_color.tex"}
+    {"kind": "TEX", "name": "leaves_color", "index": 0, "id": "df49540f1f9dbcf6fe2e612ea427757e"}
   ]
 }

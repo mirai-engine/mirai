@@ -20,11 +20,11 @@ the assets.
 ## Map
 
 - Packages, `import_source`, the imported model and CLI: [imports.md](references/imports.md#api).
-- The sidecar of a source (settings, folder, ids), what an import keeps in the imported folder and
-  what in the assets, reimporting, a moved or renamed source and parts with `owner`:
+- The sidecar of a source (settings, ids), what an import keeps in the imported folder and what in
+  the assets, reimporting, a moved or renamed source and parts with `owner`:
   [Identity](references/imports.md#identity-and-reimport).
-- A checkout without its imported folder, `mirai import --project`, what a build imports and when
-  a source is imported again: [Sync](references/imports.md#sync).
+- A checkout without its imported folder, what a build imports and when a source is imported
+  again: [Sync](references/imports.md#sync).
 - Adding or changing a format (`Format`, `Reader`, `Source_Space`, version):
   [Formats](references/imports.md#formats).
 - Import cache and versions: [Cache](references/imports.md#import-cache),
@@ -73,9 +73,8 @@ the assets.
    model format) or an `Import_Source_Provider` (a source that imports whole); the editor adds
    them to `sources.FORMATS`, which holds only the engine's own
    ([plugins](references/imports.md#plugin-formats)).
-6. **Regenerating imported assets.** `mirai import --project <folder>`
-   ([sync](references/imports.md#sync)) builds what is missing or stale of a project and its
-   plugins, and `mirai build` does it before it compiles; `--rebuild` builds everything again.
+6. **Regenerating imported assets.** `mirai build` builds what is missing or stale of a project
+   and its plugins before it compiles ([sync](references/imports.md#sync)).
    `tools/demo_content` imports `demo/source/textures` and `demo/source/models` with
    `import_source`, each image with the use its name says the first time:
    [generated content](../mirai-gameplay/references/demo.md#generated-content).
@@ -100,14 +99,15 @@ the assets.
   ([identity](references/imports.md#identity-and-reimport)). Only what is surely part of a model
   belongs to its prefab (`owner`), and it is decided once ([parts](references/imports.md#parts)).
 - **What nobody edits is a cache of the source, never versioned.** The meshes, textures, sounds
-  and fonts of a source of a project are files of its imported folder (`.mirai/imported/`), built
-  again from the source and its sidecar by [sync](references/imports.md#sync); materials, prefabs,
+  and fonts of a source of a project are files of its imported folder (`.mirai/imported/`), named
+  by their ids and listed by where their source is, built again from the source and its sidecar by
+  [sync](references/imports.md#sync); materials, prefabs,
   skeletons, clips, texts and prompts, which the editor edits, are documents of `assets/`. An
   import a checkout cannot repeat (a source outside the project, a format of a plugin, no root)
   keeps every asset as a document. Decided by the owner.
 - **The source, its sidecar and the build decide the cache.** The same three give the same files,
   byte for byte: a clone, a worktree and a branch switch are brought up to date by the same sync,
-  explicitly, in `mirai build` and `mirai import --project`; the editor never imports by itself.
+  explicitly, in `mirai build`; the editor never imports by itself.
 - **Reimporting keeps what a person changed.** A material stores what the source gave and the next
   import rewrites only that: fields changed afterwards stay, like the overrides of a prefab
   ([materials](references/imports.md#what-is-written)).
@@ -203,7 +203,7 @@ the assets.
   part), `cook/import/sources/settings_test.odin` (a sidecar that is not one is refused) and
   `cook/import/sources/write_test.odin` (importing again keeps what was changed in a material and
   takes the rest from the source). After changing what an import writes, prove it on the demo:
-  delete `demo/.mirai/imported`, `mirai import --project demo`, and `git status` shows no sidecar
+  delete `demo/.mirai/imported`, `mirai build editor demo --dev`, and `git status` shows no sidecar
   or document changed.
 - `cook/import/sources/cli_test.odin` needs `MIRAI_ROOT` (defined by `mirai test`); run it when
   touching `cook/import/sources/command.odin`. It imports in-process with `command`; the whole

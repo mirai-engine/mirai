@@ -18,13 +18,12 @@
     "rig_neck": 0,
     "skeleton": "00000000000000000000000000000000"
   },
-  "folder": "characters/jelly/jelly.gltf",
   "outputs": [
     {"kind": "PRFB", "name": "jelly", "index": 0, "id": "107c9b8f4bf9dfe8936235eae8e042a6"},
     {"kind": "MAT", "name": "Candy", "index": 0, "id": "a18adcad4fedf21125038a819d27acd2"},
     {"kind": "SKEL", "name": "Jelly bones", "index": 0, "id": "dae452ce18d59e780ff745f7d1b43697"},
-    {"kind": "MESH", "name": "Party Jelly", "index": 0, "id": "25a3e22ecb9c265a1614515f868efc52", "path": "characters/jelly/jelly.gltf/Party Jelly.mesh", "part": true},
-    {"kind": "MESH", "name": "Party Jelly (1)", "index": 1, "id": "1c00bfb5bceb2619036b114104f42040", "path": "characters/jelly/jelly.gltf/Party Jelly (1).mesh", "part": true},
+    {"kind": "MESH", "name": "Party Jelly", "index": 0, "id": "25a3e22ecb9c265a1614515f868efc52", "part": true},
+    {"kind": "MESH", "name": "Party Jelly (1)", "index": 1, "id": "1c00bfb5bceb2619036b114104f42040", "part": true},
     {"kind": "ANIM", "name": "jelly", "index": 0, "id": "0d555b0da56949fb3cdbdf41410432f4"}
   ]
 }

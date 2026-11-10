@@ -18,8 +18,7 @@
     "rig_neck": 0,
     "skeleton": "00000000000000000000000000000000"
   },
-  "folder": "surfaces/bricks",
   "outputs": [
-    {"kind": "TEX", "name": "bricks_color", "index": 0, "id": "4c24cf1fa5b4eeca8ac84ea3d8813cfc", "path": "surfaces/bricks/bricks_color.tex"}
+    {"kind": "TEX", "name": "bricks_color", "index": 0, "id": "4c24cf1fa5b4eeca8ac84ea3d8813cfc"}
   ]
 }

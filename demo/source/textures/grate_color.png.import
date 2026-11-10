@@ -18,8 +18,7 @@
     "rig_neck": 0,
     "skeleton": "00000000000000000000000000000000"
   },
-  "folder": "surfaces/metal",
   "outputs": [
-    {"kind": "TEX", "name": "grate_color", "index": 0, "id": "90b31208c9dfc6a6d00ab5517f084571", "path": "surfaces/metal/grate_color.tex"}
+    {"kind": "TEX", "name": "grate_color", "index": 0, "id": "90b31208c9dfc6a6d00ab5517f084571"}
   ]
 }

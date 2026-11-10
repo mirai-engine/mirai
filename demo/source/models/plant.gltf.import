@@ -18,13 +18,12 @@
     "rig_neck": 0,
     "skeleton": "00000000000000000000000000000000"
   },
-  "folder": "gallery/plant.gltf",
   "outputs": [
     {"kind": "PRFB", "name": "plant", "index": 0, "id": "fc120101f1ddb302e135784184f05931"},
     {"kind": "TEX", "name": "leaves_color", "index": 0, "id": "df49540f1f9dbcf6fe2e612ea427757e", "shared": true},
     {"kind": "MAT", "name": "Terracotta", "index": 0, "id": "e2a8b0fcb9401808520b370016df35c9"},
     {"kind": "MAT", "name": "Soil", "index": 1, "id": "9337601926ea70572a4442c984759e15"},
     {"kind": "MAT", "name": "Leaves", "index": 2, "id": "7e248f2df1c8c849ff972c9a1ce95fb5"},
-    {"kind": "MESH", "name": "Plant", "index": 0, "id": "72d9220e763e42b1da3107e0e5256b90", "path": "gallery/plant.gltf/Plant.mesh", "part": true}
+    {"kind": "MESH", "name": "Plant", "index": 0, "id": "72d9220e763e42b1da3107e0e5256b90", "part": true}
   ]
 }

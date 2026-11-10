@@ -18,8 +18,7 @@
     "rig_neck": 0,
     "skeleton": "00000000000000000000000000000000"
   },
-  "folder": "surfaces/wood",
   "outputs": [
-    {"kind": "TEX", "name": "planks_orm", "index": 0, "id": "6646d15415504809a3da8752ce1d6ca6", "path": "surfaces/wood/planks_orm.tex"}
+    {"kind": "TEX", "name": "planks_orm", "index": 0, "id": "6646d15415504809a3da8752ce1d6ca6"}
   ]
 }

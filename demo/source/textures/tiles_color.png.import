@@ -18,8 +18,7 @@
     "rig_neck": 0,
     "skeleton": "00000000000000000000000000000000"
   },
-  "folder": "surfaces/tiles",
   "outputs": [
-    {"kind": "TEX", "name": "tiles_color", "index": 0, "id": "cd3d66765e834e0c508906257f888eba", "path": "surfaces/tiles/tiles_color.tex"}
+    {"kind": "TEX", "name": "tiles_color", "index": 0, "id": "cd3d66765e834e0c508906257f888eba"}
   ]
 }

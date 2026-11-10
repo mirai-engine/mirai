@@ -18,8 +18,7 @@
     "rig_neck": 0,
     "skeleton": "00000000000000000000000000000000"
   },
-  "folder": "arena",
   "outputs": [
-    {"kind": "SND", "name": "hum", "index": 0, "id": "7f27bbcfa7a4b5fac01753762f745b26", "path": "arena/hum.sound"}
+    {"kind": "SND", "name": "hum", "index": 0, "id": "7f27bbcfa7a4b5fac01753762f745b26"}
   ]
 }

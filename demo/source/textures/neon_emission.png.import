@@ -18,8 +18,7 @@
     "rig_neck": 0,
     "skeleton": "00000000000000000000000000000000"
   },
-  "folder": "surfaces/neon",
   "outputs": [
-    {"kind": "TEX", "name": "neon_emission", "index": 0, "id": "6d9362793631542f0b778005f9fd8dd0", "path": "surfaces/neon/neon_emission.tex"}
+    {"kind": "TEX", "name": "neon_emission", "index": 0, "id": "6d9362793631542f0b778005f9fd8dd0"}
   ]
 }

@@ -21,7 +21,7 @@ Targets, jobs, fingerprint, project shaders, cooking and shipped game (`cook/bui
   tests/scenarios/  gameplay tests the editor plays (`mirai play test`), optional
   .mirai/           generated; not edited or versioned
     imported/       what imports build from source/ that nobody edits (meshes, textures, sounds,
-                    fonts), at the paths they have among the assets; mirai build makes it again
+                    fonts), each file named by its id; mirai build makes it again
     gen/            generated packages: the worlds and the root of each target
     plugins/        libraries of the engine plugins, with their stages and declarations
     editor<ext>     library of mirai-editor and of the players it opens; play<ext>, that of

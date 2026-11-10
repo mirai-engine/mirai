@@ -18,8 +18,7 @@
     "rig_neck": 0,
     "skeleton": "00000000000000000000000000000000"
   },
-  "folder": "surfaces/tiles",
   "outputs": [
-    {"kind": "TEX", "name": "tiles_normal", "index": 0, "id": "bd7cde48d01cd173f904fe6b00fb72dc", "path": "surfaces/tiles/tiles_normal.tex"}
+    {"kind": "TEX", "name": "tiles_normal", "index": 0, "id": "bd7cde48d01cd173f904fe6b00fb72dc"}
   ]
 }

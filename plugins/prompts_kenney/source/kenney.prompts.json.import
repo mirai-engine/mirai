@@ -18,10 +18,9 @@
     "rig_neck": 0,
     "skeleton": "00000000000000000000000000000000"
   },
-  "folder": "",
   "outputs": [
     {"kind": "PRMT", "name": "kenney", "index": 0, "id": "81aa127badfbdbeb988b5d3a1c12ab30"},
-    {"kind": "TEX", "name": "kenney_atlas_0", "index": 0, "id": "53a2b283de1b99ca9e8a22525430f426", "path": "kenney_atlas_0.tex", "part": true},
-    {"kind": "TEX", "name": "kenney_atlas_1", "index": 1, "id": "818deac4a87429281666b4b0ec524d02", "path": "kenney_atlas_1.tex", "part": true}
+    {"kind": "TEX", "name": "kenney_atlas_0", "index": 0, "id": "53a2b283de1b99ca9e8a22525430f426", "part": true},
+    {"kind": "TEX", "name": "kenney_atlas_1", "index": 1, "id": "818deac4a87429281666b4b0ec524d02", "part": true}
   ]
 }

@@ -233,13 +233,11 @@ The meshes, textures, sounds and fonts an import builds are not versioned: they 
 sources and their sidecars ([sync](../../mirai-imports/references/imports.md#sync)).
 
 - **A build imports first, and says so.** `mirai build` of a project runs the sync of the project
-  and of its active plugins before it compiles (`build_imports`, `cook/build/imports.odin`), also
-  when the library is unchanged, and the cook of a game runs it before it reads the assets
-  (`Cook_Desc.sync`). Both use the engine's import program, since the tool builds without the
-  importers; a game build builds the engine first when the project has sidecars and the program is
-  not current. A source that does not import fails the build naming it. There is no other step: a
-  checkout that was just cloned runs after `mirai build`, and so does continuous integration.
-  `mirai import --project <folder>` is the sync alone.
+  and of its active plugins before it compiles or cooks (`build_imports`, `build.imports_sync`),
+  also when the library is unchanged, with the engine's import program, since the tool builds
+  without the importers. A source that does not import fails the build naming it. There is no
+  other step: a checkout that was just cloned runs after `mirai build`, and so does continuous
+  integration; a game build needs the engine's programs built once (`mirai build editor`).
 - **What ships.** A game has no imported folder and no sources: the cook writes every asset it
   reaches at its path in the assets of the game, whichever of the two folders it came from.
 - **The installed engine** carries the imported folder of each of its plugins, built when it is
@@ -280,12 +278,9 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
   `content_hash` of the `.tex`
   ([texture cache](../../mirai-imports/references/imports.md#texture-cache)).
 - **Fast textures.** A texture the editor imported Fast ships Final, whatever `"textures"` says:
-  the [sync](#imported-sources) the cook starts with builds it again from its source, in the
-  imported folder and with the id it has. It runs in the engine's import program
-  (`Cook_Desc.import_program`, what `mirai import` runs); `Cook_Desc.sync` lets a caller that has
-  the importers run it in-process. It fills the texture cache, so the editor takes that Final from
-  then on. A source that does not import, or a texture that is still Fast, fails the cook with
-  `Source_Failed` and says how to fix it.
+  the [sync](#imported-sources) of `mirai build game` builds it again from its source, with the id
+  it has, and fills the texture cache, so the editor takes that Final from then on. A cook that
+  finds one still Fast fails with `Source_Failed` and says so.
 - **Animations.** An `.anim` is written cooked: its clips sampled as the runtime plays them
   (`asset.animation_compress`, [storage](../../mirai-std/references/anim-storage.md)).
 - **Prefab instances.** A scene or a prefab with a stale instance is written with its instances up

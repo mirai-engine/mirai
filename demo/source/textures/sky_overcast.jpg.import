@@ -18,8 +18,7 @@
     "rig_neck": 0,
     "skeleton": "00000000000000000000000000000000"
   },
-  "folder": "sky",
   "outputs": [
-    {"kind": "TEX", "name": "sky_overcast", "index": 0, "id": "88a3a1a16a759ed20966d1c3ff54ada1", "path": "sky/sky_overcast.tex"}
+    {"kind": "TEX", "name": "sky_overcast", "index": 0, "id": "88a3a1a16a759ed20966d1c3ff54ada1"}
   ]
 }
