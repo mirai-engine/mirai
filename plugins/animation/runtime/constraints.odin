@@ -50,17 +50,6 @@ Rotation_Constraint :: struct {
 }
 ROTATION_CONSTRAINT_DEFAULT :: Rotation_Constraint{axis={0,1,0},reference=1,max_swing=mm.PI,min_twist=-mm.PI,max_twist=mm.PI,weight=1,enabled=true}
 
-Foot_Contact_Constraint :: struct {
-    rig:core.Entity `mirai:"transient"`,
-    root,joint,end,pelvis:Bone_Ref,
-    hit_position,hit_normal,pole,up:mm.Vec3,
-    grounded,adjust_pelvis,enabled:bool,
-    contact,weight:f32 `mirai:"min=0,max=1"`,
-    blend_time:f32 `mirai:"min=0,unit=s"`,
-    max_distance,max_drop,max_rise:f32 `mirai:"min=0,unit=m"`,
-}
-FOOT_CONTACT_CONSTRAINT_DEFAULT :: Foot_Contact_Constraint{hit_normal={0,1,0},pole={0,0,-1},up={0,1,0},enabled=true,contact=1,weight=1,blend_time=0.1,max_distance=0.6,max_drop=0.5,max_rise=0.2}
-
 Bone_Binding :: struct {
     rig:core.Entity `mirai:"transient"`,
     bone:Bone_Ref,
@@ -68,17 +57,6 @@ Bone_Binding :: struct {
     enabled:bool,
 }
 BONE_BINDING_DEFAULT :: Bone_Binding{offset=mm.TRANSFORM_IDENTITY,enabled=true}
-
-Retarget_Mode :: enum u8 {Bone,Paths}
-
-Retarget_Mapping :: struct {
-    rig,source:core.Entity `mirai:"transient"`,
-    source_bone,target_bone:Bone_Ref,
-    mode:Retarget_Mode,
-    translation:lib.Retarget_Translation,
-    enabled:bool,
-}
-RETARGET_MAPPING_DEFAULT :: Retarget_Mapping{enabled=true}
 
 Root_Motion :: struct {bone:Bone_Ref,translation,rotation,in_place:bool}
 ROOT_MOTION_DEFAULT :: Root_Motion{translation=true,rotation=true,in_place=true}
@@ -93,9 +71,7 @@ Constraint_Inputs :: struct {
     ik:core.Read(IK_Constraint),
     look:core.Read(Look_Constraint),
     limits:core.Read(Rotation_Constraint),
-    feet:core.Read(Foot_Contact_Constraint),
     sockets:core.Read(Bone_Binding),
-    retargets:core.Read(Retarget_Mapping),
     roots:core.Read(Root_Motion),
     worlds:core.Read(core.World_Transform),
     geometry:u64,
@@ -103,35 +79,20 @@ Constraint_Inputs :: struct {
     problems:^core.Problems,
 }
 
-Foot_State :: struct {entity:core.Entity,contact:lib.Foot_Contact,animated:mm.Vec3,target:lib.Foot_Target,valid:bool}
-Retarget_State :: struct {
-    source:core.Entity,
-    source_bound,target_bound,revision:u64,
-    source_generation,target_generation:u32,
-    mapping:[dynamic]i32,
-    translations:[dynamic]lib.Retarget_Translation,
-    profile:[dynamic]lib.Retarget_Bone,
-    source_world,target_world:[dynamic]mm.Transform,
-    source_rest,target_rest,source_local:[dynamic]mm.Transform,
-    source_wrapper,target_wrapper:bool,
-    ready:bool,
-}
 Constraint_Rig :: struct {
     entity:core.Entity,
-    rows:[6][dynamic]int,
-    bones:[5][dynamic][4]int,
+    rows:[4][dynamic]int,   // of ik, look, limits and sockets
+    bones:[4][dynamic][3]int,
     targets:[2][dynamic]Spatial_Target_Binding, // of each IK and Look row
     diagnostics:[2][dynamic]Rig_Diagnostic, // of each IK and Look row
     bound:u64,
     generation:u32,
-    retarget:Retarget_State,
 }
 
 @(storage,free="constraints_free")
 Animation_Constraints :: struct {
     rigs:[dynamic]Constraint_Rig,
-    feet:[dynamic]Foot_State,
-    stamps:[6]u64,
+    stamps:[4]u64,
     revision:u64,
 }
 
@@ -179,16 +140,11 @@ constraints_index :: proc(cache:^Animation_Constraints,rows:core.Read($T),kind:i
 
 @(private)
 constraints_prepare :: proc(cache:^Animation_Constraints,inputs:Constraint_Inputs) -> bool {
-    stamps:=[6]u64{constraint_stamp(inputs.ik),constraint_stamp(inputs.look),constraint_stamp(inputs.limits),constraint_stamp(inputs.feet),constraint_stamp(inputs.sockets),constraint_stamp(inputs.retargets)}
+    stamps:=[4]u64{constraint_stamp(inputs.ik),constraint_stamp(inputs.look),constraint_stamp(inputs.limits),constraint_stamp(inputs.sockets)}
     if inputs.geometry!=0 {for &stamp in stamps {stamp=inputs.geometry}}
     if cache.stamps==stamps {return true}
     for &rig in cache.rigs {for &rows in rig.rows {clear(&rows)};rig.bound=0}
-    if !constraints_index(cache,inputs.ik,0) || !constraints_index(cache,inputs.look,1) || !constraints_index(cache,inputs.limits,2) || !constraints_index(cache,inputs.feet,3) || !constraints_index(cache,inputs.sockets,4) || !constraints_index(cache,inputs.retargets,5) ||
-       resize(&cache.feet,constraint_count(inputs.feet))!=nil {memory_problem(inputs.problems,core.NONE,"the constraints of the animated rigs, so none applies");return false}
-    for i in 0..<constraint_count(inputs.feet) {
-        entity:=core.entity_at(inputs.feet,i)
-        if cache.feet[i].entity!=entity {cache.feet[i]={entity=entity}}
-    }
+    if !constraints_index(cache,inputs.ik,0) || !constraints_index(cache,inputs.look,1) || !constraints_index(cache,inputs.limits,2) || !constraints_index(cache,inputs.sockets,3) {memory_problem(inputs.problems,core.NONE,"the constraints of the animated rigs, so none applies");return false}
     cache.stamps=stamps;cache.revision+=1
     return true
 }
@@ -196,7 +152,7 @@ constraints_prepare :: proc(cache:^Animation_Constraints,inputs:Constraint_Input
 @(private)
 constraints_bind :: proc(state:^Playing,inputs:Constraint_Inputs,rig:^Constraint_Rig) -> bool {
     if rig.bound==state.bound && rig.generation==state.generation {return true}
-    for rows,kind in rig.rows[:5] {
+    for rows,kind in rig.rows {
         if kind<2 {
             for &target in rig.targets[kind][min(len(rows),len(rig.targets[kind])):] {delete(target.path)}
             if resize(&rig.targets[kind],len(rows))!=nil || resize(&rig.diagnostics[kind],len(rows))!=nil {return false}
@@ -204,13 +160,12 @@ constraints_bind :: proc(state:^Playing,inputs:Constraint_Inputs,rig:^Constraint
         }
         if resize(&rig.bones[kind],len(rows))!=nil {return false}
         for row,i in rows {
-            names:[4]Bone_Ref
+            names:[3]Bone_Ref
             switch kind {
-            case 0: c:=core.at(inputs.ik,row);names={c.root,c.joint,c.end,{}}
-            case 1: c:=core.at(inputs.look,row);names={c.bone,{},{},{}}
-            case 2: c:=core.at(inputs.limits,row);names={c.bone,{},{},{}}
-            case 3: c:=core.at(inputs.feet,row);names={c.root,c.joint,c.end,c.pelvis}
-            case 4: c:=core.at(inputs.sockets,row);names={c.bone,{},{},{}}
+            case 0: c:=core.at(inputs.ik,row);names={c.root,c.joint,c.end}
+            case 1: c:=core.at(inputs.look,row);names={c.bone,{},{}}
+            case 2: c:=core.at(inputs.limits,row);names={c.bone,{},{}}
+            case 3: c:=core.at(inputs.sockets,row);names={c.bone,{},{}}
             }
             for target,j in names {rig.bones[kind][i][j]=bone_resolve(state,target)}
         }
@@ -226,110 +181,32 @@ constraint_world :: proc(transforms:core.Read(core.Transform),parents:core.Read(
     return mm.TRANSFORM_IDENTITY,false
 }
 
-// Why the Retarget_Mapping of a rig gave it no pose.
-@(private)
-Retarget_Failure :: enum u8 {None,Source,Memory,Sources,Paths_Twice,No_Paths,Bone,Solve}
-
-@(private)
-retarget_problem :: proc(problems:^core.Problems,e,source:core.Entity,failure:Retarget_Failure) {
-    switch failure {
-    case .None:
-    case .Source: core.report(problems,e,"animation.retarget_source","the Retarget_Mapping of this rig take the pose of entity 0x%016x, which is not another rig animated in this tick; set source to the entity of one",u64(source))
-    case .Memory: memory_problem(problems,e,"the retarget of its pose")
-    case .Sources: core.report(problems,e,"animation.retarget_mapping","the enabled Retarget_Mapping of this rig name different sources or a mode that is not Bone or Paths; give them all one source and one of those modes")
-    case .Paths_Twice: core.report(problems,e,"animation.retarget_mapping","this rig has two enabled Retarget_Mapping of mode Paths; keep one")
-    case .No_Paths: core.report(problems,e,"animation.retarget_paths","a Retarget_Mapping of mode Paths found no bone path that this rig and its source share; map the bones one by one with mode Bone")
-    case .Bone: core.report(problems,e,"animation.retarget_bone","a Retarget_Mapping of mode Bone names a source_bone or target_bone that its skeleton does not have; name bones of both skeletons (animation.asset.inspect lists them)")
-    case .Solve: core.report(problems,e,"animation.retarget_solve","the pose of the source could not be retargeted onto this rig: a rest pose or the source pose has a value that is not finite or a bone of zero length; check both skeletons")
-    }
-}
-
-@(private)
-constraint_retarget :: proc(state:^Playing,playback:^Playback,inputs:Constraint_Inputs,rig:^Constraint_Rig,revision:u64) -> (failure:Retarget_Failure,source_entity:core.Entity) {
-    if len(rig.rows[5])==0 {return}
-    source:^Playing
-    enabled:=false
-    for row in rig.rows[5] {
-        config:=core.at(inputs.retargets,row)
-        if config.enabled {enabled=true;source_entity=config.source;source=constraint_playing(playback,config.source);break}
-    }
-    if !enabled {return}
-    if source==nil || source==state || len(source.sampled)!=len(source.rest) {return .Source,source_entity}
-    target_skeleton,source_skeleton:=playing_skeleton(state),playing_skeleton(source)
-    cache:=&rig.retarget
-    if !cache.ready || cache.revision!=revision || cache.source!=source.entity || cache.source_bound!=source.bound || cache.target_bound!=state.bound || cache.source_generation!=source.generation || cache.target_generation!=state.generation {
-        cache.ready=false
-        n:=len(state.rest)
-        if resize(&cache.mapping,n)!=nil || resize(&cache.translations,n)!=nil || resize(&cache.profile,n)!=nil || resize(&cache.target_world,n)!=nil || resize(&cache.source_world,len(source.rest))!=nil {return .Memory,source_entity}
-        if resize(&cache.source_rest,len(source.rest))!=nil || resize(&cache.target_rest,n)!=nil || resize(&cache.source_local,len(source.rest))!=nil {return .Memory,source_entity}
-        for &mapping,i in cache.mapping {mapping=-1;cache.translations[i]=.Reference}
-        paths:=false
-        for row in rig.rows[5] {
-            config:=core.at(inputs.retargets,row)
-            if !config.enabled {continue}
-            if config.source!=source.entity || config.mode>.Paths {return .Sources,source_entity}
-            if config.mode!=.Paths {continue}
-            if paths {return .Paths_Twice,source_entity}
-            paths=true
-            matched:=0
-            for target,i in state.targets {
-                if target==0 {continue}
-                bone:=constraint_bone(source,target)
-                if bone>=0 {cache.mapping[i]=i32(bone);cache.translations[i]=config.translation;matched+=1}
-            }
-            if matched==0 {return .No_Paths,source_entity}
-        }
-        for row in rig.rows[5] {
-            config:=core.at(inputs.retargets,row)
-            if !config.enabled || config.mode!=.Bone {continue}
-            target_bone,source_bone:=bone_resolve(state,config.target_bone),bone_resolve(source,config.source_bone)
-            if target_bone<0 || source_bone<0 {return .Bone,source_entity}
-            cache.mapping[target_bone]=i32(source_bone);cache.translations[target_bone]=config.translation
-        }
-        cache.source_wrapper=len(source.bindings)>0 && source.bindings[0].target==0 && source.bindings[0].driven=={} && source.parents[0]<0
-        cache.target_wrapper=len(state.bindings)>0 && state.bindings[0].target==0 && state.bindings[0].driven=={} && state.parents[0]<0 && cache.mapping[0]<0
-        for mapped in cache.mapping {if mapped==0 {cache.source_wrapper=false;break}}
-        copy(cache.source_rest[:],source.rest[:]);copy(cache.target_rest[:],state.rest[:])
-        if cache.source_wrapper {cache.source_rest[0]=mm.TRANSFORM_IDENTITY}
-        if cache.target_wrapper {cache.target_rest[0]=mm.TRANSFORM_IDENTITY}
-        source_skeleton.rest=cache.source_rest[:];target_skeleton.rest=cache.target_rest[:]
-        if !lib.retarget_prepare(source_skeleton,target_skeleton,cache.mapping[:],cache.translations[:],cache.source_world[:],cache.target_world[:],cache.profile[:]) {return .Solve,source_entity}
-        cache.source=source.entity;cache.source_bound=source.bound;cache.target_bound=state.bound;cache.source_generation=source.generation;cache.target_generation=state.generation;cache.revision=revision;cache.ready=true
-    }
-    source_skeleton.rest=cache.source_rest[:];target_skeleton.rest=cache.target_rest[:]
-    source_pose:=source.sampled[:]
-    if cache.source_wrapper {copy(cache.source_local[:],source_pose);cache.source_local[0]=mm.TRANSFORM_IDENTITY;source_pose=cache.source_local[:]}
-    actor:=state.local[0]
-    ok:=lib.retarget_pose(source_skeleton,target_skeleton,cache.profile[:],source_pose,cache.source_world[:],cache.target_world[:],state.local[:])
-    if cache.target_wrapper {state.local[0]=actor}
-    return .None if ok else .Solve,source_entity
-}
-
-// Reports a constraint of the pose profile of a rig that did nothing in a tick.
+// Reports a constraint of the .character of a rig that did nothing in a tick.
 @(private)
 constraint_problem :: proc(problems:^core.Problems,e:core.Entity,kind:Modifier_Kind,index:int,failure:Rig_Failure,bone:Bone_Ref={}) {
     bone:=bone
     switch failure {
     case .Bind:
-        core.report(problems,e,"animation.constraint_bone","%v %d of the pose profile of this rig names '%s', which its skeleton does not have; %s",kind,index,base.text_get(bone.path[:]),bone_fix(bone))
+        core.report(problems,e,"animation.constraint_bone","%v %d of the .character of this rig names '%s', which its skeleton does not have; %s",kind,index,base.text_get(bone.path[:]),bone_fix(bone))
     case .Target:
-        core.report(problems,e,"animation.constraint_target","%v %d of the pose profile of this rig has no target: its entity is gone or has no Transform, its rig is not animated in this tick, or its bone or socket is not in that skeleton; give it a target that exists",kind,index)
+        core.report(problems,e,"animation.constraint_target","%v %d of the .character of this rig has no target: its entity is gone or has no Transform, its rig is not animated in this tick, or its bone or socket is not in that skeleton; give it a target that exists",kind,index)
     case .Solve:
-        core.report(problems,e,"animation.constraint_solve","%v %d of the pose profile of this rig could not be solved: its bones are not a chain of the skeleton (root above joint above end), or a value of it or of its target is not finite; fix it in the pose profile",kind,index)
+        core.report(problems,e,"animation.constraint_solve","%v %d of the .character of this rig could not be solved: its bones are not a chain of the skeleton (root above joint above end), or a value of it or of its target is not finite; fix it in the .character",kind,index)
     case .Source:
     }
 }
 
-constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_Inputs,cache:^Animation_Constraints,transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),dt:f32,grounding:^Grounding_Runtime=nil,ground_inputs:Grounding_Inputs={},rig_runtime:^Modifier_Runtime=nil,motion:^Motion_Runtime=nil,motion_assets:^Motion_Assets=nil,final_poses:[]Pose_Request=nil) {
+constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_Inputs,cache:^Animation_Constraints,transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),dt:f32,grounding:^Grounding_Runtime=nil,ground_inputs:Grounding_Inputs={},rig_runtime:^Modifier_Runtime=nil,motion:^Motion_Runtime=nil,characters:^Character_Assets=nil,final_poses:[]Pose_Request=nil) {
     if len(state.local)==0 || !constraints_prepare(cache,inputs) {return}
     skeleton:=playing_skeleton(state)
     index:=core.entity_index(state.entity)
     rig:^Constraint_Rig
     if index<len(cache.rigs) && cache.rigs[index].entity==state.entity {rig=&cache.rigs[index]}
     problems:=inputs.problems
-    if rig!=nil && !constraints_bind(state,inputs,rig) {memory_problem(problems,state.entity,"the constraints of its pose profile");return}
-    if rig!=nil {if failure,source:=constraint_retarget(state,playback,inputs,rig,cache.revision);failure!=.None {retarget_problem(problems,state.entity,source,failure)}}
-    if rig_runtime!=nil {rigs_retarget(state,playback,rig_runtime,problems)}
+    if rig!=nil && !constraints_bind(state,inputs,rig) {memory_problem(problems,state.entity,"the constraints of its .character");return}
+    // A rig that takes the sampled pose of another takes it through the chains of its set, or by
+    // the names of their bones.
+    chained:=rig_runtime!=nil && rigs_retarget(state,playback,rig_runtime,problems)
     {
         // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
         root:=state.base_root;ok:=state.has_base_root;sampled:=state.clips_in_place
@@ -357,22 +234,21 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
             return
         }
     }
-    followed:=state.leader!=core.NONE && leader_follow(state,playback,inputs,transforms,parents,parent_world)
+    followed:=state.leader!=core.NONE && !chained && leader_follow(state,playback,inputs,transforms,parents,parent_world)
     curve_poses_apply(state,playback,rig_runtime,followed,problems)
     if !lib.pose_world(skeleton.parents,state.local[:],state.world[:],parent_world) {pose_problem(problems,state.entity);return}
     if motion!=nil {
         if instance:=motion_instance(motion,state.entity);instance!=nil {
             actor,ok:=constraint_world(core.read(transforms),parents,inputs.worlds,state.entity)
             if !ok {
-                core.report(problems,state.entity,"animation.rig_parent","the motion profile of this rig cannot place it: it or one of its parents has no Transform; give them one")
+                core.report(problems,state.entity,"animation.rig_parent","the warping of the .character of this rig cannot place it: it or one of its parents has no Transform; give them one")
             } else {
-                motion_apply_pose(motion,state,instance.profile,actor,parent_world,motion_assets,problems)
+                motion_apply_pose(motion,state,instance.profile,actor,parent_world,characters,problems)
             }
         }
     }
     if grounding!=nil {grounding_apply(state,grounding,ground_inputs,dt)}
     if rig==nil {if rig_runtime!=nil {rigs_apply(state,rig_runtime,inputs,transforms,parents,parent_world,dt,playback)};final_pose_apply(state,playback,parent_world,final_poses,problems);return}
-    constraint_feet(state,inputs,cache,rig,parent_world,dt)
     for row,at in rig.rows[0] {
         config:=core.at(inputs.ik,row)
         diagnostic:=&rig.diagnostics[0][at];diagnostic.valid=false
@@ -407,7 +283,7 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
         rotation:mm.Quat;valid:bool
         if config.use_up {rotation,valid=lib.aim_at(state.world[bone].rotation,config.forward,direction,config.up,config.world_up,config.max_angle,config.weight)} else {rotation,valid=lib.look_at(state.world[bone].rotation,config.forward,direction,config.max_angle,config.weight)}
         if !valid {
-            core.report(problems,state.entity,"animation.constraint_solve","Look %d of the pose profile of this rig cannot aim: its forward or up axis is zero or not finite, or its target is where the bone is; give it axes and a target apart from the bone",at)
+            core.report(problems,state.entity,"animation.constraint_solve","Look %d of the .character of this rig cannot aim: its forward or up axis is zero or not finite, or its target is where the bone is; give it axes and a target apart from the bone",at)
             continue
         }
         parent:=state.parents[bone]
@@ -431,16 +307,16 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
         if ok {
             state.local[bone].rotation=mm.quat_slerp(state.local[bone].rotation,rotation,config.weight);limited=true
         } else {
-            core.report(problems,state.entity,"animation.constraint_solve","Limit %d of the pose profile of this rig cannot limit bone '%s': its axis is zero or not finite, or min_twist is above max_twist; fix it in the pose profile",at,base.text_get(config.bone.path[:]))
+            core.report(problems,state.entity,"animation.constraint_solve","Limit %d of the .character of this rig cannot limit bone '%s': its axis is zero or not finite, or min_twist is above max_twist; fix it in the .character",at,base.text_get(config.bone.path[:]))
         }
     }
     if limited && !lib.pose_world(skeleton.parents,state.local[:],state.world[:],parent_world) {pose_problem(problems,state.entity);return}
     final_pose_apply(state,playback,parent_world,final_poses,problems)
-    for row,at in rig.rows[4] {
+    for row,at in rig.rows[3] {
         config:=core.at(inputs.sockets,row)
         if !config.enabled {continue}
         entity:=core.entity_at(inputs.sockets,row)
-        bone:=rig.bones[4][at][0]
+        bone:=rig.bones[3][at][0]
         transform,ok:=lib.skeleton_socket(state.world[:],bone,config.offset)
         if !ok {
             core.report(problems,entity,"animation.socket_bone","this Bone_Attachment hangs from socket bone '%s', which the skeleton of rig 0x%016x does not have; name a socket of that skeleton",base.text_get(config.bone.path[:]),u64(state.entity))
@@ -495,75 +371,14 @@ animation_root_reference :: proc(state:^Playing,root:Root_Motion,pose:[]mm.Trans
 }
 
 @(private)
-constraint_feet :: proc(state:^Playing,inputs:Constraint_Inputs,cache:^Animation_Constraints,rig:^Constraint_Rig,parent_world:mm.Transform,dt:f32) {
-    if len(rig.rows[3])==0 {return}
-    skeleton:=playing_skeleton(state)
-    for row,at in rig.rows[3] {
-        config:=core.at(inputs.feet,row)
-        entity:=core.entity_at(inputs.feet,row)
-        record:=&cache.feet[row]
-        record.valid=false
-        if !config.enabled {record.contact={};continue}
-        bone:=rig.bones[3][at][2]
-        if bone<0 {constraint_problem(inputs.problems,state.entity,.Contact,at,.Bind,config.end);continue}
-        record.animated=state.world[bone].position
-        record.target,record.valid=lib.foot_plant(&record.contact,record.animated,config.hit_position,config.hit_normal,config.grounded,config.contact,dt,config.blend_time,config.max_distance)
-        record.target.weight*=config.weight
-        if !record.valid {core.report(inputs.problems,state.entity,"animation.constraint_solve","Contact %d of the pose profile of this rig cannot plant its foot: its hit_position or hit_normal is not finite or the normal is zero; give the contact goal a finite hit",at)}
-    }
-    pelvis_changed:=false
-    for row,order in rig.rows[3] {
-        config:=core.at(inputs.feet,row)
-        if !config.enabled || !config.adjust_pelvis {continue}
-        previous:=false
-        for other_row in rig.rows[3][:order] {other:=core.at(inputs.feet,other_row);if other.enabled && other.adjust_pelvis && other.pelvis==config.pelvis {previous=true;break}}
-        if previous {continue}
-        pelvis:=rig.bones[3][order][3]
-        if pelvis<0 {constraint_problem(inputs.problems,state.entity,.Contact,order,.Bind,config.pelvis);continue}
-        minimum:f32
-        first:=true
-        for other_row in rig.rows[3] {
-            other:=core.at(inputs.feet,other_row)
-            if !other.enabled || !other.adjust_pelvis || other.pelvis!=config.pelvis {continue}
-            record:=cache.feet[other_row]
-            if !record.valid || record.target.weight<=0 {continue}
-            one:=[1]mm.Vec3{record.animated};target:=[1]lib.Foot_Target{record.target}
-            offset,ok:=lib.pelvis_offset(one[:],target[:],{0,1,0},config.max_drop,config.max_rise)
-            if ok && (first || offset.y<minimum) {minimum=offset.y;first=false}
-        }
-        parent:=state.parents[pelvis]
-        offset:=mm.transform_inverse_vector(state.world[parent] if parent>=0 else parent_world,{0,minimum,0})
-        state.local[pelvis].position+=offset
-        pelvis_changed ||= offset!=mm.Vec3{}
-    }
-    if pelvis_changed && !lib.pose_world(skeleton.parents,state.local[:],state.world[:],parent_world) {pose_problem(inputs.problems,state.entity);return}
-    for row,at in rig.rows[3] {
-        config:=core.at(inputs.feet,row)
-        record:=cache.feet[row]
-        if !record.valid || record.target.weight<=0 {continue}
-        root,joint,end:=rig.bones[3][at][0],rig.bones[3][at][1],rig.bones[3][at][2]
-        if !lib.skeleton_ik(skeleton,state.local[:],state.world[:],root,joint,end,record.target.position,config.pole,record.target.weight,parent_world) {constraint_problem(inputs.problems,state.entity,.Contact,at,.Solve);continue}
-        rotation,ok:=lib.look_at(state.world[end].rotation,config.up,record.target.normal,mm.PI,record.target.weight)
-        if ok {
-            parent:=state.parents[end]
-            state.local[end].rotation=conj(state.world[parent].rotation if parent>=0 else parent_world.rotation)*rotation
-            lib.pose_world(skeleton.parents,state.local[:],state.world[:],parent_world)
-        }
-    }
-}
-
-@(private)
 constraint_rig_free :: proc(rig:^Constraint_Rig) {
     for targets in rig.targets {for target in targets {delete(target.path)};delete(targets)}
     for diagnostics in rig.diagnostics {delete(diagnostics)}
     for rows in rig.rows {delete(rows)}
     for bones in rig.bones {delete(bones)}
-    delete(rig.retarget.mapping);delete(rig.retarget.translations);delete(rig.retarget.profile)
-    delete(rig.retarget.source_world);delete(rig.retarget.target_world)
-    delete(rig.retarget.source_rest);delete(rig.retarget.target_rest);delete(rig.retarget.source_local)
     rig^={}
 }
 constraints_free :: proc(cache:^Animation_Constraints) {
     for &rig in cache.rigs {constraint_rig_free(&rig)}
-    delete(cache.rigs);delete(cache.feet);cache^={}
+    delete(cache.rigs);cache^={}
 }

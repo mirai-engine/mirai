@@ -40,7 +40,7 @@ clip_test_assets :: proc(f:^Authoring_Test,t:^testing.T) -> (animation,skeleton:
         {target="root",property=.Position,keys=root},
         {target="root/pelvis",property=.Position,keys=pelvis},
         {target="root/pelvis/spine_01/clavicle_r/upperarm_r",property=.Rotation,keys=hand},
-    },markers={{.5,"step"}},root={translation=true}}
+    },markers={{time=.5,name="step"}},root={translation=true}}
     base.text_set(clip.root.bone[:],"root")
     testing.expect_value(t,aa.animation_save(fmt.tprintf("%s/sway.anim",f.root),&f.assets.types,{id=animation,clips={clip}}),aa.Error.None)
     testing.expect(t,host.assets_scan(&f.assets))

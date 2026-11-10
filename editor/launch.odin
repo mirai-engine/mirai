@@ -7,8 +7,10 @@ import "mirai:platform"
 import "mirai:project"
 
 // mirai-editor --project <folder> [options]: edits the library editor of a
-// project built against the binaries of the engine (mirai edit).
-launch :: proc(args:[]string) -> int {
+// project built against the binaries of the engine (mirai edit). frame is
+// advance as the program names it, through the table of this library: an
+// editor a build left since (engine_take) runs from the next frame.
+launch :: proc(args:[]string,frame:proc(s:^Session) -> bool) -> int {
     platform.crash_handler_install()
     root:=host.project_argument(args)
     if report,_:=os.lookup_env(platform.CRASH_REPORT_VARIABLE,context.temp_allocator);report=="" {
@@ -29,5 +31,5 @@ launch :: proc(args:[]string) -> int {
         return 2
     }
     defer host.project_library_unload(&library)
-    return run(&library.info,args)
+    return run(&library.info,args,frame)
 }

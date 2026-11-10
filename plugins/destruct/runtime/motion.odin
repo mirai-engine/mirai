@@ -10,13 +10,10 @@ destruct_parent_motion :: proc(
     transforms:core.Read(core.Transform),parents:core.Read(core.Parent),requests:^phys.Body_Requests,time:core.Time,
 ) {
     if !time.playing || !physics.ready {return}
-    for row in 0..<core.count(destructibles) {
-        config:=core.at(destructibles,row)
+    broken:=core.join(destructibles,states)
+    for e,config,state in core.each_joined(&broken) {
         if !config.follow_parent {continue}
-        e:=core.entity_at(destructibles,row)
-        state,has:=core.get(states,e)
-        held,valid:=phys.body_pose(physics,state.body)
-        if !has || !valid {continue}
+        held:=phys.body_pose(physics,state.body) or_continue
         desired:=mm.Transform{state.initial.position,state.initial.rotation,state.initial.scale}
         if parent,attached:=core.get(parents,e);attached {
             above,ok:=core.world_of(transforms,parents,parent.entity)

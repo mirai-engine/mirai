@@ -219,7 +219,7 @@ projects; `names.create` declares a new one. Categories, sensors, presets and gr
 
 ## Animation
 
-The `animation.*`, `skeleton.*` and `pose.profile.*` methods of the animation plugin are in
+The `animation.*` and `skeleton.*` methods of the animation plugin are in
 [its reference](../../mirai-animation/references/animation-api.md). To animate, declare the intent
 (`animation.character.setup`, `animation.request`, `animation.clip.edit`) and look at the result
 with `animation.analyze` and `animation.capture` before touching keys.

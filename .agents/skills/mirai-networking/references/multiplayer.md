@@ -515,8 +515,9 @@ One rule says how it lives (`replica_wanted`):
 - On each tick the client keeps a copy of the `World` in a ring as deep as the history, with the
   tick's input and the pose and quantized state of each predicted replica.
   - Each slot copies again only the tables that changed since it was written, and of those the rows
-    whose stamp differs, also after a rollback, and of the storages those a function received to
-    write or code outside the loop asked for
+    stamped since, also after a rollback, which gives the rows it brings back new stamps
+    ([replacement](../../mirai-core/references/host.md#the-application)), and of the storages
+    those a function received to write or code outside the loop asked for
     ([copy of what changed](../../mirai-core/references/core.md#world-reflection)). Physics copies
     its state block by block without comparing again the geometry the slot already has, in pools
     of the size of what it uses (`copy_kept`); a slot of a replaced world copies everything again.

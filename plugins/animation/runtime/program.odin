@@ -9,9 +9,9 @@ import "mirai:std/base"
 import lib "mirai:std/anim"
 import mm "mirai:std/math"
 
-// The program of an Animation whose asset is a .match: the clips the search picked, played
-// together in phase when they are a blended sample, entered through an inertial transition. The
-// layers of its action set go over the pose it gives.
+// The program of an Animation whose asset is a .character with locomotion: the clips the search
+// picked, played together in phase when they are a blended sample, entered through an inertial
+// transition. The layers of the set go over the pose it gives.
 PROGRAM_GROUPS :: 1
 // Clocks its groups keep between ticks: that of the group that plays, and the one of the clip it
 // jumped from until the tick that leaves it ends.
@@ -26,14 +26,15 @@ Program_Group :: struct {leaves:[PROGRAM_LEAVES]Program_Leaf,count:u8,weight,roo
 Program_Output :: struct {asset:base.Asset_Id,groups:[PROGRAM_GROUPS]Program_Group,count:u8,primary:u8}
 Program_Player :: struct {key:u32,player:lib.Player,seen,advanced:u64,from,to:f32,was_done,active_last:bool}
 // Pending: a source still loads (host.content_animation_pending); nothing plays until it is ready.
-Program_Error :: enum u8 {None,Invalid_Asset,Invalid_Parameter,Missing_Clip,Incompatible_Root,Out_Of_Memory,Capacity,Layer_Space,Pending}
+Program_Error :: enum u8 {None,Invalid_Asset,Invalid_Parameter,Missing_Clip,Incompatible_Root,Out_Of_Memory,Capacity,Pending}
 Program_Playing :: struct {
     error:Program_Error,
     asset:base.Asset_Id,
     library:base.Asset_Id,        // the .anim the program plays
     revision:u64,
     checked:u64,
-    kind:aa.Fourcc,
+    kind:aa.Fourcc,  // of its asset
+    matched:bool,    // its asset is a .character with locomotion
     players:[dynamic]Program_Player,
     leaders:[PROGRAM_CLOCKS]u32,
     leader_keys:[PROGRAM_CLOCKS]u64,
@@ -105,11 +106,11 @@ program_representative :: proc(group:^Program_Group,content:^host.Content_Animat
     return leader
 }
 
-// The program an Animation plays this tick, when its asset is a .match. A .blend is refused with
-// Layer_Space: it plays only in a layer of an action set. inject: the whole-body action that
-// plays instead of the search. problems: where what a .match cannot do is reported.
+// The program an Animation plays this tick, when its asset is a .character with locomotion.
+// inject: the whole-body action that plays instead of the search. problems: where what its
+// locomotion cannot do is reported.
 @(private)
-program_resolve :: proc(state:^Playing,animation:Animation,app:^host.App,matches:^Match_Assets,dt:f32,events:^Animation_Events=nil,playback:^Playback=nil,prepared:^host.Content_Animation=nil,problems:^core.Problems=nil,goals:[]Match_Goal={},inject:Match_Inject={},facing:=mm.FORWARD) -> (output:^Program_Output,programmed,ok:bool) {
+program_resolve :: proc(state:^Playing,animation:Animation,app:^host.App,characters:^Character_Assets,dt:f32,events:^Animation_Events=nil,playback:^Playback=nil,prepared:^host.Content_Animation=nil,problems:^core.Problems=nil,goals:[]Match_Goal={},inject:Match_Inject={},facing:=mm.FORWARD) -> (output:^Program_Output,programmed,ok:bool) {
     if app.assets==nil {return nil,false,false}
     runtime:=&state.program
     runtime.error=.None
@@ -120,20 +121,21 @@ program_resolve :: proc(state:^Playing,animation:Animation,app:^host.App,matches
         kind=record.kind if found else aa.Fourcc(0)
         runtime.kind,runtime.checked=kind,assets_stamp(app.assets)
     }
-    if kind==BLEND_KIND {runtime.error=.Layer_Space;return nil,true,false}
-    if kind!=MATCH_KIND {
+    content:^Character_Content
+    if kind==CHARACTER_KIND {content=character_content(characters,app.assets,app.allocator,animation.asset);if content==nil {runtime.error=.Invalid_Asset;return nil,true,false}}
+    if content==nil || len(content.set.match.clips)==0 {
         program_free(runtime)
         runtime.kind,runtime.asset,runtime.checked=kind,animation.asset,assets_stamp(app.assets)
         return nil,false,true
     }
     programmed=true
+    runtime.matched=true
     if animation.library!={} {
         record,found:=aa.registry_find(&app.assets.registry,animation.library)
         if !found || record.kind!=aa.KIND_ANIMATION {runtime.error=.Invalid_Asset;return nil,true,false}
     }
     output=&runtime.output
-    content:=match_content(matches,app.assets,app.allocator,animation.asset);if content==nil {return nil,true,false}
-    source:=animation.library if animation.library!={} else content.profile.info.animation
+    source:=animation.library if animation.library!={} else content.set.info.animation
     revision:=content.revision
     reset:=runtime.asset!=animation.asset || runtime.revision!=revision || runtime.library!=source || !runtime.ready
     swapped:=reset && runtime.ready && runtime.asset==animation.asset && runtime.revision==revision
