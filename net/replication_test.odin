@@ -156,12 +156,12 @@ Scene :: struct {
     count:int,
 }
 @(private)
-scene_init :: proc(s:^Scene,clients:int,replication:Replication_Desc={},seed:u64=1,security:=Security.None) {
+scene_init :: proc(s:^Scene,clients:int,replication:Replication_Desc={},seed:u64=1) {
     test_protocol_init(&s.tp)
     test_world_init(&s.w,9,seed)
     replication:=replication
     if replication.max_objects==0 {replication.max_objects=256}
-    s.server=test_host(&s.w,{mode=.Server,protocol=&s.tp.protocol,replication=replication,max_connections=8,security={mode=security}})
+    s.server=test_host(&s.w,{mode=.Server,protocol=&s.tp.protocol,replication=replication,max_connections=8})
     for i in 0..<clients {scene_join(s)}
 }
 @(private)
@@ -169,7 +169,7 @@ scene_join :: proc(s:^Scene) -> int {
     i:=s.count
     replication:=s.server.desc.replication
     replication.state_words,replication.baseline_words=0,0
-    s.clients[i]=test_host(&s.w,{mode=.Client,protocol=&s.tp.protocol,replication=replication,security={mode=s.server.desc.security.mode}})
+    s.clients[i]=test_host(&s.w,{mode=.Client,protocol=&s.tp.protocol,replication=replication})
     s.on_server[i],s.on_client[i]=test_connect(&s.w,s.server,s.clients[i])
     s.count+=1
     return i
