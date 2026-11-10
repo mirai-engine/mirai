@@ -208,9 +208,10 @@
 - `scene.slang` includes `<surface_programs.slang>`: the stage itself evaluates no programs. A
   source marked `//! per surface program` is also compiled once per Surface program,
   `<root>__<Program>[_<variant>]<suffix>` (`gbuffer__Water_Surface_layers.frag`), with the include
-  of that program in front; `//! per surface program only` compiles only those. They are the raster stages
-  that draw materials (G-buffer, glass layers and filter, translucents, overlays, highlight,
-  thumbnails, UI and the `vfx` sprites) and `surface_points.comp`, that of the ray material points
+  of that program in front; `//! per surface program only` compiles only those. They are the
+  raster stages that draw materials (G-buffer, glass layers and filter, translucents, overlays,
+  highlight, thumbnails, UI and the `vfx` sprites) and `surface_points.comp`, that of the ray
+  material points
   ([programs in rays and raster](materials.md#surface-programs-in-rays-and-raster)). A source
   marked `//! per vertex program` is compiled only for the Surface programs with `vertex`, with
   the same include, and has no stage of its own: `surface_vertices.comp`, which calls
