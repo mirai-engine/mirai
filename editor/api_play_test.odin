@@ -1133,7 +1133,7 @@ a_scenario_plays_its_steps_in_order_from_the_first_tick_and_ends_at_the_first_th
         {`{"steps":[{"method":"play.start"}]}`,"leave it out"},
         {`{"steps":[{"method":"play.nothing"}]}`,"is not a method"},
         {`{"start":{"players":9},"steps":[{"method":"play.step"}]}`,"start:"},
-        {`{"steps":[{"method":"play.step","wait":1}]}`,`"wait" is not a key`},
+        {`{"steps":[{"method":"play.step","wait":1}]}`,`"wait" is not a field`},
         {`{"steps":[]}`,"steps: give the steps"},
         {`{"scene":"scenes/none.scene","steps":[{"method":"play.step"}]}`,"is not there"},
     }

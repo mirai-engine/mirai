@@ -45,7 +45,6 @@ API_HAND_WRITTEN :: [?]struct{file,pattern:string,count:int}{
     {"editor/api/rpc.odin","writes_result=true",1},
     {"editor/api_assets.odin","writes_result=true",1},
     {"editor/api_play_observe.odin","writes_result=true",2},
-    {"editor/api_play_scenario.odin","writes_result=true",1},
     {"editor/api_viewport.odin","writes_result=true",2},
     {"editor/input_settings.odin","writes_result=true",2},
     {"plugins/playtest/editor/explore.odin","writes_result=true",1},
