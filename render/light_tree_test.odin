@@ -270,14 +270,14 @@ scene_set_lights_refits_the_tree_while_each_light_keeps_its_kind :: proc(t: ^tes
 		clear(&s.light_ranges)
 		clear(&s.light_node_ranges)
 	}
-	scene_set_lights(r, lights[:], {}, {})
+	scene_lights_given(r, lights[:], {}, {})
 	revision := s.light_revision
 	testing.expect(t, s.lights_dirty && len(s.light_tree) == 2 * len(lights) - 1)
 	uploaded(s)
 
 	lights[42].position.x += 0.3
 	lights[42].intensity = 12
-	scene_set_lights(r, lights[:], {}, {})
+	scene_lights_given(r, lights[:], {}, {})
 	testing.expect_value(t, s.light_revision, revision)
 	testing.expect(t, !s.lights_dirty && len(s.light_ranges) == 1 && s.light_ranges[0] == Pool_Range{42, 1}, "the light that changed goes alone")
 	testing.expect(t, len(s.light_node_ranges) > 0 && s.light_node_ranges[0].count < u32(len(s.light_tree)), "and the nodes above it")
@@ -286,17 +286,17 @@ scene_set_lights_refits_the_tree_while_each_light_keeps_its_kind :: proc(t: ^tes
 	outside, _, _ := light_tree_faults(s.light_tree[:], seen[:])
 	testing.expect_value(t, outside, 0)
 	uploaded(s)
-	scene_set_lights(r, lights[:], {}, {})
+	scene_lights_given(r, lights[:], {}, {})
 	testing.expect(t, !s.lights_dirty && len(s.light_ranges) == 0 && len(s.light_node_ranges) == 0, "nothing changed, nothing goes")
 
 	for &light in lights[:LIGHT_REFITS_MAX + 1] {light.position.y += 0.1}
-	scene_set_lights(r, lights[:], {}, {})
+	scene_lights_given(r, lights[:], {}, {})
 	testing.expect(t, s.light_revision == revision && s.lights_dirty, "many changed: the whole tree is refit and goes")
 	uploaded(s)
 
 	// Far from the others, the light stretches the groups above it: the tree is built again.
 	lights[0].position = {500, 1, 500}
-	scene_set_lights(r, lights[:], {}, {})
+	scene_lights_given(r, lights[:], {}, {})
 	testing.expect(t, s.light_revision == revision && s.lights_dirty && s.light_tree_cost == s.light_tree_built)
 	nodes: [dynamic]Gpu_Light_Node
 	keys: [dynamic]Light_Key
@@ -308,10 +308,10 @@ scene_set_lights_refits_the_tree_while_each_light_keeps_its_kind :: proc(t: ^tes
 
 	// Another kind, or another number of lights: another set.
 	lights[5].cone, lights[5].direction = 0.5, {0, -1, 0}
-	scene_set_lights(r, lights[:], {}, {})
+	scene_lights_given(r, lights[:], {}, {})
 	testing.expect(t, s.light_revision == revision + 1 && s.lights_dirty)
 	uploaded(s)
-	scene_set_lights(r, lights[:99], {}, {})
+	scene_lights_given(r, lights[:99], {}, {})
 	testing.expect(t, s.light_revision == revision + 2 && s.lights_dirty && len(s.lights) == 99)
 }
 
@@ -350,11 +350,11 @@ light_update_benchmark_reports_the_time_of_moving_one_light :: proc(t: ^testing.
 			lights := make([]Light_Desc, count)
 			defer delete(lights)
 			for &light, i in lights {light = {position = {f32(i % 64) - 32, 1, f32(i / 64) - 32}, color = {1, 1, 1}, intensity = 100, range = 4, radius = 0.05}}
-			scene_set_lights(&r, lights, {}, {})
+			scene_lights_given(&r, lights, {}, {})
 			started := time.tick_now()
 			for _ in 0 ..< 200 {
 				lights[count / 2].position.x += 0.01
-				scene_set_lights(&r, lights, {}, {})
+				scene_lights_given(&r, lights, {}, {})
 			}
 			fmt.printfln("scene_set_lights moving one light of %d: %.4f ms", count, time.duration_milliseconds(time.tick_since(started)) / 200)
 		}

@@ -40,11 +40,11 @@ tint_opacity_updates_only_dirty_instances_and_reuses_materials_without_allocatin
     alphas:=[9]f32{1,0.5,0,1,0.75,0.25,0.5,0,1}
     for alpha,pass in alphas {
         core.edit(&w.tints,entities[0]).color.a=alpha
-        updates:=sync.stats.instance_updates
         host.app_frame_begin(app)
         draw(&sync,app,&w)
         if pass>0 {
-            testing.expect_value(t,sync.stats.instance_updates,updates+1)
+            touched:=app.renderer.scene.touched[0]
+            testing.expect(t,touched&1!=0 && touched&2==0,"the instance whose opacity changed goes alone")
             if pass==5 || pass==6 || pass==7 {testing.expect(t,!app.renderer.scene.tlas_dirty && !app.renderer.scene.tlas_nodes_dirty && !app.renderer.scene.tlas_refs_dirty)}
         }
         testing.expect_value(t,len(app.renderer.scene.translucent),alpha<1?1:0)

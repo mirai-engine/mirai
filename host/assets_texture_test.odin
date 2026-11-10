@@ -117,7 +117,8 @@ a_texture_holds_the_levels_its_distance_asks_for :: proc(t:^testing.T) {
     indices:=[6]u32{0,2,1,0,3,2}
     quad,added:=render.mesh_add(r,vertices[:],indices[:])
     if !testing.expect(t,added) {return}
-    render.scene_set(r,{{object_id=1,mesh=quad,transform=render.Mat4(1),tint={1,1,1}}},nil,{},{})
+    render.scene_set_environment(r,{},{})
+    render.scene_update(r,0,{{object_id=1,mesh=quad,transform=render.Mat4(1),tint={1,1,1}}},true)
 
     // What the streamer of the application does between frames, at once.
     stream :: proc(a:^Assets,r:^render.Renderer,types:^asset.Types,id:base.Asset_Id) -> render.Texture_Levels_Result {
@@ -290,7 +291,8 @@ a_mesh_a_load_takes_over_frames_and_its_skinned_copy_are_drawn_once_all_of_them_
         for _ in 0..=rhi.MAX_FRAMES_IN_FLIGHT {testing.expect(t,render.renderer_frame(r,{camera=camera}),r.error)}
     }
     instances:=[1]render.Instance_Desc{{object_id=1,mesh=handle,transform=1}}
-    render.scene_set(r,instances[:],nil,{},{})
+    render.scene_set_environment(r,{},{})
+    render.scene_update(r,0,instances[:],true)
     drawn :: proc(r:^render.Renderer) -> bool {return r.scene.instances[0].meta.w&render.INSTANCE_FLAG_HIDDEN==0}
     frames:=0
     for ;frames<64 && render.mesh_upload_pending(r,prepared.mesh_upload);frames+=1 {
@@ -326,7 +328,8 @@ a_mesh_a_load_takes_over_frames_and_its_skinned_copy_are_drawn_once_all_of_them_
     testing.expect(t,render.mesh_uploading(r,pose),"more than a frame uploads goes over frames")
     // As engine/render shows a copy that replaces the mesh of an entity: that mesh hidden, the copy outlined.
     entity:=[2]render.Instance_Desc{{object_id=1,mesh=handle,transform=1,hidden=true},{object_id=1,copy_owner=1,mesh=pose,transform=1,highlight=1}}
-    render.scene_set(r,entity[:],nil,{},{})
+    render.scene_set_environment(r,{},{})
+    render.scene_update(r,0,entity[:],true)
     copied :: proc(r:^render.Renderer) -> bool {return r.scene.instances[1].meta.w&render.INSTANCE_FLAG_HIDDEN==0}
     lifted:=mm.Mat4(1)
     lifted[1,3]=0.5

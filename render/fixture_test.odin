@@ -60,3 +60,24 @@ fixture_destroy :: proc(f: ^Fixture) {
 	free(f.renderer)
 	f.renderer = nil
 }
+
+// The lights, the sun and the sky in place of those the scene has, through
+// what a frame does with them: the lights that give light take the first
+// indices, those past them go, and the lights settle.
+scene_lights_given :: proc(r: ^Renderer, lights: []Light_Desc, sun: Sun_Desc, environment: Environment) -> bool {
+	count := 0
+	for l in lights {
+		if !light_gives(l) {continue}
+		if !scene_light_update(r, u32(count), l) {return false}
+		count += 1
+	}
+	for i := len(r.scene.lights) - 1; i >= count; i -= 1 {scene_light_remove(r, u32(i))}
+	scene_set_environment(r, sun, environment)
+	return scene_lights_settle(r)
+}
+
+// The instances, the lights, the sun and the sky in place of those the scene
+// has, as the sync of a world gives them.
+scene_given :: proc(r: ^Renderer, instances: []Instance_Desc, lights: []Light_Desc, sun: Sun_Desc, environment: Environment) -> bool {
+	return scene_update(r, 0, instances, true) && scene_lights_given(r, lights, sun, environment)
+}

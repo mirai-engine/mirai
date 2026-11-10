@@ -83,7 +83,7 @@ renderer_calls_without_memory_are_refused_and_keep_what_they_had :: proc(t: ^tes
 			mesh, added := mesh_add(r, vertices[:], indices[:])
 			if !testing.expect(t, added) {return}
 			for &instance, i in instances {instance = {object_id = u64(i + 1), mesh = mesh, transform = Mat4(1), tint = {1, 1, 1}}}
-			if call == .Scene_Update && !testing.expect(t, scene_set(r, instances[:1], nil, {}, {})) {return}
+			if call == .Scene_Update && !testing.expect(t, scene_given(r, instances[:1], nil, {}, {})) {return}
 		}
 		held := [4]int{len(tree), len(leaves), len(s.instances), len(s.meshes)}
 		words := len(s.vertices) + len(s.indices)
@@ -116,11 +116,11 @@ renderer_calls_without_memory_are_refused_and_keep_what_they_had :: proc(t: ^tes
 				done = materials_set(r, materials[:])
 				if !done {testing.expectf(t, len(s.materials) == 0, "a table refused with %d requests served has no row", served)}
 			case .Scene_Set:
-				done = scene_set(r, instances[:], light_descs[:], {}, {})
+				done = scene_given(r, instances[:], light_descs[:], {}, {})
 			case .Scene_Update:
 				done = scene_update(r, 1, instances[1:])
 			case .Lights:
-				done = scene_set_lights(r, light_descs[:], {}, {})
+				done = scene_lights_given(r, light_descs[:], {}, {})
 				if !done {testing.expectf(t, len(s.lights) == 0, "lights refused with %d requests served are not there", served)}
 			case .Shader_Reload:
 				assets := Shader_Assets{owned = true}

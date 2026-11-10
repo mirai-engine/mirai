@@ -257,7 +257,7 @@ a_touched_instance_asks_its_textures_again_without_estimating_the_scene :: proc(
 		{object_id = 2, mesh = mesh, material = 1, transform = at(20), tint = {1, 1, 1}},
 		{object_id = 3, mesh = mesh, material = 2, transform = at(40), tint = {1, 1, 1}},
 	}
-	testing.expect(t, scene_set(r, descs[:], nil, {}, {}))
+	testing.expect(t, scene_given(r, descs[:], nil, {}, {}))
 	state := &r.textures.residency
 	resize(&state.streams, 2)
 	r.textures.count = 2
@@ -342,7 +342,7 @@ a_touched_instance_asks_its_textures_again_without_estimating_the_scene :: proc(
 	testing.expect(t, state.stale, "another material")
 	estimate(r)
 	// The whole table, as a set gives it, is estimated.
-	testing.expect(t, scene_set(r, descs[:], nil, {}, {}))
+	testing.expect(t, scene_given(r, descs[:], nil, {}, {}))
 	frame(r)
 	testing.expect(t, state.stale)
 }

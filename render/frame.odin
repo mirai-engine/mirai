@@ -432,7 +432,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     if !frame.ui_only {r.frame_occluders,r.scene.occluders=r.scene.occluders,{}}
     batches_build(r)
     // The room for the lights of the GPU sizes the light buffers: it is taken before they are made.
-    if !scene_light_region(r) || !ensure_scene_capacity(r) {return false}
+    if !scene_lights_settle(r) || !scene_light_region(r) || !ensure_scene_capacity(r) {return false}
     if !frame.offscreen && !frame.ui_only {
         // The cuts rays trace follow the eye of the first view of the window, as the probes.
         eye:=frame.camera.position

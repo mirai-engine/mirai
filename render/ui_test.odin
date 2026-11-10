@@ -212,7 +212,7 @@ place :: proc(position,scale:Vec3) -> Mat4 {
 // A wall across the left half of the view, two metres from the origin towards the camera's far side.
 @(private)
 wall_scene :: proc(f:^Overlay_Fixture) {
-    scene_set(f.renderer,{{object_id=1,mesh=f.cube,transform=place({-2,0,0},{4,6,0.2}),tint={0.2,0.2,0.2}}},nil,{direction={0,0.3,1},color={1,1,1},illuminance=1 * math.PI,enabled=true},{background={0,0,0},use_background=true})
+    scene_given(f.renderer,{{object_id=1,mesh=f.cube,transform=place({-2,0,0},{4,6,0.2}),tint={0.2,0.2,0.2}}},nil,{direction={0,0.3,1},color={1,1,1},illuminance=1 * math.PI,enabled=true},{background={0,0,0},use_background=true})
 }
 
 @(private)
@@ -267,7 +267,7 @@ world_panel_as_billboard_faces_the_camera :: proc(t:^testing.T) {
     f:Overlay_Fixture
     if !overlay_fixture(t,&f,96,96) {return}
     defer overlay_fixture_destroy(t,&f)
-    scene_set(f.renderer,nil,nil,{},{background={0,0,0},use_background=true})
+    scene_given(f.renderer,nil,nil,{},{background={0,0,0},use_background=true})
     yellow:=quad(0,0,100,100,{1,1,0,1})
     // Seen from the side, a panel in the XY plane is edge on.
     side:=Camera{position={6,0,0},forward={-6,0,0},up={0,1,0},fov_y=60,near=0.05,far=100,exposure=UNIT_EXPOSURE}

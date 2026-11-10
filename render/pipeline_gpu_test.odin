@@ -78,7 +78,7 @@ pipeline_passes_run_between_stages_over_the_resources_they_declare :: proc(t: ^t
 	floor[0, 0], floor[1, 1], floor[2, 2], floor[1, 3] = 8, 0.1, 8, -0.55
 	instances := []Instance_Desc{{object_id = 1, mesh = cube, transform = 1, tint = {0.7, 0.4, 0.2}}, {object_id = 2, mesh = cube, transform = floor, tint = {0.6, 0.6, 0.6}}}
 	lights := []Light_Desc{{position = {1.2, 1.5, 1}, color = {1, 0.8, 0.6}, intensity = 4 * math.PI, range = 8, radius = 0.1}}
-	scene_set(r, instances, lights, {direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true}, {sky = {0.2, 0.3, 0.5}})
+	scene_given(r, instances, lights, {direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true}, {sky = {0.2, 0.3, 0.5}})
 
 	shader := pass_shader()
 	pipeline := rhi.pipeline_create_compute(device, {shader = &shader, name = "test pass"})

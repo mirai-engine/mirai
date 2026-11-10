@@ -144,7 +144,7 @@ mesh_remove_preserves_other_ranges_and_instances_and_reuses_the_freed_space :: p
 	middle := s.meshes[handles[1]]
 	for &ranges in s.pool_dirty {clear(&ranges)}
 	clear(&s.mesh_dirty)
-	scene_set(r,[]Instance_Desc{{object_id=1,mesh=handles[0],transform=Mat4(1)},{object_id=2,mesh=handles[1],transform=Mat4(1)},{object_id=3,mesh=handles[2],transform=Mat4(1)}},nil,{},{})
+	scene_given(r,[]Instance_Desc{{object_id=1,mesh=handles[0],transform=Mat4(1)},{object_id=2,mesh=handles[1],transform=Mat4(1)},{object_id=3,mesh=handles[2],transform=Mat4(1)}},nil,{},{})
 	s.instances_dirty=false
 	kept_instance:=s.instances[2]
 	triangles := s.triangle_total
@@ -197,7 +197,7 @@ material_rows_go_to_the_gpu_alone_and_only_when_their_values_change :: proc(t:^t
     handle,_:=edit_add(r,vertices[:],indices[:],{1,2})
     materials:=[3]Material_Desc{DEFAULT_MATERIAL,DEFAULT_MATERIAL,DEFAULT_MATERIAL}
     materials_set(r,materials[:])
-    scene_set(r,{Instance_Desc{object_id=1,mesh=handle,transform=Mat4(1)}},nil,{},{})
+    scene_given(r,{Instance_Desc{object_id=1,mesh=handle,transform=Mat4(1)}},nil,{},{})
     uploaded :: proc(s:^Scene_State) {
         s.materials_dirty=false
         clear(&s.material_ranges)
@@ -269,35 +269,35 @@ scene_set_changes_the_light_only_around_what_comes_goes_or_changes :: proc(t:^te
     at :: proc(x:f32) -> Mat4 {m:=Mat4(1);m[0,3]=x;return m}
     a:=Instance_Desc{object_id=1,mesh=handle,transform=at(0),tint={1,1,1}}
     b:=Instance_Desc{object_id=2,mesh=handle,transform=at(20),tint={1,1,1}}
-    scene_set(r,{a,b},nil,{},{})
+    scene_given(r,{a,b},nil,{},{})
     s:=&r.scene
     s.changes={}
-    scene_set(r,{a,b},nil,{},{})
+    scene_given(r,{a,b},nil,{},{})
     testing.expect(t,!s.changes.all && s.changes.count==0,"the same set changes no light")
     shown:=b
     shown.highlight=1
-    scene_set(r,{a,shown},nil,{},{})
+    scene_given(r,{a,shown},nil,{},{})
     testing.expect(t,!s.changes.all && s.changes.count==0,"nor a highlight, drawn over the image")
     c:=Instance_Desc{object_id=3,mesh=handle,transform=at(-20),tint={1,1,1}}
-    scene_set(r,{a,b,c},nil,{},{})
+    scene_given(r,{a,b,c},nil,{},{})
     testing.expect(t,!s.changes.all && s.changes.count==1,"one that comes changes the light around it")
     s.changes={}
-    scene_set(r,{a,c},nil,{},{})
+    scene_given(r,{a,c},nil,{},{})
     testing.expect(t,!s.changes.all && s.changes.count==1,"one that goes, around where it was")
     s.changes={}
     moved:=c
     moved.transform=at(-25)
-    scene_set(r,{a,moved},nil,{},{})
+    scene_given(r,{a,moved},nil,{},{})
     testing.expect(t,!s.changes.all && s.changes.count==2,"one that moves, around where it was and where it is")
     testing.expect(t,s.touched_count==1 && instance_touched(s,1),"and it has its motion")
     s.changes={}
     small:=Instance_Desc{object_id=4,mesh=handle,transform=at(40)*Mat4{0.1,0,0,0,0,0.1,0,0,0,0,0.1,0,0,0,0,1},tint={1,1,1}}
-    scene_set(r,{a,moved,small},nil,{},{})
+    scene_given(r,{a,moved,small},nil,{},{})
     testing.expect(t,s.changes.count==1 && s.changes.spheres[0].w<2,"a small one changes the light only within ten of its sizes")
     s.changes={}
     glowing:=small
     glowing.emission={1,1,1}
-    scene_set(r,{a,moved,glowing},nil,{},{})
+    scene_given(r,{a,moved,glowing},nil,{},{})
     testing.expect(t,s.changes.count==2 && s.changes.spheres[0].w>LIGHT_CHANGE_REACH,"its glow, as far as a glow reaches")
 }
 
@@ -314,7 +314,7 @@ scene_update_replaces_geometry_and_classification_and_keeps_other_rows :: proc(t
     blend.opacity,blend.alpha_mode=0.5,.Blend
     materials_set(r,{DEFAULT_MATERIAL,blend})
     original:=Instance_Desc{object_id=1,mesh=handle,transform=Mat4(1),tint={1,0,0},overlays={count=1,entries={0={material=1,enabled=true}}}}
-    scene_set(r,{original,Instance_Desc{object_id=2,mesh=handle,transform=Mat4(1),tint={0,1,0}}},nil,{},{})
+    scene_given(r,{original,Instance_Desc{object_id=2,mesh=handle,transform=Mat4(1),tint={0,1,0}}},nil,{},{})
     kept:=r.scene.instances[0]
     r.scene.instances_dirty=false
     replacement:=Instance_Desc{object_id=2,copy_owner=1,mesh=handle,transform=Mat4(1),material=2,tint={0,0,1}}
@@ -439,27 +439,27 @@ instance_values_stay_with_the_identity_of_the_instance_and_change_no_light :: pr
     materials_set(r,{DEFAULT_MATERIAL})
     a:=Instance_Desc{object_id=1,mesh=handle,transform=Mat4(1),tint={1,1,1}}
     b:=Instance_Desc{object_id=2,mesh=handle,transform=Mat4(1),tint={1,1,1}}
-    scene_set(r,{a,b},nil,{},{})
+    scene_given(r,{a,b},nil,{},{})
     s:=&r.scene
     s.changes={}
     values:=Vec4{0.25,3,0,1}
     testing.expect(t,scene_set_instance_values(r,1,values))
-    testing.expect_value(t,instance_values(s.instances[s.desc_instance[1]]),values)
+    testing.expect_value(t,instance_values(s.instances[1]),values)
     testing.expect(t,!s.changes.all && s.changes.count==0,"values change no light")
     testing.expect(t,!scene_set_instance_values(r,2,values),"a descriptor the scene does not have")
     testing.expect(t,!scene_set_instance_values(r,0,{0,0,0,max(f32)*2}),"a value that is not finite")
     moved:=Mat4(1);moved[0,3]=2
     scene_move(r,{1},{moved})
     testing.expect(t,scene_tint(r,{1},{{0.5,0.5,0.5}},{{0,0,0}}))
-    testing.expect_value(t,instance_values(s.instances[s.desc_instance[1]]),values)
-    scene_set(r,{a,b},nil,{},{})
-    testing.expect_value(t,instance_values(s.instances[s.desc_instance[1]]),values)
+    testing.expect_value(t,instance_values(s.instances[1]),values)
+    scene_given(r,{a,b},nil,{},{})
+    testing.expect_value(t,instance_values(s.instances[1]),values)
     testing.expect(t,scene_update(r,1,{b}))
-    testing.expect_value(t,instance_values(s.instances[s.desc_instance[1]]),values)
+    testing.expect_value(t,instance_values(s.instances[1]),values)
     other:=b
     other.object_id=3
     testing.expect(t,scene_update(r,1,{other}))
-    testing.expect_value(t,instance_values(s.instances[s.desc_instance[1]]),Vec4{})
+    testing.expect_value(t,instance_values(s.instances[1]),Vec4{})
 }
 
 @(test)
@@ -474,35 +474,35 @@ how_wet_an_instance_is_stays_with_its_identity_and_changes_no_light :: proc(t:^t
     materials_set(r,{DEFAULT_MATERIAL})
     a:=Instance_Desc{object_id=1,mesh=handle,transform=Mat4(1),tint={1,1,1}}
     b:=Instance_Desc{object_id=2,mesh=handle,transform=Mat4(1),tint={1,1,1}}
-    scene_set(r,{a,b},nil,{},{})
+    scene_given(r,{a,b},nil,{},{})
     s:=&r.scene
     s.changes={}
     values:=Vec4{0.25,3,0,1}
     testing.expect(t,scene_set_instance_values(r,1,values))
     testing.expect(t,scene_set_instance_wet(r,1,0.75))
-    testing.expect_value(t,s.instances[s.desc_instance[1]].wet,f32(0.75))
-    testing.expect_value(t,instance_values(s.instances[s.desc_instance[1]]),values)
-    testing.expect_value(t,s.instances[s.desc_instance[0]].wet,f32(0))
+    testing.expect_value(t,s.instances[1].wet,f32(0.75))
+    testing.expect_value(t,instance_values(s.instances[1]),values)
+    testing.expect_value(t,s.instances[0].wet,f32(0))
     testing.expect(t,!s.changes.all && s.changes.count==0,"how wet it is changes no light")
     testing.expect(t,!scene_set_instance_wet(r,2,1),"a descriptor the scene does not have")
     testing.expect(t,!scene_set_instance_wet(r,1,max(f32)*2),"a value that is not finite")
     testing.expect(t,scene_set_instance_wet(r,0,4))
-    testing.expect_value(t,s.instances[s.desc_instance[0]].wet,f32(1))
+    testing.expect_value(t,s.instances[0].wet,f32(1))
     testing.expect(t,scene_set_instance_wet(r,0,0))
     moved:=Mat4(1);moved[0,3]=2
     scene_move(r,{1},{moved})
     testing.expect(t,scene_tint(r,{1},{{0.5,0.5,0.5}},{{0,0,0}}))
-    testing.expect_value(t,s.instances[s.desc_instance[1]].wet,f32(0.75))
-    // Another order keeps it with the instance, not with the place.
-    scene_set(r,{b,a},nil,{},{})
-    testing.expect_value(t,s.instances[s.desc_instance[0]].wet,f32(0.75))
-    testing.expect_value(t,s.instances[s.desc_instance[1]].wet,f32(0))
+    testing.expect_value(t,s.instances[1].wet,f32(0.75))
+    // Moved to another index, as the sync closes a gap with the last, it keeps it.
+    testing.expect(t,scene_update(r,0,{b}) && scene_instance_was(r,0,1) && scene_update(r,1,nil,true))
+    testing.expect_value(t,s.instances[0].wet,f32(0.75))
+    testing.expect_value(t,instance_values(s.instances[0]),values)
     testing.expect(t,scene_update(r,0,{b}))
-    testing.expect_value(t,s.instances[s.desc_instance[0]].wet,f32(0.75))
+    testing.expect_value(t,s.instances[0].wet,f32(0.75))
     other:=b
     other.object_id=3
     testing.expect(t,scene_update(r,0,{other}))
-    testing.expect_value(t,s.instances[s.desc_instance[0]].wet,f32(0))
+    testing.expect_value(t,s.instances[0].wet,f32(0))
 }
 
 // What casts shadows and changed since the last frame drew the scene: each
@@ -525,7 +525,7 @@ occluders_list_what_moved_came_or_went_and_the_lights_that_moved :: proc(t: ^tes
 	set := make([]Instance_Desc, OCCLUDER_CHANGES_MAX + 4)
 	defer delete(set)
 	for &desc, i in set {desc = {object_id = u64(i + 1), mesh = mesh, transform = at(f32(i) * 4)}}
-	scene_set(r, set[:3], nil, {}, {})
+	scene_given(r, set[:3], nil, {}, {})
 	testing.expect_value(t, s.occluders.count, 3)
 	for box, i in s.occluders.boxes[:3] {testing.expect(t, box.instance == u32(i) && box.low.x == f32(i) * 4 - 0.5 && box.high.x == f32(i) * 4 + 0.5, "an instance that came")}
 
@@ -539,15 +539,15 @@ occluders_list_what_moved_came_or_went_and_the_lights_that_moved :: proc(t: ^tes
 	s.occluders = {}
 	moved := set[:3]
 	moved[1].transform = at(7)
-	scene_set(r, moved, nil, {}, {})
+	scene_given(r, moved, nil, {}, {})
 	tinted := moved
 	tinted[0].tint = {0.2, 0.3, 0.4}
-	scene_set(r, tinted, nil, {}, {})
+	scene_given(r, tinted, nil, {}, {})
 	testing.expect_value(t, s.occluders.count, 0)
-	scene_set(r, moved[:2], nil, {}, {})
+	scene_given(r, moved[:2], nil, {}, {})
 	testing.expect(t, s.occluders.count == 1 && s.occluders.boxes[0].instance == OCCLUDERS_MANY && s.occluders.boxes[0].low.x == 7.5, "an instance that went leaves its box alone")
 
-	scene_set(r, set, nil, {}, {})
+	scene_given(r, set, nil, {}, {})
 	s.occluders = {}
 	descs := make([]u32, len(set))
 	defer delete(descs)
@@ -582,17 +582,17 @@ occluders_list_what_moved_came_or_went_and_the_lights_that_moved :: proc(t: ^tes
 
 	lights := [2]Light_Desc{{position = {0, 2, 0}, color = 1, intensity = 10, range = 5}, {position = {4, 2, 0}, color = 1, intensity = 10, range = 5}}
 	sun := Sun_Desc{direction = {0, 1, 0}, color = 1, illuminance = 1000, enabled = true}
-	scene_set_lights(r, lights[:], sun, {})
+	scene_lights_given(r, lights[:], sun, {})
 	s.occluders = {}
 	lights[0].intensity = 20
-	scene_set_lights(r, lights[:], sun, {})
+	scene_lights_given(r, lights[:], sun, {})
 	testing.expect(t, s.occluders.light_count == 0 && !s.occluders.sun, "a light that only grows brighter moves no shadow")
 	lights[1].position.x += 0.5
 	sun.direction = {0.001, 1, 0}
-	scene_set_lights(r, lights[:], sun, {})
+	scene_lights_given(r, lights[:], sun, {})
 	testing.expect(t, s.occluders.light_count == 1 && s.occluders.lights[0] == 1 && !s.occluders.sun, "a light that moved; a sun that turned less than its radius")
 	sun.direction = {0.2, 1, 0}
-	scene_set_lights(r, lights[:], sun, {})
+	scene_lights_given(r, lights[:], sun, {})
 	testing.expect(t, s.occluders.sun, "a sun that turned past its radius")
 
 	f: Gpu_Frame
@@ -638,8 +638,10 @@ touched_instances_go_in_runs_of_the_table_however_many_they_are :: proc(t:^testi
     at :: proc(i:int,y:f32=0) -> Mat4 {m:=Mat4(1);m[0,3],m[1,3],m[2,3]=f32(i%40)*2,y,f32(i/40)*2;return m}
     descs:=make([]Instance_Desc,1000);defer delete(descs)
     for &desc,i in descs {desc={object_id=u64(i+1),mesh=handle,transform=at(i),tint={1,1,1}}}
-    testing.expect(t,scene_set(r,descs,nil,{},{}))
+    testing.expect(t,scene_given(r,descs,nil,{},{}))
     s:=&r.scene
+    // The table goes whole once.
+    touched_settle(s);touched_settle(s)
     testing.expect_value(t,s.touched_count,0)
     s.instances_dirty=false
     rest:=make([]Gpu_Instance,len(s.instances));defer delete(rest)
@@ -650,12 +652,9 @@ touched_instances_go_in_runs_of_the_table_however_many_they_are :: proc(t:^testi
     places:=make([dynamic]Mat4);defer delete(places)
     for i in 100..<350 {append(&moved,u32(i));append(&places,at(i,1))}
     for i in 0..<50 {append(&moved,u32(500+i*3));append(&places,at(500+i*3,1))}
-    count:int
-    testing.expect(t,scene_move(r,moved[:],places[:],nil,&count))
-    testing.expect_value(t,count,300)
+    testing.expect(t,scene_move(r,moved[:],places[:]))
     // Given the same places again, none moves and each still goes once.
-    testing.expect(t,scene_move(r,moved[:10],places[:10],nil,&count))
-    testing.expect_value(t,count,0)
+    testing.expect(t,scene_move(r,moved[:10],places[:10]))
     testing.expect(t,!s.instances_dirty,"the table does not go whole")
     testing.expect_value(t,s.touched_count,300)
     runs,rows:=0,0
@@ -683,13 +682,13 @@ touched_instances_go_in_runs_of_the_table_however_many_they_are :: proc(t:^testi
     // A set that moves some marks those alone to go again at rest.
     for index,i in moved {descs[index].transform=places[i]}
     descs[7].transform,descs[64].transform,descs[999].transform=at(7,2),at(64,2),at(999,2)
-    testing.expect(t,scene_set(r,descs,nil,{},{}))
+    testing.expect(t,scene_given(r,descs,nil,{},{}))
     testing.expect(t,s.touched_count==3 && instance_touched(s,7) && instance_touched(s,64) && instance_touched(s,999))
     // An instance the table no longer has is touched no more.
     testing.expect(t,scene_update(r,900,nil,true))
     testing.expect(t,s.touched_count==2 && len(s.instances)==900)
-    testing.expect(t,scene_tint(r,{899,898},{{1,0,0},{1,1,1}},{{},{}},&count))
-    testing.expect(t,s.touched_count==3 && instance_touched(s,899) && count==1,"the tint it had touches nothing")
+    testing.expect(t,scene_tint(r,{899,898},{{1,0,0},{1,1,1}},{{},{}}))
+    testing.expect(t,s.touched_count==3 && instance_touched(s,899) && !instance_touched(s,898),"the tint it had touches nothing")
     // An instance given again with another highlight goes alone, and changes no light; given again as they are, none goes.
     touched_settle(s);touched_settle(s)
     s.instances_dirty=false
@@ -719,7 +718,7 @@ the_scene_answers_what_an_instance_shows_and_where_it_is :: proc(t:^testing.T) {
     desc:=Instance_Desc{object_id=1,mesh=handle,transform=Mat4(1),material=2,tint={1,1,1},overlays={count=1,entries={0={material=1,enabled=true}}}}
     desc.transform[0,3],desc.transform[1,3],desc.transform[2,3]=2050.5,3,-4000.25
     desc.slot_materials[0]=3
-    testing.expect(t,scene_set(r,{desc},nil,{},{}))
+    testing.expect(t,scene_given(r,{desc},nil,{},{}))
     material,slots,overlays,shown:=scene_instance_materials(r,0)
     testing.expect(t,shown && material==2 && slots[0]==3 && slots[1]==0 && overlays.count==1 && overlays.entries[0].material==1)
     mesh,transform,placed:=scene_instance_placed(r,0)
@@ -734,7 +733,7 @@ the_scene_answers_what_an_instance_shows_and_where_it_is :: proc(t:^testing.T) {
     testing.expect(t,scene_update(r,0,{other}) && scene_instance_was(r,0,1) && !scene_instance_was(r,0,9))
     testing.expect(t,r.scene.instances[0].prev_world==was && r.scene.instances[0].world!=was)
     // One the set skipped, and one it never had.
-    testing.expect(t,scene_set(r,{desc,Instance_Desc{object_id=2,mesh=Mesh_Handle(99),transform=Mat4(1)}},nil,{},{}))
+    testing.expect(t,scene_given(r,{desc,Instance_Desc{object_id=2,mesh=Mesh_Handle(99),transform=Mat4(1)}},nil,{},{}))
     for missing in ([2]u32{1,7}) {
         _,_,_,shown=scene_instance_materials(r,missing)
         _,_,placed=scene_instance_placed(r,missing)

@@ -121,10 +121,11 @@ a_surface_seen_only_in_a_mirror_keeps_its_reflectance_and_layers :: proc(t: ^tes
 	material, derived := host.assets_material_derive(&f.assets, values)
 	if !testing.expect(t, derived) {return}
 	host.assets_commit(&f.assets)
-	gpu.scene_set(r, {
+	gpu.scene_set_environment(r,{direction = {0.2, 1, 0.3}, color = {1, 1, 1}, illuminance = math.PI, enabled = true},{sky = {0.3, 0.4, 0.6}})
+	gpu.scene_update(r,0,{
 		{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, -4}, {20, 0.2, 20}), tint = {0.5, 0.5, 0.5}},
 		{object_id = 2, mesh = f.cube, transform = trs({0, 1, 3}, {6, 6, 0.2}), material = gpu.Material_Handle(material), tint = {1, 1, 1}},
-	}, nil, {direction = {0.2, 1, 0.3}, color = {1, 1, 1}, illuminance = math.PI, enabled = true}, {sky = {0.3, 0.4, 0.6}})
+	},true)
 	camera := gpu.Camera{position = {0, 1, 0}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.1, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	state := new(Portals_Gpu)
 	defer free(state)

@@ -61,7 +61,7 @@ nits_at :: proc(t: ^testing.T, f: ^Air_Fixture, target: rhi.Texture, x, y: f32) 
 @(private = "file")
 sky_frame :: proc(t: ^testing.T, f: ^Air_Fixture, sun: Sun_Desc, camera: Camera, x, y: f32, environment := AIR_SKY) -> Vec3 {
 	r := f.renderer
-	scene_set(r, nil, nil, sun, environment)
+	scene_given(r, nil, nil, sun, environment)
 	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
 	return nits_at(t, f, r.targets.display, x, y)
 }
@@ -123,14 +123,14 @@ the_sun_through_the_air_gives_its_illuminance_overhead_and_reddens_low :: proc(t
 	floor := Instance_Desc{object_id = 1, mesh = f.square, transform = linalg.matrix4_rotate_f32(-math.PI / 2, {1, 0, 0}) * linalg.matrix4_scale_f32({40, 40, 1}), material = 1, tint = {1, 1, 1}}
 	down := Camera{position = {0, 3, 0}, forward = {0, -1, 0}, up = {0, 0, -1}, fov_y = 40, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	overhead := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true}
-	scene_set(r, {floor}, nil, overhead, {})
+	scene_given(r, {floor}, nil, overhead, {})
 	testing.expect(t, renderer_frame(r, {camera = down}), r.error)
 	bare := nits_at(t, &f, r.targets.direct, 0.5, 0.5)
-	scene_set(r, {floor}, nil, overhead, AIR_SKY)
+	scene_given(r, {floor}, nil, overhead, AIR_SKY)
 	testing.expect(t, renderer_frame(r, {camera = down}), r.error)
 	through := nits_at(t, &f, r.targets.direct, 0.5, 0.5)
 	for c in 0 ..< 3 {testing.expectf(t, abs(through[c] - bare[c]) <= bare[c] * 0.02, "the sun overhead lights the ground as its illuminance says: %v against %v", through, bare)}
-	scene_set(r, {floor}, nil, sun_at(3), AIR_SKY)
+	scene_given(r, {floor}, nil, sun_at(3), AIR_SKY)
 	testing.expect(t, renderer_frame(r, {camera = down}), r.error)
 	low := nits_at(t, &f, r.targets.direct, 0.5, 0.5)
 	testing.expectf(t, low.r > low.b * 2, "a low sun is red: %v", low)
@@ -151,10 +151,10 @@ the_air_hazes_what_is_far_and_not_what_is_near :: proc(t: ^testing.T) {
 	}
 	look := LEVEL
 	look.fov_y = 20
-	scene_set(r, {wall(&f, 20)}, nil, sun, AIR_SKY)
+	scene_given(r, {wall(&f, 20)}, nil, sun, AIR_SKY)
 	testing.expect(t, renderer_frame(r, {camera = look}), r.error)
 	near_seen, near_lit := nits_at(t, &f, r.targets.display, 0.5, 0.5), nits_at(t, &f, r.targets.direct, 0.5, 0.5)
-	scene_set(r, {wall(&f, 15000)}, nil, sun, AIR_SKY)
+	scene_given(r, {wall(&f, 15000)}, nil, sun, AIR_SKY)
 	testing.expect(t, renderer_frame(r, {camera = look}), r.error)
 	far_seen, far_lit := nits_at(t, &f, r.targets.display, 0.5, 0.5), nits_at(t, &f, r.targets.direct, 0.5, 0.5)
 	testing.expectf(t, abs(far_lit.g - near_lit.g) <= near_lit.g * 0.02, "both walls take the same light: %v against %v", far_lit, near_lit)
@@ -179,7 +179,7 @@ the_air_draws_the_same_while_nothing_changes_and_follows_the_sun :: proc(t: ^tes
 	if !air_fixture(t, &f) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
-	scene_set(r, nil, nil, sun_at(10), AIR_SKY)
+	scene_given(r, nil, nil, sun_at(10), AIR_SKY)
 	testing.expect(t, renderer_frame(r, {camera = LEVEL}), r.error)
 	first := hdr_view(t, &f)
 	row, key := r.air.rows[0], r.targets.aerial_key
