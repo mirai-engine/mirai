@@ -38,7 +38,7 @@ PARAMS_CORE :: `package core
 // A @(params) struct reaches a step as its fields would one by one: the call
 // builds it with each field bound as that parameter alone, and what it
 // writes is written by the step, with its settle, its check of writes and
-// its one writer.
+// its writing library.
 @(test)
 a_params_struct_binds_each_field_as_its_parameter :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"params")
@@ -62,15 +62,13 @@ import "mirai:core"
         testing.expect(t,strings.contains(call,"p_core.write_check_begin(p_core.raw(&w.spot),size_of(p_core.Spot))"),call)
         testing.expect(t,strings.contains(call,"p_core.table_settle(&w.spot,&w.entities)"),call)
     }
-    // The table a @(params) writes has one writer, as if the step received it alone.
+    // The table a @(params) writes is written by its library, as if the step received it alone.
     errors:=params_errors(t,&p,`package game
 import "mirai:core"
 @(step="fixed") game_move :: proc(move:core.Mover) {}
 @(step="fixed") game_push :: proc(spots:^core.Table(core.Spot)) {}
 `)
-    found:=false
-    for message in errors {found||=strings.contains(message,"game_move and game_push write Spot")}
-    testing.expectf(t,found,"%v",errors)
+    testing.expectf(t,len(errors)==0,"%v",errors)
 }
 
 // What a step writes reaches it once: by itself and in a @(params), or in two

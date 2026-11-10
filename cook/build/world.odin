@@ -1306,30 +1306,18 @@ rules_check :: proc(g:^Generator) {
             append(&g.errors,fmt.aprintf("%s: %s runs in release, which the application runs from the game loop when it frees a World: release what a library keeps by World in a library, with the game loop",s.where_,s.name))
         }
     }
-    // One writer of a table that is not shared, in each loop.
+    // A table or a storage is the state of one library, whose functions write
+    // it in the order of the loop: the functions of another push to a queue
+    // of it, or it says it is shared.
     loops:=LOOPS
     for loop in 0..<2 {
-        writers:=make(map[^Type]^Step,context.temp_allocator)
-        for s in g.steps {
-            if !s.loops[loop] {continue}
-            for param in s.params {
-                if param.kind!=.Table_Write || param.type.shared {continue}
-                if other,taken:=writers[param.type];taken && other!=s {
-                    append(&g.errors,fmt.aprintf("%s: %s and %s write %s in the %s loop; a table that is not @(component,shared) has one writer: the other sends a request through a storage",s.where_,other.name,s.name,param.type.name,loops[loop]))
-                }
-                writers[param.type]=s
-            }
-        }
-        // A storage is the state of one library: the functions of another
-        // push to it when it is a queue, or write it in the order of the loop
-        // when it says it is shared.
         owners:=make(map[^Type]^Step,context.temp_allocator)
         for s in g.steps {
             if !s.loops[loop] {continue}
             for param in s.params {
-                if param.kind!=.Storage_Write || param.type.queue || param.type.shared {continue}
+                if !writes(param) || param.type.shared {continue}
                 if other,taken:=owners[param.type];taken && other.pkg!=s.pkg {
-                    append(&g.errors,fmt.aprintf("%s: %s of %s and %s of %s write %s in the %s loop; a storage is the state of one library: the other sends a request through a storage marked @(storage,queue), or the storage says @(storage,shared) when several libraries write it in the order of the loop",s.where_,other.name,other.pkg.name,s.name,s.pkg.name,param.type.name,loops[loop]))
+                    append(&g.errors,fmt.aprintf("%s: %s of %s and %s of %s write %s in the %s loop; a table or a storage has one writing library: %s sends a request through a @(storage,queue) of %s, which a function of %s takes and applies, or %s says shared when several libraries write it in the order of the loop",s.where_,other.name,other.pkg.name,s.name,s.pkg.name,param.type.name,loops[loop],s.name,param.type.pkg.name,param.type.pkg.name,param.type.name))
                 }
                 owners[param.type]=s
             }

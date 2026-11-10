@@ -18,14 +18,15 @@ contracts_project :: proc(t:^testing.T,folder,core_source,game_source:string) ->
     return project.Project{root=game,engine_root=engine},true
 }
 
-// A storage is the state of one library: another pushes to it when it is a
-// queue, or writes it in the order of the loop when it says it is shared.
+// A table or a storage is the state of one library, whose functions write it
+// in the order of the loop: another pushes to it when it is a queue, or
+// writes it in the order of the loop when it says it is shared.
 // core.Commands makes entities with rows of any component, and after the
 // function core.settle comes to the tables that wait, which say so where the
 // World was made; core.Ref(core.Entities) reads which are alive and asks for
 // no settle of the World.
 @(test)
-storages_have_one_writing_library_and_commands_make_entities :: proc(t:^testing.T) {
+data_has_one_writing_library_and_commands_make_entities :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"contracts")
     if folder=="" {return}
     core_source:=`package core
@@ -37,6 +38,7 @@ storages_have_one_writing_library_and_commands_make_entities :: proc(t:^testing.
 @(step="fixed") state_step :: proc(state:^State,requests:^Requests,board:^Board,reports:^Reports) {}
 @(step="fixed") things_make :: proc(commands:Commands,entities:Ref(Entities),things:Read(Thing)) {}
 @(step="fixed") things_count :: proc(entities:Ref(Entities),things:^Table(Thing)) {}
+@(step="fixed") things_age :: proc(things:^Table(Thing)) {}
 `
     game_source:=`package game
 import "mirai:core"
@@ -60,16 +62,18 @@ import "mirai:core"
     // The state of a library written by another one is an error that says what to do.
     wrong:=`package game
 import "mirai:core"
-@(step="fixed") game_push :: proc(state:^core.State,reports:^core.Reports) {}
+@(step="fixed") game_push :: proc(state:^core.State,reports:^core.Reports,things:^core.Table(core.Thing)) {}
 `
     testing.expect(t,os.write_entire_file(project.path(p.root,"game","game.odin",allocator=context.temp_allocator),wrong)==nil)
     output=world_generate(&p,context.temp_allocator)
-    state,reports:=false,false
+    state,reports,things:=false,false,false
     for message in output.errors {
-        state||=strings.contains(message,"write State") && strings.contains(message,"@(storage,queue)")
+        fix:=strings.contains(message,"game_push sends a request through a @(storage,queue) of core, which a function of core takes and applies")
+        state||=strings.contains(message,"write State") && fix
         reports||=strings.contains(message,"write Reports")
+        things||=strings.contains(message,"of core and game_push of game write Thing in the game loop; a table or a storage has one writing library") && fix
     }
-    testing.expectf(t,state && reports,"%v",output.errors)
+    testing.expectf(t,state && reports && things,"%v",output.errors)
     // queue and events are of storages, and a storage is not both.
     both:=`package core
 @(storage,queue,events) Mixed :: struct {}

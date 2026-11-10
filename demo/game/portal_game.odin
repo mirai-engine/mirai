@@ -5,6 +5,7 @@ import "core:math/linalg"
 import "mirai:core"
 import inp "mirai:engine/input"
 import phys "plugins:physics/runtime"
+import render "mirai:engine/render"
 import mm "mirai:std/math"
 import portals "plugins:portals/runtime"
 
@@ -298,7 +299,7 @@ Grill_Passes :: struct {queue:core.Queue(core.Entity)}
 // Each opening leads to the other once both are placed, cut into the wall it is on; the film of a mouth
 // shows while it leads nowhere, and a mouth not placed is not drawn.
 @(step="fixed",after="portal_gun")
-portal_links :: proc(mouths:core.Read(Portal_Mouth),openings:^core.Table(portals.Portal),shows:^Show_Requests) {
+portal_links :: proc(mouths:core.Read(Portal_Mouth),openings:^core.Table(portals.Portal),hidden:^core.Table(render.Hidden)) {
     opening_of :: proc(mouths:core.Read(Portal_Mouth),color:Portal_Color) -> (core.Entity,bool) {
         for row in 0..<core.count(mouths) {
             mouth:=core.at(mouths,row)
@@ -315,8 +316,8 @@ portal_links :: proc(mouths:core.Read(Portal_Mouth),openings:^core.Table(portals
             written:=core.edit(openings,mouth.opening)
             written.exit,written.wall=exit,wall
         }
-        ask_hidden(shows,core.entity_at(mouths,row),!mouth.placed)
-        ask_hidden(shows,mouth.film,exit!=core.NONE)
+        render.set_hidden(hidden,core.entity_at(mouths,row),!mouth.placed)
+        render.set_hidden(hidden,mouth.film,exit!=core.NONE)
     }
 }
 

@@ -50,17 +50,6 @@ SWATCH_MATERIALS :: [?]string{
 
 THROWN_CUBE :: "characters/player/Thrown cube.scene"
 
-// Hidden has one writer: the scenes ask for it here.
-@(storage,queue)
-Show_Requests :: struct {queue:core.Queue(Show_Request)}
-Show_Request :: struct {entity:core.Entity,hidden:bool}
-
-ask_hidden :: proc(shows:^Show_Requests,e:core.Entity,hidden:bool) {core.push(&shows.queue,Show_Request{e,hidden})}
-
-@(step="fixed",stage="end")
-shows_apply :: proc(shows:^Show_Requests,hidden:^core.Table(render.Hidden)) {
-    for show in core.take(&shows.queue) {render.set_hidden(hidden,show.entity,show.hidden)}
-}
 THROWN_CUBE_SIZE :: f32(0.25) // m, the side of a thrown cube
 
 // On a body that opens doors, changes samples and throws cubes.
@@ -342,17 +331,12 @@ bob_height :: proc(bob:^Bob,y,seconds:f32) -> f32 {
     return bob.base_y+math.sin(seconds*bob.speed)*bob.height
 }
 
-// Emission: pulses breathe, the lamp of a door shows its state, the nose of a dog flashes when it barks,
-// the globe of a lamp of the horror house glows while lit.
+// Emission: pulses breathe, the lamp of a door shows its state, the nose of a dog flashes when it barks.
 @(step="fixed")
 game_glow :: proc(
     tints:^core.Table(render.Tint),pulses:^core.Table(Pulse),doors:core.Read(Door),buttons:core.Read(Floor_Button),barkers:core.Read(Barker),
     hierarchy:core.Ref(core.Hierarchy),names:core.Read(core.Name),time:core.Time,
-    gallery:core.Read(Physics_Gallery),view:destruct.Destruct_View,
-    lamps:core.Read(House_Lamp),
 ) {
-    physics_gallery_fade(gallery,view,tints,time)
-    horror_glow(tints,lamps)
     seconds:=f32(time.seconds)
     for row in 0..<core.count(pulses) {
         tint:=core.edit(tints,core.entity_at(pulses,row))
