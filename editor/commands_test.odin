@@ -144,6 +144,15 @@ a_gesture_runs_its_method_between_frames_with_what_the_person_has_selected :: pr
     testing.expect_value(t,history.undo_label(&f.edits),"Delete")
     testing.expect(t,len(f.selection.entities)==0 && st.commands.asked_count==0)
     testing.expect(t,test_command(s,"undo") && core.world_entities(w).alive==1)
+    // Duplicate and Paste copy beside what they copy as one step each, which leaves the copies selected.
+    for name in ([?]string{"duplicate","paste"}) {
+        testing.expect(t,test_command(s,"select_all") && test_command(s,"copy"))
+        steps:=history.edits_undo_count(&f.edits)
+        testing.expectf(t,test_command(s,name) && core.world_entities(w).alive==2 && history.edits_undo_count(&f.edits)==steps+1,"%s is one step",name)
+        testing.expect_value(t,history.undo_label(&f.edits),name=="paste"?"Paste":"Duplicate")
+        testing.expect(t,len(f.selection.entities)==1 && api_entity_id(w,f.selection.entities[0])!=api_entity_id(w,f.entity))
+        testing.expect(t,test_command(s,"undo") && core.world_entities(w).alive==1)
+    }
     // A toggle sends the opposite of what it shows.
     shown:=f.viewport.show_grid
     testing.expect_value(t,command_state(s,"grid").checked,shown)

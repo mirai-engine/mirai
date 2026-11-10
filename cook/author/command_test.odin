@@ -55,6 +55,7 @@ Game_World :: struct {
     point_lights:core.Table(erender.Point_Light),
     statuses:core.Table(Game_Status) `mirai:"game,name=Status"`,
     names:core.Table(core.Name),
+    ids:core.Table(core.Id),
     parents:core.Table(core.Parent),
     hierarchy:core.Hierarchy,
 }

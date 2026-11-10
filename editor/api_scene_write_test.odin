@@ -2,10 +2,13 @@ package editor
 
 import "core:encoding/json"
 import "core:fmt"
+import "core:os"
+import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
+import "mirai:cook/author"
 import "mirai:core"
 import "mirai:editor/history"
 import erender "mirai:engine/render"
@@ -359,8 +362,141 @@ a_write_that_fails_says_where_in_the_document_and_changes_nothing :: proc(t:^tes
         testing.expect_value(t,len(f.edits.steps),steps)
         testing.expect_value(t,write_child_names(f,root),"A,B")
     }
+    hostile:=[?]struct{document,says:string}{
+        {`{"merge":true,"entities":[{"name":"Root","delete":true,"position":[1,2,3]}]}`,"entities[0]: an entity that goes declares nothing else"},
+        {`{"merge":true,"entities":[{"copy":"Nobody"}]}`,`entities[0].copy: "Nobody" names no entity`},
+        {`{"merge":true,"entities":[{"copy":"Root","preset":"cube"}]}`,"entities[0].copy: a copy is a new entity made from another"},
+        {`{"root":"Root","merge":true,"entities":[{"copy":"Other"}]}`,"entities[0].copy: a copy is a new entity; root is the entity that is there"},
+        {`{"merge":"yes","entities":[]}`,"merge must be true or false"},
+        {`{"root":"Nobody","entities":[{}]}`,`root: "Nobody" names no entity`},
+        {`{"root":"Root","entities":[]}`,"entities declares one entity with root"},
+        {`{"entities":"all"}`,"entities must be an array"},
+        {`{"merge":true}`,"entities is required"},
+        {`{"merge":true,"entities":[{"name":"Root","position":[1,2,1e999]}]}`,"entities[0].position must be an array of 3 finite numbers"},
+        {`{"merge":true,"entities":[{"name":"Root","off":["Prefab_Test_Lamp"]}]}`,"entities[0].off: Prefab_Test_Lamp is not among the components it has"},
+        {`{"merge":true,"entities":[{"name":"Root","children":[{"name":"A","components":{"Prefab_Test_Lamp":{"intensity":"bright"}}}]}]}`,"entities[0].children[0].components.Prefab_Test_Lamp"},
+        {"\xff\x00{[",""},
+        {`[1,2,3]`,"document must be an object"},
+    }
+    for c in hostile {
+        _,failure,ok:=write_scene(f,c.document)
+        testing.expectf(t,!ok && strings.has_prefix(failure,c.says),"%s: %s",c.says,failure)
+        testing.expect_value(t,core.world_entities(w).alive,alive)
+        testing.expect_value(t,len(f.edits.steps),steps)
+    }
     lamp,_:=core.get(core.read(&f.world.lamps),a)
     testing.expect_value(t,lamp.intensity,f32(2))
+}
+
+// With merge a document names only what changes: what it leaves out stays,
+// delete takes an entity away, null a component, and copy makes an entity
+// from another. Each write is one step.
+@(test)
+a_merge_changes_what_the_document_names_and_leaves_the_rest :: proc(t:^testing.T) {
+    f:=new(Prefab_Fixture);defer free(f)
+    state:Api_State
+    if !write_fixture_init(t,f,&state,"write-merge") {return}
+    defer prefab_fixture_destroy(f)
+    defer api_schema_free(&state)
+    s:=&f.s
+    w:=edited_world(s)
+    root:=write_entity(f,"Root")
+    a:=write_entity(f,"A",root)
+    write_entity(f,"B",root)
+    write_entity(f,"C",a)
+    other:=write_entity(f,"Other")
+    core.add(&f.world.lamps,a,Prefab_Test_Lamp{intensity=2,range=3})
+    core.world_settle(w)
+    history.edits_reset(&f.edits,w)
+    a_id:=api_entity_id(w,a)
+    lamps,_:=api_component_named(w,"Prefab_Test_Lamp")
+    NONE :: [2]f32{-1,-1}
+    cases:=[?]struct{document:string,made,removed:int,children,under_a:string,lamp:[2]f32,off:bool,x:f32}{
+        // A field of a component, and the rest of it, of the entity and of its siblings stays.
+        {`{"root":"Root","merge":true,"entities":[{"children":[{"name":"A","components":{"Prefab_Test_Lamp":{"intensity":5}}}]}]}`,0,0,"A,B","C",{5,3},false,0},
+        // A name no sibling has is a new entity; one without a name is too.
+        {`{"root":"Root","merge":true,"entities":[{"children":[{"name":"New","position":[1,2,3]},{}]}]}`,2,0,"A,B,New,Group","C",{5,3},false,0},
+        // At the top an id names the entity where it is.
+        {fmt.tprintf(`{{"merge":true,"entities":[{{"id":"0x%016x","position":[7,0,0]}}]}}`,u64(a_id)),0,0,"A,B,New,Group","C",{5,3},false,7},
+        // off turns a component off, and declared without it in off, on again.
+        {`{"root":"Root/A","merge":true,"entities":[{"off":["Prefab_Test_Lamp"]}]}`,0,0,"A,B,New,Group","C",{5,3},true,7},
+        {`{"root":"Root/A","merge":true,"entities":[{"components":{"Prefab_Test_Lamp":{"range":4}},"off":[]}]}`,0,0,"A,B,New,Group","C",{5,4},false,7},
+        // delete takes entities away, and one that is not there is not an error.
+        {`{"root":"Root","merge":true,"entities":[{"children":[{"name":"B","delete":true},{"name":"Group","delete":true},{"name":"Nobody","delete":true}]}]}`,0,2,"A,New","C",{5,4},false,7},
+        // A copy stays beside what it copies, with what hangs from it, and takes what the document says.
+        {`{"merge":true,"entities":[{"copy":"Root/A","name":"A2","position":[9,0,0],"children":[{"name":"C","enabled":false}]}]}`,2,0,"A,New,A2","C",{5,4},false,7},
+        // null takes a component away.
+        {`{"root":"Root/A","merge":true,"entities":[{"components":{"Prefab_Test_Lamp":null}}]}`,0,0,"A,New,A2","C",NONE,false,7},
+        // Without merge the document declares all there is under root.
+        {`{"root":"Root","entities":[{"children":[{"name":"A"}]}]}`,0,4,"A","",NONE,false,0},
+    }
+    for c in cases {
+        steps:=len(f.edits.steps)
+        result,failure,ok:=write_scene(f,c.document)
+        if !testing.expectf(t,ok,"%s: %s",c.document,failure) {continue}
+        testing.expectf(t,result.made==c.made && result.removed==c.removed,"%s: %v",c.document,result)
+        testing.expectf(t,len(f.edits.steps)==steps+1,"%s is one step",c.document)
+        testing.expect_value(t,write_child_names(f,root),c.children)
+        testing.expect_value(t,write_child_names(f,a),c.under_a)
+        testing.expect(t,entity_alive(w,other) && entity_parent(w,a)==root,"what the document does not name stays where it is")
+        lamp:=cast(^Prefab_Test_Lamp)core.raw_find(core.world_table_at(w,lamps),lamps.info,a)
+        _,off,_:=core.raw_state(core.world_table_at(w,lamps),a)
+        testing.expectf(t,(lamp!=nil?[2]f32{lamp.intensity,lamp.range}:NONE)==c.lamp && off==c.off,"%s: %v off %v",c.document,lamp,off)
+        testing.expect_value(t,entity_local(w,a).position.x,c.x)
+    }
+    // The copy held the lamp and the child of what it copied, off as the document said.
+    testing.expect(t,history.undo(&f.edits,w,&f.selection) && history.undo(&f.edits,w,&f.selection))
+    for child in entity_children(w,root) {
+        if entity_name(w,child)!="A2" {continue}
+        lamp,_:=core.get(core.read(&f.world.lamps),child)
+        held:=entity_children(w,child)
+        testing.expect(t,lamp.intensity==5 && entity_local(w,child).position.x==9 && len(held)==1 && entity_has(w,held[0],core.Disabled))
+    }
+}
+
+// The same document written to the file with no editor gives the bytes the
+// method and a save give. The entities a document makes take their ids from
+// the sequence of whoever makes them, so these documents make none.
+@(test)
+a_document_written_to_a_file_gives_the_bytes_the_method_and_a_save_give :: proc(t:^testing.T) {
+    f:=new(Prefab_Fixture);defer free(f)
+    state:Api_State
+    if !write_fixture_init(t,f,&state,"write-file") {return}
+    defer prefab_fixture_destroy(f)
+    defer api_schema_free(&state)
+    s:=&f.s
+    w:=edited_world(s)
+    root:=write_entity(f,"Root")
+    a:=write_entity(f,"A",root)
+    write_entity(f,"B",root)
+    write_entity(f,"C",root)
+    core.add(&f.world.lamps,a,Prefab_Test_Lamp{intensity=2,range=3})
+    core.world_settle(w)
+    if !testing.expect_value(t,scene_save(s,"same.scene"),Document_Error.None) {return}
+    file:=fmt.tprintf("%s/same.scene",f.root)
+    saved,_:=os.read_entire_file(file,context.temp_allocator)
+    p:=author.Project{name="same",assets_root=f.root,info=&f.info}
+    asset.registry_init(&p.registry,f.root)
+    asset.types_init(&p.types)
+    defer {asset.registry_destroy(&p.registry);asset.types_destroy(&p.types);author.scratch_world_free(&p.scratch)}
+    p.assets={&p.registry,&p.types}
+    documents:=[?]string{
+        `{"root":"Root","merge":true,"entities":[{"children":[{"name":"A","position":[1,2,3],"components":{"Prefab_Test_Lamp":{"intensity":5}}},{"name":"B","delete":true}]}]}`,
+        `{"root":"Root","entities":[{"name":"Yard","children":[{"name":"C","position":[0,1,0]},{"name":"A","components":{"Prefab_Test_Lamp":{"range":9}},"off":["Prefab_Test_Lamp"]}]}]}`,
+        `{"merge":true,"entities":[{"name":"Root","children":[{"name":"C","enabled":false}]}]}`,
+    }
+    for document in documents {
+        if !testing.expect_value(t,os.write_entire_file(file,saved),nil) {return}
+        if !testing.expect_value(t,scene_open(s,"same.scene"),Document_Error.None) {return}
+        _,failure,ok:=write_scene(f,document)
+        if !testing.expect(t,ok,failure) || !testing.expect_value(t,scene_save(s),Document_Error.None) {return}
+        live,_:=os.read_entire_file(file,context.temp_allocator)
+        if !testing.expect_value(t,os.write_entire_file(file,saved),nil) || !testing.expect_value(t,asset.registry_scan(&p.registry),asset.Error.None) {return}
+        _,problem:=author.scene_write(&p,"same.scene",document)
+        written,_:=os.read_entire_file(file,context.temp_allocator)
+        testing.expect(t,problem=="",problem)
+        testing.expectf(t,slice.equal(live,written),"%s: the method and a save gave %d bytes, the file write %d",document,len(live),len(written))
+    }
 }
 
 @(test)
