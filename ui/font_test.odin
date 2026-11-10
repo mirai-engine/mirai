@@ -237,10 +237,6 @@ text_wraps_at_words_and_newlines :: proc(t:^testing.T) {
     }
     _,_,width:=text_line(&font,"alpha beta gamma",10,60,.Words)
     testing.expect_value(t,width,f32(47.5))
-    // The empty line a newline at the end starts is the caret's: the text itself is no taller.
-    testing.expect_value(t,text_line_count(&font,"a\n",10,100,.Words),1)
-    testing.expect_value(t,text_line_count(&font,"a\n\nb",10,100,.None),3)
-    testing.expect_value(t,text_line_count(&font,"",10,100,.Words),1)
 }
 
 @(test)

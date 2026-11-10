@@ -536,7 +536,7 @@ build_panel_build :: proc(s:^Session,height:f32) {
     if text=="" {text=b.shaders_text}
     if text!="" {
         if ui.scroll_area(ctx,ui.id(ctx,"build_text"),&b.text_scroll,{height=ui.fixed(room)}) {
-            ui.paragraph(ctx,text,th.font_small,th.text_muted)
+            ui.text(ctx,text,ui.prose(ctx,th.font_small,th.text_muted))
         }
     }
 }

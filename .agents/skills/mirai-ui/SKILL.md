@@ -18,8 +18,9 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
   [known limits](references/ui.md#known-limits).
 - Files of `ui/` by topic:
   - Frame and layout: `context.odin`, `layout.odin` (`Box`), `element.odin` (elements and their
-    drawing in order), `layout_tree.odin` (sizes, text, placement and commands), `retain.odin`
-    (subtrees that are drawn again without being built).
+    drawing in order), `layout_tree.odin` (sizes, text, placement and commands), `text.odin` (the
+    text leaf: its spans and how its lines are drawn), `retain.odin` (subtrees that are drawn again
+    without being built).
   - Drawing: `draw.odin` (shapes, geometry, scissor and clip), `composition.odin` (isolated
     layers), `paint.odin` (what each element draws), `font.odin` and `font_kerning.odin` (with
     `third_party/freetype`; the coverage correction is in `shaders/ui.frag.slang`).
@@ -69,9 +70,14 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
   generation, so starting a frame does not depend on how many ids the previous one had; the
   previous frame's rectangles live in the widget registry, which `frame_end` indexes by id: a
   lookup by id (`widget_rect`) does not go through the widgets.
-- **The only thing the layout keeps between frames is the text measure**: a paragraph that did not
-  change is not measured again (`Stats.text_measured` and `text_reused`), and one that does not fit
-  in `max_text_words` is measured again when split into lines, without being discarded.
+- **The only thing the layout keeps between frames is the text measure**: a span of text that did
+  not change is not measured again (`Stats.text_measured` and `text_reused`), and one that does not
+  fit in `max_text_words` is measured again when split into lines, without being discarded.
+- **Text goes into a box one way**: the text leaf, whose lines and height the layout computes in
+  the frame that builds it ([text](references/ui.md#text)). No widget wraps text, counts its lines
+  or reads last frame's width to do it.
+- **One layout model**: sizes by intent in flows, plus floats. A floating surface is placed by the
+  layout from what it hangs from, never by widget code from last frame's rectangle.
 - **The layout keeps the behavior of Clay v0.14**, of which it is a modified version:
   `ui/layout_test.odin` stores the boxes, lines and draw order that Clay produced. Their changing is
   a behavior change that is decided, not a test to fix.
@@ -138,7 +144,9 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
   `host/content_interface_test.odin` (the fonts of interfaces join the application's between
   frames). The editor's Latin text does not change: `ui/reference_test.odin`.
 - Layout and scroll: `layout_flow_test.odin` (wrap, stack, own alignment, aspect, weights, tracks
-  and span, floats inside the surface) and `scroll_axes_test.odin`.
+  and span, floats inside the surface), `layout_text_test.odin` (a text at each kind of width in
+  one frame, the lines that fit, a row on one baseline, row tracks and row spans, hostile numbers)
+  and `scroll_axes_test.odin`. Where a popup lands in the frame that opens it: `popup_test.odin`.
 - Game interfaces: `tree_kinds_test.odin`, `tree_containers_test.odin`, `tree_game_test.odin`,
   `tree_controls_test.odin`, `game_controls_test.odin`, `tree_names_test.odin` (tokens, extends,
   states, layouts of styles, the first control of a page) and `retain_test.odin`. Paths:
@@ -146,7 +154,7 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
 - Markdown: `markdown_test.odin` (height equal to what was built, each block, whole pills, click on
   a link, code split by characters, code copy and a stable frame without allocating).
 - Cases with fine behavior: `password_test.odin`, `caret_test.odin` (the caret blinks and restarts
-  without allocating), `number_test.odin`, `widgets_test.odin` (paragraph height) and
+  without allocating), `number_test.odin`, `widgets_test.odin` (the height of running text) and
   `scroll_test.odin` (rows of different heights).
 - The document of a `.ui` (`ui.inspect`, `ui.write`, tokens, roundtrip):
   `cook/author/ui_document_test.odin`; widgets (use, params, reach through, slot, cycles):

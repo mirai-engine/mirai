@@ -75,6 +75,7 @@ Widget :: struct {
     order:i16,   // where Tab reaches it: those with an order first, by it; 0 after them, as built
     group:Id,    // navigation stays among the widgets of the group of the one with the focus
     rect:Rect,   // as laid out
+    piece_of:i32,// of a piece of a text after the first of its span: the widget of that one, plus one
     area:Rect,   // the part of rect the pointer reaches
 }
 
@@ -144,6 +145,9 @@ Context :: struct {
     // Containers that clip around what is being built; 0 is none, which a popup pushes.
     clip_stack:[LAYOUT_DEPTH+POPUP_DEPTH]u16,clip_depth,clip_skipped:int,
     paints:[]Paint,paint_count:int,
+    runs:[]Text_Run,run_count:int, // what the spans of the texts of the frame are drawn with
+    text_open:Text_Open,
+    widget_pieces:int,  // where the widgets frame_end adds for the pieces of texts start
     text:[]u8,text_length:int,
     draw:Draw,
     effects,previous_effects:[]Effect_Clip,
@@ -262,6 +266,7 @@ context_init :: proc(ctx:^Context,desc:Context_Desc) -> bool {
     ctx.groups=slice(Focus_Group,FOCUS_LINKS,a,&ok)
     ctx.previous_groups=slice(Focus_Group,FOCUS_LINKS,a,&ok)
     ctx.paints=slice(Paint,count(desc.max_paints,ctx.max_elements),a,&ok)
+    ctx.runs=slice(Text_Run,len(ctx.paints),a,&ok)
     ctx.text=slice(u8,count(desc.max_text,65536),a,&ok)
     vertices:=count(desc.max_vertices,262144)
     if base.region_reserve(&ctx.draw.region,vertices*size_of(Vertex)) {
@@ -300,7 +305,7 @@ context_destroy :: proc(ctx:^Context) {
     a:=ctx.allocator
     if ctx.font_owner==nil && ctx.font.allocator.procedure!=nil {font_destroy(&ctx.font)}
     layout_destroy(&ctx.layout)
-    delete(ctx.widgets,a);delete(ctx.previous,a);delete(ctx.paints,a);delete(ctx.text,a)
+    delete(ctx.widgets,a);delete(ctx.previous,a);delete(ctx.paints,a);delete(ctx.runs,a);delete(ctx.text,a)
     id_table_destroy(&ctx.previous_ids,a)
     delete(ctx.links,a);delete(ctx.previous_links,a);delete(ctx.groups,a);delete(ctx.previous_groups,a)
     retained_destroy(ctx)
@@ -419,6 +424,17 @@ grid_tracks_add :: proc(ctx:^Context,tracks:Grid_Tracks) -> u16 {
     t.tracks[t.track_count]=tracks
     t.track_count+=1
     return u16(t.track_count)
+}
+
+// Adds the heights of the rows of a Grid to the frame and returns what its
+// Box.row_tracks names them by; 0 when the frame holds no more (counted in
+// Stats.dropped_tracks), and each row is as high as its highest child.
+grid_rows_add :: proc(ctx:^Context,rows:Grid_Rows) -> u16 {
+    t:=&ctx.layout
+    if t.row_track_count>=len(t.row_tracks) || t.row_track_count>=int(max(u16)) {ctx.stats.dropped_tracks+=1;return 0}
+    t.row_tracks[t.row_track_count]=rows
+    t.row_track_count+=1
+    return u16(t.row_track_count)
 }
 
 // ---------------------------------------------------------------- frame storage
@@ -559,7 +575,7 @@ frame_begin :: proc(ctx:^Context,input:Input) {
     ctx.stats.frame+=1
     ctx.dropped_before=dropped_total(&ctx.stats)
 
-    ctx.widget_count=0;ctx.paint_count=0;ctx.text_length=0
+    ctx.widget_count=0;ctx.paint_count=0;ctx.text_length=0;ctx.run_count=0;ctx.text_open={}
     ctx.effect_count=1;ctx.effect_clip=0;ctx.effect_depth=0;ctx.effect_skipped=0;ctx.effect_refused=0
     ctx.clip_count=1;ctx.clip_depth=0;ctx.clip_skipped=0;ctx.scope_count=1;ctx.scope=0
     ctx.scopes[0]={m=AFFINE_IDENTITY,tint={1,1,1,1}}
@@ -570,7 +586,7 @@ frame_begin :: proc(ctx:^Context,input:Input) {
     ctx.tooltip="";ctx.modal_open=false;ctx.activate=0
     ctx.press_used=false;ctx.right_press_used=false;ctx.escape_used=false
     ctx.popup.depth=0
-    ctx.layout.track_count=0
+    ctx.layout.track_count,ctx.layout.row_track_count=0,0
     draw_reset(&ctx.draw,{0,0,ctx.size.x,ctx.size.y},ctx.scale,ctx.font.density)
 
     // A drag ends when the button that holds it is let go: a Drop under the
@@ -597,6 +613,10 @@ frame_begin :: proc(ctx:^Context,input:Input) {
 frame_close :: proc(ctx:^Context) {
     d:=&ctx.draw
     open:=ctx.layout_started && ctx.layout.open_len>1
+    if ctx.text_open.open {
+        ctx.stats.layout_errors+=1
+        text_end(ctx)
+    }
     if !open && ctx.surface==0 && ctx.skipped==0 && ctx.clip_depth==0 && d.composition_depth==0 && d.skipped_layers==0 {return}
     ctx.stats.layout_errors+=1
     compositions_close(ctx)
@@ -614,6 +634,7 @@ frame_end :: proc(ctx:^Context) -> Frame {
 
     // Without an element in the frame there is no layout to end.
     laid:=ctx.layout_started
+    ctx.widget_pieces=ctx.widget_count
     if laid {
         t:=&ctx.layout
         layout_finish(t,&ctx.font)
@@ -622,6 +643,7 @@ frame_end :: proc(ctx:^Context) -> Frame {
         for &w in ctx.widgets[:ctx.widget_count] {
             if rect,found:=layout_find(t,w.id);found {w.rect=rect}
         }
+        text_widgets_place(ctx)
         // A clip of another scope is in other coordinates: a scaled game in a clipped stage.
     for &c in ctx.clips[1:ctx.clip_count] {
             if rect,found:=layout_find(t,c.id);found {c.rect=rect}

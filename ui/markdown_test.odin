@@ -102,6 +102,7 @@ test_markdown_build :: proc(ctx:^Context,user:rawptr) {
 }
 @(private="file")
 test_markdown_paint :: proc(ctx:^Context,text:string) -> ^Paint {
+    for &p in test_text_pieces(ctx) {if strings.trim_right(p.text," ")==text {return &p}}
     for &p in ctx.paints[:ctx.paint_count] {if strings.trim_right(p.text," ")==text {return &p}}
     return nil
 }
@@ -127,17 +128,17 @@ markdown_lays_out_each_kind_of_block :: proc(t:^testing.T) {
     strong:=test_markdown_paint(&ctx,"strong")
     testing.expect(t,strong!=nil && strong.style.font==FONT_SEMIBOLD,"Bold is SemiBold")
     testing.expect(t,test_markdown_paint(&ctx,"Some")!=nil && test_markdown_paint(&ctx,"Some").style.font==FONT_REGULAR)
-    for &p in ctx.paints[:ctx.paint_count] {
+    for &p in test_text_pieces(&ctx) {
         testing.expectf(t,strings.index_byte(p.text,'*')<0 && strings.index(p.text,"_em_")<0,"The markers of emphasis are left out: %q",p.text)
     }
     code:=test_markdown_paint(&ctx,"a_code")
     testing.expect(t,code!=nil && code.kind==.Box && code.style.font==FONT_MONO && code.fill==th.chip_on,"Inline code is a chip in the monospace face")
     html:=false
-    for &p in ctx.paints[:ctx.paint_count] {if strings.contains(p.text,"<b>tags</b>.") {html=true}}
+    for &p in test_text_pieces(&ctx) {if strings.contains(p.text,"<b>tags</b>.") {html=true}}
     testing.expect(t,html,"HTML stays as text")
     testing.expect(t,test_markdown_paint(&ctx,"Same paragraph.")!=nil,"A paragraph goes on in its next line")
     bullets:=0
-    for &p in ctx.paints[:ctx.paint_count] {if p.text=="•" {bullets+=1}}
+    for &p in test_text_pieces(&ctx) {if p.text=="•" {bullets+=1}}
     testing.expect_value(t,bullets,2)
     testing.expect(t,test_markdown_paint(&ctx,"3.")!=nil,"An ordered item shows its number")
     quoted:=test_markdown_paint(&ctx,"quoted")

@@ -1542,7 +1542,7 @@ modal_build :: proc(s:^Session) {
             agents:=working==1?"An agent is working":fmt.tprintf("%d agents are working",working)
             others:=scene_switch_others(s,g.pending)
             ui.label(ctx,unsaved?"Unsaved changes":others!=""?"Change the scene?":agents,th.font_title,th.text,font=ui.FONT_SEMIBOLD)
-            if others!="" {ui.paragraph(ctx,others,th.font_small,th.text_muted)}
+            if others!="" {ui.text(ctx,others,ui.prose(ctx,th.font_small,th.text_muted))}
             if pending_plugin(g.pending) {
                 ui.label(ctx,"The players read the saved files",th.font_small,th.text_muted)
             } else if unsaved {
