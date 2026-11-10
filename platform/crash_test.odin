@@ -4,12 +4,13 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "mirai:std/base"
 
 @(test)
 crash_events_keep_the_last_lines_in_a_file_the_report_reads_oldest_first :: proc(t:^testing.T) {
     folder,error:=os.make_directory_temp("","mirai-crash-events-*",context.temp_allocator)
     testing.expect(t,error==nil);if error!=nil {return}
-    defer os.remove_all(folder)
+    defer base.remove_all(folder)
     path:=fmt.tprintf("%s/events.txt",folder)
     events,ok:=crash_events_open(path)
     testing.expect(t,ok);if !ok {return}
