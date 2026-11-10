@@ -50,7 +50,7 @@ DEFAULT_PORT :: 27500 // of Net_Settings.port
 PLAYER_NET :: 5 // the exit code of a player whose client could not join its server, or lost it with nobody watching
 COMPONENTS :: wire.MAX_FRAGMENTS-3 // replicated components of an entity, besides its pose, motion and driver
 EVENT_BYTES :: 256
-PAUSED_EVENTS :: 1024 // messages Net_Events keeps for the first frame of a paused game; later ones are dropped and reported
+PENDING_EVENTS :: 1024 // messages that wait for the next tick (a paused game runs none); later ones are dropped and reported
 
 // An entity the network replicates. The game gives it with the entity (in its
 // prefab or its scene), and the network reads it. Its owner, the connection
@@ -196,9 +196,11 @@ Received :: struct {
     data:[EVENT_BYTES]u8,
 }
 
-// Event: this library clears it at each frame and pushes the messages that
-// arrived. It stays when a scene replaces the world in the frame.
-@(storage,events,keep)
+// The messages that arrived, for the fixed functions, like Net_Connections: at
+// the start of each tick the network leaves here what arrived since the tick
+// before. A frame without ticks keeps them for the next tick, of a frame with
+// several only the first has them, and a tick that runs again has those it had.
+@(storage)
 Net_Events :: struct {
     received:core.Queue(Received),
 }
@@ -215,7 +217,10 @@ Outgoing :: struct {
 // Not copied with the world: a correction that brings back an older copy
 // keeps what waits to be sent.
 @(storage,queue,copy=false)
-Net_Outbox :: struct {queue:core.Queue(Outgoing)}
+Net_Outbox :: struct {
+    queue:core.Queue(Outgoing),
+    replaying:bool `mirai:"readonly"`, // the tick under way runs again: it sent the first time
+}
 
 // Client: ticks the client already simulated that a library learned were
 // different, from a reason the network does not compare, as a fracture of
@@ -325,10 +330,10 @@ Net_Identity :: struct {secret:[2]u64}
 
 // Sends a message, a @(net_message): from a server to one connection, or to every one
 // that has the entity it is about (to all when it is about none); from a
-// client, to the server. False while resimulating: it was sent the first time.
-send :: proc(outbox:^Net_Outbox,time:core.Time,value:$T,about:=core.NONE,to:Connection=0) -> bool {
+// client, to the server. False in a tick that runs again: it sent the first time.
+send :: proc(outbox:^Net_Outbox,value:$T,about:=core.NONE,to:Connection=0) -> bool {
     #assert(size_of(T)<=EVENT_BYTES)
-    if time.resimulating {return false}
+    if outbox.replaying {return false}
     value:=value
     item:=Outgoing{type=T,about=about,to=to,size=size_of(T)}
     copy(item.data[:],([^]u8)(&value)[:size_of(T)])

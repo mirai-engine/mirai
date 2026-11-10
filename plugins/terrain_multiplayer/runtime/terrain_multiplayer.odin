@@ -414,16 +414,18 @@ region_differs :: proc(src:^Net_Source,low,high:[3]i32) {
     for axis in 0..<3 {src.ask_low[axis],src.ask_high[axis]=min(src.ask_low[axis],low[axis]),max(src.ask_high[axis],high[axis])}
 }
 
-// What arrived this frame, for the ticks that follow. An edit of another for
-// a tick already simulated, over one this client predicts, asks to go back.
-@(step="input",stage="begin",after="net_begin",before="net_rewind")
+// What arrived since the tick before. An edit of another for a tick already
+// simulated, over one this client predicts, asks to go back, in the next
+// frame. A tick that runs again took its messages the first time: what they
+// left is outside the World.
+@(step="fixed",loops="game",stage="begin",after="net_tick_head")
 terrain_net_receive :: proc(
     events:core.Ref(multiplayer.Net_Events),authority:core.Ref(core.Network),n:^Terrain_Net,state:core.Ref(Terrain_Net_World),session:core.Ref(multiplayer.Net_Session),
     time:core.Time,rewinds:^multiplayer.Net_Rewinds,root:core.Ref(scene.Scene_Root),settings:Terrain_Net_Settings,problems:^core.Problems,
 ) {
     if n==nil {return}
     net_world(n,root)
-    if authority.ptr==nil || authority.role==.Standalone {return}
+    if authority.ptr==nil || authority.role==.Standalone || time.resimulating {return}
     server:=authority.role==.Server
     own:=multiplayer.own_connection(session)
     for item in events.received.items {
@@ -603,7 +605,7 @@ terrain_net_follow :: proc(
             replay:terrain.Replay
             if refusal==.None {replay,refusal=ask_check(held.ask,held.connection,data,terrains,seats,drivables,worlds,settings)}
             if refusal!=.None {
-                multiplayer.send(outbox,time,Net_Terrain_Refused{held.ask.source,held.ask.tick,held.ask.index,refusal,.None},core.NONE,held.connection)
+                multiplayer.send(outbox,Net_Terrain_Refused{held.ask.source,held.ask.tick,held.ask.index,refusal,.None},core.NONE,held.connection)
                 n.stats.refused+=1
                 continue
             }
@@ -786,7 +788,7 @@ resync_send :: proc(n:^Terrain_Net,src:^Net_Source,time:core.Time,outbox:^multip
     resync:=Net_Terrain_Resync{source=src.id,low=src.ask_low,high=src.ask_high,base=src.ask_base,origin=src.ask_origin}
     name:[base.ASSET_ID_TEXT]u8
     if src.ask {tell(session,"terrain: source %s differs from the server over %v..%v here: its parts are asked for",base.asset_id_format(src.id,name[:]),src.ask_low,src.ask_high)}
-    if !multiplayer.send(outbox,time,resync) {return}
+    if !multiplayer.send(outbox,resync) {return}
     src.asked=time.tick+1
     if src.ask_base {src.basing=true}
     src.ask,src.ask_base=false,false
@@ -868,7 +870,7 @@ terrain_net_send :: proc(
                     ask.body=terrain.brush_bytes(r.brush)
                     prediction_keep(n,state,Net_Prediction{r.source,u32(time.tick),u8(key),r.low,r.high,r.check})
                 }
-                multiplayer.send(outbox,time,ask)
+                multiplayer.send(outbox,ask)
                 continue
             }
             src:=net_source(n,r.source,false)
@@ -980,7 +982,7 @@ edits_send :: proc(n:^Terrain_Net,time:core.Time,outbox:^multiplayer.Net_Outbox,
             held:=n.applying[r.tag]
             if r.error!=.None {
                 reason:=r.loaded?Terrain_Refusal.Edit:Terrain_Refusal.Not_Loaded
-                multiplayer.send(outbox,time,Net_Terrain_Refused{held.ask.source,held.ask.tick,held.ask.index,reason,r.error},core.NONE,held.connection)
+                multiplayer.send(outbox,Net_Terrain_Refused{held.ask.source,held.ask.tick,held.ask.index,reason,r.error},core.NONE,held.connection)
                 n.stats.refused+=1
                 continue
             }
@@ -992,7 +994,7 @@ edits_send :: proc(n:^Terrain_Net,time:core.Time,outbox:^multiplayer.Net_Outbox,
         if src==nil {continue}
         src.sequence+=1
         edit.sequence=src.sequence
-        if multiplayer.send(outbox,time,edit) {n.stats.sent+=1}
+        if multiplayer.send(outbox,edit) {n.stats.sent+=1}
     }
 }
 
@@ -1127,7 +1129,7 @@ serves_run :: proc(n:^Terrain_Net,data:core.Ref(terrain.Terrain_Data),time:core.
             chunk:=sv.chunk
             chunk.count=u16(count)
             copy(([^]u8)(&chunk.words)[:count],sv.packed[chunk.offset:][:count])
-            if !multiplayer.send(outbox,time,chunk,core.NONE,sv.connection) {return}
+            if !multiplayer.send(outbox,chunk,core.NONE,sv.connection) {return}
             budget-=count+64
             n.stats.bytes_sent+=u64(count)
             sv.bytes+=count

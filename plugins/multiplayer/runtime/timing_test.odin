@@ -66,7 +66,7 @@ timing_input :: proc(world,shared,editor,application:rawptr) {
     ref:=core.world_ref(w,sh.info)
     core.queue_clear(&sh.events.received)
     s.now=sh.now
-    client_commands(s,ref,app.assets,app.allocator,wire.host_poll(&s.host),&sh.events)
+    client_commands(s,ref,app.assets,app.allocator,wire.host_poll(&s.host))
     client_reconcile(s,ref,app,w.frame.dt)
     client_clock(s,ref,app)
 }
@@ -81,7 +81,7 @@ timing_fixed :: proc(world,shared,editor,application:rawptr) {
         app:=cast(^host.App)application
         ref:=core.world_ref(w,sh.info)
         core.revisions_moved(w.storage_revisions[:])
-        net_tick_head(ref,app,sh.session,&w.remote,nil,sh.session.problems)
+        net_tick_head(ref,app,sh.session,&w.remote,nil,nil,nil,sh.session.problems)
         core.settle(sh.info,w,nil)
         core.pose_targets_place(core.read(&w.replicas),&w.transforms,&w.places)
         core.settle(sh.info,w,nil)
@@ -180,7 +180,7 @@ timing_frame_run :: proc(x:^Timing,dt:f32) {
         x.server_time+=1.0/60
         x.server_tick+=1
         wire.host_update(&s.host,x.server_time)
-        server_commands(s,core.world_ref(server,&x.info),nil,wire.host_poll(&s.host),&x.server_events,&server.remote)
+        server_commands(s,core.world_ref(server,&x.info),nil,wire.host_poll(&s.host),&server.remote)
         for row in 0..<core.count(&server.transforms) {core.at(&server.transforms,row).position.x+=x.speed}
         core.settle(&x.info,server,nil)
         server_publish(s,core.world_ref(server,&x.info),&x.outbox,x.server_tick)

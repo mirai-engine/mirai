@@ -78,9 +78,9 @@ pair_frame :: proc(p:^Pair,ticks:=true) {
         session.now=p.now
         world_follow(&session,refs[index])
     }
-    server_commands(&p.sessions[0],refs[0],p.apps[0].assets,wire.host_poll(&p.sessions[0].host),&server.received,&server.remote)
+    server_commands(&p.sessions[0],refs[0],p.apps[0].assets,wire.host_poll(&p.sessions[0].host),&server.remote)
     if p.sessions[1].host_ready {
-        client_commands(&p.sessions[1],refs[1],p.apps[1].assets,p.apps[1].allocator,wire.host_poll(&p.sessions[1].host),&client.received)
+        client_commands(&p.sessions[1],refs[1],p.apps[1].assets,p.apps[1].allocator,wire.host_poll(&p.sessions[1].host))
         if !p.sessions[1].ended {client_clock(&p.sessions[1],refs[1],&p.apps[1])}
         core.clock_requests(&client.clock_requests,&client.clock,core.ref(&client.network),&p.problems[1])
     }
@@ -268,7 +268,7 @@ the_connections_that_come_and_go_reach_the_first_tick_after_them :: proc(t:^test
     defer delete(s.arrived)
     ref:=core.world_ref(&world,&info)
     tick :: proc(ref:core.World_Ref,app:^host.App,s:^Net_Session,w:^Net_Test_World) -> int {
-        net_tick_head(ref,app,s,&w.remote,&w.connections,nil)
+        net_tick_head(ref,app,s,&w.remote,&w.connections,nil,nil,nil)
         return len(w.connections.events.items)
     }
     append(&s.arrived,Connection_Event{kind=.Connected,connection=1})

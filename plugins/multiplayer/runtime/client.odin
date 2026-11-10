@@ -317,7 +317,7 @@ replica_state :: proc(s:^Net_Session,r:^Replica,command:^wire.Command) {
 
 // The datagrams received since the last frame, as changes to the world and as events.
 @(private)
-client_commands :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator,commands:[]wire.Command,events:^Net_Events) {
+client_commands :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator,commands:[]wire.Command) {
     for &command in commands {
         #partial switch command.kind {
         case .Connected:
@@ -341,7 +341,7 @@ client_commands :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,allo
                 replica_classify(s,w,r)
             }
         case .Event:
-            event_deliver(s,w,&command,events,nil)
+            event_deliver(s,w,&command,nil)
         }
     }
     core.world_settle(w)

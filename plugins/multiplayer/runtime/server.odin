@@ -207,7 +207,7 @@ server_requests :: proc(s:^Net_Session) {
 
 // The datagrams received since the last frame, as changes to the world and as events.
 @(private)
-server_commands :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,commands:[]wire.Command,events:^Net_Events,inputs:^Remote_Inputs) {
+server_commands :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,commands:[]wire.Command,inputs:^Remote_Inputs) {
     h:=&s.host
     es:=core.world_entities(w)
     for &command in commands {
@@ -261,7 +261,7 @@ server_commands :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,comm
             // The server simulates what nobody holds.
             if command.connection==0 {core.remove(core.world_table_of(w,core.Pose_Target),slot.entity)}
         case .Event:
-            event_deliver(s,w,&command,events,inputs)
+            event_deliver(s,w,&command,inputs)
         }
     }
     server_world_update(s)
@@ -342,13 +342,14 @@ member_of :: proc(w:core.World_Ref,e,section:core.Entity) -> base.Entity_Id {
     return core.id_of(core.read(core.world_table_of(w,core.Id)),e)
 }
 
+// A message of the game that arrived waits in the session for the next tick, which has it in Net_Events.
 @(private)
-event_deliver :: proc(s:^Net_Session,w:core.World_Ref,command:^wire.Command,events:^Net_Events,inputs:^Remote_Inputs) {
+event_deliver :: proc(s:^Net_Session,w:core.World_Ref,command:^wire.Command,inputs:^Remote_Inputs) {
     if int(command.event)>=len(s.events) || own_deliver(s,w,command,inputs) || !in_world(s,command.connection) {return}
     event:=s.events[command.event]
-    if s.events_held && len(events.received.items)>=PAUSED_EVENTS {
+    if len(s.received)>=PENDING_EVENTS {
         s.stats.events_dropped+=1
-        core.report(s.problems,core.NONE,"net.events_paused","a message of type %v was dropped: the game is paused and %d messages wait for its next frame; resume it, or have the other ends send less while it is paused",event.type,PAUSED_EVENTS)
+        core.report(s.problems,core.NONE,"net.events_pending","a message of type %v was dropped: %d messages wait for the next tick of this world, which runs none (it is paused); resume it, or have the other ends send less while it is paused",event.type,PENDING_EVENTS)
         return
     }
     item:=Received{type=event.type,sender=command.connection,size=u16(event.size)}
@@ -357,7 +358,11 @@ event_deliver :: proc(s:^Net_Session,w:core.World_Ref,command:^wire.Command,even
     if event.size>0 && !wire.event_read(&s.host,command,raw_data(payload)) {return}
     copy(item.data[:],payload)
     if command.object!=0 {item.about=core.Entity(wire.object_user(&s.host,command.object))}
-    core.push(&events.received,item)
+    if _,error:=append(&s.received,item);error!=nil {
+        s.stats.events_dropped+=1
+        core.report(s.problems,core.NONE,"net.memory","a message of type %v was dropped: out of memory to keep it until the next tick; free memory",event.type)
+        return
+    }
     s.stats.events_received+=1
 }
 

@@ -178,7 +178,7 @@ net_test_fixed :: proc(world,shared,editor,application:rawptr) {
     ref:=core.world_ref(w,sh.info)
     core.revisions_moved(w.storage_revisions[:])
     if sh.session!=nil {
-        net_tick_head(ref,app,sh.session,&w.remote,nil,sh.session.problems)
+        net_tick_head(ref,app,sh.session,&w.remote,nil,nil,nil,sh.session.problems)
         core.settle(sh.info,w,nil)
     }
     net_test_feed(w)
@@ -574,8 +574,8 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
             now:=wire.host_time(&sessions[0].host)
             for &session in sessions {wire.host_update(&session.host,now)}
             server_events,client_events:Net_Events
-            server_commands(&sessions[0],core.world_ref(&worlds[0],&info),nil,wire.host_poll(&sessions[0].host),&server_events,&worlds[0].remote)
-            client_commands(&sessions[1],core.world_ref(&worlds[1],&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host),&client_events)
+            server_commands(&sessions[0],core.world_ref(&worlds[0],&info),nil,wire.host_poll(&sessions[0].host),&worlds[0].remote)
+            client_commands(&sessions[1],core.world_ref(&worlds[1],&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host))
             for event in net_test_arrived(&sessions[0]) {if event.kind==.Connected {connected=event.connection}}
             core.value_free(&server_events,type_info_of(Net_Events));core.value_free(&client_events,type_info_of(Net_Events))
             if connected!=0 && sessions[1].status==.Connected {break}
@@ -592,14 +592,14 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
         if !udp {wire.sim_network_advance(&network,now)}
         for &session in sessions {wire.host_update(&session.host,now)}
         server_events,client_events:Net_Events
-        server_commands(&sessions[0],core.world_ref(&worlds[0],&info),nil,wire.host_poll(&sessions[0].host),&server_events,&worlds[0].remote)
+        server_commands(&sessions[0],core.world_ref(&worlds[0],&info),nil,wire.host_poll(&sessions[0].host),&worlds[0].remote)
         for event in net_test_arrived(&sessions[0]) {
             if event.kind==.Connected {
                 connected=event.connection
                 net_test_physical_objects(&worlds[0],&info,entities[0],connected)
             }
         }
-        client_commands(&sessions[1],core.world_ref(&worlds[1],&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host),&client_events)
+        client_commands(&sessions[1],core.world_ref(&worlds[1],&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host))
         client_reconcile(&sessions[1],core.world_ref(&worlds[1],&info),&apps[1],1.0/60)
         core.value_free(&server_events,type_info_of(Net_Events))
         core.value_free(&client_events,type_info_of(Net_Events))

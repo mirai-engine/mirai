@@ -39,7 +39,7 @@ Net_Stats :: struct {
     predicted,interpolated:int,
     spawned,despawned:u64,    // client: entities made for a replica, or taken from the scene, and released
     events_received,events_sent:u64,
-    events_dropped:u64,       // arrived while the game was paused and Net_Events held PAUSED_EVENTS
+    events_dropped:u64,       // arrived while PENDING_EVENTS waited for a tick
     confirmed,corrected,snapped:u64, // client: states of the server that matched the prediction, that were replayed, that were taken as they came
     resimulated:u64,          // client: ticks simulated again
     largest_resimulation:int,
@@ -139,6 +139,7 @@ Net_Session :: struct {
     follows:bool, // the protocol has the messages of the session: a client follows the scene of its server
     secret:[2]u64, // client: of the player it presents (Net_Player); kept while the World lives
     arrived:[dynamic]Connection_Event, // since the last tick began: Net_Connections of the next one
+    received:[dynamic]Received,        // likewise the messages of the game: Net_Events of the next one
     scratch:[]u8, // one event or one component
     placed:u32,   // the places it asked of core.Pose_Target: each a new number
     taken:u32,    // client: the last place asked before a tick began, which its simulation took
@@ -157,7 +158,6 @@ Net_Session :: struct {
     joined,left,lost:u64,
     stats:Net_Stats,
     ended:bool,
-    events_held:bool, // pump left in Net_Events what no frame read yet
     server:Server,
     client:Client,
     status_file:^os.File,
@@ -348,6 +348,7 @@ session_open :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,port:int) -> 
     }
     s.host_ready=true
     if s.arrived==nil {s.arrived=make([dynamic]Connection_Event,allocator)}
+    if s.received==nil {s.received=make([dynamic]Received,allocator)}
     ready:=s.mode==.Server?server_init(s,allocator):client_init(s,w,app.allocator)
     if !ready {
         session_destroy(s)
@@ -519,6 +520,7 @@ session_destroy :: proc(s:^Net_Session) {
     delete(s.fragments,allocator);s.fragments=nil
     delete(s.events,allocator);s.events=nil
     delete(s.arrived);s.arrived=nil
+    delete(s.received);s.received=nil
     delete(s.scratch,allocator);s.scratch=nil
     delete(s.address,allocator);s.address=""
     delete(s.invite_code,allocator);s.invite_code=""

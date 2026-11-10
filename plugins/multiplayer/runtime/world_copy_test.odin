@@ -138,8 +138,10 @@ a_rollback_replays_its_ticks_and_leaves_the_clock_and_the_frame_where_they_were 
 @(test)
 a_tick_that_runs_again_sends_nothing :: proc(t:^testing.T) {
     outbox:Net_Outbox;defer delete(outbox.queue.items)
-    testing.expect(t,!send(&outbox,core.Time{tick=4,resimulating=true},u32(7)))
-    testing.expect(t,send(&outbox,core.Time{tick=6},u32(7)))
+    outbox.replaying=true
+    testing.expect(t,!send(&outbox,u32(7)))
+    outbox.replaying=false
+    testing.expect(t,send(&outbox,u32(7)))
     testing.expect_value(t,len(outbox.queue.items),1)
 }
 

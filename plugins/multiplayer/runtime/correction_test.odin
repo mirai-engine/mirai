@@ -47,7 +47,7 @@ correction_fixed :: proc(world,shared,editor,application:rawptr) {
     app:=cast(^host.App)application
     ref:=core.world_ref(w,sh.info)
     if sh.session!=nil {
-        net_tick_head(ref,app,sh.session,&w.remote,nil,sh.session.problems)
+        net_tick_head(ref,app,sh.session,&w.remote,nil,nil,nil,sh.session.problems)
         core.settle(sh.info,w,nil)
     }
     net_test_feed(w)
@@ -168,7 +168,7 @@ correction_run :: proc(t:^testing.T,settings:Net_Settings,link:Correction_Link,s
         wire.sim_network_advance(&network,now)
         for &session in sessions {wire.host_update(&session.host,now)}
         server_events,client_events:Net_Events
-        server_commands(&sessions[0],core.world_ref(&worlds[0],&info),nil,wire.host_poll(&sessions[0].host),&server_events,&worlds[0].remote)
+        server_commands(&sessions[0],core.world_ref(&worlds[0],&info),nil,wire.host_poll(&sessions[0].host),&worlds[0].remote)
         for event in net_test_arrived(&sessions[0]) {
             if event.kind!=.Connected {continue}
             shares[0].connection=event.connection
@@ -177,7 +177,7 @@ correction_run :: proc(t:^testing.T,settings:Net_Settings,link:Correction_Link,s
             for e in bodies[0][1:] {core.add(&worlds[0].objects,e,net_test_replicate(audience=.Always))}
             core.settle(&info,&worlds[0],nil)
         }
-        client_commands(&sessions[1],core.world_ref(&worlds[1],&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host),&client_events)
+        client_commands(&sessions[1],core.world_ref(&worlds[1],&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host))
         before:=sessions[1].stats.resimulated
         client_reconcile(&sessions[1],core.world_ref(&worlds[1],&info),&apps[1],1.0/60)
         result.frame_resimulated=max(result.frame_resimulated,int(sessions[1].stats.resimulated-before))
@@ -395,7 +395,7 @@ a_client_keeps_the_history_of_its_server :: proc(t:^testing.T) {
         wire.sim_network_advance(&network,now)
         for &session in sessions {wire.host_update(&session.host,now)}
         wire.host_poll(&sessions[0].host)
-        client_commands(client,core.world_ref(&worlds[1],&info),apps[1].assets,apps[1].allocator,wire.host_poll(&client.host),&worlds[1].received)
+        client_commands(client,core.world_ref(&worlds[1],&info),apps[1].assets,apps[1].allocator,wire.host_poll(&client.host))
         if client.status==.Connected {break}
     }
     testing.expect_value(t,client.status,Status.Connected)
