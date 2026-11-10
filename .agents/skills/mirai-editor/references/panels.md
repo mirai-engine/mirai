@@ -798,9 +798,9 @@ of its column.
   column; what is longest is edited alone on the right. The first column is the row's name, which
   is renamed by typing.
 - **Cells:** a draggable or typed number, a checkbox, a list of an `enum` or of a named id, an
-  asset button, the text of a `[N]u8` and, of a `core.Text`, the text in the language the game is
-  written in (translations go through `records.set` or the CSV). A `core.Record` is the list of
-  the rows of its type (`record_choice`), the same as in the inspector.
+  asset button, the text of a `[N]u8` and, of a `core.Text`, its key of the `.strings` (what the
+  key says goes through `texts.set` or `mirai texts`). A `core.Record` is the list of the rows of
+  its type (`record_choice`), the same as in the inspector.
 - **Add row** adds a row with the type's default after the chosen one; **Duplicate** copies it with
   other text ids; **Delete** removes it. The visible rows are the only ones built.
 - What the grid and the right column change is a copy of the table, which is written as a step of
@@ -817,9 +817,13 @@ plugin [vfx](../../mirai-world/references/vfx-editor.md#particle-document).
 ## Import
 
 `import_file(s, path)` converts a source file into project assets, only in `Edit`, with
-`sources.import_source` like `mirai import`. The source can be outside the project, and then it
-does not save its settings beside it (`no_save`): reimporting finds it by its path. What is
-written stays in the assets folder, in that of its type or in `folder` (`asset_folder_clean`).
+`sources.import_source` like `mirai import`. A source inside the project is versioned with its
+sidecar, and what it builds that nobody edits goes to the imported folder of the project; a source
+outside it keeps every asset in the assets folder, with its sidecar in `source/` of the project
+([identity](../../mirai-imports/references/imports.md#identity-and-reimport)). It goes to the
+folder of its type or to `folder` (`asset_folder_clean`). The imported folder is brought up to
+date with the sources by the build that opens the editor
+([sync](../../mirai-imports/references/imports.md#sync)).
 File > Import, the content browser, a file dropped on the window and `asset.import` call it. It
 imports in a thread of its own, with its own job system, while the editor keeps drawing; the
 content browser shows the dot of what works. `import_poll`, between frames, takes what it wrote on
@@ -835,10 +839,9 @@ output folders in [importers](../../mirai-imports/SKILL.md).
   imported before the formats and takes no folder.
 - An image is sRGB unless its settings or its name say it is data or a normal (`sources.image_use`,
   which `mirai import` applies too); `asset.import {image}` chooses it.
-- An import's settings stay beside the source (`<source>.import`); reimporting writes the same
-  assets with their ids where they are and keeps what did not change.
-  `import_file(s, path, into)` updates an import from a moved or renamed source
-  ([identity](../../mirai-imports/references/imports.md#identity-and-reimport)). Textures with
+- The sidecar of a source (`<source>.import`) keeps its settings and the id of each asset;
+  reimporting writes the same assets with their ids where they are and keeps what did not change.
+  Textures with
   the same image and settings and meshes with the same geometry and settings come from their caches
   ([textures](../../mirai-imports/references/imports.md#texture-cache),
   [meshes](../../mirai-imports/references/imports.md#mesh-cache)).
@@ -849,7 +852,14 @@ output folders in [importers](../../mirai-imports/SKILL.md).
   are parts of its prefab (`asset.Header.owner`,
   [rule](../../mirai-imports/references/imports.md#parts)). `asset_detach`
   (`editor/assets_parts.odin`, `asset.detach`) takes one out of its owner as an unsaved edit with
-  undo: it only clears `owner`, and the import leaves it out; there is no UI that calls it yet. A
+  undo: it only clears `owner`, and the import leaves it out; there is no UI that calls it yet.
+- **What an import keeps in the imported folder is not edited where it is.** Moving, renaming,
+  detaching or deleting a part on its own is refused, saying to duplicate it. Moving the root of
+  an import (`asset_move`) moves its source and sidecar under `source/`, and moving a folder moves
+  the folder of the same path under `source/` with it: the registry lists their assets there at
+  once, without an import. Deleting the root of an import
+  (its prefab, the texture of an image) gives the import up: its sidecar goes to the trash with
+  what only the import can build, and the source stays. A
   copy made outside the editor receives an id of its own on scanning
   ([repeated ids](../../mirai-assets/references/formats.md#registry)).
 
@@ -954,7 +964,7 @@ or compilation.
   compared as the field stores them; `{}`, all that have the component. With neither, the first
   entity that has the component.
 - A button (`name` unique in the panel, `sets` with up to 12 targets and its `value`) is a variant:
-  it puts each field at its value, with the JSON that `scene.set` and `settings.set` accept (up to
+  it puts each field at its value, with the JSON that `scene.write` and `settings.set` accept (up to
   159 bytes), without those fields having a row. The entities of a `where` are looked up when it is
   pressed, so it reaches those created after saving the panel. Buttons are pressed in any order: if
   one sets fields of a target (same component or setting, `entity` and `where`), it sets all those

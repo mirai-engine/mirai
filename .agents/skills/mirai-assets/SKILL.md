@@ -51,8 +51,9 @@ registry).
    reading any type.
 2. **Editing an existing asset.** `mirai asset set` or `unpack`/`pack`
    ([CLI](references/cli.md)). From code: `asset.Document`, or `asset.Scene` for scenes. In a
-   game they are files of `assets/` written through the API or the editor; only the demo's tool
-   writes them with `asset.Scene_Builder`. Meshes from code go through `asset.content_mesh` over
+   game they are files of `assets/` written by `scene.write` or `mirai scene write`; only the
+   demo's tool writes them with `asset.Scene_Builder`. Meshes from code go through
+   `asset.content_mesh` over
    the shapes of `std/geom`
    ([content tool](../../../docs/game/assets/content-tool.md)).
 3. **Changing a serialized struct.** A component or a record of a game changes without a version
@@ -138,7 +139,10 @@ registry).
     small levels) and the blocks and planes of fields in `texture_blocks_test.odin`;
   - animation, skeleton, skin and fracture: `content_test.odin`, `kinds_test.odin`,
     `skeleton_test.odin` and `fracture_test.odin` of `asset`; font, texts and prompts:
-    `asset/interface_kinds_test.odin`; game data tables: `asset/records_test.odin`;
+    `asset/interface_kinds_test.odin`; the one table of texts and its fallback:
+    `std/base/texts_test.odin` and `host/content_interface_test.odin`; the tools of the texts
+    (keys, CSV, what is missing): `cook/author/texts_test.odin`; game data tables:
+    `asset/records_test.odin`;
   - versions: `asset/versions_test.odin`; a plugin's own steps, in its plugin (`.match` and
     `.pose`);
   - registry: `asset/registry_test.odin` and, in the editor, `editor/content_test.odin`;

@@ -15,9 +15,25 @@ Record_Id :: distinct u64
 // never a position. The zero value names no row.
 Record :: struct($T:typeid) {table:base.Asset_Id,row:Record_Id}
 
-// A localized text of a row: the .records keeps the text in the language the
-// game is written in and its translations by this id. Zero: no text.
-Text :: struct {id:u64}
+// A text a player reads, as a field of a row or of a component: its key in
+// the .strings of the game. Empty: no text.
+Text :: struct {key:[TEXT_KEY]u8 `mirai:"text"`}
+
+TEXT_KEY :: 64 // bytes of a key, its NUL included
+
+// Every .strings of the assets as one table: what a function of the loop
+// receives to show a text. The generator binds it.
+Texts :: base.Texts
+
+// What a text says in a language, by the name_hash of its code (that of
+// gui.ui_language), and in the language its key was written in when that one
+// lacks it. found is false for a key no .strings has, and for no text.
+text :: proc{text_of,base.text}
+
+text_of :: proc "contextless" (texts:^Texts,text:Text,language:u64) -> (value:string,found:bool) {
+    text:=text
+    return base.text(texts,base.text_get(text.key[:]),language)
+}
 
 RECORD_NAME :: 64 // bytes of the name of a row, its NUL included
 
@@ -43,8 +59,6 @@ Record_Set :: struct {
     rows:[]Record_Row,
     index:[]u32,
     values:[]u8,
-    texts:[]Record_Text, // ordered by text and language
-    text:[]u8,           // UTF-8 of the texts
     generation:u32,      // changes with every load
 }
 
@@ -57,12 +71,6 @@ Record_Row :: struct {
     table:base.Asset_Id,
     row:Record_Id,
     name:[RECORD_NAME]u8,
-}
-
-Record_Text :: struct {
-    text:u64,
-    language:u64, // the name_hash of its code; 0: the language the game is written in
-    offset,length:u32,
 }
 
 // What a function of the loop receives to read the rows of T: every table of
@@ -94,8 +102,8 @@ records_count :: proc "contextless" (r:Records($T)) -> int {
     return len(r.set.rows)
 }
 
-// Changes every time the rows load again: what a function makes of them, a
-// text it shows, is made again when it changes. 0 before the first load.
+// Changes every time the rows load again: what a function makes of them is
+// made again when it changes. 0 before the first load.
 records_generation :: proc "contextless" (r:Records($T)) -> u32 {
     if r.set==nil {return 0}
     return r.set.generation
@@ -114,17 +122,6 @@ record_name :: proc "contextless" (r:Records($T),ref:Record(T)) -> string {
     at:=record_index(r.set,ref.table,ref.row,size_of(T))
     if at<0 {return ""}
     return base.text_get(r.set.rows[at].name[:])
-}
-
-// A text of a row in a language, by the name_hash of its code; 0, or a
-// language it has no translation in, gives the text it was written in. It
-// belongs to the set and lasts until its next load. Nothing is allocated.
-record_text :: proc "contextless" (r:Records($T),text:Text,language:u64) -> (value:string,found:bool) {
-    if r.set==nil || text.id==0 {return}
-    if language!=0 {
-        if value,found=record_text_find(r.set,text.id,language);found {return}
-    }
-    return record_text_find(r.set,text.id,0)
 }
 
 // The place of a row in a set; -1 without it or when the rows have another size.
@@ -158,21 +155,6 @@ record_before :: proc "contextless" (table:base.Asset_Id,row:Record_Id,other_tab
     if table[0]!=other_table[0] {return table[0]<other_table[0]}
     if table[1]!=other_table[1] {return table[1]<other_table[1]}
     return row<other_row
-}
-
-// The text of an id in exactly that language. Public, as every procedure a
-// generic one calls: a library compiles them against the declarations of the engine.
-record_text_find :: proc "contextless" (set:^Record_Set,text,language:u64) -> (value:string,found:bool) {
-    lo,hi:=0,len(set.texts)
-    for lo<hi {
-        mid:=(lo+hi)/2
-        t:=set.texts[mid]
-        if t.text<text || t.text==text && t.language<language {lo=mid+1} else {hi=mid}
-    }
-    if lo>=len(set.texts) {return}
-    t:=set.texts[lo]
-    if t.text!=text || t.language!=language || u64(t.offset)+u64(t.length)>u64(len(set.text)) {return}
-    return string(set.text[t.offset:][:t.length]),true
 }
 
 // Reports a reference to a row no table has, with what to do.

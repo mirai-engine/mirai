@@ -22,6 +22,7 @@ Source :: struct {
     surface:^Surface,
     building:^Instance, // the interface being built: one that shows a camera or particles is not drawn again from what it drew
     effects:^UI_Effects,
+    sounds:^audio.Sound_Requests,
     player:int,
     seat:core.Entity,  // of a local player
     gamepad:int,       // of the player; -1: any
@@ -63,17 +64,17 @@ Particle_Texture :: struct {
 source_bind :: proc(
     s:^Surface,gui:^Gui,app:^host.App,p:int,seat_state:core.Ref(inp.Seats),seats:core.Read(inp.Seat),bindings:core.Ref(inp.Input_Map),
     actions:core.Ref(inp.Frame_Actions),cameras:core.Read(render.Camera),exposures:core.Read(render.Exposure),
-    view_volumes:core.Read(render.View_Volume),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),settings:UI_Settings,preferences:UI_Preferences,gamepad:int,effects:^UI_Effects,
+    view_volumes:core.Read(render.View_Volume),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),settings:UI_Settings,preferences:UI_Preferences,gamepad:int,effects:^UI_Effects,sounds:^audio.Sound_Requests,
 ) {
     seat:=p>0?inp.local_seat(seats,p-1):core.NONE
     settings,preferences:=settings,preferences
     s.source={
-        gui=gui,app=app,surface=s,effects=effects,player=p,seat=seat,gamepad=gamepad,bindings=bindings.ptr,actions=&actions.ptr.actions,seat_state=seat_state.ptr,seats=seats,
+        gui=gui,app=app,surface=s,effects=effects,sounds=sounds,player=p,seat=seat,gamepad=gamepad,bindings=bindings.ptr,actions=&actions.ptr.actions,seat_state=seat_state.ptr,seats=seats,
         cameras=cameras,exposures=exposures,view_volumes=view_volumes,volumes=volumes,worlds=worlds,pixels=s.key.scale*max(app.density,0.01),
         pack=host.content_prompts(app,settings.prompts),
     }
     s.ctx.game={
-        user=&s.source,family=s.family,prompts=source_prompts,action=source_action,language=ui_language(&settings,&preferences),
+        user=&s.source,family=s.family,prompts=source_prompts,action=source_action,texts=host.app_texts(app),language=ui_language(&settings,&preferences),
         texture=source_texture,view=source_view,particles=source_particles,sound=source_sound,draw=source_draw,
     }
 }
@@ -363,5 +364,5 @@ particles_sweep :: proc(gui:^Gui,renderer:^render.Renderer) {
 @(private)
 source_sound :: proc(user:rawptr,id:base.Asset_Id) {
     src:=(^Source)(user)
-    audio.play_asset(src.app,{},id)
+    audio.play(src.sounds,id,bus=audio.BUS_UI)
 }

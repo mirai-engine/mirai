@@ -223,7 +223,7 @@ A `.ui` stores the records of [`ui.Tree_Data`](../../mirai-ui/references/ui.md#d
 table per record (`UI_TABLE_*`); contracts and precedence, in the
 [UI reference](../../mirai-ui/references/ui.md).
 
-- The texts of nodes and translations go, of free length, in the bulk table `text`, which each
+- The texts of nodes go, of free length, in the bulk table `text`, which each
   record names by `offset` and `length` (`ui.Tree_String`); names and bindings, as fixed-length
   text. Images and fonts go by their asset's id, so they are dependencies.
 - A component with `widget` takes its template from another `.ui`, which is also a dependency:
@@ -255,7 +255,25 @@ UI keeps the bytes while it shows the font
 
 `asset/strings.odin` defines `.strings`: a game's texts by key and language (`es`, `pt-BR`).
 `entries` joins a key with a language and a range of the bulk table `text` (UTF-8, no length limit);
-a key without text in a language has no entry. The game looks up a text with `host.strings_text`.
+a key without text in a language has no entry.
+
+- **One store.** Every text a player reads in their language is a key of a `.strings`, whoever
+  shows it: a `Localized` node of a `.ui` (its text is the key), a `core.Text` field of a row of a
+  `.records` or of a component (it holds the key) and the code (`core.text`). No other format
+  stores a text in a language.
+- **One table, one lookup.** `host.app_texts` joins every `.strings` of the assets into one
+  `base.Texts`, read again when one changes, on disk or in memory; `base.text` finds a key in a
+  language. A key is in one `.strings`: with two, the first by path is read and
+  `mirai texts missing` says so.
+- **One fallback.** The first language of a `.strings` is the one its texts are written in
+  (`UI_Settings.source`, which the tools write first): a language that lacks a key, and the
+  language 0, show what the key says in the first language of its file that has it.
+- **One way to edit.** `cook/author/texts.odin` reads the `.strings` as rows of keys, sets a text,
+  makes the key of a text (`texts_key`: equal texts share it, another text under that name takes a
+  number), writes the files that changed, moves them through the CSV `cook/import` reads and lists
+  what is missing with who asks for it. `mirai texts` does it on the files and `texts.*` in the
+  open editor; a document of a `.ui` gives the text of a key beside its node and sets it
+  ([texts](../../../../docs/game/ui/texts.md)). A `.strings` an import made changes in its CSV.
 
 ## Records
 
@@ -269,9 +287,6 @@ a key without text in a language has no entry. The game looks up a text with `ho
   type of the file's schema: a tool reads the rows without the code and the code reads them by field
   name. Ids are random, 53-bit, so that two branches adding rows do not collide and JSON reads them
   whole.
-- `texts` joins the id of a `core.Text` with a language code (empty: the language the game is
-  written in) and a range of `text` (UTF-8), ordered by text and language. Saving removes the texts
-  that no row names.
 - `records_problem` says which row is not valid and how to fix it; `records_view` uses it on reading
   and `records_document` on writing.
 

@@ -11,8 +11,8 @@ Targets, jobs, fingerprint, project shaders, cooking and shipped game (`cook/bui
   input.mirai       bindings Project Settings > Input changed from the code (optional, not by hand)
   settings.mirai    project settings: what differs from the engine (optional)
   cook.mirai        cooking roots that no scene names (optional)
-  assets/           cooked assets
-  source/           art sources with their import options
+  assets/           assets: what is authored, and the documents imports write
+  source/           art sources, each with its sidecar (<source>.import): settings and asset ids
   game/             game library of the project
   editor/           editor package of the project (engine-time)
   plugins/<name>/   plugin.mirai, runtime/, editor/, shaders/, assets/
@@ -20,6 +20,9 @@ Targets, jobs, fingerprint, project shaders, cooking and shipped game (`cook/bui
   panels/           editor panels built by the chat agent (engine-time)
   tests/scenarios/  gameplay tests the editor plays (`mirai play test`), optional
   .mirai/           generated; not edited or versioned
+    imported/       what imports build from source/ that nobody edits (meshes, textures, sounds,
+                    fonts), each file named by its id and what it was built from; a build makes
+                    it again
     gen/            generated packages: the worlds and the root of each target
     plugins/        libraries of the engine plugins, with their stages and declarations
     editor<ext>     library of mirai-editor and of the players it opens; play<ext>, that of
@@ -320,10 +323,11 @@ Each mode has its folder: switching between them compiles nothing.
   the libraries compile from, as the collection `staged`: the packages of a library import each
   other through it and every other package is its declarations. A build without a stamp of its
   version and `--force` remove the stage and the declarations.
-- **Mode.** Every command that builds accepts `--dev` (everything at `-o:minimal`, to check
-  changes) or `--release` (`-o:speed`, for the CPU figures and to ship), not both, and without
-  either it is `--release`: no command takes its mode from what was built before. `session
-  restart` without either opens the session as it was opened. An agent always passes `--dev`.
+- **Mode.** Every command that builds or picks engine binaries accepts `--dev` (everything at
+  `-o:minimal`, to check changes) or `--release` (`-o:speed`, for the CPU figures and to ship),
+  not both, and without either it is `--dev` (`build_mode_take`): no command takes its mode from
+  what was built before. `session restart` without either opens the session as it was opened.
+  Only `package engine` is always `--release`; a game to ship is `build game --release`.
   `build.engine_current` says whether `engine_build` would do nothing, without taking a turn or
   writing.
 - **Shared cache.** `<main>/.mirai/cache/engine-libraries/<library>-<mode>-<fingerprint>/` stores
@@ -423,7 +427,7 @@ its skill:
 [images](../../mirai-agent-api/references/image.md),
 [`render check`](../../mirai-rendering/references/verification.md#render-check),
 [`bench compare`](../../mirai-agent-api/references/methods.md#profiling), `mirai texts`
-([texts](../../mirai-plugins/references/ui-inspector.md)) and, for an open editor,
+([texts](../../mirai-assets/references/kinds.md#texts)) and, for an open editor,
 [sessions](../../mirai-agent-api/references/api.md#sessions),
 [`rpc`](../../mirai-agent-api/references/api.md#mirai-rpc),
 [`mcp`](../../mirai-agent-api/references/api.md#mirai-mcp) and
@@ -440,9 +444,9 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 | Operation | Command |
 | --- | --- |
 | Create a worktree ready to build | `mirai worktree new <name> [--from <branch>]` |
-| Build and open the editor | `mirai edit [project] [--dev] [editor arguments]` |
-| Build and run the game | `mirai play [project] [--dev] [player arguments]` |
-| Build the editor without opening it | `mirai build editor [project] [--dev]` |
+| Build and open the editor | `mirai edit [project] [--release] [editor arguments]` |
+| Build and run the game | `mirai play [project] [--release] [player arguments]` |
+| Build the editor without opening it | `mirai build editor [project] [--release]` |
 | Build the shippable game | `mirai build game [project] [--out folder]` |
 | Build its dedicated server | `mirai build server [project] [--out folder]` |
 | Build only the engine | `mirai build engine [--dev\|--release] [--force]` |
@@ -452,7 +456,7 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 | Git plugins of a project | `mirai plugin add\|update\|remove\|sync\|list\|catalog\|check ...` |
 | Check types | `mirai check [<package> [-flag...]]`: a package relative to the working folder or to the engine, or absolute; none inside a project: its game, editor and plugins. In a runtime package it also fails on an allocation whose error nothing receives (`tools/mirai/alloc_lint.odin` says which calls and which packages), and in the runtime or editor part of a plugin on an import of `render` or `rhi` outside its tests or of the physics solver (`tools/mirai/solver_lint.odin`) |
 | Run tests | `mirai test [<package>] [test\|file.odin...] [--list\|--failed\|--no-gpu\|--quiet] [-flag...]`: the package as for `check`; none inside a project: its game |
-| Headless background editor | `mirai session start\|restart\|stop\|status [project] [--dev] [--copy]` |
+| Headless background editor | `mirai session start\|restart\|stop\|status [project] [--release] [--copy]` |
 | Call the editor API | `mirai rpc <method> [key=value...\|json] [--select c] [--wait-until c=v] [--project P]` |
 | Capture without UI | `mirai capture [project] --out x.png [--reference r.png] [--repeat]` |
 | Validate demo image and cost | `mirai render check [project] [--views a,b] [--quality] [--release]` |
@@ -465,8 +469,7 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 | Merge and diff assets with git, once per clone | `mirai setup git [folder]` |
 | Assemble the installed engine (binary) | `mirai package engine --out <folder>` |
 
-- Every command that builds does it with `--release` unless `--dev` is asked for; `render check`
-  and `bench compare` are `--dev` by themselves. An agent passes `--dev`
+- Every command that builds does it `--dev` unless `--release` is asked for
   ([AGENTS.md](../../../../AGENTS.md#common-commands)).
 - The builds of all checkouts share a few turns by themselves; do not set `-thread-count`. Tests and
   builds do not wait for a measurement: they run with low priority while it lasts.
@@ -477,10 +480,10 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
   engine.diagnostics`. With the project open in a window, `session start --copy` drives a copy.
 - **Search:** for the Odin code in `.deps`, pass its path to `rg` or `--no-ignore`. If `rg` is not
   there, `mirai setup rg` installs it pinned in `.deps` and in the PATH.
-- **When handing a command to the user** to try a change, `edit` and `play` carry `--dev`; without
-  a flag only if it is for measuring. From a worktree, start with a `cd` to its path from miari,
-  quoted, separated with `;` and not `&&` so that it also works in PowerShell 5.1. If it compiles,
-  compile it first with the same arguments, so that it tells the user "unchanged".
+- **When handing a command to the user** to try a change, `edit` and `play` go without a flag;
+  `--release` only if it is for measuring. From a worktree, start with a `cd` to its path from
+  miari, quoted, separated with `;` and not `&&` so that it also works in PowerShell 5.1. If it
+  compiles, compile it first with the same arguments, so that it tells the user "unchanged".
 - **Deleting folders:** a worktree is removed with `git worktree remove`; another folder, with
   `rm -rf`, which in Git Bash deletes a junction without following it.
 - Run arguments: [editor](../../mirai-editor/references/editor.md#arguments) and

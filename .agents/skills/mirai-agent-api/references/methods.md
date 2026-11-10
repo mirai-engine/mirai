@@ -226,12 +226,11 @@ with `animation.analyze` and `animation.capture` before touching keys.
 
 ## Cinematics
 
-The `cinematics.*` methods of the `cinematics` plugin build and play timelines without `scene.set`
+The `cinematics.*` methods of the `cinematics` plugin build and play timelines without `scene.write`
 on their components; the keys and markers of a timeline are those of its clip, which the
-`animation.*` methods write. In Edit, `cinematics.control` drives the preview of the Cinematics
-tool: the
-document does not change and the image shows in the next frame (`capture`); in Play it
-queues the command in the running world. Contract:
+`animation.*` methods write. In Edit, `cinematics.control` moves the head of the Tracks tool on
+the timeline (`animation.tracks.show` for any clip): the document does not change and the image
+shows in the next frame (`capture`); in Play it queues the command in the running world. Contract:
 [cinematics](../../mirai-gameplay/references/cinematics.md#editor-and-api).
 
 ## Ragdoll
@@ -398,45 +397,62 @@ An entity is named as [the API names it](api.md#method-conventions). Each edit i
     document's.
 - On a large game, `name` or `component`, and `components` for the values of those; `omitted`
   says how many were left out.
-- `scene.add`: creates an entity; everything is optional. Returns `{id}`.
-- `scene.set`: changes `entity`; `name` renames it and `parent:null` makes it a root. A member of an
-  instance that is not its root keeps the `parent` the prefab gives it.
-- `scene.delete`: destroys `entity` and what hangs from it. A member of an instance that is not
-  its root is not deleted: it is turned off with `scene.set` `enabled` false.
-- `scene.duplicate`: copies `entity` and returns the id of the copy; it and what hangs from it get
-  new ids.
-- `scene.write`: makes `root`, or without it a new root, and what hangs from it say what
-  `entities` declares (that entity, with the rest nested by `children`), in one step:
-  - Matches by `id` (an entity of the subtree may change parent inside it), else by `name` among
-    those of its parent, else by place among those left; it makes the others, and what the
-    document does not declare goes with what hangs from it.
+- `scene.write` is the one way to change the entities of the scene, for an agent and for the
+  entries of the editor (Delete, Duplicate and Paste call it): it makes the scene say what
+  `entities` declares, nested by `children`, in one step. The document is read, matched and
+  applied by `cook/author/scene_document.odin`, the same code `mirai scene write` runs on a file
+  ([`mirai scene`](api.md#mirai-ui-and-mirai-scene)); the editor gives it the rows of the world
+  (`editor/api_scene_write.odin`).
+  - Without `root`, `entities` are those at the top of the scene; with it, the one entity is
+    `root`. It matches by `id`, else by `name` among those of its parent, else by place among
+    those left; it makes the others, and what the document does not declare goes with what
+    hangs from it.
   - What an entity does not give is that of a new one: identity place, visible, enabled and
     without components. A component is its starting value with the fields it gives (keeping the
     hidden, `transient` and `read_only` ones); those it does not name are removed, also the one
     the editor adds beside another (the `Collider` of a `Character`). Siblings end up in the
     order of the document.
-  - `preset` takes the names of `scene.add` (a preset or the card of a plugin) and stands for the
+  - `merge:true` keeps what the document leaves out, so it names only what it adds or changes:
+    an entity is matched by `id` or `name` and never by place, one at the top named by `id`
+    stays under the parent it has, a component takes the fields given over the value it has,
+    `null` removes it, `off` turns components the entity has off (and with `off` given, on those
+    it declares and does not list), siblings keep their order, and `"delete":true` takes an
+    entity away. `{"root":"Lamp","merge":true,"entities":[{"position":[0,2,0]}]}` moves one
+    entity; a member of an instance that says `delete` is turned off.
+  - `preset` is a name of `Preset` (`cook/author/presets.odin`), case-insensitive, or the card of
+    an active plugin by its label
+    ([cards](../../mirai-editor/references/extensions.md#create-cards)); it stands for the
     components it gives, whose values are the starting ones of the fields `components` does not
-    name; without `rotation_deg` or `scale` the entity takes those of the preset. It also holds
-    when rewriting an entity; `scene.inspect` gives its components, not the preset.
+    name; without `rotation_deg` or `scale` the entity takes those of the preset, and without
+    `name` its label, with a number if a sibling has it. It also holds when rewriting an entity;
+    `scene.inspect` gives its components, not the preset. Lights shine toward their -Z; `sun`
+    looks from `render.SUN_DIRECTION` and `spot_light` downward. Adding, showing or turning on a
+    `Sun` turns off the `Sun` that was on, in the same step
+    ([one sun](../../mirai-editor/references/document.md#world-edit-procedures)).
   - A member of an instance of a prefab that is not its root keeps its parent: declaring it under
     another fails, and leaving it out turns it off (`disabled` of the result).
-  - A new entity with `prefab` (the path or the id of a `.scene`) is placed as a linked instance,
-    in the step of the write, with the rules and the errors of the write with no editor
-    ([`mirai scene`](api.md#mirai-ui-and-mirai-scene)): what it and the entities under it leave
-    out stays as the prefab gives it, also in a later write that names it the same way, and what
-    the document says of its members, by their names, are overrides. With `{asset, root}`, as
+  - A new entity with `prefab` (the path or the id of a `.scene` with one root) is placed as a
+    linked instance, in the step of the write: what it and the entities under it leave out stays
+    as the prefab gives it, also in a later write that names it the same way, and what the
+    document says of its members, by their names, are overrides. With `{asset, root}`, as
     `scene.inspect` gives it, an instance declares all it has. A write changes no link of an
     entity that is there.
+  - A new entity with `copy` (an entity by its name, a path or its id) is a copy of it and of
+    what hangs from it, with new ids, beside it unless the document nests it under another
+    entity; what the document says of it and of what it holds, by their names, changes the copy.
+    The editor makes copies; a file written with no editor declares the entity in full.
   - A `core.Entity` field names an entity that already exists. An error says where
     (`entities[0].children[2].components.Light: …`) and changes nothing.
   - The result names what it made: `created` has the `{id,name}` of each entity of the document
     that is new, in its order, and of a prefab it placed the root of the instance, under which
     its members are.
-  - Changing a few fields of scattered entities is for `scene.set`.
-- `scene.batch`: from 1 to 64 `{method,params}` with `scene.add`, `scene.set`, `scene.delete` or
-  `scene.duplicate` in one step. Returns `{results:[{id}]}` in order; if one fails none is
-  applied and the message starts with `operations[N]:`.
+- `batch`: 1 to 256 `{method,params}` of any methods, run in order (`editor/api/batch.odin`).
+  A param that is exactly `"$N"` or `"$N.path"` (the paths of `--select`) is the result of call N
+  or that field of it, and `"$$"` begins a text that starts with `$`. It stops at the first call
+  that fails: the error says `calls[N] <method>:` and its `data` holds what the ones before
+  answered. `transaction:true` makes what the calls edit of the scene one step of undo, taken
+  back whole when one fails (their edits join the edit the batch holds open,
+  `Api_State.transaction`); what they write to files stays.
 - `scene.save`: `path` is a file or a path under `assets/` (by default, the document's); a new path
   becomes the document's file. Fails with a Play, as a guest of a session, or without a path in a
   scene never saved.
@@ -458,29 +474,14 @@ An entity is named as [the API names it](api.md#method-conventions). Each edit i
   components of runtime state (also the diagnostics hidden in Play or Simulate) without making
   them editable or persistent.
 
-**`scene.add`.** `preset` is a name of `Preset` (`editor/world.odin`), case-insensitive:
-`empty` (a group), `cube`, `sphere`, `cylinder`, `cone`, `capsule`, `plane`, `prism`, `pyramid`,
-`point_light`, `spot_light`, `rect_light`, `sun`, `camera`, a camera that follows the player in a
-mode (`isometric_camera`, `top_down_camera`, `side_camera`, `first_person_camera`,
-`third_person_camera`, `aim_camera`), `spawn` (a `spawn.Spawn_Point`), or the card of an active
-plugin by its label (`decal`, `screen`, `portal`, `particles` with `vfx`;
-[cards](../../mirai-editor/references/extensions.md#create-cards)). Without `name`, that of
-the preset (with a number if it already exists); without `parent`, root. `position`, `rotation_deg`
-and `scale` are local to the parent. Lights shine toward their -Z; without `rotation_deg`, `sun`
-looks from `render.SUN_DIRECTION` and `spot_light` downward. Adding, showing or turning on a `Sun`
-turns off the `Sun` that was on, in the same undo step
-([one sun](../../mirai-editor/references/document.md#world-edit-procedures)).
+**Values of `components`** (`{"Point_Light":{"intensity":40}}`):
 
-**`components`, `enabled` and `off` of `scene.add` and `scene.set`**
-(`{"Point_Light":{"intensity":40},"Spin":null}`):
-
-- An object adds the component with its initial value or changes **only the named fields** of an
-  existing one; `null` removes it. A `core.Entity` field is the id of an entity of the scene.
+- A `core.Entity` field is the id of an entity of the scene.
 - An unknown name, a component derived by the engine, an out-of-range field or a value that changes
-  a `read_only` field of `component.list` fail with `-32602` and the name of the field.
-- `"enabled":false` turns off the entity and what hangs from it (`core.Disabled`); `off` turns off
-  or on components the entity already has, keeping their values. A base component (`Transform`,
-  `Name`, `Id`, `Parent`) or one the entity does not have fails with `-32602` and how to do it.
+  a `read_only` field of `component.list` fail with `-32602` and the path of the field.
+- `"enabled":false` turns off the entity and what hangs from it (`core.Disabled`). A base
+  component (`Transform`, `Name`, `Id`, `Parent`) has a key of its own and fails as a component,
+  with how to say it.
 
 **Prefab hierarchy.** Creating, placing or moving something under an entity of an instance makes it
 an added entity; deleting or duplicating a member, and moving it inside its instance, are overrides
@@ -830,9 +831,9 @@ one root is none: the error says so), nonexistent override and "is not part of a
   (`ok`), its message, the scene of a map and the assets it wrote (`kept`: its file was already
   the one it gives). `asset.import_status` gives the same, and whether one runs (`importing`), at
   any moment. While it runs, another import and whatever writes assets fail saying what is being
-  imported. Reimporting keeps ids and files;
-  `into` (the id of the prefab, texture or sound of the import) updates it from a moved or renamed
-  source. `image` (`color`, `data`, `normal`, `normal_green_down`) says what an image imported on
+  imported. Reimporting keeps ids and files, which the sidecar of the source lists
+  ([identity](../../mirai-imports/references/imports.md#identity-and-reimport)).
+  `image` (`color`, `data`, `normal`, `normal_green_down`) says what an image imported on
   its own holds, over its settings and its name (a packed metallic-roughness or a mask is `data`); a
   source in the project keeps the choice in its settings
 - `asset.detach`: `asset` (path or id) is a part that leaves its owner: it is left without `owner`
@@ -885,23 +886,25 @@ one root is none: the error says so), nonexistent override and "is not part of a
     of an enum, `records` of the type a `core.Record` names, description) and its tables.
   - `records.create {path,type}` creates an empty table of that type, the only method that does;
     Create of the content browser has one entry per type.
-  - `records.inspect {records,rows?}`: `{records,path,type,rows:[{id,name,values,texts}]}`; `id` is
-    a JSON number (ids have 53 bits) and `texts` gives, by path of a `core.Text` field, the text of
-    each language (`""`: the language the game is written in).
-  - `records.set {records,row,values?,texts?,name?}` and `records.add {records,name,values?,texts?,
+  - `records.inspect {records,rows?}`: `{records,path,type,rows:[{id,name,values}]}`; `id` is
+    a JSON number (ids have 53 bits).
+  - `records.set {records,row,values?,name?}` and `records.add {records,name,values?,
     after?}`: each key of `values` is a field of the row or the path of a part of one
     (`input.hold`, `windows[2].to`), and its value is that part whole: an object or a list leaves
-    what it does not give at the default of the type (zeros where it has none; the `core.Text`
-    ids stay), while what no key names keeps its value (a new row starts at the default). To
+    what it does not give at the default of the type (zeros where it has none), while what no
+    key names keeps its value (a new row starts at the default). To
     change one nested field, name its path. A `core.Record` is given as `{table,row}`, as the name
-    of a row or as `table/row`; a `core.Text`, as its original text.
+    of a row or as `table/row`; a `core.Text`, as `{key}`, the key of the `.strings` it shows
+    (`texts.set` writes what a key says, `texts.missing` lists the keys without a text:
+    [texts](../../mirai-assets/references/kinds.md#texts)).
   - `records.remove {records,rows}` and `records.move {records,row,after}`: the row it goes right
     after, `""` for first. A row is renamed with `name` of `records.set`.
   - `records.import {records,file}` reads a CSV (RFC 4180, UTF-8) whose header is `name` and paths
-    of leaf fields (`damage`, `stats.speed`, `position[1]`; `title@es` is a translation): each row
-    changes the one of the same name or is added, an empty cell changes nothing and there are no
-    formulas. It is one step; returns `{updated,added,rejected:[{line,row,reason}]}`, and an invalid
-    header writes nothing. `records.export {records,file}` writes that CSV.
+    of leaf fields (`damage`, `stats.speed`, `position[1]`; `title.key` is the key of a
+    `core.Text`): each row changes the one of the same name or is added, an empty cell changes
+    nothing and there are no formulas. It is one step; returns
+    `{updated,added,rejected:[{line,row,reason}]}`, and an invalid header writes nothing.
+    `records.export {records,file}` writes that CSV.
 - **Unsaved assets.** The methods that edit assets (`material.*`, `particle.*`, `sound_set.*`,
   `records.*`) and programs (`material.program.create` and `edit`) change them in memory, in an
   undo step attributed to the AI turn that calls:

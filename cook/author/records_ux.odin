@@ -67,8 +67,8 @@ records_copy_rows :: proc(r:^Records,rows:[]int,clip:^Clip_Nodes,allocator:=cont
     records_copy(r,roots[0],clip,allocator)
     for row in roots[1:] {
         block:Records
-        if !records_extract(r,row,&block,context.temp_allocator,false) {continue}
-        m:=merge_begin(&clip.records,&block,false)
+        if !records_extract(r,row,&block,context.temp_allocator) {continue}
+        m:=merge_begin(&clip.records,&block)
         merge_put(&m,block.nodes[:],block.overrides[:],len(clip.records.nodes),-1)
     }
 }
@@ -100,7 +100,7 @@ records_paste_rows :: proc(r:^Records,row:int,clip:^Clip_Nodes,allocator:=contex
             if !records_takes(r.nodes[:],parent) {return pasted[:]}
         }
     }
-    m:=merge_begin(r,from,true)
+    m:=merge_begin(r,from)
     for block in blocks {
         first,count:=block[0],block[1]
         nodes:=make([]ui.Tree_Node,count,context.temp_allocator)
@@ -148,7 +148,7 @@ records_place_rows :: proc(r:^Records,rows:[]int,parent,before:int,allocator:=co
     blocks:=make([]Block,len(roots),context.temp_allocator)
     for row,i in roots {blocks[i]=records_block(r,row)}
     // From the last: the rows before a removed block stay where they are.
-    // Moving keeps translations and what names the nodes.
+    // Moving keeps what names the nodes.
     parent,before:=parent,before
     for i:=len(roots)-1;i>=0;i-=1 {
         row:=roots[i]

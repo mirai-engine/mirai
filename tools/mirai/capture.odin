@@ -48,14 +48,15 @@ Capture_View :: struct {
     threshold:f64,         // SSIM against the reference under which the view fails: under what two captures of it give
 }
 cmd_capture :: proc(root:string,args:[]string) -> int {
+    mode,args,modes_valid:=build_mode_take(args)
     folder,out,scene,entity,view,reference:=".","","","","",""
     position,target:string
     fov,threshold:f64=0,-1
     width,height,frames:=0,0,64
-    mode:=Build_Mode.Release
     repeat,plan,write:=false,false,false
     views,references:string
     usage :: proc() -> int {fmt.eprintfln("Usage: mirai %s",CAPTURE_USAGE);return 2}
+    if !modes_valid {fmt.eprintln("mirai capture: --dev and --release do not go together; pass one of them");return usage()}
     for i:=0;i<len(args);i+=1 {
         ok:=true
         switch args[i] {
@@ -86,8 +87,6 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
         case "--write": write=true
         case "--views":      views,ok=option_next(args,&i)
         case "--references": references,ok=option_next(args,&i)
-        case "--dev":  mode=.Dev
-        case "--release": mode=.Release
         case:
             if !positional(args[i]) || folder!="." {return argument_unknown("capture",args[i])}
             folder=args[i]

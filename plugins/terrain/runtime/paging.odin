@@ -7,8 +7,7 @@ import "mirai:std/base"
 // Pages of a Heightfield and blocks of a Volume read from its file when a
 // resident chunk needs them and let go when none does; a page with edits
 // leaves them in a block of its own, so it comes back as it was. The weights
-// of a Volume, in blocks as its distances, come and go with them. Mesh
-// sources stay whole.
+// of a Volume, in blocks as its distances, come and go with them.
 
 Grid_Kind :: enum u8 {Heights,Weights,Holes,Distances}
 
@@ -19,14 +18,8 @@ source_samples_grid :: #force_inline proc "contextless" (s:^Source) -> ^Grid(f32
 }
 
 // The samples a build of a Volume chunk reads past its own along each axis:
-// the gradients of its coarsest level, and the cells its collider looks at
-// across its faces.
-@(private)
-volume_halo :: proc "contextless" (s:^Source) -> int {
-    level:=0
-    for level<LOD_LEVELS_MAX && 2<<uint(level+1)<=int(s.chunk_cells) {level+=1}
-    return max(1<<uint(level),2)
-}
+// its gradients, and the cells its collider looks at across its faces.
+@(private) VOLUME_HALO :: 2
 
 // The samples a build of a chunk reads: its own and the halo of a Volume,
 // or that of a Heightfield, which its normals, its rules of layers and the
@@ -35,14 +28,48 @@ volume_halo :: proc "contextless" (s:^Source) -> int {
 chunk_pages_region :: proc "contextless" (s:^Source,index:int) -> (low,high:[3]int,ok:bool) {
     from,to,valid:=chunk_region(s,chunk_coord(s,index))
     if !valid {return}
-    halo:=s.kind==.Volume?volume_halo(s):max(int(s.chunk_cells)/2,LAYER_RULE_SAMPLES)+2
+    halo:=s.kind==.Volume?VOLUME_HALO:max(int(s.chunk_cells)/2,LAYER_RULE_SAMPLES)+2
     for axis in 0..<3 {low[axis],high[axis]=max(from[axis]-halo,0),min(to[axis]+halo,int(s.samples[axis])-1)}
     return low,high,true
 }
 
+// The samples a build of node index of a Volume reads: those of its chunks.
+@(private)
+node_pages_region :: proc "contextless" (s:^Source,q:^Quad,index:int) -> (low,high:[3]int) {
+    low,high=quad_region3(s,q,index)
+    for axis in 0..<3 {low[axis],high[axis]=max(low[axis]-VOLUME_HALO,0),min(high[axis]+VOLUME_HALO,int(s.samples[axis])-1)}
+    return
+}
+
+// Whether the Volume holds a surface in an inclusive region of samples, as
+// far as its directory tells without reading a block: a block with values of
+// its own, or blocks on both sides of it.
+@(private)
+volume_region_surface :: proc "contextless" (s:^Source,low,high:[3]int) -> bool {
+    g:=&s.distances
+    from,to:=grid_pages(g,low,high)
+    sign:=0
+    for pz in from.z..=to.z {for py in from.y..=to.y {for px:=from.x;px<=to.x; {
+        slot,value:=grid_find(g,{px,py,pz})
+        step:=1
+        if slot>=0 {
+            if g.pages[slot].values!=nil || g.paged && g.blocks[slot].size>0 {return true}
+            value=g.pages[slot].fill
+        } else {
+            span,_:=grid_uniform_span(g,{px,py,pz})
+            step=max(span,1)
+        }
+        side:=value<0?-1:1
+        if sign!=0 && side!=sign {return true}
+        sign=side
+        px+=step
+    }}}
+    return false
+}
+
 // Whether a source reads pages from its file.
 @(private)
-source_paged :: #force_inline proc "contextless" (s:^Source) -> bool {return s.kind!=.Mesh && len(source_samples_grid(s).blocks)>0}
+source_paged :: #force_inline proc "contextless" (s:^Source) -> bool {return source_samples_grid(s).paged}
 
 @(private)
 distance_finite :: proc "contextless" (value:f32) -> bool {return value-value==0}
@@ -54,35 +81,36 @@ distances_within :: proc "contextless" (values:[]f32,band:f32) -> bool {
     return true
 }
 
+// Whether every distance a grid holds, in its pages in memory and for the
+// parts without them, stays within the band.
+@(private)
+grid_distances_within :: proc(g:^Grid(f32),band:f32) -> bool {
+    for page in g.pages {if !(abs(page.fill)<=band) || !distances_within(page.values,band) {return false}}
+    band:=band
+    return grid_tiles_all(g,&band,proc(user:rawptr,fill:f32) -> bool {return abs(fill)<=(^f32)(user)^})
+}
+
 // Whether every page of the grids of a source over the region is in memory.
 @(private)
 source_region_held :: proc(s:^Source,low,high:[3]int) -> bool {
     if !source_paged(s) {return true}
     if s.kind==.Volume {return volume_held(s,low,high)}
-    held :: proc(g:^Grid($T),low,high:[3]int) -> bool {
-        if len(g.blocks)==0 {return true}
-        from,to:=grid_pages(g,low,high)
-        for pz in from.z..=to.z {for py in from.y..=to.y {for px in from.x..=to.x {
-            if grid_absent(g,px+g.counts.x*(py+g.counts.y*pz)) {return false}
-        }}}
-        return true
-    }
-    return held(&s.heights,low,high) && held(&s.weights,low,high) && held(&s.holes,low,high)
+    return !grid_region_absent(&s.heights,low,high) && !grid_region_absent(&s.weights,low,high) && !grid_region_absent(&s.holes,low,high)
 }
 
 // A page whose values are in its block, into memory: false when the block
 // cannot be read or does not hold valid values, or without memory.
 @(private)
-grid_page_read :: proc(g:^Grid($T),i:int,file:string,valid:proc "contextless" (value:T) -> bool,allocator:runtime.Allocator) -> bool {
-    if !grid_absent(g,i) {return true}
-    _,count:=grid_page_extent(g,i)
+grid_page_read :: proc(g:^Grid($T),id:int,file:string,valid:proc "contextless" (value:T) -> bool,allocator:runtime.Allocator) -> bool {
+    if !grid_absent(g,id) {return true}
+    _,count:=grid_page_extent(g,id)
     read:Page_Reader
     read_ok:=page_reader_init(&read,context.temp_allocator)
     defer page_reader_destroy(&read,context.temp_allocator)
     values,made:=shared_make(T,count,allocator)
     if !read_ok || !made {shared_free(values);return false}
-    if !page_load(g.blocks[i],file,&read,mem.slice_to_bytes(values)) || !page_valid(values,valid) {shared_free(values);return false}
-    grid_page_install(g,i,values)
+    if !page_load(grid_block(g,id),file,&read,mem.slice_to_bytes(values)) || !page_valid(values,valid) {shared_free(values);return false}
+    grid_page_install(g,id,values)
     return true
 }
 
@@ -99,37 +127,43 @@ page_valid :: proc(values:[]$T,valid:proc "contextless" (value:T) -> bool) -> bo
     return true
 }
 
-// The values of a page read from its block take its place in memory.
+// The values of a page a grid holds, read from its block, take its place in memory.
 @(private)
-grid_page_install :: proc(g:^Grid($T),i:int,values:[]T) {
-    block:=&g.blocks[i]
-    g.pages[i].values=values
-    block.edited=false
+grid_page_install :: proc(g:^Grid($T),id:int,values:[]T) {
+    slot:=grid_slot(g,id)
+    g.pages[slot].values=values
+    g.blocks[slot].edited=false
 }
 
 // Reads every page of the grids of a source over the region that is in its
 // block, now: what an edit and a chunk that cannot wait need. False when one
 // cannot be read or there is no memory. Each page read marks for entry, if
 // given, the chunks that read it (data_pages_arrived).
-@(private)
 source_region_read :: proc(s:^Source,low,high:[3]int,entry:^Data_Source=nil) -> bool {
     if !source_paged(s) {return true}
     read :: proc(g:^Grid($T),low,high:[3]int,file:string,valid:proc "contextless" (value:T) -> bool,allocator:runtime.Allocator,entry:^Data_Source,band:f32=0) -> bool {
-        if len(g.blocks)==0 {return true}
+        if !g.paged {return true}
         from,to:=grid_pages(g,low,high)
-        for pz in from.z..=to.z {for py in from.y..=to.y {for px in from.x..=to.x {
-            i:=px+g.counts.x*(py+g.counts.y*pz)
-            if !grid_absent(g,i) {continue}
-            if !grid_page_read(g,i,file,valid,allocator) {return false}
+        for pz in from.z..=to.z {for py in from.y..=to.y {for px:=from.x;px<=to.x; {
+            slot,_:=grid_find(g,{px,py,pz})
+            if slot<0 {
+                span,_:=grid_uniform_span(g,{px,py,pz})
+                px+=max(span,1)
+                continue
+            }
+            px+=1
+            id:=grid_page_id(g,{px-1,py,pz})
+            if !grid_absent(g,id) {continue}
+            if !grid_page_read(g,id,file,valid,allocator) {return false}
             when T==f32 {
-                if band>0 && !distances_within(g.pages[i].values,band) {
-                    shared_free(g.pages[i].values)
-                    g.pages[i].values=nil
+                if band>0 && !distances_within(g.pages[slot].values,band) {
+                    shared_free(g.pages[slot].values)
+                    g.pages[slot].values=nil
                     return false
                 }
             }
             if entry!=nil {
-                first,last:=grid_page_region(g,i)
+                first,last:=grid_page_region(g,id)
                 data_pages_arrived(entry,first,last)
             }
         }}}
@@ -146,7 +180,7 @@ source_region_read :: proc(s:^Source,low,high:[3]int,entry:^Data_Source=nil) -> 
 @(private)
 data_pages_arrived :: proc(entry:^Data_Source,low,high:[3]int) {
     s:=&entry.source
-    halo:=s.kind==.Volume?volume_halo(s):max(int(s.chunk_cells)/2,LAYER_RULE_SAMPLES)+2
+    halo:=s.kind==.Volume?VOLUME_HALO:max(int(s.chunk_cells)/2,LAYER_RULE_SAMPLES)+2
     cells:=int(s.chunk_cells)
     counts:=chunk_counts(s)
     from,to:[3]int
@@ -164,15 +198,18 @@ data_pages_arrived :: proc(entry:^Data_Source,low,high:[3]int) {
 @(private)
 source_weights_read_all :: proc(s:^Source) -> bool {
     g:=&s.weights
-    for i in 0..<len(g.blocks) {if !grid_page_read(g,i,s.file,weights_full,s.allocator) {return false}}
+    if !g.paged {return true}
+    for slot in 0..<len(g.pages) {
+        if id:=grid_id(g,slot);id>=0 && !grid_page_read(g,id,s.file,weights_full,s.allocator) {return false}
+    }
     return true
 }
 
-// Lets go of the values of page i: with edits, they stay in a block of its
-// own first. False without memory, with the page as it was.
+// Lets go of the values of the page a slot holds: with edits, they stay in a
+// block of its own first. False without memory, with the page as it was.
 @(private)
-grid_page_leave :: proc(g:^Grid($T),i:int,allocator:runtime.Allocator) -> bool {
-    page,block:=&g.pages[i],&g.blocks[i]
+grid_page_leave :: proc(g:^Grid($T),slot:int,allocator:runtime.Allocator) -> bool {
+    page,block:=&g.pages[slot],&g.blocks[slot]
     if page.values==nil {return true}
     if block.edited || block.size==0 {
         if page_uniform(page.values) {
@@ -182,7 +219,7 @@ grid_page_leave :: proc(g:^Grid($T),i:int,allocator:runtime.Allocator) -> bool {
             writer:Page_Writer
             if !page_writer_init(&writer,context.temp_allocator) {return false}
             defer page_writer_destroy(&writer)
-            extent,_:=grid_page_extent(g,i)
+            extent,_:=grid_page_extent(g,grid_id(g,slot))
             encoded,ok:=page_encode(&writer,page.values,extent.x,false)
             if !ok {return false}
             own,made:=shared_make(u8,len(encoded),allocator)
@@ -198,36 +235,48 @@ grid_page_leave :: proc(g:^Grid($T),i:int,allocator:runtime.Allocator) -> bool {
     return true
 }
 
-// Lets go of the pages of the grids of a paged source that needed does not
-// mark, by page of its grid of samples (source_samples_grid); returns how
-// many left. The holes of a Heightfield, a sample fewer, share its pages.
+// Lets go of the pages of the grids of a paged source that chunk_pages_mark
+// did not mark since the last call, and forgets the marks; returns how many
+// left.
 @(private)
-source_pages_leave :: proc(s:^Source,needed:[]bool) -> (left:int) {
+source_pages_leave :: proc(s:^Source) -> (left:int) {
     if !source_paged(s) {return}
-    leave :: proc(g:^Grid($T),needed:[]bool,counts:[3]int,allocator:runtime.Allocator) -> (left:int) {
-        if len(g.blocks)==0 {return}
-        for page,i in g.pages {
-            if page.values==nil {continue}
-            q:=[3]int{i%g.counts.x,i/g.counts.x%g.counts.y,i/(g.counts.x*g.counts.y)}
-            at:=q.x+counts.x*(q.y+counts.y*q.z)
-            if at<len(needed) && needed[at] {continue}
-            if grid_page_leave(g,i,allocator) {left+=1}
+    leave :: proc(g:^Grid($T),allocator:runtime.Allocator) -> (left:int) {
+        if !g.paged {return}
+        for &page,slot in g.pages {
+            kept:=page.kept
+            page.kept=false
+            if kept || page.values==nil || grid_id(g,slot)<0 {continue}
+            if grid_page_leave(g,slot,allocator) {left+=1}
         }
         return
     }
-    if s.kind==.Volume {return leave(&s.distances,needed,s.distances.counts,s.allocator)+leave(&s.weights,needed,s.distances.counts,s.allocator)}
-    counts:=s.heights.counts
-    return leave(&s.heights,needed,counts,s.allocator)+leave(&s.weights,needed,counts,s.allocator)+leave(&s.holes,needed,counts,s.allocator)
+    if s.kind==.Volume {return leave(&s.distances,s.allocator)+leave(&s.weights,s.allocator)}
+    return leave(&s.heights,s.allocator)+leave(&s.weights,s.allocator)+leave(&s.holes,s.allocator)
 }
 
-// Marks in needed, by page of the grid of samples, the pages a build of chunk index reads.
+// Marks the pages of the grids of a source a build of chunk index reads, for
+// source_pages_leave to keep.
 @(private)
-chunk_pages_mark :: proc(s:^Source,index:int,needed:[]bool) {
+chunk_pages_mark :: proc(s:^Source,index:int) {
     low,high,ok:=chunk_pages_region(s,index)
-    if !ok {return}
-    g:=source_samples_grid(s)
-    from,to:=grid_pages(g,low,high)
-    for pz in from.z..=to.z {for py in from.y..=to.y {for px in from.x..=to.x {needed[px+g.counts.x*(py+g.counts.y*pz)]=true}}}
+    if ok {region_pages_mark(s,low,high)}
+}
+
+// Marks the pages of the grids of a source over an inclusive region of
+// samples, for source_pages_leave to keep.
+@(private)
+region_pages_mark :: proc(s:^Source,low,high:[3]int) {
+    mark :: proc(g:^Grid($T),low,high:[3]int) {
+        if !g.paged {return}
+        from,to:=grid_pages(g,low,high)
+        for pz in from.z..=to.z {for py in from.y..=to.y {for px in from.x..=to.x {
+            if px>=g.counts.x || py>=g.counts.y || pz>=g.counts.z {continue}
+            if slot,_:=grid_find(g,{px,py,pz});slot>=0 {g.pages[slot].kept=true}
+        }}}
+    }
+    if s.kind==.Volume {mark(&s.distances,low,high);mark(&s.weights,low,high);return}
+    mark(&s.heights,low,high);mark(&s.weights,low,high);mark(&s.holes,low,high)
 }
 
 // What differs between next, read again, and g of the same size: next takes
@@ -236,40 +285,51 @@ chunk_pages_mark :: proc(s:^Source,index:int,needed:[]bool) {
 // the pages of g as the file does, quantize as grid_put_document.
 @(private)
 grid_take :: proc(next,g:^Grid($T),writer:^Page_Writer,quantize:bool) -> (low,high:[3]int,changed:bool) {
-    if next.size!=g.size || len(next.pages)!=len(g.pages) {
+    whole :: proc(next,g:^Grid($T)) -> (low,high:[3]int,changed:bool) {
         for axis in 0..<3 {high[axis]=max(next.size[axis],g.size[axis])-1}
         return {},high,true
     }
+    if next.size!=g.size {return whole(next,g)}
+    if grid_none(next) {return}
+    // Parts neither holds that read another value: all of it may differ.
+    if !grid_parts_same(next,g) {return whole(next,g)}
     low,high=next.size,{-1,-1,-1}
     uniform :: proc(values:[]$T,fill:T) -> bool {
         for value in values {if value!=fill {return false}}
         return true
     }
-    for &page,i in next.pages {
-        old:=&g.pages[i]
+    for cursor:=0;true; {
+        id,following,found:=grid_held_next(next,g,cursor)
+        if !found {break}
+        cursor=following
+        page,old:=grid_page(next,id),grid_page(g,id)
+        block,old_block:=grid_block(next,id),grid_block(g,id)
+        old_absent:=grid_absent(g,id)
         same:bool
         switch {
         case page.values!=nil:
-            if old.values!=nil {same=mem.compare(mem.slice_to_bytes(page.values),mem.slice_to_bytes(old.values))==0} else if !grid_absent(g,i) {same=uniform(page.values,old.fill)}
-        case grid_absent(next,i):
-            block:=&next.blocks[i]
+            if old.values!=nil {same=mem.compare(mem.slice_to_bytes(page.values),mem.slice_to_bytes(old.values))==0} else if !old_absent {same=uniform(page.values,old.fill)}
+        case grid_absent(next,id):
             if old.values!=nil {
-                if len(g.blocks)>0 && !g.blocks[i].edited {
-                    same=g.blocks[i].size>0 && g.blocks[i].hash==block.hash
+                if g.paged && !old_block.edited {
+                    same=old_block.size>0 && old_block.hash==block.hash
                 } else {
-                    extent,_:=grid_page_extent(g,i)
+                    extent,_:=grid_page_extent(g,id)
                     encoded,ok:=page_encode(writer,old.values,extent.x,quantize)
                     same=ok && base.hash64(encoded)==block.hash
                 }
-                if same {page.values,old.values=old.values,nil}
-            } else if grid_absent(g,i) {
-                same=g.blocks[i].hash==block.hash
+                if same {
+                    next.pages[grid_slot(next,id)].values=old.values
+                    g.pages[grid_slot(g,id)].values=nil
+                }
+            } else if old_absent {
+                same=old_block.hash==block.hash
             }
         case:
-            if old.values!=nil {same=uniform(old.values,page.fill)} else {same=!grid_absent(g,i) && old.fill==page.fill}
+            if old.values!=nil {same=uniform(old.values,page.fill)} else {same=!old_absent && old.fill==page.fill}
         }
         if same {continue}
-        first,last:=grid_page_region(next,i)
+        first,last:=grid_page_region(next,id)
         for axis in 0..<3 {low[axis]=min(low[axis],first[axis]);high[axis]=max(high[axis],last[axis])}
         changed=true
     }
@@ -280,27 +340,20 @@ grid_take :: proc(next,g:^Grid($T),writer:^Page_Writer,quantize:bool) -> (low,hi
 // the pages keep it when they leave.
 @(private)
 source_pages_edited :: proc(s:^Source) {
-    for &block,i in s.weights.blocks {if s.weights.pages[i].values!=nil {block.edited=true}}
+    if !s.weights.paged {return}
+    for &block,slot in s.weights.blocks {if s.weights.pages[slot].values!=nil {block.edited=true}}
 }
 
 // Whether the four samples around cell c,r of a Heightfield are in memory.
 cell_held :: #force_inline proc "contextless" (s:^Source,c,r:int) -> bool {
-    if len(s.heights.blocks)==0 {return true}
     g:=&s.heights
+    if !g.paged {return true}
     return !grid_absent(g,c/PAGE+g.counts.x*(r/PAGE)) && !grid_absent(g,(c+1)/PAGE+g.counts.x*(r/PAGE)) && !grid_absent(g,c/PAGE+g.counts.x*((r+1)/PAGE)) && !grid_absent(g,(c+1)/PAGE+g.counts.x*((r+1)/PAGE))
 }
 
 // Whether the samples of a Volume from low to high, inclusive, are in memory.
 volume_held :: proc "contextless" (s:^Source,low,high:[3]int) -> bool {
-    held :: proc "contextless" (g:^Grid($T),low,high:[3]int) -> bool {
-        if len(g.blocks)==0 {return true}
-        from,to:=grid_pages(g,low,high)
-        for pz in from.z..=to.z {for py in from.y..=to.y {for px in from.x..=to.x {
-            if grid_absent(g,px+g.counts.x*(py+g.counts.y*pz)) {return false}
-        }}}
-        return true
-    }
-    return held(&s.distances,low,high) && held(&s.weights,low,high)
+    return !grid_region_absent(&s.distances,low,high) && !grid_region_absent(&s.weights,low,high)
 }
 
 // The height of a Heightfield at a local point x,z, as source_height; ok is

@@ -19,8 +19,9 @@ import "mirai:std/base"
 import_model :: proc(path:string,formats:[]Format,options:Import_Options={},allocator:=context.allocator) -> (model:Imported_Model,error:Error) {
     caller:=context.temp_allocator
     settings,stored:=options.settings,false
-    if !options.ignore_stored {
-        kept,found,settings_error:=settings_load(path)
+    // Without a root the sidecar is with what the import writes, which whoever writes it reads.
+    if !options.ignore_stored && options.root!="" {
+        kept,found,settings_error:=settings_load(path,options.root)
         if settings_error.code!=.None {return {},settings_error}
         if found {settings,stored=kept,true}
     }
@@ -38,6 +39,7 @@ import_model :: proc(path:string,formats:[]Format,options:Import_Options={},allo
     r.meshes.allocator=context.temp_allocator;r.materials.allocator=context.temp_allocator;r.images.allocator=context.temp_allocator
     r.nodes.allocator=context.temp_allocator;r.warnings.allocator=context.temp_allocator;r.image_rows.allocator=context.temp_allocator
     r.programs.allocator=context.temp_allocator
+    r.files.allocator=context.temp_allocator
     r.animations.allocator=context.temp_allocator
     r.skeletons.allocator=context.temp_allocator
     r.material_names.allocator=context.temp_allocator;r.mesh_names.allocator=context.temp_allocator
@@ -169,5 +171,7 @@ model_finish :: proc(r:^Reader,model:^Imported_Model) -> bool {
     model.warnings=own_slice(r,r.warnings[:])
     model.programs=make([]string,len(r.programs),r.out)
     for program,i in r.programs {model.programs[i]=own(r,program)}
+    model.files=make([]string,len(r.files),r.out)
+    for file,i in r.files {model.files[i]=own(r,file)}
     return true
 }

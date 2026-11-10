@@ -169,7 +169,7 @@ surfaces (an interior cavity has opposite orientation).
 
 `simplify` is the only simplifier of the engine: a port of meshoptimizer 1.3's with its same `f32`
 arithmetic and its same order, which gives its indices byte for byte. The importer levels, the
-`Mesh` collision, the `Mesh` sections of the terrain, the levels that the renderer gives to a
+`Mesh` collision, the levels that the renderer gives to a
 published mesh without levels and the cluster DAG use it.
 
 - **Shape.** That of meshoptimizer: it writes into `destination` (may be `indices`) the indices of

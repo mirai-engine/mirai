@@ -250,10 +250,9 @@ A `--<part>-only` flag after `--` regenerates only one part
   `church_fog`, with the meshes of the render plugins' scenes.
 - `--ai-only`: scene `ai` and the horde's wave and zombie-kind tables.
 - `--sky-only`: scene `sky`, the atmosphere over a plain with mountains.
-- `--interface-only`: scene `interface`, the English texts of its `.ui` (which are the source) and
-  their Spanish
-  translation (`INTERFACE_TEXTS`, by key), the icons of its objects and the tables of objects and
-  of the conversation (`tools/demo_content/records.odin` writes a table with fixed ids).
+- `--interface-only`: scene `interface`, the icons of its objects, the tables of objects and of
+  the conversation (`tools/demo_content/records.odin` writes a table with fixed ids) and the
+  `.strings` of their texts, in English and Spanish.
 - `--animation-only`: imports Mirai and writes the [animation gallery](animation-gallery.md): the
   locomotion and gallery clips of Mirai and their programs, the taller
   Mirai and its baked clips, the spider, the rig chains, the morph jellies and the scene
@@ -289,10 +288,11 @@ Content:
   camera carries `Exposure`: the viewport and the game expose the same.
 - **Imports** (`sources.odin`, with `cook/import/sources.import_source`, like the editor and
   `mirai import`): each image of `source/textures` is a `.tex` read according to the end of its name
-  (`_normal`, `_orm`, other: sRGB color). Those that show masked materials are imported with their
-  cutoff and write their `.import`, so that the editor and `mirai import` give the same texture.
-  Each model of `source/models` is a folder with its meshes, materials and the prefab of its nodes.
-  Re-importing keeps the ids
+  (`_normal`, `_orm`, other: sRGB color) the first time, and as its sidecar says from then on. Those
+  that show masked materials are imported with their cutoff. Each model of `source/models` is a
+  folder with its materials and the prefab of its nodes. The textures and the meshes are not
+  versioned: they are in `demo/.mirai/imported`, which `mirai build` makes again from the sources.
+  Re-importing keeps the ids, which the sidecars list
   ([identity](../../mirai-imports/references/imports.md#identity-and-reimport)), and what the
   demo generates over what was imported reads them from there (`imported.odin`); what it generates
   on its own uses `asset.content_id`. What did not change is kept

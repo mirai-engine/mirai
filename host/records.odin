@@ -98,7 +98,6 @@ records_free :: proc(app:^App) {
 record_set_free :: proc(app:^App,set:^core.Record_Set) {
     delete(set.tables,app.allocator);delete(set.rows,app.allocator);delete(set.index,app.allocator)
     mem.free_bytes(set.values,app.allocator)
-    delete(set.texts,app.allocator);delete(set.text,app.allocator)
     generation:=set.generation
     set^={generation=generation}
 }
@@ -211,8 +210,6 @@ records_load :: proc(app:^App,index:int) -> bool {
     tables:=make([dynamic]core.Record_Table,app.allocator)
     rows:=make([dynamic]core.Record_Row,app.allocator)
     values:=make([dynamic]u8,app.allocator)
-    texts:=make([dynamic]core.Record_Text,app.allocator)
-    text:=make([dynamic]u8,app.allocator)
     failed:=0
     for file in files {
         a:asset.Asset
@@ -230,29 +227,22 @@ records_load :: proc(app:^App,index:int) -> bool {
         base.text_set(table.name[:],file.path)
         append(&tables,table)
         for id,row in view.ids {append(&rows,core.Record_Row{table=file.id,row=core.Record_Id(id),name=view.names[row]})}
-        for &entry in view.texts {
-            language:=serial.text_field(entry.language[:])
-            append(&texts,core.Record_Text{text=entry.text,language=language==""?0:base.name_hash(language),offset=u32(len(text)),length=entry.length})
-            append(&text,..view.text[entry.offset:][:entry.length])
-        }
     }
     // Rows are read in place as values of T: their block has its alignment.
     defer delete(values)
     block,block_error:=mem.alloc_bytes_non_zeroed(len(values),max(info.info.align,16),app.allocator)
     order,error:=records_index(rows[:],app.allocator)
     if error!=nil || block_error!=nil {
-        delete(tables);delete(rows);delete(texts);delete(text);delete(order,app.allocator)
+        delete(tables);delete(rows);delete(order,app.allocator)
         mem.free_bytes(block,app.allocator)
         return false
     }
     copy(block,values[:])
-    slice.sort_by(texts[:],proc(a,b:core.Record_Text) -> bool {return a.text<b.text || a.text==b.text && a.language<b.language})
     load:=&app.records.sets[index]
     record_set_free(app,&load.set)
     load.set.size=size
     load.set.tables,load.set.rows,load.set.index=tables[:],rows[:],order
     load.set.values=block
-    load.set.texts,load.set.text=texts[:],text[:]
     load.set.generation+=1
     load.failed=failed
     return true

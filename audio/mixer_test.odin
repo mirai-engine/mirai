@@ -40,7 +40,7 @@ test_mono :: proc(t:^testing.T,m:^Mixer,frames:int,value:proc(i:int) -> f32,rate
     return sound
 }
 @(private) test_one :: proc(i:int) -> f32 {return 1}
-@(private) test_ramp :: proc(i:int) -> f32 {return f32(i+1)}
+@(private) test_ramp :: proc(i:int) -> f32 {return f32(i+1)/(1<<17)} // under full scale, exact
 @(private) test_small :: proc(i:int) -> f32 {return f32(i%7)*0.125-0.25}
 @(private)
 test_near :: proc(t:^testing.T,got,want:f32,tolerance:f32=1e-5,loc:=#caller_location) -> bool {
@@ -170,7 +170,7 @@ mono_voice_follows_the_constant_power_pan_law :: proc(t:^testing.T) {
         {1,1,0,1},
         {0.5,1,math.cos_f32(3*math.PI/8),math.sin_f32(3*math.PI/8)},
         {0,0.5,half*0.5,half*0.5},
-        {-1,2,2,0},
+        {-1,0.75,0.75,0},
         {-7,1,1,0}, // clamped
     }
     for c in cases {
@@ -298,7 +298,7 @@ pitch_is_clamped_and_zero_means_as_recorded :: proc(t:^testing.T) {
     for i in 0..<4 {test_near(t,out[i*2],test_ramp(8+i*int(PITCH_MAX)),0)}
     voice_set_pitch(m,voice,-3)
     out=test_render(m,2)
-    test_near(t,out[2]-out[0],1,0)
+    test_near(t,out[2]-out[0],test_ramp(1)-test_ramp(0),0)
 }
 
 @(test)
@@ -327,7 +327,7 @@ loop_seam_has_no_gap_and_no_repeated_frame :: proc(t:^testing.T) {
         want:=a if i%2==0 else (a+b)*0.5
         if !test_near(t,out[i*2],want,1e-4) {break}
     }
-    test_near(t,out[199*2],(100+1)*0.5,1e-4)
+    test_near(t,out[199*2],(test_ramp(99)+test_ramp(0))*0.5,1e-4)
     // Told to stop looping, it plays to the end of the sound and ends there.
     voice_set_loop(m,voice,false)
     out=test_render(m,600)
@@ -344,11 +344,11 @@ sound_that_ends_is_followed_by_silence_and_its_voice_dies :: proc(t:^testing.T) 
     voice:=voice_play(m,test_stereo(t,m,300,test_ramp))
     testing.expect(t,voice_valid(m,voice))
     out:=test_render(m,256)
-    test_near(t,out[255*2],256,0)
+    test_near(t,out[255*2],test_ramp(255),0)
     mixer_update(m)
     testing.expect(t,voice_valid(m,voice))
     out=test_render(m,256)
-    test_near(t,out[43*2],300,0)
+    test_near(t,out[43*2],test_ramp(299),0)
     test_near(t,out[44*2],0,0)
     // The handle is valid until an update has seen the end.
     testing.expect(t,voice_valid(m,voice))
@@ -484,7 +484,7 @@ pause_keeps_the_place_and_resume_goes_on_from_it :: proc(t:^testing.T) {
     voice_set_paused(m,held,false)
     out=test_render(m,CHUNK_FRAMES)
     // Ramped in over the chunk: by its end the sound is at its level, 256 frames in.
-    test_near(t,out[(CHUNK_FRAMES-1)*2],test_ramp(CHUNK_FRAMES-1)*f32(CHUNK_FRAMES-1)/CHUNK_FRAMES,1e-2)
+    test_near(t,out[(CHUNK_FRAMES-1)*2],test_ramp(CHUNK_FRAMES-1)*f32(CHUNK_FRAMES-1)/CHUNK_FRAMES,test_ramp(0)/100)
     voice_set_paused(m,held,true)
     test_render(m,CHUNK_FRAMES*3)
     voice_set_paused(m,held,false)
@@ -506,17 +506,19 @@ oldest_voice_of_the_lowest_priority_is_stolen :: proc(t:^testing.T) {
     defer mixer_destroy(m)
     desc:=VOICE_DEFAULT
     desc.loop=true
+    // Volumes that tell the voices apart in their sum, under full scale.
+    unit:=f32(1.0/32768)
     one:=test_stereo(t,m,64,test_one)
-    desc.volume=1;desc.priority=5
+    desc.volume=unit;desc.priority=5
     important:=voice_play(m,one,desc)
-    desc.volume=10;desc.priority=1
+    desc.volume=10*unit;desc.priority=1
     old:=voice_play(m,one,desc)
-    desc.volume=100
+    desc.volume=100*unit
     young:=voice_play(m,one,desc)
     out:=test_render(m,CHUNK_FRAMES)
-    test_near(t,out[0],111,1e-4)
+    test_near(t,out[0],111*unit,1e-4*unit)
     // No voice is free: the new one takes the place of the oldest of priority 1.
-    desc.volume=1000;desc.priority=1
+    desc.volume=1000*unit;desc.priority=1
     newest:=voice_play(m,one,desc)
     testing.expect(t,newest!=0 && newest!=old)
     testing.expect(t,!voice_valid(m,old))
@@ -524,9 +526,9 @@ oldest_voice_of_the_lowest_priority_is_stolen :: proc(t:^testing.T) {
     testing.expect_value(t,mixer_stats(m).voices_stolen,u64(1))
     // The stolen sound leaves over one chunk while the new one is already there.
     out=test_render(m,CHUNK_FRAMES*2)
-    test_near(t,out[0],1111,1e-3)
-    test_near(t,out[(CHUNK_FRAMES/2)*2],1106,1e-2)
-    test_near(t,out[CHUNK_FRAMES*2],1101,1e-3)
+    test_near(t,out[0],1111*unit,1e-3*unit)
+    test_near(t,out[(CHUNK_FRAMES/2)*2],1106*unit,1e-2*unit)
+    test_near(t,out[CHUNK_FRAMES*2],1101*unit,1e-3*unit)
     testing.expect_value(t,mixer_stats(m).voices_active,3)
     // The old handle does nothing to the voice that took its slot.
     testing.expect(t,!voice_stop(m,old))
@@ -535,16 +537,16 @@ oldest_voice_of_the_lowest_priority_is_stolen :: proc(t:^testing.T) {
     testing.expect_value(t,voice_play(m,one,desc),Voice(0))
     testing.expect_value(t,mixer_stats(m).voices_rejected,u64(1))
     // A higher priority steals from the lowest there is.
-    desc.priority=9;desc.volume=10000
+    desc.priority=9;desc.volume=10000*unit
     top:=voice_play(m,one,desc)
     testing.expect(t,top!=0 && !voice_valid(m,young) && voice_valid(m,newest) && voice_valid(m,important))
     // Stolen twice before a single chunk: only the last one plays there.
-    desc.priority=9;desc.volume=20000
+    desc.priority=9;desc.volume=20000*unit
     again:=voice_play(m,one,desc)
     testing.expect(t,again!=0 && !voice_valid(m,newest))
     test_render(m,CHUNK_FRAMES)
     out=test_render(m,4)
-    test_near(t,out[0],30001,1e-2)
+    test_near(t,out[0],30001*unit,1e-2*unit)
     // Ended voices free their slots: nothing is stolen for the next one.
     voice_stop(m,top);voice_stop(m,again);voice_stop(m,important)
     test_render(m,CHUNK_FRAMES)
@@ -558,7 +560,7 @@ oldest_voice_of_the_lowest_priority_is_stolen :: proc(t:^testing.T) {
 full_command_queue_refuses_instead_of_blocking :: proc(t:^testing.T) {
     m:=test_mixer(t,{command_capacity=4})
     defer mixer_destroy(m)
-    sound:=test_stereo(t,m,64,test_one)
+    sound:=test_stereo(t,m,64,proc(i:int) -> f32 {return 0.25})
     voices:[4]Voice
     for &voice in voices {
         voice=voice_play(m,sound)
@@ -572,7 +574,7 @@ full_command_queue_refuses_instead_of_blocking :: proc(t:^testing.T) {
     testing.expect_value(t,mixer_stats(m).commands_dropped,u64(4))
     testing.expect_value(t,bus_volume(m,BUS_MASTER),f32(1))
     out:=test_render(m,1)
-    test_near(t,out[0],4,0)
+    test_near(t,out[0],1,0)
     // The slot of the voice that was not played is still free.
     testing.expect(t,voice_play(m,sound)!=0)
     testing.expect(t,voice_set_volume(m,voices[0],0.5))
@@ -584,7 +586,7 @@ destroyed_sound_ends_its_voices_and_is_freed_by_an_update :: proc(t:^testing.T) 
     defer mixer_destroy(m)
     desc:=VOICE_DEFAULT
     desc.loop=true
-    doomed:=test_stereo(t,m,64,test_one)
+    doomed:=test_stereo(t,m,64,proc(i:int) -> f32 {return 0.5})
     kept:=test_stereo(t,m,64,test_ramp)
     testing.expect_value(t,mixer_stats(m).sounds,2)
     _,full:=sound_create(m,{0,0},2,RATE)
@@ -659,6 +661,7 @@ steady_playback_allocates_nothing :: proc(t:^testing.T) {
     defer mixer_destroy(m)
     sounds:=[2]Sound{test_mono(t,m,300,test_small,44100),test_stereo(t,m,500,test_small)}
     bus,_:=bus_create(m)
+    sent,_:=bus_create(m)
     out:=make([]f32,480*2)
     defer delete(out)
     count:=0
@@ -667,7 +670,8 @@ steady_playback_allocates_nothing :: proc(t:^testing.T) {
         context.temp_allocator=test_no_allocator(&count)
         for frame in 0..<200 {
             desc:=VOICE_DEFAULT
-            desc.bus=bus if frame%2==0 else BUS_MASTER
+            desc.bus=([3]Bus{bus,BUS_MASTER,sent})[frame%3]
+            desc.volume=4 // the limiter holds them
             desc.spatial=frame%3==0;desc.position={f32(frame%7)-3,0,-2};desc.doppler=1
             desc.loop=frame%5==0;desc.pitch=0.5+f32(frame%4)*0.4;desc.fade_in=0.01
             voice:=voice_play(m,sounds[frame%2],desc)
@@ -680,6 +684,7 @@ steady_playback_allocates_nothing :: proc(t:^testing.T) {
             bus_set_volume(m,bus,0.5+f32(frame%2)*0.5)
             bus_set_lowpass(m,bus,2000 if frame%10<5 else 0)
             bus_set_duck(m,bus,{source=BUS_MASTER,threshold=0.1,amount=0.5,attack=0.01,release=0.1})
+            bus_set_send(m,sent,bus if frame%7<3 else BUS_MASTER)
             mixer_render(m,out)
             mixer_update(m)
             _=mixer_stats(m)

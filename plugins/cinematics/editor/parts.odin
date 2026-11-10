@@ -17,9 +17,6 @@ import cine "plugins:cinematics/runtime"
 
 Part :: enum u8 {Timeline,Shot,Actor}
 
-// What the clip of a timeline lasts in the tool before it has one.
-EMPTY_SECONDS :: 5
-
 // The timeline an entity belongs to: itself, or the one its shot or viewer
 // names, or the one whose clip moves it.
 timeline_of :: proc(w:core.World_Ref,e:core.Entity) -> core.Entity {
@@ -30,25 +27,10 @@ timeline_of :: proc(w:core.World_Ref,e:core.Entity) -> core.Entity {
     return core.NONE
 }
 
-// Ticks per second of the fixed loop, as the settings of the project have it.
-tick_rate :: proc(s:^editor.Session) -> f32 {
-    if s.app!=nil && s.app.shared!=nil {
-        if settings:=core.world_storage_of(core.world_ref(s.app.shared,s.app.info,.Shared),core.Simulation_Settings);settings!=nil && settings.tick_rate>0 {return f32(settings.tick_rate)}
-    }
-    return f32(core.SIMULATION_SETTINGS_DEFAULT.tick_rate)
-}
-
 component_write :: proc(s:^editor.Session,w:core.World_Ref,e:core.Entity,value:$T) -> bool {
     value:=value
     _,info:=core.world_table(w,T)
     return editor.field_write(s,info,{e},0,mem.ptr_to_bytes(&value))
-}
-
-// The seconds the clip of a timeline lasts, as the animation of the world plays it; EMPTY_SECONDS
-// while it has none.
-duration_of :: proc(w:core.World_Ref,timeline:core.Entity) -> f32 {
-    if _,duration,_,ok:=anim.animation_progress(core.world_storage_of(w,anim.Playback),timeline);ok && duration>0 {return duration}
-    return EMPTY_SECONDS
 }
 
 Part_Desc :: struct {

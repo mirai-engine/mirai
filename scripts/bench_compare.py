@@ -14,11 +14,11 @@ numbers of two checkouts compare.
   demo          start-up, memory, idle view, an entity moved every frame, a selection, Play
   scale         a grid of --cubes cubes: load, idle view, an entity moved every frame
   playgpu       the GPU by pass in the view of the editor and in Play
-  batch         scene.batch of 64 cubes as the scene grows to --cubes
+  batch         scene.write of 64 cubes as the scene grows to --cubes
   simulation    floor, collider-only wall and dynamic box
   physics       native CCD or destruction wall benchmark without editor or GPU
   netpublish    entity state publication without solver, GPU or connected clients
-  fade          one Tint.alpha changed in a grid of --cubes cubes
+  fade          one Material_Values.color alpha changed in a grid of --cubes cubes
   particles     four emitters of 25 000 particles a second, additive and unlit, then blended and lit
   particlelights  four emitters of 256 particle lights each, casting shadows and then not
   terrain       hover and held sculpt on a terrain fixture supplied by --scene
@@ -335,8 +335,13 @@ def measure_view(b: Bench, prefix: str, metrics: dict, passes: dict, parts: dict
     metrics[f"{prefix}_visible_instances"] = int(status.get("visible_instances") or 0)
 
 
+def merge(*entities: dict) -> dict:
+    """The params of a scene.write that adds or changes these entities and leaves the rest."""
+    return {"merge": True, "entities": list(entities)}
+
+
 def move_params(entity, position, offset: float) -> dict:
-    return {"id": entity, "position": [position[0] + offset, position[1], position[2]]}
+    return merge({"id": entity, "position": [position[0] + offset, position[1], position[2]]})
 
 
 def measure_move(b: Bench, prefix: str, entity, position, metrics: dict, passes: dict, parts: dict):
@@ -344,7 +349,7 @@ def measure_move(b: Bench, prefix: str, entity, position, metrics: dict, passes:
     for i in range(1, 41):
         time.sleep(0.04)
         started = time.perf_counter()
-        rpc(b, "scene.set", move_params(entity, position, 0.01 * i))
+        rpc(b, "scene.write", move_params(entity, position, 0.01 * i))
         edits.append((time.perf_counter() - started) * 1000)
         step(b, 1)
         status = rpc(b, "engine.status")
@@ -355,7 +360,7 @@ def measure_move(b: Bench, prefix: str, entity, position, metrics: dict, passes:
     cpu = b.clock.now()
     started = time.perf_counter()
     for i in range(1, frames + 1):
-        rpc(b, "scene.set", move_params(entity, position, 0.4 - 0.002 * i))
+        rpc(b, "scene.write", move_params(entity, position, 0.4 - 0.002 * i))
         step(b, 1)
         if i % 30 == 0:
             status = rpc(b, "engine.status")
@@ -461,8 +466,8 @@ def scenario_particles(b: Bench):
         rpc(b, "camera.set", {"position": [0, 2.2, 8.5], "target": [0, 1.1, 0]})
         emitters = []
         for index in range(4):
-            added = rpc(b, "scene.add", {"preset": "particles", "name": f"Bench particles {index}",
-                                         "position": [index * 1.5 - 2.25, 1.1, 0]})
+            added = rpc(b, "scene.write", merge({"preset": "particles", "name": f"Bench particles {index}",
+                                                 "position": [index * 1.5 - 2.25, 1.1, 0]}))
             emitters.append(added["id"])
         for variant, look in PARTICLE_VARIANTS.items():
             for entity in emitters:
@@ -507,8 +512,8 @@ def scenario_particlelights(b: Bench):
         rpc(b, "camera.set", {"position": [0, 2.2, 8.5], "target": [0, 1.1, 0]})
         emitters = []
         for index in range(4):
-            added = rpc(b, "scene.add", {"preset": "particles", "name": f"Bench particle lights {index}",
-                                         "position": [index * 1.5 - 2.25, 0.8, 0]})
+            added = rpc(b, "scene.write", merge({"preset": "particles", "name": f"Bench particle lights {index}",
+                                                 "position": [index * 1.5 - 2.25, 0.8, 0]}))
             emitters.append(added["id"])
         for variant, shadows in PARTICLE_LIGHT_VARIANTS.items():
             for entity in emitters:
@@ -549,40 +554,38 @@ def grid_position(b: Bench, index: int) -> list[float]:
     return [x, 0.5, z]
 
 
-def grid_operations(b: Bench, first: int) -> list[dict]:
-    return [{"method": "scene.add", "params": {
+def grid_cubes(b: Bench, first: int) -> list[dict]:
+    return [{
         "preset": "cube", "name": f"Cube {i + 1}", "position": grid_position(b, i),
-        "components": {"Mesh_Renderer": {"materials": [MATERIALS[i % 4][1]]}, "Tint": {"color": [0.7, 0.7, 0.7, 1]}},
-    }} for i in range(first, min(first + 64, b.args.cubes))]
+        "components": {"Mesh_Renderer": {"materials": [MATERIALS[i % 4][1]]}, "Material_Values": {"color": [0.7, 0.7, 0.7, 1]}},
+    } for i in range(first, min(first + 64, b.args.cubes))]
 
 
 def delete_roots(b: Bench):
-    for entity in rpc(b, "scene.inspect")["entities"]:
-        if entity.get("parent") is None:
-            rpc(b, "scene.delete", {"entity": entity["id"]})
+    rpc(b, "scene.write", {"entities": []})
 
 
 def grid_new(b: Bench, path: Path):
     """The scene of this engine, built through its API and saved with scene.save."""
     delete_roots(b)
     for first in range(0, b.args.cubes, 64):
-        rpc(b, "scene.batch", {"operations": grid_operations(b, first)})
-    rpc(b, "scene.add", {"preset": "sun", "name": "Daylight", "position": [0, 10, 0]})
+        rpc(b, "scene.write", merge(*grid_cubes(b, first)))
+    rpc(b, "scene.write", merge({"preset": "sun", "name": "Daylight", "position": [0, 10, 0]}))
     rpc(b, "scene.save", {"path": path.as_posix()})
 
 
 def scenario_batch(b: Bench):
-    """Time of scene.batch of 64 cubes as the scene grows."""
+    """Time of a scene.write of 64 cubes as the scene grows."""
     metrics, passes, parts = {}, {}, {}
     engine_start(b, ["--no-gpu"])
     try:
         delete_roots(b)
         for first in range(0, b.args.cubes, 64):
-            operations = grid_operations(b, first)
+            cubes = grid_cubes(b, first)
             started = time.perf_counter()
-            rpc(b, "scene.batch", {"operations": operations})
+            rpc(b, "scene.write", merge(*cubes))
             ms = (time.perf_counter() - started) * 1000
-            count = first + len(operations)
+            count = first + len(cubes)
             if count in (64, 512, 1024, 2048, 4096, 8192):
                 metrics[f"batch_at_{count}_ms"] = rounded(ms, 1)
         metrics["private_mb"] = private_mb(psutil.Process(b.process.pid))
@@ -832,10 +835,10 @@ def scenario_simulation(b: Bench):
     try:
         box = {"Collider": {"kind": "Box", "size": [1, 1, 1]}}
         rpc(b, "scene.new", {"discard": True})
-        rpc(b, "scene.add", {"preset": "cube", "name": "Floor", "position": [0, -0.5, 0], "scale": [10, 0.5, 10], "components": box})
-        wall = rpc(b, "scene.add", {"preset": "cube", "name": "Wall", "position": [-2, 1, 0], "scale": [0.25, 1, 2], "components": box})
-        rpc(b, "scene.add", {"preset": "cube", "name": "Box", "position": [0, 0.51, 0], "scale": [0.5, 0.5, 0.5], "components": {
-            "Rigid_Body": {"type": "Dynamic", "mass": 1, "gravity_scale": 1}, **box}})
+        rpc(b, "scene.write", merge({"preset": "cube", "name": "Floor", "position": [0, -0.5, 0], "scale": [10, 0.5, 10], "components": box}))
+        wall = rpc(b, "scene.write", merge({"preset": "cube", "name": "Wall", "position": [-2, 1, 0], "scale": [0.25, 1, 2], "components": box}))
+        rpc(b, "scene.write", merge({"preset": "cube", "name": "Box", "position": [0, 0.51, 0], "scale": [0.5, 0.5, 0.5], "components": {
+            "Rigid_Body": {"type": "Dynamic", "mass": 1, "gravity_scale": 1}, **box}}))
         rpc(b, "play.start", {"simulate": True})
         rpc(b, "play.step", {"for": 90})
         for phase in ("resting", "moving"):
@@ -925,9 +928,6 @@ def scenario_fade(b: Bench):
     metrics, passes, parts = {}, {}, {}
     engine_start(b)
     try:
-        description = rpc(b, "engine.describe", {"methods": ["scene.set"]})
-        if not description["methods"][0]["params"]["properties"].get("components"):
-            raise BenchError("scene.set does not expose component editing")
         rpc(b, "scene.new", {"discard": True})
         grid_new(b, Path(args.scratch) / f"fade_{b.variant}_{args.cubes}.scene")
         entity = rpc(b, "scene.inspect", {"limit": 1})["entities"][0]["id"]
@@ -940,7 +940,7 @@ def scenario_fade(b: Bench):
             for i in range(args.samples + 16):
                 if phase == "fade":
                     alpha = 0.25 if i % 2 == 0 else 0.75
-                    rpc(b, "scene.set", {"entity": entity, "components": {"Tint": {"color": [0.7, 0.7, 0.7, alpha]}}})
+                    rpc(b, "scene.write", merge({"id": entity, "components": {"Material_Values": {"color": [0.7, 0.7, 0.7, alpha]}}}))
                 step(b, 1)
                 status = rpc(b, "engine.status")
                 if i < 16:

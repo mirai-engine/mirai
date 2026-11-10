@@ -1,5 +1,6 @@
 package terrain
 
+import "base:runtime"
 import "mirai:core"
 import render "mirai:engine/render"
 import scene "mirai:engine/scene"
@@ -46,4 +47,18 @@ layered_chunks :: proc(g:^Test_Terrain) -> (count:int) {
         if look.count>0 {count+=1}
     }
     return
+}
+
+// An allocator that serves remaining allocations of owner and then fails; below 0, all.
+@(private)
+Failing_Allocator :: struct {owner:runtime.Allocator,remaining:int}
+
+@(private)
+failing_allocator :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment:int,old_memory:rawptr,old_size:int,loc:=#caller_location) -> ([]byte,runtime.Allocator_Error) {
+    state:=(^Failing_Allocator)(data)
+    if mode==.Alloc || mode==.Alloc_Non_Zeroed || mode==.Resize || mode==.Resize_Non_Zeroed {
+        if state.remaining==0 {return nil,.Out_Of_Memory}
+        state.remaining-=1
+    }
+    return state.owner.procedure(state.owner.data,mode,size,alignment,old_memory,old_size,loc)
 }

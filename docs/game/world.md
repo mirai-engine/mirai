@@ -37,19 +37,23 @@ A new scene starts with a `Sky` and a `Sun`. Sky luminance is in nits, the sun i
 noon is 100000), point and spot lights in candelas, rect lights in nits.
 
 ```json
-{"method":"scene.add","params":{"name":"Sky","components":{"Sky":{}}}}
-{"method":"scene.add","params":{"preset":"sun"}}
-{"method":"scene.add","params":{"name":"Look","components":{"View_Volume":{"exposure":{"compensation":0.5}}}}}
+{"method":"scene.write","params":{"merge":true,"entities":[
+ {"name":"Sky","components":{"Sky":{}}},
+ {"name":"Sun","preset":"sun"},
+ {"name":"Look","components":{"View_Volume":{"exposure":{"compensation":0.5}}}}]}}
 ```
 
-A component starts from its defaults and takes the fields named. The `sun` preset aims it like the
+`scene.write` is how a scene changes: with `merge` it names only what it adds or changes, and an
+entity is matched by its `id` or its `name`. A component starts from its defaults and takes the
+fields named. The `sun` preset aims it like the
 editor's sun, shining toward its -Z; a `View_Volume` without a `Volume` is the whole scene.
 
 - Sky: `luminance` and an `image` (a 2:1 equirectangular HDR), or `atmosphere=true` for the air
   lit by the sun: turning the sun entity then changes the whole day. One `Sky` is on at a time;
   without one there is no sky light and the background is black. One `Sun` is on at a time.
-- API: `scene.add {"preset":"sun"}` aims it like the editor's sun; `scene.set {"entity":"Sun",
-  "components":{"Sky":{"atmosphere":true}}}` changes only the fields named.
+- API: `"preset":"sun"` aims a new entity like the editor's sun; `scene.write {"root":"Sky",
+  "merge":true,"entities":[{"components":{"Sky":{"atmosphere":true}}}]}` changes only the fields
+  named of the entity `root` names.
 - Indoor: turn the `Sun` off (`"enabled":false`) when the room has no window, keep the `Sky` if
   a window shows it, and light with `Point_Light`, `Spot_Light` and `Rect_Light` (`range` in
   metres; spot and rect lights shine toward their -Z). Emission of materials is in nits.

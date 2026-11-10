@@ -406,7 +406,7 @@ instance_get :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,e:core.Entity,s
         instance.asset,instance.generation,instance.bound,instance.info,instance.changed=asset,content.generation,target,world.info,true
         bind:=Bind{gui=gui,app=app,world=world}
         host_of:=bind_host(&bind)
-        instance.failed=!ui.tree_instance_init(&instance.instance,&content.tree,&host_of,ui_language(&gui.settings,&gui.preferences),gui.allocator)
+        instance.failed=!ui.tree_instance_init(&instance.instance,&content.tree,&host_of,host.app_texts(app),ui_language(&gui.settings,&gui.preferences),gui.allocator)
         if instance.failed {
             failure:=instance.instance.failure
             file:[base.ASSET_ID_TEXT]u8
@@ -628,9 +628,9 @@ screen_retains :: proc(gui:^Gui,ctx:^ui.Context,instance:^Instance,entry:^Planne
 screen_key :: proc(assets:^host.Assets,ctx:^ui.Context,instance:^Instance,entry:^Planned,layer:int,rect:[4]f32) -> u64 {
     revision:=assets.revision if assets!=nil else 0
     // The family of the device shows other prompts, and other texts come with the language.
-    mark:=[11]u64{instance.revision,u64(instance.generation),u64(i64(layer)),u64(entry.passive)|u64(entry.top)<<1,entry.variant,revision,
+    mark:=[12]u64{instance.revision,u64(instance.generation),u64(i64(layer)),u64(entry.passive)|u64(entry.top)<<1,entry.variant,revision,
         u64(transmute(u32)rect.x)<<32|u64(transmute(u32)rect.y),u64(transmute(u32)rect.z)<<32|u64(transmute(u32)rect.w),u64(entry.entity),
-        u64(ctx.game.family),ctx.game.language}
+        u64(ctx.game.family),ctx.game.language,u64(ctx.game.texts.generation) if ctx.game.texts!=nil else 0}
     return base.hash64(mem.slice_to_bytes(mark[:]))
 }
 

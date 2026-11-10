@@ -25,7 +25,7 @@ a_joined_volume_meets_the_ground_on_the_sides_of_its_box_without_a_seam :: proc(
     join:=Chunk_Join{ground=&ground,offset={24,24},lift=-8}
     testing.expect(t,source_volume_ground(&volume,join))
     // A pit in its middle, away from the band.
-    testing.expect(t,source_edit(&volume,{kind=.Remove,center={0,1,0},radius=3,amount=1}).changed)
+    testing.expect(t,source_edit(&volume,{kind=.Carve,center={0,1,0},radius=3,amount=1}).changed)
     mesh:Chunk_Mesh;chunk_mesh_init(&mesh);defer chunk_mesh_destroy(&mesh)
     // Every sample of the Heightfield on the side x of the box is a vertex of the Volume there.
     found:[17]bool
@@ -69,7 +69,7 @@ a_volume_that_joins_a_heightfield_takes_its_cells_and_digs_under_them :: proc(t:
     testing.expect(t,join_test_ground(&ground))
     testing.expect(t,source_make(&volume,.Volume,{17,17,17},1,8))
     testing.expect(t,source_volume_ground(&volume,{ground=&ground,offset={24,24},lift=-8}))
-    testing.expect(t,source_edit(&volume,{kind=.Remove,center={0,1,0},radius=3,amount=1}).changed)
+    testing.expect(t,source_edit(&volume,{kind=.Carve,center={0,1,0},radius=3,amount=1}).changed)
     ground.revision,volume.revision=1,1
     ground_id,volume_id:=base.Asset_Id{91,1},base.Asset_Id{91,2}
     testing.expect_value(t,source_save(&ground,fmt.tprintf("%s/ground.terrain",root),ground_id,&types),asset.Error.None)

@@ -80,6 +80,20 @@ csv_records :: proc(text:string,allocator:=context.allocator) -> (records:[][]st
     return list[:],starts[:],""
 }
 
+// A field of a CSV, in quotes when it holds a comma, a quote or a line break.
+csv_cell :: proc(b:^strings.Builder,cell:string) {
+    if !strings.contains_any(cell,",\"\r\n") {
+        strings.write_string(b,cell)
+        return
+    }
+    strings.write_byte(b,'"')
+    for i in 0..<len(cell) {
+        if cell[i]=='"' {strings.write_byte(b,'"')}
+        strings.write_byte(b,cell[i])
+    }
+    strings.write_byte(b,'"')
+}
+
 // The table of a CSV text of texts. message says what is wrong, naming the
 // line; it lives in allocator, as the table does.
 strings_table :: proc(text:string,allocator:=context.allocator) -> (table:Strings_Table,message:string) {
@@ -153,28 +167,25 @@ import_strings :: proc(path,folder:string,options:Import_Options={},allocator:=c
     report.warnings.allocator=allocator
     report.others.allocator=allocator
     w:Writer
-    ok:=writer_init(&w,folder,options,&report,allocator)
+    ok:=writer_init(&w,path,folder,options,&report,allocator)
     defer asset.types_destroy(&w.types)
     if ok {
-        source:=source_path(options,path)
+        source:=w.source
         name:=filepath.stem(path)
         info:=import_info(source,name,0,u64(len(bytes)),base.hash64(bytes),0,import_version(0))
-        seen:=make(map[string]bool,context.temp_allocator)
-        target:=default_path(&w,&seen,name,".strings")
-        root:int
-        if root,ok=earlier_root(&w,asset.KIND_STRINGS,source,info.source_size,info.source_hash);ok {
-            desc:=asset.Strings_Desc{languages=table.languages[:],keys=table.keys[:],entries=table.entries[:],text=table.text[:],source=&info}
-            if root>=0 {desc.id,target=w.earlier[root].id,w.earlier[root].path} else {desc.id,target=writer_id(&w),fresh_path(&w,target)}
-            existed:=os.exists(target)
-            if save_error:=asset.strings_save(target,&w.types,desc,context.temp_allocator);save_error!=.None {
-                ok=save_failed(&w,save_error,target)
-            } else {
-                record(&w,desc.id,asset.KIND_STRINGS,name,target,source,existed,fmt.tprintf("%d languages, %d keys, %d texts",len(table.languages),len(table.keys),len(table.entries)))
-                if table.missing>0 {
-                    key,language:=table.keys[table.first_missing[0]],table.languages[table.first_missing[1]]
-                    writer_warn(&w,"%s: %d texts are missing, the first one that of %s in %s",path,table.missing,serial.text_field(key.name[:]),serial.text_field(language.code[:]))
-                }
+        desc:=asset.Strings_Desc{languages=table.languages[:],keys=table.keys[:],entries=table.entries[:],text=table.text[:],source=&info}
+        target:string
+        desc.id,target=root_take(&w,asset.KIND_STRINGS,name,".strings")
+        existed:=os.exists(target)
+        if save_error:=asset.strings_save(target,&w.types,desc,context.temp_allocator);save_error!=.None {
+            ok=save_failed(&w,save_error,target)
+        } else {
+            record(&w,desc.id,asset.KIND_STRINGS,name,target,source,existed,fmt.tprintf("%d languages, %d keys, %d texts",len(table.languages),len(table.keys),len(table.entries)))
+            if table.missing>0 {
+                key,language:=table.keys[table.first_missing[0]],table.languages[table.first_missing[1]]
+                writer_warn(&w,"%s: %d texts are missing, the first one that of %s in %s",path,table.missing,serial.text_field(key.name[:]),serial.text_field(language.code[:]))
             }
+            ok=writer_finish(&w)
         }
     }
     if !ok {

@@ -188,9 +188,6 @@ chunk_outline_draw :: proc(s:^editor.Session,source:^terrain.Source,chunk:terrai
     inset:=source.cell*0.15
     low,high:=[2]f32{inset,inset},[2]f32{size.x-inset,size.z-inset}
     flat:=f32(0)
-    if source.kind==.Mesh {
-        if index:=terrain.chunk_index(source,chunk.coord);index>=0 && index<len(source.mesh_chunks) {flat=(source.mesh_chunks[index].low.y+source.mesh_chunks[index].high.y)*0.5-corner.y}
-    }
     color:=LEVEL_COLORS[int(chunk.lod.level)%len(LEVEL_COLORS)]
     width:=chunk.depth>0?f32(3):f32(1.5)
     corners:=[4][2]f32{{low.x,low.y},{high.x,low.y},{high.x,high.y},{low.x,high.y}}

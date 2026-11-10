@@ -293,7 +293,7 @@ Api_Names_Type :: struct {
     names:[1]Api_Names_Value `mirai:"list,label=The values the code declares"`,
 }
 Api_Names_Value :: struct {
-    name:[128]u8 `mirai:"text,label=What a field of the type takes in scene.set and gives back"`,
+    name:[128]u8 `mirai:"text,label=What a field of the type takes in scene.write and gives back"`,
     value:i64,
     project:bool `mirai:"label=Whether the project declares it: names.rename renames only those"`,
 }

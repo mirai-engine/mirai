@@ -7,27 +7,36 @@ import "core:slice"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:engine/gui"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-// The commands mirai ui and mirai scene, which the author program of the
-// engine runs: a project reads, checks and writes the documents of its
-// interfaces and scenes with no editor.
+// The commands mirai ui, mirai scene and mirai texts, which the author
+// program of the engine runs: a project reads, checks and writes the
+// documents of its interfaces and scenes, and the texts of its .strings,
+// with no editor.
 //
 //   read <asset> [--out <file>]   the document of the asset, as ui.inspect or
 //                                 scene.inspect with root give it
-//   read --sources                the document of every asset of the project,
-//                                 each to its file under source/
-//   write <asset> <document>      makes the asset say what the file declares,
-//                                 as ui.write does; an asset that does not
+//   write <asset> <document>      makes the asset say what the file of the
+//                                 document declares, as ui.write and
+//                                 scene.write do; an asset that does not
 //                                 exist yet is made
-//   write <file|folder>...        the same for each document under source/:
-//                                 source/<path>.ui.json is assets/<path>.ui,
-//                                 and so for .scene.json
 //   check [<asset>...]            what the assets, all without one, would fail
 //                                 with in the game
+//   texts list                    every key and what it says in each language,
+//                                 as the CSV translators take
+//   texts set <key> <language> <text>   makes a key say a text in a language,
+//                                 by its code; a key no .strings has is added
+//   texts missing                 who shows a key no .strings has, and the
+//                                 keys that say nothing in a language of the game
+//   texts export <file.csv>       the CSV of list, to a file
+//   texts import <file.csv>       makes the keys of a CSV say its texts
+//
+// The asset is the source: a document is read from it when it is wanted and
+// kept nowhere.
 //
 // The types of the game, which the paths an interface binds and the
 // components of a scene are read against, are those of the library of the
@@ -35,15 +44,14 @@ import "mirai:std/serial"
 // plugins add to the presets. Without it only an interface is read: nothing
 // is written or checked that the game could not be asked about, and the
 // command says what builds the library.
+//
 // Results go to output and failures to errors as "mirai ui write: <asset>:
 // <reason>". Exit codes: 0 done, 1 failed, 2 misuse.
 
-COMMAND_USAGE :: `Usage: mirai ui|scene read <asset> [--out <file>] | read --sources
-       mirai ui|scene write <asset> <document file> | write <file or folder under source/>...
-       mirai ui|scene check [<asset>...]`
-
-// The folder of a project its documents are kept in as text.
-SOURCE_FOLDER :: "source"
+COMMAND_USAGE :: `Usage: mirai ui|scene read <asset> [--out <file>]
+       mirai ui|scene write <asset> <document file>
+       mirai ui|scene check [<asset>...]
+       mirai texts list | missing | set <key> <language> <text> | export <file.csv> | import <file.csv>`
 
 // What a command reads and writes: the interfaces, or the scenes.
 Document_Kind :: enum u8 {Ui,Scene}
@@ -71,6 +79,7 @@ Project :: struct {
     assets:Assets,
     library:host.Project_Library,
     info:^core.World_Info, // the types of the game as it was built last; nil: none
+    languages:[]string,    // the codes of the languages of the game, the one its texts are written in first
     untyped:string,        // why it has none, with what gives them
     plugins:Plugin_Recipes, // the cards of its plugins, when whoever runs the command reads them
     scratch:Scratch_World,  // where a recipe is run; made the first time
@@ -88,11 +97,14 @@ project_open :: proc(p:^Project,root,engine:string,library:=true,recipes:Plugin_
     p.root=strings.clone(opened.root)
     p.name=strings.clone(base.text_get(opened.manifest.name[:]))
     p.assets_root=project.folder_path(p.root,.Assets)
-    asset.registry_init(&p.registry,p.assets_root)
-    for mount in host.project_asset_mounts(&opened,context.temp_allocator) {asset.registry_mount(&p.registry,mount.folder,mount.prefix)}
+    asset.registry_init(&p.registry,p.assets_root,imported=project.imported_path(p.root,context.temp_allocator))
+    for mount in host.project_asset_mounts(&opened,context.temp_allocator) {asset.registry_mount(&p.registry,mount.folder,mount.prefix,mount.imported)}
     asset.types_init(&p.types)
     p.assets={&p.registry,&p.types}
     if os.is_dir(p.assets_root) && asset.registry_scan(&p.registry)!=.None {return fmt.tprintf("the assets of %s could not be read",p.assets_root)}
+    ui_settings:=gui.UI_SETTINGS_DEFAULT
+    project.settings_load({{name="UI_Settings",info=type_info_of(gui.UI_Settings),value=&ui_settings}},p.root,engine,{.Project})
+    p.languages=slice.clone(texts_languages(ui_settings))
     if library {project_library_open(p)}
     if p.info!=nil && recipes!=nil {p.plugins=recipes(p.info,context.allocator)}
     return ""
@@ -106,6 +118,7 @@ project_close :: proc(p:^Project) {
     delete(p.root)
     delete(p.name)
     delete(p.assets_root)
+    delete(p.languages)
     p^={}
 }
 
@@ -134,22 +147,6 @@ asset_path :: proc(path:string) -> string {
     return strings.trim_prefix(strings.trim_prefix(forward,"./"),"assets/")
 }
 
-// The asset a document kept under source/ is: source/<path>.ui.json is
-// <path>.ui of the assets. ok false for a file elsewhere or of another name.
-source_asset :: proc(p:^Project,file:string,kind:Document_Kind) -> (path:string,ok:bool) {
-    absolute:=project.path_absolute(file,context.temp_allocator)
-    folder:=strings.concatenate({project.path(p.root,SOURCE_FOLDER,allocator=context.temp_allocator),"/"},context.temp_allocator)
-    if len(absolute)<=len(folder) || !strings.equal_fold(absolute[:len(folder)],folder) || !strings.has_suffix(absolute,".json") {return}
-    path=absolute[len(folder):len(absolute)-len(".json")]
-    if strings.has_suffix(path,kind_extension(kind)) {return path,true}
-    return "",false
-}
-
-// The file under source/ the document of an asset is kept in.
-source_file :: proc(p:^Project,path:string) -> string {
-    return project.path(p.root,SOURCE_FOLDER,strings.concatenate({path,".json"},context.temp_allocator),allocator=context.temp_allocator)
-}
-
 // ---------------------------------------------------------------- interfaces
 
 // The document of the .ui a path or an id names, as ui.inspect gives it, on
@@ -164,7 +161,8 @@ ui_read :: proc(p:^Project,named:string,out:^serial.Writer) -> (problem:string) 
     reading:=Reading{allocator=context.temp_allocator}
     args:=Tree_Args{reading=&reading,types=&p.types,registry=&p.registry,assets=p.assets,asset=id}
     libs:=doc_libs(&args,&r)
-    document_write(out,&p.types,&r,-1,libs[:],p.assets)
+    texts:=texts_read(p.assets,p.languages[0])
+    document_write(out,&p.types,&r,-1,libs[:],p.assets,&texts)
     return ""
 }
 
@@ -204,7 +202,8 @@ ui_write :: proc(p:^Project,named,text:string) -> (written:Written,problem:strin
         path=strings.clone(record.path,context.temp_allocator)
     }
     reading:=Reading{allocator=context.temp_allocator,raw=text,assets=registry_assets(&p.registry)}
-    args:=Tree_Args{reading=&reading,types=&p.types,registry=&p.registry,assets=p.assets,info=p.info,asset=id}
+    texts:=texts_read(p.assets,p.languages[0])
+    args:=Tree_Args{reading=&reading,types=&p.types,registry=&p.registry,assets=p.assets,info=p.info,asset=id,texts=&texts}
     applied:bool
     if written.made,written.removed,applied=document_apply(&args,&r,-1,text);!applied {return {},reading.problem}
     params:=widget_params(p.assets,id)
@@ -213,6 +212,7 @@ ui_write :: proc(p:^Project,named,text:string) -> (written:Written,problem:strin
     written.path,written.fresh=path,fresh
     file:=project.path(p.assets_root,path,allocator=context.temp_allocator) if fresh else asset.registry_file_path(&p.registry,path,context.temp_allocator)
     if problem=file_put(p,file,path,bytes,&written);problem!="" {return}
+    if problem=texts_put(p,&texts);problem!="" {return}
     // What the files that use this widget gave follows where its parameters go now.
     written.followed=widget_params_follow(p.assets,id,params_changes(params,data_params(records_data(&r),imports)),proc(user:rawptr,id:base.Asset_Id,records:^Records) -> bool {
         p:=(^Project)(user)
@@ -239,6 +239,54 @@ file_put :: proc(p:^Project,file,path:string,bytes:[]u8,written:^Written) -> (pr
     if serial.file_write_atomic(file,bytes)!=.None {return fmt.tprintf("%s could not be written. Nothing changed",file)}
     if asset.registry_refresh(&p.registry,{path})!=.None {return fmt.tprintf("%s was written and the assets could not be read again",file)}
     return ""
+}
+
+// Writes the .strings the changes of the texts touched. problem: why it could not.
+@(private)
+texts_put :: proc(p:^Project,t:^Texts) -> (problem:string) {
+    written:[]Texts_Written
+    if written,problem=texts_written(t,&p.types,asset.content_id(p.name,"strings",TEXTS_HOME));problem!="" {return}
+    for file in written {
+        put:Written
+        if problem=file_put(p,asset.registry_file_path(&p.registry,file.path,context.temp_allocator),file.path,file.bytes,&put);problem!="" {return}
+    }
+    return ""
+}
+
+// mirai texts: the keys of the .strings of the project, read and written
+// through texts.odin as the editor does it. Exit code 1 for missing when
+// something is.
+@(private="file")
+texts_command :: proc(p:^Project,args:[]string,output,errors:io.Writer) -> int {
+    t:=texts_read(p.assets,p.languages[0])
+    problem:=""
+    switch {
+    case len(args)==1 && args[0]=="list":
+        fmt.wprint(output,texts_csv(&t))
+    case len(args)==1 && args[0]=="missing":
+        lines:=texts_missing(&t,texts_uses(p.assets),p.languages)
+        for line in lines {fmt.wprintln(output,line)}
+        return 1 if len(lines)>0 else 0
+    case len(args)==2 && args[0]=="export":
+        if serial.file_write_atomic(args[1],transmute([]u8)texts_csv(&t))!=.None {problem=fmt.tprintf("%s could not be written",args[1])}
+    case len(args)==4 && args[0]=="set":
+        problem=texts_set(&t,args[1],args[2],args[3])
+    case len(args)==2 && args[0]=="import":
+        bytes,error:=os.read_entire_file(args[1],context.temp_allocator)
+        if error!=nil {problem=fmt.tprintf("%s could not be read",args[1])} else {
+            set:int
+            if set,problem=texts_csv_take(&t,string(bytes));problem=="" {fmt.wprintfln(output,"%d texts",set)} else {problem=fmt.tprintf("%s: %s. Nothing changed",args[1],problem)}
+        }
+    case:
+        fmt.wprintln(errors,COMMAND_USAGE)
+        return 2
+    }
+    if problem=="" {problem=texts_put(p,&t)}
+    if problem!="" {
+        fmt.wprintfln(errors,"mirai texts %s: %s",args[0],problem)
+        return 1
+    }
+    return 0
 }
 
 // Checks the .ui of the project, or those of ids, against the types of the
@@ -289,21 +337,22 @@ command :: proc(args:[]string,output,errors:io.Writer,recipes:Plugin_Recipes_Pro
         case: append(&rest,args[at])
         }
     }
-    if len(rest)<2 || rest[0]!="ui" && rest[0]!="scene" {fmt.wprintln(errors,COMMAND_USAGE);return 2}
+    if len(rest)<2 || rest[0]!="ui" && rest[0]!="scene" && rest[0]!="texts" {fmt.wprintln(errors,COMMAND_USAGE);return 2}
     kind:=Document_Kind.Ui if rest[0]=="ui" else Document_Kind.Scene
     verb:=rest[1]
-    if verb!="read" && verb!="write" && verb!="check" {
+    if rest[0]!="texts" && verb!="read" && verb!="write" && verb!="check" {
         fmt.wprintfln(errors,"mirai %s: there is no '%s'; it has read, write and check\n%s",rest[0],verb,COMMAND_USAGE)
         return 2
     }
     if root=="" {root="."}
     p:Project
-    reads:=kind==.Ui && verb=="read"
+    reads:=kind==.Ui && verb=="read" || rest[0]=="texts"
     if problem:=project_open(&p,root,engine,!reads,recipes);problem!="" {
         fmt.wprintfln(errors,"mirai %s %s: %s",rest[0],verb,problem)
         return 1
     }
     defer project_close(&p)
+    if rest[0]=="texts" {return texts_command(&p,rest[1:],output,errors)}
     return project_run(&p,kind,verb,rest[2:],output,errors)
 }
 
@@ -343,12 +392,9 @@ document_text :: proc(run:^Run,named:string) -> (text:string,problem:string) {
 @(private="file")
 command_read :: proc(run:^Run,args:[]string) -> int {
     named,out:string
-    sources:=false
     for at:=0;at<len(args);at+=1 {
         switch {
-        case args[at]=="--sources": sources=true
-        case args[at]=="--out":
-            if at+1>=len(args) {fmt.wprintln(run.errors,COMMAND_USAGE);return 2}
+        case args[at]=="--out" && at+1<len(args):
             out=args[at+1]
             at+=1
         case named=="" && !strings.has_prefix(args[at],"-"): named=args[at]
@@ -357,31 +403,15 @@ command_read :: proc(run:^Run,args:[]string) -> int {
             return 2
         }
     }
-    if sources==(named!="") || sources && out!="" {fmt.wprintln(run.errors,COMMAND_USAGE);return 2}
-    if !sources {
-        text,problem:=document_text(run,named)
-        if problem!="" {run_fail(run,named,problem);return 1}
-        if out=="" {
-            fmt.wprintln(run.output,text)
-            return 0
-        }
-        if !text_put(out,text) {run_fail(run,named,fmt.tprintf("%s could not be written",out));return 1}
-        fmt.wprintfln(run.output,"%s: read to %s",named,out)
+    if named=="" {fmt.wprintln(run.errors,COMMAND_USAGE);return 2}
+    text,problem:=document_text(run,named)
+    if problem!="" {run_fail(run,named,problem);return 1}
+    if out=="" {
+        fmt.wprintln(run.output,text)
         return 0
     }
-    // Every asset of the project itself: those of its plugins are theirs.
-    count:=0
-    for &file in run.p.registry.files {
-        if file.state!=.Asset || !asset.registry_listed(&file) || !path_of_kind(file.path,run.kind) || path_mounted(&run.p.registry,file.path) {continue}
-        path:=strings.clone(file.path,context.temp_allocator)
-        text,problem:=document_text(run,path)
-        if problem!="" {run_fail(run,path,problem);continue}
-        to:=source_file(run.p,path)
-        if !text_put(to,text) {run_fail(run,path,fmt.tprintf("%s could not be written",to));continue}
-        fmt.wprintfln(run.output,"%s: read to %s",path,to)
-        count+=1
-    }
-    if count==0 && !run.failed {fmt.wprintfln(run.output,"the project has no %s",kind_extension(run.kind))}
+    if !text_put(out,text) {run_fail(run,named,fmt.tprintf("%s could not be written",out));return 1}
+    fmt.wprintfln(run.output,"%s: read to %s",named,out)
     return 0
 }
 
@@ -408,87 +438,22 @@ path_mounted :: proc(r:^asset.Registry,path:string) -> bool {
     return false
 }
 
-// A document to write and the asset it is.
-@(private="file")
-Target :: struct {asset,file:string}
-
-// The documents under a folder, each with its asset.
-@(private="file")
-targets_under :: proc(run:^Run,folder:string,targets:^[dynamic]Target) {
-    entries,error:=os.read_all_directory_by_path(folder,context.temp_allocator)
-    if error!=nil {return}
-    slice.sort_by(entries,proc(a,b:os.File_Info) -> bool {return a.name<b.name})
-    for entry in entries {
-        full,_:=strings.replace_all(entry.fullpath,"\\","/",context.temp_allocator)
-        if entry.type==.Directory {targets_under(run,full,targets);continue}
-        if path,ok:=source_asset(run.p,full,run.kind);ok {append(targets,Target{path,full})}
-    }
-}
-
 @(private="file")
 command_write :: proc(run:^Run,args:[]string) -> int {
-    targets:=make([dynamic]Target,context.temp_allocator)
-    if len(args)==0 {fmt.wprintln(run.errors,COMMAND_USAGE);return 2}
-    // An asset and its document: the first is no document nor a folder of them.
-    if len(args)==2 && !strings.has_suffix(args[0],".json") && !os.is_dir(args[0]) && os.is_file(args[1]) {
-        append(&targets,Target{args[0],args[1]})
-    } else {
-        for arg in args {
-            switch {
-            case os.is_dir(arg):
-                before:=len(targets)
-                targets_under(run,arg,&targets)
-                if len(targets)==before {
-                    run_fail(run,arg,fmt.tprintf("the folder has no document of this kind under %s/ of the project: %s/<path>%s.json is the asset <path>%s",SOURCE_FOLDER,SOURCE_FOLDER,kind_extension(run.kind),kind_extension(run.kind)))
-                }
-            case os.is_file(arg):
-                path,ok:=source_asset(run.p,arg,run.kind)
-                if !ok {
-                    run_fail(run,arg,fmt.tprintf("the file does not say which asset it is: %s/<path>%s.json of the project is the asset <path>%s; for a file elsewhere name the asset first, mirai %s write <asset> <file>",SOURCE_FOLDER,kind_extension(run.kind),kind_extension(run.kind),kind_name(run.kind)))
-                    continue
-                }
-                append(&targets,Target{path,arg})
-            case:
-                run_fail(run,arg,"there is no such file or folder")
-            }
-        }
+    if len(args)!=2 {fmt.wprintln(run.errors,COMMAND_USAGE);return 2}
+    text,error:=os.read_entire_file(args[1],context.temp_allocator)
+    if error!=nil {run_fail(run,args[0],fmt.tprintf("%s could not be read",args[1]));return 1}
+    written:Written
+    problem:string
+    switch run.kind {
+    case .Ui:    written,problem=ui_write(run.p,args[0],string(text))
+    case .Scene: written,problem=scene_write(run.p,args[0],string(text))
     }
-    if run.failed {return 1}
-    // A document may use a file another one of the same run makes: what
-    // fails is tried again while a round writes something.
-    pending:=targets[:]
-    problems:=make([]string,len(targets),context.temp_allocator)
-    for len(pending)>0 {
-        left:=make([dynamic]Target,context.temp_allocator)
-        for target in pending {
-            text,error:=os.read_entire_file(target.file,context.temp_allocator)
-            if error!=nil {
-                problems[len(left)]=fmt.tprintf("%s could not be read",target.file)
-                append(&left,target)
-                continue
-            }
-            written:Written
-            problem:string
-            switch run.kind {
-            case .Ui:    written,problem=ui_write(run.p,target.asset,string(text))
-            case .Scene: written,problem=scene_write(run.p,target.asset,string(text))
-            }
-            if problem!="" {
-                problems[len(left)]=problem
-                append(&left,target)
-                continue
-            }
-            state:="unchanged" if written.same else "made" if written.fresh else "written"
-            fmt.wprintf(run.output,"%s: %s, %d made and %d removed",written.path,state,written.made,written.removed)
-            if written.followed>0 {fmt.wprintf(run.output,"; %d files that use it follow its parameters",written.followed)}
-            fmt.wprintln(run.output)
-        }
-        if len(left)==len(pending) {
-            for target,i in left {run_fail(run,target.asset,problems[i])}
-            return 1
-        }
-        pending=left[:]
-    }
+    if problem!="" {run_fail(run,args[0],problem);return 1}
+    state:="unchanged" if written.same else "made" if written.fresh else "written"
+    fmt.wprintf(run.output,"%s: %s, %d made and %d removed",written.path,state,written.made,written.removed)
+    if written.followed>0 {fmt.wprintf(run.output,"; %d files that use it follow its parameters",written.followed)}
+    fmt.wprintln(run.output)
     return 0
 }
 

@@ -190,9 +190,9 @@ are `copy=false`: they are neither copied nor cleared. `Jumps` and `Hierarchy` a
   - `resimulating`: the network repeats ticks that already ran to correct a prediction. The
     rollback sets it; `tick`, `seconds` and `dt` come back with the copy of the world and the
     repeated ticks advance them up to the present. What is not simulation is not repeated:
-    `audio.play*` makes no sound and `multiplayer.send` does not enqueue. What entered the tick is
-    repeated: each repeated tick receives the UI events it received the first time
-    ([gui](../../mirai-gameplay/references/libraries.md#gui)).
+    `audio_requests` drops the sounds it asks for and `multiplayer.send` does not enqueue. What
+    entered the tick is repeated: each repeated tick receives the UI events it received the first
+    time ([gui](../../mirai-gameplay/references/libraries.md#gui)).
     What stays in the `World` (a prefab, a counter, the clock of a particle emitter) is repeated the
     same as the first time.
 - `Frame_Time` (`copy=false`): the frame the world runs, not its simulation. `accumulator` (seconds
@@ -484,10 +484,11 @@ the schema and the editor and the API, the rows.
 - The rows are read-only and live outside the `World`, in the application: Play, copies and
   rollback do not copy them, and all worlds read the same ones. What changes in a save goes in
   components that name rows.
-- `core.Text` is a localized text of a row: the table stores the text in the language the game is
-  written in and its translations under its id. `core.record_text(rows, text, language)` gives it in
-  the language of the `name_hash` of its code (that of `gui.ui_language`) and, without a translation
-  or with 0, the original.
+- `core.Text` is a text a player reads, as a field of a row or of a component: the key of a
+  `.strings` ([one store](../../mirai-assets/references/kinds.md#texts)). A function receives
+  `^core.Texts`, every `.strings` of the assets as one table, and `core.text(texts, text, language)`
+  gives what a `core.Text` or a key by name says in the language of the `name_hash` of its code
+  (that of `gui.ui_language`).
 - `host` loads the tables of a type the first time a function asks for it, and again when one of its
   files changes (on disk or in the editor's memory), appears or leaves: editing a row during Play
   is seen on the next tick; `records_generation` changes with each load, so what a function builds

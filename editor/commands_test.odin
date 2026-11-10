@@ -111,7 +111,7 @@ every_entry_of_a_menu_or_a_shortcut_calls_a_method_of_the_api_with_params_it_tak
     serial.writer_init(&out);defer serial.writer_destroy(&out)
     api_commands_write(s,&out)
     listed:=string(serial.writer_bytes(&out))
-    testing.expect(t,strings.contains(listed,`{"name":"delete","method":"scene.delete","params":"{\"entity\":\"$roots\"}"`),listed[:min(len(listed),200)])
+    testing.expect(t,strings.contains(listed,`{"name":"delete","method":"scene.write","params":"{\"root\":\"$roots\",\"merge\":true,\"entities\":[{\"delete\":true}]}"`),listed[:min(len(listed),200)])
 }
 
 @(test)
@@ -124,17 +124,17 @@ a_gesture_runs_its_method_between_frames_with_what_the_person_has_selected :: pr
     w:=edited_world(s)
     out:serial.Writer
     serial.writer_init(&out);defer serial.writer_destroy(&out)
-    delete_method:=api.method_find(&st.server,"scene.delete")
+    delete_method:=api.method_find(&st.server,"scene.write")
     // Nothing selected: the entry is off, and the method says so to a gesture that reaches it.
     testing.expect(t,command_state(s,"delete").disabled && !command_run(s,"delete"))
-    testing.expect(t,command_call(s,"scene.delete",`{"entity":"$roots"}`))
+    testing.expect(t,command_call(s,"scene.write",`{"root":"$roots","merge":true,"entities":[{"delete":true}]}`))
     commands_run(s)
     testing.expect(t,strings.contains(string(s.toast[:s.toast_length]),"nothing is selected") && core.world_entities(w).alive==1,string(s.toast[:s.toast_length]))
     // An agent names its entities: the selection of the person is not a param of its calls.
     history.selection_set(&f.selection,{f.entity})
     st.poll_temp=context.temp_allocator
     base.arena_reset(&st.server.scratch)
-    refused,ran:=api.method_execute(&st.server,delete_method,`{"entity":"$roots"}`,&out)
+    refused,ran:=api.method_execute(&st.server,delete_method,`{"root":"$roots","merge":true,"entities":[{"delete":true}]}`,&out)
     testing.expect(t,!ran && strings.contains(refused.message,"names no entity") && core.world_entities(w).alive==1,refused.message)
     // The entry asks; the method runs between frames, as one step of the person.
     testing.expect(t,command_run(s,"delete"))
@@ -144,6 +144,15 @@ a_gesture_runs_its_method_between_frames_with_what_the_person_has_selected :: pr
     testing.expect_value(t,history.undo_label(&f.edits),"Delete")
     testing.expect(t,len(f.selection.entities)==0 && st.commands.asked_count==0)
     testing.expect(t,test_command(s,"undo") && core.world_entities(w).alive==1)
+    // Duplicate and Paste copy beside what they copy as one step each, which leaves the copies selected.
+    for name in ([?]string{"duplicate","paste"}) {
+        testing.expect(t,test_command(s,"select_all") && test_command(s,"copy"))
+        steps:=history.edits_undo_count(&f.edits)
+        testing.expectf(t,test_command(s,name) && core.world_entities(w).alive==2 && history.edits_undo_count(&f.edits)==steps+1,"%s is one step",name)
+        testing.expect_value(t,history.undo_label(&f.edits),name=="paste"?"Paste":"Duplicate")
+        testing.expect(t,len(f.selection.entities)==1 && api_entity_id(w,f.selection.entities[0])!=api_entity_id(w,f.entity))
+        testing.expect(t,test_command(s,"undo") && core.world_entities(w).alive==1)
+    }
     // A toggle sends the opposite of what it shows.
     shown:=f.viewport.show_grid
     testing.expect_value(t,command_state(s,"grid").checked,shown)
@@ -168,11 +177,11 @@ a_gesture_runs_its_method_between_frames_with_what_the_person_has_selected :: pr
     commands_run(s)
     testing.expect(t,strings.contains(string(s.toast[:s.toast_length]),"no.such.method"))
     s.toast_length=0
-    testing.expect(t,command_call(s,"scene.delete",`{"entity":`))
+    testing.expect(t,command_call(s,"scene.write",`{"root":`))
     commands_run(s)
     testing.expect(t,s.toast_length>0 && core.world_entities(w).alive==alive)
     long:=strings.repeat("x",COMMAND_PARAMS+1,context.temp_allocator)
-    testing.expect(t,!command_call(s,"scene.delete",long))
+    testing.expect(t,!command_call(s,"scene.write",long))
     for _ in 0..<COMMAND_QUEUE {testing.expect(t,command_call(s,"editor.select","{}"))}
     testing.expect(t,!command_call(s,"editor.select","{}"),"past its room a frame asks for nothing more")
     commands_run(s)
@@ -213,7 +222,7 @@ the_methods_a_menu_calls_refuse_an_agent_what_they_cannot_do_and_say_how :: proc
         {"scene.group",`{"entities":[]}`,"name the entities"},
         {"scene.group",`{"entities":["Nobody"]}`,"names no entity"},
         {"scene.group",`{"entities":["$roots"]}`,"names no entity"},
-        {"scene.duplicate",`{"entity":"$copied"}`,"names no entity"},
+        {"scene.write",`{"merge":true,"entities":[{"copy":"$copied"}]}`,"names no entity"},
         {"editor.copy",`{"entities":["Nobody"]}`,"names no entity"},
         {"editor.tool",`{"tool":"hammer"}`,"hammer"},
         {"editor.tool",`{"tool":"move","on":false}`,"always has a mode"},
@@ -244,4 +253,59 @@ the_methods_a_menu_calls_refuse_an_agent_what_they_cannot_do_and_say_how :: proc
     bare:Session
     testing.expect(t,!command_run(&bare,"save") && !command_call(&bare,"scene.save","{}") && command_state(&bare,"save").disabled && len(command_bindings(&bare))==0 && !api_person(&bare))
     commands_run(&bare)
+}
+
+// A batch runs calls of any methods in order: a call takes what one before
+// it answered, the first that fails stops it, and with transaction what they
+// edit is one step, or nothing.
+@(test)
+a_batch_runs_calls_in_order_with_references_and_as_one_step :: proc(t:^testing.T) {
+    f:=new(Commands_Test);defer free(f)
+    if !commands_test_open(t,f) {return}
+    defer commands_test_close(f)
+    s:=&f.s
+    st:=api_state(s)
+    st.poll_temp=context.temp_allocator
+    w:=edited_world(s)
+    out:serial.Writer
+    serial.writer_init(&out);defer serial.writer_destroy(&out)
+    batch:=api.method_find(&st.server,"batch")
+    if !testing.expect(t,batch!=nil,"batch is a method") {return}
+    LAMP :: `{"method":"scene.write","params":{"merge":true,"entities":[{"name":"Lamp"}]}}`
+    MOVE :: `{"method":"scene.write","params":{"root":"$0.id","merge":true,"entities":[{"position":[1,2,3]}]}}`
+    cases:=[?]struct{params:string,steps,alive:int,says:string}{
+        // The second call names what the first made, the third reads it, and all of it is one step.
+        {`{"transaction":true,"calls":[`+LAMP+`,`+MOVE+`,{"method":"scene.inspect","params":{"name":"$0.created[0].name","components":true}}]}`,1,2,`"position":[1,2,3]`},
+        // Without transaction each call is its own step.
+        {`{"calls":[`+LAMP+`,`+MOVE+`]}`,2,2,`"results":[{"method":"scene.write","result":{`},
+        // The call that fails stops the batch: as one step nothing of it stays; otherwise what ran before does.
+        {`{"transaction":true,"calls":[`+LAMP+`,{"method":"scene.write","params":{"root":"Nobody","entities":[{}]}}]}`,0,1,`calls[1] scene.write: root: "Nobody" names no entity`},
+        {`{"calls":[`+LAMP+`,{"method":"scene.write","params":{"root":"Nobody","entities":[{}]}},`+LAMP+`]}`,1,2,`calls[1] scene.write: root: "Nobody" names no entity`},
+        {`{"calls":[{"method":"scene.write","params":{"root":"$2.id","entities":[{}]}}]}`,0,1,"calls[0] scene.write: $2.id: the batch has 0 results so far"},
+        {`{"calls":[`+LAMP+`,{"method":"scene.write","params":{"root":"$0.nothing","entities":[{}]}}]}`,1,2,"calls[1] scene.write: $0.nothing: "},
+        {`{"calls":[{"method":"no.such.method"}]}`,0,1,`calls[0] no.such.method: "no.such.method" is not a method`},
+        {`{"transaction":true,"calls":[`+LAMP+`,{"method":"batch","params":{"transaction":true,"calls":[`+LAMP+`]}}]}`,0,1,"calls[1] batch: a batch that is one step runs inside another"},
+        {`{"calls":[]}`,0,1,"calls"},
+        {`{"calls":[7]}`,0,1,"calls"},
+    }
+    for c in cases {
+        steps:=f.edits.cursor
+        base.arena_reset(&st.server.scratch)
+        serial.writer_reset(&out)
+        error,ran:=api.method_execute(&st.server,batch,c.params,&out)
+        answer:=ran?string(serial.writer_bytes(&out)):error.message
+        tight,_:=strings.remove_all(answer," ",context.temp_allocator)
+        says,_:=strings.remove_all(c.says," ",context.temp_allocator)
+        testing.expectf(t,strings.contains(tight,says),"%s: %s",c.params,answer)
+        testing.expectf(t,f.edits.cursor==steps+c.steps && core.world_entities(w).alive==c.alive,"%s: %d steps and %d entities",c.params,f.edits.cursor-steps,core.world_entities(w).alive)
+        testing.expect(t,!st.transaction && !f.edits.open)
+        // Each case starts from the scene as it was: the caller undoes its steps.
+        for _ in 0..<c.steps {
+            base.arena_reset(&st.server.scratch)
+            serial.writer_reset(&out)
+            _,undone:=api.method_execute(&st.server,api.method_find(&st.server,"history.undo"),"{}",&out)
+            testing.expect(t,undone)
+        }
+        testing.expect_value(t,core.world_entities(w).alive,1)
+    }
 }
