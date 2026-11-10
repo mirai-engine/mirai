@@ -1,6 +1,7 @@
 package main
 
 import "core:fmt"
+import "core:odin/ast"
 import "core:os"
 import "core:slice"
 import "core:strconv"
@@ -107,9 +108,10 @@ cmd_test :: proc(root:string,args:[]string) -> int {
     builds:=make([]build.Test_Build,len(packages))
     for p,i in packages {
         if p.nothing || p.owner!="" {continue}
-        package_flags,ok:=test_flags(root,p.folder,release,flags[:])
-        if !ok || !test_imports_check(root,p.folder) || !package_test_shaders(root,p.folder) {
-            builds[i].failed=true
+        files:=package_parse(p.folder)
+        package_flags,ok:=test_flags(root,p.folder,files,release,flags[:])
+        if !ok || !test_imports_check(root,p.folder,files) || !package_test_shaders(root,p.folder) {
+            builds[i].failure=.Generate
             continue
         }
         builds[i]=build.test_build_plan(root,compiler,p.folder,test_executable(root,p),package_flags)
@@ -157,10 +159,10 @@ cmd_test :: proc(root:string,args:[]string) -> int {
 // reaches and those of the call. ok is false, after saying why, when the
 // collections cannot be told.
 @(private="file")
-test_flags :: proc(root,folder:string,release:bool,flags:[]string) -> (list:[]string,ok:bool) {
+test_flags :: proc(root,folder:string,files:[]^ast.File,release:bool,flags:[]string) -> (list:[]string,ok:bool) {
     command:=odin_command(root,"build",folder)
     append(&command,release?"-o:speed":"-o:minimal")
-    collections:=package_collections(root,folder,flags) or_return
+    collections:=package_collections(root,folder,files,flags) or_return
     append(&command,..collections)
     append(&command,..flags)
     return command[3:],true
@@ -497,7 +499,7 @@ test_builds_run :: proc(root:string,packages:[]Test_Package,builds:[]build.Test_
     waiting:=make([dynamic]int,context.temp_allocator)
     paths:=make([dynamic]string,context.temp_allocator)
     for planned,i in builds {
-        if packages[i].nothing || packages[i].owner!="" || planned.failed {continue}
+        if packages[i].nothing || packages[i].owner!="" || planned.failure!=.None {continue}
         if len(planned.command)==0 {
             times.current+=1
             continue
@@ -538,19 +540,9 @@ test_builds_run :: proc(root:string,packages:[]Test_Package,builds:[]build.Test_
 test_build_say :: proc(path:string,b:build.Test_Build) -> bool {
     for d in b.diagnostics {fmt.eprintfln("%s(%d:%d) %v: %s",d.file,d.line,d.column,d.severity,d.message)}
     if said:=strings.trim_right_space(b.said);said!="" {fmt.eprintln(said)}
-    switch {
-    case !b.failed:
-        return true
-    case b.code<=0:
-        fmt.eprintfln("mirai test: %s was not built; why is said above",path)
-    case:
-        if build.compiler_out_of_memory(b.said) {
-            fmt.eprintln(out_of_memory_text("mirai test"))
-        } else if strings.trim_space(b.said)=="" && len(b.diagnostics)==0 && build.compiler_crashed(b.code) {
-            fmt.eprintfln("mirai test: %s",build.compiler_silent_failure(b.code,context.temp_allocator))
-        }
-        fmt.eprintfln("mirai test: could not build %s (the compiler exited with %d)",path,b.code)
-    }
+    if b.failure==.None {return true}
+    if b.failure==.Out_Of_Memory {fmt.eprintln(out_of_memory_text("mirai test"))}
+    fmt.eprintfln("mirai test: could not build %s",path)
     return false
 }
 
@@ -576,8 +568,8 @@ project_game_folder :: proc(root:string) -> string {
 // The collections a package reaches besides mirai: plugins when it, or a
 // package it imports through plugins or project, imports "plugins:"; project,
 // the nearest folder above it with a project.mirai, when one imports
-// "project:". A flag that names one already is left as it is.
-package_collections :: proc(root,folder:string,flags:[]string) -> (collections:[]string,ok:bool) {
+// "project:". files: those of folder, parsed. A flag that names one already is left as it is.
+package_collections :: proc(root,folder:string,files:[]^ast.File,flags:[]string) -> (collections:[]string,ok:bool) {
     given :: proc(flags:[]string,name:string) -> bool {
         for flag in flags {
             if strings.has_prefix(flag,fmt.tprintf("-collection:%s=",name)) {return true}
@@ -587,33 +579,25 @@ package_collections :: proc(root,folder:string,flags:[]string) -> (collections:[
     owner:=project_of(folder)
     plugins,needs_project:=false,false
     seen:=make(map[string]bool,context.temp_allocator)
-    queue:=make([dynamic]string,context.temp_allocator)
-    append(&queue,folder)
+    seen[folder]=true
+    queue:=make([dynamic][]^ast.File,context.temp_allocator)
+    append(&queue,files)
     for len(queue)>0 {
-        at:=pop(&queue)
-        if seen[at] {continue}
-        seen[at]=true
-        entries,_:=os.read_all_directory_by_path(at,context.temp_allocator)
-        for entry in entries {
-            if entry.type!=.Regular || !strings.has_suffix(entry.name,".odin") {continue}
-            data,error:=os.read_entire_file(entry.fullpath,context.temp_allocator)
-            if error!=nil {continue}
-            text:=string(data)
-            for line in strings.split_lines_iterator(&text) {
-                line:=strings.trim_space(line)
-                if !strings.has_prefix(line,"import ") {continue}
-                open:=strings.index_byte(line,'"')
-                if open<0 {continue}
-                path:=line[open+1:]
-                path=path[:max(strings.index_byte(path,'"'),0)]
+        for file in pop(&queue) {
+            for decl in file.imports {
+                path:=strings.trim(decl.fullpath,"\"`")
+                next:string
                 switch {
                 case strings.has_prefix(path,"plugins:"):
                     plugins=true
-                    append(&queue,join(root,"plugins",path[len("plugins:"):]))
+                    next=join(root,"plugins",path[len("plugins:"):])
                 case strings.has_prefix(path,"project:"):
                     needs_project=true
-                    if owner!="" {append(&queue,join(owner,path[len("project:"):]))}
+                    if owner!="" {next=join(owner,path[len("project:"):])}
                 }
+                if next=="" || seen[next] {continue}
+                seen[next]=true
+                append(&queue,package_parse(next))
             }
         }
     }
@@ -644,9 +628,9 @@ project_of :: proc(folder:string) -> string {
 // The sources of a package of an engine plugin, its tests among them, import
 // only the plugins it depends on or its tests depend on (test_dependencies):
 // what a test runs against is part of what the plugin declares. False, after
-// saying what to declare, for another one.
+// saying what to declare, for another one. files: those of folder, parsed.
 @(private="file")
-test_imports_check :: proc(root,folder:string) -> bool {
+test_imports_check :: proc(root,folder:string,files:[]^ast.File) -> bool {
     plugins_folder:=project.path_absolute(join(root,"plugins"),context.temp_allocator)
     if !path_inside(folder,plugins_folder) {return true}
     rest:=folder[len(plugins_folder)+1:]
@@ -656,26 +640,8 @@ test_imports_check :: proc(root,folder:string) -> bool {
     if error:=project.plugins_discover(plugins_folder,.Engine,&plugins,context.temp_allocator);error.code!=.None {return true}
     index,found:=project.plugin_find(plugins[:],name)
     if !found {return true}
-    entries,_:=os.read_all_directory_by_path(folder,context.temp_allocator)
-    ok:=true
-    for entry in entries {
-        if entry.type!=.Regular || !strings.has_suffix(entry.name,".odin") {continue}
-        text,read_error:=os.read_entire_file(entry.fullpath,context.temp_allocator)
-        if read_error!=nil {continue}
-        tests:=strings.has_suffix(entry.name,"_test.odin")
-        rest:=string(text)
-        for line in strings.split_lines_iterator(&rest) {
-            trimmed:=strings.trim_space(line)
-            if !strings.has_prefix(trimmed,"import ") {continue}
-            open:=strings.index_byte(trimmed,'"')
-            close:=strings.last_index_byte(trimmed,'"')
-            if open<0 || close<=open {continue}
-            imported:=trimmed[open+1:close]
-            other:=project.import_plugin(imported)
-            if other=="" || project.plugin_reaches(plugins[:],index,other,tests) {continue}
-            fmt.eprintfln("mirai test: %s imports %s, a plugin %s does not depend on; add %q to the %s of its plugin.mirai, or take the import out",entry.fullpath,imported,name,other,tests?"test_dependencies":"dependencies")
-            ok=false
-        }
-    }
-    return ok
+    errors:=make([dynamic]string,context.temp_allocator)
+    build.plugin_imports_check(plugins[:],index,files,&errors)
+    for e in errors {fmt.eprintfln("mirai test: %s",e)}
+    return len(errors)==0
 }

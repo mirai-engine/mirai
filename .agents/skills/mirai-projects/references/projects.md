@@ -204,7 +204,7 @@ active plugin and that of the project, only for the editor. The collections are 
 
 `cook/build/plugins.odin`. Each part (`runtime`, `editor`) of an active plugin, of the engine or of
 the project, is a library of its own with all its packages, and so are the project's `game/` and
-`editor/`; one per optimization (`minimal` with `--dev`, the manifest's otherwise), so switching
+`editor/`; one per optimization (`minimal` in dev, the manifest's otherwise), so switching
 from one to the other compiles nothing. The library of the project is the generated world alone: a
 change inside a procedure of the game compiles the game library and links the world again; a
 changed declaration of the game compiles the world too.
@@ -219,9 +219,11 @@ changed declaration of the game compiles the world too.
 - Under `plugins/<optimization>/`: `decl/<name>/<part>` the declarations of the engine plugins
   (`build.declare`, prefix `plugins.`), the collection `plugins`, and `decl-project/` those of the
   project (prefix `project.`), the collection `project` of the world; `stage-<id>/` the copy a
-  library is compiled from, with the declarations of what it imports of its own collection next
-  to it and at the same depth as its declarations, and `<id>.stamp` the fingerprint of the last
-  build.
+  library is compiled from, as the collection `staged`, beside its declarations and at their
+  depth: its packages import each other through it and every other package is its declarations;
+  `<id>.stamp` the fingerprint of the last build. Each package also writes what it declares and
+  names, so a part is keyed, as the engine libraries are, on the declarations its sources name of
+  the engine and of the parts before it (one index), with the names of the libraries it links.
 - The declarations copy the body of `#force_inline`, generic or `where` procedures and declare the
   others as functions of the library, the private ones
   [only when named](#engine-binaries). An `@(private="file")` one is private in the declarations
@@ -333,10 +335,9 @@ Each mode has its folder: switching between them compiles nothing.
   the libraries compile from, as the collection `staged`: the packages of a library import each
   other through it and every other package is its declarations. A build without a stamp of its
   version and `--force` remove the stage and the declarations.
-- **Mode.** Every command that builds or picks engine binaries accepts `--dev` (everything at
-  `-o:minimal`, to check changes) or `--release` (`-o:speed`, for the CPU figures and to ship),
-  not both, and without either it is `--dev` (`build_mode_take`): no command takes its mode from
-  what was built before. `session restart` without either opens the session as it was opened.
+- **Mode.** Every command that builds or picks engine binaries is dev (everything at `-o:minimal`,
+  to check changes) unless `--release` is given (`-o:speed`, for the CPU figures and to ship)
+  (`build_mode_take`); `session restart` too. No command takes its mode from what was built before.
   Only `package engine` is always `--release`; a game to ship is `build game --release`.
   `build.engine_current` says whether `engine_build` would do nothing, without taking a turn or
   writing.
@@ -420,7 +421,7 @@ release of the tag; run by hand, it leaves the packages as artifacts.
   does not read them: it works in the project and sees the engine through `decl/`.
 - **What it does not do.** `engine_build` does not compile: the engine is up to date if it has all
   its binaries and, if one is missing, it fails with `Engine_Incomplete`. It brings only the
-  `--release` binaries (`ENGINE_MODE_INSTALLED`): `--dev` compiles the project and its plugins at
+  `--release` binaries (`ENGINE_MODE_INSTALLED`): dev compiles the project and its plugins at
   `-o:minimal` against them. The CLI is not recompiled, FreeType comes built and the engine shaders
   generated. `build tools`, `worktree`, `package`, `bench`, `render` and `shaders` without
   `--project` ask for a checkout.
@@ -477,7 +478,7 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 | Build the editor without opening it | `mirai build editor [project] [--release]` |
 | Build the shippable game | `mirai build game [project] [--out folder]` |
 | Build its dedicated server | `mirai build server [project] [--out folder]` |
-| Build only the engine | `mirai build engine [--dev\|--release] [--force]` |
+| Build only the engine | `mirai build engine [--release] [--force]`|--release] [--force]` |
 | Generate the world without building | `mirai generate [project]` |
 | Run the content tool of a project | `mirai content [project] [-- arguments]` |
 | Documents of interfaces and scenes, no editor | `mirai ui\|scene read\|write\|check ... [--project P]` |
@@ -497,7 +498,7 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 | Merge and diff assets with git, once per clone | `mirai setup git [folder]` |
 | Assemble the installed engine (binary) | `mirai package engine --out <folder>` |
 
-- Every command that builds does it `--dev` unless `--release` is asked for
+- Every command that builds does it in dev unless `--release` is asked for
   ([AGENTS.md](../../../../AGENTS.md#common-commands)).
 - The builds of all checkouts share a few turns by themselves; do not set `-thread-count`. Tests and
   builds do not wait for a measurement: they run with low priority while it lasts.

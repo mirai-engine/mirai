@@ -30,6 +30,6 @@ a_command_that_reads_the_types_of_the_game_needs_its_library_current :: proc(t:^
     testing.expect_value(t,author_library_problem(.Current,"/p",true),"")
     for state in ([]build.Target_State{.Missing,.Stale}) {
         problem:=author_library_problem(state,"/p",true)
-        testing.expect(t,strings.contains(problem,`mirai build editor "/p" --dev`),problem)
+        testing.expect(t,strings.contains(problem,`mirai build editor "/p"`),problem)
     }
 }

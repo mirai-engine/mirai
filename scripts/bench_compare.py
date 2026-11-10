@@ -219,7 +219,7 @@ def engine_start(b: Bench, extra=()) -> dict:
     args = b.args
     if port_open(args.port):
         raise BenchError(f"port {args.port} is in use")
-    # The binaries of --release: those of --dev (-o:minimal) measure the compiler, not the engine.
+    # The binaries of --release: those of dev (-o:minimal) measure the compiler, not the engine.
     folder = b.root / ".mirai" / "engine" / "release"
     if not args.exe and not (folder / "engine.stamp").is_file():
         raise BenchError(f"the engine of {b.root} has no --release binaries: run mirai build engine --release before measuring")

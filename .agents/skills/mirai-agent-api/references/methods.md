@@ -339,7 +339,7 @@ Reading a capture:
   `profile.compare`; `profile.frames` and `profile.zone` explain a spike or a function.
 - **Against `main`.** `mirai bench compare [project] [--scene S] [--camera x,y,z,tx,ty,tz]`,
   without pair scripts or a hand-built base. It builds head and the base (`--base`: `main`, a ref
-  or a checkout with its editor already built) alike, at `--dev` unless `--release`, since two
+  or a checkout with its editor already built) alike, dev unless `--release`, since two
   builds of the same mode compare; the base goes in the worktree of
   [`render check`](../../mirai-rendering/references/verification.md#render-check). With
   `measure.lock` taken it opens the two headless editors (no pacing, VSync or validation) and
@@ -737,10 +737,10 @@ when the viewport draws with them, which `mirai shaders` asks for.
   and line. `build.test` compiles and runs the `@(test)`s of a project package (`package_folder`,
   `game` if missing; `tests` by name) against the libraries the editor loads, without loading them,
   with the runner and the executable of `mirai test` of that package
-  ([checks and tests](../../mirai-projects/references/projects.md#checks-and-tests)). It replies at
-  once with `running`, and the editor answers other calls while the job builds and runs:
-  `build.test.status` says how long it has run and, once `running` is false, each test that failed
-  with what it logged. Neither runs during a build, nor two at once.
+  ([checks and tests](../../mirai-projects/references/projects.md#checks-and-tests)) and replies
+  when they end with each test that failed and what it logged. Every `build.*` method waits until
+  its action ends; the editor keeps drawing frames meanwhile, since the one job slot runs off the
+  frame. None runs while another does.
 
 - With `target:"game"` it compiles the shipped game like `mirai build game`: first the saved
   shaders (without the editor's unsaved programs), then the game with its cooked assets in `out`
