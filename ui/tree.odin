@@ -844,7 +844,7 @@ tree_build_node :: proc(ctx:^Context,b:^Tree_Build,index:int,values:rawptr,copy:
     if rules:=tree_style_rules(tree,node.style);len(rules)>0 {
         plain:=Slot_Plain{variant=variant,rules=u32(len(rules)),states=states,seen=true}
         if state.plain!=plain {
-            held,_:=style_rules_apply(&ctx.theme,&resolved,rules,node.style,variant,states)
+            held,_:=style_rules_apply(&resolved,rules,node.style,variant,states)
             state.plain=plain if !held else {}
         }
     }
@@ -1185,7 +1185,7 @@ tree_build_tabs :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next,slot:in
             if label=="" {label=tree_node_text(ctx,b,c,child,int(instance.slots[child])+copy,values)}
             if label=="" {label=string(tree.strings[c.tab.offset:][:c.tab.length])}
             if label=="" {label=number_text(ctx,f64(at+1),0)}
-            look:=style_resolve(&ctx.theme,base_style,tree_style_rules(tree,node.style),node.style,variant,widget_states(ctx,tab,at==chosen))
+            look:=style_resolve(base_style,tree_style_rules(tree,node.style),node.style,variant,widget_states(ctx,tab,at==chosen))
             if button(ctx,tab,{label=label,look=&look,layout=&Layout{padding=TREE_TAB_PADDING},block=true}).clicked {picked=at}
             if ctx.focus==tab && ctx.focus_moved {picked=at}
             child+=int(c.subtree)+1
@@ -1334,7 +1334,7 @@ tree_build_modal :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next:int,no
     backdrop:=id_derive(ctx,node_id,"backdrop")
     // Nothing it was built in clips it.
     clips_suspend(ctx)
-    box_begin(ctx,{id=backdrop,width=fixed(size.x),height=fixed(size.y),float={to=.Surface,layer=LAYER_MODAL},fill=ctx.theme.backdrop,block=true})
+    box_begin(ctx,{id=backdrop,width=fixed(size.x),height=fixed(size.y),float={to=.Surface,layer=LAYER_MODAL},fill=tone(ctx,"backdrop"),block=true})
     box_end(ctx,{id=backdrop,float={to=.Surface}})
     box.float={to=.Surface,anchor=.Center,pivot=.Center,offset=node.float.offset,layer=LAYER_MODAL+1}
     box.block=true

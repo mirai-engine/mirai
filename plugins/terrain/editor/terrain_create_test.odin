@@ -128,11 +128,11 @@ terrain_panel_hides_creation_while_a_terrain_is_selected_and_reaches_it_on_short
             tool.scroll=0
             for _ in 0..<2 {create_test_tool_panel_frame(t,&s,&tool,ref,&input)}
             panel,found:=ui.widget_rect(ctx,id)
-            testing.expect(t,found && panel.y==328 && panel.y+panel.h<=height-ctx.theme.margin+0.01)
+            testing.expect(t,found && panel.y==328 && panel.y+panel.h<=height-ui.metric(ctx,"margin")+0.01)
             tool.scroll=1e6
             create_test_tool_panel_frame(t,&s,&tool,ref,&input)
             button,button_found:=ui.widget_rect(ctx,ui.id_derive(ctx,id,"create"))
-            testing.expectf(t,button_found && button.y>=panel.y && button.y+button.h<=height-ctx.theme.margin,"%v at %g: New terrain is outside viewport: %v",kind,height,button)
+            testing.expectf(t,button_found && button.y>=panel.y && button.y+button.h<=height-ui.metric(ctx,"margin"),"%v at %g: New terrain is outside viewport: %v",kind,height,button)
             if height==600 {testing.expect(t,tool.scroll.y>0)}
         }
     }

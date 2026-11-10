@@ -9,6 +9,7 @@ import "mirai:host"
 import "mirai:platform"
 import terrain "plugins:terrain/runtime"
 import "mirai:std/serial"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 // The heightmap of a Heightfield after it is made: Import puts the heights of
@@ -25,8 +26,8 @@ import "mirai:ui"
 heightmap_fields :: proc(s:^editor.Session,tool:^Terrain_Tool) {
     ctx:=s.gui.ctx
     scale,offset:=f64(tool.height_scale),f64(tool.height_offset)
-    if ui.property(ctx,"Height scale") {if ui.number_field(ctx,ui.id(ctx,"height_scale"),&scale,{width=ui.fixed(FIELD_WIDTH),min=0,max=100000,has_min=true,has_max=true,speed=0.1,unit="m"}).changed {tool.height_scale=f32(scale)}}
-    if ui.property(ctx,"Height offset") {if ui.number_field(ctx,ui.id(ctx,"height_offset"),&offset,{width=ui.fixed(FIELD_WIDTH),min= -100000,max=100000,has_min=true,has_max=true,speed=0.1,unit="m"}).changed {tool.height_offset=f32(offset)}}
+    if kit.property(ctx,"Height scale") {if ui.number_field(ctx,ui.id(ctx,"height_scale"),&scale,{width=ui.fixed(FIELD_WIDTH),min=0,max=100000,has_min=true,has_max=true,speed=0.1,unit="m"}).changed {tool.height_scale=f32(scale)}}
+    if kit.property(ctx,"Height offset") {if ui.number_field(ctx,ui.id(ctx,"height_offset"),&offset,{width=ui.fixed(FIELD_WIDTH),min= -100000,max=100000,has_min=true,has_max=true,speed=0.1,unit="m"}).changed {tool.height_offset=f32(offset)}}
 }
 
 @(private)
@@ -119,9 +120,9 @@ resize_fields :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,
     current:=[2]int{int(stroke.source.samples.x),int(stroke.source.samples.z)}
     for &n,axis in tool.resize {if n<2 {n=current[axis]}}
     x,z:=f64(tool.resize.x),f64(tool.resize.y)
-    if ui.property(ctx,"Samples X") {if ui.number_field(ctx,ui.id(ctx,"resize_x"),&x,{width=ui.fixed(FIELD_WIDTH),min=3,max=f64(terrain.HEIGHT_SAMPLES_MAX),has_min=true,has_max=true,speed=1,integer=true}).changed {tool.resize.x=resize_even(int(x),current.x)}}
-    if ui.property(ctx,"Samples Z") {if ui.number_field(ctx,ui.id(ctx,"resize_z"),&z,{width=ui.fixed(FIELD_WIDTH),min=3,max=f64(terrain.HEIGHT_SAMPLES_MAX),has_min=true,has_max=true,speed=1,integer=true}).changed {tool.resize.y=resize_even(int(z),current.y)}}
-    if tool.resize!=current && ui.button(ctx,ui.id(ctx,"resize"),{label="Resize",style=.Field,width=-1,center=true}).clicked {terrain_resize(s,tool,world,assets,tool.resize)}
+    if kit.property(ctx,"Samples X") {if ui.number_field(ctx,ui.id(ctx,"resize_x"),&x,{width=ui.fixed(FIELD_WIDTH),min=3,max=f64(terrain.HEIGHT_SAMPLES_MAX),has_min=true,has_max=true,speed=1,integer=true}).changed {tool.resize.x=resize_even(int(x),current.x)}}
+    if kit.property(ctx,"Samples Z") {if ui.number_field(ctx,ui.id(ctx,"resize_z"),&z,{width=ui.fixed(FIELD_WIDTH),min=3,max=f64(terrain.HEIGHT_SAMPLES_MAX),has_min=true,has_max=true,speed=1,integer=true}).changed {tool.resize.y=resize_even(int(z),current.y)}}
+    if tool.resize!=current && ui.button(ctx,ui.id(ctx,"resize"),{label="Resize",variant="field",width=-1,center=true}).clicked {terrain_resize(s,tool,world,assets,tool.resize)}
 }
 
 @(private)

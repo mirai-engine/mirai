@@ -9,6 +9,7 @@ import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:std/base"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 // The effects of the View_Volume of the selected entity: enable,
@@ -290,52 +291,51 @@ post_process_pick :: proc(s:^Session,id:base.Asset_Id) {
 
 post_process_row :: proc(s:^Session,index:int,layer:erender.Post_Process_Layer) {
 	ctx:=s.gui.ctx
-	th:=&ctx.theme
 	sel,ok:=post_process_selection(s)
 	if !ok {return}
 	name,_:=post_process_material_info(s,layer.material)
 	up:=post_process_neighbor(&sel.post.layers,index,-1)>=0
 	down:=post_process_neighbor(&sel.post.layers,index,1)>=0
-	if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=2,align_y=.Center}) {
+	if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=2,align_y=.Center}) {
 		on:=layer.enabled
 		if ui.checkbox(ctx,ui.id(ctx,"post_enabled",index+1),&on) {
 			post_process_write_enabled(s,sel,index,on)
 		}
 		button:=ui.id(ctx,"post_material",index+1)
-		if ui.button(ctx,button,{label=name,style=.Field,width=-1,
-			height=th.row-4,size=th.font_small}).clicked {
+		if ui.button(ctx,button,{label=name,variant="field",width=-1,
+			height=ui.metric(ctx,"row")-4,size=ui.metric(ctx,"font_small")}).clicked {
 			if rect,found:=ui.widget_rect(ctx,button); found {
 				post_process_picker_open(s,false,index,false,rect)
 			}
 		}
 		inspecting:=post_process_inspecting(s,sel,index)
 		if ui.button(ctx,ui.id(ctx,"post_inspect",index+1),
-			{icon=.Eye,style=.Ghost,width=22,height=22,icon_size=13,active=inspecting,
-			 icon_color=th.accent if inspecting else th.text_muted,disabled=!layer.enabled}).clicked {
+			{icon=.Eye,variant="ghost",width=22,height=22,icon_size=13,active=inspecting,
+			 icon_color=ui.tone(ctx,"accent") if inspecting else ui.tone(ctx,"text_muted"),disabled=!layer.enabled}).clicked {
 			e:=&s.inspector.post_process
 			if inspecting {e.inspect_entity=core.NONE} else {e.inspect_entity,e.inspect_layer=sel.entity,index}
 		}
 		if ui.button(ctx,ui.id(ctx,"post_edit",index+1),
-			{icon=.Edit,style=.Ghost,width=22,height=22,icon_size=13,icon_color=th.text_muted}).clicked {
+			{icon=.Edit,variant="ghost",width=22,height=22,icon_size=13,icon_color=ui.tone(ctx,"text_muted")}).clicked {
 			asset_document_open(s,layer.material)
 		}
 		if ui.button(ctx,ui.id(ctx,"post_stage",index+1),
-			{label=layer.after_tonemap?"LDR":"HDR",style=.Ghost,width=32,
-			 height=22,size=th.font_small}).clicked {
+			{label=layer.after_tonemap?"LDR":"HDR",variant="ghost",width=32,
+			 height=22,size=ui.metric(ctx,"font_small")}).clicked {
 			post_process_write_after(s,sel,index,!layer.after_tonemap)
 		}
 		if ui.button(ctx,ui.id(ctx,"post_up",index+1),
-			{icon=.Chevron_Up,style=.Ghost,width=18,height=22,icon_size=12,
-			 icon_color=th.text_muted,disabled=!up}).clicked {
+			{icon=.Chevron_Up,variant="ghost",width=18,height=22,icon_size=12,
+			 icon_color=ui.tone(ctx,"text_muted"),disabled=!up}).clicked {
 			post_process_move(s,index,-1)
 		}
 		if ui.button(ctx,ui.id(ctx,"post_down",index+1),
-			{icon=.Chevron_Down,style=.Ghost,width=18,height=22,icon_size=12,
-			 icon_color=th.text_muted,disabled=!down}).clicked {
+			{icon=.Chevron_Down,variant="ghost",width=18,height=22,icon_size=12,
+			 icon_color=ui.tone(ctx,"text_muted"),disabled=!down}).clicked {
 			post_process_move(s,index,1)
 		}
 		if ui.button(ctx,ui.id(ctx,"post_remove",index+1),
-			{icon=.Cross,style=.Ghost,width=22,height=22,icon_size=12,icon_color=th.text_muted}).clicked {
+			{icon=.Cross,variant="ghost",width=22,height=22,icon_size=12,icon_color=ui.tone(ctx,"text_muted")}).clicked {
 			post_process_remove(s,index)
 		}
 	}
@@ -348,7 +348,7 @@ post_process_fade_row :: proc(s:^Session,sel:Post_Process_Selection,index:int,
 	ctx:=s.gui.ctx
 	row_begin(ctx,"Fade")
 	value:=f64(layer.fade)
-	r:=ui.slider_field(ctx,ui.id(ctx,"post_fade",index+1),&value,
+	r:=kit.slider_field(ctx,ui.id(ctx,"post_fade",index+1),&value,
 		{decimals=2,speed=0.005,min=0,max=1,has_min=true,has_max=true,height=22})
 	key:=value_key(sel.entity,index,base.name_hash("Post_Process_Layer.fade"))
 	gesture_follow(s,key,r,"Fade")
@@ -365,14 +365,14 @@ post_process_group :: proc(s:^Session,after:bool) {
 	ctx:=s.gui.ctx
 	sel,ok:=post_process_selection(s)
 	if !ok {return}
-	ui.section(ctx,after?"AFTER TONEMAP":"BEFORE TONEMAP")
+	kit.section(ctx,after?"AFTER TONEMAP":"BEFORE TONEMAP")
 	any:=false
 	for layer,i in sel.post.layers {
 		if layer.material=={} || layer.after_tonemap!=after {continue}
 		post_process_row(s,i,layer)
 		any=true
 	}
-	if !any {ui.label(ctx,"None",ctx.theme.font_small,ctx.theme.text_faint,0)}
+	if !any {ui.label(ctx,"None",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),0)}
 }
 
 // The layers of a View_Volume as a stack of effects.
@@ -380,25 +380,24 @@ post_process_array :: proc(c:^Inspect,info:^runtime.Type_Info,name,label:string,
 	if c.t==nil || c.t.type!=erender.View_Volume || name!="layers" || offset!=offset_of(erender.View_Volume,layers) {return false}
 	s:=c.s
 	ctx:=s.gui.ctx
-	th:=&ctx.theme
 	if len(c.entities)!=1 {return false}
 	value:=core.raw_find(core.world_table_at(c.w,c.t),c.t.info,c.entities[0])
 	if value==nil {return true}
 	post:=cast(^erender.View_Volume)value
 	used:=post_process_count(&post.layers)
-	if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=6,align_y=.Center}) {
+	if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=6,align_y=.Center}) {
 		ui.label(ctx,fmt.tprintf("%d / %d effects",used,
-			erender.POST_PROCESS_CAPACITY),th.font_small,th.text_muted)
+			erender.POST_PROCESS_CAPACITY),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
 		ui.spacer(ctx)
 		add:=ui.id(ctx,"post_process_add")
-		if ui.button(ctx,add,{label="Add effect",icon=.Plus,style=.Field,height=24,
-			size=th.font_small,disabled=used>=erender.POST_PROCESS_CAPACITY}).clicked {
+		if ui.button(ctx,add,{label="Add effect",icon=.Plus,variant="field",height=24,
+			size=ui.metric(ctx,"font_small"),disabled=used>=erender.POST_PROCESS_CAPACITY}).clicked {
 			if rect,found:=ui.widget_rect(ctx,add); found {
 				post_process_picker_open(s,true,-1,false,rect)
 			}
 		}
 		if ui.button(ctx,ui.id(ctx,"post_process_clear"),
-			{label="Clear",style=.Ghost,height=24,size=th.font_small,disabled=used==0}).clicked {
+			{label="Clear",variant="ghost",height=24,size=ui.metric(ctx,"font_small"),disabled=used==0}).clicked {
 			post_process_clear(s)
 		}
 	}
@@ -411,7 +410,6 @@ post_process_picker_build :: proc(s:^Session) {
 	p:=&s.inspector.post_process.picker
 	if !p.open {return}
 	ctx:=s.gui.ctx
-	th:=&ctx.theme
 	popup:=post_process_picker_id(s.gui)
 	if !ui.popup_is_open(ctx,popup) {
 		p^={}
@@ -438,36 +436,36 @@ post_process_picker_build :: proc(s:^Session) {
 		ui.id_push(ctx,popup)
 		defer ui.id_pop(ctx)
 		if p.add {
-			ui.label(ctx,"Add effect",th.font_small,th.text_muted,0)
+			ui.label(ctx,"Add effect",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),0)
 			stage:=p.after?1:0
-			if ui.tabs(ctx,ui.id(ctx,"post_picker_stage"),
+			if kit.tabs(ctx,ui.id(ctx,"post_picker_stage"),
 				{"Before tonemap","After tonemap"},&stage,ui.fixed(240),24) {
 				p.after=stage==1
 			}
 		} else {
-			ui.label(ctx,"Choose material",th.font_small,th.text_muted,0)
+			ui.label(ctx,"Choose material",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),0)
 		}
 		ui.text_field(ctx,ui.id(ctx,"post_picker_filter"),p.filter[:],
-			&p.filter_length,{placeholder="Search",live=true,height=th.row})
+			&p.filter_length,{placeholder="Search",live=true,height=ui.metric(ctx,"row")})
 		if len(shown)==0 {
-			ui.label(ctx,"No Postprocess material",th.font_small,th.text_faint,0)
+			ui.label(ctx,"No Postprocess material",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),0)
 		} else {
 			picked:=false
 			first,last:=ui.list_begin(ctx,ui.id(ctx,"post_picker_list"),&p.scroll,
-				len(shown),th.row,POST_PROCESS_PICKER_LIST)
+				len(shown),ui.metric(ctx,"row"),POST_PROCESS_PICKER_LIST)
 			for i in first..<last {
 				choice:=&p.choices[shown[i]]
 				label:=fmt.tprintf("%s - %s",asset_label_of(s,choice.id,""),
 					base.text_get(choice.program[:]))
 				if ui.button(ctx,ui.id(ctx,"post_picker_item",i+1),
-					{label=label,style=.Ghost,width=-1,height=th.row,
-					 size=th.font_small}).clicked {
+					{label=label,variant="ghost",width=-1,height=ui.metric(ctx,"row"),
+					 size=ui.metric(ctx,"font_small")}).clicked {
 					post_process_pick(s,choice.id)
 					picked=true
 					break
 				}
 			}
-			ui.list_end(ctx,ui.id(ctx,"post_picker_list"),len(shown),last,th.row)
+			ui.list_end(ctx,ui.id(ctx,"post_picker_list"),len(shown),last,ui.metric(ctx,"row"))
 			if picked {
 				ui.popup_close(ctx,popup)
 				p^={}

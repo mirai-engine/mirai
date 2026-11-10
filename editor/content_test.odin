@@ -1053,15 +1053,14 @@ a_selection_fills_its_row_or_cell_and_the_keyboard_has_a_ring_of_its_own :: proc
     ctx:ui.Context
     testing.expect(t,ui.context_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
-    th:=&ctx.theme
     row:=asset_row_box(&ctx,1,4,true,false,false)
-    testing.expect(t,row.fill==th.accent_soft && row.stroke=={},"A selected row fills, as the rows of the outliner")
+    testing.expect(t,row.fill==ui.tone(&ctx,"accent_soft") && row.stroke=={},"A selected row fills, as the rows of the outliner")
     row=asset_row_box(&ctx,1,4,false,false,true)
-    testing.expect(t,row.fill=={} && row.stroke==th.text,"Only the keyboard has the light ring")
+    testing.expect(t,row.fill=={} && row.stroke==ui.tone(&ctx,"text"),"Only the keyboard has the light ring")
     card:=asset_card_box(&ctx,1,CONTENT_VIEW_DEFAULT,60,true,false)
-    testing.expect(t,card.fill==th.accent_soft && card.stroke=={} && card.padding=={},"A cell has no padding")
-    edge,width:=asset_frame_edge(th,false,true)
-    testing.expect(t,edge==th.toggle_on_stroke && width==1,"Its thumbnail has a violet border, no light ring")
+    testing.expect(t,card.fill==ui.tone(&ctx,"accent_soft") && card.stroke=={} && card.padding=={},"A cell has no padding")
+    edge,width:=asset_frame_edge(&ctx,false,true)
+    testing.expect(t,edge==ui.tone(&ctx,"toggle_on_stroke") && width==1,"Its thumbnail has a violet border, no light ring")
     columns,_:=content_cells(CONTENT_VIEW_DEFAULT,CONTENT_TEST_WIDTH)
     testing.expect_value(t,columns,4)
 }

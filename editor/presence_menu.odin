@@ -88,9 +88,8 @@ presence_menu_build :: proc(s:^Session) {
 @(private)
 presence_menu_items :: proc(s:^Session,menu:Presence_Menu) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     header :: proc(ctx:^ui.Context,text:string) {
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(24),padding={6,0,6,0},align_y=.Center}) {ui.label(ctx,text,ctx.theme.font_small,ctx.theme.text_muted)}
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(24),padding={6,0,6,0},align_y=.Center}) {ui.label(ctx,text,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))}
     }
     editing:=s.mode==.Edit || s.mode==.Watch
     switch menu.kind {
@@ -99,7 +98,7 @@ presence_menu_items :: proc(s:^Session,menu:Presence_Menu) {
     case .Agent:
         task:=s.ai!=nil?ai_task_find(s.ai,menu.task):nil
         if task==nil {ui.popup_close(ctx);return}
-        header(ctx,ai_chat_menu_label(ctx,base.text_get(task.title[:]),180,th.font_small))
+        header(ctx,ai_chat_menu_label(ctx,base.text_get(task.title[:]),180,ui.metric(ctx,"font_small")))
         if ui.menu_item(ctx,ui.id(ctx,"chat"),"Open chat",{icon=.Sparkle}) {
             ai_chat_select(s,task)
             ai_chat_show(s.ai,true)

@@ -66,7 +66,7 @@ prompt_images_field :: proc(c:^editor.Inspect,info:^runtime.Type_Info,name,label
             for image,i in settings.prompt_images {if image.texture=={} {slot=i;break}}
         }
         if slot<0 {
-            ui.label(s.gui.ctx,fmt.tprintf("%s: the %d images are taken",prompt_row_label(row),gui.UI_PROMPT_IMAGES),s.gui.ctx.theme.font_small,s.gui.ctx.theme.text_muted)
+            ui.label(s.gui.ctx,fmt.tprintf("%s: the %d images are taken",prompt_row_label(row),gui.UI_PROMPT_IMAGES),ui.metric(s.gui.ctx,"font_small"),ui.tone(s.gui.ctx,"text_muted"))
             continue
         }
         start:=int(offset)+slot*size_of(gui.UI_Prompt_Image)

@@ -17,6 +17,7 @@ import "mirai:std/base"
 import "mirai:std/geom"
 import mm "mirai:std/math"
 import "mirai:std/serial"
+import "mirai:editor/kit"
 import "mirai:ui"
 import "base:runtime"
 
@@ -32,39 +33,39 @@ terrain_kind_name :: proc(kind:terrain.Source_Kind) -> string {
 terrain_creation_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App) {
     ctx:=s.gui.ctx
     kind:=int(tool.create_kind)
-    if ui.dropdown(ctx,ui.id(ctx,"source_kind"),{list={"Heightfield Terrain","Volumetric Terrain"}},&kind,{width=-1,height=ctx.theme.row}) {tool.create_kind=terrain.Source_Kind(kind)}
+    if ui.dropdown(ctx,ui.id(ctx,"source_kind"),{list={"Heightfield Terrain","Volumetric Terrain"}},&kind,{width=-1,height=ui.metric(ctx,"row")}) {tool.create_kind=terrain.Source_Kind(kind)}
     if tool.create_kind!=.Volume {
         source:=int(tool.create_source)
-        if ui.tabs(ctx,ui.id(ctx,"create_source"),{"Plane","Heightmap"},&source) {tool.create_source=Create_Source(source)}
+        if kit.tabs(ctx,ui.id(ctx,"create_source"),{"Plane","Heightmap"},&source) {tool.create_source=Create_Source(source)}
     }
     heightmap:=tool.create_kind!=.Volume && tool.create_source==.Heightmap
     samples,depth,cell,chunk:=f64(tool.samples),f64(tool.depth),f64(tool.cell),f64(tool.chunk_cells)
     maximum:=tool.create_kind==.Volume?f64(terrain.VOLUME_SAMPLES_MAX):f64(terrain.HEIGHT_SAMPLES_MAX)
     tool.samples=min(tool.samples,int(maximum));samples=f64(tool.samples)
     if !heightmap {
-        if ui.property(ctx,"Samples X/Z") {if ui.number_field(ctx,ui.id(ctx,"samples"),&samples,{min=3,max=maximum,has_min=true,has_max=true,speed=1}).changed {tool.samples=int(samples)}}
+        if kit.property(ctx,"Samples X/Z") {if ui.number_field(ctx,ui.id(ctx,"samples"),&samples,{min=3,max=maximum,has_min=true,has_max=true,speed=1}).changed {tool.samples=int(samples)}}
     }
-    if tool.create_kind==.Volume {if ui.property(ctx,"Samples Y") {if ui.number_field(ctx,ui.id(ctx,"depth"),&depth,{min=3,max=terrain.VOLUME_SAMPLES_MAX,has_min=true,has_max=true,speed=1}).changed {tool.depth=int(depth)}}}
+    if tool.create_kind==.Volume {if kit.property(ctx,"Samples Y") {if ui.number_field(ctx,ui.id(ctx,"depth"),&depth,{min=3,max=terrain.VOLUME_SAMPLES_MAX,has_min=true,has_max=true,speed=1}).changed {tool.depth=int(depth)}}}
     if heightmap {
         result:=platform.dialog_result(app.platform)
         if result.tag==HEIGHTMAP_DIALOG && result.state==.Accepted {tool.heightmap_length=copy(tool.heightmap_path[:],transmute([]u8)result.path)}
         path:=string(tool.heightmap_path[:tool.heightmap_length])
-        if ui.button(ctx,ui.id(ctx,"heightmap"),{label=path==""?"Choose heightmap":filepath.base(path),style=.Field,width=-1,center=true}).clicked {
+        if ui.button(ctx,ui.id(ctx,"heightmap"),{label=path==""?"Choose heightmap":filepath.base(path),variant="field",width=-1,center=true}).clicked {
             if !platform.dialog_show(app.platform,{kind=.Open_File,tag=HEIGHTMAP_DIALOG,filters={{"Heightmap","png;tga;bmp"}},location=s.assets_root}) {editor.notify(s,"A file dialog is already open")}
         }
         heightmap_fields(s,tool)
     }
-    if ui.property(ctx,"Spacing") {if ui.number_field(ctx,ui.id(ctx,"cell"),&cell,{min=0.01,max=100,has_min=true,has_max=true,speed=0.05,unit="m"}).changed {tool.cell=f32(cell)}}
-    if ui.property(ctx,"Chunk cells") {if ui.number_field(ctx,ui.id(ctx,"chunk"),&chunk,{min=terrain.CHUNK_CELLS_MIN,max=terrain.CHUNK_CELLS_MAX,has_min=true,has_max=true,speed=1}).changed {tool.chunk_cells=int(chunk)}}
+    if kit.property(ctx,"Spacing") {if ui.number_field(ctx,ui.id(ctx,"cell"),&cell,{min=0.01,max=100,has_min=true,has_max=true,speed=0.05,unit="m"}).changed {tool.cell=f32(cell)}}
+    if kit.property(ctx,"Chunk cells") {if ui.number_field(ctx,ui.id(ctx,"chunk"),&chunk,{min=terrain.CHUNK_CELLS_MIN,max=terrain.CHUNK_CELLS_MAX,has_min=true,has_max=true,speed=1}).changed {tool.chunk_cells=int(chunk)}}
     // What it makes, in metres and chunks; the view shows its outline.
     if !heightmap {
         side:=f32(max(tool.samples,2)-1)*tool.cell
         chunks:=(max(tool.samples,2)-1+max(tool.chunk_cells,1)-1)/max(tool.chunk_cells,1)
         size:=fmt.tprintf("%.0f × %.0f m, %d × %d chunks",side,side,chunks,chunks)
         if tool.create_kind==.Volume {size=fmt.tprintf("%.0f × %.0f × %.0f m",side,f32(max(tool.depth,2)-1)*tool.cell,side)}
-        if ui.property(ctx,"Size") {ui.label(ctx,size,ctx.theme.font,ctx.theme.text_muted)}
+        if kit.property(ctx,"Size") {ui.label(ctx,size,ui.metric(ctx,"font"),ui.tone(ctx,"text_muted"))}
     }
-    if ui.button(ctx,ui.id(ctx,"create"),{label="New terrain",style=.Field,width=-1,center=true}).clicked {terrain_create(s,tool,world,app.assets,app.allocator)}
+    if ui.button(ctx,ui.id(ctx,"create"),{label="New terrain",variant="field",width=-1,center=true}).clicked {terrain_create(s,tool,world,app.assets,app.allocator)}
 }
 
 @(private)

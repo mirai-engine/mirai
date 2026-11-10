@@ -803,7 +803,6 @@ overlays_draw :: proc(s:^Session,w:core.World_Ref) {
     v:=s.viewport
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     if v.show_indicators {
         reach_draw(s,w)
         indicators_draw(s,w)
@@ -811,7 +810,7 @@ overlays_draw :: proc(s:^Session,w:core.World_Ref) {
     if !tool_holding(v) {gizmo_draw(s,w)}
     if v.capture==.Select && v.moved {
         rect:=rect_from_points(v.press,v.pointer)
-        ui.draw_rect_lines(ctx,rect,1,ui.color_alpha(th.accent,220))
+        ui.draw_rect_lines(ctx,rect,1,ui.color_alpha(ui.tone(ctx,"accent"),220))
     }
 }
 
@@ -826,7 +825,6 @@ level_color :: proc "contextless" (level:u8) -> ui.Color {
 indicators_draw :: proc(s:^Session,w:core.World_Ref) {
     v:=s.viewport
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     indicators_sync(s,w,ghosts_shown(s))
     margin:=INDICATOR_RADIUS+8
     spots:=core.world_table_of(w,erender.Spot_Light)
@@ -850,10 +848,10 @@ indicators_draw :: proc(s:^Session,w:core.World_Ref) {
         if level!=0 {
             color:=level_color(level)
             ui.draw_circle(ctx,p,radius+6,ui.color_alpha(color,45))
-            ui.draw_circle(ctx,p,radius,ui.color_alpha(th.panel,200))
+            ui.draw_circle(ctx,p,radius,ui.color_alpha(ui.tone(ctx,"panel"),200))
             ui.draw_ring(ctx,p,radius,2.2,color)
         } else {
-            ui.draw_circle(ctx,p,radius,ui.color_alpha(th.panel,hidden?110:165))
+            ui.draw_circle(ctx,p,radius,ui.color_alpha(ui.tone(ctx,"panel"),hidden?110:165))
             ui.draw_ring(ctx,p,radius,1.4,ui.color_alpha(base_color,hidden?110:210))
         }
         ui.draw_icon(ctx,icon,{p.x-7,p.y-7,14,14},glyph)

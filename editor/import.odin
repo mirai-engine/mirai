@@ -475,10 +475,9 @@ import_working :: proc(s:^Session) -> bool {
     job:=s.importer.running
     if job==nil {return false}
     ctx:=s.gui.ctx
-    th:=&ctx.theme
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=8,align_y=.Center}) {
-        pulse_dot(ctx,th.accent,true)
-        ui.label(ctx,fmt.tprintf("Importing %s",filepath.base(job.source)),th.font_small,th.text)
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=8,align_y=.Center}) {
+        pulse_dot(ctx,ui.tone(ctx,"accent"),true)
+        ui.label(ctx,fmt.tprintf("Importing %s",filepath.base(job.source)),ui.metric(ctx,"font_small"),ui.tone(ctx,"text"))
     }
     return true
 }

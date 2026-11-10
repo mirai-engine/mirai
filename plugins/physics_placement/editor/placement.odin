@@ -8,6 +8,7 @@ import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:std/geom"
 import mm "mirai:std/math"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 PLACEMENT_TOOL :: "physics_placement"
@@ -310,24 +311,24 @@ physics_placement_panel :: proc(s:^editor.Session,tool:^Physics_Placement,input:
     if ui.panel(ctx,id,editor.tool_panel(g,id)) {
         ui.id_push(ctx,id)
         defer ui.id_pop(ctx)
-        ui.section(ctx,"Physics placement")
+        kit.section(ctx,"Physics placement")
         if placement_active(tool) {
-            ui.section(ctx,tool.ticks>=PLACEMENT_TICKS?"Preview paused":tool.resting?"Resting":"Simulating")
-            if ui.button(ctx,ui.id(ctx,"confirm"),{label="Confirm",style=.Field,width=-1,center=true}).clicked {placement_confirm(tool)}
-            if ui.button(ctx,ui.id(ctx,"cancel"),{label="Cancel",style=.Field,width=-1,center=true}).clicked {placement_cancel(tool)}
+            kit.section(ctx,tool.ticks>=PLACEMENT_TICKS?"Preview paused":tool.resting?"Resting":"Simulating")
+            if ui.button(ctx,ui.id(ctx,"confirm"),{label="Confirm",variant="field",width=-1,center=true}).clicked {placement_confirm(tool)}
+            if ui.button(ctx,ui.id(ctx,"cancel"),{label="Cancel",variant="field",width=-1,center=true}).clicked {placement_cancel(tool)}
         }
         {
             editor.row_begin(ctx,"Mesh")
             _=editor.geometry_choice(s,ui.id(ctx,"mesh"),&tool.mesh)
             editor.row_end(ctx)
             speed,height,scale:=f64(tool.speed),f64(tool.height),f64(tool.scale)
-            if ui.property(ctx,"Speed") {
+            if kit.property(ctx,"Speed") {
                 if ui.number_field(ctx,ui.id(ctx,"speed"),&speed,{min=0.1,max=60,has_min=true,has_max=true,speed=0.1,unit="/s"}).changed {tool.speed=f32(speed)}
             }
-            if ui.property(ctx,"Drop height") {
+            if kit.property(ctx,"Drop height") {
                 if ui.number_field(ctx,ui.id(ctx,"height"),&height,{min=0,max=1000,has_min=true,has_max=true,speed=0.05,unit="m"}).changed {tool.height=f32(height)}
             }
-            if ui.property(ctx,"Scale") {
+            if kit.property(ctx,"Scale") {
                 if ui.number_field(ctx,ui.id(ctx,"scale"),&scale,{min=0.001,max=1000,has_min=true,has_max=true,speed=0.05}).changed {tool.scale=f32(scale)}
             }
         }

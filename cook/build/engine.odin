@@ -82,7 +82,7 @@ ENGINE_PACKAGES :: [?]Engine_Package{
     {.Cook,"cook/install","cook"},{.Cook,"cook/build",""},
 
     {.Editor,"third_party/sqlite","editor-parts"},{.Editor,"editor/api","editor-parts"},{.Editor,"editor/acp","editor-parts"},{.Editor,"editor/diff","editor-parts"},{.Editor,"editor/ai_store","editor-parts"},
-    {.Editor,"editor/git","editor-parts"},{.Editor,"editor/history","editor-parts"},{.Editor,"editor/records","editor-parts"},{.Editor,"editor",""},
+    {.Editor,"editor/git","editor-parts"},{.Editor,"editor/history","editor-parts"},{.Editor,"editor/records","editor-parts"},{.Editor,"editor/kit","editor-parts"},{.Editor,"editor",""},
 }
 
 @(private)

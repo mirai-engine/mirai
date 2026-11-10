@@ -55,7 +55,7 @@ test_count_quad :: proc(vertices:[]Vertex,kind:Quad_Kind) -> int {
 @(test)
 images_show_a_part_of_a_texture_with_a_tint :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input()
     frame:=test_frame(&ctx,&input,proc(ctx:^Context,user:rawptr) {
@@ -80,7 +80,7 @@ images_show_a_part_of_a_texture_with_a_tint :: proc(t:^testing.T) {
 @(test)
 a_box_takes_an_image_or_a_nine_slice_as_its_background :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input()
     frame:=test_frame(&ctx,&input,proc(ctx:^Context,user:rawptr) {
@@ -100,7 +100,7 @@ a_box_takes_an_image_or_a_nine_slice_as_its_background :: proc(t:^testing.T) {
 @(test)
 a_progress_bar_is_its_shape_cut_at_its_value :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     Bars :: struct {value:f32,images:bool}
     s:=Bars{value=0.25}
@@ -152,7 +152,7 @@ test_styles_build :: proc(ctx:^Context,user:rawptr) {
 @(test)
 styled_text_is_aligned_and_wrapped_inside_its_box :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
     white:=Color{255,255,255,255}
     s:=Test_Styles{style={size=16,color=white},content="Score",width=FIT,height=FIT}
@@ -193,7 +193,7 @@ styled_text_is_aligned_and_wrapped_inside_its_box :: proc(t:^testing.T) {
 @(test)
 styled_text_takes_outline_shadow_and_ellipsis :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
     white:=Color{255,255,255,255}
     s:=Test_Styles{style={size=16,color=white},content="Level",width=fixed(200),height=fixed(40)}
@@ -234,7 +234,7 @@ styled_text_takes_outline_shadow_and_ellipsis :: proc(t:^testing.T) {
 @(test)
 the_scale_turns_layout_units_into_window_points :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
     testing.expect_value(t,scale_to_fit({1920,1080},{1280,720}),f32(1.5))
     testing.expect_value(t,scale_to_fit({1920,800},{1280,720}),f32(800.0/720))
@@ -244,7 +244,7 @@ the_scale_turns_layout_units_into_window_points :: proc(t:^testing.T) {
     build :: proc(ctx:^Context,user:rawptr) {
         s:=cast(^Scaled)user
         if anchored(ctx,id(ctx,"corner"),.Bottom_Right,{-10,-10},{direction=.Column}) {
-            if button(ctx,id(ctx,"go"),{label="Go",width=100,height=40,style=.Accent}).clicked {s.clicks+=1}
+            if button(ctx,id(ctx,"go"),{label="Go",width=100,height=40,variant="accent"}).clicked {s.clicks+=1}
         }
     }
     input:=test_input(1280,720)
@@ -279,9 +279,9 @@ the_scale_turns_layout_units_into_window_points :: proc(t:^testing.T) {
 @(test)
 a_skinned_button_changes_its_image_with_its_state :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
-    ctx.theme.activate_on_press=false
+    ctx.release_activates=true
     State :: struct {clicks:int,disabled:bool}
     s:State
     build :: proc(ctx:^Context,user:rawptr) {
@@ -336,7 +336,7 @@ a_canvas_is_drawn_by_its_owner_inside_the_clip_of_its_container :: proc(t:^testi
     desc:=TEST_SMALL
     desc.draw_user=draw
     ctx:Context
-    testing.expect(t,context_init(&ctx,desc));defer context_destroy(&ctx)
+    testing.expect(t,test_context_init(&ctx,desc));defer context_destroy(&ctx)
     input:=test_input()
     Build :: struct {seen:^Canvas_Seen,it:Interaction}
     b:=Build{seen=&seen}

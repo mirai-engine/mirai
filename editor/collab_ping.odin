@@ -92,7 +92,7 @@ pings_draw :: proc(s:^Session) {
         if st:=c.state;st==nil || st.phase!=.Joined {name=""}
         rect:=ui.Rect{screen.x-6,screen.y-12,12,12}
         ui.draw_circle(s.gui.ctx,ui.rect_center(rect),6,color)
-        ui.draw_ring(s.gui.ctx,ui.rect_center(rect),6,1.5,s.gui.ctx.theme.panel)
+        ui.draw_ring(s.gui.ctx,ui.rect_center(rect),6,1.5,ui.tone(s.gui.ctx,"panel"))
         if name!="" {presence_name_draw(s,{rect.x,rect.y-2,rect.w,rect.h},name,color)}
     }
 }

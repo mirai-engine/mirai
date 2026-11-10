@@ -14,7 +14,6 @@ Paint_Kind :: enum u8 {
     Panel,      // shadow, fill and a one unit stroke
     Bar,        // vertical gradient from fill to fill2 over a line of stroke
     Box,        // fill and stroke, or quad2 tinted by fill, around an icon, a quad, a text and a right aligned detail
-    Card,       // an icon over a centered label
     Field,      // a text or number field, edited or not
     Swatch,     // a color
     Sat_Value,  // the square of saturation and value of a color picker
@@ -110,7 +109,7 @@ FIELD_UNIT :: f32(9.5) // size of the unit at the right end of a number field
 // side and the text; 0: those of the editor. icon: drawn instead of the label.
 field_text_span :: proc(ctx:^Context,r:Rect,label:string,marked:=false,pad:f32=0,icon:=Icon.None) -> (x,room:f32) {
     x=r.x+(pad if pad>0 else 11 if marked else 8)
-    if icon!=.None {x+=FIELD_ICON+4} else if label!="" {x+=text_width(&ctx.font,label,ctx.theme.font_axis,FONT_MEDIUM)+6}
+    if icon!=.None {x+=FIELD_ICON+4} else if label!="" {x+=text_width(&ctx.font,label,metric(ctx,"font_axis"),FONT_MEDIUM)+6}
     return x,max(r.x+r.w-(pad if pad>0 else 8)-x,0)
 }
 FIELD_ICON :: f32(10) // side of the icon inside a field, before its value
@@ -186,7 +185,7 @@ TEXT_FADE :: 12
 paint_background :: proc(ctx:^Context,r:Rect,p:^Paint) {
     radii:=p.corners if p.corners!={} else [4]f32{p.radius,p.radius,p.radius,p.radius}
     if p.shadow {
-        color:=p.shadow_color if p.shadow_color[3]>0 else ctx.theme.shadow
+        color:=p.shadow_color if p.shadow_color[3]>0 else tone(ctx,"shadow")
         radius:=max(radii[0],radii[1],radii[2],radii[3])
         // Without blur an offset is a hard edge of its shape, a default shadow without one.
         switch {
@@ -205,7 +204,6 @@ paint_background :: proc(ctx:^Context,r:Rect,p:^Paint) {
 
 @(private)
 paint_draw :: proc(ctx:^Context,r:Rect,p:^Paint) {
-    th:=&ctx.theme
     font:=&ctx.font
     switch p.kind {
     case .None:
@@ -214,18 +212,6 @@ paint_draw :: proc(ctx:^Context,r:Rect,p:^Paint) {
     case .Bar:
         if p.program!=0 {draw_program(ctx,r,p.program,p.program_values,p.fill,{})} else {draw_rect_gradient(ctx,r,p.fill,p.fill2)}
         draw_rect(ctx,{r.x,r.y+r.h-1,r.w,1},p.stroke)
-    case .Card:
-        paint_background(ctx,r,p)
-        icon:=p.icon_size
-        center_y:=r.y+r.h*(0.5 if p.text=="" else 0.42)
-        if p.quad.kind!=.Solid {
-            draw_image(ctx,{r.x+(r.w-icon)*0.5,center_y-icon*0.5,icon,icon},p.quad)
-        } else {
-            draw_icon(ctx,p.icon,{r.x+(r.w-icon)*0.5,center_y-icon*0.5,icon,icon},p.icon_color)
-        }
-        clip_push(ctx,r)
-        draw_text(ctx,p.text,r.x+(r.w-text_width(font,p.text,p.size,int(p.style.font)))*0.5,r.y+r.h-p.size*TEXT_LINE-10,p.size,p.text_color,int(p.style.font))
-        clip_pop(ctx)
     case .Box:
         switch {
         case p.quad2.kind==.Solid: paint_background(ctx,r,p)
@@ -254,7 +240,7 @@ paint_draw :: proc(ctx:^Context,r:Rect,p:^Paint) {
         // and shows its end when it does not fit.
         right:=r.x+r.w-p.padding
         detail_x:=right
-        if p.detail!="" && !p.center {detail_x-=min(text_width(font,p.detail,th.font_small),max(right-x,0)*0.5)}
+        if p.detail!="" && !p.center {detail_x-=min(text_width(font,p.detail,metric(ctx,"font_small")),max(right-x,0)*0.5)}
         if p.text!="" {
             // A text that reaches the icon after it or the detail fades out before it.
             end:=r.x+r.w-p.padding-icon_width if p.icon_after else right
@@ -267,28 +253,28 @@ paint_draw :: proc(ctx:^Context,r:Rect,p:^Paint) {
             draw_icon(ctx,p.icon,{icon_x,r.y+(r.h-p.icon_size)*0.5,p.icon_size,p.icon_size},p.icon_color)
         }
         if p.detail!="" {
-            w:=text_width(font,p.detail,th.font_small)
+            w:=text_width(font,p.detail,metric(ctx,"font_small"))
             if detail_x>right-w {clip_push(ctx,{detail_x,r.y,r.x+r.w-detail_x,r.h})}
-            draw_text(ctx,p.detail,right-w,r.y+text_leading(th.font_small,r.h),th.font_small,p.detail_color)
+            draw_text(ctx,p.detail,right-w,r.y+text_leading(metric(ctx,"font_small"),r.h),metric(ctx,"font_small"),p.detail_color)
             if detail_x>right-w {clip_pop(ctx)}
         }
         clip_pop(ctx)
     case .Field:
         // A field of a game gives its corners, its selection and its placeholder; one of the editor takes the theme.
-        radii:=p.corners if p.corners!={} else [4]f32{th.radius_control,th.radius_control,th.radius_control,th.radius_control}
-        selection:=p.fill2 if p.fill2[3]>0 else th.text_select
-        faint:=p.faint if p.faint[3]>0 else th.text_faint
+        radii:=p.corners if p.corners!={} else [4]f32{metric(ctx,"radius_control"),metric(ctx,"radius_control"),metric(ctx,"radius_control"),metric(ctx,"radius_control")}
+        selection:=p.fill2 if p.fill2[3]>0 else tone(ctx,"text_select")
+        faint:=p.faint if p.faint[3]>0 else tone(ctx,"text_faint")
         draw_rounded_corners(ctx,r,radii,p.fill)
         editing:=p.caret>=0
         marked:=p.strip[3]>0
         if marked {draw_rounded(ctx,{r.x+3,r.y+4,3,max(r.h-8,2)},1.5,p.strip)}
         // The unit keeps the right end; the value is clipped before it.
         unit:=text_width(font,p.detail,FIELD_UNIT)+5 if p.detail!="" else 0
-        if unit>0 {draw_text(ctx,p.detail,r.x+r.w-unit,r.y+text_leading(FIELD_UNIT,r.h),FIELD_UNIT,th.text_faint if p.text_color==th.text_faint else th.text_muted)}
+        if unit>0 {draw_text(ctx,p.detail,r.x+r.w-unit,r.y+text_leading(FIELD_UNIT,r.h),FIELD_UNIT,tone(ctx,"text_faint") if p.text_color==tone(ctx,"text_faint") else tone(ctx,"text_muted"))}
         clip_push(ctx,{r.x+1,r.y,r.w-2-unit,r.h})
         if p.icon!=.None {
-            draw_icon(ctx,p.icon,{r.x+(11 if marked else 8),r.y+(r.h-FIELD_ICON)*0.5,FIELD_ICON,FIELD_ICON},th.text_muted)
-        } else if p.label!="" {draw_text(ctx,p.label,r.x+(11 if marked else 8),r.y+text_leading(th.font_axis,r.h),th.font_axis,th.text,FONT_MEDIUM)}
+            draw_icon(ctx,p.icon,{r.x+(11 if marked else 8),r.y+(r.h-FIELD_ICON)*0.5,FIELD_ICON,FIELD_ICON},tone(ctx,"text_muted"))
+        } else if p.label!="" {draw_text(ctx,p.label,r.x+(11 if marked else 8),r.y+text_leading(metric(ctx,"font_axis"),r.h),metric(ctx,"font_axis"),tone(ctx,"text"),FONT_MEDIUM)}
         x,room:=field_text_span(ctx,r,p.label,marked,p.padding,p.icon)
         // The placeholder sits where the first line of text and the caret go.
         if p.text=="" && p.placeholder!="" {
@@ -319,8 +305,8 @@ paint_draw :: proc(ctx:^Context,r:Rect,p:^Paint) {
         clip_pop(ctx)
         if p.stroke[3]>0 {draw_shape(ctx,r,{stroke=p.stroke,stroke_width=p.stroke_width if p.stroke_width>0 else 1,radii=radii})}
     case .Swatch:
-        draw_rounded(ctx,r,th.radius_control,p.fill)
-        draw_rounded_stroke(ctx,r,th.radius_control,1,p.stroke)
+        draw_rounded(ctx,r,metric(ctx,"radius_control"),p.fill)
+        draw_rounded_stroke(ctx,r,metric(ctx,"radius_control"),1,p.stroke)
     case .Sat_Value:
         // Exact colors on a grid of quads: Gouraud shading between them is
         // indistinguishable from the true saturation/value ramp.
@@ -339,7 +325,7 @@ paint_draw :: proc(ctx:^Context,r:Rect,p:^Paint) {
         draw_ring(ctx,point,6,2,{255,255,255,255})
         draw_ring(ctx,point,8,1,{0,0,0,160})
         clip_pop(ctx)
-        draw_rect_lines(ctx,r,1,th.border)
+        draw_rect_lines(ctx,r,1,tone(ctx,"border"))
     case .Hue:
         for i in 0..<6 {
             x0,x1:=r.x+r.w*f32(i)/6,r.x+r.w*f32(i+1)/6

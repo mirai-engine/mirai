@@ -18,7 +18,7 @@ disabled_test_build :: proc(ctx:^Context,user:rawptr) {
 @(test)
 a_disabled_scope_blocks_controls_and_cancels_a_number_being_typed :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     state:=Disabled_Test{value=2}
     input:=test_input()

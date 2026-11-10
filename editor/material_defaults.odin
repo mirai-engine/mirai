@@ -84,7 +84,7 @@ material_reset_button :: proc(s:^Session,p:Material_Color) {
     }
     ctx:=s.gui.ctx
     if !changed {ui.spacer(ctx,REVERT_SIDE,1);return}
-    if !ui.button(ctx,ui.id(ctx,"material_reset",int((p.name~u64(p.emission))&0x7fffffff)),{icon=.Revert,icon_size=12,icon_color=ctx.theme.text_muted,style=.Ghost,width=REVERT_SIDE,height=REVERT_SIDE}).clicked {return}
+    if !ui.button(ctx,ui.id(ctx,"material_reset",int((p.name~u64(p.emission))&0x7fffffff)),{icon=.Revert,icon_size=12,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=REVERT_SIDE,height=REVERT_SIDE}).clicked {return}
     opened,edit_ready:=edit_open(s,"Revert material value")
     if !edit_ready {return}
     defer edit_close(s,opened)

@@ -405,7 +405,7 @@ ai_chat_uses_live_selection_and_keeps_tasks_with_their_document :: proc(t:^testi
     testing.expect(t,found,"selection is automatically displayed in the AI composer")
     testing.expect(t,chip.w<240,"the context chip fits its entity name instead of growing to the composer width")
     filled:=false
-    for paint in ctx.paints[:ctx.paint_count] {if paint.radius==ctx.theme.radius_control && paint.fill==ctx.theme.field {filled=true;break}}
+    for paint in ctx.paints[:ctx.paint_count] {if paint.radius==ui.metric(&ctx,"radius_control") && paint.fill==ui.tone(&ctx,"field") {filled=true;break}}
     testing.expect(t,filled,"selected context sits on the gray of a field")
     second:=core.create(&world.entities)
     core.add(&world.names,second,core.name_make("A"))
@@ -468,7 +468,7 @@ ai_chat_uses_live_selection_and_keeps_tasks_with_their_document :: proc(t:^testi
     testing.expect(t,chat_found && chat.w<=280.01,"long file paths cannot enlarge the chat panel")
     full_title:="Read the exposed skill catalog and then inspect the live player through the Mirai MCP server without changing the scene"
     short_title:=ai_chat_menu_label(&ctx,full_title,200)
-    testing.expect(t,len(short_title)<len(full_title) && ui.text_width(&ctx.font,short_title,ctx.theme.font_small)<=200.01,"conversation titles fit the history popup without changing stored text")
+    testing.expect(t,len(short_title)<len(full_title) && ui.text_width(&ctx.font,short_title,ui.metric(&ctx,"font_small"))<=200.01,"conversation titles fit the history popup without changing stored text")
     for _ in 0..<5 {
         extra:=core.create(&world.entities)
         core.add(&world.names,extra,core.name_make("Another selected entity"))
@@ -566,7 +566,7 @@ ai_answers_are_one_markdown_message_with_the_entities_they_name_as_pills :: proc
     ai_transcript_shown(task,shown[:tr.count])
     message:=ai_message_text(tr,1,shown[:tr.count])
     testing.expect(t,strings.has_suffix(message,"](entity:4)") && strings.contains(message,"```odin\nlight := 1\n```"),"the lines of the answer join by their breaks")
-    testing.expect_value(t,tr.heights[1],AI_MESSAGE_GAP+ui.markdown_height(&ctx,message,300,ai_markdown_style(&s,ctx.theme.font_small)))
+    testing.expect_value(t,tr.heights[1],AI_MESSAGE_GAP+ui.markdown_height(&ctx,message,300,ai_markdown_style(&s,ui.metric(&ctx,"font_small"))))
     for index in 2..<tr.count {testing.expectf(t,tr.heights[index]==0,"line %d goes on the answer",index)}
 }
 

@@ -84,7 +84,7 @@ camera_preview_button :: proc(c:^Inspect,camera:core.Entity) {
     s:=c.s
     if s.mode!=.Edit {return}
     ctx:=s.gui.ctx
-    if ui.button(ctx,ui.id(ctx,"camera_preview"),{label="Preview",icon=.Play,style=.Field,width=-1,height=ctx.theme.row,size=ctx.theme.font_small,center=true}).clicked {
+    if ui.button(ctx,ui.id(ctx,"camera_preview"),{label="Preview",icon=.Play,variant="field",width=-1,height=ui.metric(ctx,"row"),size=ui.metric(ctx,"font_small"),center=true}).clicked {
         command_call(s,"camera.preview",fmt.tprintf(`{{"entity":"0x%016x"}}`,u64(camera)))
     }
 }
@@ -94,12 +94,11 @@ camera_preview_bar :: proc(s:^Session) {
     if !camera_previewing(s) {return}
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     w:=shown_world(s)
     cameras,count:=camera_preview_cameras(s,w)
-    if ui.panel(ctx,shell_id(g,"camera_preview"),{row=true,width=ui.FIT,height=ui.FIT,padding=ui.padding_all(PANEL_PADDING),gap=4,align_y=.Center,anchor=.Bottom_Center,pivot=.Bottom_Center,offset={0,-th.margin}}) {
+    if ui.panel(ctx,shell_id(g,"camera_preview"),{row=true,width=ui.FIT,height=ui.FIT,padding=ui.padding_all(PANEL_PADDING),gap=4,align_y=.Center,anchor=.Bottom_Center,pivot=.Bottom_Center,offset={0,-ui.metric(ctx,"margin")}}) {
         for e,i in cameras[:count] {
-            if ui.button(ctx,shell_id(g,"camera_preview_camera",i+1),{label=entity_name(w,e),style=.Tab,active=e==s.camera_run.camera,height=th.control,size=th.font_small,padding=10}).clicked {camera_preview_show(s,w,e)}
+            if ui.button(ctx,shell_id(g,"camera_preview_camera",i+1),{label=entity_name(w,e),variant="tab",active=e==s.camera_run.camera,height=ui.metric(ctx,"control"),size=ui.metric(ctx,"font_small"),padding=10}).clicked {camera_preview_show(s,w,e)}
         }
     }
 }

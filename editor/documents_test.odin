@@ -12,7 +12,7 @@ documents_test_frame :: proc(s:^Session,input:ui.Input) -> ui.Frame {
     ctx:=s.gui.ctx
     s.gui.named_count=0
     ui.frame_begin(ctx,input)
-    if ui.panel(ctx,ui.id(ctx,"documents_test_bar"),{width=ui.fixed(input.size.x),height=ui.fixed(ctx.theme.bar_height),padding=0,gap=0}) {documents_build(s)}
+    if ui.panel(ctx,ui.id(ctx,"documents_test_bar"),{width=ui.fixed(input.size.x),height=ui.fixed(ui.metric(ctx,"bar_height")),padding=0,gap=0}) {documents_build(s)}
     return ui.frame_end(ctx)
 }
 
@@ -42,9 +42,9 @@ document_tabs_hover_as_one_surface_and_close_independently :: proc(t:^testing.T)
     for _ in 0..<3 {frame=documents_test_frame(&session,input)}
     active,_:=ui.widget_rect(&ctx,shell_id(&gui,"document_look",1))
     idle,_:=ui.widget_rect(&ctx,shell_id(&gui,"document_look",2))
-    testing.expect(t,active.h==ctx.theme.bar_height && idle.y+idle.h<active.y+active.h,"the active document connects to the toolbar in front of the inactive tabs")
+    testing.expect(t,active.h==ui.metric(&ctx,"bar_height") && idle.y+idle.h<active.y+active.h,"the active document connects to the toolbar in front of the inactive tabs")
     surface,_:=ui.widget_rect(&ctx,shell_id(&gui,"document_surface",2))
-    testing.expect(t,surface.y<=active.y && surface.h==ctx.theme.bar_height,"an inactive tab takes clicks up to the edge of the window")
+    testing.expect(t,surface.y<=active.y && surface.h==ui.metric(&ctx,"bar_height"),"an inactive tab takes clicks up to the edge of the window")
     idle_fill:=shape_fill(frame,idle)
     tab,_:=ui.widget_rect(&ctx,shell_id(&gui,"document_tab",2))
     close,_:=ui.widget_rect(&ctx,shell_id(&gui,"document_close",2))
@@ -101,7 +101,7 @@ document_tabs_scroll_and_reveal_the_active_document_with_clipped_native_regions 
     documents_test_frame(&session,{size={420,100},pointer_absent=true})
     gui.documents_scroll-=107
     documents_test_frame(&session,{size={420,100},pointer_absent=true})
-    gui.rects.bar={0,0,420,ctx.theme.bar_height}
+    gui.rects.bar={0,0,420,ui.metric(&ctx,"bar_height")}
     regions:[NAMED_CAPACITY+1]platform.Window_Region
     count:=shell_regions(&session,regions[:])
     for region in regions[:count] {

@@ -53,7 +53,7 @@ an_asset_document_fills_the_window_from_under_the_left_panel :: proc(t:^testing.
     defer ui.frame_end(&ctx)
     g:=Editor_Ui{ctx=&ctx,layout=LAYOUT_DEFAULT}
     s:=Session{gui=&g}
-    bars:=ctx.theme.bar_height+toolbar_height(&g)
+    bars:=ui.metric(&ctx,"bar_height")+toolbar_height(&g)
     g.rects.left={RAIL_WIDTH,bars,LEFT_WIDTH.max,900-bars}
     x0:=RAIL_WIDTH+LEFT_WIDTH.max-LEFT_UNDER
     testing.expect_value(t,asset_workspace_rect(&g),ui.Rect{x0,bars,1600-x0,900-bars})

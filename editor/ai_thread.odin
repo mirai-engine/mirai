@@ -198,23 +198,23 @@ ai_markdown_resolve :: proc(data:rawptr,target,text:string,buffer:[]u8) -> ui.Ma
     switch {
     case strings.has_prefix(target,"entity:"):
         id,ok:=ai_entity_id_parse(target[len("entity:"):])
-        if !ok || s.edit_world==nil {return {pill=true,color=s.gui.ctx.theme.text_faint}}
+        if !ok || s.edit_world==nil {return {pill=true,color=ui.tone(s.gui.ctx,"text_faint")}}
         w:=shown_world(s)
         e:=history.change_entity(w,id)
-        if e==core.NONE {return {pill=true,color=s.gui.ctx.theme.text_faint}}
+        if e==core.NONE {return {pill=true,color=ui.tone(s.gui.ctx,"text_faint")}}
         name:=string(buffer[:copy(buffer,entity_name(w,e))])
         return {label=name,pill=true,live=true,selected=s.selection!=nil && history.selection_has(s.selection,e),color=AI_ENTITY_TEXT}
     case strings.has_prefix(target,"asset:"):
         if a:=s.app!=nil?s.app.assets:nil;a!=nil {
             if _,found:=asset.registry_find_path(&a.registry,target[len("asset:"):]);found {return {pill=true,live=true,color=AI_ENTITY_TEXT}}
         }
-        return {pill=true,color=s.gui.ctx.theme.text_faint}
+        return {pill=true,color=ui.tone(s.gui.ctx,"text_faint")}
     case strings.has_prefix(target,"play:"):
         // A scene the agent offers to try: a button that plays it.
         if a:=s.app!=nil?s.app.assets:nil;a!=nil {
             if file,found:=asset.registry_find_path(&a.registry,target[len("play:"):]);found && file.kind==asset.KIND_SCENE {return {pill=true,button=true,live=true,icon=.Play}}
         }
-        return {pill=true,icon=.Play,color=s.gui.ctx.theme.text_faint}
+        return {pill=true,icon=.Play,color=ui.tone(s.gui.ctx,"text_faint")}
     }
     return {}
 }
@@ -244,7 +244,7 @@ ai_play_follow :: proc(s:^Session) {
 // The style answers are drawn with: their links through ai_markdown_resolve.
 @(private)
 ai_markdown_style :: proc(s:^Session,size:f32) -> ui.Markdown_Style {
-    return {size=size,color=s.gui.ctx.theme.text_body,resolve=ai_markdown_resolve,data=s}
+    return {size=size,color=ui.tone(s.gui.ctx,"text_body"),resolve=ai_markdown_resolve,data=s}
 }
 
 // What a click on a link of an answer does: select the entity, or open the
@@ -374,13 +374,12 @@ ai_bubble_room :: proc(ctx:^ui.Context,text:string,width,size:f32) -> (room,bubb
 
 // Notes go a point smaller than the messages they are among.
 @(private)
-ai_note_size :: proc(th:^ui.Theme,size:f32) -> f32 {return size<=th.font_small?th.font_caption:th.font_small}
+ai_note_size :: proc(ctx:^ui.Context,size:f32) -> f32 {return size<=ui.metric(ctx,"font_small")?ui.metric(ctx,"font_caption"):ui.metric(ctx,"font_small")}
 
 @(private)
 ai_line_measure :: proc(s:^Session,task:^Ai_Task,index,steps:int,open:bool,width,size:f32,shown:[]bool,held_first:int,live:bool) -> f32 {
     ctx:=s.gui.ctx
     t:=&task.transcript
-    th:=&ctx.theme
     text,kind:=ai_transcript_line(t,index)
     gap:=ai_message_gap(t,index,steps>0)
     if steps>0 {return gap+AI_STEP_HEAD+(f32(steps)*AI_STEP_ROW if open else 0)}
@@ -397,7 +396,7 @@ ai_line_measure :: proc(s:^Session,task:^Ai_Task,index,steps:int,open:bool,width
         return gap+AI_DIVIDER_HEIGHT
     case .Note:
         if strings.has_prefix(text,AI_REVIEWED_NOTE) {return gap+AI_STEP_ROW}
-        note:=ai_note_size(th,size)
+        note:=ai_note_size(ctx,size)
         return gap+ui.text_height(ctx,ai_chat_paragraph_text(ctx,text,width,note),ui.prose(ctx,note),width)
     }
     return gap
@@ -476,8 +475,7 @@ ai_step_icon :: proc(method:string) -> ui.Icon {
 @(private)
 ai_transcript_draw :: proc(s:^Session,m:^Ai,task:^Ai_Task,height,width:f32,size:f32=0) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
-    size:=size>0?size:th.font_small
+    size:=size>0?size:ui.metric(ctx,"font_small")
     t:=&task.transcript
     area:=ui.id(ctx,"transcript",task.id)
     held_first:=ai_held_first(task)
@@ -524,7 +522,7 @@ ai_transcript_draw :: proc(s:^Session,m:^Ai,task:^Ai_Task,height,width:f32,size:
     rows:=make([]f32,t.count+extra_count,context.temp_allocator)
     copy(rows,t.heights[:t.count])
     copy(rows[t.count:],extra_heights[:extra_count])
-    note:=ai_note_size(th,size)
+    note:=ai_note_size(ctx,size)
     first,last:=ui.rows_begin(ctx,area,&m.scroll,rows,ui.fixed(width+AI_THREAD_MARGIN),height,bar_room=AI_THREAD_MARGIN)
     for index in first..<last {
         if index>=t.count {
@@ -535,15 +533,15 @@ ai_transcript_draw :: proc(s:^Session,m:^Ai,task:^Ai_Task,height,width:f32,size:
                 if ui.box(ctx,{width=ui.fixed(width),height=ui.fixed(AI_DOING_HEIGHT),gap=7,align_y=.Center,padding={0,4,0,0}}) {
                     pulse_dot(ctx,ai_agent_color(task),true)
                     working:=task.state==.Queued?"Queued":fmt.tprintf("Working for %s",ai_elapsed(ai_task_seconds(task)))
-                    ui.label(ctx,working,note,th.text_muted)
+                    ui.label(ctx,working,note,ui.tone(ctx,"text_muted"))
                     // What it does now: the tool of the agent under way, or its last step or words.
                     method,target:="",""
                     if kind,title,ok:=ai_tool_call_current(m,task);ok {method,target=kind,title} else if call,ok:=ai_call_parse(doing);ok {method,target=call.method,call.target} else if doing!="Thinking" {target=doing}
                     if method!="" && !ai_step_of_agent(method) {target=target!=""?fmt.tprintf("%s %s",method,target):method}
                     if target!="" {
-                        ui.icon(ctx,ai_step_icon(method),th.text_faint,12)
+                        ui.icon(ctx,ai_step_icon(method),ui.tone(ctx,"text_faint"),12)
                         room:=width-ui.text_width(&ctx.font,working,note)-50
-                        ui.label(ctx,ai_chat_menu_label(ctx,target,max(room,1),note),note,th.text_faint,0)
+                        ui.label(ctx,ai_chat_menu_label(ctx,target,max(room,1),note),note,ui.tone(ctx,"text_faint"),0)
                     }
                 }
             case .Permission:
@@ -567,11 +565,11 @@ ai_transcript_draw :: proc(s:^Session,m:^Ai,task:^Ai_Task,height,width:f32,size:
             held:=held_first>=0 && index>=held_first
             if ui.box(ctx,{width=ui.GROW,height=ui.GROW}) {
                 ui.spacer(ctx)
-                if ui.box(ctx,{width=ui.fixed(bubble),height=ui.GROW,direction=.Column,padding={10,5,10,5},fill=held?{}:th.field,radius=th.radius_popup}) {
-                    ui.text(ctx,ai_chat_paragraph_text(ctx,message,room,size),ui.prose(ctx,size,held?th.text_body:th.text))
+                if ui.box(ctx,{width=ui.fixed(bubble),height=ui.GROW,direction=.Column,padding={10,5,10,5},fill=held?{}:ui.tone(ctx,"field"),radius=ui.metric(ctx,"radius_popup")}) {
+                    ui.text(ctx,ai_chat_paragraph_text(ctx,message,room,size),ui.prose(ctx,size,held?ui.tone(ctx,"text_body"):ui.tone(ctx,"text")))
                     if held {
                         if ui.box(ctx,{width=ui.fixed(bubble),height=ui.fixed(rows[index]-gap),float={to=.Parent}}) {
-                            ui.canvas(ctx,ui.id(ctx,"held",index),ui.GROW,ui.GROW,u32(User_Icon.Dashed_Box),u64(transmute(u32)th.well_stroke_hover),{.Passive})
+                            ui.canvas(ctx,ui.id(ctx,"held",index),ui.GROW,ui.GROW,u32(User_Icon.Dashed_Box),u64(transmute(u32)ui.tone(ctx,"well_stroke_hover")),{.Passive})
                         }
                     }
                 }
@@ -582,24 +580,24 @@ ai_transcript_draw :: proc(s:^Session,m:^Ai,task:^Ai_Task,height,width:f32,size:
             ai_report_build(s,text,width,size)
         case kind==.Report:
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(AI_STEP_ROW),align_y=.Center}) {
-                ui.label(ctx,ai_chat_menu_label(ctx,ai_report_label(m,text),width,note),note,th.text_faint,0)
+                ui.label(ctx,ai_chat_menu_label(ctx,ai_report_label(m,text),width,note),note,ui.tone(ctx,"text_faint"),0)
             }
         case kind==.Divider:
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(AI_DIVIDER_HEIGHT),gap=8,align_y=.Center}) {
-                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=th.divider}) {}
-                ui.label(ctx,text,th.font_caption,th.text_muted)
-                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=th.divider}) {}
+                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"divider")}) {}
+                ui.label(ctx,text,ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_muted"))
+                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"divider")}) {}
             }
         case strings.has_prefix(text,AI_REVIEWED_NOTE):
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(AI_STEP_ROW),gap=6,align_y=.Center}) {
-                ui.icon(ctx,.Check,th.success,11)
-                ui.label(ctx,text,note,th.text_faint,0)
+                ui.icon(ctx,.Check,ui.tone(ctx,"success"),11)
+                ui.label(ctx,text,note,ui.tone(ctx,"text_faint"),0)
             }
         case:
-            ui.text(ctx,ai_chat_paragraph_text(ctx,text,width,note),ui.prose(ctx,note,task.state==.Failed?th.danger:th.text_faint))
+            ui.text(ctx,ai_chat_paragraph_text(ctx,text,width,note),ui.prose(ctx,note,task.state==.Failed?ui.tone(ctx,"danger"):ui.tone(ctx,"text_faint")))
         }
         // The changes the user reverted: one click takes them back for review.
-        if index==declined && ui.button(ctx,ui.id(ctx,"declined",task.id),{label="Restore",icon=.Revert,icon_color=ai_agent_color(task),icon_size=12,style=.Field,height=AI_DECLINED_HEIGHT-6,size=th.font_small}).clicked {
+        if index==declined && ui.button(ctx,ui.id(ctx,"declined",task.id),{label="Restore",icon=.Revert,icon_color=ai_agent_color(task),icon_size=12,variant="field",height=AI_DECLINED_HEIGHT-6,size=ui.metric(ctx,"font_small")}).clicked {
             if message:=ai_task_restore(s,m,task);message!="" {notify(s,message)}
         }
         ui.box_end(ctx,{})
@@ -611,9 +609,9 @@ ai_transcript_draw :: proc(s:^Session,m:^Ai,task:^Ai_Task,height,width:f32,size:
     // Away from the end, a button over the bottom of the thread goes back to it.
     if !m.stick && total>height+1 {
         if rect,found:=ui.widget_rect(ctx,area);found {
-            side:=th.control
+            side:=ui.metric(ctx,"control")
             if ui.box(ctx,{width=ui.fixed(side),height=ui.fixed(side),float={to=.Surface,offset={rect.x+rect.w*0.5-side*0.5,rect.y+rect.h-side-8}}}) {
-                if ui.button(ctx,ui.id(ctx,"to_end",task.id),{icon=ui.icon_user(u8(User_Icon.Down)),icon_color=th.text_muted,icon_size=13,style=.Field,width=side,height=side}).clicked {m.stick=true}
+                if ui.button(ctx,ui.id(ctx,"to_end",task.id),{icon=ui.icon_user(u8(User_Icon.Down)),icon_color=ui.tone(ctx,"text_muted"),icon_size=13,variant="field",width=side,height=side}).clicked {m.stick=true}
             }
         }
     }
@@ -623,14 +621,13 @@ ai_transcript_draw :: proc(s:^Session,m:^Ai,task:^Ai_Task,height,width:f32,size:
 // the color of the agent, and those to come.
 @(private)
 ai_plan_build :: proc(ctx:^ui.Context,task:^Ai_Task,width:f32) {
-    th:=&ctx.theme
-    small:=th.font_caption
+    small:=ui.metric(ctx,"font_caption")
     for &entry in task.plan[:task.plan_count] {
-        icon,color,text_color:=ui.Icon.Checkbox,th.text_faint,th.text_muted
+        icon,color,text_color:=ui.Icon.Checkbox,ui.tone(ctx,"text_faint"),ui.tone(ctx,"text_muted")
         switch entry.status {
         case .Pending:
-        case .In_Progress:color,text_color=ai_agent_color(task),th.text
-        case .Completed:icon,text_color=.Checkbox_Checked,th.text_faint
+        case .In_Progress:color,text_color=ai_agent_color(task),ui.tone(ctx,"text")
+        case .Completed:icon,text_color=.Checkbox_Checked,ui.tone(ctx,"text_faint")
         }
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(AI_STEP_ROW),gap=7,align_y=.Center}) {
             ui.icon(ctx,icon,color,11)
@@ -643,7 +640,7 @@ ai_plan_build :: proc(ctx:^ui.Context,task:^Ai_Task,width:f32) {
 // many they were; unfolded, one per row with its icon and what it worked on.
 @(private)
 ai_steps_build :: proc(s:^Session,m:^Ai,task:^Ai_Task,index,count:int,width,size:f32) {
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     t:=&task.transcript
     open:=m.steps_task==task.id && m.steps_line==t.dropped+index
     id:=ui.id(ctx,"steps",t.dropped+index)
@@ -652,9 +649,9 @@ ai_steps_build :: proc(s:^Session,m:^Ai,task:^Ai_Task,index,count:int,width,size
     label:=steps
     if seconds,known:=ai_turn_seconds(t,index);known {label=fmt.tprintf("Worked for %s · %s",ai_elapsed(seconds),steps)}
     head:=ui.text_width(&ctx.font,label,size)+24
-    if ui.box(ctx,{id=id,width=ui.fixed(head),height=ui.fixed(AI_STEP_HEAD),gap=6,padding={5,0,5,0},align_y=.Center,fill=it.hot?ui.color_hover(th):{},radius=th.radius_control}) {
-        ui.icon(ctx,open?.Chevron_Down:.Chevron_Right,it.hot?th.text_muted:th.text_faint,9)
-        ui.label(ctx,label,size,it.hot?th.text_muted:th.text_faint)
+    if ui.box(ctx,{id=id,width=ui.fixed(head),height=ui.fixed(AI_STEP_HEAD),gap=6,padding={5,0,5,0},align_y=.Center,fill=it.hot?ui.color_hover(ctx):{},radius=ui.metric(ctx,"radius_control")}) {
+        ui.icon(ctx,open?.Chevron_Down:.Chevron_Right,it.hot?ui.tone(ctx,"text_muted"):ui.tone(ctx,"text_faint"),9)
+        ui.label(ctx,label,size,it.hot?ui.tone(ctx,"text_muted"):ui.tone(ctx,"text_faint"))
     }
     if it.clicked {
         // One turn shows its steps at a time: the one that folds is measured again.
@@ -670,14 +667,14 @@ ai_steps_build :: proc(s:^Session,m:^Ai,task:^Ai_Task,index,count:int,width,size
         if !ok || call.method=="finish" {continue}
         agent:=ai_step_of_agent(call.method)
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(AI_STEP_ROW),gap=6,padding={16,0,0,0},align_y=.Center}) {
-            ui.icon(ctx,ai_step_icon(call.method),call.failed?th.danger:th.text_faint,12)
+            ui.icon(ctx,ai_step_icon(call.method),call.failed?ui.tone(ctx,"danger"):ui.tone(ctx,"text_faint"),12)
             room:=width-40
             if !agent {
-                ui.label(ctx,call.method,size,call.failed?th.danger:th.text_muted)
+                ui.label(ctx,call.method,size,call.failed?ui.tone(ctx,"danger"):ui.tone(ctx,"text_muted"))
                 room-=ui.text_width(&ctx.font,call.method,size)+6
             }
             detail:=call.failed && !agent?call.failure:call.target
-            if detail!="" {ui.label(ctx,ai_chat_menu_label(ctx,detail,max(room,1),size),size,call.failed && agent?th.danger:th.text_faint,0)}
+            if detail!="" {ui.label(ctx,ai_chat_menu_label(ctx,detail,max(room,1),size),size,call.failed && agent?ui.tone(ctx,"danger"):ui.tone(ctx,"text_faint"),0)}
         }
     }
 }
@@ -698,8 +695,7 @@ ai_permission_height :: proc(ctx:^ui.Context,m:^Ai,task:^Ai_Task,width:f32) -> f
     index:=ai_permission_of(m,task)
     if index<0 {return 0}
     p:=&m.permissions[index]
-    th:=&ctx.theme
-    title:=ui.text_height(ctx,base.text_get(p.title[:]),ui.prose(ctx,th.font_small,{},ui.FONT_SEMIBOLD),width-18-20)
+    title:=ui.text_height(ctx,base.text_get(p.title[:]),ui.prose(ctx,ui.metric(ctx,"font_small"),{},ui.FONT_SEMIBOLD),width-18-20)
     return 18+max(title,16)+8+f32(ai_permission_rows(ctx,p,width-18))*(AI_PERMISSION_BUTTON+5)-5
 }
 
@@ -713,7 +709,7 @@ ai_permission_label :: proc(p:^Ai_Permission,index:int) -> string {
 ai_permission_rows :: proc(ctx:^ui.Context,p:^Ai_Permission,width:f32) -> int {
     rows,used:=1,f32(0)
     for index in 0..<p.count {
-        size:=min(ui.text_width(&ctx.font,ai_permission_label(p,index),ctx.theme.font_small)+20,width)
+        size:=min(ui.text_width(&ctx.font,ai_permission_label(p,index),ui.metric(ctx,"font_small"))+20,width)
         if used>0 && used+size>width {rows+=1;used=0}
         used+=size+5
     }
@@ -722,7 +718,7 @@ ai_permission_rows :: proc(ctx:^ui.Context,p:^Ai_Permission,width:f32) -> int {
 
 @(private)
 ai_permission_build :: proc(s:^Session,task:^Ai_Task,width:f32) {
-    m:=s.ai;ctx:=s.gui.ctx;th:=&ctx.theme
+    m:=s.ai;ctx:=s.gui.ctx
     index:=ai_permission_of(m,task)
     if index<0 {return}
     p:=&m.permissions[index]
@@ -730,23 +726,23 @@ ai_permission_build :: proc(s:^Session,task:^Ai_Task,width:f32) {
     ui.id_push(ctx,ui.id(ctx,"permission",task.id))
     defer ui.id_pop(ctx)
     answered:=""
-    if ui.box(ctx,{width=ui.fixed(width),height=ui.fixed(ai_permission_height(ctx,m,task,width)),direction=.Column,gap=8,padding=ui.padding_all(9),fill=ui.color_alpha(color,13),stroke=ui.color_alpha(color,102),stroke_width=1,radius=th.radius_popup}) {
+    if ui.box(ctx,{width=ui.fixed(width),height=ui.fixed(ai_permission_height(ctx,m,task,width)),direction=.Column,gap=8,padding=ui.padding_all(9),fill=ui.color_alpha(color,13),stroke=ui.color_alpha(color,102),stroke_width=1,radius=ui.metric(ctx,"radius_popup")}) {
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=7}) {
             ui.icon(ctx,ui.icon_user(u8(User_Icon.Shield)),color,13)
-            ui.text(ctx,base.text_get(p.title[:]),ui.prose(ctx,th.font_small,th.text,ui.FONT_SEMIBOLD))
+            ui.text(ctx,base.text_get(p.title[:]),ui.prose(ctx,ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),ui.FONT_SEMIBOLD))
         }
         used:=f32(0);open:=false
         room:=width-18
         for option in 0..<p.count {
             label:=ai_permission_label(p,option)
-            size:=min(ui.text_width(&ctx.font,label,th.font_small)+20,room)
+            size:=min(ui.text_width(&ctx.font,label,ui.metric(ctx,"font_small"))+20,room)
             if !open || used+size>room {
                 if open {ui.box_end(ctx,{})}
                 ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(AI_PERMISSION_BUTTON),gap=5})
                 open,used=true,0
             }
             used+=size+5
-            if ui.button(ctx,ui.id(ctx,"option",option+1),{label=ai_chat_menu_label(ctx,label,size-20),style=option==0?.Accent:.Field,width=size,height=AI_PERMISSION_BUTTON,size=th.font_small,center=true}).clicked {answered=base.text_get(p.ids[option][:])}
+            if ui.button(ctx,ui.id(ctx,"option",option+1),{label=ai_chat_menu_label(ctx,label,size-20),variant=option==0?"accent":"field",width=size,height=AI_PERMISSION_BUTTON,size=ui.metric(ctx,"font_small"),center=true}).clicked {answered=base.text_get(p.ids[option][:])}
         }
         if open {ui.box_end(ctx,{})}
     }

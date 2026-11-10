@@ -110,10 +110,9 @@ Md :: struct {
 
 @(private="file")
 md_init :: proc(m:^Md,ctx:^Context,width:f32,style:Markdown_Style) {
-    th:=&ctx.theme
     m.ctx,m.resolve,m.data,m.width=ctx,style.resolve,style.data,max(width,1)
-    m.body=style.size if style.size>0 else th.font_small
-    m.color=style.color if style.color!={} else th.text_body
+    m.body=style.size if style.size>0 else metric(ctx,"font_small")
+    m.color=style.color if style.color!={} else tone(ctx,"text_body")
     m.bold,m.em=-1,-1
 }
 
@@ -217,7 +216,7 @@ md_walk :: proc(m:^Md,text:string) {
 
 @(private="file")
 md_open :: proc(m:^Md,block:Md_Block,level,quote,depth:int,marker:string,blank:bool) {
-    ctx:=m.ctx;th:=&ctx.theme
+    ctx:=m.ctx
     s:=m.body
     gap:f32
     if m.blocks>0 {
@@ -228,13 +227,13 @@ md_open :: proc(m:^Md,block:Md_Block,level,quote,depth:int,marker:string,blank:b
     // The rules of the quotes the block before was in go on through the gap.
     continued:=min(quote,m.last_quote) if m.blocks>0 else 0
     m.block,m.quote,m.depth,m.open=block,quote,depth,true
-    m.size,m.font,m.text_color=s,md_face(m,FONT_REGULAR),th.text_muted if quote>0 else m.color
+    m.size,m.font,m.text_color=s,md_face(m,FONT_REGULAR),tone(ctx,"text_muted") if quote>0 else m.color
     m.line=math.floor(s*PARAGRAPH_LINE)
     pad:=math.floor(s*2/3)
     switch block {
     case .Heading:
         m.size=s+(5 if level==1 else 3 if level==2 else 1)
-        m.font,m.text_color=md_face(m,FONT_SEMIBOLD),th.text
+        m.font,m.text_color=md_face(m,FONT_SEMIBOLD),tone(ctx,"text")
         m.line=math.floor(m.size*MARKDOWN_HEADING_LINE)
     case .Code:
         m.size=max(s-1,1)
@@ -255,7 +254,7 @@ md_open :: proc(m:^Md,block:Md_Block,level,quote,depth:int,marker:string,blank:b
         for k in 0..<quote {
             box_begin(ctx,{width=fixed(quote_width),height=GROW,direction=.Column})
             if k>=continued && gap>0 {spacer(ctx,MARKDOWN_BAR,gap)}
-            element_leaf(ctx,{layout={width=fixed(MARKDOWN_BAR),height=GROW},custom=paint_add(ctx,{kind=.Rect,fill=th.border})})
+            element_leaf(ctx,{layout={width=fixed(MARKDOWN_BAR),height=GROW},custom=paint_add(ctx,{kind=.Rect,fill=tone(ctx,"border")})})
             box_end(ctx,{})
         }
         box_begin(ctx,{width=fixed(outer),height=FIT,direction=.Column,padding={0,gap,0,0}})
@@ -263,14 +262,14 @@ md_open :: proc(m:^Md,block:Md_Block,level,quote,depth:int,marker:string,blank:b
             box_begin(ctx,{width=fixed(outer),height=FIT})
             if depth>1 {spacer(ctx,f32(depth-1)*list_width,0)}
             if marker!="" {
-                text(ctx,marker,{font=md_face(m,FONT_REGULAR),size=s,color=th.text_muted,align_x=.Center,align_y=.Center},fixed(list_width-math.floor(s/4)),fixed(math.floor(s*PARAGRAPH_LINE)))
+                text(ctx,marker,{font=md_face(m,FONT_REGULAR),size=s,color=tone(ctx,"text_muted"),align_x=.Center,align_y=.Center},fixed(list_width-math.floor(s/4)),fixed(math.floor(s*PARAGRAPH_LINE)))
                 spacer(ctx,math.floor(s/4),0)
             } else {
                 spacer(ctx,list_width,0)
             }
         }
         if block==.Code {
-            box_begin(ctx,{id=id(ctx,"code",m.codes),track=true,width=fixed(m.room+2*pad),height=FIT,direction=.Stack,fill=th.well,radius=th.radius_popup})
+            box_begin(ctx,{id=id(ctx,"code",m.codes),track=true,width=fixed(m.room+2*pad),height=FIT,direction=.Stack,fill=tone(ctx,"well"),radius=metric(ctx,"radius_popup")})
             box_begin(ctx,{width=fixed(m.room+2*pad),height=FIT,direction=.Column,padding=padding_all(pad)})
         } else {
             box_begin(ctx,{width=fixed(m.room),height=FIT,direction=.Column})
@@ -285,7 +284,7 @@ md_open :: proc(m:^Md,block:Md_Block,level,quote,depth:int,marker:string,blank:b
 md_close :: proc(m:^Md) {
     if !m.open {return}
     m.open=false
-    ctx:=m.ctx;th:=&ctx.theme
+    ctx:=m.ctx
     pad:=math.floor(m.body*2/3)
     switch m.block {
     case .Paragraph,.Heading:
@@ -305,7 +304,7 @@ md_close :: proc(m:^Md) {
     if !m.build {return}
     if m.block==.Rule {
         if box(ctx,{width=fixed(m.room),height=fixed(m.line),align_y=.Center}) {
-            element_leaf(ctx,{layout={width=fixed(m.room),height=fixed(1)},custom=paint_add(ctx,{kind=.Rect,fill=th.divider})})
+            element_leaf(ctx,{layout={width=fixed(m.room),height=fixed(1)},custom=paint_add(ctx,{kind=.Rect,fill=tone(ctx,"divider")})})
         }
     }
     box_end(ctx,{})
@@ -313,9 +312,9 @@ md_close :: proc(m:^Md) {
         // While the pointer is on the block, a button at its corner copies its code.
         copy:=id(ctx,"copy",m.codes)
         if widget_under(ctx,id(ctx,"code",m.codes)) || ctx.hot==copy || ctx.active==copy {
-            side:=min(th.row-4,m.line+2*pad-8)
+            side:=min(metric(ctx,"row")-4,m.line+2*pad-8)
             if box(ctx,{width=FIT,height=FIT,self_x=.End,self_y=.Start,padding=padding_all(4)}) {
-                if button(ctx,copy,{icon=.Copy,style=.Ghost,width=side,height=side,icon_size=min(14,side),icon_color=th.text_muted}).clicked {m.copied=m.codes}
+                if button(ctx,copy,{icon=.Copy,variant="ghost",width=side,height=side,icon_size=min(14,side),icon_color=tone(ctx,"text_muted")}).clicked {m.copied=m.codes}
             }
         }
         box_end(ctx,{})
@@ -432,9 +431,8 @@ md_code :: proc(m:^Md,code:string) {
     code:=code
     if len(code)>=2 && code[0]==' ' && code[len(code)-1]==' ' && strings.trim_space(code)!="" {code=code[1:len(code)-1]}
     if code=="" {return}
-    th:=&m.ctx.theme
     size:=max(m.size-1,1)
-    text_span(m.ctx,code,{font=md_face(m,FONT_MONO),size=size,color=th.text,back=th.chip_on,radius=th.radius_control,pad=2*MARKDOWN_CHIP_PAD,height=min(math.floor(size*TEXT_LINE)+2,m.line)})
+    text_span(m.ctx,code,{font=md_face(m,FONT_MONO),size=size,color=tone(m.ctx,"text"),back=tone(m.ctx,"chip_on"),radius=metric(m.ctx,"radius_control"),pad=2*MARKDOWN_CHIP_PAD,height=min(math.floor(size*TEXT_LINE)+2,m.line)})
 }
 
 // [text](target) at i, after the text from start; returns where it ends, or 0.
@@ -451,7 +449,7 @@ md_link :: proc(m:^Md,s:string,i,start:int) -> int {
     target:=strings.trim_space(s[close+2:end])
     if target=="" {return 0}
     md_emit(m,s[start:i])
-    ctx:=m.ctx;th:=&ctx.theme
+    ctx:=m.ctx
     link:=Markdown_Link{live=true}
     if m.resolve!=nil {link=m.resolve(m.data,target,label,m.labels[m.labels_used:])}
     shown:=label
@@ -471,22 +469,22 @@ md_link :: proc(m:^Md,s:string,i,start:int) -> int {
     }
     color:=link.color
     if link.pill {
-        if color=={} {color=th.on_accent if link.button else th.text}
+        if color=={} {color=tone(m.ctx,"on_accent") if link.button else tone(m.ctx,"text")}
         width:=text_width(&ctx.font,shown,m.size,int(m.font))+2*MARKDOWN_PILL_PAD+(m.size+6 if link.icon!=.None else 0)
         paint:Paint
         if m.build {
-            paint={kind=.Box,radius=th.radius_control,text=shown,text_color=color,size=m.size,style={font=m.font},fill=color_alpha(th.accent,61 if lit else 36),
+            paint={kind=.Box,radius=metric(m.ctx,"radius_control"),text=shown,text_color=color,size=m.size,style={font=m.font},fill=color_alpha(tone(m.ctx,"accent"),61 if lit else 36),
                 padding=MARKDOWN_PILL_PAD,icon=link.icon,icon_color=color,icon_size=m.size}
-            if link.button {paint.fill=th.accent_hover if lit else th.accent}
-            if link.selected {paint.stroke,paint.stroke_width=th.text,1.5}
+            if link.button {paint.fill=tone(m.ctx,"accent_hover") if lit else tone(m.ctx,"accent")}
+            if link.selected {paint.stroke,paint.stroke_width=tone(m.ctx,"text"),1.5}
             if widget!=0 && interact(ctx,widget).clicked {m.clicked=target}
         }
         text_box(ctx,min(width,m.room),m.line,paint,widget,MARKDOWN_PILL_GAP)
         return end+1
     }
-    if color=={} {color=th.accent}
-    span:=Text_Span{font=md_face(m,FONT_SEMIBOLD) if m.bold>=0 else m.font,size=m.size,color=color,radius=th.radius_control}
-    if lit {span.back=th.chip_on}
+    if color=={} {color=tone(m.ctx,"accent")}
+    span:=Text_Span{font=md_face(m,FONT_SEMIBOLD) if m.bold>=0 else m.font,size=m.size,color=color,radius=metric(m.ctx,"radius_control")}
+    if lit {span.back=tone(m.ctx,"chip_on")}
     if widget==0 {
         text_span(ctx,shown,span)
     } else if text_link(ctx,widget,shown,span).clicked {m.clicked=target}

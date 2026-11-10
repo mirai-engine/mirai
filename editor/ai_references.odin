@@ -85,11 +85,11 @@ ai_references_build :: proc(s:^Session,width:f32,rows:int) {
         if used>0 && used+size>width {ui.box_end(ctx,{});row+=1;used=0}
         if row>=rows {break}
         if used==0 {ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(AI_CHIP_HEIGHT),gap=5,align_y=.Center})}
-        if ui.box(ctx,{width=ui.fixed(size),height=ui.fixed(AI_CHIP_HEIGHT),padding={5,0,5,0},gap=4,align_y=.Center,fill=ctx.theme.field,radius=ctx.theme.radius_control}) {
-            ui.icon(ctx,.Texture,ctx.theme.text_muted,12)
-            ui.label(ctx,ai_chat_menu_label(ctx,label,max(size-AI_CHIP_ROOM-AI_CHIP_PIN_ROOM,1),ctx.theme.font_small),ctx.theme.font_small,ctx.theme.text_muted,size-40-AI_CHIP_PIN_ROOM)
+        if ui.box(ctx,{width=ui.fixed(size),height=ui.fixed(AI_CHIP_HEIGHT),padding={5,0,5,0},gap=4,align_y=.Center,fill=ui.tone(ctx,"field"),radius=ui.metric(ctx,"radius_control")}) {
+            ui.icon(ctx,.Texture,ui.tone(ctx,"text_muted"),12)
+            ui.label(ctx,ai_chat_menu_label(ctx,label,max(size-AI_CHIP_ROOM-AI_CHIP_PIN_ROOM,1),ui.metric(ctx,"font_small")),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),size-40-AI_CHIP_PIN_ROOM)
             ai_chip_pin(s,ui.id(ctx,"pin_reference",i+1),AI_PIN_IMAGE,path,label)
-            if ui.button(ctx,ui.id(ctx,"remove_reference",i+1),{icon=.Cross,icon_color=ctx.theme.text_muted,icon_size=10,padding=-1,style=.Ghost,width=12,height=12}).clicked {remove=i}
+            if ui.button(ctx,ui.id(ctx,"remove_reference",i+1),{icon=.Cross,icon_color=ui.tone(ctx,"text_muted"),icon_size=10,padding=-1,variant="ghost",width=12,height=12}).clicked {remove=i}
         }
         used+=size+5
     }

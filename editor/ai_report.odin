@@ -137,12 +137,12 @@ ai_review_revert_all :: proc(s:^Session,task:^Ai_Task) {
 // Revert and accept of a unit whose scope is open, as two icons.
 @(private)
 ai_review_buttons :: proc(s:^Session,task:^Ai_Task) -> (acted:bool) {
-    ctx:=s.gui.ctx;th:=&ctx.theme
-    if ui.button(ctx,ui.id(ctx,"revert"),{icon=.Revert,icon_color=th.text_muted,icon_size=14,style=.Ghost,width=24,height=24,disabled=task.files_changed || !ai_review_revertible(s,&task.review)}).clicked {
+    ctx:=s.gui.ctx
+    if ui.button(ctx,ui.id(ctx,"revert"),{icon=.Revert,icon_color=ui.tone(ctx,"text_muted"),icon_size=14,variant="ghost",width=24,height=24,disabled=task.files_changed || !ai_review_revertible(s,&task.review)}).clicked {
         ai_review_revert_all(s,task)
         return true
     }
-    if ui.button(ctx,ui.id(ctx,"finish"),{icon=.Check,icon_size=13,style=.Accent,width=24,height=24}).clicked {
+    if ui.button(ctx,ui.id(ctx,"finish"),{icon=.Check,icon_size=13,variant="accent",width=24,height=24}).clicked {
         ai_task_finish(s,s.ai,task)
         return true
     }
@@ -153,7 +153,7 @@ ai_review_buttons :: proc(s:^Session,task:^Ai_Task) -> (acted:bool) {
 // drawn, its changes to unfold, keep or put back, and what to say about it.
 @(private)
 ai_report_build :: proc(s:^Session,text:string,width,size:f32) {
-    m:=s.ai;ctx:=s.gui.ctx;th:=&ctx.theme
+    m:=s.ai;ctx:=s.gui.ctx
     id:=ai_report_id(text)
     task:=ai_task_find(m,id)
     color:=task!=nil?ai_agent_color(task):agent_color(int((id-1)%%len(AGENT_COLORS)))
@@ -161,13 +161,13 @@ ai_report_build :: proc(s:^Session,text:string,width,size:f32) {
     inner:=width-2*AI_REPORT_PAD_X
     ui.id_push(ctx,ui.id(ctx,"report",id))
     defer ui.id_pop(ctx)
-    if ui.box(ctx,{width=ui.GROW,height=ui.GROW,direction=.Column,gap=AI_REPORT_GAP,padding={AI_REPORT_PAD_X,AI_REPORT_PAD_Y,AI_REPORT_PAD_X,AI_REPORT_PAD_Y},fill=th.card,stroke=th.border,stroke_width=1,radius=th.radius_popup}) {
+    if ui.box(ctx,{width=ui.GROW,height=ui.GROW,direction=.Column,gap=AI_REPORT_GAP,padding={AI_REPORT_PAD_X,AI_REPORT_PAD_Y,AI_REPORT_PAD_X,AI_REPORT_PAD_Y},fill=ui.tone(ctx,"card"),stroke=ui.tone(ctx,"border"),stroke_width=1,radius=ui.metric(ctx,"radius_popup")}) {
         head:=ui.id(ctx,"head")
         it:=ui.interact(ctx,head)
         if it.clicked {ai_unit_open(s,id)}
         if ui.box(ctx,{id=head,width=ui.GROW,height=ui.fixed(AI_REPORT_HEAD),gap=7,align_y=.Center}) {
             if ui.box(ctx,{width=ui.fixed(18),height=ui.fixed(18),align_x=.Center,align_y=.Center,fill=ui.color_alpha(color,46),stroke=color,stroke_width=1,radius=9}) {pulse_dot(ctx,color,false,6)}
-            ui.label(ctx,ai_chat_menu_label(ctx,ai_report_label(m,text),max(inner-25,1),size),size,th.text,0,font=ui.FONT_MEDIUM)
+            ui.label(ctx,ai_chat_menu_label(ctx,ai_report_label(m,text),max(inner-25,1),size),size,ui.tone(ctx,"text"),0,font=ui.FONT_MEDIUM)
         }
         if answer:=ai_report_answer(m,id);answer!="" {
             if target:=ui.markdown(ctx,ui.id(ctx,"answer"),answer,inner,ai_markdown_style(s,size));target!="" {ai_markdown_follow(s,target)}
@@ -179,8 +179,8 @@ ai_report_build :: proc(s:^Session,text:string,width,size:f32) {
                 fold:=ui.id(ctx,"changes")
                 fold_it:=ui.interact(ctx,fold)
                 if ui.box(ctx,{id=fold,width=ui.FIT,height=ui.fixed(24),gap=4,padding={0,0,6,0},align_y=.Center}) {
-                    ui.icon(ctx,open?.Chevron_Down:.Chevron_Right,th.text,10)
-                    ui.label(ctx,count==1?"1 change":fmt.tprintf("%d changes",count),th.font_small,th.text,font=ui.FONT_MEDIUM)
+                    ui.icon(ctx,open?.Chevron_Down:.Chevron_Right,ui.tone(ctx,"text"),10)
+                    ui.label(ctx,count==1?"1 change":fmt.tprintf("%d changes",count),ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),font=ui.FONT_MEDIUM)
                 }
                 if fold_it.clicked {
                     m.report_open=open?0:id
@@ -188,7 +188,7 @@ ai_report_build :: proc(s:^Session,text:string,width,size:f32) {
                 }
             }
             ui.spacer(ctx)
-            if ui.button(ctx,ui.id(ctx,"reply"),{label="Reply",style=.Ghost,height=24,size=th.font_small,padding=6}).clicked {ai_about_set(s,id)}
+            if ui.button(ctx,ui.id(ctx,"reply"),{label="Reply",variant="ghost",height=24,size=ui.metric(ctx,"font_small"),padding=6}).clicked {ai_about_set(s,id)}
             if count>0 {acted=ai_review_buttons(s,task)}
         }
         if open && !acted {
@@ -221,18 +221,18 @@ ai_about_rows :: proc(m:^Ai) -> int {return m!=nil && m.about!=0?1:0}
 ai_about_build :: proc(s:^Session,width:f32,rows:int) {
     m:=s.ai
     if rows<=0 || ai_about_rows(m)==0 {return}
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     title:=ai_unit_title(m,m.about)
     label:=title
     size:=ai_chip_width(ctx,label,width)
-    color:=th.text_muted
+    color:=ui.tone(ctx,"text_muted")
     if task:=ai_task_find(m,m.about);task!=nil {color=ai_agent_color(task)}
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(AI_CHIP_HEIGHT),gap=5,align_y=.Center}) {
-        if ui.box(ctx,{width=ui.fixed(size),height=ui.fixed(AI_CHIP_HEIGHT),padding={5,0,5,0},gap=4,align_y=.Center,fill=th.field,radius=th.radius_control}) {
+        if ui.box(ctx,{width=ui.fixed(size),height=ui.fixed(AI_CHIP_HEIGHT),padding={5,0,5,0},gap=4,align_y=.Center,fill=ui.tone(ctx,"field"),radius=ui.metric(ctx,"radius_control")}) {
             pulse_dot(ctx,color,false)
-            ui.label(ctx,ai_chat_menu_label(ctx,label,max(size-AI_CHIP_ROOM-AI_CHIP_PIN_ROOM+4,1),th.font_small),th.font_small,th.text_muted,size-40-AI_CHIP_PIN_ROOM)
+            ui.label(ctx,ai_chat_menu_label(ctx,label,max(size-AI_CHIP_ROOM-AI_CHIP_PIN_ROOM+4,1),ui.metric(ctx,"font_small")),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),size-40-AI_CHIP_PIN_ROOM)
             ai_chip_pin(s,ui.id(ctx,"pin_about"),AI_PIN_AGENT,fmt.tprintf("%d",m.about),title)
-            if ui.button(ctx,ui.id(ctx,"remove_about"),{icon=.Cross,icon_color=th.text_muted,icon_size=10,padding=-1,style=.Ghost,width=12,height=12}).clicked {m.about=0}
+            if ui.button(ctx,ui.id(ctx,"remove_about"),{icon=.Cross,icon_color=ui.tone(ctx,"text_muted"),icon_size=10,padding=-1,variant="ghost",width=12,height=12}).clicked {m.about=0}
         }
     }
 }
@@ -262,7 +262,7 @@ ai_dashed_box_draw :: proc(ctx:^ui.Context,rect:ui.Rect,color:ui.Color) {
             ui.draw_line(ctx,from+direction*at,from+direction*min(at+AI_DASH,length),1,color)
         }
     }
-    r:=ctx.theme.radius_popup
+    r:=ui.metric(ctx,"radius_popup")
     x0,y0,x1,y1:=rect.x+.5,rect.y+.5,rect.x+rect.w-.5,rect.y+rect.h-.5
     run(ctx,{x0+r,y0},{x1-r,y0},color)
     run(ctx,{x0+r,y1},{x1-r,y1},color)
@@ -337,7 +337,7 @@ ai_hit_view_build :: proc(s:^Session) {
     defer if closed {view.open=false}
     width:=f32(560)
     if ui.modal(ctx,shell_id(s.gui,"ai_hit_view"),{width=width,scroll=&view.scroll,close=&closed}) {
-        if target:=ui.markdown(ctx,ui.id(ctx,"ai_hit_text"),string(view.text[:view.length]),width-36,ai_markdown_style(s,ctx.theme.font_small));target!="" {ai_markdown_follow(s,target)}
+        if target:=ui.markdown(ctx,ui.id(ctx,"ai_hit_text"),string(view.text[:view.length]),width-36,ai_markdown_style(s,ui.metric(ctx,"font_small")));target!="" {ai_markdown_follow(s,target)}
     }
 }
 
@@ -345,30 +345,30 @@ ai_hit_view_build :: proc(s:^Session) {
 // model and effort, its title and its state, which opens its details.
 @(private)
 ai_chat_inspect_build :: proc(s:^Session,task:^Ai_Task,width:f32) {
-    m:=s.ai;ctx:=s.gui.ctx;th:=&ctx.theme
+    m:=s.ai;ctx:=s.gui.ctx
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(AI_INSPECT_BACK),gap=6,align_y=.Center}) {
         back:=ui.id(ctx,"back_main")
         it:=ui.interact(ctx,back)
-        if ui.box(ctx,{id=back,width=ui.FIT,height=ui.fixed(AI_INSPECT_BACK),gap=6,padding={6,0,6,0},align_y=.Center,fill=it.hot?ui.color_hover(th):{},radius=th.radius_control}) {
-            ui.icon(ctx,ui.icon_user(u8(User_Icon.Back)),th.text_muted,12)
-            ui.label(ctx,"Main chat",th.font_small,th.text_muted)
+        if ui.box(ctx,{id=back,width=ui.FIT,height=ui.fixed(AI_INSPECT_BACK),gap=6,padding={6,0,6,0},align_y=.Center,fill=it.hot?ui.color_hover(ctx):{},radius=ui.metric(ctx,"radius_control")}) {
+            ui.icon(ctx,ui.icon_user(u8(User_Icon.Back)),ui.tone(ctx,"text_muted"),12)
+            ui.label(ctx,"Main chat",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
         }
         if it.clicked {
             if main:=ai_task_find(m,m.main);main!=nil {ai_chat_select(s,main)} else {m.selected=0}
             return
         }
         ui.spacer(ctx)
-        if text:=ai_task_model_text(m,task);text!="" {ui.label(ctx,text,th.font_caption,th.text_faint)}
+        if text:=ai_task_model_text(m,task);text!="" {ui.label(ctx,text,ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_faint"))}
     }
     state:=ai_task_state_text(m,task)
     details:=ui.id(ctx,"state")
     it:=ui.interact(ctx,details)
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(AI_INSPECT_TITLE),gap=8,padding={6,0,6,0},align_y=.Center}) {
         pulse_dot(ctx,ai_agent_color(task),!ai_task_finished(task),9)
-        room:=max(width-12-9-16-ui.text_width(&ctx.font,state,th.font_caption)-12,1)
-        ui.label(ctx,ai_chat_menu_label(ctx,ai_chat_title(base.text_get(task.title[:])),room,th.font_heading),th.font_heading,th.text,0,font=ui.FONT_SEMIBOLD)
-        if ui.box(ctx,{id=details,width=ui.FIT,height=ui.fixed(18),padding={4,0,4,0},align_y=.Center,fill=it.hot?ui.color_hover(th):{},radius=th.radius_control}) {
-            ui.label(ctx,state,th.font_caption,th.text_muted)
+        room:=max(width-12-9-16-ui.text_width(&ctx.font,state,ui.metric(ctx,"font_caption"))-12,1)
+        ui.label(ctx,ai_chat_menu_label(ctx,ai_chat_title(base.text_get(task.title[:])),room,ui.metric(ctx,"font_heading")),ui.metric(ctx,"font_heading"),ui.tone(ctx,"text"),0,font=ui.FONT_SEMIBOLD)
+        if ui.box(ctx,{id=details,width=ui.FIT,height=ui.fixed(18),padding={4,0,4,0},align_y=.Center,fill=it.hot?ui.color_hover(ctx):{},radius=ui.metric(ctx,"radius_control")}) {
+            ui.label(ctx,state,ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_muted"))
         }
     }
     if it.clicked {m.details=m.details==task.id?0:task.id}
@@ -404,7 +404,7 @@ ai_task_state_text :: proc(m:^Ai,task:^Ai_Task) -> string {
 // at its right what works and what waits for review.
 @(private)
 ai_chat_expanded_build :: proc(s:^Session,width,height:f32) {
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     if ui.box(ctx,{width=ui.GROW,height=ui.GROW}) {
         if ui.box(ctx,{width=ui.GROW,height=ui.GROW,direction=.Column,align_x=.Center,gap=8,padding=ui.padding_all(8)}) {
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(PANEL_HEADER),gap=2,align_x=.End,align_y=.Center}) {
@@ -412,9 +412,9 @@ ai_chat_expanded_build :: proc(s:^Session,width,height:f32) {
                 ai_chat_settings_button(s)
             }
             room:=height-2*8-PANEL_HEADER-8
-            ai_chat_content_build(s,min(AI_EXPANDED_CHAT,width-AI_EXPANDED_SIDE-1-2*8),room,th.font)
+            ai_chat_content_build(s,min(AI_EXPANDED_CHAT,width-AI_EXPANDED_SIDE-1-2*8),room,ui.metric(ctx,"font"))
         }
-        if ui.box(ctx,{width=ui.fixed(1),height=ui.GROW,fill=th.divider}) {}
+        if ui.box(ctx,{width=ui.fixed(1),height=ui.GROW,fill=ui.tone(ctx,"divider")}) {}
         ai_chat_side_build(s,height)
     }
 }
@@ -423,11 +423,10 @@ ai_chat_expanded_build :: proc(s:^Session,width,height:f32) {
 // inspects, and those that wait for review, kept or put back from here.
 @(private)
 ai_chat_side_build :: proc(s:^Session,height:f32) {
-    m:=s.ai;ctx:=s.gui.ctx;th:=&ctx.theme
+    m:=s.ai;ctx:=s.gui.ctx
     working,changes,_:=ai_units_count(s)
     title :: proc(ctx:^ui.Context,text:string) {
-        th:=&ctx.theme
-        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={0,0,0,4}}) {ui.label(ctx,text,th.font_caption,th.text_muted,font=ui.FONT_MEDIUM)}
+        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={0,0,0,4}}) {ui.label(ctx,text,ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_muted"),font=ui.FONT_MEDIUM)}
     }
     if ui.scroll_area(ctx,ui.id(ctx,"ai_side"),&m.list_scroll,{width=ui.fixed(AI_EXPANDED_SIDE),height=ui.fixed(height),direction=.Column,padding={14,40,14,14},gap=18}) {
         if working>0 {
@@ -438,16 +437,16 @@ ai_chat_side_build :: proc(s:^Session,height:f32) {
                     row:=ui.id(ctx,"side_working",task.id)
                     it:=ui.interact(ctx,row)
                     if it.clicked {ai_chat_select(s,&task)}
-                    if ui.box(ctx,{id=row,width=ui.GROW,height=ui.fixed(30),gap=8,padding={6,0,6,0},align_y=.Center,fill=it.hot?ui.color_hover(th):{},radius=th.radius_control}) {
+                    if ui.box(ctx,{id=row,width=ui.GROW,height=ui.fixed(30),gap=8,padding={6,0,6,0},align_y=.Center,fill=it.hot?ui.color_hover(ctx):{},radius=ui.metric(ctx,"radius_control")}) {
                         pulse_dot(ctx,ai_agent_color(&task),true,9)
-                        ui.label(ctx,ai_chat_title(base.text_get(task.title[:])),th.font_small,th.text,0)
-                        ui.label(ctx,ai_elapsed(ai_task_seconds(&task)),th.font_caption,th.text_muted)
+                        ui.label(ctx,ai_chat_title(base.text_get(task.title[:])),ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),0)
+                        ui.label(ctx,ai_elapsed(ai_task_seconds(&task)),ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_muted"))
                     }
                 }
             }
         }
         if working>0 && changes>0 {
-            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=th.divider}) {}
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"divider")}) {}
         }
         if changes>0 {
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=6}) {
@@ -457,11 +456,11 @@ ai_chat_side_build :: proc(s:^Session,height:f32) {
                     if !ai_session_row_shown(s,&task) || count==0 {continue}
                     ui.id_push(ctx,ui.id(ctx,"side_review",task.id))
                     defer ui.id_pop(ctx)
-                    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6,padding={10,6,6,6},align_y=.Center,fill=th.card,radius=th.radius_popup}) {
+                    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6,padding={10,6,6,6},align_y=.Center,fill=ui.tone(ctx,"card"),radius=ui.metric(ctx,"radius_popup")}) {
                         pulse_dot(ctx,ai_agent_color(&task),false,9)
                         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column}) {
-                            ui.label(ctx,ai_chat_title(base.text_get(task.title[:])),th.font_small,th.text,0)
-                            ui.label(ctx,count==1?"1 change":fmt.tprintf("%d changes",count),th.font_small,th.text_muted)
+                            ui.label(ctx,ai_chat_title(base.text_get(task.title[:])),ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),0)
+                            ui.label(ctx,count==1?"1 change":fmt.tprintf("%d changes",count),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
                         }
                         ai_review_buttons(s,&task)
                     }
