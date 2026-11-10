@@ -44,7 +44,7 @@ seated_connect :: proc(w:^Seated,connection:Connection,player:u64) {
 
 @(private="file")
 seated_tick :: proc(w:^Seated,settings:^Net_Settings) {
-    net_seats(&w.entities,&w.seats,&w.absents,&w.disabled,&w.objects,&w.transforms,&w.keeps,core.read(&w.links),
+    net_seats({entities=&w.entities},&w.seats,&w.absents,&w.disabled,&w.objects,&w.transforms,&w.keeps,core.read(&w.links),
         core.ref(&w.bindings),core.ref(&w.connections),core.ref(&w.network),core.ref(&w.hierarchy),core.ref(settings),w.time)
     core.test_world_settle(w)
     w.time.tick+=1

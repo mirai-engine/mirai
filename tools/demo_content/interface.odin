@@ -1,0 +1,131 @@
+package main
+
+import "core:fmt"
+import "core:math"
+import "mirai:asset"
+import game "mirai:demo/game"
+import "mirai:std/base"
+
+// What the interfaces of the interface scene (game/interface_demo.odin) show:
+// the icons of the inventory, and its items and the conversation as tables of
+// game data in assets/interface.
+
+ICON_SIZE :: 64
+
+Icon_Shape :: enum u8 {Sword,Potion,Shield,Gem,Coin}
+
+// An item of the inventory drawn on the CPU: a shape of a color with a rim,
+// transparent around it.
+@(private)
+write_item_icon :: proc(o:^Out,shape:Icon_Shape,color:[3]f32) -> base.Asset_Id {
+    names:=[Icon_Shape]string{.Sword="sword",.Potion="potion",.Shield="shield",.Gem="gem",.Coin="coin"}
+    id:=asset.content_id(PROJECT,"texture",fmt.tprintf("item_%s",names[shape]))
+    pixels:=make([]u8,ICON_SIZE*ICON_SIZE*4,context.temp_allocator)
+    for y in 0..<ICON_SIZE {
+        for x in 0..<ICON_SIZE {
+            p:=[2]f32{f32(x)+0.5-ICON_SIZE/2,f32(y)+0.5-ICON_SIZE/2}
+            // Signed distance: negative inside.
+            d:f32
+            switch shape {
+            case .Sword:
+                // A blade along the diagonal and a guard across it.
+                u:=(p.x+p.y)*0.7071;v:=(p.x-p.y)*0.7071
+                blade:=max(abs(v)-4,abs(u+2)-22)
+                guard:=max(abs(u-14)-3,abs(v)-12)
+                d=min(blade,guard)
+            case .Potion:
+                body:=math.sqrt(p.x*p.x+(p.y-6)*(p.y-6))-17
+                neck:=max(abs(p.x)-5,abs(p.y+16)-9)
+                d=min(body,neck)
+            case .Shield:
+                d=max(abs(p.x)-20,abs(p.y+2)-22)+0.0
+                if p.y>4 {d=max(d,math.sqrt(p.x*p.x+(p.y-4)*(p.y-4)*0.6)-20)}
+            case .Gem:
+                d=(abs(p.x)+abs(p.y)*0.8)-24
+            case .Coin:
+                d=math.sqrt(p.x*p.x+p.y*p.y)-24
+            }
+            coverage:=clamp(0.5-d,0,1)
+            rim:=clamp(1-abs(d+3),0,1)
+            shade:=color*(0.75+0.25*clamp(-p.y/30,-1,1))
+            c:=shade*(1-rim)+[3]f32{1,1,1}*rim*0.9
+            at:=(y*ICON_SIZE+x)*4
+            pixels[at],pixels[at+1],pixels[at+2]=u8(clamp(c.r,0,1)*255),u8(clamp(c.g,0,1)*255),u8(clamp(c.b,0,1)*255)
+            pixels[at+3]=u8(coverage*255)
+        }
+    }
+    file:=fmt.tprintf("assets/interface/item_%s.tex",names[shape])
+    asset.content_check(&o.content,file,asset.texture_save(path(o,file),&o.content.types,{id=id,width=ICON_SIZE,height=ICON_SIZE,format=.RGBA8,flags={.Srgb},mips={pixels}}))
+    return id
+}
+
+ITEMS_FILE :: "assets/interface/items.records"
+LINES_FILE :: "assets/interface/merchant_lines.records"
+ANSWERS_FILE :: "assets/interface/merchant_answers.records"
+RECORD_TEXTS_FILE :: "assets/interface/records.strings"
+
+// The items of the inventory and what the merchant of the conversation
+// says, with the .strings of their texts.
+@(private)
+write_interface_records :: proc(o:^Out,icons:[5]base.Asset_Id) {
+    item :: proc(name,en,es:string,icon:base.Asset_Id,rarity:game.Item_Rarity,stack:i32,texts:^[dynamic]Text_Out) -> Row_Out(game.Item) {
+        title:=record_text_of(ITEMS_FILE,name,en,es)
+        append(texts,title)
+        return {name,{title=title.text,icon=icon,rarity=rarity,stack=stack}}
+    }
+    texts:=make([dynamic]Text_Out,context.temp_allocator)
+    items:=[]Row_Out(game.Item){
+        item("sword","Sword","Espada",icons[0],.Rare,1,&texts),
+        item("potion","Potion","Poción",icons[1],.Common,10,&texts),
+        item("shield","Shield","Escudo",icons[2],.Common,1,&texts),
+        item("gem","Gem","Gema",icons[3],.Epic,5,&texts),
+        item("coins","Coins","Monedas",icons[4],.Common,99,&texts),
+    }
+    write_records(o,ITEMS_FILE,"game.Item",game.Item,items)
+
+    merchant:=record_text_of(LINES_FILE,"merchant","Merchant","Mercader")
+    append(&texts,merchant)
+    line :: proc(name,en,es:string,next:string,speaker:Text_Out,texts:^[dynamic]Text_Out) -> Row_Out(game.Dialogue_Line) {
+        said:=record_text_of(LINES_FILE,name,en,es)
+        append(texts,said)
+        value:=game.Dialogue_Line{speaker=speaker.text,text=said.text}
+        if next!="" {value.next=record_ref(game.Dialogue_Line,LINES_FILE,next)}
+        return {name,value}
+    }
+    lines:=[]Row_Out(game.Dialogue_Line){
+        line("greet","Welcome, traveler. Looking for something?","Bienvenido, viajero. ¿Buscas algo?","",merchant,&texts),
+        line("wares","Only potions today. Come back tomorrow for the rest.","Hoy solo pociones. Vuelve mañana por lo demás.","greet",merchant,&texts),
+        line("news","They say a gem glows inside the old pillar.","Dicen que una gema brilla dentro del pilar viejo.","greet",merchant,&texts),
+        line("gem","Ha! Then keep it between us.","¡Ja! Entonces que quede entre nosotros.","",merchant,&texts),
+    }
+    write_records(o,LINES_FILE,"game.Dialogue_Line",game.Dialogue_Line,lines)
+
+    answer :: proc(name,from,en,es,to:string,texts:^[dynamic]Text_Out,requires:="",sets:="") -> Row_Out(game.Dialogue_Choice) {
+        said:=record_text_of(ANSWERS_FILE,name,en,es)
+        append(texts,said)
+        value:=game.Dialogue_Choice{line=record_ref(game.Dialogue_Line,LINES_FILE,from),text=said.text}
+        if to!="" {value.to=record_ref(game.Dialogue_Line,LINES_FILE,to)}
+        base.text_set(value.requires[:],requires)
+        base.text_set(value.sets[:],sets)
+        return {name,value}
+    }
+    answers:=[]Row_Out(game.Dialogue_Choice){
+        answer("wares","greet","Show me your wares.","Muéstrame lo que vendes.","wares",&texts),
+        answer("news","greet","Any news?","¿Alguna novedad?","news",&texts,sets="heard"),
+        answer("gem","greet","I found the gem of the pillar.","Encontré la gema del pilar.","gem",&texts,requires="heard"),
+        answer("bye","greet","Goodbye.","Adiós.","",&texts),
+    }
+    write_records(o,ANSWERS_FILE,"game.Dialogue_Choice",game.Dialogue_Choice,answers)
+    write_strings(o,RECORD_TEXTS_FILE,texts[:])
+}
+
+write_interface_assets :: proc(o:^Out) {
+    icons:=[5]base.Asset_Id{
+        write_item_icon(o,.Sword,{0.75,0.8,0.86}),
+        write_item_icon(o,.Potion,{0.9,0.2,0.25}),
+        write_item_icon(o,.Shield,{0.25,0.45,0.9}),
+        write_item_icon(o,.Gem,{0.7,0.3,0.95}),
+        write_item_icon(o,.Coin,{0.98,0.78,0.2}),
+    }
+    write_interface_records(o,icons)
+}

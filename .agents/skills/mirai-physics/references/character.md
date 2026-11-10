@@ -75,8 +75,10 @@ The same `world_step` serves the server, the predicting client and resimulation.
 - It has no friction: traction comes from the ground constraint.
 - The three angular axes are locked (it stays upright inside the solver), its rotation is
   `up_frame` times the turn of the move's `yaw` (`character_rotation`): its -Z faces the heading
-  that the yaw gives to a look. It does not sleep
-  and it carries the `Character` flag.
+  that the yaw gives to a look. It carries the `Character` flag.
+- It sleeps standing still on what rests, out of fluids, with a move that does not drive it, so a
+  step writes nothing of it. Another move, a launch, a teleport, a change of its description, an
+  awake ground or a change of the world (`grounds_stale`) wakes it.
 - `character_set_locks` adds linear locks in world axes, with the meaning of those of a body
   (`Character.locks`, as `Rigid_Body.locks`; its angular ones do nothing): no part of the step moves
   the feet along a locked axis, and its constraint and drive act only along the free ones, so the
@@ -230,6 +232,5 @@ calls reproduces the trajectory bit for bit, with any number of workers.
 
 - A fluid measures along the world +Y: surface, depth, buoyancy and the submerged capsule.
 - An orbiting or rotating planet is a moving reference frame: the character does not follow it.
-- A character never sleeps (what it stands on and touches does, while it is still).
 - A drive that replaces the velocity on the three axes (a locomotion dash) floats in a straight
   line: it does not follow the terrain.

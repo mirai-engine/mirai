@@ -16,11 +16,6 @@ imports_sync :: proc(engine_root:string,mode:Engine_Mode,roots:[]string) -> (ok:
     append(&command,engine_paths(engine_root,mode,context.temp_allocator).import_program)
     for root in roots {append(&command,"--sync",root)}
     if len(roots)==0 {return true,""}
-    if !engine_current(engine_root,mode) {
-        if built:=engine_build({engine_root=engine_root,mode=mode});built.status==.Failed {
-            return false,fmt.tprintf("the engine, whose import program imports the sources, did not build: %s %s",built.step,built.text)
-        }
-    }
     state,output,errors,error:=subprocess.exec({command=command[:]},context.temp_allocator)
     if error!=nil {return false,fmt.tprintf("the import program could not run: %v",error)}
     if state.exit_code!=0 {return false,strings.trim_space(string(errors))}

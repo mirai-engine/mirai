@@ -20,9 +20,6 @@ every_result_of_the_ui_methods_registers_with_its_schema :: proc(t:^testing.T) {
         {Ui_Paths_Result,type_info_of(Ui_Paths_Result),true,`"required":["name","path","fits","navigable"]`},
         {Ui_Check_Result,type_info_of(Ui_Check_Result),true,`"required":["asset","node","binding","path","loads","message"]`},
         {Ui_Rename_Result,type_info_of(Ui_Rename_Result),true,`"files":{"type":"array","items":{"type":"string","maxLength":1024}`},
-        {Ui_Texts_Result,type_info_of(Ui_Texts_Result),true,`"source":{"type":"string","enum":["English",`},
-        {Ui_Texts_Exported,type_info_of(Ui_Texts_Exported),false,`"required":["path","texts"]`},
-        {Ui_Texts_Imported,type_info_of(Ui_Texts_Imported),true,`"required":["row","reason"]`},
     }
     buffer:=make([]u8,1<<16,context.temp_allocator)
     for r,i in results {

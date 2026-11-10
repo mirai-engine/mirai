@@ -134,12 +134,11 @@ request_save :: proc(requests:^Terrain_Requests,owner:core.Entity,path:string=""
 
 // The room of the requests of a tick, and what did not fit in it.
 @(step="input fixed",loops="game editor",stage="begin")
-terrain_requests_serve :: proc(requests:^Terrain_Requests,digs:^Terrain_Digs,settings:Terrain_Settings,problems:^core.Problems) {
+terrain_requests_serve :: proc(requests:^Terrain_Requests,settings:Terrain_Settings,problems:^core.Problems) {
     capacity,setting:=int(settings.requests),"Terrain_Settings.requests"
     core.queue_serve(&requests.edits,capacity,problems,"terrain.requests","terrain edits",setting)
     core.queue_serve(&requests.layers,capacity,problems,"terrain.requests","terrain layer changes",setting)
     core.queue_serve(&requests.saves,capacity,problems,"terrain.requests","terrain saves",setting,"a save names a path shorter than 512 bytes")
-    core.queue_serve(&digs.digs,capacity,problems,"terrain.requests","terrain digs of a tick",setting)
 }
 
 // A brush of the world as the terrain at place reads it, and the other way.
@@ -185,8 +184,8 @@ Terrain_Dig :: struct {
 // What the edits of dig and the replays of the tick took out, in
 // their order. terrain_replay empties it at the start of each tick of a world
 // that plays.
-@(storage,events)
-Terrain_Digs :: struct {digs:core.Queue(Terrain_Dig)}
+@(storage)
+Terrain_Digs :: struct {digs:core.Events(Terrain_Dig)}
 
 // The dig of the last edit of the source of entry, if it took something out.
 @(private)
@@ -201,7 +200,7 @@ dig_push :: proc(digs:^Terrain_Digs,owner:core.Entity,entry:^Data_Source,worlds:
     dig.center=mm.transform_point(place,d.sum/d.volume)
     dig.radius=(linalg.length(d.high-d.low)*0.5+s.cell)*scale
     for i in 0..<int(s.layer_count) {dig.materials[i]=s.layers[i].material}
-    core.offer(&digs.digs,dig)
+    core.push(&digs.digs,dig)
 }
 
 // The meshes of the pieces of the terrains of a world: each world keeps its
@@ -230,6 +229,7 @@ Terrain_Resident :: struct {
     splits:[dynamic]Split,  // room for a node of every owner: the order of the budget and of the colliders
     border:Piece_Border,    // of a node, while its pages are looked for
     picking:bool,           // chunks without a collider keep their triangles on the CPU: while the world does not play, for the picking of the editor
+    ground:Ground,          // what core.Ground_Queries answers (ground.odin)
 }
 // stale: results of jobs whose chunk changed while they ran; starved: chunks
 // shown without the collider Physics_Settings had no slot for.
@@ -324,7 +324,7 @@ terrain_file :: proc(a:^host.Assets,id:base.Asset_Id,allocator:=context.temp_all
 // its memory keeps unsaved, or the file. paged leaves the pages of a
 // Heightfield or Volume on disk in the file, read when needed; one only the
 // memory of the registry holds is read whole.
-terrain_read :: proc(s:^Source,a:^host.Assets,id:base.Asset_Id,allocator:=context.allocator,editable:=true,paged:=false) -> bool {
+terrain_read :: proc(s:^Source,a:^host.Assets,id:base.Asset_Id,allocator:=context.allocator,paged:=false) -> bool {
     if paged {
         record,found:=asset.registry_find(&a.registry,id)
         if !found || record.kind!=KIND {return false}
@@ -333,14 +333,14 @@ terrain_read :: proc(s:^Source,a:^host.Assets,id:base.Asset_Id,allocator:=contex
             front:asset.Asset
             if asset.asset_load_front(&front,path,a.allocator)!=.None {return false}
             defer asset.asset_close(&front)
-            loaded,ok:=source_read(s,&front,&a.types,allocator,editable,path)
+            loaded,ok:=source_read(s,&front,&a.types,allocator,path)
             return ok && loaded==id
         }
     }
     file:asset.Asset
     if host.assets_file(a,id,KIND,&file)!=.None {return false}
     defer asset.asset_close(&file)
-    loaded,ok:=source_read(s,&file,&a.types,allocator,editable)
+    loaded,ok:=source_read(s,&file,&a.types,allocator)
     return ok && loaded==id
 }
 terrain_source :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id) -> ^Source {
@@ -515,7 +515,7 @@ source_load_job :: proc(load:^Source_Load,worker:int) {
     front:asset.Asset
     if asset.asset_load_front(&front,load.path,context.allocator)!=.None {return}
     defer asset.asset_close(&front)
-    id,read:=source_read(&load.entry.source,&front,&load.types,context.allocator,true,load.path)
+    id,read:=source_read(&load.entry.source,&front,&load.types,context.allocator,load.path)
     if !read || id!=load.id {return}
     load.entry.id,load.entry.stamp,load.entry.change=load.id,load.stamp,1
     load.ok=data_chunks_allocate(&load.entry,context.allocator,load.js,worker)
@@ -794,6 +794,7 @@ terrain_resident_free :: proc(resident:^Terrain_Resident) {
     for &source in resident.sources {resident_source_free(resident,&source)}
     for &owner in resident.owners {resident_owner_free(&owner)}
     delete(resident.sources);delete(resident.owners);delete(resident.splits)
+    delete(resident.ground.views);delete(resident.ground.unloaded)
     piece_border_destroy(&resident.border)
     resident^={}
 }

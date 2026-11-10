@@ -107,7 +107,7 @@ player_process_command :: proc(s:^Session,player:string,args:[]string,k:int,disp
     p:=s.processes
     tiles:=p.first+p.count
     command:=make([dynamic]string,context.temp_allocator)
-    append(&command,player,"--attached","--library","editor")
+    append(&command,player,"--attached")
     append(&command,..args)
     if p.embedded {
         pixels:=player_pixels(s,player_tile(player_region(s),tiles,p.first+k))

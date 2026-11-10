@@ -29,8 +29,8 @@ Scene_Result :: struct {
 Scene_Requests :: struct {queue:core.Queue(Scene_Request)}
 
 // Events: cleared at each frame, one per request served, after the load.
-@(storage,events,keep)
-Scene_Results :: struct {queue:core.Queue(Scene_Result)}
+@(storage,keep)
+Scene_Results :: struct {queue:core.Events(Scene_Result)}
 
 // Whether this world already asked for the scene the player was launched with.
 @(storage,keep)
@@ -72,7 +72,6 @@ result_of :: proc(results:^Scene_Results,scene:base.Asset_Id,path:string="") -> 
 // Its result comes in the frame the scene replaces the world.
 @(step="input",loops="game editor")
 scene_requests :: proc(world:core.World_Ref,app:^host.App,requests:^Scene_Requests,results:^Scene_Results,launch:^Scene_Launch,loads:^Scene_Loads,loading:^Scene_Loading,root:core.Ref(Scene_Root),problems:^core.Problems) {
-    core.queue_clear(&results.queue)
     launched:=!launch.taken && app.launch.scene!=""
     if launched {
         launch.taken=true

@@ -124,7 +124,7 @@ joint_frames :: proc(w:^World,body_a,body_b:Body_Handle,anchor,axis:Vec3) -> (fr
 }
 
 joint_local_frames :: proc(w:^World,h:Joint_Handle) -> (frame_a,frame_b:Transform,ok:bool) {
-    joint,_:=joint_get(w,h)
+    joint,_:=joint_read(w,h)
     if joint==nil {return}
     return joint.frame_a,joint.frame_b,true
 }
@@ -146,6 +146,7 @@ joint_create :: proc(w:^World,desc:Joint_Desc) -> Joint_Handle {
     }
     w.joint_count+=1
     joint:=&w.joints[index]
+    stamp(w,joint)
     joint^={
         user_data=desc.user_data,body_a=index_a,body_b=index_b,type=desc.type,generation=joint.generation+1,
         frame_a={desc.frame_a.p,q_normalize(desc.frame_a.q)},frame_b={desc.frame_b.p,q_normalize(desc.frame_b.q)},
@@ -167,7 +168,7 @@ joint_create :: proc(w:^World,desc:Joint_Desc) -> Joint_Handle {
     for body,side in ([2]^Body{body_a,body_b}) {
         key:=index<<1|i32(side)
         joint.edges[side]={-1,body.joint_list}
-        if body.joint_list>=0 {w.joints[body.joint_list>>1].edges[body.joint_list&1].prev=key}
+        if body.joint_list>=0 {stamp(w,.Joints,body.joint_list>>1);w.joints[body.joint_list>>1].edges[body.joint_list&1].prev=key}
         body.joint_list=key
     }
     if !desc.collide_connected {
@@ -193,17 +194,19 @@ joint_destroy :: proc(w:^World,h:Joint_Handle) {
 @(private)
 joint_destroy_index :: proc(w:^World,index:i32) {
     joint:=&w.joints[index]
+    stamp(w,joint)
     island_unlink(w,joint.body_a,joint.body_b)
     for body_index,side in ([2]i32{joint.body_a,joint.body_b}) {
         body:=&w.bodies[body_index]
+        stamp(w,body)
         edge:=joint.edges[side]
-        if edge.prev>=0 {w.joints[edge.prev>>1].edges[edge.prev&1].next=edge.next} else {body.joint_list=edge.next}
-        if edge.next>=0 {w.joints[edge.next>>1].edges[edge.next&1].prev=edge.prev}
+        if edge.prev>=0 {stamp(w,.Joints,edge.prev>>1);w.joints[edge.prev>>1].edges[edge.prev&1].next=edge.next} else {body.joint_list=edge.next}
+        if edge.next>=0 {stamp(w,.Joints,edge.next>>1);w.joints[edge.next>>1].edges[edge.next&1].prev=edge.prev}
         body_wake(w,body_index)
     }
     if .Collide_Connected not_in joint.flags {
         // The bodies may collide again: their pairs are searched at the next step.
-        for s:=w.bodies[joint.body_a].shape_list;s>=0;s=w.shapes[s].next {w.shapes[s].flags+={.Moved}}
+        for s:=w.bodies[joint.body_a].shape_list;s>=0;s=w.shapes[s].next {stamp(w,.Shapes,s);w.shapes[s].flags+={.Moved}}
     }
     joint^={generation=joint.generation+1,body_a=w.joint_free}
     w.joint_free=index
@@ -211,16 +214,16 @@ joint_destroy_index :: proc(w:^World,index:i32) {
 }
 
 joint_bodies :: proc(w:^World,h:Joint_Handle) -> (Body_Handle,Body_Handle) {
-    joint,_:=joint_get(w,h)
+    joint,_:=joint_read(w,h)
     if joint==nil {return {},{}}
     return body_handle(w,joint.body_a),body_handle(w,joint.body_b)
 }
 joint_type :: proc(w:^World,h:Joint_Handle) -> Joint_Type {
-    joint,_:=joint_get(w,h)
+    joint,_:=joint_read(w,h)
     return joint==nil?.Fixed:joint.type
 }
 joint_user_data :: proc(w:^World,h:Joint_Handle) -> u64 {
-    joint,_:=joint_get(w,h)
+    joint,_:=joint_read(w,h)
     return joint==nil?0:joint.user_data
 }
 
@@ -291,13 +294,13 @@ twist_angle :: proc "contextless" (qa,qb:Quat) -> f32 {
 
 // Angle of a revolute joint or twist of a spherical one, radians in (-pi,pi].
 joint_angle :: proc(w:^World,h:Joint_Handle) -> f32 {
-    joint,_:=joint_get(w,h)
+    joint,_:=joint_read(w,h)
     if joint==nil {return 0}
     return twist_angle(w.bodies[joint.body_a].rotation*joint.frame_a.q,w.bodies[joint.body_b].rotation*joint.frame_b.q)
 }
 // Translation of a prismatic joint along its axis, meters.
 joint_translation :: proc(w:^World,h:Joint_Handle) -> f32 {
-    joint,_:=joint_get(w,h)
+    joint,_:=joint_read(w,h)
     if joint==nil {return 0}
     a,b:=&w.bodies[joint.body_a],&w.bodies[joint.body_b]
     d:=xf_point(body_transform_of(b),joint.frame_b.p)-xf_point(body_transform_of(a),joint.frame_a.p)
@@ -305,7 +308,7 @@ joint_translation :: proc(w:^World,h:Joint_Handle) -> f32 {
 }
 // Distance between the two anchors, meters.
 joint_distance :: proc(w:^World,h:Joint_Handle) -> f32 {
-    joint,_:=joint_get(w,h)
+    joint,_:=joint_read(w,h)
     if joint==nil {return 0}
     a,b:=&w.bodies[joint.body_a],&w.bodies[joint.body_b]
     return length(xf_point(body_transform_of(b),joint.frame_b.p)-xf_point(body_transform_of(a),joint.frame_a.p))
@@ -469,7 +472,7 @@ joints_scalar_task :: proc(data:rawptr,first,last,worker:int) #no_bounds_check {
 
 // Force in newtons and torque in newton meters that the joint applied in the last step.
 joint_reaction :: proc(w:^World,h:Joint_Handle) -> (force,torque:f32) {
-    joint,index:=joint_get(w,h)
+    joint,index:=joint_read(w,h)
     if joint==nil || w.step.inv_h==0 {return}
     return joint_load(joint,&w.joint_axes[index],w.step.inv_h)
 }

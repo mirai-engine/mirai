@@ -60,7 +60,7 @@ $P foliage.paint '{"entity":"Woods","mode":"generate","at":[256,0,256],"radius":
   whole terrain; `ungenerate` off), `paint` and `erase` place or remove manual instances (a
   `ground_only` paint stays on the terrain), `reapply` redoes scale and turn. `foliage.place` puts
   one instance, `foliage.query` lists types and instances.
-- Foliage stands on the terrain by itself (`foliage_terrain`) and follows it when it is sculpted.
+- Foliage stands on the terrain by itself and follows it when it is sculpted.
   Far away it becomes impostors; collision is per type.
 - A `Wind` component (`volume "mirai:engine/volume"`) on any entity makes foliage sway; `wind` on
   a type scales it.

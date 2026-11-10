@@ -1,7 +1,0 @@
-{
-  "name": "foliage_terrain",
-  "version": "0.1.0",
-  "dependencies": ["foliage", "terrain", "physics"],
-  "parts": ["Runtime"],
-  "automatic": true
-}

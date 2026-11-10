@@ -81,11 +81,6 @@ build_start :: proc(s:^Session,target:=build.Target.Editor,folder:="") -> bool {
         notify(s,"The code is being checked or tested; wait for it")
         return false
     }
-    // Both builds generate the world of the project in the same folder.
-    if player_building(s) {
-        notify(s,"The player of the project is being built; wait for it")
-        return false
-    }
     if !s.has_project || s.engine_root=="" {
         notify(s,"Build needs a project and the root of the engine")
         return false
@@ -369,7 +364,6 @@ Code_Probe :: struct {
 code_probe_start :: proc(s:^Session,action:build.Action,test_package:string,test_names:[]string,seconds:f64) -> string {
     b:=s.build
     if b.phase==.Running || probe_running(b) {return "A build or a check or a run of the tests is running; build.status and build.test.status say when it ends"}
-    if player_building(s) {return "The player of the project is being built; wait for it"}
     if !s.has_project || s.engine_root=="" {return "It needs a project and the root of the engine"}
     probe_free(b)
     a:=runtime.heap_allocator()

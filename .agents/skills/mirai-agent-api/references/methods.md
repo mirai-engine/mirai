@@ -886,23 +886,25 @@ one root is none: the error says so), nonexistent override and "is not part of a
     of an enum, `records` of the type a `core.Record` names, description) and its tables.
   - `records.create {path,type}` creates an empty table of that type, the only method that does;
     Create of the content browser has one entry per type.
-  - `records.inspect {records,rows?}`: `{records,path,type,rows:[{id,name,values,texts}]}`; `id` is
-    a JSON number (ids have 53 bits) and `texts` gives, by path of a `core.Text` field, the text of
-    each language (`""`: the language the game is written in).
-  - `records.set {records,row,values?,texts?,name?}` and `records.add {records,name,values?,texts?,
+  - `records.inspect {records,rows?}`: `{records,path,type,rows:[{id,name,values}]}`; `id` is
+    a JSON number (ids have 53 bits).
+  - `records.set {records,row,values?,name?}` and `records.add {records,name,values?,
     after?}`: each key of `values` is a field of the row or the path of a part of one
     (`input.hold`, `windows[2].to`), and its value is that part whole: an object or a list leaves
-    what it does not give at the default of the type (zeros where it has none; the `core.Text`
-    ids stay), while what no key names keeps its value (a new row starts at the default). To
+    what it does not give at the default of the type (zeros where it has none), while what no
+    key names keeps its value (a new row starts at the default). To
     change one nested field, name its path. A `core.Record` is given as `{table,row}`, as the name
-    of a row or as `table/row`; a `core.Text`, as its original text.
+    of a row or as `table/row`; a `core.Text`, as `{key}`, the key of the `.strings` it shows
+    (`texts.set` writes what a key says, `texts.missing` lists the keys without a text:
+    [texts](../../mirai-assets/references/kinds.md#texts)).
   - `records.remove {records,rows}` and `records.move {records,row,after}`: the row it goes right
     after, `""` for first. A row is renamed with `name` of `records.set`.
   - `records.import {records,file}` reads a CSV (RFC 4180, UTF-8) whose header is `name` and paths
-    of leaf fields (`damage`, `stats.speed`, `position[1]`; `title@es` is a translation): each row
-    changes the one of the same name or is added, an empty cell changes nothing and there are no
-    formulas. It is one step; returns `{updated,added,rejected:[{line,row,reason}]}`, and an invalid
-    header writes nothing. `records.export {records,file}` writes that CSV.
+    of leaf fields (`damage`, `stats.speed`, `position[1]`; `title.key` is the key of a
+    `core.Text`): each row changes the one of the same name or is added, an empty cell changes
+    nothing and there are no formulas. It is one step; returns
+    `{updated,added,rejected:[{line,row,reason}]}`, and an invalid header writes nothing.
+    `records.export {records,file}` writes that CSV.
 - **Unsaved assets.** The methods that edit assets (`material.*`, `particle.*`, `sound_set.*`,
   `records.*`) and programs (`material.program.create` and `edit`) change them in memory, in an
   undo step attributed to the AI turn that calls:

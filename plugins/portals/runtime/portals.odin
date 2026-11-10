@@ -37,9 +37,9 @@ Crossing :: struct {
 
 // Who goes through a portal in this tick. Whoever keeps a direction of its
 // own for a traveler, as where it looks, turns it by `turn`.
-@(storage,events)
+@(storage)
 Portal_Crossings :: struct {
-    queue:core.Queue(Crossing),
+    queue:core.Events(Crossing),
 }
 
 // How near the eye of the view is to the way of the traveler it looks through the eyes of.
@@ -118,7 +118,6 @@ portals_travel :: proc(
     colliders:core.Read(phys.Collider),moves:^core.Table(inp.Move_Input),remotes:core.Read(core.Remote),
     placer:core.Placer,requests:^phys.Body_Requests,crossings:^Portal_Crossings,
 ) {
-    core.queue_clear(&crossings.queue)
     if core.count(portals)==0 {return}
     for row in 0..<core.count(travelers) {
         e:=core.entity_at(travelers,row)

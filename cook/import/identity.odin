@@ -162,8 +162,10 @@ writer_source :: proc(w:^Writer,path:string) -> bool {
     w.source,w.path=source_path(w.options,path),path
     w.inputs.allocator,w.held.allocator=context.temp_allocator,context.temp_allocator
     w.sidecar_file=sidecar_path(path,w.options.root,w.folder,context.temp_allocator)
-    error:Error
-    if w.sidecar,_,error=sidecar_load(w.sidecar_file,context.temp_allocator);error.code!=.None {return writer_fail(w,error.code,"%s",error.message)}
+    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+    sidecar,_,error:=sidecar_load(w.sidecar_file,context.temp_allocator)
+    if error.code!=.None {return writer_fail(w,error.code,"%s",error.message)}
+    w.sidecar=sidecar
     w.taken=make([]bool,len(w.sidecar.outputs),context.temp_allocator)
     w.outputs=make([dynamic]Output,context.temp_allocator)
     names:=project.FOLDER_NAMES
