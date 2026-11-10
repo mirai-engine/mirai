@@ -50,11 +50,10 @@ registry).
 1. **Look before touching.** Inspect with the [CLI](references/cli.md); the file's schema allows
    reading any type.
 2. **Editing an existing asset.** `mirai asset set` or `unpack`/`pack`
-   ([CLI](references/cli.md)). From code: `asset.Document`, or `asset.Scene` for scenes. In a
-   game they are files of `assets/` written by `scene.write` or `mirai scene write`; only the
-   demo's tool writes them with `asset.Scene_Builder`. Meshes from code go through
-   `asset.content_mesh` over
-   the shapes of `std/geom`
+   ([CLI](references/cli.md)). From code: `asset.Document`, or `asset.Scene` for scenes. Scenes
+   and prefabs, the demo's too, are files of `assets/` written by `scene.write`,
+   `mirai scene write` or the editor; no code builds them. Meshes from code go through
+   `asset.content_mesh` over the shapes of `std/geom`
    ([content tool](../../../docs/game/assets/content-tool.md)).
 3. **Changing a serialized struct.** A component or a record of a game changes without a version
    or a converter: the reader migrates its rows by field name.
