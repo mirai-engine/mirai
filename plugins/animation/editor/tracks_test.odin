@@ -85,7 +85,7 @@ tracks_test_open :: proc(f:^Tracks_Fixture,t:^testing.T,name:string) -> bool {
     if result:=tracks_test_call(f,"animation.clip.create",`{"path":"door.anim","name":"open"}`);!testing.expectf(t,result.code==0,"%v",result) {return false}
     id:=authoring_test_id(&f.authoring,"door.anim")
     f.clip=authoring_test_id_text(id)
-    core.get(&w.animations,f.door).asset=id
+    core.edit(&w.animations,f.door).asset=id
     core.settle(&f.info,w,nil)
     history.edits_reset(&f.edits,core.world_ref(w,&f.info))
     for track in ([?]string{`"target":"Panel","property":"Position"`,`"target":"Panel","property":"Rotation","keys":[{"time":0,"value":[0,0,0,1]}]`,`"target":"Shot","property":"Position"`,`"target":"@field/Animation.weight","property":"Float"`}) {
@@ -208,8 +208,8 @@ capture_keys_the_tracks_of_an_entity_with_what_it_has_now :: proc(t:^testing.T) 
         testing.expectf(t,name==c.name && reached==c.reached,"%s is %q, reached %v",editor.entity_name(w,c.e),name,reached)
     }
     turn:=mm.quat_axis_angle({0,1,0},1)
-    core.get(&f.document.transforms,f.panel)^={position={1,2,3},rotation=turn,scale={1,1,1}}
-    core.get(&f.document.animations,f.door).weight=0.25
+    core.edit(&f.document.transforms,f.panel)^={position={1,2,3},rotation=turn,scale={1,1,1}}
+    core.edit(&f.document.animations,f.door).weight=0.25
     tracks_test_edit(f)
     cursor:=f.edits.cursor
     result:=tracks_test_call(f,"animation.key.capture",`{"animation":"0000000000000001","entity":"0000000000000002","time":1}`)
@@ -259,7 +259,7 @@ the_tracks_tool_is_turned_on_by_its_entry_and_keys_what_the_gizmo_moves :: proc(
     moved:=mm.TRANSFORM_IDENTITY;moved.position={0,4,0}
     for e in ([2]core.Entity{f.panel,f.loose}) {
         append(&f.viewport.gizmo.items,editor.Gizmo_Item{entity=e,local=editor.entity_local(w,e)})
-        core.get(&f.document.transforms,e)^=core.from_math(moved)
+        core.edit(&f.document.transforms,e)^=core.from_math(moved)
     }
     tracks_test_edit(f)
     cursor:=f.edits.cursor
