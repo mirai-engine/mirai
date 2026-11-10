@@ -433,7 +433,7 @@ instance_get :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,e:core.Entity,s
             if missing>0 {
                 file:[base.ASSET_ID_TEXT]u8
                 more:=fmt.tprintf(" and %d more",missing-1) if missing>1 else ""
-                core.report(problems,e,"gui.action","interface %s of its %s names the input action '%s'%s, which the game does not declare: its buttons do not take it and its prompts show nothing; declare it as an inp.Action constant and bind it in input.mirai, or choose another action in the .ui",host.assets_name(app.assets,asset,&file),kind,first,more)
+                core.report(problems,e,"gui.action","interface %s of its %s names the input action '%s'%s, which the game does not declare: its buttons do not take it and its prompts show nothing; declare it as a member of an enum @(actions) with its default bindings, or choose another action in the .ui",host.assets_name(app.assets,asset,&file),kind,first,more)
             }
         }
         // A Draw whose procedure the game does not declare keeps its place and shows nothing.

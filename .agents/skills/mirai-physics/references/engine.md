@@ -521,7 +521,7 @@ the world ([own pace](../../mirai-core/references/core.md#core-storages)).
   belong to `physics` (`Walk_Action`) and `look` to `engine/input` (`Look_Action`)
   ([actions](../../mirai-gameplay/references/control.md#actions)).
 - Without a seat, before `locomotion_step` takes its initial look or where another end decides
-  (`core.Remote`), it does not touch it: what an AI or the network wrote stays. If `input.mirai`
+  (`core.Remote`), it does not touch it: what an AI or the network wrote stays. If `Input_Settings`
   gives `move` or `look` another type, it is the `locomotion.seat_action` problem.
 - A step that adjusts what it wrote runs with `after="locomotion_seat"`; a portal turns only the
   look of the traveler that drives its tip.

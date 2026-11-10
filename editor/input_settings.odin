@@ -1,8 +1,7 @@
 package editor
 
-import "core:encoding/json"
 import "core:fmt"
-import "core:os"
+import "core:mem"
 import "core:reflect"
 import "core:slice"
 import "core:strings"
@@ -12,71 +11,85 @@ import "mirai:engine/gui"
 import input "mirai:engine/input"
 import "mirai:host"
 import "mirai:platform"
-import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:ui"
 
-// The input actions in Project Settings and in input.get and input.set: the
-// actions the code declares, with the kind and the bindings that input.mirai
-// of the project gives them over the defaults of the code. The file keeps
-// only the actions and ticks that differ from the code; the edited World and
-// the runs build their maps again from it.
+// The input actions in Project Settings and in input.get: the actions the
+// code declares, with the kind and the bindings that Input_Settings of the
+// project gives them over the defaults of the code. An edit changes the
+// setting in the edited World and in the games that play, the file of the
+// project keeps it like any setting, and the maps build again from it.
 
 // How far a stick or trigger moves from where it was, and how many points
 // the mouse moves, to be the input a binding listens for.
 INPUT_LISTEN_AXIS :: f32(0.6)
 INPUT_LISTEN_MOUSE :: f32(160)
-INPUT_SECONDS_MAX :: f32(10) // the longest tap or hold
 
-Input_Settings :: struct {
-    code:input.Input_Map,    // the defaults of the code
-    current:input.Input_Map, // input.mirai of the project over them
-    problem:[512]u8,         // why input.mirai of the project was not read: nothing is written over it
-    loaded,unsaved:bool,     // unsaved: a value changes that the file does not have yet
+Input_Dialog :: struct {
+    code:input.Input_Map, // the defaults of the code
+    loaded,unsaved:bool,  // unsaved: a value changes that the file does not have yet
     listen:Input_Listen,
 }
 
 // A binding that waits for the next key, button or axis; Escape cancels it.
 Input_Listen :: struct {
     active:bool,
-    whole:bool,   // every code of the binding comes from what is pressed, one after the other
+    whole:bool,   // every input of the binding comes from what is pressed, one after the other
     action:input.Action,
     binding:int,  // among the bindings of the action; -1: a new one
-    slot:int,     // the code that comes next
+    slot:int,     // the input that comes next
     gathered:input.Input_Binding,
     axes:[core.GAMEPAD_CAPACITY][core.Gamepad_Axis]f32, // of the gamepads, as they were
     mouse:[2]f32, // moved since it began
 }
 
-@(private)
-input_settings_file :: proc(s:^Session) -> string {
-    return project.path(s.project_root,project.INPUT_FILE,allocator=context.temp_allocator)
-}
-
-// Reads the actions of the code and input.mirai of the project again.
+// Reads the actions of the code again.
 input_settings_load :: proc(s:^Session) {
     st:=&s.settings_dialog.input
-    input.input_map_make(&st.code,s.info,"","",nil)
-    st.current=st.code
-    st.problem={}
+    input.input_map_make(&st.code,s.info,nil,nil)
     st.loaded,st.unsaved,st.listen=true,false,{}
-    if !s.has_project {return}
-    path:=input_settings_file(s)
-    data,read_error:=os.read_entire_file(path,context.temp_allocator)
-    if read_error!=nil {return}
-    if error,at:=input.input_map_parse(&st.current,s.info,string(data));error!=.None {
-        st.current=st.code
-        base.text_set(st.problem[:],input_file_problem(s,path,error,at))
-    }
 }
 
+// Input_Settings of the project, as the dialog edits it; nil without it.
 @(private)
-input_file_problem :: proc(s:^Session,path:string,error:input.Input_Map_Error,at:string) -> string {
-    if error==.Unknown_Action {
-        return fmt.tprintf("%s names the action %q, which the code does not declare: rename it to one of %s, or remove it",path,at,input_action_names(s))
+input_settings_of :: proc(s:^Session) -> ^input.Input_Settings {
+    return cast(^input.Input_Settings)setting_value(s,input.Input_Settings)
+}
+
+// What drives an action: its entry in Input_Settings, or the default of the code.
+@(private)
+input_driven :: proc(s:^Session,action:input.Action) -> input.Action_Bindings {
+    if settings:=input_settings_of(s);settings!=nil {
+        name,_:=core.name_of(s.info,input.Action,i64(action))
+        if entry:=input.input_settings_find(settings,name);entry!=nil {return entry.driven}
     }
-    return fmt.tprintf("%s could not be read: %v in the action %q; %s, or remove the file",path,error,at,input.input_map_error_fix(error))
+    return s.settings_dialog.input.code.actions[action]
+}
+
+// Whether two ways of driving an action are the same; a scale of 0 is the scale 1 it means.
+@(private)
+input_same :: proc(a,b:input.Action_Bindings) -> bool {
+    a,b:=a,b
+    for &binding in a.bindings {if binding.scale==0 {binding.scale=1}}
+    for &binding in b.bindings {if binding.scale==0 {binding.scale=1}}
+    return a==b
+}
+
+// Gives an action what drives it: the entry of Input_Settings, or none when
+// that is the default of the code. Says why when it cannot.
+@(private)
+input_drive :: proc(s:^Session,action:input.Action,driven:input.Action_Bindings) {
+    settings:=input_settings_of(s)
+    if settings==nil {return}
+    name,_:=core.name_of(s.info,input.Action,i64(action))
+    if input_same(driven,s.settings_dialog.input.code.actions[action]) {
+        input.input_settings_remove(settings,name)
+    } else if !input.input_settings_put(settings,name,driven) {
+        notify(s,fmt.tprintf("Input_Settings holds %d actions and names of up to %d bytes: %q does not fit",input.ACTION_CAPACITY,input.ACTION_NAME,name))
+        return
+    }
+    settings_runs_take(s,settings_touched(settings_all(s),"","Input_Settings"))
 }
 
 // The names of the actions the code declares, for an error that lists them.
@@ -90,78 +103,21 @@ input_action_names :: proc(s:^Session) -> string {
     return strings.join(names[:],", ",context.temp_allocator)
 }
 
-// Writes what the bindings have over the code to input.mirai of the project,
-// or removes the file when nothing differs; the edited World and the runs
-// build their maps again. "" or what went wrong.
-input_settings_write :: proc(s:^Session) -> string {
-    st:=&s.settings_dialog.input
-    st.unsaved=false
-    if !s.has_project {return "There is no project to keep the bindings in"}
-    if problem:=base.text_get(st.problem[:]);problem!="" {return problem}
-    text,ok:=input.input_map_text(&st.current,&st.code,s.info)
-    if !ok {return "A binding cannot be written to input.mirai: give it keys, or buttons and axes one at a time"}
-    path:=input_settings_file(s)
-    if text=="" {
-        if os.is_file(path) && os.remove(path)!=nil {return fmt.tprintf("%s could not be removed",path)}
-    } else if serial.file_write_atomic(path,transmute([]u8)text)!=.None {
-        return fmt.tprintf("%s could not be written",path)
-    }
-    input_maps_rebuild(s)
-    return ""
-}
-
-// The maps of the edited World and of each run build again from the files.
-@(private)
-input_maps_rebuild :: proc(s:^Session) {
-    if s.info==nil {return}
-    if s.edit_world!=nil {
-        if m:=core.world_storage_of(edited_world(s),input.Input_Map);m!=nil {m.built=false}
-    }
-    for &r in s.runs {
-        if r.world==nil {continue}
-        if m:=core.world_storage_of(run_ref(s,&r),input.Input_Map);m!=nil {m.built=false}
-    }
-}
-
+// The file of the project takes what changed.
 @(private)
 input_settings_commit :: proc(s:^Session) {
-    if message:=input_settings_write(s);message!="" {notify(s,message)}
+    s.settings_dialog.input.unsaved=false
+    settings_save(s)
 }
 
-// The index in the map of the nth binding of an action; -1 when it has fewer.
+// The bindings of an action without its nth.
 @(private)
-input_binding_index :: proc(m:^input.Input_Map,action:input.Action,nth:int) -> int {
-    n:=0
-    for &binding,i in m.bindings[:m.binding_count] {
-        if binding.action!=action {continue}
-        if n==nth {return i}
-        n+=1
-    }
-    return -1
+input_binding_remove :: proc(driven:^input.Action_Bindings,nth:int) {
+    used:=len(input.action_bindings(driven))
+    if nth<0 || nth>=used {return}
+    copy(driven.bindings[nth:used-1],driven.bindings[nth+1:used])
+    driven.bindings[used-1]={}
 }
-
-@(private)
-input_binding_remove :: proc(m:^input.Input_Map,index:int) {
-    if index<0 || index>=int(m.binding_count) {return}
-    copy(m.bindings[index:m.binding_count-1],m.bindings[index+1:m.binding_count])
-    m.binding_count-=1
-    m.bindings[m.binding_count]={}
-}
-
-// The action back to the kind and the bindings of the code.
-input_action_restore :: proc(m,code:^input.Input_Map,action:input.Action) {
-    input.input_map_unbind(m,action)
-    input.input_map_action(m,action,code.kinds[action])
-    for binding in code.bindings[:code.binding_count] {
-        if binding.action==action {input.input_map_bind(m,action,binding)}
-    }
-}
-
-// The seconds of a tap or a hold as the map keeps them: 0 for the default.
-@(private)
-input_seconds_kept :: proc(value,default:f32) -> f32 {return value==default?0:value}
-@(private)
-input_seconds_shown :: proc(value,default:f32) -> f32 {return value>0?value:default}
 
 // ---------------------------------------------------------------- panel
 
@@ -199,15 +155,10 @@ input_sections :: proc(s:^Session,needle:string) -> []string {
 @(private)
 input_settings_cards :: proc(s:^Session,needle:string) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     st:=&s.settings_dialog.input
     if !st.loaded {input_settings_load(s)}
     ui.id_push(ctx,ui.id(ctx,"input"))
     defer ui.id_pop(ctx)
-    if problem:=base.text_get(st.problem[:]);problem!="" {
-        if section_card(s,settings_card_id(s,SETTINGS_CATEGORY_INPUT,0),"") {ui.text(ctx,problem,ui.prose(ctx,th.font_small,th.text_muted))}
-        return
-    }
     for card,k in input_cards(s,needle) {
         // The card ends with the if that opens it: its rows go inside.
         if section_card(s,settings_card_id(s,SETTINGS_CATEGORY_INPUT,k),card.title) {
@@ -228,30 +179,29 @@ input_action_rows :: proc(s:^Session,action:input.Action) {
     ctx:=s.gui.ctx
     th:=&ctx.theme
     st:=&s.settings_dialog.input
-    m:=&st.current
+    driven:=input_driven(s,action)
     ui.id_push(ctx,ui.id(ctx,"action",int(action)+1))
     defer ui.id_pop(ctx)
     row_begin(ctx,"Kind")
-    kind:=int(m.kinds[action])
+    kind:=int(driven.kind)
     kinds:=INPUT_KINDS
-    if ui.dropdown(ctx,ui.id(ctx,"kind"),{list=kinds[:]},&kind,{width=-1,height=th.row}) && input.Action_Kind(kind)!=m.kinds[action] {
+    if ui.dropdown(ctx,ui.id(ctx,"kind"),{list=kinds[:]},&kind,{width=-1,height=th.row}) && input.Action_Kind(kind)!=driven.kind {
         st.listen={}
-        input.input_map_action(m,action,input.Action_Kind(kind))
+        driven.kind,driven.bindings=input.Action_Kind(kind),{}
+        input_drive(s,action,driven)
         input_settings_commit(s)
     }
-    if input.input_map_action_same(m,&st.code,action) {
+    if input_same(driven,st.code.actions[action]) {
         ui.spacer(ctx,REVERT_SIDE,1)
     } else if ui.button(ctx,ui.id(ctx,"restore"),{icon=.Revert,icon_size=12,icon_color=th.text_muted,style=.Ghost,width=REVERT_SIDE,height=REVERT_SIDE}).clicked {
         st.listen={}
-        input_action_restore(m,&st.code,action)
+        input_drive(s,action,st.code.actions[action])
         input_settings_commit(s)
     }
     row_end(ctx)
-    for nth:=0;;nth+=1 {
-        index:=input_binding_index(m,action,nth)
-        if index<0 {break}
+    for nth in 0..<len(input.action_bindings(&driven)) {
         input_row_rule(ctx)
-        if input_binding_row(s,action,nth,index) {break}
+        if input_binding_row(s,action,&driven,nth) {break}
     }
     input_row_rule(ctx)
     l:=&st.listen
@@ -280,14 +230,13 @@ input_row_rule :: proc(ctx:^ui.Context) {
 // a code listens for another one and a right click lists them. True when it
 // changed the bindings of the action.
 @(private)
-input_binding_row :: proc(s:^Session,action:input.Action,nth,index:int) -> (changed:bool) {
+input_binding_row :: proc(s:^Session,action:input.Action,driven:^input.Action_Bindings,nth:int) -> (changed:bool) {
     ctx:=s.gui.ctx
     th:=&ctx.theme
     st:=&s.settings_dialog.input
-    m:=&st.current
     l:=&st.listen
-    binding:=m.bindings[index]
-    kind:=m.kinds[action]
+    binding:=driven.bindings[nth]
+    kind:=driven.kind
     scaled,zoned,padded,zone:=input.binding_uses(kind,binding)
     ui.id_push(ctx,ui.id(ctx,"binding",nth+1))
     defer ui.id_pop(ctx)
@@ -296,7 +245,7 @@ input_binding_row :: proc(s:^Session,action:input.Action,nth,index:int) -> (chan
     open:=false
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.Center}) {
         menus:=INPUT_MENUS
-        device:=menus[input_code_menu(binding.codes[0])]
+        device:=menus[input_code_menu(binding.inputs[0])]
         if scaled || zoned || padded {
             open=inspector_section_open(s.inspector,key,true)
             if fold_label(s,ui.id(ctx,"fold"),device,open) {
@@ -316,7 +265,7 @@ input_binding_row :: proc(s:^Session,action:input.Action,nth,index:int) -> (chan
                     input_listen_chip(s,id,{},0)
                     continue
                 }
-                it:=input_code_chip(s,id,binding.codes[group.slot])
+                it:=input_code_chip(s,id,binding.inputs[group.slot])
                 if it.clicked {input_listen_start(s,action,nth,group.slot,!group.alone)}
                 if it.right && !ui.popup_is_open(ctx,menu) {
                     anchor,_:=ui.widget_rect(ctx,id)
@@ -328,7 +277,8 @@ input_binding_row :: proc(s:^Session,action:input.Action,nth,index:int) -> (chan
         ui.spacer(ctx)
         if ui.button(ctx,ui.id(ctx,"remove"),{icon=.Cross,icon_size=10,icon_color=th.text_muted,style=.Ghost,width=REVERT_SIDE,height=REVERT_SIDE}).clicked {
             st.listen={}
-            input_binding_remove(m,index)
+            input_binding_remove(driven,nth)
+            input_drive(s,action,driven^)
             input_settings_commit(s)
             return true
         }
@@ -336,12 +286,12 @@ input_binding_row :: proc(s:^Session,action:input.Action,nth,index:int) -> (chan
     if !open {return}
     fold_band_begin(s)
     defer fold_band_end(s)
-    b:=&m.bindings[index]
+    b:=&driven.bindings[nth]
     if scaled {
         row_begin(ctx,"Scale")
         value:=f64(b.scale!=0?b.scale:1)
         r:=ui.number_field(ctx,ui.id(ctx,"scale"),&value,{decimals=3,speed=0.01})
-        if r.changed {b.scale=f32(value);st.unsaved=true}
+        if r.changed {b.scale=f32(value);st.unsaved=true;input_drive(s,action,driven^)}
         if st.unsaved && !r.scrubbing && !r.editing {input_settings_commit(s)}
         row_end(ctx)
     }
@@ -349,16 +299,17 @@ input_binding_row :: proc(s:^Session,action:input.Action,nth,index:int) -> (chan
         row_begin(ctx,"Dead zone")
         value:=f64(zone)
         r:=ui.number_field(ctx,ui.id(ctx,"dead_zone"),&value,{decimals=3,speed=0.005,min=0.01,max=0.95,has_min=true,has_max=true})
-        if r.changed {b.dead_zone=f32(value);st.unsaved=true}
+        if r.changed {b.dead_zone=f32(value);st.unsaved=true;input_drive(s,action,driven^)}
         if st.unsaved && !r.scrubbing && !r.editing {input_settings_commit(s)}
         row_end(ctx)
     }
     if padded {
         row_begin(ctx,"Gamepad")
         pads:=INPUT_GAMEPADS
-        chosen:=b.gamepad==input.GAMEPAD_ANY?0:int(b.gamepad)+1
+        chosen:=int(b.gamepad)
         if ui.dropdown(ctx,ui.id(ctx,"gamepad"),{list=pads[:]},&chosen,{width=-1,height=th.row}) {
-            b.gamepad=chosen==0?input.GAMEPAD_ANY:u8(chosen-1)
+            b.gamepad=u8(chosen)
+            input_drive(s,action,driven^)
             input_settings_commit(s)
         }
         row_end(ctx)
@@ -373,9 +324,12 @@ Input_Group :: struct {slot:int,alone:bool}
 
 @(private)
 input_binding_groups :: proc(binding:input.Input_Binding) -> []Input_Group {
+    binding:=binding
     groups:=make([dynamic]Input_Group,context.temp_allocator)
-    count:=int(binding.count)
-    paired:=count==2 && binding.codes[0].device==binding.codes[1].device && (binding.codes[0].device==.Gamepad_Axis || binding.codes[0].device==.Mouse_Axis)
+    count:=len(input.binding_inputs(&binding))
+    first,_:=input.code_device(binding.inputs[0])
+    second,_:=input.code_device(binding.inputs[1])
+    paired:=count==2 && first==second && (first==.Gamepad_Axis || first==.Mouse_Axis)
     if count<=1 || paired {
         append(&groups,Input_Group{0,true})
         return groups[:]
@@ -389,16 +343,11 @@ input_binding_groups :: proc(binding:input.Input_Binding) -> []Input_Group {
 // where no prompt shows it.
 @(private)
 input_code_prompt :: proc(s:^Session,code:input.Input_Code) -> (prompt:ui.Prompt,name:string,shown:bool) {
-    keyboard:=code.device==.Key || code.device==.Mouse_Button || code.device==.Mouse_Axis
+    device,_:=input.code_device(code)
+    keyboard:=device==.Key || device==.Mouse_Button || device==.Mouse_Axis
     input_kind:ui.Prompt_Input
     input_kind,shown=gui.prompt_input(code,keyboard)
-    #partial switch code.device {
-    case .Key:            name=reflect.enum_string(core.Key(code.code))
-    case .Mouse_Button:   name=fmt.tprintf("Mouse %v",core.Mouse_Button(code.code))
-    case .Mouse_Axis:     name=fmt.tprintf("Mouse %v",input.Mouse_Axis(code.code))
-    case .Gamepad_Button: name=reflect.enum_string(core.Gamepad_Button(code.code))
-    case .Gamepad_Axis:   name=reflect.enum_string(core.Gamepad_Axis(code.code))
-    }
+    name,_=strings.replace_all(reflect.enum_string(code),"_"," ",context.temp_allocator)
     if !shown {return}
     prompt={family=keyboard?.Keyboard:.Xbox,input=input_kind}
     if input_kind==.Key {prompt.text=name}
@@ -428,7 +377,7 @@ INPUT_MENUS :: [Input_Menu]string{.Keyboard="Keyboard",.Mouse="Mouse",.Gamepad="
 
 @(private)
 input_code_menu :: proc(code:input.Input_Code) -> Input_Menu {
-    #partial switch code.device {
+    #partial switch device,_:=input.code_device(code);device {
     case .Mouse_Button,.Mouse_Axis:     return .Mouse
     case .Gamepad_Button,.Gamepad_Axis: return .Gamepad
     }
@@ -465,10 +414,9 @@ INPUT_GAMEPAD_AXES :: [core.Gamepad_Axis]string{.Left_X="Left stick X",.Left_Y="
 input_choices :: proc(kind:input.Action_Kind) -> []Input_Choice {
     choices:=make([dynamic]Input_Choice,context.temp_allocator)
     add :: proc(choices:^[dynamic]Input_Choice,menu:Input_Menu,group,name:string,binding:input.Input_Binding) {append(choices,Input_Choice{menu,group,name,binding})}
-    buttons :: proc(codes:..input.Input_Code) -> input.Input_Binding {
-        b:=input.Input_Binding{count=u8(len(codes)),gamepad=input.GAMEPAD_ANY}
-        copy(b.codes[:],codes)
-        return b
+    buttons :: proc(codes:..input.Input_Code) -> (b:input.Input_Binding) {
+        copy(b.inputs[:],codes)
+        return
     }
     pad :: input.code_gamepad_button
     mouse_axes,pad_axes:=INPUT_MOUSE_AXES,INPUT_GAMEPAD_AXES
@@ -497,7 +445,7 @@ input_choices :: proc(kind:input.Action_Kind) -> []Input_Choice {
         add(&choices,.Keyboard,"","WASD",input.binding_keys(.A,.D,.S,.W))
         add(&choices,.Keyboard,"","Arrow keys",input.binding_keys(.Left,.Right,.Down,.Up))
         add(&choices,.Mouse,"","Move",input.binding_mouse_delta())
-        add(&choices,.Mouse,"","Wheel",buttons({.Mouse_Axis,u8(input.Mouse_Axis.Wheel_X)},{.Mouse_Axis,u8(input.Mouse_Axis.Wheel_Y)}))
+        add(&choices,.Mouse,"","Wheel",buttons(.Wheel_X,.Wheel_Y))
         add(&choices,.Gamepad,"","Left stick",input.binding_gamepad_stick(.Left))
         add(&choices,.Gamepad,"","Right stick",input.binding_gamepad_stick(.Right))
         add(&choices,.Gamepad,"","Dpad",buttons(pad(.Dpad_Left),pad(.Dpad_Right),pad(.Dpad_Down),pad(.Dpad_Up)))
@@ -515,7 +463,7 @@ input_choices_menu :: proc(s:^Session,menu:ui.Id,action:input.Action,nth:int) {
     chosen:Maybe(input.Input_Binding)
     if ui.popup(ctx,menu,{min_width=ui.MENU_CHOICE_WIDTH}) {
         if ui.menu_item(ctx,ui.id(ctx,"press"),"Press an input") {input_listen_start(s,action,nth,0,true)}
-        choices:=input_choices(s.settings_dialog.input.current.kinds[action])
+        choices:=input_choices(input_driven(s,action).kind)
         menus:=INPUT_MENUS
         for name,device in menus {
             if ui.submenu(ctx,ui.id(ctx,"device",int(device)+1),name) {
@@ -549,7 +497,7 @@ input_choice_row :: proc(s:^Session,id:ui.Id,choice:Input_Choice) -> bool {
     count:=0
     width:=ui.text_width(&ctx.font,choice.name,th.font)+12
     for group in input_binding_groups(choice.binding) {
-        prompt,_,shown:=input_code_prompt(s,choice.binding.codes[group.slot])
+        prompt,_,shown:=input_code_prompt(s,choice.binding.inputs[group.slot])
         if !shown {continue}
         prompts[count]=prompt
         count+=1
@@ -568,10 +516,14 @@ input_choice_row :: proc(s:^Session,id:ui.Id,choice:Input_Choice) -> bool {
 // one with its options, as one that listened does.
 @(private)
 input_binding_choose :: proc(s:^Session,action:input.Action,nth:int,binding:input.Input_Binding) {
-    m:=&s.settings_dialog.input.current
-    old:=input.Input_Binding{gamepad=input.GAMEPAD_ANY}
-    if index:=input_binding_index(m,action,nth);index>=0 {old=m.bindings[index]}
-    input_binding_put(s,action,nth,input_binding_keep(binding,old))
+    input_binding_put(s,action,nth,input_binding_keep(binding,input_binding_old(s,action,nth)))
+}
+
+// The nth binding of an action; none for a new one.
+@(private)
+input_binding_old :: proc(s:^Session,action:input.Action,nth:int) -> input.Input_Binding {
+    driven:=input_driven(s,action)
+    return nth>=0 && nth<len(input.action_bindings(&driven))?driven.bindings[nth]:{}
 }
 
 // The binding with the options of old.
@@ -589,7 +541,7 @@ input_listen_chip :: proc(s:^Session,id:ui.Id,gathered:input.Input_Binding,slot:
     ctx:=s.gui.ctx
     th:=&ctx.theme
     if ui.box(ctx,{id=id,width=ui.FIT,height=ui.fixed(th.row),padding={6,0,6,0},gap=4,align_y=.Center,fill=th.accent_soft,stroke=th.accent,radius=th.radius_control}) {
-        for code in gathered.codes[:min(slot,4)] {
+        for code in gathered.inputs[:min(slot,4)] {
             if prompt,name,shown:=input_code_prompt(s,code);shown {ui.prompt_glyph(ctx,prompt,th.row-6)} else {ui.label(ctx,name,th.font_small,th.text,0)}
         }
         ui.label(ctx,"Press an input",th.font_small,th.text_muted,0)
@@ -623,29 +575,30 @@ input_listen_poll :: proc(s:^Session) {
     }
     code:input.Input_Code
     for key in core.Key {
-        if key in frame.keys_pressed && key!=.Escape {code={.Key,u8(key)};break}
+        if key in frame.keys_pressed && key!=.Escape {code=input.code_key(key);break}
     }
     for button in core.Mouse_Button {
-        if code.device==.None && button in frame.mouse_pressed {code={.Mouse_Button,u8(button)}}
+        if code==.None && button in frame.mouse_pressed {code=input.code_mouse_button(button)}
     }
     for &pad in frame.gamepads {
         if !pad.connected {continue}
         for button in core.Gamepad_Button {
-            if code.device==.None && button in pad.pressed {code={.Gamepad_Button,u8(button)}}
+            if code==.None && button in pad.pressed {code=input.code_gamepad_button(button)}
         }
     }
-    axis:=input.Input_Code{}
+    axis:input.Input_Code
     for &pad,i in frame.gamepads {
         if !pad.connected {continue}
         for value,a in pad.axes {
-            if axis.device==.None && abs(value)>INPUT_LISTEN_AXIS && abs(l.axes[i][a])<=INPUT_LISTEN_AXIS {axis={.Gamepad_Axis,u8(a)}}
+            if axis==.None && abs(value)>INPUT_LISTEN_AXIS && abs(l.axes[i][a])<=INPUT_LISTEN_AXIS {axis=input.code_gamepad_axis(a)}
         }
         l.axes[i]=pad.axes
     }
     l.mouse+=frame.mouse_delta
     mouse:=abs(l.mouse.x)>INPUT_LISTEN_MOUSE || abs(l.mouse.y)>INPUT_LISTEN_MOUSE
     wheel:=frame.wheel!={}
-    if binding,found:=input_listen_take(st,code,axis,mouse,abs(l.mouse.x)>=abs(l.mouse.y),wheel,abs(frame.wheel.x)>abs(frame.wheel.y));found {
+    kind:=input_driven(s,l.action).kind
+    if binding,found:=input_listen_take(l,kind,input_binding_old(s,l.action,l.binding),code,axis,mouse,abs(l.mouse.x)>=abs(l.mouse.y),wheel,abs(frame.wheel.x)>abs(frame.wheel.y));found {
         input_binding_put(s,l.action,l.binding,binding)
     }
 }
@@ -653,33 +606,26 @@ input_listen_poll :: proc(s:^Session) {
 // The binding the input completes: a code (a key or a button), a gamepad
 // axis that moved, the mouse that moved (wide: more across than up) or its
 // wheel. found false while it waits for more.
-input_listen_take :: proc(st:^Input_Settings,code,axis:input.Input_Code,mouse,wide,wheel,wheel_wide:bool) -> (binding:input.Input_Binding,found:bool) {
-    l:=&st.listen
-    m:=&st.current
-    kind:=m.kinds[l.action]
-    old:input.Input_Binding
-    old.gamepad=input.GAMEPAD_ANY
-    if index:=input_binding_index(m,l.action,l.binding);index>=0 {old=m.bindings[index]}
+input_listen_take :: proc(l:^Input_Listen,kind:input.Action_Kind,old:input.Input_Binding,code,axis:input.Input_Code,mouse,wide,wheel,wheel_wide:bool) -> (binding:input.Input_Binding,found:bool) {
     keep :: input_binding_keep
     need:=kind==.Axis2?4:kind==.Axis?2:1
+    device,_:=input.code_device(code)
     switch {
-    case code.device!=.None && kind==.Button:
-        return keep({count=1,codes={0=code}},old),true
-    case code.device==.Key && !l.whole:
+    case code!=.None && kind==.Button:
+        return keep({inputs={0=code}},old),true
+    case device==.Key && !l.whole:
         b:=old
-        b.codes[l.slot]=code
+        b.inputs[l.slot]=code
         return b,true
-    case code.device==.Key:
-        l.gathered.codes[l.slot]=code
+    case device==.Key:
+        l.gathered.inputs[l.slot]=code
         l.slot+=1
         if l.slot<need {return}
-        return keep({count=u8(need),codes=l.gathered.codes},old),true
-    case axis.device!=.None && kind==.Button:
-        return keep({count=1,codes={0=axis}},old),true
-    case axis.device!=.None && kind==.Axis:
-        return keep({count=1,codes={0=axis}},old),true
-    case axis.device!=.None && kind==.Axis2:
-        #partial switch core.Gamepad_Axis(axis.code) {
+        return keep({inputs=l.gathered.inputs},old),true
+    case axis!=.None && kind!=.Axis2:
+        return keep({inputs={0=axis}},old),true
+    case axis!=.None && kind==.Axis2:
+        #partial switch axis {
         case .Left_X,.Left_Y:   return keep(input.binding_gamepad_stick(.Left),old),true
         case .Right_X,.Right_Y: return keep(input.binding_gamepad_stick(.Right),old),true
         }
@@ -687,7 +633,7 @@ input_listen_take :: proc(st:^Input_Settings,code,axis:input.Input_Code,mouse,wi
         moved:input.Mouse_Axis=wheel?(wheel_wide?.Wheel_X:.Wheel_Y):(wide?.X:.Y)
         return keep(input.binding_mouse_axis(moved),old),true
     case wheel && kind==.Axis2:
-        return keep({count=2,codes={0={.Mouse_Axis,u8(input.Mouse_Axis.Wheel_X)},1={.Mouse_Axis,u8(input.Mouse_Axis.Wheel_Y)}}},old),true
+        return keep({inputs={0=.Wheel_X,1=.Wheel_Y}},old),true
     case mouse && kind==.Axis2:
         return keep(input.binding_mouse_delta(),old),true
     }
@@ -698,18 +644,18 @@ input_listen_take :: proc(st:^Input_Settings,code,axis:input.Input_Code,mouse,wi
 // when nth is -1, and the file has it; a binding that listened stops.
 @(private)
 input_binding_put :: proc(s:^Session,action:input.Action,nth:int,binding:input.Input_Binding) {
-    st:=&s.settings_dialog.input
-    st.listen={}
-    m:=&st.current
-    if !input.binding_suits(m.kinds[action],binding) {return}
-    if index:=input_binding_index(m,action,nth);index>=0 {
-        stored:=binding
-        stored.action=action
-        m.bindings[index]=stored
-    } else if !input.input_map_bind(m,action,binding) {
-        notify(s,fmt.tprintf("The map holds %d bindings: remove some first",input.BINDING_CAPACITY))
+    s.settings_dialog.input.listen={}
+    driven:=input_driven(s,action)
+    if !input.binding_suits(driven.kind,binding) {return}
+    used:=len(input.action_bindings(&driven))
+    switch {
+    case nth>=0 && nth<used: driven.bindings[nth]=binding
+    case used<input.ACTION_BINDINGS: driven.bindings[used]=binding
+    case:
+        notify(s,fmt.tprintf("An action holds %d bindings: remove one first",input.ACTION_BINDINGS))
         return
     }
+    input_drive(s,action,driven)
     input_settings_commit(s)
 }
 
@@ -719,22 +665,23 @@ input_timing_rows :: proc(s:^Session) {
     ctx:=s.gui.ctx
     th:=&ctx.theme
     st:=&s.settings_dialog.input
-    m:=&st.current
-    rows:=[2]struct{label:string,value:^f32,code,default:f32}{
-        {"Tap seconds",&m.tap_seconds,st.code.tap_seconds,input.TAP_SECONDS},
-        {"Hold seconds",&m.hold_seconds,st.code.hold_seconds,input.HOLD_SECONDS},
+    settings:=input_settings_of(s)
+    if settings==nil {return}
+    rows:=[2]struct{label:string,value:^f32,default:f32}{
+        {"Tap seconds",&settings.tap_seconds,input.TAP_SECONDS},
+        {"Hold seconds",&settings.hold_seconds,input.HOLD_SECONDS},
     }
     for row,i in rows {
         if i>0 {input_row_rule(ctx)}
         row_begin(ctx,row.label)
-        value:=f64(input_seconds_shown(row.value^,row.default))
-        r:=ui.number_field(ctx,ui.id(ctx,"ticks",i+1),&value,{speed=0.01,min=0.01,max=f64(INPUT_SECONDS_MAX),has_min=true,has_max=true})
-        if r.changed {row.value^=input_seconds_kept(f32(value),row.default);st.unsaved=true}
+        value:=f64(row.value^>0?row.value^:row.default)
+        r:=ui.number_field(ctx,ui.id(ctx,"ticks",i+1),&value,{speed=0.01,min=0.01,max=f64(input.SECONDS_MAX),has_min=true,has_max=true})
+        if r.changed {row.value^=f32(value)==row.default?0:f32(value);st.unsaved=true}
         if st.unsaved && !r.scrubbing && !r.editing {input_settings_commit(s)}
-        if row.value^==row.code {
+        if row.value^==0 {
             ui.spacer(ctx,REVERT_SIDE,1)
         } else if ui.button(ctx,ui.id(ctx,"ticks_restore",i+1),{icon=.Revert,icon_size=12,icon_color=th.text_muted,style=.Ghost,width=REVERT_SIDE,height=REVERT_SIDE}).clicked {
-            row.value^=row.code
+            row.value^=0
             input_settings_commit(s)
         }
         row_end(ctx)
@@ -750,31 +697,13 @@ Api_Input_Get_Params :: struct {
 Api_Input :: struct {
     tap_seconds:f32 `mirai:"unit=s,label=How long a press may be held and still be a tap"`,
     hold_seconds:f32 `mirai:"unit=s,label=How long a press is held before it is a hold"`,
-    problem:[512]u8 `mirai:"text,label=Why input.mirai of the project was not read, so that input.set does not write over it; empty when it was"`,
-    actions:[1]Api_Input_Action `mirai:"list,label=The actions the code declares"`,
+    actions:[1]input.Action_Setting `mirai:"list,label=The actions the code declares and what drives each, as an entry of Input_Settings writes it"`,
+    changed:[1][input.ACTION_NAME]u8 `mirai:"text,list,label=The actions Input_Settings of the project changes from the defaults of the code"`,
 }
-Api_Input_Action :: struct {
-    name:[64]u8 `mirai:"text,label=What input.set and input.mirai call it"`,
-
-    kind:[8]u8 `mirai:"text,label=Button; Axis or Axis2"`,
-    source:[8]u8 `mirai:"text,label=code: the default of the code; file: input.mirai of the project changes it"`,
-    bindings:u8 `mirai:"any,label=The bindings in effect as input.mirai writes them"`,
-}
-
-@(private)
-API_INPUT_SET_SCHEMA :: `{"type":"object","properties":{` +
-    `"action":{"type":"string","description":"The name of an action, as input.get lists it"},` +
-    `"kind":{"enum":["Button","Axis","Axis2"],"description":"The kind the action takes with bindings; without it, the one it has"},` +
-    `"bindings":{"type":"array","items":{"type":"object"},"description":"The bindings that replace those of the action, as input.mirai writes them: {\"key\": \"Space\"}, {\"keys\": [\"A\", \"D\", \"S\", \"W\"]} (two for an Axis, four for an Axis2: left, right, down, up), {\"mouse_button\": \"Left\"}, {\"mouse\": \"Delta\"}, {\"gamepad_button\": \"South\"}, {\"gamepad_axis\": \"Right_Trigger\"} or {\"gamepad_stick\": \"Left\"}, each with scale, dead_zone and gamepad (0 to 3) optional; [] leaves it without any"},` +
-    `"reset":{"type":"boolean","description":"true: the action goes back to the kind and the bindings of the code"},` +
-    `"tap_seconds":{"type":"number","exclusiveMinimum":0,"maximum":10,"description":"Seconds a press may be held and still be a tap"},` +
-    `"hold_seconds":{"type":"number","exclusiveMinimum":0,"maximum":10,"description":"Seconds a press is held before it is a hold"}},` +
-    `"additionalProperties":false}`
 
 @(private)
 input_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="input.get",summary="The input actions of the game and its plugins: the kind, the bindings in effect and whether they come from the code or from input.mirai of the project, and the seconds of a tap and of a hold.",params=Api_Input_Get_Params,result=Api_Input,writes_result=true,flags={.Read_Only},run=api_input_get})
-    api_register(s,st,{name="input.set",params_schema=API_INPUT_SET_SCHEMA,summary="Replaces the kind and the bindings of an input action, puts it back to the default of the code, or changes the seconds of a tap and of a hold; input.mirai of the project keeps what differs from the code, and a Play that starts or runs takes it. It answers with the action it changed.",result=Api_Input,writes_result=true,run=api_input_set})
+    api_register(s,st,{name="input.get",summary="The input actions of the game and its plugins: what drives each, as an entry of Input_Settings writes it, which of them the project changes, and the seconds of a tap and of a hold. settings.set with Input_Settings changes them.",params=Api_Input_Get_Params,result=Api_Input,writes_result=true,flags={.Read_Only},run=api_input_get})
 }
 
 @(private)
@@ -790,201 +719,40 @@ api_input_get :: proc(s:^Session,call:^api.Call) {
         }
         append(&only,wanted)
     }
-    input_api_write(s,call.out,len(only)>0,only[:])
-}
-
-@(private)
-input_api_write :: proc(s:^Session,out:^serial.Writer,filtered:=false,only:[]string={}) {
-    st:=&s.settings_dialog.input
-    m:=&st.current
+    out:=call.out
+    settings:=input_settings_of(s)
+    tap,hold:=input.TAP_SECONDS,input.HOLD_SECONDS
+    if settings!=nil && settings.tap_seconds>0 {tap=settings.tap_seconds}
+    if settings!=nil && settings.hold_seconds>0 {hold=settings.hold_seconds}
+    schema:serial.Schema
+    serial.schema_init(&schema,context.temp_allocator)
+    defer serial.schema_destroy(&schema)
+    if s.info.schema!=nil {schema.named=s.info.schema.schema.named}
+    type,_:=serial.schema_add_type_info(&schema,type_info_of(input.Action_Setting))
     serial.write_u8(out,'{')
-    api.write_key(out,"tap_seconds",true);api.write_number(out,input_seconds_shown(m.tap_seconds,input.TAP_SECONDS))
-    api.write_key(out,"hold_seconds");api.write_number(out,input_seconds_shown(m.hold_seconds,input.HOLD_SECONDS))
-    api.write_text(out,"problem",base.text_get(st.problem[:]))
+    api.write_key(out,"tap_seconds",true);api.write_number(out,tap)
+    api.write_key(out,"hold_seconds");api.write_number(out,hold)
+    changed:=make([dynamic]string,context.temp_allocator)
     api.write_key(out,"actions")
     serial.write_u8(out,'[')
     first:=true
     for entry in core.names_of(s.info,input.Action) {
         if entry.value<0 || entry.value>=input.ACTION_CAPACITY {continue}
-        if filtered && !slice.contains(only,entry.name) {continue}
+        if len(only)>0 && !slice.contains(only[:],entry.name) {continue}
         action:=input.Action(entry.value)
+        setting:=input.Action_Setting{driven=input_driven(s,action)}
+        base.text_set(setting.action[:],entry.name)
+        if !input_same(setting.driven,s.settings_dialog.input.code.actions[action]) {append(&changed,entry.name)}
         if !first {serial.write_u8(out,',')}
         first=false
-        serial.write_u8(out,'{')
-        api.write_text(out,"name",entry.name,true)
-
-        api.write_text(out,"kind",reflect.enum_string(m.kinds[action]))
-        api.write_text(out,"source",input.input_map_action_same(m,&st.code,action)?"code":"file")
-        api.write_key(out,"bindings")
-        serial.write_u8(out,'[')
-        b:=strings.builder_make(context.temp_allocator)
-        count:=0
-        for &binding in m.bindings[:m.binding_count] {
-            if binding.action!=action {continue}
-            strings.builder_reset(&b)
-            if !input.input_binding_text(&b,binding) {continue}
-            if count>0 {serial.text_write_raw(out,", ")}
-            serial.text_write_raw(out,strings.to_string(b))
-            count+=1
-        }
-        serial.text_write_raw(out,"]}")
+        serial.text_write(out,&schema,type,mem.ptr_to_bytes(&setting),.Line)
+    }
+    serial.write_u8(out,']')
+    api.write_key(out,"changed")
+    serial.write_u8(out,'[')
+    for name,i in changed {
+        if i>0 {serial.write_u8(out,',')}
+        serial.text_write_string(out,name)
     }
     serial.text_write_raw(out,"]}")
-}
-
-// Checked whole before the file changes: a call that fails changes nothing.
-@(private)
-api_input_set :: proc(s:^Session,call:^api.Call) {
-    input_settings_load(s)
-    st:=&s.settings_dialog.input
-    if problem:=base.text_get(st.problem[:]);problem!="" {
-        api.call_fail(call,api.INVALID_PARAMS,problem)
-        return
-    }
-    next:=new_clone(st.current,context.temp_allocator)
-    if message:=input_set_apply(s,next,call.raw);message!="" {
-        api.call_fail(call,api.INVALID_PARAMS,message)
-        return
-    }
-    st.current=next^
-    if message:=input_settings_write(s);message!="" {
-        api.call_fail(call,api.SERVER_ERROR,message)
-        return
-    }
-    values:[1]string
-    api.object_values(call.allocator,call.raw,{"action"},values[:])
-    action:=strings.trim(values[0],`"`)
-    only:=[1]string{action}
-    input_api_write(s,call.out,true,action!=""?only[:]:nil)
-}
-
-// Reads the params of input.set into a map over the code of the session;
-// what is wrong with them, or "".
-input_set_apply :: proc(s:^Session,m:^input.Input_Map,raw:string) -> string {
-    USAGE :: `params are {"action", "kind", "bindings"} to replace an action, {"action", "reset": true} to put it back, and "tap_seconds" or "hold_seconds"`
-    value,parse_error:=json.parse_string(raw,json.DEFAULT_SPECIFICATION,true,context.temp_allocator)
-    root,is_object:=value.(json.Object)
-    if parse_error!=.None || !is_object {return USAGE}
-    seconds:=[2]struct{name:string,value:^f32,default:f32}{{"tap_seconds",&m.tap_seconds,input.TAP_SECONDS},{"hold_seconds",&m.hold_seconds,input.HOLD_SECONDS}}
-    for t in seconds {
-        if t.name not_in root {continue}
-        number:f64
-        #partial switch v in root[t.name] {case json.Float: number=v;case json.Integer: number=f64(v)}
-        if !(number>0) || number>f64(INPUT_SECONDS_MAX) {return fmt.tprintf("%s is seconds above 0 and up to %v; the default is %v",t.name,INPUT_SECONDS_MAX,t.default)}
-        t.value^=input_seconds_kept(f32(number),t.default)
-    }
-    if "action" not_in root {
-        if "tap_seconds" in root || "hold_seconds" in root {return ""}
-        return fmt.tprintf("action is missing: %s",USAGE)
-    }
-    name,is_text:=root["action"].(json.String)
-    if !is_text {return fmt.tprintf("action is the name of an action in quotes: %s",input_action_names(s))}
-    found,declared:=core.name_value(s.info,input.Action,name)
-    if !declared || found<0 || found>=input.ACTION_CAPACITY {
-        return fmt.tprintf(`%q is not an input action: the code declares %s; names.create {{"type": "Action", "name": %q}} declares a new one`,name,input_action_names(s),name)
-    }
-    action:=input.Action(found)
-    reset,_:=root["reset"].(json.Boolean)
-    if reset {
-        if "kind" in root || "bindings" in root {return "reset puts back the kind and the bindings of the code: leave out kind and bindings"}
-        input_action_restore(m,&s.settings_dialog.input.code,action)
-        return ""
-    }
-    list,has_list:=root["bindings"].(json.Array)
-    if !has_list {
-        if "bindings" in root {return `bindings is a list of bindings: [{"key": "Space"}, ...]`}
-        return fmt.tprintf("give the bindings of %q (with its kind to change it), or reset: true: %s",name,USAGE)
-    }
-    kind:=m.kinds[action]
-    if "kind" in root {
-        kind_name,_:=root["kind"].(json.String)
-        named,known:=reflect.enum_from_name(input.Action_Kind,kind_name)
-        if !known {return fmt.tprintf("kind %q is not a kind: Button, Axis or Axis2",kind_name)}
-        kind=named
-    }
-    bindings:=make([]input.Input_Binding,len(list),context.temp_allocator)
-    for item,i in list {
-        o,is_binding:=item.(json.Object)
-        if !is_binding {return fmt.tprintf(`bindings[%d] is not an object: {"key": "Space"}`,i)}
-        input_binding_names_fit(o)
-        binding,error,field:=input.input_binding_parse(o)
-        if error!=.None {return input_binding_problem(i,o,error,field)}
-        if !input.binding_suits(kind,binding) {
-            return fmt.tprintf("bindings[%d] does not suit the %v action %q: %s",i,kind,name,input_kind_takes(kind))
-        }
-        bindings[i]=binding
-    }
-    input.input_map_action(m,action,kind)
-    input.input_map_unbind(m,action)
-    if int(m.binding_count)+len(bindings)>input.BINDING_CAPACITY {
-        return fmt.tprintf("the map holds %d bindings and would have %d: remove some of other actions",input.BINDING_CAPACITY,int(m.binding_count)+len(bindings))
-    }
-    for binding in bindings {input.input_map_bind(m,action,binding)}
-    return ""
-}
-
-// What the bindings of an action of a kind may name.
-@(private)
-input_kind_takes :: proc(kind:input.Action_Kind) -> string {
-    switch kind {
-    case .Button: return "a Button takes one key, mouse_button or gamepad_button, or one gamepad_axis or mouse axis pressed past its dead_zone"
-    case .Axis:   return "an Axis takes keys with two keys (negative, positive), one gamepad_axis, or mouse X, Y, Wheel_X or Wheel_Y"
-    case .Axis2:  return "an Axis2 takes keys with four keys (left, right, down, up), gamepad_stick, or mouse Delta or Wheel"
-    }
-    return ""
-}
-
-// Writes the names of a binding an agent gave as their enums have them, as
-// base.name_find takes them.
-@(private)
-input_binding_names_fit :: proc(o:json.Object) {
-    fit :: proc(value:^json.Value,names:[]string) {
-        if name,is_text:=value.(json.String);is_text {
-            if index,_:=base.name_find(name,names);index>=0 {value^=json.String(names[index])}
-        }
-    }
-    each :: proc(o:json.Object,field:string,names:[]string) {
-        if value,has:=&o[field];has {fit(value,names)}
-    }
-    each(o,"key",reflect.enum_field_names(core.Key))
-    if keys,has:=o["keys"].(json.Array);has {
-        for &key in keys {fit(&key,reflect.enum_field_names(core.Key))}
-    }
-    each(o,"mouse_button",reflect.enum_field_names(core.Mouse_Button))
-    each(o,"gamepad_button",reflect.enum_field_names(core.Gamepad_Button))
-    each(o,"gamepad_axis",reflect.enum_field_names(core.Gamepad_Axis))
-    each(o,"gamepad_stick",reflect.enum_field_names(input.Gamepad_Stick))
-}
-
-// What is wrong with one binding of the params, with the nearest names it takes.
-@(private)
-input_binding_problem :: proc(index:int,o:json.Object,error:input.Input_Map_Error,field:string) -> string {
-    switch {
-    case field=="":
-        return fmt.tprintf("bindings[%d] names no input: give it one of key, keys, mouse_button, mouse, gamepad_button, gamepad_axis or gamepad_stick",index)
-    case field=="gamepad":
-        return fmt.tprintf("bindings[%d].gamepad is %v: a gamepad is 0 to %d; leave it out for every gamepad",index,o[field],input.GAMEPAD_ANY-1)
-    case field=="keys" && error==.Invalid:
-        return fmt.tprintf("bindings[%d].keys has %d keys: give two (negative, positive) for an Axis or four (left, right, down, up) for an Axis2",index,len(o[field].(json.Array) or_else nil))
-    case error==.Syntax:
-        return fmt.tprintf("bindings[%d].%s is not %s",index,field,field=="keys"?"a list of names in quotes":"a name in quotes")
-    }
-    wrong:=fmt.tprintf("%v",o[field])
-    if keys,is_list:=o[field].(json.Array);is_list {
-        for key in keys {
-            name,_:=key.(json.String)
-            if _,known:=reflect.enum_from_name(core.Key,name);!known {wrong=string(name);break}
-        }
-    }
-    valid:[]string
-    switch field {
-    case "key","keys":     valid=reflect.enum_field_names(core.Key)
-    case "mouse_button":   valid=reflect.enum_field_names(core.Mouse_Button)
-    case "mouse":          valid=slice.concatenate([][]string{reflect.enum_field_names(input.Mouse_Axis),{"Delta","Wheel"}},context.temp_allocator)
-    case "gamepad_button": valid=reflect.enum_field_names(core.Gamepad_Button)
-    case "gamepad_axis":   valid=reflect.enum_field_names(core.Gamepad_Axis)
-    case "gamepad_stick":  valid=reflect.enum_field_names(input.Gamepad_Stick)
-    }
-    what,_:=strings.replace_all(field=="keys"?"key":field,"_"," ",context.temp_allocator)
-    return fmt.tprintf("bindings[%d].%s: %s",index,field,base.name_problem(wrong,fmt.tprintf("a %s",what),valid))
 }

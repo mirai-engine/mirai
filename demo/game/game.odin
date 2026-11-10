@@ -18,7 +18,7 @@ import mm "mirai:std/math"
 
 // The game of the demo project, for the scenes in ../assets. The
 // player is a character of the physics world that walks on the colliders of
-// the level, driven by the input actions of ../input.mirai:
+// the level, driven by these input actions:
 //   move   W A S D, left stick      look   mouse, right stick
 //   jump   Space, South             use    E, West: opens or closes a door,
 //   throw  left button, right              or changes the material of a
@@ -148,9 +148,9 @@ Action :: enum u8 {
     Hud_Style,Interface_Menu,Inventory,Talk,
 }
 
-// Their bindings. The editor (Project Settings > Input), input.set and the player write in an
-// input.mirai only what they change.
-action_defaults :: proc "contextless" () -> [Action]inp.Action_Default {
+// Their bindings. The editor (Project Settings > Input), settings.set and the
+// player keep in Input_Settings of settings.mirai only what they change of these.
+action_defaults :: proc "contextless" () -> [Action]inp.Action_Bindings {
     key :: inp.binding_key
     pad :: inp.binding_gamepad_button
     mouse :: inp.binding_mouse_button

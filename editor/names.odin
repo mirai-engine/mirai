@@ -22,8 +22,8 @@ import "mirai:std/serial"
 // An input action is a member of an enum @(actions), named by its identifier,
 // and saved data keeps its name. The code renames it, with the types in view
 // (the rename of an editor of code, or an agent), and once that code is built
-// a rename follows it: input.mirai of the project and the documents that keep
-// it take the new name. A new one is written by hand, with its default.
+// a rename follows it: Input_Settings of the project and the documents that
+// keep it take the new name. A new one is written by hand, with its default.
 
 NAMES_FILE :: "names.odin"
 NAME_CAPACITY :: 32
@@ -44,7 +44,7 @@ names_error_text :: proc(e:Names_Error,type,name:string) -> string {
     case .Source_Changed: return "the line that declares the name changed since the last build: build, then rename it again"
     case .Action_In_Code: return fmt.tprintf("an input action is a member of the enum @(actions) of the game: add %s to it, with its default in action_defaults beside the enum",action_member(name))
     case .Action_Not_Declared: return fmt.tprintf("the code built does not declare the action %q: rename the member of the enum @(actions) to %s in code (the rename of your editor of code renames its uses), build, and rename again to follow it",name,action_member(name))
-    case .Action_Still_Declared: return "the code built still declares the old name of the action: rename the member in code and build first; this rename follows it in input.mirai and the documents"
+    case .Action_Still_Declared: return "the code built still declares the old name of the action: rename the member in code and build first; this rename follows it in Input_Settings and the documents"
     }
     return ""
 }
@@ -183,20 +183,17 @@ names_rename :: proc(s:^Session,info:^core.World_Info,type:typeid,old,text:strin
 }
 
 // An input action renamed in code (its member in the enum @(actions), with
-// the rename of an editor of code or by an agent): the input.mirai of the
+// the rename of an editor of code or by an agent): Input_Settings of the
 // project and its documents take the new name. The code built and loaded has
 // to declare it already, and no longer the old one.
 @(private)
 action_follow :: proc(s:^Session,info:^core.World_Info,old,name:string) -> Names_Error {
     if _,declared:=core.name_value(info,input.Action,name);!declared {return .Action_Not_Declared}
     if _,still:=core.name_value(info,input.Action,old);still {return .Action_Still_Declared}
-    if s.has_project {
-        bindings:=project.path(s.project_root,project.INPUT_FILE,allocator=context.temp_allocator)
-        if text,read_error:=os.read_entire_file(bindings,context.temp_allocator);read_error==nil {
-            if renamed:=input_file_rename(string(text),old,name);renamed!="" {
-                if serial.file_write_atomic(bindings,transmute([]u8)renamed)!=.None {return .Write_Failed}
-                input_maps_rebuild(s)
-            }
+    if settings:=input_settings_of(s);settings!=nil && s.has_project {
+        if entry:=input.input_settings_find(settings,old);entry!=nil {
+            base.text_set(entry.action[:],name)
+            if !settings_save(s) {return .Write_Failed}
         }
     }
     action_documents_rename(s,old,name)
@@ -235,32 +232,6 @@ action_documents_rename :: proc(s:^Session,old,name:string) {
         }
         asset.document_destroy(&doc)
     }
-}
-
-// The text of input.mirai with the action old named name; "" when it does not name old.
-input_file_rename :: proc(text,old,name:string) -> string {
-    b:=strings.builder_make(context.temp_allocator)
-    quoted:=fmt.tprintf("%q",old)
-    rest,changed:=text,false
-    for {
-        at:=strings.index(rest,`"name"`)
-        if at<0 {break}
-        after:=at+len(`"name"`)
-        value:=len(rest)-len(strings.trim_left_space(rest[after:]))
-        if value<len(rest) && rest[value]==':' {
-            value=len(rest)-len(strings.trim_left_space(rest[value+1:]))
-            if strings.has_prefix(rest[value:],quoted) {
-                fmt.sbprintf(&b,"%s%q",rest[:value],name)
-                rest,changed=rest[value+len(quoted):],true
-                continue
-            }
-        }
-        strings.write_string(&b,rest[:after])
-        rest=rest[after:]
-    }
-    if !changed {return ""}
-    strings.write_string(&b,rest)
-    return strings.to_string(b)
 }
 
 // The package the files of the game folder declare; "game" without one.
@@ -315,7 +286,7 @@ Api_Name_Rename_Result :: struct {building:bool}
 api_names_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="names.list",summary="The types @(names) of the project (locomotion modes, input actions, collision categories...) with the named values the code declares for each.",params=Api_Names_Params,result=Api_Names_Result,writes_result=true,flags={.Read_Only},run=api_names_list})
     api_register(s,st,{name="names.create",summary="Declares a new value of a type @(names) in game/names.odin, the first free one after its highest, and starts the build of the game; an input action is declared in code, as a member of the enum @(actions) of the game.",params=Api_Name_Create_Params,result=Api_Name_Create_Result,run=api_name_create})
-    api_register(s,st,{name="names.rename",summary="Renames a value of a type @(names) that the project declared, with @(name) on its constant, and starts the build of the game; saved data keeps its number. An input action is renamed in code first (its member of the enum @(actions)); once built, this follows it: input.mirai of the project and the documents that keep it take the new name, as edits, unsaved.",params=Api_Name_Rename_Params,result=Api_Name_Rename_Result,run=api_name_rename})
+    api_register(s,st,{name="names.rename",summary="Renames a value of a type @(names) that the project declared, with @(name) on its constant, and starts the build of the game; saved data keeps its number. An input action is renamed in code first (its member of the enum @(actions)); once built, this follows it: Input_Settings of the project takes the new name, and the documents that keep it too, as edits, unsaved.",params=Api_Name_Rename_Params,result=Api_Name_Rename_Result,run=api_name_rename})
 }
 
 @(private)

@@ -103,8 +103,8 @@ no `Modal` screen is up; a game does not call the window for it. For a free curs
 to try:
 
 - Over gameplay for a moment: a `Modal` screen, the one way to free it while a body is driven.
-- For good, a cursor game: leave the look without a mouse binding in `input.mirai`, or let the seat
-  drive nothing (`inp.release`, `inp.drive` to take the body back): no capture happens.
+- For good, a cursor game: leave the look without a mouse binding in `Input_Settings`, or let the
+  seat drive nothing (`inp.release`, `inp.drive` to take the body back): no capture happens.
 - A `Menu` or `Passive` screen leaves the mouse where it is.
 
 ## Pitfalls that fail silently

@@ -202,7 +202,7 @@ build.shaders_destroy(job)            // waits for a generation in progress
 ## Shipped game
 
 The `Game` folder (`Desc.output`, or `.mirai/game`) receives the executable, `project.mirai`, the
-icon it names if it exists, `input.mirai` if it exists, `settings.mirai` with the
+icon it names if it exists, `settings.mirai` with the
 [combined](projects.md#project-settings) settings, `assets/` with what was
 [cooked](#asset-cooking) of the project and of each active plugin that declares `Assets` (in
 `assets/plugins/<name>/`), `shaders/` with the manifest, the catalog and the code of this system of
@@ -221,7 +221,7 @@ The copy replaces files and merges folders without deleting anything from the de
 ([player](../../mirai-core/references/host.md#arguments)). It leaves out what is only seen or
 heard: neither the icon nor `shaders/` (it does not generate the project's), and its cooking leaves
 behind the `presentation` asset kinds of `asset.KINDS` (textures, sounds, interfaces, fonts and
-prompts) without counting them as missing. It carries `input.mirai`, with the bindings Project
+prompts) without counting them as missing. It carries `settings.mirai`, with the bindings Project
 Settings > Input changed, and SDL3, which the executable links.
 
 ## Imported sources
