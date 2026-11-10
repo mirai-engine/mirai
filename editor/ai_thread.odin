@@ -377,7 +377,7 @@ ai_bubble_room :: proc(ctx:^ui.Context,text:string,width,size:f32) -> (room,bubb
 ai_note_size :: proc(th:^ui.Theme,size:f32) -> f32 {return size<=th.font_small?th.font_caption:th.font_small}
 
 @(private)
-ai_line_measure :: proc(s:^Session,task:^Ai_Task,index,steps:int,open:bool,width,size:f32,shown:[]bool,held_first:int,live:bool) -> f32 {
+ai_line_measure :: proc(s:^Session,task:^Ai_Task,index,steps:int,open:bool,width,size:f32,shown:[]bool,held_first:int) -> f32 {
     ctx:=s.gui.ctx
     t:=&task.transcript
     th:=&ctx.theme
@@ -390,9 +390,8 @@ ai_line_measure :: proc(s:^Session,task:^Ai_Task,index,steps:int,open:bool,width
         room,_:=ai_bubble_room(ctx,message,width,size)
         return gap+ui.text_height(ctx,ai_chat_paragraph_text(ctx,message,room,size),ui.prose(ctx,size),room)+10
     case .Output:
-        return gap+ui.markdown_height(ctx,ai_message_text(t,index,shown),width,ai_markdown_style(s,size))
     case .Report:
-        return gap+(live?ai_report_height(s,text,width,size):AI_STEP_ROW)
+        return gap+AI_STEP_ROW
     case .Divider:
         return gap+AI_DIVIDER_HEIGHT
     case .Note:
@@ -483,7 +482,8 @@ ai_transcript_draw :: proc(s:^Session,m:^Ai,task:^Ai_Task,height,width:f32,size:
     held_first:=ai_held_first(task)
     if t.heights_width!=width || t.heights_size!=size || t.heights_held!=held_first {
         t.heights_width,t.heights_size,t.heights_held=width,size,held_first
-        for &h in t.heights[:t.count] {h=0}
+        for &h in t.heights[:t.count] {h=-abs(h)}
+        t.built={}
     }
     shown:[AI_TRANSCRIPT_LINES]bool
     steps:[AI_TRANSCRIPT_LINES]int
@@ -492,12 +492,23 @@ ai_transcript_draw :: proc(s:^Session,m:^Ai,task:^Ai_Task,height,width:f32,size:
     ai_reports_live(t,live[:t.count])
     declined:=task.declined?ai_transcript_declined(t):-1
     // A line that goes on a message is drawn by its first line: it takes no row.
-    // A report follows the review of its agent: it is measured every frame.
+    // Markdown and a live report are as high as the row they were built in the
+    // last frame: one that changed is built this frame, where nothing shows it
+    // when it is out of sight, and until then keeps its last height. A report
+    // follows the review of its agent: it is built every frame.
+    measured,pending:[AI_TRANSCRIPT_LINES]bool
     for index in 0..<t.count {
         if !shown[index] || ai_line_continues(t,index,shown[:t.count],held_first) {t.heights[index]=0;continue}
-        if t.heights[index]>0 && t.lines[index].kind!=.Report {continue}
+        kind:=t.lines[index].kind
+        if steps[index]==0 && (kind==.Output || kind==.Report && live[index]) {
+            measured[index],pending[index]=true,!t.built[index] || kind==.Report
+            if rect,found:=ui.widget_rect(ctx,ui.id(ctx,"line",t.dropped+index));found && t.built[index] {t.heights[index]=rect.h}
+            else if t.heights[index]==0 {t.heights[index]=-AI_STEP_ROW}
+            continue
+        }
+        if t.heights[index]>0 {continue}
         open:=m.steps_task==task.id && m.steps_line==t.dropped+index
-        t.heights[index]=ai_line_measure(s,task,index,steps[index],open,width,size,shown[:t.count],held_first,live[index])
+        t.heights[index]=ai_line_measure(s,task,index,steps[index],open,width,size,shown[:t.count],held_first)
         if index==declined {t.heights[index]+=AI_DECLINED_HEIGHT}
     }
     if m.scroll_to>0 {
@@ -505,7 +516,7 @@ ai_transcript_draw :: proc(s:^Session,m:^Ai,task:^Ai_Task,height,width:f32,size:
         m.scroll_to=0
         if line>=0 && line<t.count {
             m.scroll=0
-            for h in t.heights[:line] {m.scroll+=h}
+            for h in t.heights[:line] {m.scroll+=abs(h)}
             m.stick=false
         }
     }
@@ -522,7 +533,7 @@ ai_transcript_draw :: proc(s:^Session,m:^Ai,task:^Ai_Task,height,width:f32,size:
     if h:=ai_permission_height(ctx,m,task,width);h>0 {extras[extra_count],extra_heights[extra_count]=.Permission,h+8;extra_count+=1}
     if h:=ai_chat_question_height(ctx,task,width);h>0 {extras[extra_count],extra_heights[extra_count]=.Question,h+8;extra_count+=1}
     rows:=make([]f32,t.count+extra_count,context.temp_allocator)
-    copy(rows,t.heights[:t.count])
+    for h,index in t.heights[:t.count] {rows[index]=abs(h)}
     copy(rows[t.count:],extra_heights[:extra_count])
     note:=ai_note_size(th,size)
     first,last:=ui.rows_begin(ctx,area,&m.scroll,rows,ui.fixed(width+AI_THREAD_MARGIN),height,bar_room=AI_THREAD_MARGIN)
@@ -556,6 +567,10 @@ ai_transcript_draw :: proc(s:^Session,m:^Ai,task:^Ai_Task,height,width:f32,size:
         if rows[index]==0 {continue}
         text,kind:=ai_transcript_line(t,index)
         gap:=ai_message_gap(t,index,steps[index]>0)
+        if measured[index] {
+            ai_line_row(s,task,index,width,size,gap,shown[:t.count])
+            continue
+        }
         ui.box_begin(ctx,{width=ui.fixed(width),height=ui.fixed(rows[index]),direction=.Column,padding={0,gap,0,0}})
         switch {
         case steps[index]>0:
@@ -576,10 +591,6 @@ ai_transcript_draw :: proc(s:^Session,m:^Ai,task:^Ai_Task,height,width:f32,size:
                     }
                 }
             }
-        case kind==.Output:
-            if target:=ui.markdown(ctx,ui.id(ctx,"answer",t.dropped+index),ai_message_text(t,index,shown[:t.count]),width,ai_markdown_style(s,size));target!="" {ai_markdown_follow(s,target)}
-        case kind==.Report && live[index]:
-            ai_report_build(s,text,width,size)
         case kind==.Report:
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(AI_STEP_ROW),align_y=.Center}) {
                 ui.label(ctx,ai_chat_menu_label(ctx,ai_report_label(m,text),width,note),note,th.text_faint,0)
@@ -605,6 +616,11 @@ ai_transcript_draw :: proc(s:^Session,m:^Ai,task:^Ai_Task,height,width:f32,size:
         ui.box_end(ctx,{})
     }
     ui.rows_end(ctx,area,&m.scroll,rows,last)
+    ctx.invisible+=1
+    for index in 0..<t.count {
+        if pending[index] && (index<first || index>=last) {ai_line_row(s,task,index,width,size,ai_message_gap(t,index,false),shown[:t.count],true)}
+    }
+    ctx.invisible-=1
     total:f32
     for h in rows {total+=h}
     if ctx.wheel_target==area && ctx.input.wheel.y<0 {m.stick=m.scroll>=total-height-1}
@@ -616,6 +632,20 @@ ai_transcript_draw :: proc(s:^Session,m:^Ai,task:^Ai_Task,height,width:f32,size:
                 if ui.button(ctx,ui.id(ctx,"to_end",task.id),{icon=ui.icon_user(u8(User_Icon.Down)),icon_color=th.text_muted,icon_size=13,style=.Field,width=side,height=side}).clicked {m.stick=true}
             }
         }
+    }
+}
+
+// A line as high as what it builds, Markdown or a live report, in a row whose
+// rectangle the next frame measures. hidden: it floats where nothing shows it.
+@(private)
+ai_line_row :: proc(s:^Session,task:^Ai_Task,index:int,width,size,gap:f32,shown:[]bool,hidden:=false) {
+    ctx:=s.gui.ctx
+    t:=&task.transcript
+    text,kind:=ai_transcript_line(t,index)
+    t.built[index]=true
+    if ui.box(ctx,{id=ui.id(ctx,"line",t.dropped+index),width=ui.fixed(width),height=ui.FIT,direction=.Column,padding={0,gap,0,0},track=true,float={to=.Parent} if hidden else {}}) {
+        if kind==.Report {ai_report_build(s,text,width,size);return}
+        if target:=ui.markdown(ctx,ui.id(ctx,"answer",t.dropped+index),ai_message_text(t,index,shown),width,ai_markdown_style(s,size));target!="" {ai_markdown_follow(s,target)}
     }
 }
 
