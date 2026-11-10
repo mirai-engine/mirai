@@ -19,13 +19,14 @@ Code: `collab.odin`, `collab_api.odin` and `collab_play.odin` (the host's networ
   `discard`, and `--join` enters with `discard`. Sharing and joining require `Edit`, a project with
   an assets folder and no open session (`Busy`). `COLLAB_PEERS` editors fit.
 - On sharing, the host creates a token and shows its invitation code
-  ([invitations](../../mirai-networking/references/networking.md)): the address the router mapped
-  for it ([port mapping](../../mirai-networking/references/port-mapping.md)) or, without a mapping,
-  that of its network (`address_lan`: the one the system uses toward the internet, not a virtual
-  adapter's), and the token. Whoever enters without that token gets no answer and times out; the
-  host's log shows the code each time it changes.
-- The host sees one code in Session, once the router answered: a guest asks at the address of the
-  code and nearby, so the same code joins from the host's network and from outside it.
+  ([invitations](../../mirai-networking/references/networking.md)): the address of its network
+  (`address_lan`: the one the system uses toward the internet, not a virtual adapter's), the one
+  the router mapped for it ([port mapping](../../mirai-networking/references/port-mapping.md)) and
+  the token. Whoever enters without that token gets no answer and times out; the host's log shows
+  the code each time it changes.
+- The host sees one code in Session, once the router answered: a guest asks at both addresses at
+  once, so the same code joins from the host's network and from outside it. A guest's networked
+  Play joins the host's game at those same addresses with the game's port and its mapping.
 - **Rejoining.** Each editor has an id (`Collab.client`, in the Hello): one that enters again while
   the host holds its previous connection takes its place and its color, and that connection is
   closed with what it had selected. Whoever leaves the session's list retains nothing.

@@ -71,8 +71,8 @@ test_step :: proc(w:^Test_World,steps:=1) {
 }
 // Steps until the client reports a connection or gives up; returns both handles.
 @(private)
-test_connect :: proc(w:^Test_World,server,client:^Host,limit:=600,credentials:=Credentials{}) -> (on_server,on_client:Connection) {
-    host_connect(client,address_memory(0),credentials)
+test_connect :: proc(w:^Test_World,server,client:^Host,limit:=600) -> (on_server,on_client:Connection) {
+    host_connect(client,address_memory(0))
     for _ in 0..<limit {
         test_step(w)
         for command in host_poll(server) {
