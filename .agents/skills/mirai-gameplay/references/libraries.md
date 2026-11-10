@@ -640,11 +640,11 @@ one per local player that has screens or sees a `World_Widget`.
   panel units for a world panel), `item`, `on`, `value`, `text` (of a field),
   `from`, `from_item` and `from_entity`: in a `Dropped`, the entity of the interface it came from
   (`Context.owner` is the entity while each tree is built). They are those of the last drawn frame,
-  delivered to the first following tick and to no other (`gui_events_deliver`, `fixed`, stage
-  `input`); a tick that a rollback repeats receives those it received, from a ring of `Gui` that
-  keeps the last `DELIVERED_CAPACITY`. In a frame without ticks (the world's time stopped, as under
-  a pause menu) they go to its `frame` phase (`gui_events_frame`, stage `input`), once, for a
-  `frame` function. What a widget wrote is seen until its events reached the game. They are read
+  a `core.Events` each reader gets once: pushed in the first following tick
+  (`gui_events_deliver`, `fixed`, stage `input`), or in the `frame` phase of a frame without ticks
+  (the world's time stopped, as under a pause menu; `gui_events_frame`); a tick that a rollback
+  repeats receives those it received, from a ring of `Gui` that keeps the last
+  `DELIVERED_CAPACITY`. What a widget wrote is seen until its events reached the game. They are read
   with `ui_event`, `clicked`, `clicked_item`, `changed`, `changed_value`, `changed_text`,
   `submitted`, `dropped`, `finished` and `back`: of several of one kind in a frame, all read the
   last, which is what the widget asks for now. Texts are valid as long as the events.

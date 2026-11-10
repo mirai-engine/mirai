@@ -219,8 +219,8 @@ In `plugins/multiplayer/runtime`:
   copy and the repeated ticks (`host.app_tick_replay`) advance it to the present;
   `core.Frame_Time` is not copied, so rollback neither stores nor restores anything of the clock.
   A repeated tick sees the content it saw the first time (the generation the ring keeps), and the
-  connection events and messages it had (`Net_Connections`, `Net_Events`, filled at the start of
-  each tick). `send` does not queue (`Net_Outbox.replaying`), `Net_Outbox` is not copied with the
+  messages it had (`Net_Events`, filled at the start of each tick); `Net_Connections` is not
+  pushed again. `send` does not queue (`Net_Outbox.replaying`), `Net_Outbox` is not copied with the
   world (what it holds is not lost) and
   `net_tick_tail` neither publishes nor sends: messages are not repeated unless the game asks; the
   rest follows the rule of [`Time`](../mirai-core/references/core.md#core-storages)

@@ -108,10 +108,10 @@ to the overrides).
   asked `coarse`. Without sources all are fine. Those that cross the limit are read again when the
   sources move.
 - It reads again only the cells under the boxes the ground announced since it last ran
-  (`Ground_Queries.changed`), or all those of a `Foliage` that moves or arrives. The cells to read wait in a queue and are read
-  `GROUND_TILES` per call, in jobs: a world that loads much ground and many `Foliage` at once keeps
-  responding. A grid (heights and weights) equal to the previous one does not raise its revision,
-  and a frame without changes reads nothing.
+  (`Ground_Queries.changed`), or all those of a `Foliage` that moves or arrives. The cells to read
+  wait in a queue and are read `GROUND_TILES` per call, in jobs: a world that loads much ground and
+  many `Foliage` at once keeps responding. A grid (heights and weights) equal to the previous one
+  does not raise its revision, and a frame without changes reads nothing.
 
 ## Drawing
 

@@ -181,8 +181,8 @@ action_defaults :: proc "contextless" () -> [Action]inp.Action_Default {
 // The Menu action lets the focused seat go of its body, and that frees the mouse; again, it takes
 // the body back. The animation gallery lets go too while its player adjusts a panel.
 @(step="frame")
-game_menu :: proc(game:^Game,g:^gui.Gui,state:core.Ref(inp.Seats),seats:core.Read(inp.Seat),drivables:core.Read(inp.Drivable),moves:^core.Table(inp.Move_Input),requests:^inp.Seat_Requests) {
-    if !gui.menu_pressed(gui.events_this_frame(g)) {return}
+game_menu :: proc(game:^Game,events:core.Ref(gui.UI_Events),state:core.Ref(inp.Seats),seats:core.Read(inp.Seat),drivables:core.Read(inp.Drivable),moves:^core.Table(inp.Move_Input),requests:^inp.Seat_Requests) {
+    if !gui.menu_pressed(events.ptr) {return}
     seat:=inp.focused(state.ptr,seats)
     if seat==core.NONE {return}
     if body:=inp.body_of(drivables,seat);body!=core.NONE {

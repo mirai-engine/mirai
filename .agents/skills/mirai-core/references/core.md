@@ -170,10 +170,15 @@ write: a prefab, a piece of terrain, a piece of something broken.
   happened and never clears. Each reader gets what came since it last looked, whatever its
   cadence: a function that receives the storage to read finds exactly that in `items` (the
   generated call keeps its cursor), and code outside the loops keeps a cursor and asks
-  `events_since`. Whoever runs a World ages its logs at the end of a frame (`host`, with
+  `log_since`. Whoever runs a World ages its logs at the end of a frame (`host`, with
   `World_Info.events_age`; `world_events_age` after a `world_run` of a World no loop runs), those
   a `fixed` function reads only when the frame ran a tick. A test that calls the owner by hand
   reads the log it holds: it clears it between ticks, or keeps a cursor.
+- **One log read by cursor.** `core.Log(T)` is the append-only log behind `Events`, the `gone` of a
+  table and the `moved` of the `Hierarchy`; each owner keeps only its trim rule (the age of
+  `Events`, a room whose older half goes when full for the other two). `log_since` gives what came
+  since a cursor, or says `whole` to a reader that fell behind the trim or holds the cursor of
+  another log, which reads the state whole (for `Events`, what the log holds).
 - There are two ways to learn that something happened and no more: state, read by change
   (`changes`, `touched`, `added`), and occurrences, read by cursor.
 - `Ref(S)` is a read-only pointer to a storage: writing through it is a bug that the generator does
@@ -400,8 +405,8 @@ Downward, over the `Hierarchy` and without allocating (`first_child`, `next_sibl
 hierarchy is not a spatial structure: culling, physics and queries use their own.
 
 - It composes what changed and what hangs from it, higher entities first: the `Transform` rows
-  stamped, the entities whose link moved (`hierarchy_moved`, a log of the `Hierarchy` read by
-  cursor as the `gone` of a table) and the children of one that lost its `Transform`. It composes
+  stamped, the entities whose link moved (`Hierarchy.moved`, a `core.Log` read by cursor as the
+  `gone` of a table) and the children of one that lost its `Transform`. It composes
   everything only when it had not seen the rows or the tree there are (a World copied over, more
   links moved than the log holds), and only stamps a `World_Transform` whose value changed.
 - A jump (`Jumps`) carries by `by` also the `previous` of the entity and of what hangs from it: who
