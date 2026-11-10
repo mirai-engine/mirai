@@ -193,6 +193,17 @@ register the same in the same order.
   inserting, changing or removing an entry dirties only its change group. The game declares its
   ids and writes the row of its component with the normal `core` operations.
 
+**Re-typing.** `object_retype` gives a live object another type (another list of fragments) with
+its whole state: the object, its parent, owner, scope and events go on.
+
+- Each link that has the replica takes the creation again, which carries the list; the client
+  reads the creation of a live object of the same generation as a re-typing and says so
+  (`Command.retyped`), keeping what the game bound the replica to. A creation in flight is
+  followed by the new one once it is acked, and a link that was leaving takes it if it returns.
+- The baselines of the object are dropped: they are of the words of the type before.
+- It bumps the epoch, and the server reads what an older epoch still sends (a client that held
+  the object) with the type before, to drop it.
+
 **Large states** (`Object_Type.large`, whose maximum encoding exceeds `MAX_STATE_BYTES`):
 
 - They are sent in parts of whole mask bits, from the lowest to the highest, according to the
@@ -256,10 +267,10 @@ object are sent until its creation was acked.
   removals, and filter and cell changes, with slots reserved at start, and its cell table (a
   `base.Hash_Map`, without tombstones) does not degrade even if objects traverse new cells all
   session long.
-- `Custom`: only the connections the game names with `object_set_relevance`, one bit per
-  connection and object, like Iris's connection filters. A new object and a connection that
-  arrives, even if it takes another's slot, start with none; with another filter the bit is kept
-  without counting. A change evaluates that connection on the next tick.
+- **Visibility bits**, like collision layers: an object with bits (`Object_Desc.visibility`,
+  `object_set_visibility`) is seen, of the connections its filter and its groups let, only by
+  those that share one (`connection_set_visibility`), and so its children. An object with none
+  asks for none; a connection that arrives, even in another's slot, has none.
 - A spatial object that is already seen keeps being seen until `leave_margin` beyond the view's
   reach and, past that margin, `hysteresis` more evaluations.
 - An object with a parent follows its parent's scope and is never created before it.
@@ -359,7 +370,8 @@ connection is for a replica.
 - The client estimates the server tick (`Clock.server`, corrected 10 % per sample; the estimate
   jumps if it strays more than 30 ticks) and wants its own tick ahead: half the RTT, twice the
   jitter, `input_lead` ticks and `bias`, a slow correction according to the margin the server
-  reports. That target (`Clock.target`) is smoothed with a constant of 0.5 s.
+  reports, less `input_delay`, the ticks ahead of its own it submits its input for. That target
+  (`Clock.target`) is smoothed with a constant of 0.5 s.
 - The client tick is stored by whoever uses it, with a fraction (the last simulated plus what its
   time already covers of the next). `clock_advance(h,now,local)` returns:
   - `shift`: whole ticks to add to it now. On synchronizing, what puts it on the target (also
@@ -392,11 +404,14 @@ The client predicts with copies of the world and interpolates with `replica_blen
 ([multiplayer](multiplayer.md)); these are the pieces of `net` it uses for that.
 
 - **`Smoothing`** fades the difference between the displayed pose and the corrected one without
-  touching the simulated state; beyond `snap_distance` it does not smooth.
+  touching the simulated state; beyond `snap_distance` it does not smooth. A correction may ask
+  for its own half life (a change of timeline fades slower): the error under way fades as slowly
+  as the slowest that made it up, until it is gone.
 - **`Interpolation`**: ring of snapshots per tick and object. `interpolation_sample` gives the two
   that surround a tick (`Between`), the oldest (`Before`) or the newest and how much time has
-  passed since it (`After`). `interpolation_spacing` gives the ticks between snapshots: a longer
-  gap counts at once and a shorter one, gradually.
+  passed since it (`After`); `interpolation_entry` gives each one kept, from the oldest.
+  `interpolation_spacing` gives the ticks between snapshots: a longer gap counts at once and a
+  shorter one, gradually.
 
 ## Known limits
 
