@@ -177,8 +177,8 @@ Frame_Actions :: struct {actions:Actions}
 @(params)
 Input_Of :: struct($E:typeid) where intrinsics.type_is_enum(E) {
     actions:core.Ref(Actions),
-    seats:core.Read(Seat),
-    drivables:core.Read(Drivable),
+    seats:^core.Table(Seat,.Read),
+    drivables:^core.Table(Drivable,.Read),
     base:Action,
 }
 
@@ -269,13 +269,13 @@ input_map_build :: proc(bindings:^Input_Map,app:^host.App,problems:^core.Problem
 
 // The actions of the machine, in the contexts of the focused seat.
 @(step="fixed",stage="input")
-input_actions_update :: proc(bindings:^Input_Map,actions:^Actions,input:core.Input,state:core.Ref(Seats),seats:core.Read(Seat),time:core.Time) {
+input_actions_update :: proc(bindings:^Input_Map,actions:^Actions,input:core.Input,state:core.Ref(Seats),seats:^core.Table(Seat,.Read),time:core.Time) {
     input:=input
     actions_update(actions,bindings,&input,time.dt,focused_contexts(state.ptr,seats))
 }
 
 @(step="input",stage="end")
-input_frame_actions_update :: proc(bindings:core.Ref(Input_Map),actions:^Frame_Actions,input:core.Frame_Input,state:core.Ref(Seats),seats:core.Read(Seat),frame:core.Frame_Time) {
+input_frame_actions_update :: proc(bindings:core.Ref(Input_Map),actions:^Frame_Actions,input:core.Frame_Input,state:core.Ref(Seats),seats:^core.Table(Seat,.Read),frame:core.Frame_Time) {
     input:=input.input
     actions_update(&actions.actions,bindings.ptr,&input,frame.dt,focused_contexts(state.ptr,seats))
 }

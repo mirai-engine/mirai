@@ -134,7 +134,7 @@ overlay_weights :: proc "contextless" (overlay:Terrain_Overlay) -> bool {return 
 // theirs, or the outlines of every piece. A chunk the preview of a stroke
 // shows is the preview's.
 @(step="frame",after="terrain_sculpt")
-terrain_overlay :: proc(s:^editor.Session,view:^Terrain_View,tool:^Terrain_Tool,world:core.World_Ref,terrains:core.Read(terrain.Terrain),chunks:core.Read(terrain.Terrain_Chunk),worlds:core.Read(core.World_Transform),data:core.Ref(terrain.Terrain_Data),assets:^host.Assets,extras:^host.Frame_Extras) {
+terrain_overlay :: proc(s:^editor.Session,view:^Terrain_View,tool:^Terrain_Tool,world:core.World_Ref,terrains:^core.Table(terrain.Terrain,.Read),chunks:^core.Table(terrain.Terrain_Chunk,.Read),worlds:^core.Table(core.World_Transform,.Read),data:core.Ref(terrain.Terrain_Data),assets:^host.Assets,extras:^host.Frame_Extras) {
     if view.overlay==.None || !s.gui.begun || editor.playing(s) || data.ptr==nil {return}
     a:=assets
     if a==nil {return}

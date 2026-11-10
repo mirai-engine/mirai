@@ -111,7 +111,7 @@ stride_print :: proc "contextless" (stride:^Stride,stamp:Imprint_Stamp,at,forwar
 // swept from where it was the tick before or, with a stride, a print each
 // stride it goes.
 @(step="fixed",loops="game editor",stage="end")
-imprint_stamps :: proc(steps:^Imprint_Steps,stamps:core.Read(Imprint_Stamp),worlds:core.Read(core.World_Transform),physics:core.Ref(phys.Physics_State),births:^core.Births,time:core.Time,frame:core.Frame_Time) {
+imprint_stamps :: proc(steps:^Imprint_Steps,stamps:^core.Table(Imprint_Stamp,.Read),worlds:^core.Table(core.World_Transform,.Read),physics:core.Ref(phys.Physics_State),births:^core.Births,time:core.Time,frame:core.Frame_Time) {
     dt:=time.dt if time.playing else frame.dt
     steps.tick+=1
     if !(dt>0) || core.count(stamps)==0 {return}
@@ -209,10 +209,10 @@ Imprint_Gpu :: struct {
 // field may have changed written in the Geometry stage.
 @(step="render",loops="game editor",before="render_sync")
 imprint_render :: proc(
-    state:^Imprint_Gpu,grounds:core.Read(Imprint_Ground),meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),
-    parents:core.Read(core.Parent),hierarchy:core.Ref(core.Hierarchy),tints:core.Read(erender.Tint),overrides:core.Read(erender.Material_Override),
-    hidden:core.Read(erender.Hidden),highlights:core.Read(erender.Highlight),outlines:core.Read(erender.Outline),offsets:core.Read(erender.Draw_Offset),
-    layers:core.Read(erender.Layers),locals:core.Read(core.Transform),cameras:core.Read(erender.Camera),
+    state:^Imprint_Gpu,grounds:^core.Table(Imprint_Ground,.Read),meshes:^core.Table(erender.Mesh_Renderer,.Read),worlds:^core.Table(core.World_Transform,.Read),
+    parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),tints:^core.Table(erender.Tint,.Read),overrides:^core.Table(erender.Material_Override,.Read),
+    hidden:^core.Table(erender.Hidden,.Read),highlights:^core.Table(erender.Highlight,.Read),outlines:^core.Table(erender.Outline,.Read),offsets:^core.Table(erender.Draw_Offset,.Read),
+    layers:^core.Table(erender.Layers,.Read),locals:^core.Table(core.Transform,.Read),cameras:^core.Table(erender.Camera,.Read),
     steps:core.Ref(Imprint_Steps),sync:core.Ref(vfx.Particle_Sync),app:^host.App,frame:core.Frame_Time,id:core.World_Id,
 ) {
     if state==nil || app.renderer==nil || app.assets==nil {return}
@@ -267,10 +267,10 @@ imprint_render :: proc(
 // reaches its box, and the copy written when its field may have changed.
 @(private)
 displace :: proc(
-    state:^Imprint_Gpu,e:core.Entity,ground:Imprint_Ground,write:bool,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),
-    parents:core.Read(core.Parent),tints:core.Read(erender.Tint),overrides:core.Read(erender.Material_Override),hidden:core.Read(erender.Hidden),
-    highlights:core.Read(erender.Highlight),outlines:core.Read(erender.Outline),offsets:core.Read(erender.Draw_Offset),layers:core.Read(erender.Layers),
-    locals:core.Read(core.Transform),cameras:core.Read(erender.Camera),assets:^host.Assets,renderer:^erender.Renderer,extras:^host.Frame_Extras,frame:core.Frame_Time,
+    state:^Imprint_Gpu,e:core.Entity,ground:Imprint_Ground,write:bool,meshes:^core.Table(erender.Mesh_Renderer,$A),worlds:^core.Table(core.World_Transform,$B),
+    parents:^core.Table(core.Parent,$C),tints:^core.Table(erender.Tint,$D),overrides:^core.Table(erender.Material_Override,$E),hidden:^core.Table(erender.Hidden,$F),
+    highlights:^core.Table(erender.Highlight,$G),outlines:^core.Table(erender.Outline,$H),offsets:^core.Table(erender.Draw_Offset,$I),layers:^core.Table(erender.Layers,$J),
+    locals:^core.Table(core.Transform,$K),cameras:^core.Table(erender.Camera,$L),assets:^host.Assets,renderer:^erender.Renderer,extras:^host.Frame_Extras,frame:core.Frame_Time,
     place:vfx.World_Texture_Place,start:[2]i32,low,high:[2]f64,made:u64,
 ) {
     static,has_mesh:=core.get(meshes,e)

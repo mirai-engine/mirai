@@ -145,7 +145,7 @@ a_client_keeps_the_seats_of_the_server :: proc(t:^testing.T) {
     core.test_world_settle(&w)
     seated_tick(&w,&settings)
     testing.expect(t,core.alive(&w.entities,replica))
-    testing.expect_value(t,input.local_seat(core.read(&w.seats),0),core.NONE)
+    testing.expect_value(t,input.local_seat(&w.seats,0),core.NONE)
 }
 
 // On a server, a replicated body is owned by the connection of the seat that

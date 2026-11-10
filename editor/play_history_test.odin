@@ -27,7 +27,7 @@ history_step :: proc(f:^Play_Test,r:^Run,held:bool) {
 // Read, not written: a write between frames is an edit.
 @(private="file")
 history_x :: proc(f:^Play_Test,r:^Run) -> f32 {
-    transform,_:=core.get(core.read(&(cast(^Play_Test_World)r.world).transforms),f.original)
+    transform,_:=core.get(&(cast(^Play_Test_World)r.world).transforms,f.original)
     return transform.position.x
 }
 

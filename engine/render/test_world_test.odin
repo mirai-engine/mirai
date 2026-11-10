@@ -96,7 +96,7 @@ sync_cube :: proc(f:^Sync_Fixture,x:f32) -> core.Entity {
 @(private)
 sync_frame :: proc(f:^Sync_Fixture,id:core.World_Id={}) -> u64 {
     core.test_world_settle(&f.world)
-    core.hierarchy_settle(&f.world.hierarchy,core.read(&f.world.parents),&f.world.entities)
+    core.hierarchy_settle(&f.world.hierarchy,&f.world.parents,&f.world.entities)
     before:=f.sync.stats.rows
     world_sync(&f.world,&f.sync,&f.app,id,core.ref(&f.world.hierarchy))
     clear(&f.app.extras.instances)

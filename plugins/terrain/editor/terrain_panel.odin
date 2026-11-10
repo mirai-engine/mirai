@@ -31,7 +31,7 @@ terrain_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,
         if terrains!=nil && (selected_entity!=tool.selection || target==core.NONE) && core.has(terrains,selected_entity) {target=selected_entity}
         tool.selection=selected_entity
         if terrains!=nil && worlds!=nil && core.has(terrains,target) {
-            _=stroke_prepare(tool,app.assets,app.allocator,core.read(terrains),core.read(worlds),editor.Pick{entity=target})
+            _=stroke_prepare(tool,app.assets,app.allocator,terrains,worlds,editor.Pick{entity=target})
         } else if tool.stroke.id!={} {stroke_free(tool)}
     }
     terrain_heightmap_dialogs(s,tool,world,app)
@@ -297,7 +297,7 @@ terrain_choose_panel :: proc(s:^editor.Session,world:core.World_Ref) {
     terrains:=core.world_table_of(world,terrain.Terrain)
     if terrains==nil || core.count(terrains)==0 {return}
     ui.section(ctx,"Terrains","",80)
-    table:=core.read(terrains)
+    table:=terrains
     for i in 0..<core.count(table) {
         e:=core.entity_at(table,i)
         if ui.button(ctx,ui.id(ctx,"terrain",core.entity_index(e)+1),{label=editor.entity_label(world,e),icon=ui.icon_user(u8(editor.User_Icon.Terrain)),style=.Field,width=-1}).clicked {history.selection_set(s.selection,{e})}

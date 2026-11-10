@@ -317,7 +317,7 @@ cells_version :: proc(next,previous:^Source,versions:^u32) {
 // Foliage names. Foliage.revision is the editor's: undo puts back what a
 // step held, 0 included, and the tool restores the source of that revision.
 @(step="fixed frame",loops="game editor",stage="simulate")
-foliage_load :: proc(data:^Foliage_Data,foliages:core.Read(Foliage),assets:^host.Assets,allocator:runtime.Allocator,problems:^core.Problems) {
+foliage_load :: proc(data:^Foliage_Data,foliages:^core.Table(Foliage,.Read),assets:^host.Assets,allocator:runtime.Allocator,problems:^core.Problems) {
     a:=assets
     if a==nil {return}
     context.allocator=allocator
@@ -423,7 +423,7 @@ orphans_report :: proc(problems:^core.Problems,e:core.Entity,a:^host.Assets,id:b
 // cells of a Foliage are resident, and in which band each type of them is,
 // is chosen again when the streaming sources move.
 @(step="late",loops="game editor",stage="end")
-foliage_render :: proc(resident:^Foliage_Resident,data:core.Ref(Foliage_Data),grounds:core.Ref(Foliage_Ground),removals:core.Ref(Foliage_Removals),foliages:core.Read(Foliage),worlds:core.Read(core.World_Transform),kept:core.Read(scene.Far_Kept),sources:core.Ref(scene.Streaming_Sources),id:core.World_Id,app:^host.App,problems:^core.Problems) {
+foliage_render :: proc(resident:^Foliage_Resident,data:core.Ref(Foliage_Data),grounds:core.Ref(Foliage_Ground),removals:core.Ref(Foliage_Removals),foliages:^core.Table(Foliage,.Read),worlds:^core.Table(core.World_Transform,.Read),kept:^core.Table(scene.Far_Kept,.Read),sources:core.Ref(scene.Streaming_Sources),id:core.World_Id,app:^host.App,problems:^core.Problems) {
     if resident==nil || data.ptr==nil || app.renderer==nil || app.assets==nil {return}
     a:=app.assets
     context.allocator=app.allocator
@@ -494,7 +494,7 @@ foliage_render :: proc(resident:^Foliage_Resident,data:core.Ref(Foliage_Data),gr
         ground:=ground_owner(grounds.ptr,e)
         revision:=ground!=nil?ground.revision:0
         streamed:=sources.ptr!=nil?sources.ptr.revision:0
-        far_only:=(kept.table!=nil && core.has(kept,e))
+        far_only:=(kept!=nil && core.has(kept,e))
         gone:=removed_owner(removals.ptr,e)
         removed:=gone!=nil?gone.hash:0
         if owner.far_only!=far_only {owner.built=false}

@@ -334,7 +334,7 @@ actions_interrupt :: proc(runtime:^Action_Runtime,state:^Action_State,playback:^
 }
 
 @(private)
-actions_discover :: proc(runtime:^Action_Runtime,animations:core.Read(Animation),playback:^Playback,events:^Animation_Events,assets:^host.Assets,problems:^core.Problems) -> bool {
+actions_discover :: proc(runtime:^Action_Runtime,animations:^core.Table(Animation,$A),playback:^Playback,events:^Animation_Events,assets:^host.Assets,problems:^core.Problems) -> bool {
     // Kept only when the entities found have their room: without it they are looked for again.
     seen:=runtime.animations_seen
     c:=core.changes(animations,&seen)
@@ -342,7 +342,7 @@ actions_discover :: proc(runtime:^Action_Runtime,animations:core.Read(Animation)
     added,rows:=0,len(runtime.rows)
     counted:=c
     for i in core.each_changed(animations,&counted) {
-        if animation_character(assets,animations.table.values[i])=={} {continue}
+        if animation_character(assets,animations.values[i])=={} {continue}
         index:=core.entity_index(core.entity_at(animations,i));rows=max(rows,index+1)
         slot:=int(runtime.rows[index])-1 if index<len(runtime.rows) else -1
         if slot<0 || slot>=len(runtime.states) || core.entity_index(runtime.states[slot].entity)!=index {added+=1}
@@ -350,7 +350,7 @@ actions_discover :: proc(runtime:^Action_Runtime,animations:core.Read(Animation)
     if !changed {return true}
     if !program_array_reserve(&runtime.states,len(runtime.states)+added) || !program_array_resize(&runtime.rows,rows) {memory_problem(problems,core.NONE,"the entities that play actions, so no action plays");return false}
     for i in core.each_changed(animations,&c) {
-        if animation_character(assets,animations.table.values[i])=={} {continue}
+        if animation_character(assets,animations.values[i])=={} {continue}
         entity:=core.entity_at(animations,i);index:=core.entity_index(entity);slot:=int(runtime.rows[index])-1
         if slot>=0 && slot<len(runtime.states) && core.entity_index(runtime.states[slot].entity)==index {
             if runtime.states[slot].entity==entity {continue}
@@ -365,15 +365,15 @@ actions_discover :: proc(runtime:^Action_Runtime,animations:core.Read(Animation)
 
 // Loads the set of each entity and serves the plays and stops asked for: which action takes
 // which slot, by priority and cancel policy.
-actions_prepare :: proc(runtime:^Action_Runtime,requests:^Animation_Requests,characters:^Character_Assets,animations:core.Read(Animation),playback:^Playback,events:^Animation_Events,app:^host.App,problems:^core.Problems) -> bool {
-    if runtime==nil || requests==nil || characters==nil || playback==nil || events==nil || animations.table==nil || app==nil {return false}
+actions_prepare :: proc(runtime:^Action_Runtime,requests:^Animation_Requests,characters:^Character_Assets,animations:^core.Table(Animation,$A),playback:^Playback,events:^Animation_Events,app:^host.App,problems:^core.Problems) -> bool {
+    if runtime==nil || requests==nil || characters==nil || playback==nil || events==nil || animations==nil || app==nil {return false}
     allocator:=app.allocator
     context.allocator=allocator;runtime.allocator=allocator;runtime.frame+=1
     if !actions_discover(runtime,animations,playback,events,app.assets,problems) {return false}
     for &state in runtime.states {
         state.retry=false
         row:=core.row_of(animations,state.entity);if row<0 {continue}
-        id:=animation_character(app.assets,animations.table.values[row])
+        id:=animation_character(app.assets,animations.values[row])
         if id=={} {for &slot in state.slots {if slot.active {state.seen=runtime.frame;if !slot.finishing {action_end(runtime,&state,&slot,true,playback,events,problems)}}};continue}
         state.seen=runtime.frame
         content:=character_content(characters,app.assets,allocator,id,&state.content)
@@ -405,7 +405,7 @@ actions_prepare :: proc(runtime:^Action_Runtime,requests:^Animation_Requests,cha
         state:=action_state(runtime,request.entity)
         if state!=nil && state.retry {requests.plays.items[pending]=request;pending+=1;continue}
         row:=core.row_of(animations,request.entity)
-        if row<0 || animation_character(app.assets,animations.table.values[row])=={} {
+        if row<0 || animation_character(app.assets,animations.values[row])=={} {
             core.report(problems,request.entity,"animation.action_owner","a %s of action '%s' was asked of this entity, and it has no Animation that plays a .character; set Animation.asset to one, or ask the entity that has it",verb,name)
             continue
         }

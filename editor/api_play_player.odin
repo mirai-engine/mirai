@@ -44,13 +44,13 @@ play_player_snapshot :: proc(w:core.World_Ref) -> (value:Play_Player_Snapshot) {
     players:=core.world_storage_of(w,input.Seats)
     seats:=core.world_table_of(w,input.Seat)
     if players==nil || seats==nil {return}
-    player:=input.focused(players,core.read(seats))
+    player:=input.focused(players,seats)
     if !core.alive(core.world_entities(w),player) {return}
     value.available=true
     value.seat=play_player_entity(w,player)
     if shown:=core.world_storage_of(w,render.View_Camera);shown!=nil {value.camera=play_player_entity(w,shown.entity)}
     if bodies:=core.world_table_of(w,input.Drivable);bodies!=nil {
-        body:=input.body_of(core.read(bodies),player)
+        body:=input.body_of(bodies,player)
         value.body=play_player_entity(w,body)
         if value.camera.entity=="" {
             if owned,found:=core.get(bodies,body);found {value.camera=play_player_entity(w,owned.camera)}

@@ -36,7 +36,7 @@ simulation_apply_poses :: proc(s:^Session,poses:[]Simulation_Pose) -> bool {
     transforms,parent_table:=core.world_table_of(w,core.Transform),core.world_table_of(w,core.Parent)
     Placed :: struct {depth,pose:int}
     placed:=make([]Placed,len(poses),context.temp_allocator)
-    for e,i in entities {placed[i]={parent_table!=nil?core.depth_of(core.read(parent_table),e):0,i}}
+    for e,i in entities {placed[i]={parent_table!=nil?core.depth_of(parent_table,e):0,i}}
     slice.sort_by(placed,proc(a,b:Placed) -> bool {return a.depth<b.depth})
     tools_release(s)
     if !history.edits_commit(s.edits,w,s.selection) && s.edits.error!=.No_Change {return false}
@@ -44,7 +44,7 @@ simulation_apply_poses :: proc(s:^Session,poses:[]Simulation_Pose) -> bool {
     if !edit_ready {return false}
     for item in placed {
         e:=entities[item.pose]
-        local,ok:=core.local_under(core.read(transforms),core.read(parent_table),entity_parent(w,e),simulation_transform(poses[item.pose]))
+        local,ok:=core.local_under(transforms,parent_table,entity_parent(w,e),simulation_transform(poses[item.pose]))
         if !ok || !transform_set(s,e,local) {
             history.edits_cancel(s.edits,w)
             return false

@@ -34,7 +34,7 @@ distance_tick_preserves_physical_fade_clocks_root_metadata_and_manual_warp_overr
     manual:=Root_Motion{bone=bone_ref("hip"),translation=true};core.add(&roots,actor,manual)
     core.table_settle(&transforms,&entities);core.table_settle(&parents,&entities);core.table_settle(&names,&entities);core.table_settle(&targets,&entities);core.table_settle(&animations,&entities);core.table_settle(&roots,&entities)
     hierarchy:core.Hierarchy;defer core.value_free(&hierarchy,type_info_of(core.Hierarchy))
-    core.hierarchy_settle(&hierarchy,core.read(&parents),&entities)
+    core.hierarchy_settle(&hierarchy,&parents,&entities)
     requests:Animation_Requests;events:Animation_Events;playback:Playback;skeletons:Skeleton_Assets
     defer {delete(requests.timeline.items);delete(requests.poses.items);delete(requests.distances.items);delete(events.items);playback_free(&playback);skeleton_assets_free(&skeletons)}
     motion:Motion_Runtime;motion_requests:Motion_Requests;motion_assets:Character_Assets
@@ -44,7 +44,7 @@ distance_tick_preserves_physical_fade_clocks_root_metadata_and_manual_warp_overr
     problems:core.Problems
     step:=proc(animations:^core.Table(Animation),transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent),hierarchy:^core.Hierarchy,names:^core.Table(core.Name),targets:^core.Table(Animation_Target),roots:^core.Table(Root_Motion),requests:^Animation_Requests,events:^Animation_Events,playback:^Playback,app:^host.App,skeletons:^Skeleton_Assets,motion:^Motion_Runtime,motion_requests:^Motion_Requests,motion_assets:^Character_Assets,dt:f32,problems:^core.Problems) {
         clear(&events.items) // the log of a tick, as its readers are handed it
-        animation_tick(core.read(animations),transforms,core.read(parents),core.ref(hierarchy),core.read(names),requests,events,core.read(targets),core.read(roots),playback,app,{dt=dt,playing=true},{},skeletons,problems,characters=motion_assets,motion=motion,motion_requests=motion_requests)
+        animation_tick(animations,transforms,parents,core.ref(hierarchy),names,requests,events,targets,core.read(roots),playback,app,{dt=dt,playing=true},{},skeletons,problems,characters=motion_assets,motion=motion,motion_requests=motion_requests)
     }
     step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&roots,&requests,&events,&playback,&app,&skeletons,&motion,&motion_requests,&motion_assets,.1,&problems)
     state:=&playback.states[0]

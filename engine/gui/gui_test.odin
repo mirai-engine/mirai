@@ -455,12 +455,12 @@ a_modal_on_top_blocks_the_seats_it_covers_until_it_leaves :: proc(t:^testing.T) 
     // Applied by input, the blocks are not asked again.
     state.blocks[0]={owner=menu,seat=second,mask=inp.ALL_ACTIONS,active=true}
     state.blocks[1]={owner=pause,mask=inp.ALL_ACTIONS,active=true}
-    testing.expect(t,modal_apply(&gui,{&state},core.read(&w.seats),&requests,{&contexts},&context_requests) && len(requests.items)==0)
+    testing.expect(t,modal_apply(&gui,{&state},&w.seats,&requests,{&contexts},&context_requests) && len(requests.items)==0)
     // Off the top, or gone, they give the seats back.
     gui.instances[0].modal,gui.instances[0].taking=false,false
     pop(&gui.instances)
     append(&gui.unblock,pause)
-    testing.expect(t,!modal_apply(&gui,{&state},core.read(&w.seats),&requests,{&contexts},&context_requests))
+    testing.expect(t,!modal_apply(&gui,{&state},&w.seats,&requests,{&contexts},&context_requests))
     testing.expect_value(t,len(requests.items),2)
     testing.expect(t,requests.items[0].kind==.Block_Remove && requests.items[1].kind==.Block_Remove)
     testing.expect(t,!gui.instances[0].blocking)
@@ -498,7 +498,7 @@ the_buttons_of_a_modal_get_the_actions_it_takes_from_the_game :: proc(t:^testing
     src:=Source{gui=&gui,app=app,player=1,seat=seat,seat_state=&state,seats=core.read(&w.seats),building=&instance}
     down,pressed:=source_action(&src,base.name_hash("drop_item"))
     testing.expect(t,down && pressed)
-    testing.expect(t,!inp.seat_action(core.read(&w.seats),seat,DROP).down,"the game does not get it")
+    testing.expect(t,!inp.seat_action(&w.seats,seat,DROP).down,"the game does not get it")
     instance.entity=cinematic
     down,pressed=source_action(&src,base.name_hash("drop_item"))
     testing.expect(t,!down && !pressed,"another interface does not read past the block of the Modal")
@@ -522,7 +522,7 @@ a_screen_with_an_input_context_puts_the_seats_it_covers_in_it :: proc(t:^testing
     gui:Gui
     defer {delete(gui.instances);delete(gui.unblock)}
     append(&gui.instances,Instance{entity=inventory,modal=true,taking=true,input_context=MENU})
-    testing.expect(t,modal_apply(&gui,{&state},core.read(&w.seats),&requests,{&contexts},&context_requests))
+    testing.expect(t,modal_apply(&gui,{&state},&w.seats,&requests,{&contexts},&context_requests))
     testing.expect_value(t,len(requests.items),0)
     if testing.expect_value(t,len(context_requests.items),1) {
         r:=context_requests.items[0]
@@ -531,9 +531,9 @@ a_screen_with_an_input_context_puts_the_seats_it_covers_in_it :: proc(t:^testing
     clear(&context_requests.items)
     // Applied by input, it is not asked again.
     contexts.entries[0]={owner=inventory,input_context=MENU,modal=true,active=true}
-    testing.expect(t,modal_apply(&gui,{&state},core.read(&w.seats),&requests,{&contexts},&context_requests) && len(context_requests.items)==0)
+    testing.expect(t,modal_apply(&gui,{&state},&w.seats,&requests,{&contexts},&context_requests) && len(context_requests.items)==0)
     gui.instances[0].modal,gui.instances[0].taking=false,false
-    testing.expect(t,!modal_apply(&gui,{&state},core.read(&w.seats),&requests,{&contexts},&context_requests))
+    testing.expect(t,!modal_apply(&gui,{&state},&w.seats,&requests,{&contexts},&context_requests))
     testing.expect(t,len(context_requests.items)==1 && context_requests.items[0].leave && !gui.instances[0].entered)
 }
 

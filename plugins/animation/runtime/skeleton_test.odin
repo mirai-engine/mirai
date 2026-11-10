@@ -71,12 +71,12 @@ rig_test_settle :: proc(f:^Rig_Test) {
 
 @(private="file")
 rig_test_advance :: proc(f:^Rig_Test,app:^host.App,time:core.Time,frame:core.Frame_Time={}) {
-    if app.assets!=nil {rigs_update(&f.playback,core.read(&f.meshes),core.read(&f.skins),app.assets)}
-    animation_tick(core.read(&f.animations),&f.transforms,core.read(&f.parents),{},core.read(&f.labels),&f.requests,&f.events,core.read(&f.targets),{},&f.playback,app,time,frame,&f.cache,&f.problems,characters=&f.characters,actions=&f.actions)
+    if app.assets!=nil {rigs_update(&f.playback,&f.meshes,&f.skins,app.assets)}
+    animation_tick(&f.animations,&f.transforms,&f.parents,{},&f.labels,&f.requests,&f.events,&f.targets,{},&f.playback,app,time,frame,&f.cache,&f.problems,characters=&f.characters,actions=&f.actions)
     m:=&f.modifiers
     inputs:=Constraint_Inputs{core.read(&m.ik),core.read(&m.look),core.read(&m.limits),core.read(&m.sockets),{},core.read(&f.worlds),0,&f.cache,&f.problems}
     ground_inputs:=Grounding_Inputs{core.read(&m.grounding),{},core.read(&f.transforms),core.read(&f.parents),0,&f.problems,{}}
-    animation_finish(&f.playback,inputs,&f.constraints,&f.transforms,core.read(&f.parents),time.dt,&f.grounding,ground_inputs,final_poses=core.take(&f.requests.final_poses))
+    animation_finish(&f.playback,inputs,&f.constraints,&f.transforms,&f.parents,time.dt,&f.grounding,ground_inputs,final_poses=core.take(&f.requests.final_poses))
 }
 
 // A skeleton of three bones in a column, a mesh bound to it and a clip that turns the upper bone a quarter.
@@ -147,10 +147,10 @@ skeleton_discovery_preserves_logical_rigs_on_unrelated_changes_and_retries_alloc
     core.add(&w.meshes,third,{mesh=mesh_id});rig_test_settle(&w)
     inputs:=w.playback.rigs_seen
     context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
-    testing.expect(t,!rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),app.assets))
+    testing.expect(t,!rigs_update(&w.playback,&w.meshes,&w.skins,app.assets))
     context=saved_context
     testing.expect(t,w.playback.rigs_seen==inputs && w.playback.rigs_stamp==stamp && raw_data(w.playback.rigs)==pointer && len(w.playback.rigs)==2)
-    testing.expect(t,rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),app.assets))
+    testing.expect(t,rigs_update(&w.playback,&w.meshes,&w.skins,app.assets))
     testing.expect(t,w.playback.rigs_stamp==stamp+1 && len(w.playback.rigs)==3 && rig_find(&w.playback,third)>=0)
     testing.expect(t,rig_find(&w.playback,core.entity_make(core.entity_index(first),core.entity_generation(first)+1))<0)
 }

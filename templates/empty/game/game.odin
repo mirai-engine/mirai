@@ -20,7 +20,7 @@ action_defaults :: proc "contextless" () -> [Action]inp.Action_Default {
 }
 
 @(step="fixed")
-game_spin :: proc(spinners:core.Read(Spinner),transforms:^core.Table(core.Transform),actions:inp.Input_Of(Action),time:core.Time) {
+game_spin :: proc(spinners:^core.Table(Spinner,.Read),transforms:^core.Table(core.Transform),actions:inp.Input_Of(Action),time:core.Time) {
     turn:=f32(inp.down(actions,.Reverse)?-1:1)*time.dt
     for row in 0..<core.count(spinners) {
         local:=core.free(transforms,core.entity_at(spinners,row))

@@ -34,10 +34,10 @@ walk_action_defaults :: proc "contextless" () -> [Walk_Action]input.Action_Defau
 // it (the game, an AI, the network).
 @(step="fixed",stage="input")
 locomotion_seat :: proc(
-    states:core.Read(Locomotion_State),characters:core.Read(phys.Character),moves:^core.Table(input.Move_Input),found:core.Read(phys.Character_State),
-    drivables:core.Read(input.Drivable),walk_actions:input.Input_Of(Walk_Action),look_actions:input.Input_Of(input.Look_Action),bindings:core.Ref(input.Input_Map),
-    follows:core.Read(cam.Camera_Follow),shown:core.Ref(cam.Cameras),cameras:core.Read(render.Camera),
-    worlds:core.Read(core.World_Transform),remotes:core.Read(core.Remote),physics:core.Ref(phys.Physics_State),paces:core.Read(core.Own_Pace),
+    states:^core.Table(Locomotion_State,.Read),characters:^core.Table(phys.Character,.Read),moves:^core.Table(input.Move_Input),found:^core.Table(phys.Character_State,.Read),
+    drivables:^core.Table(input.Drivable,.Read),walk_actions:input.Input_Of(Walk_Action),look_actions:input.Input_Of(input.Look_Action),bindings:core.Ref(input.Input_Map),
+    follows:^core.Table(cam.Camera_Follow,.Read),shown:core.Ref(cam.Cameras),cameras:^core.Table(render.Camera,.Read),
+    worlds:^core.Table(core.World_Transform,.Read),remotes:^core.Table(core.Remote,.Read),physics:core.Ref(phys.Physics_State),paces:^core.Table(core.Own_Pace,.Read),
     time:core.Time,clock:core.Clock,problems:^core.Problems,
 ) {
     walks:=input.input_map_has(bindings.ptr,input.action_of(walk_actions,.Move),.Axis2) && input.input_map_has(bindings.ptr,input.action_of(look_actions,.Look),.Axis2)

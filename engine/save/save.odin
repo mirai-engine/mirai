@@ -346,7 +346,7 @@ saves_serve :: proc(
     world:core.World_Ref,app:^host.App,requests:^Save_Requests,results:^Save_Results,state:^Save_State,work:^Save_Work,
     thumbnails:^Save_Thumbnails,game:^Save_Game,settings:core.Ref(Save_Settings),profile:^Profile_State,bindings:core.Ref(inp.Input_Map),
     authority:core.Ref(core.Network),frame:core.Ref(core.Frame_Time),clock:core.Ref(core.Clock),
-    references:core.Read(scene.Scene_Reference),problems:^core.Problems,
+    references:^core.Table(scene.Scene_Reference,.Read),problems:^core.Problems,
 ) {
     if !profile.read {
         profile.read=true

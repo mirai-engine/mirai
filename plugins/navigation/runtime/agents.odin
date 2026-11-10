@@ -264,11 +264,11 @@ agent_filter :: proc "contextless" (n:^Navigation,class:int,agent:Nav_Agent,walk
 
 @(step="fixed",stage="apply",server)
 navigation_agents :: proc(
-    n:core.Ref(Navigation),a:^Navigation_Agents,agents:core.Read(Nav_Agent),paths:^core.Table(Nav_Path),
-    requests:^Nav_Requests,events:^Nav_Events,inputs:^core.Table(input.Move_Input),drivables:core.Read(input.Drivable),
-    characters:core.Read(phys.Character),loco_states:core.Read(locomotion.Locomotion_State),colliders:core.Read(phys.Collider),walks:core.Read(locomotion.Walk),flights:core.Read(locomotion.Fly),swims:core.Read(locomotion.Swim),
-    grounds:core.Read(phys.Character_State),motions:core.Read(core.Motion),worlds:core.Read(core.World_Transform),
-    obstacles:core.Read(Nav_Obstacle),volumes:core.Read(volume.Volume),loco:^locomotion.Locomotion_Requests,physics:core.Ref(phys.Physics_State),builds:core.Ref(Navigation_Builds),fars:^core.Table(Nav_Far),
+    n:core.Ref(Navigation),a:^Navigation_Agents,agents:^core.Table(Nav_Agent,.Read),paths:^core.Table(Nav_Path),
+    requests:^Nav_Requests,events:^Nav_Events,inputs:^core.Table(input.Move_Input),drivables:^core.Table(input.Drivable,.Read),
+    characters:^core.Table(phys.Character,.Read),loco_states:^core.Table(locomotion.Locomotion_State,.Read),colliders:^core.Table(phys.Collider,.Read),walks:^core.Table(locomotion.Walk,.Read),flights:^core.Table(locomotion.Fly,.Read),swims:^core.Table(locomotion.Swim,.Read),
+    grounds:^core.Table(phys.Character_State,.Read),motions:^core.Table(core.Motion,.Read),worlds:^core.Table(core.World_Transform,.Read),
+    obstacles:^core.Table(Nav_Obstacle,.Read),volumes:^core.Table(volume.Volume,.Read),loco:^locomotion.Locomotion_Requests,physics:core.Ref(phys.Physics_State),builds:core.Ref(Navigation_Builds),fars:^core.Table(Nav_Far),
     roamings:^core.Table(scene.Roaming),disabled:^core.Table(core.Disabled),placer:core.Placer,bodies:^phys.Body_Requests,crossings:^Nav_Crossings,time:core.Time,problems:^core.Problems,
 ) {
     layouts:=[2]u64{core.layout(agents),core.layout(paths)}
@@ -280,8 +280,7 @@ navigation_agents :: proc(
         }
     }
     for asked in core.take(&requests.queue) {
-        p:=core.edit(paths,asked.entity)
-        if p==nil && core.has(agents,asked.entity) {p=core.added(paths,asked.entity)}
+        p:=core.staged(paths,asked.entity)
         if p==nil && far_request(paths,fars,asked,worlds) {continue}
         if p==nil {
             core.report(problems,asked.entity,"navigation.request","Navigation was asked to move an entity without a Nav_Agent: give it one (and a Character)")
@@ -612,7 +611,7 @@ jump_launch :: proc "contextless" (from,to:mm.Vec3,kind:Nav_Link_Kind,gravity:f3
 
 // Searches the paths of the agents that wait, in order, within the budget.
 @(private)
-agents_search :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Builds,paths:^core.Table(Nav_Path),agents:core.Read(Nav_Agent),characters:core.Read(phys.Character),grounds:core.Read(phys.Character_State),colliders:core.Read(phys.Collider),walks:core.Read(locomotion.Walk),swims:core.Read(locomotion.Swim),worlds:core.Read(core.World_Transform),physics:core.Ref(phys.Physics_State),sections:^Nav_Sections,budget:int,dt:f32,events:^Nav_Events,problems:^core.Problems) {
+agents_search :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Builds,paths:^core.Table(Nav_Path),agents:^core.Table(Nav_Agent,$A),characters:^core.Table(phys.Character,$B),grounds:^core.Table(phys.Character_State,$C),colliders:^core.Table(phys.Collider,$D),walks:^core.Table(locomotion.Walk,$E),swims:^core.Table(locomotion.Swim,$F),worlds:^core.Table(core.World_Transform,$G),physics:core.Ref(phys.Physics_State),sections:^Nav_Sections,budget:int,dt:f32,events:^Nav_Events,problems:^core.Problems) {
     for &tree,i in a.trees {
         if tree.target==core.NONE {continue}
         tree.age+=dt
@@ -879,7 +878,7 @@ agent_space_links :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Build
 // its own space, which says what is missing. A way toward a section away
 // stays in its own space.
 @(private)
-agent_medium_begin_search :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Builds,p:^Nav_Path,e:core.Entity,agent:Nav_Agent,pose:core.World_Transform,characters:core.Read(phys.Character),colliders:core.Read(phys.Collider),walks:core.Read(locomotion.Walk),swims:core.Read(locomotion.Swim),physics:core.Ref(phys.Physics_State),sections:^Nav_Sections) -> bool {
+agent_medium_begin_search :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Builds,p:^Nav_Path,e:core.Entity,agent:Nav_Agent,pose:core.World_Transform,characters:^core.Table(phys.Character,$A),colliders:^core.Table(phys.Collider,$B),walks:^core.Table(locomotion.Walk,$C),swims:^core.Table(locomotion.Swim,$D),physics:core.Ref(phys.Physics_State),sections:^Nav_Sections) -> bool {
     if sections!=nil && sections.away_count>0 && sections_away(sections,p.goal) {return false}
     in_volume:=class_in_volume(n,int(p.class))
     if in_volume==class_in_volume(n,int(p.partner)) {return false}
@@ -1085,7 +1084,7 @@ agents_avoid :: proc(n:^Navigation,a:^Navigation_Agents,paths:^core.Table(Nav_Pa
 // earlier in the tick, with its buttons and the turn of the ground. How many
 // agents cross a link.
 @(private)
-agents_steer :: proc(n:^Navigation,agents:core.Read(Nav_Agent),paths:^core.Table(Nav_Path),inputs:^core.Table(input.Move_Input),drivables:core.Read(input.Drivable),characters:core.Read(phys.Character),grounds:core.Read(phys.Character_State),worlds:core.Read(core.World_Transform),walks:core.Read(locomotion.Walk),flights:core.Read(locomotion.Fly),swims:core.Read(locomotion.Swim),dt:f32) -> (crossing:u32) {
+agents_steer :: proc(n:^Navigation,agents:^core.Table(Nav_Agent,$A),paths:^core.Table(Nav_Path),inputs:^core.Table(input.Move_Input),drivables:^core.Table(input.Drivable,$B),characters:^core.Table(phys.Character,$C),grounds:^core.Table(phys.Character_State,$D),worlds:^core.Table(core.World_Transform,$E),walks:^core.Table(locomotion.Walk,$F),flights:^core.Table(locomotion.Fly,$G),swims:^core.Table(locomotion.Swim,$H),dt:f32) -> (crossing:u32) {
     for row in 0..<core.count(paths) {
         e:=core.entity_at(paths,row)
         p:=core.edit_at(paths,row)
@@ -1156,13 +1155,13 @@ agents_steer :: proc(n:^Navigation,agents:core.Read(Nav_Agent),paths:^core.Table
 // way along a ladder or a climb without gravity.
 @(step="fixed",stage="simulate",before="locomotion_step",server)
 navigation_crossing :: proc(
-    paths:core.Read(Nav_Path),moves:^core.Table(phys.Character_Move),characters:core.Read(phys.Character),
-    walks:core.Read(locomotion.Walk),motions:core.Read(core.Motion),worlds:core.Read(core.World_Transform),
+    paths:^core.Table(Nav_Path,.Read),moves:^core.Table(phys.Character_Move),characters:^core.Table(phys.Character,.Read),
+    walks:^core.Table(locomotion.Walk,.Read),motions:^core.Table(core.Motion,.Read),worlds:^core.Table(core.World_Transform,.Read),
     physics:core.Ref(phys.Physics_State),crossings:core.Ref(Nav_Crossings),time:core.Time,
 ) {
     if !time.playing || time.dt<=0 || crossings.ptr==nil || crossings.count==0 {return}
     for row in 0..<core.count(paths) {
-        p:=paths.table.values[row]
+        p:=paths.values[row]
         if p.state!=.Crossing || p.manual || p.medium {continue}
         e:=core.entity_at(paths,row)
         move:=core.edit(moves,e)

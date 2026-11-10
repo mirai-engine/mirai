@@ -211,7 +211,7 @@ terrain_net_receive :: proc(
 // stands, and the replay it is. Without memory to count the asks of a
 // connection it is refused as Rate.
 @(private)
-ask_check :: proc(n:^Terrain_Net,held:multiplayer.Journal_Held,time:core.Time,data:core.Ref(terrain.Terrain_Data),terrains:core.Read(terrain.Terrain),seats:core.Read(input.Seat),drivables:core.Read(input.Drivable),worlds:core.Read(core.World_Transform),settings:Terrain_Net_Settings) -> (replay:terrain.Replay,refusal:Terrain_Refusal) {
+ask_check :: proc(n:^Terrain_Net,held:multiplayer.Journal_Held,time:core.Time,data:core.Ref(terrain.Terrain_Data),terrains:^core.Table(terrain.Terrain,$A),seats:^core.Table(input.Seat,$B),drivables:^core.Table(input.Drivable,$C),worlds:^core.Table(core.World_Transform,$D),settings:Terrain_Net_Settings) -> (replay:terrain.Replay,refusal:Terrain_Refusal) {
     if held.ahead {return {},.Tick}
     if refusal=rate_take(n,held.connection,time,settings);refusal!=.None {return}
     source:=base.Asset_Id(held.ask.key)
@@ -220,8 +220,8 @@ ask_check :: proc(n:^Terrain_Net,held:multiplayer.Journal_Held,time:core.Time,da
     if replay.kind==.Edit && settings.radius>0 && replay.brush.radius>settings.radius {return {},.Radius}
     if terrain.terrain_source(data,source)==nil {return {},.Not_Loaded}
     seat:=core.NONE
-    if seats.table!=nil {
-        for value,row in seats.table.values[:core.count(seats)] {if multiplayer.Connection(value.peer)==held.connection {seat=core.entity_at(seats,row);break}}
+    if seats!=nil {
+        for value,row in seats.values[:core.count(seats)] {if multiplayer.Connection(value.peer)==held.connection {seat=core.entity_at(seats,row);break}}
     }
     if seat==core.NONE {return {},.Player}
     if settings.reach>0 && replay.kind==.Edit {
@@ -230,8 +230,8 @@ ask_check :: proc(n:^Terrain_Net,held:multiplayer.Journal_Held,time:core.Time,da
             if world,found:=core.get(worlds,owner);found {at=mm.transform_point(world.transform,at)}
         }
         near:=false
-        if drivables.table!=nil {
-            for value,row in drivables.table.values[:core.count(drivables)] {
+        if drivables!=nil {
+            for value,row in drivables.values[:core.count(drivables)] {
                 if value.seat!=seat {continue}
                 world,found:=core.get(worlds,core.entity_at(drivables,row))
                 if found {d:=world.position-at;if d.x*d.x+d.y*d.y+d.z*d.z<=settings.reach*settings.reach {near=true;break}}
@@ -263,8 +263,8 @@ rate_take :: proc(n:^Terrain_Net,connection:multiplayer.Connection,time:core.Tim
 @(step="fixed",loops="game",stage="simulate")
 terrain_net_follow :: proc(
     authority:core.Ref(core.Network),n:^Terrain_Net,time:core.Time,replays:^terrain.Terrain_Replays,outbox:^multiplayer.Net_Outbox,
-    session:core.Ref(multiplayer.Net_Session),data:core.Ref(terrain.Terrain_Data),terrains:core.Read(terrain.Terrain),
-    seats:core.Read(input.Seat),drivables:core.Read(input.Drivable),worlds:core.Read(core.World_Transform),
+    session:core.Ref(multiplayer.Net_Session),data:core.Ref(terrain.Terrain_Data),terrains:^core.Table(terrain.Terrain,.Read),
+    seats:^core.Table(input.Seat,.Read),drivables:^core.Table(input.Drivable,.Read),worlds:^core.Table(core.World_Transform,.Read),
     settings:Terrain_Net_Settings,root:core.Ref(scene.Scene_Root),assets:^host.Assets,problems:^core.Problems,
 ) {
     if n==nil {return}
@@ -287,8 +287,8 @@ terrain_net_follow :: proc(
         refusal_report(problems,terrain.terrain_of_source(terrains,base.Asset_Id(refused.key)),refused)
     }
     // Every source a terrain shows here, or cannot read, follows its stream.
-    if terrains.table!=nil {
-        for marker in terrains.table.values[:core.count(terrains)] {
+    if terrains!=nil {
+        for marker in terrains.values[:core.count(terrains)] {
             if marker.source=={} || terrain.terrain_source(data,marker.source)==nil && !terrain.terrain_unread(data,assets,marker.source) {continue}
             if source_of(n,marker.source)==nil {core.report(problems,core.NONE,"terrain.net_memory","out of memory to follow a terrain source over the network; it is tried again in the next tick: free memory")}
         }

@@ -448,7 +448,7 @@ a_merge_changes_what_the_document_names_and_leaves_the_rest :: proc(t:^testing.T
     testing.expect(t,history.undo(&f.edits,w,&f.selection) && history.undo(&f.edits,w,&f.selection))
     for child in entity_children(w,root) {
         if entity_name(w,child)!="A2" {continue}
-        lamp,_:=core.get(core.read(&f.world.lamps),child)
+        lamp,_:=core.get(&f.world.lamps,child)
         held:=entity_children(w,child)
         testing.expect(t,lamp.intensity==5 && entity_local(w,child).position.x==9 && len(held)==1 && entity_has(w,held[0],core.Disabled))
     }

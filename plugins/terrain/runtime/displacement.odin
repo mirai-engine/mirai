@@ -105,11 +105,11 @@ source_displacement :: proc "contextless" (s:^Source) -> (reach:f32) {
 
 @(step="render",loops="game editor",before="render_sync")
 terrain_displace :: proc(
-    d:^Terrain_Displacement,data:core.Ref(Terrain_Data),settings:Terrain_Settings,terrains:core.Read(Terrain),chunks:core.Read(Terrain_Chunk),
-    meshes:core.Read(render.Mesh_Renderer),worlds:core.Read(core.World_Transform),parents:core.Read(core.Parent),
-    overrides:core.Read(render.Material_Override),tints:core.Read(render.Tint),hidden:core.Read(render.Hidden),
-    highlights:core.Read(render.Highlight),outlines:core.Read(render.Outline),offsets:core.Read(render.Draw_Offset),
-    layers:core.Read(render.Layers),locals:core.Read(core.Transform),cameras:core.Read(render.Camera),
+    d:^Terrain_Displacement,data:core.Ref(Terrain_Data),settings:Terrain_Settings,terrains:^core.Table(Terrain,.Read),chunks:^core.Table(Terrain_Chunk,.Read),
+    meshes:^core.Table(render.Mesh_Renderer,.Read),worlds:^core.Table(core.World_Transform,.Read),parents:^core.Table(core.Parent,.Read),
+    overrides:^core.Table(render.Material_Override,.Read),tints:^core.Table(render.Tint,.Read),hidden:^core.Table(render.Hidden,.Read),
+    highlights:^core.Table(render.Highlight,.Read),outlines:^core.Table(render.Outline,.Read),offsets:^core.Table(render.Draw_Offset,.Read),
+    layers:^core.Table(render.Layers,.Read),locals:^core.Table(core.Transform,.Read),cameras:^core.Table(render.Camera,.Read),
     assets:^host.Assets,renderer:^render.Renderer,extras:^host.Frame_Extras,allocator:runtime.Allocator,frame:core.Frame_Time,view:core.View,
 ) {
     if renderer==nil || assets==nil {return}

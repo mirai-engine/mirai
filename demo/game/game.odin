@@ -89,7 +89,7 @@ Door_State :: struct {
 Projectile :: struct {
     speed:f32 `mirai:"min=0,unit=m/s"`, // along the forward of the entity
     seconds_left:f32 `mirai:"min=0,unit=s"`, // it goes this long after it is seen first
-    until:u64 `mirai:"readonly,hidden"`,    // the tick it goes at; 0 until it is seen first
+    until:u64 `mirai:"readonly,hidden"`,    // the tick it goes at, set in its first tick
     velocity:[3]f32 `mirai:"transient"`,
     launched:bool `mirai:"transient"`,
 }
@@ -182,7 +182,7 @@ action_defaults :: proc "contextless" () -> [Action]inp.Action_Default {
 // The Menu action lets the focused seat go of its body, and that frees the mouse; again, it takes
 // the body back. The animation gallery lets go too while its player adjusts a panel.
 @(step="frame")
-game_menu :: proc(game:^Game,g:^gui.Gui,state:core.Ref(inp.Seats),seats:core.Read(inp.Seat),drivables:core.Read(inp.Drivable),moves:^core.Table(inp.Move_Input),requests:^inp.Seat_Requests) {
+game_menu :: proc(game:^Game,g:^gui.Gui,state:core.Ref(inp.Seats),seats:^core.Table(inp.Seat,.Read),drivables:^core.Table(inp.Drivable,.Read),moves:^core.Table(inp.Move_Input),requests:^inp.Seat_Requests) {
     if !gui.menu_pressed(gui.events_this_frame(g)) {return}
     seat:=inp.focused(state.ptr,seats)
     if seat==core.NONE {return}
@@ -197,7 +197,7 @@ game_menu :: proc(game:^Game,g:^gui.Gui,state:core.Ref(inp.Seats),seats:core.Rea
     }
 }
 
-in_reach :: proc(worlds:core.Read(core.World_Transform),from:[3]f32,e:core.Entity,reach:f32) -> bool {
+in_reach :: proc(worlds:^core.Table(core.World_Transform,$A),from:[3]f32,e:core.Entity,reach:f32) -> bool {
     placed,found:=core.get(worlds,e)
     return found && linalg.distance(placed.position,from)<reach
 }
@@ -207,8 +207,8 @@ swatch_index :: proc(swatch:Swatch) -> int {return int(swatch.index)%%len(SWATCH
 // What the seat of a body pressed this tick: open a door, change a sample, throw a cube.
 @(step="fixed")
 game_use :: proc(
-    players:^core.Table(Player),doors:^core.Table(Door),swatches:^core.Table(Swatch),inputs:core.Read(inp.Move_Input),
-    drivables:core.Read(inp.Drivable),actions:inp.Input_Of(Action),worlds:core.Read(core.World_Transform),names:core.Read(core.Name),spawner:scene.Spawner,
+    players:^core.Table(Player),doors:^core.Table(Door),swatches:^core.Table(Swatch),inputs:^core.Table(inp.Move_Input,.Read),
+    drivables:^core.Table(inp.Drivable,.Read),actions:inp.Input_Of(Action),worlds:^core.Table(core.World_Transform,.Read),names:^core.Table(core.Name,.Read),spawner:scene.Spawner,
 ) {
     for row in 0..<core.count(players) {
         e:=core.entity_at(players,row)
@@ -240,7 +240,7 @@ game_use :: proc(
 
 // Doors slide towards where their state, or a button pressed for them, says, at a constant speed.
 @(step="fixed")
-game_doors :: proc(doors:core.Read(Door),buttons:core.Read(Floor_Button),states:^core.Table(Door_State),transforms:^core.Table(core.Transform),time:core.Time) {
+game_doors :: proc(doors:^core.Table(Door,.Read),buttons:^core.Table(Floor_Button,.Read),states:^core.Table(Door_State),transforms:^core.Table(core.Transform),time:core.Time) {
     for row in 0..<core.count(doors) {
         e:=core.entity_at(doors,row)
         door:=core.at(doors,row)
@@ -258,19 +258,15 @@ game_doors :: proc(doors:core.Read(Door),buttons:core.Read(Floor_Button),states:
     }
 }
 
-// What a sample shows follows its index, wherever the index was decided. The
-// meshes are written through the world so that their version changes only
-// when a material does.
+// What a sample shows follows its index, wherever the index was decided.
 @(step="fixed")
-game_swatches :: proc(meshes:^core.Table(render.Mesh_Renderer),swatches:core.Read(Swatch),assets:^host.Assets) {
+game_swatches :: proc(meshes:^core.Table(render.Mesh_Renderer),swatches:^core.Table(Swatch,.Read),assets:^host.Assets) {
     paths:=SWATCH_MATERIALS
     for row in 0..<core.count(swatches) {
-        e:=core.entity_at(swatches,row)
-        mesh,drawn:=core.get(meshes,e)
+        mesh:=core.edit(meshes,core.entity_at(swatches,row))
         wanted,found:=host.assets_id(assets,paths[swatch_index(core.at(swatches,row))])
-        if !drawn || !found {continue}
+        if mesh==nil || !found {continue}
         for &material in mesh.materials {material=wanted}
-        core.set(meshes,e,mesh)
     }
 }
 
@@ -279,7 +275,7 @@ game_swatches :: proc(meshes:^core.Table(render.Mesh_Renderer),swatches:core.Rea
 @(step="fixed")
 game_animate :: proc(
     spins:^core.Table(Spin),bobs:^core.Table(Bob),transforms:^core.Table(core.Transform),
-    worlds:core.Read(core.World_Transform),bodies:^phys.Body_Requests,time:core.Time,
+    worlds:^core.Table(core.World_Transform,.Read),bodies:^phys.Body_Requests,time:core.Time,
 ) {
     seconds:=f32(time.seconds)
     for row in 0..<core.count(spins) {
@@ -287,9 +283,8 @@ game_animate :: proc(
         local:=core.free(transforms,e)
         placed,body:=core.get(worlds,e)
         if local==nil && !body {continue}
-        first:=core.added(spins,row)
         spin:=core.edit_at(spins,row)
-        if first {spin.angles=mm.quat_to_euler(local!=nil?local.rotation:placed.rotation)*mm.DEG_PER_RAD}
+        if core.added(spins,row) {spin.angles=mm.quat_to_euler(local!=nil?local.rotation:placed.rotation)*mm.DEG_PER_RAD}
         spin.angles+=spin.degrees_per_second*time.dt
         for &angle in spin.angles {angle=math.mod(angle,360)}
         turned:=mm.quat_from_euler(spin.angles*mm.RAD_PER_DEG)
@@ -321,8 +316,8 @@ bob_height :: proc(bobs:^core.Table(Bob),row:int,y,seconds:f32) -> f32 {
 // Emission: pulses breathe, the lamp of a door shows its state, the nose of a dog flashes when it barks.
 @(step="fixed")
 game_glow :: proc(
-    tints:^core.Table(render.Tint),pulses:^core.Table(Pulse),doors:core.Read(Door),buttons:core.Read(Floor_Button),barkers:core.Read(Barker),
-    hierarchy:core.Ref(core.Hierarchy),names:core.Read(core.Name),time:core.Time,
+    tints:^core.Table(render.Tint),pulses:^core.Table(Pulse),doors:^core.Table(Door,.Read),buttons:^core.Table(Floor_Button,.Read),barkers:^core.Table(Barker,.Read),
+    hierarchy:core.Ref(core.Hierarchy),names:^core.Table(core.Name,.Read),time:core.Time,
 ) {
     seconds:=f32(time.seconds)
     for row in 0..<core.count(pulses) {
@@ -336,12 +331,12 @@ game_glow :: proc(
     for row in 0..<core.count(doors) {
         door:=core.at(doors,row)
         glow:=door_opened(doors,buttons,core.entity_at(doors,row))?DOOR_OPEN_GLOW:DOOR_CLOSED_GLOW
-        if tint,has:=core.get(tints,door.lamp);has && tint.emission!=glow {core.edit(tints,door.lamp).emission=glow}
+        if tint:=core.edit(tints,door.lamp);tint!=nil {tint.emission=glow}
     }
     for row in 0..<core.count(buttons) {
         button:=core.at(buttons,row)
         glow:=button.pressed?DOOR_OPEN_GLOW:DOOR_CLOSED_GLOW
-        if tint,has:=core.get(tints,button.plate);has && tint.emission!=glow {core.edit(tints,button.plate).emission=glow}
+        if tint:=core.edit(tints,button.plate);tint!=nil {tint.emission=glow}
     }
     for row in 0..<core.count(barkers) {
         flashing:=!core.due(time,core.at(barkers,row).flash_until)
@@ -358,7 +353,7 @@ game_glow :: proc(
 // destruct leaves alone what is not one.
 @(step="fixed",stage="react")
 game_projectiles :: proc(
-    es:core.Commands,projectiles:^core.Table(Projectile),transforms:core.Read(core.Transform),body_states:core.Read(core.Motion),
+    es:core.Commands,projectiles:^core.Table(Projectile),transforms:^core.Table(core.Transform,.Read),body_states:^core.Table(core.Motion,.Read),
     events:core.Ref(phys.Physics_Events),bodies:^phys.Body_Requests,
     damage:^destruct.Destruct_Requests,time:core.Time,
 ) {
@@ -383,8 +378,8 @@ game_projectiles :: proc(
                 projectile.launched=true
             }
         }
-        if projectile.until==0 {
-            projectile.until=max(core.deadline(time,projectile.seconds_left),1)
+        if core.added(projectiles,row) {
+            projectile.until=core.deadline(time,projectile.seconds_left)
         } else if core.due(time,projectile.until) {
             core.destroy(es,e)
         }
@@ -411,7 +406,7 @@ Player_Hud :: struct {
 }
 
 // The caption of the exhibit nearest to a point, within its reach: its own, or its name.
-exhibit_caption :: proc(out:[]u8,exhibits:core.Read(Exhibit),worlds:core.Read(core.World_Transform),names:core.Read(core.Name),from:[3]f32) -> bool {
+exhibit_caption :: proc(out:[]u8,exhibits:^core.Table(Exhibit,$A),worlds:^core.Table(core.World_Transform,$B),names:^core.Table(core.Name,$C),from:[3]f32) -> bool {
     found:=false
     distance:=max(f32)
     for row in 0..<core.count(exhibits) {
@@ -432,13 +427,12 @@ exhibit_caption :: proc(out:[]u8,exhibits:core.Read(Exhibit),worlds:core.Read(co
 
 @(step="frame")
 player_hud :: proc(
-    huds:^core.Table(Player_Hud),players:core.Read(Player),doors:core.Read(Door),swatches:core.Read(Swatch),exhibits:core.Read(Exhibit),
-    barkers:core.Read(Barker),demos:core.Read(Control_Demo),drivables:core.Read(inp.Drivable),
-    worlds:core.Read(core.World_Transform),names:core.Read(core.Name),
+    huds:^core.Table(Player_Hud),players:^core.Table(Player,.Read),doors:^core.Table(Door,.Read),swatches:^core.Table(Swatch,.Read),exhibits:^core.Table(Exhibit,.Read),
+    barkers:^core.Table(Barker,.Read),demos:^core.Table(Control_Demo,.Read),drivables:^core.Table(inp.Drivable,.Read),
+    worlds:^core.Table(core.World_Transform,.Read),names:^core.Table(core.Name,.Read),
 ) {
-    shown:=core.read(huds)
-    for row in 0..<core.count(shown) {
-        body:=core.entity_at(shown,row)
+    for row in 0..<core.count(huds) {
+        body:=core.entity_at(huds,row)
         next:Player_Hud
         player,has_player:=core.get(players,body)
         barker,has_barker:=core.get(barkers,body)
@@ -461,6 +455,6 @@ player_hud :: proc(
             }
             next.captioned=exhibit_caption(next.caption[:],exhibits,worlds,names,feet)
         }
-        if core.at(shown,row)!=next {core.edit_at(huds,row)^=next}
+        core.edit_at(huds,row)^=next
     }
 }

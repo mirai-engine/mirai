@@ -1739,10 +1739,10 @@ followers_of_one_target_share_one_search_toward_it :: proc(t:^testing.T) {
     }
     own:=f.run.query.search.stats.searches
     replans:u32
-    at,_:=core.get(core.read(&f.worlds),runner)
+    at,_:=core.get(&f.worlds,runner)
     for e,i in walkers {
-        p,_:=core.get(core.read(&f.paths),e)
-        pose,_:=core.get(core.read(&f.worlds),e)
+        p,_:=core.get(&f.paths,e)
+        pose,_:=core.get(&f.worlds,e)
         replans+=p.replans
         testing.expectf(t,(p.state==.Arrived || p.state==.Moving) && linalg.distance(pose.position,at.position)<4,"walker %d is %v at %v, the runner at %v",i,p.state,pose.position,at.position)
     }
@@ -1894,8 +1894,8 @@ agents_step_aside_from_those_they_meet_within_the_horizon :: proc(t:^testing.T) 
         append(&f.run.near,Near{entity=a,position={0,1,0.05},velocity={4,0,0},radius=0.4,height=2,avoids=true})
         append(&f.run.near,Near{entity=b,position={distance,1,0},velocity={-4,0,0},radius=0.4,height=2,avoids=true})
         agents_avoid(&f.nav,&f.run,&f.paths,1.0/60,&f.problems)
-        first,_:=core.get(core.read(&f.paths),a)
-        second,_:=core.get(core.read(&f.paths),b)
+        first,_:=core.get(&f.paths,a)
+        second,_:=core.get(&f.paths,b)
         turned:=first.velocity!=[3]f32{4,0,0} && second.velocity!=[3]f32{-4,0,0}
         still:=first.velocity==[3]f32{4,0,0} && second.velocity==[3]f32{-4,0,0}
         testing.expectf(t,turned if i==0 else still,"%v m apart they go at %v and %v",distance,first.velocity,second.velocity)

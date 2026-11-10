@@ -56,7 +56,7 @@ The seat of a player is one (`inp.seat_of(drivables,body)`); for the run of all,
 Run :: struct {score:i32}
 
 @(step="fixed",server)
-game_run :: proc(runs:core.Read(Run),commands:core.Commands) {
+game_run :: proc(runs:^core.Table(Run,.Read),commands:core.Commands) {
     if core.count(runs)>0 {return}
     root:=core.commands_create(commands)
     core.commands_add(commands,root,core.Keep{})

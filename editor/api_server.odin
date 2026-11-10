@@ -851,7 +851,7 @@ api_handle_put :: proc(buffer:[]u8,e:core.Entity) {base.text_set(buffer,api_hand
 
 // The id of an entity of a world, 0 without one.
 api_entity_id :: proc(w:core.World_Ref,e:core.Entity) -> base.Entity_Id {
-    return core.id_of(core.read(core.world_table_of(w,core.Id)),e)
+    return core.id_of(core.world_table_of(w,core.Id),e)
 }
 
 // The live entity of a world with an Id, as of its last settle; NONE for 0

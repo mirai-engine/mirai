@@ -70,7 +70,7 @@ hierarchy_moved :: proc "contextless" (h:Ref(Hierarchy),seen:^u64) -> (moved:[]E
 // destroyed are still doomed. It goes through every row only when the table
 // was copied, swapped or cleared. False without memory: the tree is built
 // whole on the next settle.
-hierarchy_settle :: proc(h:^Hierarchy,parents:Read(Parent),es:^Entities) -> bool {
+hierarchy_settle :: proc(h:^Hierarchy,parents:^Table(Parent,$A),es:^Entities) -> bool {
     n:=entities_capacity(es)
     if len(h.parent)<n {
         if resize(&h.parent,n)!=nil || resize(&h.first_child,n)!=nil || resize(&h.last_child,n)!=nil ||
@@ -124,7 +124,7 @@ hierarchy_settle :: proc(h:^Hierarchy,parents:Read(Parent),es:^Entities) -> bool
 
 // Links e under the entity its Parent names, or leaves it out for a cycle and says so.
 @(private)
-hierarchy_place :: proc(h:^Hierarchy,parents:Read(Parent),es:^Entities,e:Entity) {
+hierarchy_place :: proc(h:^Hierarchy,parents:^Table(Parent,$A),es:^Entities,e:Entity) {
     if hierarchy_link(h,parents,es,e) {return}
     if _,error:=append(&h.cut,e);error!=nil {h.seen={}}
     log.warnf("core: the Parent of entity %d puts it under itself; it stays a root of the hierarchy until that changes",entity_index(e))
@@ -132,7 +132,7 @@ hierarchy_place :: proc(h:^Hierarchy,parents:Read(Parent),es:^Entities,e:Entity)
 
 // Whether e hangs where its Parent says, among its siblings in their order.
 @(private)
-hierarchy_placed :: proc(h:^Hierarchy,parents:Read(Parent),e:Entity) -> bool {
+hierarchy_placed :: proc(h:^Hierarchy,parents:^Table(Parent,$A),e:Entity) -> bool {
     value,_:=get(parents,e)
     i:=entity_index(e)
     if h.parent[i]!=value.entity {return false}
@@ -146,7 +146,7 @@ hierarchy_placed :: proc(h:^Hierarchy,parents:Read(Parent),e:Entity) -> bool {
 // is not above its own; a root when that one is not alive. False when e is
 // above it: the link would close a cycle.
 @(private)
-hierarchy_link :: proc(h:^Hierarchy,parents:Read(Parent),es:^Entities,e:Entity) -> bool {
+hierarchy_link :: proc(h:^Hierarchy,parents:^Table(Parent,$A),es:^Entities,e:Entity) -> bool {
     value,_:=get(parents,e)
     p:=value.entity
     if p==NONE || !alive(es,p) {return true}
@@ -199,7 +199,7 @@ cut_drop :: proc(h:^Hierarchy,e:Entity) {
 }
 
 @(private)
-order_of :: #force_inline proc(parents:Read(Parent),e:Entity) -> i32 {
+order_of :: #force_inline proc(parents:^Table(Parent,$A),e:Entity) -> i32 {
     value,_:=get(parents,e)
     return value.order
 }
@@ -252,7 +252,7 @@ destroy_tree :: proc(es:^Entities,h:Ref(Hierarchy),e:Entity) {
 }
 
 // e, or the nearest entity above it, with the component on; NONE without one.
-ancestor_with :: proc(parents:Read(Parent),table:Read($T),e:Entity) -> Entity {
+ancestor_with :: proc(parents:^Table(Parent,$A),table:^Table($T,$B),e:Entity) -> Entity {
     at:=e
     for _ in 0..=HIERARCHY_DEPTH {
         if at==NONE || has(table,at) {return at}
@@ -264,7 +264,7 @@ ancestor_with :: proc(parents:Read(Parent),table:Read($T),e:Entity) -> Entity {
 }
 
 // Whether ancestor is e or something e hangs under.
-is_under :: proc(parents:Read(Parent),e,ancestor:Entity) -> bool {
+is_under :: proc(parents:^Table(Parent,$A),e,ancestor:Entity) -> bool {
     if ancestor==NONE {return false}
     at:=e
     for _ in 0..=HIERARCHY_DEPTH {
@@ -277,7 +277,7 @@ is_under :: proc(parents:Read(Parent),e,ancestor:Entity) -> bool {
 }
 
 // How many entities e hangs under, HIERARCHY_DEPTH at most.
-depth_of :: proc(parents:Read(Parent),e:Entity) -> int {
+depth_of :: proc(parents:^Table(Parent,$A),e:Entity) -> int {
     at:=e
     for depth in 0..<HIERARCHY_DEPTH {
         parent,ok:=get(parents,at)
@@ -291,7 +291,7 @@ depth_of :: proc(parents:Read(Parent),e:Entity) -> int {
 // entity that hangs from parent has to be to be there. A parent without
 // Transform holds it as the root does. False when a parent without size on
 // an axis cannot hold it there.
-local_under :: proc(locals:Read(Transform),parents:Read(Parent),parent:Entity,world:mm.Transform) -> (local:mm.Transform,ok:bool) {
+local_under :: proc(locals:^Table(Transform,$A),parents:^Table(Parent,$B),parent:Entity,world:mm.Transform) -> (local:mm.Transform,ok:bool) {
     if parent==NONE {return world,true}
     above,placed:=world_of(locals,parents,parent)
     if !placed {return world,true}
@@ -301,7 +301,7 @@ local_under :: proc(locals:Read(Transform),parents:Read(Parent),parent:Entity,wo
 // Writes the Transform row of e so that it is at a position and rotation of
 // the world under its parent; its scale stays. What a library that moves an
 // entity writes.
-world_set :: proc(row:^Transform,locals:Read(Transform),parents:Read(Parent),e:Entity,position:[3]f32,rotation:mm.Quat) -> bool {
+world_set :: proc(row:^Transform,locals:^Table(Transform,$A),parents:^Table(Parent,$B),e:Entity,position:[3]f32,rotation:mm.Quat) -> bool {
     parent,_:=get(parents,e)
     local:=local_under(locals,parents,parent.entity,{position,rotation,{1,1,1}}) or_return
     row.position,row.rotation=local.position,local.rotation

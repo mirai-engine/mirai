@@ -37,7 +37,7 @@ gallery_mirai_matching_plays_idle_walk_and_jog_by_the_speed_it_is_asked :: proc(
     animation:=anim.ANIMATION_DEFAULT;animation.asset=ids[0];core.add(&f.animations,actor,animation)
     core.add(&gallery,actor,{kind=.Matching,manual=true})
     core.table_settle(&f.transforms,&f.entities);core.table_settle(&f.worlds,&f.entities);core.table_settle(&f.meshes,&f.entities);core.table_settle(&f.animations,&f.entities);core.table_settle(&gallery,&f.entities)
-    core.hierarchy_settle(&f.hierarchy,core.read(&f.parents),&f.entities)
+    core.hierarchy_settle(&f.hierarchy,&f.parents,&f.entities)
     time:=core.Time{dt=1.0/60,playing=true}
     tick :: proc(t:^testing.T,f:^Animation_Input_Fixture,gallery:^core.Table(Animation_Gallery),graphs:^anim.Character_Assets,progress:^core.Table(anim.Animation_Progress),panel:^Gallery_UI,problems:^core.Problems,time:core.Time) -> (anim.Animation_Match,bool) {
         ui_events:gui.UI_Events

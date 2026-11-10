@@ -196,7 +196,7 @@ physics_cache_update :: proc(players:^core.Table(Geometry_Playback),requests:^Ge
 }
 
 @(step="render",loops="game editor",before="render_sync")
-physics_cache_draw :: proc(players:core.Read(Geometry_Playback),worlds:core.Read(core.World_Transform),hidden:core.Read(render.Hidden),library:^Cache_Library,assets:^host.Assets,extras:^host.Frame_Extras,allocator:runtime.Allocator,problems:^core.Problems) {
+physics_cache_draw :: proc(players:^core.Table(Geometry_Playback,.Read),worlds:^core.Table(core.World_Transform,.Read),hidden:^core.Table(render.Hidden,.Read),library:^Cache_Library,assets:^host.Assets,extras:^host.Frame_Extras,allocator:runtime.Allocator,problems:^core.Problems) {
     if assets==nil {return}
     for row in 0..<core.count(players) {
         e:=core.entity_at(players,row)

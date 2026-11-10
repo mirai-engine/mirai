@@ -41,8 +41,8 @@ Tile_Work :: struct {
 
 @(step="fixed frame",loops="game editor",stage="simulate")
 foliage_ground :: proc(
-    ground:^Foliage_Ground,requests:^Foliage_Ground_Requests,data:core.Ref(Foliage_Data),foliages:core.Read(Foliage),
-    worlds:core.Read(core.World_Transform),sources:core.Ref(scene.Streaming_Sources),queries:core.Ref(core.Ground_Queries),
+    ground:^Foliage_Ground,requests:^Foliage_Ground_Requests,data:core.Ref(Foliage_Data),foliages:^core.Table(Foliage,.Read),
+    worlds:^core.Table(core.World_Transform,.Read),sources:core.Ref(scene.Streaming_Sources),queries:core.Ref(core.Ground_Queries),
     world:core.World_Ref,job_system:^jobs.Job_System,problems:^core.Problems,
 ) {
     asked:=core.take(&requests.cells)
@@ -211,7 +211,7 @@ tile_sample :: proc(q:^core.Ground_Query,owner_world,owner_local:mm.Mat4,coord:[
 // Reads GROUND_TILES tiles of the queue, in jobs, fine or coarse by where the
 // sources are then, and writes them in the order they were asked.
 @(private)
-ground_read :: proc(ground:^Foliage_Ground,q:^core.Ground_Query,data:core.Ref(Foliage_Data),foliages:core.Read(Foliage),worlds:core.Read(core.World_Transform),sources:^scene.Streaming_Sources,job_system:^jobs.Job_System) {
+ground_read :: proc(ground:^Foliage_Ground,q:^core.Ground_Query,data:core.Ref(Foliage_Data),foliages:^core.Table(Foliage,$A),worlds:^core.Table(core.World_Transform,$B),sources:^scene.Streaming_Sources,job_system:^jobs.Job_System) {
     if len(ground.queue)==0 {return}
     Reading :: struct {q:^core.Ground_Query,work:[dynamic]Tile_Work}
     // Temporary like the slices it holds: kept in the storage, the world would free them.

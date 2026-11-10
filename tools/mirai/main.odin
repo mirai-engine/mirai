@@ -253,7 +253,6 @@ cmd_check :: proc(root:string,args:[]string) -> int {
     if code==0 && folder!="" && alloc_lint_applies(root,folder) && !alloc_lint_package(folder) {return 1}
     if code==0 && folder!="" && plugin_api_lint_applies(folder) && !plugin_api_lint_folder(folder) {return 1}
     if code==0 && folder!="" && solver_lint_applies(root,folder) && !solver_lint_package(folder) {return 1}
-    if code==0 && folder!="" && !row_copy_lint_package(folder) {return 1}
     return code
 }
 
@@ -270,7 +269,7 @@ check_project :: proc(root,folder:string) -> int {
     for d in job.result.diagnostics {fmt.eprintfln("%s(%d:%d) %v: %s",d.file,d.line,d.column,d.severity,d.message)}
     if job.result.status==.Built {
         game:=join(folder,project.FOLDER_NAMES[.Game])
-        if !solver_lint_package(game) || !row_copy_lint_package(game) {return 1}
+        if !solver_lint_package(game) {return 1}
         return 1 if alloc_lint_applies(root,game) && !alloc_lint_package(game) || !clean else 0
     }
     if len(job.result.diagnostics)==0 {fmt.eprintln(job.result.text)}

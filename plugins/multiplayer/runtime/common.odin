@@ -116,7 +116,7 @@ pose_follow :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity,t:^Net_Type,po
     }
     replicas:=core.world_table_of(w,core.Pose_Target)
     held:=core.staged(replicas,e)
-    local,has:=core.get(core.read(core.world_table_of(w,core.Transform)),e)
+    local,has:=core.get(core.world_table_of(w,core.Transform),e)
     if held!=nil && has && linalg.length2(local.position-pose.position)<=REPLICA_JUMP*REPLICA_JUMP {
         value.placed=held.placed
     } else {

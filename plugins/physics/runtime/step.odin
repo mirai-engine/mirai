@@ -45,19 +45,18 @@ Sync :: struct {
     meshes:^Collider_Meshes,
     playing:bool,
     dt:f32,
-    rigids:core.Read(Rigid_Body),
-    colliders:core.Read(Collider),
-    characters:core.Read(Character),
-    statics:core.Read(render.Mesh_Renderer),
-    parents:core.Read(core.Parent),
+    rigids:^core.Table(Rigid_Body,.Read),
+    colliders:^core.Table(Collider,.Read),
+    characters:^core.Table(Character,.Read),
+    statics:^core.Table(render.Mesh_Renderer,.Read),
+    parents:^core.Table(core.Parent,.Read),
     hierarchy:core.Ref(core.Hierarchy), // without it every sync is whole
-    names:core.Read(core.Name),
+    names:^core.Table(core.Name,.Read),
     collision:^Collision_Settings,
     collision_changed:bool, // the settings differ from those the filters were made with
-    locals:core.Read(core.Transform),
     transforms:^core.Table(core.Transform),
     motions:^core.Table(core.Motion),
-    targets:core.Read(core.Pose_Target),
+    targets:^core.Table(core.Pose_Target,.Read),
     grouped:bool, // Motion.island has the groups of this step
     character_states:^core.Table(Character_State),
     jumps:^core.Jumps, // nil for whoever steps the simulation by hand
@@ -79,15 +78,15 @@ physics_prepare :: proc(state:^Physics_State,settings:core.Ref(Physics_Settings)
 physics_step :: proc(
     state:^Physics_State,settings:core.Ref(Physics_Settings),requests:^Body_Requests,events:^Physics_Events,meshes:^Collider_Meshes,
     app:^host.App,time:core.Time,
-    rigids:core.Read(Rigid_Body),colliders:core.Read(Collider),characters:core.Read(Character),moves:core.Read(Character_Move),
-    joints:^core.Table(Joint),statics:core.Read(render.Mesh_Renderer),parents:core.Read(core.Parent),names:core.Read(core.Name),
-    transforms:^core.Table(core.Transform),motions:^core.Table(core.Motion),targets:core.Read(core.Pose_Target),
-    character_states:^core.Table(Character_State),joint_states:^core.Table(Joint_State),fluids:core.Read(Fluid),
+    rigids:^core.Table(Rigid_Body,.Read),colliders:^core.Table(Collider,.Read),characters:^core.Table(Character,.Read),moves:^core.Table(Character_Move,.Read),
+    joints:^core.Table(Joint),statics:^core.Table(render.Mesh_Renderer,.Read),parents:^core.Table(core.Parent,.Read),names:^core.Table(core.Name,.Read),
+    transforms:^core.Table(core.Transform),motions:^core.Table(core.Motion),targets:^core.Table(core.Pose_Target,.Read),
+    character_states:^core.Table(Character_State),joint_states:^core.Table(Joint_State),fluids:^core.Table(Fluid,.Read),
     joint_requests:^Joint_Requests,
     collision:core.Ref(Collision_Settings),sync_check:core.Ref(core.Sync_Check),simulation_hash:^core.Simulation_Hash,
     jumps:^core.Jumps,problems:^core.Problems,
-    gravities:core.Read(volume.Gravity),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),
-    fluid_waves:core.Read(Fluid_Waves),winds:core.Read(volume.Wind),
+    gravities:^core.Table(volume.Gravity,.Read),volumes:^core.Table(volume.Volume,.Read),worlds:^core.Table(core.World_Transform,.Read),
+    fluid_waves:^core.Table(Fluid_Waves,.Read),winds:^core.Table(volume.Wind,.Read),
     hierarchy:core.Ref(core.Hierarchy),
 ) {
     if !state_make(state,settings.ptr,&app.jobs,problems) {
@@ -95,7 +94,7 @@ physics_step :: proc(
         return
     }
     w:=&state.world
-    fluids_sync(state,fluids,volumes,core.read(transforms),parents,problems,fluid_waves,winds,worlds)
+    fluids_sync(state,fluids,volumes,transforms,parents,problems,fluid_waves,winds,worlds)
     if !events_reserve(events,w.desc.event_capacity) {
         memory_problem(problems,core.NONE,"the events of the physics, so nothing is simulated in this tick")
         core.queue_clear(&requests.queue)
@@ -105,7 +104,7 @@ physics_step :: proc(
     s:=Sync{
         state=state,app=app,meshes=meshes,playing=time.playing && time.dt>0,dt=time.dt,
         rigids=rigids,colliders=colliders,characters=characters,statics=statics,parents=parents,hierarchy=hierarchy,names=names,
-        locals=core.read(transforms),transforms=transforms,motions=motions,targets=targets,character_states=character_states,jumps=jumps,problems=problems,
+        transforms=transforms,motions=motions,targets=targets,character_states=character_states,jumps=jumps,problems=problems,
         budget=BODIES_PER_TICK,
     }
     // Bodies that wait for the next tick keep a load from being resident.
@@ -185,12 +184,12 @@ physics_step :: proc(
         structure=sync_structure(&s)
         state.synced=sync_seen(&s,structure)
         if ran {state.sealed_key,state.unmade=sealed_key(&s,structure),s.unmade}
-        _=core.changes(s.locals,&state.transforms_seen)
+        _=core.changes(s.transforms,&state.transforms_seen)
     }
 
     asked:=core.take(&requests.queue)
     requests_apply(&s,asked)
-    if s.playing {joints_sync(&s,core.read(joints),joint_states)}
+    if s.playing {joints_sync(&s,joints,joint_states)}
     joint_requests_apply(&s,joints,joint_states,joint_requests)
     if s.playing {
         for row in 0..<core.count(characters) {
@@ -220,7 +219,7 @@ physics_step :: proc(
     }
     parallel:=Parallel{&app.jobs}
     w.desc.parallel_user=&parallel
-    if gravities.table!=nil {gravity_apply(state,gravities,volumes,worlds,problems)}
+    if gravities!=nil {gravity_apply(state,gravities,volumes,worlds,problems)}
     sim.world_step(w,time.dt)
     w.desc.parallel_user=nil
     strains_apply(w,asked)
@@ -246,7 +245,7 @@ physics_step :: proc(
 // The vertical of every character, for what reads it outside physics: the
 // camera that follows it, the game.
 @(step="fixed",loops="game",stage="simulate",after="physics_step")
-physics_verticals :: proc(state:core.Ref(Physics_State),characters:core.Read(Character),verticals:^core.Table(core.Vertical)) {
+physics_verticals :: proc(state:core.Ref(Physics_State),characters:^core.Table(Character,.Read),verticals:^core.Table(core.Vertical)) {
     if state.ptr==nil || !state.ready {return}
     for row in 0..<core.count(characters) {
         e:=core.entity_at(characters,row)
@@ -255,7 +254,7 @@ physics_verticals :: proc(state:core.Ref(Physics_State),characters:core.Read(Cha
         next:=core.Vertical{sim.character_state(&state.world,l.character).up_frame}
         if at:=core.row_of(verticals,e);at<0 {
             core.add(verticals,e,next)
-        } else if verticals.values[at]!=next {core.edit_at(verticals,at)^=next}
+        } else {core.edit_at(verticals,at)^=next}
     }
     for row:=core.count(verticals)-1;row>=0;row-=1 {
         if e:=core.entity_at(verticals,row);!core.has(characters,e) {core.remove(verticals,e)}
@@ -298,12 +297,12 @@ sealed_sync :: proc(s:^Sync,structure:u64) -> bool {
     h:=s.hierarchy
     if h.ptr==nil || len(h.cut)>0 || state.unmade || s.collision_changed || sealed_key(s,structure)!=state.sealed_key {return false}
     seen:=state.transforms_seen
-    c:=core.changes(s.locals,&seen)
+    c:=core.changes(s.transforms,&seen)
     if c.all {return false}
     clear(&state.sealed)
-    for row in core.each_changed(s.locals,&c) {
-        root:=core.entity_at(s.locals,row)
-        if sealed_above(s.locals,h,root,c) {continue}
+    for row in core.each_changed(s.transforms,&c) {
+        root:=core.entity_at(s.transforms,row)
+        if sealed_above(s.transforms,h,root,c) {continue}
         for at:=root;at!=core.NONE;at=core.subtree_next(h,root,at) {
             order,body:=sync_order(s,at)
             if !body {continue}
@@ -320,7 +319,7 @@ sealed_sync :: proc(s:^Sync,structure:u64) -> bool {
 
 // Whether something e hangs from has its Transform sealed since: its walk takes e.
 @(private)
-sealed_above :: proc(locals:core.Read(core.Transform),h:core.Ref(core.Hierarchy),e:core.Entity,c:core.Changes) -> bool {
+sealed_above :: proc(locals:^core.Table(core.Transform,$A),h:core.Ref(core.Hierarchy),e:core.Entity,c:core.Changes) -> bool {
     for at:=core.parent_of(h,e);at!=core.NONE;at=core.parent_of(h,at) {
         if row:=core.row_of(locals,at);row>=0 && core.changed(locals,c,row) {return true}
     }
@@ -384,12 +383,12 @@ links_reserve :: proc(s:^Sync) -> bool {
 
 @(private)
 world_pose :: proc(s:^Sync,e:core.Entity) -> mm.Transform {
-    world,_:=core.world_of(s.locals,s.parents,e)
+    world,_:=core.world_of(s.transforms,s.parents,e)
     return world
 }
 
 // The Transform values that put an entity at a world pose under its parent: what a library that moves an entity writes.
-local_of :: proc(locals:core.Read(core.Transform),parents:core.Read(core.Parent),e:core.Entity,pose:sim.Transform) -> (position:[3]f32,rotation:mm.Quat,ok:bool) {
+local_of :: proc(locals:^core.Table(core.Transform,$A),parents:^core.Table(core.Parent,$B),e:core.Entity,pose:sim.Transform) -> (position:[3]f32,rotation:mm.Quat,ok:bool) {
     parent,_:=core.get(parents,e)
     local:=core.local_under(locals,parents,parent.entity,{pose.p,pose.q,{1,1,1}}) or_return
     return local.position,local.rotation,true
@@ -408,7 +407,7 @@ pose_differs :: proc "contextless" (current:sim.Transform,target:sim.Transform) 
 pose_write :: proc(s:^Sync,l:^Link,e:core.Entity,pose:sim.Transform) {
     row:=core.row_of(s.transforms,e)
     if row<0 {return}
-    position,rotation,ok:=local_of(s.locals,s.parents,e,pose)
+    position,rotation,ok:=local_of(s.transforms,s.parents,e,pose)
     if !ok {return}
     l.written_position,l.written_rotation=position,rotation
     local:=s.transforms.values[row]
@@ -543,7 +542,7 @@ body_sync :: proc(s:^Sync,e:core.Entity,l:^Link,rigid:Rigid_Body,has_rigid:bool,
     }
     if mass_changed {body_mass_update(w,l.body,rigid,has_rigid)}
 
-    local,has_local:=core.get(s.locals,e)
+    local,has_local:=core.get(s.transforms,e)
     if created {
         if has_local {l.written_position,l.written_rotation=local.position,local.rotation}
     } else if s.playing && (has_rigid || l.hold.by!={}) {
@@ -581,9 +580,9 @@ compound_relative :: proc(s:^Sync,e,owner:core.Entity) -> mm.Transform {
         at=ok?parent.entity:core.NONE
     }
     relative:=mm.TRANSFORM_IDENTITY
-    if above,ok:=core.world_of(s.locals,s.parents,owner);ok {relative.scale=above.scale}
+    if above,ok:=core.world_of(s.transforms,s.parents,owner);ok {relative.scale=above.scale}
     #reverse for at in chain[:depth] {
-        if local,ok:=core.get(s.locals,at);ok {relative=mm.transform_compose(relative,core.to_math(local))}
+        if local,ok:=core.get(s.transforms,at);ok {relative=mm.transform_compose(relative,core.to_math(local))}
     }
     return relative
 }
@@ -748,7 +747,7 @@ character_sync :: proc(s:^Sync,e:core.Entity,l:^Link,config:Character,capsule:Co
     scale:=linalg.abs(world.scale)
     filter:=collision_of(s,e,l,capsule)
     desc:=character_desc(config,capsule,scale,filter,e)
-    local,has_local:=core.get(s.locals,e)
+    local,has_local:=core.get(s.transforms,e)
     if l.kind==.Character && sim.character_valid(w,l.character) && character_shape_same(l,config,capsule,scale) {
         if l.config!=config || l.collider.drag!=capsule.drag {sim.character_set_desc(w,l.character,desc)}
         if l.config.locks!=config.locks {sim.character_set_locks(w,l.character,body_locks(config.locks))}
@@ -1182,7 +1181,7 @@ link_write :: proc(s:^Sync,l:^Link,e:core.Entity) -> (again:bool) {
                 height=sim.character_desc(w,l.character).height,velocity=sim.character_velocity(w,l.character),
             }
             next.cramped=next.height<l.height_asked-HEIGHT_EPSILON
-            if s.character_states.values[row]!=next {core.edit_at(s.character_states,row)^=next}
+            core.edit_at(s.character_states,row)^=next
         }
         body:=sim.character_body(w,l.character)
         motion_write(s,e,body,sim.body_is_awake(w,body),false)
@@ -1202,7 +1201,7 @@ motion_write :: proc(s:^Sync,e:core.Entity,body:sim.Body_Handle,awake,add:bool) 
         center=center,island=s.grouped?sim.body_group(w,body):0,awake=awake,
     }
     if row:=core.row_of(s.motions,e);row>=0 {
-        if s.motions.values[row]!=next {core.edit_at(s.motions,row)^=next}
+        core.edit_at(s.motions,row)^=next
     } else if add {
         core.add(s.motions,e,next)
     }

@@ -32,7 +32,7 @@ Destruct_Net :: struct {journal:multiplayer.Journal}
 net_free :: proc(n:^Destruct_Net) {multiplayer.journal_free(&n.journal)}
 
 @(private)
-key_of :: proc(ids:core.Read(core.Id),e:core.Entity) -> multiplayer.Journal_Key {return {u64(core.id_of(ids,e)),0}}
+key_of :: proc(ids:^core.Table(core.Id,$A),e:core.Entity) -> multiplayer.Journal_Key {return {u64(core.id_of(ids,e)),0}}
 
 @(step="fixed",stage="begin")
 destruct_net_receive :: proc(events:core.Ref(multiplayer.Net_Events),authority:core.Ref(core.Network),n:^Destruct_Net,time:core.Time,rewinds:^multiplayer.Net_Rewinds,root:core.Ref(scene.Scene_Root),problems:^core.Problems) {
@@ -45,7 +45,7 @@ destruct_net_receive :: proc(events:core.Ref(multiplayer.Net_Events),authority:c
 @(step="fixed",stage="react")
 destruct_net_follow :: proc(
     authority:core.Ref(core.Network),n:^Destruct_Net,time:core.Time,requests:^destruct.Destruct_Requests,physics_state:core.Ref(physics.Physics_State),
-    destructibles:core.Read(destruct.Destructible),states:core.Read(destruct.Destructible_State),ids:core.Read(core.Id),root:core.Ref(scene.Scene_Root),
+    destructibles:^core.Table(destruct.Destructible,.Read),states:^core.Table(destruct.Destructible_State,.Read),ids:^core.Table(core.Id,.Read),root:core.Ref(scene.Scene_Root),
 ) {
     multiplayer.journal_world(&n.journal,DESTRUCT_JOURNAL,root)
     if authority.role!=.Client || !physics_state.ready {return}
@@ -72,7 +72,7 @@ destruct_net_send :: proc(
     authority:core.Ref(core.Network),n:^Destruct_Net,time:core.Time,outbox:^multiplayer.Net_Outbox,adoptions:^multiplayer.Net_Adoptions,session:core.Ref(multiplayer.Net_Session),
     connections:core.Ref(multiplayer.Net_Connections),
     events:core.Ref(destruct.Destruct_Events),physics_state:core.Ref(physics.Physics_State),commands:core.Commands,
-    states:core.Read(destruct.Destructible_State),ids:core.Read(core.Id),objects:core.Read(multiplayer.Replicate),entities:core.Ref(core.Entities),root:core.Ref(scene.Scene_Root),problems:^core.Problems,
+    states:^core.Table(destruct.Destructible_State,.Read),ids:^core.Table(core.Id,.Read),objects:^core.Table(multiplayer.Replicate,.Read),entities:core.Ref(core.Entities),root:core.Ref(scene.Scene_Root),problems:^core.Problems,
 ) {
     j:=&n.journal
     multiplayer.journal_world(j,DESTRUCT_JOURNAL,root)

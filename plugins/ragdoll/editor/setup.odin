@@ -167,7 +167,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
     if len(previous)>0 {editor.entities_delete(s,previous[:])}
     for body in previous {
         if editor.entity_alive(w,body) {
-            failure(call,{"entity","Locked_Body","bodies the scene can remove",fmt.tprintf("%x",core.id_of(core.read(ids),body)),"A body of the previous ragdoll could not be removed","Unlock it: it is a member of a prefab instance or of a section that is not edited"})
+            failure(call,{"entity","Locked_Body","bodies the scene can remove",fmt.tprintf("%x",core.id_of(ids,body)),"A body of the previous ragdoll could not be removed","Unlock it: it is a member of a prefab instance or of a section that is not edited"})
             editor.api_edit_end(s,call,false)
             return
         }
@@ -199,15 +199,15 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
     core.world_settle(w)
     if !editor.api_edit_end(s,call,true) {return}
     out:=api.call_result(call,Ragdoll_Setup_Result)
-    out.id,out.removed=core.id_of(core.read(ids),rig),u32(len(previous))
+    out.id,out.removed=core.id_of(ids,rig),u32(len(previous))
     rules:=PART_RULES
     count:=0
     for &body,part in bodies {
         if !body.present {continue}
         row:=&out.bodies[count];count+=1
-        row.id,row.part,row.shape,row.size,row.mass,row.joint=core.id_of(core.read(ids),made[part]),part,body.collider.kind,body.collider.size,body.mass,rules[part].joint
+        row.id,row.part,row.shape,row.size,row.mass,row.joint=core.id_of(ids,made[part]),part,body.collider.kind,body.collider.size,body.mass,rules[part].joint
         named:=bone_named(view.bones,int(body.bone));base.text_set(row.bone[:],base.text_get(named.path[:]))
-        if part!=.Pelvis {row.parent=core.id_of(core.read(ids),made[body.parent])}
+        if part!=.Pelvis {row.parent=core.id_of(ids,made[body.parent])}
     }
 }
 

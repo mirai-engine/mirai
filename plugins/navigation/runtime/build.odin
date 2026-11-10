@@ -95,15 +95,15 @@ Tile_Field :: struct {
 
 // The versions of a table of boxes in the frame of their entities and of the poses that place them.
 @(private)
-poses_stamps :: proc "contextless" (rows:core.Read($T),transforms:core.Read(core.Transform),parents:core.Read(core.Parent)) -> [6]u64 {
+poses_stamps :: proc "contextless" (rows:^core.Table($T,$A),transforms:^core.Table(core.Transform,$B),parents:^core.Table(core.Parent,$C)) -> [6]u64 {
     return {core.version(rows),core.layout(rows),core.version(transforms),core.layout(transforms),core.version(parents),core.layout(parents)}
 }
 
 // poses_stamps of rows whose box is the Volume of their entity.
 @(private)
-boxes_stamps :: proc "contextless" (rows:core.Read($T),volumes:core.Read(volume.Volume),transforms:core.Read(core.Transform),parents:core.Read(core.Parent)) -> [6]u64 {
+boxes_stamps :: proc "contextless" (rows:^core.Table($T,$A),volumes:^core.Table(volume.Volume,$B),transforms:^core.Table(core.Transform,$C),parents:^core.Table(core.Parent,$D)) -> [6]u64 {
     stamps:=poses_stamps(rows,transforms,parents)
-    if volumes.table!=nil {
+    if volumes!=nil {
         stamps[0]+=core.version(volumes)
         stamps[1]+=core.layout(volumes)
     }
@@ -112,8 +112,8 @@ boxes_stamps :: proc "contextless" (rows:core.Read($T),volumes:core.Read(volume.
 
 // Half the size of the box of a Nav_Bounds, a Nav_Area or a Nav_Obstacle: the
 // extents of the Volume of its entity, which is to be a Box.
-box_half :: proc(volumes:core.Read(volume.Volume),e:core.Entity) -> (half:[3]f32,ok:bool) {
-    if volumes.table==nil {return}
+box_half :: proc(volumes:^core.Table(volume.Volume,$A),e:core.Entity) -> (half:[3]f32,ok:bool) {
+    if volumes==nil {return}
     v,found:=core.get(volumes,e)
     if !found || v.shape!=.Box {return}
     return v.extents,true
@@ -460,9 +460,9 @@ upright_box :: proc "contextless" (pose:mm.Transform,half:[3]f32) -> (box:mm.Aab
 
 @(step="fixed",loops="game editor",stage="react",server)
 navigation_build :: proc(
-    n:^Navigation,b:^Navigation_Builds,settings:core.Ref(Navigation_Settings),bakes:core.Read(Navigation_Bake),physics:core.Ref(phys.Physics_State),requests:^Nav_Build_Requests,
-    bounds:core.Read(Nav_Bounds),areas:core.Read(Nav_Area),links:core.Read(Nav_Link),obstacles:core.Read(Nav_Obstacle),volumes:core.Read(volume.Volume),time:core.Time,transforms:core.Read(core.Transform),parents:core.Read(core.Parent),
-    ground:core.Ref(core.Ground_Queries),world:core.World_Ref,references:core.Read(scene.Scene_Reference),worlds:core.Read(core.World_Transform),ids:core.Read(core.Id),app:^host.App,problems:^core.Problems,
+    n:^Navigation,b:^Navigation_Builds,settings:core.Ref(Navigation_Settings),bakes:^core.Table(Navigation_Bake,.Read),physics:core.Ref(phys.Physics_State),requests:^Nav_Build_Requests,
+    bounds:^core.Table(Nav_Bounds,.Read),areas:^core.Table(Nav_Area,.Read),links:^core.Table(Nav_Link,.Read),obstacles:^core.Table(Nav_Obstacle,.Read),volumes:^core.Table(volume.Volume,.Read),time:core.Time,transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),
+    ground:core.Ref(core.Ground_Queries),world:core.World_Ref,references:^core.Table(scene.Scene_Reference,.Read),worlds:^core.Table(core.World_Transform,.Read),ids:^core.Table(core.Id,.Read),app:^host.App,problems:^core.Problems,
 ) {
     if physics.ptr==nil || !physics.ready || settings.ptr==nil {return}
     // A section away is not loaded: like the terrain that is not, its tiles wait for it.
@@ -557,7 +557,7 @@ navigation_build :: proc(
 // surface, with its dry boxes. Tiles and zones that leave them are removed;
 // those that enter are marked.
 @(private)
-bounds_update :: proc(n:^Navigation,b:^Navigation_Builds,bounds:core.Read(Nav_Bounds),volumes:core.Read(volume.Volume),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),physics:core.Ref(phys.Physics_State),unloaded:Unloaded,fresh,collision_changed:bool,problems:^core.Problems) -> Limits {
+bounds_update :: proc(n:^Navigation,b:^Navigation_Builds,bounds:^core.Table(Nav_Bounds,$A),volumes:^core.Table(volume.Volume,$B),transforms:^core.Table(core.Transform,$C),parents:^core.Table(core.Parent,$D),physics:core.Ref(phys.Physics_State),unloaded:Unloaded,fresh,collision_changed:bool,problems:^core.Problems) -> Limits {
     // The water and the box of the collision change with the collision, through its change log.
     poses:=boxes_stamps(bounds,volumes,transforms,parents)
     stamps:=[7]u64{poses[0],poses[1],poses[2],poses[3],poses[4],poses[5],unloaded.revision}
@@ -570,7 +570,7 @@ bounds_update :: proc(n:^Navigation,b:^Navigation_Builds,bounds:core.Read(Nav_Bo
         e:=core.entity_at(bounds,i)
         pose,ok:=core.world_of(transforms,parents,e)
         if !ok {continue}
-        bound:=bounds.table.values[i]
+        bound:=bounds.values[i]
         half,boxed:=box_half(volumes,e)
         if !boxed {
             box_missing(problems,e,"Nav_Bounds")
@@ -676,7 +676,7 @@ bounds_update :: proc(n:^Navigation,b:^Navigation_Builds,bounds:core.Read(Nav_Bo
 
 // Marks where a Nav_Area was and is, when it moved, changed or went.
 @(private)
-areas_update :: proc(n:^Navigation,b:^Navigation_Builds,areas:core.Read(Nav_Area),volumes:core.Read(volume.Volume),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),limits:Limits,fresh:bool,problems:^core.Problems) {
+areas_update :: proc(n:^Navigation,b:^Navigation_Builds,areas:^core.Table(Nav_Area,$A),volumes:^core.Table(volume.Volume,$B),transforms:^core.Table(core.Transform,$C),parents:^core.Table(core.Parent,$D),limits:Limits,fresh:bool,problems:^core.Problems) {
     stamps:=boxes_stamps(areas,volumes,transforms,parents)
     if !fresh && stamps==b.areas_stamps {return}
     seen,enough:=seen_reset(b,len(b.areas.values),problems)
@@ -687,7 +687,7 @@ areas_update :: proc(n:^Navigation,b:^Navigation_Builds,areas:core.Read(Nav_Area
         e:=core.entity_at(areas,i)
         pose,ok:=core.world_of(transforms,parents,e)
         if !ok {continue}
-        area:=areas.table.values[i]
+        area:=areas.values[i]
         half,boxed:=box_half(volumes,e)
         if !boxed {
             box_missing(problems,e,"Nav_Area")
@@ -1074,7 +1074,7 @@ zone_publish :: proc(n:^Navigation,c:^Class_Mesh,build:^Build,problems:^core.Pro
 // Obstacles block the surface under them once they have been still long
 // enough, and stop when they move; outside a run (the editor) they are still.
 @(private)
-obstacles_update :: proc(n:^Navigation,b:^Navigation_Builds,obstacles:core.Read(Nav_Obstacle),volumes:core.Read(volume.Volume),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),limits:Limits,time:core.Time,fresh:bool,problems:^core.Problems) {
+obstacles_update :: proc(n:^Navigation,b:^Navigation_Builds,obstacles:^core.Table(Nav_Obstacle,$A),volumes:^core.Table(volume.Volume,$B),transforms:^core.Table(core.Transform,$C),parents:^core.Table(core.Parent,$D),limits:Limits,time:core.Time,fresh:bool,problems:^core.Problems) {
     stamps:=boxes_stamps(obstacles,volumes,transforms,parents)
     moved:=fresh || stamps!=b.obstacles_stamps
     // Unmoved, only those that settle need the tick.
@@ -1087,7 +1087,7 @@ obstacles_update :: proc(n:^Navigation,b:^Navigation_Builds,obstacles:core.Read(
     b.looked+=u64(core.count(obstacles))+u64(len(seen))
     for i in 0..<core.count(obstacles) {
         e:=core.entity_at(obstacles,i)
-        obstacle:=obstacles.table.values[i]
+        obstacle:=obstacles.values[i]
         at:=core.entity_map_index(&b.obstacles,e)
         if moved {
             pose,ok:=core.world_of(transforms,parents,e)
@@ -1285,7 +1285,7 @@ paged_put :: proc(paged:^base.Hash_Map(u64),key,hash:u64) -> bool {
 // loads, puts in the meshes what its .navmesh has that they do not. adopt:
 // the meshes have them already (a copy of the world).
 @(private)
-bakes_update :: proc(n:^Navigation,b:^Navigation_Builds,bakes:core.Read(Navigation_Bake),app:^host.App,problems:^core.Problems,adopt:bool) {
+bakes_update :: proc(n:^Navigation,b:^Navigation_Builds,bakes:^core.Table(Navigation_Bake,$A),app:^host.App,problems:^core.Problems,adopt:bool) {
     seen:=core.version(bakes)+core.layout(bakes)+1
     if seen==b.bakes_seen {return}
     b.bakes_seen=seen

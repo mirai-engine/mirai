@@ -266,7 +266,7 @@ OUTLINE_STYLES_DEFAULT :: Outline_Styles{styles={0..<OUTLINE_STYLES=Outline_Styl
 
 // The outline level an instance of e is drawn with: the editor's Highlight in
 // place of the game's Outline.
-instance_outline :: proc(highlights:core.Read(Highlight),outlines:core.Read(Outline),e:core.Entity) -> u8 {
+instance_outline :: proc(highlights:^core.Table(Highlight,$A),outlines:^core.Table(Outline,$B),e:core.Entity) -> u8 {
     if level,has_level:=core.get(highlights,e);has_level && level.level>0 {return min(level.level,HIGHLIGHT_LEVELS)}
     if outline,has_outline:=core.get(outlines,e);has_outline {return gpu.outline_level(outline.style)}
     return 0
@@ -442,7 +442,7 @@ View_Bodies :: struct {
 // The camera of the game becomes its view.
 @(step="late",loops="game",stage="end")
 camera_view :: proc(
-    cameras:core.Read(Camera),exposures:core.Read(Exposure),worlds:core.Read(core.World_Transform),chosen:core.Ref(View_Camera),view:^core.View,app:^host.App,
+    cameras:^core.Table(Camera,.Read),exposures:^core.Table(Exposure,.Read),worlds:^core.Table(core.World_Transform,.Read),chosen:core.Ref(View_Camera),view:^core.View,app:^host.App,
 ) {
     // .ptr spelled out: a field reached through using in a ternary is loaded before its nil check (see ODIN_WORKAROUNDS).
     best:=chosen.ptr!=nil?chosen.ptr.entity:core.NONE
@@ -469,7 +469,7 @@ camera_pose :: proc "contextless" (c:Camera,world:mm.Transform) -> View_Pose {
 // The view through the camera e, of size pixels; the default view when e is
 // no placed camera. cut says that it jumped from the camera it had. With a
 // pose, the view is drawn from it with the exposure and clip plane of e.
-view_of_camera :: proc(view:^core.View,cameras:core.Read(Camera),exposures:core.Read(Exposure),worlds:core.Read(core.World_Transform),e:core.Entity,size:[2]f32,pose:^View_Pose=nil,cut:=false) {
+view_of_camera :: proc(view:^core.View,cameras:^core.Table(Camera,$A),exposures:^core.Table(Exposure,$B),worlds:^core.Table(core.World_Transform,$C),e:core.Entity,size:[2]f32,pose:^View_Pose=nil,cut:=false) {
     previous:=view.camera
     c,has_camera:=core.get(cameras,e)
     world,placed:=core.get(worlds,e)
@@ -509,12 +509,12 @@ world_light_forget :: proc(renderer:^Renderer,id:core.World_Id) {
 @(step="render",loops="game editor")
 render_sync :: proc(
     sync:^Render_Sync,app:^host.App,id:core.World_Id,frame:core.Frame_Time,view:core.View,
-    worlds:core.Read(core.World_Transform),meshes:core.Read(Mesh_Renderer),tints:core.Read(Tint),
-    hidden:core.Read(Hidden),elsewhere:core.Read(Drawn_Elsewhere),parents:core.Read(core.Parent),hierarchy:core.Ref(core.Hierarchy),
-    suns:core.Read(Sun),points:core.Read(Point_Light),spots:core.Read(Spot_Light),rects:core.Read(Rect_Light),emissions:core.Read(Light_Emission),skies:core.Read(Sky),view_volumes:core.Read(View_Volume),volumes:core.Read(volume.Volume),
-    overrides:core.Read(Material_Override),highlights:core.Read(Highlight),outlines:core.Read(Outline),outline_styles:core.Ref(Outline_Styles),
-    offsets:core.Read(Draw_Offset),layers:core.Read(Layers),bodies:core.Ref(View_Bodies),preview:core.Ref(Environment_Preview),
-    locals:core.Read(core.Transform),cameras:core.Read(Camera),posed:^Posed_Meshes,
+    worlds:^core.Table(core.World_Transform,.Read),meshes:^core.Table(Mesh_Renderer,.Read),tints:^core.Table(Tint,.Read),
+    hidden:^core.Table(Hidden,.Read),elsewhere:^core.Table(Drawn_Elsewhere,.Read),parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),
+    suns:^core.Table(Sun,.Read),points:^core.Table(Point_Light,.Read),spots:^core.Table(Spot_Light,.Read),rects:^core.Table(Rect_Light,.Read),emissions:^core.Table(Light_Emission,.Read),skies:^core.Table(Sky,.Read),view_volumes:^core.Table(View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),
+    overrides:^core.Table(Material_Override,.Read),highlights:^core.Table(Highlight,.Read),outlines:^core.Table(Outline,.Read),outline_styles:core.Ref(Outline_Styles),
+    offsets:^core.Table(Draw_Offset,.Read),layers:^core.Table(Layers,.Read),bodies:core.Ref(View_Bodies),preview:core.Ref(Environment_Preview),
+    locals:^core.Table(core.Transform,.Read),cameras:^core.Table(Camera,.Read),posed:^Posed_Meshes,
 ) {
     a:=app.assets
     r:=app.renderer
@@ -754,23 +754,23 @@ render_sync :: proc(
 // The tables render_sync makes instances and lights from.
 @(private)
 Sync_Tables :: struct {
-    worlds:core.Read(core.World_Transform),
-    meshes:core.Read(Mesh_Renderer),
-    tints:core.Read(Tint),
-    hidden:core.Read(Hidden),
-    elsewhere:core.Read(Drawn_Elsewhere),
-    parents:core.Read(core.Parent),
-    overrides:core.Read(Material_Override),
-    highlights:core.Read(Highlight),
-    outlines:core.Read(Outline),
-    offsets:core.Read(Draw_Offset),
-    layers:core.Read(Layers),
-    locals:core.Read(core.Transform), // what instance_place chains what a camera carries from
-    cameras:core.Read(Camera),
-    points:core.Read(Point_Light),
-    spots:core.Read(Spot_Light),
-    rects:core.Read(Rect_Light),
-    emissions:core.Read(Light_Emission),
+    worlds:^core.Table(core.World_Transform,.Read),
+    meshes:^core.Table(Mesh_Renderer,.Read),
+    tints:^core.Table(Tint,.Read),
+    hidden:^core.Table(Hidden,.Read),
+    elsewhere:^core.Table(Drawn_Elsewhere,.Read),
+    parents:^core.Table(core.Parent,.Read),
+    overrides:^core.Table(Material_Override,.Read),
+    highlights:^core.Table(Highlight,.Read),
+    outlines:^core.Table(Outline,.Read),
+    offsets:^core.Table(Draw_Offset,.Read),
+    layers:^core.Table(Layers,.Read),
+    locals:^core.Table(core.Transform,.Read), // what instance_place chains what a camera carries from
+    cameras:^core.Table(Camera,.Read),
+    points:^core.Table(Point_Light,.Read),
+    spots:^core.Table(Spot_Light,.Read),
+    rects:^core.Table(Rect_Light,.Read),
+    emissions:^core.Table(Light_Emission,.Read),
     posed:^Posed_Meshes,
     owned:[VIEW_SLOTS]core.Entity, // View_Bodies
 }
@@ -863,7 +863,7 @@ entity_changed :: proc(sync:^Render_Sync,e:core.Entity) {
 
 // The entities a table changed go to under; below, also what hangs from them.
 @(private)
-changes_gather :: proc(sync:^Render_Sync,h:core.Ref(core.Hierarchy),table:core.Read($T),c:core.Changes,below:bool) {
+changes_gather :: proc(sync:^Render_Sync,h:core.Ref(core.Hierarchy),table:^core.Table($T,$A),c:core.Changes,below:bool) {
     c:=c
     for e in c.gone {
         if below {subtree_gather(sync,h,e)} else {push(sync,&sync.under,e)}
@@ -1058,7 +1058,7 @@ instance_object :: proc(renderer:^Renderer,instance:int) -> u64 {
 }
 
 // Whether e or something above it is Hidden.
-is_hidden :: proc(hidden:core.Read(Hidden),parents:core.Read(core.Parent),e:core.Entity) -> bool {
+is_hidden :: proc(hidden:^core.Table(Hidden,$A),parents:^core.Table(core.Parent,$B),e:core.Entity) -> bool {
     return core.count(hidden)>0 && core.ancestor_with(parents,hidden,e)!=core.NONE
 }
 
@@ -1073,7 +1073,7 @@ drawn_transform :: proc(world:core.World_Transform,frame:core.Frame_Time) -> mm.
 }
 
 @(private)
-offset_of_entity :: proc(offsets:core.Read(Draw_Offset),parents:core.Read(core.Parent),worlds:core.Read(core.World_Transform),e:core.Entity) -> (offset:Draw_Offset,pivot:[3]f32,ok:bool) {
+offset_of_entity :: proc(offsets:^core.Table(Draw_Offset,$A),parents:^core.Table(core.Parent,$B),worlds:^core.Table(core.World_Transform,$C),e:core.Entity) -> (offset:Draw_Offset,pivot:[3]f32,ok:bool) {
     if core.count(offsets)==0 {return}
     at:=core.ancestor_with(parents,offsets,e)
     if at==core.NONE {return}
@@ -1087,7 +1087,7 @@ offset_of_entity :: proc(offsets:core.Read(Draw_Offset),parents:core.Read(core.P
 // carries composed from the camera instead (camera_carried): the transform
 // relative to anchor, the place of the world the renderer takes it from
 // (gpu.Instance_Desc.anchor).
-instance_place :: proc(world:core.World_Transform,frame:core.Frame_Time,offsets:core.Read(Draw_Offset),parents:core.Read(core.Parent),worlds:core.Read(core.World_Transform),locals:core.Read(core.Transform),cameras:core.Read(Camera),e:core.Entity) -> (anchor:[3]f32,transform:mm.Mat4) {
+instance_place :: proc(world:core.World_Transform,frame:core.Frame_Time,offsets:^core.Table(Draw_Offset,$A),parents:^core.Table(core.Parent,$B),worlds:^core.Table(core.World_Transform,$C),locals:^core.Table(core.Transform,.Read),cameras:^core.Table(Camera,.Read),e:core.Entity) -> (anchor:[3]f32,transform:mm.Mat4) {
     if eye,carried,ok:=camera_carried(frame,offsets,parents,worlds,locals,cameras,e);ok {return eye,mm.transform_matrix(carried)}
     return {},instance_matrix(world,frame,offsets,parents,worlds,e)
 }
@@ -1104,8 +1104,8 @@ CARRIED_DEPTH :: 16
 // camera it keeps the step of its own size. World_Transform, the physics and
 // what else reads them do not change. False for one no camera carries, one
 // with a Draw_Offset, or one without the transforms it would be chained from.
-camera_carried :: proc(frame:core.Frame_Time,offsets:core.Read(Draw_Offset),parents:core.Read(core.Parent),worlds:core.Read(core.World_Transform),locals:core.Read(core.Transform),cameras:core.Read(Camera),e:core.Entity) -> (eye:[3]f32,carried:mm.Transform,ok:bool) {
-    if cameras.table==nil || locals.table==nil || core.count(cameras)==0 {return}
+camera_carried :: proc(frame:core.Frame_Time,offsets:^core.Table(Draw_Offset,$A),parents:^core.Table(core.Parent,$B),worlds:^core.Table(core.World_Transform,$C),locals:^core.Table(core.Transform,$D),cameras:^core.Table(Camera,$E),e:core.Entity) -> (eye:[3]f32,carried:mm.Transform,ok:bool) {
+    if cameras==nil || locals==nil || core.count(cameras)==0 {return}
     chain:[CARRIED_DEPTH]core.Entity
     n:=0
     at:=e
@@ -1130,7 +1130,7 @@ camera_carried :: proc(frame:core.Frame_Time,offsets:core.Read(Draw_Offset),pare
     return shown.position,carried,true
 }
 
-instance_matrix :: proc(world:core.World_Transform,frame:core.Frame_Time,offsets:core.Read(Draw_Offset),parents:core.Read(core.Parent),worlds:core.Read(core.World_Transform),e:core.Entity) -> mm.Mat4 {
+instance_matrix :: proc(world:core.World_Transform,frame:core.Frame_Time,offsets:^core.Table(Draw_Offset,$A),parents:^core.Table(core.Parent,$B),worlds:^core.Table(core.World_Transform,$C),e:core.Entity) -> mm.Mat4 {
     shown:=drawn_transform(world,frame)
     if offset,pivot,ok:=offset_of_entity(offsets,parents,worlds,e);ok {
         rotation:=offset.rotation!=0?offset.rotation:1
@@ -1181,11 +1181,11 @@ mesh_user_remove :: proc(sync:^Render_Sync,id:base.Asset_Id,e:core.Entity) {
 // The sun that lights the world: the one previewed (Environment_Preview), or
 // else the first not hidden.
 @(private)
-sun_on :: proc(worlds:core.Read(core.World_Transform),suns:core.Read(Sun),preview:core.Entity,hidden:core.Read(Hidden),parents:core.Read(core.Parent)) -> (sun:Sun,direction:[3]f32,found:bool) {
-    if preview!=core.NONE && suns.table!=nil {
-        if row:=core.raw_row(core.raw(suns.table),preview);row>=0 {
+sun_on :: proc(worlds:^core.Table(core.World_Transform,$A),suns:^core.Table(Sun,$B),preview:core.Entity,hidden:^core.Table(Hidden,$C),parents:^core.Table(core.Parent,$D)) -> (sun:Sun,direction:[3]f32,found:bool) {
+    if preview!=core.NONE && suns!=nil {
+        if row:=core.raw_row(core.raw(suns),preview);row>=0 {
             if world,placed:=core.get(worlds,preview);placed {
-                return suns.table.values[row],mm.quat_rotate(world.rotation,[3]f32{0,0,1}),true
+                return suns.values[row],mm.quat_rotate(world.rotation,[3]f32{0,0,1}),true
             }
         }
     }
@@ -1259,7 +1259,7 @@ light_settle :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Sync_Tab
 // are given again; the others stay as the renderer has them.
 @(private)
 lights_settle :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Sync_Tables,c:^Sync_Changes,shaded:[]core.Entity,extras:[]gpu.Instance_Desc) {
-    rows :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Sync_Tables,extras:[]gpu.Instance_Desc,table:core.Read($T),c:^core.Changes,kind:Light_Kind) {
+    rows :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Sync_Tables,extras:[]gpu.Instance_Desc,table:^core.Table($T,$A),c:^core.Changes,kind:Light_Kind) {
         for e in c.gone {light_settle(sync,a,r,t,extras,e,kind)}
         for row in core.each_changed(table,c) {light_settle(sync,a,r,t,extras,core.entity_at(table,row),kind)}
     }

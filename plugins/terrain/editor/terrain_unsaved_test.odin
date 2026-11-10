@@ -24,7 +24,7 @@ unsaved_test_sculpt :: proc(t:^testing.T,s:^editor.Session,tool:^Terrain_Tool,re
 @(private)
 unsaved_test_stroke :: proc(t:^testing.T,s:^editor.Session,tool:^Terrain_Tool,ref:core.World_Ref,world:^Create_Test_World,owner:core.Entity,brush:terrain.Brush) {
     terrain_sync(s,tool,core.read(&world.terrains),s.app.assets)
-    if !testing.expect(t,stroke_prepare(tool,s.app.assets,s.app.allocator,core.read(&world.terrains),core.read(&world.worlds),editor.Pick{entity=owner})) {return}
+    if !testing.expect(t,stroke_prepare(tool,s.app.assets,s.app.allocator,&world.terrains,&world.worlds,editor.Pick{entity=owner})) {return}
     if !testing.expect(t,stroke_baseline(tool)) {return}
     tool.stroke.active=true
     change:=terrain.source_edit(&tool.stroke.source,brush)
@@ -96,7 +96,7 @@ terrain_history_follows_a_save_and_a_discard_of_its_file :: proc(t:^testing.T) {
     head:=editor.revision_head(&tool.history,id,3)
     if !testing.expect(t,head!=nil) {return}
     testing.expect_value(t,terrain.source_value(head,middle),f32(2))
-    testing.expect(t,stroke_prepare(&tool,app.assets,app.allocator,core.read(&world.terrains),core.read(&world.worlds),editor.Pick{entity=owner}))
+    testing.expect(t,stroke_prepare(&tool,app.assets,app.allocator,&world.terrains,&world.worlds,editor.Pick{entity=owner}))
     testing.expect_value(t,terrain.source_value(&tool.stroke.source,middle),f32(2))
     testing.expect(t,history.undo(&edits,ref,&selection))
     terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)

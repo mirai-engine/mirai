@@ -207,16 +207,16 @@ fluid_bodies :: proc(physics:core.Ref(Physics_State),out:[]Fluid_Body) -> int {
 // physics by hand without fluids can leave fluids zero.
 @(private)
 fluids_sync :: proc(
-    state:^Physics_State,fluids:core.Read(Fluid),volumes:core.Read(volume.Volume),locals:core.Read(core.Transform),parents:core.Read(core.Parent),problems:^core.Problems,
-    waves:core.Read(Fluid_Waves)={},winds:core.Read(volume.Wind)={},worlds:core.Read(core.World_Transform)={},
+    state:^Physics_State,fluids:^core.Table(Fluid,$B),volumes:^core.Table(volume.Volume,$C),locals:^core.Table(core.Transform,$A),parents:^core.Table(core.Parent,$D),problems:^core.Problems,
+    waves:^core.Table(Fluid_Waves,.Read)=nil,winds:^core.Table(volume.Wind,.Read)=nil,worlds:^core.Table(core.World_Transform,.Read)=nil,
 ) {
-    if fluids.table==nil {return}
+    if fluids==nil {return}
     seen:=core.version(fluids)+core.layout(fluids)+core.version(locals)+core.layout(locals)+core.version(parents)+core.layout(parents)+u64(state.epoch)
-    if volumes.table!=nil {seen+=core.version(volumes)+core.layout(volumes)}
+    if volumes!=nil {seen+=core.version(volumes)+core.layout(volumes)}
     // The wind changes only the fluids with waves.
-    if waves.table!=nil {
+    if waves!=nil {
         seen+=core.version(waves)+core.layout(waves)
-        if core.count(waves)>0 && winds.table!=nil && volumes.table!=nil && worlds.table!=nil {
+        if core.count(waves)>0 && winds!=nil && volumes!=nil && worlds!=nil {
             seen+=core.version(winds)+core.layout(winds)+core.version(worlds)+core.layout(worlds)
         }
     }
@@ -239,7 +239,7 @@ fluids_sync :: proc(
         fluid:=core.at(fluids,row)
         region:volume.Volume
         has_region:=false
-        if volumes.table!=nil {region,has_region=core.get(volumes,e)}
+        if volumes!=nil {region,has_region=core.get(volumes,e)}
         // The simulation has a sea and a pool: the fluid of a region of another shape is not made.
         shaped:=has_region && (region.shape==.Plane || region.shape==.Box)
         world,_:=core.world_of(locals,parents,e)
@@ -250,7 +250,7 @@ fluids_sync :: proc(
         if shaped && region.shape==.Box {desc.half_extents=region.extents*linalg.abs(world.scale)}
         raised:Fluid_Waves
         has_waves:=false
-        if waves.table!=nil {raised,has_waves=core.get(waves,e)}
+        if waves!=nil {raised,has_waves=core.get(waves,e)}
         if has_waves && shaped && region.shape==.Plane {
             desc.waves=fluid_waves_of(raised,desc.yaw,volume_wind(winds,volumes,worlds,world.position))
         } else if has_waves && shaped {
@@ -294,8 +294,8 @@ fluids_sync :: proc(
 
 // The wind over a point of the water, x and z of the world.
 @(private)
-volume_wind :: proc(winds:core.Read(volume.Wind),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),point:[3]f32) -> [2]f32 {
-    if winds.table==nil || volumes.table==nil || worlds.table==nil || core.count(winds)==0 {return {}}
+volume_wind :: proc(winds:^core.Table(volume.Wind,$A),volumes:^core.Table(volume.Volume,$B),worlds:^core.Table(core.World_Transform,$C),point:[3]f32) -> [2]f32 {
+    if winds==nil || volumes==nil || worlds==nil || core.count(winds)==0 {return {}}
     blowing:=volume.wind_at(winds,volumes,worlds,point)
     return {blowing.x,blowing.z}
 }

@@ -83,16 +83,16 @@ Cinematic_View :: struct {
 @(private)
 Cine :: struct {
     cinematics:^core.Table(Cinematic),
-    shots:core.Read(Cinematic_Shot),
-    cameras:core.Read(render.Camera),
+    shots:^core.Table(Cinematic_Shot,.Read),
+    cameras:^core.Table(render.Camera,.Read),
     transforms:^core.Table(core.Transform),
-    parents:core.Read(core.Parent),
+    parents:^core.Table(core.Parent,.Read),
     views:^core.Table(Cinematic_View),
     shown:core.Ref(camera.Cameras),
     seat_state:core.Ref(input.Seats),
     camera_requests:^camera.Camera_Requests,
     seat_requests:^input.Seat_Requests,
-    seats:core.Read(input.Seat),
+    seats:^core.Table(input.Seat,.Read),
     problems:^core.Problems,
 }
 
@@ -130,7 +130,7 @@ clip_apart :: proc "contextless" (a,b,duration:f32,loop:bool) -> f32 {
 // On an end that does not decide a timeline, its clip goes where the anchor says it is at the end
 // of this tick: asked before animation_sample, which seeks and then advances a clip that plays.
 @(step="fixed")
-cinematic_follow :: proc(cinematics:core.Read(Cinematic),animations:core.Read(anim.Animation),playback:core.Ref(anim.Playback),requests:^anim.Animation_Requests,time:core.Time,remotes:core.Read(core.Remote)) {
+cinematic_follow :: proc(cinematics:^core.Table(Cinematic,.Read),animations:^core.Table(anim.Animation,.Read),playback:core.Ref(anim.Playback),requests:^anim.Animation_Requests,time:core.Time,remotes:^core.Table(core.Remote,.Read)) {
     if !time.playing {return}
     for row in 0..<core.count(cinematics) {
         e:=core.entity_at(cinematics,row)
@@ -154,11 +154,11 @@ cinematic_follow :: proc(cinematics:core.Read(Cinematic),animations:core.Read(an
 // put them in this tick.
 @(step="fixed",stage="react")
 cinematic_advance :: proc(
-    entities:core.Ref(core.Entities),cinematics:^core.Table(Cinematic),shots:core.Read(Cinematic_Shot),viewers:core.Read(Cinematic_Viewer),
-    views:^core.Table(Cinematic_View),cameras:core.Read(render.Camera),drivables:core.Read(input.Drivable),transforms:^core.Table(core.Transform),
-    parents:core.Read(core.Parent),animations:core.Read(anim.Animation),playback:core.Ref(anim.Playback),
+    entities:core.Ref(core.Entities),cinematics:^core.Table(Cinematic),shots:^core.Table(Cinematic_Shot,.Read),viewers:^core.Table(Cinematic_Viewer,.Read),
+    views:^core.Table(Cinematic_View),cameras:^core.Table(render.Camera,.Read),drivables:^core.Table(input.Drivable,.Read),transforms:^core.Table(core.Transform),
+    parents:^core.Table(core.Parent,.Read),animations:^core.Table(anim.Animation,.Read),playback:core.Ref(anim.Playback),
     shown:core.Ref(camera.Cameras),seat_state:core.Ref(input.Seats),camera_requests:^camera.Camera_Requests,seat_requests:^input.Seat_Requests,
-    seats:core.Read(input.Seat),time:core.Time,remotes:core.Read(core.Remote),problems:^core.Problems,
+    seats:^core.Table(input.Seat,.Read),time:core.Time,remotes:^core.Table(core.Remote,.Read),problems:^core.Problems,
 ) {
     if !time.playing {return}
     p:=Cine{cinematics,shots,cameras,transforms,parents,views,shown,seat_state,camera_requests,seat_requests,seats,problems}
@@ -200,7 +200,7 @@ Camera_Sample :: struct {
 }
 
 // The shot in force at a time and the one before it.
-cinematic_shots_at :: proc(shots:core.Read(Cinematic_Shot),timeline:core.Entity,time:f32) -> (current,previous:Cinematic_Shot,found:bool) {
+cinematic_shots_at :: proc(shots:^core.Table(Cinematic_Shot,$A),timeline:core.Entity,time:f32) -> (current,previous:Cinematic_Shot,found:bool) {
     for row in 0..<core.count(shots) {
         shot:=core.at(shots,row)
         if shot.timeline!=timeline || !(shot.time<=time) {continue}
@@ -232,7 +232,7 @@ cinematic_shot_blend :: proc(shot:Cinematic_Shot,from,to:Camera_Sample,time:f32)
 
 // A camera as a shot shows it: where its transforms put it in the world now, with the lens it has
 // now. The clip moves it and writes its lens as it does any entity.
-cinematic_camera_sample :: proc(cameras:core.Read(render.Camera),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),e:core.Entity) -> (sample:Camera_Sample,ok:bool) {
+cinematic_camera_sample :: proc(cameras:^core.Table(render.Camera,$A),transforms:^core.Table(core.Transform,$B),parents:^core.Table(core.Parent,$C),e:core.Entity) -> (sample:Camera_Sample,ok:bool) {
     lens:=core.get(cameras,e) or_return
     sample.pose=core.world_of(transforms,parents,e) or_return
     sample.fov,sample.near=lens.fov,lens.near
@@ -256,7 +256,7 @@ view_ask :: proc(p:^Cine,e,seat:core.Entity,viewer:Cinematic_Viewer,fov,near:f32
 }
 
 @(private)
-viewer_update :: proc(p:^Cine,es:^core.Entities,e:core.Entity,viewer:Cinematic_Viewer,drivables:core.Read(input.Drivable)) {
+viewer_update :: proc(p:^Cine,es:^core.Entities,e:core.Entity,viewer:Cinematic_Viewer,drivables:^core.Table(input.Drivable,$A)) {
     c,has_timeline:=core.get(p.cinematics,viewer.timeline)
     ready:=has_timeline && (c.status==.Playing || c.status==.Paused)
     seat:=viewer.seat!=core.NONE?viewer.seat:input.focused(p.seat_state.ptr,p.seats)
@@ -270,7 +270,7 @@ viewer_update :: proc(p:^Cine,es:^core.Entities,e:core.Entity,viewer:Cinematic_V
         binding=nil
     }
     if !active {return}
-    locals:=core.read(p.transforms)
+    locals:=p.transforms
     sample,valid:=cinematic_camera_sample(p.cameras,locals,p.parents,current.camera)
     if !valid {
         if binding!=nil {view_release(p,e)}

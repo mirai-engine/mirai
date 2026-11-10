@@ -6,8 +6,8 @@ import mm "mirai:std/math"
 
 @(step="fixed",stage="simulate",before="physics_prepare")
 destruct_parent_motion :: proc(
-    physics:core.Ref(phys.Physics_State),destructibles:core.Read(Destructible),states:core.Read(Destructible_State),
-    transforms:core.Read(core.Transform),parents:core.Read(core.Parent),requests:^phys.Body_Requests,time:core.Time,
+    physics:core.Ref(phys.Physics_State),destructibles:^core.Table(Destructible,.Read),states:^core.Table(Destructible_State,.Read),
+    transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),requests:^phys.Body_Requests,time:core.Time,
 ) {
     if !time.playing || !physics.ready {return}
     broken:=core.join(destructibles,states)

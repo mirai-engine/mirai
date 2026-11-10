@@ -61,15 +61,19 @@ table holds no memory: a table costs what its rows cost, not what the entities o
 The enabled rows come first: walking a component is walking `0..<count(t)`. Removing a row moves
 another into its place, with its stamp, without mixing the two sections.
 
+- **One handle, two accesses.** A function writes with `^Table(T)` and only reads with
+  `^Table(T,.Read)`, the same table cast by the generated call: the access is part of the type, so
+  a write through a read is a compile error, and every read procedure takes `^Table(T,$A)`.
 - **Reading stamps nothing.** `get` (value and whether it was found) and `at` (the value of a row)
-  answer the same on a `Read` and on a `^Table`, as `row_of` and `has` do. None of them sees a
-  disabled row. `join` of two or three tables, either access, and `each_joined` walk the rows of
-  the first whose entity has the others on and give the entity and the values; the join's `row`
-  is the row of the first, for `edit_at`.
-- **Writing is requesting the row.** `edit`, `edit_at` and `writable` on `^Table`, and `free` on a
-  `shared` table, give `^T` and stamp the row with a new `version`, written or not. `set` and
-  `set_at` take the value and stamp only when its bytes differ from those of the row: what a
-  function computes every tick and seldom changes goes through them.
+  answer on either access, as `row_of` and `has` do. None of them sees a disabled row. `join` of
+  two or three tables and `each_joined` walk the rows of the first whose entity has the others on
+  and give the entity and the values; the join's `row` is the row of the first, for `edit_at`.
+- **Writing is requesting the row.** `edit` and `edit_at`, and `free` on a `shared` table, give
+  `^T`, stamp the row with a new `version` at once and keep a copy of the bytes it had at the first
+  ask of the function. The settle after the function gives back its stamp to a row whose bytes did
+  not change, and the version too when no row changed and nothing else wrote: what a function
+  computes every tick and seldom changes is asked for and written as it is. `writable` stamps every
+  row for good.
 - **Stamps come in pages.** `page_stamps` keeps, for each `STAMP_PAGE` rows, the newest stamp
   written in them: a reader of what changed skips the pages written before it looked.
 - **Structural changes wait.** `add` (adds or replaces), `remove`, `disable` and `enable` wait in
@@ -77,12 +81,13 @@ another into its place, with its stamp, without mixing the two sections.
   are not alive. It reserves room for all the additions first: without memory it applies none and
   they wait for the next settle. There are never two rows per index: the new generation replaces
   the old one.
-- **What waits is finished in the function.** `added(t, e)` gives the value of the last pending
-  `add` to write (valid until the next `add` to the table) and `staged`, that or the enabled row: a
-  function finishes what it created without settling the world. `staged_has` says whether the entity
+- **What waits is finished in the function.** `staged(t, e)` gives the value of the last pending
+  `add` to write (valid until the next `add` to the table), or else the enabled row: a function
+  finishes what it created without settling the world. `staged_has` says whether the entity
   will have the row on, with what waits counted.
-- `version` and `layout` only grow, also after `table_copy` and `table_swap`: a reader never sees a
-  repeated stamp.
+- `version` and `layout` only grow, also after `table_copy` and `table_swap`, except that the edits
+  of a function that wrote nothing take `version` back where they found it; the next write goes
+  above every version handed out, so a reader never sees a repeated stamp.
 - The `base` tables (the components of `core`) follow their entity even when it is disabled;
   `disable` on them is a `core.fail`.
 - **Copying what changed.** `table_copy_changed(dst, src, &mark)` is for a `dst` that is kept as a
@@ -93,12 +98,13 @@ another into its place, with its stamp, without mixing the two sections.
   valid. Going back to such a copy with its marks brings back only what the world changed since
   ([replace](host.md#the-application)): a table says it changed with its `version` and its
   `layout`, which also move when who owns its rows does, and a storage with the stamp of its row.
-- **New rows.** `added(t, row)` says the row has its value from an `add` and was not written
-  since: the writer of a table asks it before it asks for the row, to set up what the row starts
-  with in its first tick. It is the parity of the stamp of the row, so a copy and a rollback keep
-  it, and a row turned off and on stays added. A stateful object keeps the phase it is in and the
-  tick it entered it, and derives the rest from `core.Time`; it has no field that says it was set
-  up.
+- **New rows.** `added(t, row)` says the row has its value from an `add` and no function of its
+  writer asked for it yet: the writer asks it, before or after it asks for the row, to set up what
+  the row starts with in its first tick; the row is no longer added when that function settles,
+  even with the bytes it had. It is the parity of the stamp of the row, so a copy and a rollback
+  keep it, and a row turned off and on stays added. A stateful object keeps the phase it is in and
+  the tick it entered it, and derives the rest from `core.Time`; it has no field that says it was
+  set up.
 - **Owners.** `@(component,locks="core.Transform")` makes each row the owner of the `Transform` row
   of its entity; the others write with `free`, which gives `nil` on an owned row. The lock names the
   locked table by its distance within the world, not by a pointer, because the world is copied in

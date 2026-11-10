@@ -16,7 +16,7 @@ its `base.Asset_Id`. Every scene of the project ships, whether another names it 
 import "mirai:engine/scene"
 
 @(step="fixed")
-game_burst :: proc(impacts:core.Read(Impact),spawner:scene.Spawner) {
+game_burst :: proc(impacts:^core.Table(Impact,.Read),spawner:scene.Spawner) {
     for row in 0..<core.count(impacts) {
         at:=core.at(impacts,row).point
         scene.spawn(spawner,"arena/Burst.scene",{position=at},transient=true)
@@ -37,7 +37,7 @@ has `scene.Prefab_Instance`, whose `prefab` is the scene it came from.
 
 ```odin
 @(step="fixed",server)
-game_dogs :: proc(spawner:scene.Spawner,owners:core.Read(Owner)) {
+game_dogs :: proc(spawner:scene.Spawner,owners:^core.Table(Owner,.Read)) {
     for row in 0..<core.count(owners) {
         dog:=scene.spawn(spawner,"pets/Dog.scene",{position=core.at(owners,row).home})
         if dog!=core.NONE {
@@ -59,7 +59,7 @@ game_dogs :: proc(spawner:scene.Spawner,owners:core.Read(Owner)) {
 ## Hierarchy
 
 `core.Transform` is local to the `core.Parent`; `core.World_Transform` (`position`, `rotation`)
-is the result, read with `core.Read(core.World_Transform)`. Never keep your own child list.
+is the result, read with `^core.Table(core.World_Transform,.Read)`. Never keep your own child list.
 
 ```odin
 // hierarchy:core.Ref(core.Hierarchy)
@@ -71,7 +71,7 @@ for c:=core.first_child(hierarchy,e);c!=core.NONE;c=core.next_sibling(hierarchy,
 - Destroy an entity and what hangs from it: `core.destroy_tree(commands.entities,hierarchy,e)`
   with `commands:core.Commands`.
 - Upward: `core.ancestor_with(parents,table,e)` and `core.is_under(parents,e,ancestor)`, with
-  `parents:core.Read(core.Parent)`.
+  `parents:^core.Table(core.Parent,.Read)`.
 
 ## Pitfalls that fail silently
 

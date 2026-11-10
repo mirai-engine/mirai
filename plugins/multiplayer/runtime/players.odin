@@ -20,7 +20,7 @@ import wire "mirai:net"
 @(step="fixed",loops="game",stage="begin")
 net_seats :: proc(
     es:core.Commands,seats:^core.Table(input.Seat),absents:^core.Table(Seat_Absent),disabled:^core.Table(core.Disabled),
-    objects:^core.Table(Replicate),transforms:^core.Table(core.Transform),keeps:^core.Table(core.Keep),links:core.Read(Net_Link),
+    objects:^core.Table(Replicate),transforms:^core.Table(core.Transform),keeps:^core.Table(core.Keep),links:^core.Table(Net_Link,.Read),
     bindings:core.Ref(input.Input_Map),connections:core.Ref(Remote_Inputs),network:core.Ref(core.Network),
     hierarchy:core.Ref(core.Hierarchy),settings:core.Ref(Net_Settings),time:core.Time,
 ) {
@@ -159,7 +159,7 @@ net_input_delay :: proc(session:^Net_Session,seats:^core.Table(input.Seat),bindi
     tick:=u32(time.tick)
     if !time.resimulating {
         c.fed_seat=seat^
-        sent,_:=input.seat_remote(core.read(seats),input.local_seat(core.read(seats),0),bindings.ptr)
+        sent,_:=input.seat_remote(seats,input.local_seat(seats,0),bindings.ptr)
         c.taken[int(tick)%len(c.taken)]={tick+1,sent}
     }
     seat.actions,seat.held,seat.rearm,seat.fed=c.delayed.actions,c.delayed.held,c.delayed.rearm,c.delayed.fed
@@ -172,15 +172,15 @@ net_input_delay :: proc(session:^Net_Session,seats:^core.Table(input.Seat),bindi
 @(private)
 delayed_seat :: proc(session:^Net_Session,seats:^core.Table(input.Seat)) -> ^input.Seat {
     if !session.host_ready || session.mode!=.Client || session.desc.input_delay==0 {return nil}
-    return core.edit(seats,input.local_seat(core.read(seats),0))
+    return core.edit(seats,input.local_seat(seats,0))
 }
 
 // A client: its first local seat asks to drive the body the server lets it
 // predict, and to let go of a replicated one it no longer predicts.
 @(step="fixed",loops="game",stage="input")
 net_driving :: proc(
-    links:core.Read(Net_Link),replicas:core.Read(core.Pose_Target),elsewhere:core.Read(core.Remote),
-    drivables:core.Read(input.Drivable),seats:core.Read(input.Seat),requests:^input.Seat_Requests,network:core.Ref(core.Network),
+    links:^core.Table(Net_Link,.Read),replicas:^core.Table(core.Pose_Target,.Read),elsewhere:^core.Table(core.Remote,.Read),
+    drivables:^core.Table(input.Drivable,.Read),seats:^core.Table(input.Seat,.Read),requests:^input.Seat_Requests,network:core.Ref(core.Network),
 ) {
     if network.role==.Client {
         seat:=input.local_seat(seats,0)

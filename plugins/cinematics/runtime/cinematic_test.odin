@@ -133,8 +133,8 @@ a_viewer_shows_the_shots_of_a_clip_while_it_plays :: proc(t:^testing.T) {
     core.add(&w.shots,close,Cinematic_Shot{timeline=timeline,camera=close,time=.5,blend=.5})
     core.add(&w.viewers,output,Cinematic_Viewer{timeline=timeline,seat=seat})
     core.test_world_settle(&w)
-    core.hierarchy_settle(&w.hierarchy,core.read(&w.parents),&w.entities)
-    shown :: proc(w:^Cinematic_World,e:core.Entity) -> [3]f32 {value,_:=core.get(core.read(&w.transforms),e);return value.position}
+    core.hierarchy_settle(&w.hierarchy,&w.parents,&w.entities)
+    shown :: proc(w:^Cinematic_World,e:core.Entity) -> [3]f32 {value,_:=core.get(&w.transforms,e);return value.position}
     asked :: proc(w:^Cinematic_World,owner:core.Entity) -> (fov:f32,found:bool) {
         #reverse for request in w.camera_requests.items {if request.add && request.override.owner==owner {return request.override.fov,true}}
         return
@@ -143,20 +143,20 @@ a_viewer_shows_the_shots_of_a_clip_while_it_plays :: proc(t:^testing.T) {
     // The clip plays by itself, as the Animation of the timeline says: the first shot shows the
     // camera where the clip put it in this tick.
     cinematic_tick(&w,&s,&app,&problems,1,DT)
-    c,_:=core.get(core.read(&w.cinematics),timeline)
+    c,_:=core.get(&w.cinematics,timeline)
     testing.expect(t,c.status==.Playing && c.time==.25 && c.duration==1)
     testing.expect_value(t,shown(&w,wide),[3]f32{2,0,0})
     testing.expect_value(t,shown(&w,output),[3]f32{2,0,0})
     fov,found:=asked(&w,output)
     testing.expect(t,found && fov==1)
-    view,viewing:=core.get(core.read(&w.views),output)
+    view,viewing:=core.get(&w.views,output)
     testing.expect(t,viewing && view.shot_camera==wide && view.seat==seat)
 
     // The second shot blends in from the first; its lens is the one the clip writes on its camera.
     cinematic_tick(&w,&s,&app,&problems,2,DT)
     testing.expect_value(t,shown(&w,output),[3]f32{4,0,0})
     cinematic_tick(&w,&s,&app,&problems,3,DT)
-    lens,_:=core.get(core.read(&w.cameras),close)
+    lens,_:=core.get(&w.cameras,close)
     testing.expect_value(t,lens.fov,f32(.625))
     testing.expect_value(t,shown(&w,output),[3]f32{3,2.5,0})
     fov,_=asked(&w,output)
@@ -165,12 +165,12 @@ a_viewer_shows_the_shots_of_a_clip_while_it_plays :: proc(t:^testing.T) {
     // Paused, the viewer keeps showing it; at its end the viewer gives the seat its view back.
     anim.animation_command(&w.requests,timeline,.Pause)
     cinematic_tick(&w,&s,&app,&problems,4,DT)
-    c,_=core.get(core.read(&w.cinematics),timeline)
+    c,_=core.get(&w.cinematics,timeline)
     testing.expect(t,c.status==.Paused && core.has(&w.views,output))
     anim.animation_command(&w.requests,timeline,.Resume)
     clear(&w.camera_requests.items)
     cinematic_tick(&w,&s,&app,&problems,5,DT)
-    c,_=core.get(core.read(&w.cinematics),timeline)
+    c,_=core.get(&w.cinematics,timeline)
     testing.expect(t,c.status==.Completed && c.time==1 && !core.has(&w.views,output))
     testing.expect(t,len(w.camera_requests.items)==1 && !w.camera_requests.items[0].add && w.camera_requests.items[0].override.owner==output)
     testing.expect(t,problems.count==0)

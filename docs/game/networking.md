@@ -55,12 +55,12 @@ A client makes each replica from the prefab the server spawned it from: same ass
 
 ```odin
 @(step="fixed",server)       // runs on the server or alone, never on a client
-game_damage :: proc(players:core.Read(Player),actions:inp.Input_Of(Action)) { ... }
+game_damage :: proc(players:^core.Table(Player,.Read),actions:inp.Input_Of(Action)) { ... }
 ```
 
 Where one function runs on every end, ask before deciding: `network:core.Ref(core.Network)` and
 `network.role` (`.Standalone`, `.Server`, `.Client`), or `core.owned(remotes,e)` with
-`remotes:core.Read(core.Remote)`.
+`remotes:^core.Table(core.Remote,.Read)`.
 
 ## Pitfalls that fail silently
 

@@ -49,13 +49,13 @@ import "mirai:ui"
 @(step="render release") hud_commands :: proc(commands:core.Commands) {}
 @(step="render",server) hud_rules :: proc() {}
 @(step="render") hud_glow :: proc(glows:^core.Table(Glow),state:^Hud_State,clicked:^Clicked,wishes:^Wishes) {}
-@(step="fixed") glow_reader :: proc(glows:core.Read(Glow),state:core.Ref(Hud_State),clicked:core.Ref(Clicked),wishes:^Wishes) {}
+@(step="fixed") glow_reader :: proc(glows:^core.Table(Glow,.Read),state:core.Ref(Hud_State),clicked:core.Ref(Clicked),wishes:^Wishes) {}
 @(step="frame render") glow_both :: proc(state:^Hud_State) {}
 @(step="ui") hud_drawn :: proc() {}
 @(draw="map") map_draw :: proc(ctx:^ui.Context,node:ui.Draw_Node) {}
 @(draw="map") map_again :: proc(ctx:^ui.Context,node:ui.Draw_Node) {}
 @(draw) unnamed_draw :: proc(ctx:^ui.Context,node:ui.Draw_Node) {}
-@(draw="rows") rows_draw :: proc(ctx:^ui.Context,rows:core.Read(Glow)) {}
+@(draw="rows") rows_draw :: proc(ctx:^ui.Context,rows:^core.Table(Glow,.Read)) {}
 @(draw="five") drawn_five :: 5
 `},
         {project.path(game,"game","game.odin",allocator=context.temp_allocator),"package game\nimport editor \"project:editor\"\n"+`@(step="fixed") steady :: proc() {}

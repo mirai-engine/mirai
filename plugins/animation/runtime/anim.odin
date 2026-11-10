@@ -264,12 +264,12 @@ Playback :: struct {
 
 @(private)
 animation_tick :: proc(
-    animations:core.Read(Animation),transforms:^core.Table(core.Transform),
-    parents:core.Read(core.Parent),hierarchy:core.Ref(core.Hierarchy),names:core.Read(core.Name),requests:^Animation_Requests,events:^Animation_Events,
-    targets:core.Read(Animation_Target),roots:core.Read(Root_Motion),
+    animations:^core.Table(Animation,$A),transforms:^core.Table(core.Transform),
+    parents:^core.Table(core.Parent,$B),hierarchy:core.Ref(core.Hierarchy),names:^core.Table(core.Name,$C),requests:^Animation_Requests,events:^Animation_Events,
+    targets:^core.Table(Animation_Target,$D),roots:^core.Table(Root_Motion,.Read),
     playback:^Playback,app:^host.App,time:core.Time,frame:core.Frame_Time,skeleton_assets:^Skeleton_Assets,problems:^core.Problems,characters:^Character_Assets=nil,
     actions:^Action_Runtime=nil,motion:^Motion_Runtime=nil,motion_requests:^Motion_Requests=nil,sources:^Source_Assets=nil,
-    paces:core.Read(core.Own_Pace)={},clock:=core.CLOCK_DEFAULT,budget:=ANIMATION_BUDGET_CONFIG_DEFAULT,
+    paces:^core.Table(core.Own_Pace,.Read)=nil,clock:=core.CLOCK_DEFAULT,budget:=ANIMATION_BUDGET_CONFIG_DEFAULT,
 ) {
     playback.frame+=1
     playback.events_from=len(events.items)
@@ -288,7 +288,7 @@ animation_tick :: proc(
             core.report(problems,value.entity,"animation.parameter","a parameter was set on this entity, which has no Animation, or on which more than %d names are set; set the weights of layers and the axes of spaces on the entity whose Animation plays the .character",STACK_PARAMETERS)
         }
     }
-    if motion!=nil {if !motion_prepare(motion,motion_requests,animations,playback,characters,app.assets,app.allocator,problems) {return};motion_resolve_targets(motion,playback,skeleton_assets,core.read(transforms),parents,{})}
+    if motion!=nil {if !motion_prepare(motion,motion_requests,animations,playback,characters,app.assets,app.allocator,problems) {return};motion_resolve_targets(motion,playback,skeleton_assets,core.read(transforms),core.read(parents),nil)}
     distances:=core.take(&requests.distances)
     seeks:=core.take(&requests.timeline)
     pose_requests:=core.take(&requests.poses)
@@ -334,7 +334,7 @@ animation_tick :: proc(
         first_event:=len(events.items)
         defer source_markers_resolve(sources,state,events.items[first_event:])
         facing:=mm.FORWARD;placed:=mm.TRANSFORM_IDENTITY
-        if state.program.matched {if world,ok:=constraint_world(core.read(transforms),parents,{},e);ok {placed=world;facing=mm.quat_rotate(world.rotation,facing)}}
+        if state.program.matched {if world,ok:=constraint_world(transforms,parents,nil,e);ok {placed=world;facing=mm.quat_rotate(world.rotation,facing)}}
         rig_goals:[]Match_Goal
         if at:=int(state.program.match.goal)-1;at>=0 && at<len(match_goals) && match_goals[at].rig==e {rig_goals=match_goals[at:][:1]} else if unindexed>0 {
             for &goal,i in match_goals {if goal.rig==e {rig_goals=match_goals[i:][:1]}}
@@ -393,7 +393,7 @@ animation_tick :: proc(
         // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
         state.base_root={}
         state.has_base_root=false;state.clips_in_place=false
-        if roots.table!=nil {
+        if roots!=nil {
             base_root,has_base_root:=core.get(roots,e)
             state.base_root=base_root
             state.has_base_root=has_base_root
@@ -438,7 +438,7 @@ animation_tick :: proc(
         append(&playback.work,Pose_Row{state=playback.rows[core.entity_index(e)]-1,content=played,programmed=programmed,animation=animation,dt=dt,current_dt=current_dt,sought=sought,distance=distance,action_distance=action_distance,distance_error=distance_error,placed=placed})
     }
     timeline_unclaimed(seeks,time.playing,problems)
-    pose_rows_run(playback,core.read(transforms),&app.jobs if budget.parallel else nil,int(budget.job_grain))
+    pose_rows_run(playback,transforms,&app.jobs if budget.parallel else nil,int(budget.job_grain))
     for &row in playback.work {
         state:=&playback.states[row.state]
         e:=state.entity
@@ -476,7 +476,7 @@ animation_tick :: proc(
             if state.has_action_in_place {if bone:=bone_resolve(state,state.action_in_place_root.bone);bone>0 && state.parents[bone]==0 {state.action_in_place_local=lib.mirror_transform(state.mirror_plane,state.mirror_corrections[bone],state.action_in_place_local)}}
         }
         if character:=animation_character(app.assets,animation^);motion!=nil && character!={} && content!=nil {
-            actor,ok:=constraint_world(core.read(transforms),parents,{},e)
+            actor,ok:=constraint_world(transforms,parents,nil,e)
             clock:=animation_motion_clock(state,content,&state.program.output if programmed else nil,dt,current_dt)
             clock.weight*=mm.saturate(animation.weight)
             if state.has_base_root && !programmed {clock.root=state.base_root}
@@ -561,25 +561,25 @@ animation_valid :: proc "contextless" (animation:Animation) -> bool {
 // with a Pose_Source of stage Finished shares the pose of its rig when both
 // have one skeleton; otherwise it is a rig that takes the pose of that one.
 @(private)
-rigs_update :: proc(playback:^Playback,meshes:core.Read(erender.Mesh_Renderer),skins:core.Read(Pose_Source),assets:^host.Assets) -> bool {
-    if meshes.table==nil {if len(playback.rigs)>0 {clear(&playback.rigs);clear(&playback.follow_order);playback.rigs_stamp+=1};playback.rigs_seen,playback.rigs_assets={},0;return true}
+rigs_update :: proc(playback:^Playback,meshes:^core.Table(erender.Mesh_Renderer,$A),skins:^core.Table(Pose_Source,$B),assets:^host.Assets) -> bool {
+    if meshes==nil {if len(playback.rigs)>0 {clear(&playback.rigs);clear(&playback.follow_order);playback.rigs_stamp+=1};playback.rigs_seen,playback.rigs_assets={},0;return true}
     // Kept only when the rigs were made: without memory they are made again.
     seen,loaded:=playback.rigs_seen,assets_stamp(assets)
     moved:=core.touched(meshes,&seen[0])
-    if skins.table!=nil {moved|=core.touched(skins,&seen[1])} else {moved|=seen[1]!={};seen[1]={}}
+    if skins!=nil {moved|=core.touched(skins,&seen[1])} else {moved|=seen[1]!={};seen[1]={}}
     if !moved && loaded==playback.rigs_assets {return true}
-    skeleton_of :: proc(meshes:core.Read(erender.Mesh_Renderer),assets:^host.Assets,e:core.Entity) -> base.Asset_Id {
+    skeleton_of :: proc(meshes:^core.Table(erender.Mesh_Renderer,$A),assets:^host.Assets,e:core.Entity) -> base.Asset_Id {
         static,has:=core.get(meshes,e)
         if !has || static.mesh=={} {return {}}
         mesh:=host.assets_mesh(assets,static.mesh)
         return mesh.skeleton if mesh!=nil && !mesh.failed else {}
     }
-    rig_of :: proc(meshes:core.Read(erender.Mesh_Renderer),skins:core.Read(Pose_Source),assets:^host.Assets,row:int) -> (rig:Rig,ok:bool) {
+    rig_of :: proc(meshes:^core.Table(erender.Mesh_Renderer,$A),skins:^core.Table(Pose_Source,$B),assets:^host.Assets,row:int) -> (rig:Rig,ok:bool) {
         e:=core.entity_at(meshes,row)
         skeleton:=skeleton_of(meshes,assets,e)
         if skeleton=={} {return}
         rig={entity=e,skeleton=skeleton}
-        if skins.table!=nil {
+        if skins!=nil {
             if source,has:=core.get(skins,e);has {
                 leader:=skeleton_of(meshes,assets,source.rig)
                 if leader=={} || leader==skeleton && source.stage==.Finished || source.rig==e {return}
@@ -843,7 +843,7 @@ layers_advance :: proc(playback:^Playback,state:^Playing,content:^host.Content_A
 // The lock of a clip that carries root motion, with clips_in_place: its root bone blends its rest,
 // or the entity's transform for a root bound to it, so a clip fading out does not take it along.
 @(private)
-clip_root_lock :: proc(state:^Playing,content:^host.Content_Animation,clip:lib.Clip,transforms:core.Read(core.Transform)) -> (lock:lib.Pose_Lock) {
+clip_root_lock :: proc(state:^Playing,content:^host.Content_Animation,clip:lib.Clip,transforms:^core.Table(core.Transform,$A)) -> (lock:lib.Pose_Lock) {
     if !state.clips_in_place || content==nil || content.clip_count<=0 || int(clip)<1 {return}
     index:=(int(clip)-1)%content.clip_count
     if index>=len(content.roots) || !(content.roots[index].translation || content.roots[index].rotation) {return}
@@ -858,7 +858,7 @@ clip_root_lock :: proc(state:^Playing,content:^host.Content_Animation,clip:lib.C
 }
 
 @(private)
-pose_sample :: proc(playback:^Playback,state:^Playing,library:^lib.Library,animation:Animation,transforms:core.Read(core.Transform),content:^host.Content_Animation=nil,worker:=0) -> (faults:Pose_Faults) {
+pose_sample :: proc(playback:^Playback,state:^Playing,library:^lib.Library,animation:Animation,transforms:^core.Table(core.Transform,.Read),content:^host.Content_Animation=nil,worker:=0) -> (faults:Pose_Faults) {
     if len(state.bindings)==0 {return}
     if state.clip>=0 {
         _,bones,shared,ready:=pose_room(playback,state,worker)
@@ -939,13 +939,13 @@ pose_layer_mesh_rotation :: proc(rotations:[]mm.Quat,state:^Playing,blend:lib.Bo
 // The slots of the stack of state over its local pose, in order: each moves only what its clips
 // animate, inside its branch, replacing by its weight or adding its change from its reference.
 @(private)
-pose_layers :: proc(playback:^Playback,state:^Playing,library:^lib.Library,animation:Animation,transforms:core.Read(core.Transform)={},worker:=0) -> (faults:Pose_Faults) {
+pose_layers :: proc(playback:^Playback,state:^Playing,library:^lib.Library,animation:Animation,transforms:^core.Table(core.Transform,.Read)=nil,worker:=0) -> (faults:Pose_Faults) {
     if state.stack==0 {return}
     root_bone:=-1;reference:=mm.TRANSFORM_IDENTITY;retired:=mm.TRANSFORM_IDENTITY
     for root,i in state.action_roots {if state.action_root_mask&(u16(1)<<u16(i))==0 {continue};root_bone=bone_resolve(state,root.bone);if root_bone>=0 {state.action_in_place_root=root;break}}
     if root_bone>=0 {
         reference=state.rest[root_bone];retired=state.local[root_bone]
-        if state.parents[root_bone]<0 && state.bindings[root_bone].entity==state.entity && transforms.table!=nil {if current,present:=core.get(transforms,state.entity);present {reference=core.to_math(current)}}
+        if state.parents[root_bone]<0 && state.bindings[root_bone].entity==state.entity && transforms!=nil {if current,present:=core.get(transforms,state.entity);present {reference=core.to_math(current)}}
         if state.has_base_root && state.base_root.in_place && bone_resolve(state,state.base_root.bone)==root_bone {if state.base_root.translation {retired.position=reference.position};if state.base_root.rotation {retired.rotation=reference.rotation}}
     }
     n:=len(state.bindings)
@@ -990,7 +990,7 @@ pose_layers :: proc(playback:^Playback,state:^Playing,library:^lib.Library,anima
 
 // Writes the pose to the entities it is bound to. An entity whose Transform another component
 // owns (a body) is asked of its owner through places, at the place the track gives it.
-pose_write :: proc(playback:^Playback,state:^Playing,transforms:^core.Table(core.Transform),parents:core.Read(core.Parent)={},places:^core.Places=nil) {
+pose_write :: proc(playback:^Playback,state:^Playing,transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,.Read)=nil,places:^core.Places=nil) {
     if state.held && state.skeleton=={} {return}
     for binding,i in state.bindings {
         if binding.entity==core.NONE {continue}
@@ -1001,7 +1001,7 @@ pose_write :: proc(playback:^Playback,state:^Playing,transforms:^core.Table(core
             if places==nil || state.skeleton!={} || binding.driven&{.Position,.Rotation}=={} {playback.stats.skipped+=1;continue}
             world:=state.local[i]
             if parent,under:=core.get(parents,binding.entity);under && parent.entity!=core.NONE {
-                above,placed:=core.world_of(core.read(transforms),parents,parent.entity)
+                above,placed:=core.world_of(transforms,parents,parent.entity)
                 if placed {world=mm.transform_compose(above,world)}
             }
             core.push(&places.queue,core.Place_Request{entity=binding.entity,position=world.position,rotation=world.rotation})
@@ -1061,7 +1061,7 @@ binding_add :: proc(playback:^Playback,state:^Playing,old:[]Binding,transforms:^
 // rest transform. Below it, entities with an Animation of their own, rigs and
 // what names another animation are left to it.
 @(private)
-bind :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,hierarchy:core.Ref(core.Hierarchy),transforms:^core.Table(core.Transform),names:core.Read(core.Name),targets:core.Read(Animation_Target),animations:core.Read(Animation),problems:^core.Problems) -> bool {
+bind :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,hierarchy:core.Ref(core.Hierarchy),transforms:^core.Table(core.Transform),names:^core.Table(core.Name,$A),targets:^core.Table(Animation_Target,$B),animations:^core.Table(Animation,$C),problems:^core.Problems) -> bool {
     next:Playing
     defer playing_free(&next)
     old:=state.bindings[:]
@@ -1208,12 +1208,12 @@ pose_space :: proc(playback:^Playback,entity:core.Entity,allocator:=context.allo
     return pose,true
 }
 
-animation_finish :: proc(playback:^Playback,inputs:Constraint_Inputs,constraints:^Animation_Constraints,transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),dt:f32,grounding:^Grounding_Runtime,ground_inputs:Grounding_Inputs,rig_runtime:^Modifier_Runtime=nil,motion:^Motion_Runtime=nil,characters:^Character_Assets=nil,final_poses:[]Pose_Request=nil,paces:core.Read(core.Own_Pace)={},clock:=core.CLOCK_DEFAULT,places:^core.Places=nil) {
+animation_finish :: proc(playback:^Playback,inputs:Constraint_Inputs,constraints:^Animation_Constraints,transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,$A),dt:f32,grounding:^Grounding_Runtime,ground_inputs:Grounding_Inputs,rig_runtime:^Modifier_Runtime=nil,motion:^Motion_Runtime=nil,characters:^Character_Assets=nil,final_poses:[]Pose_Request=nil,paces:^core.Table(core.Own_Pace,.Read)=nil,clock:=core.CLOCK_DEFAULT,places:^core.Places=nil) {
     grounding_prepare(grounding,ground_inputs.configs,ground_inputs.problems)
-    finish :: proc(state:^Playing,playback:^Playback,inputs:Constraint_Inputs,constraints:^Animation_Constraints,transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),dt:f32,grounding:^Grounding_Runtime,ground_inputs:Grounding_Inputs,rig_runtime:^Modifier_Runtime,motion:^Motion_Runtime,characters:^Character_Assets,final_poses:[]Pose_Request,paces:core.Read(core.Own_Pace),clock:core.Clock,places:^core.Places) {
+    finish :: proc(state:^Playing,playback:^Playback,inputs:Constraint_Inputs,constraints:^Animation_Constraints,transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,$A),dt:f32,grounding:^Grounding_Runtime,ground_inputs:Grounding_Inputs,rig_runtime:^Modifier_Runtime,motion:^Motion_Runtime,characters:^Character_Assets,final_poses:[]Pose_Request,paces:^core.Table(core.Own_Pace,$B),clock:core.Clock,places:^core.Places) {
         if state.skeleton!={} {if root,ok:=core.get(transforms,state.entity);ok {state.local[0]=core.to_math(root)}}
-        constraints_apply(state,playback,inputs,constraints,transforms,parents,dt*core.pace_of(clock,paces,state.entity),grounding,ground_inputs,rig_runtime,motion,characters,final_poses)
-        pose_write(playback,state,transforms,parents,places)
+        constraints_apply(state,playback,inputs,constraints,transforms,core.read(parents),dt*core.pace_of(clock,paces,state.entity),grounding,ground_inputs,rig_runtime,motion,characters,final_poses)
+        pose_write(playback,state,transforms,core.read(parents),places)
         if !state.pose_ready || !slice.equal(state.local[:],state.previous[:]) {state.changed=playback.frame}
         if !state.pose_ready {copy(state.previous[:],state.local[:])}
         state.pose_ready=true

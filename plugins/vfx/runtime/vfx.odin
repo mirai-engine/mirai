@@ -134,9 +134,9 @@ particle_sync_free :: proc(sync:^Particle_Sync) {
 // what each starts and the entities of the effects that are done.
 @(step="fixed",loops="game editor",stage="end")
 particles_tick :: proc(
-    emitters:core.Read(Particle_Emitter),overrides:^core.Table(Particle_Override),parameters:^core.Table(Particle_Parameters),
-    worlds:core.Read(core.World_Transform),hierarchy:core.Ref(core.Hierarchy),entities:core.Commands,
-    clocks:^Particle_Clocks,requests:^Particle_Requests,births:^core.Births,listeners:core.Read(Particle_Channel),
+    emitters:^core.Table(Particle_Emitter,.Read),overrides:^core.Table(Particle_Override),parameters:^core.Table(Particle_Parameters),
+    worlds:^core.Table(core.World_Transform,.Read),hierarchy:core.Ref(core.Hierarchy),entities:core.Commands,
+    clocks:^Particle_Clocks,requests:^Particle_Requests,births:^core.Births,listeners:^core.Table(Particle_Channel,.Read),
     time:core.Time,frame:core.Frame_Time,assets:^host.Assets,problems:^core.Problems,
 ) {
     if clocks.playing!=time.playing {
@@ -183,12 +183,12 @@ particles_tick :: proc(
 // not start yet, and where they are.
 @(step="render",loops="game editor",after="render_sync")
 particles_sync :: proc(
-    emitters:core.Read(Particle_Emitter),overrides:core.Read(Particle_Override),parameters:core.Read(Particle_Parameters),
-    worlds:core.Read(core.World_Transform),hidden:core.Read(erender.Hidden),parents:core.Read(core.Parent),
-    bindings:core.Read(Particle_Bindings),meshes:core.Read(erender.Mesh_Renderer),drawn:core.Ref(erender.Render_Sync),listeners:core.Read(Particle_Channel),grids:core.Read(Particle_Grid),volumes:core.Read(Particle_Volume),textures:core.Read(Particle_World_Texture),
+    emitters:^core.Table(Particle_Emitter,.Read),overrides:^core.Table(Particle_Override,.Read),parameters:^core.Table(Particle_Parameters,.Read),
+    worlds:^core.Table(core.World_Transform,.Read),hidden:^core.Table(erender.Hidden,.Read),parents:^core.Table(core.Parent,.Read),
+    bindings:^core.Table(Particle_Bindings,.Read),meshes:^core.Table(erender.Mesh_Renderer,.Read),drawn:core.Ref(erender.Render_Sync),listeners:^core.Table(Particle_Channel,.Read),grids:^core.Table(Particle_Grid,.Read),volumes:^core.Table(Particle_Volume,.Read),textures:^core.Table(Particle_World_Texture,.Read),
     clocks:core.Ref(Particle_Clocks),settings:core.Ref(Particle_Settings),sync:^Particle_Sync,reports:^Particle_Reports,data:^Particle_Data,watch:^Particle_Data_Watch,read:^Particle_Data_Read,ui_effects:^UI_Particles,ui_requests:core.Ref(gui.UI_Effects),id:core.World_Id,time:core.Time,frame:core.Frame_Time,
     view:core.View,problems:^core.Problems,app:^host.App,
-    winds:core.Read(volume.Wind),places:core.Read(volume.Volume),gravities:core.Read(volume.Gravity),
+    winds:^core.Table(volume.Wind,.Read),places:^core.Table(volume.Volume,.Read),gravities:^core.Table(volume.Gravity,.Read),
 ) {
     if sync==nil {return}
     if reports!=nil {reports_read(reports,sync,app.renderer,id)}
@@ -369,7 +369,7 @@ births_since :: proc(clock:^Emitter_Clock,started:^u64) -> (spawns:[SPAWNS]Parti
 // GPU is told of them. False without assets, or while the renderer does not
 // have the triangles of its mesh: it is resolved again.
 @(private)
-shown_resolve :: proc(shown:^Emitter_Shown,app:^host.App,particle:base.Asset_Id,overrides:core.Read(Particle_Override),parameters:core.Read(Particle_Parameters),e:core.Entity) -> bool {
+shown_resolve :: proc(shown:^Emitter_Shown,app:^host.App,particle:base.Asset_Id,overrides:^core.Table(Particle_Override,$A),parameters:^core.Table(Particle_Parameters,$B),e:core.Entity) -> bool {
     a:=app.assets
     override,_:=core.get(overrides,e)
     given,_:=core.get(parameters,e)
@@ -486,7 +486,7 @@ status :: proc(clocks:^Particle_Clocks,emitter:Particle_Emitter,e:core.Entity) -
 
 // Whether every emitter at e or under it is done.
 @(private)
-subtree_done :: proc(emitters:core.Read(Particle_Emitter),clocks:^Particle_Clocks,hierarchy:core.Ref(core.Hierarchy),root:core.Entity) -> bool {
+subtree_done :: proc(emitters:^core.Table(Particle_Emitter,$A),clocks:^Particle_Clocks,hierarchy:core.Ref(core.Hierarchy),root:core.Entity) -> bool {
     for e:=root;e!=core.NONE;e=core.subtree_next(hierarchy,root,e) {
         if !core.has(emitters,e) {continue}
         if clock:=clock_find(clocks,e);clock==nil || !clock.done {return false}

@@ -192,7 +192,7 @@ an_animation_that_compresses_in_a_job_plays_once_it_is_ready_without_problems ::
     animation:=ANIMATION_DEFAULT;animation.asset=id;animation.loop=false;animation.fade=0;base.text_set(animation.clip[:],"walk")
     core.add(&w.animations,actor,animation)
     core.test_world_settle(&w)
-    core.hierarchy_settle(&w.hierarchy,core.read(&w.parents),&w.entities)
+    core.hierarchy_settle(&w.hierarchy,&w.parents,&w.entities)
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
     problems:core.Problems
     for ready in 0..<2 {
@@ -243,7 +243,7 @@ a_library_that_compresses_in_a_job_keeps_what_plays_until_it_is_ready :: proc(t:
     animation:=ANIMATION_DEFAULT;animation.asset=CHARACTER;animation.fade=0
     core.add(&w.animations,actor,animation)
     core.test_world_settle(&w)
-    core.hierarchy_settle(&w.hierarchy,core.read(&w.parents),&w.entities)
+    core.hierarchy_settle(&w.hierarchy,&w.parents,&w.entities)
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
     problems:core.Problems
     graphs:=Character_Assets{allocator=context.allocator};defer character_assets_free(&graphs)
@@ -256,7 +256,7 @@ a_library_that_compresses_in_a_job_keeps_what_plays_until_it_is_ready :: proc(t:
     }
     tick :: proc(s:Swap_Test) {
         w:=s.w
-        animation_tick(core.read(&w.animations),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),&w.requests,&w.events,core.read(&w.targets),{},&w.playback,s.app,{dt=.1,playing=true},{},s.skeletons,s.problems,characters=s.graphs,actions=&w.actions,sources=s.sources)
+        animation_tick(core.read(&w.animations),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),&w.requests,&w.events,&w.targets,{},&w.playback,s.app,{dt=.1,playing=true},{},s.skeletons,s.problems,characters=s.graphs,actions=&w.actions,sources=s.sources)
     }
     s:=Swap_Test{&w,&app,&skeletons,&problems,&graphs,&sources}
     if !testing.expect(t,host.content_animation_wait(&app,CLIPS)!=nil) {return}

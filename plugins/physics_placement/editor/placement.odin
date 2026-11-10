@@ -234,7 +234,7 @@ placement_update :: proc(tool:^Physics_Placement,dt:f32) -> bool {
             if local!=editor.entity_local(editor.edited_world(tool.session),e) {
                 if !editor.transform_set(tool.session,e,local) {placement_cancel(tool);return false}
             }
-            motion,made:=core.get(core.read(core.world_table_of(tool.preview,core.Motion)),e)
+            motion,made:=core.get(core.world_table_of(tool.preview,core.Motion),e)
             resting=resting && made && !motion.awake
         }
         if resting || tool.ticks>=PLACEMENT_TICKS {tool.resting=true;break}

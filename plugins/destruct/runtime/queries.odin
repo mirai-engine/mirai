@@ -20,8 +20,8 @@ Group_Info :: struct {
 @(params)
 Destruct_View :: struct {
     physics:core.Ref(phys.Physics_State),
-    states:core.Read(Destructible_State),
-    groups:core.Read(Destructible_Group),
+    states:^core.Table(Destructible_State,.Read),
+    groups:^core.Table(Destructible_Group,.Read),
 }
 
 // The destructible e is part of: itself, or the one a body that broke off it

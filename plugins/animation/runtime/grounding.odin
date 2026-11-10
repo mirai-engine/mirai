@@ -79,9 +79,9 @@ Grounding_Runtime :: struct {
 }
 
 // What the rays of a rig skip: the nearest of it and its parents with a body.
-ground_ignore :: proc(ground:core.World_Query,parents:core.Read(core.Parent),rig:core.Entity) -> core.Entity {
+ground_ignore :: proc(ground:core.World_Query,parents:^core.Table(core.Parent,$A),rig:core.Entity) -> core.Entity {
     ignore:=rig
-    if ground.solid==nil || parents.table==nil {return ignore}
+    if ground.solid==nil || parents==nil {return ignore}
     for attempts:=0;attempts<256;attempts+=1 {
         if ground.solid(ground.user,ignore) {break}
         parent,ok:=core.get(parents,ignore)
@@ -92,25 +92,25 @@ ground_ignore :: proc(ground:core.World_Query,parents:core.Read(core.Parent),rig
 }
 
 Grounding_Inputs :: struct {
-    configs:core.Read(Foot_Grounding),
+    configs:^core.Table(Foot_Grounding,.Read),
     ground:core.World_Query, // the feet stand on what it hits; without a library that gives it no foot is grounded
-    transforms:core.Read(core.Transform),
-    parents:core.Read(core.Parent),
+    transforms:^core.Table(core.Transform,.Read),
+    parents:^core.Table(core.Parent,.Read),
     geometry:u64,
     problems:^core.Problems,
-    verticals:core.Read(core.Vertical),
+    verticals:^core.Table(core.Vertical,.Read),
 }
 
 grounding_free :: proc(cache:^Grounding_Runtime) {
     delete(cache.records);delete(cache.rows);delete(cache.hierarchies);delete(cache.links);cache^={}
 }
 
-grounding_prepare :: proc(cache:^Grounding_Runtime,configs:core.Read(Foot_Grounding),problems:^core.Problems) -> bool {
+grounding_prepare :: proc(cache:^Grounding_Runtime,configs:^core.Table(Foot_Grounding,$A),problems:^core.Problems) -> bool {
     if cache==nil {return false}
     count:=constraint_count(configs)
     stamp:=constraint_stamp(configs)
     if cache.stamp==stamp {return true}
-    layout:=core.layout(configs) if configs.table!=nil else 0
+    layout:=core.layout(configs) if configs!=nil else 0
     rebuild:=cache.layout!=layout || len(cache.records)!=count || len(cache.hierarchies)!=count
     if !rebuild {
         for i in 0..<count {
@@ -311,18 +311,18 @@ grounding_limb_hit :: proc(ground:core.World_Query,hip,knee,foot:mm.Vec3,ignore:
 // the frame of the rig under basis, the world of its parent; never as the
 // bones of the rig turn in its animation.
 grounding_up :: proc(inputs:Grounding_Inputs,rig:core.Entity,basis:mm.Transform,up:mm.Vec3) -> mm.Vec3 {
-    if inputs.verticals.table!=nil {
+    if inputs.verticals!=nil {
         e:=rig
         for _ in 0..<GROUNDING_DEPTH {
             if core.has(inputs.verticals,e) {return mm.quat_rotate(core.vertical_of(inputs.verticals,e),{0,1,0})}
-            if inputs.parents.table==nil {break}
+            if inputs.parents==nil {break}
             parent,found:=core.get(inputs.parents,e)
             if !found || parent.entity==core.NONE {break}
             e=parent.entity
         }
     }
     rotation:=basis.rotation
-    if inputs.transforms.table!=nil {
+    if inputs.transforms!=nil {
         if local,found:=core.get(inputs.transforms,rig);found {rotation*=local.rotation}
     }
     return linalg.normalize0(mm.quat_rotate(rotation,up))
@@ -352,7 +352,7 @@ grounding_apply :: proc(state:^Playing,cache:^Grounding_Runtime,inputs:Grounding
     if prepared.first<0 || prepared.count!=len(state.parents) || prepared.first>len(cache.links) || prepared.count>len(cache.links)-prepared.first {grounding_inconsistent(problems,state.entity);return false}
     hierarchy:=lib.Pose_Hierarchy{state.parents[:],cache.links[prepared.first:prepared.first+prepared.count]}
     basis:=mm.TRANSFORM_IDENTITY
-    if inputs.parents.table!=nil {
+    if inputs.parents!=nil {
         if parent,ok:=core.get(inputs.parents,state.entity);ok && parent.entity!=core.NONE {
             basis,ok=core.world_of(inputs.transforms,inputs.parents,parent.entity)
             if !ok {

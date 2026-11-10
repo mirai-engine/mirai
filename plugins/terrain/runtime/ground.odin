@@ -52,7 +52,7 @@ ground_open :: proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
 
 // What the ground of the world is now, at the end of terrain_update.
 @(private)
-ground_update :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:core.Read(Terrain),colliders:^core.Table(phys.Collider),worlds:core.Read(core.World_Transform),focus:Terrain_Focus) {
+ground_update :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:^core.Table(Terrain,$A),colliders:^core.Table(phys.Collider),worlds:^core.Table(core.World_Transform,$B),focus:Terrain_Focus) {
     g:=&resident.ground
     if g.revision>>32!=u64(data.epoch) {
         g.revision,g.count,g.stamps=u64(data.epoch)<<32,0,{}
@@ -222,7 +222,7 @@ shown_weights :: proc "contextless" (s:^Source,local,normal:[3]f32) -> Weights {
 // chunk shown empty has nothing to load. Made again when the chunks, the
 // colliders, the terrains, their places or their sources change.
 @(private)
-ground_unloaded :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:core.Read(Terrain),colliders:^core.Table(phys.Collider),worlds:core.Read(core.World_Transform)) {
+ground_unloaded :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:^core.Table(Terrain,$A),colliders:^core.Table(phys.Collider),worlds:^core.Table(core.World_Transform,$B)) {
     g:=&resident.ground
     stamps:=[5]u64{core.version(colliders),core.version(terrains),core.version(worlds),terrain_data_change({data}),u64(len(resident.owners))}
     for &source in resident.sources {for chunk in source.chunks {stamps[4]=stamps[4]*31+u64(chunk.shown)}}

@@ -35,23 +35,21 @@ Raft_Game :: struct {
 
 @(step="fixed")
 raft_breath :: proc(
-    divers:^core.Table(Diver),states:core.Read(phys.Character_State),games:^core.Table(Raft_Game),
-    worlds:core.Read(core.World_Transform),placer:core.Placer,time:core.Time,
+    divers:^core.Table(Diver),states:^core.Table(phys.Character_State,.Read),games:^core.Table(Raft_Game),
+    worlds:^core.Table(core.World_Transform,.Read),placer:core.Placer,time:core.Time,
 ) {
     if !time.playing || !(time.dt>0) {return}
     for row in 0..<core.count(divers) {
         e:=core.entity_at(divers,row)
         state,has:=core.get(states,e)
         if !has {continue}
-        // Only a breath that changes is written: a full one over the surface stays as it is.
-        next:=core.at(divers,row)
-        if core.added(divers,row) {next.oxygen=next.capacity} // its first breath
+        diver:=core.edit_at(divers,row)
+        if core.added(divers,row) {diver.oxygen=diver.capacity} // its first breath
         if state.head_depth>0 {
-            next.oxygen=max(next.oxygen-time.dt,0)
-        } else {next.oxygen=min(next.oxygen+next.refill*time.dt,next.capacity)}
-        drowned:=next.oxygen<=0
-        if drowned {next.oxygen,next.drowned=next.capacity,next.drowned+1}
-        if next!=core.at(divers,row) {core.edit_at(divers,row)^=next}
+            diver.oxygen=max(diver.oxygen-time.dt,0)
+        } else {diver.oxygen=min(diver.oxygen+diver.refill*time.dt,diver.capacity)}
+        drowned:=diver.oxygen<=0
+        if drowned {diver.oxygen,diver.drowned=diver.capacity,diver.drowned+1}
         if !drowned {continue}
         for &game in core.writable(games) {
             raft,found:=core.get(worlds,game.raft)
@@ -87,12 +85,11 @@ RAFT_BAR_STEPS :: 300 // the steps the bar of the breath moves in
 
 @(step="frame")
 raft_hud :: proc(
-    huds:^core.Table(Raft_Hud),divers:core.Read(Diver),games:core.Read(Raft_Game),states:core.Read(phys.Character_State),locomotions:core.Read(locomotion.Locomotion_State),
-    drivables:core.Read(inp.Drivable),time:core.Time,
+    huds:^core.Table(Raft_Hud),divers:^core.Table(Diver,.Read),games:^core.Table(Raft_Game,.Read),states:^core.Table(phys.Character_State,.Read),locomotions:^core.Table(locomotion.Locomotion_State,.Read),
+    drivables:^core.Table(inp.Drivable,.Read),time:core.Time,
 ) {
-    shown:=core.read(huds)
-    for row in 0..<core.count(shown) {
-        body:=core.entity_at(shown,row)
+    for row in 0..<core.count(huds) {
+        body:=core.entity_at(huds,row)
         next:Raft_Hud
         if diver,is_diver:=core.get(divers,body);is_diver && inp.seat_of(drivables,body)!=core.NONE && core.count(games)>0 {
             state,_:=core.get(states,body)
@@ -108,6 +105,6 @@ raft_hud :: proc(
             next.drowned,next.drowned_once=i32(diver.drowned),diver.drowned>0
             for at in 0..<core.count(games) {next.message||=!core.due(time,core.at(games,at).message_until)}
         }
-        if core.at(shown,row)!=next {core.edit_at(huds,row)^=next}
+        core.edit_at(huds,row)^=next
     }
 }

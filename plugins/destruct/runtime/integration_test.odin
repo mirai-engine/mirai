@@ -321,7 +321,7 @@ authored_destruction_proxies_geometry_and_groups_survive_cache_recovery_offline 
     testing.expect_value(t,core.version(&f.transforms),transforms_version)
     core.remove(&f.configs,e);core.remove(&f.states,e);destruct_test_step(&f)
     testing.expect_value(t,phys.body_of(core.ref(&f.physics),e),phys.Body_Handle(0))
-    testing.expect_value(t,core.count(core.read(&f.groups)),0)
+    testing.expect_value(t,core.count(&f.groups),0)
     testing.expect_value(t,f.physics.world.body_count,i32(0))
 }
 
@@ -353,7 +353,7 @@ rejected_authored_destruction_does_not_leave_root_or_fragment_proxies :: proc(t:
     destruct_test_step(&f)
     testing.expect(t,core.at(&f.states,core.row_of(&f.states,e)).failed)
     testing.expect_value(t,phys.body_of(core.ref(&f.physics),e),phys.Body_Handle(0))
-    testing.expect_value(t,core.count(core.read(&f.groups)),0)
+    testing.expect_value(t,core.count(&f.groups),0)
     testing.expect_value(t,f.physics.world.body_count,i32(0))
     testing.expect_value(t,f.physics.world.shape_count,i32(0))
 }
@@ -413,7 +413,7 @@ successive_cuts_keep_detached_proxies_and_all_live_fragment_meshes :: proc(t:^te
         testing.expect(t,core.alive(&f.entities,target.entity))
         testing.expect_value(t,phys.body_of(core.ref(&f.physics),target.entity),target.body)
         testing.expect_value(t,groups(Destruct_View{core.ref(&f.physics),core.read(&f.states),core.read(&f.groups)},e,poses[:]),3+pass)
-        testing.expect_value(t,core.count(core.read(&f.groups)),3+pass)
+        testing.expect_value(t,core.count(&f.groups),3+pass)
         testing.expect_value(t,f.assets.stats.generated,3+pass)
         root,_:=core.get(&f.meshes,root_entity)
         testing.expect_value(t,root.mesh,root_mesh)

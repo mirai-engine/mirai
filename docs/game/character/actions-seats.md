@@ -32,7 +32,7 @@ changed; never write it by hand.
 
 ```odin
 @(step="fixed",server)
-game_fire :: proc(players:core.Read(Player),actions:inp.Input_Of(Action)) {
+game_fire :: proc(players:^core.Table(Player,.Read),actions:inp.Input_Of(Action)) {
     for row in 0..<core.count(players) {
         body:=core.entity_at(players,row)
         if !inp.pressed(actions,body,.Fire) {continue}   // the seat that drives body
@@ -59,7 +59,8 @@ A seat is a player of this machine (`slot`) or of a connection (`peer`); it exis
 
 - `inp.drive(seats,seat,body)`, `inp.release(seats,seat)`, `inp.swap(seats,first,second)` and
   `inp.focus(seats,slot)` push into `^inp.Seat_Requests`; they apply at the start of the tick.
-- `inp.body_of(drivables,seat)` and `inp.seat_of(drivables,body)` read `core.Read(inp.Drivable)`.
+- `inp.body_of(drivables,seat)` and `inp.seat_of(drivables,body)` read the table of
+  `inp.Drivable`.
 - Bodies appear at spawn points: `Spawn_Settings.players` gives each seat one, or ask with
   `spawn.spawn(requests,seat,PLAYER_PREFAB)` and `spawn.respawn(requests,body,point)` in
   `^spawn.Spawn_Requests` (a client cannot: the server decides).

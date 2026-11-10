@@ -187,7 +187,7 @@ slice :: proc(requests:^Destruct_Requests,e:core.Entity,point,normal:[3]f32) {
 
 Remove_Error :: enum {None,Missing_Group,Retained_Group}
 
-remove :: proc(requests:^Destruct_Requests,groups:core.Read(Destructible_Group),e:core.Entity) -> Remove_Error {
+remove :: proc(requests:^Destruct_Requests,groups:^core.Table(Destructible_Group,$A),e:core.Entity) -> Remove_Error {
     group,has:=core.get(groups,e)
     if !has {return .Missing_Group}
     if group.group==0 {return .Retained_Group}

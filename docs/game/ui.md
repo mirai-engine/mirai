@@ -48,7 +48,7 @@ A frame step reads what the widgets asked, once each, also while the clock is st
 
 ```odin
 @(step="frame")
-menu_frame :: proc(g:^gui.Gui, screens:core.Read(Menu_Screen), options:^Menu_Options) {
+menu_frame :: proc(g:^gui.Gui, screens:^core.Table(Menu_Screen,.Read), options:^Menu_Options) {
     screen:=core.entity_at(screens,0)
     events:=gui.events_this_frame(g)
     if gui.clicked(events,screen,"menu_play") {start_game()}

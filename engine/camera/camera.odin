@@ -168,14 +168,14 @@ camera_override_remove :: proc(r:^Camera_Requests,owner:core.Entity) {
 
 // The camera a seat sees through: its latest override, and otherwise the
 // camera of its body. none without a valid one.
-camera_selected :: proc(cameras_state:^Cameras,drivables:core.Read(input.Drivable),cameras:core.Read(render.Camera),seat:core.Entity) -> core.Entity {
+camera_selected :: proc(cameras_state:^Cameras,drivables:^core.Table(input.Drivable,$A),cameras:^core.Table(render.Camera,$B),seat:core.Entity) -> core.Entity {
     camera,_:=seat_camera(cameras_state,drivables,cameras,seat)
     return camera
 }
 
 // The camera a seat sees through and, when an override chose it, the blend it asked for.
 @(private)
-seat_camera :: proc(cameras_state:^Cameras,drivables:core.Read(input.Drivable),cameras:core.Read(render.Camera),seat:core.Entity) -> (core.Entity,Camera_Blend) {
+seat_camera :: proc(cameras_state:^Cameras,drivables:^core.Table(input.Drivable,$A),cameras:^core.Table(render.Camera,$B),seat:core.Entity) -> (core.Entity,Camera_Blend) {
     if chosen:=override_chosen(cameras_state,cameras,seat);chosen!=nil {return chosen.camera,chosen.blend}
     if seat==core.NONE {return core.NONE,{}}
     if body:=input.body_of(drivables,seat);body!=core.NONE {
@@ -194,7 +194,7 @@ camera_overriding :: proc "contextless" (cameras_state:^Cameras,owner:core.Entit
 }
 
 @(private)
-override_chosen :: proc(cameras_state:^Cameras,cameras:core.Read(render.Camera),seat:core.Entity) -> (chosen:^Camera_Override) {
+override_chosen :: proc(cameras_state:^Cameras,cameras:^core.Table(render.Camera,$A),seat:core.Entity) -> (chosen:^Camera_Override) {
     if seat==core.NONE {return}
     for &item in cameras_state.overrides {
         if !item.active || item.seat!=seat || !camera_valid(cameras,item.camera) {continue}
@@ -204,7 +204,7 @@ override_chosen :: proc(cameras_state:^Cameras,cameras:core.Read(render.Camera),
 }
 
 @(private)
-camera_valid :: proc(cameras:core.Read(render.Camera),e:core.Entity) -> bool {
+camera_valid :: proc(cameras:^core.Table(render.Camera,$A),e:core.Entity) -> bool {
     camera,ok:=core.get(cameras,e)
     return ok && camera.fov>=0 && camera.fov<3.14159 && camera.near>=0
 }
@@ -213,9 +213,9 @@ camera_valid :: proc(cameras:core.Read(render.Camera),e:core.Entity) -> bool {
 // drives what, so a camera and a seat request land together, before the Move_Input of the seats.
 @(step="fixed",stage="input")
 camera_select :: proc(
-    es:core.Ref(core.Entities),cameras:core.Read(render.Camera),cameras_state:^Cameras,requests:^Camera_Requests,
-    activations:core.Read(Camera_Activation),follows:core.Read(Camera_Follow),drivables:core.Read(input.Drivable),
-    seats:core.Read(input.Seat),seat_state:core.Ref(input.Seats),problems:^core.Problems,
+    es:core.Ref(core.Entities),cameras:^core.Table(render.Camera,.Read),cameras_state:^Cameras,requests:^Camera_Requests,
+    activations:^core.Table(Camera_Activation,.Read),follows:^core.Table(Camera_Follow,.Read),drivables:^core.Table(input.Drivable,.Read),
+    seats:^core.Table(input.Seat,.Read),seat_state:core.Ref(input.Seats),problems:^core.Problems,
 ) {
     for request in core.take(&requests.queue) {
         r:=request.override
@@ -290,10 +290,10 @@ override_set :: proc(cameras_state:^Cameras,r:Camera_Override) -> bool {
 @(step="late")
 camera_follow :: proc(
     world:core.World_Ref,follows:^core.Table(Camera_Follow),cameras:^core.Table(render.Camera),transforms:^core.Table(core.Transform),
-    worlds:core.Read(core.World_Transform),parents:core.Read(core.Parent),drivables:core.Read(input.Drivable),
-    seats:core.Read(input.Seat),moves:core.Read(input.Move_Input),shown:core.Ref(Cameras),
+    worlds:^core.Table(core.World_Transform,.Read),parents:^core.Table(core.Parent,.Read),drivables:^core.Table(input.Drivable,.Read),
+    seats:^core.Table(input.Seat,.Read),moves:^core.Table(input.Move_Input,.Read),shown:core.Ref(Cameras),
     seat_state:core.Ref(input.Seats),look_actions:input.Frame_Input_Of(input.Look_Action),queries:core.Ref(core.World_Queries),look_input:^Camera_Input,changes:^Camera_Changes,
-    views:core.Ref(Camera_Views),verticals:core.Read(core.Vertical),frame:core.Frame_Time,time:core.Time,problems:^core.Problems,
+    views:core.Ref(Camera_Views),verticals:^core.Table(core.Vertical,.Read),frame:core.Frame_Time,time:core.Time,problems:^core.Problems,
     shakes:^Camera_Shakes,
 ) {
     // The lens is the one of the mode or the override; the shakes go over it again below.
@@ -360,7 +360,7 @@ vertical_between :: proc "contextless" (vertical:mm.Quat,placed:core.World_Trans
 // A setup keeps the target and what its camera derived; a free Orbit goes on
 // looking where the camera looked, and one with an angle of its own takes it.
 @(private)
-mode_take :: proc(follows:^core.Table(Camera_Follow),cameras:^core.Table(render.Camera),worlds:core.Read(core.World_Transform),change:Camera_Change,problems:^core.Problems) {
+mode_take :: proc(follows:^core.Table(Camera_Follow),cameras:^core.Table(render.Camera),worlds:^core.Table(core.World_Transform,$A),change:Camera_Change,problems:^core.Problems) {
     camera:=core.edit(cameras,change.camera)
     if camera==nil {
         core.report(problems,change.camera,"camera.mode_camera","a camera mode for entity 0x%016x was refused: it has no render.Camera; give it one, or ask for the mode of a camera",u64(change.camera))
@@ -443,7 +443,7 @@ arm_query :: proc(user:rawptr,from,to:mm.Vec3,radius:f32) -> (fraction:f32,hit:b
 
 // Its target, or without one the body whose camera it is, or else the one of
 // the focused local player.
-follow_target :: proc(e,target:core.Entity,drivables:core.Read(input.Drivable),player:core.Entity) -> core.Entity {
+follow_target :: proc(e,target:core.Entity,drivables:^core.Table(input.Drivable,$A),player:core.Entity) -> core.Entity {
     if target!=core.NONE {return target}
     for row in 0..<core.count(drivables) {
         if core.at(drivables,row).camera==e {return core.entity_at(drivables,row)}
@@ -495,8 +495,8 @@ arm_tune :: proc "contextless" (arm:^Spring_Arm,follow:Camera_Follow) {
 @(private)
 follow_one :: proc(
     e:core.Entity,follow:^Camera_Follow,target:core.Entity,transforms:^core.Table(core.Transform),
-    worlds:core.Read(core.World_Transform),parents:core.Read(core.Parent),
-    moves:core.Read(input.Move_Input),vertical:mm.Quat,query:core.World_Query,frame:core.Frame_Time,tick:f32,
+    worlds:^core.Table(core.World_Transform,$A),parents:^core.Table(core.Parent,$B),
+    moves:^core.Table(input.Move_Input,$C),vertical:mm.Quat,query:core.World_Query,frame:core.Frame_Time,tick:f32,
     camera:^render.Camera=nil,
 ) {
     placed,has_target:=core.get(worlds,target)
@@ -575,7 +575,7 @@ follow_one :: proc(
     turn,widen:=shakes_advance(s,dt)
     world_rotation*=turn
     if camera!=nil {shakes_fov(camera,s,widen)}
-    if core.world_set(row,core.read(transforms),parents,e,world_position,world_rotation) {
+    if core.world_set(row,transforms,parents,e,world_position,world_rotation) {
         s.written,s.wrote=row^,true
     }
 }

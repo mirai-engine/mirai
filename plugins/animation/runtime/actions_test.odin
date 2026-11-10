@@ -378,7 +378,7 @@ a_new_actions_asset_or_revision_interrupts_the_playing_action_and_fades_its_laye
         requests:Animation_Requests;defer delete(requests.plays.items);actions:Action_Runtime;defer actions_runtime_free(&actions)
         tick :: proc(actions:^Action_Runtime,requests:^Animation_Requests,cache:^Character_Assets,descriptions:^core.Table(Animation),playback:^Playback,app:^host.App,content:^host.Content_Animation,events:^Animation_Events,dt:f32) -> bool {
             if !prepare(actions,requests,cache,descriptions,playback,events,app,nil) {return false}
-            state:=&playback.states[0];sampled,_:=core.get(core.read(descriptions),state.entity)
+            state:=&playback.states[0];sampled,_:=core.get(descriptions,state.entity)
             stack_asks(actions,state,sampled,content)
             actions_sample(actions,state,sampled,dt,nil,content,playback,events);layers_advance(playback,state,content,sampled,events,dt,nil);actions_finish(actions,playback,dt)
             return true
@@ -463,7 +463,7 @@ actions_retry_a_first_fire_when_profile_preparation_has_no_memory :: proc(t:^tes
     actions:Action_Runtime;defer actions_runtime_free(&actions);requests:Animation_Requests;defer delete(requests.plays.items)
     events:Animation_Events;defer delete(events.items)
     reserve(&events.items,EVENT_BATCH)
-    testing.expect(t,actions_discover(&actions,core.read(&w.descriptions),&playback,&events,&host_assets,nil))
+    testing.expect(t,actions_discover(&actions,&w.descriptions,&playback,&events,&host_assets,nil))
     play(&requests,entity,"attack")
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;app.allocator=context.allocator
     prepared:=prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil)

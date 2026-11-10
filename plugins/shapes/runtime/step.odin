@@ -92,9 +92,9 @@ shapes_release :: proc(cache:^Shapes_Cache,assets:^host.Assets) {
 @(step="fixed frame",loops="game editor",stage="simulate",before="physics_prepare")
 shapes_update :: proc(
     cache:^Shapes_Cache,assets:^host.Assets,job_system:^jobs.Job_System,allocator:runtime.Allocator,commands:core.Commands,
-    shapes:core.Read(Shape),brushes:core.Read(Shape_Brush),parts:core.Read(Shape_Part),rigids:core.Read(physics.Rigid_Body),
+    shapes:^core.Table(Shape,.Read),brushes:^core.Table(Shape_Brush,.Read),parts:^core.Table(Shape_Part,.Read),rigids:^core.Table(physics.Rigid_Body,.Read),
     colliders:^core.Table(physics.Collider),meshes:^core.Table(render.Mesh_Renderer),
-    transforms:core.Read(core.Transform),parents:core.Read(core.Parent),hierarchy:core.Ref(core.Hierarchy),problems:^core.Problems,
+    transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),problems:^core.Problems,
 ) {
     if cache==nil || assets==nil {return}
     cs:=core.changes(shapes,&cache.shapes_seen)
@@ -139,7 +139,7 @@ shapes_update :: proc(
         entry:=core.entity_map_get(&cache.entries,e)
         row:=core.row_of(shapes,e)
         if entry==nil || row<0 {continue}
-        shape:=&shapes.table.values[row]
+        shape:=&shapes.values[row]
         body:=core.has(rigids,e)
         cut_first,gathered:=brushes_gather(&u,e,shape)
         if !gathered {
@@ -188,14 +188,14 @@ Update :: struct {
     cache:^Shapes_Cache,
     assets:^host.Assets,
     commands:core.Commands,
-    shapes:core.Read(Shape),
-    brushes:core.Read(Shape_Brush),
-    parts:core.Read(Shape_Part),
-    rigids:core.Read(physics.Rigid_Body),
+    shapes:^core.Table(Shape,.Read),
+    brushes:^core.Table(Shape_Brush,.Read),
+    parts:^core.Table(Shape_Part,.Read),
+    rigids:^core.Table(physics.Rigid_Body,.Read),
     colliders:^core.Table(physics.Collider),
     meshes:^core.Table(render.Mesh_Renderer),
-    transforms:core.Read(core.Transform),
-    parents:core.Read(core.Parent),
+    transforms:^core.Table(core.Transform,.Read),
+    parents:^core.Table(core.Parent,.Read),
     hierarchy:core.Ref(core.Hierarchy),
     problems:^core.Problems,
 }

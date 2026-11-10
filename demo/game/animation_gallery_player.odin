@@ -38,7 +38,7 @@ gallery_move :: proc(input:^inp.Move_Input,rotation:mm.Quat,wish:mm.Vec3,dt:f32)
     }
 }
 
-gallery_player_input :: proc(input:^inp.Move_Input,rotation:mm.Quat,dt:f32,owner:inp.Drivable,walk_actions:inp.Input_Of(locomotion.Walk_Action),look_actions:inp.Input_Of(inp.Look_Action),follows:core.Read(cam.Camera_Follow)) {
+gallery_player_input :: proc(input:^inp.Move_Input,rotation:mm.Quat,dt:f32,owner:inp.Drivable,walk_actions:inp.Input_Of(locomotion.Walk_Action),look_actions:inp.Input_Of(inp.Look_Action),follows:^core.Table(cam.Camera_Follow,$A)) {
     look:=inp.seat_vector(look_actions,owner.seat,.Look)
     move:=inp.seat_vector(walk_actions,owner.seat,.Move)
     follow,_:=core.get(follows,owner.camera)
@@ -52,7 +52,7 @@ gallery_player_input :: proc(input:^inp.Move_Input,rotation:mm.Quat,dt:f32,owner
 // The body a gallery seat drives walks along the view of its camera; while it adjusts a panel it
 // stands still. A body that fell goes back to where the gallery starts.
 @(step="fixed")
-gallery_player_move :: proc(players:core.Read(Gallery_Player),inputs:^core.Table(inp.Move_Input),worlds:core.Read(core.World_Transform),placer:core.Placer,seats:inp.Players,walk_actions:inp.Input_Of(locomotion.Walk_Action),look_actions:inp.Input_Of(inp.Look_Action),follows:core.Read(cam.Camera_Follow),time:core.Time) {
+gallery_player_move :: proc(players:^core.Table(Gallery_Player,.Read),inputs:^core.Table(inp.Move_Input),worlds:^core.Table(core.World_Transform,.Read),placer:core.Placer,seats:inp.Players,walk_actions:inp.Input_Of(locomotion.Walk_Action),look_actions:inp.Input_Of(inp.Look_Action),follows:^core.Table(cam.Camera_Follow,.Read),time:core.Time) {
     for row in 0..<core.count(players) {
         player:=core.at(players,row)
         body:=inp.body_of(seats.drivables,core.entity_at(players,row))
@@ -71,7 +71,7 @@ gallery_player_move :: proc(players:core.Read(Gallery_Player),inputs:^core.Table
 // E at a station: frame its panel, or drive the spider; E again, or at the spider, gives the
 // walk back to Mirai.
 @(step="fixed")
-gallery_interact :: proc(players:^core.Table(Gallery_Player),gallery:core.Read(Animation_Gallery),panels:core.Read(Gallery_Panel),worlds:core.Read(core.World_Transform),seats:inp.Players,actions:inp.Input_Of(Action),requests:^inp.Seat_Requests,cameras:^cam.Camera_Requests) {
+gallery_interact :: proc(players:^core.Table(Gallery_Player),gallery:^core.Table(Animation_Gallery,.Read),panels:^core.Table(Gallery_Panel,.Read),worlds:^core.Table(core.World_Transform,.Read),seats:inp.Players,actions:inp.Input_Of(Action),requests:^inp.Seat_Requests,cameras:^cam.Camera_Requests) {
     for row in 0..<core.count(players) {
         player:=core.at(players,row)
         seat:=core.entity_at(players,row)
@@ -116,7 +116,7 @@ GALLERY_PLAQUE_DISTANCE :: 10 // m from the body of the player within which the 
 // The plaques show near the body of the player and a panel only while its player adjusts it: a
 // widget without size is not drawn.
 @(step="fixed")
-gallery_widgets :: proc(players:core.Read(Gallery_Player),labels:core.Read(Gallery_Label),panels:core.Read(Gallery_Panel),widgets:^core.Table(gui.World_Widget),worlds:core.Read(core.World_Transform),drivables:core.Read(inp.Drivable)) {
+gallery_widgets :: proc(players:^core.Table(Gallery_Player,.Read),labels:^core.Table(Gallery_Label,.Read),panels:^core.Table(Gallery_Panel,.Read),widgets:^core.Table(gui.World_Widget),worlds:^core.Table(core.World_Transform,.Read),drivables:^core.Table(inp.Drivable,.Read)) {
     player,found:=core.first(players)
     if !found {return}
     focus:=core.at(players,0).focus

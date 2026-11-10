@@ -66,7 +66,7 @@ status_show :: proc(statuses:^core.Table(Status),message:string,hit:=false) {
 // wall or a piece of it. The server decides it, and a session alone.
 @(step="fixed",server)
 game_hit :: proc(
-    players:core.Read(Player),drivables:core.Read(inp.Drivable),worlds:core.Read(core.World_Transform),
+    players:^core.Table(Player,.Read),drivables:^core.Table(inp.Drivable,.Read),worlds:^core.Table(core.World_Transform,.Read),
     actions:inp.Input_Of(Action),physics:core.Ref(phys.Physics_State),damage:^destruct.Destruct_Requests,
 ) {
     for row in 0..<core.count(players) {

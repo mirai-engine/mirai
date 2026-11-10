@@ -17,8 +17,8 @@ import mm "mirai:std/math"
 // entity with a parent is left to its parent.
 @(step="fixed",loops="game",stage="begin")
 physics_pose_targets :: proc(
-    state:^Physics_State,targets:core.Read(core.Pose_Target),transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),
-    rigids:core.Read(Rigid_Body),characters:core.Read(Character),
+    state:^Physics_State,targets:^core.Table(core.Pose_Target,.Read),transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,.Read),
+    rigids:^core.Table(Rigid_Body,.Read),characters:^core.Table(Character,.Read),
 ) {
     c:=core.changes(targets,&state.targets_seen)
     if c.all {
@@ -73,7 +73,7 @@ physics_pose_targets :: proc(
 // A body made for an entity with a target starts as its target asks: placed
 // where it was made, and heading for the pose when it follows.
 @(private)
-target_made :: proc(state:^Physics_State,l:^Link,targets:core.Read(core.Pose_Target),e:core.Entity) {
+target_made :: proc(state:^Physics_State,l:^Link,targets:^core.Table(core.Pose_Target,$A),e:core.Entity) {
     target,on:=core.get(targets,e)
     if !on {return}
     l.target_placed=target.placed
@@ -130,7 +130,7 @@ target_place :: proc(state:^Physics_State,l:^Link,local:^core.Transform,position
 // velocity: after the step, so what the step did to it is undone. It looks
 // at the characters, not at every body.
 @(private)
-step_followed :: proc(state:^Physics_State,characters:core.Read(Character)) {
+step_followed :: proc(state:^Physics_State,characters:^core.Table(Character,$A)) {
     world:=&state.world
     for row in 0..<core.count(characters) {
         l:=link_find(state,core.entity_at(characters,row))

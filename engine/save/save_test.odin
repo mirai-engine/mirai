@@ -286,7 +286,7 @@ placed_at :: proc(w:^Save_Test_World,id:base.Entity_Id) -> [3]f32 {
 
 @(private="file")
 place :: proc(w:^Save_Test_World,id:base.Entity_Id,position:[3]f32) {
-    core.edit_at(&w.transforms,core.table_row(&w.transforms,core.entity_of(&w.entities,id))).position=position
+    core.edit_at(&w.transforms,core.row_of(&w.transforms,core.entity_of(&w.entities,id))).position=position
 }
 
 @(private="file")

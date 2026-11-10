@@ -288,9 +288,9 @@ net_test_fragment :: proc(s:^Net_Session,type:wire.Type_Id,component:typeid) -> 
 @(private)
 net_test_replica :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity,role:Role,simulation:Simulation) -> ^Replica {
     r:=&s.client.replicas[1]
-    local,_:=core.get(core.read(core.world_table_of(w,core.Transform)),e)
+    local,_:=core.get(core.world_table_of(w,core.Transform),e)
     r^={object=1,entity=e,type=net_test_type(s,w,e),role=role,simulation=simulation,slot=-1,samples=-1}
-    r.pose={id=core.id_of(core.read(core.world_table_of(w,core.Id)),e),position=local.position,rotation=local.rotation,scale=local.scale}
+    r.pose={id=core.id_of(core.world_table_of(w,core.Id),e),position=local.position,rotation=local.rotation,scale=local.scale}
     r.motion,_=motion_read(w,e)
     wire.smoothing_init(&r.smoothing)
     s.client.replica_high=max(s.client.replica_high,2)
@@ -332,7 +332,7 @@ net_test_pack :: proc(s:^Net_Session,w:^Net_Test_World,r:^Replica,tick:u32,pose:
 @(private)
 net_test_command :: proc(s:^Net_Session,w:^Net_Test_World,r:^Replica,tick:u32,force:f32,words:[]u32) -> wire.Command {
     local,_:=core.get(&w.transforms,r.entity)
-    pose:=Pose{id=core.id_of(core.read(&w.identities),r.entity),position=local.position,rotation=local.rotation,scale=local.scale}
+    pose:=Pose{id=core.id_of(&w.identities,r.entity),position=local.position,rotation=local.rotation,scale=local.scale}
     motion,_:=motion_read(core.world_ref(w,s.info),r.entity)
     return net_test_pack(s,w,r,tick,pose,motion,force,words)
 }
@@ -662,7 +662,7 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
     remote,status:=remote_input(core.ref(&worlds[0].remote),connected)
     testing.expect(t,status!=.None && remote.down&inp.action_bit(NET_TEST_FIRE)!=0)
     // The axis as the client's seat took it, past its dead zone.
-    steer:=inp.seat_action(core.read(&worlds[1].seats),inp.local_seat(core.read(&worlds[1].seats),0),NET_TEST_STEER).value
+    steer:=inp.seat_action(core.read(&worlds[1].seats),inp.local_seat(&worlds[1].seats,0),NET_TEST_STEER).value
     testing.expectf(t,steer>0.5 && abs(net_test_axis(remote,NET_TEST_STEER)-steer)<0.001,"steer %v at the client, %v at the server",steer,net_test_axis(remote,NET_TEST_STEER))
     // The input says what tick of the server the client showed, near the one
     // simulated. This fixture moves the client's tick by hand, not with its
@@ -674,7 +674,7 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
         client_pose,_:=core.get(&worlds[1].transforms,entities[1][index])
         testing.expectf(t,linalg.length(server_pose.position-client_pose.position)<0.02,"body %d server %v client %v",index,server_pose.position,client_pose.position)
     }
-    late,has_late:=core.get(core.read(&worlds[1].lates),entities[1][1])
+    late,has_late:=core.get(&worlds[1].lates,entities[1][1])
     testing.expectf(t,has_late && late.level==9 && !core.has(&worlds[1].lates,entities[1][0]),"the client has the late component of the second body %v at level %d, and that of the first %v",has_late,late.level,core.has(&worlds[1].lates,entities[1][0]))
     testing.expect_value(t,sessions[0].stats.retyped,u64(3))
     testing.expect_value(t,sessions[1].stats.spawned,u64(2))

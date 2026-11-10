@@ -73,7 +73,7 @@ blocked (`block_mask`). The editor API builds it: `cinematics.add` with part `Ti
 
 ```odin
 anim.animation_command(requests,intro,.Play)             // as any clip
-// cinematics:core.Read(cine.Cinematic), events:core.Ref(anim.Animation_Events)
+// cinematics:^core.Table(cine.Cinematic,.Read), events:core.Ref(anim.Animation_Events)
 if c,ok:=core.get(cinematics,intro);ok && c.status==.Completed {start_the_level()}
 for event in events.items {
     if event.entity==intro && event.name==base.name_hash("door_slam") {slam()}  // a .Marker

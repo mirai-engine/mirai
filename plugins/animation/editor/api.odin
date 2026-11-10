@@ -334,7 +334,7 @@ preview :: proc(s:^editor.Session,call:^api.Call) {
         written+=1
         serial.text_write_raw(out,"{");api.write_key(out,"id",true)
         id,_:=core.get(ids,entity);api.write_id(out,id.value)
-        api.write_text(out,"name",core.name_get(core.read(names),entity))
+        api.write_text(out,"name",core.name_get(names,entity))
         target,_:=core.get(targets,entity);api.write_text(out,"path",base.text_get(target.path[:]))
         api.write_numbers(out,"position",value.position);api.write_numbers(out,"scale",value.scale)
         rotation:=[4]f32{value.rotation.x,value.rotation.y,value.rotation.z,value.rotation.w}

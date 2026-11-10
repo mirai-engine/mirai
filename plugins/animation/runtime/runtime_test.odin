@@ -81,13 +81,13 @@ direct_clip_weights_preserve_zero_full_and_partial_trs_without_allocations :: pr
     lib.fader_play(&state.fader,clip)
     playback:Playback;defer playback_free(&playback)
     if !testing.expect(t,tracks_bind(&playback,&state,&content)) {return}
-    pose_sample(&playback,&state,&content.lib,ANIMATION_DEFAULT,{},nil)
+    pose_sample(&playback,&state,&content.lib,ANIMATION_DEFAULT,nil,nil)
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     matched:=true
     for source_weight in ([3]f32{0,.5,1}) {for weight in ([3]f32{0,.25,1}) {
         state.fader.current.weight=source_weight
         animation:=ANIMATION_DEFAULT;animation.weight=weight
-        pose_sample(&playback,&state,&content.lib,animation,{},nil)
+        pose_sample(&playback,&state,&content.lib,animation,nil,nil)
         expected:=mm.transform_interpolate(rest,posed,source_weight*weight)
         expected.rotation=mm.quat_slerp(rest.rotation,posed.rotation,source_weight*weight)
         for i in 0..<3 {matched &&=abs(state.local[0].position[i]-expected.position[i])<1e-5 && abs(state.local[0].scale[i]-expected.scale[i])<1e-5}
@@ -314,10 +314,10 @@ animation_bind_is_transactional_when_allocations_fail_and_stops_at_nested_player
     defer lib.library_destroy(&content.lib)
     still,_:=lib.clip_add(&content.lib,{tracks={{target=base.name_hash("10"),property=.Position,keys={{time=0,value={1,0,0,0}}}}}})
     testing.expect(t,still!=0)
-    testing.expect(t,core.hierarchy_settle(&w.hierarchy,core.read(&w.parents),&w.entities))
+    testing.expect(t,core.hierarchy_settle(&w.hierarchy,&w.parents,&w.entities))
     state:=Playing{entity=root}
     defer playing_free(&state)
-    testing.expect(t,bind(&w.playback,&state,&content,core.ref(&w.hierarchy),&w.transforms,core.read(&w.names),core.read(&w.targets),core.read(&w.animations),nil))
+    testing.expect(t,bind(&w.playback,&state,&content,core.ref(&w.hierarchy),&w.transforms,&w.names,&w.targets,&w.animations,nil))
     testing.expect_value(t,len(state.bindings),2)
     testing.expect_value(t,state.bindings[1].entity,bone)
     core.edit(&w.transforms,bone).position={9,0,0}
@@ -331,7 +331,7 @@ animation_bind_is_transactional_when_allocations_fail_and_stops_at_nested_player
         saved_context:=context
         context.allocator={runtime_failure_allocator,&failure}
         context.temp_allocator=context.allocator
-        ok:=bind(&w.playback,&state,&content,core.ref(&w.hierarchy),&w.transforms,core.read(&w.names),core.read(&w.targets),core.read(&w.animations),nil)
+        ok:=bind(&w.playback,&state,&content,core.ref(&w.hierarchy),&w.transforms,&w.names,&w.targets,&w.animations,nil)
         context=saved_context
         if ok {succeeded=true;break}
         testing.expect_value(t,raw_data(state.bindings),old_pointer)
@@ -342,7 +342,7 @@ animation_bind_is_transactional_when_allocations_fail_and_stops_at_nested_player
     testing.expect_value(t,state.rest[1],old_rest)
     core.remove(&w.animations,nested);core.test_world_settle(&w)
     append(&w.playback.rigs,Rig{entity=nested,skeleton={1,2}})
-    testing.expect(t,bind(&w.playback,&state,&content,core.ref(&w.hierarchy),&w.transforms,core.read(&w.names),core.read(&w.targets),core.read(&w.animations),nil))
+    testing.expect(t,bind(&w.playback,&state,&content,core.ref(&w.hierarchy),&w.transforms,&w.names,&w.targets,&w.animations,nil))
     testing.expect_value(t,len(state.bindings),2)
     testing.expect_value(t,len(state.previous),len(state.local))
     saved_context:=context

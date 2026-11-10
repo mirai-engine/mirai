@@ -133,10 +133,10 @@ ZOMBIE_BITERS :: 3 // zombies that bite the same target at once; the rest circle
 // What the minds of the arenas read of their agents and what they perceive.
 @(params)
 Arena :: struct {
-    worlds:core.Read(core.World_Transform),
-    perceptions:core.Read(behavior.Perception),
-    perceivables:core.Read(behavior.Perceivable),
-    agents:core.Read(nav.Nav_Agent),
+    worlds:^core.Table(core.World_Transform,.Read),
+    perceptions:^core.Table(behavior.Perception,.Read),
+    perceivables:^core.Table(behavior.Perceivable,.Read),
+    agents:^core.Table(nav.Nav_Agent,.Read),
 }
 
 @(storage)
@@ -196,7 +196,7 @@ zombie_think :: proc(t:^ai.Think(Zombie_Act),w:Arena) {
 
 // Walks somewhere near for a second or so, then stands a second and a half.
 @(act="Wander")
-zombie_wander :: proc(a:^ai.Act(Zombie_Act),w:Arena,flights:core.Read(locomotion.Fly),state:^Arena_State) -> ai.Status {
+zombie_wander :: proc(a:^ai.Act(Zombie_Act),w:Arena,flights:^core.Table(locomotion.Fly,.Read),state:^Arena_State) -> ai.Status {
     if ai.stage(a)==0 {
         if a.phase==.Enter {
             e:=behavior.agent(a)
@@ -251,7 +251,7 @@ SOLDIER_SURE :: f32(0.8) // how sure of an enemy it fires at it: seen a moment a
 SOLDIER_ERRAND :: f32(0.8) // what going for a smart object counts once begun: only healing and fetching ammo interrupt it
 
 @(mind="soldier")
-soldier_think :: proc(t:^ai.Think(Soldier_Act),w:Arena,soldiers:core.Read(Soldier)) {
+soldier_think :: proc(t:^ai.Think(Soldier_Act),w:Arena,soldiers:^core.Table(Soldier,.Read)) {
     e:=behavior.agent(t)
     s,ok:=core.get(soldiers,e)
     if !ok {return}
@@ -279,7 +279,7 @@ soldier_think :: proc(t:^ai.Think(Soldier_Act),w:Arena,soldiers:core.Read(Soldie
 
 // Walks to where it last perceived an enemy, or ahead toward the other squad.
 @(act="Advance")
-soldier_advance :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:core.Read(Soldier)) -> ai.Status {
+soldier_advance :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:^core.Table(Soldier,.Read)) -> ai.Status {
     if a.phase!=.Enter {return behavior.move_act(a,{})}
     e:=behavior.agent(a)
     _,position,confidence:=arena_seen(w,e)
@@ -294,7 +294,7 @@ soldier_advance :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:core.Read(Soldie
 // Asks for the wall that covers it best and stays behind it: stage 0 waits
 // for the answer and claims the place, 1 walks there, 2 holds it.
 @(act="Take_Cover")
-soldier_cover :: proc(a:^ai.Act(Soldier_Act),w:Arena,smart_objects:core.Read(behavior.Smart_Object),places:^behavior.Place_Requests,results:core.Read(behavior.Place_Result),requests:^nav.Nav_Requests) -> ai.Status {
+soldier_cover :: proc(a:^ai.Act(Soldier_Act),w:Arena,smart_objects:^core.Table(behavior.Smart_Object,.Read),places:^behavior.Place_Requests,results:^core.Table(behavior.Place_Result,.Read),requests:^nav.Nav_Requests) -> ai.Status {
     e:=behavior.agent(a)
     switch a.phase {
     case .Enter:
@@ -445,7 +445,7 @@ BOSS_STUNNED :: 50
 BOSS_DEAD :: 100
 
 @(mind="boss")
-boss_think :: proc(t:^ai.Think(Boss_Act),w:Arena,bosses:core.Read(Boss)) {
+boss_think :: proc(t:^ai.Think(Boss_Act),w:Arena,bosses:^core.Table(Boss,.Read)) {
     e:=behavior.agent(t)
     b,ok:=core.get(bosses,e)
     if !ok {return}
@@ -492,7 +492,7 @@ boss_attack :: proc(a:^ai.Act(Boss_Act),w:Arena,bosses:^core.Table(Boss)) -> ai.
 }
 
 @(act="Rage")
-boss_rage :: proc(a:^ai.Act(Boss_Act),w:Arena,bosses:core.Read(Boss)) -> ai.Status {
+boss_rage :: proc(a:^ai.Act(Boss_Act),w:Arena,bosses:^core.Table(Boss,.Read)) -> ai.Status {
     if a.phase==.Exit {return .Success}
     if ai.entering(a) {
         e:=behavior.agent(a)
@@ -513,7 +513,7 @@ boss_stunned :: proc(a:^ai.Act(Boss_Act),bosses:^core.Table(Boss)) -> ai.Status 
 }
 
 @(act="Dead")
-boss_dead :: proc(a:^ai.Act(Boss_Act),bosses:core.Read(Boss)) -> ai.Status {
+boss_dead :: proc(a:^ai.Act(Boss_Act),bosses:^core.Table(Boss,.Read)) -> ai.Status {
     if ai.entering(a) {ai.commit(a,BOSS_DEAD)}
     b,ok:=core.get(bosses,behavior.agent(a))
     return .Success if !ok || b.health>0 else .Running
@@ -550,7 +550,7 @@ guard_patrol :: proc(a:^ai.Act(Guard_Act),patrols:^core.Table(Arena_Patrol),requ
 
 // Once begun it lasts until navigation takes the guard on from the other side.
 @(act="Vault")
-guard_vault :: proc(a:^ai.Act(Guard_Act),w:Arena,links:core.Read(nav.Nav_Link),placer:core.Placer) -> ai.Status {
+guard_vault :: proc(a:^ai.Act(Guard_Act),w:Arena,links:^core.Table(nav.Nav_Link,.Read),placer:core.Placer) -> ai.Status {
     if ai.entering(a) {ai.commit(a,1)}
     return behavior.cross_act(a,links,placer,USE_VAULT,arena_user(w,behavior.agent(a)),0.6)
 }
@@ -559,7 +559,7 @@ guard_vault :: proc(a:^ai.Act(Guard_Act),w:Arena,links:core.Read(nav.Nav_Link),p
 // place, unless the scene holds it, and their agents.
 @(step="fixed",stage="apply",server)
 arena_build :: proc(
-    commands:core.Commands,arenas:^core.Table(AI_Arena),worlds:core.Read(core.World_Transform),time:core.Time,
+    commands:core.Commands,arenas:^core.Table(AI_Arena),worlds:^core.Table(core.World_Transform,.Read),time:core.Time,
 ) {
     if !time.playing {return}
     for row in 0..<core.count(arenas) {
@@ -773,7 +773,7 @@ arena_target :: proc(c:core.Commands,position:mm.Vec3,team:behavior.Team) -> cor
 // Sends the waves of the horde arenas that have them, once the arena is built.
 @(step="fixed",stage="apply",server)
 horde_waves :: proc(
-    commands:core.Commands,hordes:^core.Table(Horde_Waves),arenas:core.Read(AI_Arena),worlds:core.Read(core.World_Transform),
+    commands:core.Commands,hordes:^core.Table(Horde_Waves),arenas:^core.Table(AI_Arena,.Read),worlds:^core.Table(core.World_Transform,.Read),
     waves:core.Records(Horde_Wave),kinds:core.Records(Zombie_Kind),time:core.Time,problems:^core.Problems,
 ) {
     if !time.playing || time.dt<=0 {return}
@@ -781,9 +781,8 @@ horde_waves :: proc(
         e:=core.entity_at(hordes,row)
         arena,built:=core.get(arenas,e)
         if !built || !arena.built || arena.kind!=.Horde {continue}
-        first:=core.added(hordes,row)
         h:=core.edit_at(hordes,row)
-        if first {
+        if core.added(hordes,row) {
             h.rng=mm.rng_make(h.seed,7)
             h.wave=h.first
             first,_:=core.record(waves,h.wave,problems,e)
@@ -950,7 +949,7 @@ arena_drone :: proc(c:core.Commands,position:mm.Vec3) -> core.Entity {
 
 // The carts drive and park; the bells ring.
 @(step="fixed",server)
-arena_carts :: proc(carts:core.Read(Arena_Cart),bodies:^phys.Body_Requests,bells:core.Read(Arena_Bell),worlds:core.Read(core.World_Transform),noises:^behavior.Noises,time:core.Time) {
+arena_carts :: proc(carts:^core.Table(Arena_Cart,.Read),bodies:^phys.Body_Requests,bells:^core.Table(Arena_Bell,.Read),worlds:^core.Table(core.World_Transform,.Read),noises:^behavior.Noises,time:core.Time) {
     if !time.playing || time.dt<=0 {return}
     // Every cart is at the same point of its cycle.
     t:=f32(math.mod(time.seconds,f64(2*(ARENA_CART_DRIVE+ARENA_CART_WAIT))))
@@ -962,10 +961,10 @@ arena_carts :: proc(carts:core.Read(Arena_Cart),bodies:^phys.Body_Requests,bells
     case: along=1-(t-2*ARENA_CART_WAIT-ARENA_CART_DRIVE)/ARENA_CART_DRIVE
     }
     along=along*along*(3-2*along)
-    for cart,row in carts.table.values[:core.count(carts)] {
+    for cart,row in carts.values[:core.count(carts)] {
         phys.move_kinematic(bodies,core.entity_at(carts,row),cart.from+(cart.to-cart.from)*along)
     }
-    for bell,row in bells.table.values[:core.count(bells)] {
+    for bell,row in bells.values[:core.count(bells)] {
         if bell.count<=0 || !(bell.period>0) {continue}
         slot:=u64(time.seconds/f64(bell.period))
         if slot%u64(bell.count)!=u64(bell.turn) {continue}
@@ -978,8 +977,8 @@ arena_carts :: proc(carts:core.Read(Arena_Cart),bodies:^phys.Body_Requests,bells
 // near and staggers it now and then; a fallen boss rises again after a while.
 @(step="fixed",server)
 arena_targets :: proc(
-    targets:^core.Table(Arena_Target),bosses:^core.Table(Boss),worlds:core.Read(core.World_Transform),
-    paths:core.Read(nav.Nav_Path),requests:^nav.Nav_Requests,
+    targets:^core.Table(Arena_Target),bosses:^core.Table(Boss),worlds:^core.Table(core.World_Transform,.Read),
+    paths:^core.Table(nav.Nav_Path,.Read),requests:^nav.Nav_Requests,
     state:^Arena_State,time:core.Time,
 ) {
     if !time.playing || time.dt<=0 {return}

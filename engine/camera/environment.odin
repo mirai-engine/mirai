@@ -26,8 +26,8 @@ ENVIRONMENT_TRIGGER_DEFAULT :: Environment_Trigger{seconds=1}
 
 @(step="frame")
 environment_triggers :: proc(
-    triggers:^core.Table(Environment_Trigger),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),
-    seat_state:core.Ref(input.Seats),seats:core.Read(input.Seat),drivables:core.Read(input.Drivable),
+    triggers:^core.Table(Environment_Trigger),volumes:^core.Table(volume.Volume,.Read),worlds:^core.Table(core.World_Transform,.Read),
+    seat_state:core.Ref(input.Seats),seats:^core.Table(input.Seat,.Read),drivables:^core.Table(input.Drivable,.Read),
     requests:^render.Environment_Requests,
 ) {
     if core.count(triggers)==0 {return}

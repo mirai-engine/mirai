@@ -33,13 +33,12 @@ Ctx :: struct {
     es:^core.Entities,
     commands:core.Commands,
     authority:core.Network_Role, // in a network session the server damages, and a client only applies what it is told
-    destructibles:core.Read(Destructible),
-    colliders:core.Read(physics.Collider),
+    destructibles:^core.Table(Destructible,.Read),
+    colliders:^core.Table(physics.Collider,.Read),
     collision:^physics.Collision_Settings,
     meshes:^core.Table(render.Mesh_Renderer),
     tints:^core.Table(render.Tint),
-    parents:core.Read(core.Parent),
-    locals:core.Read(core.Transform),
+    parents:^core.Table(core.Parent,.Read),
     states:^core.Table(Destructible_State),
     groups:^core.Table(Destructible_Group),
     elsewhere:^core.Table(render.Drawn_Elsewhere),
@@ -56,10 +55,10 @@ Ctx :: struct {
 destruct_step :: proc(
     state:^physics.Physics_State,cache:^Destruct_Cache,requests:^Destruct_Requests,events:^Destruct_Events,
     authority:core.Ref(core.Network),assets:^host.Assets,job_system:^jobs.Job_System,time:core.Time,commands:core.Commands,
-    destructibles:core.Read(Destructible),meshes:^core.Table(render.Mesh_Renderer),tints:^core.Table(render.Tint),parents:core.Read(core.Parent),
+    destructibles:^core.Table(Destructible,.Read),meshes:^core.Table(render.Mesh_Renderer),tints:^core.Table(render.Tint),parents:^core.Table(core.Parent,.Read),
     states:^core.Table(Destructible_State),groups:^core.Table(Destructible_Group),
     elsewhere:^core.Table(render.Drawn_Elsewhere),transforms:^core.Table(core.Transform),ids:^core.Table(core.Id),
-    colliders:core.Read(physics.Collider),collision:core.Ref(physics.Collision_Settings),problems:^core.Problems,
+    colliders:^core.Table(physics.Collider,.Read),collision:core.Ref(physics.Collision_Settings),problems:^core.Problems,
 ) {
     if cache==nil || !state.ready || !time.playing || time.dt<=0 {return}
     room:=physics.breakable_room(core.ref(state))
@@ -76,7 +75,7 @@ destruct_step :: proc(
     c:=Ctx{
         state=state,view=core.ref(state),cache=cache,events=events,assets=assets,job_system=job_system,time=time,es=commands.entities,commands=commands,
         authority=authority.role,
-        destructibles=destructibles,colliders=colliders,collision=collision.ptr,meshes=meshes,tints=tints,parents=parents,locals=core.read(transforms),
+        destructibles=destructibles,colliders=colliders,collision=collision.ptr,meshes=meshes,tints=tints,parents=parents,
         states=states,groups=groups,elsewhere=elsewhere,transforms=transforms,ids=ids,problems=problems,
     }
     gone,at:=core.changes(destructibles,&cache.seen),0
@@ -130,7 +129,7 @@ reconcile :: proc(c:^Ctx,e:core.Entity,d:Destructible) {
     held,has=core.get(c.states,e)
     st:=held
     static,has_mesh:=core.get(c.meshes,e)
-    world,placed:=core.world_of(c.locals,c.parents,e)
+    world,placed:=core.world_of(c.transforms,c.parents,e)
     scale:=linalg.abs(world.scale)
     entry:=entry_take(cache,e)
     if entry==nil {
@@ -150,7 +149,7 @@ reconcile :: proc(c:^Ctx,e:core.Entity,d:Destructible) {
             core.add(c.states,e,st)
         }
         if valid {
-            if local,has_local:=core.get(c.locals,e);has_local {physics.proxy_set(c.state,e,st.body,local.position,local.rotation)}
+            if local,has_local:=core.get(c.transforms,e);has_local {physics.proxy_set(c.state,e,st.body,local.position,local.rotation)}
             if len(entry.visuals)==0 {cache_recover(c,e,d,static,scale,entry)}
         }
         return
@@ -321,18 +320,18 @@ cache_recover :: proc(c:^Ctx,e:core.Entity,d:Destructible,static:render.Mesh_Ren
 @(private)
 follow :: proc(c:^Ctx,e:core.Entity) {
     cache:=c.cache
-    st,has:=core.get(core.read(c.states),e)
+    st,has:=core.get(c.states,e)
     entry:=entry_find(cache,e)
     if !has || entry==nil || entry.pass==cache.pass || entry.prepared==nil || prepared_pending(entry.prepared) || entry.prepared.error!=.None || !physics.breakable_valid(c.view,st.handle) {return}
     written_position,written_rotation:=st.written_position,st.written_rotation
-    local,has_local:=core.get(c.locals,e)
+    local,has_local:=core.get(c.transforms,e)
     if position,rotation,ok:=physics.proxy_pose(c.state,e);ok {written_position,written_rotation=position,rotation}
     if has_local && (local.position!=written_position || local.rotation!=written_rotation) {
         core.fail("Entity %v has a Destructible, which owns its Transform, but another function wrote its position or rotation: place a destructible in the scene; it cannot be moved while playing",e)
         written_position,written_rotation=local.position,local.rotation
     }
     if pose,valid:=physics.body_pose(c.view,st.body);has_local && valid {
-        if position,rotation,ok:=physics.local_of(c.locals,c.parents,e,pose);ok {
+        if position,rotation,ok:=physics.local_of(c.transforms,c.parents,e,pose);ok {
             if local.position!=position || local.rotation!=rotation {if output:=core.edit(c.transforms,e);output!=nil {output.position,output.rotation=position,rotation}}
             written_position,written_rotation=position,rotation
             physics.proxy_written(c.state,e,position,rotation)
@@ -345,15 +344,15 @@ follow :: proc(c:^Ctx,e:core.Entity) {
     for &group in entry.groups {
         pose,valid:=physics.body_pose(c.view,group.body)
         if !valid {continue}
-        row,has_row:=core.get(core.read(c.groups),group.entity)
-        moved,has_moved:=core.get(c.locals,group.entity)
+        row,has_row:=core.get(c.groups,group.entity)
+        moved,has_moved:=core.get(c.transforms,group.entity)
         if !has_row || !has_moved {continue}
         written_position,written_rotation:=row.written_position,row.written_rotation
         if position,rotation,ok:=physics.proxy_pose(c.state,group.entity);ok {written_position,written_rotation=position,rotation}
         if moved.position!=written_position || moved.rotation!=written_rotation {
             core.fail("Entity %v is a body of a broken destructible, which owns its Transform: do not write it",group.entity)
         }
-        if position,rotation,ok:=physics.local_of(c.locals,c.parents,group.entity,pose);ok {
+        if position,rotation,ok:=physics.local_of(c.transforms,c.parents,group.entity,pose);ok {
             if moved.position!=position || moved.rotation!=rotation {if output:=core.edit(c.transforms,group.entity);output!=nil {output.position,output.rotation=position,rotation}}
             if row.written_position!=position || row.written_rotation!=rotation {if output:=core.edit(c.groups,group.entity);output!=nil {output.written_position,output.written_rotation=position,rotation}}
             physics.proxy_written(c.state,group.entity,position,rotation)
@@ -468,7 +467,7 @@ group_sync :: proc(c:^Ctx,owner:core.Entity,entry:^Entry,group:Scratch_Group) {
     row:=Destructible_Group{owner=owner,group=group.group,debris=group.debris}
     if group.group==0 {
         // The pieces are at their size already: the entity undoes the scale of the one it hangs from.
-        if above,ok:=core.world_of(c.locals,c.parents,owner);ok {
+        if above,ok:=core.world_of(c.transforms,c.parents,owner);ok {
             for axis in 0..<3 {
                 if above.scale[axis]!=0 {pose.scale[axis]=1/abs(above.scale[axis])}
             }

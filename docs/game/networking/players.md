@@ -13,7 +13,7 @@ A seat drives a body that carries `inp.Drivable`. With `Spawn_Settings.players` 
 
 ```odin
 @(step="fixed",server)
-give_bodies :: proc(seats:core.Read(inp.Seat),drivables:core.Read(inp.Drivable),
+give_bodies :: proc(seats:^core.Table(inp.Seat,.Read),drivables:^core.Table(inp.Drivable,.Read),
     requests:^spawn.Spawn_Requests) {
     for row in 0..<core.count(seats) {
         seat:=core.entity_at(seats,row)

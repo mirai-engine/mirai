@@ -17,7 +17,7 @@ Ground_World :: struct {
 
 @(private="file")
 ground_step :: proc(w:^Ground_World,resident:^Terrain_Resident,focus:=Terrain_Focus{}) -> core.Ground_Query {
-    ground_update(resident,&w.data,core.read(&w.terrains),&w.colliders,core.read(&w.worlds),focus)
+    ground_update(resident,&w.data,&w.terrains,&w.colliders,&w.worlds,focus)
     g:=&resident.ground
     return {user=g,probe=ground_probe,spacing=g.spacing,revision=g.revision,changes=g.changes[:g.count],unloaded=g.unloaded[:],unloaded_revision=g.unloaded_revision}
 }

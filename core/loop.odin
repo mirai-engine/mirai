@@ -139,15 +139,15 @@ OWN_PACE_DEFAULT :: Own_Pace{rate=1}
 // Seconds of the time of e per second of the simulation of its world: 1
 // without an Own_Pace or with a rate out of (0, CLOCK_SCALE_MAX], and with no
 // table (a caller that leaves it out).
-pace_of :: proc "contextless" (clock:Clock,paces:Read(Own_Pace),e:Entity) -> f32 {
-    if paces.table==nil {return 1}
+pace_of :: proc "contextless" (clock:Clock,paces:^Table(Own_Pace,$A),e:Entity) -> f32 {
+    if paces==nil {return 1}
     own,ok:=get(paces,e)
     if !ok || !(own.rate>0) || own.rate>CLOCK_SCALE_MAX || !(clock.scale>0) {return 1}
     return own.rate/clock.scale
 }
 
 @(step="fixed",stage="begin",loops="game")
-own_paces_check :: proc(paces:Read(Own_Pace),problems:^Problems) {
+own_paces_check :: proc(paces:^Table(Own_Pace,.Read),problems:^Problems) {
     for row in 0..<count(paces) {
         if rate:=at(paces,row).rate;!(rate>0) || rate>CLOCK_SCALE_MAX {
             report(problems,entity_at(paces,row),"core.own_pace","its Own_Pace has rate %v, so it keeps the clock of the world: give it one above 0 and up to %v",rate,CLOCK_SCALE_MAX)

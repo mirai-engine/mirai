@@ -10,7 +10,7 @@ particles of its effect at every birth pushed to that channel, besides the emitt
 CHANNEL_IMPACTS :: core.Birth_Channel(16) // game channels start at core.CHANNEL_GAME
 
 @(step="fixed")
-impacts :: proc(hits:core.Read(Hit), births:^core.Births) {
+impacts :: proc(hits:^core.Table(Hit,.Read), births:^core.Births) {
     for i in 0..<core.count(hits) {
         hit:=core.at(hits, i)
         core.push(&births.queue, core.Birth{

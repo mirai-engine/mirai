@@ -106,7 +106,7 @@ placement_api_run :: proc(s:^editor.Session,call:^api.Call,tool:^Physics_Placeme
     }
     out:=api.call_result(call,Drop_Result)
     roots,placed,ticks:=tool.roots,tool.count,tool.ticks
-    motions:=core.read(core.world_table_of(tool.preview,core.Motion))
+    motions:=core.world_table_of(tool.preview,core.Motion)
     for e,at in roots[:placed] {
         motion,made:=core.get(motions,e)
         out.placed[at].rested=made && !motion.awake

@@ -37,4 +37,4 @@ Simulation_Hash :: struct {
 }
 
 // Whether this end decides what an entity does.
-owned :: #force_inline proc "contextless" (remotes:Read(Remote),e:Entity) -> bool {return !has(remotes,e)}
+owned :: #force_inline proc "contextless" (remotes:^Table(Remote,$A),e:Entity) -> bool {return !has(remotes,e)}

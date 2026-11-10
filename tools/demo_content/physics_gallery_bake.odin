@@ -109,7 +109,7 @@ physics_cache_bake :: proc(o:^Out,fracture,mesh:base.Asset_Id) {
         }
         if frame==120 {
             for e in world.groups.entities {
-                if e!=owner && destruct.remove(&requests,core.read(&world.groups),e)==.None {break}
+                if e!=owner && destruct.remove(&requests,&world.groups,e)==.None {break}
             }
         }
         destruct.destruct_step(&physics,&geometry,&requests,&events,core.ref(&alone),app.assets,&app.jobs,{playing=true,dt=1.0/30,tick=u64(frame)},core.commands(&world,&info),

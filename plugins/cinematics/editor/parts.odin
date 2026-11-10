@@ -95,7 +95,7 @@ shot_view :: proc(w:core.World_Ref,timeline:core.Entity,time:f32) -> (shot:cine.
     shots:=core.world_table_of(w,cine.Cinematic_Shot)
     if shots==nil {return}
     previous:cine.Cinematic_Shot
-    shot,previous=cine.cinematic_shots_at(core.read(shots),timeline,time) or_return
+    shot,previous=cine.cinematic_shots_at(shots,timeline,time) or_return
     sample=camera_at(w,shot.camera) or_return
     if from,found:=camera_at(w,previous.camera);found && previous.camera!=core.NONE {sample=cine.cinematic_shot_blend(shot,from,sample,time)}
     return shot,sample,true

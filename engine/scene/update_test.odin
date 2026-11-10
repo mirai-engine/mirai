@@ -113,7 +113,7 @@ an_update_writes_what_differs_onto_the_entities_that_have_the_ids_of_a_document 
     held:=(^Update_Lamp)(core.raw_find(core.raw(&w.lamps),type_info_of(Update_Lamp),bulb))^
     _,turned,_:=core.raw_state(core.raw(&w.lamps),bulb)
     testing.expect(t,held==Update_Lamp{range=5,heat=7} && turned,"the value follows the document, what it does not save stays, and it is off")
-    testing.expect_value(t,core.name_get(core.read(&w.names),lamp),"Desk lamp")
+    testing.expect_value(t,core.name_get(&w.names,lamp),"Desk lamp")
     testing.expect(t,!core.has(&w.links,lamp) && core.at(&w.links,core.row_of(&w.links,bulb)).target==other)
     shade:=core.entity_of(&w.entities,50)
     parent,_:=core.get(&w.parents,shade)

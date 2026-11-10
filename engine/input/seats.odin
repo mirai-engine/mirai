@@ -158,46 +158,46 @@ input_unblock :: proc(r:^Seat_Requests,owner:core.Entity) {
 }
 
 // The body a seat drives; none when it has none or the table holds it twice.
-body_of :: proc(drivables:core.Read(Drivable),seat:core.Entity) -> core.Entity {
+body_of :: proc(drivables:^core.Table(Drivable,$A),seat:core.Entity) -> core.Entity {
     if seat==core.NONE {return core.NONE}
-    body,valid:=body_find(drivables.table,seat)
+    body,valid:=body_find(drivables,seat)
     return valid?body:core.NONE
 }
 
 // The seat that drives a body.
-seat_of :: proc(drivables:core.Read(Drivable),body:core.Entity) -> core.Entity {
+seat_of :: proc(drivables:^core.Table(Drivable,$A),body:core.Entity) -> core.Entity {
     value,ok:=core.get(drivables,body)
     return ok?value.seat:core.NONE
 }
 
 // The ray of the view of a body: from its Drivable.camera, where it looks, as
 // the player sees it, whatever the mode of the camera. False without a camera.
-aim :: proc(drivables:core.Read(Drivable),worlds:core.Read(core.World_Transform),body:core.Entity) -> (origin,direction:[3]f32,ok:bool) {
+aim :: proc(drivables:^core.Table(Drivable,$A),worlds:^core.Table(core.World_Transform,$B),body:core.Entity) -> (origin,direction:[3]f32,ok:bool) {
     drivable:=core.get(drivables,body) or_return
     placed:=core.get(worlds,drivable.camera) or_return
     return placed.position,mm.quat_forward(placed.rotation),true
 }
 
 // The seat of a local slot; none without one.
-local_seat :: proc(seats:core.Read(Seat),slot:int) -> core.Entity {
-    for &seat,row in seats.table.values[:core.count(seats)] {
+local_seat :: proc(seats:^core.Table(Seat,$A),slot:int) -> core.Entity {
+    for &seat,row in seats.values[:core.count(seats)] {
         if seat_local(seat) && int(seat.slot)==slot {return core.entity_at(seats,row)}
     }
     return core.NONE
 }
 
 // The local seat with the keyboard and the mouse.
-focused :: proc(state:^Seats,seats:core.Read(Seat)) -> core.Entity {
+focused :: proc(state:^Seats,seats:^core.Table(Seat,$A)) -> core.Entity {
     return state.local_count>0?local_seat(seats,state.focus):core.NONE
 }
 
 // The state of an action of a seat this tick: released while it is blocked
 // or waits for its release, and for what is not a seat. Code reads its own
 // actions with seat_state and Input_Of.
-seat_action :: proc(seats:core.Read(Seat),seat:core.Entity,a:Action) -> Action_State {
+seat_action :: proc(seats:^core.Table(Seat,$A),seat:core.Entity,a:Action) -> Action_State {
     row:=core.row_of(seats,seat)
     if row<0 {return {}}
-    source:=&seats.table.values[row]
+    source:=&seats.values[row]
     if (source.blocked|source.rearm)&action_bit(a)!=0 {return {}}
     return action(&source.actions,a)
 }
@@ -206,10 +206,10 @@ seat_action :: proc(seats:core.Read(Seat),seat:core.Entity,a:Action) -> Action_S
 // own blocks, so that what takes the actions of a seat (a modal screen) still
 // gets them; released while a block of another owner takes it or it waits
 // for its release.
-seat_action_for :: proc(state:^Seats,seats:core.Read(Seat),seat:core.Entity,a:Action,owner:core.Entity) -> Action_State {
+seat_action_for :: proc(state:^Seats,seats:^core.Table(Seat,$A),seat:core.Entity,a:Action,owner:core.Entity) -> Action_State {
     row:=core.row_of(seats,seat)
     if row<0 {return {}}
-    source:=&seats.table.values[row]
+    source:=&seats.values[row]
     bit:=action_bit(a)
     if source.rearm&bit!=0 {return {}}
     if source.blocked&bit!=0 {
@@ -223,10 +223,10 @@ seat_action_for :: proc(state:^Seats,seats:core.Read(Seat),seat:core.Entity,a:Ac
 }
 
 // The button actions of a seat that are down this tick, as seat_down sees them.
-seat_buttons :: proc(seats:core.Read(Seat),seat:core.Entity,bindings:^Input_Map) -> (mask:Action_Mask) {
+seat_buttons :: proc(seats:^core.Table(Seat,$A),seat:core.Entity,bindings:^Input_Map) -> (mask:Action_Mask) {
     row:=core.row_of(seats,seat)
     if row<0 {return}
-    source:=&seats.table.values[row]
+    source:=&seats.values[row]
     for state,i in source.actions.states[:source.actions.count] {
         if state.down && bindings.kinds[i]==.Button {mask|=action_bit(Action(i))}
     }
@@ -236,8 +236,8 @@ seat_buttons :: proc(seats:core.Read(Seat),seat:core.Entity,bindings:^Input_Map)
 // Who plays and what each drives, for a step to receive in one parameter.
 @(params)
 Players :: struct {
-    seats:core.Read(Seat),
-    drivables:core.Read(Drivable),
+    seats:^core.Table(Seat,.Read),
+    drivables:^core.Table(Drivable,.Read),
 }
 
 // The state of an action of the seat that drives a body this tick; released
@@ -253,7 +253,7 @@ body_action :: proc(p:Players,body:core.Entity,a:Action) -> Action_State {
 @(step="fixed",stage="input")
 input_seats :: proc(
     es:core.Commands,app:^host.App,seats:^core.Table(Seat),
-    multiplayer:core.Read(Local_Multiplayer),state:^Seats,run:core.Ref(Run_Players),
+    multiplayer:^core.Table(Local_Multiplayer,.Read),state:^Seats,run:core.Ref(Run_Players),
     device:core.Input,bindings:core.Ref(Input_Map),network:core.Ref(core.Network),keeps:^core.Table(core.Keep),time:core.Time,
 ) {
     // A server has players of its own only when someone asks for them: one
@@ -265,7 +265,7 @@ input_seats :: proc(
     state.local_count=count
     state.focus=clamp(state.focus,0,max(count-1,0))
     for slot in 0..<count {
-        if local_seat(core.read(seats),slot)==core.NONE {
+        if local_seat(seats,slot)==core.NONE {
             seat:=core.create(es)
             core.add(seats,seat,Seat{slot=u8(slot)})
             // A player stays at the machine when the scene changes.
@@ -329,7 +329,7 @@ Apply :: struct {
     seats:^core.Table(Seat),
     state:^Seats,
     role:core.Network_Role,
-    elsewhere:core.Read(core.Remote),
+    elsewhere:^core.Table(core.Remote,.Read),
     problems:^core.Problems,
 }
 
@@ -339,7 +339,7 @@ Apply :: struct {
 @(step="fixed",stage="input")
 input_drive :: proc(
     es:core.Ref(core.Entities),drivables:^core.Table(Drivable),seats:^core.Table(Seat),state:^Seats,requests:^Seat_Requests,
-    network:core.Ref(core.Network),elsewhere:core.Read(core.Remote),problems:^core.Problems,
+    network:core.Ref(core.Network),elsewhere:^core.Table(core.Remote,.Read),problems:^core.Problems,
 ) {
     a:=Apply{es=es.ptr,drivables=drivables,seats=seats,state=state,role=network.role,elsewhere=elsewhere,problems=problems}
     for request in core.take(&requests.queue) {request_apply(&a,request)}
@@ -433,7 +433,7 @@ seated :: proc(a:^Apply,seat:core.Entity) -> bool {
 }
 
 @(private)
-body_find :: proc(drivables:^core.Table(Drivable),seat:core.Entity) -> (body:core.Entity,valid:bool) {
+body_find :: proc(drivables:^core.Table(Drivable,$A),seat:core.Entity) -> (body:core.Entity,valid:bool) {
     for value,row in drivables.values[:core.count(drivables)] {
         if value.seat!=seat {continue}
         if body!=core.NONE {return core.NONE,false}

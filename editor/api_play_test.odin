@@ -89,7 +89,7 @@ probe_query_probe :: proc(user:rawptr,origin,direction:[3]f32,length,radius:f32,
 // What a plugin that moves bodies says of those of the test (Body_Provider).
 @(private="file")
 probe_standing :: proc(w:core.World_Ref,body:core.Entity) -> (standing,known:bool) {
-    state:=core.get(core.read(&(cast(^Probe_World)w.data).standings),body) or_return
+    state:=core.get(&(cast(^Probe_World)w.data).standings,body) or_return
     return state.standing,true
 }
 
@@ -402,7 +402,7 @@ play_input_holds_actions_of_a_seat_by_name_for_the_ticks_that_run :: proc(t:^tes
     if !probe_open(t,f) {return}
     defer probe_close(f)
     running:=cast(^Probe_World)run_find(&f.s,0).world
-    read:=core.read(&running.seats)
+    read:=&running.seats
     // One tick as play.step runs it, without the frame of a window.
     step :: proc(f:^Probe) {
         held:=Api_Step_Input{ticks=1}
@@ -428,16 +428,16 @@ play_input_holds_actions_of_a_seat_by_name_for_the_ticks_that_run :: proc(t:^tes
     error,text:=probe_call(f,"play.input",`{"actions":[{"name":"jump","for":1},{"name":"move","vector":[0,1]}]}`)
     testing.expect_value(t,error.code,0)
     testing.expect(t,strings.contains(text,fmt.tprintf(`"0x%016x"`,u64(f.seat))) && strings.contains(text,`"queued": 2`),text)
-    testing.expect(t,!input.seat_action(read,f.seat,PROBE_JUMP).down,"nothing acts before the next tick")
+    testing.expect(t,!input.seat_action(core.read(read),f.seat,PROBE_JUMP).down,"nothing acts before the next tick")
     step(f)
-    testing.expect(t,input.seat_action(read,f.seat,PROBE_JUMP).pressed)
-    testing.expect_value(t,input.seat_action(read,f.seat,PROBE_MOVE).vector,[2]f32{0,1})
+    testing.expect(t,input.seat_action(core.read(read),f.seat,PROBE_JUMP).pressed)
+    testing.expect_value(t,input.seat_action(core.read(read),f.seat,PROBE_MOVE).vector,[2]f32{0,1})
     step(f)
-    testing.expect(t,input.seat_action(read,f.seat,PROBE_JUMP).released && input.seat_action(read,f.seat,PROBE_MOVE).down,"jump for one tick, move until released")
+    testing.expect(t,input.seat_action(core.read(read),f.seat,PROBE_JUMP).released && input.seat_action(core.read(read),f.seat,PROBE_MOVE).down,"jump for one tick, move until released")
     error,_=probe_call(f,"play.input",`{"release_all":true}`)
     testing.expect_value(t,error.code,0)
     step(f)
-    testing.expect(t,input.seat_action(read,f.seat,PROBE_MOVE).released)
+    testing.expect(t,input.seat_action(core.read(read),f.seat,PROBE_MOVE).released)
 }
 
 // Keys named by consecutive calls are one hold, as a person keeps a key down:
@@ -450,22 +450,22 @@ a_key_named_by_consecutive_calls_stays_held_and_a_call_that_omits_it_lets_go :: 
     defer probe_close(f)
     api_state(&f.s).step_frame=probe_frame
     running:=cast(^Probe_World)run_find(&f.s,0).world
-    read:=core.read(&running.seats)
+    read:=&running.seats
     call :: proc(t:^testing.T,f:^Probe,params:string) {
         error,_:=probe_call(f,"play.step",params)
         testing.expect_value(t,error.code,0)
     }
     call(t,f,`{"keys":["Space"]}`)
-    jump:=input.seat_action(read,f.seat,PROBE_JUMP)
+    jump:=input.seat_action(core.read(read),f.seat,PROBE_JUMP)
     testing.expect(t,jump.pressed && jump.down,"the first call presses it")
     call(t,f,`{"keys":["Space"],"for":3}`)
-    jump=input.seat_action(read,f.seat,PROBE_JUMP)
+    jump=input.seat_action(core.read(read),f.seat,PROBE_JUMP)
     testing.expect(t,jump.down && !jump.pressed && !jump.released && running.input.keys_released=={},"the next call goes on holding it")
     call(t,f,`{"keys":["Space"]}`)
-    jump=input.seat_action(read,f.seat,PROBE_JUMP)
+    jump=input.seat_action(core.read(read),f.seat,PROBE_JUMP)
     testing.expect(t,jump.down && !jump.pressed && !jump.released,"also over a third call")
     call(t,f,`{"for":1}`)
-    jump=input.seat_action(read,f.seat,PROBE_JUMP)
+    jump=input.seat_action(core.read(read),f.seat,PROBE_JUMP)
     testing.expect(t,jump.released && !jump.down && .Space in running.input.keys_released,"a call that omits it lets go")
 }
 
@@ -631,7 +631,7 @@ probe_seen :: proc(seen:^Probe_Seen,w:core.World_Ref) {
     given:=core.world_storage_of(w,core.Input)
     seen.keys[seen.count],seen.deltas[seen.count]=given.keys_down,given.mouse_delta
     seen.pressed[seen.count],seen.released[seen.count]=given.keys_pressed,given.keys_released
-    if seats:=core.world_table_of(w,input.Seat);seats!=nil && seen.seat!=core.NONE {seen.jumps[seen.count]=input.seat_action(core.read(seats),seen.seat,PROBE_JUMP)}
+    if seats:=core.world_table_of(w,input.Seat);seats!=nil && seen.seat!=core.NONE {seen.jumps[seen.count]=input.seat_action(seats,seen.seat,PROBE_JUMP)}
     seen.ticks[seen.count]=core.world_storage_of(w,core.Time).tick
     seen.count+=1
 }

@@ -68,10 +68,10 @@ in_context :: proc "contextless" (state:^Input_Contexts,owner:core.Entity) -> bo
 }
 
 // The contexts of the local seat with the keyboard and the mouse; nil without one.
-focused_contexts :: proc(state:^Seats,seats:core.Read(Seat)) -> ^Context_Stack {
+focused_contexts :: proc(state:^Seats,seats:^core.Table(Seat,$A)) -> ^Context_Stack {
     if state==nil || state.local_count==0 {return nil}
     row:=core.row_of(seats,local_seat(seats,state.focus))
-    return row>=0?&seats.table.values[row].contexts:nil
+    return row>=0?&seats.values[row].contexts:nil
 }
 
 // The contexts as they were asked, without what refers to what no longer

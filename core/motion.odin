@@ -27,8 +27,8 @@ Vertical :: struct {
 }
 
 // The frame of the vertical of e: the identity without one.
-vertical_of :: proc(verticals:Read(Vertical),e:Entity) -> mm.Quat {
-    if verticals.table!=nil {
+vertical_of :: proc(verticals:^Table(Vertical,$A),e:Entity) -> mm.Quat {
+    if verticals!=nil {
         if vertical,ok:=get(verticals,e);ok && vertical.frame!=0 {return vertical.frame}
     }
     return mm.QUAT_IDENTITY
@@ -59,7 +59,7 @@ Pose_Target_Places :: struct {seen:Seen}
 // The pose a target asks of a Transform no component owns, at the start of
 // the tick.
 @(step="fixed",loops="game",stage="begin")
-pose_targets_place :: proc(targets:Read(Pose_Target),transforms:^Table(Transform),places:^Pose_Target_Places) {
+pose_targets_place :: proc(targets:^Table(Pose_Target,.Read),transforms:^Table(Transform),places:^Pose_Target_Places) {
     c:=changes(targets,&places.seen)
     for row in each_changed(targets,&c) {
         local:=free(transforms,entity_at(targets,row))

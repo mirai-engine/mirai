@@ -125,7 +125,7 @@ camera_mode_setup :: proc(changes:^Camera_Changes,camera:core.Entity,setup:Camer
 }
 
 // The preset camera is set to, when it is one.
-camera_preset_of :: proc(follows:core.Read(Camera_Follow),cameras:core.Read(render.Camera),camera:core.Entity) -> (Camera_Preset,bool) {
+camera_preset_of :: proc(follows:^core.Table(Camera_Follow,$A),cameras:^core.Table(render.Camera,$B),camera:core.Entity) -> (Camera_Preset,bool) {
     follow,following:=core.get(follows,camera)
     lens,has_lens:=core.get(cameras,camera)
     if !following || !has_lens {return {},false}

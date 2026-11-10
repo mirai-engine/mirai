@@ -92,11 +92,11 @@ unit :: proc "contextless" (v,fallback:[3]f32) -> [3]f32 {
 // the copies that move this frame written in its Geometry stage.
 @(step="render",loops="game editor",before="render_sync")
 deform_render :: proc(
-    state:^Deform_Gpu,deforms:core.Read(Deform),meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),
-    parents:core.Read(core.Parent),tints:core.Read(erender.Tint),overrides:core.Read(erender.Material_Override),
-    hidden:core.Read(erender.Hidden),highlights:core.Read(erender.Highlight),outlines:core.Read(erender.Outline),offsets:core.Read(erender.Draw_Offset),
-    layers:core.Read(erender.Layers),app:^host.App,time:core.Time,frame:core.Frame_Time,
-    locals:core.Read(core.Transform),cameras:core.Read(erender.Camera),id:core.World_Id,
+    state:^Deform_Gpu,deforms:^core.Table(Deform,.Read),meshes:^core.Table(erender.Mesh_Renderer,.Read),worlds:^core.Table(core.World_Transform,.Read),
+    parents:^core.Table(core.Parent,.Read),tints:^core.Table(erender.Tint,.Read),overrides:^core.Table(erender.Material_Override,.Read),
+    hidden:^core.Table(erender.Hidden,.Read),highlights:^core.Table(erender.Highlight,.Read),outlines:^core.Table(erender.Outline,.Read),offsets:^core.Table(erender.Draw_Offset,.Read),
+    layers:^core.Table(erender.Layers,.Read),app:^host.App,time:core.Time,frame:core.Frame_Time,
+    locals:^core.Table(core.Transform,.Read),cameras:^core.Table(erender.Camera,.Read),id:core.World_Id,
 ) {
     if state==nil || app.renderer==nil || app.assets==nil {return}
     state.world=erender.world_key(id)

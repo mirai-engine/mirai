@@ -53,7 +53,7 @@ Link_Seen :: struct {
 // across it (changed): a class the arc does not fit does not get the link,
 // or gets it one way only.
 @(private)
-links_update :: proc(n:^Navigation,b:^Navigation_Builds,links:core.Read(Nav_Link),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),physics:core.Ref(phys.Physics_State),changed:mm.Aabb,fresh:bool,problems:^core.Problems) {
+links_update :: proc(n:^Navigation,b:^Navigation_Builds,links:^core.Table(Nav_Link,$A),transforms:^core.Table(core.Transform,$B),parents:^core.Table(core.Parent,$C),physics:core.Ref(phys.Physics_State),changed:mm.Aabb,fresh:bool,problems:^core.Problems) {
     stamps:=poses_stamps(links,transforms,parents)
     if !fresh && stamps==b.links_stamps && mm.aabb_is_empty(changed) {return}
     b.links_stamps=stamps
@@ -72,7 +72,7 @@ links_update :: proc(n:^Navigation,b:^Navigation_Builds,links:core.Read(Nav_Link
     b.looked+=u64(core.count(links))+u64(len(seen))
     for row in 0..<core.count(links) {
         e:=core.entity_at(links,row)
-        link:=links.table.values[row]
+        link:=links.values[row]
         pose,ok:=core.world_of(transforms,parents,e)
         if !ok {continue}
         start:=pose.position

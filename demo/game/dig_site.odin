@@ -48,8 +48,8 @@ Dig_Inventory :: struct {
 
 @(step="fixed",stage="react")
 dig_site :: proc(
-    commands:core.Commands,sites:^core.Table(Dig_Site),pickups:core.Read(Dig_Pickup),players:core.Read(Player),
-    drivables:core.Read(inp.Drivable),actions:inp.Input_Of(Action),worlds:core.Read(core.World_Transform),
+    commands:core.Commands,sites:^core.Table(Dig_Site),pickups:^core.Table(Dig_Pickup,.Read),players:^core.Table(Player,.Read),
+    drivables:^core.Table(inp.Drivable,.Read),actions:inp.Input_Of(Action),worlds:^core.Table(core.World_Transform,.Read),
     requests:^terrain.Terrain_Requests,digs:core.Ref(terrain.Terrain_Digs),inventories:^core.Table(Dig_Inventory),network:core.Network,time:core.Time,
 ) {
     site_entity,found:=core.sole(sites)
@@ -121,9 +121,8 @@ Dig_Hud :: struct {
 }
 
 @(step="frame")
-dig_hud :: proc(huds:^core.Table(Dig_Hud),inventories:core.Read(Dig_Inventory),assets:^host.Assets) {
-    shown:=core.read(huds)
-    if core.count(shown)==0 {return}
+dig_hud :: proc(huds:^core.Table(Dig_Hud),inventories:^core.Table(Dig_Inventory,.Read),assets:^host.Assets) {
+    if core.count(huds)==0 {return}
     // The inventory is on the Keep root the first tick of a dig makes: none before it.
     inventory:Dig_Inventory
     if core.count(inventories)>0 {inventory=core.at(inventories,0)}
@@ -136,7 +135,7 @@ dig_hud :: proc(huds:^core.Table(Dig_Hud),inventories:core.Read(Dig_Inventory),a
         row.cubic_metres=math.round(inventory.cubic_metres[i]*100)/100
         row.drops,row.picked=i32(inventory.drops[i]),inventory.drops[i]>0
     }
-    for row in 0..<core.count(shown) {
-        if core.at(shown,row)!=next {core.edit_at(huds,row)^=next}
+    for row in 0..<core.count(huds) {
+        core.edit_at(huds,row)^=next
     }
 }

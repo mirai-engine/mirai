@@ -95,7 +95,6 @@ game_bobs :: proc(bobs:^core.Table(Bob),transforms:^core.Table(core.Transform),t
     for row in 0..<core.count(bobs) {
         local:=core.free(transforms,core.entity_at(bobs,row))
         if local==nil {continue}
-        // New: asked before the row is written.
         if core.added(bobs,row) {core.edit_at(bobs,row).base_y=local.position.y}
         bob:=core.at(bobs,row)
         local.position.y=bob.base_y+math.sin(f32(time.seconds)*bob.speed)*bob.height
@@ -103,8 +102,8 @@ game_bobs :: proc(bobs:^core.Table(Bob),transforms:^core.Table(core.Transform),t
 }
 ```
 
-`core.added(table,row)` is true from the add that gave the row its value until the row is written
-(`edit`, `edit_at`, a `set` that changes it); it is for the library that writes the table.
+`core.added(table,row)` is true from the add that gave the row its value until a function of the
+library that writes the table asks for the row (`edit`, `edit_at`) and ends.
 
 ## Pitfalls that fail silently
 

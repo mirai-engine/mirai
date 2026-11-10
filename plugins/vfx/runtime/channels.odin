@@ -47,7 +47,7 @@ Channel_Ring :: struct {
 
 // The births of a step into the channels the emitters of the world listen to.
 @(private)
-channels_step :: proc(clocks:^Particle_Clocks,pushed:[]core.Birth,listeners:core.Read(Particle_Channel),time:core.Time) {
+channels_step :: proc(clocks:^Particle_Clocks,pushed:[]core.Birth,listeners:^core.Table(Particle_Channel,$A),time:core.Time) {
     // The rings follow the channels some emitter names.
     for i:=len(clocks.channels)-1;i>=0;i-=1 {
         named:=false
