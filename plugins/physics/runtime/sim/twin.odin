@@ -200,7 +200,8 @@ twin_shape_create :: proc(w:^World,t:^Twin,source:i32) -> i32 {
     generation:=shape.generation+1
     shape^=w.shapes[source]
     shape.generation=generation
-    shape.flags+={.Moved,.Twin}
+    shape.flags=shape.flags-{.Moved}+{.Twin}
+    shape_moved(w,index)
     shape.source=source
     shape.next,shape.prev=t.shapes,-1
     if t.shapes>=0 {w.shapes[t.shapes].prev=index}
@@ -226,6 +227,7 @@ twin_shape_destroy :: proc(w:^World,t:^Twin,index:i32) {
     t.count-=1
     if .Hits in shape.flags {w.hit_shapes-=1}
     shape_refs_add(w,shape,-1)
+    shape_unmoved(w,index)
     shape.generation+=1
     shape.flags={}
     shape.next=w.shape_free
@@ -265,7 +267,7 @@ twin_refresh :: proc(w:^World,t:^Twin) #no_bounds_check {
         if shape.filter!=source.filter {
             shape.filter=source.filter
             shape_destroy_contacts(w,s)
-            shape.flags+={.Moved}
+            shape_moved(w,s)
         }
         shape.local,shape.size,shape.radius=source.local,source.size,source.radius
         shape.friction,shape.restitution,shape.rolling_resistance=source.friction,source.restitution,source.rolling_resistance
@@ -275,7 +277,7 @@ twin_refresh :: proc(w:^World,t:^Twin) #no_bounds_check {
         reach:=spatial.aabb_translate_extend(shape.aabb,motion)
         if !math.aabb_contains(shape.fat,reach) {
             shape.fat=shape_fat(reach)
-            shape.flags+={.Moved}
+            shape_moved(w,s)
             spatial.dynamic_tree_move(tree,shape.proxy,shape.fat)
         }
     }

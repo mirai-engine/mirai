@@ -638,7 +638,7 @@ character_turned_proxies :: proc(w:^World,body:^Body) {
         shape.aabb=shape_aabb(w,shape,xf)
         if math.aabb_contains(shape.fat,shape.aabb) {continue}
         shape.fat=math.aabb_merge(shape.fat,shape_fat(shape.aabb))
-        shape.flags+={.Moved}
+        shape_moved(w,s)
         if shape.proxy>=0 {spatial.dynamic_tree_move(&w.trees[DYNAMIC_TREE],shape.proxy,shape.fat)}
     }
 }

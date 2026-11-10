@@ -220,6 +220,7 @@ world_step :: proc(w:^World,dt:f32) {
     joints_break(w)
     islands_sleep(w)
     step_hits(w)
+    for i in st.active[:st.active_count] {w.contacts[i].flags-={.Visited}}
     w.stats.awake_bodies=st.awake_count
     w.stats.active_contacts=st.active_count
     w.stats.constraints=st.ref_count
@@ -264,16 +265,14 @@ solve_stage :: proc(w:^World,pass:Solve_Pass) {
     }
 }
 
-// Awake bodies in slot order, with their velocities and the constants of the step.
+// Awake bodies in the order of their list, with their velocities and the constants of the step.
 @(private)
 solver_bodies_gather :: proc(w:^World) #no_bounds_check {
     st:=&w.step
-    count:=0
-    for i in 0..<w.body_high {
+    st.awake_count=bodies_awake(w,st.awake)
+    for i,count in st.awake[:st.awake_count] {
         body:=&w.bodies[i]
-        if body.generation&1==0 || .Awake not_in body.flags {continue}
         body.solver_index=i32(count)
-        st.awake[count]=i
         st.bodies[count]={v=body.linear_velocity,flags=body.flags,w=body.angular_velocity,dq=QUAT_IDENTITY}
         params:=&st.params[count]
         if body.type==.Dynamic {
@@ -287,9 +286,7 @@ solver_bodies_gather :: proc(w:^World) #no_bounds_check {
         } else {
             params^={q0=body.rotation}
         }
-        count+=1
     }
-    st.awake_count=count
 }
 
 // The root of the set of index, in a forest where parents[i]==i is a root. Halves the paths it walks.
@@ -351,19 +348,27 @@ constraints_gather :: proc(w:^World) #no_bounds_check {
 
     st.joint_count=0
     st.joint_single_count=0
+    // The joints of the awake bodies in their order; one of two awake bodies comes from the lower slot.
     st.joint_solved_count=0
+    for index in st.awake[:st.awake_count] {
+        for key:=w.bodies[index].joint_list;key>=0; {
+            joint:=&w.joints[key>>1]
+            other:=key&1==0?joint.body_b:joint.body_a
+            if w.bodies[other].solver_index<0 || other>index {
+                st.joint_solved[st.joint_solved_count]=key>>1
+                st.joint_solved_count+=1
+            }
+            key=joint.edges[key&1].next
+        }
+    }
     JOINT_BUCKETS :: GRAPH_COLORS*LANE_JOINT_TYPES
     lane_buckets:[JOINT_BUCKETS]int
     lanes:=0
-    for i in 0..<w.joint_high {
+    for i in st.joint_solved[:st.joint_solved_count] {
         joint:=&w.joints[i]
-        if joint.generation&1==0 {continue}
         a,b:=w.bodies[joint.body_a].solver_index,w.bodies[joint.body_b].solver_index
-        if a<0 && b<0 {continue}
         island_constraint(w,joint.body_a,joint.body_b)
         color:=color_assign(st,a,b)
-        st.joint_solved[st.joint_solved_count]=i
-        st.joint_solved_count+=1
         if joint.type==.SixDOF || joint.type==.Spherical && .Angular_Drive in joint.flags {
             st.joint_slots[st.joint_count]=i32(color)
             st.joint_data[st.joint_count].joint=i
@@ -574,14 +579,14 @@ finalize_task :: proc(data:rawptr,first,last,worker:int) #no_bounds_check {
             if .Character in body.flags {reach=spatial.aabb_translate_extend(reach,solved.v*st.dt)}
             if !math.aabb_contains(shape.fat,reach) {
                 shape.fat=shape_fat(reach)
-                shape.flags+={.Moved}
                 body.flags+={.Enlarged}
             }
         }
     }
 }
 
-// Moves in the tree the proxies whose fat box changed. Serial: the tree is shared.
+// Moves in the tree the proxies whose fat box changed, which then need new pairs. Serial: the tree and the list
+// of the moved shapes are shared.
 @(private)
 proxies_update :: proc(w:^World) #no_bounds_check {
     st:=&w.step
@@ -591,7 +596,9 @@ proxies_update :: proc(w:^World) #no_bounds_check {
         if .Enlarged not_in body.flags {continue}
         for s:=body.shape_list;s>=0;s=w.shapes[s].next {
             shape:=&w.shapes[s]
-            if spatial.dynamic_tree_aabb(tree,shape.proxy)!=shape.fat {spatial.dynamic_tree_move(tree,shape.proxy,shape.fat)}
+            if spatial.dynamic_tree_aabb(tree,shape.proxy)==shape.fat {continue}
+            spatial.dynamic_tree_move(tree,shape.proxy,shape.fat)
+            shape_moved(w,s)
         }
     }
 }

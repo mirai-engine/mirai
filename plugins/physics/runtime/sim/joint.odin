@@ -203,7 +203,7 @@ joint_destroy_index :: proc(w:^World,index:i32) {
     }
     if .Collide_Connected not_in joint.flags {
         // The bodies may collide again: their pairs are searched at the next step.
-        for s:=w.bodies[joint.body_a].shape_list;s>=0;s=w.shapes[s].next {w.shapes[s].flags+={.Moved}}
+        for s:=w.bodies[joint.body_a].shape_list;s>=0;s=w.shapes[s].next {shape_moved(w,s)}
     }
     joint^={generation=joint.generation+1,body_a=w.joint_free}
     w.joint_free=index

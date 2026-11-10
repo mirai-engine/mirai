@@ -267,6 +267,63 @@ bench_friction :: proc(t:^testing.T) {
     }
 }
 
+// 19,000 boxes asleep on the ground and 200 balls that roll apart in a corner and never sleep: the step should
+// cost what the awake ones cost.
+@(test)
+bench_asleep :: proc(t:^testing.T) {
+    if !PHYSICS_BENCH {return}
+    w:=new(World)
+    defer free(w)
+    testing.expect(t,test_world_threaded(w,nil,20480,65536,64))
+    defer world_destroy(w)
+    test_ground(w,{200,1,200})
+    for i in 0..<19000 {
+        desc:=BODY_DESC_DEFAULT
+        desc.position,desc.asleep={(f32(i%140)-70)*1.2,0.25,(f32(i/140)-70)*1.2},true
+        body:=body_create(w,desc)
+        shape:=SHAPE_DESC_DEFAULT
+        shape.geometry=Box{{0.25,0.25,0.25}}
+        shape_create(w,body,shape)
+    }
+    for i in 0..<200 {
+        ball:=test_body(w,Sphere{0.25},{150+f32(i%10)*2,0.25,f32(i/10)*2})
+        body_set_sleep_disabled(w,ball,true)
+        body_set_velocity(w,ball,{0,0,1},{})
+    }
+    times:=new(Bench_Times)
+    defer free(times)
+    cycles:u64
+    for step in 0..<240 {
+        lap:=time.tick_now()
+        before:=bench_thread_cycles()
+        world_step(w,1.0/60)
+        if step>=60 {
+            cycles+=bench_thread_cycles()-before
+            bench_record(times,time.duration_milliseconds(time.tick_since(lap)),world_profile(w))
+        }
+    }
+    result:=bench_result(times)
+    stats:=world_stats(w)
+    fmt.printfln("BENCH asleep %v bodies, %v awake, %v contacts, %v active: %.2f Mcycles of the thread per step; step median %.3f ms (best %.3f); pairs %.3f narrow %.3f prepare %.3f solve %.3f finalize %.3f sleep %.3f",
+        stats.bodies,stats.awake_bodies,stats.contacts,stats.active_contacts,f64(cycles)/180e6,result.median,result.best,result.stages[0],result.stages[1],result.stages[2],result.stages[3],result.stages[4],result.stages[5])
+}
+
+// Cycles the calling thread has run: its work, whatever else shares the machine. Zero where it is not known.
+@(private)
+bench_thread_cycles :: proc() -> (cycles:u64) {
+    when ODIN_OS==.Windows {bench_query_thread_cycles(bench_current_thread(),&cycles)}
+    return
+}
+
+when ODIN_OS==.Windows {
+    foreign import bench_kernel32 "system:Kernel32.lib"
+    @(default_calling_convention="system",private)
+    foreign bench_kernel32 {
+        @(link_name="GetCurrentThread") bench_current_thread :: proc() -> rawptr ---
+        @(link_name="QueryThreadCycleTime") bench_query_thread_cycles :: proc(thread:rawptr,cycles:^u64) -> i32 ---
+    }
+}
+
 // 5,000 balls fall on rolling ground with sleeping on, until they all sleep: what the islands cost while a
 // large pile settles.
 @(test)

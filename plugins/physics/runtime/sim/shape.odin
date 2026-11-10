@@ -169,7 +169,7 @@ shape_create :: proc(w:^World,body_handle:Body_Handle,desc:Shape_Desc,update_mas
         local={desc.transform.p,q_normalize(desc.transform.q)},size=size,
         friction=max(desc.friction,0),restitution=clamp(desc.restitution,0,1),density=max(desc.density,0),
         filter=desc.filter,body=body_index,next=body.shape_list,prev=-1,rolling_resistance=max(desc.rolling_resistance,0),
-        resource=resource,generation=shape.generation+1,type=type,flags={.Moved},
+        resource=resource,generation=shape.generation+1,type=type,
         dominance=i32(desc.dominance),surface_speed=finite_or_zero(desc.surface_speed),radius=radius,
     }
     shape.drag=desc.drag>0 && desc.drag<=max(f32)?desc.drag:shape_drag_default(type)
@@ -179,6 +179,7 @@ shape_create :: proc(w:^World,body_handle:Body_Handle,desc:Shape_Desc,update_mas
     if body.shape_list>=0 {w.shapes[body.shape_list].prev=index}
     body.shape_list=index
     body.shape_count+=1
+    shape_moved(w,index)
     shape_refs_add(w,shape,1)
     shape.aabb=shape_aabb(w,shape,body_transform_of(body))
     shape.fat=body.type==.Static?shape.aabb:shape_fat(shape.aabb)
@@ -231,6 +232,7 @@ shape_destroy_index :: proc(w:^World,index:i32,update_mass,static_log:bool) {
     if .Hits in shape.flags {w.hit_shapes-=1}
     shape_refs_add(w,shape,-1)
     body_index:=shape.body
+    shape_unmoved(w,index)
     shape.generation+=1
     shape.flags={}
     shape.next=w.shape_free
@@ -458,7 +460,7 @@ shape_set_filter :: proc(w:^World,h:Shape_Handle,filter:Filter) {
     if w.bodies[shape.body].type==.Static && shape.filter!=filter {static_log_push(w,shape.aabb)}
     shape.filter=filter
     shape_destroy_contacts(w,index)
-    shape.flags+={.Moved}
+    shape_moved(w,index)
     body_wake(w,shape.body)
 }
 // Takes effect on the contacts of the shape at once, as shape_set_material.
@@ -547,4 +549,24 @@ shape_set_density :: proc(w:^World,h:Shape_Handle,density:f32) {
 shape_fat :: #force_inline proc "contextless" (aabb:Aabb) -> Aabb {
     extent:=aabb.max-aabb.min
     return math.aabb_expand(aabb,min(AABB_MARGIN,0.125*max(extent.x,extent.y,extent.z)))
+}
+
+// Puts a shape in the list of the moved shapes, whose pairs the next step searches.
+@(private)
+shape_moved :: proc "contextless" (w:^World,index:i32) #no_bounds_check {
+    shape:=&w.shapes[index]
+    if .Moved in shape.flags {return}
+    shape.flags+={.Moved}
+    shape.moved_prev,shape.moved_next=-1,w.moved_head
+    if w.moved_head>=0 {w.shapes[w.moved_head].moved_prev=index}
+    w.moved_head=index
+}
+
+@(private)
+shape_unmoved :: proc "contextless" (w:^World,index:i32) #no_bounds_check {
+    shape:=&w.shapes[index]
+    if .Moved not_in shape.flags {return}
+    shape.flags-={.Moved}
+    if shape.moved_prev>=0 {w.shapes[shape.moved_prev].moved_next=shape.moved_next} else {w.moved_head=shape.moved_next}
+    if shape.moved_next>=0 {w.shapes[shape.moved_next].moved_prev=shape.moved_prev}
 }
