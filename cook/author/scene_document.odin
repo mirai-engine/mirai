@@ -22,8 +22,8 @@ import "mirai:std/serial"
 // Entities nest by children and give what differs from a new entity: their
 // transform local to the parent, being hidden or off, and by name the
 // components they have with the fields that differ from the value a
-// component starts with. A preset or the card of a plugin stands for the
-// components its recipe gives; a new entity with prefab is a linked instance
+// component starts with. A preset names a recipe and stands for the
+// components it gives; a new entity with prefab is a linked instance
 // of that one-root scene, and one with copy a copy of another entity.
 //
 // Without root the entities are those at the top of the scene; with it, the
@@ -142,12 +142,10 @@ Node_Info :: struct {
     instance:Node,        // the root of that instance; 0: of none
 }
 
-// What a preset or the card of a plugin gives the entity it makes.
+// What the recipe a preset names gives the entity it makes.
 Scene_Preset :: struct {
-    name:string,      // as the document names it
-    rotation:mm.Quat,
-    scale:[3]f32,
-    parts:[]Part,     // its components, each as the target keeps a value
+    using recipe:Recipe,
+    parts:[]Part, // its components, each as the target keeps a value
 }
 
 // Where a document is read from and written to. The procedures that can
@@ -211,7 +209,7 @@ scene_entities_read :: proc(reading:^Reading,text:string,parent:int,path:string,
     if !listed {return false}
     for item,at in items {
         index:=len(out)
-        append(out,Scene_Entity{path=fmt.aprintf("%s[%d]",path,at,allocator=reading.allocator),parent=parent,recipe={rotation=1,scale={1,1,1}}})
+        append(out,Scene_Entity{path=fmt.aprintf("%s[%d]",path,at,allocator=reading.allocator),parent=parent,recipe={local=core.TRANSFORM_IDENTITY}})
         keys,values:=tree_object(reading,item,out[index].path) or_return
         vector :: proc(reading:^Reading,text,what:string,value:^[3]f32) -> bool {
             items:=doc_items(reading,text,what,"3 numbers") or_return
@@ -245,7 +243,7 @@ scene_entities_read :: proc(reading:^Reading,text:string,parent:int,path:string,
             case "preset","copy":
                 word,is_text:=doc_string(reading,value)
                 if !is_text || word=="" {
-                    reading_failf(reading,"%s must be %s",what,"the name of a preset or of the card of a plugin" if key=="preset" else "the entity it copies: its name, a path Parent/Child or its id")
+                    reading_failf(reading,"%s must be %s",what,"the name of a recipe" if key=="preset" else "the entity it copies: its name, a path Parent/Child or its id")
                     return false
                 }
                 if key=="preset" {d.preset=word} else {d.copy=word}
@@ -609,9 +607,9 @@ scene_values_apply :: proc(a:^Scene_Apply,d:^Scene_Entity) -> bool {
     }
     keeps:=!d.made && (a.merge || d.keeps || a.placed[info.instance])
     local:=info.local
-    rotation:=mm.quat_from_euler(d.rotation_deg*mm.RAD_PER_DEG) if d.has_rotation else d.recipe.rotation
+    rotation:=mm.quat_from_euler(d.rotation_deg*mm.RAD_PER_DEG) if d.has_rotation else d.recipe.local.rotation
     target:=local
-    target.position,target.scale=d.position,d.scale if d.has_scale else d.recipe.scale
+    target.position,target.scale=d.position,d.scale if d.has_scale else d.recipe.local.scale
     // The rotation the document of the scene gave keeps its quaternion: degrees do not say it to the last bit.
     angles:=d.rotation_deg if d.has_rotation else mm.quat_to_euler(rotation)*mm.DEG_PER_RAD
     if mm.quat_to_euler(local.rotation)*mm.DEG_PER_RAD!=angles {target.rotation=rotation}

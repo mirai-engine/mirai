@@ -177,7 +177,7 @@ placement_drop :: proc(tool:^Physics_Placement,desc:Placement_Desc,bounds:mm.Aab
     _,mesh_info:=core.world_table(w,erender.Mesh_Renderer)
     if mesh_info==nil {return false}
     pose:=core.from_math(placement_pose(desc,bounds))
-    e:=editor.entity_create(s,{preset=.Empty,name="Placed mesh",transform=pose})
+    e:=editor.entity_create(s,{name="Placed mesh",transform=pose})
     if e==core.NONE {return false}
     success:=false
     defer if !success {placement_cancel(tool)}

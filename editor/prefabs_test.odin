@@ -7,6 +7,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
+import "mirai:cook/author"
 import "mirai:core"
 import "mirai:editor/history"
 import erender "mirai:engine/render"
@@ -61,12 +62,16 @@ prefab_fixture_init :: proc(t:^testing.T,f:^Prefab_Fixture,name:string) -> bool 
     f.app=host.App{assets=&f.assets,info=&f.info,allocator=context.allocator}
     test_session_open(&f.edited,core.world_ref(&f.world,&f.info))
     f.s.editor_world,f.s.assets_root,f.s.app,f.s.inspector,f.s.outliner,f.s.ai=&f.editor,f.root,&f.app,&f.inspector,&f.outliner,&f.ai
+    // The engine whose recipes it makes entities of: mirai test sets it.
+    f.s.engine_root,_=os.lookup_env("MIRAI_ROOT",context.allocator)
     return true
 }
 
 @(private)
 prefab_fixture_destroy :: proc(f:^Prefab_Fixture) {
     prefabs_free(&f.s)
+    author.recipes_free(f.s.recipes)
+    delete(f.s.engine_root)
     test_session_close(&f.edited)
     core.value_free(&f.inspector,type_info_of(Inspector))
     delete(f.app.worlds)

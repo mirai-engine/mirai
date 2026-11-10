@@ -21,11 +21,11 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:sync"
-import "core:thread"
 import "core:time"
 import "mirai:cook/workspace"
 import "mirai:rhi"
 import "mirai:std/base"
+import job_system "mirai:std/jobs"
 
 // Names what the generator produces from a given source and compiler. It is
 // part of every fingerprint: raise it when the outputs change for a reason the
@@ -196,7 +196,6 @@ Generation :: struct {
     engine_build: string, // <root>/shaders/build when the output is another folder; "" otherwise
     jobs:         []Job,
     order:        []int, // the jobs by when they run (jobs_order)
-    next_job:     int, // atomic, into order
     first_left:   int, // atomic: first stages still to compile
     first_output: string,
     active_left:  int, // atomic: stages that are not idle still to compile
@@ -920,25 +919,23 @@ job_cost :: proc(g:^Generation,job:^Job) -> i64 {
     return info.size
 }
 
+// The stages a job system compiles, in their order: each worker keeps what it
+// made in an arena of its own until the generation ends.
 @(private)
-Worker :: struct {
+Stages_Work :: struct {
     generation:^Generation,
-    arena:     virtual.Arena,
-    thread:    ^thread.Thread,
+    arenas:    []virtual.Arena, // by worker
 }
 
-// Takes the next stage until there are none or the generation is cancelled.
-// A stage that fails does not stop the others: what compiles is in the
-// cache for the next generation.
+// Compiles the stages of the range unless the generation is cancelled. A
+// stage that fails does not stop the others: what compiles is in the cache
+// for the next generation.
 @(private)
-worker_run :: proc(worker:^Worker) {
-    g:=worker.generation
-    allocator:=virtual.arena_allocator(&worker.arena)
-    for {
+stages_run :: proc(work:^Stages_Work,first,last:int,worker:int) {
+    g:=work.generation
+    allocator:=virtual.arena_allocator(&work.arenas[worker])
+    for at in first..<last {
         if runner_cancelled(g.runner) {return}
-        at:=sync.atomic_add(&g.next_job,1)
-        if at>=len(g.order) {return}
-        runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
         job:=&g.jobs[g.order[at]]
         started:=time.tick_now()
         job_run(g,job,allocator)
@@ -1278,20 +1275,23 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
         g.layouts=layouts_reflected(data,scratch)
     }
 
-    pool:=make([]Worker,min(workers,max(len(g.jobs),1)),scratch)
-    for &worker in pool {
-        worker.generation=g
-        if virtual.arena_init_growing(&worker.arena)!=nil {continue}
-        worker.thread=thread.create_and_start_with_poly_data(&worker,worker_run)
+    // What a worker made lives in its arena, which goes with the generation.
+    stage_arenas:[]virtual.Arena
+    defer for &arena in stage_arenas {virtual.arena_destroy(&arena)}
+    {
+        js:job_system.Job_System
+        if !job_system.system_init(&js,{threads=min(workers,max(len(g.jobs),1))-1}) {fail(&result,allocator,"could not start the threads that compile the stages");return}
+        defer job_system.system_destroy(&js)
+        stage_arenas=make([]virtual.Arena,len(js.workers),scratch)
+        for &arena in stage_arenas {
+            if virtual.arena_init_growing(&arena)!=nil {fail(&result,allocator,"could not reserve the memory the stages are compiled in");return}
+        }
+        work:=Stages_Work{g,stage_arenas}
+        job_system.parallel_for(&js,job_system.OWNER,len(g.order),1,stages_run,&work)
     }
-    for &worker in pool {
-        if worker.thread!=nil {thread.join(worker.thread);thread.destroy(worker.thread)}
-    }
-    defer for &worker in pool {virtual.arena_destroy(&worker.arena)}
     result.warnings=strings.clone(strings.to_string(g.warnings),allocator)
     if runner_cancelled(g.runner) {fail(&result,allocator,"the generation was cancelled");return}
     for job in g.jobs {
-        // What a worker made lives in its arena, which goes with the pool.
         if job.error!="" {fail(&result,allocator,"%s",job.error);result.diagnostics=diagnostics_clone(job.diagnostics,allocator);return}
         if job.result.name=="" {fail(&result,allocator,"%s: was not compiled",job.source);return}
         if job.reused {result.reused+=1;continue}

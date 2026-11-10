@@ -135,22 +135,6 @@ api_write_component :: proc(a:^Api_Write,reading:^author.Reading,e:core.Entity,t
     return true,true
 }
 
-// The components a card gives, as the API shows them: made on an entity of
-// its own that goes at once, inside the open edit.
-@(private="file")
-api_card_parts :: proc(s:^Session,w:core.World_Ref,card:int,allocator:runtime.Allocator) -> []author.Part {
-    e:=core.create(core.world_entities(w))
-    if made:=cards(s)[card].make;made!=nil {made(s,w,e)} else {preset_components(w,e,Preset(card))}
-    core.world_settle(w)
-    parts:=make([dynamic]author.Part,allocator)
-    for part in author.entity_parts(w,e,allocator) {
-        if api_component_listed(s,part.t) {append(&parts,part)}
-    }
-    core.world_destroy_tree(w,e)
-    core.world_settle(w)
-    return parts[:]
-}
-
 // The world the editor edits as what a document is read from and written to.
 // False after failing the call.
 @(private)
@@ -218,21 +202,23 @@ api_write_target :: proc(s:^Session,call:^api.Call,a:^Api_Write) -> (target:auth
             component_start(t,start)
             serial.text_write_changed(out,&st.schema,st.types[api_table_index(a.s,t)],value,start,omit_fields={.Transient,.Hidden})
         },
+        // A recipe is placed on an entity of its own that goes at once, inside the open edit.
         preset=proc(user:rawptr,name:string,allocator:runtime.Allocator) -> (preset:author.Scene_Preset,problem:string) {
             a:=(^Api_Write)(user)
-            card,found:=card_named(a.s,name)
-            if !found {return {},cards_problem(a.s,name)}
-            preset={name=name,rotation=1,scale={1,1,1},parts=api_card_parts(a.s,a.w,card,allocator)}
-            if card<len(Preset) {preset.rotation=preset_rotation(Preset(card))}
-            if c:=cards(a.s)[card];c.scale!={} {preset.scale=c.scale}
-            return
+            recipe,found:=recipe_of(a.s,name)
+            if !found {return {},recipes_problem(a.s,name)}
+            all:[]author.Part
+            if all,problem=author.recipe_parts(a.w,&a.s.app.assets.types,recipe,allocator);problem!="" {return}
+            parts:=make([dynamic]author.Part,allocator)
+            for part in all {
+                if api_component_listed(a.s,part.t) {append(&parts,part)}
+            }
+            return {recipe=recipe,parts=parts[:]},""
         },
         create=proc(user:rawptr,parent:author.Node,name:string,preset:author.Scene_Preset,id:base.Entity_Id) -> (author.Node,string) {
             a:=(^Api_Write)(user)
             if reason:=api_write_refused(a,parent);reason!="" {return 0,reason}
-            card:=-1
-            if preset.name!="" {card,_=card_named(a.s,preset.name)}
-            e:=entity_create(a.s,{card=card,parent=core.Entity(parent),name=name,named=name!=""})
+            e:=entity_create(a.s,{recipe=preset.name,parent=core.Entity(parent),name=name,named=name!=""})
             core.world_settle(a.w)
             return author.Node(e),"the entity cannot be made there: its parent has no size in some axis" if e==core.NONE else ""
         },

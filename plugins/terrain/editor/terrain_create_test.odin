@@ -398,7 +398,8 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     if !testing.expect_value(t,len(world.terrains.values),1) {return}
     owner:=world.terrains.entities[0]
     id:=world.terrains.values[0].source
-    operand:=editor.entity_create(&s,{preset=.Cube,name="Operand"})
+    operand:=editor.entity_create(&s,{name="Operand"})
+    core.add(&world.meshes,operand,erender.Mesh_Renderer{shape=.Cube})
     core.test_world_settle(&world)
     history.selection_set(&selection,{owner,operand})
     history.edits_reset(&edits,ref)

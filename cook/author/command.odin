@@ -40,8 +40,7 @@ import "mirai:std/serial"
 //
 // The types of the game, which the paths an interface binds and the
 // components of a scene are read against, are those of the library of the
-// editor of the project as it was built last, which also has the cards its
-// plugins add to the presets. Without it only an interface is read: nothing
+// editor of the project as it was built last. Without it only an interface is read: nothing
 // is written or checked that the game could not be asked about, and the
 // command says what builds the library.
 //
@@ -81,7 +80,7 @@ Project :: struct {
     info:^core.World_Info, // the types of the game as it was built last; nil: none
     languages:[]string,    // the codes of the languages of the game, the one its texts are written in first
     untyped:string,        // why it has none, with what gives them
-    plugins:Plugin_Recipes, // the cards of its plugins, when whoever runs the command reads them
+    recipes:[]Recipe,       // of the engine and of its active plugins
     scratch:Scratch_World,  // where a recipe is run; made the first time
 }
 
@@ -91,7 +90,7 @@ BUILD_FIX :: "mirai build editor <project> --dev builds it"
 
 // Opens the project at root with the assets of its plugins. library false
 // leaves the types of its game out. problem: why it does not open.
-project_open :: proc(p:^Project,root,engine:string,library:=true,recipes:Plugin_Recipes_Proc=nil) -> (problem:string) {
+project_open :: proc(p:^Project,root,engine:string,library:=true) -> (problem:string) {
     opened,error:=project.open(root,engine,context.temp_allocator)
     if error.code!=.None {return project.error_text(root,error,context.temp_allocator)}
     p.root=strings.clone(opened.root)
@@ -106,12 +105,13 @@ project_open :: proc(p:^Project,root,engine:string,library:=true,recipes:Plugin_
     project.settings_load({{name="UI_Settings",info=type_info_of(gui.UI_Settings),value=&ui_settings}},p.root,engine,{.Project})
     p.languages=slice.clone(texts_languages(ui_settings))
     if library {project_library_open(p)}
-    if p.info!=nil && recipes!=nil {p.plugins=recipes(p.info,context.allocator)}
+    p.recipes=recipes_read(project.recipe_folders(&opened,context.temp_allocator))
     return ""
 }
 
 project_close :: proc(p:^Project) {
     scratch_world_free(&p.scratch)
+    recipes_free(p.recipes)
     if p.library.handle!=nil {host.project_library_unload(&p.library)}
     asset.registry_destroy(&p.registry)
     asset.types_destroy(&p.types)
@@ -122,8 +122,7 @@ project_close :: proc(p:^Project) {
     p^={}
 }
 
-// The types of the game of the project: those of the library of its editor,
-// which its plugins give their cards in.
+// The types of the game of the project: those of the library of its editor.
 @(private="file")
 project_library_open :: proc(p:^Project) {
     path:=project.project_library(p.root,"editor",context.temp_allocator)
@@ -322,10 +321,7 @@ run_fail :: proc(run:^Run,what,why:string) {
     else {fmt.wprintfln(run.errors,"mirai %s %s: %s: %s",kind_name(run.kind),run.verb,what,why)}
 }
 
-// recipes reads the cards of the plugins of the library of the project
-// (editor.plugin_recipes, in the program of the engine); without it a
-// document names the presets alone.
-command :: proc(args:[]string,output,errors:io.Writer,recipes:Plugin_Recipes_Proc=nil) -> int {
+command :: proc(args:[]string,output,errors:io.Writer) -> int {
     root,engine:string
     rest:=make([dynamic]string,context.temp_allocator)
     for at:=0;at<len(args);at+=1 {
@@ -347,7 +343,7 @@ command :: proc(args:[]string,output,errors:io.Writer,recipes:Plugin_Recipes_Pro
     if root=="" {root="."}
     p:Project
     reads:=kind==.Ui && verb=="read" || rest[0]=="texts"
-    if problem:=project_open(&p,root,engine,!reads,recipes);problem!="" {
+    if problem:=project_open(&p,root,engine,!reads);problem!="" {
         fmt.wprintfln(errors,"mirai %s %s: %s",rest[0],verb,problem)
         return 1
     }

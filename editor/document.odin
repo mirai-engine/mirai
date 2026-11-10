@@ -155,9 +155,9 @@ scene_new :: proc(s:^Session) {
         return
     }
     ai_document_closed(s,s.edit_world)
-    sky:=entity_make(s,w,{preset=.Empty,name="Sky",named=true})
+    sky:=entity_make(s,w,{name="Sky",named=true})
     if t:=core.world_table_of(w,erender.Sky);t!=nil && sky!=core.NONE {core.add(t,sky,erender.SKY_DEFAULT)}
-    entity_make(s,w,{preset=.Sun,name="Sun",named=true})
+    entity_make(s,w,{recipe="sun",name="Sun",named=true})
     core.world_settle(w)
     document_reset(s)
     document_opened(s)

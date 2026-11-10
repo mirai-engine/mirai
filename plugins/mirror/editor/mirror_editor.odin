@@ -17,7 +17,7 @@ mirror_cards_default :: proc() -> (cards:Mirror_Cards) {
     // A glass that stands, with the glint of what it reflects.
     cards.provider.count=1
     cards.provider.cards[0]={
-        label="Mirror",group="Logic",color={160,220,255,255},lift=1.2,scale={1.6,2.4,1},component=mirror.Mirror,make=mirror_make,
+        recipe="mirror",group="Logic",color={160,220,255,255},component=mirror.Mirror,
         drawing=ui.icon_drawing(
             ui.icon_part(.Loop,{{-4.6,-6.8},{4.6,-6.8},{4.6,6.8},{-4.6,6.8}},1.4),
             ui.icon_part(.Line,{{-2.4,1.2},{1.2,-4.2}}),
@@ -25,11 +25,6 @@ mirror_cards_default :: proc() -> (cards:Mirror_Cards) {
         ),
     }
     return
-}
-
-@(private)
-mirror_make :: proc(s:^editor.Session,w:core.World_Ref,e:core.Entity) {
-    if t:=core.world_table_of(w,mirror.Mirror);t!=nil {core.add(t,e,mirror.Mirror{})}
 }
 
 @(storage)

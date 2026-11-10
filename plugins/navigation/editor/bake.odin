@@ -157,7 +157,7 @@ bake_call :: proc(s:^editor.Session,call:^api.Call) {
     if !editor.api_edit_begin(s,call,"Bake navigation") {return}
     if owner!=core.NONE {
         core.edit(table,owner).asset=id
-    } else if e:=editor.entity_create(s,{preset=.Empty,name="Navigation",parent=section});e!=core.NONE {
+    } else if e:=editor.entity_create(s,{name="Navigation",parent=section});e!=core.NONE {
         value:=nav.Navigation_Bake{asset=id}
         editor.component_add(s,e,bakes_info,&value)
     }

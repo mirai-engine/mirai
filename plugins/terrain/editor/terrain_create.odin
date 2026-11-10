@@ -111,7 +111,7 @@ terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
     position:=placed?at:[3]f32{s.viewport.orbit.target.x,0,s.viewport.orbit.target.z}
     transform:=core.Transform{position=position,rotation=1,scale={1,1,1}}
     if ground!=core.NONE {transform=over.transform}
-    e:=editor.entity_create(s,{preset=.Empty,name=label,transform=transform})
+    e:=editor.entity_create(s,{name=label,transform=transform})
     core.add(terrains,e,terrain.Terrain{source=id,revision=1,solid=true,ground=over.id})
     history.edits_end(s.edits);history.selection_set(editor.document_selection(s),{e})
     append(&tool.applied,Applied{source=id,revision=1,stamp=terrain.terrain_stamp(a,id)})

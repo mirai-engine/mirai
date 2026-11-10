@@ -24,15 +24,10 @@ portals_cards_default :: proc() -> (cards:Portals_Cards) {
     }
     cards.provider.count=1
     cards.provider.cards[0]={
-        label="Portal",group="Logic",color={190,150,255,255},lift=1.5,scale={2,3,1},component=portals.Portal,make=portal_make,
+        recipe="portal",group="Logic",color={190,150,255,255},component=portals.Portal,
         drawing=ui.icon_drawing(ui.icon_part(.Loop,rim[:],1.4),ui.icon_part(.Fill,inside[:],shade=60)),
     }
     return
-}
-
-@(private)
-portal_make :: proc(s:^editor.Session,w:core.World_Ref,e:core.Entity) {
-    if t:=core.world_table_of(w,portals.Portal);t!=nil {core.add(t,e,portals.Portal{})}
 }
 
 @(storage)

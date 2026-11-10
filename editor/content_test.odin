@@ -5,6 +5,7 @@ import "core:os"
 import "core:slice"
 import "core:testing"
 import "mirai:asset"
+import "mirai:cook/author"
 import "mirai:core"
 import "mirai:editor/history"
 import "mirai:host"
@@ -803,14 +804,16 @@ ctrl_and_the_wheel_over_create_resize_its_cards_with_those_of_the_browser :: pro
     c:=CONTENT_DEFAULT
     defer core.value_free(&c,type_info_of(Content))
     selection:history.Selection
-    session:=Session{app=&app,gui=&g,content=&c,selection=&selection,headless=true}
+    engine,_:=os.lookup_env("MIRAI_ROOT",context.temp_allocator)
+    session:=Session{app=&app,gui=&g,content=&c,selection=&selection,headless=true,engine_root=engine}
+    defer author.recipes_free(session.recipes)
     frame :: proc(s:^Session,input:ui.Input) {
         ui.frame_begin(s.gui.ctx,input)
         if ui.box(s.gui.ctx,{width=ui.fixed(284),height=ui.fixed(440),direction=.Column}) {create_build(s,core.World_Ref{},440,284)}
         _=ui.frame_end(s.gui.ctx)
     }
     for _ in 0..<2 {frame(&session,{size={800,600},pointer_absent=true})}
-    card,found:=ui.widget_rect(&ctx,ui.id(&ctx,"card",int(Preset.Cube)+1))
+    card,found:=ui.widget_rect(&ctx,ui.id(&ctx,"card",CONTENT_TEST_CUBE+1))
     testing.expect(t,found && abs(card.w-cell)<0.01,"A card of Create is a cell of the browser at its width")
     over:=ui.Input{size={800,600},pointer=ui.rect_center(card)}
     frame(&session,over)
@@ -819,10 +822,14 @@ ctrl_and_the_wheel_over_create_resize_its_cards_with_those_of_the_browser :: pro
     frame(&session,zoom)
     testing.expect(t,c.view.mode==.Grid && c.view.columns==3 && g.create_scroll==0,"The cells of the browser go a step and Create does not scroll")
     frame(&session,over)
-    card,_=ui.widget_rect(&ctx,ui.id(&ctx,"card",int(Preset.Cube)+1))
+    card,_=ui.widget_rect(&ctx,ui.id(&ctx,"card",CONTENT_TEST_CUBE+1))
     testing.expect(t,card.w>cell)
     testing.expect_value(t,ctx.stats.layout_errors,u32(0))
 }
+
+// The place of the cube among the cards of the editor.
+@(private)
+CONTENT_TEST_CUBE :: 7
 
 @(private)
 CONTENT_TEST_ROBOT :: base.Asset_Id{2,1}

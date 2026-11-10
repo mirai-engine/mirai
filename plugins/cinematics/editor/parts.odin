@@ -56,7 +56,7 @@ part_add :: proc(s:^editor.Session,w:core.World_Ref,desc:Part_Desc) -> (e:core.E
     if desc.part!=.Timeline && !editor.entity_has(w,desc.timeline,cine.Cinematic) {return core.NONE,"the timeline has no Cinematic"}
     switch desc.part {
     case .Timeline:
-        e=editor.entity_create(s,{preset=.Empty,name="Cinematic"})
+        e=editor.entity_create(s,{name="Cinematic"})
         if e==core.NONE {return core.NONE,"the entity could not be created"}
         animation:=anim.ANIMATION_DEFAULT
         animation.asset,animation.playing,animation.loop,animation.fade=desc.clip,desc.playing,false,0
@@ -65,7 +65,7 @@ part_add :: proc(s:^editor.Session,w:core.World_Ref,desc:Part_Desc) -> (e:core.E
     case .Shot:
         if !editor.entity_has(w,desc.target,erender.Camera) {return core.NONE,"the camera of the shot has no Camera"}
         if !(desc.time>=0) || !(desc.blend>=0) {return core.NONE,"the time and the blend of a shot are seconds, 0 or more"}
-        e=editor.entity_create(s,{preset=.Empty,name=fmt.tprintf("Shot %s",editor.entity_label(w,desc.target)),parent=desc.timeline})
+        e=editor.entity_create(s,{name=fmt.tprintf("Shot %s",editor.entity_label(w,desc.target)),parent=desc.timeline})
         if e==core.NONE {return core.NONE,"the entity could not be created"}
         add(s,w,e,cine.Cinematic_Shot{timeline=desc.timeline,camera=desc.target,time=desc.time,blend=desc.blend,ease=desc.ease})
     case .Actor:

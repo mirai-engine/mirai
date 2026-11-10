@@ -22,7 +22,7 @@ FOLDER_NAMES :: [Folder]string{
     .Assets="assets",.Source="source",.Game="game",.Editor="editor",
     .Plugins="plugins",.Shaders="shaders",.Panels="panels",.Generated=".mirai",
 }
-PART_NAMES :: [Plugin_Part]string{.Runtime="runtime",.Editor="editor",.Shaders="shaders",.Assets="assets"}
+PART_NAMES :: [Plugin_Part]string{.Runtime="runtime",.Editor="editor",.Shaders="shaders",.Assets="assets",.Recipes="recipes"}
 
 // Under the generated folder, beside the libraries of the project: the libraries of the engine's plugins it links.
 PLUGIN_LIBRARIES :: "plugins/lib"
@@ -382,6 +382,21 @@ path_absolute :: proc(location:string,allocator:=context.allocator) -> string {
     copy,copy_error:=strings.clone(result,allocator)
     if copy_error!=nil {return ""}
     return copy
+}
+
+// The folders of the recipes Create and the preset of a document place: that
+// of the engine, then the one of each active plugin that declares the part,
+// in the order of p.active. A recipe is a scene of one entity, which is
+// copied where it is placed; the name of its file is its name.
+recipe_folders :: proc(p:^Project,allocator:=context.allocator) -> []string {
+    folders:=make([dynamic]string,allocator)
+    parts:=PART_NAMES
+    if p.engine_root!="" {append(&folders,path(p.engine_root,parts[.Recipes],allocator=allocator))}
+    for index in p.active {
+        plugin:=&p.plugins[index]
+        if .Recipes in plugin.manifest.parts {append(&folders,path(plugin.folder,parts[.Recipes],allocator=allocator))}
+    }
+    return folders[:]
 }
 
 // A folder of assets of a project, and the path its files have among the

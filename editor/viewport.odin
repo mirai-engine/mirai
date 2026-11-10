@@ -741,13 +741,15 @@ placement_commit :: proc(s:^Session,w:core.World_Ref,d:Drag,hit:Pick,select:bool
         if select && root!=core.NONE {history.selection_set(s.selection,{root})}
         return
     }
-    card:=d.kind==.Preset?d.card:int(Preset.Empty)
-    opened,edit_ready:=edit_open(s,d.kind==.Preset?fmt.tprintf("Add %s",cards(s)[card].label):fmt.tprintf("Add %s",asset_label(&d)))
+    recipe:=cards(s)[d.card].recipe if d.kind==.Preset else "sound" if placement_sound(d) else ""
+    opened,edit_ready:=edit_open(s,d.kind==.Preset?fmt.tprintf("Add %s",cards(s)[d.card].label):fmt.tprintf("Add %s",asset_label(&d)))
     if !edit_ready {return}
     defer edit_close(s,opened)
-    e:=entity_create(s,{card=card,name=d.kind==.Asset?asset_label(&d):"",transform={position=point,rotation=1,scale={1,1,1}}})
+    e:=entity_create(s,{recipe=recipe,name=d.kind==.Asset?asset_label(&d):"",transform={position=point,rotation=1,scale={1,1,1}}})
     if placement_sound(d) {
-        sound_components(w,e,d.asset_id)
+        if t:=core.world_table_of(w,eaudio.Audio_Source);t!=nil {
+            if source:=core.raw_added(core.raw(t),type_info_of(eaudio.Audio_Source),e);source!=nil {(^eaudio.Audio_Source)(source).sound=d.asset_id}
+        }
     } else if d.kind==.Asset {
         if t:=core.world_table_of(w,erender.Mesh_Renderer);t!=nil {core.add(t,e,erender.Mesh_Renderer{mesh=d.asset_id})}
     }

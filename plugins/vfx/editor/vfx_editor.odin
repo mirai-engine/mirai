@@ -81,7 +81,7 @@ VFX_THUMBNAILS_DEFAULT :: Vfx_Thumbnails{provider={kinds={0=effect.KIND},count=1
 @(storage)
 Vfx_Cards :: struct {provider:editor.Card_Provider}
 VFX_CARDS_DEFAULT :: Vfx_Cards{provider={
-    cards={0={label="Particles",group="Logic",icon=.Particles,color=PARTICLES_COLOR,lift=0.5,make=emitter_make,component=vfx.Particle_Emitter}},
+    cards={0={recipe="particles",group="Logic",icon=.Particles,color=PARTICLES_COLOR,component=vfx.Particle_Emitter}},
     count=1,
 }}
 
@@ -92,11 +92,6 @@ VFX_INSPECTOR_DEFAULT :: Vfx_Inspector{provider={component=vfx_sections,field=em
 @(storage)
 Vfx_Api :: struct {provider:editor.Api_Provider}
 VFX_API_DEFAULT :: Vfx_Api{provider={register=api_register}}
-
-@(private)
-emitter_make :: proc(s:^editor.Session,w:core.World_Ref,e:core.Entity) {
-    if t:=core.world_table_of(w,vfx.Particle_Emitter);t!=nil {core.add(t,e,vfx.PARTICLE_EMITTER_DEFAULT)}
-}
 
 // The emitters of the selection take the effect whose card was clicked, as one step.
 @(private)

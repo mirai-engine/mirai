@@ -96,7 +96,7 @@ png_size :: proc(path:string) -> (width,height:int,ok:bool) {
     return width,height,true
 }
 
-Plugin_Part :: enum u8 {Runtime,Editor,Shaders,Assets}
+Plugin_Part :: enum u8 {Runtime,Editor,Shaders,Assets,Recipes}
 Plugin_Parts :: bit_set[Plugin_Part;u8]
 
 Version :: [32]u8
