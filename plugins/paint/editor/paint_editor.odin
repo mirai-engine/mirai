@@ -101,26 +101,26 @@ paint_pointer :: proc(s:^editor.Session,tool:^Paint_Tool,input:core.Input) {
 @(step="frame",after="editor_tools")
 paint_brush :: proc(
     s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),
-    app:^host.App,input:core.Input,frame:core.Frame_Time,
+    assets:^host.Assets,extras:^host.Frame_Extras,allocator:runtime.Allocator,input:core.Input,frame:core.Frame_Time,
 ) {
     gpu.debug_lines_clear(&tool.lines)
-    defer if tool.lines.count>0 {host.app_debug_lines_add(app,tool.lines)}
+    defer if tool.lines.count>0 {host.extras_debug_lines_add(extras,tool.lines)}
     if !s.gui.begun {return}
     stroke:=&tool.stroke
     if !tool.active || editor.playing(s) {
-        if stroke.active {stroke_cancel(s,tool,world,app)}
+        if stroke.active {stroke_cancel(s,tool,world)}
         return
     }
     if stroke.active {
         if ui.escape(s.gui.ctx) || !core.alive(core.world_entities(world),stroke.entity) || !core.has(meshes,stroke.entity) {
-            stroke_cancel(s,tool,world,app)
+            stroke_cancel(s,tool,world)
             return
         }
         if !core.mouse_down(input,.Left) {
-            stroke_end(s,tool,world,app)
+            stroke_end(s,tool,world,assets,allocator)
             return
         }
-        stroke_move(s,tool,world,app,input,frame)
+        stroke_move(s,tool,world,assets,allocator,input,frame)
         if stroke.active {ring(tool,stroke.last,stroke.normal)}
         return
     }
@@ -128,7 +128,7 @@ paint_brush :: proc(
     hit:=editor.pick_point(s,world,input.mouse_position)
     if hit.entity==core.NONE || hit.indicator {return}
     ring(tool,hit.position,hit.normal)
-    if tool.begin {stroke_begin(s,tool,world,app,meshes,worlds,hit)}
+    if tool.begin {stroke_begin(s,tool,world,assets,allocator,meshes,worlds,hit)}
 }
 
 // The ring of the brush on the surface, in the color it paints.
@@ -154,16 +154,16 @@ ring :: proc(tool:^Paint_Tool,position,normal:[3]f32) {
 // first stamp. Nothing is held when the entity has no mesh that can be painted.
 @(private)
 stroke_begin :: proc(
-    s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,app:^host.App,meshes:core.Read(erender.Mesh_Renderer),
+    s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator,meshes:core.Read(erender.Mesh_Renderer),
     worlds:core.Read(core.World_Transform),hit:editor.Pick,
 ) {
-    a:=app.assets
+    a:=assets
     source,has_mesh:=core.get(meshes,hit.entity)
     placed,has_placed:=core.get(worlds,hit.entity)
     if a==nil || !has_mesh || !has_placed {return}
     stroke:=&tool.stroke
     stroke_free(tool)
-    if !stroke_load(stroke,a,hit.entity,source,placed.transform,app.allocator) {
+    if !stroke_load(stroke,a,hit.entity,source,placed.transform,allocator) {
         editor.notify(s,"This mesh cannot be painted")
         stroke_free(tool)
         return
@@ -171,7 +171,7 @@ stroke_begin :: proc(
     stroke.active=true
     stroke.last,stroke.normal=hit.position,hit.normal
     stroke.dirty=stamp(stroke.positions,stroke.weights,hit.position,tool.radius)
-    if stroke.dirty {stroke_write(s,tool,world,app)}
+    if stroke.dirty {stroke_write(s,tool,world,assets,allocator)}
 }
 
 // Takes the mesh an entity shows into memory, its vertices placed in the
@@ -206,7 +206,7 @@ stroke_load :: proc(stroke:^Stroke,a:^host.Assets,e:core.Entity,source:erender.M
 }
 
 @(private)
-stroke_move :: proc(s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,app:^host.App,input:core.Input,frame:core.Frame_Time) {
+stroke_move :: proc(s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator,input:core.Input,frame:core.Frame_Time) {
     stroke:=&tool.stroke
     hit:=editor.pick_point(s,world,input.mouse_position)
     if hit.entity==stroke.entity && !hit.indicator {
@@ -214,20 +214,20 @@ stroke_move :: proc(s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,app:
         stroke.last,stroke.normal=hit.position,hit.normal
     }
     stroke.wait-=frame.dt
-    if stroke.dirty && stroke.wait<=0 {stroke_write(s,tool,world,app)}
+    if stroke.dirty && stroke.wait<=0 {stroke_write(s,tool,world,assets,allocator)}
 }
 
 // Writes the painted copy with the colors of the stroke so far, in the step
 // of the stroke. The first time, opens the step; the stroke is cancelled
 // when the copy cannot be written or assigned.
 @(private)
-stroke_write :: proc(s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,app:^host.App) -> bool {
+stroke_write :: proc(s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator) -> bool {
     opened:=!tool.stroke.written
     if opened {editor.edits_begin(s.edits,s.selection,"Paint")}
-    if !stroke_apply(s,&tool.stroke,world,app,tool.color,tool.strength) {
+    if !stroke_apply(s,&tool.stroke,world,assets,allocator,tool.color,tool.strength) {
         editor.notify(s,"The painted mesh could not be written")
         if opened {editor.edits_cancel(s.edits,world)}
-        stroke_cancel(s,tool,world,app)
+        stroke_cancel(s,tool,world)
         return false
     }
     return true
@@ -236,14 +236,14 @@ stroke_write :: proc(s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,app
 // Writes the painted copy into the open step. The first time it assigns the
 // copy to the entity; afterwards the copy is reloaded where it is.
 @(private)
-stroke_apply :: proc(s:^editor.Session,stroke:^Stroke,world:core.World_Ref,app:^host.App,color:[3]f32,strength:f32) -> bool {
-    a:=app.assets
+stroke_apply :: proc(s:^editor.Session,stroke:^Stroke,world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator,color:[3]f32,strength:f32) -> bool {
+    a:=assets
     meshes:=core.world_table_of(world,erender.Mesh_Renderer)
     row:=meshes!=nil?core.get(meshes,stroke.entity):nil
     if a==nil || row==nil {return false}
     colors_blend(stroke.canvas.vertices,stroke.before,stroke.weights,color,strength)
-    bytes,error:=canvas_bytes(&stroke.canvas,stroke.id,&a.types,app.allocator)
-    defer delete(bytes,app.allocator)
+    bytes,error:=canvas_bytes(&stroke.canvas,stroke.id,&a.types,allocator)
+    defer delete(bytes,allocator)
     if error!=.None || !editor.file_write(s,stroke.path,bytes,"Paint") {return false}
     stroke.dirty,stroke.wait=false,REFRESH_SECONDS
     if stroke.written {return true}
@@ -257,9 +257,9 @@ stroke_apply :: proc(s:^editor.Session,stroke:^Stroke,world:core.World_Ref,app:^
 
 // The stroke becomes one step of the history.
 @(private)
-stroke_end :: proc(s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,app:^host.App) {
+stroke_end :: proc(s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator) {
     stroke:=&tool.stroke
-    if stroke.dirty && !stroke_write(s,tool,world,app) {return}
+    if stroke.dirty && !stroke_write(s,tool,world,assets,allocator) {return}
     if stroke.written {editor.edits_end(s.edits)}
     stroke_free(tool)
 }
@@ -267,7 +267,7 @@ stroke_end :: proc(s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,app:^
 // The entity shows again what it showed, and the copy of the stroke goes
 // with the step.
 @(private)
-stroke_cancel :: proc(s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,app:^host.App) {
+stroke_cancel :: proc(s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref) {
     if tool.stroke.written {editor.edits_cancel(s.edits,world)}
     stroke_free(tool)
 }

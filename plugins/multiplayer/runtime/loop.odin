@@ -92,7 +92,7 @@ net_tick_head :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,in
 }
 
 @(step="fixed",loops="game",stage="end")
-net_tick_tail :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,outbox:^Net_Outbox,adoptions:^Net_Adoptions,problems:^core.Problems) {
+net_tick_tail :: proc(world:core.World_Ref,session:^Net_Session,outbox:^Net_Outbox,adoptions:^Net_Adoptions,problems:^core.Problems) {
     previous:=session.problems
     session.problems=problems
     defer session.problems=previous
@@ -106,9 +106,9 @@ net_tick_tail :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,ou
     if time==nil || time.resimulating {return}
     tick:=u32(time.tick)
     if session.mode==.Server {
-        server_publish(session,world,app,outbox,tick)
+        server_publish(session,world,outbox,tick)
     } else {
-        client_tail(session,world,app,tick,outbox)
+        client_tail(session,world,tick,outbox)
     }
 }
 
@@ -184,10 +184,10 @@ net_receive :: proc(session:^Net_Session,world:core.World_Ref,app:^host.App,even
     session.now=host.app_seconds(app)
     commands:=wire.host_poll(&session.host)
     if session.mode==.Server {
-        server_commands(session,world,app,commands,events,inputs)
+        server_commands(session,world,app.assets,commands,events,inputs)
         return true
     }
-    client_commands(session,world,app,commands,events)
+    client_commands(session,world,app.assets,app.allocator,commands,events)
     if !session.ended {return true}
     // Its ticks go at the pace of the frames again, and its clock is its own.
     if frame:=core.world_storage_of(world,core.Frame_Time);frame!=nil {frame.dilation=0}

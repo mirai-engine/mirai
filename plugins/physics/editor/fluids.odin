@@ -19,7 +19,7 @@ Fluid_Lines :: struct {
 }
 
 @(step="render",after="render_sync")
-fluid_lines :: proc(s:^editor.Session,view:^Fluid_Lines,app:^host.App) {
+fluid_lines :: proc(s:^editor.Session,view:^Fluid_Lines,extras:^host.Frame_Extras) {
     if editor.document_is_prefab(s) {return}
     state:=core.world_storage_of(editor.shown_world(s),phys.Physics_State)
     if state==nil || !state.ready || state.world.fluid_count==0 {return}
@@ -28,5 +28,5 @@ fluid_lines :: proc(s:^editor.Session,view:^Fluid_Lines,app:^host.App) {
     lines:=gpu.debug_lines_make(view.vertices[:])
     for line in out.lines[:out.line_count] {gpu.debug_line(&lines,line.a,line.b,COLLISION_COLORS[line.kind])}
     lines.dropped+=out.lines_dropped
-    if lines.count>0 {host.app_debug_lines_add(app,lines)}
+    if lines.count>0 {host.extras_debug_lines_add(extras,lines)}
 }

@@ -83,7 +83,7 @@ removal_foliage :: proc(r:^Removal_Test,id:base.Entity_Id) -> core.Entity {
 @(private="file")
 removal_step :: proc(r:^Removal_Test) {
     w:=&r.w
-    foliage_removals(&r.removals,&r.requests,&w.removed,core.read(&w.foliages),core.read(&w.ids),core.ref(&r.data),core.ref(&r.network),core.commands(w,&r.info),&r.app,&r.problems)
+    foliage_removals(&r.removals,&r.requests,&w.removed,core.read(&w.foliages),core.read(&w.ids),core.ref(&r.data),core.ref(&r.network),core.commands(w,&r.info),r.app.allocator,&r.problems)
     removal_settle(w)
 }
 

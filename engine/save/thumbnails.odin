@@ -77,20 +77,20 @@ thumbnail_texture :: proc(thumbnails:^Save_Thumbnails,state:^Save_State,app:^hos
 
 // Lets go of the texture of the thumbnail of a slot, if the world holds one:
 // what showed its id shows nothing.
-thumbnail_release :: proc(thumbnails:^Save_Thumbnails,app:^host.App,slot:string) {
+thumbnail_release :: proc(thumbnails:^Save_Thumbnails,assets:^host.Assets,slot:string) {
     if thumbnails==nil {return}
     for &item in thumbnails.items {
         if item.texture=={} || base.text_get(item.slot[:])!=slot {continue}
-        if app.assets!=nil {host.assets_texture_release(app.assets,item.texture)}
+        if assets!=nil {host.assets_texture_release(assets,item.texture)}
         item={}
     }
 }
 
 // Lets go of every thumbnail the world holds.
-thumbnails_release :: proc(thumbnails:^Save_Thumbnails,app:^host.App) {
+thumbnails_release :: proc(thumbnails:^Save_Thumbnails,assets:^host.Assets) {
     if thumbnails==nil {return}
     for &item in thumbnails.items {
-        if item.texture!={} && app.assets!=nil {host.assets_texture_release(app.assets,item.texture)}
+        if item.texture!={} && assets!=nil {host.assets_texture_release(assets,item.texture)}
         item={}
     }
 }

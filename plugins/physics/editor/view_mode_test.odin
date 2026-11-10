@@ -41,18 +41,18 @@ collision_view_draws_the_layers_asked_for_and_keeps_its_lines_while_physics_stay
         app.extras.debug_count=0
         return count
     }
-    collision_view_draw(&view,w,~sim.Collision_Layers(0),&app)
+    collision_view_draw(&view,w,~sim.Collision_Layers(0),&app.extras)
     testing.expect_value(t,lines_of(&app),12)
     testing.expect(t,app.extras.debug[0].depth_test,"hidden behind the scene")
-    collision_view_draw(&view,w,2,&app)
+    collision_view_draw(&view,w,2,&app.extras)
     testing.expect_value(t,lines_of(&app),0)
     // A shape added without a step of the physics shows when the physics moves on.
     sim.shape_create(&world.physics.world,body,{geometry=sim.Box{{0.5,0.5,0.5}},transform={{2,0,0},1},filter={layers=2,block=0xffffffff}})
-    collision_view_draw(&view,w,2,&app)
+    collision_view_draw(&view,w,2,&app.extras)
     testing.expect_value(t,lines_of(&app),0)
     world.physics.world.tick+=1
-    collision_view_draw(&view,w,2,&app)
+    collision_view_draw(&view,w,2,&app.extras)
     testing.expect_value(t,lines_of(&app),12)
-    collision_view_draw(&view,w,~sim.Collision_Layers(0),&app)
+    collision_view_draw(&view,w,~sim.Collision_Layers(0),&app.extras)
     testing.expect_value(t,lines_of(&app),24)
 }

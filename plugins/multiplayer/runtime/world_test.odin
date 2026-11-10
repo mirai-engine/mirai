@@ -84,9 +84,9 @@ pair_frame :: proc(p:^Pair,ticks:=true) {
         session.now=p.now
         world_follow(&session,refs[index])
     }
-    server_commands(&p.sessions[0],refs[0],&p.apps[0],wire.host_poll(&p.sessions[0].host),&server.received,&server.remote)
+    server_commands(&p.sessions[0],refs[0],p.apps[0].assets,wire.host_poll(&p.sessions[0].host),&server.received,&server.remote)
     if p.sessions[1].host_ready {
-        client_commands(&p.sessions[1],refs[1],&p.apps[1],wire.host_poll(&p.sessions[1].host),&client.received)
+        client_commands(&p.sessions[1],refs[1],p.apps[1].assets,p.apps[1].allocator,wire.host_poll(&p.sessions[1].host),&client.received)
         if !p.sessions[1].ended {client_clock(&p.sessions[1],refs[1],&p.apps[1])}
         core.clock_requests(&client.clock_requests,&client.clock,core.ref(&client.network),&p.problems[1])
     }

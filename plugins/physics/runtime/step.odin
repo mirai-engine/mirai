@@ -34,7 +34,7 @@ jobs_parallel_for :: proc(link:^Parallel,count,grain:int,data:rawptr,body:proc(d
 }
 
 @(private)
-jobs_workers :: proc(app:^host.App) -> int {return max(jobs.worker_count(&app.jobs),1)}
+jobs_workers :: proc(job_system:^jobs.Job_System) -> int {return max(jobs.worker_count(job_system),1)}
 
 @(private)
 Sync :: struct {
@@ -68,8 +68,8 @@ Sync :: struct {
 // Makes the simulation of the world when it has none, before what asks of
 // its bodies in the tick looks for them, and gives the queries of the world.
 @(step="fixed",loops="game editor",stage="simulate")
-physics_prepare :: proc(state:^Physics_State,settings:core.Ref(Physics_Settings),queries:^core.World_Queries,app:^host.App,problems:^core.Problems) {
-    _=state_make(state,settings.ptr,app,problems)
+physics_prepare :: proc(state:^Physics_State,settings:core.Ref(Physics_Settings),queries:^core.World_Queries,job_system:^jobs.Job_System,problems:^core.Problems) {
+    _=state_make(state,settings.ptr,job_system,problems)
     if queries.open==nil {queries.open=query_open}
 }
 
@@ -89,7 +89,7 @@ physics_step :: proc(
     hierarchy:core.Ref(core.Hierarchy),
 ) {
     events_clear(events)
-    if !state_make(state,settings.ptr,app,problems) {
+    if !state_make(state,settings.ptr,&app.jobs,problems) {
         core.queue_clear(&requests.queue)
         return
     }

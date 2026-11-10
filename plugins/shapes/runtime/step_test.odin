@@ -66,7 +66,7 @@ world_init :: proc(w:^World,app:^host.App) {
 
 @(private="file")
 world_destroy :: proc(w:^World) {
-    shapes_release(&w.cache,w.app)
+    shapes_release(&w.cache,w.app.assets)
     shapes_cache_free(&w.cache)
     core.table_destroy(&w.shapes);core.table_destroy(&w.brushes);core.table_destroy(&w.parts);core.table_destroy(&w.rigids);core.table_destroy(&w.colliders)
     core.table_destroy(&w.meshes);core.table_destroy(&w.parents);core.table_destroy(&w.transforms);core.table_destroy(&w.ids)
@@ -87,7 +87,7 @@ world_settle :: proc(w:^World) {
 @(private="file")
 world_step :: proc(w:^World) {
     world_settle(w)
-    shapes_update(&w.cache,w.app,core.commands(w,&w.info),core.read(&w.shapes),core.read(&w.brushes),core.read(&w.parts),core.read(&w.rigids),
+    shapes_update(&w.cache,w.app.assets,&w.app.jobs,w.app.allocator,core.commands(w,&w.info),core.read(&w.shapes),core.read(&w.brushes),core.read(&w.parts),core.read(&w.rigids),
         &w.colliders,&w.meshes,core.read(&w.transforms),core.read(&w.parents),core.ref(&w.hierarchy),&w.problems)
     world_settle(w)
 }

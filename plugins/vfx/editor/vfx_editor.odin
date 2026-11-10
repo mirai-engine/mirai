@@ -115,7 +115,7 @@ effect_clicked :: proc(s:^editor.Session,w:core.World_Ref,file:^asset.Registry_F
 // The document of the effect in front. Without it its preview goes, and so
 // does that of the thumbnails once none was drawn for a while.
 @(step="ui",after="editor_panels")
-vfx_document :: proc(s:^editor.Session,v:^Vfx_Editor,app:^host.App,frame:core.Frame_Time) {
+vfx_document :: proc(s:^editor.Session,v:^Vfx_Editor,assets:^host.Assets,frame:core.Frame_Time) {
     if v.thumbnail.world!=nil && s.frame>v.thumbnail.used+PREVIEW_IDLE {preview_free(&v.thumbnail)}
     g:=s.gui
     d:=editor.asset_document_active(s)
@@ -128,7 +128,7 @@ vfx_document :: proc(s:^editor.Session,v:^Vfx_Editor,app:^host.App,frame:core.Fr
     }
     if !g.begun {return}
     vfx_editor_ready(v)
-    effect_document(s,&v.document,app,frame,d.id)
+    effect_document(s,&v.document,assets,frame,d.id)
 }
 
 // An effect let go over an entity of the scene with a Particle_Emitter: the

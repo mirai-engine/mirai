@@ -45,12 +45,12 @@ bone_rigs_free :: proc(rigs:^[dynamic]Bone_Rig) {
 
 // The rig of a mesh: read once; one that failed stays without joints.
 @(private)
-bone_rig :: proc(rigs:^[dynamic]Bone_Rig,app:^host.App,mesh:base.Asset_Id) -> ^Bone_Rig {
-    if mesh=={} || app.assets==nil {return nil}
+bone_rig :: proc(rigs:^[dynamic]Bone_Rig,assets:^host.Assets,mesh:base.Asset_Id) -> ^Bone_Rig {
+    if mesh=={} || assets==nil {return nil}
     for &rig in rigs {
         if rig.mesh==mesh {return &rig}
     }
-    joints:=bone_rig_read(app,mesh)
+    joints:=bone_rig_read(assets,mesh)
     if _,error:=append(rigs,Bone_Rig{mesh=mesh,joints=joints});error!=nil {
         delete(joints)
         return nil
@@ -59,16 +59,16 @@ bone_rig :: proc(rigs:^[dynamic]Bone_Rig,app:^host.App,mesh:base.Asset_Id) -> ^B
 }
 
 @(private)
-bone_rig_read :: proc(app:^host.App,mesh:base.Asset_Id) -> []Bone_Joint {
+bone_rig_read :: proc(assets:^host.Assets,mesh:base.Asset_Id) -> []Bone_Joint {
     file:asset.Asset
-    if host.assets_file(app.assets,mesh,asset.KIND_MESH,&file)!=.None {return nil}
+    if host.assets_file(assets,mesh,asset.KIND_MESH,&file)!=.None {return nil}
     defer asset.asset_close(&file)
-    view,error:=asset.mesh_view(&file,&app.assets.types)
+    view,error:=asset.mesh_view(&file,&assets.types)
     if error!=.None || len(view.joints)==0 || view.info.skeleton=={} {return nil}
     skeleton_file:asset.Asset
-    if host.assets_file(app.assets,view.info.skeleton,asset.KIND_SKELETON,&skeleton_file)!=.None {return nil}
+    if host.assets_file(assets,view.info.skeleton,asset.KIND_SKELETON,&skeleton_file)!=.None {return nil}
     defer asset.asset_close(&skeleton_file)
-    skeleton,skeleton_error:=asset.skeleton_view(&skeleton_file,&app.assets.types)
+    skeleton,skeleton_error:=asset.skeleton_view(&skeleton_file,&assets.types)
     if skeleton_error!=.None {return nil}
     // The joints that move some vertex.
     moves:=make([]bool,len(view.joints),context.temp_allocator)
@@ -101,14 +101,14 @@ bone_rig_read :: proc(app:^host.App,mesh:base.Asset_Id) -> []Bone_Joint {
 // skin the renderer deforms (none: its bind pose). first and count: its
 // bones among those of the frame.
 @(private)
-bones_pose :: proc(sync:^Particle_Sync,app:^host.App,rig:^Bone_Rig,skin:erender.Mesh_Handle,posed:bool) -> (first,count:u32,ok:bool) {
+bones_pose :: proc(sync:^Particle_Sync,renderer:^erender.Renderer,rig:^Bone_Rig,skin:erender.Mesh_Handle,posed:bool) -> (first,count:u32,ok:bool) {
     joints:=len(rig.joints)
     if joints==0 {return}
     current,previous:[][3][4]f32
     if posed {
         if resize(&sync.palette,2*joints)!=nil {return}
         current,previous=sync.palette[:joints],sync.palette[joints:]
-        known,read:=erender.skin_palette(app,skin,current,previous)
+        known,read:=erender.skin_palette(renderer,skin,current,previous)
         if !read || known!=joints {current,previous=nil,nil}
     }
     place :: proc(palette:[][3][4]f32,at:int,bind:[3]f32) -> [3]f32 {
@@ -149,32 +149,32 @@ bones_pose :: proc(sync:^Particle_Sync,app:^host.App,rig:^Bone_Rig,skin:erender.
 // skin; without the scene of its world in the renderer, its Mesh_Renderer
 // where it is, in its bind pose.
 @(private)
-entity_bones :: proc(sync:^Particle_Sync,drawn:^erender.Render_Sync,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),id:core.World_Id,app:^host.App,e:core.Entity) -> Resource_Desc {
+entity_bones :: proc(sync:^Particle_Sync,drawn:^erender.Render_Sync,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),id:core.World_Id,assets:^host.Assets,renderer:^erender.Renderer,e:core.Entity) -> Resource_Desc {
     shown,has_mesh:=core.get(meshes,e)
     if !has_mesh {return {}}
-    rig:=bone_rig(&sync.rigs,app,shown.mesh)
+    rig:=bone_rig(&sync.rigs,assets,shown.mesh)
     if rig==nil {return {}}
     if drawn!=nil && drawn.world==id {
         for &extra in drawn.extras {
-            if extra.replace_source && extra.object_id==u64(e) {return bones_of(sync,app,rig,extra.mesh,extra.transform,true)}
+            if extra.replace_source && extra.object_id==u64(e) {return bones_of(sync,renderer,rig,extra.mesh,extra.transform,true)}
         }
     }
     world,placed:=core.get(worlds,e)
     if !placed {return {}}
-    return bones_of(sync,app,rig,0,mm.transform_matrix(world.transform),false)
+    return bones_of(sync,renderer,rig,0,mm.transform_matrix(world.transform),false)
 }
 
 // The bones of a mesh asset at a transform, in its bind pose.
 @(private)
-asset_bones :: proc(sync:^Particle_Sync,app:^host.App,mesh:base.Asset_Id,transform:mm.Mat4) -> Resource_Desc {
-    rig:=bone_rig(&sync.rigs,app,mesh)
+asset_bones :: proc(sync:^Particle_Sync,assets:^host.Assets,renderer:^erender.Renderer,mesh:base.Asset_Id,transform:mm.Mat4) -> Resource_Desc {
+    rig:=bone_rig(&sync.rigs,assets,mesh)
     if rig==nil {return {}}
-    return bones_of(sync,app,rig,0,transform,false)
+    return bones_of(sync,renderer,rig,0,transform,false)
 }
 
 @(private)
-bones_of :: proc(sync:^Particle_Sync,app:^host.App,rig:^Bone_Rig,skin:erender.Mesh_Handle,transform:mm.Mat4,posed:bool) -> Resource_Desc {
-    first,count,ok:=bones_pose(sync,app,rig,skin,posed)
+bones_of :: proc(sync:^Particle_Sync,renderer:^erender.Renderer,rig:^Bone_Rig,skin:erender.Mesh_Handle,transform:mm.Mat4,posed:bool) -> Resource_Desc {
+    first,count,ok:=bones_pose(sync,renderer,rig,skin,posed)
     if !ok {return {}}
     return {kind=.Bones,first=first,count=count,transform=transform}
 }

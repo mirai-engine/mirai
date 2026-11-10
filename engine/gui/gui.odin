@@ -643,7 +643,7 @@ frame_begin :: proc(
         s.input=input
         s.viewed,s.animating=false,false
         source_bind(&s,gui,app,p,seat_state,seats,bindings,actions,cameras,exposures,view_volumes,volumes,worlds,settings,preferences,gamepad,effects)
-        if world_panels && !preview {meshes_aim(gui,app,&s,p,input.ray,meshes,worlds)}
+        if world_panels && !preview {meshes_aim(gui,app.assets,app.renderer,&app.extras,&s,p,input.ray,meshes,worlds)}
         ui.frame_begin(s.ctx,input)
         s.open=true
     }
@@ -706,7 +706,7 @@ widgets_build :: proc(world:core.World_Ref,gui:^Gui,app:^host.App,problems:^core
             retained:=ui.id(ctx,"retained")
             retain:=screen_retains(gui,ctx,instance,&entry)
             if instance.changed {instance.revision+=1}
-            if retain && !ui.retained_begin(ctx,retained,screen_key(app,ctx,instance,&entry,layer,s.rect)~gui.prompts) {
+            if retain && !ui.retained_begin(ctx,retained,screen_key(app.assets,ctx,instance,&entry,layer,s.rect)~gui.prompts) {
                 instance_kept(instance,&entry)
                 gui.kept+=1
             } else {
@@ -787,19 +787,19 @@ frame_end :: proc(
             if converted.dropped>0 {
                 core.report(problems,core.NONE,"gui.draws","%d draw commands of the interfaces of a frame were left out: they did not fit what the renderer takes, or a layer was not closed; draw fewer widgets or layers",converted.dropped)
             }
-            meshes_draw(gui,app,s.offscreen[:converted.offscreen_count])
+            meshes_draw(gui,&app.extras,s.offscreen[:converted.offscreen_count])
         }
         if !s.shown {continue}
         if s.cursor!=.Default && !s.input.pointer_absent {cursor=s.cursor}
         gui.pointer_consumed||=s.pointer
         gui.keyboard_consumed||=s.keyboard
-        if s.draw_count>0 {host.app_ui_layer_add(app,s.layer)}
-        for panel in s.panels[:s.panel_count] {host.app_world_panel_add(app,panel)}
+        if s.draw_count>0 {host.extras_ui_layer_add(&app.extras,s.layer)}
+        for panel in s.panels[:s.panel_count] {host.extras_world_panel_add(&app.extras,panel)}
     }
     if preview {
-        views_sweep(gui,app)
-        particles_sweep(gui,app)
-        meshes_sweep(gui,app)
+        views_sweep(gui,app.renderer)
+        particles_sweep(gui,app.renderer)
+        meshes_sweep(gui,app.renderer)
         return
     }
     gui.modal_up=modal_apply(gui,seat_state,seats,seat_requests,contexts,context_requests)
@@ -812,23 +812,23 @@ frame_end :: proc(
             gui.cursor=cursor
         }
     }
-    views_sweep(gui,app)
-    particles_sweep(gui,app)
-    meshes_sweep(gui,app)
+    views_sweep(gui,app.renderer)
+    particles_sweep(gui,app.renderer)
+    meshes_sweep(gui,app.renderer)
 }
 
 // The interfaces of a World that is freed go with it, and the events it had
 // not delivered.
 @(step="release")
-gui_release :: proc(gui:^Gui,app:^host.App) {
+gui_release :: proc(gui:^Gui,renderer:^render.Renderer) {
     if gui==nil {return}
     instances_clear(gui)
     clear(&gui.pending)
     clear(&gui.arrived.items)
-    for view in gui.views_shown {render.view_texture_remove(app,view.texture)}
+    for view in gui.views_shown {render.view_texture_remove(renderer,view.texture)}
     clear(&gui.views_shown)
-    for &shown in gui.particles {if shown.texture!=0 {render.ui_texture_remove(app,shown.texture)};shown={}}
-    for &mesh in gui.meshes {if mesh.texture!=0 {render.ui_texture_remove(app,mesh.texture)};mesh={}}
+    for &shown in gui.particles {if shown.texture!=0 {render.ui_texture_remove(renderer,shown.texture)};shown={}}
+    for &mesh in gui.meshes {if mesh.texture!=0 {render.ui_texture_remove(renderer,mesh.texture)};mesh={}}
 }
 
 @(private)

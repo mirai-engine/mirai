@@ -131,7 +131,7 @@ subject_skin_ready :: proc(app:^host.App,w:core.World_Ref,skin:^Subject_Skin)->b
     if app.shared==nil {return false}
     cache:=core.world_storage_of(core.world_ref(app.shared,w.info,.Shared),eanim.Skeleton_Assets)
     if app.renderer==nil || cache==nil || skin.geometry.skeleton=={} {return false}
-    content:=eanim.skeleton_content(cache,app,skin.geometry.skeleton)
+    content:=eanim.skeleton_content(cache,app.assets,app.allocator,skin.geometry.skeleton)
     if content==nil {return false}
     count:=len(content.bones)
     err:runtime.Allocator_Error

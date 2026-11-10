@@ -9,6 +9,7 @@ import "mirai:host"
 import "mirai:std/base"
 import lib "mirai:std/anim"
 import mm "mirai:std/math"
+import "base:runtime"
 
 // A .match plays locomotion by motion matching over its clips: every interval it looks for the
 // frame whose feet, hips and trajectory are closest to what the body does and is asked to do,
@@ -166,28 +167,28 @@ match_content_free :: proc(content:^Match_Content) {
     content^={}
 }
 
-match_content :: proc(cache:^Graph_Assets,app:^host.App,id:base.Asset_Id) -> ^Match_Content {
-    if cache==nil || app==nil || app.assets==nil || id=={} {return nil}
-    context.allocator=app.allocator;cache.allocator=app.allocator
+match_content :: proc(cache:^Graph_Assets,assets:^host.Assets,allocator:runtime.Allocator,id:base.Asset_Id) -> ^Match_Content {
+    if cache==nil || assets==nil || id=={} {return nil}
+    context.allocator=allocator;cache.allocator=allocator
     row:=-1
     for content,i in cache.matches {if content.id==id {row=i;break}}
     if row<0 {row=len(cache.matches);if append(&cache.matches,Match_Content{id=id})!=1 {return nil}}
     content:=&cache.matches[row]
-    if content.checked==assets_stamp(app) {return content if content.valid else nil}
-    record,found:=asset.registry_find(&app.assets.registry,id)
+    if content.checked==assets_stamp(assets) {return content if content.valid else nil}
+    record,found:=asset.registry_find(&assets.registry,id)
     stamp:=[2]i64{}
     if found {stamp={record.size,record.time}}
-    if content.checked!=0 && stamp==content.stamp {content.checked=assets_stamp(app);return content if content.valid else nil}
+    if content.checked!=0 && stamp==content.stamp {content.checked=assets_stamp(assets);return content if content.valid else nil}
     profile:Match_Profile;error:=asset.Error.Not_Found
     if found {
         file:asset.Asset
-        error=host.assets_file(app.assets,id,MATCH_KIND,&file)
+        error=host.assets_file(assets,id,MATCH_KIND,&file)
         if error==.None {
-            view,read:=match_view(&file,&app.assets.types);error=read
+            view,read:=match_view(&file,&assets.types);error=read
             if read==.None {
                 profile.info=view.info
-                clips,ok:=graph_clone(view.clips,app.allocator)
-                samples,cloned:=graph_clone(view.samples,app.allocator)
+                clips,ok:=graph_clone(view.clips,allocator)
+                samples,cloned:=graph_clone(view.samples,allocator)
                 if ok && cloned {profile.clips,profile.samples=clips,samples} else {delete(clips);delete(samples);error=.Out_Of_Memory}
             }
             asset.asset_close(&file)
@@ -196,7 +197,7 @@ match_content :: proc(cache:^Graph_Assets,app:^host.App,id:base.Asset_Id) -> ^Ma
     if error==.Out_Of_Memory {content.error=error;content.checked=0;return nil}
     revision:=content.revision
     match_content_free(content)
-    content^={id=id,profile=profile,valid=error==.None,error=error,stamp=stamp,checked=assets_stamp(app),revision=revision+1}
+    content^={id=id,profile=profile,valid=error==.None,error=error,stamp=stamp,checked=assets_stamp(assets),revision=revision+1}
     return content if content.valid else nil
 }
 
@@ -457,15 +458,15 @@ match_marker_crossed :: proc(library:^host.Content_Animation,clip:lib.Clip,name:
 // Chooses the clip and time the rig plays in this tick and writes them as a program of one clip.
 // facing is the -Z of the rig in the world.
 @(private)
-match_output :: proc(state:^Playing,output:^Program_Output,content:^Match_Content,library:^host.Content_Animation,source:base.Asset_Id,dt:f32,goals:[]Match_Goal,plays:[]Match_Play,facing:mm.Vec3,app:^host.App,events:^Animation_Events,playback:^Playback,problems:^core.Problems) -> bool {
+match_output :: proc(state:^Playing,output:^Program_Output,content:^Match_Content,library:^host.Content_Animation,source:base.Asset_Id,dt:f32,goals:[]Match_Goal,plays:[]Match_Play,facing:mm.Vec3,assets:^host.Assets,allocator:runtime.Allocator,events:^Animation_Events,playback:^Playback,problems:^core.Problems) -> bool {
     runtime:=&state.program;m:=&runtime.match;info:=content.profile.info
     goal:Match_Goal;has_goal:=false
     for value in goals {if value.rig==state.entity {goal,has_goal=value,true}}
     mode:=goal.mode if has_goal else m.mode
-    db,built,fault:=match_database(content,library,state,source,app.allocator)
+    db,built,fault:=match_database(content,library,state,source,allocator)
     // A rig binds its skeleton after its first program: until then it plays the first clip.
     if db==nil && len(state.parents)>=2 {
-        name:[base.ASSET_ID_TEXT]u8;path:=host.assets_name(app.assets,content.id,&name)
+        name:[base.ASSET_ID_TEXT]u8;path:=host.assets_name(assets,content.id,&name)
         names:[MATCH_BLEND]string
         if fault.kind!=.None && int(fault.source)<len(content.profile.clips) {names,_=match_source_clips(&content.profile.clips[fault.source])}
         #partial switch built {

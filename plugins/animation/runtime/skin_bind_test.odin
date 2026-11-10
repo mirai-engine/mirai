@@ -64,7 +64,7 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     if !testing.expect(t,host.assets_init(&assets,{root=directory,renderer=renderer})) {return}
     defer host.assets_destroy(&assets)
     app:=host.App{allocator=context.allocator,renderer=renderer,assets=&assets}
-    defer host.app_extras_free(&app)
+    defer host.extras_free(&app.extras)
     cache:Skin_Runtime;defer skin_runtime_free(&cache)
     state:Skin_Instances;defer skin_instances_free(&state)
     playback:Playback;defer playback_free(&playback)
@@ -94,7 +94,7 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     }
     core.table_settle(&parents,&entities);core.table_settle(&skins,&entities);core.table_settle(&transforms,&entities)
     core.table_settle(&meshes,&entities);core.table_settle(&worlds,&entities)
-    definition:=skeleton_content(&skeleton_assets,&app,skeleton_id)
+    definition:=skeleton_content(&skeleton_assets,app.assets,app.allocator,skeleton_id)
     if !testing.expect(t,definition!=nil) {return}
     for rig in roots {
         pose:=state_get(&playback,rig)
@@ -105,7 +105,7 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     tick :: proc(app:^host.App,cache:^Skin_Runtime,state:^Skin_Instances,playback:^Playback,meshes:^core.Table(erender.Mesh_Renderer),skins:^core.Table(Pose_Source),parents:^core.Table(core.Parent),worlds:^core.Table(core.World_Transform),tints:^core.Table(erender.Tint),overrides:^core.Table(erender.Material_Override),hidden:^core.Table(erender.Hidden),elsewhere:^core.Table(erender.Drawn_Elsewhere),highlights:^core.Table(erender.Highlight),offsets:^core.Table(erender.Draw_Offset),problems:^core.Problems,modifiers:^Modifier_Runtime=nil) {
         clear(&app.extras.instances)
         outlines:core.Table(erender.Outline);defer core.table_destroy(&outlines)
-        animation_skin(core.read(meshes),core.read(skins),core.read(parents),core.read(worlds),core.read(tints),core.read(overrides),core.read(hidden),core.read(elsewhere),core.read(highlights),core.read(&outlines),core.read(offsets),cache,state,app,{},core.FRAME_TIME_DEFAULT,core.Ref(Playback){ptr=playback},{},problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,{},{},{},core.Ref(Modifier_Runtime){ptr=modifiers})
+        animation_skin(core.read(meshes),core.read(skins),core.read(parents),core.read(worlds),core.read(tints),core.read(overrides),core.read(hidden),core.read(elsewhere),core.read(highlights),core.read(&outlines),core.read(offsets),cache,state,app.assets,app.renderer,&app.extras,&app.jobs,app.allocator,{},core.FRAME_TIME_DEFAULT,core.Ref(Playback){ptr=playback},{},problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,{},{},{},core.Ref(Modifier_Runtime){ptr=modifiers})
     }
     measure :: proc(renderer:^gpu.Renderer,label:string) -> int {
         s:=&renderer.scene
@@ -117,7 +117,7 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     tick(&app,&cache,&state,&playback,&meshes,&skins,&parents,&worlds,&tints,&overrides,&hidden,&elsewhere,&highlights,&offsets,&problems)
     testing.expect_value(t,problems.count,0)
     testing.expect_value(t,measure(renderer,"64 rigs at the bind pose"),0)
-    testing.expect_value(t,len(host.app_instances(&app)),0)
+    testing.expect_value(t,len(host.extras_instances(&app.extras)),0)
 
     // A pose that leaves the bind makes the copy of that rig alone.
     pose:=constraint_playing(&playback,roots[0])
@@ -126,8 +126,8 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     pose.changed+=1
     tick(&app,&cache,&state,&playback,&meshes,&skins,&parents,&worlds,&tints,&overrides,&hidden,&elsewhere,&highlights,&offsets,&problems)
     testing.expect_value(t,measure(renderer,"one rig posed"),1)
-    if !testing.expect_value(t,len(host.app_instances(&app)),1) {return}
-    gpu.scene_set(renderer,host.app_instances(&app),nil,{},gpu.Environment{sky={1,1,1}})
+    if !testing.expect_value(t,len(host.extras_instances(&app.extras)),1) {return}
+    gpu.scene_set(renderer,host.extras_instances(&app.extras),nil,{},gpu.Environment{sky={1,1,1}})
     if !testing.expect(t,gpu.renderer_frame(renderer,{camera={position={1,2,8},forward={0,-1,-8},up={0,1,0},fov_y=50,near=0.1,far=100}}),renderer.error) {return}
     record:=renderer.scene.meshes[core.entity_map_get(&state.instances,draws[0]).mesh]
     result:[1]gpu.Gpu_Posed_Vertex
@@ -143,7 +143,7 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     testing.expect(t,modifier_append(&modifiers.curve_materials,roots[1],blush))
     tick(&app,&cache,&state,&playback,&meshes,&skins,&parents,&worlds,&tints,&overrides,&hidden,&elsewhere,&highlights,&offsets,&problems,&modifiers)
     testing.expect_value(t,measure(renderer,"one rig posed and one with curve materials"),2)
-    testing.expect_value(t,len(host.app_instances(&app)),2)
+    testing.expect_value(t,len(host.extras_instances(&app.extras)),2)
     instance:=core.entity_map_get(&state.instances,draws[1])
     testing.expect(t,instance!=nil && instance.copied,"the still rig with curve materials has its copy")
     testing.expect_value(t,problems.count,0)

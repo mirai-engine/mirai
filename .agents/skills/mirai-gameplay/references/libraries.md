@@ -505,11 +505,12 @@ the reverb of the room where the listener is and what covers each source.
   `.sound_set`; `play_source` plays an `Audio_Source` as configured, without a place, and
   `play_source_at` at a point of the world with its curve (a loop that follows something:
   `source_place` moves it); `source_tune` passes either its changes; `stop` and `playing` on the
-  voice they return. `buses_apply`
+  voice they return. Playing takes `^host.App`, which loads the sound; what acts on a voice
+  (`stop`, `playing`, `source_place`, `source_tune`) takes the mixer, `^audio.Mixer`. `buses_apply`
   is what `audio_buses` does every frame, for whoever sounds outside the game (the editor). They
   return zero if there is no mixer, the asset does not load or there is no free voice, or if a
   rollback repeats the tick (`time.resimulating`): it already sounded the first time. They belong
-  to the game thread: only from functions that receive `^host.App`.
+  to the game thread: only from the functions of the loop.
 
 ## `anim`
 

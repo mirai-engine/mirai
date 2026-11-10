@@ -33,7 +33,7 @@ save_methods_read_and_delete_slots_in_edit_and_ask_for_play_to_write :: proc(t:^
     info:=core.World_Info{storages=storages[:]}
     shared:Save_Api_Shared
     app:=host.App{info=&info,allocator=context.allocator,shared=&shared}
-    save.folder_set(&shared.state,&app,dir)
+    save.folder_set(&shared.state,app.allocator,dir)
     defer delete(shared.state.folder)
     session:=Session{info=&info,app=&app}
     broken:=strings.concatenate({dir,"/broken",save.EXTENSION},context.temp_allocator)

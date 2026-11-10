@@ -5,7 +5,6 @@ import "mirai:core"
 import camera "mirai:engine/camera"
 import render "mirai:engine/render"
 import volume "mirai:engine/volume"
-import "mirai:host"
 
 // What a lens does to the image besides exposing it: the depth of field of
 // its aperture, the motion blur of its shutter, the light it scatters around
@@ -110,10 +109,10 @@ Gpu_Params :: struct {
 @(step="render",loops="game editor",after="render_sync")
 lens_render :: proc(
     state:^Lens_Gpu,lenses:core.Read(Lens),zones:core.Read(Lens_Volume),places:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),
-    exposures:core.Read(render.Exposure),view_volumes:core.Read(render.View_Volume),view:core.View,locals:core.Ref(camera.Local_Views),app:^host.App,
+    exposures:core.Read(render.Exposure),view_volumes:core.Read(render.View_Volume),view:core.View,locals:core.Ref(camera.Local_Views),renderer:^render.Renderer,
 ) {
     state.views={}
-    if app.renderer==nil || core.count(lenses)==0 && core.count(zones)==0 {return}
+    if renderer==nil || core.count(lenses)==0 && core.count(zones)==0 {return}
     used:=false
     state.views[0]=view_lens(lenses,zones,places,worlds,exposures,view_volumes,view)
     used||=state.views[0].used
@@ -125,11 +124,11 @@ lens_render :: proc(
     if !used {return}
     shaders:=LENS_SHADERS
     for &pipeline,pass in state.pipelines {
-        pipeline=render.stage_pipeline(app,{stage=.Post,shader=shaders[pass],name=shaders[pass]})
+        pipeline=render.stage_pipeline(renderer,{stage=.Post,shader=shaders[pass],name=shaders[pass]})
         // 0 while the shaders in use have no lens: a generation made without the plugin.
         if pipeline==0 {return}
     }
-    render.frame_pass(app,.Post,lens_record,state)
+    render.frame_pass(renderer,.Post,lens_record,state)
 }
 
 // How a view looks through its lens: its camera's own, or the one of where it is.

@@ -123,7 +123,7 @@ particle_document_builds_the_rows_of_every_field_and_its_eyes_hide_them :: proc(
     p.open={.Spawn=true,.Shape=true,.Motion=true,.Look=true,.Collision=true,.Program=true}
     frame :: proc(t:^testing.T,ctx:^ui.Context,s:^editor.Session,p:^Effect_Document,app:^host.App,input:ui.Input) {
         ui.frame_begin(ctx,input)
-        if ui.box(ctx,{width=ui.fixed(264),height=ui.FIT,direction=.Column,gap=3}) {effect_rows(s,p,app)}
+        if ui.box(ctx,{width=ui.fixed(264),height=ui.FIT,direction=.Column,gap=3}) {effect_rows(s,p,app.assets)}
         output:=ui.frame_end(ctx)
         testing.expect(t,!output.overflow)
         testing.expect_value(t,ctx.stats.layout_errors,u32(0))

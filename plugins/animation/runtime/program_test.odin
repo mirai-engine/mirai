@@ -64,7 +64,7 @@ animation_programs_blend_weighted_poses_curves_root_motion_and_masked_layers_wit
     events:Animation_Events;defer delete(events.items)
     nodes:=program_test_graph();profile:=Graph_Profile{info={animation={1,2},output=4},nodes=nodes[:]}
     if !testing.expect(t,graph_check(profile)) {return}
-    output:=new(Program_Output);defer {program_output_free(output);mem.free(output)};ok:=program_node(output,profile,4,nil,nil,nil)
+    output:=new(Program_Output);defer {program_output_free(output);mem.free(output)};ok:=program_node(output,profile,4,nil,nil,nil,{})
     if !testing.expect(t,ok && output.count==2 && output.groups[output.primary].count==2) {return}
     animation:=ANIMATION_DEFAULT;animation.loop=false;animation.root_motion=.Extract
     playback.frame,state.seen=1,1;state.program.ready=true
@@ -112,7 +112,7 @@ synchronized_program_players_share_phase_across_clip_durations_and_emit_only_the
     nodes:=program_test_graph();nodes[0].sync_mode,nodes[1].sync_mode=.Markers,.Markers
     base.text_set(nodes[0].sync_group[:],"locomotion");base.text_set(nodes[1].sync_group[:],"locomotion")
     nodes[0].loop,nodes[1].loop=true,true
-    output:=new(Program_Output);defer {program_output_free(output);mem.free(output)};ok:=program_node(output,{info={animation={1,2},output=3},nodes=nodes[:]},3,nil,nil,nil)
+    output:=new(Program_Output);defer {program_output_free(output);mem.free(output)};ok:=program_node(output,{info={animation={1,2},output=3},nodes=nodes[:]},3,nil,nil,nil,{})
     if !testing.expect(t,ok) {return}
     animation:=ANIMATION_DEFAULT;animation.root_motion=.Extract
     if !testing.expect(t,program_players(&state,output,&content,animation,&events,&playback,.5,-1,nil)) {return}
@@ -231,7 +231,7 @@ shared_graph_nodes_preserve_full_root_motion_and_do_not_double_animation_events 
     nodes:=program_test_graph();nodes[3].left,nodes[3].right,nodes[3].weight=0,0,.5
     profile:=Graph_Profile{info={animation={1,2},output=3},nodes=nodes[:]}
     testing.expect(t,graph_check(profile))
-    output:=new(Program_Output);defer {program_output_free(output);mem.free(output)};ok:=program_node(output,profile,3,nil,nil,nil)
+    output:=new(Program_Output);defer {program_output_free(output);mem.free(output)};ok:=program_node(output,profile,3,nil,nil,nil,{})
     if !testing.expect(t,ok) {return}
     animation:=ANIMATION_DEFAULT;animation.loop=false;animation.root_motion=.Extract
     testing.expect(t,program_players(&state,output,&content,animation,&events,&playback,.5,-1,nil))
@@ -246,7 +246,7 @@ program_players_allocate_only_for_programs_replay_once_clips_and_retire_optional
     playback:Playback;defer playback_free(&playback)
     events:Animation_Events;defer delete(events.items)
     nodes:=program_test_graph()
-    output:=new(Program_Output);defer {program_output_free(output);mem.free(output)};ok:=program_node(output,{info={animation={1,2}},nodes=nodes[:]},0,nil,nil,nil)
+    output:=new(Program_Output);defer {program_output_free(output);mem.free(output)};ok:=program_node(output,{info={animation={1,2}},nodes=nodes[:]},0,nil,nil,nil,{})
     if !testing.expect(t,ok) {return}
     animation:=ANIMATION_DEFAULT;animation.loop=false
     testing.expect(t,state.program.players==nil && state.program.from==nil && state.program.from_curves==nil)

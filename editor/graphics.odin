@@ -209,7 +209,7 @@ graphics_build :: proc(s:^Session) {
     popup:=graphics_popup(g)
     current:=graphics_settings(s)
     if !ui.popup_is_open(ctx,popup) || current==nil {return}
-    offered:=erender.antialiasing_offered(s.app)
+    offered:=erender.antialiasing_offered(s.app.renderer)
     choices:=graphics_choices(current^,offered)
     defaults:=graphics_choices(graphics_base(s),offered)
     next:=current^

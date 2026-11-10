@@ -24,7 +24,7 @@ program_buffer_step :: proc(f:^Program_Feature_Fixture,app:^host.App,graphs:^Gra
     clear(&f.events.items)
     output,programmed,ok:=program_resolve(&f.state,f.animation,app,nil,graphs,dt)
     if !ok || !programmed {return false}
-    if !program_masks_prepare(&f.state,output,&f.content,graphs,app) {return false}
+    if !program_masks_prepare(&f.state,output,&f.content,graphs,app.assets,app.allocator) {return false}
     if !program_players(&f.state,output,&f.content,f.animation,&f.events,&f.playback,dt,-1,nil) || !program_pose(&f.playback,&f.state,&f.content,f.animation,output,{}) {return false}
     copy(f.state.sampled[:],f.state.local[:]);f.state.pose_ready=true
     return true

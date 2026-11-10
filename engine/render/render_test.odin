@@ -103,7 +103,7 @@ shared_generated_chunks_survive_world_layout_changes_and_local_preview_retiremen
                     instance,usable:=mesh_instance(app.assets,{mesh=preview},mm.transform_matrix(world.transform),tint)
                     testing.expect(t,usable)
                     instance.object_id,instance.copy_owner,instance.copy_variant,instance.replace_source=u64(e),99,1,true
-                    testing.expect(t,host.app_instance_add(app,instance))
+                    testing.expect(t,host.extras_instance_add(&app.extras,instance))
                 }
             } else if preview!={} && frame==0 {
                 testing.expect(t,host.assets_mesh_release(app.assets,preview));preview={}
@@ -196,7 +196,7 @@ meshes_created_before_their_world_transform_become_visible_and_visual_instances_
             preview,ok:=mesh_instance(app.assets,{shape=.Cube},mm.transform_matrix(transform),Tint{color={0,1,0,0.8},emission={0,3,0}})
             testing.expect(t,ok)
             preview.copy_owner,preview.copy_variant=1,1
-            testing.expect(t,host.app_instance_add(app,preview))
+            testing.expect(t,host.extras_instance_add(&app.extras,preview))
         }
         host.app_camera_set(app,host.camera_from_view(view),view.cut,view.carried)
         outlines:core.Table(Outline);defer core.table_destroy(&outlines)
@@ -265,7 +265,7 @@ meshes_created_before_their_world_transform_become_visible_and_visual_instances_
             testing.expect(t,usable)
             preview.material,preview.object_id=gpu.Material_Handle(row),u64(e)
             preview.copy_owner,preview.copy_variant,preview.replace_source=2,1,true
-            testing.expect(t,host.app_instance_add(app,preview))
+            testing.expect(t,host.extras_instance_add(&app.extras,preview))
         } else {
             testing.expect(t,host.assets_mesh_release(app.assets,generated))
         }
@@ -319,7 +319,7 @@ meshes_created_before_their_world_transform_become_visible_and_visual_instances_
             empty,usable:=mesh_instance(app.assets,{mesh=source},mm.Mat4(1))
             testing.expect(t,usable)
             empty.object_id,empty.copy_owner,empty.replace_source,empty.hidden=u64(e),3,true,true
-            testing.expect(t,host.app_instance_add(app,empty))
+            testing.expect(t,host.extras_instance_add(&app.extras,empty))
         }
         host.app_camera_set(app,host.camera_from_view(view),view.cut,view.carried)
         outlines:core.Table(Outline);defer core.table_destroy(&outlines)
@@ -472,7 +472,7 @@ meshes_that_come_and_go_change_only_their_instances :: proc(t:^testing.T) {
         extra,usable:=mesh_instance(app.assets,{shape=.Cube},mm.transform_matrix({{0,2,0},1,{0.5,0.5,0.5}}),Tint{color={0,1,0,1},emission={0,3,0}})
         testing.expect(t,usable)
         extra.copy_owner,extra.copy_variant=1,1
-        testing.expect(t,host.app_instance_add(app,extra))
+        testing.expect(t,host.extras_instance_add(&app.extras,extra))
         host.app_camera_set(app,host.camera_from_view(view),view.cut,view.carried)
         outlines:core.Table(Outline);defer core.table_destroy(&outlines)
         outline_styles:=OUTLINE_STYLES_DEFAULT
@@ -609,7 +609,7 @@ a_scene_without_memory_is_empty_until_a_frame_makes_it :: proc(t:^testing.T) {
         extra,usable:=mesh_instance(app.assets,{shape=.Cube},mm.transform_matrix({{0,2,0},1,{0.5,0.5,0.5}}),Tint{color={0,1,0,1}})
         testing.expect(t,usable)
         extra.object_id,extra.replace_source=u64(a),true
-        testing.expect(t,host.app_instance_add(app,extra))
+        testing.expect(t,host.extras_instance_add(&app.extras,extra))
         host.app_camera_set(app,host.camera_from_view(view),view.cut,view.carried)
         {
             context.allocator=limited

@@ -234,7 +234,7 @@ session_start :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,settings:^Ne
     port:=wanted.port>0?wanted.port:s.desc.port
     if _,valid:=settings_port(settings^);!valid {
         core.report(s.problems,core.NONE,"net.settings","the network did not open: Net_Settings.port %d is not a UDP port; give it one from 1 to 65535, or 0 for %d",settings.port,DEFAULT_PORT)
-        session_fail(s,app,fmt.tprintf("the network did not open: Net_Settings.port %d is not a UDP port",settings.port))
+        session_fail(s,app.allocator,fmt.tprintf("the network did not open: Net_Settings.port %d is not a UDP port",settings.port))
         return
     }
     if wanted.timeout>0 {s.desc.timeout,s.desc.connect_timeout=wanted.timeout,wanted.timeout}
@@ -243,20 +243,20 @@ session_start :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,settings:^Ne
     switch error {
     case .None:
     case .Transport_Failed:
-        if wanted.server {session_fail(s,app,fmt.tprintf("could not open the UDP port %d: is another server on it?",port))}
-        else {session_fail(s,app,fmt.tprintf("\"%s\" is neither an invitation nor an address: give a code like K7Q2-9XMA-PL3F-0B2C, 1.2.3.4:27500 or [::1]:27500",connect))}
+        if wanted.server {session_fail(s,app.allocator,fmt.tprintf("could not open the UDP port %d: is another server on it?",port))}
+        else {session_fail(s,app.allocator,fmt.tprintf("\"%s\" is neither an invitation nor an address: give a code like K7Q2-9XMA-PL3F-0B2C, 1.2.3.4:27500 or [::1]:27500",connect))}
     case .Protocol_Failed:
         if refusal:=base.text_get(s.refusal[:]);refusal!="" {
-            session_fail(s,app,fmt.tprintf("the libraries do not describe a network protocol: %s",refusal))
+            session_fail(s,app.allocator,fmt.tprintf("the libraries do not describe a network protocol: %s",refusal))
         } else {
-            session_fail(s,app,"the libraries do not describe a network protocol: a replicated component or a message does not fit in a datagram")
+            session_fail(s,app.allocator,"the libraries do not describe a network protocol: a replicated component or a message does not fit in a datagram")
         }
     case .Host_Failed,.Out_Of_Memory:
         if refused.field!="" {
             owner,field:=setting_of(refused.field)
             core.report(s.problems,core.NONE,"net.settings","the network did not open: %s%s is out of its range (%s); change it",owner,field,refused.range)
-            session_fail(s,app,fmt.tprintf("the network did not open: %s%s is out of its range (%s)",owner,field,refused.range))
-        } else {session_fail(s,app,fmt.tprintf("the network did not open: %v",error))}
+            session_fail(s,app.allocator,fmt.tprintf("the network did not open: %s%s is out of its range (%s)",owner,field,refused.range))
+        } else {session_fail(s,app.allocator,fmt.tprintf("the network did not open: %v",error))}
     }
     if s.launched && s.status_path!="" && s.opened && s.status!=.Disconnected {
         file,open_error:=os.open(s.status_path,{.Write,.Create,.Append},os.Permissions_Default_File)
@@ -267,18 +267,18 @@ session_start :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,settings:^Ne
 // Keeps a copy of why the session ended, for a person; without memory for
 // it, the problems say it.
 @(private)
-reason_keep :: proc(s:^Net_Session,app:^host.App,reason:string) {
-    delete(s.reason_text,app.allocator)
+reason_keep :: proc(s:^Net_Session,allocator:runtime.Allocator,reason:string) {
+    delete(s.reason_text,allocator)
     error:runtime.Allocator_Error
-    if s.reason_text,error=strings.clone(reason,app.allocator);error!=nil {
+    if s.reason_text,error=strings.clone(reason,allocator);error!=nil {
         core.report(s.problems,core.NONE,"net.reason","the session ended and there is no memory to keep why: %s",reason)
     }
 }
 
 @(private)
-session_fail :: proc(s:^Net_Session,app:^host.App,reason:string) {
+session_fail :: proc(s:^Net_Session,allocator:runtime.Allocator,reason:string) {
     log.errorf("net: %s",reason)
-    reason_keep(s,app,reason)
+    reason_keep(s,allocator,reason)
     s.status=.Disconnected
     s.ended=true
     session_destroy(s)
@@ -344,7 +344,7 @@ session_open :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,port:int) -> 
     }
     s.host_ready=true
     if s.arrived==nil {s.arrived=make([dynamic]Connection_Event,allocator)}
-    ready:=s.mode==.Server?server_init(s,allocator):client_init(s,w,app)
+    ready:=s.mode==.Server?server_init(s,allocator):client_init(s,w,app.allocator)
     if !ready {
         session_destroy(s)
         return .Out_Of_Memory,{}
@@ -526,7 +526,7 @@ session_destroy :: proc(s:^Net_Session) {
 }
 
 // Leaves the network: the entities stay as they are.
-close :: proc(s:^Net_Session,app:^host.App) {
+close :: proc(s:^Net_Session) {
     if !s.opened || s.status==.Offline && !s.host_ready {return}
     session_destroy(s)
     s.status=.Offline

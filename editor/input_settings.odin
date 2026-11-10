@@ -404,7 +404,7 @@ input_code_prompt :: proc(s:^Session,code:input.Input_Code) -> (prompt:ui.Prompt
     prompt={family=keyboard?.Keyboard:.Xbox,input=input_kind}
     if input_kind==.Key {prompt.text=name}
     if settings:=cast(^gui.UI_Settings)setting_value(s,gui.UI_Settings);settings!=nil && s.app!=nil {
-        prompt=gui.prompt_shown(s.app,settings,host.content_prompts(s.app,settings.prompts),prompt)
+        prompt=gui.prompt_shown(s.app.assets,s.app.renderer,settings,host.content_prompts(s.app,settings.prompts),prompt)
     }
     return
 }

@@ -7,6 +7,7 @@ import render "mirai:engine/render"
 import "mirai:host"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import "base:runtime"
 
 // Heightfield chunks at level 0 near the view raise the heights of the
 // textures of their layers, as Terrain3D displaces its mesh near the camera.
@@ -88,9 +89,9 @@ terrain_displacement_free :: proc(d:^Terrain_Displacement) {
 }
 
 @(private)
-displaced_release :: proc(app:^host.App,entry:^Displaced) {
-    if entry.copy!=0 {render.mesh_remove(app,entry.copy)}
-    if entry.mesh!={} {host.assets_mesh_release(app.assets,entry.mesh)}
+displaced_release :: proc(assets:^host.Assets,renderer:^render.Renderer,entry:^Displaced) {
+    if entry.copy!=0 {render.mesh_remove(renderer,entry.copy)}
+    if entry.mesh!={} {host.assets_mesh_release(assets,entry.mesh)}
     entry^={}
 }
 
@@ -109,15 +110,15 @@ terrain_displace :: proc(
     overrides:core.Read(render.Material_Override),tints:core.Read(render.Tint),hidden:core.Read(render.Hidden),
     highlights:core.Read(render.Highlight),outlines:core.Read(render.Outline),offsets:core.Read(render.Draw_Offset),
     layers:core.Read(render.Layers),locals:core.Read(core.Transform),cameras:core.Read(render.Camera),
-    app:^host.App,frame:core.Frame_Time,view:core.View,
+    assets:^host.Assets,renderer:^render.Renderer,extras:^host.Frame_Extras,allocator:runtime.Allocator,frame:core.Frame_Time,view:core.View,
 ) {
-    if app.renderer==nil || app.assets==nil {return}
-    d.assets=app.assets
+    if renderer==nil || assets==nil {return}
+    d.assets=assets
     d.frame+=1
     d.job_count=0
-    if !d.ready {chunk_mesh_init(&d.building,app.allocator);d.ready=true}
+    if !d.ready {chunk_mesh_init(&d.building,allocator);d.ready=true}
     distance:=settings.displacement_distance
-    d.pipeline=distance>0?render.stage_pipeline(app,{stage=.Geometry,shader="terrain_displace",name="terrain displace"}):0
+    d.pipeline=distance>0?render.stage_pipeline(renderer,{stage=.Geometry,shader="terrain_displace",name="terrain displace"}):0
     // The chunks within the distance, nearest first.
     if d.pipeline!=0 {
         for row in 0..<core.count(chunks) {
@@ -142,15 +143,15 @@ terrain_displace :: proc(
                 far:=0
                 for item,i in d.displaced {if item.distance>d.displaced[far].distance {far=i}}
                 if d.displaced[far].distance<=near {continue}
-                displaced_release(app,&d.displaced[far])
+                displaced_release(assets,renderer,&d.displaced[far])
                 at=far
             }
             item:=&d.displaced[at]
-            if item.entity!=e {displaced_release(app,item);item.entity,item.owner,item.coord=e,chunk.owner,chunk.coord}
+            if item.entity!=e {displaced_release(assets,renderer,item);item.entity,item.owner,item.coord=e,chunk.owner,chunk.coord}
             item.source,item.distance,item.seen=marker.source,near,d.frame
         }
     }
-    for &item in d.displaced {if item.entity!=core.NONE && item.seen!=d.frame {displaced_release(app,&item)}}
+    for &item in d.displaced {if item.entity!=core.NONE && item.seen!=d.frame {displaced_release(assets,renderer,&item)}}
     // Each side joins another displaced chunk of its terrain, or keeps the samples.
     for &item in d.displaced {
         if item.entity==core.NONE {continue}
@@ -167,13 +168,13 @@ terrain_displace :: proc(
         if item.mesh!={} && item.change==entry.versions[index] && item.detail==detail && item.fine==item.want {continue}
         if builds>=DISPLACED_BUILDS {continue}
         builds+=1
-        if item.copy!=0 {render.mesh_remove(app,item.copy)}
-        if item.mesh!={} {host.assets_mesh_release(app.assets,item.mesh)}
+        if item.copy!=0 {render.mesh_remove(renderer,item.copy)}
+        if item.mesh!={} {host.assets_mesh_release(assets,item.mesh)}
         // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
         item.params={}
         item.mesh,item.rest,item.copy,item.made,item.settle={},0,0,0,false
-        if !chunk_detail_build(&entry.source,item.coord,{},detail,item.want,&d.building) || !chunk_render_prepare(.Heightfield,&d.building,host.assets_limits(app.assets)) {continue}
-        mesh,ok:=chunk_publish(app.assets,.Heightfield,&d.building,false)
+        if !chunk_detail_build(&entry.source,item.coord,{},detail,item.want,&d.building) || !chunk_render_prepare(.Heightfield,&d.building,host.assets_limits(assets)) {continue}
+        mesh,ok:=chunk_publish(assets,.Heightfield,&d.building,false)
         if !ok {continue}
         item.mesh,item.change,item.detail,item.fine=mesh,entry.versions[index],detail,item.want
     }
@@ -190,7 +191,7 @@ terrain_displace :: proc(
             }
         }
     }
-    made:=render.vertices_made(app)
+    made:=render.vertices_made(renderer)
     for &item,at in d.displaced {
         if !item.shown {continue}
         e:=item.entity
@@ -204,22 +205,22 @@ terrain_displace :: proc(
         anchor,transform:=render.instance_place(world,frame,offsets,parents,worlds,locals,cameras,e)
         detailed:=static
         detailed.mesh=item.mesh
-        shown,usable:=render.mesh_instance(app.assets,detailed,transform,tint,override)
+        shown,usable:=render.mesh_instance(assets,detailed,transform,tint,override)
         if !usable {continue}
         if item.copy==0 || item.rest!=shown.mesh {
-            if item.copy!=0 {render.mesh_remove(app,item.copy)}
-            low,high,known:=render.mesh_bounds(app,shown.mesh)
+            if item.copy!=0 {render.mesh_remove(renderer,item.copy)}
+            low,high,known:=render.mesh_bounds(renderer,shown.mesh)
             if !known {continue}
-            copy,created:=render.deformable_create(app,shown.mesh)
+            copy,created:=render.deformable_create(renderer,shown.mesh)
             if !created {continue}
             // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
             item.params={}
             item.rest,item.copy,item.rest_min,item.rest_max,item.made=shown.mesh,copy,low,high,0
         }
-        params:=displace_params(app.assets,&entry.source,&item)
+        params:=displace_params(assets,&entry.source,&item)
         if params!=item.params || made!=item.made || item.settle {
             reach:=source_displacement(&entry.source)/max(abs(world.scale.y),1e-6)
-            if render.deformable_update(app,item.copy,item.rest_min-reach,item.rest_max+reach) {
+            if render.deformable_update(renderer,item.copy,item.rest_min-reach,item.rest_max+reach) {
                 item.settle=params!=item.params || made!=item.made
                 // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
                 item.params=params
@@ -234,9 +235,9 @@ terrain_displace :: proc(
         shown.copy_owner,shown.replace_source=base.name_hash("terrain displace"),true
         shown.highlight=render.instance_outline(highlights,outlines,e)
         if in_layers,exists:=core.get(layers,e);exists {shown.layers=in_layers.mask}
-        render.instance_add(app,shown)
+        render.instance_add(extras,shown)
     }
-    if d.job_count>0 {render.frame_pass(app,.Geometry,terrain_displace_record,d)}
+    if d.job_count>0 {render.frame_pass(renderer,.Geometry,terrain_displace_record,d)}
 }
 
 // -X, +X, -Z, +Z: side ~ 1 is the one across.

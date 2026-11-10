@@ -724,7 +724,7 @@ a_member_of_a_section_is_copied_from_its_scene :: proc(t:^testing.T) {
     if _,error:=load(w,&f.app,"root.scene");!testing.expect_value(t,error,Error.None) {return}
     before:=core.raw_count(core.raw(&f.world.lamps))
     at:=core.Transform{position={3,4,5},rotation=1,scale={1,1,1}}
-    report,error:=spawn_member(core.commands_of(w),&f.app,SECTION_ROOM,1,id_in(1,11),at)
+    report,error:=spawn_member(core.commands_of(w),f.app.assets,SECTION_ROOM,1,id_in(1,11),at)
     if !testing.expect_value(t,error,Error.None) {return}
     core.world_settle(w)
     testing.expect_value(t,report.entities,2)
@@ -735,7 +735,7 @@ a_member_of_a_section_is_copied_from_its_scene :: proc(t:^testing.T) {
     lamp,_:=core.get(core.read(&f.world.lamps),chest)
     testing.expect_value(t,lamp.range,2)
     testing.expect_value(t,core.raw_count(core.raw(&f.world.lamps)),before+2)
-    _,error=spawn_member(core.commands_of(w),&f.app,SECTION_ROOM,1,id_in(1,99),at)
+    _,error=spawn_member(core.commands_of(w),f.app.assets,SECTION_ROOM,1,id_in(1,99),at)
     testing.expect_value(t,error,Error.Not_Found)
 }
 

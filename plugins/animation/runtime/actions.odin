@@ -7,6 +7,7 @@ import "mirai:host"
 import "mirai:std/base"
 import lib "mirai:std/anim"
 import mm "mirai:std/math"
+import "base:runtime"
 
 ACTION_KIND :: asset.Fourcc(u32('A')|u32('C')<<8|u32('T')<<16|u32('N')<<24)
 ACTION_VERSION :: 2
@@ -126,31 +127,31 @@ Action_Content :: struct {id:base.Asset_Id,checked,revision:u64,stamp:[2]i64,pro
 @(storage,host,free="actions_assets_free")
 Actions_Assets :: struct {allocator:mem.Allocator,contents:[dynamic]Action_Content}
 actions_assets_free :: proc(cache:^Actions_Assets) {if cache.allocator.procedure!=nil {context.allocator=cache.allocator};for &content in cache.contents {action_profile_free(&content.profile)};delete(cache.contents);cache^={}}
-action_content :: proc(cache:^Actions_Assets,app:^host.App,id:base.Asset_Id,hint:^i32=nil) -> ^Action_Content {
-    if cache==nil || app==nil || app.assets==nil || id=={} {return nil}
-    context.allocator=app.allocator;cache.allocator=app.allocator
+action_content :: proc(cache:^Actions_Assets,assets:^host.Assets,allocator:runtime.Allocator,id:base.Asset_Id,hint:^i32=nil) -> ^Action_Content {
+    if cache==nil || assets==nil || id=={} {return nil}
+    context.allocator=allocator;cache.allocator=allocator
     row:=int(hint^)-1 if hint!=nil else -1
     if row<0 || row>=len(cache.contents) || cache.contents[row].id!=id {row=-1;for content,i in cache.contents {if content.id==id {row=i;break}}}
     if row<0 {row=len(cache.contents);if !program_array_reserve(&cache.contents,row+1) || append(&cache.contents,Action_Content{id=id})!=1 {return nil}}
     if hint!=nil {hint^=i32(row+1)}
     content:=&cache.contents[row]
-    if content.checked==assets_stamp(app) {return content if content.valid else nil}
-    record,found:=asset.registry_find(&app.assets.registry,id);stamp:=[2]i64{}
+    if content.checked==assets_stamp(assets) {return content if content.valid else nil}
+    record,found:=asset.registry_find(&assets.registry,id);stamp:=[2]i64{}
     if found {stamp={record.size,record.time}}
-    if content.checked!=0 && stamp==content.stamp {content.checked=assets_stamp(app);return content if content.valid else nil}
+    if content.checked!=0 && stamp==content.stamp {content.checked=assets_stamp(assets);return content if content.valid else nil}
     profile:Action_Profile;error:=asset.Error.Not_Found
     if found {
         file:asset.Asset
-        if error=host.assets_file(app.assets,id,ACTION_KIND,&file);error==.None {
-            view,read:=action_profile_view(&file,&app.assets.types);error=read
-            if error==.None {if copied,ok:=action_profile_clone(view,app.allocator);ok {profile=copied} else {error=.Out_Of_Memory}}
+        if error=host.assets_file(assets,id,ACTION_KIND,&file);error==.None {
+            view,read:=action_profile_view(&file,&assets.types);error=read
+            if error==.None {if copied,ok:=action_profile_clone(view,allocator);ok {profile=copied} else {error=.Out_Of_Memory}}
             asset.asset_close(&file)
         }
     }
     content.error=error
     if error==.Out_Of_Memory {content.checked=0;return nil}
     action_profile_free(&content.profile);content.profile=profile;content.valid=error==.None
-    content.stamp,content.checked=stamp,assets_stamp(app);content.revision+=1
+    content.stamp,content.checked=stamp,assets_stamp(assets);content.revision+=1
     return content if content.valid else nil
 }
 
@@ -265,9 +266,9 @@ actions_discover :: proc(runtime:^Action_Runtime,animations:core.Read(Animation)
     return true
 }
 
-actions_prepare :: proc(runtime:^Action_Runtime,requests:^Action_Requests,assets:^Actions_Assets,animations:core.Read(Animation),playback:^Playback,app:^host.App,problems:^core.Problems) -> bool {
-    if runtime==nil || requests==nil || assets==nil || playback==nil || app==nil || animations.table==nil {return false}
-    context.allocator=app.allocator;runtime.allocator=app.allocator;runtime.frame+=1;clear(&runtime.events.items)
+actions_prepare :: proc(runtime:^Action_Runtime,requests:^Action_Requests,assets:^Actions_Assets,animations:core.Read(Animation),playback:^Playback,loaded:^host.Assets,allocator:mem.Allocator,problems:^core.Problems) -> bool {
+    if runtime==nil || requests==nil || assets==nil || playback==nil || animations.table==nil {return false}
+    context.allocator=allocator;runtime.allocator=allocator;runtime.frame+=1;clear(&runtime.events.items)
     if !actions_discover(runtime,animations,len(requests.queue.items)>0,problems) {return false}
     for &state in runtime.states {
         state.retry=false
@@ -275,9 +276,9 @@ actions_prepare :: proc(runtime:^Action_Runtime,requests:^Action_Requests,assets
         id:=animations.table.values[row].actions
         if id=={} {for &slot in state.layers {if slot.active {state.seen=runtime.frame;if !slot.finishing {action_end(runtime,&state,&slot,true,problems)}}};continue}
         state.seen=runtime.frame
-        content:=action_content(assets,app,id,&state.content)
+        content:=action_content(assets,loaded,allocator,id,&state.content)
         if content==nil {
-            asset_problem(problems,state.entity,app,"animation.actions_asset","Animation.actions",id,content_error(assets.contents[:],id))
+            asset_problem(problems,state.entity,loaded,"animation.actions_asset","Animation.actions",id,content_error(assets.contents[:],id))
             row=int(state.content)-1
             state.retry=row<0 || row>=len(assets.contents) || assets.contents[row].id!=id || assets.contents[row].checked==0
             if !state.retry {for &slot in state.layers {if slot.active && !slot.finishing {action_end(runtime,&state,&slot,true,problems)}};state.plan=-1}
@@ -286,10 +287,10 @@ actions_prepare :: proc(runtime:^Action_Runtime,requests:^Action_Requests,assets
         plan:=int(state.plan)
         if plan<0 || plan>=len(runtime.plans) || runtime.plans[plan].asset!=content.id {plan=-1;for value,j in runtime.plans {if value.asset==content.id {plan=j;break}}}
         if plan<0 {
-            copy,ok:=action_profile_clone(content.profile,app.allocator);if !ok {memory_problem(problems,state.entity,"its actions");state.retry=true;continue}
-            plan=len(runtime.plans);if append(&runtime.plans,Action_Plan{asset=content.id,revision=content.revision,profile=copy})!=1 {action_profile_free(&copy,app.allocator);memory_problem(problems,state.entity,"its actions");state.retry=true;continue}
+            copy,ok:=action_profile_clone(content.profile,allocator);if !ok {memory_problem(problems,state.entity,"its actions");state.retry=true;continue}
+            plan=len(runtime.plans);if append(&runtime.plans,Action_Plan{asset=content.id,revision=content.revision,profile=copy})!=1 {action_profile_free(&copy,allocator);memory_problem(problems,state.entity,"its actions");state.retry=true;continue}
         } else if runtime.plans[plan].revision!=content.revision {
-            copy,ok:=action_profile_clone(content.profile,app.allocator);if !ok {memory_problem(problems,state.entity,"its actions");state.retry=true;continue}
+            copy,ok:=action_profile_clone(content.profile,allocator);if !ok {memory_problem(problems,state.entity,"its actions");state.retry=true;continue}
             for &previous in runtime.states {if int(previous.plan)==plan {for &slot in previous.layers {if slot.active && !slot.finishing {action_end(runtime,&previous,&slot,true,problems)}}}}
             action_profile_free(&runtime.plans[plan].profile);runtime.plans[plan].profile=copy;runtime.plans[plan].revision=content.revision
         }

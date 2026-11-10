@@ -98,12 +98,12 @@ section_path :: proc(w:core.World_Ref,e:core.Entity,allocator:=context.temp_allo
 }
 
 // The names of a path of scenes, as a problem says them.
-path_text :: proc(app:^host.App,path:[]base.Asset_Id,allocator:=context.temp_allocator) -> string {
+path_text :: proc(assets:^host.Assets,path:[]base.Asset_Id,allocator:=context.temp_allocator) -> string {
     b:=strings.builder_make(allocator)
     for id,i in path {
         if i>0 {strings.write_string(&b," > ")}
         name:[base.ASSET_ID_TEXT]u8
-        strings.write_string(&b,app.assets!=nil?host.assets_name(app.assets,id,&name):"?")
+        strings.write_string(&b,assets!=nil?host.assets_name(assets,id,&name):"?")
     }
     return strings.to_string(b)
 }

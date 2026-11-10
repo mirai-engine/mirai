@@ -57,7 +57,7 @@ Refusal :: struct {
 // path is of the registry (a level under a host.assets_mount) or absolute.
 // What failed is in report.refused; untrusted_text says it with its fix.
 load_untrusted :: proc(w:core.World_Ref,app:^host.App,path:string,rules:Untrusted) -> (report:Report,error:Error) {
-    if app==nil || app.assets==nil {return {},.No_Assets}
+    if app.assets==nil {return {},.No_Assets}
     if app.info==nil || w.info!=app.info || w.place!=.World {return {},.Invalid}
     limit:=u64(rules.max_bytes>0?rules.max_bytes:UNTRUSTED_BYTES)
     registry:=&app.assets.registry
@@ -82,7 +82,7 @@ load_untrusted :: proc(w:core.World_Ref,app:^host.App,path:string,rules:Untruste
     defer asset.asset_close(&document)
     if !asset.blob_verify_hash(&document.blob) {return {},.Corrupt}
     if document.blob.header.kind!=asset.KIND_SCENE {return {},.Invalid}
-    if error=untrusted_check(w,app,&document,rules,&report.refused);error!=.None {return}
+    if error=untrusted_check(w,app.assets,&document,rules,&report.refused);error!=.None {return}
     return replace(w,app,&document,&app.assets.types)
 }
 
@@ -118,9 +118,9 @@ untrusted_text :: proc(report:Report,error:Error) -> string {
 
 // What a document holds against the rules, before anything is instantiated.
 @(private="file")
-untrusted_check :: proc(w:core.World_Ref,app:^host.App,a:^asset.Asset,rules:Untrusted,refused:^Refusal) -> Error {
-    registry:=&app.assets.registry
-    view,view_error:=asset.scene_view(a,&app.assets.types)
+untrusted_check :: proc(w:core.World_Ref,assets:^host.Assets,a:^asset.Asset,rules:Untrusted,refused:^Refusal) -> Error {
+    registry:=&assets.registry
+    view,view_error:=asset.scene_view(a,&assets.types)
     if view_error!=.None {return view_error==.Out_Of_Memory?.Out_Of_Memory:.Corrupt}
     if checked:=asset.scene_view_check(view,context.temp_allocator);checked!=.None {return .Out_Of_Memory if checked==.Out_Of_Memory else .Corrupt}
     if rules.max_entities>0 && len(view.ids)>rules.max_entities {

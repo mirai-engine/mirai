@@ -955,7 +955,7 @@ play_stop :: proc(s:^Session,force:=false) {
     // A Play that kept its past stays, with its World, until the next Play;
     // its voices stop as those of a World that is freed.
     if (s.mode==.Play || s.mode==.Paused) && r.history!=nil && r.history.count>0 {
-        eaudio.audio_release(host.app_world_storage(s.app,r.world,eaudio.Voices),s.app)
+        eaudio.audio_release(host.app_world_storage(s.app,r.world,eaudio.Voices),s.app.mixer)
         replay_free(s)
         run_tell_ended(s,r)
         s.replay=r^

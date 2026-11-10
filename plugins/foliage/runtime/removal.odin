@@ -2,8 +2,8 @@ package foliage
 
 import "core:slice"
 import "mirai:core"
-import "mirai:host"
 import "mirai:std/base"
+import "base:runtime"
 
 // Instances taken out in play (harvested, cut, burnt) are what the world
 // says of its foliage beyond its source: an entity with Foliage_Removed for
@@ -199,10 +199,10 @@ removals_index :: proc(r:^Foliage_Removals,removed:core.Read(Foliage_Removed),fo
 @(step="fixed frame",loops="game editor",stage="simulate",after="foliage_load",before="physics_prepare")
 foliage_removals :: proc(
     r:^Foliage_Removals,requests:^Foliage_Requests,removed:^core.Table(Foliage_Removed),foliages:core.Read(Foliage),ids:core.Read(core.Id),
-    data:core.Ref(Foliage_Data),authority:core.Ref(core.Network),commands:core.Commands,app:^host.App,problems:^core.Problems,
+    data:core.Ref(Foliage_Data),authority:core.Ref(core.Network),commands:core.Commands,allocator:runtime.Allocator,problems:^core.Problems,
 ) {
     asked:=core.take(&requests.removes)
-    context.allocator=app.allocator
+    context.allocator=allocator
     if !removals_index(r,core.read(removed),foliages,commands.entities) {
         memory_problem(problems,core.NONE,"the instances taken out of the foliage: some show again")
     }

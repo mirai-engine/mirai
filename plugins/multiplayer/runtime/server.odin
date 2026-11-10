@@ -207,7 +207,7 @@ server_requests :: proc(s:^Net_Session) {
 
 // The datagrams received since the last frame, as changes to the world and as events.
 @(private)
-server_commands :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,commands:[]wire.Command,events:^Net_Events,inputs:^Remote_Inputs) {
+server_commands :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,commands:[]wire.Command,events:^Net_Events,inputs:^Remote_Inputs) {
     h:=&s.host
     es:=core.world_entities(w)
     for &command in commands {
@@ -265,14 +265,14 @@ server_commands :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,commands:[
         }
     }
     server_world_update(s)
-    server_gone(s,w,app)
+    server_gone(s,w,assets)
 }
 
 // Server: what of the sections the connections loaded is gone, as each one
 // hears it, and what went from a section, as every one does; what the host
 // has no room for is sent at the next step.
 @(private)
-server_gone :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App) {
+server_gone :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets) {
     server:=&s.server
     h:=&s.host
     kept:=0
@@ -292,7 +292,7 @@ server_gone :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App) {
         if peer.connection!=due.connection || !peer.ready {continue}
         ids:=make([dynamic]base.Entity_Id,context.temp_allocator)
         documents:scene.Documents
-        if app!=nil {documents=scene.assets_documents(app.assets)}
+        if assets!=nil {documents=scene.assets_documents(assets)}
         scene.section_gone(w,documents,core.entity_of(es,due.section),&ids)
         for due.sent<len(ids) {
             message:=Net_Gone{section=due.section,changes=server.changes}
@@ -411,7 +411,7 @@ view_checked :: proc(claimed,expected,tolerance:f64) -> (behind:f64,corrected:bo
 // After the tick: objects for the entities that gained Replicate, none for
 // those that lost it, and the state of what was written since the last publish.
 @(private)
-server_publish :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,outbox:^Net_Outbox,tick:u32) {
+server_publish :: proc(s:^Net_Session,w:core.World_Ref,outbox:^Net_Outbox,tick:u32) {
     server:=&s.server
     h:=&s.host
     es:=core.world_entities(w)
@@ -477,7 +477,7 @@ server_publish :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,outbox:^Net
             if ancestor!=core.NONE {
                 if parent=wire.object_of_user(h,u64(ancestor));parent==0 {continue}
             }
-            object=server_create(s,w,app,e,config,ancestor,parent)
+            object=server_create(s,w,e,config,ancestor,parent)
             if object==0 {continue}
             core.add(links,e,Net_Link{object=object})
             continue
@@ -721,7 +721,7 @@ kept_off :: proc(w:core.World_Ref,e:core.Entity) -> bool {
 // it replicates; parent is the object of its ancestor. Zero when it has no
 // Transform, it has more than an object carries or the host is full.
 @(private)
-server_create :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,e:core.Entity,config:Replicate,ancestor:core.Entity,parent:Object) -> Object {
+server_create :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity,config:Replicate,ancestor:core.Entity,parent:Object) -> Object {
     h:=&s.host
     local,has_pose:=core.get(core.read(core.world_table_of(w,core.Transform)),e)
     if !has_pose {

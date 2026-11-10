@@ -13,9 +13,9 @@ content_error :: proc(contents:[]$T,id:base.Asset_Id) -> asset.Error {
 }
 
 // Reports that the asset id, which field of entity e names, cannot be used.
-asset_problem :: proc(problems:^core.Problems,e:core.Entity,app:^host.App,code,field:string,id:base.Asset_Id,error:asset.Error) {
+asset_problem :: proc(problems:^core.Problems,e:core.Entity,assets:^host.Assets,code,field:string,id:base.Asset_Id,error:asset.Error) {
     name:[base.ASSET_ID_TEXT]u8
-    path:=host.assets_name(app.assets if app!=nil else nil,id,&name)
+    path:=host.assets_name(assets,id,&name)
     switch error {
     case .None:
     case .Not_Found:
