@@ -9,12 +9,6 @@ import "mirai:editor/history"
 import "mirai:std/base"
 
 @(private="file")
-code_test_root :: proc(name:string) -> string {
-    folder,_:=os.get_working_directory(context.temp_allocator)
-    return fmt.tprintf("%s/.mirai/tmp/ai-code-%s-%d",folder,name,os.get_pid())
-}
-
-@(private="file")
 code_test_write :: proc(t:^testing.T,root,path,text:string) {
     full:=fmt.tprintf("%s/%s",root,path)
     _=os.make_directory_all(filepath.dir(full))
@@ -31,8 +25,7 @@ code_test_file :: proc(task:^Ai_Task,path:string) -> ^history.Change_File {
 
 @(test)
 a_turn_keeps_what_the_files_it_changed_held_before_it :: proc(t:^testing.T) {
-    root:=code_test_root("turn")
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"ai-code-turn");if root=="" {return}
     code_test_write(t,root,"game/player.odin","package game // before\n")
     code_test_write(t,root,"game/gone.odin","package game // gone\n")
     code_test_write(t,root,"assets/scene.scene","not code")
@@ -74,8 +67,7 @@ a_turn_keeps_what_the_files_it_changed_held_before_it :: proc(t:^testing.T) {
 
 @(test)
 a_turn_that_changes_a_file_too_large_to_keep_cannot_be_reverted :: proc(t:^testing.T) {
-    root:=code_test_root("large")
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"ai-code-large");if root=="" {return}
     code_test_write(t,root,"game/small.odin","package game\n")
     m:=new(Ai);defer free(m)
     defer ai_code_free(m)

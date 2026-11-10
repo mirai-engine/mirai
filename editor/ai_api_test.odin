@@ -1,25 +1,32 @@
 package editor
 
 import "core:encoding/json"
-import "core:fmt"
-import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor/ai_store"
 import "mirai:editor/api"
-import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
+
+@(private="file")
+Ai_Api_Test_Sky :: struct {level:f32}
+
+@(private="file")
+Ai_Api_Test_World :: struct {
+    using world:core.Test_World,
+    sky:Ai_Api_Test_Sky `mirai:"name=Sky"`,
+}
 
 @(test)
 ai_methods_write_the_results_they_declare :: proc(t:^testing.T) {
     temporary:=context.temp_allocator
     defer {context.temp_allocator=temporary}
-    storages:=[]core.Storage_Info{{name="Sky"}}
-    info:=core.World_Info{storages=storages}
+    world:Ai_Api_Test_World
+    if !core.test_world_init(t,&world) {return}
+    defer core.test_world_destroy(&world)
     m:=new(Ai);defer free(m)
-    s:=Session{ai=m,info=&info}
+    s:=Session{ai=m,info=core.test_world_info(&world)}
     m.task_count,m.workers[0].task=2,7
     task:=&m.tasks[0];task.id=7;task.state=.Running
     m.tasks[1].id,m.tasks[1].state=8,.Queued
@@ -39,9 +46,7 @@ ai_methods_write_the_results_they_declare :: proc(t:^testing.T) {
     command:=&m.connections[1]
     base.text_set(command.id[:],"local");command.agent=.Command
     base.text_set(command.command[:],"agent");base.text_set(command.arguments[0][:],"--acp");command.argument_count=1
-    root:=project.path_absolute(fmt.tprintf(".mirai/test-ai-api-%d",os.get_pid()),context.temp_allocator)
-    if !testing.expect(t,!os.exists(root)) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"ai-api");if root=="" {return}
     testing.expect_value(t,ai_store.open(&m.store,root),"");defer ai_store.close(&m.store)
     saved:=ai_store.Conversation{id=1,updated_at=200}
     ai_store.conversation_set_text(saved.title[:],&saved.title_len,"Paint the cube")
