@@ -16,11 +16,12 @@ Packages, all *engine-time*:
 
 ## API
 
-- `sources.import_source` imports a file into a folder: a model writes its assets and, if it has
-  nodes, its prefab; an image, its `.tex`; a sound, a font, a strings CSV or a prompt pack, its
-  asset. The [sidecar](#identity-and-reimport) of the source keeps its settings and the id of each
-  asset: importing it again gives the same assets. `sources.sync` imports every source of a root
-  whose outputs are missing or stale ([sync](#sync)).
+- `sources.import_source` imports a file of the assets folder of a project or a plugin: a model
+  writes its assets and, if it has nodes, its prefab; an image, its `.tex`; a sound, a font, a
+  strings CSV or a prompt pack, its asset. The [sidecar](#identity-and-reimport) of the source
+  keeps its settings, the folder of its assets and the id of each asset: importing it again gives
+  the same assets. `sources.sync` imports every source of a root whose outputs are missing or
+  stale ([sync](#sync)).
 - `sources.source_kind` says what a file is from its first bytes ([sniffing](#formats)), except
   what the signature does not settle: TGA by extension, strings by `.csv` and prompts by
   `.prompts.json`. It carries the formats it searches with (`formats`, `FORMATS` by default), like
@@ -32,12 +33,13 @@ Packages, all *engine-time*:
   `prefab.model_import` does both with the prefab (`cook/prefab.model_prefab`).
 - `Outputs` (`output_root`, `output_part`): the assets of an import that is not a model (a scene,
   the source of a plugin) are those the sidecar of their source lists, like those of a model: the
-  root by its kind and every other by kind and name, then index; `outputs_end` writes the sidecar.
+  root by its kind and every other by kind and name; `outputs_end` writes the sidecar.
 - For engine-time tools: `mesh_levels` ([levels](#levels-of-detail)), `mesh_collision`
   ([colliders](#collision)) and the PBR conversions of `pbr.odin`.
 - `Error` is `{code,message}`; `message` lives in the caller's `temp_allocator`. `Import_Options`
-  carries the settings and how they apply: `ignore_stored`, `root` (the project or the plugin the
-  import belongs to), `documents`, `rebuild`, the caches and `worker`
+  carries the settings and how they apply: `ignore_stored`, `root` (the project or the plugin
+  whose assets folder has the source; `import_source` finds it from the path), `registry` (the
+  scanned assets of the root, else the import scans them), `rebuild`, the caches and `worker`
   ([in parallel](#in-parallel)).
 
 ## Formats
@@ -51,7 +53,8 @@ Packages, all *engine-time*:
 - `version` is the version of what `read` returns for the same bytes: it goes up when that changes,
   and assets of another version are rebuilt when importing again.
 - `space` is the `Source_Space` of its files, unless `read` declares another.
-- `folder` says the folder of its own a file's import goes to; without it, the file name.
+- `folder` says the folder beside a file its first import puts its assets in; without it, the stem
+  of the file.
 - `sniff` looks at the first `SNIFF_BYTES`: `Content` if they are of the format, `No` if not,
   `Extension` if they say nothing (OBJ, or a JSON whose `asset` object comes later).
 
@@ -138,24 +141,23 @@ does not is turned about +Y after the read (`model_front`), in place: the source
 
 ### Plugin formats
 
-Besides `sources.FORMATS`, the editor imports what the plugins of the library in use provide with
-two providers of their editor part
-([extension](../../mirai-editor/references/extensions.md#importers-of-a-plugin)):
+Besides `sources.FORMATS`, the plugins of a project provide two kinds of importer in their editor
+part ([extension](../../mirai-editor/references/extensions.md#importers-of-a-plugin)):
 
-- `Import_Format_Provider{format}` is one more `importer.Format`: it is imported like the engine's
-  (`sources.import_source` with the editor's list of formats) and goes to `<folder>/`, where
-  `Format.folder` says the folder. Its extensions are in the Models filter of the dialog. Its
-  `prepare` gives, on the editor thread, the format's options for an import (`Format.data`), and
-  `release` frees them when it ends.
+- `Import_Format_Provider{format}` is one more `importer.Format`: it is imported like the engine's,
+  with the same storage (the cache and the documents, [identity](#identity-and-reimport)).
+  `Format.folder` says the folder of its assets. Its extensions are in the Models filter of the
+  dialog. Its `prepare` gives the format's options for an import (`Format.data`) from the assets
+  of the project and the library of its plugins, and `release` frees them when it ends.
+- The editor imports with the providers of its library; the import program of the engine
+  (`mirai import`, the [sync](#sync) of every build) loads the editor library of the project and
+  takes the same providers from it (`editor.plugin_import_formats`, `sources.Plugin_Formats`),
+  only when a source is read by no format of the engine. A clone without that library built fails
+  those sources and says to build the editor.
 - `Import_Source_Provider{source}` is a source that the plugin imports whole, without a folder: it
   is not a model, and it writes what its importer says (a scene, its assets). It appears with its
-  name as a filter of the dialog and claims a file with `claims(path, head)`.
-- `mirai import`, `sources.sync` and `tools/demo_content` do not know them: a format or a source of
-  a plugin is imported in the editor, with the plugin in the project. That is why everything such
-  an import writes is a [document](#identity-and-reimport) of the assets folder, versioned: a
-  machine without the plugin, or without the tool or the data its importer reads, has the assets
-  all the same, and nothing tries to build them again. The Unreal content importer is the
-  `unreal` plugin of the catalog ([git plugins and
+  name as a filter of the dialog and claims a file with `claims(path, head)`. The Unreal content
+  importer is the `unreal` plugin of the catalog ([git plugins and
   catalog](../../mirai-plugins/references/plugins.md#git-plugins-and-catalog)).
 
 ## Import cache
@@ -171,72 +173,65 @@ index, size and hash of what was read (the source, or the image of a texture), v
   (`mesh_settings_hash`); for a texture, its `Build_Options` with `BUILD_VERSION`; for a sound,
   whether it is `Stream`. Materials, skeletons and clips store 0. Changing a texture setting keeps
   the meshes, and one of the meshes, the textures.
-- `import_write` keeps a mesh or a texture whose file already has the same id and kind, the current
-  `kind_version`, the right hash and the same `Import_Info`: it is not simplified or compressed
-  again (`Written.kept`), although the source is read whole; if only the `owner` changes, it
-  rewrites the header. Materials, skeletons, clips and prefabs, which are cheap, are always
-  written, with what a person changed in them ([what is written](#what-is-written)), also with
-  `rebuild`.
-- An asset of another writer or format version, other settings or another `kind_version`
-  ([version rule](../../mirai-assets/references/formats.md#versions)) is rebuilt;
-  `rebuild` (`mirai import --rebuild`) rebuilds everything.
+- What is current is decided once, by the name of a file of the cache: `import_write` keeps a mesh
+  or a texture whose file under the key of what the import builds from now exists
+  (`Written.kept`) and builds nothing ahead when every output of the cache is kept; if only the
+  `owner` changes, it rewrites the header. Materials, skeletons, clips and prefabs, which are
+  cheap, are always written, with what a person changed in them ([what is
+  written](#what-is-written)), also with `rebuild`.
+- A change of writer or format version, of the settings or of `kind_version`
+  ([version rule](../../mirai-assets/references/formats.md#versions)) changes the key and
+  rebuilds; `rebuild` (`mirai import --rebuild`) rebuilds everything.
 
 ## Identity and reimport
 
-`<source>.import`, the sidecar, is what is versioned of an import with its source
-(`cook/import/sidecar.odin`): a text with the settings, the files the import read besides the
-source (`inputs`) and one output per asset the source gives, by kind, name and index, with its id.
-Nothing else decides an id: the first import gives each part
-a random one and the sidecar keeps it; importing again, on any machine and in any order of sources,
-gives each part the asset it had. A sidecar that does not parse is an error that names it, never
-the defaults nor new ids.
+A source lives in the assets folder of a project or a plugin, beside what it makes, in the folder
+of its theme (never a folder per asset type: the browser filters by type). `<source>.import`, the
+sidecar, is what is versioned of an import with its source (`asset/sidecar.odin`, read by the
+registry and by the importer alike): a text with the settings, the `folder` beside the source its
+assets go to (a model's: its stem, or what `Format.folder` says; an image's, a sound's: none, they
+go beside it), the files the import read besides the source (`inputs`) and one output per asset
+the source gives, by kind, name and index, with its id. Nothing else decides an id: the first
+import gives each part a random one and the sidecar keeps it; importing again, on any machine and
+in any order of sources, gives each part the asset it had. A sidecar that does not parse is an
+error that names it, never the defaults nor new ids. A source in no assets folder is refused,
+saying where it goes; `import_source` finds its root (the project or plugin) from its path.
 
-What an import of a source in the `source/` folder of a root writes is of two sorts (`kind_cached`):
+What an import writes is of two sorts (`asset.import_cached`), whatever the format that reads the
+source, the engine's or a plugin's:
 
 - **The cache**: meshes, textures, sounds and fonts. Nothing edits them after the import, so the
   source and the sidecar give them back whole. Each is a file of the imported folder of the root
   (`project.imported_path`: `.mirai/imported/`), named by its id and by the key of what it was
   built from (`import_key`), never versioned. Nothing stores where it is listed: the
-  [registry](../../mirai-assets/references/formats.md#registry) derives its path from where the
-  sidecar that lists it is now. [Sync](#sync) builds it again where it is missing.
+  [registry](../../mirai-assets/references/formats.md#registry) lists it at
+  `<folder of the sidecar>/<folder>/<name><extension>`. [Sync](#sync) builds it again where it is
+  missing.
 - **Documents**: materials, prefabs, skeletons, clips, texts and prompts. The editor edits them,
-  so they are files of the assets folder, versioned. An import finds each by its id, wherever a
-  person moved it under the assets, writes again what the source gives and keeps what was changed
-  ([what is written](#what-is-written)); a new one goes to the folder the import is given, or
-  without one, to the folder of the assets the source has among the sources (a model in a folder
-  named after its file).
-
-Any other import keeps every output as a document of the folder, and its sidecar says so
-(`documents`): a source outside `source/` of the root, whose sidecar is `source/<file name>.import`
-of the root when the source is outside the root; a format of a plugin
-([plugin formats](#plugin-formats), `Import_Options.documents`), which only an editor with that
-plugin imports; and an import without `root`, whose sidecar is `<file name>.import` in the folder
-it writes to. Such an import builds its textures Final also in the editor.
+  so they are files of the assets folder, versioned. An import finds each by its id in the
+  registry of the root, wherever a person moved it, writes again what the source gives and keeps
+  what was changed ([what is written](#what-is-written)); a new one goes to the folder of the
+  import.
 
 - **The root** of an import is the prefab of a model, the texture of an image or the sound of a
   sound, without `owner`: the output of its kind the sidecar lists. A model with nodes that has
   none receives a new prefab.
-- **A part** takes the output of its kind and name (among equal names, the one of its index), then
-  the one of its index, for what was renamed in the source. A part the sidecar does not list is
-  new. An output the source no longer gives leaves the sidecar with a warning: its file goes with
-  it when it is of the cache, and stays as a plain asset when it is a document.
+- **A part** is the output of its kind and name (among equal names, the one of its index); one the
+  sidecar does not list is new. A part renamed in the source is a new asset: what named the old
+  one does not silently get another. An output the source no longer gives leaves the sidecar with
+  a warning: its file goes with it when it is of the cache, and stays as a plain asset when it is
+  a document.
 - **A source moved or renamed** keeps its import as long as its sidecar goes with it, and takes
   what it has in the cache with it without an import: the registry lists those assets where the
-  sidecar is at its next scan, which the editor runs when it moves an asset or a folder (their
-  sources go with them) and when its watch of `source/` sees a change. A source that is deleted
-  takes them out of the listing at once. A copy of the source without its sidecar is another
-  import, with ids of its own.
+  sidecar is at its next scan, which a refresh of a sidecar or of its source triggers (the editor
+  moves a source with its sidecar, and a folder with its sources). A source that is deleted takes
+  them out of the listing at once. A copy of the source without its sidecar is another import,
+  with ids of its own.
+- **An import never touches another.** Two models that embed the same image get a texture asset
+  each; the [texture cache](#texture-cache) keeps one encoded copy. No import writes a file or a
+  sidecar of another source. Decided by the owner.
 - **The textures of a model** name the model as source and the image as name, with the size and
   hash of the image.
-- **What the project already has is not written twice.** A new texture whose image has the bytes
-  and settings of a texture imported in the project names that texture (in an import of the
-  editor, also one another import wrote Fast with those settings); a new material whose
-  textures are all like that names the project material that has exactly those textures and whose
-  `imported` layer is what this source gives it; if the source gives it other values, one of its
-  own is written. The sidecar lists what it names as `shared`, so importing again names the same
-  asset whether or not the import that writes it ran yet. What starts using another import stops
-  being part of its own ([parts](#parts)), together with the materials of that owner that name it;
-  the report warns of it.
 
 ### Parts
 
@@ -248,13 +243,11 @@ what surely belongs to that model is a part; what is doubtful stays independent 
 - A material is a part (`Parts.Auto`) only if all of this holds, in this order:
   1. it has textures;
   2. a single mesh of the model uses it;
-  3. none of its textures belongs to another import (the own import of the same image file does not
-     count);
-  4. all the UVs of its triangles, where its map puts them (like the renderer), fall in 0..1 with
+  3. all the UVs of its triangles, where its map puts them (like the renderer), fall in 0..1 with
      the slack `PARTS_UV_SLACK`: what an exporter that crops its atlas leaves;
-  5. no UV island reaches from one edge to the opposite;
-  6. rasterized on a grid of `PARTS_GRID` per side, they leave at least `PARTS_MIN_UNUSED` unused;
-  7. its base image (or its normal, or the first it has) does not tile at its edges: on no axis does
+  4. no UV island reaches from one edge to the opposite;
+  5. rasterized on a grid of `PARTS_GRID` per side, they leave at least `PARTS_MIN_UNUSED` unused;
+  6. its base image (or its normal, or the first it has) does not tile at its edges: on no axis does
      the difference between opposite edges exceed `PARTS_SEAM_STEPS` times the mean step between
      neighboring interior pixels while the edge varies along itself by at least
      `PARTS_EDGE_CONTENT` of a step. A flat edge, the padding of an atlas, says nothing.
@@ -275,7 +268,7 @@ what surely belongs to that model is a part; what is doubtful stays independent 
 ## Sync
 
 `sources.sync(root, options)` brings the imported folder of a project or a plugin up to date with
-the sources of its source folder (`cook/import/sources/sync.odin`): it is what makes a checkout
+the sources of its assets folder (`cook/import/sources/sync.odin`): it is what makes a checkout
 that was just cloned, a worktree that was just made or a branch that changed a source run.
 
 - It imports each source whose sidecar lists outputs of the cache when one of them has no file
@@ -285,18 +278,19 @@ that was just cloned, a worktree that was just made or a branch that changed a s
   writes, with textures Final. One notion of current, no dates: a source that only moved is not
   imported, and one whose `.bin` or image changed is. A USD is composed by `usdcat`, which does
   not say which layers it read: after changing one alone, import the stage.
+- A source no format of the engine reads takes the formats the plugins of the project add
+  (`Sync_Options.plugins`); one no format reads is a failure that says so.
 - A file of the imported folder that no sidecar with its source next to it lists under its
   current key is removed. A source that does not import is a failure of the report that names it:
   the others are imported, and nothing is removed.
-- **Who runs it.** Every build of a project, at its start (`build.job_start`, `imports_sync`):
-  `mirai build` of the editor, the game or the server, `mirai play`, and the builds the editor
-  starts, with the engine's import program, which is built first when it is not current. `mirai
-  package engine` runs it for the plugins. A plugin with assets is a root of its own.
+- **Who runs it.** Every build of a project once its target stands (`build.job_imports`, with
+  `imports_sync`): `mirai build` of the editor, the game or the server, `mirai play`, and the
+  builds the editor starts, with the engine's import program, which reads the formats of plugins
+  from the editor library just built. `mirai package engine` runs it for the plugins. A plugin
+  with assets is a root of its own.
 - What costs comes from the [texture cache](#texture-cache) and the [mesh cache](#mesh-cache),
   which the worktrees of a repository share: a new worktree reads its sources and writes its
   imported folder without compressing or simplifying anything.
-- It does not import what has no cache: a sidecar that says `documents`, or one without its source
-  next to it.
 
 ## In parallel
 
@@ -307,9 +301,8 @@ levels, clusters and colliders of each mesh (`mesh_cook`) and the levels of each
 when it gets to it, with the same functions. Ids, files, parts and what is shared are decided on a
 single thread and in the usual order: with or without a job system the same bytes are written.
 
-- What a previous import already wrote is not built beforehand (`Known`, from the outputs it
-  found: a mesh by its `Import_Info`, a texture by the image and its settings), except with
-  `rebuild`. If the writer later does not keep it, it builds it itself.
+- An import whose outputs of the cache are all current builds nothing beforehand, except with
+  `rebuild`.
 - `Import_Options.worker` is the worker of the job system that calls (`jobs.Worker_Ref`: the owner,
   or the job that imports); without a system, everything runs on the calling thread. The BC blocks
   of a texture go in parallel rows of the same system, and without it, in one of their own if they
@@ -321,9 +314,8 @@ single thread and in the usual order: with or without a job system the same byte
   when it ends. Both sum with `importer.profile_totals`: each zone under the one that contained it,
   with its seconds on the importing thread, which add up to its wall time, and what no zone
   covers.
-- The writes of a map share `Import_Options.earlier_cache`: the front of each asset of the project,
-  which an import reads to find its documents by their ids, is read once per import, and again only
-  if its size or dates changed.
+- The imports of a sync share `Import_Options.registry`, which finds documents by their ids: one
+  scan of the root for all of them.
 
 ### Texture cache
 

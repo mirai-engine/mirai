@@ -17,7 +17,7 @@ survives :: proc(t:^testing.T,source:string,extension:string,options:importer.Im
     formats:=formats if formats!=nil else FORMATS[:]
     bytes,error:=os.read_entire_file(source,context.temp_allocator)
     if !testing.expectf(t,error==nil,"%s cannot be read",source) {return}
-    folder:=base.test_folder(t,fmt.tprintf("fuzz-%s",filepath.stem(source)))
+    _,folder:=test_project(t,fmt.tprintf("fuzz-%s",filepath.stem(source)))
     if folder=="" {return}
     path:=fmt.tprintf("%s/subject%s",folder,extension)
     imported,refused:=0,0
@@ -120,37 +120,37 @@ damaged_wav_and_ogg_files_are_built_or_refused :: proc(t:^testing.T) {
 
 @(test)
 damaged_images_and_settings_are_imported_or_refused :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"fuzz-image")
+    root,folder:=test_project(t,"fuzz-image")
     if folder=="" {return}
     png:=png_bytes(8,8,{200,120,60},true)
     path:=fmt.tprintf("%s/subject.png",folder)
     imported,refused:=0,0
-    attempt :: proc(path,folder:string,data:[]u8,imported,refused:^int) {
+    attempt :: proc(path,root:string,data:[]u8,imported,refused:^int) {
         if os.write_entire_file(path,data)!=nil {return}
-        report,error:=importer.import_texture(path,fmt.tprintf("%s/out",folder),{image=.Color,ignore_stored=true})
+        report,error:=importer.import_texture(path,{root=root,image=.Color,ignore_stored=true})
         if error.code==.None {
             importer.report_destroy(&report)
             imported^+=1
         } else {refused^+=1}
     }
-    attempt(path,folder,png,&imported,&refused)
+    attempt(path,root,png,&imported,&refused)
     testing.expect_value(t,imported,1)
-    for length in 0..<len(png) {attempt(path,folder,png[:length],&imported,&refused)}
+    for length in 0..<len(png) {attempt(path,root,png[:length],&imported,&refused)}
     changed:=make([]u8,len(png),context.temp_allocator)
     for position in 0..<len(png) {
         copy(changed,png)
         changed[position]~=0xff
-        attempt(path,folder,changed,&imported,&refused)
+        attempt(path,root,changed,&imported,&refused)
     }
     testing.expectf(t,refused>len(png)/2,"%d of %d damaged images are refused",refused,imported+refused)
 
     // The sidecar of a source: any text is the settings and the outputs it says or is refused, and never the defaults or other ids by accident.
     wanted:=importer.Import_Settings{max_texture_size=256,textures=.Uncompressed,rdo_lambda=30,image=.Color,alpha_coverage=0.25,lods=.None,collision=.Mesh,collision_hulls=3}
     listed:=make([dynamic]importer.Output,context.temp_allocator)
-    append(&listed,importer.Output{kind=asset.KIND_MESH,name="Crate \"big\"",index=2,id={3,4},part=true},importer.Output{kind=asset.KIND_MATERIAL,name="Wood",id={5,6}},importer.Output{kind=asset.KIND_TEXTURE,name="wood",id={7,8},shared=true})
-    text:=importer.sidecar_text({settings=wanted,outputs=listed},context.temp_allocator)
+    append(&listed,importer.Output{kind=asset.KIND_MESH,name="Crate \"big\"",index=2,id={3,4},part=true},importer.Output{kind=asset.KIND_MATERIAL,name="Wood",id={5,6}},importer.Output{kind=asset.KIND_TEXTURE,name="wood",id={7,8}})
+    text:=importer.sidecar_text({settings=wanted,folder="crate",outputs=listed},context.temp_allocator)
     parsed,valid:=importer.sidecar_parse(text,context.temp_allocator)
-    testing.expect(t,valid && parsed.settings==wanted && len(parsed.outputs)==3)
+    testing.expect(t,valid && parsed.settings==wanted && parsed.folder=="crate" && len(parsed.outputs)==3)
     if valid && len(parsed.outputs)==3 {
         for output,at in parsed.outputs {testing.expectf(t,output==listed[at],"output %d is read as written: %v",at,output)}
     }
@@ -180,7 +180,7 @@ damaged_images_and_settings_are_imported_or_refused :: proc(t:^testing.T) {
 // with bytes changed, are imported or refused.
 @(test)
 damaged_fonts_texts_and_prompts_are_imported_or_refused :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"fuzz-interface")
+    _,folder:=test_project(t,"fuzz-interface")
     if folder=="" {return}
     _=os.write_entire_file(fmt.tprintf("%s/a.png",folder),png_bytes(8,8,{200,120,60},true))
     Subject :: struct {file:string,data:[]u8}
@@ -194,7 +194,7 @@ damaged_fonts_texts_and_prompts_are_imported_or_refused :: proc(t:^testing.T) {
         imported,refused:=0,0
         attempt :: proc(path,folder:string,data:[]u8,imported,refused:^int) {
             if os.write_entire_file(path,data)!=nil {return}
-            report,error:=import_source(path,fmt.tprintf("%s/out",folder),{})
+            report,error:=import_source(path,{})
             if error.code==.None {
                 importer.report_destroy(&report)
                 imported^+=1

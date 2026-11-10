@@ -3,10 +3,12 @@ package gltf
 import "core:fmt"
 import "core:math/linalg"
 import "core:os"
+import "core:path/filepath"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import importer "mirai:cook/import"
+import "mirai:std/base"
 import mm "mirai:std/math"
 
 FIXTURES :: #directory+"/../../../assets/fixtures/"
@@ -19,6 +21,21 @@ write_text :: proc(folder,name,text:string) -> string {
     path:=fmt.tprintf("%s/%s",folder,name)
     _=os.write_entire_file(path,text)
     return path
+}
+
+// Writes a model as the import of a copy of its source in the assets of a
+// test project, as import_write takes it: "" for the folder when there is none.
+write_model :: proc(t:^testing.T,model:^importer.Imported_Model,name:string) -> (report:importer.Import_Report,error:importer.Error,folder:string) {
+    root:=base.test_folder(t,name)
+    if root=="" {return}
+    folder=fmt.tprintf("%s/assets",root)
+    os.make_directory_all(folder)
+    copied:=fmt.tprintf("%s/%s",folder,filepath.base(model.source))
+    data,_:=os.read_entire_file(model.source,context.temp_allocator)
+    _=os.write_entire_file(copied,data)
+    model.source=copied
+    report,error=importer.import_write(model,{root=root})
+    return
 }
 
 import_ok :: proc(t:^testing.T,path:string,options:importer.Import_Options={}) -> (model:importer.Imported_Model,ok:bool) {

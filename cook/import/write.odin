@@ -182,10 +182,18 @@ import_info :: proc(source:string,name:string,index:int,size:u64,hash:u64,settin
 
 // The file of the cache an asset would be written to, open for its report,
 // when it already is there: its name says it was built from what the import
-// builds from now. The caller closes it.
+// builds from now. Its owner, which the sidecar decides, is written again in
+// its header when it changed. The caller closes it.
 @(private="file")
-writer_kept :: proc(w:^Writer,path:string,file:^asset.Asset) -> bool {
-    return !w.options.rebuild && os.exists(path) && asset.asset_load(file,path,context.temp_allocator)==.None
+writer_kept :: proc(w:^Writer,path:string,owner:base.Asset_Id,file:^asset.Asset) -> bool {
+    if w.options.rebuild || !os.exists(path) || asset.asset_load(file,path,context.temp_allocator)!=.None {return false}
+    if file.blob.header.owner==owner {return true}
+    if asset.header_owner_set(file.blob.data,owner)==.None && serial.file_write_atomic(path,file.blob.data)==.None {
+        file.blob.header.owner=owner
+        return true
+    }
+    asset.asset_close(file)
+    return false
 }
 
 // Writes a material the source gives as desc. Over the file of the same
@@ -256,7 +264,7 @@ texture_options :: proc(w:^Writer,job:Texture_Job) -> textures.Build_Options {
 write_texture :: proc(w:^Writer,job:Texture_Job,id,owner:base.Asset_Id,path,source:string) -> bool {
     options:=texture_options(w,job)
     info:=import_info(source,job.name,job.index,job.size,job.hash,textures.settings_hash(options),job.version)
-    if file:asset.Asset;writer_kept(w,path,&file) {
+    if file:asset.Asset;writer_kept(w,path,owner,&file) {
         defer asset.asset_close(&file)
         if view,error:=asset.texture_view(&file,&w.types);error==.None {
             record(w,id,asset.KIND_TEXTURE,job.name,path,source,true,texture_detail(view.info.format,int(view.info.width),int(view.info.height),len(view.mips)),kept=true)
@@ -497,7 +505,7 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
         import_data:=import_info(source,mesh.name,i,model.source_size,model.source_hash,mesh_settings,model.version)
         file:asset.Asset
         kept_zone:=zone_begin(w.options,"mesh.kept")
-        if writer_kept(w,path,&file) {
+        if writer_kept(w,path,owner,&file) {
             view,view_error:=asset.mesh_view(&file,&w.types)
             if view_error==.None {
                 if chosen.collision!=.None && len(view.colliders)==0 {writer_warn(w,"mesh %s: no %v collider could be made of it",mesh.name,chosen.collision)}

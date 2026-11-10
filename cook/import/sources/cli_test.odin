@@ -70,7 +70,7 @@ mirai_import_writes_assets_that_mirai_asset_verifies :: proc(t:^testing.T) {
     }
     compiler,has_compiler:=os.lookup_env("MIRAI_ODIN",context.temp_allocator)
     if !has_compiler || compiler=="" {compiler="odin"}
-    folder:=base.test_folder(t,"cli")
+    root_folder,folder:=test_project(t,"cli")
     if folder=="" {return}
     exe:=fmt.tprintf("%s/bin/tests/mirai-import-cli%s",root,EXE)
     os.make_directory_all(fmt.tprintf("%s/bin/tests",root))
@@ -79,9 +79,9 @@ mirai_import_writes_assets_that_mirai_asset_verifies :: proc(t:^testing.T) {
         if !testing.expectf(t,error==nil && state.exit_code==0,"the tool does not build: %v\n%s%s",error,string(stdout),string(stderr)) {return}
     }
 
-    // A model with a texture: mesh, three materials, the image of the leaves and the prefab.
-    out:=fmt.tprintf("%s/plant",folder)
-    first:=import_run(DEMO+"gallery/plant.gltf","--out",out,"--max-texture","16")
+    // A model with a texture in the assets of a project: mesh, three materials, the image of the leaves and the prefab.
+    plant:=copy_in(root_folder,DEMO,"gallery/plant.gltf","gallery/leaves_color.png")
+    first:=import_run(plant,"--max-texture","16")
     testing.expectf(t,first.code==0 && first.err=="","import fails: %d\n%s%s",first.code,first.out,first.err)
     paths:=reported_paths(first.out)
     testing.expect_value(t,len(paths),6)
@@ -92,65 +92,67 @@ mirai_import_writes_assets_that_mirai_asset_verifies :: proc(t:^testing.T) {
     append(&verify,..paths)
     checked:=run(t,exe,..verify[:])
     testing.expectf(t,checked.code==0,"asset verify fails: %s%s",checked.out,checked.err)
-    listing:=run(t,exe,"asset","ls",out)
-    testing.expect(t,listing.code==0 && strings.count(listing.out,"\n")==6,listing.out)
+    listing:=run(t,exe,"asset","ls",fmt.tprintf("%s/gallery/plant",folder))
+    testing.expect(t,listing.code==0 && strings.count(listing.out,"\n")-strings.count(listing.out,"! missing")==4,listing.out)
 
     // Importing again keeps every id, and the mesh and the texture are not built again.
-    again:=import_run(DEMO+"gallery/plant.gltf","--out",out,"--max-texture","16")
+    again:=import_run(plant,"--max-texture","16")
     testing.expect(t,again.code==0 && strings.contains(again.out,"6 assets, 2 were already up to date") && slice.equal(reported_paths(again.out),paths),again.out)
-    rebuilt:=import_run(DEMO+"gallery/plant.gltf","--out",out,"--max-texture","16","--rebuild")
+    rebuilt:=import_run(plant,"--max-texture","16","--rebuild")
     testing.expect(t,rebuilt.code==0 && slice.equal(reported_assets(rebuilt.out),reported_assets(first.out)),"--rebuild builds everything again, to the same bytes")
 
     // An image on its own.
-    image_out:=fmt.tprintf("%s/image",folder)
-    texture:=import_run(DEMO+"surfaces/bricks/bricks_color.png","--out",image_out,"--srgb")
-    testing.expectf(t,texture.code==0 && strings.contains(texture.out,"texture") && strings.contains(texture.out,"bricks_color.tex"),"%d: %s%s",texture.code,texture.out,texture.err)
+    bricks:=copy_in(root_folder,DEMO,"surfaces/bricks/bricks_color.png")
+    texture:=import_run(bricks,"--srgb")
+    testing.expectf(t,texture.code==0 && strings.contains(texture.out,"texture") && strings.contains(texture.out,".tex"),"%d: %s%s",texture.code,texture.out,texture.err)
     verify_texture:=make([dynamic]string,context.temp_allocator)
     append(&verify_texture,"asset","verify")
     append(&verify_texture,..reported_paths(texture.out))
     verified:=run(t,exe,..verify_texture[:])
     testing.expect_value(t,verified.code,0)
 
-    // The sidecar of an import keeps its settings: the options change them, and importing again uses them.
-    // Without a root it is in the folder written to, and nothing is written next to the source.
-    copy:=fmt.tprintf("%s/vase.obj",folder)
-    source,_:=os.read_entire_file(DEMO+"gallery/vase.obj",context.temp_allocator)
-    material,_:=os.read_entire_file(DEMO+"gallery/vase.mtl",context.temp_allocator)
-    _=os.write_entire_file(copy,source)
-    _=os.write_entire_file(fmt.tprintf("%s/vase.mtl",folder),material)
-    vase_out:=fmt.tprintf("%s/vase",folder)
-    hulled:=import_run(copy,"--out",vase_out,"--collision","hull")
+    // The sidecar of an import, next to its source, keeps its settings: the options change them, and importing again uses them.
+    copy:=copy_in(root_folder,DEMO,"gallery/vase.obj","gallery/vase.mtl","gallery/vase_color.png")
+    hulled:=import_run(copy,"--collision","hull")
     testing.expectf(t,hulled.code==0 && strings.contains(hulled.out," triangles, 1 hull of ") && strings.contains(hulled.out,"sidecar ") && strings.contains(hulled.out,"vase.obj.import"),"%d: %s%s",hulled.code,hulled.out,hulled.err)
-    sidecar:=fmt.tprintf("%s/vase.obj.import",vase_out)
+    sidecar:=fmt.tprintf("%s.import",copy)
     stored,_:=os.read_entire_file(sidecar,context.temp_allocator)
-    testing.expect(t,strings.contains(string(stored),"\"collision\": \"Hull\"") && !os.exists(fmt.tprintf("%s.import",copy)),string(stored))
-    mesh_path:=fmt.tprintf("%s/Vase.mesh",vase_out)
+    testing.expect(t,strings.contains(string(stored),"\"collision\": \"Hull\""),string(stored))
+    ids :: proc(out:string) -> []string {
+        found:=make([dynamic]string,context.temp_allocator)
+        for line in reported_assets(out) {append(&found,line[:32])}
+        return found[:]
+    }
+    mesh_path:string
+    for line in reported_assets(hulled.out) {if strings.contains(line," mesh ") {mesh_path=reported_paths(line)[0]}}
     with_hull,_:=os.read_entire_file(mesh_path,context.temp_allocator)
-    repeated:=import_run(copy,"--out",vase_out)
+    repeated:=import_run(copy)
     same,_:=os.read_entire_file(mesh_path,context.temp_allocator)
     testing.expect(t,repeated.code==0 && slice.equal(reported_paths(repeated.out),reported_paths(hulled.out)) && string(same)==string(with_hull) && len(same)>0,"importing again without options gives the same assets")
-    bare:=import_run(copy,"--out",vase_out,"--collision","none","--lods","none")
-    testing.expect(t,bare.code==0 && !strings.contains(bare.out,"hull") && slice.equal(reported_paths(bare.out),reported_paths(hulled.out)) && strings.contains(bare.out,"  3232 triangles"),bare.out)
+    bare:=import_run(copy,"--collision","none","--lods","none")
+    testing.expect(t,bare.code==0 && !strings.contains(bare.out,"hull") && slice.equal(ids(bare.out),ids(hulled.out)) && strings.contains(bare.out,"  3232 triangles"),bare.out)
     _=os.write_entire_file(sidecar,"{\"lods\": \"Never\"}")
-    refused:=import_run(copy,"--out",vase_out)
+    refused:=import_run(copy)
     testing.expect(t,refused.code==1 && strings.contains(refused.err,"vase.obj.import"),refused.err)
 
     // Misuse and failures.
-    testing.expect_value(t,import_run(DEMO+"gallery/vase.obj","--out",out,"--lods","some").code,2)
-    testing.expect_value(t,import_run(DEMO+"gallery/vase.obj","--out",out,"--collision","soft").code,2)
-    testing.expect_value(t,import_run(DEMO+"surfaces/bricks/bricks_color.png","--out",out,"--collision","hull").code,2)
+    testing.expect_value(t,import_run(copy,"--lods","some").code,2)
+    testing.expect_value(t,import_run(copy,"--collision","soft").code,2)
+    testing.expect_value(t,import_run(bricks,"--collision","hull").code,2)
     testing.expect_value(t,import_run().code,2)
-    testing.expect_value(t,import_run(DEMO+"gallery/vase.obj").code,2)
-    testing.expect_value(t,import_run(DEMO+"gallery/vase.obj","--out",out,"--max-texture","0").code,2)
-    testing.expect_value(t,import_run(DEMO+"gallery/vase.obj","--out",out,"--srgb").code,2)
-    testing.expect_value(t,import_run(DEMO+"gallery/vase.obj","--out",out,"--alpha-coverage","0.5").code,2)
-    testing.expect_value(t,import_run(DEMO+"surfaces/bricks/bricks_color.png","--out",out,"--alpha-coverage","1.5").code,2)
-    testing.expect_value(t,import_run(DEMO+"surfaces/bricks/bricks_color.png","--out",out,"--rdo-lambda","101").code,2)
-    testing.expect_value(t,import_run(DEMO+"surfaces/bricks/bricks_color.png","--out",out,"--rdo-lambda","-1").code,2)
-    testing.expect_value(t,import_run(DEMO+"gallery/vase.obj","--out",out,"--nope").code,2)
-    missing:=import_run(fmt.tprintf("%s/missing.obj",folder),"--out",out)
+    testing.expect_value(t,import_run(copy,"--max-texture","0").code,2)
+    testing.expect_value(t,import_run(copy,"--srgb").code,2)
+    testing.expect_value(t,import_run(copy,"--alpha-coverage","0.5").code,2)
+    testing.expect_value(t,import_run(bricks,"--alpha-coverage","1.5").code,2)
+    testing.expect_value(t,import_run(bricks,"--rdo-lambda","101").code,2)
+    testing.expect_value(t,import_run(bricks,"--rdo-lambda","-1").code,2)
+    testing.expect_value(t,import_run(copy,"--nope").code,2)
+    testing.expect_value(t,import_run(copy,"--out",folder).code,2)
+    missing:=import_run(fmt.tprintf("%s/missing.obj",folder))
     testing.expect(t,missing.code==1 && strings.contains(missing.err,"mirai import:") && strings.contains(missing.err,"missing.obj"),missing.err)
+    outside:=import_run(fmt.tprintf("%s/elsewhere.obj",root_folder))
+    testing.expect(t,outside.code==1 && strings.contains(outside.err,"assets"),outside.err)
     write_text(folder,"broken.obj","v 0 0 0\nf 1 2 3\n")
-    broken:=import_run(fmt.tprintf("%s/broken.obj",folder),"--out",fmt.tprintf("%s/broken",folder))
+    broken:=import_run(fmt.tprintf("%s/broken.obj",folder))
     testing.expect(t,broken.code==1 && strings.contains(broken.err,"outside"),broken.err)
 }
