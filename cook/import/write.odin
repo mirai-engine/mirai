@@ -401,8 +401,8 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
     if chosen.skeleton!={} {return write_clips_onto(w,model,source,name,chosen.skeleton)}
 
     // The import this one updates, by its prefab.
-    prefab_path:=folder_path(w,fmt.tprintf("%s.prefab",safe_name(name)))
-    root:=earlier_root(w,asset.KIND_PREFAB,source,model.source_size,model.source_hash) or_return
+    prefab_path:=folder_path(w,fmt.tprintf("%s.scene",safe_name(name)))
+    root:=earlier_root(w,asset.KIND_SCENE,source,model.source_size,model.source_hash) or_return
     if root>=0 {
         earlier:=&w.earlier[root]
         earlier.taken=true

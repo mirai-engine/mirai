@@ -208,13 +208,28 @@ For a renderer that generates frames (`rhi/present.odin`):
   `Stats.problem`, which `engine.status` (`renderer_problem`) and `engine.diagnostics`
   (`renderer`) show.
 
+## Shader constants
+
+- A shader names boolean constants (`Shader_Code.constants`, by id; up to `MAX_SHADER_CONSTANTS`)
+  and a pipeline says which are true (`Shader_Constants` of `Compute_Pipeline_Desc.constants`,
+  `Graphics_Pipeline_Desc.vertex_constants` and `fragment_constants`); the others are false. The
+  driver compiles the code with them folded: one code, a pipeline per combination.
+- Vulkan gives them as specialization constants (`VkSpecializationInfo`, each a `VkBool32` at
+  constant id = its id). Metal, as function constants: SPIRV-Cross emits each specialization
+  constant of the SPIR-V as `[[function_constant(id)]]` and the function is made with
+  `MTLFunctionConstantValues`; the library of a source is compiled once and each set of constants
+  is a function of it.
+- A constant the shader does not declare makes no pipeline: the error names both.
+  `shader_constant(code, name)` finds one by name, for the stages found by name.
+
 ## Pipeline cache
 
 - Vulkan keeps in `Device_Desc.pipeline_cache_path` one driver blob per pipeline
-  (`rhi/pipeline_store.odin`), under a key of the code and state it compiles, never its name: each
-  pipeline is created with a `VkPipelineCache` of its own, because a driver cache returns every
-  entry it was ever given and grows without end. Blobs are stored as chunks cut by their content,
-  each once: a driver repeats in every blob what they all share (NVIDIA a dictionary of megabytes).
+  (`rhi/pipeline_store.odin`), under a key of the code, constants and state it compiles, never its
+  name: each pipeline is created with a `VkPipelineCache` of its own, because a driver cache
+  returns every entry it was ever given and grows without end. Blobs are stored as chunks cut by
+  their content, each once: a driver repeats in every blob what they all share (NVIDIA a
+  dictionary of megabytes).
 - The file belongs to one device, driver and cache UUID, and is read whole or not at all: another
   device, another version or a file that does not read back exactly is ignored and replaced.
 - Destroying the device rewrites it in one rename: the blobs this run used, the last used first,

@@ -94,14 +94,14 @@ Api_Play_Audio_Voice :: struct {
     sound:base.Asset_Id `mirai:"label=Of its Audio_Source: a .sound or a .sound_set"`,
     path:[API_PATH_BYTES]u8 `mirai:"text,label=Of the sound under the assets folder"`,
     bus:[NAME_CAPACITY]u8 `mirai:"text"`,
-    volume:f32 `mirai:"label=Linear gain the voice was given: that of its source by what its set drew and by how hidden it is; before its bus and its distance"`,
+    volume:f32 `mirai:"label=Linear gain the voice was given: that of its source by what its set drew; before its bus, its distance and what hides it"`,
     pitch:f32 `mirai:"label=Rate of playback the voice was given"`,
     pan:f32 `mirai:"optional,label=Of a voice that is not spatial"`,
     loop:bool,
     playing:bool `mirai:"label=The mixer has not ended it as of its last update"`,
     spatial:bool,
     position:[3]f32 `mirai:"optional,label=Of a spatial voice: where it was placed last in meters"`,
-    lowpass:f32 `mirai:"label=Cutoff in Hz it was given; 0: none"`,
+    occlusion:f32 `mirai:"optional,label=Of a spatial voice: how hidden it was told it is, 0 in sight to 1 hidden"`,
     reverb:f32 `mirai:"label=Share of it sent to the reverb"`,
 }
 
@@ -500,7 +500,7 @@ play_audio_write :: proc(s:^Session,out:^serial.Writer,voices:^eaudio.Voices,w:c
             api.write_bool(out,"playing",m!=nil && mixer.voice_valid(m,entry.voice))
             api.write_bool(out,"spatial",entry.spatial)
             if entry.spatial {api.write_numbers(out,"position",entry.position)}
-            api.write_key(out,"lowpass");api.write_number(out,entry.lowpass)
+            if entry.spatial {api.write_key(out,"occlusion");api.write_number(out,entry.occlusion)}
             api.write_key(out,"reverb");api.write_number(out,entry.reverb)
             serial.write_u8(out,'}')
         }

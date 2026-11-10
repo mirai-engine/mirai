@@ -9,6 +9,19 @@ Probe :: struct {value:i32}
 Probe_Tag :: struct {}
 
 @(private="file")
+@(component,single)
+Single_Probe :: struct {value:i32}
+
+@(private="file")
+World_Of_Single :: struct {
+    using world:Test_World,
+    disabled:Table(Disabled),
+    parents:Table(Parent),
+    probes:Table(Single_Probe),
+    hierarchy:Hierarchy,
+}
+
+@(private="file")
 World_Of_Probes :: struct {
     using world:Test_World,
     disabled:Table(Disabled),
@@ -229,22 +242,35 @@ a_disabled_entity_turns_off_what_hangs_from_it_and_keeps_what_was_off :: proc(t:
     testing.expect(t,!entity_off(&w.entities,reused))
 }
 
+@(private="file")
+Lock_Owner :: struct {value:u8}
+
+@(private="file")
+@(component,locks="Lock_Owner")
+Lock_Body :: struct {value:i32}
+
+@(private="file")
+World_Of_Locks :: struct {
+    using world:Test_World,
+    bodies:Table(Lock_Body),
+    owner:Table(Lock_Owner),
+}
+
 @(test)
 a_component_on_owns_what_its_locks_take_and_one_off_lets_it_go :: proc(t:^testing.T) {
-    es:Entities;entities_init(&es);defer entities_destroy(&es)
-    bodies:Table(Probe);table_init(&bodies,"Body");defer table_destroy(&bodies)
-    owner:Table(u8);table_init(&owner,"Transform");defer table_destroy(&owner)
-    locks:=[1]Lock{{offset=lock_offset(&bodies,&owner),id=1,target="Transform",names={"","Body"}}}
-    bodies.locks=locks[:]
-    e:=create(&es)
-    add(&bodies,e,Probe{1})
-    table_settle(&bodies,&es)
+    w:World_Of_Locks
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    es,bodies,owner:=&w.entities,&w.bodies,&w.owner
+    e:=create(es)
+    add(bodies,e,Lock_Body{1})
+    table_settle(bodies,es)
     testing.expect_value(t,owner.owners[entity_index(e)].id,u16(1))
-    disable(&bodies,e)
-    table_settle(&bodies,&es)
+    disable(bodies,e)
+    table_settle(bodies,es)
     testing.expect_value(t,owner.owners[entity_index(e)],Row_Owner{})
-    enable(&bodies,e)
-    table_settle(&bodies,&es)
+    enable(bodies,e)
+    table_settle(bodies,es)
     testing.expect_value(t,owner.owners[entity_index(e)].id,u16(1))
 }
 
@@ -316,12 +342,11 @@ changes_read_the_table_whole_when_a_reader_falls_behind_or_it_is_replaced :: pro
 // entity is off is on once its entity is.
 @(test)
 a_single_component_follows_the_entities_turned_off_and_on :: proc(t:^testing.T) {
-    w:World_Of_Probes
+    w:World_Of_Single
     if !test_world_init(t,&w) {return}
     defer test_world_destroy(&w)
-    w.probes.single=true
     root,section:=create(&w.entities),create(&w.entities)
-    add(&w.probes,root,Probe{1});add(&w.probes,section,Probe{2})
+    add(&w.probes,root,Single_Probe{1});add(&w.probes,section,Single_Probe{2})
     test_world_settle(&w)
     enable(&w.probes,section)
     test_world_settle(&w)

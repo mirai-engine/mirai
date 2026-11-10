@@ -25,10 +25,16 @@ Inspect_World :: struct {
 }
 @(private="file") Inspect_Editor :: struct {api:Api}
 
+@(private="file") Hidden_State :: struct {value:u32}
+@(private="file") Lights_World :: struct {using world:core.Test_World,points:core.Table(erender.Point_Light),spots:core.Table(erender.Spot_Light)}
+@(private="file") Lights_Editor :: struct {hidden:core.Table(Hidden_State)}
+
 @(test)
 a_name_of_a_component_or_a_key_resolves_as_it_is_written_or_says_the_nearest :: proc(t:^testing.T) {
-    tables:=[]core.Table_Info{{name="Point_Light",place=.World},{name="Spot_Light",place=.World},{name="Hidden_State",place=.Editor}}
-    info:=core.World_Info{tables=tables}
+    info,described:=core.test_info(t,Lights_World,core.Test_None,Lights_Editor,test_types)
+    if !described {return}
+    defer core.test_info_destroy(&info)
+    tables:=info.tables
     w:=core.World_Ref{info=&info,place=.World}
     cases:=[]struct{name:string,found:^core.Table_Info,says:string}{
         {"Point_Light",&tables[0],""},

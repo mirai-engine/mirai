@@ -137,6 +137,7 @@ test_info_destroy :: proc(info:^World_Info,allocator:=context.allocator) {
     delete(info.tables_by_type);delete(info.storages_by_type)
     lock_names:[]string
     for table in info.tables {
+        delete(table.name,allocator)
         delete(table.description,allocator)
         if len(table.locks)>0 {lock_names=table.locks[0].names}
         delete(table.locks,allocator)
@@ -379,42 +380,61 @@ Build :: struct {
 build_fields :: proc(b:^Build,place:Place,layout:runtime.Type_Info_Struct,base:uintptr) -> (problem:string) {
     for i in 0..<int(layout.field_count) {
         if layout.names[i]=="_" || layout.types[i].id==Test_World {continue}
-        held,kind:=field_held(layout.types[i])
+        held,_:=field_held(layout.types[i])
         if group,is_group:=runtime.type_info_base(layout.types[i]).variant.(runtime.Type_Info_Struct);is_group && layout.usings[i] && held==nil {
             if problem=build_fields(b,place,group,base+layout.offsets[i]);problem!="" {return}
             continue
         }
         tag:=reflect.Struct_Tag(layout.tags[i])
-        f:=Test_Field{place=place,offset=base+layout.offsets[i],info=layout.types[i],name=layout.names[i]}
-        _,f.game=field_option(tag,"game")
-        if held!=nil {f.kind,f.info=kind,held}
-        if f.kind==.Table && place==.Shared || f.kind==.By_World && place!=.Shared {
-            return fmt.tprintf("%s: a table goes in the World or in the editor, and a By_World in the struct of the application",layout.names[i])
-        }
-        f.type=f.info.id
-        named,is_named:=f.info.variant.(runtime.Type_Info_Named)
-        if is_named {f.name,f.library=named.name,named.pkg}
-        if name,renamed:=field_option(tag,"name");renamed {f.name=name}
-        for type in b.given {
-            if type.type==f.type {
-                f.procs=type
-                break
+        // An array of tables is a table of its type for each element, named with its index.
+        if array,is_array:=runtime.type_info_base(layout.types[i]).variant.(runtime.Type_Info_Array);is_array {
+            if _,kind:=field_held(array.elem);kind==.Table && array.count>0 {
+                for k in 0..<array.count {
+                    if problem=build_field(b,place,layout.names[i],base+layout.offsets[i]+uintptr(k*array.elem_size),array.elem,tag,k);problem!="" {return}
+                }
+                continue
             }
         }
-        if is_named && named.loc!=nil {
-            if problem=field_declared(&f,named.loc^,&b.sources,b.allocator);problem!="" {return}
-        }
-        if f.file!="" {
-            if f.kind==.By_World && !f.declared.by_world || f.kind==.Storage && f.declared.by_world {
-                return fmt.tprintf("%s is %sby_world: the struct of the application holds it as %s",f.name,f.declared.by_world?"":"not ",f.declared.by_world?fmt.tprintf("core.By_World(%s)",f.name):"a value")
-            }
-            if f.declared.host!=(place==.Shared) {
-                return fmt.tprintf("%s is %s: it goes in the struct of %s",f.name,f.declared.host?"@(storage,host)":"not @(storage,host)",f.declared.host?"the application":"the World, or of the editor")
-            }
-            if problem=field_procs(&f);problem!="" {return}
-        }
-        append(f.kind==.Table?&b.tables:&b.storages,f)
+        if problem=build_field(b,place,layout.names[i],base+layout.offsets[i],layout.types[i],tag,-1);problem!="" {return}
     }
+    return ""
+}
+
+// One table or storage at offset of the struct of a place; element is its
+// index in an array of tables, -1 for a field of its own.
+@(private="file")
+build_field :: proc(b:^Build,place:Place,field:string,offset:uintptr,info:^runtime.Type_Info,tag:reflect.Struct_Tag,element:int) -> (problem:string) {
+    held,kind:=field_held(info)
+    f:=Test_Field{place=place,offset=offset,info=info,name=field}
+    _,f.game=field_option(tag,"game")
+    if held!=nil {f.kind,f.info=kind,held}
+    if f.kind==.Table && place==.Shared || f.kind==.By_World && place!=.Shared {
+        return fmt.tprintf("%s: a table goes in the World or in the editor, and a By_World in the struct of the application",field)
+    }
+    f.type=f.info.id
+    named,is_named:=f.info.variant.(runtime.Type_Info_Named)
+    if is_named {f.name,f.library=named.name,named.pkg}
+    if name,renamed:=field_option(tag,"name");renamed {f.name=name}
+    for type in b.given {
+        if type.type==f.type {
+            f.procs=type
+            break
+        }
+    }
+    if is_named && named.loc!=nil {
+        if problem=field_declared(&f,named.loc^,&b.sources,b.allocator);problem!="" {return}
+    }
+    if f.file!="" {
+        if f.kind==.By_World && !f.declared.by_world || f.kind==.Storage && f.declared.by_world {
+            return fmt.tprintf("%s is %sby_world: the struct of the application holds it as %s",f.name,f.declared.by_world?"":"not ",f.declared.by_world?fmt.tprintf("core.By_World(%s)",f.name):"a value")
+        }
+        if f.declared.host!=(place==.Shared) {
+            return fmt.tprintf("%s is %s: it goes in the struct of %s",f.name,f.declared.host?"@(storage,host)":"not @(storage,host)",f.declared.host?"the application":"the World, or of the editor")
+        }
+        if problem=field_procs(&f);problem!="" {return}
+    }
+    if element>=0 {f.name=fmt.tprintf("%s_%d",f.name,element)}
+    append(f.kind==.Table?&b.tables:&b.storages,f)
     return ""
 }
 
@@ -625,11 +645,19 @@ made_info :: proc(made:^Test_Made,sizes,aligns:[Place]int,allocator:runtime.Allo
     for &f,index in made.fields {
         d:=f.declared
         if index<made.tables {
-            tables[index]={name=f.name,library=f.library,type=f.type,info=f.info,offset=f.offset,place=f.place,shared=d.shared,replicated=d.replication,game=f.game,default=f.procs.default,description=strings.clone(d.description,allocator),single=d.single,far=d.far,base=f.base,locks=f.locks}
+            tables[index]={name=strings.clone(f.name,allocator),library=f.library,type=f.type,info=f.info,offset=f.offset,place=f.place,shared=d.shared,replicated=d.replication,game=f.game,default=f.procs.default,description=strings.clone(d.description,allocator),single=d.single,far=d.far,base=f.base,locks=f.locks}
             locked||=len(f.locks)>0
             f.locks=nil
         } else {
             storages[index-made.tables]={name=f.name,library=f.library,type=f.type,info=f.info,offset=f.offset,place=f.place,setting=d.setting,default=f.procs.default,by_world=f.kind==.By_World,for_device=f.procs.for_device,persist=d.persist,keep=d.keep,plugin=f.plugin,game=f.game,local=d.copy=="false",procs={f.procs.copy,f.procs.copy_kept,f.procs.swap,f.procs.free,f.procs.reset}}
+        }
+    }
+    // A lock names its target as the World_Info does, which holds the name.
+    for &table in tables {
+        for &lock in table.locks {
+            for other in tables {
+                if other.place==table.place && int(other.offset)==int(table.offset)+lock.offset {lock.target=other.name}
+            }
         }
     }
     if locked {made.lock_names=nil}
@@ -657,6 +685,12 @@ Described_Lines :: struct {
     single:Table(Described_Single),
     kept:Described_Kept,
     plain:Described_Plain,
+}
+
+@(private="file")
+Described_Array :: struct {
+    using world:Test_World,
+    sent:[3]Table(Described_Sent),
 }
 
 @(private="file")
@@ -724,6 +758,30 @@ a_test_world_is_described_as_the_declarations_of_its_types_say :: proc(t:^testin
         kept,plain:=lines.storages[0],lines.storages[1]
         testing.expect(t,sent.replicated==.All && !sent.single && kept.keep,"a declaration on one line has its attributes")
         testing.expect(t,single.single && single.replicated==.None && !plain.keep,"and the declaration below it does not")
+    }
+
+    // An array of tables is a table of its type for each element.
+    array:Described_Array
+    if test_world_init(t,&array) {
+        defer test_world_destroy(&array)
+        tables:=test_world_info(&array).tables
+        if testing.expect_value(t,len(tables),3) {
+            for table,k in tables {
+                testing.expectf(t,table.name==fmt.tprintf("Described_Sent_%d",k) && table.replicated==.All && table.offset==offset_of(Described_Array,sent)+uintptr(k*size_of(Table(Described_Sent))),"element %d: %v",k,table)
+            }
+        }
+        e:=create(&array.entities)
+        for &table,k in array.sent {add(&table,e,Described_Sent{i32(k)})}
+        testing.expect_value(t,test_world_settle(&array),3)
+        copied:Described_Array
+        if test_world_init(t,&copied) {
+            defer test_world_destroy(&copied)
+            testing.expect(t,test_world_copy(&copied,&array))
+            for &table,k in copied.sent {
+                value,found:=get(read(&table),e)
+                testing.expectf(t,found && value.value==i32(k),"each element copies as a table of its own: %d",k)
+            }
+        }
     }
 
     Case :: struct {what:string,world:^runtime.Type_Info,shared:^runtime.Type_Info,names:string}

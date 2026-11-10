@@ -420,7 +420,7 @@ server_publish :: proc(s:^Net_Session,w:core.World_Ref,outbox:^Net_Outbox,tick:u
     transforms:=core.world_table_of(w,core.Transform)
     worlds:=core.world_table_of(w,core.World_Transform)
     ids:=core.world_table_of(w,core.Id)
-    sources:=core.world_table_of(w,scene.Prefab_Source)
+    placed:=core.world_table_of(w,scene.Prefab_Instance)
     moves:=core.world_table_of(w,input.Move_Input)
     hierarchy:=core.ref(core.world_storage_of(w,core.Hierarchy))
     seats:=core.world_table_of(w,input.Seat)
@@ -515,8 +515,8 @@ server_publish :: proc(s:^Net_Session,w:core.World_Ref,outbox:^Net_Outbox,tick:u
             written:=true
             if send {
                 prefab:base.Asset_Id
-                if sources!=nil {
-                    if source:=(^scene.Prefab_Source)(core.raw_find(core.raw(sources),type_info_of(scene.Prefab_Source),e));source!=nil {prefab=source.prefab}
+                if placed!=nil {
+                    if instance:=(^scene.Prefab_Instance)(core.raw_find(core.raw(placed),type_info_of(scene.Prefab_Instance),e));instance!=nil {prefab=instance.prefab}
                 }
                 pose:=Pose{id=core.id_of(core.read(ids),e),prefab=prefab,sections=section_ids(ids,slot.sections),position=local.position,rotation=local.rotation,scale=local.scale,off=off,disabled=disabled}
                 written=wire.object_write(h,object,0,&pose)==.None
@@ -740,12 +740,12 @@ server_create :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity,config:Repli
         return 0
     }
     t:=net_type(s,type)
-    source,_:=core.get(core.read(core.world_table_of(w,scene.Prefab_Source)),e)
+    of_prefab,_:=scene.prefab_instance(w,e)
     ids:=core.world_table_of(w,core.Id)
     hierarchy:=core.ref(core.world_storage_of(w,core.Hierarchy))
     references,worlds:=core.world_table_of(w,scene.Scene_Reference),core.world_table_of(w,core.World_Transform)
     sections:=sections_of(s,s.server.section_boxes[:],worlds,hierarchy,e,section_of(hierarchy,references,e))
-    pose:=Pose{id=core.id_of(core.read(ids),e),prefab=source.prefab,sections=section_ids(ids,sections),position=local.position,rotation=local.rotation,scale=local.scale,off=components_off(w,e,t)}
+    pose:=Pose{id=core.id_of(core.read(ids),e),prefab=of_prefab.prefab,sections=section_ids(ids,sections),position=local.position,rotation=local.rotation,scale=local.scale,off=components_off(w,e,t)}
     position:=local.position
     if world,has:=core.get(core.read(core.world_table_of(w,core.World_Transform)),e);has {position=world.position}
     desc:=wire.Object_Desc{

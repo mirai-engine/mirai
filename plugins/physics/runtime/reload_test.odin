@@ -17,7 +17,7 @@ reloading_a_scene_recreates_body_velocity_and_automatic_joint_frames :: proc(t:^
     file:=fmt.tprintf("%s/physics.scene",folder)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     authored:asset.Scene
-    testing.expect_value(t,asset.scene_init(&authored,&types,asset.KIND_SCENE,{12,45}),asset.Error.None)
+    testing.expect_value(t,asset.scene_init(&authored,&types,{12,45}),asset.Error.None)
     defer asset.scene_destroy(&authored)
     _,added:=asset.scene_entity_add(&authored,1,0,"Driven body")
     testing.expect_value(t,added,asset.Error.None)

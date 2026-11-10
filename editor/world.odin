@@ -253,8 +253,8 @@ entity_make :: proc(s:^Session,w:core.World_Ref,desc:Create_Desc) -> core.Entity
     desc:=desc
     if desc.transform=={} {desc.transform=core.TRANSFORM_IDENTITY}
     if index:=max(desc.card,int(desc.preset));index<len(Preset) && desc.transform.rotation==1 {desc.transform.rotation=preset_rotation(Preset(index))}
-    root:=document_root(s,w)
-    if root==core.NONE && w.data==s.edit_world {root=section_editing(s)}
+    root:=core.NONE
+    if w.data==s.edit_world {root=section_editing(s)}
     if root!=core.NONE && desc.parent==core.NONE && !playing(s) {
         transform:=desc.transform=={}?core.TRANSFORM_IDENTITY:desc.transform
         local,ok:=mm.transform_relative(core.to_math(transform),entity_world(w,root))
@@ -318,13 +318,12 @@ entities_delete :: proc(s:^Session,entities:[]core.Entity) {
         // What a section holds goes with its reference, which is among them.
         if section_locked(s,w,e) {continue}
         if prefab_member_locked(s,w,e) {kept=true;continue}
-        if e==document_root(s,w) {continue}
         core.world_destroy_tree(w,e)
     }
     if kept {notify(s,"A member of a prefab instance stays: turn it off, or unlink the instance")}
     selection:=w.data==s.edit_world?document_selection(s):s.selection
     for e in entities {
-        if e==document_root(s,w) || prefab_member_locked(s,w,e) {continue}
+        if prefab_member_locked(s,w,e) {continue}
         for i:=len(selection.entities)-1;i>=0;i-=1 {
             if entity_under(w,selection.entities[i],e) {ordered_remove(&selection.entities,i)}
         }
@@ -340,14 +339,6 @@ entities_duplicate :: proc(s:^Session,entities:[]core.Entity,label:="Duplicate",
     w:=editing_world(s)
     es:=core.world_entities(w)
     if len(entities)==0 {return nil}
-    if root:=document_root(s,w);root!=core.NONE {
-        for e in entities {
-            if e==root {
-                _,ok:=mm.transform_relative(entity_world(w,root),entity_world(w,root))
-                if !ok {return nil}
-            }
-        }
-    }
     opened,edit_ready:=edit_open(s,label)
     if !edit_ready {return nil}
     defer edit_close(s,opened)
@@ -413,12 +404,6 @@ entities_duplicate :: proc(s:^Session,entities:[]core.Entity,label:="Duplicate",
     }
     if len(sources)>0 {
         core.world_settle(w)
-        if root:=document_root(s,w);root!=core.NONE {
-            for at in roots {
-                if entity_parent(w,copies[at])==core.NONE {entity_reparent(s,copies[at],root)}
-            }
-            core.world_settle(w)
-        }
         prefab_copies_settle(w,copies)
     }
     result:=make([]core.Entity,len(roots),allocator)
@@ -449,11 +434,6 @@ entity_rename :: proc(s:^Session,e:core.Entity,name:string) -> bool {
 entity_reparent :: proc(s:^Session,e,parent:core.Entity) -> bool {
     if watching(s) {return false}
     w:=editing_world(s)
-    parent:=parent
-    if root:=document_root(s,w);root!=core.NONE && w.data==s.edit_world {
-        if e==root {return parent==core.NONE}
-        if parent==core.NONE {parent=root}
-    }
     parents:=core.world_table_of(w,core.Parent)
     transforms:=core.world_table_of(w,core.Transform)
     if parents==nil || !entity_alive(w,e) || parent!=core.NONE && (!entity_alive(w,parent) || entity_under(w,parent,e)) {return false}

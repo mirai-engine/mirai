@@ -65,7 +65,7 @@ sections_fixture_init :: proc(t:^testing.T,f:^Sections_Fixture,name:string,state
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     f.x=SECTIONS_TEST_X
     x:asset.Scene
-    if asset.scene_init(&x,&types,asset.KIND_SCENE,f.x)!=.None {return false}
+    if asset.scene_init(&x,&types,f.x)!=.None {return false}
     asset.scene_entity_add(&x,SECTIONS_TEST_LOCAL,0,"Crate")
     saved:=asset.scene_save(&x,fmt.tprintf("%s/layer.scene",f.root))
     asset.scene_destroy(&x)
@@ -305,9 +305,6 @@ save_writes_each_section_edited_in_its_world_that_changed_and_stays_unsaved_when
     testing.expect_value(t,scene_save(s,"world.scene"),Document_Error.None)
     testing.expect(t,document_dirty(s),"a section not written keeps the document unsaved")
     testing.expect(t,strings.contains(string(s.toast[:s.toast_length]),"was not saved"))
-    // A scene referenced as a section does not turn into a prefab.
-    _,why:=asset_convert(s,f.x)
-    testing.expect(t,strings.contains(why,"section"),why)
 }
 
 @(test)

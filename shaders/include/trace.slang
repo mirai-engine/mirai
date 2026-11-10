@@ -12,7 +12,10 @@
 #include <surface_coverage.slang>
 
 // Colored shadows filter their rays through glass; a pass can ask for the
-// same filters for rays of its own.
+// same filters for rays of its own. MIRAI_COLORED_SHADOWS and
+// MIRAI_GLASS_MEANS are constants of the stages that declare them
+// (`//! constant`): declared, the stage has what they need; true in a
+// pipeline, its rays do it.
 #if defined(MIRAI_COLORED_SHADOWS) && !defined(MIRAI_RAY_FILTERS)
 #define MIRAI_RAY_FILTERS
 #endif
@@ -550,8 +553,8 @@ struct Ray_Path {
 // glass as the mean filter of its instance (MIRAI_GLASS_MEANS): its detail
 // averages away after a diffuse bounce. Without it they go through glass.
 #ifdef MIRAI_GLASS_MEANS
-#define RAY_CROSSES (RAY_SEEN | RAY_GLASS)
-#define RAY_CROSSING BLEND_MEANS
+#define RAY_CROSSES (MIRAI_GLASS_MEANS ? (RAY_SEEN | RAY_GLASS) : RAY_SEEN)
+#define RAY_CROSSING (MIRAI_GLASS_MEANS ? BLEND_MEANS : BLEND_PASSES)
 #else
 #define RAY_CROSSES RAY_SEEN
 #define RAY_CROSSING BLEND_PASSES
@@ -572,11 +575,13 @@ Hit trace_segment(float3 from, float3 direction, float t_min, float reach, bool 
         Hit found = trace_ray_impl(from, direction, t_min, reach, any_hit, RAY_CROSSING, RAY_CROSSES);
         if (attempt == 0u) hit = found;
 #ifdef MIRAI_GLASS_MEANS
-        if (attempt == 0u && hit.instance != INVALID && ray_filter_far > hit.t) {
-            reach = hit.t;
-            continue;
+        if (MIRAI_GLASS_MEANS) {
+            if (attempt == 0u && hit.instance != INVALID && ray_filter_far > hit.t) {
+                reach = hit.t;
+                continue;
+            }
+            path.glass *= ray_filter;
         }
-        path.glass *= ray_filter;
 #endif
         break;
     }
@@ -675,17 +680,28 @@ float3 trace_transmission(float3 origin, float3 direction, float t_max, bool gat
     float gate;
     if (gated && ray_gated(origin, direction, t_max, gate)) return float3(0.0);
 #endif
-#if defined(MIRAI_COLORED_SHADOWS)
-    ray_filter = float3(1.0);
-    ray_filter_direction = direction;
-    bool blocked = trace_ray_impl(origin, direction, 0.0, t_max, true, BLEND_FILTERS, RAY_SHADOWS | RAY_GLASS).instance != INVALID;
-#ifdef MIRAI_FILTER_POINTS
-    if (blocked) filters_blocked();
+#if defined(MIRAI_COLORED_SHADOWS) || defined(MIRAI_GLASS_MEANS)
+    // One traversal in the source, whatever the constants of the pipeline make of it.
+    uint blend = BLEND_PASSES;
+    uint classes = RAY_SHADOWS;
+#ifdef MIRAI_GLASS_MEANS
+    if (MIRAI_GLASS_MEANS) {
+        blend = BLEND_MEANS;
+        classes = RAY_SHADOWS | RAY_GLASS;
+    }
 #endif
-    return blocked ? float3(0.0) : ray_filter;
-#elif defined(MIRAI_GLASS_MEANS)
+#ifdef MIRAI_COLORED_SHADOWS
+    if (MIRAI_COLORED_SHADOWS) {
+        blend = BLEND_FILTERS;
+        classes = RAY_SHADOWS | RAY_GLASS;
+        ray_filter_direction = direction;
+    }
+#endif
     ray_filter = float3(1.0);
-    bool blocked = trace_ray_impl(origin, direction, 0.0, t_max, true, BLEND_MEANS, RAY_SHADOWS | RAY_GLASS).instance != INVALID;
+    bool blocked = trace_ray_impl(origin, direction, 0.0, t_max, true, blend, classes).instance != INVALID;
+#if defined(MIRAI_COLORED_SHADOWS) && defined(MIRAI_FILTER_POINTS)
+    if (MIRAI_COLORED_SHADOWS && blocked) filters_blocked();
+#endif
     return blocked ? float3(0.0) : ray_filter;
 #else
     return trace_ray_impl(origin, direction, 0.0, t_max, true, BLEND_PASSES, RAY_SHADOWS).instance == INVALID ? float3(1.0) : float3(0.0);
@@ -711,16 +727,18 @@ float3 trace_transmission_blocker(float3 origin, float3 direction, float t_max, 
     stopper = hit.instance;
     return float3(0.0);
 #else
+    // One traversal in the source: without colored shadows in the pipeline no
+    // filter is met, and the filter and its distance stay as they start.
     ray_filter = float3(1.0);
     ray_filter_direction = direction;
     ray_filter_distance = FLT_MAX;
-    Hit hit = trace_ray_impl(origin, direction, 0.0, t_max, true, BLEND_FILTERS, RAY_SHADOWS | RAY_GLASS);
+    Hit hit = trace_ray_impl(origin, direction, 0.0, t_max, true, MIRAI_COLORED_SHADOWS ? BLEND_FILTERS : BLEND_PASSES, MIRAI_COLORED_SHADOWS ? (RAY_SHADOWS | RAY_GLASS) : RAY_SHADOWS);
     blocker = ray_filter_distance;
     if (hit.instance == INVALID) return ray_filter;
     blocker = min(blocker, hit.t);
     stopper = hit.instance;
 #ifdef MIRAI_FILTER_POINTS
-    filters_blocked();
+    if (MIRAI_COLORED_SHADOWS) filters_blocked();
 #endif
     return float3(0.0);
 #endif
