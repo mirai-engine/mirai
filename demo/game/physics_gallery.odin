@@ -9,12 +9,12 @@ import inp "mirai:engine/input"
 import phys "plugins:physics/runtime"
 import render "mirai:engine/render"
 import "mirai:engine/scene"
+import volume "mirai:engine/volume"
 import "mirai:host"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:ui"
 import cache "plugins:physics_cache/runtime"
-import fields "plugins:physics_fields/runtime"
 import rag "plugins:ragdoll/runtime"
 
 PHYSICS_GALLERY_STATIONS :: 23
@@ -51,7 +51,7 @@ physics_gallery_reset :: proc(views:core.Read(Physics_Gallery_View),actions:inp.
 @(step="fixed")
 physics_gallery_actions :: proc(
     views:^core.Table(Physics_Gallery_View),stations:^core.Table(Physics_Gallery),actions:inp.Input_Of(Action),
-    requests:^destruct.Destruct_Requests,bodies:^phys.Body_Requests,field_configs:^core.Table(fields.Physics_Field),
+    requests:^destruct.Destruct_Requests,bodies:^phys.Body_Requests,force_fields:^core.Table(phys.Force_Field),strain_fields:^core.Table(destruct.Strain_Field),
     caches:^cache.Geometry_Requests,ragdolls:^Ragdoll_Gallery_Requests,time:core.Time,
     view:destruct.Destruct_View,
 ) {
@@ -76,9 +76,9 @@ physics_gallery_actions :: proc(
         point:=physics_gallery_piece_center(view,item.target,item.origin+mm.Vec3{0,.5,0}) if needs_destructible else item.origin
         switch item.station {
         case 0,8,19,21:
-            phys.apply_radial_impulse(bodies,item.origin+mm.Vec3{0,-.6,0},4,35,velocity_change=true)
+            phys.apply_area(bodies,volume.sphere(4,blend=4),{position=item.origin+mm.Vec3{0,-.6,0}},35,impulse=true,velocity_change=true)
         case 22:
-            phys.apply_radial_impulse(bodies,item.origin+mm.Vec3{0,-1,0},4,6,velocity_change=true)
+            phys.apply_area(bodies,volume.sphere(4,blend=4),{position=item.origin+mm.Vec3{0,-1,0}},6,impulse=true,velocity_change=true)
         case 2,4,5,7:
             normal:=mm.Vec3{1,0,0} if item.activations%2==1 else mm.Vec3{0,1,0}
             destruct.slice(requests,item.target,point,normal)
@@ -86,8 +86,10 @@ physics_gallery_actions :: proc(
             if item.activations%2==1 {destruct.weaken(requests,item.target,point,4,10000)}
             else {destruct.strain(requests,item.target,point,4,1)}
         case 12,14:
-            if on,_,found:=core.raw_state(core.raw(field_configs),item.field);found {
-                core.set_on(field_configs,item.field,!on)
+            // The force of the field and, where it has one, its strain: on and off together.
+            if on,_,found:=core.raw_state(core.raw(force_fields),item.field);found {
+                core.set_on(force_fields,item.field,!on)
+                if _,_,strains:=core.raw_state(core.raw(strain_fields),item.field);strains {core.set_on(strain_fields,item.field,!on)}
             }
         case 17:
             cache.play(caches,item.target,1 if item.activations%2==1 else -1,restart=true)
@@ -137,7 +139,7 @@ physics_gallery_events :: proc(stations:core.Read(Physics_Gallery),counts:^Physi
             if item.target!=event.entity {continue}
             if item.station!=11 && item.station!=13 {
                 center:=event.point-mm.Vec3{0,.5,.3} if event.kind==.Slice else item.origin-mm.Vec3{0,1,.3}
-                phys.apply_radial_impulse(bodies,center,4,3,.Constant,velocity_change=true)
+                phys.apply_area(bodies,volume.sphere(4),{position=center},3,impulse=true,velocity_change=true)
             }
             if item.station<PHYSICS_GALLERY_STATIONS {counts.counts[item.station]+=1}
             if item.station==10 {

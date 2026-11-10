@@ -4,6 +4,7 @@ import "core:math"
 import "core:math/linalg"
 import "mirai:core"
 import render "mirai:engine/render"
+import volume "mirai:engine/volume"
 import "mirai:std/ai"
 import mm "mirai:std/math"
 import behavior "plugins:behavior/runtime"
@@ -731,12 +732,14 @@ arena_piece_add :: proc(c:core.Commands,piece:Arena_Piece) {
         core.commands_add(c,e,render.Tint{color=piece.color})
         if piece.kind==.Cart {
             core.commands_add(c,e,phys.RIGID_BODY_KINEMATIC)
-            core.commands_add(c,e,nav.Nav_Obstacle{half={0.5,0.5,0.5},settle=1})
+            core.commands_add(c,e,nav.Nav_Obstacle{settle=1})
+            core.commands_add(c,e,volume.box({0.5,0.5,0.5}))
             core.commands_add(c,e,Arena_Cart{from=piece.position,to=piece.to})
         }
     case .Area:
         core.commands_add(c,e,core.Transform{piece.position,1,{1,1,1}})
-        core.commands_add(c,e,nav.Nav_Area{half=piece.half+{0,1,0},area=piece.area})
+        core.commands_add(c,e,nav.Nav_Area{area=piece.area})
+        core.commands_add(c,e,volume.box(piece.half+{0,1,0}))
         slab:=core.commands_create(c)
         core.commands_add(c,slab,core.Transform{{0,0.01,0},1,piece.half*2})
         core.commands_add(c,slab,core.Parent{entity=e})
@@ -751,7 +754,8 @@ arena_piece_add :: proc(c:core.Commands,piece:Arena_Piece) {
         core.commands_add(c,e,behavior.Smart_Object{offers={0=piece.offers[0],1=piece.offers[1]}})
     case .Air:
         core.commands_add(c,e,core.Transform{piece.position,1,{1,1,1}})
-        core.commands_add(c,e,nav.Nav_Bounds{half=piece.half,air=true})
+        core.commands_add(c,e,nav.Nav_Bounds{air=true})
+        core.commands_add(c,e,volume.box(piece.half))
     }
 }
 
