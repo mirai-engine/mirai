@@ -19,9 +19,12 @@ names the Surface program of a water without its own material (empty or unknown:
   underneath, a grid generated once (`surface_build`) that follows the camera in steps of
   `SURFACE_STEP`, with cells that double outward by rings and whose edges between levels share
   vertices. That of a plane goes on to the horizon; that of a box ends at its walls (its vertices
-  past them go onto them), so a box is a lake that sits in its basin or a stretch of river whose
-  slope follows its bed, and its walls are the ground or the banks around it. They are added as
-  frame instances (`instance_add`) before `render_sync`.
+  past them go onto them), so a box is a lake that sits in its basin, and its walls are the ground
+  or the banks around it. Water along a path (a `Spline` with a `Fluid`: a river) is a ribbon
+  along the samples the physics follows (`phys.fluid_path`, `river.odin`), level across, made
+  again only when they or the waters it meets change, ending where a water of higher priority
+  takes it; its vertex colors carry the current, which its small waves drift with. They are added
+  as frame instances (`instance_add`) before `render_sync`.
 - **Waves.** Those of a fluid are those of physics ([`Fluid_Waves`][waves]): `water_render` uploads
   with each body its `wave_terms`, measured from the origin of each pass at the time the frame
   shows (that of physics between its last two steps, like the poses; without Play, the
@@ -103,8 +106,8 @@ dry box, the master loses the highs (`UNDER_LOWPASS`) and the water reverb sound
 A scene with water has the `Fluid` entity with its `Volume` (with `Water` if its appearance
 changes and `Fluid_Waves` if it has waves) and, for splashes, bubbles and suspended particles, an
 emitter with a `Particle_Channel` `splashes`, `bubbles` or `motes`, as the `raft` scene of the
-demo has them. Station 22 of its physics gallery has a pool in its basin and a stretch of river
-down a ramp.
+demo has them. Station 22 of its physics gallery has a pool in its basin and a river that bends
+on open ground.
 
 ## Limits
 
