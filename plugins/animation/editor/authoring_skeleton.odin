@@ -45,7 +45,6 @@ Socket_Set_Params :: struct {
 
 @(private)
 authoring_skeleton_register :: proc(s:^editor.Session) {
-    inspect:=Authoring_Inspect_Params{limit=128}
     create:=authoring_skeleton_create_defaults();if create==nil {return}
     bone:=Skeleton_Bone_Set_Params{bone={rotation={0,0,0,1},scale={1,1,1}}}
     socket:=Socket_Set_Params{offset=mm.TRANSFORM_IDENTITY}
@@ -85,26 +84,19 @@ authoring_skeleton_save :: proc(s:^editor.Session,call:^api.Call,target:Authorin
 }
 
 @(private)
-authoring_skeleton_inspect :: proc(s:^editor.Session,call:^api.Call) {
-    p:=api.call_params(call,Authoring_Inspect_Params)
+authoring_skeleton_inspect :: proc(s:^editor.Session,call:^api.Call,p:^Asset_Inspect_Params,r:^Asset_Inspect_Result) {
     file:Authoring_File;defer aa.asset_close(&file.file)
     view,ok:=authoring_skeleton_open(s,call,p.asset,&file);if !ok {return}
-    out:=call.out
-    serial.text_write_raw(out,"{");authoring_result(call,p.asset,file.path)
-    api.write_uint(out,"bones_total",u64(len(view.bones)));api.write_uint(out,"sockets_total",u64(len(view.sockets)))
-    api.write_key(out,"bones");serial.text_write_raw(out,"[")
-    start:=min(int(p.offset),len(view.bones));end:=min(start+int(p.limit),len(view.bones))
-    for &bone,i in view.bones[start:end] {
-        if i>0 {serial.text_write_raw(out,",")}
-        value:=Authoring_Bone{name=bone.name,path=bone.path,position=bone.translation,rotation={bone.rotation.x,bone.rotation.y,bone.rotation.z,bone.rotation.w},scale=bone.scale}
+    base.text_set(r.path[:],file.path)
+    r.bones_total,r.sockets_total=u32(len(view.bones)),u32(len(view.sockets))
+    first:=min(int(p.offset),len(view.bones))
+    r.bones=make([]Authoring_Bone,min(first+int(p.limit),len(view.bones))-first,call.allocator)
+    for &value,i in r.bones {
+        bone:=view.bones[first+i]
+        value={name=bone.name,path=bone.path,position=bone.translation,rotation={bone.rotation.x,bone.rotation.y,bone.rotation.z,bone.rotation.w},scale=bone.scale}
         if bone.parent>=0 {value.parent=view.bones[bone.parent].path}
-        authoring_write_value(call,&value,type_info_of(Authoring_Bone))
     }
-    serial.text_write_raw(out,"]")
-    api.write_key(out,"sockets");serial.text_write_raw(out,"[")
-    start=min(int(p.offset),len(view.sockets));end=min(start+int(p.limit),len(view.sockets))
-    for &socket,i in view.sockets[start:end] {if i>0 {serial.text_write_raw(out,",")};authoring_write_value(call,&socket,type_info_of(aa.Skeleton_Socket))}
-    serial.text_write_raw(out,"]}")
+    r.sockets=authoring_page(call,view.sockets,p.offset,p.limit)
 }
 
 @(private)

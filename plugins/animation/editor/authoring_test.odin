@@ -50,7 +50,7 @@ authoring_test_register :: proc(f:^Authoring_Test,t:^testing.T,name:string,$T:ty
         {authoring_skeleton_create,Authoring_Write_Result},{authoring_bone_set,Authoring_Write_Result},{authoring_socket_set,Authoring_Write_Result},
         {authoring_action_set,Authoring_Write_Result},{authoring_pose_bake,Authoring_Write_Result},{program_blend_set,Authoring_Write_Result},
         {authoring_profile_poses,Profile_Poses_Result},{body_detect,Body_Result},{body_set,Body_Result},{clip_edit,Clip_Edit_Result},{clip_analyze,Metrics_Result},
-        {authoring_bone_add,Skeleton_Bone_Add_Result},{program_blend_sample,Blend_Sample_Result},{setup,Setup_Result},{request,Request_Result},
+        {authoring_bone_add,Skeleton_Bone_Add_Result},{program_blend_sample,Blend_Sample_Result},{setup,Setup_Result},{request,Request_Result},{asset_inspect,Asset_Inspect_Result},{instance_inspect,Instance_Inspect_Result},{preview,Preview_Result},
     }
     desc:=api.Method_Desc{name=name,params=type_info_of(T),result=type_info_of(serial.Json),writes_result=true,defaults=defaults,user=entry,handler=proc(call:^api.Call) {entry:=(^Authoring_Test_Entry)(call.user);entry.run(entry.session,call)}}
     for each in typed {
@@ -103,8 +103,8 @@ skeleton_authoring_preserves_identity_and_validates_sockets :: proc(t:^testing.T
     authoring_test_register(f,t,"create",Skeleton_Create_Params,authoring_skeleton_create)
     defaults:=Socket_Set_Params{offset=mm.TRANSFORM_IDENTITY}
     authoring_test_register(f,t,"socket",Socket_Set_Params,authoring_socket_set,&defaults)
-    inspect:=Authoring_Inspect_Params{limit=1}
-    authoring_test_register(f,t,"inspect",Authoring_Inspect_Params,authoring_skeleton_inspect,&inspect)
+    inspect:=Asset_Inspect_Params{limit=1}
+    authoring_test_register(f,t,"inspect",Asset_Inspect_Params,asset_inspect,&inspect)
     result:=authoring_test_execute(f,"create",`{"path":"rig.skeleton","bones":[{"name":"root","path":"root","position":[0,0,0],"rotation":[0,0,0,1],"scale":[1,1,1]}]}`)
     if !testing.expect_value(t,result.code,0) {return}
     id:=authoring_test_id(f,"rig.skeleton");testing.expect(t,id!={})
@@ -118,7 +118,7 @@ skeleton_authoring_preserves_identity_and_validates_sockets :: proc(t:^testing.T
     testing.expect_value(t,authoring_test_revision(f,"rig.skeleton"),changed)
     result=authoring_test_execute(f,"inspect",fmt.tprintf(`{{"asset":"%s"}}`,authoring_test_id_text(id)))
     testing.expect_value(t,result.code,0)
-    text:=string(serial.writer_bytes(&f.out));testing.expect(t,strings.contains(text,`"name": "hand"`) && strings.contains(text,`"bones_total":1`))
+    text:=api.json_compact(string(serial.writer_bytes(&f.out)));testing.expect(t,strings.contains(text,`"name":"hand"`) && strings.contains(text,`"bones_total":1`))
     result=authoring_test_execute(f,"socket",fmt.tprintf(`{{"asset":"%s","name":"hand","remove":true}}`,authoring_test_id_text(id)))
     testing.expect_value(t,result.code,0)
     f.session.mode=.Play
@@ -187,12 +187,12 @@ timeline_authoring_edits_curves_keys_markers_and_root_without_partial_writes :: 
     key_defaults:=Key_Set_Params{}
     marker_defaults:=Marker_Set_Params{}
     clip_defaults:=Clip_Set_Params{}
-    inspect:=Track_Inspect_Params{offset=1,limit=1}
+    inspect:=Asset_Inspect_Params{section=.Track,offset=1,limit=1}
     authoring_test_register(f,t,"track",Track_Set_Params,authoring_track_set,&track_defaults)
     authoring_test_register(f,t,"key",Key_Set_Params,authoring_key_set,&key_defaults)
     authoring_test_register(f,t,"marker",Marker_Set_Params,authoring_marker_set,&marker_defaults)
     authoring_test_register(f,t,"clip",Clip_Set_Params,authoring_clip_set,&clip_defaults)
-    authoring_test_register(f,t,"inspect",Track_Inspect_Params,authoring_track_inspect,&inspect)
+    authoring_test_register(f,t,"inspect",Asset_Inspect_Params,asset_inspect,&inspect)
     if !testing.expect_value(t,authoring_test_execute(f,"create",`{"path":"clip.anim","name":"walk"}`).code,0) {return}
     id:=authoring_test_id(f,"clip.anim");identity:=authoring_test_id_text(id)
     params:=fmt.tprintf(`{{"asset":"%s","clip":"walk","target":"pulse","property":"Float","keys":[{{"time":0,"value":[0,0,0,0]}},{{"time":1,"value":[1,0,0,0],"interpolation":"Cubic_Spline","tangents":true,"in_slope":[1,0,0,0],"out_slope":[1,0,0,0]}}]}}`,identity)
@@ -225,7 +225,7 @@ timeline_authoring_edits_curves_keys_markers_and_root_without_partial_writes :: 
     testing.expect_value(t,result.code,0)
     result=authoring_test_execute(f,"inspect",fmt.tprintf(`{{"asset":"%s","clip":"stride","target":"pulse","property":"Float"}}`,identity))
     testing.expect_value(t,result.code,0)
-    text:=string(serial.writer_bytes(&f.out));testing.expect(t,strings.contains(text,`"keys_total":3`) && strings.contains(text,`"interpolation": "Cubic_Spline"`))
+    text:=api.json_compact(string(serial.writer_bytes(&f.out)));testing.expect(t,strings.contains(text,`"keys_total":3`) && strings.contains(text,`"interpolation":"Cubic_Spline"`))
     file:asset.Asset
     testing.expect_value(t,authoring_test_load(f,"clip.anim",&file),asset.Error.None);defer asset.asset_close(&file)
     view,error:=asset.animation_view(&file,&f.assets.types)
@@ -252,8 +252,8 @@ pose_profile_authoring_edits_typed_rows_independently_and_rejects_invalid_values
     defaults:=Profile_Set_Params{look=anim.LOOK_CONSTRAINT_DEFAULT,limit=anim.ROTATION_CONSTRAINT_DEFAULT};profile_constraints_defaults(&defaults)
     authoring_test_register(f,t,"create",Authoring_Create_Params,authoring_profile_create)
     authoring_test_register(f,t,"set",Profile_Set_Params,authoring_profile_set,&defaults)
-    inspect:=Profile_Inspect_Params{limit=16}
-    authoring_test_register(f,t,"inspect",Profile_Inspect_Params,authoring_profile_inspect,&inspect)
+    inspect:=Asset_Inspect_Params{limit=16}
+    authoring_test_register(f,t,"inspect",Asset_Inspect_Params,asset_inspect,&inspect)
     if !testing.expect_value(t,authoring_test_execute(f,"create",`{"path":"rig.pose"}`).code,0) {return}
     id:=authoring_test_id(f,"rig.pose");identity:=authoring_test_id_text(id)
     result:=authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s","table":"Look","look":{{"bone":{{"path":"head"}},"target":{{"position":[0,0,0]}},"forward":[0,0,-1],"max_angle":1.5,"weight":0.8,"enabled":true}}}}`,identity))
@@ -264,7 +264,7 @@ pose_profile_authoring_edits_typed_rows_independently_and_rejects_invalid_values
     result=authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s","table":"Look","look":{{"bone":{{"path":"head"}},"target":{{"position":[0,0,0]}},"forward":[0,0,-1],"max_angle":1.5,"weight":-1,"enabled":true}}}}`,identity))
     testing.expect_value(t,result.code,api.INVALID_PARAMS);testing.expect_value(t,authoring_test_revision(f,"rig.pose"),revision)
     result=authoring_test_execute(f,"inspect",fmt.tprintf(`{{"asset":"%s","table":"Look"}}`,identity))
-    testing.expect_value(t,result.code,0);testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"weight": 0.8`))
+    testing.expect_value(t,result.code,0);testing.expect(t,strings.contains(api.json_compact(string(serial.writer_bytes(&f.out))),`"weight":0.8`))
     result=authoring_test_execute(f,"set",fmt.tprintf(`{{"asset":"%s","table":"Look","look":{{"bone":{{"path":"head"}},"target":{{"position":[0,0,0]}},"forward":[0,0,-1],"max_angle":1.5,"weight":0.8,"enabled":true}},"remove":true}}`,identity))
     testing.expect_value(t,result.code,0);testing.expect_value(t,authoring_test_id(f,"rig.pose"),id)
 }
@@ -293,7 +293,7 @@ curve_poses_are_made_from_the_frames_of_a_clip_and_replace_those_of_their_curves
     json=fmt.tprintf(`{{"asset":"%s","animation":"%s","clip":"poses","skeleton":"%s","poses":[{{"time":1,"curve":"jaw_open"}},{{"time":2,"curve":"rest"}}]}}`,profile,clip,skeleton)
     result:=authoring_test_execute(f,"poses",json)
     if !testing.expect(t,result.code==0,result.message) {return}
-    testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"poses": 1, "rows": 1, "still": 1`),string(serial.writer_bytes(&f.out)))
+    testing.expect(t,strings.contains(api.json_compact(string(serial.writer_bytes(&f.out))),`"poses":1,"rows":1,"still":1`),string(serial.writer_bytes(&f.out)))
     // Again: the rows of its curves are replaced, not added.
     if !testing.expect_value(t,authoring_test_execute(f,"poses",json).code,0) {return}
     file:asset.Asset;testing.expect_value(t,authoring_test_load(f,"face.pose",&file),asset.Error.None)
@@ -319,7 +319,7 @@ curve_poses_are_made_from_the_frames_of_a_clip_and_replace_those_of_their_curves
     json=fmt.tprintf(`{{"asset":"%s","animation":"%s","clip":"poses","skeleton":"%s"}}`,profile,clip,skeleton)
     result=authoring_test_execute(f,"poses",json)
     if !testing.expect(t,result.code==0,result.message) {return}
-    testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"poses": 1, "rows": 1, "drives": 1`),string(serial.writer_bytes(&f.out)))
+    testing.expect(t,strings.contains(api.json_compact(string(serial.writer_bytes(&f.out))),`"poses":1,"rows":1,"drives":1`),string(serial.writer_bytes(&f.out)))
     testing.expect_value(t,authoring_test_load(f,"face.pose",&file),asset.Error.None)
     view,error=anim.pose_profile_view(&file,&f.assets.types)
     if testing.expect(t,error==.None && len(view.curve_poses)==1 && len(view.curve_drives)==1) {
@@ -380,9 +380,9 @@ timeline_key_pages_fit_api_scratch_and_refuse_oversized_arrays :: proc(t:^testin
     f:=new(Authoring_Test);defer free(f);if !authoring_test_init(f,t,"capacity") {return};defer authoring_test_destroy(f)
     authoring_test_register(f,t,"create",Clip_Create_Params,authoring_clip_create)
     defaults:=Track_Set_Params{}
-    inspect:=Track_Inspect_Params{limit=512}
+    inspect:=Asset_Inspect_Params{section=.Track,limit=512}
     authoring_test_register(f,t,"track",Track_Set_Params,authoring_track_set,&defaults)
-    authoring_test_register(f,t,"inspect",Track_Inspect_Params,authoring_track_inspect,&inspect)
+    authoring_test_register(f,t,"inspect",Asset_Inspect_Params,asset_inspect,&inspect)
     if !testing.expect_value(t,authoring_test_execute(f,"create",`{"path":"capacity.anim","name":"curve"}`).code,0) {return}
     id:=authoring_test_id_text(authoring_test_id(f,"capacity.anim"))
     request:serial.Writer;serial.writer_init(&request);defer serial.writer_destroy(&request)
@@ -398,7 +398,7 @@ timeline_key_pages_fit_api_scratch_and_refuse_oversized_arrays :: proc(t:^testin
     json:=fmt.tprintf(`{{"asset":"%s","clip":"curve","target":"pulse","property":"Float"}}`,id)
     testing.expect_value(t,authoring_test_execute(f,"inspect",json).code,0)
     testing.expect(t,api.json_valid(context.temp_allocator,string(serial.writer_bytes(&f.out))))
-    testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"keys_total":512`))
+    testing.expect(t,strings.contains(api.json_compact(string(serial.writer_bytes(&f.out))),`"keys_total":512`))
     request.count=end
     serial.text_write_raw(&request,`,{"time":512,"value":[512,0,0,0]}]}`)
     testing.expect_value(t,authoring_test_execute(f,"track",string(serial.writer_bytes(&request))).code,api.INVALID_PARAMS)

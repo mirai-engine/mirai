@@ -25,7 +25,6 @@ Blend_Write_Params :: struct {
 Blend_Sample_Params :: struct {asset:base.Asset_Id,position:mm.Vec2 `mirai:"label=Outside the hull it projects to the nearest edge"`}
 Blend_Contribution :: struct {index:u32 `mirai:"label=The sample"`,clip:string,animation:base.Asset_Id,weight:f32}
 Blend_Sample_Result :: struct {samples:[]Blend_Contribution}
-Modifier_Inspect_Params :: struct {entity:editor.Api_Entity_Text `mirai:"text,entity"`,handle:core.Entity `mirai:"transient"`,offset:u32 `mirai:"optional"`,limit:u32 `mirai:"optional,min=1,max=256,clamp"`,diagnostics:bool `mirai:"optional"`}
 Modifier_Goal_Kind :: enum u8 {IK,Look,Contact,Grounding,Chain_IK,Spring,Multi_IK,Spline_IK,Follow}
 MODIFIER_GOAL_KINDS :: [Modifier_Goal_Kind]anim.Modifier_Kind{.IK=.IK,.Look=.Look,.Contact=.Contact,.Grounding=.Grounding,.Chain_IK=.Chain_IK,.Spring=.Spring,.Multi_IK=.Multi_IK,.Spline_IK=.Spline_IK,.Follow=.Follow}
 @(private)
@@ -41,10 +40,8 @@ program_blend_defaults :: proc() -> ^Blend_Write_Params {
 }
 @(private)
 program_register :: proc(s:^editor.Session) {
-    inspect:=Authoring_Inspect_Params{limit=128}
     blend:=program_blend_defaults()
     if blend==nil {return}
-    modifiers:=Modifier_Inspect_Params{limit=128}
     editor.api_method_register(s,{params=type_info_of(Blend_Write_Params),result=type_info_of(Authoring_Write_Result),name="animation.blend_space.set",summary="Makes or replaces a .blend: clips placed on one or two axes, its segments or triangles prepared from the samples. It plays as the space of a layer of an action set (animation.action.set): aim offsets or additive poses its axes sample, set by name. An invalid one changes nothing. In Edit.",defaults=blend,run=program_blend_set})
     editor.api_method_register(s,{params=type_info_of(Blend_Sample_Params),result=type_info_of(Blend_Sample_Result),name="animation.blend_space.sample",summary="The samples of a blend space that contribute at a position and their weights, without advancing the world.",flags={.Read_Only},run=program_blend_sample})
 }
@@ -88,27 +85,17 @@ program_match_open :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id,fil
     return profile,true
 }
 
-@(private)
-program_rows :: proc(call:^api.Call,name:string,rows:[]$T,offset,limit:u32) {
-    api.write_key(call.out,name);serial.text_write_raw(call.out,"[")
-    start:=min(int(offset),len(rows));end:=min(start+int(limit),len(rows))
-    for &row,i in rows[start:end] {
-        if i>0 {serial.text_write_raw(call.out,",")}
-        serial.text_write_raw(call.out,"{");api.write_uint(call.out,"index",u64(start+i),true);api.write_key(call.out,"value");authoring_write_value(call,&row,type_info_of(T));serial.text_write_raw(call.out,"}")
-    }
-    serial.text_write_raw(call.out,"]")
-}
 
 @(private)
-program_blend_inspect :: proc(s:^editor.Session,call:^api.Call) {
-    p:=api.call_params(call,Authoring_Inspect_Params)
+program_blend_inspect :: proc(s:^editor.Session,call:^api.Call,p:^Asset_Inspect_Params,r:^Asset_Inspect_Result) {
     file:Authoring_File;defer asset.asset_close(&file.file)
     profile,ok:=program_blend_open(s,call,p.asset,&file);if !ok {return}
-    serial.text_write_raw(call.out,"{");authoring_result(call,p.asset,file.path)
-    api.write_key(call.out,"info");authoring_write_value(call,&profile.info,type_info_of(anim.Blend_Info))
-    api.write_uint(call.out,"samples_total",u64(len(profile.samples)));api.write_uint(call.out,"segments_total",u64(len(profile.segments)));api.write_uint(call.out,"triangles_total",u64(len(profile.triangles)))
-    program_rows(call,"samples",profile.samples,p.offset,p.limit);program_rows(call,"segments",profile.segments,p.offset,p.limit);program_rows(call,"triangles",profile.triangles,p.offset,p.limit)
-    serial.text_write_raw(call.out,"}")
+    base.text_set(r.path[:],file.path)
+    r.info=profile.info
+    r.samples_total,r.segments_total,r.triangles_total=u32(len(profile.samples)),u32(len(profile.segments)),u32(len(profile.triangles))
+    r.samples=authoring_pages(call,profile.samples,p.offset,p.limit,anim.Blend_Sample)
+    r.segments=authoring_pages(call,profile.segments,p.offset,p.limit,lib.Blend_Segment)
+    r.triangles=authoring_pages(call,profile.triangles,p.offset,p.limit,lib.Blend_Triangle)
 }
 
 @(private)
@@ -287,9 +274,7 @@ program_grounding_diagnostic :: proc(world:core.World_Ref,entity:core.Entity,slo
 }
 
 @(private)
-program_modifier_inspect :: proc(s:^editor.Session,call:^api.Call) {
-    p:=api.call_params(call,Modifier_Inspect_Params)
-    world,entity,ok:=subject(s,call,p.entity[:],p.handle);if !ok {return}
+program_modifier_inspect :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity:core.Entity,p:^Instance_Inspect_Params) -> (r:Instance_Modifiers) {
     config,present:=editor.entity_get(world,entity,anim.Pose_Modifiers)
     file:Authoring_File;defer asset.asset_close(&file.file)
     retarget_file:Authoring_File;defer asset.asset_close(&retarget_file.file)
@@ -301,15 +286,14 @@ program_modifier_inspect :: proc(s:^editor.Session,call:^api.Call) {
     if !present && (!animated || animation.retarget=={}) {authoring_failure(call,"entity","Missing_Profile","Pose_Modifiers or Animation.retarget","none","The entity has no rig operation profile");return}
     runtime:=core.world_storage_of(world,anim.Modifier_Runtime)
     total:=0;for kind in anim.Modifier_Kind {total+=program_modifier_count(profile,kind)}
-    serial.text_write_raw(call.out,"{");api.write_key(call.out,"id",true);api.write_id(call.out,editor.api_entity_id(world,entity))
-    api.write_key(call.out,"profile");serial.write_u8(call.out,'"');serial.text_write_asset_id(call.out,config.profile);serial.write_u8(call.out,'"')
-    api.write_key(call.out,"retarget_profile");serial.write_u8(call.out,'"');serial.text_write_asset_id(call.out,animation.retarget);serial.write_u8(call.out,'"')
-    api.write_uint(call.out,"total",u64(total));api.write_key(call.out,"last_request_error");request_error:=anim.modifier_request_error(runtime,entity);authoring_write_value(call,&request_error,type_info_of(anim.Modifier_Request_Error));api.write_key(call.out,"modifiers");serial.text_write_raw(call.out,"[")
-    offset,written:=0,0
+    r.id,r.profile,r.retarget_profile,r.total=editor.api_entity_id(world,entity),config.profile,animation.retarget,u32(total)
+    r.last_request_error=anim.modifier_request_error(runtime,entity)
+    rows:=make([dynamic]Instance_Modifier,call.allocator)
+    offset:=0
     for kind in anim.Modifier_Kind {
         for slot in 0..<program_modifier_count(profile,kind) {
             index:=offset;offset+=1
-            if index<int(p.offset) || written>=int(p.limit) {continue}
+            if index<int(p.offset) || len(rows)>=int(p.limit) {continue}
             definition,_:=program_modifier_definition(profile,kind,u16(slot));weight,enabled:=definition.weight,definition.enabled
             if kind!=.Chain_Retarget {weight*=config.weight;enabled &&=config.enabled}
             alpha,target:f32=1,1;requested:=true;remaining:f32
@@ -317,28 +301,29 @@ program_modifier_inspect :: proc(s:^editor.Session,call:^api.Call) {
                 weight,enabled=state.base_weight*state.weight,state.base_enabled && (state.enabled || state.weight>0)
                 alpha,target,requested,remaining=state.weight,state.target,state.enabled,max(0,state.duration-state.elapsed)
             }
-            if written>0 {serial.text_write_raw(call.out,",")};written+=1
-            tag:=kind
-            serial.text_write_raw(call.out,"{");api.write_key(call.out,"kind",true);authoring_write_value(call,&tag,type_info_of(anim.Modifier_Kind))
-            api.write_text(call.out,"name",base.text_get(definition.name[:]))
             selected:=&retarget_file if kind==.Chain_Retarget else &file
-            api.write_key(call.out,"profile");serial.write_u8(call.out,'"');serial.text_write_asset_id(call.out,selected.file.blob.header.id);serial.write_u8(call.out,'"')
-            api.write_key(call.out,"weight");api.write_number(call.out,weight);api.write_bool(call.out,"enabled",enabled)
+            row:=Instance_Modifier{kind=kind,profile=selected.file.blob.header.id,weight=weight,enabled=enabled}
+            base.text_set(row.name[:],base.text_get(definition.name[:]))
             if p.diagnostics {
-                api.write_key(call.out,"alpha");api.write_number(call.out,alpha);api.write_key(call.out,"target_alpha");api.write_number(call.out,target);api.write_bool(call.out,"requested_enabled",requested);api.write_key(call.out,"fade_remaining");api.write_number(call.out,remaining)
+                row.alpha,row.target_alpha,row.requested_enabled,row.fade_remaining=alpha,target,requested,remaining
                 diagnostic,_:=anim.animation_rig_diagnostic(runtime,entity,kind,u16(slot),core.world_storage_of(world,anim.Animation_Constraints))
-                result:=Modifier_Diagnostic_Result{valid=diagnostic.valid,reached=diagnostic.reached,residual=diagnostic.residual,angular_error=diagnostic.angular_error,iterations=diagnostic.iterations}
-                if kind==.Grounding {result=program_grounding_diagnostic(world,entity,u16(slot),profile.grounding[slot])}
-                api.write_key(call.out,"diagnostic");authoring_write_value(call,&result,type_info_of(Modifier_Diagnostic_Result))
+                row.diagnostic={valid=diagnostic.valid,reached=diagnostic.reached,residual=diagnostic.residual,angular_error=diagnostic.angular_error,iterations=diagnostic.iterations}
+                if kind==.Grounding {row.diagnostic=program_grounding_diagnostic(world,entity,u16(slot),profile.grounding[slot])}
             }
-            api.write_key(call.out,"effectors");serial.write_u8(call.out,'[')
-            if kind==.Multi_IK {for &effector,e in profile.multi_ik[slot].effectors[:profile.multi_ik[slot].effector_count] {if e>0 {serial.write_u8(call.out,',')};item:=Modifier_Effector_Result{effector.name};authoring_write_value(call,&item,type_info_of(Modifier_Effector_Result))}}
-            if kind==.Spline_IK {for name,e in anim.SPLINE_CONTROLS {if e>0 {serial.write_u8(call.out,',')};item:Modifier_Effector_Result;base.text_set(item.name[:],name);authoring_write_value(call,&item,type_info_of(Modifier_Effector_Result))}}
-            serial.write_u8(call.out,']')
-            serial.text_write_raw(call.out,"}")
+            if kind==.Multi_IK {
+                multi:=&profile.multi_ik[slot]
+                row.effectors=make([]Modifier_Effector_Result,multi.effector_count,call.allocator)
+                for &item,e in row.effectors {item.name=multi.effectors[e].name}
+            }
+            if kind==.Spline_IK {
+                row.effectors=make([]Modifier_Effector_Result,len(anim.SPLINE_CONTROLS),call.allocator)
+                controls:=anim.SPLINE_CONTROLS;for &item,e in row.effectors {base.text_set(item.name[:],controls[e])}
+            }
+            append(&rows,row)
         }
     }
-    serial.text_write_raw(call.out,"]}")
+    r.modifiers=rows[:]
+    return
 }
 
 

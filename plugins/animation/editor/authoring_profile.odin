@@ -10,19 +10,6 @@ import anim "plugins:animation/runtime"
 
 Profile_Table :: enum u8 {IK,Look,Limit,Contact,Grounding,Retarget,Chain_IK,Twist,Spring,Multi_IK,Chain_Retarget,Spline_IK,Corrective,Follow,Curve_Pose,Curve_Drive,Curve_Material}
 Profile_Counts :: struct {IK,Look,Limit,Contact,Grounding,Retarget,Chain_IK,Twist,Spring,Multi_IK,Chain_Retarget,Spline_IK,Corrective,Follow,Curve_Pose,Curve_Drive,Curve_Material:u32}
-Profile_Inspect_Result :: struct {
-    asset:base.Asset_Id,path:[1024]u8 `mirai:"text"`,table:Profile_Table,counts:Profile_Counts,
-    ik:[256]Authoring_Page(anim.IK_Constraint),look:[256]Authoring_Page(anim.Look_Constraint),limits:[256]Authoring_Page(anim.Rotation_Constraint),contacts:[256]Authoring_Page(anim.Foot_Contact_Constraint),grounding:[1]Authoring_Page(Profile_Grounding_Params),retarget:[256]Authoring_Page(anim.Retarget_Mapping),
-    chain_ik:[256]Authoring_Page(Profile_Chain_Params),twist:[256]Authoring_Page(Profile_Twist_Params),springs:[256]Authoring_Page(Profile_Spring_Params),multi_ik:[256]Authoring_Page(Profile_Multi_Params),retarget_chains:[256]Authoring_Page(anim.Chain_Retarget_Constraint),
-    spline_ik:[256]Authoring_Page(Profile_Spline_Params),correctives:[256]Authoring_Page(Profile_Corrective_Params),follow:[256]Authoring_Page(Profile_Follow_Params),
-    curve_poses:[256]Authoring_Page(anim.Curve_Pose),curve_drives:[256]Authoring_Page(anim.Curve_Drive),curve_materials:[256]Authoring_Page(anim.Curve_Material),
-}
-Profile_Inspect_Params :: struct {
-    asset:base.Asset_Id,
-    table:Profile_Table,
-    offset:u32 `mirai:"optional"`,
-    limit:u32 `mirai:"optional,min=1,max=256,clamp"`,
-}
 Profile_Set_Params :: struct {
     asset:base.Asset_Id,
     table:Profile_Table `mirai:"label=The table; the field named after it holds the value and the lengths of its arrays are its counts. A row with the key of that value is replaced or removed and otherwise appended: end for IK and Contact; bone for Look and Limit; name for the tables that name rows; target_bone and mode for Retarget; curve and bone for Curve_Pose; from with and to for Curve_Drive; curve parameter and slot for Curve_Material; Grounding is the one rig. A table holds 256 rows; Curve_Pose, Curve_Drive and Curve_Material 4096; Grounding one rig of up to 16 legs"`,
@@ -49,7 +36,6 @@ Profile_Set_Params :: struct {
 
 @(private)
 authoring_profile_register :: proc(s:^editor.Session) {
-    inspect:=Profile_Inspect_Params{limit=128}
     set:=new(Profile_Set_Params,context.temp_allocator);if set==nil {return}
     set.ik,set.look,set.limit,set.contact=anim.IK_CONSTRAINT_DEFAULT,anim.LOOK_CONSTRAINT_DEFAULT,anim.ROTATION_CONSTRAINT_DEFAULT,anim.FOOT_CONTACT_CONSTRAINT_DEFAULT
     set.retarget,set.retarget_chain=anim.RETARGET_MAPPING_DEFAULT,anim.CHAIN_RETARGET_CONSTRAINT_DEFAULT;profile_constraints_defaults(set)
@@ -71,33 +57,32 @@ authoring_profile_open :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id
 }
 
 @(private)
-authoring_profile_inspect :: proc(s:^editor.Session,call:^api.Call) {
-    p:=api.call_params(call,Profile_Inspect_Params)
+authoring_profile_inspect :: proc(s:^editor.Session,call:^api.Call,p:^Asset_Inspect_Params,r:^Asset_Inspect_Result) {
     file:Authoring_File;defer asset.asset_close(&file.file)
     profile,ok:=authoring_profile_open(s,call,p.asset,&file);if !ok {return}
-    out:=call.out
-    serial.text_write_raw(out,"{");authoring_result(call,p.asset,file.path)
-    api.write_key(out,"counts");serial.text_write_raw(out,"{")
-    api.write_uint(out,"IK",u64(len(profile.ik)),true);api.write_uint(out,"Look",u64(len(profile.look)));api.write_uint(out,"Limit",u64(len(profile.limits)));api.write_uint(out,"Contact",u64(len(profile.contacts)));api.write_uint(out,"Grounding",u64(len(profile.grounding)));api.write_uint(out,"Retarget",u64(len(profile.retarget)));api.write_uint(out,"Chain_IK",u64(len(profile.chain_ik)));api.write_uint(out,"Twist",u64(len(profile.twist)));api.write_uint(out,"Spring",u64(len(profile.springs)));api.write_uint(out,"Multi_IK",u64(len(profile.multi_ik)));api.write_uint(out,"Chain_Retarget",u64(len(profile.retarget_chains)));api.write_uint(out,"Spline_IK",u64(len(profile.spline_ik)));api.write_uint(out,"Corrective",u64(len(profile.correctives)));api.write_uint(out,"Follow",u64(len(profile.follow)));api.write_uint(out,"Curve_Pose",u64(len(profile.curve_poses)));api.write_uint(out,"Curve_Drive",u64(len(profile.curve_drives)));api.write_uint(out,"Curve_Material",u64(len(profile.curve_materials)));serial.text_write_raw(out,"}")
-    api.write_key(out,"table");authoring_write_value(call,&p.table,type_info_of(Profile_Table))
-    program_rows(call,"ik",profile.ik if p.table==.IK else nil,p.offset,p.limit)
-    program_rows(call,"look",profile.look if p.table==.Look else nil,p.offset,p.limit)
-    program_rows(call,"limits",profile.limits if p.table==.Limit else nil,p.offset,p.limit)
-    program_rows(call,"contacts",profile.contacts if p.table==.Contact else nil,p.offset,p.limit)
-    profile_constraint_rows(call,"grounding",profile.grounding if p.table==.Grounding else nil,p.offset,p.limit)
-    program_rows(call,"retarget",profile.retarget if p.table==.Retarget else nil,p.offset,p.limit)
-    profile_constraint_rows(call,"chain_ik",profile.chain_ik if p.table==.Chain_IK else nil,p.offset,p.limit)
-    profile_constraint_rows(call,"twist",profile.twist if p.table==.Twist else nil,p.offset,p.limit)
-    profile_constraint_rows(call,"springs",profile.springs if p.table==.Spring else nil,p.offset,p.limit)
-    profile_constraint_rows(call,"multi_ik",profile.multi_ik if p.table==.Multi_IK else nil,p.offset,p.limit)
-    program_rows(call,"retarget_chains",profile.retarget_chains if p.table==.Chain_Retarget else nil,p.offset,p.limit)
-    profile_constraint_rows(call,"spline_ik",profile.spline_ik if p.table==.Spline_IK else nil,p.offset,p.limit)
-    profile_constraint_rows(call,"correctives",profile.correctives if p.table==.Corrective else nil,p.offset,p.limit)
-    profile_constraint_rows(call,"follow",profile.follow if p.table==.Follow else nil,p.offset,p.limit)
-    program_rows(call,"curve_poses",profile.curve_poses if p.table==.Curve_Pose else nil,p.offset,p.limit)
-    program_rows(call,"curve_drives",profile.curve_drives if p.table==.Curve_Drive else nil,p.offset,p.limit)
-    program_rows(call,"curve_materials",profile.curve_materials if p.table==.Curve_Material else nil,p.offset,p.limit)
-    serial.text_write_raw(out,"}")
+    base.text_set(r.path[:],file.path)
+    r.table=p.table
+    r.counts={u32(len(profile.ik)),u32(len(profile.look)),u32(len(profile.limits)),u32(len(profile.contacts)),u32(len(profile.grounding)),u32(len(profile.retarget)),u32(len(profile.chain_ik)),u32(len(profile.twist)),u32(len(profile.springs)),u32(len(profile.multi_ik)),u32(len(profile.retarget_chains)),u32(len(profile.spline_ik)),u32(len(profile.correctives)),u32(len(profile.follow)),u32(len(profile.curve_poses)),u32(len(profile.curve_drives)),u32(len(profile.curve_materials))}
+    o,l:=p.offset,p.limit
+    switch p.table {
+    case .IK: r.ik=authoring_pages(call,profile.ik,o,l,anim.IK_Constraint)
+    case .Look: r.look=authoring_pages(call,profile.look,o,l,anim.Look_Constraint)
+    case .Limit: r.limits=authoring_pages(call,profile.limits,o,l,anim.Rotation_Constraint)
+    case .Contact: r.contacts=authoring_pages(call,profile.contacts,o,l,anim.Foot_Contact_Constraint)
+    case .Grounding: r.grounding=authoring_pages(call,profile.grounding,o,l,Profile_Grounding_Params)
+    case .Retarget: r.retarget=authoring_pages(call,profile.retarget,o,l,anim.Retarget_Mapping)
+    case .Chain_IK: r.chain_ik=authoring_pages(call,profile.chain_ik,o,l,Profile_Chain_Params)
+    case .Twist: r.twist=authoring_pages(call,profile.twist,o,l,Profile_Twist_Params)
+    case .Spring: r.springs=authoring_pages(call,profile.springs,o,l,Profile_Spring_Params)
+    case .Multi_IK: r.multi_ik=authoring_pages(call,profile.multi_ik,o,l,Profile_Multi_Params)
+    case .Chain_Retarget: r.retarget_chains=authoring_pages(call,profile.retarget_chains,o,l,anim.Chain_Retarget_Constraint)
+    case .Spline_IK: r.spline_ik=authoring_pages(call,profile.spline_ik,o,l,Profile_Spline_Params)
+    case .Corrective: r.correctives=authoring_pages(call,profile.correctives,o,l,Profile_Corrective_Params)
+    case .Follow: r.follow=authoring_pages(call,profile.follow,o,l,Profile_Follow_Params)
+    case .Curve_Pose: r.curve_poses=authoring_pages(call,profile.curve_poses,o,l,anim.Curve_Pose)
+    case .Curve_Drive: r.curve_drives=authoring_pages(call,profile.curve_drives,o,l,anim.Curve_Drive)
+    case .Curve_Material: r.curve_materials=authoring_pages(call,profile.curve_materials,o,l,anim.Curve_Material)
+    }
 }
 
 // rows with value in the place of the row with its key, or after them; with

@@ -43,7 +43,7 @@ action_write_defaults :: proc() -> ^Action_Write_Params {
     return defaults
 }
 authoring_actions_register :: proc(s:^editor.Session) {
-    defaults:=action_write_defaults();inspect:=Authoring_Inspect_Params{limit=64}
+    defaults:=action_write_defaults()
     editor.api_method_register(s,{params=type_info_of(Action_Write_Params),result=type_info_of(Authoring_Write_Result),name="animation.action.set",summary="Makes or replaces an .action set that entities share: the stack of layers over their base (a clip or the aim offsets of a .blend each, over a branch or the whole body, replacing or adding) and the named actions of clips with their layer, priorities, cancel policies, entry and exit, sections and gameplay windows. In Edit.",defaults=defaults,run=authoring_action_set})
 }
 @(private)
@@ -131,17 +131,21 @@ authoring_action_set :: proc(s:^editor.Session,call:^api.Call) {
     if anim.action_profile_document(&doc,&s.app.assets.types,id,profile,call.allocator)!=.None {authoring_failure(call,"definition","Invalid_Profile","a serializable action profile","invalid","The action profile could not be serialized");return};defer asset.document_destroy(&doc)
     _=authoring_publish(s,call,file,&doc,api.call_result(call,Authoring_Write_Result))
 }
-authoring_action_profile_inspect :: proc(s:^editor.Session,call:^api.Call) {
-    p:=api.call_params(call,Authoring_Inspect_Params);file:Authoring_File;defer asset.asset_close(&file.file)
+@(private)
+authoring_action_profile_inspect :: proc(s:^editor.Session,call:^api.Call,p:^Asset_Inspect_Params,r:^Asset_Inspect_Result) {
+    file:Authoring_File;defer asset.asset_close(&file.file)
     profile,ok:=action_authoring_open(s,call,p.asset,&file);if !ok {return}
-    sections:=make([]Action_Section_Params,len(profile.sections),call.allocator);windows:=make([]Action_Window_Params,len(profile.windows),call.allocator)
+    sections:=make([]Action_Section_Params,len(profile.sections),call.allocator);windows:=make([]Asset_Window,len(profile.windows),call.allocator)
     if len(profile.sections)>0 && sections==nil || len(profile.windows)>0 && windows==nil {authoring_failure(call,"definition","Out_Of_Memory","memory for named action sections and windows","allocation failed","The action profile could not be inspected",api.SERVER_ERROR);return}
     for section,i in profile.sections {sections[i]={action=profile.actions[section.action].name,name=section.name,start=section.start,end=section.end};if section.next>=0 {sections[i].next=profile.sections[section.next].name}}
     for window,i in profile.windows {windows[i]={action=profile.actions[window.action].name,name=window.name,start=window.start,end=window.end}}
-    out:=call.out;serial.text_write_raw(out,"{");authoring_result(call,p.asset,file.path)
-    api.write_key(out,"animation");serial.write_u8(out,'"');serial.text_write_asset_id(out,profile.info.animation);serial.write_u8(out,'"');api.write_int(out,"layers_total",i64(len(profile.layers)));api.write_int(out,"actions_total",i64(len(profile.actions)));api.write_int(out,"sections_total",i64(len(sections)));api.write_int(out,"windows_total",i64(len(windows)))
-    program_rows(call,"layers",profile.layers,p.offset,p.limit);program_rows(call,"actions",profile.actions,p.offset,p.limit);program_rows(call,"sections",sections,p.offset,p.limit);program_rows(call,"windows",windows,p.offset,p.limit)
-    serial.text_write_raw(out,"}");
+    base.text_set(r.path[:],file.path)
+    r.animation=profile.info.animation
+    r.layers_total,r.actions_total,r.sections_total,r.windows_total=u32(len(profile.layers)),u32(len(profile.actions)),u32(len(sections)),u32(len(windows))
+    r.layers=authoring_pages(call,profile.layers,p.offset,p.limit,anim.Stack_Layer)
+    r.actions=authoring_pages(call,profile.actions,p.offset,p.limit,anim.Action_Definition)
+    r.sections=authoring_pages(call,sections,p.offset,p.limit,Action_Section_Params)
+    r.windows=authoring_pages(call,windows,p.offset,p.limit,Asset_Window)
 }
 // Whether an action can be asked of the Animation: one with root motion not of one that follows a source.
 @(private)
@@ -151,10 +155,9 @@ action_control_policy :: proc(call:^api.Call,definition:anim.Action_Definition,d
 }
 // The events of the tick of an entity, from Animation_Events: those of its actions, or with markers all.
 @(private)
-action_events_write :: proc(call:^api.Call,world:core.World_Ref,entity:core.Entity,set:base.Asset_Id,markers:bool) {
-    out:=call.out;written:=0
+action_events :: proc(call:^api.Call,world:core.World_Ref,entity:core.Entity,set:base.Asset_Id,markers:bool) -> []Action_Event_Result {
+    rows:=make([dynamic]Action_Event_Result,call.allocator)
     events:=core.world_storage_of(world,anim.Animation_Events);runtime:=core.world_storage_of(world,anim.Action_Runtime)
-    serial.text_write_raw(out,"[")
     if events!=nil {for event in events.items {
         if event.entity!=entity || event.kind==.Marker && !markers {continue}
         value:=Action_Event_Result{kind=event.kind,time=event.time,weight=event.weight}
@@ -164,30 +167,28 @@ action_events_write :: proc(call:^api.Call,world:core.World_Ref,entity:core.Enti
             for &section in plan.profile.sections {if base.name_hash(base.text_get(section.name[:]))==event.name && event.kind!=.Span_Begin && event.kind!=.Span_End {value.name=section.name}}
             for &window in plan.profile.windows {if base.name_hash(base.text_get(window.name[:]))==event.name && (event.kind==.Span_Begin || event.kind==.Span_End) {value.name=window.name}}
         }}
-        if written>0 {serial.text_write_raw(out,",")};written+=1;authoring_write_value(call,&value,type_info_of(Action_Event_Result))
+        append(&rows,value)
     }}
-    serial.text_write_raw(out,"]")
+    return rows[:]
 }
-authoring_action_inspect :: proc(s:^editor.Session,call:^api.Call) {
-    p:=api.call_params(call,Entity_Params);w,e,ok:=subject(s,call,p.entity[:],p.handle);if !ok {return}
+@(private)
+authoring_action_inspect :: proc(s:^editor.Session,call:^api.Call,w:core.World_Ref,e:core.Entity) -> (r:Instance_Actions) {
     description,present:=editor.entity_get(w,e,anim.Animation);if !present {authoring_failure(call,"entity","Missing_Component","an Animation component","none","The entity has no Animation component");return}
     runtime:=core.world_storage_of(w,anim.Action_Runtime);playback:=core.world_storage_of(w,anim.Playback)
-    out:=call.out;serial.text_write_raw(out,"{");api.write_key(out,"id",true);api.write_id(out,editor.api_entity_id(w,e));api.write_key(out,"profile");serial.write_u8(out,'"');serial.text_write_asset_id(out,description.actions);serial.write_u8(out,'"')
-    problems:[PREVIEW_PROBLEMS]Problem_Result
-    shown,_:=entity_problems(s.app,w,e,"animation.action",problems[:])
-    serial.text_write_raw(out,",\"problems\":[")
-    for &problem,i in problems[:shown] {if i>0 {serial.write_u8(out,',')};authoring_write_value(call,&problem,type_info_of(Problem_Result))}
-    serial.text_write_raw(out,"],\"parameters\":[")
-    parameters:[anim.STACK_PARAMETERS*2]anim.Stack_Parameter_Info
+    r.id,r.profile=editor.api_entity_id(w,e),description.actions
+    problems:=make([]Problem_Result,PREVIEW_PROBLEMS,call.allocator)
+    shown,_:=entity_problems(s.app,w,e,"animation.action",problems)
+    r.problems=problems[:shown]
+    parameters:=make([]anim.Stack_Parameter_Info,anim.STACK_PARAMETERS*2,call.allocator)
     blends:=core.world_storage_of(core.world_ref(s.app.shared,s.info,.Shared),anim.Blend_Assets)
-    for &parameter,i in parameters[:anim.stack_parameters(runtime,blends,playback,e,parameters[:])] {if i>0 {serial.write_u8(out,',')};authoring_write_value(call,&parameter,type_info_of(anim.Stack_Parameter_Info))}
-    serial.text_write_raw(out,"],\"playing\":[");written:=0
+    r.parameters=parameters[:anim.stack_parameters(runtime,blends,playback,e,parameters)]
+    playing:=make([dynamic]Action_Playing_Result,call.allocator)
     if runtime!=nil {for &state in runtime.states {if state.entity!=e || state.plan<0 || int(state.plan)>=len(runtime.plans) {continue};profile:=runtime.plans[state.plan].profile
         for slot,i in state.slots {if !slot.active {continue};definition:=profile.actions[slot.action];value:=Action_Playing_Result{name=definition.name,layer=definition.layer,time=slot.time,finishing=slot.finishing,root_motion=definition.root_motion};if slot.section>=0 {value.section=profile.sections[slot.section].name}
             if playback!=nil {for played in playback.states {if played.entity==e {value.weight=1 if slot.injected else played.layers[i].weight;break}}}
-            if written>0 {serial.text_write_raw(out,",")};written+=1;authoring_write_value(call,&value,type_info_of(type_of(value)))
+            append(&playing,value)
         }
     }}
-    serial.text_write_raw(out,"],\"events\":");action_events_write(call,w,e,description.actions,false)
-    serial.text_write_raw(out,"}");
+    r.playing,r.events=playing[:],action_events(call,w,e,description.actions,false)
+    return
 }

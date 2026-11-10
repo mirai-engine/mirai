@@ -54,8 +54,6 @@ API_HAND_WRITTEN :: [?]struct{file,pattern:string,count:int}{
     {"editor/api_scene.odin","writes_result=true",3},
     {"editor/api_viewport.odin","writes_result=true",2},
     {"editor/input_settings.odin","writes_result=true",2},
-    {"plugins/animation/editor/api.odin","writes_result=true",1},
-    {"plugins/animation/editor/inspect.odin","writes_result=true",2},
     {"plugins/playtest/editor/explore.odin","writes_result=true",1},
     {"plugins/playtest/editor/observe.odin","writes_result=true",1},
     {"plugins/playtest/editor/qa.odin","writes_result=true",1},
@@ -73,7 +71,7 @@ API_HAND_WRITTEN :: [?]struct{file,pattern:string,count:int}{
 @(test)
 methods_are_described_read_and_written_by_their_structs :: proc(t:^testing.T) {
     root,_:=filepath.join({#directory,".."},context.temp_allocator)
-    patterns:=[?]string{"writes_result=true","rpc_init(","result=serial.Json,","params_schema=","result_schema="}
+    patterns:=[?]string{"writes_result=true","rpc_init(","result=type_info_of(serial.Json)","params_schema=","result_schema="}
     files:=make([dynamic]string,context.temp_allocator)
     walk :: proc(folder:string,files:^[dynamic]string) {
         entries,error:=os.read_all_directory_by_path(folder,context.temp_allocator)

@@ -37,12 +37,6 @@ AUTHORING_TIME_EPSILON :: 1e-4
 authoring_keyframe :: proc(value:Authoring_Keyframe) -> lib.Keyframe {
     return {time=value.time,value=value.value,ease=value.ease,interpolation=value.interpolation,tangents=value.tangents,in_slope=value.in_slope,out_slope=value.out_slope}
 }
-Clip_Inspect_Params :: struct {
-    asset:base.Asset_Id,
-    clip:[64]u8 `mirai:"text,optional,label=Clip name; empty selects the first clip"`,
-    offset:u32 `mirai:"optional"`,
-    limit:u32 `mirai:"optional,min=1,max=256,clamp"`,
-}
 Clip_Create_Params :: struct {
     path:[1024]u8 `mirai:"text,label=An .anim: the clip goes after those of what is there"`,
     name:[64]u8 `mirai:"text"`,
@@ -54,15 +48,6 @@ Clip_Set_Params :: struct {
     name:[64]u8 `mirai:"text,label=New clip name"`,
     root:aa.Animation_Root,
     dry_run:bool `mirai:"optional,label=Validates and answers without writing"`,
-}
-Track_Inspect_Params :: struct {
-    asset:base.Asset_Id,
-    clip:[64]u8 `mirai:"text"`,
-    target:[aa.NODE_PATH_CAPACITY]u8 `mirai:"text,label=Canonical bone or rigid-node path; scalar curve name for Float/Vector"`,
-    property:lib.Property,
-    slot:u8 `mirai:"optional"`,
-    offset:u32 `mirai:"optional"`,
-    limit:u32 `mirai:"optional,min=1,max=512,clamp"`,
 }
 Track_Set_Params :: struct {
     asset:base.Asset_Id,
@@ -99,8 +84,6 @@ Marker_Set_Params :: struct {
 
 @(private)
 authoring_clip_register :: proc(s:^editor.Session) {
-    inspect:=Clip_Inspect_Params{limit=128}
-    track:=Track_Inspect_Params{limit=128}
     editor.api_method_register(s,{params=type_info_of(Clip_Create_Params),result=type_info_of(Authoring_Write_Result),name="animation.clip.create",summary="Creates an empty named clip in a new .anim or after the clips of an existing one. One step of undo.",run=authoring_clip_create})
     editor.api_method_register(s,{params=type_info_of(Clip_Set_Params),result=type_info_of(Authoring_Write_Result),name="animation.clip.set",summary="Renames a clip and replaces its root motion; its tracks and markers stay.",run=authoring_clip_set})
     editor.api_method_register(s,{params=type_info_of(Track_Set_Params),result=type_info_of(Authoring_Write_Result),name="animation.track.set",summary="Creates, replaces or removes the track of a clip found by target, property and slot.",run=authoring_track_set})
@@ -150,36 +133,21 @@ authoring_clip_save :: proc(s:^editor.Session,call:^api.Call,target:Authoring_Fi
 }
 
 @(private)
-authoring_clip_inspect :: proc(s:^editor.Session,call:^api.Call) {
-    p:=api.call_params(call,Clip_Inspect_Params)
+authoring_clip_inspect :: proc(s:^editor.Session,call:^api.Call,p:^Asset_Inspect_Params,r:^Asset_Inspect_Result) {
     file:Authoring_File;defer aa.asset_close(&file.file)
     view,ok:=authoring_clip_open(s,call,p.asset,&file);if !ok {return}
     selected,found:=authoring_clip_index(call,view,base.text_get(p.clip[:]));if !found {return}
-    out:=call.out
-    serial.text_write_raw(out,"{");authoring_result(call,p.asset,file.path)
-    api.write_key(out,"clips");serial.text_write_raw(out,"[")
-    for &clip,i in view.clips {if i>0 {serial.text_write_raw(out,",")};serial.text_write_raw(out,"{");api.write_text(out,"name",base.text_get(clip.name[:]),true);serial.write_u8(out,'}')}
-    serial.text_write_raw(out,"]")
+    base.text_set(r.path[:],file.path)
+    r.clips=make([]Asset_Clip_Name,len(view.clips),call.allocator)
+    for &clip,i in r.clips {clip.name=view.clips[i].name}
     clip:=view.clips[selected]
-    api.write_text(out,"clip",base.text_get(clip.name[:]))
-    api.write_key(out,"root");authoring_write_value(call,&clip.root,type_info_of(aa.Animation_Root))
+    r.clip,r.root=clip.name,clip.root
     tracks:=view.tracks[clip.first_track:][:clip.track_count]
-    api.write_uint(out,"tracks_total",u64(len(tracks)))
-    api.write_key(out,"tracks");serial.text_write_raw(out,"[")
-    start:=min(int(p.offset),len(tracks));end:=min(start+int(p.limit),len(tracks))
-    for &track,i in tracks[start:end] {
-        if i>0 {serial.text_write_raw(out,",")}
-        serial.text_write_raw(out,"{");api.write_text(out,"target",base.text_get(track.target[:]),true)
-        api.write_key(out,"property");authoring_write_value(call,&track.property,type_info_of(lib.Property))
-        api.write_uint(out,"slot",u64(track.slot));api.write_uint(out,"keys_total",u64(track.key_count));serial.text_write_raw(out,"}")
-    }
-    serial.text_write_raw(out,"]")
+    first:=min(int(p.offset),len(tracks))
+    r.tracks_total,r.tracks=u32(len(tracks)),make([]Asset_Clip_Track,min(first+int(p.limit),len(tracks))-first,call.allocator)
+    for &row,i in r.tracks {track:=tracks[first+i];row={target=track.target,property=track.property,slot=track.slot,keys_total=u32(track.key_count)}}
     markers:=view.markers[clip.first_marker:][:clip.marker_count]
-    api.write_uint(out,"markers_total",u64(len(markers)))
-    api.write_key(out,"markers");serial.text_write_raw(out,"[")
-    start=min(int(p.offset),len(markers));end=min(start+int(p.limit),len(markers))
-    for &marker,i in markers[start:end] {if i>0 {serial.text_write_raw(out,",")};authoring_write_value(call,&marker,type_info_of(aa.Animation_Marker))}
-    serial.text_write_raw(out,"]}")
+    r.markers_total,r.markers=u32(len(markers)),authoring_page(call,markers,p.offset,p.limit)
 }
 
 @(private)
@@ -214,8 +182,7 @@ authoring_clip_set :: proc(s:^editor.Session,call:^api.Call) {
 }
 
 @(private)
-authoring_track_inspect :: proc(s:^editor.Session,call:^api.Call) {
-    p:=api.call_params(call,Track_Inspect_Params)
+authoring_track_inspect :: proc(s:^editor.Session,call:^api.Call,p:^Asset_Inspect_Params,r:^Asset_Inspect_Result) {
     file:Authoring_File;defer aa.asset_close(&file.file)
     view,ok:=authoring_clip_open(s,call,p.asset,&file);if !ok {return}
     index,found:=authoring_clip_index(call,view,base.text_get(p.clip[:]));if !found {return}
@@ -225,15 +192,9 @@ authoring_track_inspect :: proc(s:^editor.Session,call:^api.Call) {
     if selected<0 {authoring_failure(call,"target","Missing_Track","a track of the clip by target, property and slot",base.text_get(p.target[:]),"The clip has no such track",fix="animation.asset.inspect of the clip lists its tracks");return}
     track:=view.tracks[clip.first_track+u32(selected)]
     keys:=view.keys[track.first_key:][:track.key_count]
-    out:=call.out
-    serial.text_write_raw(out,"{");authoring_result(call,p.asset,file.path)
-    api.write_text(out,"clip",base.text_get(clip.name[:]));api.write_text(out,"target",base.text_get(track.target[:]))
-    api.write_key(out,"property");authoring_write_value(call,&track.property,type_info_of(lib.Property))
-    api.write_uint(out,"slot",u64(track.slot));api.write_uint(out,"keys_total",u64(len(keys)))
-    api.write_key(out,"keys");serial.text_write_raw(out,"[")
-    start:=min(int(p.offset),len(keys));end:=min(start+int(p.limit),len(keys))
-    for &key,i in keys[start:end] {if i>0 {serial.text_write_raw(out,",")};authoring_write_value(call,&key,type_info_of(lib.Keyframe))}
-    serial.text_write_raw(out,"]}")
+    base.text_set(r.path[:],file.path)
+    r.clip,r.target,r.property,r.slot,r.keys_total=clip.name,track.target,track.property,track.slot,u32(len(keys))
+    r.keys=authoring_page(call,keys,p.offset,p.limit)
 }
 
 @(private)

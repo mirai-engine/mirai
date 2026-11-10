@@ -14,8 +14,8 @@ import anim "plugins:animation/runtime"
 
 Motion_Pose_Params :: struct {
     pelvis:anim.Bone_Ref `mirai:"optional"`,
-    spine:[16]anim.Bone_Ref `mirai:"optional"`,
-    legs:[16]anim.Pose_Warp_Leg `mirai:"optional"`,
+    spine:[16]anim.Bone_Ref `mirai:"optional,trim"`,
+    legs:[16]anim.Pose_Warp_Leg `mirai:"optional,trim"`,
     min_stride,max_stride,max_angle,weight:f32 `mirai:"optional"`,
     orientation,stride:bool `mirai:"optional"`,
 }
@@ -27,7 +27,7 @@ Motion_Window_Params :: struct {
     weight:f32 `mirai:"optional,min=0,max=1"`,
     animation:base.Asset_Id `mirai:"optional"`,
 }
-Motion_Distance_Params :: struct {clip:[64]u8 `mirai:"text"`,name:[32]u8 `mirai:"text"`,keys:[256]lib.Distance_Key,animation:base.Asset_Id `mirai:"optional"`}
+Motion_Distance_Params :: struct {clip:[64]u8 `mirai:"text"`,name:[32]u8 `mirai:"text"`,keys:[256]lib.Distance_Key `mirai:"trim"`,animation:base.Asset_Id `mirai:"optional"`}
 Motion_Write_Params :: struct {
     path:[1024]u8 `mirai:"text,label=Ending in .motion: what is there is replaced keeping its id"`,
     pose:Motion_Pose_Params `mirai:"optional,label=Pose warping: the pelvis; spine and IK legs"`,
@@ -103,43 +103,24 @@ authoring_motion_set :: proc(s:^editor.Session,call:^api.Call) {
     _=authoring_publish(s,call,file,&doc,api.call_result(call,Authoring_Write_Result))
 }
 
-@(private)
-motion_authoring_pose_write :: proc(call:^api.Call,pose:anim.Pose_Warp_Profile) {
-    pose:=pose
-    serial.text_write_raw(call.out,"{");api.write_key(call.out,"pelvis",true);value:=pose.pelvis;authoring_write_value(call,&value,type_info_of(anim.Bone_Ref))
-    api.write_key(call.out,"spine");serial.text_write_raw(call.out,"[")
-    for &bone,i in pose.spine[:pose.spine_count] {if i>0 {serial.text_write_raw(call.out,",")};authoring_write_value(call,&bone,type_info_of(anim.Bone_Ref))}
-    serial.text_write_raw(call.out,"]")
-    api.write_key(call.out,"legs");serial.text_write_raw(call.out,"[")
-    for &leg,i in pose.legs[:pose.count] {if i>0 {serial.text_write_raw(call.out,",")};authoring_write_value(call,&leg,type_info_of(anim.Pose_Warp_Leg))}
-    serial.text_write_raw(call.out,"]")
-    for field in ([4]string{"min_stride","max_stride","max_angle","weight"}) {
-        number:=pose.min_stride if field=="min_stride" else pose.max_stride if field=="max_stride" else pose.max_angle if field=="max_angle" else pose.weight
-        api.write_key(call.out,field);api.write_number(call.out,number)
-    }
-    api.write_bool(call.out,"orientation",pose.orientation);api.write_bool(call.out,"stride",pose.stride);serial.text_write_raw(call.out,"}")
-}
 
 @(private)
-authoring_motion_profile_inspect :: proc(s:^editor.Session,call:^api.Call) {
-    p:=api.call_params(call,Authoring_Inspect_Params);file:Authoring_File;defer asset.asset_close(&file.file)
+authoring_motion_profile_inspect :: proc(s:^editor.Session,call:^api.Call,p:^Asset_Inspect_Params,r:^Asset_Inspect_Result) {
+    file:Authoring_File;defer asset.asset_close(&file.file)
     profile,ok:=motion_authoring_open(s,call,p.asset,&file);if !ok {return}
-    serial.text_write_raw(call.out,"{");authoring_result(call,p.asset,file.path)
-    api.write_key(call.out,"pose");motion_authoring_pose_write(call,profile.info.pose)
-    api.write_uint(call.out,"windows_total",u64(len(profile.windows)));api.write_uint(call.out,"distances_total",u64(len(profile.distances)))
-    program_rows(call,"windows",profile.windows,p.offset,p.limit)
-    api.write_key(call.out,"distances");serial.text_write_raw(call.out,"[")
-    first:=min(int(p.offset),len(profile.distances));last:=min(first+int(p.limit),len(profile.distances))
-    for &track,i in profile.distances[first:last] {
-        if i>0 {serial.text_write_raw(call.out,",")};serial.text_write_raw(call.out,"{");api.write_int(call.out,"index",i64(first+i),true)
-        api.write_key(call.out,"value");serial.text_write_raw(call.out,"{")
-        api.write_text(call.out,"clip",base.text_get(track.clip[:]),true);api.write_text(call.out,"name",base.text_get(track.name[:]))
-        api.write_key(call.out,"animation");serial.write_u8(call.out,'"');serial.text_write_asset_id(call.out,track.animation);serial.write_u8(call.out,'"')
-        api.write_key(call.out,"keys");serial.text_write_raw(call.out,"[")
-        for &key,k in profile.keys[track.first:][:track.count] {if k>0 {serial.text_write_raw(call.out,",")};authoring_write_value(call,&key,type_info_of(lib.Distance_Key))}
-        serial.text_write_raw(call.out,"]}}")
+    base.text_set(r.path[:],file.path)
+    pose:=profile.info.pose
+    authoring_struct_fields(&r.pose,pose)
+    copy(r.pose.spine[:],pose.spine[:pose.spine_count]);copy(r.pose.legs[:],pose.legs[:pose.count])
+    r.windows_total,r.distances_total=u32(len(profile.windows)),u32(len(profile.distances))
+    r.windows=authoring_pages(call,profile.windows,p.offset,p.limit,Asset_Window)
+    first:=min(int(p.offset),len(profile.distances))
+    r.distances=make([]Authoring_Page(Motion_Distance_Params),min(first+int(p.limit),len(profile.distances))-first,call.allocator)
+    for &page,i in r.distances {
+        track:=profile.distances[first+i]
+        page={index=u32(first+i),value={clip=track.clip,name=track.name,animation=track.animation}}
+        copy(page.value.keys[:],profile.keys[track.first:][:track.count])
     }
-    serial.text_write_raw(call.out,"]}")
 }
 
 @(private)
@@ -152,28 +133,22 @@ authoring_motion_distance :: proc(s:^editor.Session,call:^api.Call) {
 }
 
 @(private)
-authoring_motion_inspect :: proc(s:^editor.Session,call:^api.Call) {
-    p:=api.call_params(call,Entity_Params);world,entity,ok:=subject(s,call,p.entity[:],p.handle);if !ok {return}
+authoring_motion_inspect :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity:core.Entity) -> (r:Instance_Motion) {
     instance,ready:=anim.motion_inspect(core.world_storage_of(world,anim.Motion_Runtime),entity)
-    serial.text_write_raw(call.out,"{");api.write_key(call.out,"id",true);api.write_id(call.out,editor.api_entity_id(world,entity))
-    api.write_key(call.out,"profile");serial.write_u8(call.out,'"');serial.text_write_asset_id(call.out,instance.profile);serial.write_u8(call.out,'"')
-    api.write_bool(call.out,"ready",ready);api.write_int(call.out,"window",i64(instance.window));api.write_key(call.out,"error");authoring_write_value(call,&instance.error,type_info_of(anim.Motion_Error))
-    api.write_key(call.out,"remaining_error");api.write_number(call.out,instance.remaining_error);api.write_numbers(call.out,"source_velocity",instance.source_velocity)
+    r.id,r.profile,r.ready,r.window,r.error=editor.api_entity_id(world,entity),instance.profile,ready,i32(instance.window),instance.error
+    r.remaining_error,r.source_velocity=instance.remaining_error,instance.source_velocity
     goal:=instance.locomotion
-    api.write_key(call.out,"locomotion");serial.text_write_raw(call.out,"{");api.write_numbers(call.out,"velocity",goal.velocity,true);api.write_numbers(call.out,"source_velocity",goal.source_velocity)
-    api.write_key(call.out,"weight");api.write_number(call.out,goal.weight);api.write_bool(call.out,"enabled",goal.enabled);serial.text_write_raw(call.out,"}")
-    api.write_uint(call.out,"targets_total",u64(len(instance.targets)));api.write_key(call.out,"targets");serial.text_write_raw(call.out,"[")
+    r.locomotion={velocity=goal.velocity,source_velocity=goal.source_velocity,weight=goal.weight,enabled=goal.enabled}
+    r.targets_total=u32(len(instance.targets))
+    r.targets=make([]Instance_Motion_Target,len(instance.targets),call.allocator)
     ids:=core.world_table_of(world,core.Id)
-    for &target,i in instance.targets {
-        if i>0 {serial.text_write_raw(call.out,",")};serial.text_write_raw(call.out,"{");api.write_text(call.out,"name",base.text_get(target.name[:]),true)
+    for &row,i in r.targets {
+        target:=instance.targets[i]
         named:=SPATIAL_TARGET_PARAMS_DEFAULT
         named.kind=target.target.kind;named.bone=target.target.bone;named.socket=target.target.socket
         named.position,named.rotation,named.scale=target.target.position,target.target.rotation,target.target.scale
         if id,found:=core.get(ids,target.target.entity);found {base.text_set(named.entity[:],fmt.tprintf("%016x",u64(id.value)))}
-        api.write_key(call.out,"target");authoring_write_value(call,&named,type_info_of(Spatial_Target_Params))
-        api.write_numbers(call.out,"world_position",target.world.position)
-        rotation:=target.world.rotation;api.write_key(call.out,"world_rotation");authoring_write_value(call,&rotation,type_info_of(mm.Quat))
-        api.write_bool(call.out,"enabled",target.enabled);api.write_bool(call.out,"resolved",target.resolved);serial.text_write_raw(call.out,"}")
+        row={name=target.name,target=named,world_position=target.world.position,world_rotation=target.world.rotation,enabled=target.enabled,resolved=target.resolved}
     }
-    serial.text_write_raw(call.out,"]}")
+    return
 }

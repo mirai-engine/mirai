@@ -28,9 +28,9 @@ blend_space_authoring_prepares_samples_preserves_identity_and_rejects_partial_ed
     f:=new(Authoring_Test);defer free(f);if !authoring_test_init(f,t,"program-blend") {return};defer authoring_test_destroy(f)
     source:=authoring_test_id_text(program_test_source(f,t))
     defaults:=program_blend_defaults()
-    inspect:=Authoring_Inspect_Params{offset=1,limit=1}
+    inspect:=Asset_Inspect_Params{offset=1,limit=1}
     authoring_test_register(f,t,"set",Blend_Write_Params,program_blend_set,defaults)
-    authoring_test_register(f,t,"inspect",Authoring_Inspect_Params,program_blend_inspect,&inspect)
+    authoring_test_register(f,t,"inspect",Asset_Inspect_Params,asset_inspect,&inspect)
     authoring_test_register(f,t,"sample",Blend_Sample_Params,program_blend_sample)
     definition:=fmt.tprintf(`"info":{{"animation":"%s","dimension":"One","x":{{"name":"speed","min":0,"max":2}}}},"samples":[{{"position":[0,0],"clip":"idle"}},{{"position":[2,0],"clip":"walk"}}]`,source)
     request:=fmt.tprintf(`{{"path":"locomotion.blend",%s}}`,definition)
@@ -69,9 +69,9 @@ blend_space_authoring_prepares_samples_preserves_identity_and_rejects_partial_ed
 two_dimensional_blend_authoring_bakes_triangles_and_rejects_collinear_replacements :: proc(t:^testing.T) {
     f:=new(Authoring_Test);defer free(f);if !authoring_test_init(f,t,"program-blend-2d") {return};defer authoring_test_destroy(f)
     source:=authoring_test_id_text(program_test_source(f,t))
-    defaults:=program_blend_defaults();inspect:=Authoring_Inspect_Params{limit=16}
+    defaults:=program_blend_defaults();inspect:=Asset_Inspect_Params{limit=16}
     authoring_test_register(f,t,"set",Blend_Write_Params,program_blend_set,defaults)
-    authoring_test_register(f,t,"inspect",Authoring_Inspect_Params,program_blend_inspect,&inspect)
+    authoring_test_register(f,t,"inspect",Asset_Inspect_Params,asset_inspect,&inspect)
     authoring_test_register(f,t,"sample",Blend_Sample_Params,program_blend_sample)
     definition:=fmt.tprintf(`"info":{{"animation":"%s","dimension":"Two","x":{{"name":"direction","min":0,"max":1}},"y":{{"name":"speed","min":0,"max":1}}}},"samples":[{{"position":[0,0],"clip":"idle"}},{{"position":[1,0],"clip":"walk"}},{{"position":[0,1],"clip":"walk"}}]`,source)
     result:=authoring_test_execute(f,"set",fmt.tprintf(`{{"path":"locomotion.blend",%s}}`,definition))
@@ -141,7 +141,7 @@ program_runtime_api_sets_named_parameters_and_keeps_actions_and_modifier_control
     }
     f.session.info,f.session.edit_world,f.session.mode=&world_info,&document,.Play;f.session.runs[0]={world=&play}
     requested:=request_defaults();authoring_test_register(f,t,"request",Request_Params,request,requested)
-    inspect:=Modifier_Inspect_Params{limit=128};authoring_test_register(f,t,"inspect",Modifier_Inspect_Params,program_modifier_inspect,&inspect)
+    inspect:=Instance_Inspect_Params{parts={.Modifiers},limit=128};authoring_test_register(f,t,"inspect",Instance_Inspect_Params,instance_inspect,&inspect)
     // A parameter is the weight of a layer of its set, asked of the running world.
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","parameters":[{"name":"Arm","value":0.6}]}`).code,0)
     testing.expect(t,strings.contains(api.json_compact(string(serial.writer_bytes(&f.out))),`"kind":"Parameter","name":"Arm"`))

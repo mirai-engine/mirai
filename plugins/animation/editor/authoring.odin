@@ -3,6 +3,7 @@ package animation_editor
 import "base:runtime"
 import "core:fmt"
 import "core:mem"
+import "core:slice"
 import "core:strings"
 import "mirai:asset"
 import "mirai:editor"
@@ -11,6 +12,7 @@ import "mirai:host"
 import "mirai:platform"
 import "mirai:std/base"
 import "mirai:std/serial"
+import anim "plugins:animation/runtime"
 
 Authoring_Inspect_Params :: struct {
     asset:base.Asset_Id,
@@ -147,23 +149,30 @@ authoring_dry_run :: proc(call:^api.Call) -> bool {
     return api.json_member(call.raw,"dry_run")=="true"
 }
 
+// A page of rows from offset, at most limit, each with its index. A row of
+// another type takes the fields of the same name and type.
 @(private)
-authoring_result :: proc(call:^api.Call,id:base.Asset_Id,path:string,first:bool=true) {
-    out:=call.out
-    api.write_key(out,"asset",first);serial.write_u8(out,'"');serial.text_write_asset_id(out,id);serial.write_u8(out,'"')
-    api.write_text(out,"path",path)
+authoring_pages :: proc(call:^api.Call,rows:[]$T,offset,limit:u32,$R:typeid) -> []Authoring_Page(R) {
+    first:=min(int(offset),len(rows));last:=min(first+int(limit),len(rows))
+    pages:=make([]Authoring_Page(R),last-first,call.allocator)
+    for &page,i in pages {
+        row:=rows[first+i]
+        page.index=u32(first+i)
+        when T==R {page.value=row} else {
+            authoring_struct_fields(&page.value,row)
+            when T==anim.Twist_Constraint {for amount,j in row.amounts[:row.amount_count] {page.value.amounts[j].value=amount}}
+            else when T==anim.Multi_IK_Constraint {authoring_struct_fields(&page.value.settings,row.settings)}
+            else when T==anim.Foot_Grounding {for j in 0..<int(row.count) {authoring_struct_fields(&page.value.legs[j],row.legs[j])}}
+        }
+    }
+    return pages
 }
 
+// A copy of a page of rows, in the call.
 @(private)
-authoring_write_value :: proc(call:^api.Call,value:^$T,info:^runtime.Type_Info) -> bool {
-    schema:serial.Schema
-    allocator:=call.server.allocator if call.server!=nil else context.allocator
-    serial.schema_init(&schema,allocator)
-    defer serial.schema_destroy(&schema)
-    index,ok:=serial.schema_add_type_info(&schema,info)
-    if !ok {authoring_failure(call,"result","Invalid_Schema","a registered result type","schema preparation failed","The value schema could not be prepared",api.INTERNAL_ERROR);return false}
-    serial.text_write(call.out,&schema,index,mem.ptr_to_bytes(value),.Line)
-    return call.out.overflow==0
+authoring_page :: proc(call:^api.Call,rows:[]$T,offset,limit:u32) -> []T {
+    first:=min(int(offset),len(rows))
+    return slice.clone(rows[first:min(first+int(limit),len(rows))],call.allocator)
 }
 
 @(private)
