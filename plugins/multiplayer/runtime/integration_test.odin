@@ -764,6 +764,7 @@ replicas_joined_to_any_of_many_driven_bodies_are_critical :: proc(t:^testing.T) 
     }
     replica(c,1+2*PAIRS,alone,.Shown)
     c.replica_high=2+2*PAIRS
+    driven_list(c)
     records_capture(&s,core.world_ref(&world,&info),1)
     for k in 0..<PAIRS {testing.expectf(t,replica_critical(&s.desc,&c.replicas[1+PAIRS+k],1),"the replica joined to body %d is not critical",k)}
     testing.expect(t,!replica_critical(&s.desc,&c.replicas[1+2*PAIRS],1))

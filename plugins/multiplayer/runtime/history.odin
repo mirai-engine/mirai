@@ -13,44 +13,57 @@ Authoritative :: struct {
     checked:bool,
 }
 
+// The states of the server kept for a predicted replica: a row of the
+// history for each record slot, where the state of a tick is at its number
+// modulo the history. One of a tick takes the place of the one a whole
+// history older.
 @(private)
-authority_at :: proc(s:^Net_Session,r:^Replica,index:int) -> (^Authoritative,[]u32) {
+authority_slot :: proc(s:^Net_Session,r:^Replica,index:int) -> (^Authoritative,[]u32) {
     at:=int(r.slot)*s.client.history+index
     return &s.client.authoritative[at],s.client.authoritative_words[at*s.client.words_per:][:s.client.words_per]
+}
+
+// A replica takes a record slot: the states another one left in its row are not its own.
+@(private)
+authority_clear :: proc(s:^Net_Session,r:^Replica) {
+    for index in 0..<s.client.history {
+        record,_:=authority_slot(s,r,index)
+        record^={}
+    }
 }
 
 @(private)
 authoritative_capture :: proc(s:^Net_Session,r:^Replica,command:^wire.Command) {
     if r.mode!=.Predicted || r.slot<0 {return}
-    for index in 0..<r.authority_count {
-        record,words:=authority_at(s,r,index)
-        if record.object==r.object && record.tick==command.tick {
-            record.mask|=command.mask
-            record.available=r.available
-            record.checked=false
-            copy(words,command.words)
-            return
-        }
+    record,words:=authority_slot(s,r,int(command.tick)%s.client.history)
+    if record.object==r.object && record.tick==command.tick {
+        record.mask|=command.mask
+    } else {
+        record^={object=r.object,tick=command.tick,mask=command.mask}
     }
-    record,words:=authority_at(s,r,r.authority_next)
-    record^={object=r.object,tick=command.tick,mask=command.mask,available=r.available}
+    record.available,record.checked=r.available,false
     copy(words,command.words)
-    r.authority_next=(r.authority_next+1)%s.client.history
-    r.authority_count=min(r.authority_count+1,s.client.history)
 }
 
+// The state of the server of a tick, or without exact the newest one kept
+// at or before it: going back from the slot of the tick, the first state
+// found at the slot of its own tick, and when there is none in a whole
+// history, the nearest of the older ones left.
 @(private)
 authoritative_command :: proc(s:^Net_Session,r:^Replica,tick:u32,exact:bool) -> (command:wire.Command,found:bool) {
-    if r.slot<0 {return}
+    // Only a predicted replica has a row of them: the slot of another is of the interpolation.
+    if r.mode!=.Predicted || r.slot<0 {return}
+    history:=s.client.history
+    start:=int(tick)%history
     distance:=max(u32)
-    for index in 0..<r.authority_count {
-        record,words:=authority_at(s,r,index)
-        if record.object!=r.object || i32(tick-record.tick)<0 || exact && record.tick!=tick {continue}
-        behind:=u32(tick-record.tick)
-        if found && behind>=distance {continue}
-        distance=behind
+    for back in 0..<(exact?1:history) {
+        record,words:=authority_slot(s,r,(start-back+history)%history)
+        if record.object!=r.object || i32(tick-record.tick)<0 {continue}
+        behind:=tick-record.tick
+        if exact && behind!=0 || found && behind>=distance {continue}
+        distance,found=behind,true
         command={kind=.Object_Updated,object=r.object,type=r.type,tick=record.tick,mask=record.available,words=words}
-        found=true
+        if behind==u32(back) {break}
     }
     return
 }
