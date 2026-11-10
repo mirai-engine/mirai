@@ -2,7 +2,7 @@ package asset
 
 import "base:runtime"
 import "core:mem"
-import "core:os"
+import "core:fmt"
 import "core:testing"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -87,8 +87,7 @@ scene_builds_saves_and_loads_entities_and_components :: proc(t:^testing.T) {
     tags,_:=scene_component(&scene,"Tag")
     testing.expect(t,scene.doc.tables[tags].rows==2 && scene.doc.tables[tags].columns[1].size==0)
 
-    path:=test_path("level.scene")
-    defer os.remove(path)
+    path:=fmt.tprintf("%s/level.scene",base.test_folder(t,"asset"))
     testing.expect_value(t,scene_save(&scene,path),Error.None)
     loaded:Scene
     testing.expect_value(t,scene_load(&loaded,&types,path),Error.None)
@@ -719,8 +718,7 @@ components_turned_off_survive_saving_and_go_with_their_component :: proc(t:^test
     testing.expect_value(t,len(scene.off),1)
     testing.expect_value(t,scene_component_turn(&scene,0x99,light_hash(),true),Error.Not_Found)
 
-    path:=test_path("off.scene")
-    defer os.remove(path)
+    path:=fmt.tprintf("%s/off.scene",base.test_folder(t,"asset"))
     testing.expect_value(t,scene_save(&scene,path),Error.None)
     loaded:Scene
     testing.expect_value(t,scene_load(&loaded,&types,path),Error.None)

@@ -10,11 +10,12 @@ import "mirai:std/base"
 
 @(private="file")
 Update_World :: struct {
-    entities:core.Entities,
+    using world:core.Test_World,
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
+    disabled:core.Table(core.Disabled),
     lamps:core.Table(Update_Lamp),
     links:core.Table(Update_Link),
     instances:core.Table(Prefab_Instance),
@@ -25,53 +26,20 @@ Update_World :: struct {
 @(private="file")
 Update_Fixture :: struct {
     w:Update_World,
-    tables:[8]core.Table_Info,
-    storages:[1]core.Storage_Info,
-    info:core.World_Info,
     types:asset.Types,
 }
 
 @(private="file")
-update_fixture_init :: proc(f:^Update_Fixture) -> core.World_Ref {
-    w:=&f.w
-    core.entities_init(&w.entities)
-    core.table_init(&w.ids,"Id");core.table_init(&w.names,"Name");core.table_init(&w.transforms,"Transform")
-    core.table_init(&w.parents,"Parent");core.table_init(&w.lamps,"Update_Lamp");core.table_init(&w.links,"Update_Link")
-    core.table_init(&w.instances,"Prefab_Instance");core.table_init(&w.members,"Prefab_Member")
-    f.tables={
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Update_World,ids)},
-        {name="Name",type=core.Name,info=type_info_of(core.Name),offset=offset_of(Update_World,names)},
-        {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Update_World,transforms)},
-        {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Update_World,parents)},
-        {name="Update_Lamp",type=Update_Lamp,info=type_info_of(Update_Lamp),offset=offset_of(Update_World,lamps)},
-        {name="Update_Link",type=Update_Link,info=type_info_of(Update_Link),offset=offset_of(Update_World,links)},
-        {name="Prefab_Instance",type=Prefab_Instance,info=type_info_of(Prefab_Instance),offset=offset_of(Update_World,instances)},
-        {name="Prefab_Member",type=Prefab_Member,info=type_info_of(Prefab_Member),offset=offset_of(Update_World,members)},
-    }
-    f.storages={{name="Hierarchy",type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Update_World,hierarchy)}}
-    f.info={entities=offset_of(Update_World,entities),tables=f.tables[:],storages=f.storages[:]}
+update_fixture_init :: proc(t:^testing.T,f:^Update_Fixture) -> (ref:core.World_Ref,ok:bool) {
+    core.test_world_init(t,&f.w,test_types) or_return
     asset.types_init(&f.types)
-    return core.world_ref(w,&f.info)
+    return core.test_world_ref(&f.w),true
 }
 
 @(private="file")
 update_fixture_destroy :: proc(f:^Update_Fixture) {
-    w:=&f.w
     asset.types_destroy(&f.types)
-    core.table_destroy(&w.ids);core.table_destroy(&w.names);core.table_destroy(&w.transforms)
-    core.table_destroy(&w.parents);core.table_destroy(&w.lamps);core.table_destroy(&w.links)
-    core.table_destroy(&w.instances);core.table_destroy(&w.members)
-    core.value_free(&w.hierarchy,type_info_of(core.Hierarchy))
-    core.entities_destroy(&w.entities)
-}
-
-@(private="file")
-update_settle :: proc(w:^Update_World) {
-    core.table_settle(&w.ids,&w.entities);core.table_settle(&w.names,&w.entities);core.table_settle(&w.transforms,&w.entities)
-    core.table_settle(&w.parents,&w.entities);core.table_settle(&w.lamps,&w.entities);core.table_settle(&w.links,&w.entities)
-    core.table_settle(&w.instances,&w.entities);core.table_settle(&w.members,&w.entities)
-    core.hierarchy_settle(&w.hierarchy,core.read(&w.parents),&w.entities)
-    core.entities_settle(&w.entities)
+    core.test_world_destroy(&f.w)
 }
 
 @(private="file")
@@ -95,14 +63,15 @@ update_put :: proc(t:^testing.T,f:^Update_Fixture,ref:core.World_Ref,document:^a
     testing.expect_value(t,asset.asset_open(&file,data),asset.Error.None)
     defer asset.asset_close(&file)
     report,error=update(ref,&file,&f.types,{scope=scope})
-    update_settle(&f.w)
+    core.test_world_settle(&f.w)
     return
 }
 
 @(test)
 an_update_writes_what_differs_onto_the_entities_that_have_the_ids_of_a_document :: proc(t:^testing.T) {
     f:Update_Fixture
-    ref:=update_fixture_init(&f)
+    ref,made:=update_fixture_init(t,&f)
+    if !made {return}
     defer update_fixture_destroy(&f)
     w:=&f.w
     other:=update_entity(w,9,"Other",core.NONE)
@@ -113,7 +82,7 @@ an_update_writes_what_differs_onto_the_entities_that_have_the_ids_of_a_document 
     core.add(&w.lamps,bulb,Update_Lamp{range=1,heat=7})
     core.add(&w.links,bulb,Update_Link{other})
     core.add(&w.links,lamp,Update_Link{bulb})
-    update_settle(w)
+    core.test_world_settle(w)
 
     // A capture written back changes nothing, and what it names outside stays named.
     document:asset.Scene
@@ -198,7 +167,8 @@ update_file :: proc(t:^testing.T,document:^asset.Scene,file:^asset.Asset) -> boo
 @(test)
 the_instances_of_a_document_are_components_of_its_entities_and_a_copy_has_none :: proc(t:^testing.T) {
     f:Update_Fixture
-    ref:=update_fixture_init(&f)
+    ref,made:=update_fixture_init(t,&f)
+    if !made {return}
     defer update_fixture_destroy(&f)
     w:=&f.w
     LAMP :: base.Asset_Id{0x1a,2}
@@ -219,7 +189,7 @@ the_instances_of_a_document_are_components_of_its_entities_and_a_copy_has_none :
     if !update_file(t,&level,&file) {return}
     defer asset.asset_close(&file)
     _,error:=instantiate(ref,&file,&f.types)
-    update_settle(w)
+    core.test_world_settle(w)
     testing.expect_value(t,error,Error.None)
     root,bulb:=core.entity_of(&w.entities,root_id),core.entity_of(&w.entities,bulb_id)
     of_bulb,instance,member:=prefab_instance_of(ref,bulb)
@@ -247,6 +217,6 @@ the_instances_of_a_document_are_components_of_its_entities_and_a_copy_has_none :
     rows:=[2]int{core.count(&w.instances),core.count(&w.members)}
     report:Report
     report,error=instantiate(ref,&copied,&f.types,{fresh=true})
-    update_settle(w)
+    core.test_world_settle(w)
     testing.expect(t,error==.None && report.entities==3 && rows==[2]int{core.count(&w.instances),core.count(&w.members)})
 }

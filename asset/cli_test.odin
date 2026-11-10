@@ -120,16 +120,13 @@ cli_reads_and_edits_assets_of_every_kind :: proc(t:^testing.T) {
     }
     compiler,has_compiler:=os.lookup_env("MIRAI_ODIN",context.temp_allocator)
     if !has_compiler || compiler=="" {compiler="odin"}
-    cli:=Cli{t=t,folder=test_path("cli")}
+    cli:=Cli{t=t,folder=base.test_folder(t,"cli")}
     cli.exe=fmt.tprintf("%s/bin/tests/mirai-asset-cli%s",root,EXE)
     os.make_directory_all(fmt.tprintf("%s/bin/tests",root))
     {
         state,stdout,stderr,error:=subprocess.exec({command={compiler,"build",fmt.tprintf("%s/tools/mirai",root),fmt.tprintf("-collection:mirai=%s",root),"-ignore-unknown-attributes","-o:minimal",fmt.tprintf("-out:%s",cli.exe)}},context.temp_allocator)
         if !testing.expectf(t,error==nil && state.exit_code==0,"the tool does not build: %v\n%s%s",error,string(stdout),string(stderr)) {return}
     }
-    os.remove_all(cli.folder)
-    os.make_directory_all(cli.folder)
-    defer os.remove_all(cli.folder)
     types:Types;types_init(&types);defer types_destroy(&types)
     write_assets(&cli,&types)
     names:=[5]string{"plant.mesh","leaf.tex","leaf.mat","level.scene","water.quest"}
@@ -348,16 +345,13 @@ cli_commands_answer_for_damaged_files :: proc(t:^testing.T) {
     }
     compiler,has_compiler:=os.lookup_env("MIRAI_ODIN",context.temp_allocator)
     if !has_compiler || compiler=="" {compiler="odin"}
-    cli:=Cli{t=t,folder=test_path("cli-damaged")}
+    cli:=Cli{t=t,folder=base.test_folder(t,"cli-damaged")}
     cli.exe=fmt.tprintf("%s/bin/tests/mirai-asset-damaged%s",root,EXE)
     os.make_directory_all(fmt.tprintf("%s/bin/tests",root))
     {
         state,stdout,stderr,error:=subprocess.exec({command={compiler,"build",fmt.tprintf("%s/tools/mirai",root),fmt.tprintf("-collection:mirai=%s",root),"-ignore-unknown-attributes","-o:minimal",fmt.tprintf("-out:%s",cli.exe)}},context.temp_allocator)
         if !testing.expectf(t,error==nil && state.exit_code==0,"the tool does not build: %v\n%s%s",error,string(stdout),string(stderr)) {return}
     }
-    os.remove_all(cli.folder)
-    os.make_directory_all(cli.folder)
-    defer os.remove_all(cli.folder)
     answered :: proc(cli:^Cli,args:..string) -> int {
         result:=run(cli,..args)
         if result.code<0 || result.code>2 {testing.expectf(cli.t,false,"mirai asset %v ended with %d\n%s",args,result.code,result.err)}
