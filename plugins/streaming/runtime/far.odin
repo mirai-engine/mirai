@@ -11,29 +11,45 @@ import "mirai:std/base"
 // on, a proxy beside its reference shows the far mesh of its scene, which
 // the render draws by the cut of its DAG and rays trace by its coarse cuts:
 // what is not loaded is seen from afar and keeps shading what is below it.
-// The far mesh is a derived asset of the scene (cook/far): a shipped game
-// finds the one its cook wrote beside the scene, and the editor the one the
-// editor part of this plugin made (Streaming_Far_Meshes). A game makes none.
+// The far mesh is a derived asset of the scene (cook/far), an asset as any:
+// a shipped game finds the one its cook wrote beside the scene, and a project
+// that is not cooked, in the editor or a game, the one of the far cache of the
+// project (project.FAR_CACHE) made of what the scene is now (asset.far_key),
+// which the editor part of this plugin makes once. A game makes none.
 
-// The scenes whose far meshes the references of the worlds of the application ask for.
+// The far meshes of the scenes the references of the worlds of the
+// application name, found again when the registry changes.
 @(storage,host)
-Streaming_Far :: struct {wanted:[dynamic]base.Asset_Id}
+Streaming_Far :: struct {
+    scenes:[dynamic]Far_Mesh,
+    revision:u64, // of the registry when they were found
+}
 
-// The far meshes the editor made, by scene: only the editor part writes them.
-@(storage,host)
-Streaming_Far_Meshes :: struct {items:[dynamic]Far_Mesh}
+Far_Mesh :: struct {
+    scene,mesh:base.Asset_Id, // mesh: none until there is one; the last one found while the cache has none of what the scene is now
+    key:u64,                  // of the cache (asset.far_key) of what the scene is now; 0: cooked
+}
 
-Far_Mesh :: struct {scene,mesh:base.Asset_Id}
-
-// The far mesh of a scene: the one the editor made, or the one its cook
-// wrote beside it; none for a scene without static meshes.
-far_mesh :: proc(meshes:^Streaming_Far_Meshes,a:^host.Assets,id:base.Asset_Id) -> base.Asset_Id {
-    if meshes!=nil {for m in meshes.items {if m.scene==id {return m.mesh}}}
-    if a!=nil && a.indexed {
-        cooked:=asset.far_mesh_id(id)
-        if _,found:=asset.registry_find(&a.registry,cooked);found {return cooked}
-    }
+// The far mesh of a scene; none for one without static meshes, or one whose
+// far mesh was not made.
+far_mesh :: proc(far:^Streaming_Far,id:base.Asset_Id) -> base.Asset_Id {
+    for s in far.scenes {if s.scene==id {return s.mesh}}
     return {}
+}
+
+// Finds the far mesh of each scene again when the registry changed or a scene was added.
+@(private)
+far_find :: proc(far:^Streaming_Far,a:^host.Assets,added:bool) {
+    if !added && a.registry.revision==far.revision {return}
+    far.revision=a.registry.revision
+    for &s in far.scenes {
+        id:=asset.far_mesh_id(s.scene)
+        if !a.indexed {
+            s.key=asset.far_key(&a.registry,s.scene)
+            id=asset.far_cache_id(s.key)
+        }
+        if _,found:=asset.registry_find(&a.registry,id);found {s.mesh=id}
+    }
 }
 
 // Each section that is not loaded and on shows the far mesh of its scene,
@@ -43,23 +59,27 @@ far_mesh :: proc(meshes:^Streaming_Far_Meshes,a:^host.Assets,id:base.Asset_Id) -
 streaming_far :: proc(
     world:core.World_Ref,app:^host.App,references:core.Read(scene.Scene_Reference),views:core.Ref(scene.Section_Views),
     transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),proxies:core.Read(scene.Section_Proxy),renderers:core.Read(render.Mesh_Renderer),
-    far:^Streaming_Far,meshes:core.Ref(Streaming_Far_Meshes),
+    far:^Streaming_Far,
 ) {
-    if far==nil || app==nil {return}
-    a:=app.assets
+    if far==nil || app==nil || app.assets==nil {return}
+    added:=false
     for row in 0..<core.count(references) {
         id:=core.at(references,row).scene
         known:=id=={}
-        for w in far.wanted {known||=w==id}
-        if !known {append(&far.wanted,id)}
+        for s in far.scenes {known||=s.scene==id}
+        if !known {
+            append(&far.scenes,Far_Mesh{scene=id})
+            added=true
+        }
     }
+    far_find(far,app.assets,added)
     // The proxies there are, by reference; one that no longer shows what it should goes.
     shown:=make(map[core.Entity]core.Entity,context.temp_allocator)
     for row in 0..<core.count(proxies) {
         e:=core.entity_at(proxies,row)
         r:=core.at(proxies,row).reference
         reference,found:=core.get(references,r)
-        mesh:=far_mesh(meshes.ptr,a,reference.scene) if found else {}
+        mesh:=far_mesh(far,reference.scene) if found else {}
         renderer,_:=core.get(renderers,e)
         above,_:=core.get(parents,r)
         below,_:=core.get(parents,e)
@@ -73,7 +93,7 @@ streaming_far :: proc(
     for row in 0..<core.count(references) {
         e:=core.entity_at(references,row)
         reference:=core.at(references,row)
-        mesh:=far_mesh(meshes.ptr,a,reference.scene)
+        mesh:=far_mesh(far,reference.scene)
         pose,posed:=core.get(transforms,e)
         if !posed {pose=core.TRANSFORM_IDENTITY}
         if proxy,has:=shown[e];has {

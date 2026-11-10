@@ -1,6 +1,7 @@
 package host
 
 import "base:runtime"
+import "core:os"
 import "core:slice"
 import "core:strings"
 import "mirai:asset"
@@ -799,6 +800,12 @@ project_asset_mounts :: proc(p:^project.Project,allocator:=context.allocator) ->
     mounts:=make([dynamic]asset.Registry_Mount,allocator)
     for folder in project.asset_folders(p,allocator) {
         if folder.prefix!="" {append(&mounts,asset.Registry_Mount{folder=folder.path,prefix=folder.prefix,imported=folder.imported})}
+    }
+    // The far meshes the editor made, where the assets are not cooked: a game that runs them shows them.
+    assets:=project.folder_path(p.root,.Assets,context.temp_allocator)
+    far:=project.cache_path(p.root,project.FAR_CACHE,allocator=allocator)
+    if !os.exists(project.path(assets,asset.REGISTRY_INDEX,allocator=context.temp_allocator)) && (os.is_dir(far) || os.make_directory_all(far)==nil) {
+        append(&mounts,asset.Registry_Mount{folder=far,prefix=project.FAR_PREFIX})
     }
     return mounts[:]
 }

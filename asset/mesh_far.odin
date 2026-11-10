@@ -2,6 +2,7 @@ package asset
 
 import "core:math"
 import "core:math/linalg"
+import "core:slice"
 import "core:strings"
 import "mirai:std/base"
 import "mirai:std/geom"
@@ -26,6 +27,41 @@ far_mesh_id :: proc "contextless" (scene:base.Asset_Id) -> base.Asset_Id {
     SALT :: 0x6661725f6d657368 // "far_mesh"
     return {base.hash_combine(scene[0],SALT),base.hash_combine(scene[1],SALT)}
 }
+
+// What builds far meshes: a far mesh of the cache of another version is not found.
+FAR_VERSION :: 1
+
+// What the far mesh of a scene is made of, as a key of the cache of far meshes
+// of a project (project.FAR_CACHE): the content of the scene and of the scenes,
+// meshes, materials and textures it takes, by the registry; an asset it names
+// that is not there counts too.
+far_key :: proc(r:^Registry,scene:base.Asset_Id) -> u64 {
+    Read :: struct {id:base.Asset_Id,hash:u64}
+    reads:=make([dynamic]Read,context.temp_allocator)
+    seen:=make(map[base.Asset_Id]bool,context.temp_allocator)
+    pending:=make([dynamic]base.Asset_Id,context.temp_allocator)
+    append(&pending,scene)
+    for len(pending)>0 {
+        id:=pop(&pending)
+        if id=={} || id in seen {continue}
+        seen[id]=true
+        file,found:=registry_find(r,id)
+        if !found {
+            append(&reads,Read{id,0})
+            continue
+        }
+        if file.kind!=KIND_SCENE && file.kind!=KIND_MESH && file.kind!=KIND_MATERIAL && file.kind!=KIND_TEXTURE {continue}
+        append(&reads,Read{id,file.content_hash})
+        append(&pending,..registry_dependencies(r,file))
+    }
+    slice.sort_by(reads[:],proc(a,b:Read) -> bool {return a.id[0]<b.id[0] || a.id[0]==b.id[0] && a.id[1]<b.id[1]})
+    key:=base.hash_combine(FAR_VERSION,scene[0]~scene[1])
+    for read in reads {key=base.hash_combine(base.hash_combine(key,read.id[0]~read.id[1]),read.hash)}
+    return key|1
+}
+
+// The id of the far mesh of the cache made of what key says.
+far_cache_id :: proc "contextless" (key:u64) -> base.Asset_Id {return {key,FAR_VERSION}}
 
 // A level of a texture as a far mesh reads it: linear when the texture is sRGB.
 Far_Texture :: struct {
