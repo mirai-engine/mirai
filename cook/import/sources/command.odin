@@ -41,7 +41,7 @@ import "mirai:std/jobs"
 // Exit codes: 0 done, 1 failed, 2 misuse.
 
 @(private="file")
-IMPORT_USAGE :: "Usage: mirai import <file> [--out <folder>] [--max-texture N] [--uncompressed|--blocks] [--rdo-lambda L] [--root <folder>] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--max-triangles N] [--collision none|hull|pieces|mesh|exact] [--force-collision] [--hulls N] [--parts auto|all|none] [--front auto|negative_z|z|x|negative_x] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--skeleton <id>] [--rebuild] [--texture-cache <folder>] [--mesh-cache <folder>] [--profile] [--dev|--release]\n       mirai import --project <folder> [--rebuild] [--dev|--release]"
+IMPORT_USAGE :: "Usage: mirai import <file> [--out <folder>] [--max-texture N] [--uncompressed|--blocks] [--rdo-lambda L] [--root <folder>] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--max-triangles N] [--collision none|hull|pieces|mesh|exact] [--force-collision] [--hulls N] [--parts auto|all|none] [--front auto|negative_z|z|x|negative_x] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--skeleton <id>] [--rebuild] [--texture-cache <folder>] [--mesh-cache <folder>] [--profile] [--dev|--release]"
 
 command :: proc(args:[]string,output,errors:io.Writer) -> int {
     file,out:string
@@ -199,7 +199,6 @@ command :: proc(args:[]string,output,errors:io.Writer) -> int {
     defer jobs.system_destroy(&js)
     options.worker={system=&js,worker=jobs.OWNER}
     if len(roots)>0 {
-        if file!="" || out!="" || changed!={} {fmt.wprintln(errors,"mirai import: --project imports every source of the project as its sidecar says; it takes no file, --out or settings");return 2}
         return sync_command(roots[:],options,output,errors)
     }
     kind:=source_kind(file)

@@ -45,10 +45,10 @@ the_outputs_of_a_source_are_the_assets_its_sidecar_lists :: proc(t:^testing.T) {
     if !ok {return}
     testing.expect(t,first.scene!={} && first.floor!={} && first.materials[0]!={} && first.materials[0]!=first.materials[1])
     testing.expect(t,strings.contains(first.scene_path,"/assets/level/level.scene"),first.scene_path)
-    testing.expect(t,strings.contains(first.floor_path,"/.mirai/imported/level/Floor.mesh"),first.floor_path)
+    testing.expect(t,strings.contains(first.floor_path,"/.mirai/imported/") && strings.has_suffix(first.floor_path,".mesh"),first.floor_path)
     file:=fmt.tprintf("%s.import",source)
     sidecar,found,_:=sidecar_load(file,context.temp_allocator)
-    testing.expect(t,found && sidecar.folder=="level" && len(sidecar.outputs)==4)
+    testing.expect(t,found && len(sidecar.outputs)==4)
 
     // Again: the same assets. A run that fails writes no sidecar.
     again,again_ok:=pass(t,root,source,bytes,{"Wood","Stone"})

@@ -31,7 +31,6 @@ Import_Report :: struct {
     warnings:[dynamic]string,
     others:[dynamic]string, // files of other imports whose owner this one cleared: what it shares with them
     programs:[dynamic]string, // the Surface programs written to the shaders of the project, their files: the editor publishes them
-    read:[dynamic]string,     // the files the import read besides the source, by absolute path: what it is built from with the source and its sidecar
     // The asset of each mesh, material and image of the model, by row; zero for an image that was not written.
     mesh_ids,material_ids,image_ids,skeleton_ids:[]base.Asset_Id,
     animation_id:base.Asset_Id,
@@ -57,8 +56,6 @@ report_destroy :: proc(report:^Import_Report) {
     for warning in report.warnings {delete(warning,report.allocator)}
     for other in report.others {delete(other,report.allocator)}
     for program in report.programs {delete(program,report.allocator)}
-    for file in report.read {delete(file,report.allocator)}
-    delete(report.read)
     delete(report.assets)
     delete(report.warnings)
     delete(report.others)
@@ -79,18 +76,16 @@ report_init :: proc(report:^Import_Report,allocator:=context.allocator) {
     report.warnings.allocator=allocator
     report.others.allocator=allocator
     report.programs.allocator=allocator
-    report.read.allocator=allocator
 }
 
-// Moves what src lists (assets, warnings, others, programs and files read) to
-// the end of dst and destroys src; both live in the same allocator.
+// Moves what src lists (assets, warnings, others and programs) to the end of
+// dst and destroys src; both live in the same allocator.
 report_take :: proc(dst,src:^Import_Report) {
     append(&dst.assets,..src.assets[:])
     append(&dst.warnings,..src.warnings[:])
     append(&dst.others,..src.others[:])
     append(&dst.programs,..src.programs[:])
-    append(&dst.read,..src.read[:])
-    clear(&src.assets);clear(&src.warnings);clear(&src.others);clear(&src.programs);clear(&src.read)
+    clear(&src.assets);clear(&src.warnings);clear(&src.others);clear(&src.programs)
     report_destroy(src)
 }
 
@@ -134,10 +129,8 @@ Writer :: struct {
     sidecar:Sidecar,             // of the source, as the import found it
     taken:[]bool,                // the outputs of sidecar the import gives again
     outputs:[dynamic]Output,     // what the import gives: the outputs of the sidecar it writes
-    assets:string,               // the assets folder of options.root, as files are compared (path_key); "" without a root
     imported:string,             // the imported folder of options.root
-    listed:string,               // the folder as the sidecar names it
-    cached:bool,                 // what the import builds of the cache kinds goes to the imported folder
+    cached:bool,                 // what the import builds of the cache kinds goes there, each file named by its id
     owner:base.Asset_Id,         // of the parts: the prefab of a model
     rng:base.Rng,
     allocator:mem.Allocator,
@@ -365,9 +358,9 @@ writer_rollback :: proc(w:^Writer) {
 // Writes the meshes, materials, textures, skeletons and clips of a model as
 // assets. Importing a source again writes each part again with the id its
 // sidecar lists, to the file it has (identity.odin); a new part gets a random
-// id and <name>.mesh, <name>.mat, <name>.tex, <name>.skeleton or <name>.anim:
-// in folder, or for what nobody edits at the same path of the imported folder
-// of the root (sidecar.odin). The parts name the prefab of the model as
+// id and <name>.mesh, <name>.mat, <name>.tex, <name>.skeleton or <name>.anim
+// in folder, or for what nobody edits a file of the imported folder of the
+// root named by its id (sidecar.odin). The parts name the prefab of the model as
 // their owner (Import_Report.prefab), which import_source writes. A mesh or a
 // texture whose file already is the one it would write is kept as it is
 // (Written.kept), unless options.rebuild. A failure removes the files this
@@ -411,7 +404,6 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
     mesh_settings:=mesh_settings_hash(chosen)
     for warning in model.warnings {writer_warn(w,"%s",warning)}
     for program in model.programs {append(&w.report.programs,strings.clone(program,w.allocator))}
-    for file in model.files {append(&w.report.read,strings.clone(file,w.allocator))}
 
     name:=model.name if model.name!="" else filepath.stem(source)
     if chosen.skeleton!={} {return write_clips_onto(w,model,source,name,chosen.skeleton)}
@@ -437,7 +429,6 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
             }
             job.bytes=data
             job.file=source_path(w.options,image.path)
-            append(&w.report.read,strings.clone(image.path,w.allocator))
         } else {
             job.bytes=image.data
             if image.made.width>0 {job.bytes,job.made=image.made.texels,image.made}

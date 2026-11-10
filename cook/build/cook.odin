@@ -51,22 +51,12 @@ Cook_Desc :: struct {
     plugins:[]project.Asset_Folder, // the assets of active plugins: every file a root, cooked under its prefix
     texture_cache:string, // folder of compressed textures kept by content (textures.cache_read); "": none
     mesh_cache:string,    // folder of the meshes an import keeps (cook/import Import_Options); "": none
-    // What brings the imported folders of the project and of its plugins up to date before the
-    // cook reads them, their textures built Final (cook/import/sources.sync). nil: the engine's
-    // import program at import_program, in a process of its own, since the tool builds without
-    // the importers; "" there: the folders are read as they are.
-    sync:Cook_Sync,
-    import_program:string,
     root:string,          // of the project: the sources of imported assets are named relative to it. "": the folder of assets
     worker:jobs.Worker_Ref, // where the files are cooked, in parallel on its system. No system: a system of the cook, a thread per core
     server:bool, // for a dedicated server: what is only shown or heard (asset.Kind_Info.presentation) stays behind, and is not missing
     quick:bool,  // a cook that checks a change (a --dev game): lz_optimal.QUICK in place of SHIP
     allocator:runtime.Allocator, // of the report. Unset: context.allocator
 }
-
-// What a cook runs to bring the imported folder of each root (the project, a plugin) up to date
-// with its sources, with the caches of desc. message, in the temp allocator, says why it failed.
-Cook_Sync :: #type proc(roots:[]string,desc:^Cook_Desc) -> (ok:bool,message:string)
 
 // How the assets of a cook are compressed.
 @(private="file")
@@ -81,7 +71,7 @@ Cook_Error :: enum u8 {
     Write_Failed,     // detail: the file
     Verify_Failed,    // detail: the file that does not read back as what was written
     Resolve_Failed,   // detail: the scene or prefab whose prefab instances could not be brought up to date
-    Source_Failed,    // detail: the sources that did not import, or the texture that is still Fast, and why
+    Source_Failed,    // detail: the texture that is still Fast, which the import of its source by a build makes Final
 }
 
 Cook_File :: struct {
@@ -183,18 +173,6 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
     manifest,problem:=manifest_read(desc.manifest,temp)
     if problem!="" {cook_fail(&report,.Manifest_Invalid,problem,allocator);return}
 
-    // The imported folders first: what the registry lists of them is what the sources give now.
-    roots:=make([dynamic]string,temp)
-    if desc.root!="" {append(&roots,desc.root)}
-    for folder in desc.plugins {
-        if folder.root!="" {append(&roots,folder.root)}
-    }
-    if len(roots)>0 {
-        desc:=desc
-        synced,message:=true,""
-        if desc.sync!=nil {synced,message=desc.sync(roots[:],&desc)} else if desc.import_program!="" && imports_any(roots[:]) {synced,message=imports_sync(desc.import_program,roots[:],desc.texture_cache,desc.mesh_cache)}
-        if !synced {cook_fail(&report,.Source_Failed,message,allocator);return}
-    }
     registry:asset.Registry
     asset.registry_init(&registry,desc.assets,"",temp,desc.root!=""?project.imported_path(desc.root,temp):"")
     for folder in desc.plugins {asset.registry_mount(&registry,folder.path,folder.prefix,folder.imported)}
@@ -422,7 +400,7 @@ texture_probe :: proc(work:^Cook_Work,first,last:int,worker:int) {
         view,error:=asset.texture_view(&file,types)
         if error!=.None || .Fast not_in view.info.flags {continue}
         named:=view.source!=nil?base.text_get(view.source.source[:]):"a source it does not name"
-        result.problem=work_text(work,"it was imported Fast and %s was not imported again as Final: `mirai import --project <project>` does it, and says why a source does not import; without the import program of the engine, build the editor once (`mirai build editor`)",named)
+        result.problem=work_text(work,"it was imported Fast and %s was not imported again as Final: `mirai build game` does it before it cooks",named)
     }
 }
 

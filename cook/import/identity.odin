@@ -6,6 +6,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:slice"
 import "core:strings"
+import "core:time"
 import "mirai:asset"
 import "mirai:project"
 import "mirai:std/base"
@@ -154,8 +155,8 @@ earlier_scan :: proc(w:^Writer,folder:string) {
 
 // Reads the sidecar of the source at path, which says which asset each thing
 // of the source is, and decides where what the import builds goes: the cache
-// kinds to the imported folder of the root when the source is inside the root
-// and the folder under its assets, everything else to the folder.
+// kinds to the imported folder of the root when the source is in the source
+// folder of the root, everything else to the folder.
 @(private)
 writer_source :: proc(w:^Writer,path:string) -> bool {
     w.source=source_path(w.options,path)
@@ -164,41 +165,19 @@ writer_source :: proc(w:^Writer,path:string) -> bool {
     if w.sidecar,_,error=sidecar_load(w.sidecar_file,context.temp_allocator);error.code!=.None {return writer_fail(w,error.code,"%s",error.message)}
     w.taken=make([]bool,len(w.sidecar.outputs),context.temp_allocator)
     w.outputs=make([dynamic]Output,context.temp_allocator)
-    if w.options.root!="" {
-        w.assets=strings.trim_right(path_key(project.folder_path(w.options.root,.Assets,context.temp_allocator)),"/")
-        w.imported=project.imported_path(w.options.root,context.temp_allocator)
-    }
-    under:bool
-    w.listed,under=folder_listed(w)
-    w.cached=under && !w.options.documents && !filepath.is_abs(w.source)
+    names:=project.FOLDER_NAMES
+    w.cached=w.options.root!="" && !w.options.documents && strings.has_prefix(w.source,names[.Source]) && strings.has_prefix(w.source[len(names[.Source]):],"/")
+    if w.cached {w.imported=project.imported_path(w.options.root,context.temp_allocator)}
     // A texture is built Fast only where sync builds it Final later: in the cache.
     if !w.cached {w.options.fast_textures=false}
-    if !under {
-        // Without a root, or outside its assets: as the sidecar sees the folder.
-        beside:=filepath.dir(path_key(w.sidecar_file))
-        if relative,rel_error:=filepath.rel(beside,path_key(w.folder),context.temp_allocator);rel_error==.None {
-            slashed,_:=strings.replace_all(relative,"\\","/",context.temp_allocator)
-            w.listed=slashed if strings.has_prefix(slashed,"../") || slashed==".." || slashed=="." else fmt.tprintf("./%s",slashed)
-        }
-    }
     return true
 }
 
-// The folder the import writes to as the assets of the root name it, and
-// whether it is under them; outside them, its absolute path.
+// The file of an output of the cache: in the imported folder, by its id.
 @(private)
-folder_listed :: proc(w:^Writer) -> (listed:string,under:bool) {
-    folder:=strings.trim_right(path_key(w.folder),"/")
-    if w.assets=="" {return folder,false}
-    if strings.equal_fold(folder,w.assets) {return "",true}
-    if len(folder)>len(w.assets) && folder[len(w.assets)]=='/' && strings.equal_fold(folder[:len(w.assets)],w.assets) {return folder[len(w.assets)+1:],true}
-    return folder,false
-}
-
-// The file of an output of the cache, by its path among the assets.
-@(private)
-imported_file :: proc(w:^Writer,listed:string) -> string {
-    return fmt.tprintf("%s/%s",w.imported,listed)
+imported_file :: proc(w:^Writer,id:base.Asset_Id,extension:string) -> string {
+    buffer:[base.ASSET_ID_TEXT]u8
+    return fmt.tprintf("%s/%s%s",w.imported,base.asset_id_format(id,buffer[:]),extension)
 }
 
 // The output of the sidecar a part is: of its kind and, unless it is the root
@@ -221,7 +200,7 @@ output_find :: proc(w:^Writer,p:^Part,by_index:bool) -> int {
 }
 
 // Gives each part its asset and its file. A part the sidecar of the source
-// lists is that asset: one of the cache at the path the sidecar gives it, a
+// lists is that asset: one of the cache in the imported folder, a
 // document where the file with its id is now, and one another import writes
 // (shared) only named, whether or not that import ran yet: the order sources
 // are imported in changes nothing. A part it does not list is new: a texture names one of
@@ -264,7 +243,6 @@ parts_plan :: proc(w:^Writer,parts:[]Part) {
             break
         }
     }
-    _,under:=folder_listed(w)
     for &p,i in parts {
         p.output=len(w.outputs)
         if p.shared!=NOT_SHARED {
@@ -272,14 +250,12 @@ parts_plan :: proc(w:^Writer,parts:[]Part) {
             continue
         }
         if p.entry<0 {p.id=writer_id(w)}
-        listed:=""
+        cached:=w.cached && kind_cached(p.kind)
         switch {
-        case w.cached && under && kind_cached(p.kind):
-            if p.entry>=0 {listed=w.sidecar.outputs[p.entry].path}
-            p.decided=listed!=""
+        case cached:
+            p.decided=p.entry>=0
             p.part=p.decided && w.sidecar.outputs[p.entry].part
-            if listed=="" {listed=fresh_listed(w,defaults[i])}
-            p.path=imported_file(w,listed)
+            p.path=imported_file(w,p.id,p.extension)
         case p.earlier>=0:
             p.path=w.earlier[p.earlier].path
             p.decided,p.part=true,w.earlier[p.earlier].owner!={}
@@ -287,7 +263,7 @@ parts_plan :: proc(w:^Writer,parts:[]Part) {
             p.path=fresh_path(w,defaults[i])
         }
         if folder:=filepath.dir(p.path);!os.is_dir(folder) {_=os.make_directory_all(folder)}
-        append(&w.outputs,Output{kind=p.kind,name=p.name,index=p.index,id=p.id,path=listed,part=p.part && listed!=""})
+        append(&w.outputs,Output{kind=p.kind,name=p.name,index=p.index,id=p.id,part=p.part && cached})
     }
 }
 
@@ -305,7 +281,7 @@ root_take :: proc(w:^Writer,kind:asset.Fourcc,name,extension:string) -> (id:base
 @(private)
 parts_record :: proc(w:^Writer,parts:[]Part) {
     for &p in parts {
-        if p.shared==NOT_SHARED && w.outputs[p.output].path!="" {w.outputs[p.output].part=p.owner!={}}
+        if p.shared==NOT_SHARED && w.cached && kind_cached(p.kind) {w.outputs[p.output].part=p.owner!={}}
     }
 }
 
@@ -317,14 +293,21 @@ parts_record :: proc(w:^Writer,parts:[]Part) {
 writer_finish :: proc(w:^Writer) -> bool {
     for output,at in w.sidecar.outputs {
         if w.taken[at] || output.shared {continue}
-        if output.path!="" {
-            os.remove(imported_file(w,output.path))
+        if info,known:=asset.kind_info(output.kind);w.cached && known && kind_cached(output.kind) {
+            os.remove(imported_file(w,output.id,info.extension))
             writer_warn(w,"%s %s is no longer in the source: its asset is gone, and what named it names nothing",kind_name(output.kind),output.name)
         } else if found,located:=w.by_id[output.id];located {
             writer_warn(w,"%s is no longer in the source: it was left as it is",w.earlier[found].path)
         }
     }
-    if !sidecar_save(w.sidecar_file,{settings=w.report.settings,folder=w.listed,outputs=w.outputs}) {
+    // What the import gave is as new as its sidecar: what sync compares their times for.
+    defer if w.cached {
+        now:=time.now()
+        for written in w.report.assets {
+            if strings.has_prefix(written.path,w.imported) {_=os.change_times(written.path,now,now)}
+        }
+    }
+    if !sidecar_save(w.sidecar_file,{settings=w.report.settings,documents=!w.cached,outputs=w.outputs}) {
         return writer_fail(w,.Write,"%s, which keeps the ids of the import, could not be written",w.sidecar_file)
     }
     w.report.saved=strings.clone(w.sidecar_file,w.allocator)
@@ -404,26 +387,6 @@ fresh_path :: proc(w:^Writer,file:string) -> string {
         if w.names[key] || os.exists(candidate) {continue}
         w.names[key]=true
         return candidate
-    }
-}
-
-// As fresh_path for an output of the cache: its path among the assets, which
-// no part of this write, no output the sidecar lists and no file of the
-// assets or of the imported folder has.
-@(private)
-fresh_listed :: proc(w:^Writer,file:string) -> string {
-    folder,_:=folder_listed(w)
-    stem,extension:=filepath.stem(file),filepath.ext(file)
-    next: for at:=1;;at+=1 {
-        name:=fmt.tprintf("%s%s",stem,extension) if at==1 else fmt.tprintf("%s (%d)%s",stem,at,extension)
-        key:=strings.to_lower(name,context.temp_allocator)
-        listed:=name if folder=="" else fmt.tprintf("%s/%s",folder,name)
-        if w.names[key] || os.exists(imported_file(w,listed)) || os.exists(folder_path(w,name)) {continue}
-        for output in w.sidecar.outputs {
-            if strings.equal_fold(output.path,listed) {continue next}
-        }
-        w.names[key]=true
-        return listed
     }
 }
 

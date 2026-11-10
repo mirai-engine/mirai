@@ -196,13 +196,17 @@ an_import_takes_a_texture_that_another_import_built_from_the_texture_cache :: pr
     // Only in the imported folder of a project, where the sync of a build makes it Final.
     fast.texture_cache=fmt.tprintf("%s/empty",folder)
     fast.root=folder
-    report,error:=import_source(image,fmt.tprintf("%s/assets/g",folder),fast)
+    os.make_directory_all(fmt.tprintf("%s/source",folder))
+    bytes,_:=os.read_entire_file(image,context.temp_allocator)
+    of_project:=fmt.tprintf("%s/source/g.png",folder)
+    testing.expect(t,os.write_entire_file(of_project,bytes)==nil)
+    report,error:=import_source(of_project,"",fast)
     defer importer.report_destroy(&report)
     if testing.expectf(t,error.code==.None && len(report.assets)==1,"%v %s",error.code,error.message) {
         a:asset.Asset
         testing.expect_value(t,asset.asset_load(&a,report.assets[0].path,context.temp_allocator),asset.Error.None)
         view,view_error:=asset.texture_view(&a,&types)
-        testing.expect(t,view_error==.None && .Fast in view.info.flags && view.info.format==.BC1 && strings.contains(report.assets[0].path,"/.mirai/imported/g/"),"Fast, for the sync of a build to encode again")
+        testing.expect(t,view_error==.None && .Fast in view.info.flags && view.info.format==.BC1 && strings.contains(report.assets[0].path,"/.mirai/imported/"),"Fast, for the sync of a build to encode again")
     }
 }
 

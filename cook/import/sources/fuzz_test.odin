@@ -147,10 +147,10 @@ damaged_images_and_settings_are_imported_or_refused :: proc(t:^testing.T) {
     // The sidecar of a source: any text is the settings and the outputs it says or is refused, and never the defaults or other ids by accident.
     wanted:=importer.Import_Settings{max_texture_size=256,textures=.Uncompressed,rdo_lambda=30,image=.Color,alpha_coverage=0.25,lods=.None,collision=.Mesh,collision_hulls=3}
     listed:=make([dynamic]importer.Output,context.temp_allocator)
-    append(&listed,importer.Output{kind=asset.KIND_MESH,name="Crate \"big\"",index=2,id={3,4},path="props/Crate.mesh",part=true},importer.Output{kind=asset.KIND_MATERIAL,name="Wood",id={5,6}},importer.Output{kind=asset.KIND_TEXTURE,name="wood",id={7,8},shared=true})
-    text:=importer.sidecar_text({settings=wanted,folder="props",outputs=listed},context.temp_allocator)
+    append(&listed,importer.Output{kind=asset.KIND_MESH,name="Crate \"big\"",index=2,id={3,4},part=true},importer.Output{kind=asset.KIND_MATERIAL,name="Wood",id={5,6}},importer.Output{kind=asset.KIND_TEXTURE,name="wood",id={7,8},shared=true})
+    text:=importer.sidecar_text({settings=wanted,outputs=listed},context.temp_allocator)
     parsed,valid:=importer.sidecar_parse(text,context.temp_allocator)
-    testing.expect(t,valid && parsed.settings==wanted && parsed.folder=="props" && len(parsed.outputs)==3)
+    testing.expect(t,valid && parsed.settings==wanted && len(parsed.outputs)==3)
     if valid && len(parsed.outputs)==3 {
         for output,at in parsed.outputs {testing.expectf(t,output==listed[at],"output %d is read as written: %v",at,output)}
     }
@@ -170,7 +170,7 @@ damaged_images_and_settings_are_imported_or_refused :: proc(t:^testing.T) {
             // What is read is settings an import can use, and outputs it can write.
             changed_settings:=changed.settings
             testing.expect(t,changed_settings.max_texture_size>=0 && changed_settings.collision_hulls>=0 && changed_settings.alpha_coverage>=0 && changed_settings.alpha_coverage<=1 && changed_settings.lods<=max(importer.Lods) && changed_settings.collision<=max(importer.Collision))
-            for output in changed.outputs {testing.expect(t,output.id!={} && output.kind!=0 && !strings.contains(output.path,".."),"an output has an id, a kind and a path under the assets")}
+            for output in changed.outputs {testing.expect(t,output.id!={} && output.kind!=0,"an output has an id and a kind")}
         } else {rejected+=1}
     }
     testing.expectf(t,rejected>len(text)/2 && read>0,"%d texts are sidecars and %d are refused",read,rejected)

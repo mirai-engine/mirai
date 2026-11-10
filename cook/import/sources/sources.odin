@@ -12,6 +12,7 @@ import "mirai:cook/import/gltf"
 import "mirai:cook/import/obj"
 import "mirai:cook/import/usd"
 import "mirai:cook/prefab"
+import "mirai:project"
 import "mirai:std/serial"
 
 // The source files a project imports and the one way they are imported, the
@@ -146,12 +147,12 @@ import_source :: proc(path,folder:string,options:importer.Import_Options={},form
     options,folder:=options,folder
     kind:=source_kind(path,formats)
     if folder=="" && kind!=.None {
-        if options.root=="" {return {},importer.error_make(.Not_Found,"%s: pass the folder its assets go to; only an import of a project (root) is found again by its source",path)}
-        file:=importer.sidecar_path(path,options.root,allocator=context.temp_allocator)
-        sidecar,found,sidecar_error:=importer.sidecar_load(file,context.temp_allocator)
-        if sidecar_error.code!=.None {return {},sidecar_error}
-        if !found {return {},importer.error_make(.Not_Found,"%s was not imported before: pass the folder its assets go to",path)}
-        folder=importer.sidecar_folder(options.root,file,sidecar)
+        // Where its source is among the sources: a model in a folder of its own.
+        names:=project.FOLDER_NAMES
+        named:=importer.source_path(options,path)
+        if options.root=="" || !strings.has_prefix(named,names[.Source]) {return {},importer.error_make(.Not_Found,"%s: pass the folder its assets go to; only a source in the %s folder of a project (root) goes where it is",path,names[.Source])}
+        beside,_:=strings.replace_all(filepath.dir(named[len(names[.Source]):]),"\\","/",context.temp_allocator)
+        folder=fmt.tprintf("%s/%s%s",project.folder_path(options.root,.Assets,context.temp_allocator),strings.trim_left(beside,"/."),kind==.Model?fmt.tprintf("/%s",model_folder(path,formats)):"")
     }
     if kind==.Model && model_of_plugin(path,formats) {options.documents=true}
     // Without a root the sidecar is in the folder, which reading a model does not know.
@@ -178,6 +179,5 @@ import_source :: proc(path,folder:string,options:importer.Import_Options={},form
         report,error=importer.import_prompts(path,folder,options,allocator)
     }
     if error.code!=.None {return {},error}
-    stamp_write(path,options,&report)
     return report,{}
 }

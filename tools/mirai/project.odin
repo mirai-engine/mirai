@@ -299,9 +299,12 @@ build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_M
 // with the reason said, when a source does not import.
 @(private="file")
 build_imports :: proc(root:string,p:^project.Project,engine:Build_Mode) -> bool {
-    roots:=build.imports_roots(p,context.temp_allocator)
-    if !build.imports_any(roots) {return true}
-    ok,message:=build.imports_sync(build.engine_paths(root,engine,context.temp_allocator).import_program,roots)
+    roots:=make([dynamic]string,context.temp_allocator)
+    append(&roots,p.root)
+    for folder in project.asset_folders(p,context.temp_allocator) {
+        if folder.prefix!="" {append(&roots,folder.root)}
+    }
+    ok,message:=build.imports_sync(build.engine_paths(root,engine,context.temp_allocator).import_program,roots[:])
     if !ok {
         fmt.eprintfln("mirai build: could not import the sources of the project: %s",message)
         return false
@@ -326,13 +329,10 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
         built:=build.engine_build({engine_root=root,mode=engine})
         if code:=engine_report(built,root);code!=0 {return code,"",false,true,false}
         engine_built=built.status==.Built
-        if !build_imports(root,p,engine) {return 1,"",false,false,engine_built}
     } else if !engine_shaders(root,turn_held=true) {
         return 1,"",false,true,false
-    } else if build.imports_any(build.imports_roots(p,context.temp_allocator)) && !build.engine_current(root,engine) {
-        // The cook imports the sources of the project with the import program of the engine.
-        if code:=engine_report(build.engine_build({engine_root=root,mode=engine}),root);code!=0 {return code,"",false,true,false}
     }
+    if !build_imports(root,p,engine) {return 1,"",false,false,engine_built}
     // The generation first: a game ships the one that is published, and a dedicated server none.
     if !server {
         generation:=build.shaders_run(p)

@@ -1,6 +1,5 @@
 package host
 
-import "core:os"
 import "mirai:asset"
 import "mirai:platform"
 
@@ -16,7 +15,6 @@ app_assets_create :: proc(app:^App,root,cache:string,mounts:[]asset.Registry_Mou
     assets.load_profile=&app.load_profile
     // Without a watch nothing reloads; the application still runs.
     app.assets_watch.watch,_=platform.watch_create(app.platform,{path=root,recursive=true})
-    app_assets_watch_imported(app)
     return .None
 }
 
@@ -26,7 +24,6 @@ app_assets_destroy :: proc(app:^App) {
     app_textures_stream_stop(app)
     app_assets_releases_stop(app)
     if app.assets_watch.watch!=0 {platform.watch_destroy(app.platform,app.assets_watch.watch)}
-    if app.assets_watch.imported!=0 {platform.watch_destroy(app.platform,app.assets_watch.imported)}
     assets_destroy(app.assets)
     free(app.assets,app.allocator)
     app.assets=nil
@@ -38,31 +35,13 @@ ASSETS_WATCH_RATE :: ASSETS_WATCH_SLICE*60 // units per second at most: the pass
 
 app_assets_watch_reset :: proc(app:^App) {
     if app.assets_watch.watch!=0 {platform.watch_destroy(app.platform,app.assets_watch.watch)}
-    if app.assets_watch.imported!=0 {platform.watch_destroy(app.platform,app.assets_watch.imported)}
     app.assets_watch={}
-    if app.assets!=nil {
-        app.assets_watch.watch,_=platform.watch_create(app.platform,{path=app.assets.registry.root,recursive=true})
-        app_assets_watch_imported(app)
-    }
-}
-
-// Watches the imported folder that goes with the asset folder, whose files
-// are assets at the same paths: what an import of another process builds
-// there (mirai import, the sync of a build) is seen like a file of the asset
-// folder. The folder is made when it is missing, so that the first import
-// into it is seen too.
-@(private)
-app_assets_watch_imported :: proc(app:^App) {
-    folder:=app.assets.registry.imported
-    // A shipped game has its assets cooked into one folder, and no sources.
-    if folder=="" || app.assets.indexed || !os.is_dir(folder) && os.make_directory_all(folder)!=nil {return}
-    app.assets_watch.imported,_=platform.watch_create(app.platform,{path=folder,recursive=true})
+    if app.assets!=nil {app.assets_watch.watch,_=platform.watch_create(app.platform,{path=app.assets.registry.root,recursive=true})}
 }
 
 @(private)
 Assets_Watch :: struct {
     watch:platform.Watch,
-    imported:platform.Watch, // of the imported folder that goes with the asset folder; 0 without one
     due:f32,   // units of the walk that time has earned
     spent:int, // units given since the last pass ended
     pass:int,  // units the last pass that walked the folder took; 0 before the first
@@ -91,11 +70,7 @@ app_assets_watch :: proc(app:^App,dt:f32) {
         if quiet==aw.quiet {aw.pass=aw.spent}
         aw.quiet,aw.spent=quiet,0
     }
-    app_assets_watch_apply(app,aw.watch,events[:count])
-    if aw.imported!=0 {
-        count,_=platform.watch_poll(app.platform,aw.imported,ASSETS_WATCH_SLICE,events[:])
-        app_assets_watch_apply(app,aw.imported,events[:count])
-    }
+    app_assets_watch_apply(app,events[:count])
 }
 
 // Everything that changed in the asset folder until now, without pacing: for
@@ -105,23 +80,20 @@ app_assets_watch :: proc(app:^App,dt:f32) {
 app_assets_watch_now :: proc(app:^App) {
     aw:=&app.assets_watch
     if app.assets==nil || aw.watch==0 {return}
-    for watch in ([2]platform.Watch{aw.watch,aw.imported}) {
-        if watch==0 {continue}
-        for passes:=0;passes<2; {
-            events:[16]platform.Watch_Event
-            count,complete:=platform.watch_poll(app.platform,watch,max(int),events[:])
-            if count==0 && !complete {break}
-            app_assets_watch_apply(app,watch,events[:count])
-            if complete {passes+=1}
-        }
+    for passes:=0;passes<2; {
+        events:[16]platform.Watch_Event
+        count,complete:=platform.watch_poll(app.platform,aw.watch,max(int),events[:])
+        if count==0 && !complete {return}
+        app_assets_watch_apply(app,events[:count])
+        if complete {passes+=1}
     }
 }
 
 // The files that changed are refreshed in the registry and reloaded in place.
 @(private)
-app_assets_watch_apply :: proc(app:^App,watch:platform.Watch,events:[]platform.Watch_Event) {
+app_assets_watch_apply :: proc(app:^App,events:[]platform.Watch_Event) {
     if len(events)==0 {return}
-    if platform.watch_stats(app.platform,watch).untracked>0 {
+    if platform.watch_stats(app.platform,app.assets_watch.watch).untracked>0 {
         assets_scan(app.assets)
     } else {
         paths:[16]string

@@ -10,14 +10,15 @@ import "mirai:std/base"
 import "mirai:std/serial"
 
 // <source>.import, the sidecar: what is versioned of an import with its
-// source. It says how the source becomes assets (settings), where they go
-// (folder) and which asset each thing of the source is (outputs): nothing else
-// decides an id. Meshes, textures, sounds and fonts (kind_cached), which
-// nobody edits, go to the imported folder of the root, never versioned, at
-// the path their output lists, and sources.sync builds them again. The other
-// kinds are documents of the assets folder, found by their id. An import a
-// checkout cannot repeat (a source outside the root, a format of a plugin, no
-// root) has no cache: every output is a document of the folder.
+// source. It says how the source becomes assets (settings) and which asset
+// each thing of the source is (outputs): nothing else decides an id. Of a
+// source in the source folder of a root, the meshes, textures, sounds and
+// fonts (kind_cached), which nobody edits, are files of the imported folder
+// of the root named by their ids, never versioned: the registry lists them
+// by where the source is, and sources.sync builds them again. The other kinds
+// are documents of the assets folder, found by their id. Any other import (a
+// source elsewhere, a format of a plugin, no root) keeps every output as a
+// document of the folder it writes to.
 
 SIDECAR_EXTENSION :: ".import"
 SIDECAR_VERSION :: 1
@@ -28,17 +29,13 @@ Output :: struct {
     name:string,       // in the source: the mesh, the material, the image
     index:int,         // among those of its kind in the source
     id:base.Asset_Id,
-    path:string,       // of one in the cache: its path among the assets; "" for a document
     part:bool,         // of one in the cache: it is a part of the root of the import (parts.odin), decided when it was first imported
     shared:bool,       // another import writes it: this one only names it
 }
 
 Sidecar :: struct {
     settings:Import_Settings,
-    // Where new outputs go: a folder of the assets of the root ("" for the
-    // assets folder itself). Outside them, or without a root: a path that
-    // starts at the folder of the sidecar with ./ or ../, else an absolute one.
-    folder:string,
+    documents:bool, // every output is a document of the assets: sources.sync does not import the source
     outputs:[dynamic]Output,
 }
 
@@ -93,8 +90,7 @@ sidecar_text :: proc(sidecar:Sidecar,allocator:=context.allocator) -> string {
     serial.text_write_int(&w,SIDECAR_VERSION)
     serial.text_write_raw(&w,",\n  \"settings\": ")
     serial.text_write(&w,&schema,type,([^]u8)(&settings)[:size_of(Import_Settings)],depth=1)
-    serial.text_write_raw(&w,",\n  \"folder\": ")
-    serial.text_write_string(&w,sidecar.folder)
+    if sidecar.documents {serial.text_write_raw(&w,",\n  \"documents\": true")}
     serial.text_write_raw(&w,",\n  \"outputs\": [")
     for output,at in sidecar.outputs {
         buffer:[4]u8
@@ -107,10 +103,6 @@ sidecar_text :: proc(sidecar:Sidecar,allocator:=context.allocator) -> string {
         serial.text_write_raw(&w,", \"id\": \"")
         serial.text_write_asset_id(&w,output.id)
         serial.text_write_raw(&w,"\"")
-        if output.path!="" {
-            serial.text_write_raw(&w,", \"path\": ")
-            serial.text_write_string(&w,output.path)
-        }
         if output.part {serial.text_write_raw(&w,", \"part\": true")}
         if output.shared {serial.text_write_raw(&w,", \"shared\": true")}
         serial.text_write_raw(&w,"}")
@@ -147,8 +139,9 @@ sidecar_parse :: proc(text:string,allocator:=context.allocator) -> (sidecar:Side
             version=int(magnitude)
         case "settings":
             serial.text_read(&r,&schema,type,([^]u8)(&sidecar.settings)[:size_of(Import_Settings)]) or_return
-        case "folder":
-            sidecar.folder=strings.clone(serial.text_string(&r) or_return,allocator)
+        case "documents":
+            sidecar.documents=serial.text_keyword(&r,"true")
+            if !sidecar.documents && !serial.text_keyword(&r,"false") {return}
         case "outputs":
             serial.text_expect(&r,'[') or_return
             for begun:=false;!serial.text_accept(&r,']');begun=true {
@@ -161,14 +154,11 @@ sidecar_parse :: proc(text:string,allocator:=context.allocator) -> (sidecar:Side
         }
     }
     serial.text_end(&r) or_return
-    if version!=SIDECAR_VERSION || !settings_valid(sidecar.settings) || !path_plain(sidecar.folder,true) {return}
+    if version!=SIDECAR_VERSION || !settings_valid(sidecar.settings) {return}
     for output,at in sidecar.outputs {
-        if output.id=={} || output.kind==0 || output.index<0 || !path_plain(output.path,false) {return}
-        if output.path!="" && (!kind_cached(output.kind) || output.shared) {return}
-        if output.part && output.path=="" {return}
+        if output.id=={} || output.kind==0 || output.index<0 || output.part && (!kind_cached(output.kind) || output.shared) {return}
         for other in sidecar.outputs[:at] {
             if other.id==output.id || other.kind==output.kind && other.index==output.index && other.name==output.name {return}
-            if output.path!="" && strings.equal_fold(other.path,output.path) {return}
         }
     }
     return sidecar,true
@@ -193,8 +183,6 @@ output_parse :: proc(r:^serial.Text_Reader,allocator:=context.allocator) -> (out
             output.index=int(magnitude)
         case "id":
             output.id=serial.text_parse_asset_id(serial.text_string(r) or_return) or_return
-        case "path":
-            output.path=strings.clone(serial.text_string(r) or_return,allocator)
         case "part","shared":
             value:=serial.text_keyword(r,"true")
             if !value && !serial.text_keyword(r,"false") {return}
@@ -204,22 +192,6 @@ output_parse :: proc(r:^serial.Text_Reader,allocator:=context.allocator) -> (out
         }
     }
     return output,true
-}
-
-// Whether a path a sidecar holds stays where it says: relative, with forward
-// slashes and no name that climbs out of its folder or that a file cannot
-// have. A folder may also be an absolute path (an import without a root).
-@(private="file")
-path_plain :: proc(path:string,folder:bool) -> bool {
-    if path=="" {return true}
-    if unsafe_path(path) || strings.contains_rune(path,'\\') {return false}
-    if folder {return true}
-    if filepath.is_abs(path) || strings.has_prefix(path,"/") {return false}
-    rest:=path
-    for name in strings.split_iterator(&rest,"/") {
-        if name=="" || name==".." || name=="." {return false}
-    }
-    return true
 }
 
 // The sidecar at path, in allocator. found is false, with an empty one, when
@@ -245,24 +217,6 @@ sidecar_save :: proc(path:string,sidecar:Sidecar) -> bool {
     if data,read_error:=os.read_entire_file(path,context.temp_allocator);read_error==nil && string(data)==text {return true}
     if folder:=filepath.dir(path);!os.is_dir(folder) {_=os.make_directory_all(folder)}
     return serial.file_write_atomic(path,transmute([]u8)text)==.None
-}
-
-// The folder the sidecar at file says its import goes to, for the root it was
-// imported with.
-sidecar_folder :: proc(root,file:string,sidecar:Sidecar,allocator:=context.temp_allocator) -> string {
-    folder:=sidecar.folder
-    joined:string
-    switch {
-    case filepath.is_abs(folder) || strings.has_prefix(folder,"/"):
-        joined=folder
-    case folder=="." || folder==".." || strings.has_prefix(folder,"./") || strings.has_prefix(folder,"../") || root=="":
-        // What the sidecar sees from where it is.
-        joined,_=filepath.join({filepath.dir(file),folder},context.temp_allocator)
-    case:
-        joined,_=filepath.join({project.folder_path(root,.Assets,context.temp_allocator),folder},context.temp_allocator)
-    }
-    slashed,_:=strings.replace_all(joined,"\\","/",allocator)
-    return slashed
 }
 
 // The settings kept with a source, the defaults (found false) when it has no

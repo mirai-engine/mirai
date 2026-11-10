@@ -217,7 +217,6 @@ import_prompts :: proc(path,folder:string,options:Import_Options={},allocator:=c
     if !packed {return {},error_make(.Limit,"%s: an image is larger than an atlas of %d texels on each side",path,PROMPTS_ATLAS_MAX-2*PROMPTS_PADDING,allocator=caller)}
 
     report_init(&report,allocator)
-    for file in files {append(&report.read,strings.clone(file,allocator))}
     w:Writer
     ok:=writer_init(&w,path,folder,options,&report,allocator)
     w.options.textures,w.options.max_texture_size=.Uncompressed,PROMPTS_ATLAS_MAX

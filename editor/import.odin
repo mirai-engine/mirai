@@ -404,7 +404,7 @@ import_root :: proc(s:^Session,r:^asset.Registry,id:base.Asset_Id) -> (sidecar:s
     if load_error.code!=.None || !has || len(listed.outputs)==0 || listed.outputs[0].id!=id {return}
     files:=make([dynamic]u32,context.temp_allocator)
     for output in listed.outputs {
-        if at,known:=r.by_id[output.id];known && output.path!="" {append(&files,at)}
+        if at,known:=r.by_id[output.id];known && r.files[at].imported {append(&files,at)}
     }
     return path,files[:]
 }

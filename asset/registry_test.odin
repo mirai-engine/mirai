@@ -556,66 +556,70 @@ registry_mounts_a_guest_folder_that_never_takes_an_id_the_registry_has :: proc(t
 }
 
 // What the imports of the sources of a folder build that nobody edits is in
-// the imported folder that goes with it, and is listed at the same paths: a
-// path is a file of one folder or of the other, the registry says which, and
-// its cache remembers it.
+// the imported folder that goes with it, each file named by its id, and is
+// listed where its source is now: beside it for the root of an import, in a
+// folder named after the source file for the rest. A source that is gone
+// takes its outputs out of the listing.
 @(test)
-registry_lists_the_imported_folder_of_a_folder_at_the_same_paths :: proc(t:^testing.T) {
+registry_lists_the_imported_folder_by_where_the_sources_are :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    base_folder:=base.test_folder(t,"registry-imported")
-    if base_folder=="" {return}
-    root:=fmt.tprintf("%s/game/assets",base_folder)
-    imported:=fmt.tprintf("%s/game/.mirai/imported",base_folder)
-    plugin:=fmt.tprintf("%s/pack/assets",base_folder)
-    plugin_imported:=fmt.tprintf("%s/pack/.mirai/imported",base_folder)
-    for folder in ([]string{fmt.tprintf("%s/props",root),fmt.tprintf("%s/props",imported),fmt.tprintf("%s/.stamps",imported),plugin,plugin_imported}) {os.make_directory_all(folder)}
-    wood,sign,atlas:=base.Asset_Id{1,1},base.Asset_Id{2,2},base.Asset_Id{3,3}
+    folder:=base.test_folder(t,"registry-imported")
+    if folder=="" {return}
+    root:=fmt.tprintf("%s/game/assets",folder)
+    imported:=fmt.tprintf("%s/game/.mirai/imported",folder)
+    plugin:=fmt.tprintf("%s/pack/assets",folder)
+    plugin_imported:=fmt.tprintf("%s/pack/.mirai/imported",folder)
+    for made in ([]string{fmt.tprintf("%s/props",root),imported,plugin,plugin_imported,fmt.tprintf("%s/game/source/props",folder),fmt.tprintf("%s/pack/source",folder)}) {os.make_directory_all(made)}
+    Built :: struct {imported,source,name:string,id,owner:base.Asset_Id,listed:string}
+    wood,lid,atlas,lost:=base.Asset_Id{1,1},base.Asset_Id{2,2},base.Asset_Id{3,3},base.Asset_Id{5,5}
+    built:=[]Built{
+        {imported,"source/props/wood.png","wood",wood,{},"props/wood.tex"},
+        {imported,"source/props/crate.glb","lid",lid,{9,9},"props/crate.glb/lid.tex"},
+        {plugin_imported,"source/atlas.png","atlas",atlas,{},"plugins/pack/atlas.tex"},
+        {imported,"source/props/gone.png","gone",lost,{},""},
+    }
+    pixels:[16]u8
+    buffer:[base.ASSET_ID_TEXT]u8
+    for b in built {
+        source:Import_Info
+        text_set(source.source[:],b.source)
+        text_set(source.name[:],b.name)
+        file:=fmt.tprintf("%s/%s.tex",b.imported,base.asset_id_format(b.id,buffer[:]))
+        testing.expect_value(t,texture_save(file,&types,{id=b.id,owner=b.owner,width=2,height=2,format=.RGBA8,mips={pixels[:]},source=&source}),Error.None)
+        if b.listed!="" {testing.expect(t,os.write_entire_file(fmt.tprintf("%s/../../%s",b.imported,b.source),"a source")==nil)}
+    }
     write_material(t,&types,fmt.tprintf("%s/props/Wood.mat",root),{4,4},wood)
-    write_texture(t,&types,fmt.tprintf("%s/props/wood.tex",imported),wood)
-    // A file of the assets wins over one of the imported folder at its path, and what a scan leaves out is left out there too.
-    write_texture(t,&types,fmt.tprintf("%s/props/sign.tex",root),sign)
-    write_texture(t,&types,fmt.tprintf("%s/props/sign.tex",imported),{5,5})
-    write_texture(t,&types,fmt.tprintf("%s/.stamps/hidden.tex",imported),{6,6})
-    write_texture(t,&types,fmt.tprintf("%s/atlas.tex",plugin_imported),atlas)
 
-    cache:=fmt.tprintf("%s/registry.cache",base_folder)
+    cache:=fmt.tprintf("%s/registry.cache",folder)
     for pass in 0..<2 {
         r:Registry;registry_init(&r,root,cache,imported=imported);defer registry_destroy(&r)
         testing.expect(t,registry_mount(&r,plugin,"plugins/pack",plugin_imported))
         testing.expect_value(t,registry_scan(&r),Error.None)
         testing.expectf(t,pass==0 || r.stats.opened==0,"the second scan reads its cache: %v",r.stats)
-        testing.expect_value(t,len(r.duplicates),0)
-        Case :: struct {path:string,id:base.Asset_Id,imported:bool,file:string}
-        for c in ([]Case{
-            {"props/Wood.mat",{4,4},false,fmt.tprintf("%s/props/Wood.mat",root)},
-            {"props/wood.tex",wood,true,fmt.tprintf("%s/props/wood.tex",imported)},
-            {"props/sign.tex",sign,false,fmt.tprintf("%s/props/sign.tex",root)},
-            {"plugins/pack/atlas.tex",atlas,true,fmt.tprintf("%s/atlas.tex",plugin_imported)},
-        }) {
-            file,found:=registry_find_path(&r,c.path)
-            if !testing.expectf(t,found,"%s is listed",c.path) {continue}
-            testing.expectf(t,file.id==c.id && file.imported==c.imported && file.state==.Asset,"%s: %v",c.path,file^)
-            testing.expect_value(t,registry_file_path(&r,c.path,context.temp_allocator),c.file)
-            back,inside:=registry_relative(&r,c.file)
-            testing.expectf(t,inside && back==c.path,"%s is %s in the registry, not %s",c.file,c.path,back)
+        for b in built {
+            file,found:=registry_find(&r,b.id)
+            if b.listed=="" {
+                testing.expectf(t,!found,"%s is gone: what it gave is not listed",b.source)
+                continue
+            }
+            if !testing.expectf(t,found && file.path==b.listed && file.imported,"%s %s is listed at %s",b.source,b.name,b.listed) {continue}
+            testing.expect_value(t,registry_file_path(&r,file.path,context.temp_allocator),fmt.tprintf("%s/%s.tex",b.imported,base.asset_id_format(b.id,buffer[:])))
         }
-        _,hidden:=registry_find(&r,{6,6})
-        testing.expect(t,!hidden,"a folder whose name starts with a dot is not listed")
-        // The material finds its texture, which is no file of the assets.
-        material,_:=registry_find_path(&r,"props/Wood.mat")
         missing:=make([dynamic]Registry_Missing,context.temp_allocator)
         registry_missing(&r,&missing)
-        testing.expect(t,material!=nil && len(missing)==0,"a dependency in the imported folder is not missing")
+        testing.expect(t,len(missing)==0,"a dependency in the imported folder is not missing")
         if pass==0 {continue}
-        // What a sync wrote or removed is refreshed by its path.
-        write_texture(t,&types,fmt.tprintf("%s/props/new.tex",imported),{7,7})
-        testing.expect_value(t,os.remove(fmt.tprintf("%s/props/wood.tex",imported)),nil)
-        testing.expect_value(t,registry_refresh(&r,{"props/new.tex","props/wood.tex"}),Error.None)
-        added,has:=registry_find(&r,{7,7})
-        testing.expect(t,has && added.imported && added.path=="props/new.tex")
-        _,still:=registry_find(&r,wood)
-        testing.expect(t,!still)
-        registry_missing(&r,&missing)
-        testing.expect_value(t,len(missing),1)
+        // The source moves: nothing is listed until it is imported again and its outputs name it there.
+        testing.expect(t,os.rename(fmt.tprintf("%s/game/source/props/wood.png",folder),fmt.tprintf("%s/game/source/wood.png",folder))==nil)
+        testing.expect_value(t,registry_scan(&r),Error.None)
+        _,stale:=registry_find(&r,wood)
+        testing.expect(t,!stale,"an output whose source is not where it says is not listed")
+        source:Import_Info
+        text_set(source.source[:],"source/wood.png")
+        text_set(source.name[:],"wood")
+        testing.expect_value(t,texture_save(fmt.tprintf("%s/%s.tex",imported,base.asset_id_format(wood,buffer[:])),&types,{id=wood,width=2,height=2,format=.RGBA8,mips={pixels[:]},source=&source}),Error.None)
+        testing.expect_value(t,registry_scan(&r),Error.None)
+        moved,again:=registry_find(&r,wood)
+        testing.expect(t,again && moved.path=="wood.tex","the asset is listed where its source is, with its id")
     }
 }

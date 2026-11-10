@@ -81,13 +81,13 @@ the_parts_of_an_import_name_its_prefab_and_keep_their_ids_where_they_were_moved 
     testing.expect(t,strings.has_prefix(wood.detail,"of its own: an island"),wood.detail)
     for written in first.assets {
         cached:=importer.kind_cached(written.kind)
-        testing.expectf(t,strings.contains(written.path,cached?"/.mirai/imported/models/box/":"/assets/models/box/"),"%s: of the %s",written.path,cached?"imported folder":"assets")
+        testing.expectf(t,strings.contains(written.path,cached?"/.mirai/imported/":"/assets/models/box/"),"%s: of the %s",written.path,cached?"imported folder":"assets")
     }
     sidecar,found,_:=importer.sidecar_load(fmt.tprintf("%s.import",source),context.temp_allocator)
-    testing.expect(t,found && sidecar.folder=="models/box" && len(sidecar.outputs)==len(first.assets),"the sidecar next to the source lists what it gives")
+    testing.expect(t,found && len(sidecar.outputs)==len(first.assets),"the sidecar next to the source lists what it gives")
     for output in sidecar.outputs {
         written,listed:=written_of(&first,output.kind,output.kind==asset.KIND_PREFAB?"box":output.name)
-        testing.expectf(t,listed && written.id==output.id && (output.path!="")==importer.kind_cached(output.kind) && output.part==(output.kind==asset.KIND_MESH),"%s %s is listed with its id: %v",output.name,output.path,output)
+        testing.expectf(t,listed && written.id==output.id && output.part==(output.kind==asset.KIND_MESH),"%s is listed with its id: %v",output.name,output)
     }
     a,loaded:=read_asset(t,prefab,&types)
     if loaded {
@@ -381,18 +381,17 @@ a_checkout_without_its_imported_folder_gets_the_same_assets_from_its_sources :: 
     root:=base.test_folder(t,"sync")
     if root=="" {return}
     // The second model in the order of a walk comes first by name, and shares the texture and the material of the other.
-    atlas_images(fmt.tprintf("%s/source/crate",root))
-    atlas_images(fmt.tprintf("%s/source/barrel",root))
-    crate:=atlas_source(fmt.tprintf("%s/source/crate",root),"crate.gltf",{"atlas","waves","across","shared"})
-    barrel:=atlas_source(fmt.tprintf("%s/source/barrel",root),"barrel.gltf",{"atlas","waves","across","shared"})
+    atlas_images(fmt.tprintf("%s/source/set/crate",root))
+    atlas_images(fmt.tprintf("%s/source/set/barrel",root))
+    crate:=atlas_source(fmt.tprintf("%s/source/set/crate",root),"crate.gltf",{"atlas","waves","across","shared"})
+    barrel:=atlas_source(fmt.tprintf("%s/source/set/barrel",root),"barrel.gltf",{"atlas","waves","across","shared"})
     _=os.write_entire_file(fmt.tprintf("%s/source/sign.png",root),png_bytes(8,8,{200,40,40}))
     sources:=[3]string{crate,barrel,fmt.tprintf("%s/source/sign.png",root)}
-    folders:=[3]string{"crate","barrel","signs"}
     Built :: struct {path:string,id:base.Asset_Id,bytes:[]u8}
     built:=make([dynamic]Built,context.temp_allocator)
     caches:=Sync_Options{texture_cache=fmt.tprintf("%s/cache/textures",root),mesh_cache=fmt.tprintf("%s/cache/meshes",root)}
-    for source,at in sources {
-        report,error:=import_source(source,fmt.tprintf("%s/assets/%s",root,folders[at]),{root=root,textures=.Uncompressed,texture_cache=caches.texture_cache,mesh_cache=caches.mesh_cache})
+    for source in sources {
+        report,error:=import_source(source,"",{root=root,textures=.Uncompressed,texture_cache=caches.texture_cache,mesh_cache=caches.mesh_cache})
         if !testing.expectf(t,error.code==.None,"%s: %s",source,error.message) {return}
         for written in report.assets {append(&built,Built{path=strings.clone(written.path,context.temp_allocator),id=written.id})}
         importer.report_destroy(&report)
@@ -430,29 +429,55 @@ a_checkout_without_its_imported_folder_gets_the_same_assets_from_its_sources :: 
     again:=sync(root,caches,context.temp_allocator)
     testing.expectf(t,again.imported==0 && len(again.failures)==0,"%v",again)
 
-    // A source that changed is imported again, and it alone; a file the source read counts as the source.
+    // The registry lists what the imported folder holds by where its source is now.
+    Listed :: struct {id:base.Asset_Id,path:string}
+    listing :: proc(t:^testing.T,root:string) -> (listed:[dynamic]Listed,missing:int) {
+        r:asset.Registry
+        asset.registry_init(&r,fmt.tprintf("%s/assets",root),imported=fmt.tprintf("%s/.mirai/imported",root))
+        defer asset.registry_destroy(&r)
+        testing.expect_value(t,asset.registry_scan(&r),asset.Error.None)
+        listed=make([dynamic]Listed,context.temp_allocator)
+        for file in r.files {
+            if file.imported {append(&listed,Listed{file.id,strings.clone(file.path,context.temp_allocator)})}
+        }
+        lost:=make([dynamic]asset.Registry_Missing,context.temp_allocator)
+        asset.registry_missing(&r,&lost)
+        return listed,len(lost)
+    }
+    path_of :: proc(listed:[]Listed,path:string) -> (id:base.Asset_Id,found:bool) {
+        for entry in listed {
+            if entry.path==path {return entry.id,true}
+        }
+        return
+    }
+    before,missing:=listing(t,root)
+    body,has_body:=path_of(before[:],"set/crate/crate.gltf/Body.mesh")
+    keg,has_keg:=path_of(before[:],"set/barrel/barrel.gltf/Body.mesh")
+    _,has_sign:=path_of(before[:],"sign.tex")
+    testing.expectf(t,has_body && has_keg && has_sign && missing==0 && len(before)==cached,"a part in the folder of its source file, a root beside its source: %v",before[:])
+
+    // A source that changed is imported again, and it alone.
     _=os.write_entire_file(fmt.tprintf("%s/source/sign.png",root),png_bytes(8,8,{40,40,200}))
     changed:=sync(root,caches,context.temp_allocator)
     testing.expectf(t,changed.imported==1 && len(changed.failures)==0,"%v",changed)
-    _=os.write_entire_file(fmt.tprintf("%s/source/crate/across.png",root),png_pixels(64,64,gradient_green))
-    read:=sync(root,caches,context.temp_allocator)
-    testing.expectf(t,read.imported==1 && len(read.failures)==0,"an image a model reads changed: %v",read)
 
-    // A file of the imported folder that no sidecar lists goes; one that is missing comes back.
-    stray:=fmt.tprintf("%s/signs/old.tex",imported)
-    sign:=fmt.tprintf("%s/signs/sign.tex",imported)
-    testing.expect(t,os.rename(sign,stray)==nil)
-    swept:=sync(root,caches,context.temp_allocator)
-    testing.expectf(t,swept.imported==1 && swept.removed==1 && os.exists(sign) && !os.exists(stray),"%v",swept)
-
-    // A sidecar without its source cannot give its assets: sync names it and removes nothing.
+    // A folder with two sources moves, one of them is renamed and another source is deleted: until
+    // they are imported again nothing stale is listed, and then every asset is listed where its
+    // source is, with the id it had; what names them still finds them.
+    testing.expect(t,os.rename(fmt.tprintf("%s/source/set",root),fmt.tprintf("%s/source/props",root))==nil)
+    for end in ([2]string{"",".import"}) {testing.expect(t,os.rename(fmt.tprintf("%s/source/props/barrel/barrel.gltf%s",root,end),fmt.tprintf("%s/source/props/barrel/keg.gltf%s",root,end))==nil)}
     testing.expect(t,os.remove(fmt.tprintf("%s/source/sign.png",root))==nil)
-    lost:=sync(root,caches,context.temp_allocator)
-    testing.expectf(t,len(lost.failures)==1 && strings.contains(lost.failures[0],"sign.png") && strings.contains(lost.failures[0],"missing") && os.exists(sign),"%v",lost)
-    // With its sidecar gone too, the source is no longer of the project, and its texture goes.
-    testing.expect(t,os.remove(fmt.tprintf("%s/source/sign.png.import",root))==nil)
-    gone:=sync(root,caches,context.temp_allocator)
-    testing.expectf(t,gone.sources==2 && gone.removed==1 && len(gone.failures)==0 && !os.exists(sign),"%v",gone)
+    moved,_:=listing(t,root)
+    testing.expectf(t,len(moved)==0,"an asset whose source is not where it says is not listed: %v",moved[:])
+    again_synced:=sync(root,caches,context.temp_allocator)
+    testing.expectf(t,again_synced.sources==2 && again_synced.imported==2 && again_synced.removed==1 && len(again_synced.failures)==0,"%v",again_synced)
+    after,after_missing:=listing(t,root)
+    moved_body,_:=path_of(after[:],"props/crate/crate.gltf/Body.mesh")
+    moved_keg,_:=path_of(after[:],"props/barrel/keg.gltf/Body.mesh")
+    testing.expectf(t,moved_body==body && moved_keg==keg && body!={} && keg!={} && after_missing==0 && len(after)==len(before)-1,"%v",after[:])
+    for entry in after {
+        testing.expectf(t,strings.has_prefix(entry.path,"props/"),"%s is listed where its source is",entry.path)
+    }
 }
 
 // What cannot be imported again from the checkout alone has no cache: the
@@ -495,10 +520,7 @@ an_import_that_a_checkout_cannot_repeat_keeps_every_asset_in_the_assets :: proc(
         }
         sidecar,found,_:=importer.sidecar_load(c.sidecar,context.temp_allocator)
         own:=0
-        for output in sidecar.outputs {
-            own+=int(!output.shared)
-            testing.expectf(t,output.path=="","%s %s is no output of the cache",c.sidecar,output.name)
-        }
+        for output in sidecar.outputs {own+=int(!output.shared)}
         testing.expectf(t,found && own==len(first.assets),"%s lists its assets",c.sidecar)
         again,again_error:=import_source(c.source,folder,{root=project,textures=.Uncompressed},formats)
         if !testing.expectf(t,again_error.code==.None,"%s",again_error.message) {continue}
