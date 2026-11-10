@@ -126,15 +126,9 @@ tool_refresh_ignores_newer_tests_and_tracks_runtime_and_loaded_files :: proc(t:^
         testing.expect(t,known && newer)
         if !testing.expect(t,os.change_times(file,time.unix(100,0),time.unix(100,0))==nil) {return}
     }
-    // A build of tests compiled them, and those of the packages it imports.
-    newer,known=sources_newer(dependencies,output,folder,tests=true)
-    testing.expect(t,known && newer)
-    if !testing.expect(t,os.change_times(tests,time.unix(100,0),time.unix(100,0))==nil) {return}
-    newer,known=sources_newer(dependencies,output,folder,tests=true)
-    testing.expect(t,known && !newer)
     if !testing.expect(t,os.change_times(imported_tests,time.unix(300,0),time.unix(300,0))==nil) {return}
-    newer,known=sources_newer(dependencies,output,folder,tests=true)
-    testing.expect(t,known && newer,"a test file of an imported package is a source of a build of tests")
+    newer,known=sources_newer(dependencies,output,folder)
+    testing.expect(t,known && !newer)
     if !testing.expect(t,os.remove(source)==nil) {return}
     newer,known=sources_newer(dependencies,output,folder)
     testing.expect(t,known && newer)

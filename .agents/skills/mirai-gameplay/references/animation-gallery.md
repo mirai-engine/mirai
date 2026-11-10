@@ -95,7 +95,7 @@ schemas and `scene.inspect` for the ids of the stations, which are named after w
 
 ## Verification
 
-- `mirai test demo/game -collection:plugins=plugins`: `animation_gallery_controls_test.odin`
+- `mirai test demo/game`: `animation_gallery_controls_test.odin`
   (manual and automatic stations, bounded queue), `animation_gallery_matching_test.odin` (the speed
   asked picks idle, walk or jog of `mirai_gallery.match`), `mirai_matching_test.odin`,
   `mirai_character_test.odin`, `grounding_physics_test.odin` and `animation_motor_test.odin`.
