@@ -2,7 +2,6 @@ package terrain_multiplayer
 
 import "core:fmt"
 import "core:log"
-import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
@@ -64,9 +63,8 @@ SOURCE :: base.Asset_Id{0x7e77a1,0x5e55}
 // corner when raise is not 0, or no file when not written.
 @(private="file")
 fixture_init :: proc(t:^testing.T,f:^Fixture,name:string,kind:=terrain.Source_Kind.Heightfield,raise:f32=0,written:=true) -> bool {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    f.folder=fmt.tprintf("%s/mirai-terrain-net-%s-%d",directory,name,os.get_pid())
-    if os.make_directory_all(f.folder)!=nil {return false}
+    f.folder=base.test_folder(t,name)
+    if f.folder=="" {return false}
     asset.types_init(&f.types)
     s:terrain.Source
     defer terrain.source_destroy(&s)
@@ -81,7 +79,6 @@ fixture_init :: proc(t:^testing.T,f:^Fixture,name:string,kind:=terrain.Source_Ki
 @(private="file")
 fixture_destroy :: proc(f:^Fixture) {
     host.assets_destroy(&f.assets);asset.types_destroy(&f.types)
-    os.remove(fmt.tprintf("%s/ground.terrain",f.folder));os.remove(f.folder)
 }
 
 // A call of terrain_update in a tick of a world that plays: it loads the
