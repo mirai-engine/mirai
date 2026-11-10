@@ -837,6 +837,8 @@ collab_snapshot_send :: proc(s:^Session,st:^Collab_State,peer:^Collab_Peer) {
     cap:asset.Scene
     if _,error:=scene.capture(w,&cap,&a.types,{previous=d.previous,id=d.id});error!=.None {return}
     defer asset.scene_destroy(&cap)
+    cap.doc.flags-={.Prefab}
+    if d.prefab {cap.doc.flags+={.Prefab}}
     out:serial.Writer
     collab_begin(&out,.Snapshot,0)
     if asset.scene_write(&cap,&out)!=.None {return}
@@ -863,6 +865,7 @@ collab_snapshot_load :: proc(s:^Session,st:^Collab_State,data:[]u8) -> bool {
     document_previous_free(d)
     if asset.scene_read(records,&a.types,own)==.None {d.previous=records} else {free(records)}
     d.id={}
+    d.prefab=asset.asset_prefab(&source)
     document_name(d,"","")
     document_opened(s)
     st.epoch=s.edits.epoch

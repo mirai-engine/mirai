@@ -398,7 +398,7 @@ a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testin
     testing.expect(t,len(asset.scene_instance_roots(&after))==1 && len(after_members)==len(members))
 
     // What the document says of a member, however deep, by its name, the instance holds on its own.
-    _,gate_why:=scene_write(&p,"arena/Gate.scene",`{"entities":[{"name":"Gate","children":[{"name":"Frame","children":[{"name":"Lamp","preset":"point_light"}]}]}]}`)
+    _,gate_why:=scene_write(&p,"arena/Gate.scene",`{"kind":"Prefab","entities":[{"name":"Gate","children":[{"name":"Frame","children":[{"name":"Lamp","preset":"point_light"}]}]}]}`)
     if !testing.expect(t,gate_why=="",gate_why) {return}
     court:=`{"entities":[{"name":"North","prefab":"arena/Gate.scene","children":[{"name":"Frame","children":[{"name":"Lamp","position":[0,2,0],"components":{"Point_Light":{"intensity":9}}}]}]}]}`
     north,north_why:=scene_write(&p,"arena/court.scene",court)
@@ -413,7 +413,7 @@ a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testin
     testing.expect(t,why=="" && again.same,fmt.tprintf("%s %v",why,again))
 
     // A prefab is not placed in a file it holds, itself or through the prefabs it places.
-    _,wall_why:=scene_write(&p,"arena/Wall.scene",`{"entities":[{"name":"Wall","children":[{"name":"Door","prefab":"arena/Gate.scene"}]}]}`)
+    _,wall_why:=scene_write(&p,"arena/Wall.scene",`{"kind":"Prefab","entities":[{"name":"Wall","children":[{"name":"Door","prefab":"arena/Gate.scene"}]}]}`)
     testing.expect(t,wall_why=="",wall_why)
     gate:=slice.clone(file_bytes(&p,"arena/Gate.scene"),context.temp_allocator)
     for inner in ([]string{"arena/Gate.scene","arena/Wall.scene"}) {
@@ -421,6 +421,12 @@ a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testin
         testing.expectf(t,strings.contains(refused,"entities[0].children[0].prefab: ") && strings.contains(refused,"holds the scene it would be placed in"),"%s gave '%s'",inner,refused)
     }
     testing.expect(t,slice.equal(file_bytes(&p,"arena/Gate.scene"),gate),"a refused document leaves the file as it was")
+
+    // A prefab has exactly one root: a scene with several is not made one, and a prefab keeps one.
+    _,many:=scene_write(&p,"arena/yard.scene",`{"merge":true,"kind":"Prefab","entities":[]}`)
+    testing.expectf(t,strings.contains(many,"exactly one root"),"gave '%s'",many)
+    _,second:=scene_write(&p,"arena/Gate.scene",`{"merge":true,"entities":[{"name":"Second"}]}`)
+    testing.expectf(t,strings.contains(second,"exactly one root"),"gave '%s'",second)
 }
 
 

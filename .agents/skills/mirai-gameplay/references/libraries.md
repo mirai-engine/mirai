@@ -40,8 +40,8 @@ the name of their type) and a world (handles and tables).
   only a scene the game ships: what hangs from it loads unchecked. `report.refused` says what
   failed and `untrusted_text` how to fix it.
 - `spawn(spawner, path_or_id, at)` is the one way to place a copy of a scene while playing and
-  returns its root. It places a scene with exactly one root, a prefab; one with none or several is
-  `Not_One_Root`, and hangs whole from a `Scene_Reference` instead. One that fails returns `NONE`
+  returns its root. It places a prefab (`Header_Flag.Prefab`), by its one root; another scene is
+  `Not_A_Prefab`, and hangs whole from a `Scene_Reference` instead. One that fails returns `NONE`
   and is the problem `scene.spawn` of its `parent` (or of the world), with the fix. A zero
   rotation is none and a zero scale is 1; its rows wait for the end of the function that spawned
   it. The root receives `Prefab_Instance{prefab}`, the one component that says what prefab an
@@ -102,14 +102,14 @@ the name of their type) and a world (handles and tables).
 - An entity is looked up by its `Id` with `core.entity_of(&es, id)`, up to date from the settle that
   settles what was instantiated
   ([identity](../../mirai-core/references/core.md#persistent-identity)).
-- `Error`: `No_Assets`, `Not_Found`, `Invalid`, `Cycle`, `Not_One_Root`, `Corrupt`,
+- `Error`: `No_Assets`, `Not_Found`, `Invalid`, `Cycle`, `Not_A_Prefab`, `Corrupt`,
   `Duplicate_Id`, `Out_Of_Memory`, `Write_Failed` and, of `load_untrusted`, `Too_Large`,
   `Not_Allowed`, `Out_Of_Range`, `Unknown_Reference`; `error_text`.
 
 ### Scene references
 
-One kind of scene, placed as its use asks: loaded as the world, referenced as a section or,
-with exactly one root, copied (an instance with overrides in a document, `spawn` while running).
+Any scene is loaded as the world or referenced as a section; a prefab is also copied by its one
+root (an instance with overrides in a document, `spawn` while running).
 
 - `Scene_Reference{scene}` (`reference.odin`) on an entity: the scene's entities hang from it
   without being copied into the document that has the reference. Deleting or turning it off removes

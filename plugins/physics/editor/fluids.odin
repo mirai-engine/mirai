@@ -20,7 +20,6 @@ Fluid_Lines :: struct {
 
 @(step="render",after="render_sync")
 fluid_lines :: proc(s:^editor.Session,view:^Fluid_Lines,extras:^host.Frame_Extras) {
-    if editor.document_is_prefab(s) {return}
     state:=core.world_storage_of(editor.shown_world(s),phys.Physics_State)
     if state==nil || !state.ready || state.world.fluid_count==0 {return}
     out:=sim.Debug_Draw{lines=view.scratch[:]}

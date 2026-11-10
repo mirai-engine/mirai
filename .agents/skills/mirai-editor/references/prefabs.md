@@ -2,15 +2,16 @@
 
 Code: `prefabs.odin`, `api_prefab.odin`.
 
-- A prefab is a scene with exactly one root
-  ([what makes one](../../mirai-assets/references/scenes.md#prefab)): the same `.scene` file as any
-  other, which the registry knows as a prefab from its header. The editor tells them apart by that
-  alone: `shown_kind` gives `SHOWN_PREFAB` for it, which is the color, icon and filter of the
-  content browser, what a field of prefabs lists (a name with `prefab`, or the tag `kind=prefab`)
-  and what a drag carries; `asset.list` says `prefab` of each scene. It is no second kind: a scene
-  saved with another number of roots is shown as a scene from then on.
+- A prefab is a `.scene` whose header says Prefab, with exactly one root
+  ([what makes one](../../mirai-assets/references/scenes.md#prefab)): its maker chooses it (Create
+  > Prefab, File > New prefab, `prefab_create` of a selection, `scene.new` with `kind`) and
+  `kind` in a `scene.write` document, which File > Make prefab and Make scene send, changes it.
+  The browser gives it its color, icon and filter from that header (`asset_file_color`,
+  `asset_file_icon`, `content_file_category`), a field of scenes takes it, a drop places it as a
+  linked instance where another scene hangs as a section, and `asset.list` says `prefab` of each
+  scene.
 - An **instance** is a subtree of the document linked to a prefab; its entities (the **members**)
-  have the effective values in the `World`. A scene with several roots is not instantiated
+  have the effective values in the `World`. A scene that is not a prefab is not instantiated
   (`Not_Found`, which says why): it hangs from a `Scene_Reference`.
 - An instance is two components of its entities
   ([format](../../mirai-assets/references/scenes.md#prefab-instances)): `scene.Prefab_Instance` on
@@ -102,12 +103,13 @@ instance, a click chooses the member.
 - Double click in Assets or on an instance's icon opens it in a tab (`file_open_path`); the scene
   and its changes stay in its own. It is edited with the common tools, saved to the same `.scene`
   keeping identity, has its own history and closing asks about the changes.
-- A tab is a prefab's while the file it was read from or last saved to has one root
-  (`document_is_prefab`, from the header of that file): it opens beside the scene instead of
-  taking its tab, with the prefab icon, the variants and the preview sunlight.
-- It is a scene as any other: it takes a second root, sections and Play. No rule keeps its one
-  root; saved with several it is a scene, in its tab and in Assets, and the instances other files
-  placed of it stay as they are until it has one root again.
+- A tab is a prefab's while its document is one (`Document.prefab`, read from the header and
+  changed by `scene.write` `kind`; `document_is_prefab`): it opens beside the scene instead of
+  taking its tab, with the prefab icon, the variants and the preview sunlight; its view modes are
+  those of any scene.
+- Save refuses a prefab without exactly one root (`Not_One_Root`, with how to fix it), and making
+  a scene a prefab refuses the same; made a scene, the instances other files placed of it stay as
+  they are.
 - Preview sunlight is a preview sun active on opening, with a neutral environment and grid: it only
   changes the renderer, never entities, assets, bounds, selection or history, and on returning to
   the scene its lighting is restored. It is the studio light (`studio_lighting`), which a scene
@@ -201,7 +203,7 @@ A variant is a common prefab whose root is the root of an instance of another pr
   default; Apply rejects before writing the prefab and the document's capture rejects saving.
   Without memory the migration gives `Out_Of_Memory`; with an invalid schema, `Rejected`.
 - The errors are `Prefab_Error`. By API, those of an entity, path, id or instance that do not exist
-  (`Unknown_Entity`, `No_Id`, `Not_Found`, `Unknown_Path`, `Not_Instance`; a scene without
-  exactly one root is no prefab to find) and the apply to the base of something that is not a
+  (`Unknown_Entity`, `No_Id`, `Not_Found`, `Unknown_Path`, `Not_Instance`; a scene that is not a
+  prefab is no prefab to find) and the apply to the base of something that is not a
   variant (`Not_Variant`) are `INVALID_PARAMS`, and the rest,
   `SERVER_ERROR` ([API](../../mirai-agent-api/references/methods.md#prefabs)).

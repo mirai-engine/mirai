@@ -426,7 +426,7 @@ An entity is named as [the API names it](api.md#method-conventions). Each edit i
     ([one sun](../../mirai-editor/references/document.md#world-edit-procedures)).
   - A member of an instance of a prefab that is not its root keeps its parent: declaring it under
     another fails, and leaving it out turns it off (`disabled` of the result).
-  - A new entity with `prefab` (the path or the id of a `.scene` with one root) is placed as a
+  - A new entity with `prefab` (the path or the id of a prefab) is placed as a
     linked instance, in the step of the write: what it and the entities under it leave out stays
     as the prefab gives it, also in a later write that names it the same way, and what the
     document says of its members, by their names, are overrides. With `{asset, root}`, as
@@ -773,11 +773,13 @@ when the viewport draws with them, which `mirai shaders` asks for.
 
 ## Prefabs
 
-A prefab is a scene with exactly one root, named by `asset` as any asset is: a path under
-`assets/` or its id. `asset.list` says `prefab` of every scene and `prefab.list` lists them.
-Those that edit are transactions. Unknown id, no id, prefab not found (a scene without exactly
-one root is none: the error says so), nonexistent override and "is not part of an instance" are
-`-32602`; the rest, `-32000`
+A prefab is a scene whose kind is Prefab, with exactly one root, named by `asset` as any asset
+is: a path under `assets/` or its id. `scene.new` and `asset.create` make one with `kind`
+`Prefab` (`prefab`), `kind` in a document of `scene.write` changes the kind of the document, and
+`editor.documents` says the kind of each tab. `asset.list` says `prefab` of every scene and
+`prefab.list` lists them. Those that edit are transactions. Unknown id, no id, prefab not found
+(a scene that is not a prefab is none: the error says so), nonexistent override and "is not part
+of an instance" are `-32602`; the rest, `-32000`
 ([errors](../../mirai-editor/references/prefabs.md#errors)).
 
 - An instance is named by its `root`. `prefab.create`, `prefab.variant.create` and `prefab.apply`
