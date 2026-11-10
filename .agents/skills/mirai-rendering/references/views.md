@@ -202,6 +202,11 @@ in the declared order. Each renderer stage (`Render_Stage`) declares what it rea
 - **Image.** `Output` finishes the last image written: an own pass that writes `Taa` takes the
   place of `Resolve`, like an upscaler, and one that writes `Display` returns to the unresolved
   image.
+- **Given light.** An own pass that writes `Direct` takes the place of `Direct`; one that writes
+  `Gi`, of `Indirect` (both is an error): `Gi` is then the diffuse indirect light itself, which the
+  composite takes instead of the probe volume's (`FRAME_FLAG_GI_GIVEN`), and it keeps what the pass
+  left the frame before. The references of the tests are such passes
+  ([indirect reference](gi.md#indirect-reference)).
 - **Request.** A pipeline is requested in every frame that uses it; the renderer compiles it the
   first time, identifies it by a hash of the description (including `record` and `user`: a project
   reload gives another) and keeps up to `RENDER_PIPELINE_CAPACITY` (16); one that no recent frame

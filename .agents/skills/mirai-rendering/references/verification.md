@@ -120,13 +120,14 @@ It measures GI on synthetic fixtures: it does not replace the [render check](#re
 - The indirect (`Debug_View.Indirect`, without TAA) is compared in nits with the
   [reference](gi.md#indirect-reference) at its key moments (error, SSIM, bias and leak); the
   shadow cases (`Gi_Case.direct`: a pushed body and a falling one, with the view still) compare
-  the direct light (`Debug_View.Direct`) with `reference_lights` in the same pose, while moving
+  the direct light (`Debug_View.Direct`) with the [reference of the lights](lights.md#shadows)
+  in the same pose, while moving
   and after stopping;
   in a still window noise, boiling, flicker, fireflies and blotches are measured, whose floor is
   the noise of the reference (`MIRAI_GI_REFERENCE_FRAMES` lowers it); in the pans, the
   reprojected flicker and the settling on stopping; after each change, the time to 90 % and 99 %
   of the settled value; and the GPU and CPU cost.
-- Controls: `MIRAI_RT=software`, `MIRAI_GI_REFERENCE=<folder>` (stores and reuses the
+- Controls: `MIRAI_RT=software` (Vulkan), `MIRAI_GI_REFERENCE=<folder>` (stores and reuses the
   references), `MIRAI_GI_DUMP=<folder>`, `MIRAI_GI_CASES`, `MIRAI_GI_SETTINGS=name=value,...` and
   `MIRAI_GI_WINDOW=from,to` for ablations.
 - Blotches in an editor scene: the deviation of the luminance against its blur on a smooth wall,
@@ -184,8 +185,8 @@ While working, `--views` and `--quality`.
     samples (`main_wall` flies sideways).
   - In a pushing view (`church_push`): the luma MAE at mid push against the same settled pose,
     judged like the stability, and the frames after stopping until the image is within 10 % and
-    1 % of what it deviated by on stopping (`RENDER_PUSH_AFTER`). The editor does not expose
-    `reference_lights`: against it `gi_benchmark` measures.
+    1 % of what it deviated by on stopping (`RENDER_PUSH_AFTER`). The references are not in the
+    editor: against them `gi_benchmark` measures.
   - Captures, the difference map and, with a base, the two builds side by side.
 - **Regressions**, with the limits of `tools/mirai/render.odin` (`RENDER_COST_LIMIT`,
   `RENDER_STABILITY_*`, `RENDER_MOTTLE_FLOOR`, `RENDER_LUMA_LIMIT`): the longest frame; the

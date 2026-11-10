@@ -188,9 +188,10 @@ it:
   rectangle go on the diagonals of the cells of a 4×4 grid. One below the surface horizon gives no
   light and the block uses the opposite one. The hard shadow of a shape goes to the point nearest
   to the normal (`light_aim`).
-- **Reference.** `Settings.reference_lights` traces from each pixel to the whole set of points of
-  the sun and of each light, randomly rotated per frame, without tree, blocks or filter: its
-  average over a few frames is the exact image.
+- **Reference.** What the tests compare with, outside the renderer games run: a custom pass of the
+  tests in place of the `Direct` stage (`render/reference_test.odin`) traces from each pixel to
+  the whole set of points of the sun and of each light, randomly rotated per frame, without tree,
+  blocks or filter: its average over a few frames is the exact image.
 - **Limits.**
   - A block has one fraction for all its lights: the specular highlight of a covered light turns
     off in proportion to what covers all of them.
