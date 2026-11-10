@@ -3,6 +3,7 @@ package animation_editor
 import "mirai:asset"
 import "core:fmt"
 import "core:math/linalg"
+import "core:strings"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
@@ -24,39 +25,6 @@ Blend_Write_Params :: struct {
 Blend_Sample_Params :: struct {asset:base.Asset_Id,position:mm.Vec2 `mirai:"label=Outside the hull it projects to the nearest edge"`}
 Blend_Contribution :: struct {index:u32 `mirai:"label=The sample"`,clip:[64]u8 `mirai:"text"`,animation:base.Asset_Id,weight:f32}
 Blend_Sample_Result :: struct {samples:[3]Blend_Contribution}
-Program_Graph_Node :: struct {
-    name:[64]u8 `mirai:"text"`,
-    kind:anim.Graph_Node_Kind,
-    left,right:[64]u8 `mirai:"text,optional,label=Child node name"`,
-    clip:[64]u8 `mirai:"text,optional"`,
-    animation:base.Asset_Id `mirai:"optional,label=Clip source; empty inherits the graph animation"`,
-    blend_space:base.Asset_Id `mirai:"optional,label=Blend_Space: a .blend, an aim offset or additive space; only the right of an Additive node"`,
-    x_parameter,y_parameter,weight_parameter:[32]u8 `mirai:"text,optional,label=Parameter name; empty uses the fixed value"`,
-    position:mm.Vec2 `mirai:"optional"`,
-    weight:f32 `mirai:"optional,min=0,max=1"`,
-    speed:f32 `mirai:"optional"`,
-    loop:bool `mirai:"optional"`,
-    sync_mode:anim.Sync_Mode `mirai:"optional,label=Clip and Blend_Space only"`,
-    sync_duration:f32 `mirai:"optional,min=0,unit=s,label=Clip and Blend_Space only"`,
-    sync_group:[32]u8 `mirai:"text,optional,label=Clip and Blend_Space only"`,
-    over:[asset.NODE_PATH_CAPACITY]u8 `mirai:"text,optional,label=Bone branch path for Layer"`,
-    mask:[64]u8 `mirai:"text,optional,label=Named bone mask"`,
-    reference:f32 `mirai:"optional,min=0,unit=s,label=Reference time for an additive clip"`,
-    curves:anim.Curve_Blend `mirai:"optional"`,
-    mirror:bool `mirai:"optional,label=Clip or Blend_Space with left and right bones swapped"`,
-}
-Program_Graph_Mask :: struct {name:[64]u8 `mirai:"text"`}
-Program_Graph_Mask_Bone :: struct {mask:[64]u8 `mirai:"text"`,bone:anim.Bone_Ref,weight:f32 `mirai:"optional,min=0,max=1"`,branch:bool `mirai:"optional"`}
-Graph_Write_Params :: struct {
-    path:[1024]u8 `mirai:"text,label=Ending in .agraph: what is there is replaced keeping its id"`,
-    animation:base.Asset_Id,
-    output:[64]u8 `mirai:"text,label=The node whose pose the graph gives"`,
-    nodes:[anim.GRAPH_NODES]Program_Graph_Node,
-    parameters:[anim.GRAPH_PARAMETERS]anim.Graph_Parameter `mirai:"optional"`,
-    masks:[64]Program_Graph_Mask `mirai:"optional"`,
-    mask_bones:[512]Program_Graph_Mask_Bone `mirai:"optional"`,
-    dry_run:bool `mirai:"optional,label=Validates the definition with its references and sources without writing"`,
-}
 Modifier_Inspect_Params :: struct {entity:editor.Api_Entity_Text `mirai:"text,entity"`,handle:core.Entity `mirai:"transient"`,offset:u32 `mirai:"optional"`,limit:u32 `mirai:"optional,min=1,max=256,clamp"`,diagnostics:bool `mirai:"optional"`}
 Modifier_Goal_Kind :: enum u8 {IK,Look,Contact,Grounding,Chain_IK,Spring,Multi_IK,Spline_IK,Follow}
 MODIFIER_GOAL_KINDS :: [Modifier_Goal_Kind]anim.Modifier_Kind{.IK=.IK,.Look=.Look,.Contact=.Contact,.Grounding=.Grounding,.Chain_IK=.Chain_IK,.Spring=.Spring,.Multi_IK=.Multi_IK,.Spline_IK=.Spline_IK,.Follow=.Follow}
@@ -72,24 +40,13 @@ program_blend_defaults :: proc() -> ^Blend_Write_Params {
     return blend
 }
 @(private)
-program_graph_defaults :: proc(allocator:=context.temp_allocator) -> ^Graph_Write_Params {
-    graph:=new(Graph_Write_Params,allocator)
-    if graph==nil {return nil}
-    for &node in graph.nodes {node.weight,node.speed,node.loop,node.sync_mode=.5,1,true,.Markers}
-    for &bone in graph.mask_bones {bone.weight=1}
-    return graph
-}
-
-@(private)
 program_register :: proc(s:^editor.Session) {
     inspect:=Authoring_Inspect_Params{limit=128}
     blend:=program_blend_defaults()
-    graph:=program_graph_defaults()
-    if blend==nil || graph==nil {return}
+    if blend==nil {return}
     modifiers:=Modifier_Inspect_Params{limit=128}
-    editor.api_method_register(s,Blend_Write_Params,Authoring_Write_Result,{name="animation.blend_space.set",summary="Makes or replaces a .blend: clips placed on one or two axes, its segments or triangles prepared from the samples. It plays as an aim offset or additive space, the right of an Additive node of an .agraph. An invalid one changes nothing. In Edit.",defaults=blend,run=program_blend_set,writes_result=true})
+    editor.api_method_register(s,Blend_Write_Params,Authoring_Write_Result,{name="animation.blend_space.set",summary="Makes or replaces a .blend: clips placed on one or two axes, its segments or triangles prepared from the samples. It plays as the space of a layer of an action set (animation.action.set): aim offsets or additive poses its axes sample, set by name. An invalid one changes nothing. In Edit.",defaults=blend,run=program_blend_set,writes_result=true})
     editor.api_method_register(s,Blend_Sample_Params,Blend_Sample_Result,{name="animation.blend_space.sample",summary="The samples of a blend space that contribute at a position and their weights, without advancing the world.",flags={.Read_Only},run=program_blend_sample,writes_result=true})
-    editor.api_method_register(s,Graph_Write_Params,Authoring_Write_Result,{name="animation.graph.set",summary="Makes or replaces an .agraph that composes poses: named nodes in any order (clips, blends, layers and additives) with its parameters and bone masks. Locomotion is a .match. An invalid one changes nothing. In Edit.",defaults=graph,run=program_graph_set,writes_result=true})
 }
 
 @(private)
@@ -120,14 +77,6 @@ program_blend_open :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id,fil
     if !authoring_open(s,call,id,anim.BLEND_KIND,file) {return {},false}
     profile,error:=anim.blend_space_view(&file.file,&s.app.assets.types)
     if error!=.None {authoring_failure(call,"asset","Invalid_Asset","a valid .blend asset",fmt.tprintf("%v",error),"The blend space is invalid");return {},false}
-    return profile,true
-}
-
-@(private)
-program_graph_open :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id,file:^Authoring_File) -> (anim.Graph_Profile,bool) {
-    if !authoring_open(s,call,id,anim.GRAPH_KIND,file) {return {},false}
-    profile,error:=anim.graph_view(&file.file,&s.app.assets.types)
-    if error!=.None {authoring_failure(call,"asset","Invalid_Asset","a valid .agraph asset",fmt.tprintf("%v",error),"The animation graph is invalid");return {},false}
     return profile,true
 }
 
@@ -205,50 +154,37 @@ program_blend_sample :: proc(s:^editor.Session,call:^api.Call) {
     serial.text_write_raw(call.out,"]}")
 }
 
-@(private)
-program_graph_inspect :: proc(s:^editor.Session,call:^api.Call) {
-    p:=api.call_params(call,Authoring_Inspect_Params)
-    file:Authoring_File;defer asset.asset_close(&file.file)
-    profile,ok:=program_graph_open(s,call,p.asset,&file);if !ok {return}
-    serial.text_write_raw(call.out,"{");authoring_result(call,p.asset,file.path)
-    graph_named_inspect(call,profile,p)
-    serial.text_write_raw(call.out,"}")
-}
-
-@(private)
-program_graph_set :: proc(s:^editor.Session,call:^api.Call) {
-    p:=api.call_params(call,Graph_Write_Params)
-    if !authoring_editable(s,call) {return}
-    target:Authoring_File;defer asset.asset_close(&target.file)
-    id,ok:=authoring_set_target(s,call,base.text_get(p.path[:]),anim.GRAPH_KIND,".agraph",&target);if !ok {return}
-    profile,prepared:=graph_named_prepare(s,call,p);defer anim.graph_profile_free(&profile,call.allocator)
-    if !prepared {return}
-    doc:asset.Document;defer asset.document_destroy(&doc)
-    if error:=anim.graph_document(&doc,&s.app.assets.types,id,profile,s.app.allocator);error!=.None {authoring_failure(call,"graph","Publication","a valid prepared graph",fmt.tprintf("%v",error),"The animation graph could not be prepared",api.SERVER_ERROR if error==.Out_Of_Memory else api.INVALID_PARAMS);return}
-    _=authoring_publish(s,call,target,&doc)
-}
-
-// Checks that the graph of the Animation declares a parameter with this name and range.
+// Checks that the action set of the Animation declares a parameter with this name: a layer, whose
+// weight it is, or an axis of the space of one, within its range.
 @(private)
 program_parameter_check :: proc(s:^editor.Session,call:^api.Call,animation:anim.Animation,name:string,value:f32) -> bool {
-    if name=="" {authoring_failure(call,"name","Required","a declared parameter name","empty","The parameter name is required");return false}
+    if name=="" {authoring_failure(call,"name","Required","a layer or an axis of the action set","empty","The parameter name is required");return false}
     if !finite(value) {authoring_failure(call,"value","Invalid_Value","a finite parameter value",fmt.tprintf("%v",value),"The parameter value must be finite");return false}
-    if s.app==nil || s.app.assets==nil {authoring_failure(call,"assets","Unavailable","an asset registry","missing registry","Assets are unavailable",api.SERVER_ERROR);return false}
-    if !host.assets_scan(s.app.assets) {authoring_failure(call,"assets","Read_Failed","a refreshed asset registry","scan failed","The asset registry could not be refreshed",api.SERVER_ERROR);return false}
-    record,found:=asset.registry_find(&s.app.assets.registry,animation.asset)
-    if !found {authoring_failure(call,"asset","Missing_Asset","an animation program in the registry",fmt.tprintf("%v",animation.asset),"The animation program is missing");return false}
+    if animation.actions=={} {authoring_failure(call,"name","Missing_Profile","Animation.actions assigned","none","The entity has no action set, so it has no parameters",fix="Make one with its layers with animation.action.set and assign it to Animation.actions");return false}
     file:Authoring_File;defer asset.asset_close(&file.file)
-    index:=-1
-    switch record.kind {
-    case anim.GRAPH_KIND:
-        profile,loaded:=program_graph_open(s,call,animation.asset,&file);if !loaded {return false}
-        index=anim.graph_parameter_index(profile,name)
-        if index<0 || index>=len(profile.parameters) {authoring_failure(call,"name","Unknown_Reference","a declared parameter name",name,"The graph parameter is missing");return false}
-        if value<profile.parameters[index].min || value>profile.parameters[index].max {authoring_failure(call,"value","Out_Of_Range",fmt.tprintf("%v to %v",profile.parameters[index].min,profile.parameters[index].max),fmt.tprintf("%v",value),"The parameter is outside its declared range");return false}
-    case:
-        authoring_failure(call,"asset","Invalid_Kind","an .agraph asset",fmt.tprintf("%v",record.kind),"Only an .agraph has parameters",fix="Parameters drive the blends of an .agraph; a .match follows the body, and animation.request plays tells it what to play");return false
+    profile,loaded:=action_authoring_open(s,call,animation.actions,&file);if !loaded {return false}
+    names:=make([dynamic]string,context.temp_allocator)
+    for &layer in profile.layers {
+        append(&names,base.text_get(layer.name[:]))
+        if base.text_get(layer.name[:])==name {
+            if value<0 || value>1 {authoring_failure(call,"value","Out_Of_Range","0 to 1",fmt.tprintf("%v",value),"The weight of a layer is a share");return false}
+            return true
+        }
     }
-    return true
+    for &layer in profile.layers {
+        if layer.space=={} {continue}
+        space_file:Authoring_File;defer asset.asset_close(&space_file.file)
+        space,opened:=program_blend_open(s,call,layer.space,&space_file);if !opened {return false}
+        axes:=[2]anim.Blend_Axis{space.info.x,space.info.y}
+        for &axis in axes[:2 if space.info.dimension==.Two else 1] {
+            append(&names,base.text_get(axis.name[:]))
+            if base.text_get(axis.name[:])!=name {continue}
+            if value<axis.min || value>axis.max {authoring_failure(call,"value","Out_Of_Range",fmt.tprintf("%v to %v",axis.min,axis.max),fmt.tprintf("%v",value),"The parameter is outside the range of its axis");return false}
+            return true
+        }
+    }
+    authoring_failure(call,"name","Unknown_Reference","a layer of the action set or an axis of the space of one",name,"The action set declares no such parameter",fix=fmt.tprintf("Parameters: %s",strings.join(names[:],", ",context.temp_allocator)))
+    return false
 }
 
 @(private)

@@ -31,7 +31,7 @@ Pose_Scratch :: struct {
 // What the pose of a rig could not do in its job; animation_tick reports it.
 Pose_Faults :: struct {
     program,mirror,memory:bool,
-    layer_bone,layer_reference:u8, // a bit a layer
+    layer_bone,layer_reference:u16, // a bit a slot of the stack
 }
 
 // An entity of a tick between its clocks, which run in order on the owner thread, and what
@@ -41,7 +41,7 @@ Pose_Row :: struct {
     state:i32,   // in Playback.states
     content:i32, // in Playback.work_contents + 1; 0: it plays nothing
     programmed:bool,
-    animation:Animation, // as its actions left it
+    animation:Animation,
     dt,current_dt,sought:f32,
     distance,action_distance:^Animation_Distance_Request,
     distance_error:Distance_Error,
@@ -171,7 +171,7 @@ pose_row :: proc(playback:^Playback,row:^Pose_Row,transforms:core.Read(core.Tran
     state:=&playback.states[row.state]
     content:=&playback.work_contents[row.content-1]
     if row.programmed {
-        if !program_pose(playback,state,content,row.animation,&state.program.output,transforms,worker) {row.faults.program=true;return}
+        if !program_pose(playback,state,content,row.animation,&state.program.output,worker) {row.faults.program=true;return}
         row.faults=pose_layers(playback,state,&content.lib,row.animation,transforms,worker)
         sample_layer_curves(state,content,row.animation)
     } else {
@@ -200,14 +200,14 @@ pose_rows_run :: proc(playback:^Playback,transforms:core.Read(core.Transform),sy
 }
 
 @(private)
-pose_faults_report :: proc(problems:^core.Problems,e:core.Entity,faults:Pose_Faults) {
+pose_faults_report :: proc(problems:^core.Problems,e:core.Entity,faults:Pose_Faults,actions:^Action_Runtime=nil) {
     if faults.memory {memory_problem(problems,e,"the blend of its clips")}
-    for i in 0..<ANIMATION_LAYERS {
-        if faults.layer_bone&(u8(1)<<u8(i))!=0 {
-            core.report(problems,e,"animation.layer_bone","layer %d of the Animation of this entity plays over a bone, or a part or region of the body, that this rig does not have, so it plays nothing; give animation_play in over one of its bones, a part or region of its body (@upper_body), or none",i+1)
+    for i in 0..<STACK_SLOTS {
+        if faults.layer_bone&(u16(1)<<u16(i))!=0 {
+            core.report(problems,e,"animation.layer_bone","layer '%s' of the action set of this entity plays over a bone, or a part or region of the body, that this rig does not have, so it plays nothing; give its over one of its bones, a part or region of its body (@upper_body), or none",stack_slot_name(actions,e,i))
         }
-        if faults.layer_reference&(u8(1)<<u8(i))!=0 {
-            core.report(problems,e,"animation.layer_reference","layer %d of the Animation of this entity adds its clip over a reference clip its animation does not have, so it plays nothing; give animation_play in reference_clip the name of one of its clips, or none to subtract its own clip",i+1)
+        if faults.layer_reference&(u16(1)<<u16(i))!=0 {
+            core.report(problems,e,"animation.layer_reference","layer '%s' of the action set of this entity adds its clip over a reference clip its animation does not have, so it plays nothing; give its reference_clip the name of one of its clips, or none to subtract the clip that plays",stack_slot_name(actions,e,i))
         }
     }
     if faults.mirror {

@@ -33,20 +33,11 @@ PATH_CAPACITY :: asset.NODE_PATH_CAPACITY // the field asset hides the package i
 
 Play_Params :: struct {
     entity:editor.Api_Entity_Text `mirai:"text,entity"`,
-    asset:base.Asset_Id `mirai:"optional,label=An .anim; a .match, its locomotion; or an .agraph whose parameters go through animation.request; omitted keeps what it plays"`,
-    clip:[64]u8 `mirai:"text,optional,label=A clip of the .anim; on layer 0 only with an .anim asset"`,
+    asset:base.Asset_Id `mirai:"optional,label=An .anim; or a .match, its locomotion; omitted keeps what it plays"`,
+    clip:[64]u8 `mirai:"text,optional,label=A clip of the .anim; only with an .anim asset"`,
     speed:f32 `mirai:"optional"`,
     fade:f32 `mirai:"optional,min=0"`,
     loop:bool `mirai:"optional"`,
-    layer:u32 `mirai:"optional,max=3,label=0 is the base; 1 to 3 play a clip over any source"`,
-    over:[PATH_CAPACITY]u8 `mirai:"text,optional"`,
-    sync:bool `mirai:"optional"`,
-    weight:f32 `mirai:"optional,min=0,max=1"`,
-    mode:anim.Layer_Mode `mirai:"optional"`,
-    reference:f32 `mirai:"optional,min=0,unit=s,label=Additive layer: the time of reference_clip whose pose its clip is added over"`,
-    reference_clip:[64]u8 `mirai:"text,optional,label=Additive layer: a clip of the .anim whose pose at reference it adds the difference of its clip to, as an emote over a stand; empty is its own clip"`,
-    curves:anim.Curve_Blend `mirai:"optional"`,
-    mesh_space:bool `mirai:"optional,label=Override layer: its rotations blend in the space of the rig, keeping the turn of its clip whatever the base turns above it"`,
 }
 
 // handle: the one animation.inspect resolved, which subject takes over entity.
@@ -63,10 +54,9 @@ Preview_Params :: struct {
     dt:f32 `mirai:"optional,min=0.0001,max=0.25"`,
     offset:u32 `mirai:"optional"`,
     limit:u32 `mirai:"optional,min=1,max=1024,clamp"`,
-    parameters:[anim.GRAPH_PARAMETERS]Preview_Parameter `mirai:"optional"`,
+    parameters:[anim.STACK_PARAMETERS]Preview_Parameter `mirai:"optional"`,
     controls:[64]Preview_Control `mirai:"optional"`,
     goals:[64]Preview_Goal `mirai:"optional"`,
-    plays:[16]Request_Play `mirai:"optional"`,
     actions:[64]Preview_Action `mirai:"optional"`,
     motion:[16]Request_Motion `mirai:"optional"`,
     locomotion:Request_Locomotion `mirai:"optional"`,
@@ -88,11 +78,11 @@ register :: proc(s:^editor.Session) {
     program_register(s)
     morph_register(s)
     describe_defaults:=Describe_Params{limit=256}
-    play_defaults:=Play_Params{speed=1,fade=0.2,loop=true,weight=1}
+    play_defaults:=Play_Params{speed=1,fade=0.2,loop=true}
     preview_defaults:=new(Preview_Params,context.temp_allocator);if preview_defaults==nil {return}
     preview_defaults.dt,preview_defaults.limit,preview_defaults.trace_limit=1.0/60,256,16
     request_rows_defaults(preview_defaults)
-    editor.api_method_register(s,Play_Params,Control_Result,{name="animation.play",summary="Plays a clip, the motion matching of a .match or a graph on an entity, or a clip on a layer over it. One step of undo in Edit; in Play it changes the running world.",defaults=&play_defaults,run=play})
+    editor.api_method_register(s,Play_Params,Control_Result,{name="animation.play",summary="Plays a clip of an .anim or the motion matching of a .match on an entity. What plays over it are the layers and actions of its action set (animation.action.set, animation.request). One step of undo in Edit; in Play it changes the running world.",defaults=&play_defaults,run=play})
     editor.api_method_register(s,Preview_Params,Preview_Result,{name="animation.preview",summary="Evaluates an entity on a copy of the world with the fields of animation.request scheduled by tick and returns its poses; the document and the running world stay intact.",defaults=preview_defaults,flags={.Read_Only},run=preview,writes_result=true})
 }
 
@@ -157,7 +147,7 @@ edit_end :: proc(s:^editor.Session,call:^api.Call,w:core.World_Ref,ok:bool) -> b
 @(private)
 play :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Play_Params)
-    if !finite(p.speed) || !finite(p.fade) || p.fade<0 || !finite(p.weight) {authoring_failure(call,"speed","Invalid_Value","finite speed, fade and weight; nonnegative fade",fmt.tprintf("speed=%v fade=%v weight=%v",p.speed,p.fade,p.weight),"Animation playback settings are invalid");return}
+    if !finite(p.speed) || !finite(p.fade) || p.fade<0 {authoring_failure(call,"speed","Invalid_Value","finite speed and fade; nonnegative fade",fmt.tprintf("speed=%v fade=%v",p.speed,p.fade),"Animation playback settings are invalid");return}
     w,e,ok:=subject(s,call,p.entity[:]);if !ok {return}
     table:=core.world_table_of(w,anim.Animation)
     if table==nil {authoring_failure(call,"Animation","Unavailable","the animation runtime table","missing table","Animation runtime is not present",api.SERVER_ERROR);return}
@@ -168,19 +158,14 @@ play :: proc(s:^editor.Session,call:^api.Call) {
     content:=host.content_animation_wait(s.app,source)
     if content==nil {authoring_failure(call,"asset","Invalid_Asset","a loadable animation source","source load failed","The animation asset could not be loaded");return}
     name:=base.text_get(p.clip[:])
-    if source!=value.asset && p.layer==0 && name!="" {authoring_failure(call,"clip","Program_Source","a clip on a layer over a .match or .agraph","base clip supplied","A base clip requires an .anim asset",fix="Pass layer 1 to 3 to play it over, or ask the .match for it with animation.request plays");return}
+    if source!=value.asset && name!="" {authoring_failure(call,"clip","Program_Source","no clip with a .match","base clip supplied","The search of a .match picks its clips",fix="Play a clip over it as an action of its action set: animation.action.set, then animation.request actions");return}
     if name!="" && lib.clip_find(&content.lib,base.name_hash(name))==0 {authoring_failure(call,"clip","Missing_Clip","a clip name in the source",name,"The clip does not exist in this animation asset");return}
-    reference:=base.text_get(p.reference_clip[:])
-    if reference!="" && (p.layer==0 || p.mode!=.Additive) {authoring_failure(call,"reference_clip","Not_Additive","an Additive layer from 1 to 3",fmt.tprintf("layer %d in %v mode",p.layer,p.mode),"Only an additive layer adds its clip over a reference clip",fix="Pass mode Additive and layer 1 to 3, or leave reference_clip out");return}
-    if reference!="" && lib.clip_find(&content.lib,base.name_hash(reference))==0 {authoring_failure(call,"reference_clip","Missing_Clip","a clip name in the source",reference,"The reference clip does not exist in this animation asset",fix="Name a clip of the .anim (animation.inspect lists them), or leave it out to subtract the clip's own pose");return}
-    if !anim.animation_play(&value,name,p.fade,p.loop,int(p.layer),base.text_get(p.over[:]),p.sync,p.weight,p.speed,p.mode,p.reference,p.curves,p.mesh_space,reference) {authoring_failure(call,"layer","Invalid_Value","a valid layer and supported playback policies",fmt.tprintf("%d",p.layer),"The animation layer or its policies are invalid");return}
+    if !anim.animation_clip(&value,name,p.fade,p.loop,p.speed) {authoring_failure(call,"clip","Invalid_Value","a clip name under 64 bytes",name,"The clip could not be set");return}
     if !edit_begin(s,call,"Play animation") {return}
     core.add(table,e,value)
     if !edit_end(s,call,w,true) {return}
     control_result(s,call,w,e)
 }
-
-
 
 @(private)
 asset_open :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id,file:^asset.Asset) -> bool {
@@ -282,11 +267,10 @@ preview :: proc(s:^editor.Session,call:^api.Call) {
     if buffer==nil {authoring_failure(call,"trace","Out_Of_Memory","memory for the preview trace","allocation failed","The preview trace could not be allocated",api.SERVER_ERROR);return}
     serial.writer_init_fixed(&trace.writer,buffer)
     animation,_:=editor.entity_get(world,e,anim.Animation)
-    source_file,graph_file:Authoring_File;defer asset.asset_close(&source_file.file);defer asset.asset_close(&graph_file.file)
+    source_file:Authoring_File;defer asset.asset_close(&source_file.file)
     if animation.asset!={} {
         source_id,valid:=program_source(s,call,animation.asset,animation.library);if !valid {return}
         trace.view,valid=program_animation_open(s,call,source_id,&source_file);if !valid {return}
-        if record,found:=asset.registry_find(&s.app.assets.registry,animation.asset);found && record.kind==anim.GRAPH_KIND {trace.graph,valid=program_graph_open(s,call,animation.asset,&graph_file);if !valid {return}}
     }
     if !request_source_check(s,call,world,e) || !request_apply(s,call,world,e,p,p.ticks,nil) {return}
     animation,_=editor.entity_get(world,e,anim.Animation)
@@ -312,7 +296,7 @@ preview :: proc(s:^editor.Session,call:^api.Call) {
     serial.text_write_raw(out,"{");api.write_key(out,"id",true);api.write_id(out,editor.api_entity_id(source,e))
     progress,_,ended,_:=anim.animation_progress(core.world_storage_of(world,anim.Playback),e);api.write_key(out,"time");api.write_number(out,progress);api.write_bool(out,"ended",ended)
     selected:^anim.Playing;for &state in playback.states {if state.entity==e {selected=&state;break}}
-    api.write_key(out,"program");preview_program_write(call,world,s.app,selected,animation,trace.graph)
+    api.write_key(out,"program");preview_program_write(call,world,s.app,selected,animation)
     api.write_key(out,"poses");serial.text_write_raw(out,"[")
     total,written:=0,0
     if skeleton_id!={} {

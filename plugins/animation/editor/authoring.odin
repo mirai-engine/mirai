@@ -31,7 +31,6 @@ authoring_register :: proc(s:^editor.Session) {
     authoring_bake_register(s)
     authoring_motion_register(s)
     authoring_actions_register(s)
-    authoring_patch_register(s)
     body_register(s)
     clip_edit_register(s)
     request_register(s)

@@ -31,18 +31,13 @@ Align :: enum u8 {Start,Center,End,Baseline}
 // cell or the stack: as its parent aligns its children, or on its own.
 Self_Align :: enum u8 {Parent,Start,Center,End,Stretch}
 
-// The widths of the columns of a Grid: Fixed, Percent, Fit or Grow, whose
-// value is its weight (0 is 1).
+// The widths of the columns of a Grid, or the heights of its first rows for
+// the Grid that names it by Box.row_tracks: Fixed, Percent, Fit or Grow, whose
+// value is its weight (0 is 1). The rows after them are as high as their highest child.
 GRID_TRACKS :: 12
 Grid_Tracks :: struct {
     count:u8,
     columns:[GRID_TRACKS]Size,
-}
-// The heights of the first rows of a Grid, of the same kinds. The rows after
-// count are as high as their highest child.
-Grid_Rows :: struct {
-    count:u8,
-    rows:[GRID_TRACKS]Size,
 }
 
 // A point of a rectangle: where a floating element hangs from, and which of
@@ -82,7 +77,7 @@ Box :: struct {
     id:Id,
     using layout:Layout,
     row_span:u8,     // rows of a Grid it takes; 0 is 1
-    row_tracks:u16,  // of a Grid: row plus one of Context.grid_rows with the height of its rows; 0: each as high as its highest child
+    row_tracks:u16,  // of a Grid: what grid_tracks_add gave for the heights of its first rows; 0: each as high as its highest child
     float:Float,
     contain:bool,    // floating: it stays inside its surface, on the other side of what it hangs from when it does not fit
     inset:[4]f32,    // contained: how far inside its surface it stays (left, top, right, bottom)

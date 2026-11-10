@@ -271,10 +271,14 @@ move_actions_ask_navigation_and_read_where_the_agent_got :: proc(t:^testing.T) {
     testing.expect_value(t,follow_act(&w,&a,e,1),ai.Status.Failure)
 }
 
+// The clock at `seconds` of a run at hz ticks a second.
+@(private="file")
+clock_at :: proc(hz,seconds:f64) -> core.Time {return {tick=u64(seconds*hz+0.5),seconds=seconds,dt=f32(1/hz),playing=true}}
+
 @(private="file")
 sight_tick :: proc(f:^Sight_World,seconds:f64) {
     core.test_world_settle(f)
-    perception_update(core.read(&f.perceivers),&f.perceptions,core.read(&f.perceivables),core.read(&f.worlds),core.ref(&f.settings),&f.turns,&f.sight,&f.noises,&f.events,core.ref(&f.physics),core.read(&f.fars),core.ref(&f.entities),{seconds=seconds,dt=1.0/60,playing=true},&f.problems)
+    perception_update(core.read(&f.perceivers),&f.perceptions,core.read(&f.perceivables),core.read(&f.worlds),core.ref(&f.settings),&f.turns,&f.sight,&f.noises,&f.events,core.ref(&f.physics),core.read(&f.fars),core.ref(&f.entities),clock_at(60,seconds),&f.problems)
     core.test_world_settle(f)
 }
 
@@ -664,7 +668,7 @@ smart_objects_offer_their_uses_to_whom_may_take_them :: proc(t:^testing.T) {
     core.test_world_settle(&world)
     smart_update(core.read(&world.objects),&world.states,&world.uses,{seconds=0})
     core.test_world_settle(&world)
-    v:=Smart_View{objects=core.read(&world.objects),states=core.read(&world.states),worlds=core.read(&world.worlds),claims=&world.claims,time=0,tick=1}
+    v:=Smart_View{objects=core.read(&world.objects),states=core.read(&world.states),worlds=core.read(&world.worlds),claims=&world.claims,time=clock_at(60,1.0/60)}
     red:=Smart_User{entity=a,team=1}
     blue:=Smart_User{entity=b,team=2}
     found,ok:=smart_offer(&v,crate,USE_AMMO,red)
@@ -692,20 +696,23 @@ smart_objects_offer_their_uses_to_whom_may_take_them :: proc(t:^testing.T) {
     ai.reserve_release(&world.claims.reservations,m.main.reserved,u64(a))
     _,ok=smart_offer(&v,crate,USE_AMMO,other)
     testing.expect(t,ok)
-    // Used: closed until its cooldown passes; spent after its uses.
+    // Used: closed until its cooldown passes, as long at 60 as at 120 Hz; spent after its uses.
+    for hz in ([]f64{60,120}) {
+        core.edit(&world.states,crate)^={}
+        smart_used(&world.uses,found)
+        smart_update(core.read(&world.objects),&world.states,&world.uses,clock_at(hz,1))
+        core.test_world_settle(&world)
+        v.time=clock_at(hz,5.95)
+        _,ok=smart_offer(&v,crate,USE_AMMO,red)
+        testing.expectf(t,!ok,"cooling down at %v Hz",hz)
+        v.time=clock_at(hz,6)
+        _,ok=smart_offer(&v,crate,USE_AMMO,red)
+        testing.expectf(t,ok,"cooled down at %v Hz",hz)
+    }
     smart_used(&world.uses,found)
-    smart_update(core.read(&world.objects),&world.states,&world.uses,{seconds=1})
+    smart_update(core.read(&world.objects),&world.states,&world.uses,clock_at(60,6))
     core.test_world_settle(&world)
-    v.time=3
-    _,ok=smart_offer(&v,crate,USE_AMMO,red)
-    testing.expect(t,!ok,"cooling down")
-    v.time=6
-    _,ok=smart_offer(&v,crate,USE_AMMO,red)
-    testing.expect(t,ok)
-    smart_used(&world.uses,found)
-    smart_update(core.read(&world.objects),&world.states,&world.uses,{seconds=6})
-    core.test_world_settle(&world)
-    v.time=100
+    v.time=clock_at(60,100)
     _,ok=smart_offer(&v,crate,USE_AMMO,red)
     testing.expect(t,!ok,"spent")
 }

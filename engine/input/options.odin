@@ -44,14 +44,14 @@ input_options_write :: proc(m:^Input_Map,app:^host.App) -> bool {
 }
 
 // The text of an input.mirai with what m has over below: the tap and hold
-// ticks, and each action whose kind or bindings differ. "" when nothing
+// seconds, and each action whose kind or bindings differ. "" when nothing
 // differs; ok false for a binding that the file cannot name.
 input_map_text :: proc(m,below:^Input_Map,info:^core.World_Info,allocator:=context.temp_allocator) -> (text:string,ok:bool) {
     b:=strings.builder_make(allocator)
     fields:=0
     strings.write_string(&b,"{")
-    if m.tap_ticks!=below.tap_ticks {fmt.sbprintf(&b,"\n    \"tap_ticks\": %d",m.tap_ticks);fields+=1}
-    if m.hold_ticks!=below.hold_ticks {fmt.sbprintf(&b,"%s\n    \"hold_ticks\": %d",fields>0?",":"",m.hold_ticks);fields+=1}
+    if m.tap_seconds!=below.tap_seconds {fmt.sbprintf(&b,"\n    \"tap_seconds\": %v",m.tap_seconds);fields+=1}
+    if m.hold_seconds!=below.hold_seconds {fmt.sbprintf(&b,"%s\n    \"hold_seconds\": %v",fields>0?",":"",m.hold_seconds);fields+=1}
     actions:=0
     for value in 0..<ACTION_CAPACITY {
         action:=Action(value)

@@ -3,8 +3,7 @@ package destruct
 import "mirai:asset"
 import render "mirai:engine/render"
 import "mirai:host"
-import sim "plugins:physics/runtime/sim"
-import fr "plugins:destruct/runtime/fracture"
+import physics "plugins:physics/runtime"
 import "mirai:std/geom"
 
 @(private)
@@ -26,7 +25,7 @@ prepare_authored :: proc(assets:^host.Assets,p:^Prepared,d:Destructible,static:r
     }
     for cluster,at in view.clusters {
         hull:=view.cluster_hulls[at]
-        append(&p.clusters,fr.Cluster_Desc{parent=cluster.parent,strength=cluster.strength,first_point=u32(len(p.cluster_points)),point_count=hull.point_count})
+        append(&p.clusters,physics.Cluster_Desc{parent=cluster.parent,strength=cluster.strength,first_point=u32(len(p.cluster_points)),point_count=hull.point_count})
         for point in view.cluster_points[hull.first_point:][:hull.point_count] {append(&p.cluster_points,point*scale)}
     }
     p.desc.lo,p.desc.hi=geom.mesh_bounds(f.mesh.positions[:])

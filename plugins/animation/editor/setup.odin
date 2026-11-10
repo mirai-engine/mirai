@@ -597,9 +597,15 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
         } else if over.path[0]==0 {say(&capabilities[.Gestures],.Missing,"the body has no spine to play gestures over","Set pelvis and neck with skeleton.body.set")
         } else {
             definitions:=make([dynamic]anim.Action_Definition,call.allocator)
-            define :: proc(definitions:^[dynamic]anim.Action_Definition,name,clip:string,layer:u8,over:anim.Bone_Ref) {
-                value:=anim.ACTION_DEFINITION_DEFAULT;value.layer,value.over=layer,over;value.fade_in,value.fade_out=.2,.25
-                base.text_set(value.name[:],name);base.text_set(value.clip[:],clip)
+            layers:=make([dynamic]anim.Stack_Layer,call.allocator)
+            // A layer of the set a gesture plays in: over the upper body or one arm.
+            layer :: proc(layers:^[dynamic]anim.Stack_Layer,name:string,over:anim.Bone_Ref) {
+                value:=anim.STACK_LAYER_DEFAULT;value.over=over;base.text_set(value.name[:],name)
+                append(layers,value)
+            }
+            define :: proc(definitions:^[dynamic]anim.Action_Definition,name,clip,layer:string) {
+                value:=anim.ACTION_DEFINITION_DEFAULT;value.fade_in,value.fade_out=.2,.25
+                base.text_set(value.name[:],name);base.text_set(value.clip[:],clip);base.text_set(value.layer[:],layer)
                 append(definitions,value)
             }
             arm_l:=bone(skeleton,body,.Clavicle_L) if body.bones[.Clavicle_L]>=0 else bone(skeleton,body,.Shoulder_L)
@@ -608,14 +614,17 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
                 if arm_l.path[0]!=0 {arm_l=anim.bone_ref(anim.BODY_LABEL+"arm_l")}
                 if arm_r.path[0]!=0 {arm_r=anim.bone_ref(anim.BODY_LABEL+"arm_r")}
             }
+            layer(&layers,"Upper_Body",over)
+            if arm_l.path[0]!=0 {layer(&layers,"Arm_L",arm_l)}
+            if arm_r.path[0]!=0 {layer(&layers,"Arm_R",arm_r)}
             for clip in clips.gestures {
-                define(&definitions,clip,clip,1,over)
-                if arm_l.path[0]!=0 {define(&definitions,fmt.tprintf("%s Arm_L",clip),clip,2,arm_l)}
-                if arm_r.path[0]!=0 {define(&definitions,fmt.tprintf("%s Arm_R",clip),clip,3,arm_r)}
+                define(&definitions,clip,clip,"Upper_Body")
+                if arm_l.path[0]!=0 {define(&definitions,fmt.tprintf("%s Arm_L",clip),clip,"Arm_L")}
+                if arm_r.path[0]!=0 {define(&definitions,fmt.tprintf("%s Arm_R",clip),clip,"Arm_R")}
             }
             file,planned:=plan(s,call,&files,folder,name,"Actions",".action",p.replace);if !planned {return}
             actions_id=file.id
-            if anim.action_profile_document(&file.doc,types,actions_id,{info={animation=library},actions=definitions[:]},call.allocator)!=.None {authoring_failure(call,"gestures","Invalid_Actions","gestures of the library","refused","The gestures could not be built",api.SERVER_ERROR);return}
+            if anim.action_profile_document(&file.doc,types,actions_id,{info={animation=library},layers=layers[:],actions=definitions[:]},call.allocator)!=.None {authoring_failure(call,"gestures","Invalid_Actions","gestures of the library","refused","The gestures could not be built",api.SERVER_ERROR);return}
             say(&capabilities[.Gestures],.Ready,fmt.tprintf("%d gestures over the upper body or one arm",len(clips.gestures)),"")
         }
     }
@@ -639,9 +648,8 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
             }
         }
         if rigged && locomotion {
-            // The values of the program it played before name parameters the .match lacks.
             animation.asset,animation.library,animation.motion=match_id,{},motion_id
-            animation.clip,animation.parameters,animation.parameter_names={},{},{}
+            animation.clip={}
             animation.speed,animation.playing=1,true
             // The Character moves the body: the clips that carry a root play it in place.
             for &clip in clips_view.clips {if clip.root.translation || clip.root.rotation {animation.root_motion=.In_Place;break}}

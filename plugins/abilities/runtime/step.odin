@@ -21,7 +21,6 @@ Ability_World :: struct {
     clock:core.Clock,
     physics:core.Ref(phys.Physics_State),
     moves:^phys.Locomotion_Requests,
-    actions:^anim.Action_Requests,
     animations:^anim.Animation_Requests,
     problems:^core.Problems,
 }
@@ -380,12 +379,13 @@ input_down :: proc(t:^Tick,e:core.Entity,input:Ability_Input) -> bool {
 input_fired :: proc(t:^Tick,e:core.Entity,input:Ability_Input) -> bool {
     if input.on==.None {return false}
     s:=input_state(t,e,input)
-    hold:=u32(ticks_of(input.hold,t.dt))
+    // The tick nearest to input.hold crosses it.
+    crossed:=input.hold-t.dt*0.5
     switch input.on {
     case .None: return false
     case .Pressed: return s.pressed
-    case .Released: return s.released && s.released_held>=hold
-    case .Held: return hold==0?s.pressed:s.down && s.held_ticks==hold
+    case .Released: return s.released && s.released_held>=crossed
+    case .Held: return s.down && s.held>=crossed && (s.pressed || s.held-t.dt<crossed)
     case .Down: return s.down
     }
     return false
@@ -460,18 +460,16 @@ ability_start :: proc(t:^Tick,e:core.Entity,u:^Ability_User,ref:core.Record(Abil
     u.ability,u.start,u.own,u.hits,u.hit_count=ref,t.tick,0,{},0
     event_push(t,{kind=.Started,entity=e,ability=ref,window=-1})
     if name:=ability_name_text(&a.action);name!="" {
-        anim.action_fire(t.w.actions,e,name)
+        anim.play(t.w.animations,e,name)
     } else if name:=ability_name_text(&a.clip);name!="" {
-        mode:u16
-        if c,found:=core.get(t.w.characters,e);found {mode=u16(c.mode)}
-        anim.match_play(t.w.animations,e,name,mode)
+        anim.play(t.w.animations,e,name)
     }
 }
 
 // Ends the running ability at at: its open windows close, their moves stop and its animation
-// stops unless next plays the same action, or a clip of its own. An action next does not fire again
-// is cancelled even when next fires another: on another layer nothing would replace it, and a
-// looping section would play on, and on the same layer the one next fires takes the layer.
+// stops unless next plays the same action, or a whole-body one of its own. An action next does not
+// play again is stopped even when next plays another: in another layer nothing would replace it,
+// and a looping section would play on, and in the same layer the one next plays takes the layer.
 @(private)
 ability_end :: proc(t:^Tick,e:core.Entity,u:^Ability_User,a:^Ability,at:Ability_Time,kind:Ability_Event_Kind,next:^Ability) {
     ref:=u.ability
@@ -482,8 +480,8 @@ ability_end :: proc(t:^Tick,e:core.Entity,u:^Ability_User,a:^Ability,at:Ability_
             if w.move.velocity!={} {phys.remove_moves(t.w.moves,e,MOVE_ID+u32(i))}
         }
         if kind!=.Completed || a.hold {
-            if name:=ability_name_text(&a.action);name!="" && (next==nil || ability_name_text(&next.action)!=name) {anim.action_cancel(t.w.actions,e,name)}
-            if ability_name_text(&a.clip)!="" && (next==nil || ability_name_text(&next.clip)=="") {anim.match_stop(t.w.animations,e)}
+            if name:=ability_name_text(&a.action);name!="" && (next==nil || ability_name_text(&next.action)!=name) {anim.stop(t.w.animations,e,name)}
+            if name:=ability_name_text(&a.clip);name!="" && (next==nil || ability_name_text(&next.clip)=="") {anim.stop(t.w.animations,e,name)}
         }
     }
     u.ability,u.start,u.own,u.hits,u.hit_count={},0,0,{},0

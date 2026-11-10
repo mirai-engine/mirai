@@ -6,9 +6,8 @@ import "mirai:core"
 import gui "mirai:engine/gui"
 import "mirai:std/base"
 import anim "plugins:animation/runtime"
-import phys "plugins:physics/runtime"
 
-Gallery_Command_Kind :: enum u8 {Automatic,Playing,Restart,Seek,Rate,Weight,Parameter,Speed,Clip,Layer,Action,Modifier,Match_Play,Value,Warp}
+Gallery_Command_Kind :: enum u8 {Automatic,Playing,Restart,Seek,Rate,Speed,Clip,Action,Modifier,Value,Warp}
 Gallery_Command :: struct {
     kind:Gallery_Command_Kind,
     entity:core.Entity,
@@ -46,14 +45,13 @@ gallery_manual :: proc(manual:bool,entity:core.Entity,commands:[]Gallery_Command
     return result
 }
 
-gallery_playback_commands :: proc(commands:[]Gallery_Command,animations:^core.Table(anim.Animation),requests:^anim.Animation_Requests,actions:^anim.Action_Requests,modifiers:^anim.Modifier_Requests) {
+gallery_playback_commands :: proc(commands:[]Gallery_Command,animations:^core.Table(anim.Animation),requests:^anim.Animation_Requests,modifiers:^anim.Modifier_Requests) {
     for &command in commands {
         #partial switch command.kind {
         case .Modifier:
             anim.modifier_control(modifiers,{rig=command.entity,kind=command.modifier,slot=command.slot,weight=command.value,enabled=command.enabled,fade=.2})
             continue
-        case .Action: anim.action_fire(actions,command.entity,base.text_get(command.name[:]));continue
-        case .Match_Play: anim.match_play(requests,command.entity,base.text_get(command.name[:]),u16(phys.MODE_WALKING));continue
+        case .Action: anim.play(requests,command.entity,base.text_get(command.name[:]));continue
         case .Speed,.Value,.Warp: continue
         }
         animation:=core.edit(animations,command.entity);if animation==nil {continue}
@@ -63,10 +61,7 @@ gallery_playback_commands :: proc(commands:[]Gallery_Command,animations:^core.Ta
         case .Restart: animation.playing=true;anim.animation_seek(requests,command.entity,0)
         case .Seek: anim.animation_seek(requests,command.entity,command.value)
         case .Rate: animation.speed=command.value
-        case .Weight: anim.animation_weight(animation,0,command.value)
-        case .Parameter: anim.animation_parameter(animation,GALLERY_WAVE,command.value)
-        case .Clip: anim.animation_play(animation,base.text_get(command.name[:]),speed=animation.speed)
-        case .Layer: anim.animation_weight(animation,1,command.value)
+        case .Clip: anim.animation_clip(animation,base.text_get(command.name[:]),speed=animation.speed)
         }
     }
 }
@@ -103,15 +98,11 @@ gallery_controls :: proc(kind:Gallery_Kind) -> (rows:[GALLERY_PANEL_ROWS]Gallery
         return rows,2,buttons,4
     case .Matching:
         rows[0]={label="Speed",command=.Speed,max=GALLERY_MATCH_SPEED}
-        buttons[0],buttons[1]={label="Inertial wave",command=.Match_Play,name="wave"},automatic
+        buttons[0],buttons[1]={label="Inertial wave",command=.Action,name="Wave"},automatic
         return rows,1,buttons,2
-    case .Layered: rows[0]={label="Greeting",command=.Layer,max=1}
-    case .Sync: rows[0]={label="Jog blend",command=.Layer,max=1}
-    case .Additive: rows[0]={label="Wave",command=.Parameter,max=1}
-    case .Graph:
-        rows[0]={label="Greeting layer",command=.Parameter,max=1}
-        buttons[0],buttons[1]={label="Greet",command=.Action,name="Greet"},automatic
-        return rows,1,buttons,2
+    case .Layered: rows[0]={label="Greeting",command=.Value,max=1}
+    case .Sync: rows[0]={label="Jog blend",command=.Value,max=1}
+    case .Additive: rows[0]={label="Wave",command=.Value,max=1}
     case .Actions:
         buttons[0],buttons[1],buttons[2]={label="Greet",command=.Action,name="Greet"},{label="Step",command=.Action,name="Step"},automatic
         return rows,0,buttons,3
@@ -174,8 +165,6 @@ gallery_panels :: proc(panels:^core.Table(Gallery_Panel),gallery:core.Read(Anima
             case .Rate: value=animation.speed
             case .Seek: clock,duration,_,valid:=anim.animation_progress(playback.ptr,current.station);if valid {value,high=clock,duration}
             case .Speed: value=item.speed
-            case .Layer: value=animation.layers[0].weight
-            case .Parameter: value,_=anim.animation_parameter_value(animation,GALLERY_WAVE)
             case .Value: value=item.values[control.slot]
             case .Modifier:
                 value=1
