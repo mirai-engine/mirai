@@ -34,7 +34,7 @@ walk_actions_default :: proc "contextless" () -> Walk_Actions {
 // While no seat drives it, while it moves relative to the Game, or where
 // another end decides it, the Move_Input stays as whoever else writes it left
 // it (the game, an AI, the network).
-@(step="fixed",stage="input",after="input_drive")
+@(step="fixed",stage="input")
 locomotion_seat :: proc(
     characters:core.Read(Character),moves:^core.Table(input.Move_Input),found:core.Read(Character_State),
     drivables:core.Read(input.Drivable),walk_actions:input.Input_Of(Walk_Action),look_actions:input.Input_Of(input.Look_Action),bindings:core.Ref(input.Input_Map),

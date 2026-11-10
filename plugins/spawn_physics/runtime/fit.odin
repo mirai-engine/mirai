@@ -15,7 +15,7 @@ import spawn "plugins:spawn/runtime"
 
 SPAWN_FIT_REACH :: f32(2) // m the bottom of the shape goes down from the place for something to stand on
 
-@(step="fixed",stage="input",after="spawn_step")
+@(step="fixed",stage="input")
 spawn_fit :: proc(at_origin:core.Ref(spawn.Spawned_At_Origin),colliders:core.Read(phys.Collider),physics:core.Ref(phys.Physics_State),placer:core.Placer) {
     for body in at_origin.items {
         collider,ok:=core.get(colliders,body)

@@ -1,14 +1,25 @@
 package core
 
+import "mirai:std/base"
+
 // Requests: many push, the library that owns the queue takes them.
 // Events: the library that owns the queue clears it and pushes; the others read items.
 Queue :: struct($T:typeid) {
     items:[dynamic]T,
+    waiting:[dynamic]Waiting(T), // pushed with later: each one is taken at its tick
     dropped:int, // offered with no room, since the owner last served it
     refused:int, // asked with values it cannot take, since the owner last served it
 }
 
+// A request that waits for its tick.
+Waiting :: struct($T:typeid) {due:u64,item:T}
+
 push :: proc(q:^Queue($T),item:T) {append(&q.items,item)}
+
+// Pushes what the owner takes `seconds` from now, with take_due: a request
+// that waits as plain data, copied and rolled back with its queue. A queue is
+// not saved: a wait a save must keep is a deadline in a component.
+later :: proc(q:^Queue($T),time:Time,seconds:f32,item:T) {append(&q.waiting,Waiting(T){deadline(time,seconds),item})}
 
 QUEUE_FIRST_ROOM :: 64 // of a queue asked for before its owner served it
 
@@ -40,14 +51,38 @@ queue_serve :: proc(q:^Queue($T),capacity:int,problems:^Problems,code,what,setti
     }
 }
 
-// What was pushed since the last take. Valid until the next push.
+// What was pushed since the last take. Valid until the next push. What was
+// pushed for later is refused: the owner of a queue that takes it uses take_due.
 take :: proc(q:^Queue($T)) -> []T {
+    q.refused+=len(q.waiting)
+    clear(&q.waiting)
     items:=q.items[:]
     clear(&q.items)
     return items
 }
 
-queue_clear :: proc(q:^Queue($T)) {clear(&q.items)}
+// What was pushed since the last take and what was pushed for later and is
+// due, in the order it was pushed. Valid until the next push.
+take_due :: proc(q:^Queue($T),time:Time) -> []T {
+    kept:=0
+    for waiting in q.waiting {
+        if due(time,waiting.due) {
+            append(&q.items,waiting.item)
+        } else {
+            q.waiting[kept]=waiting
+            kept+=1
+        }
+    }
+    base.truncate(&q.waiting,kept)
+    items:=q.items[:]
+    clear(&q.items)
+    return items
+}
+
+queue_clear :: proc(q:^Queue($T)) {
+    clear(&q.items)
+    clear(&q.waiting)
+}
 
 // A storage read without copying it. Writing through it is a bug the
 // generator cannot see: a function that writes a storage receives ^S.

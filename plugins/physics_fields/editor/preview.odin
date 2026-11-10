@@ -92,7 +92,7 @@ field_preview_draw :: proc(lines:^erender.Debug_Lines,field:fields.Physics_Field
     }
 }
 
-@(step="frame",after="editor_tools")
+@(step="frame")
 physics_fields_preview :: proc(
     s:^editor.Session,preview:^Physics_Field_Preview,id:core.World_Id,
     regions:core.Read(fields.Physics_Field),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),extras:^host.Frame_Extras,
