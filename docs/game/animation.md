@@ -33,7 +33,7 @@ Without a `Character` (a scripted walker) a `fixed` step tells the match what th
 velocity in world axes and m/s (the model faces -Z):
 
 ```odin
-anim.match_goal(requests,{rig=e,mode=u16(phys.MODE_WALKING),   // requests:^anim.Animation_Requests
+anim.match_goal(requests,{rig=e,mode=u16(locomotion.MODE_WALKING), // ^anim.Animation_Requests
     velocity=w.velocity,desired=w.velocity,facing=w.facing})
 ```
 

@@ -9,7 +9,7 @@ import render "mirai:engine/render"
 import "mirai:host"
 import "mirai:std/base"
 import anim "plugins:animation/runtime"
-import phys "plugins:physics/runtime"
+import locomotion "plugins:locomotion/runtime"
 
 @(test)
 mirai_matching_selects_a_walking_clip :: proc(t:^testing.T) {
@@ -36,7 +36,7 @@ mirai_matching_selects_a_walking_clip :: proc(t:^testing.T) {
     core.table_settle(&f.transforms,&f.entities);core.table_settle(&f.worlds,&f.entities);core.table_settle(&f.meshes,&f.entities);core.table_settle(&f.animations,&f.entities);core.table_settle(&gallery,&f.entities)
     core.hierarchy_settle(&f.hierarchy,core.read(&f.parents),&f.entities)
     time:=core.Time{dt=1.0/60,playing=true}
-    tick :: proc(f:^Animation_Input_Fixture,gallery:^core.Table(Animation_Gallery),graphs:^anim.Match_Assets,progress:^core.Table(anim.Animation_Progress),problems:^core.Problems,time:core.Time,mode:=phys.MODE_WALKING) -> (anim.Animation_Match,bool) {
+    tick :: proc(f:^Animation_Input_Fixture,gallery:^core.Table(Animation_Gallery),graphs:^anim.Match_Assets,progress:^core.Table(anim.Animation_Progress),problems:^core.Problems,time:core.Time,mode:=locomotion.MODE_WALKING) -> (anim.Animation_Match,bool) {
         entity:=core.entity_at(gallery,0)
         speed:=core.at(gallery,0).speed
         anim.match_goal(&f.requests,{rig=entity,mode=u16(mode),velocity={0,0,-speed},desired={0,0,-speed},facing={0,0,-1},acceleration=20,braking=20})
@@ -77,7 +77,7 @@ mirai_matching_selects_a_walking_clip :: proc(t:^testing.T) {
     }
     core.edit(&gallery,actor).speed=1
     falling:anim.Animation_Match
-    for _ in 0..<120 {falling,_=tick(&f,&gallery,&graphs,&progress,&problems,time,phys.MODE_FALLING)}
+    for _ in 0..<120 {falling,_=tick(&f,&gallery,&graphs,&progress,&problems,time,locomotion.MODE_FALLING)}
     testing.expectf(t,falling.clip==base.name_hash("fall"),"while falling with horizontal speed, the fall loop plays")
     testing.expect_value(t,problems.count,0)
 }

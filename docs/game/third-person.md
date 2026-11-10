@@ -28,7 +28,7 @@ P="mirai rpc --project ."
 $P scene.open '{"path":"player/Player.scene"}'
 $P scene.write '{"root":"Player","merge":true,"entities":[{
   "components":{
-    "Locomotion":{"move_relative_to":"Camera","turn_speed":12},
+    "Drivable":{"move_relative_to":"Camera"},"Character":{"turn_speed":12},
     "Walk":{"max_speed":7,"air_control":0.55,"coyote_time":0.13,
             "jump_height":1.9,"jump_rise":0.11,"jump_cut":0.42}},
   "children":[

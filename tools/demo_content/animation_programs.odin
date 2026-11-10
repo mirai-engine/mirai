@@ -7,7 +7,7 @@ import game "mirai:demo/game"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
-import phys "plugins:physics/runtime"
+import locomotion "plugins:locomotion/runtime"
 
 @(private)
 Mirai_Programs :: struct {matching,greeting,strides,additive,actions,reach,locomotion:base.Asset_Id}
@@ -32,7 +32,7 @@ gallery_program_assets :: proc(o:^Out,model:^importer.Imported_Model,animation:b
     }
     shoulder:=rig_path(model,"LeftShoulder")
     clips:[3]anim.Match_Source
-    for name,i in ([3]string{"idle","walk","jog"}) {base.text_set(clips[i].clip[:],name);clips[i].loop=true;clips[i].modes=1<<u32(phys.MODE_WALKING)}
+    for name,i in ([3]string{"idle","walk","jog"}) {base.text_set(clips[i].clip[:],name);clips[i].loop=true;clips[i].modes=1<<u32(locomotion.MODE_WALKING)}
     info:=anim.MATCH_INFO_DEFAULT;info.animation=animation;info.keep_loop_phase=true;info.stationary_speed=.15
     asset.content_check(&o.content,"assets/characters/mirai/mirai_gallery.match",anim.match_save(path(o,"assets/characters/mirai/mirai_gallery.match"),&o.content.types,programs.matching,{info=info,clips=clips[:]}))
     space:=asset.content_id(PROJECT,"blend","mirai_wave")

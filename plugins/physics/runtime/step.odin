@@ -733,14 +733,6 @@ look_yaw_of :: proc "contextless" (frame,rotation:mm.Quat) -> f32 {
     return sim.up_frame_yaw(sim.up_frame_turn(frame,mm.quat_rotate(rotation,{0,1,0})),rotation)
 }
 
-// The frame of the vertical of the character of e: the identity without one.
-up_frame_of :: proc(physics:core.Ref(Physics_State),e:core.Entity) -> mm.Quat {
-    if physics.ptr==nil || !physics.ready {return mm.QUAT_IDENTITY}
-    l:=link_find(physics.ptr,e)
-    if l==nil || l.kind!=.Character || !sim.character_valid(&physics.world,l.character) {return mm.QUAT_IDENTITY}
-    return sim.character_state(&physics.world,l.character).up_frame
-}
-
 @(private)
 character_sync :: proc(s:^Sync,e:core.Entity,l:^Link,config:Character,capsule:Collider,has_capsule:bool) {
     state:=s.state

@@ -1,4 +1,4 @@
-package physics
+package locomotion
 
 import "core:math"
 import "core:testing"
@@ -7,15 +7,16 @@ import cam "mirai:engine/camera"
 import input "mirai:engine/input"
 import render "mirai:engine/render"
 import mm "mirai:std/math"
+import phys "plugins:physics/runtime"
 
 // What a seat reads to walk a character.
 @(private="file")
 Seat_World :: struct {
     using world:core.Test_World,
-    locomotions:core.Table(Locomotion),
+    characters:core.Table(phys.Character),
     loco_states:core.Table(Locomotion_State),
     moves:core.Table(input.Move_Input),
-    states:core.Table(Character_State),
+    states:core.Table(phys.Character_State),
     drivables:core.Table(input.Drivable),
     seats:core.Table(input.Seat),
     worlds:core.Table(core.World_Transform),
@@ -45,19 +46,28 @@ seat_test_settle :: proc(f:^Seat_Test) {core.test_world_settle(&f.w)}
 seat_test_run :: proc(f:^Seat_Test) {
     walk:=input.Input_Of(Walk_Action){seats=core.read(&f.seats),drivables=core.read(&f.drivables),base=TEST_WALK_BASE}
     look:=input.Input_Of(input.Look_Action){seats=core.read(&f.seats),drivables=core.read(&f.drivables)}
-    locomotion_seat(core.read(&f.locomotions),core.read(&f.loco_states),&f.moves,core.read(&f.states),core.read(&f.drivables),walk,look,core.ref(&f.bindings),core.read(&f.follows),core.ref(&f.shown),core.read(&f.cameras),core.read(&f.worlds),core.read(&f.remotes),{},{},{playing=true,dt=1.0/60},core.CLOCK_DEFAULT,&f.problems)
+    locomotion_seat(core.read(&f.loco_states),core.read(&f.characters),&f.moves,core.read(&f.states),core.read(&f.drivables),walk,look,core.ref(&f.bindings),core.read(&f.follows),core.ref(&f.shown),core.read(&f.cameras),core.read(&f.worlds),core.read(&f.remotes),{},{},{playing=true,dt=1.0/60},core.CLOCK_DEFAULT,&f.problems)
 }
 
-// A character facing -X (yaw π/2, as locomotion_step leaves the look of one that stands so) and its Move_Input.
+// A character that turns at once, facing -X (yaw π/2, as locomotion_step leaves the look of one that
+// stands so), and its Move_Input.
 @(private="file")
-seat_test_body :: proc(f:^Seat_Test,relative:=Move_Relative.Look) -> core.Entity {
+seat_test_body :: proc(f:^Seat_Test) -> core.Entity {
     e:=core.create(&f.entities)
-    c:=LOCOMOTION_DEFAULT
-    c.move_relative_to,c.turn_speed=relative,0
-    core.add(&f.locomotions,e,c)
+    body:=phys.character_default()
+    body.turn_speed=0
+    core.add(&f.characters,e,body)
     core.add(&f.loco_states,e,Locomotion_State{ready=true})
     core.add(&f.moves,e,input.Move_Input{look_yaw=math.PI/2})
     return e
+}
+
+// A seat drives e, forward relative to what relative says.
+@(private="file")
+seat_test_drive :: proc(f:^Seat_Test,e,seat:core.Entity,relative:=input.Move_Relative.Look,camera:=core.NONE) {
+    drivable:=input.DRIVABLE_DEFAULT
+    drivable.seat,drivable.camera,drivable.move_relative_to=seat,camera,relative
+    core.add(&f.drivables,e,drivable)
 }
 
 // A seat that holds W and Space and moved the mouse 10 points right.
@@ -94,13 +104,13 @@ a_seat_walks_the_character_it_drives_and_leaves_the_others :: proc(t:^testing.T)
     defer seat_test_destroy(f)
     if !seat_test_map(t,&f.bindings,&f.problems) {return}
 
-    driven,idle,remote,by_game:=seat_test_body(f),seat_test_body(f),seat_test_body(f),seat_test_body(f,.Game)
+    driven,idle,remote,by_game:=seat_test_body(f),seat_test_body(f),seat_test_body(f),seat_test_body(f)
     seat,other,third:=seat_test_seat(f),seat_test_seat(f),seat_test_seat(f)
-    core.add(&f.drivables,driven,input.Drivable{seat=seat})
-    core.add(&f.drivables,remote,input.Drivable{seat=other})
-    core.add(&f.drivables,by_game,input.Drivable{seat=third})
+    seat_test_drive(f,driven,seat)
+    seat_test_drive(f,remote,other)
+    seat_test_drive(f,by_game,third,.Game)
     core.add(&f.remotes,remote,core.Remote{})
-    core.add(&f.states,driven,Character_State{ground_turn=0.1})
+    core.add(&f.states,driven,phys.Character_State{ground_turn=0.1})
     seat_test_settle(f)
     seat_test_run(f)
 
@@ -126,11 +136,11 @@ a_seat_walks_toward_where_the_camera_or_the_world_says :: proc(t:^testing.T) {
     defer seat_test_destroy(f)
     if !seat_test_map(t,&f.bindings,&f.problems) {return}
 
-    followed,mapped:=seat_test_body(f,.Camera),seat_test_body(f,.World)
+    followed,mapped:=seat_test_body(f),seat_test_body(f)
     camera:=core.create(&f.entities)
     core.add(&f.worlds,camera,core.World_Transform{rotation=mm.quat_axis_angle({0,1,0},-math.PI/2),scale=1})
-    core.add(&f.drivables,followed,input.Drivable{seat=seat_test_seat(f),camera=camera})
-    core.add(&f.drivables,mapped,input.Drivable{seat=seat_test_seat(f)})
+    seat_test_drive(f,followed,seat_test_seat(f),.Camera,camera)
+    seat_test_drive(f,mapped,seat_test_seat(f),.World)
     seat_test_settle(f)
     seat_test_run(f)
 
@@ -150,12 +160,12 @@ a_seat_walks_as_the_mode_of_its_camera_wants :: proc(t:^testing.T) {
     defer seat_test_destroy(f)
     if !seat_test_map(t,&f.bindings,&f.problems) {return}
 
-    eyes,orbit:=seat_test_body(f,.View),seat_test_body(f,.View)
+    eyes,orbit:=seat_test_body(f),seat_test_body(f)
     for body,i in ([2]core.Entity{eyes,orbit}) {
         camera:=core.create(&f.entities)
         core.add(&f.worlds,camera,core.World_Transform{rotation=mm.quat_axis_angle({0,1,0},-math.PI/2),scale=1})
         core.add(&f.follows,camera,cam.Camera_Follow{mode=i==0?.Eyes:.Orbit})
-        core.add(&f.drivables,body,input.Drivable{seat=seat_test_seat(f),camera=camera})
+        seat_test_drive(f,body,seat_test_seat(f),.View,camera)
     }
     seat_test_settle(f)
     seat_test_run(f)
@@ -177,8 +187,7 @@ a_seat_without_the_walk_actions_is_a_problem :: proc(t:^testing.T) {
     input.input_map_action(&f.bindings,0,.Button)
 
     body:=seat_test_body(f)
-    seat:=seat_test_seat(f)
-    core.add(&f.drivables,body,input.Drivable{seat=seat})
+    seat_test_drive(f,body,seat_test_seat(f))
     seat_test_settle(f)
     seat_test_run(f)
 

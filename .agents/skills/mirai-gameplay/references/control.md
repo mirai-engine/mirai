@@ -18,11 +18,11 @@ are used by every game and the third only by one that makes bodies appear for it
   drives nothing: between one death and the next, in a menu, spectating.
 - Each seat carries the actions of the tick's `Input_Map`. Actions are all of the player's
   (shoot, use, menus); `Move_Input` is the body's intent: movement, look direction and the held
-  buttons, as action ids. A `Character` of the `physics` plugin passes from the former to the
-  latter without game code, with forward relative to its look direction, to the camera or to the
-  world ([seat control](../../mirai-physics/references/engine.md#seat-control)); with
-  `move_relative_to` `Game`, the game writes the `Move_Input`. What does not move the body (shoot,
-  use) the game reads from the seat.
+  buttons, as action ids. A `Character` with a `Walk` of the `locomotion` plugin passes from the
+  former to the latter without game code, with forward relative to its look direction, to the
+  camera or to the world ([seat control](../../mirai-physics/references/engine.md#seat-control));
+  with the `move_relative_to` `Game` of its `Drivable`, the game writes the `Move_Input`. What does
+  not move the body (shoot, use) the game reads from the seat.
 - `Move_Input` is what is asked of a body in the tick, and it is `shared`: `locomotion_seat` or the
   game writes it for what a seat drives, an AI for its own bodies (like `Follow` in the demo), the
   network for the replicas of others, and a replay. Each one writes the bodies it moves;
@@ -67,14 +67,14 @@ Each library declares its actions as an enum `@(actions)` of `u8`
 (`@(actions) Action :: enum u8 {Mode,Layer_Back,Stamp}`); the name of an action is its member in
 lowercase (`layer_back`). Nobody writes or sees a number: the generator gives the members of every
 enum, the engine first (`inp.Look_Action`), then the active plugins in order (locomotion:
-`phys.Walk_Action`) and the game, the next values of `inp.Action`, the `@(names,actions)` type
+`locomotion.Walk_Action`) and the game, the next values of `inp.Action`, the `@(names,actions)` type
 ([named ids](../../mirai-core/references/core.md#named-ids)) that the map, the seats, the masks
 and the data hold. The code is the only source of the names; `input.mirai`, the API and the
 inspector use them.
 
 - **Reading.** A step receives `inp.Input_Of(E)` for the enum whose actions it reads, and another
-  for each enum of another library (`walk:inp.Input_Of(phys.Walk_Action)`): the generator binds it
-  as a [parameter group](../../mirai-core/references/generator.md#parameter-groups) (the
+  for each enum of another library (`walk:inp.Input_Of(locomotion.Walk_Action)`): the generator
+  binds it as a [parameter group](../../mirai-core/references/generator.md#parameter-groups) (the
   `Actions` of the tick, the seats and the `Drivable`s) and gives it the base of `E`. The machine:
   `inp.pressed(input, .Stamp)` and `down`, `released`, `tapped`, `holding`, `value`, `vector`; the
   seat that drives a body: `inp.pressed(input, body, .Jump)`; a seat: `inp.seat_pressed(input,
@@ -255,7 +255,7 @@ a transition.
   override whose owner is the camera.
 - Cameras without `aim` and with `turn` that follow the same body look where the visible one looks,
   so switching from one to another does not turn the view. With `facing`, the `Character` with
-  `move_relative_to` `View` looks where the camera looks: when aiming it walks sideways.
+  `Drivable.move_relative_to` `View` looks where the camera looks: when aiming it walks sideways.
 - The `Aim` preset is such a camera (Create > Cameras > Aim).
 
 ### Views and transitions
@@ -355,7 +355,7 @@ game with its own mode passes its setup. The editor offers them as recipes in Cr
 - Requesting the mode it already has does nothing: the game can request it every tick, also in one
   that is simulated again.
 - A mode that cannot be taken is a problem of the camera (`camera.mode_*`).
-- For the body to move well in any mode, its `Locomotion` uses `move_relative_to` `View`
+- For the body to move well in any mode, its `Drivable` uses `move_relative_to` `View`
   ([seat control](../../mirai-physics/references/engine.md#seat-control)).
 - Seeing a camera and passing to others without playing:
   [camera preview](../../mirai-editor/references/editor.md#camera-preview).
@@ -403,6 +403,6 @@ where the geometry covers the change.
   `mirai test plugins/spawn/runtime`: the bodies of a seat that leaves.
 - `mirai test engine/camera`: modes, views that enter and leave an override and a mode, the orbit
   and the dolly zoom of the blend, the dead zone, the lead and a camera that an action brings, and
-  the arm (`rigs_test.odin`). `locomotion_seat_test.odin` covers `move_relative_to` `View`.
+  the arm (`rigs_test.odin`). `seat_test.odin` of `locomotion` covers `move_relative_to` `View`.
 - Integration: the demo's control scene ([demo](demo.md#control)) without a window and with an
   input script; over the network, with a dedicated server and a client.

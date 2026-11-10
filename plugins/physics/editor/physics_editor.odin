@@ -77,18 +77,16 @@ character_standing :: proc(w:core.World_Ref,body:core.Entity) -> (standing,known
     return state.standing,true
 }
 
-// What its components say; its height once a step made its capsule.
+// What its Character says; its height once a step made its capsule. How fast it walks and jumps is
+// said by the plugin that moves it.
 @(private)
 character_measure :: proc(w:core.World_Ref,body:core.Entity) -> (measure:editor.Body_Measure,known:bool) {
-    characters,states,walks:=core.world_table_of(w,phys.Character),core.world_table_of(w,phys.Character_State),core.world_table_of(w,phys.Walk)
+    characters,states:=core.world_table_of(w,phys.Character),core.world_table_of(w,phys.Character_State)
     if characters==nil {return}
     character:=core.get(characters,body) or_return
     measure.step_height=character.step_height
     if states!=nil {
         if state,stepped:=core.get(states,body);stepped {measure.height=state.height}
-    }
-    if walks!=nil {
-        if walk,walks:=core.get(walks,body);walks {measure.speed,measure.jump_height=walk.max_speed,walk.jump_height}
     }
     return measure,true
 }

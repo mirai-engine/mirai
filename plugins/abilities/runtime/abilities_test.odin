@@ -10,6 +10,7 @@ import inp "mirai:engine/input"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
 // A blade with Mirai's own numbers, in the shape of a melee weapon with techniques, branches,
@@ -53,13 +54,13 @@ Abilities_World :: struct {
     seats:core.Table(inp.Seat),
     drivables:core.Table(inp.Drivable),
     characters:core.Table(phys.Character),
-    locomotions:core.Table(phys.Locomotion_State),
+    locomotions:core.Table(locomotion.Locomotion_State),
     worlds:core.Table(core.World_Transform),
     remotes:core.Table(core.Remote),
     paces:core.Table(core.Own_Pace),
     requests:Ability_Requests,
     events:Ability_Events,
-    moves:phys.Locomotion_Requests,
+    moves:locomotion.Locomotion_Requests,
     animations:anim.Animation_Requests,
     time:core.Time,
 }

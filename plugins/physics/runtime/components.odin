@@ -124,9 +124,9 @@ collider_character :: proc "contextless" (radius:f32=0.3,height:f32=1.8) -> Coll
 // whose +Y is its up (core.Vertical) and which faces the yaw of its move, and
 // the capsule stands on the feet along that up. The up turns toward the
 // opposite of the gravity it feels, at up_speed. Its Character_Move drives it,
-// which its locomotion writes in the mode it is in (locomotion.odin). Only an
-// author writes it: its size, mass and step_height take effect by making the
-// character again, and what changes while it plays is in Locomotion_State.
+// which the locomotion plugin writes from its Walk, Fly or Swim, or a game.
+// Only an author writes it: its size, mass and step_height take effect by
+// making the character again.
 @(component,replicated,locks="core.Transform",description="A physical character that stands on walkable ground, steps and pushes, moved by its Character_Move.")
 Character :: struct {
     mass:f32 `mirai:"min=0,unit=kg"`, // 0: from the density of the capsule
@@ -139,6 +139,7 @@ Character :: struct {
     density:f32 `mirai:"min=0,unit=kg/m3"`, // of the body in a fluid, whose volume is its mass over this: 985 a person; 0: no buoyancy
     up_speed:f32 `mirai:"angle,min=0,unit=deg/s"`, // its up turns toward the opposite of its gravity: around a planet; 0: it keeps its up
     locks:Body_Locks,                       // world axes the simulation never moves its feet along, as for a Rigid_Body; a place still does. Its move turns it: the angular ones do nothing
+    turn_speed:f32 `mirai:"angle,min=0,unit=deg/s"`, // its yaw toward where it goes, as a seat that moves it relative to the camera or the world or an agent that steers it turn it; 0: at once
 }
 
 // A human of 80 kg: the values of sim.CHARACTER_DESC_DEFAULT. Its capsule is collider_character().
@@ -147,6 +148,7 @@ character_default :: proc "contextless" () -> Character {
     return {
         mass=d.mass,max_slope=d.max_slope,step_height=d.step_height,traction_force=d.traction_force,
         adhesion_force=d.adhesion_force,gravity_scale=d.gravity_scale,push_force=d.push_force,density=d.density,up_speed=d.up_speed,
+        turn_speed=500*mm.RAD_PER_DEG,
     }
 }
 
@@ -155,9 +157,8 @@ Move_Flag :: sim.Move_Flag
 Move_Flags :: sim.Move_Flags
 Character_Drive :: sim.Character_Move
 
-// What drives a Character from the next step on: its locomotion writes it,
-// or a mode of the game under it, and the step hands it to the simulation.
-// The locomotion adds it while the character plays.
+// What drives a Character from the next step on: the locomotion plugin or a
+// game writes it, and the step hands it to the simulation.
 @(component,shared,description="How the Character is driven: toward a velocity on the ground and another in the air, with a launch and the yaw it faces.")
 Character_Move :: struct {
     value:Character_Drive `mirai:"transient,readonly"`,

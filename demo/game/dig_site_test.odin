@@ -21,7 +21,7 @@ Dig_World :: struct {
 
 @(private="file")
 dig_types :: proc(types:^[dynamic]core.Test_Type) {
-    append(types,core.test_type(Dig_Site,default=proc(dst:^Dig_Site) {dst^=DIG_SITE_DEFAULT}))
+    append(types,core.test_type(Dig_Site,default=proc(dst:^Dig_Site) {dst^=DIG_SITE_DEFAULT}),core.test_type(inp.Drivable,default=proc(dst:^inp.Drivable) {dst^=inp.DRIVABLE_DEFAULT}))
 }
 
 // What the players take is run state: a component on a core.Keep root, which

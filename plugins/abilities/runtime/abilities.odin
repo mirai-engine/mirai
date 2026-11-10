@@ -3,7 +3,7 @@ package abilities
 import "mirai:core"
 import inp "mirai:engine/input"
 import "mirai:std/base"
-import phys "plugins:physics/runtime"
+import locomotion "plugins:locomotion/runtime"
 
 // Abilities: what a character does on top of its locomotion (an attack, a dash, a block, a hit
 // reaction) as rows of game data. An Ability is a sheet: the input that starts it, what it
@@ -63,8 +63,8 @@ Ability_Attribute :: distinct u8
 Ability_Cue :: distinct u16
 @(name="none") CUE_NONE :: Ability_Cue(0)
 
-// Locomotion modes of the physics Character an ability may start in.
-@(name_bits="phys.Locomotion_Mode")
+// Locomotion modes of the Character an ability may start in.
+@(name_bits="locomotion.Locomotion_Mode")
 Ability_Modes :: distinct u32
 
 Ability_Trigger :: enum u8 {
@@ -140,7 +140,7 @@ Ability_Hitbox :: struct {
 
 Ability_Move :: struct {
     velocity:[3]f32 `mirai:"unit=m/s"`, // in the axes of the user when the window opens; zero: no move
-    mix:phys.Move_Mix,
+    mix:locomotion.Move_Mix,
 }
 
 // What the seconds of a window count.

@@ -9,6 +9,7 @@ import "mirai:std/ai"
 import mm "mirai:std/math"
 import behavior "plugins:behavior/runtime"
 import nav "plugins:navigation/runtime"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
 // AI arenas: an entity with an AI_Arena builds, when its world runs, a place
@@ -138,7 +139,7 @@ Arena_Tick :: struct {
     soldiers:^core.Table(Soldier),
     bosses:^core.Table(Boss),
     patrols:^core.Table(Arena_Patrol),
-    flights:core.Read(phys.Fly),
+    flights:core.Read(locomotion.Fly),
     physics:core.Ref(phys.Physics_State),
     rng:^mm.Rng,
 }
@@ -792,9 +793,8 @@ arena_body :: proc(c:core.Commands,position:mm.Vec3,color:[4]f32,speed:f32=4) ->
     core.commands_add(c,e,core.Id{core.id_next(c.entities)})
     core.commands_add(c,e,core.Transform{position,1,{1,1,1}})
     core.commands_add_default(c,e,phys.Character)
-    core.commands_add_default(c,e,phys.Locomotion)
     core.commands_add(c,e,phys.collider_character())
-    walk:=core.default(c,phys.Walk)
+    walk:=core.default(c,locomotion.Walk)
     walk.max_speed=speed
     core.commands_add(c,e,walk)
     core.commands_add_default(c,e,nav.Nav_Agent)
@@ -981,12 +981,8 @@ arena_drone :: proc(c:core.Commands,position:mm.Vec3) -> core.Entity {
     core.commands_add(c,e,core.Id{core.id_next(c.entities)})
     core.commands_add(c,e,core.Transform{position,1,{1,1,1}})
     core.commands_add_default(c,e,phys.Character)
-    locomotion:=core.default(c,phys.Locomotion)
-    locomotion.mode=phys.MODE_FLYING
-    core.commands_add(c,e,locomotion)
     core.commands_add(c,e,phys.collider_character(0.25,0.8))
-    core.commands_add_default(c,e,phys.Walk)
-    core.commands_add(c,e,phys.Fly{speed=5,acceleration=20})
+    core.commands_add(c,e,locomotion.Fly{speed=5,acceleration=20})
     core.commands_add_default(c,e,nav.Nav_Agent)
     look:=core.commands_create(c)
     core.commands_add(c,look,core.Transform{{0,0.4,0},1,{0.5,0.4,0.5}})
@@ -1060,7 +1056,7 @@ arena_targets :: proc(
 @(step="fixed",server)
 arena_think :: proc(
     world:behavior.Mind_World,zombies:^core.Table(Zombie),soldiers:^core.Table(Soldier),bosses:^core.Table(Boss),patrols:^core.Table(Arena_Patrol),
-    flights:core.Read(phys.Fly),placer:core.Placer,physics:core.Ref(phys.Physics_State),state:^Arena_State,
+    flights:core.Read(locomotion.Fly),placer:core.Placer,physics:core.Ref(phys.Physics_State),state:^Arena_State,
 ) {
     minds,agents,time,problems:=world.minds,world.agents,world.time,world.problems
     if !time.playing || time.dt<=0 || core.count(agents)==0 {return}

@@ -4,6 +4,7 @@ import "core:math/linalg"
 import "mirai:core"
 import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
 // Actions that move their body. While an action whose body_move is not None plays on a Character,
@@ -16,16 +17,16 @@ import phys "plugins:physics/runtime"
 BODY_ROOT_MOVE :: u32(0x41435452) // the id of its layered moves
 
 @(step="fixed",stage="apply")
-animation_body_move :: proc(characters:core.Read(phys.Character),states:core.Read(phys.Locomotion_State),worlds:core.Read(core.World_Transform),verticals:core.Read(core.Vertical),paces:core.Read(core.Own_Pace),playback:core.Ref(anim.Playback),moves:^phys.Locomotion_Requests,time:core.Time,clock:core.Clock) {
+animation_body_move :: proc(characters:core.Read(phys.Character),states:core.Read(locomotion.Locomotion_State),worlds:core.Read(core.World_Transform),verticals:core.Read(core.Vertical),paces:core.Read(core.Own_Pace),playback:core.Ref(anim.Playback),moves:^locomotion.Locomotion_Requests,time:core.Time,clock:core.Clock) {
     if !(time.dt>0) {return}
     for row in 0..<core.count(characters) {
         character:=core.at(characters,row)
         entity:=core.entity_at(characters,row)
-        if state,_:=core.get(states,entity);state.mode==phys.MODE_MANTLING {continue}
+        if state,_:=core.get(states,entity);state.mode==locomotion.MODE_MANTLING {continue}
         body,moving:=anim.animation_body_motion(playback.ptr,entity)
         placed,ok:=core.get(worlds,entity)
         if !moving || !ok {continue}
-        phys.add_move(moves,entity,body_layered_move(body,placed,core.vertical_of(verticals,entity),time.dt*core.pace_of(clock,paces,entity),character.mass))
+        locomotion.add_move(moves,entity,body_layered_move(body,placed,core.vertical_of(verticals,entity),time.dt*core.pace_of(clock,paces,entity),character.mass))
     }
 }
 
@@ -33,7 +34,7 @@ animation_body_move :: proc(characters:core.Read(phys.Character),states:core.Rea
 // actions asks for, placed where the body is and with up the +Y of up_frame (core.Vertical). Its
 // force reaches the velocity in that tick for a body of mass kg: a root that lunges faster than
 // traction drives the body is followed, and an Additive one is not counted as the walk's own.
-body_layered_move :: proc "contextless" (body:anim.Body_Motion,placed:core.World_Transform,up_frame:mm.Quat,dt:f32,mass:f32) -> phys.Layered_Move {
+body_layered_move :: proc "contextless" (body:anim.Body_Motion,placed:core.World_Transform,up_frame:mm.Quat,dt:f32,mass:f32) -> locomotion.Layered_Move {
     velocity:=root_velocity(body.translation,placed,dt)
     if !body.vertical {up:=mm.quat_rotate(up_frame,mm.Vec3{0,1,0});velocity-=up*linalg.dot(velocity,up)}
     force:=max(mass,0)*linalg.length(velocity)/dt

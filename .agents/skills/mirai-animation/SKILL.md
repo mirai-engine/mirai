@@ -135,7 +135,7 @@ automatic plugin `animation_physics` feeds the locomotion of each `Character`.
 
 ## Character workflow
 
-1. **Locomotion:** a `.match` in `Animation.asset` with its clips and the physics mode that each one
+1. **Locomotion:** a `.match` in `Animation.asset` with its clips and the locomotion mode that each
    serves (`animation.character.setup` generates it from the clip names). With a `Character`,
    `animation_physics` tells it on each tick the mode, the velocity and the request: the game writes
    nothing. Without physics, the game calls `match_goal`.

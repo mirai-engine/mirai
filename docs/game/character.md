@@ -32,26 +32,30 @@ body and a camera both face -Z, so the eyes child needs no turn. For a first-per
 
 ```json
 {"method":"scene.write","params":{"root":"Player","merge":true,"entities":[{
- "components":{"Locomotion":{"move_relative_to":"Look"}},
+ "components":{"Drivable":{"move_relative_to":"Look"}},
  "children":[{"name":"Player view",
    "components":{"Camera_Follow":{"mode":"Eyes","offset":[0,1.6,0]}}}]}]}}
 ```
 
-`move_relative_to` says what forward is for the seat: `Look` (first person), `Camera` (a camera
-that orbits), `World` (seen from above), `View` (the camera may change mode), `Game` (your code
-writes the `inp.Move_Input`).
+`move_relative_to` of the body's `Drivable` says what forward is for the seat: `Look` (first
+person), `Camera` (a camera that orbits), `World` (seen from above), `View` (the camera may change
+mode), `Game` (your code writes the `inp.Move_Input`). Turning toward the move goes at the
+`turn_speed` of its `Character`.
 
 ## Walk
 
-Start from `phys.WALK_DEFAULT`, then set `max_speed`, `jump_height` and the rest (`component.list`
-on `Walk`: sprint, air control, coyote time, crouch). A held jump keeps rising for `jump_rise`.
+A walker is a `Character` and a `Walk` of the `locomotion` plugin, which the project enables
+(`import locomotion "plugins:locomotion/runtime"`); it starts walking, and a game that starts it
+flying or swimming asks `locomotion.set_mode`. Start from `locomotion.WALK_DEFAULT`, then set
+`max_speed`, `jump_height` and the rest (`component.list` on `Walk`: sprint, air control, coyote
+time, crouch). A held jump keeps rising for `jump_rise`.
 **`jump_cut`** is the share of its upward speed a jump keeps when the button is let go while
 rising: `0.4` lets a tap make a short hop, `1` or `0` keeps all of it, and a ledge jump is never
 cut. Locomotion does the rest from the seat's actions: the game sets how fast (`max_speed`), it
 does not steer by writing a velocity. A launch, such as a jump pad, works on a `Character`:
 `phys.set_velocity(requests,e,v)` replaces its velocity and `phys.apply_impulse(requests,e,impulse)`
-adds to it, with `requests:^phys.Body_Requests`. Flying and swimming are components too (`phys.Fly`,
-`phys.Swim`).
+adds to it, with `requests:^phys.Body_Requests`. Flying and swimming are components too
+(`locomotion.Fly`, `locomotion.Swim`).
 
 ## Pitfalls that fail silently
 
