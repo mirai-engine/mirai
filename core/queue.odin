@@ -1,14 +1,59 @@
 package core
 
+import "base:runtime"
+
 // Requests: many push, the library that owns the queue takes them.
-// Events: the library that owns the queue clears it and pushes; the others read items.
 Queue :: struct($T:typeid) {
     items:[dynamic]T,
     dropped:int, // offered with no room, since the owner last served it
     refused:int, // asked with values it cannot take, since the owner last served it
 }
 
-push :: proc(q:^Queue($T),item:T) {append(&q.items,item)}
+queue_push :: proc(q:^Queue($T),item:T) {append(&q.items,item)}
+push :: proc{queue_push,events_push}
+
+// Occurrences: the library that owns the log pushes what happened and never
+// clears it. A function that receives its storage to read (S or core.Ref(S))
+// finds in items what came since it last ran, whatever its cadence: the
+// generated call keeps its cursor. Code outside the loops keeps one.
+Events :: struct($T:typeid) {
+    items:[dynamic]T,
+    first:u64, // how many came before items[0]
+    kept:int,  // of items, how many came before the last events_age
+}
+
+events_push :: proc(e:^Events($T),item:T) {append(&e.items,item)}
+
+// What came since cursor, which it moves to now; valid until the next push.
+// A cursor of another log, as after a World was copied over, gets what this
+// one holds.
+events_since :: proc "contextless" (e:Events($T),cursor:^u64) -> []T {
+    end:=e.first+u64(len(e.items))
+    from:=cursor^>end?end:max(cursor^,e.first)
+    cursor^=end
+    return e.items[from-e.first:]
+}
+
+// Leaves in view, the copy of a log a reader is handed, what came since cursor.
+events_read :: proc "contextless" (view:^Events($T),cursor:^u64) {
+    since:=events_since(view^,cursor)
+    view.items=transmute([dynamic]T)runtime.Raw_Dynamic_Array{raw_data(since),len(since),len(since),{}}
+}
+
+// What came before the call before this one goes. Whoever runs a World calls
+// it at the end of a frame, and for a log a fixed function reads only when the
+// frame ran a tick: what runs once a frame or a tick has read what goes. True
+// when the log changed.
+events_age :: proc "contextless" (e:^Events($T)) -> bool {
+    dropped:=e.kept
+    if dropped>0 {
+        copy(e.items[:],e.items[dropped:])
+        (cast(^runtime.Raw_Dynamic_Array)&e.items).len-=dropped
+        e.first+=u64(dropped)
+    }
+    e.kept=len(e.items)
+    return dropped>0 || e.kept>0
+}
 
 QUEUE_FIRST_ROOM :: 64 // of a queue asked for before its owner served it
 

@@ -64,6 +64,8 @@ world_init :: proc(info:^World_Info,place:Place,data:rawptr,allocator:runtime.Al
     for &s in info.storages {
         if s.place==place && !s.by_world && s.default!=nil {s.default(storage_of(data,&s))}
     }
+    // What a storage starts as is its first value: who reads it by change takes it.
+    if place==.World {revisions_moved(revisions_of(info,data))}
     return true
 }
 

@@ -50,15 +50,15 @@ Control_Demo :: struct {}
 // What the players ask of their seats; a dog whose person left goes with it.
 @(step="fixed")
 game_seats :: proc(
-    es:^core.Entities,follows:^core.Table(Follow),drivables:core.Read(inp.Drivable),
+    es:core.Commands,follows:^core.Table(Follow),drivables:core.Read(inp.Drivable),
     seats:core.Read(inp.Seat),actions:inp.Input_Of(Action),hierarchy:core.Ref(core.Hierarchy),names:core.Read(core.Name),demos:core.Read(Control_Demo),
     requests:^inp.Seat_Requests,shown:core.Ref(cam.Cameras),camera_requests:^cam.Camera_Requests,
     camera_changes:^cam.Camera_Changes,camera_follows:core.Read(cam.Camera_Follow),cameras:core.Read(render.Camera),
 ) {
     if core.count(demos)==0 {return}
     for row in 0..<core.count(follows) {
-        if core.alive(es,core.at(follows,row).leader) {continue}
-        core.destroy_tree(es,hierarchy,core.entity_at(follows,row))
+        if core.alive(es.entities,core.at(follows,row).leader) {continue}
+        core.destroy_tree(es.entities,hierarchy,core.entity_at(follows,row))
     }
     for row in 0..<core.count(seats) {
         seat:=core.entity_at(seats,row)

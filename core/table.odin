@@ -22,7 +22,8 @@ import "core:slice"
 // which each_changed goes through, and in gone the entities whose row stopped
 // being on or went while off; one that only makes again what it derives asks
 // touched. layout grows whenever the rows are others. Both only grow, also in
-// a table copied over.
+// a table copied over. The stamp of a write is even and that of an add odd: a
+// row is added, new to its writer, until it is written (added).
 //
 // A single table (@(component,single)) keeps on one row: of the rows that
 // were turned on and whose entity is on, the one turned on last. Turning one
@@ -171,7 +172,19 @@ stamp_pages :: #force_inline proc "contextless" (rows:int) -> int {return (rows+
 @(private)
 stamp_set :: #force_inline proc "contextless" (t:^Raw_Table,row:int,stamp:u64) {
     t.stamps[row]=stamp
-    t.page_stamps[row>>STAMP_PAGE_BITS]=stamp
+    page:=&t.page_stamps[row>>STAMP_PAGE_BITS]
+    page^=max(page^,stamp)
+}
+
+// The stamp of a row turned: above next, and added if the row was.
+@(private)
+stamp_turn :: #force_inline proc "contextless" (t:^Raw_Table,row:int,next:u64) {stamp_set(t,row,next+(t.stamps[row]&1))}
+
+// The stamp of a write: even, and above every other of the table.
+@(private)
+version_write :: #force_inline proc "contextless" (t:^Raw_Table) -> u64 {
+    t.version=(t.version+2)&~u64(1)
+    return t.version
 }
 
 // The stamp of a row that came after every other, in room reserved for it.
@@ -285,7 +298,7 @@ edit :: #force_inline proc "contextless" (t:^Table($T),e:Entity) -> ^T {
 
 // The row at an index, to write.
 edit_at :: #force_inline proc "contextless" (t:^Table($T),row:int) -> ^T {
-    t.version+=1
+    t.version=(t.version+2)&~u64(1)
     t.stamps[row]=t.version
     t.page_stamps[row>>STAMP_PAGE_BITS]=t.version
     return &t.values[row]
@@ -320,7 +333,7 @@ free :: #force_inline proc "contextless" (t:^Table($T),e:Entity) -> ^T {
 
 // Every row on, to write.
 writable :: proc "contextless" (t:^Table($T)) -> []T {
-    t.version+=1
+    version_write(raw(t))
     for &s in t.stamps[:t.on] {s=t.version}
     for &s in t.page_stamps[:stamp_pages(t.on)] {s=t.version}
     return t.values[:t.on]
@@ -392,7 +405,7 @@ remove :: proc(t:^Table($T),e:Entity) {
 table_append :: proc(t:^Table($T),e:Entity,value:T) -> bool {
     count:=len(t.values)
     if reserve(&t.values,count+1)!=nil || reserve(&t.entities,count+1)!=nil || reserve(&t.stamps,count+1)!=nil || reserve(&t.page_stamps,stamp_pages(count+1))!=nil || reserve(&t.off,count+1)!=nil || !rows_room(raw(t),entity_index(e),0) {return false}
-    t.version+=1
+    t.version=(t.version+1)|1
     append(&t.values,value);append(&t.entities,e);append(&t.off,false)
     stamp_push(raw(t),t.version)
     rows_set(raw(t),entity_index(e),i32(count+1))
@@ -405,12 +418,21 @@ table_append :: proc(t:^Table($T),e:Entity,value:T) -> bool {
 // before the end of the function: what a function reads of what it is making.
 // nil without one, or when a remove follows it. Valid until the next add to
 // the table.
-added :: proc "contextless" (t:^Table($T),e:Entity) -> ^T {return cast(^T)raw_added(raw(t),type_info_of(T),e)}
+table_added :: proc "contextless" (t:^Table($T),e:Entity) -> ^T {return cast(^T)raw_added(raw(t),type_info_of(T),e)}
+
+// Whether the row at an index is new to its writer: it has its value from an
+// add and was not written since. What the writer of a table asks before it
+// asks for the row (edit, edit_at, set, writable), to set up in its first
+// tick what the row starts with, in place of a field that says it did. It is
+// of the row: a World copied, or rolled back, keeps it.
+table_added_row :: #force_inline proc "contextless" (t:^Table($T),row:int) -> bool {return t.stamps[row]&1==1}
+read_added_row :: #force_inline proc "contextless" (r:Read($T),row:int) -> bool {return r.table.stamps[row]&1==1}
+added :: proc{table_added,table_added_row,read_added_row}
 
 // The value the entity will have at the end of the function, to write: the
 // one an add waits to give it, or else its row on. nil without either.
 staged :: proc "contextless" (t:^Table($T),e:Entity) -> ^T {
-    if value:=added(t,e);value!=nil {return value}
+    if value:=table_added(t,e);value!=nil {return value}
     return edit(t,e)
 }
 
@@ -537,7 +559,22 @@ raw_touched :: proc "contextless" (t:^Raw_Table,seen:^Seen) -> bool {
 }
 table_touched :: #force_inline proc "contextless" (t:^Table($T),seen:^Seen) -> bool {return raw_touched(raw(t),seen)}
 read_touched :: #force_inline proc "contextless" (r:Read($T),seen:^Seen) -> bool {return raw_touched(raw(r.table),seen)}
-touched :: proc{table_touched,read_touched}
+// A storage of a World is its one row, and this the stamp of that row: it
+// grows when a function receives the storage to write, when code outside the
+// loops asks for it (world_storage) and when the World is copied over, swapped
+// or cleared. What a function receives to read a storage S by change, beside
+// S or core.Ref(S).
+Stamp :: struct($S:typeid) {version:^u64}
+
+// Whether a storage was handed out to write since seen, which it moves to now.
+// A Stamp of no World says it always was.
+stamp_touched :: proc "contextless" (s:Stamp($S),seen:^Seen) -> bool {
+    if s.version==nil {return true}
+    if seen.version==s.version^ {return false}
+    seen.version=s.version^
+    return true
+}
+touched :: proc{table_touched,read_touched,stamp_touched}
 
 // The rows a reader saw in a table, for reshaped.
 Shape :: distinct u64
@@ -581,7 +618,8 @@ table_settle :: proc(t:^Table($T),es:^Entities) -> bool {
 raw_settle :: proc(t:^Raw_Table,size,align:int,es:^Entities) -> bool {
     turned:=t.base?0:len(es.turned)
     if len(t.pending)==0 && len(es.doomed)==0 && turned==0 {return false}
-    next:=t.version+1
+    // Adds take next+1, and turns next or, of a row added, next+1.
+    next:=(t.version+2)&~u64(1)
     written,changed:=false,false
     if table_settle_reserve(t,size,align,es) {
         changed,written=table_pending_apply(t,size,es,next)
@@ -597,7 +635,7 @@ raw_settle :: proc(t:^Raw_Table,size,align:int,es:^Entities) -> bool {
         }
     }
     if t.single && changed {changed=single_keep(t,size,es,next) || changed}
-    if changed || written {t.version=next}
+    if changed || written {t.version=next+1}
     if changed {t.layout+=1}
     return changed
 }
@@ -692,7 +730,7 @@ table_pending_apply :: proc(t:^Raw_Table,size:int,es:^Entities,next:u64) -> (cha
                 if p.value==PENDING_ON {turn=single_turn(t,row);if t.turns[row]>=turn {turn=t.turns[row]}}
                 if turn!=t.turns[row] {
                     t.turns[row]=turn
-                    stamp_set(t,row,next)
+                    stamp_turn(t,row,next)
                     written=true
                 }
             }
@@ -700,7 +738,7 @@ table_pending_apply :: proc(t:^Raw_Table,size:int,es:^Entities,next:u64) -> (cha
             // Off with its entity, the row stays where it was: the stamp
             // tells the readers of every row that its own off changed.
             if !moved && t.off[row]!=was {
-                stamp_set(t,row,next)
+                stamp_turn(t,row,next)
                 on=true
             }
             changed||=moved
@@ -710,7 +748,7 @@ table_pending_apply :: proc(t:^Raw_Table,size:int,es:^Entities,next:u64) -> (cha
             value:=rawptr(uintptr(t.added.data)+uintptr(int(p.value)*size))
             if row:=raw_row(t,p.entity);row>=0 {
                 if size>0 {mem.copy(raw_at(t,size,row),value,size)}
-                stamp_set(t,row,next)
+                stamp_set(t,row,next+1)
                 written=true
                 continue
             }
@@ -725,7 +763,7 @@ table_pending_apply :: proc(t:^Raw_Table,size:int,es:^Entities,next:u64) -> (cha
             t.values.len+=1
             if size>0 {mem.copy(raw_at(t,size,row),value,size)}
             append(&t.entities,p.entity)
-            stamp_push(t,next)
+            stamp_push(t,next+1)
             append(&t.off,waits)
             rows_set(t,i,i32(row+1))
             if on {
@@ -754,7 +792,7 @@ table_place :: proc(t:^Raw_Table,size,row:int,es:^Entities,next:u64) -> (moved,o
             t.off[row]=true
             return
         }
-        stamp_set(t,row,next)
+        stamp_turn(t,row,next)
         table_swap_rows(t,size,row,t.on)
         t.on+=1
         return true,true
@@ -1056,8 +1094,7 @@ raw_row :: proc "contextless" (t:^Raw_Table,e:Entity) -> int {
 raw_edit :: proc "contextless" (t:^Raw_Table,type:^runtime.Type_Info,e:Entity) -> rawptr {
     row:=raw_row(t,e)
     if row<0 {return nil}
-    t.version+=1
-    stamp_set(t,row,t.version)
+    stamp_set(t,row,version_write(t))
     return raw_value(t,type,row)
 }
 
@@ -1077,10 +1114,7 @@ raw_value :: proc "contextless" (t:^Raw_Table,type:^runtime.Type_Info,row:int) -
 // Says that the row of an entity was written in place, through a pointer
 // raw_find gave: a widget bound to its fields.
 raw_touch :: proc "contextless" (t:^Raw_Table,e:Entity) {
-    if row:=raw_row(t,e);row>=0 {
-        t.version+=1
-        stamp_set(t,row,t.version)
-    }
+    if row:=raw_row(t,e);row>=0 {stamp_set(t,row,version_write(t))}
 }
 
 // Whether the component of an entity is on, and whether it was turned off by
@@ -1156,7 +1190,7 @@ raw_put :: proc(t:^Raw_Table,info:^runtime.Type_Info,es:^Entities,e:Entity,value
     if t.single && len(t.turns)>=cap(t.turns) {return false}
     for lock in t.locks {if owners:=lock_owners(t,lock);i>=max(len(owners),cap(owners)) {return false}}
     if rows_at(t,i)!=0 {raw_drop_index(t,size,i)}
-    t.version+=1
+    version_write(t)
     if t.single {append(&t.turns,off?0:single_turn(t))}
     row:=t.values.len
     t.values.len+=1

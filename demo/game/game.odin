@@ -48,17 +48,6 @@ SWATCH_MATERIALS :: [?]string{
 
 THROWN_CUBE :: "characters/player/Thrown cube.scene"
 
-// Hidden has one writer: the scenes ask for it here.
-@(storage,queue)
-Show_Requests :: struct {queue:core.Queue(Show_Request)}
-Show_Request :: struct {entity:core.Entity,hidden:bool}
-
-ask_hidden :: proc(shows:^Show_Requests,e:core.Entity,hidden:bool) {core.push(&shows.queue,Show_Request{e,hidden})}
-
-@(step="fixed",stage="end")
-shows_apply :: proc(shows:^Show_Requests,hidden:^core.Table(render.Hidden)) {
-    for show in core.take(&shows.queue) {render.set_hidden(hidden,show.entity,show.hidden)}
-}
 THROWN_CUBE_SIZE :: f32(0.25) // m, the side of a thrown cube
 
 // On a body that opens doors, changes samples and throws cubes.
@@ -71,7 +60,6 @@ Player :: struct {
 Spin :: struct {
     degrees_per_second:[3]f32,
     angles:[3]f32 `mirai:"transient"`, // Euler degrees in X, Y, Z order, added up since the first tick
-    turning:bool `mirai:"transient"`,  // angles were taken from the rotation of the entity
 }
 
 @(component)
@@ -79,7 +67,6 @@ Bob :: struct {
     height:f32 `mirai:"min=0,unit=m"`,
     speed:f32,
     base_y:f32 `mirai:"transient"`, // where the entity was when it started
-    ready:bool `mirai:"transient"`,
 }
 
 @(component)
@@ -94,7 +81,6 @@ Door :: struct {
 @(component)
 Door_State :: struct {
     closed_y:f32 `mirai:"transient,local"`, // where the door was when it started
-    ready:bool `mirai:"transient,local"`,
 }
 
 // A thrown cube: a body that gets its velocity once it exists.
@@ -131,7 +117,6 @@ Pulse :: struct {
     low:f32 `mirai:"min=0"`,
     high:f32 `mirai:"min=0"`,
     base:[3]f32 `mirai:"transient"`, // the emission of the entity when it started
-    ready:bool `mirai:"transient"`,
 }
 
 @(storage)
@@ -262,7 +247,7 @@ game_doors :: proc(doors:core.Read(Door),buttons:core.Read(Floor_Button),states:
         if !has_place {continue}
         state,known:=core.get(states,e)
         if !known {
-            core.add(states,e,Door_State{closed_y=placed.position.y,ready=true})
+            core.add(states,e,Door_State{closed_y=placed.position.y})
             continue
         }
         target:=state.closed_y+(door_opened(doors,buttons,e)?door.travel:0)
@@ -301,11 +286,9 @@ game_animate :: proc(
         local:=core.free(transforms,e)
         placed,body:=core.get(worlds,e)
         if local==nil && !body {continue}
+        first:=core.added(spins,row)
         spin:=core.edit_at(spins,row)
-        if !spin.turning {
-            spin.angles=mm.quat_to_euler(local!=nil?local.rotation:placed.rotation)*mm.DEG_PER_RAD
-            spin.turning=true
-        }
+        if first {spin.angles=mm.quat_to_euler(local!=nil?local.rotation:placed.rotation)*mm.DEG_PER_RAD}
         spin.angles+=spin.degrees_per_second*time.dt
         for &angle in spin.angles {angle=math.mod(angle,360)}
         turned:=mm.quat_from_euler(spin.angles*mm.RAD_PER_DEG)
@@ -314,45 +297,38 @@ game_animate :: proc(
             continue
         }
         position:=placed.position
-        if bob:=core.edit(bobs,e);bob!=nil {position.y=bob_height(bob,position.y,seconds)}
+        if at:=core.row_of(bobs,e);at>=0 {position.y=bob_height(bobs,at,position.y,seconds)}
         phys.move_kinematic(bodies,e,position,turned)
     }
     for row in 0..<core.count(bobs) {
         e:=core.entity_at(bobs,row)
-        bob:=core.edit_at(bobs,row)
         if local:=core.free(transforms,e);local!=nil {
-            local.position.y=bob_height(bob,local.position.y,seconds)
+            local.position.y=bob_height(bobs,row,local.position.y,seconds)
         } else if placed,body:=core.get(worlds,e);body && !core.has(spins,e) {
-            phys.move_kinematic(bodies,e,{placed.position.x,bob_height(bob,placed.position.y,seconds),placed.position.z},placed.rotation)
+            phys.move_kinematic(bodies,e,{placed.position.x,bob_height(bobs,row,placed.position.y,seconds),placed.position.z},placed.rotation)
         }
     }
 }
 
 @(private="file")
-bob_height :: proc(bob:^Bob,y,seconds:f32) -> f32 {
-    if !bob.ready {bob.base_y,bob.ready=y,true}
+bob_height :: proc(bobs:^core.Table(Bob),row:int,y,seconds:f32) -> f32 {
+    if core.added(bobs,row) {core.edit_at(bobs,row).base_y=y}
+    bob:=core.at(bobs,row)
     return bob.base_y+math.sin(seconds*bob.speed)*bob.height
 }
 
-// Emission: pulses breathe, the lamp of a door shows its state, the nose of a dog flashes when it barks,
-// the globe of a lamp of the horror house glows while lit.
+// Emission: pulses breathe, the lamp of a door shows its state, the nose of a dog flashes when it barks.
 @(step="fixed")
 game_glow :: proc(
     tints:^core.Table(render.Tint),pulses:^core.Table(Pulse),doors:core.Read(Door),buttons:core.Read(Floor_Button),barkers:core.Read(Barker),
     hierarchy:core.Ref(core.Hierarchy),names:core.Read(core.Name),time:core.Time,
-    gallery:core.Read(Physics_Gallery),view:destruct.Destruct_View,
-    lamps:core.Read(House_Lamp),
 ) {
-    physics_gallery_fade(gallery,view,tints,time)
-    horror_glow(tints,lamps)
     seconds:=f32(time.seconds)
     for row in 0..<core.count(pulses) {
         tint:=core.edit(tints,core.entity_at(pulses,row))
         if tint==nil {continue}
-        pulse:=core.edit_at(pulses,row)
-        if !pulse.ready {
-            pulse.base,pulse.ready=tint.emission,true
-        }
+        if core.added(pulses,row) {core.edit_at(pulses,row).base=tint.emission}
+        pulse:=core.at(pulses,row)
         wave:=0.5+0.5*math.sin(seconds*pulse.speed)
         tint.emission=pulse.base*(pulse.low+(pulse.high-pulse.low)*wave)
     }
@@ -381,7 +357,7 @@ game_glow :: proc(
 // destruct leaves alone what is not one.
 @(step="fixed",stage="react")
 game_projectiles :: proc(
-    es:^core.Entities,projectiles:^core.Table(Projectile),transforms:core.Read(core.Transform),body_states:core.Read(core.Motion),
+    es:core.Commands,projectiles:^core.Table(Projectile),transforms:core.Read(core.Transform),body_states:core.Read(core.Motion),
     events:core.Ref(phys.Physics_Events),bodies:^phys.Body_Requests,
     damage:^destruct.Destruct_Requests,time:core.Time,
 ) {

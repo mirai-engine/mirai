@@ -78,7 +78,6 @@ Horde_Waves :: struct {
     sent:i32 `mirai:"transient,readonly"`,                     // of that wave
     total:i32 `mirai:"transient,readonly"`,                    // of every wave
     wait:f32 `mirai:"transient,hidden"`,                       // s to the next zombie
-    started:bool `mirai:"transient,hidden"`,
     rng:mm.Rng `mirai:"transient,hidden"`,
 }
 
@@ -822,12 +821,12 @@ horde_waves :: proc(
 ) {
     if !time.playing || time.dt<=0 {return}
     for row in 0..<core.count(hordes) {
-        h:=core.edit_at(hordes,row)
         e:=core.entity_at(hordes,row)
         arena,built:=core.get(arenas,e)
         if !built || !arena.built || arena.kind!=.Horde {continue}
-        if !h.started {
-            h.started=true
+        first:=core.added(hordes,row)
+        h:=core.edit_at(hordes,row)
+        if first {
             h.rng=mm.rng_make(h.seed,7)
             h.wave=h.first
             first,_:=core.record(waves,h.wave,problems,e)

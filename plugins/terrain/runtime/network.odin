@@ -67,8 +67,8 @@ Replay_Result :: struct {
 }
 
 // What terrain_replay did in the tick, in the order it did it.
-@(storage,events)
-Terrain_Replay_Events :: struct {results:core.Queue(Replay_Result)}
+@(storage)
+Terrain_Replay_Events :: struct {results:core.Events(Replay_Result)}
 
 // Bytes of a Brush as it travels: its alpha is not part of it.
 BRUSH_BYTES :: size_of(Brush)
@@ -299,8 +299,6 @@ replay_page :: proc(data:^Terrain_Data,entry:^Data_Source,replay:Replay) -> (cha
 // request_layer, before terrain_update: what they change shows as an edit does.
 @(step="fixed",loops="game",stage="simulate",before="terrain_update")
 terrain_replay :: proc(replays:^Terrain_Replays,events:^Terrain_Replay_Events,digs:^Terrain_Digs,requests:^Terrain_Requests,data:^Terrain_Data,terrains:core.Read(Terrain),worlds:core.Read(core.World_Transform),assets:^host.Assets,problems:^core.Problems) {
-    core.queue_clear(&events.results)
-    core.queue_clear(&digs.digs)
     routed,asked:=replays.routed,replays.asked
     replays.routed,replays.asked=false,false
     if len(replays.items.items)==0 && (!routed || len(requests.edits.items)==0 && len(requests.layers.items)==0) {return}
