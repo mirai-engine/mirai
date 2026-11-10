@@ -85,7 +85,8 @@ own `AGENTS.md` applies, not the one of the checkout that contains it.
 - **Performance.** If the task seeks performance or adds measurable work per frame or tick, measure
   once, when it is finished, with `mirai bench compare --base main`
   ([profiling](.agents/skills/mirai-agent-api/references/methods.md#profiling)): it alternates
-  `--release` pairs, without validation, VSync or frame limit, and writes the table. Never after
+  pairs of both builds, built alike at `--dev`, without validation, VSync or frame limit, and
+  writes the table. Never after
   each step nor with homemade pair scripts. A change that does not move the cost (UI, tools) needs
   no base: `profile.capture` in the open session is enough. If other tasks are compiling or
   testing, CPU time per phase counts; wall clock and frame time are measured in the unloaded window
@@ -129,8 +130,9 @@ The shell, the command table, the flow of a session and how to hand a command to
 [common commands](.agents/skills/mirai-projects/references/projects.md#common-commands).
 
 - An agent passes `--dev` to `build`, `edit`, `play`, `session` and `capture`, and `render check`
-  is `--dev` by itself. **`--release` only when the task cannot do without it or the user asks for
-  it**: figures of the CPU (`mirai bench compare`, a benchmark test) or a budget in absolute numbers.
+  and `bench compare` are `--dev` by themselves: two builds of the same mode compare. **`--release`
+  only when the task cannot do without it or the user asks for it**: a budget in absolute numbers,
+  or once at the end of a phase, since only an optimized build shows a compiler that hangs.
   If the user's editor holds the `--dev` build of the checkout, work in a worktree.
 - Against an editor: `mirai session start`, `mirai rpc` or `mirai capture`, and
   `mirai session stop`. Do not launch `mirai-editor` by hand, write HTTP clients, or parse the

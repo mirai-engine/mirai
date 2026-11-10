@@ -330,7 +330,8 @@ Reading a capture:
   `profile.compare`; `profile.frames` and `profile.zone` explain a spike or a function.
 - **Against `main`.** `mirai bench compare [project] [--scene S] [--camera x,y,z,tx,ty,tz]`,
   without pair scripts or a hand-built base. It builds head and the base (`--base`: `main`, a ref
-  or a checkout with its editor at `--release`) at `--release`, the base in the worktree of
+  or a checkout with its editor already built) alike, at `--dev` unless `--release`, since two
+  builds of the same mode compare; the base goes in the worktree of
   [`render check`](../../mirai-rendering/references/verification.md#render-check). With
   `measure.lock` taken it opens the two headless editors (no pacing, VSync or validation) and
   alternates `--pairs` captures: head, base, base, head… It prints a Markdown table for the final
