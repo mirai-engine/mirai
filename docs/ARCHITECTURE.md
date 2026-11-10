@@ -342,7 +342,8 @@ Numbered layers; a package only imports lower layers.
   it does not read to the libraries (`Launch`).
 - **5** `engine/*`: the engine libraries `scene`, `volume` (the regions of the world, the per-zone
   values in them, how they combine, and wind), `render`, `audio`, `gui`, `input` (devices,
-  actions, seats, driving and `Move_Input`), `camera` (each seat's camera and the game view), `save`.
+  actions, seats, driving and `Move_Input`), `camera` (each seat's camera and the game view),
+  `save`.
 - **6** `cook/*`: engine-time; world generator and project build, `cook/cache` (what is built,
   stored by what makes it), `cook/compressor/lz` (the optimal levels of the LZ encoder, which only
   a cook writes with), textures (with the encoders `cook/compressor/texture`, of BC1 to BC7, and
