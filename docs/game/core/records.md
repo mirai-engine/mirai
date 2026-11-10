@@ -11,7 +11,7 @@ run time and are not part of the world: a save keeps only the components that na
 Item :: struct {
     stack:i32 `mirai:"min=1"`,
     value:f32,
-    label:core.Text,              // a localized text of the row
+    label:core.Text,              // a text of the row: a key of the .strings of the game
 }
 ITEM_DEFAULT :: Item{stack=1}
 
@@ -34,8 +34,9 @@ game_pickups :: proc(pickups:core.Read(Pickup),items:core.Records(Item),problems
 - `core.record` reports `records.missing` on the entity when the table or row is gone; the zero
   reference names no row and reports nothing. `core.record_get` looks without reporting.
 - Walk every row: `core.records_count(items)` and `core.records_at(items, i)` (value and ref).
-- Text of a row: `core.record_text(items, item.label, language)`; `language` is
-  `base.name_hash("en")`, or 0 for the language the game is written in.
+- Text of a row: a `core.Text` holds a key of the `.strings` (`{"label":{"key":"item.sword"}}`
+  in `records.set`), and `core.text(texts, item.label, language)` gives what it says, with
+  `texts:^core.Texts` a parameter of the function: [texts](../ui/texts.md).
 - Rows load the first time a function asks and again when a file changes, also during Play.
   `core.records_generation(items)` changes on each load: rebuild what you derived from rows then.
 

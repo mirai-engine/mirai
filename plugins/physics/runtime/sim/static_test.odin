@@ -431,15 +431,15 @@ restoring_a_snapshot_or_copying_a_state_leaves_every_static_change_reader_behind
     defer world_destroy(&other)
     boxes:[4]Aabb
     test_static_box(&w,{0,0,0})
-    buffer:=make([]byte,world_snapshot_capacity(&w))
-    defer delete(buffer)
-    _,saved:=world_snapshot(&w,buffer)
+    buffer:World
+    defer world_destroy(&buffer)
+    saved:=test_keep(&buffer,&w)
     testing.expect(t,saved)
     test_static_box(&w,{5,0,0})
     current,_,_:=static_changes(&w,0,boxes[:])
     testing.expect_value(t,current,u64(2))
 
-    testing.expect(t,world_restore(&w,buffer))
+    testing.expect(t,test_restore(&w,&buffer))
     count:int
     overflow:bool
     for since in ([2]u64{0,current}) {
@@ -452,7 +452,8 @@ restoring_a_snapshot_or_copying_a_state_leaves_every_static_change_reader_behind
     testing.expect_value(t,boxes[0].min.x,f32(8))
 
     head,_,_:=static_changes(&other,0,boxes[:])
-    testing.expect(t,world_state_copy(&other,&w))
+    _,copied:=world_state_copy(&other,&w)
+    testing.expect(t,copied)
     _,count,overflow=static_changes(&other,head,boxes[:])
     testing.expect(t,overflow && count==0)
 }

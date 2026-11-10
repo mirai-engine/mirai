@@ -13,7 +13,7 @@ import mm "mirai:std/math"
 import "mirai:std/serial"
 import "mirai:ui"
 
-// The interfaces, animations, sounds, sound sets, fonts, texts and prompts of
+// The interfaces, animations, sounds, sound sets, fonts and prompts of
 // the application's assets, loaded the first time a component names them and
 // shared by every world. An asset whose file changes is loaded again where
 // it is; generation tells whoever holds state made for the old one, and no
@@ -25,7 +25,7 @@ CONTENT_CAPACITY :: 256
 // The fonts App.ui_font has before any is added: those of ui.font_init without fonts.
 CONTENT_UI_FONTS :: ui.FONT_DEFAULTS
 
-Content_Kind :: enum u8 {Ui,Animation,Sound,Sound_Set,Font,Strings,Prompts}
+Content_Kind :: enum u8 {Ui,Animation,Sound,Sound_Set,Font,Prompts}
 
 Content_Stamp :: struct {
     id:base.Asset_Id,
@@ -132,17 +132,6 @@ Content_Font :: struct {
     added:bool, // it is a font of App.ui_font
 }
 
-// A .strings, with the texts found by the name_hash of a language and of a key.
-Content_Strings :: struct {
-    using stamp:Content_Stamp,
-    text:[]u8,
-    languages:[]u64, // name_hash of the code of each language
-    codes:[]asset.String_Language,
-    keys:[]u64,      // name_hash of the name of each key
-    entries:[]asset.String_Entry,
-    slots:[]u32,     // entry+1 by the hash of its language and key, the next free slot on a collision; 0 is empty
-}
-
 // A .prompts: the images of its inputs, whose textures prompts_find gives.
 Content_Prompts :: struct {
     using stamp:Content_Stamp,
@@ -182,7 +171,6 @@ Content :: struct {
     sound_sets:[dynamic]Content_Sound_Set,
     rng:base.Rng,                    // of the variations of the sets
     fonts:[dynamic]Content_Font,
-    texts:[dynamic]Content_Strings,
     prompts:[dynamic]Content_Prompts,
     retired:[dynamic]asset.Asset, // files of streams that were replaced or unloaded
     free:[Content_Kind][dynamic]u32, // entries that unloaded content left
@@ -204,22 +192,21 @@ app_content :: proc(app:^App) -> ^Content {
     if error!=nil {return nil}
     c.allocator=app.allocator
     c.index=make(map[base.Asset_Id]Content_Ref,app.allocator)
-    errors:[7]runtime.Allocator_Error
+    errors:[6]runtime.Allocator_Error
     c.uis,errors[0]=make([dynamic]Content_Ui,0,CONTENT_CAPACITY,app.allocator)
     c.animations,errors[1]=make([dynamic]Content_Animation,0,CONTENT_CAPACITY,app.allocator)
     c.sounds,errors[2]=make([dynamic]Content_Sound,0,CONTENT_CAPACITY,app.allocator)
     c.sound_sets,errors[3]=make([dynamic]Content_Sound_Set,0,CONTENT_CAPACITY,app.allocator)
     c.rng=base.rng_make(0x736f756e64)
     c.fonts,errors[4]=make([dynamic]Content_Font,0,ui.FONT_CAPACITY,app.allocator)
-    c.texts,errors[5]=make([dynamic]Content_Strings,0,CONTENT_CAPACITY,app.allocator)
-    c.prompts,errors[6]=make([dynamic]Content_Prompts,0,CONTENT_CAPACITY,app.allocator)
+    c.prompts,errors[5]=make([dynamic]Content_Prompts,0,CONTENT_CAPACITY,app.allocator)
     c.retired=make([dynamic]asset.Asset,app.allocator)
     for &free in c.free {free=make([dynamic]u32,app.allocator)}
     failed:=reserve(&c.index,CONTENT_CAPACITY*4)!=nil
     for error in errors {failed||=error!=nil}
     if failed {
         delete(c.index);delete(c.uis);delete(c.animations);delete(c.sounds);delete(c.sound_sets);delete(c.retired)
-        delete(c.fonts);delete(c.texts);delete(c.prompts)
+        delete(c.fonts);delete(c.prompts)
         for free in c.free {delete(free)}
         free(c,app.allocator)
         return nil
@@ -243,13 +230,12 @@ app_content_destroy :: proc(app:^App) {
         if entry.id!={} {content_sound_free(app,&entry,true)}
     }
     for &entry in c.fonts {delete(entry.data,c.allocator);delete(entry.next,c.allocator)}
-    for &entry in c.texts {content_strings_free(c,&entry)}
     for &entry in c.prompts {delete(entry.images,c.allocator)}
     for free in c.free {delete(free)}
     for &file in c.retired {asset.asset_close(&file)}
     delete(c.retired)
     delete(c.index);delete(c.uis);delete(c.animations);delete(c.sounds);delete(c.sound_sets)
-    delete(c.fonts);delete(c.texts);delete(c.prompts)
+    delete(c.fonts);delete(c.prompts)
     free(c,app.allocator)
     app.content=nil
 }
@@ -414,66 +400,6 @@ content_font_read :: proc(app:^App,id:base.Asset_Id,stamp:^Content_Stamp) -> (da
     if data,allocation=make([]u8,len(view.file),c.allocator);allocation!=nil {return}
     copy(data,view.file)
     return data,true
-}
-
-@(private="file")
-content_strings_free :: proc(c:^Content,entry:^Content_Strings) {
-    delete(entry.text,c.allocator);delete(entry.languages,c.allocator);delete(entry.codes,c.allocator);delete(entry.keys,c.allocator)
-    delete(entry.entries,c.allocator);delete(entry.slots,c.allocator)
-    entry.text,entry.languages,entry.codes,entry.keys,entry.entries,entry.slots=nil,nil,nil,nil,nil,nil
-}
-
-@(private="file")
-strings_slot :: #force_inline proc "contextless" (language,key:u64) -> u64 {return base.hash_combine(language,key)}
-
-@(private="file")
-content_strings_load :: proc(app:^App,id:base.Asset_Id,entry:^Content_Strings) -> bool {
-    a,c:=app.assets,app.content
-    file:asset.Asset
-    content_open(a,id,asset.KIND_STRINGS,&file,entry) or_return
-    defer asset.asset_close(&file)
-    view,error:=asset.strings_view(&file,&a.types)
-    if error!=.None {return false}
-    slots:=1
-    for slots<len(view.entries)*2 {slots*=2}
-    loaded:Content_Strings
-    e1,e2,e3,e4,e5,e6:runtime.Allocator_Error
-    loaded.text,e1=make([]u8,len(view.text),c.allocator)
-    loaded.languages,e2=make([]u64,len(view.languages),c.allocator)
-    loaded.keys,e3=make([]u64,len(view.keys),c.allocator)
-    loaded.entries,e4=make([]asset.String_Entry,len(view.entries),c.allocator)
-    loaded.slots,e5=make([]u32,slots,c.allocator)
-    loaded.codes,e6=make([]asset.String_Language,len(view.languages),c.allocator)
-    ok:=e1==nil && e2==nil && e3==nil && e4==nil && e5==nil && e6==nil
-    if ok {
-        copy(loaded.text,view.text);copy(loaded.entries,view.entries);copy(loaded.codes,view.languages)
-        for &language,i in view.languages {loaded.languages[i]=base.name_hash(base.text_get(language.code[:]))}
-        for &key,i in view.keys {loaded.keys[i]=base.name_hash(base.text_get(key.name[:]))}
-        // Two names of one hash could not be told apart.
-        ok=!slice_repeats(loaded.languages) && !slice_repeats(loaded.keys)
-    }
-    if !ok {
-        content_strings_free(c,&loaded)
-        return false
-    }
-    mask:=u64(slots-1)
-    for e,i in loaded.entries {
-        at:=strings_slot(loaded.languages[e.language],loaded.keys[e.key])&mask
-        for loaded.slots[at]!=0 {at=(at+1)&mask}
-        loaded.slots[at]=u32(i+1)
-    }
-    content_strings_free(c,entry)
-    entry.text,entry.languages,entry.codes,entry.keys,entry.entries,entry.slots=loaded.text,loaded.languages,loaded.codes,loaded.keys,loaded.entries,loaded.slots
-    return true
-}
-
-@(private="file")
-slice_repeats :: proc(values:[]u64) -> bool {
-    sorted:=make([]u64,len(values),context.temp_allocator)
-    copy(sorted,values)
-    slice.sort(sorted)
-    for i in 1..<len(sorted) {if sorted[i]==sorted[i-1] {return true}}
-    return false
 }
 
 @(private="file")
@@ -679,44 +605,9 @@ app_ui_fonts_apply :: proc(app:^App) {
     for &entry in c.fonts {c.fonts_waiting||=entry.id!={} && !entry.failed && !entry.added || entry.next!=nil}
 }
 
-// The text of a key in a language of a .strings, by the name_hash of the
-// code of the language and of the name of the key. It belongs to the
-// strings. Nothing is allocated.
-strings_text :: proc "contextless" (s:^Content_Strings,language:u64,key:u64) -> (text:string,found:bool) {
-    if s==nil || len(s.slots)==0 {return}
-    mask:=u64(len(s.slots)-1)
-    for at:=strings_slot(language,key)&mask;;at=(at+1)&mask {
-        index:=s.slots[at]
-        if index==0 {return}
-        e:=&s.entries[index-1]
-        if s.languages[e.language]==language && s.keys[e.key]==key {return string(s.text[e.offset:][:e.length]),true}
-    }
-}
-
-// The texts of a .strings, by its path in the assets or its id, loaded the
-// first time. nil for a path the assets do not have, the zero id, an asset
-// that is not a .strings or cannot be loaded, and when no room is left.
-content_strings :: proc{content_strings_path,content_strings_id}
-
-content_strings_path :: proc(app:^App,path:string) -> ^Content_Strings {
-    id,_:=assets_id(app.assets,path)
-    return content_strings_id(app,id)
-}
-
-content_strings_id :: proc(app:^App,id:base.Asset_Id) -> ^Content_Strings {
-    c:=app_content(app)
-    if c==nil || id=={} {return nil}
-    entry,fresh:=content_slot(c,&c.texts,id,.Strings)
-    if entry==nil {return nil}
-    if fresh {
-        scope:=load_asset_begin(&app.load_profile)
-        content_loaded(c,entry,content_strings_load(app,id,entry))
-        load_asset_end(&app.load_profile,scope,id,.Interface,entry.size,entry.failed)
-    }
-    return entry.failed?nil:entry
-}
-
-// The pack of prompts of a .prompts, loaded the first time. nil as content_strings.
+// The pack of prompts of a .prompts, by its id, loaded the first time. nil for
+// the zero id, an asset that is not a .prompts or cannot be loaded, and when
+// no room is left.
 content_prompts :: proc(app:^App,id:base.Asset_Id) -> ^Content_Prompts {
     c:=app_content(app)
     if c==nil || id=={} {return nil}
@@ -835,9 +726,6 @@ content_refresh :: proc(app:^App) -> (reloaded:int) {
         done(c,&entry,read,&reloaded)
         c.fonts_waiting||=read
     }
-    for &entry in c.texts {
-        if entry.id!={} && changed(registry,&entry) {done(c,&entry,content_strings_load(app,entry.id,&entry),&reloaded)}
-    }
     for &entry in c.prompts {
         if entry.id!={} && changed(registry,&entry) {done(c,&entry,content_prompts_load(app,entry.id,&entry),&reloaded)}
     }
@@ -864,7 +752,7 @@ content_refresh :: proc(app:^App) -> (reloaded:int) {
     return
 }
 
-// Unloads the interfaces, animations, sounds, sets, texts and prompts that no
+// Unloads the interfaces, animations, sounds, sets and prompts that no
 // scope of the assets reaches (assets_scope_set): their memory is freed, a
 // sound leaves the mixer, and their entries are there for the next ones.
 // Fonts stay, as App.ui_font keeps them. Asking for one again
@@ -893,9 +781,6 @@ content_collect :: proc(app:^App) -> (unloaded:int) {
             c.sounds[ref.index]={}
         case .Sound_Set:
             c.sound_sets[ref.index]={}
-        case .Strings:
-            content_strings_free(c,&c.texts[ref.index])
-            c.texts[ref.index]={}
         case .Prompts:
             delete(c.prompts[ref.index].images,c.allocator)
             c.prompts[ref.index]={}

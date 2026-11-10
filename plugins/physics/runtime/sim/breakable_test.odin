@@ -188,8 +188,8 @@ disabling_impact_damage_preserves_collision_manual_damage_and_snapshot_replay ::
     wall,error:=test_destructible(&w,{4,2,.4},{0,1,0},24,true,desc)
     if !testing.expect_value(t,error,Breakable_Error.None) {return}
     ball:=test_cannonball(&w,{0,1.2,3},{0,0,-30})
-    snapshot:=make([]u8,world_snapshot_size(&w));defer delete(snapshot)
-    _,saved:=world_snapshot(&w,snapshot)
+    snapshot:World;defer world_destroy(&snapshot)
+    saved:=test_keep(&snapshot,&w)
     if !testing.expect(t,saved) {return}
     for _ in 0..<20 {
         world_step(&w,1.0/60)
@@ -200,7 +200,7 @@ disabling_impact_damage_preserves_collision_manual_damage_and_snapshot_replay ::
     count:=breakable_bonds(&w,wall,connections[:])
     for bond in connections[:count] {testing.expect(t,!bond.broken && bond.strain==0)}
     intact:=world_hash(&w)
-    testing.expect(t,world_restore(&w,snapshot))
+    testing.expect(t,test_restore(&w,&snapshot))
     test_steps(&w,20)
     testing.expect_value(t,world_hash(&w),intact)
     event,broke:=breakable_strain(&w,wall,{0,1,0},4,10000)
@@ -306,9 +306,9 @@ restoring_before_a_fracture_and_applying_its_event_reproduces_it :: proc(t:^test
     crate,_:=test_destructible(&w,{1,1,1},{3,0.5,3},1,false)
     test_cannonball(&w,{-1,1,3},{0,0,-25})
     test_steps(&w,3)
-    buffer:=make([]byte,world_snapshot_capacity(&w))
-    defer delete(buffer)
-    size,ok:=world_snapshot(&w,buffer)
+    buffer:World
+    defer world_destroy(&buffer)
+    ok:=test_keep(&buffer,&w)
     testing.expect(t,ok)
     before:=world_hash(&w)
     events:[2]Break_Event
@@ -324,7 +324,7 @@ restoring_before_a_fracture_and_applying_its_event_reproduces_it :: proc(t:^test
         recorded[i]=len(world_events(&w).breaks)
     }
     pieces:=world_stats(&w).pieces
-    testing.expect(t,world_restore(&w,buffer[:size]))
+    testing.expect(t,test_restore(&w,&buffer))
     testing.expect_value(t,world_hash(&w),before)
     testing.expect(t,test_graph_is_consistent(t,&w,wall))
     for event in events {testing.expect(t,break_event_apply(&w,event))}
@@ -524,14 +524,14 @@ repeated_cuts_work_until_the_pieces_run_out_and_replay_after_a_restore :: proc(t
     defer world_destroy(&w)
     world_set_gravity(&w,{})
     crate,_:=test_destructible(&w,{1,1,1},{0,3,0},1,false)
-    snapshot:=make([]u8,world_snapshot_capacity(&w));defer delete(snapshot)
+    snapshot:World;defer world_destroy(&snapshot)
     size:int
     events:[16]Break_Event
     hash:u64
     for i in 0..<16 {
         if i==5 {
             saved:bool
-            size,saved=world_snapshot(&w,snapshot)
+            saved=test_keep(&snapshot,&w)
             testing.expect(t,saved)
         }
         cut:bool
@@ -546,7 +546,7 @@ repeated_cuts_work_until_the_pieces_run_out_and_replay_after_a_restore :: proc(t
         testing.expectf(t,!cut && refused==Break_Capacities{.Pieces},"cut %v needs two more slots: %v",i,refused)
     }
     testing.expect_value(t,breakable_pieces(&w,crate,nil),23)
-    testing.expect(t,world_restore(&w,snapshot[:size]))
+    testing.expect(t,test_restore(&w,&snapshot))
     for event in events[5:11] {
         testing.expect(t,break_event_apply(&w,event))
         world_step(&w,1.0/60)

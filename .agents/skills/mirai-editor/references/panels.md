@@ -798,9 +798,9 @@ of its column.
   column; what is longest is edited alone on the right. The first column is the row's name, which
   is renamed by typing.
 - **Cells:** a draggable or typed number, a checkbox, a list of an `enum` or of a named id, an
-  asset button, the text of a `[N]u8` and, of a `core.Text`, the text in the language the game is
-  written in (translations go through `records.set` or the CSV). A `core.Record` is the list of
-  the rows of its type (`record_choice`), the same as in the inspector.
+  asset button, the text of a `[N]u8` and, of a `core.Text`, its key of the `.strings` (what the
+  key says goes through `texts.set` or `mirai texts`). A `core.Record` is the list of the rows of
+  its type (`record_choice`), the same as in the inspector.
 - **Add row** adds a row with the type's default after the chosen one; **Duplicate** copies it with
   other text ids; **Delete** removes it. The visible rows are the only ones built.
 - What the grid and the right column change is a copy of the table, which is written as a step of

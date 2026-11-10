@@ -59,11 +59,11 @@ mirai import source/sounds/step.wav --out assets/player --root .
 - The API takes an asset by its path under `assets/`, with or without its extension, or its id;
   code, by its path as the file is spelled, and a field it fills by `host.assets_id(assets,path)`.
   A constant id in code is only for assets your own tool writes with `asset.content_id`.
-- Scenes and `.records` ship. Other assets only code names need a root in `cook.mirai`:
-  `{"roots":["arena/Chrome.mat","player/"]}` (path under `assets/`, folder with `/`, or id).
-- Texts: `host.strings_text(host.content_strings(app,"menu/texts.strings"),base.name_hash("en"),
-  base.name_hash(key))` gives `(text,found)`. `mirai texts export|import <file.csv>` moves the
-  translations of `.ui` files through the open editor.
+- Scenes, `.records` and `.strings` ship. Other assets only code names need a root in
+  `cook.mirai`: `{"roots":["arena/Chrome.mat","player/"]}` (path under `assets/`, folder with
+  `/`, or id).
+- Texts: every `.strings` is one table of keys, which a node of a `.ui`, a `core.Text` of a row
+  and `core.text(texts,"menu.start",language)` show: [texts](ui/texts.md).
 - Game data: a struct tagged `@(record)` is a catalog (items, dialogue, waves) whose rows live in
   a `.records` file (`records.create`; `records.add`, `records.set`). A
   `core.Record(T)` field names a row; read it with `core.record(rows,ref,problems,entity)`.
