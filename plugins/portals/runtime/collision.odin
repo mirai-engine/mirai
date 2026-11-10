@@ -156,9 +156,9 @@ portals_collision :: proc(
         if !has_place || !has_exit || opening_count==len(openings) {continue}
         opening:=Opening{entity=e,entrance=placed.transform,exit=exit.transform}
         wall,has_wall:=core.get(worlds,portal.wall)
-        frame,framed:=core.get(core.read(frames),e)
+        frame,framed:=core.get(frames,e)
         if portal.wall!=core.NONE && has_wall && phys.collider_ready(physics,portal.wall) {
-            collider,_:=core.get(core.read(colliders),portal.wall)
+            collider,_:=core.get(colliders,portal.wall)
             key:=frame_key(placed.transform,wall.transform,collider)
             if !framed || frame.key!=key {
                 made:=Portal_Frame{key=key}
@@ -196,7 +196,7 @@ portals_collision :: proc(
         e:=core.entity_at(frames,row)
         portal,is_portal:=core.get(portals,e)
         if is_portal && core.has(worlds,e) && core.has(worlds,portal.exit) && portal.wall!=core.NONE {continue}
-        frame_drop(es,frames,e,core.at(core.read(frames),row))
+        frame_drop(es,frames,e,core.at(frames,row))
     }
     for wall in walls[:wall_count] {cuts_put(cuts,wall.entity,wall.cuts)}
     for row in 0..<core.count(travelers) {
@@ -222,7 +222,7 @@ portals_collision :: proc(
             if core.has(cuts,e) {core.remove(cuts,e)}
             continue
         }
-        if had,has:=core.get(core.read(twins),e);!has || had!=twin {core.add(twins,e,twin)}
+        if had,has:=core.get(twins,e);!has || had!=twin {core.add(twins,e,twin)}
         mine:=phys.Collider_Cuts{count=1}
         mine.boxes[0]=cut
         cuts_put(cuts,e,mine)
@@ -241,7 +241,7 @@ portals_collision :: proc(
 
 @(private)
 cuts_put :: proc(cuts:^core.Table(phys.Collider_Cuts),e:core.Entity,value:phys.Collider_Cuts) {
-    if had,has:=core.get(core.read(cuts),e);has && had==value {return}
+    if had,has:=core.get(cuts,e);has && had==value {return}
     core.add(cuts,e,value)
 }
 

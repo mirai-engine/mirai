@@ -127,7 +127,7 @@ prefab_test_has :: proc(f:^Prefab_Fixture,root,e:core.Entity,component:string,ki
 // An edit of the lamp of an entity, as one step.
 @(private="file")
 lamp_set :: proc(f:^Prefab_Fixture,e:core.Entity,intensity:f32) {
-    value,_:=core.get(core.read(&f.world.lamps),e)
+    value,_:=core.get(&f.world.lamps,e)
     value.intensity=intensity
     core.add(&f.world.lamps,e,value)
     core.world_settle(edited_world(&f.s))
@@ -136,7 +136,7 @@ lamp_set :: proc(f:^Prefab_Fixture,e:core.Entity,intensity:f32) {
 
 @(private="file")
 lamp_of :: proc(f:^Prefab_Fixture,e:core.Entity) -> Prefab_Test_Lamp {
-    value,_:=core.get(core.read(&f.world.lamps),e)
+    value,_:=core.get(&f.world.lamps,e)
     return value
 }
 
@@ -646,8 +646,8 @@ the_overrides_of_an_instance_are_derived_reverted_and_applied_without_writing_fi
     left,_:=prefab_overrides_of(s,root)
     testing.expect(t,member && of_sticker.instance==root && len(left)==0,"what was applied is the prefab's, and the entity added a member")
     registered,_,_:=prefab_file(s,id)
-    first,_:=core.get(core.read(&f.world.instances),crate)
-    second,_:=core.get(core.read(&f.world.instances),root)
+    first,_:=core.get(&f.world.instances,crate)
+    second,_:=core.get(&f.world.instances,root)
     testing.expect(t,first.stamp==registered.content_hash && second.stamp==registered.content_hash)
 
     // Undone, the instances and the file are as before it; done again, as after.
@@ -836,7 +836,7 @@ an_instance_whose_base_is_not_held_keeps_what_it_has_when_it_is_refreshed :: pro
     testing.expect(t,refreshed==.None && report.prefabs==1 && report.instances==2 && report.failed==0)
     testing.expect(t,lamp_of(f,copy).intensity==9 && lamp_of(f,copy).range==3 && lamp_of(f,lamp).intensity==2,"what differs from the file stays")
     registered,_,_:=prefab_file(s,id)
-    instance,_:=core.get(core.read(&f.world.instances),root)
+    instance,_:=core.get(&f.world.instances,root)
     testing.expect_value(t,instance.stamp,registered.content_hash)
     _,known=prefab_overrides_of(s,root)
     testing.expect(t,known && prefab_test_has(f,root,copy,"Prefab_Test_Lamp",.Field,"range") && prefab_test_has(f,root,copy,"Prefab_Test_Lamp",.Field,"intensity"))

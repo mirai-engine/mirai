@@ -35,7 +35,7 @@ environment_triggers :: proc(
     at,placed:=core.get(worlds,body)
     for row in 0..<core.count(triggers) {
         e:=core.entity_at(triggers,row)
-        trigger:=core.at(core.read(triggers),row)
+        trigger:=core.at(triggers,row)
         box,boxed:=core.get(worlds,e)
         inside:=trigger.inside
         if placed && boxed {

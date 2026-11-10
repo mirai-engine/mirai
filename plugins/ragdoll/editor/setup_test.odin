@@ -164,7 +164,7 @@ ragdoll_setup_builds_a_body_and_limited_joint_per_part_of_a_humanoid_in_one_step
     testing.expect_value(t,len(bodies),16)
     testing.expect_value(t,len(w.rigids.values),16)
     testing.expect_value(t,len(w.joints.values),15)
-    config,configured:=core.get(core.read(&w.configs),f.figure)
+    config,configured:=core.get(&w.configs,f.figure)
     testing.expect(t,configured && config.mode==.Simulated && config.max_torque==rag.RAGDOLL_DEFAULT.max_torque)
     testing.expect_value(t,f.edits.cursor,1)
     for want in ([]string{`"part":"Forearm_L"`,`"joint":"Hinge"`,`"joint":"Swing_Twist"`,`"shape":"Capsule"`,`"shape":"Sphere"`,`"bone":"spine_02"`}) {
@@ -204,7 +204,7 @@ ragdoll_setup_builds_a_body_and_limited_joint_per_part_of_a_humanoid_in_one_step
             placed:=mm.transform_compose(world[i],binding.offset)
             testing.expectf(t,linalg.length(placed.position-pose.position)<1e-4 && abs(linalg.dot(placed.rotation,pose.rotation))>.9999,"%s: the bone puts its body at %v, it is at %v",base.text_get(bone.name[:]),placed.position,pose.position)
         }
-        joint,jointed:=core.get(core.read(&w.joints),e)
+        joint,jointed:=core.get(&w.joints,e)
         if !jointed {continue}
         testing.expect_value(t,phys.joint_configuration_error(joint),phys.Joint_Error.None)
         target:=core.to_math(core.at(&w.transforms,core.row_of(&w.transforms,joint.target)))

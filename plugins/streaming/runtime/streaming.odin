@@ -162,7 +162,7 @@ crossing_hang :: proc(references:core.Read(scene.Scene_Reference),worlds:core.Re
     }
     last:i32=-1
     for child:=core.first_child(hierarchy,target);child!=core.NONE;child=core.next_sibling(hierarchy,child) {
-        if p,has:=core.get(core.read(parents),child);has {last=max(last,p.order)}
+        if p,has:=core.get(parents,child);has {last=max(last,p.order)}
     }
     core.add(parents,e,core.Parent{target,last+1})
     return true

@@ -57,13 +57,13 @@ ai_review_test_entity :: proc(w:^Ai_Review_Test_World,id:base.Entity_Id) -> core
 
 @(private="file")
 ai_review_test_transform :: proc(w:^Ai_Review_Test_World,e:core.Entity) -> core.Transform {
-    value,_:=core.get(core.read(&w.transforms),e)
+    value,_:=core.get(&w.transforms,e)
     return value
 }
 
 @(private="file")
 ai_review_test_parent :: proc(w:^Ai_Review_Test_World,e:core.Entity) -> core.Parent {
-    value,_:=core.get(core.read(&w.parents),e)
+    value,_:=core.get(&w.parents,e)
     return value
 }
 
@@ -758,7 +758,7 @@ ai_review_shows_reverts_and_restores_a_component_turned_off :: proc(t:^testing.T
 
     // Revert turns it on in one step of undo, and Restore turns it off again.
     testing.expect_value(t,ai_task_revert(&f.s,&f.ai,task),"")
-    value,on:=core.get(core.read(&f.w.lamps),lamp)
+    value,on:=core.get(&f.w.lamps,lamp)
     testing.expect(t,on && value.intensity==10)
     testing.expect(t,history.undo(&f.edits,ref,&f.selection) && !core.has(&f.w.lamps,lamp))
     testing.expect(t,history.redo(&f.edits,ref,&f.selection) && core.has(&f.w.lamps,lamp))

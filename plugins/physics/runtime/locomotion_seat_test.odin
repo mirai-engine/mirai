@@ -107,13 +107,13 @@ a_seat_walks_the_character_it_drives_and_leaves_the_others :: proc(t:^testing.T)
     seat_test_settle(f)
     seat_test_run(f)
 
-    walked,_:=core.get(core.read(&f.moves),driven)
+    walked,_:=core.get(&f.moves,driven)
     wanted:=f32(math.PI/2)+0.1-10*input.LOOK_SPEED
     testing.expect(t,abs(walked.look_yaw-wanted)<1e-4)
     testing.expect_value(t,walked.move,[3]f32{0,0,-1})
     testing.expect_value(t,walked.buttons,input.action_bit(TEST_JUMP))
     for e in ([3]core.Entity{idle,remote,by_game}) {
-        left,_:=core.get(core.read(&f.moves),e)
+        left,_:=core.get(&f.moves,e)
         testing.expect_value(t,left,input.Move_Input{look_yaw=math.PI/2})
     }
     testing.expect_value(t,f.problems.count,0)
@@ -137,10 +137,10 @@ a_seat_walks_toward_where_the_camera_or_the_world_says :: proc(t:^testing.T) {
     seat_test_settle(f)
     seat_test_run(f)
 
-    turned,_:=core.get(core.read(&f.moves),followed)
+    turned,_:=core.get(&f.moves,followed)
     testing.expectf(t,abs(turned.look_yaw+math.PI/2)<1e-4,"it faces where the camera looks: %v",turned.look_yaw)
     testing.expectf(t,abs(turned.move.z+1)<1e-4 && abs(turned.move.x)<1e-4,"and walks forward: %v",turned.move)
-    north,_:=core.get(core.read(&f.moves),mapped)
+    north,_:=core.get(&f.moves,mapped)
     testing.expectf(t,abs(north.look_yaw)<1e-4 && abs(north.move.z+1)<1e-4,"it walks to -Z of the world: %v",north)
     testing.expect_value(t,f.problems.count,0)
 }
@@ -163,9 +163,9 @@ a_seat_walks_as_the_mode_of_its_camera_wants :: proc(t:^testing.T) {
     seat_test_settle(f)
     seat_test_run(f)
 
-    looked,_:=core.get(core.read(&f.moves),eyes)
+    looked,_:=core.get(&f.moves,eyes)
     testing.expectf(t,abs(looked.look_yaw-(math.PI/2-10*input.LOOK_SPEED))<1e-4 && abs(looked.move.z+1)<1e-4,"a camera at its eyes: it turns with the look: %v",looked)
-    turned,_:=core.get(core.read(&f.moves),orbit)
+    turned,_:=core.get(&f.moves,orbit)
     testing.expectf(t,abs(turned.look_yaw+math.PI/2)<1e-4,"a free camera: it faces where the camera looks: %v",turned.look_yaw)
     testing.expect_value(t,f.problems.count,0)
 }
@@ -187,6 +187,6 @@ a_seat_without_the_walk_actions_is_a_problem :: proc(t:^testing.T) {
 
     testing.expect_value(t,f.problems.count,1)
     testing.expect(t,core.problem_find(&f.problems,body,"locomotion.seat_action")!=nil)
-    walked,_:=core.get(core.read(&f.moves),body)
+    walked,_:=core.get(&f.moves,body)
     testing.expect_value(t,walked,input.Move_Input{look_yaw=math.PI/2})
 }

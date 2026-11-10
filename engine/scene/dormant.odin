@@ -391,7 +391,7 @@ section_unload :: proc(w:core.World_Ref,documents:Documents,e:core.Entity) -> (o
         above,_:=core.world_of(locals,core.read(parents),s.reference)
         for x in s.content {
             if !kept[core.entity_index(x)] {continue}
-            parent,_:=core.get(core.read(parents),x)
+            parent,_:=core.get(parents,x)
             if parent.entity==s.reference || kept[core.entity_index(parent.entity)] {continue}
             at,placed:=core.world_of(locals,core.read(parents),x)
             local,fits:=mm.transform_relative(at,above)
@@ -400,7 +400,7 @@ section_unload :: proc(w:core.World_Ref,documents:Documents,e:core.Entity) -> (o
         }
         // A far form under what goes, or sleeps off, would go or turn off with it.
         for x in s.far {
-            parent,_:=core.get(core.read(parents),x)
+            parent,_:=core.get(parents,x)
             if parent.entity==s.reference {continue}
             at,placed:=core.world_of(locals,core.read(parents),x)
             local,fits:=mm.transform_relative(at,above)
@@ -596,7 +596,7 @@ sleepers_apply :: proc(w,apart:core.World_Ref,e:core.Entity) -> (s:Sleepers) {
         references:=core.world_table_of(w,Scene_Reference)
         at:=x
         for _ in 0..<core.HIERARCHY_DEPTH {
-            parent,placed:=core.get(core.read(parents),at)
+            parent,placed:=core.get(parents,at)
             if !placed || parent.entity==e {return true}
             at=parent.entity
             if references==nil || core.raw_row(core.raw(references),at)<0 {continue}
@@ -654,7 +654,7 @@ sleepers_apply :: proc(w,apart:core.World_Ref,e:core.Entity) -> (s:Sleepers) {
         s.applied[x]=took
         append(&s.took,took)
         values_apply(w,apart,x,took)
-        parent,_:=core.get(core.read(parents),x)
+        parent,_:=core.get(parents,x)
         switch {
         case parent.entity==e:
             if apart_parents!=nil {core.remove(apart_parents,took)}
@@ -768,7 +768,7 @@ sleepers_join :: proc(w:core.World_Ref,e:core.Entity,s:^Sleepers,made:[]core.Ent
     for x,into in s.applied {
         for child:=core.first_child(h,x);child!=core.NONE;child=core.next_sibling(h,child) {
             if child in s.applied || buried[child] {continue}
-            parent,_:=core.get(core.read(parents),child)
+            parent,_:=core.get(parents,child)
             core.add(parents,child,core.Parent{took(made,into),parent.order})
         }
         core.destroy(es,x)
@@ -796,7 +796,7 @@ sleepers_join :: proc(w:core.World_Ref,e:core.Entity,s:^Sleepers,made:[]core.Ent
     marks:=core.world_table_of(w,Section_Held)
     for x in s.woken {
         if dormants!=nil {core.remove(dormants,x)}
-        parent,_:=core.get(core.read(parents),x)
+        parent,_:=core.get(parents,x)
         if held && parent.entity==e {continue}
         if row_has(marks,x) {
             if disabled!=nil {core.remove(disabled,x)}

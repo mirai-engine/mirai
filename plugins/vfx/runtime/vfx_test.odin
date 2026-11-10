@@ -452,7 +452,7 @@ requests_control_an_emitter_from_the_next_step :: proc(t:^testing.T) {
     fixture_tick(&f,TICK)
     clock=clock_find(&f.clocks,e)
     testing.expect_value(t,clock.control,Particle_Control.Playing)
-    status_now,_:=status(&f.clocks,core.at(core.read(&f.emitters),0),e)
+    status_now,_:=status(&f.clocks,core.at(&f.emitters,0),e)
     testing.expect_value(t,status_now.state,Particle_State.Playing)
     pause(&f.requests,e)
     fixture_tick(&f,TICK)
@@ -521,11 +521,11 @@ requests_change_the_values_of_an_instance :: proc(t:^testing.T) {
     testing.expect_value(t,request_override(&f.requests,e,"rate",f32(-1)),Error.Invalid_Value)
     testing.expect_value(t,request_parameter(&f.requests,e,"speed",f32(4)),Error.None)
     fixture_tick(&f,TICK)
-    override,has:=core.get(core.read(&f.overrides),e)
+    override,has:=core.get(&f.overrides,e)
     testing.expect(t,has && override.count==1)
     rate,_:=override_get(override,"rate",f32)
     testing.expect_value(t,rate,f32(80))
-    given,has_given:=core.get(core.read(&f.parameters),e)
+    given,has_given:=core.get(&f.parameters,e)
     testing.expect(t,has_given && given.count==1)
     // The clock follows the value of the instance from the next step.
     fixture_tick(&f,TICK)
@@ -533,8 +533,8 @@ requests_change_the_values_of_an_instance :: proc(t:^testing.T) {
     request_override_clear(&f.requests,e)
     request_parameter_clear(&f.requests,e)
     fixture_tick(&f,TICK)
-    override,_=core.get(core.read(&f.overrides),e)
-    given,_=core.get(core.read(&f.parameters),e)
+    override,_=core.get(&f.overrides,e)
+    given,_=core.get(&f.parameters,e)
     testing.expect(t,override.count==0 && given.count==0)
 }
 

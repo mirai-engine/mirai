@@ -186,7 +186,7 @@ physics_cache_update :: proc(players:^core.Table(Geometry_Playback),requests:^Ge
         }
     }
     for index in 0..<core.count(players) {
-        player:=core.at(core.read(players),index)
+        player:=core.at(players,index)
         view:=cache_content(library,assets,allocator,player.source)
         if view==nil {continue}
         next:=player

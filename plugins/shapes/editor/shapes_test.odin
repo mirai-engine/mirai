@@ -285,11 +285,11 @@ a_brush_placed_on_a_surface_is_one_step_and_a_child_with_an_id :: proc(t:^testin
     if !testing.expect(t,history.edits_commit(&f.edits,f.ref,&f.selection)) {return}
     testing.expect_value(t,f.edits.cursor,1)
     testing.expect(t,core.has(&w.ids,brush))
-    parent,has_parent:=core.get(core.read(&w.parents),brush)
+    parent,has_parent:=core.get(&w.parents,brush)
     testing.expect(t,has_parent && parent.entity==solid)
-    value,has_brush:=core.get(core.read(&w.brushes),brush)
+    value,has_brush:=core.get(&w.brushes,brush)
     testing.expect(t,has_brush && value==shapes.Shape_Brush{kind=.Box})
-    local,_:=core.get(core.read(&w.transforms),brush)
+    local,_:=core.get(&w.transforms,brush)
     testing.expectf(t,abs(local.position.z-0.75)<1e-5 && abs(local.scale.x-0.5)<1e-5,"%v",local)
     testing.expectf(t,abs(mm.quat_rotate(local.rotation,{0,1,0}).z-1)<1e-5,"%v",local.rotation)
 
@@ -303,8 +303,8 @@ a_brush_placed_on_a_surface_is_one_step_and_a_child_with_an_id :: proc(t:^testin
     if !testing.expect(t,history.edits_commit(&f.edits,f.ref,&f.selection)) {return}
     testing.expect_value(t,f.edits.cursor,2)
     testing.expect_value(t,w.entities.alive,4)
-    made_parent,_:=core.get(core.read(&w.parents),made)
-    made_solid,_:=core.get(core.read(&w.shapes),made_parent.entity)
+    made_parent,_:=core.get(&w.parents,made)
+    made_solid,_:=core.get(&w.shapes,made_parent.entity)
     testing.expect_value(t,made_solid.kind,shapes.Shape_Kind.Solid)
 
     testing.expect(t,history.undo(&f.edits,f.ref,&f.selection))

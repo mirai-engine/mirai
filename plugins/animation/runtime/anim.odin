@@ -278,7 +278,7 @@ animation_tick :: proc(
         // An entity with a pace of its own advances by its own time.
         pace:=core.pace_of(clock,paces,e) if time.playing else 1
         dt:=tick_dt*pace
-        if !core.has(core.read(transforms),e) {continue}
+        if !core.has(transforms,e) {continue}
         animation,animated:=core.get(animations,e)
         if !animated {animation=ANIMATION_DEFAULT;animation.playing=false}
         if !time.playing {animation.playing=animation.playing && animation.preview}
@@ -351,7 +351,7 @@ animation_tick :: proc(
             if programmed && len(state.program.from)!=len(state.local) && resize(&state.program.from,len(state.local))!=nil {memory_problem(problems,e,"its animation program");continue}
             if state.pose_ready {copy(state.previous[:],state.local[:])}
             copy(state.local[:],state.rest[:])
-            if root,ok:=core.get(core.read(transforms),e);ok {state.local[0]=core.to_math(root)}
+            if root,ok:=core.get(transforms,e);ok {state.local[0]=core.to_math(root)}
         } else if state.skeleton!={} || state.hierarchy_stamp!=stamp || state.tracks==0 {
             state.leader=core.NONE
             if !bind(playback,state,content,hierarchy,transforms,names,targets,animations,problems) {
@@ -876,7 +876,7 @@ pose_layers :: proc(playback:^Playback,state:^Playing,library:^lib.Library,anima
 pose_write :: proc(playback:^Playback,state:^Playing,transforms:^core.Table(core.Transform)) {
     for binding,i in state.bindings {
         if binding.entity==core.NONE {continue}
-        old,ok:=core.get(core.read(transforms),binding.entity)
+        old,ok:=core.get(transforms,binding.entity)
         if !ok || state.local[i]==core.to_math(old) {continue}
         row:=core.free(transforms,binding.entity)
         if row==nil {playback.stats.skipped+=1;continue}
@@ -914,7 +914,7 @@ targeted :: proc "contextless" (library:^lib.Library,target:u64) -> (driven:Prop
 
 @(private)
 binding_add :: proc(playback:^Playback,state:^Playing,old:[]Binding,transforms:^core.Table(core.Transform),e:core.Entity,target:u64,driven:Property_Set,problems:^core.Problems) -> bool {
-    row,ok:=core.get(core.read(transforms),e)
+    row,ok:=core.get(transforms,e)
     if !ok {
         core.report(problems,state.entity,"animation.bind_transform","entity 0x%016x below this animated entity has no Transform, so the tracks of its name move nothing; give it one",u64(e))
         return true
@@ -1112,7 +1112,7 @@ pose_space :: proc(playback:^Playback,entity:core.Entity,allocator:=context.allo
 animation_finish :: proc(playback:^Playback,inputs:Constraint_Inputs,constraints:^Animation_Constraints,transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),dt:f32,grounding:^Grounding_Runtime,ground_inputs:Grounding_Inputs,rig_runtime:^Modifier_Runtime=nil,motion:^Motion_Runtime=nil,motion_assets:^Motion_Assets=nil,final_poses:[]Pose_Request=nil,paces:core.Read(core.Own_Pace)={},clock:=core.CLOCK_DEFAULT) {
     grounding_prepare(grounding,ground_inputs.configs,ground_inputs.problems)
     finish :: proc(state:^Playing,playback:^Playback,inputs:Constraint_Inputs,constraints:^Animation_Constraints,transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),dt:f32,grounding:^Grounding_Runtime,ground_inputs:Grounding_Inputs,rig_runtime:^Modifier_Runtime,motion:^Motion_Runtime,motion_assets:^Motion_Assets,final_poses:[]Pose_Request,paces:core.Read(core.Own_Pace),clock:core.Clock) {
-        if state.skeleton!={} {if root,ok:=core.get(core.read(transforms),state.entity);ok {state.local[0]=core.to_math(root)}}
+        if state.skeleton!={} {if root,ok:=core.get(transforms,state.entity);ok {state.local[0]=core.to_math(root)}}
         constraints_apply(state,playback,inputs,constraints,transforms,parents,dt*core.pace_of(clock,paces,state.entity),grounding,ground_inputs,rig_runtime,motion,motion_assets,final_poses)
         pose_write(playback,state,transforms)
         if !state.pose_ready || !slice.equal(state.local[:],state.previous[:]) {state.changed=playback.frame}

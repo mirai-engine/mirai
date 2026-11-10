@@ -99,13 +99,13 @@ navigation_bake_keep :: proc(s:^editor.Session,kept:^Nav_Bake_Kept) {
     n:=core.world_storage_of(w,nav.Navigation)
     bakes:=core.world_table_of(w,nav.Navigation_Bake)
     if n==nil || bakes==nil || core.count(bakes)==0 || !n.ready {return}
-    seen:=core.version(core.read(bakes))+core.layout(core.read(bakes))
+    seen:=core.version(bakes)+core.layout(bakes)
     if kept.world==w.data && kept.revision==n.revision && kept.bakes==seen {return}
     if !settled(n) {return}
     written:=true
     for row in 0..<core.count(bakes) {
         e:=core.entity_at(bakes,row)
-        bake:=core.at(core.read(bakes),row)
+        bake:=core.at(bakes,row)
         if bake.asset=={} {continue}
         filter,section:=bake_filter(w,e)
         _,file:=bake_path(s,bake.asset,section)
@@ -139,7 +139,7 @@ bake_call :: proc(s:^editor.Session,call:^api.Call) {
         if editor.section_of(w,e)==section {owner=e;break}
     }
     id:base.Asset_Id
-    if value,found:=core.get(core.read(table),owner);found {id=value.asset}
+    if value,found:=core.get(table,owner);found {id=value.asset}
     if id=={} {
         if section!=core.NONE {
             reference,_:=editor.entity_get(w,section,scene.Scene_Reference)

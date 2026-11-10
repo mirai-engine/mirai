@@ -72,7 +72,7 @@ game_seats :: proc(
 ) {
     if core.count(demos)==0 {return}
     for row in 0..<core.count(follows) {
-        if core.alive(es,core.at(core.read(follows),row).leader) {continue}
+        if core.alive(es,core.at(follows,row).leader) {continue}
         core.destroy_tree(es,hierarchy,core.entity_at(follows,row))
     }
     for row in 0..<core.count(seats) {
@@ -82,7 +82,7 @@ game_seats :: proc(
         if companion!=core.NONE && inp.seat_pressed(actions,seat,.Switch_Body) {
             // The seat drives the dog, and the person follows it.
             inp.drive(requests,seat,companion)
-            follow:=core.at(core.read(follows),core.row_of(follows,companion))
+            follow:=core.at(follows,core.row_of(follows,companion))
             follow.leader=companion
             core.remove(follows,companion)
             core.add(follows,body,follow)
@@ -170,7 +170,7 @@ game_barker :: proc(
             barker:=core.edit_at(barkers,row)
             barker.count+=1
             barker.flash_ticks=18
-        } else if barkers.values[row].flash_ticks>0 {
+        } else if core.at(barkers,row).flash_ticks>0 {
             core.edit_at(barkers,row).flash_ticks-=1
         }
     }

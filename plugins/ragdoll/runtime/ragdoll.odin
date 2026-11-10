@@ -61,13 +61,13 @@ ragdoll_bind :: proc(world:core.World_Ref,rig:core.Entity,bodies:[]core.Entity,b
     bindings:=core.world_table_of(world,Ragdoll_Bone)
     rigids:=core.world_table_of(world,phys.Rigid_Body)
     transforms:=core.world_table_of(world,core.Transform)
-    if configs==nil || bindings==nil || transforms==nil || !core.has(core.read(transforms),rig) {return .Missing_Rig}
+    if configs==nil || bindings==nil || transforms==nil || !core.has(transforms,rig) {return .Missing_Rig}
     if rigids==nil {return .Missing_Body}
     for bone,i in bones {
         value:=bone;value.rig=rig
         if !ragdoll_bone_valid(value) {return .Invalid_Settings}
-        body,ok:=core.get(core.read(rigids),bodies[i])
-        if !ok || body.type!=.Dynamic || !core.has(core.read(transforms),bodies[i]) {return .Missing_Body}
+        body,ok:=core.get(rigids,bodies[i])
+        if !ok || body.type!=.Dynamic || !core.has(transforms,bodies[i]) {return .Missing_Body}
         for previous in bodies[:i] {if previous==bodies[i] {return .Invalid_Settings}}
     }
     core.add(configs,rig,config)
@@ -84,8 +84,8 @@ ragdoll_release :: proc(state:^Ragdoll_State,entity:core.Entity,bodies:^phys.Bod
 
 @(step="fixed",loops="game editor",stage="simulate",after="animation_sample",before="physics_prepare")
 ragdoll_prepare :: proc(configs:core.Read(Ragdoll),bones:core.Read(Ragdoll_Bone),states:^core.Table(Ragdoll_State),rigids:core.Read(phys.Rigid_Body),joint_rows:core.Read(phys.Joint),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),playback:core.Ref(anim.Playback),runtime:^Ragdoll_Runtime,settings:core.Ref(Ragdoll_Settings),bodies:^phys.Body_Requests,joints:^phys.Joint_Requests,time:core.Time,poses:^anim.Animation_Requests,problems:^core.Problems) {
-    for row in 0..<core.count(core.read(states)) {
-        entity:=core.entity_at(core.read(states),row)
+    for row in 0..<core.count(states) {
+        entity:=core.entity_at(states,row)
         state:=core.edit_at(states,row)
         bone,exists:=core.get(bones,entity)
         if !exists || !core.has(configs,bone.rig) {ragdoll_release(state,entity,bodies,joints,joint_rows);core.remove(states,entity)}
@@ -102,8 +102,8 @@ ragdoll_prepare :: proc(configs:core.Read(Ragdoll),bones:core.Read(Ragdoll_Bone)
         } else {
             core.report(problems,core.NONE,"ragdoll.memory","out of memory for the pose of %d bones (Ragdoll_Settings.max_bones), so no ragdoll works; free memory, or lower max_bones",capacity)
         }
-        for row in 0..<core.count(core.read(states)) {
-            entity:=core.entity_at(core.read(states),row);state:=core.edit_at(states,row)
+        for row in 0..<core.count(states) {
+            entity:=core.entity_at(states,row);state:=core.edit_at(states,row)
             ragdoll_release(state,entity,bodies,joints,joint_rows);state.error=.Pose_Capacity
         }
         return
@@ -118,7 +118,7 @@ ragdoll_prepare :: proc(configs:core.Read(Ragdoll),bones:core.Read(Ragdoll_Bone)
             entity:=core.entity_at(bones,row)
             bone:=core.at(bones,row)
             if bone.rig!=rig {continue}
-            held,present_state:=core.get(core.read(states),entity)
+            held,present_state:=core.get(states,entity)
             next_state:=held;state:=&next_state
             defer {
                 if !present_state {core.add(states,entity,next_state)}
@@ -166,7 +166,7 @@ ragdoll_prepare :: proc(configs:core.Read(Ragdoll),bones:core.Read(Ragdoll_Bone)
                             bone_problem(problems,joint.target,parent_bone,.Invalid_Settings,capacity)
                             ragdoll_release(state,entity,bodies,joints,joint_rows);continue
                         }
-                        parent_state,present_parent:=core.get(core.read(states),joint.target)
+                        parent_state,present_parent:=core.get(states,joint.target)
                         parent_binding:=parent_state.binding
                         parent_reference,_:=anim.bone_ref_hash(parent_bone.bone)
                         resolved:=present_parent && parent_binding.rig==rig && parent_binding.revision==revision && parent_state.reference==parent_reference

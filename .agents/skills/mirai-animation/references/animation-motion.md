@@ -36,11 +36,11 @@ Advance by distance:
 
 `Motion_Runtime` (of the world, copied for Play and rollback):
 
-- Flat rows per rig with targets, resolved references and diagnostics. It is discovered by the
-  `layout/version` stamp of `Animation`: without writes it does not walk the table. `motion_prepare`
+- Flat rows per rig with targets, resolved references and diagnostics. It is discovered from
+  the `core.changes` of `Animation`: it looks only at the rows written since. `motion_prepare`
   resolves references when the profile, revision or bind changes and compacts the instances that no
   longer use `.motion`; its index checks the generational handle.
-- A failed reservation keeps the requests and does not confirm the stamp.
+- A failed reservation keeps the requests and does not keep what it saw of `Animation`.
 
 ## Requests and order
 

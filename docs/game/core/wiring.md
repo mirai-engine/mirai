@@ -30,7 +30,7 @@ hit :: proc(requests:^Hit_Requests,target:core.Entity,damage:f32) {
 @(step="fixed")
 game_hits :: proc(requests:^Hit_Requests,healths:^core.Table(Health)) {
     for request in core.take(&requests.queue) {
-        if health:=core.get(healths,request.target);health!=nil {health.hp-=request.damage}
+        if health:=core.edit(healths,request.target);health!=nil {health.hp-=request.damage}
     }
 }
 ```

@@ -142,7 +142,7 @@ a_component_turned_off_keeps_its_value_out_of_sight :: proc(t:^testing.T) {
     enable(&w.probes,a)
     test_world_settle(&w)
     testing.expect_value(t,count(&w.probes),3)
-    value,ok:=get(read(&w.probes),a)
+    value,ok:=get(&w.probes,a)
     testing.expect(t,ok && value==Probe{10})
     c2:=changes(&w.probes,&seen)
     testing.expect(t,!c2.all && len(c2.gone)==0)

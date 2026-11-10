@@ -104,7 +104,7 @@ a_mode_is_taken_once_keeps_the_target_and_counts_for_the_views :: proc(t:^testin
     testing.expect(t,camera_follow_config(follow^)==camera_follow_config(want),"it takes the setup and keeps its target")
     testing.expect(t,follow.state.changes==1 && follow.state.blend.seconds==0.5)
     testing.expect(t,follow.state.handing && close(follow.state.handoff.x,1) && close(follow.state.handoff.y,0.2),"a free Orbit goes on from where the camera looked")
-    lens,_:=core.get(core.read(&f.cameras),camera)
+    lens,_:=core.get(&f.cameras,camera)
     testing.expect(t,lens_of(lens)==third.lens)
 
     mode_take(&f.follows,&f.cameras,core.read(&f.worlds),{camera,third,{0.5,.Linear}},&f.problems)
@@ -135,7 +135,7 @@ a_mode_gives_a_camera_without_one_a_camera_follow :: proc(t:^testing.T) {
     core.test_world_settle(&f.w)
     mode_take(&f.follows,&f.cameras,core.read(&f.worlds),{camera,camera_preset(.Side),CAMERA_BLEND},&f.problems)
     core.test_world_settle(&f.w)
-    follow,ok:=core.get(core.read(&f.follows),camera)
+    follow,ok:=core.get(&f.follows,camera)
     testing.expect(t,ok && follow.target==core.NONE && follow.state.changes==1 && follow.state.blend==CAMERA_BLEND)
 }
 
@@ -334,7 +334,7 @@ the_eyes_sit_along_the_vertical_of_a_character_on_a_planet :: proc(t:^testing.T)
     core.test_world_settle(&f.w)
     follow:=Camera_Follow{target=body,mode=.Eyes,offset={0,1.6,0}}
     follow_one(camera,&follow,body,&f.transforms,core.read(&f.worlds),core.read(&f.parents),core.read(&f.moves),side,{},core.FRAME_TIME_DEFAULT,1.0/60)
-    eyes,_:=core.get(core.read(&f.transforms),camera)
+    eyes,_:=core.get(&f.transforms,camera)
     testing.expectf(t,close_vec(eyes.position,{21.6,0,0}),"the eyes are along the up of the character: %v",eyes.position)
     testing.expect(t,close_vec(mm.quat_rotate(eyes.rotation,{0,1,0}),{1,0,0}),"the eyes look level with its ground")
 
@@ -471,7 +471,7 @@ a_camera_plays_sequence_shakes_over_its_view_until_they_end :: proc(t:^testing.T
 shake_test_look :: proc(f:^Camera_Test,camera,body:core.Entity,dt:f32) -> f32 {
     following:=core.edit(&f.follows,camera)
     follow_one(camera,following,body,&f.transforms,core.read(&f.worlds),core.read(&f.parents),core.read(&f.moves),1,{},{dt=dt,alpha=1},dt,core.edit(&f.cameras,camera))
-    placed,_:=core.get(core.read(&f.transforms),camera)
+    placed,_:=core.get(&f.transforms,camera)
     ahead:=mm.quat_forward(placed.rotation)
     return math.asin(ahead.y) // how far up it looks
 }

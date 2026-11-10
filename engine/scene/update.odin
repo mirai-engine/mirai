@@ -81,7 +81,7 @@ update :: proc(w:core.World_Ref,a:^asset.Asset,asset_types:^asset.Types,desc:Upd
         }
         if names==nil {continue}
         name:=core.Name{text=view.names[row]}
-        if held,has:=core.get(core.read(names),entities[row]);created[row] || !has || held!=name {core.add(names,entities[row],name)}
+        if held,has:=core.get(names,entities[row]);created[row] || !has || held!=name {core.add(names,entities[row],name)}
     }
 
     Off :: struct {entity:base.Entity_Id,component:u64}

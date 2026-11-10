@@ -99,7 +99,7 @@ a_sync_of_the_sealed_rows_gives_what_a_sync_of_every_body_gives :: proc(t:^testi
         testing.expect_value(t,sealed.state.stats,whole.state.stats)
         for row in 0..<core.count(&whole.transforms) {
             e:=core.entity_at(&whole.transforms,row)
-            pose,_:=core.get(core.read(&sealed.transforms),e)
+            pose,_:=core.get(&sealed.transforms,e)
             if !testing.expectf(t,pose==whole.transforms.values[row],"entity %v differs at tick %v",e,tick) {return}
         }
         if tick>=20 {
@@ -222,5 +222,5 @@ the_rows_of_what_moved_are_those_a_walk_of_every_link_brings_back :: proc(t:^tes
     }
     testing.expect_value(t,moved.problems.count,walked.problems.count)
     testing.expect_value(t,moved.problems.count,0)
-    testing.expect(t,core.has(core.read(&moved.bodies),scene.ghost),"the proxy got the Motion of its body")
+    testing.expect(t,core.has(&moved.bodies,scene.ghost),"the proxy got the Motion of its body")
 }

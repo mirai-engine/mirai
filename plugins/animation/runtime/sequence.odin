@@ -52,9 +52,9 @@ keyframe_path_evaluate :: proc(animations:^core.Table(Keyframe_Path),progress:^c
     if !(abs(time.dt)<=max(f32)) {return}
     for &value,row in animations.values[:core.count(animations)] {
         e:=animations.entities[row]
-        local,has:=core.get(core.read(transforms),e)
+        local,has:=core.get(transforms,e)
         if !has {continue}
-        state,exists:=core.get(core.read(progress),e)
+        state,exists:=core.get(progress,e)
         fresh:=!exists || !state.ready
         requested:=false
         for command in requests.queue.items {if command.entity==e {requested=true;break}}
@@ -101,7 +101,7 @@ keyframe_path_evaluate :: proc(animations:^core.Table(Keyframe_Path),progress:^c
         if value.relative {pose=mm.transform_compose(state.origin,pose)}
         result:=core.from_math(pose)
         if result!=local {if written:=core.free(transforms,e);written!=nil {written^=result}}
-        if !exists {core.add(progress,e,state)} else {old,_:=core.get(core.read(progress),e);if state!=old {core.edit(progress,e)^=state}}
+        if !exists {core.add(progress,e,state)} else {old,_:=core.get(progress,e);if state!=old {core.edit(progress,e)^=state}}
     }
     core.queue_clear(&requests.queue)
     for e in progress.entities[:core.count(progress)] {if !core.has(animations,e) {core.remove(progress,e)}}
@@ -114,7 +114,7 @@ keyframe_path_playback_free :: proc(playback:^Keyframe_Path_Playback) {core.tabl
 
 keyframe_path_progress :: proc(playback:^Keyframe_Path_Playback,entity:core.Entity) -> (Keyframe_Path_Progress,bool) {
     if playback==nil {return {},false}
-    return core.get(core.read(&playback.states),entity)
+    return core.get(&playback.states,entity)
 }
 
 @(step="fixed",stage="apply",before="animation_sample")

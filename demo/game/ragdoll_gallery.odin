@@ -17,7 +17,7 @@ ragdoll_gallery_cycle :: proc(requests:^Ragdoll_Gallery_Requests,rig:core.Entity
 @(step="fixed")
 ragdoll_gallery_update :: proc(gallery:^core.Table(Ragdoll_Gallery),configs:^core.Table(rag.Ragdoll),requests:^Ragdoll_Gallery_Requests,time:core.Time,problems:^core.Problems) {
     modes:=[3]rag.Ragdoll_Mode{.Animated,.Driven,.Simulated}
-    if core.count(core.read(gallery))>0 && reserve(&requests.queue.items,32)!=nil {
+    if core.count(gallery)>0 && reserve(&requests.queue.items,32)!=nil {
         core.report(problems,core.NONE,"demo.ragdoll_requests","out of memory for room for the ragdoll gallery requests; free memory")
     }
     for rig in core.take(&requests.queue) {
@@ -25,8 +25,8 @@ ragdoll_gallery_update :: proc(gallery:^core.Table(Ragdoll_Gallery),configs:^cor
         if state==nil || config==nil {continue}
         state.auto_cycle=false;state.phase=(state.phase+1)%3;config.mode=modes[state.phase]
     }
-    for row in 0..<core.count(core.read(gallery)) {
-        rig:=core.entity_at(core.read(gallery),row);state:=core.edit_at(gallery,row)
+    for row in 0..<core.count(gallery) {
+        rig:=core.entity_at(gallery,row);state:=core.edit_at(gallery,row)
         if !state.auto_cycle || time.dt<=0 || !time.playing {continue}
         state.age+=time.dt
         phase:=u8(int(state.age/3)%3)

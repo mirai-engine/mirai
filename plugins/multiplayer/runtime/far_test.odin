@@ -111,7 +111,7 @@ an_entity_off_on_the_server_stays_off_on_the_clients_and_comes_back_where_it_got
             testing.expect(t,core.alive(&client.entities,mine) && !core.entity_off(&client.entities,mine),"on again")
             testing.expect(t,core.has(&client.statics,mine),"with its own Mesh_Renderer")
             testing.expectf(t,abs(position.x-20)<0.01,"the client has it at %v",position)
-            value,has:=core.get(core.read(&client.values),mine)
+            value,has:=core.get(&client.values,mine)
             testing.expect(t,has && value.force==2)
         }
         core.settle(&info,server,nil)

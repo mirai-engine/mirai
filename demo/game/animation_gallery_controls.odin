@@ -168,7 +168,7 @@ gallery_panel_input :: proc(panels:core.Read(Gallery_Panel),gallery:core.Read(An
 @(step="fixed",stage="react",after="gallery_observe")
 gallery_panels :: proc(panels:^core.Table(Gallery_Panel),gallery:core.Read(Animation_Gallery),animations:core.Read(anim.Animation),playback:core.Ref(anim.Playback),modifiers:core.Ref(anim.Modifier_Runtime),paths:core.Read(anim.Keyframe_Path)) {
     for row in 0..<core.count(panels) {
-        current:=core.at(core.read(panels),row)
+        current:=core.at(panels,row)
         item,exists:=core.get(gallery,current.station)
         if !exists {continue}
         animation,_:=core.get(animations,current.station)

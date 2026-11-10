@@ -241,7 +241,7 @@ paths_read_the_components_and_storages_of_the_world_by_name :: proc(t:^testing.T
     testing.expect(t,found && !storage)
     data,stamp:=host.fetch(host.user,base.name_hash("Bind_Test_Health"),base.Entity(e))
     testing.expect(t,data!=nil && (^Bind_Test_Health)(data).value==3)
-    _,_=core.get(core.read(&w.healths),e)
+    _,_=core.get(&w.healths,e)
     _,same:=host.fetch(host.user,base.name_hash("Bind_Test_Health"),base.Entity(e))
     testing.expect_value(t,same,stamp)
     core.edit(&w.healths,e).value=4

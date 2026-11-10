@@ -509,7 +509,7 @@ changes :: proc{table_changes,read_changes}
 //   c:=core.changes(lights,&state.seen)
 //   for e in c.gone {...}
 //   for row in core.each_changed(lights,&c) {...}
-raw_each_changed :: proc "contextless" (t:^Raw_Table,c:^Changes) -> (row:int,ok:bool) {
+raw_each_changed :: #force_inline proc "contextless" (t:^Raw_Table,c:^Changes) -> (row:int,ok:bool) {
     row=c.row
     rows:=min(c.rows,len(t.stamps))
     if c.all {
@@ -517,18 +517,18 @@ raw_each_changed :: proc "contextless" (t:^Raw_Table,c:^Changes) -> (row:int,ok:
         c.row=row+1
         return row,true
     }
-    for row<rows {
-        end:=(row|(STAMP_PAGE-1))+1
-        if t.page_stamps[row>>STAMP_PAGE_BITS]<=c.since {
-            row=end
+    stamps,pages,since:=raw_data(t.stamps),raw_data(t.page_stamps),c.since
+    // A page is asked for where a walk enters it: every row below rows has its page.
+    #no_bounds_check for row<rows {
+        if row&(STAMP_PAGE-1)==0 && pages[row>>STAMP_PAGE_BITS]<=since {
+            row+=STAMP_PAGE
             continue
         }
-        for end=min(end,rows);row<end;row+=1 {
-            if t.stamps[row]>c.since {
-                c.row=row+1
-                return row,true
-            }
+        if stamps[row]>since {
+            c.row=row+1
+            return row,true
         }
+        row+=1
     }
     c.row=rows
     return 0,false

@@ -135,9 +135,9 @@ reconcile :: proc(c:^Ctx,e:core.Entity,d:Destructible) {
     f:=c.f
     held:Destructible_State
     has:bool
-    held,has=core.get(core.read(c.states),e)
+    held,has=core.get(c.states,e)
     st:=held
-    static,has_mesh:=core.get(core.read(c.meshes),e)
+    static,has_mesh:=core.get(c.meshes,e)
     world,placed:=core.world_of(c.locals,c.parents,e)
     scale:=linalg.abs(world.scale)
     entry:=entry_take(cache,e)
@@ -331,7 +331,7 @@ follow :: proc(c:^Ctx,e:core.Entity) {
     cache:=c.cache
     w:=c.w
     f:=c.f
-    st,has:=core.get(core.read(c.states),e)
+    st,has:=core.get(c.states,e)
     entry:=entry_find(cache,e)
     if !has || entry==nil || entry.pass==cache.pass || entry.prepared==nil || prepared_pending(entry.prepared) || entry.prepared.error!=.None || !fr.destructible_valid(f,st.handle) {return}
     written_position,written_rotation:=st.written_position,st.written_rotation
@@ -354,7 +354,7 @@ follow :: proc(c:^Ctx,e:core.Entity) {
     if revision:=fr.destructible_revision(f,st.handle);revision!=st.revision {mirror(c,e,core.edit(c.states,e),entry,revision)}
     for &group in entry.groups {
         if !sim.body_valid(w,group.body) {continue}
-        row,has_row:=core.get(core.read(c.groups),group.entity)
+        row,has_row:=core.get(c.groups,group.entity)
         moved,has_moved:=core.get(c.locals,group.entity)
         if !has_row || !has_moved {continue}
         written_position,written_rotation:=row.written_position,row.written_rotation
@@ -495,7 +495,7 @@ group_sync :: proc(c:^Ctx,owner:core.Entity,entry:^Entry,group:Scratch_Group) {
     core.add(c.groups,record.entity,row)
     physics.proxy_set(c.state,record.entity,group.body,pose.position,pose.rotation)
     if group.group!=0 {group_identify(c,owner,record.entity,group)}
-    if tint,has:=core.get(core.read(c.tints),owner);has {core.add(c.tints,record.entity,tint)}
+    if tint,has:=core.get(c.tints,owner);has {core.add(c.tints,record.entity,tint)}
 }
 
 // Destroys the entities of a group that no destructible of this world accounts for: what a world that went back in time left.
@@ -531,7 +531,7 @@ events_apply :: proc(c:^Ctx,waiting,requests:[]Destruct_Request,retry:^core.Queu
         target:=request.entity
         body:sim.Body_Handle
         cosmetic:=false
-        if group,has:=core.get(core.read(c.groups),target);has {
+        if group,has:=core.get(c.groups,target);has {
             cosmetic=group.debris
             if c.authority==.Client && (request.kind!=.Remove || !cosmetic) {continue}
             body=physics.body_of(core.ref(c.state),target);target=group.owner
@@ -540,7 +540,7 @@ events_apply :: proc(c:^Ctx,waiting,requests:[]Destruct_Request,retry:^core.Queu
                 continue
             }
         } else if c.authority==.Client || request.kind==.Remove {continue}
-        st,has:=core.get(core.read(c.states),target)
+        st,has:=core.get(c.states,target)
         entry:=entry_find(cache,target)
         if !has || entry==nil || !fr.destructible_valid(f,st.handle) {
             if core.has(c.destructibles,target) && (!has || st.waiting || !st.failed) {core.push(retry,request)}

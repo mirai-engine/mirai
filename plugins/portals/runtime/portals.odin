@@ -138,7 +138,7 @@ portals_travel :: proc(
             exit,_:=core.get(worlds,config.exit)
             capsule,_:=core.get(colliders,e)
             look:=mm.quat_forward(world.rotation)
-            if move,driven:=core.get(core.read(moves),e);driven {look=mm.quat_forward(mm.quat_from_euler({move.look_pitch,move.look_yaw,0}))}
+            if move,driven:=core.get(moves,e);driven {look=mm.quat_forward(mm.quat_from_euler({move.look_pitch,move.look_yaw,0}))}
             feet,yaw:=character_through(through,exit.transform,world.transform,point,look,capsule)
             core.place(placer,e,feet,mm.quat_axis_angle({0,1,0},yaw))
             phys.set_velocity(requests,e,mm.quat_rotate(through.rotation,motion.linear))

@@ -7,7 +7,7 @@ For entities that no `.match` drives: a door, a lift, a pickup, a scripted creat
 
 ```odin
 // animations:^core.Table(anim.Animation), requests:^anim.Animation_Requests
-if a:=core.get(animations,door);a!=nil {
+if a:=core.edit(animations,door);a!=nil {
     anim.animation_play(a,"open",.2,loop=false)          // layer 0: cross-fades from the clip
     anim.animation_play(a,"wave",layer=1,over="@upper_body",weight=1)  // layers 1 to 3
     anim.animation_weight(a,1,.5)                        // weight of a layer, reached over its fade

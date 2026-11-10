@@ -206,7 +206,7 @@ timing_replica :: proc(x:^Timing) -> core.Entity {
 @(private="file")
 timing_drawn :: proc(x:^Timing,e:core.Entity) -> (position:[3]f32,ok:bool) {
     client:=&x.worlds[1]
-    world,found:=core.get(core.read(&client.worlds),e)
+    world,found:=core.get(&client.worlds,e)
     if !found {return}
     return render.drawn_transform(world,client.frame).position,true
 }
@@ -375,7 +375,7 @@ an_interpolated_body_is_kinematic_until_this_client_simulates_it :: proc(t:^test
         net_test_fixed(&world,&shared,nil,&app)
     }
     testing.expect_value(t,body_type(&world,e),phys.Body_Type.Kinematic)
-    motion,_:=core.get(core.read(&world.bodies),e)
+    motion,_:=core.get(&world.bodies,e)
     testing.expectf(t,math.abs(motion.linear.x-3)<0.2 && math.abs(motion.linear.y)<0.2,"it goes as the interpolation does: %v",motion.linear)
     r.role=.Held
     replica_classify(&s,ref,r)
@@ -430,8 +430,8 @@ an_interpolated_body_follows_the_server_over_a_manipulation_of_the_game_and_give
         phys.manipulation_target(&world.requests,e,held)
         net_test_fixed(&world,&shared,nil,&app)
     }
-    local,_:=core.get(core.read(&world.transforms),e)
-    motion,_:=core.get(core.read(&world.bodies),e)
+    local,_:=core.get(&world.transforms,e)
+    motion,_:=core.get(&world.bodies,e)
     testing.expectf(t,abs(local.position.x-1.5)<0.1 && abs(local.position.y)<0.05,"it is where the server has it: %v",local.position)
     testing.expectf(t,abs(motion.linear.x-3)<0.2 && abs(motion.linear.y)<0.2,"it goes as the interpolation does: %v",motion.linear)
     r.role=.Held
@@ -444,7 +444,7 @@ an_interpolated_body_follows_the_server_over_a_manipulation_of_the_game_and_give
         world.time.tick=u64(tick)
         net_test_fixed(&world,&shared,nil,&app)
     }
-    local,_=core.get(core.read(&world.transforms),e)
+    local,_=core.get(&world.transforms,e)
     testing.expectf(t,linalg.length(local.position-held)<0.01,"the manipulation of the game holds it again: %v",local.position)
     phys.manipulation_end(&world.requests,e)
     net_test_fixed(&world,&shared,nil,&app)

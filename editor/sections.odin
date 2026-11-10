@@ -94,7 +94,7 @@ sections_sync :: proc(s:^Session) {
     if hierarchy==nil {return}
     image:=sections_image(s,w)
     for row in 0..<core.count(references) {
-        reference:=core.at(core.read(references),row)
+        reference:=core.at(references,row)
         e:=core.entity_at(references,row)
         changed:=reference.rule==.With_Document && reference.state!=.Unloaded && reference.loaded!={} && reference.loaded!=reference.scene
         made:=reference.loaded=={} && section_made(image,e) && section_wanted(s,w,e)!=.Unloaded
@@ -226,7 +226,7 @@ section_of :: proc(w:core.World_Ref,e:core.Entity) -> core.Entity {
     if references==nil || core.count(references)==0 || parents==nil {return core.NONE}
     at:=e
     for depth:=0;depth<1024;depth+=1 {
-        parent,placed:=core.get(core.read(parents),at)
+        parent,placed:=core.get(parents,at)
         if !placed {return core.NONE}
         at=parent.entity
         if core.has(references,at) {return at}
@@ -248,7 +248,7 @@ section_holder :: proc(w:core.World_Ref,e:core.Entity) -> core.Entity {
             if row:=core.raw_row(core.raw(proxies),at);row>=0 {return proxies.values[row].reference}
         }
         if at!=e && core.raw_row(core.raw(references),at)>=0 {return at}
-        parent,placed:=core.get(core.read(parents),at)
+        parent,placed:=core.get(parents,at)
         if !placed {return core.NONE}
         at=parent.entity
     }
@@ -589,7 +589,7 @@ section_save :: proc(s:^Session,reference:core.Entity) -> (result:Section_Write,
     others:=make([dynamic]core.Entity,context.temp_allocator)
     for row in 0..<core.count(references) {
         e:=core.entity_at(references,row)
-        if e!=reference && core.at(core.read(references),row).scene==r.scene {append(&others,e)}
+        if e!=reference && core.at(references,row).scene==r.scene {append(&others,e)}
     }
     d:=&s.document.sections
     for e in others {
@@ -746,11 +746,11 @@ sections_watch :: proc(s:^Session,watch:^Sections_Watch,world:core.World_Ref) {
     clear(&watch.proxied)
     if proxies:=core.world_table_of(world,scene.Section_Proxy);proxies!=nil {
         _=core.touched(proxies,&watch.proxies)
-        for row in 0..<core.count(core.read(proxies)) {append(&watch.proxied,core.entity_at(core.read(proxies),row))}
+        for row in 0..<core.count(proxies) {append(&watch.proxied,core.entity_at(proxies,row))}
     }
     for row in 0..<core.count(references) {
         e:=core.entity_at(references,row)
-        r:=core.at(core.read(references),row)
+        r:=core.at(references,row)
         append(&watch.marks,Section_Mark{e,r.loaded,r.far,r.held})
         if section_made(image,e) && !slice.contains(watch.made[:],e) {
             append(&watch.made,e)
@@ -812,7 +812,7 @@ sections_watched :: proc(s:^Session,watch:^Sections_Watch,world:core.World_Ref) 
         return
     }
     for m in watch.marks {
-        r,found:=core.get(core.read(references),m.entity)
+        r,found:=core.get(references,m.entity)
         if !found || r.loaded!=m.loaded || r.held!=m.held || r.far!=m.far {
             sections_take_in(s,watch,world)
             return

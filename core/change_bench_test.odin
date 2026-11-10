@@ -4,7 +4,8 @@ package core
 @(require) import "core:testing"
 @(require) import "core:time"
 
-// BEFORE (old API) variant of the change bench: replaced after the change.
+// What a reader of changes and a join of tables cost:
+// mirai test core bench_changes bench_join --release -define:MIRAI_BENCH=true
 when BENCH {
 
 @(private="file") ROUNDS :: 9
@@ -17,6 +18,10 @@ fill :: proc(t:^Table($T),es:^Entities,all:[]Entity,every:int) {
     table_settle(t,es)
 }
 
+// The rows changed since a reader looked, at 100,000 and 1,000,000 rows with
+// none, 1 in 1000, 1 in 100 and all of them written: each_changed, which
+// skips the pages written before, against a walk of every stamp. And what
+// the stamp of its page adds to a write of every row.
 @(test)
 bench_changes :: proc(t:^testing.T) {
     found:=0
@@ -34,24 +39,30 @@ bench_changes :: proc(t:^testing.T) {
         seen:Seen
         _=changes(&table,&seen)
         for every in ([?]int{0,1000,100,1}) {
-            scan:f64
-            hits:=0
+            pages,scan:f64
+            hits,scanned:=0,0
             for round in 0..<ROUNDS {
-                if every>0 {for row:=round%every;row<count(&table);row+=every {at(&table,row).a.x+=1}}
+                if every>0 {for row:=round%every;row<count(&table);row+=every {edit_at(&table,row).a.x+=1}}
                 c:=changes(&table,&seen)
                 started:=time.tick_now()
                 hits=0
-                for row in 0..<count(&table) {if changed(&table,c,row) {hits+=1}}
+                for _ in each_changed(&table,&c) {hits+=1}
                 ns:=f64(time.duration_nanoseconds(time.tick_since(started)))
+                if round==0 || ns<pages {pages=ns}
+                started=time.tick_now()
+                scanned=0
+                for stamp in table.stamps[:table.on] {if stamp>c.since {scanned+=1}}
+                ns=f64(time.duration_nanoseconds(time.tick_since(started)))
                 if round==0 || ns<scan {scan=ns}
             }
             found+=hits+1
-            log.infof("changes %8d rows, 1 in %4d written (%7d changed): scan %9.1f us",rows,every,hits,scan/1e3)
+            testing.expect_value(t,hits,scanned)
+            log.infof("changes %8d rows, 1 in %4d written (%7d changed): each_changed %9.1f us, a walk of every stamp %9.1f us",rows,every,hits,pages/1e3,scan/1e3)
         }
         write:f64
         for round in 0..<ROUNDS {
             started:=time.tick_now()
-            for row in 0..<count(&table) {at(&table,row).a.x+=1}
+            for row in 0..<count(&table) {edit_at(&table,row).a.x+=1}
             ns:=f64(time.duration_nanoseconds(time.tick_since(started)))
             if round==0 || ns<write {write=ns}
         }
@@ -60,6 +71,9 @@ bench_changes :: proc(t:^testing.T) {
     testing.expect(t,found>0)
 }
 
+// Every mesh with its world transform and its tint when it has one, by
+// entity: through tables received to read, and through the same tables
+// received to write, which a read stamps no row of.
 @(test)
 bench_join :: proc(t:^testing.T) {
     N :: 100_000
@@ -93,10 +107,10 @@ bench_join :: proc(t:^testing.T) {
         started:=time.tick_now()
         for row in 0..<count(&meshes) {
             e:=entity_at(&meshes,row)
-            world:=get(&worlds,e)
-            if world==nil {continue}
+            world,found:=get(&worlds,e)
+            if !found {continue}
             sum+=world.position.x+f32(at(&meshes,row).flags)
-            if tint:=get(&tints,e);tint!=nil {sum+=tint.a.x}
+            if tint,tinted:=get(&tints,e);tinted {sum+=tint.a.x}
         }
         ns:=f64(time.duration_nanoseconds(time.tick_since(started)))
         if round==0 || ns<through_table {through_table=ns}

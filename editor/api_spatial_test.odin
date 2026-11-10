@@ -88,7 +88,7 @@ near3 :: proc(a,b:[3]f32) -> bool {return linalg.length(a-b)<1e-3}
 
 @(private="file")
 spatial_y :: proc(f:^Spatial_Fixture,e:core.Entity) -> f32 {
-    value,_:=core.get(core.read(&f.w.transforms),e)
+    value,_:=core.get(&f.w.transforms,e)
     return value.position.y
 }
 
@@ -217,7 +217,7 @@ scene_ground_rests_entities_on_what_is_under_them_as_one_undo :: proc(t:^testing
     result={}
     call=spatial_call(f,api_scene_ground,&method,&params,&result,`{"entities":["Boulder"],"align":true}`)
     testing.expect(t,!call.failed,call.error.message)
-    turned,_:=core.get(core.read(&f.w.transforms),f.boulder)
+    turned,_:=core.get(&f.w.transforms,f.boulder)
     up:=mm.quat_rotate(turned.rotation,{0,1,0})
     testing.expect(t,linalg.dot(up,[3]f32{-0.5,math.sqrt_f32(3)*0.5,0})>0.999,"its up follows the ramp")
     testing.expect(t,abs(result.entities[0].rotation_deg.z-30)<0.1 && result.entities[0].moved<0)

@@ -111,7 +111,7 @@ an_unbounded_volume_of_a_section_rules_in_its_box :: proc(t:^testing.T) {
     place(&f,9,Volume{shape=.Unbounded,scope=section,scope_extents={10,10,10}})
     testing.expect_value(t,level_at(&f,{100,0,0}),9)
     testing.expect_value(t,level_at(&f,{0,0,0}),1)
-    core.edit(&f.volumes,core.entity_at(core.read(&f.volumes),0)).scope_extents={}
+    core.edit(&f.volumes,core.entity_at(&f.volumes,0)).scope_extents={}
     testing.expect_value(t,level_at(&f,{100,0,0}),1)
 }
 

@@ -75,7 +75,7 @@ timeline_choose :: proc(s:^editor.Session,c:^Cinematic_Editor,w:core.World_Ref) 
     for e in s.selection.entities {
         if t:=timeline_of(w,e);t!=core.NONE {c.timeline=t;return}
     }
-    if table:=core.world_table_of(w,cine.Cinematic);table!=nil && core.count(core.read(table))>0 {c.timeline=core.entity_at(core.read(table),0)}
+    if table:=core.world_table_of(w,cine.Cinematic);table!=nil && core.count(table)>0 {c.timeline=core.entity_at(table,0)}
 }
 
 @(private)
@@ -83,9 +83,9 @@ lanes_of :: proc(w:core.World_Ref,timeline:core.Entity) -> []Lane {
     lanes:=make([dynamic]Lane,0,LANES,context.temp_allocator)
     append(&lanes,Lane{kind=.Shots})
     if tracks:=core.world_table_of(w,cine.Cinematic_Track);tracks!=nil {
-        for row in 0..<core.count(core.read(tracks)) {
+        for row in 0..<core.count(tracks) {
             if len(lanes)>=LANES-1 {break}
-            if core.at(core.read(tracks),row).timeline==timeline {append(&lanes,Lane{kind=.Track,track=core.entity_at(core.read(tracks),row)})}
+            if core.at(tracks,row).timeline==timeline {append(&lanes,Lane{kind=.Track,track=core.entity_at(tracks,row)})}
         }
     }
     append(&lanes,Lane{kind=.Markers})
@@ -99,9 +99,9 @@ parts_of :: proc(w:core.World_Ref,timeline:core.Entity,$T:typeid) -> (entities:[
     if table==nil {return}
     e:=make([dynamic]core.Entity,context.temp_allocator)
     v:=make([dynamic]T,context.temp_allocator)
-    for row in 0..<core.count(core.read(table)) {
-        value:=core.at(core.read(table),row)
-        if value.timeline==timeline {append(&e,core.entity_at(core.read(table),row));append(&v,value)}
+    for row in 0..<core.count(table) {
+        value:=core.at(table,row)
+        if value.timeline==timeline {append(&e,core.entity_at(table,row));append(&v,value)}
     }
     return e[:],v[:]
 }
@@ -321,15 +321,15 @@ Names :: struct {entities:[]core.Entity,names:[]string}
 entity_names :: proc(w:core.World_Ref,$T:typeid,numbered:bool) -> (names:Names,complete:bool) {
     table:=core.world_table_of(w,T)
     if table==nil {return {},true}
-    count:=min(core.count(core.read(table)),NAMES)
+    count:=min(core.count(table),NAMES)
     names.entities=make([]core.Entity,count,context.temp_allocator)
     names.names=make([]string,count,context.temp_allocator)
     for row in 0..<count {
-        e:=core.entity_at(core.read(table),row)
+        e:=core.entity_at(table,row)
         names.entities[row]=e
         names.names[row]=numbered?fmt.tprintf("%s (%d)",editor.entity_label(w,e),row+1):editor.entity_label(w,e)
     }
-    return names,count==core.count(core.read(table))
+    return names,count==core.count(table)
 }
 
 // The time strip of the timeline: its shots, a lane per track with its keys and its markers.

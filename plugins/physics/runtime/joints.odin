@@ -76,7 +76,7 @@ joint_state_read :: proc(states:^core.Table(Joint_State),e:core.Entity) -> (valu
         if pending.entity!=e {continue}
         return pending.value>=0?states.added[pending.value]:Joint_State{},pending.value>=0
     }
-    return core.get(core.read(states),e)
+    return core.get(states,e)
 }
 
 // What the setters of the joint change.

@@ -547,7 +547,7 @@ animation_sample :: proc(animations:core.Read(Animation),progress:^core.Table(An
 progress_resume :: proc(progress:^core.Table(Animation_Progress),playback:^Playback,requests:^Animation_Requests) {
     for row in 0..<core.count(progress) {
         e:=core.entity_at(progress,row)
-        if constraint_playing(playback,e)==nil {animation_seek(requests,e,core.at(core.read(progress),row).time)}
+        if constraint_playing(playback,e)==nil {animation_seek(requests,e,core.at(progress,row).time)}
     }
 }
 
@@ -563,7 +563,7 @@ progress_write :: proc(progress:^core.Table(Animation_Progress),animations:core.
         if !ok {continue}
         if at:=core.row_of(progress,e);at<0 {
             core.add(progress,e,Animation_Progress{clip_time})
-        } else if core.at(core.read(progress),at).time!=clip_time {
+        } else if core.at(progress,at).time!=clip_time {
             core.edit_at(progress,at).time=clip_time
         }
     }

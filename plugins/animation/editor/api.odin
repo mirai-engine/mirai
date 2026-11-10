@@ -104,7 +104,7 @@ within :: proc(w:core.World_Ref,entity,root:core.Entity) -> bool {
     if parents==nil {return entity==root}
     for depth:=0;entity!=core.NONE && depth<=len(parents.values);depth+=1 {
         if entity==root {return true}
-        parent,found:=core.get(core.read(parents),entity)
+        parent,found:=core.get(parents,entity)
         entity=parent.entity if found else core.NONE
     }
     return false
@@ -162,7 +162,7 @@ play :: proc(s:^editor.Session,call:^api.Call) {
     w,e,ok:=subject(s,call,p.entity[:]);if !ok {return}
     table:=core.world_table_of(w,anim.Animation)
     if table==nil {authoring_failure(call,"Animation","Unavailable","the animation runtime table","missing table","Animation runtime is not present",api.SERVER_ERROR);return}
-    value,present:=core.get(core.read(table),e)
+    value,present:=core.get(table,e)
     if !present {value=anim.ANIMATION_DEFAULT}
     if p.asset!={} {value.asset=p.asset}
     source,loaded:=program_source(s,call,value.asset,value.library);if !loaded {return}
@@ -350,9 +350,9 @@ preview :: proc(s:^editor.Session,call:^api.Call) {
         if written>0 {serial.text_write_raw(out,",")}
         written+=1
         serial.text_write_raw(out,"{");api.write_key(out,"id",true)
-        id,_:=core.get(core.read(ids),entity);api.write_id(out,id.value)
+        id,_:=core.get(ids,entity);api.write_id(out,id.value)
         api.write_text(out,"name",core.name_get(core.read(names),entity))
-        target,_:=core.get(core.read(targets),entity);api.write_text(out,"path",base.text_get(target.path[:]))
+        target,_:=core.get(targets,entity);api.write_text(out,"path",base.text_get(target.path[:]))
         api.write_numbers(out,"position",value.position);api.write_numbers(out,"scale",value.scale)
         rotation:=[4]f32{value.rotation.x,value.rotation.y,value.rotation.z,value.rotation.w}
         api.write_numbers(out,"rotation",rotation[:]);serial.text_write_raw(out,"}")

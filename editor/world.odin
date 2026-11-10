@@ -100,7 +100,7 @@ entity_label :: proc(w:core.World_Ref,e:core.Entity,allocator:=context.temp_allo
 entity_parent :: proc(w:core.World_Ref,e:core.Entity) -> core.Entity {
     parents:=core.world_table_of(w,core.Parent)
     if parents==nil {return core.NONE}
-    if parent,ok:=core.get(core.read(parents),e);ok {return parent.entity}
+    if parent,ok:=core.get(parents,e);ok {return parent.entity}
     return core.NONE
 }
 
@@ -123,7 +123,7 @@ entity_under :: proc(w:core.World_Ref,e,ancestor:core.Entity) -> bool {
 entity_local :: proc(w:core.World_Ref,e:core.Entity) -> mm.Transform {
     transforms:=core.world_table_of(w,core.Transform)
     if transforms==nil {return mm.TRANSFORM_IDENTITY}
-    if t,ok:=core.get(core.read(transforms),e);ok {return core.to_math(t)}
+    if t,ok:=core.get(transforms,e);ok {return core.to_math(t)}
     return mm.TRANSFORM_IDENTITY
 }
 
@@ -226,7 +226,7 @@ name_free :: proc(w:core.World_Ref,name:string,allocator:=context.temp_allocator
 order_next :: proc(w:core.World_Ref,parent:core.Entity) -> i32 {
     parents:=core.world_table_of(w,core.Parent)
     if parents==nil || parent==core.NONE {return 0}
-    last,ok:=core.get(core.read(parents),core.last_child(entity_hierarchy(w),parent))
+    last,ok:=core.get(parents,core.last_child(entity_hierarchy(w),parent))
     return ok?max(last.order+1,0):0
 }
 
@@ -477,7 +477,7 @@ entity_order_set :: proc(s:^Session,e:core.Entity,order:i32) {
     w:=editing_world(s)
     parents:=core.world_table_of(w,core.Parent)
     if parents==nil {return}
-    current,placed:=core.get(core.read(parents),e)
+    current,placed:=core.get(parents,e)
     if !placed || current.order==order {return}
     opened,edit_ready:=edit_open(s,"Order")
     if !edit_ready {return}

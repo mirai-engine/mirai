@@ -72,7 +72,7 @@ morph_api_inspects_named_defaults_final_weights_and_sources_and_controls_instanc
     testing.expect_value(t,authoring_test_execute(f,"set",`{"entity":"0000000000000012","name":"Smile","value":0.35,"mode":"Default"}`).code,0)
     testing.expect_value(t,edits.cursor,1)
     mesh:=document.meshes.entities[0]
-    configured,has_config:=core.get(core.read(&document.configs),mesh)
+    configured,has_config:=core.get(&document.configs,mesh)
     testing.expect(t,has_config && morph_api_test_count(configured)==1)
     testing.expect(t,history.undo(&edits,core.world_ref(&document,&info),&selection));testing.expect(t,!core.has(&document.configs,mesh))
     testing.expect(t,history.redo(&edits,core.world_ref(&document,&info),&selection))
@@ -83,7 +83,7 @@ morph_api_inspects_named_defaults_final_weights_and_sources_and_controls_instanc
     testing.expect(t,invalid.code==api.INVALID_PARAMS && strings.contains(invalid.data,"Unknown_Target") && strings.contains(invalid.message,"inspect"))
     testing.expect_value(t,document.configs.values[0],before);testing.expect_value(t,edits.cursor,cursor)
     testing.expect_value(t,authoring_test_execute(f,"set",`{"entity":"0000000000000012","name":"Smile","value":-1.25}`).code,0)
-    playing:=anim.Morph_Playing{entity=mesh,mesh=id,revision=1,path=base.name_hash("Face"),source=document.animations.entities[0],stamp=core.stamp(core.read(&document.configs),0)+1}
+    playing:=anim.Morph_Playing{entity=mesh,mesh=id,revision=1,path=base.name_hash("Face"),source=document.animations.entities[0],stamp=core.stamp(&document.configs,0)+1}
     append(&playing.current,f32(-1.25),f32(-.5));append(&document.morphs.states,playing)
     resize(&document.morphs.rows,int(core.entity_index(mesh))+1);document.morphs.rows[core.entity_index(mesh)]=1
     testing.expect_value(t,authoring_test_execute(f,"inspect",`{"entity":"0000000000000012","diagnostics":true}`).code,0)

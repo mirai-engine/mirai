@@ -116,7 +116,7 @@ an_update_writes_what_differs_onto_the_entities_that_have_the_ids_of_a_document 
     testing.expect_value(t,core.name_get(core.read(&w.names),lamp),"Desk lamp")
     testing.expect(t,!core.has(&w.links,lamp) && core.at(&w.links,core.row_of(&w.links,bulb)).target==other)
     shade:=core.entity_of(&w.entities,50)
-    parent,_:=core.get(core.read(&w.parents),shade)
+    parent,_:=core.get(&w.parents,shade)
     testing.expect(t,shade!=core.NONE && parent.entity==lamp && core.at(&w.links,core.row_of(&w.links,shade)).target==bulb && core.has(&w.transforms,shade))
     testing.expect(t,!core.alive(&w.entities,cable) && core.alive(&w.entities,bulb) && core.alive(&w.entities,other))
     report,error=update_put(t,&f,ref,&document,scope)

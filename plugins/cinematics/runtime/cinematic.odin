@@ -429,7 +429,7 @@ view_ask :: proc(p:^Cine,e,seat:core.Entity,viewer:Cinematic_Viewer,fov,near:f32
 
 @(private)
 viewer_update :: proc(p:^Cine,es:^core.Entities,e:core.Entity,viewer:Cinematic_Viewer,drivables:core.Read(input.Drivable)) {
-    c,has_timeline:=core.get(core.read(p.cinematics),viewer.timeline)
+    c,has_timeline:=core.get(p.cinematics,viewer.timeline)
     position:u32
     ready:=has_timeline && duration_valid(&c) && (c.status==.Playing || c.status==.Paused)
     if ready {position=c.position}

@@ -463,7 +463,7 @@ final_world_poses_update_skin_and_sockets_in_the_same_tick_without_stable_alloca
         actual_a,ok_a:=animation_bone_transform(&w.playback,rig,bone_ref("upper"))
         actual_b,ok_b:=animation_bone_transform(&w.playback,rig,bone_ref("foot"))
         testing.expect(t,ok_a && ok_b && linalg.length(actual_a.position-a.position)<.001 && linalg.length(actual_b.position-b.position)<.001)
-        placed,_:=core.get(core.read(&w.transforms),socket)
+        placed,_:=core.get(&w.transforms,socket)
         expected:=mm.transform_compose(b,binding.offset)
         testing.expect(t,linalg.length(placed.position-expected.position)<.001)
         sampled:[4]mm.Transform

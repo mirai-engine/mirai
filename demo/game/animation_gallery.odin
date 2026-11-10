@@ -161,7 +161,7 @@ gallery_direct_clips :: proc(gallery:core.Read(Animation_Gallery),animations:^co
         item:=core.at(gallery,row)
         entity:=core.entity_at(gallery,row)
         if item.kind!=.Direct || gallery_manual(item.manual,entity,commands) {continue}
-        value,found:=core.get(core.read(animations),entity)
+        value,found:=core.get(animations,entity)
         if !found {continue}
         phase:=int(item.age/3)%3
         wanted:="wave" if phase==1 else "walk"
@@ -305,7 +305,7 @@ gallery_observe :: proc(gallery:^core.Table(Animation_Gallery),transforms:^core.
         if item.kind==.IK && item.target!=core.NONE {
             local:=gallery_ik_target(item)
             if !item.manual {item.values[0],item.values[1]=local.y,-local.z}
-            actor,_:=core.get(core.read(transforms),entity)
+            actor,_:=core.get(transforms,entity)
             if target:=core.free(transforms,item.target);target!=nil {target.position=item.origin+mm.quat_rotate(actor.rotation,local)}
         }
         if item.kind==.Root_Motion {

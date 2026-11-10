@@ -25,7 +25,7 @@ a_loaded_clip_seeks_the_progress_its_entity_kept :: proc(t:^testing.T) {
     state.clip,state.time=0,1.5
     progress_write(&w.progress,core.read(&w.animations),&w.playback)
     core.test_world_settle(&w)
-    kept,found:=core.get(core.read(&w.progress),e)
+    kept,found:=core.get(&w.progress,e)
     testing.expect(t,found && kept.time==1.5)
 
     progress_resume(&w.progress,&w.playback,&w.requests)

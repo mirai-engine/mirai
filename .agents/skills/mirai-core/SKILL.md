@@ -138,16 +138,22 @@ A game is a struct in memory and a list of functions that transform it
 - **The hierarchy is queried in `core`**: downward with the `Hierarchy`, upward with `Parent`, and a
   world pose is written with `world_set` or `local_under`. Nobody builds their own child index or
   walks `Parent` by hand ([queries](references/core.md#queries)).
-- **Whoever reads processes what changed** with `core.changes(t, &seen)`: stamped rows and entities
-  that left, or `all` ([changes](references/core.md#what-changed-since-the-last-read)).
+- **Whoever reads processes what changed** with `core.changes(t, &seen)`: the entities that left
+  and, with `core.each_changed`, the rows stamped since, or every row with `all`. Nobody walks the
+  stamps of a table by hand, and nobody sums `version` and `layout` into a key: what is derived
+  whole asks `core.touched`, or `core.reshaped` when only which rows there are matters
+  ([changes](references/core.md#what-changed-since-the-last-read)).
 - **An `Id` is looked up with `core.entity_of`, that of an entity is read with `core.id_of` and a
   new one comes from `core.id_new`** (in a document, `asset.scene_new_id`), never by walking the
   `Id` table or with another generator. An `Id` added before the settle that settles the `Id` table
   is not found yet ([identity](references/core.md#persistent-identity)).
-- **Writing is requesting the row** with `get`, `at` or `free` on `^core.Table`, `writable`, or
-  `raw_get`/`raw_touch` by reflection: the row takes a stamp and its readers process it
-  ([stamps](references/core.md#tables)). A direct write into `values` is seen by nobody; what only
-  looks uses `Read`, `row_of` or `raw_find`, also outside the loop (editor, UI, API).
+- **Reading never stamps; writing is requesting the row.** `get` and `at` give the value, on a
+  `Read` and on a `^core.Table` alike. A write asks for the row with `edit`, `edit_at`, `free` or
+  `writable`, or gives its value with `set`, which writes only a value that differs; by reflection,
+  `raw_edit` or `raw_touch`. The row takes a stamp and its readers process it
+  ([stamps](references/core.md#tables)). A direct write into `values` is seen by nobody, and a row
+  asked for with `edit` is stamped whether or not it is written: what may leave the row as it is
+  reads first, or uses `set`.
 - **A `@(params)` is only a way of writing the signature.** It counts as its loose fields: it gives
   the same write rights, with one writer per datum, and what the function writes reaches it only
   once among its parameters and groups.

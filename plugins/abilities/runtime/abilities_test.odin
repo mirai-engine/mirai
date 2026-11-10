@@ -194,7 +194,7 @@ step :: proc(f:^Fixture,ticks:=1) {
 
 @(private="file")
 user :: proc(f:^Fixture,e:core.Entity) -> Ability_User {
-    u,_:=core.get(core.read(&f.users),e)
+    u,_:=core.get(&f.users,e)
     return u
 }
 

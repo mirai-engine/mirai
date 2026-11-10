@@ -838,7 +838,7 @@ indicators_draw :: proc(s:^Session,w:core.World_Ref) {
         icon,base_color:=entity_icon(s,w,e)
         hidden:=entity_hidden(w,e) || core.entity_off(es,e)
         radius:=INDICATOR_RADIUS
-        if spots!=nil && core.has(core.read(spots),e) {
+        if spots!=nil && core.has(spots,e) {
             tip,tip_front:=viewport_screen(v,world.position+mm.quat_forward(world.rotation))
             if length:=linalg.distance(tip,p);tip_front && length>radius {
                 direction:=(tip-p)/length

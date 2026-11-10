@@ -469,7 +469,7 @@ capture :: proc(w:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator
         if !yes {continue}
         e:=core.entity_make(index,es.generation[index])
         if !core.alive(es,e) {continue}
-        if value,_:=core.get(core.read(ids),e);value.value!=0 {continue}
+        if value,_:=core.get(ids,e);value.value!=0 {continue}
         id:=core.id_new(es,&state)
         core.add(ids,e,core.Id{id})
         append(&lent,e)

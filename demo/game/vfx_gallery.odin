@@ -60,7 +60,7 @@ vfx_gallery_reset :: proc(views:core.Read(Vfx_Gallery_View),actions:inp.Frame_In
 
 @(step="fixed")
 vfx_gallery_actions :: proc(views:^core.Table(Vfx_Gallery_View),actions:inp.Input_Of(Action),time:core.Time) {
-    if !time.playing || !(time.dt>0) || core.count(core.read(views))==0 {return}
+    if !time.playing || !(time.dt>0) || core.count(views)==0 {return}
     previous,next,overview:=inp.pressed(actions,.Gallery_Previous),inp.pressed(actions,.Gallery_Next),inp.pressed(actions,.Gallery_Overview)
     use:=inp.pressed(actions,.Use)
     if !(previous || next || overview || use) {return}
@@ -76,8 +76,8 @@ vfx_gallery_actions :: proc(views:^core.Table(Vfx_Gallery_View),actions:inp.Inpu
 vfx_gallery_impacts :: proc(impacts:^core.Table(Vfx_Impacts),views:core.Read(Vfx_Gallery_View),worlds:core.Read(core.World_Transform),channels:^vfx.Particle_Channels,time:core.Time) {
     if !time.playing || !(time.dt>0) {return}
     view:=core.at(views,0) if core.count(views)>0 else Vfx_Gallery_View{}
-    for row in 0..<core.count(core.read(impacts)) {
-        e:=core.entity_at(core.read(impacts),row)
+    for row in 0..<core.count(impacts) {
+        e:=core.entity_at(impacts,row)
         world,placed:=core.get(worlds,e)
         if !placed {continue}
         wall:=core.edit_at(impacts,row)
@@ -120,7 +120,7 @@ vfx_gallery_camera :: proc(views:core.Read(Vfx_Gallery_View),stations:core.Read(
             break
         }
         entity:=core.entity_at(views,row)
-        current,found:=core.get(core.read(transforms),entity)
+        current,found:=core.get(transforms,entity)
         rotation:=mm.quat_look(target-position,{0,1,0})
         if found && (current.position!=position || current.rotation!=rotation) {
             if output:=core.free(transforms,entity);output!=nil {output.position,output.rotation=position,rotation}

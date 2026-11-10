@@ -156,25 +156,25 @@ the_mind_of_an_agent_presents_what_it_does_and_does_not_tick_again_in_a_resimula
     problems:core.Problems
     minds_tick(minds,&world.mind_agents,"hunter",&COUNTING_ACTS,counting_think,&ctx,&c.w,{tick=1,dt=1.0/60,playing=true},&problems)
     core.test_world_settle(&world)
-    shown,found:=core.get(core.read(&world.presentations),e)
+    shown,found:=core.get(&world.presentations,e)
     testing.expect(t,found && c.entered==1)
     testing.expect(t,shown.action==u16(Count_Act.Count) && shown.step==ai.MIND_NONE)
     testing.expect(t,shown.look==core.NONE && shown.look_point=={1,2,3} && shown.animation==9 && shown.animations==1)
     // It ends and enters again: the same action, a new animation asked.
     minds_tick(minds,&world.mind_agents,"hunter",&COUNTING_ACTS,counting_think,&ctx,&c.w,{tick=2,dt=1.0/60,playing=true},&problems)
     core.test_world_settle(&world)
-    shown,_=core.get(core.read(&world.presentations),e)
+    shown,_=core.get(&world.presentations,e)
     testing.expect(t,c.entered==2 && shown.animations==2)
-    version:=core.version(core.read(&world.presentations))
+    version:=core.version(&world.presentations)
     ticks:=world.mind_agents.values[0].state.ticks
     // A tick that runs again (a rollback) neither ticks nor presents.
     minds_tick(minds,&world.mind_agents,"hunter",&COUNTING_ACTS,counting_think,&ctx,&c.w,{tick=3,dt=1.0/60,playing=true,resimulating=true},&problems)
     testing.expect_value(t,world.mind_agents.values[0].state.ticks,ticks)
-    testing.expect_value(t,core.version(core.read(&world.presentations)),version)
+    testing.expect_value(t,core.version(&world.presentations),version)
     c.w.entity=e
     present_look(&c.w,e)
     core.test_world_settle(&world)
-    shown,_=core.get(core.read(&world.presentations),e)
+    shown,_=core.get(&world.presentations,e)
     testing.expect(t,shown.look==e && shown.look_point=={})
     testing.expect_value(t,problems.count,0)
 }
@@ -416,19 +416,19 @@ places_are_answered_in_order_within_the_budget :: proc(t:^testing.T) {
     problems:core.Problems
     places_run(&world.requests,&places,&world.results,core.ref(&world.settings),core.read(&world.worlds),core.read(&world.perceivers),{},core.read(&world.paths),core.read(&world.agents),core.read(&world.walks),core.read(&world.swims),core.ref(&world.navigation),core.ref(&world.physics),{},{},nil,{},{},&problems)
     core.test_world_settle(&world)
-    first,_:=core.get(core.read(&world.results),a)
-    second,_:=core.get(core.read(&world.results),b)
+    first,_:=core.get(&world.results,a)
+    second,_:=core.get(&world.results,b)
     testing.expect(t,first.status==.Found && first.request==1 && first.count==3 && first.points[0]=={3,0,0} && first.scores[0]>=first.scores[1])
     testing.expect(t,second.status==.Waiting && second.request==2)
     places_run(&world.requests,&places,&world.results,core.ref(&world.settings),core.read(&world.worlds),core.read(&world.perceivers),{},core.read(&world.paths),core.read(&world.agents),core.read(&world.walks),core.read(&world.swims),core.ref(&world.navigation),core.ref(&world.physics),{},{},nil,{},{},&problems)
-    second,_=core.get(core.read(&world.results),b)
+    second,_=core.get(&world.results,b)
     testing.expect(t,second.status==.Found && linalg.distance(second.points[0],mm.Vec3{6,0,0})<1e-4)
     // Of two queries of one querier, the last one is answered and the first does not take its place.
     q.querier=a
     place_query(&world.requests,q)
     place_query(&world.requests,q)
     places_run(&world.requests,&places,&world.results,core.ref(&world.settings),core.read(&world.worlds),core.read(&world.perceivers),{},core.read(&world.paths),core.read(&world.agents),core.read(&world.walks),core.read(&world.swims),core.ref(&world.navigation),core.ref(&world.physics),{},{},nil,{},{},&problems)
-    first,_=core.get(core.read(&world.results),a)
+    first,_=core.get(&world.results,a)
     testing.expect(t,first.status==.Found && first.request==4)
 }
 
@@ -468,7 +468,7 @@ places_of_a_target_that_is_destroyed_are_none :: proc(t:^testing.T) {
     }
     place_query(&f.requests,around)
     run(&f)
-    result,_:=core.get(core.read(&f.results),querier)
+    result,_:=core.get(&f.results,querier)
     testing.expect(t,result.status==.Found && result.request==1,"around the target while it is there")
     core.destroy(&f.entities,target)
     core.destroy(&f.entities,gone)
@@ -476,11 +476,11 @@ places_of_a_target_that_is_destroyed_are_none :: proc(t:^testing.T) {
     place_query(&f.requests,orphan)
     place_query(&f.requests,around)
     run(&f)
-    result,_=core.get(core.read(&f.results),querier)
+    result,_=core.get(&f.results,querier)
     testing.expectf(t,result.request==3 && result.status==.Empty,"around a target that is gone: %v",result)
     place_query(&f.requests,from)
     run(&f)
-    result,_=core.get(core.read(&f.results),querier)
+    result,_=core.get(&f.results,querier)
     testing.expectf(t,result.request==4 && result.status==.Empty,"measured from a target that is gone: %v",result)
     testing.expect_value(t,len(f.places.waiting),0)
     testing.expect_value(t,core.count(&f.results),1)
@@ -580,7 +580,7 @@ places_come_from_the_mesh_joined_to_the_center_from_entities_and_from_offers :: 
         places_run(&f.requests,&f.places,&f.results,core.ref(&f.settings),core.read(&f.worlds),core.read(&f.perceivers),core.read(&f.perceivables),core.read(&f.paths),
             core.read(&f.agents),core.read(&f.walks),core.read(&f.swims),core.ref(&f.navigation),core.ref(&f.physics),core.read(&f.objects),core.read(&f.states),&f.claims,{},{},&f.problems)
         core.test_world_settle(&f.w)
-        result,_:=core.get(core.read(&f.results),q.querier)
+        result,_:=core.get(&f.results,q.querier)
         return result
     }
     // Farthest from the querier first: on the ground it stands on, never on the island.

@@ -127,7 +127,7 @@ outliner_sync :: proc(o:^Outliner,w:core.World_Ref) {
     if names!=nil {for e in names.entities {if entity_author(w,e)==e {add(o,es,e)}}}
     for &node in o.nodes {
         if parents==nil {break}
-        if parent,ok:=core.get(core.read(parents),node.entity);ok && parent.entity!=core.NONE {
+        if parent,ok:=core.get(parents,node.entity);ok && parent.entity!=core.NONE {
             i:=core.entity_index(parent.entity)
             if i<len(o.node_of) && o.node_of[i]!=0 && o.nodes[o.node_of[i]-1].entity==parent.entity {node.parent=o.node_of[i]-1}
             node.order=parent.order

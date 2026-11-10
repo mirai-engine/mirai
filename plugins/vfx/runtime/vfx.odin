@@ -163,7 +163,7 @@ particles_tick :: proc(
         stamp:=core.layout(overrides)
         if at:=core.row_of(overrides,e);at>=0 {stamp=base.hash_combine(stamp,core.stamp(overrides,at))}
         if key:=emission_key(emitter.particle,a,stamp);clock.resolved!=key {
-            override,_:=core.get(core.read(overrides),e)
+            override,_:=core.get(overrides,e)
             info:=particle_resolve(a,emitter.particle,&override)
             clock.emission=emission_of(a,&info)
             clock.resolved=key

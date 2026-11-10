@@ -47,30 +47,30 @@ a_server_replicates_the_instances_taken_out_of_each_cell_to_every_connection_as_
     for role in ([2]core.Network_Role{.Standalone,.Client}) {
         network.role=role
         step(&net,&network,&w,commands)
-        testing.expect_value(t,core.count(core.read(&w.objects)),0)
+        testing.expect_value(t,core.count(&w.objects),0)
     }
     network.role=.Server
     step(&net,&network,&w,commands)
     for e in cells {
-        object,replicated:=core.get(core.read(&w.objects),e)
-        testing.expect(t,replicated && object==REPLICATE && core.has(core.read(&w.transforms),e))
+        object,replicated:=core.get(&w.objects,e)
+        testing.expect(t,replicated && object==REPLICATE && core.has(&w.transforms,e))
     }
     testing.expect(t,REPLICATE.simulation!=.Each,"what is taken out of a cell later travels as a change of its object")
     // Taken out of a cell that has its entity: no other object.
-    version:=core.version(core.read(&w.objects))
+    version:=core.version(&w.objects)
     page:=core.edit(&w.removed,cells[0])
     page.instances[page.count]={99}
     page.count+=1
     core.test_world_settle(&w)
     step(&net,&network,&w,commands)
-    testing.expect_value(t,core.version(core.read(&w.objects)),version)
+    testing.expect_value(t,core.version(&w.objects),version)
     // A cell that has its first, or one that fills its entity, is one object more.
     later:=core.create(&w.entities)
     core.add(&w.removed,later,foliage.Foliage_Removed{foliage=500,coord={7,7},count=1})
     core.test_world_settle(&w)
     step(&net,&network,&w,commands)
-    testing.expect(t,core.has(core.read(&w.objects),later))
-    testing.expect_value(t,core.count(core.read(&w.objects)),3)
+    testing.expect(t,core.has(&w.objects,later))
+    testing.expect_value(t,core.count(&w.objects),3)
 }
 
 // The entity of a cell is one fragment of the protocol whose ids change

@@ -573,7 +573,7 @@ section_load_end :: proc(job:^Load_Job,w:core.World_Ref,e:core.Entity) -> (repor
         for generation,index in apart_es.generation {
             x:=core.entity_make(index,generation)
             if index==0 || !core.alive(apart_es,x) {continue}
-            parent,_:=core.get(core.read(apart_parents),x)
+            parent,_:=core.get(apart_parents,x)
             of[index]=core.ancestor_with(core.read(apart_parents),core.read(inner),parent.entity)
         }
     }
@@ -654,7 +654,7 @@ apart_locals :: proc(apart:core.World_Ref) -> []base.Entity_Id {
     for row in 0..<core.raw_count(core.raw(members)) {
         x:=core.raw(members).entities[row]
         if parents!=nil && references!=nil {
-            parent,placed:=core.get(core.read(parents),x)
+            parent,placed:=core.get(parents,x)
             if placed && core.ancestor_with(core.read(parents),core.read(references),parent.entity)!=core.NONE {continue}
         }
         append(&locals,(^Section_Member)(core.raw_value(core.raw(members),type_info_of(Section_Member),row)).local)

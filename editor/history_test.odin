@@ -242,7 +242,7 @@ undo_of_a_creation_keeps_the_entity_while_a_child_of_another_author_hangs_from_i
     core.test_world_settle(&f.world)
     testing.expect(t,move.done && move.kept==1)
     testing.expect(t,core.alive(&f.world.entities,made) && core.alive(&f.world.entities,child))
-    parent,_:=core.get(core.read(&f.world.parents),child)
+    parent,_:=core.get(&f.world.parents,child)
     testing.expect_value(t,parent.entity,made)
     // Without the child, the creation goes.
     testing.expect(t,history_move(f,AGENT,false).done)

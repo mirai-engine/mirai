@@ -266,7 +266,7 @@ a_character_takes_its_capsule_and_its_collision_from_its_collider :: proc(t:^tes
     core.edit(&f.characters,e).coyote=0.05
     physics_test_step(&f,0)
     testing.expect_value(t,f.state.stats.characters_created,created)
-    current,_:=core.get(core.read(&f.colliders),e)
+    current,_:=core.get(&f.colliders,e)
     testing.expect_value(t,sim.character_desc(&f.state.world,link_find(&f.state,e).character).filter,collision_filter(&f.collision,current))
     core.edit(&f.colliders,e).size.x=0.3
     physics_test_step(&f,0)

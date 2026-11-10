@@ -1004,7 +1004,7 @@ grounding_prepared_hierarchies_rebind_atomically_repack_rigs_and_replay_copied_w
     other.entity=core.create(&f.entities);other.bound+=1
     core.add(&f.transforms,other.entity,core.TRANSFORM_IDENTITY)
     core.table_settle(&f.transforms,&f.entities)
-    config,_:=core.get(core.read(&f.configs),f.rig)
+    config,_:=core.get(&f.configs,f.rig)
     core.add(&f.configs,other.entity,config)
     core.table_settle(&f.configs,&f.entities)
     if !testing.expect(t,anim.grounding_apply(&other,&f.cache,grounding_fixture_inputs(&f),.1)) {return}

@@ -190,10 +190,10 @@ a_prefab_spawned_again_is_placed_as_read_anew_from_the_form_its_world_keeps :: p
     // The copy is no instance and holds what the prefab does: the bulb at its intensity, named by the lamp and by its glass.
     w:=p.kept
     testing.expect_value(t,core.count(&w.instances)+core.count(&w.members),0)
-    lit,found:=core.get(core.read(&w.links),first)
-    light,has_light:=core.get(core.read(&w.lights),lit.target)
+    lit,found:=core.get(&w.links,first)
+    light,has_light:=core.get(&w.lights,lit.target)
     testing.expect(t,found && has_light && light.range==1 && light.intensity==4)
-    source,has_source:=core.get(core.read(&w.sources),first)
+    source,has_source:=core.get(&w.sources,first)
     testing.expect(t,has_source && source.prefab==SPAWN_LAMP)
 
     // The bulb changes in memory, as an editor holds it unsaved: the lamp is read again, once.
@@ -207,8 +207,8 @@ a_prefab_spawned_again_is_placed_as_read_anew_from_the_form_its_world_keeps :: p
     for _ in 0..<2 {
         changed:=spawn_test_both(t,&p,{prefab=SPAWN_LAMP})
         spawn_test_same(t,&p)
-        lit,_=core.get(core.read(&w.links),changed)
-        light,_=core.get(core.read(&w.lights),lit.target)
+        lit,_=core.get(&w.links,changed)
+        light,_=core.get(&w.lights,lit.target)
         testing.expect(t,light.range==5 && light.intensity==4)
     }
     testing.expect_value(t,forms.prepared,2)

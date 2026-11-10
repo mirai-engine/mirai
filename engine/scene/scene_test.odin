@@ -183,10 +183,10 @@ a_referenced_scene_hangs_from_each_reference_with_its_own_ids :: proc(t:^testing
     links:=core.read(&p.world.links)
     for row in 0..<core.count(links) {
         e:=core.entity_at(links,row)
-        id,_:=core.get(core.read(&p.world.ids),e)
+        id,_:=core.get(&p.world.ids,e)
         target:=core.at(links,row).target
         if id.value==40 {
-            got,_:=core.get(core.read(&p.world.ids),target)
+            got,_:=core.get(&p.world.ids,target)
             testing.expect_value(t,got.value,id_in(10,1))
         } else {
             testing.expect_value(t,target,core.NONE)
@@ -223,7 +223,7 @@ a_referenced_scene_hangs_from_each_reference_with_its_own_ids :: proc(t:^testing
         core.settle(&p.info,p.world,nil)
         testing.expect_value(t,len(scene_test_ranges(p.world)),3)
         found:=false
-        for row in 0..<core.count(core.read(&p.world.ids)) {found||=core.at(core.read(&p.world.ids),row).value==id_in(50,1)}
+        for row in 0..<core.count(&p.world.ids) {found||=core.at(&p.world.ids,row).value==id_in(50,1)}
         testing.expect(t,found,"its lamp has the Id of the reference combined with its own")
     }
 
@@ -494,8 +494,8 @@ instantiated_entities_get_their_world_transforms_from_the_propagation :: proc(t:
     propagate(ref,&app)
     testing.expect_value(t,core.count(&w.worlds),2)
     for e in made {
-        local,_:=core.get(core.read(&w.transforms),e)
-        placed,found:=core.get(core.read(&w.worlds),e)
+        local,_:=core.get(&w.transforms,e)
+        placed,found:=core.get(&w.worlds,e)
         testing.expect(t,found && (local.position=={1,0,0} && placed.position==[3]f32{1,0,0} || local.position=={0,2,0} && placed.position==[3]f32{1,2,0}))
     }
 }
@@ -569,7 +569,7 @@ spawned_prefabs_keep_their_entity_references_inside :: proc(t:^testing.T) {
     }
     core.test_world_settle(w)
     for copy in made {
-        drivable,found:=core.get(core.read(&w.drivables),copy[0])
+        drivable,found:=core.get(&w.drivables,copy[0])
         testing.expect(t,found)
         testing.expect_value(t,drivable.camera,copy[1])
         testing.expect_value(t,drivable.seat,core.NONE)
@@ -702,7 +702,7 @@ an_untrusted_level_loads_only_what_its_rules_allow :: proc(t:^testing.T) {
     first:=core.entity_of(&p.world.entities,base.Entity_Id(1))
     blocks:=core.read(&p.world.blocks)
     if !testing.expect_value(t,core.count(blocks),1) {return}
-    lamp,_:=core.get(core.read(&p.world.ids),core.at(blocks,0).link)
+    lamp,_:=core.get(&p.world.ids,core.at(blocks,0).link)
     testing.expect_value(t,lamp.value,base.Entity_Id(2))
 
     Case :: struct {

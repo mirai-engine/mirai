@@ -89,27 +89,27 @@ collision_api_reads_and_edits_presets_masks_and_queries_by_name_in_one_undo_step
     testing.expectf(t,strings.contains(error.message,"no collision component"),"%s",error.message)
     error=execute(state,&out,"physics.collision.set",`{"entity":"0000000000000007","component":"Collider","belongs":["player"],"collides":["world","camera"]}`)
     if !testing.expect_value(t,error.code,0) {return}
-    value,_:=core.get(core.read(&world.colliders),entity)
+    value,_:=core.get(&world.colliders,entity)
     testing.expect(t,value.preset==phys.PRESET_CUSTOM && value.belongs==0b10 && value.collides==0b1100 && !value.sensor)
     testing.expect(t,value.group==held && value.friction==collider.friction)
     testing.expect_value(t,edits.cursor,1)
     error=execute(state,&out,"physics.collision.set",`{"entity":"0000000000000007","component":"Collider","sensor":true}`)
     testing.expect_value(t,error.code,0)
-    value,_=core.get(core.read(&world.colliders),entity)
+    value,_=core.get(&world.colliders,entity)
     testing.expect(t,value.sensor && value.belongs==0b10 && value.collides==0b1100)
     error=execute(state,&out,"physics.collision.set",`{"entity":"0000000000000007","component":"Collider","preset":"trigger"}`)
     testing.expect_value(t,error.code,0)
-    value,_=core.get(core.read(&world.colliders),entity)
+    value,_=core.get(&world.colliders,entity)
     testing.expect(t,value.preset==phys.PRESET_TRIGGER && value.group==held)
     // Custom chosen as a preset keeps what the preset gave as its own.
     error=execute(state,&out,"physics.collision.set",`{"entity":"0000000000000007","component":"Collider","preset":"custom"}`)
     testing.expect_value(t,error.code,0)
-    value,_=core.get(core.read(&world.colliders),entity)
+    value,_=core.get(&world.colliders,entity)
     testing.expect(t,value.preset==phys.PRESET_CUSTOM && value.sensor && value.belongs==1 && value.collides==phys.COLLISION_LAYERS_ALL)
     // The steps are of the API: it undoes them, as history.undo does.
     edits.author=history.EDIT_AUTHOR_API
     for _ in 0..<4 {testing.expect(t,history.undo(&edits,editor.edited_world(&session),&selection))}
-    value,_=core.get(core.read(&world.colliders),entity);testing.expect_value(t,value,collider)
+    value,_=core.get(&world.colliders,entity);testing.expect_value(t,value,collider)
     testing.expect(t,history.redo(&edits,editor.edited_world(&session),&selection))
     edits.author=history.EDIT_AUTHOR_USER
     before:=history.edits_scene_state(&edits);cursor:=edits.cursor
@@ -131,7 +131,7 @@ collision_api_reads_and_edits_presets_masks_and_queries_by_name_in_one_undo_step
     }
     error=execute(state,&out,"physics.collision.set",`{"entity":"0000000000000007","component":"Collision_Test_Filter","hits":["player","world"]}`)
     testing.expect_value(t,error.code,0)
-    filtered,_:=core.get(core.read(&world.filters),entity)
+    filtered,_:=core.get(&world.filters,entity)
     testing.expect(t,filtered.filter.filter.block==6 && filtered.filter.filter.layers==phys.COLLISION_LAYERS_ALL && filtered.filter.objects==0)
     testing.expect(t,filtered.filter.debris && filtered.unchanged==93)
     error=execute(state,&out,"physics.collision.get",`{"entity":"0000000000000007","component":"Collision_Test_Filter"}`)
@@ -139,7 +139,7 @@ collision_api_reads_and_edits_presets_masks_and_queries_by_name_in_one_undo_step
     text=string(serial.writer_bytes(&out));testing.expectf(t,strings.contains(text,`"prefix":"filter","hits":["player","world"],"sensors":false`),"%s",text)
     error=execute(state,&out,"physics.collision.set",`{"entity":"0000000000000007","component":"Collision_Test_Nested","prefix":"region.filter","hits":["camera"],"sensors":true}`)
     testing.expect_value(t,error.code,0)
-    nested,_:=core.get(core.read(&world.nested),entity)
+    nested,_:=core.get(&world.nested,entity)
     testing.expect(t,nested.region.filter.filter.block==8 && nested.region.filter.overlaps && nested.region.filter.objects==0)
     testing.expect(t,nested.region.filter.debris && nested.region.unchanged==93)
     error=execute(state,&out,"physics.collision.get",`{"entity":"0000000000000007","component":"Collision_Test_Nested","prefix":"region.filter"}`)

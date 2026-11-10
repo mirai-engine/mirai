@@ -310,7 +310,7 @@ a_new_actions_asset_or_revision_interrupts_the_playing_action_and_fades_its_laye
         requests:Action_Requests;defer delete(requests.queue.items);actions:Action_Runtime;defer actions_runtime_free(&actions)
         tick :: proc(actions:^Action_Runtime,requests:^Action_Requests,cache:^Actions_Assets,descriptions:^core.Table(Animation),playback:^Playback,app:^host.App,content:^host.Content_Animation,events:^Animation_Events,dt:f32) -> bool {
             if !actions_prepare(actions,requests,cache,core.read(descriptions),playback,app.assets,app.allocator,nil) {return false}
-            state:=&playback.states[0];sampled,_:=core.get(core.read(descriptions),state.entity)
+            state:=&playback.states[0];sampled,_:=core.get(descriptions,state.entity)
             actions_sample(actions,state,&sampled,dt,nil,content,playback,events);layers_advance(playback,state,content,sampled,events,dt,nil);actions_finish(actions,playback,dt)
             return true
         }

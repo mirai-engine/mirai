@@ -86,7 +86,7 @@ a_body_floats_on_a_fluid_volume_of_the_world :: proc(t:^testing.T) {
     core.add(&f.colliders,raft,collider)
     core.add(&f.transforms,raft,core.Transform{{0,1,0},1,{1,1,1}})
     for _ in 0..<600 {physics_test_step(&f)}
-    placed,_:=core.get(core.read(&f.transforms),raft)
+    placed,_:=core.get(&f.transforms,raft)
     // Half its thickness under the surface.
     testing.expectf(t,abs(placed.position.y)<0.002,"floats at %v",placed.position.y)
 }

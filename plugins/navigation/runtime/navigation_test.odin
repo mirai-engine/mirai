@@ -765,8 +765,8 @@ fliers_leave_a_u_shaped_cave_under_its_wall_and_step_aside_from_each_other :: pr
     arrived:[2]bool
     for _ in 0..<60*30 {
         agents_test_step(&f)
-        pa,_:=core.get(core.read(&f.worlds),a)
-        pb,_:=core.get(core.read(&f.worlds),b)
+        pa,_:=core.get(&f.worlds,a)
+        pb,_:=core.get(&f.worlds,b)
         least=min(least,linalg.distance(pa.position,pb.position))
         lowest=min(lowest,pa.position.y,pb.position.y)
         // Never through the wall.
@@ -774,7 +774,7 @@ fliers_leave_a_u_shaped_cave_under_its_wall_and_step_aside_from_each_other :: pr
             testing.expect(t,!(p.x>4.5-0.2 && p.x<5.5+0.2 && p.y+0.8>2.55))
         }
         for e,i in ([2]core.Entity{a,b}) {
-            if p,ok:=core.get(core.read(&f.paths),e);ok {
+            if p,ok:=core.get(&f.paths,e);ok {
                 testing.expect(t,p.state!=.Failed)
                 if p.state==.Arrived {arrived[i]=true}
             }
@@ -784,7 +784,7 @@ fliers_leave_a_u_shaped_cave_under_its_wall_and_step_aside_from_each_other :: pr
     testing.expectf(t,arrived[0] && arrived[1],"arrived %v",arrived)
     testing.expectf(t,lowest<1.6,"the lowest feet %v: under the wall",lowest)
     testing.expectf(t,least>0.5,"the nearest the two came %v",least)
-    pa,_:=core.get(core.read(&f.worlds),a)
+    pa,_:=core.get(&f.worlds,a)
     // A flier takes its goal for the center of its capsule.
     testing.expectf(t,linalg.distance(pa.position+{0,0.4,0},mm.Vec3{8,6,2})<0.5,"a ends at %v",pa.position)
 }
@@ -838,8 +838,8 @@ swimmers_leave_a_u_shaped_cave_under_its_wall_and_keep_out_of_a_dry_box :: proc(
     arrived:[2]bool
     for _ in 0..<60*40 {
         agents_test_step(&f)
-        pa,_:=core.get(core.read(&f.worlds),a)
-        pb,_:=core.get(core.read(&f.worlds),b)
+        pa,_:=core.get(&f.worlds,a)
+        pb,_:=core.get(&f.worlds,b)
         least=min(least,linalg.distance(pa.position,pb.position))
         lowest=min(lowest,pa.position.y,pb.position.y)
         for p in ([2]mm.Vec3{pa.position,pb.position}) {
@@ -847,7 +847,7 @@ swimmers_leave_a_u_shaped_cave_under_its_wall_and_keep_out_of_a_dry_box :: proc(
             testing.expect(t,!(p.x>7.2 && p.y+0.4<3.3 && p.y+0.4>0.7))
         }
         for e,i in ([2]core.Entity{a,b}) {
-            if p,ok:=core.get(core.read(&f.paths),e);ok {
+            if p,ok:=core.get(&f.paths,e);ok {
                 testing.expect(t,p.state!=.Failed)
                 if p.state==.Arrived {arrived[i]=true}
             }
@@ -1139,7 +1139,7 @@ an_agent_crosses_a_section_that_is_not_loaded_and_comes_out_in_the_next :: proc(
     lowest:=f32(1e9)
     for _ in 0..<60*40 {
         agents_test_step(&f)
-        pose,_:=core.get(core.read(&f.worlds),walker)
+        pose,_:=core.get(&f.worlds,walker)
         lowest=min(lowest,pose.position.y)
         now:=core.raw_row(core.raw(&f.fars),walker)>=0
         if now {
@@ -1149,14 +1149,14 @@ an_agent_crosses_a_section_that_is_not_loaded_and_comes_out_in_the_next :: proc(
             testing.expect(t,core.entity_off(&f.entities,walker))
         }
         far=now
-        if p,ok:=core.get(core.read(&f.paths),walker);ok {
+        if p,ok:=core.get(&f.paths,walker);ok {
             testing.expect(t,p.state!=.Failed)
             if p.state==.Arrived {arrived=true;break}
         }
     }
     testing.expectf(t,entries==1 && roamed && through && arrived,"far %d times, roaming %v, through the middle %v, arrived %v",entries,roamed,through,arrived)
     testing.expectf(t,lowest>-1,"it fell to %v",lowest)
-    pose,_:=core.get(core.read(&f.worlds),walker)
+    pose,_:=core.get(&f.worlds,walker)
     testing.expectf(t,linalg.length(mm.Vec3{pose.position.x-goal.x,0,pose.position.z-goal.z})<1,"it ends at %v",pose.position)
     agents_test_step(&f)
     testing.expect(t,!core.entity_off(&f.entities,walker) && core.raw_row(core.raw(&f.fars),walker)<0 && !core.has(&f.roamings,walker))
@@ -1190,7 +1190,7 @@ an_agent_that_arrives_far_appears_when_its_section_loads :: proc(t:^testing.T) {
     walker:=agents_test_walker(&f,{-25,0,0})
     nav_move_to(&f.nav_requests,walker,{2,0,1})
     testing.expect(t,agents_test_far_arrival(t,&f,walker))
-    pose,_:=core.get(core.read(&f.worlds),walker)
+    pose,_:=core.get(&f.worlds,walker)
     testing.expectf(t,linalg.length(pose.position-mm.Vec3{2,0,1})<0.5,"it got to %v",pose.position)
     // It stays where it got while its section is away.
     for _ in 0..<60 {agents_test_step(&f)}
@@ -1205,11 +1205,11 @@ an_agent_that_arrives_far_appears_when_its_section_loads :: proc(t:^testing.T) {
         if !core.entity_off(&f.entities,walker) {break}
     }
     testing.expect(t,!core.entity_off(&f.entities,walker) && told)
-    p,ok:=core.get(core.read(&f.paths),walker)
+    p,ok:=core.get(&f.paths,walker)
     testing.expect(t,ok && p.state==.Arrived && core.raw_row(core.raw(&f.fars),walker)<0)
     // On the mesh, and it stands there.
     for _ in 0..<30 {agents_test_step(&f)}
-    pose,_=core.get(core.read(&f.worlds),walker)
+    pose,_=core.get(&f.worlds,walker)
     testing.expectf(t,linalg.length(mm.Vec3{pose.position.x-2,0,pose.position.z-1})<0.5 && abs(pose.position.y)<0.5,"it stands at %v",pose.position)
     mesh:=&f.nav.classes[0].mesh
     filter:=filter_make(&f.nav_settings,{},{})
@@ -1236,9 +1236,9 @@ an_agent_far_takes_the_requests_of_the_game :: proc(t:^testing.T) {
     arrived:=false
     for _ in 0..<60*30 {
         agents_test_step(&f)
-        if p,ok:=core.get(core.read(&f.paths),walker);ok && p.state==.Arrived {arrived=true;break}
+        if p,ok:=core.get(&f.paths,walker);ok && p.state==.Arrived {arrived=true;break}
     }
-    pose,_:=core.get(core.read(&f.worlds),walker)
+    pose,_:=core.get(&f.worlds,walker)
     testing.expectf(t,arrived && linalg.length(mm.Vec3{pose.position.x-back.x,0,pose.position.z-back.z})<1,"arrived %v at %v",arrived,pose.position)
     testing.expect_value(t,f.problems.count,0)
 }
@@ -1293,7 +1293,7 @@ a_flier_far_takes_the_way_through_the_air_of_the_section_away :: proc(t:^testing
     highest:=f32(-1e9)
     for _ in 0..<60*60 {
         agents_test_step(&f)
-        pose,_:=core.get(core.read(&f.worlds),flier)
+        pose,_:=core.get(&f.worlds,flier)
         now:=core.raw_row(core.raw(&f.fars),flier)>=0
         if now {
             if !far {entries+=1}
@@ -1303,7 +1303,7 @@ a_flier_far_takes_the_way_through_the_air_of_the_section_away :: proc(t:^testing
             }
         }
         far=now
-        if p,ok:=core.get(core.read(&f.paths),flier);ok {
+        if p,ok:=core.get(&f.paths,flier);ok {
             testing.expect(t,p.state!=.Failed)
             if p.state==.Arrived {arrived=true;break}
         }
@@ -1311,7 +1311,7 @@ a_flier_far_takes_the_way_through_the_air_of_the_section_away :: proc(t:^testing
     testing.expectf(t,entries==1 && under && arrived,"far %d times, under the wall %v, arrived %v",entries,under,arrived)
     // Its feet, under the bottom of the wall less the half of its capsule.
     testing.expectf(t,highest<2.5-0.4,"it went through where the wall was at %v",highest)
-    pose,_:=core.get(core.read(&f.worlds),flier)
+    pose,_:=core.get(&f.worlds,flier)
     testing.expectf(t,linalg.distance(pose.position+{0,0.4,0},goal)<1,"it ends at %v",pose.position)
     testing.expect_value(t,f.problems.count,0)
 }
@@ -1340,10 +1340,10 @@ agents_test_travel :: proc(f:^Nav_Test,e:core.Entity,seconds:int) -> (arrived:bo
     crossed=make([dynamic]Nav_Link_Kind,context.temp_allocator)
     for _ in 0..<60*seconds {
         agents_test_step(f)
-        c,_:=core.get(core.read(&f.characters),e)
+        c,_:=core.get(&f.characters,e)
         if int(c.mode)<16 {modes+={int(c.mode)}}
         for event in f.nav_events.queue.items {if event.entity==e && event.kind==.Crossed {append(&crossed,event.link)}}
-        p,_:=core.get(core.read(&f.paths),e)
+        p,_:=core.get(&f.paths,e)
         failed||=p.state==.Failed
         if p.state==.Arrived {return !p.partial,modes,crossed,failed}
     }
@@ -1368,15 +1368,15 @@ an_amphibian_walks_into_the_water_at_the_shore_swims_across_and_walks_out :: pro
     nav_move_to(&f.nav_requests,e,{22,0,4})
     for _ in 0..<30 {
         agents_test_step(&f)
-        if p,_:=core.get(core.read(&f.paths),e);p.state==.Moving {break}
+        if p,_:=core.get(&f.paths,e);p.state==.Moving {break}
     }
-    p,_:=core.get(core.read(&f.paths),e)
+    p,_:=core.get(&f.paths,e)
     testing.expectf(t,p.state==.Moving && p.medium && p.kind==LINK_SWIM && p.to.x>p.from.x,"its plan crosses into the water: %v %v %v",p.state,p.medium,p.kind)
     arrived,modes,crossed,failed:=agents_test_travel(&f,e,60)
     testing.expect(t,arrived && !failed,"it walks out on the far side to its goal")
     testing.expect(t,int(phys.MODE_SWIMMING) in modes,"it swims")
     testing.expectf(t,len(crossed)>=2 && crossed[0]==LINK_SWIM && crossed[len(crossed)-1]==LINK_SWIM,"in and out by the shores: %v",crossed)
-    at,_:=core.get(core.read(&f.worlds),e)
+    at,_:=core.get(&f.worlds,e)
     testing.expectf(t,linalg.distance(at.position,mm.Vec3{22,0,4})<1,"at %v",at.position)
 }
 
@@ -1411,7 +1411,7 @@ an_agent_that_walks_and_flies_takes_off_and_lands_by_links_of_the_air :: proc(t:
     testing.expectf(t,len(crossed)>=2 && crossed[0]==LINK_FLY && crossed[len(crossed)-1]==LINK_FLY,"off and down by the links of the air: %v",crossed)
     // It may arrive still falling onto the platform: there it stands.
     for _ in 0..<60 {agents_test_step(&f)}
-    at,_:=core.get(core.read(&f.worlds),e)
+    at,_:=core.get(&f.worlds,e)
     testing.expectf(t,abs(at.position.y-4)<0.1 && at.position.x>17 && at.position.x<23,"on the platform, at %v",at.position)
 }
 
@@ -1437,7 +1437,7 @@ an_agent_no_class_holds_fails_and_says_so_once :: proc(t:^testing.T) {
         agents_test_step(&f)
         for event in f.nav_events.queue.items {if event.entity==e && event.kind==.Failed {failed+=1}}
     }
-    p,_:=core.get(core.read(&f.paths),e)
+    p,_:=core.get(&f.paths,e)
     testing.expect(t,p.state==.Failed && failed==1)
 }
 
@@ -1462,14 +1462,14 @@ a_seated_agent_walks_where_it_is_asked_while_its_seat_drives_it :: proc(t:^testi
     core.edit(&f.inputs,walkers[0]).buttons=held
     for e,i in walkers {nav_move_to(&f.nav_requests,e,{6,0,f32(i)*4-2})}
     for _ in 0..<30 {agents_test_step(&f)}
-    seated,_:=core.get(core.read(&f.inputs),walkers[0])
-    left,_:=core.get(core.read(&f.inputs),walkers[1])
+    seated,_:=core.get(&f.inputs,walkers[0])
+    left,_:=core.get(&f.inputs,walkers[1])
     testing.expect(t,seated.move!={} && seated.buttons==held,"it steers and the seat keeps its buttons")
     testing.expect_value(t,left.move,[3]f32{})
     arrived,_,_,failed:=agents_test_travel(&f,walkers[0],10)
     testing.expect(t,arrived && !failed,"the seated agent arrives")
-    pose,_:=core.get(core.read(&f.worlds),walkers[0])
-    stayed,_:=core.get(core.read(&f.worlds),walkers[1])
+    pose,_:=core.get(&f.worlds,walkers[0])
+    stayed,_:=core.get(&f.worlds,walkers[1])
     testing.expectf(t,pose.position.x>5,"it walked to %v",pose.position)
     testing.expectf(t,abs(stayed.position.x+6)<0.1,"the other stayed at %v",stayed.position)
     testing.expect_value(t,f.problems.count,0)
@@ -1520,8 +1520,8 @@ walkers_that_crowd_at_the_start_of_a_link_keep_to_the_mesh :: proc(t:^testing.T)
     for _ in 0..<60*120 {
         agents_test_step(&f)
         for e,i in walkers {
-            p,_:=core.get(core.read(&f.paths),e)
-            pose,_:=core.get(core.read(&f.worlds),e)
+            p,_:=core.get(&f.paths,e)
+            pose,_:=core.get(&f.worlds,e)
             // A fall of a level while it walks, not the end of a drop that lands it.
             drops[i]=drops[i]+heights[i]-pose.position.y if p.state!=.Crossing && pose.position.y<heights[i] else 0
             if drops[i]>1 {fell+=1}
@@ -1544,8 +1544,8 @@ walkers_that_crowd_at_the_start_of_a_link_keep_to_the_mesh :: proc(t:^testing.T)
     }
     testing.expectf(t,fell==0,"walkers fell off a level for %d ticks without crossing a link",fell)
     for e,i in walkers {
-        pose,_:=core.get(core.read(&f.worlds),e)
-        p,_:=core.get(core.read(&f.paths),e)
+        pose,_:=core.get(&f.worlds,e)
+        p,_:=core.get(&f.paths,e)
         testing.expectf(t,reached[i]>=4,"walker %d reached %d points, at %v, %v",i,reached[i],pose.position,p.state)
     }
     // Put down off the platform as it walks on it, it climbs back by the ladder.
@@ -1559,8 +1559,8 @@ walkers_that_crowd_at_the_start_of_a_link_keep_to_the_mesh :: proc(t:^testing.T)
     nav_move_to(&f.nav_requests,e,{-8,3.5,9})
     for _ in 0..<60*10 {
         agents_test_step(&f)
-        p,_:=core.get(core.read(&f.paths),e)
-        pose,_:=core.get(core.read(&f.worlds),e)
+        p,_:=core.get(&f.paths,e)
+        pose,_:=core.get(&f.worlds,e)
         if p.state==.Crossing && p.kind==LINK_JUMP && abs(pose.position.z-4.25)<0.3 {break}
     }
     nav_move_to(&f.nav_requests,e,{-2,0,-8})

@@ -80,8 +80,8 @@ shared_generated_chunks_survive_world_layout_changes_and_local_preview_retiremen
                 }
                 for index in ([2]int{0,4}) {
                     e:=chunks[index]
-                    world,_:=core.get(core.read(&w.worlds),e)
-                    tint,_:=core.get(core.read(&w.tints),e)
+                    world,_:=core.get(&w.worlds,e)
+                    tint,_:=core.get(&w.tints,e)
                     instance,usable:=mesh_instance(app.assets,{mesh=preview},mm.transform_matrix(world.transform),tint)
                     testing.expect(t,usable)
                     instance.object_id,instance.copy_owner,instance.copy_variant,instance.replace_source=u64(e),99,1,true

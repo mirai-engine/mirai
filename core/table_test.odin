@@ -188,7 +188,7 @@ transforms_compute_what_was_written_and_what_hangs_from_it :: proc(t:^testing.T)
         table_settle(worlds,es)
     }
     at :: proc(worlds:^Table(World_Transform),e:Entity) -> World_Transform {
-        value,_:=get(read(worlds),e)
+        value,_:=get(worlds,e)
         return value
     }
 
@@ -344,7 +344,7 @@ a_single_table_keeps_on_the_row_turned_on_last :: proc(t:^testing.T) {
     table:Table(i32)
     table_init(&table,"Sky");defer table_destroy(&table)
     table.single=true
-    on :: proc(table:^Table(i32)) -> Entity {return count(table)==1?entity_at(read(table),0):NONE}
+    on :: proc(table:^Table(i32)) -> Entity {return count(table)==1?entity_at(table,0):NONE}
     a,b,c:=create(&es),create(&es),create(&es)
     add(&table,a,1)
     add(&table,b,2)
@@ -411,7 +411,7 @@ a_settle_without_changes_leaves_a_single_table_as_it_was :: proc(t:^testing.T) {
     // Turning on the one that is on changes nothing.
     enable(&skies,a)
     table_settle(&skies,&es)
-    testing.expect(t,skies.layout==shape && entity_at(read(&skies),0)==a)
+    testing.expect(t,skies.layout==shape && entity_at(&skies,0)==a)
 }
 
 // What a function asked waits for the settle: staged_has answers as has will after it.
@@ -450,7 +450,7 @@ first_sole_and_entity_named_find_the_entity_a_function_asks_for :: proc(t:^testi
     table_init(&names,"Name")
     defer table_destroy(&names)
     _,any:=first(&names)
-    _,one:=sole(read(&names))
+    _,one:=sole(&names)
     testing.expect(t,!any && !one && entity_named(read(&names),"lift")==NONE)
 
     a,b:=create(&es),create(&es)
@@ -461,7 +461,7 @@ first_sole_and_entity_named_find_the_entity_a_function_asks_for :: proc(t:^testi
 
     add(&names,b,name_make("door"))
     table_settle(&names,&es)
-    e,found=first(read(&names))
+    e,found=first(&names)
     testing.expect(t,found && e==a)
     _,found=sole(&names)
     testing.expect(t,!found,"sole is the only one")
@@ -519,15 +519,15 @@ a_table_holds_rows_by_entity_only_where_it_has_rows :: proc(t:^testing.T) {
     for page in names.rows {if len(page)>0 {pages+=1}}
     testing.expect_value(t,pages,2)
     testing.expect(t,cap(names.gone)==0,"no entity went: there is no room for them yet")
-    value,found:=get(read(&names),far)
+    value,found:=get(&names,far)
     testing.expect(t,found && value==2 && !has(&names,entity_make(2*ROWS_PAGE,1)))
     testing.expect(t,table_copy(&copied,&names))
-    value,found=get(read(&copied),far)
+    value,found=get(&copied,far)
     testing.expect(t,found && value==2 && has(&copied,near))
     // A table a storage holds is copied and freed as any value is.
     held:Table(i32)
     testing.expect(t,value_copy(&held,&names,type_info_of(Table(i32))))
-    value,found=get(read(&held),far)
+    value,found=get(&held,far)
     testing.expect(t,found && value==2 && raw_data(held.rows[0])!=raw_data(names.rows[0]))
     value_free(&held,type_info_of(Table(i32)))
     seen:Seen

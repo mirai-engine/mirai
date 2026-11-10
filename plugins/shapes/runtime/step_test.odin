@@ -86,14 +86,14 @@ world_step :: proc(w:^Step_Test) {
 parts_of :: proc(w:^Step_Test,e:core.Entity) -> (child:core.Entity,count:int) {
     for row in 0..<core.count(&w.parts) {
         c:=core.entity_at(&w.parts,row)
-        if parent,has:=core.get(core.read(&w.parents),c);has && parent.entity==e {child,count=c,count+1}
+        if parent,has:=core.get(&w.parents,c);has && parent.entity==e {child,count=c,count+1}
     }
     return
 }
 
 @(private="file")
 mesh_of :: proc(w:^Step_Test,child:core.Entity) -> base.Asset_Id {
-    shown,_:=core.get(core.read(&w.meshes),child)
+    shown,_:=core.get(&w.meshes,child)
     return shown.mesh
 }
 
@@ -125,7 +125,7 @@ a_shape_shows_and_collides_through_one_unsaved_child :: proc(t:^testing.T) {
         child,count:=parts_of(&w,c.shape)
         if !testing.expectf(t,count==1,"%s: %d children",c.name,count) {continue}
         testing.expectf(t,!core.has(&w.ids,child),"%s: the child has no Id, so no scene saves it",c.name)
-        collider,has:=core.get(core.read(&w.colliders),child)
+        collider,has:=core.get(&w.colliders,child)
         testing.expectf(t,has && collider.kind==c.kind && collider.size==0 && collider.center==0,"%s: %v",c.name,collider.kind)
         mesh:=mesh_of(&w,child)
         testing.expectf(t,host.assets_mesh_generated(&a.assets,mesh),"%s: generated mesh",c.name)
@@ -185,7 +185,7 @@ a_change_builds_again_and_releases_only_what_the_world_made :: proc(t:^testing.T
     // Becoming a body changes the collider.
     core.add(&w.rigids,e,physics.RIGID_BODY_DYNAMIC)
     world_step(&w)
-    collider,_:=core.get(core.read(&w.colliders),child)
+    collider,_:=core.get(&w.colliders,child)
     testing.expect_value(t,collider.kind,physics.Collider_Kind.Hull)
     third:=mesh_of(&w,child)
 

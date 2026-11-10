@@ -448,7 +448,7 @@ what_a_section_load_resolves_in_the_document_is_no_part_of_the_next_step :: proc
     append(&f.world.unresolved.items,scene.Unresolved_Reference{entity=f.a,table=base.name_hash("Sections_Link"),offset=0,target=SECTIONS_TEST_LOCAL})
     // The section loads and the resolve gives the field its entity.
     scene.references_resolve(w)
-    link,_:=core.get(core.read(&f.world.links),f.a)
+    link,_:=core.get(&f.world.links,f.a)
     testing.expect_value(t,link.target,f.c)
     testing.expect_value(t,len(f.world.unresolved.resolved),1)
     sections_resolved(s,w)
@@ -461,7 +461,7 @@ what_a_section_load_resolves_in_the_document_is_no_part_of_the_next_step :: proc
         testing.expect(t,rows.table!=links_table,"the step does not hold the field the load resolved")
     }
     testing.expect(t,history.undo(&f.edits,w,&f.selection))
-    link,_=core.get(core.read(&f.world.links),f.a)
+    link,_=core.get(&f.world.links,f.a)
     testing.expect(t,link.target==f.c && entity_local(w,f.a).position==[3]f32{0,0,0})
     // Once taken, the same resolve is not taken again over an edit of the user.
     core.edit(&f.world.links,f.a).target=f.r
@@ -474,7 +474,7 @@ what_a_section_load_resolves_in_the_document_is_no_part_of_the_next_step :: proc
     inside:=make([]bool,int(core.entity_index(f.c))+1,context.temp_allocator)
     inside[core.entity_index(f.c)]=true
     scene.references_release(w,inside,nil)
-    link,_=core.get(core.read(&f.world.links),f.a)
+    link,_=core.get(&f.world.links,f.a)
     testing.expect_value(t,link.target,core.NONE)
     sections_resolved(s,w)
     testing.expect(t,!history.edits_commit(&f.edits,w,&f.selection) && f.edits.error==.No_Change,"what the drop released is no step")

@@ -88,7 +88,7 @@ api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: p
     testing.expect(t,strings.contains(text,`"compiled": [8, 9]`))
     testing.expect(t,strings.contains(text,`"Inspect_Runtime":{"ticks": 21}`))
     testing.expect_value(t,world.config.version,version)
-    config,_:=core.get(core.read(&world.config),entity)
+    config,_:=core.get(&world.config,entity)
     testing.expect_value(t,config.diagnostics,u32(13))
     testing.expect_value(t,config.compiled,[2]u32{8,9})
     out.count=0;first:=true
@@ -143,7 +143,7 @@ api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: p
     testing.expect(t,strings.contains(text,`"position":[0,0,0]`))
     testing.expect(t,strings.contains(text,`"diagnostics": 13`) && strings.contains(text,`"ticks": 21`))
     testing.expect_value(t,world.config.version,version)
-    config,_=core.get(core.read(&world.config),entity)
+    config,_=core.get(&world.config,entity)
     testing.expect_value(t,config.diagnostics,u32(13))
 }
 

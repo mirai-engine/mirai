@@ -175,7 +175,7 @@ a_world_pose_is_written_under_the_parent :: proc(t:^testing.T) {
     world,placed:=world_of(read(&w.locals),read(&w.parents),held)
     testing.expect(t,placed && linalg.length(world.position-[3]f32{1,2,3})<1e-4)
     testing.expect(t,linalg.length(mm.quat_rotate(world.rotation,{1,0,0})-mm.quat_rotate(rotation,{1,0,0}))<1e-4)
-    local,_:=get(read(&w.locals),held)
+    local,_:=get(&w.locals,held)
     testing.expect_value(t,local.scale,[3]f32{1,3,1})
 
     // A parent without size cannot hold it anywhere.

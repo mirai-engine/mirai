@@ -70,7 +70,7 @@ in_place_root_motion_preserves_gameplay_actor_placement_and_restores_internal_bo
         pose_sample(&playback,&state,&library,ANIMATION_DEFAULT,core.read(&transforms),nil)
         constraints_apply(&state,&playback,{roots=core.read(&roots),problems=&problems},&cache,&transforms,core.read(&parents),0.25)
         pose_write(&playback,&state,&transforms)
-        current,_:=core.get(core.read(&transforms),rig)
+        current,_:=core.get(&transforms,rig)
         testing.expect_value(t,core.to_math(current),expected)
         expected.position+=mm.quat_rotate(expected.rotation,motion.translation)
         expected.rotation*=motion.rotation
@@ -249,13 +249,13 @@ bone_constraints_solve_world_targets_under_rotated_uneven_parents_and_respect_so
     constraints_apply(&state,&playback,inputs,&cache,&w.transforms,core.read(&w.parents),0.1)
     testing.expect_value(t,problems.count,0)
     testing.expect(t,linalg.length(state.world[2].position-target)<0.001)
-    attached,_:=core.get(core.read(&w.transforms),socket)
+    attached,_:=core.get(&w.transforms,socket)
     expected,_:=lib.skeleton_socket(state.world[:],2,socket_config.offset)
     testing.expect(t,linalg.length(attached.position-expected.position)<0.001)
     resize(&w.transforms.owners,core.entity_index(socket)+1);w.transforms.owners[core.entity_index(socket)]={core.entity_generation(socket),1}
     core.edit(&w.modifiers.ik,helper).target.position+=mm.Vec3{0.2,0,0}
     constraints_apply(&state,&playback,inputs,&cache,&w.transforms,core.read(&w.parents),0.1)
-    locked,_:=core.get(core.read(&w.transforms),socket)
+    locked,_:=core.get(&w.transforms,socket)
     testing.expect_value(t,locked,attached)
     testing.expect(t,problems.count==1 && core.problem_find(&problems,socket,"animation.socket_owner")!=nil)
     w.transforms.owners[core.entity_index(socket)]={}

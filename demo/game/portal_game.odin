@@ -207,18 +207,18 @@ portal_gun :: proc(
     // A player that went through a grill loses the portals and what it carries; a cube that did is let go.
     for passed in passes.queue.items {
         for row in 0..<core.count(guns) {
-            if core.entity_at(guns,row)!=passed && guns.values[row].held!=passed {continue}
+            if core.entity_at(guns,row)!=passed && core.at(guns,row).held!=passed {continue}
             core.edit_at(guns,row).held=core.NONE
             if core.entity_at(guns,row)!=passed {continue}
             for at in 0..<core.count(mouths) {
-                if mouths.values[at].placed {core.edit_at(mouths,at).placed=false}
+                if core.at(mouths,at).placed {core.edit_at(mouths,at).placed=false}
             }
         }
     }
     core.queue_clear(&passes.queue)
     for row in 0..<core.count(guns) {
         player:=core.entity_at(guns,row)
-        gun:=core.at(core.read(guns),row)
+        gun:=core.at(guns,row)
         eye,aim,ok:=inp.aim(drivables,worlds,player)
         if !ok {continue}
         blue:=inp.pressed(actions,player,.Portal_Blue)
@@ -278,7 +278,7 @@ portal_gun :: proc(
         }
         mine,other:=core.Entity(core.NONE),Maybe(mm.Transform)(nil)
         for at in 0..<core.count(mouths) {
-            mouth:=core.at(core.read(mouths),at)
+            mouth:=core.at(mouths,at)
             if mouth.color==color {mine=core.entity_at(mouths,at);continue}
             if !mouth.placed {continue}
             if portal,has:=core.get(openings,mouth.opening);has && portal.wall==wall {
@@ -316,7 +316,7 @@ portal_links :: proc(mouths:core.Read(Portal_Mouth),openings:^core.Table(portals
         other,other_placed:=opening_of(mouths,mouth.color==.Blue?.Orange:.Blue)
         exit:=mouth.placed && other_placed?other:core.NONE
         wall:=mouth.placed?mouth.wall:core.NONE
-        if portal,has:=core.get(core.read(openings),mouth.opening);has && (portal.exit!=exit || portal.wall!=wall) {
+        if portal,has:=core.get(openings,mouth.opening);has && (portal.exit!=exit || portal.wall!=wall) {
             written:=core.edit(openings,mouth.opening)
             written.exit,written.wall=exit,wall
         }
@@ -334,14 +334,14 @@ portal_chamber :: proc(
     physics:core.Ref(phys.Physics_State),passes:^Grill_Passes,placer:core.Placer,
 ) {
     home :: proc(cubes:^core.Table(Portal_Cube),placer:core.Placer,e:core.Entity) {
-        cube,_:=core.get(core.read(cubes),e)
+        cube,_:=core.get(cubes,e)
         core.place(placer,e,cube.home,at_rest=true)
     }
     for row in 0..<core.count(cubes) {
         e:=core.entity_at(cubes,row)
         placed,has:=core.get(worlds,e)
         if !has {continue}
-        if !cubes.values[row].homed {
+        if !core.at(cubes,row).homed {
             cube:=core.edit_at(cubes,row)
             cube.home,cube.homed=placed.position,true
         } else if placed.position.y<FALL_LIMIT {
@@ -369,7 +369,7 @@ portal_chamber :: proc(
             count,_:=phys.overlap_box(physics,mm.transform_point(placed.transform,zone.center),zone.size*placed.scale,placed.rotation,found[:],filter)
             for other in found[:min(count,len(found))] {pressed||=core.has(cubes,other) || core.has(guns,other)}
         }
-        if buttons.values[row].pressed!=pressed {core.edit_at(buttons,row).pressed=pressed}
+        if core.at(buttons,row).pressed!=pressed {core.edit_at(buttons,row).pressed=pressed}
     }
 }
 

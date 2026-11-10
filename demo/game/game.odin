@@ -278,17 +278,17 @@ game_doors :: proc(doors:core.Read(Door),buttons:core.Read(Floor_Button),states:
     for row in 0..<core.count(doors) {
         e:=core.entity_at(doors,row)
         door:=core.at(doors,row)
-        local:=core.free(transforms,e)
-        if local==nil {continue}
-        state:=core.edit(states,e)
-        if state==nil {
-            core.add(states,e,Door_State{closed_y=local.position.y,ready=true})
+        placed,has_place:=core.get(transforms,e)
+        if !has_place {continue}
+        state,known:=core.get(states,e)
+        if !known {
+            core.add(states,e,Door_State{closed_y=placed.position.y,ready=true})
             continue
         }
         target:=state.closed_y+(door_opened(doors,buttons,e)?door.travel:0)
-        if local.position.y==target {continue}
+        if placed.position.y==target {continue}
         step:=door.speed*time.dt
-        local.position.y+=clamp(target-local.position.y,-step,step)
+        if local:=core.free(transforms,e);local!=nil {local.position.y+=clamp(target-local.position.y,-step,step)}
     }
 }
 
@@ -302,11 +302,11 @@ game_swatches :: proc(meshes:^core.Table(render.Mesh_Renderer),palette:^Palette,
         palette.ready=true
     }
     for row in 0..<core.count(swatches) {
-        mesh:=core.edit(meshes,core.entity_at(swatches,row))
-        if mesh==nil {continue}
-        wanted:=palette.materials[swatch_index(core.at(swatches,row))]
-        if mesh.materials[0]==wanted {continue}
-        for &material in mesh.materials {material=wanted}
+        e:=core.entity_at(swatches,row)
+        mesh,drawn:=core.get(meshes,e)
+        if !drawn {continue}
+        for &material in mesh.materials {material=palette.materials[swatch_index(core.at(swatches,row))]}
+        core.set(meshes,e,mesh)
     }
 }
 
@@ -381,12 +381,12 @@ game_glow :: proc(
     for row in 0..<core.count(doors) {
         door:=core.at(doors,row)
         glow:=door_opened(doors,buttons,core.entity_at(doors,row))?DOOR_OPEN_GLOW:DOOR_CLOSED_GLOW
-        if tint,has:=core.get(core.read(tints),door.lamp);has && tint.emission!=glow {core.edit(tints,door.lamp).emission=glow}
+        if tint,has:=core.get(tints,door.lamp);has && tint.emission!=glow {core.edit(tints,door.lamp).emission=glow}
     }
     for row in 0..<core.count(buttons) {
         button:=core.at(buttons,row)
         glow:=button.pressed?DOOR_OPEN_GLOW:DOOR_CLOSED_GLOW
-        if tint,has:=core.get(core.read(tints),button.plate);has && tint.emission!=glow {core.edit(tints,button.plate).emission=glow}
+        if tint,has:=core.get(tints,button.plate);has && tint.emission!=glow {core.edit(tints,button.plate).emission=glow}
     }
     for row in 0..<core.count(barkers) {
         flashing:=core.at(barkers,row).flash_ticks>0

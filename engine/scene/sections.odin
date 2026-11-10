@@ -154,7 +154,7 @@ scene_sections :: proc(
         e:=core.entity_at(references,row)
         // What a section dropped above it this frame destroyed or left dormant waits.
         if !core.alive(es,e) || dormants!=nil && core.raw_added(core.raw(dormants),type_info_of(Dormant),e)!=nil {continue}
-        reference:=core.at(core.read(references),row)
+        reference:=core.at(references,row)
         state:=section_wanted(views.ptr,e,reference)
         slot:=-1
         if loads!=nil {for l,i in loads.items {if l.job!=nil && l.entity==e {slot=i}}}
@@ -179,7 +179,7 @@ scene_sections :: proc(
             job.gated=waits!=nil
             loads.items[free]={job,e}
         }
-        reference=core.at(core.read(references),row)
+        reference=core.at(references,row)
         // Not loaded nor loading: what draws a far form of its own shows, read from its scene apart.
         loading:=slot>=0
         if loads!=nil && !loading {for l in loads.items {if l.job!=nil && l.entity==e {loading=true}}}
@@ -285,7 +285,7 @@ section_hold :: proc(world:core.World_Ref,e:core.Entity,held:bool) -> Error {
         for x in content {
             at,off:=x,false
             for {
-                parent,_:=core.get(core.read(parents),at)
+                parent,_:=core.get(parents,at)
                 if parent.entity==e {
                     off||=!slice.contains(turned[:],at)
                     break

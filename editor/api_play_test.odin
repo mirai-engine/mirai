@@ -253,7 +253,7 @@ the_game_that_plays_is_changed_and_read_by_its_storages_and_conditions :: proc(t
     error,text=probe_call(f,"play.set",strings.concatenate({`{"entity":"`,hero,`","position":[4,5,6],"components":{"Probe_Health":{"target":"`,fmt.tprintf("%016x",u64(f.foe)),`"}}}`},context.temp_allocator))
     testing.expect_value(t,error.code,0)
     testing.expect(t,strings.contains(text,`"teleported": true`),text)
-    health,_:=core.get(core.read(&running.health),f.hero)
+    health,_:=core.get(&running.health,f.hero)
     testing.expect_value(t,health,Probe_Health{points=3,target=f.foe})
     testing.expect_value(t,entity_world(run_ref(&f.s,run_find(&f.s,0)),f.hero).position,[3]f32{4,5,6})
     testing.expect_value(t,len(running.jumps.queue.items),1)

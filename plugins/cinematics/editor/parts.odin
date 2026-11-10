@@ -172,8 +172,8 @@ target_place :: proc(s:^editor.Session,w:core.World_Ref,target:core.Entity,prope
 targets_place :: proc(s:^editor.Session,w:core.World_Ref,timeline:core.Entity,position:f32) {
     tracks,shots:=core.world_table_of(w,cine.Cinematic_Track),core.world_table_of(w,cine.Cinematic_Shot)
     if tracks==nil || shots==nil {return}
-    for row in 0..<core.count(core.read(tracks)) {
-        track:=core.at(core.read(tracks),row)
+    for row in 0..<core.count(tracks) {
+        track:=core.at(tracks,row)
         if track.timeline!=timeline || !editor.entity_alive(w,track.target) || cine.cinematic_shot_camera(core.read(shots),timeline,track.target) {continue}
         if value,ok:=cine.cinematic_track_value(&track,position);ok {target_place(s,w,track.target,track.property,value)}
     }

@@ -186,7 +186,7 @@ agents_far :: proc(
     // Roaming follows whether an agent has somewhere to go; one that has, where only away sections are, goes far.
     for row in 0..<core.count(paths) {
         e:=core.entity_at(paths,row)
-        p:=core.at(core.read(paths),row)
+        p:=core.at(paths,row)
         moving:=p.state==.Waiting || p.state==.Moving || p.state==.Crossing
         if moving!=core.has(roamings,e) {
             if moving {core.add(roamings,e,scene.Roaming{})} else {core.remove(roamings,e)}

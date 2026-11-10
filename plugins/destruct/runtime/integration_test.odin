@@ -249,7 +249,7 @@ fragment_removal_validates_the_group_and_retires_its_physics_proxy :: proc(t:^te
     }
     testing.expect(t,fragment.expires)
     testing.expect_value(t,fragment.remaining_ticks,u32(60))
-    for row in 0..<core.count(core.read(&f.groups)) {
+    for row in 0..<core.count(&f.groups) {
         if f.groups.values[row].group==0 {
             testing.expect_value(t,remove(&f.requests,core.read(&f.groups),f.groups.entities[row]),Remove_Error.Retained_Group)
         }
@@ -362,12 +362,12 @@ authored_destruction_proxies_geometry_and_groups_survive_cache_recovery_offline 
     info:[4]Piece_Info;testing.expect_value(t,pieces(Destruct_View{core.ref(&f.physics),core.ref(&f.fractures),core.read(&f.states),core.read(&f.groups)},e,info[:]),2)
     testing.expect(t,piece_geometry(core.ref(&f.cache),e,info[0].id,&cut_geometry))
     testing.expect_value(t,len(cut_geometry.indices),36)
-    transforms_version:=core.version(core.read(&f.transforms))
+    transforms_version:=core.version(&f.transforms)
     destruct_test_step(&f)
-    testing.expect_value(t,core.version(core.read(&f.transforms)),transforms_version)
+    testing.expect_value(t,core.version(&f.transforms),transforms_version)
     core.remove(&f.configs,e);core.remove(&f.states,e);destruct_test_step(&f)
     testing.expect_value(t,phys.body_of(core.ref(&f.physics),e),sim.Body_Handle(0))
-    testing.expect_value(t,core.count(core.read(&f.groups)),0)
+    testing.expect_value(t,core.count(&f.groups),0)
     testing.expect_value(t,f.physics.world.body_count,i32(0))
 }
 
@@ -398,7 +398,7 @@ rejected_authored_destruction_does_not_leave_root_or_fragment_proxies :: proc(t:
     destruct_test_step(&f)
     testing.expect(t,core.at(&f.states,core.row_of(&f.states,e)).failed)
     testing.expect_value(t,phys.body_of(core.ref(&f.physics),e),sim.Body_Handle(0))
-    testing.expect_value(t,core.count(core.read(&f.groups)),0)
+    testing.expect_value(t,core.count(&f.groups),0)
     testing.expect_value(t,f.physics.world.body_count,i32(0))
     testing.expect_value(t,f.physics.world.shape_count,i32(0))
 }
@@ -435,10 +435,10 @@ successive_cuts_keep_detached_proxies_and_all_live_fragment_meshes :: proc(t:^te
     for pose in poses[:2] {if pose.group!=0 {target=pose}}
     root_mesh:base.Asset_Id
     root_entity:=core.NONE
-    for row in 0..<core.count(core.read(&f.groups)) {
+    for row in 0..<core.count(&f.groups) {
         if f.groups.values[row].group!=0 {continue}
         root_entity=f.groups.entities[row]
-        mesh,_:=core.get(core.read(&f.meshes),root_entity);root_mesh=mesh.mesh
+        mesh,_:=core.get(&f.meshes,root_entity);root_mesh=mesh.mesh
     }
     for pass in 0..<3 {
         pieces_out:[16]Piece_Info
@@ -458,12 +458,12 @@ successive_cuts_keep_detached_proxies_and_all_live_fragment_meshes :: proc(t:^te
         testing.expect(t,core.alive(&f.entities,target.entity))
         testing.expect_value(t,phys.body_of(core.ref(&f.physics),target.entity),target.body)
         testing.expect_value(t,groups(Destruct_View{core.ref(&f.physics),core.ref(&f.fractures),core.read(&f.states),core.read(&f.groups)},e,poses[:]),3+pass)
-        testing.expect_value(t,core.count(core.read(&f.groups)),3+pass)
+        testing.expect_value(t,core.count(&f.groups),3+pass)
         testing.expect_value(t,f.assets.stats.generated,3+pass)
-        root,_:=core.get(core.read(&f.meshes),root_entity)
+        root,_:=core.get(&f.meshes,root_entity)
         testing.expect_value(t,root.mesh,root_mesh)
-        for row in 0..<core.count(core.read(&f.groups)) {
-            mesh,has:=core.get(core.read(&f.meshes),f.groups.entities[row])
+        for row in 0..<core.count(&f.groups) {
+            mesh,has:=core.get(&f.meshes,f.groups.entities[row])
             testing.expect(t,has && host.assets_mesh_generated(&f.assets,mesh.mesh))
         }
     }
@@ -503,8 +503,8 @@ root_slice_requests_preserve_previous_groups_meshes_and_volume_across_ticks :: p
         previous_count=min(groups(Destruct_View{core.ref(&f.physics),core.ref(&f.fractures),core.read(&f.states),core.read(&f.groups)},e,previous[:]),len(previous))
         testing.expect(t,previous_count>=pass+2)
         testing.expect_value(t,f.assets.stats.generated,previous_count)
-        for row in 0..<core.count(core.read(&f.groups)) {
-            mesh,has:=core.get(core.read(&f.meshes),f.groups.entities[row])
+        for row in 0..<core.count(&f.groups) {
+            mesh,has:=core.get(&f.meshes,f.groups.entities[row])
             testing.expect(t,has && host.assets_mesh_generated(&f.assets,mesh.mesh))
         }
     }

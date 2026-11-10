@@ -153,17 +153,17 @@ choosing_custom_keeps_what_the_preset_was_and_undoes_as_one_action :: proc(t:^te
     table:=&f.info.tables[1]
     collision_preset_apply(session,table,core.world_table_at(w,table),f.selection.entities[:],phys.PRESET_CUSTOM,&world.settings)
     history.edits_flush(&f.edits,w,&f.selection)
-    first,_:=core.get(core.read(&world.colliders),a)
-    second,_:=core.get(core.read(&world.colliders),b)
+    first,_:=core.get(&world.colliders,a)
+    second,_:=core.get(&world.colliders,b)
     testing.expect(t,first.preset==phys.PRESET_CUSTOM && first.sensor && first.belongs==1 && first.collides==phys.COLLISION_LAYERS_ALL)
     testing.expect_value(t,second,custom)
     testing.expect_value(t,len(f.edits.steps),1)
     collision_preset_apply(session,table,core.world_table_at(w,table),f.selection.entities[:],phys.PRESET_DEFAULT,&world.settings)
     history.edits_flush(&f.edits,w,&f.selection)
-    first,_=core.get(core.read(&world.colliders),a)
+    first,_=core.get(&world.colliders,a)
     testing.expect(t,first.preset==phys.PRESET_DEFAULT && phys.collision_filter(&world.settings,first)==phys.collision_filter(nil,phys.COLLIDER_DEFAULT))
     testing.expect(t,history.undo(&f.edits,w,&f.selection) && history.undo(&f.edits,w,&f.selection))
-    first,_=core.get(core.read(&world.colliders),a);second,_=core.get(core.read(&world.colliders),b)
+    first,_=core.get(&world.colliders,a);second,_=core.get(&world.colliders,b)
     testing.expect(t,first==trigger && second==custom)
 }
 
