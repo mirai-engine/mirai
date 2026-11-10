@@ -119,7 +119,7 @@ far_round :: proc(j:^Far_Job,worker:int) {
 
 // Moves the builds on: gives each round what it asked for, publishes what is
 // made, and makes again the far meshes whose reads changed.
-@(step="frame")
+@(step="frame",after="streaming_far")
 streaming_far_build :: proc(app:^host.App,wanted:core.Ref(streaming.Streaming_Far),meshes:^streaming.Streaming_Far_Meshes,builds:^Far_Builds,problems:^core.Problems) {
     if app==nil || app.assets==nil || app.assets.renderer==nil || wanted.ptr==nil {return}
     a:=app.assets
