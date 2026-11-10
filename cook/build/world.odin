@@ -18,7 +18,7 @@ import "mirai:std/serial"
 //   @(component) @(component,shared) @(component,locks="core.Transform")
 //   @(component,replicated) @(component,replicated="owner") @(component,replicated="others")
 //   @(storage) @(storage,host) @(storage,setting) @(storage,setting="machine")
-//   @(storage,queue) @(storage,events) @(storage,shared) @(storage,keep)
+//   @(storage,queue) @(storage,shared) @(storage,keep)
 //   @(storage,copy="state_copy") @(storage,free="state_free") @(storage,reset="state_reset")
 //   @(step="fixed late",loops="game editor",stage="end",after="a b",before="c",server)
 //   @(net_message) @(net_message,from="client",reliable) @(net_message,from="owner")
@@ -565,9 +565,8 @@ package_read :: proc(g:^Generator,pkg:^Package) {
                     if !is_call || type_key(g,file,pkg,call.expr)!="mirai:core.Events" {continue}
                     for n in field.names {append(&t.logs,ident_name(n))}
                 }
-                t.events=len(t.logs)>0
             }
-            if t.queue && (t.kind!=.Storage || t.events) {
+            if t.queue && (t.kind!=.Storage || len(t.logs)>0) {
                 append(&g.errors,fmt.aprintf("%s: %s says queue: a storage of requests is @(storage,queue), and it holds no core.Events, which are what a library reports",t.where_,name))
                 continue
             }
@@ -581,7 +580,7 @@ package_read :: proc(g:^Generator,pkg:^Package) {
                 append(&g.errors,fmt.aprintf("%s: %s is by_world: a storage of the application with a value for each World is @(storage,host,by_world) in a library, and is not a setting",t.where_,name))
                 continue
             }
-            if t.persist && (t.kind!=.Storage || t.place!=.World || t.queue || t.events || t.setting!=.None || t.copy=="false" || t.reset!="") {
+            if t.persist && (t.kind!=.Storage || t.place!=.World || t.queue || len(t.logs)>0 || t.setting!=.None || t.copy=="false" || t.reset!="") {
                 append(&g.errors,fmt.aprintf("%s: %s says persist: the progress of the player is a plain @(storage,persist) of a library; not a component, a storage of the application, a queue, events, a setting, nor one that resets or is not copied",t.where_,name))
                 continue
             }
@@ -1369,7 +1368,7 @@ rules_check :: proc(g:^Generator) {
     for s in g.steps {
         if !s.loops[0] || step_shown(s) {continue}
         for param in s.params {
-            if param.type==nil || param.type.queue || param.type.events || run_written[param.type] {continue}
+            if param.type==nil || param.type.queue || len(param.type.logs)>0 || run_written[param.type] {continue}
             writer,shown_only:=shown_writer[param.type]
             if !shown_only {continue}
             append(&g.errors,fmt.aprintf("%s: %s reads %s, which only %s writes, in ui or render: a dedicated server runs neither and there %s keeps the value it starts with; write it in input, fixed, frame or late, or read it in ui or render",s.where_,s.name,param.type.name,writer.name,param.type.name))

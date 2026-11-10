@@ -12,7 +12,6 @@ Declared :: struct {
     far:bool,    // a component that draws a far form of its own: its entity stays when its section unloads
     replication:Replication,
     queue:bool,        // a storage of requests that many push and one library takes
-    events:bool,       // a storage with core.Events fields, as the generator finds it: what one library reports and the others read
     keep:bool,         // a storage of the World that survives clearing it: the state of the run, not of its entities
     persist:bool,      // a keep storage that the save library writes to the profile of the player and reads back
     presentation:bool, // what comes back from the GPU: it decides nothing a rollback runs again, so no function of fixed reads it

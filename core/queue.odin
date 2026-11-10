@@ -13,11 +13,9 @@ queue_push :: proc(q:^Queue($T),item:T) {append(&q.items,item)}
 push :: proc{queue_push,events_push}
 
 // Occurrences: the library that owns the log pushes what happened and never
-// clears it; whoever reads gets what came since it last looked, whatever its
-// cadence. A function that receives the storage of the log to read (S or
-// core.Ref(S)) finds in items what came since it last ran: the generated call
-// keeps its cursor. Code outside the loops keeps one and asks events_since.
-// What every function has had a frame and a tick to read goes (events_age).
+// clears it. A function that receives its storage to read (S or core.Ref(S))
+// finds in items what came since it last ran, whatever its cadence: the
+// generated call keeps its cursor. Code outside the loops keeps one.
 Events :: struct($T:typeid) {
     items:[dynamic]T,
     first:u64, // how many came before items[0]
@@ -26,13 +24,12 @@ Events :: struct($T:typeid) {
 
 events_push :: proc(e:^Events($T),item:T) {append(&e.items,item)}
 
-// What came since cursor, which it moves to now. Valid until the next push.
-// A cursor outside the log is of another one, as after a World was copied
-// over, or of a reader slower than events_age: it gets what the log holds.
+// What came since cursor, which it moves to now; valid until the next push.
+// A cursor of another log, as after a World was copied over, gets what this
+// one holds.
 events_since :: proc "contextless" (e:Events($T),cursor:^u64) -> []T {
     end:=e.first+u64(len(e.items))
-    from:=clamp(cursor^,e.first,end)
-    if cursor^>end {from=end}
+    from:=cursor^>end?end:max(cursor^,e.first)
     cursor^=end
     return e.items[from-e.first:]
 }
@@ -43,10 +40,10 @@ events_read :: proc "contextless" (view:^Events($T),cursor:^u64) {
     view.items=transmute([dynamic]T)runtime.Raw_Dynamic_Array{raw_data(since),len(since),len(since),{}}
 }
 
-// What came before the call before this one goes: the loop that runs a World
-// calls it for each of its logs at the end of a frame, and for a log a fixed
-// function reads only when the frame ran a tick, so whatever runs once a
-// frame or once a tick has read by then what goes. True when the log changed.
+// What came before the call before this one goes. Whoever runs a World calls
+// it at the end of a frame, and for a log a fixed function reads only when the
+// frame ran a tick: what runs once a frame or a tick has read what goes. True
+// when the log changed.
 events_age :: proc "contextless" (e:^Events($T)) -> bool {
     dropped:=e.kept
     if dropped>0 {
