@@ -1545,31 +1545,10 @@ scene_instance_materials :: proc(r: ^Renderer, descriptor: u32) -> (material: Ma
 	return material, inst.slot_materials, s.overlays[index], true
 }
 
-// Four numbers of each instance that extensions give it and read in their
-// shaders (instance_values of scene.slang), by the descriptor of the
-// instance. They stay while the instance keeps its identity, and change
-// neither its light nor its rays. False for a descriptor the scene does not
-// have or a value that is not finite.
-scene_set_instance_values :: proc(r:^Renderer,descriptor:u32,values:Vec4) -> bool {
-    s:=&r.scene
-    if int(descriptor)>=len(s.desc_instance) {return false}
-    for value in values {if value!=value || value-value!=0 {return false}}
-    index:=s.desc_instance[descriptor]
-    if index<0 {return true}
-    inst:=&s.instances[index]
-    if instance_values(inst^)==values {return true}
-    inst.tint.w,inst.emission.w,inst.bounds_min.w,inst.bounds_max.w=values.x,values.y,values.z,values.w
-    instance_touch(s, u32(index))
-    return true
-}
-
-@(private)
-instance_values :: proc "contextless" (inst:Gpu_Instance) -> Vec4 {return {inst.tint.w,inst.emission.w,inst.bounds_min.w,inst.bounds_max.w}}
-
 // How wet an instance is, 0 dry to 1 soaked, by the descriptor of the
 // instance: the materials read it (Mirai_Surface_Context.wet) and the
 // renderer darkens and smooths by it what is not metal, glass or unlit. It
-// stays while the instance keeps its identity, as its values, and changes
+// stays while the instance keeps its identity, and changes
 // neither its light nor its rays. False for a descriptor the scene does not
 // have or a value that is not finite; others are clamped to 0..1.
 scene_set_instance_wet :: proc(r:^Renderer,descriptor:u32,wet:f32) -> bool {
@@ -1587,10 +1566,10 @@ scene_set_instance_wet :: proc(r:^Renderer,descriptor:u32,wet:f32) -> bool {
 
 // What extensions gave an instance, which it keeps with its identity.
 @(private)
-Instance_Given :: struct {values:Vec4,wet:f32}
+Instance_Given :: struct {wet:f32}
 
 @(private)
-instance_given :: proc "contextless" (inst:Gpu_Instance) -> Instance_Given {return {instance_values(inst),inst.wet}}
+instance_given :: proc "contextless" (inst:Gpu_Instance) -> Instance_Given {return {inst.wet}}
 
 // Room for count instances in every table that holds one of each, and in
 // those of what rays and glass need of them. False without memory.
@@ -1611,7 +1590,6 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
     desc:=desc
     // An instance whose material programs move its vertices shows its own pose of its mesh.
     desc.mesh=displaced_mesh(r,desc)
-    values:=given.values
     count:=int(index)+1
     if before:=len(s.instances);count>before {
         if resize(&s.instances,count)!=nil || resize(&s.instance_next,count)!=nil || resize(&s.instance_prev,count)!=nil || resize(&s.overlays,count)!=nil ||
@@ -1653,10 +1631,10 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 			world_inv = rows_3x4(inverse),
 			prev_world = rows_3x4(previous),
 			meta = {u32(desc.mesh) | cut, material, u32(desc.object_id), flags},
-			bounds_min = {bmin.x, bmin.y, bmin.z, values.z},
-			bounds_max = {bmax.x, bmax.y, bmax.z, values.w},
-			tint = {desc.tint.x, desc.tint.y, desc.tint.z, values.x},
-			emission = {desc.emission.x, desc.emission.y, desc.emission.z, values.y},
+			bounds_min = {bmin.x, bmin.y, bmin.z, 0},
+			bounds_max = {bmax.x, bmax.y, bmax.z, 0},
+			tint = {desc.tint.x, desc.tint.y, desc.tint.z, 0},
+			emission = {desc.emission.x, desc.emission.y, desc.emission.z, 0},
 			wet = given.wet,
 		}
 		// Without room for its values it shows its rows as they are (stats.problem says what is missing).

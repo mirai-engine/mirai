@@ -244,7 +244,7 @@ the_tree_of_a_traced_batch_is_built_for_rays_traced_by_software_alone :: proc(t:
 }
 
 @(test)
-values_given_to_a_batch_change_its_row_in_place_and_stay_until_it_is_set_again :: proc(t: ^testing.T) {
+a_batch_says_what_it_is_and_its_revision_moves_when_it_is_set_again :: proc(t: ^testing.T) {
 	r:=new(Renderer);defer free(r)
 	r.allocator = context.allocator
 	scene_init(r)
@@ -253,21 +253,10 @@ values_given_to_a_batch_change_its_row_in_place_and_stay_until_it_is_set_again :
 	instances := [2]Batch_Instance{batch_instance({0, 0, 0}, 1, 1, 1), batch_instance({3, 0, 0}, 1, 1, 1)}
 	handle, _ := batch_set(r, 0, 0, {mesh = mesh, object_id = 42}, instances[:])
 	revision := batches_revision(r)
-	batches_build(r)
-	b := &r.scene.batch
-	b.upload = false
-	testing.expect(t, batch_values_set(r, handle, {0.2, 5, 0, 1}))
-	testing.expect(t, b.built && b.upload, "the row changes without building the tables again")
-	testing.expect(t, b.rows[0].tint.w == 0.2 && b.rows[0].emission.w == 5 && b.rows[0].bounds_max.w == 1)
-	testing.expect_value(t, batches_revision(r), revision)
-	testing.expect(t, !batch_values_set(r, handle, {math.nan_f32(), 0, 0, 0}))
 	info, ok := batch_info(r, 0)
-	testing.expect(t, ok && info.handle == handle && info.object_id == 42 && info.values == Vec4{0.2, 5, 0, 1} && info.count == 2)
-	// Set again by its owner, it takes the values of its description.
+	testing.expect(t, ok && info.handle == handle && info.object_id == 42 && info.count == 2)
 	batch_set(r, handle, 0, {mesh = mesh, object_id = 42}, instances[:])
 	testing.expect(t, batches_revision(r) > revision)
-	info, _ = batch_info(r, 0)
-	testing.expect_value(t, info.values, Vec4{})
 	testing.expect(t, batch_remove(r, handle))
 	_, ok = batch_info(r, 0)
 	testing.expect(t, !ok)

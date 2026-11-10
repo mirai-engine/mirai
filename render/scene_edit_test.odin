@@ -428,41 +428,6 @@ mesh_slab_axes_need_every_vertex_on_a_face_of_the_box :: proc(t: ^testing.T) {
 }
 
 @(test)
-instance_values_stay_with_the_identity_of_the_instance_and_change_no_light :: proc(t:^testing.T) {
-    r:=new(Renderer);defer free(r)
-    r.allocator=context.allocator
-    scene_init(r)
-    defer scene_destroy(r)
-    vertices,indices:=edit_grid(4,2)
-    defer delete(vertices);defer delete(indices)
-    handle,_:=edit_add(r,vertices[:],indices[:],{0,1})
-    materials_set(r,{DEFAULT_MATERIAL})
-    a:=Instance_Desc{object_id=1,mesh=handle,transform=Mat4(1),tint={1,1,1}}
-    b:=Instance_Desc{object_id=2,mesh=handle,transform=Mat4(1),tint={1,1,1}}
-    scene_set(r,{a,b},nil,{},{})
-    s:=&r.scene
-    s.changes={}
-    values:=Vec4{0.25,3,0,1}
-    testing.expect(t,scene_set_instance_values(r,1,values))
-    testing.expect_value(t,instance_values(s.instances[s.desc_instance[1]]),values)
-    testing.expect(t,!s.changes.all && s.changes.count==0,"values change no light")
-    testing.expect(t,!scene_set_instance_values(r,2,values),"a descriptor the scene does not have")
-    testing.expect(t,!scene_set_instance_values(r,0,{0,0,0,max(f32)*2}),"a value that is not finite")
-    moved:=Mat4(1);moved[0,3]=2
-    scene_move(r,{1},{moved})
-    testing.expect(t,scene_tint(r,{1},{{0.5,0.5,0.5}},{{0,0,0}}))
-    testing.expect_value(t,instance_values(s.instances[s.desc_instance[1]]),values)
-    scene_set(r,{a,b},nil,{},{})
-    testing.expect_value(t,instance_values(s.instances[s.desc_instance[1]]),values)
-    testing.expect(t,scene_update(r,1,{b}))
-    testing.expect_value(t,instance_values(s.instances[s.desc_instance[1]]),values)
-    other:=b
-    other.object_id=3
-    testing.expect(t,scene_update(r,1,{other}))
-    testing.expect_value(t,instance_values(s.instances[s.desc_instance[1]]),Vec4{})
-}
-
-@(test)
 how_wet_an_instance_is_stays_with_its_identity_and_changes_no_light :: proc(t:^testing.T) {
     r:=new(Renderer);defer free(r)
     r.allocator=context.allocator
@@ -477,11 +442,8 @@ how_wet_an_instance_is_stays_with_its_identity_and_changes_no_light :: proc(t:^t
     scene_set(r,{a,b},nil,{},{})
     s:=&r.scene
     s.changes={}
-    values:=Vec4{0.25,3,0,1}
-    testing.expect(t,scene_set_instance_values(r,1,values))
     testing.expect(t,scene_set_instance_wet(r,1,0.75))
     testing.expect_value(t,s.instances[s.desc_instance[1]].wet,f32(0.75))
-    testing.expect_value(t,instance_values(s.instances[s.desc_instance[1]]),values)
     testing.expect_value(t,s.instances[s.desc_instance[0]].wet,f32(0))
     testing.expect(t,!s.changes.all && s.changes.count==0,"how wet it is changes no light")
     testing.expect(t,!scene_set_instance_wet(r,2,1),"a descriptor the scene does not have")

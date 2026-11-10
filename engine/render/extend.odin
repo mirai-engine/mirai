@@ -359,14 +359,6 @@ instance_placed :: proc(renderer:^Renderer,index:int) -> (mesh:Mesh_Handle,trans
     if renderer==nil || index<0 {return}
     return gpu.scene_instance_placed(renderer,u32(index))
 }
-// Four numbers of an instance of the renderer, by its index (instance_object), that
-// the shaders of the plugin read with instance_values (scene.slang): they
-// stay while the instance keeps its identity and change neither its light
-// nor its rays. False for an index the renderer does not have or a value that
-// is not finite.
-instance_values_set :: proc(renderer:^Renderer,index:int,values:[4]f32) -> bool {
-    return renderer!=nil && index>=0 && gpu.scene_set_instance_values(renderer,u32(index),values)
-}
 // How wet an instance of the renderer is, by its index (instance_object): 0 dry to 1
 // soaked. Every material darkens and smooths by it what is not metal, glass
 // or unlit, and a program reads it in Mirai_Surface_Context.wet. It stays
@@ -485,27 +477,17 @@ Batch_Info :: gpu.Batch_Info
 Batch_Hit :: gpu.Batch_Hit
 
 // Changes when a batch comes, goes or is set again: what an extension that
-// gives batches values (batch_values_set) compares to know when to go
-// through them again.
+// goes through the batches compares to know when to go through them again.
 batches_revision :: proc(renderer:^Renderer) -> u64 {return renderer!=nil?gpu.batches_revision(renderer):0}
 
 // The records of the batches, to go through them with batch_info.
 batch_records :: proc(renderer:^Renderer) -> int {return renderer!=nil?gpu.batch_records(renderer):0}
 
-// The batch of a record: its handle, world, object id, values and
+// The batch of a record: its handle, world, object id, mesh and
 // instances. False for a record that holds none.
 batch_info :: proc(renderer:^Renderer,index:int) -> (info:Batch_Info,ok:bool) {
     if renderer==nil {return}
     return gpu.batch_info(renderer,index)
-}
-
-// Four numbers of a batch that the shaders of a plugin read with
-// instance_values (scene.slang), as Batch_Desc.values, given by an
-// extension that does not own the batch: they stay until its owner sets it
-// again, and change neither its light nor its rays. False for a handle
-// that names no batch or a value that is not finite.
-batch_values_set :: proc(renderer:^Renderer,handle:Batch_Handle,values:[4]f32) -> bool {
-    return renderer!=nil && gpu.batch_values_set(renderer,handle,values)
 }
 
 // The instance of a batch of a world a ray of the world meets first within

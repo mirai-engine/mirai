@@ -1064,11 +1064,6 @@ float hit_lod(float3 world_edge1, float3 world_edge2, float2 uv_edge1, float2 uv
     return 0.5 * log2(max(uv_area, 1e-12) / max(world_area, 1e-12)) + log2(max(footprint, 1e-6));
 }
 
-// The four numbers an extension gave the instance (scene_set_instance_values).
-float4 instance_values(uint instance_index) {
-    Instance inst = scene_instance(instance_index);
-    return float4(inst.tint.w, inst.emission.w, inst.bounds_min.w, inst.bounds_max.w);
-}
 
 // What multiplies the base color of a material at a vertex of that color: the
 // color, but for a program, which reads it in its context.

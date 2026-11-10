@@ -143,7 +143,7 @@ Gpu_Instance :: struct {
 	bounds_min: Vec4,
 	bounds_max: Vec4,
 	tint:       Vec4,
-	emission:   Vec4, // the w of tint, emission, bounds_min and bounds_max: the values of extensions (scene_set_instance_values)
+	emission:   Vec4,
 	glass:      Vec4, // written on the GPU by glass_mean.comp after every upload (glass_means_record)
 	slot_materials: [32]u32,
 	wet:        f32,    // 0 dry to 1 soaked, which the materials read (scene_set_instance_wet)
