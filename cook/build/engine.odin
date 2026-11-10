@@ -316,14 +316,16 @@ ENGINE_EMBEDS_SHADERS :: "render"
 @(private)
 engine_plan :: proc(root,compiler:string,mode:Engine_Mode,paths:Engine_Paths,libraries:[]Engine_Library) -> (plan:Engine_Plan) {
     plan.flags=engine_flags(root,mode==.Dev)
-    // render embeds the code of the shaders of the engine, whose manifest has the hash of each.
-    // A release build embeds it as encoded to ship; a dev build, however it was encoded.
+    // render embeds the code of the shaders of the engine. A release build follows it, encoded to
+    // ship. A dev build follows only its table (render/shaders_gen.odin), which says what the
+    // stages bind and nothing of their code: the code it embeds is that of when it was compiled,
+    // and a generation with newer code loads into it (render.shader_generation_current).
     names:=shaders.EMBEDDED_NAMES
     embedded:=[2]string{project.path(root,"shaders/build/manifest.json",allocator=context.temp_allocator),project.path(root,"shaders/build",names[shaders.HOST_BACKEND],allocator=context.temp_allocator)}
     plan.programs,_=fingerprint(root,compiler,plan.flags[:],nil)
     plan.libraries=make([]Library_Stamp,len(libraries),context.temp_allocator)
     for &library,which in plan.libraries {
-        loads:=(embedded[:] if mode==.Release else embedded[:1]) if slice.contains(libraries[which].packages,ENGINE_EMBEDS_SHADERS) else nil
+        loads:=embedded[:] if mode==.Release && slice.contains(libraries[which].packages,ENGINE_EMBEDS_SHADERS) else nil
         library.sources,_=fingerprint(root,compiler,plan.flags[:],engine_sources(root,libraries[which].packages,..loads))
         library.tools,_=fingerprint(root,compiler,plan.flags[:],loads)
     }
