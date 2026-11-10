@@ -1263,7 +1263,7 @@ breakables_update :: proc(w:^World) {
         shapes:=[2]Shape_Handle{hit.shape_a,hit.shape_b}
         for shape,side in shapes {
             tag:=shape_tag(w,shape)
-            if tag==0 || i32(tag-1)>=w.piece_high || w.pieces[tag-1].shape!=shape {continue}
+            if tag==0 || tag-1>=u32(w.piece_high) || w.pieces[tag-1].shape!=shape {continue}
             piece:=&w.pieces[tag-1]
             if piece.flags&{.Debris,.Gone}!={} {continue}
             d:=&w.breakables[piece.breakable]

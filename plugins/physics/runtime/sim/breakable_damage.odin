@@ -68,7 +68,7 @@ breakable_of :: proc(w:^World,body:Body_Handle) -> (h:Breakable_Handle,piece:i32
     if b==nil || !w.breaking.made || w.kept {return {},-1}
     for shape:=b.shape_list;shape>=0;shape=w.shapes[shape].next {
         tag:=w.shapes[shape].tag
-        if tag==0 || i32(tag-1)>=w.piece_high || w.pieces[tag-1].shape!=shape_handle(w,shape) {continue}
+        if tag==0 || tag-1>=u32(w.piece_high) || w.pieces[tag-1].shape!=shape_handle(w,shape) {continue}
         return breakable_handle(w,w.pieces[tag-1].breakable),i32(tag-1)
     }
     return {},-1

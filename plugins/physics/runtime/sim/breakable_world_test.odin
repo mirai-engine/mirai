@@ -206,6 +206,25 @@ breakables_and_bodies_asked_for_with_hostile_values_are_refused :: proc(t:^testi
     }
     owner,held:=breakable_of(&w,root)
     testing.expect(t,owner==wall && held>=0)
+    // A shape of another owner whose tag is no piece: its hits damage nothing, and its body is of no breakable.
+    for tag in ([]u32{max(u32),1<<31,u32(len(w.pieces))+1,u32(held)+1}) {
+        desc:=BODY_DESC_DEFAULT
+        desc.position,desc.linear_velocity={0,6,0},{0,-20,0}
+        tagged:=body_create(&w,desc)
+        shape:=SHAPE_DESC_DEFAULT
+        shape.geometry,shape.hits,shape.tag=Sphere{0.25},true,tag
+        shape_create(&w,tagged,shape)
+        strange,none:=breakable_of(&w,tagged)
+        testing.expect(t,strange=={} && none==-1)
+        hits:=0
+        for _ in 0..<30 {
+            world_step(&w,1.0/60)
+            hits+=len(world_events(&w).hit)
+            for event in world_events(&w).breaks {testing.expect(t,event.breakable==wall)}
+        }
+        testing.expectf(t,hits>0,"the shape tagged %v hit nothing",tag)
+        body_destroy(&w,tagged)
+    }
     for h in ([]Breakable_Handle{{},Breakable_Handle(max(u64)),Breakable_Handle(u64(wall)+2)}) {
         testing.expect(t,!breakable_valid(&w,h) && breakable_pieces(&w,h,nil)==0 && breakable_state_size(&w,h)==0 && breakable_check(&w,h)==0)
         _,broke:=breakable_damage(&w,h,{0,1,0},3,{0,0,-9000})
