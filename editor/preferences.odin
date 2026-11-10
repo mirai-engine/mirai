@@ -160,7 +160,7 @@ Api_Preferences_Get_Params :: struct {
 }
 
 Api_Preferences :: struct {
-    file:[512]u8 `mirai:"text,label=The file that keeps them; empty: this editor keeps none (--headless without --preferences) and a change lasts until it closes"`,
+    file:string `mirai:"label=The file that keeps them; empty: this editor keeps none (--headless without --preferences) and a change lasts until it closes"`,
     preferences:serial.Json `mirai:"label=Every value in effect: a section per area of the editor with its fields"`,
     kept:serial.Json `mirai:"label=The sections and fields the file sets over the values of the code"`,
 }
@@ -171,8 +171,8 @@ Api_Preferences_Set_Params :: struct {
 
 @(private)
 preferences_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="preferences.get",summary="The preferences of the editor on this machine, the same for every project: its panels, viewport, lists, console, Play and chats, and of the plugins.",params=Api_Preferences_Get_Params,result=Api_Preferences,writes_result=true,flags={.Read_Only},run=api_preferences_get})
-    api_register(s,st,{name="preferences.set",params=Api_Preferences_Set_Params,summary="Changes preferences of the editor; they take effect at once, the file keeps what differs from the values of the code and it answers with the areas changed.",result=Api_Preferences,writes_result=true,run=api_preferences_set})
+    api_register(s,st,{name="preferences.get",summary="The preferences of the editor on this machine, the same for every project: its panels, viewport, lists, console, Play and chats, and of the plugins.",params=Api_Preferences_Get_Params,result=Api_Preferences,flags={.Read_Only},run=api_preferences_get})
+    api_register(s,st,{name="preferences.set",params=Api_Preferences_Set_Params,summary="Changes preferences of the editor; they take effect at once, the file keeps what differs from the values of the code and it answers with the areas changed.",result=Api_Preferences,run=api_preferences_set})
 }
 
 @(private)
@@ -192,36 +192,21 @@ api_preferences_write :: proc(s:^Session,call:^api.Call,keep:[]bool) {
         return
     }
     project.settings_default(code)
-    out:=call.out
-    serial.text_write_raw(out,`{"file": `)
-    serial.text_write_string(out,s.preferences!=nil?s.preferences.file:"")
-    serial.text_write_raw(out,`, "preferences": `)
     shown:=settings_kept(list,keep)
-    serial.text_write_raw(out,strings.trim_space(project.settings_text(shown,{},{},context.temp_allocator)))
-    serial.text_write_raw(out,`, "kept": `)
-    serial.text_write_raw(out,strings.trim_space(project.settings_text(shown,settings_kept(code,keep),{},context.temp_allocator)))
-    serial.write_u8(out,'}')
+    api.call_result(call,Api_Preferences)^={
+        s.preferences!=nil?s.preferences.file:"",
+        serial.Json(strings.trim_space(project.settings_text(shown,{},{},call.allocator))),
+        serial.Json(strings.trim_space(project.settings_text(shown,settings_kept(code,keep),{},call.allocator))),
+    }
 }
 
 // Read into copies and checked against the fields of each area: a change that
 // fails leaves every preference as it was.
 @(private)
 api_preferences_set :: proc(s:^Session,call:^api.Call) {
-    USAGE :: `params are {"preferences": {"<Area>": {"<field>": value}}}`
-    r:serial.Text_Reader
-    serial.text_reader_init(&r,call.raw,context.temp_allocator)
-    defer serial.text_reader_destroy(&r)
-    sections:=""
-    if serial.text_accept(&r,'{') && !serial.text_accept(&r,'}') {
-        key,named:=serial.text_string(&r)
-        if named && key=="preferences" && serial.text_expect(&r,':') && serial.text_peek(&r)=='{' {
-            start:=r.offset
-            if serial.text_skip(&r) {sections=r.text[start:r.offset]}
-        }
-        if !serial.text_expect(&r,'}') || !serial.text_end(&r) {sections=""}
-    }
-    if sections=="" {
-        api.call_fail(call,api.INVALID_PARAMS,USAGE)
+    sections:=strings.trim_space(string(api.call_params(call,Api_Preferences_Set_Params).preferences))
+    if !strings.has_prefix(sections,"{") {
+        api.call_fail(call,api.INVALID_PARAMS,`preferences is an object of areas: {"<Area>": {"<field>": value}}`)
         return
     }
     list:=preferences_list(s)

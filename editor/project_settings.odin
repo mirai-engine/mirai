@@ -220,21 +220,21 @@ Api_Project_Plugin :: struct {
     needed_by:project.Name `mirai:"text,label=An active plugin that depends on it; empty: none"`,
     automatic:bool `mirai:"label=Active exactly when its dependencies are: it cannot be activated by name"`,
     development:bool `mirai:"label=A tool for making the game: never in a published game"`,
-    origin:[8]u8 `mirai:"text,label=project or engine"`,
+    origin:string `mirai:"label=project or engine"`,
     version:project.Version `mirai:"text"`,
 }
 
 Api_Project :: struct {
-    file:[256]u8 `mirai:"text,label=The project.mirai it reads and writes"`,
-    manifest:serial.Json `mirai:"label=project.mirai: name version identifier icon thumbnail start_scene plugins window and build"`,
+    file:string `mirai:"label=The project.mirai it reads and writes"`,
+    manifest:project.Manifest `mirai:"label=project.mirai"`,
     plugins:[]Api_Project_Plugin `mirai:"label=Every plugin the project can see"`,
 }
 
 // What project.set writes.
 Api_Project_Changed :: struct {
     building:bool `mirai:"label=A build of the project still runs: the plugins or the options of the build changed and its wait ran out"`,
-    build_error:[512]u8 `mirai:"text,label=Empty; or the first error of the build the change started and that failed"`,
-    active_plugins:[][64]u8 `mirai:"text,label=The plugins on after the change; project.get gives the manifest and every plugin"`,
+    build_error:string `mirai:"label=Empty; or the first error of the build the change started and that failed"`,
+    active_plugins:[]string `mirai:"label=The plugins on after the change; project.get gives the manifest and every plugin"`,
 }
 
 Api_Project_Set_Params_Window_Mode :: enum u8 {Maximized,Fullscreen,Windowed}
@@ -264,8 +264,8 @@ Api_Project_Set_Params :: struct {
 
 @(private)
 project_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="project.get",summary="project.mirai (name, version, identifier, icon, thumbnail, start scene, window and build) and every plugin the project can see, active or not.",result=Api_Project,writes_result=true,flags={.Read_Only},run=api_project_get})
-    api_register(s,st,{name="project.set",params=Api_Project_Set_Params,summary="Changes the fields of project.mirai it names and activates or deactivates plugins; a change of the plugins or of build starts a build, which restarts the editor, and answers when it ends, with build_error when it failed.",result=Api_Project_Changed,writes_result=true,run=api_project_set})
+    api_register(s,st,{name="project.get",summary="project.mirai (name, version, identifier, icon, thumbnail, start scene, window and build) and every plugin the project can see, active or not.",result=Api_Project,flags={.Read_Only},run=api_project_get})
+    api_register(s,st,{name="project.set",params=Api_Project_Set_Params,summary="Changes the fields of project.mirai it names and activates or deactivates plugins; a change of the plugins or of build starts a build, which restarts the editor, and answers when it ends, with build_error when it failed.",result=Api_Project_Changed,run=api_project_set})
 }
 
 @(private)
@@ -283,82 +283,22 @@ api_project_write :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.SERVER_ERROR,project.error_text(s.project_root,error,context.temp_allocator))
         return
     }
-    out:=call.out
-    serial.text_write_raw(out,`{"file": `)
-    serial.text_write_string(out,file)
-    serial.text_write_raw(out,`, "manifest": `)
-    serial.text_write_raw(out,strings.trim_space(project.manifest_text(&opened.manifest,context.temp_allocator)))
-    serial.text_write_raw(out,`, "plugins": [`)
+    r:=api.call_result(call,Api_Project)
+    r.file=file
+    r.manifest=opened.manifest
+    plugins:=make([]Api_Project_Plugin,len(opened.plugins),call.allocator)
     for &plugin,i in opened.plugins {
         name:=base.text_get(plugin.manifest.name[:])
-        needed:=""
+        shown:=&plugins[i]
+        shown^={name=plugin.manifest.name,active=slice.contains(opened.active,i),automatic=plugin.manifest.automatic,development=plugin.manifest.development,origin=plugin.origin==.Engine?"engine":"project",version=plugin.manifest.version}
         for index in opened.active {
             for &dependency in opened.plugins[index].manifest.dependencies {
-                if base.text_get(dependency[:])==name {needed=base.text_get(opened.plugins[index].manifest.name[:])}
+                if base.text_get(dependency[:])==name {shown.needed_by=opened.plugins[index].manifest.name}
             }
         }
-        named:=false
-        for &entry in opened.manifest.plugins {named|=base.text_get(entry[:])==name}
-        serial.text_write_raw(out,i>0?", {":"{")
-        serial.text_write_raw(out,`"name": `)
-        serial.text_write_string(out,name)
-        serial.text_write_raw(out,fmt.tprintf(`, "active": %v, "named": %v, "needed_by": `,slice.contains(opened.active,i),named))
-        serial.text_write_string(out,needed)
-        serial.text_write_raw(out,fmt.tprintf(`, "automatic": %v, "development": %v, "origin": "%s", "version": `,plugin.manifest.automatic,plugin.manifest.development,plugin.origin==.Engine?"engine":"project"))
-        serial.text_write_string(out,base.text_get(plugin.manifest.version[:]))
-        serial.write_u8(out,'}')
+        for &entry in opened.manifest.plugins {shown.named|=base.text_get(entry[:])==name}
     }
-    serial.text_write_raw(out,"]}")
-}
-
-// The fields of project.mirai of the params, as an object of its own, and
-// the plugins they switch on and off; message says what is wrong with them.
-@(private)
-api_project_params :: proc(raw:string) -> (fields:string,on,off:[]string,message:string) {
-    USAGE :: `params are the fields of project.mirai to change, as project.get writes them, and "plugins": {"<plugin>": true or false}`
-    r:serial.Text_Reader
-    serial.text_reader_init(&r,raw,context.temp_allocator)
-    defer serial.text_reader_destroy(&r)
-    object:=strings.builder_make(context.temp_allocator)
-    switched_on,switched_off:=make([dynamic]string,context.temp_allocator),make([dynamic]string,context.temp_allocator)
-    strings.write_byte(&object,'{')
-    if !serial.text_accept(&r,'{') {return "",nil,nil,USAGE}
-    if !serial.text_accept(&r,'}') {
-        for {
-            serial.text_space(&r)
-            start:=r.offset
-            key,named:=serial.text_string(&r)
-            if !named || !serial.text_expect(&r,':') {return "",nil,nil,USAGE}
-            if key!="plugins" {
-                if !serial.text_skip(&r) {return "",nil,nil,USAGE}
-                if len(object.buf)>1 {strings.write_byte(&object,',')}
-                strings.write_string(&object,r.text[start:r.offset])
-            } else {
-                if !serial.text_accept(&r,'{') {return "",nil,nil,`plugins is an object: {"<plugin>": true to activate it, false to deactivate it}`}
-                if !serial.text_accept(&r,'}') {
-                    for {
-                        plugin,ok:=serial.text_string(&r)
-                        if !ok || !serial.text_expect(&r,':') {return "",nil,nil,`plugins is an object: {"<plugin>": true to activate it, false to deactivate it}`}
-                        plugin=strings.clone(plugin,context.temp_allocator)
-                        switch {
-                        case serial.text_keyword(&r,"true"):  append(&switched_on,plugin)
-                        case serial.text_keyword(&r,"false"): append(&switched_off,plugin)
-                        case: return "",nil,nil,fmt.tprintf("plugins: %s is true to activate it or false to deactivate it",plugin)
-                        }
-                        if serial.text_accept(&r,',') {continue}
-                        if !serial.text_expect(&r,'}') {return "",nil,nil,USAGE}
-                        break
-                    }
-                }
-            }
-            if serial.text_accept(&r,',') {continue}
-            if !serial.text_expect(&r,'}') {return "",nil,nil,USAGE}
-            break
-        }
-    }
-    if !serial.text_end(&r) {return "",nil,nil,USAGE}
-    strings.write_byte(&object,'}')
-    return strings.to_string(object),switched_on[:],switched_off[:],""
+    r.plugins=plugins
 }
 
 // Nothing is written unless all of it is valid.
@@ -368,10 +308,34 @@ api_project_set :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.SERVER_ERROR,"There is no project: open a folder with a project.mirai")
         return
     }
-    fields,on,off,message:=api_project_params(call.raw)
-    if message!="" {
-        api.call_fail(call,api.INVALID_PARAMS,message)
-        return
+    // The fields it gives go over project.mirai as they are; plugins switches plugins.
+    fields:=strings.builder_make(context.temp_allocator)
+    strings.write_byte(&fields,'{')
+    members,_:=api.json_members(call.raw)
+    for member in members {
+        if member.name=="plugins" {continue}
+        if len(fields.buf)>1 {strings.write_byte(&fields,',')}
+        strings.write_quoted_string(&fields,member.name)
+        strings.write_byte(&fields,':')
+        strings.write_string(&fields,member.value)
+    }
+    strings.write_byte(&fields,'}')
+    on,off:=make([dynamic]string,context.temp_allocator),make([dynamic]string,context.temp_allocator)
+    if plugins:=string(api.call_params(call,Api_Project_Set_Params).plugins);plugins!="" {
+        switched,is_object:=api.json_members(plugins)
+        if !is_object {
+            api.call_fail(call,api.INVALID_PARAMS,`plugins is an object: {"<plugin>": true to activate it, false to deactivate it}`)
+            return
+        }
+        for member in switched {
+            switch member.value {
+            case "true":  append(&on,member.name)
+            case "false": append(&off,member.name)
+            case:
+                api.call_failf(call,api.INVALID_PARAMS,"plugins: %s is true to activate it or false to deactivate it",member.name)
+                return
+            }
+        }
     }
     file:=project.path(s.project_root,project.PROJECT_FILE,allocator=context.temp_allocator)
     manifest,error:=project.manifest_read(file)
@@ -379,7 +343,7 @@ api_project_set :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.SERVER_ERROR,project.error_text(s.project_root,error,context.temp_allocator))
         return
     }
-    if error=project.manifest_merge(&manifest,fields);error.code!=.None {
+    if error=project.manifest_merge(&manifest,strings.to_string(fields));error.code!=.None {
         if error.code==.Text {
             api.call_failf(call,api.INVALID_PARAMS,"%s at column %d of the fields",error.detail,error.column)
         } else {
@@ -387,12 +351,12 @@ api_project_set :: proc(s:^Session,call:^api.Call) {
         }
         return
     }
-    if message=project_plugins_switch(s,&manifest,on,off);message!="" {
+    if message:=project_plugins_switch(s,&manifest,on[:],off[:]);message!="" {
         api.call_fail(call,api.INVALID_PARAMS,message)
         return
     }
-    building:bool
-    if message,building=project_manifest_store(s,&manifest);message!="" {
+    message,building:=project_manifest_store(s,&manifest)
+    if message!="" {
         api.call_fail(call,api.INVALID_PARAMS,message)
         return
     }
@@ -427,14 +391,8 @@ api_project_set_write :: proc(s:^Session,call:^api.Call,building:bool,build_erro
         api.call_fail(call,api.SERVER_ERROR,project.error_text(s.project_root,error,context.temp_allocator))
         return
     }
-    out:=call.out
-    serial.text_write_raw(out,fmt.tprintf(`{{"building": %v, "build_error": `,building))
-    serial.text_write_string(out,build_error)
-    serial.text_write_raw(out,`, "active_plugins": [`)
-    for index,i in opened.active {
-        if i>0 {serial.text_write_raw(out,", ")}
-        serial.text_write_string(out,base.text_get(opened.plugins[index].manifest.name[:]))
-    }
-    serial.text_write_raw(out,"]}")
+    active:=make([]string,len(opened.active),call.allocator)
+    for index,i in opened.active {active[i]=strings.clone(base.text_get(opened.plugins[index].manifest.name[:]),call.allocator)}
+    api.call_result(call,Api_Project_Changed)^={building,build_error,active}
 }
 

@@ -73,7 +73,7 @@ Manifest :: struct {
     icon:Path `mirai:"text"`,                 // a PNG of the window of the game, relative to the project, with forward slashes. Empty: none
     thumbnail:Path `mirai:"text"`,            // a PNG the list of projects shows it with, relative to the project, with forward slashes. Empty: the view of its start scene
     start_scene:Path `mirai:"text,kind=.scene"`, // relative to the assets folder of the project, with forward slashes. Empty: none
-    plugins:[MAX_PLUGINS]Name `mirai:"text,hidden"`, // active plugins, of the project or of the engine
+    plugins:[MAX_PLUGINS]Name `mirai:"text,trim,hidden"`, // active plugins, of the project or of the engine
     sources:[MAX_SOURCES]Source `mirai:"trim,hidden"`, // plugins of its plugins/ that come from git
     window:Window `mirai:"section=Window"`,
     build:Build_Options `mirai:"section=Build"`,

@@ -798,7 +798,7 @@ Api_Settings_Get_Params :: struct {
 }
 
 Api_Settings :: struct {
-    machine:[][64]u8 `mirai:"text,optional,label=The settings of the machine: the only ones the file of the engine holds; only without sections"`,
+    machine:[]string `mirai:"optional,label=The settings of the machine: the only ones the file of the engine holds; only without sections"`,
     settings:serial.Json `mirai:"label=Every value in effect: a section per setting with its fields"`,
     engine:serial.Json `mirai:"label=The sections and fields the file of the engine sets over the values of the code"`,
     project:serial.Json `mirai:"label=The sections and fields the file of the project sets over the engine and the code"`,
@@ -814,8 +814,8 @@ Api_Settings_Set_Params :: struct {
 
 @(private)
 settings_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="settings.get",summary="The settings of the engine, the active plugins and the game: the values in effect and what the file of each layer sets over the layers under it.",params=Api_Settings_Get_Params,result=Api_Settings,writes_result=true,flags={.Read_Only},run=api_settings_get})
-    api_register(s,st,{name="settings.set",params=Api_Settings_Set_Params,summary="Changes settings in a layer, whose file keeps what differs from the layers under it; the edited World and the games that play take the result at once and it answers with the sections changed.",result=Api_Settings,writes_result=true,run=api_settings_set})
+    api_register(s,st,{name="settings.get",summary="The settings of the engine, the active plugins and the game: the values in effect and what the file of each layer sets over the layers under it.",params=Api_Settings_Get_Params,result=Api_Settings,flags={.Read_Only},run=api_settings_get})
+    api_register(s,st,{name="settings.set",params=Api_Settings_Set_Params,summary="Changes settings in a layer, whose file keeps what differs from the layers under it; the edited World and the games that play take the result at once and it answers with the sections changed.",result=Api_Settings,run=api_settings_set})
 }
 
 @(private)
@@ -886,68 +886,18 @@ api_settings_write :: proc(s:^Session,call:^api.Call,keep:[]bool) {
         api.call_fail(call,api.SERVER_ERROR,settings_error_text(s,error,layer))
         return
     }
-    out:=call.out
-    serial.write_u8(out,'{')
+    r:=api.call_result(call,Api_Settings)
     if keep==nil {
-        serial.text_write_raw(out,`"machine": [`)
-        count:=0
+        machine:=make([dynamic]string,call.allocator)
         for info in s.info.storages {
-            if info.setting!=.Machine {continue}
-            serial.text_write_raw(out,count>0?", ":"")
-            serial.text_write_string(out,info.name)
-            count+=1
+            if info.setting==.Machine {append(&machine,info.name)}
         }
-        serial.text_write_raw(out,`], `)
+        r.machine=machine[:]
     }
     shown,under,top:=settings_kept(current,keep),settings_kept(engine,keep),settings_kept(code,keep)
-    serial.text_write_raw(out,`"settings": `)
-    serial.text_write_raw(out,strings.trim_space(project.settings_text(shown,{},{},context.temp_allocator)))
-    serial.text_write_raw(out,`, "engine": `)
-    serial.text_write_raw(out,strings.trim_space(project.settings_text(under,top,{},context.temp_allocator)))
-    serial.text_write_raw(out,`, "project": `)
-    serial.text_write_raw(out,strings.trim_space(project.settings_text(shown,under,{},context.temp_allocator)))
-    serial.write_u8(out,'}')
-}
-
-// The layer and the sections of the params of settings.set; message says what is wrong with them.
-@(private)
-api_settings_params :: proc(raw:string,allocator:runtime.Allocator) -> (layer:project.Settings_Layer,sections,preset,message:string) {
-    USAGE :: `params are {"layer": "project" or "engine", "graphics_preset": "Low", "Medium", "High" or "Ultra", "settings": {"<Section>": {"<field>": value}}}`
-    r:serial.Text_Reader
-    serial.text_reader_init(&r,raw,allocator)
-    if !serial.text_accept(&r,'{') {return .Project,"","",USAGE}
-    if !serial.text_accept(&r,'}') {
-        for {
-            key,named:=serial.text_string(&r)
-            if !named || !serial.text_expect(&r,':') {return .Project,"","",USAGE}
-            switch key {
-            case "layer":
-                name,_:=serial.text_string(&r)
-                switch name {
-                case "project": layer=.Project
-                case "engine":  layer=.Engine
-                case:           return .Project,"","",`layer is "project" or "engine"`
-                }
-            case "graphics_preset":
-                name,given:=serial.text_string(&r)
-                if !given {return .Project,"","",USAGE}
-                preset=strings.clone(name,allocator)
-            case "settings":
-                if serial.text_peek(&r)!='{' {return .Project,"","",`settings is an object of sections: {"<Section>": {"<field>": value}}`}
-                start:=r.offset
-                if !serial.text_skip(&r) {return .Project,"","",USAGE}
-                sections=r.text[start:r.offset]
-            case:
-                return .Project,"","",fmt.tprintf("unknown key %q: %s",key,USAGE)
-            }
-            if serial.text_accept(&r,',') {continue}
-            if !serial.text_expect(&r,'}') {return .Project,"","",USAGE}
-            break
-        }
-    }
-    if !serial.text_end(&r) {return .Project,"","",USAGE}
-    if sections=="" && preset=="" {return .Project,"","",fmt.tprintf("settings is missing: %s",USAGE)}
-    return
+    r.settings=serial.Json(strings.trim_space(project.settings_text(shown,{},{},call.allocator)))
+    r.engine=serial.Json(strings.trim_space(project.settings_text(under,top,{},call.allocator)))
+    r.project=serial.Json(strings.trim_space(project.settings_text(shown,under,{},call.allocator)))
 }
 
 // The names of the sections of an object of settings, as far as it reads.
@@ -971,9 +921,12 @@ settings_section_names :: proc(text:string) -> []string {
 // a change that fails leaves every setting as it was.
 @(private)
 api_settings_set :: proc(s:^Session,call:^api.Call) {
-    layer,sections,preset,message:=api_settings_params(call.raw,call.allocator)
-    if message!="" {
-        api.call_fail(call,api.INVALID_PARAMS,message)
+    p:=api.call_params(call,Api_Settings_Set_Params)
+    layer:=project.Settings_Layer.Engine if p.layer==.engine else .Project
+    sections:=string(p.settings)
+    preset:=api.call_given(call,"graphics_preset")?fmt.tprint(p.graphics_preset):""
+    if sections=="" && preset=="" {
+        api.call_fail(call,api.INVALID_PARAMS,`settings is missing: give {"settings": {"<Section>": {"<field>": value}}} or graphics_preset`)
         return
     }
     if layer==.Engine && s.engine_root=="" {
@@ -1049,7 +1002,7 @@ api_settings_set :: proc(s:^Session,call:^api.Call) {
         for setting,i in next {mem.copy(current[i].value,setting.value,setting.info.size)}
         next=current
     }
-    if message=settings_store(s,next,layer);message!="" {
+    if message:=settings_store(s,next,layer);message!="" {
         api.call_fail(call,api.SERVER_ERROR,message)
         return
     }

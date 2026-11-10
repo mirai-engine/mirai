@@ -94,7 +94,8 @@ material_instance_write :: proc(s:^Session,call:^api.Call,w:core.World_Ref,e:cor
     given,_:=override_split(&a.override,slot)
     o:=&given
     r:=api.call_result(call,Api_Material_Instance)
-    r.id,r.slot,r.slots,r.material,r.values=api_entity_id(w,e),slot,a.slots,a.material,a.values.info
+    r.id,r.slot,r.slots,r.material=api_entity_id(w,e),slot,a.slots,a.material
+    r.values=a.values.info
     overrides:=make([dynamic]string,call.allocator)
     for name in o.names[:min(int(o.count),len(o.names))] {append(&overrides,override_label(a.program,name))}
     for name in o.texture_names[:min(int(o.texture_count),len(o.texture_names))] {append(&overrides,override_label(a.program,name))}

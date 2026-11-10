@@ -303,7 +303,8 @@ api_particle_write :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id) {
         return
     }
     r:=api.call_result(call,Particle_Result)
-    r.particle,r.values=id,view.info^
+    r.particle=id
+    r.values=view.info^
     r.path=editor.asset_path(s,id)
     r.parameters=particle_parameters_json(call,view.parameters)
     hidden:=make([]string,len(view.hidden),call.allocator)
@@ -515,7 +516,8 @@ particle_instance_write :: proc(s:^editor.Session,call:^api.Call,w:core.World_Re
     info:effect.Particle_Info
     error:=vfx.particle_resolve_checked(a,emitter.particle,&override,&info)
     r:=api.call_result(call,Instance_Result)
-    r.id,r.world,r.particle,r.values=editor.api_entity_id(w,e),fmt.tprint(world),emitter.particle,info
+    r.id,r.world,r.particle=editor.api_entity_id(w,e),fmt.tprint(world),emitter.particle
+    r.values=info
     r.overrides=particle_overrides_json(call,&override)
     r.parameters=particle_parameters_json(call,given.values[:min(given.count,vfx.PARTICLE_PARAMETER_CAPACITY)])
     r.problem=vfx.error_message(error)

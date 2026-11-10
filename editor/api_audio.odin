@@ -266,7 +266,8 @@ api_sound_set_write :: proc(s:^Session,call:^api.Call,id:base.Asset_Id) {
         return
     }
     r:=api.call_result(call,Api_Sound_Set_Result)
-    r.sound_set,r.path,r.values=id,asset_path(s,id),info
+    r.sound_set,r.path=id,asset_path(s,id)
+    r.values=info
     sounds:=make([dynamic]string,call.allocator)
     for variation in info.sounds {
         if variation.sound!={} {append(&sounds,asset_path(s,variation.sound))}

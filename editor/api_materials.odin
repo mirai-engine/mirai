@@ -86,7 +86,8 @@ api_material_write :: proc(s:^Session,call:^api.Call,id:base.Asset_Id) {
     }
     defer asset.asset_close(&file)
     r:=api.call_result(call,Api_Material_Result)
-    r.material,r.path,r.values=id,asset_path(s,id),view.info^
+    r.material,r.path=id,asset_path(s,id)
+    r.values=view.info^
     if view.imported!=nil {
         r.imported=view.imported^
         overrides:=make([dynamic]string,call.allocator)
