@@ -203,6 +203,8 @@ registry_path_id :: proc(r:^Registry,path:string) -> base.Asset_Id {
 registry_file_remove :: proc(r:^Registry,path:string) {
     for file,at in r.files {
         if file.path!=path {continue}
+        // Out of the lookup until the index is made again: its place is another file's now.
+        delete_key(&r.by_path,path)
         delete(file.path,r.allocator)
         ordered_remove(&r.files,at)
         return

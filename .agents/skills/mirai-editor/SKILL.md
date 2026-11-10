@@ -282,7 +282,7 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   `editor/thumbnail_subjects_test.odin` (the stored view of a scene at each size); those of a
   plugin, in its skill ([previews](../mirai-plugins/references/previews.md#verification)); their
   image, `capture` with the UI and the content browser filtered by Animation, Prefab and Scene.
-- The first undo of a drag is tested from `plugins/terrain/editor/terrain_drag_test.odin`; a
+- The first undo of a stroke is tested from `plugins/terrain/editor/terrain_history_test.odin`; a
   material imported unsaved on reimport and its per-field reversion: `editor/materials_test.odin`.
 - Recovery: `editor/recovery_test.odin` (the copy written by a job) and
   `editor/recovery_log_test.odin` (the chain over the saved file, a truncated log, the replay by

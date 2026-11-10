@@ -81,7 +81,7 @@ join_band_chunk :: proc "contextless" (s:^Source,index:int,level:u8) -> bool {
 join_height :: proc "contextless" (g:^Source,x,z:int) -> f32 {
     x,z:=clamp(x,0,int(g.samples.x)-1),clamp(z,0,int(g.samples.z)-1)
     if grid_absent(&g.heights,x/PAGE+g.heights.counts.x*(z/PAGE)) {
-        if len(g.coarse.heights.pages)>0 {return coarse_height(g,x,z)}
+        if !grid_none(&g.coarse.heights) {return coarse_height(g,x,z)}
     }
     return grid_get(&g.heights,x,z)
 }
@@ -118,10 +118,20 @@ join_blend :: proc "contextless" (s:^Source,join:Chunk_Join,samples:[]f32,first,
 // Volume starts from, to dig into.
 source_volume_ground :: proc(s:^Source,join:Chunk_Join) -> bool {
     if s.kind!=.Volume || join.ground==nil || join.ground.kind!=.Heightfield {return false}
-    for z in 0..<int(s.samples.z) {for y in 0..<int(s.samples.y) {for x in 0..<int(s.samples.x) {
-        if !source_set(s,{x,y,z},join_ground_distance(s,join,{x,y,z})) {return false}
-    }}}
-    grid_settle(&s.distances,{},{int(s.samples.x)-1,int(s.samples.y)-1,int(s.samples.z)-1},s.allocator)
+    Ground :: struct {s:^Source,join:Chunk_Join}
+    page :: proc(user:rawptr,first,extent:[3]int,values:[]f32) -> (fill:f32,uniform:bool) {
+        g:=(^Ground)(user)
+        for z in 0..<extent.z {for y in 0..<extent.y {for x in 0..<extent.x {
+            values[x+extent.x*(y+extent.y*z)]=join_ground_distance(g.s,g.join,first+{x,y,z})
+        }}}
+        return
+    }
+    ground:=Ground{s,join}
+    next:Grid(f32)
+    if !grid_init(&next,s.distances.size,s.cell*SDF_BAND_CELLS,s.allocator) {return false}
+    if !grid_generate(&next,&ground,page,s.allocator) {grid_destroy(&next,s.allocator);return false}
+    grid_destroy(&s.distances,s.allocator)
+    s.distances=next
     return true
 }
 

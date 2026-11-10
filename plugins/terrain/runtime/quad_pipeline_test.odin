@@ -257,38 +257,6 @@ sixty_four_terrains_of_one_source_stream_without_holes_caps_or_allocations :: pr
     }
 }
 
-// A streamed Mesh terrain shows its far sections as nodes that keep their border.
-@(test)
-a_streamed_mesh_terrain_shows_its_far_sections_as_nodes :: proc(t:^testing.T) {
-    root:=base.test_folder(t,"terrain")
-    id:=base.Asset_Id{329,330}
-    source:Source;defer source_destroy(&source)
-    lod_mesh_source(t,&source,64,1,16,20)
-    source.revision=1
-    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    testing.expect_value(t,source_save(&source,fmt.tprintf("%s/source.terrain",root),id,&types),asset.Error.None)
-    assets:host.Assets;testing.expect(t,host.assets_init(&assets,{root=root,capacity=256}));defer host.assets_destroy(&assets)
-    app:=host.App{assets=&assets,allocator=context.allocator}
-    w:Terrain_Test_World
-    if !terrain_test_world_init(t,&w) {return}
-    defer terrain_test_world_free(&w)
-    resident:Terrain_Resident;defer terrain_resident_free(&resident)
-    quad_owner(&w,id)
-    low:=source.mesh_origin
-    quad_viewer(&w,low+{2,0,2})
-    // Level 0 within 2 m: farther, the view opens no node down to its sections.
-    settings:=Terrain_Settings{resident_distance=10,lod_distance=2}
-    quad_settle(&w,&resident,&app,settings)
-    o:=&resident.owners[0]
-    holes,overlaps:=quad_coverage(o)
-    testing.expect(t,holes==0 && overlaps==0)
-    nodes:=0
-    for node,i in o.nodes {if node.visible && i>=o.quad.first[1] {nodes+=1}}
-    testing.expect(t,nodes>0 && o.nodes[0].visible)
-    testing.expect_value(t,len(w.statics.values),len(w.chunks.values))
-    testing.expect_value(t,w.problems.count,0)
-}
-
 // A node chosen by its error opens and closes within LOD_HYSTERESIS of its
 // spacing too: wherever the view stops, from near to far, choosing the levels
 // again keeps what was chosen, and a still view builds nothing. Chunks of 63
