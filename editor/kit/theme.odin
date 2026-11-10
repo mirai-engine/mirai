@@ -19,5 +19,6 @@ theme_set :: proc(ctx:^ui.Context) -> bool {
     if asset.asset_open(&file,THEME,context.temp_allocator)!=.None {return false}
     defer asset.asset_close(&file)
     data,error:=host.ui_tree_view(&file,&types)
-    return error==.None && ui.context_sheet_set(ctx,data)
+    if error!=.None {return false}
+    return ui.context_sheet_set(ctx,data)
 }
