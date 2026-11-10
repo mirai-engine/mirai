@@ -39,8 +39,6 @@ remote_follows_what_a_client_holds_on_a_server_and_a_new_role_clears_it :: proc(
     testing.expect(t,core.owned(core.read(&world.remotes),e),"what a connection owns and predicts is decided here")
 
     s.server.objects[1]={object=Object(1),entity=e}
-    events:Net_Events
-    defer core.value_free(&events,type_info_of(Net_Events))
     held:=[]wire.Command{{kind=.Authority_Changed,object=Object(1),connection=3}}
     server_commands(&s,ref,nil,held,&world.remote)
     core.settle(&info,&world,nil)

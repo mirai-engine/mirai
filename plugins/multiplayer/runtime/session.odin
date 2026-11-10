@@ -79,7 +79,7 @@ Net_Type :: struct {
 }
 
 @(private)
-Net_Event :: struct {type:typeid,size:int,reliable:bool}
+Net_Event :: struct {type:typeid,size,align:int,reliable:bool}
 
 // The messages of the session itself, by their place among the messages; the
 // world follows the server's only when the protocol has them all (a world the
@@ -138,7 +138,7 @@ Net_Session :: struct {
     follows:bool, // the protocol has the messages of the session: a client follows the scene of its server
     secret:[2]u64, // client: of the player it presents (Net_Player); kept while the World lives
     arrived:[dynamic]Connection_Event, // since the last tick began: Net_Connections of the next one
-    received:[dynamic]Received,        // likewise the messages of the game: Net_Events of the next one
+    received:[]core.Net_Arrived,       // likewise the messages of the game, by message: core.Net_Messages of the next one
     scratch:[]u8, // one event or one component
     placed:u32,   // the places it asked of core.Pose_Target: each a new number
     taken:u32,    // client: the last place asked before a tick began, which its simulation took
@@ -349,7 +349,6 @@ session_open :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,port:int) -> 
     }
     s.host_ready=true
     if s.arrived==nil {s.arrived=make([dynamic]Connection_Event,allocator)}
-    if s.received==nil {s.received=make([dynamic]Received,allocator)}
     ready:=s.mode==.Server?server_init(s,allocator):client_init(s,w,app.allocator)
     if !ready {
         session_destroy(s)
@@ -409,7 +408,7 @@ protocol_build :: proc(s:^Net_Session,w:core.World_Ref) -> bool {
     _=wire.fragment_register(&s.protocol,"pose",{schema=&s.schema,type=pose}) or_return
     _=wire.fragment_register(&s.protocol,"motion",{schema=&s.schema,type=motion}) or_return
     _=wire.fragment_register(&s.protocol,"driver",{schema=&s.schema,type=driver}) or_return
-    largest:=size_of(Received)
+    largest:=0
     fragments,fragments_error:=make([]wire.Fragment_Id,len(w.info.tables),allocator)
     if fragments_error!=nil {return false}
     s.fragments=fragments
@@ -427,6 +426,10 @@ protocol_build :: proc(s:^Net_Session,w:core.World_Ref) -> bool {
     events,events_error:=make([]Net_Event,len(w.info.messages),allocator)
     if events_error!=nil {return false}
     s.events=events
+    received,received_error:=make([]core.Net_Arrived,len(w.info.messages),allocator)
+    if received_error!=nil {return false}
+    s.received=received
+    for &pending in s.received {pending.blocks.allocator=allocator}
     s.own={-1,-1,-1,-1,-1}
     for message,index in w.info.messages {
         switch message.type {
@@ -436,7 +439,6 @@ protocol_build :: proc(s:^Net_Session,w:core.World_Ref) -> bool {
         case Net_Section:     s.own.section=index
         case Net_Gone:        s.own.gone=index
         }
-        if message.info.size>EVENT_BYTES {return protocol_refuse(s,"message %s takes %d bytes, and a message %d; send less in it",message.name,message.info.size,EVENT_BYTES)}
         type,ok:=serial.schema_add_type_info(&s.schema,message.info)
         if !ok {return protocol_refuse(s,"message %s does not fit the protocol: %s",message.name,s.schema.error)}
         flags:wire.Event_Flags
@@ -450,8 +452,12 @@ protocol_build :: proc(s:^Net_Session,w:core.World_Ref) -> bool {
         }
         name:=fmt.tprintf("%s.%s",message.library,message.name)
         event,registered:=wire.event_register(&s.protocol,name,&s.schema,type,flags)
-        if !registered || int(event)!=index {return protocol_refuse(s,"message %s does not fit a datagram; send less in it",message.name)}
-        s.events[index]={type=message.type,size=message.info.size,reliable=message.reliable}
+        if !registered || int(event)!=index {
+            return protocol_refuse(s,"message %s does not fit the protocol: an unreliable message encodes in at most %d bytes and a reliable one in %d, within %d words; make it reliable, or send less in it",
+                message.name,wire.EVENT_MAX_BYTES,wire.RELIABLE_EVENT_MAX_BYTES,wire.MAX_STATE_WORDS)
+        }
+        s.events[index]={type=message.type,size=message.info.size,align=message.info.align,reliable=message.reliable}
+        largest=max(largest,message.info.size)
     }
     s.follows=s.own.world>=0 && s.own.ready>=0 && s.own.player>=0 && s.own.section>=0 && s.own.gone>=0
     wire.input_register(&s.protocol,&s.schema,input) or_return
@@ -521,7 +527,8 @@ session_destroy :: proc(s:^Net_Session) {
     delete(s.fragments,allocator);s.fragments=nil
     delete(s.events,allocator);s.events=nil
     delete(s.arrived);s.arrived=nil
-    delete(s.received);s.received=nil
+    for pending in s.received {delete(pending.blocks)}
+    delete(s.received,allocator);s.received=nil
     delete(s.scratch,allocator);s.scratch=nil
     delete(s.address,allocator);s.address=""
     delete(s.invite_code,allocator);s.invite_code=""
