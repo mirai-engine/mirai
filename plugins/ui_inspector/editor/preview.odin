@@ -14,7 +14,6 @@ import "mirai:engine/gui"
 import inp "mirai:engine/input"
 import "mirai:project"
 import "mirai:host"
-import gpu "mirai:render"
 import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:ui"
@@ -192,7 +191,7 @@ preview_textures :: proc(images:[]ui.Tree_Image,a:^host.Assets) -> []u32 {
     for image,i in images {
         if image.texture=={} {continue}
         if texture:=host.assets_texture_image(a,image.texture);texture!=nil {
-            textures[i]=gpu.ui_image(a.renderer,texture.handle)&~gpu.UI_MATERIAL_IMAGE_BIT
+            textures[i]=gui.image_quad(a.renderer,texture.handle).data
         }
     }
     return textures
@@ -510,7 +509,7 @@ preview_game :: proc(u:^Ui_Inspector,app:^host.App,settings:^gui.UI_Settings,sta
                     // As the game shows it: the image of the settings, or else that of the pack.
                     if at:=gui.prompt_image_find(g.settings,prompt.family,prompt.input,prompt.text);at>=0 && a.renderer!=nil {
                         if texture:=host.assets_texture_image(a,g.settings.prompt_images[at].texture);texture!=nil && texture.height>0 {
-                            prompt.quad=ui.quad_whole(.Image,gpu.ui_image(a.renderer,texture.handle)&~gpu.UI_MATERIAL_IMAGE_BIT)
+                            prompt.quad=gui.image_quad(a.renderer,texture.handle)
                             prompt.aspect=f32(texture.width)/f32(texture.height)
                             continue
                         }
@@ -526,7 +525,7 @@ preview_game :: proc(u:^Ui_Inspector,app:^host.App,settings:^gui.UI_Settings,sta
             a:=(cast(^Preview_Game)user).app.assets
             texture:=host.assets_texture_image(a,id)
             if texture==nil || a.renderer==nil {return {}}
-            return ui.quad_whole(.Image,gpu.ui_image(a.renderer,texture.handle)&~gpu.UI_MATERIAL_IMAGE_BIT)
+            return gui.image_quad(a.renderer,texture.handle)
         },
     }
 }
@@ -658,7 +657,7 @@ stage_background :: proc(u:^Ui_Inspector,a:^host.Assets) -> (out:Stage_Fill) {
     case .Texture:
         out.fill={255,255,255,255}
         if texture:=host.assets_texture_image(a,u.stage.texture);texture!=nil && a.renderer!=nil {
-            out.image=ui.quad_whole(.Image,gpu.ui_image(a.renderer,texture.handle)&~gpu.UI_MATERIAL_IMAGE_BIT)
+            out.image=gui.image_quad(a.renderer,texture.handle)
         } else {out.fill={18,20,26,255}}
     }
     return
