@@ -152,7 +152,7 @@ Result :: struct {
     compiled,reused:int, // stages run through the compilers, and taken from the shared cache or the previous output
     changed: bool,       // the published generation is another one: its manifest was written
     current: bool,       // nothing changed since the last generation: no stage was looked at and no tool was run
-    engine:  string,     // identity of the engine sources the generation was compiled from
+    engine:  string,     // identity of what its engine stages share with a build of the engine (engine_interface)
     warnings:string,     // what the compilers said of the stages that compiled
     refused: string,     // the programs left out of the catalog and why, one a line: the others were published
     error:   string,     // "": the generation was published
@@ -204,7 +204,7 @@ Generation :: struct {
     progress:     ^Progress,
     shader_jobs,extension_jobs:[]Job,
     program_jobs: []Job, // the stages of the engine compiled for one program each, by name outside Shader_Id
-    identity:     string, // of the engine sources, as the manifest names it
+    identity:     string, // of what its engine stages share with the engine (engine_interface), as the manifest names it
     catalog:      string, // its fingerprint
     vfx:          []string, // the Vfx programs: a stage marked `//! per vfx program` is compiled once for each
     surface:      []string, // the Surface programs: a stage marked `//! per surface program` is compiled once for each
@@ -649,47 +649,35 @@ overlay_read :: proc(g:^Generation,job:^Job) -> string {
     return ""
 }
 
-// Identity of the engine's own shader sources, the compiler and the generator:
-// what the structures and passes of a build of the engine go with. It does not
-// depend on the programs of a project or on the folder a generation is staged in.
-engine_fingerprint :: proc(root,version:string,include_dirs:[]string,allocator:=context.allocator,sources:^Sources=nil) -> string {
-    local:Sources
-    s:=sources
-    if s==nil {
-        sources_init(&local,context.temp_allocator)
-        s=&local
-    }
-    shader_root:=path_join(root,"shaders",allocator=context.temp_allocator)
-    build:=path_join(shader_root,"build",allocator=context.temp_allocator)
-    generated:=path_clean(include_dirs[0],context.temp_allocator) if len(include_dirs)>0 else ""
-    found:=make(map[string]bool,context.temp_allocator)
-    top:=sources_in(s,shader_root,".slang",context.temp_allocator)
-    for path in top {found[path]=true}
-    for folder in ([]string{"include","materials"}) {
-        for path in sources_below(s,path_join(shader_root,folder,allocator=context.temp_allocator)) {found[path]=true}
-    }
-    for source in top {
-        for path in dependencies(source,include_dirs,context.temp_allocator,s) {
-            if path_inside(path,shader_root) && !path_inside(path,build) && !(generated!="" && path_inside(path,generated)) {found[path]=true}
-        }
-    }
-    ordered:=make([dynamic]string,context.temp_allocator)
-    for path in found {append(&ordered,path)}
-    sort_paths(ordered[:])
+// Identity of what the engine's own stages share with a build of the engine:
+// how the generator binds and lays out, the structs both sides read as Slang
+// lays them out, and of each stage its kind, its workgroup, its bindings and
+// its constants, which are what render compiles in (shaders_gen.odin). The
+// code of a stage is no part of it: a generation that changes only code loads
+// into an engine that is already built and running. shaders are the stages
+// as the generation of the engine compiles them: one for a project compiles
+// some against what it adds, so it names the identity the generation of the
+// engine of the same sources gave (generate_staged).
+@(private)
+engine_interface :: proc(g:^Generation,shaders:[]Shader,allocator:=context.allocator) -> string {
     hash:Sha256
     sha_begin(&hash)
-    sha_text(&hash,GENERATOR_CONTRACT)
-    sha_text(&hash,abi_text())
-    sha_text(&hash,material_schema())
-    sha_text(&hash,shared_constants())
-    sha_text(&hash,strings.join(SLANG_FLAGS," ",context.temp_allocator))
-    sha_text(&hash,strings.join(SLANG_OPTIMIZATION," ",context.temp_allocator))
-    sha_text(&hash,strings.join(SPIRV_FLAGS," ",context.temp_allocator))
-    sha_text(&hash,version)
-    for path in ordered {
-        relative,_:=path_relative(path,root)
-        sha_text(&hash,relative)
-        sha_bytes(&hash,sources_file(s,path).data)
+    for text in ([]string{GENERATOR_CONTRACT,abi_text(),material_schema(),shared_constants()}) {sha_text(&hash,text);sha_text(&hash,"\n")}
+    // A struct under a define is of the generations that define it.
+    for shared in SHARED_STRUCTS {
+        if shared.guard!="" {continue}
+        for layout in g.layouts {
+            if layout.name!=shared.slang {continue}
+            sha_text(&hash,fmt.tprintf("%s %d",layout.name,layout.size))
+            for field in layout.fields {sha_text(&hash,fmt.tprintf(" %s %d %d",field.name,field.offset,field.size))}
+            sha_text(&hash,"\n")
+        }
+    }
+    for shader in shaders {
+        sha_text(&hash,fmt.tprintf("%s %v %v",shader.name,shader.stage,shader.group))
+        for binding in shader.bindings {sha_text(&hash,fmt.tprintf(" %d %v",binding.slot,binding.kind))}
+        for constant in shader.constants {sha_text(&hash,fmt.tprintf(" %s",constant))}
+        sha_text(&hash,"\n")
     }
     return sha_hex(&hash,allocator)
 }
@@ -698,14 +686,6 @@ engine_fingerprint :: proc(root,version:string,include_dirs:[]string,allocator:=
 @(private)
 abi_text :: proc() -> string {
     return fmt.tprintf("%d;table;%d;%d;%d",TABLE_SLOT,TABLE_METAL_BUFFER,BUFFER_SLOTS,SAMPLER_SLOTS)
-}
-
-@(private)
-sort_paths :: proc(paths:[]string) {
-    // Insertion by component order; the lists are a few hundred paths.
-    for i in 1..<len(paths) {
-        for j:=i;j>0 && path_less(paths[j],paths[j-1]);j-=1 {paths[j],paths[j-1]=paths[j-1],paths[j]}
-    }
 }
 
 // SPIRV-Tools 2026.3 and 2026.4 fall with an invalid access when they
@@ -1128,6 +1108,15 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     g:=new(Generation,scratch)
     odin,request,setup_error:=generation_setup(g,options,scratch)
     if setup_error!="" {result.error=setup_error;return}
+    // What the engine stages share with the engine is what the tables of the
+    // engine say, and only its own generation writes them: any other is made
+    // beside one of the same sources, which this leaves current, and names it.
+    // Before its own turn: one into another folder of the engine has the same.
+    if g.engine_build!="" {
+        engine:=generate_staged({root=options.root,odin=true,workers=options.workers,tools=options.tools},scratch)
+        if engine.error!="" {fail(&result,allocator,"the shaders of the engine: %s",engine.error);return}
+        g.identity=engine.engine
+    }
     g.progress=options.progress
     g.runner=&g.progress.runner if g.progress!=nil else &g.own_runner
     // Generations with one stamp publish into one output: they take turns.
@@ -1205,10 +1194,7 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     }
     append(&bases,Base{"engine",g.root})
     g.includes,g.bases=includes[:],bases[:]
-    // What the engine's own shaders are compiled from. A generation built for
-    // a project names it, and the engine loads it only while it is its own.
-    identity:=engine_fingerprint(g.root,g.version,g.includes,scratch,&g.sources)
-    g.identity,g.catalog,g.vfx,g.surface,g.vertex=identity,catalog.fingerprint,catalog.vfx,catalog.surface,catalog.vertex
+    g.catalog,g.vfx,g.surface,g.vertex=catalog.fingerprint,catalog.vfx,catalog.surface,catalog.vertex
     // The tools after Slang shape the Metal output of a shader, not what a
     // generation shares with the engine: they are of each shader's digest.
     {
@@ -1320,20 +1306,25 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     tables_folder:string
     defer if cleanup && tables_folder!="" {base.remove_all(tables_folder)}
     shipped:=false
+    compiled:[4][]Shader
+    for jobs,i in ([4][]Job{shader_jobs,program_jobs,extension_jobs,test_jobs}) {
+        compiled[i]=make([]Shader,len(jobs),scratch)
+        for job,at in jobs {compiled[i][at]=job.result}
+    }
+    if g.engine_build=="" {g.identity=engine_interface(g,compiled[0],scratch)}
+    identity:=g.identity
     if odin {
         assertions:=strings.builder_make(scratch)
         if problem:=layouts_assertions(&assertions,g.layouts);problem!="" {fail(&result,allocator,"%s",problem);return}
         shipped=true
         names:=EMBEDDED_NAMES
-        sizes:[Backend][]int
         for backend in g.backends {
-            packed:[]u8;packed_shipped:bool;problem:string
-            packed,sizes[backend],packed_shipped,problem=embedded_pack(g,{shader_jobs,program_jobs},backend,options.ship,scratch)
+            packed,packed_shipped,problem:=embedded_pack(g,{shader_jobs,program_jobs},backend,options.ship,scratch)
             if problem!="" {fail(&result,allocator,"%s",problem);return}
             if !write_file(path_join(staging_shaders,names[backend],allocator=scratch),packed) {fail(&result,allocator,"could not write %s",names[backend]);return}
             shipped&&=packed_shipped
         }
-        render_table:=odin_table(shader_jobs,g.backends,g.output,path_join(g.root,"render",allocator=scratch),"mirai_render","mirai:rhi",identity,"",strings.to_string(assertions),scratch,program_jobs,true,sizes)
+        render_table:=odin_table(shader_jobs,g.backends,g.output,path_join(g.root,"render",allocator=scratch),"mirai_render","mirai:rhi",identity,"",strings.to_string(assertions),scratch,program_jobs,true,true)
         rhi_table:=odin_table(test_jobs,g.backends,tests_out,path_join(g.root,"rhi",allocator=scratch),"rhi","","","TEST_SHADERS","",scratch)
         tables:=[2]string{path_join(g.root,"render/shaders_gen.odin",allocator=scratch),path_join(g.root,"rhi/shaders_gen_test.odin",allocator=scratch)}
         for bytes,i in ([2][]u8{render_table,rhi_table}) {
@@ -1349,11 +1340,6 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
             append(&replacements,Publication{source=source,target=tables[i],backup=backup})
         }
         append(&outputs,..tables[:])
-    }
-    compiled:[4][]Shader
-    for jobs,i in ([4][]Job{shader_jobs,program_jobs,extension_jobs,test_jobs}) {
-        compiled[i]=make([]Shader,len(jobs),scratch)
-        for job,at in jobs {compiled[i][at]=job.result}
     }
     // A generation equal to the published one leaves its manifest alone: whoever watches it sees no change.
     manifest_path:=path_join(g.output,"manifest.json",allocator=scratch)
@@ -1413,19 +1399,21 @@ generation_matches :: proc(staging,output:string) -> bool {
 // without the table. appended: text after the table (the layout assertions
 // of the shared structs). programs: with program_table, the stages compiled
 // for one program each, in PROGRAM_SHADERS, which the renderer finds by name.
-// packed: for each backend, the size of the code of each stage of jobs and
-// then of programs; the code is then the stream EMBEDDED_NAMES names
-// (SHADERS_PACKED) and each stage an Embedded_Shader of render.
+// packed: the code of the stages of jobs and then of programs is the file
+// EMBEDDED_NAMES names, which says the size of each and which a procedure of
+// the package returns (shaders_packed): a value would be in the declarations
+// of the package, and whatever compiles against them would follow the code.
+// Nothing in the table follows the code of a stage then: it is their
+// interface, which engine names (engine_interface).
 @(private)
-odin_table :: proc(jobs:[]Job,backends:Backends,out,target_folder,package_name,rhi_import,engine,guard,appended:string,allocator:=context.allocator,programs:[]Job=nil,program_table:=false,packed:[Backend][]int={}) -> []u8 {
+odin_table :: proc(jobs:[]Job,backends:Backends,out,target_folder,package_name,rhi_import,engine,guard,appended:string,allocator:=context.allocator,programs:[]Job=nil,program_table:=false,packed:=false) -> []u8 {
     stages:=STAGE_NAMES
     relative:=path_from(out,target_folder,context.temp_allocator)
     prefix:="rhi." if rhi_import!="" else ""
-    // size<0: the code is loaded as it is.
-    code :: proc(b:^strings.Builder,shader:Shader,metal:bool,relative,prefix:string,stages:[Stage]string,size:int) {
+    code :: proc(b:^strings.Builder,shader:Shader,metal:bool,relative,prefix:string,stages:[Stage]string,packed:bool) {
         switch {
-        case size>=0 && metal: fmt.sbprintf(b,"{{size = %d, code = {{binary = {{msl_entry = \"%s\"}}, ",size,shader.entry)
-        case size>=0: fmt.sbprintf(b,"{{size = %d, code = {{",size)
+        case packed && metal: fmt.sbprintf(b,"{{binary = {{msl_entry = \"%s\"}}, ",shader.entry)
+        case packed: strings.write_string(b,"{")
         case metal: fmt.sbprintf(b,"{{binary = {{msl = #load(\"%s/%s\", string), msl_entry = \"%s\"}}, ",relative,shader.msl,shader.entry)
         case: fmt.sbprintf(b,"{{binary = {{spirv = #load(\"%s/%s\")}}, ",relative,shader.spv)
         }
@@ -1441,15 +1429,15 @@ odin_table :: proc(jobs:[]Job,backends:Backends,out,target_folder,package_name,r
             for constant,i in shader.constants {fmt.sbprintf(b,"%s\"%s\"",", " if i>0 else "",constant)}
             strings.write_string(b,"}")
         }
-        strings.write_string(b,"}},\n" if size>=0 else "},\n")
+        strings.write_string(b,"},\n")
     }
     b:=strings.builder_make(allocator)
     fmt.sbprintf(&b,"// Code generated by mirai shaders. DO NOT EDIT.\npackage %s\n\n",package_name)
     if rhi_import!="" {fmt.sbprintf(&b,"import \"%s\"\n\n",rhi_import)}
     if guard!="" {fmt.sbprintf(&b,"when %s {{\n\n",guard)}
     if engine!="" {
-        strings.write_string(&b,"// Of the engine's shader sources these were compiled from. A shader generation\n// built for a project is loaded only while its manifest names the same one.\n")
-        fmt.sbprintf(&b,"SHADERS_FINGERPRINT :: \"%s\"\n\n",engine)
+        strings.write_string(&b,"// Of what these stages share with the engine: their bindings, their constants and\n// the structs both read. A shader generation is loaded only while its manifest\n// names the same one, whatever the code of its stages.\n")
+        fmt.sbprintf(&b,"SHADERS_INTERFACE :: \"%s\"\n\n",engine)
     }
     strings.write_string(&b,"Shader_Id :: enum u8 {\n")
     for job in jobs {fmt.sbprintf(&b,"\t%s,\n",job.result.id)}
@@ -1480,21 +1468,18 @@ odin_table :: proc(jobs:[]Job,backends:Backends,out,target_folder,package_name,r
             fmt.sbprintf(&b,"\t#panic(\"the shaders were generated without %s code: run `mirai shaders --backends all`\")\n","Metal" if metal else "SPIR-V")
             continue
         }
-        sizes:=packed[backend]
-        kind:="Embedded_Shader" if sizes!=nil else strings.concatenate({prefix,"Shader_Code"},context.temp_allocator)
-        size :: proc(sizes:[]int,at:int) -> int {return sizes[at] if at<len(sizes) else -1}
-        if sizes!=nil {fmt.sbprintf(&b,"\t@(rodata)\n\tSHADERS_PACKED := #load(\"%s/%s\")\n",relative,names[backend])}
-        fmt.sbprintf(&b,"\t@(rodata)\n\tSHADERS := [Shader_Id]%s{{\n",kind)
-        for job,at in jobs {
+        if packed {fmt.sbprintf(&b,"\t@(private)\n\tshaders_packed :: proc \"contextless\" () -> []u8 {{return #load(\"%s/%s\")}}\n",relative,names[backend])}
+        fmt.sbprintf(&b,"\t@(rodata)\n\tSHADERS := [Shader_Id]%sShader_Code{{\n",prefix)
+        for job in jobs {
             fmt.sbprintf(&b,"\t\t.%s = ",job.result.id)
-            code(&b,job.result,metal,relative,prefix,stages,size(sizes,at))
+            code(&b,job.result,metal,relative,prefix,stages,packed)
         }
         strings.write_string(&b,"\t}\n")
         if program_table {
-            fmt.sbprintf(&b,"\t@(rodata)\n\tPROGRAM_SHADERS := [%d]%s{{\n",len(programs),kind)
-            for job,at in programs {
+            fmt.sbprintf(&b,"\t@(rodata)\n\tPROGRAM_SHADERS := [%d]%sShader_Code{{\n",len(programs),prefix)
+            for job in programs {
                 strings.write_string(&b,"\t\t")
-                code(&b,job.result,metal,relative,prefix,stages,size(sizes,len(jobs)+at))
+                code(&b,job.result,metal,relative,prefix,stages,packed)
             }
             strings.write_string(&b,"\t}\n")
         }

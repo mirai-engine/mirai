@@ -81,8 +81,12 @@ its `exit_code` and `script_hold`.
   content stays in that world for the next replacement, which does not allocate if it fits;
   `app_world_scratch_free` releases it when the next one is far off (opening a scene).
   - With the `marks` of a `src` that `core.world_copy_changed` keeps as a copy of `dst` (a tick of
-    the rollback history), only the tables and storages `dst` changed since that copy are copied
-    and swapped (`core.world_restore`): the rest stays where it is, and its readers see no change.
+    the rollback history), only what `dst` changed since that copy comes back
+    (`core.world_restore`): the rest stays where it is, and its readers see no change. A table of
+    flat values that still holds the rows of the copy, on and off, takes back in place the rows
+    whose value or whose being added differs, with new stamps, and its readers see those rows
+    alone; a table whose rows were added, removed or turned since, or whose values hold a
+    pointer, and the storages written, are copied and swapped, and their readers read them whole.
     That separate world is then left with parts of several, and is cleared before it is released.
 - `app_world_ref(app, data)` gives the `core.World_Ref`.
 - `app_user_folder(root)`: `<user data>/Mirai/<project name>`, created if missing; empty without a
