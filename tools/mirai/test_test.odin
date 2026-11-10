@@ -8,6 +8,7 @@ import "core:testing"
 import "core:time"
 import "mirai:cook/shaders"
 import "mirai:project"
+import "mirai:std/base"
 
 // A benchmark is a define of a name with BENCH that is not off; it runs alone.
 @(test)
@@ -78,10 +79,10 @@ a_source_builds_for_the_system_its_name_and_build_lines_say :: proc(t:^testing.T
     testing.expect(t,source_for_system("x.odin","#+build windows amd64\npackage x",.Windows))
 }
 
-// The tests of this package are listed from its sources, all of them or those of a file.
+// The tests of this package are listed from its sources, all of them or those of some files.
 @(test)
 the_tests_of_a_package_are_listed_without_compiling :: proc(t:^testing.T) {
-    declared:=test_declared(#directory,"",context.temp_allocator)
+    declared:=test_declared(#directory,allocator=context.temp_allocator)
     found:=false
     for test in declared {
         if test.name=="a_benchmark_is_a_define_with_bench_that_is_on" {found=test.file=="test_test.odin" && test.here}
@@ -89,9 +90,93 @@ the_tests_of_a_package_are_listed_without_compiling :: proc(t:^testing.T) {
         testing.expect(t,test.name!="first")
     }
     testing.expect(t,found)
-    of_file:=test_declared(#directory,"deps_test.odin",context.temp_allocator)
-    testing.expect(t,len(of_file)>0)
-    for test in of_file {testing.expect_value(t,test.file,"deps_test.odin")}
+    files:=[]string{"deps_test.odin","shell_test.odin"}
+    of_files:=test_declared(#directory,files,allocator=context.temp_allocator)
+    seen:[2]bool
+    for test in of_files {
+        at,among:=slice.linear_search(files,test.file)
+        if testing.expectf(t,among,"%s is of %s",test.name,test.file) {seen[at]=true}
+    }
+    testing.expect(t,seen==[2]bool{true,true})
+}
+
+// A test reaches the device of the GPU tests when its procedure names the
+// shared device or makes one, itself or through the declarations of the test
+// files of its package; what a comment, a string, a member of something else
+// or a file that is no test says is no reach.
+@(test)
+the_tests_that_reach_the_gpu_device_are_told_from_the_sources :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    folder:=base.test_folder(t,"test-device")
+    if folder=="" {return}
+    sources:=[?][2]string{
+        {"fixture_test.odin",`package x
+
+Fixture :: struct {device:rawptr}
+
+fixture_init :: proc(t:^testing.T,f:^Fixture) -> bool {
+    f.device=shared_device.take_or_skip(t)
+    return f.device!=nil
+}
+
+@(deferred_out=scene_end)
+scene_begin :: proc(
+    t:^testing.T,
+    f:^Fixture,
+) -> bool {
+    return fixture_init(t,f)
+}
+
+CASES :: [?]proc(t:^testing.T,f:^Fixture) -> bool{scene_begin}
+`},
+        {"gpu_test.odin",`package x
+
+@(test)
+through_two_helpers :: proc(t:^testing.T) {
+    f:Fixture
+    if !scene_begin(t,&f) {return}
+}
+
+@(test)
+through_a_table :: proc(t:^testing.T) {
+    for c in CASES {c(t,nil)}
+}
+
+when #config(X_BENCH,false) {
+@(test)
+inside_a_when :: proc(t:^testing.T) {
+    device,_:=rhi.device_create({})
+}
+}
+`},
+        {"app.odin",`package x
+
+app_start :: proc(gpu:bool) {
+    if gpu {device,_:=rhi.device_create({})}
+}
+`},
+        {"cpu_test.odin",`package x
+
+// shared_device.take_or_skip is not taken here.
+@(test)
+names_it_in_words_only :: proc(t:^testing.T) {
+    text:="rhi.device_create and fixture_init"
+    testing.expect(t,table.fixture_init==nil && other.device_create==nil)
+}
+
+@(test)
+starts_a_program_without_a_device :: proc(t:^testing.T) {
+    app_start(false)
+}
+`},
+    }
+    for source in sources {testing.expect(t,os.write_entire_file(join(folder,source[0]),source[1])==nil)}
+    declared:=test_declared(folder,device=true)
+    testing.expect_value(t,len(declared),5)
+    for test in declared {
+        testing.expectf(t,test.device==(test.file=="gpu_test.odin"),"%s of %s: device %v",test.name,test.file,test.device)
+    }
+    for test in test_declared(folder) {testing.expectf(t,!test.device,"%s is told without being asked",test.name)}
 }
 
 // A name that is not there gets the ones that share its words or most of its letters.

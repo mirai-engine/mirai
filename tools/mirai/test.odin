@@ -12,16 +12,17 @@ import "mirai:cook/workspace"
 import "mirai:project"
 import "mirai:std/subprocess"
 
-TEST_USAGE :: "test <package> [test...] [<package> [test...]...] [--failed] [--quiet] [--timeout S] [--release] [-flag...]"
-TEST_LIST_USAGE :: "test <package> --list [file]"
+TEST_USAGE :: "test <package> [test|file.odin...] [<package>...] [--no-gpu] [--failed] [--quiet] [--timeout S] [--release] [-flag...]"
+TEST_LIST_USAGE :: "test <package> [file.odin...] --list [--no-gpu]"
 
 // How long a test may run while no other one starts or ends (test_hung).
 TEST_TIMEOUT :: 120*time.Second
 
-// A package of a call to mirai test and the tests asked of it; none is all.
-// file: the one --list lists, when one is given.
+// A package of a call to mirai test and what is asked of it: tests by their
+// names and by the files that declare them; neither is all of it. nothing:
+// none of what was asked is left to run.
 @(private="file")
-Test_Package :: struct {path,folder,file:string,names:[dynamic]string}
+Test_Package :: struct {path,folder:string,names,files:[dynamic]string,nothing:bool}
 
 // What compiling and running the tests took. turn: waiting for other compilations.
 @(private="file")
@@ -34,15 +35,17 @@ Test_Times :: struct {build,turn,run:time.Duration}
 // of tests go to the runner (-tests:), so asking for others compiles nothing;
 // a name the sources do not declare stops the command before it compiles.
 // An argument that is a folder of the engine, or a path to one, is a package;
-// the others are tests of the package before them; --release and the flags are
-// for all of them. The collections plugins and project a package reaches are
-// passed unless a flag already names them. What the runner says goes through
-// Test_Output, which kills an executable that hangs (test_hung).
+// the others are tests of the package before them, or files of it whose tests
+// are asked; --no-gpu leaves out the tests of the files that reach the device
+// of the GPU tests; --release and the flags are for all of them. The
+// collections plugins and project a package reaches are passed unless a flag
+// already names them. What the runner says goes through Test_Output, which
+// kills an executable that hangs (test_hung).
 cmd_test :: proc(root:string,args:[]string) -> int {
     packages:=make([dynamic]Test_Package)
     flags:=make([dynamic]string)
     optimization:="minimal"
-    list,failed_only,quiet:=false,false,false
+    list,failed_only,quiet,no_gpu:=false,false,false,false
     timeout:=TEST_TIMEOUT
     timeout_given:=false
     for i:=0;i<len(args);i+=1 {
@@ -52,6 +55,7 @@ cmd_test :: proc(root:string,args:[]string) -> int {
         case arg=="--list":   list=true
         case arg=="--failed": failed_only=true
         case arg=="--quiet":  quiet=true
+        case arg=="--no-gpu": no_gpu=true
         case arg=="--timeout":
             seconds,parsed:=strconv.parse_f64(i+1<len(args)?args[i+1]:"")
             if !parsed || !(seconds>=0) {
@@ -78,15 +82,12 @@ cmd_test :: proc(root:string,args:[]string) -> int {
         if game=="" {fmt.eprintfln("Usage: mirai %s\n       mirai %s",TEST_USAGE,TEST_LIST_USAGE);return 2}
         append(&packages,Test_Package{path=game,folder=game})
     }
-    if list {return test_list(packages[:])}
-    for p in packages {
-        if p.file!="" {fmt.eprintfln("mirai test: a file (%s) only goes with --list",p.file);return 2}
-    }
+    if list {return test_list(packages[:],no_gpu)}
     // The tests that build something (cook/image, asset, the importer) run the
     // compiler this run builds the suites with: MIRAI_ODIN names it, as
     // MIRAI_ROOT names the engine, so Odin needs no place in PATH.
     _=os.set_env("MIRAI_ODIN",odin_executable(root))
-    if !test_names_check(root,packages[:],failed_only) {return 2}
+    if !test_names_check(root,packages[:],failed_only,no_gpu) {return 2}
     benchmark:=benchmark_asked(flags[:])
     // A benchmark may take long: only --timeout bounds it.
     if benchmark && !timeout_given {timeout=0}
@@ -98,7 +99,7 @@ cmd_test :: proc(root:string,args:[]string) -> int {
 
     pending:=0
     for p in packages {
-        if !failed_only || len(p.names)>0 {pending+=1}
+        if !p.nothing {pending+=1}
     }
     if pending==0 {return 0}
     times:Test_Times
@@ -112,7 +113,7 @@ cmd_test :: proc(root:string,args:[]string) -> int {
     layers_isolate(root)
     failed:=make([dynamic]string)
     for &p in packages {
-        if failed_only && len(p.names)==0 {continue}
+        if p.nothing {continue}
         if len(packages)>1 {fmt.printfln("== %s",p.path)}
         if !test_imports_check(root,p.folder) || !plugin_test_shaders(root,p.folder) {
             append(&failed,p.path)
@@ -239,62 +240,107 @@ benchmark_asked :: proc(flags:[]string) -> bool {
     return false
 }
 
-// A .odin argument names a file whose tests --list lists: a path to it, or
-// the name of a file of the package before it. false, after saying why, when
-// it is neither.
+// A .odin argument names a file whose tests are asked: the name of a file of
+// the package before it, or a path to one from the working folder or the
+// engine, or absolute. false, after saying what it can be, when it is neither.
 @(private="file")
 test_file_take :: proc(root,arg:string,packages:^[dynamic]Test_Package) -> bool {
-    for candidate in ([2]string{arg,join(root,arg)}) {
-        if !os.is_absolute_path(candidate) || !os.is_file(candidate) {continue}
+    n:=len(packages)
+    named:=os.base(arg)==arg
+    if n>0 && named && os.is_file(join(packages[n-1].folder,arg)) {
+        append(&packages[n-1].files,arg)
+        return true
+    }
+    for candidate in ([2]string{project.path_absolute(arg,context.temp_allocator),join(root,arg)}) {
+        if !os.is_file(candidate) {continue}
         folder:=project.path_absolute(os.dir(candidate))
-        file:=os.base(candidate)
-        if n:=len(packages);n>0 && path_same(packages[n-1].folder,folder) && packages[n-1].file=="" {
-            packages[n-1].file=file
-            return true
+        if n==0 || !path_same(packages[n-1].folder,folder) {
+            path:=os.dir(arg)
+            append(packages,Test_Package{path=path!=""?path:".",folder=folder})
         }
-        path:=os.dir(arg)
-        append(packages,Test_Package{path=path!=""?path:".",folder=folder,file=file})
+        append(&packages[len(packages)-1].files,os.base(candidate))
         return true
     }
-    if n:=len(packages);n>0 && os.is_file(join(packages[n-1].folder,arg)) {
-        packages[n-1].file=arg
-        return true
+    if n==0 || !named {
+        fmt.eprintfln("mirai test: there is no file %s; a file is given by its path from the working folder (%s) or from the engine (%s), or by its name after its package: mirai test <package> <file>_test.odin",arg,project.path_absolute(".",context.temp_allocator),root)
+        return false
     }
-    fmt.eprintfln("mirai test: %s is not an Odin file of the engine nor of the package before it",arg)
+    p:=packages[n-1]
+    files:=make([dynamic]string,context.temp_allocator)
+    for test in test_declared(p.folder,allocator=context.temp_allocator) {
+        if !slice.contains(files[:],test.file) {append(&files,test.file)}
+    }
+    if similar:=test_similar(arg,files[:],context.temp_allocator);len(similar)>0 {
+        fmt.eprintfln("mirai test: %s has no file %s; similar: %s",p.path,arg,strings.join(similar,", ",context.temp_allocator))
+    } else {
+        fmt.eprintfln("mirai test: %s has no file %s; mirai test %s --list shows its files with tests",p.path,arg,p.path)
+    }
     return false
 }
 
-// mirai test --list: the tests the sources of each package, or of its file,
-// declare, by file, without compiling.
+// The files with a test that reaches the device of the GPU tests.
 @(private="file")
-test_list :: proc(packages:[]Test_Package) -> int {
+test_device_files :: proc(declared:[]Test_Declared) -> [dynamic]string {
+    files:=make([dynamic]string,context.temp_allocator)
+    for test in declared {
+        if test.device && !slice.contains(files[:],test.file) {append(&files,test.file)}
+    }
+    return files
+}
+
+// mirai test --list: the tests the sources of each package, or of its files
+// asked, declare, by file, without compiling; with --no-gpu, without the
+// files that reach the device of the GPU tests.
+@(private="file")
+test_list :: proc(packages:[]Test_Package,no_gpu:bool) -> int {
     for p in packages {
-        declared:=test_declared(p.folder,p.file)
+        declared:=test_declared(p.folder,p.files[:],no_gpu)
+        device:=test_device_files(declared[:])
         file:=""
+        count:=0
         for test in declared {
+            if slice.contains(device[:],test.file) {continue}
             if test.file!=file {
                 file=test.file
                 fmt.printfln("%s/%s%s",strings.trim_right(p.path,"/\\"),file,test.here?"":" (does not build on this system)")
             }
             fmt.printfln("  %s",test.name)
+            count+=1
         }
-        fmt.printfln("%d tests in %s%s",len(declared),p.path,p.file!=""?fmt.tprintf("/%s",p.file):"")
+        of:=len(p.files)>0?fmt.tprintf(" (%s)",strings.join(p.files[:],", ",context.temp_allocator)):""
+        without:=len(device)>0?fmt.tprintf(", without the %d of files that reach the GPU device",len(declared)-count):""
+        fmt.printfln("%d tests in %s%s%s",count,p.path,of,without)
     }
     return 0
 }
 
-// Checks the names asked of each package against those its sources declare,
-// so that a wrong one stops the command before it compiles, and says which
-// ones look like it. With --failed, the tests that failed the last time join
-// those asked; one its sources no longer declare is left out.
+// Settles what each package runs before anything compiles. The names asked
+// are checked against those its sources declare: a wrong one stops the
+// command and says which ones look like it. The tests of the files asked join
+// them, and with --failed those that failed the last time, but for one the
+// sources no longer declare. With --no-gpu the tests of the files that reach
+// the device of the GPU tests leave.
 @(private="file")
-test_names_check :: proc(root:string,packages:[]Test_Package,failed_only:bool) -> bool {
+test_names_check :: proc(root:string,packages:[]Test_Package,failed_only,no_gpu:bool) -> bool {
     ok:=true
     for &p in packages {
-        declared:=test_declared(p.folder,"")
+        declared:=test_declared(p.folder,device=no_gpu)
         names:=make([dynamic]string,context.temp_allocator)
         for test in declared {
             if test.here {append(&names,test.name)}
+        }
+        for file in p.files {
+            found,here:=false,false
+            for test in declared {
+                if !path_same(test.file,file) {continue}
+                found=true
+                here||=test.here
+                if test.here && !slice.contains(p.names[:],test.name) {append(&p.names,test.name)}
+            }
+            if here {continue}
+            ok=false
+            if found {fmt.eprintfln("mirai test: %s/%s does not build on this system",p.path,file)}
+            else {fmt.eprintfln("mirai test: %s/%s declares no test; mirai test %s --list shows the files that do",p.path,file,p.path)}
         }
         if failed_only {
             last:=test_failed_load(test_executable(root,p.folder))
@@ -305,7 +351,8 @@ test_names_check :: proc(root:string,packages:[]Test_Package,failed_only:bool) -
                 }
                 if !slice.contains(p.names[:],name) {append(&p.names,name)}
             }
-            if len(p.names)==0 {fmt.printfln("mirai test: %s: no test failed the last time",p.path)}
+            p.nothing=len(p.names)==0
+            if p.nothing {fmt.printfln("mirai test: %s: no test failed the last time",p.path)}
         }
         for asked in p.names {
             name:=test_bare(asked)
@@ -322,6 +369,21 @@ test_names_check :: proc(root:string,packages:[]Test_Package,failed_only:bool) -
             case: fmt.eprintfln("mirai test: %s has no test %s; mirai test %s --list shows them",p.path,name,p.path)
             }
         }
+        device:=test_device_files(declared[:])
+        if len(device)==0 || p.nothing {continue}
+        asked:=make(map[string]bool,context.temp_allocator)
+        for name in p.names {asked[test_bare(name)]=true}
+        kept:=make([dynamic]string)
+        left:=0
+        for test in declared {
+            if !test.here || (len(asked)>0 && test.name not_in asked) {continue}
+            if slice.contains(device[:],test.file) {left+=1} else {append(&kept,test.name)}
+        }
+        if left==0 {continue}
+        fmt.eprintfln("mirai test: %s: --no-gpu leaves out %d test%s of files that reach the GPU device; mirai test %s --list --no-gpu shows the ones that stay",p.path,left,left==1?"":"s",p.path)
+        p.names=kept
+        p.nothing=len(kept)==0
+        if p.nothing {fmt.printfln("mirai test: %s: every test asked is of a file that reaches the GPU device",p.path)}
     }
     return ok
 }

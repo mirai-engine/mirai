@@ -430,7 +430,7 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 | Documents of interfaces and scenes, no editor | `mirai ui\|scene read\|write\|check ... [--project P]` |
 | Git plugins of a project | `mirai plugin add\|update\|remove\|sync\|list\|catalog\|check ...` |
 | Check types | `mirai check [<package> [-flag...]]`: a package relative to the working folder or to the engine, or absolute; none inside a project: its game, editor and plugins. In a runtime package it also fails on an allocation whose error nothing receives (`tools/mirai/alloc_lint.odin` says which calls and which packages) |
-| Run tests | `mirai test [<package>] [test...] [--list\|--failed\|--quiet] [-flag...]`: the package as for `check`; none inside a project: its game |
+| Run tests | `mirai test [<package>] [test\|file.odin...] [--list\|--failed\|--no-gpu\|--quiet] [-flag...]`: the package as for `check`; none inside a project: its game |
 | Headless background editor | `mirai session start\|restart\|stop\|status [project] [--dev] [--copy]` |
 | Call the editor API | `mirai rpc <method> [key=value...\|json] [--select c] [--wait-until c=v] [--project P]` |
 | Capture without UI | `mirai capture [project] --out x.png [--reference r.png] [--repeat]` |
@@ -527,6 +527,14 @@ package.
 - Names are looked up among the `@(test)` of the sources before compiling: one that is not there
   cuts the command with 2 and names the similar ones. They reach the executable as `-tests:`, so
   asking for other tests does not compile.
+- An argument that ends in `.odin` asks for the tests of that file: the name of a file of the
+  package before it, or a path to one. A file that is not there or declares no test cuts the
+  command like a wrong name.
+- `--no-gpu` leaves out the tests of the files that reach the device of the GPU tests. A test
+  reaches it when it names `rhi/shared_device` or `rhi.device_create`, itself or through the
+  declarations of the test files of its package; it is read from the text, like the names, so a
+  GPU test takes the device in its test files and not through what is no test. `--list` takes the
+  files and `--no-gpu` too, and shows what would run.
 - `--failed` runs those that failed last time in the package: each run removes the ones that ran
   and adds the ones that failed.
 - Each package has its executable in `bin/tests/`, which is compiled with the turn only if its
