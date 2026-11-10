@@ -323,9 +323,9 @@ preview_find :: proc(stroke:^Stroke,coord:[3]i32) -> int {
 // The levels the chunks of the stroke show: each its level outside the
 // stroke, a chunk with holes level 0 as the runtime makes it, and each side
 // the finer of the two chunks it joins. A chunk previewed at a coarse level
-// joins those around it; one whose side changes is previewed too. A
-// Heightfield keeps the border each chunk shows, lowered only where a hole
-// takes a chunk to level 0; the nodes of the quadtree are not previewed.
+// joins those around it; one whose side changes is previewed too. Each keeps
+// the border it shows, lowered only where a hole takes a chunk to level 0;
+// the nodes of the quadtree are not previewed. A Volume has no levels.
 @(private)
 preview_levels :: proc(stroke:^Stroke,terrains:core.Read(terrain.Terrain),chunks:core.Read(terrain.Terrain_Chunk)) {
     dirty:=false
@@ -333,6 +333,7 @@ preview_levels :: proc(stroke:^Stroke,terrains:core.Read(terrain.Terrain),chunks
     if !dirty && core.version(chunks)==stroke.levels_seen {return}
     stroke.levels_seen=core.version(chunks)
     s:=&stroke.source
+    if s.kind!=.Heightfield {return}
     counts:=terrain.chunk_counts(s)
     levels:=make([]u8,counts.x*counts.y*counts.z,context.temp_allocator)
     shown:=make([]terrain.Chunk_Lod,len(levels),context.temp_allocator)
@@ -346,29 +347,24 @@ preview_levels :: proc(stroke:^Stroke,terrains:core.Read(terrain.Terrain),chunks
     }
     for &level,index in levels {if level>0 && terrain.chunk_holed(s,index) {level,dropped[index]=0,true}}
     for index in 0..<len(levels) {
+        if !has[index] {continue}
         coord:=terrain.chunk_coord(s,index)
-        lod:=terrain.chunk_lod_sides(s,levels,coord)
-        if s.kind==.Heightfield {
-            if !has[index] {continue}
-            lod=shown[index]
-            lod.level=levels[index]
-            lod.faces[2],lod.faces[3]=lod.level,lod.level
-            for &edge in lod.edges {edge=lod.level}
-            lower :: proc(s:^terrain.Source,levels:[]u8,dropped,has:[]bool,value:^u8,around:[]([3]i32)) {
-                for coord in around {
-                    at:=terrain.chunk_index(s,coord)
-                    if at>=0 && has[at] && dropped[at] {value^=min(value^,levels[at])}
-                }
+        lod:=shown[index]
+        lod.level=levels[index]
+        lower :: proc(s:^terrain.Source,levels:[]u8,dropped,has:[]bool,value:^u8,around:[]([3]i32)) {
+            for coord in around {
+                at:=terrain.chunk_index(s,coord)
+                if at>=0 && has[at] && dropped[at] {value^=min(value^,levels[at])}
             }
-            x,z:=coord.x,coord.z
-            lower(s,levels,dropped,has,&lod.faces[0],{{x,0,z},{x-1,0,z}})
-            lower(s,levels,dropped,has,&lod.faces[1],{{x,0,z},{x+1,0,z}})
-            lower(s,levels,dropped,has,&lod.faces[4],{{x,0,z},{x,0,z-1}})
-            lower(s,levels,dropped,has,&lod.faces[5],{{x,0,z},{x,0,z+1}})
-            for &corner,k in lod.corners {
-                dx,dz:=i32(k&1),i32(k>>1)
-                lower(s,levels,dropped,has,&corner,{{x+dx-1,0,z+dz-1},{x+dx,0,z+dz-1},{x+dx-1,0,z+dz},{x+dx,0,z+dz}})
-            }
+        }
+        x,z:=coord.x,coord.z
+        lower(s,levels,dropped,has,&lod.sides[0],{{x,0,z},{x-1,0,z}})
+        lower(s,levels,dropped,has,&lod.sides[1],{{x,0,z},{x+1,0,z}})
+        lower(s,levels,dropped,has,&lod.sides[2],{{x,0,z},{x,0,z-1}})
+        lower(s,levels,dropped,has,&lod.sides[3],{{x,0,z},{x,0,z+1}})
+        for &corner,k in lod.corners {
+            dx,dz:=i32(k&1),i32(k>>1)
+            lower(s,levels,dropped,has,&corner,{{x+dx-1,0,z+dz-1},{x+dx,0,z+dz-1},{x+dx-1,0,z+dz},{x+dx,0,z+dz}})
         }
         at:=preview_find(stroke,coord)
         if at<0 {

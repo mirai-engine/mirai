@@ -23,7 +23,7 @@ Chunk_Mesh :: struct {
     remap:[dynamic]i32,
     holes:[dynamic]u8, // of the cells of a Heightfield collider
     samples:[dynamic]f32, // of a Volume: the window of samples a build reads
-    collision:geom.Mesh_Buffer, // a Volume at a level above 0: what collides, level 0
+    locked:[dynamic]bool, // of a node of a Volume, by vertex: on a side of its region another piece shares, where its levels keep it
     render:host.Mesh_Render_Geometry, // what the renderer takes of geometry, made by the job that built it
     render_ready:bool,                // render is that of geometry as it is
     // A piece of a Heightfield: the border of a chunk, and the lines it joins.
@@ -45,7 +45,7 @@ chunk_mesh_init :: proc(mesh:^Chunk_Mesh,allocator:=context.allocator) {
     mesh.remap=make([dynamic]i32,allocator)
     mesh.holes=make([dynamic]u8,allocator)
     mesh.samples=make([dynamic]f32,allocator)
-    geom.mesh_buffer_init(&mesh.collision,allocator)
+    mesh.locked=make([dynamic]bool,allocator)
     host.assets_render_geometry_init(&mesh.render,allocator)
     for i in 0..<4 {mesh.border.sides[i]=make([dynamic]u8,allocator);mesh.border.corners[i]=make([dynamic]u8,allocator)}
     mesh.lines.xs,mesh.lines.zs=make([dynamic]int,allocator),make([dynamic]int,allocator)
@@ -62,7 +62,7 @@ chunk_mesh_destroy :: proc(mesh:^Chunk_Mesh) {
     delete(mesh.uv1s);delete(mesh.heights)
     delete(mesh.remap)
     delete(mesh.holes);delete(mesh.samples)
-    geom.mesh_buffer_destroy(&mesh.collision)
+    delete(mesh.locked)
     host.assets_render_geometry_destroy(&mesh.render)
     piece_border_destroy(&mesh.border)
     delete(mesh.lines.xs);delete(mesh.lines.zs);delete(mesh.lines.column);delete(mesh.lines.row)
@@ -117,10 +117,13 @@ chunk_build :: proc(s:^Source,coord:[3]i32,mesh:^Chunk_Mesh,collision:=true,lod:
     return true
 }
 
-// The visible mesh of node index of the quadtree (above the chunks), in its
-// own space, without collider. A Heightfield node shows its region at
-// lod.level from the coarse grid, joined by its border.
-node_build :: proc(s:^Source,q:^Quad,index:int,lod:Chunk_Lod,border:^Piece_Border,mesh:^Chunk_Mesh) -> bool {
+// The visible mesh of node index of the tree (above the chunks), in its own
+// space, without collider. A Heightfield node shows its region at lod.level
+// from the coarse grid, joined by its border. A Volume node is the surface of
+// its chunks as they build it, welded into one mesh: the vertices on the
+// sides of its region that another piece shares are locked, so the levels
+// the renderer makes of it meet whatever is beside it.
+node_build :: proc(s:^Source,q:^Quad,index:int,lod:Chunk_Lod,border:^Piece_Border,mesh:^Chunk_Mesh,join:=Chunk_Join{}) -> bool {
     chunk_mesh_clear(mesh)
     if index<q.first[1] || index>=quad_total(q) {return false}
     m:=&mesh.geometry
@@ -129,7 +132,32 @@ node_build :: proc(s:^Source,q:^Quad,index:int,lod:Chunk_Lod,border:^Piece_Borde
         low,high:=quad_region(s,q,index)
         if !piece_build(s,{low=low,high=high,level=lod.level,coarse=true,border=border},mesh) {return false}
     case .Volume:
-        return false
+        from,to:=quad_chunks3(q,index)
+        merged:=&mesh.halo
+        geom.mesh_buffer_clear(merged)
+        for z in from.z..<to.z {for y in from.y..<to.y {for x in from.x..<to.x {
+            if !chunk_build_terrain(s,{i32(x),i32(y),i32(z)},mesh,false,{},join) {return false}
+            if len(m.indices)==0 {continue}
+            first:=u32(len(merged.positions))
+            if append(&merged.positions,..m.positions[:])!=len(m.positions) || append(&merged.normals,..m.normals[:])!=len(m.normals) || reserve(&merged.indices,len(merged.indices)+len(m.indices))!=nil {return false}
+            for i in m.indices {append(&merged.indices,first+i)}
+        }}}
+        chunk_mesh_clear(mesh)
+        if len(merged.indices)==0 {break}
+        if !geom.mesh_weld(geom.mesh_buffer_view(merged),0,m) {return false}
+        if resize(&m.uvs,len(m.positions))!=nil || resize(&mesh.uv1s,len(m.positions))!=nil || resize(&mesh.locked,len(m.positions))!=nil {return false}
+        low,high:=quad_region3(s,q,index)
+        origin:=source_origin(s)
+        for position,i in m.positions {
+            w:=layers_vertex(s,source_weights_at(s,position),i<len(m.normals)?m.normals[i]:{0,1,0},position.y)
+            m.uvs[i],mesh.uv1s[i]={w[0],w[1]},{w[2],w[3]}
+            locked:=false
+            for axis in 0..<3 {
+                if low[axis]>0 && position[axis]==origin[axis]+f32(low[axis])*s.cell {locked=true}
+                if high[axis]<int(s.samples[axis])-1 && position[axis]==origin[axis]+f32(high[axis])*s.cell {locked=true}
+            }
+            mesh.locked[i]=locked
+        }
     }
     chunk_place(s,quad_place(s,q,index),mesh)
     return true
@@ -142,20 +170,8 @@ chunk_origin :: proc "contextless" (s:^Source,coord:[3]i32) -> (origin:[3]f32) {
     return
 }
 
-// What a texture laid over the terrain, a turn every UV_METERS, has turned
-// before a place of it, without the whole turns: the uvs of a chunk start
-// there and stay small however far the terrain reaches.
-chunk_turns :: proc "contextless" (place:[3]f32) -> [2]f32 {
-    turns:[2]f32
-    for axis,i in ([2]int{0,2}) {
-        p:=f64(place[axis])/f64(UV_METERS)
-        turns[i]=f32(p-math.floor(p))
-    }
-    return turns
-}
-
 // A chunk built in the space of its terrain into its own, from its place
-// there (chunk_origin, mesh.origin): its vertices and what collides of it. A
+// there (chunk_origin, mesh.origin). A
 // terrain of kilometres keeps them within a chunk, which f32 holds to the
 // millimetre and less.
 @(private)
@@ -163,15 +179,13 @@ chunk_place :: proc(s:^Source,coord:[3]i32,mesh:^Chunk_Mesh) {
     origin:=chunk_origin(s,coord)
     mesh.origin=origin
     for &p in mesh.geometry.positions {p-=origin}
-    for &p in mesh.collision.positions {p-=origin}
 }
 
 @(private)
 chunk_mesh_clear :: proc(mesh:^Chunk_Mesh) {
     mesh.render_ready=false
     geom.mesh_buffer_clear(&mesh.geometry)
-    geom.mesh_buffer_clear(&mesh.collision)
-    clear(&mesh.uv1s);clear(&mesh.heights);clear(&mesh.disabled_edges);clear(&mesh.disabled_borders);clear(&mesh.holes)
+    clear(&mesh.uv1s);clear(&mesh.heights);clear(&mesh.disabled_edges);clear(&mesh.disabled_borders);clear(&mesh.holes);clear(&mesh.locked)
     mesh.columns,mesh.rows=0,0
     mesh.origin,mesh.cell={},{}
 }
@@ -184,7 +198,7 @@ chunk_detail_build :: proc(s:^Source,coord:[3]i32,lod:Chunk_Lod,detail:u8,fine:[
     low,high,valid:=chunk_region(s,coord)
     if !valid || s.kind!=.Heightfield || lod.level!=0 {return false}
     piece_border_of_lod(lod,&mesh.border)
-    piece_build(s,{low=low.xz,high=high.xz,border=&mesh.border,holes=len(s.holes.pages)>0,detail=detail,fine=fine},mesh) or_return
+    piece_build(s,{low=low.xz,high=high.xz,border=&mesh.border,holes=!grid_none(&s.holes),detail=detail,fine=fine},mesh) or_return
     chunk_place(s,coord,mesh)
     return true
 }
@@ -197,27 +211,14 @@ chunk_build_terrain :: proc(s:^Source,coord:[3]i32,mesh:^Chunk_Mesh,collision:=t
     m:=&mesh.geometry
     if s.kind==.Volume {
         grid:geom.Scalar_Grid
-        surface,ok:=chunk_volume_window(s,low,high,lod.level,&mesh.samples,&grid,join)
+        // Every sample: what is far shows through the nodes above, at the levels the renderer makes of them.
+        surface,ok:=chunk_volume_window(s,low,high,&mesh.samples,&grid,join)
         if !ok {return false}
-        if surface && collision {
+        if surface {
             if geom.isosurface(grid,low,high,m)!=.None {return false}
-            collides:=lod.level>0?&mesh.collision:&mesh.welded
-            if !geom.mesh_weld(geom.mesh_buffer_view(m),0,collides) {return false}
-            if lod.level==0 {
-                mesh.geometry,mesh.welded=mesh.welded,mesh.geometry
-                collides=m
-            }
-            if !chunk_volume_edges(s,grid,low,high,mesh,collides) {return false}
-        }
-        if surface && (lod.level>0 || !collision) {
-            if geom.isosurface(grid,low,high,m,0,chunk_iso_lod(lod))!=.None {return false}
             if !geom.mesh_weld(geom.mesh_buffer_view(m),0,&mesh.welded) {return false}
             mesh.geometry,mesh.welded=mesh.welded,mesh.geometry
-            // What a coarse level misses still shows while it collides.
-            if len(m.indices)==0 && len(mesh.collision.indices)>0 {
-                mesh.geometry,mesh.collision=mesh.collision,mesh.geometry
-                geom.mesh_buffer_clear(&mesh.collision)
-            }
+            if collision && !chunk_volume_edges(s,grid,low,high,mesh,m) {return false}
         }
         if resize(&m.uvs,len(m.positions))!=nil || resize(&mesh.uv1s,len(m.positions))!=nil {return false}
         for position,i in m.positions {
@@ -227,9 +228,9 @@ chunk_build_terrain :: proc(s:^Source,coord:[3]i32,mesh:^Chunk_Mesh,collision:=t
         return true
     }
     columns,rows:=high.x-low.x+1,high.z-low.z+1
-    if !chunk_lod_plain(lod) {
+    if lod!={} {
         piece_border_of_lod(lod,&mesh.border)
-        if !piece_build(s,{low=low.xz,high=high.xz,level=lod.level,border=&mesh.border,holes=len(s.holes.pages)>0 || len(join.cuts)>0,cuts=join.cuts},mesh) {return false}
+        if !piece_build(s,{low=low.xz,high=high.xz,level=lod.level,border=&mesh.border,holes=!grid_none(&s.holes) || len(join.cuts)>0,cuts=join.cuts},mesh) {return false}
     } else {
         count:=columns*rows
         if resize(&m.positions,count)!=nil || resize(&m.normals,count)!=nil || resize(&m.uvs,count)!=nil || resize(&mesh.uv1s,count)!=nil || resize(&m.indices,(columns-1)*(rows-1)*6)!=nil {return false}
@@ -250,7 +251,7 @@ chunk_build_terrain :: proc(s:^Source,coord:[3]i32,mesh:^Chunk_Mesh,collision:=t
     // The collider keeps every sample, whatever the level shown.
     if resize(&mesh.heights,columns*rows)!=nil {return false}
     for row in 0..<rows {for column in 0..<columns {mesh.heights[row*columns+column]=grid_get(&s.heights,low.x+column,low.z+row)}}
-    if len(s.holes.pages)>0 || len(join.cuts)>0 {
+    if !grid_none(&s.holes) || len(join.cuts)>0 {
         if resize(&mesh.holes,(columns-1)*(rows-1))!=nil {return false}
         for row in 0..<rows-1 {for column in 0..<columns-1 {mesh.holes[row*(columns-1)+column]=u8(cell_hole(s,join.cuts,low.x+column,low.z+row))}}
     }
@@ -291,15 +292,17 @@ detail_vertex :: proc "contextless" (s:^Source,at,step:[2]int,detail:u8) -> (pos
 }
 
 // Makes the geometry the renderer takes of a chunk built, where it was
-// built: chunk_publish then only gives it the rows of its materials. Any thread.
-chunk_render_prepare :: proc(kind:Source_Kind,mesh:^Chunk_Mesh,limits:host.Assets_Limits) -> bool {
+// built: chunk_publish then only gives it the rows of its materials. levels:
+// in the clusters the renderer draws at the detail the view asks for, as a
+// node of a Volume is, its locked vertices kept where they are. Any thread.
+chunk_render_prepare :: proc(kind:Source_Kind,mesh:^Chunk_Mesh,limits:host.Assets_Limits,levels:=false) -> bool {
     if len(mesh.geometry.indices)==0 {return false}
     tangents:[][4]f32
     if kind==.Heightfield {
         tangents=make([][4]f32,len(mesh.geometry.normals),context.temp_allocator)
         heightfield_tangents(mesh.geometry.normals[:],tangents)
     }
-    mesh.render_ready=host.assets_render_geometry_make(geom.mesh_buffer_view(&mesh.geometry),mesh.uv1s[:],1,&mesh.render,limits,tangents)
+    mesh.render_ready=host.assets_render_geometry_make(geom.mesh_buffer_view(&mesh.geometry),mesh.uv1s[:],1,&mesh.render,limits,tangents,levels,levels?mesh.locked[:]:nil)
     return mesh.render_ready
 }
 
@@ -324,15 +327,15 @@ heightfield_normal :: proc "contextless" (s:^Source,x,z,step:int) -> [3]f32 {
     return linalg.normalize0([3]f32{(west-east)/(f32(x1-x0)*s.cell),1,(north-south)/(f32(z1-z0)*s.cell)})
 }
 
-// The samples a build of the Volume chunk low..high at level reads, from its
+// The samples a build of the Volume chunk low..high reads, from its
 // blocks into samples: grid, the window of the field its surface and its
 // collider are extracted from, at the places of the whole field. surface is
 // false when every block there is all air or all solid alike: there is none
 // to extract.
 @(private)
-chunk_volume_window :: proc(s:^Source,low,high:[3]int,level:u8,samples:^[dynamic]f32,grid:^geom.Scalar_Grid,join:=Chunk_Join{}) -> (surface,ok:bool) {
+chunk_volume_window :: proc(s:^Source,low,high:[3]int,samples:^[dynamic]f32,grid:^geom.Scalar_Grid,join:=Chunk_Join{}) -> (surface,ok:bool) {
     g:=&s.distances
-    halo:=max(1<<uint(level),2)
+    halo:=VOLUME_HALO
     last:[3]int
     grid^={samples={int(s.samples.x),int(s.samples.y),int(s.samples.z)},cell={s.cell,s.cell,s.cell},origin=source_origin(s)}
     for axis in 0..<3 {grid.first[axis],last[axis]=max(low[axis]-halo,0),min(high[axis]+halo,int(s.samples[axis])-1)}
@@ -340,9 +343,10 @@ chunk_volume_window :: proc(s:^Source,low,high:[3]int,level:u8,samples:^[dynamic
     from,to:=grid_pages(g,grid.first,last)
     sign:=0
     for pz in from.z..=to.z {for py in from.y..=to.y {for px in from.x..=to.x {
-        page:=&g.pages[px+g.counts.x*(py+g.counts.y*pz)]
-        side:=page.fill<0?-1:1
-        if page.values!=nil || sign!=0 && side!=sign {surface=true}
+        slot,value:=grid_find(g,{px,py,pz})
+        if slot>=0 {value=g.pages[slot].fill}
+        side:=value<0?-1:1
+        if slot>=0 && g.pages[slot].values!=nil || sign!=0 && side!=sign {surface=true}
         sign=side
     }}}
     // The ground the band of a joined Volume reads may cross it anywhere.
@@ -356,14 +360,15 @@ chunk_volume_window :: proc(s:^Source,low,high:[3]int,level:u8,samples:^[dynamic
     for z in grid.first.z..=last.z {for y in grid.first.y..=last.y {
         for x:=grid.first.x;x<=last.x; {
             q:=[3]int{x,y,z}/BLOCK
-            page:=&g.pages[q.x+g.counts.x*(q.y+g.counts.y*q.z)]
+            slot,fill:=grid_find(g,q)
             run:=samples[at:][:min(q.x*BLOCK+BLOCK-1,last.x)-x+1]
-            if page.values==nil {
-                for &value in run {value=page.fill}
+            if slot<0 || g.pages[slot].values==nil {
+                if slot>=0 {fill=g.pages[slot].fill}
+                for &value in run {value=fill}
             } else {
                 low:=q*BLOCK
                 width,height:=min(BLOCK,g.size.x-low.x),min(BLOCK,g.size.y-low.y)
-                copy(run,page.values[x-low.x+width*(y-low.y+height*(z-low.z)):])
+                copy(run,g.pages[slot].values[x-low.x+width*(y-low.y+height*(z-low.z)):])
             }
             at+=len(run)
             x+=len(run)
@@ -441,11 +446,10 @@ chunk_heightfield_borders :: proc(s:^Source,low,high:[3]int,mesh:^Chunk_Mesh,cut
 }
 
 // picking keeps the triangles on the CPU without a collider: the editor picks
-// a chunk far from the view by them.
-chunk_publish :: proc(a:^host.Assets,kind:Source_Kind,mesh:^Chunk_Mesh,collision:=true,picking:=false) -> (id:base.Asset_Id,ok:bool) {
+// a chunk far from the view by them. levels: as chunk_render_prepare made it.
+chunk_publish :: proc(a:^host.Assets,kind:Source_Kind,mesh:^Chunk_Mesh,collision:=true,picking:=false,levels:=false) -> (id:base.Asset_Id,ok:bool) {
     if len(mesh.geometry.indices)==0 {return {},true}
-    options:=host.Mesh_Generate_Options{no_lods=true,collision=collision || picking,disabled_edges=mesh.disabled_edges[:]}
-    if collision {options.collision_mesh=geom.mesh_buffer_view(&mesh.collision)}
+    options:=host.Mesh_Generate_Options{no_lods=!levels || !mesh.render_ready,collision=collision || picking,disabled_edges=mesh.disabled_edges[:]}
     if mesh.render_ready {
         options.render_geometry=&mesh.render
     } else if kind==.Heightfield {

@@ -190,12 +190,27 @@ source_layer_set :: proc(s:^Source,index:int,layer:Terrain_Layer) -> bool {
 source_layer_remove :: proc(s:^Source,index:int) -> bool {
     count:=int(s.layer_count)
     if index<0 || index>=count || count==1 {return false}
-    for i in 0..<len(s.weights.pages) {if !grid_page_own(&s.weights,i,s.allocator) {return false}}
+    // Each page takes values no other grid holds before they change.
+    for &page in s.weights.pages {
+        if page.values==nil || shared_alone(page.values) {continue}
+        values,made:=shared_make(Weights,len(page.values),s.allocator)
+        if !made {return false}
+        copy(values,page.values)
+        shared_free(page.values)
+        page.values=values
+    }
     for &page in s.weights.pages {
         page.altered=true
         page.fill=weights_remove(page.fill,index,count)
         for &value in page.values {value=weights_remove(value,index,count)}
     }
+    Removed :: struct {index,count:int}
+    removed:=Removed{index,count}
+    grid_tiles_map(&s.weights,&removed,proc(user:rawptr,fill:Weights) -> Weights {
+        r:=(^Removed)(user)
+        return weights_remove(fill,r.index,r.count)
+    })
+    s.weights.filled=true
     copy(s.layers[index:count],s.layers[index+1:count])
     s.layers[count-1]={}
     s.layer_count-=1
@@ -241,24 +256,27 @@ weights_used :: proc "contextless" (w:Weights,count:u32) -> bool {
     return true
 }
 
-// The weights a .terrain holds for the layers of info, into s.
+// Whether every weight a source holds is of its layers alone.
 @(private)
-source_weights_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=context.allocator,paged:=false) -> bool {
-    if !grid_read_document(&s.weights,file,types,weights_size(s),"weight_pages","weight_blocks",weights_full,allocator,paged) {return false}
+weights_all_used :: proc(s:^Source) -> bool {
     for page in s.weights.pages {
         if !weights_used(page.fill,s.layer_count) {return false}
         for value in page.values {if !weights_used(value,s.layer_count) {return false}}
     }
-    return true
+    count:=s.layer_count
+    return grid_tiles_all(&s.weights,&count,proc(user:rawptr,fill:Weights) -> bool {return weights_used(fill,(^u32)(user)^)})
+}
+
+// The weights a .terrain holds for the layers of info, into s.
+@(private)
+source_weights_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=context.allocator,paged:=false) -> bool {
+    if !grid_read_document(&s.weights,file,types,weights_size(s),"weight_pages","weight_blocks",weights_full,allocator,paged) {return false}
+    return weights_all_used(s)
 }
 
 @(private)
 source_weights_put :: proc(document:^asset.Document,types:^asset.Types,s:^Source,keep:=false) -> asset.Error {
-    if s.weights.size!=weights_size(s) {return .Invalid}
-    for page in s.weights.pages {
-        if !weights_used(page.fill,s.layer_count) {return .Invalid}
-        for value in page.values {if !weights_used(value,s.layer_count) {return .Invalid}}
-    }
+    if s.weights.size!=weights_size(s) || !weights_all_used(s) {return .Invalid}
     return grid_put_document(document,types,&s.weights,"weight_pages","weight_blocks",weights_full,s.file,s.allocator,keep)
 }
 

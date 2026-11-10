@@ -54,7 +54,7 @@ terrain_editor_budget_counts_sources_chunks_and_replacement_without_double_charg
 }
 
 @(test)
-terrain_editor_budget_leaves_chunks_and_colliders_of_a_heightfield_to_the_runtime :: proc(t:^testing.T) {
+terrain_editor_budget_leaves_chunks_and_colliders_to_the_runtime :: proc(t:^testing.T) {
     w:Budget_World
     if !core.test_world_init(t,&w,test_types) {return}
     defer core.test_world_destroy(&w)
@@ -65,10 +65,7 @@ terrain_editor_budget_leaves_chunks_and_colliders_of_a_heightfield_to_the_runtim
     world:=core.test_world_ref(&w)
     session:editor.Session
     testing.expect(t,terrain_budget(&session,world,&source),"256 chunks show as nodes past 64 pieces, and the nearest take the 16 heightfields")
-    // A Volume has no nodes to show in place of its chunks.
     volume:terrain.Source;defer terrain.source_destroy(&volume)
     testing.expect(t,terrain.source_make(&volume,.Volume,{65,65,65},1,8))
-    testing.expect(t,!terrain_budget(&session,world,&volume),"512 chunks of a Volume pass 64")
-    w.settings.resident_distance=100
-    testing.expect(t,terrain_budget(&session,world,&volume),"a streamed Volume keeps its nearest")
+    testing.expect(t,terrain_budget(&session,world,&volume),"512 chunks of a Volume show as nodes past 64 pieces too")
 }

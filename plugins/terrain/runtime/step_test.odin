@@ -566,7 +566,8 @@ volume_runtime_keeps_empty_chunk_identity_and_updates_collision_when_material_ap
     core.test_world_settle(&w.w);terrain_test_update(&w,&resident,&app)
     testing.expect_value(t,len(w.chunks.values),8)
     testing.expect_value(t,len(w.colliders.values),4)
-    identities:[8]core.Entity
+    // Its eight chunks, and the root over them.
+    identities:[9]core.Entity
     copy(identities[:],resident.owners[0].chunks)
     dig(&w.terrain_requests,{kind=.Add,center={0,3,0},radius=1.5,amount=1},owner)
     terrain_test_update(&w,&resident,&app)

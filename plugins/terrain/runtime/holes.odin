@@ -8,7 +8,7 @@ import "mirai:asset"
 // once a cell is a hole.
 
 source_hole :: #force_inline proc "contextless" (s:^Source,x,z:int) -> bool {
-    return len(s.holes.pages)>0 && grid_get(&s.holes,x,z)!=0
+    return !grid_none(&s.holes) && grid_get(&s.holes,x,z)!=0
 }
 
 @(private)
@@ -16,7 +16,7 @@ hole_valid :: proc "contextless" (value:u8) -> bool {return value<=1}
 
 // Whether chunk index has a hole: it stays at level 0, the holes exact.
 chunk_holed :: proc "contextless" (s:^Source,index:int) -> bool {
-    if s.kind!=.Heightfield || len(s.holes.pages)==0 {return false}
+    if s.kind!=.Heightfield || grid_none(&s.holes) {return false}
     low,high,valid:=chunk_region(s,chunk_coord(s,index))
     if !valid {return false}
     for pz in low.z/PAGE..=(high.z-1)/PAGE {for px in low.x/PAGE..=(high.x-1)/PAGE {
@@ -40,7 +40,7 @@ chunk_holed :: proc "contextless" (s:^Source,index:int) -> bool {
 source_holes_edit :: proc(s:^Source,brush:Brush) -> (change:Change) {
     if s.kind!=.Heightfield {change.error=.Kind;return}
     size:=[2]int{int(s.samples.x)-1,int(s.samples.z)-1}
-    if len(s.holes.pages)==0 {
+    if grid_none(&s.holes) {
         if brush.kind==.Fill {return}
         if !grid_init(&s.holes,{size.x,1,size.y},0,s.allocator) {change.error=.Out_Of_Memory;return}
     }
@@ -80,7 +80,7 @@ source_holes_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocat
 
 @(private)
 source_holes_put :: proc(document:^asset.Document,types:^asset.Types,s:^Source,keep:=false) -> asset.Error {
-    if s.kind!=.Heightfield || len(s.holes.pages)==0 {return .None}
+    if s.kind!=.Heightfield || grid_none(&s.holes) {return .None}
     if s.holes.size!={int(s.samples.x)-1,1,int(s.samples.z)-1} {return .Invalid}
     return grid_put_document(document,types,&s.holes,"hole_pages","hole_blocks",hole_valid,s.file,s.allocator,keep)
 }

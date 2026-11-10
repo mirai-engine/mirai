@@ -133,8 +133,9 @@ Net_Terrain_Resync :: struct {
 }
 
 // What a Net_Terrain_Page holds: the head of a base (terrain.terrain_head_bytes),
-// a page of a grid or the end of a base, without bytes.
-Net_Part :: enum u8 {Head,Grid,End}
+// a page of a grid, a slab or a table of a grid in blocks that holds one value
+// without pages (terrain.terrain_grid_fill) or the end of a base, without bytes.
+Net_Part :: enum u8 {Head,Grid,Slab,Table,End}
 
 // A part of a source as the server holds it after edit after, in pieces:
 // total bytes of LZ of raw bytes; a page of raw 0 is all fill. A head starts
@@ -256,6 +257,7 @@ Net_Serve :: struct {
     started:bool,
     part:Net_Part,
     grid:terrain.Grid_Kind,
+    fills:bool, // of a whole base: the pages a grid holds went, its parts of one value go
     next:int,
     chunk:Net_Terrain_Page, // of the part being sent
     packed:[dynamic]u8,
@@ -481,7 +483,7 @@ page_chunk :: proc(n:^Terrain_Net,chunk:Net_Terrain_Page,problems:^core.Problems
         switch chunk.part {
         case .Head:    raw_max=terrain.HEAD_BYTES
         case .Grid:
-        case .End:     raw_max=0
+        case .Slab,.Table,.End: raw_max=0
         }
         state:=Net_Part_State{after=chunk.after,base=chunk.base,whole=chunk.whole,part=chunk.part,grid=chunk.grid,page=chunk.page,fill=chunk.fill,raw=chunk.raw,total=chunk.total}
         if chunk.part>max(Net_Part) || chunk.grid>max(terrain.Grid_Kind) || int(chunk.raw)>raw_max || int(chunk.total)>asset.pack_bound(int(chunk.raw)) {
@@ -717,6 +719,8 @@ stream_follow :: proc(n:^Terrain_Net,src:^Net_Source,cursor:^Net_Cursor,state:^T
                 #partial switch page.part {
                 case .Head:    replay.kind=.Head
                 case .Grid:    replay.kind=.Page
+                case .Slab:    replay.kind,replay.span=.Page,terrain.SLAB
+                case .Table:   replay.kind,replay.span=.Page,terrain.SLAB*terrain.TABLE
                 }
                 core.push(&replays.items,replay)
             }
@@ -1012,25 +1016,32 @@ serve_add :: proc(n:^Terrain_Net,connection:multiplayer.Connection,resync:Net_Te
     append(&n.serves,Net_Serve{connection=connection,source=resync.source,low=resync.low,high=resync.high,base=resync.base,origin=resync.origin})
 }
 
-// Server: the next part a serve sends, at or after next of its kind: those
-// over its region and, of a base, every part when whole, else those written
-// since its origin.
+// Server: the next page of the grid a serve sends, from its cursor on. Of a
+// region, the pages over it, whether the grid holds them or not: what a
+// client wrote there goes back to what the server reads. Of a base, the pages
+// the grid holds: all of them when whole, else those written since its origin
+// and those over its region.
 @(private)
 serve_next :: proc(sv:^Net_Serve,data:core.Ref(terrain.Terrain_Data)) -> (index:int,found:bool) {
-    parts :: proc(sv:^Net_Serve,data:core.Ref(terrain.Terrain_Data),low,high:[3]i32) -> (from,to,counts:[3]int,ok:bool) {
-        return terrain.terrain_grid_pages(data,sv.source,sv.grid,low,high)
-    }
-    region_from,region_to,_,region:=parts(sv,data,sv.low,sv.high)
+    from,to,counts,region:=terrain.terrain_grid_pages(data,sv.source,sv.grid,sv.low,sv.high)
     region=region && sv.high.x>=sv.low.x
-    from,to,counts,ok:=region_from,region_to,[3]int{},region
-    if sv.base {from,to,counts,ok=parts(sv,data,{},{-1,-1,-1})} else if region {_,_,counts,_=parts(sv,data,sv.low,sv.high)}
-    if !ok {return}
-    for pz in from.z..=to.z {for py in from.y..=to.y {for px in from.x..=to.x {
-        p:=px+counts.x*(py+counts.y*pz)
-        if p<sv.next {continue}
-        inside:=region && px>=region_from.x && py>=region_from.y && pz>=region_from.z && px<=region_to.x && py<=region_to.y && pz<=region_to.z
-        if !sv.base || sv.whole || inside || terrain.terrain_altered(data,sv.source,sv.grid,p) {return p,true}
-    }}}
+    if !sv.base {
+        if !region {return}
+        for pz in from.z..=to.z {for py in from.y..=to.y {for px in from.x..=to.x {
+            p:=px+counts.x*(py+counts.y*pz)
+            if p>=sv.next {sv.next=p+1;return p,true}
+        }}}
+        return
+    }
+    slots,_:=terrain.terrain_grid_held(data,sv.source,sv.grid)
+    for sv.next<slots {
+        p,altered,held:=terrain.terrain_grid_held_page(data,sv.source,sv.grid,sv.next)
+        sv.next+=1
+        if !held {continue}
+        px,py,pz:=p%max(counts.x,1),counts.x>0?p/counts.x%max(counts.y,1):0,counts.x>0?p/(counts.x*max(counts.y,1)):0
+        inside:=region && px>=from.x && py>=from.y && pz>=from.z && px<=to.x && py<=to.y && pz<=to.z
+        if sv.whole || altered || inside {return p,true}
+    }
     return
 }
 
@@ -1043,33 +1054,46 @@ serve_pack :: proc(n:^Terrain_Net,sv:^Net_Serve,src:^Net_Source,data:core.Ref(te
         sv.part=.Grid
         if sv.base {
             sv.served_origin,_,_=terrain.terrain_origin(data,sv.source)
-            sv.whole=sv.origin==0 || sv.served_origin==0 || sv.origin!=sv.served_origin
+            // Parts of one value that changed without pages are not told apart from the file: all of it goes.
+            sv.whole=sv.origin==0 || sv.served_origin==0 || sv.origin!=sv.served_origin || terrain.terrain_filled(data,sv.source)
             if resize(&n.raw,terrain.HEAD_BYTES)!=nil || !terrain.terrain_head_bytes(data,sv.source,n.raw[:]) {return false}
             chunk.part,chunk.whole,chunk.raw=.Head,sv.whole,u32(terrain.HEAD_BYTES)
             return serve_packed(n,sv,chunk)
         }
     }
     for sv.part!=.Head && sv.part!=.End {
-        index,found:=serve_next(sv,data)
-        if !found {
-            if sv.grid==max(terrain.Grid_Kind) {
-                // The end of a base says the client holds all of it.
-                if !sv.base {return false}
-                sv.part=.End
-                chunk.part,chunk.whole=.End,sv.whole
+        if !sv.fills {
+            if index,found:=serve_next(sv,data);found {
+                chunk.part,chunk.grid,chunk.page,chunk.whole=sv.part,sv.grid,u32(index),sv.whole
+                if resize(&n.raw,terrain.PAGE_BYTES_MAX)!=nil {return false}
+                size,fill,read:=terrain.terrain_page_bytes(data,sv.source,sv.grid,index,n.raw[:])
+                if !read {continue}
+                chunk.raw,chunk.fill=u32(size),fill
                 return serve_packed(n,sv,chunk)
             }
-            sv.grid=terrain.Grid_Kind(int(sv.grid)+1)
-            sv.next=0
-            continue
+            // Of a whole base, the parts of a grid in blocks that hold one value without pages follow its pages.
+            if _,parts:=terrain.terrain_grid_held(data,sv.source,sv.grid);sv.base && sv.whole && parts {
+                sv.fills,sv.next=true,0
+                continue
+            }
+        } else {
+            page,span,fill,next,more:=terrain.terrain_grid_fill(data,sv.source,sv.grid,sv.next)
+            if more {
+                sv.next=next
+                chunk.part,chunk.grid,chunk.page,chunk.fill,chunk.whole=span==terrain.SLAB?.Slab:.Table,sv.grid,u32(page),fill,sv.whole
+                return serve_packed(n,sv,chunk)
+            }
+            sv.fills=false
         }
-        sv.next=index+1
-        chunk.part,chunk.grid,chunk.page,chunk.whole=sv.part,sv.grid,u32(index),sv.whole
-        if resize(&n.raw,terrain.PAGE_BYTES_MAX)!=nil {return false}
-        size,fill,read:=terrain.terrain_page_bytes(data,sv.source,sv.grid,index,n.raw[:])
-        if !read {continue}
-        chunk.raw,chunk.fill=u32(size),fill
-        return serve_packed(n,sv,chunk)
+        if sv.grid==max(terrain.Grid_Kind) {
+            // The end of a base says the client holds all of it.
+            if !sv.base {return false}
+            sv.part=.End
+            chunk.part,chunk.whole=.End,sv.whole
+            return serve_packed(n,sv,chunk)
+        }
+        sv.grid=terrain.Grid_Kind(int(sv.grid)+1)
+        sv.next=0
     }
     return false
 }

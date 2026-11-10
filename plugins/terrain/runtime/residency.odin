@@ -35,10 +35,10 @@ split_before :: proc(a,b:Split) -> bool {
 // pieces whose mesh shows something else. Each terrain opens, from its roots,
 // the nodes under which a chunk is near a viewer, or nearer than their finest
 // level reaches; within Terrain_Settings.chunks, the nearest open first, so
-// past it the farthest show coarser nodes and nothing goes. A Volume, which
-// has no nodes, keeps its nearest chunks. Runs when the view, the transforms,
-// the sources, the colliders or the chunks change; while pieces wait to be
-// built, again once a frame (once_more: the first call of a frame).
+// past it the farthest show coarser nodes and nothing goes. Runs when the
+// view, the transforms, the sources, the colliders or the chunks change; while
+// pieces wait to be built, again once a frame (once_more: the first call of a
+// frame).
 @(private)
 resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:core.Read(core.World_Transform),view:core.View,sources:core.Ref(scene.Streaming_Sources),settings:Terrain_Settings,terrains:core.Read(Terrain),c:^Chunk_Tables,physics:phys.Physics_Settings,problems:^core.Problems,once_more:=true,focus:=Terrain_Focus{}) {
     stamp:=[5]u64{core.version(worlds),sources.ptr!=nil?sources.ptr.revision:0,u64(len(resident.owners)),resident.marks,core.version(c.colliders)}
@@ -72,11 +72,7 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:core.R
         chunks:=q.first[1]
         base:=lod_base(s,settings)
         by_error:=lod_by_error(entry,settings)
-        if q.depth==0 {
-            for node,i in owner.nodes {if node.resident {append(&resident.splits,Split{node.reach,node.distance,0,u32(o),u32(i)})}}
-            continue
-        }
-        roots+=q.counts[q.depth].x*q.counts[q.depth].y
+        roots+=q.counts[q.depth].x*q.counts[q.depth].y*q.tall[q.depth]
         for d in 1..=q.depth {for i in q.first[d]..<q.first[d+1] {
             node:=&owner.nodes[i]
             node.want=false
@@ -85,7 +81,8 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:core.R
             // finer. The chunks of a streamed Heightfield need their pages: only
             // their residency opens to them.
             minimum:=node_lod_min(s,q,i)
-            finer:=node_lod_min(s,q,quad_children(q,i)[0])<minimum && (s.kind!=.Heightfield || d>1 || !stream)
+            // A node of a Volume shows every sample at the levels of its clusters: only a chunk under it opens it.
+            finer:=s.kind==.Heightfield && node_lod_min(s,q,quad_children(q,i)[0])<minimum && (d>1 || !stream)
             if !node.want && finer {
                 switch {
                 case settings.lod_distance<0: node.want=true
@@ -107,15 +104,11 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:core.R
     }
     budget-=roots
     slice.sort_by(resident.splits[:],split_before)
-    for &owner in resident.owners {for &node in owner.nodes {node.open=false;if owner.quad.depth==0 {node.cut=false}}}
+    for &owner in resident.owners {for &node in owner.nodes {node.open=false}}
     for split in resident.splits {
         owner:=&resident.owners[split.owner]
         q:=&owner.quad
         node:=&owner.nodes[split.node]
-        if q.depth==0 {
-            if budget>=1 {budget-=1;node.cut=true} else {node.resident=false}
-            continue
-        }
         parent:=quad_parent(q,int(split.node))
         if parent>=0 && !owner.nodes[parent].open {continue}
         cost:=-1
@@ -126,12 +119,6 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:core.R
     }
     for &owner in resident.owners {
         q:=&owner.quad
-        if q.depth==0 {
-            dropped:=0
-            for node,i in owner.nodes {if !node.cut && node.distance<max(f32) && (!stream || scene.resident(node.reach,false)) {dropped+=1;_=i}}
-            if dropped>0 {core.report(problems,owner.entity,"terrain.chunks_full","%d chunks of this terrain do not show: it has no nodes to show in their place, and with the other terrains they pass the %d pieces of Terrain_Settings.chunks; raise it, or lower Terrain_Settings.resident_distance",dropped,data.settings.chunks)}
-            continue
-        }
         for d in 0..=q.depth {for i in q.first[d]..<q.first[d+1] {
             parent:=quad_parent(q,i)
             node:=&owner.nodes[i]
@@ -153,8 +140,7 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:core.R
             chunk:=&source.chunks[i]
             // A streamed terrain keeps its open nodes and its roots too: they stand in
             // for what they cover while it comes (owner_cut), and show when all else goes.
-            // A Volume has no nodes, and its chunks are no roots.
-            chunk.resident=node.cut || stream && (node.open || q.depth>0 && i>=q.first[q.depth])
+            chunk.resident=node.cut || stream && (node.open || i>=q.first[q.depth])
             if i>=chunks {continue}
             chunk.wanted.collision=node.cut && node.collide
             if node.cut && (!stream || node.reach<=DEEP_REACH) {source.deep[i]=true}
@@ -164,7 +150,7 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:core.R
             chunk:=&source.chunks[i]
             next:=u8(0)
             joined:=source.join.ground!={} && join_side_chunk(s,i) || join_cut_key(s,source.join.cuts[:],i)!=0
-            if settings.lod_distance>=0 && !chunk_holed(s,i) && !joined {
+            if s.kind==.Heightfield && settings.lod_distance>=0 && !chunk_holed(s,i) && !joined {
                 maximum:=chunk_lod_max(s,chunk_coord(s,i))
                 next=lod_level_error(entry.errors,q,i,0,maximum,chunk.pixels,chunk.spacing,s.cell,level)
                 // The distance makes a chunk coarser only as far as its error lets it be.
@@ -186,7 +172,8 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:core.R
             key.border=0
             if i<chunks {
                 coord:=chunk_coord(s,i)
-                if s.kind==.Heightfield {key.lod=chunk_lod_border(&border,source.levels[i],{int(coord.x),int(coord.z)})} else {key.lod=chunk_lod_sides(s,source.levels,coord)}
+                key.lod={}
+                if s.kind==.Heightfield {key.lod=chunk_lod_border(&border,source.levels[i],{int(coord.x),int(coord.z)})}
                 key.join=join_cut_key(s,source.join.cuts[:],i)
                 if source.join.ground!={} && join_band_chunk(s,i,key.lod.level) {key.join=source.join.hash}
             } else {
@@ -200,6 +187,8 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:core.R
                 }
                 key.lod=Chunk_Lod{level=clamp(level,minimum,maximum)}
                 key.collision=false
+                // A node of a joined Volume blends the ground under its chunks of the band as they do.
+                key.join=s.kind==.Volume && source.join.ground!={}?source.join.hash:0
                 if s.kind==.Heightfield {
                     a,b:=quad_chunks(q,i)
                     key.border=piece_border(&border,a,b)
@@ -343,7 +332,7 @@ owner_cut :: proc(owner:^Resident_Owner,source:^Resident_Source,stream:bool) {
     }}
     // From the roots down: a node shows its children once all of them stand,
     // a node in place of what is not built yet; until then what showed there
-    // stays. A Volume has no nodes: a chunk that is not wanted goes.
+    // stays.
     for d:=q.depth;d>=0;d-=1 {for i in q.first[d]..<q.first[d+1] {
         node:=&nodes[i]
         parent:=quad_parent(q,i)
@@ -353,7 +342,6 @@ owner_cut :: proc(owner:^Resident_Owner,source:^Resident_Source,stream:bool) {
         case parent>=0 && nodes[parent].covering: node.visible,node.covering=false,true
         case node.can: node.visible,node.covering=node.cut,node.cut
         case opened && i>=chunks && source.chunks[i].shown: node.visible,node.covering=true,true
-        case q.depth==0: node.visible,node.covering=false,false
         case: node.covering=node.visible
         }
         if node.visible!=was {append(&owner.changed,u32(i))}
@@ -491,7 +479,6 @@ resident_needed :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:c
         for &node in owner.nodes[:min(owner.quad.first[1],len(owner.nodes))] {
             switch {
             case stream: node.resident=scene.resident(node.reach,node.resident)
-            case owner.quad.depth==0: node.resident=true
             case: node.resident=solid && (node.distance<=reach[kind] || node.resident && node.distance<=reach[kind]*LOD_HYSTERESIS)
             }
         }

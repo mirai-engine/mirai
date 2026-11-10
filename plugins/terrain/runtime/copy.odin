@@ -54,9 +54,8 @@ source_restore :: proc(dst,src:^Source,low,high:[3]int) -> (change:Change) {
     for z in from.z..=to.z {for y in from.y..=to.y {for x in from.x..=to.x {
         p:=[3]int{x,y,z}
         value:=grid_value(h,p)
-        i,at:=grid_page_at(g,p)
-        if g.pages[i].values[at]==value {continue}
-        g.pages[i].values[at]=value
+        if grid_value(g,p)==value {continue}
+        grid_write(g,p,value)
         change.changed=true
         for axis in 0..<3 {change.low[axis]=min(change.low[axis],p[axis]);change.high[axis]=max(change.high[axis],p[axis])}
     }}}
@@ -87,7 +86,7 @@ source_resize :: proc(dst,src:^Source,samples:[2]int,allocator:=context.allocato
     for z in 0..<samples.y {for x in 0..<samples.x {
         grid_set(&temporary.weights,x,z,grid_get(&src.weights,clamp(x-shift.x,0,old.x-1),clamp(z-shift.y,0,old.y-1)))
     }}
-    if len(src.holes.pages)>0 {
+    if !grid_none(&src.holes) {
         cells:=samples-1
         if !grid_init(&temporary.holes,{cells.x,1,cells.y},0,allocator) {return false}
         for z in 0..<cells.y {for x in 0..<cells.x {

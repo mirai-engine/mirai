@@ -33,25 +33,18 @@ terrain_samples_left :: proc(world:core.World_Ref,replace_id:base.Asset_Id) -> i
     return max(available,0)
 }
 
-// Whether a source fits Terrain_Settings with the loaded ones. A Heightfield
-// shows coarser nodes of its quadtree past the pieces of
-// Terrain_Settings.chunks, and its nearest chunks take the colliders
-// Physics_Settings has room for: only its samples can fail. A
-// Volume, without nodes, needs a chunk for each of its chunks unless it streams.
+// Whether a source fits Terrain_Settings with the loaded ones. A terrain shows
+// coarser nodes of its tree past the pieces of Terrain_Settings.chunks, and
+// its nearest chunks take the colliders Physics_Settings has room for: only
+// its samples can fail.
 @(private)
 terrain_budget :: proc(s:^editor.Session,world:core.World_Ref,source:^terrain.Source,replace_id:base.Asset_Id={}) -> bool {
     settings:=terrain_limits(world)
-    counts:=terrain.chunk_counts(source)
-    sources,chunks:=1,counts.x*counts.y*counts.z
+    sources:=1
     if data:=core.world_storage_of(world,terrain.Terrain_Data);data!=nil {
-        for &entry in data.entries {
-            if entry.id==replace_id {continue}
-            sources+=1
-            if entry.source.kind==.Volume {chunks+=len(entry.versions)}
-        }
+        for &entry in data.entries {if entry.id!=replace_id {sources+=1}}
     }
     if sources>int(settings.sources) {editor.notify(s,fmt.tprintf("Terrain needs %d sources; the limit is %d",sources,settings.sources));return false}
-    if source.kind==.Volume && chunks>int(settings.chunks) && settings.resident_distance<=0 {editor.notify(s,fmt.tprintf("Terrain needs %d chunks; the limit is %d",chunks,settings.chunks));return false}
     cost:=terrain.source_cost(source)
     available:=terrain_samples_left(world,replace_id)
     if cost>available {editor.notify(s,fmt.tprintf("Terrain needs %d samples; %d are available",cost,available));return false}

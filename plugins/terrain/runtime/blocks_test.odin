@@ -41,7 +41,9 @@ volume_blocks_all_air_or_all_solid_hold_no_values_through_brushes_and_the_file :
     // A block of one value holds none: all air or all solid past the band,
     // or a thin block at a far edge that the margin of air fills alike.
     band_wide,held:=0,0
-    for page,i in g.pages {
+    blocks:=g.counts.x*g.counts.y*g.counts.z
+    for i in 0..<blocks {
+        page:=grid_page(g,i)
         if page.values!=nil {
             _,count:=grid_page_extent(g,i)
             testing.expect_value(t,len(page.values),count)
@@ -50,17 +52,17 @@ volume_blocks_all_air_or_all_solid_hold_no_values_through_brushes_and_the_file :
         }
         if page.fill==band || page.fill==-band {band_wide+=1}
     }
-    testing.expect(t,band_wide>len(g.pages)/3,"blocks all air or all solid")
+    testing.expect(t,band_wide>blocks/3,"blocks all air or all solid")
     testing.expect_value(t,grid_dense(g),held)
     testing.expect(t,held<97*97*97,"fewer values than samples: a block at a far edge holds only those of the field there")
-    testing.expect(t,g.pages[BLOCKS_DEEP].values==nil && g.pages[BLOCKS_DEEP].fill==-band)
+    testing.expect(t,grid_page(g,BLOCKS_DEEP).values==nil && grid_page(g,BLOCKS_DEEP).fill==-band)
     // A brush gives the blocks it changes values of their own; one it leaves all air holds none again.
     change:=source_edit(&source,{kind=.Carve,center=BLOCKS_CENTER,radius=20,amount=1})
     testing.expect(t,change.changed)
-    testing.expect(t,g.pages[BLOCKS_DEEP].values==nil && g.pages[BLOCKS_DEEP].fill==band,"the carved block is all air and holds no values")
+    testing.expect(t,grid_page(g,BLOCKS_DEEP).values==nil && grid_page(g,BLOCKS_DEEP).fill==band,"the carved block is all air and holds no values")
     testing.expect(t,source_value(&source,{40,24,40})==band)
     neighbor:=BLOCKS_DEEP+1
-    testing.expect(t,g.pages[neighbor].values!=nil,"a block the surface of the cavity crosses holds its values")
+    testing.expect(t,grid_page(g,neighbor).values!=nil,"a block the surface of the cavity crosses holds its values")
     // The file keeps a uniform block as its value and every other one as its own LZ block.
     root:=base.test_folder(t,"terrain")
     path:=fmt.tprintf("%s/volume.terrain",root)
@@ -70,10 +72,19 @@ volume_blocks_all_air_or_all_solid_hold_no_values_through_brushes_and_the_file :
     file:asset.Asset
     if !testing.expect_value(t,asset.asset_load(&file,path),asset.Error.None) {return}
     testing.expect_value(t,file.blob.header.kind_version,u16(VERSION))
-    records,error:=asset.asset_rows(&file,&types,"distance_pages","",Page_Record)
+    runs,error:=asset.asset_rows(&file,&types,"distance_pages","",Page_Run)
     testing.expect_value(t,error,asset.Error.None)
-    testing.expect_value(t,len(records),len(g.pages))
-    for record,i in records {testing.expectf(t,(record.size==0)==(g.pages[i].values==nil),"block %d is stored as it is held",i)}
+    // A run for each block with values, and one for the blocks of one value that follow one another.
+    stored,counted:=0,0
+    for run in runs {
+        counted+=int(run.count)
+        if run.size!=0 {stored+=1}
+    }
+    with_values:=0
+    for page in g.pages {if page.values!=nil {with_values+=1}}
+    testing.expect_value(t,counted,blocks)
+    testing.expect_value(t,stored,with_values)
+    testing.expect(t,len(runs)<blocks,"blocks of one value share a run")
     _,found:=asset.asset_table(&file,"values")
     testing.expect(t,!found,"no dense array of values")
     asset.asset_close(&file)
@@ -113,7 +124,7 @@ volume_files_of_another_version_or_with_distances_past_the_band_are_refused :: p
     testing.expect(t,ok)
     // A distance past the band is not saved.
     band:=source.cell*SDF_BAND_CELLS
-    source.distances.pages[0].fill=band*2
+    if held:=grid_page_ref(&source.distances,0,source.allocator);testing.expect(t,held!=nil) {held.fill=band*2}
     _,error=source_bytes(&source,id,&types)
     testing.expect_value(t,error,asset.Error.Invalid)
 }
@@ -155,12 +166,11 @@ a_volume_read_by_pages_holds_only_the_blocks_it_reads_and_a_block_that_leaves_ke
     testing.expect(t,source_edit(&paged,{kind=.Carve,center=[3]f32{40,46,40}-48,radius=1.5,amount=1}).changed)
     edited:=source_value(&paged,at)
     testing.expect(t,edited>source_value(&source,at))
-    needed:=make([]bool,len(g.pages));defer delete(needed)
-    testing.expect(t,source_pages_leave(&paged,needed)>0)
+    testing.expect(t,source_pages_leave(&paged)>0)
     testing.expect_value(t,grid_dense(g),0)
     testing.expect_value(t,grid_dense(&paged.weights),0)
     block,_:=grid_page_at(g,at)
-    testing.expect(t,grid_absent(g,block) && g.blocks[block].own!=nil,"the edited block keeps its edits in a block of its own")
+    testing.expect(t,grid_absent(g,block) && grid_block(g,block).own!=nil,"the edited block keeps its edits in a block of its own")
     testing.expect(t,source_region_read(&paged,low,high))
     testing.expect_value(t,source_value(&paged,at),edited)
     testing.expect_value(t,grid_value(&paged.weights,{40,48,40}),grid_value(&source.weights,{40,48,40}))

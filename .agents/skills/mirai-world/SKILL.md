@@ -1,6 +1,6 @@
 ---
 name: mirai-world
-description: Mirai world content plugins - `terrain` (heightfield, mesh and volume terrain, chunks,
+description: Mirai world content plugins - `terrain` (heightfield and volume terrain, chunks,
   material layers, digging, with the `terrain_vfx` dust and the `terrain_debris` pieces), `foliage`
   (cells, impostors, wind, collision, with the `foliage_terrain` bridge), `water` (waves, caustics,
   foam, wakes), `imprint` (footprints in snow, mud and sand), `vfx` (GPU particles, `.particle`
@@ -58,8 +58,7 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
   [format](references/terrain.md#canonical-format),
   [geometry and collision](references/terrain.md#geometry-and-collision),
   [materials and layers](references/terrain.md#materials-and-layers),
-  [mesh authoring](references/terrain.md#mesh-authoring), [tool](references/terrain.md#tool),
-  [API](references/terrain.md#api),
+  [tool](references/terrain.md#tool), [API](references/terrain.md#api),
   [editing during Play](references/terrain.md#editing-during-play),
   [publishing and residency](references/terrain.md#jobs-publishing-and-residency) and
   [open worlds](references/terrain.md#limits-in-open-worlds)
@@ -68,8 +67,8 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
     [interior](references/terrain.md#volume-interior)
   - What digging removes (`Terrain_Digs`), the `terrain_vfx` dust and the `terrain_debris` pieces
     and drops: [what digging leaves](references/terrain.md#what-digging-leaves)
-  - Quadtree, far nodes, coarse grid and piece budget:
-    [quadtree](references/terrain.md#quadtree-and-nodes)
+  - Quadtree of a Heightfield and octree of a Volume, far nodes, coarse grid and piece budget:
+    [tree](references/terrain.md#tree-and-nodes)
 - `foliage` (`.foliage`, cells, generator, overrides and orphans, ground and its `foliage_terrain`
   bridge, per-cell batches, types from prefabs, octahedral impostors and canopy in rays, wind by
   variants and by hook, bending by `Foliage_Bender`, collision by resident cells, brush and
@@ -132,6 +131,8 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
   a component or revisioned source. Runtime can publish resident chunks without a file and save
   on explicit request. Lifetimes: [terrain](references/terrain.md),
   [host](../mirai-core/references/host.md) and [preview](../mirai-editor/references/extensions.md).
+- Terrain: two representations, Heightfield and Volume, and no third; a brush is an intent
+  (`Brush_Kind`) that both take, and what is wrong with it is an error that says the fix.
 - AI over the network: the minds decide on the server.
 - Navigation: automatic navmesh by tiles from the collision.
 - Far-away simulation: automatic coarse simulation through the portal graph.

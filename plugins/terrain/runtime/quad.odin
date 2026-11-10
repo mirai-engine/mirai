@@ -2,32 +2,46 @@ package terrain
 
 import "mirai:std/base"
 
-// The quadtree of a source whose chunks lie on one layer (a Heightfield):
-// its leaves are the chunks, in the order of chunk_index, and above
-// them the nodes of each depth, in rows, up to the root, which covers every
-// chunk. A node covers the chunks of its children: four, or fewer at the far
-// edges of the source. A Volume source has only its chunks. Every piece a
-// terrain shows is a node of it: a chunk, or a node of lower resolution.
+// The tree of the pieces of a source: its leaves are the chunks, in the
+// order of chunk_index, and above them the nodes of each depth, in rows, up
+// to its roots. A node covers the chunks of its children. A Heightfield has a
+// quadtree over x and z, up to one root that covers every chunk; a node of
+// it is of lower resolution. A Volume has an octree, as deep as a node of
+// VOLUME_NODE_CELLS cells a side allows and of one depth at least, with many
+// roots: a node of it is the
+// surface of its chunks as one mesh, which the renderer draws at the detail
+// the view asks for (the levels of its clusters). Every piece a terrain shows
+// is a node of the tree: a chunk, or a node above.
 
 QUAD_DEPTH_MAX :: 13
+// The cells a side of the largest node of a Volume: what one build extracts and gives its levels.
+VOLUME_NODE_CELLS :: 64
 
 Quad :: struct {
-    depth:int,                       // of the root; 0 for a Volume, which has no nodes
+    depth:int,                       // of the roots: 1 or more
     counts:[QUAD_DEPTH_MAX+1][2]int, // nodes along X and Z of each depth
-    first:[QUAD_DEPTH_MAX+2]int,     // index of the first node of each depth; past the root, the count of every node
+    tall:[QUAD_DEPTH_MAX+1]int,      // and along Y: 1 for a Heightfield
+    first:[QUAD_DEPTH_MAX+2]int,     // index of the first node of each depth; past the roots, the count of every node
 }
 
 quad_of :: proc "contextless" (s:^Source) -> (q:Quad) {
     n:=chunk_counts(s)
     q.counts[0]={n.x,n.z}
+    q.tall[0]=n.y
     q.first[1]=n.x*n.y*n.z
-    if s.kind==.Volume || n.y!=1 {return}
-    // A source of one chunk has a root too: what stays when the chunk goes.
-    for (q.depth==0 || q.counts[q.depth]!={1,1}) && q.depth<QUAD_DEPTH_MAX {
+    limit:=QUAD_DEPTH_MAX
+    if s.kind==.Volume {
+        limit=1
+        for limit<QUAD_DEPTH_MAX && int(s.chunk_cells)<<uint(limit+1)<=VOLUME_NODE_CELLS {limit+=1}
+    }
+    // A terrain of one chunk has a root too: what stays when the chunk goes.
+    for q.depth<limit && (q.depth==0 || q.counts[q.depth]!={1,1} || q.tall[q.depth]!=1) {
         c:=q.counts[q.depth]
+        t:=q.tall[q.depth]
         q.depth+=1
         q.counts[q.depth]={(c.x+1)/2,(c.y+1)/2}
-        q.first[q.depth+1]=q.first[q.depth]+q.counts[q.depth].x*q.counts[q.depth].y
+        q.tall[q.depth]=(t+1)/2
+        q.first[q.depth+1]=q.first[q.depth]+q.counts[q.depth].x*q.counts[q.depth].y*q.tall[q.depth]
     }
     return
 }
@@ -39,44 +53,65 @@ quad_depth :: proc "contextless" (q:^Quad,index:int) -> int {
     return -1
 }
 
-// The depth of a node and its place among those of its depth.
-quad_coord :: proc "contextless" (q:^Quad,index:int) -> (depth:int,coord:[2]int) {
+// The depth of a node and its place among those of its depth: x, y and z.
+quad_coord3 :: proc "contextless" (q:^Quad,index:int) -> (depth:int,coord:[3]int) {
     depth=quad_depth(q,index)
     if depth<0 {return}
     local:=index-q.first[depth]
-    return depth,{local%q.counts[depth].x,local/q.counts[depth].x}
+    n,t:=q.counts[depth],q.tall[depth]
+    return depth,{local%n.x,local/n.x%t,local/(n.x*t)}
 }
 
-quad_index :: proc "contextless" (q:^Quad,depth:int,coord:[2]int) -> int {
+// The depth of a node and its place over x and z among those of its depth.
+quad_coord :: proc "contextless" (q:^Quad,index:int) -> (depth:int,coord:[2]int) {
+    c:[3]int
+    depth,c=quad_coord3(q,index)
+    return depth,c.xz
+}
+
+quad_index3 :: proc "contextless" (q:^Quad,depth:int,coord:[3]int) -> int {
     if depth<0 || depth>q.depth {return -1}
-    n:=q.counts[depth]
-    if coord.x<0 || coord.y<0 || coord.x>=n.x || coord.y>=n.y {return -1}
-    return q.first[depth]+coord.x+n.x*coord.y
+    n,t:=q.counts[depth],q.tall[depth]
+    if coord.x<0 || coord.y<0 || coord.z<0 || coord.x>=n.x || coord.y>=t || coord.z>=n.y {return -1}
+    return q.first[depth]+coord.x+n.x*(coord.y+t*coord.z)
+}
+
+// A node of the lowest layer by its place over x and z: any node of a Heightfield.
+quad_index :: proc "contextless" (q:^Quad,depth:int,coord:[2]int) -> int {
+    return quad_index3(q,depth,{coord.x,0,coord.y})
 }
 
 // -1 for a root.
 quad_parent :: proc "contextless" (q:^Quad,index:int) -> int {
-    depth,coord:=quad_coord(q,index)
+    depth,coord:=quad_coord3(q,index)
     if depth<0 || depth>=q.depth {return -1}
-    return quad_index(q,depth+1,coord/2)
+    return quad_index3(q,depth+1,coord/2)
 }
 
-// -1 where a child would be past the edge of the source, and for a chunk.
-quad_children :: proc "contextless" (q:^Quad,index:int) -> (children:[4]int) {
-    children={-1,-1,-1,-1}
-    depth,coord:=quad_coord(q,index)
+// -1 where a child would be past the edge of the source, and for a chunk:
+// the four of the lower layer first, which are all a Heightfield has.
+quad_children :: proc "contextless" (q:^Quad,index:int) -> (children:[8]int) {
+    children={-1,-1,-1,-1,-1,-1,-1,-1}
+    depth,coord:=quad_coord3(q,index)
     if depth<=0 {return}
-    for i in 0..<4 {children[i]=quad_index(q,depth-1,coord*2+{i&1,i>>1})}
+    for i in 0..<8 {children[i]=quad_index3(q,depth-1,coord*2+{i&1,(i>>2)&1,(i>>1)&1})}
     return
 }
 
-// The chunks a node covers, from low to before high.
-quad_chunks :: proc "contextless" (q:^Quad,index:int) -> (low,high:[2]int) {
-    depth,coord:=quad_coord(q,index)
+// The chunks a node covers, from low to before high, along x, y and z.
+quad_chunks3 :: proc "contextless" (q:^Quad,index:int) -> (low,high:[3]int) {
+    depth,coord:=quad_coord3(q,index)
     if depth<0 {return}
-    low={coord.x<<uint(depth),coord.y<<uint(depth)}
-    high={min(low.x+1<<uint(depth),q.counts[0].x),min(low.y+1<<uint(depth),q.counts[0].y)}
+    span:=1<<uint(depth)
+    low=coord*span
+    high={min(low.x+span,q.counts[0].x),min(low.y+span,q.tall[0]),min(low.z+span,q.counts[0].y)}
     return
+}
+
+// The chunks a node covers over x and z, from low to before high.
+quad_chunks :: proc "contextless" (q:^Quad,index:int) -> (low,high:[2]int) {
+    a,b:=quad_chunks3(q,index)
+    return a.xz,b.xz
 }
 
 // The samples of the X/Z grid a node covers, inclusive.
@@ -86,23 +121,32 @@ quad_region :: proc "contextless" (s:^Source,q:^Quad,index:int) -> (low,high:[2]
     return a*cells,{min(b.x*cells,int(s.samples.x)-1),min(b.y*cells,int(s.samples.z)-1)}
 }
 
+// The samples a node covers along x, y and z, inclusive.
+quad_region3 :: proc "contextless" (s:^Source,q:^Quad,index:int) -> (low,high:[3]int) {
+    a,b:=quad_chunks3(q,index)
+    cells:=int(s.chunk_cells)
+    low=a*cells
+    for axis in 0..<3 {high[axis]=min(b[axis]*cells,int(s.samples[axis])-1)}
+    return
+}
+
 // The coordinate of a chunk, or of the first chunk of a node: where its
 // entity stands (chunk_origin).
 quad_place :: proc "contextless" (s:^Source,q:^Quad,index:int) -> [3]i32 {
     if index<q.first[1] {return chunk_coord(s,index)}
-    low,_:=quad_chunks(q,index)
-    return {i32(low.x),0,i32(low.y)}
+    low,_:=quad_chunks3(q,index)
+    return {i32(low.x),i32(low.y),i32(low.z)}
 }
 
 // The local box of node i: its region of the source, with the heights its
-// samples reach (ranges); a Volume chunk spans its region.
+// samples reach (ranges) for a Heightfield.
 node_box :: proc "contextless" (s:^Source,q:^Quad,ranges:[][2]f32,i:int) -> (low,high:[3]f32) {
-    if s.kind==.Volume || q.depth==0 {
-        heights:=i<len(ranges)?ranges[i]:{-HEIGHT_LIMIT,HEIGHT_LIMIT}
-        return chunk_box(s,source_origin(s),i,heights)
+    origin:=source_origin(s)
+    if s.kind==.Volume {
+        a,b:=quad_region3(s,q,i)
+        return origin+[3]f32{f32(a.x),f32(a.y),f32(a.z)}*s.cell,origin+[3]f32{f32(b.x),f32(b.y),f32(b.z)}*s.cell
     }
     a,b:=quad_region(s,q,i)
-    origin:=source_origin(s)
     low=origin+[3]f32{f32(a.x),0,f32(a.y)}*s.cell
     high=origin+[3]f32{f32(b.x),0,f32(b.y)}*s.cell
     if i<len(ranges) {low.y,high.y=ranges[i].x,ranges[i].y} else {low.y,high.y=-HEIGHT_LIMIT,HEIGHT_LIMIT}
@@ -194,8 +238,7 @@ piece_border :: proc(b:^Border_Levels,low,high:[2]int,border:^Piece_Border=nil) 
 @(private)
 piece_border_of_lod :: proc(lod:Chunk_Lod,border:^Piece_Border) {
     for i in 0..<4 {clear(&border.sides[i]);clear(&border.corners[i])}
-    append(&border.sides[0],lod.faces[0]);append(&border.sides[1],lod.faces[1])
-    append(&border.sides[2],lod.faces[4]);append(&border.sides[3],lod.faces[5])
+    for side,at in lod.sides {append(&border.sides[at],side)}
     append(&border.corners[0],lod.corners[0],lod.corners[2]);append(&border.corners[1],lod.corners[1],lod.corners[3])
     append(&border.corners[2],lod.corners[0],lod.corners[1]);append(&border.corners[3],lod.corners[2],lod.corners[3])
 }
@@ -203,6 +246,7 @@ piece_border_of_lod :: proc(lod:Chunk_Lod,border:^Piece_Border) {
 // The coarsest level of node i of a Heightfield: as chunk_lod_max, over its
 // region.
 node_lod_max :: proc "contextless" (s:^Source,q:^Quad,i:int) -> u8 {
+    if s.kind==.Volume {return 0}
     depth,_:=quad_coord(q,i)
     if depth==0 {return chunk_lod_max(s,chunk_coord(s,i))}
     level:=0
@@ -216,7 +260,6 @@ node_lod_max :: proc "contextless" (s:^Source,q:^Quad,i:int) -> u8 {
 // built from the coarse grid, never finer than it.
 node_lod_min :: proc "contextless" (s:^Source,q:^Quad,i:int) -> u8 {
     depth,_:=quad_coord(q,i)
-    if depth==0 {return 0}
-    level:=s.kind==.Heightfield?max(depth,COARSE_LEVEL):depth
-    return min(u8(level),node_lod_max(s,q,i))
+    if depth==0 || s.kind==.Volume {return 0}
+    return min(u8(max(depth,COARSE_LEVEL)),node_lod_max(s,q,i))
 }

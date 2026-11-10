@@ -37,7 +37,8 @@ Replay :: struct {
     verify:bool,        // Edit and Layer: the check covers low..high, not what it changed
     low,high:[3]i32,    // samples, inclusive
     grid:Grid_Kind,     // Page
-    page:u32,           // Page
+    page:u32,           // Page: its id
+    span:u8,            // Page without values: above 1, every page of the box that many pages a side from page holds fill, as a part of the directory of a grid in blocks does (terrain_grid_fill)
     fill:u32,           // Page without values: the bits of the one value it holds
     whole:bool,         // Head: every value of the source starts over, as a new source of that shape holds them; else it takes only the layers
     values:[]u8,        // Page: its values coded (terrain_page_bytes); Head: terrain_head_bytes. Who pushed it keeps them until terrain_replay runs
@@ -210,18 +211,32 @@ grid_size :: proc "contextless" (s:^Source,kind:Grid_Kind) -> [3]int {
 }
 
 // Writes page i of a grid whole: its values coded (page_code), or fill alone
-// when values is empty. low..high is the region of samples it covers. False when the page
-// is not one of the grid, the values are not those of the page or one is
-// not valid, or without memory; then the grid reads as before.
+// when values is empty; with a span above 1, fill for every page of the box
+// that many pages a side from it. low..high is the region of samples it
+// covers. False when the page is not one of the grid, the values are not
+// those of the page or one is not valid, or without memory; then the grid
+// reads as before.
 @(private)
-grid_page_put :: proc(s:^Source,entry:^Data_Source,g:^Grid($T),size:[3]int,i:int,fill:T,values:[]u8,valid:proc "contextless" (value:T) -> bool,band:f32=0) -> (low,high:[3]int,ok:bool) {
+grid_page_put :: proc(s:^Source,entry:^Data_Source,g:^Grid($T),size:[3]int,i:int,fill:T,values:[]u8,valid:proc "contextless" (value:T) -> bool,band:f32=0,span:=1) -> (low,high:[3]int,ok:bool) {
     if size.x<=0 {return}
-    if len(g.pages)==0 {
+    if grid_none(g) {
         zero:T
         if len(values)==0 && fill==zero {return {},{-1,-1,-1},true}
         if !grid_init(g,size,zero,s.allocator) {return}
     }
-    if g.size!=size || i<0 || i>=len(g.pages) {return}
+    if g.size!=size || i<0 || i>=g.counts.x*g.counts.y*g.counts.z {return}
+    if span>1 {
+        if len(values)>0 || !valid(fill) || span!=SLAB && span!=SLAB*TABLE {return}
+        when T==f32 {if band>0 && !(abs(fill)<=band) {return}}
+        from:=grid_page_coord(g,i)
+        to:=from+span-1
+        for axis in 0..<3 {to[axis]=min(to[axis],g.counts[axis]-1)}
+        low,_=grid_page_region(g,i)
+        _,high=grid_page_region(g,grid_page_id(g,to))
+        // What the box held in memory goes with it: nothing of it is read first.
+        if !grid_fill_box(g,from,to,fill,s.allocator) {return}
+        return low,high,true
+    }
     low,high=grid_page_region(g,i)
     _,count:=grid_page_extent(g,i)
     decoded:[PAGE_VALUES]T=---
@@ -231,9 +246,10 @@ grid_page_put :: proc(s:^Source,entry:^Data_Source,g:^Grid($T),size:[3]int,i:int
         if !page_valid(held,valid) {return}
         when T==f32 {if band>0 && !distances_within(held,band) {return}}
     } else if !valid(fill) {return}
+    when T==f32 {if band>0 && len(values)==0 && !(abs(fill)<=band) {return}}
     if !source_region_read(s,low,high,entry) || !grid_prepare(g,low,high,s.allocator) {return}
-    page:=&g.pages[i]
-    if len(page.values)!=count {return}
+    page:=grid_page_ref(g,i,s.allocator)
+    if page==nil || len(page.values)!=count {return}
     if len(values)>0 {
         copy(page.values,held)
     } else {
@@ -262,10 +278,10 @@ replay_page :: proc(data:^Terrain_Data,entry:^Data_Source,replay:Replay) -> (cha
         // The samples of the cells: their vertices, and the edges of the collider around them.
         if ok && high.x>=low.x {high+={1,0,1}}
     case .Weights:
-        low,high,ok=grid_page_put(s,entry,&s.weights,grid_size(s,.Weights),i,transmute(Weights)fill,replay.values,weights_full)
+        low,high,ok=grid_page_put(s,entry,&s.weights,grid_size(s,.Weights),i,transmute(Weights)fill,replay.values,weights_full,0,max(int(replay.span),1))
     case .Distances:
         if s.kind!=.Volume {return {error=.Invalid}}
-        low,high,ok=grid_page_put(s,entry,&s.distances,grid_size(s,.Distances),i,transmute(f32)fill,replay.values,distance_finite,s.cell*SDF_BAND_CELLS)
+        low,high,ok=grid_page_put(s,entry,&s.distances,grid_size(s,.Distances),i,transmute(f32)fill,replay.values,distance_finite,s.cell*SDF_BAND_CELLS,max(int(replay.span),1))
     }
     data.samples=u32(max(int(data.samples)-before+source_cost(s),0))
     if !ok {return {error=.Invalid}}
@@ -470,25 +486,10 @@ terrain_origin :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id) -> (origin:
     if s==nil {return}
     altered :: proc(g:^Grid($T)) -> bool {
         for page in g.pages {if page.altered {return true}}
-        return false
+        return g.filled
     }
     clean=!altered(&s.heights) && !altered(&s.holes) && !altered(&s.distances) && !altered(&s.weights)
     return s.origin,clean,true
-}
-
-// Whether page i of a grid of a loaded source was written since it was read
-// from its file or saved to it.
-terrain_altered :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,kind:Grid_Kind,i:int) -> bool {
-    s:=terrain_source(data,id)
-    if s==nil {return false}
-    altered :: proc(g:^Grid($T),i:int) -> bool {return i>=0 && i<len(g.pages) && g.pages[i].altered}
-    switch kind {
-    case .Heights:   return altered(&s.heights,i)
-    case .Holes:     return altered(&s.holes,i)
-    case .Weights:   return altered(&s.weights,i)
-    case .Distances: return altered(&s.distances,i)
-    }
-    return false
 }
 
 // Whether a source a terrain names cannot be loaded: the assets do not have
@@ -506,7 +507,7 @@ terrain_grid_pages :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,kind:Gri
     s:=terrain_source(data,id)
     if s==nil {return}
     pages :: proc(g:^Grid($T),low,high:[3]i32) -> (from,to,counts:[3]int,ok:bool) {
-        if len(g.pages)==0 {return}
+        if grid_none(g) {return}
         a,b:=[3]int{int(low.x),int(low.y),int(low.z)},[3]int{int(high.x),int(high.y),int(high.z)}
         if b.x<a.x {a,b={},g.size-1}
         if b.x<0 || b.y<0 || b.z<0 || a.x>=g.size.x || a.y>=g.size.y || a.z>=g.size.z {return}
@@ -530,8 +531,8 @@ terrain_page_bytes :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,kind:Gri
     s:=terrain_source(data,id)
     if s==nil || len(out)<PAGE_BYTES_MAX {return}
     read :: proc(g:^Grid($T),i:int,file:string,out:[]u8) -> (size:int,fill:u32,ok:bool) {
-        if i<0 || i>=len(g.pages) {return}
-        page:=&g.pages[i]
+        if grid_none(g) || i<0 || i>=g.counts.x*g.counts.y*g.counts.z {return}
+        page:=grid_page(g,i)
         extent,count:=grid_page_extent(g,i)
         size=PAGE_HEADER+count*size_of(T)
         if page.values!=nil {
@@ -548,8 +549,9 @@ terrain_page_bytes :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,kind:Gri
         read_ok:=page_reader_init(&read,context.temp_allocator)
         defer page_reader_destroy(&read,context.temp_allocator)
         if !read_ok {return}
-        block,block_ok:=page_block_read(g.blocks[i],file,read.block)
-        if !block_ok || !page_unpack(block,g.blocks[i].hash,out[:size],&read.decoder) {return}
+        held:=grid_block(g,i)
+        block,block_ok:=page_block_read(held,file,read.block)
+        if !block_ok || !page_unpack(block,held.hash,out[:size],&read.decoder) {return}
         return size,0,true
     }
     switch kind {
@@ -559,6 +561,86 @@ terrain_page_bytes :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,kind:Gri
     case .Distances: if s.kind==.Volume {return read(&s.distances,i,s.file,out)}
     }
     return
+}
+
+// The pages a grid of a loaded source holds, which a base sends: how many
+// slots hold them (terrain_grid_held_page gives the page of each), and for a
+// grid in blocks whether whole parts of it hold one value without pages
+// (terrain_grid_fill gives those).
+terrain_grid_held :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,kind:Grid_Kind) -> (slots:int,parts:bool) {
+    s:=terrain_source(data,id)
+    if s==nil {return}
+    switch kind {
+    case .Heights:   return len(s.heights.pages),false
+    case .Holes:     return len(s.holes.pages),false
+    case .Weights:   return len(s.weights.pages),s.weights.sparse
+    case .Distances: return len(s.distances.pages),s.distances.sparse
+    }
+    return
+}
+
+// The id of the page a slot of a grid of a loaded source holds, and whether
+// it was written since the source was read from its file or saved to it; ok
+// is false for a slot that holds none.
+terrain_grid_held_page :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,kind:Grid_Kind,slot:int) -> (page:int,altered,ok:bool) {
+    s:=terrain_source(data,id)
+    if s==nil {return}
+    held :: proc(g:^Grid($T),slot:int) -> (page:int,altered,ok:bool) {
+        if slot<0 || slot>=len(g.pages) {return}
+        page=grid_id(g,slot)
+        return page,g.pages[slot].altered,page>=0
+    }
+    switch kind {
+    case .Heights:   return held(&s.heights,slot)
+    case .Holes:     return held(&s.holes,slot)
+    case .Weights:   return held(&s.weights,slot)
+    case .Distances: return held(&s.distances,slot)
+    }
+    return
+}
+
+// The next part of a grid in blocks of a loaded source that holds one value
+// without pages and not the one a new source of its shape starts with, at or
+// after cursor (0 to begin): the id of its first page, how many pages a side
+// its box is and the bits of the value. next: the cursor to go on from.
+terrain_grid_fill :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,kind:Grid_Kind,cursor:int) -> (page:int,span:int,fill:u32,next:int,found:bool) {
+    s:=terrain_source(data,id)
+    if s==nil {return}
+    fills :: proc(g:^Grid($T),start:T,cursor:int) -> (page:int,span:int,fill:u32,next:int,found:bool) {
+        if !g.sparse {return}
+        skip:=fill_bits(start)
+        for at:=max(cursor,0);at<len(g.top)*(TABLE_SLABS+1);at+=1 {
+            top,m:=at/(TABLE_SLABS+1),at%(TABLE_SLABS+1)-1
+            table_low:=[3]int{top%g.top_counts.x,top/g.top_counts.x%g.top_counts.y,top/(g.top_counts.x*g.top_counts.y)}*(TABLE*SLAB)
+            tile:=g.top[top]
+            if tile.child<0 {
+                // The part itself, once; its slabs are not looked at.
+                if m<0 && tile.fill!=skip {return grid_page_id(g,table_low),TABLE*SLAB,tile.fill,(top+1)*(TABLE_SLABS+1),true}
+                at=(top+1)*(TABLE_SLABS+1)-1
+                continue
+            }
+            if m<0 {continue}
+            slab:=g.tables[tile.child][m]
+            slab_low:=table_low+[3]int{m%TABLE,m/TABLE%TABLE,m/(TABLE*TABLE)}*SLAB
+            if slab.child>=0 || slab.fill==skip || grid_box_pages(g,slab_low,SLAB)==0 {continue}
+            return grid_page_id(g,slab_low),SLAB,slab.fill,at+1,true
+        }
+        return
+    }
+    switch kind {
+    case .Heights,.Holes:
+    case .Weights:   return fills(&s.weights,Weights{WEIGHT_FULL,0,0,0},cursor)
+    case .Distances: return fills(&s.distances,s.cell*SDF_BAND_CELLS,cursor)
+    }
+    return
+}
+
+// Whether a part of a grid in blocks of a loaded source took another value
+// without pages since the source was read from its file or saved to it: a
+// base of it sends all of it.
+terrain_filled :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id) -> bool {
+    s:=terrain_source(data,id)
+    return s!=nil && (s.distances.filled || s.weights.filled)
 }
 
 // The terrain of a source whose problems name it, or none.

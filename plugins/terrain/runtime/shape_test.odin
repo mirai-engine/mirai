@@ -38,7 +38,7 @@ a_ramp_reaches_the_heights_of_its_ends_along_its_line :: proc(t:^testing.T) {
 volume_shapes_join_and_carve_and_a_blend_softens_the_join :: proc(t:^testing.T) {
     source:Source;testing.expect(t,source_make(&source,.Volume,{33,33,33},1,16));defer source_destroy(&source)
     air:=source.cell*SDF_BAND_CELLS
-    for &page in source.distances.pages {page_free(page);page.values=nil;page.fill=air}
+    testing.expect(t,grid_fill_box(&source.distances,{},source.distances.counts-1,air,source.allocator))
     capsule:=Brush{kind=.Add,shape=.Capsule,center=source_point(&source,{8,16,16}),delta={16,0,0},radius=3,amount=1}
     testing.expect(t,source_edit(&source,capsule).changed)
     testing.expect(t,source_value(&source,{16,16,16})<0,"the middle of the capsule is solid")

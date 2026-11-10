@@ -47,7 +47,9 @@ terrain_sources_reject_invalid_dimensions_values_and_unavailable_memory :: proc(
     source:Source;defer source_destroy(&source)
     testing.expect(t,!source_make(&source,.Heightfield,{5,2,5},1,4))
     testing.expect(t,!source_make(&source,.Volume,{5,1,5},1,4))
-    testing.expect(t,!source_make(&source,.Volume,{130,5,5},1,4))
+    // A Volume reaches as far as a Heightfield; past its chunks it takes more cells in each.
+    testing.expect(t,!source_make(&source,.Volume,{HEIGHT_SAMPLES_MAX+1,5,5},1,4))
+    testing.expect(t,!source_make(&source,.Volume,{4097,4097,4097},1,4) && source_valid({kind=.Volume,samples={4097,4097,4097},cell=1,chunk_cells=256,layer_count=1,layers={0=LAYER_DEFAULT}}))
     testing.expect(t,!source_make(&source,.Heightfield,{5,1,5},0,4))
     testing.expect(t,!source_make(&source,.Heightfield,{5,1,5},1,3))
     testing.expect(t,!source_make(&source,.Heightfield,{5,1,5},1,4,runtime.nil_allocator()))
@@ -289,7 +291,6 @@ published_chunks_keep_heightfield_geometry_uv_channels_and_immutable_lifetimes :
 // each other and with the source.
 chunk_in_terrain :: proc(mesh:^Chunk_Mesh) {
     for &p in mesh.geometry.positions {p+=mesh.origin}
-    for &p in mesh.collision.positions {p+=mesh.origin}
 }
 
 // A chunk far from the centre of a terrain of kilometres is in its own space:

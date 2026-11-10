@@ -260,7 +260,6 @@ Resident_Source :: struct {
     changed:[dynamic]u32,    // nodes published or let go since the owner last showed them
     dirty:[]bool,            // by node: in pending
     pending:[dynamic]u32,    // nodes whose mesh may show something else than what is wanted
-    pages:[]bool,            // of a paged source, by page of its heights: those a resident chunk reads
     leave:bool,              // a chunk was let go: pages may leave with it
     override:render.Material_Override, // of its layers
     override_info:Source_Info,         // the layers it was made from
@@ -767,7 +766,7 @@ source_compare :: proc(next,s:^Source) -> (change:Change,ok:bool) {
     defer page_writer_destroy(&writer)
     low,high,differ:=grid_take(&next.heights,&s.heights,&writer,true)
     if differ {widen(&change,low,high)}
-    if len(next.holes.pages)!=len(s.holes.pages) {
+    if grid_none(&next.holes)!=grid_none(&s.holes) {
         widen(&change,{},{last.x,0,last.z})
     } else if low,high,differ=grid_take(&next.holes,&s.holes,&writer,false);differ {
         widen(&change,low,high+{1,0,1})
@@ -809,7 +808,7 @@ resident_source_free :: proc(resident:^Terrain_Resident,source:^Resident_Source)
         host.assets_mesh_release(resident.assets,chunk.mesh)
         resident.stats.released+=1;resident.stats.meshes-=1
     }
-    delete(source.chunks);delete(source.levels);delete(source.deep);delete(source.changed);delete(source.pages);delete(source.dirty);delete(source.pending)
+    delete(source.chunks);delete(source.levels);delete(source.deep);delete(source.changed);delete(source.dirty);delete(source.pending)
     delete(source.join.cuts)
     source^={}
 }

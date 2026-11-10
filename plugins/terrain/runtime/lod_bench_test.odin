@@ -31,8 +31,7 @@ bench_terrain_levels :: proc(t:^testing.T) {
                         value=time.duration_milliseconds(time.tick_since(start))
                     }
                     slice.sort(times[:])
-                    collides:=len(mesh.collision.indices)>0?len(mesh.collision.indices)/3:len(mesh.geometry.indices)/3
-                    fmt.printfln("BENCH | %s | %d | %s | %.3f ms | %d | %d |",name,level,collision?"yes":"no",times[RUNS/2],len(mesh.geometry.indices)/3,collision?collides:0)
+                    fmt.printfln("BENCH | %s | %d | %s | %.3f ms | %d | %d |",name,level,collision?"yes":"no",times[RUNS/2],len(mesh.geometry.indices)/3,collision?len(mesh.geometry.indices)/3:0)
                 }
             }
         }
@@ -43,15 +42,6 @@ bench_terrain_levels :: proc(t:^testing.T) {
             for z in 0..<257 {for x in 0..<257 {source_set(&s,{x,0,z},height(x,z))}}
             levels:=make([]u8,16,context.temp_allocator)
             report(t,"Heightfield 64×64 cells",&s,{1,0,1},&mesh,levels)
-        }
-        for chunk in ([2]int{16,32}) {
-            s:Source;defer source_destroy(&s)
-            lod_volume_source(t,&s,65,chunk)
-            counts:=chunk_counts(&s)
-            levels:=make([]u8,counts.x*counts.y*counts.z,context.temp_allocator)
-            // A chunk the surface crosses, off its middle.
-            coord:=[3]i32{0,i32(counts.y/2),i32(counts.z/2)}
-            report(t,fmt.tprintf("Volume %d³ cells",chunk),&s,coord,&mesh,levels)
         }
     }
 }

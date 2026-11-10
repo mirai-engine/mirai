@@ -38,7 +38,7 @@ the_quadtree_of_a_source_covers_its_chunks_once_from_one_root :: proc(t:^testing
     volume:Source;defer source_destroy(&volume)
     testing.expect(t,source_make(&volume,.Volume,{17,17,17},1,8))
     v:=quad_of(&volume)
-    testing.expect(t,v.depth==0 && quad_total(&v)==8)
+    testing.expect(t,v.depth==1 && quad_total(&v)==9)
     testing.expect_value(t,quad_place(&volume,&v,5),chunk_coord(&volume,5))
 }
 
@@ -211,4 +211,14 @@ levels_follow_the_projected_error_and_the_spacing_of_the_samples :: proc(t:^test
     view:=core.VIEW_DEFAULT
     view.size={1440,1800}
     testing.expect(t,abs(view_pixels(view)-2*LOD_VIEW_PIXELS)<1e-2)
+}
+
+// Appends a piece to a mesh of all of them, as they stand in their terrain.
+@(private)
+lod_append :: proc(all:^geom.Mesh_Buffer,m:^geom.Mesh_Buffer) {
+    first:=u32(len(all.positions))
+    append(&all.positions,..m.positions[:])
+    append(&all.normals,..m.normals[:])
+    for index in m.indices {append(&all.indices,index+first)}
+    append(&all.materials,..m.materials[:])
 }

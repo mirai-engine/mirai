@@ -189,6 +189,9 @@ same_ground :: proc(a,b:^End) -> (same:bool,differ:int) {
     sa,sb:=terrain.terrain_source(core.ref(&a.data),SOURCE),terrain.terrain_source(core.ref(&b.data),SOURCE)
     if sa==nil || sb==nil {return}
     if sa.kind!=sb.kind || sa.samples!=sb.samples {return}
+    // What no chunk shows left the memory of each end.
+    last:=[3]int{int(sa.samples.x)-1,int(sa.samples.y)-1,int(sa.samples.z)-1}
+    if !terrain.source_region_read(sa,{},last) || !terrain.source_region_read(sb,{},last) {return}
     for z in 0..<int(sa.samples.z) {for y in 0..<int(sa.samples.y) {for x in 0..<int(sa.samples.x) {
         if terrain.source_value(sa,{x,y,z})!=terrain.source_value(sb,{x,y,z}) {differ+=1}
     }}}
@@ -512,6 +515,7 @@ a_volume_dig_that_differs_on_a_client_comes_back_as_its_blocks_and_a_late_client
     // A pocket beside the dig of the server, inside the box it changes and out of its ball.
     other,dig:=brush_at(&a,.Carve,39,39,2,1),brush_at(&s,.Carve,32,32,6,1)
     other.center.y,dig.center.y=-2,0
+    testing.expect(t,terrain.source_region_read(terrain.terrain_source(core.ref(&a.data),SOURCE),{32,8,32},{46,24,46}))
     testing.expect_value(t,terrain.source_edit(terrain.terrain_source(core.ref(&a.data),SOURCE),other).error,terrain.Edit_Error.None)
     testing.expect_value(t,terrain.dig(&s.terrain_requests,dig,s.owner),terrain.Edit_Error.None)
     for _ in 0..<60 {round(&f,&s,&a)}

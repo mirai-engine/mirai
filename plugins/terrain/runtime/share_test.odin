@@ -46,6 +46,7 @@ a_copy_shares_its_pages_and_a_write_on_either_side_leaves_the_other_as_it_was ::
         if !testing.expect(t,data_source_copy(&copied,&source)) {return}
         c:=source_samples_grid(&copied)
         for page,i in g.pages {testing.expect(t,raw_data(page.values)==raw_data(c.pages[i].values),"the copy holds the values of the source")}
+        testing.expect_value(t,len(c.pages),len(g.pages))
         // What a copy allocates is its tables, less than the values of one page.
         {
             context.allocator=mem.tracking_allocator(&tracking)
@@ -62,6 +63,8 @@ a_copy_shares_its_pages_and_a_write_on_either_side_leaves_the_other_as_it_was ::
         testing.expect(t,source_value(&source,at)!=before)
         testing.expect_value(t,source_value(&copied,at),before)
         touched,_:=grid_page_at(g,at)
+        touched=grid_slot(g,touched)
+        if !testing.expect(t,touched>=0 && touched==grid_slot(c,grid_id(g,touched)),"the copy holds its pages where the source does") {return}
         testing.expect(t,raw_data(g.pages[touched].values)!=raw_data(c.pages[touched].values),"the source took values of its own")
         shared:=0
         for page,i in g.pages {if page.values!=nil && raw_data(page.values)==raw_data(c.pages[i].values) {shared+=1}}

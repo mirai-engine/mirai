@@ -207,6 +207,8 @@ a_dig_request_edits_whichever_terrain_is_under_it_and_reports_what_it_cannot_do 
     for kind in Source_Kind {
         entry:=data_find(&w.data,ids[kind])
         if !testing.expect(t,entry!=nil) {continue}
+        // What no chunk shows left the memory: its pages are read again.
+        testing.expect(t,source_region_read(&entry.source,{0,0,0},{32,32,32}))
         bottom,found:=surface_under(&entry.source,0.25,0.25)
         testing.expectf(t,found && abs(bottom+4)<0.6,"the dig of the %v reaches %v",kind,bottom)
     }

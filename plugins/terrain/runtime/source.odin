@@ -12,9 +12,11 @@ import "mirai:std/serial"
 
 KIND :: asset.Fourcc(u32('T')|u32('E')<<8|u32('R')<<16|u32('R')<<24)
 EXTENSION :: ".terrain"
-VERSION :: 9
+VERSION :: 10
 HEIGHT_SAMPLES_MAX :: 16385
-VOLUME_SAMPLES_MAX :: 129
+VOLUME_SAMPLES_MAX :: HEIGHT_SAMPLES_MAX
+// A Volume has at most this many chunks: one that reaches further takes more cells per chunk.
+VOLUME_CHUNKS_MAX :: 1<<18
 CHUNK_CELLS_MIN :: 4
 CHUNK_CELLS_MAX :: 256
 UV_METERS :: f32(4)
@@ -62,7 +64,11 @@ source_valid :: proc "contextless" (info:Source_Info) -> bool {
     }
     switch info.kind {
     case .Heightfield: return info.samples.y==1 && info.samples.x>=2 && info.samples.z>=2 && info.samples.x<=HEIGHT_SAMPLES_MAX && info.samples.z<=HEIGHT_SAMPLES_MAX
-    case .Volume: return info.samples.x>=3 && info.samples.y>=3 && info.samples.z>=3 && info.samples.x<=VOLUME_SAMPLES_MAX && info.samples.y<=VOLUME_SAMPLES_MAX && info.samples.z<=VOLUME_SAMPLES_MAX
+    case .Volume:
+        if !(info.samples.x>=3 && info.samples.y>=3 && info.samples.z>=3 && info.samples.x<=VOLUME_SAMPLES_MAX && info.samples.y<=VOLUME_SAMPLES_MAX && info.samples.z<=VOLUME_SAMPLES_MAX) {return false}
+        chunks:=u64(1)
+        for n in info.samples {chunks*=u64(max((int(n)-2+int(info.chunk_cells))/int(info.chunk_cells),1))}
+        return chunks<=VOLUME_CHUNKS_MAX
     }
     return false
 }
@@ -99,28 +105,30 @@ source_make :: proc(s:^Source,kind:Source_Kind,samples:[3]int,cell:f32,chunk_cel
         bottom:=-half.y+cell
         center_y:=bottom*0.5
         extents:=[3]f32{max(half.x-cell,cell*0.25),max(-bottom*0.5,cell*0.25),max(half.z-cell,cell*0.25)}
-        g:=&s.distances
-        scratch,error:=make([]f32,PAGE_VALUES,context.temp_allocator)
-        if error!=nil {source_destroy(s);return false}
         // Each block takes values of its own only where it is not all air or all solid.
-        for &page,i in g.pages {
-            first,_:=grid_page_region(g,i)
-            extent,count:=grid_page_extent(g,i)
-            values:=scratch[:count]
-            for z in 0..<extent.z {for y in 0..<extent.y {for x in 0..<extent.x {
-                p:=source_point(s,first+{x,y,z})-[3]f32{0,center_y,0}
-                d:=[3]f32{abs(p.x),abs(p.y),abs(p.z)}-extents
-                outside:=[3]f32{max(d.x,0),max(d.y,0),max(d.z,0)}
-                distance:=linalg.length(outside)+min(max(d.x,max(d.y,d.z)),0)
-                values[x+extent.x*(y+extent.y*z)]=clamp(distance,-cell*SDF_BAND_CELLS,cell*SDF_BAND_CELLS)
-            }}}
-            page.fill=values[0]
-            if page_uniform(values) {continue}
-            held,made:=shared_make(f32,count,s.allocator)
-            if !made {source_destroy(s);return false}
-            copy(held,values)
-            page.values=held
+        Block :: struct {s:^Source,center_y:f32,extents:[3]f32}
+        distance :: proc(b:^Block,p:[3]f32) -> f32 {
+            p:=p-[3]f32{0,b.center_y,0}
+            d:=[3]f32{abs(p.x),abs(p.y),abs(p.z)}-b.extents
+            outside:=[3]f32{max(d.x,0),max(d.y,0),max(d.z,0)}
+            return linalg.length(outside)+min(max(d.x,max(d.y,d.z)),0)
         }
+        page :: proc(user:rawptr,first,extent:[3]int,values:[]f32) -> (fill:f32,uniform:bool) {
+            b:=(^Block)(user)
+            s:=b.s
+            band:=s.cell*SDF_BAND_CELLS
+            // A block further from the faces of the solid than its own reach is all air or all solid.
+            low,high:=source_point(s,first),source_point(s,first+extent-1)
+            middle:=distance(b,(low+high)*0.5)
+            if reach:=linalg.length(high-low)*0.5;abs(middle)-reach>=band {return middle<0?-band:band,true}
+            for z in 0..<extent.z {for y in 0..<extent.y {for x in 0..<extent.x {
+                values[x+extent.x*(y+extent.y*z)]=clamp(distance(b,source_point(s,first+{x,y,z})),-band,band)
+            }}}
+            return
+        }
+        block:=Block{s,center_y,extents}
+        if !grid_generate(&s.distances,&block,page,s.allocator) {source_destroy(s);return false}
+        s.distances.filled=false
     }
     return true
 }
@@ -140,8 +148,8 @@ source_destroy :: proc(s:^Source) {
 // A Heightfield or Volume source holds every sample of its shape.
 @(private)
 source_samples_held :: proc "contextless" (s:^Source) -> bool {
-    if s.kind==.Heightfield {return s.heights.size=={int(s.samples.x),1,int(s.samples.z)} && len(s.heights.pages)>0}
-    return s.distances.size=={int(s.samples.x),int(s.samples.y),int(s.samples.z)} && len(s.distances.pages)>0
+    if s.kind==.Heightfield {return s.heights.size=={int(s.samples.x),1,int(s.samples.z)}}
+    return s.distances.size=={int(s.samples.x),int(s.samples.y),int(s.samples.z)}
 }
 
 source_clone :: proc(dst,src:^Source,allocator:=context.allocator,editable:=true) -> bool {
@@ -183,8 +191,7 @@ source_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=co
     } else {
         g:=&temporary.distances
         if !grid_read_document(g,file,types,g.size,"distance_pages","distance_blocks",distance_finite,allocator,pages!="") {return}
-        band:=info.cell*SDF_BAND_CELLS
-        for page in g.pages {if !(abs(page.fill)<=band) || !distances_within(page.values,band) {return}}
+        if !grid_distances_within(g,info.cell*SDF_BAND_CELLS) {return}
     }
     if pages!="" {
         error:runtime.Allocator_Error
@@ -213,7 +220,10 @@ source_save :: proc(s:^Source,path:string,id:base.Asset_Id,types:^asset.Types,or
 @(private)
 source_origin_set :: proc(s:^Source,origin:u64) {
     s.origin=origin
-    unalter :: proc(g:^Grid($T)) {for &page in g.pages {page.altered=false}}
+    unalter :: proc(g:^Grid($T)) {
+        for &page in g.pages {page.altered=false}
+        g.filled=false
+    }
     unalter(&s.heights);unalter(&s.holes);unalter(&s.distances);unalter(&s.weights)
 }
 
@@ -222,8 +232,7 @@ source_origin_set :: proc(s:^Source,origin:u64) {
 // the grids keep their blocks for the next time (grid_put_document).
 source_bytes :: proc(s:^Source,id:base.Asset_Id,types:^asset.Types,allocator:=context.allocator,import_info:^asset.Import_Info=nil,keep:=false) -> (data:[]u8,error:asset.Error) {
     if !source_valid(s.info) || !source_samples_held(s) {return nil,.Invalid}
-    band:=s.cell*SDF_BAND_CELLS
-    for page in s.distances.pages {if !(abs(page.fill)<=band) || !distances_within(page.values,band) {return nil,.Invalid}}
+    if !grid_distances_within(&s.distances,s.cell*SDF_BAND_CELLS) {return nil,.Invalid}
     document:asset.Document
     asset.document_init(&document,KIND,id,s.allocator)
     defer asset.document_destroy(&document)
@@ -375,6 +384,19 @@ source_ray :: proc(s:^Source,origin,direction:[3]f32) -> (point,normal:[3]f32,ok
         for z in 0..<grid.extent.z {for y in 0..<grid.extent.y {for x in 0..<grid.extent.x {
             window[x+grid.extent.x*(y+grid.extent.y*z)]=block_get(&s.distances,grid.first+{x,y,z})
         }}}
+        // A cell with every sample around it on one side holds no surface.
+        crossed:=false
+        for value in grid.values[1:] {if (value<0)!=(grid.values[0]<0) {crossed=true;break}}
+        if !crossed {
+            if end>=far {return}
+            for axis in 0..<3 {
+                if next[axis]>end {continue}
+                cell[axis]+=advance[axis]
+                if cell[axis]<0 || cell[axis]>=int(s.samples[axis])-1 {return}
+            }
+            near=end
+            continue
+        }
         if geom.isosurface(grid,cell,cell+[3]int{1,1,1},&s.ray_mesh)!=.None {return}
         best:=f32(1e9)
         for triangle:=0;triangle<len(s.ray_mesh.indices);triangle+=3 {
