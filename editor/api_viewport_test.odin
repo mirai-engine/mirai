@@ -111,7 +111,8 @@ camera_set_takes_a_fov_and_looks_through_a_camera_of_the_scene_without_editing_i
     editor:Camera_Editor
     session:=Session{info=&info,edit_world=&world,editor_world=&editor,selection=&selection,viewport=&viewport,gui=&gui,edits=&edits,document=&document}
     history.edits_reset(&edits,edited_world(&session))
-    if !testing.expect(t,api_open(&session,0,true)==.None) {return};defer api_close(&session)
+    api_opened,api_problem:=api_open(&session,0,true)
+    if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return};defer api_close(&session)
     state:=api_state(&session);state.poll_temp=context.temp_allocator
     out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)
     execute :: proc(state:^Api_State,out:^serial.Writer,params:string) -> (error:api.Error,result:Api_Camera_Result) {

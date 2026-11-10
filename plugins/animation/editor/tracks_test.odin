@@ -75,7 +75,8 @@ tracks_test_open :: proc(f:^Tracks_Fixture,t:^testing.T,name:string) -> bool {
     core.add(&w.targets,f.actor,target)
     s:=&f.authoring.session
     s.info,s.edit_world,s.editor_world,s.selection,s.edits,s.viewport,s.gui=&f.info,w,&f.editor_world,&f.selection,&f.edits,&f.viewport,&f.gui
-    if !testing.expect_value(t,editor.api_open(s,0,false,false),editor.Api_Open_Error.None) {return false}
+    api_opened,api_problem:=editor.api_open(s,0,false,false)
+    if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return false}
     authoring_clip_register(s)
     serial.writer_init(&f.out,1<<16)
     animation:=anim.ANIMATION_DEFAULT;animation.playing=false

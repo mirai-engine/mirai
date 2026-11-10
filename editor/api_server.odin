@@ -125,16 +125,16 @@ Api_Open_Error :: enum {None,No_Storage,Server,Methods}
 // Opens the registry of the methods, which the menus, the shortcuts and the
 // buttons of the editor call too, and with listen the server that answers
 // agents. port 0 lets the system choose. A method that cannot be registered
-// stops the opening with the reason.
-api_open :: proc(s:^Session,port:int,manual:bool,listen:=true) -> Api_Open_Error {
+// stops the opening; problem names it and why, as it names what else failed.
+api_open :: proc(s:^Session,port:int,manual:bool,listen:=true) -> (error:Api_Open_Error,problem:string) {
     a:=api_of(s)
-    if a==nil {return .No_Storage}
+    if a==nil {return .No_Storage,"the editor world has no Api storage"}
     st:=new(Api_State)
     st.allocator=context.allocator
     st.manual=manual
     if error:=api.server_init(&st.server,{port=port,local=!listen,name="mirai",version=API_VERSION,instructions=API_INSTRUCTIONS,docs_root=s.engine_root,max_methods=API_METHOD_CAPACITY+1,max_response=4<<20,allocator=context.allocator});error!=.None {
         free(st)
-        return .Server
+        return .Server,fmt.tprintf("the server could not start on port %d: %v",port,error)
     }
     st.server.assets={s,asset_text_resolve}
     api_schema_build(s,st)
@@ -147,15 +147,15 @@ api_open :: proc(s:^Session,port:int,manual:bool,listen:=true) -> Api_Open_Error
     commands_register(s,st)
     api_providers_register(s)
     if st.refused>0 {
-        fmt.eprintfln("mirai: the API does not open: %d methods did not register, the first: %s",st.refused,st.refusal)
+        problem=fmt.tprintf("%d methods did not register, the first: %s",st.refused,st.refusal)
         api_close(s)
-        return .Methods
+        return .Methods,problem
     }
     st.library_generation=s.library_generation
     st.server.pause,st.server.transaction,st.server.user=api_server_pause,api_server_transaction,s
     api_disk_baseline(s)
     if listen {api_port_file_write(s,st.port)}
-    return .None
+    return .None,""
 }
 
 api_close :: proc(s:^Session) {

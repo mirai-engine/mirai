@@ -29,7 +29,8 @@ editor_api_registers_every_method_and_refuses_loudly_when_full :: proc(t:^testin
     session,described:=api_diagnostics_session(t,&world,&edits,&info)
     if !described {return}
     defer core.test_info_destroy(&info)
-    if !testing.expect_value(t,api_open(&session,0,true),Api_Open_Error.None) {return}
+    api_opened,api_problem:=api_open(&session,0,true)
+    if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return}
     defer api_close(&session)
     state:=api_state(&session)
     testing.expect_value(t,state.refused,0)
@@ -63,7 +64,8 @@ editor_engine_diagnostics_lists_the_console_after_a_serial :: proc(t:^testing.T)
     if !described {return}
     defer core.test_info_destroy(&info)
     session.console=&console
-    if !testing.expect_value(t,api_open(&session,0,true),Api_Open_Error.None) {return}
+    api_opened,api_problem:=api_open(&session,0,true)
+    if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return}
     defer api_close(&session)
     state:=api_state(&session)
     state.poll_temp=context.temp_allocator

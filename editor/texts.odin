@@ -41,16 +41,16 @@ Texts_File_Params :: struct {
     path:[API_PATH_BYTES]u8 `mirai:"text,label=A CSV with the column key and one per language by its code, as texts.export writes it and mirai import reads it; an import changes nothing where a cell is empty"`,
 }
 Texts_List :: struct {
-    languages:[1][16]u8 `mirai:"list,text,label=The codes of the languages of the game (Project Settings > UI), the one its texts are written in first"`,
-    texts:[1]Texts_Entry `mirai:"list"`,
+    languages:[]string `mirai:"label=The codes of the languages of the game (Project Settings > UI), the one its texts are written in first"`,
+    texts:[]Texts_Entry,
 }
 Texts_Entry :: struct {
-    key:[64]u8 `mirai:"text"`,
-    file:[API_PATH_BYTES]u8 `mirai:"text,label=The .strings it is in"`,
-    texts:u8 `mirai:"any,label=What it says by language code; a language it says nothing in is left out and shows the first"`,
+    key:string,
+    file:string `mirai:"label=The .strings it is in"`,
+    texts:serial.Json `mirai:"label=What it says by language code; a language it says nothing in is left out and shows the first"`,
 }
 Texts_Missing :: struct {
-    missing:[1][512]u8 `mirai:"list,text,label=Each says what lacks a text and how to write it: who shows a key no .strings has (its .ui and node; its .records; row and field); a key without a text in a language of the game; a key two files have"`,
+    missing:[]string `mirai:"label=Each says what lacks a text and how to write it: who shows a key no .strings has (its .ui and node; its .records; row and field); a key without a text in a language of the game; a key two files have"`,
 }
 Texts_Count :: struct {
     texts:int `mirai:"label=The texts written or set"`,
@@ -58,9 +58,9 @@ Texts_Count :: struct {
 
 @(private)
 texts_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="texts.list",summary="Every text a player reads, by key: what each key of the .strings of the project says in each language. A node of a .ui, a core.Text of a row and the code show a text by its key.",result=Texts_List,writes_result=true,flags={.Read_Only},run=api_texts_list})
+    api_register(s,st,{name="texts.list",summary="Every text a player reads, by key: what each key of the .strings of the project says in each language. A node of a .ui, a core.Text of a row and the code show a text by its key.",result=Texts_List,flags={.Read_Only},run=api_texts_list})
     api_register(s,st,{name="texts.set",summary="Makes a key say a text in a language: adds a text, or translates one. One step of history; its .strings waits for Save.",params=Texts_Set_Params,result=Texts_Count,run=api_texts_set})
-    api_register(s,st,{name="texts.missing",summary="What the texts lack: who shows a key no .strings has, and the keys that say nothing in a language of the game.",result=Texts_Missing,writes_result=true,flags={.Read_Only},run=api_texts_missing})
+    api_register(s,st,{name="texts.missing",summary="What the texts lack: who shows a key no .strings has, and the keys that say nothing in a language of the game.",result=Texts_Missing,flags={.Read_Only},run=api_texts_missing})
     api_register(s,st,{name="texts.export",summary="Writes every text of the project to a CSV for translators.",params=Texts_File_Params,result=Texts_Count,flags={.Read_Only},run=api_texts_export})
     api_register(s,st,{name="texts.import",summary="Makes the keys of a CSV say its texts, as texts.export writes it. One step of history per .strings, which waits for Save.",params=Texts_File_Params,result=Texts_Count,run=api_texts_import})
 }
@@ -68,28 +68,21 @@ texts_api_register :: proc(s:^Session,st:^Api_State) {
 @(private="file")
 api_texts_list :: proc(s:^Session,call:^api.Call) {
     texts,languages:=texts_open(s)
-    out:=call.out
-    serial.text_write_raw(out,`{"languages":[`)
-    for code,i in languages {
-        if i>0 {serial.write_u8(out,',')}
-        serial.text_write_string(out,code)
-    }
-    serial.text_write_raw(out,`],"texts":[`)
+    entries:=make([]Texts_Entry,len(texts.rows),call.allocator)
     for &row,i in texts.rows {
-        if i>0 {serial.write_u8(out,',')}
-        serial.write_u8(out,'{')
-        api.write_text(out,"key",row.key,true)
-        api.write_text(out,"file",texts.files[row.file].path)
-        api.write_key(out,"texts");serial.write_u8(out,'{')
+        said:serial.Writer
+        serial.writer_init(&said,64,call.allocator)
+        serial.write_u8(&said,'{')
         first:=true
         for cell,language in row.cells {
             if cell=="" {continue}
-            api.write_text(out,texts.languages[language],cell,first)
+            api.write_text(&said,texts.languages[language],cell,first)
             first=false
         }
-        serial.text_write_raw(out,"}}")
+        serial.write_u8(&said,'}')
+        entries[i]={row.key,texts.files[row.file].path,serial.Json(serial.writer_bytes(&said))}
     }
-    serial.text_write_raw(out,"]}")
+    api.call_result(call,Texts_List)^={languages,entries}
 }
 
 // Writes the texts a call changed and answers how many; fails the call with a problem.
@@ -111,13 +104,7 @@ api_texts_set :: proc(s:^Session,call:^api.Call) {
 @(private="file")
 api_texts_missing :: proc(s:^Session,call:^api.Call) {
     texts,languages:=texts_open(s)
-    out:=call.out
-    serial.text_write_raw(out,`{"missing":[`)
-    for line,i in author.texts_missing(&texts,author.texts_uses(author.assets_of(s.app.assets)),languages) {
-        if i>0 {serial.write_u8(out,',')}
-        serial.text_write_string(out,line)
-    }
-    serial.text_write_raw(out,"]}")
+    api.call_result(call,Texts_Missing).missing=author.texts_missing(&texts,author.texts_uses(author.assets_of(s.app.assets)),languages)
 }
 
 @(private="file")

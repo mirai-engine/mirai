@@ -203,7 +203,8 @@ probe_open :: proc(t:^testing.T,f:^Probe) -> bool {
     test_session_open(&f.edited,core.world_ref(f.data,&f.info))
     f.s.app,f.s.editor_world,f.s.build=&f.app,&f.editor,&f.build
     f.document.saved=history.edits_state(&f.edits)
-    if !testing.expect(t,api_open(&f.s,0,true)==.None) {return false}
+    api_opened,api_problem:=api_open(&f.s,0,true)
+    if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return false}
     api_state(&f.s).poll_temp=context.temp_allocator
     serial.writer_init(&f.out)
     return testing.expect(t,play_start(&f.s))

@@ -69,7 +69,8 @@ input_fixture :: proc(t:^testing.T,f:^Input_Fixture) -> bool {
     if !testing.expect(t,core.world_init(&f.info,.World,&f.world,context.allocator)) {return false}
     f.session=Session{info=&f.info,edit_world=&f.world,editor_world=&f.editor,app=&f.app,selection=&f.selection,viewport=&f.viewport,gui=&f.gui,edits=&f.edits,inspector=&f.inspector,project_root=f.folder,has_project=true}
     history.edits_reset(&f.edits,edited_world(&f.session))
-    if !testing.expect(t,api_open(&f.session,0,true)==.None) {return false}
+    api_opened,api_problem:=api_open(&f.session,0,true)
+    if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return false}
     state:=api_state(&f.session)
     state.poll_temp=context.temp_allocator
     if api.method_find(&state.server,"input.get")==nil {input_api_register(&f.session,state)}

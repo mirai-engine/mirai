@@ -127,7 +127,8 @@ spatial_methods_read_their_params_and_write_their_results_through_the_server :: 
     if !pick_device_open(t,&f.device) || !spatial_open(t,f) {pick_device_close(&f.device);return}
     defer spatial_close(f)
     f.s.editor_world=&f.editor
-    if !testing.expect_value(t,api_open(&f.s,0,true),Api_Open_Error.None) {return}
+    api_opened,api_problem:=api_open(&f.s,0,true)
+    if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return}
     defer api_close(&f.s)
     state:=api_state(&f.s)
     state.poll_temp=context.temp_allocator

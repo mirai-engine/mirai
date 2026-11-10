@@ -17,21 +17,20 @@ services_open :: proc(s:^Session,options:Options) -> (api_ok:bool) {
     api_ok=true
     manual:=options.headless && options.frames==0
     if options.no_api {
-        if api_open(s,0,false,listen=false)!=.None {fmt.eprintln("mirai: the methods of the editor could not be registered: its menus and shortcuts run nothing")}
+        if opened,problem:=api_open(s,0,false,listen=false);opened!=.None {fmt.eprintfln("mirai: the methods of the editor could not be registered, so its menus and shortcuts run nothing: %s",problem)}
     } else {
         port:=options.api_port>0?options.api_port:api.DEFAULT_PORT
         if options.api_port_any {port=0}
-        opened:=api_open(s,port,manual)
+        opened,problem:=api_open(s,port,manual)
         if opened==.Server && options.api_port==0 && !options.api_port_any {
             log.warnf("the API port %d is taken: the system picks another",port)
-            opened=api_open(s,0,manual)
+            opened,problem=api_open(s,0,manual)
         }
         switch opened {
-        case .None:      fmt.eprintfln("mirai: API at 127.0.0.1:%d",api_port(s))
-        case .Methods:   // api_open already said which
-        case .No_Storage: fmt.eprintln("mirai: the agent API could not open")
+        case .None: fmt.eprintfln("mirai: API at 127.0.0.1:%d",api_port(s))
+        case .Methods,.No_Storage: fmt.eprintfln("mirai: the agent API could not open: %s",problem)
         case .Server:
-            fmt.eprintln("mirai: the agent API could not open")
+            fmt.eprintfln("mirai: the agent API could not open: %s",problem)
             api_open(s,0,false,listen=false)
         }
         api_ok=opened==.None

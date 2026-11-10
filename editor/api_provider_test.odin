@@ -54,7 +54,6 @@ API_HAND_WRITTEN :: [?]struct{file,pattern:string,count:int}{
     {"editor/api_scene.odin","writes_result=true",3},
     {"editor/api_viewport.odin","writes_result=true",2},
     {"editor/input_settings.odin","writes_result=true",2},
-    {"editor/texts.odin","writes_result=true",2},
     {"plugins/animation/editor/api.odin","writes_result=true",1},
     {"plugins/animation/editor/authoring_actions.odin","writes_result=true",1},
     {"plugins/animation/editor/authoring_bake.odin","writes_result=true",1},
@@ -138,7 +137,8 @@ editor_plugin_methods_exist_before_frames_and_reload_from_current_metadata :: pr
     provider:=&info.storages[info.storages_by_type[Api_Test_Provider]]
     provider.plugin="test_plugin"
     session:=Session{info=&info,editor_world=&world,edits=&edits}
-    if !testing.expect_value(t,api_open(&session,0,true),Api_Open_Error.None) {return}
+    api_opened,api_problem:=api_open(&session,0,true)
+    if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return}
     defer api_close(&session)
     state:=api_state(&session)
     state.poll_temp=context.temp_allocator

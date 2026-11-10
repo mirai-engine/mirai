@@ -55,7 +55,8 @@ collision_api_reads_and_edits_presets_masks_and_queries_by_name_in_one_undo_step
     tools:Collision_Test_Editor
     session:=editor.Session{info=&info,edit_world=&world,editor_world=&tools,selection=&selection,viewport=&viewport,gui=&gui,edits=&edits}
     history.edits_reset(&edits,editor.edited_world(&session))
-    if !testing.expect_value(t,editor.api_open(&session,0,true),editor.Api_Open_Error.None) {return};defer editor.api_close(&session)
+    api_opened,api_problem:=editor.api_open(&session,0,true)
+    if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return};defer editor.api_close(&session)
     state:=editor.api_state(&session);state.poll_temp=context.temp_allocator
     if api.method_find(&state.server,"physics.collision.get")==nil {api_collision_register(&session)}
     out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)

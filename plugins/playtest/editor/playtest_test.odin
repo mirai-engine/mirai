@@ -155,7 +155,8 @@ probe_open :: proc(t:^testing.T,f:^Probe) -> bool {
     f.s={app=&f.app,info=&f.info,edit_world=f.data,editor_world=&f.tools,edits=&f.edits,selection=&f.selection,viewport=&f.viewport,gui=&f.gui,document=&f.document,build=&f.build}
     history.edits_reset(&f.edits,editor.edited_world(&f.s))
     f.document.saved=history.edits_state(&f.edits)
-    if !testing.expect(t,editor.api_open(&f.s,0,true)==.None) {return false}
+    api_opened,api_problem:=editor.api_open(&f.s,0,true)
+    if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return false}
     editor.api_state(&f.s).poll_temp=context.temp_allocator
     serial.writer_init(&f.out)
     return testing.expect(t,editor.play_start(&f.s))
