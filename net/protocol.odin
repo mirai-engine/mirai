@@ -964,28 +964,3 @@ mask_read :: proc(r:^serial.Bit_Reader,type:^Object_Type) -> (mask:u64,ok:bool) 
     }
     return mask,!r.error && mask&~type.all==0
 }
-
-// Blends the replicated fields of two copies of a fragment: floats linearly,
-// rotations along the shortest arc, everything else switching at the middle.
-fragment_interpolate :: proc(p:^Protocol,type:Type_Id,fragment:int,a,b:rawptr,alpha:f32,out:rawptr) {
-    t:=&p.types[type]
-    info:=t.fragments[fragment]
-    for &leaf in t.leaves[info.first_leaf:][:info.leaf_count] {
-        offset:=uintptr(leaf.source)
-        pa,pb,po:=rawptr(uintptr(a)+offset),rawptr(uintptr(b)+offset),rawptr(uintptr(out)+offset)
-        #partial switch leaf.kind {
-        case .Float,.Quantized,.Ranged:
-            va,vb:=float_load(pa,leaf.size),float_load(pb,leaf.size)
-            float_store(po,leaf.size,va+(vb-va)*f64(alpha))
-        case .Quaternion,.Rotation:
-            qa,qb:=intrinsics.unaligned_load((^[4]f32)(pa)),intrinsics.unaligned_load((^[4]f32)(pb))
-            if qa[0]*qb[0]+qa[1]*qb[1]+qa[2]*qb[2]+qa[3]*qb[3]<0 {qb=-qb}
-            q:=qa+(qb-qa)*alpha
-            length:=math.sqrt(q[0]*q[0]+q[1]*q[1]+q[2]*q[2]+q[3]*q[3])
-            if length>0 {q/=length} else {q=qa}
-            intrinsics.unaligned_store((^[4]f32)(po),q)
-        case:
-            mem.copy(po,alpha<0.5?pa:pb,leaf.kind==.Text?int(leaf.count):int(leaf.size))
-        }
-    }
-}
