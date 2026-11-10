@@ -1021,9 +1021,6 @@ api_settings_set :: proc(s:^Session,call:^api.Call) {
             api.call_failf(call,api.INVALID_PARAMS,"settings: %s at line %d, column %d",error.detail,error.line,error.column)
             return
         }
-        for setting,i in next {
-            if setting.name=="Graphics_Settings" {erender.graphics_quality_follow((^erender.Graphics_Settings)(setting.value),(^erender.Graphics_Settings)(current[i].value).quality)}
-        }
     }
     for setting in next {
         if problem:=setting_problem(s,setting.info,setting.value);problem!="" {

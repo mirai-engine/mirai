@@ -116,15 +116,22 @@ glass_means_record :: proc(p: ^Pass) -> bool {
 	return true
 }
 
+// Every texture of the glass of a view, made or not.
+@(private)
+glass_textures :: proc(t: ^Targets) -> (all: [GLASS_LAYERS_MAX * 7 + 4]rhi.Texture) {
+	for layer, i in t.glass {
+		each := [7]rhi.Texture{layer.albedo, layer.normal, layer.emission, layer.ids, layer.depth, layer.surface, layer.layers}
+		copy(all[i * 7:], each[:])
+	}
+	rest := [4]rhi.Texture{t.glass_zbuffer, t.glass_scene, t.glass_history[0], t.glass_history[1]}
+	copy(all[GLASS_LAYERS_MAX * 7:], rest[:])
+	return
+}
+
 @(private)
 destroy_glass_targets :: proc(r: ^Renderer, t: ^Targets) {
-	d := r.device
-	for &layer in t.glass {
-		for tex in ([]rhi.Texture{layer.albedo, layer.normal, layer.emission, layer.ids, layer.depth, layer.surface, layer.layers}) {if tex != 0 {rhi.texture_destroy(d, tex)}}
-		layer = {}
-	}
-	for tex in ([]rhi.Texture{t.glass_zbuffer, t.glass_scene, t.glass_history[0], t.glass_history[1]}) {if tex != 0 {rhi.texture_destroy(d, tex)}}
-	t.glass_zbuffer, t.glass_scene, t.glass_history = 0, 0, {}
+	for tex in glass_textures(t) {if tex != 0 {rhi.texture_destroy(r.device, tex)}}
+	t.glass, t.glass_zbuffer, t.glass_scene, t.glass_history = {}, 0, 0, {}
 	t.glass_valid = false
 }
 

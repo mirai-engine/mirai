@@ -62,7 +62,6 @@ Ui_Texture_Target :: struct {
     texture:Texture_Handle,
     size:[2]u32,
     ldr:rhi.Texture,              // drawn, then copied into the entry
-    copy:rhi.Buffer,
     hdr,coverage,depth:rhi.Texture, // of an effect view
     empty:rhi.Texture,            // the scene depth its effects fade against: none
     ui_layers:[UI_LAYER_DEPTH_CAPACITY]rhi.Texture, // made the first time its UI composes a layer
@@ -116,7 +115,6 @@ ui_texture_target_destroy :: proc(r:^Renderer,target:^Ui_Texture_Target) {
     for t in ([]rhi.Texture{target.ldr,target.hdr,target.coverage,target.depth,target.empty}) {if t!=0 {rhi.texture_destroy(r.device,t)}}
     for t in target.ui_layers {if t!=0 {rhi.texture_destroy(r.device,t)}}
     for t in target.ui_blur {if t!=0 {rhi.texture_destroy(r.device,t)}}
-    if target.copy!=0 {rhi.buffer_destroy(r.device,target.copy)}
     target^={}
 }
 
@@ -157,8 +155,7 @@ ui_texture_add :: proc(r:^Renderer,width,height:u32,name:string,effects:=false) 
     d:=r.device
     target^={texture=texture,size={width,height}}
     target.ldr=rhi.texture_create(d,{width=width,height=height,format=.RGBA8_Unorm,usage={.Color_Target,.Sampled,.Transfer_Src},name="ui texture"})
-    target.copy=rhi.buffer_create(d,{size=u64(width)*u64(height)*4,usage={.Transfer_Src,.Transfer_Dst},memory=.GPU,name="ui texture copy"})
-    made:=target.ldr!=0 && target.copy!=0
+    made:=target.ldr!=0
     if effects {
         target.hdr=rhi.texture_create(d,{width=width,height=height,format=.RGBA16_Float,usage={.Color_Target,.Sampled},name="effect view"})
         target.coverage=rhi.texture_create(d,{width=width,height=height,format=.R8_Unorm,usage={.Color_Target,.Sampled},name="effect view coverage"})
@@ -196,8 +193,7 @@ ui_texture_target :: proc(r:^Renderer,texture:Texture_Handle) -> ^Ui_Texture_Tar
 @(private)
 ui_texture_show :: proc(r:^Renderer,cmd:^rhi.Command_List,target:^Ui_Texture_Target) {
     image:=r.textures.textures[target.texture-1]
-    rhi.cmd_copy_texture_to_buffer(cmd,target.ldr,target.copy,0)
-    rhi.cmd_copy_buffer_to_texture(cmd,target.copy,0,image)
+    rhi.cmd_copy_texture(cmd,target.ldr,image)
     rhi.cmd_barrier_texture(cmd,image,.Shader_Read)
 }
 

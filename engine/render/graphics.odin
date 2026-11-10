@@ -1,5 +1,6 @@
 package render
 
+import "mirai:core"
 import "mirai:host"
 import "mirai:platform"
 import gpu "mirai:render"
@@ -29,8 +30,7 @@ Reflections :: enum u8 {
 
 @(storage,shared,setting="machine")
 Graphics_Settings :: struct {
-    quality:Graphics_Quality `mirai:"section=Resolution"`, // only an input: the last preset named, whose fields follow (graphics_apply); the preset the fields are at is graphics_quality_of
-    render_scale:f32 `mirai:"min=0,max=2"`,                // the 3D image per point of the window along each axis, 0.25 to 2; 0 follows the target of the preset (preset_height), and above 0 it is used as it is and the target counts for nothing
+    render_scale:f32 `mirai:"min=0,max=2,section=Resolution"`, // the 3D image per point of the window along each axis, 0.25 to 2; 0 follows the target of the preset (preset_height), and above 0 it is used as it is and the target counts for nothing
     preset_height:u32 `mirai:"min=0,max=16384,advanced"`,  // the lines the last preset aims for in the views of the window, never above one pixel per point (only graphics_preset_apply writes it); 0: one per point
     antialiasing:[gpu.ANTIALIASING_NAME_BYTES]u8 `mirai:"text"`, // the technique that resolves the image and upscales it: "off", "taa" or one a plugin offers (antialiasing_offer); one no plugin resolves is the TAA
     indirect_light:Indirect_Light `mirai:"section=Lighting"`,
@@ -52,11 +52,14 @@ Graphics_Settings :: struct {
 
 // Without a device: the High preset.
 GRAPHICS_SETTINGS_DEFAULT :: Graphics_Settings{
-    quality=.High,preset_height=1080,antialiasing={0='t',1='a',2='a'},indirect_light=.Probes,light_probes=.High,reflections=.Detailed,
+    preset_height=1080,antialiasing={0='t',1='a',2='a'},indirect_light=.Probes,light_probes=.High,reflections=.Detailed,
     sun_shadows=true,shadowed_lights=8,glass_layers=1,textures=.High,detail=.High,frame_limit=60,vsync=true,frame_generation=true,show_fps=true,
 }
 
-Graphics_Quality :: enum u8 {Low,Medium,High,Ultra,Custom} // the presets, in their order, and Custom: none, which leaves the fields alone
+// The presets, in their order, and Custom: none. No setting stores one: a
+// preset is the values graphics_preset_apply writes, and the one the fields
+// are at is graphics_quality_of.
+Graphics_Quality :: enum u8 {Low,Medium,High,Ultra,Custom}
 // Of each preset only the fields of the quality count: graphics_preset_apply.
 // The technique of antialiasing is not one of them: it is the same in all.
 GRAPHICS_PRESETS :: #partial [Graphics_Quality]Graphics_Settings{
@@ -82,19 +85,14 @@ graphics_generates :: proc(graphics:Graphics_Settings,app:^host.App) -> bool {
     return shown==0 || shown>=2*FRAME_GENERATION_BASE_MIN-0.5
 }
 
-// The fields follow a preset named in quality since seen; anything else stays.
-graphics_quality_follow :: proc(g:^Graphics_Settings,seen:Graphics_Quality) {
-    if g.quality!=seen {graphics_preset_apply(g,g.quality)}
-}
-
-// What a control does: names a preset and gives the fields of the quality its
-// values, with a scale that follows its target; the others stay. Custom names
-// none and changes nothing.
+// What names a preset (a control, a layer of the settings, the code of a
+// game): gives the fields of the quality its values, with a scale that
+// follows its target; the others stay. Custom is none and changes nothing.
 graphics_preset_apply :: proc(g:^Graphics_Settings,preset:Graphics_Quality) {
     if preset==.Custom {return}
     presets:=GRAPHICS_PRESETS
     p:=presets[preset]
-    g.quality,g.render_scale,g.preset_height=preset,0,p.preset_height
+    g.render_scale,g.preset_height=0,p.preset_height
     g.sun_shadows=p.sun_shadows
     g.indirect_light,g.light_probes,g.reflections=p.indirect_light,p.light_probes,p.reflections
     g.shadowed_lights,g.glass_shadows,g.glass_layers=p.shadowed_lights,p.glass_shadows,p.glass_layers
@@ -103,14 +101,12 @@ graphics_preset_apply :: proc(g:^Graphics_Settings,preset:Graphics_Quality) {
 }
 
 // The preset the fields of g are at, or Custom: what a control shows, computed
-// when it is read, whatever quality last named.
+// when it is read.
 graphics_quality_of :: proc(g:Graphics_Settings) -> Graphics_Quality {
     for preset in Graphics_Quality {
-        if preset==.Custom {continue}
-        at,compared:=g,g
+        at:=g
         graphics_preset_apply(&at,preset)
-        compared.quality=preset
-        if compared==at {return preset}
+        if preset!=.Custom && at==g {return preset}
     }
     return .Custom
 }
@@ -164,17 +160,9 @@ graphics_render_settings :: proc(settings:gpu.Settings,quality:Graphics_Settings
 
 // Brings the renderer and the pacing to the graphics settings of the world when they change.
 @(step="render",loops="game editor",before="render_sync")
-graphics_apply :: proc(settings:^Graphics_Settings,sync:^Render_Sync,app:^host.App) {
-    if sync.graphics_applied && sync.graphics==settings^ {return}
-    seen:=sync.graphics.quality
-    if !sync.graphics_applied {
-        // At the fields of the device a layer only named a preset; with fields of its own, a person chose those.
-        defaults:=GRAPHICS_SETTINGS_DEFAULT
-        if app.device!=nil {defaults=graphics_settings_for_device(rhi.device_info(app.device)^)}
-        seen=graphics_quality_of(settings^)==defaults.quality?defaults.quality:settings.quality
-    }
-    graphics_quality_follow(settings,seen)
-    graphics:=settings^
+graphics_apply :: proc(settings:core.Ref(Graphics_Settings),sync:^Render_Sync,app:^host.App) {
+    graphics:=settings.ptr^
+    if sync.graphics_applied && sync.graphics==graphics {return}
     r:=app.renderer
     if r!=nil && rhi.device_info(r.device).type!=.CPU {
         before:=r.settings

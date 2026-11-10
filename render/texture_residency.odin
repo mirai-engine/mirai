@@ -210,7 +210,7 @@ textures_update :: proc(r: ^Renderer) -> int {
 	streamed: u64
 	for &stream, index in streams {if stream.levels > 0 {streamed += r.textures.stored[index]}}
 	room := max(u64)
-	if pool := u64(r.settings.texture_pool_megabytes) * 1024 * 1024; pool > 0 {
+	if pool, limited := texture_pool_room(r); limited {
 		fixed := r.textures.bytes - min(streamed, r.textures.bytes)
 		room = pool - min(fixed, pool)
 	}
@@ -428,7 +428,7 @@ texture_requests :: proc(r: ^Renderer, out: []Texture_Request, busy: []Texture_H
 	t := &r.textures.residency
 	if t.pending == 0 || len(out) == 0 {return 0}
 	shrink_first := false
-	if pool := u64(r.settings.texture_pool_megabytes) * 1024 * 1024; pool > 0 {shrink_first = r.textures.bytes > pool}
+	if pool, limited := texture_pool_room(r); limited {shrink_first = r.textures.bytes > pool}
 	urgency :: proc "contextless" (stream: ^Texture_Stream, shrink_first: bool) -> int {
 		grow := stream.target < stream.top
 		steps := abs(int(stream.top) - int(stream.target))

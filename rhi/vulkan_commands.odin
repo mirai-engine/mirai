@@ -640,6 +640,26 @@ cmd_copy_texture_to_buffer :: proc(c: ^Command_List, src: Texture, dst: Buffer, 
 	c.device.dvk.CmdCopyImageToBuffer(c.cmd, t.image, .TRANSFER_SRC_OPTIMAL, b.handle, 1, &region)
 }
 
+// Copies mip 0 of a texture into mip 0 of another, every layer, with its
+// bytes as they are: nothing converts between the sRGB encodings of the two.
+// What it copies between: texture_copy_problem; neither is the image of the
+// swapchain.
+cmd_copy_texture :: proc(c: ^Command_List, src: Texture, dst: Texture) {
+	assert(!c.in_render_pass)
+	d := c.device
+	s := pool_get(&d.textures, base.Handle(src))
+	t := pool_get(&d.textures, base.Handle(dst))
+	if s == nil || t == nil {return}
+	if src == dst || s.swapchain || t.swapchain {set_error(d, "cmd_copy_texture: it copies between two textures of the device, not the image of the swapchain"); return}
+	if problem := texture_copy_problem(s.desc, t.desc); problem != "" {set_error(d, "cmd_copy_texture: %s", problem); return}
+	cmd_barrier_texture(c, src, .Transfer_Read)
+	cmd_barrier_texture(c, dst, .Transfer_Write)
+	vk_flush_barriers(c)
+	layers := vk.ImageSubresourceLayers{aspectMask = s.aspect, layerCount = max(s.desc.layers, 1)}
+	region := vk.ImageCopy{srcSubresource = layers, dstSubresource = layers, extent = {s.desc.width, s.desc.height, 1}}
+	d.dvk.CmdCopyImage(c.cmd, s.image, .TRANSFER_SRC_OPTIMAL, t.image, .TRANSFER_DST_OPTIMAL, 1, &region)
+}
+
 // ---------------------------------------------------------------- debugging and timing
 
 cmd_push_label :: proc(c: ^Command_List, name: string) {

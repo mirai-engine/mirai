@@ -331,13 +331,21 @@ texture_add_data :: proc(r: ^Renderer, data: Texture_Data, name: string, key:u64
 	return Texture_Handle(index + 1), true
 }
 
-// The levels of data the pool (settings.texture_pool_megabytes) has no room
-// for, the largest, and the bytes of the others.
-texture_pool_first :: proc(r: ^Renderer, data: Texture_Data) -> (first: int, bytes: u64) {
+// The bytes the textures may take, and whether they have such a limit: the
+// pool of the settings (texture_pool_megabytes) less what the targets of the
+// views drawn into textures hold.
+texture_pool_room :: proc(r: ^Renderer) -> (bytes: u64, limited: bool) {
 	pool := u64(r.settings.texture_pool_megabytes) * 1024 * 1024
+	return pool - min(r.texture_view_bytes, pool), pool > 0
+}
+
+// The levels of data the pool (texture_pool_room) has no room for, the
+// largest, and the bytes of the others.
+texture_pool_first :: proc(r: ^Renderer, data: Texture_Data) -> (first: int, bytes: u64) {
+	pool, limited := texture_pool_room(r)
 	for level in data.levels {bytes += u64(len(level))}
 	// Never below 64 texels: a pool that small is a setting to fix, not a texture to erase.
-	for pool > 0 && r.textures.bytes + bytes > pool && first + 1 < len(data.levels) && max(data.width >> uint(first + 1), data.height >> uint(first + 1)) >= 64 {
+	for limited && r.textures.bytes + bytes > pool && first + 1 < len(data.levels) && max(data.width >> uint(first + 1), data.height >> uint(first + 1)) >= 64 {
 		bytes -= u64(len(data.levels[first]))
 		first += 1
 	}

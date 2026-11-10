@@ -718,6 +718,39 @@ texture_level_bytes :: proc(desc: Texture_Desc, mip: u32) -> u64 {
 	return row * rows * u64(max(desc.layers, 1))
 }
 
+// The bytes of every mip of a texture, tightly packed, of all its layers and slices.
+texture_desc_bytes :: proc(desc: Texture_Desc) -> (bytes: u64) {
+	if desc.format == .Undefined {return 0}
+	for mip in 0 ..< max(desc.mip_levels, 1) {bytes += texture_level_bytes(desc, mip) * u64(max(desc.depth >> mip, 1))}
+	return
+}
+
+// What a texture holds of the memory of the device, less what its driver
+// pads: texture_desc_bytes of it. 0 for one that is not there.
+texture_bytes :: proc(d: ^Device, texture: Texture) -> u64 {return texture_desc_bytes(texture_desc(d, texture))}
+
+// The format that holds the same bytes without the sRGB encoding.
+format_linear :: proc "contextless" (f: Format) -> Format {
+	#partial switch f {
+	case .RGBA8_Srgb: return .RGBA8_Unorm
+	case .BGRA8_Srgb: return .BGRA8_Unorm
+	case .BC1_Srgb:   return .BC1_Unorm
+	case .BC3_Srgb:   return .BC3_Unorm
+	case .BC7_Srgb:   return .BC7_Unorm
+	}
+	return f
+}
+
+// Why cmd_copy_texture cannot copy a texture into another, "" when it can:
+// both are 2D, with one size and as many layers, and their formats hold the
+// same bytes (one format, or two that differ only in the sRGB encoding).
+texture_copy_problem :: proc "contextless" (src, dst: Texture_Desc) -> string {
+	if src.depth > 1 || dst.depth > 1 {return "a 3D texture is written by shaders"}
+	if src.width != dst.width || src.height != dst.height || max(src.layers, 1) != max(dst.layers, 1) {return "the two textures differ in size or layers"}
+	if format_linear(src.format) != format_linear(dst.format) {return "the two formats differ in more than the sRGB encoding"}
+	return ""
+}
+
 // Typed wrappers over the byte-oriented transfer procedures.
 buffer_upload_slice :: proc(d: ^Device, buffer: Buffer, offset: u64, data: []$T) -> bool {
 	return buffer_upload(d, buffer, offset, ([^]u8)(raw_data(data))[:len(data) * size_of(T)])

@@ -76,48 +76,50 @@ a_scale_set_by_hand_is_used_as_it_is_and_zero_follows_the_target_of_the_preset :
 @(test)
 a_preset_named_moves_the_fields_and_what_they_are_at_is_computed :: proc(t:^testing.T) {
     presets:=GRAPHICS_PRESETS
-    sync:=new(Render_Sync);defer free(sync)
-    app:=new(host.App);defer free(app)
     g:=GRAPHICS_SETTINGS_DEFAULT
     testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.High)
     // A preset named over a scale set by hand: it follows the target of the preset again.
-    graphics_apply(&g,sync,app)
-    g.render_scale,g.quality=0.5,.Low
-    graphics_apply(&g,sync,app)
-    testing.expect(t,g.quality==.Low && g.render_scale==0 && g.preset_height==presets[.Low].preset_height && g.reflections==.Off)
-    testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.Low)
-    // A field changed by hand: the preset the fields are at is Custom; the input stays and so does the field.
-    g.reflections=.Traced
-    graphics_apply(&g,sync,app)
-    testing.expect(t,g.quality==.Low && g.reflections==.Traced && g.preset_height==presets[.Low].preset_height)
+    g.render_scale=0.5
     testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.Custom)
-    // A control reaches the preset named before, which no write of quality alone could.
+    graphics_preset_apply(&g,.Low)
+    testing.expect(t,g.render_scale==0 && g.preset_height==presets[.Low].preset_height && g.reflections==.Off)
+    testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.Low)
+    // A field changed by hand leaves the others where the preset put them.
+    g.reflections=.Traced
+    testing.expect(t,g.preset_height==presets[.Low].preset_height)
+    testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.Custom)
+    // Naming the preset again reaches it.
     graphics_preset_apply(&g,.Low)
     testing.expect(t,g.reflections==.Off)
+    // What is not of the quality counts for none.
+    g.frame_limit,g.vsync,g.show_fps,g.antialiasing=0,false,false,{}
     testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.Low)
-    // Custom names none: the fields stay where they are.
-    g.quality=.Custom
-    graphics_apply(&g,sync,app)
-    testing.expect(t,g.reflections==.Off)
+    // Custom is none: the fields stay where they are.
+    before:=g
+    graphics_preset_apply(&g,.Custom)
+    testing.expect_value(t,g,before)
 }
 
+// The step that brings the renderer to the settings reads them: whatever they
+// hold, at a preset or with fields of a project, it leaves them as they were.
 @(test)
-the_first_read_keeps_the_fields_of_a_project_over_the_default_and_applies_a_preset_it_names :: proc(t:^testing.T) {
+applying_the_graphics_settings_writes_none_of_them :: proc(t:^testing.T) {
     app:=new(host.App)
     defer free(app)
-    own:=GRAPHICS_SETTINGS_DEFAULT
-    own.shadowed_lights,own.glass_shadows,own.glass_layers=16,true,2
     sync:=new(Render_Sync)
     defer free(sync)
-    graphics_apply(&own,sync,app)
-    testing.expect(t,own.shadowed_lights==16 && own.glass_shadows && own.glass_layers==2)
-    testing.expect_value(t,graphics_quality_of(own),Graphics_Quality.Custom)
-    named:=GRAPHICS_SETTINGS_DEFAULT
-    named.quality=.Low
-    other:=new(Render_Sync)
-    defer free(other)
-    graphics_apply(&named,other,app)
-    testing.expect(t,named.quality==.Low && named.reflections==.Off)
+    own:=GRAPHICS_SETTINGS_DEFAULT
+    own.shadowed_lights,own.glass_shadows,own.glass_layers=16,true,2
+    low:=GRAPHICS_SETTINGS_DEFAULT
+    graphics_preset_apply(&low,.Low)
+    scaled:=low
+    scaled.render_scale=0.5
+    for wanted in ([]Graphics_Settings{GRAPHICS_SETTINGS_DEFAULT,own,low,scaled}) {
+        g:=wanted
+        graphics_apply({&g},sync,app)
+        testing.expect_value(t,g,wanted)
+        testing.expect(t,sync.graphics_applied && sync.graphics==wanted,"what was applied is what the settings hold")
+    }
 }
 
 @(test)
