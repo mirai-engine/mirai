@@ -44,9 +44,8 @@ mirai import source/sounds/step.wav --out assets/player --root .
   wrote; a CLI import is picked up by the editor at its next call. `asset.list` shows what exists.
 
 ## Kinds
-- Engine: `.mesh` `.skeleton` `.mat` `.tex` `.anim` `.sound` `.sound_set` `.ui` `.font`
-  `.strings` `.prompts` `.records` `.scene` `.fracture` `.physics_cache`. A prefab is a `.scene`
-  with one root ([prefabs](core/prefabs.md)), which `asset.list` tells and `kind=prefab` asks.
+- Engine: `.mesh` `.skeleton` `.mat` `.tex` `.anim` `.sound` `.sound_set` `.ui` `.font` `.strings`
+  `.prompts` `.records` `.fracture` `.physics_cache` `.scene` (one root: a prefab, `kind=prefab`).
 - Plugins add `.particle`, `.terrain`, `.foliage`, `.navmesh`, `.match`, `.agraph`, `.pose`,
   `.blend`, `.motion`, `.action`.
 - Folders are named after what they hold (`player`, `arena`), never after a kind. An import goes

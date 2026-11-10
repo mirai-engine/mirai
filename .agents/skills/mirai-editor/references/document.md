@@ -20,16 +20,15 @@ have.
 Procedures:
 
 - `scene_open(s, path)`: replaces the edited world with a scene, by file or by path under
-  `assets/`; one with a single root opens as a prefab (`Document.prefab`, decided when the tab
-  opens it and kept while it lives: [prefab document](prefabs.md#prefab-document)). Stops a
-  Play, starts a new history and deselects. It loads with `scene.replace`, like the game: if
-  reading, instantiating or copying fails, memory included, the world stays as it was.
+  `assets/`; one whose file has a single root is a
+  [prefab document](prefabs.md#prefab-document). Stops a Play, starts a new history and
+  deselects. It loads with `scene.replace`, like the game: if reading, instantiating or copying
+  fails, memory included, the world stays as it was.
 - `scene_new(s)`: a scene without a file with two entities, `Sky` (with `SKY_DEFAULT`) and `Sun`
   (the sun preset), without changes or history.
 - `scene_save(s, path="")`: writes to the document's file or to `path`, adding `.scene` when it
   has no extension; a new file is another asset with its own id. With neither, it opens the save
-  dialog. Saving a prefab that other files place with more than one root says so: it is no prefab
-  until it has one again.
+  dialog.
 - `document_write(s, file, as_document)`: writes the world; with `as_document` it becomes its file,
   except in copies (recovery, restart).
 - `file_new`: replaces the active document; asks if it has unsaved changes.

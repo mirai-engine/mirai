@@ -772,10 +772,10 @@ when the viewport draws with them, which `mirai shaders` asks for.
 ## Prefabs
 
 A prefab is a scene with exactly one root, named by `asset` as any asset is: a path under
-`assets/` or its id. `asset.list` says `prefab` of every scene and lists only them with
-`kind:"prefab"`. Those that edit are transactions. Unknown id, no id, prefab not found, a scene
-without exactly one root (the error says to give it one, or to hang it from a `Scene_Reference`),
-nonexistent override and "is not part of an instance" are `-32602`; the rest, `-32000`
+`assets/` or its id. `asset.list` says `prefab` of every scene and `prefab.list` lists them.
+Those that edit are transactions. Unknown id, no id, prefab not found (a scene without exactly
+one root is none: the error says so), nonexistent override and "is not part of an instance" are
+`-32602`; the rest, `-32000`
 ([errors](../../mirai-editor/references/prefabs.md#errors)).
 
 - An instance is named by its `root`. `prefab.create`, `prefab.variant.create` and `prefab.apply`
@@ -816,8 +816,7 @@ nonexistent override and "is not part of an instance" are `-32602`; the rest, `-
     for a derived one by `name` without it fails saying so.
 - `asset.list`: rescans the registry. `kind` filters by the name of the type as the result gives it
   (`mesh`, `sound set`, case-insensitive and with `_` for a space; that of a plugin type is the
-  extension of its files, `particle`), or `prefab` for the scenes with exactly one root; empty or
-  `all`, all of them. Free-form result
+  extension of its files, `particle`); empty or `all`, all of them. Free-form result
   `{root,assets:[{path,asset,kind,prefab,size,dependencies,used_by,owner}],total,offset,shown,
   broken,duplicates,missing}`; `prefab`, only on a scene, says whether it is one; `used_by` counts
   the files that depend on the asset (the inverse index of the

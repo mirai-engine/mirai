@@ -78,7 +78,7 @@ the name of their type) and a world (handles and tables).
   asset marks do not read meanwhile. Then, jobs (at most the `LOAD_WORKERS_SHARE` part of the
   workers, the rest stays for the frames' work) read and decode the meshes, textures and materials
   it names that are not loaded, and what the other assets it names take (the meshes of a foliage
-  source or of a scene to spawn; not those of a `Scene_Reference`, another section), each after
+  source or of a prefab; not those of a scene of several roots, another section), each after
   what it takes, and
   `load_step` hands them to the renderer with the part of the frame the load has
   ([budget](../../mirai-core/references/host.md#loaded-assets)); it also waits for the first
