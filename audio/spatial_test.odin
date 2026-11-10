@@ -380,10 +380,10 @@ spatial_voice_on_speakers_is_panned_and_attenuated_for_the_listener :: proc(t:^t
     test_near(t,out[0],0,1e-6)
     test_near(t,out[1],0.5*air(2),1e-4)
     // Its volume still applies.
-    voice_set_volume(m,voice,3)
+    voice_set_volume(m,voice,1.5)
     test_render(m,CHUNK_FRAMES*4)
     out=test_render(m,4)
-    test_near(t,out[1],1.5*air(2),1e-3)
+    test_near(t,out[1],0.75*air(2),1e-3)
     // The same mixer on headphones: the voice goes on, now through the HRTF.
     testing.expect(t,mixer_set_output(m,.Headphones) && mixer_output(m)==.Headphones)
     test_render(m,CHUNK_FRAMES*4)
@@ -391,7 +391,8 @@ spatial_voice_on_speakers_is_panned_and_attenuated_for_the_listener :: proc(t:^t
     testing.expect(t,energy(out,2,0)>0 && energy(out,2,1)>0,"it goes on playing")
     testing.expect(t,!mixer_set_output(m,Output_Kind(7)))
     voice_stop(m,voice)
-    test_render(m,CHUNK_FRAMES)
+    // What the HRTF raised past full scale is let go of by the limiter.
+    test_render(m,int((LIMITER_HOLD+LIMITER_RELEASE)*RATE)+CHUNK_FRAMES)
     mixer_update(m)
 
     // A stereo sound with a place in the world is heard as one source.
@@ -462,20 +463,22 @@ doppler_changes_the_speed_of_a_spatial_voice :: proc(t:^testing.T) {
     desc.position={0,0,-50}
     desc.velocity={0,0,60} // toward the listener at a fifth of the speed of sound: 300/(300-60)=1.25
     sound:=test_mono(t,m,100000,test_ramp)
-    half:=f32(math.SQRT_TWO/2)*air_absorption(50)[0]
+    // The slope of the ramp, as it comes out at 50 m.
+    step:=test_ramp(1)-test_ramp(0)
+    half:=f32(math.SQRT_TWO/2)*air_absorption(50)[0]*step
     desc.doppler=1
     voice:=voice_play(m,sound,desc)
     test_render(m,CHUNK_FRAMES)
     out:=test_render(m,200)
     // A ramp keeps its slope through the EQ of the air once it settled: the pitch is its slope.
-    test_near(t,(out[199*2]-out[0])/199,1.25*half,2e-3)
+    test_near(t,(out[199*2]-out[0])/199,1.25*half,2e-3*step)
     // Without the effect the same voice plays as recorded.
     desc.doppler=0
     voice_stop(m,voice)
     plain:=voice_play(m,sound,desc)
     test_render(m,CHUNK_FRAMES)
     out=test_render(m,4)
-    test_near(t,out[2]-out[0],half,1e-3)
+    test_near(t,out[2]-out[0],half,1e-3*step)
     // The pitch of the voice and the effect multiply: it stops and the listener runs from it.
     voice_set_pitch(m,plain,2)
     voice_stop(m,plain)
@@ -484,7 +487,7 @@ doppler_changes_the_speed_of_a_spatial_voice :: proc(t:^testing.T) {
     away:=voice_play(m,sound,desc)
     test_render(m,CHUNK_FRAMES)
     out=test_render(m,4)
-    test_near(t,out[2]-out[0],2*0.5*half,1e-3)
+    test_near(t,out[2]-out[0],2*0.5*half,1e-3*step)
     testing.expect(t,voice_valid(m,away))
 }
 
@@ -498,6 +501,7 @@ binaural_one_voice :: proc(t:^testing.T) -> []f32 {
     noise:=test_mono(t,m,RATE,test_noise)
     desc:=VOICE_DEFAULT
     desc.loop,desc.spatial,desc.position,desc.attenuation=true,true,{0,0,-2},{model=.None}
+    desc.volume=BINAURAL_ONE_VOICE_LEVEL
     voice:=voice_play(m,noise,desc)
     FRAMES :: 4096
     out:=make([]f32,FRAMES*2,context.temp_allocator)
@@ -515,6 +519,10 @@ binaural_one_voice :: proc(t:^testing.T) -> []f32 {
 }
 
 @(private="file") BINAURAL_ONE_VOICE :: #load("testdata/binaural_one_voice.f32")
+// The recording was made at full level, louder than full scale at times: the
+// voice plays at a power of two below it, under the limiter, and every sample
+// comes out scaled exactly by it.
+@(private="file") BINAURAL_ONE_VOICE_LEVEL :: f32(0.25)
 
 // Adding the voices of a bus in frequency gives one voice what its own
 // overlap-add gave it, recorded before the voices were added up.
@@ -526,7 +534,7 @@ binaural_mix_in_frequency_keeps_the_output_of_a_voice :: proc(t:^testing.T) {
     worst:=f32(0)
     for x,i in got {
         want:=transmute(f32)([4]u8{recorded[i*4],recorded[i*4+1],recorded[i*4+2],recorded[i*4+3]})
-        worst=max(worst,abs(x-want))
+        worst=max(worst,abs(x/BINAURAL_ONE_VOICE_LEVEL-want))
     }
     testing.expectf(t,worst<1e-5,"the voice differs from its own overlap-add by %v",worst)
 }

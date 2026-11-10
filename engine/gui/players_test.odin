@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
+import audio "mirai:engine/audio"
 import inp "mirai:engine/input"
 import render "mirai:engine/render"
 import volume "mirai:engine/volume"
@@ -48,6 +49,7 @@ Players_Fixture :: struct {
     actions:inp.Frame_Actions,
     requests:UI_Requests,
     effects:UI_Effects,
+    sounds:audio.Sound_Requests,
     seat_requests:inp.Seat_Requests,
     contexts:inp.Input_Contexts,
     context_requests:inp.Context_Requests,
@@ -61,7 +63,7 @@ players_frame :: proc(f:^Players_Fixture) {
     world:=core.test_world_ref(w)
     frame_begin(world,core.read(&w.screens),core.read(&w.widgets),core.read(&w.worlds),core.read(&w.hidden),core.read(&w.parents),core.read(&w.meshes),
         UI_SETTINGS_DEFAULT,UI_PREFERENCES_DEFAULT,{},core.ref(&f.state),core.read(&w.seats),core.read(&w.drivables),core.ref(&f.bindings),core.ref(&f.actions),
-        {},core.read(&w.cameras),core.read(&w.exposures),core.read(&w.view_volumes),core.read(&w.volumes),&f.requests,&f.effects,&f.gui,&f.app,&f.problems,false)
+        {},core.read(&w.cameras),core.read(&w.exposures),core.read(&w.view_volumes),core.read(&w.volumes),&f.requests,&f.effects,&f.sounds,&f.gui,&f.app,&f.problems,false)
     widgets_build(world,&f.gui,&f.app,&f.problems)
 }
 

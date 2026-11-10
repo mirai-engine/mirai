@@ -462,14 +462,22 @@ the reverb of the room where the listener is and what covers each source.
   - Doppler: the source's and the listener's velocity come from how much they moved in the frame; a
     `View` with `cut` does not move. It is only sent while there is doppler.
   - With the world's `core.Clock` paused, its voices are paused and the sources are not updated
-    until it continues; the UI's loose sounds are not.
+    until it continues; one-shots are not.
+- **One-shots.** `audio.play(sounds, path_or_id, at, bus, volume, pitch)` pushes to
+  `Sound_Requests`, from any step and from the interface sounds of `gui` (on `BUS_UI`). Each is
+  an `Audio_Source` of `AUDIO_SOURCE_DEFAULT` with those values (placed, it sends all of it to the
+  room) and starts through the same `voice_start` as a source, without a handle. `audio_requests`
+  (`fixed` and `late`, stage `end`) takes the queue: at the end of the tick that asked, a tick that
+  runs again (`time.resimulating`) drops what it asks, since it played the first time, and the
+  copies of the world for a rollback are made between ticks, after the take; what frame steps and
+  the interface push plays at the end of the frame's `late`.
 - **Reverb.** The mixer has [only one](../../mirai-platform/references/audio.md#reverb): that of
   the room where the listener is. `Audio_Reverb` is a value of [volume](#volume): without a
   `Volume`, the level's; without any, nothing reverberates. `audio_reverb` (`late`) takes the blend
   at the listener and moves toward it over some `REVERB_FADE` seconds; it only sends while it
   changes. It returns in `Audio_Settings.reverb_bus`.
-  - `Audio_Source.reverb` is the part of the source that it sends to the room; `play_asset_at`
-    sends all by default and `play_asset` none.
+  - `Audio_Source.reverb` is the part of the source that it sends to the room; a one-shot sends
+    all when placed and none when not.
 - **Medium.** `Audio_Medium` is what surrounds the listener besides air, like the water they are
   under: a low-pass and a reverb with their weight. A single plugin writes it
   ([water](../../mirai-world/references/water.md#sound)) before `audio_reverb` and
@@ -498,7 +506,9 @@ the reverb of the room where the listener is and what covers each source.
   `voice` and `ui`, and a game its own below `AUDIO_BUS_CAPACITY`, which is the mixer's capacity. A
   bus is reserved the first time something names it.
   - `Audio_Settings` (project setting) has an entry per bus that does not sound as it arrives: its
-    gain in dB, its low-pass, who ducks it and its own reverb, over everything it touches. The gain
+    gain in dB, its low-pass, who ducks it, its own reverb over everything it touches, and the bus
+    it sends to ([sends](../../mirai-platform/references/audio.md#buses)): one of a lower number,
+    or the problem `audio.send` and the master. The gain
     is in dB so that an entry at zeros says "as it arrives": in linear, the master at volume 0
     would be an empty entry. `audio_bus_setting_set` writes or removes the entry and
     `db_volume` converts inside the mixer.

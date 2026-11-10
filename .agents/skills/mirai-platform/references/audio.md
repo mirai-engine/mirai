@@ -7,8 +7,8 @@ device is in [`platform`](platform.md#audio-device).
 ## Mixer
 
 `mixer_create(Mixer_Desc)` sets the sample rate, output channels (1 or 2), capacities and the speed
-of sound. `mixer_render(m,out)` replaces `out` with interleaved f32 frames and does not clip: a mix
-louder than full scale exceeds 1.
+of sound. `mixer_render(m,out)` replaces `out` with interleaved f32 frames, under full scale
+through the [limiter](#buses) of the master.
 
 ### Threads
 
@@ -109,9 +109,17 @@ invalid one return false.
 
 ## Buses
 
-Every voice sounds on a bus and every bus on the master (`BUS_MASTER`), which is what is written;
-buses are not nested or destroyed. A game's named buses belong to
-[`engine/audio`](../../mirai-gameplay/references/libraries.md#audio).
+Every voice sounds on a bus and every bus on the one it sends to, the master (`BUS_MASTER`) by
+default, which is what is written; buses are a fixed set, never a graph, and are not destroyed. A
+game's named buses belong to [`engine/audio`](../../mirai-gameplay/references/libraries.md#audio).
+
+- `bus_set_send`: a bus sends only to the master or to one created before it, so the buses mix
+  from the last to the first without a loop. A bus ducked by one created before it hears that
+  one's peak of the last chunk.
+- **Limiter.** The master, after the mono downmix, goes through a limiter with no lookahead (Godot's
+  hard limiter without its delay, so the mix adds no latency): a frame that would pass
+  `LIMITER_CEILING` brings the gain down to it at once, which holds `LIMITER_HOLD` and comes back
+  in `LIMITER_RELEASE`. A mix that never reaches full scale comes out as it is.
 
 - Volume and mute are ramped within a chunk; a muted bus keeps its volume.
 - `bus_set_duck`: while the peak of the `source` bus, measured after its volume and its filter,
