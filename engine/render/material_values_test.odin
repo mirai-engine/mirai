@@ -3,6 +3,8 @@ package render
 import "core:reflect"
 import "core:strings"
 import "core:testing"
+import "mirai:host"
+import gpu "mirai:render"
 import "mirai:std/base"
 
 @(test)
@@ -93,4 +95,31 @@ values_given_over_those_of_an_entity_compose_with_them :: proc(t:^testing.T) {
     testing.expect_value(t,own.values[material_value_find(&own,0,base.name_hash("roughness"))].x,f32(0.9))
     testing.expect_value(t,own.values[material_value_find(&own,1,base.name_hash("metallic"))].x,f32(1))
     testing.expect(t,own.texture_count==1 && own.shown[0]==5 && own.texture_slots[0]==2)
+}
+
+// What shows a row through an instance without drawing it (the rectangle a
+// screen lights) is given the row with the values the instance holds for it:
+// the same row their values give derived from its material.
+@(test)
+the_values_an_instance_holds_give_the_row_they_derive :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"values-held")
+    if root=="" {return}
+    a:host.Assets
+    if !testing.expect(t,host.assets_init(&a,{root=root,capacity=8})) {return}
+    defer host.assets_destroy(&a)
+    material:=gpu.DEFAULT_MATERIAL
+    material.roughness=0.8
+    row,derived:=host.assets_material_derive(&a,material)
+    if !testing.expect(t,derived) {return}
+    held:gpu.Instance_Material_Values
+    held.entries[0]=gpu.instance_material_value(row,gpu.Instance_Material_Value_Target.Emission,{40,20,10,0})
+    held.entries[1]=gpu.instance_material_value(row,gpu.Instance_Material_Value_Target.Base_Color,{0,0,0,0})
+    held.entries[2]=gpu.instance_material_value(row+1,gpu.Instance_Material_Value_Target.Roughness,{0.1,0,0,0})
+    held.count=3
+    expected:=material
+    testing.expect(t,material_value_apply(&expected,nil,base.name_hash("emission"),{40,20,10,0}) && material_value_apply(&expected,nil,base.name_hash("base_color"),{}))
+    want,_:=host.assets_material_derive(&a,expected)
+    shown:=material_row_held(&a,row,&held)
+    testing.expect(t,shown!=row && shown==want,"the values for the row, and not those for another")
+    testing.expect_value(t,material_row_held(&a,row,&gpu.Instance_Material_Values{}),row)
 }

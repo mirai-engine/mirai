@@ -8,6 +8,7 @@ import "mirai:core"
 import volume "mirai:engine/volume"
 import "mirai:host"
 import gpu "mirai:render"
+import "mirai:render/abi"
 import "mirai:std/base"
 import mm "mirai:std/math"
 
@@ -727,6 +728,7 @@ render_sync :: proc(
             if material,slots,overlays,held:=gpu.scene_instance_materials(r,u32(at));held {instance_materials_retain(a,material,slots,overlays)}
         }
         for instance in extras {instance_materials_retain(a,instance.material,instance.slot_materials,instance.overlays)}
+        for light in sync.lights {host.assets_material_retain(a,u32(light.material))}
         host.assets_appearance_end(a);host.assets_commit(a)
         sync.assets_appearance,sync.derived,sync.extra_rows=a.appearance,a.stats.derived,rows
     }
@@ -1330,6 +1332,7 @@ lights_settle :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Sync_Ta
     if core.count(t.emissions)==0 {return}
     for at in sync.made {light_settle(sync,a,r,t,extras,sync.drawn.entities[at],.Rect)}
     for e in sync.replaced {light_settle(sync,a,r,t,extras,e,.Rect)}
+    for at in sync.tinted {light_settle(sync,a,r,t,extras,sync.drawn.entities[at],.Rect)}
 }
 
 // A point or a spot in the world: a sphere the scale of its entity draws
@@ -1376,9 +1379,40 @@ emission_material :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Syn
     } else if material,slots,_,held:=gpu.scene_instance_materials(r,u32(at));held {
         shown.material=material
         shown.slot_materials=slots
+        values:=MATERIAL_VALUES_DEFAULT
+        if own,has_values:=core.get(t.values,e);has_values {values=own}
+        if pose:=t.posed!=nil?core.entity_map_get(&t.posed.poses,e):nil;pose!=nil && pose.materialed {values=pose.override}
+        made,_:=mesh_instance(a,static,1,values)
+        shown.material_values=made.material_values
     }
     row,_:=mesh_slot_row(a,static,&shown,slot)
-    return gpu.Material_Handle(row)
+    return gpu.Material_Handle(material_row_held(a,row,&shown.material_values))
+}
+
+// The row with the values an instance holds for it over it, as the shaders
+// read them over the row: what a light that shows the row is given. The row
+// itself when the instance holds none for it.
+material_row_held :: proc(a:^host.Assets,row:u32,held:^gpu.Instance_Material_Values) -> u32 {
+    values:=host.assets_material_values(a,row)
+    given:=false
+    for &entry in held.entries[:min(int(held.count),len(held.entries))] {
+        if entry.row!=row {continue}
+        target:=entry.target&(1<<abi.INSTANCE_VALUE_COUNT_SHIFT-1)
+        if target<abi.INSTANCE_VALUE_STANDARD {
+            count:=min(int(entry.target>>abi.INSTANCE_VALUE_COUNT_SHIFT),4,gpu.PROGRAM_PARAMETER_BYTES/4-int(target))
+            copy((cast(^[gpu.PROGRAM_PARAMETER_BYTES/4]u32)&values.custom_params)[target:][:count],entry.words[:count])
+            given=true
+            continue
+        }
+        for field in MATERIAL_VALUE_FIELDS {
+            if u32(field.held)!=target {continue}
+            value:=transmute([4]f32)entry.words
+            if material_standard_value(&values.info,base.name_hash(field.name),&value,true) {given=true}
+        }
+    }
+    if !given {return row}
+    derived,derives:=host.assets_material_derive(a,values)
+    return derives?derived:row
 }
 
 // The row of the material a mesh is drawn with in a slot, and where the
