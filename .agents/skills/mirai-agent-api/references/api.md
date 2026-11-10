@@ -81,18 +81,18 @@ named by `.mirai/session.json` (pid, mode and arguments) and `api.json`; its log
   either: `stop --discard` closes it.
 - **Build with an open session.** Windows does not replace loaded binaries, but it moves them: the
   build moves the ones a program runs to `.mirai/engine/<mode>/retired/` and writes in their place
-  (`build.engine_unlock`), and a later build deletes them once nothing runs them. If `mirai build
-  editor`, `edit`, `play` or `capture` rebuild the engine the project's session runs, they close it
-  (with its players), build and reopen it on the new binaries; if the engine does not build, it
-  stays closed. Every other program that runs them (another session, a person's editor) goes on
-  with the binaries it started with and is named; it takes the new ones when it starts again. An
-  editor whose engine was rebuilt restarts on the new one as soon as its next Build ends, a
-  headless one too, between calls, instead of loading the library into the old one: it runs the
-  program and reads the stamp of the folder it started from (`Session.program`), not where the
-  system says its moved executable is, and the session record follows it to the new process, so
-  the next call reaches it through the port file, its `build.status`
-  says `Built`, and `mirai session` still knows it as the project's. `mirai build engine` does not
-  restart sessions: it names them.
+  (`build.engine_unlock`), and a later build deletes them once nothing runs them. `mirai build
+  editor` ends by handing the project's session what it built (`build.start` target `built`):
+  engine libraries whose declarations stand are taken in place, then the library and the shaders,
+  and the command says in a line after how long the session runs them; otherwise the session
+  restarts on the new binaries with its documents and the line says why
+  ([taking a build in place](../../mirai-projects/references/projects.md#engine-binaries)). Every
+  other program that runs them (another session, a person's editor) goes on with the binaries it
+  started with and is named; it takes the new ones at its next Build. An editor reads the stamp of
+  the folder it started from (`Session.program`), not where the system says its moved executable
+  is, and the session record follows it to a restarted process, so the next call reaches it
+  through the port file and `mirai session` still knows it as the project's. `mirai build engine`
+  does not hand builds to sessions: it names them.
 - `stop` never saves: unsaved changes (from `editor.documents` and `asset.unsaved`) are discarded
   automatically if all are copies under `.mirai/tmp/`; otherwise it fails listing them and
   `--discard` discards them.
