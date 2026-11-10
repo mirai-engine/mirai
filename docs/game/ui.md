@@ -56,7 +56,8 @@ menu_frame :: proc(g:^gui.Gui, screens:core.Read(Menu_Screen), options:^Menu_Opt
 }
 ```
 
-- Names are `base.name_hash` of the node name: `mirai ui check` refuses a literal no `.ui` has. A
+- Names are `base.name_hash` of the node name: the first frame a step asks a screen for a name
+  its `.ui` lacks, `engine.diagnostics` has a `gui.names` problem naming the screen. A
   control bound to a storage writes it (a setting is also kept); one bound to a component asks,
   and the game writes it on `Changed`. A `Button` with `bind_value` writes its `choice` there.
 - The helpers (`clicked`, `changed`, `changed_value`, `submitted`, `dropped`, `back`,

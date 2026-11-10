@@ -424,26 +424,24 @@ a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testin
 }
 
 
-// The bytes a document read from the .ui id and written back gives; ok false
-// when it does not read or write.
+// The bytes the document mirai ui read gives of the .ui path, written back as
+// mirai ui write writes it, and the .strings that write would touch. The
+// bindings are not checked: the test world is not the game of the project.
 @(private="file")
-ui_round_trip :: proc(p:^Project,id:base.Asset_Id) -> (bytes:[]u8,why:string,ok:bool) {
-    r:Records
-    if !records_read(p.assets,id,&r,context.temp_allocator) {return nil,"it does not read",false}
-    reading:=Reading{allocator=context.temp_allocator,assets=registry_assets(&p.registry)}
-    args:=Tree_Args{reading=&reading,types=&p.types,registry=&p.registry,assets=p.assets,asset=id}
-    libs:=doc_libs(&args,&r)
+ui_round_trip :: proc(p:^Project,path:string,id:base.Asset_Id) -> (bytes:[]u8,texts:[]Texts_Written,why:string) {
+    info:=p.info
+    p.info=nil
+    defer p.info=info
     out:serial.Writer
     serial.writer_init(&out,0,context.temp_allocator)
-    document_write(&out,&p.types,&r,-1,libs[:],p.assets)
-    text:=string(serial.writer_bytes(&out))
-    reading.raw=text
-    again:Records
-    if !records_read(p.assets,id,&again,context.temp_allocator) {return nil,"it does not read",false}
-    if _,_,applied:=document_apply(&args,&again,-1,text);!applied {return nil,reading.problem,false}
-    written,_,loads:=document_bytes(&args,id,&again)
-    if !loads {return nil,reading.problem,false}
-    return written,"",true
+    if why=ui_read(p,path,&out);why!="" {return}
+    r:Records
+    if !records_read(p.assets,id,&r,context.temp_allocator) {return nil,nil,"it does not read"}
+    keys:=texts_read(p.assets,p.languages[0])
+    written:Written
+    if bytes,_,why=ui_apply(p,id,&r,string(serial.writer_bytes(&out)),&keys,&written);why!="" {return}
+    texts,why=texts_written(&keys,&p.types,{})
+    return
 }
 
 // Every interface, scene and prefab the engine tracks, in the game template
@@ -471,9 +469,10 @@ the_documents_of_the_tracked_assets_write_back_the_files_they_were_read_from :: 
             switch file.kind {
             case asset.KIND_UI:
                 files+=1
-                written,why,ok:=ui_round_trip(&p,file.id)
-                if !testing.expectf(t,ok,"%s/%s: %s",folder,path,why) {continue}
+                written,texts,why:=ui_round_trip(&p,path,file.id)
+                if !testing.expectf(t,why=="","%s/%s: %s",folder,path,why) {continue}
                 testing.expectf(t,slice.equal(written,file_bytes(&p,path)),"%s/%s: its document writes other bytes: mirai ui write saves it again",folder,path)
+                for touched in texts {testing.expectf(t,slice.equal(touched.bytes,file_bytes(&p,touched.path)),"%s/%s: its document writes other texts in %s",folder,path,touched.path)}
             case asset.KIND_SCENE:
                 files+=1
                 problem:=scene_verify(&p,path)
