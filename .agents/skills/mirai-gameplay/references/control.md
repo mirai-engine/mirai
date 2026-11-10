@@ -242,7 +242,7 @@ priority), otherwise `Drivable.camera` of its body, and otherwise `NONE`.
   `Move_Input` of the seats: a seat request and a camera request pushed together (a cinematic that
   ends) are in force in the same tick. It writes no `render.Camera`.
   `Cameras` is derived, like `Seats`: whoever requested an override requests it again after loading
-  (a `Cinematic_Viewer` does it from its `Cinematic_View`).
+  (a `Cinematic` does it while its clip shows a shot).
 
 ### Cameras that an action brings
 

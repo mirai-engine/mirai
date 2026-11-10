@@ -200,7 +200,7 @@ source_join :: proc(cache:^Source_Assets,set:^Source_Set,primary:base.Asset_Id,s
     defer {if !published {source_set_free(&next,allocator)}}
     if !lib.library_init(&next.content.lib,desc) {return .Out_Of_Memory}
     e1,e2,e3,e4,e5,e6:mem.Allocator_Error
-    next.content.markers,e1=make([]u64,marker_names,allocator)
+    next.content.markers,e1=make([]host.Content_Marker,marker_names,allocator)
     next.content.names,e2=make([][asset.ANIMATION_NAME_CAPACITY]u8,count,allocator)
     next.content.roots,e3=make([]asset.Animation_Root,count,allocator)
     next.clip_sources,e4=make([]base.Asset_Id,count,allocator)

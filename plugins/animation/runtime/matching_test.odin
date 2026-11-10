@@ -277,7 +277,7 @@ match_fixture :: proc(t:^testing.T,f:^Match_Fixture,memory:u32=MATCH_INFO_DEFAUL
     for desc in descs {if _,error:=lib.clip_add(&f.content.lib,desc);error!=.None {return false}}
     if _,error:=lib.library_compress(&f.content.lib);error!=.None {return false}
     host.content_animation_loops(&f.content.lib,len(descs));f.content.clip_count=len(descs)
-    f.content.markers=make([]u64,4);f.content.markers[0],f.content.markers[1],f.content.markers[2],f.content.markers[3]=base.name_hash("release"),base.name_hash("land"),base.name_hash("land"),base.name_hash("hit")
+    f.content.markers=make([]host.Content_Marker,4);f.content.markers[0].name,f.content.markers[1].name,f.content.markers[2].name,f.content.markers[3].name=base.name_hash("release"),base.name_hash("land"),base.name_hash("land"),base.name_hash("hit")
     // The lunge carries the hips, its root.
     f.content.roots=make([]asset.Animation_Root,len(descs));base.text_set(f.content.roots[6].bone[:],"hips");f.content.roots[6].translation=true
     f.assets.registry.by_id=make(map[base.Asset_Id]u32)
@@ -980,7 +980,7 @@ match_library_swap_enters_the_new_clips_through_an_inertial_transition :: proc(t
     for desc in descs {_,error:=lib.clip_add(&weapon.lib,desc);testing.expect(t,error==.None)}
     _,compressed:=lib.library_compress(&weapon.lib);testing.expect(t,compressed==.None)
     host.content_animation_loops(&weapon.lib,len(descs));weapon.clip_count=len(descs)
-    weapon.markers=make([]u64,1);weapon.markers[0]=base.name_hash("land")
+    weapon.markers=make([]host.Content_Marker,1);weapon.markers[0].name=base.name_hash("land")
     append(&f.assets.registry.files,asset.Registry_File{id=MATCH_TEST_LIBRARY,kind=asset.KIND_ANIMATION,state=.Asset})
     f.assets.registry.by_id[MATCH_TEST_LIBRARY]=u32(len(f.assets.registry.files)-1)
 

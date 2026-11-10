@@ -727,8 +727,8 @@ Saves: the `World` written in a slot, a file `saves/<slot>.save` in the project'
     name.
   - **Storages are not stored**: what a save must keep goes in a component. What is derived (bodies,
     replicas, caches) is redone by the owning library from the components; that is why the bodies'
-    velocity is in `core.Motion`, a clip's time in `anim.Animation_Progress` and what a cinematic
-    shows in `Cinematic_View`.
+    velocity is in `core.Motion` and a clip's time in `anim.Animation_Progress`, from which a
+    cinematic asks for its shot again.
 - **It is written after capturing.** The capture is immediate. With a renderer the slot waits for
   its thumbnail: the player's view (`core.View`) drawn in a texture view of the library, without
   the scene's UI and exposed at once, which returns without waiting for the GPU
