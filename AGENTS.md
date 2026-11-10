@@ -131,8 +131,7 @@ The shell, the command table, the flow of a session and how to hand a command to
 
 - An agent passes `--dev` to `build`, `edit`, `play`, `session` and `capture`, and `render check`
   and `bench compare` are `--dev` by themselves: two builds of the same mode compare. **`--release`
-  only when the task cannot do without it or the user asks for it**: a budget in absolute numbers,
-  or once at the end of a phase, since only an optimized build shows a compiler that hangs.
+  only when the task cannot do without it or the user asks for it**: a budget in absolute numbers.
   If the user's editor holds the `--dev` build of the checkout, work in a worktree.
 - Against an editor: `mirai session start`, `mirai rpc` or `mirai capture`, and
   `mirai session stop`. Do not launch `mirai-editor` by hand, write HTTP clients, or parse the
