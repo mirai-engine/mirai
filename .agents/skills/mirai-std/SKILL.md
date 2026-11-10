@@ -18,8 +18,8 @@ description: Mirai standard library for games, with the packages `std/base`, `st
   [hashing, identities and randomness](references/base.md#hashing-identities-and-randomness),
   [radix sort](references/base.md#radix-sort-sortodin) and
   [profile zones](references/base.md#profile-zones-profileodin).
-- Work-stealing scheduler, `parallel_for` and task graphs (`host` uses them to give threads to the
-  loop): [workers](references/jobs.md#workers),
+- Work-stealing scheduler, `parallel_for` and task graphs (a loop function spreads its work with
+  them): [workers](references/jobs.md#workers),
   [tasks and counters](references/jobs.md#tasks-and-counters),
   [parallel_for](references/jobs.md#parallel_for), [task graphs](references/jobs.md#task-graphs),
   [temporary memory](references/jobs.md#temporary-memory) and

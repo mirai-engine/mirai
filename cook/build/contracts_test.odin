@@ -200,12 +200,12 @@ functions_are_called_from_the_loops_and_from_their_order :: proc(t:^testing.T) {
     output:=world_generate(&p,context.temp_allocator)
     if !testing.expectf(t,len(output.errors)==0,"%v",output.errors) {return}
     for text in ([]string{output.game_world,output.editor_world}) {
-        testing.expect_value(t,strings.count(text,"call_things_move :: proc(world,shared,editor:rawptr,app_data:rawptr,worker:int) {"),1)
+        testing.expect_value(t,strings.count(text,"call_things_move :: proc(world,shared,editor:rawptr,app_data:rawptr) {"),1)
         testing.expect_value(t,strings.count(text,"p_core.things_move(&w.thing,w.clock)"),2) // with and without CHECK_WRITES
-        testing.expect(t,strings.contains(text,"game_fixed :: proc(world,shared,editor:rawptr,app_data:rawptr) {\n    call_clock_read(world,shared,editor,app_data,p_host.PROFILE_MAIN)\n    call_things_move(world,shared,editor,app_data,p_host.PROFILE_MAIN)\n}"),text)
+        testing.expect(t,strings.contains(text,"game_fixed :: proc(world,shared,editor:rawptr,app_data:rawptr) {\n    call_clock_read(world,shared,editor,app_data)\n    call_things_move(world,shared,editor,app_data)\n}"),text)
         testing.expect(t,strings.contains(text,"@(rodata) order_game_fixed:=[2]i32{1,0}"),text)
         testing.expect(t,strings.contains(text,"info.loops[.Game][.Late],info.order[.Game][.Late]=game_late,order_game_late[:]"),text)
-        testing.expect(t,strings.contains(text,"steps[0]={\"things_move\",\"core\",{.Fixed,.Late,},{.Game,.Editor,},call_things_move,false}"),text)
+        testing.expect(t,strings.contains(text,"steps[0]={\"things_move\",\"core\",{.Fixed,.Late,},{.Game,.Editor,},call_things_move}"),text)
     }
     defaulted:=`package core
 @(storage) Clock :: struct {tick:u64}

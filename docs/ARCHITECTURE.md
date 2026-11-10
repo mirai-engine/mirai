@@ -302,11 +302,10 @@ compiling the project separately. The editor and the player load the project's w
 
 ## Threads
 
-- Each phase runs at once the functions that do not clash in what they read and write, with the
-  same result as in order
-  ([concurrency](../.agents/skills/mirai-core/references/generator.md#concurrent-functions)),
-  and a function's parallelism goes inside it (`std/jobs`): physics, destructible cutting and asset
-  loading use the application's threads.
+- Each phase runs its functions one after another on the thread of the loop
+  ([order](../.agents/skills/mirai-core/references/generator.md#order)), and a function's
+  parallelism goes inside it (`std/jobs`): physics, destructible cutting and asset loading use the
+  application's threads.
 - Background threads (audio, network, asset loading) only talk to the world through queues that a
   loop function drains.
 

@@ -44,8 +44,7 @@ A game is a struct in memory and a list of functions that transform it
   `core.Placer`): [groups](references/generator.md#parameter-groups).
 - Settle and call of the functions: [generated
   functions](references/generator.md#generated-functions); in which order they run (stages, `after`,
-  `before`): [order](references/generator.md#order); which ones run at the same time: [concurrent
-  functions](references/generator.md#concurrent-functions).
+  `before`): [order](references/generator.md#order).
 - A function that only runs where the rules are decided (`server`):
   [attributes](references/generator.md#attributes).
 - Application, frame, several views and profiling: [host](references/host.md#the-application); a GPU
@@ -114,10 +113,11 @@ A game is a struct in memory and a list of functions that transform it
   (`stage`) and, within it, which ones it waits for (`after`, `before`), naming only functions of
   the engine or of the plugins it depends on; `order=` is an error. Between plugins that do not know
   each other the stage orders ([order](references/generator.md#order)).
-- **A function touches only what it receives.** Its parameters say what it reads and writes, and
-  from them comes which functions of a phase run at the same time; what it reached by another path
-  (a stored pointer, the application from a `World` storage) would run alongside its writer
-  ([concurrent functions](references/generator.md#concurrent-functions)).
+- **A function touches only what it receives.** Its parameters say what it reads and writes:
+  from them come the settle after it, the revisions of the storages a rollback copies again and
+  the single writer of each datum ([parameters](references/generator.md#parameters)).
+- **Steps run in order; spread work inside a step.** A phase calls its functions one after another
+  on the thread of the loop; what is heavy spreads its own work with `std/jobs`.
 - **What decides the rules is `server`.** A function whose whole body belongs to the server or to a
   lone game is marked `@(step="fixed",server)` instead of asking `core.Network` and returning: a
   client neither runs nor resimulates it. One that also does something at every end is split or
@@ -243,7 +243,6 @@ A game is a struct in memory and a list of functions that transform it
 - Meshes with UV1 on GPU: `mirai test engine/render` in the
   [GPU environment](../mirai-rendering/references/verification.md#gpu-environment).
 - Generator or build: [project verification](../mirai-projects/SKILL.md#verification).
-- Concurrent functions: `mirai test cook/build` (`graph_test.odin`: collisions, barriers, stages,
-  `after`/`before`, `main`), `host` (`steps_test.odin`: the same `World` with one and with several
-  workers) and `std/jobs` (fixed nodes to the one that runs the graph); also
-  `plugins/multiplayer/runtime` (rollback).
+- Order of the functions: `mirai test cook/build` (`stages_test.odin`: stages, `after`/`before`,
+  the settle before the next function) and `host` (`steps_test.odin`: a phase in order, with a
+  function that spreads its work with `std/jobs`); also `plugins/multiplayer/runtime` (rollback).

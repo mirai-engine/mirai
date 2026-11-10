@@ -15,9 +15,9 @@ run_step :: proc(world,shared,editor,app:rawptr,index:int) {
     w:=cast(^Run_World)world
     w.seen[index]=w.time.dt+(w.frame.phase==.Fixed?100:0)
 }
-@(private="file") run_first :: proc(world,shared,editor,app:rawptr,worker:int) {run_step(world,shared,editor,app,0)}
-@(private="file") run_second :: proc(world,shared,editor,app:rawptr,worker:int) {run_step(world,shared,editor,app,1)}
-@(private="file") run_other :: proc(world,shared,editor,app:rawptr,worker:int) {run_step(world,shared,editor,app,2)}
+@(private="file") run_first :: proc(world,shared,editor,app:rawptr) {run_step(world,shared,editor,app,0)}
+@(private="file") run_second :: proc(world,shared,editor,app:rawptr) {run_step(world,shared,editor,app,1)}
+@(private="file") run_other :: proc(world,shared,editor,app:rawptr) {run_step(world,shared,editor,app,2)}
 
 // A tool runs the functions of some libraries of a phase as the loop would:
 // in its order, with the Time it gives, which the World gets back after, and

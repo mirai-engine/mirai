@@ -464,7 +464,7 @@ scene_test_clear :: proc(world:rawptr) -> bool {
 
 // transforms_propagate as the late phase of a generated world calls it.
 @(private="file")
-scene_test_propagate :: proc(world,shared,editor,app:rawptr,worker:int) {
+scene_test_propagate :: proc(world,shared,editor,app:rawptr) {
     w:=cast(^Scene_Test_World)world
     core.transforms_propagate(core.read(&w.transforms),core.ref(&w.hierarchy),&w.worlds,&w.propagation,&w.jumps,w.frame)
     core.table_settle(&w.worlds,&w.entities)

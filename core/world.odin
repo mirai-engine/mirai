@@ -99,17 +99,11 @@ Step_Info :: struct {
     phases:Phases,
     loops:Loops,
     call:Step_Proc, // the function as its loops call it: its binding, its settle and its time
-    main:bool,      // runs on the thread that runs its loop: it receives the application (^host.App, Records) or a storage of it or of the editor
 }
 
+// A phase of a loop: its functions, one after another in their order.
 Loop_Proc :: #type proc(world,shared,editor:rawptr,app:rawptr)
-// worker: the one of the job system of the application that runs it; 0 on the thread of the loop.
-Step_Proc :: #type proc(world,shared,editor:rawptr,app:rawptr,worker:int)
-
-// then waits for first: positions in the order of a loop and phase. Two steps
-// without a path of edges between them touch nothing in common that either
-// writes, and give the same World in any order or at once.
-Step_Edge :: struct {first,then:i32}
+Step_Proc :: #type proc(world,shared,editor:rawptr,app:rawptr)
 
 // What the generator knows of the project, for code that works on any world.
 World_Info :: struct {
@@ -137,8 +131,6 @@ World_Info :: struct {
     detach:proc(world,shared:rawptr), // frees them, after the release phase of the World
     loops:[Loop][Phase]Loop_Proc,
     order:[Loop][Phase][]i32, // the steps each loop calls, by index, in its order
-    edges:[Loop][Phase][]Step_Edge, // what waits for what in that order, without the edges other edges imply
-    parallel:bool, // edges hold every wait between steps: the host may run those without a path between them at once; otherwise they run in order
     tables_by_type,storages_by_type:map[typeid]int, // index in tables and in storages, by_world aside: world_info_index
     schema:^World_Schema, // world_info_index
 }
@@ -221,10 +213,9 @@ storage_check :: proc(dst,src:rawptr,info:^runtime.Type_Info,name:string) {
 // preview or the animation of a copy. While they run it stands for the host:
 // the Time of the World is time, and its Frame_Time a frame of time.dt in
 // that phase, as the editor loop runs it; both are given back after. They
-// run one after another on the calling thread, worker of the job system of
-// the application (0: the thread of the loop). False for a World_Ref that is
+// run one after another on the calling thread. False for a World_Ref that is
 // not of a World or without app.
-world_run :: proc(w:World_Ref,shared,editor,app:rawptr,loop:Loop,phase:Phase,libraries:[]string,time:Time,worker:=0) -> bool {
+world_run :: proc(w:World_Ref,shared,editor,app:rawptr,loop:Loop,phase:Phase,libraries:[]string,time:Time) -> bool {
     if w.data==nil || w.info==nil || w.place!=.World || app==nil {return false}
     clock,frame:=world_storage_of(w,Time),world_storage_of(w,Frame_Time)
     kept_clock:Time
@@ -242,7 +233,7 @@ world_run :: proc(w:World_Ref,shared,editor,app:rawptr,loop:Loop,phase:Phase,lib
         s:=&w.info.steps[index]
         for library in libraries {
             if s.library==library {
-                s.call(w.data,shared,editor,app,worker)
+                s.call(w.data,shared,editor,app)
                 break
             }
         }
