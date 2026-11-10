@@ -9,9 +9,6 @@ description: Import models, textures, fonts, sounds and texts into a Mirai game 
 
 Assets are binary files under `assets/`; art sources stay in `source/`, never shipped. Every asset
 has an id in its header: components and scenes name it by id; a prefab spawned from code, by path.
-Commit `source/` with the `.import` beside each file and `assets/`. The meshes, textures, sounds
-and fonts an import builds are not there: they are in `.mirai/imported/`, never committed, and
-`mirai build` makes them again from the sources on a fresh clone.
 
 ## Map
 
@@ -31,26 +28,18 @@ mirai import source/sounds/step.wav --out assets/player --root .
 ```
 
 - Formats: OBJ, glTF/GLB, USD, FBX; PNG, JPEG, TGA, BMP, GIF, PSD, HDR; WAV and Ogg Vorbis (mono
-  or stereo); TTF, OTF; CSV texts (`key,en,es`); prompt manifests. `mirai import` with no
-  arguments lists every flag.
+  or stereo); TTF, OTF; CSV texts (`key,en,es`); prompt manifests.
 - A model writes meshes, materials, textures, skeletons, clips and a `.prefab`: instantiate that.
 - An image is color unless its name says otherwise (`normal`, `_n`, `rough`, `metal`, `orm`,
   `_ao`, `height`, `mask`); force it with `--srgb`, `--data`, `--normal`, `--normal-green-down`.
-- `<file>.import` beside the source keeps the flags, which repeat on the next import, and the id
-  of each asset. Never delete it: without it the next import gives new ids, and what named the
-  old ones names nothing.
+- `<file>.import` beside the source keeps the flags and the id of each asset, so importing again
+  updates in place, keeping ids and material edits: commit it, and move it with its source.
+- Meshes, textures, sounds and fonts are built into `.mirai/imported/`, never committed: `mirai
+  build` makes them again on a fresh clone. Edit their source, not them.
 - Triangle and texture limits and the collision shape are flags too; colliders a source brings
   win unless `--force-collision`. `mirai import` without arguments prints every flag.
 - A model without a skeleton that must animate: `--rig` with the template that fits it. Clips of
   another file onto a skeleton the project has: `--skeleton <id>` ([animation](animation.md)).
-- Importing again updates in place, keeping ids and material edits; `--out` may be left out. Move
-  or rename a source together with its `.import`. `mirai import --project .` imports every source
-  whose assets are missing or stale.
-- Materials, prefabs, skeletons and clips an import writes are files of `assets/`: edit and move
-  them. Its meshes and textures are listed by `asset.list` at their paths, but are not files of
-  `assets/` and are not edited: change the source, or duplicate the asset.
-- A file outside the project imports too, but then everything it writes is a file of `assets/`
-  to commit: copy sources into `source/` first.
 - With an editor session: `asset.import` (MCP `asset_import`) answers when it ends, with what it
   wrote; a CLI import is picked up by the editor at its next call. `asset.list` shows what exists.
 

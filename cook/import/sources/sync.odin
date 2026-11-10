@@ -35,6 +35,10 @@ Sync_Options :: struct {
     fast_textures:bool,              // as Import_Options.fast_textures: what the editor passes
     rebuild:bool,                    // imports every source again
     worker:jobs.Worker_Ref,
+    // Called once, before the first source is imported or the first file removed: a sync that
+    // finds everything up to date writes nothing and does not call it.
+    on_work:proc(user:rawptr),
+    user:rawptr,
 }
 
 Sync_Report :: struct {
@@ -202,7 +206,11 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
     }
     listed:=make(map[string]struct{},context.temp_allocator) // files of the imported folder the sidecars list, in lower case
     stamps:=make(map[string]struct{},context.temp_allocator)
-    whole:=true
+    whole,working:=true,false
+    work :: proc(options:Sync_Options,working:^bool) {
+        if !working^ && options.on_work!=nil {options.on_work(options.user)}
+        working^=true
+    }
     for file in sidecars_under(top) {
         source:=file[:len(file)-len(importer.SIDECAR_EXTENSION)]
         sidecar,_,error:=importer.sidecar_load(file,context.temp_allocator)
@@ -227,6 +235,7 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
             continue
         }
         if options.rebuild || missing || !stamp_current(top,source,options.fast_textures) {
+            work(options,&working)
             written,import_error:=import_source(source,"",import_options,nil,allocator)
             if import_error.code!=.None {
                 append(&report.failures,fmt.aprintf("%s: %s",source,import_error.message,allocator=allocator))
@@ -264,6 +273,7 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
             }
             if entry.type!=.Regular || strings.has_prefix(entry.name,".") || strings.has_suffix(entry.name,".tmp") {continue}
             if _,kept:=listed[strings.to_lower(path[len(imported)+1:],context.temp_allocator)];kept {continue}
+            work(options,&working)
             if os.remove(path)==nil {report.removed+=1}
         }
     }

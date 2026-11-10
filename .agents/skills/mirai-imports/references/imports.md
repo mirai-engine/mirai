@@ -423,7 +423,8 @@ what is of the cache. What already existed is written where it is
 Each imported asset carries the `Cooked` flag and its `Import_Info` ([cache](#import-cache)).
 
 - **Ids and owner.** Random the first time and those of the sidecar afterwards; the
-  [parts](#parts) name their prefab as `owner`. Dependencies come from the `Asset_Id`s that each asset names.
+  [parts](#parts) name their prefab as `owner`. Dependencies come from the `Asset_Id`s that each
+  asset names.
 - **Compression.** Texels go in BC blocks ([textures](#textures-cooktextures)); the bulk columns of
   a mesh and the levels of a texture go in LZ
   ([compression](../../mirai-assets/references/formats.md#compression)).

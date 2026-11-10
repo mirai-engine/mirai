@@ -49,18 +49,19 @@ the_outputs_of_a_source_are_the_assets_its_sidecar_lists :: proc(t:^testing.T) {
     file:=fmt.tprintf("%s.import",source)
     sidecar,found,_:=sidecar_load(file,context.temp_allocator)
     testing.expect(t,found && sidecar.folder=="level" && len(sidecar.outputs)==4)
-    kept,_:=os.read_entire_file(file,context.temp_allocator)
 
     // Again: the same assets. A run that fails writes no sidecar.
     again,again_ok:=pass(t,root,source,bytes,{"Wood","Stone"})
     testing.expect(t,again_ok && again.scene==first.scene && again.floor==first.floor && again.floor_path==first.floor_path && again.materials=={first.materials[1],first.materials[0]} && again.warnings==0,"each output is found by its kind and name")
+    kept,_:=os.read_entire_file(file,context.temp_allocator)
     _,_=pass(t,root,source,bytes,{"Clay"},failed=true)
     after,_:=os.read_entire_file(file,context.temp_allocator)
-    testing.expect(t,string(after)==string(kept),"a failed import leaves the sidecar as it was")
+    testing.expect(t,len(kept)>0 && string(after)==string(kept),"a failed import leaves the sidecar as it was")
 
-    // A part renamed in the source is the one of its index; one that is gone leaves the sidecar.
-    renamed,renamed_ok:=pass(t,root,source,bytes,{"Granite"})
-    testing.expect(t,renamed_ok && renamed.materials[0]==first.materials[0],"Granite is what Stone was")
+    // A part renamed in the source is the one of its index that no name took; one that is gone leaves the sidecar.
+    renamed,renamed_ok:=pass(t,root,source,bytes,{"Wood","Granite"})
+    testing.expect(t,renamed_ok && renamed.materials=={first.materials[1],first.materials[0]},"Granite is what Stone was")
+    _,gone_ok:=pass(t,root,source,bytes,{"Granite"})
     sidecar,found,_=sidecar_load(file,context.temp_allocator)
-    testing.expect(t,found && len(sidecar.outputs)==3,"Wood is no longer listed")
+    testing.expect(t,gone_ok && found && len(sidecar.outputs)==3,"Wood is no longer listed")
 }

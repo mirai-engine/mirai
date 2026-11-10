@@ -363,10 +363,11 @@ writer_rollback :: proc(w:^Writer) {
 }
 
 // Writes the meshes, materials, textures, skeletons and clips of a model as
-// assets. Importing a source again writes each part again to the file and
-// with the id it has (earlier.odin), wherever it was moved; a new part goes
-// into folder as <name>.mesh, <name>.mat, <name>.tex, <name>.skeleton or
-// <name>.anim with a random id. The parts name the prefab of the model as
+// assets. Importing a source again writes each part again with the id its
+// sidecar lists, to the file it has (identity.odin); a new part gets a random
+// id and <name>.mesh, <name>.mat, <name>.tex, <name>.skeleton or <name>.anim:
+// in folder, or for what nobody edits at the same path of the imported folder
+// of the root (sidecar.odin). The parts name the prefab of the model as
 // their owner (Import_Report.prefab), which import_source writes. A mesh or a
 // texture whose file already is the one it would write is kept as it is
 // (Written.kept), unless options.rebuild. A failure removes the files this

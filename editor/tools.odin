@@ -185,7 +185,7 @@ api_asset_import :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.SERVER_ERROR,string(s.importer.message[:s.importer.message_length]))
         return
     }
-    importing :: proc(s:^Session,user:rawptr) -> bool {return s.importer.running!=nil}
+    importing :: proc(s:^Session,user:rawptr) -> bool {return s.importer.running!=nil && s.importer.running.roots==nil}
     api_wait(s,f64(params.seconds),nil,importing,"importing")
     api_import_status_write(s,call.out)
 }

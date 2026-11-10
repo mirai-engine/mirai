@@ -78,8 +78,8 @@ A tool can import art too, with the function `mirai import` calls:
 report,error:=sources.import_source("source/models/crate.glb","assets/arena/crate",{root="."})
 ```
 
-`sources` is `mirai:cook/import/sources`. It writes the settings beside the source unless
-`no_save=true`, and repeats earlier ids, so a tool and `mirai import` give the same assets.
+`sources` is `mirai:cook/import/sources`. It keeps the settings and the ids in `<file>.import`
+beside the source, so a tool and `mirai import` give the same assets.
 
 ## Pitfalls that fail silently
 

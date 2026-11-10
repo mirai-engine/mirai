@@ -74,6 +74,7 @@ Import_Job :: struct {
     plugin_formats:[]Import_Format_Provider, // with the format.data their prepare gave
     roots:[]string,        // of the sync of a project: the project and its plugins with assets; nil for the import of a source
     synced,removed:int,    // by that sync: sources imported, and stale files removed
+    writing:bool,          // that sync found a source to import or a file to remove: from then on it writes assets
     whole:Source_Importer, // of a source a plugin imports whole; run is nil otherwise
     state:rawptr,          // what whole.prepare gave
     options:importer.Import_Options,
@@ -119,7 +120,11 @@ import_say :: proc(s:^Session,format:string,args:..any) {
 import_busy :: proc(s:^Session) -> string {
     if s.importer==nil || s.importer.running==nil {return ""}
     job:=s.importer.running
-    if job.roots!=nil {return "the sources of the project are being imported and write assets; try again when that ends (asset.import_status)"}
+    if job.roots!=nil {
+        // A sync that only looks, as that of a project whose build imported it, keeps nobody waiting.
+        if !intrinsics.atomic_load(&job.writing) {return ""}
+        return "the sources of the project are being imported and write assets; try again when that ends (asset.import_status)"
+    }
     return fmt.tprintf("%s is being imported and writes assets; try again when it ends (asset.import_status)",filepath.base(job.source))
 }
 
@@ -162,6 +167,11 @@ import_file :: proc(s:^Session,source:string,folder:="",profiled:=false,rig:Mayb
     if busy:=import_busy(s);busy!="" {
         import_say(s,"%s",busy)
         return false
+    }
+    // A sync that is only looking ends first: one import runs at a time.
+    for s.importer.running!=nil {
+        time.sleep(time.Millisecond)
+        import_poll(s)
     }
     name:=filepath.base(source)
     allocator:=runtime.heap_allocator()
@@ -273,7 +283,7 @@ import_run :: proc(job:^Import_Job) {
     error:importer.Error
     if job.roots!=nil {
         for root in job.roots {
-            report:=sources.sync(root,{texture_cache=job.options.texture_cache,mesh_cache=job.options.mesh_cache,fast_textures=true,worker=job.options.worker},job.allocator)
+            report:=sources.sync(root,{texture_cache=job.options.texture_cache,mesh_cache=job.options.mesh_cache,fast_textures=true,worker=job.options.worker,on_work=proc(user:rawptr) {intrinsics.atomic_store(&(^Import_Job)(user).writing,true)},user=job},job.allocator)
             job.synced+=report.imported
             job.removed+=report.removed
             if job.report.allocator.procedure==nil {importer.report_init(&job.report,job.allocator)}
@@ -525,12 +535,12 @@ import_programs_published :: proc(s:^Session) {
 import_working :: proc(s:^Session) -> bool {
     if s.importer==nil {return false}
     job:=s.importer.running
-    if job==nil {return false}
+    if job==nil || job.roots!=nil && !intrinsics.atomic_load(&job.writing) {return false}
     ctx:=s.gui.ctx
     th:=&ctx.theme
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=8,align_y=.Center}) {
         pulse_dot(ctx,th.accent,true)
-        ui.label(ctx,fmt.tprintf("Importing %s",filepath.base(job.source)),th.font_small,th.text)
+        ui.label(ctx,job.roots!=nil?"Importing the sources of the project":fmt.tprintf("Importing %s",filepath.base(job.source)),th.font_small,th.text)
     }
     return true
 }

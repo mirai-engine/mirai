@@ -554,3 +554,68 @@ registry_mounts_a_guest_folder_that_never_takes_an_id_the_registry_has :: proc(t
         os.remove(fmt.tprintf("%s/levels/late.tex",guest))
     }
 }
+
+// What the imports of the sources of a folder build that nobody edits is in
+// the imported folder that goes with it, and is listed at the same paths: a
+// path is a file of one folder or of the other, the registry says which, and
+// its cache remembers it.
+@(test)
+registry_lists_the_imported_folder_of_a_folder_at_the_same_paths :: proc(t:^testing.T) {
+    types:Types;types_init(&types);defer types_destroy(&types)
+    base_folder:=base.test_folder(t,"registry-imported")
+    if base_folder=="" {return}
+    root:=fmt.tprintf("%s/game/assets",base_folder)
+    imported:=fmt.tprintf("%s/game/.mirai/imported",base_folder)
+    plugin:=fmt.tprintf("%s/pack/assets",base_folder)
+    plugin_imported:=fmt.tprintf("%s/pack/.mirai/imported",base_folder)
+    for folder in ([]string{fmt.tprintf("%s/props",root),fmt.tprintf("%s/props",imported),fmt.tprintf("%s/.stamps",imported),plugin,plugin_imported}) {os.make_directory_all(folder)}
+    wood,sign,atlas:=base.Asset_Id{1,1},base.Asset_Id{2,2},base.Asset_Id{3,3}
+    write_material(t,&types,fmt.tprintf("%s/props/Wood.mat",root),{4,4},wood)
+    write_texture(t,&types,fmt.tprintf("%s/props/wood.tex",imported),wood)
+    // A file of the assets wins over one of the imported folder at its path, and what a scan leaves out is left out there too.
+    write_texture(t,&types,fmt.tprintf("%s/props/sign.tex",root),sign)
+    write_texture(t,&types,fmt.tprintf("%s/props/sign.tex",imported),{5,5})
+    write_texture(t,&types,fmt.tprintf("%s/.stamps/hidden.tex",imported),{6,6})
+    write_texture(t,&types,fmt.tprintf("%s/atlas.tex",plugin_imported),atlas)
+
+    cache:=fmt.tprintf("%s/registry.cache",base_folder)
+    for pass in 0..<2 {
+        r:Registry;registry_init(&r,root,cache,imported=imported);defer registry_destroy(&r)
+        testing.expect(t,registry_mount(&r,plugin,"plugins/pack",plugin_imported))
+        testing.expect_value(t,registry_scan(&r),Error.None)
+        testing.expectf(t,pass==0 || r.stats.opened==0,"the second scan reads its cache: %v",r.stats)
+        testing.expect_value(t,len(r.duplicates),0)
+        Case :: struct {path:string,id:base.Asset_Id,imported:bool,file:string}
+        for c in ([]Case{
+            {"props/Wood.mat",{4,4},false,fmt.tprintf("%s/props/Wood.mat",root)},
+            {"props/wood.tex",wood,true,fmt.tprintf("%s/props/wood.tex",imported)},
+            {"props/sign.tex",sign,false,fmt.tprintf("%s/props/sign.tex",root)},
+            {"plugins/pack/atlas.tex",atlas,true,fmt.tprintf("%s/atlas.tex",plugin_imported)},
+        }) {
+            file,found:=registry_find_path(&r,c.path)
+            if !testing.expectf(t,found,"%s is listed",c.path) {continue}
+            testing.expectf(t,file.id==c.id && file.imported==c.imported && file.state==.Asset,"%s: %v",c.path,file^)
+            testing.expect_value(t,registry_file_path(&r,c.path,context.temp_allocator),c.file)
+            back,inside:=registry_relative(&r,c.file)
+            testing.expectf(t,inside && back==c.path,"%s is %s in the registry, not %s",c.file,c.path,back)
+        }
+        _,hidden:=registry_find(&r,{6,6})
+        testing.expect(t,!hidden,"a folder whose name starts with a dot is not listed")
+        // The material finds its texture, which is no file of the assets.
+        material,_:=registry_find_path(&r,"props/Wood.mat")
+        missing:=make([dynamic]Registry_Missing,context.temp_allocator)
+        registry_missing(&r,&missing)
+        testing.expect(t,material!=nil && len(missing)==0,"a dependency in the imported folder is not missing")
+        if pass==0 {continue}
+        // What a sync wrote or removed is refreshed by its path.
+        write_texture(t,&types,fmt.tprintf("%s/props/new.tex",imported),{7,7})
+        testing.expect_value(t,os.remove(fmt.tprintf("%s/props/wood.tex",imported)),nil)
+        testing.expect_value(t,registry_refresh(&r,{"props/new.tex","props/wood.tex"}),Error.None)
+        added,has:=registry_find(&r,{7,7})
+        testing.expect(t,has && added.imported && added.path=="props/new.tex")
+        _,still:=registry_find(&r,wood)
+        testing.expect(t,!still)
+        registry_missing(&r,&missing)
+        testing.expect_value(t,len(missing),1)
+    }
+}

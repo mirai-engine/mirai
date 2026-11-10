@@ -1,35 +1,37 @@
-package importer
+package sources
 
 import "core:fmt"
 import "core:math"
-import "core:os"
 import "core:path/filepath"
 import "core:testing"
 import "core:time"
 import "mirai:asset"
+import importer "mirai:cook/import"
+import "mirai:std/base"
 import "mirai:std/geom"
 
-// Level 0 of a mesh of the demo, in the space and with the submeshes of
-// its asset; ok is false, with a warning, when MIRAI_ROOT is not set.
+// Level 0 of a mesh the import of a model of the demo builds, in the space
+// and with the submeshes of its asset. relative: the source under
+// demo/source/models, and the mesh of it.
 @(private="file")
-demo_level0 :: proc(t:^testing.T,relative:string,file:^asset.Asset,types:^asset.Types) -> (vertices:[]asset.Vertex,indices:[]u32,submeshes:[]Submesh,ok:bool) {
-    root,has_root:=os.lookup_env("MIRAI_ROOT",context.temp_allocator)
-    if !has_root {
-        fmt.eprintln("MIRAI_ROOT is not set: the meshes of the demo were not read. Use `mirai test cook/import`.")
-        return
-    }
-    path,_:=filepath.join({root,relative},context.temp_allocator)
-    if !testing.expect_value(t,asset.asset_load(file,path),asset.Error.None) {return}
+demo_level0 :: proc(t:^testing.T,folder,relative:string,file:^asset.Asset,types:^asset.Types) -> (vertices:[]asset.Vertex,indices:[]u32,submeshes:[]importer.Submesh,ok:bool) {
+    source,name:=filepath.dir(relative),filepath.base(relative)
+    report,import_error:=import_source(fmt.tprintf("%smodels/%s",DEMO,source),fmt.tprintf("%s/%s",folder,filepath.base(source)),{textures=.Uncompressed,max_texture_size=4})
+    if !testing.expectf(t,import_error.code==.None,"%s: %s",source,import_error.message) {return}
+    defer importer.report_destroy(&report)
+    written,found:=written_of(&report,asset.KIND_MESH,name)
+    if !testing.expectf(t,found,"%s has no mesh %s",source,name) {return}
+    if !testing.expect_value(t,asset.asset_load(file,written.path),asset.Error.None) {return}
     view,error:=asset.mesh_view(file,types)
     if !testing.expect_value(t,error,asset.Error.None) {return}
     decoded:=make([dynamic]asset.Vertex,context.temp_allocator)
     decoded_indices:=make([dynamic]u32,context.temp_allocator)
     if !testing.expect(t,asset.mesh_level_decode(view.geometry,0,&decoded,&decoded_indices)) {return}
     // The clusters of a slot follow one another: a run of its triangles.
-    ranges:=make([dynamic]Submesh,context.temp_allocator)
+    ranges:=make([dynamic]importer.Submesh,context.temp_allocator)
     for at:=0;at<len(decoded_indices);at+=3 {
         slot:=decoded[decoded_indices[at]].material
-        if len(ranges)==0 || ranges[len(ranges)-1].slot!=slot {append(&ranges,Submesh{first_index=u32(at),slot=slot})}
+        if len(ranges)==0 || ranges[len(ranges)-1].slot!=slot {append(&ranges,importer.Submesh{first_index=u32(at),slot=slot})}
         ranges[len(ranges)-1].index_count+=3
     }
     return decoded[:],decoded_indices[:],ranges[:],true
@@ -40,9 +42,11 @@ the_cluster_dag_of_demo_meshes_cuts_without_cracks_with_errors_that_grow :: proc
     types:asset.Types
     asset.types_init(&types)
     defer asset.types_destroy(&types)
-    for relative in ([]string{"demo/assets/gallery/vase.obj/Vase.mesh","demo/assets/gallery/plant.gltf/Plant.mesh","demo/assets/characters/mirai/output_unwrapped.mesh"}) {
+    folder:=base.test_folder(t,"cluster-dag")
+    if folder=="" {return}
+    for relative in ([]string{"vase.obj/Vase","plant.gltf/Plant","mirai/mirai.glb/output_unwrapped"}) {
         file:asset.Asset
-        vertices,indices,submeshes,ok:=demo_level0(t,relative,&file,&types)
+        vertices,indices,submeshes,ok:=demo_level0(t,folder,relative,&file,&types)
         if !ok {return}
         defer asset.asset_close(&file)
         positions,attributes,protect:=asset.mesh_simplify_inputs(vertices)
