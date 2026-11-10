@@ -225,7 +225,7 @@ tracks_frame :: proc(s:^editor.Session,t:^Tracks,frame:core.Frame_Time) {
     }
 }
 
-// The gizmo let go of entities the clip moves: each is keyed at the head, in a step after its move.
+// The gizmo let go of entities the clip moves: each is keyed at the head, in the step of the move.
 @(private)
 tracks_key_moved :: proc(s:^editor.Session,t:^Tracks,w:core.World_Ref,view:aa.Animation_View,clip:int) {
     c:=view.clips[clip]
@@ -236,7 +236,7 @@ tracks_key_moved :: proc(s:^editor.Session,t:^Tracks,w:core.World_Ref,view:aa.An
         for &track in view.tracks[c.first_track:][:c.track_count] {
             node,component,_:=track_parts(base.text_get(track.target[:]))
             if node!=name || component!="" {continue}
-            editor.command_call(s,"animation.key.capture",fmt.tprintf(`{{"animation":"%016x","entity":"%016x","time":%v}}`,u64(editor.api_entity_id(w,t.entity)),u64(editor.api_entity_id(w,item.entity)),t.head))
+            editor.command_join(s,"animation.key.capture",fmt.tprintf(`{{"animation":"%016x","entity":"%016x","time":%v}}`,u64(editor.api_entity_id(w,t.entity)),u64(editor.api_entity_id(w,item.entity)),t.head))
             break
         }
     }

@@ -255,17 +255,24 @@ the_tracks_tool_is_turned_on_by_its_entry_and_keys_what_the_gizmo_moves :: proc(
     testing.expect(t,tracker.entity==f.door && tracker.head==0.5)
     view,clip,ok:=tracks_clip(s,tracker,w)
     if !testing.expect(t,ok) {return}
-    // The gizmo let go of the panel where it moved it, and of the loose entity: the panel is keyed at the head.
+    // The gizmo let go of the panel where it moved it, and of the loose entity: the panel is keyed at
+    // the head in the step of the move, which one undo takes back whole.
+    cursor:=f.edits.cursor
+    f.edits.author=history.EDIT_AUTHOR_USER
+    testing.expect(t,history.edits_begin(&f.edits,&f.selection,"Move"))
     moved:=mm.TRANSFORM_IDENTITY;moved.position={0,4,0}
     for e in ([2]core.Entity{f.panel,f.loose}) {
         append(&f.viewport.gizmo.items,editor.Gizmo_Item{entity=e,local=editor.entity_local(w,e)})
         core.edit(&f.document.transforms,e)^=core.from_math(moved)
     }
-    tracks_test_edit(f)
-    cursor:=f.edits.cursor
+    core.settle(&f.info,&f.document,nil)
+    history.edits_end(&f.edits)
     tracks_key_moved(s,tracker,w,view,clip)
-    editor.commands_run(s)
+    history.edits_flush(&f.edits,w,&f.selection)
     testing.expect_value(t,f.edits.cursor,cursor+1)
     position:=tracks_test_keys(f,"Panel",.Position)
     testing.expect(t,len(position)==2 && position[1].time==0.5 && position[1].value==mm.Vec4{0,4,0,0},fmt.tprint(position))
+    testing.expect(t,tracks_test_undo(f))
+    panel,_:=core.get(&f.document.transforms,f.panel)
+    testing.expect(t,len(tracks_test_keys(f,"Panel",.Position))==1 && panel.position==[3]f32{})
 }

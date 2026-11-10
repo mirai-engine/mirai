@@ -1,5 +1,6 @@
-package asset
+package destruct
 
+import "mirai:asset"
 import "core:math/linalg"
 import "core:testing"
 import "mirai:std/serial"
@@ -9,7 +10,7 @@ import mm "mirai:std/math"
 @(private="file")
 Test_Fracture :: struct {
     info:Fracture_Info,
-    vertices:[8]Vertex,
+    vertices:[8]asset.Vertex,
     indices:[24]u32,
     pieces:[2]Fracture_Piece,
     connections:[1]Fracture_Connection,
@@ -34,25 +35,25 @@ test_fracture :: proc(s:^Test_Fracture) -> Fracture_Desc {
 @(test)
 fracture_preserves_authored_geometry_proximity_graph_and_clusters :: proc(t:^testing.T) {
     defer free_all(context.temp_allocator)
-    types:Types;types_init(&types);defer types_destroy(&types)
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     storage:Test_Fracture
     desc:=test_fracture(&storage)
-    doc:Document
-    if !testing.expect_value(t,fracture_document(&doc,&types,desc),Error.None) {return}
-    defer document_destroy(&doc)
+    doc:asset.Document
+    if !testing.expect_value(t,fracture_document(&doc,&types,desc),asset.Error.None) {return}
+    defer asset.document_destroy(&doc)
     writer:serial.Writer;serial.writer_init(&writer);defer serial.writer_destroy(&writer)
-    testing.expect_value(t,document_write(&doc,&writer),Error.None)
-    a:Asset
-    if !testing.expect_value(t,asset_open(&a,serial.writer_bytes(&writer)),Error.None) {return}
-    defer asset_close(&a)
+    testing.expect_value(t,asset.document_write(&doc,&writer),asset.Error.None)
+    a:asset.Asset
+    if !testing.expect_value(t,asset.asset_open(&a,serial.writer_bytes(&writer)),asset.Error.None) {return}
+    defer asset.asset_close(&a)
     view,error:=fracture_view(&a,&types)
-    if !testing.expect_value(t,error,Error.None) {return}
+    if !testing.expect_value(t,error,asset.Error.None) {return}
     testing.expect_value(t,view.info.source_mesh,desc.source_mesh)
     testing.expect_value(t,view.vertices[7],desc.vertices[7])
     testing.expect_value(t,view.pieces[0].anchor,true)
     testing.expect_value(t,view.connections[0].strength,f32(30))
     testing.expect_value(t,view.clusters[0].strength,f32(100))
-    testing.expect_value(t,a.blob.header.kind,KIND_FRACTURE)
+    testing.expect_value(t,a.blob.header.kind,FRACTURE_KIND)
     // The cook gives the cluster the hull of both pieces: the corners of the two tetrahedra it spans.
     testing.expect_value(t,len(view.cluster_hulls),1)
     testing.expect_value(t,view.cluster_hulls[0],Fracture_Cluster_Hull{0,u32(len(view.cluster_points))})
@@ -91,13 +92,13 @@ fracture_refuses_cluster_hulls_out_of_range_short_or_not_finite :: proc(t:^testi
 @(test)
 fracture_cook_refuses_a_cluster_without_pieces :: proc(t:^testing.T) {
     defer free_all(context.temp_allocator)
-    types:Types;types_init(&types);defer types_destroy(&types)
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     storage:Test_Fracture
     desc:=test_fracture(&storage)
     clusters:=[2]Fracture_Cluster{{-1,100},{0,50}}
     desc.clusters=clusters[:]
-    doc:Document
-    testing.expect_value(t,fracture_document(&doc,&types,desc),Error.Invalid)
+    doc:asset.Document
+    testing.expect_value(t,fracture_document(&doc,&types,desc),asset.Error.Invalid)
 }
 
 @(test)
@@ -124,21 +125,34 @@ fracture_refuses_bad_piece_ranges_indices_cluster_cycles_and_connections :: proc
     testing.expect(t,!fracture_source_check(view))
 }
 
+// A file cut anywhere does not open; one with damaged bytes opens or not,
+// and its view either holds together or is refused.
 @(test)
-fracture_reader_refuses_every_truncated_prefix :: proc(t:^testing.T) {
+fracture_reader_refuses_every_truncated_prefix_and_survives_damaged_bytes :: proc(t:^testing.T) {
     defer free_all(context.temp_allocator)
-    types:Types;types_init(&types);defer types_destroy(&types)
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     storage:Test_Fracture
-    doc:Document
-    if !testing.expect_value(t,fracture_document(&doc,&types,test_fracture(&storage)),Error.None) {return}
-    defer document_destroy(&doc)
+    doc:asset.Document
+    if !testing.expect_value(t,fracture_document(&doc,&types,test_fracture(&storage)),asset.Error.None) {return}
+    defer asset.document_destroy(&doc)
     writer:serial.Writer;serial.writer_init(&writer);defer serial.writer_destroy(&writer)
-    testing.expect_value(t,document_write(&doc,&writer),Error.None)
+    testing.expect_value(t,asset.document_write(&doc,&writer),asset.Error.None)
     data:=serial.writer_bytes(&writer)
     for length in 0..<len(data) {
-        a:Asset
-        testing.expect(t,asset_open(&a,data[:length])!=.None)
-        asset_close(&a)
+        a:asset.Asset
+        testing.expect(t,asset.asset_open(&a,data[:length])!=.None)
+        asset.asset_close(&a)
+    }
+    damaged:=make([]u8,len(data),context.temp_allocator)
+    state:=u64(0x9e3779b97f4a7c15)
+    for round in 0..<400 {
+        copy(damaged,data)
+        state=state*6364136223846793005+1442695040888963407
+        damaged[int((state>>33)%u64(len(damaged)))]=u8(state>>24)
+        a:asset.Asset
+        if asset.asset_open(&a,damaged)!=.None {continue}
+        if view,error:=fracture_view(&a,&types);error==.None {testing.expectf(t,fracture_check(view),"round %d",round)}
+        asset.asset_close(&a)
     }
 }
 
@@ -151,24 +165,24 @@ fracture_builder_preserves_attributes_and_cooks_exact_gap_proximity :: proc(t:^t
     for _ in cube.positions {append(&cube.colors,{.2,.5,.8,1})}
     b:Fracture_Builder;fracture_builder_init(&b);defer fracture_builder_destroy(&b)
     root,error:=fracture_cluster_add(&b,-1,150)
-    testing.expect_value(t,error,Error.None)
+    testing.expect_value(t,error,asset.Error.None)
     _,error=fracture_piece_add(&b,geom.mesh_buffer_view(&cube),cluster=root,anchor=true)
-    testing.expect_value(t,error,Error.None)
+    testing.expect_value(t,error,asset.Error.None)
     _,error=fracture_piece_add(&b,geom.mesh_buffer_view(&cube),{{1.06,0,0},1,{1,1,1}},cluster=root)
-    testing.expect_value(t,error,Error.None)
-    testing.expect_value(t,fracture_connect_proximity(&b,.04,.5,12),Error.None)
+    testing.expect_value(t,error,asset.Error.None)
+    testing.expect_value(t,fracture_connect_proximity(&b,.04,.5,12),asset.Error.None)
     testing.expect_value(t,len(b.connections),0)
-    testing.expect_value(t,fracture_connect_proximity(&b,.07,.5,12),Error.None)
+    testing.expect_value(t,fracture_connect_proximity(&b,.07,.5,12),asset.Error.None)
     testing.expect_value(t,len(b.connections),1)
     testing.expect_value(t,b.connections[0],Fracture_Connection{0,1,.5,12})
     info:=Fracture_Info{}
     view:=Fracture_View{info=&info,vertices=b.vertices[:],indices=b.indices[:],pieces=b.pieces[:],connections=b.connections[:],clusters=b.clusters[:]}
     f:geom.Fracture;geom.fracture_init(&f);defer geom.fracture_destroy(&f)
-    testing.expect_value(t,fracture_geometry(view,&f,{2,1,.5}),Error.None)
+    testing.expect_value(t,fracture_geometry(view,&f,{2,1,.5}),asset.Error.None)
     testing.expect_value(t,f.mesh.positions[36],b.vertices[36].position*[3]f32{2,1,.5})
     testing.expect_value(t,f.mesh.materials[0],u32(1))
     testing.expect(t,abs(f.mesh.colors[0].g-.5)<.005)
     testing.expect_value(t,f.connections[0].area,f32(1))
-    testing.expect_value(t,fracture_connect_proximity(&b,-1,.5),Error.Invalid)
-    testing.expect_value(t,fracture_geometry(view,&f,{-1,1,1}),Error.Invalid)
+    testing.expect_value(t,fracture_connect_proximity(&b,-1,.5),asset.Error.Invalid)
+    testing.expect_value(t,fracture_geometry(view,&f,{-1,1,1}),asset.Error.Invalid)
 }

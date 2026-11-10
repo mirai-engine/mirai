@@ -6,6 +6,7 @@ import "core:os"
 import "mirai:asset"
 import "mirai:core"
 import phys "plugins:physics/runtime"
+import destruct "plugins:destruct/runtime"
 import "mirai:std/geom"
 import "mirai:std/jobs"
 import cache "plugins:physics_cache/runtime"
@@ -47,13 +48,13 @@ gallery_geometry_bake_records_two_cuts_new_interior_meshes_and_fragment_retireme
 @(test)
 gallery_mixed_source_keeps_supports_and_full_collision_leaves_while_only_small_pieces_expire :: proc(t:^testing.T) {
     cube:geom.Mesh_Buffer;geom.mesh_buffer_init(&cube);defer geom.mesh_buffer_destroy(&cube);geom.cube_build(&cube)
-    builder:asset.Fracture_Builder;asset.fracture_builder_init(&builder);defer asset.fracture_builder_destroy(&builder)
+    builder:destruct.Fracture_Builder;destruct.fracture_builder_init(&builder);defer destruct.fracture_builder_destroy(&builder)
     if !testing.expect(t,physics_mixed_build(&builder,geom.mesh_buffer_view(&cube))) {return}
-    desc:=asset.fracture_builder_desc(&builder,{})
-    info:asset.Fracture_Info
-    view:=asset.Fracture_View{info=&info,vertices=desc.vertices,indices=desc.indices,pieces=desc.pieces,connections=desc.connections,clusters=desc.clusters}
+    desc:=destruct.fracture_builder_desc(&builder,{})
+    info:destruct.Fracture_Info
+    view:=destruct.Fracture_View{info=&info,vertices=desc.vertices,indices=desc.indices,pieces=desc.pieces,connections=desc.connections,clusters=desc.clusters}
     fracture:geom.Fracture;geom.fracture_init(&fracture);defer geom.fracture_destroy(&fracture)
-    if !testing.expect_value(t,asset.fracture_geometry(view,&fracture),asset.Error.None) {return}
+    if !testing.expect_value(t,destruct.fracture_geometry(view,&fracture),asset.Error.None) {return}
     anchors:[8]bool
     for piece,at in builder.pieces {anchors[at]=piece.anchor}
     physics:phys.Physics_State;settings:=phys.Physics_Settings{bodies=16,shapes=32,contacts=64,joints=1,hulls=16,breakables=1,pieces=16,bonds=64}

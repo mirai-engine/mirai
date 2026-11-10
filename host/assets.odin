@@ -48,7 +48,7 @@ Assets_Desc :: struct {
     mounts:[]asset.Registry_Mount, // folders seen beside root under a prefix: the assets of active plugins
 }
 
-Assets_Kind :: enum u8 {Mesh,Texture,Material,Scene,Shape,Document,Fracture}
+Assets_Kind :: enum u8 {Mesh,Texture,Material,Scene,Shape,Document}
 
 Assets_Problem :: enum u8 {
     Missing,     // no file of the registry is that asset
@@ -431,7 +431,6 @@ assets_open :: proc(a:^Assets,id:base.Asset_Id,kind:Assets_Kind,file:^asset.Asse
     case .Material: expected=record.kind==asset.KIND_MATERIAL
     case .Scene:    expected=record.kind==asset.KIND_SCENE
     case .Document: expected=record.kind==document
-    case .Fracture: expected=record.kind==asset.KIND_FRACTURE
     }
     if !expected {return .Wrong_Kind,.Invalid,false}
     detail=assets_file(a,id,record.kind,file)
@@ -1908,7 +1907,7 @@ assets_reload :: proc(a:^Assets,id:base.Asset_Id) -> bool {
     detail:asset.Error
     ok,removed,rebuild,derived:bool
     switch ref.kind {
-    case .Shape,.Fracture:
+    case .Shape:
     case .Mesh:
         entry:=&a.meshes[ref.index]
         fresh:Assets_Mesh
@@ -2102,7 +2101,7 @@ assets_unload :: proc(a:^Assets,gone:[]base.Asset_Id) -> int {
     for id in gone {
         ref:=a.index[id]
         switch ref.kind {
-        case .Shape,.Fracture:
+        case .Shape:
         case .Mesh:
             entry:=&a.meshes[ref.index]
             // A failed entry shows the stand-in, which is not its own.

@@ -167,7 +167,7 @@ selected entity; the strip at the bottom has a lane of keys per track in view.
   value the track has there.
 - While it is on, the scene is lent to the selection and the gizmo: letting go of an entity the
   clip moves with Position, Rotation or Scale tracks keys it at the head with
-  `animation.key.capture`, a step after the step of the move.
+  `animation.key.capture`, in the step of the move: one undo takes back both.
 - Another tool shows it on an entity of its own in place of its panel: its frame step calls
   `tracks_open` while it is on and its panel draws `tracks_rows` (Cinematics).
 

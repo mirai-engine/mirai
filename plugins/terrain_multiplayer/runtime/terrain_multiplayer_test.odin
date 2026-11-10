@@ -140,6 +140,7 @@ end_tick :: proc(e:^End,_:^Fixture,resimulating:=false) {
     f:=e.fixture
     e.tick+=1
     time:=core.Time{dt=1.0/60,playing=true,tick=e.tick,resimulating=resimulating}
+    e.outbox.replaying=resimulating // as a correction of the network leaves it
     terrain_net_follow(core.ref(&e.authority),&e.net,&e.net_state,time,&e.replays,&e.outbox,core.ref(&e.session),core.ref(&e.data),core.read(&e.terrains),
         core.read(&e.seats),core.read(&e.drivables),core.read(&e.worlds),e.net_settings,core.ref(&e.root),f.app.assets,&e.problems)
     terrain.terrain_replay(&e.replays,&e.replayed,&e.digs,&e.terrain_requests,&e.data,core.read(&e.terrains),core.read(&e.worlds),f.app.assets,&e.problems)

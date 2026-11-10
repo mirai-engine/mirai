@@ -45,8 +45,8 @@ Body_Result :: struct {
 @(private)
 body_register :: proc(s:^editor.Session) {
     detect:=Body_Detect_Params{keep_manual=true}
-    authoring_method_register(s,{name="skeleton.body.detect",summary="Finds the body parts of a skeleton and its up from bone names, hierarchy and rest pose, and saves them in the .skeleton. A body faces -Z: the import turns its source to it (front of asset.import).",params=Body_Detect_Params,params_info=type_info_of(Body_Detect_Params),defaults=&detect,run=body_detect},Body_Result,type_info_of(Body_Result))
-    authoring_method_register(s,{name="skeleton.body.set",summary="Corrects the body parts of a skeleton: the bone of each part it names, or none. Where the body faces is not set here: it faces -Z, and front of asset.import turns a source that does not.",params=Body_Set_Params,params_info=type_info_of(Body_Set_Params),run=body_set},Body_Result,type_info_of(Body_Result))
+    editor.api_method_register(s,Body_Detect_Params,Body_Result,{name="skeleton.body.detect",summary="Finds the body parts of a skeleton and its up from bone names, hierarchy and rest pose, and saves them in the .skeleton. A body faces -Z: the import turns its source to it (front of asset.import).",defaults=&detect,run=body_detect,writes_result=true})
+    editor.api_method_register(s,Body_Set_Params,Body_Result,{name="skeleton.body.set",summary="Corrects the body parts of a skeleton: the bone of each part it names, or none. Where the body faces is not set here: it faces -Z, and front of asset.import turns a source that does not.",run=body_set,writes_result=true})
 }
 
 // The bone with this path or, failing that, this unique name; -1 for none or several.

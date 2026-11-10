@@ -224,7 +224,7 @@ meshes_aim :: proc(gui:^Gui,assets:^host.Assets,renderer:^render.Renderer,extras
             if mesh==nil || mesh.handle==host.ASSETS_MESH_NONE {continue}
             shown={mesh=mesh.handle,transform=mm.transform_matrix(world.transform)}
         }
-        distance,uv,hit:=render.mesh_ray(renderer,shown.mesh,shown.transform,ray.origin-shown.anchor,ray.direction)
+        distance,uv,_,hit:=render.mesh_ray(renderer,shown.mesh,shown.transform,ray.origin-shown.anchor,ray.direction)
         id:=ui.id(s.ctx,"world",core.entity_index(entry.entity))
         ui.world_panel_aim(s.ctx,id,uv*entry.panel.size,distance,hit)
     }

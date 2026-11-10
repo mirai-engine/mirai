@@ -45,8 +45,8 @@ Key_Capture_Result :: struct {
 @(private)
 tracks_register :: proc(s:^editor.Session) {
     editor.tool_entry(s,TRACKS_TOOL,"Tracks",.Play)
-    editor.api_method_register(s,{name="animation.tracks.show",summary="Turns on the Tracks tool on the clip of an entity's Animation and moves its head: the scene shows the clip at the head without changing the document. Edit only.",params=Tracks_Show_Params,params_info=type_info_of(Tracks_Show_Params),result=Tracks_Show_Result,result_info=type_info_of(Tracks_Show_Result),run=tracks_show})
-    authoring_method_register(s,{name="animation.key.capture",summary="Keys at a time every track of the clip of an Animation that moves an entity, with the transform and the fields the entity has now: a key there is updated, else one is inserted. One step of undo.",params=Key_Capture_Params,params_info=type_info_of(Key_Capture_Params),run=key_capture},Key_Capture_Result,type_info_of(Key_Capture_Result))
+    editor.api_method_register(s,Tracks_Show_Params,Tracks_Show_Result,{name="animation.tracks.show",summary="Turns on the Tracks tool on the clip of an entity's Animation and moves its head: the scene shows the clip at the head without changing the document. Edit only.",run=tracks_show})
+    editor.api_method_register(s,Key_Capture_Params,Key_Capture_Result,{name="animation.key.capture",summary="Keys at a time every track of the clip of an Animation that moves an entity, with the transform and the fields the entity has now: a key there is updated, else one is inserted. One step of undo.",run=key_capture,writes_result=true})
 }
 
 @(private)

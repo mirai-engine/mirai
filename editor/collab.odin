@@ -180,8 +180,6 @@ Collab_State :: struct {
     presence_at,edit_at:f64,
     code:[48]u8,          // the host: its invitation, as others reach it
     code_length:int,
-    lan_code:[48]u8,      // and as its network reaches it
-    lan_length:int,
     sent_edits,received_edits,sent_ops,received_ops:u64,
     guest_name:[COLLAB_NAME_BYTES]u8,
     guest_name_length:int,
@@ -457,29 +455,14 @@ collab_close :: proc(s:^Session) {
     collab_destroy(s)
 }
 
-// The code of the invitation for who is outside the network of the host: by
-// the address its router opened. Empty with why, while the router has not.
-@(private)
-collab_internet_code :: proc(st:^Collab_State) -> (code,missing:string) {
-    if !st.mapping_on {return "","The router opens no port"}
-    status:=wire.mapping_poll(&st.mapping)
-    switch status.phase {
-    case .Pending:          return "","Opening the port on the router..."
-    case .Unavailable,.Closed: return "","The router did not open the port"
-    case .Mapped:
-        if status.external.kind!=.IP4 {return "","The router did not open the port"}
-        return wire.invite_encode(status.external,st.invite,context.temp_allocator),""
-    }
-    return
-}
-
-// The codes others join with: by the address the router mapped, or the one of the adapter, and by the one of the adapter.
+// The code others join with, from anywhere: by the address the router mapped, or the one of the
+// adapter. None until the router answered: the code is of the address it opens.
 @(private)
 collab_codes_update :: proc(st:^Collab_State) {
+    if st.mapping_on && wire.mapping_poll(&st.mapping).phase==.Pending {return}
     code:=wire.invite_encode(wire.address_reachable(&st.mapping,st.mapping_on,st.port),st.invite,context.temp_allocator)
     if code!=string(st.code[:st.code_length]) {log.infof("invitation to the session: %s",code)}
     st.code_length=copy(st.code[:],code)
-    st.lan_length=copy(st.lan_code[:],wire.invite_encode(wire.address_lan(st.port),st.invite,context.temp_allocator))
 }
 
 // ---------------------------------------------------------------- writing messages
@@ -641,7 +624,7 @@ collab_update :: proc(s:^Session) {
         collab_agents_send(s,st,now)
     }
     if st.role==.Guest && st.phase==.Connecting && now-st.peers[0].connected_at>COLLAB_HELLO_TIMEOUT {
-        collab_end(st,"the host did not answer; on its network, join with its Same network code")
+        collab_end(st,"the host did not answer")
         return
     }
     for &peer in st.peers {
@@ -686,7 +669,7 @@ collab_command :: proc(s:^Session,st:^Collab_State,command:wire.Command,now:f64)
             case .Denied_Full:    reason="the session is full"
             case .Timeout:        reason="the host stopped answering"
             case .Reliable_Overflow: reason="the connection could not keep up with what the session sends"
-            case .Connect_Timeout: reason="the host did not answer: the invitation is not the one of the session, or, on its network, join with its Same network code"
+            case .Connect_Timeout: reason="the host did not answer: the invitation is not the one of the session, or the host is not reachable"
             }
             collab_end(st,reason)
             return

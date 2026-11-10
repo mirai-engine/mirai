@@ -438,7 +438,9 @@ shortcut and a button of the bar are an entry (`Binding`): the name of a method,
 JSON, a label, an icon, a shortcut and a menu. `command_run` runs an entry and `command_call` a
 method with params the interface worked out (Play from here); both queue the call, which runs
 between frames through the handler every call of an agent goes through, so the undo step, the
-errors and what is refused are those of the method. What fails is said in a notice.
+errors and what is refused are those of the method. What fails is said in a notice. A method the
+person runs while a gesture of theirs is open records into that gesture's step
+(`command_join`, `api_edit_begin`): one undo takes back both.
 
 - **What is a command.** Whatever has a menu entry, a shortcut or a button. What a person does
   inside a panel with the pointer or the keyboard focus (a scroll, a hover, a fold, a splitter, a
