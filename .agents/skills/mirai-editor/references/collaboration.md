@@ -47,15 +47,20 @@ games).
   fits (`message_send` returns `Full`): a scene or a Watch larger than the queue take longer, they
   do not cut the connection.
 - **The differences**, every `COLLAB_EDIT_INTERVAL`: per component and entity, identified by
-  `core.Id`, the bytes of each row that changed (`core.Entity` fields as `Id`, `transient` bytes at
-  zero), whether it was turned off or on by itself and the `Id`s of the rows that left. Only the
-  tables a scene stores. An entity reborn with its `Id` (a prefab operation replaces the world)
-  does not leave: the rows of its previous handle do not delete it.
-- They come out of the [document's journal](document.md#edits-and-undo), without a copy of their
-  own: the rows the journal took since the previous read (commits, undo, redo), with their previous
-  state and the `Id` of an entity that is no longer there; those the world and the journal do not
-  share yet (an open gesture travels live); and those that were counted that way in the previous
-  send (`Collab_State.told`), so that a cancellation also travels. Each goes as it is now; the off
+  `core.Id`, the fields of each row that changed (`core.Entity` fields as `Id`), the whole row when
+  the others have none, whether it was turned off or on by itself and the `Id`s of the rows that
+  left. Only the tables a scene stores. An entity reborn with its `Id` (a prefab operation replaces
+  the world) does not leave: the rows of its previous handle do not delete it.
+- **By field.** A field is what `saved_fields` lists of the component: each non-`transient` field,
+  those of a nested struct one by one, an array whole. Whoever receives a difference writes those
+  fields and leaves the rest of the row as it has it, so two editors that change different fields
+  of one component of one entity both keep their change.
+- They come out of the [document's journal](document.md#edits-and-undo), without a copy of the
+  world: the rows the journal took since the previous read (commits, undo, redo), with what they
+  held before and the `Id` of an entity that is no longer there; those the world and the journal
+  do not share yet (an open gesture travels live); and those that were counted that way in the
+  previous send (`Collab_State.told`, with what was told of them), so that a cancellation also
+  travels. Each is compared with what the others have of it and only what differs goes; the off
   state travels when it differs from the one the others have.
 - **Presence**, every 1/12 s over the unreliable channel: camera, up to 16 selection ids (in Edit
   only), whether it is in a Play or Simulate of its own, whether it plays the host's game and, if
@@ -65,11 +70,9 @@ games).
   name. They are forgotten after 3 s without data.
 - Whoever is in their own Play or Simulate also carries a ring under the figure and shows no
   selection; whoever plays the host's game, the ring in the host's color.
-- **What is selected belongs to whoever selected it** (`collab_hold.odin`): the others see it with
-  the outline of their color and do not edit it until they select something else. The edit
-  procedures (`edit_held`) reject it with a toast that says who has it, the inspector shows it
-  read-only, the gizmo does not appear and an API call, also from an agent, fails with that
-  message. What hangs from it stays editable, and a run edits a copy that belongs to nobody.
+- **Selecting holds nothing.** What another editor selected is outlined in their color
+  (`collab_highlights`), also over the selection of whoever looks, and that is all: every editor
+  and every agent edits it like the rest.
 - **Each editor's agents** (`collab_agents.odin`, `Agents` message, reliable): figure, color,
   glyph, name and what the turn changed while awaiting review (up to `COLLAB_AGENT_IDS`). Each
   editor sends its own on changing and every so often while it has any, so whoever enters later
@@ -95,11 +98,15 @@ Edits:
   from the document and those of others are applied while someone plays. If the host replaces the
   scene, the run of whoever receives it stops ([Play](editor.md#play)).
 - A guest sends its edits to the host, which applies them and forwards them to all, sender
-  included: all converge to the host's order. Before applying what arrives, each editor sends its
-  own. What was applied is taken by the journal row by row, without a step or reader: it does not
-  come back as its own.
+  included: all converge to the host's order, which decides a field two editors changed. Before
+  applying what arrives, each editor sends its own. What was applied is taken by the journal field
+  by field, without a step or reader: it does not come back as its own.
+- A guest already has what comes back of its own edits, or something newer, and skips it; except in
+  the rows another editor wrote while they were on their way (`Collab_State.crossed`), where the
+  host put its edit after theirs: there it writes it again, but for the fields it is editing now.
 - The edits of others do not enter the history of whoever receives them, nor in a gesture it had
-  open. Each editor's undo undoes its own steps and keeps what the others wrote afterwards
+  open: the step of that gesture holds its own fields. Each editor's undo undoes its own steps and
+  keeps what the others wrote afterwards, also in the field it wrote
   ([undo by author](document.md#undo-by-author)); what it changes travels like any edit.
 - The host marks the document with unsaved changes and only it writes the file.
 

@@ -114,7 +114,7 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   [where each one plays](references/collaboration.md#where-each-one-plays).
 - **Figure of agents and editors, glyph menu, Follow, palette, pings, the editor's own assets
   (`.editor`)**: [figures](references/editor.md#figures-of-whoever-works).
-- **Lock on what another editor selected, agents of other editors**:
+- **What travels of an edit (by field), what another editor selected, agents of other editors**:
   [collaboration](references/collaboration.md#what-travels).
 - **ACP transport**: [ACP client](../../../editor/acp/README.md). **Agent API**:
   [mirai-agent-api](../mirai-agent-api/SKILL.md). **Plugins**:
@@ -131,8 +131,8 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
    `edits_end`; `edits_flush` records it at the end of the frame. Outside the loop,
    `edits_commit` records immediately. `edits_cancel` restores the last copy only with a gesture
    open or pending.
-3. A new edit procedure starts with `if watching(s) || edit_held(s,e) {return}`: what is being
-   watched and what another editor of the session has selected are not edited.
+3. A new edit procedure starts with `if watching(s) {return}`: what is being watched is not
+   edited. What another editor of the session has selected is edited like the rest.
 4. A created or copied entity has `core.Id` (`core.id_new` with `Session.id_state`), `core.Name`
    (`name_free`) and `core.Transform`; its other components appear when the loop function
    finishes.
@@ -322,7 +322,12 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
 - Journal, undo and transactions: `editor/journal_test.odin` (each reader's cursors, steps that
   grow with what changed, cancellation and undo without allocating,
   `collaboration_reads_the_journal_and_does_not_echo_what_it_applies`,
-  `undo_at_each_end_keeps_what_the_other_end_wrote_since`) and `editor/edits_memory_test.odin`.
+  `undo_at_each_end_keeps_what_the_other_end_wrote_since`; the fields several editors change in
+  one row, in the order of the host and under undo,
+  `fields_changed_at_several_ends_stay_and_a_field_two_changed_follows_the_host` and
+  `a_gesture_left_open_keeps_what_another_end_writes_to_another_field`) and
+  `editor/edits_memory_test.odin`. What another editor selected is edited:
+  `what_another_editor_selected_is_edited_and_stays_outlined`.
   Undo by author and selection steps: `editor/history_test.odin`. Memory with a large scene:
   `journal_memory_of_a_large_scene` with `-define:EDITOR_JOURNAL_BENCH=true`.
 - The scene a guest receives:

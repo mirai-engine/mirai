@@ -817,7 +817,7 @@ prefab_place :: proc(s:^Session,w:core.World_Ref,prefab:base.Asset_Id,point:[3]f
 
 // Gives a material to the first slot of the meshes of some entities, as one step.
 material_assign :: proc(s:^Session,w:core.World_Ref,entities:[]core.Entity,material:base.Asset_Id) {
-    if watching(s) || edit_held(s,..entities) || section_refused(s,..entities) {return}
+    if watching(s) || section_refused(s,..entities) {return}
     t:=core.world_table_of(w,erender.Mesh_Renderer)
     if t==nil {return}
     opened,edit_ready:=edit_open(s,"Material")

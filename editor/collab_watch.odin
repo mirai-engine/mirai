@@ -448,6 +448,7 @@ collab_watch_apply :: proc(s:^Session,st:^Collab_State,data:[]u8) {
             e,found:=wt.entities[key]
             if !found || size!=1 {continue}
             if bytes[0]!=0 {core.raw_disable(table,e)} else {core.raw_enable(table,e)}
+        case .Fields:
         }
     }
     core.world_settle(w)

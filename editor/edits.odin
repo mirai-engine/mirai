@@ -82,6 +82,8 @@ Edits :: struct {
     ranges:[dynamic]Edit_Transient_Ranges, // by table a scene saves
     changes:[dynamic]Journal_Change,       // what the image took since collaboration or the recovery log read, while they read
     changes_first:u64,            // how many changes went before changes[0]
+    change_values:[dynamic]u8,    // what the rows of the changes held before, one after another (Journal_Change.value)
+    change_values_first:u64,      // how many bytes went before change_values[0]
     reading:bool,                 // collaboration reads the changes
     read_done:u64,                // up to where it read them
     logging:bool,                 // the recovery log reads the changes (recovery_log.odin)
@@ -423,6 +425,7 @@ edits_free :: proc(edits:^Edits) {
     delete(edits.image);delete(edits.saved);delete(edits.selection)
     journal_entities_free(&edits.image_entities)
     delete(edits.changes)
+    delete(edits.change_values)
     for ranges in edits.ranges {delete(ranges.ranges)}
     delete(edits.ranges);delete(edits.marks);delete(edits.cancel_scratch)
     edits_files_free(edits)

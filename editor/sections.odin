@@ -419,6 +419,13 @@ section_scene_name :: proc(s:^Session,w:core.World_Ref,reference:core.Entity) ->
     return "its scene"
 }
 
+// A notice of why an edit did not happen and, for a call of the API that
+// tried it, the reason the call fails with.
+edit_refusal :: proc(s:^Session,text,reason:string) {
+    notify(s,text)
+    if a:=api_of(s);a!=nil {a.unedited_length=len(fmt.bprintf(a.unedited[:],"%s",reason))}
+}
+
 // True, with a notice and the reason a call of the API that tried fails
 // with, when one of the entities reads only because of the sections.
 section_refused :: proc(s:^Session,entities:..core.Entity) -> bool {
