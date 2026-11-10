@@ -310,6 +310,6 @@ records_api_schemas_and_results_keep_their_shape :: proc(t:^testing.T) {
     records_api_row_write(&out,&f.c,1)
     serial.text_write_raw(&out,"]}")
     text:=string(serial.writer_bytes(&out))
-    testing.expectf(t,strings.contains(text,`"title":{"key":"item.sword"}`),"%s",text)
+    testing.expectf(t,strings.contains(text,`"title": {"key": "item.sword"}`),"%s",text)
     api_result_shape_expect(t,text,Api_Records_Table)
 }

@@ -81,9 +81,11 @@ call_read :: proc(call:^api.Call,reading:^author.Reading) -> bool {
     return false
 }
 
+// texts: those of the project, which a document reads the text of a key from and sets it in.
 @(private)
-tree_args :: proc(s:^editor.Session,reading:^author.Reading) -> (args:author.Tree_Args,ok:bool) {
-    return author.tree_args(reading,author.assets_of(s.app.assets),s.app.info)
+tree_args :: proc(s:^editor.Session,reading:^author.Reading,texts:^author.Texts) -> (args:author.Tree_Args,ok:bool) {
+    texts^,_=editor.texts_open(s)
+    return author.tree_args(reading,author.assets_of(s.app.assets),s.app.info,texts)
 }
 
 // The records of the .ui the params name.
@@ -108,7 +110,8 @@ tree_open :: proc(s:^editor.Session,call:^api.Call,args:^author.Tree_Args,record
 api_tree_inspect :: proc(s:^editor.Session,call:^api.Call) {
     reading:=call_reading(call)
     defer call_read(call,&reading)
-    args,args_ok:=tree_args(s,&reading)
+    texts:author.Texts
+    args,args_ok:=tree_args(s,&reading,&texts)
     if !args_ok {return}
     r:author.Records
     _,opened:=tree_open(s,call,&args,&r)
@@ -120,7 +123,7 @@ api_tree_inspect :: proc(s:^editor.Session,call:^api.Call) {
     libs:=author.doc_libs(&args,&r)
     serial.write_u8(out,'{')
     api.write_key(out,"document",true)
-    author.document_write(out,a.types,&r,root,libs[:],a)
+    author.document_write(out,a.types,&r,root,libs[:],a,&texts)
     serial.write_u8(out,'}')
 }
 
@@ -134,7 +137,8 @@ Tree_Write_Answer :: struct {
 api_tree_write :: proc(s:^editor.Session,call:^api.Call) {
     reading:=call_reading(call)
     defer call_read(call,&reading)
-    args,args_ok:=tree_args(s,&reading)
+    texts:author.Texts
+    args,args_ok:=tree_args(s,&reading,&texts)
     if !args_ok {return}
     for key in args.keys {
         if key!="asset" && key!="node" && key!="document" && key!="save" {api.call_failf(call,api.INVALID_PARAMS,"ui.write has no '%s'; it has asset, node, document and save",key);return}
@@ -171,10 +175,14 @@ api_tree_write :: proc(s:^editor.Session,call:^api.Call) {
         if problem:=editor.asset_create(s,asset.KIND_UI,path,id);problem!="" {api.call_failf(call,api.INVALID_PARAMS,"asset: %s",problem);return}
     }
     if problem,written:=records_file_write(s,id,&r,bytes,imports,params,"Write");!written {api.call_failf(call,api.SERVER_ERROR,"%s. Nothing changed",problem);return}
+    if problem:=editor.texts_write(s,&texts,"Write");problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return}
     if save {
         record,recorded:=asset.registry_find(&s.app.assets.registry,id)
         if !recorded {api.call_fail(call,api.SERVER_ERROR,"the .ui it wrote is not in the assets");return}
-        if _,failures:=editor.assets_write(s,{record.path});failures!="" {api.call_failf(call,api.SERVER_ERROR,"the .ui stays unsaved: %s",failures);return}
+        paths:=make([dynamic]string,context.temp_allocator)
+        append(&paths,record.path)
+        for file in texts.files {if file.changed {append(&paths,file.path)}}
+        if _,failures:=editor.assets_write(s,paths[:]);failures!="" {api.call_failf(call,api.SERVER_ERROR,"the .ui stays unsaved: %s",failures);return}
     }
     api.call_result(call,Tree_Write_Answer)^={ok=true,made=made,removed=removed}
 }
