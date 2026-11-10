@@ -29,6 +29,7 @@ Cinematic_Editor :: struct {
     head:f32, // ticks
     playing,loop:bool,
     speed:f32,
+    active:bool,     // its tool was on in the last frame
     previewing:bool, // the scene shows the timeline at the head
     shown:f32,       // the head the preview put the targets at; <0: the preview has to begin
     shot_view:bool,  // the viewport looks through the shot at the head
@@ -199,12 +200,11 @@ cinematics_panel :: proc(s:^editor.Session,c:^Cinematic_Editor) {
     g:=s.gui
     if !g.begun || editor.playing(s) {return}
     ctx:=g.ctx;th:=&ctx.theme
+    // Turned on, it previews and shows no timeline yet.
     active:=editor.tool_on(s,TOOL)
-    if editor.tool_button(g,ui.id_derive(ctx,SCOPE,"tool"),.Play,"Cinematics","",active) {
-        editor.tool_set(s,TOOL,!active)
-        if !active {c.previewing,c.shown=true,-1}
-    }
-    if !editor.tool_on(s,TOOL) || s.viewport.pick.active {return}
+    if active && !c.active {c.previewing,c.shown=true,-1}
+    c.active=active
+    if !active || s.viewport.pick.active {return}
     w:=editor.edited_world(s)
     timeline_choose(s,c,w)
     id:=ui.id_derive(ctx,SCOPE,"panel")

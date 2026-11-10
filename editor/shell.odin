@@ -61,7 +61,7 @@ Unsaved_Use :: struct {
     uses:bool,
 }
 
-// The dot of unsaved changes, as the prototype draws it.
+// The dot of unsaved changes.
 UNSAVED_COLOR :: ui.Color{201,181,239,255}
 Splitter :: enum u8 {None,Bottom,Right}
 
@@ -443,7 +443,7 @@ draw_user :: proc(ctx:^ui.Context,rect:ui.Rect,kind:u32,data:u64,color:ui.Color)
         ui.draw_polyline(ctx,p[:],1.5,color)
         ui.draw_line(ctx,p[0],c+{-2*s*sign,-6*s},1.5,color)
         ui.draw_line(ctx,p[0],c+{-2*s*sign,2*s},1.5,color)
-    // The icons of the prototype drawn on a 24 unit grid, at two thirds.
+    // Icons drawn on a 24 unit grid, at two thirds.
     case .Scene:
         for y in ([2]f32{-2,2}) {ui.draw_line(ctx,c+{-5.33*s,y*s},c+{5.33*s,y*s},1.3*s,color)}
         ui.draw_line(ctx,c+{-1.33*s,-6*s},c+{-2.67*s,6*s},1.3*s,color)
@@ -630,7 +630,7 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
         projects_build(s)
         return
     }
-    // Behind a document in front, where the scene would be, the canvas of the prototype.
+    // Behind a document in front, where the scene would be, its canvas.
     if scene_covered(s) {
         if ui.box(ctx,{width=ui.fixed(ctx.size.x),height=ui.fixed(ctx.size.y),fill=th.well,float={to=.Surface}}) {}
     }
@@ -972,14 +972,6 @@ dock_edge :: proc(s:^Session,width,top,height:f32) {
     }
 }
 
-bottom_toggle :: proc(g:^Editor_Ui,tab:Bottom_Tab) {
-    if g.layout.bottom_open && g.layout.bottom_tab==tab {
-        g.layout.bottom_open=false
-        return
-    }
-    g.layout.bottom_open,g.layout.bottom_tab=true,tab
-}
-
 // The edge of a panel that resizes it. sign: whether the size grows with the pointer (1) or against it (-1).
 @(private)
 splitter :: proc(s:^Session,which:Splitter,rect:ui.Rect,size,sign:f32) -> (value:f32,changed:bool) {
@@ -1037,7 +1029,7 @@ command_menu_item :: proc(s:^Session,id:ui.Id,name:string,label:="") -> bool {
     b:=command_binding(s,name)
     if b==nil {return false}
     state:=binding_state(s,b)
-    text:=label!=""?label:state.label!=""?state.label:b.label
+    text:=label!=""?label:binding_label(b,state)
     if ui.menu_item(s.gui.ctx,id,text,{icon=b.icon,shortcut=shortcut_text(b.shortcut),checked=state.checked,disabled=state.disabled}) {return command_run(s,name)}
     return false
 }
@@ -1440,8 +1432,8 @@ menus_build :: proc(s:^Session,w:core.World_Ref) {
 }
 
 // A menu of the bar: the entries given to it, of the editor and of the
-// plugins, in the order they were given, a line between two groups. View
-// shows Stats, which is not a command, before its last group.
+// plugins, by group. View shows Stats, a popup of its own and not a command,
+// after the panels of the plugins.
 @(private)
 menu_entries :: proc(s:^Session,title:string,index:int,menu:Menu,look:ui.Button={}) {
     g:=s.gui
@@ -1449,29 +1441,25 @@ menu_entries :: proc(s:^Session,title:string,index:int,menu:Menu,look:ui.Button=
     id:=shell_id(g,"menu",index)
     named_add(g,id)
     if ui.menu(ctx,id,title,look.icon!=.None?BAR_MARK_HEIGHT:26,look) {
-        MENU_LAST_GROUP :: 4
-        stats :: proc(s:^Session,menu:ui.Id) {
-            g:=s.gui
-            if ui.menu_item(g.ctx,shell_id(g,"stats"),"Stats",{icon=.Gauge}) {
-                anchor,_:=ui.widget_rect(g.ctx,menu)
-                ui.popup_open(g.ctx,stats_popup(g),anchor)
+        shown:=false
+        for group in 0..<u8(MENU_GROUPS) {
+            parted:=false
+            part :: proc(ctx:^ui.Context,shown,parted:^bool) {
+                if shown^ && !parted^ {ui.menu_separator(ctx)}
+                shown^,parted^=true,true
             }
-        }
-        group,first,stated:=u8(0),true,menu!=.View
-        for &b,at in command_bindings(s) {
-            if b.menu!=menu {continue}
-            if !first && b.group!=group {ui.menu_separator(ctx)}
-            if !stated && b.group>=MENU_LAST_GROUP {
-                stats(s,id)
-                ui.menu_separator(ctx)
-                stated=true
+            for &b,at in command_bindings(s) {
+                if b.menu!=menu || b.group!=group {continue}
+                part(ctx,&shown,&parted)
+                command_menu_item(s,shell_id(g,"menu_item",index*1000+at+1),b.name)
             }
-            group,first=b.group,false
-            command_menu_item(s,shell_id(g,"menu_item",index*1000+at+1),b.name)
-        }
-        if !stated {
-            if !first {ui.menu_separator(ctx)}
-            stats(s,id)
+            if menu==.View && group==MENU_GROUP_PLUGINS {
+                part(ctx,&shown,&parted)
+                if ui.menu_item(ctx,shell_id(g,"stats"),"Stats",{icon=.Gauge}) {
+                    anchor,_:=ui.widget_rect(ctx,id)
+                    ui.popup_open(ctx,stats_popup(g),anchor)
+                }
+            }
         }
     }
 }

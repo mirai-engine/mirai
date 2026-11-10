@@ -11,7 +11,7 @@ import "mirai:project"
 import "mirai:std/base"
 import "mirai:ui"
 
-// Assets open in tabs next to the scenes, as the prototype opens them. The
+// Assets open in tabs next to the scenes. The
 // document in front takes the place of the scene: the scene that was active
 // stays loaded under it, with its history, its Play stopped and its tools
 // quiet, and the API and the agents keep working on it. The left panel stays;
@@ -678,7 +678,7 @@ asset_toolbar_whole :: proc(g:^Editor_Ui) -> (rect:ui.Rect,ok:bool) {
 
 ASSET_HEADING :: f32(33)
 
-// The row of the heading of a part of a document, as the prototype draws it:
+// The row of the heading of a part of a document:
 // the caller fills it, and asset_heading_end draws the line under it.
 asset_heading_box :: proc(ctx:^ui.Context,id:ui.Id=0) -> ui.Box {
     return {id=id,width=ui.GROW,height=ui.fixed(ASSET_HEADING-1),padding={12,0,12,0},gap=8,align_y=.Center,fill=ctx.theme.card}

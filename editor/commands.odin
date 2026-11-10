@@ -41,6 +41,7 @@ Shortcut :: struct {key:core.Key,modifiers:ui.Modifiers,set:bool}
 // What an entry shows now, for the person at the editor.
 Command_State :: struct {
     label:string,  // instead of the label of the entry
+    detail:string, // after its label, in a menu: what Undo undoes
     disabled,checked:bool,
 }
 Command_State_Proc :: #type proc(s:^Session,b:^Binding) -> Command_State
@@ -52,6 +53,12 @@ Menu :: enum u8 {
     Tools, // the tools of the plugins, in the menu of the bar
 }
 
+// A menu shows its entries by group, a line between two, and those of a
+// group in the order they were given. The panels of the plugins go in
+// MENU_GROUP_PLUGINS of View.
+MENU_GROUPS :: 8
+MENU_GROUP_PLUGINS :: 3
+
 Binding :: struct {
     name:string,   // what command_run, the buttons and editor.inspect name it by; the name of its method when empty
     method:string,
@@ -60,7 +67,7 @@ Binding :: struct {
     icon:ui.Icon,
     shortcut,alternate:Shortcut,
     menu:Menu,
-    group:u8,      // of its menu: a line parts two groups
+    group:u8,      // of its menu, under MENU_GROUPS
     state:Command_State_Proc, // nil: always on, never checked
     scene:bool,    // it works on the scene: off while an asset document covers it
     in_game:bool,  // its shortcut runs while a game has the keys
@@ -87,6 +94,8 @@ Commands :: struct {
 @(private)
 command_text :: proc(st:^Api_State,format:string,args:..any) -> string {
     c:=&st.commands
+    // Without room for the longest params it gives none: the entry it was for is refused.
+    if len(c.text)-c.text_used<COMMAND_PARAMS {return ""}
     text:=fmt.bprintf(c.text[c.text_used:],format,..args)
     c.text_used+=len(text)
     return text
@@ -112,8 +121,10 @@ command_bind :: proc(s:^Session,b:Binding) -> bool {
 tool_entry :: proc(s:^Session,name,label:string,icon:ui.Icon,shortcut:=Shortcut{}) -> bool {
     st:=api_state(s)
     if st==nil {return false}
+    params:=command_text(st,`{{"tool":%q,"on":"$toggle"}}`,name)
+    if params=="" {return false}
     return command_bind(s,{
-        name=name,method="editor.tool",params=command_text(st,`{{"tool":%q,"on":"$toggle"}}`,name),
+        name=name,method="editor.tool",params=params,
         label=label,icon=icon,shortcut=shortcut,menu=.Tools,state=tool_entry_state,scene=true,
     })
 }
@@ -201,7 +212,7 @@ command_call :: proc(s:^Session,method,params:string) -> bool {
     if st==nil {return false}
     c:=&st.commands
     if c.asked_count>=len(c.asked) || len(params)>COMMAND_PARAMS {
-        notify(s,"Too much was asked of the editor in one frame")
+        notify(s,len(params)>COMMAND_PARAMS?"The params of that gesture are too long":"Too much was asked of the editor in one frame")
         return false
     }
     asked:=&c.asked[c.asked_count]
@@ -400,7 +411,7 @@ commands_register :: proc(s:^Session,st:^Api_State) {
         {name="hierarchy_panel",method="editor.view",params=`{"part":"Hierarchy","on":"$toggle"}`,label="Hierarchy",icon=user(.List),state=state_hierarchy_panel},
         {name="source_control",method="editor.view",params=`{"part":"Git"}`,label="Source control",icon=user(.Branch),state=state_source_control},
         {name="ai_chat",method="editor.view",params=`{"part":"Chat","on":"$toggle"}`,label="AI tasks",icon=.Sparkle,state=state_ai_chat},
-        {name="shortcuts",method="editor.view",params=`{"part":"Shortcuts"}`,label="Keyboard shortcuts",icon=user(.Command),menu=.View,group=4},
+        {name="shortcuts",method="editor.view",params=`{"part":"Shortcuts"}`,label="Keyboard shortcuts",icon=user(.Command),menu=.View,group=MENU_GROUP_PLUGINS+1},
         {name="find",method="editor.view",params=`{"part":"Find"}`,label="Find object",icon=user(.Search),shortcut=key(.Space),scene=true},
 
         // The key of Play stops what plays, and that of Pause resumes it.
@@ -452,16 +463,22 @@ state_build :: proc(s:^Session,b:^Binding) -> (state:Command_State) {
     return
 }
 
+// The label of an entry as a menu and editor.inspect show it now.
+binding_label :: proc(b:^Binding,state:Command_State,allocator:=context.temp_allocator) -> string {
+    label:=state.label!=""?state.label:b.label
+    return state.detail!=""?fmt.aprintf("%s %s",label,state.detail,allocator=allocator):label
+}
+
 @(private="file")
 state_undo :: proc(s:^Session,b:^Binding) -> (state:Command_State) {
     if d:=asset_document_active(s);d!=nil {
         h:=&d.history
         state.disabled=h.cursor==0 && !h.open
-        if h.cursor>0 {state.label=fmt.tprintf("Undo %s",asset_history_undo_label(h))}
+        if h.cursor>0 {state.detail=asset_history_undo_label(h)}
         return
     }
     state.disabled=s.mode!=.Edit || history.undo_label(s.edits)=="" && !s.edits.preview
-    if s.edits.preview {state.label="Cancel preview"} else if !state.disabled {state.label=fmt.tprintf("Undo %s",history.undo_label(s.edits))}
+    if s.edits.preview {state.label="Cancel preview"} else if !state.disabled {state.detail=history.undo_label(s.edits)}
     return
 }
 
@@ -470,11 +487,11 @@ state_redo :: proc(s:^Session,b:^Binding) -> (state:Command_State) {
     if d:=asset_document_active(s);d!=nil {
         h:=&d.history
         state.disabled=h.cursor>=len(h.steps)
-        if !state.disabled {state.label=fmt.tprintf("Redo %s",asset_history_redo_label(h))}
+        if !state.disabled {state.detail=asset_history_redo_label(h)}
         return
     }
     state.disabled=s.mode!=.Edit || history.redo_label(s.edits)==""
-    if !state.disabled {state.label=fmt.tprintf("Redo %s",history.redo_label(s.edits))}
+    if !state.disabled {state.detail=history.redo_label(s.edits)}
     return
 }
 
@@ -903,7 +920,7 @@ api_commands_write :: proc(s:^Session,w:^serial.Writer) {
         serial.text_write_raw(w,`{"name":`);serial.text_write_string(w,b.name)
         api.write_key(w,"method");serial.text_write_string(w,b.method)
         if b.params!="" {api.write_key(w,"params");serial.text_write_string(w,b.params)}
-        api.write_key(w,"label");serial.text_write_string(w,state.label!=""?state.label:b.label)
+        api.write_key(w,"label");serial.text_write_string(w,binding_label(&b,state))
         if b.shortcut.set {api.write_key(w,"shortcut");serial.text_write_string(w,shortcut_text(b.shortcut))}
         api.write_key(w,"disabled");api.write_flag(w,state.disabled)
         api.write_key(w,"checked");api.write_flag(w,state.checked)

@@ -421,9 +421,6 @@ shapes_panel :: proc(s:^editor.Session,tool:^Shapes_Tool,world:core.World_Ref,in
     tool_ready(tool)
     ctx:=g.ctx
     keys_free:=ctx.edit.id==0 && ctx.input.modifiers=={} && g.modal==.None && ctx.popup.count==0
-    if core.key_pressed(input,.K) && keys_free {editor.tool_set(s,TOOL,!tool.active)}
-    tool.active=editor.tool_on(s,TOOL)
-    if editor.tool_button(g,ui.id_derive(ctx,PANEL_SCOPE,"tool"),.Prism,"Shapes","K",tool.active) {editor.tool_set(s,TOOL,!tool.active)}
     tool.active=editor.tool_on(s,TOOL)
     if !tool.active || s.viewport.pick.active {return}
     if keys_free && !tool_busy(tool) {

@@ -308,9 +308,6 @@ physics_placement_panel :: proc(s:^editor.Session,tool:^Physics_Placement,input:
     if !g.begun || editor.playing(s) {return}
     placement_ready(tool)
     ctx:=g.ctx
-    if core.key_pressed(input,.P) && ctx.edit.id==0 && ctx.input.modifiers=={} && g.modal==.None && ctx.popup.count==0 {editor.tool_set(s,PLACEMENT_TOOL,!editor.tool_on(s,PLACEMENT_TOOL))}
-    active:=editor.tool_on(s,PLACEMENT_TOOL)
-    if editor.tool_button(g,ui.id_derive(ctx,PLACEMENT_SCOPE,"tool"),.Import,"Placement","P",active) {editor.tool_set(s,PLACEMENT_TOOL,!active)}
     if !editor.tool_on(s,PLACEMENT_TOOL) || s.viewport.pick.active {return}
     id:=ui.id_derive(ctx,PLACEMENT_SCOPE,"panel")
     if ui.panel(ctx,id,editor.tool_panel(g,id)) {
