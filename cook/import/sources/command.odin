@@ -9,6 +9,7 @@ import "core:time"
 import "mirai:asset"
 import importer "mirai:cook/import"
 import "mirai:cook/textures"
+import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/jobs"
 
@@ -203,6 +204,8 @@ command :: proc(args:[]string,output,errors:io.Writer,plugins:Plugin_Formats=nil
     root,in_assets:=source_root(file,context.temp_allocator)
     if !in_assets {fmt.wprintfln(errors,"mirai import: %s is in no assets folder of a project or a plugin: move it beside what it makes, under assets/",file);return 1}
     options.root=root
+    if options.texture_cache=="" {options.texture_cache=project.content_cache_path(root,project.TEXTURE_CACHE,context.temp_allocator)}
+    if options.mesh_cache=="" {options.mesh_cache=project.content_cache_path(root,project.MESH_CACHE,context.temp_allocator)}
     formats:=FORMATS[:]
     kind:=source_kind(file)
     release:proc(state:rawptr)

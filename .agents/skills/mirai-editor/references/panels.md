@@ -817,12 +817,13 @@ plugin [vfx](../../mirai-world/references/vfx-editor.md#particle-document).
 ## Import
 
 `import_file(s, path)` converts a source file into project assets, only in `Edit`, with
-`sources.import_source` like `mirai import`. A source inside the project is versioned with its
-sidecar, and what it builds that nobody edits goes to the imported folder of the project; a source
-outside it keeps every asset in the assets folder, with its sidecar in `source/` of the project
-([identity](../../mirai-imports/references/imports.md#identity-and-reimport)). It goes to the
-folder of its type or to `folder` (`asset_folder_clean`). The imported folder is brought up to
-date with the sources by the build that opens the editor
+`sources.import_source` like `mirai import`. A source in the assets of the project or of a plugin
+imports where it is; one from outside the project is first copied into `folder`
+(`asset_folder_clean`, the folder of the browser), and one in the project but outside its assets
+is refused. The source is versioned with its sidecar beside what it makes, and what it builds
+that nobody edits goes to the imported folder
+([identity](../../mirai-imports/references/imports.md#identity-and-reimport)). The imported folder
+is brought up to date with the sources by the build that opens the editor
 ([sync](../../mirai-imports/references/imports.md#sync)).
 File > Import, the content browser, a file dropped on the window and `asset.import` call it. It
 imports in a thread of its own, with its own job system, while the editor keeps drawing; the
@@ -855,11 +856,10 @@ output folders in [importers](../../mirai-imports/SKILL.md).
   undo: it only clears `owner`, and the import leaves it out; there is no UI that calls it yet.
 - **What an import keeps in the imported folder is not edited where it is.** Moving, renaming,
   detaching or deleting a part on its own is refused, saying to duplicate it. Moving the root of
-  an import (`asset_move`) moves its source and sidecar under `source/`, and moving a folder moves
-  the folder of the same path under `source/` with it: the registry lists their assets there at
-  once, without an import. Deleting the root of an import
-  (its prefab, the texture of an image) gives the import up: its sidecar goes to the trash with
-  what only the import can build, and the source stays. A
+  an import of the cache (`asset_move`, the texture of an image) moves its source and sidecar, and
+  moving a folder moves the sources in it: the registry lists their assets there at once, without
+  an import. Deleting the root of an import (its prefab, the texture of an image) gives the import
+  up: its source and its sidecar go to the trash with what only the import can build. A
   copy made outside the editor receives an id of its own on scanning
   ([repeated ids](../../mirai-assets/references/formats.md#registry)).
 

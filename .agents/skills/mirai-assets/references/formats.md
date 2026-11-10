@@ -225,12 +225,14 @@ scan opens every file and writes it again.
   and of each mount: `.mirai/imported/` of the project or the plugin): what the
   [imports](../../mirai-imports/references/imports.md#identity-and-reimport) of its sources build
   that nobody edits, never versioned, each file named by its id and the key of what it was built
-  from. The registry lists them like any asset (`Registry_File.imported` is that key,
-  `asset/registry_imported.odin`) at a path it derives from where the sidecar that lists each is
-  now: beside its source for the root of an import, in a folder named after the source file for
-  the rest; one whose source is gone is not listed, and one that moved is listed there at the
-  next scan. `registry_file_path` gives the
-  file of either folder. A cooked folder has none: the cook writes every asset at its path.
+  from. A scan reads the sidecars it walks (`asset/sidecar.odin`, the one reader of the format)
+  and lists each output of the cache like any asset (`Registry_File.imported` is that key) at
+  `<folder of the sidecar>/<folder it names>/<name><extension>`; two outputs of one kind and
+  name are told apart by their index, and a path another file or output has takes the name of
+  the source: never the order of a scan. One whose source is gone is not listed, and one that
+  moved is listed there at the next scan, which a refresh of a sidecar or of its source runs.
+  `registry_file_path` gives the file of either folder. A cooked folder has none: the cook
+  writes every asset at its path.
 - **Mounts.** `registry_mount` adds a folder under a prefix (a plugin's assets, in
   `plugins/<name>`). A prefix that starts with a dot belongs to the program's assets (the editor's,
   in `.editor`): they are found by id and by path, but a project's lists omit them

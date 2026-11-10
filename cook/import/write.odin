@@ -433,7 +433,7 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
     first_mesh:=len(parts)
     for mesh,i in model.meshes {append(&parts,Part{kind=asset.KIND_MESH,name=mesh.name,index=i,extension=".mesh"})}
     animation:=len(parts)
-    if len(model.animations)>0 {append(&parts,Part{kind=asset.KIND_ANIMATION,name=name,extension=".anim"})}
+    if len(model.animations)>0 {append(&parts,Part{kind=asset.KIND_ANIMATION,name=name,extension=".anim",only=true})}
     parts_plan(w,parts[:])
     reasons:=make([]string,len(model.materials),context.temp_allocator)
     parts_own(w,model,jobs[:],parts[:],first_material,reasons)
@@ -583,7 +583,7 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
 @(private="file")
 write_clips_onto :: proc(w:^Writer,model:^Imported_Model,source,name:string,skeleton:base.Asset_Id) -> bool {
     if len(model.animations)==0 {return writer_fail(w,.Malformed,"%s has no clips to put on the skeleton of Import_Settings.skeleton",source)}
-    parts:=[1]Part{{kind=asset.KIND_ANIMATION,name=name,extension=".anim"}}
+    parts:=[1]Part{{kind=asset.KIND_ANIMATION,name=name,extension=".anim",only=true}}
     parts_plan(w,parts[:])
     part:=&parts[0]
     import_data:=import_info(source,name,0,model.source_size,model.source_hash,0,model.version)

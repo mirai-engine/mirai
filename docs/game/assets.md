@@ -7,8 +7,8 @@ description: Import models, textures, fonts, sounds and texts into a Mirai game 
 
 # Game assets
 
-Assets are binary files under `assets/`; art sources stay in `source/`, never shipped. Every asset
-has an id in its header: components and scenes name it by id; code, by its path.
+Assets are binary files under `assets/`, in folders by theme, beside the art sources they are
+imported from (never shipped). Components and scenes name an asset by its id; code, by its path.
 
 ## Map
 
@@ -19,12 +19,12 @@ has an id in its header: components and scenes name it by id; code, by its path.
 
 ## Import
 
-Put the file in `source/`; from the project folder, one `--out` folder per model (names clash):
+Put the file in `assets/`, in the folder of what it is for, and import it where it is:
 
 ```sh
-mirai import source/models/hero.glb --out assets/player/hero --root .
-mirai import source/textures/rock_n.png --out assets/arena --root .
-mirai import source/sounds/step.wav --out assets/player --root .
+mirai import assets/player/hero.glb     # its materials and prefab go to assets/player/hero/
+mirai import assets/arena/rock_n.png    # its texture is listed as assets/arena/rock_n.tex
+mirai import assets/player/step.wav     # assets/player/step.sound
 ```
 
 - Formats: OBJ, glTF/GLB, USD, FBX; PNG, JPEG, TGA, BMP, GIF, PSD, HDR; WAV and Ogg Vorbis (mono
@@ -32,12 +32,13 @@ mirai import source/sounds/step.wav --out assets/player --root .
 - A model writes meshes, materials, textures, skeletons, clips and a prefab: instantiate that.
 - An image is color unless its name says otherwise (`normal`, `_n`, `rough`, `metal`, `orm`,
   `_ao`, `height`, `mask`); force it with `--srgb`, `--data`, `--normal`, `--normal-green-down`.
-- `<file>.import` beside the source keeps the flags and the id of each asset, so importing again
-  updates in place, keeping ids and material edits: commit it, and move it with its source.
+- `<file>.import` beside the source keeps the flags, the folder of its assets and the id of each
+  asset, so importing again updates in place, keeping ids and material edits: commit it, and move
+  it with its source. A part renamed in the source is a new asset.
 - Meshes, textures, sounds and fonts are built into `.mirai/imported/`, never committed: `mirai
   build` makes them again on a fresh clone. Edit their source, not them.
-- Triangle and texture limits and the collision shape are flags too; colliders a source brings
-  win unless `--force-collision`. `mirai import` without arguments prints every flag.
+- Triangle and texture limits and the collision shape are flags too (`mirai import` without
+  arguments prints them); colliders a source brings win unless `--force-collision`.
 - A model without a skeleton that must animate: `--rig` with the template that fits it. Clips of
   another file onto a skeleton the project has: `--skeleton <id>` ([animation](animation.md)).
 - With an editor session: `asset.import` (MCP `asset_import`) answers when it ends, with what it
@@ -48,9 +49,8 @@ mirai import source/sounds/step.wav --out assets/player --root .
   `.prompts` `.records` `.scene` (one root: a prefab, `kind=prefab`).
 - Plugins add `.particle`, `.terrain`, `.foliage`, `.navmesh`, `.character` (`animation`),
   `.fracture` (`destruct`), `.physics_cache`.
-- Folders are named after what they hold (`player`, `arena`), never after a kind. An import goes
-  into the folder asked for, a model in one of its name inside. Sound sets: [audio](audio.md);
-  particles: [vfx](vfx.md).
+- Folders are named after what they hold (`player`, `arena`), never after a kind; the browser
+  filters by kind. Sound sets: [audio](audio.md); particles: [vfx](vfx.md).
 
 ## Reference
 

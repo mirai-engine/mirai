@@ -23,7 +23,7 @@ Part :: struct {
     name:string,      // in the source: the mesh, the material, the image
     index:int,        // among those of its kind in the source
     extension:string,
-    root:bool,        // the root of the import: the one of its kind, whatever its name
+    only:bool,        // the one of its kind, whatever its name, as the root (the clips of a model, named after it)
     output:int,       // what the sidecar the import writes lists for it (Writer.outputs)
     decided:bool,     // whether it is a part of the root was decided by an import before: part says it
     part:bool,
@@ -85,17 +85,17 @@ writer_input :: proc(w:^Writer,file:string) {
 }
 
 // Gives each part its asset and its file: the output of the sidecar of its
-// kind and name (the one of its index first), or of its kind for the root,
-// else a new id. What the import gives is listed in w.outputs, the sidecar it
+// kind and name (the one of its index first), or of its kind for the only one
+// of its kind, else a new id. What the import gives is listed in w.outputs, the sidecar it
 // writes when it ends.
 @(private)
 parts_plan :: proc(w:^Writer,parts:[]Part) {
     for &p in parts {
         entry:=-1
         for output,at in w.sidecar.outputs {
-            if w.taken[at] || output.kind!=p.kind || !p.root && output.name!=p.name {continue}
+            if w.taken[at] || output.kind!=p.kind || !p.only && output.name!=p.name {continue}
             entry=at
-            if p.root || output.index==p.index {break}
+            if p.only || output.index==p.index {break}
         }
         p.id=writer_id(w)
         if entry>=0 {
@@ -125,7 +125,7 @@ parts_plan :: proc(w:^Writer,parts:[]Part) {
 // sidecar lists, else a new one named name.
 @(private)
 root_take :: proc(w:^Writer,kind:asset.Fourcc,name,extension:string) -> (id:base.Asset_Id,path:string) {
-    parts:=[1]Part{{kind=kind,name=name,extension=extension,root=true}}
+    parts:=[1]Part{{kind=kind,name=name,extension=extension,only=true}}
     parts_plan(w,parts[:])
     return parts[0].id,parts[0].path
 }

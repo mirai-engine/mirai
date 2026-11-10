@@ -34,7 +34,7 @@ badge and the hum); `mirai content <project>` runs it. It does not go into the g
 - `cook.mirai`: the prefabs and materials that only code picks by path.
 - `render_check.mirai`: the fixed views that `mirai render check` measures
   ([render check](../../mirai-rendering/references/verification.md#render-check)).
-- `game/`, `assets/` and the art sources in `source/`.
+- `game/` and `assets/`, with the art sources beside what they make.
 
 Scenes:
 
@@ -259,7 +259,7 @@ A `--<part>-only` flag after `--` regenerates only one part
 
 Content:
 
-- **Skies**: whole-sky images of 4096×2048 in `source/textures` (`sky_day`, `sky_sunset`,
+- **Skies**: whole-sky images of 4096×2048 in `assets/sky` (`sky_day`, `sky_sunset`,
   `sky_overcast`, `sky_night`). A scene's `Sky` entity is turned around the vertical so that the
   image's sun has the heading of the scene's `Sun`, at the height it has in the image. Overcast
   and night have `disc` off.
@@ -279,12 +279,11 @@ Content:
   its lamps are wells of light in the dark and no compensation works from all its views. The
   others, the light meter alone: `lights` used to be clipped and `skeletal`, without light. No demo
   camera carries `Exposure`: the viewport and the game expose the same.
-- **Imports** (`sources.odin`, with `cook/import/sources.import_source`, like the editor and
-  `mirai import`): each image of `source/textures` is a `.tex` read according to the end of its name
-  (`_normal`, `_orm`, other: sRGB color) the first time, and as its sidecar says from then on. Those
-  that show masked materials are imported with their cutoff. Each model of `source/models` is a
-  folder with its materials and the prefab of its nodes. The textures and the meshes are not
-  versioned: they are in `demo/.mirai/imported`, which `mirai build` makes again from the sources.
+- **Imports**: each image is a source beside the materials that show it (`assets/surfaces/bricks`,
+  `assets/sky`, `assets/gallery`), read as its sidecar says; each model is a source beside a
+  folder with its materials and the prefab of its nodes (`assets/gallery/plant.gltf` and
+  `assets/gallery/plant/`). The textures and the meshes are not versioned: they are in
+  `demo/.mirai/imported`, which `mirai build` makes again from the sources.
   Re-importing keeps the ids, which the sidecars list
   ([identity](../../mirai-imports/references/imports.md#identity-and-reimport)), and what the
   demo generates over what was imported reads them from there (`imported.odin`); what it generates

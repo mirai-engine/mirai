@@ -19,5 +19,5 @@ clips, own clips and an `Animation` component are added on that root. The contra
 are in the
 [imports guide](../../../../.agents/skills/mirai-imports/references/imports.md#skinned-meshes).
 
-The demo imports it with the rest of `source/models` and the import tests read it; the animation
+The demo imports it where it is and the import tests read it; the animation
 gallery shows Mirai instead.
