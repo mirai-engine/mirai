@@ -23,7 +23,7 @@ Shader_Assets :: struct {
 @(private)
 shader_code_destroy :: proc(c:rhi.Shader_Code,allocator:runtime.Allocator) {
     delete(c.name,allocator);delete(c.bindings,allocator)
-    when ODIN_OS==.Darwin {delete(transmute([]u8)c.msl,allocator);delete(c.msl_entry,allocator)} else {delete(c.spirv,allocator)}
+    delete(rhi.shader_code_bytes(c),allocator);delete(rhi.shader_code_entry(c),allocator)
 }
 shader_assets_destroy :: proc(assets:^Shader_Assets) {
     if assets.owned {
@@ -64,7 +64,7 @@ embedded_shaders_decode :: proc(codes:^[Shader_Id]rhi.Shader_Code,programs:^[len
     at:=0
     place :: proc(code:^rhi.Shader_Code,shader:Embedded_Shader,bytes:[]u8,at:^int) {
         code^=shader.code
-        when ODIN_OS==.Darwin {code.msl=string(bytes[at^:][:shader.size])} else {code.spirv=bytes[at^:][:shader.size]}
+        rhi.shader_code_set(code,bytes[at^:][:shader.size],rhi.shader_code_entry(shader.code))
         at^+=shader.size
     }
     for &code,id in codes^ {place(&code,SHADERS[id],bytes,&at)}
@@ -159,12 +159,7 @@ shader_assets_match_codes :: proc(assets:^Shader_Assets,codes:^[Shader_Id]rhi.Sh
 shader_code_matches :: proc(next,current:rhi.Shader_Code)->bool {
     if next.name!=current.name || next.stage!=current.stage || next.threadgroup!=current.threadgroup || len(next.bindings)!=len(current.bindings) {return false}
     for binding,i in next.bindings {if binding!=current.bindings[i] {return false}}
-    when ODIN_OS==.Darwin {
-        if next.msl!=current.msl || next.msl_entry!=current.msl_entry {return false}
-    } else {
-        if string(next.spirv)!=string(current.spirv) {return false}
-    }
-    return true
+    return string(rhi.shader_code_bytes(next))==string(rhi.shader_code_bytes(current)) && rhi.shader_code_entry(next)==rhi.shader_code_entry(current)
 }
 // Whether two generations bring the same stages of extensions, or of programs.
 @(private)
@@ -233,15 +228,15 @@ shader_assets_load :: proc(directory:string,allocator:=context.allocator)->(asse
         no_name:runtime.Allocator_Error
         if code.name,no_name=strings.clone(text(item["name"]),allocator);no_name!=nil {error="out of memory for the name of a shader";break}
         stage,valid_stage:=reflect.enum_from_name(rhi.Shader_Stage,text(item["stage"]));if !valid_stage {error="invalid shader stage";break};code.stage=stage
-        key := "msl" when ODIN_OS==.Darwin else "spv"
-        file,_:=filepath.join({directory,text(item[key])},context.temp_allocator)
+        file,_:=filepath.join({directory,text(item["msl" if rhi.SHADER_FORMAT==.Msl else "spv"])},context.temp_allocator)
         data,problem:=os.read_entire_file(file,allocator);if problem!=nil {error=fmt.tprintf("cannot read %s",file);break}
-        when ODIN_OS==.Darwin {
-            code.msl=string(data)
-            no_entry:runtime.Allocator_Error
-            if code.msl_entry,no_entry=strings.clone(text(item["entry"]),allocator);no_entry!=nil {error=fmt.tprintf("out of memory for the entry point of shader %s",code.name);break}
-            if code.msl_entry=="" {error="shader has no Metal entry point";break}
-        } else {code.spirv=data}
+        rhi.shader_code_set(code,data,"")
+        if rhi.SHADER_FORMAT==.Msl {
+            entry,no_entry:=strings.clone(text(item["entry"]),allocator)
+            if no_entry!=nil {error=fmt.tprintf("out of memory for the entry point of shader %s",code.name);break}
+            rhi.shader_code_set(code,data,entry)
+            if entry=="" {error="shader has no Metal entry point";break}
+        }
         group:=item["group"].(json.Array) or_else nil
         if len(group)!=3 {error="invalid workgroup";break}
         for v,i in group {n,valid:=number(v);if !valid {error="invalid workgroup";break};code.threadgroup[i]=n}

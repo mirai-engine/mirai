@@ -301,7 +301,10 @@ Binding_Info :: struct {
 
 // Generated from one Slang source: SPIR-V for Vulkan, MSL translated by
 // SPIRV-Cross for Metal, plus the shared reflected bindings.
-when ODIN_OS == .Darwin {
+Shader_Format :: enum u8 {Spirv, Msl}
+// The code the Shader_Code of this system holds.
+SHADER_FORMAT :: Shader_Format.Msl when ODIN_OS == .Darwin else Shader_Format.Spirv
+when SHADER_FORMAT == .Msl {
 	Shader_Binary :: struct {msl:string,msl_entry:string}
 } else {
 	Shader_Binary :: struct {spirv:[]u8}
@@ -312,6 +315,17 @@ Shader_Code :: struct {
 	stage:       Shader_Stage,
 	threadgroup: [3]u32,
 	bindings:    []Binding_Info,
+}
+// The code of a shader as bytes, and the entry point its MSL names ("" for SPIR-V).
+shader_code_bytes :: proc "contextless" (code: Shader_Code) -> []u8 {
+	when SHADER_FORMAT == .Msl {return transmute([]u8)code.msl} else {return code.spirv}
+}
+shader_code_entry :: proc "contextless" (code: Shader_Code) -> string {
+	when SHADER_FORMAT == .Msl {return code.msl_entry} else {return ""}
+}
+// Gives a shader its code: bytes and entry are kept, not copied.
+shader_code_set :: proc "contextless" (code: ^Shader_Code, bytes: []u8, entry: string) {
+	when SHADER_FORMAT == .Msl {code.msl, code.msl_entry = string(bytes), entry} else {code.spirv = bytes}
 }
 
 Compare :: enum u8 {Never, Less, Less_Equal, Equal, Greater, Greater_Equal, Always}

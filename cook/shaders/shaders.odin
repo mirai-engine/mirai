@@ -144,7 +144,7 @@ cancel :: proc(progress:^Progress) {
 // What the code of a stage is for: SPIR-V for Vulkan, Metal source for Metal.
 Backend :: enum u8 {Vulkan,Metal}
 Backends :: bit_set[Backend;u8]
-HOST_BACKEND :: Backend.Metal when ODIN_OS==.Darwin else Backend.Vulkan
+HOST_BACKEND :: Backend.Metal when rhi.SHADER_FORMAT==.Msl else Backend.Vulkan
 
 Result :: struct {
     shaders,tests,programs:int,
@@ -1394,7 +1394,7 @@ odin_table :: proc(jobs:[]Job,backends:Backends,out,target_folder,package_name,r
     }
     strings.write_string(&b,"Shader_Id :: enum u8 {\n")
     for job in jobs {fmt.sbprintf(&b,"\t%s,\n",job.result.id)}
-    strings.write_string(&b,"}\n\nwhen ODIN_OS == .Darwin {\n")
+    fmt.sbprintf(&b,"}}\n\nwhen %sSHADER_FORMAT == .Msl {{\n",prefix)
     names:=EMBEDDED_NAMES
     for metal in ([]bool{true,false}) {
         if !metal {strings.write_string(&b,"} else {\n")}

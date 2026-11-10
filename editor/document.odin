@@ -108,9 +108,7 @@ scene_file :: proc(s:^Session,path:string,allocator:=context.temp_allocator) -> 
 // A file as the document names it: relative to the assets folder when it is inside.
 scene_path :: proc(s:^Session,file:string) -> string {
     root:=s.assets_root
-    when ODIN_OS==.Windows {inside:=len(file)>len(root) && strings.equal_fold(file[:len(root)],root)}
-    else {inside:=len(file)>len(root) && file[:len(root)]==root}
-    if inside && file[len(root)]=='/' {return file[len(root)+1:]}
+    if len(file)>len(root) && file[len(root)]=='/' && project.path_same(file[:len(root)],root) {return file[len(root)+1:]}
     return file
 }
 

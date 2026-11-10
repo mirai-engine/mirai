@@ -29,7 +29,7 @@ cache_folder :: proc(root,name:string,allocator:=context.allocator) -> string {
 // The Odin compiler pinned under the deps of root, when it is there.
 deps_compiler :: proc(root:string,allocator:=context.allocator) -> (path:string,found:bool) {
     deps:=deps_folder(root,context.temp_allocator)
-    executable:=strings.concatenate({"odin",EXECUTABLE_SUFFIX},context.temp_allocator)
+    executable:=strings.concatenate({"odin",project.EXECUTABLE_SUFFIX},context.temp_allocator)
     for folder in ([3]string{"odin/dist","linux-amd64/odin","odin"}) {
         candidate:=join(deps,folder,executable)
         if os.is_file(candidate) {return slashes(candidate,allocator),true}
@@ -244,13 +244,8 @@ build_folders_acquire :: proc(lock:^Lock,root,what:string,notice:proc(holder:str
     }
     take(lock,root,what,notice)
     for folder in also {
-        if !path_same(folder,root) {take(lock,folder,what,notice)}
+        if !project.path_same(folder,root) {take(lock,folder,what,notice)}
     }
-}
-
-@(private)
-path_same :: proc(a,b:string) -> bool {
-    return strings.equal_fold(slashes(a,context.temp_allocator),slashes(b,context.temp_allocator))
 }
 
 @(private)
@@ -368,9 +363,6 @@ measure_try :: proc(root,what:string,wait:=time.Duration(0),part_of:="") -> (loc
 builds_wait :: proc(root:string,notice:proc(holder:string)=nil) {
     for path in build_paths(root) {lock_wait(path,notice)}
 }
-
-@(private)
-EXECUTABLE_SUFFIX :: ".exe" when ODIN_OS==.Windows else ""
 
 @(private)
 join :: proc(parts:..string) -> string {

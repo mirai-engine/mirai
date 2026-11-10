@@ -319,7 +319,7 @@ session_reusable :: proc(root,folder:string,mode:Build_Mode,file:api.Port_File,c
     paths:=build.engine_paths(root,engine,context.temp_allocator)
     stale:string
     switch {
-    case !path_same(file.engine,paths.folder): stale=fmt.tprintf("runs the binaries of %s, not those of %s",file.engine,paths.folder)
+    case !project.path_same(file.engine,paths.folder): stale=fmt.tprintf("runs the binaries of %s, not those of %s",file.engine,paths.folder)
     case file.stamp!=build.engine_stamp_of(paths.folder,context.temp_allocator): stale="runs engine binaries older than the last build"
     case !build.engine_current(root,engine): stale="runs an engine whose sources changed afterwards"
     case file.library!=build.target_stamp_of(folder,.Editor,context.temp_allocator): stale="runs a project library older than the last one built"
@@ -524,7 +524,7 @@ session_copy_editor :: proc(copy:string,pid:int) -> bool {
     info,error:=os.process_info_by_pid(pid,{.Command_Args,.Working_Dir},context.temp_allocator)
     if error!=nil || .Command_Args not_in info.fields {return true}
     opened,_:=engine_arguments(info.command_args,info.working_dir)
-    return path_same(opened,copy)
+    return project.path_same(opened,copy)
 }
 
 // The editor arguments of a headless session: a free API port, never api.DEFAULT_PORT, which
@@ -560,7 +560,7 @@ session_copy_remove :: proc(copy,command:string) -> bool {
 path_inside :: proc(path,folder:string) -> bool {
     p,_:=strings.replace_all(path,"\\","/",context.temp_allocator)
     f,_:=strings.replace_all(strings.trim_right(folder,"/\\"),"\\","/",context.temp_allocator)
-    return len(f)>0 && len(p)>len(f) && p[len(f)]=='/' && path_same(p[:len(f)],f)
+    return len(f)>0 && len(p)>len(f) && p[len(f)]=='/' && project.path_same(p[:len(f)],f)
 }
 
 @(private="file")
@@ -644,7 +644,7 @@ session_stop_orphans :: proc(root,folder:string) -> int {
     closed,kept,failed:=0,0,0
     for p in engine_processes(engine_folder(root)) {
         if !program_is_editor(p.program) || engine_process_role(p)!=.Orphan {continue}
-        if folder!="" && !path_same(p.project,folder) {continue}
+        if folder!="" && !project.path_same(p.project,folder) {continue}
         if !p.headless {
             kept+=1
             fmt.eprintfln("mirai session: not closing %s",engine_process_text(p,.Orphan))
@@ -787,7 +787,7 @@ engine_release :: proc(root,folder:string,mode:Build_Mode,command:string) -> (cl
     session:=0
     for p,i in running {
         roles[i]=engine_process_role(p)
-        if roles[i]==.Session && folder!="" && path_same(p.project,folder) {session=p.pid}
+        if roles[i]==.Session && folder!="" && project.path_same(p.project,folder) {session=p.pid}
     }
     others:=0
     for p,i in running {

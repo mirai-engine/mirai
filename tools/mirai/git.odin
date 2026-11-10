@@ -35,7 +35,7 @@ doctor_git :: proc(errors:^int,root,folder:string,said:="") -> (repository:strin
     state:build.Git_Wiring
     stale:bool
     state,repository,stale=build.git_wiring(root,folder)
-    if said!="" && path_same(repository,said) {return}
+    if said!="" && project.path_same(repository,said) {return}
     if stale {fmt.printfln("  warn   the .gitattributes of %s lacks the line of a kind of asset of the engine or of its plugins -> mirai setup git %s",repository,folder)}
     switch state {
     case .None:

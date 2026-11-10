@@ -1086,7 +1086,7 @@ create_pipelines :: proc(r: ^Renderer) -> bool {
 	for &item, i in list.items[:list.count] {
 		if !pipeline_possible(info, item) {continue}
 		for id in item.shaders[:2 if item.graphics else 1] {
-			item.cost += len(r.shader_codes[id].msl) when ODIN_OS == .Darwin else len(r.shader_codes[id].spirv)
+			item.cost += len(rhi.shader_code_bytes(r.shader_codes[id]))
 		}
 		at := work.count
 		for at > 0 && list.items[work.order[at - 1]].cost < item.cost {

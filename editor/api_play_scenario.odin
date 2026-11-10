@@ -312,8 +312,7 @@ api_scenario_steps :: proc(s:^Session,call:^api.Call,sc:^Scenario,out:^serial.Wr
         target:=scene_file(s,sc.scene)
         if target=="" {return fmt.bprintf(buffer,"scene: %q is not a path of a file",sc.scene),0}
         if !os.is_file(target) {return fmt.bprintf(buffer,"scene: %s is not there",target),0}
-        when ODIN_OS==.Windows {same:=strings.equal_fold(target,document_file(s.document))} else {same:=target==document_file(s.document)}
-        if !same {
+        if !project.path_same(target,document_file(s.document)) {
             switch {
             case owner!=0:
                 return fmt.bprintf(buffer,"scene: the scenario plays %s and the document is %s; a turn does not open another scene: run it with mirai play test, or ask the user to open that scene",sc.scene,document_path(s.document)),0

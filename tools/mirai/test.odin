@@ -248,7 +248,7 @@ test_file_take :: proc(root,arg:string,packages:^[dynamic]Test_Package) -> bool 
         if !os.is_absolute_path(candidate) || !os.is_file(candidate) {continue}
         folder:=project.path_absolute(os.dir(candidate))
         file:=os.base(candidate)
-        if n:=len(packages);n>0 && path_same(packages[n-1].folder,folder) && packages[n-1].file=="" {
+        if n:=len(packages);n>0 && project.path_same(packages[n-1].folder,folder) && packages[n-1].file=="" {
             packages[n-1].file=file
             return true
         }
@@ -329,7 +329,7 @@ test_names_check :: proc(root:string,packages:[]Test_Package,failed_only:bool) -
 // The executable of the tests of a package: bin/tests/<test_name>.
 @(private="file")
 test_executable :: proc(root,folder:string) -> string {
-    return join(root,"bin","tests",fmt.aprintf("%s%s",test_name(root,folder),EXE))
+    return join(root,"bin","tests",fmt.aprintf("%s%s",test_name(root,folder),project.EXECUTABLE_SUFFIX))
 }
 
 // The flag that gives the threads of a test executable the stack of the system with the most:
@@ -359,7 +359,7 @@ test_build :: proc(root,path,folder,executable,optimization:string,flags:[]strin
     for argument in command {fmt.sbprintln(&key,argument)}
     if info,error:=os.stat(command[0],context.temp_allocator);error==nil {fmt.sbprintf(&key,"%d %v",info.size,info.modification_time)}
     if test_current(root,folder,executable,sources,stamp,strings.to_string(key)) {return true}
-    staging:=join(root,"bin","tests",fmt.aprintf(".%s-build-%d%s",name,os.get_pid(),EXE))
+    staging:=join(root,"bin","tests",fmt.aprintf(".%s-build-%d%s",name,os.get_pid(),project.EXECUTABLE_SUFFIX))
     staged_sources:=fmt.aprintf("%s.sources.json",staging)
     append(&command,fmt.aprintf("-out:%s",staging),"-export-dependencies:json",fmt.aprintf("-export-dependencies-file:%s",staged_sources))
     {
@@ -501,7 +501,7 @@ project_of :: proc(folder:string) -> string {
 path_inside :: proc(path,folder:string) -> bool {
     a:=project.path_absolute(path,context.temp_allocator)
     b:=strings.trim_right(project.path_absolute(folder,context.temp_allocator),"/")
-    return len(a)>len(b) && a[len(b)]=='/' && path_same(a[:len(b)],b)
+    return len(a)>len(b) && a[len(b)]=='/' && project.path_same(a[:len(b)],b)
 }
 
 // The sources of a package of an engine plugin, its tests among them, import

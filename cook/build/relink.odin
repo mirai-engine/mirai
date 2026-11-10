@@ -238,7 +238,7 @@ link_record_write :: proc(file:string,record:Link_Record) {
         _=os.remove(file)
         return
     }
-    if had && !path_equal(previous.folder,record.folder) {remove_later({previous.folder})}
+    if had && !project.path_same(previous.folder,record.folder) {remove_later({previous.folder})}
 }
 
 // Removes the record and the objects it names: what a compile that failed,
