@@ -134,10 +134,7 @@ scene_open :: proc(s:^Session,path:string) -> Document_Error {
     defer host.load_ready(s.app,.Scene,core.world_entities(edited_world(s)).alive)
     defer host.load_phase_end(s.app,opening)
     d:=s.document
-    if document_file(d)!=file {
-        ai_document_closed(s,s.edit_world)
-        if s.ai!=nil {s.ai.pending=false}
-    }
+    if document_file(d)!=file {ai_document_closed(s,s.edit_world)}
     document_previous_free(d)
     d.previous=loaded
     d.id=loaded.doc.id
@@ -158,7 +155,6 @@ scene_new :: proc(s:^Session) {
         return
     }
     ai_document_closed(s,s.edit_world)
-    if s.ai!=nil {s.ai.pending=false}
     sky:=entity_make(s,w,{preset=.Empty,name="Sky",named=true})
     if t:=core.world_table_of(w,erender.Sky);t!=nil && sky!=core.NONE {core.add(t,sky,erender.SKY_DEFAULT)}
     entity_make(s,w,{preset=.Sun,name="Sun",named=true})
@@ -589,7 +585,7 @@ document_opened :: proc(s:^Session) {
     document_source_stamp(s)
     // What Play will play compresses meanwhile.
     play_animations_load(s,wait=false)
-    if s.ai!=nil {for &task in s.ai.tasks[:s.ai.task_count] {ai_review_reconcile(s,s.ai,&task)}}
+    ai_reviews_reconcile(s,s.ai)
     // A scene a merge waits for shows the choices made.
     if s.git!=nil && s.git.merge.loaded {git_merge_preview(s)}
 }
