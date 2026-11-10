@@ -15,7 +15,8 @@
 #include "probe_light.slang"
 // A pass with the maps of the view (SUN_SHADOW_SLOT and SHADOW_DATA_SLOT) that
 // takes the shadows of direct_lighting from them where they hold the point,
-// and traces the rays only where they do not.
+// and traces the rays only where they do not; with SHADOW_TINT_SLOT, the glass
+// on the way from the tint the maps keep of it.
 #ifdef MIRAI_LIGHT_MAPS
 #include "shadow_maps.slang"
 #endif
@@ -818,6 +819,10 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_A
             reach = scene_reach(origin, direction);
 #ifdef MIRAI_LIGHT_MAPS
             mapped = sun_shadow_seen(s.position, s.normal);
+#ifdef SHADOW_TINT_SLOT
+            Shadow_Map tinted;
+            if (mapped > 0.0 && sun_map_of(s.position, tinted)) radiance *= shadow_tint(tinted, s.position);
+#endif
 #endif
         } else if (item <= local_items) {
             Light_Node node = light_nodes[cut[item - 1u]];
@@ -842,6 +847,10 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_A
             reach = light_reach(aimed, distance);
 #ifdef MIRAI_LIGHT_MAPS
             mapped = light_shadow_seen(node.child, s.position, s.normal, light_extent(aimed));
+#ifdef SHADOW_TINT_SLOT
+            Shadow_Map tinted;
+            if (mapped > 0.0 && light_map_of(node.child, s.position, tinted)) radiance *= shadow_tint(tinted, s.position);
+#endif
 #endif
         }
 #ifdef MIRAI_HOOK_LIGHTS

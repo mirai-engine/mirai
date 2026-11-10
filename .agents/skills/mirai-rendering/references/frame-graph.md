@@ -80,7 +80,7 @@ or interleave its own passes.
      `reference_lights` is the same passes with many samples, without maps or half
      resolution.
 6. **reflect**: the pixels smoother than `reflection_roughness` trace a ray from their lobe and a
-   second pass filters in space and time; it is omitted while no material of the table can go
+   second pass filters the rays of the frame; it is omitted while no material of the table can go
    below that limit ([traced reflections](materials.md#traced-reflections)).
 7. **ddgi**: with indirect light, in the first window view, the
    [probe volume](gi.md#probe-volume) marks the probes that scene changes reach and those that

@@ -101,7 +101,7 @@ DEFAULT_SETTINGS :: Settings{
 	gi_max_distance = 1e4, light_budget = 8, direct_samples = 15, shadow_maps = true,
 	firefly_clamp = 20, texture_max_size = 2048,
 	texture_compression = true, texture_pool_megabytes = 1024, page_pool_bytes = 256 << 20,
-	reflections = true, reflection_roughness = 0.4, reflection_half_resolution = true, reflection_light_budget = 8,
+	reflections = true, reflection_roughness = 0.3, reflection_half_resolution = true, reflection_light_budget = 8,
 	reflection_detail_roughness = REFLECTION_SHARED_ROUGHNESS, glass_layers = 1,
 	sun_radius = SUN_RADIUS,
 }
@@ -123,7 +123,7 @@ CPU_DEVICE_SETTINGS :: Settings{
 	gi_max_distance = 1e4, light_budget = 4, direct_samples = 7,
 	firefly_clamp = 20, texture_max_size = 1024,
 	texture_compression = true, texture_pool_megabytes = 256, page_pool_bytes = 128 << 20,
-	reflections = false, reflection_roughness = 0.4, reflection_half_resolution = true, reflection_light_budget = 4,
+	reflections = false, reflection_roughness = 0.3, reflection_half_resolution = true, reflection_light_budget = 4,
 	glass_layers = 1,
 	sun_radius = SUN_RADIUS,
 }
@@ -324,8 +324,7 @@ Targets :: struct {
 	direct:                  rhi.Texture,
 	reflect_raw:             rhi.Texture, // radiance and hit distance of this frame's reflection rays
 	reflect_shared:          rhi.Texture, // the same at half resolution: the rays that blocks of 2x2 pixels share
-	reflect_history:         [2]rhi.Texture,
-	reflect_valid:           bool,
+	reflections:             rhi.Texture, // the traced reflections of the frame, filtered
 	hdr:                     [2]rhi.Texture,
 	display:                 rhi.Texture, // composite output shown by tonemap (debug views)
 	taa:                     [2]rhi.Texture, // output-resolution history
@@ -359,7 +358,7 @@ Targets :: struct {
 	glass:                   [GLASS_LAYERS_MAX]Glass_Layer,
 	glass_zbuffer:           rhi.Texture,
 	glass_scene:             rhi.Texture, // copy of the scene a glass layer is drawn over, for the layer to read
-	glass_history:           [2]rhi.Texture, // filtered reflections of the nearest layer
+	glass_reflections:       rhi.Texture, // the traced reflections of the nearest layer of glass, filtered
 	glass_valid:             bool,
 	glass_needs_clear:       bool,
 	direct_blockers:         rhi.Texture, // what stopped the ray each pixel traced for its direct light (direct_rays.comp)
@@ -505,7 +504,7 @@ view_camera_cut :: proc(v:^View_State) {
     v.exposure_generation+=1
     v.prev_jitter={}
     t:=&v.targets
-    t.taa_valid,t.reflect_valid,t.gi_reference_valid=false,false,false
+    t.taa_valid,t.gi_reference_valid=false,false
     t.glass_valid,t.hiz_valid=false,false
 }
 
@@ -1352,7 +1351,7 @@ renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
 	r.textures.residency.stale = true
 	if old.reference_gi != settings.reference_gi {r.targets.gi_reference_valid = false}
 	if old.colored_shadows != settings.colored_shadows || old.reflection_light_budget != settings.reflection_light_budget || old.reflection_detail_roughness != settings.reflection_detail_roughness {
-		r.targets.reflect_valid, r.targets.gi_reference_valid, r.targets.taa_valid = false, false, false
+		r.targets.gi_reference_valid, r.targets.taa_valid = false, false
 		r.targets.glass_valid = false
 		if old.colored_shadows != settings.colored_shadows {ddgi_release(r)}
 	}
@@ -1435,7 +1434,7 @@ highlight_style_valid :: proc(style: Highlight_Style) -> bool {
 destroy_targets :: proc(r: ^Renderer, t: ^Targets) {
 	d := r.device
 	textures := []rhi.Texture{
-		t.depth, t.albedo, t.surface, t.layers, t.instance, t.post_hdr[0],t.post_hdr[1],t.post_ldr[0],t.post_ldr[1],t.normal, t.emission, t.motion, t.linear_depth, t.direct, t.reflect_raw, t.reflect_shared, t.reflect_history[0], t.reflect_history[1], t.hdr[0], t.hdr[1], t.display, t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.hiz[0], t.hiz[1], t.ldr, t.generated,
+		t.depth, t.albedo, t.surface, t.layers, t.instance, t.post_hdr[0],t.post_hdr[1],t.post_ldr[0],t.post_ldr[1],t.normal, t.emission, t.motion, t.linear_depth, t.direct, t.reflect_raw, t.reflect_shared, t.reflections, t.hdr[0], t.hdr[1], t.display, t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.hiz[0], t.hiz[1], t.ldr, t.generated,
 		t.highlight, t.highlight_depth, t.highlight_filtered, t.gi_reference,
 		t.reactive, t.nested_depth, t.aerial,
 	}
@@ -1542,8 +1541,7 @@ ensure_reflect_targets :: proc(r: ^Renderer, cmd: ^rhi.Command_List, t: ^Targets
 	if t.reflect_raw != 0 {return true}
 	ok := target(r, cmd, &t.reflect_raw, t.width, t.height, .RGBA16_Float, {.Sampled, .Storage}, "reflection rays")
 	ok &&= target(r, cmd, &t.reflect_shared, t.half_width, t.half_height, .RGBA16_Float, HISTORY_USAGE, "shared reflection rays")
-	for i in 0 ..< 2 {ok &&= target(r, cmd, &t.reflect_history[i], t.width, t.height, .RGBA16_Float, HISTORY_USAGE, "reflection history", true)}
-	t.reflect_valid = false
+	ok &&= target(r, cmd, &t.reflections, t.width, t.height, .RGBA16_Float, HISTORY_USAGE, "reflections", true)
 	return ok
 }
 

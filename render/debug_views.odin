@@ -84,7 +84,7 @@ debug_views_pass :: proc(p: ^Pass) {
 	source := r.dummy_texture
 	#partial switch mode {
 	case .Shadows:             source = texture_or_dummy(r, t.direct_points)
-	case .Reflections:         if p.use_reflections {source = texture_or_dummy(r, t.reflect_history[p.current])}
+	case .Reflections:         if p.use_reflections {source = texture_or_dummy(r, t.reflections)}
 	case .Reflections_Raw:     if p.use_reflections {source = texture_or_dummy(r, t.reflect_raw)}
 	}
 	rhi.cmd_timestamp(cmd, "debug view")

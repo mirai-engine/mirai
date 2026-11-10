@@ -266,6 +266,17 @@ float reflection_weight(float roughness) {
     return limit > 0.0 ? 1.0 - smoothstep(limit * 0.5, limit, roughness) : 0.0;
 }
 
+// The pattern of the traced reflections: each cell of a tile of
+// REFLECT_PATTERN x REFLECT_PATTERN traces its own stratum of the lobe,
+// neighbours far apart in it, so that a filter over a tile takes every stratum
+// once (reflect_resolve.comp), and the same one every frame.
+#define REFLECT_PATTERN 4
+static const uint REFLECT_PATTERN_RANKS[16] = {0u, 8u, 2u, 10u, 12u, 4u, 14u, 6u, 3u, 11u, 1u, 9u, 15u, 7u, 13u, 5u};
+float2 reflect_pattern_stratum(int2 cell) {
+    uint rank = REFLECT_PATTERN_RANKS[(cell.y & 3) * 4 + (cell.x & 3)];
+    return (float2(float(rank & 3u), float(rank >> 2u)) + 0.5) / 4.0;
+}
+
 // The pixel of a block of `block` x `block` (a power of two) that traces the
 // block's ray this frame. Every pixel takes its turn, and turns that follow
 // each other fall in different quarters of the block.
@@ -278,6 +289,12 @@ int2 block_pixel(uint frame_index, uint block) {
         i >>= 2u;
     }
     return p;
+}
+
+// The pixel of a block of 2x2 that traces the reflection of a cell: always the
+// same one, scattered over the cells.
+int2 reflect_block_pixel(int2 cell) {
+    return block_pixel(hash_u32(uint(cell.x) * 73856093u ^ uint(cell.y) * 19349663u), 2u);
 }
 
 // ---------------------------------------------------------------- instances of batches
@@ -863,6 +880,13 @@ float3 material_absorption(Material m, float path) {
 // How far into a solid of the material its clearest color still lets
 // SOLID_CLEAR of the light through: what lies farther in does not show.
 #define SOLID_CLEAR 0.002
+// How far into a solid of the material its clearest color lets `share` of the light through.
+float material_reach(Material m, float share) {
+    float clearest = max(m.attenuation_color.r, max(m.attenuation_color.g, m.attenuation_color.b));
+    if (!(m.attenuation_distance > 0.0) || clearest >= 0.999) return FLT_MAX;
+    return m.attenuation_distance * log(share) / log(max(clearest, 1e-4));
+}
+
 float material_clear_reach(Material m) {
     float clearest = max(m.attenuation_color.r, max(m.attenuation_color.g, m.attenuation_color.b));
     if (!(m.attenuation_distance > 0.0) || clearest >= 0.999) return FLT_MAX;

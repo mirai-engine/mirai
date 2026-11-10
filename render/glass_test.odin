@@ -668,7 +668,7 @@ glass_frames_stay_allocation_free :: proc(t: ^testing.T) {
 	scene_set(r, instances, []Light_Desc{{position = {1, 3, 1}, color = {1, 1, 1}, intensity = 8 * math.PI, range = 10}}, SUN, {})
 	camera := Camera{position = {0, 5, 0.5}, forward = {0, -5, -0.5}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for _ in 0 ..< 4 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
-	targets := [3]rhi.Texture{r.targets.glass_scene, r.targets.glass[1].depth, r.targets.glass_history[0]}
+	targets := [3]rhi.Texture{r.targets.glass_scene, r.targets.glass[1].depth, r.targets.glass_reflections}
 	testing.expect(t, targets[0] != 0 && targets[1] != 0 && targets[2] != 0, "both layers have their targets")
 	tracking: mem.Tracking_Allocator
 	mem.tracking_allocator_init(&tracking, context.allocator)
@@ -678,7 +678,7 @@ glass_frames_stay_allocation_free :: proc(t: ^testing.T) {
 		for _ in 0 ..< 8 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	}
 	testing.expect_value(t, tracking.total_allocation_count, 0)
-	testing.expect_value(t, [3]rhi.Texture{r.targets.glass_scene, r.targets.glass[1].depth, r.targets.glass_history[0]}, targets)
+	testing.expect_value(t, [3]rhi.Texture{r.targets.glass_scene, r.targets.glass[1].depth, r.targets.glass_reflections}, targets)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 

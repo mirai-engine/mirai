@@ -279,14 +279,13 @@ highlight_screen_bounds :: proc(instances: []Gpu_Instance, view_projection: Mat4
 }
 
 // Traces one ray of the specular lobe of the surfaces of a G-buffer that are
-// smooth enough and filters the result over space and time. lit receives the
-// direct light plus those reflections, and the current history their radiance.
-// shared_from is the roughness from which a block of 2x2 pixels shares a ray;
-// a pixel that reflects less than cached_below of what its ray finds lights
-// the hit from the probe volume. For a layer of glass the pass runs with the
-// dispatch sizes of the cull pass and keeps the history alone.
+// smooth enough and filters the rays of the frame into filtered: their
+// radiance. shared_from is the roughness from which a block of 2x2 pixels
+// shares a ray; a pixel that reflects less than cached_below of what its ray
+// finds lights the hit from the probe volume. For a layer of glass the pass
+// runs with the dispatch sizes of the cull pass.
 @(private)
-reflect_pass :: proc(p: ^Pass, normal, depth, albedo, history_previous, history_current: rhi.Texture, history_valid, stored_reflectance: bool, shared_from: f32, cached_below: f32 = 0, glass := false) {
+reflect_pass :: proc(p: ^Pass, normal, depth, albedo, filtered: rhi.Texture, stored_reflectance: bool, shared_from: f32, cached_below: f32 = 0, glass := false) {
 	run :: proc(p: ^Pass, glass, half: bool, x, y: u32) {
 		if glass {
 			rhi.cmd_dispatch_indirect(p.cmd, p.view.glass_dispatch, u64(offset_of(Gpu_Glass_Dispatch, half)) if half else 0)
@@ -294,7 +293,7 @@ reflect_pass :: proc(p: ^Pass, normal, depth, albedo, history_previous, history_
 			rhi.cmd_dispatch(p.cmd, x, y)
 		}
 	}
-	Params :: struct {light_budget: u32, max_distance, firefly_clamp, pixel_spread: f32, block: u32, roughness_from, roughness_to, cached_below, detail_below: f32, stored_reflectance, material_roughness: u32, faint_below: f32, resume, medium, pad1, pad2: u32}
+	Params :: struct {light_budget: u32, max_distance, firefly_clamp, pixel_spread: f32, block: u32, roughness_from, roughness_to, cached_below, detail_below: f32, stored_reflectance, material_roughness, pad0, resume, medium, pad1, pad2: u32}
 	// The rays of a size of block, then what waits for the programs of what they hit.
 	trace :: proc(p: ^Pass, pipeline: rhi.Pipeline, params: ^Params, glass, half: bool, x, y: u32) {
 		batch := points_begin(p)
@@ -327,8 +326,7 @@ reflect_pass :: proc(p: ^Pass, normal, depth, albedo, history_previous, history_
 	params.material_roughness = 0 if glass else 1
 	// The exit faces of the solid the camera is in reflect inside it.
 	params.medium = p.glass_medium if glass else 0
-	// Until the filter has a past to keep, every turn traces.
-	params.faint_below = GLASS_FAINT_REFLECTANCE if glass && history_valid else 0
+	bind_light_maps(p, p.frame.sun_maps.z != 0)
 	// A layer of glass always keeps what it reflects.
 	params.stored_reflectance = 1 if stored_reflectance else 0
 	if s.smoothest < split {
@@ -344,22 +342,29 @@ reflect_pass :: proc(p: ^Pass, normal, depth, albedo, history_previous, history_
 		trace(p, pipeline, &params, glass, true, groups(t.half_width, 8), groups(t.half_height, 8))
 	}
 
-	Resolve :: struct {history_valid, max_radius, blend, shared_from: f32}
-	// The disc keeps its size on screen at any resolution, down to the few
-	// pixels a filter needs to have neighbours at all.
-	resolve := Resolve{history_valid = 1 if history_valid else 0, max_radius = max(7 * f32(t.height) / 900, 3), blend = 0.08, shared_from = split}
+	Resolve :: struct {shared_from, pad0, pad1, pad2: f32}
+	resolve := Resolve{shared_from = split}
 	rhi.cmd_timestamp(cmd, "glass reflect resolve" if glass else "reflect resolve")
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Reflect_Resolve_Glass if glass else .Reflect_Resolve])
 	set_params(cmd, &resolve)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.reflect_raw)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS2, depth)
-	if glass {rhi.cmd_bind_buffer(cmd, SLOT_PASS4, p.view.glass_seen)}
-	rhi.cmd_bind_texture(cmd, SLOT_PASS5, history_previous)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.motion)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS8, history_current)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS8, filtered)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS9, t.reflect_shared)
 	run(p, glass, false, groups(t.width, 8), groups(t.height, 8))
+}
+
+// The maps of the view for a pass that lights hits with MIRAI_LIGHT_MAPS of
+// lighting.slang (SUN_SHADOW_SLOT, SHADOW_TINT_SLOT, SHADOW_DATA_SLOT); the
+// dummies when the view drew none.
+@(private)
+bind_light_maps :: proc(p: ^Pass, maps: bool) {
+	r, cmd, t := p.r, p.cmd, p.t
+	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.shadow_atlas if maps else r.dummy_texture)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.shadow_tint if maps && p.frame.sun_maps.w != 0 else r.dummy_texture)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS8, t.shadow_buffers.table if maps else r.dummy_buffer)
 }
 
 // Farthest-depth mip chain of the linear depth target.
@@ -608,7 +613,7 @@ histories_rescale :: proc(r: ^Renderer, cmd: ^rhi.Command_List) {
 	for view in views_all(r) {
 		t := &view.targets
 		for i in 0 ..< 2 {
-			for texture in ([?]rhi.Texture{t.taa[i], t.hdr[i], t.reflect_history[i], t.glass_history[i]}) {scale(r, cmd, texture)}
+			for texture in ([?]rhi.Texture{t.taa[i], t.hdr[i]}) {scale(r, cmd, texture)}
 		}
 	}
 }
@@ -828,7 +833,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 		t.needs_clear = false
 	}
 	if t.glass_needs_clear {
-		clear_textures(cmd, t.glass_history[0], t.glass_history[1])
+		clear_textures(cmd, t.glass_reflections)
 		t.glass_needs_clear = false
 	}
 	bind_scene_table(p)
@@ -1385,15 +1390,11 @@ pass_direct :: proc(p: ^Pass) -> bool {
 @(private)
 pass_reflections :: proc(p: ^Pass) -> bool {
 	r, cmd, t := p.r, p.cmd, p.t
-	if !p.use_reflections {
-		t.reflect_valid = false
-		return true
-	}
+	if !p.use_reflections {return true}
 	if !ensure_reflect_targets(r, cmd, t) {return false}
 	rhi.cmd_timestamp(cmd, "reflect")
-	reflect_pass(p, t.normal, t.linear_depth, t.albedo, t.reflect_history[p.previous], t.reflect_history[p.current], t.reflect_valid, p.reflectance, REFLECTION_SHARED_ROUGHNESS)
-	p.reflections = t.reflect_history[p.current]
-	t.reflect_valid = true
+	reflect_pass(p, t.normal, t.linear_depth, t.albedo, t.reflections, p.reflectance, REFLECTION_SHARED_ROUGHNESS)
+	p.reflections = t.reflections
 	return true
 }
 

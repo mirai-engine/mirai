@@ -19,7 +19,13 @@
 //
 // The pass runs once per size of block: with a block of 1 every pixel of its
 // roughness range traces; with a block of 2 one pixel of each 2x2 traces for
-// the four, a different one every frame.
+// the four. A cell takes the stratum of the lobe of its place in a fixed
+// pattern (reflect_pattern_stratum), and the pixel of its block, always the
+// same: what a frame shows depends on that frame alone (reflect_resolve.comp).
+//
+// The lights of a hit take their shadows from the maps of the view where these
+// hold it, and the glass on the way from the tint the maps keep of it; the
+// others trace their shadow rays.
 //
 // A reflection sharp enough for it to show (params.detail_below) also has the
 // glass its ray crosses, as the color filter it is, and the gloss of what it
@@ -32,6 +38,10 @@
 #define MIRAI_RAY_FILTERS
 #define POINTS_SLOT SLOT_POINTS
 #define MIRAI_DEFER_FILTERS
+#define MIRAI_LIGHT_MAPS
+#define SUN_SHADOW_SLOT SLOT_PASS5
+#define SHADOW_TINT_SLOT SLOT_PASS7
+#define SHADOW_DATA_SLOT SLOT_PASS8
 #include "lighting.slang"
 #include "glass.slang"
 #include <extension_hooks.slang>
@@ -44,10 +54,14 @@
 // reflects a few percent away from grazing angles). material_roughness: the
 // roughness by which a pixel decides how to trace is the one of its material
 // (g_motion.b) rather than the one specular antialiasing widened (a layer of
-// glass has only the latter). faint_below: a reflection this faint (glass
-// seen face on) traces one turn of its block in four. resume: a thread for
-// each head of the round of the batch, instead of each cell.
-struct Params_Block { uint light_budget; float max_distance; float firefly_clamp; float pixel_spread; uint block; float roughness_from; float roughness_to; float cached_below; float detail_below; uint stored_reflectance; uint material_roughness; float faint_below; uint resume; uint medium; uint pad1; uint pad2; };
+// glass has only the latter). resume: a thread for each head of the round of
+// the batch, instead of each cell. medium: the instance plus one of the solid
+// the camera is in, 0 none.
+struct Params_Block { uint light_budget; float max_distance; float firefly_clamp; float pixel_spread; uint block; float roughness_from; float roughness_to; float cached_below; float detail_below; uint stored_reflectance; uint material_roughness; uint pad0; uint resume; uint medium; uint pad1; uint pad2; };
+
+// A reflection inside the solid the camera is in ends where the solid lets
+// this share of its light through: past it, what the ray would meet does not show.
+#define REFLECT_MEDIUM_CUT 0.02
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 #define GBUFFER_NORMAL SLOT_PASS0
 #define GBUFFER_ALBEDO SLOT_PASS3
@@ -99,7 +113,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         int2 size = int2(frame.resolution);
         int2 p = cell * int(params.block);
         if (any(((p) >= (size)))) return;
-        if (params.block > 1u) p = min(p + block_pixel(frame.frame_index, 2u), size - 1);
+        if (params.block > 1u) p = min(p + reflect_block_pixel(cell), size - 1);
         float depth = g_depth.Load(int3(p, 0)).r;
         // A layer of glass always keeps its reflectance; the opaque G-buffer, when the scene needs it.
         Gbuffer_Pixel g = gbuffer_read(p, params.stored_reflectance != 0u);
@@ -116,7 +130,6 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         bool coat = (g.bits & GBUFFER_TRACE_COAT) != 0u;
         float3 n = coat ? g.layers.coat_normal : g.normal;
         float widened = coat ? g.layers.coat_roughness : g.roughness;
-        uint seed = seed_for(uint2(p), frame.frame_index, 17u);
         float3 dir = reflect(view, n);
         if (roughness > MIRROR_ROUGHNESS) {
             float3 t, b;
@@ -131,7 +144,8 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
             } else {
                 make_basis(n, t, b);
             }
-            float2 u = float2(random01(seed) * (1.0 - LOBE_TAIL_CUT), random01(seed));
+            float2 u = reflect_pattern_stratum(cell);
+            u.x *= 1.0 - LOBE_TAIL_CUT;
             float3 h = sample_visible_normal(float3(dot(-view, t), dot(-view, b), dot(-view, n)), alpha, u);
             float3 sampled = reflect(view, normalize(t * h.x + b * h.y + n * h.z));
             if (dot(sampled, n) > 0.0) dir = sampled;
@@ -150,27 +164,27 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         // it, all of it beyond the critical angle: a whole reflection, through the solid.
         bool inside = (g.bits & GBUFFER_GLASS_EXIT) != 0u && params.medium != 0u;
         if (inside) reflectance = 1.0;
-        // A reflection this faint shows little and changes little: its block
-        // traces four frames in sixteen, one pixel of it each, and the filter
-        // keeps what they found in between. The turn is the same for a whole
-        // group of threads, which skip it together.
-        if (reflectance < params.faint_below && ((frame.frame_index >> 2u) + hash_u32(group.x * 7919u + group.y)) % 4u != 0u) {
-            out_radiance[cell] = float4(0.0, 0.0, 0.0, -1.0);
-            return;
+        float reach = params.max_distance;
+        Material medium = (Material)0;
+        if (inside) {
+            medium = material_row(material_of(scene_instance(params.medium - 1u), 0u));
+            reach = min(reach, material_reach(medium, REFLECT_MEDIUM_CUT));
         }
         Ray_Path path;
-        Hit hit = trace_ray(origin, dir, 0.0, params.max_distance, false, path);
-        distance = hit.instance == INVALID ? params.max_distance : hit.t;
+        Hit hit = trace_ray(origin, dir, 0.0, reach, false, path);
+        distance = hit.instance == INVALID ? reach : hit.t;
+        // A ray that ended inside the solid before the scene did shows the solid alone.
+        bool ended = hit.instance == INVALID && reach < params.max_distance;
         float3 solid = float3(1.0);
         if (inside) {
-            Material medium = material_row(material_of(scene_instance(params.medium - 1u), 0u));
             solid = material_absorption(medium, distance);
             glow = solid_scatter(medium, params.medium - 1u, origin, dir, distance, SOLID_TOP_UNKNOWN);
         }
         // The glass the ray crosses on its way: with its detail in a sharp
         // reflection, up to the gate of an extension it leaves through, and as its
-        // mean in the others.
-        bool filtered = detailed && (frame.flags & FRAME_FLAG_GLASS) != 0u;
+        // mean in the others and in one reflected inside the solid the camera is
+        // in, whose way stays in the solid up to what it meets.
+        bool filtered = detailed && !inside && (frame.flags & FRAME_FLAG_GLASS) != 0u;
         if (filtered) {
             filters_begin();
             through = trace_glass_filter(origin, dir, path.gate >= 0.0 ? path.gate : distance);
@@ -180,7 +194,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         through *= solid;
         uint owner = uint(cell.x) | (uint(cell.y) << 16u);
         if (hit.instance == INVALID) {
-            float3 sky = sky_radiance(path.direction, roughness);
+            float3 sky = ended ? float3(0.0) : sky_radiance(path.direction, roughness);
             if (filtered) filters_weigh(sky);
             if (filter_chain != INVALID && head_append(point_head(INVALID, filter_chain, owner))) {
                 out_radiance[cell] = float4(finite_or_zero(sky * through + glow), distance);

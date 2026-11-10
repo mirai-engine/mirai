@@ -427,22 +427,21 @@ the pieces of a mesh, numbered in UV1, fly in with a turn as its `progress` goes
 - **Roughness that decides.** Which pixels trace, which share a ray, which see the detail and how
   much they yield to the probe volume is decided by the material's roughness, not the one widened
   by specular antialiasing, which only enlarges the ray footprint and the lobe energy.
-- **Sampling.** Each pixel chooses a direction of its GGX lobe with the VNDF, trimming the tail;
-  below `MIRROR_ROUGHNESS` it traces the mirror direction, without a spatial filter. At a sharp
-  hit (`Reflections.Detailed`), one ray to each light up to `reflection_light_budget`; above it,
-  groups of the [light tree](lights.md#local-lights). A rough reflection (`Reflections.Traced`)
-  takes the light of what it hits from the probe volume instead of lights and shadows.
-- **Half resolution.** From `REFLECTION_SHARED_ROUGHNESS` a 2×2 block shares a ray that each frame
-  traces a different pixel; `reflection_half_resolution` turns it off.
-- **Filters.** The spatial one weights samples of a disc that grows with the roughness by the
-  similarity of the source pixel. The temporal one looks up the history where the reflected point
-  was, according to its distance and the curvature of the neighboring normals (a normal map does
-  not count), and a rough reflection also where its surface was, never at an intermediate point.
-- The history is read only from the same surface. On a surface still on screen it is not clipped
-  against the frame's rays: few rays of a wide lobe say little, and the moving reflection of a
-  polished sphere must be the settled one. With motion it comes to stay close to the frame's rays,
-  like Lumen, because the place it was read from is a conjecture and a highlight carried there
-  leaves a trail (the foot of a wall on a polished floor).
+- **Sampling.** Each cell takes the direction of its GGX lobe (the VNDF, the tail trimmed) of the
+  stratum of its place in a fixed pattern of the screen, the same every frame; below
+  `MIRROR_ROUGHNESS` it traces the mirror direction. At a sharp hit (`Reflections.Detailed`), one
+  ray to each light up to `reflection_light_budget`; above it, groups of the
+  [light tree](lights.md#local-lights). A light the maps of the view hold takes its shadow from
+  them and the glass on the way from their tint, without a ray. A rough reflection
+  (`Reflections.Traced`) takes the light of what it hits from the probe volume instead of lights
+  and shadows.
+- **Half resolution.** From `REFLECTION_SHARED_ROUGHNESS` a 2×2 block shares a ray traced from one
+  of its pixels, always the same; `reflection_half_resolution` turns it off.
+- **Filter.** Only the rays of the frame, so that a reflection never depends on another frame. One
+  that is not a mirror is the mean of the cells over a tile of the pattern around the pixel, which
+  holds each stratum once; the tile slides with the pixel, and the cells count by how much the
+  pixel they were traced from resembles this one, the relief of a surface (waves) less than an
+  edge.
 - **Transition.** Between half of `reflection_roughness` and that limit, the traced reflection
   yields to that of the probe volume.
 - **Detail.** Below `reflection_detail_roughness` the reflection shows the glass that its ray
@@ -505,10 +504,10 @@ the pieces of a mesh, numbered in UV1, fly in with a turn as its `progress` goes
   front: they filter, absorb and do not refract, and layers are discarded by depth equality between
   two pipelines with the same vertex shader. Sun and local lights trace their shadow only if they
   would contribute more than a threshold.
-- **Reflection.** The first layer uses the reflections pass with its own history, one ray per 2×2
-  block at any roughness, and traces fewer turns where it reflects little
-  (`GLASS_FAINT_REFLECTANCE`); where it reflects little of what it sees, the hit and the surfaces
-  behind take their light from the probe volume.
+- **Reflection.** The first layer uses the reflections pass with its own target, one ray per 2×2
+  block at any roughness; where it reflects little of what it sees, the hit and the surfaces
+  behind take their light from the probe volume. Inside the solid the camera is in, a reflection
+  ends where the solid lets little of its light through.
 - **Rays.** A blend-only instance is the class `RAY_GLASS`: the rays that do not see the glass do
   not visit it.
 - **No glass in view.** If no blend instance touches the frustum, these passes are not recorded. If

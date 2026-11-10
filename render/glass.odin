@@ -15,7 +15,6 @@ GLASS_LAYERS_MAX :: 2
 GLASS_CACHED_REFLECTANCE :: f32(0.25)
 // Below this reflectance (glass seen within about 50 degrees of face on) a
 // reflection of glass traces one turn of its block in four.
-GLASS_FAINT_REFLECTANCE :: f32(0.06)
 
 Glass_Layer :: struct {
 	albedo:   rhi.Texture, // rgb base color, a metallic
@@ -73,10 +72,10 @@ ensure_glass_targets :: proc(r: ^Renderer, t: ^Targets) -> bool {
 	}
 	t.glass_zbuffer = full(d, t, .D32_Float, {.Depth_Target}, "glass z")
 	t.glass_scene = full(d, t, .RGBA16_Float, {.Sampled, .Storage, .Color_Target}, "glass scene")
-	for &history in t.glass_history {history = full(d, t, .RGBA16_Float, {.Sampled, .Storage, .Color_Target}, "glass reflection history")}
+	t.glass_reflections = full(d, t, .RGBA16_Float, {.Sampled, .Storage, .Color_Target}, "glass reflections")
 	t.glass_valid = false
 	t.glass_needs_clear = true
-	ok &&= t.glass_zbuffer != 0 && t.glass_scene != 0 && t.glass_history[0] != 0 && t.glass_history[1] != 0
+	ok &&= t.glass_zbuffer != 0 && t.glass_scene != 0 && t.glass_reflections != 0
 	if !ok {set_error(r, "glass targets: %s", rhi.device_error(d))}
 	return ok
 }
@@ -122,8 +121,8 @@ destroy_glass_targets :: proc(r: ^Renderer, t: ^Targets) {
 		for tex in ([]rhi.Texture{layer.albedo, layer.normal, layer.emission, layer.ids, layer.depth, layer.surface, layer.layers}) {if tex != 0 {rhi.texture_destroy(d, tex)}}
 		layer = {}
 	}
-	for tex in ([]rhi.Texture{t.glass_zbuffer, t.glass_scene, t.glass_history[0], t.glass_history[1]}) {if tex != 0 {rhi.texture_destroy(d, tex)}}
-	t.glass_zbuffer, t.glass_scene, t.glass_history = 0, 0, {}
+	for tex in ([]rhi.Texture{t.glass_zbuffer, t.glass_scene, t.glass_reflections}) {if tex != 0 {rhi.texture_destroy(d, tex)}}
+	t.glass_zbuffer, t.glass_scene, t.glass_reflections = 0, 0, 0
 	t.glass_valid = false
 }
 
@@ -236,7 +235,6 @@ glass_layers :: proc(p: ^Pass) {
 @(private)
 glass_shade :: proc(p: ^Pass, trace_reflections: bool) {
 	r, cmd, t, camera := p.r, p.cmd, p.t, p.camera
-	previous, current := p.previous, p.current
 	s := &r.scene
 	settings := &r.settings
 	layers := glass_layer_count(r)
@@ -273,7 +271,7 @@ glass_shade :: proc(p: ^Pass, trace_reflections: bool) {
 		glass_bind_layers(p, first)
 		// Glass reflects a few percent of what its ray finds: a ray per block
 		// of 2x2 pixels is enough at any roughness.
-		reflect_pass(p, first.normal, first.depth, first.albedo, t.glass_history[previous], t.glass_history[current], t.glass_valid, true, 0, GLASS_CACHED_REFLECTANCE, true)
+		reflect_pass(p, first.normal, first.depth, first.albedo, t.glass_reflections, true, 0, GLASS_CACHED_REFLECTANCE, true)
 		rhi.cmd_bind_texture(cmd, SLOT_SURFACE, t.surface if t.surface != 0 else r.dummy_texture)
 	}
 	t.glass_valid = traced
@@ -351,7 +349,7 @@ glass_layer_bind :: proc(p: ^Pass, k: int) {
 	rhi.cmd_bind_texture(cmd, SLOT_PASS2, layer.emission)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS3, layer.ids)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS4, layer.depth)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.glass_history[p.current])
+	rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.glass_reflections)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS8, t.linear_depth)
 }
 
