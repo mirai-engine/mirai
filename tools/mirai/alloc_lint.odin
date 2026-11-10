@@ -52,6 +52,9 @@ alloc_lint_package :: proc(folder:string) -> bool {
 @(private="file")
 alloc_fix :: proc(call:string) -> string {
     name:=call[:max(strings.index_byte(call,'('),0)]
+    if library_call(name)==.No_Error {
+        return fmt.tprintf("%s has no error to give: write the text with fmt.tprintf, or with fmt.bprintf in a buffer, and copy it with strings.clone, receiving its error.",name)
+    }
     if alloc_call(name)==.One_Result {
         return fmt.tprintf("Receive it and return the memory error of the package: `if %s(&x,n)!=nil {{return .Out_Of_Memory}}`; to only shorten the array, base.truncate.",name)
     }
@@ -71,6 +74,27 @@ alloc_call :: proc(name:string) -> Alloc_Call {
     case "new","new_clone","new_aligned": return .New
     case "make_slice","make_multi_pointer","make_dynamic_array_len","make_dynamic_array_len_cap","make_map_cap","make_soa","make_soa_slice","make_soa_dynamic_array_len","make_soa_dynamic_array_len_cap": return .Sized
     case "resize","reserve","non_zero_resize","non_zero_reserve","resize_soa","reserve_soa","non_zero_resize_soa","non_zero_reserve_soa": return .One_Result
+    }
+    return .None
+}
+
+// What a library procedure that copies gives back, by its package and name.
+// Copy: the copy and the allocator error. No_Error: the copy alone, so the
+// error is dropped whoever receives the result.
+@(private="file")
+Library_Call :: enum {None,Copy,No_Error}
+
+@(private="file")
+library_call :: proc(name:string) -> Library_Call {
+    switch name {
+    case "strings.clone","strings.clone_to_cstring","strings.clone_from","strings.clone_from_bytes","strings.clone_from_cstring","strings.clone_from_cstring_bounded","strings.clone_from_ptr",
+         "strings.concatenate","strings.join","strings.repeat","strings.split","strings.split_n","strings.split_after","strings.split_lines","strings.fields","strings.fields_proc",
+         "strings.to_lower","strings.to_upper","slice.clone","slice.clone_to_dynamic","slice.concatenate","slice.repeat",
+         "bytes.clone_safe","bytes.join_safe","bytes.concatenate_safe","filepath.join":
+        return .Copy
+    case "fmt.aprint","fmt.aprintln","fmt.aprintf","fmt.aprintfln","fmt.caprint","fmt.caprintf","fmt.caprintfln",
+         "bytes.clone","bytes.join","bytes.concatenate","bytes.repeat","strings.replace","strings.replace_all","strings.remove","strings.remove_all":
+        return .No_Error
     }
     return .None
 }
@@ -294,13 +318,34 @@ make_request :: proc(s:^Alloc_Scan,call:^ast.Call_Expr) -> (sized:bool,allocator
     return
 }
 
+// A copy of a library is dropped like a make; its allocator is whichever
+// argument is one, and in a formatter only the named one, the others being
+// what it writes.
+@(private="file")
+library_dropped :: proc(s:^Alloc_Scan,call:^ast.Call_Expr) -> bool {
+    selector,ok:=call.expr.derived.(^ast.Selector_Expr)
+    if !ok {return false}
+    name:=alloc_text(s,selector)
+    kind:=library_call(name)
+    if kind==.None || (kind==.Copy && s.received[rawptr(call)]) {return false}
+    formatter:=strings.has_prefix(name,"fmt.")
+    for arg in call.args {
+        if pair,is_pair:=arg.derived.(^ast.Field_Value);is_pair {
+            if field,is_name:=pair.field.derived.(^ast.Ident);is_name && field.name=="allocator" && allocator_temporary(s,pair.value) {return false}
+        } else if !formatter && allocator_temporary(s,arg) {
+            return false
+        }
+    }
+    return true
+}
+
 @(private="file")
 alloc_check :: proc(s:^Alloc_Scan,call:^ast.Call_Expr) {
     callee,named:=call.expr.derived.(^ast.Ident)
-    if !named {return}
-    kind:=alloc_call(callee.name)
-    if kind==.None {return}
-    if kind==.One_Result {
+    kind:=alloc_call(callee.name) if named else .None
+    if kind==.None {
+        if !library_dropped(s,call) {return}
+    } else if kind==.One_Result {
         if !s.alone[rawptr(call)] {return}
         // An array the procedure made with the temporary allocator grows in it.
         if len(call.args)>0 {
