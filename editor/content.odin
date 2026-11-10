@@ -1368,8 +1368,8 @@ content_create_menu :: proc(s:^Session) {
         if c.create_on_folder {
             ui.menu_separator(ctx)
             off:=asset_create_refusal(s)!=""
-            if ui.menu_item(ctx,ui.id(ctx,"rename"),"Rename",{icon=action_icon(.Rename),disabled=off}) {content_rename_begin(s,{},folder)}
-            if ui.menu_item(ctx,ui.id(ctx,"duplicate"),"Duplicate",{icon=action_icon(.Duplicate),disabled=off}) {
+            if ui.menu_item(ctx,ui.id(ctx,"rename"),"Rename",{icon=command_icon(s,"rename"),disabled=off}) {content_rename_begin(s,{},folder)}
+            if ui.menu_item(ctx,ui.id(ctx,"duplicate"),"Duplicate",{icon=command_icon(s,"duplicate"),disabled=off}) {
                 if _,message:=asset_folder_duplicate(s,folder);message!="" {notify(s,message)}
             }
             if ui.submenu(ctx,ui.id(ctx,"move"),"Move to",{icon=ui.icon_user(u8(User_Icon.Folder)),disabled=off}) {content_move_items(s,{},folder)}
@@ -1635,7 +1635,7 @@ content_settings_build :: proc(s:^Session,content_view:bool) {
         if ui.menu_item(ctx,ui.id(ctx,"reload"),"Refresh assets",{icon=.Refresh,disabled=s.app.assets==nil}) {
             if asset.registry_scan(&s.app.assets.registry)!=.None {notify(s,"The asset folder could not be read")}
         }
-        if ui.menu_item(ctx,ui.id(ctx,"import"),"Import",{icon=.Import,disabled=action_state(s,.Import).disabled}) {action_run(s,.Import)}
+        command_menu_item(s,ui.id(ctx,"import"),"import","Import")
         ui.id_pop(ctx)
     }
 }
@@ -2519,7 +2519,7 @@ content_menu :: proc(s:^Session,w:core.World_Ref) -> (open:string) {
             }
         }
         if file.kind==asset.KIND_SCENE && scene_tab(s,file.id)>=0 {
-            if ui.menu_item(ctx,ui.id(ctx,"thumbnail"),"Update thumbnail",{icon=action_icon(.Scene_Thumbnail),disabled=s.mode!=.Edit || !scene_thumbnails_kept(s)}) {scene_thumbnail_update(s,file.id)}
+            if ui.menu_item(ctx,ui.id(ctx,"thumbnail"),"Update thumbnail",{icon=command_icon(s,"scene_thumbnail"),disabled=s.mode!=.Edit || !scene_thumbnails_kept(s)}) {scene_thumbnail_update(s,file.id)}
         }
         asset_plugin_menus(s,file)
         if ui.menu_item(ctx,ui.id(ctx,"ask"),"Ask agent",{icon=.Sparkle,disabled=!s.has_project}) {
@@ -2536,10 +2536,10 @@ content_menu :: proc(s:^Session,w:core.World_Ref) -> (open:string) {
         // Duplicating and moving scan the registry again: what follows names the asset by its id.
         id:=file.id
         off:=asset_create_refusal(s)!=""
-        if ui.menu_item(ctx,ui.id(ctx,"rename"),"Rename",{icon=action_icon(.Rename),shortcut=shortcut_text(ACTION_SHORTCUTS[.Rename]),disabled=off}) {content_rename_begin(s,id)}
-        if ui.menu_item(ctx,ui.id(ctx,"duplicate"),"Duplicate",{icon=action_icon(.Duplicate),shortcut=shortcut_text(ACTION_SHORTCUTS[.Duplicate]),disabled=off}) {content_duplicate(s,id)}
+        if ui.menu_item(ctx,ui.id(ctx,"rename"),"Rename",{icon=command_icon(s,"rename"),shortcut=command_shortcut_text(s,"rename"),disabled=off}) {content_rename_begin(s,id)}
+        if ui.menu_item(ctx,ui.id(ctx,"duplicate"),"Duplicate",{icon=command_icon(s,"duplicate"),shortcut=command_shortcut_text(s,"duplicate"),disabled=off}) {content_duplicate(s,id)}
         if ui.submenu(ctx,ui.id(ctx,"move"),"Move to",{icon=ui.icon_user(u8(User_Icon.Folder)),disabled=off}) {content_move_items(s,id,"")}
-        if ui.menu_item(ctx,ui.id(ctx,"delete"),"Delete",{icon=action_icon(.Delete),shortcut="Del",danger=true,disabled=s.mode!=.Edit || watching(s)}) {asset_delete_ask(s,id)}
+        if ui.menu_item(ctx,ui.id(ctx,"delete"),"Delete",{icon=command_icon(s,"delete"),shortcut="Del",danger=true,disabled=s.mode!=.Edit || watching(s)}) {asset_delete_ask(s,id)}
     }
     return
 }

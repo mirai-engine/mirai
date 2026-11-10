@@ -1,5 +1,6 @@
 package editor
 
+import "core:testing"
 import "mirai:core"
 import "mirai:editor/history"
 import ecamera "mirai:engine/camera"
@@ -51,7 +52,29 @@ Test_Session :: struct {
     document:Document,
     viewport:Viewport,
     gui:Editor_Ui,
+    commands:Api,
     s:Session,
+}
+
+// The registry of the methods for a session of a test, listening on no port:
+// the entries of the menus and the shortcuts run through it. a is the storage
+// of the API, which stays where it is until test_commands_close.
+test_commands_open :: proc(t:^testing.T,s:^Session,a:^Api) -> bool {
+    s.api=a
+    return testing.expect_value(t,api_open(s,0,false,listen=false),Api_Open_Error.None)
+}
+
+test_commands_close :: proc(s:^Session) {
+    api_close(s)
+    s.api=nil
+}
+
+// Runs an entry as its key does, and what it asked for as the end of the
+// frame does. False when the entry is off.
+test_command :: proc(s:^Session,name:string) -> bool {
+    if !command_run(s,name) {return false}
+    commands_run(s)
+    return true
 }
 
 // Starts the history at the World as it is.

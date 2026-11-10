@@ -4,7 +4,7 @@
   options.
 - `game/game.odin`: the game library: the `Spinner` component and the `game_spin` function, which
   runs in the `fixed` phase and spins the entities that have it (backwards while the `reverse`
-  action is held, R or East by default in `Game_Actions`). Project Settings > Input writes an
+  action is held, R or East by default in `action_defaults`). Project Settings > Input writes an
   `input.mirai` with what it changes of those keys.
 - `plugins/sample/`: a plugin with a `runtime/` part: the `Lifetime` component and the `sample_age`
   function, which counts how long each entity that has it has been simulated.

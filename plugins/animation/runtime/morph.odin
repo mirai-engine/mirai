@@ -230,7 +230,7 @@ morph_bind :: proc(state:^Morph_Playing,rig:^Skin_Rig,config:Morph_Weights,path:
 
 // Composes the weights of the targets of every mesh that has them, from its
 // mesh, its Morph_Weights and the curves of the animation that drives it.
-@(step="fixed",loops="game editor",stage="react",after="animation_advance")
+@(step="fixed",loops="game editor",stage="react")
 animation_morph :: proc(
     meshes:core.Read(erender.Mesh_Renderer),configs:core.Read(Morph_Weights),animations:core.Read(Animation),
     targets:core.Read(Animation_Target),sources:core.Read(Pose_Source),parents:core.Read(core.Parent),

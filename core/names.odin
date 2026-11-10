@@ -42,11 +42,14 @@ Name_Info :: struct {
 }
 
 // An enum @(actions): its member i is the value base+i of the type @(names,actions).
+// defaults writes the [E]Action_Default of engine/input that its package
+// declares beside it, <ENUM>_DEFAULTS or <enum>_defaults(); nil without one.
 Actions_Info :: struct {
     type:typeid,
     info:^runtime.Type_Info,
     base:i64,
     library:string, // the package that declares it
+    defaults:proc(dst:rawptr),
 }
 
 // A mask of a type @(name_bits): bit i is the value i of of.

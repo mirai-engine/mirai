@@ -73,7 +73,7 @@ instance_slot :: proc "contextless" (is_world:bool,player:int) -> int {return is
 // The screens in order, the lowest left out past SCREEN_CAPACITY; a hidden
 // one only while it still shows something of its last build.
 @(private)
-plan_screens :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,screens:core.Read(UI_Screen),hidden:core.Read(render.Hidden),parents:core.Read(core.Parent),time:core.Time,local_count:int,problems:^core.Problems) {
+plan_screens :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,screens:core.Read(UI_Screen),hidden:core.Read(render.Hidden),parents:core.Read(core.Parent),seats:core.Read(inp.Seat),drivables:core.Read(inp.Drivable),time:core.Time,local_count:int,problems:^core.Problems) {
     Candidate :: struct {entity:core.Entity,screen:UI_Screen,hiding:bool}
     ordered:[SCREEN_CAPACITY]Candidate
     count:=0
@@ -82,6 +82,15 @@ plan_screens :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,screens:core.Re
     for row in 0..<core.count(screens) {
         e:=core.entity_at(screens,row)
         screen:=core.at(screens,row)
+        // A screen that names no player is of the one its entity is of: in
+        // its part while the window is split, and not on this machine when
+        // that player is at another end or nobody drives the body.
+        if screen.player==0 {
+            if slot,owned,local:=screen_owner(seats,drivables,parents,e);owned {
+                if !local || slot>=players {continue}
+                if local_count>1 {screen.player=u8(slot+1)}
+            }
+        }
         if int(screen.player)>players {continue}
         hiding:=render.is_hidden(hidden,parents,e)
         if hiding && !screen_hiding(instance_find(gui,e,0)) {continue}
@@ -121,6 +130,27 @@ plan_screens :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,screens:core.Re
         instance.modal,instance.taking,instance.player=entry.top && entry.input==.Modal,entry.top,entry.player
         instance.input_context=entry.input_context
     }
+}
+
+OWNER_DEPTH :: 8 // entities over one that are asked whose it is
+
+// Whose an entity is: the seat it is, the seat that drives it, or that of
+// the nearest entity over it that is one of those. owned: it is of a player,
+// or a body nobody drives; local: of the player of this machine in slot.
+screen_owner :: proc(seats:core.Read(inp.Seat),drivables:core.Read(inp.Drivable),parents:core.Read(core.Parent),e:core.Entity) -> (slot:int,owned,local:bool) {
+    at:=e
+    for _ in 0..<OWNER_DEPTH {
+        seat:=at
+        if body,driven:=core.get(drivables,at);driven {
+            if body.seat==core.NONE {return 0,true,false}
+            seat=body.seat
+        }
+        if value,is_seat:=core.get(seats,seat);is_seat {return int(value.slot),true,inp.seat_local(value)}
+        parent,has:=core.get(parents,at)
+        if !has || parent.entity==core.NONE {return}
+        at=parent.entity
+    }
+    return
 }
 
 // A World_Widget in sight of the camera of a context, while it is planned.
@@ -406,6 +436,15 @@ instance_get :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,e:core.Entity,s
                 core.report(problems,e,"gui.action","interface %s of its %s names the input action '%s'%s, which the game does not declare: its buttons do not take it and its prompts show nothing; declare it as an inp.Action constant and bind it in input.mirai, or choose another action in the .ui",host.assets_name(app.assets,asset,&file),kind,first,more)
             }
         }
+        // A Draw whose procedure the game does not declare keeps its place and shows nothing.
+        if !instance.failed && app.info!=nil {
+            for &node,at in content.tree.nodes[:content.tree.node_count] {
+                if node.kind!=.Draw || draw_named(app.info,node.draw)!=nil {continue}
+                file:[base.ASSET_ID_TEXT]u8
+                core.report(problems,e,"gui.draw","interface %s of its %s has a Draw, node %d, that names a procedure the game does not declare, so it shows nothing: write @(draw=\"name\") with the name its draw says on a proc(ctx:^ui.Context,node:ui.Draw_Node) of the game; mirai ui check names it",host.assets_name(app.assets,asset,&file),kind,at)
+                break
+            }
+        }
     }
     if instance.failed {return -1,nil}
     return index,content
@@ -449,7 +488,7 @@ bind_named :: proc(b:^Bind,name:u64) -> ^Bound_Source {
     }
     if !ok {
         for &s in world.info.storages {
-            if s.place==world.place && !s.by_world && base.name_hash(s.name)==name {found,ok={name=name,type=s.type,info=s.info,storage=true,setting=s.setting!=.None},true;break}
+            if s.place==world.place && !s.by_world && base.name_hash(s.name)==name {found,ok={name=name,type=s.type,info=s.info,storage=true},true;break}
         }
     }
     if !ok {return nil}
@@ -461,10 +500,13 @@ bind_named :: proc(b:^Bind,name:u64) -> ^Bound_Source {
     return &gui.sources[len(gui.sources)-1]
 }
 
+// A control bound to a field of a storage writes it: the settings and what the
+// game keeps of its interfaces (the page a menu shows). A component is the
+// game's to write, in the tick its events reach.
 @(private)
 bind_commits :: proc(user:rawptr,name:u64) -> bool {
     source:=bind_named((^Bind)(user),name)
-    return source!=nil && source.setting
+    return source!=nil && source.storage
 }
 
 @(private)
@@ -529,9 +571,9 @@ values_refresh :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,instance:^Ins
 }
 
 // Builds the tree of an interface where the UI is, with the copy of what it
-// binds, and queues what its widgets did: what they bind is of the game,
-// which writes what they ask for, except a setting, which a control bound to
-// it writes itself. The event is queued all the same.
+// binds, and queues what its widgets did: a control bound to a field of a
+// storage writes it itself, and one bound to a component asks the game, which
+// writes it. The event is queued all the same.
 @(private)
 screen_build :: proc(world:core.World_Ref,gui:^Gui,app:^host.App,ctx:^ui.Context,s:^Surface,instance:^Instance,entry:^Planned,problems:^core.Problems,area:ui.Id=0,area_rect:ui.Rect={}) {
     content:=entry.content

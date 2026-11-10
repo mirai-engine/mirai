@@ -414,7 +414,7 @@ of an `Anim_Set` on state changes and returns true while the element must be bui
   [std/math](../../mirai-std/references/math.md#easing-and-curves-easeodin-curveodin); `Step` keeps
   the previous value until the key.
 
-### Data tree
+## Data tree
 
 `Widget_Tree` is a flat array of `Node` in preorder with styles, variants, images, texts and
 animations in neighboring arrays, without pointers. `tree_build` builds it with the same procedures
@@ -422,9 +422,16 @@ as code and says which events it wrote and lost and whether the next frame diffe
 The node types are in `Node_Kind` (`tree.odin`) and the events in `Tree_Event`.
 
 - **Controls.** The tree's controls are the game ones, in the parts of the style that the node
-  resolves, and **do not write the value**: they emit `Changed` with what they ask for and the game
-  writes it; they show what was asked until the game has had a tick to write it. A control bound to
-  a field of a setting (`@(storage,setting)`) writes it itself: a settings screen is data. A
+  resolves. They write the copy of the value and emit `Changed` with what they ask for; the host
+  says which sources they then write in the game (`Bind_Host.commits`, `tree_commit_event`): for
+  `engine/gui`, the fields of a storage, so a settings screen and the page of a menu are data, and
+  not those of a component, which the game writes and which show what was asked until it has had a
+  tick to. A `Button` that binds a value writes its `choice` when clicked, as a `Radio` does, and
+  emits `Changed` after `Clicked`.
+- **Draw.** A `Draw` node is a leaf whose paint (`Paint_Kind.Draw`) calls `Game_Source.draw` at
+  `frame_end` with a `Draw_Node`: the rectangle, the colors and text of its style, and the bytes
+  of the field its `bind_value` names, of any type (`Bound_Want.Data`, `draw_value`). `draw` names
+  who draws it. It is replayed with its screen, so what it shows comes from what it binds. A
   `Selector` or a
   `Dropdown` written `Label=Value` binds the value of the option chosen (a number, a member of an
   enum, a text for a text field), not its index. A `Selector` or a
@@ -472,6 +479,8 @@ The node types are in `Node_Kind` (`tree.odin`) and the events in `Tree_Event`.
   between nodes: the widget that has it is shared.
 - **Input.** A `Button` with `action` is also pressed with that game action (with `hold`, only after
   holding it); `Action_Bar` lists the buttons with an action of its tree with their prompts. A
+  The bar shows the buttons the last build found: a build that finds others, or their texts in
+  another language, says `animating` so the next frame shows them. A
   `passive` tree takes no input; `order`, `nav`, `Focus_First` and `Wrap_X`/`Wrap_Y` build its
   navigation. Each `Tree_Event` carries the rect of its node, so the game can point at what was
   hovered or pressed.
