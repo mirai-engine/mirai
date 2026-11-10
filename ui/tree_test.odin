@@ -370,7 +370,7 @@ a_tree_copied_byte_by_byte_builds_the_same_frame :: proc(t:^testing.T) {
     mem.copy(raw_data(target.anim_sets),raw_data(source.anim_sets),source.anim_set_count*size_of(Anim_Set));target.anim_set_count=source.anim_set_count
     mem.copy(raw_data(target.strings),raw_data(source.strings),source.string_length);target.string_length=source.string_length
     a,b:=&source.anims,&target.anims
-    mem.copy(raw_data(b.keys),raw_data(a.keys),a.key_count*size_of(Keyframe));b.key_count=a.key_count
+    mem.copy(raw_data(b.keys),raw_data(a.keys),a.key_count*size_of(b.keys[0]));b.key_count=a.key_count
     mem.copy(raw_data(b.tracks),raw_data(a.tracks),a.track_count*size_of(Anim_Track));b.track_count=a.track_count
     mem.copy(raw_data(b.nodes),raw_data(a.nodes),a.node_count*size_of(Anim_Node));b.node_count=a.node_count
     copied.values=s.values

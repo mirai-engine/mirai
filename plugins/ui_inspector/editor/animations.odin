@@ -4,7 +4,9 @@ import "core:fmt"
 import "mirai:cook/author"
 import "mirai:editor"
 import "mirai:host"
+import std_anim "mirai:std/anim"
 import "mirai:std/base"
+import mm "mirai:std/math"
 import "mirai:std/serial"
 import "mirai:ui"
 
@@ -32,7 +34,7 @@ anim_names :: proc(r:^author.Records) -> []string {
 // x and y, an angle, an opacity, a color that multiplies, a size, a value, a
 // frame or the part of the text shown.
 @(private)
-key_row :: proc(p:^Pane,property:ui.Anim_Property,key:^ui.Keyframe) -> (changed:bool) {
+key_row :: proc(p:^Pane,property:ui.Anim_Property,key:^std_anim.Keyframe) -> (changed:bool) {
     v:=&key.value
     d:=author.property_default(property)
     pair :: proc(p:^Pane,label:string,v:^[4]f32,d:[4]f32,about:string) -> bool {
@@ -93,7 +95,7 @@ section_animations :: proc(p:^Pane,n:^ui.Tree_Node) {
     if u.anim<0 || u.anim>=len(r.anims) {return}
     a:=&r.anims[u.anim]
     edit(u,"Animation",value_row(p,"Name",Name_Value,&a.name,a.name,"What the game names to play it on a node"))
-    edit(u,"Animation",value_row(p,"Loop",Enum_Value(ui.Anim_Loop),&a.loop,ui.Anim_Loop.Once))
+    edit(u,"Animation",value_row(p,"Loop",Enum_Value(std_anim.Loop),&a.loop,std_anim.Loop.Once))
     if a.kind==.Clip {
         removed_track:=-1
         for t in 0..<int(a.count) {
@@ -121,7 +123,10 @@ section_animations :: proc(p:^Pane,n:^ui.Tree_Node) {
                 edit(u,"Animation",value_row(p,"Time",Seconds_Value,&key.time,key.time))
                 edit(u,"Animation",key_row(p,track.property,key))
                 if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=4,align_y=.Center}) {
-                    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column}) {edit(u,"Animation",value_row(p,"Ease",Enum_Value(ui.Ease),&key.ease,ui.Ease.Linear))}
+                    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column}) {
+                        edit(u,"Animation",value_row(p,"Ease",Enum_Value(mm.Ease),&key.ease,mm.Ease.Linear))
+                        edit(u,"Animation",value_row(p,"Interpolation",Enum_Value(std_anim.Interpolation),&key.interpolation,std_anim.Interpolation.Linear))
+                    }
                     if ui.button(ctx,ui.id(ctx,"remove"),{icon=.Cross,tip="Remove key",style=.Ghost,width=th.row,height=th.row,disabled=track.key_count<=1}).clicked {removed_key=k}
                 }
                 ui.id_pop(ctx)

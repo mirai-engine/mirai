@@ -570,9 +570,9 @@ progress_write :: proc(progress:^core.Table(Animation_Progress),animations:core.
 }
 
 @(step="fixed",loops="game editor",stage="react")
-animation_advance :: proc(configs:core.Read(Pose_Modifiers),transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),worlds:core.Read(core.World_Transform),requests:^Modifier_Requests,runtime:^Modifier_Runtime,playback:^Playback,constraints:^Animation_Constraints,grounding:^Grounding_Runtime,world:core.World_Ref,queries:core.Ref(core.World_Queries),time:core.Time,poses:^Animation_Requests,skeletons:core.Ref(Skeleton_Assets),problems:^core.Problems,motion:^Motion_Runtime,motion_assets:^Motion_Assets,verticals:core.Read(core.Vertical),paces:core.Read(core.Own_Pace),clock:core.Clock) {
+animation_advance :: proc(configs:core.Read(Pose_Modifiers),transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),worlds:core.Read(core.World_Transform),requests:^Modifier_Requests,runtime:^Modifier_Runtime,playback:^Playback,constraints:^Animation_Constraints,grounding:^Grounding_Runtime,world:core.World_Ref,queries:core.Ref(core.World_Queries),time:core.Time,poses:^Animation_Requests,skeletons:core.Ref(Skeleton_Assets),problems:^core.Problems,motion:^Motion_Runtime,motion_assets:^Motion_Assets,verticals:core.Read(core.Vertical),paces:core.Read(core.Own_Pace),clock:core.Clock,places:^core.Places) {
     modifier_take(runtime,requests,configs,problems,time.dt)
     inputs:=Constraint_Inputs{core.read(&runtime.ik),core.read(&runtime.look),core.read(&runtime.limits),core.read(&runtime.feet),core.read(&runtime.sockets),core.read(&runtime.retargets),{},worlds,runtime.geometry,skeletons.ptr,problems}
     ground_inputs:=Grounding_Inputs{core.read(&runtime.grounding),core.world_query(world,queries),core.read(transforms),parents,runtime.geometry,problems,verticals}
-    animation_finish(playback,inputs,constraints,transforms,parents,time.dt,grounding,ground_inputs,runtime,motion,motion_assets,core.take(&poses.final_poses),paces,clock)
+    animation_finish(playback,inputs,constraints,transforms,parents,time.dt,grounding,ground_inputs,runtime,motion,motion_assets,core.take(&poses.final_poses),paces,clock,places)
 }
