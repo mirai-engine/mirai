@@ -26,9 +26,13 @@ import "mirai:std/serial"
 // unlinking that one gives them back as instances of this document, read
 // from the prefab through the source of each member.
 //
-// An instance is stale when its stamp is not the content hash of the file of
-// its prefab, or when that prefab holds a stale instance itself;
-// Prefab_Resolver finds them and brings them up to date.
+// The stamp of an instance is that of its prefab as it was last brought up
+// to date with it: the content hash of the prefab as resolved, which is the
+// hash of its file while nothing it places is stale, and otherwise the hash
+// of the file a save of it resolved would write. Every end computes the same
+// one, so an instance brought up to date is up to date at the editor, the
+// cook and a load alike, whether or not its prefab was saved again.
+// Prefab_Resolver finds the stale instances and brings them up to date.
 
 COMPONENT_INSTANCE :: "Prefab_Instance"
 COMPONENT_MEMBER :: "Prefab_Member"
@@ -37,7 +41,7 @@ COMPONENT_MEMBER :: "Prefab_Member"
 // Prefab_Instance for a world: a test there compares the two.
 Instance :: struct {
     prefab:base.Asset_Id `mirai:"readonly,hidden"`,
-    stamp:u64 `mirai:"readonly,hidden"`, // the content hash of the prefab file it was last updated from; 0: not known
+    stamp:u64 `mirai:"readonly,hidden"`, // the content hash of the prefab, as resolved, it was last updated from; 0: not known
 }
 
 // The component of an entity an instance placed, as engine/scene declares
@@ -709,15 +713,15 @@ Prefab_Files :: struct {
 
 Resolve_State :: enum u8 {
     Checking, // being looked at: a prefab that holds itself
-    Current,  // every instance it holds is up to date
-    Stale,    // an instance it holds is not
+    Current,  // every instance its file holds is up to date
+    Stale,    // an instance its file holds is not: it is not what it resolves to
     Missing,  // no file of a prefab has the id
 }
 
 Resolved_Prefab :: struct {
     state:Resolve_State,
-    stamp:u64,    // the content hash of its file
-    scene:^Scene, // its document with its instances up to date, once an instance asked for it
+    stamp:u64,    // its content hash as resolved: of its file when Current, of what it resolves to when Stale
+    scene:^Scene, // its document with its instances up to date, once it was resolved or an instance asked for it
 }
 
 // The prefabs a resolution looked at, by id: which instances of a document
@@ -780,16 +784,46 @@ resolver_check :: proc(r:^Prefab_Resolver,id:base.Asset_Id) -> Resolved_Prefab {
     if file!=nil && file.blob.header.kind==KIND_PREFAB {
         checked.stamp=file.blob.header.content_hash
         checked.state=resolver_instances_stale(r,instances_of(file,r.types))?.Stale:.Current
+        if checked.state==.Stale {
+            // What it resolves to has another content, and that is what its instances follow.
+            if prefab,failed:=resolver_resolve(r,file);failed==.None {
+                checked.scene,checked.stamp=prefab,prefab.stamp
+            } else {
+                r.error=failed
+            }
+        }
     }
     r.prefabs[id]=checked
     return checked
 }
 
+// A prefab whose file holds stale instances, with them up to date and the
+// stamp of the file that would hold it so.
+@(private="file")
+resolver_resolve :: proc(r:^Prefab_Resolver,file:^Asset) -> (prefab:^Scene,error:Error) {
+    no_scene:runtime.Allocator_Error
+    if prefab,no_scene=new(Scene,r.allocator);no_scene!=nil {return nil,.Out_Of_Memory}
+    if error=scene_from_asset(prefab,r.types,file,r.allocator);error==.None {
+        if _,error=scene_resolve(r,prefab);error==.None {
+            data:[]u8
+            // Encoding gives the scene the stamp of its bytes.
+            if data,error=scene_bytes(prefab,r.allocator);error==.None {mem.free_bytes(data,r.allocator)}
+        }
+        if error!=.None {scene_destroy(prefab)}
+    }
+    if error!=.None {
+        free(prefab,r.allocator)
+        return nil,error
+    }
+    return prefab,.None
+}
+
 // Whether an instance placed in a document is not what its prefab gives
-// now. One of a prefab that is missing, or that holds itself, stays as it is.
+// now: its stamp is not that of the prefab as resolved. One of a prefab that
+// is missing, or that holds itself, stays as it is.
 resolver_instance_stale :: proc(r:^Prefab_Resolver,instance:Instance) -> bool {
     p:=resolver_check(r,instance.prefab)
-    return (p.state==.Current || p.state==.Stale) && (instance.stamp!=p.stamp || p.state==.Stale)
+    return (p.state==.Current || p.state==.Stale) && instance.stamp!=p.stamp
 }
 
 @(private="file")
@@ -832,15 +866,19 @@ resolver_prefab :: proc(r:^Prefab_Resolver,id:base.Asset_Id) -> (prefab:^Scene,e
     if file==nil {return nil,.None}
     kept:=&r.prefabs[id]
     if kept==nil {return nil,.Out_Of_Memory}
+    if checked.state==.Stale {
+        // Its resolved document was given away: it is resolved again, to the same stamp.
+        prefab=resolver_resolve(r,file) or_return
+        kept.scene=prefab
+        return prefab,.None
+    }
     no_scene:runtime.Allocator_Error
     if prefab,no_scene=new(Scene,r.allocator);no_scene!=nil {return nil,.Out_Of_Memory}
     if error=scene_from_asset(prefab,r.types,file,r.allocator);error!=.None {
         free(prefab,r.allocator)
         return nil,error
     }
-    // Kept before resolving it: a prefab that holds itself gets this one.
     kept.scene=prefab
-    if checked.state==.Stale {scene_resolve(r,prefab) or_return}
     return prefab,.None
 }
 

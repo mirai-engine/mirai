@@ -789,9 +789,17 @@ unlinking_gives_back_what_a_prefab_placed_and_a_variant_applies_to_its_base :: p
     crate_id,_:=prefab_create(s,crate,"crate")
     yard_id,created:=prefab_create(s,yard,"yard")
     if !testing.expect_value(t,created,Prefab_Error.None) {return}
-    // The crate is of the yard now: the scene holds one instance, and the yard's file the other.
+    // The crate is of the yard now: the scene holds one instance, and the yard's file the other,
+    // which the chain of an entity reads from it.
     of_crate,_:=prefab_link_of(w,crate)
     testing.expect(t,core.count(&f.world.instances)==1 && of_crate.instance==yard && !of_crate.root && prefab_contains(s,yard_id,crate_id))
+    links:=prefab_chain(s,w,lamp)
+    if testing.expect_value(t,len(links),2) {
+        testing.expect(t,links[0].asset==yard_id && links[0].instance==yard && !links[0].root)
+        testing.expect(t,links[1].asset==crate_id && links[1].instance==crate && links[1].source==lamp_id && !links[1].root)
+    }
+    of_root:=prefab_chain(s,w,crate)
+    testing.expect(t,len(of_root)==2 && of_root[1].root && of_root[1].instance==crate && len(prefab_chain(s,w,yard))==1)
 
     testing.expect_value(t,prefab_unlink(s,yard,false),Prefab_Error.None)
     of_crate,_=prefab_link_of(w,crate)
@@ -860,6 +868,55 @@ a_scene_opened_after_its_prefab_changed_follows_it_and_keeps_what_its_instances_
     root:=api_entity(w,placed)
     overrides,known:=prefab_overrides_of(s,root)
     testing.expect(t,known && len(overrides)==1 && prefab_test_has(f,root,api_entity(w,copy_id),"Prefab_Test_Lamp",.Field,"intensity"))
+}
+
+// A prefab changed outside under a prefab that places it: one refresh brings every instance up to
+// date, the ones of the placer to what it resolves to, and nothing is stale after it although the
+// file of the placer stays as it was.
+@(test)
+a_refresh_after_a_placed_prefab_changed_leaves_nothing_stale :: proc(t:^testing.T) {
+    f:=new(Prefab_Fixture);defer free(f)
+    if !testing.expect(t,prefab_fixture_init(f,"converge")) {return}
+    defer prefab_fixture_destroy(f)
+    s:=&f.s
+    w:=edited_world(s)
+    crate,_,lamp:=prefab_test_crate(f)
+    shelf:=entity_create(s,{name="Shelf",named=true})
+    core.world_settle(w)
+    edits_reset(&f.edits,w)
+    crate_id,created:=prefab_create(s,crate,"crate")
+    if !testing.expect_value(t,created,Prefab_Error.None) {return}
+    on_shelf,placed:=prefab_instantiate(s,crate_id,{parent=shelf})
+    _,shelved:=prefab_create(s,shelf,"shelf")
+    if !testing.expect(t,placed==.None && shelved==.None) {return}
+    testing.expect_value(t,scene_save(s,"level.scene"),Document_Error.None)
+    _,saved:=assets_save_all(s)
+    testing.expect(t,saved)
+    shelf_lamp:=prefab_test_named(f,shelf,"Lamp")
+    testing.expect(t,shelf_lamp!=core.NONE && api_entity(w,on_shelf)!=core.NONE)
+    of_shelf,_:=scene.prefab_instance(w,shelf)
+    testing.expect(t,!prefab_stale(s,of_shelf))
+
+    if !lamp_file_set(t,f,scene_file(s,"crate.prefab"),api_entity_id(w,lamp),5,8) {return}
+    of_crate,_:=scene.prefab_instance(w,crate)
+    testing.expect(t,prefab_stale(s,of_crate) && prefab_stale(s,of_shelf),"an instance is stale once the registry has the file that changed outside")
+    steps:=len(f.edits.steps)
+    report,refreshed:=prefab_refresh(s,{})
+    testing.expect(t,refreshed==.None && report.prefabs==2 && report.instances==2 && len(f.edits.steps)==steps+1)
+    testing.expect(t,lamp_of(f,lamp).range==8 && lamp_of(f,shelf_lamp).range==8)
+    of_crate,_=scene.prefab_instance(w,crate)
+    of_shelf,_=scene.prefab_instance(w,shelf)
+    testing.expect(t,!prefab_stale(s,of_crate) && !prefab_stale(s,of_shelf))
+    for state in prefab_instances(s) {testing.expect(t,!state.stale)}
+
+    again,_:=prefab_refresh(s,{})
+    testing.expect(t,again.instances==0 && len(f.edits.steps)==steps+1 && len(assets_unsaved_paths(s))==0,"nothing is brought up to date twice, and no file was made unsaved")
+    // Saved and opened again: still nothing to do, and no step.
+    testing.expect_value(t,scene_save(s),Document_Error.None)
+    testing.expect_value(t,scene_open(s,"level.scene"),Document_Error.None)
+    for state in prefab_instances(s) {testing.expect(t,!state.stale)}
+    again,_=prefab_refresh(s,{})
+    testing.expect(t,again.instances==0 && len(f.edits.steps)==0 && !document_dirty(s) && len(assets_unsaved_paths(s))==0)
 }
 
 @(test)

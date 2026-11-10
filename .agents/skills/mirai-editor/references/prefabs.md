@@ -7,7 +7,7 @@ Code: `prefabs.odin`, `api_prefab.odin`.
   `World`.
 - An instance is two components of its entities
   ([format](../../mirai-assets/references/scenes.md#prefab-instances)): `scene.Prefab_Instance` on
-  its root (the prefab and the stamp of the file it was last brought up to date with) and
+  its root (the prefab and its stamp when the instance was last brought up to date with it) and
   `scene.Prefab_Member` on every entity it placed, the root among them (the root and the entity of
   the prefab it stands for). They are rows like any other: the history, a shared session, the
   recovery log, a Play copy and a save carry them with no code of their own. Both are hidden from
@@ -122,9 +122,12 @@ Prefab document:
   without deleting it.
 - The `Transform` of an instance's root is its placement: it is never an override and is kept on
   applying, reverting or updating. The children's transforms are compared.
-- A **stale** instance (`stale`) was not updated against the current file of its prefab (its stamp
-  is not the file's hash) or its prefab brings a stale one; `prefab.refresh` brings it up to date
-  and the members follow the prefab except in their overrides.
+- A **stale** instance (`stale`) is not at the stamp its prefab gives now
+  ([as resolved](../../mirai-assets/references/scenes.md#resolution-against-the-current-prefab),
+  asked of the files once for each state of the registry: `prefab_stamp`): its file changed, or
+  the file of a prefab it places did. `prefab.refresh` brings it up to date, the members follow
+  the prefab except in their overrides, and nothing is stale after it, whether or not the prefabs
+  that place the one that changed were saved again.
 - A node the prefab no longer has is deleted in each instance on updating it, even if it has
   overrides, with the entities added under it; what other entities pointed to, to it or to what
   hung from it, ends up pointing to none.
@@ -148,7 +151,10 @@ Prefab document:
 
 - A document holds only the instances it placed. The entities of an instance a prefab places are
   members of the outer instance; that inner instance lives in the file of the prefab, and is read
-  from it through the `source` of each member when Unlink gives it back.
+  from it through the `source` of each member: when Unlink gives it back, and for the `links` of
+  `prefab.inspect` (`prefab_chain`), which name the instance that placed an entity and then each
+  one inside it that the entity is of. The inspector shows the instance of the document: a crate
+  inside a placed shelf is a member of the shelf.
 - `prefab_apply` propagates outward: it updates and writes, unsaved, the prefabs that place the one
   that changed.
 - A prefab that contains the open document cannot be placed (`Cycle`).

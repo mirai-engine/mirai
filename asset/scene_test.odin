@@ -942,11 +942,33 @@ stale_prefab_instances_resolve_against_the_files_of_their_prefabs :: proc(t:^tes
     testing.expect(t,seen.range==3 && seen.intensity==2)
     seen,_=scene_get(&resolved,member(&resolved,lone,2),LIGHT,Test_Light)
     testing.expect(t,seen.range==3 && seen.intensity==1)
-    // The stamps are those of the files: Room as its file is, Lamp as its file is now.
+    // The stamps are those of the prefabs as resolved: of the file of Lamp, which places nothing, and of
+    // what Room resolves to, which its file is not until it is saved again.
     of_room,_:=scene_instance(&resolved,placed)
     of_lamp,_:=scene_instance(&resolved,lone)
-    testing.expect_value(t,of_room.stamp,files.assets[{0xc,0xc}].blob.header.content_hash)
+    room_hash:=files.assets[{0xc,0xc}].blob.header.content_hash
+    testing.expect(t,of_room.stamp==resolver_check(&r,{0xc,0xc}).stamp && of_room.stamp!=room_hash && of_room.stamp!=0)
     testing.expect_value(t,of_lamp.stamp,files.assets[{0xa,0xa}].blob.header.content_hash)
+    // Saved so, the level is up to date for every resolver that reads it, with Room as stale on disk as it
+    // was: nothing brings it up to date again.
+    test_file_put(t,&files,&resolved)
+    {
+        again:Prefab_Resolver;resolver_init(&again,&types,{&files,test_files_open});defer resolver_destroy(&again)
+        testing.expect(t,!resolver_stale(&again,files.assets[level.doc.id]),"an instance brought up to date stays so while no file changes")
+        settled:Scene
+        testing.expect_value(t,scene_from_asset(&settled,&types,files.assets[level.doc.id]),Error.None)
+        defer scene_destroy(&settled)
+        moved,resolve_error:=scene_resolve(&again,&settled)
+        testing.expect(t,!moved && resolve_error==.None)
+        // Room saved as it resolves has the stamp its instances already hold.
+        room_resolved,_:=resolver_prefab(&again,{0xc,0xc})
+        test_file_put(t,&files,room_resolved)
+    }
+    {
+        saved:Prefab_Resolver;resolver_init(&saved,&types,{&files,test_files_open});defer resolver_destroy(&saved)
+        testing.expect_value(t,resolver_check(&saved,{0xc,0xc}).state,Resolve_State.Current)
+        testing.expect(t,resolver_check(&saved,{0xc,0xc}).stamp==of_room.stamp && !resolver_stale(&saved,files.assets[level.doc.id]))
+    }
     // A missing prefab leaves its instances as they are.
     asset_close(files.assets[{0xc,0xc}])
     free(files.assets[{0xc,0xc}])

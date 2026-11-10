@@ -13,7 +13,7 @@ import "mirai:std/base"
 @(component,description="The root of an instance of a prefab placed in this scene.")
 Prefab_Instance :: struct {
     prefab:base.Asset_Id `mirai:"readonly,hidden"`,
-    stamp:u64 `mirai:"readonly,hidden"`, // the content hash of the prefab file it was last updated from; 0: not known
+    stamp:u64 `mirai:"readonly,hidden"`, // the content hash of the prefab, as resolved, it was last updated from; 0: not known
 }
 
 @(component,description="An entity an instance of a prefab placed in this scene.")

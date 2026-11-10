@@ -5,6 +5,7 @@ import "core:strings"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/api"
+import scene "mirai:engine/scene"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
@@ -96,9 +97,9 @@ Api_Prefab_Instance :: struct {
 Api_Prefab_Inspect_Result :: struct {
     id:base.Entity_Id `mirai:"optional,label=With entity: the entity"`,
     locked:bool `mirai:"optional,label=With entity: whether it keeps the place its prefab gives it as a member of an instance that is not its root"`,
-    links:[1]Api_Prefab_Link `mirai:"list,optional,label=With entity: the instance that placed it; empty for an entity no instance placed"`,
+    links:[1]Api_Prefab_Link `mirai:"list,optional,label=With entity: the instance that placed it in the document and then each instance the prefab of the one before places that the entity is of; empty for an entity no instance placed"`,
     overrides:[1]Api_Prefab_Override `mirai:"list,optional,label=With entity: what it holds that its prefab does not; its placement left out"`,
-    stale:bool `mirai:"optional,label=With entity: whether its instance is not up to date with the file of its prefab; its overrides are told once prefab.refresh updates it"`,
+    stale:bool `mirai:"optional,label=With entity: whether its instance is not up to date with its prefab as its files give it now; prefab.refresh updates it"`,
     asset:base.Asset_Id `mirai:"optional,label=With asset: the prefab"`,
     path:[API_PATH_BYTES]u8 `mirai:"text,optional,label=With asset: the file of the prefab"`,
     root:base.Entity_Id `mirai:"optional,label=With asset: the root of the prefab"`,
@@ -113,7 +114,7 @@ Api_Asset_Id :: base.Asset_Id
 Api_Prefab_Link :: struct {
     asset:base.Asset_Id `mirai:"label=The prefab"`,
     path:[API_PATH_BYTES]u8 `mirai:"text,label=The file of the prefab; empty when it is missing"`,
-    root:base.Entity_Id `mirai:"label=The root of the instance"`,
+    root:base.Entity_Id `mirai:"label=The root of the instance: of the document for the first link; of the instance a prefab places for the next ones"`,
     source:base.Entity_Id `mirai:"label=The entity of the prefab the entity stands for"`,
 }
 Api_Prefab_Override :: struct {
@@ -201,8 +202,10 @@ api_prefab_inspect :: proc(s:^Session,call:^api.Call) {
         entity_id:=api_entity_id(world,e)
         serial.text_write_raw(w,`{"id":`);api.write_id(w,entity_id)
         api.write_key(w,"locked");api.write_flag(w,prefab_member_locked(s,world,e))
+        assets_rescan(s)
         api.write_key(w,"links");serial.write_u8(w,'[')
-        if link,linked:=prefab_link_of(world,e);linked {
+        for link,at in prefab_chain(s,world,e,call.allocator) {
+            if at>0 {serial.write_u8(w,',')}
             file,_,_:=prefab_file(s,link.asset)
             serial.text_write_raw(w,`{"asset":`);api_asset_write(w,link.asset)
             api.write_key(w,"path");serial.text_write_string(w,file!=nil?file.path:"")
@@ -227,7 +230,8 @@ api_prefab_inspect :: proc(s:^Session,call:^api.Call) {
             serial.write_u8(w,'}')
         }
         serial.write_u8(w,']')
-        api.write_key(w,"stale");api.write_flag(w,!known)
+        placed,is_instance:=scene.prefab_instance(world,root)
+        api.write_key(w,"stale");api.write_flag(w,is_instance && (!known || prefab_stale(s,placed)))
         serial.write_u8(w,'}')
         return
     }

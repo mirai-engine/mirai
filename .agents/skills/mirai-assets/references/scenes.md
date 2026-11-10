@@ -34,8 +34,9 @@ type with the component's name, `scene` (`Scene_Info`), those of instances if th
 
 The document stores each entity with its effective values, so a scene loads without its prefabs.
 An instance (`asset/prefab.odin`) is two components of its entities, saved and merged as any
-other: `Prefab_Instance` on its root (the prefab, and the `stamp` of the file of that prefab it was
-last updated against: the prefab's `Scene.stamp`; 0: unknown) and `Prefab_Member` on every entity
+other: `Prefab_Instance` on its root (the prefab, and the `stamp` of that prefab as it was last
+updated against it, [as resolved](#resolution-against-the-current-prefab); 0: unknown) and
+`Prefab_Member` on every entity
 it placed, the root among them (the root, and `source`, the entity of the prefab it stands for).
 What it fixed on its own are its `Override`s, a table of the file.
 
@@ -80,15 +81,20 @@ What it fixed on its own are its `Override`s, a table of the file.
 
 ## Resolution against the current prefab
 
-An instance placed in a document is stale when its `stamp` is not the hash of the content of its
-prefab's file, or when that prefab brings a stale one.
+The stamp of a prefab is its content hash **as resolved**: the hash of its file while nothing it
+places is stale, and otherwise the hash of the file a save of it resolved would write. An instance
+is stale when its `stamp` is not that one. Every end computes the same stamp from the same files,
+so an instance brought up to date is up to date for the editor, the cook and a load alike, whether
+or not its prefab was saved again, and saving that prefab as it resolves gives the same stamp.
 
 - `Prefab_Resolver` reads each prefab once through `Prefab_Files`, which opens them for as long as
   needed: `Registry_Prefabs` reads them from a registry; `engine/scene`, from `host`'s cache.
-- `resolver_check` looks only at the `Prefab_Instance` table, without copying the document;
-  `Checking` is a prefab that contains itself. An instance of a missing prefab stays as it is.
-- `scene_resolve` updates each stale placed instance; each one's stamp is that of its prefab's file
-  even if that prefab was resolved in memory: until it is saved, each resolution repeats it.
+- `resolver_check` looks only at the `Prefab_Instance` table of a prefab whose instances are up to
+  date (`Current`); one that places a stale instance (`Stale`) is resolved then, and its stamp is
+  that of what it resolves to. `Checking` is a prefab that contains itself. An instance of a
+  missing prefab stays as it is.
+- `scene_resolve` updates each stale instance of a document and gives it the stamp of its prefab
+  as resolved: resolved again with the same files, nothing is stale.
 - It is used by `engine/scene` on loading
   ([running scenes](../../mirai-gameplay/references/libraries.md#scene)), cooking
   ([cooking](../../mirai-projects/references/build.md#asset-cooking)) and the editor on

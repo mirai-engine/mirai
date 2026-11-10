@@ -76,13 +76,20 @@ prefab_error_text :: proc(error:Prefab_Error) -> string {
     return ""
 }
 
-// A prefab as instances were brought up to date with it: by the content hash
-// of its file then, which is the stamp of those instances.
+// A prefab as instances were brought up to date with it: by its content hash
+// as resolved then, which is the stamp of those instances.
 Prefab_Base :: struct {
     id:base.Asset_Id,
     stamp:u64,
     scene:^asset.Scene,
-    revision:u64, // of the registry when the prefabs it places were last known to be up to date in it
+}
+
+// The stamp a prefab gives its instances now, as last asked of its files.
+Prefab_Stamp :: struct {
+    id:base.Asset_Id,
+    stamp:u64,
+    found:bool,
+    revision:u64, // of the registry then
 }
 
 // The overrides of one instance, as last derived.
@@ -97,6 +104,7 @@ Prefab_Derived :: struct {
 Prefabs :: struct {
     bases:[dynamic]Prefab_Base,
     bases_serial:u64, // counts the changes of the bases
+    stamps:[dynamic]Prefab_Stamp,
     changes:u64,      // counts the edits that are not steps of the history: those of the others of a session
     derived:Prefab_Derived,
 }
@@ -117,6 +125,7 @@ prefabs_free :: proc(s:^Session) {
 prefabs_state_free :: proc(p:^Prefabs) {
     for &b in p.bases {prefab_scene_free(b.scene)}
     delete(p.bases)
+    delete(p.stamps)
     delete(p.derived.overrides)
     p^={}
 }
@@ -165,6 +174,41 @@ prefab_link_of :: proc(w:core.World_Ref,e:core.Entity) -> (link:Prefab_Link,foun
     root,instance,member:=scene.prefab_instance_of(w,e)
     if root==core.NONE {return}
     return {root,instance.prefab,base.Entity_Id(member.source),root==e},true
+}
+
+// The instances an entity is of, outermost first: the one that placed it in
+// the document, then each one the prefab of the one before places that the
+// entity stands in, read from that prefab through its source there. It ends
+// where a base is not held.
+prefab_chain :: proc(s:^Session,w:core.World_Ref,e:core.Entity,allocator:=context.temp_allocator) -> []Prefab_Link {
+    chain:=make([dynamic]Prefab_Link,allocator)
+    link,linked:=prefab_link_of(w,e)
+    if !linked {return chain[:]}
+    append(&chain,link)
+    members:=prefab_members(w,link.instance)
+    // What each member stands for in the prefab the walk is at; 0 once it is of none there.
+    sources:=make([]base.Entity_Id,len(members),context.temp_allocator)
+    for member,at in members {sources[at]=member.source}
+    mine:=link.source
+    from:=prefab_link_base(s,w,link)
+    for _ in 0..<asset.PREFAB_DEPTH {
+        if from==nil {break}
+        inner_root,inner_source,inner:=asset.scene_member(from,mine)
+        if !inner {break}
+        placed,is_instance:=asset.scene_instance(from,inner_root)
+        if !is_instance {break}
+        root:=core.NONE
+        for &source,at in sources {
+            if source==0 {continue}
+            if source==inner_root {root=members[at].entity}
+            of_root,inside,member:=asset.scene_member(from,source)
+            source=member && of_root==inner_root?inside:0
+        }
+        append(&chain,Prefab_Link{instance=root,asset=placed.prefab,source=inner_source,root=root==e})
+        mine=inner_source
+        from=prefab_base_of(s,{prefab=placed.prefab,stamp=placed.stamp})
+    }
+    return chain[:]
 }
 
 // True when the document has instances of prefabs.
@@ -354,6 +398,35 @@ prefab_places_stale :: proc(s:^Session,id:base.Asset_Id) -> bool {
     return asset.resolver_check(&reader.resolver,id).state==.Stale
 }
 
+// The stamp a prefab gives its instances now: its content hash as resolved,
+// which is that of its file while nothing it places is stale. Asked of the
+// files once for each state of the registry; false for a prefab without file.
+@(private)
+prefab_stamp :: proc(s:^Session,id:base.Asset_Id) -> (stamp:u64,found:bool) {
+    p:=prefabs_of(s)
+    if p==nil || s.app.assets==nil {return}
+    revision:=s.app.assets.registry.revision
+    known:^Prefab_Stamp
+    for &entry in p.stamps {
+        if entry.id!=id {continue}
+        if entry.revision==revision {return entry.stamp,entry.found}
+        known=&entry
+    }
+    reader:Prefab_Reader
+    prefab_reader_begin(s,&reader)
+    defer prefab_reader_end(&reader)
+    checked:=asset.resolver_check(&reader.resolver,id)
+    asked:=Prefab_Stamp{id=id,stamp=checked.stamp,found=checked.state==.Current || checked.state==.Stale,revision=revision}
+    if known!=nil {known^=asked} else {append(&p.stamps,asked)}
+    return asked.stamp,asked.found
+}
+
+// Whether an instance is not up to date with its prefab as its files give it now.
+prefab_stale :: proc(s:^Session,instance:scene.Prefab_Instance) -> bool {
+    stamp,found:=prefab_stamp(s,instance.prefab)
+    return found && stamp!=instance.stamp
+}
+
 // ---------------------------------------------------------------- bases
 
 @(private)
@@ -369,7 +442,7 @@ prefab_base_find :: proc(p:^Prefabs,id:base.Asset_Id,stamp:u64) -> ^Prefab_Base 
 prefab_base_set :: proc(s:^Session,id:base.Asset_Id,loaded:^asset.Scene) {
     p:=prefabs_of(s)
     p.bases_serial+=1
-    entry:=Prefab_Base{id=id,stamp=loaded.stamp,scene=loaded,revision=s.app.assets.registry.revision}
+    entry:=Prefab_Base{id=id,stamp=loaded.stamp,scene=loaded}
     if b:=prefab_base_find(p,id,loaded.stamp);b!=nil {
         prefab_scene_free(b.scene)
         b^=entry
@@ -386,8 +459,7 @@ prefab_base_of :: proc(s:^Session,instance:scene.Prefab_Instance) -> ^asset.Scen
     p:=prefabs_of(s)
     if p==nil || s.app.assets==nil {return nil}
     if b:=prefab_base_find(p,instance.prefab,instance.stamp);b!=nil {return b.scene}
-    file,_,located:=prefab_file(s,instance.prefab)
-    if !located || file.content_hash!=instance.stamp {return nil}
+    if stamp,found:=prefab_stamp(s,instance.prefab);!found || stamp!=instance.stamp {return nil}
     loaded,ok:=prefab_scene_load(s,instance.prefab)
     if !ok {return nil}
     if loaded.stamp!=instance.stamp {
@@ -589,21 +661,14 @@ prefab_roots :: proc(w:core.World_Ref,id:base.Asset_Id,allocator:=context.temp_a
 prefab_sync :: proc(s:^Session,id:base.Asset_Id) -> (current:^asset.Scene,updated,failed:int,error:Prefab_Error) {
     p:=prefabs_of(s)
     w:=edited_world(s)
-    file,_,located:=prefab_file(s,id)
+    stamp,located:=prefab_stamp(s,id)
     if !located {return nil,0,0,.Not_Found}
-    stamp:=file.content_hash
     held:=prefab_base_find(p,id,stamp)
-    superseded:=false
-    if held!=nil && held.revision!=s.app.assets.registry.revision {
-        // Its file is the same, and a prefab it places may not be.
-        superseded=prefab_places_stale(s,id)
-        if !superseded {held.revision=s.app.assets.registry.revision}
-    }
     stale:=make([dynamic]core.Entity,context.temp_allocator)
     for root in prefab_roots(w,id) {
-        if instance,_:=scene.prefab_instance(w,root);superseded || instance.stamp!=stamp {append(&stale,root)}
+        if instance,_:=scene.prefab_instance(w,root);instance.stamp!=stamp {append(&stale,root)}
     }
-    if held!=nil && !superseded && len(stale)==0 {return held.scene,0,0,.None}
+    if held!=nil && len(stale)==0 {return held.scene,0,0,.None}
     loaded,ok:=prefab_scene_load(s,id)
     if !ok {return nil,0,0,.Not_Found}
     for root in stale {

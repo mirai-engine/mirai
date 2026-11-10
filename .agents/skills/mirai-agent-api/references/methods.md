@@ -762,12 +762,14 @@ instance" are `-32602`; the rest, `-32000`
   leave the prefab files they write unsaved, as any asset an edit changes: `scene.save` or
   `asset.save` writes them.
 - `prefab.list`: the instances the document placed, not those its prefabs place. A `stale`
-  instance has a stamp that is not the hash of its prefab's file, or that prefab brings an
-  outdated one; `prefab.refresh` updates it.
+  instance is not up to date with its prefab as its files give it now, that file or the file of a
+  prefab it places having changed; `prefab.refresh` updates it, and nothing is stale after it.
 - `prefab.inspect` with `entity`: `kind` of an override is `field`, `added`, `removed`, `turned` or
   `child` (the entity was added by the instance); a turned-off member is an `added` of `Disabled`.
-  The overrides are derived then, by comparing with the prefab; with `stale` true the instance is
-  not up to date with it and none can be told until it is refreshed.
+  The overrides are derived then, by comparing with the prefab as the instance was last brought up
+  to date with it; `stale` says the same as in `prefab.list`. `links` names the instance that
+  placed the entity and then each instance inside it that the entity is of (the crate of a placed
+  shelf), with the `root` of each among the entities of the document.
   With `asset` it gives the prefab with its own instances up to date, and its `base` and
   `chain` if it is a [variant](../../mirai-editor/references/prefabs.md#variants) (zero and empty
   if not).
