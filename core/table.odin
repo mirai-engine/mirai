@@ -537,7 +537,22 @@ raw_touched :: proc "contextless" (t:^Raw_Table,seen:^Seen) -> bool {
 }
 table_touched :: #force_inline proc "contextless" (t:^Table($T),seen:^Seen) -> bool {return raw_touched(raw(t),seen)}
 read_touched :: #force_inline proc "contextless" (r:Read($T),seen:^Seen) -> bool {return raw_touched(raw(r.table),seen)}
-touched :: proc{table_touched,read_touched}
+// A storage of a World is its one row, and this the stamp of that row: it
+// grows when a function receives the storage to write, when code outside the
+// loops asks for it (world_storage) and when the World is copied over, swapped
+// or cleared. What a function receives to read a storage S by change, beside
+// S or core.Ref(S).
+Stamp :: struct($S:typeid) {version:^u64}
+
+// Whether a storage was handed out to write since seen, which it moves to now.
+// A Stamp of no World says it always was.
+stamp_touched :: proc "contextless" (s:Stamp($S),seen:^Seen) -> bool {
+    if s.version==nil {return true}
+    if seen.version==s.version^ {return false}
+    seen.version=s.version^
+    return true
+}
+touched :: proc{table_touched,read_touched,stamp_touched}
 
 // The rows a reader saw in a table, for reshaped.
 Shape :: distinct u64

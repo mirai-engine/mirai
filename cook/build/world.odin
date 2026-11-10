@@ -96,7 +96,7 @@ Message :: struct {
 }
 
 @(private="file")
-Param_Kind :: enum u8 {Table_Write,Table_Read,Storage_Write,Storage_Ref,Storage_Value,Entities_Read,Commands,World_Ref,App,App_Part,Records}
+Param_Kind :: enum u8 {Table_Write,Table_Read,Storage_Write,Storage_Ref,Storage_Value,Storage_Stamp,Entities_Read,Commands,World_Ref,App,App_Part,Records}
 
 // What host.App holds that a step receives by itself, bound by the type that
 // names it: the call hands out what the application owns.
@@ -121,7 +121,7 @@ APP_PARTS :: [?]App_Part{
 }
 
 @(private="file")
-PARAM_FORMS :: "^core.Table(T), core.Read(T), ^S, core.Ref(S), S, core.Ref(core.Entities), core.Commands, core.World_Ref, a part of the application (^host.Assets, ^host.Frame_Extras, ^render.Renderer, ^audio.Mixer, ^jobs.Job_System, runtime.Allocator) or ^host.App"
+PARAM_FORMS :: "^core.Table(T), core.Read(T), ^S, core.Ref(S), S, core.Stamp(S), core.Ref(core.Entities), core.Commands, core.World_Ref, a part of the application (^host.Assets, ^host.Frame_Extras, ^render.Renderer, ^audio.Mixer, ^jobs.Job_System, runtime.Allocator) or ^host.App"
 
 @(private="file")
 Param :: struct {
@@ -1194,6 +1194,7 @@ param_read :: proc(g:^Generator,file:^ast.File,pkg:^Package,expr:^ast.Expr) -> (
         case wrapper=="mirai:core.Table" && pointer && inner.kind==.Component: return {kind=.Table_Write,type=inner},true
         case wrapper=="mirai:core.Read" && !pointer && inner.kind==.Component: return {kind=.Table_Read,type=inner},true
         case wrapper=="mirai:core.Ref" && !pointer && inner.kind==.Storage: return {kind=.Storage_Ref,type=inner},true
+        case wrapper=="mirai:core.Stamp" && !pointer && inner.kind==.Storage && inner.place==.World: return {kind=.Storage_Stamp,type=inner},true
         }
         return
     }
@@ -1798,6 +1799,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
                 if reads_log(param) {fmt.sbprintf(&args,"%s.ref(&view_%s)",core_alias,param.type.field)} else if param.type.by_world {fmt.sbprintf(&args,"%s.ref(%s.by_world_get(&%s.%s,w.%s))",core_alias,core_alias,holder,param.type.field,world_id.field)} else {fmt.sbprintf(&args,"%s.ref(&%s.%s)",core_alias,holder,param.type.field)}
             case .Storage_Value:
                 if reads_log(param) {fmt.sbprintf(&args,"view_%s",param.type.field)} else {fmt.sbprintf(&args,"%s.%s",holder,param.type.field)}
+            case .Storage_Stamp: fmt.sbprintf(&args,"%s.Stamp(%s.%s){{&w.storage_revisions[%d]}}",core_alias,param.type.pkg.alias,param.type.name,storage_index[param.type])
             case .Entities_Read: fmt.sbprintf(&args,"%s.ref(&w.entities)",core_alias)
             case .Commands: fmt.sbprintf(&args,"%s.commands(w,app.info)",core_alias)
             case .World_Ref: fmt.sbprintf(&args,"%s.world_ref(w,app.info)",core_alias)

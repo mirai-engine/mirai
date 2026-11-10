@@ -43,6 +43,7 @@ data_has_one_writing_library_and_commands_make_entities :: proc(t:^testing.T) {
     game_source:=`package game
 import "mirai:core"
 @(step="fixed") game_push :: proc(requests:^core.Requests,board:^core.Board,reports:core.Ref(core.Reports)) {}
+@(step="fixed") game_watch :: proc(state:core.Stamp(core.State)) {}
 `
     p,ok:=contracts_project(t,folder,core_source,game_source)
     if !ok {return}
@@ -52,6 +53,8 @@ import "mirai:core"
         testing.expect(t,strings.contains(text,"p_core.things_make(p_core.commands(w,app.info),p_core.ref(&w.entities),p_core.read(&w.thing))"),text)
         at:=strings.index(text,"p_core.things_make(")
         testing.expect(t,at>=0 && strings.contains(text[at:][:400],"p_core.settle(app.info,w,e)"))
+        // A storage is read by change with the stamp of its row.
+        testing.expect(t,strings.contains(text,"p_game.game_watch(p_core.Stamp(p_core.State){&w.storage_revisions[0]})"),text)
         // A reader of occurrences is handed what came since it last ran, by a cursor of its own
         // in each log, which the World copies with it for a step a rollback runs again.
         testing.expect(t,strings.contains(text,"    view_reports:=w.reports\n    p_core.events_read(&view_reports.log,&w.event_cursors.seen[0])\n    p_core.events_read(&view_reports.lost,&w.event_cursors.seen[1])\n"),text)
