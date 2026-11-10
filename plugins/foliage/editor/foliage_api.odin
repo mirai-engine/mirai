@@ -131,6 +131,7 @@ Foliage_Query_Result :: struct {
 
 @(private)
 foliage_api_register :: proc(s:^editor.Session) {
+    editor.tool_entry(s,TOOL,"Foliage",.Edit,{key=.G,set=true})
     paint_defaults:=Paint_Params{radius=3,density=1}
     query_defaults:=Query_Params{limit=256}
     editor.api_method_register(s,{name="foliage.create",summary="Makes a Foliage in the edited scene, with a .foliage of no types in memory until it is saved; one step of undo takes it away.",params=Create_Params,params_info=type_info_of(Create_Params),result=Foliage_Create_Result,result_info=type_info_of(Foliage_Create_Result),writes_result=true,run=api_create})

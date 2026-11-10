@@ -19,6 +19,8 @@ A game is a struct in memory and a list of functions that transform it
 - Finding an entity by `Id` and giving new `Id`s:
   [identity](references/core.md#persistent-identity).
 - Queues, requests and events: [queues](references/core.md#queues-and-references).
+- Waiting some seconds, cooldowns and requests for later (`deadline`, `due`, `later`):
+  [waiting](references/core.md#waiting).
 - `Time`, `Frame_Time`, `Input`, `View`, `Jumps`, pause and slow motion (`Clock`) and an entity
   that keeps its pace in it (`Own_Pace`, bullet time):
   [storages](references/core.md#core-storages).
@@ -75,7 +77,8 @@ A game is a struct in memory and a list of functions that transform it
    settings dialog shows it under an Advanced fold,
    [settings](../mirai-editor/references/panels.md#project-settings)).
 3. A nonzero initial value is declared with `NAME_DEFAULT` or `name_default()` in the same package
-   (`SPIN_DEFAULT :: Spin{...}`).
+   (`SPIN_DEFAULT :: Spin{...}`); a literal of the type that leaves out a field it sets is a
+   generator error ([initial values](references/generator.md#initial-values)).
 4. A loop function is a `proc` without a result with `@(step="<phases>")`; each parameter says what
    it touches ([parameters](references/generator.md#parameters)). What is received together in
    several functions goes in a `@(params)` struct that the function receives by value and passes
@@ -88,10 +91,13 @@ A game is a struct in memory and a list of functions that transform it
    that library (`scene.spawn`, `spawn.spawn`). What the function created is finished in it with
    `core.commands_added` or `core.staged`, without `world_settle`. `core.World_Ref` is only for code
    that does not know the types (scenes, saving, network, editor).
-7. Order: the stage (`stage="react"`; without it, `intent`) and within it `after="a b"` or
-   `before="c"` ([order](references/generator.md#order)). Function names are unique across the whole
-   world. What only a lone game or a server decides carries `server`.
-8. `mirai generate` lists the generator errors; the generated code is read in
+7. Order: the stage (`stage="react"`; without it, `intent`). Within it the generator orders the
+   functions from what they read, write, push and take; `after="a b"` or `before="c"` say only
+   what the parameters do not ([order](references/generator.md#order)). Function names are unique
+   across the whole world. What only a lone game or a server decides carries `server`.
+8. What waits keeps the tick it waits for: `core.deadline` and `core.due`, or a request pushed
+   with `core.later` ([waiting](references/core.md#waiting)).
+9. `mirai generate` lists the generator errors; the generated code is read in
    `<project>/.mirai/gen/` and is never edited.
 
 ### Change `core`, the generator or `host`
@@ -113,9 +119,16 @@ A game is a struct in memory and a list of functions that transform it
 - **One table per component, not archetypes.** The world stores a dense table per component, without
   a query engine, and `core.changes` makes each reader process only what changed.
 - **The loop order is named stages, not numbers.** A function says in which part of the tick it runs
-  (`stage`) and, within it, which ones it waits for (`after`, `before`), naming only functions of
-  the engine or of the plugins it depends on; `order=` is an error. Between plugins that do not know
-  each other the stage orders ([order](references/generator.md#order)).
+  (`stage`); `order=` is an error. Between plugins that do not know each other the stage orders
+  ([order](references/generator.md#order)).
+- **Inside a stage the data orders.** Whoever pushes a request runs before the library that takes
+  it, and whoever writes a table or a storage before whoever reads it. `after` and `before` name
+  functions of the engine or of the plugins a library depends on, only for what its parameters do
+  not say; a cycle is a generator error that one name settles.
+- **A wait is a tick.** What waits keeps the tick it is due at (`core.deadline`, `core.due`), or
+  is a request pushed for later (`core.later`, `core.take_due`): plain data that a rollback and a
+  save keep, the same seconds at any tick rate. No countdown written every tick, no count of
+  ticks in code, no coroutines ([waiting](references/core.md#waiting)).
 - **A function touches only what it receives.** Its parameters say what it reads and writes:
   from them come the settle after it, the revisions of the storages a rollback copies again and
   the single writer of each datum ([parameters](references/generator.md#parameters)).
@@ -189,8 +202,11 @@ A game is a struct in memory and a list of functions that transform it
   tick ([reflection](references/core.md#world-reflection)).
 - **Clearing a world takes its derived storages to their start.** Loading a scene or a save and
   opening a document call `core.world_clear`; what remains is only what `@(storage,keep)` says
-  (state of the run), the settings and what is not copied. What a save must keep goes in a
-  component, never in a storage ([classes](references/generator.md#attributes)).
+  (engine run state and state only an interface shows), the settings and what is not copied. What
+  a save must keep goes in a component, never in a storage
+  ([classes](references/generator.md#attributes)); the state of a run that crosses a scene change
+  (a score, an inventory) is components on a `core.Keep` root, which passes, is saved and
+  replicates as any entity: the seat of a player is one.
 - **`World` is plain data copied in blocks.** What the application stores for each world that is
   not copied with it (sockets, pointers, mirrors of its state: voices, interfaces, derived meshes,
   its problems) is `@(storage,host,by_world)`: each function receives the value of its world (nil in
@@ -231,6 +247,8 @@ A game is a struct in memory and a list of functions that transform it
 - `Id` index or new `Id`s: also `mirai test engine/save` (borrowed `Id`s),
   `plugins/multiplayer/runtime` (rollback and adoption), `plugins/destruct/runtime` (groups) and
   `editor` (API and collaboration).
+- Deadlines and requests for later: `mirai test core` (`deadline_test.odin`, `queue_test.odin`) and
+  `engine/save` (a checkpoint brings the clock back).
 - Authority and requested places: `mirai test core` (`place_test.odin`) and
   `plugins/multiplayer/runtime` (`authority_test.odin`).
 - Indices and schema of the `World_Info`: `mirai test core`; the generated `info()`, with a real
@@ -249,6 +267,7 @@ A game is a struct in memory and a list of functions that transform it
 - Meshes with UV1 on GPU: `mirai test engine/render` in the
   [GPU environment](../mirai-rendering/references/verification.md#gpu-environment).
 - Generator or build: [project verification](../mirai-projects/SKILL.md#verification).
-- Order of the functions: `mirai test cook/build` (`stages_test.odin`: stages, `after`/`before`,
-  the settle before the next function) and `host` (`steps_test.odin`: a phase in order, with a
-  function that spreads its work with `std/jobs`); also `plugins/multiplayer/runtime` (rollback).
+- Order of the functions: `mirai test cook/build` (`stages_test.odin`: stages, the order the data
+  gives, cycles, `after`/`before`, the settle before the next function) and `host`
+  (`steps_test.odin`: a phase in order, with a function that spreads its work with `std/jobs`);
+  also `plugins/multiplayer/runtime` (rollback).

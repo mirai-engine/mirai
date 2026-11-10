@@ -30,6 +30,7 @@ Save_Test_World :: struct {
     references:core.Table(scene.Scene_Reference),
     hierarchy:core.Hierarchy,
     root:scene.Scene_Root,
+    time:core.Time,
 }
 
 // The layout of the World and an application that makes it.
@@ -518,17 +519,24 @@ autosaves_go_round_their_slots_and_a_checkpoint_loads_back :: proc(t:^testing.T)
     testing.expect_value(t,slots(&s.state,&f.app,list[:]),2)
     testing.expect_value(t,base.text_get(list[0].label[:]),"Save 2")
 
+    // A deadline is a tick of the clock the save keeps: what waited two seconds waits them again.
+    w.time={tick=600,seconds=10,dt=1.0/60,playing=true}
+    until:=core.deadline(w.time,2)
     request_label(&s.requests,"Act 1")
     request_checkpoint(&s.requests)
     serve(&f,&s)
     played:=s.game.played
     place(w,5,{9,9,9})
+    w.time.tick,w.time.seconds=900,15
+    testing.expect(t,core.due(w.time,until))
     serve(&f,&s)
     request_load_checkpoint(&s.requests)
     serve(&f,&s)
     if !testing.expect_value(t,len(s.results.queue.items),1) {return}
     testing.expect_value(t,s.results.queue.items[0].error,Error.None)
     testing.expect_value(t,placed_at(w,5),[3]f32{1,2,3})
+    testing.expect_value(t,w.time.tick,u64(600))
+    testing.expect(t,!core.due(w.time,until) && until-w.time.tick==core.ticks_of(w.time,2))
     testing.expect_value(t,base.text_get(s.game.label[:]),"Act 1")
     testing.expect_value(t,s.game.played,played)
 }

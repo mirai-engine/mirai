@@ -42,7 +42,7 @@ names_error_text :: proc(e:Names_Error,type,name:string) -> string {
     case .No_Game:        return "the project has no game folder to declare the name in"
     case .Write_Failed:   return "the code of the name could not be written"
     case .Source_Changed: return "the line that declares the name changed since the last build: build, then rename it again"
-    case .Action_In_Code: return fmt.tprintf("an input action is a member of the enum @(actions) of the game: add %s to it, with its default in the field [Action]input.Action_Default of its storage",action_member(name))
+    case .Action_In_Code: return fmt.tprintf("an input action is a member of the enum @(actions) of the game: add %s to it, with its default in action_defaults beside the enum",action_member(name))
     case .Action_Not_Declared: return fmt.tprintf("the code built does not declare the action %q: rename the member of the enum @(actions) to %s in code (the rename of your editor of code renames its uses), build, and rename again to follow it",name,action_member(name))
     case .Action_Still_Declared: return "the code built still declares the old name of the action: rename the member in code and build first; this rename follows it in input.mirai and the documents"
     }

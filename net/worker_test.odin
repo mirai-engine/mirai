@@ -106,17 +106,12 @@ worker_threads_carry_replication_over_udp_while_the_simulation_only_queues_and_p
 
 @(test)
 damaged_replication_traffic_never_crashes_allocates_or_reaches_other_clients :: proc(t:^testing.T) {
-    for security in Security {damaged_replication_traffic(t,security)}
-}
-
-@(private="file")
-damaged_replication_traffic :: proc(t:^testing.T,security:Security) {
     track:mem.Tracking_Allocator
     mem.tracking_allocator_init(&track,context.allocator)
     defer mem.tracking_allocator_destroy(&track)
     context.allocator=mem.tracking_allocator(&track)
     s:=new(Scene);defer free(s)
-    scene_init(s,2,{max_objects=128},seed=77,security=security);defer scene_destroy(s)
+    scene_init(s,2,{max_objects=128},seed=77);defer scene_destroy(s)
     c:=new(Crowd);defer free(c)
     state:=u64(12)
     for i in 0..<80 {crowd_spawn(s,c,i,&state,true)}

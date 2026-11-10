@@ -18,25 +18,20 @@ import "mirai:std/serial"
 @(private="file") JUMP :: input.Action(1)
 @(private="file") HIT :: input.Action(40)
 
-@(private="file") Input_Defaults :: struct {defaults:[Input_Test_Action]input.Action_Default}
-@(private="file") Input_World :: struct {using world:core.Test_World,bindings:input.Input_Map,defaults:Input_Defaults}
+@(private="file") Input_World :: struct {using world:core.Test_World,bindings:input.Input_Map}
 @(private="file") Input_Editor :: struct {api:Api}
 
-@(private="file")
-input_test_types :: proc(types:^[dynamic]core.Test_Type) {
-    test_types(types)
-    append(types,core.test_type(Input_Defaults,default=proc(dst:^Input_Defaults) {
-        dst^={defaults={
-            .Move=input.action_default(.Axis2,input.binding_keys(.A,.D,.S,.W),input.binding_gamepad_stick(.Left)),
-            .Jump=input.action_default(.Button,input.binding_key(.Space)),
-        }}
-    }))
-}
-
+// The defaults of Input_Test_Action, as the generator finds them beside the enum.
 @(private="file")
 input_test_actions :: proc() -> []core.Actions_Info {
+    defaults :: proc(dst:rawptr) {
+        (cast(^[Input_Test_Action]input.Action_Default)dst)^={
+            .Move=input.action_default(.Axis2,input.binding_keys(.A,.D,.S,.W),input.binding_gamepad_stick(.Left)),
+            .Jump=input.action_default(.Button,input.binding_key(.Space)),
+        }
+    }
     @(static) actions:[1]core.Actions_Info
-    actions[0]={type=Input_Test_Action,info=type_info_of(Input_Test_Action)}
+    actions[0]={type=Input_Test_Action,info=type_info_of(Input_Test_Action),defaults=defaults}
     return actions[:]
 }
 
@@ -63,7 +58,7 @@ Input_Fixture :: struct {
 input_fixture :: proc(t:^testing.T,f:^Input_Fixture) -> bool {
     f.folder=base.test_folder(t,"input-settings")
     if f.folder=="" {return false}
-    f.info=core.test_info(t,Input_World,core.Test_None,Input_Editor,input_test_types) or_return
+    f.info=core.test_info(t,Input_World,core.Test_None,Input_Editor,test_types) or_return
     f.names={
         {type=input.Action,value=0,name="move",file="engine/input/input.odin",line=1},
         {type=input.Action,value=1,name="jump",file="engine/input/input.odin",line=2},
@@ -276,7 +271,7 @@ a_binding_chosen_from_the_menus_is_written :: proc(t:^testing.T) {
 @(test)
 a_listening_binding_takes_what_is_pressed :: proc(t:^testing.T) {
     names:=[]core.Name_Info{{type=input.Action,value=0,name="move"},{type=input.Action,value=1,name="jump"}}
-    info,made:=core.test_info(t,struct {using world:core.Test_World,defaults:Input_Defaults},input_test_types)
+    info,made:=core.test_info(t,struct {using world:core.Test_World},test_types)
     if !made {return}
     defer core.test_info_destroy(&info)
     info.names,info.actions=names,input_test_actions()

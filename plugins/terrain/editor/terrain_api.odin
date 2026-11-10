@@ -7,6 +7,7 @@ import "core:strings"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor"
+import "mirai:ui"
 import "mirai:editor/api"
 import terrain "plugins:terrain/runtime"
 import "mirai:std/base"
@@ -172,6 +173,7 @@ Terrain_Heightmap_Result :: struct {
 
 @(private)
 terrain_api_register :: proc(s:^editor.Session) {
+    editor.tool_entry(s,"terrain","Terrain",ui.icon_user(u8(editor.User_Icon.Terrain)),{key=.T,set=true})
     create_defaults:=Create_Params{samples=65,depth=17,spacing=1,chunk_cells=32,height_scale=32,base_depth=8}
     edit_defaults:=Edit_Params{radius=4,strength=0.5,passes=1,interval=2,riser=0.25,scale=8,sides=2}
     layer_defaults:=Layer_Params{tiling=terrain.LAYER_DEFAULT.tiling}

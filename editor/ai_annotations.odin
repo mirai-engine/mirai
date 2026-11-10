@@ -204,7 +204,6 @@ ai_annotations_build :: proc(s:^Session) {
     g:=s.gui;ctx:=g.ctx;th:=&ctx.theme
     a:=&m.annotations
     annotating:=tool_on(s,AI_ANNOTATE_TOOL)
-    if tool_button(g,shell_id(g,"ai_annotate_tool"),ai_annotate_icon(),"Annotate","",annotating) {tool_set(s,AI_ANNOTATE_TOOL,!annotating)}
     ai_annotations_sync(s)
     if ai_annotations_visible(s) {
         v:=s.viewport

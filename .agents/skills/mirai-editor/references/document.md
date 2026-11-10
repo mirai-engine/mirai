@@ -257,8 +257,8 @@ Native failures:
   ([platform](../../mirai-platform/references/platform.md#crashes)).
 - The report ends with the events before the failure, oldest first (`editor/events.odin`,
   `<project>/.mirai/editor-events.txt`): keys and buttons with their modifiers and where, the
-  actions (`action_run`), the API methods and the document steps with their label and author, to
-  relate an input to the action and the procedure that failed.
+  entries a person ran (`command_run`), the API methods and the document steps with their label
+  and author, to relate an input to the method and the procedure that failed.
 - Odin's bounds checks stay active in the build. `MIRAI_CHECK_WRITES` diagnoses world writes that
   did not request their row; it costs and is not for measuring.
 
@@ -379,7 +379,7 @@ Rules:
 
 ### Undo by author
 
-Ctrl+Z, `editor.action undo` and `history.undo` undo the last step of whoever asks, even if others
+Ctrl+Z is `history.undo` as the user: it undoes the last step of whoever asks, even if others
 edited afterwards, without overwriting what another wrote later.
 
 - **Author** (`Edit_Step.author`). `Edits.author` is that of what changes now: `EDIT_AUTHOR_USER`

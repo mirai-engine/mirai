@@ -182,11 +182,6 @@ Api_Select_Result :: struct {
     active:base.Entity_Id,
 }
 
-Api_Action_Params :: struct {
-    name:[64]u8 `mirai:"text,label=An action as editor.inspect lists it"`,
-}
-Api_Action_Result :: struct {ran:bool}
-
 Api_Camera_Result :: struct {
     position,target:[3]f32,
     yaw,pitch,distance:f32,
@@ -293,7 +288,7 @@ Api_Editor_Inspect :: struct {
     interactions:Api_Editor_Interactions,
     window:Api_Editor_Window,
     layout:Api_Editor_Layout `mirai:"label=Rectangles as x y width height in points from the top left of the window"`,
-    actions:[]Api_Editor_Action `mirai:"label=Every action; editor.action runs them by name"`,
+    commands:[]Api_Editor_Command `mirai:"label=Every entry of the menus and shortcuts and buttons of the editor and of its plugins: a person runs the method it names"`,
 }
 Api_Editor_Document :: struct {
     path:[API_PATH_BYTES]u8 `mirai:"text"`,
@@ -324,11 +319,16 @@ Api_Editor_Window :: struct {
 }
 Api_Editor_Layout :: struct {
     bar,left,right,bottom:[4]f32,
-    widgets:serial.Json `mirai:"label=The rectangle of each widget drawn by key: action.<name> for an action; menu.<name> for a menu; stats; share"`,
+    widgets:serial.Json `mirai:"label=The rectangle of each widget drawn by key: command.<name> for the button of an entry; menu.<name> for a menu; stats; share"`,
 }
-Api_Editor_Action :: struct {
-    name:[32]u8 `mirai:"text"`,
-    disabled,checked:bool,
+Api_Editor_Command :: struct {
+    name:[32]u8 `mirai:"text,label=Of the entry: layout.widgets names its button command.<name>"`,
+    method:[api.MAX_NAME]u8 `mirai:"text,label=The method it calls"`,
+    params:[COMMAND_PARAMS]u8 `mirai:"text,optional,label=The params it calls it with as JSON; $roots and $selection and $active and $copied and $all stand for entities of the selection of the person; $toggle for the opposite of checked; $ask for a file the person picks: a call names them itself"`,
+    label:[64]u8 `mirai:"text"`,
+    shortcut:[24]u8 `mirai:"text,optional"`,
+    disabled:bool `mirai:"label=The person cannot run it now"`,
+    checked:bool,
 }
 
 // What editor.input takes.
@@ -383,7 +383,7 @@ Api_Build_Check_Result :: struct {
     text:string,
 }
 
-// What build.test answers.
+// What build.test, build.test.status answer.
 Api_Build_Test_Result_Failed :: struct {
     package_:string `mirai:"name=package"`,
     name:string,
@@ -401,6 +401,7 @@ Api_Build_Test_Result :: struct {
     ok:bool,
     failure:string,
     seconds:f64,
+    running:bool `mirai:"label=it still builds or runs: build.test.status says when it ends"`,
     compiled:bool `mirai:"label=false: the package did not build; diagnostics say why"`,
     total:int,
     passed:int,
@@ -420,8 +421,7 @@ api_methods_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="engine.step",summary="Advances whole frames of editor, game and render with a fixed dt. Manual execution only (headless).",params=Api_Step_Params,result=Api_Step_Result,defaults=&step_default,flags={.As_User},run=api_step})
     api_register(s,st,{name="engine.shutdown",summary="Stops Play and quits the editor after answering. Fails with unsaved changes of scenes or assets unless discard.",params=Api_Shutdown_Params,result=Api_Shutdown_Result,flags={.Destructive,.As_User},run=api_shutdown})
     api_register(s,st,{name="engine.gpu_lose",summary="Makes the next submission to the GPU report the device lost, as a reset of the GPU does, to test what follows: the editor starts again with its documents, and ends if it was started again for a loss less than a minute before.",result=Api_Gpu_Lose_Result,flags={.Destructive,.As_User},run=api_gpu_lose})
-    api_register(s,st,{name="editor.inspect",summary="What the editor shows and the actions it can run, to drive it as a person would with editor.input and editor.action.",result=Api_Editor_Inspect,writes_result=true,flags={.Read_Only},run=api_editor_inspect})
-    api_register(s,st,{name="editor.action",summary="Runs an action of the editor by name, as its menu entry or its shortcut does.",params=Api_Action_Params,result=Api_Action_Result,run=api_editor_action})
+    api_register(s,st,{name="editor.inspect",summary="What the editor shows and the entries of its menus, shortcuts and buttons: the method each one calls, with what params, and whether it is off or checked for the person now.",result=Api_Editor_Inspect,writes_result=true,flags={.Read_Only},run=api_editor_inspect})
     api_register(s,st,{name="editor.recover",summary="Recovers what an editor that ended left unsaved, or discards it; until then it stays set aside, whatever is edited or saved meanwhile, and a tab with changes stays as it is. With nothing offered it answers resolved false.",params=Api_Recovery_Params,result=Api_Recovery_Result,flags={.Idempotent},run=api_recover})
     api_register(s,st,{name="editor.section_edit",summary="Edits the section of a Scene_Reference in its world: its entities are edited here, scene.save writes its scene too, and everything else reads only. id 0 stops. Returns the reference edited.",params=Api_Section_Edit_Params,result=Api_Section_Edit_Result,writes_result=true,run=api_section_edit})
     api_register(s,st,{name="editor.section_preview",summary="Draws the sky and the sun of the section of a Scene_Reference instead of those on, in the view of the editor only: not an edit, not saved, and Play starts without it. id 0 goes back. Returns the sky and the sun drawn.",params=Api_Section_Preview_Params,result=Api_Section_Preview_Result,writes_result=true,run=api_section_preview})
@@ -443,7 +443,8 @@ api_methods_register :: proc(s:^Session,st:^Api_State) {
     check_defaults:=Api_Build_Check_Params{seconds=300}
     api_register(s,st,{name="build.check",summary="Checks the types of the code of the project, its game, editor and plugins, without building or loading anything; answers when it ends, with each error and its file and line.",params=Api_Build_Check_Params,defaults=&check_defaults,result=Api_Build_Check_Result,writes_result=true,flags={.Core,.Read_Only},run=api_build_check})
     test_defaults:=Api_Build_Test_Params{seconds=600}
-    api_register(s,st,{name="build.test",summary="Builds and runs the @(test) procedures of a package of the project against the engine it uses, without loading anything; answers when they end, with each failed test and what it logged.",params=Api_Build_Test_Params,defaults=&test_defaults,result=Api_Build_Test_Result,writes_result=true,flags={.Read_Only},run=api_build_test})
+    api_register(s,st,{name="build.test",summary="Starts building and running the @(test) procedures of a package of the project against the engine it uses, without loading anything, and answers at once: poll build.test.status until running is false, for each failed test and what it logged.",params=Api_Build_Test_Params,defaults=&test_defaults,result=Api_Build_Test_Result,writes_result=true,flags={.Read_Only},run=api_build_test})
+    api_register(s,st,{name="build.test.status",summary="The last run of the tests build.test started: how long it has run while it runs, then each failed test and what it logged.",result=Api_Build_Test_Result,writes_result=true,flags={.Read_Only},run=api_build_test_status})
     api_play_record_register(s,st)
     api_play_history_register(s,st)
     api_scene_register(s,st)
@@ -479,6 +480,8 @@ api_frames :: proc(s:^Session,count:int,dt:f32) -> int {
     p:=s.app.platform
     saved:=p.fixed_dt
     if st.manual && dt>0 {p.fixed_dt=dt}
+    // A method a frame of another one runs (a gesture inside editor.input) leaves it stepping.
+    stepping:=st.stepping
     st.stepping=true
     done:=0
     for _ in 0..<count {
@@ -488,7 +491,7 @@ api_frames :: proc(s:^Session,count:int,dt:f32) -> int {
         profile_sample(s,start)
         if !running {break}
     }
-    st.stepping=false
+    st.stepping=stepping
     p.fixed_dt=saved
     return done
 }
@@ -496,7 +499,7 @@ api_frames :: proc(s:^Session,count:int,dt:f32) -> int {
 @(private)
 api_manual_required :: proc(s:^Session,call:^api.Call) -> bool {
     if st:=api_state(s);st!=nil && st.manual {return true}
-    api.call_fail(call,api.SERVER_ERROR,"This editor draws by itself: engine.step and editor.input run only in a manual one, which mirai session start opens. Here play.step drives a game and editor.action runs an action")
+    api.call_fail(call,api.SERVER_ERROR,"This editor draws by itself: engine.step and editor.input run only in a manual one, which mirai session start opens. Here play.step drives a game and the methods editor.inspect lists in commands do what the menus do")
     return false
 }
 
@@ -611,6 +614,11 @@ api_step :: proc(s:^Session,call:^api.Call) {
 api_shutdown :: proc(s:^Session,call:^api.Call) {
     if api_turn_refused(s,call,"quit the editor") {return}
     params:=api.call_params(call,Api_Shutdown_Params)
+    // A person is asked about what is unsaved.
+    if api_person(s) {
+        quit_request(s)
+        return
+    }
     if documents_dirty(s) && !params.discard {
         api.call_fail(call,api.SERVER_ERROR,"The scene has unsaved changes; save it first or pass discard")
         return
@@ -653,12 +661,26 @@ api_history_result :: proc(s:^Session,call:^api.Call,kept:=0) {
     api.call_result(call,Api_History_Result)^={history.edits_undo_count(s.edits),history.edits_redo_count(s.edits),kept}
 }
 
+// The history a gesture of the person moves in: that of the asset document in front, when one is.
+@(private)
+api_document_history :: proc(s:^Session) -> ^Asset_History {
+    if d:=asset_document_active(s);d!=nil && api_person(s) {return &d.history}
+    return nil
+}
+
 @(private)
 api_undo :: proc(s:^Session,call:^api.Call) {
     preview:=s.edits.preview
+    if h:=api_document_history(s);h!=nil {
+        tools_release(s)
+        if asset_history_undo(h) {notify(s,fmt.tprintf("Undo %s",history.cstring_text(h.steps[h.cursor].label[:])))}
+        api.call_result(call,Api_History_Result)^={h.cursor,len(h.steps)-h.cursor,0}
+        return
+    }
     if !api_guard(s,call) {return}
     if preview {api_history_result(s,call);return}
     move:=history_undo(s)
+    if text:=history_text(move,"Undo");text!="" && api_person(s) {notify(s,text)}
     if !move.done {
         api.call_fail(call,api.SERVER_ERROR,move.error if move.error!="" else "Nothing to undo: the caller has no edit of its own left (an agent's turn undoes its own edits, the API outside a turn its own)")
         return
@@ -668,8 +690,15 @@ api_undo :: proc(s:^Session,call:^api.Call) {
 
 @(private)
 api_redo :: proc(s:^Session,call:^api.Call) {
+    if h:=api_document_history(s);h!=nil {
+        tools_release(s)
+        if asset_history_redo(h) {notify(s,fmt.tprintf("Redo %s",history.cstring_text(h.steps[h.cursor-1].label[:])))}
+        api.call_result(call,Api_History_Result)^={h.cursor,len(h.steps)-h.cursor,0}
+        return
+    }
     if !api_guard(s,call) {return}
     move:=history_redo(s)
+    if text:=history_text(move,"Redo");text!="" && api_person(s) {notify(s,text)}
     if !move.done {
         api.call_fail(call,api.SERVER_ERROR,move.error if move.error!="" else "Nothing to redo: the caller undid nothing since its last edit")
         return
@@ -689,40 +718,6 @@ api_editor_select :: proc(s:^Session,call:^api.Call) {
     tools_release(s)
     if len(picked)==0 && !params.add {history.selection_clear(s.selection)} else {history.selection_set(s.selection,picked,params.add)}
     api.call_result(call,Api_Select_Result)^={len(s.selection.entities),api_entity_id(w,history.selection_active(s.selection))}
-}
-
-@(private)
-api_action_find :: proc(name:string) -> (action:Action,found:bool) {
-    for candidate,index in reflect.enum_field_names(Action) {
-        if strings.equal_fold(candidate,name) {return Action(index),true}
-    }
-    return
-}
-
-@(private)
-api_editor_action :: proc(s:^Session,call:^api.Call) {
-    name:=base.text_get(api.call_params(call,Api_Action_Params).name[:])
-    action,found:=api_action_find(name)
-    if !found {
-        api.call_failf(call,api.INVALID_PARAMS,"%q is not an action; editor.inspect lists them",name)
-        return
-    }
-    #partial switch action {
-    case .Open,.Save_As,.Quit,.Shortcuts,.Import:
-        api.call_failf(call,api.INVALID_PARAMS,"%s opens a dialog: use scene.open, scene.save or engine.shutdown",name)
-        return
-    }
-    if !action_run(s,action) {
-        api.call_failf(call,api.SERVER_ERROR,"%s is disabled now",name)
-        return
-    }
-    // What the action asked for happens between frames; a manual editor
-    // runs one after undo and redo, as history.undo does.
-    if s.requests!={} || action==.Undo || action==.Redo {
-        st:=api_state(s)
-        if st.manual {api_frames(s,1,0)} else if s.requests!={} {requests_run(s)}
-    }
-    api.call_result(call,Api_Action_Result).ran=true
 }
 
 // ---------------------------------------------------------------- editor.inspect
@@ -798,26 +793,15 @@ api_inspect_write :: proc(s:^Session,w:^serial.Writer) {
         first^=false
         api_rect(w,rect)
     }
-    for action in Action {
-        name,_:=reflect.enum_name_from_value(action)
-        widget(w,s,&first,fmt.tprintf("action.%s",api_lower(name)),shell_id(g,"action",int(action)+1))
+    for &b in command_bindings(s) {
+        widget(w,s,&first,fmt.tprintf("command.%s",b.name),command_widget(g,b.name))
     }
     widget(w,s,&first,"menu.file",shell_id(g,"menu",1))
     widget(w,s,&first,"menu.view",shell_id(g,"menu",4))
     widget(w,s,&first,"stats",shell_id(g,"stats"))
     widget(w,s,&first,"share",shell_id(g,"share"))
     serial.text_write_raw(w,"}}")
-    api.write_key(w,"actions");serial.write_u8(w,'[')
-    for action in Action {
-        name,_:=reflect.enum_name_from_value(action)
-        if int(action)>0 {serial.write_u8(w,',')}
-        state:=action_state(s,action)
-        serial.text_write_raw(w,`{"name":`);serial.text_write_string(w,api_lower(name))
-        api.write_key(w,"disabled");api.write_flag(w,state.disabled)
-        api.write_key(w,"checked");api.write_flag(w,state.checked)
-        serial.write_u8(w,'}')
-    }
-    serial.write_u8(w,']')
+    api.write_key(w,"commands");api_commands_write(s,w)
     serial.write_u8(w,'}')
 }
 
@@ -1134,7 +1118,8 @@ api_camera_set :: proc(s:^Session,call:^api.Call) {
     v.orbit=orbit
     v.exposure,v.exposure_source,v.ev100=exposure,source,ev100
     viewport_camera(v)
-    s.view_cut=true
+    // Framing what is selected keeps the image; a camera that jumps cuts its history.
+    if framed==0 || !api_person(s) {s.view_cut=true}
     api.call_result(call,Api_Camera_Result)^={orbit_position(orbit),orbit.target,orbit.yaw,orbit.pitch,orbit.distance,orbit.fov,source,ev100}
 }
 
@@ -1294,6 +1279,10 @@ api_play_start :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.INVALID_PARAMS,"players and online are 4 at most")
         return
     }
+    if api_person(s) && (s.mode!=.Edit || play_plugin_active(s)) {
+        api.call_fail(call,api.SERVER_ERROR,"A game already plays")
+        return
+    }
     if running!=nil {
         if owner==0 {
             play_stop(s,true)
@@ -1314,11 +1303,14 @@ api_play_start :: proc(s:^Session,call:^api.Call) {
     case .Camera: s.play_asked=camera_origin(s);s.play_asked.asked=true
     case .Point:  s.play_asked=point_origin(s,params.point)
     }
-    if play_build_first(s,{owner=owner,players=params.players,online=params.online,ping_ms=params.ping_ms,saved_only=params.saved_only}) {
+    // A person plays with the players the Play menu has, and is asked about unsaved assets (-1).
+    online,ping:=params.online,params.ping_ms
+    if api_person(s) {online,ping=-1,-1}
+    if play_build_first(s,{owner=owner,players=params.players,online=online,ping_ms=ping,saved_only=params.saved_only}) {
         api_play_after_build(s,call,owner)
         return
     }
-    if error:=play_begin(s,owner,params.players,params.online,params.ping_ms,params.saved_only);error!="" {
+    if error:=play_begin(s,owner,params.players,online,ping,params.saved_only);error!="" {
         s.play_asked={}
         api.call_fail(call,api.SERVER_ERROR,error)
         return
@@ -1332,6 +1324,8 @@ api_play_start :: proc(s:^Session,call:^api.Call) {
 api_play_after_build :: proc(s:^Session,call:^api.Call,owner:int) {
     build_play_waits :: proc(s:^Session,user:rawptr) -> bool {return s.build.play.pending}
     if !api_wait(s,API_BUILD_SECONDS,nil,build_play_waits,"building to play") {
+        // A person sees the build and the game that follows it.
+        if api_person(s) {return}
         // Cancelled, the game does not start by itself when the build ends.
         if api_stop_asked(s) {s.build.play.pending=false;s.play_asked={};return}
         api.call_failf(call,api.SERVER_ERROR,"The build still runs after %d s: the game starts when it stands and play.status says so",API_BUILD_SECONDS)
@@ -1406,6 +1400,12 @@ play_begin :: proc(s:^Session,owner,players,online,ping_ms:int,saved_only:bool) 
 
 @(private)
 api_play_stop :: proc(s:^Session,call:^api.Call) {
+    // Stop of the bar ends what the editor shows: a watch, the game, or that of a plugin.
+    if api_person(s) {
+        shown_stop(s)
+        api_play_result(s,call,run_find(s,0))
+        return
+    }
     r,own:=api_play_run(s,call)
     if r!=nil && !own {api_play_refused(call);return}
     if r!=nil {
@@ -1704,15 +1704,24 @@ Api_Build_Test_Params :: struct {
 @(private)
 api_build_check :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Build_Check_Params)
-    job,error:=code_probe(s,.Check,"",nil,f64(params.seconds))
-    if error!="" {api.call_fail(call,api.SERVER_ERROR,error);return}
-    defer build.job_destroy(job)
+    if error:=code_probe_start(s,.Check,"",nil,f64(params.seconds));error!="" {api.call_fail(call,api.SERVER_ERROR,error);return}
+    // An odin check compiles nothing: it answers when it ends, saying how long it has run meanwhile.
+    checking :: proc(s:^Session,user:rawptr) -> bool {return probe_running(s.build)}
+    api_wait(s,f64(params.seconds)+5,nil,checking,"checking")
+    probe_poll(s)
+    if probe_running(s.build) {
+        api.call_fail(call,api.SERVER_ERROR,"The check did not end in its seconds")
+        return
+    }
     out:=call.out
     serial.write_u8(out,'{')
-    api_probe_write(out,&job.result)
+    api_probe_write(out,probe_result(s.build))
     serial.write_u8(out,'}')
 }
 
+// Starts building and running the tests and answers at once, as
+// build.test.status answers while they run: the editor answers other calls
+// meanwhile.
 @(private)
 api_build_test :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Build_Test_Params)
@@ -1729,13 +1738,32 @@ api_build_test :: proc(s:^Session,call:^api.Call) {
     for name in strings.split_iterator(&rest,",") {
         if trimmed:=strings.trim_space(name);trimmed!="" {append(&names,trimmed)}
     }
-    job,error:=code_probe(s,.Test,path,names[:],f64(params.seconds))
-    if error!="" {api.call_fail(call,api.SERVER_ERROR,error);return}
-    defer build.job_destroy(job)
-    out:=call.out
-    report:=&job.result.tests
+    if error:=code_probe_start(s,.Test,path,names[:],f64(params.seconds));error!="" {api.call_fail(call,api.SERVER_ERROR,error);return}
+    api_test_write(call.out,s.build)
+}
+
+@(private)
+api_build_test_status :: proc(s:^Session,call:^api.Call) {
+    probe_poll(s)
+    if s.build.probe==nil || s.build.probe.action!=.Test {
+        api.call_fail(call,api.SERVER_ERROR,"No run of the tests since the editor opened: build.test starts one")
+        return
+    }
+    api_test_write(call.out,s.build)
+}
+
+// A run of the tests: while it runs, how long it has run; once it ended,
+// what it ended with.
+@(private)
+api_test_write :: proc(out:^serial.Writer,b:^Build_State) {
+    running:=probe_running(b)
+    // While it runs, seconds is how long it has run.
+    shown:=probe_result(b)^
+    if running {shown.seconds=time.duration_seconds(time.tick_since(b.probe.started))}
+    report:=&shown.tests
     serial.write_u8(out,'{')
-    api_probe_write(out,&job.result)
+    api_probe_write(out,&shown)
+    api.write_bool(out,"running",running)
     api.write_bool(out,"compiled",report.compiled)
     api.write_int(out,"total",i64(report.total))
     api.write_int(out,"passed",i64(report.passed))
@@ -1755,6 +1783,16 @@ api_build_test :: proc(s:^Session,call:^api.Call) {
     }
     serial.write_u8(out,']')
     serial.write_u8(out,'}')
+}
+
+// What the last probe ended with; while it runs, or when its project could
+// not be opened, a result that says so.
+@(private)
+probe_result :: proc(b:^Build_State) -> ^build.Result {
+    if job:=probe_job(b);job!=nil {return &job.result}
+    result:=new(build.Result,context.temp_allocator)
+    if b.probe!=nil && b.probe.thread==nil {result.status,result.text=.Failed,"The project could not be opened"}
+    return result
 }
 
 // What a check or a run of the tests ended with, without the braces.

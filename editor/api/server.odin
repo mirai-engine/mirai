@@ -45,14 +45,16 @@ server_init :: proc(s:^Server,desc:Server_Desc) -> Init_Error {
     s.docs_root=clone_text(allocator,desc.docs_root)
     serial.writer_init_fixed(&s.out,s.response[HEAD_ROOM:])
     serial.writer_init_fixed(&s.stage,s.staging)
-    err:net.Network_Error
-    s.listener,err=net.listen_tcp({address=net.IP4_Loopback,port=desc.port},16)
-    if err!=nil {server_destroy(s);return .Bind_Failed}
-    s.listening=true
-    socket_private(s.listener)
-    if net.set_blocking(s.listener,false)!=nil {server_destroy(s);return .Bind_Failed}
-    endpoint,_:=net.bound_endpoint(s.listener)
-    s.port=endpoint.port
+    if !desc.local {
+        err:net.Network_Error
+        s.listener,err=net.listen_tcp({address=net.IP4_Loopback,port=desc.port},16)
+        if err!=nil {server_destroy(s);return .Bind_Failed}
+        s.listening=true
+        socket_private(s.listener)
+        if net.set_blocking(s.listener,false)!=nil {server_destroy(s);return .Bind_Failed}
+        endpoint,_:=net.bound_endpoint(s.listener)
+        s.port=endpoint.port
+    }
     if !describe_register(s) {server_destroy(s);return .Out_Of_Memory}
     return .None
 }

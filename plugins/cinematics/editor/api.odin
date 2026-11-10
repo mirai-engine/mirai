@@ -92,6 +92,7 @@ Key_Result :: struct {track:base.Entity_Id,key_count:u32}
 
 @(private)
 register :: proc(s:^editor.Session) {
+    editor.tool_entry(s,TOOL,"Cinematics",.Play)
     inspect_defaults:=Inspect_Params{position=-1}
     editor.api_method_register(s,{name="cinematics.inspect",summary="A timeline with its tracks and their keys, shots, markers and viewers, the values of its tracks and what its viewers show at a position, and the preview of the editor.",params=Inspect_Params,params_info=type_info_of(Inspect_Params),result=Inspect_Result,result_info=type_info_of(Inspect_Result),defaults=&inspect_defaults,writes_result=true,flags={.Read_Only},run=api_inspect})
     editor.api_method_register(s,{name="cinematics.control",summary="Plays, pauses, resumes, stops or seeks a timeline: in Edit the preview of the Cinematics tool, which puts its targets where the tracks say without changing the document; in Play the running world.",params=Control_Params,params_info=type_info_of(Control_Params),result=Control_Result,result_info=type_info_of(Control_Result),run=api_control})

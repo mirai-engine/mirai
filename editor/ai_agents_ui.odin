@@ -403,7 +403,7 @@ ai_chat_task_actions :: proc(s:^Session,task:^Ai_Task,width:f32) {
     if task.needs_build {
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(AI_ACTION_ROW),align_y=.Center}) {
             ui.spacer(ctx)
-            if ui.button(ctx,ui.id(ctx,"build"),{label="Build",icon=ui.icon_user(u8(User_Icon.Component)),style=.Accent,height=24}).clicked {action_run(s,.Build)}
+            if ui.button(ctx,ui.id(ctx,"build"),{label="Build",icon=ui.icon_user(u8(User_Icon.Component)),style=.Accent,height=24}).clicked {command_run(s,"build")}
         }
     }
 }
