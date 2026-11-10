@@ -478,16 +478,33 @@ that stopped being solid, with its weights; in a Heightfield, the height that we
 with the weights of its column. `terrain` stores none of that: the game uses it (an inventory,
 points) and these plugins:
 
-- **Dust:** the automatic bridge `terrain_vfx` (`terrain` and `vfx`). `Terrain_Dust` on the terrain
-  gives per layer a [`vfx`](vfx.md#channels) channel (`CHANNEL_DUST` or another, for another
-  effect) and its color, and births per cubic meter with a cap per edit. An emitter with a
-  `Particle_Channel` of that channel shows it.
+- **Dust:** `Terrain_Dust` on the terrain (`dust.odin`) gives per layer a channel of
+  `core.Births` (`CHANNEL_DUST` or another, for another effect) and its color, and births per cubic
+  meter with a cap per edit. An emitter of [`vfx`](vfx.md#channels) with a `Particle_Channel` of
+  that channel shows it; without `vfx` nobody takes them.
 - **Pieces and drops:** the `terrain_debris` plugin. `Terrain_Debris` gives per layer a piece
   prefab (with `Rigid_Body`, of the layer's material, which leaves with `speed`) and a drop one,
   each per so many cubic meters removed; what does not reach is owed to the next edit of that
   terrain (`Debris_Owed`), with a cap per tick for each.
 - Both are configured in the inspector and by `scene.write`; the demo has them in the `dig`
   scene.
+
+## Ground
+
+`ground.odin` gives `core.Ground_Queries` (set by `terrain_update`), so foliage, navigation and any
+other plugin read the ground without importing terrain. The probe answers the highest terrain along
+a line; a Heightfield read straight down takes its coarse grid when asked or where its pages are
+not in memory, so far from every viewer it still answers, coarser; a Volume there answers
+`Unloaded`, and the page that comes marks its chunks, which announces them. A hole, or the region of
+a stroke the editor holds (not in `Terrain_Data` until confirmed), answers `Empty`. At the end of
+each `terrain_update` the views are made again when the terrains, their places or the data
+changed, and each change is announced as a box of the world: a terrain that comes, goes, moves or
+shows another source (its whole box), the chunks whose version passed the change last seen
+(`terrain_changed`, with a cell around them) and a stroke that begins, grows or ends. The revision
+starts anew with each epoch of `Terrain_Data`, so a copied, swapped or reloaded world makes its
+readers read everything again. `unloaded` names the runs of chunks of each solid terrain that have
+no collider now (not resident, beyond `collision_distance`, waiting for a slot or a build); a chunk
+shown empty has nothing to load.
 
 ## Network
 
@@ -772,8 +789,10 @@ order, out-of-order edits and a lost one, a client that joins late, a request re
 cause, a correction that comes back and repeats the ticks, the brush in bytes, and
 `a_volume_dig_that_differs_on_a_client_comes_back_as_its_blocks_and_a_late_client_gets_them`.
 
-Bridges: `mirai test plugins/terrain_vfx/runtime`
-(`a_dig_raises_dust_of_each_layer_it_took_on_its_channel`) and
+Ground and dust: `mirai test plugins/terrain/runtime` with
+`the_ground_answers_each_line_as_its_terrain_has_it`,
+`the_chunks_of_a_terrain_without_collider_are_unloaded_ground` and
+`a_dig_raises_dust_of_each_layer_it_took_on_its_channel`. Debris:
 `mirai test plugins/terrain_debris/runtime`
 (`digs_give_a_piece_for_each_volume_taken_and_keep_what_falls_short_for_the_next`).
 

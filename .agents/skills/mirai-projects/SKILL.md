@@ -84,7 +84,7 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   the tool imports. It is guarded by `the_tool_imports_no_package_of_the_engine`.
 - The generator reads syntax (`core:odin/parser`) and writes text. The generated packages are the
   only source of what goes into each binary: `gen/game` imports `host` and the libraries, nothing
-  from the editor; `gen/editor` and `gen/play` only export `mirai_project_info`.
+  from the editor; `gen/editor` only exports `mirai_project_info`.
 - A generic procedure, an `inline` one, one with `deferred_*` or one with an `any` in its
   signature is compiled in its caller: it is not exported. An `any` crossing into a library would
   carry a typeid its type table lacks (`%v` of a plugin's enum prints nothing).
@@ -112,8 +112,12 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   (`-export-dependencies:json`), not against what was generated; `engine_time_packages` defines it.
 - The compiler never writes over a published output: it writes with the job's prefix in
   `.mirai/build` and a successful build replaces it with a rename.
-- A plugin library compiles only when the plugin libraries it links are published; their
-  declarations are written before and do not wait.
+- The code of a project (`game/`, `editor/`, its plugins) compiles into libraries of its own, as
+  the engine plugins do; the library of the project is the generated world alone. The player runs
+  the game of that library: there is no second build of the game besides the one that ships.
+- Every declaration is written before anything compiles and does not wait. On Windows the import
+  library of each library is made from the module definition `declare` writes, so every library
+  compiles at once; elsewhere a library compiles only when the libraries it links are published.
 - `job_start` does not wait for the compiler and copies to its arena what it needs from the
   project: the `Project` can be closed afterwards.
 - Paths use `/` in everything that is stored, generated or compared.

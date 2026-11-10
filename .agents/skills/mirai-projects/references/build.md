@@ -11,27 +11,25 @@ compiles against: [engine binaries](projects.md#engine-binaries). Which folders 
 errors of the attributes.
 
 - `Editor`: exports `mirai_project_info` over `gen/editor_world` (world of the editor, the game,
-  the `editor/` of the project and the active plugins). A library (`-build-mode:dll`) against the
-  engine `decl/` and the declarations of the [plugin libraries](projects.md#plugin-libraries),
-  which the job compiles first if they are stale; with the optimization and the `-debug` of the
-  manifest; output `.mirai/editor<ext>`. Optimized (`Size`, `Speed`, `Aggressive`) it is a single
-  LLVM module, as the shipped game compiles it, because a `#force_inline` procedure of another
-  package is not inlined across modules; with `--dev` (`minimal`) or `None`, one module per
-  package (`library_optimization_append`).
-- `Play`: the same over `gen/game_world` (game and runtime of the plugins), with the runtime
-  libraries of the plugins; output `.mirai/play<ext>`.
+  the `editor/` of the project and the active plugins). A library (`-build-mode:dll`) of the
+  generated world alone, against the engine `decl/` and the declarations of the
+  [plugin libraries](projects.md#plugin-libraries), which hold the code of the active plugins and
+  of the project and which the job compiles first if they are stale; with the optimization and
+  the `-debug` of the manifest; output `.mirai/editor<ext>`. The editor loads it, and
+  `mirai-player` runs its game (`mirai play`, `player.start`, the editor's attached players).
+  Optimized (`Size`, `Speed`, `Aggressive`) it is a single LLVM module, as the shipped game
+  compiles it, because a `#force_inline` procedure of another package is not inlined across
+  modules; with `--dev` (`minimal`) or `None`, one module per package
+  (`library_optimization_append`).
 - `Game`: a `main` that calls `host.player_run` over `gen/shipped_world`, the world without the
-  development plugins, which only this target generates. It compiles the whole engine from the
-  sources with `-o:speed`; executable `<output>/<executable><ext>` (`.mirai/game` or `--out`).
-  With `Desc.server` (`mirai build server`) it is the [dedicated server](#dedicated-server), the
-  same executable in `.mirai/server`.
-  - `mirai build game` and `server` without `--release` set `Desc.incremental`: the engine and its
-    shipping plugins are one `-o:speed` library next to the executable, kept in the shared cache
-    (`shipped-engine`) by its key, and only the game compiles, against its declarations;
-    `--release` and the editor's Build compile everything whole, the only build to ship
-    (`mirai package` builds no game).
+  development plugins, which only this target generates. It compiles the whole engine, the
+  plugins and the game from the sources, `-o:speed` with `--release` (the build that ships) and
+  `-o:minimal` otherwise; executable `<output>/<executable><ext>` (`.mirai/game` or `--out`). With
+  `Desc.server` (`mirai build server`) it is the [dedicated server](#dedicated-server), the same
+  executable in `.mirai/server`.
 
-A library compiles only the code of the project: it sees the engine through its declarations.
+A library compiles only the code of the project: it sees the engine through its declarations. A
+check and a test build read the project itself, with its tests.
 
 ## Flags and environment
 

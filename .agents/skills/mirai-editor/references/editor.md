@@ -241,12 +241,12 @@ The editor provides the generic parts:
   unsaved assets (`Pending.Play_Plugin`). While its game runs, Play and Simulate wait. Without a
   plugin that provides it, `play.start` with `online` fails saying `multiplayer` is missing.
 - **Player processes** (`editor/player_processes.odin`): the plugin opens a `mirai-player` per
-  player with the arguments that say what it plays; the editor adds `--attached`, how to show it
-  and `--library editor`: each process loads its copy of the `editor` library that the editor
-  already loaded and runs only the game's world and its loop, like the editor's Play, so nothing is
-  compiled for them. A Build while they run replaces the file: the processes continue with their
-  copy ([project libraries](../../mirai-core/references/host.md#project-libraries)). The scene
-  copies they run go to `.mirai/play/` (`play_copy_file`).
+  player with the arguments that say what it plays; the editor adds `--attached` and how to show
+  it: each process loads its copy of the `editor` library that the editor already loaded and runs
+  only the game's world and its loop, like the editor's Play, so nothing is compiled for them. A
+  Build while they run replaces the file: the processes continue with their copy
+  ([project libraries](../../mirai-core/references/host.md#project-libraries)). The scene copies
+  they run go to `.mirai/play/` (`play_copy_file`).
 
 Screen and input of the processes:
 

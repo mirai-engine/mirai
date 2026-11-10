@@ -243,15 +243,11 @@ volume_removal_creates_a_cavity_with_a_roof_and_addition_refills_it :: proc(t:^t
 }
 
 @(test)
-volume_picking_hits_the_tetra_surface_and_reuses_its_cell_buffer :: proc(t:^testing.T) {
+volume_picking_hits_the_tetra_surface :: proc(t:^testing.T) {
     source:Source;testing.expect(t,source_make(&source,.Volume,{3,3,3},1,4));defer source_destroy(&source)
     testing.expect(t,grid_init(&source.distances,source.distances.size,1,source.allocator))
     testing.expect(t,source_set(&source,{0,0,0},-1))
-    held:=raw_data(source.ray_mesh.positions)
-    allocator:=source.ray_mesh.positions.allocator
-    source.ray_mesh.positions.allocator=runtime.nil_allocator()
-    source.ray_mesh.normals.allocator=runtime.nil_allocator()
-    source.ray_mesh.indices.allocator=runtime.nil_allocator()
+    context.allocator=runtime.nil_allocator()
     for _ in 0..<4 {
         hit,normal,ok:=source_ray(&source,{-1,-1,-1},{1,1,1})
         testing.expect(t,ok)
@@ -259,8 +255,6 @@ volume_picking_hits_the_tetra_surface_and_reuses_its_cell_buffer :: proc(t:^test
         testing.expect(t,normal.x+normal.y+normal.z>0)
         testing.expectf(t,source_density(&source,hit)>0.7,"the trilinear field intentionally differs from the tetra surface")
     }
-    source.ray_mesh.positions.allocator=allocator;source.ray_mesh.normals.allocator=allocator;source.ray_mesh.indices.allocator=allocator
-    testing.expect_value(t,raw_data(source.ray_mesh.positions),held)
 }
 
 @(test)

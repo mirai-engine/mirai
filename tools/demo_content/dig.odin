@@ -23,7 +23,7 @@ dig_material :: proc(o:^Out,name:string,color:[3]f32,roughness:f32,metallic:f32=
 }
 
 // The Volume of the dig scene: grass over soil over rock with pockets of ore,
-// their materials and the dust a dig raises (plugin terrain_vfx).
+// their materials and the dust a dig raises (Terrain_Dust).
 write_dig_assets :: proc(o:^Out) {
     os.make_directory_all(path(o,"assets/dig"))
     grass:=dig_material(o,"Dig grass",{0.2,0.36,0.1},0.9)
