@@ -36,7 +36,7 @@ says how to fix each finding.
 
 - `play` compiles the project at the `build.optimization` of `project.mirai` (`Minimal` in the
   template) and reads assets and shaders from the project: nothing is cooked, so it starts fast.
-- `build game` generates the shaders, cooks the assets that every scene, prefab and `cook.mirai`
+- `build game` generates the shaders, cooks the assets that every scene and `cook.mirai`
   reach and writes `.mirai/game` (or `--out`): the executable, `project.mirai`, `input.mirai`,
   `settings.mirai`, `assets/` and `shaders/`. It alone shows what the built game lacks.
 - `mirai build game` (and `--dev`) is the fast incremental path: the engine and its plugins come

@@ -53,7 +53,7 @@ control_spawns :: proc(s:^asset.Scene_Builder,name:string,prefab:base.Asset_Id,f
 
 write_control_scene :: proc(o:^Out) {
     s:asset.Scene_Builder
-    asset.builder_init(&s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene","control"))
+    asset.builder_init(&s,&o.content,asset.content_id(PROJECT,"scene","control"))
     defer asset.builder_destroy(&s)
     demo:=game.Control_Demo{}
     asset.builder_set(&s,asset.builder_entity(&s,"Control demo"),demo)

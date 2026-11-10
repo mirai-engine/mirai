@@ -79,7 +79,7 @@ a_scene_of_the_host_that_fails_halfway_leaves_the_world_as_it_was :: proc(t:^tes
     st:=new(Collab_State);defer free(st)
 
     host_scene:asset.Scene
-    asset.scene_init(&host_scene,&assets.types,asset.KIND_SCENE,{0x1c,1})
+    asset.scene_init(&host_scene,&assets.types,{0x1c,1})
     defer asset.scene_destroy(&host_scene)
     placed:=core.Transform{{0,3,0},1,{1,1,1}}
     for i in 1..=64 {

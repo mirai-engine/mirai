@@ -341,7 +341,7 @@ write_animation_scene :: proc(o:^Out) {
     if o.content.failed {return}
     programs:=gallery_program_assets(o,&model,clip,stride_time)
     matching:=gallery_mirai_matching(o,locomotion)
-    s:asset.Scene_Builder;asset.builder_init(&s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene","animation"));defer asset.builder_destroy(&s)
+    s:asset.Scene_Builder;asset.builder_init(&s,&o.content,asset.content_id(PROJECT,"scene","animation"));defer asset.builder_destroy(&s)
     g:=Gallery_Build{o=o,s=&s,model=&model,source=source,clip=clip,label=ui_id("animation_gallery_label"),panel=ui_id("animation_gallery_panel")}
     gallery_environment(o,&s)
     shoulder:=rig_path(&model,"LeftShoulder")

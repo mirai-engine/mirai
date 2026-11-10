@@ -350,6 +350,7 @@ Shader :: struct {
     spv,msl:    string, // file names in the folder of the generation
     entry:      string, // the entry point SPIRV-Cross gave the Metal source
     bindings:   []Binding,
+    constants:  []string, // the names of its constants, by id
     group:      [3]int,
     fingerprint,spv_hash,msl_hash:string,
     staged:     bool, // its files are in the staging folder, to be published
@@ -399,6 +400,13 @@ shader_from_json :: proc(object:json.Object,allocator:=context.allocator) -> (sh
         if !valid {return}
         shader.bindings[i]={slot,strings.clone(json_text(binding["kind"]),allocator)}
     }
+    constants,_:=object["constants"].(json.Array)
+    shader.constants=make([]string,len(constants),allocator)
+    for value,i in constants {
+        name,is_name:=value.(json.String)
+        if !is_name || name=="" {return}
+        shader.constants[i]=strings.clone(name,allocator)
+    }
     group,_:=object["group"].(json.Array)
     if len(group)!=3 {return}
     for value,i in group {
@@ -429,6 +437,9 @@ shader_to_json :: proc(writer:^Json_Writer,shader:Shader) {
     json_array_end(writer)
     json_key(writer,"group");json_array_begin(writer)
     for size in shader.group {json_integer(writer,i64(size))}
+    json_array_end(writer)
+    json_key(writer,"constants");json_array_begin(writer)
+    for constant in shader.constants {json_string(writer,constant)}
     json_array_end(writer)
     json_key(writer,"fingerprint");json_string(writer,shader.fingerprint)
     json_key(writer,"spv_hash");json_string(writer,shader.spv_hash)

@@ -1,7 +1,7 @@
 #include "native.slang"
 //! variant hw MIRAI_HW_RT=1
-//! variant color MIRAI_COLORED_SHADOWS=1
-//! variant color_hw MIRAI_COLORED_SHADOWS=1 MIRAI_HW_RT=1
+// color: colored shadows, whose rays take the filters of the glass they cross (trace.slang).
+//! constant color MIRAI_COLORED_SHADOWS
 // The direct light of the pixels that trace rays of their own. A pixel of
 // thin geometry or an edge, whose surface no block of shadows holds, traces
 // one to the sun, to each node of its cut and to each light of extensions,
@@ -42,15 +42,13 @@ static const uint REFERENCE_POINTS = 16u;
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
 void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint local : SV_GroupIndex) {
-#ifdef MIRAI_FILTER_POINTS
-    if (params.resume != 0u) {
+    if (MIRAI_COLORED_SHADOWS && params.resume != 0u) {
         Point_Head head;
         if (!head_of_round(group.x * (MIRAI_GROUP_X * MIRAI_GROUP_Y) + local, head)) return;
         int2 at = int2(head.owner & 0xffffu, head.owner >> 16u);
         out_direct[at] = float4(finite_or_zero(out_direct[at].rgb + filters_correction(head.chain)), 1.0);
         return;
     }
-#endif
     uint index = dispatch_id.x;
     int2 p;
     bool front = true, back = true;
@@ -93,7 +91,5 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         direct += direct_lighting(side == 0u ? s : behind, bias, budget, which, extension_point);
     }
     out_direct[p] = float4(direct, 1.0);
-#ifdef MIRAI_FILTER_POINTS
-    if (filter_chain != INVALID) head_append(point_head(INVALID, filter_chain, uint(p.x) | (uint(p.y) << 16u)));
-#endif
+    if (MIRAI_COLORED_SHADOWS && filter_chain != INVALID) head_append(point_head(INVALID, filter_chain, uint(p.x) | (uint(p.y) << 16u)));
 }

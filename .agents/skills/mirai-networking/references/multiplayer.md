@@ -25,7 +25,7 @@ Usually its prefab carries it: everything that appears from that prefab is repli
 
 - What travels is what the entity has when it is first replicated:
   - its pose (position to 1 mm, rotation of 15 bits per component, scale), preceded by the
-    entity's persistent `Id`, the prefab it came from (`scene.Prefab_Source`) and the
+    entity's persistent `Id`, the prefab it came from (`scene.Prefab_Instance`) and the
     [section](#sections) it hangs from;
   - its motion (`Motion_State`, linear and angular velocity to 1 mm/s) if a simulation moves it
     (it has `core.Motion`);

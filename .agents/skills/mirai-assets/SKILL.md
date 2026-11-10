@@ -1,6 +1,6 @@
 ---
 name: mirai-assets
-description: Mirai binary assets (.scene, .prefab, .mat, .mesh, .tex, .anim, .sound, .sound_set,
+description: Mirai binary assets (.scene, prefabs, .mat, .mesh, .tex, .anim, .sound, .sound_set,
   .ui, .font, .strings, .prompts, .records and those of plugins, such as .terrain and .foliage),
   their container, the `asset` package, the registry, prefab resolution (`cook/prefab`), the
   compression of assets (`std/compressor`, `cook/compressor`), `std/serial` and the `mirai asset`
@@ -12,7 +12,8 @@ description: Mirai binary assets (.scene, .prefab, .mat, .mesh, .tex, .anim, .so
 
 The packages are `std/serial` (streams, schemas, migration, paths, JSON), the codecs
 (`std/compressor` and its packages, `cook/compressor/lz`, `cook/compressor/bc7split`) and
-`asset` (container, compression, typed tables, asset types, scene/prefab, registry).
+`asset` (container, compression, typed tables, asset types, scenes and their prefab instances,
+registry).
 
 ## Map
 
@@ -39,8 +40,8 @@ The packages are `std/serial` (streams, schemas, migration, paths, JSON), the co
   [records](references/kinds.md#records) and [prompts](references/kinds.md#prompts). A plugin's
   types are its own: `.particle` ([vfx](../mirai-world/references/vfx.md#format)), `.terrain`,
   `.foliage`.
-- Scenes, prefabs, instances and overrides:
-  [scene and prefab](references/scenes.md#scene-and-prefab),
+- Scenes, what makes one a prefab, instances and overrides:
+  [scene](references/scenes.md#scene), [prefab](references/scenes.md#prefab),
   [prefab instances](references/scenes.md#prefab-instances) and
   [resolution](references/scenes.md#resolution-against-the-current-prefab).
 
@@ -49,10 +50,10 @@ The packages are `std/serial` (streams, schemas, migration, paths, JSON), the co
 1. **Look before touching.** Inspect with the [CLI](references/cli.md); the file's schema allows
    reading any type.
 2. **Editing an existing asset.** `mirai asset set` or `unpack`/`pack`
-   ([CLI](references/cli.md)). From code: `asset.Document`, or `asset.Scene` for scenes and
-   prefabs. In a game they are files of `assets/` written through the API or the editor; only the
-   demo's tool writes them with `asset.Scene_Builder`. Meshes from code go through
-   `asset.content_mesh` over the shapes of `std/geom`
+   ([CLI](references/cli.md)). From code: `asset.Document`, or `asset.Scene` for scenes. In a
+   game they are files of `assets/` written through the API or the editor; only the demo's tool
+   writes them with `asset.Scene_Builder`. Meshes from code go through `asset.content_mesh` over
+   the shapes of `std/geom`
    ([content tool](../../../docs/game/assets/content-tool.md)).
 3. **Changing a serialized struct.** A component or a record of a game changes without a version
    or a converter: the reader migrates its rows by field name.
@@ -89,7 +90,7 @@ The packages are `std/serial` (streams, schemas, migration, paths, JSON), the co
   `owner` says which asset it is a part of ([container](references/formats.md#container)).
 - **Persistent identity.** What is stored names entities by `Entity_Id` and assets by `Asset_Id`,
   never by runtime index. The only stored position is the `entity` column of a component table. In
-  scenes and prefabs a `base.Entity` field contains the `Entity_Id` of its target.
+  a scene a `base.Entity` field contains the `Entity_Id` of its target.
 - **Dependencies are derived** from the `Asset_Id`s the values name; there is no separate list.
 - **Nothing in the file is trusted without validating.** `blob_open`, `schema_read` and
   `asset_open` validate header, directory, schema and tables; each `*_view` validates ranges of its
@@ -117,6 +118,10 @@ The packages are `std/serial` (streams, schemas, migration, paths, JSON), the co
 - **Atomic writing.** `document_save` and `scene_save` write a temporary and rename;
   `mirai asset set` does not leave the file half-written if a value is invalid.
 - **A scene is one file**, not one per entity.
+- **One kind of scene.** A prefab is a scene with exactly one root, never another kind or
+  extension: `Header_Flag.One_Root` says it, derived from the entities on every write and checked
+  on every read, so the registry answers it without opening the file
+  ([prefab](references/scenes.md#prefab)).
 - **A guest mount never takes an id the registry has**: what the program shipped wins over what a
   player adds ([guest mounts](references/formats.md#registry)).
 

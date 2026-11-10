@@ -201,7 +201,7 @@ api_play_spawn :: proc(s:^Session,call:^api.Call) {
     r,ok:=api_play_own_run(s,call,params.player)
     if !ok {return}
     w:=run_ref(s,r)
-    id,located:=asset_named(s,call,base.text_get(params.asset[:]),asset.KIND_PREFAB,PREFAB_EXTENSION,"a prefab")
+    id,located:=asset_named(s,call,base.text_get(params.asset[:]),asset.KIND_SCENE,SCENE_EXTENSION,"a prefab")
     if !located {return}
     spawned:=scene.Spawn{prefab=id}
     if base.text_get(params.parent[:])!="" {
@@ -212,7 +212,7 @@ api_play_spawn :: proc(s:^Session,call:^api.Call) {
     report,error:=scene.spawn_prefab(core.commands_of(w),s.app.assets,spawned)
     core.world_settle(w)
     if error!=.None {
-        api.call_failf(call,api.SERVER_ERROR,"The prefab could not be spawned: %v",error)
+        api.call_failf(call,api.SERVER_ERROR,"The prefab could not be spawned: %s",scene.error_text(error))
         return
     }
     run_tell_call(s,r,"play.spawn",call.raw)

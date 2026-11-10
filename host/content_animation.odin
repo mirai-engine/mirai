@@ -73,7 +73,7 @@ content_animation_wait :: proc(app:^App,id:base.Asset_Id) -> ^Content_Animation 
 
 // Starts the first load of each .anim that ids name, directly or through the assets they depend
 // on in the registry, and appends them to out: what a world that starts playing with those ids
-// can play. Scenes are not followed: they load apart.
+// can play. Scenes of several roots are not followed: they load apart.
 content_animations_start :: proc(app:^App,ids:[]base.Asset_Id,out:^[dynamic]base.Asset_Id) {
     a:=app.assets
     if a==nil {return}
@@ -85,7 +85,7 @@ content_animations_start :: proc(app:^App,ids:[]base.Asset_Id,out:^[dynamic]base
         if id=={} || id in seen {continue}
         seen[id]=true
         file,found:=asset.registry_find(&a.registry,id)
-        if !found || file.kind==asset.KIND_SCENE {continue}
+        if !found || file.kind==asset.KIND_SCENE && !asset.registry_prefab(file) {continue}
         if file.kind==asset.KIND_ANIMATION {
             _=content_animation(app,id)
             append(out,id)

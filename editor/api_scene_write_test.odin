@@ -245,7 +245,7 @@ a_write_places_a_prefab_as_a_linked_instance_with_what_the_document_says_of_it :
         return
     }
 
-    document:=fmt.tprintf(`{{"root":"0x%016x","entities":[{{"name":"Level","children":[{{"name":"North","prefab":"crate.prefab","position":[4,0,0],"children":[{{"name":"Lid","children":[{{"name":"Lamp","components":{{"Prefab_Test_Lamp":{{"intensity":9}}}}}}]}}]}}]}}]}}`,u64(level_id))
+    document:=fmt.tprintf(`{{"root":"0x%016x","entities":[{{"name":"Level","children":[{{"name":"North","prefab":"crate.scene","position":[4,0,0],"children":[{{"name":"Lid","children":[{{"name":"Lamp","components":{{"Prefab_Test_Lamp":{{"intensity":9}}}}}}]}}]}}]}}]}}`,u64(level_id))
     result,named,failure,ok:=write_scene_made(f,document)
     if !testing.expect(t,ok,failure) {return}
     testing.expect_value(t,result,Api_Write_Result{id=level_id,made=3})
@@ -289,7 +289,7 @@ a_write_places_a_prefab_as_a_linked_instance_with_what_the_document_says_of_it :
     testing.expect(t,revert_error==.None && reverted>0 && value.intensity==2 && value.range==3,fmt.tprintf("%v %d %v",revert_error,reverted,value))
 
     // Without root the instance is the new root, with what the document says of it.
-    result,failure,ok=write_scene(f,`{"entities":[{"name":"Alone","prefab":"crate.prefab","enabled":false}]}`)
+    result,failure,ok=write_scene(f,`{"entities":[{"name":"Alone","prefab":"crate.scene","enabled":false}]}`)
     alone,placed_alone:=prefab_link_of(w,api_entity(w,result.id))
     testing.expect(t,ok && result.made==3 && placed_alone && alone.root && entity_has(w,api_entity(w,result.id),core.Disabled),fmt.tprintf("%s %v %v %v",failure,result,placed_alone,alone))
 
@@ -301,9 +301,9 @@ a_write_places_a_prefab_as_a_linked_instance_with_what_the_document_says_of_it :
     instances,members:=core.count(&f.world.instances),core.count(&f.world.members)
     open_id:=f.document.id
     cases:=[?]struct{document,says:string,inside:bool}{
-        {`{"entities":[{"name":"Top","children":[{"name":"South","prefab":"crate.prefab"},{"name":"Bad","components":{"Light":{}}}]}]}`,"entities[0].children[1].components.Light",false},
-        {`{"entities":[{"name":"In","prefab":"crate.prefab"}]}`,"holds the file it would be placed in",true},
-        {`{"entities":[{"name":"In","prefab":"yard.prefab"}]}`,"holds the file it would be placed in",true},
+        {`{"entities":[{"name":"Top","children":[{"name":"South","prefab":"crate.scene"},{"name":"Bad","components":{"Light":{}}}]}]}`,"entities[0].children[1].components.Light",false},
+        {`{"entities":[{"name":"In","prefab":"crate.scene"}]}`,"holds the file it would be placed in",true},
+        {`{"entities":[{"name":"In","prefab":"yard.scene"}]}`,"holds the file it would be placed in",true},
     }
     for c in cases {
         if c.inside {f.document.id=id}
@@ -343,9 +343,9 @@ a_write_that_fails_says_where_in_the_document_and_changes_nothing :: proc(t:^tes
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"x","colour":1}}]}}]}}`,at),"entities[0].children[0] has no 'colour'"},
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"position":[1,2]}}]}}]}}`,at),"entities[0].children[0]: position must be an array of 3 numbers"},
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"id":"0x%016x"}}]}}]}}`,at,u64(other_id)),"entities[0].children[0].id: 0x"},
-        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made","prefab":"nobody.prefab"}}]}}]}}`,at),`entities[0].children[0].prefab: "nobody.prefab" is no .prefab asset`},
-        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made","prefab":"level.scene"}}]}}]}}`,at),`entities[0].children[0].prefab: "level.scene" is no .prefab asset`},
-        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made","prefab":{{"asset":"nobody.prefab","size":2}}}}]}}]}}`,at),"entities[0].children[0].prefab has no 'size'"},
+        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made","prefab":"nobody.scene"}}]}}]}}`,at),`entities[0].children[0].prefab: "nobody.scene" is no .scene asset`},
+        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made","prefab":"level.scene"}}]}}]}}`,at),`entities[0].children[0].prefab: "level.scene" is no .scene asset`},
+        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made","prefab":{{"asset":"nobody.scene","size":2}}}}]}}]}}`,at),"entities[0].children[0].prefab has no 'size'"},
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made","prefab":7}}]}}]}}`,at),"entities[0].children[0].prefab must be the path or the id of a prefab"},
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"A","prefab":{{"root":true}}}}]}}]}}`,at),"entities[0].children[0].prefab: it is not what links the entity to a prefab"},
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"A","components":{{"Prefab_Instance":{{}}}}}}]}}]}}`,at),"entities[0].children[0].components.Prefab_Instance: Prefab_Instance is what links an entity to its prefab"},
