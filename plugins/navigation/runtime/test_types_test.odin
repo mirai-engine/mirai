@@ -18,7 +18,6 @@ test_types :: proc(types:^[dynamic]core.Test_Type) {
         core.test_type(Nav_Path,default=proc(dst:^Nav_Path) {dst^=NAV_PATH_DEFAULT}),
         core.test_type(Navigation,copy=navigation_copy,copy_kept=navigation_copy_kept,free=navigation_free,reset=navigation_free),
         core.test_type(Navigation_Agents,free=agents_free),
-        core.test_type(Nav_Unloaded,free=nav_unloaded_free),
         core.test_type(Navigation_Builds,free=builds_free),
     )
 }

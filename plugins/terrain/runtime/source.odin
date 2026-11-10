@@ -3,6 +3,7 @@ package terrain
 import "base:runtime"
 import "core:math"
 import "core:math/linalg"
+import "core:mem"
 import "core:strings"
 import "mirai:asset"
 import "mirai:std/base"
@@ -47,7 +48,6 @@ Source :: struct {
     holes:Grid(u8),       // Heightfield: 1 for each cell without surface; no pages without holes
     distances:Grid(f32),  // Volume: samples.x by y by z in blocks; one all air or all solid holds no values
     scratch:[dynamic]f32, // the region a brush reads while it writes
-    ray_mesh:geom.Mesh_Buffer,
     weights:Grid(Weights), // samples.x by samples.z, or of each sample of a Volume in blocks
     dug:Dug,               // what the last edit took out
     file:string,           // Heightfield and Volume: where the pages of its grids in blocks are read from
@@ -76,7 +76,7 @@ source_valid :: proc "contextless" (info:Source_Info) -> bool {
 height_valid :: proc "contextless" (value:f32) -> bool {return value-value==0 && abs(value)<=HEIGHT_LIMIT}
 
 @(private)
-source_allocate :: proc(s:^Source,info:Source_Info,allocator:=context.allocator,editable:=true) -> bool {
+source_allocate :: proc(s:^Source,info:Source_Info,allocator:=context.allocator) -> bool {
     if !source_valid(info) {return false}
     temporary:=Source{allocator=allocator,info=info}
     if info.kind==.Heightfield {
@@ -86,10 +86,6 @@ source_allocate :: proc(s:^Source,info:Source_Info,allocator:=context.allocator,
     }
     if !weights_init(&temporary) {source_destroy(&temporary);return false}
     temporary.scratch=make([dynamic]f32,allocator)
-    geom.mesh_buffer_init(&temporary.ray_mesh,allocator)
-    if info.kind==.Volume && editable {
-        if reserve(&temporary.ray_mesh.positions,36)!=nil || reserve(&temporary.ray_mesh.normals,36)!=nil || reserve(&temporary.ray_mesh.indices,36)!=nil {source_destroy(&temporary);return false}
-    }
     source_destroy(s)
     s^=temporary
     return true
@@ -140,7 +136,6 @@ source_destroy :: proc(s:^Source) {
     grid_destroy(&s.holes,s.allocator)
     grid_destroy(&s.weights,s.allocator)
     coarse_destroy(&s.coarse,s.allocator)
-    geom.mesh_buffer_destroy(&s.ray_mesh)
     delete(s.file,s.allocator)
     s^={}
 }
@@ -152,10 +147,10 @@ source_samples_held :: proc "contextless" (s:^Source) -> bool {
     return s.distances.size=={int(s.samples.x),int(s.samples.y),int(s.samples.z)}
 }
 
-source_clone :: proc(dst,src:^Source,allocator:=context.allocator,editable:=true) -> bool {
+source_clone :: proc(dst,src:^Source,allocator:=context.allocator) -> bool {
     if !source_valid(src.info) || !source_samples_held(src) {return false}
     temporary:Source
-    if !source_allocate(&temporary,src.info,allocator,editable) {return false}
+    if !source_allocate(&temporary,src.info,allocator) {return false}
     if !grid_clone(&temporary.heights,&src.heights,allocator) || !grid_clone(&temporary.distances,&src.distances,allocator) || !grid_clone(&temporary.holes,&src.holes,allocator) || !grid_clone(&temporary.weights,&src.weights,allocator) {source_destroy(&temporary);return false}
     if src.file!="" {
         error:runtime.Allocator_Error
@@ -174,17 +169,16 @@ source_load :: proc(s:^Source,path:string,types:^asset.Types,allocator:=context.
     return source_read(s,&file,types,allocator)
 }
 
-// The source an open .terrain holds; s is replaced only when it is valid.
-// editable false leaves out what only brushes use, as source_clone. With
+// The source an open .terrain holds; s is replaced only when it is valid. With
 // pages, the path of file, a Heightfield or Volume leaves the values of its
 // pages in that file (asset_load_front opens it without them), read when
 // needed.
-source_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=context.allocator,editable:=true,pages:="") -> (id:base.Asset_Id,ok:bool) {
+source_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=context.allocator,pages:="") -> (id:base.Asset_Id,ok:bool) {
     if asset.kind_check(file,KIND,VERSION)!=.None {return}
     info,error:=asset.asset_row(file,types,"terrain",Source_Info)
     if error!=.None || info==nil || !source_valid(info^) {return}
     temporary:Source
-    if !source_allocate(&temporary,info^,allocator,editable) {return}
+    if !source_allocate(&temporary,info^,allocator) {return}
     defer source_destroy(&temporary)
     if info.kind==.Heightfield {
         if !grid_read_document(&temporary.heights,file,types,temporary.heights.size,"height_pages","height_blocks",height_valid,allocator,pages!="") {return}
@@ -365,8 +359,14 @@ source_ray :: proc(s:^Source,origin,direction:[3]f32) -> (point,normal:[3]f32,ok
         }
         return
     }
-    // Each cell is extracted from a window of its samples and those its gradients read.
+    // Each cell is extracted from a window of its samples and those its gradients read,
+    // into memory of the call: rays of other threads read the same source.
     window:[4*4*4]f32
+    backing:[4096]u8
+    arena:mem.Arena
+    mem.arena_init(&arena,backing[:])
+    ray_mesh:geom.Mesh_Buffer
+    geom.mesh_buffer_init(&ray_mesh,mem.arena_allocator(&arena))
     grid:=geom.Scalar_Grid{samples={int(s.samples.x),int(s.samples.y),int(s.samples.z)},cell={s.cell,s.cell,s.cell},origin=low}
     start:=(origin+d*(near+s.cell*1e-5)-low)/s.cell
     cell,advance:[3]int
@@ -397,10 +397,10 @@ source_ray :: proc(s:^Source,origin,direction:[3]f32) -> (point,normal:[3]f32,ok
             near=end
             continue
         }
-        if geom.isosurface(grid,cell,cell+[3]int{1,1,1},&s.ray_mesh)!=.None {return}
+        if geom.isosurface(grid,cell,cell+[3]int{1,1,1},&ray_mesh)!=.None {return}
         best:=f32(1e9)
-        for triangle:=0;triangle<len(s.ray_mesh.indices);triangle+=3 {
-            a,b,c:=s.ray_mesh.positions[s.ray_mesh.indices[triangle]],s.ray_mesh.positions[s.ray_mesh.indices[triangle+1]],s.ray_mesh.positions[s.ray_mesh.indices[triangle+2]]
+        for triangle:=0;triangle<len(ray_mesh.indices);triangle+=3 {
+            a,b,c:=ray_mesh.positions[ray_mesh.indices[triangle]],ray_mesh.positions[ray_mesh.indices[triangle+1]],ray_mesh.positions[ray_mesh.indices[triangle+2]]
             face:=mm.Triangle{a,b,c}
             t,_,hit:=mm.ray_triangle({origin,d},face)
             if hit && t>=near-s.cell*1e-4 && t<=end+s.cell*1e-4 && t<best {best=t;normal=mm.triangle_normal(face);ok=true}

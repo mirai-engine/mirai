@@ -231,16 +231,18 @@ layer, `x` is the density and `y` how much it glows. A flat grid is not drawn (p
 
 ## Channels
 
-A game gives births to a channel (`channel_emit` over `Particle_Channels`, a world queue): where,
+A game gives births to a channel (`core.Births`, a world queue of `core`: whoever pushes does not
+import `vfx`): where,
 with what velocity, color, size, how many and values that its programs read
 (`Mirai_Vfx_Context.values`). Each emitter with a `Particle_Channel` of that channel starts
 particles of its effect at each one, besides its own; a program reads them through a `channel`
 resource.
 
-- A channel is a named id (`Particle_Channel_Name`,
+- A channel is a named id (`core.Birth_Channel`,
   [named ids](../../mirai-core/references/core.md#named-ids)): whoever pushes declares it in
-  code, the plugins below `CHANNEL_GAME` (`fluids` `brushes` and `displacers`, `water`
-  `splashes`) and a game from there (`impacts` of the demo); the inspector offers them in a list.
+  code, the engine and plugins below `CHANNEL_GAME` (`fluids` `brushes` and `displacers`,
+  `water` `splashes`, `terrain` `dust`) and a game from there (`impacts` of the demo); the
+  inspector offers them in a list.
   A program's `channel` resource reads the channel whose name is its own (`channel_needs`);
   without a constant of that name the emitter reports the problem.
 - The data channels remain text: their names are given by the programs' text and the imported

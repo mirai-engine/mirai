@@ -60,7 +60,9 @@ Nav_Test :: struct {
     using w:Nav_World,
     using host:phys.Test_Physics_Host,
     builds:Navigation_Builds,
-    unloaded:Nav_Unloaded,
+    unloaded:[dynamic]mm.Aabb, // what the ground names unloaded
+    unloaded_revision:u64,
+    ground:core.Ground_Queries,
     run:Navigation_Agents,
     time:core.Time, // of the build
     tick:u64,
@@ -72,13 +74,17 @@ nav_test_init :: proc(t:^testing.T,f:^Nav_Test) -> bool {
     f.settings={bodies=64,shapes=64,contacts=256,joints=4,characters=8}
     f.nav_settings.tile_cells=48
     jobs.system_init(&f.app.jobs,{threads=0})
+    f.ground.open=proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
+        f:=cast(^Nav_Test)w.data
+        return {unloaded=f.unloaded[:],unloaded_revision=f.unloaded_revision},true
+    }
     return true
 }
 
 @(private)
 nav_test_destroy :: proc(f:^Nav_Test) {
     builds_free(&f.builds)
-    nav_unloaded_free(&f.unloaded)
+    delete(f.unloaded)
     agents_free(&f.run)
     phys.test_host_destroy(&f.host)
     core.test_world_destroy(&f.w)
@@ -100,7 +106,7 @@ nav_test_step :: proc(f:^Nav_Test,ticks:=1) {
             &f.transforms,&f.bodies,core.read(&f.replicas),&f.character_states,&f.joint_states,core.read(&f.fluids),&f.joint_requests,core.ref(&f.collision),core.ref(&f.sync_check),&f.simulation_hash,nil,&f.problems,{},core.read(&f.volumes),{},{},{},core.ref(&f.hierarchy),
         )
         nav_test_settle(f)
-        navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),core.read(&f.volumes),f.time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.unloaded),core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
+        navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),core.read(&f.volumes),f.time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.ground),{data=f},core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
     }
 }
 
@@ -261,8 +267,8 @@ tiles_where_the_collision_is_not_loaded_keep_what_they_have_until_it_loads :: pr
     testing.expect_value(t,status,ai.Search_Status.No_Path)
     built:=f.nav.stats.built+f.nav.stats.emptied
     // The wall leaves where a paging library says the collision is not loaded: nothing is built there.
-    append(&f.unloaded.boxes,mm.Aabb{{-2,-1,-12},{2,3,12}})
-    f.unloaded.revision+=1
+    append(&f.unloaded,mm.Aabb{{-2,-1,-12},{2,3,12}})
+    f.unloaded_revision+=1
     core.destroy(&f.entities,wall)
     nav_test_settled(t,&f)
     _,status=nav_test_path(t,&f,{-5,0,0},{5,0,0})
@@ -273,8 +279,8 @@ tiles_where_the_collision_is_not_loaded_keep_what_they_have_until_it_loads :: pr
     for _,mark in base.hash_map_iterate(&it) {if mark.unloaded {unloaded+=1}}
     testing.expect(t,unloaded>0)
     // It loads: the tiles build from what is there now.
-    clear(&f.unloaded.boxes)
-    f.unloaded.revision+=1
+    clear(&f.unloaded)
+    f.unloaded_revision+=1
     nav_test_settled(t,&f)
     _,status=nav_test_path(t,&f,{-5,0,0},{5,0,0})
     testing.expect_value(t,status,ai.Search_Status.Found)
@@ -328,8 +334,8 @@ the_tiles_where_the_terrain_is_not_loaded_go_in_a_run_and_come_back_from_the_bak
     hash:=tile.data.hash
     before,built:=nav_test_tiles(&f.nav),f.nav.stats.built+f.nav.stats.emptied
     // The terrain west of x=0 is not loaded: the edited world keeps its tiles.
-    append(&f.unloaded.boxes,mm.Aabb{{-40,-1e4,-40},{0,1e4,40}})
-    f.unloaded.revision+=1
+    append(&f.unloaded,mm.Aabb{{-40,-1e4,-40},{0,1e4,40}})
+    f.unloaded_revision+=1
     nav_test_settled(t,&f)
     testing.expect_value(t,nav_test_tiles(&f.nav),before)
     testing.expect_value(t,f.nav.stats.dropped,0)
@@ -345,8 +351,8 @@ the_tiles_where_the_terrain_is_not_loaded_go_in_a_run_and_come_back_from_the_bak
     testing.expect(t,ai.nav_mesh_tile_at(mesh,near)!=nil && waiting!=nil && waiting.dirty && waiting.unloaded)
     // Loaded: they come back from the bake as they were, and none is built.
     unchanged:=f.nav.stats.unchanged
-    clear(&f.unloaded.boxes)
-    f.unloaded.revision+=1
+    clear(&f.unloaded)
+    f.unloaded_revision+=1
     nav_test_settled(t,&f)
     testing.expect_value(t,nav_test_tiles(&f.nav),before)
     testing.expect_value(t,f.nav.stats.built+f.nav.stats.emptied,built)
@@ -402,8 +408,8 @@ the_bounds_of_the_collision_keep_the_tiles_where_it_is_not_loaded :: proc(t:^tes
     nav_test_settled(t,&f)
     tiles :: proc(f:^Nav_Test) -> (count:int) {for &tile in f.nav.classes[0].mesh.tiles {if tile.used {count+=1}};return}
     before:=tiles(&f)
-    append(&f.unloaded.boxes,mm.Aabb{{0.5,-1e4,-7},{13,1e4,7}})
-    f.unloaded.revision+=1
+    append(&f.unloaded,mm.Aabb{{0.5,-1e4,-7},{13,1e4,7}})
+    f.unloaded_revision+=1
     core.destroy(&f.entities,far)
     nav_test_settled(t,&f)
     testing.expect_value(t,tiles(&f),before)
@@ -736,7 +742,7 @@ agents_test_step :: proc(f:^Nav_Test) {
         if w:=core.edit(&f.worlds,e);w!=nil {w.transform=t} else {core.add(&f.worlds,e,core.World_Transform{transform=t})}
     }
     nav_test_settle(f)
-    navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),core.read(&f.volumes),time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.unloaded),core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
+    navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),core.read(&f.volumes),time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.ground),{data=f},core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
     navigation_agents(core.ref(&f.nav),&f.run,core.read(&f.agents),&f.paths,&f.nav_requests,&f.nav_events,&f.inputs,core.read(&f.drivables),core.read(&f.characters),core.read(&f.locomotions),core.read(&f.loco_states),core.read(&f.colliders),core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.worlds),core.read(&f.obstacles),core.read(&f.volumes),&f.loco,core.ref(&f.state),core.ref(&f.builds),&f.fars,
         &f.roamings,&f.disabled,{&f.transforms,core.read(&f.parents),&f.places,&f.jumps},&f.requests,&f.nav_crossings,time,&f.problems)
     nav_test_settle(f)
