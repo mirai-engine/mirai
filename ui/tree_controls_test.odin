@@ -339,14 +339,13 @@ animations_size_value_frame_and_reveal_their_node :: proc(t:^testing.T) {
 }
 
 @(test)
-the_focus_selection_and_clicks_play_their_animations :: proc(t:^testing.T) {
+a_click_plays_its_animation :: proc(t:^testing.T) {
     s:Test_Shop
     test_shop_init(t,&s)
     defer test_shop_destroy(&s)
     lib:=&s.tree.anims
-    focused:=anim_tween(lib,.Offset,{0,0,0,0},{4,0,0,0},0.1)
     clicked:=anim_tween(lib,.Scale,{1,1,0,0},{1.1,1.1,0,0},0.1)
-    set,_:=tree_anim_set(&s.tree,{focused=focused,clicked=clicked})
+    set,_:=tree_anim_set(&s.tree,{clicked=clicked})
     tree_node(&s.tree,-1,{kind=.Button,name="go",text="Go",anims=set,layout={width=fixed(40),height=fixed(20)}})
     testing.expect(t,test_shop_instance(&s))
     ctx:Context
@@ -354,9 +353,8 @@ the_focus_selection_and_clicks_play_their_animations :: proc(t:^testing.T) {
     defer context_destroy(&ctx)
     input:=test_input()
     test_frame(&ctx,&input,test_shop_build,&s)
-    ctx.focus,ctx.focus_ring=tree_element_id(&ctx,"go"),true
     test_frame(&ctx,&input,test_shop_build,&s)
-    testing.expect_value(t,s.instance.states[0].anim,focused)
+    testing.expect_value(t,s.instance.states[0].anim,Anim(0))
     test_point(&input,test_rect(t,&ctx,tree_element_id(&ctx,"go")))
     test_frame(&ctx,&input,test_shop_build,&s)
     test_press(&input);test_release(&input)

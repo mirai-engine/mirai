@@ -48,7 +48,7 @@ SWATCH_MATERIALS :: [?]string{
     "surfaces/paint/Lacquer.mat","surfaces/wood/Planks.mat","surfaces/glass/Stained glass.mat","surfaces/neon/Neon sign.mat",
 }
 
-THROWN_CUBE :: "characters/player/Thrown cube.prefab"
+THROWN_CUBE :: "characters/player/Thrown cube.scene"
 
 // Hidden has one writer: the scenes ask for it here.
 @(storage,queue)

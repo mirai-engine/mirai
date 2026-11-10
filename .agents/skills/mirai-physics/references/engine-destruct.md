@@ -71,9 +71,10 @@ simulation starts.
 ## Requests and movement
 
 `Destruct_Requests` receives `damage`, `strain` (breaks without impulse), `weaken` (accumulates
-without breaking), `slice` (deactivates the cluster hierarchy and continues on the piece graph),
-`field_strain` (a `Destruct_Region` with any `Radial_Falloff`, which can exclude a body with
-`ignore_body`) and `remove`.
+without breaking), `slice` (deactivates the cluster hierarchy and continues on the piece graph)
+and `remove`. Strain that lasts in a region is a `Strain_Field` on an entity with a `Volume`
+([damage](destruction.md#damage-and-fields)): it goes through `physics.strain_area`, and what it
+breaks comes back as events of the step like the impacts.
 
 - `remove` asks to remove a detached group and returns `Remove_Error` (group zero is retained). It
   removes body, proxy, entity and mesh with the same `Remove` event as the automatic policies. A

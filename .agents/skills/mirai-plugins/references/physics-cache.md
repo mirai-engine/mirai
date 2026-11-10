@@ -19,7 +19,7 @@ geometry allocates. A rejected frame is not added.
   increasing times from zero and poses relative to the recording origin. An absent piece is not
   drawn in that frame and can come back.
 - The automatic bridge `physics_cache_destruct`, there when a project has this plugin and
-  `destruct`, records destructibles: `capture_destructible`, with the scratch of its `Capture`,
+  `destruct`, records destructibles: `capture_destructible`
   uses the [public destruction queries][destruct], keeps each new geometry (also the halves of a
   cut) and converts the world poses to the origin. With `Geometry_Unavailable` the piece is not
   prepared yet and the caller retries off the stable path. The cache itself knows neither `destruct`

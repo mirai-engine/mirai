@@ -45,8 +45,7 @@ constants and parameters: `types.odin` and the comments of each file.
   scratch. The center of mass sets direction and weight; the force produces no torque.
 - `Radial_Falloff` are the curves of Chaos fields over that weight, from the edge (0) to the inside
   (1), and `Weight_Range` takes them from `min` to `max` like Chaos `MinRange`/`MaxRange`; outside
-  the area the weight is zero. `radial_weight` and `box_weight` are the same curves over a sphere
-  and a box, for the regions of fracture.
+  the area the weight is zero.
 - `Field_Noise` multiplies the weight by gradient noise (`noise_perlin3`) in the frame of the
   volume: a pure function of position and seed, stateless, the same with any number of workers.
 - A curve outside the enum, a non-finite range or a negative `scale` invalidate the request. A

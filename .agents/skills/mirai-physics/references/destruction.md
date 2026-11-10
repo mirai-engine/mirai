@@ -84,16 +84,16 @@ Topology:
 
 ## Damage and fields
 
-- `breakable_damage` (the strain is the magnitude of the impulse), `breakable_strain` (breaks
-  without launching) and `breakable_weaken` (adds strain without breaking or launching); the
-  `_body` variants are limited to the body of a piece.
-- `breakable_strain_region` accepts a `Break_Region` (sphere or oriented box) with any
-  `Radial_Falloff` curve, with the same `radial_weight` and `box_weight` as the solver's forces and
-  without `Weight_Range` or noise. Damage evaluates centers of bonds and of cluster pieces;
-  forces, centers of mass of bodies. Damage and impulse are independent.
+- `break_apply(w,event)` is the one door for what is asked of a breakable: a `Damage` strains and
+  launches what comes off with its impulse, a `Weaken` adds strain without breaking, on every body
+  (`piece=-1`) or on the body of one piece. Strain and impulse are independent.
+- The `Break_Region` of an event is a sphere or an oriented box that weighs as a
+  [`Volume`](../../mirai-gameplay/references/libraries.md#volume) does: 1 inside, rising from the
+  border over `blend` meters. It is in the event so that another end repeats it; damage evaluates
+  it at the centers of bonds and of cluster pieces.
 - `breakables_strain` gives a region to every breakable a `Query_Filter` meets, body by body except
   debris and `ignore_body`, and lists the event of each body it reached with those of the step.
-  The integration applies there what `physics.strain_region` asked, once the step of the tick ran.
+  The integration applies there what `physics.strain_area` asked, once the step of the tick ran.
 - Each bond accumulates strain up to `strength * area`, saturating at the largest f32.
 - With `impact_damage`, per contact only the points that approached fast and accumulated at least
   `damage_threshold` of normal impulse do damage: they are parameters of the breakage model, not
@@ -104,18 +104,11 @@ Topology:
   - The explicit impulse is distributed by volume and spatial weight among what is detached. A
     contact impact distributes it only when detaching from static: the solver already hit the
     dynamic.
-<<<<<<< HEAD
   - If bodies are missing, it keeps the broken bonds and retries detaching in a later event.
-- The optional [physics_fields](../../mirai-plugins/references/physics-fields.md) plugin provides
-  persistent fields through `physics.strain_region`; it adds no field state to the core.
-=======
-  - If bodies are missing, it keeps the broken connections and retries detaching in a later event.
 - `Strain_Field` on an entity with a box or sphere
-  [`Volume`](../../mirai-gameplay/references/libraries.md#volume) is persistent strain through the
-  public API (`strain_fields_step`): each tick it asks `field_strain` of every destructible its
-  filter sees, with the region of the volume, constant without blend and linear with it. A client
-  asks for none; another shape is the `destruct.strain_field` problem.
->>>>>>> main
+  [`Volume`](../../mirai-gameplay/references/libraries.md#volume) is persistent strain
+  (`strain_fields_step`): each tick it asks `physics.strain_area` for its strain in that volume. A
+  client asks for none; another shape is the `destruct.strain_field` problem.
 
 ## Removal
 
@@ -127,15 +120,15 @@ Topology:
 - Removal emits `Remove` with a representative piece and is replayed in another world. Passive
   clients do not remove non-cosmetic groups by themselves and follow the server.
 - The state for late join keeps the remaining ticks of life and distinguishes unlimited life.
-- `breakable_remove_body` returns the same `Remove` and removes only the detached body of that
-  piece; it rejects the initial group, removed pieces and stale handles.
+- A `Remove` event asked of `break_apply` removes only the detached body of its piece; the
+  initial group, removed pieces and stale handles are refused.
 - `breakable_body_remaining_ticks` gives the ticks until the first expiration of the pieces of a
   body and `expires`: zero with `expires=true` is a reached date; `expires=false`, unlimited life or
   no date.
 
 ## Cut
 
-- `breakable_slice` and `_body` cut by a world plane and allocate.
+- A `Slice` event cuts by the plane through its point, whose normal is its vector, and allocates.
   - A crossed piece receives two hulls and leaves its original `Gone`; the sides regroup without
     impulse. Bonds between sides break and the others pass to the corresponding half.
   - It needs two slots and two hulls per cut piece, and shapes for the pieces of whole clusters; if
@@ -166,9 +159,9 @@ frame of the body.
 
 Events:
 
-- A `Break_Event` with `piece=-1` reaches the whole breakable; `break_event_apply` replays the
-  operation in an equivalent world. `world_events(w).breaks` gathers the impacts and removals of
-  the last step and the regions of `breakables_strain` since; explicit requests return their event.
+- A `Break_Event` with `piece=-1` reaches the whole breakable; `break_apply` returns it with its
+  tick, and repeats it in an equivalent world. `world_events(w).breaks` gathers the impacts and
+  removals of the last step and the regions of `breakables_strain` since.
 - The hits and the break events of a step share `event_capacity`. A break event that does not fit
   was applied and is not listed: it counts in `breakable_shortfall` and in `Stats`. A hit that does
   not fit does no damage and counts with the events of the solver.

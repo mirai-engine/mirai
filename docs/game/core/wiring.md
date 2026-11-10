@@ -44,7 +44,7 @@ game_hits :: proc(requests:^Hit_Requests,healths:^core.Table(Health)) {
 ```
 
 Any other function receives `^Hit_Requests` and calls `hit(requests,e,5)`. The engine's work the
-same way: `scene.spawn(spawner,"arena/Crate.prefab",at)`, `phys.set_velocity(bodies,e,v)`,
+same way: `scene.spawn(spawner,"arena/Crate.scene",at)`, `phys.set_velocity(bodies,e,v)`,
 `save.request_save(saves,"slot")`, `core.place(placer,e,position)` (teleport anything;
 `at_rest=true` also stops a body),
 `inp.drive(seats,seat,body)`, `cam.camera_mode(changes,camera,.Aim)`.

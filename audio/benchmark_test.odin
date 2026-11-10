@@ -9,7 +9,7 @@ import "core:time"
 AUDIO_BENCHMARK :: #config(AUDIO_BENCHMARK,false)
 
 @(private="file")
-Scenario :: enum {Mono_Direct,Mono_Resampled,Stereo_Resampled,Spatial_Moving,Mixed_Buses}
+Scenario :: enum {Mono_Direct,Mono_Resampled,Stereo_Resampled,Spatial_Moving,Spatial_Speakers,Mixed_Buses}
 
 // Time to mix 10 ms of audio (480 frames at 48 kHz) with every voice playing.
 @(test)
@@ -23,7 +23,7 @@ benchmark_mixing_ten_milliseconds :: proc(t:^testing.T) {
     defer delete(times)
     for scenario in Scenario {
         for count in ([?]int{64,256}) {
-            m:=test_mixer(t,{voice_capacity=count,command_capacity=4096})
+            m:=test_mixer(t,{voice_capacity=count,command_capacity=4096,output=.Speakers if scenario==.Spatial_Speakers else .Headphones})
             defer mixer_destroy(m)
             mono:=test_mono(t,m,RATE,proc(i:int) -> f32 {return 0.01*math.sin_f32(f32(i)*0.05)})
             mono_44:=test_mono(t,m,44100,proc(i:int) -> f32 {return 0.01*math.sin_f32(f32(i)*0.05)},44100)
@@ -46,7 +46,7 @@ benchmark_mixing_ten_milliseconds :: proc(t:^testing.T) {
                 case .Mono_Direct:
                 case .Mono_Resampled:sound=mono_44;desc.pitch=0.8+f32(i%8)*0.05
                 case .Stereo_Resampled:sound=stereo_44;desc.pitch=0.8+f32(i%8)*0.05
-                case .Spatial_Moving:
+                case .Spatial_Moving,.Spatial_Speakers:
                     sound=mono_44;desc.spatial=true;desc.doppler=1
                     desc.position={f32(i%16)-8,0,-f32(i%5)-1}
                 case .Mixed_Buses:
@@ -59,7 +59,7 @@ benchmark_mixing_ten_milliseconds :: proc(t:^testing.T) {
             mixer_render(m,out)
             testing.expect_value(t,mixer_stats(m).voices_active,count)
             for &sample,run in times {
-                if scenario==.Spatial_Moving {
+                if scenario==.Spatial_Moving || scenario==.Spatial_Speakers {
                     // Every voice and the listener move every 10 ms: all positions are worked out again.
                     for voice,i in voices {voice_set_position(m,voice,{f32(i%16)-8+f32(run%100)*0.01,0,-f32(i%5)-1},{1,0,0})}
                     listener_set(m,{f32(run%50)*0.01,0,0},1)

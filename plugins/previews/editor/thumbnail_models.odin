@@ -149,7 +149,7 @@ thumbnail_animation_model :: proc(m:^Thumbnail_Models,a:^host.Assets,id:base.Ass
     inputs:=base.hash_combine(registry_stamp(r,id),m.skins_key)
     for at in users {
         file:=&r.files[at]
-        if file.kind==asset.KIND_PREFAB || file.kind==asset.KIND_SCENE {inputs=base.hash_combine(inputs,registry_stamp(r,file.id))}
+        if file.kind==asset.KIND_SCENE {inputs=base.hash_combine(inputs,registry_stamp(r,file.id))}
     }
     if match==nil {
         append(&m.matches,Thumbnail_Match{animation=id})
@@ -162,7 +162,7 @@ thumbnail_animation_model :: proc(m:^Thumbnail_Models,a:^host.Assets,id:base.Ass
     if !animation_targets(m,a,id) {return {}}
     for at in users {
         file:=&r.files[at]
-        if file.kind!=asset.KIND_PREFAB && file.kind!=asset.KIND_SCENE {continue}
+        if file.kind!=asset.KIND_SCENE {continue}
         if model,found:=animation_player(m,a,file,id);found {
             match.model=model
             return model

@@ -339,15 +339,6 @@ zone; `gravity.odin` applies it to the simulation.
   [transform and hierarchy](../../mirai-core/references/core.md#transform-and-hierarchy)).
 - A request that does nothing (non-finite values, without a body of its own, kinematic or
   manipulation of a character) is a `physics.request_*` problem of its entity.
-<<<<<<< HEAD
-- Forces: `apply_force` and `apply_torque` accumulate during one tick; the area ones
-  (`apply_radial_*`, `apply_sphere_force`, `apply_box_*`, `apply_plane_force`) follow the model's
-  [volume forces](physics.md#volume-forces) in world coordinates and also affect characters (a
-  radial impulse is a `launch`) and proxies.
-- `strain_region` strains the [breakables](destruction.md#damage-and-fields) its filter meets in a
-  sphere or a box, once the step of the tick ran, with or without breaking them (`weakening`); what
-  it did is in `breakable_events` with the hits of the step.
-=======
 - Forces: `apply_force` and `apply_torque` accumulate during one tick. The area one, `apply_area`,
   takes a `volume.Volume` and the pose it is placed at: a force, an impulse or a velocity change
   on every body whose center of mass is in it, away from its center (along the up of a plane) or
@@ -355,7 +346,9 @@ zone; `gravity.odin` applies it to the simulation.
   [area forces](physics.md#area-forces). It also affects characters (an impulse is a `launch`) and
   proxies. A volume without size or values that are not finite are the `physics.request_area`
   problem.
->>>>>>> main
+- `strain_area` strains the [breakables](destruction.md#damage-and-fields) its filter meets in a
+  box or sphere `volume.Volume` placed at a pose, once the step of the tick ran, with or without
+  breaking them (`weakening`); what it did is in `breakable_events` with the hits of the step.
 
 Manipulation:
 

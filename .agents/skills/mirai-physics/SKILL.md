@@ -1,20 +1,12 @@
 ---
 name: mirai-physics
 description: Modify, use and verify Mirai physics - the `physics` plugin (the
-<<<<<<< HEAD
   `plugins/physics/runtime/sim` solver with bodies, joints, queries, character, breakable bodies and
   snapshots, the `plugins/physics/runtime` integration with character locomotion, and its editor
   part) and the `destruct` plugin, which makes a `Destructible` a breakable body. Use when changing
   the solver, breaking things, writing gameplay with bodies and characters (walk, jump, fly, swim,
-  `Character`, `Walk`, `Swim`), working with buoyancy and drag of `Fluid_Volume`s (the drawn water
-=======
-  `plugins/physics/runtime/sim` solver with bodies, joints, queries, character and snapshots, the
-  `plugins/physics/runtime` integration with character locomotion, and its editor part) and the
-  `destruct` plugin with its fracture model (`plugins/destruct/runtime/fracture`). Use when changing
-  the solver or the model, writing gameplay with bodies and characters (walk, jump, fly, swim,
-  `Character`, `Walk`, `Swim`), working with buoyancy and drag of `Fluid`s, with `Force_Field`s
-  and area forces (the drawn water
->>>>>>> main
+  `Character`, `Walk`, `Swim`), working with buoyancy and drag of `Fluid`s, with `Force_Field`s,
+  `Strain_Field`s and area forces (the drawn water
   is in `mirai-world`) or changing how the simulation is reflected in entities.
 ---
 
@@ -196,7 +188,7 @@ networking ([networking](../mirai-networking/SKILL.md)).
     snapshot and a copy do with what breaks).
   - Integration: `collision`, `forces`, `geometry`, `joints`, `manipulation`, `reload`,
     `static`, `teleport`, `fluids`, `sync` (sealed rows against the full reconciliation),
-    `breakables` (the facade, its copies and `strain_region`);
+    `breakables` (the facade, its copies and `strain_area`);
     locomotion: `locomotion` (walk, jump, coyote, layers, flight, swimming, modes),
     `locomotion_moves` (crouch, slide, mantle, tactical sprint, ledge jump), `planet` (own
     vertical: walking, jumping and rollback on a planet, crossing fields) and `locomotion_seat`
