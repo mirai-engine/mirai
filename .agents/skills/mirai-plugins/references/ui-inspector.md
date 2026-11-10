@@ -145,8 +145,8 @@ sequence or together parts of earlier rows (`records_part_add`, `records_part_re
 - ASCII is typed, like all editable text; `texts.set` accepts any UTF-8. Languages that need an
   IME do not have their glyphs in the editor font.
 - `texts.export` and `texts.import` (`mirai texts export|import <csv>`) carry every text of the
-  project to a CSV and back; an empty cell changes nothing and it
-  returns the rejected rows with their reason.
+  project to a CSV and back; an empty cell changes nothing, and a CSV that does not read
+  changes nothing and says its line.
 - A **Prompt** is just the prompts of its action. The action of a button or a prompt is chosen
   among the game's `Action` constants; one that the game no longer has is marked.
 
