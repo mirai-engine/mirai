@@ -10,6 +10,7 @@ import "mirai:rhi"
 feedback_settings :: proc() -> Settings {
 	s := DEFAULT_SETTINGS
 	s.reference_lights = true
+	s.reflections = .Detailed
 	s.gi_enabled = false
 	s.taa = false
 	return s
