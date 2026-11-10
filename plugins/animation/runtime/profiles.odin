@@ -303,11 +303,7 @@ modifier_runtime_free :: proc(runtime:^Modifier_Runtime) {
 modifier_append :: proc(table:^core.Table($T),entity:core.Entity,value:T) -> bool {
     count:=len(table.values)
     if existing:=core.row_of(table,entity);existing>=0 && existing!=count-1 {return false}
-    index:=core.entity_index(entity)
-    if reserve(&table.values,count+1)!=nil || reserve(&table.entities,count+1)!=nil || reserve(&table.stamps,count+1)!=nil || reserve(&table.off,count+1)!=nil || index>=len(table.rows) && resize(&table.rows,index+1)!=nil {return false}
-    append(&table.values,value);append(&table.entities,entity);append(&table.stamps,table.version+1);append(&table.off,false)
-    table.rows[index]=i32(count+1);table.on=count+1;table.version+=1;table.layout+=1
-    return true
+    return core.table_append(table,entity,value)
 }
 
 @(private)

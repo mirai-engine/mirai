@@ -116,7 +116,7 @@ settle_mark :: proc "contextless" (info:^World_Info,world:rawptr,marks:[]bool,en
         for &t,at in info.tables {
             if marks[at] || t.place!=.World {continue}
             table:=cast(^Raw_Table)(uintptr(world)+t.offset)
-            if i<len(table.rows) && table.rows[i]!=0 && !(turned && table.base) {marks[at]=true}
+            if rows_at(table,i)!=0 && !(turned && table.base) {marks[at]=true}
         }
     }
 }

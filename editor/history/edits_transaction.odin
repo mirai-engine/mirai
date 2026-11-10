@@ -232,8 +232,8 @@ edits_cancel_prepare :: proc(edits:^Edits,w:core.World_Ref,additional_entities:i
         if size>0 && rows>max(int)/size {return .Memory}
         if !runtime.__dynamic_array_reserve(&current.values,size,table.info.align,rows) || reserve(&current.entities,rows)!=nil || reserve(&current.stamps,rows)!=nil || reserve(&current.off,rows)!=nil || reserve(&current.pending,len(current.entities)+additional_entities)!=nil {return .Memory}
         if current.single && reserve(&current.turns,rows)!=nil {return .Memory}
+        if !core.raw_room(current,len(image.entities)>0?limit:0) {return .Memory}
         if len(image.entities)>0 {
-            if reserve(&current.rows,limit)!=nil {return .Memory}
             for lock in current.locks {if reserve(core.lock_owners(current,lock),limit)!=nil {return .Memory}}
         }
         if resize(&edits.cancel_scratch,max(len(edits.cancel_scratch),size))!=nil {return .Memory}
@@ -265,7 +265,7 @@ edits_step_prepare :: proc(edits:^Edits,w:core.World_Ref,step:^Edit_Step,selecti
         table:=&w.info.tables[rows.table]
         current:=core.world_table_at(w,table)
         count:=len(current.entities)+len(rows.entities)
-        if !runtime.__dynamic_array_reserve(&current.values,table.info.size,table.info.align,count) || !runtime.__dynamic_array_reserve(&current.added,table.info.size,table.info.align,len(rows.entities)) || reserve(&current.entities,count)!=nil || reserve(&current.stamps,count)!=nil || reserve(&current.off,count)!=nil || reserve(&current.pending,len(current.pending)+2*len(rows.entities))!=nil || reserve(&current.rows,edits.cancel_limit)!=nil {return .Memory}
+        if !runtime.__dynamic_array_reserve(&current.values,table.info.size,table.info.align,count) || !runtime.__dynamic_array_reserve(&current.added,table.info.size,table.info.align,len(rows.entities)) || reserve(&current.entities,count)!=nil || reserve(&current.stamps,count)!=nil || reserve(&current.off,count)!=nil || reserve(&current.pending,len(current.pending)+2*len(rows.entities))!=nil || !core.raw_room(current,edits.cancel_limit) {return .Memory}
         for lock in current.locks {if reserve(core.lock_owners(current,lock),edits.cancel_limit)!=nil {return .Memory}}
     }
     return .None
@@ -284,14 +284,7 @@ edits_cancel_reserved :: proc(edits:^Edits,w:core.World_Ref) -> bool {
     if locals:=core.world_table_of(w,core.Transform);locals!=nil {_=core.changes(locals,&transforms)}
     bound:=len(es.generation)
     journal_entities_put(&edits.image_entities,es,marks)
-    for &t in w.info.tables {
-        if t.place!=w.place {continue}
-        table:=core.world_table_at(w,&t)
-        for i in 1..<min(bound,len(table.rows)) {
-            if table.rows[i]==0 || !entity_turned(es,marks,i) {continue}
-            if e:=table.entities[table.rows[i]-1];!core.alive(es,e) {core.raw_drop(table,t.info,e)}
-        }
-    }
+    turned_rows_drop(w,es,marks,bound)
     authors,only_authors:=history_authors(edits,w)
     id:=journal_id_table(w)
     for pass in 0..<2 {

@@ -44,7 +44,7 @@ world_init :: proc(info:^World_Info,place:Place,data:rawptr,allocator:runtime.Al
     for &t,at in info.tables {
         if t.place!=place {continue}
         table:=table_of(data,&t)
-        if !raw_init(table,t.name,allocator) {return false}
+        raw_init(table,t.name,allocator)
         // Its place in info.tables is where settle finds what it has pending.
         if es!=nil {raw_follow(table,es,at)}
         table.base,table.single,table.locks=t.base,t.single,t.locks

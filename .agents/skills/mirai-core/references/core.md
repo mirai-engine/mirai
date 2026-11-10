@@ -57,8 +57,10 @@ the id of the asset and its `id_counter`.
 ## Tables
 
 `core.Table(T)` stores values, entities and stamps, dense and parallel, with an index map from
-entity to row. The enabled rows come first: walking a component is walking `0..<count(t)`. Removing
-a row moves another into its place, with its stamp, without mixing the two sections.
+entity to row. The map comes in pages made for the entities that have had a row, and an empty
+table holds no memory: a table costs what its rows cost, not what the entities of its world would.
+The enabled rows come first: walking a component is walking `0..<count(t)`. Removing a row moves
+another into its place, with its stamp, without mixing the two sections.
 
 - **Writing is requesting the row.** `get`, `at` and `writable` on `^Table`, and `free` on a
   `shared` table, give `^T` and stamp the row with a new `version`; on a `Read` they give the value.
@@ -97,11 +99,13 @@ A reader keeps one `core.Seen` per table and calls `changes(t, &seen)`, which ad
   back, among the stamped ones); valid until the next settle.
 - `all`: the reader did not see the rows that exist (the table was copied, swapped or cleared, or
   the log discarded entries) and walks all of them.
-- The `gone` log never allocates in a settle: its room grows with the rows, when they are reserved
-  (twice those that exist, `GONE_CAPACITY` at least), and when full it discards its oldest half.
-  What leaves between two reads, the rows that existed and those that arrived, fits in the half that
-  remains: a load that creates and removes many entities does not make whoever reads every frame
-  read the whole table. A reader that falls behind more than that reads it whole.
+- The `gone` log gets its room when the first entity leaves a table, and from then on never
+  allocates in a settle: its room grows with the rows, when they are reserved (twice those that
+  exist, `GONE_CAPACITY` at least), and when full it discards its oldest half. What leaves between
+  two reads, the rows that existed and those that arrived, fits in the half that remains: a load
+  that creates and removes many entities does not make whoever reads every frame read the whole
+  table. A reader that falls behind more than that, or a log left without memory for its room,
+  reads it whole.
 
 ### Per-entity maps
 

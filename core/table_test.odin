@@ -236,7 +236,7 @@ a_single_table_keeps_on_the_row_turned_on_last :: proc(t:^testing.T) {
     enable(&table,b)
     table_settle(&table,&es)
     testing.expect_value(t,on(&table),b)
-    testing.expect_value(t,table.values[table.rows[entity_index(a)]-1],1)
+    testing.expect_value(t,table.values[rows_at(raw(&table),entity_index(a))-1],1)
     disable(&table,b)
     table_settle(&table,&es)
     testing.expect(t,on(&table)==a,"turning off the one on turns on the one before")
@@ -377,4 +377,45 @@ a_component_added_without_a_value_is_zeroed_whatever_its_size :: proc(t:^testing
     check(t,Empty,"Empty")
     check(t,Small,"Small")
     check(t,Large,"Large")
+}
+
+// The rows by entity of a table come in pages made for the entities it has
+// rows of: an entity far from the others costs a page, not room for every
+// entity before it. A copy brings every row and forgets those it had, and
+// the room of the entities gone is made when the first one goes.
+@(test)
+a_table_holds_rows_by_entity_only_where_it_has_rows :: proc(t:^testing.T) {
+    es:Entities
+    entities_init(&es);defer entities_destroy(&es)
+    names,copied:Table(i32)
+    table_init(&names,"Name");defer table_destroy(&names)
+    table_init(&copied,"Name");defer table_destroy(&copied)
+    near:=create(&es)
+    far:Entity
+    for _ in 0..<5*ROWS_PAGE {far=create(&es)}
+    add(&names,near,1);add(&names,far,2)
+    table_settle(&names,&es)
+    pages:=0
+    for page in names.rows {if len(page)>0 {pages+=1}}
+    testing.expect_value(t,pages,2)
+    testing.expect(t,cap(names.gone)==0,"no entity went: there is no room for them yet")
+    value,found:=get(read(&names),far)
+    testing.expect(t,found && value==2 && !has(&names,entity_make(2*ROWS_PAGE,1)))
+    testing.expect(t,table_copy(&copied,&names))
+    value,found=get(read(&copied),far)
+    testing.expect(t,found && value==2 && has(&copied,near))
+    // A table a storage holds is copied and freed as any value is.
+    held:Table(i32)
+    testing.expect(t,value_copy(&held,&names,type_info_of(Table(i32))))
+    value,found=get(read(&held),far)
+    testing.expect(t,found && value==2 && raw_data(held.rows[0])!=raw_data(names.rows[0]))
+    value_free(&held,type_info_of(Table(i32)))
+    seen:Seen
+    _=changes(&names,&seen)
+    remove(&names,far)
+    table_settle(&names,&es)
+    c:=changes(&names,&seen)
+    testing.expect(t,!has(&names,far) && has(&names,near) && !c.all && len(c.gone)==1 && c.gone[0]==far)
+    testing.expect(t,table_copy(&copied,&names))
+    testing.expect(t,!has(&copied,far) && has(&copied,near) && raw_row(raw(&copied),far)<0)
 }
