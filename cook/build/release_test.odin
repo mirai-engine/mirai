@@ -32,7 +32,7 @@ later_release :: proc(pools:^Pools) {}
         testing.expect(t,strings.contains(text,"game_release :: proc"))
         testing.expect(t,strings.contains(text,"info.loops[.Game][.Release],info.order[.Game][.Release]=game_release,order_game_release[:]"))
         testing.expect(t,strings.contains(text,"p_core.pools_release(&s.pools,w.world_id,app)"))
-        testing.expect(t,strings.contains(text,"game_release :: proc(world,shared,editor:rawptr,app_data:rawptr) {\n    call_pools_release(world,shared,editor,app_data,p_host.PROFILE_MAIN)\n    call_later_release(world,shared,editor,app_data,p_host.PROFILE_MAIN)\n}"))
+        testing.expect(t,strings.contains(text,"game_release :: proc(world,shared,editor:rawptr,app_data:rawptr) {\n    call_pools_release(world,shared,editor,app_data)\n    call_later_release(world,shared,editor,app_data)\n}"))
         testing.expect(t,!strings.contains(text,"&dst.world_id") && !strings.contains(text,"a.world_id,b.world_id="))
     }
     // The application runs release from the game loop alone: an editor package has none.

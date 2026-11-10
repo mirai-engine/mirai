@@ -37,7 +37,7 @@ Placement_Test_World :: struct {
 }
 
 // physics_step as the editor loop of a generated world calls it: what step_world runs.
-placement_test_physics :: proc(data,shared,editor,app:rawptr,worker:int) {
+placement_test_physics :: proc(data,shared,editor,app:rawptr) {
     w:=cast(^Placement_Test_World)data
     phys.physics_step(&w.physics,core.ref(&w.settings),&w.requests,&w.events,cast(^phys.Collider_Meshes)shared,cast(^host.App)app,w.time,
         core.read(&w.rigids),core.read(&w.colliders),core.read(&w.characters),core.read(&w.moves),&w.joints,core.read(&w.statics),core.read(&w.parents),core.read(&w.names),

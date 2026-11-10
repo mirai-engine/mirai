@@ -52,24 +52,24 @@ pose_bake_test_settle :: proc(data,shared,editor:rawptr) {
 
 // The functions animation_evaluate runs, bound as a generated world binds them.
 @(private)
-pose_bake_test_sample :: proc(data,shared,editor,app_data:rawptr,worker:int) {
+pose_bake_test_sample :: proc(data,shared,editor,app_data:rawptr) {
     w,s:=(^Pose_Bake_Test_World)(data),(^Pose_Bake_Test_Shared)(shared)
     anim.animation_sample(core.read(&w.animations),&w.progress,core.read(&w.modifiers),core.read(&w.attachments),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),core.read(&w.targets),core.read(&w.meshes),core.read(&w.sources),&w.requests,&w.events,&w.modifier_requests,&w.modifier_runtime,&w.playback,&s.poses,&s.skeletons,(^host.App)(app_data),w.time,w.frame,&w.problems,&s.blends,&s.graphs,&w.actions,&w.action_requests,&s.actions,nil,&w.motion_requests,nil,&s.sources,{},core.CLOCK_DEFAULT)
     pose_bake_test_settle(data,shared,editor)
 }
 @(private)
-pose_bake_test_advance :: proc(data,shared,editor,app_data:rawptr,worker:int) {
+pose_bake_test_advance :: proc(data,shared,editor,app_data:rawptr) {
     w,s:=(^Pose_Bake_Test_World)(data),(^Pose_Bake_Test_Shared)(shared)
     anim.animation_advance(core.read(&w.modifiers),&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.modifier_requests,&w.modifier_runtime,&w.playback,&w.constraints,&w.grounding,{},{},w.time,&w.requests,core.ref(&s.skeletons),&w.problems,nil,nil,{},{},core.CLOCK_DEFAULT)
     pose_bake_test_settle(data,shared,editor)
 }
 @(private)
-pose_bake_test_morph :: proc(data,shared,editor,app_data:rawptr,worker:int) {
+pose_bake_test_morph :: proc(data,shared,editor,app_data:rawptr) {
     w,s:=(^Pose_Bake_Test_World)(data),(^Pose_Bake_Test_Shared)(shared)
     anim.animation_morph(core.read(&w.meshes),core.read(&w.morph_weights),core.read(&w.animations),core.read(&w.targets),core.read(&w.sources),core.read(&w.parents),core.ref(&w.playback),core.ref(&w.modifier_runtime),&s.skin,&w.morphs,nil,(^host.App)(app_data),w.time,&w.problems)
 }
 @(private)
-pose_bake_test_propagate :: proc(data,shared,editor,app_data:rawptr,worker:int) {
+pose_bake_test_propagate :: proc(data,shared,editor,app_data:rawptr) {
     w:=(^Pose_Bake_Test_World)(data)
     core.transforms_propagate(core.read(&w.transforms),core.ref(&w.hierarchy),&w.worlds,&w.propagation,&w.jumps,w.frame)
     pose_bake_test_settle(data,shared,editor)

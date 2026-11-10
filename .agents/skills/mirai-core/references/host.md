@@ -117,9 +117,9 @@ app_frame_end     mixer, drawing, pacing
 
 `app_frame` does the three for the player's world.
 
-Each phase runs its functions as a job graph on the workers of `app.jobs` (`steps.odin`), with the
-loop thread as one more and owner of those that touch the application; the graph and when it runs in
-order: [concurrent functions](generator.md#concurrent-functions).
+Each phase calls its functions one after another on the thread of the loop, in
+[the order of the generator](generator.md#order). The workers of `app.jobs` sleep until a function
+spreads its work with `std/jobs`, as their owner (`jobs.OWNER`).
 
 **Game loop.**
 
@@ -174,8 +174,8 @@ entities or persistent data.
   always covered, like the editor bars, is not drawn.
 
 **Profiling (`profile.odin`).** `profile_start(app, frames)` records the following frames: zones of
-the main thread, one per loop function in the ring of the worker that runs it, the tasks of each
-worker and what the renderer measures. The first `profile_start` reserves the memory: recording does
+the main thread, one per loop function, the tasks of each worker and what the renderer
+measures. The first `profile_start` reserves the memory: recording does
 not allocate, without recording a zone costs one branch and what does not fit is counted in `lost`.
 Whoever reads the zones as they happen (a profiling plugin) calls `profile_request` in every frame
 and reads them with its own cursor; without a recording or a request, the device writes no

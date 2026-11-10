@@ -114,14 +114,14 @@ the_editor_loop_does_not_call_again_what_the_game_loop_ran_on_a_world_in_the_fra
         {name="Time",type=core.Time,info=type_info_of(core.Time),offset=offset_of(Loops_Test_World,time)},
         {name="Frame_Time",type=core.Frame_Time,info=type_info_of(core.Frame_Time),offset=offset_of(Loops_Test_World,frame_time)},
     }
-    shared_step :: proc(world,_,_,_:rawptr,_:int) {(cast(^Loops_Test_World)world).shared+=1}
-    own_step :: proc(world,_,_,_:rawptr,_:int) {(cast(^Loops_Test_World)world).own+=1}
+    shared_step :: proc(world,_,_,_:rawptr) {(cast(^Loops_Test_World)world).shared+=1}
+    own_step :: proc(world,_,_,_:rawptr) {(cast(^Loops_Test_World)world).own+=1}
     steps:=[2]core.Step_Info{{name="both",phases={.Frame},loops={.Game,.Editor},call=shared_step},{name="own",phases={.Frame},loops={.Editor},call=own_step}}
     game_order,editor_order:=[1]i32{0},[2]i32{0,1}
     info:=core.World_Info{storages=storages[:],steps=steps[:]}
     info.order[.Game][.Frame],info.order[.Editor][.Frame]=game_order[:],editor_order[:]
-    info.loops[.Game][.Frame]=proc(world,shared,editor,app:rawptr) {shared_step(world,shared,editor,app,0)}
-    info.loops[.Editor][.Frame]=proc(world,shared,editor,app:rawptr) {shared_step(world,shared,editor,app,0);own_step(world,shared,editor,app,0)}
+    info.loops[.Game][.Frame]=proc(world,shared,editor,app:rawptr) {shared_step(world,shared,editor,app)}
+    info.loops[.Editor][.Frame]=proc(world,shared,editor,app:rawptr) {shared_step(world,shared,editor,app);own_step(world,shared,editor,app)}
     app:=App{info=&info,platform=p,tick_dt=1.0/60,max_ticks=4}
     defer delete(app.worlds)
     w:=Loops_Test_World{frame_time=core.FRAME_TIME_DEFAULT}

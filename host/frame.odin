@@ -390,7 +390,7 @@ run_editor_only :: proc(app:^App,phase:core.Phase,world,editor:rawptr) {
         if index<0 || int(index)>=len(info.steps) {continue}
         step:=info.steps[index]
         if .Game in step.loops || step.call==nil {continue}
-        step.call(world,app.shared,editor,app,0)
+        step.call(world,app.shared,editor,app)
     }
 }
 
@@ -401,7 +401,7 @@ run_phase :: proc(app:^App,loop:core.Loop,phase:core.Phase,phases:core.Phases,wo
     ref:=app_world_ref(app,world)
     if f:=core.world_storage_of(ref,core.Frame_Time);f!=nil {f.phase=phase}
     if phase==.Render {frame_view(app,ref)}
-    if !steps_run(app,loop,phase,world,editor) {run(world,app.shared,editor,app)}
+    run(world,app.shared,editor,app)
 }
 
 // The camera and the time the frame is drawn with: those of the View, the

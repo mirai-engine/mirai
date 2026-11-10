@@ -43,9 +43,12 @@ errors_have :: proc(errors:[]string,parts:..string) -> bool {
     return false
 }
 
-// A phase runs its stages in their order. Inside a stage the steps keep the
-// order of the libraries, and a step runs first the ones it waits for: its
-// after, and the before that name it, separated by spaces or commas.
+// A phase runs its steps one after another: its stages in their order, and
+// inside a stage the steps in the order of the libraries, where a step runs
+// first the ones it waits for: its after, and the before that name it,
+// separated by spaces or commas. The order is the same every time the world
+// is generated, and it is all the world says of how its steps run. A step
+// that makes entities settles the World before the next one runs.
 @(test)
 stages_run_in_order_and_after_and_before_order_a_stage :: proc(t:^testing.T) {
     folder,error:=os.make_directory_temp("","mirai-stages-*",context.temp_allocator)
@@ -53,6 +56,7 @@ stages_run_in_order_and_after_and_before_order_a_stage :: proc(t:^testing.T) {
     defer os.remove_all(folder)
     core_source:=`package core
 @(storage) Clock :: struct {tick:u64}
+@(component) Thing :: struct {value:f32}
 @(step="fixed",stage="end") core_last :: proc(clock:Ref(Clock)) {}
 @(step="fixed") core_middle :: proc(clock:Ref(Clock)) {}
 @(step="fixed",stage="begin") core_first :: proc(clock:Ref(Clock)) {}
@@ -66,15 +70,31 @@ import "mirai:core"
 @(step="fixed",stage="react",before="core_react") game_react :: proc(clock:core.Ref(core.Clock)) {}
 @(step="fixed",stage="react") game_late :: proc(clock:core.Ref(core.Clock)) {}
 @(step="fixed",stage="apply") game_apply :: proc(clock:core.Ref(core.Clock)) {}
+@(step="fixed",stage="apply") game_count :: proc(things:core.Read(core.Thing)) {}
+@(step="fixed",stage="apply",before="game_count") game_spawn :: proc(commands:core.Commands) {}
 `
     p,ok:=stages_project(t,folder,core_source,game_source)
     if !ok {return}
     output:=world_generate(&p,context.temp_allocator)
     if !testing.expectf(t,len(output.errors)==0,"%v",output.errors) {return}
-    want:=[]string{"core_first","core_middle","game_logic","game_apply","core_simulate","game_react","core_react","core_after","game_late","core_last"}
+    want:=[]string{"core_first","core_middle","game_logic","game_apply","game_spawn","game_count","core_simulate","game_react","core_react","core_after","game_late","core_last"}
+    again:=world_generate(&p,context.temp_allocator)
+    testing.expect(t,again.game_world==output.game_world && again.editor_world==output.editor_world,"two generations of the same sources differ")
     for text in ([]string{output.game_world,output.editor_world}) {
         got:=calls_of(text,"game_fixed")
         testing.expectf(t,slice_equal(got,want),"%v",got)
+        // info.order lists them as the phase calls them, by their index in info.steps.
+        testing.expect(t,strings.contains(text,"@(rodata) order_game_fixed:=[12]i32{2,1,6,9,11,10,5,7,3,4,8,0}"),text)
+        // The steps of a phase run in that order and no other way: the world says nothing of which could run at once.
+        for gone in ([]string{"Step_Edge","info.edges","info.parallel","worker"}) {
+            testing.expectf(t,!strings.contains(text,gone),"the generated world still says %s",gone)
+        }
+        testing.expect(t,strings.contains(text,"steps[0]={\"core_last\",\"core\",{.Fixed,},{.Game,},call_core_last}"),text)
+        // What game_spawn made is settled inside its call, before game_count is called.
+        _,_,rest:=strings.partition(text,"call_game_spawn :: proc(world,shared,editor:rawptr,app_data:rawptr) {")
+        body,_,_:=strings.partition(rest,"\n}\n")
+        _,ran,after:=strings.partition(body,"p_game.game_spawn(p_core.commands(w,app.info))")
+        testing.expectf(t,ran!="" && strings.contains(after,"p_core.settle(app.info,w,e)"),"%s",body)
     }
 }
 

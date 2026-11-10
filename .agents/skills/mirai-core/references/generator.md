@@ -311,8 +311,7 @@ and on a dedicated server those requests arrive through the network. Writes by r
 
 Each function is written once, as `call_<name>`, with its binding, its settle, its time and its
 profile zone, and each loop and phase with functions as `game_fixed`, `editor_frame`, etc., which
-calls them in the computed order; the host also runs them at the same time
-([concurrent functions](#concurrent-functions)). `info.steps[i].call` and
+calls them one after another in the computed order ([order](#order)). `info.steps[i].call` and
 `info.order[loop][phase]` give them to `core.world_run`: a tool runs a part of a loop, in order,
 with the same binding and settle ([reflection](core.md#world-reflection)). Nothing binds
 parameters by hand.
@@ -332,8 +331,8 @@ parameters by hand.
   an entity destroyed or turned marks the tables that hold a row of it. A World made by hand has no
   marks, and its settle looks at every table.
 - It adds the time of each function to `app.step_ns` (`engine.status` reports the most expensive
-  ones) and opens its profile zone in the ring of the worker that runs it, which records only
-  during a capture ([profiling](host.md#the-frame)).
+  ones) and opens its profile zone, which records only during a capture
+  ([profiling](host.md#the-frame)).
 - With `core.CHECK_WRITES` it wraps each function that receives tables with `^` in
   `write_check_begin`/`write_check_end`.
 
@@ -377,39 +376,26 @@ cameras before `camera_follow`. A function of several phases has the same stage 
   for the core and the network (`net_tick_tail` is the last of the tick), and what feeds physics
   goes in `simulate` with `before="physics_prepare"`.
 
-### Concurrent functions
+### What a parameter declares
 
-That order is the result; within it, the generator gives per loop and phase the edges of a graph
-(`info.edges[loop][phase]`, by position in `info.order`): a function waits for an earlier one if it
-is of a later stage, if `after` or `before` say so or if they collide, and only the edges that
-others do not imply remain. Two functions collide if one writes a datum that the other reads or
-writes:
+The functions of a phase never run at once, so how a function receives a datum orders nothing. It
+still says what the function does with it, and each form has its reader:
 
-- A table: `^core.Table` writes it and `core.Read` reads it. Writing a table with `locks` also
-  writes those it locks; writing `core.Id`, the index that `core.Ref(core.Entities)` reads.
-- A `World` storage: `^S` writes it, also when pushing to a `queue`; `core.Ref(S)` and `S` read it.
-- A `Shared` storage (`host`, `by_world`, `core.Problems`) or an editor one counts as written
-  however it is received, and `^host.App` and `core.Records` collide with all of them: they are the
-  application, to which they can lead.
-- A whole-world function (`^core.Entities`, `core.Commands`, `core.World_Ref`, or one that writes
-  `Disabled` or `Parent`) collides with all: it is a barrier, because `settle` runs afterwards.
+- `^core.Table(C)`: the function is the writer of `C` (one per table that is not `shared`), its
+  rows are checked with `CHECK_WRITES`, and the table settles after it. Writing `Disabled` or
+  `Parent` settles the whole World.
+- `core.Read(C)`, `core.Ref(S)` and `S`: read-only access, which settles nothing and moves no
+  revision.
+- `^S`: the function's library owns the storage (or pushes to a `queue`, or it is `shared`), and
+  the revision of a `World` storage moves before it runs, so the copy a rollback keeps takes it
+  again ([reflection](core.md#world-reflection)).
+- `^core.Entities`, `core.Commands` and `core.World_Ref`: the World settles after the function;
+  `core.Ref(core.Entities)` asks for no settle.
+- `^host.App`, `core.Records(T)` and the storages of the application or of the editor: what the
+  rules of the loops and phases check ([rules](#rules-the-generator-checks)).
 
-Those that collide keep the loop order, so the graph gives the same `World` as the in-order
-execution, with any number of workers: what the `fixed` rollback requires. `host` runs the phase as
-a `jobs.Graph` on the application's workers, built the first time it runs with a library and
-without allocating afterwards ([host](host.md#the-frame)):
-
-- Each function receives the index of its worker: its profile zone goes to the ring of that worker
-  and `app.step_ns` adds at the index of the function.
-- Those that receive the application or a `Shared` or editor storage (`Step_Info.main`) run on the
-  loop thread: they use the job system as its owner and what the application does not share.
-- It runs in order, with `info.loops`, with a single worker, with
-  `-define:MIRAI_STEPS_SEQUENTIAL=true`, when the phase runs again from inside itself (a network
-  correction that resimulates ticks) or with a `World_Info` without `parallel` (one built by hand).
-- A function touches only what it receives: what it could reach outside its parameters (a pointer
-  stored in a `World` storage) would run at the same time as its writer.
-- What it requests from `context.temp_allocator` is released on return; the rest of the `context` is
-  that of whoever runs the phase.
+A function that spreads its work does it inside, with `std/jobs` and the application as the owner
+of the job system; what it requests from `context.temp_allocator` is released on return.
 
 ## Outputs
 

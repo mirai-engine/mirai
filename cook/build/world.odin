@@ -1469,21 +1469,8 @@ order_visit :: proc(o:^Ordering,s:^Step) -> bool {
     return true
 }
 
-// What a step touches, for the steps that may run at once: each datum by
-// the key of its type, true when the step writes it, or the whole World.
-@(private="file")
-Access :: struct {
-    data:map[string]bool,
-    whole:bool, // creates or destroys entities, or changes what is off: after it, a settle of every table
-    main:bool,  // runs on the thread of the loop: it touches the application or the editor
-}
-
-// The application and what holds it: every storage of Shared or of the
-// editor may lead to it (the renderer, the mixer, the assets, the session).
-@(private="file") APP_DATUM :: "app"
-// The entities and their index by Id, which the settle of the table Id follows.
-@(private="file") ENTITIES_DATUM :: "entities"
-
+// Whether a step can create or destroy entities, reach any table or change
+// what is off: after it, core.settle runs on the World.
 @(private="file")
 step_whole :: proc(g:^Generator,s:^Step) -> bool {
     disabled,parent:=g.by_key["mirai:core.Disabled"],g.by_key["mirai:core.Parent"]
@@ -1492,100 +1479,6 @@ step_whole :: proc(g:^Generator,s:^Step) -> bool {
         if param.kind==.Table_Write && (param.type==disabled || param.type==parent) {return true}
     }
     return false
-}
-
-// A queue is written by whoever pushes to it, and the order of what it holds
-// is the order of the loop. A storage of Shared or of the editor is one datum
-// whatever a step does with it, and all of them meet in the application.
-@(private="file")
-step_access :: proc(g:^Generator,s:^Step) -> (a:Access) {
-    a.data=make(map[string]bool,context.temp_allocator)
-    a.whole=step_whole(g,s)
-    touch :: proc(a:^Access,key:string,write:bool) {a.data[key]=write || a.data[key]}
-    for param in s.params {
-        switch param.kind {
-        case .Table_Write:
-            touch(&a,param.type.key,true)
-            for lock in param.type.locks {touch(&a,lock,true)}
-            if param.type.key=="mirai:core.Id" {touch(&a,ENTITIES_DATUM,true)}
-        case .Table_Read: touch(&a,param.type.key,false)
-        case .Storage_Write,.Storage_Ref,.Storage_Value:
-            if param.type.place!=.World {
-                touch(&a,param.type.key,true)
-                touch(&a,APP_DATUM,false)
-                a.main=true
-            } else {
-                touch(&a,param.type.key,param.kind==.Storage_Write)
-            }
-        case .Entities_Read: touch(&a,ENTITIES_DATUM,false)
-        case .Entities,.Commands,.World_Ref:
-        case .App,.Records:
-            touch(&a,APP_DATUM,true)
-            a.main=true
-        }
-    }
-    return
-}
-
-@(private="file")
-accesses_conflict :: proc(a,b:^Access) -> bool {
-    if a.whole || b.whole {return true}
-    for key,write in a.data {
-        if other,found:=b.data[key];found && (write || other) {return true}
-    }
-    return false
-}
-
-// The edges of a loop and phase, by position in its order: a step waits for
-// an earlier one when it is of a later stage, when after or before say so,
-// or when they conflict, and only for those no other path of edges orders
-// already. Conflicting steps keep the order of the loop, so any run of the
-// graph gives the World the sequential order gives.
-@(private="file")
-phase_edges :: proc(g:^Generator,steps:[]^Step) -> [][2]i32 {
-    n:=len(steps)
-    words:=(n+63)/64
-    accesses:=make([]Access,n,context.temp_allocator)
-    for s,i in steps {accesses[i]=step_access(g,s)}
-    waits:=make([]bool,n*n,context.temp_allocator) // [first*n+then]
-    for s,j in steps {
-        for name in s.after {
-            for other,i in steps[:j] {
-                if other.name==name {waits[i*n+j]=true}
-            }
-        }
-        for name in s.before {
-            for other,k in steps[j+1:] {
-                if other.name==name {waits[j*n+j+1+k]=true}
-            }
-        }
-    }
-    for i in 0..<n {
-        for j in i+1..<n {
-            if steps[i].stage<steps[j].stage || accesses_conflict(&accesses[i],&accesses[j]) {waits[i*n+j]=true}
-        }
-    }
-    // reach[i]: what waits for i through any path, which the order lists after i.
-    reach:=make([]u64,n*words,context.temp_allocator)
-    #reverse for _,i in steps {
-        mine:=reach[i*words:][:words]
-        for j in i+1..<n {
-            if !waits[i*n+j] {continue}
-            mine[j/64]|=u64(1)<<uint(j%64)
-            for &word,k in mine {word|=reach[j*words+k]}
-        }
-    }
-    edges:=make([dynamic][2]i32,context.temp_allocator)
-    covered:=make([]u64,words,context.temp_allocator)
-    for i in 0..<n {
-        for &word in covered {word=0}
-        for j in i+1..<n {
-            if !waits[i*n+j] || covered[j/64]&(u64(1)<<uint(j%64))!=0 {continue}
-            append(&edges,[2]i32{i32(i),i32(j)})
-            for &word,k in covered {word|=reach[j*words+k]}
-        }
-    }
-    return edges[:]
 }
 
 @(private="file")
@@ -1866,7 +1759,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
             if strings.builder_len(checks)>0 {strings.write_string(&checks,",")}
             fmt.sbprintf(&checks,"%s.write_check_begin(%s.raw(&%s.%s),size_of(%s.%s))",core_alias,core_alias,holder,param.type.field,param.type.pkg.alias,param.type.name)
         }
-        fmt.sbprintf(w,"call_%s :: proc(world,shared,editor:rawptr,app_data:rawptr,worker:int) {{\n",step.name)
+        fmt.sbprintf(w,"call_%s :: proc(world,shared,editor:rawptr,app_data:rawptr) {{\n",step.name)
         fmt.sbprintf(w,"    w:=cast(^World)world\n    s:=cast(^Shared)shared\n    e:=cast(^Editor)editor\n    app:=cast(^%s.App)app_data\n    _,_,_=s,e,app\n",host_alias)
         // A client neither runs nor resimulates what the server or a game alone decides.
         if step.server {fmt.sbprintf(w,"    if w.%s.role==.Client {{return}}\n",g.by_key["mirai:core.Network"].field)}
@@ -1878,7 +1771,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
             for other in step.params[:pi] {again||=other.kind==.Storage_Write && other.type==param.type}
             if !again {fmt.sbprintf(w,"    w.storage_revisions[%d]+=1\n",storage_index[param.type])}
         }
-        fmt.sbprintf(w,"    started:=gen_time.tick_now()\n    zone:=%s.profile_step_begin(app,%d,worker)\n",host_alias,si)
+        fmt.sbprintf(w,"    started:=gen_time.tick_now()\n    zone:=%s.profile_step_begin(app,%d)\n",host_alias,si)
         if strings.builder_len(checks)>0 {
             fmt.sbprintf(w,"    when %s.CHECK_WRITES {{\n        checks:=[?]%s.Write_Check{{%s}}\n        %s\n        %s.write_check_end(checks[:],\"%s\")\n    }} else {{%s}}\n",core_alias,core_alias,strings.to_string(checks),call,core_alias,step.name,call)
         } else {
@@ -1902,25 +1795,18 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     phases:=PHASES
     titles:=PHASE_TITLES
     loops:=LOOPS
-    defined,edged:[2][len(PHASES)]bool
+    defined:[2][len(PHASES)]bool
     for loop in 0..<(editor?2:1) {
         for phase in 0..<len(PHASES) {
             steps,_:=phase_order(g,loop,phase)
             if len(steps)==0 {continue}
             defined[loop][phase]=true
             fmt.sbprintf(w,"%s_%s :: proc(world,shared,editor:rawptr,app_data:rawptr) {{\n",loops[loop],phases[phase])
-            for step in steps {fmt.sbprintf(w,"    call_%s(world,shared,editor,app_data,%s.PROFILE_MAIN)\n",step.name,host_alias)}
+            for step in steps {fmt.sbprintf(w,"    call_%s(world,shared,editor,app_data)\n",step.name)}
             fmt.sbprint(w,"}\n")
             fmt.sbprintf(w,"@(rodata) order_%s_%s:=[%d]i32{{",loops[loop],phases[phase],len(steps))
             for step,k in steps {fmt.sbprintf(w,"%s%d",k>0?",":"",index_of[step])}
             fmt.sbprint(w,"}\n")
-            edges:=phase_edges(g,steps)
-            edged[loop][phase]=len(edges)>0
-            if len(edges)>0 {
-                fmt.sbprintf(w,"@(rodata) edges_%s_%s:=[%d]%s.Step_Edge{{",loops[loop],phases[phase],len(edges),core_alias)
-                for edge,k in edges {fmt.sbprintf(w,"%s{{%d,%d}}",k>0?",":"",edge[0],edge[1])}
-                fmt.sbprint(w,"}\n")
-            }
             fmt.sbprint(w,"\n")
         }
     }
@@ -2055,7 +1941,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
         loop_set:=strings.builder_make(context.temp_allocator)
         if s.loops[0] {strings.write_string(&loop_set,".Game,")}
         if s.loops[1] {strings.write_string(&loop_set,".Editor,")}
-        fmt.sbprintf(w,"    steps[%d]={{\"%s\",\"%s\",{{%s}},{{%s}},call_%s,%v}}\n",si,s.name,s.pkg.name,strings.to_string(phase_set),strings.to_string(loop_set),s.name,step_access(g,s).main)
+        fmt.sbprintf(w,"    steps[%d]={{\"%s\",\"%s\",{{%s}},{{%s}},call_%s}}\n",si,s.name,s.pkg.name,strings.to_string(phase_set),strings.to_string(loop_set),s.name)
     }
     fmt.sbprintf(w,"    info:%s.World_Info\n",core_alias)
     fmt.sbprint(w,"    info.sizes={.World=size_of(World),.Shared=size_of(Shared),.Editor=size_of(Editor)}\n")
@@ -2070,10 +1956,8 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     for loop in 0..<(editor?2:1) {
         for phase in 0..<len(PHASES) {
             if defined[loop][phase] {fmt.sbprintf(w,"    info.loops[.%s][.%s],info.order[.%s][.%s]=%s_%s,order_%s_%s[:]\n",loop==0?"Game":"Editor",titles[phase],loop==0?"Game":"Editor",titles[phase],loops[loop],phases[phase],loops[loop],phases[phase])}
-            if edged[loop][phase] {fmt.sbprintf(w,"    info.edges[.%s][.%s]=edges_%s_%s[:]\n",loop==0?"Game":"Editor",titles[phase],loops[loop],phases[phase])}
         }
     }
-    fmt.sbprint(w,"    info.parallel=true\n")
     fmt.sbprintf(w,"    %s.world_info_index(&info)\n",core_alias)
     fmt.sbprint(w,"    return info\n}\n")
     return strings.to_string(b)
