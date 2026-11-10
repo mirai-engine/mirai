@@ -137,7 +137,7 @@ particles_tick :: proc(
     emitters:core.Read(Particle_Emitter),overrides:^core.Table(Particle_Override),parameters:^core.Table(Particle_Parameters),
     worlds:core.Read(core.World_Transform),hierarchy:core.Ref(core.Hierarchy),entities:^core.Entities,
     clocks:^Particle_Clocks,requests:^Particle_Requests,channels:^Particle_Channels,listeners:core.Read(Particle_Channel),
-    time:core.Time,frame:core.Frame_Time,app:^host.App,problems:^core.Problems,
+    time:core.Time,frame:core.Frame_Time,assets:^host.Assets,problems:^core.Problems,
 ) {
     if clocks.playing!=time.playing {
         core.entity_map_clear(&clocks.clocks)
@@ -150,7 +150,7 @@ particles_tick :: proc(
     core.entity_map_prune(&clocks.clocks,worlds,core.changes(worlds,&clocks.seen_worlds))
     dt:=time.playing?time.dt:max(frame.dt,0)
     requests_apply(requests,emitters,overrides,parameters,clocks,problems)
-    a:=app.assets
+    a:=assets
     done:[dynamic]core.Entity
     done.allocator=context.temp_allocator
     for row in 0..<core.count(emitters) {
@@ -194,8 +194,8 @@ particles_sync :: proc(
     winds:core.Read(volume.Wind),places:core.Read(volume.Volume),gravities:core.Read(volume.Gravity),
 ) {
     if sync==nil {return}
-    if reports!=nil {reports_read(reports,sync,app,id)}
-    if read!=nil {data_read(read,&sync.data,app,id,problems)}
+    if reports!=nil {reports_read(reports,sync,app.renderer,id)}
+    if read!=nil {data_read(read,&sync.data,app.renderer,id,problems)}
     r,a:=app.renderer,app.assets
     sync.world,sync.world_id=erender.world_key(id),id
     clear(&sync.descs)
@@ -205,7 +205,7 @@ particles_sync :: proc(
     clear(&sync.segments)
     grids_sync(&sync.grids,grids,volumes,textures,worlds,view,problems)
     sync.fields=fields_of(gravities,winds,places,worlds)
-    world_textures_keep(sync,app,id)
+    world_textures_keep(sync,app.renderer,id)
     // Rigs are read again once the assets change.
     if a!=nil {
         if stamp:=a.revision+a.registry.revision+1;stamp!=sync.rigs_stamp {
@@ -223,7 +223,7 @@ particles_sync :: proc(
     core.entity_map_prune(&sync.shown,worlds,core.changes(worlds,&sync.seen_worlds))
     shaders:=app.shaders.reloads
     // What an emitter is resolved from besides its own: the triangles of meshes move when the scene is made again.
-    made:=erender.vertices_made(app)
+    made:=erender.vertices_made(app.renderer)
     used:[DATA_CHANNELS]bool
     for row in 0..<core.count(emitters) {
         e:=core.entity_at(emitters,row)
@@ -331,15 +331,15 @@ particles_sync :: proc(
 
 // A world that goes takes its particles with it.
 @(step="release")
-particles_release :: proc(sync:^Particle_Sync,id:core.World_Id,app:^host.App) {
+particles_release :: proc(sync:^Particle_Sync,id:core.World_Id,renderer:^erender.Renderer) {
     if sync==nil {return}
-    if app.renderer!=nil {
-        pool_release(app,id,&sync.pool)
-        erender.buffer_release(app,id,world_buffer(sync).name)
-        erender.readback_release(app,id,GRID_BAKE_READBACK)
-        for name in sync.world_textures[:sync.world_texture_count] {erender.table_texture_release(app,id,world_texture_key(name))}
-        erender.readback_release(app,id,reports_readback().name)
-        for entry in sync.data.entries {erender.readback_release(app,id,data_readback_desc(entry.name,entry.words).name)}
+    if renderer!=nil {
+        pool_release(renderer,id,&sync.pool)
+        erender.buffer_release(renderer,id,world_buffer(sync).name)
+        erender.readback_release(renderer,id,GRID_BAKE_READBACK)
+        for name in sync.world_textures[:sync.world_texture_count] {erender.table_texture_release(renderer,id,world_texture_key(name))}
+        erender.readback_release(renderer,id,reports_readback().name)
+        for entry in sync.data.entries {erender.readback_release(renderer,id,data_readback_desc(entry.name,entry.words).name)}
     }
     pool_free(&sync.pool)
     surfaces_free(&sync.surfaces)
@@ -399,13 +399,13 @@ shown_resolve :: proc(shown:^Emitter_Shown,app:^host.App,particle:base.Asset_Id,
     }
     base.text_set(shown.problem[:],problem)
     if a==nil {return false}
-    desc,ready:=emitter_desc(&shown.info,app,u64(e))
+    desc,ready:=emitter_desc(&shown.info,app.assets,app.renderer,u64(e))
     shown.desc=desc
     shown.desc.program=shown.program
     shown.desc.report,shown.desc.owner=shown.info.report,e
     shown.sub_desc={}
     if shown.has_sub {
-        sub_desc,sub_ready:=emitter_desc(&shown.sub,app,sub_id(e))
+        sub_desc,sub_ready:=emitter_desc(&shown.sub,app.assets,app.renderer,sub_id(e))
         shown.sub_desc=sub_desc
         ready&&=sub_ready
         sub:=&shown.sub_desc
@@ -424,8 +424,8 @@ sub_id :: proc "contextless" (e:core.Entity) -> u64 {return base.hash_combine(u6
 // What the GPU is told of an effect at an emitter, but for what each frame
 // gives. ready: the renderer has the triangles of its mesh, or it draws none.
 @(private)
-emitter_desc :: proc(m:^effect.Particle_Info,app:^host.App,id:u64) -> (desc:Emitter_Desc,ready:bool) {
-    a:=app.assets
+emitter_desc :: proc(m:^effect.Particle_Info,assets:^host.Assets,renderer:^erender.Renderer,id:u64) -> (desc:Emitter_Desc,ready:bool) {
+    a:=assets
     material:=erender.Material_Handle(m.material!={}?host.assets_material_row(a,m.material):0)
     mesh:[3]u32
     blended:=false
@@ -434,8 +434,8 @@ emitter_desc :: proc(m:^effect.Particle_Info,app:^host.App,id:u64) -> (desc:Emit
         // A material that blends draws its meshes over the lit scene, as a sprite.
         if found:=host.assets_material(a,m.material);found!=nil {blended=found.info.alpha_mode==.Blend}
         entry:=m.mesh!={}?host.assets_mesh(a,m.mesh):host.assets_shape(a,.Cube)
-        if entry!=nil {mesh.x,ready=erender.mesh_draw_range(app,entry.handle);mesh.y=u32(entry.handle)}
-        ready||=app.renderer==nil
+        if entry!=nil {mesh.x,ready=erender.mesh_draw_range(renderer,entry.handle);mesh.y=u32(entry.handle)}
+        ready||=renderer==nil
     }
     return {
         id=id,capacity=emitter_capacity(m),

@@ -116,7 +116,6 @@ App_Stats :: struct {
     frames:u64,
     frames_drawn:u64,
     frames_skipped:u64,
-    extras_dropped:u64,
     watch_slices:u64,
     ticks:u64,
     ticks_dropped:u64, // ticks a slow frame could not simulate
@@ -198,16 +197,12 @@ App :: struct {
     // editor shows); none: they split the drawable among them.
     player_tiles:[PLAYER_TILES][4]i32,
     player_tile_count:int,
-    texture_views:[TEXTURE_VIEW_CAPACITY]render.Frame_View, // the views this frame draws into a texture
-    texture_view_count:int,
     ui_font_sizes:[]i32,
     // The font every UI context of the application borrows, on demand: the
     // application rasterizes what they ask for (app_ui_font_sync).
     ui_font:ui.Font,
     font:Font_Key,
     extras:Frame_Extras,
-    slots_shown:[FRAME_SLOT_TEXTURE_CAPACITY]Slot_Shown, // of the last frame: render_sync writes them
-    slots_shown_count:int,
     ui_input:ui.Input,    // of the pointer and the keyboard this frame, for the UI of the game
 
     mixer:^audio.Mixer, // nil without audio
@@ -353,7 +348,7 @@ app_destroy :: proc(app:^App) {
     if app.platform!=nil {platform.destroy(app.platform)}
     delete(app.root,app.allocator);delete(app.engine_root,app.allocator);delete(app.options,app.allocator)
     delete(app.animation_cache,app.allocator)
-    app_extras_free(app)
+    extras_free(&app.extras)
     free(app,app.allocator)
 }
 

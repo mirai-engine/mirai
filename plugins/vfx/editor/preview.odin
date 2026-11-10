@@ -44,7 +44,7 @@ Effect_Preview :: struct {
 @(private)
 preview_free :: proc(p:^Effect_Preview) {
     if p.app!=nil {
-        if p.texture!=0 {erender.view_texture_remove(p.app,p.texture)}
+        if p.texture!=0 {erender.view_texture_remove(p.app.renderer,p.texture)}
         if p.world!=nil {host.app_world_free(p.app,p.world)}
     }
     p^={}
@@ -61,9 +61,9 @@ preview_draw :: proc(s:^editor.Session,p:^Effect_Preview,id:base.Asset_Id,info:^
     if p.world==nil && !preview_make(s,p) {return false}
     w:=host.app_world_ref(app,p.world)
     if p.side!=side {
-        if p.texture!=0 {erender.view_texture_remove(app,p.texture)}
+        if p.texture!=0 {erender.view_texture_remove(app.renderer,p.texture)}
         p.texture,p.side=0,0
-        texture,made:=erender.view_texture_add(app,side,side,"vfx.preview")
+        texture,made:=erender.view_texture_add(app.renderer,side,side,"vfx.preview")
         if !made {return false}
         p.texture,p.side=texture,side
     }
@@ -239,7 +239,7 @@ effect_image :: proc(s:^editor.Session,subject:^editor.Thumbnail_Subject,side:in
     drawn:=PREVIEW_THUMBNAIL
     n:=drawn/side
     if !preview_draw(s,&v.thumbnail,shown.id,&shown.info,nil,nil,max(shown.info.lifetime[0],shown.info.lifetime[1])*0.5,u32(drawn)) {return false}
-    pixels,width,height,ok:=erender.view_texture_capture(s.app,v.thumbnail.texture,context.temp_allocator)
+    pixels,width,height,ok:=erender.view_texture_capture(s.app.renderer,v.thumbnail.texture,context.temp_allocator)
     if !ok || width!=drawn || height!=drawn {return false}
     for y in 0..<side {
         for x in 0..<side {

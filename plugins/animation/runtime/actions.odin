@@ -134,10 +134,10 @@ action_content :: proc(cache:^Actions_Assets,app:^host.App,id:base.Asset_Id,hint
     if row<0 {row=len(cache.contents);if !program_array_reserve(&cache.contents,row+1) || append(&cache.contents,Action_Content{id=id})!=1 {return nil}}
     if hint!=nil {hint^=i32(row+1)}
     content:=&cache.contents[row]
-    if content.checked==assets_stamp(app) {return content if content.valid else nil}
+    if content.checked==assets_stamp(app.assets) {return content if content.valid else nil}
     record,found:=asset.registry_find(&app.assets.registry,id);stamp:=[2]i64{}
     if found {stamp={record.size,record.time}}
-    if content.checked!=0 && stamp==content.stamp {content.checked=assets_stamp(app);return content if content.valid else nil}
+    if content.checked!=0 && stamp==content.stamp {content.checked=assets_stamp(app.assets);return content if content.valid else nil}
     profile:Action_Profile;error:=asset.Error.Not_Found
     if found {
         file:asset.Asset
@@ -150,7 +150,7 @@ action_content :: proc(cache:^Actions_Assets,app:^host.App,id:base.Asset_Id,hint
     content.error=error
     if error==.Out_Of_Memory {content.checked=0;return nil}
     action_profile_free(&content.profile);content.profile=profile;content.valid=error==.None
-    content.stamp,content.checked=stamp,assets_stamp(app);content.revision+=1
+    content.stamp,content.checked=stamp,assets_stamp(app.assets);content.revision+=1
     return content if content.valid else nil
 }
 

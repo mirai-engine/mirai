@@ -867,11 +867,11 @@ program_pipelines :: proc(p:^Particle_Pipelines,id:u32) -> ^Program_Pipelines {
 // The programs of the live emitters with their pipelines, and the slots each
 // one's emitters hold. Past PROGRAMS_IN_USE, the emitters of the rest do not run.
 @(private)
-programs_find :: proc(sync:^Particle_Sync,app:^host.App) {
+programs_find :: proc(sync:^Particle_Sync,renderer:^erender.Renderer) {
     pool:=&sync.pool
     p:=&sync.pipelines
     for {
-        left_out:=programs_span(sync,app)
+        left_out:=programs_span(sync,renderer)
         // Those no live emitter runs give their room.
         kept:=0
         for each in p.programs[:p.program_count] {
@@ -890,7 +890,7 @@ programs_find :: proc(sync:^Particle_Sync,app:^host.App) {
 }
 
 @(private)
-programs_span :: proc(sync:^Particle_Sync,app:^host.App) -> (left_out:bool) {
+programs_span :: proc(sync:^Particle_Sync,renderer:^erender.Renderer) -> (left_out:bool) {
     pool:=&sync.pool
     p:=&sync.pipelines
     p.none={}
@@ -906,9 +906,9 @@ programs_span :: proc(sync:^Particle_Sync,app:^host.App) -> (left_out:bool) {
                 each=&p.programs[p.program_count]
                 p.program_count+=1
                 each^={id=id}
-                each.emit=erender.stage_pipeline(app,{stage=.Simulate,shader=fmt.tprintf("particle_emit__%s",name),name="particle emit"})
-                each.simulate=erender.stage_pipeline(app,{stage=.Simulate,shader=fmt.tprintf("particle_simulate__%s",name),name="particle simulate"})
-                each.stage=erender.stage_pipeline(app,{stage=.Simulate,shader=fmt.tprintf("particle_stage__%s",name),name="particle stage"})
+                each.emit=erender.stage_pipeline(renderer,{stage=.Simulate,shader=fmt.tprintf("particle_emit__%s",name),name="particle emit"})
+                each.simulate=erender.stage_pipeline(renderer,{stage=.Simulate,shader=fmt.tprintf("particle_simulate__%s",name),name="particle simulate"})
+                each.stage=erender.stage_pipeline(renderer,{stage=.Simulate,shader=fmt.tprintf("particle_stage__%s",name),name="particle stage"})
                 base.text_set(each.sprite[:],fmt.tprintf("particle_sprite__%s",name))
                 base.text_set(each.mesh[:],fmt.tprintf("particle_mesh__%s",name))
                 base.text_set(each.mesh_blend[:],fmt.tprintf("particle_mesh_blend__%s",name))
@@ -931,53 +931,53 @@ particles_frame :: proc(sync:^Particle_Sync,app:^host.App) -> bool {
     pool:=&sync.pool
     if pool.slot_end==0 {return true}
     p:=&sync.pipelines
-    simulate:=erender.stage_pipeline(app,{stage=.Simulate,shader="particle_simulate",name="particle simulate"})
+    simulate:=erender.stage_pipeline(app.renderer,{stage=.Simulate,shader="particle_simulate",name="particle simulate"})
     if simulate==0 {return false}
     if simulate!=p.simulate || p.reloads!=app.shaders.reloads {
         p^={reloads=app.shaders.reloads}
-        p.shift=erender.stage_pipeline(app,{stage=.Geometry,shader="particle_shift",name="particle shift"})
-        p.begin=erender.stage_pipeline(app,{stage=.Simulate,shader="particle_begin",name="particle begin"})
-        p.emit=erender.stage_pipeline(app,{stage=.Simulate,shader="particle_emit",name="particle emit"})
-        p.finish=erender.stage_pipeline(app,{stage=.Simulate,shader="particle_finish",name="particle finish"})
-        p.surface=erender.stage_pipeline(app,{stage=.Simulate,shader="particle_surface",name="particle surface"})
-        p.stage=erender.stage_pipeline(app,{stage=.Simulate,shader="particle_stage",name="particle stage"})
-        p.volume_light=erender.stage_pipeline(app,{stage=.Simulate,shader="particle_volume_light",name="particle volume light"})
-        p.lights=erender.stage_pipeline(app,{stage=.Simulate,shader="particle_lights",name="particle lights"})
-        p.world_texture=erender.stage_pipeline(app,{stage=.Simulate,shader="particle_world_texture",name="particle world texture"})
-        p.volume=erender.stage_pipeline(app,{stage=.Blend,shader="particle_volume",blend=.Premultiplied,name="particle volumes"})
-        p.additive=erender.stage_pipeline(app,{stage=.Blend,shader="particle_sprite",blend=.Additive,name="particles additive"})
-        p.alpha=erender.stage_pipeline(app,{stage=.Blend,shader="particle_sprite",blend=.Premultiplied,name="particles blended"})
+        p.shift=erender.stage_pipeline(app.renderer,{stage=.Geometry,shader="particle_shift",name="particle shift"})
+        p.begin=erender.stage_pipeline(app.renderer,{stage=.Simulate,shader="particle_begin",name="particle begin"})
+        p.emit=erender.stage_pipeline(app.renderer,{stage=.Simulate,shader="particle_emit",name="particle emit"})
+        p.finish=erender.stage_pipeline(app.renderer,{stage=.Simulate,shader="particle_finish",name="particle finish"})
+        p.surface=erender.stage_pipeline(app.renderer,{stage=.Simulate,shader="particle_surface",name="particle surface"})
+        p.stage=erender.stage_pipeline(app.renderer,{stage=.Simulate,shader="particle_stage",name="particle stage"})
+        p.volume_light=erender.stage_pipeline(app.renderer,{stage=.Simulate,shader="particle_volume_light",name="particle volume light"})
+        p.lights=erender.stage_pipeline(app.renderer,{stage=.Simulate,shader="particle_lights",name="particle lights"})
+        p.world_texture=erender.stage_pipeline(app.renderer,{stage=.Simulate,shader="particle_world_texture",name="particle world texture"})
+        p.volume=erender.stage_pipeline(app.renderer,{stage=.Blend,shader="particle_volume",blend=.Premultiplied,name="particle volumes"})
+        p.additive=erender.stage_pipeline(app.renderer,{stage=.Blend,shader="particle_sprite",blend=.Additive,name="particles additive"})
+        p.alpha=erender.stage_pipeline(app.renderer,{stage=.Blend,shader="particle_sprite",blend=.Premultiplied,name="particles blended"})
         if p.shift==0 || p.begin==0 || p.emit==0 || p.finish==0 || p.surface==0 || p.stage==0 || p.volume_light==0 || p.lights==0 || p.world_texture==0 || p.additive==0 || p.alpha==0 || p.volume==0 {return false}
         p.simulate=simulate
         pool.regroup=true
     }
     if pool.regroup {
-        programs_find(sync,app)
+        programs_find(sync,app.renderer)
         pool.regroup=false
     }
     // The vertices of the scene made again: so are the areas of its surfaces.
-    if made:=erender.vertices_made(app);made!=sync.surfaces.vertices {
+    if made:=erender.vertices_made(app.renderer);made!=sync.surfaces.vertices {
         sync.surfaces.vertices=made
         for &entry in sync.surfaces.entries {entry.built=false}
     }
     pool.lights=lights_asked(pool.slots[:pool.slot_end])
-    if pool.lights!={} {erender.lights_ask(app,pool.lights[0],pool.lights[1])}
-    world_textures_make(sync,app)
-    grids_load_prepare(sync,app)
-    if pool.made {erender.frame_pass(app,.Geometry,particles_shift,sync)}
-    erender.frame_pass(app,.Simulate,particles_simulate,sync)
-    if sync.world_texture_count>0 || sync.world_shown.names!={} {erender.frame_pass(app,.Mask,world_textures_frame,sync)}
-    erender.frame_pass(app,.Gbuffer,particles_meshes,sync)
+    if pool.lights!={} {erender.lights_ask(app.renderer,pool.lights[0],pool.lights[1])}
+    world_textures_make(sync,app.renderer)
+    grids_load_prepare(sync,app.assets)
+    if pool.made {erender.frame_pass(app.renderer,.Geometry,particles_shift,sync)}
+    erender.frame_pass(app.renderer,.Simulate,particles_simulate,sync)
+    if sync.world_texture_count>0 || sync.world_shown.names!={} {erender.frame_pass(app.renderer,.Mask,world_textures_frame,sync)}
+    erender.frame_pass(app.renderer,.Gbuffer,particles_meshes,sync)
     // What Mesh particles reflect and their layers reach the G-buffer of every
     // view, and their meshes stay whole: they draw every cluster of level 0.
     for &s in pool.slots[:pool.slot_end] {
         if !s.live || s.desc.render!=.Mesh {continue}
-        if !s.desc.blended {erender.frame_gbuffer_mesh(app,erender.Mesh_Handle(s.desc.mesh[1]),s.desc.material)}
-        erender.frame_mesh_whole(app,erender.Mesh_Handle(s.desc.mesh[1]))
+        if !s.desc.blended {erender.frame_gbuffer_mesh(app.renderer,erender.Mesh_Handle(s.desc.mesh[1]),s.desc.material)}
+        erender.frame_mesh_whole(app.renderer,erender.Mesh_Handle(s.desc.mesh[1]))
     }
-    erender.frame_pass(app,.Blend,particles_volumes,sync)
-    erender.frame_pass(app,.Blend,particles_sprites,sync)
-    if pool_has_views(pool) {erender.frame_pass(app,.Effect,particles_sprites,sync)}
+    erender.frame_pass(app.renderer,.Blend,particles_volumes,sync)
+    erender.frame_pass(app.renderer,.Blend,particles_sprites,sync)
+    if pool_has_views(pool) {erender.frame_pass(app.renderer,.Effect,particles_sprites,sync)}
     return true
 }
 
@@ -1317,8 +1317,8 @@ particles_meshes :: proc(pass:^erender.Pass,user:rawptr) {
 }
 
 // Lets go of the buffers of the pool of a world.
-pool_release :: proc(app:^host.App,world:core.World_Id,pool:^Pool) {
-    for b in Pool_Buffer {erender.buffer_release(app,world,pool_buffer(pool,b).name)}
-    erender.buffer_release(app,world,neighbors_buffer(pool).name)
+pool_release :: proc(renderer:^erender.Renderer,world:core.World_Id,pool:^Pool) {
+    for b in Pool_Buffer {erender.buffer_release(renderer,world,pool_buffer(pool,b).name)}
+    erender.buffer_release(renderer,world,neighbors_buffer(pool).name)
     pool.made=false
 }

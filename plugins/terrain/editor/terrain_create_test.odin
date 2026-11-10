@@ -298,11 +298,11 @@ a_named_terrain_takes_the_name_and_a_missing_heightmap_says_its_path :: proc(t:^
     missing:=fmt.tprintf("%s/source/none.png",root)
     tool.heightmap_length=copy(tool.heightmap_path[:],missing)
     s.toast_length=0
-    testing.expect_value(t,terrain_create(&s,&tool,ref,&app,name="Island"),core.NONE)
+    testing.expect_value(t,terrain_create(&s,&tool,ref,app.assets,app.allocator,name="Island"),core.NONE)
     said:=string(s.toast[:s.toast_length])
     testing.expectf(t,strings.contains(said,missing),"the error names the file it tried: %s",said)
     tool.create_source,tool.samples,tool.chunk_cells=.Plane,5,4
-    e:=terrain_create(&s,&tool,ref,&app,at={0,0,0},placed=true,name="Island")
+    e:=terrain_create(&s,&tool,ref,app.assets,app.allocator,at={0,0,0},placed=true,name="Island")
     if !testing.expect(t,e!=core.NONE && editor.edits_commit(&edits,ref,&selection)) {return}
     name:=core.get(&world.names,e)
     testing.expect(t,name!=nil && base.text_get(name.text[:])=="Island","the entity takes the name")
@@ -332,10 +332,10 @@ a_volume_created_on_a_heightfield_is_filled_with_its_ground :: proc(t:^testing.T
     tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
     tool.create_kind=.Heightfield;tool.samples,tool.depth,tool.chunk_cells=17,9,8
     // The ground is a root: where it stands is its Transform.
-    ground:=terrain_create(&s,&tool,ref,&app,at={10,0,10},placed=true)
+    ground:=terrain_create(&s,&tool,ref,app.assets,app.allocator,at={10,0,10},placed=true)
     if !testing.expect(t,ground!=core.NONE && editor.edits_commit(&edits,ref,&selection)) {return}
     tool.create_kind=.Volume
-    owner:=terrain_create(&s,&tool,ref,&app,at={10,0,10},placed=true,ground=ground)
+    owner:=terrain_create(&s,&tool,ref,app.assets,app.allocator,at={10,0,10},placed=true,ground=ground)
     if !testing.expect(t,owner!=core.NONE && editor.edits_commit(&edits,ref,&selection)) {return}
     marker:=core.get(&world.terrains,owner)
     testing.expect_value(t,marker.ground,editor.api_entity_id(ref,ground))
@@ -376,11 +376,11 @@ mesh_terrain_creation_from_selection_preserves_authoring_and_undo :: proc(t:^tes
     editor.edits_reset(&edits,ref)
     tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
     tool.create_source=.Selection;tool.create_kind=.Heightfield
-    terrain_create(&s,&tool,ref,&app)
+    terrain_create(&s,&tool,ref,app.assets,app.allocator)
     testing.expect(t,!edits.open && !edits.commit && !os.exists(path))
     testing.expect_value(t,len(world.terrains.values),0)
     tool.create_kind=.Mesh
-    terrain_create(&s,&tool,ref,&app)
+    terrain_create(&s,&tool,ref,app.assets,app.allocator)
     if !testing.expect(t,editor.edits_commit(&edits,ref,&selection)) {return}
     testing.expect_value(t,world.entities.alive,1)
     testing.expect(t,core.has(&world.terrains,owner))
@@ -533,7 +533,7 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     s:=editor.Session{app=&app,info=&info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,viewport=&viewport,id_state=419}
     tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
     tool.create_kind=.Heightfield;tool.samples,tool.chunk_cells=5,4
-    terrain_create(&s,&tool,ref,&app)
+    terrain_create(&s,&tool,ref,app.assets,app.allocator)
     create_test_settle(&world,nil,nil)
     if !testing.expect_value(t,len(world.terrains.values),1) {return}
     owner:=world.terrains.entities[0]
@@ -551,7 +551,7 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     change:=terrain.source_edit(&tool.stroke.source,{kind=.Raise,center={0,0,0},radius=1,amount=2})
     if !testing.expect(t,change.changed && change.error==.None) {return}
     cached_values:=raw_data(tool.stroke.source.heights.pages[0].values)
-    stroke_end(&s,&tool,ref,&app)
+    stroke_end(&s,&tool,ref,app.assets)
     if !testing.expect(t,editor.edits_commit(&edits,ref,&selection)) {return}
     testing.expect_value(t,edits.cursor,1)
     testing.expect_value(t,len(edits.steps),1)
@@ -567,7 +567,7 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     redo_values:[25]f32
     for &value,i in redo_values {value=terrain.source_value(&tool.stroke.source,{i%5,0,i/5})}
     if !testing.expect(t,editor.undo(&edits,ref,&selection)) {return}
-    terrain_sync(&s,&tool,core.read(&world.terrains),&app)
+    terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
     restored:=test_held(t,&assets,relative)
     defer delete(restored)
     testing.expect_value(t,string(restored),string(original))
@@ -581,7 +581,7 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     if !testing.expect(t,change.changed && change.error==.None) {return}
     // A height the format refuses: the file cannot be written.
     terrain.grid_set(&tool.stroke.source.heights,0,0,2*terrain.HEIGHT_LIMIT)
-    stroke_end(&s,&tool,ref,&app,consume=operand,label="Subtract terrain")
+    stroke_end(&s,&tool,ref,app.assets,consume=operand,label="Subtract terrain")
     testing.expect_value(t,string(s.toast[:s.toast_length]),"The terrain could not be written")
     testing.expect_value(t,edits.cursor,0)
     testing.expect_value(t,len(edits.steps),1)
@@ -606,7 +606,7 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     defer delete(after_failure)
     testing.expect_value(t,string(after_failure),string(original))
     if !testing.expect(t,editor.redo(&edits,ref,&selection)) {return}
-    terrain_sync(&s,&tool,core.read(&world.terrains),&app)
+    terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
     testing.expect_value(t,core.get(&world.terrains,owner).revision,u32(2))
     testing.expect_value(t,editor.revision_applied(&tool.history,id).revision,u32(2))
     after_redo:=test_held(t,&assets,relative)

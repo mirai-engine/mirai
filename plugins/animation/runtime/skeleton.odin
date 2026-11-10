@@ -10,6 +10,7 @@ import "mirai:host"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import lib "mirai:std/anim"
+import "base:runtime"
 
 // A mesh that shows the pose of a rig of its skeleton instead of posing its own;
 // with a skeleton of its own it is a rig that follows that one (Rig.leader).
@@ -122,7 +123,7 @@ skeleton_assets_free :: proc(cache:^Skeleton_Assets) {
 // of the registry, on disk or unsaved in its memory, or what the host gave out
 // of one. A content looks at its record again only then. Never 0.
 @(private)
-assets_stamp :: proc "contextless" (app:^host.App) -> u64 {return app.assets.revision+app.assets.registry.revision+1}
+assets_stamp :: proc "contextless" (assets:^host.Assets) -> u64 {return assets.revision+assets.registry.revision+1}
 
 skeleton_content :: proc(cache:^Skeleton_Assets,app:^host.App,id:base.Asset_Id) -> ^Skeleton_Content {
     if cache==nil || app==nil || app.assets==nil || id=={} {return nil}
@@ -135,17 +136,17 @@ skeleton_content :: proc(cache:^Skeleton_Assets,app:^host.App,id:base.Asset_Id) 
         if map_insert(&cache.rows,id,row)==nil {pop(&cache.contents);return nil}
     }
     content:=&cache.contents[row]
-    if content.checked==assets_stamp(app) {return content if len(content.bones)>0 else nil}
+    if content.checked==assets_stamp(app.assets) {return content if len(content.bones)>0 else nil}
     record,exists:=asset.registry_find(&app.assets.registry,id)
     stamp:=[2]i64{}
     if exists {stamp={record.size,record.time}}
-    if found && content.checked!=0 && content.stamp==stamp {content.checked=assets_stamp(app);return content if len(content.bones)>0 else nil}
+    if found && content.checked!=0 && content.stamp==stamp {content.checked=assets_stamp(app.assets);return content if len(content.bones)>0 else nil}
     bones:[]asset.Skeleton_Bone
     sockets:[]asset.Skeleton_Socket
     mirror:[]i32
     body:=lib.body_map_empty()
     error:=asset.Error.Not_Found
-    if exists {bones,sockets,body,error=skeleton_read(app,id)}
+    if exists {bones,sockets,body,error=skeleton_read(app.assets,app.allocator,id)}
     if error==.None {
         paired:bool
         if mirror,paired=skeleton_mirror_pairs(bones,app.allocator);!paired {delete(bones);delete(sockets);bones,sockets=nil,nil;error=.Out_Of_Memory}
@@ -155,21 +156,21 @@ skeleton_content :: proc(cache:^Skeleton_Assets,app:^host.App,id:base.Asset_Id) 
     if error==.Out_Of_Memory {content.checked=0;return nil}
     delete(content.bones);delete(content.sockets);delete(content.mirror);content.bones,content.sockets,content.mirror=bones,sockets,mirror
     content.body=body if error==.None else lib.body_map_empty()
-    content.stamp,content.checked=stamp,assets_stamp(app);content.revision+=1
+    content.stamp,content.checked=stamp,assets_stamp(app.assets);content.revision+=1
     return content if error==.None else nil
 }
 
 @(private)
-skeleton_read :: proc(app:^host.App,id:base.Asset_Id) -> ([]asset.Skeleton_Bone,[]asset.Skeleton_Socket,lib.Body_Map,asset.Error) {
+skeleton_read :: proc(assets:^host.Assets,allocator:runtime.Allocator,id:base.Asset_Id) -> ([]asset.Skeleton_Bone,[]asset.Skeleton_Socket,lib.Body_Map,asset.Error) {
     file:asset.Asset
-    if error:=host.assets_file(app.assets,id,asset.KIND_SKELETON,&file);error!=.None {return nil,nil,{},error}
+    if error:=host.assets_file(assets,id,asset.KIND_SKELETON,&file);error!=.None {return nil,nil,{},error}
     defer asset.asset_close(&file)
-    view,error:=asset.skeleton_view(&file,&app.assets.types)
+    view,error:=asset.skeleton_view(&file,&assets.types)
     if error!=.None {return nil,nil,{},error}
-    bones,allocation:=make([]asset.Skeleton_Bone,len(view.bones),app.allocator)
+    bones,allocation:=make([]asset.Skeleton_Bone,len(view.bones),allocator)
     if allocation!=nil {return nil,nil,{},.Out_Of_Memory}
     copy(bones,view.bones)
-    sockets,socket_allocation:=make([]asset.Skeleton_Socket,len(view.sockets),app.allocator)
+    sockets,socket_allocation:=make([]asset.Skeleton_Socket,len(view.sockets),allocator)
     if socket_allocation!=nil {delete(bones);return nil,nil,{},.Out_Of_Memory}
     copy(sockets,view.sockets)
     return bones,sockets,asset.skeleton_body_map(view.bones,view.body,view.body_parts),.None

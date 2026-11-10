@@ -79,8 +79,8 @@ peaks_fill :: proc(peaks:^[WAVE_WIDTH][2]f32,samples:[]$T,channels,rate:int,scal
 // Reads the file of the subject again when the assets change. The edits of a
 // set the rows hold stay over what its file says now.
 @(private)
-sound_sync :: proc(s:^editor.Session,app:^host.App,p:^Sound) {
-    a:=app.assets
+sound_sync :: proc(s:^editor.Session,assets:^host.Assets,p:^Sound) {
+    a:=assets
     if p.id=={} || a==nil {return}
     record,found:=asset.registry_find(&a.registry,p.id)
     if !found || record.kind!=p.kind {
@@ -140,7 +140,7 @@ sound_wave :: proc(s:^editor.Session,p:^Sound) {
 
 // Play or stop, in the room the toolbar leaves the document.
 @(private)
-sound_bar :: proc(s:^editor.Session,app:^host.App,p:^Sound) {
+sound_bar :: proc(s:^editor.Session,m:^mixer.Mixer,p:^Sound) {
     g:=s.gui;ctx:=g.ctx;th:=&ctx.theme
     rect,found:=editor.asset_toolbar(g)
     if !found || rect.w<=0 {return}
@@ -149,7 +149,7 @@ sound_bar :: proc(s:^editor.Session,app:^host.App,p:^Sound) {
         defer ui.id_pop(ctx)
         if ui.box(ctx,{width=ui.fixed(1),height=ui.fixed(18),fill=th.border}) {}
         heard:=editor.sound_heard(s,p.id)
-        if ui.button(ctx,ui.id(ctx,"play"),{icon=heard?.Stop:.Play,tip=heard?"Stop sound":"Play sound",style=.Tab,active=heard,width=26,height=th.control,disabled=app.mixer==nil || !p.read}).clicked {
+        if ui.button(ctx,ui.id(ctx,"play"),{icon=heard?.Stop:.Play,tip=heard?"Stop sound":"Play sound",style=.Tab,active=heard,width=26,height=th.control,disabled=m==nil || !p.read}).clicked {
             if heard {
                 editor.sound_hear_stop(s)
             } else if !editor.sound_hear(s,p.id) {
@@ -160,13 +160,13 @@ sound_bar :: proc(s:^editor.Session,app:^host.App,p:^Sound) {
 }
 
 @(private)
-sound_document :: proc(s:^editor.Session,previews:^Previews,app:^host.App,d:^editor.Asset_Document) {
+sound_document :: proc(s:^editor.Session,previews:^Previews,assets:^host.Assets,m:^mixer.Mixer,d:^editor.Asset_Document) {
     p:=&previews.sound
     g:=s.gui
     ctx:=g.ctx
     if p.id!=d.id || p.kind!=d.kind {sound_subject(p,d.id,d.kind)}
-    sound_sync(s,app,p)
-    sound_bar(s,app,p)
+    sound_sync(s,assets,p)
+    sound_bar(s,m,p)
     id:=ui.id_derive(ctx,DOCUMENT_SCOPE,"sound")
     if ui.panel(ctx,id,editor.asset_workspace(g)) {
         ui.id_push(ctx,id)
@@ -186,7 +186,7 @@ sound_document :: proc(s:^editor.Session,previews:^Previews,app:^host.App,d:^edi
                 }
             } else {
                 if editor.asset_column_begin(ctx,ui.GROW,"Chances") {
-                    if p.read {sound_set_chances(s,app,p)}
+                    if p.read {sound_set_chances(s,assets,p)}
                     editor.asset_column_end(ctx)
                 }
                 editor.asset_column_divider(ctx)
@@ -230,7 +230,7 @@ sound_facts :: proc(s:^editor.Session,p:^Sound) {
 
 // How often each sound of the set plays, by the weights the rows hold.
 @(private)
-sound_set_chances :: proc(s:^editor.Session,app:^host.App,p:^Sound) {
+sound_set_chances :: proc(s:^editor.Session,assets:^host.Assets,p:^Sound) {
     ctx:=s.gui.ctx
     th:=&ctx.theme
     total:=f32(0)
@@ -242,7 +242,7 @@ sound_set_chances :: proc(s:^editor.Session,app:^host.App,p:^Sound) {
             if variation.sound=={} {continue}
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=8,align_y=.Center}) {
                 ui.icon(ctx,.Sound,editor.asset_color(asset.KIND_SOUND),13)
-                ui.label(ctx,editor.asset_name_of(app.assets,variation.sound),th.font_small,th.text)
+                ui.label(ctx,editor.asset_name_of(assets,variation.sound),th.font_small,th.text)
                 ui.spacer(ctx)
                 ui.label(ctx,fmt.tprintf("%.0f %%",100*(variation.weight>0?variation.weight:1)/total),th.font_small,th.text_muted)
             }

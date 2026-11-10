@@ -266,7 +266,7 @@ match_fixture :: proc(t:^testing.T,f:^Match_Fixture,memory:u32=MATCH_INFO_DEFAUL
     info:=MATCH_INFO_DEFAULT;info.animation,info.memory=f.content.id,memory
     info.left_foot,info.right_foot,info.hips=bone_ref("foot_l"),bone_ref("foot_r"),bone_ref("hips")
     profile:=Match_Profile{info=info,clips=clips}
-    append(&f.graphs.matches,Match_Content{id=MATCH_TEST_ID,checked=assets_stamp(&f.app),revision=1,valid=true,profile=profile})
+    append(&f.graphs.matches,Match_Content{id=MATCH_TEST_ID,checked=assets_stamp(f.app.assets),revision=1,valid=true,profile=profile})
     if !testing.expect(t,match_check(profile) && lib.pose_init(&f.playback.pose,64)) {return false}
     f.state=state_get(&f.playback,f.rig)
     f.animation=ANIMATION_DEFAULT;f.animation.asset=MATCH_TEST_ID

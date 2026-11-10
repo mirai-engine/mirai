@@ -76,7 +76,7 @@ destruct_step :: proc(
     replays:=core.take(&requests.replays)
     states_asked:=core.take(&requests.states)
     if cache.epoch!=state.epoch {
-        cache_reset(app,cache)
+        cache_reset(app.assets,&app.jobs,cache)
         cache.epoch=state.epoch
     }
     cache.pass+=1
@@ -90,7 +90,7 @@ destruct_step :: proc(
     entry:Entry
     for e in core.entity_map_left(&cache.entries,destructibles,gone,&at,&entry) {
         entity_end(&c,e,&entry)
-        entry_release(app,cache,&entry)
+        entry_release(app.assets,&app.jobs,cache,&entry)
     }
     for row in 0..<core.count(destructibles) {reconcile(&c,core.entity_at(destructibles,row),core.at(destructibles,row))}
     events_apply(&c,waiting,pending,&requests.waiting)
@@ -124,7 +124,7 @@ groups_end :: proc(c:^Ctx,entry:^Entry) {
         physics.proxy_remove(c.state,group.entity)
         if core.alive(c.es,group.entity) {core.destroy(c.es,group.entity)}
     }
-    groups_release(c.app,c.cache,entry)
+    groups_release(c.app.assets,c.cache,entry)
 }
 
 // The simulation destructible of one entity made match its row: made, made
@@ -195,7 +195,7 @@ reconcile :: proc(c:^Ctx,e:core.Entity,d:Destructible) {
         core.report(c.problems,e,"destruct.pieces","its Destructible asks for %d pieces, and the world holds %d (Destruct_Settings.pieces); ask for 1 to %d, or raise pieces",d.pieces,len(cache.infos),len(cache.infos))
         return
     }
-    _,interior,generated:=slots_of(c.app,d,static.mesh)
+    _,interior,generated:=slots_of(c.app.assets,d,static.mesh)
     // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
     entry.slots=interior+1
     entry.generated=generated
@@ -203,7 +203,7 @@ reconcile :: proc(c:^Ctx,e:core.Entity,d:Destructible) {
     if interior<render.MATERIAL_SLOTS && d.interior=={} {entry.materials[interior]=static.materials[0]}
     key:=Prepared_Key{pieces=d.pieces,seed=d.seed,pattern=d.pattern,mesh=static.mesh,fracture=d.fracture,shape=static.shape,scale=scale,interior=interior}
     if entry.prepared==nil || entry.prepared.key!=key {
-        if !prepare_start(c.app,entry,d,static,scale,interior) {
+        if !prepare_start(c.app.assets,&c.app.jobs,entry,d,static,scale,interior) {
             name:[base.ASSET_ID_TEXT]u8
             core.report(c.problems,e,"destruct.geometry","mesh %s of its Destructible has no geometry to fracture: the mesh is missing or has no triangles, or memory ran out; give Mesh_Renderer.mesh a closed mesh of the assets",host.assets_name(c.app.assets,static.mesh,&name))
             return
@@ -306,12 +306,12 @@ cache_recover :: proc(c:^Ctx,e:core.Entity,d:Destructible,static:render.Mesh_Ren
     st:=core.get(c.states,e)
     if st==nil {return}
     if entry.prepared==nil {
-        _,interior,generated:=slots_of(c.app,d,static.mesh)
+        _,interior,generated:=slots_of(c.app.assets,d,static.mesh)
         // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
         entry.slots=interior+1
         entry.generated=generated
         entry.materials=static.materials
-        if !prepare_start(c.app,entry,d,static,scale,interior) {st.failed=true;return}
+        if !prepare_start(c.app.assets,&c.app.jobs,entry,d,static,scale,interior) {st.failed=true;return}
     }
     st.waiting=prepared_pending(entry.prepared)
     if st.waiting || entry.prepared.error!=.None {return}
@@ -465,7 +465,7 @@ group_sync :: proc(c:^Ctx,owner:core.Entity,entry:^Entry,group:Scratch_Group) {
     if changed {
         if record.mesh!={} && c.app.assets!=nil && host.assets_mesh_release(c.app.assets,record.mesh) {cache.stats.meshes-=1}
         made:bool
-        record.mesh,made=group_mesh_make(c.app,cache,entry,members)
+        record.mesh,made=group_mesh_make(c.app.assets,cache,entry,members)
         if !made && c.app.assets!=nil {
             core.report(c.problems,owner,"destruct.group_mesh","the mesh of a broken part of its Destructible was not made: its pieces have no geometry, or the generated meshes are full; that part collides and is not drawn: free memory, or use fewer pieces")
         }

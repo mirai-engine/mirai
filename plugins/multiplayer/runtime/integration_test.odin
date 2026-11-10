@@ -508,7 +508,7 @@ net_test_fixed :: proc(world,shared,editor,application:rawptr) {
     if sh.session!=nil {
         outbox:Net_Outbox
         adoptions:Net_Adoptions
-        net_tick_tail(ref,app,sh.session,&outbox,&adoptions,sh.session.problems)
+        net_tick_tail(ref,sh.session,&outbox,&adoptions,sh.session.problems)
         core.value_free(&outbox,type_info_of(Net_Outbox))
         core.value_free(&adoptions,type_info_of(Net_Adoptions))
     }
@@ -551,7 +551,7 @@ net_test_session :: proc(s:^Net_Session,w:^Net_Test_World,info:^core.World_Info,
     desc.replication.max_objects=s.desc.max_objects
     if wire.host_init(&s.host,desc)!=.None {return false}
     s.host_ready,s.mode=true,mode
-    ready:=mode==.Client?client_init(s,core.world_ref(w,info),app):server_init(s,context.allocator)
+    ready:=mode==.Client?client_init(s,core.world_ref(w,info),app.allocator):server_init(s,context.allocator)
     world_seen(s,core.world_ref(w,info))
     return ready
 }
@@ -735,7 +735,7 @@ component_references_resolve_after_binding_and_clear_after_destruction :: proc(t
     s:Net_Session
     if !testing.expect(t,net_test_session(&s,&world,&info,&app,&network,0,.Server)) {return}
     defer session_destroy(&s)
-    if !testing.expect(t,client_init(&s,core.world_ref(&world,&info),&app)) {return}
+    if !testing.expect(t,client_init(&s,core.world_ref(&world,&info),app.allocator)) {return}
     type:=net_test_type(&s,core.world_ref(&world,&info),source)
     target_object,error:=wire.object_create(&s.host,{type=type})
     if !testing.expect_value(t,error,wire.Error.None) {return}
@@ -794,19 +794,19 @@ server_publishes_only_changed_rows_at_the_objects_frequency :: proc(t:^testing.T
     outbox:Net_Outbox
     defer core.value_free(&outbox,type_info_of(Net_Outbox))
     for tick in 1..<4 {
-        server_publish(&s,core.world_ref(&world,&info),&app,&outbox,u32(tick))
+        server_publish(&s,core.world_ref(&world,&info),&outbox,u32(tick))
         net_test_settle(&world,nil,nil)
     }
     before:=s.stats.fragments_published
     core.get(&world.values,first).force=9
-    server_publish(&s,core.world_ref(&world,&info),&app,&outbox,4)
+    server_publish(&s,core.world_ref(&world,&info),&outbox,4)
     testing.expect_value(t,s.stats.fragments_published-before,u64(1))
     // Ten times a second at 60 ticks: on its turn, once every six ticks, whatever changed between turns.
     core.get(&world.objects,first).update_hz=10
     before=s.stats.fragments_published
     for tick in 5..<17 {
         core.get(&world.values,first).force=f32(tick)
-        server_publish(&s,core.world_ref(&world,&info),&app,&outbox,u32(tick))
+        server_publish(&s,core.world_ref(&world,&info),&outbox,u32(tick))
     }
     testing.expect_value(t,s.stats.fragments_published-before,u64(2))
     testing.expect_value(t,wire.object_poll_interval(&s.host,wire.object_of_user(&s.host,u64(first))),6)
@@ -1145,7 +1145,7 @@ object_scope_controls_relevance_radius_and_follows_the_replicated_ancestor :: pr
         }
         if tick==165 {core.add(&world.parents,child,core.Parent{entity=replacement})}
         net_test_settle(world,nil,nil)
-        server_publish(&sessions[0],core.world_ref(world,&info),&apps[0],&outbox,u32(tick))
+        server_publish(&sessions[0],core.world_ref(world,&info),&outbox,u32(tick))
         wire.host_update(&sessions[0].host,now)
         if tick==19 {
             child_object=wire.object_of_user(&sessions[0].host,u64(child))
@@ -1207,7 +1207,7 @@ replicated_joint_waits_for_its_target_and_preserves_authoritative_frames_on_reta
     session:Net_Session
     if !testing.expect(t,net_test_session(&session,&world,&info,&app,&network,0,.Server)) {return}
     defer session_destroy(&session)
-    if !testing.expect(t,client_init(&session,ref,&app)) {return}
+    if !testing.expect(t,client_init(&session,ref,app.allocator)) {return}
     type:=net_test_type(&session,ref,source)
     joint_fragment,state_fragment:=net_test_fragment(&session,type,phys.Joint),net_test_fragment(&session,type,phys.Joint_State)
     if !testing.expect(t,joint_fragment>=0 && state_fragment>=0,"the body replicates its joint") {return}

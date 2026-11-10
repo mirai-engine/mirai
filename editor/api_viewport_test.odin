@@ -194,7 +194,7 @@ capture_without_ui_draws_the_world_alone_at_the_size_asked_for :: proc(t:^testin
     panel:=[6]gpu.Ui_Vertex{{position={0,0,0},color=red},{position={32,0,0},color=red},{position={32,24,0},color=red},{position={0,0,0},color=red},{position={32,24,0},color=red},{position={0,24,0},color=red}}
     for _ in 0..<3 {
         host.app_frame_begin(app)
-        host.app_ui_layer_add(app,{vertices=panel[:]})
+        host.extras_ui_layer_add(&app.extras,{vertices=panel[:]})
         host.app_frame_end(app)
     }
     at :: proc(pixels:[]u8,width,x,y:int) -> [3]int {i:=(y*width+x)*4;return {int(pixels[i]),int(pixels[i+1]),int(pixels[i+2])}}

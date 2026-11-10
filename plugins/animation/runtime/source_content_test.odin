@@ -83,7 +83,7 @@ multiple_animation_sources_keep_duplicate_clip_names_curves_markers_root_and_act
     samples:=[2]Blend_Sample{{position={0,0},speed=1},{position={1,0},speed=1,animation=sources[1].id}}
     for &sample in samples {base.text_set(sample.clip[:],"Walk")}
     assets:host.Assets;app:=host.App{assets=&assets,allocator=context.allocator}
-    blend:=Blend_Content{id={101,3},checked=assets_stamp(&app),valid=true,profile={info={animation=sources[0].id,dimension=.One,x={min=0,max=1}},samples=samples[:]}}
+    blend:=Blend_Content{id={101,3},checked=assets_stamp(app.assets),valid=true,profile={info={animation=sources[0].id,dimension=.One,x={min=0,max=1}},samples=samples[:]}}
     base.text_set(blend.profile.info.x.name[:],"speed")
     testing.expect_value(t,blend_space_prepare(&blend.profile),asset.Error.None)
     defer {delete(blend.profile.segments);delete(blend.profile.triangles)}

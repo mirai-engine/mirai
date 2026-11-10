@@ -226,7 +226,7 @@ placement_drops_settle_without_gameplay_and_commit_as_one_undo :: proc(t:^testin
     editor.selection_set(&f.selection,{source})
     testing.expect(t,placement_start(&f.session,&f.tool,{mesh={shape=.Cube},scale={0.5,0.1,0.7},height=1,point={3,0,0}}))
     for _ in 0..<60 {testing.expect(t,placement_update(&f.tool,PLACEMENT_DT))}
-    bounds,_:=placement_box(&f.app,erender.Mesh_Renderer{shape=.Cube})
+    bounds,_:=placement_box(f.app.assets,erender.Mesh_Renderer{shape=.Cube})
     testing.expect(t,placement_drop(&f.tool,{mesh={shape=.Cube},scale={0.5,0.1,0.7},height=1,point={3,0,0}},bounds))
     testing.expect_value(t,f.tool.count,2)
     first,second:=f.tool.roots[0],f.tool.roots[1]

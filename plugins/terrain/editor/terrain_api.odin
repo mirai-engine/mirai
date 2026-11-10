@@ -167,7 +167,7 @@ api_terrain :: proc(s:^editor.Session,call:^api.Call,named:[]u8) -> (tool:^Terra
     if !core.has(core.read(worlds),e) {api.call_failf(call,api.INVALID_PARAMS,"Terrain %s has no place in the world: give its entity a Transform with scene.set",given);return}
     marker,_:=core.get(core.read(terrains),e)
     if !terrain.terrain_stamp(s.app.assets,marker.source).found {api.call_failf(call,api.INVALID_PARAMS,"The .terrain of terrain %s is not among the assets: asset.list shows them",given);return}
-    if !stroke_prepare(tool,s.app,core.read(terrains),core.read(worlds),editor.Pick{entity=e}) {api.call_failf(call,api.INVALID_PARAMS,"The .terrain of terrain %s could not be read: engine.diagnostics says why",given);return}
+    if !stroke_prepare(tool,s.app.assets,s.app.allocator,core.read(terrains),core.read(worlds),editor.Pick{entity=e}) {api.call_failf(call,api.INVALID_PARAMS,"The .terrain of terrain %s could not be read: engine.diagnostics says why",given);return}
     if !stroke_baseline(tool) {api.call_fail(call,api.INTERNAL_ERROR,"The terrain history could not be stored: there is not enough memory");return}
     return tool,world,true
 }
@@ -254,7 +254,7 @@ api_create :: proc(s:^editor.Session,call:^api.Call) {
         known:bool
         if ground,known=editor.api_call_entity(call,editor.edited_world(s),p.ground[:],"ground");!known {return}
     }
-    e:=terrain_create(s,tool,editor.edited_world(s),s.app,p.at,placed,ground,name)
+    e:=terrain_create(s,tool,editor.edited_world(s),s.app.assets,s.app.allocator,p.at,placed,ground,name)
     if e==core.NONE {editor.tool_call_fail(s,call,"The terrain could not be made");return}
     world:=editor.edited_world(s)
     core.world_settle(world)
@@ -415,7 +415,7 @@ api_edit :: proc(s:^editor.Session,call:^api.Call) {
         }
     }
     if !stroke.changed {stroke_cancel(tool);api_changed_write(call,false,touches);return}
-    stroke_end(s,tool,world,s.app,label=fmt_label(kind,level))
+    stroke_end(s,tool,world,s.app.assets,label=fmt_label(kind,level))
     if stroke.active || stroke.changed {editor.tool_call_fail(s,call,"The stroke could not be kept");return}
     api_changed_write(call,true,touches)
 }
@@ -452,13 +452,13 @@ api_layer :: proc(s:^editor.Session,call:^api.Call) {
     if p.remove {
         if index<0 {api.call_fail(call,api.INVALID_PARAMS,"Give layer, the one to take out");return}
         if count==1 {api.call_fail(call,api.INVALID_PARAMS,LAST_LAYER);return}
-        if !terrain_layer_commit(s,tool,world,s.app,index,{},true) {editor.tool_call_fail(s,call,"The layer could not be taken out");return}
+        if !terrain_layer_commit(s,tool,world,s.app.assets,index,{},true) {editor.tool_call_fail(s,call,"The layer could not be taken out");return}
     } else {
         if index<0 {index=count}
         if index>=terrain.LAYERS_MAX {api.call_failf(call,api.INVALID_PARAMS,"A terrain has up to %d layers and it has %d: name one with layer to change it",terrain.LAYERS_MAX,count);return}
         layer:=index<count?source.layers[index]:terrain.LAYER_DEFAULT
         if !layer_values(call,p,&layer) {return}
-        if !terrain_layer_commit(s,tool,world,s.app,index,layer,false) {editor.tool_call_fail(s,call,"The layer could not be set");return}
+        if !terrain_layer_commit(s,tool,world,s.app.assets,index,layer,false) {editor.tool_call_fail(s,call,"The layer could not be set");return}
     }
     w:=call.out
     serial.text_write_raw(w,"{")
@@ -624,7 +624,7 @@ api_interior :: proc(s:^editor.Session,call:^api.Call) {
         return
     }
     s.toast_length=0
-    if !terrain_interior_commit(s,tool,world,s.app,interior) {editor.tool_call_fail(s,call,"The interior could not be set");return}
+    if !terrain_interior_commit(s,tool,world,s.app.assets,interior) {editor.tool_call_fail(s,call,"The interior could not be set");return}
     w:=call.out
     serial.text_write_raw(w,"{")
     api.write_uint(w,"strata",u64(source.interior.strata_count),true)
@@ -699,7 +699,7 @@ api_heightmap :: proc(s:^editor.Session,call:^api.Call) {
     if imported!="" {
         file,problem:=editor.api_file_path(s.project_root,imported,context.temp_allocator)
         if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
-        if !heightmap_import(s,tool,world,s.app,file) {editor.tool_call_fail(s,call,"The heightmap could not be imported");return}
+        if !heightmap_import(s,tool,world,s.app.assets,file) {editor.tool_call_fail(s,call,"The heightmap could not be imported");return}
     }
     if exported!="" {
         file,problem:=editor.api_file_path(s.project_root,exported,context.temp_allocator)
@@ -721,7 +721,7 @@ api_resize :: proc(s:^editor.Session,call:^api.Call) {
     tool,world,ok:=api_terrain(s,call,p.entity[:])
     if !ok {return}
     s.toast_length=0
-    if !terrain_resize(s,tool,world,s.app,{int(p.samples.x),int(p.samples.y)}) {editor.tool_call_fail(s,call,"The terrain could not be resized");return}
+    if !terrain_resize(s,tool,world,s.app.assets,{int(p.samples.x),int(p.samples.y)}) {editor.tool_call_fail(s,call,"The terrain could not be resized");return}
     w:=call.out
     serial.text_write_raw(w,"{")
     resized,_:=editor.api_entity_find(world,base.text_get(p.entity[:]))

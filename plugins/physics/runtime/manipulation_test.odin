@@ -131,7 +131,7 @@ physics_test_step :: proc(f:^Physics_Test,dt:f32=1.0/60) {
 physics_test_run :: proc(f:^Physics_Test,dt:f32) {
     gravities:core.Read(volume.Gravity);gravity_volumes:core.Read(volume.Volume);worlds:core.Read(core.World_Transform)
     if g:=f.fields;g!=nil {gravities,gravity_volumes,worlds=core.read(&g.gravities),core.read(&g.volumes),core.read(&g.worlds)}
-    if state_make(&f.state,&f.settings,&f.app,&f.problems) {
+    if state_make(&f.state,&f.settings,&f.app.jobs,&f.problems) {
         if f.fields==nil {sim.world_set_gravity(&f.state.world,f.gravity)}
     }
     physics_step(

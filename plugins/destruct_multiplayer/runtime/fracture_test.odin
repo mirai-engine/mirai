@@ -87,7 +87,7 @@ end_init :: proc(f:^End,name:string,role:core.Network_Role) -> bool {
 
 @(private="file")
 end_destroy :: proc(f:^End) {
-    destruct.cache_destroy(&f.app,&f.cache);jobs.system_destroy(&f.app.jobs);destruct.fracture_state_destroy(&f.fractures);phys.state_destroy(&f.physics);host.assets_destroy(&f.assets)
+    destruct.cache_destroy(f.app.assets,&f.app.jobs,&f.cache);jobs.system_destroy(&f.app.jobs);destruct.fracture_state_destroy(&f.fractures);phys.state_destroy(&f.physics);host.assets_destroy(&f.assets)
     core.table_destroy(&f.configs);core.table_destroy(&f.colliders);core.table_destroy(&f.states);core.table_destroy(&f.groups)
     core.table_destroy(&f.transforms);core.table_destroy(&f.parents);core.table_destroy(&f.meshes);core.table_destroy(&f.tints)
     core.table_destroy(&f.elsewhere);core.table_destroy(&f.ids);core.table_destroy(&f.objects);core.entities_destroy(&f.entities)

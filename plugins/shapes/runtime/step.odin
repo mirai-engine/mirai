@@ -75,10 +75,10 @@ shapes_cache_free :: proc(cache:^Shapes_Cache) {
 
 // What the cache made for a World that is freed goes with it.
 @(step="release")
-shapes_release :: proc(cache:^Shapes_Cache,app:^host.App) {
+shapes_release :: proc(cache:^Shapes_Cache,assets:^host.Assets) {
     if cache==nil {return}
     for entry in cache.entries.values {
-        if entry.mesh!={} && app.assets!=nil {host.assets_mesh_release(app.assets,entry.mesh)}
+        if entry.mesh!={} && assets!=nil {host.assets_mesh_release(assets,entry.mesh)}
     }
     core.entity_map_clear(&cache.entries)
     core.entity_map_clear(&cache.brushes)

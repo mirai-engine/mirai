@@ -68,8 +68,8 @@ terrain_conversion_requires_its_owner_to_remain_selected :: proc(t:^testing.T) {
     tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
     tool.assets=&assets;tool.stroke.id,tool.stroke.entity,tool.stroke.revision=id,owner,1
     if !testing.expect(t,terrain.source_clone(&tool.stroke.source,&source)) {return}
-    terrain_sync(&session,&tool,core.read(&world.terrains),&app)
-    terrain_convert(&session,&tool,ref,&app)
+    terrain_sync(&session,&tool,core.read(&world.terrains),app.assets)
+    terrain_convert(&session,&tool,ref,app.assets,app.allocator)
     testing.expect(t,!edits.open && !edits.commit)
     testing.expect_value(t,edits.cursor,0)
     testing.expect_value(t,core.get(&world.terrains,owner).revision,u32(1))
@@ -81,14 +81,14 @@ terrain_conversion_requires_its_owner_to_remain_selected :: proc(t:^testing.T) {
     testing.expect_value(t,len(untouched),len(before))
     if len(untouched)==len(before) {for value,i in untouched {testing.expect_value(t,value,before[i])}}
     editor.selection_set(&selection,{owner})
-    terrain_convert(&session,&tool,ref,&app)
+    terrain_convert(&session,&tool,ref,app.assets,app.allocator)
     testing.expect(t,editor.edits_commit(&edits,ref,&selection))
     testing.expect_value(t,tool.stroke.source.kind,terrain.Source_Kind.Mesh)
     testing.expect_value(t,core.get(&world.terrains,owner).revision,u32(2))
     _,unsaved:=asset.registry_memory_find(&assets.registry,"heightfield.terrain")
     testing.expect(t,unsaved)
     testing.expect(t,editor.undo(&edits,ref,&selection))
-    terrain_sync(&session,&tool,core.read(&world.terrains),&app)
+    terrain_sync(&session,&tool,core.read(&world.terrains),app.assets)
     undone:=test_held(t,&assets,"heightfield.terrain");defer delete(undone)
     testing.expect(t,string(undone)==string(before))
     _,unsaved=asset.registry_memory_find(&assets.registry,"heightfield.terrain")
@@ -179,8 +179,8 @@ terrain_boolean_consumes_a_transformed_operand_and_undo_restores_geometry_materi
         session:=editor.Session{app=&app,info=&info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,document=&document}
         tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
         tool.brush=brush
-        terrain_sync(&session,&tool,core.read(&world.terrains),&app)
-        if !testing.expect(t,stroke_prepare(&tool,&app,core.read(&world.terrains),core.read(&world.worlds),editor.Pick{entity=owner})) {return}
+        terrain_sync(&session,&tool,core.read(&world.terrains),app.assets)
+        if !testing.expect(t,stroke_prepare(&tool,app.assets,app.allocator,core.read(&world.terrains),core.read(&world.worlds),editor.Pick{entity=owner})) {return}
         editor.selection_set(&selection,{operand})
         terrain_operand(&session,&tool,ref,&app)
         testing.expect(t,core.alive(&world.entities,operand))
@@ -237,7 +237,7 @@ terrain_boolean_consumes_a_transformed_operand_and_undo_restores_geometry_materi
         committed:=test_held(t,&assets,"solid.terrain")
         defer delete(committed)
         testing.expect(t,editor.undo(&edits,ref,&selection))
-        terrain_sync(&session,&tool,core.read(&world.terrains),&app)
+        terrain_sync(&session,&tool,core.read(&world.terrains),app.assets)
         testing.expect(t,core.alive(&world.entities,operand))
         testing.expect_value(t,core.get(&world.meshes,operand)^,operand_static)
         testing.expect_value(t,core.get(&world.transforms,operand)^,core.Transform(operand_pose))
@@ -252,7 +252,7 @@ terrain_boolean_consumes_a_transformed_operand_and_undo_restores_geometry_materi
         testing.expect_value(t,len(undone),len(before))
         if len(undone)==len(before) {for value,i in undone {testing.expect_value(t,value,before[i])}}
         testing.expect(t,editor.redo(&edits,ref,&selection))
-        terrain_sync(&session,&tool,core.read(&world.terrains),&app)
+        terrain_sync(&session,&tool,core.read(&world.terrains),app.assets)
         testing.expect(t,!core.alive(&world.entities,operand))
         if shared_overrides {
             testing.expect_value(t,core.get(&world.overrides,shared)^,shared_override)

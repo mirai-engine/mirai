@@ -74,7 +74,7 @@ api_stroke :: proc(s:^editor.Session,call:^api.Call) {
         return
     }
     if !editor.api_edit_begin(s,call,"Paint") {return}
-    written:=stroke_apply(s,stroke,w,app,tool.color,tool.strength)
+    written:=stroke_apply(s,stroke,w,app.assets,app.allocator,tool.color,tool.strength)
     if !written {api.call_fail(call,api.SERVER_ERROR,"The painted mesh could not be written under the asset root")}
     if !editor.api_edit_end(s,call,written) {return}
     out:=api.call_result(call,Stroke_Result)

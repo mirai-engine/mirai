@@ -84,7 +84,7 @@ destructible_geometry_and_detached_group_poses_play_after_the_source_world_is_de
     fractures:destruct.Fracture_State
     defer destruct.fracture_state_destroy(&fractures)
     geometry:destruct.Destruct_Cache
-    defer destruct.cache_destroy(&app,&geometry)
+    defer destruct.cache_destroy(app.assets,&app.jobs,&geometry)
     requests:destruct.Destruct_Requests
     events:destruct.Destruct_Events
     defer core.value_free(&requests,type_info_of(destruct.Destruct_Requests))
@@ -128,7 +128,7 @@ destructible_geometry_and_detached_group_poses_play_after_the_source_world_is_de
     path:=fmt.tprintf("%s/mirai-cache-%d.physics_cache",directory,os.get_pid())
     defer os.remove(path)
     testing.expect_value(t,cache_save(path,&assets.types,{456,789},record_view(&record)),asset.Error.None)
-    destruct.cache_destroy(&app,&geometry)
+    destruct.cache_destroy(app.assets,&app.jobs,&geometry)
     phys.state_destroy(&physics)
     file:asset.Asset
     testing.expect_value(t,asset.asset_load(&file,path),asset.Error.None)

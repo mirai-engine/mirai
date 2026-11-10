@@ -2,7 +2,6 @@ package vfx
 
 import "core:fmt"
 import "mirai:core"
-import "mirai:host"
 import "mirai:std/base"
 import erender "mirai:engine/render"
 
@@ -212,11 +211,11 @@ data_readback_desc :: proc(name:u64,words:u32) -> erender.Buffer_Desc {
 
 // What the GPU brought back of the watched channels since the last frame.
 @(private)
-data_read :: proc(read:^Particle_Data_Read,d:^Data_Channels,app:^host.App,id:core.World_Id,problems:^core.Problems) {
+data_read :: proc(read:^Particle_Data_Read,d:^Data_Channels,renderer:^erender.Renderer,id:core.World_Id,problems:^core.Problems) {
     for &channel in read.channels {channel.fresh=false}
     for entry in d.entries {
         if !entry.watched {continue}
-        bytes,frame,ok:=erender.readback(app,id,data_readback_desc(entry.name,entry.words).name)
+        bytes,frame,ok:=erender.readback(renderer,id,data_readback_desc(entry.name,entry.words).name)
         if !ok {continue}
         channel:^Data_Read
         for &each in read.channels {if each.name==entry.name {channel=&each}}

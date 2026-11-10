@@ -73,21 +73,21 @@ mode_held :: proc "contextless" (tool:^Foliage_Tool,modifiers:ui.Modifiers) -> F
 }
 
 @(private)
-mode_set :: proc(s:^editor.Session,tool:^Foliage_Tool,app:^host.App,mode:Foliage_Mode) {
+mode_set :: proc(s:^editor.Session,tool:^Foliage_Tool,assets:^host.Assets,mode:Foliage_Mode) {
     if mode==tool.mode {return}
-    if tool.stroke.active {edit_cancel(s,tool,app);tool.stroke={}}
+    if tool.stroke.active {edit_cancel(s,tool,assets);tool.stroke={}}
     tool.mode=mode
     selected_clear(tool)
 }
 
 // The keys of the tool while no field is edited and no menu is open.
 @(private)
-tool_keys_frame :: proc(s:^editor.Session,tool:^Foliage_Tool,app:^host.App,input:core.Input) {
+tool_keys_frame :: proc(s:^editor.Session,tool:^Foliage_Tool,assets:^host.Assets,input:core.Input) {
     ctx:=s.gui.ctx
     if ctx.edit.id!=0 || s.gui.modal!=.None || ctx.popup.count!=0 || ctx.input.modifiers!={} {return}
     if core.key_pressed(input,.Left_Bracket) {tool.radius=max(tool.radius/RADIUS_STEP,RADIUS_MIN)}
     if core.key_pressed(input,.Right_Bracket) {tool.radius=min(tool.radius*RADIUS_STEP,RADIUS_MAX)}
-    for key,mode in MODE_KEYS {if core.key_pressed(input,key) {mode_set(s,tool,app,mode)}}
+    for key,mode in MODE_KEYS {if core.key_pressed(input,key) {mode_set(s,tool,assets,mode)}}
 }
 
 // The density F with Shift drags in a mode.
@@ -126,7 +126,7 @@ mode_color :: proc "contextless" (mode:Foliage_Mode) -> ui.Color {
 // while the button is held, a touch at most BRUSH_RATE times a second, the
 // first when it is pressed; a fast drag also touches between two of them.
 @(private)
-brush_frame :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,e:core.Entity,owner:mm.Transform,ground:^foliage.Ground_Owner,requests:^foliage.Foliage_Ground_Requests,app:^host.App,input:core.Input,frame:core.Frame_Time) {
+brush_frame :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,e:core.Entity,owner:mm.Transform,ground:^foliage.Ground_Owner,requests:^foliage.Foliage_Ground_Requests,assets:^host.Assets,input:core.Input,frame:core.Frame_Time) {
     stroke:=&tool.stroke
     if tool.adjust.active {
         mode:=mode_held(tool,s.gui.ctx.input.modifiers)
@@ -135,10 +135,10 @@ brush_frame :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,e:
     }
     mode:=stroke.active?stroke.mode:mode_held(tool,s.gui.ctx.input.modifiers)
     if stroke.active {
-        if ui.escape(s.gui.ctx) {edit_cancel(s,tool,app);tool.stroke={};return}
+        if ui.escape(s.gui.ctx) {edit_cancel(s,tool,assets);tool.stroke={};return}
         if !core.mouse_down(input,.Left) {
             labels:=[Foliage_Mode]string{.Paint="Paint foliage",.Erase="Erase foliage",.Select="",.Place="",.Reapply="Reapply foliage",.Generate="Generate foliage"}
-            if stroke.changed {edit_commit(s,tool,world,app,labels[stroke.mode])}
+            if stroke.changed {edit_commit(s,tool,world,assets,labels[stroke.mode])}
             tool.stroke={}
             clear(&tool.reapplied)
             return
@@ -185,7 +185,7 @@ brush_frame :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,e:
     stroke.last=hit.position
     if changed {
         stroke.changed=true
-        edit_preview(s,tool,app)
+        edit_preview(s,tool,assets)
     }
 }
 
@@ -362,7 +362,7 @@ reapply_touch :: proc(tool:^Foliage_Tool,s:^foliage.Source,ground:^foliage.Groun
 // Place: one instance of the selected types, in turn, where the pointer is,
 // as one step.
 @(private)
-place_frame :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,owner:mm.Transform,ground:^foliage.Ground_Owner,app:^host.App,input:core.Input) {
+place_frame :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,owner:mm.Transform,ground:^foliage.Ground_Owner,assets:^host.Assets,input:core.Input) {
     hit:=editor.pick_point(s,world,input.mouse_position)
     if hit.entity==core.NONE || hit.indicator {return}
     to_local,inverted:=mm.transform_inverse_matrix(owner)
@@ -382,7 +382,7 @@ place_frame :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,ow
     tool.random+=1
     random:=mm.rng_make(base.hash_u64(tool.random),u64(t.id)+1)
     paint_instance(source,t,local,up,&random,ground)
-    edit_commit(s,tool,world,app,"Place foliage instance")
+    edit_commit(s,tool,world,assets,"Place foliage instance")
 }
 
 // The selected instances: those Select took, which the gizmo moves together
@@ -457,7 +457,7 @@ selected_pivot :: proc(t:^Foliage_Tool,owner:mm.Transform,ground:^foliage.Ground
 // about its middle, Delete takes it out and End stands it on the ground,
 // each a step.
 @(private)
-select_frame :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,e:core.Entity,owner:mm.Transform,ground:^foliage.Ground_Owner,resident:^foliage.Foliage_Resident,app:^host.App,input:core.Input,frame:core.Frame_Time) {
+select_frame :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,e:core.Entity,owner:mm.Transform,ground:^foliage.Ground_Owner,resident:^foliage.Foliage_Resident,assets:^host.Assets,input:core.Input,frame:core.Frame_Time) {
     sel:=&tool.selected
     source:=&tool.edit.source
     ctx:=s.gui.ctx
@@ -472,11 +472,11 @@ select_frame :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,e
             edit_baseline(tool)
             sel.pivot_start=sel.pivot
         case .Moved:
-            if selected_move(tool,owner,ground) {edit_preview(s,tool,app)}
+            if selected_move(tool,owner,ground) {edit_preview(s,tool,assets)}
         case .Ended:
-            if !edit_commit(s,tool,world,app,len(sel.refs)==1?"Move foliage instance":"Move foliage instances") {selected_clear(tool)}
+            if !edit_commit(s,tool,world,assets,len(sel.refs)==1?"Move foliage instance":"Move foliage instances") {selected_clear(tool)}
         case .Cancelled:
-            edit_cancel(s,tool,app)
+            edit_cancel(s,tool,assets)
             selected_clear(tool)
         }
         if sel.active {editor.tool_gizmo_draw(s,&tool.gizmo,sel.pivot,s.viewport.tool)}
@@ -484,8 +484,8 @@ select_frame :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,e
         // Escape lets go of the instances before the editor takes it for the selection.
         if ui.escape(ctx) {selected_clear(tool);return}
         if ctx.edit.id==0 {
-            if core.key_pressed(input,.Delete) || core.key_pressed(input,.Backspace) {selected_delete(s,tool,world,app);return}
-            if core.key_pressed(input,.End) {selected_ground(s,tool,world,app,ground,owner);return}
+            if core.key_pressed(input,.Delete) || core.key_pressed(input,.Backspace) {selected_delete(s,tool,world,assets);return}
+            if core.key_pressed(input,.End) {selected_ground(s,tool,world,assets,ground,owner);return}
         }
     }
     stroke:=&tool.stroke
@@ -555,17 +555,17 @@ selected_move :: proc(t:^Foliage_Tool,owner:mm.Transform,ground:^foliage.Ground_
 
 // Takes the selected instances out, as a step.
 @(private)
-selected_delete :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,app:^host.App) {
+selected_delete :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,assets:^host.Assets) {
     if !tool.selected.active {return}
     edit_baseline(tool)
     many:=len(tool.selected.refs)>1
-    if instances_delete(&tool.edit.source,tool.selected.refs[:]) {edit_commit(s,tool,world,app,many?"Delete foliage instances":"Delete foliage instance")}
+    if instances_delete(&tool.edit.source,tool.selected.refs[:]) {edit_commit(s,tool,world,assets,many?"Delete foliage instances":"Delete foliage instance")}
     selected_clear(tool)
 }
 
 // Stands the selected instances on the ground under them, as a step.
 @(private)
-selected_ground :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,app:^host.App,ground:^foliage.Ground_Owner,owner:mm.Transform) {
+selected_ground :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,assets:^host.Assets,ground:^foliage.Ground_Owner,owner:mm.Transform) {
     sel:=&tool.selected
     if !sel.active {return}
     edit_baseline(tool)
@@ -580,12 +580,12 @@ selected_ground :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Re
         if next,ok:=instance_set(&tool.edit.source,ground,ref,placed);ok {ref=next;changed=true}
         _=i
     }
-    if changed {edit_commit(s,tool,world,app,"Stand foliage on the ground")} else {editor.notify(s,"The ground under the selected instances is not known")}
+    if changed {edit_commit(s,tool,world,assets,"Stand foliage on the ground")} else {editor.notify(s,"The ground under the selected instances is not known")}
 }
 
 // Gives the selected instances another type, as a step.
 @(private)
-selected_retype :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,app:^host.App,ground:^foliage.Ground_Owner,owner:mm.Transform,type:u32) {
+selected_retype :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,assets:^host.Assets,ground:^foliage.Ground_Owner,owner:mm.Transform,type:u32) {
     sel:=&tool.selected
     if !sel.active {return}
     edit_baseline(tool)
@@ -598,7 +598,7 @@ selected_retype :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Re
     }
     if changed {
         type_reveal(tool,type)
-        edit_commit(s,tool,world,app,"Change foliage instances")
+        edit_commit(s,tool,world,assets,"Change foliage instances")
     }
 }
 

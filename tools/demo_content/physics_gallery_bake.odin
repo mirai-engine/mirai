@@ -70,7 +70,7 @@ physics_cache_bake :: proc(o:^Out,fracture,mesh:base.Asset_Id) -> base.Asset_Id 
     physics.ready=true;defer phys.state_destroy(&physics)
     fractures:destruct.Fracture_State;defer destruct.fracture_state_destroy(&fractures)
     fracture_settings:=destruct.Destruct_Settings{destructibles=1,pieces=128,connections=512}
-    geometry:destruct.Destruct_Cache;defer destruct.cache_destroy(&app,&geometry)
+    geometry:destruct.Destruct_Cache;defer destruct.cache_destroy(app.assets,&app.jobs,&geometry)
     requests:destruct.Destruct_Requests;events:destruct.Destruct_Events
     alone:core.Network
     defer core.value_free(&requests,type_info_of(destruct.Destruct_Requests))

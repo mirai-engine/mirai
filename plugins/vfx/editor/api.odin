@@ -527,11 +527,11 @@ particle_instance_write :: proc(s:^editor.Session,call:^api.Call,w:core.World_Re
     // What the GPU copied back of its particles, and the editor watches it from now on.
     if sync:=host.app_world_storage(s.app,s.edit_world,vfx.Particle_Sync);sync!=nil {
         sync.watch=u64(e)
-        if list,frame,ok:=vfx.watched(sync,s.app);ok {
+        if list,frame,ok:=vfx.watched(sync,s.app.renderer);ok {
             api.write_key(out,"gpu")
             serial.write_u8(out,'{')
             api.write_uint(out,"alive",u64(len(list)),first=true)
-            if state,read:=vfx.watched_state(sync,s.app);read {
+            if state,read:=vfx.watched_state(sync,s.app.renderer);read {
                 api.write_uint(out,"dead",u64(state.dead))
                 api.write_uint(out,"births",u64(state.births))
                 api.write_uint(out,"born",u64(state.born))

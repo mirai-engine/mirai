@@ -92,7 +92,7 @@ net_tick_head :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,in
 }
 
 @(step="fixed",loops="game",stage="end")
-net_tick_tail :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,outbox:^Net_Outbox,adoptions:^Net_Adoptions,problems:^core.Problems) {
+net_tick_tail :: proc(world:core.World_Ref,session:^Net_Session,outbox:^Net_Outbox,adoptions:^Net_Adoptions,problems:^core.Problems) {
     previous:=session.problems
     session.problems=problems
     defer session.problems=previous
@@ -106,9 +106,9 @@ net_tick_tail :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,ou
     if time==nil || time.resimulating {return}
     tick:=u32(time.tick)
     if session.mode==.Server {
-        server_publish(session,world,app,outbox,tick)
+        server_publish(session,world,outbox,tick)
     } else {
-        client_tail(session,world,app,tick,outbox)
+        client_tail(session,world,tick,outbox)
     }
 }
 

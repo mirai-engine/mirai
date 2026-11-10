@@ -8,9 +8,9 @@ import fr "plugins:destruct/runtime/fracture"
 import "mirai:std/geom"
 
 @(private)
-prepare_authored :: proc(app:^host.App,p:^Prepared,d:Destructible,static:render.Mesh_Renderer,scale:[3]f32,interior:u32) -> bool {
+prepare_authored :: proc(assets:^host.Assets,p:^Prepared,d:Destructible,static:render.Mesh_Renderer,scale:[3]f32,interior:u32) -> bool {
     file:asset.Asset
-    view,ok:=host.assets_fracture(app.assets,d.fracture,&file)
+    view,ok:=host.assets_fracture(assets,d.fracture,&file)
     if !ok {return false}
     defer asset.asset_close(&file)
     if view.info.source_mesh!={} && view.info.source_mesh!=static.mesh {return false}

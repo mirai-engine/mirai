@@ -518,7 +518,7 @@ animation_valid :: proc "contextless" (animation:Animation) -> bool {
 @(private)
 rigs_update :: proc(playback:^Playback,meshes:core.Read(erender.Mesh_Renderer),skins:core.Read(Pose_Source),app:^host.App) -> bool {
     if meshes.table==nil {if len(playback.rigs)>0 {clear(&playback.rigs);clear(&playback.follow_order);playback.rigs_stamp+=1};playback.rigs_inputs={};return true}
-    inputs:=[5]u64{core.layout(meshes),core.version(meshes),core.layout(skins) if skins.table!=nil else 0,core.version(skins) if skins.table!=nil else 0,assets_stamp(app)}
+    inputs:=[5]u64{core.layout(meshes),core.version(meshes),core.layout(skins) if skins.table!=nil else 0,core.version(skins) if skins.table!=nil else 0,assets_stamp(app.assets)}
     if inputs==playback.rigs_inputs {return true}
     skeleton_of :: proc(meshes:core.Read(erender.Mesh_Renderer),app:^host.App,e:core.Entity) -> base.Asset_Id {
         static,has:=core.get(meshes,e)

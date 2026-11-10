@@ -142,7 +142,7 @@ pose_bake_sample :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,e
             state=pose_bake_state(world,entity);if state==nil {authoring_failure(call,"bake","Unbound_Pose","a ready pose at every sample",fmt.tprintf("frame %d",frame),"The rig became unbound while baking");return false}
         }
         content:=anim.animation_playing_content(sources,s.app,state)
-        if !preview_trace_sources_prepare(call,&trace,sources,state,content,s.app) {return false}
+        if !preview_trace_sources_prepare(call,&trace,sources,state,content,s.app.assets) {return false}
         for curve in state.curves {
             name:=preview_curve_name(&trace,curve.target)
             if name[0]==0 {authoring_failure(call,"curves","Missing_Name","a source name for each composed curve",fmt.tprintf("%x",curve.target),"A curve name could not be resolved");return false}

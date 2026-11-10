@@ -95,7 +95,7 @@ field_preview_draw :: proc(lines:^gpu.Debug_Lines,field:fields.Physics_Field,pos
 @(step="frame",after="editor_tools")
 physics_fields_preview :: proc(
     s:^editor.Session,preview:^Physics_Field_Preview,id:core.World_Id,
-    regions:core.Read(fields.Physics_Field),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),app:^host.App,
+    regions:core.Read(fields.Physics_Field),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),extras:^host.Frame_Extras,
 ) {
     if editor.playing(s) && !editor.simulating(s) || s.selection==nil || len(s.selection.entities)==0 {
         preview.ready=false
@@ -116,5 +116,5 @@ physics_fields_preview :: proc(
         preview.count,preview.dropped,preview.ready=lines.count,lines.dropped,true
     }
     lines.count,lines.dropped=preview.count,preview.dropped
-    if lines.count>0 {host.app_debug_lines_add(app,lines)}
+    if lines.count>0 {host.extras_debug_lines_add(extras,lines)}
 }

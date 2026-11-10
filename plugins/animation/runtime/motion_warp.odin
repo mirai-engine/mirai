@@ -8,6 +8,7 @@ import "mirai:host"
 import "mirai:std/base"
 import lib "mirai:std/anim"
 import mm "mirai:std/math"
+import "base:runtime"
 
 MOTION_KIND :: asset.Fourcc(u32('M')|u32('O')<<8|u32('T')<<16|u32('N')<<24)
 MOTION_VERSION :: 2
@@ -128,32 +129,32 @@ motion_content :: proc(cache:^Motion_Assets,app:^host.App,id:base.Asset_Id,hint:
     context.allocator=app.allocator;cache.allocator=app.allocator
     content:=motion_cached_content(cache,id,hint)
     if content==nil {if !program_array_reserve(&cache.contents,len(cache.contents)+1) || append(&cache.contents,Motion_Content{id=id})!=1 {return nil};content=&cache.contents[len(cache.contents)-1];if hint!=nil {hint^=i32(len(cache.contents))}}
-    if content.checked==assets_stamp(app) {return content if content.valid else nil}
+    if content.checked==assets_stamp(app.assets) {return content if content.valid else nil}
     record,found:=asset.registry_find(&app.assets.registry,id)
     stamp:=[2]i64{};if found {stamp={record.size,record.time}}
-    if content.checked!=0 && content.stamp==stamp {content.checked=assets_stamp(app);return content if content.valid else nil}
+    if content.checked!=0 && content.stamp==stamp {content.checked=assets_stamp(app.assets);return content if content.valid else nil}
     profile:Motion_Profile;error:=asset.Error.Not_Found
     if found {
         // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
-        read,read_error:=motion_profile_read(app,id)
+        read,read_error:=motion_profile_read(app.assets,app.allocator,id)
         profile=read;error=read_error
     }
     content.error=error
     if error==.Out_Of_Memory {content.checked=0;return nil}
     motion_profile_free(&content.profile);content.profile=profile;content.valid=error==.None
-    content.stamp,content.checked=stamp,assets_stamp(app);content.revision+=1
+    content.stamp,content.checked=stamp,assets_stamp(app.assets);content.revision+=1
     return content if content.valid else nil
 }
 @(private)
-motion_profile_read :: proc(app:^host.App,id:base.Asset_Id) -> (profile:Motion_Profile,error:asset.Error) {
+motion_profile_read :: proc(assets:^host.Assets,allocator:runtime.Allocator,id:base.Asset_Id) -> (profile:Motion_Profile,error:asset.Error) {
     file:asset.Asset
-    if error:=host.assets_file(app.assets,id,MOTION_KIND,&file);error!=.None {return {},error};defer asset.asset_close(&file)
-    view,read:=motion_profile_view(&file,&app.assets.types);if read!=.None {return {},read}
+    if error:=host.assets_file(assets,id,MOTION_KIND,&file);error!=.None {return {},error};defer asset.asset_close(&file)
+    view,read:=motion_profile_view(&file,&assets.types);if read!=.None {return {},read}
     profile.info=view.info
     ok:bool
-    profile.windows,ok=graph_clone(view.windows,app.allocator);if !ok {return {},.Out_Of_Memory}
-    profile.distances,ok=graph_clone(view.distances,app.allocator);if !ok {motion_profile_free(&profile,app.allocator);return {},.Out_Of_Memory}
-    profile.keys,ok=graph_clone(view.keys,app.allocator);if !ok {motion_profile_free(&profile,app.allocator);return {},.Out_Of_Memory}
+    profile.windows,ok=graph_clone(view.windows,allocator);if !ok {return {},.Out_Of_Memory}
+    profile.distances,ok=graph_clone(view.distances,allocator);if !ok {motion_profile_free(&profile,allocator);return {},.Out_Of_Memory}
+    profile.keys,ok=graph_clone(view.keys,allocator);if !ok {motion_profile_free(&profile,allocator);return {},.Out_Of_Memory}
     return profile,.None
 }
 

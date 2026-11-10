@@ -113,7 +113,7 @@ an_entity_off_on_the_server_stays_off_on_the_clients_and_comes_back_where_it_got
             testing.expect(t,has && value.force==2)
         }
         net_test_settle(server,nil,nil)
-        server_publish(&sessions[0],core.world_ref(server,&info),&apps[0],&outbox,u32(tick))
+        server_publish(&sessions[0],core.world_ref(server,&info),&outbox,u32(tick))
     }
     testing.expect_value(t,problems[0].count,0)
     testing.expect_value(t,problems[1].count,0)

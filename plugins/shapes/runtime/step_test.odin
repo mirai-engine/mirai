@@ -66,7 +66,7 @@ world_init :: proc(w:^World,app:^host.App) {
 
 @(private="file")
 world_destroy :: proc(w:^World) {
-    shapes_release(&w.cache,w.app)
+    shapes_release(&w.cache,w.app.assets)
     shapes_cache_free(&w.cache)
     core.table_destroy(&w.shapes);core.table_destroy(&w.brushes);core.table_destroy(&w.parts);core.table_destroy(&w.rigids);core.table_destroy(&w.colliders)
     core.table_destroy(&w.meshes);core.table_destroy(&w.parents);core.table_destroy(&w.transforms);core.table_destroy(&w.ids)

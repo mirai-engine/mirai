@@ -411,7 +411,7 @@ view_checked :: proc(claimed,expected,tolerance:f64) -> (behind:f64,corrected:bo
 // After the tick: objects for the entities that gained Replicate, none for
 // those that lost it, and the state of what was written since the last publish.
 @(private)
-server_publish :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,outbox:^Net_Outbox,tick:u32) {
+server_publish :: proc(s:^Net_Session,w:core.World_Ref,outbox:^Net_Outbox,tick:u32) {
     server:=&s.server
     h:=&s.host
     es:=core.world_entities(w)
@@ -477,7 +477,7 @@ server_publish :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,outbox:^Net
             if ancestor!=core.NONE {
                 if parent=wire.object_of_user(h,u64(ancestor));parent==0 {continue}
             }
-            object=server_create(s,w,app,e,config,ancestor,parent)
+            object=server_create(s,w,e,config,ancestor,parent)
             if object==0 {continue}
             core.add(links,e,Net_Link{object=object})
             continue
@@ -721,7 +721,7 @@ kept_off :: proc(w:core.World_Ref,e:core.Entity) -> bool {
 // it replicates; parent is the object of its ancestor. Zero when it has no
 // Transform, it has more than an object carries or the host is full.
 @(private)
-server_create :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,e:core.Entity,config:Replicate,ancestor:core.Entity,parent:Object) -> Object {
+server_create :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity,config:Replicate,ancestor:core.Entity,parent:Object) -> Object {
     h:=&s.host
     local,has_pose:=core.get(core.read(core.world_table_of(w,core.Transform)),e)
     if !has_pose {

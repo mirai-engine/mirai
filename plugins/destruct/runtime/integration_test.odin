@@ -77,7 +77,7 @@ destruct_test_init :: proc(f:^Destruct_Test,name:string,hulls:int=8,anchor_first
 
 @(private="file")
 destruct_test_destroy :: proc(f:^Destruct_Test) {
-    cache_destroy(&f.app,&f.cache);jobs.system_destroy(&f.app.jobs);fracture_state_destroy(&f.fractures);phys.state_destroy(&f.physics);host.assets_destroy(&f.assets)
+    cache_destroy(f.app.assets,&f.app.jobs,&f.cache);jobs.system_destroy(&f.app.jobs);fracture_state_destroy(&f.fractures);phys.state_destroy(&f.physics);host.assets_destroy(&f.assets)
     core.table_destroy(&f.configs);core.table_destroy(&f.colliders);core.table_destroy(&f.states);core.table_destroy(&f.groups)
     core.table_destroy(&f.transforms);core.table_destroy(&f.parents);core.table_destroy(&f.meshes);core.table_destroy(&f.tints)
     core.table_destroy(&f.elsewhere);core.table_destroy(&f.ids);core.entities_destroy(&f.entities)

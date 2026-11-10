@@ -55,7 +55,7 @@ tracy_frame :: proc(t:^Tracy,app:^host.App) {
 	profiler_frame_mark(&t.profiler)
 	if !profiler_session_ready(&t.profiler) || !host.profile_request(app) {return}
 	if t.session!=t.profiler.client.session && !tracy_session_begin(t,app) {return}
-	tracy_gpu_send(t,app)
+	tracy_gpu_send(t,app.renderer)
 	epoch:=host.profile_epoch_ns(app)
 	for &thread,index in t.threads {
 		count,next,_:=host.profile_read(app,index,thread.cursor,t.read)
@@ -109,8 +109,8 @@ tracy_session_begin :: proc(t:^Tracy,app:^host.App) -> bool {
 }
 
 @(private="file")
-tracy_gpu_send :: proc(t:^Tracy,app:^host.App) {
-	for timing in erender.gpu_timings(app) {
+tracy_gpu_send :: proc(t:^Tracy,renderer:^erender.Renderer) {
+	for timing in erender.gpu_timings(renderer) {
 		if timing.end_ns<=t.gpu_end {continue}
 		if !profiler_gpu_timing(&t.profiler,t.gpu,timing.name,max(timing.start_ns,t.gpu_end),timing.end_ns) {break}
 		t.gpu_end=timing.end_ns

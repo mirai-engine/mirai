@@ -5,7 +5,6 @@ import "core:math/linalg"
 import "core:mem"
 import "mirai:core"
 import erender "mirai:engine/render"
-import "mirai:host"
 import mm "mirai:std/math"
 
 // The portals in the renderer. Every stage of every view gets the gates of
@@ -76,13 +75,13 @@ light_keep :: proc(state:^Portals_Gpu,weights:^[PORTAL_LIGHT_CAPACITY]f32,weight
 portals_render :: proc(
     state:^Portals_Gpu,portals:core.Read(Portal),worlds:core.Read(core.World_Transform),
     suns:core.Read(erender.Sun),points:core.Read(erender.Point_Light),spots:core.Read(erender.Spot_Light),rects:core.Read(erender.Rect_Light),
-    hidden:core.Read(erender.Hidden),parents:core.Read(core.Parent),app:^host.App,frame:core.Frame_Time,
+    hidden:core.Read(erender.Hidden),parents:core.Read(core.Parent),renderer:^erender.Renderer,frame:core.Frame_Time,
 ) {
     state.last,state.last_count=state.gates,state.count
     state.count=0
     if core.count(portals)==0 {return}
     // 0 while the shaders in use have no portals.
-    state.pipeline=erender.stage_pipeline(app,{stage=.Mask,shader="portal_mask",name="portal masks"})
+    state.pipeline=erender.stage_pipeline(renderer,{stage=.Mask,shader="portal_mask",name="portal masks"})
     if state.pipeline==0 {return}
     state.constants={}
     exits,throughs:[PORTAL_CAPACITY]mm.Transform
@@ -120,7 +119,7 @@ portals_render :: proc(
 
     // The lights in front of the exit of each gate, near enough to reach its opening, as they are seen from in front of the gate.
     gates:=Gate_Lights{state=state,exits=exits[:state.count],throughs=throughs[:state.count],sizes=sizes[:state.count]}
-    sun_radius:=erender.sun_radius(app)
+    sun_radius:=erender.sun_radius(renderer)
     for row in 0..<core.count(suns) {
         e:=core.entity_at(suns,row)
         sun:=core.at(suns,row)
@@ -157,7 +156,7 @@ portals_render :: proc(
             gate_lights_add(&gates,erender.rect_desc(world,core.at(rects,row)),.Rect)
         }
     }
-    erender.frame_pass(app,.Mask,portals_record,state)
+    erender.frame_pass(renderer,.Mask,portals_record,state)
 }
 
 // The constants of the portals for a view whose places are relative to

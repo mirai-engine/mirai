@@ -69,21 +69,21 @@ a_local_view_gives_the_renderer_its_effects_when_they_change :: proc(t:^testing.
     layers[0]={material=base.Asset_Id{1,2},enabled=true}
     last:View_Postprocess
     r.view_postprocesses[1]=other
-    view_postprocess_sync(&app,1,layers,&last)
+    view_postprocess_sync(app.assets,app.renderer,1,layers,&last)
     testing.expect(t,r.view_postprocesses[1].count==0 && last.layers==layers,"a material without a PostProcess program runs nothing")
     // Unchanged, it does nothing: what it gave stays.
     last.given=other
     r.view_postprocesses[1]=other
-    view_postprocess_sync(&app,1,layers,&last)
+    view_postprocess_sync(app.assets,app.renderer,1,layers,&last)
     testing.expect_value(t,r.view_postprocesses[1].count,u32(1))
     // Another list in the renderer, or other layers, give it again.
     r.view_postprocesses[1]={}
-    view_postprocess_sync(&app,1,layers,&last)
+    view_postprocess_sync(app.assets,app.renderer,1,layers,&last)
     testing.expect(t,r.view_postprocesses[1].count==0 && last.given.count==0)
     r.view_postprocesses[1]=other
     last.given=other
     layers[1]={material=base.Asset_Id{3,4},enabled=true,after_tonemap=true}
-    view_postprocess_sync(&app,1,layers,&last)
+    view_postprocess_sync(app.assets,app.renderer,1,layers,&last)
     testing.expect(t,r.view_postprocesses[1].count==0 && last.layers==layers)
     testing.expect(t,r.view_postprocesses[0].count==0 && r.postprocesses.count==0,"the other slots and the frame keep theirs")
 }

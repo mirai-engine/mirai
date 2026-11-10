@@ -95,7 +95,7 @@ terrain_initial_asset_revision_is_the_baseline_of_the_first_undo :: proc(t:^test
     initial:=editor.edits_state(&edits)
     core.get(&world.terrains,owner).revision=7
     tool:Terrain_Tool;defer terrain_tool_free(&tool)
-    terrain_sync(&session,&tool,core.read(&world.terrains),&app)
+    terrain_sync(&session,&tool,core.read(&world.terrains),app.assets)
     testing.expect_value(t,editor.edits_state(&edits),initial)
     testing.expect_value(t,len(edits.steps),0)
     editor.edits_begin(&edits,&selection,"Sculpt")

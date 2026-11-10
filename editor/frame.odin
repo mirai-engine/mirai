@@ -564,9 +564,9 @@ editor_end :: proc(s:^Session,g:^Editor_Ui,v:^Viewport,selection:^Selection,edit
     layer,_,panel_count,dropped:=host.ui_frame_convert(ui_frame,g.draws[:],g.panels[:])
     g.dropped+=u64(dropped)
     host.app_ui_font_sync(app,ctx)
-    host.app_ui_layer_add(app,layer)
-    for panel in g.panels[:panel_count] {host.app_world_panel_add(app,panel)}
-    if v.lines.count>0 {host.app_debug_lines_add(app,v.lines)}
+    host.extras_ui_layer_add(&app.extras,layer)
+    for panel in g.panels[:panel_count] {host.extras_world_panel_add(&app.extras,panel)}
+    if v.lines.count>0 {host.extras_debug_lines_add(&app.extras,v.lines)}
     if edits.commit {sections_sync(s)}
     edits_flush(edits,world,selection)
     edits_select(edits,world,selection)

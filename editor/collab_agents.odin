@@ -131,7 +131,7 @@ collab_agents_draw :: proc(s:^Session,st:^Collab_State,now:f64) {
             color:=agent_color(int(agent.color))
             eyes:=agent.anchor+{0,-low.y,0}
             figure:=&st.agent_figures[i][k]
-            if presence_prepare(s,figure,eyes,agent.facing,color,agent_level(int(agent.color)),u64(1)<<32|u64(i)<<16|u64(agent.task)) {host.app_instance_add(s.app,figure.instance)}
+            if presence_prepare(s,figure,eyes,agent.facing,color,agent_level(int(agent.color)),u64(1)<<32|u64(i)<<16|u64(agent.task)) {host.extras_instance_add(&s.app.extras,figure.instance)}
             if rect,shown:=presence_glyph_rect(s,presence_shown(figure,eyes)+{0,high.y,0},s.viewport.view_projection);shown {
                 presence_icon_draw(s,rect,collab_agent_icon(agent),color)
                 presence_name_draw(s,rect,string(agent.name[:agent.name_length]),color)

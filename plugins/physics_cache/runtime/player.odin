@@ -137,9 +137,9 @@ cache_content_find :: proc(library:^Cache_Library,app:^host.App,id:base.Asset_Id
 
 // Why the Geometry_Playback of an entity plays nothing.
 @(private)
-source_problem :: proc(problems:^core.Problems,e:core.Entity,app:^host.App,id:base.Asset_Id,error:asset.Error) {
+source_problem :: proc(problems:^core.Problems,e:core.Entity,assets:^host.Assets,id:base.Asset_Id,error:asset.Error) {
     name:[base.ASSET_ID_TEXT]u8
-    source:=host.assets_name(app.assets,id,&name)
+    source:=host.assets_name(assets,id,&name)
     #partial switch error {
     case .None,.Invalid:
     case .Not_Found:
@@ -202,7 +202,7 @@ physics_cache_draw :: proc(players:core.Read(Geometry_Playback),worlds:core.Read
         if core.has(hidden,e) {continue}
         player:=core.at(players,row)
         content,error:=cache_content_find(library,app,player.source)
-        if content==nil || error!=.None {source_problem(problems,e,app,player.source,error);continue}
+        if content==nil || error!=.None {source_problem(problems,e,app.assets,player.source,error);continue}
         world,has:=core.get(worlds,e)
         if !has {continue}
         count:=cache_sample(content.view,player.time,library.sampled)
@@ -213,7 +213,7 @@ physics_cache_draw :: proc(players:core.Read(Geometry_Playback),worlds:core.Read
             instance,ok:=render.mesh_instance(app.assets,{mesh=mesh},mm.transform_matrix(pose))
             if !ok {continue}
             instance.object_id=u64(e)
-            host.app_instance_add(app,instance)
+            host.extras_instance_add(&app.extras,instance)
         }
     }
 }

@@ -77,7 +77,7 @@ state_and_owner_refused_by_a_full_frame_are_sent_on_the_next_interval :: proc(t:
             testing.expect(t,owned!=nil && owned.role==.Predicted)
         }
         net_test_settle(server,nil,nil)
-        server_publish(&sessions[0],core.world_ref(server,&info),&apps[0],&outbox,u32(tick))
+        server_publish(&sessions[0],core.world_ref(server,&info),&outbox,u32(tick))
     }
     testing.expect_value(t,problems[0].count,0)
     testing.expect_value(t,problems[1].count,0)
@@ -194,7 +194,7 @@ net_test_late_reference :: proc(t:^testing.T,body:bool) {
             }
         }
         net_test_settle(server,nil,nil)
-        server_publish(&sessions[0],core.world_ref(server,&info),&apps[0],&outbox,u32(tick))
+        server_publish(&sessions[0],core.world_ref(server,&info),&outbox,u32(tick))
     }
     testing.expect_value(t,problems[0].count,0)
     testing.expect_value(t,problems[1].count,0)
@@ -251,7 +251,7 @@ a_body_replicates_the_collision_and_contact_rules_of_its_collider :: proc(t:^tes
             testing.expectf(t,has && collider==expected,"the client holds %v",collider)
         }
         net_test_settle(server,nil,nil)
-        server_publish(&sessions[0],core.world_ref(server,&info),&apps[0],&outbox,u32(tick))
+        server_publish(&sessions[0],core.world_ref(server,&info),&outbox,u32(tick))
     }
     testing.expect_value(t,problems[0].count,0)
     testing.expect_value(t,problems[1].count,0)
@@ -283,7 +283,7 @@ an_object_the_host_has_no_room_for_names_the_capacity_to_raise :: proc(t:^testin
         s.problems=&problems
         outbox:Net_Outbox
         defer core.value_free(&outbox,type_info_of(Net_Outbox))
-        server_publish(&s,core.world_ref(&world,&info),&app,&outbox,1)
+        server_publish(&s,core.world_ref(&world,&info),&outbox,1)
         return
     }
     named :: proc(t:^testing.T,problems:^core.Problems,e:core.Entity,code,field:string) {

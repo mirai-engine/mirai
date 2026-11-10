@@ -161,18 +161,18 @@ pose_content :: proc(cache:^Pose_Assets,app:^host.App,id:base.Asset_Id) -> ^Pose
     for content,i in cache.contents {if content.id==id {row=i;break}}
     if row<0 {row=len(cache.contents);if append(&cache.contents,Pose_Content{id=id})!=1 {return nil}}
     content:=&cache.contents[row]
-    if content.checked==assets_stamp(app) {return content if content.valid else nil}
+    if content.checked==assets_stamp(app.assets) {return content if content.valid else nil}
     record,found:=asset.registry_find(&app.assets.registry,id)
     stamp:=[2]i64{}
     if found {stamp={record.size,record.time}}
-    if content.checked!=0 && stamp==content.stamp {content.checked=assets_stamp(app);return content if content.valid else nil}
+    if content.checked!=0 && stamp==content.stamp {content.checked=assets_stamp(app.assets);return content if content.valid else nil}
     profile:Pose_Profile
     error:=asset.Error.Not_Found
     if found {profile,error=pose_profile_read(app,id)}
     content.error=error
     if error==.Out_Of_Memory {content.checked=0;return nil}
     pose_profile_free(&content.profile);content.profile=profile;content.valid=error==.None
-    content.stamp,content.checked=stamp,assets_stamp(app);content.revision+=1
+    content.stamp,content.checked=stamp,assets_stamp(app.assets);content.revision+=1
     return content if content.valid else nil
 }
 @(private)
@@ -338,7 +338,7 @@ modifier_prepare :: proc(runtime:^Modifier_Runtime,configs:core.Read(Pose_Modifi
         for content in cache.contents {if content.id==id {return content.checked==0}}
         return true
     }
-    headers:=[8]u64{core.version(configs),core.layout(configs),core.version(attachments),core.layout(attachments),core.version(animations),core.layout(animations),playback.rigs_stamp,assets_stamp(app)}
+    headers:=[8]u64{core.version(configs),core.layout(configs),core.version(attachments),core.layout(attachments),core.version(animations),core.layout(animations),playback.rigs_stamp,assets_stamp(app.assets)}
     if runtime.inputs==headers {return true}
     definitions_changed:=runtime.inputs[0]!=headers[0] || runtime.inputs[1]!=headers[1] || runtime.inputs[2]!=headers[2] || runtime.inputs[3]!=headers[3] || runtime.inputs[6]!=headers[6]
     sources_changed:=modifier_sources_changed(runtime,animations,headers[4],headers[5])

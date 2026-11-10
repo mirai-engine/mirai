@@ -8,6 +8,7 @@ import "mirai:engine/scene"
 import "mirai:host"
 import "mirai:std/base"
 import wire "mirai:net"
+import "base:runtime"
 
 // The world of a session is the scene of its server. When a scene replaces
 // the world of an end (scene.Scene_Root.changes), what the session knew of its
@@ -243,7 +244,7 @@ client_heard :: proc(s:^Net_Session,w:core.World_Ref,message:Net_World) {
 // Client: once no scene is loading, the scene of the server is asked for, or,
 // in it, the server hears so. A scene that did not load ends the session.
 @(private)
-client_world_update :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App) {
+client_world_update :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator) {
     c:=&s.client
     h:=&s.host
     if s.follows && !c.player_told && s.status==.Connected {
@@ -258,13 +259,13 @@ client_world_update :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App) {
     root:=core.world_storage_of(w,scene.Scene_Root)
     requests:=core.world_storage_of(w,scene.Scene_Requests)
     if c.scene!={} && (root==nil || requests==nil) {
-        client_lacks(s,w,app,.No_Assets)
+        client_lacks(s,w,assets,allocator,.No_Assets)
         return
     }
     if c.asked {
         if results:=core.world_storage_of(w,scene.Scene_Results);results!=nil {
             if result,found:=scene.result_of(results,c.scene);found && result.error!=.None {
-                client_lacks(s,w,app,result.error)
+                client_lacks(s,w,assets,allocator,result.error)
                 return
             }
         }
@@ -366,24 +367,24 @@ section_loaded :: proc(w:core.World_Ref,id:base.Entity_Id) -> bool {
 // Client: the scene the server is in did not load. It leaves, saying which,
 // and that a client needs the assets of its server.
 @(private)
-client_lacks :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,error:scene.Error) {
+client_lacks :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator,error:scene.Error) {
     name:[base.ASSET_ID_TEXT]u8
     what:=base.asset_id_format(s.client.scene,name[:])
-    if app.assets!=nil {what=host.assets_name(app.assets,s.client.scene,&name)}
+    if assets!=nil {what=host.assets_name(assets,s.client.scene,&name)}
     core.report(s.problems,core.NONE,"net.scene","the server is in scene %s, which this client could not load (%v): a client needs the assets of its server; run it from the same project",what,error)
     wire.host_disconnect(&s.host,0,.Scene_Missing)
-    client_end(s,w,app,0,.Scene_Missing,fmt.tprintf("the server %s is in scene %s, which this client could not load (%s): a client needs the assets of its server; run it from the same project",s.address,what,scene.error_text(error)))
+    client_end(s,w,allocator,0,.Scene_Missing,fmt.tprintf("the server %s is in scene %s, which this client could not load (%s): a client needs the assets of its server; run it from the same project",s.address,what,scene.error_text(error)))
 }
 
 // Client: the session ends, with the reason for a person (text, which it
 // copies); what came of the server goes, or stays as an entity of the scene.
 @(private)
-client_end :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,connection:Connection,reason:Disconnect_Reason,text:string) {
+client_end :: proc(s:^Net_Session,w:core.World_Ref,allocator:runtime.Allocator,connection:Connection,reason:Disconnect_Reason,text:string) {
     was:=s.status==.Connected
     s.left+=u64(was)
     s.lost+=u64(was && reason!=.Closed && reason!=.Scene_Missing)
     s.status,s.reason=.Disconnected,reason
-    reason_keep(s,app,text)
+    reason_keep(s,allocator,text)
     for &r in s.client.replicas[:s.client.replica_high] {
         if r.object!=0 {replica_destroy(s,w,r.object,.Leave)}
     }

@@ -5,6 +5,7 @@ import "mirai:asset"
 import "mirai:host"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import "base:runtime"
 
 // An .agraph composes poses: clips, blends by a weight, layers over a branch or a mask, and
 // additive poses, among them the aim offsets and additive spaces of a .blend. It has no states:
@@ -171,17 +172,17 @@ graph_clone :: proc(source:[]$T,allocator:mem.Allocator) -> ([]T,bool) {
     out,error:=make([]T,len(source),allocator);if error!=nil {return nil,false};copy(out,source);return out,true
 }
 @(private)
-graph_read :: proc(app:^host.App,id:base.Asset_Id) -> (profile:Graph_Profile,error:asset.Error) {
+graph_read :: proc(assets:^host.Assets,allocator:runtime.Allocator,id:base.Asset_Id) -> (profile:Graph_Profile,error:asset.Error) {
     file:asset.Asset
-    if error:=host.assets_file(app.assets,id,GRAPH_KIND,&file);error!=.None {return {},error};defer asset.asset_close(&file)
-    view,read:=graph_view(&file,&app.assets.types);if read!=.None {return {},read}
+    if error:=host.assets_file(assets,id,GRAPH_KIND,&file);error!=.None {return {},error};defer asset.asset_close(&file)
+    view,read:=graph_view(&file,&assets.types);if read!=.None {return {},read}
     profile.info=view.info
     ok:bool
-    defer if !ok {graph_profile_free(&profile,app.allocator)}
-    profile.parameters,ok=graph_clone(view.parameters,app.allocator);if !ok {return profile,.Out_Of_Memory}
-    profile.nodes,ok=graph_clone(view.nodes,app.allocator);if !ok {return profile,.Out_Of_Memory}
-    profile.masks,ok=graph_clone(view.masks,app.allocator);if !ok {return profile,.Out_Of_Memory}
-    profile.mask_bones,ok=graph_clone(view.mask_bones,app.allocator);if !ok {return profile,.Out_Of_Memory}
+    defer if !ok {graph_profile_free(&profile,allocator)}
+    profile.parameters,ok=graph_clone(view.parameters,allocator);if !ok {return profile,.Out_Of_Memory}
+    profile.nodes,ok=graph_clone(view.nodes,allocator);if !ok {return profile,.Out_Of_Memory}
+    profile.masks,ok=graph_clone(view.masks,allocator);if !ok {return profile,.Out_Of_Memory}
+    profile.mask_bones,ok=graph_clone(view.mask_bones,allocator);if !ok {return profile,.Out_Of_Memory}
     return profile,.None
 }
 graph_content :: proc(cache:^Graph_Assets,app:^host.App,id:base.Asset_Id) -> ^Graph_Content {
@@ -191,13 +192,13 @@ graph_content :: proc(cache:^Graph_Assets,app:^host.App,id:base.Asset_Id) -> ^Gr
     for content,i in cache.contents {if content.id==id {row=i;break}}
     if row<0 {row=len(cache.contents);if append(&cache.contents,Graph_Content{id=id})!=1 {return nil}}
     content:=&cache.contents[row]
-    if content.checked==assets_stamp(app) {return content if content.valid else nil}
+    if content.checked==assets_stamp(app.assets) {return content if content.valid else nil}
     record,found:=asset.registry_find(&app.assets.registry,id)
     stamp:=[2]i64{}
     if found {stamp={record.size,record.time}}
-    if content.checked!=0 && stamp==content.stamp {content.checked=assets_stamp(app);return content if content.valid else nil}
+    if content.checked!=0 && stamp==content.stamp {content.checked=assets_stamp(app.assets);return content if content.valid else nil}
     profile:Graph_Profile;error:=asset.Error.Not_Found
-    if found {profile,error=graph_read(app,id)}
+    if found {profile,error=graph_read(app.assets,app.allocator,id)}
     if error==.Out_Of_Memory {content.error=error;content.checked=0;return nil}
     graph_profile_free(&content.profile)
     content.profile,content.valid,content.error=profile,error==.None,error
@@ -205,6 +206,6 @@ graph_content :: proc(cache:^Graph_Assets,app:^host.App,id:base.Asset_Id) -> ^Gr
         for _,i in profile.nodes {content.plans[i],_=graph_plan(profile,i)}
         for &parameter,i in profile.parameters {content.parameter_names[i]=base.name_hash(base.text_get(parameter.name[:]))}
     }
-    content.stamp,content.checked=stamp,assets_stamp(app);content.revision+=1
+    content.stamp,content.checked=stamp,assets_stamp(app.assets);content.revision+=1
     return content if content.valid else nil
 }

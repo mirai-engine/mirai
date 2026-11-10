@@ -101,7 +101,7 @@ shared_terrain_chunks_remain_visible_after_duplicate_copy_and_preview_retirement
                     instance,usable:=render.mesh_instance(app.assets,{mesh=preview},mm.transform_matrix(world.transform),tint)
                     testing.expect(t,usable)
                     instance.object_id,instance.copy_owner,instance.copy_variant,instance.replace_source=u64(e),99,1,true
-                    testing.expect(t,host.app_instance_add(app,instance))
+                    testing.expect(t,host.extras_instance_add(&app.extras,instance))
                 }
             }
             host.app_camera_set(app,host.camera_from_view(view),view.cut,view.carried)

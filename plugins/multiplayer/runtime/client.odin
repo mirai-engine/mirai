@@ -175,10 +175,9 @@ Client :: struct {
 }
 
 @(private)
-client_init :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App) -> bool {
+client_init :: proc(s:^Net_Session,w:core.World_Ref,allocator:runtime.Allocator) -> bool {
     c:=&s.client
     d:=&s.desc
-    allocator:=app.allocator
     c.words_per=s.protocol.object_words
     error:runtime.Allocator_Error
     if c.replicas,error=make([]Replica,d.max_objects,allocator);error!=nil {return false}
@@ -327,7 +326,7 @@ client_commands :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,commands:[
             s.joined+=1
             append(&s.arrived,Connection_Event{kind=.Connected,connection=command.connection})
         case .Disconnected:
-            client_end(s,w,app,command.connection,command.reason,reason_text(command.reason,s.address,s.protocol.hash))
+            client_end(s,w,app.allocator,command.connection,command.reason,reason_text(command.reason,s.address,s.protocol.hash))
         case .Object_Created:
             replica_create(s,w,app,&command)
         case .Object_Updated:
@@ -346,7 +345,7 @@ client_commands :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,commands:[
     core.world_settle(w)
     if !s.ended {replicas_sections(s,w,app)}
     references_refresh(s,w)
-    if !s.ended {client_world_update(s,w,app)}
+    if !s.ended {client_world_update(s,w,app.assets,app.allocator)}
 }
 
 // The replicas of entities of sections take the entity they have here as the
@@ -482,7 +481,7 @@ replica_spawn :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,r:^Replica) 
         if home:=r.pose.sections[0];home!=0 && r.pose.id!=0 {
             if references:=core.world_table_of(w,scene.Scene_Reference);references!=nil {
                 if reference,found:=core.get(core.read(references),core.entity_of(es,home));found && reference.scene!={} {
-                    if report,error:=scene.spawn_member(core.commands_of(w),app,reference.scene,home,r.pose.id,local);error==.None {e=report.root}
+                    if report,error:=scene.spawn_member(core.commands_of(w),app.assets,reference.scene,home,r.pose.id,local);error==.None {e=report.root}
                 }
             }
         }
@@ -909,7 +908,7 @@ client_frame :: proc(s:^Net_Session,w:core.World_Ref,dt:f32) {
 // and the pose of every predicted replica is remembered to compare with the
 // state of the server.
 @(private)
-client_tail :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,tick:u32,outbox:^Net_Outbox) {
+client_tail :: proc(s:^Net_Session,w:core.World_Ref,tick:u32,outbox:^Net_Outbox) {
     c:=&s.client
     h:=&s.host
     c.newest,c.any=tick,true

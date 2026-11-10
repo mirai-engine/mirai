@@ -48,7 +48,7 @@ the_progress_of_the_player_comes_back_from_the_profile :: proc(t:^testing.T) {
     state:Save_State
     defer delete(state.folder)
     app.allocator=context.allocator
-    folder_set(&state,&app,fmt.tprintf("%s/saves",root))
+    folder_set(&state,app.allocator,fmt.tprintf("%s/saves",root))
 
     storages:[1]core.Storage_Info
     w:Profile_World
@@ -104,7 +104,7 @@ the_profile_names_a_storage_it_cannot_hold :: proc(t:^testing.T) {
     state:Save_State
     defer delete(state.folder)
     app.allocator=context.allocator
-    folder_set(&state,&app,fmt.tprintf("%s/saves",root))
+    folder_set(&state,app.allocator,fmt.tprintf("%s/saves",root))
     w:Profile_Other_World
     problems:core.Problems
 
@@ -144,7 +144,7 @@ the_profile_is_written_by_itself_when_it_rests_and_when_the_world_goes :: proc(t
     state:Save_State
     defer delete(state.folder)
     app.allocator=context.allocator
-    folder_set(&state,&app,fmt.tprintf("%s/saves",root))
+    folder_set(&state,app.allocator,fmt.tprintf("%s/saves",root))
     path,_:=profile_path(&state,&app)
     storages:[1]core.Storage_Info
     w:Profile_World

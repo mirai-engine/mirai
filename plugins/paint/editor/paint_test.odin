@@ -102,10 +102,10 @@ painted_copies_stay_in_memory_until_saved_and_go_with_undo_and_cancel :: proc(t:
 
     if !paint_test_stroke(t,&tool,app,e,cube,root,0x51) {return}
     first,first_path:=tool.stroke.id,fmt.tprintf("%s/%s/%016x.mesh",root,FOLDER,u64(0x51))
-    testing.expect(t,stroke_write(s,&tool,ref,app))
+    testing.expect(t,stroke_write(s,&tool,ref,app.assets,app.allocator))
     tool.stroke.dirty=true
-    testing.expect(t,stroke_write(s,&tool,ref,app))
-    stroke_end(s,&tool,ref,app)
+    testing.expect(t,stroke_write(s,&tool,ref,app.assets,app.allocator))
+    stroke_end(s,&tool,ref,app.assets,app.allocator)
     if !testing.expect(t,editor.edits_commit(edits,ref,selection)) {return}
     testing.expect_value(t,edits.cursor,1)
     testing.expect_value(t,core.get(&world.meshes,e).mesh,first)
@@ -118,9 +118,9 @@ painted_copies_stay_in_memory_until_saved_and_go_with_undo_and_cancel :: proc(t:
     testing.expect_value(t,tool.stroke.before[0],u32(0xff0000ff))
     second_path:=fmt.tprintf("%s/%s/%016x.mesh",root,FOLDER,u64(0x52))
     tool.color=[3]f32{0,0,1}
-    testing.expect(t,stroke_write(s,&tool,ref,app))
+    testing.expect(t,stroke_write(s,&tool,ref,app.assets,app.allocator))
     testing.expect(t,editor.file_exists(s,second_path))
-    stroke_cancel(s,&tool,ref,app)
+    stroke_cancel(s,&tool,ref)
     testing.expect(t,!editor.file_exists(s,second_path))
     testing.expect_value(t,core.get(&world.meshes,e).mesh,first)
     testing.expect_value(t,edits.cursor,1)

@@ -266,15 +266,15 @@ program_resolve :: proc(state:^Playing,animation:Animation,app:^host.App,blends:
     runtime.error=.None
     defer {if programmed && !ok && runtime.error==.None {runtime.error=.Invalid_Asset}}
     kind:=runtime.kind
-    if runtime.asset!=animation.asset || runtime.checked!=assets_stamp(app) {
+    if runtime.asset!=animation.asset || runtime.checked!=assets_stamp(app.assets) {
         record,found:=aa.registry_find(&app.assets.registry,animation.asset)
         kind=record.kind if found else aa.Fourcc(0)
-        runtime.kind,runtime.checked=kind,assets_stamp(app)
+        runtime.kind,runtime.checked=kind,assets_stamp(app.assets)
     }
     if kind==BLEND_KIND {runtime.error=.Additive_Space;return nil,true,false}
     if kind!=GRAPH_KIND && kind!=MATCH_KIND {
         program_free(runtime)
-        runtime.kind,runtime.asset,runtime.checked=kind,animation.asset,assets_stamp(app)
+        runtime.kind,runtime.asset,runtime.checked=kind,animation.asset,assets_stamp(app.assets)
         return nil,false,true
     }
     programmed=true
@@ -294,7 +294,7 @@ program_resolve :: proc(state:^Playing,animation:Animation,app:^host.App,blends:
         swapped=reset && runtime.ready && runtime.asset==animation.asset && runtime.revision==revision
         if reset && !program_output_prepare(output,1,1) {runtime.error=.Out_Of_Memory;return nil,true,false}
         if reset {runtime.match=match_swapped(runtime.match) if swapped else MATCH_PLAYING_DEFAULT}
-        ok=match_output(state,output,content,prepared if prepared!=nil else host.content_animation(app,source),source,dt,goals,plays,facing,app,events,playback,problems)
+        ok=match_output(state,output,content,prepared if prepared!=nil else host.content_animation(app,source),source,dt,goals,plays,facing,app.assets,app.allocator,events,playback,problems)
     } else {
         content:=graph_content(graphs,app,animation.asset);if content==nil {return nil,true,false}
         source=animation.library if animation.library!={} else content.profile.info.animation
@@ -310,7 +310,7 @@ program_resolve :: proc(state:^Playing,animation:Animation,app:^host.App,blends:
         for parameter,i in content.profile.parameters {parameters[i]=parameter.value}
         if !program_parameter_values(animation,content.parameter_names[:count],parameters[:count]) {runtime.error=.Unknown_Parameter;return nil,true,false}
         for parameter,i in content.profile.parameters {if !finite(parameters[i]) || parameters[i]<parameter.min || parameters[i]>parameter.max {runtime.error=.Invalid_Parameter;return nil,true,false}}
-        compiled_stamp=base.hash_combine(base.hash_combine(revision,assets_stamp(app)),u64(node))
+        compiled_stamp=base.hash_combine(base.hash_combine(revision,assets_stamp(app.assets)),u64(node))
         for parameter in parameters[:count] {compiled_stamp=base.hash_combine(compiled_stamp,u64(transmute(u32)parameter))}
         if !reset && runtime.compiled_stamp==compiled_stamp {ok,reused=true,true} else {ok=program_node(output,content.profile,node,parameters[:count],blends,app,0,&content.plans[node],animation.library)}
     }

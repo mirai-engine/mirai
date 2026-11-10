@@ -124,12 +124,12 @@ animation_content :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,desc
     }
     plan:=&cache.plans[at]
     content_generation:=app.content.generations if app.content!=nil else 0
-    if plan.valid && plan.checked==assets_stamp(app) && plan.content_generation==content_generation {
+    if plan.valid && plan.checked==assets_stamp(app.assets) && plan.content_generation==content_generation {
         state.source_plan=u32(at+1)
         return source_plan_content(cache,app,plan)
     }
     changed:=!plan.valid
-    if !changed && plan.checked!=assets_stamp(app) {for dependency in plan.dependencies {if source_dependency(app,dependency.id)!=dependency {changed=true;break}}}
+    if !changed && plan.checked!=assets_stamp(app.assets) {for dependency in plan.dependencies {if source_dependency(app.assets,dependency.id)!=dependency {changed=true;break}}}
     ids:[ANIMATION_SOURCES]base.Asset_Id;count:=0
     dependencies:[SOURCE_DEPENDENCIES]Source_Dependency;dependency_count:=0
     primary:=plan.primary
@@ -148,7 +148,7 @@ animation_content :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,desc
     set,prepared:=source_set_prepare(cache,app,primary,ids[:count])
     if prepared!=.None {delete(copied,cache.allocator);return nil,prepared}
     if changed {delete(plan.dependencies,cache.allocator);plan.dependencies=copied}
-    plan.primary,plan.set,plan.checked,plan.valid,plan.content_generation=primary,set,assets_stamp(app),true,content_generation
+    plan.primary,plan.set,plan.checked,plan.valid,plan.content_generation=primary,set,assets_stamp(app.assets),true,content_generation
     state.source_plan=u32(at+1)
     return source_plan_content(cache,app,plan)
 }
@@ -279,16 +279,16 @@ source_single :: proc(app:^host.App,id:base.Asset_Id) -> (^host.Content_Animatio
 }
 
 @(private)
-source_dependency :: proc(app:^host.App,id:base.Asset_Id) -> Source_Dependency {
-    record,present:=asset.registry_find(&app.assets.registry,id)
+source_dependency :: proc(assets:^host.Assets,id:base.Asset_Id) -> Source_Dependency {
+    record,present:=asset.registry_find(&assets.registry,id)
     return {id=id,size=record.size if present else 0,time=record.time if present else 0,present=present}
 }
 @(private)
-source_dependency_add :: proc(app:^host.App,rows:^[SOURCE_DEPENDENCIES]Source_Dependency,count:^int,id:base.Asset_Id) -> bool {
+source_dependency_add :: proc(assets:^host.Assets,rows:^[SOURCE_DEPENDENCIES]Source_Dependency,count:^int,id:base.Asset_Id) -> bool {
     if id=={} {return false}
     for row in rows[:count^] {if row.id==id {return true}}
     if count^>=len(rows) {return false}
-    rows[count^]=source_dependency(app,id);count^+=1;return true
+    rows[count^]=source_dependency(assets,id);count^+=1;return true
 }
 @(private)
 source_id_add :: proc(ids:^[ANIMATION_SOURCES]base.Asset_Id,count:^int,id:base.Asset_Id) -> bool {
@@ -305,7 +305,7 @@ source_blend_collect :: proc(profile:Blend_Profile,override:base.Asset_Id,ids:^[
 
 @(private)
 source_collect :: proc(app:^host.App,description:Animation,entity:core.Entity,blends:^Blend_Assets,graphs:^Graph_Assets,actions:^Action_Runtime,ids:^[ANIMATION_SOURCES]base.Asset_Id,count:^int,dependencies:^[SOURCE_DEPENDENCIES]Source_Dependency,dependency_count:^int) -> (primary:base.Asset_Id,ok:bool) {
-    if !source_dependency_add(app,dependencies,dependency_count,description.asset) {return}
+    if !source_dependency_add(app.assets,dependencies,dependency_count,description.asset) {return}
     record,present:=asset.registry_find(&app.assets.registry,description.asset)
     kind:=record.kind if present else asset.KIND_ANIMATION
     primary=description.asset
@@ -317,7 +317,7 @@ source_collect :: proc(app:^host.App,description:Animation,entity:core.Entity,bl
         for node in graph.profile.nodes {
             if node.kind==.Clip {if !source_id_add(ids,count,source_effective(node.animation,graph.profile.info.animation,description.library)) {return}}
             else if node.kind==.Blend_Space {
-                if !source_dependency_add(app,dependencies,dependency_count,node.blend_space) {return}
+                if !source_dependency_add(app.assets,dependencies,dependency_count,node.blend_space) {return}
                 blend:=blend_content(blends,app,node.blend_space)
                 if blend==nil || !source_blend_collect(blend.profile,description.library,ids,count) {return}
             }
@@ -332,13 +332,13 @@ source_collect :: proc(app:^host.App,description:Animation,entity:core.Entity,bl
     case: return
     }
     if description.actions!={} {
-        if !source_dependency_add(app,dependencies,dependency_count,description.actions) {return}
+        if !source_dependency_add(app.assets,dependencies,dependency_count,description.actions) {return}
         active:=action_state(actions,entity)
         if active==nil || active.plan<0 || int(active.plan)>=len(actions.plans) {return}
         profile:=actions.plans[active.plan].profile
         for action in profile.actions {if !source_id_add(ids,count,source_effective(action.animation,profile.info.animation,description.library)) {return}}
     }
-    for id in ids[:count^] {if !source_dependency_add(app,dependencies,dependency_count,id) {return}}
+    for id in ids[:count^] {if !source_dependency_add(app.assets,dependencies,dependency_count,id) {return}}
     // The primary source stays first and the rest are sorted, so equal sets share one library.
     for i in 2..<count^ {
         j:=i

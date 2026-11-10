@@ -61,8 +61,8 @@ collision_view_modes :: proc(s:^editor.Session,view:^Collision_View) {
 }
 
 @(step="render",after="render_sync")
-collision_view_lines :: proc(s:^editor.Session,view:^Collision_View,app:^host.App) {
-    if view.shown!=0 {collision_view_draw(view,editor.shown_world(s),view.shown,app)}
+collision_view_lines :: proc(s:^editor.Session,view:^Collision_View,extras:^host.Frame_Extras) {
+    if view.shown!=0 {collision_view_draw(view,editor.shown_world(s),view.shown,extras)}
 }
 
 // The lines go over the lit image: the pass of the mode draws nothing.
@@ -70,7 +70,7 @@ collision_view_lines :: proc(s:^editor.Session,view:^Collision_View,app:^host.Ap
 collision_view_record :: proc(pass:^erender.Pass,user:rawptr) {}
 
 @(private)
-collision_view_draw :: proc(c:^Collision_View,w:core.World_Ref,layers:sim.Collision_Layers,app:^host.App) {
+collision_view_draw :: proc(c:^Collision_View,w:core.World_Ref,layers:sim.Collision_Layers,extras:^host.Frame_Extras) {
     state:=core.world_storage_of(w,phys.Physics_State)
     if state==nil || !state.ready {return}
     if len(c.vertices)==0 {
@@ -86,7 +86,7 @@ collision_view_draw :: proc(c:^Collision_View,w:core.World_Ref,layers:sim.Collis
         c.count,c.dropped,c.ready=lines.count,lines.dropped+out.lines_dropped,true
     }
     lines.count,lines.dropped=c.count,c.dropped
-    if lines.count>0 {host.app_debug_lines_add(app,lines)}
+    if lines.count>0 {host.extras_debug_lines_add(extras,lines)}
 }
 
 // By what the body of a shape is: what does not move in blue, what moves in

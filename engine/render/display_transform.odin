@@ -1,6 +1,5 @@
 package render
 
-import "mirai:host"
 import gpu "mirai:render"
 
 // How the image of the project goes to the display: Neutral (the default) keeps
@@ -13,6 +12,6 @@ Display_Transform_Settings :: struct {
 
 // Brings the renderer to the transform of the project when it changes.
 @(step="render",loops="game editor",before="render_sync")
-display_transform_apply :: proc(settings:Display_Transform_Settings,app:^host.App) {
-    if app.renderer!=nil {gpu.renderer_set_display_transform(app.renderer,settings.transform)}
+display_transform_apply :: proc(settings:Display_Transform_Settings,renderer:^Renderer) {
+    if renderer!=nil {gpu.renderer_set_display_transform(renderer,settings.transform)}
 }

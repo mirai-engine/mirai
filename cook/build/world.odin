@@ -126,6 +126,7 @@ APP_PARTS :: [?]App_Part{
     {"mirai:render.Renderer","^render.Renderer","app.renderer"},
     {"mirai:engine/render.Renderer","^render.Renderer","app.renderer"},
     {"mirai:audio.Mixer","^audio.Mixer","app.mixer"},
+    {"mirai:engine/audio.Mixer","^audio.Mixer","app.mixer"},
     {"mirai:std/jobs.Job_System","^jobs.Job_System","&app.jobs"},
     {"base:runtime.Allocator","runtime.Allocator","app.allocator"},
     {"core:mem.Allocator","mem.Allocator","app.allocator"},

@@ -427,7 +427,7 @@ navigation_build :: proc(
     paging_update(n,b,unloaded.ptr,time.playing,fresh,reset,app,problems)
     published,spent:=builds_publish(n,b,problems)
     host.load_phase_add(app,.Nav_Tiles,spent,published)
-    builds_start(n,b,physics,limits,gone,time.playing,app,problems)
+    builds_start(n,b,physics,limits,gone,time.playing,&app.jobs,problems)
     // Tiles building keep a load from being resident.
     building:=false
     for build in b.builds {building||=build.busy}
@@ -592,7 +592,7 @@ areas_update :: proc(n:^Navigation,b:^Navigation_Builds,areas:core.Read(Nav_Area
 
 // Gathers, hashes and starts the builds of marked tiles, up to the free jobs.
 @(private)
-builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Physics_State),limits:Limits,unloaded:Unloaded,playing:bool,app:^host.App,problems:^core.Problems) {
+builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Physics_State),limits:Limits,unloaded:Unloaded,playing:bool,job_system:^jobs.Job_System,problems:^core.Problems) {
     want:=int(n.settings.builds) if n.settings.builds>0 else 4
     for len(b.builds)<want {
         build,error:=new(Build)
@@ -660,7 +660,7 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
                 free.volume_config=c.volume_config
                 next.building=true
                 mark_set(c,mark,next)
-                build_launch(free,app)
+                build_launch(free,job_system)
                 continue
             }
             coord:=coord_of_key(key)
@@ -692,7 +692,7 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
             free.config=c.config
             next.building=true
             mark_set(c,mark,next)
-            build_launch(free,app)
+            build_launch(free,job_system)
         }
     }
     b.unloaded_seen=revision
@@ -712,13 +712,13 @@ mark_box_of :: proc "contextless" (c:^Class_Mesh,key:u64,air:bool) -> mm.Aabb {
 }
 
 @(private)
-build_launch :: proc(build:^Build,app:^host.App) {
-    if jobs.worker_count(&app.jobs)==0 {
+build_launch :: proc(build:^Build,job_system:^jobs.Job_System) {
+    if jobs.worker_count(job_system)==0 {
         build_job(build,0)
         return
     }
-    jobs.run(&app.jobs,jobs.OWNER,build_job,build,&build.counter)
-    if jobs.worker_count(&app.jobs)==1 {jobs.wait(&app.jobs,jobs.OWNER,&build.counter)}
+    jobs.run(job_system,jobs.OWNER,build_job,build,&build.counter)
+    if jobs.worker_count(job_system)==1 {jobs.wait(job_system,jobs.OWNER,&build.counter)}
 }
 
 // The triangles of the static collision in a box that block filter (the

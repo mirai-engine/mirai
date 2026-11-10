@@ -28,7 +28,7 @@ selected_physics_fields_preview_world_regions_force_direction_and_parent_changes
     session:=editor.Session{selection=&selection}
     preview:=new(Physics_Field_Preview);defer free(preview)
     app:host.App
-    physics_fields_preview(&session,preview,{},core.read(&regions),core.read(&transforms),core.read(&parents),&app)
+    physics_fields_preview(&session,preview,{},core.read(&regions),core.read(&transforms),core.read(&parents),&app.extras)
     testing.expect_value(t,app.extras.debug_count,1)
     lines:=app.extras.debug[0]
     testing.expect(t,!lines.depth_test && lines.count==34 && lines.dropped==0)
@@ -42,12 +42,12 @@ selected_physics_fields_preview_world_regions_force_direction_and_parent_changes
     testing.expect(t,linalg.length(lines.vertices[25].position-pose.position-direction*2)<1e-4)
     app.extras.debug_count=0
     core.get(&transforms,parent).position.x+=10
-    physics_fields_preview(&session,preview,{},core.read(&regions),core.read(&transforms),core.read(&parents),&app)
+    physics_fields_preview(&session,preview,{},core.read(&regions),core.read(&transforms),core.read(&parents),&app.extras)
     testing.expect_value(t,app.extras.debug[0].vertices[24].position,pose.position+mm.Vec3{10,0,0})
     app.extras.debug_count=0
     field.shape,field.direction,field.radius=.Sphere,.Radial,2
     core.get(&regions,entity)^=field
-    physics_fields_preview(&session,preview,{},core.read(&regions),core.read(&transforms),core.read(&parents),&app)
+    physics_fields_preview(&session,preview,{},core.read(&regions),core.read(&transforms),core.read(&parents),&app.extras)
     lines=app.extras.debug[0]
     testing.expect_value(t,lines.count,252)
     pose,_=core.world_of(core.read(&transforms),core.read(&parents),entity)
@@ -58,14 +58,14 @@ selected_physics_fields_preview_world_regions_force_direction_and_parent_changes
     }
     app.extras.debug_count=0
     editor.selection_clear(&selection)
-    physics_fields_preview(&session,preview,{},core.read(&regions),core.read(&transforms),core.read(&parents),&app)
+    physics_fields_preview(&session,preview,{},core.read(&regions),core.read(&transforms),core.read(&parents),&app.extras)
     testing.expect_value(t,app.extras.debug_count,0)
     editor.selection_set(&selection,{entity})
     versions:=[3]u64{regions.version,transforms.version,parents.version}
     for mode in ([2]editor.Mode{.Simulate,.Simulation_Paused}) {
         session.mode=mode
         app.extras.debug_count=0
-        physics_fields_preview(&session,preview,{},core.read(&regions),core.read(&transforms),core.read(&parents),&app)
+        physics_fields_preview(&session,preview,{},core.read(&regions),core.read(&transforms),core.read(&parents),&app.extras)
         testing.expect_value(t,app.extras.debug_count,1)
         testing.expect_value(t,app.extras.debug[0].count,252)
         testing.expect_value(t,([3]u64{regions.version,transforms.version,parents.version}),versions)
@@ -73,7 +73,7 @@ selected_physics_fields_preview_world_regions_force_direction_and_parent_changes
     app.extras.debug_count=0
     for mode in ([2]editor.Mode{.Play,.Paused}) {
         session.mode=mode
-        physics_fields_preview(&session,preview,{},core.read(&regions),core.read(&transforms),core.read(&parents),&app)
+        physics_fields_preview(&session,preview,{},core.read(&regions),core.read(&transforms),core.read(&parents),&app.extras)
         testing.expect_value(t,app.extras.debug_count,0)
     }
 }
@@ -92,12 +92,12 @@ physics_field_preview_reuses_vertices_without_allocations_and_omits_incomplete_r
     session:=editor.Session{selection=&selection}
     preview:=new(Physics_Field_Preview);defer free(preview)
     app:host.App
-    physics_fields_preview(&session,preview,{},core.read(&regions),core.read(&transforms),core.read(&parents),&app)
+    physics_fields_preview(&session,preview,{},core.read(&regions),core.read(&transforms),core.read(&parents),&app.extras)
     tracking:mem.Tracking_Allocator;mem.tracking_allocator_init(&tracking,context.allocator);defer mem.tracking_allocator_destroy(&tracking)
     previous:=context.allocator;context.allocator=mem.tracking_allocator(&tracking)
     for _ in 0..<128 {
         app.extras.debug_count=0
-        physics_fields_preview(&session,preview,{},core.read(&regions),core.read(&transforms),core.read(&parents),&app)
+        physics_fields_preview(&session,preview,{},core.read(&regions),core.read(&transforms),core.read(&parents),&app.extras)
         testing.expect_value(t,app.extras.debug_count,1)
         testing.expect_value(t,app.extras.debug[0].count,252)
     }

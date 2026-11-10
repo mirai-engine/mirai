@@ -8,6 +8,7 @@ import "mirai:host"
 import "mirai:std/base"
 import lib "mirai:std/anim"
 import mm "mirai:std/math"
+import "base:runtime"
 
 // What the renderer deforms a mesh with: the joints and influences of its
 // skin and its morph targets, for the vertices of every level. A mesh with
@@ -82,7 +83,7 @@ Skin_Instances :: struct {
 // Ends what an instance holds; taking it out of the map is the caller's.
 @(private)
 skin_instance_free :: proc(app:^host.App,instance:^Skin_Instance) {
-    if instance.copied && app!=nil {erender.mesh_remove(app,instance.mesh)}
+    if instance.copied && app!=nil {erender.mesh_remove(app.renderer,instance.mesh)}
     delete(instance.local);delete(instance.world);delete(instance.palette);delete(instance.morph_weights)
     delete(instance.in_part);delete(instance.part_palette)
     instance^={}
@@ -90,8 +91,8 @@ skin_instance_free :: proc(app:^host.App,instance:^Skin_Instance) {
 
 // Makes the copy of the mesh of an instance that the renderer deforms.
 @(private)
-skin_copy :: proc(app:^host.App,instance:^Skin_Instance,rig:^Skin_Rig,problems:^core.Problems,entity:core.Entity) -> bool {
-    mesh,created:=erender.skin_create(app,instance.source,rig.influences,u32(len(instance.palette)),rig.morph,instance.part>0)
+skin_copy :: proc(renderer:^erender.Renderer,instance:^Skin_Instance,rig:^Skin_Rig,problems:^core.Problems,entity:core.Entity) -> bool {
+    mesh,created:=erender.skin_create(renderer,instance.source,rig.influences,u32(len(instance.palette)),rig.morph,instance.part>0)
     if !created {
         core.report(problems,entity,"animation.skin_gpu","the renderer refused to deform the mesh of this entity: its skin does not match its vertices or names joints it does not have, or memory ran out; import the mesh again, or free memory")
         return false
@@ -160,39 +161,39 @@ skin_rig_load :: proc(state:^Skin_Runtime,app:^host.App,id:base.Asset_Id,problem
         if map_insert(&state.rig_rows,id,index)==nil {pop(&state.rigs);memory_problem(problems,e,"the skin of its mesh");return max(u32)}
     }
     rig:=&state.rigs[index]
-    if rig.checked==assets_stamp(app) {return index}
+    if rig.checked==assets_stamp(app.assets) {return index}
     record,exists:=asset.registry_find(&app.assets.registry,id)
     stamp:=[2]i64{}
     if exists {stamp={record.size,record.time}}
-    if found && rig.checked!=0 && rig.stamp==stamp {rig.checked=assets_stamp(app);return index}
+    if found && rig.checked!=0 && rig.stamp==stamp {rig.checked=assets_stamp(app.assets);return index}
     loaded:Skin_Rig
     error:=asset.Error.None if host.assets_mesh_generated(app.assets,id) else asset.Error.Not_Found
     if exists && !host.assets_mesh_rigged(app.assets,id) {
         error=.None
-    } else if exists {loaded,error=skin_rig_read(app,id)}
+    } else if exists {loaded,error=skin_rig_read(app.assets,app.allocator,id)}
     if error==.Out_Of_Memory {rig.checked=0;memory_problem(problems,e,"the skin of its mesh");return max(u32)}
     asset_problem(problems,e,app,"animation.skin_mesh","Mesh_Renderer.mesh",id,error)
     skin_rig_free(rig)
     rig.skeleton,rig.joints,rig.influences,rig.morphs,rig.morph=loaded.skeleton,loaded.joints,loaded.influences,loaded.morphs,loaded.morph
-    rig.stamp,rig.checked=stamp,assets_stamp(app);rig.revision+=1
+    rig.stamp,rig.checked=stamp,assets_stamp(app.assets);rig.revision+=1
     return index
 }
 
 @(private)
-skin_rig_read :: proc(app:^host.App,id:base.Asset_Id) -> (Skin_Rig,asset.Error) {
+skin_rig_read :: proc(assets:^host.Assets,allocator:runtime.Allocator,id:base.Asset_Id) -> (Skin_Rig,asset.Error) {
     file:asset.Asset
-    if error:=host.assets_file(app.assets,id,asset.KIND_MESH,&file);error!=.None {return {},error}
+    if error:=host.assets_file(assets,id,asset.KIND_MESH,&file);error!=.None {return {},error}
     defer asset.asset_close(&file)
-    view,error:=asset.mesh_view(&file,&app.assets.types)
+    view,error:=asset.mesh_view(&file,&assets.types)
     if error!=.None {return {},error}
     if (len(view.skin)==0 || len(view.joints)==0) && len(view.morphs)==0 {return {},.None}
     if !asset.mesh_check_indices(view) {return {},.Corrupt}
     vertices:=len(view.vertices)
-    joints,joint_error:=make([]asset.Rig_Joint,len(view.joints),app.allocator)
-    influences,influence_error:=make([]erender.Skin_Influence,vertices,app.allocator)
+    joints,joint_error:=make([]asset.Rig_Joint,len(view.joints),allocator)
+    influences,influence_error:=make([]erender.Skin_Influence,vertices,allocator)
     rig:=Skin_Rig{skeleton=view.info.skeleton,joints=joints,influences=influences}
-    if joint_error!=nil || influence_error!=nil || !morph_rig_read(&rig,view,app.allocator) {
-        context.allocator=app.allocator
+    if joint_error!=nil || influence_error!=nil || !morph_rig_read(&rig,view,allocator) {
+        context.allocator=allocator
         skin_rig_free(&rig)
         return {},.Out_Of_Memory
     }
@@ -324,10 +325,10 @@ animation_skin :: proc(
                 instance.in_part,instance.part_palette=in_part,part_palette
             }
             // Morphs deform from their first weights; a pose waits for a palette off the bind.
-            if (rigid || len(rig.morphs)>0) && !skin_copy(app,instance,rig,problems,entity) {skin_instance_free(app,instance);continue}
+            if (rigid || len(rig.morphs)>0) && !skin_copy(app.renderer,instance,rig,problems,entity) {skin_instance_free(app,instance);continue}
         }
         // Curve materials are drawn with the copy: the mesh of the world shared at the bind has none.
-        if materialed && !instance.copied && !skin_copy(app,instance,rig,problems,entity) {skin_instance_free(app,instance);continue}
+        if materialed && !instance.copied && !skin_copy(app.renderer,instance,rig,problems,entity) {skin_instance_free(app,instance);continue}
         if !rigid && (instance.pose!=owner || instance.bound!=pose.bound) {
             instance.pose=owner;instance.bound=pose.bound;instance.reset=true
         }
@@ -402,9 +403,9 @@ animation_skin :: proc(
                 instance.reset=false;instance.exact=update.exact;instance.drawn,instance.basis=update.drawn,update.basis
                 continue
             }
-            if !skin_copy(app,instance,&cache.rigs[instance.rig],problems,state.instances.entities[update.slot]) {state.work[i].ok=false;continue}
+            if !skin_copy(app.renderer,instance,&cache.rigs[instance.rig],problems,state.instances.entities[update.slot]) {state.work[i].ok=false;continue}
         }
-        if !erender.skin_update(app,instance.mesh,instance.palette,instance.reset,instance.morph_weights,{palette=instance.part_palette,layers=instance.part_layers}) {
+        if !erender.skin_update(app.renderer,instance.mesh,instance.palette,instance.reset,instance.morph_weights,{palette=instance.part_palette,layers=instance.part_layers}) {
             state.work[i].ok=false
             core.report(problems,state.instances.entities[update.slot],"animation.skin_gpu","the renderer refused the new pose of the skinned mesh of this entity, so it shows the last one: a joint of its palette or a morph weight is not finite or does not match the mesh; check the pose (animation.analyze)")
             continue
@@ -420,7 +421,7 @@ animation_skin :: proc(
         } else if draw.morphed {
             // New weights over the palette the renderer has.
             instance:=&state.instances.values[draw.slot]
-            if !erender.skin_update(app,instance.mesh,instance.palette,instance.reset,instance.morph_weights) {
+            if !erender.skin_update(app.renderer,instance.mesh,instance.palette,instance.reset,instance.morph_weights) {
                 core.report(problems,state.instances.entities[draw.slot],"animation.skin_gpu","the renderer refused the new morph weights of the mesh of this entity, so it shows the last ones: a weight is not finite or their count does not match the mesh; check them (animation.inspect)")
                 continue
             }
@@ -428,7 +429,7 @@ animation_skin :: proc(
         }
         // A copy that still goes to the GPU replaces the mesh of the world too: the renderer
         // draws neither until all of the copy went, and it shows posed.
-        if !host.app_instance_add(app,draw.shown) {
+        if !host.extras_instance_add(&app.extras,draw.shown) {
             core.report(problems,state.instances.entities[draw.slot],"animation.skin_draw","the skinned mesh of this entity is not drawn in this frame: the renderer has no room for more instances; draw fewer meshes")
         }
     }

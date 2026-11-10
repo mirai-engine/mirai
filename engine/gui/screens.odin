@@ -1,6 +1,5 @@
 package gui
 
-import "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:strings"
@@ -156,7 +155,7 @@ plan_widgets :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,widgets:core.Re
             // Built in the window's context, seen by the camera of any local player.
             nearest,seen:=max(f32),false
             for p in (1 if split else 0)..=(players if split else 0) {
-                distance,in_sight:=mesh_seen(app,&gui.views[p],e,position)
+                distance,in_sight:=mesh_seen(app.renderer,&app.extras,&gui.views[p],e,position)
                 if in_sight {nearest,seen=min(nearest,distance),true}
             }
             if seen {append(&gui.candidates,Widget_Candidate{entity=e,row=row,placed=placed,player=0,distance=nearest});continue}
@@ -195,7 +194,7 @@ plan_widgets :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,widgets:core.Re
             if static,has:=core.get(meshes_of,c.entity);has && app.assets!=nil {
                 if shape:=static.mesh!={}?host.assets_mesh(app.assets,static.mesh):host.assets_shape(app.assets,static.shape);shape!=nil {handle=shape.handle}
             }
-            mesh=mesh_surface_get(gui,app,c.entity,widget,handle,problems)
+            mesh=mesh_surface_get(gui,app.renderer,c.entity,widget,handle,problems)
             if mesh<0 {continue}
             meshes+=1
         }
@@ -311,24 +310,24 @@ asked_check :: proc(gui:^Gui,app:^host.App,problems:^core.Problems) {
         }
         if !any {continue}
         asked.checked=true
-        if !found {asked_report(gui,app,&asked,slots,problems)}
+        if !found {asked_report(gui,app.assets,&asked,slots,problems)}
     }
 }
 
 // The problem of a name no interface of the entity has.
 @(private)
-asked_report :: proc(gui:^Gui,app:^host.App,asked:^Asked_Name,slots:^Instance_Slots,problems:^core.Problems) {
+asked_report :: proc(gui:^Gui,assets:^host.Assets,asked:^Asked_Name,slots:^Instance_Slots,problems:^core.Problems) {
     screen:[base.ASSET_ID_TEXT]u8
     title:=""
     has:=make([dynamic]string,context.temp_allocator)
     for slot in slots^ {
         if slot==0 {continue}
         id:=gui.instances[slot-1].asset
-        if title=="" {title=host.assets_name(app.assets,id,&screen)}
+        if title=="" {title=host.assets_name(assets,id,&screen)}
         file:masset.Asset
-        if host.assets_file(app.assets,id,masset.KIND_UI,&file)!=.None {continue}
+        if host.assets_file(assets,id,masset.KIND_UI,&file)!=.None {continue}
         defer masset.asset_close(&file)
-        data,error:=host.ui_tree_view(&file,&app.assets.types)
+        data,error:=host.ui_tree_view(&file,&assets.types)
         if error!=.None {continue}
         for &n in data.nodes {
             #partial switch n.kind {
@@ -584,8 +583,8 @@ screen_retains :: proc(gui:^Gui,ctx:^ui.Context,instance:^Instance,entry:^Planne
 // whether it takes input, the textures of the assets, the prompts of the
 // device and the texts of the language.
 @(private)
-screen_key :: proc(app:^host.App,ctx:^ui.Context,instance:^Instance,entry:^Planned,layer:int,rect:[4]f32) -> u64 {
-    revision:=app.assets.revision if app.assets!=nil else 0
+screen_key :: proc(assets:^host.Assets,ctx:^ui.Context,instance:^Instance,entry:^Planned,layer:int,rect:[4]f32) -> u64 {
+    revision:=assets.revision if assets!=nil else 0
     // The family of the device shows other prompts, and other texts come with the language.
     mark:=[11]u64{instance.revision,u64(instance.generation),u64(i64(layer)),u64(entry.passive)|u64(entry.top)<<1,entry.variant,revision,
         u64(transmute(u32)rect.x)<<32|u64(transmute(u32)rect.y),u64(transmute(u32)rect.z)<<32|u64(transmute(u32)rect.w),u64(entry.entity),

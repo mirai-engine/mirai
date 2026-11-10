@@ -107,11 +107,11 @@ foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved :: proc(t:^testing
     foliages:=core.read(&world.foliages)
     owner:=mm.Transform{rotation=1,scale={1,1,1}}
     prepare :: proc(t:^testing.T,s:^editor.Session,tool:^Foliage_Tool,foliages:core.Read(foliage.Foliage),e:core.Entity) -> bool {
-        foliage_sync(s,tool,foliages,s.app)
-        return testing.expect(t,edit_prepare(tool,s.app,foliages,e))
+        foliage_sync(s,tool,foliages,s.app.assets)
+        return testing.expect(t,edit_prepare(tool,s.app.assets,s.app.allocator,foliages,e))
     }
     step :: proc(t:^testing.T,s:^editor.Session,tool:^Foliage_Tool,ref:core.World_Ref,label:string) {
-        testing.expect(t,edit_commit(s,tool,ref,s.app,label))
+        testing.expect(t,edit_commit(s,tool,ref,s.app.assets,label))
         testing.expect(t,editor.edits_commit(s.edits,ref,s.selection))
     }
     random:=mm.rng_make(9,1)
@@ -178,7 +178,7 @@ foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved :: proc(t:^testing
     // Undo goes back through each step, and redo forward.
     for revision:=u32(5);revision>=1;revision-=1 {
         testing.expect(t,editor.undo(&edits,ref,&selection))
-        foliage_sync(&s,&tool,foliages,&app)
+        foliage_sync(&s,&tool,foliages,app.assets)
         testing.expect_value(t,core.at(foliages,0).revision,revision)
         held=held_source(t,&assets,id)
         testing.expect_value(t,held.info.revision,revision)
@@ -189,7 +189,7 @@ foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved :: proc(t:^testing
     testing.expect_value(t,len(held.cells[0].overrides),0)
     foliage.source_destroy(&held)
     testing.expect(t,editor.redo(&edits,ref,&selection))
-    foliage_sync(&s,&tool,foliages,&app)
+    foliage_sync(&s,&tool,foliages,app.assets)
     held=held_source(t,&assets,id)
     testing.expect_value(t,manual_count(&held),3)
     foliage.source_destroy(&held)
@@ -223,11 +223,11 @@ a_canceled_stroke_puts_back_what_the_file_held :: proc(t:^testing.T) {
     edit_baseline(&tool)
     random:=mm.rng_make(3,1)
     paint_instance(&tool.edit.source,&tool.edit.source.types[0],{1,0,1},{0,1,0},&random,nil)
-    testing.expect(t,edit_preview(&s,&tool,&app))
+    testing.expect(t,edit_preview(&s,&tool,app.assets))
     held:=held_source(t,&assets,id)
     testing.expect_value(t,manual_count(&held),1)
     foliage.source_destroy(&held)
-    edit_cancel(&s,&tool,&app)
+    edit_cancel(&s,&tool,app.assets)
     held=held_source(t,&assets,id)
     testing.expect_value(t,manual_count(&held),0)
     foliage.source_destroy(&held)
@@ -311,8 +311,8 @@ a_move_of_an_imported_foliage_is_undone_back_to_revision_zero :: proc(t:^testing
     problems:core.Problems
     // A frame: the runtime reads the source before the tool syncs.
     frame :: proc(s:^editor.Session,tool:^Foliage_Tool,data:^foliage.Foliage_Data,foliages:core.Read(foliage.Foliage),problems:^core.Problems) {
-        foliage.foliage_load(data,foliages,s.app,problems)
-        foliage_sync(s,tool,foliages,s.app)
+        foliage.foliage_load(data,foliages,s.app.assets,s.app.allocator,problems)
+        foliage_sync(s,tool,foliages,s.app.assets)
     }
     x_of :: proc(t:^testing.T,a:^host.Assets,id:base.Asset_Id) -> f32 {
         held:=held_source(t,a,id)
@@ -323,14 +323,14 @@ a_move_of_an_imported_foliage_is_undone_back_to_revision_zero :: proc(t:^testing
     }
     frame(&s,&tool,&data,foliages,&problems)
     testing.expect_value(t,core.at(foliages,0).revision,u32(0))
-    if !testing.expect(t,edit_prepare(&tool,&app,foliages,patch)) {return}
+    if !testing.expect(t,edit_prepare(&tool,app.assets,app.allocator,foliages,patch)) {return}
     edit_baseline(&tool)
     instance,placed,found:=instance_of_batch(&tool.edit.source,nil,{0,0},fern.id,0,&tool.work)
     if !testing.expect(t,found) {return}
     placed.position.x+=3
     _,moved:=instance_set(&tool.edit.source,nil,instance,placed)
     testing.expect(t,moved)
-    testing.expect(t,edit_commit(&s,&tool,ref,&app,"Move foliage instance"))
+    testing.expect(t,edit_commit(&s,&tool,ref,app.assets,"Move foliage instance"))
     testing.expect(t,editor.edits_commit(&edits,ref,&selection))
     frame(&s,&tool,&data,foliages,&problems)
     testing.expect_value(t,core.at(foliages,0).revision,u32(1))

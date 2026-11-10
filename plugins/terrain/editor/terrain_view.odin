@@ -58,7 +58,7 @@ Terrain_View :: struct {
 Terrain_View_Params :: struct {mode:u32,_:[3]u32}
 
 @(step="frame")
-terrain_view_modes :: proc(s:^editor.Session,view:^Terrain_View,app:^host.App) {
+terrain_view_modes :: proc(s:^editor.Session,view:^Terrain_View,renderer:^erender.Renderer) {
     view.pipeline=0
     view.overlay=.None
     current:=editor.view_mode_current(s.viewport)
@@ -73,7 +73,7 @@ terrain_view_modes :: proc(s:^editor.Session,view:^Terrain_View,app:^host.App) {
     }
     reason:=""
     if shown || view.overlay!=.None {
-        view.pipeline=erender.stage_pipeline(app,{stage=.Inspect,shader="terrain_view",name="terrain view"})
+        view.pipeline=erender.stage_pipeline(renderer,{stage=.Inspect,shader="terrain_view",name="terrain view"})
         if view.pipeline==0 {reason="The shaders in use have no terrain_view.comp: generate those of the project"}
     }
     for desc,mode in TERRAIN_VIEW_MODES {
@@ -134,9 +134,9 @@ overlay_weights :: proc "contextless" (overlay:Terrain_Overlay) -> bool {return 
 // theirs, or the outlines of every piece. A chunk the preview of a stroke
 // shows is the preview's.
 @(step="frame",after="terrain_sculpt")
-terrain_overlay :: proc(s:^editor.Session,view:^Terrain_View,tool:^Terrain_Tool,world:core.World_Ref,terrains:core.Read(terrain.Terrain),chunks:core.Read(terrain.Terrain_Chunk),worlds:core.Read(core.World_Transform),data:core.Ref(terrain.Terrain_Data),app:^host.App) {
+terrain_overlay :: proc(s:^editor.Session,view:^Terrain_View,tool:^Terrain_Tool,world:core.World_Ref,terrains:core.Read(terrain.Terrain),chunks:core.Read(terrain.Terrain_Chunk),worlds:core.Read(core.World_Transform),data:core.Ref(terrain.Terrain_Data),assets:^host.Assets,extras:^host.Frame_Extras) {
     if view.overlay==.None || !s.gui.begun || editor.playing(s) || data.ptr==nil {return}
-    a:=app.assets
+    a:=assets
     if a==nil {return}
     statics:=core.world_table_of(world,erender.Mesh_Renderer)
     tints:=core.world_table_of(world,erender.Tint)
@@ -166,7 +166,7 @@ terrain_overlay :: proc(s:^editor.Session,view:^Terrain_View,tool:^Terrain_Tool,
         if instance,ok:=erender.mesh_instance(a,static,mm.transform_matrix(placed.transform),tint,override);ok {
             instance.object_id,instance.copy_owner,instance.copy_variant=u64(e),PREVIEW_OWNER,2
             instance.replace_source=true
-            host.app_instance_add(app,instance)
+            host.extras_instance_add(extras,instance)
         }
     }
     host.assets_commit(a)

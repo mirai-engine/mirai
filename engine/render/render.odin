@@ -449,8 +449,8 @@ view_of_camera :: proc(view:^core.View,cameras:core.Read(Camera),exposures:core.
 }
 // The world id took another scene: the light the renderer kept for it, if it
 // is not the one shown, is of the scene before.
-world_light_forget :: proc(app:^host.App,id:core.World_Id) {
-    if app.renderer!=nil {gpu.world_light_forget(app.renderer,world_key(id))}
+world_light_forget :: proc(renderer:^Renderer,id:core.World_Id) {
+    if renderer!=nil {gpu.world_light_forget(renderer,world_key(id))}
 }
 
 // The world into the renderer. The camera and the time of the frame are
@@ -487,7 +487,7 @@ render_sync :: proc(
         overrides=core.changes(overrides,&sync.seen_overrides),offsets=core.changes(offsets,&sync.seen_offsets),layers=core.changes(layers,&sync.seen_layers),
     }
     slot_textures_apply(app,a,t,frame)
-    extras:=host.app_instances(app)
+    extras:=host.extras_instances(&app.extras)
     extras_inherit(t,extras)
     rebuild:=!sync.synced || sync.world!=id || c.meshes.all || c.worlds.all || c.tints.all || c.hidden.all || c.elsewhere.all
     rebuild||=c.parents.all || c.overrides.all || c.offsets.all || c.layers.all
@@ -894,16 +894,16 @@ instance_make :: proc(a:^host.Assets,t:Sync_Tables,e:core.Entity,static:Mesh_Ren
 // The textures that slots of meshes show this frame (host.Slot_Texture), in
 // what draws each entity: what replaces its mesh, or else a copy of its mesh
 // of the world that does. What drew each one is kept for the next frame
-// (host.app_slot_shown).
+// (host.extras_slot_shown).
 @(private)
 slot_textures_apply :: proc(app:^host.App,a:^host.Assets,t:Sync_Tables,frame:core.Frame_Time) {
-    app.slots_shown_count=0
-    for request in host.app_slot_textures(app) {
+    app.extras.slots_shown_count=0
+    for request in host.extras_slot_textures(&app.extras) {
         e:=core.Entity(request.object)
         static,has_mesh:=core.get(t.meshes,e)
         if !has_mesh || request.texture==0 {continue}
         shown:^gpu.Instance_Desc
-        for &extra in host.app_instances(app) {
+        for &extra in host.extras_instances(&app.extras) {
             if extra.replace_source && extra.object_id==request.object {shown=&extra;break}
         }
         if shown==nil {
@@ -912,8 +912,8 @@ slot_textures_apply :: proc(app:^host.App,a:^host.Assets,t:Sync_Tables,frame:cor
             instance,_,_,made:=instance_make(a,t,e,static,world,frame)
             if !made || instance.hidden {continue}
             instance.copy_owner,instance.replace_source=SLOT_TEXTURE_OWNER,true
-            if !host.app_instance_add(app,instance) {continue}
-            extras:=host.app_instances(app)
+            if !host.extras_instance_add(&app.extras,instance) {continue}
+            extras:=host.extras_instances(&app.extras)
             shown=&extras[len(extras)-1]
         }
         row,at:=mesh_slot_row(a,static,shown,request.slot)
@@ -930,9 +930,9 @@ slot_textures_apply :: proc(app:^host.App,a:^host.Assets,t:Sync_Tables,frame:cor
         derived,derives:=host.assets_material_derive(a,values)
         if !derives {continue}
         if at!=nil {at^=derived+1} else {shown.material=gpu.Material_Handle(derived)}
-        if app.slots_shown_count<len(app.slots_shown) {
-            app.slots_shown[app.slots_shown_count]={object=request.object,mesh=shown.mesh,anchor=shown.anchor,transform=shown.transform}
-            app.slots_shown_count+=1
+        if app.extras.slots_shown_count<len(app.extras.slots_shown) {
+            app.extras.slots_shown[app.extras.slots_shown_count]={object=request.object,mesh=shown.mesh,anchor=shown.anchor,transform=shown.transform}
+            app.extras.slots_shown_count+=1
         }
     }
 }
@@ -1578,10 +1578,10 @@ sync_reset :: proc(sync:^Render_Sync) {sync.synced=false}
 // A World that is freed while the renderer shows it takes its instances
 // with it; the World shown next is given whole.
 @(step="release")
-render_release :: proc(sync:^Render_Sync,id:core.World_Id,app:^host.App) {
+render_release :: proc(sync:^Render_Sync,id:core.World_Id,renderer:^Renderer) {
     if sync.world!=id {return}
     sync.world,sync.synced={},false
-    if app.renderer!=nil {gpu.scene_set(app.renderer,nil,nil,sync.sun,sync.environment)}
+    if renderer!=nil {gpu.scene_set(renderer,nil,nil,sync.sun,sync.environment)}
 }
 
 sync_free :: proc(sync:^Render_Sync) {

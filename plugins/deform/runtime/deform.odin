@@ -104,7 +104,7 @@ deform_render :: proc(
     state.job_count=0
     if core.count(deforms)>0 {
         seconds:=time.playing?f32(time.seconds)+frame.alpha*time.dt:f32(app.seconds)
-        made:=erender.vertices_made(app)
+        made:=erender.vertices_made(app.renderer)
         for row in 0..<core.count(deforms) {
             e:=core.entity_at(deforms,row)
             deform:=core.at(deforms,row)
@@ -113,7 +113,7 @@ deform_render :: proc(
             if !has_mesh || !placed || erender.is_hidden(hidden,parents,e) {continue}
             own:=base.text_get(deform.shape[:])
             // The stage with the equation of the shape, that of this plugin without a name; 0 while the shaders in use have none.
-            pipeline:=erender.stage_pipeline(app,{stage=.Geometry,shader=own!=""?own:"deform",name="deform"})
+            pipeline:=erender.stage_pipeline(app.renderer,{stage=.Geometry,shader=own!=""?own:"deform",name="deform"})
             if pipeline==0 {continue}
             tint:=erender.TINT_DEFAULT
             if value,exists:=core.get(tints,e);exists {tint=value}
@@ -130,13 +130,13 @@ deform_render :: proc(
             if at<0 {continue}
             shaped:=&state.shaped[at]
             if shaped.valid && (shaped.entity!=e || shaped.source!=shown.mesh) {
-                erender.mesh_remove(app,shaped.mesh)
+                erender.mesh_remove(app.renderer,shaped.mesh)
                 shaped^={}
             }
             if !shaped.valid {
-                rest_min,rest_max,known:=erender.mesh_bounds(app,shown.mesh)
+                rest_min,rest_max,known:=erender.mesh_bounds(app.renderer,shown.mesh)
                 if !known {continue}
-                mesh,created:=erender.deformable_create(app,shown.mesh)
+                mesh,created:=erender.deformable_create(app.renderer,shown.mesh)
                 if !created {continue}
                 shaped^={entity=e,source=shown.mesh,mesh=mesh,rest_min=rest_min,rest_max=rest_max,valid=true}
             }
@@ -154,7 +154,7 @@ deform_render :: proc(
                     center,radius:=0.5*(shaped.rest_min+shaped.rest_max),0.5*linalg.length(shaped.rest_max-shaped.rest_min)
                     bounds_min,bounds_max=center-radius,center+radius
                 }
-                if erender.deformable_update(app,shaped.mesh,bounds_min,bounds_max) {
+                if erender.deformable_update(app.renderer,shaped.mesh,bounds_min,bounds_max) {
                     shaped.params,shaped.pipeline,shaped.made=params,pipeline,made
                     params.rest=u32(at)
                     state.jobs[state.job_count]=params
@@ -165,15 +165,15 @@ deform_render :: proc(
             shown.copy_owner,shown.replace_source=base.name_hash("deform"),true
             shown.highlight=erender.instance_outline(highlights,outlines,e)
             if in_layers,exists:=core.get(layers,e);exists {shown.layers=in_layers.mask}
-            erender.instance_add(app,shown)
+            erender.instance_add(&app.extras,shown)
         }
     }
     for &shaped in state.shaped {
         if !shaped.valid || shaped.seen==state.frame {continue}
-        erender.mesh_remove(app,shaped.mesh)
+        erender.mesh_remove(app.renderer,shaped.mesh)
         shaped={}
     }
-    if state.job_count>0 {erender.frame_pass(app,.Geometry,deform_record,state)}
+    if state.job_count>0 {erender.frame_pass(app.renderer,.Geometry,deform_record,state)}
 }
 
 @(private)
@@ -197,10 +197,10 @@ deform_record :: proc(pass:^erender.Pass,user:rawptr) {
 
 // The copies of a world that goes.
 @(step="release")
-deform_release :: proc(state:^Deform_Gpu,app:^host.App) {
+deform_release :: proc(state:^Deform_Gpu,renderer:^erender.Renderer) {
     if state==nil {return}
     for &shaped in state.shaped {
-        if shaped.valid && app.renderer!=nil {erender.mesh_remove(app,shaped.mesh)}
+        if shaped.valid && renderer!=nil {erender.mesh_remove(renderer,shaped.mesh)}
         shaped={}
     }
     state.job_count=0

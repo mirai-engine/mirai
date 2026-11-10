@@ -86,10 +86,10 @@ placement_confirm :: proc(tool:^Physics_Placement) -> bool {
 }
 
 @(private)
-placement_box :: proc(app:^host.App,mesh:erender.Mesh_Renderer) -> (box:mm.Aabb,ok:bool) {
+placement_box :: proc(assets:^host.Assets,mesh:erender.Mesh_Renderer) -> (box:mm.Aabb,ok:bool) {
     buffer:geom.Mesh_Buffer
     geom.mesh_buffer_init(&buffer,context.temp_allocator)
-    if !host.assets_geometry(app.assets,mesh.mesh,mesh.shape,&buffer) || len(buffer.positions)==0 {return}
+    if !host.assets_geometry(assets,mesh.mesh,mesh.shape,&buffer) || len(buffer.positions)==0 {return}
     box.min,box.max=geom.mesh_bounds(buffer.positions[:])
     return box,true
 }
@@ -150,7 +150,7 @@ placement_valid :: proc(desc:Placement_Desc) -> bool {
 
 placement_start :: proc(s:^editor.Session,tool:^Physics_Placement,desc:Placement_Desc) -> bool {
     if editor.playing(s) || s.app==nil || !placement_valid(desc) {return false}
-    bounds,measured:=placement_box(s.app,desc.mesh)
+    bounds,measured:=placement_box(s.app.assets,desc.mesh)
     if !measured {editor.notify(s,"Choose a static mesh for placement");return false}
     placement_cancel(tool)
     w:=editor.edited_world(s)
@@ -264,7 +264,7 @@ physics_placement_frame :: proc(s:^editor.Session,tool:^Physics_Placement,world:
     if hit.entity==core.NONE || hit.indicator {tool.drop_time=0;return}
     revision:=s.app.assets!=nil?s.app.assets.revision:0
     if tool.measured_mesh!=tool.mesh || tool.measured_revision!=revision {
-        tool.bounds,tool.measured=placement_box(s.app,tool.mesh)
+        tool.bounds,tool.measured=placement_box(s.app.assets,tool.mesh)
         tool.measured_mesh,tool.measured_revision=tool.mesh,revision
     }
     if !tool.measured {return}
@@ -291,7 +291,7 @@ placement_hover :: proc(s:^editor.Session,tool:^Physics_Placement,desc:Placement
         transform:=mm.transform_matrix(pose)
         if instance,ok:=erender.mesh_instance(s.app.assets,desc.mesh,transform,erender.TINT_DEFAULT,{});ok {
             instance.copy_owner,instance.copy_variant=0x70687973706c6163,1
-            host.app_instance_add(s.app,instance)
+            host.extras_instance_add(&s.app.extras,instance)
         }
         gpu.debug_box_transformed(&lines,transform,bounds.min,bounds.max,color)
     }
@@ -299,7 +299,7 @@ placement_hover :: proc(s:^editor.Session,tool:^Physics_Placement,desc:Placement
     low,high:=desc.point-[3]f32{size.x,0,size.z},desc.point+[3]f32{size.x,0,size.z}
     gpu.debug_box(&lines,low,high,color)
     gpu.debug_line(&lines,desc.point,desc.point+[3]f32{0,desc.height,0},color)
-    host.app_debug_lines_add(s.app,lines)
+    host.extras_debug_lines_add(&s.app.extras,lines)
     host.assets_commit(s.app.assets)
 }
 

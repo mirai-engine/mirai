@@ -188,7 +188,7 @@ a_mind_decides_on_the_server_and_the_client_sees_its_presentation :: proc(t:^tes
             mind_net_init(snapshot,context.allocator)
             testing.expect(t,mind_net_copy(snapshot,server))
         }
-        server_publish(&sessions[0],core.world_ref(server,&info),&apps[0],&outbox,u32(tick))
+        server_publish(&sessions[0],core.world_ref(server,&info),&outbox,u32(tick))
     }
     testing.expect_value(t,seen_steps,bit_set[Net_Act]{.Walk,.Look})
     last,_:=core.get(core.read(&client.shows),mine)

@@ -161,7 +161,7 @@ an_entity_with_more_replicated_components_than_an_object_carries_is_not_replicat
     defer session_destroy(&s)
     if !testing.expect(t,protocol_build(&s,ref)) {return}
     app:host.App
-    testing.expect_value(t,server_create(&s,ref,&app,e,REPLICATE_DEFAULT,core.NONE,0),Object(0))
+    testing.expect_value(t,server_create(&s,ref,e,REPLICATE_DEFAULT,core.NONE,0),Object(0))
     found:=core.problem_find(&problems,e,"net.object")
     if !testing.expect(t,found!=nil,"the entity is named") {return}
     testing.expectf(t,strings.contains(core.problem_text(found),"more replicated components"),"%s",core.problem_text(found))

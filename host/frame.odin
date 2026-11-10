@@ -42,7 +42,9 @@ CAMERA_DEFAULT :: render.Camera{position={0,2,6},forward={0,-1,-6},up={0,1,0},fo
 
 ALL_PHASES :: core.Phases{.Input,.Fixed,.Frame,.Late,.Ui,.Render}
 
-@(private)
+// What libraries add to a frame of the application, which draws it and
+// starts the next one without it. A function that adds to the frame
+// receives it by itself.
 Frame_Extras :: struct {
     layers:[FRAME_LAYER_CAPACITY]render.Ui_Layer,
     layer_count:int,
@@ -59,6 +61,11 @@ Frame_Extras :: struct {
     probe_count:int,
     slot_textures:[FRAME_SLOT_TEXTURE_CAPACITY]Slot_Texture,
     slot_texture_count:int,
+    slots_shown:[FRAME_SLOT_TEXTURE_CAPACITY]Slot_Shown, // of the last frame: render_sync writes them
+    slots_shown_count:int,
+    texture_views:[TEXTURE_VIEW_CAPACITY]render.Frame_View, // the views this frame draws into a texture
+    texture_view_count:int,
+    dropped:u64, // what did not fit in its frame and was not drawn, since the application started
 }
 
 // A texture a slot of the mesh of an entity shows this frame over its
@@ -448,7 +455,7 @@ app_frame_end :: proc(app:^App) {
     app.camera_carried={}
     app.inspection={}
     app.view_count=0
-    app.texture_view_count=0
+    app.extras.texture_view_count=0
     app.stats.frames+=1
     images:=u32(2) if drawn && app.renderer!=nil && render.renderer_stats(app.renderer).generated else 1
     app.stats.fps_frames+=int(images)
@@ -526,7 +533,7 @@ app_draw :: proc(app:^App,window:platform.Window_Frame) -> bool {
     // The views of the window and, after them, those drawn into a texture.
     views:[render.VIEW_CAPACITY+TEXTURE_VIEW_CAPACITY]render.Frame_View
     count:=copy(views[:],app.views[:app.view_count])
-    count+=copy(views[count:],app.texture_views[:app.texture_view_count])
+    count+=copy(views[count:],extras.texture_views[:extras.texture_view_count])
     drawn:=render.renderer_frame(r,{
         camera=app.camera,detail=app.detail,ui=extras.layers[:extras.layer_count],camera_cut=app.camera_cut,carried=app.camera_carried,inspection=app.inspection,time=app.time,
         views=views[:count],
@@ -545,10 +552,9 @@ app_draw :: proc(app:^App,window:platform.Window_Frame) -> bool {
 }
 
 // A screen layer for this frame, drawn over the layers added before it.
-app_ui_layer_add :: proc(app:^App,layer:render.Ui_Layer) -> bool {
-    extras:=&app.extras
+extras_ui_layer_add :: proc(extras:^Frame_Extras,layer:render.Ui_Layer) -> bool {
     if extras.layer_count>=len(extras.layers) {
-        app.stats.extras_dropped+=1
+        extras.dropped+=1
         return false
     }
     extras.layers[extras.layer_count]=layer
@@ -556,10 +562,9 @@ app_ui_layer_add :: proc(app:^App,layer:render.Ui_Layer) -> bool {
     return true
 }
 
-app_world_panel_add :: proc(app:^App,panel:render.World_Panel) -> bool {
-    extras:=&app.extras
+extras_world_panel_add :: proc(extras:^Frame_Extras,panel:render.World_Panel) -> bool {
     if extras.panel_count>=len(extras.panels) {
-        app.stats.extras_dropped+=1
+        extras.dropped+=1
         return false
     }
     extras.panels[extras.panel_count]=panel
@@ -568,9 +573,8 @@ app_world_panel_add :: proc(app:^App,panel:render.World_Panel) -> bool {
 }
 
 // A world panel drawn into a texture of render.ui_texture_add in this frame.
-app_ui_texture_draw :: proc(app:^App,draw:render.Ui_Texture_Draw) -> bool {
-    extras:=&app.extras
-    if extras.ui_texture_count>=len(extras.ui_textures) {app.stats.extras_dropped+=1;return false}
+extras_ui_texture_draw :: proc(extras:^Frame_Extras,draw:render.Ui_Texture_Draw) -> bool {
+    if extras.ui_texture_count>=len(extras.ui_textures) {extras.dropped+=1;return false}
     extras.ui_textures[extras.ui_texture_count]=draw
     extras.ui_texture_count+=1
     return true
@@ -589,27 +593,24 @@ app_ui_texture_capture :: proc(app:^App,draw:render.Ui_Texture_Draw,allocator:=c
 
 // What extensions draw at the Effect stage into a texture of
 // render.ui_texture_add, in this frame.
-app_effect_view_add :: proc(app:^App,view:render.Effect_View) -> bool {
-    extras:=&app.extras
-    if extras.effect_view_count>=len(extras.effect_views) {app.stats.extras_dropped+=1;return false}
+extras_effect_view_add :: proc(extras:^Frame_Extras,view:render.Effect_View) -> bool {
+    if extras.effect_view_count>=len(extras.effect_views) {extras.dropped+=1;return false}
     extras.effect_views[extras.effect_view_count]=view
     extras.effect_view_count+=1
     return true
 }
 
 // A pixel whose depth this frame reads back (render.renderer_depth_probes).
-app_depth_probe_add :: proc(app:^App,probe:render.Depth_Probe) -> bool {
-    extras:=&app.extras
-    if extras.probe_count>=len(extras.probes) {app.stats.extras_dropped+=1;return false}
+extras_depth_probe_add :: proc(extras:^Frame_Extras,probe:render.Depth_Probe) -> bool {
+    if extras.probe_count>=len(extras.probes) {extras.dropped+=1;return false}
     extras.probes[extras.probe_count]=probe
     extras.probe_count+=1
     return true
 }
 
-app_debug_lines_add :: proc(app:^App,lines:render.Debug_Lines) -> bool {
-    extras:=&app.extras
+extras_debug_lines_add :: proc(extras:^Frame_Extras,lines:render.Debug_Lines) -> bool {
     if extras.debug_count>=len(extras.debug) {
-        app.stats.extras_dropped+=1
+        extras.dropped+=1
         return false
     }
     extras.debug[extras.debug_count]=lines
@@ -618,36 +619,33 @@ app_debug_lines_add :: proc(app:^App,lines:render.Debug_Lines) -> bool {
 }
 
 // Visual instances for this frame, without entities in a world.
-app_instance_add :: proc(app:^App,instance:render.Instance_Desc) -> bool {
-    extras:=&app.extras
-    if extras.instances.allocator.procedure==nil && app.allocator.procedure!=nil {extras.instances.allocator=app.allocator}
-    if _,error:=append(&extras.instances,instance);error!=nil {app.stats.extras_dropped+=1;return false}
+extras_instance_add :: proc(extras:^Frame_Extras,instance:render.Instance_Desc) -> bool {
+    if _,error:=append(&extras.instances,instance);error!=nil {extras.dropped+=1;return false}
     return true
 }
 
-app_instances :: proc(app:^App) -> []render.Instance_Desc {return app.extras.instances[:]}
+extras_instances :: proc(extras:^Frame_Extras) -> []render.Instance_Desc {return extras.instances[:]}
 
 // Frees what the extras of the frames hold; app_destroy does it.
-app_extras_free :: proc(app:^App) {
-    delete(app.extras.instances)
-    app.extras.instances=nil
+extras_free :: proc(extras:^Frame_Extras) {
+    delete(extras.instances)
+    extras.instances=nil
 }
 
 // A texture a slot of the mesh of an entity shows this frame (Slot_Texture).
 // False without room for another one.
-app_slot_texture_add :: proc(app:^App,texture:Slot_Texture) -> bool {
-    extras:=&app.extras
-    if extras.slot_texture_count>=len(extras.slot_textures) {app.stats.extras_dropped+=1;return false}
+extras_slot_texture_add :: proc(extras:^Frame_Extras,texture:Slot_Texture) -> bool {
+    if extras.slot_texture_count>=len(extras.slot_textures) {extras.dropped+=1;return false}
     extras.slot_textures[extras.slot_texture_count]=texture
     extras.slot_texture_count+=1
     return true
 }
 
-app_slot_textures :: proc(app:^App) -> []Slot_Texture {return app.extras.slot_textures[:app.extras.slot_texture_count]}
+extras_slot_textures :: proc(extras:^Frame_Extras) -> []Slot_Texture {return extras.slot_textures[:extras.slot_texture_count]}
 
 // What drew the mesh of the Slot_Texture of object in the last frame.
-app_slot_shown :: proc(app:^App,object:u64) -> (Slot_Shown,bool) {
-    for shown in app.slots_shown[:app.slots_shown_count] {if shown.object==object {return shown,true}}
+extras_slot_shown :: proc(extras:^Frame_Extras,object:u64) -> (Slot_Shown,bool) {
+    for shown in extras.slots_shown[:extras.slots_shown_count] {if shown.object==object {return shown,true}}
     return {},false
 }
 
@@ -662,10 +660,10 @@ app_camera_set :: proc(app:^App,camera:render.Camera,cut:=false,carried:=render.
 
 // A view this frame draws into a texture of render.view_texture_add, before
 // the views of the window. False without room for another one.
-app_texture_view_add :: proc(app:^App,view:render.Frame_View) -> bool {
-    if app.texture_view_count>=len(app.texture_views) || view.texture==0 {app.stats.extras_dropped+=1;return false}
-    app.texture_views[app.texture_view_count]=view
-    app.texture_view_count+=1
+extras_texture_view_add :: proc(extras:^Frame_Extras,view:render.Frame_View) -> bool {
+    if extras.texture_view_count>=len(extras.texture_views) || view.texture==0 {extras.dropped+=1;return false}
+    extras.texture_views[extras.texture_view_count]=view
+    extras.texture_view_count+=1
     return true
 }
 
@@ -880,7 +878,7 @@ app_world_draw :: proc(app:^App,world,editor:rawptr,texture:render.Texture_Handl
     defer {
         app.camera=camera
         app.camera_cut,app.camera_carried,app.inspection,app.time,app.ui_only=camera_cut,carried,inspection,shown,ui_only
-        app.view_count,app.texture_view_count=0,0
+        app.view_count,app.extras.texture_view_count=0,0
     }
     app.ui_only=false
     extras:=&app.extras

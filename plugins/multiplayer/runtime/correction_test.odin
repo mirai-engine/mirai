@@ -63,7 +63,7 @@ correction_fixed :: proc(world,shared,editor,application:rawptr) {
     if sh.session!=nil {
         outbox:Net_Outbox
         adoptions:Net_Adoptions
-        net_tick_tail(ref,app,sh.session,&outbox,&adoptions,sh.session.problems)
+        net_tick_tail(ref,sh.session,&outbox,&adoptions,sh.session.problems)
         core.value_free(&outbox,type_info_of(Net_Outbox))
         core.value_free(&adoptions,type_info_of(Net_Adoptions))
     }

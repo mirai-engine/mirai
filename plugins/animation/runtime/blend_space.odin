@@ -133,27 +133,27 @@ blend_content :: proc(cache:^Blend_Assets,app:^host.App,id:base.Asset_Id) -> ^Bl
     for content,i in cache.contents {if content.id==id {row=i;break}}
     if row<0 {row=len(cache.contents);if append(&cache.contents,Blend_Content{id=id})!=1 {return nil}}
     content:=&cache.contents[row]
-    if content.checked==assets_stamp(app) {return content if content.valid else nil}
+    if content.checked==assets_stamp(app.assets) {return content if content.valid else nil}
     record,found:=asset.registry_find(&app.assets.registry,id)
     stamp:=[2]i64{}
     if found {stamp={record.size,record.time}}
-    if content.checked!=0 && stamp==content.stamp {content.checked=assets_stamp(app);return content if content.valid else nil}
+    if content.checked!=0 && stamp==content.stamp {content.checked=assets_stamp(app.assets);return content if content.valid else nil}
     next:Blend_Content
     error:=asset.Error.Not_Found
-    if found {next,error=blend_profile_read(app,id,cache.allocator)}
+    if found {next,error=blend_profile_read(app.assets,id,cache.allocator)}
     if error==.Out_Of_Memory {content.error=error;content.checked=0;return nil}
     blend_profile_free(&content.profile,cache.allocator);delete(content.space.points,cache.allocator)
     revision:=content.revision+1
-    content^=next;content.id,content.stamp,content.checked,content.revision=id,stamp,assets_stamp(app),revision
+    content^=next;content.id,content.stamp,content.checked,content.revision=id,stamp,assets_stamp(app.assets),revision
     content.valid,content.error=error==.None,error
     if content.valid {content.axis_names={base.name_hash(base.text_get(content.profile.info.x.name[:])),base.name_hash(base.text_get(content.profile.info.y.name[:]))}}
     return content if content.valid else nil
 }
 @(private)
-blend_profile_read :: proc(app:^host.App,id:base.Asset_Id,allocator:mem.Allocator) -> (content:Blend_Content,error:asset.Error) {
+blend_profile_read :: proc(assets:^host.Assets,id:base.Asset_Id,allocator:mem.Allocator) -> (content:Blend_Content,error:asset.Error) {
     file:asset.Asset
-    if error:=host.assets_file(app.assets,id,BLEND_KIND,&file);error!=.None {return {},error};defer asset.asset_close(&file)
-    view,read:=blend_space_view(&file,&app.assets.types)
+    if error:=host.assets_file(assets,id,BLEND_KIND,&file);error!=.None {return {},error};defer asset.asset_close(&file)
+    view,read:=blend_space_view(&file,&assets.types)
     if read!=.None {return {},read}
     clone :: proc(source:[]$T,allocator:mem.Allocator) -> ([]T,bool) {
         out,error:=make([]T,len(source),allocator);if error!=nil {return nil,false};copy(out,source);return out,true
