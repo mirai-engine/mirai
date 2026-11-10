@@ -1,27 +1,25 @@
 package vfx
 
+import "core:fmt"
 import "core:math"
+import "core:strings"
 import "mirai:core"
 import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:std/base"
 
-// Births a game gives particles by channel: one emitter, many births, each
-// where and how the game says. A channel is a name, as a data channel is
-// (base.name_hash): code of the game pushes births to it (channel_emit);
-// each emitter whose Particle_Channel names it starts particles of its
-// effect at each, and a Vfx program reads those of the channel of a resource
-// of kind channel with its name (`//! resource name channel`).
+// Births a game gives particles by channel (core.Births): one emitter, many
+// births, each where and how the game says. Each emitter whose
+// Particle_Channel names the channel of a birth starts particles of its
+// effect at it, and a Vfx program reads those of the channel of a resource of
+// kind channel with its name (`//! resource name channel`).
 // particles_tick numbers the births of each channel in the world, as the
 // clocks number theirs, and particles_sync starts on the GPU only those it
 // did not start: a rollback that pushes them again does not draw them twice.
 // A channel keeps the births of its last ticks, CHANNEL_BIRTHS at most;
-// older ones are lost and counted. A birth to a channel no emitter listens to
-// is let go.
+// older ones are lost and counted.
 
 CHANNEL_BIRTHS :: 1024
-
-CHANNEL_NAME_BYTES :: 32
 
 // The channel an emitter starts particles of its effect from: at each birth
 // pushed to it, count of them where the birth is, besides its own. A silent
@@ -29,53 +27,25 @@ CHANNEL_NAME_BYTES :: 32
 // kind channel of the same name.
 @(component)
 Particle_Channel :: struct {
-    name:[CHANNEL_NAME_BYTES]u8 `mirai:"text"`,
+    name:[core.CHANNEL_NAME_BYTES]u8 `mirai:"text"`,
     silent:bool, // its effect starts no particles at the births
 }
 
-// count particles at position, with velocity besides the one their effect
-// gives them, color and size multiplying theirs, and values its programs read
-// (Mirai_Vfx_Context.values).
-Channel_Birth :: struct {
-    position:[3]f32 `mirai:"unit=m"`,
-    velocity:[3]f32 `mirai:"unit=m/s"`,
-    color:[4]f32 `mirai:"color"`, // zero: white
-    size:f32,                     // 0: 1
-    count:u32,                    // 0: one
-    values:[4]f32,
-}
-
-Channel_Push :: struct {
-    channel:u64, // base.name_hash of its name
-    birth:Channel_Birth,
-}
-
-@(storage,queue)
-Particle_Channels :: struct {
-    queue:core.Queue(Channel_Push),
-}
-
-// Gives the emitters of the channel of a name a birth, in the next fixed step.
-channel_emit :: proc(channels:^Particle_Channels,name:string,birth:Channel_Birth) {
-    core.push(&channels.queue,Channel_Push{base.name_hash(name),birth})
-}
-
-// The key of the channel an emitter listens to; 0: none.
+// The channel an emitter listens to; 0: none.
 @(private)
-channel_key :: proc(listener:Particle_Channel) -> u64 {
+channel_key :: proc(listener:Particle_Channel) -> core.Birth_Channel {
     listener:=listener
-    name:=base.text_get(listener.name[:])
-    return name=="" ? 0 : base.name_hash(name)
+    return core.birth_channel(base.text_get(listener.name[:]))
 }
 
 Channel_Record :: struct {
-    birth:Channel_Birth,
+    birth:core.Birth,
     time:f64, // seconds of the world when it was born; negative: not known (the editor), it starts as it is
 }
 
 // The births of a channel some emitter listens to, numbered.
 Channel_Ring :: struct {
-    name:u64,
+    name:core.Birth_Channel,
     records:[CHANNEL_BIRTHS]Channel_Record,
     start,count:u32,
     emitted:u64, // births since the channel began: the number of the next
@@ -84,7 +54,7 @@ Channel_Ring :: struct {
 
 // The births of a step into the channels the emitters of the world listen to.
 @(private)
-channels_step :: proc(clocks:^Particle_Clocks,pushed:[]Channel_Push,listeners:core.Read(Particle_Channel),time:core.Time) {
+channels_step :: proc(clocks:^Particle_Clocks,pushed:[]core.Birth,listeners:core.Read(Particle_Channel),time:core.Time) {
     // The rings follow the channels some emitter names.
     for i:=len(clocks.channels)-1;i>=0;i-=1 {
         named:=false
@@ -96,14 +66,14 @@ channels_step :: proc(clocks:^Particle_Clocks,pushed:[]Channel_Push,listeners:co
         if name!=0 && channel_ring(clocks,name)==nil {append(&clocks.channels,Channel_Ring{name=name})}
     }
     at:=time.playing?time.seconds+f64(time.dt):-1
-    for &push in pushed {
-        if ring:=channel_ring(clocks,push.channel);ring!=nil {ring_record(ring,push.birth,at)}
+    for &birth in pushed {
+        if ring:=channel_ring(clocks,birth.channel);ring!=nil {ring_record(ring,birth,at)}
     }
 }
 
 // A birth into a ring, at the seconds of the world; negative: not known.
 @(private)
-ring_record :: proc(ring:^Channel_Ring,birth:Channel_Birth,at:f64) {
+ring_record :: proc(ring:^Channel_Ring,birth:core.Birth,at:f64) {
     if ring.count==CHANNEL_BIRTHS {
         ring.start=(ring.start+1)%CHANNEL_BIRTHS
         ring.count-=1
@@ -136,11 +106,11 @@ channel_needs :: proc(a:^host.Assets,program:^Program,needs:^Program_Needs) {
     found:=erender.program_find(a,base.text_get(program.name[:]),.Vfx) if a!=nil && program.id!=0 else nil
     if found==nil {return}
     for resource,at in found.resources[:min(len(found.resources),RESOURCES)] {
-        if needs.resources[at].kind==.Channel {needs.resources[at].channel=base.name_hash(resource.name)}
+        if needs.resources[at].kind==.Channel {needs.resources[at].channel=core.birth_channel(resource.name)}
     }
 }
 
-channel_ring :: proc(clocks:^Particle_Clocks,name:u64) -> ^Channel_Ring {
+channel_ring :: proc(clocks:^Particle_Clocks,name:core.Birth_Channel) -> ^Channel_Ring {
     for &ring in clocks.channels {if ring.name==name {return &ring}}
     return nil
 }
@@ -158,13 +128,13 @@ Gpu_Birth :: struct {
 
 // Where the births of a channel are among those of the frame.
 Channel_Region :: struct {
-    name:u64,
+    name:core.Birth_Channel,
     first,count:u32,
 }
 
 // What the GPU started of a channel.
 Channel_Started :: struct {
-    name:u64,
+    name:core.Birth_Channel,
     started:u64,
 }
 
@@ -205,7 +175,7 @@ channels_sync :: proc(sync:^Particle_Sync,clocks:^Particle_Clocks,now:f64,proble
 }
 
 @(private)
-channel_region :: proc(sync:^Particle_Sync,name:u64) -> (first,count:u32) {
+channel_region :: proc(sync:^Particle_Sync,name:core.Birth_Channel) -> (first,count:u32) {
     for region in sync.regions {
         if region.name==name {return region.first,region.count}
     }

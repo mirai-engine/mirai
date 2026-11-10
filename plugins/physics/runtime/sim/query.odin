@@ -319,7 +319,7 @@ ray_cast_all :: proc(w:^World,origin,translation:Vec3,hits:[]Ray_Hit,filter:=QUE
 }
 // Ray against a single shape, whatever its filter.
 shape_ray_cast :: proc(w:^World,h:Shape_Handle,origin,translation:Vec3) -> (Ray_Hit,bool) {
-    shape,index:=shape_get(w,h)
+    shape,index:=shape_read(w,h)
     if shape==nil {return {},false}
     xf:=shape_transform_of(w,shape)
     t,normal,hit:=shape_ray(w,shape,xf_inv_point(xf,origin),q_inv_rotate(xf.q,translation),1)
@@ -330,7 +330,7 @@ shape_ray_cast :: proc(w:^World,h:Shape_Handle,origin,translation:Vec3) -> (Ray_
 // Ray against the shapes of one body as if the body were at a pose, whatever their filter: where it was at
 // another time.
 body_ray_cast :: proc(w:^World,h:Body_Handle,at:Transform,origin,translation:Vec3) -> (best:Ray_Hit,found:bool) {
-    body,_:=body_get(w,h)
+    body,_:=body_read(w,h)
     if body==nil {return}
     best.fraction=1
     for s:=body.shape_list;s>=0;s=w.shapes[s].next {

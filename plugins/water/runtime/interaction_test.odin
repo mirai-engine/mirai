@@ -2,13 +2,12 @@ package water
 
 import "core:testing"
 import "mirai:core"
-import "mirai:std/base"
 import phys "plugins:physics/runtime"
-import vfx "plugins:vfx/runtime"
 
 @(private="file")
-births :: proc(channels:^vfx.Particle_Channels,channel:string) -> (count:int) {
-    for push in channels.queue.items {if push.channel==base.name_hash(channel) {count+=1}}
+born :: proc(births:^core.Births,name:string) -> (count:int) {
+    channel:=core.birth_channel(name)
+    for birth in births.queue.items {if birth.channel==channel {count+=1}}
     return
 }
 
@@ -37,31 +36,31 @@ a_body_that_moves_under_the_water_bubbles_behind_it_and_a_still_one_does_not :: 
 
     // Through the step, a pause between the bubbles of a body.
     wet:Water_Wet
-    channels:vfx.Particle_Channels
-    defer core.value_free(&channels,type_info_of(vfx.Particle_Channels))
-    for _ in 0..<BUBBLE_PAUSE+1 {bodies_step(&wet,{swimming,still},{},&channels,1.0/60)}
-    testing.expect_value(t,births(&channels,CHANNEL_BUBBLES),2)
-    testing.expect_value(t,births(&channels,CHANNEL_SPLASHES),0)
+    births:core.Births
+    defer core.value_free(&births,type_info_of(core.Births))
+    for _ in 0..<BUBBLE_PAUSE+1 {bodies_step(&wet,{swimming,still},{},&births,1.0/60)}
+    testing.expect_value(t,born(&births,CHANNEL_BUBBLES),2)
+    testing.expect_value(t,born(&births,CHANNEL_SPLASHES),0)
 }
 
 @(test)
 a_body_that_leaves_the_water_stays_wet_and_dries_in_wet_seconds :: proc(t:^testing.T) {
     wet:Water_Wet
-    channels:vfx.Particle_Channels
-    defer core.value_free(&channels,type_info_of(vfx.Particle_Channels))
+    births:core.Births
+    defer core.value_free(&births,type_info_of(core.Births))
     crate:=phys.Fluid_Body{entity=core.Entity(3),center={0,-1,0},volume=1,whole=1,surface=0,reach=0.9}
     dt:=f32(1.0/60)
-    bodies_step(&wet,{crate},{},&channels,dt)
+    bodies_step(&wet,{crate},{},&births,dt)
     testing.expect(t,wet.count==1 && wet.marks[0].wet==1,"under the water it is soaked")
     // Out of the water but in the bounds of the fluid: nothing under the surface.
     out:=crate
     out.center.y,out.volume=1,0
-    bodies_step(&wet,{out},{},&channels,dt)
+    bodies_step(&wet,{out},{},&births,dt)
     testing.expect(t,wet.marks[0].wet<1 && wet.marks[0].wet>0.99)
     // Out of the bounds, the physics finds it no more: it keeps drying.
     ticks:=0
     for wet.count>0 && ticks<1000 {
-        bodies_step(&wet,{},{},&channels,dt)
+        bodies_step(&wet,{},{},&births,dt)
         ticks+=1
     }
     seconds:=f32(ticks+1)*dt
@@ -69,7 +68,7 @@ a_body_that_leaves_the_water_stays_wet_and_dries_in_wet_seconds :: proc(t:^testi
     // Half under the surface, it is that wet while it floats.
     half:=crate
     half.volume=0.5
-    for _ in 0..<10 {bodies_step(&wet,{half},{},&channels,dt)}
+    for _ in 0..<10 {bodies_step(&wet,{half},{},&births,dt)}
     testing.expect_value(t,wet.marks[0].wet,f32(0.5))
     testing.expect(t,wet_level(0.5)==0.5 && wet_level(1.0/1000)==0 && wet_level(2)==1)
 }

@@ -412,6 +412,10 @@ Editor and skinning:
   `Skin_Part`, the deformed copy is created with the part and each palette
   collapses its joints onto the bone: changing the bone creates the copy again, changing its layers
   does not.
+- The copy is the mesh the renderer draws its entity with, not another instance
+  ([posed mesh](../../mirai-rendering/references/scene.md#visual-instances)): `render_sync` places,
+  tints, hides and outlines it as any mesh, and the skin only gives its palette, its weights and,
+  with curve materials, the values of its materials.
 - A rig whose palette leaves each vertex at its bind (`palette_at_bind`) is drawn with the world's
   shared mesh: a still character or one without animation copies no geometry or BLAS. The copy is
   created the first time the palette leaves the bind and stays until the rig goes away; with morphs

@@ -26,7 +26,7 @@ Emitters_World :: struct {
     volumes:core.Table(Particle_Volume),
     textures:core.Table(Particle_World_Texture),
     meshes:core.Table(erender.Mesh_Renderer),
-    channels:Particle_Channels,
+    births:core.Births,
     hierarchy:core.Hierarchy,
     clocks:Particle_Clocks,
     requests:Particle_Requests,
@@ -69,7 +69,7 @@ fixture_emitter :: proc(f:^Emitters_Fixture,emitter:Particle_Emitter,position:[3
 
 @(private="file")
 fixture_tick :: proc(f:^Emitters_Fixture,time:core.Time,frame:=FRAME) {
-    particles_tick(core.read(&f.emitters),&f.overrides,&f.parameters,core.read(&f.worlds),core.ref(&f.hierarchy),&f.entities,&f.clocks,&f.requests,&f.channels,core.read(&f.listeners),time,frame,f.app.assets,&f.problems)
+    particles_tick(core.read(&f.emitters),&f.overrides,&f.parameters,core.read(&f.worlds),core.ref(&f.hierarchy),{entities=&f.entities},&f.clocks,&f.requests,&f.births,core.read(&f.listeners),time,frame,f.app.assets,&f.problems)
     fixture_settle(f)
 }
 
@@ -579,32 +579,33 @@ channel_births_start_once_through_a_rollback :: proc(t:^testing.T) {
     if !fixture_init(t,&f) {return}
     defer fixture_destroy(&f)
     e:=fixture_emitter(&f,Particle_Emitter{})
+    IMPACTS,NOBODY:=core.birth_channel("impacts"),core.birth_channel("nobody")
     listener:Particle_Channel
     base.text_set(listener.name[:],"impacts")
     core.add(&f.listeners,e,listener)
     fixture_settle(&f)
     f.app.assets=nil
     id:=core.World_Id{0,1}
-    tick :: proc(f:^Emitters_Fixture,at:int) {
-        if at%2==0 {channel_emit(&f.channels,"impacts",Channel_Birth{position={f32(at),0,0},count=3})}
-        channel_emit(&f.channels,"nobody",Channel_Birth{count=1})
+    tick :: proc(f:^Emitters_Fixture,at:int,impacts,nobody:core.Birth_Channel) {
+        if at%2==0 {core.push(&f.births.queue,core.Birth{channel=impacts,position={f32(at),0,0},count=3})}
+        core.push(&f.births.queue,core.Birth{channel=nobody,count=1})
         fixture_tick(f,TICK)
     }
-    for at in 0..<4 {tick(&f,at)}
+    for at in 0..<4 {tick(&f,at,IMPACTS,NOBODY)}
     saved:Particle_Clocks
     defer core.value_free(&saved,type_info_of(Particle_Clocks))
     testing.expect(t,core.value_copy(&saved,&f.clocks,type_info_of(Particle_Clocks)))
-    for at in 4..<8 {tick(&f,at)}
+    for at in 4..<8 {tick(&f,at,IMPACTS,NOBODY)}
     testing.expect_value(t,len(f.clocks.channels),1)
     fixture_sync(&f,id,TICK)
     testing.expect_value(t,len(f.sync.births),4)
     testing.expect(t,f.sync.births[3].position=={6,0,0} && f.sync.births[3].count==3 && f.sync.births[3].number==3)
     // The rollback: four ticks in, and the same ticks again.
     testing.expect(t,core.value_copy(&f.clocks,&saved,type_info_of(Particle_Clocks)))
-    for at in 4..<8 {tick(&f,at)}
+    for at in 4..<8 {tick(&f,at,IMPACTS,NOBODY)}
     fixture_sync(&f,id,TICK)
     testing.expect_value(t,len(f.sync.births),0)
-    tick(&f,8)
+    tick(&f,8,IMPACTS,NOBODY)
     fixture_sync(&f,id,TICK)
     testing.expect_value(t,len(f.sync.births),1)
     testing.expect_value(t,f.sync.births[0].number,u32(4))

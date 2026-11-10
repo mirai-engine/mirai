@@ -104,7 +104,7 @@ world_debug_draw :: proc(w:^World,out:^Debug_Draw,flags:Debug_Draw_Flags,region:
 
 shape_debug_draw :: proc(w:^World,handle:Shape_Handle,out:^Debug_Draw,region:=Aabb{}) -> bool {
     out.line_count,out.point_count,out.lines_dropped,out.points_dropped=0,0,0,0
-    shape,_:=shape_get(w,handle)
+    shape,_:=shape_read(w,handle)
     if shape==nil {return false}
     body:=&w.bodies[shape.body]
     debug_shape(w,out,shape,body,debug_kind(shape,body),region,region==Aabb{})

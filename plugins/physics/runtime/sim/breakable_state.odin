@@ -27,7 +27,7 @@ cluster_ordinal :: proc(w:^World,d:^Breakable,slot:i32) -> i32 {
 // Counts every group that left, every cut and every piece removed: whoever mirrors the pieces of the
 // breakable looks at them again when it changes. Zero while it is as created.
 breakable_revision :: proc(w:^World,h:Breakable_Handle) -> u32 {
-    d,_:=breakable_get(w,h)
+    d,_:=breakable_read(w,h)
     return d!=nil?d.revision:0
 }
 
@@ -75,7 +75,7 @@ piece_ordinals :: proc(w:^World,d:^Breakable) -> []i32 {
 // are broken. Two worlds that applied the same events to equal breakables give the same; strains and
 // poses are left out, and so is whether a piece of debris expired, which each world decides.
 breakable_check :: proc(w:^World,h:Breakable_Handle) -> u32 {
-    d,_:=breakable_get(w,h)
+    d,_:=breakable_read(w,h)
     if d==nil {return 0}
     mix :: #force_inline proc "contextless" (hash:^u32,value:u32) {hash^ = (hash^~value)*16777619}
     ordinals:=piece_ordinals(w,d)
@@ -97,7 +97,7 @@ breakable_check :: proc(w:^World,h:Breakable_Handle) -> u32 {
 
 // Bytes breakable_state_write needs now.
 breakable_state_size :: proc(w:^World,h:Breakable_Handle) -> int {
-    d,_:=breakable_get(w,h)
+    d,_:=breakable_read(w,h)
     if d==nil {return 0}
     return size_of(Break_State_Header)+int(d.piece_count)*size_of(Break_State_Piece)+int(d.bond_count)*size_of(Break_State_Bond)
 }
@@ -106,7 +106,7 @@ breakable_state_size :: proc(w:^World,h:Breakable_Handle) -> int {
 // every piece and the strain of every bond. Debris is written as gone, since it is of each world.
 // Returns the bytes written; zero when `out` is too small.
 breakable_state_write :: proc(w:^World,h:Breakable_Handle,out:[]u8) -> int {
-    d,_:=breakable_get(w,h)
+    d,_:=breakable_read(w,h)
     size:=breakable_state_size(w,h)
     if d==nil || len(out)<size {return 0}
     w.breaking.tick=w.tick
@@ -256,6 +256,7 @@ breakable_state_apply :: proc(w:^World,h:Breakable_Handle,state:[]u8) -> bool {
             phantoms[clusters]=w.bonds[slot].b
             clusters+=1
         }
+        stamp(w,.Bonds,slot)
         w.bonds[slot]={next=w.bond_free}
         w.bond_free=slot
         w.bond_count-=1

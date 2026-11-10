@@ -26,6 +26,8 @@ Ping :: struct {value:u32}
 Tick :: struct {value:u32}
 @(component,replicated="owner")
 Secret :: struct {value:f32}
+@(component,replicated="object")
+Taken :: struct {count:u32}
 `
     testing.expect(t,os.write_entire_file(file,source)==nil)
     p:=project.Project{root=game,engine_root=engine}
@@ -35,6 +37,7 @@ Secret :: struct {value:f32}
         testing.expectf(t,strings.contains(text,`{"Ping","game",`) && strings.contains(text,`.Client,true}`),"%s",text)
         testing.expect(t,strings.contains(text,`{"Tick","game",`) && strings.contains(text,`.Server,false}`))
         testing.expect(t,strings.contains(text,`.World,false,.Owner,true,nil,"",nil,false,false,`))
+        testing.expect(t,strings.contains(text,`.World,false,.Object,true,`))
     }
 
     wrong:=`package game

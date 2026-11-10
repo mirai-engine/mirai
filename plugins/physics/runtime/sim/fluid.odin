@@ -60,11 +60,17 @@ Fluid_Sample :: struct {
 FLUID_COLUMN_DRY :: 8
 
 @(private)
-fluid_get :: #force_inline proc "contextless" (w:^World,h:Fluid_Handle) -> (^Fluid,i32) {
+fluid_read :: #force_inline proc "contextless" (w:^World,h:Fluid_Handle) -> (^Fluid,i32) {
     index:=base.handle_index(base.Handle(h))
     generation:=base.handle_generation(base.Handle(h))
     if index>=u32(w.fluid_high) || generation&1==0 || w.fluids[index].generation!=generation {return nil,-1}
     return &w.fluids[index],i32(index)
+}
+@(private)
+fluid_get :: #force_inline proc "contextless" (w:^World,h:Fluid_Handle) -> (^Fluid,i32) {
+    f,index:=fluid_read(w,h)
+    if f!=nil {stamp(w,.Fluids,index)}
+    return f,index
 }
 
 @(private) fluid_handle :: #force_inline proc "contextless" (w:^World,index:i32) -> Fluid_Handle {
@@ -84,7 +90,7 @@ fluid_desc_valid :: proc "contextless" (d:Fluid_Desc) -> bool {
 }
 
 fluid_valid :: proc(w:^World,h:Fluid_Handle) -> bool {
-    f,_:=fluid_get(w,h)
+    f,_:=fluid_read(w,h)
     return f!=nil
 }
 
@@ -109,6 +115,7 @@ fluid_create :: proc(w:^World,desc:Fluid_Desc) -> Fluid_Handle {
     }
     w.fluid_count+=1
     f:=&w.fluids[index]
+    stamp(w,.Fluids,index)
     generation:=f.generation+1
     f^=fluid_of(desc)
     f.generation,f.next_free=generation,-1
@@ -140,14 +147,14 @@ fluid_set :: proc(w:^World,h:Fluid_Handle,desc:Fluid_Desc) -> bool {
 }
 
 fluid_desc :: proc(w:^World,h:Fluid_Handle) -> (desc:Fluid_Desc,ok:bool) {
-    f,_:=fluid_get(w,h)
+    f,_:=fluid_read(w,h)
     if f==nil {return}
     return {shape=f.shape,position=f.position,yaw=f.yaw,half_extents=f.half_extents,slope=f.slope,density=f.density,current=f.current,priority=f.priority,user_data=f.user_data,waves=f.waves},true
 }
 
 // The box a fluid fills; a plane reaches without end sideways and down.
 fluid_bounds :: proc(w:^World,h:Fluid_Handle) -> Aabb {
-    f,_:=fluid_get(w,h)
+    f,_:=fluid_read(w,h)
     return f!=nil?fluid_aabb(f):{}
 }
 
@@ -227,7 +234,7 @@ fluid_bottom :: #force_inline proc "contextless" (f:^Fluid,x,z:f32) -> f32 {
 
 // The surface of a fluid or the top of a dry box over (x, z) (fluid_surface_at); false for a handle that is gone.
 fluid_surface :: proc(w:^World,h:Fluid_Handle,x,z:f32) -> (height:f32,normal:Vec3,ok:bool) {
-    f,_:=fluid_get(w,h)
+    f,_:=fluid_read(w,h)
     if f==nil {return}
     height,normal=fluid_surface_at(w,f,x,z)
     return height,normal,true
@@ -236,7 +243,7 @@ fluid_surface :: proc(w:^World,h:Fluid_Handle,x,z:f32) -> (height:f32,normal:Vec
 // Whether a point is in the volume of a fluid or a dry box: in its column, between its bottom and its surface.
 // Dry boxes do not take a fluid out here: fluid_sample does.
 fluid_holds :: proc(w:^World,h:Fluid_Handle,p:Vec3) -> bool {
-    f,_:=fluid_get(w,h)
+    f,_:=fluid_read(w,h)
     if f==nil || !fluid_in_column(f,p) {return false}
     top,_:=fluid_surface_at(w,f,p.x,p.z)
     return p.y>=fluid_bottom(f,p.x,p.z) && p.y<=top

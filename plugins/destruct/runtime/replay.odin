@@ -36,6 +36,7 @@ event_note :: proc(c:^Ctx,e:core.Entity,event:physics.Break_Event) {
 // destructible whose replay is not done takes no more replays in the tick.
 @(private)
 replays_apply :: proc(c:^Ctx,states:[]State_Replay,replays:[]Replay) {
+    from:=len(c.events.replayed.items) // those of this tick come after
     for asked in states {
         done,failed:bool
         check:u32
@@ -46,7 +47,7 @@ replays_apply :: proc(c:^Ctx,states:[]State_Replay,replays:[]Replay) {
         core.push(&c.events.replayed,Replayed{entity=asked.entity,sequence=asked.sequence,state=true,done=done,failed=failed,check=check})
     }
     for asked in replays {
-        if replay_stopped(c,asked.entity) {continue}
+        if replay_stopped(c,asked.entity,from) {continue}
         st:=core.edit(c.states,asked.entity)
         entry:=entry_find(c.cache,asked.entity)
         done:=false
@@ -63,8 +64,8 @@ replays_apply :: proc(c:^Ctx,states:[]State_Replay,replays:[]Replay) {
 }
 
 @(private)
-replay_stopped :: proc(c:^Ctx,e:core.Entity) -> bool {
-    for item in c.events.replayed.items {
+replay_stopped :: proc(c:^Ctx,e:core.Entity,from:int) -> bool {
+    for item in c.events.replayed.items[from:] {
         if item.entity==e && !item.done {return true}
     }
     return false

@@ -5,6 +5,7 @@ import "core:testing"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:host"
+import wire "mirai:net"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
@@ -276,4 +277,36 @@ a_saved_game_takes_out_the_same_instance_after_its_source_is_edited :: proc(t:^t
     testing.expect(t,source_instance_remove(level,{0,0},cut))
     cell_build(level,source_cell(level,{0,0}),{},&work,ids)
     testing.expect_value(t,len(work.placed),2)
+}
+
+// The entity of a cell is one fragment of the protocol whose ids change
+// apart: one more id taken out sends its own entries and the count, a small
+// part of what its creation sends a client that comes later.
+@(test)
+an_instance_taken_out_later_sends_a_small_part_of_its_cell :: proc(t:^testing.T) {
+    schema:serial.Schema;serial.schema_init(&schema);defer serial.schema_destroy(&schema)
+    index,added:=serial.schema_add(&schema,Foliage_Removed)
+    testing.expect(t,added,schema.error)
+    p:wire.Protocol;wire.protocol_init(&p);defer wire.protocol_destroy(&p)
+    type,registered:=wire.type_register(&p,"Foliage_Removed",{{schema=&schema,type=index}})
+    if !testing.expect(t,added && registered,"a page of a cell fits in an object") {return}
+    wire.protocol_seal(&p)
+    desc:=&p.types[type]
+    testing.expect(t,desc.words<=wire.MAX_STATE_WORDS)
+    // The change bits of the count and of each entry.
+    bit_of :: proc(desc:^wire.Object_Type,offset:uintptr) -> int {
+        for leaf in desc.leaves {if uintptr(leaf.source)==offset {return int(leaf.bit)}}
+        return -1
+    }
+    count_bit:=bit_of(desc,offset_of(Foliage_Removed,count))
+    if !testing.expect(t,count_bit>=0) {return}
+    entries:=offset_of(Foliage_Removed,instances)
+    first:=bit_of(desc,entries)
+    testing.expect(t,first>=0 && first!=count_bit)
+    for k in 0..<REMOVED_PAGE {
+        bit:=bit_of(desc,entries+uintptr(k*size_of(Removed_Instance)))
+        if !testing.expect(t,bit>=0 && bit!=count_bit) {return}
+        sent:=int(desc.bit_max_bits[count_bit])+int(desc.bit_max_bits[bit])
+        if !testing.expect(t,sent*16<desc.max_bits,"one id taken out sends a sixteenth of the cell at most") {return}
+    }
 }

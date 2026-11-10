@@ -351,9 +351,9 @@ fluids_repeat_bit_for_bit_from_a_snapshot_and_when_resimulated :: proc(t:^testin
     room,_:=fluid_scene(&a)
     fluid_scene(&b)
     test_steps(&a,60)
-    buffer:=make([]byte,world_snapshot_capacity(&a))
-    defer delete(buffer)
-    written,ok:=world_snapshot(&a,buffer)
+    buffer:World
+    defer world_destroy(&buffer)
+    ok:=test_keep(&buffer,&a)
     testing.expect(t,ok)
     run :: proc(w:^World,room:Fluid_Handle) {
         for step in 0..<120 {
@@ -369,10 +369,10 @@ fluids_repeat_bit_for_bit_from_a_snapshot_and_when_resimulated :: proc(t:^testin
     }
     run(&a,room)
     first:=world_hash(&a)
-    testing.expect(t,world_restore(&a,buffer[:written]))
+    testing.expect(t,test_restore(&a,&buffer))
     run(&a,room)
     testing.expect_value(t,world_hash(&a),first)
-    testing.expect(t,world_restore(&b,buffer[:written]))
+    testing.expect(t,test_restore(&b,&buffer))
     run(&b,room)
     testing.expect_value(t,world_hash(&b),first)
     // And with any number of workers.
@@ -383,7 +383,7 @@ fluids_repeat_bit_for_bit_from_a_snapshot_and_when_resimulated :: proc(t:^testin
     testing.expect(t,test_character_world(&c,8,&pool))
     defer world_destroy(&c)
     fluid_scene(&c)
-    testing.expect(t,world_restore(&c,buffer[:written]))
+    testing.expect(t,test_restore(&c,&buffer))
     run(&c,room)
     testing.expect_value(t,world_hash(&c),first)
 }

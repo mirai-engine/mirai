@@ -111,7 +111,7 @@ stride_print :: proc "contextless" (stride:^Stride,stamp:Imprint_Stamp,at,forwar
 // swept from where it was the tick before or, with a stride, a print each
 // stride it goes.
 @(step="fixed",loops="game editor",stage="end")
-imprint_stamps :: proc(steps:^Imprint_Steps,stamps:core.Read(Imprint_Stamp),worlds:core.Read(core.World_Transform),physics:core.Ref(phys.Physics_State),channels:^vfx.Particle_Channels,time:core.Time,frame:core.Frame_Time) {
+imprint_stamps :: proc(steps:^Imprint_Steps,stamps:core.Read(Imprint_Stamp),worlds:core.Read(core.World_Transform),physics:core.Ref(phys.Physics_State),births:^core.Births,time:core.Time,frame:core.Frame_Time) {
     dt:=time.dt if time.playing else frame.dt
     steps.tick+=1
     if !(dt>0) || core.count(stamps)==0 {return}
@@ -136,16 +136,16 @@ imprint_stamps :: proc(steps:^Imprint_Steps,stamps:core.Read(Imprint_Stamp),worl
             if press<=0 {stride.travelled=0;continue}
             print,ok:=stride_print(stride,stamp,hit.point,forward,moved)
             if !ok {continue}
-            vfx.channel_emit(channels,CHANNEL_STAMPS,vfx.Channel_Birth{
-                position=print,velocity=forward,size=stamp.radius,count=1,
+            core.push(&births.queue,core.Birth{
+                channel=core.birth_channel(CHANNEL_STAMPS),position=print,velocity=forward,size=stamp.radius,count=1,
                 values={press,stamp.berm,STAMP_PRINT,max(stamp.length,2*stamp.radius)},
             })
             steps.pressed+=1
             continue
         }
         if press<=0 {continue}
-        vfx.channel_emit(channels,CHANNEL_STAMPS,vfx.Channel_Birth{
-            position=hit.point,velocity=motion/dt,size=stamp.radius,count=1,values={press,stamp.berm,STAMP_RUT,0},
+        core.push(&births.queue,core.Birth{
+            channel=core.birth_channel(CHANNEL_STAMPS),position=hit.point,velocity=motion/dt,size=stamp.radius,count=1,values={press,stamp.berm,STAMP_RUT,0},
         })
         steps.pressed+=1
     }

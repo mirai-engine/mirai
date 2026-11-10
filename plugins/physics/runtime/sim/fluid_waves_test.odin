@@ -94,13 +94,13 @@ a_body_floats_on_the_waves_and_repeats_from_a_snapshot :: proc(t:^testing.T) {
     }
     testing.expectf(t,high-low>0.6,"it went from %v to %v",low,high)
     testing.expect(t,world_time(&w)>9.99 && world_time(&w)<10.01)
-    buffer:=make([]byte,world_snapshot_capacity(&w))
-    defer delete(buffer)
-    written,ok:=world_snapshot(&w,buffer)
+    buffer:World
+    defer world_destroy(&buffer)
+    ok:=test_keep(&buffer,&w)
     testing.expect(t,ok)
     for _ in 0..<60 {world_step(&w,1.0/60)}
     first:=world_hash(&w)
-    testing.expect(t,world_restore(&w,buffer[:written]))
+    testing.expect(t,test_restore(&w,&buffer))
     for _ in 0..<60 {world_step(&w,1.0/60)}
     testing.expect_value(t,world_hash(&w),first)
 }

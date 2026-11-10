@@ -135,8 +135,8 @@ particle_sync_free :: proc(sync:^Particle_Sync) {
 @(step="fixed",loops="game editor",stage="end")
 particles_tick :: proc(
     emitters:core.Read(Particle_Emitter),overrides:^core.Table(Particle_Override),parameters:^core.Table(Particle_Parameters),
-    worlds:core.Read(core.World_Transform),hierarchy:core.Ref(core.Hierarchy),entities:^core.Entities,
-    clocks:^Particle_Clocks,requests:^Particle_Requests,channels:^Particle_Channels,listeners:core.Read(Particle_Channel),
+    worlds:core.Read(core.World_Transform),hierarchy:core.Ref(core.Hierarchy),entities:core.Commands,
+    clocks:^Particle_Clocks,requests:^Particle_Requests,births:^core.Births,listeners:core.Read(Particle_Channel),
     time:core.Time,frame:core.Frame_Time,assets:^host.Assets,problems:^core.Problems,
 ) {
     if clocks.playing!=time.playing {
@@ -144,7 +144,7 @@ particles_tick :: proc(
         clear(&clocks.channels)
         clocks.playing=time.playing
     }
-    channels_step(clocks,core.take(&channels.queue),listeners,time)
+    channels_step(clocks,core.take(&births.queue),listeners,time)
     // The clocks of the emitters that went, or whose entity is no longer placed.
     core.entity_map_prune(&clocks.clocks,emitters,core.changes(emitters,&clocks.seen_emitters))
     core.entity_map_prune(&clocks.clocks,worlds,core.changes(worlds,&clocks.seen_worlds))
@@ -178,7 +178,7 @@ particles_tick :: proc(
         if time.playing && clock.done && emitter.destroy_when_done {append(&done,e)}
     }
     for e in done {
-        if subtree_done(emitters,clocks,hierarchy,e) {core.destroy_tree(entities,hierarchy,e)}
+        if subtree_done(emitters,clocks,hierarchy,e) {core.destroy_tree(entities.entities,hierarchy,e)}
     }
 }
 
@@ -274,7 +274,7 @@ particles_sync :: proc(
         desc.age,desc.born=age,u32(born)
         if shown.info.shape==.Surface || shown.info.shape==.Bones || shown.needs.resources[0].kind!=.None || shown.needs.stages[0].kind!=.None {
             bound,_:=core.get(bindings,e)
-            rows:=emitter_resources(sync,shown,&shown.info,shown.sources[:shown.source_count],&bound,e,transform,drawn.ptr,meshes,worlds,id,app.assets,app.renderer)
+            rows:=emitter_resources(sync,shown,&shown.info,shown.sources[:shown.source_count],&bound,e,transform,host.extras_instances(&app.extras),drawn.ptr,meshes,worlds,id,app.assets,app.renderer)
             desc.resources=u32(len(sync.resources))+1
             append(&sync.resources,..rows[:])
         }

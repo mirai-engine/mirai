@@ -17,8 +17,9 @@ import "mirai:std/serial"
 //
 //   @(component) @(component,shared) @(component,locks="core.Transform")
 //   @(component,replicated) @(component,replicated="owner") @(component,replicated="others")
+//   @(component,replicated="object")
 //   @(storage) @(storage,host) @(storage,setting) @(storage,setting="machine")
-//   @(storage,queue) @(storage,events) @(storage,shared) @(storage,keep)
+//   @(storage,queue) @(storage,shared) @(storage,keep)
 //   @(storage,copy="state_copy") @(storage,free="state_free") @(storage,reset="state_reset")
 //   @(step="fixed late",loops="game editor",stage="end",after="a b",before="c",server)
 //   @(net_message) @(net_message,from="client",reliable) @(net_message,from="owner")
@@ -29,7 +30,7 @@ import "mirai:std/serial"
 // and the game/ of the project go into World and Shared; the editor and the
 // editor/ of plugins and of the project into Editor_World.
 
-CUSTOM_ATTRIBUTES :: "component,storage,step,loops,stage,after,before,server,shared,locks,host,by_world,copy,copy_kept,swap,free,replicated,setting,description,queue,events,keep,persist,single,far,reset,net_message,from,reliable,params,names,name_bits,name,name_requires,presentation,record,actions,draw"
+CUSTOM_ATTRIBUTES :: "component,storage,step,loops,stage,after,before,server,shared,locks,host,by_world,copy,copy_kept,swap,free,replicated,setting,description,queue,keep,persist,single,far,reset,net_message,from,reliable,params,names,name_bits,name,name_requires,presentation,record,actions,draw"
 
 PHASES :: [7]string{"input","fixed","frame","late","ui","render","release"}
 UI_PHASE :: 4 // where the interfaces are built: the engine and the editor draw in it, a game shows .ui documents
@@ -67,10 +68,12 @@ Type :: struct {
     using declared:core.Declared,
     fields:[dynamic]core.Field_Description, // a component: the comments on the lines of its fields
     locks:[dynamic]string, // keys, resolved later
+    logs:[dynamic]string,  // a storage: its fields that are a core.Events
     field:string,
     lock_id:int,
     file:^ast.File,   // where it is declared
     value:^ast.Expr,  // its struct
+    where_:string,    // its file and line, for an error
 }
 
 // A struct of game data, @(record): the row of the tables of .records assets.
@@ -95,7 +98,7 @@ Message :: struct {
 }
 
 @(private="file")
-Param_Kind :: enum u8 {Table_Write,Table_Read,Storage_Write,Storage_Ref,Storage_Value,Entities,Entities_Read,Commands,World_Ref,App,App_Part,Records}
+Param_Kind :: enum u8 {Table_Write,Table_Read,Storage_Write,Storage_Ref,Storage_Value,Storage_Stamp,Entities_Read,Commands,World_Ref,App,App_Part,Records}
 
 // What host.App holds that a step receives by itself, bound by the type that
 // names it: the call hands out what the application owns.
@@ -117,10 +120,11 @@ APP_PARTS :: [?]App_Part{
     {"mirai:std/jobs.Job_System","^jobs.Job_System","&app.jobs"},
     {"base:runtime.Allocator","runtime.Allocator","app.allocator"},
     {"core:mem.Allocator","mem.Allocator","app.allocator"},
+    {"mirai:core.Texts","^core.Texts","host.app_texts(app)"},
 }
 
 @(private="file")
-PARAM_FORMS :: "^core.Table(T), core.Read(T), ^S, core.Ref(S), S, ^core.Entities, core.Ref(core.Entities), core.Commands, core.World_Ref, a part of the application (^host.Assets, ^host.Frame_Extras, ^render.Renderer, ^audio.Mixer, ^jobs.Job_System, runtime.Allocator) or ^host.App"
+PARAM_FORMS :: "^core.Table(T), core.Read(T), ^S, core.Ref(S), S, core.Stamp(S), core.Ref(core.Entities), core.Commands, core.World_Ref, a part of the application (^host.Assets, ^host.Frame_Extras, ^render.Renderer, ^audio.Mixer, ^jobs.Job_System, runtime.Allocator, ^core.Texts) or ^host.App"
 
 @(private="file")
 Param :: struct {
@@ -526,64 +530,76 @@ package_read :: proc(g:^Generator,pkg:^Package) {
             t:=new(Type)
             t.name,t.pkg=name,pkg
             t.file,t.value=file,decl.values[0]
+            t.where_=fmt.aprintf("%s(%d)",file.fullpath,decl.pos.line)
             t.key=fmt.aprintf("%s.%s",pkg.path,name)
             t.kind=is_component?.Component:.Storage
             switch core.declared_read(&t.declared,options,pkg.editor) {
             case "replicated":
-                append(&g.errors,fmt.aprintf("%s: %s has replicated=%q: write @(component,replicated) for every end that has the entity, replicated=\"owner\" for its owner or replicated=\"others\" for the rest",pkg.folder,name,options["replicated"]))
+                append(&g.errors,fmt.aprintf("%s: %s has replicated=%q: write @(component,replicated) for every end that has the entity, replicated=\"owner\" for its owner, replicated=\"others\" for the rest or replicated=\"object\" for every end of an entity it replicates by itself",t.where_,name,options["replicated"]))
                 continue
             case "setting":
-                append(&g.errors,fmt.aprintf("%s: %s has setting=%q, which is not a kind of setting: write @(storage,setting) for a setting of the project or @(storage,setting=\"machine\") for a preference of whoever uses the engine on this machine",pkg.folder,name,options["setting"]))
+                append(&g.errors,fmt.aprintf("%s: %s has setting=%q, which is not a kind of setting: write @(storage,setting) for a setting of the project or @(storage,setting=\"machine\") for a preference of whoever uses the engine on this machine",t.where_,name,options["setting"]))
                 continue
             }
             if t.replication!=.None && !is_component {
-                append(&g.errors,fmt.aprintf("%s: %s is a storage and says replicated: the network replicates components of entities; make it a @(component,replicated), or send it as a @(net_message)",pkg.folder,name))
+                append(&g.errors,fmt.aprintf("%s: %s is a storage and says replicated: the network replicates components of entities; make it a @(component,replicated), or send it as a @(net_message)",t.where_,name))
                 continue
             }
             if _,scene:=options["scene"];scene {
-                append(&g.errors,fmt.aprintf("%s: %s says scene: a setting of the scene is a component on an entity of the root scene, which saves, replicates and changes while the game runs; make it a @(component), with single if the world uses one at a time",pkg.folder,name))
+                append(&g.errors,fmt.aprintf("%s: %s says scene: a setting of the scene is a component on an entity of the root scene, which saves, replicates and changes while the game runs; make it a @(component), with single if the world uses one at a time",t.where_,name))
                 continue
             }
             if t.single && !is_component {
-                append(&g.errors,fmt.aprintf("%s: %s says single, which is of a component the world uses one of at a time: write @(component,single)",pkg.folder,name))
+                append(&g.errors,fmt.aprintf("%s: %s says single, which is of a component the world uses one of at a time: write @(component,single)",t.where_,name))
                 continue
             }
             if t.far && !is_component {
-                append(&g.errors,fmt.aprintf("%s: %s says far, which is of a component whose entity draws a far form of its own and stays when its section unloads: write @(component,far)",pkg.folder,name))
+                append(&g.errors,fmt.aprintf("%s: %s says far, which is of a component whose entity draws a far form of its own and stays when its section unloads: write @(component,far)",t.where_,name))
                 continue
             }
-            if (t.queue || t.events) && (t.kind!=.Storage || t.queue && t.events) {
-                append(&g.errors,fmt.aprintf("%s: %s says queue or events: a storage of requests is @(storage,queue), one of what a library reports is @(storage,events), and none is both",pkg.folder,name))
+            if _,old:=options["events"];old {
+                append(&g.errors,fmt.aprintf("%s: %s says events, which is no option: what a library reports is a field core.Events(T) of a @(storage), which its owner pushes to and never clears; take events out and make its core.Queue(T) a core.Events(T)",t.where_,name))
+                continue
+            }
+            if record,is_struct:=decl.values[0].derived.(^ast.Struct_Type);is_struct && is_storage {
+                for field in record.fields.list {
+                    call,is_call:=field.type.derived.(^ast.Call_Expr)
+                    if !is_call || type_key(g,file,pkg,call.expr)!="mirai:core.Events" {continue}
+                    for n in field.names {append(&t.logs,ident_name(n))}
+                }
+            }
+            if t.queue && (t.kind!=.Storage || len(t.logs)>0) {
+                append(&g.errors,fmt.aprintf("%s: %s says queue: a storage of requests is @(storage,queue), and it holds no core.Events, which are what a library reports",t.where_,name))
                 continue
             }
             if t.kind==.Component {field_comments(&t.fields,decl.values[0])}
             for lock in strings.fields(t.lock_names) {append(&t.locks,qualified(g,file,pkg,lock))}
             if t.setting!=.None && (t.kind!=.Storage || t.place==.Editor) {
-                append(&g.errors,fmt.aprintf("%s: %s is a setting: mark it @(storage,setting) or @(storage,setting=\"machine\") in a library",pkg.folder,name))
+                append(&g.errors,fmt.aprintf("%s: %s is a setting: mark it @(storage,setting) or @(storage,setting=\"machine\") in a library",t.where_,name))
                 continue
             }
             if t.by_world && (t.kind!=.Storage || t.place!=.Shared || t.setting!=.None) {
-                append(&g.errors,fmt.aprintf("%s: %s is by_world: a storage of the application with a value for each World is @(storage,host,by_world) in a library, and is not a setting",pkg.folder,name))
+                append(&g.errors,fmt.aprintf("%s: %s is by_world: a storage of the application with a value for each World is @(storage,host,by_world) in a library, and is not a setting",t.where_,name))
                 continue
             }
-            if t.persist && (t.kind!=.Storage || t.place!=.World || t.queue || t.events || t.setting!=.None || t.copy=="false" || t.reset!="") {
-                append(&g.errors,fmt.aprintf("%s: %s says persist: the progress of the player is a plain @(storage,persist) of a library; not a component, a storage of the application, a queue, events, a setting, nor one that resets or is not copied",pkg.folder,name))
+            if t.persist && (t.kind!=.Storage || t.place!=.World || t.queue || len(t.logs)>0 || t.setting!=.None || t.copy=="false" || t.reset!="") {
+                append(&g.errors,fmt.aprintf("%s: %s says persist: the progress of the player is a plain @(storage,persist) of a library; not a component, a storage of the application, a queue, events, a setting, nor one that resets or is not copied",t.where_,name))
                 continue
             }
             if t.copy_kept!="" && (t.kind!=.Storage || t.place!=.World || t.copy=="false") {
-                append(&g.errors,fmt.aprintf("%s: %s says copy_kept, the copy of a storage of the World that a history keeps: write it on a @(storage) of a library that is copied",pkg.folder,name))
+                append(&g.errors,fmt.aprintf("%s: %s says copy_kept, the copy of a storage of the World that a history keeps: write it on a @(storage) of a library that is copied",t.where_,name))
                 continue
             }
             if (t.keep || t.reset!="") && (t.kind!=.Storage || t.place!=.World) {
-                append(&g.errors,fmt.aprintf("%s: %s says keep or reset, which are of a storage of the World: clearing a World resets its storages, and the others have no World to follow",pkg.folder,name))
+                append(&g.errors,fmt.aprintf("%s: %s says keep or reset, which are of a storage of the World: clearing a World resets its storages, and the others have no World to follow",t.where_,name))
                 continue
             }
             if (t.keep || t.reset!="") && (t.setting!=.None || t.copy=="false") || t.keep && t.reset!="" {
-                append(&g.errors,fmt.aprintf("%s: %s says keep or reset and survives clearing the World already as a setting or with copy=false, or says both: a storage that the World resets says reset=\"proc\" when it needs more than its default, one that survives says keep",pkg.folder,name))
+                append(&g.errors,fmt.aprintf("%s: %s says keep or reset and survives clearing the World already as a setting or with copy=false, or says both: a storage that the World resets says reset=\"proc\" when it needs more than its default, one that survives says keep",t.where_,name))
                 continue
             }
             if t.key in g.by_key {
-                append(&g.errors,fmt.aprintf("%s: %s is declared twice",pkg.folder,name))
+                append(&g.errors,fmt.aprintf("%s: %s is declared twice",t.where_,name))
                 continue
             }
             g.by_key[t.key]=t
@@ -963,11 +979,11 @@ types_settle :: proc(g:^Generator) {
         for lock in t.locks {
             target,found:=g.by_key[lock]
             if !found || target.kind!=.Component {
-                append(&g.errors,fmt.aprintf("%s: %s locks %s, which is not a component",t.pkg.folder,t.name,lock))
+                append(&g.errors,fmt.aprintf("%s: %s locks %s, which is not a component",t.where_,t.name,lock))
             } else if !target.shared {
-                append(&g.errors,fmt.aprintf("%s: %s locks %s, which is not @(component,shared): only a table with several writers has owners by entity",t.pkg.folder,t.name,target.name))
+                append(&g.errors,fmt.aprintf("%s: %s locks %s, which is not @(component,shared): only a table with several writers has owners by entity",t.where_,t.name,target.name))
             } else if target.place!=t.place {
-                append(&g.errors,fmt.aprintf("%s: %s locks %s, which is in another place of the world: a row owns rows of its own World, Shared or Editor",t.pkg.folder,t.name,target.name))
+                append(&g.errors,fmt.aprintf("%s: %s locks %s, which is in another place of the world: a row owns rows of its own World, Shared or Editor",t.where_,t.name,target.name))
             }
         }
     }
@@ -1183,12 +1199,12 @@ param_read :: proc(g:^Generator,file:^ast.File,pkg:^Package,expr:^ast.Expr) -> (
         case wrapper=="mirai:core.Table" && pointer && inner.kind==.Component: return {kind=.Table_Write,type=inner},true
         case wrapper=="mirai:core.Read" && !pointer && inner.kind==.Component: return {kind=.Table_Read,type=inner},true
         case wrapper=="mirai:core.Ref" && !pointer && inner.kind==.Storage: return {kind=.Storage_Ref,type=inner},true
+        case wrapper=="mirai:core.Stamp" && !pointer && inner.kind==.Storage && inner.place==.World: return {kind=.Storage_Stamp,type=inner},true
         }
         return
     }
     key:=type_key(g,file,pkg,e)
     switch key {
-    case "mirai:core.Entities": return {kind=.Entities,type=nil},pointer
     case "mirai:core.Commands": return {kind=.Commands,type=nil},!pointer
     case "mirai:core.World_Ref": return {kind=.World_Ref,type=nil},!pointer
     case "mirai:host.App": return {kind=.App,type=nil},pointer
@@ -1225,12 +1241,12 @@ type_key :: proc(g:^Generator,file:^ast.File,pkg:^Package,expr:^ast.Expr) -> str
 rules_check :: proc(g:^Generator) {
     for t in g.types {
         if t.by_world && "mirai:core.World_Id" not_in g.by_key {
-            append(&g.errors,fmt.aprintf("%s: %s is by_world, and the world has no core.World_Id to know whose value a function gets",t.pkg.folder,t.name))
+            append(&g.errors,fmt.aprintf("%s: %s is by_world, and the world has no core.World_Id to know whose value a function gets",t.where_,t.name))
         }
         if !t.persist {continue}
         if field,what,fix:=persist_unkept(g,t.file,t.pkg,t.value,"",0);what!="" {
             at:=field==""?t.name:fmt.aprintf("%s.%s",t.name,field)
-            append(&g.errors,fmt.aprintf("%s: %s says persist and %s is %s, which the profile of the player does not keep: the profile holds plain data; %s",t.pkg.folder,t.name,at,what,fix))
+            append(&g.errors,fmt.aprintf("%s: %s says persist and %s is %s, which the profile of the player does not keep: the profile holds plain data; %s",t.where_,t.name,at,what,fix))
         }
     }
     for r in g.records {
@@ -1296,7 +1312,7 @@ rules_check :: proc(g:^Generator) {
         for a,i in s.params {
             for b in s.params[i+1:] {
                 if a.bundle==nil && b.bundle==nil || !same_datum(a,b) || !writes(a) && !writes(b) {continue}
-                what:=a.type!=nil?a.type.name:"Entities"
+                what:=a.type.name
                 fix:="receive the two @(params) in different steps, or declare one without that field"
                 if a.bundle==b.bundle && a.arg==b.arg {fix=fmt.tprintf("take %s or %s out of %s",a.name,b.name,a.bundle.name)}
                 else if a.bundle==b.bundle {fix=fmt.tprintf("receive %s once",a.bundle.name)}
@@ -1309,30 +1325,18 @@ rules_check :: proc(g:^Generator) {
             append(&g.errors,fmt.aprintf("%s: %s runs in release, which the application runs from the game loop when it frees a World: release what a library keeps by World in a library, with the game loop",s.where_,s.name))
         }
     }
-    // One writer of a table that is not shared, in each loop.
+    // A table or a storage is the state of one library, whose functions write
+    // it in the order of the loop: the functions of another push to a queue
+    // of it, or it says it is shared.
     loops:=LOOPS
     for loop in 0..<2 {
-        writers:=make(map[^Type]^Step,context.temp_allocator)
-        for s in g.steps {
-            if !s.loops[loop] {continue}
-            for param in s.params {
-                if param.kind!=.Table_Write || param.type.shared {continue}
-                if other,taken:=writers[param.type];taken && other!=s {
-                    append(&g.errors,fmt.aprintf("%s: %s and %s write %s in the %s loop; a table that is not @(component,shared) has one writer: the other sends a request through a storage",s.where_,other.name,s.name,param.type.name,loops[loop]))
-                }
-                writers[param.type]=s
-            }
-        }
-        // A storage is the state of one library: the functions of another
-        // push to it when it is a queue, or write it in the order of the loop
-        // when it says it is shared.
         owners:=make(map[^Type]^Step,context.temp_allocator)
         for s in g.steps {
             if !s.loops[loop] {continue}
             for param in s.params {
-                if param.kind!=.Storage_Write || param.type.queue || param.type.shared {continue}
+                if !writes(param) || param.type.shared {continue}
                 if other,taken:=owners[param.type];taken && other.pkg!=s.pkg {
-                    append(&g.errors,fmt.aprintf("%s: %s of %s and %s of %s write %s in the %s loop; a storage is the state of one library: the other sends a request through a storage marked @(storage,queue), or the storage says @(storage,shared) when several libraries write it in the order of the loop",s.where_,other.name,other.pkg.name,s.name,s.pkg.name,param.type.name,loops[loop]))
+                    append(&g.errors,fmt.aprintf("%s: %s of %s and %s of %s write %s in the %s loop; a table or a storage has one writing library: %s sends a request through a @(storage,queue) of %s, which a function of %s takes and applies, or %s says shared when several libraries write it in the order of the loop",s.where_,other.name,other.pkg.name,s.name,s.pkg.name,param.type.name,loops[loop],s.name,param.type.pkg.name,param.type.pkg.name,param.type.name))
                 }
                 owners[param.type]=s
             }
@@ -1355,10 +1359,8 @@ rules_check :: proc(g:^Generator) {
                     if param.type.replication!=.None {
                         append(&g.errors,fmt.aprintf("%s: %s runs only in ui or render and writes %s, which is replicated: a dedicated server runs neither and would send what the scene says; write it in input, fixed, frame or late",s.where_,s.name,param.type.name))
                     }
-                case .Entities:
-                    append(&g.errors,fmt.aprintf("%s: %s runs only in ui or render and receives ^core.Entities, which creates and destroys entities, as a dedicated server would not: create them in input, fixed, frame or late; to ask only whether an entity is alive or off, receive core.Ref(core.Entities), which also leaves the tables unsettled after it",s.where_,s.name))
                 case .Commands:
-                    append(&g.errors,fmt.aprintf("%s: %s runs only in ui or render and creates or destroys entities, which a dedicated server would not: create them in input, fixed, frame or late",s.where_,s.name))
+                    append(&g.errors,fmt.aprintf("%s: %s runs only in ui or render and receives core.Commands, which creates and destroys entities, as a dedicated server would not: create them in input, fixed, frame or late; to ask only whether an entity is alive or off, receive core.Ref(core.Entities), which also leaves the tables unsettled after it",s.where_,s.name))
                 }
             }
             if param.type==nil || !writes(param) {continue}
@@ -1368,30 +1370,10 @@ rules_check :: proc(g:^Generator) {
     for s in g.steps {
         if !s.loops[0] || step_shown(s) {continue}
         for param in s.params {
-            if param.type==nil || param.type.queue || param.type.events || run_written[param.type] {continue}
+            if param.type==nil || param.type.queue || len(param.type.logs)>0 || run_written[param.type] {continue}
             writer,shown_only:=shown_writer[param.type]
             if !shown_only {continue}
             append(&g.errors,fmt.aprintf("%s: %s reads %s, which only %s writes, in ui or render: a dedicated server runs neither and there %s keeps the value it starts with; write it in input, fixed, frame or late, or read it in ui or render",s.where_,s.name,param.type.name,writer.name,param.type.name))
-        }
-    }
-    // A frame runs any number of ticks: a fixed step would see twice, or never,
-    // what only the frame fills and empties.
-    filled_outside:=make(map[^Type]^Step,context.temp_allocator)
-    filled_in_fixed:=make(map[^Type]bool,context.temp_allocator)
-    for s in g.steps {
-        if !s.loops[0] {continue}
-        for param in s.params {
-            if param.kind!=.Storage_Write || !param.type.events {continue}
-            if s.phases[FIXED_PHASE] {filled_in_fixed[param.type]=true} else {filled_outside[param.type]=s}
-        }
-    }
-    for s in g.steps {
-        if !s.loops[0] || !s.phases[FIXED_PHASE] {continue}
-        for param in s.params {
-            if param.type==nil || !param.type.events || param.kind==.Storage_Write || filled_in_fixed[param.type] {continue}
-            writer,outside:=filled_outside[param.type]
-            if !outside {continue}
-            append(&g.errors,fmt.aprintf("%s: %s runs in fixed and reads %s, which only %s fills, and which is emptied every frame: a frame runs any number of ticks, so a tick would see it twice or never; read it in a frame step",s.where_,s.name,param.type.name,writer.name))
         }
     }
     // A cycle is reported once, also when its steps share several phases.
@@ -1468,16 +1450,12 @@ names_split :: proc(names:^[dynamic]string,text:string) {
 }
 
 @(private="file")
-same_datum :: proc(a,b:Param) -> bool {
-    if a.type!=nil || b.type!=nil {return a.type==b.type}
-    entities :: proc(p:Param) -> bool {return p.kind==.Entities || p.kind==.Entities_Read}
-    return entities(a) && entities(b)
-}
+same_datum :: proc(a,b:Param) -> bool {return a.type!=nil && a.type==b.type}
 
 // A queue is pushed by many: pushing to it is not writing it.
 @(private="file")
 writes :: proc(p:Param) -> bool {
-    return p.kind==.Table_Write || p.kind==.Entities || p.kind==.Storage_Write && !p.type.queue
+    return p.kind==.Table_Write || p.kind==.Storage_Write && !p.type.queue
 }
 
 @(private="file")
@@ -1686,7 +1664,7 @@ order_visit :: proc(o:^Ordering,s:^Step) -> bool {
 step_whole :: proc(g:^Generator,s:^Step) -> bool {
     disabled,parent:=g.by_key["mirai:core.Disabled"],g.by_key["mirai:core.Parent"]
     for param in s.params {
-        if param.kind==.Entities || param.kind==.Commands || param.kind==.World_Ref {return true}
+        if param.kind==.Commands || param.kind==.World_Ref {return true}
         if param.kind==.Table_Write && (param.type==disabled || param.type==parent) {return true}
     }
     return false
@@ -1722,6 +1700,38 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     }
     fmt.sbprint(w,"\n")
 
+    // The functions as info.steps lists them: where each one adds its time.
+    kept:=make([dynamic]^Step,context.temp_allocator)
+    index_of:=make(map[^Step]int,context.temp_allocator)
+    for s in g.steps {
+        if editor || !s.pkg.editor {
+            index_of[s]=len(kept)
+            append(&kept,s)
+        }
+    }
+
+    // Where each step that reads the occurrences of a storage left off in each
+    // of its logs: for a step of fixed, which a rollback runs again, in a
+    // storage copied with the World; for the others, in the World, with its
+    // frame. A log a fixed step reads waits for a tick before it ages.
+    reads_log :: proc(p:Param) -> bool {
+        return p.type!=nil && len(p.type.logs)>0 && p.type.place==.World && (p.kind==.Storage_Ref || p.kind==.Storage_Value)
+    }
+    cursor_of:=make(map[[2]rawptr]int,context.temp_allocator)
+    cursors:[2]int // of the frame, of the ticks
+    waits_tick:=make(map[^Type]bool,context.temp_allocator)
+    for step in kept {
+        ticks:=int(step.phases[FIXED_PHASE])
+        for param in step.params {
+            key:=[2]rawptr{step,param.type}
+            if !reads_log(param) || key in cursor_of {continue}
+            cursor_of[key]=cursors[ticks]
+            cursors[ticks]+=len(param.type.logs)
+            if ticks==1 {waits_tick[param.type]=true}
+        }
+    }
+    if cursors[1]>0 {fmt.sbprintf(w,"Event_Cursors :: struct {{seen:[%d]u64}}\n\n",cursors[1])}
+
     places:=[3]core.Place{.World,.Shared,.Editor}
     struct_names:=[3]string{"World","Shared","Editor"}
     // Each storage by its index in info.storages, where its revision is.
@@ -1731,7 +1741,11 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     }
     for place,pi in places {
         fmt.sbprintf(w,"%s :: struct {{\n",struct_names[pi])
-        if place==.World {fmt.sbprintf(w,"    entities:%s.Entities,\n    storage_revisions:[%d]u64,\n",core_alias,len(storage_index))}
+        if place==.World {
+            fmt.sbprintf(w,"    entities:%s.Entities,\n    storage_revisions:[%d]u64,\n",core_alias,len(storage_index)+int(cursors[1]>0))
+            if cursors[1]>0 {fmt.sbprint(w,"    event_cursors:Event_Cursors,\n")}
+            if cursors[0]>0 {fmt.sbprintf(w,"    frame_cursors:[%d]u64,\n",cursors[0])}
+        }
         for t in g.types {
             if t.place!=place || !included(t,editor) {continue}
             if t.kind==.Component {fmt.sbprintf(w,"    %s:%s.Table(%s.%s),\n",t.field,core_alias,t.pkg.alias,t.name)}
@@ -1750,16 +1764,6 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     fmt.sbprint(w,"}\n\n")
 
     world_id:=g.by_key["mirai:core.World_Id"]
-
-    // The functions as info.steps lists them: where each one adds its time.
-    kept:=make([dynamic]^Step,context.temp_allocator)
-    index_of:=make(map[^Step]int,context.temp_allocator)
-    for s in g.steps {
-        if editor || !s.pkg.editor {
-            index_of[s]=len(kept)
-            append(&kept,s)
-        }
-    }
 
     // Each function as the loops call it, with its binding, its settle and
     // its time: the loops call these in order, and core.world_run a part of them.
@@ -1797,16 +1801,18 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
             case .Storage_Write:
                 if param.type.by_world {fmt.sbprintf(&args,"%s.by_world_get(&%s.%s,w.%s)",core_alias,holder,param.type.field,world_id.field)} else {fmt.sbprintf(&args,"&%s.%s",holder,param.type.field)}
             case .Storage_Ref:
-                if param.type.by_world {fmt.sbprintf(&args,"%s.ref(%s.by_world_get(&%s.%s,w.%s))",core_alias,core_alias,holder,param.type.field,world_id.field)} else {fmt.sbprintf(&args,"%s.ref(&%s.%s)",core_alias,holder,param.type.field)}
-            case .Storage_Value: fmt.sbprintf(&args,"%s.%s",holder,param.type.field)
-            case .Entities: fmt.sbprint(&args,"&w.entities")
+                if reads_log(param) {fmt.sbprintf(&args,"%s.ref(&view_%s)",core_alias,param.type.field)} else if param.type.by_world {fmt.sbprintf(&args,"%s.ref(%s.by_world_get(&%s.%s,w.%s))",core_alias,core_alias,holder,param.type.field,world_id.field)} else {fmt.sbprintf(&args,"%s.ref(&%s.%s)",core_alias,holder,param.type.field)}
+            case .Storage_Value:
+                if reads_log(param) {fmt.sbprintf(&args,"view_%s",param.type.field)} else {fmt.sbprintf(&args,"%s.%s",holder,param.type.field)}
+            case .Storage_Stamp: fmt.sbprintf(&args,"%s.Stamp(%s.%s){{&w.storage_revisions[%d]}}",core_alias,param.type.pkg.alias,param.type.name,storage_index[param.type])
             case .Entities_Read: fmt.sbprintf(&args,"%s.ref(&w.entities)",core_alias)
             case .Commands: fmt.sbprintf(&args,"%s.commands(w,app.info)",core_alias)
             case .World_Ref: fmt.sbprintf(&args,"%s.world_ref(w,app.info)",core_alias)
             case .App: fmt.sbprint(&args,"app")
             case .App_Part:
                 parts:=APP_PARTS
-                fmt.sbprint(&args,parts[param.part].value)
+                value:=parts[param.part].value
+                if strings.has_prefix(value,"host.") {fmt.sbprintf(&args,"%s.%s",host_alias,value[5:])} else {fmt.sbprint(&args,value)}
             case .Records:
                 index,_:=slice.linear_search(g.records[:],param.record)
                 fmt.sbprintf(&args,"%s.Records(%s.%s){{%s.app_record_set(app,%d)}}",core_alias,param.record.pkg.alias,param.record.name,host_alias,index)
@@ -1832,6 +1838,20 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
             again:=false
             for other in step.params[:pi] {again||=other.kind==.Storage_Write && other.type==param.type}
             if !again {fmt.sbprintf(w,"    w.storage_revisions[%d]+=1\n",storage_index[param.type])}
+        }
+        // Of a log it reads, the step is handed what came since it last ran.
+        ticks:=step.phases[FIXED_PHASE]
+        for param,pi in step.params {
+            at,reads:=cursor_of[[2]rawptr{step,param.type}]
+            if !reads || !reads_log(param) {continue}
+            again:=false
+            for other in step.params[:pi] {again||=other.type==param.type && reads_log(other)}
+            if again {continue}
+            fmt.sbprintf(w,"    view_%s:=w.%s\n",param.type.field,param.type.field)
+            for log,li in param.type.logs {
+                fmt.sbprintf(w,"    %s.events_read(&view_%s.%s,&w.%s[%d])\n",core_alias,param.type.field,log,ticks?"event_cursors.seen":"frame_cursors",at+li)
+            }
+            if ticks {fmt.sbprintf(w,"    w.storage_revisions[%d]+=1\n",len(storage_index))}
         }
         fmt.sbprintf(w,"    started:=gen_time.tick_now()\n    zone:=%s.profile_step_begin(app,%d)\n",host_alias,si)
         if strings.builder_len(checks)>0 {
@@ -1872,6 +1892,19 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
             fmt.sbprint(w,"\n")
         }
     }
+
+    // What every reader of the logs has had a frame and a tick to read goes.
+    aged:=false
+    for pass in 0..<2 {
+        for t in g.types {
+            if len(t.logs)==0 || t.place!=.World || !included(t,editor) || waits_tick[t]!=(pass==1) {continue}
+            if !aged {fmt.sbprint(w,"events_age :: proc(world:rawptr,ticked:bool) {\n    w:=cast(^World)world\n")}
+            aged=true
+            // An aged log is another: the copy of what changed takes its storage again.
+            for log in t.logs {fmt.sbprintf(w,"    if %s%s.events_age(&w.%s.%s) {{w.storage_revisions[%d]+=1}}\n",pass==1?"ticked && ":"",core_alias,t.field,log,storage_index[t])}
+        }
+    }
+    if aged {fmt.sbprint(w,"}\n\n")}
 
     // Defaults are also metadata for storage providers and project settings.
     defaults:=make(map[^Type]string,context.temp_allocator)
@@ -1969,7 +2002,8 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
         fmt.sbprintf(w,"    tables[%d]={{\"%s\",\"%s\",typeid_of(%s.%s),type_info_of(%s.%s),offset_of(%s,%s),.%v,%v,.%v,%v,%s,%q,%s,%v,%v,%v,%s,false}}\n",i,t.name,t.pkg.name,t.pkg.alias,t.name,t.pkg.alias,t.name,struct_names[int(t.place)],t.field,t.place,t.shared,t.replication,game,defaults[t] or_else "nil",t.description,fields,t.single,t.far,t.pkg.path=="mirai:core",locks)
         i+=1
     }
-    fmt.sbprintf(w,"    storages:=make([]%s.Storage_Info,%d)\n",core_alias,count_kind(g,.Storage,editor))
+    fmt.sbprintf(w,"    storages:=make([]%s.Storage_Info,%d)\n",core_alias,len(storage_index)+int(cursors[1]>0))
+    if cursors[1]>0 {fmt.sbprintf(w,"    storages[%d]={{name=\"Event_Cursors\",library=\"world\",type=typeid_of(Event_Cursors),info=type_info_of(Event_Cursors),offset=offset_of(World,event_cursors)}}\n",len(storage_index))}
     i=0
     for t in g.types {
         if t.kind!=.Storage || !included(t,editor) {continue}
@@ -2051,6 +2085,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     fmt.sbprint(w,"    info.named_types,info.names,info.name_bits,info.actions=named_types,names,name_bits,actions\n")
     fmt.sbprint(w,"    info.records=records\n")
     fmt.sbprint(w,"    info.draws=draws\n")
+    if aged {fmt.sbprint(w,"    info.events_age=events_age\n")}
     for loop in 0..<(editor?2:1) {
         for phase in 0..<len(PHASES) {
             if defined[loop][phase] {fmt.sbprintf(w,"    info.loops[.%s][.%s],info.order[.%s][.%s]=%s_%s,order_%s_%s[:]\n",loop==0?"Game":"Editor",titles[phase],loop==0?"Game":"Editor",titles[phase],loops[loop],phases[phase],loops[loop],phases[phase])}

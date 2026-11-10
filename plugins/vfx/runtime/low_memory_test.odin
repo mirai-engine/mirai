@@ -3,7 +3,6 @@ package vfx
 import "base:runtime"
 import "core:testing"
 import "mirai:core"
-import "mirai:std/base"
 
 // An allocator that serves `remaining` requests of its owner and refuses the rest.
 @(private="file")
@@ -54,7 +53,7 @@ a_channel_without_memory_waits_with_its_births :: proc(t:^testing.T) {
     defer delete(clocks.channels)
     if !testing.expect(t,resize(&clocks.channels,1)==nil) {return}
     ring:=&clocks.channels[0]
-    ring.name,ring.count,ring.emitted=base.name_hash("impacts"),1,1
+    ring.name,ring.count,ring.emitted=core.birth_channel("impacts"),1,1
     problems:core.Problems
     given,waited:=false,false
     for served:=0;!given && served<8;served+=1 {

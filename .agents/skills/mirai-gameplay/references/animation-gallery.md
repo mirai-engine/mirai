@@ -2,8 +2,8 @@
 
 `demo/assets/animation_gallery/animation.scene` is the only animation scene of the demo: a hall that
 the player walks with Mirai (`source/models/mirai/mirai.glb`), with one numbered station per feature
-on each side of the walkway. `tools/demo_content --animation-only` writes it with its clips,
-programs and profiles ([generated content](demo.md#generated-content)).
+on each side of the walkway. The scene is authored; `tools/demo_content --animation-only` writes
+its clips, programs, profiles, rigs and meshes ([generated content](demo.md#generated-content)).
 
 ## Invariants
 
@@ -33,9 +33,13 @@ programs and profiles ([generated content](demo.md#generated-content)).
   retarget](../../mirai-animation/references/animation.md#offline-and-live-retarget)).
 - The warp station walks between goals on either side of its origin and is never put back: it
   turns in place toward the next goal with its motor off, then strides by root motion warped to
-  end there. Each goal is a share of what its stride covers unwarped (`stride`, measured when
-  generating), 0.8 to 1.2 on its own and 0.7 to 1.3 from its panel: a warp corrects what a clip
-  nearly covers, and a goal far from it makes the feet slide.
+  end there. Each goal is a share of what its stride covers unwarped (`stride` of its
+  `Animation_Gallery`, which the scene keeps equal to what the stride clip covers), 0.8 to 1.2 on
+  its own and 0.7 to 1.3 from its panel: a warp corrects what a clip nearly covers, and a goal far
+  from it makes the feet slide.
+- The constraints of the IK station and of the three rigs aim at points of the world: the tool
+  puts them where the scene has those stations (`gallery_place`), so moving one of them in the
+  scene moves its points in the tool too.
 - The manual adjustments and the UI queue belong to the Play world and are discarded when it stops.
 
 ## Code (`demo/game`)

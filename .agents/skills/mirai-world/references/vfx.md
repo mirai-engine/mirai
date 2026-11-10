@@ -8,7 +8,7 @@ editor (inspector, document, thumbnails and `particle.*`) is in [its reference](
 
 ## Format
 
-`plugins/vfx/runtime/effect` (`effect.KIND` `PART`, `.particle`, `effect.VERSION`; another
+`plugins/vfx/runtime/effect` (`effect.KIND` `PART`, `.particle`, `effect.VERSION` 2; another
 version asks to write it again). An effect is like a material: entities name it
 (`vfx.Particle_Emitter`) and give it values of their own (`vfx.Particle_Override`, and
 `vfx.Particle_Parameters` for its program). Tables: `particle` (`Particle_Info`), `parameters`
@@ -37,7 +37,7 @@ version asks to write it again). An effect is like a material: entities name it
     `R_axis` turns about the normalized `spin_axis`, and `F` is the frame of `facing`: `Entity` the
     axes of the simulation space; `Camera_Position` X toward the camera, Z = X × up with up = world
     +Y (world ∓X when X is within 0.99 of it), Y = Z × X; `Camera_Plane` the same with X = −camera
-    forward and up = camera up. `Random` (the default) turns about an axis of each
+    forward and up = camera up. `Random` (the default) keeps the old turn about an axis of each
     particle's own instead of `F · R_axis` and ignores `spin_axis`; `mesh_rotation` and
     `mesh_scale` apply to every facing. Zeros stand for X, no turn and a scale of one
     (`particle_mesh_placement`).
@@ -231,15 +231,18 @@ layer, `x` is the density and `y` how much it glows. A flat grid is not drawn (p
 
 ## Channels
 
-A game gives births to a channel (`channel_emit` over `Particle_Channels`, a world queue): where,
+A game gives births to a channel (`core.Births`, a world queue of `core`: whoever pushes does not
+import `vfx`): where,
 with what velocity, color, size, how many and values that its programs read
 (`Mirai_Vfx_Context.values`). Each emitter with a `Particle_Channel` of that channel starts
 particles of its effect at each one, besides its own; a program reads them through a `channel`
 resource.
 
-- A channel is a name, keyed by `base.name_hash` as a [data channel](#data-channels) is: whoever
-  pushes and whoever listens say it as text, so no plugin or game allocates ids. A program's
-  `channel` resource reads the channel whose name is its own (`channel_needs`).
+- A channel is a name ([births](../../mirai-core/references/core.md#births)), keyed as a
+  [data channel](#data-channels) is: whoever pushes and whoever listens say it as text
+  (`fluids` `brushes` and `displacers`, `water` `splashes`, `terrain` `dust`, the demo's
+  `impacts`). A program's `channel` resource reads the channel whose name is its own
+  (`channel_needs`).
 
 - A silent `Particle_Channel` (`silent`) starts no particles: its program reads the births alone,
   through a `channel` resource of the same name (the brushes of the `fluids` plugin).
@@ -455,7 +458,8 @@ In the `Simulate` stage, per step:
 - **simulate**: one thread per slot of each program's span; `_hw` variant.
   - Program, acceleration, value-noise rotor with analytic derivatives (no sources), attractor and
     drag.
-  - `World` collision with `trace_ray` and the triangle's normal.
+  - `Screen` collision against the depth and normal of this frame's G-buffer, or `World` with
+    `trace_ray` and the triangle's normal.
   - Deaths to the free list; death or hit events, and reports of those that the emitter's `report`
     names.
   - In the last step: the live ones to the draw list and, the `lit` ones, their light (sun with
@@ -478,9 +482,6 @@ In each view:
 
 - **volumes** (`Blend`): the volumes' media, before the sprites.
 - **sprites** (`Blend`): over the lit image, before TAA; the emitters from farthest to nearest.
-  Both go behind the media of the view (`pass_media`, `media_over`): fog dims what they send and
-  adds what it scatters over what they cover, at the place of each sprite and where the ray first
-  meets a volume.
   - `Billboard` (faces the camera, with rotation), `Velocity` (stretched according to `stretch`),
     `Horizontal` (plane in XZ) and `Ribbon` (each particle joined to the next in the list).
   - `Mesh` particles whose material blends (alpha mode `blend`, `Emitter_Desc.blended`): their

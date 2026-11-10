@@ -17,11 +17,11 @@ mine_light :: proc(mines:^core.Table(Mine),e:core.Entity,time:core.Time) {
 }
 
 @(step="fixed",server)
-game_mines :: proc(mines:core.Read(Mine),es:^core.Entities,time:core.Time) {
+game_mines :: proc(mines:core.Read(Mine),commands:core.Commands,time:core.Time) {
     for row in 0..<core.count(mines) {
         mine:=core.at(mines,row)
         if mine.bang_at==0 || !core.due(time,mine.bang_at) {continue}
-        core.destroy(es,core.entity_at(mines,row))
+        core.destroy(commands,core.entity_at(mines,row))
     }
 }
 ```

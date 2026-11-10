@@ -532,9 +532,9 @@ modifier_take :: proc(runtime:^Modifier_Runtime,requests:^Modifier_Requests,conf
 
 @(step="fixed",loops="game editor",stage="apply")
 animation_sample :: proc(animations:core.Read(Animation),progress:^core.Table(Animation_Progress),configs:core.Read(Pose_Modifiers),attachments:core.Read(Bone_Attachment),transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),hierarchy:core.Ref(core.Hierarchy),names:core.Read(core.Name),targets:core.Read(Animation_Target),meshes:core.Read(erender.Mesh_Renderer),sources:core.Read(Pose_Source),requests:^Animation_Requests,events:^Animation_Events,goals:^Modifier_Requests,runtime:^Modifier_Runtime,playback:^Playback,assets:^Pose_Assets,skeletons:^Skeleton_Assets,app:^host.App,time:core.Time,frame:core.Frame_Time,problems:^core.Problems,blends:^Blend_Assets,matches:^Match_Assets,actions:^Action_Runtime,action_assets:^Actions_Assets,motion:^Motion_Runtime,motion_requests:^Motion_Requests,motion_assets:^Motion_Assets,content_sources:^Source_Assets,paces:core.Read(core.Own_Pace),clock:core.Clock,budget:Animation_Budget_Config) {
-    if app.assets==nil {playback.frame+=1;clear(&events.items);return}
-    if !rigs_update(playback,meshes,sources,app.assets) {memory_problem(problems,core.NONE,"the list of rigs, so nothing is animated in this tick");playback.frame+=1;clear(&events.items);return}
-    if !modifier_prepare(runtime,configs,animations,attachments,assets,skeletons,playback,app.assets,app.allocator,problems) {playback.frame+=1;clear(&events.items);return}
+    if app.assets==nil {playback.frame+=1;return}
+    if !rigs_update(playback,meshes,sources,app.assets) {memory_problem(problems,core.NONE,"the list of rigs, so nothing is animated in this tick");playback.frame+=1;return}
+    if !modifier_prepare(runtime,configs,animations,attachments,assets,skeletons,playback,app.assets,app.allocator,problems) {playback.frame+=1;return}
     // A look is a goal of the first Look of the pose profile.
     for goal in core.take(&requests.looks) {modifier_goal(goals,goal)}
     modifier_take(runtime,goals,configs,problems)

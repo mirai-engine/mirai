@@ -6,7 +6,6 @@ import inp "mirai:engine/input"
 import "mirai:engine/scene"
 import "mirai:std/base"
 import mm "mirai:std/math"
-import vfx "plugins:vfx/runtime"
 
 VFX_GALLERY_STATIONS :: 5
 
@@ -37,7 +36,7 @@ VFX_GALLERY_VIEW_DEFAULT :: Vfx_Gallery_View{station=-1}
 // its station.
 @(component)
 Vfx_Impacts :: struct {
-    channel:[vfx.CHANNEL_NAME_BYTES]u8 `mirai:"text"`,
+    channel:[core.CHANNEL_NAME_BYTES]u8 `mirai:"text"`,
     size:[2]f32 `mirai:"min=0,unit=m"`,
     interval:f32 `mirai:"min=0,unit=s"`,
     speed:f32 `mirai:"unit=m/s"`,
@@ -69,7 +68,7 @@ vfx_gallery_actions :: proc(views:^core.Table(Vfx_Gallery_View),actions:inp.Inpu
 }
 
 @(step="fixed")
-vfx_gallery_impacts :: proc(impacts:^core.Table(Vfx_Impacts),views:core.Read(Vfx_Gallery_View),worlds:core.Read(core.World_Transform),channels:^vfx.Particle_Channels,time:core.Time) {
+vfx_gallery_impacts :: proc(impacts:^core.Table(Vfx_Impacts),views:core.Read(Vfx_Gallery_View),worlds:core.Read(core.World_Transform),births:^core.Births,time:core.Time) {
     if !time.playing || !(time.dt>0) {return}
     view:=core.at(views,0) if core.count(views)>0 else VFX_GALLERY_VIEW_DEFAULT
     for row in 0..<core.count(impacts) {
@@ -89,7 +88,7 @@ vfx_gallery_impacts :: proc(impacts:^core.Table(Vfx_Impacts),views:core.Read(Vfx
             wall.hits+=1
             u,v:=vfx_gallery_random(wall.hits,1),vfx_gallery_random(wall.hits,2)
             at:=mm.transform_point(world.transform,{(u-0.5)*wall.size.x,(v-0.5)*wall.size.y,0})
-            vfx.channel_emit(channels,base.text_get(wall.channel[:]),vfx.Channel_Birth{position=at,velocity=out*wall.speed,count=wall.count})
+            core.push(&births.queue,core.Birth{channel=core.birth_channel(base.text_get(wall.channel[:])),position=at,velocity=out*wall.speed,count=wall.count})
         }
     }
 }

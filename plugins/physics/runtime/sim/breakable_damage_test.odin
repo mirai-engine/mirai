@@ -48,8 +48,8 @@ authored_clusters_release_root_then_children_then_leaves_and_replay :: proc(t:^t
     h,error:=test_authored_destructible(&w,true,settings)
     if !testing.expect_value(t,error,Breakable_Error.None) {return}
     testing.expect_value(t,break_group_count(&w,h),1)
-    snapshot:=make([]u8,world_snapshot_size(&w));defer delete(snapshot)
-    _,saved:=world_snapshot(&w,snapshot)
+    snapshot:World;defer world_destroy(&snapshot)
+    saved:=test_keep(&snapshot,&w)
     testing.expect(t,saved)
     events:[3]Break_Event
     events[0],_=breakable_strain(&w,h,{0,3,0},100,1000)
@@ -63,7 +63,7 @@ authored_clusters_release_root_then_children_then_leaves_and_replay :: proc(t:^t
     events[2],_,_=breakable_strain_body(&w,h,pieces[3].id,{1.1,3,0},100,1000)
     testing.expect_value(t,break_group_count(&w,h),4)
     final:=world_hash(&w)
-    testing.expect(t,world_restore(&w,snapshot))
+    testing.expect(t,test_restore(&w,&snapshot))
     for event in events {testing.expect(t,break_event_apply(&w,event))}
     testing.expect_value(t,world_hash(&w),final)
 }
@@ -172,8 +172,8 @@ passive_fragment_deadlines_survive_expiry_restore_and_explicit_removal_replay ::
         representative,body=piece.id,piece.body
         pose:=body_transform(&w,piece.body);body_rest(&w,piece.body,pose.p,pose.q)
     }
-    snapshot:=make([]u8,world_snapshot_size(&w));defer delete(snapshot)
-    _,saved:=world_snapshot(&w,snapshot);testing.expect(t,saved)
+    snapshot:World;defer world_destroy(&snapshot)
+    saved:=test_keep(&snapshot,&w);testing.expect(t,saved)
     test_steps(&w,5)
     ticks,expires:=breakable_body_remaining_ticks(&w,h,body)
     testing.expect(t,expires)
@@ -183,7 +183,7 @@ passive_fragment_deadlines_survive_expiry_restore_and_explicit_removal_replay ::
     testing.expect(t,removed && event.kind==.Remove)
     testing.expect_value(t,break_group_count(&w,h),3)
     final:=world_hash(&w)
-    testing.expect(t,world_restore(&w,snapshot))
+    testing.expect(t,test_restore(&w,&snapshot))
     test_steps(&w,5)
     testing.expect(t,break_event_apply(&w,event))
     testing.expect_value(t,world_hash(&w),final)
@@ -227,8 +227,8 @@ cutting_a_detached_group_preserves_its_deadline_mass_and_replay :: proc(t:^testi
         if !testing.expect(t,target.body!=0) {return}
         remaining,expires:=breakable_body_remaining_ticks(&w,h,target.body)
         mass:=breakable_mass(&w,h)
-        snapshot:=make([]u8,world_snapshot_size(&w));defer delete(snapshot)
-        _,saved:=world_snapshot(&w,snapshot);testing.expect(t,saved)
+        snapshot:World;defer world_destroy(&snapshot)
+        saved:=test_keep(&snapshot,&w);testing.expect(t,saved)
         pose:=body_transform(&w,target.body)
         event,cut:=breakable_slice_body(&w,h,target.id,xf_point(pose,target.center),{0,1,0})
         if !testing.expect(t,cut) {return}
@@ -240,7 +240,7 @@ cutting_a_detached_group_preserves_its_deadline_mass_and_replay :: proc(t:^testi
         testing.expect_value(t,break_group_count(&w,h),5)
         testing.expect(t,abs(breakable_mass(&w,h)-mass)<0.01)
         final:=world_hash(&w)
-        testing.expect(t,world_restore(&w,snapshot))
+        testing.expect(t,test_restore(&w,&snapshot))
         testing.expect(t,break_event_apply(&w,event))
         test_steps(&w,2)
         testing.expect_value(t,world_hash(&w),final)
