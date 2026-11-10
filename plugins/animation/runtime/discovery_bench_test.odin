@@ -24,15 +24,15 @@ bench_animation_optional_feature_discovery :: proc(t:^testing.T) {
         defer core.test_world_destroy(&w)
         for i in 0..<COUNT {
             entity:=core.create(&w.entities);description:=ANIMATION_DEFAULT
-            if i<feature_count {description.actions={3,4};description.motion={5,6}}
+            if i<feature_count {description.asset={3,4}}
             core.add(&w.descriptions,entity,description)
         }
         core.test_world_settle(&w)
         host_assets:host.Assets;app:=host.App{assets=&host_assets,allocator=context.allocator}
-        action_assets:=Actions_Assets{allocator=context.allocator};defer actions_assets_free(&action_assets)
-        append(&action_assets.contents,Action_Content{id={3,4},checked=1,revision=1,profile=action_test_profile(),valid=true})
-        motion_assets:=Motion_Assets{allocator=context.allocator};defer motion_assets_free(&motion_assets)
-        append(&motion_assets.contents,Motion_Content{id={5,6},checked=1,revision=1,profile=motion_test_profile(),valid=true})
+        characters:=Character_Assets{allocator=context.allocator};defer character_assets_free(&characters)
+        test_character_register(&host_assets,{3,4});defer test_registry_free(&host_assets)
+        profile,motion_profile:=action_test_profile(),motion_test_profile();defer {action_profile_free(&profile);motion_test_free(&motion_profile)}
+        test_character_seed(&characters,{3,4},{info={animation={1,2}},actions=profile,motion=motion_profile})
         actions:Action_Runtime;defer actions_runtime_free(&actions)
         motion:Motion_Runtime;defer motion_runtime_free(&motion)
         requests:Animation_Requests;defer {delete(requests.plays.items);delete(requests.values.items);delete(requests.looks.items)}
@@ -41,7 +41,7 @@ bench_animation_optional_feature_discovery :: proc(t:^testing.T) {
         playback:Playback;defer playback_free(&playback)
         problems:core.Problems
         for _ in 0..<2 {
-            if !testing.expect(t,actions_prepare(&actions,&requests,&action_assets,core.read(&w.descriptions),&playback,&events,app.assets,app.allocator,&problems) && motion_prepare(&motion,&targets,core.read(&w.descriptions),&playback,&motion_assets,app.assets,app.allocator,&problems)) {return}
+            if !testing.expect(t,actions_prepare(&actions,&requests,&characters,core.read(&w.descriptions),&playback,&events,&app,&problems) && motion_prepare(&motion,&targets,core.read(&w.descriptions),&playback,&characters,app.assets,app.allocator,&problems)) {return}
         }
         best:=max(time.Duration);valid:=true
         saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;app.allocator=context.allocator
@@ -49,8 +49,8 @@ bench_animation_optional_feature_discovery :: proc(t:^testing.T) {
             start:=time.tick_now()
             for tick in 0..<REPEATS {
                 if case_index==3 {core.edit_at(&w.descriptions,COUNT-1).weight=f32(tick&1)}
-                valid &&=actions_prepare(&actions,&requests,&action_assets,core.read(&w.descriptions),&playback,&events,app.assets,app.allocator,&problems)
-                valid &&=motion_prepare(&motion,&targets,core.read(&w.descriptions),&playback,&motion_assets,app.assets,app.allocator,&problems)
+                valid &&=actions_prepare(&actions,&requests,&characters,core.read(&w.descriptions),&playback,&events,&app,&problems)
+                valid &&=motion_prepare(&motion,&targets,core.read(&w.descriptions),&playback,&characters,app.assets,app.allocator,&problems)
             }
             best=min(best,time.tick_since(start))
         }

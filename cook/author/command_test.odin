@@ -166,6 +166,21 @@ the_commands_read_write_and_check_the_document_of_an_asset :: proc(t:^testing.T)
         code:=project_run(p,kind,verb,args,strings.to_writer(&output),strings.to_writer(&errors))
         return {code,strings.to_string(output),strings.to_string(errors)}
     }
+    // A file outside the assets, as git gives one to diff, reads as the asset with its id.
+    {
+        q:Project
+        if problem:=project_open(&q,root,engine,false);!testing.expect(t,problem=="",problem) {return}
+        defer project_close(&q)
+        q.info=&info
+        extensions:=KIND_EXTENSIONS
+        for named in ([2]struct{kind:Document_Kind,path:string}{{.Ui,"hud/hud.ui"},{.Scene,"arena/main.scene"}}) {
+            outside:=project.path(root,strings.concatenate({"outside",extensions[named.kind]},context.temp_allocator),allocator=context.temp_allocator)
+            testing.expect(t,os.write_entire_file(outside,file_bytes_at(root,strings.concatenate({"assets/",named.path},context.temp_allocator)))==nil)
+            of_asset:=on(&q,named.kind,"read",named.path)
+            of_file:=on(&q,named.kind,"read",outside)
+            testing.expectf(t,of_asset.code==0 && of_file.code==0 && of_file.out==of_asset.out,"%s: %s%s",named.path,of_file.out,of_file.err)
+        }
+    }
     written:=on(&p,.Ui,"write","hud/hud.ui",hud)
     testing.expectf(t,written.code==0 && strings.contains(written.out,"hud/hud.ui: unchanged"),"%d %s%s",written.code,written.out,written.err)
     testing.expect_value(t,on(&p,.Ui,"write",hud).code,2)

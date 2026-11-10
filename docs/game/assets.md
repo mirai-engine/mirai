@@ -46,8 +46,8 @@ mirai import source/sounds/step.wav --out assets/player --root .
 ## Kinds
 - Engine: `.mesh` `.skeleton` `.mat` `.tex` `.anim` `.sound` `.sound_set` `.ui` `.font` `.strings`
   `.prompts` `.records` `.scene` (one root: a prefab, `kind=prefab`).
-- Plugins add `.particle`, `.terrain`, `.foliage`, `.navmesh`, `.match`, `.pose`, `.blend`,
-  `.motion`, `.action`, `.fracture` (`destruct`), `.physics_cache`.
+- Plugins add `.particle`, `.terrain`, `.foliage`, `.navmesh`, `.character` (`animation`),
+  `.fracture` (`destruct`), `.physics_cache`.
 - Folders are named after what they hold (`player`, `arena`), never after a kind. An import goes
   into the folder asked for, a model in one of its name inside. Sound sets: [audio](audio.md);
   particles: [vfx](vfx.md).
@@ -55,7 +55,7 @@ mirai import source/sounds/step.wav --out assets/player --root .
 ## Reference
 
 - A `base.Asset_Id` field of a component holds an id; tag it `mirai:"kind=.tex"` (several:
-  `kind=.anim .match`) so the inspector lists only those; fill it in the scene.
+  `kind=.anim .character`) so the inspector lists only those; fill it in the scene.
 - The API takes an asset by its path under `assets/`, with or without its extension, or its id;
   code, by its path as the file is spelled, and a field it fills by `host.assets_id(assets,path)`.
   A constant id in code is only for assets your own tool writes with `asset.content_id`.
@@ -70,9 +70,9 @@ mirai import source/sounds/step.wav --out assets/player --root .
 
 ## Inspect
 
-- `mirai asset ls <folder>`, `info`, `verify <file>...`, `deps <file> --users`, `dump`,
-  `get <file> <path>`, `set <file> <path>=<value>` (`entities[@0x20].name=Lamp`); rows are
-  added by `unpack`, editing `asset.json`, `pack`.
+- `mirai asset ls <folder>`, `info`, `verify <file>...`, `deps <file> --users`, `dump`, `get <file>
+  <path>`, `set <file> <path>=<value>`; rows are added by `unpack`, editing `asset.json`, `pack`; a
+  scene or a `.ui`, by the document `dump` prints ([text](assets/text-sources.md)).
 
 ## Pitfalls that fail silently
 - A hard-coded id of an imported asset matches nothing in another checkout: ids are random.

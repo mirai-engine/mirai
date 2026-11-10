@@ -8,6 +8,7 @@ import "core:strings"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:engine/gui"
+import escene "mirai:engine/scene"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
@@ -47,6 +48,12 @@ import "mirai:std/serial"
 //
 // Results go to output and failures to errors as "mirai ui write: <asset>:
 // <reason>". Exit codes: 0 done, 1 failed, 2 misuse.
+
+// The asset may also be a file outside the assets of the project: that file
+// read in place of the asset with its id (another version of it, as git
+// gives one to diff), or as one more asset when the project has no asset with
+// its id. Given several --project, the command runs on the first whose assets
+// have the asset of the first file it names.
 
 COMMAND_USAGE :: `Usage: mirai ui|scene read <asset> [--out <file>]
        mirai ui|scene write <asset> <document file>
@@ -326,13 +333,14 @@ run_fail :: proc(run:^Run,what,why:string) {
 // (editor.plugin_recipes, in the program of the engine); without it a
 // document names the presets alone.
 command :: proc(args:[]string,output,errors:io.Writer,recipes:Plugin_Recipes_Proc=nil) -> int {
-    root,engine:string
+    engine:string
+    roots:=make([dynamic]string,context.temp_allocator)
     rest:=make([dynamic]string,context.temp_allocator)
     for at:=0;at<len(args);at+=1 {
         switch args[at] {
         case "--project","--engine":
             if at+1>=len(args) {fmt.wprintln(errors,COMMAND_USAGE);return 2}
-            if args[at]=="--project" {root=args[at+1]} else {engine=args[at+1]}
+            if args[at]=="--project" {append(&roots,args[at+1])} else {engine=args[at+1]}
             at+=1
         case: append(&rest,args[at])
         }
@@ -344,7 +352,8 @@ command :: proc(args:[]string,output,errors:io.Writer,recipes:Plugin_Recipes_Pro
         fmt.wprintfln(errors,"mirai %s: there is no '%s'; it has read, write and check\n%s",rest[0],verb,COMMAND_USAGE)
         return 2
     }
-    if root=="" {root="."}
+    if len(roots)==0 {append(&roots,".")}
+    root:=project_choose(roots[:],engine,rest[2] if len(rest)>2 else "")
     p:Project
     reads:=kind==.Ui && verb=="read" || rest[0]=="texts"
     if problem:=project_open(&p,root,engine,!reads,recipes);problem!="" {
@@ -354,6 +363,46 @@ command :: proc(args:[]string,output,errors:io.Writer,recipes:Plugin_Recipes_Pro
     defer project_close(&p)
     if rest[0]=="texts" {return texts_command(&p,rest[1:],output,errors)}
     return project_run(&p,kind,verb,rest[2:],output,errors)
+}
+
+// Of several projects, the one whose assets have the asset of a file: the
+// first when none has it, or named is no file.
+@(private="file")
+project_choose :: proc(roots:[]string,engine,named:string) -> string {
+    if len(roots)==1 || !os.is_file(named) {return roots[0]}
+    file:asset.Asset
+    if asset.asset_load(&file,named,context.temp_allocator)!=.None {return roots[0]}
+    id:=file.blob.header.id
+    asset.asset_close(&file)
+    for root in roots {
+        p:Project
+        problem:=project_open(&p,root,engine,false)
+        _,has:=asset.registry_find(&p.registry,id)
+        project_close(&p)
+        if problem=="" && has {return root}
+    }
+    return roots[0]
+}
+
+// The path of the registry an asset named by a command has: the name itself
+// when it is one of the project, else a file outside its assets, which the
+// registry then holds in memory in place of the asset with its id, or as one
+// more asset. problem: why a file cannot be read as an asset of the kind.
+@(private)
+outside_take :: proc(p:^Project,named:string,kind:Document_Kind) -> (path,problem:string) {
+    path=asset_path(named)
+    if _,found:=asset.registry_find_path(&p.registry,path);found || !os.is_file(named) {return named,""}
+    bytes,read:=os.read_entire_file(named,context.temp_allocator)
+    if read!=nil {return "",fmt.tprintf("%s could not be read",named)}
+    file:asset.Asset
+    if asset.asset_take(&file,bytes,context.temp_allocator)!=.None {return "",fmt.tprintf("%s is not a Mirai asset",named)}
+    id,file_kind:=file.blob.header.id,file.blob.header.kind
+    asset.asset_close(&file)
+    if file_kind!=(asset.KIND_UI if kind==.Ui else asset.KIND_SCENE) {return "",fmt.tprintf("%s is not a %s",named,kind_extension(kind))}
+    path,_=strings.replace_all(project.path_absolute(named,context.temp_allocator),"\\","/",context.temp_allocator)
+    if record,known:=asset.registry_find(&p.registry,id);known {path=strings.clone(record.path,context.temp_allocator)}
+    if asset.registry_memory_set(&p.registry,path,bytes)!=.None {return "",fmt.tprintf("%s could not be read: memory ran out",named)}
+    return path,""
 }
 
 // Runs read, write or check on an open project. All but reading an interface
@@ -404,7 +453,9 @@ command_read :: proc(run:^Run,args:[]string) -> int {
         }
     }
     if named=="" {fmt.wprintln(run.errors,COMMAND_USAGE);return 2}
-    text,problem:=document_text(run,named)
+    path,taken:=outside_take(run.p,named,run.kind)
+    if taken!="" {run_fail(run,named,taken);return 1}
+    text,problem:=document_text(run,path)
     if problem!="" {run_fail(run,named,problem);return 1}
     if out=="" {
         fmt.wprintln(run.output,text)
@@ -467,7 +518,9 @@ command_check :: proc(run:^Run,args:[]string) -> int {
     case .Ui:
         ids:=make([dynamic]base.Asset_Id,context.temp_allocator)
         for arg in args {
-            id,unknown:=asset.registry_resolve(&run.p.registry,asset_path(arg),".ui")
+            path,taken:=outside_take(run.p,arg,.Ui)
+            if taken!="" {run_fail(run,arg,taken);continue}
+            id,unknown:=asset.registry_resolve(&run.p.registry,asset_path(path),".ui")
             if unknown!="" {run_fail(run,arg,unknown);continue}
             append(&ids,id)
         }
@@ -488,11 +541,17 @@ command_check :: proc(run:^Run,args:[]string) -> int {
 }
 
 // Checks the scenes args name, all without one: each reads as its
-// document and that document writes it back. How many do not.
+// document and that document writes it back, and what it stores otherwise
+// than the game reads it is said, a problem when a save loses values or
+// nothing reads them. How many problems.
 @(private="file")
 scene_check :: proc(run:^Run,args:[]string) -> (count:int) {
     paths:=make([dynamic]string,context.temp_allocator)
-    for arg in args {append(&paths,asset_path(arg))}
+    for arg in args {
+        path,taken:=outside_take(run.p,arg,.Scene)
+        if taken!="" {run_fail(run,arg,taken);continue}
+        append(&paths,asset_path(path))
+    }
     if len(args)==0 {
         for &file in run.p.registry.files {
             if file.state==.Asset && asset.registry_listed(&file) && path_of_kind(file.path,.Scene) && !path_mounted(&run.p.registry,file.path) {append(&paths,strings.clone(file.path,context.temp_allocator))}
@@ -502,6 +561,11 @@ scene_check :: proc(run:^Run,args:[]string) -> (count:int) {
         if problem:=scene_verify(run.p,path);problem!="" {
             fmt.wprintfln(run.output,"%s: %s",path,problem)
             count+=1
+        }
+        for entry in scene_stored(run.p,path) {
+            text,warning:=escene.stored_text(entry,path)
+            fmt.wprintln(run.output,text)
+            if warning {count+=1}
         }
     }
     return

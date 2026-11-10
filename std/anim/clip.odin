@@ -4,10 +4,12 @@ import "base:runtime"
 import "core:slice"
 import math "mirai:std/math"
 
-// A moment of a clip that playback reports when it crosses it.
+// A moment of a clip that playback reports when it crosses it; with a duration, a span that
+// starts there.
 Marker :: struct {
     time:f32,
     id:u32,
+    duration:f32,
 }
 
 // One property of one target over time. `target` is the name_hash of whatever
