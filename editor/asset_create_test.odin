@@ -72,6 +72,11 @@ create_makes_each_kind_with_a_free_name_where_it_says :: proc(t:^testing.T) {
     testing.expect_value(t,asset_create(s,asset.KIND_SCENE,"Empty/New Scene.scene",scene),"")
     file,found=asset.registry_find(r,scene)
     testing.expect(t,found && file.kind==asset.KIND_SCENE && os.exists(disk(&f,"Empty/New Scene.scene")),"a scene opens from its file")
+    testing.expect(t,!asset.registry_prefab(file),"a scene is no prefab, whatever its roots")
+    prefab:=asset_id_new(s)
+    testing.expect_value(t,asset_create(s,ASSET_CREATE_PREFAB,"Empty/New Prefab.scene",prefab),"")
+    file,found=asset.registry_find(r,prefab)
+    testing.expect(t,found && asset.registry_prefab(file) && asset_create_kind_name(s,ASSET_CREATE_PREFAB)=="prefab","a prefab is a .scene of that kind")
     testing.expect(t,slice.contains(asset_create_kinds(s),asset.KIND_STRINGS) && slice.contains(asset_create_kinds(s),asset.KIND_FONT))
     testing.expect_value(t,asset_create_kind_name(s,asset.KIND_STRINGS),"strings")
     for kind in ([]asset.Fourcc{asset.KIND_SOUND_SET,asset.KIND_STRINGS,asset.KIND_FONT}) {
