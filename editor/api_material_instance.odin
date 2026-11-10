@@ -221,15 +221,37 @@ api_material_instance_set :: proc(s:^Session,call:^api.Call) {
         }
     }
 
+    if !material_given_read(s,call,a.program,a.material,slot,parameters,textures,overlays,&next,"An entity changes") {return}
+
+    if !api_edit_begin(s,call,"Material") {return}
+    w=edited_world(s)
+    table:=core.world_table_of(w,erender.Material_Values)
+    if table==nil {api_edit_end(s,call,false);return}
+    if erender.material_values_plain(&next) {
+        if core.has(table,e) {core.remove(table,e)}
+    } else {
+        core.add(table,e,next)
+    }
+    if !api_edit_end(s,call,true) {return}
+    material_instance_write(s,call,edited_world(s),e,slot)
+}
+
+// What a call gives a material by name, into next for a slot: numbers of its
+// Surface program (parameters), its maps and the textures of its program
+// (textures), and the layers drawn over it (overlays). material: the one
+// they are given to, which no layer names. who: whose limits the errors name
+// ("An entity changes", "material.set takes"). False when the call failed.
+@(private)
+material_given_read :: proc(s:^Session,call:^api.Call,program:^gpu.Program,material:base.Asset_Id,slot:int,parameters,textures,overlays:string,next:^erender.Material_Values,who:string) -> bool {
     if parameters!="" {
         r:Rpc_Args
         rpc_init(&r,call,parameters)
-        if !rpc_object_begin(&r,"parameters") {return}
+        if !rpc_object_begin(&r,"parameters") {return false}
         object:Rpc_Object
         for key in rpc_next(&r,&object) {
             parameter:^gpu.Program_Parameter
-            if a.program!=nil {
-                for &candidate in a.program.parameters {if candidate.kind!=.Texture && candidate.name==key {parameter=&candidate}}
+            if program!=nil {
+                for &candidate in program.parameters {if candidate.kind!=.Texture && candidate.name==key {parameter=&candidate}}
             }
             if parameter==nil {
                 rpc_fail(&r,"parameters: %s is not a number of the Surface program of the material",key)
@@ -237,7 +259,7 @@ api_material_instance_set :: proc(s:^Session,call:^api.Call) {
             }
             name:=base.name_hash(parameter.name)
             if serial.text_keyword(&r.r,"null") {
-                erender.material_value_drop(&next,name,slot)
+                erender.material_value_drop(next,name,slot)
                 continue
             }
             value:[4]f32
@@ -250,32 +272,32 @@ api_material_instance_set :: proc(s:^Session,call:^api.Call) {
                 rpc_fail(&r,"parameters.%s must be an array of %d numbers",key,count)
                 break
             }
-            if !erender.material_value(&next,name,value,slot) {
-                rpc_fail(&r,"An entity changes up to %d values of its material",erender.MATERIAL_VALUES_CAPACITY)
+            if !erender.material_value(next,name,value,slot) {
+                rpc_fail(&r,"%s up to %d values of a material",who,erender.MATERIAL_VALUES_CAPACITY)
                 break
             }
         }
-        if r.failed {return}
+        if r.failed {return false}
     }
 
     if textures!="" {
         r:Rpc_Args
         rpc_init(&r,call,textures)
-        if !rpc_object_begin(&r,"textures") {return}
+        if !rpc_object_begin(&r,"textures") {return false}
         object:Rpc_Object
         for key in rpc_next(&r,&object) {
             name:=base.name_hash(key)
             known:=false
             for map_name in erender.MATERIAL_MAP_NAMES {known|=map_name==key}
-            if a.program!=nil {
-                for &parameter in a.program.parameters {known|=parameter.kind==.Texture && parameter.name==key}
+            if program!=nil {
+                for &parameter in program.parameters {known|=parameter.kind==.Texture && parameter.name==key}
             }
             if !known {
                 rpc_fail(&r,"textures: %s is not a map (maps.base_color, maps.normal...) or a texture of the program of the material",key)
                 break
             }
             if serial.text_keyword(&r.r,"null") {
-                override_texture_put(&next,slot,name,{},false)
+                override_texture_put(next,slot,name,{},false)
                 continue
             }
             buffer:[API_PATH_BYTES]u8
@@ -283,14 +305,14 @@ api_material_instance_set :: proc(s:^Session,call:^api.Call) {
             texture:base.Asset_Id
             if text!="" {
                 named:bool
-                if texture,named=asset_named(s,call,text,asset.KIND_TEXTURE,".tex","a texture");!named {return}
+                if texture,named=asset_named(s,call,text,asset.KIND_TEXTURE,".tex","a texture");!named {return false}
             }
-            if !override_texture_put(&next,slot,name,texture,true) {
-                rpc_fail(&r,"An entity changes up to %d textures of its material",erender.MATERIAL_VALUES_TEXTURES)
+            if !override_texture_put(next,slot,name,texture,true) {
+                rpc_fail(&r,"%s up to %d textures of a material",who,erender.MATERIAL_VALUES_TEXTURES)
                 break
             }
         }
-        if r.failed {return}
+        if r.failed {return false}
     }
 
     if overlays!="" {
@@ -301,7 +323,7 @@ api_material_instance_set :: proc(s:^Session,call:^api.Call) {
         } else {
             if !serial.text_accept(&r.r,'[') {
                 api.call_fail(call,api.INVALID_PARAMS,"overlays must be an array or null")
-                return
+                return false
             }
             list:[asset.MATERIAL_MAX_OVERLAYS]asset.Material_Overlay
             count:=0
@@ -311,7 +333,7 @@ api_material_instance_set :: proc(s:^Session,call:^api.Call) {
                     break
                 }
                 if count>=len(list) {
-                    rpc_fail(&r,"An entity shows up to %d overlays",len(list))
+                    rpc_fail(&r,"%s up to %d overlays",who,len(list))
                     break
                 }
                 layer:=asset.Material_Overlay{id=u32(count+1),blend=.Alpha,enabled=true}
@@ -323,7 +345,7 @@ api_material_instance_set :: proc(s:^Session,call:^api.Call) {
                         buffer:[API_PATH_BYTES]u8
                         text:=rpc_text(&r,"overlays.material",buffer[:]) or_break
                         named:bool
-                        if layer.material,named=asset_named(s,call,text,asset.KIND_MATERIAL,".mat","a material");!named {return}
+                        if layer.material,named=asset_named(s,call,text,asset.KIND_MATERIAL,".mat","a material");!named {return false}
                     case "blend":
                         buffer:[16]u8
                         text:=rpc_text(&r,"overlays.blend",buffer[:]) or_break
@@ -337,29 +359,18 @@ api_material_instance_set :: proc(s:^Session,call:^api.Call) {
                     }
                 }
                 if r.failed {break}
-                if layer.material=={} || layer.material==a.material {
-                    rpc_fail(&r,"overlays: each one names a material other than the one the entity shows")
+                if layer.material=={} || layer.material==material {
+                    rpc_fail(&r,"overlays: each one names a material other than the one it is drawn over")
                     break
                 }
                 list[count]=layer
                 count+=1
             }
-            if r.failed {return}
+            if r.failed {return false}
             next.own_overlays,next.overlay_count,next.overlays=true,u32(count),list
         }
     }
-
-    if !api_edit_begin(s,call,"Material") {return}
-    w=edited_world(s)
-    table:=core.world_table_of(w,erender.Material_Values)
-    if table==nil {api_edit_end(s,call,false);return}
-    if erender.material_values_plain(&next) {
-        if core.has(table,e) {core.remove(table,e)}
-    } else {
-        core.add(table,e,next)
-    }
-    if !api_edit_end(s,call,true) {return}
-    material_instance_write(s,call,edited_world(s),e,slot)
+    return true
 }
 
 @(private)

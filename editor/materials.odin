@@ -755,17 +755,17 @@ material_slot_key :: proc(slot:int) -> u64 {
 // What a row of the inspector changes in the file of a material. Loaded: the
 // values and parameters the material holds in memory.
 Material_Change :: struct {
-    kind:enum u8 {Overlays,Map,Parameter,Values,Value,Loaded,Revert,Override},
+    kind:enum u8 {Overlays,Map,Parameter,Values,Value,Loaded,Revert,Override,Set},
     overlays:[]asset.Material_Overlay, // Overlays: all of them
     slot:int,              // Map: of MAP_LABELS
     name:string,           // Parameter: a texture of the program; Value: a number of it
     texture:base.Asset_Id, // Map, Parameter: 0 takes it away
-    info:asset.Material_Info, // Values: all of them
+    info:asset.Material_Info, // Values, Set: all of them
     value:[4]f64,          // Value: its components
     parameter:asset.Parameter_Kind,
     components:u8,
     paths:[]string,        // Revert: the fields that take what the source gave (asset.material_revert); none: all
-    override:^erender.Material_Values, // Override: what an entity changes of the material
+    override:^erender.Material_Values, // Override: what an entity changes of the material; Set: what a call gives it by name, over info
 }
 
 // The entities of the scene that show a material in some slot: theirs, or the one their mesh came with.
@@ -831,9 +831,14 @@ material_write :: proc(s:^Session,owner:base.Asset_Id,change:Material_Change) ->
     case .Overlays:
         overlays=change.overlays
         overlay_parameters_keep(&parameters,overlays)
-    case .Override:
+    case .Override,.Set:
         o:=change.override
         program:=erender.surface_program(a,host.assets_material_values(a,host.assets_material_row(a,owner)).program_id)
+        // The parameters are of the program the values of the call name.
+        if change.kind==.Set {
+            info=change.info
+            program=erender.program_find(a,base.text_get(info.program[:]),.Surface)
+        }
         values: for name,i in o.names[:min(int(o.count),len(o.names))] {
             if program!=nil {
                 for &parameter in program.parameters {

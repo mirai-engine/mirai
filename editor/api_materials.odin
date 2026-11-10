@@ -2,6 +2,7 @@ package editor
 
 import "mirai:asset"
 import "mirai:editor/api"
+import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -9,11 +10,12 @@ import "mirai:std/serial"
 // material.inspect, material.set and material.revert:
 // materials by code, with their values as the text of asset.Material_Info:
 // the base, its layers (coat, fuzz, anisotropy, diffuse transmission, unlit), its maps and its
-// program. Of an imported material, also what its source gave at the last
-// import and the fields changed after it, which the next import keeps.
+// program; and, by name, the parameters of its Surface program and the layers
+// drawn over it. Of an imported material, also what its source gave at the
+// last import and the fields changed after it, which the next import keeps.
 
 @(private)
-MATERIAL_PARAMS_SCHEMA :: `{"type":"object","properties":{"material":{"type":"string","description":"A material: its path under the assets folder, or its id"},"path":{"type":"string","description":"material.set: in place of material, a new material at this path under the assets folder, made over the defaults; it fails when that file exists"},"values":{"type":"object","description":"Fields of the material to change, as material.inspect shows them"}},"additionalProperties":false}`
+MATERIAL_PARAMS_SCHEMA :: `{"type":"object","properties":{"material":{"type":"string","description":"A material: its path under the assets folder, or its id"},"path":{"type":"string","description":"material.set: in place of material, a new material at this path under the assets folder, made over the defaults; it fails when that file exists"},"values":{"type":"object","description":"Fields of the material to change, as material.inspect shows them"},"parameters":{"type":"object","description":"material.set: numbers of the Surface program of the material by name, each a number or an array of its components"},"textures":{"type":"object","description":"material.set: textures of the Surface program of the material by name, each the path or the id of a texture; an empty text shows none"},"overlays":{"type":"array","description":"material.set: the layers drawn over the material, bottom first, in place of those it has: each {material, blend (Alpha, Additive or Multiply), enabled}","items":{"type":"object"}}},"additionalProperties":false}`
 
 @(private)
 Api_Material_Revert_Params :: struct {
@@ -28,13 +30,15 @@ Api_Material_Result :: struct {
     values:u8 `mirai:"any,label=Its base; its layers (coat; fuzz; anisotropy; diffuse transmission; unlit); its maps and its program; as material.set takes them"`,
     imported:u8 `mirai:"any,optional,label=Of an imported material: the values its source gave at the last import"`,
     overrides:[1][asset.OVERRIDE_PATH_BYTES]u8 `mirai:"text,list,optional,label=Of an imported material: every field that differs from imported; importing it again keeps them"`,
+    parameters:u8 `mirai:"any,label=What it stores for its Surface program by name: a list of numbers; or the id of a texture"`,
+    overlays:[1]Api_Material_Instance_Overlay `mirai:"list,label=The layers drawn over it; bottom first"`,
 }
 
 @(private)
 materials_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="material.inspect",params_schema=MATERIAL_PARAMS_SCHEMA,summary="The values of a material (.mat) and, of an imported one, what its source gave at the last import and the fields that differ from it.",result=Api_Material_Result,writes_result=true,flags={.Read_Only},run=api_material_inspect})
     material_capture_register(s,st)
-    api_register(s,st,{name="material.set",params_schema=MATERIAL_PARAMS_SCHEMA,summary="Changes the values of a material (.mat) for every entity that shows it, keeping its program parameters and overlays, or makes a new one at path over the defaults.",result=Api_Material_Result,writes_result=true,run=api_material_set})
+    api_register(s,st,{name="material.set",params_schema=MATERIAL_PARAMS_SCHEMA,summary="Changes a material (.mat) for every entity that shows it, its values and, by name, the parameters and textures of its Surface program and the layers drawn over it, or makes a new one at path over the defaults. What it is not given stays. One undo step, in memory: asset.save writes its file.",result=Api_Material_Result,writes_result=true,run=api_material_set})
     api_register(s,st,{name="material.revert",params=Api_Material_Revert_Params,summary="Gives fields of an imported material back what its source gave at the last import, so they stop being overrides.",result=Api_Material_Result,writes_result=true,flags={.Idempotent},run=api_material_revert})
     material_instance_api_register(s,st)
 }
@@ -97,6 +101,39 @@ api_material_write :: proc(s:^Session,call:^api.Call,id:base.Asset_Id) {
         }
         serial.write_u8(out,']')
     }
+    api.write_key(out,"parameters")
+    serial.write_u8(out,'{')
+    first:=true
+    for &parameter in view.parameters {
+        if parameter.overlay!=0 {continue}
+        if !first {serial.write_u8(out,',')}
+        first=false
+        serial.text_write_string(out,base.text_get(parameter.name[:]))
+        serial.write_u8(out,':')
+        if parameter.kind==.Texture {
+            api_asset_write(out,parameter.texture)
+            continue
+        }
+        serial.write_u8(out,'[')
+        for component in 0..<clamp(int(parameter.components),1,4) {
+            if component>0 {serial.write_u8(out,',')}
+            serial.text_write_float(out,transmute(u64)parameter.value[component],8)
+        }
+        serial.write_u8(out,']')
+    }
+    serial.write_u8(out,'}')
+    api.write_key(out,"overlays")
+    serial.write_u8(out,'[')
+    blends:=OVERLAY_BLEND_NAMES
+    for overlay,i in view.overlays {
+        if i>0 {serial.write_u8(out,',')}
+        serial.write_u8(out,'{')
+        api.write_key(out,"material",first=true);api_asset_write(out,overlay.material)
+        api.write_text(out,"blend",blends[overlay.blend])
+        api.write_key(out,"enabled");api.write_flag(out,overlay.enabled)
+        serial.write_u8(out,'}')
+    }
+    serial.write_u8(out,']')
     serial.write_u8(out,'}')
 }
 
@@ -111,7 +148,7 @@ api_material_inspect :: proc(s:^Session,call:^api.Call) {
 
 @(private)
 api_material_set :: proc(s:^Session,call:^api.Call) {
-    p,read:=asset_params(call,"material")
+    p,read:=asset_params(call,"material",{"parameters","textures","overlays"})
     if !read {return}
     t,found:=asset_target(s,call,&p,"material",asset.KIND_MATERIAL,".mat","a material")
     if !found {return}
@@ -124,14 +161,19 @@ api_material_set :: proc(s:^Session,call:^api.Call) {
         }
     }
     if !material_values_read(call,p.values,&info) {return}
+    // What it is given by name, of the program its values name now.
+    given:=erender.MATERIAL_VALUES_DEFAULT
+    program:=erender.program_find(s.app.assets,base.text_get(info.program[:]),.Surface)
+    if !material_given_read(s,call,program,t.id,0,p.extra[0],p.extra[1],p.extra[2],&given,"material.set takes") {return}
     label:=t.created?"Create material":"Material"
     if !api_edit_begin(s,call,label) {return}
     written:bool
     if t.created {
         bytes,error:=asset.material_bytes(&s.app.assets.types,{id=t.id,info=info},context.temp_allocator)
         written=error==.None && file_write(s,t.file,bytes,label)
+        if written && !erender.material_values_unnamed(&given) {written=material_write(s,t.id,{kind=.Set,info=info,override=&given})}
     } else {
-        written=material_write(s,t.id,{kind=.Values,info=info})
+        written=material_write(s,t.id,{kind=.Set,info=info,override=&given})
     }
     if !written {api.call_fail(call,api.SERVER_ERROR,api_asset_write_problem(s,t.file))}
     if !api_edit_end(s,call,written) {return}
