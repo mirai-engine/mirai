@@ -468,8 +468,7 @@ that `tree_node` takes: the loaded tree is, byte for byte, the one the same call
   active. `Focused` is the navigation focus with its ring, not the one a click gives: it does not
   look like hover.
 - `style_resolve` applies the states in order; within the state, a named rule wins over the
-  wildcard, and then the last row. A tree keeps its rules by style and in that order
-  (`tree_style_rules`): a node looks only at those of its style.
+  wildcard, and then the last row. A tree keeps its rules by style, in that order.
 - With `Node_Style.transition`, a node's colors, its shadow and what `move` and `scale` give go from
   the style it showed to the new one when its state or variant changes; a change under way starts
   from where it was and a transparent end only fades.
