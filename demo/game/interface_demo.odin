@@ -11,12 +11,11 @@ import "mirai:std/base"
 // (variants of its styles), a menu M opens over it with the controls of a
 // game's options, an inventory I opens with a grid of items to drag, and a
 // conversation T starts. The four are .ui of assets/interface on entities
-// of their own that bind this component of another entity. tools/demo_content
-// writes them. What the items are and what the conversation says are rows of
-// the tables of assets/interface, which the editor and the API edit.
+// of their own that bind this component of another entity. What the items are
+// and what the conversation says are rows of the tables of assets/interface,
+// which the editor and the API edit.
 
 INTERFACE_ITEMS :: 12
-INTERFACE_DEMO :: "Interface demo"         // the entity with Interface_Demo
 INTERFACE_HUD :: "Interface HUD"
 INTERFACE_MENU :: "Interface menu"
 INTERFACE_INVENTORY :: "Interface inventory"

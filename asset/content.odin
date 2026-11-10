@@ -1,7 +1,5 @@
 package asset
 
-import "base:intrinsics"
-import "base:runtime"
 import "core:fmt"
 import "core:os"
 import "core:strings"
@@ -47,62 +45,6 @@ content_check :: proc(content:^Content,what:string,error:Error) {
     content.failed=true
 }
 
-// A scene written from code. Its entities take the ids 1, 2, 3...
-// in the order they are added, so the same code gives the same bytes. The
-// first error is reported and everything after it does nothing.
-Scene_Builder :: struct {
-    scene:Scene,
-    content:^Content,
-    next:base.Entity_Id,
-    failed:bool,
-}
-
-builder_init :: proc(b:^Scene_Builder,content:^Content,id:base.Asset_Id,allocator:=context.allocator) {
-    b^={content=content}
-    if error:=scene_init(&b.scene,&content.types,id,allocator);error!=.None {
-        builder_fail(b,"the document",error)
-    }
-}
-
-builder_destroy :: proc(b:^Scene_Builder) {
-    scene_destroy(&b.scene)
-    b^={}
-}
-
-// Adds an entity with its Transform: a rotation or a scale left zero is the
-// identity.
-builder_entity :: proc(b:^Scene_Builder,name:string,place:mm.Transform={},parent:base.Entity_Id=0) -> base.Entity_Id {
-    if b.failed {return 0}
-    b.next+=1
-    id:=b.next
-    if _,error:=scene_entity_add(&b.scene,id,parent,name);error!=.None {
-        builder_fail(b,name,error)
-        return 0
-    }
-    place:=place
-    if place.rotation==0 {place.rotation=1}
-    if place.scale==([3]f32{}) {place.scale=1}
-    // mm.Transform has the name and the layout of the Transform component.
-    builder_set(b,id,place)
-    return id
-}
-
-// Sets the component of an entity named as the type of the value.
-builder_set :: proc(b:^Scene_Builder,id:base.Entity_Id,value:$T) where intrinsics.type_is_named(T) {
-    if b.failed {return}
-    named,is_named:=type_info_of(T).variant.(runtime.Type_Info_Named)
-    if !is_named {
-        builder_fail(b,fmt.tprintf("%v is not a type a component can have",typeid_of(T)),.Invalid)
-        return
-    }
-    value:=value
-    if error:=scene_set(&b.scene,id,named.name,&value);error!=.None {
-        row,found:=scene_entity_find(&b.scene,id)
-        entity:=found?scene_entity(&b.scene,row).name:"no entity"
-        builder_fail(b,fmt.tprintf("%s: %s",entity,named.name),error)
-    }
-}
-
 // Writes a mesh made from code (geom.*_build, one Mesh_Buffer per asset) to path,
 // beside what it belongs to; materials are its slots in order, none: the engine's
 // default, and the colors of the buffer multiply them. Its id, from the project
@@ -135,21 +77,4 @@ content_mesh :: proc(c:^Content,path:string,mesh:^geom.Mesh_Buffer,materials:..b
     content_folder(path)
     content_check(c,path,mesh_save(path,&c.types,desc))
     return id
-}
-
-// Saves to path and reports as content_check does.
-builder_save :: proc(b:^Scene_Builder,path:string) {
-    if b.failed {
-        fmt.eprintfln("%s: %s: not written, it has errors",b.content.project,path)
-        b.content.failed=true
-        return
-    }
-    content_folder(path)
-    content_check(b.content,path,scene_save(&b.scene,path))
-}
-
-// Reports what a part of the scene could not write and stops the builder.
-builder_fail :: proc(b:^Scene_Builder,what:string,error:Error) {
-    content_check(b.content,what,error)
-    b.failed=true
 }

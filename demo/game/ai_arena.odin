@@ -40,7 +40,7 @@ Arena_Kind :: enum u8 {Horde,Firefight,Boss,Swarm,Paths,Senses}
 AI_Arena :: struct {
     kind:Arena_Kind,
     agents:i32 `mirai:"min=1,max=2000"`, // zombies, drones, patrollers or listeners, or soldiers of each squad
-    place:bool, // it builds its place too; tools/demo_content writes it into the scene instead
+    place:bool, // it builds its place too; false when the scene holds it
     built:bool `mirai:"transient"`,
 }
 AI_ARENA_DEFAULT :: AI_Arena{agents=60,place=true}
@@ -622,7 +622,7 @@ arena_build :: proc(
 }
 
 // A piece of the place of an arena. The world adds it when the arena runs, or
-// the scene holds it (AI_Arena.place false; tools/demo_content writes it), so
+// the scene holds it (AI_Arena.place false), so
 // that the navigation mesh is there in the editor.
 Arena_Piece_Kind :: enum u8 {
     Solid, // a box of the static collision

@@ -9,7 +9,6 @@ import inp "mirai:engine/input"
 import render "mirai:engine/render"
 import "mirai:engine/scene"
 import "mirai:host"
-import phys "plugins:physics/runtime"
 import "mirai:std/base"
 import mm "mirai:std/math"
 
@@ -20,7 +19,6 @@ import mm "mirai:std/math"
 // instead, and the person follows; V blends into the shared overhead camera
 // and back; C blends the camera of the body into the next mode.
 
-CONTROL_INTRO :: "Control intro"
 CONTROL_SHARED_CAMERA :: "Shared overhead camera"
 DOG_BEHIND :: [3]f32{-1.2,0,1.5} // m from its person, in the frame of the person, where a dog appears
 OVERHEAD_BLEND :: cam.Camera_Blend{seconds=0.8,ease=.Cubic_In_Out}
@@ -48,21 +46,6 @@ BARK_FLASH_SECONDS :: 0.3
 // Marks the root of the scene of the person and the dog.
 @(component)
 Control_Demo :: struct {}
-
-dog_character :: proc "contextless" () -> phys.Character {
-    dog:=phys.character_default()
-    dog.mass=20
-    return dog
-}
-
-dog_walk :: proc "contextless" () -> phys.Walk {
-    dog:=player_walk()
-    dog.max_speed=4.5
-    return dog
-}
-
-// Lower and thinner than the capsule of a person.
-dog_capsule :: proc "contextless" () -> phys.Collider {return phys.collider_character(0.25,0.85)}
 
 // What the players ask of their seats; a dog whose person left goes with it.
 @(step="fixed")
@@ -174,40 +157,4 @@ game_barker :: proc(
             barker.flash_until=core.deadline(time,BARK_FLASH_SECONDS)
         }
     }
-}
-
-Actor_Part :: struct {name:string,position,scale:[3]f32,color:[4]f32}
-HUMAN_PARTS :: [?]Actor_Part{
-    {"Torso",{0,1.15,0},{0.45,0.6,0.28},{0.05,0.15,0.8,1}},
-    {"Head",{0,1.6,0},{0.35,0.35,0.35},{1,0.78,0.12,1}},
-    {"Arm left",{-0.32,1.12,0},{0.12,0.6,0.12},{1,0.78,0.12,1}},
-    {"Arm right",{0.32,1.12,0},{0.12,0.6,0.12},{1,0.78,0.12,1}},
-    {"Leg left",{-0.13,0.42,0},{0.16,0.8,0.18},{0.05,0.15,0.8,1}},
-    {"Leg right",{0.13,0.42,0},{0.16,0.8,0.18},{0.05,0.15,0.8,1}},
-}
-DOG_PARTS :: [?]Actor_Part{
-    {"Body",{0,0.5,0},{0.42,0.34,0.7},{0.65,0.43,0.2,1}},
-    {"Head",{0,0.74,-0.38},{0.33,0.3,0.35},{0.75,0.52,0.28,1}},
-    {"Nose",{0,0.68,-0.6},{0.16,0.14,0.17},{0.15,0.09,0.04,1}},
-    {"Ear left",{-0.12,0.94,-0.37},{0.09,0.2,0.14},{0.65,0.43,0.2,1}},
-    {"Ear right",{0.12,0.94,-0.37},{0.09,0.2,0.14},{0.65,0.43,0.2,1}},
-    {"Leg front left",{-0.15,0.2,-0.22},{0.09,0.4,0.1},{0.6,0.4,0.18,1}},
-    {"Leg front right",{0.15,0.2,-0.22},{0.09,0.4,0.1},{0.6,0.4,0.18,1}},
-    {"Leg back left",{-0.15,0.2,0.22},{0.09,0.4,0.1},{0.6,0.4,0.18,1}},
-    {"Leg back right",{0.15,0.2,0.22},{0.09,0.4,0.1},{0.6,0.4,0.18,1}},
-    {"Tail",{0,0.65,0.4},{0.08,0.3,0.08},{0.65,0.43,0.2,1}},
-}
-
-Actor_Parts :: struct {items:[len(DOG_PARTS)]Actor_Part,count:int}
-
-// The rigid cubes that show a person or a dog, children of its body.
-actor_parts :: proc(dog:bool) -> (parts:Actor_Parts) {
-    if dog {
-        for part,i in DOG_PARTS {parts.items[i]=part}
-        parts.count=len(DOG_PARTS)
-    } else {
-        for part,i in HUMAN_PARTS {parts.items[i]=part}
-        parts.count=len(HUMAN_PARTS)
-    }
-    return
 }
