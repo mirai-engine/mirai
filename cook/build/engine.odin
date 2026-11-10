@@ -31,7 +31,10 @@ import "mirai:std/subprocess"
 // the packages of each. Dev has one per unit: a package that is edited often
 // is one of its own, so the body of a procedure compiles its package again and
 // nothing else, and those that change little share one, since every library
-// pays a compile of the runtime and a link.
+// pays a compile of the runtime and a link. A package that binds a C library
+// linked into it is a unit by itself: the library keeps what a second copy of
+// it would not have, so nothing else shares the unit that is never swapped
+// (engine_swap).
 //
 // Each part is built again only for what it reads: a library for its sources
 // and for the declarations they name in other libraries, so a change in the
@@ -70,18 +73,18 @@ ENGINE_PACKAGES :: [?]Engine_Package{
     {.Base,"std/compressor/lz/parse","std"},{.Base,"std/compressor/lz","std"},{.Base,"audio","system"},{.Base,"platform","system"},{.Base,"rhi","system"},
     {.Base,"project","system"},{.Base,"core",""},
 
-    {.Engine,"asset",""},{.Engine,"net",""},{.Engine,"render/abi","render"},{.Engine,"render","render"},{.Engine,"third_party/freetype","ui"},
+    {.Engine,"asset",""},{.Engine,"net",""},{.Engine,"render/abi","render"},{.Engine,"render","render"},{.Engine,"third_party/freetype","freetype"},
     {.Engine,"ui","ui"},{.Engine,"host",""},{.Engine,"engine/volume","engine"},{.Engine,"engine/input","engine"},{.Engine,"engine/scene","engine"},
     {.Engine,"engine/render","engine"},{.Engine,"engine/audio","engine"},{.Engine,"engine/gui","engine"},{.Engine,"engine/camera","engine"},{.Engine,"engine/save","engine"},
 
-    {.Cook,"cook/workspace","cook"},{.Cook,"cook/cache","cook"},{.Cook,"cook/compressor/lz","cook"},{.Cook,"cook/compressor/bc7split","cook"},{.Cook,"cook/compressor/texture/common","cook"},
+    {.Cook,"third_party/ufbx","ufbx"},{.Cook,"cook/workspace","cook"},{.Cook,"cook/cache","cook"},{.Cook,"cook/compressor/lz","cook"},{.Cook,"cook/compressor/bc7split","cook"},{.Cook,"cook/compressor/texture/common","cook"},
     {.Cook,"cook/compressor/texture/bc67","cook"},{.Cook,"cook/compressor/texture/bc1","cook"},{.Cook,"cook/compressor/texture/bc4","cook"},{.Cook,"cook/compressor/texture/bc6","cook"},{.Cook,"cook/compressor/texture/bc7","cook"},
     {.Cook,"cook/compressor/texture","cook"},{.Cook,"cook/textures","cook"},{.Cook,"cook/image","cook"},{.Cook,"cook/movie","cook"},{.Cook,"cook/rig","cook"},
-    {.Cook,"cook/import","cook"},{.Cook,"cook/import/obj","cook"},{.Cook,"cook/import/gltf","cook"},{.Cook,"cook/import/usd","cook"},{.Cook,"third_party/ufbx","cook"},
+    {.Cook,"cook/import","cook"},{.Cook,"cook/import/obj","cook"},{.Cook,"cook/import/gltf","cook"},{.Cook,"cook/import/usd","cook"},
     {.Cook,"cook/import/fbx","cook"},{.Cook,"cook/shaders","cook"},{.Cook,"cook/prefab","cook"},{.Cook,"cook/import/sources","cook"},{.Cook,"cook/author","cook"},
     {.Cook,"cook/install","cook"},{.Cook,"cook/build",""},
 
-    {.Editor,"third_party/sqlite","editor-parts"},{.Editor,"editor/api","editor-parts"},{.Editor,"editor/acp","editor-parts"},{.Editor,"editor/diff","editor-parts"},{.Editor,"editor/ai_store","editor-parts"},
+    {.Editor,"third_party/sqlite","sqlite"},{.Editor,"editor/api","editor-parts"},{.Editor,"editor/acp","editor-parts"},{.Editor,"editor/diff","editor-parts"},{.Editor,"editor/ai_store","editor-parts"},
     {.Editor,"editor/git","editor-parts"},{.Editor,"editor/history","editor-parts"},{.Editor,"editor/records","editor-parts"},{.Editor,"editor",""},
 }
 
@@ -148,7 +151,7 @@ engine_libraries :: proc(mode:Engine_Mode,allocator:=context.allocator) -> []Eng
 // Changes when what declare writes changes, so that binaries built by an
 // earlier version are built again.
 @(private)
-DECLARE_VERSION :: 10
+DECLARE_VERSION :: 11
 
 // The collection the stage of the engine is compiled as (Declare_Desc.staged).
 @(private)
@@ -265,6 +268,16 @@ Library_Stamp :: struct {
     against:u64, // the declarations of other libraries its sources name (declared_key)
 }
 
+// What a library declares, which a compile of it does not move: a program
+// that runs the library takes one built again in place while this stands
+// (engine_swap).
+@(private)
+Library_Declared :: struct {
+    hash:u64,      // of what its packages declare (Declare_Changed.declared)
+    moved:string,  // the declaration that last changed it; "": none since its first build
+    pinned:string, // what it keeps that a newer build of it would not have; "": nothing
+}
+
 // What the last build of a mode left: of each library, of the programs (the
 // compiler and the flags they were built with, and the declarations they
 // name) and of declare. What a build is about to compile is zeroed before
@@ -273,6 +286,7 @@ Library_Stamp :: struct {
 @(private)
 Engine_Stamp :: struct {
     libraries:[]Library_Stamp, // as engine_libraries has them
+    declared:[]Library_Declared,
     programs:u64,
     programs_against:u64,
     declares:int,
@@ -317,6 +331,7 @@ engine_plan :: proc(root,compiler:string,mode:Engine_Mode,paths:Engine_Paths,lib
     // Without the declarations nothing compiles against what stands.
     if !stamped || previous.declares!=DECLARE_VERSION || !os.is_dir(paths.decl) || !os.is_file(paths.declared) {
         plan.previous.libraries=make([]Library_Stamp,len(libraries),context.temp_allocator)
+        plan.previous.declared=make([]Library_Declared,len(libraries),context.temp_allocator)
         return
     }
     plan.previous,plan.stamped=previous,true
@@ -365,7 +380,7 @@ Engine_Program :: struct {name,package_name,source,output:string}
 @(private)
 engine_program_sources :: proc(paths:Engine_Paths) -> [4]Engine_Program {
     return {
-        {"editor program","editor","package main\n\nimport \"core:os\"\nimport \"mirai:editor\"\n\nmain :: proc() {os.exit(editor.launch(os.args[1:]))}\n",paths.editor_program},
+        {"editor program","editor","package main\n\nimport \"core:os\"\nimport \"mirai:editor\"\n\nmain :: proc() {os.exit(editor.launch(os.args[1:],editor.advance))}\n",paths.editor_program},
         {"player program","host","package main\n\nimport \"core:os\"\nimport \"mirai:host\"\n\nmain :: proc() {os.exit(host.launch(os.args[1:]))}\n",paths.player_program},
         {"import program","import",`package main
 
@@ -391,7 +406,7 @@ main :: proc() {os.exit(author.command(os.args[1:],os.to_writer(os.stdout),os.to
 @(private)
 engine_library_stage :: proc(root:string,paths:Engine_Paths,library:Engine_Library) -> (errors:[]string,changed:Declare_Changed,ok:bool) {
     _,linked:=engine_library_files(paths,library,context.temp_allocator)
-    errors,changed=declare({root=root,packages=library.packages,binary="mirai",library=linked,stage=paths.stage,decl=paths.decl,staged=ENGINE_STAGE_COLLECTION,names=true})
+    errors,changed=declare({root=root,packages=library.packages,binary="mirai",library=linked,stage=paths.stage,decl=paths.decl,staged=ENGINE_STAGE_COLLECTION,names=true,slots=paths.mode==.Dev})
     if len(errors)>0 {return errors,changed,true}
     entry,written:=entry_write(paths.stage,engine_library_entry(library,context.temp_allocator),entry_imports(ENGINE_STAGE_COLLECTION,library.packages)[:])
     changed.stage||=entry
@@ -527,6 +542,7 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
     // every library and program compiles against is then known before any compiles.
     stamp:=plan.previous
     stamp.libraries=slice.clone(plan.previous.libraries,context.temp_allocator)
+    stamp.declared=slice.clone(plan.previous.declared,context.temp_allocator)
     stamp.declares=DECLARE_VERSION
     compile:=make([]bool,len(libraries),context.temp_allocator)
     staged:=make([]bool,len(libraries),context.temp_allocator)
@@ -549,6 +565,7 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
         }
         staged[which]=true
         declarations_moved||=changed.decl
+        stamp.declared[which]={changed.declared,changed.moved if changed.moved!="" else stamp.declared[which].moved,changed.pinned}
         // The stage may be the same while the compiler, the flags or what the
         // library embeds moved: it is compiled again anyway.
         compile[which]=desc.force || !present || changed.stage || was.tools!=plan.libraries[which].tools
@@ -965,15 +982,44 @@ cache_trim :: proc(folder:string,keep:int) {
     remove_later(removed[:])
 }
 
-// What the stamp of the binaries in folder says they were built from, its
-// first line, to tell later whether a program that started from them runs the
-// last ones built. "" without one.
+// What the stamp of the binaries in folder says they were built from, to tell
+// later whether a program that started from them runs the last ones built,
+// and what a build changed since (engine_swap). "" without one.
 engine_stamp_of :: proc(folder:string,allocator:=context.allocator) -> string {
-    data,error:=os.read_entire_file(project.path(folder,ENGINE_STAMP,allocator=context.temp_allocator),context.temp_allocator)
-    if error!=nil {return ""}
-    text:=string(data)
-    line,_:=strings.split_lines_iterator(&text)
-    return strings.clone(strings.trim_space(line),allocator)
+    data,_:=os.read_entire_file(project.path(folder,ENGINE_STAMP,allocator=context.temp_allocator),allocator)
+    return string(data)
+}
+
+// What a program that started from the binaries of one stamp does with those
+// of another, which a build left since. The libraries of a dev build call
+// each other through tables (Declare_Desc.slots), so one built again that
+// declares what it did is taken in place (host.engine_library_swap): only the
+// bodies of its procedures are other. restart says in a line what keeps the
+// program from going on with the ones it runs: a declaration that changed,
+// and with it the layouts, the constants and the inline bodies whatever names
+// it compiled in; a library that keeps what a newer one would not have; the
+// programs themselves.
+engine_swap :: proc(mode:Engine_Mode,running,now:string,allocator:=context.allocator) -> (swapped:[]Engine_Library,restart:string) {
+    if mode!=.Dev {return nil,"a release build of the engine calls its libraries directly"}
+    libraries:=engine_libraries(mode,allocator)
+    was,was_read:=engine_stamp_parse(running,libraries)
+    is,is_read:=engine_stamp_parse(now,libraries)
+    if !was_read || !is_read || was.declares!=is.declares {return nil,"the build of the engine lays its binaries out another way"}
+    list:=make([dynamic]Engine_Library,allocator)
+    for library,which in libraries {
+        if is.libraries[which].sources==0 {return nil,fmt.aprintf("%s did not build",library.file,allocator=allocator)}
+        if was.libraries[which]==is.libraries[which] {continue}
+        declared:=is.declared[which]
+        switch {
+        case was.declared[which].hash!=declared.hash:
+            return nil,fmt.aprintf("the declaration %s changed",declared.moved!=""?declared.moved:library.file,allocator=allocator)
+        case declared.pinned!="":
+            return nil,fmt.aprintf("%s keeps what a newer one would not have (%s)",library.file,declared.pinned,allocator=allocator)
+        }
+        append(&list,library)
+    }
+    if was.programs!=is.programs || was.programs_against!=is.programs_against {return nil,"the compiler or the flags of the build changed"}
+    return list[:],""
 }
 
 // The stamp of the last build of a mode, of these libraries; false when
@@ -982,37 +1028,41 @@ engine_stamp_of :: proc(folder:string,allocator:=context.allocator) -> string {
 engine_stamp_read :: proc(file:string,libraries:[]Engine_Library) -> (stamp:Engine_Stamp,ok:bool) {
     data,error:=os.read_entire_file(file,context.temp_allocator)
     if error!=nil {return}
-    lines:=strings.split_lines(strings.trim_space(string(data)),context.temp_allocator)
+    return engine_stamp_parse(string(data),libraries)
+}
+
+@(private)
+engine_stamp_parse :: proc(text:string,libraries:[]Engine_Library) -> (stamp:Engine_Stamp,ok:bool) {
+    lines:=strings.split_lines(strings.trim_space(text),context.temp_allocator)
     if len(lines)!=1+len(libraries) {return}
     fields:=strings.fields(lines[0],context.temp_allocator)
-    if len(fields)!=4 {return}
+    if len(fields)!=3 {return}
     stamp.declares=strconv.parse_int(fields[0],10) or_return
     stamp.programs=strconv.parse_u64_of_base(fields[1],16) or_return
     stamp.programs_against=strconv.parse_u64_of_base(fields[2],16) or_return
-    _=strconv.parse_u64_of_base(fields[3],16) or_return
     stamp.libraries=make([]Library_Stamp,len(libraries),context.temp_allocator)
+    stamp.declared=make([]Library_Declared,len(libraries),context.temp_allocator)
     // One line per library, in their order, each with its name.
     for line,index in lines[1:] {
         of:=strings.fields(line,context.temp_allocator)
-        if len(of)!=4 || of[3]!=libraries[index].name {return}
+        if len(of)!=7 || of[3]!=libraries[index].name {return}
         stamp.libraries[index].sources=strconv.parse_u64_of_base(of[0],16) or_return
         stamp.libraries[index].tools=strconv.parse_u64_of_base(of[1],16) or_return
         stamp.libraries[index].against=strconv.parse_u64_of_base(of[2],16) or_return
+        stamp.declared[index].hash=strconv.parse_u64_of_base(of[4],16) or_return
+        stamp.declared[index].moved,stamp.declared[index].pinned=strings.trim_prefix(of[5],"-"),strings.trim_prefix(of[6],"-")
     }
     return stamp,true
 }
 
-// The first line says what every binary was built from (engine_stamp_of): its
-// last field is the hash of the lines of the libraries.
 @(private)
 engine_stamp_write :: proc(file:string,stamp:Engine_Stamp,libraries:[]Engine_Library) -> os.Error {
     b:=strings.builder_make(context.temp_allocator)
-    all:u64=1
     for library,index in stamp.libraries {
-        all=base.hash_combine(base.hash_combine(base.hash_combine(all,library.sources),library.tools),library.against)
-        fmt.sbprintf(&b,"\n%x %x %x %s",library.sources,library.tools,library.against,libraries[index].name)
+        declared:=stamp.declared[index]
+        fmt.sbprintf(&b,"\n%x %x %x %s %x %s %s",library.sources,library.tools,library.against,libraries[index].name,declared.hash,declared.moved!=""?declared.moved:"-",declared.pinned!=""?declared.pinned:"-")
     }
-    return os.write_entire_file(file,fmt.tprintf("%d %x %x %x%s",stamp.declares,stamp.programs,stamp.programs_against,all,strings.to_string(b)))
+    return os.write_entire_file(file,fmt.tprintf("%d %x %x%s",stamp.declares,stamp.programs,stamp.programs_against,strings.to_string(b)))
 }
 
 @(private)
