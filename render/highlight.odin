@@ -86,9 +86,6 @@ highlight_filter_pass :: proc(p: ^Pass, points: Vec2, bounds: Vec4) {
         if style.width > 0 && style.fill[at] == 0 {highest = max(highest, highlight_rank(level))}
     }
     params.widths.z = f32(highest)
-    rhi.cmd_barrier_texture(cmd, t.highlight, .Shader_Read)
-    rhi.cmd_barrier_texture(cmd, t.linear_depth, .Shader_Read)
-    rhi.cmd_barrier_texture(cmd, t.highlight_filtered, .Shader_Write)
     rhi.cmd_bind_pipeline(cmd, r.pipelines[.Highlight_Filter])
     set_params(cmd, &params)
     rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.highlight)

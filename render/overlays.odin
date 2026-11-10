@@ -25,13 +25,9 @@ overlay_pipelines_list :: proc(r:^Renderer,list:^Pipeline_List) {
 }
 overlay_pass :: proc(p:^Pass) {
     r,cmd,instance_count:=p.r,p.cmd,p.instance_count
-    s,t,g:=&r.scene,p.t,&r.ddgi
+    s,t:=&r.scene,p.t
     if s.overlay_count==0 {return}
     rhi.cmd_timestamp(cmd,"overlays")
-    for buffer in ([]rhi.Buffer{s.instance_buffer,s.mesh_buffer,s.vertex_buffer,s.index_buffer,s.material_buffer,s.light_buffer,s.light_tree_buffer,s.blas_node_buffer,s.blas_triangle_buffer,s.tlas_node_buffer,s.tlas_ref_buffer,g.probes if g.valid else r.dummy_buffer}) {if buffer!=0 {rhi.cmd_barrier_buffer(cmd,buffer,.Shader_Read)}}
-    if g.valid {rhi.cmd_barrier_texture(cmd,g.irradiance,.Shader_Read);rhi.cmd_barrier_texture(cmd,g.distance,.Shader_Read)}
-    rhi.cmd_barrier_texture(cmd,r.dummy_texture,.Shader_Read)
-    if r.hardware_rt && s.tlas!=0 {rhi.cmd_barrier_accel(cmd,s.tlas)}
     pass:=rhi.Render_Pass_Desc{color_count=1,name="surface overlays"}
     pass.colors[0]={texture=t.display,load=.Load,store=.Store}
     pass.depth={texture=t.depth,load=.Load,store=.Store}

@@ -809,6 +809,45 @@ a_settings_change_starts_again_only_what_depends_on_it :: proc(t:^testing.T) {
     expect_clean(t,f.device)
 }
 
+// Views of one size share the targets that live within the frame of each
+// (targets_frame) and keep their own histories: each still shows what it sees.
+@(test)
+views_of_one_size_share_the_targets_of_a_frame :: proc(t:^testing.T) {
+    f:Cube_Fixture
+    settings:=test_settings()
+    settings.taa=true
+    if !cube_fixture_init(t,&f,128,64,settings) {return}
+    defer fixture_destroy(&f)
+    r:=f.renderer
+    scene_set(r,{
+        {object_id=1,mesh=f.cube,transform=trs({-3,0,0},{2,2,2}),tint={1,0,0},emission={2,0,0}},
+        {object_id=2,mesh=f.cube,transform=trs({3,0,0},{2,2,2}),tint={0,1,0},emission={0,2,0}},
+    },nil,{direction={0.2,1,0.1},color={1,1,1},illuminance=math.PI,enabled=true},{use_background=true})
+    cameras:=[2]Camera{
+        {position={-3,0,4},forward={0,0,-4},up={0,1,0},fov_y=60,near=0.05,far=100,exposure=UNIT_EXPOSURE},
+        {position={3,0,4},forward={0,0,-4},up={0,1,0},fov_y=60,near=0.05,far=100,exposure=UNIT_EXPOSURE},
+    }
+    views:=[2]Frame_View{{camera=cameras[0],rect={0,0,64,64}},{camera=cameras[1],rect={64,0,64,64}}}
+    for _ in 0..<4 {testing.expect(t,renderer_frame(r,{views=views[:]}),r.error)}
+    pixels,w,_,ok:=renderer_capture(r)
+    testing.expect(t,ok)
+    if ok {
+        for view,index in views {
+            center:=pixel(pixels,w,{int(view.rect.x+view.rect.z/2),int(view.rect.y+view.rect.w/2)})
+            testing.expectf(t,center[index]>150 && center[index]-center[1-index]>100,"view %d shows %v",index,center)
+        }
+        delete(pixels)
+    }
+    a,b:=&r.views[0].targets,&r.views[1].targets
+    shared,own:=targets_frame(a),targets_frame(b)
+    for texture,i in shared {
+        testing.expectf(t,texture^==own[i]^,"the views share target %d of the frame",i)
+        for other in shared[:i] {testing.expectf(t,texture^==0 || texture^!=other^,"target %d of the frame of a view is one of its own",i)}
+    }
+    testing.expect(t,a.albedo!=0 && a.taa[0]!=b.taa[0] && a.hiz[0]!=b.hiz[0] && a.shadow.history[0]!=b.shadow.history[0],"each view keeps its histories")
+    expect_clean(t,f.device)
+}
+
 @(test)
 split_screen_preserves_views_and_composes_global_ui :: proc(t:^testing.T) {
     f:Cube_Fixture

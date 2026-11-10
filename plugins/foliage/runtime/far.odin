@@ -346,7 +346,7 @@ foliage_impostors_record :: proc(pass:^render.Pass,user:rawptr) {
     }
     if d.written==0 {return}
     rows,uploaded:=render.pass_rows_upload(pass,raw_data(d.rows),len(d.rows)*size_of(Impostor_Row))
-    if !uploaded || !render.pass_buffer_ready(pass,desc) {return}
+    if !uploaded {return}
     render.pass_gbuffer_begin(pass,"foliage impostors")
     render.pass_pipeline(pass,pipeline)
     render.pass_buffer(pass,0,desc)
