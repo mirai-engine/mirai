@@ -1,7 +1,6 @@
 # Collaboration
 
-Code: `collab.odin`, `collab_api.odin` and `collab_watch.odin` (the host's Play and networked
-games).
+Code: `collab.odin`, `collab_api.odin` and `collab_play.odin` (the host's networked games).
 
 - Several editors share one's scene. The **host** owns the file and orders the edits; a **guest**
   receives the whole scene on entering and keeps its copy in memory.
@@ -44,8 +43,8 @@ games).
 - The network half of the session runs in its own thread (`worker_start`): an editor busy for a
   while (generating a game's world, a long frame) keeps responding and nobody gives it up for gone.
 - Reliable data waits in each peer's queue (`Collab_Peer.out`) and enters the channel as long as it
-  fits (`message_send` returns `Full`): a scene or a Watch larger than the queue take longer, they
-  do not cut the connection.
+  fits (`message_send` returns `Full`): a scene larger than the queue takes longer, it does not
+  cut the connection.
 - **The differences**, every `COLLAB_EDIT_INTERVAL`: per component and entity, identified by
   `core.Id`, the fields of each row that changed (`core.Entity` fields as `Id`), the whole row when
   the others have none, whether it was turned off or on by itself and the `Id`s of the rows that
@@ -122,32 +121,6 @@ Edits:
 If the host replaces its document (open, new scene), it sends the new scene to the guests; if a
 guest replaces its own, its session ends.
 
-## Watching the host's Play
-
-A guest watches the host's Play or Simulate from the
-[menu of its figure](editor.md#figures-of-whoever-works) (Watch Play) or with `editor.watch` and
-`host:true` ([watching another run](editor.md#watching-another-run)).
-
-- The guest requests `Watch`. The host sends over the reliable channel all the rows of its world
-  (`Watch_Begin`, `Watch_Rows`) and afterwards, every `COLLAB_WATCH_INTERVAL`, what changed and its
-  view (`Watch_View`).
-- What changed is told by `core.changes` of each table since the previous send
-  (`collab_watch_diff`), without a copy of the world: the rows written, added or turned on and
-  those that left or were turned off. A row requested for writing travels even if it stays equal,
-  and an entity that loses its last row is destroyed.
-- Rows are identified by the `Entity` of the host's world, not by `Id`: what the game creates
-  without `Id` also travels, and the guest translates the `Entity` fields to its own entities. Only
-  the tables a scene stores travel; the storages do not, except the view.
-- What was sent (a `core.Seen` per table) is one for all who watch. If any has more than
-  `COLLAB_WATCH_BACKLOG` reliable messages waiting, the send waits and the next carries what
-  accumulated. If a table has rows the previous send did not see (more than `GONE_CAPACITY` gone,
-  or the table replaced), all who watch start again with all the rows.
-- The guest draws that world with the editor loop, without running its game or the host's game UI,
-  and the viewport camera follows the received view.
-- When the host stops its Play or starts another, it sends `Watch_End` and those who watch receive
-  everything again with the next one; when presence says it stopped playing, the guest stops
-  watching.
-
 ## The host's networked games
 
 While the host shares its scene, its Play always serves the networked game
@@ -168,8 +141,8 @@ online players. How a guest joins:
 
 ## Where each one plays
 
-- Each editor plays its own copy: a guest's Play or Simulate is a world of its own, which neither
-  travels nor changes anyone's. Edits keep traveling while it plays.
+- Each editor plays its own copy: a Play or Simulate is a world of its own, which neither travels
+  nor changes anyone's, and nobody else sees it. Edits keep traveling while it plays.
 - A guest joins the host's game with **Join game** of its figure's menu or `play.join`, as a
   `multiplayer` client with its own seat and its prediction, and leaves with **Leave game**, Esc or
   Stop. Joining starts from Edit.
@@ -181,6 +154,7 @@ online players. How a guest joins:
 ## Limits
 
 - An editor that restarts for a Build loses the session.
-- Only the host's Play is watched and only its networked game is joined: a guest's Play is its own.
+- Only the host's networked game is joined, and a game is seen by whoever plays it: the Play of
+  another editor is not shown.
 - `collab.status` and the `collab` summary of `engine.status` report role, phase, editors and
   counters.

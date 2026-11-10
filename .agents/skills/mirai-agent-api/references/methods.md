@@ -182,8 +182,8 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
     ([viewport exposure](../../mirai-editor/references/panels.md#viewport-exposure)).
   - The editor camera has no roll: for a camera looking almost vertically it keeps the position
     with the pitch at its limit. The other values are clamped to the camera limits.
-- `editor.watch`: switches to `mode:"Watch"` watching the run of `task` or the host's Play (`host`),
-  without stopping or editing it; with neither it stops watching
+- `editor.watch`: switches to `mode:"Watch"` watching the run of `task`, without stopping or
+  editing it; without one it stops watching
   ([watching another run](../../mirai-editor/references/editor.md#watching-another-run)).
 
 ## Collision

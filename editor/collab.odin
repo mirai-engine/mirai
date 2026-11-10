@@ -81,8 +81,7 @@ collab_error_text :: proc(error:Collab_Error) -> string {
 @(private)
 Collab_Message :: enum u8 {
     Hello=1,Welcome,Snapshot,Ready,Edit,Presence,Roster,Reject,
-    Watch,Watch_Begin,Watch_Rows,Watch_View,Watch_End, // the Play of the host to the guests that watch it
-    Play_Mark,Play_Scene_Request,Play_Scene,           // the scene of a game of the host on the network
+    Play_Mark,Play_Scene_Request,Play_Scene,           // the scene of a game of the host on the network (collab_play.odin)
     Agents,                                            // the agents of an editor (collab_agents.odin)
     Ping,                                              // a point of the scene an editor pinged (collab_ping.odin)
     File,                                              // an asset file an editor changed, in chunks (collab_files.odin)
@@ -109,7 +108,6 @@ Collab_Peer :: struct {
     in_game:bool,        // plays the game the host serves
     offer:[COLLAB_OFFER_BYTES]u8,
     offer_size:int,
-    watching,watch_fresh:bool, // the host sends it its Play; fresh: from the start
     seen:f64,
     selection:[COLLAB_SELECTION]base.Entity_Id,
     selection_count:int,
@@ -187,7 +185,6 @@ Collab_State :: struct {
     guest_name:[COLLAB_NAME_BYTES]u8,
     guest_name_length:int,
     echoed_edits:u64,     // a guest: its Edit messages the host sent back
-    watch:Collab_Watch,
     play_serial:u32,      // a guest: the last game of the host it saw the mark of
     play_copied:bool,     // and its copy of the scene of that game is written
     play_bytes:[dynamic]u8,
@@ -302,7 +299,6 @@ collab_tables_build :: proc(s:^Session,st:^Collab_State) {
         st.tables[i]={used=true,size=size,hash=base.name_hash(t.name),fields=saved_fields(t.info,context.allocator),transient=ranges,entities=offsets}
         st.by_hash[st.tables[i].hash]=i
     }
-    st.watch.seen=make([]Collab_Watch_Seen,len(s.info.tables))
 }
 
 @(private)
@@ -311,12 +307,11 @@ collab_tables_free :: proc(st:^Collab_State) {
         delete(t.fields);delete(t.transient);delete(t.entities)
     }
     delete(st.tables)
-    delete(st.watch.seen)
     delete(st.by_hash)
     delete(st.told)
     delete(st.told_values)
     delete(st.crossed)
-    st.tables,st.watch.seen,st.by_hash,st.told,st.told_values,st.crossed=nil,nil,nil,nil,nil,nil
+    st.tables,st.by_hash,st.told,st.told_values,st.crossed=nil,nil,nil,nil,nil
 }
 
 // ---------------------------------------------------------------- start and end
@@ -422,10 +417,6 @@ collab_destroy :: proc(s:^Session) {
     c:=collab_of(s)
     st:=c.state
     if st==nil {return}
-    if s.mode==.Watch && s.watch.host {watch_stop(s)}
-    collab_watch_drop(s,st)
-    delete(st.watch.entities)
-    delete(st.watch.rows)
     delete(st.play_bytes)
     if st.mapping_on {wire.mapping_close(&st.mapping)}
     wire.host_destroy(&st.host)
@@ -529,6 +520,85 @@ collab_broadcast :: proc(st:^Collab_State,bytes:[]u8,except:int=-1) {
     }
 }
 
+// The operations as messages of a kind, each within the size of a message:
+// the kind, the author, the count and the operations.
+@(private)
+collab_ops_pack :: proc(ops:^Collab_Ops,kind:Collab_Message,author:u8) -> [][]u8 {
+    messages:=make([dynamic][]u8,context.temp_allocator)
+    if ops.count==0 {return messages[:]}
+    all:=make([dynamic]u8,context.temp_allocator)
+    append(&all,..serial.writer_bytes(&ops.head))
+    append(&all,..serial.writer_bytes(&ops.body))
+    append(&all,..serial.writer_bytes(&ops.tail))
+    at:=0
+    for at<len(all) {
+        m:serial.Writer
+        collab_begin(&m,kind,COLLAB_MESSAGE)
+        serial.write_scalar(&m,author)
+        count_at:=m.count
+        serial.write_scalar(&m,u16(0))
+        count:=0
+        for at<len(all) {
+            size:=int(intrinsic_u16(all[at+17:]))
+            length:=19+size
+            if count>0 && m.count+length>COLLAB_MESSAGE {break}
+            serial.write_bytes(&m,all[at:][:length])
+            at+=length
+            count+=1
+        }
+        patched:=u16(count)
+        serial.writer_patch(&m,count_at,mem.ptr_to_bytes(&patched))
+        append(&messages,serial.writer_bytes(&m))
+    }
+    return messages[:]
+}
+
+// Bytes too long for one message, in chunks of a kind: the tag, the total,
+// the offset and the chunk.
+@(private)
+collab_chunks_queue :: proc(peer:^Collab_Peer,kind:Collab_Message,data:[]u8,tag:u32=0) {
+    offset:=0
+    for {
+        size:=min(COLLAB_CHUNK,len(data)-offset)
+        m:serial.Writer
+        collab_begin(&m,kind,size+16)
+        serial.write_scalar(&m,tag)
+        serial.write_scalar(&m,u32(len(data)))
+        serial.write_scalar(&m,u32(offset))
+        serial.write_bytes(&m,data[offset:][:size])
+        collab_queue(peer,serial.writer_bytes(&m))
+        offset+=size
+        if offset>=len(data) {break}
+    }
+}
+
+// Adds a chunk to what is being assembled; true when the last one arrived.
+@(private)
+collab_chunk_take :: proc(r:^serial.Reader,into:^[dynamic]u8,total:^int) -> (tag:u32,complete:bool) {
+    tag=serial.read_u32(r)
+    whole:=int(serial.read_u32(r))
+    offset:=int(serial.read_u32(r))
+    chunk:=serial.read_bytes(r,serial.reader_remaining(r))
+    if r.failed || whole<=0 || whole>1<<30 {return}
+    if offset==0 {
+        clear(into)
+        total^=whole
+    }
+    if offset!=len(into) || whole!=total^ {return}
+    append(into,..chunk)
+    if len(into)<total^ {return}
+    total^=0
+    return tag,true
+}
+
+// The name an editor of the session gave.
+collab_peer_name :: proc(s:^Session,id:int) -> string {
+    st:=collab_state(s)
+    if st==nil || id<0 || id>=COLLAB_PEERS {return ""}
+    peer:=&st.peers[id]
+    return string(peer.name[:peer.name_length])
+}
+
 // ---------------------------------------------------------------- the loop
 
 // Called every frame between frames, after the editor: network, edits, presence.
@@ -566,7 +636,6 @@ collab_update :: proc(s:^Session) {
         collab_presence_send(s,st)
         collab_agents_send(s,st,now)
     }
-    if st.phase==.Joined {collab_watch_send(s,st,now)}
     if st.role==.Guest && st.phase==.Connecting && now-st.peers[0].connected_at>COLLAB_HELLO_TIMEOUT {
         collab_end(st,"the host did not answer; on its network, join with its Same network code")
         return
@@ -783,27 +852,6 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
             peer^={}
             collab_roster_send(st)
         }
-    case .Watch:
-        if st.role!=.Host || from<0 {return}
-        on:=serial.read_u8(&r)
-        if r.failed {return}
-        peer:=&st.peers[from]
-        peer.watching=on!=0
-        peer.watch_fresh=peer.watching
-    case .Watch_Begin:
-        if st.role==.Guest {collab_watch_begin(s,st)}
-    case .Watch_Rows:
-        if st.role==.Guest {collab_watch_apply(s,st,data)}
-    case .Watch_View:
-        if st.role==.Guest {collab_watch_view_apply(s,st,data)}
-    case .Watch_End:
-        if st.role==.Guest && st.watch.world!=nil {
-            host.app_world_free(s.app,st.watch.world)
-            st.watch.world=nil
-            clear(&st.watch.entities)
-            clear(&st.watch.rows)
-            if s.mode==.Watch && s.watch.host {selection_clear(s.selection)}
-        }
     case .Play_Mark:
         if st.role!=.Guest {return}
         game:=serial.read_u32(&r)
@@ -910,15 +958,13 @@ collab_op_write :: proc(ops:^Collab_Ops,into:^serial.Writer,kind:Collab_Op,hash:
     ops.count+=1
 }
 
-// The bytes of a row as they travel: transient bytes zero, Entity fields as
-// Ids, or as they are when rows are keyed by entity.
+// The bytes of a row as they travel: transient bytes zero, Entity fields as Ids.
 @(private)
-collab_normalize :: proc(w:core.World_Ref,t:^Collab_Table,value:rawptr,out:[]u8,by_entity:bool) {
+collab_normalize :: proc(w:core.World_Ref,t:^Collab_Table,value:rawptr,out:[]u8) {
     if t.size>0 {mem.copy(raw_data(out),value,t.size)}
     for range in t.transient {
         if range[1]>0 {mem.zero(&out[range[0]],range[1])}
     }
-    if by_entity {return}
     for offset in t.entities {
         field:=cast(^u64)&out[offset]
         field^=u64(api_entity_id(w,core.Entity(field^)))
@@ -1039,7 +1085,7 @@ collab_edits_send :: proc(s:^Session,st:^Collab_State) {
         if row>=0 {
             value:=core.raw_value(table,info.info,row)
             current:=make([]u8,max(t.size,1),context.temp_allocator)
-            collab_normalize(w,t,value,current,false)
+            collab_normalize(w,t,value,current)
             if is_ids || !before.present || len(before.value)!=t.size || t.size>int(max(u16)) {
                 collab_op_write(&ops,is_ids?&ops.head:&ops.body,.Set,t.hash,id,current[:t.size])
             } else {

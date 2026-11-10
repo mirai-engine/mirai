@@ -108,9 +108,9 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   [overrides](references/prefabs.md#overrides) and [nested](references/prefabs.md#nested-prefabs);
   variants and Apply to base, in
   [variants](references/prefabs.md#variants).
-- **Shared session and the host's Play**:
+- **Shared session and the host's networked game**:
   [entering and leaving](references/collaboration.md#entering-and-leaving),
-  [watching the host's play](references/collaboration.md#watching-the-hosts-play) and
+  [the host's networked games](references/collaboration.md#the-hosts-networked-games) and
   [where each one plays](references/collaboration.md#where-each-one-plays).
 - **Figure of agents and editors, glyph menu, Follow, palette, pings, the editor's own assets
   (`.editor`)**: [figures](references/editor.md#figures-of-whoever-works).
@@ -217,10 +217,10 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
 - A section is edited in its world: inside the world that contains it, in the same document, with
   everything else dimmed and read-only; Save also writes the section's scene and undo is one for
   both ([sections](references/document.md#sections)).
-- A guest's Play is either solo or in the host's game: in a collaboration session each guest plays
-  their own copy, which does not travel nor affect anyone, or joins as a network client of the
-  game the host serves (Join game, `play.join`) with their seat and `multiplayer` prediction, and
-  leaves whenever they want.
+- A guest's Play is either solo or in the host's game: in a collaboration session each editor plays
+  their own copy, which does not travel, affects nobody and is shown to nobody else, or a guest
+  joins as a network client of the game the host serves (Join game, `play.join`) with their seat
+  and `multiplayer` prediction, and leaves whenever they want.
 - Online players run the editor's library: the player processes the editor opens for a networked
   Play load the `editor` library the editor already loaded (`--library editor`) and run only the
   game's world, so a networked Play compiles nothing and server and clients run the same code.

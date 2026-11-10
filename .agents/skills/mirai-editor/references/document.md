@@ -286,9 +286,8 @@ inverse:
   its `transient` fields.
 - **Readers**, each with its cursor: undo and redo (`cursor` in `steps`), the
   [review of an AI turn](ai-review.md), the [observation of prefabs](prefabs.md) (`Edits.turns`,
-  `Edit_Step.turned`), [collaboration](collaboration.md#what-travels) (its place in `changes`,
-  which keep what each row held before the image took it while it reads) and Watch (a `core.Seen`
-  per table of the Play's world).
+  `Edit_Step.turned`) and [collaboration](collaboration.md#what-travels) (its place in `changes`,
+  which keep what each row held before the image took it while it reads).
 
 Procedures:
 
