@@ -107,8 +107,7 @@ the assets.
   keeps every asset as a document. Decided by the owner.
 - **The source, its sidecar and the build decide the cache.** The same three give the same files,
   byte for byte: a clone, a worktree and a branch switch are brought up to date by the same sync,
-  explicitly, in `mirai build` and `mirai import --project`; the editor does it when it opens a
-  project.
+  explicitly, in `mirai build` and `mirai import --project`; the editor never imports by itself.
 - **Reimporting keeps what a person changed.** A material stores what the source gave and the next
   import rewrites only that: fields changed afterwards stay, like the overrides of a prefab
   ([materials](references/imports.md#what-is-written)).

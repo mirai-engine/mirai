@@ -136,7 +136,8 @@ sidecar_text :: proc(sidecar:Sidecar,allocator:=context.allocator) -> string {
 
 // False for a text that is not the sidecar of a source: another version, a
 // field or a value this build does not know, an output without an id or twice
-// the same one. What it holds lives in allocator.
+// the same one. What it holds lives in allocator, an arena: nothing frees it
+// piece by piece.
 sidecar_parse :: proc(text:string,allocator:=context.allocator) -> (sidecar:Sidecar,ok:bool) {
     schema:serial.Schema
     serial.schema_init(&schema,context.temp_allocator)
@@ -146,10 +147,6 @@ sidecar_parse :: proc(text:string,allocator:=context.allocator) -> (sidecar:Side
     serial.text_reader_init(&r,text,context.temp_allocator)
     defer serial.text_reader_destroy(&r)
     sidecar.outputs=make([dynamic]Output,allocator)
-    defer if !ok {
-        sidecar_destroy(&sidecar,allocator)
-        sidecar={}
-    }
     version:=0
     serial.text_expect(&r,'{') or_return
     for first:=true;!serial.text_accept(&r,'}');first=false {
@@ -166,9 +163,7 @@ sidecar_parse :: proc(text:string,allocator:=context.allocator) -> (sidecar:Side
         case "settings":
             serial.text_read(&r,&schema,type,([^]u8)(&sidecar.settings)[:size_of(Import_Settings)]) or_return
         case "folder":
-            folder:=serial.text_string(&r) or_return
-            delete(sidecar.folder,allocator)
-            sidecar.folder=strings.clone(folder,allocator)
+            sidecar.folder=strings.clone(serial.text_string(&r) or_return,allocator)
         case "outputs":
             serial.text_expect(&r,'[') or_return
             for begun:=false;!serial.text_accept(&r,']');begun=true {
@@ -196,10 +191,6 @@ sidecar_parse :: proc(text:string,allocator:=context.allocator) -> (sidecar:Side
 
 @(private="file")
 output_parse :: proc(r:^serial.Text_Reader,allocator:=context.allocator) -> (output:Output,ok:bool) {
-    defer if !ok {
-        delete(output.name,allocator)
-        delete(output.path,allocator)
-    }
     serial.text_expect(r,'{') or_return
     for first:=true;!serial.text_accept(r,'}');first=false {
         if !first {serial.text_expect(r,',') or_return}
@@ -210,9 +201,7 @@ output_parse :: proc(r:^serial.Text_Reader,allocator:=context.allocator) -> (out
         case "kind":
             output.kind=kind_parse(serial.text_string(r) or_return) or_return
         case "name":
-            name:=serial.text_string(r) or_return
-            delete(output.name,allocator)
-            output.name=strings.clone(name,allocator)
+            output.name=strings.clone(serial.text_string(r) or_return,allocator)
         case "index":
             negative,magnitude:=serial.text_integer(r) or_return
             if negative || magnitude>u64(max(i32)) {return}
@@ -220,9 +209,7 @@ output_parse :: proc(r:^serial.Text_Reader,allocator:=context.allocator) -> (out
         case "id":
             output.id=serial.text_parse_asset_id(serial.text_string(r) or_return) or_return
         case "path":
-            path:=serial.text_string(r) or_return
-            delete(output.path,allocator)
-            output.path=strings.clone(path,allocator)
+            output.path=strings.clone(serial.text_string(r) or_return,allocator)
         case "part","shared":
             value:=serial.text_keyword(r,"true")
             if !value && !serial.text_keyword(r,"false") {return}
@@ -248,16 +235,6 @@ path_plain :: proc(path:string,folder:bool) -> bool {
         if name=="" || name==".." || name=="." {return false}
     }
     return true
-}
-
-sidecar_destroy :: proc(sidecar:^Sidecar,allocator:=context.allocator) {
-    for output in sidecar.outputs {
-        delete(output.name,allocator)
-        delete(output.path,allocator)
-    }
-    delete(sidecar.outputs)
-    delete(sidecar.folder,allocator)
-    sidecar^={}
 }
 
 // The sidecar at path, in allocator. found is false, with an empty one, when

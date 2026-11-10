@@ -19,8 +19,8 @@ import "mirai:std/serial"
 // builds it again from the sources and their sidecars, which are. A checkout
 // that was just cloned, a worktree that was just made and a branch that
 // changed a source are brought up to date the same way, by whoever needs the
-// assets: mirai build before it compiles or cooks, mirai import --project,
-// and the editor when it opens a project. What costs (the levels of a mesh,
+// assets: mirai build before it compiles or cooks, and mirai import --project.
+// What costs (the levels of a mesh,
 // the blocks of a texture) comes from the caches kept by content, which the
 // worktrees of a repository share.
 //
@@ -32,13 +32,8 @@ import "mirai:std/serial"
 
 Sync_Options :: struct {
     texture_cache,mesh_cache:string, // "": those of the root (project.content_cache_path)
-    fast_textures:bool,              // as Import_Options.fast_textures: what the editor passes
     rebuild:bool,                    // imports every source again
     worker:jobs.Worker_Ref,
-    // Called once, before the first source is imported or the first file removed: a sync that
-    // finds everything up to date writes nothing and does not call it.
-    on_work:proc(user:rawptr),
-    user:rawptr,
 }
 
 Sync_Report :: struct {
@@ -132,13 +127,13 @@ stamp_write :: proc(path:string,options:importer.Import_Options,report:^importer
 // source, its sidecar and the files it read are now, by this build. A file
 // whose size and time are those of the stamp is not read.
 @(private="file")
-stamp_current :: proc(root,source:string,fast:bool) -> bool {
+stamp_current :: proc(root,source:string) -> bool {
     data,error:=serial.file_read(stamp_path(root,source),context.temp_allocator)
     if error!=.None {return false}
     r:=serial.reader_init(data)
     if serial.read_u32(&r)!=STAMP_MAGIC || serial.read_u32(&r)!=STAMP_VERSION || serial.read_u64(&r)!=build_key() {return false}
-    // A texture built Fast is not what a build that wants it Final has.
-    if built_fast:=serial.read_u8(&r)!=0;built_fast && !fast {return false}
+    // A texture the editor built Fast is not what a build, which wants it Final, has.
+    if serial.read_u8(&r)!=0 {return false}
     sidecar,read_error:=serial.file_read(importer.sidecar_path(source,root,allocator=context.temp_allocator),context.temp_allocator)
     if read_error!=.None || serial.read_u64(&r)!=base.hash64(sidecar) {return false}
     count:=serial.read_count(&r,1)
@@ -200,17 +195,13 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
     top:=project.path_absolute(root,context.temp_allocator)
     imported:=project.imported_path(top,context.temp_allocator)
     import_options:=importer.Import_Options{
-        root=top,rebuild=options.rebuild,fast_textures=options.fast_textures,worker=options.worker,
+        root=top,rebuild=options.rebuild,worker=options.worker,
         texture_cache=options.texture_cache if options.texture_cache!="" else project.content_cache_path(top,project.TEXTURE_CACHE,context.temp_allocator),
         mesh_cache=options.mesh_cache if options.mesh_cache!="" else project.content_cache_path(top,project.MESH_CACHE,context.temp_allocator),
     }
     listed:=make(map[string]struct{},context.temp_allocator) // files of the imported folder the sidecars list, in lower case
     stamps:=make(map[string]struct{},context.temp_allocator)
-    whole,working:=true,false
-    work :: proc(options:Sync_Options,working:^bool) {
-        if !working^ && options.on_work!=nil {options.on_work(options.user)}
-        working^=true
-    }
+    whole:=true
     for file in sidecars_under(top) {
         source:=file[:len(file)-len(importer.SIDECAR_EXTENSION)]
         sidecar,_,error:=importer.sidecar_load(file,context.temp_allocator)
@@ -234,8 +225,7 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
             whole=false
             continue
         }
-        if options.rebuild || missing || !stamp_current(top,source,options.fast_textures) {
-            work(options,&working)
+        if options.rebuild || missing || !stamp_current(top,source) {
             written,import_error:=import_source(source,"",import_options,nil,allocator)
             if import_error.code!=.None {
                 append(&report.failures,fmt.aprintf("%s: %s",source,import_error.message,allocator=allocator))
@@ -273,7 +263,6 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
             }
             if entry.type!=.Regular || strings.has_prefix(entry.name,".") || strings.has_suffix(entry.name,".tmp") {continue}
             if _,kept:=listed[strings.to_lower(path[len(imported)+1:],context.temp_allocator)];kept {continue}
-            work(options,&working)
             if os.remove(path)==nil {report.removed+=1}
         }
     }

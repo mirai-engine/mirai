@@ -33,8 +33,8 @@ import "mirai:ui"
 // writes where its importer says. The sidecar of a source (<source>.import)
 // keeps its settings and the id of each asset, and importing it again gives
 // the same assets; what an import builds that nobody edits is not a file of
-// the asset folder but of the imported folder of the project, which the
-// editor brings up to date with the sources when it opens (import_sync). The Import
+// the asset folder but of the imported folder of the project, which mirai
+// build brings up to date with the sources (sources.sync). The Import
 // button of the Assets tab and File > Import ask for the file; a file dropped
 // on the window is imported the same way.
 //
@@ -55,7 +55,6 @@ Importer :: struct {
     imports:int,   // files imported in this session
     message:[IMPORT_MESSAGE_BYTES]u8,message_length:int, // what the last one said
     running:^Import_Job,  // the import in its thread; nil when none runs
-    synced:bool,          // the imported folders were looked at once since the project opened (import_sync)
     status:Import_Status, // of the import that runs, or of the last one
     written:[dynamic]Import_Written, // what the last one that ended wrote
     warnings:[dynamic]string,        // what the last one that ended warned of
@@ -72,9 +71,6 @@ Import_Job :: struct {
     kind:sources.Source_Kind,
     formats:[]importer.Format,                // of a model: the engine's, then plugin_formats'
     plugin_formats:[]Import_Format_Provider, // with the format.data their prepare gave
-    roots:[]string,        // of the sync of a project: the project and its plugins with assets; nil for the import of a source
-    synced,removed:int,    // by that sync: sources imported, and stale files removed
-    writing:bool,          // that sync found a source to import or a file to remove: from then on it writes assets
     whole:Source_Importer, // of a source a plugin imports whole; run is nil otherwise
     state:rawptr,          // what whole.prepare gave
     options:importer.Import_Options,
@@ -120,11 +116,6 @@ import_say :: proc(s:^Session,format:string,args:..any) {
 import_busy :: proc(s:^Session) -> string {
     if s.importer==nil || s.importer.running==nil {return ""}
     job:=s.importer.running
-    if job.roots!=nil {
-        // A sync that only looks, as that of a project whose build imported it, keeps nobody waiting.
-        if !intrinsics.atomic_load(&job.writing) {return ""}
-        return "the sources of the project are being imported and write assets; try again when that ends (asset.import_status)"
-    }
     return fmt.tprintf("%s is being imported and writes assets; try again when it ends (asset.import_status)",filepath.base(job.source))
 }
 
@@ -167,11 +158,6 @@ import_file :: proc(s:^Session,source:string,folder:="",profiled:=false,rig:Mayb
     if busy:=import_busy(s);busy!="" {
         import_say(s,"%s",busy)
         return false
-    }
-    // A sync that is only looking ends first: one import runs at a time.
-    for s.importer.running!=nil {
-        time.sleep(time.Millisecond)
-        import_poll(s)
     }
     name:=filepath.base(source)
     allocator:=runtime.heap_allocator()
@@ -281,17 +267,7 @@ import_run :: proc(job:^Import_Job) {
     defer job.options.worker={}
     if job.profiled && !importer.profile_begin(&job.profile,&job.options,job.allocator) {job.profiled=false}
     error:importer.Error
-    if job.roots!=nil {
-        for root in job.roots {
-            report:=sources.sync(root,{texture_cache=job.options.texture_cache,mesh_cache=job.options.mesh_cache,fast_textures=true,worker=job.options.worker,on_work=proc(user:rawptr) {intrinsics.atomic_store(&(^Import_Job)(user).writing,true)},user=job},job.allocator)
-            job.synced+=report.imported
-            job.removed+=report.removed
-            if job.report.allocator.procedure==nil {importer.report_init(&job.report,job.allocator)}
-            for warning in report.warnings {append(&job.report.warnings,strings.clone(warning,job.allocator))}
-            if len(report.failures)>0 && error.code==.None {error={.Read,strings.clone(report.failures[0],context.temp_allocator)}}
-            sources.sync_report_destroy(&report)
-        }
-    } else if job.whole.run!=nil {
+    if job.whole.run!=nil {
         // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
         report,scene,run_error:=job.whole.run(job.state,job.source,job.options,job.allocator)
         job.report=report
@@ -311,8 +287,6 @@ import_job_free :: proc(job:^Import_Job) {
     allocator:=job.allocator
     if job.thread!=nil {thread.destroy(job.thread)}
     importer.report_destroy(&job.report)
-    for root in job.roots {delete(root,allocator)}
-    delete(job.roots,allocator)
     delete(job.source,allocator);delete(job.folder,allocator);delete(job.scene,allocator)
     delete(job.options.root,allocator);delete(job.options.texture_cache,allocator);delete(job.options.mesh_cache,allocator)
     for provider in job.plugin_formats {
@@ -330,28 +304,10 @@ import_job_free :: proc(job:^Import_Job) {
 // Between frames.
 import_poll :: proc(s:^Session) {
     job:=s.importer.running
-    if job==nil {
-        if !s.importer.synced {
-            s.importer.synced=true
-            import_sync(s)
-        }
-        return
-    }
-    if !intrinsics.atomic_load(&job.done) {return}
+    if job==nil || !intrinsics.atomic_load(&job.done) {return}
     thread.join(job.thread)
     s.importer.running=nil
     defer import_job_free(job)
-    if job.roots!=nil {
-        // What the sync built or removed is in the imported folders: the registry looks at them again.
-        if a:=s.app.assets;a!=nil && job.synced+job.removed>0 {
-            host.assets_scan(a)
-            s.content.revision+=1
-        }
-        for warning in job.report.warnings {log.warn(warning)}
-        if job.error.code!=.None {import_say(s,"A source of the project did not import: %s",job.error.message)}
-        else if job.synced>0 {import_say(s,"Imported %d sources of the project in %.1f s",job.synced,job.seconds)}
-        return
-    }
     name:=filepath.base(job.source)
     status:=&s.importer.status
     status.importing=false
@@ -453,36 +409,6 @@ import_root :: proc(s:^Session,r:^asset.Registry,id:base.Asset_Id) -> (sidecar:s
     return path,files[:]
 }
 
-// Brings what the imports of the project and of its plugins build that is not
-// versioned up to date with their sources (sources.sync), in the thread of the
-// imports: a project that was just cloned, or whose branch changed a source,
-// opens with its meshes and textures built. Nothing runs for a project whose
-// build already did it.
-@(private)
-import_sync :: proc(s:^Session) {
-    a:=s.app.assets
-    if a==nil || a.registry.root=="" || s.project_root=="" || s.importer.running!=nil {return}
-    allocator:=runtime.heap_allocator()
-    roots:=make([dynamic]string,allocator)
-    append(&roots,strings.clone(s.project_root,allocator))
-    for mount in a.registry.mounts {
-        // The assets of a plugin are the assets folder of its root.
-        if mount.imported!="" && !mount.guest {append(&roots,strings.clone(filepath.dir(filepath.dir(mount.imported)),allocator))}
-    }
-    job:=new(Import_Job,allocator)
-    job^={allocator=allocator,started=time.tick_now(),roots=roots[:]}
-    job.options={
-        texture_cache=project.content_cache_path(s.project_root,project.TEXTURE_CACHE,allocator=allocator),
-        mesh_cache=project.content_cache_path(s.project_root,project.MESH_CACHE,allocator=allocator),
-    }
-    job.thread=thread.create_and_start_with_poly_data(job,import_run)
-    if job.thread==nil {
-        import_job_free(job)
-        return
-    }
-    s.importer.running=job
-}
-
 // Waits for an import that runs and lets go of what the last one wrote:
 // when the editor ends.
 import_end :: proc(s:^Session) {
@@ -535,12 +461,12 @@ import_programs_published :: proc(s:^Session) {
 import_working :: proc(s:^Session) -> bool {
     if s.importer==nil {return false}
     job:=s.importer.running
-    if job==nil || job.roots!=nil && !intrinsics.atomic_load(&job.writing) {return false}
+    if job==nil {return false}
     ctx:=s.gui.ctx
     th:=&ctx.theme
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=8,align_y=.Center}) {
         pulse_dot(ctx,th.accent,true)
-        ui.label(ctx,job.roots!=nil?"Importing the sources of the project":fmt.tprintf("Importing %s",filepath.base(job.source)),th.font_small,th.text)
+        ui.label(ctx,fmt.tprintf("Importing %s",filepath.base(job.source)),th.font_small,th.text)
     }
     return true
 }

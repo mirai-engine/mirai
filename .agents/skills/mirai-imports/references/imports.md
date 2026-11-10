@@ -286,9 +286,10 @@ worktree that was just made or a branch that changed a source run.
   are imported, and nothing is removed.
 - **Who runs it.** `mirai build` before it compiles the libraries of a project, and the cook
   before it reads the assets ([build](../../mirai-projects/references/build.md#imported-sources)),
-  both with the engine's import program, Final; `mirai import --project <folder>` on its own; and
-  the editor when it opens a project, Fast, in the thread of its imports. A plugin with assets is a
-  root of its own.
+  both with the engine's import program; `mirai import --project <folder>` on its own. The editor
+  does not: the build that opens it did, and it watches the imported folder for what a sync of
+  another process writes. It builds textures Final, also those the editor imported Fast. A plugin
+  with assets is a root of its own.
 - What costs comes from the [texture cache](#texture-cache) and the [mesh cache](#mesh-cache),
   which the worktrees of a repository share: a new worktree reads its sources and writes its
   imported folder without compressing or simplifying anything.

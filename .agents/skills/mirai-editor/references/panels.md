@@ -817,9 +817,9 @@ plugin [vfx](../../mirai-world/references/vfx-editor.md#particle-document).
 sidecar, and what it builds that nobody edits goes to the imported folder of the project; a source
 outside it keeps every asset in the assets folder, with its sidecar in `source/` of the project
 ([identity](../../mirai-imports/references/imports.md#identity-and-reimport)). It goes to the
-folder of its type or to `folder` (`asset_folder_clean`). When the editor opens a project,
-`import_sync` brings its imported folders up to date with its sources in the thread of the imports
-([sync](../../mirai-imports/references/imports.md#sync)).
+folder of its type or to `folder` (`asset_folder_clean`). The imported folder is brought up to
+date with the sources by the build that opens the editor
+([sync](../../mirai-imports/references/imports.md#sync)), and the editor watches it.
 File > Import, the content browser, a file dropped on the window and `asset.import` call it. It
 imports in a thread of its own, with its own job system, while the editor keeps drawing; the
 content browser shows the dot of what works. `import_poll`, between frames, takes what it wrote on
