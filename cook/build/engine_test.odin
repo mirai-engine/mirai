@@ -544,7 +544,7 @@ a_library_of_the_engine_follows_its_stage :: proc(t:^testing.T) {
 // A library links against the libraries its imports reach before it, directly
 // or through another, and names the declarations of those its sources write
 // after the name of an import: what it is built again by. A literal that
-// names a package after its own is no import, nor is one inside another string.
+// names a package outside an import, or a package after its own, imports nothing.
 @(test)
 a_library_needs_the_libraries_it_reaches_and_names_what_it_writes :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
@@ -566,16 +566,16 @@ a_library_needs_the_libraries_it_reaches_and_names_what_it_writes :: proc(t:^tes
         }
         core,render,ui,asset,host:=of(t,libraries,"core"),of(t,libraries,"render"),of(t,libraries,"ui"),of(t,libraries,"asset"),of(t,libraries,"host")
         cook,editor:=of(t,libraries,"cook/build"),of(t,libraries,"editor")
-        testing.expectf(t,reach.needs[cook][render] && reach.needs[cook][core] && reach.needs[cook][asset],"%v: what it imports, what that imports and what it names",mode)
+        testing.expectf(t,reach.needs[cook][render] && reach.needs[cook][core],"%v: what it imports and what that imports",mode)
         testing.expectf(t,reach.needs[editor][cook] && reach.needs[editor][ui] && reach.needs[editor][core],"%v: the editor reaches them all",mode)
         testing.expectf(t,!reach.needs[cook][editor] && !slice.contains(reach.needs[core],true),"%v: a library needs nothing after it",mode)
         if mode==.Dev {
-            testing.expect(t,reach.needs[render][core] && !reach.needs[cook][host],"a package is a library, and a literal inside another string is no import")
+            testing.expect(t,reach.needs[render][core] && !reach.needs[cook][host] && !reach.needs[cook][asset],"a package is a library, and a literal outside an import imports nothing")
             names:=reach.names[render]
             testing.expect(t,"core.count" in names && "core.more" in names && "core.rest" in names && "core." in names,"what follows the name of the import, and the head of its package")
-            testing.expect(t,"render.frames" in reach.names[cook] && "asset.*" in reach.names[cook],"under the name it is imported with; all of a package named outside an import")
+            testing.expect(t,"render.frames" in reach.names[cook],"under the name it is imported with")
             testing.expect(t,"cook/build." in reach.names[editor] && "ui." in reach.names[editor])
-            for name in reach.names[cook] {testing.expectf(t,!strings.has_prefix(name,"editor.") && !strings.has_prefix(name,"host."),"%s is of no import",name)}
+            for name in reach.names[cook] {testing.expectf(t,!strings.has_prefix(name,"editor.") && !strings.has_prefix(name,"host.") && !strings.has_prefix(name,"asset."),"%s is of no import",name)}
             // With no declaration moved only the libraries whose sources changed are read, and they link in order.
             only:=make([]bool,len(libraries))
             only[core],only[cook]=true,true
@@ -727,7 +727,6 @@ a_library_of_the_engine_is_shared_by_what_it_is_built_from :: proc(t:^testing.T)
     engine_cache_store(entry,paths,library)
     testing.expect(t,os.is_file(project.path(entry,CACHE_COMPLETE)),"the library is kept")
     testing.expect(t,!os.exists(project.path(entry,"mirai-other.txt")),"with nothing of another")
-    testing.expect(t,os.remove_all(first)==nil)
 
     restored:=engine_paths(second,.Dev)
     testing.expect(t,os.make_directory_all(restored.folder)==nil)

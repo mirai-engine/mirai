@@ -31,11 +31,6 @@ DECLARED_NAMES :: "declared.names"
 @(private)
 DECLARED_HEAD :: "."
 
-// In a key, after the package: every declaration of it. What names a package
-// outside an import follows it whole.
-@(private)
-DECLARED_WHOLE :: "*"
-
 // Of each declaration of the engine, by `<package>.<name>`, the hash of what
 // whoever names it compiles against. `<package>.` is the head of a package.
 @(private)
@@ -74,17 +69,12 @@ declared_write :: proc(decl,file:string) -> bool {
         if error!=nil {continue}
         text=string(data)
         head:=node(&nodes,&ids,fmt.tprintf("%s.",path))
-        whole:=node(&nodes,&ids,fmt.tprintf("%s.%s",path,DECLARED_WHOLE))
-        append(&nodes[whole].edges,head)
         rest:=text
         for line in strings.split_lines_iterator(&rest) {
             name,hash:=declared_line(line) or_continue
             id:=name==DECLARED_HEAD?head:node(&nodes,&ids,fmt.tprintf("%s.%s",path,name))
             nodes[id].own=base.hash_combine(nodes[id].own,hash)
-            if id!=head {
-                append(&nodes[id].edges,head)
-                append(&nodes[whole].edges,id)
-            }
+            if id!=head {append(&nodes[id].edges,head)}
         }
     }
     // Every declaration is known by now: a bare name that is none of its package is a local one.
@@ -228,11 +218,11 @@ declared_read :: proc(file:string,allocator:=context.allocator) -> (declared:Dec
 
 // Adds to names the declarations of the engine a source names, each as its
 // key: of every package it imports, the head and whatever follows the name
-// it gives the package and a dot; of a package it names outside an import,
-// all of it. The packages of skip are not followed: they are compiled with
-// the source. A package of the engine imports only the ones before it: a
-// literal that names one from limit on is no import, as one inside another
-// string is not. reached, when given, marks the packages named. followed is
+// it gives the package and a dot. A literal that names a package counts only
+// after `import` and the name it may give it: the text of a program a source
+// carries imports nothing. The packages of skip are not followed: they are
+// compiled with the source. A package of the engine imports only the ones
+// before it, those under limit. reached, when given, marks the packages imported. followed is
 // false when the source names declarations decl has that are of no package
 // of the engine: what imports them compiles against something no hash follows.
 @(private)
@@ -257,8 +247,6 @@ declared_names :: proc(decl,source:string,skip:[]string,names:^map[string]bool,r
             continue
         }
         if index>=limit {continue}
-        if reached!=nil {reached[index]=true}
-        if slice.contains(skip,path) {continue}
         // `import "mirai:core"` or `import name "mirai:core"`: anything else is no import.
         before:=strings.trim_right(source[:start-1]," \t")
         first:=word_before(before)
@@ -268,10 +256,9 @@ declared_names :: proc(decl,source:string,skip:[]string,names:^map[string]bool,r
         } else if first!="" && word_before(strings.trim_right(before[:len(before)-len(first)]," \t"))=="import" {
             name=first
         }
-        if name=="" {
-            names[strings.concatenate({path,".",DECLARED_WHOLE},context.temp_allocator)]=true
-            continue
-        }
+        if name=="" {continue}
+        if reached!=nil {reached[index]=true}
+        if slice.contains(skip,path) {continue}
         names[strings.concatenate({path,"."},context.temp_allocator)]=true
         if name!="_" {append(&aliases,Alias{name,path})}
     }
