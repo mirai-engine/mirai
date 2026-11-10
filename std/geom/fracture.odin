@@ -3,6 +3,7 @@ package geom
 import "base:runtime"
 import "core:slice"
 import "mirai:std/base"
+import mm "mirai:std/math"
 
 Site_Pattern :: enum {
     Uniform,   // spread evenly in the box
@@ -23,11 +24,11 @@ Site_Desc :: struct {
 // Fills `sites` with the sites of a Voronoi fracture. The sequence depends
 // only on the description: the same seed gives the same sites everywhere.
 sites_generate :: proc(sites:[]Vec3,desc:Site_Desc) {
-    rng:=rng_make(desc.seed)
+    rng:=base.rng_make(desc.seed)
     size:=desc.hi-desc.lo
     diagonal:=f32(dlength(dvec(size)))
-    inside :: proc(rng:^Rng,lo,size:Vec3) -> Vec3 {
-        x:=rng_f32(rng);y:=rng_f32(rng);z:=rng_f32(rng)
+    inside :: proc(rng:^base.Rng,lo,size:Vec3) -> Vec3 {
+        x:=mm.random_f32(rng);y:=mm.random_f32(rng);z:=mm.random_f32(rng)
         return lo+size*Vec3{x,y,z}
     }
     switch desc.pattern {
@@ -40,13 +41,13 @@ sites_generate :: proc(sites:[]Vec3,desc:Site_Desc) {
         // The first sites are the centers; the rest gather around them in turn.
         for &site,i in sites {
             if i<clusters {site=inside(&rng,desc.lo,size);continue}
-            site=sites[i%clusters]+rng_ball(&rng)*reach
+            site=sites[i%clusters]+mm.random_in_sphere(&rng)*reach
         }
     case .Radial:
         reach:=desc.radius if desc.radius>0 else 0.5*diagonal
         for &site in sites {
-            direction:=fnormalize(rng_ball(&rng),{0,1,0})
-            u:=rng_f32(&rng)
+            direction:=fnormalize(mm.random_in_sphere(&rng),{0,1,0})
+            u:=mm.random_f32(&rng)
             site=desc.center+direction*(reach*u*u)
         }
     }

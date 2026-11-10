@@ -5,6 +5,8 @@ import "core:testing"
 import "core:fmt"
 import "core:math"
 import "core:time"
+import "mirai:std/base"
+import mm "mirai:std/math"
 
 @(private) Boolean_Rig :: struct {a,b,out,again:Mesh_Buffer}
 @(private) boolean_rig_init :: proc(r:^Boolean_Rig) {for p in ([]^Mesh_Buffer{&r.a,&r.b,&r.out,&r.again}) {mesh_buffer_init(p)}}
@@ -180,10 +182,10 @@ boolean_finite_extreme_attributes_do_not_overflow_interpolation :: proc(t:^testi
 @(test)
 boolean_rotated_solids_conserve_volume_and_repeated_cuts_remain_closed :: proc(t:^testing.T) {
     r:Boolean_Rig;boolean_rig_init(&r);defer boolean_rig_destroy(&r)
-    rng:=rng_make(59137)
+    rng:=base.rng_make(59137)
     for iteration in 0..<32 {
         boolean_box(&r.a,{3,2,4},{})
-        boolean_box(&r.b,{2,3,2},rng_ball(&rng)*1.5)
+        boolean_box(&r.b,{2,3,2},mm.random_in_sphere(&rng)*1.5)
         s,c:=turn_sincos(f64(iteration)*0.037)
         for &p in r.b.positions {p={f32(f64(p.x)*c-f64(p.z)*s),p.y,f32(f64(p.x)*s+f64(p.z)*c)}}
         for &n in r.b.normals {n={f32(f64(n.x)*c-f64(n.z)*s),n.y,f32(f64(n.x)*s+f64(n.z)*c)}}

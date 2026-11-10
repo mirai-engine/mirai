@@ -1,6 +1,8 @@
 package geom
 
 import "core:testing"
+import "mirai:std/base"
+import mm "mirai:std/math"
 
 // Counter-clockwise triangles whose edges pair up, that cover the hull of the
 // points (T = 2n - 2 - h) and keep every point out of every circle.
@@ -113,19 +115,19 @@ delaunay_keeps_every_point_out_of_every_circle :: proc(t:^testing.T) {
     defer delete(halfedges)
     defer delete(again)
     defer delete(points)
-    rng:=rng_make(0xde1a)
+    rng:=base.rng_make(0xde1a)
     for round in 0..<60 {
-        count:=3+int(rng_u32(&rng)%300)
+        count:=3+int(base.rng_u32(&rng)%300)
         scales:=[3]f32{1,1e-3,5e4}
         scale:=scales[round%3]
-        offset:=Vec2{rng_f32(&rng),rng_f32(&rng)}*scale*(round%4==0?50:1)
+        offset:=Vec2{mm.random_f32(&rng),mm.random_f32(&rng)}*scale*(round%4==0?50:1)
         resize(&points,count)
         for &p in points {
             switch round%5 {
-            case 0,1: p={rng_f32(&rng),rng_f32(&rng)}
-            case 2: b:=rng_ball(&rng);p={b.x,b.y}
-            case 3: p={rng_f32(&rng),rng_f32(&rng)*0.01}
-            case 4: p={rng_f32(&rng)*rng_f32(&rng),rng_f32(&rng)*rng_f32(&rng)*rng_f32(&rng)}
+            case 0,1: p={mm.random_f32(&rng),mm.random_f32(&rng)}
+            case 2: b:=mm.random_in_sphere(&rng);p={b.x,b.y}
+            case 3: p={mm.random_f32(&rng),mm.random_f32(&rng)*0.01}
+            case 4: p={mm.random_f32(&rng)*mm.random_f32(&rng),mm.random_f32(&rng)*mm.random_f32(&rng)*mm.random_f32(&rng)}
             }
             p=p*scale+offset
         }

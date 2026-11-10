@@ -135,7 +135,7 @@ slicer_destroy :: proc(s:^Slicer) {
     x:=i64(clamp(math.floor(f64(position.x)*inverse),-4e18,4e18))+dx
     y:=i64(clamp(math.floor(f64(position.y)*inverse),-4e18,4e18))+dy
     z:=i64(clamp(math.floor(f64(position.z)*inverse),-4e18,4e18))+dz
-    key:=hash_u64(hash_u64(hash_u64(u64(x))~u64(y))~u64(z))
+    key:=base.hash_u64(base.hash_u64(base.hash_u64(u64(x))~u64(y))~u64(z))
     return 0 if key==KEY_EMPTY else key
 }
 

@@ -16,8 +16,8 @@ Crowd :: struct {
 @(private)
 crowd_spawn :: proc(s:^Scene,c:^Crowd,i:int,state:^u64,poll:bool) -> Error {
     c.transforms[i],c.vitals[i]=random_transform(state),random_vitals(state)
-    c.secrets[i]={ammo=u16(rng_next(state)),stamina=f32(rng_unit(state)*10)}
-    c.owner[i]=int(rng_next(state)%u64(s.count+1))-1
+    c.secrets[i]={ammo=u16(base.splitmix_next(state)),stamina=f32(rng_unit(state)*10)}
+    c.owner[i]=int(base.splitmix_next(state)%u64(s.count+1))-1
     c.polled[i]=poll
     error:Error
     c.objects[i],error=object_create(s.server,{type=s.tp.actor,user=u64(1000+i),sources={0=&c.transforms[i],1=&c.vitals[i],2=&c.secrets[i]},
@@ -26,10 +26,10 @@ crowd_spawn :: proc(s:^Scene,c:^Crowd,i:int,state:^u64,poll:bool) -> Error {
 }
 @(private)
 crowd_mutate :: proc(s:^Scene,c:^Crowd,i:int,state:^u64) {
-    switch rng_next(state)%5 {
+    switch base.splitmix_next(state)%5 {
     case 0: c.transforms[i].position+={f32(rng_unit(state)-0.5),0,f32(rng_unit(state)-0.5)}
     case 1: c.transforms[i]=random_transform(state)
-    case 2: c.vitals[i].health=i32(rng_next(state)%1001)
+    case 2: c.vitals[i].health=i32(base.splitmix_next(state)%1001)
     case 3: c.vitals[i]=random_vitals(state)
     case 4: c.secrets[i].ammo+=1
     }
@@ -70,12 +70,12 @@ replication_converges_under_loss_reordering_and_duplication :: proc(t:^testing.T
     unsound:=0
     for step in 0..<600 {
         for _ in 0..<30 {
-            i:=int(rng_next(&state)%200)
+            i:=int(base.splitmix_next(&state)%200)
             if c.objects[i]!=0 {crowd_mutate(s,c,i,&state)}
         }
         if step%40==0 {
             for _ in 0..<5 {
-                i:=int(rng_next(&state)%200)
+                i:=int(base.splitmix_next(&state)%200)
                 if c.objects[i]!=0 {
                     object_destroy(s.server,c.objects[i])
                     c.objects[i]=0

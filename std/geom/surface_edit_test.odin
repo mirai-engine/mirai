@@ -3,6 +3,8 @@ package geom
 import "base:runtime"
 import "core:testing"
 import "core:time"
+import "mirai:std/base"
+import mm "mirai:std/math"
 
 @(test)
 surface_brush_sculpts_in_any_direction_and_flattens_an_oriented_plane :: proc(t:^testing.T) {
@@ -241,37 +243,37 @@ surface_normals_join_smooth_chunk_seams_and_keep_untouched_vertices :: proc(t:^t
 @(test)
 surface_operations_return_on_hostile_meshes_and_parameters :: proc(t:^testing.T) {
     rounds :: #config(GEOM_HOSTILE_ROUNDS,400)
-    rng:=rng_make(1743)
+    rng:=base.rng_make(1743)
     positions,normals:[12]Vec3
     indices:[24]u32
     out:Mesh_Buffer;mesh_buffer_init(&out);defer mesh_buffer_destroy(&out)
     work:Mesh_Surface_Workspace;mesh_surface_workspace_init(&work);defer mesh_surface_workspace_destroy(&work)
-    scalar :: proc(rng:^Rng) -> f32 {
-        switch rng_u32(rng)%8 {
+    scalar :: proc(rng:^base.Rng) -> f32 {
+        switch base.rng_u32(rng)%8 {
         case 0:return f32(0h7fc00000)
         case 1:return f32(0h7f800000)
         case 2:return 1e30
         case 3:return 1e-30
         case 4:return 0
         }
-        return rng_range(rng,-4,4)
+        return mm.random_range(rng,-4,4)
     }
     for iteration in 0..<rounds {
         for &p in positions {p={scalar(&rng),scalar(&rng),scalar(&rng)}}
         for &n in normals {n={scalar(&rng),scalar(&rng),scalar(&rng)}}
-        for &i in indices {i=rng_u32(&rng)%14}
-        mesh:=Mesh{positions=positions[:],normals=normals[:int(rng_u32(&rng)%13)],indices=indices[:int(rng_u32(&rng)%25)]}
-        brush:=Mesh_Surface_Brush{kind=Mesh_Surface_Brush_Kind(rng_u32(&rng)%6),center={scalar(&rng),0,scalar(&rng)},normal={scalar(&rng),1,scalar(&rng)},delta={scalar(&rng),scalar(&rng),scalar(&rng)},radius=scalar(&rng),amount=scalar(&rng),hardness=scalar(&rng),lock_boundary=rng_u32(&rng)%2==0}
+        for &i in indices {i=base.rng_u32(&rng)%14}
+        mesh:=Mesh{positions=positions[:],normals=normals[:int(base.rng_u32(&rng)%13)],indices=indices[:int(base.rng_u32(&rng)%25)]}
+        brush:=Mesh_Surface_Brush{kind=Mesh_Surface_Brush_Kind(base.rng_u32(&rng)%6),center={scalar(&rng),0,scalar(&rng)},normal={scalar(&rng),1,scalar(&rng)},delta={scalar(&rng),scalar(&rng),scalar(&rng)},radius=scalar(&rng),amount=scalar(&rng),hardness=scalar(&rng),lock_boundary=base.rng_u32(&rng)%2==0}
         if iteration%4==0 {
-            for &p in positions {p=rng_ball(&rng)*((iteration%8==0)?1e30:1e-30)}
+            for &p in positions {p=mm.random_in_sphere(&rng)*((iteration%8==0)?1e30:1e-30)}
             for &n in normals {n={0,1,0}}
-            for &i in indices {i=rng_u32(&rng)%u32(len(positions))}
+            for &i in indices {i=base.rng_u32(&rng)%u32(len(positions))}
             mesh={positions=positions[:],normals=normals[:],indices=indices[:]}
             brush={kind=Mesh_Surface_Brush_Kind((iteration/4)%4),normal={1,2,3},rotation=quaternion(w=scalar(&rng),x=scalar(&rng),y=scalar(&rng),z=scalar(&rng)),radius=2e30,amount=0.1}
         }
         _,error:=mesh_surface_edit(&work,mesh,brush,&out)
         if error==.None {testing.expect(t,mesh_is_valid(mesh_buffer_view(&out)));for p in out.positions {testing.expect(t,finite3(p))}}
-        _,error=mesh_surface_refine(&work,mesh,{center=brush.center,radius=brush.radius,max_edge_length=scalar(&rng),max_triangles=int(rng_u32(&rng)%80)-1},&out)
+        _,error=mesh_surface_refine(&work,mesh,{center=brush.center,radius=brush.radius,max_edge_length=scalar(&rng),max_triangles=int(base.rng_u32(&rng)%80)-1},&out)
         if error==.None {testing.expect(t,mesh_is_valid(mesh_buffer_view(&out)));for p in out.positions {testing.expect(t,finite3(p))}}
     }
 }

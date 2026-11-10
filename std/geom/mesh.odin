@@ -2,6 +2,7 @@ package geom
 
 import "base:runtime"
 import "core:math"
+import "mirai:std/base"
 
 // Triangle list over plain slices. normals, uvs and colors are either empty
 // or as long as positions; materials is either empty or one slot per triangle.
@@ -111,7 +112,7 @@ positions_weld :: proc(positions:[]Vec3,tolerance:f32,remap:[]u32) -> int #no_bo
         return i64(clamp(math.floor(f64(x)*inverse),-4e18,4e18))
     }
     cell_key :: proc "contextless" (x,y,z:i64) -> u64 {
-        key:=hash_u64(hash_u64(hash_u64(u64(x))~u64(y))~u64(z))
+        key:=base.hash_u64(base.hash_u64(base.hash_u64(u64(x))~u64(y))~u64(z))
         return 0 if key==KEY_EMPTY else key
     }
     inverse:=1/f64(tolerance)

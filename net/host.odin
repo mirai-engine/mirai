@@ -331,7 +331,7 @@ host_init :: proc(h:^Host,desc:Host_Desc) -> Error {
         }
     }
     for i in 0..<2 {
-        word:=rng_next(&b.rng)
+        word:=base.splitmix_next(&b.rng)
         mem.copy(&b.secret[i*8],&word,8)
     }
     if !secure_host_init(h) {return refuse(h,"security","a token_key that is an Ed25519 public key, one when require_token, and a system that gives random bytes for Encrypted")}

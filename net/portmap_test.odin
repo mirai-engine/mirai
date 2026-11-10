@@ -6,6 +6,7 @@ import "core:strconv"
 import "core:strings"
 import "core:testing"
 import "core:time"
+import "mirai:std/base"
 
 @(test)
 port_mapping_pcp_and_natpmp_codecs_reject_mismatched_or_truncated_replies :: proc(t:^testing.T) {
@@ -56,8 +57,8 @@ port_mapping_upnp_parsers_bound_addresses_headers_and_xml :: proc(t:^testing.T) 
     for a in ([]Address{address_ip4(10,0,0,1,7950),address_loopback(7950),address_ip4(100,64,0,1,7950),address_ip4(192,168,1,1,7950),address_ip4(224,0,0,1,7950)}) {testing.expect(t,!portmap_public(a))}
     random:[1024]u8;seed:=u64(5)
     for _ in 0..<1000 {
-        for &byte in random {byte=u8(rng_next(&seed))}
-        size:=int(rng_next(&seed)%u64(len(random)))
+        for &byte in random {byte=u8(base.splitmix_next(&seed))}
+        size:=int(base.splitmix_next(&seed)%u64(len(random)))
         portmap_xml(string(random[:size]),"service")
         portmap_http_body(random[:size])
     }

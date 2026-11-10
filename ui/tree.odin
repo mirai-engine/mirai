@@ -620,7 +620,7 @@ tree_node_id :: proc(ctx:^Context,node:^Node,index:int) -> Id {
 @(private)
 tree_name_id :: proc(ctx:^Context,name:u64) -> Id {
     name:=name
-    seed:=ctx.id_stack[ctx.id_depth-1] if ctx.id_depth>0 else u32(0x811c9dc5)
+    seed:=ctx.id_stack[ctx.id_depth-1] if ctx.id_depth>0 else ID_SEED
     value:=hash.fnv32a(mem.ptr_to_bytes(&name),seed)
     return Id(value) if value!=0 else Id(1)
 }

@@ -4,6 +4,7 @@ import "core:mem"
 import "core:time"
 import "core:testing"
 import "mirai:std/serial"
+import "mirai:std/base"
 
 @(private="file")
 CHANNELS :: []Channel_Desc{{kind=.Reliable,max_message_bytes=20000,queue_bytes=64<<10},{kind=.Unreliable},{kind=.Sequenced}}
@@ -250,7 +251,7 @@ reliable_messages_arrive_once_in_order_under_loss_reordering_and_duplication :: 
     sent,to_server,to_client:=0,0,0
     state:=u64(5)
     for step in 0..<6000 {
-        if sent<MESSAGES && rng_next(&state)%3==0 {
+        if sent<MESSAGES && base.splitmix_next(&state)%3==0 {
             size:=size_of_message(sent)
             fill(payload[:size],sent)
             testing.expect_value(t,message_send(client,on_client,0,payload[:size]),Error.None)
@@ -425,8 +426,8 @@ hostile_datagrams :: proc(t:^testing.T,security:Security) {
     state:=u64(3)
     junk:[PACKET_BYTES]u8
     for round in 0..<3000 {
-        size:=int(rng_next(&state)%PACKET_BYTES)+1
-        for &b in junk[:size] {b=u8(rng_next(&state))}
+        size:=int(base.splitmix_next(&state)%PACKET_BYTES)+1
+        for &b in junk[:size] {b=u8(base.splitmix_next(&state))}
         if round%2==0 && size>=8 {
             junk[0]&=7
             checksum_write(junk[:size],server.back.key)
@@ -448,8 +449,8 @@ hostile_datagrams :: proc(t:^testing.T,security:Security) {
     reconnects:=0
     for step in 0..<8000 {
         if on_client!=0 {
-            message_send(client,on_client,int(rng_next(&state)%3),payload[:rng_next(&state)%600])
-            message_send(server,0,int(rng_next(&state)%3),payload[:rng_next(&state)%600])
+            message_send(client,on_client,int(base.splitmix_next(&state)%3),payload[:base.splitmix_next(&state)%600])
+            message_send(server,0,int(base.splitmix_next(&state)%3),payload[:base.splitmix_next(&state)%600])
         }
         test_step(&w)
         for command in host_poll(server) {

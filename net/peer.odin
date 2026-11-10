@@ -204,7 +204,7 @@ peer_connect :: proc(h:^Host,address:Address,credentials:^Credentials) {
     p:=&h.back.peers[0]
     if p.state!=.Free {peer_drop(h,p,.Closed,true)}
     peer_reset(h,p,address)
-    p.client_salt=rng_next(&h.back.rng)
+    p.client_salt=base.splitmix_next(&h.back.rng)
     p.state=.Requesting
     if h.desc.security.mode==.Encrypted && !secure_client_begin(h,p,credentials) {peer_drop(h,p,.Denied_Security,false)}
 }
@@ -558,7 +558,7 @@ packet_receive :: proc(h:^Host,bytes:[]u8,from:Address) {
         if p!=nil {peer_drop(h,p,.Closed,false)}
         peer_reset(h,slot,from)
         // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
-        slot.client_salt,slot.server_salt,slot.stamp=salt,rng_next(&b.rng),stamp
+        slot.client_salt,slot.server_salt,slot.stamp=salt,base.splitmix_next(&b.rng),stamp
         slot.secure=session
         peer_established(h,slot,h.history)
         handshake_accept(h,slot)

@@ -613,13 +613,6 @@ document_name :: proc(d:^Document,path,file:string) {
 
 // A new id for an asset made in the editor.
 asset_id_new :: proc(s:^Session) -> base.Asset_Id {
-    next :: proc(state:^u64) -> u64 {
-        state^+=0x9e3779b97f4a7c15
-        z:=state^
-        z=(z~(z>>30))*0xbf58476d1ce4e5b9
-        z=(z~(z>>27))*0x94d049bb133111eb
-        return z~(z>>31)
-    }
     s.id_state~=platform.clock_ns()
-    return {next(&s.id_state),next(&s.id_state)}
+    return {base.splitmix_next(&s.id_state),base.splitmix_next(&s.id_state)}
 }

@@ -180,8 +180,8 @@ curves_layout :: proc(state:^Playing,leader:[]Curve_Output,runtime:^Modifier_Run
         binding.to_slot=find(state.driven[:],{target=binding.to,property=.Float})
     }
     layout:u64=0
-    for curve in state.driven {layout=(layout~curve.target)*0x100000001b3}
-    state.curve_layout=(layout~u64(len(state.driven)))*0x100000001b3
+    for curve in state.driven {layout=base.hash_mix(layout,curve.target)}
+    state.curve_layout=base.hash_mix(layout,u64(len(state.driven)))
     return true
 }
 

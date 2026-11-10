@@ -1,6 +1,8 @@
 package geom
 
 import "core:testing"
+import "mirai:std/base"
+import mm "mirai:std/math"
 
 @(private) test_quad :: proc(b:^Mesh_Buffer,p0,p1,p2,p3:Vec3) {
     base:=u32(len(b.positions))
@@ -230,13 +232,13 @@ slice_of_an_open_mesh_leaves_the_cut_open_and_reports_it :: proc(t:^testing.T) {
         bytes_equal(a.colors[:],b.colors[:]) && bytes_equal(a.indices[:],b.indices[:]) && bytes_equal(a.materials[:],b.materials[:])
 }
 
-@(private) random_plane :: proc(rng:^Rng,positions:[]Vec3,round:int) -> Plane {
-    through:=positions[int(rng_u32(rng))%len(positions)]
-    normal:=rng_ball(rng)
+@(private) random_plane :: proc(rng:^base.Rng,positions:[]Vec3,round:int) -> Plane {
+    through:=positions[int(base.rng_u32(rng))%len(positions)]
+    normal:=mm.random_in_sphere(rng)
     switch round%4 {
     case 1: normal={1,0,0} if round%3==0 else {0,1,0} if round%3==1 else {0,0,1} // through a vertex, along an axis
-    case 2: through+=rng_ball(rng)*0.1
-    case 3: through=(through+positions[int(rng_u32(rng))%len(positions)])*0.5
+    case 2: through+=mm.random_in_sphere(rng)*0.1
+    case 3: through=(through+positions[int(base.rng_u32(rng))%len(positions)])*0.5
     }
     if normal=={} {normal={0,1,0}}
     return plane_from_point(normal,through)
@@ -255,14 +257,14 @@ slices_of_random_planes_stay_closed_and_keep_the_volume :: proc(t:^testing.T) {
     defer mesh_buffer_destroy(&front2)
     defer mesh_buffer_destroy(&back2)
     defer mesh_buffer_destroy(&again)
-    rng:=rng_make(0x511ce)
+    rng:=base.rng_make(0x511ce)
     for round in 0..<360 {
         shape:=Shape(round%len(Shape))
         mesh_buffer_clear(&r.mesh)
         shape_build(&r.mesh,shape)
         scales:=[3]f32{1,1e-3,300}
         scale:=scales[round/len(Shape)%3]
-        offset:=Vec3{rng_f32(&rng)-0.5,rng_f32(&rng)-0.5,rng_f32(&rng)-0.5}*scale*(round%7==0?2000:2)
+        offset:=Vec3{mm.random_f32(&rng)-0.5,mm.random_f32(&rng)-0.5,mm.random_f32(&rng)-0.5}*scale*(round%7==0?2000:2)
         for &p in r.mesh.positions {p=p*scale+offset}
         mesh:=mesh_buffer_view(&r.mesh)
         total:=mesh_volume(mesh.positions,mesh.indices)
