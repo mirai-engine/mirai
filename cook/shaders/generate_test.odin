@@ -12,6 +12,7 @@ import "mirai:std/base"
 @(private="file")
 FILL :: `#include "native.slang"
 //! variant double MIRAI_DOUBLE=1
+//! constant half MIRAI_HALF
 struct Fill_Params { uint count; float scale; float offset; uint pad; };
 [[vk::binding(0, 0)]] ConstantBuffer<Fill_Params> params : register(b0, space0);
 [[vk::binding(1, 0)]] StructuredBuffer<float> input_data : register(t1, space0);
@@ -26,6 +27,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
 #else
     output_data[i] = input_data[i] * params.scale + params.offset;
 #endif
+    if (MIRAI_HALF) output_data[i] *= 0.5;
 }
 `
 
@@ -56,7 +58,27 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID) {
 }
 `
 
-// A small engine of its own: three stages (one with a variant), a test stage
+// The marks a constant of id 0 leaves in the code of a stage: a
+// specialization constant in SPIR-V, a function constant in Metal.
+@(private="file")
+code_has_constant :: proc(code:string) -> bool {
+    when ODIN_OS==.Darwin {
+        return strings.contains(code,"[[function_constant(0)]]")
+    } else {
+        OP_DECORATE,SPEC_ID :: 71,1
+        bytes:=transmute([]u8)code
+        word :: proc(bytes:[]u8,at:int) -> u32 {return u32(bytes[4*at]) | u32(bytes[4*at+1])<<8 | u32(bytes[4*at+2])<<16 | u32(bytes[4*at+3])<<24}
+        for at:=5;at<len(bytes)/4; {
+            count:=int(word(bytes,at)>>16)
+            if count==0 || at+count>len(bytes)/4 {return false}
+            if word(bytes,at)&0xffff==OP_DECORATE && count==4 && word(bytes,at+2)==SPEC_ID && word(bytes,at+3)==0 {return true}
+            at+=count
+        }
+        return false
+    }
+}
+
+// A small engine of its own: three stages (one with a variant and a constant), a test stage
 // and the shared includes and built-in programs of the real engine.
 @(private="file")
 Mini :: struct {root,output:string,options:Options}
@@ -146,6 +168,14 @@ generation_compiles_publishes_and_reuses_what_did_not_change :: proc(t:^testing.
     testing.expect(t,strings.contains(table,"#panic(\"the shaders were generated without"),"the other system is told to ask for its backend")
     testing.expect(t,strings.contains(mini_read(&mini,"rhi/shaders_gen_test.odin"),"\tProbe_Comp,\n\tProbe_Double_Comp,\n"))
     testing.expect(t,mini_read(&mini,strings.concatenate({"shaders/build/fill.comp",HOST_CODE},context.temp_allocator))!=mini_read(&mini,strings.concatenate({"shaders/build/fill_double.comp",HOST_CODE},context.temp_allocator)),"a variant is another compilation")
+    // A constant is no compilation: the code of each variant holds it, for the pipeline to set.
+    for name in ([]string{"shaders/build/fill.comp","shaders/build/fill_double.comp"}) {
+        testing.expectf(t,code_has_constant(mini_read(&mini,strings.concatenate({name,HOST_CODE},context.temp_allocator))),"%s keeps its constant for the pipeline",name)
+    }
+    testing.expect(t,!code_has_constant(mini_read(&mini,strings.concatenate({"shaders/build/color.frag",HOST_CODE},context.temp_allocator))),"a stage without constants has none")
+    testing.expect_value(t,strings.count(manifest,"\"constants\": [\n        \"half\"\n      ]"),4)
+    testing.expect_value(t,strings.count(table,"FILL_COMP_HALF :: 0\n"),1)
+    testing.expect_value(t,strings.count(table,"constants = []string{\"half\"}"),2)
     leftovers,_:=os.read_all_directory_by_path(path_join(mini.root,"shaders",allocator=context.temp_allocator),context.temp_allocator)
     for entry in leftovers {testing.expectf(t,!strings.has_prefix(entry.name,".mirai-shaders-"),"the staging folder %s is removed",entry.name)}
 
@@ -207,6 +237,12 @@ generation_that_fails_keeps_the_previous_one_whole :: proc(t:^testing.T) {
     testing.expect_value(t,fixed.error,"")
     testing.expect_value(t,fixed.compiled,0)
     testing.expect(t,mini_read(&mini,color_code)!=color,"the new generation is published")
+    // Constants a pipeline cannot set fail the stage that declares them, by name, before any tool runs.
+    published:=mini_read(&mini,"shaders/build/manifest.json")
+    fixture_write(t,mini.root,"shaders/point.vert.slang",strings.concatenate({"//! constant a SAME\n//! constant b SAME\n",POINT},context.temp_allocator))
+    twice:=mini_generate(t,&mini,mini.options)
+    testing.expect(t,strings.contains(twice.error,"point.vert") && strings.contains(twice.error,"twice"),twice.error)
+    testing.expect(t,mini_read(&mini,"shaders/build/manifest.json")==published,"nothing is published of it")
 }
 
 @(test)
