@@ -55,6 +55,8 @@ destruct_test_destroy :: proc(f:^Destruct_Test) {
 @(private="file")
 destruct_test_step :: proc(f:^Destruct_Test,resimulating:=false) {
     core.test_world_settle(&f.w)
+    // The logs of a tick, as their readers are handed them.
+    clear(&f.events.fractured.items);clear(&f.events.applied.items);clear(&f.events.replayed.items);clear(&f.events.grouped.items)
     f.tick+=1
     test_step(&f.rows,&f.application,core.commands_of(core.test_world_ref(&f.w)),{dt=1.0/60,playing=true,tick=f.tick,resimulating=resimulating})
     core.test_world_settle(&f.w)
