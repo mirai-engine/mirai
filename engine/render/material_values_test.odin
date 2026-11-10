@@ -1,5 +1,7 @@
 package render
 
+import "core:reflect"
+import "core:strings"
 import "core:testing"
 import "mirai:std/base"
 
@@ -45,7 +47,8 @@ only_what_changes_how_a_surface_is_drawn_asks_for_a_row :: proc(t:^testing.T) {
     cases:=[?]Case{
         {"base_color",false},{"opacity",false},{"metallic",false},{"roughness",false},{"emission",false},
         {"dissolve",false},{"progress",false},
-        {"ior",true},{"transmission",true},{"alpha_mode",true},{"coat",true},{"unlit",true},{"emission_mode",true},{"specular",true},
+        {"specular",false},{"coat",false},{"anisotropy_rotation",false},{"unlit",false},{"emission_mode",false},
+        {"ior",true},{"transmission",true},{"alpha_mode",true},
     }
     for c in cases {
         o:=MATERIAL_VALUES_DEFAULT
@@ -54,6 +57,11 @@ only_what_changes_how_a_surface_is_drawn_asks_for_a_row :: proc(t:^testing.T) {
         testing.expect(t,!material_values_plain(&o))
         _,instanced:=material_value_instanced(base.name_hash(c.name))
         testing.expectf(t,!(instanced && c.row),"%s",c.name)
+    }
+    for field in MATERIAL_VALUE_FIELDS {
+        if field.held=={} {continue}
+        target,_:=reflect.enum_name_from_value(field.held)
+        testing.expectf(t,strings.to_lower(target,context.temp_allocator)==field.name,"%s is held as %s",field.name,target)
     }
     o:=MATERIAL_VALUES_DEFAULT
     testing.expect(t,material_values_plain(&o))

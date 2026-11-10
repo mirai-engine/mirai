@@ -452,19 +452,26 @@ bool material_value_at(uint block, uint i, uint row, out uint target, out uint c
 #endif
 }
 // A row with the values of the standard model an instance gives it.
+uint material_layer_given(uint layers, uint layer, bool on) {return on ? layers | layer : layers & ~layer;}
 Material material_instanced(Material m, uint block) {
     uint given = material_values_count(block);
     for (uint i = 0u; i < given; i++) {
         uint target, count;
         uint4 words;
         if (!material_value_at(block, i, m.row, target, count, words) || target < INSTANCE_VALUE_STANDARD) continue;
-        // In the order of render.Instance_Material_Value_Target.
         float4 value = asfloat(words);
-        if (target == INSTANCE_VALUE_STANDARD) m.base_color = value.xyz;
-        else if (target == INSTANCE_VALUE_STANDARD + 1u) m.opacity = saturate(value.x);
-        else if (target == INSTANCE_VALUE_STANDARD + 2u) m.metallic = saturate(value.x);
-        else if (target == INSTANCE_VALUE_STANDARD + 3u) m.roughness = saturate(value.x);
-        else if (target == INSTANCE_VALUE_STANDARD + 4u) m.emission = value.xyz;
+        if (target == INSTANCE_VALUE_BASE_COLOR) m.base_color = value.xyz;
+        else if (target == INSTANCE_VALUE_OPACITY) m.opacity = saturate(value.x);
+        else if (target == INSTANCE_VALUE_METALLIC) m.metallic = saturate(value.x);
+        else if (target == INSTANCE_VALUE_ROUGHNESS) m.roughness = saturate(value.x);
+        else if (target == INSTANCE_VALUE_EMISSION) m.emission = value.xyz;
+        else if (target == INSTANCE_VALUE_SPECULAR) m.specular_factor = value.x;
+        else if (target == INSTANCE_VALUE_EMISSION_MODE) m.emission_mode = value.x >= 0.5 ? EMISSION_RELATIVE : EMISSION_PHYSICAL;
+        else if (target == INSTANCE_VALUE_UNLIT) m.layers = material_layer_given(m.layers, MATERIAL_LAYER_UNLIT, value.x >= 0.5);
+        else if (target == INSTANCE_VALUE_COAT) m.layers = material_layer_given(m.layers, MATERIAL_LAYER_COAT, value.x > 0.0);
+        else if (target == INSTANCE_VALUE_FUZZ) m.layers = material_layer_given(m.layers, MATERIAL_LAYER_FUZZ, value.x > 0.0);
+        else if (target == INSTANCE_VALUE_ANISOTROPY) m.layers = material_layer_given(m.layers, MATERIAL_LAYER_ANISOTROPY, value.x > 0.0);
+        else if (target == INSTANCE_VALUE_DIFFUSE_TRANSMISSION) m.layers = material_layer_given(m.layers, MATERIAL_LAYER_DIFFUSE_TRANSMISSION, value.x > 0.0);
     }
     return m;
 }
@@ -623,7 +630,7 @@ uint material_layers_allowed(uint layers) {
     return layers;
 }
 // The layers a material holds at a point (MATERIAL_LAYER_* of its row): the
-// blocks of the row, by their maps. The coat follows the surface under the
+// blocks of the row, under the values of the instance, by their maps. The coat follows the surface under the
 // normal map of the base, or its own map; the tangent of an anisotropic lobe
 // is that of the surface turned by its rotation and its map, across the
 // shading normal.
@@ -633,8 +640,29 @@ Material_Layers material_layers(Material m, Mirai_Surface_Context ctx) {
     l.bits = bits;
     if (bits == 0u || (bits & MATERIAL_LAYER_UNLIT) != 0u) return l;
     float2 lod = float2(ctx.lod, ctx.lod1);
+    Material_Coat coat = materials[m.row].coat;
+    Material_Fuzz fuzz = materials[m.row].fuzz;
+    Material_Diffuse_Transmission transmission = materials[m.row].diffuse_transmission;
+    Material_Anisotropy anisotropy = materials[m.row].anisotropy;
+    // Under the values the instance gives.
+    for (uint i = 0u; i < material_values_count(ctx.material_values); i++) {
+        uint target, count;
+        uint4 words;
+        if (!material_value_at(ctx.material_values, i, m.row, target, count, words)) continue;
+        float4 v = asfloat(words);
+        if (target == INSTANCE_VALUE_COAT) coat.weight = saturate(v.x);
+        else if (target == INSTANCE_VALUE_COAT_ROUGHNESS) coat.roughness = saturate(v.x);
+        else if (target == INSTANCE_VALUE_COAT_COLOR) coat.color = saturate(v.xyz);
+        else if (target == INSTANCE_VALUE_COAT_IOR) coat.ior = max(v.x, 1.0);
+        else if (target == INSTANCE_VALUE_FUZZ) fuzz.weight = saturate(v.x);
+        else if (target == INSTANCE_VALUE_FUZZ_COLOR) fuzz.color = saturate(v.xyz);
+        else if (target == INSTANCE_VALUE_FUZZ_ROUGHNESS) fuzz.roughness = saturate(v.x);
+        else if (target == INSTANCE_VALUE_ANISOTROPY) anisotropy.amount = saturate(v.x);
+        else if (target == INSTANCE_VALUE_ANISOTROPY_ROTATION) anisotropy.rotation = float2(cos(v.x), sin(v.x));
+        else if (target == INSTANCE_VALUE_DIFFUSE_TRANSMISSION) transmission.weight = saturate(v.x);
+        else if (target == INSTANCE_VALUE_DIFFUSE_TRANSMISSION_COLOR) transmission.color = saturate(v.xyz);
+    }
     if ((bits & MATERIAL_LAYER_COAT) != 0u) {
-        Material_Coat coat = materials[m.row].coat;
         l.coat = coat.weight;
         l.coat_roughness = coat.roughness;
         if (material_has(m.textures[MATERIAL_MAP_COAT])) l.coat *= material_map_texel(m, MATERIAL_MAP_COAT, m.textures[MATERIAL_MAP_COAT], ctx.uv0, ctx.uv1, lod, ctx.ray).r;
@@ -648,7 +676,6 @@ Material_Layers material_layers(Material m, Mirai_Surface_Context ctx) {
         }
     }
     if ((bits & MATERIAL_LAYER_FUZZ) != 0u) {
-        Material_Fuzz fuzz = materials[m.row].fuzz;
         l.fuzz = fuzz.weight;
         l.fuzz_color = fuzz.color;
         l.fuzz_roughness = fuzz.roughness;
@@ -656,14 +683,12 @@ Material_Layers material_layers(Material m, Mirai_Surface_Context ctx) {
         if (material_has(m.textures[MATERIAL_MAP_FUZZ_ROUGHNESS])) l.fuzz_roughness *= material_map_texel(m, MATERIAL_MAP_FUZZ_ROUGHNESS, m.textures[MATERIAL_MAP_FUZZ_ROUGHNESS], ctx.uv0, ctx.uv1, lod, ctx.ray).a;
     }
     if ((bits & MATERIAL_LAYER_DIFFUSE_TRANSMISSION) != 0u) {
-        Material_Diffuse_Transmission transmission = materials[m.row].diffuse_transmission;
         l.diffuse_transmission = transmission.weight;
         l.diffuse_transmission_color = transmission.color;
         if (material_has(m.textures[MATERIAL_MAP_DIFFUSE_TRANSMISSION])) l.diffuse_transmission *= material_map_texel(m, MATERIAL_MAP_DIFFUSE_TRANSMISSION, m.textures[MATERIAL_MAP_DIFFUSE_TRANSMISSION], ctx.uv0, ctx.uv1, lod, ctx.ray).a;
         if (material_has(m.textures[MATERIAL_MAP_DIFFUSE_TRANSMISSION_COLOR])) l.diffuse_transmission_color *= material_map_texel(m, MATERIAL_MAP_DIFFUSE_TRANSMISSION_COLOR, m.textures[MATERIAL_MAP_DIFFUSE_TRANSMISSION_COLOR], ctx.uv0, ctx.uv1, lod, ctx.ray).rgb;
     }
     if ((bits & MATERIAL_LAYER_ANISOTROPY) != 0u) {
-        Material_Anisotropy anisotropy = materials[m.row].anisotropy;
         float2 direction = float2(1.0, 0.0);
         l.anisotropy = anisotropy.amount;
         if (material_has(m.textures[MATERIAL_MAP_ANISOTROPY])) {

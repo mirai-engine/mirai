@@ -29,8 +29,12 @@ mode.
   an instance (`material_instanced`, `material_parameters`, from `ctx.material_values`), so raster,
   ray hits, coverage and the vertex functions see the same. Another value touches the words of its
   instance alone: no row, no texture residency, no other instance. A stage that draws no instance
-  of a scene (the previews: `MIRAI_NO_INSTANCES`) reads none and does not bind the pool. What
-  changes how a surface is drawn (alpha mode, layers, transmission, textures) is of the row.
+  of a scene (the previews: `MIRAI_NO_INSTANCES`) reads none and does not bind the pool. A row
+  holds its layer blocks also with their weight at zero, so a weight an instance gives takes the
+  rest from them. What chooses the passes and the glass media of a surface (alpha mode,
+  transmission, index of refraction) and textures are of the row. A specular or a layer an
+  instance gives counts, like the row's, for the passes of what reflects or has layers
+  (`instance_alpha`): one that changes them classes every instance again.
 
 ## Evaluation
 

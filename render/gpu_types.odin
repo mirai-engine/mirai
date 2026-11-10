@@ -265,7 +265,7 @@ MESH_FLAG_STREAMED :: abi.MESH_FLAG_STREAMED
 INSTANCE_VALUES_MAX :: abi.INSTANCE_VALUES_MAX
 INSTANCE_VALUE_WORDS :: abi.INSTANCE_VALUE_WORDS
 // A value of the standard model an instance gives: the others are of the row.
-Instance_Material_Value_Target :: enum u32 {Base_Color = abi.INSTANCE_VALUE_STANDARD, Opacity, Metallic, Roughness, Emission}
+Instance_Material_Value_Target :: abi.Instance_Value
 Instance_Material_Value :: struct {
 	row:    u32,    // of the material table: the value is for the points of the instance that show it
 	target: u32,    // a word of the parameters of the program of the row, or an Instance_Material_Value_Target; from INSTANCE_VALUE_COUNT_SHIFT, how many of its words it gives

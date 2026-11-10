@@ -212,7 +212,15 @@ PROGRAMS_HEADER   :: 8
 INSTANCE_VALUES_MAX         :: 16
 INSTANCE_VALUE_WORDS        :: 6
 INSTANCE_VALUE_COUNT_SHIFT  :: 8
-INSTANCE_VALUE_STANDARD     :: 64 // base color, then opacity, metallic, roughness and emission
+INSTANCE_VALUE_STANDARD     :: 64
+// The values of the standard model an instance gives. A row holds the others
+// (the index of refraction, the transmission and the alpha mode), which choose
+// the passes that draw it and the media its glass leaves.
+Instance_Value :: enum u32 {
+	Base_Color = INSTANCE_VALUE_STANDARD, Opacity, Metallic, Roughness, Emission, Specular,
+	Coat, Coat_Roughness, Coat_Color, Coat_Ior, Fuzz, Fuzz_Color, Fuzz_Roughness, Anisotropy, Anisotropy_Rotation,
+	Unlit, Emission_Mode, Diffuse_Transmission, Diffuse_Transmission_Color,
+}
 
 // The limits of a program of the catalog.
 PROGRAM_PARAMETER_BYTES  :: 256

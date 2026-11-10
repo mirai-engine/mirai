@@ -464,21 +464,12 @@ gpu_material :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row {
 		}
 	}
 	result.layers = transmute(u32)layers
-	if .Coat in layers {
-		c := m.coat
-		result.coat = {color = linalg.clamp(c.color, 0, 1), weight = clamp(c.weight, 0, 1), roughness = clamp(c.roughness, 0, 1), ior = max(c.ior, 1), normal_scale = c.normal_scale}
-	}
-	if .Fuzz in layers {
-		f := m.fuzz
-		result.fuzz = {color = linalg.clamp(f.color, 0, 1), weight = clamp(f.weight, 0, 1), roughness = clamp(f.roughness, 0, 1)}
-	}
-	if .Anisotropy in layers {
-		result.anisotropy = {amount = clamp(m.anisotropy.amount, 0, 1), rotation = {math.cos(m.anisotropy.rotation), math.sin(m.anisotropy.rotation)}}
-	}
-	if .Diffuse_Transmission in layers {
-		d := m.diffuse_transmission
-		result.diffuse_transmission = {color = linalg.clamp(d.color, 0, 1), weight = clamp(d.weight, 0, 1)}
-	}
+	// The blocks of the layers it does not hold too: those an instance gives a weight take the rest from them.
+	c, f, d := m.coat, m.fuzz, m.diffuse_transmission
+	result.coat = {color = linalg.clamp(c.color, 0, 1), weight = clamp(c.weight, 0, 1), roughness = clamp(c.roughness, 0, 1), ior = max(c.ior, 1), normal_scale = c.normal_scale}
+	result.fuzz = {color = linalg.clamp(f.color, 0, 1), weight = clamp(f.weight, 0, 1), roughness = clamp(f.roughness, 0, 1)}
+	result.anisotropy = {amount = clamp(m.anisotropy.amount, 0, 1), rotation = {math.cos(m.anisotropy.rotation), math.sin(m.anisotropy.rotation)}}
+	result.diffuse_transmission = {color = linalg.clamp(d.color, 0, 1), weight = clamp(d.weight, 0, 1)}
 	maps := m.maps
 	placed := asset.material_maps(&maps)
 	for transform, kind in placed {
@@ -738,7 +729,7 @@ instances_classify :: proc(s: ^Scene_State) {
 	clear(&s.reflective)
 	for &inst, i in s.instances {
 		if int(inst.meta.x & INSTANCE_MESH_MASK) >= len(s.meshes) {continue}
-		tested, blended, glass, reflectance, layered, solid, glass_layered := instance_alpha(s, s.meshes[inst.meta.x & INSTANCE_MESH_MASK], inst.meta.y, inst.slot_materials)
+		tested, blended, glass, reflectance, layered, solid, glass_layered := instance_alpha(s, s.meshes[inst.meta.x & INSTANCE_MESH_MASK], inst.meta.y, inst.slot_materials, inst.material_values)
 		flags := (inst.meta.w &~ (INSTANCE_FLAG_ALPHA_TESTED | INSTANCE_FLAG_BLENDED | INSTANCE_FLAG_TRANSLUCENT)) | alpha_flags(tested, blended, glass)
 		if reflectance && flags & INSTANCE_FLAG_HIDDEN == 0 {append(&s.reflective, Reflective_Instance{u32(i), layered})}
 		if flags != inst.meta.w {
@@ -781,8 +772,9 @@ tlas_refs_classify :: proc(s: ^Scene_State) {
 @(private)
 // reflectance: one of its opaque materials reflects other than the default
 // dielectric, which the albedo and metallic of the G-buffer give by themselves.
-// glass_layered: one of its blended materials has layers.
-instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:[32]u32) -> (tested, blended, glass, reflectance, layered, solid, glass_layered: bool) {
+// glass_layered: one of its blended materials has layers. given: the values
+// the instance gives its rows (instance_material_values_words).
+instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:[32]u32, given: u32 = 0) -> (tested, blended, glass, reflectance, layered, solid, glass_layered: bool) {
     palette:=slots
     defaults:=asset.MATERIAL_DEFAULTS
     glass = mesh.slot_count > 0
@@ -792,10 +784,11 @@ instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:
         if int(row)<len(s.materials) {
             values:=&s.materials[row]
             m=asset.Alpha_Mode(values.alpha_mode)
-            departs:=values.program_id!=0 || values.specular_color!=defaults.specular_color || values.specular_factor!=defaults.specular_factor || values.ior!=defaults.ior
+            given_specular,given_layers:=instance_values_class(s,given,row)
+            departs:=values.program_id!=0 || values.specular_color!=defaults.specular_color || values.specular_factor!=defaults.specular_factor || values.ior!=defaults.ior || given_specular
             if m != .Blend && (departs || values.textures[.Specular]!=GPU_NONE || values.textures[.Specular_Color]!=GPU_NONE) {reflectance=true}
             lit:=transmute(asset.Material_Layers)values.layers-{.Unlit}
-            if card(lit)>0 {
+            if card(lit)>0 || given_layers {
                 if m == .Blend {glass_layered=true} else {layered=true}
             }
         }
@@ -1401,7 +1394,8 @@ tlas_settle :: proc(s: ^Scene_State) {
 // descs are positions in the list it was given. It touches each instance
 // alone: no row of the material table, no texture, no other instance. count
 // takes how many had another. False, with nothing changed, when the lists
-// differ in length or name an instance that the set did not have.
+// differ in length or name an instance that the set did not have. Values that
+// change whether it reflects or has layers class every instance again.
 scene_tint :: proc(r: ^Renderer, descs: []u32, tints, emissions: []Vec3, count: ^int = nil, values: []Instance_Material_Values = nil) -> bool {
 	s := &r.scene
 	if count != nil {count^ = 0}
@@ -1409,6 +1403,7 @@ scene_tint :: proc(r: ^Renderer, descs: []u32, tints, emissions: []Vec3, count: 
 	for desc in descs {
 		if int(desc) >= len(s.desc_instance) {return false}
 	}
+	classify := false
 	for desc, at in descs {
 		index := s.desc_instance[desc]
 		if index < 0 {continue}
@@ -1420,13 +1415,18 @@ scene_tint :: proc(r: ^Renderer, descs: []u32, tints, emissions: []Vec3, count: 
 		inst.tint, inst.emission = tint, emission
 		if values != nil {
 			given := values[at]
+			mesh := s.meshes[inst.meta.x & INSTANCE_MESH_MASK]
+			_, _, _, reflected, layered, _, glass_layered := instance_alpha(s, mesh, inst.meta.y, inst.slot_materials, inst.material_values)
 			changed ||= instance_material_values_give(r, inst, &given)
+			_, _, _, reflects, layers, _, glass_layers := instance_alpha(s, mesh, inst.meta.y, inst.slot_materials, inst.material_values)
+			classify ||= reflects != reflected || layers != layered || glass_layers != glass_layered
 		}
 		if !changed {continue}
 		instance_changed_near(s, inst, glowed || instance_material_values_glow(s, inst.material_values))
 		instance_touch(s, u32(index))
 		if count != nil {count^ += 1}
 	}
+	if classify {instances_classify(s)}
 	return true
 }
 
@@ -1437,6 +1437,21 @@ instance_material_values_words :: proc "contextless" (s: ^Scene_State, values: u
 	count := int(min(s.indices[values - 1], INSTANCE_VALUES_MAX))
 	if int(values) + count * INSTANCE_VALUE_WORDS > len(s.indices) {return nil}
 	return s.indices[values:][:count * INSTANCE_VALUE_WORDS]
+}
+
+// What the values an instance gives a row change of how it is drawn: a
+// specular of its own reflects, and a layer reaches the layers target.
+@(private = "file")
+instance_values_class :: proc "contextless" (s: ^Scene_State, values, row: u32) -> (specular, layered: bool) {
+	words := instance_material_values_words(s, values)
+	for at := 0; at + INSTANCE_VALUE_WORDS <= len(words); at += INSTANCE_VALUE_WORDS {
+		if words[at] != row {continue}
+		#partial switch Instance_Material_Value_Target(words[at + 1] & 0xff) {
+		case .Specular: specular = true
+		case .Coat ..= .Anisotropy_Rotation, .Diffuse_Transmission, .Diffuse_Transmission_Color: layered = true
+		}
+	}
+	return
 }
 
 // Whether the values of an instance give it an emission: its glow reaches as far as that of a tint.
@@ -1631,11 +1646,7 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 		material := u32(desc.material) if desc.material != 0 && int(desc.material) < len(s.materials) else GPU_NONE
         slot_materials:=desc.slot_materials
         for &row in slot_materials {if row>u32(len(s.materials)) {row=0}}
-		tested, blended, glass, reflectance, layered, solid, glass_layered := instance_alpha(s, mesh, material,slot_materials)
-		flags |= alpha_flags(tested, blended, glass)
 		flags |= instance_small(bmin, bmax)
-		if reflectance && !hidden {append(&s.reflective, Reflective_Instance{index, layered})}
-		if blended && !hidden {append(&s.translucent, Translucent{instance = index, solid = solid, layered = glass_layered})}
 		s.instances[index]=Gpu_Instance{
 			slot_materials=slot_materials,
 			world = rows_3x4(desc.transform),
@@ -1651,6 +1662,11 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 		// Without room for its values it shows its rows as they are (stats.problem says what is missing).
 		values_given := desc.material_values
 		if instance_material_values_give(r, &s.instances[index], &values_given) && instance_material_values_glow(s, s.instances[index].material_values) {instance_changed_near(s, &s.instances[index], true)}
+		tested, blended, glass, reflectance, layered, solid, glass_layered := instance_alpha(s, mesh, material, slot_materials, s.instances[index].material_values)
+		flags |= alpha_flags(tested, blended, glass)
+		s.instances[index].meta.w = flags
+		if reflectance && !hidden {append(&s.reflective, Reflective_Instance{index, layered})}
+		if blended && !hidden {append(&s.translucent, Translucent{instance = index, solid = solid, layered = glass_layered})}
 		head:=s.meshes[desc.mesh].first_instance
 		s.instance_next[index],s.instance_prev[index]=head,-1
 		if head>=0 {s.instance_prev[head]=i32(index)}

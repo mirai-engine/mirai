@@ -10,7 +10,7 @@ import mm "mirai:std/math"
 // The values entities give their materials by name are held by their
 // instances: each one shows its own, no row of the material table is made for
 // them, and another value is given in place, without making the instance
-// again. What changes how a surface is drawn still takes a row.
+// again. What changes the passes that draw a surface still takes a row.
 @(test)
 values_of_an_entity_show_from_its_instance_without_a_row_of_their_own :: proc(t:^testing.T) {
     settings:=gpu.DEFAULT_SETTINGS
@@ -78,8 +78,15 @@ values_of_an_entity_show_from_its_instance_without_a_row_of_their_own :: proc(t:
     shown=count(t,app)
     testing.expectf(t,shown.r==0 && shown.g>100 && shown.b>100,"the value given in place shows: %v",shown)
 
-    // A value that changes how the surface is drawn makes the entity show a row of its own.
-    testing.expect(t,material_value(core.edit(&w.values,entities[1]),"unlit",1))
+    // A layer and unlit are given in place too.
+    testing.expect(t,material_value(core.edit(&w.values,entities[1]),"unlit",1) && material_value(core.edit(&w.values,entities[1]),"coat",1))
+    draw(&sync,app,&w)
+    testing.expect(t,sync.stats.instance_updates==updates && sync.stats.tints==given+2 && app.assets.stats.derived==0)
+    shown=count(t,app)
+    testing.expectf(t,shown.g>100 && shown.b>100,"%v",shown)
+
+    // A value that changes the passes that draw the surface makes the entity show a row of its own.
+    testing.expect(t,material_value(core.edit(&w.values,entities[1]),"ior",1.8))
     draw(&sync,app,&w)
     testing.expect_value(t,sync.stats.instance_updates,updates+1)
     testing.expect_value(t,app.assets.stats.derived,1)

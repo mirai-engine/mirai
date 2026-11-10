@@ -336,15 +336,17 @@ Components that describe the scene and `render_sync`, which carries it to the re
     instance of the entity
     ([values of an instance](../../mirai-rendering/references/materials.md#material-row)):
     `render_sync` gives them in place when they change (`values_settle`), without making the
-    instance again or deriving a row. A texture, overlays, an alpha below 1 or another value of
-    the standard model make the entity show a derived row, shared by content. What an instance
+    instance again or deriving a row. A texture, overlays, an alpha below 1 or a value of the
+    standard model that chooses passes (`ior`, `transmission`, `alpha_mode`) make the entity show
+    a derived row, shared by content. What an instance
     holds is for a row: the slots of a mesh that show the same material share it.
   - It is `shared`: several game functions animate values of one entity, each setting and dropping
     only its own names with `material_value` and `material_value_drop` instead of writing the
     whole component over what another gave. A zero value is black and hidden: start from
     what the entity has or from `MATERIAL_VALUES_DEFAULT`.
-  - `values_show` gives an entity values for one frame that no table holds (the texture a world
-    panel is drawn into): what draws the entity that frame shows them over its own.
+  - `values_show` asks, through the `Frame_Values_Requests` queue that `render_sync` takes, for
+    values of one frame that no table holds (the texture a world panel is drawn into): what draws
+    the entity that frame shows them over its own.
 - **`Highlight`**: the editor's selection outline; it replaces the entity's `Outline`.
 - **`Outline`**: the game's outline, with one of the 15 styles of `Outline_Styles`, a project
   setting (the same in all its scenes) with the color, the fill and what is seen behind another

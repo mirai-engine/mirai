@@ -281,28 +281,30 @@ Draw_Offset :: struct {
 
 // The values of the standard model an entity gives by name, and where
 // asset.Material_Info holds each: a number, a color, a flag or, with modes,
-// an enum of a byte with that many members.
+// an enum of a byte with that many members; held: where an instance holds
+// it, or 0 for one a row holds.
 Material_Value_Field :: struct {
     name:string,
     offset:uintptr,
     kind:enum u8 {Number,Color,Flag,Mode},
     modes:u8,
+    held:gpu.Instance_Material_Value_Target,
 }
 MATERIAL_VALUE_FIELDS :: [22]Material_Value_Field{
-    {"base_color",offset_of(asset.Material_Info,base_color),.Color,0},{"opacity",offset_of(asset.Material_Info,opacity),.Number,0},
-    {"metallic",offset_of(asset.Material_Info,metallic),.Number,0},{"roughness",offset_of(asset.Material_Info,roughness),.Number,0},
-    {"emission",offset_of(asset.Material_Info,emission),.Color,0},{"specular",offset_of(asset.Material_Info,specular_factor),.Number,0},
-    {"ior",offset_of(asset.Material_Info,ior),.Number,0},{"transmission",offset_of(asset.Material_Info,transmission),.Number,0},
-    {"alpha_mode",offset_of(asset.Material_Info,alpha_mode),.Mode,len(asset.Alpha_Mode)},
-    {"coat",offset_of(asset.Material_Info,coat)+offset_of(asset.Material_Coat,weight),.Number,0},{"coat_roughness",offset_of(asset.Material_Info,coat)+offset_of(asset.Material_Coat,roughness),.Number,0},
-    {"coat_color",offset_of(asset.Material_Info,coat)+offset_of(asset.Material_Coat,color),.Color,0},{"coat_ior",offset_of(asset.Material_Info,coat)+offset_of(asset.Material_Coat,ior),.Number,0},
-    {"fuzz",offset_of(asset.Material_Info,fuzz)+offset_of(asset.Material_Fuzz,weight),.Number,0},{"fuzz_color",offset_of(asset.Material_Info,fuzz)+offset_of(asset.Material_Fuzz,color),.Color,0},
-    {"fuzz_roughness",offset_of(asset.Material_Info,fuzz)+offset_of(asset.Material_Fuzz,roughness),.Number,0},
-    {"anisotropy",offset_of(asset.Material_Info,anisotropy)+offset_of(asset.Material_Anisotropy,amount),.Number,0},
-    {"anisotropy_rotation",offset_of(asset.Material_Info,anisotropy)+offset_of(asset.Material_Anisotropy,rotation),.Number,0},
-    {"unlit",offset_of(asset.Material_Info,unlit),.Flag,0},{"emission_mode",offset_of(asset.Material_Info,emission_mode),.Mode,len(asset.Emission_Mode)},
-    {"diffuse_transmission",offset_of(asset.Material_Info,diffuse_transmission)+offset_of(asset.Material_Diffuse_Transmission,weight),.Number,0},
-    {"diffuse_transmission_color",offset_of(asset.Material_Info,diffuse_transmission)+offset_of(asset.Material_Diffuse_Transmission,color),.Color,0},
+    {"base_color",offset_of(asset.Material_Info,base_color),.Color,0,.Base_Color},{"opacity",offset_of(asset.Material_Info,opacity),.Number,0,.Opacity},
+    {"metallic",offset_of(asset.Material_Info,metallic),.Number,0,.Metallic},{"roughness",offset_of(asset.Material_Info,roughness),.Number,0,.Roughness},
+    {"emission",offset_of(asset.Material_Info,emission),.Color,0,.Emission},{"specular",offset_of(asset.Material_Info,specular_factor),.Number,0,.Specular},
+    {"ior",offset_of(asset.Material_Info,ior),.Number,0,{}},{"transmission",offset_of(asset.Material_Info,transmission),.Number,0,{}},
+    {"alpha_mode",offset_of(asset.Material_Info,alpha_mode),.Mode,len(asset.Alpha_Mode),{}},
+    {"coat",offset_of(asset.Material_Info,coat)+offset_of(asset.Material_Coat,weight),.Number,0,.Coat},{"coat_roughness",offset_of(asset.Material_Info,coat)+offset_of(asset.Material_Coat,roughness),.Number,0,.Coat_Roughness},
+    {"coat_color",offset_of(asset.Material_Info,coat)+offset_of(asset.Material_Coat,color),.Color,0,.Coat_Color},{"coat_ior",offset_of(asset.Material_Info,coat)+offset_of(asset.Material_Coat,ior),.Number,0,.Coat_Ior},
+    {"fuzz",offset_of(asset.Material_Info,fuzz)+offset_of(asset.Material_Fuzz,weight),.Number,0,.Fuzz},{"fuzz_color",offset_of(asset.Material_Info,fuzz)+offset_of(asset.Material_Fuzz,color),.Color,0,.Fuzz_Color},
+    {"fuzz_roughness",offset_of(asset.Material_Info,fuzz)+offset_of(asset.Material_Fuzz,roughness),.Number,0,.Fuzz_Roughness},
+    {"anisotropy",offset_of(asset.Material_Info,anisotropy)+offset_of(asset.Material_Anisotropy,amount),.Number,0,.Anisotropy},
+    {"anisotropy_rotation",offset_of(asset.Material_Info,anisotropy)+offset_of(asset.Material_Anisotropy,rotation),.Number,0,.Anisotropy_Rotation},
+    {"unlit",offset_of(asset.Material_Info,unlit),.Flag,0,.Unlit},{"emission_mode",offset_of(asset.Material_Info,emission_mode),.Mode,len(asset.Emission_Mode),.Emission_Mode},
+    {"diffuse_transmission",offset_of(asset.Material_Info,diffuse_transmission)+offset_of(asset.Material_Diffuse_Transmission,weight),.Number,0,.Diffuse_Transmission},
+    {"diffuse_transmission_color",offset_of(asset.Material_Info,diffuse_transmission)+offset_of(asset.Material_Diffuse_Transmission,color),.Color,0,.Diffuse_Transmission_Color},
 }
 
 // The maps of the standard model as Material_Values names them, the paths
@@ -1441,14 +1443,11 @@ instances_moved :: proc(sync:^Render_Sync,t:Sync_Tables,c:core.Changes,frame:cor
     }
 }
 
-// Where a value of the standard model an instance holds goes: the first of
-// MATERIAL_VALUE_FIELDS, in the order of their targets. False for the others,
-// which a row holds.
+// Where an instance holds a value of the standard model; false for one a row holds.
 @(private)
 material_value_instanced :: proc(name:u64) -> (target:gpu.Instance_Material_Value_Target,instanced:bool) {
-    fields:=MATERIAL_VALUE_FIELDS
-    for field,index in fields[:len(gpu.Instance_Material_Value_Target)] {
-        if base.name_hash(field.name)==name {return gpu.Instance_Material_Value_Target(int(min(gpu.Instance_Material_Value_Target))+index),true}
+    for field in MATERIAL_VALUE_FIELDS {
+        if base.name_hash(field.name)==name {return field.held,field.held!={}}
     }
     return
 }
@@ -1537,9 +1536,7 @@ material_values_slot :: proc(o:^Material_Values,slot:int,rows:=false) -> bool {
     for stored,i in o.slots[:min(int(o.count),len(o.slots))] {
         if int(stored)!=slot {continue}
         if !rows {return true}
-        for field in fields[len(gpu.Instance_Material_Value_Target):] {
-            if base.name_hash(field.name)==o.names[i] {return true}
-        }
+        for field in fields {if field.held=={} && base.name_hash(field.name)==o.names[i] {return true}}
     }
     return false
 }

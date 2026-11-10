@@ -794,6 +794,11 @@ the_values_of_an_instance_cost_words_of_the_pool_and_no_material_row :: proc(t:^
     glow:=next
     glow.entries[1],glow.count=instance_material_value(1,Instance_Material_Value_Target.Emission,{4,4,4,0}),2
     testing.expect(t,scene_tint(r,{7},{{1,1,1}},{{}},nil,{glow}) && (s.changes.all || s.changes.count>0))
+    // A layer given in place puts it with what has layers, still without a row.
+    coat:=next
+    coat.entries[1],coat.count=instance_material_value(1,Instance_Material_Value_Target.Coat,{1,0,0,0}),2
+    testing.expect(t,len(s.reflective)==0 && scene_tint(r,{7},{{1,1,1}},{{}},nil,{coat}))
+    testing.expect(t,len(s.reflective)==1 && s.reflective[0].instance==u32(s.desc_instance[7]) && s.reflective[0].layered && len(s.materials)==rows)
     testing.expect(t,!scene_tint(r,{COUNT},{{1,1,1}},{{}},nil,{next}) && !scene_tint(r,{1},{{1,1,1}},{{}},nil,{next,next}),"a descriptor the scene does not have, lists that differ")
 
     // What goes gives its words back.
