@@ -109,8 +109,9 @@ document_activate :: proc(s:^Session,index:int) -> bool {
     return true
 }
 
-// Opens a scene or a prefab, or brings its tab. One scene is open at a time,
-// beside any number of prefabs: another scene takes the tab of the one open.
+// Opens a scene, or brings its tab. One scene is open at a time, beside any
+// number of prefabs, the scenes with one root: another scene takes the tab of
+// the one open.
 document_open_tab :: proc(s:^Session,path:string) -> Document_Error {
     if s.app.assets==nil {return .No_Assets}
     if !collab_can_open(s) {return .Rejected}
@@ -121,7 +122,7 @@ document_open_tab :: proc(s:^Session,path:string) -> Document_Error {
         d:=index==s.active_document?s.document:&tab.document
         if document_file(d)==file {document_activate(s,index);return .None}
     }
-    if scene:=document_scene_tab(s);scene>=0 && !path_is_prefab(path) {
+    if scene:=document_scene_tab(s);scene>=0 && !path_is_prefab(s,path) {
         previous:=s.active_document
         document_activate(s,scene)
         if error:=scene_open(s,path);error!=.None {
@@ -181,12 +182,21 @@ document_holds_file :: proc(s:^Session,path:string) -> bool {
 document_scene_tab :: proc(s:^Session) -> int {
     for &tab,index in s.documents {
         d:=index==s.active_document?s.document:&tab.document
-        if d.previous==nil || d.previous.doc.kind!=asset.KIND_PREFAB {return index}
+        if !d.prefab {return index}
     }
     return -1
 }
 
-path_is_prefab :: proc(path:string) -> bool {return strings.has_suffix(path,".prefab")}
+// Whether the file a path names is a prefab now: a scene with one root, as
+// the registry has it. A path that names no file of the assets yet is none.
+path_is_prefab :: proc(s:^Session,path:string) -> bool {
+    a:=s.app.assets
+    if a==nil {return false}
+    relative,inside:=asset.registry_relative(&a.registry,scene_file(s,path))
+    if !inside {return false}
+    file,found:=asset.registry_find_path(&a.registry,relative)
+    return found && asset.registry_prefab(file)
+}
 
 // Others lose what they do when the scene changes: the guests of the session,
 // or this end its place in it, and the agents at work.
@@ -318,7 +328,7 @@ strip_tab :: proc(s:^Session,index:int) -> (tab:Strip_Tab) {
     d,e:=s.document,s.edits
     if index!=s.active_document && index<len(s.documents) {d,e=&s.documents[index].document,&s.documents[index].edits}
     tab.label=document_title(d)
-    tab.icon=d.previous!=nil && d.previous.doc.kind==asset.KIND_PREFAB?.Prefab:.Scene
+    tab.icon=d.prefab?.Prefab:.Scene
     tab.dirty=d.unsaved || history.edits_scene_state(e)!=d.saved || document_uses_unsaved(s,index)
     tab.active=index==s.active_document && !scene_covered(s)
     return
@@ -428,13 +438,10 @@ documents_build :: proc(s:^Session) {
     }
 }
 
+// Whether the open document is shown as a prefab: its file had one root when
+// its tab opened it (Document.prefab).
 document_is_prefab :: proc(s:^Session) -> bool {
-    return s.document!=nil && s.document.previous!=nil && s.document.previous.doc.kind==asset.KIND_PREFAB
-}
-
-document_root :: proc(s:^Session,w:core.World_Ref) -> core.Entity {
-    if !document_is_prefab(s) {return core.NONE}
-    return core.entity_of(core.world_entities(w),s.document.previous.info.root)
+    return s.document!=nil && s.document.prefab
 }
 
 // Who loses what they do when the scene changes, for the question that asks

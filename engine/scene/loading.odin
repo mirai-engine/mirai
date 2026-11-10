@@ -305,7 +305,7 @@ load_step :: proc(job:^Load_Job,all:=false) -> bool {
             }
             for id in job.wanted {
                 file,found:=asset.registry_find(&a.registry,id)
-                if !found || file.kind!=asset.KIND_SCENE && file.kind!=asset.KIND_PREFAB {continue}
+                if !found || file.kind!=asset.KIND_SCENE {continue}
                 if source,known:=host.assets_source(a,id,runtime.heap_allocator());known {
                     append(&job.queue,source)
                     job.asked+=1
@@ -328,7 +328,8 @@ load_step :: proc(job:^Load_Job,all:=false) -> bool {
 // The World is instantiated: what reads it on this thread does, and the
 // assets it names that are not loaded, with what they take, are read in jobs:
 // also what the other assets it names take, as the meshes of a foliage
-// source, but not what a scene takes, which is a section of its own.
+// source or of a scene something spawns, but not what the scene of a
+// Scene_Reference takes, which is a section and loads what it takes with it.
 @(private)
 load_named :: proc(job:^Load_Job) {
     app,a:=job.app,job.app.assets
@@ -343,6 +344,9 @@ load_named :: proc(job:^Load_Job) {
     lists:[3][dynamic]base.Asset_Id
     for &list in lists {list=make([dynamic]base.Asset_Id,context.temp_allocator)}
     seen:=make(map[base.Asset_Id]bool,context.temp_allocator)
+    apart:=make([dynamic]base.Asset_Id,context.temp_allocator)
+    section_scenes(w,&apart)
+    for id in apart {seen[id]=true}
     pending:=make([dynamic]base.Asset_Id,context.temp_allocator)
     append(&pending,..job.names[:])
     for len(pending)>0 {
@@ -350,7 +354,7 @@ load_named :: proc(job:^Load_Job) {
         if id in seen {continue}
         seen[id]=true
         file,found:=asset.registry_find(&a.registry,id)
-        if !found || host.assets_loaded(a,id) || file.kind==asset.KIND_SCENE {continue}
+        if !found || host.assets_loaded(a,id) {continue}
         for kind,at in kinds {if file.kind==kind {append(&lists[at],id)}}
         append(&pending,..asset.registry_dependencies(&a.registry,file))
     }
@@ -371,7 +375,7 @@ load_named :: proc(job:^Load_Job) {
         }
     }
     job.items=job.items[:count]
-    host.content_animations_start(app,job.names[:],&job.animations)
+    host.content_animations_start(app,job.names[:],&job.animations,apart[:])
     // A section loads ahead, far away: its textures come with their smallest
     // levels, and their distance asks for the others once it shows them.
     job.limits=host.assets_limits(a,tail=job.salt!=0)

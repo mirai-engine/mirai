@@ -156,7 +156,7 @@ history_by_ids :: proc(s:^Session,state:u64,forward:bool) -> (move:History_Move)
 @(private="file")
 history_prefab_step :: proc(step:^history.Edit_Step) -> bool {
     for &file in step.files {
-        if strings.has_suffix(file.path,PREFAB_EXTENSION) {return true}
+        if strings.has_suffix(file.path,SCENE_EXTENSION) {return true}
     }
     return false
 }

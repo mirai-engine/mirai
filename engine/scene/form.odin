@@ -13,15 +13,15 @@ import "mirai:std/serial"
 
 // A document as a world places it: its values in the layout of the world,
 // the row of the entity each reference names and the order of its children.
-// Instantiating reads a document into one and places it; a prefab spawned
+// Instantiating reads a document into one and places it; a scene spawned
 // while the world runs keeps its own (Prefab_Forms), so placing it again
 // reads nothing. It holds nothing of the world it is placed in, and all of
 // it is one block of memory.
 @(private)
 Form :: struct {
     scene:base.Asset_Id,
-    kind:asset.Fourcc,
-    root:u32,                  // the row the document names as its root, else its first root; NONE_ROW in an empty one
+    roots:int,                 // entities without a parent: one in a prefab
+    root:u32,                  // the row of its first root; NONE_ROW in an empty one
     ids:[]base.Entity_Id,
     names:[]asset.Entity_Name,
     parents:[]u32,             // rows; NONE_ROW for a root
@@ -102,7 +102,7 @@ form_make :: proc(w:core.World_Ref,a:^asset.Asset,asset_types:^asset.Types,alloc
 @(private)
 form_read :: proc(m:^Form_Memory,form:^Form,w:core.World_Ref,a:^asset.Asset,view:asset.Scene_View,types:^core.World_Schema) -> Error {
     count:=len(view.ids)
-    form.scene,form.kind,form.root=a.blob.header.id,a.blob.header.kind,NONE_ROW
+    form.scene,form.roots,form.root=a.blob.header.id,view.roots,NONE_ROW
     form.ids=form_take(m,base.Entity_Id,count)
     form.names=form_take(m,asset.Entity_Name,count)
     form.parents=form_take(m,u32,count)
@@ -137,7 +137,6 @@ form_read :: proc(m:^Form_Memory,form:^Form,w:core.World_Ref,a:^asset.Asset,view
             form.order[at]=place.row
             if parent==NONE_ROW && form.root==NONE_ROW {form.root=place.row}
         }
-        if root,found:=key_find(keys,view.info.root);found {form.root=root}
         off=make(map[Form_Off]bool,context.temp_allocator)
         for record in view.off {off[{record.entity,record.component}]=true}
     }
@@ -273,9 +272,18 @@ form_place :: proc(w:core.World_Ref,form:^Form,asset_types:^asset.Types,desc:Ins
             }
             if info.type==Scene_Reference && desc.only==0 {
                 reference:=(^Scene_Reference)(value)
+                // A copy without Ids has none for a section to be asked by later: its sections load with it.
+                if desc.transient {reference.rule=.With_Document}
                 if (desc.documents.open!=nil || desc.saved) && (reference.rule==.With_Document || desc.saved) && reference.state!=.Unloaded {reference.loaded=reference.scene}
                 // Only what loads with its document; the others wait for their state (scene_sections).
-                if reference.rule==.With_Document && reference.state!=.Unloaded {append(&sections,Form_Section{e,reference^,id_in(desc.salt,form.ids[row])})}
+                if reference.rule==.With_Document && reference.state!=.Unloaded {
+                    // The Ids of a section are made with the Id its reference has in the world, which in a copy is not the document's.
+                    salt:=id_in(desc.salt,form.ids[row])
+                    if desc.fresh && ids!=nil {
+                        if given:=(^core.Id)(core.raw_added(core.raw(ids),type_info_of(core.Id),e));given!=nil {salt=given.value}
+                    }
+                    append(&sections,Form_Section{e,reference^,salt})
+                }
             }
             // What the world uses one of (a sky, a sun) of a section or a prefab, placed or in the document, comes off: only enable turns it on.
             if c.off[i] || info.single && (desc.salt!=0 || copied || form.instanced[row]) {core.raw_disable(table,e)}
@@ -302,7 +310,6 @@ form_place :: proc(w:core.World_Ref,form:^Form,asset_types:^asset.Types,desc:Ins
         if _,recorded:=records_add(w,desc.parent,form.ids);!recorded {return report,.Out_Of_Memory}
     }
     if len(sections)>0 {
-        if form.kind==asset.KIND_PREFAB {return report,.Invalid}
         sections_error:=sections_load(w,form.scene,asset_types,desc,sections[:],&report)
         if sections_error!=.None {return report,sections_error}
     }

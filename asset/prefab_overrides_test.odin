@@ -8,11 +8,10 @@ import "mirai:std/base"
 
 @(private="file")
 lamp :: proc(prefab:^Scene,types:^Types,range:f32) {
-    scene_init(prefab,types,KIND_PREFAB,LAMP)
+    scene_init(prefab,types,LAMP)
     scene_entity_add(prefab,1,0,"Lamp")
     scene_entity_add(prefab,2,1,"Bulb")
     scene_entity_add(prefab,3,1,"Shade")
-    prefab.info.root=1
     for id in ([]base.Entity_Id{1,2,3}) {
         value:=Test_Transform{position={0,f32(id),0},rotation=1,scale={1,1,1}}
         scene_set(prefab,id,"Transform",&value)
@@ -43,7 +42,7 @@ derived :: proc(t:^testing.T,scene:^Scene,instance:base.Entity_Id,prefab:^Scene)
 prefab_overrides_derive_from_the_members_survive_an_update_and_go_into_the_prefab :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
     prefab:Scene;lamp(&prefab,&types,1);defer scene_destroy(&prefab)
-    scene:Scene;scene_init(&scene,&types,KIND_SCENE,{0xb,0xb});defer scene_destroy(&scene)
+    scene:Scene;scene_init(&scene,&types,{0xb,0xb});defer scene_destroy(&scene)
     root,_:=scene_instantiate(&scene,&prefab,LAMP,0)
     instance:=root
     bulb,shade:=member_of(&scene,instance,2),member_of(&scene,instance,3)
@@ -126,8 +125,8 @@ failing_allocator :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment
 prefab_value_applied_without_memory_leaves_the_prefab_and_can_be_tried_again :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
     scene,prefab:Scene
-    scene_init(&scene,&types,KIND_SCENE,{1,2});defer scene_destroy(&scene)
-    scene_init(&prefab,&types,KIND_PREFAB,{3,4});defer scene_destroy(&prefab)
+    scene_init(&scene,&types,{1,2});defer scene_destroy(&scene)
+    scene_init(&prefab,&types,{3,4});defer scene_destroy(&prefab)
     scene_entity_add(&scene,1,0,"Source")
     scene_entity_add(&prefab,2,0,"Destination")
     before:=Test_Transform{{1,2,3},1,{1,1,1}}

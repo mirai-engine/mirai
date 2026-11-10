@@ -235,7 +235,7 @@ the_document_of_a_scene_writes_it_back_and_declares_what_its_file_has :: proc(t:
     if problem:=project_open(&p,root,engine,false);!testing.expect(t,problem=="",problem) {return}
     defer project_close(&p)
     p.info=&info
-    for path in ([]string{"arena/main.scene","player/Player.prefab"}) {
+    for path in ([]string{"arena/main.scene","player/Player.scene"}) {
         before:=slice.clone(file_bytes(&p,path),context.temp_allocator)
         out:serial.Writer
         serial.writer_init(&out,0,context.temp_allocator)
@@ -277,12 +277,12 @@ the_document_of_a_scene_writes_it_back_and_declares_what_its_file_has :: proc(t:
     scene_file,_:=asset.registry_find_path(&p.registry,"arena/main.scene")
     scene_id:[base.ASSET_ID_TEXT]u8
     cases:=[]struct{document,message:string}{
-        {fmt.tprintf(`{{"entities":[{{"name":"x","prefab":"%s"}}]}}`,base.asset_id_format(scene_file.id,scene_id[:])),"is no prefab of the project; give the path or the id of a .prefab"},
+        {fmt.tprintf(`{{"entities":[{{"name":"x","prefab":"%s"}}]}}`,base.asset_id_format(scene_file.id,scene_id[:])),"is no prefab of the project; give the path or the id of a .scene"},
         {`{"entities":[{"name":"x","components":{"Nope":{}}}]}`,"entities[0].components.Nope: the game of this build has no component 'Nope'"},
         {`{"entities":[{"name":"x","preset":"cubes"}]}`,"entities[0].preset: "},
-        {`{"entities":[{"name":"x","prefab":"player/Nobody.prefab"}]}`,"entities[0].prefab: "},
-        {`{"entities":[{"name":"x","prefab":"arena/main.scene"}]}`,`entities[0].prefab: "arena/main.scene" is no .prefab asset`},
-        {`{"entities":[{"name":"x","prefab":{"asset":"player/Player.prefab","size":2}}]}`,"entities[0].prefab has no 'size'"},
+        {`{"entities":[{"name":"x","prefab":"player/Nobody.scene"}]}`,"entities[0].prefab: "},
+        {`{"entities":[{"name":"x","prefab":"arena/main.scene"}]}`,`entities[0].prefab: "arena/main.scene" is no .scene asset`},
+        {`{"entities":[{"name":"x","prefab":{"asset":"player/Player.scene","size":2}}]}`,"entities[0].prefab has no 'size'"},
         {`{"entities":[{"id":"0x00000000000000ff"}]}`,"entities[0].id: 0x00000000000000ff is no entity of the file"},
         {`{"entities":[{"name":"x","components":{"Tint":{"colour":[1,1,1,1]}}}]}`,"entities[0].components.Tint"},
         {`{"entities":[{"name":"x","sizes":3}]}`,"entities[0] has no 'sizes'; an entity has id, name"},
@@ -325,7 +325,7 @@ a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testin
         {"name":"Lamp","preset":"point_light","position":[0,3,0],"components":{"Point_Light":{"intensity":7}}},
         {"name":"Box","preset":"cube","scale":[1,2,1]},
         {"name":"Board","preset":"scoreboard"},
-        {"name":"Hero","prefab":"player/Player.prefab","position":[1,2,3]}]}`)
+        {"name":"Hero","prefab":"player/Player.scene","position":[1,2,3]}]}`)
     if !testing.expect(t,problem=="",problem) {return}
     yard:asset.Scene
     file:=project.path(p.assets_root,"arena/yard.scene",allocator=context.temp_allocator)
@@ -345,7 +345,7 @@ a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testin
     testing.expect(t,has_status && status.hits==3 && placed.scale==[3]f32{2,2,2},"the card of a plugin gives its components and its scale")
     // The instance: its root where the document says, linked to its prefab, with the members the prefab has.
     prefab:asset.Scene
-    if !testing.expect_value(t,asset.scene_load(&prefab,&p.types,project.path(p.assets_root,"player/Player.prefab",allocator=context.temp_allocator),context.temp_allocator),asset.Error.None) {return}
+    if !testing.expect_value(t,asset.scene_load(&prefab,&p.types,project.path(p.assets_root,"player/Player.scene",allocator=context.temp_allocator),context.temp_allocator),asset.Error.None) {return}
     testing.expect_value(t,written.made,3+asset.scene_entity_count(&prefab))
     roots:=asset.scene_instance_roots(&yard)
     if !testing.expect_value(t,len(roots),1) {return}
@@ -360,7 +360,7 @@ a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testin
         {"name":"Lamp","preset":"point_light","position":[0,3,0],"components":{"Point_Light":{"intensity":7}}},
         {"name":"Box","preset":"cube","scale":[1,2,1]},
         {"name":"Board","preset":"scoreboard"},
-        {"name":"Hero","prefab":"player/Player.prefab","position":[1,2,3]}]}`)
+        {"name":"Hero","prefab":"player/Player.scene","position":[1,2,3]}]}`)
     testing.expect(t,same_why=="" && same.same,fmt.tprintf("%s %v",same_why,same))
     // Its document reads it back and writes it as it is; moving the instance by its id keeps its link.
     testing.expect_value(t,scene_verify(&p,"arena/yard.scene"),"")
@@ -379,9 +379,9 @@ a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testin
     testing.expect(t,len(asset.scene_instance_roots(&after))==1 && len(after_members)==len(members))
 
     // What the document says of a member, however deep, by its name, the instance holds on its own.
-    _,gate_why:=scene_write(&p,"arena/Gate.prefab",`{"entities":[{"name":"Gate","children":[{"name":"Frame","children":[{"name":"Lamp","preset":"point_light"}]}]}]}`)
+    _,gate_why:=scene_write(&p,"arena/Gate.scene",`{"entities":[{"name":"Gate","children":[{"name":"Frame","children":[{"name":"Lamp","preset":"point_light"}]}]}]}`)
     if !testing.expect(t,gate_why=="",gate_why) {return}
-    court:=`{"entities":[{"name":"North","prefab":"arena/Gate.prefab","children":[{"name":"Frame","children":[{"name":"Lamp","position":[0,2,0],"components":{"Point_Light":{"intensity":9}}}]}]}]}`
+    court:=`{"entities":[{"name":"North","prefab":"arena/Gate.scene","children":[{"name":"Frame","children":[{"name":"Lamp","position":[0,2,0],"components":{"Point_Light":{"intensity":9}}}]}]}]}`
     north,north_why:=scene_write(&p,"arena/court.scene",court)
     if !testing.expect(t,north_why=="" && north.made==3,fmt.tprintf("%s %v",north_why,north)) {return}
     held:asset.Scene
@@ -394,14 +394,14 @@ a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testin
     testing.expect(t,why=="" && again.same,fmt.tprintf("%s %v",why,again))
 
     // A prefab is not placed in a file it holds, itself or through the prefabs it places.
-    _,wall_why:=scene_write(&p,"arena/Wall.prefab",`{"entities":[{"name":"Wall","children":[{"name":"Door","prefab":"arena/Gate.prefab"}]}]}`)
+    _,wall_why:=scene_write(&p,"arena/Wall.scene",`{"entities":[{"name":"Wall","children":[{"name":"Door","prefab":"arena/Gate.scene"}]}]}`)
     testing.expect(t,wall_why=="",wall_why)
-    gate:=slice.clone(file_bytes(&p,"arena/Gate.prefab"),context.temp_allocator)
-    for inner in ([]string{"arena/Gate.prefab","arena/Wall.prefab"}) {
-        _,refused:=scene_write(&p,"arena/Gate.prefab",fmt.tprintf(`{{"entities":[{{"name":"Gate","children":[{{"name":"In","prefab":%q}}]}}]}}`,inner))
+    gate:=slice.clone(file_bytes(&p,"arena/Gate.scene"),context.temp_allocator)
+    for inner in ([]string{"arena/Gate.scene","arena/Wall.scene"}) {
+        _,refused:=scene_write(&p,"arena/Gate.scene",fmt.tprintf(`{{"entities":[{{"name":"Gate","children":[{{"name":"In","prefab":%q}}]}}]}}`,inner))
         testing.expectf(t,strings.contains(refused,"entities[0].children[0].prefab: ") && strings.contains(refused,"holds the file it would be placed in"),"%s gave '%s'",inner,refused)
     }
-    testing.expect(t,slice.equal(file_bytes(&p,"arena/Gate.prefab"),gate),"a refused document leaves the file as it was")
+    testing.expect(t,slice.equal(file_bytes(&p,"arena/Gate.scene"),gate),"a refused document leaves the file as it was")
 }
 
 
@@ -455,7 +455,7 @@ the_documents_of_the_tracked_assets_write_back_the_files_they_were_read_from :: 
                 written,why,ok:=ui_round_trip(&p,file.id)
                 if !testing.expectf(t,ok,"%s/%s: %s",folder,path,why) {continue}
                 testing.expectf(t,slice.equal(written,file_bytes(&p,path)),"%s/%s: its document writes other bytes: mirai ui write saves it again",folder,path)
-            case asset.KIND_SCENE,asset.KIND_PREFAB:
+            case asset.KIND_SCENE:
                 files+=1
                 problem:=scene_verify(&p,path)
                 testing.expectf(t,problem=="","%s/%s: %s",folder,path,problem)

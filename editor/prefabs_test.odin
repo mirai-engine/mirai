@@ -164,6 +164,17 @@ overrides_held :: proc(s:^Session) -> (count:int) {
     return
 }
 
+// The only entity of a world without a parent: the root of a prefab. NONE with none or several.
+@(private)
+test_only_root :: proc(w:core.World_Ref) -> (root:core.Entity) {
+    for e in core.world_table_of(w,core.Id).entities {
+        if entity_parent(w,e)!=core.NONE {continue}
+        if root!=core.NONE {return core.NONE}
+        root=e
+    }
+    return
+}
+
 @(test)
 prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T) {
     info,described:=prefab_test_info(t)
@@ -237,7 +248,7 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     testing.expect_value(t,entity_parent(w,second),group)
     testing.expect_value(t,entity_world(w,first).position,([3]f32{2,0,0}))
     testing.expect_value(t,entity_world(w,second).position,([3]f32{6,0,0}))
-    file:=fmt.tprintf("%s/pair.prefab",root)
+    file:=fmt.tprintf("%s/pair.scene",root)
     testing.expect(t,file_exists(s,file) && !os.exists(file),"the prefab is an unsaved file of the step")
     testing.expect(t,history.undo(&edits,w,&selection))
     testing.expect(t,!file_exists(s,file) && core.count(&world.instances)==0)
@@ -421,22 +432,22 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     testing.expect_value(t,error,Prefab_Error.None)
     testing.expect_value(t,edits.cursor,before+1)
     testing.expect(t,history.undo(&edits,w,&selection))
-    testing.expect(t,!prefab_linked(s) && !file_exists(s,fmt.tprintf("%s/single.prefab",root)))
+    testing.expect(t,!prefab_linked(s) && !file_exists(s,fmt.tprintf("%s/single.scene",root)))
     testing.expect(t,history.redo(&edits,w,&selection))
     testing.expect(t,prefab_linked(s))
-    file_open_path(s,"single.prefab")
+    file_open_path(s,"single.scene")
     testing.expect_value(t,g.modal,Modal.None)
     testing.expect(t,.Open in s.requests)
-    testing.expect_value(t,scene_open(s,"single.prefab"),Document_Error.None)
+    testing.expect_value(t,scene_open(s,"single.scene"),Document_Error.None)
     group=api_entity(w,group_id)
     entity_rename(s,group,"Saved prefab")
     history.edits_commit(&edits,w,&selection)
     testing.expect_value(t,scene_save(s),Document_Error.None)
     saved:asset.Scene
-    testing.expect_value(t,asset.scene_load(&saved,&assets.types,fmt.tprintf("%s/single.prefab",root)),asset.Error.None)
+    testing.expect_value(t,asset.scene_load(&saved,&assets.types,fmt.tprintf("%s/single.scene",root)),asset.Error.None)
     defer asset.scene_destroy(&saved)
-    testing.expect_value(t,saved.doc.kind,asset.KIND_PREFAB)
-    testing.expect_value(t,saved.info.root,group_id)
+    saved_root,rooted:=asset.prefab_root(&saved)
+    testing.expect(t,rooted && saved_root==group_id,"what was saved is a scene with the group as its one root: a prefab")
     row,_:=asset.scene_entity_find(&saved,group_id)
     testing.expect_value(t,base.text_get(asset.scene_names(&saved)[row][:]),"Saved prefab")
     scene_new(s)
@@ -444,7 +455,7 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     // frame it was let go in, which draws the World its fixed phase ran on.
     alive:=world.entities.alive
     s.requests={} // the Open above was run by hand
-    placement_commit(s,w,Drag{kind=.Asset,asset_kind=asset.KIND_PREFAB,asset_id=id},Pick{},true)
+    placement_commit(s,w,Drag{kind=.Asset,asset_kind=SHOWN_PREFAB,asset_id=id},Pick{},true)
     testing.expect(t,world.entities.alive>alive)
     testing.expect_value(t,len(selection.entities),1)
     if len(selection.entities)==1 {
@@ -485,7 +496,7 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     base.text_set(ai.prompt[:],"Scene draft")
     ai.prompt_length=len("Scene draft")
     ai.selected=7
-    testing.expect_value(t,document_open_tab(s,"single.prefab"),Document_Error.None)
+    testing.expect_value(t,document_open_tab(s,"single.scene"),Document_Error.None)
     defer documents_free(s)
     testing.expect_value(t,len(s.documents),2)
     testing.expect_value(t,s.active_document,1)
@@ -493,7 +504,7 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     testing.expect_value(t,string(ai.prompt[:ai.prompt_length]),"Scene draft")
     testing.expect_value(t,ai.selected,7)
     prefab_world:=edited_world(s)
-    root_entity:=document_root(s,prefab_world)
+    root_entity:=test_only_root(prefab_world)
     testing.expect(t,root_entity!=core.NONE)
     entity_rename(s,root_entity,"Changed in tab")
     history.edits_commit(&edits,prefab_world,&selection)
@@ -516,7 +527,7 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     testing.expect_value(t,history.selection_active(&selection),plain)
     testing.expect_value(t,string(ai.prompt[:ai.prompt_length]),"Scene draft")
     testing.expect_value(t,ai.selected,7)
-    testing.expect_value(t,document_open_tab(s,"single.prefab"),Document_Error.None)
+    testing.expect_value(t,document_open_tab(s,"single.scene"),Document_Error.None)
     testing.expect_value(t,len(s.documents),2)
     testing.expect_value(t,edits.cursor,prefab_cursor)
     testing.expect_value(t,string(ai.prompt[:ai.prompt_length]),"Scene draft")
@@ -526,13 +537,17 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     testing.expect(t,history.undo(&edits,prefab_world,&selection))
     testing.expect_value(t,entity_name(prefab_world,root_entity),"Saved prefab")
     testing.expect(t,history.redo(&edits,prefab_world,&selection))
-    child:=entity_create(s,{name="New child"})
+    // The document of a prefab is a scene as any other: an entity made at its top is a another_root
+    // root, its only root moves under it, and its tab stays as it was opened.
+    another_root:=entity_create(s,{name="Second root"})
     history.edits_commit(&edits,prefab_world,&selection)
-    testing.expect_value(t,entity_parent(prefab_world,child),root_entity)
-    entities_delete(s,{root_entity})
-    core.world_settle(prefab_world)
-    testing.expect(t,entity_alive(prefab_world,root_entity))
-    testing.expect(t,!entity_reparent(s,root_entity,child))
+    testing.expect_value(t,entity_parent(prefab_world,another_root),core.NONE)
+    testing.expect(t,test_only_root(prefab_world)==core.NONE && document_is_prefab(s))
+    testing.expect(t,entity_reparent(s,root_entity,another_root))
+    history.edits_commit(&edits,prefab_world,&selection)
+    testing.expect_value(t,test_only_root(prefab_world),another_root)
+    testing.expect(t,history.undo(&edits,prefab_world,&selection) && history.undo(&edits,prefab_world,&selection))
+    testing.expect_value(t,test_only_root(prefab_world),root_entity)
     saved_tabs,kept:=documents_save_restart(s,root)
     testing.expect(t,kept && os.exists(saved_tabs))
     document_close(s,1)
@@ -540,7 +555,7 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     confirm_resolve(s,.Cancel)
     testing.expect_value(t,len(s.documents),2)
     document_activate(s,0)
-    testing.expect_value(t,document_open_tab(s,"missing.prefab"),Document_Error.Not_Found)
+    testing.expect_value(t,document_open_tab(s,"missing.scene"),Document_Error.Not_Found)
     testing.expect_value(t,len(s.documents),2)
     testing.expect_value(t,s.active_document,0)
     // Restore uses fresh worlds after a process restart; keep the stack-owned fixture active on exit.
@@ -571,7 +586,7 @@ a_prefab_operation_is_one_step_of_the_rows_of_its_instance :: proc(t:^testing.T)
     // Creating: the entities stay, linked, and the prefab is an unsaved file of the step.
     id,created:=prefab_create(s,crate,"crate")
     if !testing.expect_value(t,created,Prefab_Error.None) {return}
-    file:=scene_file(s,"crate.prefab")
+    file:=scene_file(s,"crate.scene")
     testing.expect(t,!os.exists(file) && file_exists(s,file),"the prefab waits for Save in memory")
     of_crate,_:=prefab_link_of(w,crate)
     of_lamp,linked:=prefab_link_of(w,lamp)
@@ -617,7 +632,7 @@ the_overrides_of_an_instance_are_derived_reverted_and_applied_without_writing_fi
     history.edits_reset(&f.edits,w)
     id,created:=prefab_create(s,crate,"crate")
     if !testing.expect_value(t,created,Prefab_Error.None) {return}
-    file:=scene_file(s,"crate.prefab")
+    file:=scene_file(s,"crate.scene")
     placed,_:=prefab_instantiate(s,id,{})
     root:=api_entity(w,placed)
     copy,lid:=prefab_test_named(f,root,"Lamp"),prefab_test_named(f,root,"Lid")
@@ -706,7 +721,7 @@ unlinking_gives_back_what_a_prefab_placed_and_a_variant_applies_to_its_base :: p
     // A variant of the crate: what an instance of it changes goes through it into the crate.
     variant,made:=prefab_variant_create(s,crate_id,"crate_red")
     chain:=prefab_variant_chain(s,variant)
-    testing.expect(t,made==.None && file_exists(s,scene_file(s,"crate_red.prefab")) && len(chain)==1 && chain[0]==crate_id)
+    testing.expect(t,made==.None && file_exists(s,scene_file(s,"crate_red.scene")) && len(chain)==1 && chain[0]==crate_id)
     placed,instantiated:=prefab_instantiate(s,variant,{})
     root:=api_entity(w,placed)
     if !testing.expect(t,instantiated==.None && root!=core.NONE) {return}
@@ -745,7 +760,7 @@ a_scene_opened_after_its_prefab_changed_follows_it_and_keeps_what_its_instances_
     _,saved:=assets_save_all(s)
     testing.expect(t,saved)
 
-    if !lamp_file_set(t,f,scene_file(s,"crate.prefab"),lamp_id,5,8) {return}
+    if !lamp_file_set(t,f,scene_file(s,"crate.scene"),lamp_id,5,8) {return}
     stale:=0
     for state in prefab_instances(s) {stale+=int(state.stale)}
     testing.expect_value(t,stale,2)
@@ -787,7 +802,7 @@ a_refresh_after_a_placed_prefab_changed_leaves_nothing_stale :: proc(t:^testing.
     of_shelf,_:=scene.prefab_instance(w,shelf)
     testing.expect(t,!prefab_stale(s,of_shelf))
 
-    if !lamp_file_set(t,f,scene_file(s,"crate.prefab"),api_entity_id(w,lamp),5,8) {return}
+    if !lamp_file_set(t,f,scene_file(s,"crate.scene"),api_entity_id(w,lamp),5,8) {return}
     of_crate,_:=scene.prefab_instance(w,crate)
     testing.expect(t,prefab_stale(s,of_crate) && prefab_stale(s,of_shelf),"an instance is stale once the registry has the file that changed outside")
     steps:=len(f.edits.steps)
@@ -828,7 +843,7 @@ an_instance_whose_base_is_not_held_keeps_what_it_has_when_it_is_refreshed :: pro
     lamp_set(f,copy,9)
 
     // The file is another, and this editor never held the one the instances were made with.
-    if !lamp_file_set(t,f,scene_file(s,"crate.prefab"),api_entity_id(w,lamp),5,8) {return}
+    if !lamp_file_set(t,f,scene_file(s,"crate.scene"),api_entity_id(w,lamp),5,8) {return}
     prefabs_state_free(&f.prefabs)
     _,known:=prefab_overrides_of(s,root)
     testing.expect(t,!known,"nothing says what the instance set")
@@ -914,7 +929,7 @@ prefab_instances_add_entities_and_turn_members_off_through_updates_apply_and_rev
     root_id,a_id,b_id,c_id:=api_entity_id(w,root),api_entity_id(w,a),api_entity_id(w,b),api_entity_id(w,c)
     id,created:=prefab_create(s,root,"places")
     if !testing.expect_value(t,created,Prefab_Error.None) {return}
-    file:=fmt.tprintf("%s/places.prefab",f.root)
+    file:=fmt.tprintf("%s/places.scene",f.root)
     testing.expect_value(t,len(prefab_test_all(f)),0)
     disabled:=u64(0)
     for table in s.info.tables {
@@ -1067,7 +1082,7 @@ prefab_variants_follow_their_base_and_apply_to_it :: proc(t:^testing.T) {
     testing.expect_value(t,path,"crate_variant")
     variant,made:=prefab_variant_create(s,crate,path)
     if !testing.expect_value(t,made,Prefab_Error.None) {return}
-    file:=fmt.tprintf("%s/crate_variant.prefab",f.root)
+    file:=fmt.tprintf("%s/crate_variant.scene",f.root)
     testing.expect(t,file_exists(s,file) && !os.exists(file))
     testing.expect_value(t,prefab_variant_path(s,crate),"crate_variant_2")
     _,taken:=prefab_variant_create(s,crate,path)
@@ -1123,7 +1138,7 @@ prefab_variants_follow_their_base_and_apply_to_it :: proc(t:^testing.T) {
     // The base is saved and changes on disk: the instance of the variant follows it and keeps the variant's change.
     _,stored:=assets_save_all(s)
     testing.expect(t,stored)
-    crate_file:=fmt.tprintf("%s/crate.prefab",f.root)
+    crate_file:=fmt.tprintf("%s/crate.scene",f.root)
     edited:asset.Scene
     if !testing.expect_value(t,asset.scene_load(&edited,&f.assets.types,crate_file),asset.Error.None) {return}
     asset.scene_entity_rename(&edited,lid_id,"Lid v2")
@@ -1184,24 +1199,23 @@ prefab_apply_writes_fields_the_file_of_the_prefab_did_not_have :: proc(t:^testin
     lamps.default=proc(dst:rawptr) {(^Prefab_Test_Lamp)(dst)^={intensity=1,range=10}}
     Lamp_Without_Range :: struct {intensity:f32}
     old:asset.Scene
-    if !testing.expect_value(t,asset.scene_init(&old,&f.assets.types,asset.KIND_PREFAB,{1,2}),asset.Error.None) {return}
+    if !testing.expect_value(t,asset.scene_init(&old,&f.assets.types,{1,2}),asset.Error.None) {return}
     lamp_id,bulb_id:=base.Entity_Id(0x11),base.Entity_Id(0x12)
     asset.scene_entity_add(&old,lamp_id,0,"Lamp")
     asset.scene_entity_add(&old,bulb_id,lamp_id,"Bulb")
-    old.info.root=lamp_id
     for id in ([]base.Entity_Id{lamp_id,bulb_id}) {
         identity:=core.TRANSFORM_IDENTITY
         without:=Lamp_Without_Range{intensity=3}
         asset.scene_set(&old,id,"Transform",&identity)
         asset.scene_set(&old,id,"Prefab_Test_Lamp",&without)
     }
-    file:=fmt.tprintf("%s/lamp.prefab",f.root)
+    file:=fmt.tprintf("%s/lamp.scene",f.root)
     saved:=asset.scene_save(&old,file)
     asset.scene_destroy(&old)
     if !testing.expect_value(t,saved,asset.Error.None) {return}
     core.world_settle(w)
     history.edits_reset(&f.edits,w)
-    id,problem:=asset_resolve(s,"lamp",".prefab")
+    id,problem:=asset_resolve(s,"lamp",".scene")
     if !testing.expect_value(t,problem,"") {return}
     placed,placed_error:=prefab_instantiate(s,id,{})
     if !testing.expect_value(t,placed_error,Prefab_Error.None) {return}
@@ -1295,7 +1309,7 @@ prefab_instances_travel_a_session_as_rows_and_their_prefab_as_an_unsaved_file ::
     prefab_collab_send(host,guest)
     there:=prefab_fixture_find(guest,crate_id)
     link,linked:=prefab_link_of(gw,there)
-    file:=scene_file(&guest.s,"group.prefab")
+    file:=scene_file(&guest.s,"group.scene")
     testing.expect(t,linked && link.root && link.asset==id && core.count(&guest.world.members)==3)
     testing.expect(t,file_exists(&guest.s,file) && !os.exists(file),"the prefab came as an unsaved file")
     _,known:=prefab_overrides_of(&guest.s,there)
@@ -1338,12 +1352,12 @@ an_asset_is_named_by_its_path_with_or_without_its_extension_or_by_its_id :: proc
     fmt.sbprintf(&b,"%016x%016x",crate[0],crate[1])
     id:=strings.to_string(b)
     cases:=[?]struct{name,kinds,says:string}{
-        {"crate.prefab",".prefab",""},
-        {"crate",".prefab",""},
+        {"crate.scene",".scene",""},
+        {"crate",".scene",""},
         {"crate","",""},
-        {id,".prefab",""},
-        {"crat",".prefab","crate.prefab"},
-        {"prefabs/crat",".prefab","crate.prefab"},
+        {id,".scene",""},
+        {"crat",".scene","crate.scene"},
+        {"prefabs/crat",".scene","crate.scene"},
         {"crate",".mesh","no .mesh"},
     }
     for c in cases {

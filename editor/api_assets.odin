@@ -47,7 +47,7 @@ Api_Component_Field :: struct {
 }
 
 Api_Asset_Params :: struct {
-    kind:[32]u8 `mirai:"text,optional,label=Only the assets of this kind as the results name it (mesh; material; sound set or one of a plugin); empty or all: every kind"`,
+    kind:[32]u8 `mirai:"text,optional,label=Only the assets of this kind as the results name it (mesh; material; sound set or one of a plugin), or prefab for the scenes with exactly one root; empty or all: every kind"`,
     folder:[256]u8 `mirai:"text,optional,label=Only the assets under this folder"`,
     offset:int `mirai:"optional,min=0,max=1000000"`,
     limit:int `mirai:"optional,min=1,max=1024,clamp"`,
@@ -67,6 +67,7 @@ Api_Asset_Entry :: struct {
     path:[API_PATH_BYTES]u8 `mirai:"text,label=Under the asset folder"`,
     asset:base.Asset_Id,
     kind:[32]u8 `mirai:"text,label=The name of its kind (mesh; texture; material...); other for a kind this build does not know"`,
+    prefab:bool `mirai:"optional,label=Of a scene: whether it has exactly one root, which makes it a prefab that prefab.instantiate and scene.spawn place"`,
     size:int `mirai:"label=Bytes of the file"`,
     dependencies:int `mirai:"label=Assets it uses"`,
     used_by:int `mirai:"label=Files that use it"`,
@@ -95,7 +96,6 @@ api_assets_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="asset.list",summary="The assets of the registry by kind and folder, with a count of its broken files, duplicated ids and missing dependencies.",params=Api_Asset_Params,result=Api_Asset_List,writes_result=true,defaults=&assets,flags={.Core,.Read_Only},run=api_asset_list})
     api_register(s,st,{name="asset.detach",summary="Takes a part of an import out of the asset that owns it so it shows on its own; the import still writes it and leaves it out of the owner.",params=Api_Detach_Params,result=Api_Detach_Result,writes_result=true,run=api_asset_detach})
     api_register(s,st,{name="asset.create",summary="Makes an empty asset in a folder of the assets as Create of the content browser does; material.set, particle.set and the like fill it.",params=Api_Asset_Create_Params,result=Api_Asset_Create_Result,run=api_asset_create})
-    api_register(s,st,{name="asset.convert",summary="Turns a scene into a prefab or a prefab into a scene, keeping its id; a scene needs one root and no Scene_Reference to become a prefab. At once, not an edit.",params=Api_Asset_Convert_Params,run=api_asset_convert})
     api_register(s,st,{name="asset.users",summary="The files that use an asset or a part it owns, as the Delete modal of the content browser lists them.",params=Api_Asset_Users_Params,result=Api_Asset_Users_Result,writes_result=true,flags={.Read_Only},run=api_asset_users})
     api_register(s,st,{name="asset.delete",summary="Moves an asset and the parts it owns to the trash of the system at once and without undo. Fails for files of plugins, the engine or the editor, open tabs and outside Edit.",params=Api_Asset_Delete_Params,result=Api_Asset_Delete_Result,writes_result=true,flags={.Destructive},run=api_asset_delete})
     api_register(s,st,{name="asset.move",summary="Moves, renames or copies an asset with the parts it owns, or a folder with all it holds, at once and without undo; a move keeps ids and references, an asset its extension. A move fails for files of plugins, the engine or the editor, open tabs, unsaved changes, a folder into itself and outside Edit.",params=Api_Asset_Move_Params,result=Api_Asset_Moved_Result,run=api_asset_move})
@@ -272,7 +272,9 @@ api_asset_list :: proc(s:^Session,call:^api.Call) {
     api.write_key(w,"assets");serial.write_u8(w,'[')
     for &file in registry.files {
         if file.state==.Broken {broken+=1}
-        if file.state!=.Asset || !asset.registry_listed(&file) || !api_asset_kind_matches(s,base.text_get(params.kind[:]),file.kind) {continue}
+        if file.state!=.Asset || !asset.registry_listed(&file) {continue}
+        // A prefab is no kind: it is asked for as one, and is a scene among the scenes.
+        if wanted:=base.text_get(params.kind[:]);strings.equal_fold(wanted,"prefab")?!asset.registry_prefab(&file):!api_asset_kind_matches(s,wanted,file.kind) {continue}
         if folder!="" && !strings.has_prefix(file.path,folder) {continue}
         total+=1
         if total<=params.offset || shown>=params.limit {continue}
@@ -281,6 +283,7 @@ api_asset_list :: proc(s:^Session,call:^api.Call) {
         serial.text_write_raw(w,`{"path":`);serial.text_write_string(w,file.path)
         api.write_key(w,"asset");api_asset_write(w,file.id)
         api.write_key(w,"kind");serial.text_write_string(w,api_asset_kind_name(s,file.kind))
+        if file.kind==asset.KIND_SCENE {api.write_key(w,"prefab");api.write_flag(w,asset.registry_prefab(&file))}
         api.write_key(w,"size");serial.text_write_int(w,file.size)
         api.write_key(w,"dependencies");serial.text_write_int(w,i64(file.dependency_count))
         api.write_key(w,"used_by");serial.text_write_int(w,i64(len(asset.registry_dependents(registry,file.id))))

@@ -365,9 +365,9 @@ verify_asset :: proc(a:^asset.Asset,path:string,types:^asset.Types) -> string {
         if _,error:=asset.texture_view(a,types);error!=.None {return "texture: inconsistent size, format, layers or levels"}
     case asset.KIND_MATERIAL:
         if _,error:=asset.material_view(a,types);error!=.None {return "material: a value out of range or an invalid name"}
-    case asset.KIND_SCENE,asset.KIND_PREFAB:
+    case asset.KIND_SCENE:
         view,error:=asset.scene_view(a,types)
-        if error!=.None {return "scene: a component table names rows that do not exist or are out of order"}
+        if error!=.None {return "scene: a component table names rows that do not exist or are out of order, or the header does not say whether it has one root"}
         if asset.scene_view_check(view)!=.None {return "scene: repeated ids, missing or cyclic parents, or prefab records without an entity"}
     case asset.KIND_ANIMATION:
         if _,error:=asset.animation_view(a,types);error!=.None {return "animation: an invalid range, key or name"}
@@ -553,7 +553,7 @@ asset_merge :: proc(args:[]string) -> int {
     if error:=asset.scene_merge(&m,&types,&ours,base_doc,&theirs);error!=.None {failed("merge",files[1],error_text(error));return 2}
     data,error:=asset.document_bytes(&ours)
     if error!=.None {failed("merge",files[1],error_text(error));return 2}
-    if ours.kind==asset.KIND_SCENE || ours.kind==asset.KIND_PREFAB {
+    if ours.kind==asset.KIND_SCENE {
         check:asset.Scene
         if problem:=asset.scene_read(&check,&types,data);problem!=.None {failed("merge",files[1],"the result is not a valid scene: %s",error_text(problem));return 2}
         asset.scene_destroy(&check)

@@ -105,7 +105,7 @@ write_decal_images :: proc(o:^Out) -> (images:[Decal_Image]base.Asset_Id) {
 // views take over the meter.
 @(private)
 feature_scene_begin :: proc(s:^asset.Scene_Builder,o:^Out,name:string,sky:Sky,sun_color:[3]f32,sun:f32,towards:[3]f32,u:Light_Units,exposure:f32=0) {
-    asset.builder_init(s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene",name))
+    asset.builder_init(s,&o.content,asset.content_id(PROJECT,"scene",name))
     environment,turn,to_sun,disc:=sky_of(o,sky,towards,u,sun)
     meter:=render.EXPOSURE_DEFAULT
     meter.compensation=exposure

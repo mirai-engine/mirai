@@ -19,7 +19,7 @@ import rag "plugins:ragdoll/runtime"
 
 PHYSICS_GALLERY_STATIONS :: 23
 PHYSICS_GALLERY_SCENE :: "physics_gallery/physics.scene"
-PHYSICS_GALLERY_BURST :: "physics_gallery/physics_burst.prefab"
+PHYSICS_GALLERY_BURST :: "physics_gallery/physics_burst.scene"
 
 @(component)
 Physics_Gallery :: struct {

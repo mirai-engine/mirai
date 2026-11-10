@@ -6,14 +6,18 @@ import "core:mem"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-// Prefab instances inside a scene or another prefab.
+// Prefab instances inside a scene. A prefab is a scene with exactly one root:
+// no kind of its own, only what a scene is while it has one (asset_prefab,
+// registry_prefab). A scene with another number of roots places no instances
+// and is placed by none; it hangs under a Scene_Reference.
 //
 // Instantiating copies the entities of the prefab with new ids, points their
 // references to each other at the copies and empties those that pointed
 // outside the prefab. The root of the instance keeps the prefab and the
-// content hash of the file it was last brought up to date with (Instance),
-// and every entity it placed, the root among them, the entity of the prefab
-// it stands for (Member): two components, saved and merged as any other.
+// content hash of the file it was last brought up to date with
+// (Prefab_Instance), and every entity it placed, the root among them, the
+// entity of the prefab it stands for (Prefab_Member): two components, saved
+// and merged as any other.
 // What it set on its own are its overrides: values and components, and the
 // entities it added under its members. Updating adds and removes members
 // with the prefab, and gives every member the parent, order, name and
@@ -37,16 +41,21 @@ import "mirai:std/serial"
 COMPONENT_INSTANCE :: "Prefab_Instance"
 COMPONENT_MEMBER :: "Prefab_Member"
 
-// The component of the root of an instance, as engine/scene declares
-// Prefab_Instance for a world: a test there compares the two.
-Instance :: struct {
+// The component of the root of what a prefab placed, in a document and in a
+// world: the generator reads the two components of this package, which is
+// where the procedures that place, update and unlink instances are. The
+// root of an instance is a Prefab_Member of itself; the root of a copy
+// spawned while the world runs (scene.spawn) is a member of nothing, and no
+// document holds it.
+@(component,description="The root of what a prefab placed: an instance linked to it in this scene, or a copy spawned while the world runs.")
+Prefab_Instance :: struct {
     prefab:base.Asset_Id `mirai:"readonly,hidden"`,
-    stamp:u64 `mirai:"readonly,hidden"`, // the content hash of the prefab, as resolved, it was last updated from; 0: not known
+    stamp:u64 `mirai:"readonly,hidden"`, // the content hash of the prefab, as resolved, it was last updated from; 0: not known, and that of a spawned copy
 }
 
-// The component of an entity an instance placed, as engine/scene declares
-// Prefab_Member.
-Member :: struct {
+// The component of an entity an instance placed.
+@(component,description="An entity an instance of a prefab placed in this scene.")
+Prefab_Member :: struct {
     instance:base.Entity `mirai:"readonly,hidden"`, // the root of its instance, by its Entity_Id in a document
     source:u64 `mirai:"readonly,hidden"`,           // its Entity_Id in the prefab: not a reference into this document
 }
@@ -63,10 +72,20 @@ path_covers :: proc(path,part:string) -> bool {
     return len(part)>len(path) && part[:len(path)]==path && (part[len(path)]=='.' || part[len(path)]=='[')
 }
 
-// The entity an instance of a prefab places: its root when it says one, or
-// its only entity without parent.
+// Whether an open asset is a prefab: a scene with one root, by its header.
+asset_prefab :: proc "contextless" (a:^Asset) -> bool {
+    return a.blob.header.kind==KIND_SCENE && .One_Root in a.blob.header.flags
+}
+
+// Whether a file of a registry is a prefab, by the header the registry read:
+// what a content browser asks without opening the file.
+registry_prefab :: proc "contextless" (file:^Registry_File) -> bool {
+    return file.state==.Asset && file.kind==KIND_SCENE && .One_Root in file.flags
+}
+
+// The entity an instance of a prefab places: its only entity without parent.
+// Not found in a scene with none or several, which is no prefab.
 prefab_root :: proc(prefab:^Scene) -> (root:base.Entity_Id,found:bool) {
-    if prefab.info.root!=0 {return prefab.info.root,prefab.info.root in prefab.index}
     for parent,row in scene_parents(prefab) {
         if parent!=0 {continue}
         if root!=0 {return 0,false}
@@ -104,29 +123,29 @@ table_entities :: proc(scene:^Scene,table:int) -> []u32 {
 
 // The members of the document: the row of each in the entities, and its value.
 @(private)
-member_rows :: proc(scene:^Scene) -> (rows:[]u32,values:[]Member,error:Error) {
-    table:=membership(scene,COMPONENT_MEMBER,Member) or_return
+member_rows :: proc(scene:^Scene) -> (rows:[]u32,values:[]Prefab_Member,error:Error) {
+    table:=membership(scene,COMPONENT_MEMBER,Prefab_Member) or_return
     if table<0 {return}
-    return table_entities(scene,table),mem.slice_data_cast([]Member,scene.doc.tables[table].columns[1].data),.None
+    return table_entities(scene,table),mem.slice_data_cast([]Prefab_Member,scene.doc.tables[table].columns[1].data),.None
 }
 
 @(private)
-instance_rows :: proc(scene:^Scene) -> (rows:[]u32,values:[]Instance,error:Error) {
-    table:=membership(scene,COMPONENT_INSTANCE,Instance) or_return
+instance_rows :: proc(scene:^Scene) -> (rows:[]u32,values:[]Prefab_Instance,error:Error) {
+    table:=membership(scene,COMPONENT_INSTANCE,Prefab_Instance) or_return
     if table<0 {return}
-    return table_entities(scene,table),mem.slice_data_cast([]Instance,scene.doc.tables[table].columns[1].data),.None
+    return table_entities(scene,table),mem.slice_data_cast([]Prefab_Instance,scene.doc.tables[table].columns[1].data),.None
 }
 
 // The instance an entity is the root of.
-scene_instance :: proc(scene:^Scene,root:base.Entity_Id) -> (instance:Instance,found:bool) {
-    table,error:=membership(scene,COMPONENT_INSTANCE,Instance)
+scene_instance :: proc(scene:^Scene,root:base.Entity_Id) -> (instance:Prefab_Instance,found:bool) {
+    table,error:=membership(scene,COMPONENT_INSTANCE,Prefab_Instance)
     if error!=.None || table<0 {return}
     image:=scene_component_get(scene,table,root) or_return
-    mem.copy(&instance,raw_data(image),size_of(Instance))
+    mem.copy(&instance,raw_data(image),size_of(Prefab_Instance))
     return instance,true
 }
 
-scene_instance_set :: proc(scene:^Scene,root:base.Entity_Id,instance:Instance) -> Error {
+scene_instance_set :: proc(scene:^Scene,root:base.Entity_Id,instance:Prefab_Instance) -> Error {
     value:=instance
     return scene_set(scene,root,COMPONENT_INSTANCE,&value)
 }
@@ -143,17 +162,17 @@ scene_instance_roots :: proc(scene:^Scene,allocator:=context.temp_allocator) -> 
 
 // The root of the instance that placed an entity and the entity of the prefab it stands for.
 scene_member :: proc(scene:^Scene,entity:base.Entity_Id) -> (root,source:base.Entity_Id,found:bool) {
-    table,error:=membership(scene,COMPONENT_MEMBER,Member)
+    table,error:=membership(scene,COMPONENT_MEMBER,Prefab_Member)
     if error!=.None || table<0 {return}
     image:=scene_component_get(scene,table,entity) or_return
-    member:Member
-    mem.copy(&member,raw_data(image),size_of(Member))
+    member:Prefab_Member
+    mem.copy(&member,raw_data(image),size_of(Prefab_Member))
     if member.instance==0 {return}
     return base.Entity_Id(member.instance),base.Entity_Id(member.source),true
 }
 
 scene_member_set :: proc(scene:^Scene,entity,root,source:base.Entity_Id) -> Error {
-    value:=Member{base.Entity(root),u64(source)}
+    value:=Prefab_Member{base.Entity(root),u64(source)}
     return scene_set(scene,entity,COMPONENT_MEMBER,&value)
 }
 
@@ -552,7 +571,7 @@ scene_instance_remove :: proc(scene:^Scene,root:base.Entity_Id) -> Error {
 @(private)
 scene_records_prune :: proc(scene:^Scene) {
     if rows,values,error:=member_rows(scene);error==.None && len(rows)>0 {
-        roots,_:=membership(scene,COMPONENT_INSTANCE,Instance)
+        roots,_:=membership(scene,COMPONENT_INSTANCE,Prefab_Instance)
         table,_:=document_table(&scene.doc,COMPONENT_MEMBER)
         ids:=scene_ids(scene)
         left:=0
@@ -756,16 +775,16 @@ resolver_destroy :: proc(r:^Prefab_Resolver) {
 // The instances of an open document: the file itself, or a copy in
 // temporary memory when it stores another layout.
 @(private="file")
-instances_of :: proc(a:^Asset,types:^Types) -> []Instance {
+instances_of :: proc(a:^Asset,types:^Types) -> []Prefab_Instance {
     table,found:=asset_table(a,COMPONENT_INSTANCE)
     if !found || len(table.columns)!=2 || table.rows==0 {return nil}
-    index,known:=types_index(types,Instance)
+    index,known:=types_index(types,Prefab_Instance)
     if !known {return nil}
     if asset_column_matches(a,table,1,types.hashes[index]) {
         data,error:=asset_column_data(a,table,1)
-        if error==.None && uintptr(raw_data(data))&uintptr(align_of(Instance)-1)==0 {return mem.slice_data_cast([]Instance,data)}
+        if error==.None && uintptr(raw_data(data))&uintptr(align_of(Prefab_Instance)-1)==0 {return mem.slice_data_cast([]Prefab_Instance,data)}
     }
-    rows,error:=make([]Instance,table.rows,context.temp_allocator)
+    rows,error:=make([]Prefab_Instance,table.rows,context.temp_allocator)
     if error!=nil || asset_column_read(a,table,1,&types.schema,index,mem.slice_to_bytes(rows))!=.None {return nil}
     return rows
 }
@@ -781,7 +800,7 @@ resolver_check :: proc(r:^Prefab_Resolver,id:base.Asset_Id) -> Resolved_Prefab {
         delete_key(&r.prefabs,id)
         return checked
     }
-    if file!=nil && file.blob.header.kind==KIND_PREFAB {
+    if file!=nil && asset_prefab(file) {
         checked.stamp=file.blob.header.content_hash
         checked.state=resolver_instances_stale(r,instances_of(file,r.types))?.Stale:.Current
         if checked.state==.Stale {
@@ -821,13 +840,13 @@ resolver_resolve :: proc(r:^Prefab_Resolver,file:^Asset) -> (prefab:^Scene,error
 // Whether an instance placed in a document is not what its prefab gives
 // now: its stamp is not that of the prefab as resolved. One of a prefab that
 // is missing, or that holds itself, stays as it is.
-resolver_instance_stale :: proc(r:^Prefab_Resolver,instance:Instance) -> bool {
+resolver_instance_stale :: proc(r:^Prefab_Resolver,instance:Prefab_Instance) -> bool {
     p:=resolver_check(r,instance.prefab)
     return (p.state==.Current || p.state==.Stale) && instance.stamp!=p.stamp
 }
 
 @(private="file")
-resolver_instances_stale :: proc(r:^Prefab_Resolver,instances:[]Instance) -> bool {
+resolver_instances_stale :: proc(r:^Prefab_Resolver,instances:[]Prefab_Instance) -> bool {
     for instance in instances {
         if resolver_instance_stale(r,instance) {return true}
     }
@@ -848,7 +867,7 @@ PREFAB_DEPTH :: 16
 prefab_holds :: proc(files:Prefab_Files,types:^Types,id,target:base.Asset_Id,depth:=0) -> (holds:bool,error:Error) {
     if id==target || depth>PREFAB_DEPTH {return true,.None}
     file:=files.open(files.data,id) or_return
-    if file==nil || file.blob.header.kind!=KIND_PREFAB {return false,.None}
+    if file==nil || !asset_prefab(file) {return false,.None}
     for instance in instances_of(file,types) {
         if prefab_holds(files,types,instance.prefab,target,depth+1) or_return {return true,.None}
     }
@@ -938,7 +957,7 @@ registry_prefab_files :: proc(files:^Registry_Prefabs) -> Prefab_Files {
         files:=(^Registry_Prefabs)(data)
         if opened,known:=files.opened[id];known {return opened,.None}
         a:^Asset
-        if file,found:=registry_find(files.registry,id);found && file.kind==KIND_PREFAB {
+        if file,found:=registry_find(files.registry,id);found && registry_prefab(file) {
             no_asset:runtime.Allocator_Error
             if a,no_asset=new(Asset,files.allocator);no_asset!=nil {return nil,.Out_Of_Memory}
             // What the registry holds of it unsaved, else the disk.

@@ -45,7 +45,7 @@ BARK_GLOW :: [3]f32{64,25,4.8}
 // The materials a Swatch walks through.
 SWATCH_MATERIALS :: [?]string{"Chrome","Satin metal","Brushed steel","Lacquer","Planks","Stained glass","Neon sign"}
 
-THROWN_CUBE :: "characters/player/Thrown cube.prefab"
+THROWN_CUBE :: "characters/player/Thrown cube.scene"
 
 // Hidden has one writer: the scenes ask for it here.
 @(storage,queue)

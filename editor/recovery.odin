@@ -492,7 +492,7 @@ recovery_resolve :: proc(s:^Session,discard:bool) -> (resolved:bool,reason:strin
                 source:=base.text_get(found.scene?found.info.source[:]:found.source[:])
                 previous:=s.active_document
                 tab:=document_scene_tab(s)
-                beside:=scene || path_is_prefab(source) || tab<0 || document_tab_dirty(s,tab)
+                beside:=scene || path_is_prefab(s,source) || tab<0 || document_tab_dirty(s,tab)
                 why:=""
                 if beside {
                     if !document_tab_new(s) {why=fmt.tprintf("%s could not be opened in a new tab",source!=""?source:"Untitled")}
@@ -509,7 +509,7 @@ recovery_resolve :: proc(s:^Session,discard:bool) -> (resolved:bool,reason:strin
                     continue
                 }
                 resolved=true
-                scene||=!path_is_prefab(source)
+                scene||=!path_is_prefab(s,source)
                 if front<0 {front=s.active_document}
             }
             resize(&r.found,kept)

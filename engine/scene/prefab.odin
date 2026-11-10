@@ -1,28 +1,21 @@
 package scene
 
+import "mirai:asset"
 import "mirai:core"
-import "mirai:std/base"
 
-// The instances of prefabs a document placed, as its entities hold them: the
-// root knows its prefab, and every entity the instance placed, the root among
-// them, the entity of the prefab it stands for. asset declares the same two
-// for a document (asset.Instance, asset.Member), where the procedures that
-// place, update and unlink instances are. A copy spawned while the world
-// runs is no instance: its root has Prefab_Source.
+// What a prefab placed, as the entities of a world hold it: the two
+// components asset declares, for a document and for a world alike. The root
+// of anything a prefab placed has Prefab_Instance, which names the prefab:
+// whatever asks what prefab an entity is reads it. An instance a document
+// keeps linked has, besides, Prefab_Member on every entity it placed, the
+// root among them; a copy spawned while the world runs (scene.spawn) has
+// none, and no document holds its Prefab_Instance.
 
-@(component,description="The root of an instance of a prefab placed in this scene.")
-Prefab_Instance :: struct {
-    prefab:base.Asset_Id `mirai:"readonly,hidden"`,
-    stamp:u64 `mirai:"readonly,hidden"`, // the content hash of the prefab, as resolved, it was last updated from; 0: not known
-}
+Prefab_Instance :: asset.Prefab_Instance
+Prefab_Member :: asset.Prefab_Member
 
-@(component,description="An entity an instance of a prefab placed in this scene.")
-Prefab_Member :: struct {
-    instance:core.Entity `mirai:"readonly,hidden"`, // the root of its instance; the root names itself
-    source:u64 `mirai:"readonly,hidden"`,           // its Entity_Id in the prefab: not a reference into this scene
-}
-
-// The instance an entity is the root of, also while the entity is off.
+// What a prefab placed with this entity as its root, an instance or a spawned
+// copy, also while the entity is off.
 prefab_instance :: proc(w:core.World_Ref,root:core.Entity) -> (instance:Prefab_Instance,found:bool) {
     table:=core.world_table_of(w,Prefab_Instance)
     if table==nil {return}

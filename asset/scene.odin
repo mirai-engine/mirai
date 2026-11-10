@@ -5,7 +5,10 @@ import "core:mem"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-// .scene and .prefab: entities and their components, independent of any ECS.
+// .scene: entities and their components, independent of any ECS. One kind for
+// what a game loads whole, what hangs under a Scene_Reference and what is
+// placed as a copy; a scene with exactly one root is a prefab, the scene an
+// instance or a spawn places (Header_Flag.One_Root says so in its header).
 //
 //   entities     columns id (the key), parent, order and name
 //   <component>  one table per component type, named as the component:
@@ -26,14 +29,14 @@ import "mirai:std/serial"
 // entity column of a component table is a position in the file.
 //
 // The document stores every entity with its effective values, those of its
-// prefab included, so a scene loads without its prefabs. The instances of
+// prefabs included, so a scene loads without its prefabs. The instances of
 // prefabs are two components of its entities (prefab.odin): where each came
 // from, and on the root the content hash of the prefab file the instance was
 // last brought up to date with. The overrides say which values and which
 // places in its hierarchy an instance set itself as of that file; updating
 // it from its prefab replaces everything else.
 
-SCENE_VERSION :: 3
+SCENE_VERSION :: 4
 ENTITY_NAME_BYTES :: 64
 OVERRIDE_PATH_BYTES :: 96
 
@@ -47,8 +50,7 @@ COLUMN_VALUE :: "value"
 Entity_Name :: [ENTITY_NAME_BYTES]u8
 
 Scene_Info :: struct {
-    root:base.Entity_Id, // of a prefab: the entity an instance places
-    id_counter:u64,      // the last one scene_new_id used
+    id_counter:u64, // the last one scene_new_id used
 }
 
 Override_Kind :: enum u8 {
@@ -95,10 +97,9 @@ Entity_Record :: struct {
     name:string, // a view
 }
 
-scene_init :: proc(scene:^Scene,types:^Types,kind:Fourcc,id:base.Asset_Id,allocator:=context.allocator) -> Error {
-    if kind!=KIND_SCENE && kind!=KIND_PREFAB {return .Invalid}
+scene_init :: proc(scene:^Scene,types:^Types,id:base.Asset_Id,allocator:=context.allocator) -> Error {
     scene^={types=types}
-    document_init(&scene.doc,kind,id,allocator)
+    document_init(&scene.doc,KIND_SCENE,id,allocator)
     scene.doc.kind_version=SCENE_VERSION
     scene_arrays_init(scene)
     table:=document_table_add(&scene.doc,TABLE_ENTITIES) or_return
@@ -135,6 +136,30 @@ scene_parents :: #force_inline proc(scene:^Scene) -> []base.Entity_Id {return me
 scene_orders :: #force_inline proc(scene:^Scene) -> []u32 {return mem.slice_data_cast([]u32,scene.doc.tables[0].columns[COLUMN_ORDER].data)}
 scene_names :: #force_inline proc(scene:^Scene) -> []Entity_Name {return mem.slice_data_cast([]Entity_Name,scene.doc.tables[0].columns[COLUMN_NAME].data)}
 scene_entity_count :: #force_inline proc(scene:^Scene) -> int {return scene.doc.tables[0].rows}
+
+// How many entities of the scene have no parent. A scene with one is a prefab.
+scene_roots :: proc(scene:^Scene) -> (roots:int) {
+    for parent in scene_parents(scene) {
+        if parent==0 {roots+=1}
+    }
+    return
+}
+
+// scene_roots of a document that is not open as a Scene: what its header says
+// of it when it is written. -1 for one without the entities of a scene.
+@(private)
+document_scene_roots :: proc(doc:^Document) -> (roots:int) {
+    table,found:=document_table(doc,TABLE_ENTITIES)
+    if !found {return -1}
+    for column in doc.tables[table].columns {
+        if column.name!="parent" || column.size!=size_of(base.Entity_Id) {continue}
+        for at:=0;at+column.size<=len(column.data);at+=column.size {
+            if intrinsics.unaligned_load((^base.Entity_Id)(&column.data[at]))==0 {roots+=1}
+        }
+        return roots
+    }
+    return -1
+}
 
 scene_entity_find :: proc(scene:^Scene,id:base.Entity_Id) -> (row:int,found:bool) {
     at,ok:=scene.index[id]
@@ -459,7 +484,6 @@ scene_entities_remove :: proc(scene:^Scene,ids:[]base.Entity_Id,descendants:=tru
     for &parent in scene_parents(scene) {
         if parent!=0 && !(parent in scene.index) {parent=0}
     }
-    if scene.info.root!=0 && !(scene.info.root in scene.index) {scene.info.root=0}
     scene_records_prune(scene)
     return removed,.None
 }
@@ -560,7 +584,7 @@ scene_load :: proc(scene:^Scene,types:^Types,path:string,allocator:=context.allo
 @(private="file")
 scene_adopt :: proc(scene:^Scene) -> Error {
     doc,types:=&scene.doc,scene.types
-    if doc.kind!=KIND_SCENE && doc.kind!=KIND_PREFAB {return .Invalid}
+    if doc.kind!=KIND_SCENE {return .Invalid}
     if doc.kind_version!=SCENE_VERSION {return .Version}
     entities,found:=document_table(doc,TABLE_ENTITIES)
     if !found || len(doc.tables[entities].columns)!=4 {return .Corrupt}
@@ -628,7 +652,6 @@ scene_adopt :: proc(scene:^Scene) -> Error {
     }
     if _,has:=document_table(doc,TABLE_OVERRIDES);has {document_rows(doc,types,TABLE_OVERRIDES,&scene.overrides) or_return}
     if _,has:=document_table(doc,TABLE_OFF);has {document_rows(doc,types,TABLE_OFF,&scene.off) or_return}
-    if scene.info.root!=0 && !(scene.info.root in scene.index) {return .Corrupt}
     for &override in scene.overrides {
         if !(override.entity in scene.index) || !override_valid(override) {return .Corrupt}
         override.path[len(override.path)-1]=0
@@ -665,20 +688,22 @@ Scene_Component :: struct {
 // A scene open for loading: the columns of the file as they are.
 Scene_View :: struct {
     info:Scene_Info,
+    roots:int, // entities without a parent
     ids:[]base.Entity_Id,
     parents:[]base.Entity_Id,
     orders:[]u32,
     names:[]Entity_Name,
     components:[]Scene_Component,
-    instances:[]Instance,  // of the roots of the prefab instances
+    instances:[]Prefab_Instance, // of the roots of the prefab instances
     instance_rows:[]u32,   // the row of each root in the entities
     member_rows:[]u32,     // the rows of the entities a prefab instance placed
     overrides:[]Override,
     off:[]Component_Off,
 }
 
-// Columns of equal length, and entity rows inside the entity table and in
-// order. Whether ids repeat or parents exist is left to scene_view_check.
+// Columns of equal length, entity rows inside the entity table and in order,
+// and a header that says One_Root of the scene that has one. Whether ids
+// repeat or parents exist is left to scene_view_check.
 // The asset keeps the view it read with types, so reading it again does not
 // take more of its memory; the view is read only.
 scene_view :: proc(a:^Asset,types:^Types) -> (view:Scene_View,error:Error) {
@@ -690,16 +715,19 @@ scene_view :: proc(a:^Asset,types:^Types) -> (view:Scene_View,error:Error) {
 
 @(private)
 scene_view_read :: proc(a:^Asset,types:^Types) -> (view:Scene_View,error:Error) {
-    kind:=a.blob.header.kind
-    if kind!=KIND_SCENE && kind!=KIND_PREFAB {return {},.Invalid}
+    if a.blob.header.kind!=KIND_SCENE {return {},.Invalid}
     if a.blob.header.kind_version!=SCENE_VERSION {return {},.Version}
     view.ids=asset_rows(a,types,TABLE_ENTITIES,"id",base.Entity_Id) or_return
     view.parents=asset_rows(a,types,TABLE_ENTITIES,"parent",base.Entity_Id) or_return
     view.orders=asset_rows(a,types,TABLE_ENTITIES,"order",u32) or_return
     view.names=asset_rows(a,types,TABLE_ENTITIES,"name",Entity_Name) or_return
+    for parent in view.parents {
+        if parent==0 {view.roots+=1}
+    }
+    if (view.roots==1)!=(.One_Root in a.blob.header.flags) {return {},.Corrupt}
     if info,info_error:=table_rows(a,types,TABLE_SCENE,Scene_Info);info_error!=.None {return {},info_error}
     else if len(info)==1 {view.info=info[0]}
-    view.instances=table_rows(a,types,COMPONENT_INSTANCE,Instance,COLUMN_VALUE) or_return
+    view.instances=table_rows(a,types,COMPONENT_INSTANCE,Prefab_Instance,COLUMN_VALUE) or_return
     view.instance_rows=table_rows(a,types,COMPONENT_INSTANCE,u32,COLUMN_ENTITY) or_return
     view.member_rows=table_rows(a,types,COMPONENT_MEMBER,u32,COLUMN_ENTITY) or_return
     if len(view.instances)!=len(view.instance_rows) {return {},.Corrupt}
@@ -769,7 +797,6 @@ scene_view_check :: proc(view:Scene_View,allocator:=context.allocator) -> Error 
     for &name in view.names {
         if name[len(name)-1]!=0 {return .Corrupt}
     }
-    if view.info.root!=0 && !(view.info.root in index) {return .Corrupt}
     for override in view.overrides {
         if !(override.entity in index) || !override_valid(override) {return .Corrupt}
     }

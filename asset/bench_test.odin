@@ -58,7 +58,7 @@ world_delete :: proc(world:^Bench_World) {
 // Groups of ten: the first of each is the parent of the other nine.
 @(private)
 bench_scene :: proc(scene:^Scene,types:^Types,count:int) {
-    scene_init(scene,types,KIND_SCENE,{0xbe,0xbe})
+    scene_init(scene,types,{0xbe,0xbe})
     rows:[4][dynamic]u32
     transforms:[dynamic]Bench_Transform
     meshes:[dynamic]Bench_Mesh
@@ -192,7 +192,7 @@ scene_file_against_a_file_per_entity :: proc(t:^testing.T) {
             start:=time.tick_now()
             for i in 0..<count {
                 one:Scene
-                scene_init(&one,&types,KIND_SCENE,{0xbe,u64(i)})
+                scene_init(&one,&types,{0xbe,u64(i)})
                 scene_entity_add(&one,ids[i],0,serial.text_field(names[i][:]),int(orders[i]))
                 scene_parents(&one)[0]=parents[i]
                 value:=bench_transform(i)

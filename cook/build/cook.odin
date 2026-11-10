@@ -207,7 +207,7 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
         append(pending,at)
     }
     for file,at in files {
-        if file.state==.Asset && (file.kind==asset.KIND_SCENE || file.kind==asset.KIND_PREFAB || file.kind==asset.KIND_RECORDS) {root_add(reached,&pending,&report,u32(at))}
+        if file.state==.Asset && (file.kind==asset.KIND_SCENE || file.kind==asset.KIND_RECORDS) {root_add(reached,&pending,&report,u32(at))}
         // What a plugin brings is for its code, which no scene names.
         for folder in desc.plugins {
             if strings.has_prefix(file.path,folder.prefix) && len(file.path)>len(folder.prefix) && file.path[len(folder.prefix)]=='/' {root_add(reached,&pending,&report,u32(at))}
@@ -540,7 +540,7 @@ file_cook :: proc(work:^Cook_Work,at:int,worker:int,entry:^Cook_File) -> (error:
     if !entry.compressed && !entry.finalized {
         data,read_error:=os.read_entire_file(source,context.temp_allocator)
         if read_error!=nil {return .Read_Failed,work_text(work,"%s",file.path)}
-        if file.state==.Asset && (file.kind==asset.KIND_SCENE || file.kind==asset.KIND_PREFAB) {
+        if file.state==.Asset && (file.kind==asset.KIND_SCENE) {
             sync.mutex_lock(&work.resolve)
             resolved,resolve_ok:=scene_cook(&work.resolver,&work.resolver_types,data)
             sync.mutex_unlock(&work.resolve)

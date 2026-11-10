@@ -13,7 +13,7 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
 
-// A scene or a prefab as a document, between its text and its file, with no
+// A scene as a document, between its text and its file, with no
 // world: {"entities":[...]} holds the entities at the top of the file, each
 // as scene.inspect gives one with root and scene.write takes it back. They
 // nest by children and give what differs from a new entity: their transform
@@ -134,14 +134,14 @@ Scene_File :: struct {
     fresh:bool, // the file is being made: its entities take the ids the document gives
 }
 
-// The path of the scene or prefab a name gives, and whether its file exists.
+// The path of the scene a name gives, and whether its file exists.
 @(private="file")
 scene_path :: proc(p:^Project,named:string) -> (path:string,exists:bool,problem:string) {
     path=asset_path(named)
     if _,found:=asset.registry_find_path(&p.registry,path);found {return path,true,""}
-    fresh:=(strings.has_suffix(path,".scene") || strings.has_suffix(path,".prefab")) && !strings.contains_rune(path,':')
+    fresh:=strings.has_suffix(path,".scene") && !strings.contains_rune(path,':')
     if fresh {return path,false,""}
-    id,unknown:=asset.registry_resolve(&p.registry,path,".scene .prefab")
+    id,unknown:=asset.registry_resolve(&p.registry,path,".scene")
     if unknown!="" {return "",false,fmt.tprintf("asset: %s",unknown)}
     record,_:=asset.registry_find(&p.registry,id)
     return strings.clone(record.path,context.temp_allocator),true,""
@@ -154,11 +154,10 @@ scene_open :: proc(p:^Project,f:^Scene_File,path:string,exists:bool) -> (problem
     if exists {
         file:=asset.registry_file_path(&p.registry,path,context.temp_allocator)
         if error:=asset.scene_load(&f.scene,&p.types,file,context.temp_allocator);error!=.None {
-            return fmt.tprintf("asset %s is not a scene or a prefab that loads (%v); mirai asset verify says what its file has",path,error)
+            return fmt.tprintf("asset %s is not a scene that loads (%v); mirai asset verify says what its file has",path,error)
         }
     } else {
-        kind:=asset.KIND_PREFAB if strings.has_suffix(path,".prefab") else asset.KIND_SCENE
-        if asset.scene_init(&f.scene,&p.types,kind,asset.content_id(p.name,"scene",path),context.temp_allocator)!=.None {return "the file could not be made: memory ran out"}
+        if asset.scene_init(&f.scene,&p.types,asset.content_id(p.name,"scene",path),context.temp_allocator)!=.None {return "the file could not be made: memory ran out"}
         f.fresh=true
     }
     scene_children(f)
@@ -278,12 +277,12 @@ scene_local :: proc(f:^Scene_File,id:base.Entity_Id) -> core.Transform {
 
 // ---------------------------------------------------------------- reading a file
 
-// The document of the scene or prefab a path or an id names, on one line.
+// The document of the scene a path or an id names, on one line.
 // problem: why there is none.
 scene_read :: proc(p:^Project,named:string,out:^serial.Writer) -> (problem:string) {
     path,exists,unknown:=scene_path(p,named)
     if unknown!="" {return unknown}
-    if !exists {return fmt.tprintf("asset: %q is no scene or prefab of the project",named)}
+    if !exists {return fmt.tprintf("asset: %q is no scene of the project",named)}
     f:Scene_File
     if problem=scene_open(p,&f,path,true);problem!="" {return}
     serial.text_write_raw(out,`{"entities":[`)
@@ -430,7 +429,7 @@ scene_entities_read :: proc(reading:^Reading,text:string,parent:int,path:string,
 
 // ---------------------------------------------------------------- writing a file
 
-// Makes the scene or prefab a path names say what a document declares, and
+// Makes the scene a path names say what a document declares, and
 // writes its file: one that does not exist yet is made. A document it
 // refuses leaves the file as it was. problem: why.
 scene_write :: proc(p:^Project,named,text:string) -> (written:Written,problem:string) {
@@ -440,12 +439,6 @@ scene_write :: proc(p:^Project,named,text:string) -> (written:Written,problem:st
     if problem=scene_open(p,&f,path,exists);problem!="" {return}
     reading:=Reading{allocator=context.temp_allocator,raw=text,assets=registry_assets(&p.registry)}
     if !scene_apply(&f,&reading,text,&written) {return {},reading.problem}
-    if strings.has_suffix(path,".prefab") {
-        if _,kept:=asset.scene_entity_find(&f.scene,f.scene.info.root);!kept {
-            scene_children(&f)
-            f.scene.info.root=f.children[0][0] if len(f.children[0])>0 else 0
-        }
-    }
     bytes,error:=asset.scene_bytes(&f.scene,context.temp_allocator)
     if error!=.None {return {},fmt.tprintf("the file could not be written: %v",error)}
     written.path,written.fresh=path,!exists
@@ -459,7 +452,7 @@ scene_write :: proc(p:^Project,named,text:string) -> (written:Written,problem:st
     return
 }
 
-// Whether the document of a scene or prefab reads and writes it back
+// Whether the document of a scene reads and writes it back
 // unchanged: "" when it does.
 scene_verify :: proc(p:^Project,path:string) -> (problem:string) {
     out:serial.Writer
@@ -750,7 +743,7 @@ scene_prefab_read :: proc(reading:^Reading,text,path:string) -> (given:Scene_Pre
     word,is_text:=doc_string(reading,named)
     if !is_text || word=="" {reading_failf(reading,"%s.prefab must be the path or the id of a prefab of the project",path);return}
     problem:string
-    if given.asset,problem=reading.assets.resolve(reading.assets.user,asset_path(word),".prefab");problem!="" {reading_failf(reading,"%s.prefab: %s",path,problem);return}
+    if given.asset,problem=reading.assets.resolve(reading.assets.user,asset_path(word),".scene");problem!="" {reading_failf(reading,"%s.prefab: %s",path,problem);return}
     given.named=word
     return given,true
 }
@@ -764,13 +757,17 @@ scene_prefab_same :: proc(reading:^Reading,given:Scene_Prefab,path:string,prefab
 }
 
 // Reads the prefab a new entity names, to be placed in the file of id into:
-// one of the project that loads, has one entity at its top and does not hold
-// that file. prefab lives in the temporary allocator.
+// a scene of the project that loads, has one entity at its top and does not
+// hold that file. prefab lives in the temporary allocator.
 scene_prefab_open :: proc(reading:^Reading,a:Assets,given:Scene_Prefab,path:string,into:base.Asset_Id,prefab:^asset.Scene) -> bool {
     if given.asset=={} {reading_failf(reading,"%s.prefab must be the path or the id of a prefab of the project",path);return false}
     if a.registry==nil {reading_brokef(reading,"%s.prefab: the project has no assets folder to read a prefab from",path);return false}
     record,found:=asset.registry_find(a.registry,given.asset)
-    if !found || record.kind!=asset.KIND_PREFAB {reading_failf(reading,"%s.prefab: %q is no prefab of the project; give the path or the id of a .prefab",path,given.named);return false}
+    if !found || record.kind!=asset.KIND_SCENE {reading_failf(reading,"%s.prefab: %q is no scene of the project; give the path or the id of a .scene with one entity at its top",path,given.named);return false}
+    if record.state==.Asset && !asset.registry_prefab(record) {
+        reading_failf(reading,"%s.prefab: %s has no single entity at its top to place; give it one, with the rest under it, or hang it whole from a Scene_Reference",path,record.path)
+        return false
+    }
     files:asset.Registry_Prefabs
     asset.registry_prefabs_init(&files,a.registry,context.temp_allocator)
     defer asset.registry_prefabs_destroy(&files)
@@ -782,7 +779,7 @@ scene_prefab_open :: proc(reading:^Reading,a:Assets,given:Scene_Prefab,path:stri
         return false
     }
     if _,rooted:=asset.prefab_root(prefab);!rooted {
-        reading_failf(reading,"%s.prefab: %s has no single entity at its top to place; give it one, with the rest under it",path,record.path)
+        reading_failf(reading,"%s.prefab: %s has no single entity at its top to place; give it one, with the rest under it, or hang it whole from a Scene_Reference",path,record.path)
         return false
     }
     holds,asking:=asset.prefab_holds(opened,a.types,given.asset,into)

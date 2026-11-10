@@ -790,7 +790,7 @@ open_run :: proc(s:^Session) {
     scene:=document_scene_tab(s)
     // Another scene takes the place of the one open: who would lose what
     // they do, or what is unsaved, is asked about first.
-    replaces:=scene>=0 && !path_is_prefab(path) && !document_holds_file(s,path)
+    replaces:=scene>=0 && !path_is_prefab(s,path) && !document_holds_file(s,path)
     if replaces && !s.open_confirmed {
         asset_document_activate(s,-1)
         document_activate(s,scene)
@@ -863,7 +863,9 @@ play_animations_load :: proc(s:^Session,wait:bool) {
     ids:=make([dynamic]base.Asset_Id,context.temp_allocator)
     host.world_asset_ids(edited_world(s),&ids)
     animations:=make([dynamic]base.Asset_Id,context.temp_allocator)
-    host.content_animations_start(s.app,ids[:],&animations)
+    apart:=make([dynamic]base.Asset_Id,context.temp_allocator)
+    scene.section_scenes(edited_world(s),&apart)
+    host.content_animations_start(s.app,ids[:],&animations,apart[:])
     if wait {_=host.content_animations_pending(s.app,animations[:],wait=true)}
 }
 

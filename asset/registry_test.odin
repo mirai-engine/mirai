@@ -37,7 +37,7 @@ registry_scans_headers_and_answers_by_id_path_and_dependency :: proc(t:^testing.
     write_material(t,&types,fmt.tprintf("%s/materials/copy.mat",root),{3,3},wood)
     write_material(t,&types,fmt.tprintf("%s/.mirai/hidden.mat",root),{6,6},wood)
     write_material(t,&types,fmt.tprintf("%s/materials/staging.mat.123.tmp",root),{7,7},wood)
-    scene:Scene;scene_init(&scene,&types,KIND_SCENE,{8,8})
+    scene:Scene;scene_init(&scene,&types,{8,8})
     scene_entity_add(&scene,1,0,"wall")
     mesh:=Test_Mesh{material={4,4}}
     scene_set(&scene,1,"Mesh",&mesh)

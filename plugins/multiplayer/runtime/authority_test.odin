@@ -121,7 +121,7 @@ Crowded_World :: struct {
     es:core.Entities,
     transforms:core.Table(core.Transform),
     worlds:core.Table(core.World_Transform),
-    sources:core.Table(scene.Prefab_Source),
+    instances:core.Table(scene.Prefab_Instance),
     motions:core.Table(core.Motion),
     moves:core.Table(input.Move_Input),
     values:[COMPONENTS+1]core.Table(Net_Test_Value),
@@ -135,14 +135,14 @@ an_entity_with_more_replicated_components_than_an_object_carries_is_not_replicat
     w:Crowded_World
     core.entities_init(&w.es)
     defer {
-        core.table_destroy(&w.transforms);core.table_destroy(&w.worlds);core.table_destroy(&w.sources);core.table_destroy(&w.motions);core.table_destroy(&w.moves)
+        core.table_destroy(&w.transforms);core.table_destroy(&w.worlds);core.table_destroy(&w.instances);core.table_destroy(&w.motions);core.table_destroy(&w.moves)
         for &table in w.values {core.table_destroy(&table)}
         core.entities_destroy(&w.es)
     }
     tables:[len(w.values)+5]core.Table_Info
     tables[0]={name="core.Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Crowded_World,transforms)}
     tables[1]={name="core.World_Transform",type=core.World_Transform,info=type_info_of(core.World_Transform),offset=offset_of(Crowded_World,worlds)}
-    tables[2]={name="scene.Prefab_Source",type=scene.Prefab_Source,info=type_info_of(scene.Prefab_Source),offset=offset_of(Crowded_World,sources)}
+    tables[2]={name="scene.Prefab_Instance",type=scene.Prefab_Instance,info=type_info_of(scene.Prefab_Instance),offset=offset_of(Crowded_World,instances)}
     tables[3]={name="core.Motion",type=core.Motion,info=type_info_of(core.Motion),offset=offset_of(Crowded_World,motions)}
     tables[4]={name="input.Move_Input",type=input.Move_Input,info=type_info_of(input.Move_Input),offset=offset_of(Crowded_World,moves)}
     for k in 0..<len(w.values) {

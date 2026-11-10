@@ -65,7 +65,7 @@ a_far_mesh_is_made_of_the_static_meshes_of_a_scene_and_of_the_scenes_it_referenc
     red.base_color={1,0,0}
     testing.expect_value(t,asset.material_save(files[3].path,&types,{id=FAR_RED,info=red}),asset.Error.None)
     at :: proc(x:f32) -> core.Transform {return {position={x,0,0},rotation=1,scale={1,1,1}}}
-    root:asset.Scene;asset.scene_init(&root,&types,asset.KIND_SCENE,FAR_ROOT)
+    root:asset.Scene;asset.scene_init(&root,&types,FAR_ROOT)
     for id in 1..=6 {asset.scene_entity_add(&root,base.Entity_Id(id),5 if id==6 else 0,fmt.tprintf("thing %d",id))}
     for id in 1..=6 {
         pose:=at(f32(id)*40)
@@ -78,7 +78,7 @@ a_far_mesh_is_made_of_the_static_meshes_of_a_scene_and_of_the_scenes_it_referenc
     asset.scene_set(&root,7,"Scene_Reference",&scene.Scene_Reference{scene=FAR_INNER,extents={50,50,50}})
     testing.expect_value(t,asset.scene_save(&root,files[0].path),asset.Error.None)
     asset.scene_destroy(&root)
-    inner:asset.Scene;asset.scene_init(&inner,&types,asset.KIND_SCENE,FAR_INNER)
+    inner:asset.Scene;asset.scene_init(&inner,&types,FAR_INNER)
     asset.scene_entity_add(&inner,1,0,"Sheet")
     asset.scene_set(&inner,1,"Mesh_Renderer",&render.Mesh_Renderer{mesh=FAR_SHEET})
     testing.expect_value(t,asset.scene_save(&inner,files[1].path),asset.Error.None)

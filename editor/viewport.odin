@@ -731,7 +731,8 @@ placement_commit :: proc(s:^Session,w:core.World_Ref,d:Drag,hit:Pick,select:bool
     }
     point:=placement_point(s,d,hit)
     if d.kind==.Asset {content_used(s,d.asset_id)}
-    if d.kind==.Asset && d.asset_kind==asset.KIND_PREFAB {
+    // The placement chooses: a prefab goes in as an instance linked to it, a scene of several roots hangs as a section.
+    if d.kind==.Asset && d.asset_kind==SHOWN_PREFAB {
         root:=prefab_place_linked(s,d.asset_id,point)
         if select && root!=core.NONE {history.selection_set(s.selection,{root})}
         return
