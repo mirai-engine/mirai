@@ -160,16 +160,15 @@ a_subagent_runs_in_its_own_conversation_and_keeps_the_view_of_the_user :: proc(t
 }
 
 @(private="file")
-spawn_call :: proc(s:^Session,tag:string) -> (call:api.Call,text:string) {
+spawn_call :: proc(s:^Session,tag:string) -> (call:api.Call,result:^Ai_Agent_Result) {
     p:=new(Ai_Agent_Spawn_Params,context.temp_allocator)
     base.text_set(p.prompt[:],"Paint the wall")
-    w:=new(serial.Writer,context.temp_allocator)
-    serial.writer_init(w,0,context.temp_allocator)
+    result=new(Ai_Agent_Result,context.temp_allocator)
     method:=new(api.Method,context.temp_allocator)
     method^={name="agent.spawn",params_id=Ai_Agent_Spawn_Params,result_id=Ai_Agent_Result}
-    call={method=method,raw="{}",client_tag=tag,params=p,out=w,allocator=context.temp_allocator}
+    call={method=method,raw="{}",client_tag=tag,params=p,result=result,allocator=context.temp_allocator}
     ai_method_agent_spawn(s,&call)
-    return call,string(serial.writer_bytes(w))
+    return
 }
 
 @(test)
@@ -180,9 +179,9 @@ agent_spawn_works_only_from_a_running_turn_of_the_main_chat :: proc(t:^testing.T
     main:=main_chat(t,f)
     if main==nil {return}
     main.state=.Running
-    call,text:=spawn_call(&f.s,base.text_get(main.name[:]))
+    call,spawned:=spawn_call(&f.s,base.text_get(main.name[:]))
     if !testing.expectf(t,!call.failed,"%s",call.error.message) {return}
-    testing.expect_value(t,api.result_mismatch(Ai_Agent_Result,text),"")
+    testing.expect_value(t,spawned.title,"Paint the wall")
     testing.expect_value(t,f.ai.task_count,2)
     testing.expect_value(t,f.ai.selected,main.id)
     agent:=&f.ai.tasks[1]
