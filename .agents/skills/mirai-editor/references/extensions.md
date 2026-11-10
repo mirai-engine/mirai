@@ -32,12 +32,14 @@ to an unloaded library. Those of one type are looked up in a single place (`prov
 
 Outline of `paint` and `terrain` (`plugins/*/editor/`):
 
-1. **Turn on.** `editor.tool_button` presents an entry of the Tools menu and returns its click; the
-   step calls `editor.tool_set(s, "paint", true)`, which keeps the name's hash in
-   `Viewport.plugin_tool`, and rereads `editor.tool_on(s, "paint")`. `tool_set(s, name, false)`
-   turns it off only if it is the active one.
-2. A key is handled only if `ctx.edit.id == 0`, without modifiers, with `g.modal == .None` and
-   `ctx.popup.count == 0`.
+1. **Turn on.** The register procedure of its `Api_Provider` calls
+   `editor.tool_entry(s, "paint", "Paint", icon, {key=.B, set=true})`: an entry of the Tools menu
+   with its shortcut that calls `editor.tool`, which a person and an agent turn it on and off with
+   ([commands](editor.md#commands-and-shortcuts)). The step reads `editor.tool_on(s, "paint")`;
+   `editor.tool_set` keeps the name's hash in `Viewport.plugin_tool`, and with `false` turns it off
+   only if it is the active one.
+2. A key of the tool besides its shortcut is handled only if `ctx.edit.id == 0`, without modifiers,
+   with `g.modal == .None` and `ctx.popup.count == 0`.
 3. **Collect input** in `input`: `s.viewport.hovered` says the pointer is over the scene and no UI
    takes it. While `s.viewport.pick.active` waits for a reference, the click belongs to that
    choice. `editor.tool_pointer` gives the three things: on, over the scene and a click that starts
@@ -123,12 +125,9 @@ name:
 - It is passed to `ui.panel` and the controls are built inside the panel's positive block, which
   closes its scope on exit. `free_region` discounts these panels. An independent panel can use
   its own `anchor`/`pivot`.
-- `editor.view_toggle(g, id, label, active)` adds an entry in View and returns its click; the
-  plugin changes its state and builds the panel.
-- `tool_button` and `view_toggle` pass data to the next frame in fixed arrays of `Editor_Ui` (16
-  controls in total, copied strings, no allocations). A control that stops being presented
-  disappears in the next frame. The click returns to the step that presented it, without keeping
-  functions.
+- A panel of its own opens from View: the method that opens it carries the entry
+  (`entry={label=..., menu=.View, group=editor.MENU_GROUP_PLUGINS, params=`{"open":"$toggle"}`}` in
+  its `api_method_register`), so an agent opens it too; `profiler` does (`profile.panel`).
 - Use the inspector widgets (`ui.section`, `ui.property`, `ui.number_field`, `ui.toggle`,
   `ui.color_field`) and a `ui.Id` of its own scope (`ui.id_derive(ctx, SCOPE, "panel")`). The
   Details cards are `editor.card_begin`, `section_band` and `card_body_begin`, with their open state
@@ -193,10 +192,11 @@ A plugin opens asset types in tabs next to the scenes
 - **Settings.** `editor.settings_open(s, name)` opens Project Settings at that storage's setting,
   like the File menu.
 - The plugin's state follows the front document: on changing asset it rereads it.
-- **Edit actions.** `Asset_Document_Provider.actions` says which edit actions (Copy, Paste,
-  Duplicate, Delete...) its documents take: with one in front, their shortcuts do not run them on
-  the scene, but leave them in `Asset_Document.request` with another `request_serial`, and the
-  plugin runs each serial once.
+- **Edit keys.** `Asset_Document_Provider.takes` names the entries that work on the scene its
+  documents take instead (`copy`, `paste`, `duplicate`, `delete`, `rename`...): with one in front,
+  their shortcuts do not call their methods, but leave the name of the entry in
+  `Asset_Document.request` with another `request_serial`, and the plugin runs each serial once on
+  what the document has chosen.
 - **Create.** `Asset_Document_Provider.creates` says which of its types (of `asset.KINDS`) offer
   the content browser's Create and `asset.create`. The editor chooses the path and id and calls
   `Asset_Document_Provider.create(s, kind, id)`, which returns the bytes of the empty file in the
@@ -344,6 +344,9 @@ A plugin adds modes to the [mode menu](panels.md#inspection-mode) and to
   rebuilds the registry between calls with those of the new library.
 - The `Type_Info` of `params` and `result` must come from the package that declares the structs, to
   cross the loaded library; `engine.describe` and MCP expose those schemas.
+- A method a person runs too carries its entry in the same descriptor (`entry`: label, icon,
+  shortcut, menu, params and what it shows): the plugin writes the gesture once, in the method.
+  `editor.command_bind` gives a method more entries, with other params.
 - Handlers use `editor.shown_world`. A document write goes between
   `editor.api_edit_begin(s,call,label)` and `editor.api_edit_end(s,call,ok)`, which apply guards,
   cancellation and undo. An asset the plugin writes goes through `editor.file_write` inside that

@@ -26,6 +26,9 @@ tool_previews_confirm_once_or_restore_the_document_and_selection :: proc(t:^test
     history.edits_reset(&edits,w)
     defer history.edits_free(&edits)
     defer delete(selection.entities)
+    commands:Api
+    if !test_commands_open(t,&s,&commands) {return}
+    defer test_commands_close(&s)
     history.selection_set(&selection,{original})
     tool_set(&s,"test",true)
     testing.expect(t,tool_preview_begin(&s,"test","Place"))
@@ -67,7 +70,7 @@ tool_previews_confirm_once_or_restore_the_document_and_selection :: proc(t:^test
 
     testing.expect(t,tool_preview_begin(&s,"test","Move"))
     core.get(&world.transforms,duplicate).position.x=8
-    testing.expect(t,action_run(&s,.Undo))
+    testing.expect(t,test_command(&s,"undo"))
     testing.expect_value(t,entity_local(w,duplicate).position.x,f32(3))
     testing.expect_value(t,edits.cursor,1)
     testing.expect(t,!tool_preview_active(&s,"test"))
@@ -126,19 +129,22 @@ tool_lent_to_the_gizmo_stays_on :: proc(t:^testing.T) {
     history.edits_reset(&edits,edited_world(&s))
     defer history.edits_free(&edits)
     defer delete(selection.entities)
+    commands:Api
+    if !test_commands_open(t,&s,&commands) {return}
+    defer test_commands_close(&s)
     tool_set(&s,"test",true)
-    testing.expect(t,action_state(&s,.Tool_Move).checked)
+    testing.expect(t,command_state(&s,"tool_move").checked)
     tool_lend(&s,"test")
-    testing.expect(t,!action_state(&s,.Tool_Move).checked)
-    testing.expect(t,action_run(&s,.Tool_Rotate))
+    testing.expect(t,!command_state(&s,"tool_move").checked)
+    testing.expect(t,test_command(&s,"tool_rotate"))
     testing.expect(t,tool_on(&s,"test") && tool_aside(&s,"test"))
-    testing.expect(t,action_state(&s,.Tool_Rotate).checked)
+    testing.expect(t,command_state(&s,"tool_rotate").checked)
     tool_take(&s,"test")
     testing.expect(t,!tool_aside(&s,"test") && tool_on(&s,"test"))
-    testing.expect(t,!action_state(&s,.Tool_Rotate).checked)
+    testing.expect(t,!command_state(&s,"tool_rotate").checked)
     // Another tool lends nothing until it says so.
     tool_set(&s,"other",true)
-    testing.expect(t,action_state(&s,.Tool_Rotate).checked)
-    testing.expect(t,action_run(&s,.Tool_Move))
+    testing.expect(t,command_state(&s,"tool_rotate").checked)
+    testing.expect(t,test_command(&s,"tool_move"))
     testing.expect(t,!tool_aside(&s,"other"))
 }

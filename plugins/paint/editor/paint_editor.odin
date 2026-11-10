@@ -315,9 +315,6 @@ paint_panel :: proc(s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,inpu
     if !g.begun || editor.playing(s) {return}
     tool_ready(tool)
     ctx:=g.ctx
-    if core.key_pressed(input,.B) && ctx.edit.id==0 && ctx.input.modifiers=={} && g.modal==.None && ctx.popup.count==0 {editor.tool_set(s,"paint",!tool.active)}
-    tool.active=editor.tool_on(s,"paint")
-    if editor.tool_button(g,ui.id_derive(ctx,PANEL_SCOPE,"tool"),.Edit,"Paint","B",tool.active) {editor.tool_set(s,"paint",!tool.active)}
     tool.active=editor.tool_on(s,"paint")
     if !tool.active || s.viewport.pick.active {return}
     id:=ui.id_derive(ctx,PANEL_SCOPE,"panel")

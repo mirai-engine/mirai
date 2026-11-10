@@ -293,9 +293,6 @@ foliage_panel :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,
     g:=s.gui
     if !g.begun || editor.playing(s) {return}
     tool_ready(tool);ctx:=g.ctx
-    if core.key_pressed(input,.G) && ctx.edit.id==0 && ctx.input.modifiers=={} && g.modal==.None && ctx.popup.count==0 {editor.tool_set(s,TOOL,!tool.active)}
-    tool.active=editor.tool_on(s,TOOL)
-    if editor.tool_button(g,ui.id_derive(ctx,PANEL_SCOPE,"tool"),.Edit,"Foliage","G",tool.active) {editor.tool_set(s,TOOL,!tool.active)}
     tool.active=editor.tool_on(s,TOOL)
     if !tool.active || s.viewport.pick.active {return}
     id:=ui.id_derive(ctx,PANEL_SCOPE,"panel")
