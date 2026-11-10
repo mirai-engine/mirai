@@ -534,8 +534,11 @@ reference](../../mirai-animation/references/animation.md).
 Game `.ui` interfaces over the UI contexts of each world (`Gui`, `host,by_world`): the window's and
 one per local player that has screens or sees a `World_Widget`.
 
-- `UI_Screen`: an interface over the screen; a greater `order` covers a lesser one. `player` 0 is
-  the window; `n`, the part of local player `n` in split screen (`host.app_player_rect`).
+- `UI_Screen`: an interface over the screen; a greater `order` covers a lesser one. `player` `n`
+  is the part of local player `n` in split screen (`host.app_player_rect`). With `player` 0 it is
+  of whoever its entity is of (`screen_owner`): a seat, the body a seat drives or what hangs from
+  them shows in the part of that local player, and not at all for a body nobody drives or one a
+  player of another end drives; any other entity shows on the window.
 - `World_Widget`: an interface in the world, on the entity.
   - `preview` (true by default): in the editor, while the world is not playing, it is shown as it
     will look, without input or screens, with steps of the editor loop that do not run in a world

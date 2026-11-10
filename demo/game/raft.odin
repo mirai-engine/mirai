@@ -72,10 +72,11 @@ Raft_Doing :: enum u8 {On_Raft,Wading,Surface,Under}
 // How much breath it has left: the variant of the style of its count.
 Raft_Air :: enum u8 {Fine,Low}
 
-// What raft_hud.ui shows of the swimmer it is on, while the focused seat drives it.
+// What raft_hud.ui shows of the swimmer it is on, while a seat drives it: the
+// screen is on the swimmer, so it shows in the view of the player that drives it.
 @(component,description="The HUD of a swimmer: its breath, how it moves and the message of its last drowning.")
 Raft_Hud :: struct {
-    shown:bool,        // the focused seat drives this swimmer
+    shown:bool,        // a seat drives this swimmer
     doing:Raft_Doing,
     oxygen:i32,        // whole seconds of breath left
     breath:f32,        // of a full one, 0 to 1, in the steps its bar shows
@@ -90,14 +91,13 @@ RAFT_BAR_STEPS :: 300 // the steps the bar of the breath moves in
 @(step="frame")
 raft_hud :: proc(
     huds:^core.Table(Raft_Hud),divers:core.Read(Diver),games:core.Read(Raft_Game),states:core.Read(phys.Character_State),characters:core.Read(phys.Character),
-    drivables:core.Read(inp.Drivable),seat_state:core.Ref(inp.Seats),locals:core.Read(inp.Seat),
+    drivables:core.Read(inp.Drivable),
 ) {
-    focused:=inp.body_of(drivables,inp.focused(seat_state.ptr,locals))
     shown:=core.read(huds)
     for row in 0..<core.count(shown) {
         body:=core.entity_at(shown,row)
         next:Raft_Hud
-        if diver,is_diver:=core.get(divers,body);is_diver && body==focused && core.count(games)>0 {
+        if diver,is_diver:=core.get(divers,body);is_diver && inp.seat_of(drivables,body)!=core.NONE && core.count(games)>0 {
             state,_:=core.get(states,body)
             character,_:=core.get(characters,body)
             switch {

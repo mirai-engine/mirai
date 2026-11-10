@@ -40,8 +40,8 @@ Write it with [ui.write](writing-ui.md). In the scene, the screen and its data o
   "Top_Left", "offset": [16, 16]}`: `Safe` keeps it clear of notches. `Surface` is the whole
   window.
 - Repeat a node per element of an array with a `List` and `bind_items`.
-- Several local players: `UI_Screen.player` is `0` for the window and `n` for the part of
-  player `n`.
+- Several local players: a `UI_Screen` on a seat, or on the body a seat drives, shows in the view
+  of that player; on any other entity, on the whole window (`player` `n` names a part).
 
 ## Custom drawing
 
