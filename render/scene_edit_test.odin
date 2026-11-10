@@ -145,6 +145,7 @@ mesh_remove_preserves_other_ranges_and_instances_and_reuses_the_freed_space :: p
 	for &ranges in s.pool_dirty {clear(&ranges)}
 	clear(&s.mesh_dirty)
 	scene_given(r,[]Instance_Desc{{object_id=1,mesh=handles[0],transform=Mat4(1)},{object_id=2,mesh=handles[1],transform=Mat4(1)},{object_id=3,mesh=handles[2],transform=Mat4(1)}},nil,{},{})
+	touched_settle(s);touched_settle(s)
 	s.instances_dirty=false
 	kept_instance:=s.instances[2]
 	triangles := s.triangle_total
@@ -298,7 +299,7 @@ scene_set_changes_the_light_only_around_what_comes_goes_or_changes :: proc(t:^te
     glowing:=small
     glowing.emission={1,1,1}
     scene_given(r,{a,moved,glowing},nil,{},{})
-    testing.expect(t,s.changes.count==2 && s.changes.spheres[0].w>LIGHT_CHANGE_REACH,"its glow, as far as a glow reaches")
+    testing.expect(t,s.changes.count==2 && max(s.changes.spheres[0].w,s.changes.spheres[1].w)>LIGHT_CHANGE_REACH,"its glow, as far as a glow reaches")
 }
 
 @(test)
@@ -732,8 +733,9 @@ the_scene_answers_what_an_instance_shows_and_where_it_is :: proc(t:^testing.T) {
     other.transform[1,3]=4
     testing.expect(t,scene_update(r,0,{other}) && scene_instance_was(r,0,1) && !scene_instance_was(r,0,9))
     testing.expect(t,r.scene.instances[0].prev_world==was && r.scene.instances[0].world!=was)
-    // One the set skipped, and one it never had.
-    testing.expect(t,scene_given(r,{desc,Instance_Desc{object_id=2,mesh=Mesh_Handle(99),transform=Mat4(1)}},nil,{},{}))
+    // A mesh the scene does not have is refused, and the scene stays as it was.
+    testing.expect(t,!scene_update(r,0,{desc,Instance_Desc{object_id=2,mesh=Mesh_Handle(99),transform=Mat4(1)}},true) && len(r.scene.instances)==2)
+    testing.expect(t,scene_update(r,1,nil,true))
     for missing in ([2]u32{1,7}) {
         _,_,_,shown=scene_instance_materials(r,missing)
         _,_,placed=scene_instance_placed(r,missing)

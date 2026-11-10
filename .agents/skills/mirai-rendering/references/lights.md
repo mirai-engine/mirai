@@ -223,9 +223,9 @@ Tests: the shadow ones of `render/render_test.odin` (`render_sun_shadow_is_ray_t
   once, where the ray enters.
 - Native geometry is built without duplicate candidates per primitive: a surface does not filter
   twice.
-- `color` and `color_hw` variants of the same Slang, with the filter of each texel
-  (`MIRAI_COLORED_SHADOWS`) or the mean one (`MIRAI_GLASS_MEANS`); they are used only with the
-  option active and blend in the scene, and without the option the shader does not contain those
+- The `color` constant of the same Slang, with the filter of each texel
+  (`MIRAI_COLORED_SHADOWS`) or the mean one (`MIRAI_GLASS_MEANS`); its pipelines are made and used
+  only with the option active and blend in the scene, and without it the code skips those
   traversals. The reflection pass always includes the per-texel one, for its sharp rays.
 - Changing the option invalidates the histories and restarts the probes.
 - Software tracing admits a tolerance in barycentrics at the edges: an oblique ray does not leak

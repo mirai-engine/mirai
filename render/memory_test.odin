@@ -35,8 +35,8 @@ MEMORY_CATALOG :: `{"programs":[{"id":3,"name":"Paint","domain":"vfx","attribute
 renderer_calls_without_memory_are_refused_and_keep_what_they_had :: proc(t: ^testing.T) {
 	limit := Memory_Limit{owner = context.allocator, remaining = max(int)}
 	limited := runtime.Allocator{memory_limit_proc, &limit}
-	Call :: enum {Bvh, Light_Tree, Texture, Catalog, Scene_Init, Materials, Scene_Set, Scene_Update, Lights, Shader_Reload, Mesh}
-	SAYS :: bit_set[Call]{.Materials, .Scene_Set, .Scene_Update, .Lights, .Shader_Reload}
+	Call :: enum {Bvh, Light_Tree, Texture, Catalog, Scene_Init, Materials, Scene_Whole, Scene_Update, Lights, Shader_Reload, Mesh}
+	SAYS :: bit_set[Call]{.Materials, .Scene_Whole, .Scene_Update, .Lights, .Shader_Reload}
 
 	vertices: [8]Mesh_Vertex
 	for &v, i in vertices {
@@ -79,7 +79,7 @@ renderer_calls_without_memory_are_refused_and_keep_what_they_had :: proc(t: ^tes
 		case .Light_Tree:
 			_, built := light_tree_build(&tree, &keys, &leaves, lights[:2])
 			if !testing.expect(t, built) {return}
-		case .Scene_Set, .Scene_Update:
+		case .Scene_Whole, .Scene_Update:
 			mesh, added := mesh_add(r, vertices[:], indices[:])
 			if !testing.expect(t, added) {return}
 			for &instance, i in instances {instance = {object_id = u64(i + 1), mesh = mesh, transform = Mat4(1), tint = {1, 1, 1}}}
@@ -115,13 +115,13 @@ renderer_calls_without_memory_are_refused_and_keep_what_they_had :: proc(t: ^tes
 			case .Materials:
 				done = materials_set(r, materials[:])
 				if !done {testing.expectf(t, len(s.materials) == 0, "a table refused with %d requests served has no row", served)}
-			case .Scene_Set:
-				done = scene_given(r, instances[:], light_descs[:], {}, {})
+			case .Scene_Whole:
+				done = scene_update(r, 0, instances[:], true)
 			case .Scene_Update:
 				done = scene_update(r, 1, instances[1:])
 			case .Lights:
-				done = scene_lights_given(r, light_descs[:], {}, {})
-				if !done {testing.expectf(t, len(s.lights) == 0, "lights refused with %d requests served are not there", served)}
+				done = scene_light_update(r, 0, light_descs[0])
+				if !done {testing.expectf(t, len(s.lights) == 0, "a light refused with %d requests served is not there", served)}
 			case .Shader_Reload:
 				assets := Shader_Assets{owned = true}
 				candidate := renderer_shader_reload_begin(r, &assets)
@@ -139,7 +139,7 @@ renderer_calls_without_memory_are_refused_and_keep_what_they_had :: proc(t: ^tes
 		}
 		testing.expectf(t, done && refused, "%v: refused without memory, and with it it goes through", call)
 		#partial switch call {
-		case .Scene_Set, .Scene_Update:
+		case .Scene_Whole, .Scene_Update:
 			testing.expectf(t, len(s.instances) == len(instances), "%v: %d instances", call, len(s.instances))
 		case .Lights:
 			testing.expect_value(t, len(s.lights), len(light_descs))

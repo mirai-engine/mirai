@@ -355,6 +355,7 @@ Scene_State :: struct {
 	light_node_ranges:    [dynamic]Pool_Range, // and the nodes of the tree
 	lights_changed:       bool, // a light came, went or changed since the last frame began
 	lights_stale:         bool, // lights came, went or took another kind: the tree is built again (scene_lights_settle)
+	light_refits:         int,  // lights refit one by one since the frame began
 	light_flux:           f32,  // of the lights the probe volume holds, when they last changed (blackout.odin)
 	flux_seen:            f32,  // of the whole scene in the frame before
 	lights_scale:         f32,  // render units per nit the lights are in: the light scale, or the one before a world started without light
@@ -1818,11 +1819,15 @@ scene_light_update :: proc(r: ^Renderer, index: u32, desc: Light_Desc) -> bool {
 		s.lights_stale ||= light_directed(before) != light_directed(light) || light_placed(before) != light_placed(light)
 		if !s.lights_stale {
 			if !light_placed_same(before, light) {occluder_light_moved(s, index)}
-			if !s.lights_dirty {range_add(&s.light_ranges, {index, 1})}
-			if leaf := s.light_leaves[index]; leaf != LIGHT_TREE_NONE {
-				s.light_tree_cost += light_tree_refit(s.light_tree[:], s.lights[:], leaf, nil if s.lights_dirty else &s.light_node_ranges, s.light_region)
+			// Past LIGHT_REFITS_MAX in a frame the whole tree is refit once (scene_lights_settle).
+			s.light_refits += 1
+			if s.light_refits > LIGHT_REFITS_MAX {s.lights_dirty = true} else {
+				if !s.lights_dirty {range_add(&s.light_ranges, {index, 1})}
+				if leaf := s.light_leaves[index]; leaf != LIGHT_TREE_NONE {
+					s.light_tree_cost += light_tree_refit(s.light_tree[:], s.lights[:], leaf, nil if s.lights_dirty else &s.light_node_ranges, s.light_region)
+				}
+				if len(s.light_ranges) > LIGHT_RANGES_MAX || len(s.light_node_ranges) > LIGHT_RANGES_MAX {s.lights_dirty = true}
 			}
-			if len(s.light_ranges) > LIGHT_RANGES_MAX || len(s.light_node_ranges) > LIGHT_RANGES_MAX {s.lights_dirty = true}
 		}
 	}
 	scene_changed_near(s, light.position_range.xyz, light.position_range.w)
@@ -1864,6 +1869,8 @@ scene_lights_settle :: proc(r: ^Renderer) -> bool {
 		r.gi_warm_spread = GI_BLACKOUT_FRAMES
 	}
 	s.flux_seen = flux
+	if s.light_refits > LIGHT_REFITS_MAX && !s.lights_stale {s.light_tree_cost = light_tree_refit_all(s.light_tree[:], s.lights[:], s.light_region)}
+	s.light_refits = 0
 	if s.lights_stale || s.light_tree_cost > s.light_tree_built * LIGHT_TREE_REFIT_SLACK {
 		if !light_tree_rebuild(s) {set_error(r, "light tree of %d lights: out of memory", len(s.lights));return false}
 		// An index names the same light only while the set holds.

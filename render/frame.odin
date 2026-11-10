@@ -124,19 +124,6 @@ bind_scene_table :: proc(p: ^Pass) {
 	rhi.cmd_bind_texture(cmd, SLOT_DISTANCE, g.distance if g.valid else r.dummy_texture)
 }
 
-@(private)
-shadow_pipeline :: proc(r:^Renderer,software,hardware,colored_software,colored_hardware:Pipeline_Id)->rhi.Pipeline {
-    return shadow_target(r,software,hardware,colored_software,colored_hardware)^
-}
-
-// The same, as where the renderer keeps it.
-@(private)
-shadow_target :: proc(r:^Renderer,software,hardware,colored_software,colored_hardware:Pipeline_Id)->^rhi.Pipeline {
-    id:=colored_hardware if r.hardware_rt else colored_software
-    if !shadows_colored(r) {id=hardware if r.hardware_rt else software}
-    return &r.pipelines[id]
-}
-
 // Whether shadow rays take the color of the glass they cross.
 @(private)
 shadows_colored :: proc(r: ^Renderer) -> bool {
@@ -314,12 +301,10 @@ reflect_pass :: proc(p: ^Pass, normal, depth, albedo, history_previous, history_
 	split := shared_from if settings.reflection_half_resolution else max(f32)
 	// Its rays shade what they hit with the layers of its material, and a
 	// layer of glass traces the lobe its own layers shape.
-	pipeline: rhi.Pipeline
-	if scene_layered(s) || (glass && glass_layered(s)) {
-		pipeline = shadow_pipeline(r,.Reflect,.Reflect_Hw,.Reflect_Color,.Reflect_Color_Hw)
-	} else {
-		pipeline = shadow_pipeline(r,.Reflect_Unlayered,.Reflect_Unlayered_Hw,.Reflect_Unlayered_Color,.Reflect_Unlayered_Color_Hw)
-	}
+	constants: rhi.Shader_Constants
+	if shadows_colored(r) {constants += {REFLECT_COMP_COLOR}}
+	if !scene_layered(s) && !(glass && glass_layered(s)) {constants += {REFLECT_COMP_UNLAYERED}}
+	pipeline := pipeline_of(r, .Reflect, constants)^
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, depth)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS3, albedo)
@@ -344,7 +329,7 @@ reflect_pass :: proc(p: ^Pass, normal, depth, albedo, history_previous, history_
 	// The disc keeps its size on screen at any resolution, down to the few
 	// pixels a filter needs to have neighbours at all.
 	resolve := Resolve{history_valid = 1 if history_valid else 0, max_radius = max(7 * f32(t.height) / 900, 3), blend = 0.08, shared_from = split}
-	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Reflect_Resolve_Glass if glass else .Reflect_Resolve])
+	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Reflect_Resolve, {REFLECT_RESOLVE_COMP_GLASS} if glass else {})^)
 	set_params(cmd, &resolve)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.reflect_raw)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, normal)
@@ -1056,7 +1041,7 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 		cull_record(p, params, t.hiz[p.current], r.stats_buffer, p.view.glass_dispatch)
 		rhi.cmd_barrier_buffer(cmd, s.cull_state_buffer, .Indirect_Read)
 		cull_lists_ready(p, r.stats_buffer, p.view.glass_dispatch)
-		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Cull_Clusters_Candidates])
+		rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Cull_Clusters, {CULL_CLUSTERS_COMP_CANDIDATES})^)
 		cull_bind(p, params, t.hiz[p.current], r.stats_buffer, p.view.glass_dispatch)
 		rhi.cmd_dispatch_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, candidate_dispatch)))
 		cull_programs_bin(p, 1)
@@ -1264,7 +1249,7 @@ pass_shadow_set :: proc(p: ^Pass, set: ^Shadow_Set) {
 		params := Params{light_budget = settings.light_budget, sun_radius = settings.sun_radius, block = set.block}
 		// The filters of glass with a program wait for it.
 		batch := shadows_colored(r) && points_begin(p, filters = true)
-		pipeline := shadow_pipeline(r, .Shadow_Trace, .Shadow_Trace_Hw, .Shadow_Trace_Color, .Shadow_Trace_Color_Hw)
+		pipeline := pipeline_of(r, .Shadow_Trace, {SHADOW_TRACE_COMP_COLOR} if shadows_colored(r) else {})^
 		rhi.cmd_bind_pipeline(cmd, pipeline)
 		set_params(cmd, &params)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
@@ -1333,7 +1318,7 @@ pass_direct :: proc(p: ^Pass, mode: Direct_Mode) -> bool {
 		if !ensure_direct_list(r, t) {return false}
 		rhi.cmd_fill_buffer(cmd, t.direct_traced, 0, 4, 0)
 		rhi.cmd_copy_buffer(cmd, r.dispatch_start, 0, t.direct_dispatch, 0, 16)
-		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Lighting if p.layered else .Lighting_Unlayered])
+		rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Lighting, {} if p.layered else {LIGHTING_COMP_UNLAYERED})^)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct)
@@ -1352,7 +1337,7 @@ pass_direct :: proc(p: ^Pass, mode: Direct_Mode) -> bool {
 		Params :: struct {light_budget, listed, reference: u32, sun_radius: f32, resume, pad0, pad1, pad2: u32}
 		params := Params{light_budget = settings.light_budget, listed = u32(blocks), reference = u32(settings.reference_lights), sun_radius = settings.sun_radius}
 		batch := shadows_colored(r) && points_begin(p, filters = true)
-		pipeline := shadow_pipeline(r, .Lighting_Traced, .Lighting_Traced_Hw, .Lighting_Traced_Color, .Lighting_Traced_Color_Hw)
+		pipeline := pipeline_of(r, .Lighting_Traced, {LIGHTING_TRACED_COMP_COLOR} if shadows_colored(r) else {})^
 		rhi.cmd_bind_pipeline(cmd, pipeline)
 		set_params(cmd, &params)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
@@ -1457,9 +1442,10 @@ pass_contact :: proc(p: ^Pass) -> bool {
 	if !ok {return false}
 	rhi.cmd_timestamp(cmd, "contact")
 	Params :: struct {mode, pad0, pad1, pad2: u32}
+	contact := pipeline_of(r, .Contact)^
 	for mode in u32(0) ..< 2 {
 		params := Params{mode = mode}
-		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Contact_Hw] if mode == 0 && r.hardware_rt else r.pipelines[.Contact])
+		rhi.cmd_bind_pipeline(cmd, contact)
 		set_params(cmd, &params)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
@@ -1481,7 +1467,8 @@ GI_REFERENCE_BOUNCES :: u32(32)
 @(private)
 pass_gi_reference :: proc(p: ^Pass) -> bool {
 	r, cmd, t := p.r, p.cmd, p.t
-	if !ensure_pipelines(r, {.Gi_Reference_Hw} if r.hardware_rt else {.Gi_Reference}) {return false}
+	pipeline := pipeline_of(r, .Gi_Reference)^
+	if pipeline == 0 {return false}
 	if !target(r, cmd, &t.gi_reference, t.width, t.height, .RGBA32_Float, HISTORY_USAGE, "gi reference", true) {return false}
 	restart := !t.gi_reference_valid || r.scene_uploads_change || t.gi_reference_view != p.frame.view_proj_unjittered || t.gi_reference_eye != p.camera.position
 	t.gi_reference_view, t.gi_reference_eye = p.frame.view_proj_unjittered, p.camera.position
@@ -1489,7 +1476,6 @@ pass_gi_reference :: proc(p: ^Pass) -> bool {
 	Params :: struct {paths, bounces, reset: u32, sun_radius: f32, resume, pad0, pad1, pad2: u32}
 	params := Params{paths = GI_REFERENCE_PATHS, bounces = GI_REFERENCE_BOUNCES, reset = u32(restart), sun_radius = r.settings.sun_radius}
 	batch := points_begin(p)
-	pipeline := r.pipelines[.Gi_Reference_Hw] if r.hardware_rt else r.pipelines[.Gi_Reference]
 	rhi.cmd_bind_pipeline(cmd, pipeline)
 	set_params(cmd, &params)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
@@ -1510,7 +1496,7 @@ pass_gi_reference :: proc(p: ^Pass) -> bool {
 pass_composite :: proc(p: ^Pass) {
 	r, cmd, t := p.r, p.cmd, p.t
 	rhi.cmd_timestamp(cmd, "composite")
-	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Composite if p.layered else .Composite_Unlayered])
+	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Composite, {} if p.layered else {COMPOSITE_COMP_UNLAYERED})^)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.albedo)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.emission)

@@ -257,7 +257,7 @@ a_room_nobody_wrote_goes_back_to_the_scene_and_no_lights_without_shadows :: proc
 }
 
 @(test)
-scene_set_lights_refits_the_tree_while_each_light_keeps_its_kind :: proc(t: ^testing.T) {
+the_light_tree_is_refit_while_each_light_keeps_its_kind :: proc(t: ^testing.T) {
 	r:=new(Renderer);defer free(r)
 	r.allocator = context.allocator
 	scene_init(r)

@@ -1515,7 +1515,7 @@ MOVE_TEST_CAMERA :: Camera{position = {0, 8, 7}, forward = {0, -8, -7}, up = {0,
 move_scene :: proc(cube: Mesh_Handle, instances: ^[5]Instance_Desc) {
 	instances^ = {
 		{object_id = 1, mesh = cube, transform = trs({0, -0.1, 0}, {12, 0.2, 12}), tint = {0.8, 0.8, 0.8}},
-		{object_id = 2, mesh = Mesh_Handle(77), transform = trs({0, 5, 0}, {1, 1, 1})},
+		{object_id = 2, mesh = cube, transform = trs({0, 5, 0}, {1, 1, 1}), hidden = true},
 		{object_id = 3, mesh = cube, transform = trs({0, 1.5, 0}, {2, 0.2, 2}), tint = {0.5, 0.5, 0.5}},
 		{object_id = 4, mesh = cube, transform = trs({-3, 0.5, 1}, {1, 1, 1}), tint = {0.9, 0.2, 0.2}},
 		{object_id = 5, mesh = cube, transform = trs({3, 0.5, -1}, {1, 1, 1}), tint = {0.2, 0.3, 0.9}},
@@ -1685,7 +1685,7 @@ an_instance_scaled_to_zero_is_drawn_and_traced_as_a_hidden_one :: proc(t: ^testi
 	testing.expect(t, a.instances[2].meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_COLLAPSED) == INSTANCE_FLAG_HIDDEN)
 	testing.expect(t, scene_move(r, {2}, {shown}))
 	testing.expect(t, a.instances[2].meta.w & INSTANCE_FLAG_HIDDEN != 0)
-	testing.expect_value(t, a.hidden_count, 1)
+	testing.expect_value(t, a.hidden_count, 2)
 	expect_clean(t, zero.device)
 	expect_clean(t, hidden.device)
 }
@@ -1706,8 +1706,8 @@ scene_tint_leaves_the_scene_that_setting_it_again_would :: proc(t: ^testing.T) {
 	r, expected := tinted.renderer, set.renderer
 	testing.expect(t, !scene_tint(r, {3}, {}, {}))
 	testing.expect(t, !scene_tint(r, {9}, {{1, 1, 1}}, {{}}))
-	// The same values, and an instance the set skipped, touch nothing.
-	testing.expect(t, scene_tint(r, {0, 1}, {instances[0].tint, {1, 0, 0}}, {instances[0].emission, {}}))
+	// The same values touch nothing.
+	testing.expect(t, scene_tint(r, {0, 1}, {instances[0].tint, instances[1].tint}, {instances[0].emission, instances[1].emission}))
 	testing.expect_value(t, r.scene.touched_count, 0)
 
 	instances[3].tint, instances[3].emission = {0.1, 0.9, 0.2}, {0, 3, 0}
@@ -1841,7 +1841,7 @@ scene_move_refits_the_tree_of_a_large_scene_until_it_fits_badly :: proc(t: ^test
 }
 
 @(test)
-scene_set_lights_replaces_the_lights_alone :: proc(t: ^testing.T) {
+the_lights_given_alone_change_nothing_else :: proc(t: ^testing.T) {
 	f: Cube_Fixture
 	if !cube_fixture_init(t, &f, 96, 64, move_settings()) {return}
 	defer fixture_destroy(&f)
@@ -1856,7 +1856,7 @@ scene_set_lights_replaces_the_lights_alone :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(s.lights), 2)
 	testing.expect_value(t, len(s.light_tree), 3)
 	testing.expect(t, s.lights_dirty && !s.instances_dirty && !s.tlas_nodes_dirty && !s.sun.enabled)
-	testing.expect_value(t, len(s.instances), 4)
+	testing.expect_value(t, len(s.instances), 5)
 	testing.expect_value(t, len(s.tlas_nodes), nodes)
 	move_frames(t, r, 2)
 	testing.expect(t, !s.lights_dirty)
@@ -1864,7 +1864,7 @@ scene_set_lights_replaces_the_lights_alone :: proc(t: ^testing.T) {
 }
 
 @(test)
-scene_set_lights_sends_only_what_changed_and_the_gpu_holds_the_lights_of_the_scene :: proc(t: ^testing.T) {
+a_light_that_changes_goes_alone_and_the_gpu_holds_the_lights_of_the_scene :: proc(t: ^testing.T) {
 	f: Cube_Fixture
 	if !cube_fixture_init(t, &f, 96, 64, move_settings()) {return}
 	defer fixture_destroy(&f)
@@ -1923,7 +1923,7 @@ scene_benchmark_moves_one_instance_of_many :: proc(t: ^testing.T) {
 				scene_move(r, {5}, {instances[5].transform})
 				move = min(move, time.tick_since(start))
 			}
-			fmt.printfln("scene: %d instances; scene_set %.2f ms, scene_move of one %.1f us", count, time.duration_milliseconds(set), time.duration_microseconds(move))
+			fmt.printfln("scene: %d instances; given whole %.2f ms, scene_move of one %.1f us", count, time.duration_milliseconds(set), time.duration_microseconds(move))
 		}
 	}
 }
