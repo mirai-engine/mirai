@@ -197,9 +197,6 @@ predicting it ([minds](../../mirai-world/references/behavior.md#minds)).
     are different players. Accounts of a platform are not there.
   - A connection presents one player, and one that is somebody: an empty secret or a second
     `Net_Player` closes it with `Denied_Player`.
-  - **Known limit:** the session does not encrypt the transport (`net` can, with `Security_Desc`,
-    but the session does not use it): the secret travels in the clear and whoever reads the traffic
-    can present it.
   - When the connection leaves, the seat waits for its player disabled (`core.Disabled` and
     `Seat_Absent`) for `absent_seconds`, and then leaves with what hangs from it; the same player
     who connects recovers it, like Unreal's inactive PlayerState, enabled if the network disabled

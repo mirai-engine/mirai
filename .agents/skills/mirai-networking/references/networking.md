@@ -62,37 +62,55 @@ like `replication.hysteresis`) and the values it admits.
 
 ## Connections
 
-- **Four-datagram handshake.** The client's request and response are padded. The server answers
-  the request with a SipHash cookie of the address, the client salt and the time, and stores
-  nothing: only whoever returns the cookie gets a slot, so a spoofed address neither reserves
-  memory nor receives more bytes than it sent.
+- **Four-datagram handshake, always sealed.** The client's request and response are padded.
+  - *Request*: the client salt. *Challenge*: a SipHash cookie of the address, the salt and the
+    time, the server's version and its lasting X25519 key; every request gets it, the server
+    stores nothing, and a client of another version ends with `Denied_Version` on reading it.
+  - *Response*: the cookie, the protocol hash, the client's key for the attempt and its proof,
+    sealed with a key from the exchange of that key with the server's lasting one (the pinned one
+    or the one of the challenge) and the invitation; a connect token travels inside it.
+  - *Accepted*: the server's key for the connection and, sealed with the session keys, its salt,
+    object capacity and history.
+  - Nothing but the challenge answers an address that has not returned a valid cookie, and
+    nothing at all a proof that does not open (a wrong invitation, a client that pinned another
+    server): both count in `handshakes_dropped`. Denials (`Denied_Protocol`, `Denied_Token*`,
+    `Denied_Full`) go only to a returned cookie, and those after the protocol only to a proof
+    that opened; they count in `handshakes_refused`. The idea is netcode's: answer only when
+    necessary, and deny only a request that passed every check
+    ([standard](https://raw.githubusercontent.com/mas-bandwidth/netcode/main/STANDARD.md)).
   - A server reached through its router's address may answer from its own address on the network
     (hairpin): a Challenge, Accepted or Denied with the salt of a request in progress is for it,
     and the connection continues with the address that answered (`Host_Stats.readdressed`).
 - **Format.** Every datagram starts with a type byte. The handshake ends in an XXH3 checksum keyed
-  with `protocol_id`; data carries a checksum keyed with the salts of both ends or, encrypted, the
-  ChaCha20-Poly1305 tag. The protocol hash includes fragments, events, input, channels and
-  `TRANSPORT_VERSION`, which rises when the format of data datagrams changes.
-- **Encryption** (`net/secure.odin`, only with `core:crypto`): keys come from HKDF-SHA256 over the
-  exchange of two ephemeral X25519 keys and, if the client pins the server's public key
-  (`Credentials.server_key`), also over that of its ephemeral key with the server's fixed key:
-  only its owner ends up with the same keys, and a client that does not pin it accepts whoever
-  answers. One key per direction, with the 64-bit sequence as nonce, which every `REKEY_INTERVAL`
-  datagrams is derived from the previous one; the receiver's only advances when a datagram with
-  the new one turns out authentic. A tampered, truncated, repeated or older-than-the-last-accepted
-  datagram is discarded.
-- **Invitations** (`net/invite.odin`): a server with `Host_Desc.invite` lets in only whoever brings
-  the same one (`Denied_Invite`). It is a short secret so that whoever received the code gets in,
-  not a credential: it does not replace encryption or tokens. The code (`invite_encode`) carries
-  IP, port, token and a check in Crockford base32, tolerant of case, separators and confusable
-  characters; `address_reachable` gives the address the router mapped or the LAN one.
+  with `protocol_id`, which only filters strays; data ends in the ChaCha20-Poly1305 tag, with the
+  type and sequence as associated data. The protocol hash includes fragments, events, input,
+  channels and `TRANSPORT_VERSION`, which rises when the format of the handshake or of data
+  datagrams changes.
+- **Sealing** (`net/secure.odin`, only with `core:crypto`; there is no unsealed mode): the session
+  keys come from HKDF-SHA256 over the exchange of the two keys made for the connection and that of
+  the client's key with the server's lasting one, salted with the key of the invitation. A client
+  that pins the server's key (`Credentials.server_key`) talks only to its owner; one that does not
+  takes the key of the challenge, so only an active attacker on the path could pose as the server,
+  and only knowing the invitation. One key per direction, with the 64-bit sequence as nonce, which
+  every `REKEY_INTERVAL` datagrams is derived from the previous one; the receiver's only advances
+  when a datagram with the new one turns out authentic. A tampered, truncated, repeated or
+  older-than-the-last-accepted datagram is discarded. A system without secure random bytes cannot
+  make a host (`host_init` refuses `security`) nor an invitation (`invite_token` is not ok).
+- **Invitations** (`net/invite.odin`): `Host_Desc.invite` is in every key, so both ends must have
+  the same one (zero at both: none); a client without it times out with `Connect_Timeout`. It is a
+  short secret so that whoever received the code gets in, not a credential: nobody can try
+  invitations from the server's answers, but whoever poses as an unpinned server on the path can
+  try them against the client's proof. The code (`invite_encode`) carries IP, port, token and a
+  check in Crockford base32, tolerant of case, separators and confusable characters;
+  `address_reachable` gives the address the router mapped or the LAN one.
 - **Connection tokens**: the game's backend signs with Ed25519 (`token_issue`) a token that the
   server verifies with `token_key` and requires with `require_token`. The client must pin the
   server's key, because the token travels sealed for it and nobody on the path can read and use it
   first. The `client_id` arrives with `Connected`; if the same id comes back, the previous
   connection closes with `Replaced`.
 - **Amplification.** The Challenge is smaller than the padded request, and the server does X25519
-  exchanges only for whoever returned the cookie, `handshakes_per_update` at a time per update.
+  exchanges (two per accepted client, one per refused proof) only for whoever returned the cookie,
+  `handshakes_per_update` at a time per update.
 - **Acks.** Each data datagram carries its sequence, the last one received and a variable number of
   ack bits: from what the other end might not have resolved when reading the last ack this end
   received (`ack_known`), capped by `ACK_WINDOW`. Everything the sender has in flight arrives this

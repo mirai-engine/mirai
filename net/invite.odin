@@ -3,8 +3,6 @@ package mirai_net
 import "core:crypto"
 import cnet "core:net"
 import "core:strings"
-import "core:time"
-import "mirai:std/base"
 
 // Invitation codes. What a host gives others so they join it without seeing
 // an address: its address, port and invitation token, and a check byte, in
@@ -13,8 +11,9 @@ import "mirai:std/base"
 // letters O, I and L for the digits they look like, and spaces or dashes
 // anywhere; a character that changed or went missing makes it no code.
 //
-// A server whose Host_Desc has an invite refuses with Denied_Invite a client
-// that does not bring the same one: who knows the code can join.
+// The token is Host_Desc.invite of the server and of whoever joins it: every
+// key of the connection depends on it, so a client without the same one gets
+// no answer at all, and nobody can try tokens from a host's answers.
 
 INVITE_TOKEN_BITS :: 24
 @(private) INVITE_ALPHABET :: "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
@@ -22,17 +21,13 @@ INVITE_TOKEN_BITS :: 24
 @(private) INVITE_BYTES_6 :: 16+2+3+1
 @(private) INVITE_GROUP :: 4
 
-// A new invitation token, never zero.
-invite_token :: proc() -> u32 {
+// A new invitation token, never zero. Not ok when the system gives no secure random bytes.
+invite_token :: proc() -> (token:u32,ok:bool) {
+    when !crypto.HAS_RAND_BYTES {return}
     bytes:[4]u8
-    when crypto.HAS_RAND_BYTES {
-        crypto.rand_bytes(bytes[:])
-    } else {
-        seed:=u64(time.now()._nsec)
-        for &b,i in bytes {b=u8(base.hash_combine(seed,u64(i)))}
-    }
-    token:=(u32(bytes[0])|u32(bytes[1])<<8|u32(bytes[2])<<16)&(1<<INVITE_TOKEN_BITS-1)
-    return token!=0?token:1
+    crypto.rand_bytes(bytes[:])
+    token=(u32(bytes[0])|u32(bytes[1])<<8|u32(bytes[2])<<16)&(1<<INVITE_TOKEN_BITS-1)
+    return token!=0?token:1,true
 }
 
 // The code of an address and a token; empty for an address that is not IPv4 or IPv6, or a token that does not fit.

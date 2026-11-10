@@ -47,7 +47,7 @@ Disconnect_Reason :: enum u8 {
     None,
     Closed,            // either side asked for it
     Timeout,
-    Connect_Timeout,
+    Connect_Timeout,   // also what a wrong invitation, or a server without the key the client pinned, ends in: they get no answer
     Denied_Full,
     Denied_Version,
     Denied_Protocol,   // the two ends registered different object types, events or channels
@@ -55,11 +55,10 @@ Disconnect_Reason :: enum u8 {
     Reliable_Overflow, // a reliable channel had no room left for a message
     Capacity,          // this end ran out of room for what the other end sent
     Kicked,
-    Denied_Security,      // one end encrypts and the other does not, or the server does not hold the key the client expects
+    Denied_Security,      // the server answered with keys that leave nothing secret or that it could not have made
     Denied_Token,         // the server wants a connect token and this one is missing, forged or for another server
     Denied_Token_Expired,
     Replaced,             // the same client id connected again
-    Denied_Invite,        // the server wants an invitation and this one is missing or another
     Scene_Missing,        // the client does not have the scene the server is in
     Denied_Player,        // the client presented no player, or a second one
 }
@@ -70,8 +69,8 @@ Host_Desc :: struct {
     protocol:^Protocol,       // object types, events and input; nil for connections and channels alone
     protocol_id:u32,          // identity of the application: datagrams of any other are ignored
     version:u32,              // both ends must have the same
-    seed:u64,                 // source of salts and cookies; 0 takes it from the system
-    invite:u32,               // server: the invitation a client must bring, 0: none; client: the one it brings (invite.odin)
+    seed:u64,                 // source of salts; 0 takes it from the system
+    invite:u32,               // the invitation both ends must have, 0 at both for none: every key of a connection depends on it (invite.odin)
     max_connections:int,      // server; default 32. A client has one
     channels:[]Channel_Desc,  // at most USER_CHANNELS
     tick_rate:int,            // Hz, default 60
@@ -130,7 +129,8 @@ Host_Stats :: struct {
     packets_sent,packets_received:u64,
     bytes_sent,bytes_received:u64,
     packets_invalid:u64,     // wrong size, checksum or contents
-    handshakes_refused:u64,
+    handshakes_refused:u64,  // answered with a denial, after the cookie and the proof of the client
+    handshakes_dropped:u64,  // answered with nothing: a cookie that is not this host's or is old, or a proof that does not open
     readdressed:u64,         // connections of a client that went on with the address the server answered from
     handshakes_deferred:u64, // key exchanges put off because the update had computed its share
     commands_dropped:u64,    // the command buffer was full
@@ -321,22 +321,13 @@ host_init :: proc(h:^Host,desc:Host_Desc) -> Error {
     h.start=time.tick_now()
     h.worker_interval=time.Millisecond
 
+    when !crypto.HAS_RAND_BYTES {return refuse(h,"security","a system that gives secure random bytes: every connection is sealed")}
     b:=&h.back
     b.rng=d.seed
     b.scale=1
-    if d.seed==0 {
-        when crypto.HAS_RAND_BYTES {
-            crypto.rand_bytes(mem.ptr_to_bytes(&b.rng))
-        } else {
-            b.rng=u64(time.now()._nsec)~u64(uintptr(h))
-        }
-    }
-    for i in 0..<2 {
-        word:=base.splitmix_next(&b.rng)
-        mem.copy(&b.secret[i*8],&word,8)
-    }
-    if !secure_host_init(h) {return refuse(h,"security","a token_key that is an Ed25519 public key, one when require_token, and a system that gives random bytes for Encrypted")}
-    if d.security.mode==.Encrypted {crypto.rand_bytes(b.secret[:])}
+    if d.seed==0 {crypto.rand_bytes(mem.ptr_to_bytes(&b.rng))}
+    crypto.rand_bytes(b.secret[:])
+    if !secure_host_init(h) {return refuse(h,"security","a token_key that is an Ed25519 public key, and one when require_token")}
     b.key=base.hash_combine(0x6d697261696e6574,u64(d.protocol_id))
 
     for &frame in h.frames {
@@ -449,7 +440,7 @@ frame_submit :: proc(h:^Host) {
 }
 
 // Client: starts connecting. The answer is a Connected or a Disconnected command.
-// credentials are what an encrypted server asks for: its key and a connect token.
+// credentials are what the client knows of the server: its key, and the connect token it may ask for.
 host_connect :: proc(h:^Host,address:Address,credentials:Credentials={}) -> Error {
     if h.desc.mode!=.Client || address.kind==.None {return .Invalid}
     zero:Key

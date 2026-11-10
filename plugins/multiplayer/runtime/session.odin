@@ -30,7 +30,7 @@ Open_Error :: enum u8 {
     None,
     Transport_Failed, // the socket could not be opened, or the address is not one
     Protocol_Failed,  // a replicated component or a message does not fit the protocol
-    Host_Failed,
+    Host_Failed,      // also a system without secure random bytes, which every connection is sealed with
     Out_Of_Memory,
 }
 
@@ -171,7 +171,7 @@ Net_Session :: struct {
 @(private)
 Told :: struct {
     joined,lost,served,invited:bool,
-    seen,refused:u64,
+    seen,refused,dropped:u64,
 }
 
 // The UDP port of the game: Net_Settings.port, or DEFAULT_PORT for 0. valid
@@ -295,7 +295,11 @@ session_open :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,port:int) -> 
         if s.wanted.invite {
             s.invite=s.wanted.invite_token
             if s.invite==0 {
-                s.invite=wire.invite_token()
+                made:bool
+                if s.invite,made=wire.invite_token();!made {
+                    session_destroy(s)
+                    return .Host_Failed,{field="invite",range="a system that gives secure random bytes"}
+                }
                 s.mapping_on=wire.mapping_start(&s.mapping,u16(s.port))
             }
         }
@@ -536,12 +540,11 @@ close :: proc(s:^Net_Session) {
 @(private)
 reason_text :: proc(reason:Disconnect_Reason,address:string,protocol:u64) -> string {
     #partial switch reason {
-    case .Connect_Timeout:   return fmt.tprintf("the server %s does not answer",address)
+    case .Connect_Timeout:   return fmt.tprintf("the server %s does not answer: it is not reachable, or the invitation is not the one of its game",address)
     case .Denied_Protocol:   return fmt.tprintf("the server %s refused the connection: its libraries do not produce the same network protocol as those of this project (here %016x); build both ends from the same sources",address,protocol)
     case .Denied_Version:    return fmt.tprintf("the server %s refused the connection: it is of another version",address)
     case .Denied_Full:       return fmt.tprintf("the server %s is full",address)
-    case .Denied_Invite:     return fmt.tprintf("the server %s refused the connection: the invitation is not the one of its game",address)
-    case .Denied_Security:   return fmt.tprintf("the server %s refused the connection: one end encrypts and the other does not",address)
+    case .Denied_Security:   return fmt.tprintf("the server %s answered with keys it could not have made: it is not the server it says",address)
     case .Closed:            return fmt.tprintf("the server %s closed the connection",address)
     case .Timeout:           return fmt.tprintf("the connection to the server %s was lost: it stopped answering",address)
     case .Kicked:            return fmt.tprintf("the server %s kicked this client",address)
@@ -593,7 +596,11 @@ report_update :: proc(s:^Net_Session,app:^host.App) {
     }
     if refused:=s.host.stats.handshakes_refused;refused!=told.refused {
         told.refused=refused
-        fmt.printfln("mirai: %d connection attempts refused: another version, another protocol, without the invitation or a full server",refused)
+        fmt.printfln("mirai: %d connection attempts refused: another protocol or a full server",refused)
+    }
+    if dropped:=s.host.stats.handshakes_dropped;dropped!=told.dropped {
+        told.dropped=dropped
+        fmt.printfln("mirai: %d connection attempts left without an answer: without the invitation of this game, or an old or forged cookie",dropped)
     }
     if s.until_empty && s.joined>0 && s.connections==0 {host.app_exit(app,host.PLAYER_OK)}
 }
