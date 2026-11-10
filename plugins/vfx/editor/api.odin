@@ -152,7 +152,7 @@ api_register :: proc(s:^editor.Session) {
 // resources (the text of their objects) and its hidden fields.
 @(private)
 Particle_Params :: struct {
-    using common:editor.Asset_Params,
+    named,path,values:string,
     parameters:string,
     resources:string,
     hidden:[dynamic]effect.Particle_Field,
@@ -162,7 +162,7 @@ Particle_Params :: struct {
 @(private)
 particle_params :: proc(call:^api.Call) -> (p:Particle_Params) {
     given:=api.call_params(call,Particle_Inspect_Params)
-    p.common={named=given.particle,path=given.path,values=string(given.values)}
+    p.named,p.path,p.values=given.particle,given.path,string(given.values)
     p.parameters,p.resources=string(given.parameters),string(given.resources)
     p.has_hidden=api.call_given(call,"hidden")
     p.hidden=make([dynamic]effect.Particle_Field,context.temp_allocator)
@@ -304,7 +304,7 @@ api_particle_write :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id) {
     }
     r:=api.call_result(call,Particle_Result)
     r.particle,r.values=id,view.info^
-    if file,found:=asset.registry_find(&a.registry,id);found {r.path=file.path}
+    r.path=editor.asset_path(s,id)
     r.parameters=particle_parameters_json(call,view.parameters)
     hidden:=make([]string,len(view.hidden),call.allocator)
     for &h,i in view.hidden {hidden[i]=strings.clone(base.text_get(h.name[:]),call.allocator)}
@@ -412,7 +412,7 @@ particle_resources_read :: proc(s:^editor.Session,call:^api.Call,text:string,inf
 @(private)
 api_particle_set :: proc(s:^editor.Session,call:^api.Call) {
     p:=particle_params(call)
-    t,found:=editor.asset_target(s,call,&p.common,"particle",effect.KIND,effect.EXTENSION,"a particle effect")
+    t,found:=editor.asset_target(s,call,p.named,p.path,"particle",effect.KIND,effect.EXTENSION,"a particle effect")
     if !found {return}
     file:=particle_file(s,t.created?base.Asset_Id{}:t.id)
     if !particle_params_apply(s,call,&p,&file) {return}

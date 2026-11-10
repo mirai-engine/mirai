@@ -21,10 +21,10 @@ Api_Material_Revert_Params :: struct {
 @(private)
 Api_Material_Result :: struct {
     material:base.Asset_Id,
-    path:[API_PATH_BYTES]u8 `mirai:"text,optional,label=Under the assets folder"`,
-    values:serial.Json `mirai:"label=Its base; its layers (coat; fuzz; anisotropy; diffuse transmission; unlit); its maps and its program; as material.set takes them"`,
-    imported:serial.Json `mirai:"optional,label=Of an imported material: the values its source gave at the last import"`,
-    overrides:[][asset.OVERRIDE_PATH_BYTES]u8 `mirai:"text,optional,label=Of an imported material: every field that differs from imported; importing it again keeps them"`,
+    path:string `mirai:"optional,label=Under the assets folder"`,
+    values:asset.Material_Info `mirai:"label=As material.set takes them"`,
+    imported:asset.Material_Info `mirai:"optional,label=Of an imported material: the values its source gave at the last import"`,
+    overrides:[]string `mirai:"optional,label=Of an imported material: every field that differs from imported; importing it again keeps them"`,
 }
 
 Api_Material_Params :: struct {
@@ -35,10 +35,10 @@ Api_Material_Params :: struct {
 
 @(private)
 materials_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="material.inspect",params=Api_Material_Params,summary="The values of a material (.mat) and, of an imported one, what its source gave at the last import and the fields that differ from it.",result=Api_Material_Result,writes_result=true,flags={.Read_Only},run=api_material_inspect})
+    api_register(s,st,{name="material.inspect",params=Api_Material_Params,summary="The values of a material (.mat) and, of an imported one, what its source gave at the last import and the fields that differ from it.",result=Api_Material_Result,flags={.Read_Only},run=api_material_inspect})
     material_capture_register(s,st)
-    api_register(s,st,{name="material.set",params=Api_Material_Params,summary="Changes the values of a material (.mat) for every entity that shows it, keeping its program parameters and overlays, or makes a new one at path over the defaults.",result=Api_Material_Result,writes_result=true,run=api_material_set})
-    api_register(s,st,{name="material.revert",params=Api_Material_Revert_Params,summary="Gives fields of an imported material back what its source gave at the last import, so they stop being overrides.",result=Api_Material_Result,writes_result=true,flags={.Idempotent},run=api_material_revert})
+    api_register(s,st,{name="material.set",params=Api_Material_Params,summary="Changes the values of a material (.mat) for every entity that shows it, keeping its program parameters and overlays, or makes a new one at path over the defaults.",result=Api_Material_Result,run=api_material_set})
+    api_register(s,st,{name="material.revert",params=Api_Material_Revert_Params,summary="Gives fields of an imported material back what its source gave at the last import, so they stop being overrides.",result=Api_Material_Result,flags={.Idempotent},run=api_material_revert})
     material_instance_api_register(s,st)
 }
 
@@ -85,38 +85,28 @@ api_material_write :: proc(s:^Session,call:^api.Call,id:base.Asset_Id) {
         return
     }
     defer asset.asset_close(&file)
-    out:=call.out
-    asset_named_write(s,out,"material",id)
-    asset_values_write(out,"values",view.info)
+    r:=api.call_result(call,Api_Material_Result)
+    r.material,r.path,r.values=id,asset_path(s,id),view.info^
     if view.imported!=nil {
-        asset_values_write(out,"imported",view.imported)
-        overrides:=make([dynamic]string,context.temp_allocator)
+        r.imported=view.imported^
+        overrides:=make([dynamic]string,call.allocator)
         asset.material_overrides(&s.app.assets.types,view,&overrides)
-        api.write_key(out,"overrides")
-        serial.write_u8(out,'[')
-        for path,i in overrides {
-            if i>0 {serial.write_u8(out,',')}
-            serial.text_write_string(out,path)
-        }
-        serial.write_u8(out,']')
+        r.overrides=overrides[:]
     }
-    serial.write_u8(out,'}')
 }
 
 @(private)
 api_material_inspect :: proc(s:^Session,call:^api.Call) {
-    p,read:=asset_params(call,"material")
-    if !read {return}
-    id,found:=asset_named(s,call,p.named,asset.KIND_MATERIAL,".mat","a material")
+    p:=api.call_params(call,Api_Material_Params)
+    id,found:=asset_named(s,call,p.material,asset.KIND_MATERIAL,".mat","a material")
     if !found {return}
     api_material_write(s,call,id)
 }
 
 @(private)
 api_material_set :: proc(s:^Session,call:^api.Call) {
-    p,read:=asset_params(call,"material")
-    if !read {return}
-    t,found:=asset_target(s,call,&p,"material",asset.KIND_MATERIAL,".mat","a material")
+    p:=api.call_params(call,Api_Material_Params)
+    t,found:=asset_target(s,call,p.material,p.path,"material",asset.KIND_MATERIAL,".mat","a material")
     if !found {return}
     info:=asset.MATERIAL_DEFAULTS
     if !t.created {
@@ -126,7 +116,7 @@ api_material_set :: proc(s:^Session,call:^api.Call) {
             return
         }
     }
-    if !material_values_read(call,p.values,&info) {return}
+    if !material_values_read(call,string(p.values),&info) {return}
     label:=t.created?"Create material":"Material"
     if !api_edit_begin(s,call,label) {return}
     written:bool

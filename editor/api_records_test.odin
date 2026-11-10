@@ -326,21 +326,15 @@ records_move_places_a_row_right_after_another :: proc(t:^testing.T) {
     }
 }
 
-// A row as inspect writes it keeps the shape of its result.
+// A row as inspect gives it has its texts by field and language, and none
+// without a text.
 @(test)
-records_api_results_keep_their_shape :: proc(t:^testing.T) {
+records_api_rows_give_their_texts :: proc(t:^testing.T) {
     f:Csv_Fixture
     csv_fixture(&f)
     _,_,_,message:=csv_import(&f,"name,damage,title,title@es\nsword,7,Sword,Espada\naxe,1,,\n")
     testing.expect_value(t,message,"")
-    out:serial.Writer
-    serial.writer_init(&out,0,context.temp_allocator)
-    serial.text_write_raw(&out,`{"records":"00000000000000090000000000000009","type":"game.Weapon","rows":[`)
-    records_api_row_write(&out,&f.c,records_api_leaves(&f.c),0)
-    serial.write_u8(&out,',')
-    records_api_row_write(&out,&f.c,records_api_leaves(&f.c),1)
-    serial.text_write_raw(&out,"]}")
-    text:=string(serial.writer_bytes(&out))
-    testing.expectf(t,strings.contains(text,`"texts":{"title":{"":"Sword","es":"Espada"}}`),"%s",text)
-    api_result_shape_expect(t,text,Api_Records_Table)
+    sword:=records_api_row(&f.c,records_api_leaves(&f.c),0)
+    testing.expect_value(t,string(sword.texts),`{"title":{"":"Sword","es":"Espada"}}`)
+    testing.expect_value(t,records_api_row(&f.c,records_api_leaves(&f.c),1).texts,serial.Json(""))
 }
