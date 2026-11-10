@@ -15,7 +15,7 @@ VK_LIBRARY_NAMES :: [?]string{"vulkan-1.dll"} when ODIN_OS == .Windows else [?]s
 
 Vk_Buffer :: struct {
 	handle:   vk.Buffer,
-	memory:   vk.DeviceMemory,
+	memory:   Vk_Memory,
 	size:     u64,
 	mapped:   rawptr,
 	address:  u64,
@@ -23,11 +23,12 @@ Vk_Buffer :: struct {
 	kind:     Memory,
 	write:    Access,          // last write not yet superseded (None = clean)
 	reads:    bit_set[Access], // reads made visible since that write
+	fresh:    bool,            // of GPU memory, waiting in Device.fresh for the fill that zeroes it
 }
 
 Vk_Texture :: struct {
 	image:     vk.Image,
-	memory:    vk.DeviceMemory,
+	memory:    Vk_Memory,
 	view:      vk.ImageView,
 	mip_views: [MAX_TEXTURE_MIPS]vk.ImageView,
 	desc:      Texture_Desc,
@@ -81,7 +82,7 @@ Vk_Accel :: struct {
 // them has completed on the GPU.
 Vk_Deferred :: struct {
 	buffer:     vk.Buffer,
-	memory:     vk.DeviceMemory,
+	memory:     Vk_Memory, // of the buffer or the image
 	image:      vk.Image,
 	views:      [MAX_TEXTURE_MIPS + 1]vk.ImageView,
 	sampler:    vk.Sampler,
@@ -180,7 +181,12 @@ Device :: struct {
 	surface_ext:       bool,
 	swapchain_ext:     bool,
 	scratch_alignment: u64,
-	accel_arena:       Accel_Arena,      // where acceleration structures live
+	memory:            Vk_Memory_Pools,  // where buffers and textures live
+	staging:           Buffer,           // what uploads copy from (vk_staging_take)
+	staging_size:      u64,
+	fresh:             [dynamic]Buffer,  // of GPU memory, made between lists: the next list zeroes them (vk_zero_new)
+	immediate_open:    bool,             // between immediate_begin and immediate_end
+	accel_arena:       Arena,            // where acceleration structures live
 	accel_blocks:      [dynamic]Buffer,  // the buffer of each block of the arena
 	accel_empty:       [dynamic]int,     // blocks a deletion left empty, which go at the next creation
 	compact_pool:      vk.QueryPool,     // the compacted sizes of BLASes (accel_compact.odin)
@@ -377,6 +383,7 @@ vk_create_pools :: proc(d: ^Device) -> bool {
 	images_error, present_error: runtime.Allocator_Error
 	d.swapchain.images, images_error = make([dynamic]Texture, 0, 8, d.allocator)
 	d.swapchain.present, present_error = make([dynamic]vk.Semaphore, 0, 8, d.allocator)
+	d.fresh = make([dynamic]Buffer, d.allocator)
 	ok &&= images_error == nil && present_error == nil
 	if !ok {set_error(d, "out of memory for the resource tables")}
 	return ok
@@ -552,6 +559,7 @@ vk_pick_physical_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	}
 	if d.physical == nil {set_error(d, "no Vulkan 1.3 device with push descriptors and a graphics+compute queue"); return false}
 	d.ivk.GetPhysicalDeviceMemoryProperties(d.physical, &d.memory_properties)
+	vk_memory_init(&d.memory, &d.memory_properties, d.properties.limits.maxMemoryAllocationCount, u64(d.properties.limits.bufferImageGranularity), d.allocator)
 	name := string(cstring(&d.properties.deviceName[0]))
 	n := copy(d.name_buffer[:], name)
 	d.info.name = string(d.name_buffer[:n])
@@ -799,7 +807,7 @@ device_destroy :: proc(d: ^Device) {
 		}
 		if d.scratch != 0 {buffer_destroy(d, d.scratch)}
 		// The blocks of the arena are buffers, released below with the others.
-		accel_arena_destroy(&d.accel_arena)
+		arena_destroy(&d.accel_arena)
 		delete(d.accel_blocks)
 		delete(d.accel_empty)
 		if d.compact_pool != 0 {d.dvk.DestroyQueryPool(d.handle, d.compact_pool, nil)}
@@ -816,9 +824,8 @@ device_destroy :: proc(d: ^Device) {
 		for &t, i in d.textures.items {if d.textures.alive[i] && !t.swapchain {vk_release_texture(d, &t)}}
 		for &b, i in d.buffers.items {
 			if d.buffers.alive[i] {
-				if b.mapped != nil {d.dvk.UnmapMemory(d.handle, b.memory)}
 				d.dvk.DestroyBuffer(d.handle, b.handle, nil)
-				d.dvk.FreeMemory(d.handle, b.memory, nil)
+				vk_memory_unbind(d, b.memory)
 			}
 		}
 		for &s, i in d.samplers.items {if d.samplers.alive[i] {d.dvk.DestroySampler(d.handle, s, nil)}}
@@ -831,6 +838,7 @@ device_destroy :: proc(d: ^Device) {
 		if d.immediate_pool != 0 {d.dvk.DestroyCommandPool(d.handle, d.immediate_pool, nil)}
 		if d.immediate_fence != 0 {d.dvk.DestroyFence(d.handle, d.immediate_fence, nil)}
 		if d.timeline != 0 {d.dvk.DestroySemaphore(d.handle, d.timeline, nil)}
+		vk_memory_shutdown(d, true)
 		if d.pipeline_cache != 0 {
 			vk_save_pipeline_cache(d)
 			d.dvk.DestroyPipelineCache(d.handle, d.pipeline_cache, nil)
@@ -844,6 +852,8 @@ device_destroy :: proc(d: ^Device) {
 	if d.instance != nil {d.ivk.DestroyInstance(d.instance, nil)}
 	if d.library != nil {dynlib.unload_library(d.library)}
 	vk_loader_unlock(d)
+	vk_memory_shutdown(d, false)
+	delete(d.fresh)
 	for &f in d.frames {delete(f.deletions)}
 	delete(d.swapchain.images)
 	delete(d.swapchain.present)
@@ -914,6 +924,7 @@ device_own :: proc(d: ^Device) -> (buffers, textures, pipelines: int) {
 	for f in d.frames {if f.upload != 0 {buffers += 1}}
 	for block in d.accel_blocks {if block != 0 {buffers += 1}}
 	if d.scratch != 0 {buffers += 1}
+	if d.staging != 0 {buffers += 1}
 	if d.table_default != 0 {textures += 1}
 	if d.tlas_translator != 0 {pipelines += 1}
 	return
@@ -939,7 +950,7 @@ device_timestamps_calibrated :: proc(d: ^Device) -> bool {return d.calibrate != 
 vk_release_deferred :: proc(d: ^Device, e: ^Vk_Deferred) {
 	if e.accel != 0 {d.dvk.DestroyAccelerationStructureKHR(d.handle, e.accel, nil)}
 	// The block of an empty range goes later: destroying it here would defer it into the list being released.
-	if e.arena_block > 0 && d.accel_arena.blocks != nil && accel_arena_give(&d.accel_arena, int(e.arena_block - 1), e.arena_offset, e.arena_size) {
+	if e.arena_block > 0 && arena_give(&d.accel_arena, int(e.arena_block - 1), e.arena_offset, e.arena_size) {
 		append(&d.accel_empty, int(e.arena_block - 1))
 	}
 	if e.pipeline != 0 {d.dvk.DestroyPipeline(d.handle, e.pipeline, nil)}
@@ -949,7 +960,7 @@ vk_release_deferred :: proc(d: ^Device, e: ^Vk_Deferred) {
 	for view in e.views {if view != 0 {d.dvk.DestroyImageView(d.handle, view, nil)}}
 	if e.image != 0 {d.dvk.DestroyImage(d.handle, e.image, nil)}
 	if e.buffer != 0 {d.dvk.DestroyBuffer(d.handle, e.buffer, nil)}
-	if e.memory != 0 {d.dvk.FreeMemory(d.handle, e.memory, nil)}
+	vk_memory_unbind(d, e.memory)
 	if e.sampler != 0 {d.dvk.DestroySampler(d.handle, e.sampler, nil)}
 }
 
@@ -1091,6 +1102,7 @@ frame_begin :: proc(d: ^Device, present := true) -> (cmd: ^Command_List, ok: boo
 		// Without passes the frame is one interval, from here to frame_end.
 		if !f.passes {vk_timestamp_write(f, "frame")}
 	}
+	vk_zero_fresh(&f.list)
 	d.in_frame = true
 	return &f.list, true
 }
@@ -1189,6 +1201,8 @@ immediate_begin :: proc(d: ^Device) -> ^Command_List {
 	begin := vk.CommandBufferBeginInfo{sType = .COMMAND_BUFFER_BEGIN_INFO, flags = {.ONE_TIME_SUBMIT}}
 	d.dvk.BeginCommandBuffer(d.immediate.cmd, &begin)
 	vk_list_reset(&d.immediate)
+	vk_zero_fresh(&d.immediate)
+	d.immediate_open = true
 	return &d.immediate
 }
 
@@ -1197,6 +1211,7 @@ immediate_end :: proc(d: ^Device, cmd: ^Command_List) -> bool {
 		if cmd != nil {set_error(d, "immediate_end of a list immediate_begin did not give")}
 		return false
 	}
+	d.immediate_open = false
 	if cmd.in_render_pass {cmd_end_render_pass(cmd)}
 	vk_flush_barriers(cmd)
 	d.dvk.EndCommandBuffer(cmd.cmd)

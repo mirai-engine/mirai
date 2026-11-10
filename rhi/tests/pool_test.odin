@@ -85,6 +85,87 @@ rhi_device_reports_what_is_alive :: proc(t:^testing.T) {
     testing.expect_value(t,rhi.device_validation_errors(d),0)
 }
 
+// More small resources than the memory allocations a Vulkan driver has to
+// give at once (4096): they share the memory of a few, each keeps what was
+// written to it, and the device makes them all.
+@(test)
+rhi_holds_more_resources_than_a_driver_gives_memory_allocations :: proc(t:^testing.T) {
+    d:=small_device(t,{})
+    if d==nil {return}
+    defer rhi.device_destroy(d)
+    textures:=make([]rhi.Texture,5000)
+    defer delete(textures)
+    made:=0
+    for &texture in textures {
+        texture=rhi.texture_create(d,{width=4,height=4,format=.RGBA8_Unorm,usage={.Sampled},name="one of many"})
+        if texture==0 {break}
+        made+=1
+    }
+    testing.expectf(t,made==len(textures),"%d of %d textures: %s",made,len(textures),rhi.device_error(d))
+    buffers:[16]rhi.Buffer
+    written:[1024]u8
+    for &buffer,i in buffers {
+        memory:=rhi.Memory.GPU if i%2==0 else rhi.Memory.Upload
+        buffer=rhi.buffer_create(d,{size=len(written),usage={.Storage},memory=memory,name="neighbour"})
+        for &b in written {b=u8(i+1)}
+        testing.expect(t,buffer!=0 && rhi.buffer_upload(d,buffer,0,written[:]),rhi.device_error(d))
+    }
+    for texture,i in textures[:min(made,16)] {
+        texels:[4*4*4]u8
+        for &b in texels {b=u8(i+1)}
+        testing.expect(t,rhi.texture_upload(d,texture,texels[:],16),rhi.device_error(d))
+    }
+    for buffer,i in buffers {
+        read:[1024]u8
+        testing.expect(t,rhi.buffer_read(d,buffer,0,read[:]),rhi.device_error(d))
+        testing.expectf(t,read[0]==u8(i+1) && read[len(read)-1]==u8(i+1),"buffer %d holds what a neighbour wrote",i)
+        rhi.buffer_destroy(d,buffer)
+    }
+    for texture,i in textures[:min(made,16)] {
+        read:[4*4*4]u8
+        testing.expect(t,rhi.texture_read(d,texture,read[:]),rhi.device_error(d))
+        testing.expectf(t,read[0]==u8(i+1) && read[len(read)-1]==u8(i+1),"texture %d holds what a neighbour wrote",i)
+    }
+    for texture in textures[:made] {rhi.texture_destroy(d,texture)}
+    rhi.device_wait_idle(d)
+    testing.expect_value(t,rhi.device_validation_errors(d),0)
+}
+
+// A new buffer reads zero where it was not written, also in the memory a
+// buffer that was written left.
+@(test)
+rhi_a_new_buffer_reads_zero_where_another_was :: proc(t:^testing.T) {
+    d:=small_device(t,{})
+    if d==nil {return}
+    defer rhi.device_destroy(d)
+    WRITTEN :: 16
+    written:[4096]u8
+    for &b in written {b=0xA5}
+    for memory in ([?]rhi.Memory{.GPU,.Upload}) {
+        for round in 0..<3 {
+            buffer:=rhi.buffer_create(d,{size=len(written),usage={.Storage},memory=memory,name="reused"})
+            read:[4096]u8
+            for &b in read {b=1}
+            made:=buffer!=0 && rhi.buffer_upload(d,buffer,0,written[:WRITTEN]) && rhi.buffer_read(d,buffer,0,read[:])
+            if !testing.expect(t,made,rhi.device_error(d)) {return}
+            kept,zero:=true,true
+            for b in read[:WRITTEN] {kept&&=b==0xA5}
+            for b in read[WRITTEN:] {zero&&=b==0}
+            testing.expectf(t,kept && zero,"round %d: a new buffer of %v memory keeps what was written (%v) and reads zero past it (%v)",round,memory,kept,zero)
+            testing.expect(t,rhi.buffer_upload(d,buffer,0,written[:]),rhi.device_error(d))
+            rhi.buffer_destroy(d,buffer)
+            // The frames after which the device lets the memory of the buffer go.
+            for _ in 0..=rhi.MAX_FRAMES_IN_FLIGHT {
+                cmd,ok:=rhi.frame_begin(d)
+                if !testing.expect(t,ok,rhi.device_error(d)) {return}
+                testing.expect(t,rhi.frame_end(d,cmd),rhi.device_error(d))
+            }
+        }
+    }
+    rhi.device_wait_idle(d)
+    testing.expect_value(t,rhi.device_validation_errors(d),0)
+}
+
 @(test)
 rhi_destroying_more_than_a_frame_slot_holds_between_frames_releases_them :: proc(t:^testing.T) {
     d:=small_device(t,{deletions=4})
