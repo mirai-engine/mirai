@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "settings": {
+    "max_texture_size": 0,
+    "textures": "Blocks",
+    "rdo_lambda": 0,
+    "image": "Normal",
+    "alpha_coverage": 0,
+    "lods": "Auto",
+    "max_triangles": 0,
+    "collision": "None",
+    "force_collision": false,
+    "collision_hulls": 0,
+    "parts": "Auto",
+    "front": "Auto",
+    "rig": "Source",
+    "rig_crotch": 0,
+    "rig_neck": 0,
+    "skeleton": "00000000000000000000000000000000"
+  },
+  "folder": "surfaces/cobblestone",
+  "outputs": [
+    {"kind": "TEX", "name": "cobblestone_normal", "index": 0, "id": "1a08080be2a08b5fe300ec425923c195", "path": "surfaces/cobblestone/cobblestone_normal.tex"}
+  ]
+}

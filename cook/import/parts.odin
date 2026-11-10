@@ -254,18 +254,19 @@ parts_own :: proc(w:^Writer,model:^Imported_Model,jobs:[]Texture_Job,parts:[]Par
     for job,i in jobs {image_ids[job.index]=parts[i].id}
     // Another import of the very file of an image is no other model.
     of_another_model :: proc(w:^Writer,p:^Part) -> bool {
+        if p.shared<0 {return true}
         e:=&w.earlier[p.shared]
         return p.file=="" || !strings.equal_fold(base.text_get(e.info.source[:]),p.file)
     }
 
     for &material,m in model.materials {
         p:=&parts[first_material+m]
-        if p.earlier>=0 {continue}
+        if p.entry>=0 || p.earlier>=0 {continue}
         ids:=make([dynamic]base.Asset_Id,context.temp_allocator)
         for row in material.images {
             if row<0 {continue}
             at:=row_part[row]
-            if at<0 || parts[at].shared<0 {clear(&ids);break}
+            if at<0 || parts[at].shared==NOT_SHARED {clear(&ids);break}
             if !slice.contains(ids[:],parts[at].id) {append(&ids,parts[at].id)}
         }
         if len(ids)==0 {continue}
@@ -276,34 +277,35 @@ parts_own :: proc(w:^Writer,model:^Imported_Model,jobs:[]Texture_Job,parts:[]Par
             for id in ids {same&&=slice.contains(e.dependencies,id)}
             if !same || !material_gave(w,&e,given) {continue}
             p.shared,p.id=at,e.id
+            w.outputs[p.output]={kind=p.kind,name=p.name,index=p.index,id=p.id,shared=true}
             break
         }
     }
 
     for &p in parts {
         switch {
-        case p.shared>=0: p.owner=w.earlier[p.shared].owner
-        case p.kind==asset.KIND_MESH || p.kind==asset.KIND_SKELETON: p.owner=p.earlier>=0?w.earlier[p.earlier].owner:w.owner
-        case p.kind==asset.KIND_ANIMATION: p.owner=p.earlier>=0?w.earlier[p.earlier].owner:{}
+        case p.shared!=NOT_SHARED: p.owner=p.shared>=0?w.earlier[p.shared].owner:{}
+        case p.kind==asset.KIND_MESH || p.kind==asset.KIND_SKELETON: p.owner=p.decided && !p.part?{}:w.owner
+        case p.kind==asset.KIND_ANIMATION: p.owner=p.decided && p.part?w.owner:{}
         }
     }
     for &material,m in model.materials {
         p:=&parts[first_material+m]
         switch {
-        case p.shared>=0:
-            reasons[m]=fmt.tprintf("%s, of the project, has its textures",w.earlier[p.shared].path)
+        case p.shared!=NOT_SHARED:
+            reasons[m]=p.shared>=0?fmt.tprintf("%s, of the project, has its textures",w.earlier[p.shared].path):"a material of another import has its textures"
         case w.owner=={}:
             p.owner,reasons[m]={},"the model has no prefab"
         case mode==.All:
             p.owner,reasons[m]=w.owner,"the import makes every material a part"
         case mode==.None:
             p.owner,reasons[m]={},"the import makes no material a part"
-        case p.earlier>=0:
-            p.owner,reasons[m]=w.earlier[p.earlier].owner,"as decided when it was first imported"
+        case p.decided:
+            p.owner,reasons[m]=p.part?w.owner:{},"as decided when it was first imported"
         case:
             shared:=false
             for row in material.images {
-                if row>=0 && row_part[row]>=0 && parts[row_part[row]].shared>=0 && of_another_model(w,&parts[row_part[row]]) {shared=true}
+                if row>=0 && row_part[row]>=0 && parts[row_part[row]].shared!=NOT_SHARED && of_another_model(w,&parts[row_part[row]]) {shared=true}
             }
             pixels:[]u8
             width,height:int
@@ -317,10 +319,10 @@ parts_own :: proc(w:^Writer,model:^Imported_Model,jobs:[]Texture_Job,parts:[]Par
     for job,i in jobs {
         p:=&parts[i]
         switch {
-        case p.shared>=0:
+        case p.shared!=NOT_SHARED:
         case mode==.All: p.owner=w.owner
         case mode==.None: p.owner={}
-        case p.earlier>=0: p.owner=w.earlier[p.earlier].owner
+        case p.decided: p.owner=p.part?w.owner:{}
         case:
             users,owned:=0,0
             for material,m in model.materials {
@@ -328,7 +330,7 @@ parts_own :: proc(w:^Writer,model:^Imported_Model,jobs:[]Texture_Job,parts:[]Par
                 for row in material.images {uses||=row==job.index}
                 if !uses {continue}
                 users+=1
-                if q:=&parts[first_material+m];q.shared<0 && q.owner!={} && q.owner==w.owner {owned+=1}
+                if q:=&parts[first_material+m];q.shared==NOT_SHARED && q.owner!={} && q.owner==w.owner {owned+=1}
             }
             p.owner=users>0 && owned==users?w.owner:{}
         }
@@ -357,13 +359,13 @@ material_gave :: proc(w:^Writer,e:^Earlier,given:asset.Material_Info) -> bool {
 @(private="file")
 earlier_unpart :: proc(w:^Writer,e:^Earlier) {
     owner:=e.owner
-    if asset.file_owner_set(e.key,{})!=.None {
-        writer_warn(w,"%s is shared with %s but it could not be taken out of the asset it is a part of",e.path,w.named)
+    if asset.file_owner_set(e.key,{})!=.None || !sidecar_unpart(w,e) {
+        writer_warn(w,"%s is shared with %s but it could not be taken out of the asset it is a part of",e.path,w.source)
         return
     }
     e.owner={}
     append(&w.report.others,strings.clone(e.path,w.allocator))
-    writer_warn(w,"%s is shared with %s: it is no longer a part of another import",e.path,w.named)
+    writer_warn(w,"%s is shared with %s: it is no longer a part of another import",e.path,w.source)
     for &other in w.earlier {
         if other.owner!=owner {continue}
         switch {

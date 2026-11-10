@@ -85,6 +85,7 @@ read_mtl :: proc(r:^importer.Reader,path:string,materials:^map[string]Obj_Materi
     if importer.unsafe_path(path) {importer.warn(r,"the material library %s is a device, not a file",path);return}
     bytes,error:=os.read_entire_file(path,context.temp_allocator)
     if error!=nil {importer.warn(r,"the material library %s could not be read",path);return}
+    importer.read_note(r,path)
     current:string
     explicit_roughness:=false
     fields:[dynamic]string

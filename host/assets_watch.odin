@@ -4,10 +4,10 @@ import "mirai:asset"
 import "mirai:platform"
 
 @(private)
-app_assets_create :: proc(app:^App,root,cache:string,mounts:[]asset.Registry_Mount=nil) -> App_Error {
+app_assets_create :: proc(app:^App,root,cache:string,mounts:[]asset.Registry_Mount=nil,imported:="") -> App_Error {
     assets,error:=new(Assets,app.allocator)
     if error!=nil {return .Out_Of_Memory}
-    if !assets_init(assets,{root=root,cache=cache,renderer=app.renderer,allocator=app.allocator,mounts=mounts}) {
+    if !assets_init(assets,{root=root,imported=imported,cache=cache,renderer=app.renderer,allocator=app.allocator,mounts=mounts}) {
         free(assets,app.allocator)
         return .Assets_Failed
     }

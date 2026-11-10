@@ -45,6 +45,21 @@ asset_delete_files :: proc(r:^asset.Registry,id:base.Asset_Id) -> []u32 {
     return files[:]
 }
 
+// As asset_delete_files, with what goes when the asset is the root of an
+// import: what that import keeps in the imported folder, which nothing builds
+// once its sidecar is gone.
+@(private)
+asset_delete_all :: proc(s:^Session,r:^asset.Registry,id:base.Asset_Id) -> (files:[]u32,sidecar:string) {
+    listed:=make([dynamic]u32,context.temp_allocator)
+    append(&listed,..asset_delete_files(r,id))
+    cached:[]u32
+    sidecar,cached=import_root(s,r,id)
+    for at in cached {
+        if !slice.contains(listed[:],at) {append(&listed,at)}
+    }
+    return listed[:],sidecar
+}
+
 // The files that use what deleting id moves and are not moved with it.
 @(private)
 asset_delete_users :: proc(r:^asset.Registry,files:[]u32) -> []u32 {
@@ -61,6 +76,9 @@ asset_delete_users :: proc(r:^asset.Registry,files:[]u32) -> []u32 {
 @(private)
 asset_delete_refusal :: proc(s:^Session,r:^asset.Registry,file:^asset.Registry_File) -> string {
     if refusal:=asset_owned_refusal(r,file);refusal!="" {return refusal}
+    if file.imported {
+        if sidecar,_:=import_root(s,r,file.id);sidecar=="" {return "It is built by the import of its source, which makes it again: delete or move the asset that source gives (its prefab), change the source, or duplicate it to have a copy of its own"}
+    }
     if watching(s) {return "The run of an agent is being watched; stop watching it first"}
     if busy:=import_busy(s);busy!="" {return busy}
     for at in asset_delete_files(r,file.id) {
@@ -86,7 +104,7 @@ asset_delete :: proc(s:^Session,id:base.Asset_Id) -> (moved:[]string,message:str
     file,found:=asset.registry_find(r,id)
     if !found {return nil,"The asset is not in the registry"}
     if refusal:=asset_delete_refusal(s,r,file);refusal!="" {return nil,refusal}
-    files:=asset_delete_files(r,id)
+    files,sidecar:=asset_delete_all(s,r,id)
     paths:=make([]string,len(files),context.temp_allocator)
     for at,i in files {paths[i]=strings.clone(r.files[at].path,context.temp_allocator)}
     // What memory holds of them goes first, or the registry would keep answering for them.
@@ -99,6 +117,8 @@ asset_delete :: proc(s:^Session,id:base.Asset_Id) -> (moved:[]string,message:str
         }
         append(&done,path)
     }
+    // The import is given up with its root: its source stays, and importing it again is a new import.
+    if message=="" && sidecar!="" {_=platform.trash(sidecar)}
     if len(done)>0 {
         host.assets_refresh(s.app.assets,done[:])
         host.content_refresh(s.app)
@@ -129,7 +149,7 @@ asset_delete_modal :: proc(s:^Session) {
     closed:=false
     defer if closed {g.modal,g.delete_asset=.None,{}}
     if ui.modal(ctx,shell_id(g,"delete_asset"),{width=420,padding=16,gap=14,close=&closed}) {
-        files:=asset_delete_files(r,file.id)
+        files,_:=asset_delete_all(s,r,file.id)
         users:=asset_delete_users(r,files)
         refusal:=asset_delete_refusal(s,r,file)
         ui.label(ctx,"Delete asset",th.font_heading,th.text,font=ui.FONT_SEMIBOLD)

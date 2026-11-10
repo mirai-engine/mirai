@@ -110,6 +110,7 @@ cmd_package :: proc(root:string,args:[]string) -> int {
 
     // The plugin libraries, built by the engine just packaged: their fingerprints are those of its projects.
     if !package_plugins(out) {return 1}
+    if !package_imports(out) {return 1}
     _=os.remove_all(join(out,".mirai","tmp"))
     _=os.remove_all(workspace.cache_folder(out,"locks",context.temp_allocator))
 
@@ -314,5 +315,26 @@ package_plugins :: proc(out:string) -> bool {
         }
         fmt.printfln("mirai package: %d plugin libraries at %v in %.1f s",result.plugins_built,optimization,result.seconds)
     }
+    return true
+}
+
+// What the imports of the plugins build that is not versioned (the atlases of
+// a pack of prompts), built by the engine just packaged into the imported
+// folder of each: an installed engine imports nothing, and its folder may be
+// one nobody writes to.
+@(private="file")
+package_imports :: proc(out:string) -> bool {
+    roots:=make([dynamic]string,context.temp_allocator)
+    entries,_:=os.read_all_directory_by_path(join(out,"plugins"),context.temp_allocator)
+    for entry in entries {
+        if entry.type==.Directory && os.is_file(join(entry.fullpath,project.PLUGIN_FILE)) {append(&roots,join(out,"plugins",entry.name))}
+    }
+    if !build.imports_any(roots[:]) {return true}
+    ok,message:=build.imports_sync(build.engine_paths(out,.Release,context.temp_allocator).import_program,roots[:])
+    if !ok {
+        fmt.eprintfln("mirai package: could not import the sources of the plugins: %s",message)
+        return false
+    }
+    if message!="" {fmt.println(message)}
     return true
 }

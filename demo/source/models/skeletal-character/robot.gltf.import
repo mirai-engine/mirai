@@ -1,18 +1,31 @@
 {
-  "max_texture_size": 0,
-  "textures": "Blocks",
-  "rdo_lambda": 0,
-  "image": "Data",
-  "alpha_coverage": 0,
-  "lods": "Auto",
-  "max_triangles": 0,
-  "collision": "None",
-  "force_collision": false,
-  "collision_hulls": 0,
-  "parts": "Auto",
-  "front": "Auto",
-  "rig": "Source",
-  "rig_crotch": 0,
-  "rig_neck": 0,
-  "skeleton": "00000000000000000000000000000000"
+  "version": 1,
+  "settings": {
+    "max_texture_size": 0,
+    "textures": "Blocks",
+    "rdo_lambda": 0,
+    "image": "Data",
+    "alpha_coverage": 0,
+    "lods": "Auto",
+    "max_triangles": 0,
+    "collision": "None",
+    "force_collision": false,
+    "collision_hulls": 0,
+    "parts": "Auto",
+    "front": "Auto",
+    "rig": "Source",
+    "rig_crotch": 0,
+    "rig_neck": 0,
+    "skeleton": "00000000000000000000000000000000"
+  },
+  "folder": "characters/robot/robot.gltf",
+  "outputs": [
+    {"kind": "PRFB", "name": "robot", "index": 0, "id": "b0f0241df6e014392af304b56cf59eab"},
+    {"kind": "MAT", "name": "robot blue", "index": 0, "id": "c67757fb8b041b0d6b6178fe958bd91e"},
+    {"kind": "MAT", "name": "robot gold", "index": 1, "id": "feebc67eaeb9081ec3d1f1edac208b2a"},
+    {"kind": "MAT", "name": "robot joints", "index": 2, "id": "a453277713f405f86fd3dc27c2506977"},
+    {"kind": "MAT", "name": "robot visor", "index": 3, "id": "0bf1bd3d54bcb875b34957598640c69d"},
+    {"kind": "SKEL", "name": "13 joint robot rig", "index": 0, "id": "cf5b1fe881d020461927fe9b85c42136"},
+    {"kind": "MESH", "name": "Mirai robot", "index": 0, "id": "3a94f8ad990aede6566ad2af8010bb23", "path": "characters/robot/robot.gltf/Mirai robot.mesh", "part": true}
+  ]
 }

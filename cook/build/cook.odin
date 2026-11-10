@@ -51,10 +51,11 @@ Cook_Desc :: struct {
     plugins:[]project.Asset_Folder, // the assets of active plugins: every file a root, cooked under its prefix
     texture_cache:string, // folder of compressed textures kept by content (textures.cache_read); "": none
     mesh_cache:string,    // folder of the meshes an import keeps (cook/import Import_Options); "": none
-    // How the source of a texture the editor imported Fast is imported again as Final. nil: the
-    // engine's import program at import_program, in a process of its own, since the tool builds
-    // without the importers; "" there: such a texture fails the cook.
-    import_source:Cook_Import,
+    // What brings the imported folders of the project and of its plugins up to date before the
+    // cook reads them, their textures built Final (cook/import/sources.sync). nil: the engine's
+    // import program at import_program, in a process of its own, since the tool builds without
+    // the importers; "" there: the folders are read as they are.
+    sync:Cook_Sync,
     import_program:string,
     root:string,          // of the project: the sources of imported assets are named relative to it. "": the folder of assets
     worker:jobs.Worker_Ref, // where the files are cooked, in parallel on its system. No system: a system of the cook, a thread per core
@@ -63,10 +64,9 @@ Cook_Desc :: struct {
     allocator:runtime.Allocator, // of the report. Unset: context.allocator
 }
 
-// What a cook runs to import the source of a texture imported Fast again: Final, into folder,
-// with the caches of desc and the settings of the .import beside the source. message, in the
-// temp allocator, says why it failed.
-Cook_Import :: #type proc(source,folder:string,desc:^Cook_Desc,worker:jobs.Worker_Ref) -> (ok:bool,message:string)
+// What a cook runs to bring the imported folder of each root (the project, a plugin) up to date
+// with its sources, with the caches of desc. message, in the temp allocator, says why it failed.
+Cook_Sync :: #type proc(roots:[]string,desc:^Cook_Desc) -> (ok:bool,message:string)
 
 // How the assets of a cook are compressed.
 @(private="file")
@@ -81,7 +81,7 @@ Cook_Error :: enum u8 {
     Write_Failed,     // detail: the file
     Verify_Failed,    // detail: the file that does not read back as what was written
     Resolve_Failed,   // detail: the scene or prefab whose prefab instances could not be brought up to date
-    Source_Failed,    // detail: the texture imported Fast whose source does not import again as Final, and why
+    Source_Failed,    // detail: the sources that did not import, or the texture that is still Fast, and why
 }
 
 Cook_File :: struct {
@@ -90,7 +90,6 @@ Cook_File :: struct {
     kind:asset.Fourcc,
     source_bytes,bytes:i64,
     compressed:bool,  // a texture that was RGBA8 and is blocks now, or an animation that is sampled
-    finalized:bool,   // a texture imported Fast, encoded again as Final from its source
     resolved:bool,    // a scene or prefab whose stale prefab instances follow their prefabs now
 }
 
@@ -116,7 +115,6 @@ Cook_Report :: struct {
     missing:[]Cook_Missing,
     removed:int,              // files of an earlier cook that the output no longer has
     textures_compressed:int,
-    textures_finalized:int,
     animations_compressed:int,
     scenes_resolved:int,      // scenes and prefabs written with their prefab instances up to date
     source_bytes:i64,         // of the whole assets folder
@@ -185,9 +183,21 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
     manifest,problem:=manifest_read(desc.manifest,temp)
     if problem!="" {cook_fail(&report,.Manifest_Invalid,problem,allocator);return}
 
+    // The imported folders first: what the registry lists of them is what the sources give now.
+    roots:=make([dynamic]string,temp)
+    if desc.root!="" {append(&roots,desc.root)}
+    for folder in desc.plugins {
+        if folder.root!="" {append(&roots,folder.root)}
+    }
+    if len(roots)>0 {
+        desc:=desc
+        synced,message:=true,""
+        if desc.sync!=nil {synced,message=desc.sync(roots[:],&desc)} else if desc.import_program!="" && imports_any(roots[:]) {synced,message=imports_sync(desc.import_program,roots[:],desc.texture_cache,desc.mesh_cache)}
+        if !synced {cook_fail(&report,.Source_Failed,message,allocator);return}
+    }
     registry:asset.Registry
-    asset.registry_init(&registry,desc.assets,"",temp)
-    for folder in desc.plugins {asset.registry_mount(&registry,folder.path,folder.prefix)}
+    asset.registry_init(&registry,desc.assets,"",temp,desc.root!=""?project.imported_path(desc.root,temp):"")
+    for folder in desc.plugins {asset.registry_mount(&registry,folder.path,folder.prefix,folder.imported)}
     defer asset.registry_destroy(&registry)
     if asset.registry_scan(&registry)!=.None {cook_fail(&report,.Assets_Missing,desc.assets,allocator);return}
     files:=registry.files[:]
@@ -290,29 +300,7 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
     slice.sort_by(order[:],proc(a,b:Cook_Order) -> bool {return a.bytes>b.bytes || a.bytes==b.bytes && a.at<b.at})
     work.order,work.probed=order[:],probed[:]
 
-    // Each source of textures imported Fast imports once, before the textures that take from it.
     jobs.parallel_for(on.system,on.worker,len(work.probed),1,texture_probe,&work)
-    imports:=make(map[string]int,temp)
-    finals:=make([dynamic]Final_Import,temp)
-    for at in work.probed {
-        probe:=&work.results[at].probe
-        if probe.path=="" {continue}
-        imported,known:=imports[probe.path]
-        if !known {
-            imported=len(finals)
-            imports[probe.path]=imported
-            append(&finals,Final_Import{path=probe.path,named=probe.named})
-        }
-        probe.final=imported+1
-    }
-    if len(finals)>0 {
-        if made,temp_error:=os.make_directory_temp("","mirai-cook-*",temp);temp_error==nil {work.folder=made}
-        for &imported,at in finals {
-            if work.folder!="" {imported.folder=fmt.tprintf("%s/%d",work.folder,at)}
-        }
-    }
-    work.finals=finals[:]
-    jobs.parallel_for(on.system,on.worker,len(work.finals),1,final_import,&work)
     jobs.parallel_for(on.system,on.worker,len(work.order),1,files_cook,&work)
 
     // The report is the one of a cook on one thread: the first file that failed, by path, and the rest by path.
@@ -328,7 +316,6 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
         if result.error!=.None {cook_fail(&report,result.error,result.detail,allocator);return}
         entry:=result.entry
         entry.path=strings.clone(file.path,allocator)
-        if entry.finalized {report.textures_finalized+=1}
         if entry.compressed {
             if entry.kind==asset.KIND_ANIMATION {report.animations_compressed+=1} else {report.textures_compressed+=1}
         }
@@ -372,8 +359,6 @@ Cook_Work :: struct {
     results:[]Cook_Result, // by file
     types:[]asset.Types,   // of each worker, made when it first needs them
     first_error:int,       // the first file, by path, that failed; len(files): none
-    finals:[]Final_Import,
-    folder:string,         // where the imports of finals write; "": none could be made
     resolve:sync.Mutex,    // over the resolver, its types and its prefabs
     resolver:asset.Prefab_Resolver,
     resolver_types:asset.Types,
@@ -390,23 +375,7 @@ Cook_Result :: struct {
     entry:Cook_File, // without its path
     error:Cook_Error,
     detail:string,   // in the allocator of the work
-    probe:Final_Probe,
-}
-
-// Of a texture: whether it was imported Fast, and the source to import again.
-@(private="file")
-Final_Probe :: struct {
-    problem:string,    // why it cannot be encoded again
-    path,named:string, // the source, as a path and as the texture names it; "": not Fast
-    final:int,         // 1 + the index of the import of its source in finals; 0: none
-}
-
-// The import of a source of textures imported Fast, again as Final.
-@(private="file")
-Final_Import :: struct {
-    path,named:string,
-    folder:string,
-    problem:string, // why it does not import
+    problem:string,  // of a texture: why it cannot be shipped; in the allocator of the work
 }
 
 @(private="file")
@@ -420,12 +389,8 @@ work_destroy :: proc(work:^Cook_Work) {
     delete(work.cached)
     for result in work.results {
         delete(result.detail,work.allocator)
-        delete(result.probe.problem,work.allocator)
-        delete(result.probe.path,work.allocator)
-        delete(result.probe.named,work.allocator)
+        delete(result.problem,work.allocator)
     }
-    for imported in work.finals {delete(imported.problem,work.allocator)}
-    if work.folder!="" {os.remove_all(work.folder)}
 }
 
 @(private="file")
@@ -440,52 +405,24 @@ work_types :: proc(work:^Cook_Work,worker:int) -> ^asset.Types {
     return types
 }
 
-// Whether each texture was imported Fast, and from which source.
+// A texture still built Fast is not shipped: the imports of the editor build one so until its
+// Final is there, and the sync before the cook builds every one Final.
 @(private="file")
 texture_probe :: proc(work:^Cook_Work,first,last:int,worker:int) {
     context.allocator=work.allocator
     types:=work_types(work,worker)
     for at in work.probed[first:last] {
-        probe:=&work.results[at].probe
+        result:=&work.results[at]
         file:asset.Asset
         if asset.asset_load(&file,asset.registry_file_path(work.registry,work.files[at].path,context.temp_allocator),context.temp_allocator)!=.None {
-            probe.problem=work_text(work,"it cannot be read")
+            result.problem=work_text(work,"it cannot be read")
             continue
         }
         defer asset.asset_close(&file)
         view,error:=asset.texture_view(&file,types)
         if error!=.None || .Fast not_in view.info.flags {continue}
-        if view.source==nil {
-            probe.problem=work_text(work,"it was imported Fast and names no source to import again")
-            continue
-        }
-        named:=base.text_get(view.source.source[:])
-        root:=work.desc.root if work.desc.root!="" else filepath.dir(work.desc.assets)
-        path:=named if filepath.is_abs(named) else project.path(root,named,allocator=context.temp_allocator)
-        probe.path,probe.named=strings.clone(path,work.allocator),strings.clone(named,work.allocator)
-    }
-}
-
-@(private="file")
-final_import :: proc(work:^Cook_Work,first,last:int,worker:int) {
-    context.allocator=work.allocator
-    for &imported in work.finals[first:last] {
-        if !os.exists(imported.path) {
-            imported.problem=work_text(work,"it was imported Fast and its source %s is missing: restore the source, or import the texture again with `mirai import`, which builds it Final",imported.named)
-            continue
-        }
-        if imported.folder=="" {
-            imported.problem=work_text(work,"no folder for the import of its source could be made")
-            continue
-        }
-        ok:bool
-        message:string
-        if work.desc.import_source!=nil {
-            ok,message=work.desc.import_source(imported.path,imported.folder,&work.desc,jobs.worker_ref_at(work.on,worker))
-        } else {
-            ok,message=import_program_run(&work.desc,imported.path,imported.folder)
-        }
-        if !ok {imported.problem=work_text(work,"its source %s does not import again: %s",imported.named,message)}
+        named:=view.source!=nil?base.text_get(view.source.source[:]):"a source it does not name"
+        result.problem=work_text(work,"it was imported Fast and %s was not imported again as Final: `mirai import --project <project>` does it, and says why a source does not import; without the import program of the engine, build the editor once (`mirai build editor`)",named)
     }
 }
 
@@ -522,12 +459,10 @@ file_cook :: proc(work:^Cook_Work,at:int,worker:int,entry:^Cook_File) -> (error:
     entry.source_bytes=file.size
     if file.state==.Asset {entry.id,entry.kind=file.id,file.kind}
     if file.state==.Asset && file.kind==asset.KIND_TEXTURE {
-        finalized,problem:=texture_final(work,&work.results[at].probe,source,target,types)
-        if problem!="" {return .Source_Failed,work_text(work,"%s: %s",file.path,problem)}
-        entry.finalized=finalized
+        if problem:=work.results[at].problem;problem!="" {return .Source_Failed,work_text(work,"%s: %s",file.path,problem)}
     }
     // A texture only interfaces show stays as it is: they draw it texel for texel.
-    if !entry.finalized && file.state==.Asset && file.kind==asset.KIND_TEXTURE && work.textures==.Blocks && (work.drawn[at] || !work.shown[at]) {
+    if file.state==.Asset && file.kind==asset.KIND_TEXTURE && work.textures==.Blocks && (work.drawn[at] || !work.shown[at]) {
         compressed,cooked:=texture_cook(work,source,target,types,jobs.worker_ref_at(work.on,worker))
         if !cooked {return .Write_Failed,work_text(work,"%s",file.path)}
         entry.compressed=compressed
@@ -537,7 +472,7 @@ file_cook :: proc(work:^Cook_Work,at:int,worker:int,entry:^Cook_File) -> (error:
         if !cooked {return .Write_Failed,work_text(work,"%s",file.path)}
         entry.compressed=compressed
     }
-    if !entry.compressed && !entry.finalized {
+    if !entry.compressed {
         data,read_error:=os.read_entire_file(source,context.temp_allocator)
         if read_error!=nil {return .Read_Failed,work_text(work,"%s",file.path)}
         if file.state==.Asset && (file.kind==asset.KIND_SCENE || file.kind==asset.KIND_PREFAB) {
@@ -643,61 +578,6 @@ cook_summary :: proc(report:^Cook_Report,allocator:=context.allocator) -> string
     return strings.to_string(b)
 }
 
-// Writes a texture the editor imported Fast as Final, with the id and source
-// it has: the texture of the same name and index is taken from the import of
-// its source again as Final. finalized is false, with nothing written, for one
-// that is not Fast; problem says why one cannot be.
-@(private="file")
-texture_final :: proc(work:^Cook_Work,probe:^Final_Probe,source,target:string,types:^asset.Types) -> (finalized:bool,problem:string) {
-    if probe.problem!="" {return false,probe.problem}
-    if probe.final==0 {return}
-    imported:=&work.finals[probe.final-1]
-    if imported.problem!="" {return false,imported.problem}
-    file:asset.Asset
-    if asset.asset_load(&file,source,context.temp_allocator)!=.None {return false,"it cannot be read"}
-    defer asset.asset_close(&file)
-    view,error:=asset.texture_view(&file,types)
-    if error!=.None || view.source==nil {return false,"it cannot be read"}
-    named:=probe.named
-    final,found:=final_find(imported.folder,view.source,types)
-    if !found {return false,fmt.tprintf("its source %s no longer has the image %s (index %d): import it again",named,base.text_get(view.source.name[:]),view.source.index)}
-    defer textures.built_destroy(&final)
-    info:=view.info
-    if final.format!=info.format || final.width!=int(info.width) || final.height!=int(info.height) || final.layers!=int(info.layers) || len(final.mips)!=len(view.mips) {
-        return false,fmt.tprintf("its source %s builds another texture now (%v %dx%d against %v %dx%d): import it again",named,final.format,final.width,final.height,info.format,info.width,info.height)
-    }
-    desc:=textures.built_desc(&final,file.blob.header.id,view.source)
-    desc.owner=file.blob.header.owner
-    if asset.texture_save(target,types,desc,context.temp_allocator,cook_pack(work.desc))!=.None {return false,"it could not be written"}
-    return true,""
-}
-
-// The texture of the import in folder whose source names the image of
-// wanted (its name and index), its levels in the temp allocator.
-@(private="file")
-final_find :: proc(folder:string,wanted:^asset.Import_Info,types:^asset.Types) -> (built:textures.Built,found:bool) {
-    entries,error:=os.read_all_directory_by_path(folder,context.temp_allocator)
-    if error!=nil {return}
-    for entry in entries {
-        if entry.type==.Directory {
-            if built,found=final_find(entry.fullpath,wanted,types);found {return}
-            continue
-        }
-        if !strings.has_suffix(entry.name,".tex") {continue}
-        file:asset.Asset
-        if asset.asset_load(&file,entry.fullpath,context.temp_allocator)!=.None {continue}
-        defer asset.asset_close(&file)
-        view,view_error:=asset.texture_view(&file,types)
-        if view_error!=.None || view.source==nil || view.source.index!=wanted.index || base.text_get(view.source.name[:])!=base.text_get(wanted.name[:]) {continue}
-        info:=view.info
-        built={width=int(info.width),height=int(info.height),layers=int(info.layers),format=info.format,flags=info.flags,alpha_coverage=info.alpha_coverage,allocator=context.temp_allocator}
-        built.mips=make([][]u8,len(view.mips),context.temp_allocator)
-        for _,level in view.mips {built.mips[level]=slice.clone(asset.texture_mip(view,level),context.temp_allocator)}
-        return built,true
-    }
-    return
-}
-
 // Writes an animation with its clips sampled as the runtime plays them
 // (asset.animation_compress, on the skeletons of the registry); compressed is
 // false, with nothing written, for one that is cooked already. ok is false when
@@ -722,21 +602,4 @@ animation_cook :: proc(work:^Cook_Work,source,target:string,types:^asset.Types) 
     defer asset.document_destroy(&doc)
     doc.flags=file.blob.header.flags
     return true,asset.document_save(&doc,target,p=cook_pack(work.desc))==.None
-}
-
-// Imports source as Final into folder with the engine's import program (what `mirai import` runs),
-// with the caches of desc and without writing settings beside the source.
-@(private="file")
-import_program_run :: proc(desc:^Cook_Desc,source,folder:string) -> (ok:bool,message:string) {
-    if desc.import_program=="" || !os.is_file(desc.import_program) {
-        return false,"the import program of the engine is missing: build the editor once (`mirai build editor`) and cook again"
-    }
-    command:=make([dynamic]string,context.temp_allocator)
-    append(&command,desc.import_program,source,"--out",folder,"--no-save")
-    if desc.texture_cache!="" {append(&command,"--texture-cache",desc.texture_cache)}
-    if desc.mesh_cache!="" {append(&command,"--mesh-cache",desc.mesh_cache)}
-    state,_,errors,error:=subprocess.exec({command=command[:]},context.temp_allocator)
-    if error!=nil {return false,fmt.tprintf("the import program could not run: %v",error)}
-    if state.exit_code!=0 {return false,strings.trim_space(string(errors))}
-    return true,""
 }

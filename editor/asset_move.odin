@@ -83,6 +83,8 @@ asset_unsaved_refusal :: proc(r:^asset.Registry,paths:[]string,folder:="") -> st
 // Why an asset cannot be renamed or moved now; "" when it can.
 @(private)
 asset_move_refusal :: proc(s:^Session,r:^asset.Registry,file:^asset.Registry_File) -> string {
+    // Its place is the one the sidecar of its source gives it, where its import writes it again.
+    if file.imported {return "It is built by the import of its source, at the path its sidecar lists: duplicate it to have a copy that moves"}
     if refusal:=asset_create_refusal(s);refusal!="" {return refusal}
     if refusal:=asset_delete_refusal(s,r,file);refusal!="" {return refusal}
     files:=asset_delete_files(r,file.id)
@@ -112,6 +114,8 @@ asset_move :: proc(s:^Session,id:base.Asset_Id,folder,name:string) -> (path,mess
     source:=content_folder_of(file.path)
     moves:=make([dynamic]Asset_Move,context.temp_allocator)
     for at,i in asset_delete_files(r,id) {
+        // A part of the imported folder stays at the path its sidecar lists.
+        if i>0 && r.files[at].imported {continue}
         from:=strings.clone(r.files[at].path,context.temp_allocator)
         to:=asset_create_join(into,named,extension)
         if i>0 {to=asset_create_join(into,from[len(source)+1:] if source!="" && asset_path_inside(from,source) else asset_path_base(from),"")}

@@ -35,6 +35,7 @@ Reader :: struct {
     animations:[dynamic]asset.Animation_Clip_Desc,
     warnings:[dynamic]string,
     programs:[dynamic]string, // the Surface programs it wrote to the shaders of the project, their files
+    files:[dynamic]string,    // the files it read besides the source (read_note)
     degenerate:int,       // faces without area the reader skipped
     // What the procedures of the reader keep.
     image_rows:map[Image_Key]int,
@@ -167,11 +168,22 @@ resolve_path :: proc(r:^Reader,relative:string) -> string {
     return normalize_path(r,joined)
 }
 
+// Notes a file the model is read from besides its source: a change of it
+// imports the source again (sources.sync).
+read_note :: proc(r:^Reader,path:string) {
+    if path==r.path {return}
+    for file in r.files {
+        if file==path {return}
+    }
+    append(&r.files,strings.clone(path,context.temp_allocator))
+}
+
 // The bytes of a file the source names, in scratch memory.
 read_source :: proc(r:^Reader,path:string) -> (bytes:[]u8,ok:bool) {
     data,error:=serial.file_read(path,context.temp_allocator,limit=MAX_SOURCE_BYTES)
     #partial switch error {
     case .None:
+        read_note(r,path)
         return data,true
     case .Not_Found:
         return nil,fail(r,.Not_Found,"%s does not exist",path)

@@ -225,6 +225,13 @@ scan opens every file and writes it again.
   [previews](../../mirai-editor/references/panels.md#previews)) reads them and empties it.
 - `registry_dependents` comes from an inverse index built with each change: how many use an asset is
   its length, without walking the files (`asset.list` reports it as `used_by`).
+- **Imported folders.** An assets folder may have an imported folder with it (that of the root
+  and of each mount: `.mirai/imported/` of the project or the plugin): what the
+  [imports](../../mirai-imports/references/imports.md#identity-and-reimport) of its sources build
+  that nobody edits, never versioned. Its files are assets at the same paths, listed with
+  `Registry_File.imported`; `registry_file_path` gives the file in one folder or the other, and a
+  file of the assets folder wins over one of the imported folder at the same path. A cooked folder
+  has none: the cook writes every asset at its path.
 - **Mounts.** `registry_mount` adds a folder under a prefix (a plugin's assets, in
   `plugins/<name>`). A prefix that starts with a dot belongs to the program's assets (the editor's,
   in `.editor`): they are found by id and by path, but a project's lists omit them

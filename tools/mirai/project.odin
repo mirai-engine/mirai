@@ -263,6 +263,7 @@ build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_M
     engine:=build.engine_mode_resolve(root,mode)
     engine_current:=target==.Game || build.engine_current(root,engine)
     if target!=.Game && engine_current && library_current(root,&p,target,engine,mode==.Dev) {
+        if !build_imports(root,&p,engine) {return 1,"",false}
         _=engine_report({status=.Up_To_Date,mode=engine},root)
         if os.is_file(project.path(project.shader_generation(p.root,context.temp_allocator),project.SHADERS_MANIFEST,allocator=context.temp_allocator)) {
             fmt.printfln("%s unchanged.",project.shader_generation(p.root,context.temp_allocator))
@@ -292,6 +293,23 @@ build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_M
     return
 }
 
+// Brings what the imports of the project and of its plugins build that is not
+// versioned up to date with their sources, with the import program of the
+// engine, which is built: a checkout that was just cloned imports here. False,
+// with the reason said, when a source does not import.
+@(private="file")
+build_imports :: proc(root:string,p:^project.Project,engine:Build_Mode) -> bool {
+    roots:=build.imports_roots(p,context.temp_allocator)
+    if !build.imports_any(roots) {return true}
+    ok,message:=build.imports_sync(build.engine_paths(root,engine,context.temp_allocator).import_program,roots)
+    if !ok {
+        fmt.eprintfln("mirai build: could not import the sources of the project: %s",message)
+        return false
+    }
+    if message!="" {fmt.println(message)}
+    return true
+}
+
 // What build_project does once it has to compile, in its turn. engine_failed:
 // the binaries of the engine did not build; rebuilt: the engine or the
 // library were built again.
@@ -308,8 +326,12 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
         built:=build.engine_build({engine_root=root,mode=engine})
         if code:=engine_report(built,root);code!=0 {return code,"",false,true,false}
         engine_built=built.status==.Built
+        if !build_imports(root,p,engine) {return 1,"",false,false,engine_built}
     } else if !engine_shaders(root,turn_held=true) {
         return 1,"",false,true,false
+    } else if build.imports_any(build.imports_roots(p,context.temp_allocator)) && !build.engine_current(root,engine) {
+        // The cook imports the sources of the project with the import program of the engine.
+        if code:=engine_report(build.engine_build({engine_root=root,mode=engine}),root);code!=0 {return code,"",false,true,false}
     }
     // The generation first: a game ships the one that is published, and a dedicated server none.
     if !server {

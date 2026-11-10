@@ -4,6 +4,8 @@ import "core:fmt"
 import "core:os"
 import "core:path/filepath"
 import "core:testing"
+import "core:strings"
+import "mirai:asset"
 import importer "mirai:cook/import"
 import "mirai:std/base"
 
@@ -142,14 +144,19 @@ damaged_images_and_settings_are_imported_or_refused :: proc(t:^testing.T) {
     }
     testing.expectf(t,refused>len(png)/2,"%d of %d damaged images are refused",refused,imported+refused)
 
-    // The settings next to a source: any text is the settings it says or is refused, and never the defaults by accident.
+    // The sidecar of a source: any text is the settings and the outputs it says or is refused, and never the defaults or other ids by accident.
     wanted:=importer.Import_Settings{max_texture_size=256,textures=.Uncompressed,rdo_lambda=30,image=.Color,alpha_coverage=0.25,lods=.None,collision=.Mesh,collision_hulls=3}
-    text:=importer.settings_text(wanted,context.temp_allocator)
-    parsed,valid:=importer.settings_parse(text)
-    testing.expect(t,valid && parsed==wanted)
+    listed:=make([dynamic]importer.Output,context.temp_allocator)
+    append(&listed,importer.Output{kind=asset.KIND_MESH,name="Crate \"big\"",index=2,id={3,4},path="props/Crate.mesh",part=true},importer.Output{kind=asset.KIND_MATERIAL,name="Wood",id={5,6}},importer.Output{kind=asset.KIND_TEXTURE,name="wood",id={7,8},shared=true})
+    text:=importer.sidecar_text({settings=wanted,folder="props",outputs=listed},context.temp_allocator)
+    parsed,valid:=importer.sidecar_parse(text,context.temp_allocator)
+    testing.expect(t,valid && parsed.settings==wanted && parsed.folder=="props" && len(parsed.outputs)==3)
+    if valid && len(parsed.outputs)==3 {
+        for output,at in parsed.outputs {testing.expectf(t,output==listed[at],"output %d is read as written: %v",at,output)}
+    }
     read,rejected:=0,0
     for length in 0..<len(text) {
-        if _,ok:=importer.settings_parse(text[:length]);ok {read+=1} else {rejected+=1}
+        if _,ok:=importer.sidecar_parse(text[:length],context.temp_allocator);ok {read+=1} else {rejected+=1}
     }
     work:=make([]u8,len(text),context.temp_allocator)
     marks:="{}[]\":,0-9ex \x00\xff"
@@ -158,13 +165,15 @@ damaged_images_and_settings_are_imported_or_refused :: proc(t:^testing.T) {
         copy(work,text)
         state=state*6364136223846793005+1442695040888963407
         work[int((state>>33)%u64(len(work)))]=marks[int((state>>20)%u64(len(marks)))]
-        if changed_settings,ok:=importer.settings_parse(string(work));ok {
+        if changed,ok:=importer.sidecar_parse(string(work),context.temp_allocator);ok {
             read+=1
-            // What is read is settings an import can use.
+            // What is read is settings an import can use, and outputs it can write.
+            changed_settings:=changed.settings
             testing.expect(t,changed_settings.max_texture_size>=0 && changed_settings.collision_hulls>=0 && changed_settings.alpha_coverage>=0 && changed_settings.alpha_coverage<=1 && changed_settings.lods<=max(importer.Lods) && changed_settings.collision<=max(importer.Collision))
+            for output in changed.outputs {testing.expect(t,output.id!={} && output.kind!=0 && !strings.contains(output.path,".."),"an output has an id, a kind and a path under the assets")}
         } else {rejected+=1}
     }
-    testing.expectf(t,rejected>len(text) && read>0,"%d texts are settings and %d are refused",read,rejected)
+    testing.expectf(t,rejected>len(text)/2 && read>0,"%d texts are sidecars and %d are refused",read,rejected)
 }
 
 // Fonts, texts and manifests of prompts, cut at lengths spread over them or
@@ -185,7 +194,7 @@ damaged_fonts_texts_and_prompts_are_imported_or_refused :: proc(t:^testing.T) {
         imported,refused:=0,0
         attempt :: proc(path,folder:string,data:[]u8,imported,refused:^int) {
             if os.write_entire_file(path,data)!=nil {return}
-            report,error:=import_source(path,fmt.tprintf("%s/out",folder),{no_save=true})
+            report,error:=import_source(path,fmt.tprintf("%s/out",folder),{})
             if error.code==.None {
                 importer.report_destroy(&report)
                 imported^+=1

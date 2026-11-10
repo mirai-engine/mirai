@@ -813,9 +813,13 @@ plugin [vfx](../../mirai-world/references/vfx-editor.md#particle-document).
 ## Import
 
 `import_file(s, path)` converts a source file into project assets, only in `Edit`, with
-`sources.import_source` like `mirai import`. The source can be outside the project, and then it
-does not save its settings beside it (`no_save`): reimporting finds it by its path. What is
-written stays in the assets folder, in that of its type or in `folder` (`asset_folder_clean`).
+`sources.import_source` like `mirai import`. A source inside the project is versioned with its
+sidecar, and what it builds that nobody edits goes to the imported folder of the project; a source
+outside it keeps every asset in the assets folder, with its sidecar in `source/` of the project
+([identity](../../mirai-imports/references/imports.md#identity-and-reimport)). It goes to the
+folder of its type or to `folder` (`asset_folder_clean`). When the editor opens a project,
+`import_sync` brings its imported folders up to date with its sources in the thread of the imports
+([sync](../../mirai-imports/references/imports.md#sync)).
 File > Import, the content browser, a file dropped on the window and `asset.import` call it. It
 imports in a thread of its own, with its own job system, while the editor keeps drawing; the
 content browser shows the dot of what works. `import_poll`, between frames, takes what it wrote on
@@ -831,10 +835,9 @@ output folders in [importers](../../mirai-imports/SKILL.md).
   imported before the formats and takes no folder.
 - An image is sRGB unless its settings or its name say it is data or a normal (`sources.image_use`,
   which `mirai import` applies too); `asset.import {image}` chooses it.
-- An import's settings stay beside the source (`<source>.import`); reimporting writes the same
-  assets with their ids where they are and keeps what did not change.
-  `import_file(s, path, into)` updates an import from a moved or renamed source
-  ([identity](../../mirai-imports/references/imports.md#identity-and-reimport)). Textures with
+- The sidecar of a source (`<source>.import`) keeps its settings and the id of each asset;
+  reimporting writes the same assets with their ids where they are and keeps what did not change.
+  Textures with
   the same image and settings and meshes with the same geometry and settings come from their caches
   ([textures](../../mirai-imports/references/imports.md#texture-cache),
   [meshes](../../mirai-imports/references/imports.md#mesh-cache)).
@@ -845,7 +848,12 @@ output folders in [importers](../../mirai-imports/SKILL.md).
   are parts of its prefab (`asset.Header.owner`,
   [rule](../../mirai-imports/references/imports.md#parts)). `asset_detach`
   (`editor/assets_parts.odin`, `asset.detach`) takes one out of its owner as an unsaved edit with
-  undo: it only clears `owner`, and the import leaves it out; there is no UI that calls it yet. A
+  undo: it only clears `owner`, and the import leaves it out; there is no UI that calls it yet.
+- **What an import keeps in the imported folder is not edited where it is.** Moving, renaming,
+  detaching or deleting it on its own is refused, saying to duplicate it; it moves with nothing
+  and stays at the path its sidecar lists when its prefab moves. Deleting the root of an import
+  (its prefab, the texture of an image) gives the import up: its sidecar goes to the trash with
+  what only the import can build, and the source stays. A
   copy made outside the editor receives an id of its own on scanning
   ([repeated ids](../../mirai-assets/references/formats.md#registry)).
 

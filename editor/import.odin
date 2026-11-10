@@ -30,8 +30,11 @@ import "mirai:ui"
 // next to them; an image becomes a texture in textures/ (sRGB unless its name
 // says it holds data or a normal map); a sound file (WAV, Ogg) becomes a
 // sound in sounds/; a source a plugin imports whole (Import_Source_Provider)
-// writes where its importer says. The settings of a source stay next to it
-// (<source>.import) and importing it again gives the same assets. The Import
+// writes where its importer says. The sidecar of a source (<source>.import)
+// keeps its settings and the id of each asset, and importing it again gives
+// the same assets; what an import builds that nobody edits is not a file of
+// the asset folder but of the imported folder of the project, which the
+// editor brings up to date with the sources when it opens (import_sync). The Import
 // button of the Assets tab and File > Import ask for the file; a file dropped
 // on the window is imported the same way.
 //
@@ -52,6 +55,7 @@ Importer :: struct {
     imports:int,   // files imported in this session
     message:[IMPORT_MESSAGE_BYTES]u8,message_length:int, // what the last one said
     running:^Import_Job,  // the import in its thread; nil when none runs
+    synced:bool,          // the imported folders were looked at once since the project opened (import_sync)
     status:Import_Status, // of the import that runs, or of the last one
     written:[dynamic]Import_Written, // what the last one that ended wrote
     warnings:[dynamic]string,        // what the last one that ended warned of
@@ -68,6 +72,8 @@ Import_Job :: struct {
     kind:sources.Source_Kind,
     formats:[]importer.Format,                // of a model: the engine's, then plugin_formats'
     plugin_formats:[]Import_Format_Provider, // with the format.data their prepare gave
+    roots:[]string,        // of the sync of a project: the project and its plugins with assets; nil for the import of a source
+    synced,removed:int,    // by that sync: sources imported, and stale files removed
     whole:Source_Importer, // of a source a plugin imports whole; run is nil otherwise
     state:rawptr,          // what whole.prepare gave
     options:importer.Import_Options,
@@ -113,6 +119,7 @@ import_say :: proc(s:^Session,format:string,args:..any) {
 import_busy :: proc(s:^Session) -> string {
     if s.importer==nil || s.importer.running==nil {return ""}
     job:=s.importer.running
+    if job.roots!=nil {return "the sources of the project are being imported and write assets; try again when that ends (asset.import_status)"}
     return fmt.tprintf("%s is being imported and writes assets; try again when it ends (asset.import_status)",filepath.base(job.source))
 }
 
@@ -130,10 +137,12 @@ import_place :: proc(s:^Session) -> string {
 }
 
 // Starts importing a source file into the asset folder; false, with the
-// reason shown, when it cannot. The source may be anywhere: only what it
-// writes is in the project, and its settings are kept next to it only when it
-// is inside. A source imported before writes the assets it wrote then,
-// wherever they are; into names that import when the source was moved.
+// reason shown, when it cannot. The source may be anywhere. One inside the
+// project is versioned with its sidecar, so its meshes, textures, sounds and
+// fonts go to the imported folder; one outside is not, so every asset of it
+// is a file of the asset folder, and its sidecar is kept in the source folder
+// of the project under the name of the file (importer.Sidecar). A source
+// imported before writes the assets its sidecar lists, wherever they are.
 // folder, a folder of the assets (asset_folder_clean), is where it goes, a
 // model in a folder of its own inside; none is the root. profiled records the zones of
 // the import (importer.profile_totals) for asset.import_status.
@@ -144,7 +153,7 @@ import_place :: proc(s:^Session) -> string {
 // skeleton, when not zero, is the skeleton of the project the clips of a model
 // play on (Import_Settings.skeleton), kept the same way; so is front, when
 // given, where a model stands facing (Import_Settings.front).
-import_file :: proc(s:^Session,source:string,into:base.Asset_Id={},folder:="",profiled:=false,rig:Maybe(importer.Import_Settings)=nil,image:Maybe(importer.Image_Use)=nil,skeleton:base.Asset_Id={},front:Maybe(importer.Front)=nil) -> bool {
+import_file :: proc(s:^Session,source:string,folder:="",profiled:=false,rig:Maybe(importer.Import_Settings)=nil,image:Maybe(importer.Image_Use)=nil,skeleton:base.Asset_Id={},front:Maybe(importer.Front)=nil) -> bool {
     a:=s.app.assets
     if a==nil || a.registry.root=="" {
         import_say(s,"There is no asset folder to import into")
@@ -157,14 +166,11 @@ import_file :: proc(s:^Session,source:string,into:base.Asset_Id={},folder:="",pr
     name:=filepath.base(source)
     allocator:=runtime.heap_allocator()
     options:=importer.Import_Options{
-        root=strings.clone(s.project_root,allocator),into=into,
-        texture_cache=project.cache_path(s.project_root,project.TEXTURE_CACHE,allocator=allocator),
-        mesh_cache=project.cache_path(s.project_root,project.MESH_CACHE,allocator=allocator),
+        root=strings.clone(s.project_root,allocator),
+        texture_cache=project.content_cache_path(s.project_root,project.TEXTURE_CACHE,allocator=allocator),
+        mesh_cache=project.content_cache_path(s.project_root,project.MESH_CACHE,allocator=allocator),
         fast_textures=true,
     }
-    // A source outside the project keeps no settings next to it: the editor
-    // writes only into the project, and reimporting finds it by its path.
-    options.no_save=filepath.is_abs(importer.source_path(options,source))
     formats:=import_formats(s)
     // A source a plugin imports whole goes before the formats, which may read its bytes too.
     whole,claimed:=import_whole(s,source)
@@ -175,7 +181,7 @@ import_file :: proc(s:^Session,source:string,into:base.Asset_Id={},folder:="",pr
         _,rigged:=rig.?
         _,faced:=front.?
         if rigged || faced || skeleton!={} {
-            stored,_,settings_error:=importer.settings_load(importer.source_path(options,source))
+            stored,_,settings_error:=importer.settings_load(source,options.root)
             if settings_error.code!=.None {
                 import_say(s,"%s: %s",name,settings_error.message)
                 return false
@@ -188,7 +194,7 @@ import_file :: proc(s:^Session,source:string,into:base.Asset_Id={},folder:="",pr
     case .Image:
         options.image=sources.image_use(source)
         if use,given:=image.?;given {
-            stored,_,settings_error:=importer.settings_load(importer.source_path(options,source))
+            stored,_,settings_error:=importer.settings_load(source,options.root)
             if settings_error.code!=.None {
                 import_say(s,"%s: %s",name,settings_error.message)
                 return false
@@ -265,7 +271,17 @@ import_run :: proc(job:^Import_Job) {
     defer job.options.worker={}
     if job.profiled && !importer.profile_begin(&job.profile,&job.options,job.allocator) {job.profiled=false}
     error:importer.Error
-    if job.whole.run!=nil {
+    if job.roots!=nil {
+        for root in job.roots {
+            report:=sources.sync(root,{texture_cache=job.options.texture_cache,mesh_cache=job.options.mesh_cache,fast_textures=true,worker=job.options.worker},job.allocator)
+            job.synced+=report.imported
+            job.removed+=report.removed
+            if job.report.allocator.procedure==nil {importer.report_init(&job.report,job.allocator)}
+            for warning in report.warnings {append(&job.report.warnings,strings.clone(warning,job.allocator))}
+            if len(report.failures)>0 && error.code==.None {error={.Read,strings.clone(report.failures[0],context.temp_allocator)}}
+            sources.sync_report_destroy(&report)
+        }
+    } else if job.whole.run!=nil {
         // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
         report,scene,run_error:=job.whole.run(job.state,job.source,job.options,job.allocator)
         job.report=report
@@ -285,6 +301,8 @@ import_job_free :: proc(job:^Import_Job) {
     allocator:=job.allocator
     if job.thread!=nil {thread.destroy(job.thread)}
     importer.report_destroy(&job.report)
+    for root in job.roots {delete(root,allocator)}
+    delete(job.roots,allocator)
     delete(job.source,allocator);delete(job.folder,allocator);delete(job.scene,allocator)
     delete(job.options.root,allocator);delete(job.options.texture_cache,allocator);delete(job.options.mesh_cache,allocator)
     for provider in job.plugin_formats {
@@ -302,10 +320,28 @@ import_job_free :: proc(job:^Import_Job) {
 // Between frames.
 import_poll :: proc(s:^Session) {
     job:=s.importer.running
-    if job==nil || !intrinsics.atomic_load(&job.done) {return}
+    if job==nil {
+        if !s.importer.synced {
+            s.importer.synced=true
+            import_sync(s)
+        }
+        return
+    }
+    if !intrinsics.atomic_load(&job.done) {return}
     thread.join(job.thread)
     s.importer.running=nil
     defer import_job_free(job)
+    if job.roots!=nil {
+        // What the sync built or removed is in the imported folders: the registry looks at them again.
+        if a:=s.app.assets;a!=nil && job.synced+job.removed>0 {
+            host.assets_scan(a)
+            s.content.revision+=1
+        }
+        for warning in job.report.warnings {log.warn(warning)}
+        if job.error.code!=.None {import_say(s,"A source of the project did not import: %s",job.error.message)}
+        else if job.synced>0 {import_say(s,"Imported %d sources of the project in %.1f s",job.synced,job.seconds)}
+        return
+    }
     name:=filepath.base(job.source)
     status:=&s.importer.status
     status.importing=false
@@ -374,13 +410,67 @@ import_poll :: proc(s:^Session) {
         if a!=nil {scene,_=asset.registry_relative(&a.registry,job.scene)}
         base.text_set(status.scene[:],scene)
         import_say(s,"Imported %s: the scene %s and %d assets, %d warnings, in %.1f s",name,scene,len(report.assets)-1,len(report.warnings),job.seconds)
-    case job.kind!=.Model && job.kind!=.Image || report.saved!="" || job.options.no_save:
-        import_say(s,"Imported %s: %d assets",name,len(report.assets))
     case:
-        import_say(s,"Imported %s: %d assets; its settings could not be written next to it",name,len(report.assets))
+        import_say(s,"Imported %s: %d assets",name,len(report.assets))
     }
     base.text_set(status.message[:],string(s.importer.message[:s.importer.message_length]))
     for warning in report.warnings {log.warn(warning)}
+}
+
+// The sidecar of the import an asset is the root of (the prefab of a model,
+// the texture of an image, the sound of a sound file), and the registry files
+// of what that import keeps in the imported folder; "" for any other asset.
+// Deleting the root gives the import up: its sidecar goes with it, and with
+// the sidecar what only the import can build.
+@(private)
+import_root :: proc(s:^Session,r:^asset.Registry,id:base.Asset_Id) -> (sidecar:string,cached:[]u32) {
+    file,found:=asset.registry_find(r,id)
+    if !found || s.project_root=="" {return}
+    types:asset.Types
+    asset.types_init(&types,context.temp_allocator)
+    defer asset.types_destroy(&types)
+    _,info,imported,error:=asset.import_peek(asset.registry_file_path(r,file.path,context.temp_allocator),&types)
+    if error!=.None || !imported {return}
+    source:=base.text_get(info.source[:])
+    if !filepath.is_abs(source) {source=project.path(s.project_root,source,allocator=context.temp_allocator)}
+    path:=importer.sidecar_path(source,s.project_root,allocator=context.temp_allocator)
+    listed,has,load_error:=importer.sidecar_load(path,context.temp_allocator)
+    if load_error.code!=.None || !has || len(listed.outputs)==0 || listed.outputs[0].id!=id {return}
+    files:=make([dynamic]u32,context.temp_allocator)
+    for output in listed.outputs {
+        if at,known:=r.by_id[output.id];known && output.path!="" {append(&files,at)}
+    }
+    return path,files[:]
+}
+
+// Brings what the imports of the project and of its plugins build that is not
+// versioned up to date with their sources (sources.sync), in the thread of the
+// imports: a project that was just cloned, or whose branch changed a source,
+// opens with its meshes and textures built. Nothing runs for a project whose
+// build already did it.
+@(private)
+import_sync :: proc(s:^Session) {
+    a:=s.app.assets
+    if a==nil || a.registry.root=="" || s.project_root=="" || s.importer.running!=nil {return}
+    allocator:=runtime.heap_allocator()
+    roots:=make([dynamic]string,allocator)
+    append(&roots,strings.clone(s.project_root,allocator))
+    for mount in a.registry.mounts {
+        // The assets of a plugin are the assets folder of its root.
+        if mount.imported!="" && !mount.guest {append(&roots,strings.clone(filepath.dir(filepath.dir(mount.imported)),allocator))}
+    }
+    job:=new(Import_Job,allocator)
+    job^={allocator=allocator,started=time.tick_now(),roots=roots[:]}
+    job.options={
+        texture_cache=project.content_cache_path(s.project_root,project.TEXTURE_CACHE,allocator=allocator),
+        mesh_cache=project.content_cache_path(s.project_root,project.MESH_CACHE,allocator=allocator),
+    }
+    job.thread=thread.create_and_start_with_poly_data(job,import_run)
+    if job.thread==nil {
+        import_job_free(job)
+        return
+    }
+    s.importer.running=job
 }
 
 // Waits for an import that runs and lets go of what the last one wrote:

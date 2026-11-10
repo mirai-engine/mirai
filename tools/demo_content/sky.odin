@@ -69,10 +69,10 @@ sky_of :: proc(o:^Out,sky:Sky,towards:[3]f32,u:Light_Units,sun:f32) -> (environm
     images:=SKIES
     image:=images[sky]
     heading:=math.atan2(towards.z,towards.x)
-    texture,_:=asset_at(o,fmt.tprintf("assets/sky/%s.tex",filepath.stem(image.file)))
+    texture:=imported_id(o,fmt.tprintf("source/textures/%s",image.file),asset.KIND_TEXTURE,filepath.stem(image.file))
     turned:=2*math.PI*(image.sun.x-0.5)-heading
     turn=math.atan2(math.sin(turned),math.cos(turned))
-    environment={luminance=image.per_lux>0?image.per_lux*lux(u,sun):nits(u,image.light),image=texture.id,air=render.AIR_DEFAULT}
+    environment={luminance=image.per_lux>0?image.per_lux*lux(u,sun):nits(u,image.light),image=texture,air=render.AIR_DEFAULT}
     to_sun=linalg.normalize(towards)
     if image.disc {
         height:=(0.5-image.sun.y)*math.PI

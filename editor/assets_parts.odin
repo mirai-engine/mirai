@@ -31,6 +31,7 @@ asset_detach :: proc(s:^Session,id:base.Asset_Id) -> (owner:base.Asset_Id,messag
     if !found {return {},fmt.tprintf("No asset has the id %s; asset.list lists them",base.asset_id_format(id,buffer[:]))}
     path:=file.path
     if file.owner=={} {return {},fmt.tprintf("%s is a part of no asset: it already is one of its own",path)}
+    if file.imported {return {},fmt.tprintf("%s is built by the import of its source, whose sidecar says it is a part: import the source with parts none, or duplicate the asset to have one of its own",path)}
     owner=file.owner
     bytes,error:=asset.registry_read(r,path,context.temp_allocator)
     if error==.None {error=asset.header_owner_set(bytes,{})}

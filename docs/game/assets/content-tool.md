@@ -54,7 +54,9 @@ hum:=report.assets[0].id // random the first time, kept after
 
 - Write the WAV only when its bytes differ from the file on disk, so an unchanged source is
   imported as the same file.
-- The id an import returns is random: read it with `asset.list`; never in a constant.
+- The id an import returns is random the first time and the one `<file>.import` keeps from then
+  on: read it with `asset.list`; never in a constant. Commit the WAV and its `.import`; the
+  `.sound` is built again from them.
 
 ## Sound set
 

@@ -233,7 +233,7 @@ clips_onto_a_skeleton_write_only_the_anim :: proc(t:^testing.T) {
 a_humanoid_skeleton_is_written_with_its_body_and_keeps_what_a_person_set :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"write-body")
     if folder=="" {return}
-    options:=importer.Import_Options{ignore_stored=true,no_save=true}
+    options:=importer.Import_Options{ignore_stored=true}
     options.max_texture_size=4
     body_of :: proc(t:^testing.T,folder:string,options:importer.Import_Options,types:^asset.Types) -> (map_:anim.Body_Map,bones:[]asset.Skeleton_Bone,path:string,sockets:[]asset.Skeleton_Socket) {
         model,ok:=import_ok(t,DEMO+"models/mirai/mirai.glb",options)
@@ -301,7 +301,7 @@ a_humanoid_skeleton_is_written_with_its_body_and_keeps_what_a_person_set :: proc
 imported_clips_that_move_the_bone_above_the_pelvis_carry_it_as_their_root :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"write-root")
     if folder=="" {return}
-    options:=importer.Import_Options{ignore_stored=true,no_save=true}
+    options:=importer.Import_Options{ignore_stored=true}
     options.max_texture_size=4
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     roots_of :: proc(t:^testing.T,folder:string,options:importer.Import_Options,types:^asset.Types) -> (roots:map[string]asset.Animation_Root,path:string,armature:string) {
@@ -376,7 +376,7 @@ importing_again_keeps_what_was_changed_in_a_material_and_takes_the_rest_from_the
     texture,_=strings.replace_all(texture,"\\","/",context.temp_allocator)
     gltf,_:=strings.replace_all(string(text),"../textures/leaves_color.png",texture,context.temp_allocator)
     if !testing.expect(t,os.write_entire_file(source,transmute([]u8)gltf)==nil) {return}
-    options:=importer.Import_Options{ignore_stored=true,no_save=true,max_texture_size=4}
+    options:=importer.Import_Options{ignore_stored=true,max_texture_size=4}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     import_once :: proc(t:^testing.T,source,folder:string,options:importer.Import_Options,types:^asset.Types) -> string {
         model,ok:=import_ok(t,source,options);if !ok {return ""}
@@ -438,10 +438,11 @@ importing_again_keeps_the_identity_of_every_asset :: proc(t:^testing.T) {
         testing.expect(t,!ids[item.id],"ids are distinct")
         ids[item.id]=true
     }
+    // The assets, and the sidecar that lists them.
     names,_:=os.read_all_directory_by_path(fmt.tprintf("%s/one",folder),context.temp_allocator)
-    testing.expect_value(t,len(names),len(first.assets))
+    testing.expect_value(t,len(names),len(first.assets)+1)
 
-    // A copy of a project, its sources with its assets, imports again with the ids of its assets.
+    // A copy of a project, its sources and their sidecars with its assets, imports again with the ids of its assets.
     for root in ([]string{"a","b"}) {
         source:=fmt.tprintf("%s/%s/models",folder,root)
         os.make_directory_all(source)
@@ -459,6 +460,8 @@ importing_again_keeps_the_identity_of_every_asset :: proc(t:^testing.T) {
                 data,_:=os.read_entire_file(entry.fullpath,context.temp_allocator)
                 _=os.write_entire_file(fmt.tprintf("%s/b/out/%s",folder,entry.name),data)
             }
+            sidecar,_:=os.read_entire_file(fmt.tprintf("%s/a/models/vase.obj.import",folder),context.temp_allocator)
+            testing.expect(t,len(sidecar)>0 && os.write_entire_file(fmt.tprintf("%s/b/models/vase.obj.import",folder),sidecar)==nil)
         }
         options:=importer.Import_Options{root=fmt.tprintf("%s/%s",folder,root)}
         vase,vase_ok:=import_ok(t,fmt.tprintf("%s/%s/models/vase.obj",folder,root),options)
@@ -717,7 +720,7 @@ a_radiance_image_becomes_an_hdr_texture :: proc(t:^testing.T) {
     for _ in 0..<8 {append(&hdr,200,200,200,135)} // 100
     _=os.write_entire_file(path,hdr[:])
     testing.expect_value(t,source_kind(path),Source_Kind.Image)
-    report,error:=import_source(path,fmt.tprintf("%s/out",folder),{no_save=true})
+    report,error:=import_source(path,fmt.tprintf("%s/out",folder),{})
     defer importer.report_destroy(&report)
     if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
     a:asset.Asset

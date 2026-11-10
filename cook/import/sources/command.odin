@@ -17,20 +17,20 @@ import "mirai:std/jobs"
 // font (TrueType, OpenType), a CSV of texts or a manifest of prompts
 // (<name>.prompts.json) into assets with import_source, as the editor does: a
 // model also gets the prefab of its hierarchy.
-// A model or an image is imported with the settings kept next to it in
-// <file>.import, changed by the options given; the result is written back
-// there, so importing again without options gives the same assets. --no-save
-// leaves that file as it is. --rdo-lambda 0 encodes the blocks of textures
-// for the least error and a higher lambda for smaller files. An asset whose
-// file already is the one the import gives is kept as it is, unless
-// --rebuild. Importing a source again keeps the ids and files of what an
-// earlier import of it wrote under --root (or --out); --into <id> names that
-// import by its prefab, texture or sound when the source was moved or
-// renamed. An image imported for the first time without --srgb, --data or
-// --normal holds what its name says (image_use). An earlier output outside --out is not written unless asked:
-// the import fails naming it, --in-place writes it again where it is and
-// --copy makes a separate import in --out with new ids, leaving the earlier
-// one alone. Only models and images have settings.
+// A source is imported with the settings its sidecar keeps (<file>.import),
+// changed by the options given; the result is written back there with the id
+// of each asset, so importing again without options gives the same assets,
+// and without --out, where they went. --rdo-lambda 0 encodes the blocks of
+// textures for the least error and a higher lambda for smaller files. An
+// asset whose file already is the one the import gives is kept as it is,
+// unless --rebuild. With --root, the project or the plugin the import belongs
+// to, what it builds that nobody edits goes to the imported folder of the
+// root (importer.Sidecar). An image imported for the first time without
+// --srgb, --data or --normal holds what its name says (image_use). Only
+// models and images have settings.
+// --sync <root>, once per project or plugin, imports instead every source
+// under it whose outputs in its imported folder are missing or stale (sync):
+// what a checkout needs before it runs.
 // The report goes to output, one asset per line: id, kind, bytes and path, and
 // under it, indented, what the asset holds; then the settings file and the
 // warnings. A failure goes to errors as "mirai import: <file>: <reason>".
@@ -41,13 +41,12 @@ import "mirai:std/jobs"
 // Exit codes: 0 done, 1 failed, 2 misuse.
 
 @(private="file")
-IMPORT_USAGE :: "Usage: mirai import <file> --out <folder> [--max-texture N] [--uncompressed|--blocks] [--rdo-lambda L] [--root <folder>] [--into <id>] [--in-place|--copy] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--max-triangles N] [--collision none|hull|pieces|mesh|exact] [--force-collision] [--hulls N] [--parts auto|all|none] [--front auto|negative_z|z|x|negative_x] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--skeleton <id>] [--rebuild] [--no-save] [--texture-cache <folder>] [--mesh-cache <folder>] [--profile] [--dev|--release]"
+IMPORT_USAGE :: "Usage: mirai import <file> [--out <folder>] [--max-texture N] [--uncompressed|--blocks] [--rdo-lambda L] [--root <folder>] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--max-triangles N] [--collision none|hull|pieces|mesh|exact] [--force-collision] [--hulls N] [--parts auto|all|none] [--front auto|negative_z|z|x|negative_x] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--skeleton <id>] [--rebuild] [--texture-cache <folder>] [--mesh-cache <folder>] [--profile] [--dev|--release]\n       mirai import --project <folder> [--rebuild] [--dev|--release]"
 
 command :: proc(args:[]string,output,errors:io.Writer) -> int {
     file,out:string
     options:importer.Import_Options
-    options.outside=.Refuse
-    placed:bool // --in-place or --copy was given
+    roots:=make([dynamic]string,context.temp_allocator) // of --sync
     profiled:bool
     // What the options change of the settings the source has.
     Change :: enum {Max_Texture,Textures,Rdo_Lambda,Image,Alpha_Coverage,Lods,Max_Triangles,Collision,Force_Collision,Hulls,Parts,Front,Rig,Rig_Crotch,Rig_Neck,Skeleton}
@@ -64,12 +63,9 @@ command :: proc(args:[]string,output,errors:io.Writer) -> int {
         switch args[at] {
         case "--out": out,ok=value(args,&at)
         case "--root": options.root,ok=value(args,&at)
-        case "--into":
-            text:string
-            if text,ok=value(args,&at);ok {
-                parsed:bool
-                if options.into,parsed=base.asset_id_parse(text);!parsed || options.into=={} {fmt.wprintln(errors,"mirai import: --into needs the 32-hex-digit id of the prefab, texture or sound written by the import being updated");return 2}
-            }
+        case "--sync":
+            root:string
+            if root,ok=value(args,&at);ok {append(&roots,root)}
         case "--skeleton":
             text:string
             if text,ok=value(args,&at);ok {
@@ -123,10 +119,6 @@ command :: proc(args:[]string,output,errors:io.Writer) -> int {
                 changed+={.Alpha_Coverage}
             }
         case "--force-collision": given.force_collision=true;changed+={.Force_Collision}
-        case "--in-place","--copy":
-            if placed {fmt.wprintln(errors,"mirai import: --in-place and --copy do not go together; pass one of them");return 2}
-            options.outside,placed=importer.Earlier_Outside.Copy if args[at]=="--copy" else .In_Place,true
-        case "--no-save": options.no_save=true
         case "--texture-cache": options.texture_cache,ok=value(args,&at)
         case "--mesh-cache": options.mesh_cache,ok=value(args,&at)
         case "--profile": profiled=true
@@ -206,13 +198,18 @@ command :: proc(args:[]string,output,errors:io.Writer) -> int {
     }
     defer jobs.system_destroy(&js)
     options.worker={system=&js,worker=jobs.OWNER}
+    if len(roots)>0 {
+        if file!="" || out!="" || changed!={} {fmt.wprintln(errors,"mirai import: --project imports every source of the project as its sidecar says; it takes no file, --out or settings");return 2}
+        return sync_command(roots[:],options,output,errors)
+    }
     kind:=source_kind(file)
-    if file=="" || out=="" {fmt.wprintln(errors,IMPORT_USAGE);return 2}
+    // Without --out the import goes where its sidecar says, which only a project keeps with the source.
+    if file=="" || out=="" && options.root=="" {fmt.wprintln(errors,IMPORT_USAGE);return 2}
     if changed&{.Image,.Alpha_Coverage}!={} && kind!=.Image {fmt.wprintln(errors,"mirai import: --srgb, --normal, --normal-green-down, --data and --alpha-coverage apply only to images");return 2}
     if changed&{.Lods,.Max_Triangles,.Collision,.Force_Collision,.Hulls,.Parts,.Front,.Rig,.Rig_Crotch,.Rig_Neck,.Skeleton}!={} && kind!=.Model {fmt.wprintln(errors,"mirai import: --lods, --max-triangles, --collision, --force-collision, --hulls, --parts, --front, --skeleton and the --rig options apply only to models");return 2}
 
     if kind==.Model || kind==.Image {
-        stored,found,settings_error:=importer.settings_load(file)
+        stored,found,settings_error:=importer.settings_load(file,options.root,out)
         if settings_error.code!=.None {
             fmt.wprintfln(errors,"mirai import: %s: %s",file,settings_error.message)
             return 1
@@ -253,9 +250,27 @@ command :: proc(args:[]string,output,errors:io.Writer) -> int {
     }
     defer importer.report_destroy(&report)
     written_print(output,report.assets[:])
-    if report.saved!="" {fmt.wprintfln(output,"settings %s",report.saved)}
+    if report.saved!="" {fmt.wprintfln(output,"sidecar %s",report.saved)}
     for warning in report.warnings {fmt.wprintfln(output,"warning: %s",warning)}
     return 0
+}
+
+// --sync: every root in turn, one line each with what its sync did.
+@(private="file")
+sync_command :: proc(roots:[]string,options:importer.Import_Options,output,errors:io.Writer) -> int {
+    code:=0
+    for root in roots {
+        started:=time.tick_now()
+        report:=sync(root,{texture_cache=options.texture_cache,mesh_cache=options.mesh_cache,rebuild=options.rebuild,worker=options.worker})
+        defer sync_report_destroy(&report)
+        for warning in report.warnings {fmt.wprintfln(output,"warning: %s",warning)}
+        for failure in report.failures {fmt.wprintfln(errors,"mirai import: %s",failure)}
+        if len(report.failures)>0 {code=1}
+        if report.sources>0 || report.removed>0 {
+            fmt.wprintfln(output,"%s: %d of %d imported sources built again, %d stale files removed (%.1f s).",root,report.imported,report.sources,report.removed,time.duration_seconds(time.tick_since(started)))
+        }
+    }
+    return code
 }
 
 // The zones of a profiled import (importer.profile_totals), each with its

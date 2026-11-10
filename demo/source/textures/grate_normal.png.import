@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "settings": {
+    "max_texture_size": 0,
+    "textures": "Blocks",
+    "rdo_lambda": 0,
+    "image": "Normal",
+    "alpha_coverage": 0,
+    "lods": "Auto",
+    "max_triangles": 0,
+    "collision": "None",
+    "force_collision": false,
+    "collision_hulls": 0,
+    "parts": "Auto",
+    "front": "Auto",
+    "rig": "Source",
+    "rig_crotch": 0,
+    "rig_neck": 0,
+    "skeleton": "00000000000000000000000000000000"
+  },
+  "folder": "surfaces/metal",
+  "outputs": [
+    {"kind": "TEX", "name": "grate_normal", "index": 0, "id": "c9d9c9f0f1dea3ec0ceec0f9671187eb", "path": "surfaces/metal/grate_normal.tex"}
+  ]
+}

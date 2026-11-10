@@ -223,6 +223,25 @@ behind the `presentation` asset kinds of `asset.KINDS` (textures, sounds, interf
 prompts) without counting them as missing. It carries `input.mirai`, with the bindings Project
 Settings > Input changed, and SDL3, which the executable links.
 
+## Imported sources
+
+The meshes, textures, sounds and fonts an import builds are not versioned: they are in
+`.mirai/imported/` of the project and of each plugin with assets, and are built again from the
+sources and their sidecars ([sync](../../mirai-imports/references/imports.md#sync)).
+
+- **A build imports first, and says so.** `mirai build` of a project runs the sync of the project
+  and of its active plugins before it compiles (`build_imports`, `cook/build/imports.odin`), also
+  when the library is unchanged, and the cook of a game runs it before it reads the assets
+  (`Cook_Desc.sync`). Both use the engine's import program, since the tool builds without the
+  importers; a game build builds the engine first when the project has sidecars and the program is
+  not current. A source that does not import fails the build naming it. There is no other step: a
+  checkout that was just cloned runs after `mirai build`, and so does continuous integration.
+  `mirai import --project <folder>` is the sync alone.
+- **What ships.** A game has no imported folder and no sources: the cook writes every asset it
+  reaches at its path in the assets of the game, whichever of the two folders it came from.
+- **The installed engine** carries the imported folder of each of its plugins, built when it is
+  packaged (`mirai package engine`): nothing is imported on the machine that installs it.
+
 ## Asset cooking
 
 `cook_assets` (`cook/build/cook.odin`) leaves in a folder the assets the game can reach. The `Game`
@@ -258,14 +277,12 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
   `content_hash` of the `.tex`
   ([texture cache](../../mirai-imports/references/imports.md#texture-cache)).
 - **Fast textures.** A texture the editor imported Fast ships Final, whatever `"textures"` says:
-  the cook imports its source again (by `Import_Info.source`, relative to `Cook_Desc.root`, with
-  the settings of its `.import`) into a temporary folder and writes the texture of the same image
-  with the id it has. The import runs in the engine's import program (`Cook_Desc.import_program`,
-  what `mirai import` runs), since the tool builds without the importers; `import_source` lets a
-  caller that has them import in-process. The import fills the texture cache, so the editor takes
-  that Final from
-  then on. A source that is missing, no longer has the image or builds another texture fails the
-  cook with `Source_Failed` and says how to fix it.
+  the [sync](#imported-sources) the cook starts with builds it again from its source, in the
+  imported folder and with the id it has. It runs in the engine's import program
+  (`Cook_Desc.import_program`, what `mirai import` runs); `Cook_Desc.sync` lets a caller that has
+  the importers run it in-process. It fills the texture cache, so the editor takes that Final from
+  then on. A source that does not import, or a texture that is still Fast, fails the cook with
+  `Source_Failed` and says how to fix it.
 - **Animations.** An `.anim` is written cooked: its clips sampled as the runtime plays them
   (`asset.animation_compress`, [storage](../../mirai-std/references/anim-storage.md)).
 - **Prefab instances.** A scene or a prefab with a stale instance is written with its instances up

@@ -9,6 +9,9 @@ description: Import models, textures, fonts, sounds and texts into a Mirai game 
 
 Assets are binary files under `assets/`; art sources stay in `source/`, never shipped. Every asset
 has an id in its header: components and scenes name it by id; a prefab spawned from code, by path.
+Commit `source/` with the `.import` beside each file and `assets/`. The meshes, textures, sounds
+and fonts an import builds are not there: they are in `.mirai/imported/`, never committed, and
+`mirai build` makes them again from the sources on a fresh clone.
 
 ## Map
 
@@ -33,13 +36,21 @@ mirai import source/sounds/step.wav --out assets/player --root .
 - A model writes meshes, materials, textures, skeletons, clips and a `.prefab`: instantiate that.
 - An image is color unless its name says otherwise (`normal`, `_n`, `rough`, `metal`, `orm`,
   `_ao`, `height`, `mask`); force it with `--srgb`, `--data`, `--normal`, `--normal-green-down`.
-- Flags are saved in `<file>.import` beside the source and repeat on the next import.
+- `<file>.import` beside the source keeps the flags, which repeat on the next import, and the id
+  of each asset. Never delete it: without it the next import gives new ids, and what named the
+  old ones names nothing.
 - Triangle and texture limits and the collision shape are flags too; colliders a source brings
   win unless `--force-collision`. `mirai import` without arguments prints every flag.
 - A model without a skeleton that must animate: `--rig` with the template that fits it. Clips of
   another file onto a skeleton the project has: `--skeleton <id>` ([animation](animation.md)).
-- Importing again from the same path updates in place, keeping ids and material edits; after
-  moving or renaming the source pass `--into <id>` of its prefab, texture or sound.
+- Importing again updates in place, keeping ids and material edits; `--out` may be left out. Move
+  or rename a source together with its `.import`. `mirai import --project .` imports every source
+  whose assets are missing or stale.
+- Materials, prefabs, skeletons and clips an import writes are files of `assets/`: edit and move
+  them. Its meshes and textures are listed by `asset.list` at their paths, but are not files of
+  `assets/` and are not edited: change the source, or duplicate the asset.
+- A file outside the project imports too, but then everything it writes is a file of `assets/`
+  to commit: copy sources into `source/` first.
 - With an editor session: `asset.import` (MCP `asset_import`) answers when it ends, with what it
   wrote; a CLI import is picked up by the editor at its next call. `asset.list` shows what exists.
 
