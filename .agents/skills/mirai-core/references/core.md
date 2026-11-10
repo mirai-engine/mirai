@@ -521,9 +521,10 @@ those that happen in the loop are reported as [problems](#problems).
 
 ## Test worlds
 
-A test that needs a world declares a struct and lets `core` describe it
-(`core/test_world_test.odin`): no test writes `Table_Info` or `Storage_Info` rows, nor the init,
-destroy, settle, copy and swap of its tables.
+A test that needs a world declares a struct and lets `core` describe it (`core/test_world.odin`,
+public API, so a game's tests reach it through the declarations of the engine libraries): no test
+writes `Table_Info` or `Storage_Info` rows, nor the init, destroy, settle, copy and swap of its
+tables.
 
 - The struct starts with `using world:core.Test_World`; each other field is a `core.Table(T)` of a
   component or the value of a storage. What the attributes of `T` say is read from the source that

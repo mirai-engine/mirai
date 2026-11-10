@@ -537,6 +537,13 @@ then runs them one after another in the order asked.
   binaries when their sources changed, into `<project>/.mirai/build/tests/`.
 - Every test executable runs in the root of the engine, also one of a project package: a relative
   path in a test is relative to the engine root (`demo/assets/...`).
+- The compiler reads every `.odin` of a folder, tests included. The libraries of a project compile
+  its game, editor and plugins from `.mirai/build/stage`, a copy without the `_test.odin` (as the
+  engine and plugin stages leave them out); only a test build reads the project itself. What the
+  compiler says of the stage, and what it read of it, is said of the project.
+- A test of a project package sees the engine through its declarations, which carry no test file:
+  what a game's tests use is public API of the engine, as the test-world builder of `core`
+  ([test worlds](../../mirai-core/references/core.md#test-worlds)).
 - An executable compiles again only when the [fingerprint](build.md#fingerprint) of what its last
   build read changed, the `_test.odin` of every folder it read included, or its flags or the
   compiler: a date that moves or a checkout that restores the text compiles nothing. The last
