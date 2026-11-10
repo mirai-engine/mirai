@@ -3,6 +3,7 @@ package navigation
 import "base:runtime"
 import "core:testing"
 import "mirai:core"
+import "mirai:std/spatial"
 
 // An allocator that serves `remaining` requests of its owner and refuses the rest.
 @(private="file")
@@ -51,7 +52,7 @@ navigation_scratch_without_memory_reports_it_and_leaves_its_part :: proc(t:^test
                 done&&=len(seen)==8
             case .Avoid:
                 agents_avoid(nil,&agents,&w.paths,1.0/60,&problems)
-                done=len(agents.sorted)==len(agents.near) && len(agents.scratch)==len(agents.near)
+                done=len(agents.grid.items)>=len(agents.near)
             }
             context.allocator=owner
             limit.remaining=max(int)
@@ -64,7 +65,7 @@ navigation_scratch_without_memory_reports_it_and_leaves_its_part :: proc(t:^test
         }
         testing.expectf(t,done && refused,"%v: reported without memory, and with it it goes through",call)
         delete(builds.seen)
-        delete(agents.near);delete(agents.sorted);delete(agents.scratch)
+        delete(agents.near);spatial.grid_destroy(&agents.grid)
         core.test_world_destroy(&w)
     }
 }

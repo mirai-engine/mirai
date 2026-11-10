@@ -1,5 +1,6 @@
 package navigation
 
+import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import "core:slice"
@@ -1898,6 +1899,84 @@ agents_step_aside_from_those_they_meet_within_the_horizon :: proc(t:^testing.T) 
         turned:=first.velocity!=[3]f32{4,0,0} && second.velocity!=[3]f32{-4,0,0}
         still:=first.velocity==[3]f32{4,0,0} && second.velocity==[3]f32{-4,0,0}
         testing.expectf(t,turned if i==0 else still,"%v m apart they go at %v and %v",distance,first.velocity,second.velocity)
+    }
+    testing.expect_value(t,f.problems.count,0)
+}
+
+// The neighbors an agent gathers from the grid are, among those it may meet
+// within the horizon, the nearest ones ORCA counts: the same as a look at
+// every other agent finds, in a crowd, far apart, on two floors, in the air,
+// beside an obstacle and with positions that are not numbers or are huge.
+@(test)
+agents_gather_the_nearest_neighbors_they_may_meet :: proc(t:^testing.T) {
+    f:Nav_Test
+    if !nav_test_init(t,&f) {return}
+    defer nav_test_destroy(&f)
+    Case :: enum {Crowd,Apart,Floors,Air,Obstacle,Hostile}
+    rng:=mm.rng_make(3)
+    for c in Case {
+        clear(&f.run.near)
+        jitter :: proc(rng:^mm.Rng) -> mm.Vec3 {return {mm.random_range(rng,-0.1,0.1),0,mm.random_range(rng,-0.1,0.1)}}
+        walker :: proc(f:^Nav_Test,position,velocity:mm.Vec3) {append(&f.run.near,Near{entity=core.Entity(len(f.run.near)+1),position=position,velocity=velocity,radius=0.4,height=1.8,avoids=true})}
+        switch c {
+        case .Crowd:
+            for i in 0..<240 {walker(&f,mm.Vec3{f32(i%20)*0.7,1,f32(i/20)*0.7}+jitter(&rng),{1,0,0})}
+        case .Apart:
+            for d in ([?]f32{0,3,7,11,15,30,70}) {walker(&f,{d,1,0}+jitter(&rng),{-2,0,0})}
+        case .Floors:
+            for i in 0..<40 {walker(&f,mm.Vec3{f32(i%10),1+f32(i/20)*4,f32(i/10%2)}+jitter(&rng),{0,0,1})}
+        case .Air:
+            for i in 0..<60 {
+                position:=mm.Vec3{f32(i%5)*1.5,2+f32(i/5%4)*1.2,f32(i/20)*1.5}+jitter(&rng)
+                append(&f.run.near,Near{entity=core.Entity(i+1),position=position,velocity={0,1,0},radius=0.3,height=0.8,avoids=true,flies=true})
+            }
+        case .Obstacle:
+            for i in 0..<12 {walker(&f,mm.Vec3{f32(i)*0.9,1,0}+jitter(&rng),{3,0,0})}
+            append(&f.run.near,Near{entity=100,position={4,1,1},velocity={5,0,0},radius=1.5,height=2})
+        case .Hostile:
+            nan:=math.nan_f32()
+            for i in 0..<10 {walker(&f,{f32(i),1,0},{1,0,0})}
+            walker(&f,{nan,1,0},{1,0,0})
+            walker(&f,{1e30,1,-1e30},{1,0,0})
+            walker(&f,{2,1,nan},{nan,0,0})
+        }
+        // Without a path that moves nobody steps aside: the tick only fills the grid.
+        agents_avoid(&f.nav,&f.run,&f.paths,1.0/60,&f.problems)
+        fastest,widest:f32
+        for near in f.run.near {
+            if near.avoids {fastest=max(fastest,linalg.length(near.velocity))}
+            widest=max(widest,near_sphere(near))
+        }
+        for near,i in f.run.near {
+            if !(abs(near.position.x)<1e6) || !(abs(near.position.z)<1e6) {continue}
+            top:=linalg.length(near.velocity)
+            agent_neighbors(&f.run,i,top,NAV_AGENT_HORIZON*(top+fastest)+near_sphere(near)+widest)
+            gathered,every:[dynamic]f32
+            defer delete(gathered)
+            defer delete(every)
+            for other in f.run.neighbors {append(&gathered,linalg.length2(other.position-near.position.xz))}
+            for other in f.run.neighbors_air {append(&gathered,linalg.length2(other.position-near.position))}
+            for other,j in f.run.near {
+                if j==i {continue}
+                velocity:=other.velocity if other.avoids else {}
+                reach:=NAV_AGENT_HORIZON*(top+linalg.length(velocity))
+                distance2:f32
+                if near.flies {
+                    reach+=near_sphere(near)+near_sphere(other)
+                    distance2=linalg.length2(other.position-near.position)
+                } else {
+                    if !(abs(other.position.y-near.position.y)<=max(near.height,other.height)) {continue}
+                    reach+=near.radius+other.radius
+                    distance2=linalg.length2(other.position.xz-near.position.xz)
+                }
+                if distance2<=reach*reach {append(&every,distance2)}
+            }
+            slice.sort(gathered[:])
+            slice.sort(every[:])
+            nearest:=min(len(every),ai.AVOID_MAX_NEIGHBORS)
+            same:=len(gathered)>=nearest && slice.equal(gathered[:nearest],every[:nearest])
+            testing.expectf(t,same,"%v: agent %d gathers %v nearest, and is near %v",c,i,gathered[:min(len(gathered),nearest)],every[:nearest])
+        }
     }
     testing.expect_value(t,f.problems.count,0)
 }
