@@ -91,7 +91,7 @@ Run_Observed :: struct {
 @(private)
 observe_api_register :: proc(s:^editor.Session) {
     defaults:=Api_Play_Observe_Params{nearest=API_OBSERVE_NEAREST,step={focus=-1,trace={every=1}}}
-    editor.api_method_register(s,{name="play.observe",summary="Everything needed for one decision in one small answer: the tick, the frame time, the focused player (place, velocity, grounded, facing), the buttons of the screen it sees, the problems since the last observe, whether it is stuck and the nearest targets. With step it first runs those ticks as play.step does, so one call acts and observes.",params=Api_Play_Observe_Params,params_info=type_info_of(Api_Play_Observe_Params),result=Api_Play_Observe,result_info=type_info_of(Api_Play_Observe),writes_result=true,defaults=&defaults,run=api_play_observe})
+    editor.api_method_register(s,Api_Play_Observe_Params,Api_Play_Observe,{name="play.observe",summary="Everything needed for one decision in one small answer: the tick, the frame time, the focused player (place, velocity, grounded, facing), the buttons of the screen it sees, the problems since the last observe, whether it is stuck and the nearest targets. With step it first runs those ticks as play.step does, so one call acts and observes.",writes_result=true,defaults=&defaults,run=api_play_observe})
 }
 
 @(private)
@@ -155,7 +155,7 @@ observe_targets_find :: proc(s:^editor.Session,w:core.World_Ref,names:[]string,b
 @(private)
 observe_facing :: proc(w:core.World_Ref,body:core.Entity) -> [3]f32 {
     if moves:=core.world_table_of(w,input.Move_Input);moves!=nil {
-        if move,found:=core.get(core.read(moves),body);found {
+        if move,found:=core.get(moves,body);found {
             yaw:=f64(move.look_yaw)
             return {f32(-math.sin(yaw)),0,f32(-math.cos(yaw))}
         }
@@ -186,7 +186,7 @@ play_observe_write :: proc(s:^editor.Session,out:^serial.Writer,r:^editor.Run,na
     if body!=core.NONE {
         velocity:[3]f32
         if motions:=core.world_table_of(w,core.Motion);motions!=nil {
-            if motion,moves:=core.get(core.read(motions),body);moves {velocity=motion.linear}
+            if motion,moves:=core.get(motions,body);moves {velocity=motion.linear}
         }
         facing:=observe_facing(w,body)
         api.write_key(out,"player");serial.write_u8(out,'{')

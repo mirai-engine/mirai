@@ -71,7 +71,7 @@ Mixer_Stats :: struct {
 @(private)
 Command_Kind :: enum u8 {
     Voice_Play,Voice_Stop,Voice_Pause,Voice_Volume,Voice_Pitch,Voice_Pan,Voice_Loop,Voice_Fade,Voice_Place,Voice_Occlusion,Voice_Lowpass,Voice_Reverb,
-    Bus_Volume,Bus_Mute,Bus_Lowpass,Bus_Duck,Bus_Reverb,
+    Bus_Volume,Bus_Mute,Bus_Lowpass,Bus_Duck,Bus_Reverb,Bus_Send,
     Reverb,
     Listener,
     Output,
@@ -137,6 +137,7 @@ Mixer :: struct {
     reverb:Reverb_Unit,  // the room
     reverb_bus:u16,      // where the room returns
     bus_reverbs:[]Reverb_Unit,
+    limiter:Limiter,
     scratch:[]f32,     // source frames of a voice that plays from a feed, laid out in a row
     listener:Listener,
     listener_serial:u32,
@@ -257,6 +258,7 @@ mixer_init :: proc(m:^Mixer,desc:Mixer_Desc) -> Error {
     for &bus in m.bus_shadows {bus.volume=1}
     for &bus in m.buses {bus.volume=1;bus.gain=1;bus.duck_gain=1;bus.duck_gain_now=1}
     m.listener.rotation=1
+    m.limiter.gain=1
     if m.spatial_mono,failed=make([]f32,CHUNK_FRAMES,allocator);failed!=nil {return .Out_Of_Memory}
     if m.spatial_old,failed=make([]f32,CHUNK_FRAMES,allocator);failed!=nil {return .Out_Of_Memory}
     if error:=hrtf_load(&m.hrtf,m.sample_rate,allocator);error!=.None {return .Invalid_Desc if error==.Unsupported_Format else error}
@@ -364,8 +366,8 @@ command_pop :: proc "contextless" (m:^Mixer,command:^Command) -> bool {
     return true
 }
 
-// Renders len(out)/channels frames, interleaved, replacing what out held.
-// The samples are not clamped: a mix louder than full scale goes above 1.
+// Renders len(out)/channels frames, interleaved, replacing what out held,
+// under LIMITER_CEILING.
 // Safe to call from an audio thread: it takes no lock and allocates nothing.
 mixer_render :: proc "contextless" (m:^Mixer,out:[]f32) {
     frames:=len(out)/m.channels
@@ -405,13 +407,14 @@ commands_apply :: proc "contextless" (m:^Mixer) {
             m.reverb.params=reverb_command(&command)
             m.reverb_bus=u16(command.index)
         case .Bus_Reverb:m.bus_reverbs[command.index].params=reverb_command(&command)
+        case .Bus_Send:m.buses[command.index].send=Bus(command.frames)
         case .Listener:
             m.listener={command.vectors[0],command.vectors[1],command.rotation}
             m.listener_serial+=1
         case .Output:
             m.output_now=Output_Kind(command.index)
             // What a voice kept for the other output starts over.
-            for &v in m.voices {v.binaural_live,v.pan_valid=false,false}
+            for &v in m.voices {v.binaural_live=false}
         case .Sound_Release:
             for &v,i in m.voices {
                 if v.has_next && v.next.sound==command.index {voice_next_cancel(m,u32(i))}

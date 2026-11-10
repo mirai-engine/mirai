@@ -86,14 +86,14 @@ world_step :: proc(w:^Step_Test) {
 parts_of :: proc(w:^Step_Test,e:core.Entity) -> (child:core.Entity,count:int) {
     for row in 0..<core.count(&w.parts) {
         c:=core.entity_at(&w.parts,row)
-        if parent,has:=core.get(core.read(&w.parents),c);has && parent.entity==e {child,count=c,count+1}
+        if parent,has:=core.get(&w.parents,c);has && parent.entity==e {child,count=c,count+1}
     }
     return
 }
 
 @(private="file")
 mesh_of :: proc(w:^Step_Test,child:core.Entity) -> base.Asset_Id {
-    shown,_:=core.get(core.read(&w.meshes),child)
+    shown,_:=core.get(&w.meshes,child)
     return shown.mesh
 }
 
@@ -125,7 +125,7 @@ a_shape_shows_and_collides_through_one_unsaved_child :: proc(t:^testing.T) {
         child,count:=parts_of(&w,c.shape)
         if !testing.expectf(t,count==1,"%s: %d children",c.name,count) {continue}
         testing.expectf(t,!core.has(&w.ids,child),"%s: the child has no Id, so no scene saves it",c.name)
-        collider,has:=core.get(core.read(&w.colliders),child)
+        collider,has:=core.get(&w.colliders,child)
         testing.expectf(t,has && collider.kind==c.kind && collider.size==0 && collider.center==0,"%s: %v",c.name,collider.kind)
         mesh:=mesh_of(&w,child)
         testing.expectf(t,host.assets_mesh_generated(&a.assets,mesh),"%s: generated mesh",c.name)
@@ -141,7 +141,7 @@ a_shape_shows_and_collides_through_one_unsaved_child :: proc(t:^testing.T) {
         }
     }
     // A shape whose Collider physics would also make reports it.
-    core.get(&w.colliders,static).kind=.Box
+    core.edit(&w.colliders,static).kind=.Box
     world_step(&w)
     testing.expect_value(t,w.problems.count,1)
 }
@@ -168,7 +168,7 @@ a_change_builds_again_and_releases_only_what_the_world_made :: proc(t:^testing.T
     testing.expect(t,w.cache.pass==pass && mesh_of(&w,child)==first)
 
     // A new source: a new mesh on the same child, and the old one released.
-    core.get(&w.shapes,e).depth=2
+    core.edit(&w.shapes,e).depth=2
     world_step(&w)
     again,count:=parts_of(&w,e)
     second:=mesh_of(&w,again)
@@ -176,16 +176,16 @@ a_change_builds_again_and_releases_only_what_the_world_made :: proc(t:^testing.T
     testing.expect(t,host.assets_mesh_generated(&a.assets,second) && !host.assets_mesh_generated(&a.assets,first))
 
     // A source that cannot be built keeps the mesh it had and says why.
-    core.get(&w.shapes,e).depth=-1
+    core.edit(&w.shapes,e).depth=-1
     world_step(&w)
     testing.expect(t,mesh_of(&w,child)==second && host.assets_mesh_generated(&a.assets,second))
     testing.expect_value(t,w.problems.count,1)
-    core.get(&w.shapes,e).depth=1
+    core.edit(&w.shapes,e).depth=1
 
     // Becoming a body changes the collider.
     core.add(&w.rigids,e,physics.RIGID_BODY_DYNAMIC)
     world_step(&w)
-    collider,_:=core.get(core.read(&w.colliders),child)
+    collider,_:=core.get(&w.colliders,child)
     testing.expect_value(t,collider.kind,physics.Collider_Kind.Hull)
     third:=mesh_of(&w,child)
 
@@ -271,7 +271,7 @@ a_solid_is_made_of_its_brush_children_and_follows_their_changes :: proc(t:^testi
     testing.expectf(t,abs(volume_of(&a,first)-7.73)<0.05,"volume %v",volume_of(&a,first))
 
     // Moving a brush builds once, on the tick that sees it.
-    core.get(&w.transforms,cut).position={1,1,0.9}
+    core.edit(&w.transforms,cut).position={1,1,0.9}
     world_step(&w)
     moved:=mesh_of(&w,child)
     testing.expect(t,moved!=first && !host.assets_mesh_generated(&a.assets,first))
@@ -280,13 +280,13 @@ a_solid_is_made_of_its_brush_children_and_follows_their_changes :: proc(t:^testi
     testing.expect(t,mesh_of(&w,child)==moved && len(w.cache.dirty)==0)
 
     // Reordered, the cut comes first and has nothing to cut: the whole box, and a problem.
-    core.get(&w.parents,box).order=2
+    core.edit(&w.parents,box).order=2
     world_step(&w)
     reordered:=mesh_of(&w,child)
     testing.expect(t,reordered!=moved)
     testing.expectf(t,abs(volume_of(&a,reordered)-8)<1e-3,"volume %v",volume_of(&a,reordered))
     testing.expect(t,reported(&w,solid,"shapes.first_brush"))
-    core.get(&w.parents,box).order=0
+    core.edit(&w.parents,box).order=0
     world_step(&w)
     back:=mesh_of(&w,child)
     testing.expect(t,back!=reordered && volume_of(&a,back)<7.9)
@@ -356,7 +356,7 @@ outlines_without_brushes_do_no_work_and_allocate_nothing_while_nothing_changes :
     a.app.allocator=mem.tracking_allocator(&track)
     // The entities move: what moves an outline is not its source.
     for i in 0..<3 {
-        for row in 0..<core.count(&w.transforms) {core.at(&w.transforms,row).position.y=f32(i)}
+        for row in 0..<core.count(&w.transforms) {core.edit_at(&w.transforms,row).position.y=f32(i)}
         world_step(&w)
     }
     a.app.allocator=allocator

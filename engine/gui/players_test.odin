@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
+import audio "mirai:engine/audio"
 import inp "mirai:engine/input"
 import render "mirai:engine/render"
 import volume "mirai:engine/volume"
@@ -48,6 +49,7 @@ Players_Fixture :: struct {
     actions:inp.Frame_Actions,
     requests:UI_Requests,
     effects:UI_Effects,
+    sounds:audio.Sound_Requests,
     seat_requests:inp.Seat_Requests,
     contexts:inp.Input_Contexts,
     context_requests:inp.Context_Requests,
@@ -61,7 +63,7 @@ players_frame :: proc(f:^Players_Fixture) {
     world:=core.test_world_ref(w)
     frame_begin(world,core.read(&w.screens),core.read(&w.widgets),core.read(&w.worlds),core.read(&w.hidden),core.read(&w.parents),core.read(&w.meshes),
         UI_SETTINGS_DEFAULT,UI_PREFERENCES_DEFAULT,{},core.ref(&f.state),core.read(&w.seats),core.read(&w.drivables),core.ref(&f.bindings),core.ref(&f.actions),
-        {},core.read(&w.cameras),core.read(&w.exposures),core.read(&w.view_volumes),core.read(&w.volumes),&f.requests,&f.effects,&f.gui,&f.app,&f.problems,false)
+        {},core.read(&w.cameras),core.read(&w.exposures),core.read(&w.view_volumes),core.read(&w.volumes),&f.requests,&f.effects,&f.sounds,&f.gui,&f.app,&f.problems,false)
     widgets_build(world,&f.gui,&f.app,&f.problems)
 }
 
@@ -191,7 +193,7 @@ a_screen_on_the_body_of_a_player_shows_in_the_part_of_that_player :: proc(t:^tes
     testing.expect(t,f.gui.skipped==before+3 && before>skipped,"The frames skipped are counted")
 
     // What one body shows changes: its player builds again, the other does not.
-    core.get(&w.huds,bodies[1]).coins=8
+    core.edit(&w.huds,bodies[1]).coins=8
     core.test_world_settle(w)
     players_frame(f)
     testing.expect(t,second.open && context_shows(second.ctx,"8") && first.skipped,"Only the player whose HUD changed is built")

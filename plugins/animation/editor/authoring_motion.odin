@@ -47,8 +47,8 @@ motion_write_defaults :: proc() -> ^Motion_Write_Params {
 
 authoring_motion_register :: proc(s:^editor.Session) {
     defaults:=motion_write_defaults();if defaults==nil {return}
-    authoring_method_register(s,{name="animation.motion.set",summary="Makes or replaces a .motion profile that entities share: warp windows, pose warping and distance tracks. An invalid one changes nothing. In Edit.",params=Motion_Write_Params,params_info=type_info_of(Motion_Write_Params),defaults=defaults,run=authoring_motion_set},Authoring_Write_Result,type_info_of(Authoring_Write_Result))
-    editor.api_method_register(s,{name="animation.motion.distance",summary="The clip and time at which a distance track of a .motion profile reaches a distance, without advancing the world.",params=Motion_Distance_Params_Query,params_info=type_info_of(Motion_Distance_Params_Query),result=Motion_Distance_Result,result_info=type_info_of(Motion_Distance_Result),flags={.Read_Only},run=authoring_motion_distance})
+    editor.api_method_register(s,Motion_Write_Params,Authoring_Write_Result,{name="animation.motion.set",summary="Makes or replaces a .motion profile that entities share: warp windows, pose warping and distance tracks. An invalid one changes nothing. In Edit.",defaults=defaults,run=authoring_motion_set,writes_result=true})
+    editor.api_method_register(s,Motion_Distance_Params_Query,Motion_Distance_Result,{name="animation.motion.distance",summary="The clip and time at which a distance track of a .motion profile reaches a distance, without advancing the world.",flags={.Read_Only},run=authoring_motion_distance})
 }
 
 @(private)
@@ -169,7 +169,7 @@ authoring_motion_inspect :: proc(s:^editor.Session,call:^api.Call) {
         named:=SPATIAL_TARGET_PARAMS_DEFAULT
         named.kind=target.target.kind;named.bone=target.target.bone;named.socket=target.target.socket
         named.position,named.rotation,named.scale=target.target.position,target.target.rotation,target.target.scale
-        if id,found:=core.get(core.read(ids),target.target.entity);found {base.text_set(named.entity[:],fmt.tprintf("%016x",u64(id.value)))}
+        if id,found:=core.get(ids,target.target.entity);found {base.text_set(named.entity[:],fmt.tprintf("%016x",u64(id.value)))}
         api.write_key(call.out,"target");authoring_write_value(call,&named,type_info_of(Spatial_Target_Params))
         api.write_numbers(call.out,"world_position",target.world.position)
         rotation:=target.world.rotation;api.write_key(call.out,"world_rotation");authoring_write_value(call,&rotation,type_info_of(mm.Quat))

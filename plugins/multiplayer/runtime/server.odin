@@ -39,15 +39,14 @@ Server_Object :: struct {
     position:[3]f32,       // the last one the host was told
     off:u16,               // the components off it last published (Pose.off)
     disabled:bool,         // it was off when it last published (Pose.disabled)
+    visibility:u32,        // the bits the host was told (Visibility.mask)
+    retype:bool,           // its entity gained or lost what its type lists: it is given the type of what it has now
+    predict:bool,          // Replicate.predict as it last published (Pose.predict)
 }
 
 // Where a connection looks from: the entity it owns first.
 @(private)
 View :: struct {position:[3]f32,entity:core.Entity,set:bool}
-
-// A relevance_set for an entity whose object is made at the next publish.
-@(private)
-Relevance_Request :: struct {entity:core.Entity,connection:Connection,relevant:bool}
 
 // What a connection knows of the world of the server.
 @(private)
@@ -56,6 +55,7 @@ Server_Peer :: struct {
     told:bool,  // it heard the change of the world it is in now
     ready:bool, // it said it is in that world
     held:bool,  // it sees no object and hears nothing of the game (wire.connection_hold)
+    sees:u32,   // the visibility bits the host was told (Visibility.sees of its seat)
 }
 
 // A group a connection gains or loses (none: all), which the host had no room for.
@@ -71,10 +71,13 @@ Server :: struct {
     objects:[]Server_Object, // by object index
     views:[]View,            // by connection index
     peers:[]Server_Peer,     // by connection index
-    requests:[]Relevance_Request,
-    request_count:int,
-    ancestry:[3]u64,         // the version of the Hierarchy and the layouts of Replicate and of Scene_Reference the ancestors and sections follow
-    boxes:[2]u64,            // the version of Scene_Reference and the stamps of the World_Transform of its rows the sections of each object were looked at for
+    visibility:[2]core.Seen, // what of Visibility and of input.Seat the bits of the objects and of the connections were read for
+    layouts:[]core.Shape,    // by table of the world info: the rows of each replicated component the types of the objects were looked at for
+    changed:[]bool,          // likewise: it changed since the publish before
+    moved:[2]core.Shape,     // the rows of core.Motion and of input.Move_Input, likewise
+    ancestry:Ancestry,
+    boxes:core.Seen,         // what of Scene_Reference the sections of each object were looked at for,
+    places:u64,              // and the stamps of the World_Transform of its rows
     section_boxes:[dynamic]Section_Box, // the boxes of the sections as of boxes
     scene:base.Asset_Id,     // the scene the world is, and the number of that change (scene.Scene_Root)
     changes:u32,
@@ -86,6 +89,14 @@ Server :: struct {
     groups:[dynamic]Group_Change,
     gone:[dynamic]Gone_Due,
     notices:[dynamic]Gone_Notice, // which the host had no room for
+}
+
+// What the ancestors and the sections of the objects follow: the version of the Hierarchy and
+// the rows of Replicate and of Scene_Reference.
+@(private)
+Ancestry :: struct {
+    hierarchy:u64,
+    objects,references:core.Shape,
 }
 
 // The box of a section where it is, and the box of the world around it.
@@ -119,7 +130,6 @@ filter_of :: proc "contextless" (audience:Audience) -> wire.Filter {
     case .Near:   return .Spatial
     case .Always: return .Always
     case .Owner:  return .Owner
-    case .Custom: return .Custom
     }
     return .Spatial
 }
@@ -137,8 +147,9 @@ server_init :: proc(s:^Net_Session,allocator:runtime.Allocator) -> bool {
     if s.server.views,error=make([]View,wire.MAX_CONNECTIONS,allocator);error!=nil {return false}
     if s.server.peers,error=make([]Server_Peer,wire.MAX_CONNECTIONS,allocator);error!=nil {return false}
     s.server.clock=core.CLOCK_DEFAULT
-    if s.server.requests,error=make([]Relevance_Request,s.desc.max_objects,allocator);error!=nil {return false}
     if s.server.sections,error=make([]base.Entity_Id,s.host.desc.replication.groups,allocator);error!=nil {return false}
+    if s.server.layouts,error=make([]core.Shape,len(s.fragments),allocator);error!=nil {return false}
+    if s.server.changed,error=make([]bool,len(s.fragments),allocator);error!=nil {return false}
     if s.server.loaded,error=make([]u64,wire.MAX_CONNECTIONS*loaded_words(&s.server),allocator);error!=nil {return false}
     s.server.section_boxes=make([dynamic]Section_Box,allocator)
     s.server.groups=make([dynamic]Group_Change,allocator)
@@ -152,8 +163,9 @@ server_destroy :: proc(s:^Net_Session) {
     delete(s.server.objects,s.allocator)
     delete(s.server.views,s.allocator)
     delete(s.server.peers,s.allocator)
-    delete(s.server.requests,s.allocator)
     delete(s.server.sections,s.allocator)
+    delete(s.server.layouts,s.allocator)
+    delete(s.server.changed,s.allocator)
     delete(s.server.loaded,s.allocator)
     delete(s.server.section_boxes)
     delete(s.server.groups)
@@ -173,41 +185,129 @@ loaded_of :: proc "contextless" (server:^Server,index:int) -> []u64 {
     return server.loaded[index*words:][:words]
 }
 
-// Behind a waiting request it waits too, so that they apply in the order the game made them.
+// What an entity replicates is what it has: when rows of a replicated
+// component, of core.Motion or of input.Move_Input come or go, each object
+// whose entity no longer has what its type lists is marked to be re-typed.
 @(private)
-server_relevance :: proc(s:^Net_Session,e:core.Entity,connection:Connection,relevant:bool) -> bool {
+server_kinds :: proc(s:^Net_Session,w:core.World_Ref) {
     server:=&s.server
-    if object:=wire.object_of_user(&s.host,u64(e));object!=0 && server.request_count==0 {
-        return wire.object_set_relevance(&s.host,object,connection,relevant)==.None
+    motions,moves:=core.world_table_of(w,core.Motion),core.world_table_of(w,input.Move_Input)
+    count:=0
+    for kind,table in s.fragments {
+        server.changed[table]=kind!=wire.FRAGMENT_NONE && core.raw_reshaped(core.world_table_at(w,&w.info.tables[table]),&server.layouts[table])
+        count+=int(server.changed[table])
     }
-    if server.request_count==len(server.requests) {return false}
-    server.requests[server.request_count]={e,connection,relevant}
-    server.request_count+=1
+    moved:=core.reshaped(motions,&server.moved[0])
+    if moves!=nil && core.reshaped(moves,&server.moved[1]) {moved=true}
+    if count==0 && !moved {return}
+    for &slot in server.objects {
+        if slot.object==0 || slot.retype {continue}
+        e:=slot.entity
+        t:=net_type(s,slot.type)
+        if moved && ((core.staged(motions,e)!=nil)!=(t.motion>=0) || (moves!=nil && core.staged(moves,e)!=nil)!=(t.driver>=0)) {
+            slot.retype=true
+            continue
+        }
+        if count==0 {continue}
+        for changed,table in server.changed {
+            if !changed {continue}
+            info:=&w.info.tables[table]
+            if (core.raw_staged(core.world_table_at(w,info),info.info,e)!=nil)!=type_has(t,table) {slot.retype=true;break}
+        }
+    }
+}
+
+// Whether a type lists the replicated component of a table.
+@(private)
+type_has :: proc "contextless" (t:^Net_Type,table:int) -> bool {
+    for held in t.tables[:t.count] {
+        if held==table {return true}
+    }
+    return false
+}
+
+// Gives the object of an entity the type of what the entity has now, with its
+// whole state: its replicas go on, of that type. False while the host has no
+// room for it, and it is tried again at the next publish.
+@(private)
+object_retype :: proc(s:^Net_Session,w:core.World_Ref,slot:^Server_Object,disabled:bool) -> bool {
+    h:=&s.host
+    e:=slot.entity
+    kinds:[wire.MAX_FRAGMENTS]wire.Fragment_Id
+    count,fits:=entity_kinds(s,w,e,&kinds)
+    if !fits {
+        core.report(s.problems,e,"net.object","the replicated components it gained do not travel: it has more than an object carries (%d, besides its pose, motion and driver); replicate fewer of them",COMPONENTS)
+        return true
+    }
+    type,composed:=wire.type_compose(&s.protocol,kinds[:count])
+    if !composed {
+        core.report(s.problems,e,"net.object","the replicated components it gained do not travel: they take more than the state of an object, or the %d kinds of replicated entities of the protocol are in use; replicate fewer fields, or fewer different sets of components",wire.TYPE_CAPACITY)
+        return true
+    }
+    if type==slot.type {return true}
+    local,has_pose:=core.get(core.read(core.world_table_of(w,core.Transform)),e)
+    if !has_pose {return true}
+    t:=net_type(s,type)
+    ids:=core.world_table_of(w,core.Id)
+    of_prefab,_:=scene.prefab_instance(w,e)
+    pose:=Pose{id=core.id_of(core.read(ids),e),prefab=of_prefab.prefab,sections=section_ids(ids,slot.sections),position=local.position,rotation=local.rotation,scale=local.scale,off=components_off(w,e,t),disabled=disabled,predict=slot.predict}
+    // Through rawptr: the host lets go of these locals below, which the escape analysis of Odin cannot tell.
+    sources:[wire.MAX_FRAGMENTS]rawptr
+    sources[0]=rawptr(&pose)
+    motion,_:=motion_read(w,e)
+    if t.motion>=0 {sources[t.motion]=rawptr(&motion)}
+    driver:=driver_read(w,e)
+    if t.driver>=0 {sources[t.driver]=rawptr(&driver)}
+    for k in 0..<t.count {
+        info:=&w.info.tables[t.tables[k]]
+        sources[t.first+k]=core.raw_staged(core.world_table_at(w,info),info.info,e)
+    }
+    if wire.object_retype(h,slot.object,type,sources)!=.None {return false}
+    for fragment in 0..<count {wire.object_set_source(h,slot.object,fragment,nil)}
+    slot.type,slot.off,slot.disabled,slot.moving=type,pose.off,disabled,true
+    // What it publishes from now on is compared with what this creation carried.
+    slot.stamps,slot.layouts,slot.bindings={},{},0
+    s.stats.retyped+=1
     return true
 }
 
-// After the objects of the tick are made: what relevance_set asked for them.
+// The visibility bits of the objects (Visibility.mask) and of the connections
+// (Visibility.sees of their seats), told to the host when Visibility or the
+// seats change; what the full frame refuses is told at the next publish.
 @(private)
-server_requests :: proc(s:^Net_Session) {
+server_visibility :: proc(s:^Net_Session,w:core.World_Ref) {
     server:=&s.server
-    kept:=0
-    for request in server.requests[:server.request_count] {
-        object:=wire.object_of_user(&s.host,u64(request.entity))
-        if object==0 {
-            core.report(s.problems,request.entity,"net.relevance","relevance_set names an entity that is not replicated: give it Replicate and a Transform, or name it once it has its Net_Link")
-            continue
-        }
-        if kept>0 || wire.object_set_relevance(&s.host,object,request.connection,request.relevant)==.Full {
-            server.requests[kept]=request
-            kept+=1
-        }
+    h:=&s.host
+    visibility:=core.world_table_of(w,Visibility)
+    if visibility==nil {return}
+    seats:=core.world_table_of(w,input.Seat)
+    // Moved on only once everything was told: what the full frame refuses is read again.
+    seen:=server.visibility
+    changed:=core.touched(visibility,&seen[0])
+    if seats!=nil && core.touched(seats,&seen[1]) {changed=true}
+    if !changed {return}
+    told:=true
+    for &slot in server.objects {
+        if slot.object==0 {continue}
+        value,_:=core.get(core.read(visibility),slot.entity)
+        if slot.visibility==value.mask {continue}
+        if wire.object_set_visibility(h,slot.object,value.mask)==.None {slot.visibility=value.mask} else {told=false}
     }
-    server.request_count=kept
+    for &peer in server.peers {
+        if peer.connection==0 {continue}
+        value:Visibility
+        for row in 0..<(seats!=nil?core.count(seats):0) {
+            if Connection(seats.values[row].peer)==peer.connection {value,_=core.get(core.read(visibility),core.entity_at(seats,row));break}
+        }
+        if peer.sees==value.sees {continue}
+        if wire.connection_set_visibility(h,peer.connection,value.sees)==.None {peer.sees=value.sees} else {told=false}
+    }
+    if told {server.visibility=seen}
 }
 
 // The datagrams received since the last frame, as changes to the world and as events.
 @(private)
-server_commands :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,commands:[]wire.Command,events:^Net_Events,inputs:^Remote_Inputs) {
+server_commands :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,commands:[]wire.Command,inputs:^Remote_Inputs) {
     h:=&s.host
     es:=core.world_entities(w)
     for &command in commands {
@@ -227,6 +327,7 @@ server_commands :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,comm
                 core.report(s.problems,core.NONE,"net.memory","a connection was closed: out of memory for the inputs of its player; free memory, or lower Net_Settings.max_clients")
             }
             s.server.peers[index]={connection=command.connection,held=s.follows}
+            s.server.visibility={}
             mem.zero_slice(loaded_of(&s.server,index))
             append(&s.arrived,Connection_Event{kind=.Connected,connection=command.connection})
             // Without the world to load, it is in it already.
@@ -261,7 +362,7 @@ server_commands :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,comm
             // The server simulates what nobody holds.
             if command.connection==0 {core.remove(core.world_table_of(w,core.Pose_Target),slot.entity)}
         case .Event:
-            event_deliver(s,w,&command,events,inputs)
+            event_deliver(s,w,&command,inputs)
         }
     }
     server_world_update(s)
@@ -316,7 +417,7 @@ server_gone :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets) {
 gone_tell :: proc(s:^Net_Session,w:core.World_Ref,section:core.Entity,id:base.Entity_Id) {
     references:=core.world_table_of(w,scene.Scene_Reference)
     if !s.follows || id==0 || references==nil {return}
-    reference,found:=core.get(core.read(references),section)
+    reference,found:=core.get(references,section)
     if !found || reference.loaded=={} {return}
     server:=&s.server
     message:=Net_Gone{section=core.id_of(core.read(core.world_table_of(w,core.Id)),section),changes=server.changes,count=1}
@@ -342,13 +443,14 @@ member_of :: proc(w:core.World_Ref,e,section:core.Entity) -> base.Entity_Id {
     return core.id_of(core.read(core.world_table_of(w,core.Id)),e)
 }
 
+// A message of the game that arrived waits in the session for the next tick, which has it in Net_Events.
 @(private)
-event_deliver :: proc(s:^Net_Session,w:core.World_Ref,command:^wire.Command,events:^Net_Events,inputs:^Remote_Inputs) {
+event_deliver :: proc(s:^Net_Session,w:core.World_Ref,command:^wire.Command,inputs:^Remote_Inputs) {
     if int(command.event)>=len(s.events) || own_deliver(s,w,command,inputs) || !in_world(s,command.connection) {return}
     event:=s.events[command.event]
-    if s.events_held && len(events.received.items)>=PAUSED_EVENTS {
+    if len(s.received)>=PENDING_EVENTS {
         s.stats.events_dropped+=1
-        core.report(s.problems,core.NONE,"net.events_paused","a message of type %v was dropped: the game is paused and %d messages wait for its next frame; resume it, or have the other ends send less while it is paused",event.type,PAUSED_EVENTS)
+        core.report(s.problems,core.NONE,"net.events_pending","a message of type %v was dropped: %d messages wait for the next tick of this world, which runs none (it is paused); resume it, or have the other ends send less while it is paused",event.type,PENDING_EVENTS)
         return
     }
     item:=Received{type=event.type,sender=command.connection,size=u16(event.size)}
@@ -357,7 +459,11 @@ event_deliver :: proc(s:^Net_Session,w:core.World_Ref,command:^wire.Command,even
     if event.size>0 && !wire.event_read(&s.host,command,raw_data(payload)) {return}
     copy(item.data[:],payload)
     if command.object!=0 {item.about=core.Entity(wire.object_user(&s.host,command.object))}
-    core.push(&events.received,item)
+    if _,error:=append(&s.received,item);error!=nil {
+        s.stats.events_dropped+=1
+        core.report(s.problems,core.NONE,"net.memory","a message of type %v was dropped: out of memory to keep it until the next tick; free memory",event.type)
+        return
+    }
     s.stats.events_received+=1
 }
 
@@ -377,7 +483,9 @@ server_inputs :: proc(s:^Net_Session,tick:u32,inputs:^Remote_Inputs) {
             continue
         }
         entry.actions=status==.Repeated?input.remote_repeated(packet.actions):packet.actions
-        entry.look,entry.has_look={packet.look_yaw,packet.look_pitch},packet.has_look
+        // A look that was of another tick is not compared with this one's.
+        entry.look,entry.look_behind={packet.look_yaw,packet.look_pitch},packet.look_behind
+        entry.has_look=packet.has_look && (status==.Fresh || packet.look_behind==0)
         behind:=f64(packet.view_behind)
         if packet.has_view && s.desc.rewind_tolerance>0 {
             if stats,ok:=wire.connection_stats(&s.host,entry.connection);ok {
@@ -439,10 +547,11 @@ server_publish :: proc(s:^Net_Session,w:core.World_Ref,outbox:^Net_Outbox,tick:u
     }
     // The ancestors and the sections change only with the hierarchy, with what replicates or with the references.
     references:=core.world_table_of(w,scene.Scene_Reference)
-    // .ptr spelled out: a field reached through using in a ternary is loaded before its nil check (see ODIN_WORKAROUNDS).
-    ancestry:=[3]u64{hierarchy.ptr!=nil?hierarchy.ptr.version:0,core.layout(objects),references!=nil?core.layout(references):0}
-    if ancestry!=server.ancestry {
-        server.ancestry=ancestry
+    ancestry:=&server.ancestry
+    related:=core.reshaped(objects,&ancestry.objects)
+    if references!=nil && core.reshaped(references,&ancestry.references) {related=true}
+    if hierarchy.ptr!=nil && hierarchy.ptr.version!=ancestry.hierarchy {ancestry.hierarchy,related=hierarchy.ptr.version,true}
+    if related {
         for &slot in server.objects {
             if slot.object==0 {continue}
             slot.ancestor=replicated_ancestor(w,hierarchy,objects,slot.entity)
@@ -456,12 +565,12 @@ server_publish :: proc(s:^Net_Session,w:core.World_Ref,outbox:^Net_Outbox,tick:u
         }
     }
     // What a section that moved, loaded or changed its box holds is looked at again.
-    if boxes:=sections_seen(references,worlds);boxes!=server.boxes {
-        server.boxes=boxes
+    if sections_moved(server,references,worlds) {
         section_boxes(&server.section_boxes,references,worlds)
         for &slot in server.objects {slot.placed={}}
     }
 
+    server_kinds(s,w)
     waiting:=0
     // The rows off too: an object made while the entity was on stays while it is off (kept_off).
     for row in 0..<len(objects.entities) {
@@ -484,6 +593,8 @@ server_publish :: proc(s:^Net_Session,w:core.World_Ref,outbox:^Net_Outbox,tick:u
         }
         slot:=&server.objects[object_index(object)]
         if slot.object!=object || slot.entity!=e {continue}
+        // What a client holds comes from it, of the type it was lent with; of what each end simulates only the creation travels.
+        if slot.retype && slot.holder==0 && config.simulation!=.Each && object_retype(s,w,slot,disabled) {slot.retype=false}
         t:=net_type(s,slot.type)
         if owner:=owner_of(w,e);slot.owner!=owner && wire.object_set_owner(h,object,owner)==.None {slot.owner=owner}
         if slot.priority!=config.priority && wire.object_set_priority(h,object,config.priority)==.None {slot.priority=config.priority}
@@ -500,7 +611,7 @@ server_publish :: proc(s:^Net_Session,w:core.World_Ref,outbox:^Net_Outbox,tick:u
         // What a client holds comes from it, and of what each end simulates only the creation travels.
         if slot.holder!=0 || config.simulation==.Each {continue}
         if !wire.object_poll_due(h,object,tick) {continue}
-        local,has_pose:=core.get(core.read(transforms),e)
+        local,has_pose:=core.get(transforms,e)
         if !has_pose {continue}
         bindings:=wire.object_binding_revision(h)
         references_changed:=bindings!=slot.bindings
@@ -510,7 +621,7 @@ server_publish :: proc(s:^Net_Session,w:core.World_Ref,outbox:^Net_Outbox,tick:u
         off:=components_off(w,e,t)
         moved:=row_changed(core.raw(transforms),e,&slot.stamps[0],&slot.layouts[0])
         // Off, its pose goes once, as it turns off, and what changed meanwhile goes as it turns on.
-        send:=disabled!=slot.disabled || !disabled && (moved || off!=slot.off)
+        send:=disabled!=slot.disabled || !disabled && (moved || off!=slot.off || config.predict!=slot.predict)
         if send || moved {
             written:=true
             if send {
@@ -518,13 +629,13 @@ server_publish :: proc(s:^Net_Session,w:core.World_Ref,outbox:^Net_Outbox,tick:u
                 if placed!=nil {
                     if instance:=(^scene.Prefab_Instance)(core.raw_find(core.raw(placed),type_info_of(scene.Prefab_Instance),e));instance!=nil {prefab=instance.prefab}
                 }
-                pose:=Pose{id=core.id_of(core.read(ids),e),prefab=prefab,sections=section_ids(ids,slot.sections),position=local.position,rotation=local.rotation,scale=local.scale,off=off,disabled=disabled}
+                pose:=Pose{id=core.id_of(core.read(ids),e),prefab=prefab,sections=section_ids(ids,slot.sections),position=local.position,rotation=local.rotation,scale=local.scale,off=off,disabled=disabled,predict=config.predict}
                 written=wire.object_write(h,object,0,&pose)==.None
-                if written {slot.off,slot.disabled=off,disabled}
+                if written {slot.off,slot.disabled,slot.predict=off,disabled,config.predict}
                 if written {s.stats.fragments_published+=1}
             }
             position:=local.position
-            if world,has:=core.get(core.read(worlds),e);has {position=world.position}
+            if world,has:=core.get(worlds,e);has {position=world.position}
             if linalg.length2(position-slot.position)>1 {
                 if wire.object_set_position(h,object,position)==.None {slot.position=position} else {written=false}
             }
@@ -574,7 +685,7 @@ server_publish :: proc(s:^Net_Session,w:core.World_Ref,outbox:^Net_Outbox,tick:u
             if config:=(^Replicate)(core.raw_find(core.raw(objects),type_info_of(Replicate),slot.entity));config!=nil {server_scope(s,&slot,config^,false)}
         }
     }
-    server_requests(s)
+    server_visibility(s,w)
     events_send(s,outbox)
     wire.host_publish(h,tick)
 }
@@ -612,7 +723,7 @@ section_of :: proc(hierarchy:core.Ref(core.Hierarchy),references:^core.Table(sce
 sections_of :: proc(s:^Net_Session,boxes:[]Section_Box,worlds:^core.Table(core.World_Transform),hierarchy:core.Ref(core.Hierarchy),e,home:core.Entity) -> (sections:[wire.OBJECT_GROUPS]core.Entity) {
     sections[0]=home
     if home==core.NONE || len(boxes)==0 {return}
-    place,placed:=core.get(core.read(worlds),e)
+    place,placed:=core.get(worlds,e)
     if !placed {return}
     count:=1
     rows: for &box in boxes {
@@ -640,8 +751,8 @@ section_boxes :: proc(out:^[dynamic]Section_Box,references:^core.Table(scene.Sce
     if references==nil {return}
     for row in 0..<core.count(references) {
         r:=core.entity_at(references,row)
-        reference:=core.at(core.read(references),row)
-        pose,has:=core.get(core.read(worlds),r)
+        reference:=core.at(references,row)
+        pose,has:=core.get(worlds,r)
         if !has || reference.extents=={} {continue}
         half:=reference.extents*mm.Vec3{abs(pose.scale.x),abs(pose.scale.y),abs(pose.scale.z)}
         bounds:=mm.aabb_transform({-half,half},mm.transform_matrix({pose.position,pose.rotation,{1,1,1}}))
@@ -649,14 +760,15 @@ section_boxes :: proc(out:^[dynamic]Section_Box,references:^core.Table(scene.Sce
     }
 }
 
-// What the sections of the objects follow: the version of the references
-// and where each of them is.
+// Whether what the sections of the objects follow changed: the references, or where one of them is.
 @(private)
-sections_seen :: proc(references:^core.Table(scene.Scene_Reference),worlds:^core.Table(core.World_Transform)) -> (seen:[2]u64) {
-    if references==nil {return}
-    seen[0]=core.version(references)
-    for e in references.entities[:core.count(references)] {seen[1]=seen[1]*31+row_stamp(core.raw(worlds),e)}
-    return
+sections_moved :: proc(server:^Server,references:^core.Table(scene.Scene_Reference),worlds:^core.Table(core.World_Transform)) -> bool {
+    if references==nil {return false}
+    moved:=core.touched(references,&server.boxes)
+    places:u64
+    for e in references.entities[:core.count(references)] {places=places*31+row_stamp(core.raw(worlds),e)}
+    if places!=server.places {server.places,moved=places,true}
+    return moved
 }
 
 // The Ids of the references of sections, as a pose names them.
@@ -745,13 +857,16 @@ server_create :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity,config:Repli
     hierarchy:=core.ref(core.world_storage_of(w,core.Hierarchy))
     references,worlds:=core.world_table_of(w,scene.Scene_Reference),core.world_table_of(w,core.World_Transform)
     sections:=sections_of(s,s.server.section_boxes[:],worlds,hierarchy,e,section_of(hierarchy,references,e))
-    pose:=Pose{id=core.id_of(core.read(ids),e),prefab=of_prefab.prefab,sections=section_ids(ids,sections),position=local.position,rotation=local.rotation,scale=local.scale,off=components_off(w,e,t)}
+    pose:=Pose{id=core.id_of(core.read(ids),e),prefab=of_prefab.prefab,sections=section_ids(ids,sections),position=local.position,rotation=local.rotation,scale=local.scale,off=components_off(w,e,t),predict=config.predict}
     position:=local.position
     if world,has:=core.get(core.read(core.world_table_of(w,core.World_Transform)),e);has {position=world.position}
     desc:=wire.Object_Desc{
         type=type,user=u64(e),owner=owner_of(w,e),simulation=config.simulation,priority=config.priority,poll_interval=publish_interval(s,config.update_hz),
         filter=filter_of(config.audience),position=position,radius=config.radius,parent=parent,auto_authority=config.simulation==.Lent,
         groups=section_groups(s,ids,sections),
+    }
+    if visibility:=core.world_table_of(w,Visibility);visibility!=nil {
+        if value:=core.staged(visibility,e);value!=nil {desc.visibility=value.mask}
     }
     // Through rawptr: the host lets go of these locals below, which the escape analysis of Odin cannot tell.
     desc.sources[0]=rawptr(&pose)
@@ -783,7 +898,7 @@ server_create :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity,config:Repli
     for fragment in 0..<count {wire.object_set_source(h,object,fragment,nil)}
     s.server.objects[object_index(object)]={
         object=object,entity=e,type=type,moving=true,owner=desc.owner,filter=filter_of(config.audience),priority=config.priority,radius=config.radius,ancestor=ancestor,parent=parent,position=position,
-        off=pose.off,sections=sections,told=true,member=member_of(w,e,sections[0]),
+        off=pose.off,sections=sections,told=true,member=member_of(w,e,sections[0]),visibility=desc.visibility,predict=config.predict,
     }
     placed:=&s.server.objects[object_index(object)].placed
     row_changed(core.raw(worlds),e,&placed[0],&placed[1])
@@ -811,19 +926,28 @@ server_scope :: proc(s:^Net_Session,slot:^Server_Object,config:Replicate,wait:bo
 
 // Server: the body a connection drives looks where its client says, after the
 // seat turned it with the mouse (locomotion_seat, stage input) and before the
-// locomotion moves it (stage simulate). See Input_Packet.
+// locomotion moves it (stage simulate). See Input_Packet. The look is of
+// look_behind ticks before the input (its input delay): what it differs by
+// from the look this end had then is put right now, and in the looks kept since.
 @(step="fixed",loops="game",stage="intent")
-remote_look :: proc(session:core.Ref(Net_Session),inputs:core.Ref(Remote_Inputs),seats:core.Read(input.Seat),drivables:core.Read(input.Drivable),moves:^core.Table(input.Move_Input)) {
+remote_look :: proc(session:core.Ref(Net_Session),inputs:^Remote_Inputs,seats:core.Read(input.Seat),drivables:core.Read(input.Drivable),moves:^core.Table(input.Move_Input),time:core.Time) {
     if session.ptr==nil || session.mode!=.Server {return}
     for row in 0..<core.count(drivables) {
         seat,has:=core.get(seats,core.at(drivables,row).seat)
         if !has || seat.peer==0 {continue}
-        entry:=remote_entry(inputs.ptr,Connection(seat.peer))
-        if entry==nil || !entry.has_look {continue}
-        if move:=core.get(moves,core.entity_at(drivables,row));move!=nil {
+        entry:=remote_entry(inputs,Connection(seat.peer))
+        move:=core.edit(moves,core.entity_at(drivables,row))
+        if entry==nil || move==nil {continue}
+        now:=int(time.tick%len(entry.looks))
+        if behind:=int(entry.look_behind);entry.has_look && behind<=int(entry.looks_kept) {
+            had:=behind==0?[2]f32{move.look_yaw,move.look_pitch}:entry.looks[(now+len(entry.looks)-behind)%len(entry.looks)]
             // The yaw comes wrapped: the shortest turn to it keeps the body's whole turns.
-            move.look_yaw+=mm.angle_wrap(entry.look[0]-move.look_yaw)
-            move.look_pitch=entry.look[1]
+            off:=[2]f32{mm.angle_wrap(entry.look[0]-had[0]),entry.look[1]-had[1]}
+            move.look_yaw+=off[0]
+            move.look_pitch+=off[1]
+            for &kept in entry.looks {kept+=off}
         }
+        entry.looks[now]={move.look_yaw,move.look_pitch}
+        entry.looks_kept=min(entry.looks_kept+1,len(entry.looks))
     }
 }

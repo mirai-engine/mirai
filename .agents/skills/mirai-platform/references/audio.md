@@ -7,8 +7,8 @@ device is in [`platform`](platform.md#audio-device).
 ## Mixer
 
 `mixer_create(Mixer_Desc)` sets the sample rate, output channels (1 or 2), capacities and the speed
-of sound. `mixer_render(m,out)` replaces `out` with interleaved f32 frames and does not clip: a mix
-louder than full scale exceeds 1.
+of sound. `mixer_render(m,out)` replaces `out` with interleaved f32 frames, under full scale
+through the [limiter](#buses) of the master.
 
 ### Threads
 
@@ -109,9 +109,17 @@ invalid one return false.
 
 ## Buses
 
-Every voice sounds on a bus and every bus on the master (`BUS_MASTER`), which is what is written;
-buses are not nested or destroyed. A game's named buses belong to
-[`engine/audio`](../../mirai-gameplay/references/libraries.md#audio).
+Every voice sounds on a bus and every bus on the one it sends to, the master (`BUS_MASTER`) by
+default, which is what is written; buses are a fixed set, never a graph, and are not destroyed. A
+game's named buses belong to [`engine/audio`](../../mirai-gameplay/references/libraries.md#audio).
+
+- `bus_set_send`: a bus sends only to the master or to one created before it, so the buses mix
+  from the last to the first without a loop. A bus ducked by one created before it hears that
+  one's peak of the last chunk.
+- **Limiter.** The master, after the mono downmix, goes through a limiter with no lookahead (Godot's
+  hard limiter without its delay, so the mix adds no latency): a frame that would pass
+  `LIMITER_CEILING` brings the gain down to it at once, which holds `LIMITER_HOLD` and comes back
+  in `LIMITER_RELEASE`. A mix that never reaches full scale comes out as it is.
 
 - Volume and mute are ramped within a chunk; a muted bus keeps its volume.
 - `bus_set_duck`: while the peak of the `source` bus, measured after its volume and its filter,
@@ -142,14 +150,16 @@ binaural and panning effects.
   (low shelf, peak, high shelf at 800 Hz and 8 kHz): air absorption over the distance, and
   `occlusion` blending each band toward `transmission`. The EQ is normalized to a peak of 1 with a
   floor of 24 dB, so distance and occlusion take highs first and never raise a band. A change of
-  gains crossfades the old and the new cascade over the chunk.
+  gains crossfades the old and the new cascade over the chunk. While every band is within 0.5 dB of
+  unity (near and in sight) the EQ is left out, and on speakers the voice mixes into its bus as a
+  panned voice; coming in or out, the EQ crossfades with the dry signal.
 - **Output.** `Output_Kind` is one per mixer: on headphones each voice is convolved with the HRTF of
-  its direction (bilinear blend of log magnitude and unwrapped phase of the four measurements
-  around it), in blocks cut at the chunks whose shared samples crossfade a change of direction.
-  Every voice is transformed once and its products with the HRTF add up per bus, which goes back
-  to time once per chunk into one ring per bus; the output is `BINAURAL_OVERLAP` samples late
-  whatever size the render has. A source that turned less than a quarter of the finest spacing of
-  the measurements keeps its filters. On speakers the direction, brought to the horizontal plane,
+  its direction (bilinear blend of log magnitude and unwrapped phase of the four measurements around
+  it), in blocks cut at the chunks whose shared samples crossfade a change of direction. Every voice
+  is transformed once (none once it is silent) and its products with the HRTF add up per bus, which
+  goes back to time once per chunk into one ring per bus; the output is `BINAURAL_OVERLAP` samples
+  late whatever size the render has. A source that turned less than a quarter of the finest spacing
+  of the measurements keeps its filters. On speakers the direction, brought to the horizontal plane,
   pans with constant power; a mono output plays it centered.
 - The HRTF is the one Steam Audio ships (`audio/hrtf/cipic_124.hrtf`, CIPIC database), so the mixer
   only runs at the rates it was measured at. It is loaded and transformed when the mixer is

@@ -49,14 +49,14 @@ rollback_copy_failure_keeps_live_world_and_warm_publication_does_not_allocate ::
     testing.expect(t,core.world_copy(&info,frame.world,&world))
     frame.valid,frame.tick=true,2
     world.time.tick=3
-    before,_:=core.get(core.read(&world.transforms),entity)
+    before,_:=core.get(&world.transforms,entity)
     values,transforms:=raw_data(world.values.values),raw_data(world.transforms.values)
     total:=world.force.total
     snapshot:=cast(^Net_Test_World)frame.world
     source_total:=snapshot.force.total
     allocation.remaining=0
     testing.expect(t,!client_rollback(&session,core.world_ref(&world,&info),&app,1))
-    after,_:=core.get(core.read(&world.transforms),entity)
+    after,_:=core.get(&world.transforms,entity)
     testing.expect_value(t,after,before)
     testing.expect_value(t,world.force.total,total)
     testing.expect_value(t,raw_data(world.values.values),values)
@@ -133,14 +133,6 @@ a_rollback_replays_its_ticks_and_leaves_the_clock_and_the_frame_where_they_were 
     }
     testing.expect_value(t,host.content_generation(&app),u32(9))
     testing.expect_value(t,session.stats.resimulated,u64(3))
-}
-
-@(test)
-a_tick_that_runs_again_sends_nothing :: proc(t:^testing.T) {
-    outbox:Net_Outbox;defer delete(outbox.queue.items)
-    testing.expect(t,!send(&outbox,core.Time{tick=4,resimulating=true},u32(7)))
-    testing.expect(t,send(&outbox,core.Time{tick=6},u32(7)))
-    testing.expect_value(t,len(outbox.queue.items),1)
 }
 
 @(test)
@@ -225,7 +217,7 @@ history_copies_of_what_changed_equal_whole_copies_through_writes_layout_changes_
     c:=&session.client
     for tick in 1..=48 {
         switch tick {
-        case 9:  core.get(&world.values,first).force=-3
+        case 9:  core.edit(&world.values,first).force=-3
         case 14: core.add(&world.move_inputs,second,inp.Move_Input{})
         case 20: core.remove(&world.values,second)
         case 27: core.add(&world.values,second,Net_Test_Value{force=2})
@@ -267,7 +259,7 @@ net_test_interpolated :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity) -> 
 net_test_state :: proc(s:^Net_Session,r:^Replica,tick:u32,position:[3]f32) {
     r.tick=tick
     r.pose.position=position
-    replica_sample(s,r)
+    replica_sample(s,r,0)
 }
 
 // With late, an interpolated replica gets the states of its last ticks after they ran.
@@ -310,10 +302,10 @@ sync_test_run :: proc(t:^testing.T,outside:bool,late:=false) -> (problems:core.P
     if late {
         for tick in u32(7)..=9 {net_test_state(&session,replica,tick,{f32(tick),5,0})}
     }
-    before,_:=core.get(core.read(&world.transforms),body)
+    before,_:=core.get(&world.transforms,body)
     time:=world.time
     client_sync_test(&session,ref,&app)
-    after,_:=core.get(core.read(&world.transforms),body)
+    after,_:=core.get(&world.transforms,body)
     testing.expect_value(t,session.stats.sync_tested,u64(4))
     testing.expect_value(t,world.time,time)
     moved,skipped=before!=after,session.stats.sync_skipped
@@ -397,14 +389,14 @@ a_rollback_places_interpolated_replicas_as_far_behind_as_each_tick_did :: proc(t
     placed:[3]f32
     for _ in 1..=8 {
         net_test_fixed(&world,&shared,nil,&app)
-        local,_:=core.get(core.read(&world.transforms),shown)
+        local,_:=core.get(&world.transforms,shown)
         placed=local.position
         core.time_advance(&world.time)
     }
     // Its states come further apart from now on: it is shown three ticks further back.
     r.delay=3
     testing.expect(t,client_rollback(&session,ref,&app,4))
-    local,_:=core.get(core.read(&world.transforms),shown)
+    local,_:=core.get(&world.transforms,shown)
     testing.expectf(t,local.position==placed,"tick 8 ran again with the replica at %v, and the first time it was at %v",local.position,placed)
     testing.expect_value(t,problems.count,0)
 }

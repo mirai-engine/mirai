@@ -30,11 +30,10 @@ Animation_Capture_Params :: struct {
     views:Capture_Views `mirai:"optional,label=A row each turned with the way the character faces; omitted is Three_Quarter"`,
     size:u32 `mirai:"optional,min=64,max=512,label=Pixels of a side of a frame"`,
     path:[1024]u8 `mirai:"optional,text,label=PNG file to write; one under .mirai/captures when empty. mirai image diff compares two"`,
-    parameters:[eanim.GRAPH_PARAMETERS]aed.Preview_Parameter `mirai:"optional"`,
+    parameters:[eanim.STACK_PARAMETERS]aed.Preview_Parameter `mirai:"optional"`,
     controls:[64]aed.Preview_Control `mirai:"optional"`,
     goals:[64]aed.Preview_Goal `mirai:"optional"`,
     actions:[64]aed.Preview_Action `mirai:"optional"`,
-    plays:[16]aed.Request_Play `mirai:"optional"`,
     motion:[16]aed.Request_Motion `mirai:"optional"`,
     locomotion:aed.Request_Locomotion `mirai:"optional"`,
     distance:aed.Request_Distance `mirai:"optional"`,
@@ -61,7 +60,7 @@ Animation_Capture_Result :: struct {
 previews_register :: proc(s:^editor.Session) {
     defaults:=Animation_Capture_Params{frames=6,seconds=1,size=256,views={.Three_Quarter}}
     aed.request_rows_defaults(&defaults)
-    editor.api_method_register(s,{name="animation.capture",summary="Shows how an animated entity moves as a PNG: a strip of frames over seconds with a row per view at one scale, from a copy run with the fields of animation.preview.",params=Animation_Capture_Params,params_info=type_info_of(Animation_Capture_Params),result=Animation_Capture_Result,result_info=type_info_of(Animation_Capture_Result),writes_result=true,defaults=&defaults,flags={.Read_Only},run=capture})
+    editor.api_method_register(s,Animation_Capture_Params,Animation_Capture_Result,{name="animation.capture",summary="Shows how an animated entity moves as a PNG: a strip of frames over seconds with a row per view at one scale, from a copy run with the fields of animation.preview.",writes_result=true,defaults=&defaults,flags={.Read_Only},run=capture})
 }
 
 @(private)

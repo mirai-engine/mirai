@@ -139,7 +139,7 @@ each_world_keeps_its_voices_and_freeing_one_stops_only_its_own :: proc(t:^testin
     testing.expect(t,core.entity_map_get(&shown.voices.entries,e).voice==voice && mixer.voice_valid(m,voice))
 
     // Another bus is another voice.
-    core.get(&shown.sources,e).bus=BUS_MUSIC
+    core.edit(&shown.sources,e).bus=BUS_MUSIC
     world_run(&shown,&listener,&f.app)
     moved:=core.entity_map_get(&shown.voices.entries,e)
     testing.expect(t,moved!=nil && moved.voice!=voice && moved.bus==BUS_MUSIC && mixer.bus_count(m)>int(BUS_MUSIC))
@@ -151,24 +151,51 @@ each_world_keeps_its_voices_and_freeing_one_stops_only_its_own :: proc(t:^testin
     testing.expect_value(t,len(shown.voices.entries.values),0)
 }
 
+// A request plays once, at the end of the tick that asked; the same request
+// in a tick that runs again does not play again; a copy of the world made
+// before the end of the tick carries it.
 @(test)
-a_tick_that_runs_again_does_not_play_its_sounds_again :: proc(t:^testing.T) {
+a_sound_request_plays_once_and_not_again_when_its_tick_runs_again :: proc(t:^testing.T) {
     f:Fixture
     if !fixture_init(t,&f) {return}
     defer fixture_destroy(&f)
+    m:=f.app.mixer
+    problems:core.Problems
     tick:=core.Time{dt=1.0/60,playing=true}
     replay:=tick
     replay.resimulating=true
-    testing.expect_value(t,play_asset(&f.app,replay,HUM),Voice{})
-    testing.expect_value(t,play_asset_at(&f.app,replay,HUM,{1,0,0}),Voice{})
-    voice:=play_asset(&f.app,tick,STEPS)
-    testing.expect(t,voice!={} && playing(f.app.mixer,voice))
-    testing.expect(t,stop(f.app.mixer,voice))
-    testing.expect_value(t,play_asset(&f.app,tick,HUM,bus=Audio_Bus(AUDIO_BUS_CAPACITY)),Voice{})
+    sounds:Sound_Requests
+    defer core.value_free(&sounds,type_info_of(Sound_Requests))
+    play(&sounds,STEPS,at=[3]f32{1,0,0})
+    copied:Sound_Requests
+    defer core.value_free(&copied,type_info_of(Sound_Requests))
+    testing.expect(t,core.value_copy(&copied,&sounds,type_info_of(Sound_Requests)))
+    testing.expect(t,len(copied.items)==1 && copied.items[0].sound==STEPS && copied.items[0].placed,"a copy of the world carries what waits")
+    audio_requests(&sounds,tick,&f.app,&problems)
+    testing.expect_value(t,mixer.mixer_stats(m).voices_played,u64(1))
+    testing.expect_value(t,len(sounds.items),0)
+    audio_requests(&sounds,tick,&f.app,&problems)
+    testing.expect_value(t,mixer.mixer_stats(m).voices_played,u64(1))
+    // A rollback brings back the copy, and the tick asks again as it runs again.
+    play(&copied,STEPS,at=[3]f32{1,0,0})
+    audio_requests(&copied,replay,&f.app,&problems)
+    testing.expect_value(t,mixer.mixer_stats(m).voices_played,u64(1))
+    testing.expect_value(t,len(copied.items),0)
+    testing.expect_value(t,problems.count,0)
+    play(&sounds,HUM,bus=Audio_Bus(AUDIO_BUS_CAPACITY))
+    audio_requests(&sounds,tick,&f.app,&problems)
+    testing.expect(t,mixer.mixer_stats(m).voices_played==1 && core.problem_find(&problems,core.NONE,"audio.bus")!=nil,"a bus over the capacity plays nothing and says so")
+    nan,inf:=math.nan_f32(),math.inf_f32(1)
+    play(&sounds,HUM,volume=nan)
+    play(&sounds,HUM,pitch=-1)
+    play(&sounds,HUM,at=[3]f32{0,inf,0})
+    audio_requests(&sounds,tick,&f.app,&problems)
+    refused:=core.problem_find(&problems,core.NONE,"audio.request")
+    testing.expect(t,mixer.mixer_stats(m).voices_played==1 && refused!=nil && refused.count==3,"what is not a number plays nothing and says so")
 }
 
 // Code names a sound by its path in the assets as by its id; a path the
-// assets do not have plays nothing.
+// assets do not have plays nothing and says so.
 @(test)
 a_sound_plays_by_its_path_in_the_assets :: proc(t:^testing.T) {
     f:Fixture
@@ -176,12 +203,19 @@ a_sound_plays_by_its_path_in_the_assets :: proc(t:^testing.T) {
     defer fixture_destroy(&f)
     testing.expect(t,host.assets_scan(&f.assets))
     tick:=core.Time{dt=1.0/60,playing=true}
-    cases:=[]struct{path:string,plays:bool}{{"hum.sound",true},{"steps.sound_set",true},{"missing.sound",false},{"",false}}
+    sounds:Sound_Requests
+    defer core.value_free(&sounds,type_info_of(Sound_Requests))
+    long:=make([]u8,SOUND_PATH_CAPACITY,context.temp_allocator)
+    for &c in long {c='a'}
+    cases:=[]struct{path:string,plays:bool}{{"hum.sound",true},{"steps.sound_set",true},{"missing.sound",false},{"",false},{string(long),false}}
     for c in cases {
-        for voice in ([2]Voice{play_asset(&f.app,tick,c.path),play_asset_at(&f.app,tick,c.path,{1,0,0})}) {
-            testing.expectf(t,(voice!={})==c.plays,"%q plays: %v",c.path,voice!={})
-            if voice!={} {testing.expect(t,stop(f.app.mixer,voice))}
-        }
+        problems:core.Problems
+        played:=mixer.mixer_stats(f.app.mixer).voices_played
+        play(&sounds,c.path)
+        play(&sounds,c.path,at=[3]f32{1,0,0})
+        audio_requests(&sounds,tick,&f.app,&problems)
+        testing.expectf(t,(mixer.mixer_stats(f.app.mixer).voices_played==played+2)==c.plays,"%q plays: %v",c.path,!c.plays)
+        testing.expectf(t,(core.problem_find(&problems,core.NONE,"audio.sound")==nil)==c.plays,"%q says why it does not play",c.path)
     }
 }
 
@@ -216,8 +250,16 @@ buses_take_their_gain_filter_and_ducking_from_the_settings :: proc(t:^testing.T)
     hall:=Reverb{room_size=0.9,damping=0.3,wet=0.8,width=1}
     testing.expect(t,audio_bus_setting_set(&settings,{bus=BUS_MUSIC,gain=-6,lowpass=2000,duck_by=BUS_VOICE,duck_amount=0.5,duck_threshold=0.1,duck_attack=0.05,duck_release=0.3,reverb=hall}))
     testing.expect(t,audio_bus_setting_set(&settings,{bus=BUS_MASTER,gain=AUDIO_SILENCE_DB}))
+    AMBIENCE :: Audio_Bus(5)
+    testing.expect(t,audio_bus_setting_set(&settings,{bus=AMBIENCE,send=BUS_EFFECTS}))
+    testing.expect(t,audio_bus_setting_set(&settings,{bus=BUS_EFFECTS,send=BUS_UI}))
     volumes:=AUDIO_VOLUMES_DEFAULT
-    audio_buses(core.ref(&settings),core.ref(&volumes),{},f.app.mixer)
+    problems:core.Problems
+    audio_buses(core.ref(&settings),core.ref(&volumes),{},f.app.mixer,&problems)
+    testing.expect(t,mixer.bus_send(m,mixer.Bus(AMBIENCE))==mixer.Bus(BUS_EFFECTS),"ambience plays into effects")
+    testing.expect(t,mixer.bus_send(m,mixer.Bus(BUS_EFFECTS))==mixer.BUS_MASTER && core.problem_find(&problems,core.NONE,"audio.send")!=nil,"a bus sends only to one before it, and says so")
+    testing.expect(t,audio_bus_setting_set(&settings,{bus=AMBIENCE}))
+    testing.expect(t,audio_bus_setting_set(&settings,{bus=BUS_EFFECTS}))
     testing.expect(t,mixer.bus_count(m)>int(BUS_VOICE))
     testing.expect(t,abs(mixer.bus_volume(m,mixer.Bus(BUS_MUSIC))-0.5012)<0.001 && mixer.bus_lowpass(m,mixer.Bus(BUS_MUSIC))==2000)
     testing.expect(t,mixer.bus_duck(m,mixer.Bus(BUS_MUSIC)).source==mixer.Bus(BUS_VOICE) && mixer.bus_duck(m,mixer.Bus(BUS_MUSIC)).amount==0.5)
@@ -226,7 +268,7 @@ buses_take_their_gain_filter_and_ducking_from_the_settings :: proc(t:^testing.T)
 
     // The volume the player chose goes over the gain of the game.
     volumes.music=0.5
-    audio_buses(core.ref(&settings),core.ref(&volumes),{},f.app.mixer)
+    audio_buses(core.ref(&settings),core.ref(&volumes),{},f.app.mixer,nil)
     testing.expect(t,abs(mixer.bus_volume(m,mixer.Bus(BUS_MUSIC))-0.2506)<0.001)
     testing.expect_value(t,audio_volume(&volumes,BUS_MUSIC),f32(0.5))
     volumes.more[0]=0.25
@@ -241,7 +283,7 @@ buses_take_their_gain_filter_and_ducking_from_the_settings :: proc(t:^testing.T)
     testing.expect(t,audio_bus_setting_set(&settings,{bus=BUS_MUSIC}))
     testing.expect(t,audio_bus_setting_set(&settings,{bus=BUS_MASTER}))
     testing.expect(t,settings==Audio_Settings{},"settings that say nothing are zeros")
-    audio_buses(core.ref(&settings),core.ref(&volumes),{},f.app.mixer)
+    audio_buses(core.ref(&settings),core.ref(&volumes),{},f.app.mixer,nil)
     testing.expect(t,mixer.bus_volume(m,mixer.Bus(BUS_MUSIC))==1 && mixer.bus_lowpass(m,mixer.Bus(BUS_MUSIC))==0 && mixer.bus_duck(m,mixer.Bus(BUS_MUSIC))=={} && mixer.bus_reverb(m,mixer.Bus(BUS_MUSIC))=={})
     testing.expect_value(t,mixer.bus_volume(m,mixer.BUS_MASTER),f32(1))
     testing.expect(t,db_volume(AUDIO_SILENCE_DB)==0 && abs(db_volume(-6)-0.5012)<0.001)
@@ -269,7 +311,7 @@ without_a_listener_the_view_hears_and_moving_gives_it_a_velocity :: proc(t:^test
     testing.expect(t,listener.velocity==[3]f32{},"a view that jumped does not move")
 
     // A source that moves tells its velocity, and stops telling it once it rests.
-    core.get(&w.worlds,e).position={0,0,-9}
+    core.edit(&w.worlds,e).position={0,0,-9}
     world_run(&w,&listener,&f.app,0.5)
     entry:=core.entity_map_get(&w.voices.entries,e)
     testing.expect(t,entry!=nil && entry.moving && entry.position==[3]f32{0,0,-9})
@@ -311,7 +353,7 @@ a_source_behind_a_wall_is_muffled_and_comes_back_over_its_fade :: proc(t:^testin
     core.test_world_settle(&w.data)
     world_run(&w,&listener,&f.app,0.1)
     entry:=core.entity_map_get(&w.voices.entries,e)
-    testing.expect(t,entry!=nil && core.get(&w.states,e).occlusion==1,"a voice that starts hidden is hidden at once")
+    testing.expect(t,entry!=nil && core.at(&w.states,core.row_of(&w.states,e)).occlusion==1,"a voice that starts hidden is hidden at once")
     // Both sides of one wall without a material: the default one, once.
     want:=AUDIO_MATERIAL_DEFAULT.transmission
     for band in 0..<mixer.BANDS {testing.expect(t,abs(entry.transmission[band]-want[band])<1e-5)}
@@ -319,19 +361,19 @@ a_source_behind_a_wall_is_muffled_and_comes_back_over_its_fade :: proc(t:^testin
 
     wall=false
     world_run(&w,&listener,&f.app,0.1)
-    amount:=core.get(&w.states,e).occlusion
+    amount:=core.at(&w.states,core.row_of(&w.states,e)).occlusion
     testing.expect(t,abs(amount-0.8)<1e-4,"it comes back a fifth of the way in a tenth of its fade")
     entry=core.entity_map_get(&w.voices.entries,e)
     testing.expect(t,abs(entry.occlusion-0.8)<1e-4)
     for _ in 0..<5 {world_run(&w,&listener,&f.app,0.1)}
     entry=core.entity_map_get(&w.voices.entries,e)
-    testing.expect(t,core.get(&w.states,e).occlusion==0 && entry.occlusion==0,"in sight it plays as it is")
+    testing.expect(t,core.at(&w.states,core.row_of(&w.states,e)).occlusion==0 && entry.occlusion==0,"in sight it plays as it is")
 
     // Near the listener nothing hides it: that is its own body.
     wall=true
-    core.get(&w.worlds,e).position={0,0,-0.3}
+    core.edit(&w.worlds,e).position={0,0,-0.3}
     world_run(&w,&listener,&f.app,0.1)
-    testing.expect_value(t,core.get(&w.states,e).occlusion,f32(0))
+    testing.expect_value(t,core.at(&w.states,core.row_of(&w.states,e)).occlusion,f32(0))
 }
 
 // A wall across z=-5 that ends at x=0.3, the body of the entity in user.
@@ -362,7 +404,7 @@ a_wide_source_behind_the_edge_of_a_wall_is_partly_hidden :: proc(t:^testing.T) {
     core.add(&w.occlusions,e,Audio_Occlusion{radius=1,fade=0})
     core.test_world_settle(&w.data)
     world_run(&w,&listener,&f.app)
-    state:=core.get(&w.states,e)
+    state,_:=core.get(&w.states,e)
     testing.expectf(t,state.occlusion>0.2 && state.occlusion<0.95,"part of it is hidden: %v",state.occlusion)
     entry:=core.entity_map_get(&w.voices.entries,e)
     testing.expect(t,entry!=nil && entry.occlusion==state.occlusion)
@@ -370,11 +412,11 @@ a_wide_source_behind_the_edge_of_a_wall_is_partly_hidden :: proc(t:^testing.T) {
     // Each frame tests a few of its points again: it stays where it is while nothing moves.
     before:=state.occlusion
     for _ in 0..<OCCLUSION_SAMPLES/OCCLUSION_SAMPLES_PER_FRAME {world_run(&w,&listener,&f.app)}
-    testing.expect_value(t,core.get(&w.states,e).occlusion,before)
+    testing.expect_value(t,core.at(&w.states,core.row_of(&w.states,e)).occlusion,before)
     // Out from behind the wall it is in sight again within as many frames.
-    core.get(&w.worlds,e).position={20,0,-10}
+    core.edit(&w.worlds,e).position={20,0,-10}
     for _ in 0..<OCCLUSION_SAMPLES/OCCLUSION_SAMPLES_PER_FRAME {world_run(&w,&listener,&f.app)}
-    testing.expect_value(t,core.get(&w.states,e).occlusion,f32(0))
+    testing.expect_value(t,core.at(&w.states,core.row_of(&w.states,e)).occlusion,f32(0))
 }
 
 // The level reverberates as its unbounded Audio_Reverb; a hall replaces it
@@ -440,16 +482,16 @@ the_medium_around_the_listener_dulls_the_master_and_mixes_its_reverb :: proc(t:^
     settings:Audio_Settings
     volumes:=AUDIO_VOLUMES_DEFAULT
     water:=Audio_Medium{lowpass=700,reverb={room_size=0.3,damping=0.9,wet=0.6,width=0.5},weight=1}
-    audio_buses(core.ref(&settings),core.ref(&volumes),core.ref(&water),f.app.mixer)
+    audio_buses(core.ref(&settings),core.ref(&volumes),core.ref(&water),f.app.mixer,nil)
     testing.expect_value(t,mixer.bus_lowpass(m,mixer.BUS_MASTER),f32(700))
     testing.expect(t,audio_bus_setting_set(&settings,{bus=BUS_MASTER,lowpass=500}))
-    audio_buses(core.ref(&settings),core.ref(&volumes),core.ref(&water),f.app.mixer)
+    audio_buses(core.ref(&settings),core.ref(&volumes),core.ref(&water),f.app.mixer,nil)
     testing.expect_value(t,mixer.bus_lowpass(m,mixer.BUS_MASTER),f32(500))
     testing.expect(t,audio_bus_setting_set(&settings,{bus=BUS_MASTER,lowpass=4000}))
-    audio_buses(core.ref(&settings),core.ref(&volumes),core.ref(&water),f.app.mixer)
+    audio_buses(core.ref(&settings),core.ref(&volumes),core.ref(&water),f.app.mixer,nil)
     testing.expect_value(t,mixer.bus_lowpass(m,mixer.BUS_MASTER),f32(700))
     air:Audio_Medium
-    audio_buses(core.ref(&settings),core.ref(&volumes),core.ref(&air),f.app.mixer)
+    audio_buses(core.ref(&settings),core.ref(&volumes),core.ref(&air),f.app.mixer,nil)
     testing.expect_value(t,mixer.bus_lowpass(m,mixer.BUS_MASTER),f32(4000))
 
     room:Audio_World
@@ -476,60 +518,6 @@ the_medium_around_the_listener_dulls_the_master_and_mixes_its_reverb :: proc(t:^
     testing.expect(t,near(hear(r,v,w,l,&room.view,&settings,&air,&mixed,&f.app),transmute(Reverb)level),"in the air, the room")
     position,found:=listener_position(w,l,core.ref(&room.view))
     testing.expect(t,found && position==room.view.position,"without an Audio_Listener the View hears")
-}
-
-@(test)
-a_source_heard_alone_plays_as_it_is_set_and_follows_its_changes :: proc(t:^testing.T) {
-    f:Fixture
-    if !fixture_init(t,&f) {return}
-    defer fixture_destroy(&f)
-    m:=f.app.mixer
-    source:=AUDIO_SOURCE_DEFAULT
-    source.sound,source.bus,source.loop,source.pitch=HUM,BUS_MUSIC,true,2
-    voice:=play_source(&f.app,{},source)
-    testing.expect(t,voice!={} && mixer.bus_count(m)>int(BUS_MUSIC),"it plays in its bus")
-    // Twice the sound at twice its speed, a frame of the game at a time.
-    render :: proc(m:^mixer.Mixer) {
-        out:=make([]f32,960*2,context.temp_allocator)
-        for _ in 0..<10 {
-            mixer.mixer_render(m,out)
-            mixer.mixer_update(m)
-        }
-    }
-    render(m)
-    testing.expect(t,playing(f.app.mixer,voice),"a loop goes on")
-    source.loop=false
-    source_tune(f.app.mixer,voice,source)
-    render(m)
-    testing.expect(t,!playing(f.app.mixer,voice),"once it does not loop, it ends")
-}
-
-@(test)
-a_source_heard_at_a_place_falls_by_its_curve_and_follows_where_it_is_moved :: proc(t:^testing.T) {
-    f:Fixture
-    if !fixture_init(t,&f) {return}
-    defer fixture_destroy(&f)
-    m:=f.app.mixer
-    mixer.listener_set(m,{0,0,0},1)
-    source:=AUDIO_SOURCE_DEFAULT
-    source.sound,source.loop,source.attenuation,source.min_distance,source.max_distance=HUM,true,.Linear,1,20
-    // The loudest sample of a few frames of the game.
-    peak :: proc(m:^mixer.Mixer) -> f32 {
-        out:=make([]f32,960*2,context.temp_allocator)
-        loudest:f32
-        for _ in 0..<6 {
-            mixer.mixer_render(m,out)
-            mixer.mixer_update(m)
-        }
-        for sample in out {loudest=max(loudest,abs(sample))}
-        return loudest
-    }
-    voice:=play_source_at(&f.app,{},source,{0,0,-30})
-    if !testing.expect(t,voice!={},"it plays") {return}
-    testing.expect(t,peak(m)<1e-4,"beyond its max_distance its linear curve leaves it silent")
-    source_place(f.app.mixer,voice,{0,0,-1})
-    testing.expect(t,peak(m)>0.05,"moved within its min_distance it is heard whole")
-    testing.expect(t,playing(f.app.mixer,voice),"a loop goes on")
 }
 
 @(test)
@@ -585,10 +573,46 @@ a_voice_is_given_its_source_by_what_its_set_drew :: proc(t:^testing.T) {
     volume,pitch:=voice_entry_given(entry^)
     testing.expect(t,abs(volume-0.8*entry.pick[0])<1e-5 && abs(pitch-2*entry.pick[1])<1e-5)
     testing.expect(t,entry.pick[0]>=0.5 && entry.pick[0]<=0.75 && entry.pick[1]>=0.9 && entry.pick[1]<=1.2)
-    changed:=core.get(&w.sources,e)
+    changed:=core.edit(&w.sources,e)
     changed.pitch,changed.volume=0.5,0.4
     world_run(&w,&listener,&f.app)
     entry=core.entity_map_get(&w.voices.entries,e)
     volume,pitch=voice_entry_given(entry^)
     testing.expect(t,abs(volume-0.4*entry.pick[0])<1e-5 && abs(pitch-0.5*entry.pick[1])<1e-5)
+}
+
+// A placed request is the voice of a source there: on speakers, near and in
+// sight, both come out sample for sample alike, through the same cheap path.
+@(test)
+a_placed_request_plays_as_a_source_at_its_place :: proc(t:^testing.T) {
+    f:Fixture
+    if !fixture_init(t,&f) {return}
+    defer fixture_destroy(&f)
+    m:=f.app.mixer
+    testing.expect_value(t,mixer.mixer_output(m),Output_Kind.Speakers)
+    at:=[3]f32{0.5,0,-1}
+    heard :: proc(m:^Mixer) -> []f32 {
+        out:=make([]f32,mixer.CHUNK_FRAMES*4*2,context.temp_allocator)
+        mixer.mixer_render(m,out)
+        return out
+    }
+    sounds:Sound_Requests
+    defer core.value_free(&sounds,type_info_of(Sound_Requests))
+    play(&sounds,HUM,at=at)
+    audio_requests(&sounds,core.Time{},&f.app,nil)
+    requested:=heard(m)
+    listener:Mixer_Listener
+    source:=AUDIO_SOURCE_DEFAULT;source.sound,source.spatial=HUM,true
+    w:Heard_World
+    _,made:=world_init(t,&w,source,at);defer world_destroy(&w)
+    if !made {return}
+    w.view.position,w.view.rotation={},1 // where the mixer hears the request from
+    // The request, a tenth of a second long, ends before the source starts.
+    for _ in 0..<6 {_=heard(m)}
+    mixer.mixer_update(m)
+    world_run(&w,&listener,&f.app)
+    sourced:=heard(m)
+    worst:=f32(0)
+    for x,i in requested {worst=max(worst,abs(x-sourced[i]))}
+    testing.expectf(t,worst==0 && requested[len(requested)-2]!=0,"a request and a source at one place differ by %v",worst)
 }

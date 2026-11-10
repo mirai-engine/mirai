@@ -28,26 +28,26 @@ mirai import source/sounds/step.wav --out assets/player --root .
 ```
 
 - Formats: OBJ, glTF/GLB, USD, FBX; PNG, JPEG, TGA, BMP, GIF, PSD, HDR; WAV and Ogg Vorbis (mono
-  or stereo); TTF, OTF; CSV texts (`key,en,es`); prompt manifests. `mirai import` with no
-  arguments lists every flag.
+  or stereo); TTF, OTF; CSV texts (`key,en,es`); prompt manifests.
 - A model writes meshes, materials, textures, skeletons, clips and a prefab: instantiate that.
 - An image is color unless its name says otherwise (`normal`, `_n`, `rough`, `metal`, `orm`,
   `_ao`, `height`, `mask`); force it with `--srgb`, `--data`, `--normal`, `--normal-green-down`.
-- Flags are saved in `<file>.import` beside the source and repeat on the next import.
+- `<file>.import` beside the source keeps the flags and the id of each asset, so importing again
+  updates in place, keeping ids and material edits: commit it, and move it with its source.
+- Meshes, textures, sounds and fonts are built into `.mirai/imported/`, never committed: `mirai
+  build` makes them again on a fresh clone. Edit their source, not them.
 - Triangle and texture limits and the collision shape are flags too; colliders a source brings
   win unless `--force-collision`. `mirai import` without arguments prints every flag.
 - A model without a skeleton that must animate: `--rig` with the template that fits it. Clips of
   another file onto a skeleton the project has: `--skeleton <id>` ([animation](animation.md)).
-- Importing again from the same path updates in place, keeping ids and material edits; after
-  moving or renaming the source pass `--into <id>` of its scene, texture or sound.
 - With an editor session: `asset.import` (MCP `asset_import`) answers when it ends, with what it
   wrote; a CLI import is picked up by the editor at its next call. `asset.list` shows what exists.
 
 ## Kinds
 - Engine: `.mesh` `.skeleton` `.mat` `.tex` `.anim` `.sound` `.sound_set` `.ui` `.font` `.strings`
-  `.prompts` `.records` `.fracture` `.physics_cache` `.scene` (one root: a prefab, `kind=prefab`).
-- Plugins add `.particle`, `.terrain`, `.foliage`, `.navmesh`, `.match`, `.agraph`, `.pose`,
-  `.blend`, `.motion`, `.action`.
+  `.prompts` `.records` `.scene` (one root: a prefab, `kind=prefab`).
+- Plugins add `.particle`, `.terrain`, `.foliage`, `.navmesh`, `.match`, `.pose`, `.blend`,
+  `.motion`, `.action`, `.fracture` (`destruct`), `.physics_cache`.
 - Folders are named after what they hold (`player`, `arena`), never after a kind. An import goes
   into the folder asked for, a model in one of its name inside. Sound sets: [audio](audio.md);
   particles: [vfx](vfx.md).

@@ -3,8 +3,6 @@ package destruct
 import "core:math/linalg"
 import "mirai:core"
 import phys "plugins:physics/runtime"
-import sim "plugins:physics/runtime/sim"
-import fr "plugins:destruct/runtime/fracture"
 import "mirai:host"
 import "mirai:std/base"
 
@@ -21,12 +19,11 @@ Destruct_Pattern :: enum u8 {
     Radial,    // around the center of the bounds, denser towards it
 }
 
-Fracture_Kind :: fr.Fracture_Kind
-Destruct_Region :: fr.Region
-Piece_Info :: fr.Piece_Info
-Piece_Flags :: fr.Piece_Flags
-Piece_Flag :: fr.Piece_Flag
-Destruct_Cluster_Info :: fr.Cluster_Info
+Fracture_Kind :: phys.Break_Kind
+Piece_Info :: phys.Piece_Info
+Piece_Flags :: phys.Piece_Flags
+Piece_Flag :: phys.Piece_Flag
+Destruct_Cluster_Info :: phys.Cluster_Info
 
 // The mesh must be closed. The entity needs a Collider of kind External and
 // no Rigid_Body: the pieces are its shapes, with the surface and collision of
@@ -54,9 +51,9 @@ Destructible :: struct {
     interior:base.Asset_Id `mirai:"section=Appearance,kind=.mat"`,                    // material of the faces a fracture opens; zero: the one of the first slot
 }
 
-// The values of fr.DESTRUCTIBLE_DESC_DEFAULT. Its collider is collider_fracture().
+// The values of physics.BREAKABLE_DESC_DEFAULT. Its collider is collider_fracture().
 destructible :: proc "contextless" (pieces:u32=16,anchored:=false,seed:u64=1) -> Destructible {
-    d:=fr.DESTRUCTIBLE_DESC_DEFAULT
+    d:=phys.BREAKABLE_DESC_DEFAULT
     return {
         pieces=pieces,seed=seed,anchored=anchored,gravity_scale=d.gravity_scale,hull_vertices=u32(d.hull_vertices),strength=d.strength,
         impact_damage=d.impact_damage,damage_threshold=d.damage_threshold,damage_radius=d.damage_radius,debris_volume=d.debris_volume,debris_lifetime=5,
@@ -66,10 +63,10 @@ destructible :: proc "contextless" (pieces:u32=16,anchored:=false,seed:u64=1) ->
 destructible_default :: proc "contextless" () -> Destructible {return destructible()}
 
 // The Collider of a Destructible: External, since this library makes its shapes, with the surface of
-// fr.DESTRUCTIBLE_DESC_DEFAULT.
+// physics.BREAKABLE_DESC_DEFAULT.
 collider_fracture :: proc "contextless" () -> phys.Collider {
     c:=phys.COLLIDER_DEFAULT
-    d:=fr.DESTRUCTIBLE_DESC_DEFAULT
+    d:=phys.BREAKABLE_DESC_DEFAULT
     c.kind,c.density,c.friction,c.restitution=.External,d.density,d.friction,d.restitution
     return c
 }
@@ -77,8 +74,8 @@ collider_fracture :: proc "contextless" () -> phys.Collider {
 // What this library keeps of a destructible. Only it writes it.
 @(component)
 Destructible_State :: struct {
-    handle:fr.Destructible_Handle `mirai:"transient,readonly,hidden"`,
-    body:sim.Body_Handle `mirai:"transient,readonly,hidden"`, // the one it was created as: where its anchors are, or its largest part
+    handle:phys.Breakable_Handle `mirai:"transient,readonly,hidden"`,
+    body:phys.Body_Handle `mirai:"transient,readonly,hidden"`, // the one it was created as: where its anchors are, or its largest part
     revision:u32 `mirai:"transient,readonly,hidden"`,         // of the simulation destructible that the groups mirror
     detached:u32 `mirai:"transient,readonly"`,                // pieces that left the body of the entity
     sequence:u32 `mirai:"transient,readonly,hidden"`,         // fracture events applied to it, in order (Fracture_Record.sequence)
@@ -89,7 +86,7 @@ Destructible_State :: struct {
     configured:bool `mirai:"transient,readonly,hidden"`,      // applied holds what it was made from
     applied:Destructible `mirai:"transient,readonly,hidden"`,
     applied_surface:[3]f32 `mirai:"transient,readonly,hidden"`, // density, friction and restitution of its collider; zero without one
-    applied_filter:sim.Filter `mirai:"transient,readonly,hidden"`,
+    applied_filter:phys.Collision_Filter `mirai:"transient,readonly,hidden"`,
     applied_mesh:base.Asset_Id `mirai:"transient,readonly,hidden"`,
     applied_shape:host.Shape `mirai:"transient,readonly,hidden"`,
     applied_scale:[3]f32 `mirai:"transient,readonly,hidden"`,
@@ -104,19 +101,16 @@ Destructible_State :: struct {
 @(component,locks="core.Transform")
 Destructible_Group :: struct {
     owner:core.Entity `mirai:"transient,readonly"`, // the destructible
-    group:u32 `mirai:"transient,readonly"`,         // fr.Piece_Info.group: the same on every end of a network session
+    group:u32 `mirai:"transient,readonly"`,         // physics.Piece_Info.group: the same on every end of a network session
     debris:bool `mirai:"transient,readonly"`,       // cosmetic: of this world alone
     written_position:[3]f32 `mirai:"transient,readonly,hidden"`, // group 0; the others keep it in the proxy of physics
     written_rotation:quaternion128 `mirai:"transient,readonly,hidden"`,
 }
 
+// What is asked of a destructible, or of one body that broke off it: the event each of its bodies gets.
 Destruct_Request :: struct {
     entity:core.Entity,
-    kind:Fracture_Kind,
-    region:fr.Region,
-    vector:[3]f32,
-    strain:f32,
-    ignore_body:sim.Body_Handle,
+    using event:phys.Break_Event,
 }
 
 // A fracture event applied to a destructible, in the frame of the body it was
@@ -132,11 +126,11 @@ Fracture_Record :: struct {
     strain:f32,
     half_extents:[3]f32,
     rotation:quaternion128,
-    falloff:sim.Radial_Falloff,
+    blend:f32,
 }
 
 // A fracture recorded on another end, to apply to a destructible here. check,
-// when not zero, is sim.destructible_check after it there: the replays of the
+// when not zero, is physics.breakable_check after it there: the replays of the
 // destructible that follow in the tick wait when it is not the same here.
 Replay :: struct {
     entity:core.Entity,
@@ -145,7 +139,7 @@ Replay :: struct {
 }
 
 // The state another end had of a destructible after sequence events
-// (sim.destructible_state_write); empty: as created. data is read in the tick it is asked.
+// (physics.breakable_state_write); empty: as created. data is read in the tick it is asked.
 State_Replay :: struct {
     entity:core.Entity,
     sequence:u32,
@@ -174,25 +168,21 @@ state_replay :: proc(requests:^Destruct_Requests,e:core.Entity,sequence:u32,data
 // radius takes the size of the impulse, fading to nothing at the radius, and
 // what comes off shares the impulse.
 damage :: proc(requests:^Destruct_Requests,e:core.Entity,point:[3]f32,radius:f32,impulse:[3]f32) {
-    core.push(&requests.queue,Destruct_Request{entity=e,kind=.Damage,region={point=point,radius=radius,falloff=.Linear},vector=impulse,strain=linalg.length(impulse)})
+    core.push(&requests.queue,Destruct_Request{e,{kind=.Damage,region={point=point,radius=radius,blend=radius},vector=impulse,strain=linalg.length(impulse)}})
 }
 
 strain :: proc(requests:^Destruct_Requests,e:core.Entity,point:[3]f32,radius,amount:f32,impulse:[3]f32={}) {
-    core.push(&requests.queue,Destruct_Request{entity=e,kind=.Damage,region={point=point,radius=radius,falloff=.Linear},vector=impulse,strain=amount})
+    core.push(&requests.queue,Destruct_Request{e,{kind=.Damage,region={point=point,radius=radius,blend=radius},vector=impulse,strain=amount}})
 }
 
 weaken :: proc(requests:^Destruct_Requests,e:core.Entity,point:[3]f32,radius,amount:f32) {
-    core.push(&requests.queue,Destruct_Request{entity=e,kind=.Weaken,region={point=point,radius=radius,falloff=.Linear},strain=amount})
+    core.push(&requests.queue,Destruct_Request{e,{kind=.Weaken,region={point=point,radius=radius,blend=radius},strain=amount}})
 }
 
 // Cuts a destructible by the plane through a world point: the pieces the
 // plane crosses become two and the two sides come apart.
 slice :: proc(requests:^Destruct_Requests,e:core.Entity,point,normal:[3]f32) {
-    core.push(&requests.queue,Destruct_Request{entity=e,kind=.Slice,region={point=point},vector=normal})
-}
-
-field_strain :: proc(requests:^Destruct_Requests,e:core.Entity,region:fr.Region,amount:f32,impulse:[3]f32={},weakening:=false,ignore_body:sim.Body_Handle={}) {
-    core.push(&requests.queue,Destruct_Request{entity=e,kind=weakening?.Weaken:.Damage,region=region,vector=impulse,strain=amount,ignore_body=ignore_body})
+    core.push(&requests.queue,Destruct_Request{e,{kind=.Slice,region={point=point},vector=normal}})
 }
 
 Remove_Error :: enum {None,Missing_Group,Retained_Group}
@@ -201,7 +191,7 @@ remove :: proc(requests:^Destruct_Requests,groups:core.Read(Destructible_Group),
     group,has:=core.get(groups,e)
     if !has {return .Missing_Group}
     if group.group==0 {return .Retained_Group}
-    core.push(&requests.queue,Destruct_Request{entity=e,kind=.Remove})
+    core.push(&requests.queue,Destruct_Request{e,{kind=.Remove}})
     return .None
 }
 
@@ -227,7 +217,7 @@ Replayed :: struct {
     state:bool,  // of a State_Replay
     done:bool,
     failed:bool, // a state that does not apply here: the ends fracture different meshes
-    check:u32,   // sim.destructible_check after it
+    check:u32,   // physics.breakable_check after it
 }
 
 // The entity of a group of a broken destructible in a network session, with

@@ -53,7 +53,7 @@ Ragdoll_Setup_Result :: struct {
 @(private)
 register :: proc(s:^editor.Session) {
     defaults:=Ragdoll_Setup_Params{mode=rag.RAGDOLL_DEFAULT.mode}
-    editor.api_method_register(s,{name="ragdoll.setup",summary="Builds the ragdoll of a rig from the body of its skeleton, the one it stores or one found in memory for the call: a dynamic body with collider, Ragdoll_Bone and limited Joint per part, and the Ragdoll of the rig, in one step of undo that also takes away the ragdoll the rig had.",params=Ragdoll_Setup_Params,params_info=type_info_of(Ragdoll_Setup_Params),result=Ragdoll_Setup_Result,result_info=type_info_of(Ragdoll_Setup_Result),defaults=&defaults,run=setup})
+    editor.api_method_register(s,Ragdoll_Setup_Params,Ragdoll_Setup_Result,{name="ragdoll.setup",summary="Builds the ragdoll of a rig from the body of its skeleton, the one it stores or one found in memory for the call: a dynamic body with collider, Ragdoll_Bone and limited Joint per part, and the Ragdoll of the rig, in one step of undo that also takes away the ragdoll the rig had.",defaults=&defaults,run=setup})
 }
 
 // What a part takes from the body: its parent part, its joint with limits in
@@ -153,7 +153,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
     for body in previous {
         for at,depth:=rig,0;at!=core.NONE && depth<1024;depth+=1 {
             if at==body {failure(call,{"entity","Invalid_Replace","bodies apart from the rig","a body that holds the rig","A body of the ragdoll holds the rig, and replacing it would remove the rig","Take the rig out of that body, or remove its Ragdoll_Bone"});return}
-            parent,placed:=core.get(core.read(parents),at)
+            parent,placed:=core.get(parents,at)
             at=parent.entity if placed else core.NONE
         }
     }

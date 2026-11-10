@@ -381,11 +381,10 @@ between packages; in `fixed`:
 
 - `begin`: the core and the network at the start of the tick: inputs and seats of the connections,
   pose targets.
-- `input`: actions and seats of this machine, bodies that appear, who drives what and the
-  `Move_Input` of what a seat drives.
+- `input`: actions and seats of this machine, bodies that appear, who drives what, the camera of
+  each seat and the `Move_Input` of what a seat drives.
 - `intent`, the default stage: the game logic, which writes `Move_Input` and pushes requests.
-- `apply`: what does what was requested before simulating: spawns, the camera of each seat, paths
-  and animation sampling.
+- `apply`: what does what was requested before simulating: spawns, paths and animation sampling.
 - `simulate`: what feeds physics (locomotion, ragdolls, fields, terrain), the requested places and
   the step.
 - `react`: what reads physics: destruction, animation after physics, game contacts.
@@ -463,7 +462,7 @@ return.
   [attributes](#attributes); the consumers of the `World_Info` are updated in the same task.
 - What an attribute says of a component or a storage is read in `core.declared_read`, which the
   [test worlds](core.md#test-worlds) read too; what the generated world does with it (init, copy,
-  swap, clear) is done as well by the builder of `core/test_world_test.odin`.
+  swap, clear) is done as well by the builder of `core/test_world.odin`.
 - Error messages say what to do, not only what failed.
 - The generator does not run code of the project or of the engine: it reads syntax. Sizes and
   alignments are computed by the compiler when it compiles the written world.

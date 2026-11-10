@@ -80,7 +80,9 @@ server_world :: proc(s:^Net_Session,w:core.World_Ref,root:scene.Scene_Root) {
         slot.entity,slot.ancestor,slot.sections,slot.holder,slot.member=core.NONE,core.NONE,{},0,0
     }
     mem.zero_slice(server.views)
-    server.request_count=0
+    server.visibility={}
+    mem.zero_slice(server.layouts)
+    server.moved={}
     server.ancestry={}
     mem.zero_slice(server.sections)
     server.section_count,server.sections_full=0,false
@@ -307,11 +309,11 @@ client_sections :: proc(s:^Net_Session,w:core.World_Ref) {
     references:=core.world_table_of(w,scene.Scene_Reference)
     ids:=core.world_table_of(w,core.Id)
     if !s.follows || references==nil || ids==nil {return}
-    seen:=[2]u64{core.version(references),core.layout(references)}
-    if seen==c.sections_seen {return}
+    seen:=c.sections_seen
+    if !core.touched(references,&seen) {return}
     loaded:=make([dynamic]base.Entity_Id,context.temp_allocator)
     for row in 0..<core.count(references) {
-        reference:=core.at(core.read(references),row)
+        reference:=core.at(references,row)
         if reference.loaded=={} {continue}
         if id:=core.id_of(core.read(ids),core.entity_at(references,row));id!=0 {append(&loaded,id)}
     }
@@ -360,7 +362,7 @@ client_gone :: proc(s:^Net_Session,w:core.World_Ref,message:Net_Gone) {
 section_loaded :: proc(w:core.World_Ref,id:base.Entity_Id) -> bool {
     references:=core.world_table_of(w,scene.Scene_Reference)
     if references==nil {return false}
-    reference,found:=core.get(core.read(references),core.entity_of(core.world_entities(w),id))
+    reference,found:=core.get(references,core.entity_of(core.world_entities(w),id))
     return found && reference.loaded!={}
 }
 

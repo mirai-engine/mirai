@@ -371,7 +371,7 @@ api_material_instance_revert :: proc(s:^Session,call:^api.Call) {
     if !api_edit_begin(s,call,"Revert material") {return}
     w=edited_world(s)
     if table:=core.world_table_of(w,erender.Material_Override);table!=nil {
-        if override,overridden:=core.get(core.read(table),e);overridden {
+        if override,overridden:=core.get(table,e);overridden {
             _,rest:=override_split(&override,p.slot)
             if erender.material_override_empty(&rest) {core.remove(table,e)} else {core.add(table,e,rest)}
         }

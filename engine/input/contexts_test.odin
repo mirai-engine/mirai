@@ -39,14 +39,14 @@ the_always_context_reads_under_a_modal_one :: proc(t:^testing.T) {
     device:=core.Input{keys_down={.Escape},keys_pressed={.Escape}}
     modal:=Context_Stack{layers={0=MENU},count=1,modal=1}
     actions:Actions
-    actions_update(&actions,&m,&device,&modal)
+    actions_update(&actions,&m,&device,1.0/60,&modal)
     testing.expect(t,action(&actions,PAUSE).pressed,"a modal context does not silence it")
     actions={}
-    actions_update(&actions,&m,&device)
+    actions_update(&actions,&m,&device,1.0/60)
     testing.expect(t,action(&actions,PAUSE).pressed,"without a seat in a context, it reads too")
     input_map_bind(&m,CONFIRM,binding_key(.Escape))
     actions={}
-    actions_update(&actions,&m,&device,&modal)
+    actions_update(&actions,&m,&device,1.0/60,&modal)
     testing.expect(t,action(&actions,CONFIRM).pressed && !action(&actions,PAUSE).down,"the context that reads Escape keeps it")
 }
 
@@ -59,19 +59,19 @@ a_context_on_top_takes_the_inputs_its_actions_read :: proc(t:^testing.T) {
     device.gamepads[0]={connected=true,down={.South},pressed={.South}}
 
     actions:Actions
-    actions_update(&actions,&m,&device)
+    actions_update(&actions,&m,&device,1.0/60)
     testing.expect(t,action(&actions,JUMP).pressed && !action(&actions,CONFIRM).down,"outside the menu, its actions read nothing")
 
     menu:=Context_Stack{layers={0=MENU},count=1}
     actions={}
-    actions_update(&actions,&m,&device,&menu)
+    actions_update(&actions,&m,&device,1.0/60,&menu)
     testing.expect(t,action(&actions,CONFIRM).pressed,"the menu confirms on Space")
     testing.expect(t,!action(&actions,JUMP).down,"Space and South of every gamepad are the menu's, also South of the first one")
     testing.expect(t,action(&actions,MOVE).vector==[2]f32{0,1},"what the menu does not read stays with the game")
 
     menu.modal=1
     actions={}
-    actions_update(&actions,&m,&device,&menu)
+    actions_update(&actions,&m,&device,1.0/60,&menu)
     testing.expect(t,action(&actions,CONFIRM).pressed && !action(&actions,MOVE).down,"a modal menu leaves the game nothing")
 }
 
@@ -130,16 +130,16 @@ a_button_held_across_a_change_of_context_waits_for_its_release :: proc(t:^testin
     seat:Seat
     seat.contexts=Context_Stack{layers={0=MENU},count=1}
     device:=core.Input{keys_down={.Space},keys_pressed={.Space}}
-    seat_feed(&seat,&device,&m,false)
+    seat_feed(&seat,&device,&m,false,1.0/60)
     testing.expect(t,action(&seat.actions,CONFIRM).pressed)
     seat.contexts={}
     device={keys_down={.Space}}
-    seat_feed(&seat,&device,&m,false)
+    seat_feed(&seat,&device,&m,false,1.0/60)
     testing.expect(t,seat.rearm&action_bit(JUMP)!=0,"jump waits for Space to be released")
     device={keys_released={.Space}}
-    seat_feed(&seat,&device,&m,false)
+    seat_feed(&seat,&device,&m,false,1.0/60)
     device={keys_down={.Space},keys_pressed={.Space}}
-    seat_feed(&seat,&device,&m,false)
+    seat_feed(&seat,&device,&m,false,1.0/60)
     testing.expect(t,seat.rearm==0 && action(&seat.actions,JUMP).pressed,"pressed again, it jumps")
 }
 
@@ -167,7 +167,7 @@ input_mirai_names_contexts_and_chords :: proc(t:^testing.T) {
     menu:=Context_Stack{layers={0=MENU},count=1}
     actions:Actions
     device:=core.Input{keys_down={.Left_Control,.S},keys_pressed={.Left_Control,.S}}
-    actions_update(&actions,&m,&device,&menu)
+    actions_update(&actions,&m,&device,1.0/60,&menu)
     testing.expect(t,action(&actions,SAVE).pressed && !action(&actions,JUMP).down,"the menu takes S, and Ctrl+S saves")
 
     below:Input_Map

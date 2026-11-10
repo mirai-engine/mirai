@@ -21,7 +21,6 @@ Ability_World :: struct {
     clock:core.Clock,
     physics:core.Ref(phys.Physics_State),
     moves:^phys.Locomotion_Requests,
-    actions:^anim.Action_Requests,
     animations:^anim.Animation_Requests,
     problems:^core.Problems,
 }
@@ -78,7 +77,7 @@ abilities_tick :: proc(users:^core.Table(Ability_User),abilities:core.Records(Ab
         e:=core.entity_at(users,row)
         u:=users.values[row]
         if core.owned(w.remotes,e) {user_tick(&t,e,&u)} else {replica_tick(&t,e,&u)}
-        if mem.compare_ptrs(&u,&users.values[row],size_of(Ability_User))!=0 {core.at(users,row)^=u}
+        if mem.compare_ptrs(&u,&users.values[row],size_of(Ability_User))!=0 {core.edit_at(users,row)^=u}
     }
 }
 
@@ -88,18 +87,18 @@ request_apply :: proc(t:^Tick,r:Ability_Request) {
     switch r.kind {
     case .Use:
         // As if its input fired: it waits as its sheet says.
-        if u:=core.get(t.users,r.entity);u!=nil {
+        if u:=core.edit(t.users,r.entity);u!=nil {
             a:=ability_sheet(t.abilities,r.ability)
             buffer_add(u,r.ability,t.tick,a!=nil && a.input.wait==.Running)
         }
     case .Cancel:
-        u:=core.get(t.users,r.entity)
+        u:=core.edit(t.users,r.entity)
         if u==nil || u.ability=={} {return}
         ability_end(t,r.entity,u,ability_sheet(t.abilities,u.ability),time_of(t,u),.Canceled,nil)
     case .Effect:
         effect_apply(t,r.entity,r.source,r.effect)
     case .Kit:
-        if u:=core.get(t.users,r.entity);u!=nil {u.kit,u.buffer=r.kit,{}}
+        if u:=core.edit(t.users,r.entity);u!=nil {u.kit,u.buffer=r.kit,{}}
     }
 }
 
@@ -109,11 +108,11 @@ effect_apply :: proc(t:^Tick,target,source:core.Entity,effect:Ability_Effect) {
         core.report(t.w.problems,target,"abilities.effect","an effect asked for it %s",text)
         return
     }
-    u:=core.get(t.users,target)
+    u:=core.edit(t.users,target)
     if u!=nil && u.statuses&effect.blocked_by!=0 {return}
     amount:=effect.amount
     if effect.scale_by!=ATTRIBUTE_NONE && amount!=0 {
-        from,found:=core.get(core.read(t.users),source)
+        from,found:=core.get(t.users,source)
         scale,has:=ability_value(from,effect.scale_by)
         if !found || !has {core.report(t.w.problems,target,"abilities.effect","an effect scaled by an attribute its source does not have hit it: give the source that attribute, or clear scale_by")}
         amount*=scale
@@ -380,12 +379,13 @@ input_down :: proc(t:^Tick,e:core.Entity,input:Ability_Input) -> bool {
 input_fired :: proc(t:^Tick,e:core.Entity,input:Ability_Input) -> bool {
     if input.on==.None {return false}
     s:=input_state(t,e,input)
-    hold:=u32(ticks_of(input.hold,t.dt))
+    // The tick nearest to input.hold crosses it.
+    crossed:=input.hold-t.dt*0.5
     switch input.on {
     case .None: return false
     case .Pressed: return s.pressed
-    case .Released: return s.released && s.released_held>=hold
-    case .Held: return hold==0?s.pressed:s.down && s.held_ticks==hold
+    case .Released: return s.released && s.released_held>=crossed
+    case .Held: return s.down && s.held>=crossed && (s.pressed || s.held-t.dt<crossed)
     case .Down: return s.down
     }
     return false
@@ -460,18 +460,16 @@ ability_start :: proc(t:^Tick,e:core.Entity,u:^Ability_User,ref:core.Record(Abil
     u.ability,u.start,u.own,u.hits,u.hit_count=ref,t.tick,0,{},0
     event_push(t,{kind=.Started,entity=e,ability=ref,window=-1})
     if name:=ability_name_text(&a.action);name!="" {
-        anim.action_fire(t.w.actions,e,name)
+        anim.play(t.w.animations,e,name)
     } else if name:=ability_name_text(&a.clip);name!="" {
-        mode:u16
-        if c,found:=core.get(t.w.characters,e);found {mode=u16(c.mode)}
-        anim.match_play(t.w.animations,e,name,mode)
+        anim.play(t.w.animations,e,name)
     }
 }
 
 // Ends the running ability at at: its open windows close, their moves stop and its animation
-// stops unless next plays the same action, or a clip of its own. An action next does not fire again
-// is cancelled even when next fires another: on another layer nothing would replace it, and a
-// looping section would play on, and on the same layer the one next fires takes the layer.
+// stops unless next plays the same action, or a whole-body one of its own. An action next does not
+// play again is stopped even when next plays another: in another layer nothing would replace it,
+// and a looping section would play on, and in the same layer the one next plays takes the layer.
 @(private)
 ability_end :: proc(t:^Tick,e:core.Entity,u:^Ability_User,a:^Ability,at:Ability_Time,kind:Ability_Event_Kind,next:^Ability) {
     ref:=u.ability
@@ -482,8 +480,8 @@ ability_end :: proc(t:^Tick,e:core.Entity,u:^Ability_User,a:^Ability,at:Ability_
             if w.move.velocity!={} {phys.remove_moves(t.w.moves,e,MOVE_ID+u32(i))}
         }
         if kind!=.Completed || a.hold {
-            if name:=ability_name_text(&a.action);name!="" && (next==nil || ability_name_text(&next.action)!=name) {anim.action_cancel(t.w.actions,e,name)}
-            if ability_name_text(&a.clip)!="" && (next==nil || ability_name_text(&next.clip)=="") {anim.match_stop(t.w.animations,e)}
+            if name:=ability_name_text(&a.action);name!="" && (next==nil || ability_name_text(&next.action)!=name) {anim.stop(t.w.animations,e,name)}
+            if name:=ability_name_text(&a.clip);name!="" && (next==nil || ability_name_text(&next.clip)=="") {anim.stop(t.w.animations,e,name)}
         }
     }
     u.ability,u.start,u.own,u.hits,u.hit_count={},0,0,{},0

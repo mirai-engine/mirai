@@ -89,6 +89,33 @@ test_state_make :: proc(state:^Physics_State,settings:=Physics_Settings{}) -> bo
     return state_make(state,&settings,&job_system,&problems)
 }
 
+// A dynamic ball in a simulation alone, which the test of a library throws at what it made there.
+test_ball :: proc(state:^Physics_State,position,velocity:[3]f32,radius:f32=0.25,gravity_scale:f32=0,bullet:=true) -> Body_Handle {
+    desc:=sim.BODY_DESC_DEFAULT
+    desc.position,desc.linear_velocity,desc.gravity_scale,desc.bullet=position,velocity,gravity_scale,bullet
+    body:=sim.body_create(&state.world,desc)
+    shape:=sim.SHAPE_DESC_DEFAULT
+    shape.geometry=sim.Sphere{radius}
+    sim.shape_create(&state.world,body,shape)
+    return body
+}
+
+// A strain around a point that fades to nothing at the radius, on every body of a breakable; with weaken
+// it breaks nothing yet.
+test_strain :: proc(state:^Physics_State,h:Breakable_Handle,point:[3]f32,radius,amount:f32,impulse:[3]f32={},weaken:=false) -> (changed,strained:bool) {
+    _,changed,strained=break_apply(state,{breakable=h,piece=-1,region={point=point,radius=radius,blend=radius},vector=impulse,strain=amount,kind=weaken?.Weaken:.Damage})
+    return
+}
+
+// A cut of every body of a breakable by the plane through a point.
+test_slice :: proc(state:^Physics_State,h:Breakable_Handle,point,normal:[3]f32) -> bool {
+    _,cut,_:=break_apply(state,{breakable=h,piece=-1,region={point=point},vector=normal,kind=.Slice})
+    return cut
+}
+
+// Ends a body test_ball made: its handle is then one of a body that is gone.
+test_body_end :: proc(state:^Physics_State,body:Body_Handle) {sim.body_destroy(&state.world,body)}
+
 test_host_destroy :: proc(h:^Test_Physics_Host) {
     collider_meshes_destroy(&h.meshes)
 }

@@ -79,23 +79,19 @@ message that comes out of them passes the `core.Time` to its sink, which does no
 choice of shot and its blend are the runtime's (`cinematic_shots_at`, `cinematic_shot_blend`): the
 editor has no other.
 
-- The tool shows one timeline: the one it had, the selection's or the first of the scene. At the
-  bottom, the editor's time strip (`editor.timeline_strip`), in fixed ticks, as long as the clip,
-  with the lane of shots; on the right, the timeline and what adds a shot or an actor. A shot is an
-  entity under the timeline; an actor is an `Animation_Target` on its entity.
-- The keys and the markers are the clip's: `animation.clip.create`, `animation.track.set`,
-  `animation.key.set` and `animation.marker.set` write them, with the `target` of an actor as
-  `cinematics.inspect` gives it.
-- **Preview.** With the tool on, the scene shows the timeline at the playhead: the tool seeks the
-  clip there, as the preview of any `Animation`, and the document does not change. Playing advances
-  the playhead at the fixed tick rate, without markers or game logic. Turning it off returns the
-  clip to its start.
+- The tool shows one timeline: the one it had, the selection's or the first of the scene. It is
+  the [Tracks tool](../../mirai-animation/references/animation-authoring.md#tracks-tool) opened on
+  the clip of the timeline (its strip, its head and the scene shown there, its keys), with the
+  timeline, the shot view and what adds a shot or an actor above the tracks in its panel. A shot is
+  an entity under the timeline, added at the head and timed by its `Cinematic_Shot.time`; an actor
+  is an `Animation_Target` on its entity.
+- The keys and the markers are the clip's: the Tracks tool, `animation.key.capture`,
+  `animation.track.set`, `animation.key.set` and `animation.marker.set` write them, with the
+  `target` of an actor as `cinematics.inspect` gives it.
 - Shot view puts the viewport's view on the current shot with its blend, without roll; turning it
   off or leaving the tool restores the previous view.
-- Dragging a shot moves it by tick; the lane's button adds one of the chosen camera at the playhead
-  and the right button deletes. Each write is a document undo step.
-- `cinematics.control` in Edit drives the preview (turns the tool on) and in Play queues the
-  command with `anim.animation_command`. `add` requires Edit.
+- `cinematics.control` in Edit moves the head of the Tracks tool on the timeline (turns the tool
+  on) and in Play queues the command with `anim.animation_command`. `add` requires Edit.
 
 ## Verification
 

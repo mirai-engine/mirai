@@ -222,6 +222,16 @@ command_call :: proc(s:^Session,method,params:string) -> bool {
     return true
 }
 
+// Runs a method now, as the person at the editor, inside the gesture that is open: what it edits
+// is part of the step of the gesture (the key the Tracks tool writes as the gizmo lets go). False
+// when there is no API.
+command_join :: proc(s:^Session,method,params:string) -> bool {
+    st:=api_state(s)
+    if st==nil {return false}
+    command_execute(s,st,method,params)
+    return true
+}
+
 // The params of an entry with what it shows now in place of "$toggle".
 @(private)
 binding_params :: proc(b:^strings.Builder,params:string,checked:bool) {

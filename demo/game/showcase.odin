@@ -31,7 +31,7 @@ game_showcase :: proc(
     if core.count(shown)==0 {return}
     arrivals:=i32(0)
     for marker in markers.items {
-        if marker.marker==base.name_hash("top") {arrivals+=1}
+        if marker.kind==.Marker && marker.name==base.name_hash("top") {arrivals+=1}
     }
     lift:=core.entity_named(names,SHOWCASE_LIFT)
     animation,animated:=core.get(animations,lift)

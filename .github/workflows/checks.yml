@@ -70,4 +70,4 @@ jobs:
           ./mirai test \
             std/base std/jobs std/math std/anim std/ai std/input std/geom std/spatial std/serial std/subprocess \
             core net project rhi cook/image cook/textures cook/shaders \
-            plugins/physics/runtime/sim plugins/destruct/runtime/fracture
+            plugins/physics/runtime/sim

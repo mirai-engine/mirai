@@ -27,7 +27,7 @@ remote_bindings :: proc() -> (m:Input_Map) {
 @(private="file")
 same_state :: proc(a,b:Action_State) -> bool {
     return a.down==b.down && a.pressed==b.pressed && a.released==b.released && a.tapped==b.tapped &&
-        a.held_ticks==b.held_ticks && a.holding==b.holding && abs(a.value-b.value)<0.002 && abs(a.vector.x-b.vector.x)<0.001 && abs(a.vector.y-b.vector.y)<0.001
+        a.held==b.held && a.holding==b.holding && abs(a.value-b.value)<0.002 && abs(a.vector.x-b.vector.x)<0.001 && abs(a.vector.y-b.vector.y)<0.001
 }
 
 // The seat of another end that takes what a seat sent has its actions as
@@ -56,13 +56,13 @@ a_seat_takes_the_actions_another_end_sent_as_they_were_there :: proc(t:^testing.
         {},
     }
     for tick,index in ticks {
-        seat:=core.get(&w.seats,local)
+        seat:=core.edit(&w.seats,local)
         seat.contexts=tick.menu?menu:{}
         device:=tick.device
-        seat_feed(seat,&device,&m,false)
+        seat_feed(seat,&device,&m,false,1.0/60)
         sent,ok:=seat_remote(core.read(&w.seats),local,&m)
         testing.expect(t,ok)
-        seat_receive(&there,&m,sent)
+        seat_receive(&there,&m,sent,1.0/60)
         for a in ([]Action{TEST_MOVE,TEST_LOOK,TEST_JUMP,TEST_CONFIRM}) {
             here:=seat_action(core.read(&w.seats),local,a)
             testing.expectf(t,same_state(here,action(&there.actions,a)),"tick %d, action %d: %v here, %v there",index,a,here,action(&there.actions,a))
@@ -84,11 +84,11 @@ a_repeated_tick_holds_what_was_held_and_not_the_mouse :: proc(t:^testing.T) {
     sent.axes[0]={TEST_MOVE,{0,1}}
     sent.axes[1]={TEST_LOOK,{4,1}}
     there:Seat
-    seat_receive(&there,&m,sent)
+    seat_receive(&there,&m,sent,1.0/60)
     testing.expect(t,action(&there.actions,TEST_JUMP).pressed && action(&there.actions,TEST_CONFIRM).pressed && action(&there.actions,TEST_CONFIRM).released)
-    seat_receive(&there,&m,remote_repeated(sent))
+    seat_receive(&there,&m,remote_repeated(sent),1.0/60)
     jump,move,look:=action(&there.actions,TEST_JUMP),action(&there.actions,TEST_MOVE),action(&there.actions,TEST_LOOK)
-    testing.expect(t,jump.down && !jump.pressed && jump.held_ticks==2)
+    testing.expect(t,jump.down && !jump.pressed && abs(jump.held-2.0/60)<1e-6)
     testing.expect(t,move.down && move.vector==[2]f32{0,1})
     testing.expect(t,!look.down && look.vector==[2]f32{})
     testing.expect(t,!action(&there.actions,TEST_CONFIRM).pressed)
@@ -105,11 +105,11 @@ hostile_remote_actions_stay_in_the_map :: proc(t:^testing.T) {
     }
     for sent in cases {
         there:Seat
-        seat_receive(&there,&m,sent)
-        seat_receive(&there,&m,remote_repeated(sent))
+        seat_receive(&there,&m,sent,1.0/60)
+        seat_receive(&there,&m,remote_repeated(sent),1.0/60)
         testing.expect_value(t,int(there.actions.count),action_end(&m))
     }
     without:Seat
-    seat_receive(&without,nil,cases[0])
+    seat_receive(&without,nil,cases[0],1.0/60)
     testing.expect_value(t,without.actions.count,0)
 }

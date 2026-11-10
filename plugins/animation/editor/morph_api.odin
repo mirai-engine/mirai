@@ -35,7 +35,7 @@ Morph_Set_Result :: struct {id:base.Entity_Id,name:[64]u8 `mirai:"text"`,value:f
 morph_register :: proc(s:^editor.Session) {
     inspect:=Morph_Inspect_Params{limit=256}
     set:=Morph_Set_Params{mode=.Override}
-    editor.api_method_register(s,{name="animation.morph.set",summary="Sets the weight of a morph target of a mesh instance by name. One step of undo in Edit; Play and Simulation change only the running world.",params=Morph_Set_Params,params_info=type_info_of(Morph_Set_Params),result=Morph_Set_Result,result_info=type_info_of(Morph_Set_Result),defaults=&set,run=morph_set})
+    editor.api_method_register(s,Morph_Set_Params,Morph_Set_Result,{name="animation.morph.set",summary="Sets the weight of a morph target of a mesh instance by name. One step of undo in Edit; Play and Simulation change only the running world.",defaults=&set,run=morph_set})
 }
 
 @(private)
@@ -59,7 +59,7 @@ morph_instance_source :: proc(w:core.World_Ref,e:core.Entity,config:anim.Morph_W
     if source==core.NONE {return source,.None}
     if config.source!=core.NONE {return source,.Explicit}
     if source==e {return source,.Own}
-    return source,.Pose_Source if core.has(core.read(sources),e) else .Ancestor
+    return source,.Pose_Source if core.has(sources,e) else .Ancestor
 }
 
 @(private)
@@ -70,7 +70,7 @@ morph_inspect :: proc(s:^editor.Session,call:^api.Call) {
     view,id,loaded:=morph_mesh_open(s,call,w,e,&file);if !loaded {return}
     config,_:=editor.entity_get(w,e,anim.Morph_Weights)
     stamp:u64
-    if configs:=core.world_table_of(w,anim.Morph_Weights);configs!=nil {if row:=core.row_of(core.read(configs),e);row>=0 {stamp=core.stamp(core.read(configs),row)+1}}
+    if configs:=core.world_table_of(w,anim.Morph_Weights);configs!=nil {if row:=core.row_of(configs,e);row>=0 {stamp=core.stamp(configs,row)+1}}
     source,kind:=morph_instance_source(w,e,config)
     path:=base.text_get(config.path[:]);if path=="" {if target,present:=editor.entity_get(w,e,anim.Animation_Target);present {path=base.text_get(target.path[:])}}
     state,available:=anim.animation_morph_state(core.world_storage_of(w,anim.Morph_Playback),e)

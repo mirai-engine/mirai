@@ -404,8 +404,9 @@ their defaults, `input.mirai` and the seats: [actions](control.md#actions).
   - `Axis`: two keys (negative, positive), a gamepad axis or a mouse axis.
   - `Axis2`: four keys (left, right, down, up), a stick or the mouse movement. Key diagonals keep
     unit length.
-- `Action_State`: `down`, `pressed`, `released`, `tapped`, `holding`, `held_ticks`, `value`,
-  `vector`. `tap_ticks` (12) and `hold_ticks` (30) come from the map.
+- `Action_State`: `down`, `pressed`, `released`, `tapped`, `holding`, `held` (seconds), `value`,
+  `vector`. `tap_seconds` and `hold_seconds` come from the map, and each threshold is met at the
+  tick nearest to it, so a tap and a hold last the same at any tick rate.
 - Changing the map at runtime: `input_map_action(&m, jump, .Button)`,
   `input_map_bind(&m, jump, inp.binding_key(.Space))`, `input_map_unbind`, with the action of the
   world (`jump:=inp.action_of(walk, .Jump)`); `input_map_has` says whether it has an action of a
@@ -464,14 +465,22 @@ the reverb of the room where the listener is and what covers each source.
   - Doppler: the source's and the listener's velocity come from how much they moved in the frame; a
     `View` with `cut` does not move. It is only sent while there is doppler.
   - With the world's `core.Clock` paused, its voices are paused and the sources are not updated
-    until it continues; the UI's loose sounds are not.
+    until it continues; one-shots are not.
+- **One-shots.** `audio.play(sounds, path_or_id, at, bus, volume, pitch)` pushes to
+  `Sound_Requests`, from any step and from the interface sounds of `gui` (on `BUS_UI`). Each is
+  an `Audio_Source` of `AUDIO_SOURCE_DEFAULT` with those values and starts through the same
+  `voice_start` as a source, so the mixer takes the same path for both, without a handle.
+  `audio_requests` (`fixed` and `late`, stage `end`) takes the queue: at the end of the tick that
+  asked, a tick that runs again (`time.resimulating`) drops what it asks, since it played the first
+  time, and the copies of the world for a rollback are made between ticks, after the take; what
+  frame steps and the interface push plays at the end of the frame's `late`.
 - **Reverb.** The mixer has [only one](../../mirai-platform/references/audio.md#reverb): that of
   the room where the listener is. `Audio_Reverb` is a value of [volume](#volume): without a
   `Volume`, the level's; without any, nothing reverberates. `audio_reverb` (`late`) takes the blend
   at the listener and moves toward it over some `REVERB_FADE` seconds; it only sends while it
   changes. It returns in `Audio_Settings.reverb_bus`.
-  - `Audio_Source.reverb` is the part of the source that it sends to the room; `play_asset_at`
-    sends all by default and `play_asset` none.
+  - `Audio_Source.reverb` is the part of the source that it sends to the room; a one-shot sends
+    none, as `AUDIO_SOURCE_DEFAULT`.
 - **Medium.** `Audio_Medium` is what surrounds the listener besides air, like the water they are
   under: a low-pass and a reverb with their weight. A single plugin writes it
   ([water](../../mirai-world/references/water.md#sound)) before `audio_reverb` and
@@ -500,7 +509,9 @@ the reverb of the room where the listener is and what covers each source.
   `voice` and `ui`, and a game its own below `AUDIO_BUS_CAPACITY`, which is the mixer's capacity. A
   bus is reserved the first time something names it.
   - `Audio_Settings` (project setting) has an entry per bus that does not sound as it arrives: its
-    gain in dB, its low-pass, who ducks it and its own reverb, over everything it touches. The gain
+    gain in dB, its low-pass, who ducks it, its own reverb over everything it touches, and the bus
+    it sends to ([sends](../../mirai-platform/references/audio.md#buses)): one of a lower number,
+    or the problem `audio.send` and the master. The gain
     is in dB so that an entry at zeros says "as it arrives": in linear, the master at volume 0
     would be an empty entry. `audio_bus_setting_set` writes or removes the entry and
     `db_volume` converts inside the mixer.
@@ -510,7 +521,7 @@ the reverb of the room where the listener is and what covers each source.
     `platform.audio_device_names`; empty, the system's. `audio_output` moves the mixer to it when
     it changes, without losing its voices, and only if the application has an open output. A name
     the system does not list sounds through the system's and is the problem `audio.output`. Its
-    `kind` (headphones by default, or speakers) is given to every mixer, open output or not.
+    `kind` (speakers by default, or headphones) is given to every mixer, open output or not.
   - `audio_buses` (`late`) compares each bus of the mixer with its entry and its volume and sends
     only what differs; a bus without an entry returns to 0 dB, without filter or ducking. The
     master's mute belongs to the host (the player without focus), not to the settings.
@@ -522,16 +533,9 @@ the reverb of the room where the listener is and what covers each source.
   `audio.sound`, `audio.bus`, `audio.voices` or `audio.memory`.
 - `Mixer_Listener` (host) is the mixer's listener, one per application: it is set by the world whose
   listener moved, or the one that runs after another.
-- A loose sound: `audio.play_asset(app,time,path_or_id,...)` and `play_asset_at`, with `.sound`
-  or `.sound_set`; `play_source` plays an `Audio_Source` as configured, without a place, and
-  `play_source_at` at a point of the world with its curve (a loop that follows something:
-  `source_place` moves it); `source_tune` passes either its changes; `stop` and `playing` on the
-  voice they return. Playing takes `^host.App`, which loads the sound; what acts on a voice
-  (`stop`, `playing`, `source_place`, `source_tune`) takes the mixer, `^audio.Mixer`. `buses_apply`
-  is what `audio_buses` does every frame, for whoever sounds outside the game (the editor). They
-  return zero if there is no mixer, the asset does not load or there is no free voice, or if a
-  rollback repeats the tick (`time.resimulating`): it already sounded the first time. They belong
-  to the game thread: only from the functions of the loop.
+- A loose sound is a one-shot of `Sound_Requests` (above). `buses_apply` is what `audio_buses`
+  does every frame, for whoever sounds outside the game (the editor), which starts what it plays
+  to be heard with `voice_start`.
 
 ## `anim`
 

@@ -54,7 +54,7 @@ a_session_without_memory_is_refused_and_a_connection_without_room_is_closed :: p
     budgets:=[]int{0,max(int)}
     for budget in budgets {
         failure.remaining=budget
-        server_commands(&s,ref,nil,connected,&events,&world.remote)
+        server_commands(&s,ref,nil,connected,&world.remote)
         failure.remaining=max(int)
         testing.expectf(t,problems.count==1 && (remote_entry(&world.remote,3)!=nil)==(budget!=0),"with %d requests served: %d problems, seated %v",budget,problems.count,remote_entry(&world.remote,3)!=nil)
     }

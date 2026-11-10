@@ -19,7 +19,7 @@ import "mirai:std/serial"
 REGISTRY_HEAD :: 4096
 REGISTRY_MAX_DEPENDENCIES :: 1<<20
 REGISTRY_CACHE_MAGIC :: u32('M')|u32('R')<<8|u32('E')<<16|u32('G')<<24
-REGISTRY_CACHE_VERSION :: 4 // of its layout; a cache or index of another one, or of another container VERSION, is not read
+REGISTRY_CACHE_VERSION :: 5 // of its layout; a cache or index of another one, or of another container VERSION, is not read
 // The packed index of a folder of cooked assets, inside it: what a scan of
 // the folder would find, written by whoever cooked it. registry_load reads it
 // instead of looking at the files.
@@ -36,6 +36,7 @@ Registry_File :: struct {
     size:i64,
     time:i64,    // of its last change, nanoseconds since 1970
     state:Registry_State,
+    imported:u64, // not 0: its file is in the imported folder that goes with its assets folder, named by its id and this key (registry_imported.odin)
     id:base.Asset_Id,
     owner:base.Asset_Id, // the asset it is a part of; zero for one of its own
     kind:Fourcc,
@@ -79,7 +80,8 @@ Registry_Stats :: struct {
 // A folder of assets seen under prefix/, beside the root: the assets of a
 // plugin. A prefix that starts with a dot is of the program's own assets.
 // A guest is a folder the program did not ship (registry_mount_guest).
-Registry_Mount :: struct {folder,prefix:string,guest:bool}
+// imported: the imported folder that goes with it; "" for none.
+Registry_Mount :: struct {folder,prefix:string,guest:bool,imported:string}
 
 // Whether lists of what a project has show a file: those under a mount whose
 // prefix starts with a dot are the program's own, found by their path.
@@ -87,6 +89,7 @@ registry_listed :: proc "contextless" (file:^Registry_File) -> bool {return len(
 
 Registry :: struct {
     root:string,
+    imported:string, // the imported folder that goes with the root; "" for none
     cache:string, // "" for none
     mounts:[dynamic]Registry_Mount,
     files:[dynamic]Registry_File, // every file, sorted by path
@@ -114,15 +117,18 @@ Registry :: struct {
 }
 
 // False, with a registry of no folder that registry_destroy takes, without memory for it.
-registry_init :: proc(r:^Registry,root:string,cache:="",allocator:=context.allocator) -> bool {
+registry_init :: proc(r:^Registry,root:string,cache:="",allocator:=context.allocator,imported:="") -> bool {
     r^={allocator=allocator}
-    no_root,no_cache:runtime.Allocator_Error
+    no_root,no_cache,no_imported:runtime.Allocator_Error
     r.root,no_root=strings.clone(root,allocator)
     r.cache,no_cache=strings.clone(cache,allocator)
-    if no_root!=nil || no_cache!=nil {
+    r.imported,no_imported=strings.clone(imported,allocator)
+    if no_root!=nil || no_cache!=nil || no_imported!=nil {
         delete(r.root,allocator)
         delete(r.cache,allocator)
-        r.root,r.cache="",""
+        delete(r.imported,allocator)
+        r.root,r.cache,r.imported="","",""
+        no_root=.Out_Of_Memory
     }
     r.files=make([dynamic]Registry_File,allocator)
     r.folders=make([dynamic]string,allocator)
@@ -141,22 +147,24 @@ registry_init :: proc(r:^Registry,root:string,cache:="",allocator:=context.alloc
 }
 
 @(private="file")
-registry_mount_add :: proc(r:^Registry,folder,prefix:string,guest:bool) -> bool {
+registry_mount_add :: proc(r:^Registry,folder,prefix:string,guest:bool,imported:="") -> bool {
     kept_folder,no_folder:=strings.clone(folder,r.allocator)
     kept_prefix,no_prefix:=strings.clone(prefix,r.allocator)
-    if no_folder==nil && no_prefix==nil {
-        if _,no_room:=append(&r.mounts,Registry_Mount{kept_folder,kept_prefix,guest});no_room==nil {return true}
+    kept_imported,no_imported:=strings.clone(imported,r.allocator)
+    if no_folder==nil && no_prefix==nil && no_imported==nil {
+        if _,no_room:=append(&r.mounts,Registry_Mount{kept_folder,kept_prefix,guest,kept_imported});no_room==nil {return true}
     }
     delete(kept_folder,r.allocator)
     delete(kept_prefix,r.allocator)
+    delete(kept_imported,r.allocator)
     return false
 }
 
 // Adds folder to what the next scan sees, its files under prefix/. The prefix
 // is a relative path with '/' that names no folder of the root. False without
 // memory for it.
-registry_mount :: proc(r:^Registry,folder,prefix:string) -> bool {
-    return registry_mount_add(r,folder,prefix,false)
+registry_mount :: proc(r:^Registry,folder,prefix:string,imported:="") -> bool {
+    return registry_mount_add(r,folder,prefix,false,imported)
 }
 
 // Mounts now a folder the program did not ship (what a player saved or
@@ -225,7 +233,7 @@ registry_unmount :: proc(r:^Registry,prefix:string) -> Error {
     }
     base.truncate(&r.folders,kept)
     registry_refused_clear(r,prefix)
-    delete(r.mounts[at].folder,r.allocator);delete(r.mounts[at].prefix,r.allocator)
+    delete(r.mounts[at].folder,r.allocator);delete(r.mounts[at].prefix,r.allocator);delete(r.mounts[at].imported,r.allocator)
     ordered_remove(&r.mounts,at)
     indexed:=registry_index(r)
     if r.cache!="" {registry_cache_write(r)}
@@ -275,6 +283,7 @@ registry_refused_clear :: proc(r:^Registry,prefix:string) {
 // the mount whose prefix it starts with, or itself when it is outside them.
 // "" without memory for it.
 registry_file_path :: proc(r:^Registry,path:string,allocator:=context.allocator) -> string {
+    if at,known:=r.by_path[path];known && r.files[at].imported!=0 {return registry_imported_file(r,path,r.files[at].id,r.files[at].imported,allocator)}
     parts:=[3]string{r.root,"/",path}
     if registry_outside(path) {
         parts={path,"",""}
@@ -306,14 +315,14 @@ registry_destroy :: proc(r:^Registry) {
     for entry in r.reassigned {registry_reassigned_free(r,entry)}
     delete(r.reassigned)
     delete(r.dependents);delete(r.dependent_files)
-    for mount in r.mounts {delete(mount.folder,r.allocator);delete(mount.prefix,r.allocator)}
+    for mount in r.mounts {delete(mount.folder,r.allocator);delete(mount.prefix,r.allocator);delete(mount.imported,r.allocator)}
     delete(r.mounts)
     for &held in r.memory {registry_memory_free(r,&held)}
     delete(r.memory)
     delete(r.removed)
     registry_refused_clear(r,"")
     delete(r.refused)
-    delete(r.root,r.allocator);delete(r.cache,r.allocator)
+    delete(r.root,r.allocator);delete(r.cache,r.allocator);delete(r.imported,r.allocator)
     r^={}
 }
 
@@ -456,11 +465,12 @@ registry_scan :: proc(r:^Registry) -> Error {
     registry_refused_clear(r,"")
 
     if !os.is_directory(r.root) {return .Not_Found}
-    if error:=registry_walk(r,{r.root,"",false},known,previous[:],previous_dependencies[:]);error!=.None {return error}
+    if error:=registry_walk(r,{folder=r.root},known,previous[:],previous_dependencies[:]);error!=.None {return error}
     for mount in r.mounts {
         if !os.is_directory(mount.folder) {continue}
         if error:=registry_walk(r,mount,known,previous[:],previous_dependencies[:]);error!=.None {return error}
     }
+    if error:=registry_imported_list(r,known,previous[:],previous_dependencies[:]);error!=.None {return error}
     indexed:=registry_index(r)
     slice.sort(r.folders[:])
     if r.cache!="" && (r.stats.opened>0 || len(previous)!=len(r.files)) {registry_cache_write(r)}
@@ -481,6 +491,20 @@ registry_scan :: proc(r:^Registry) -> Error {
 
 // Appends the files and folders of a folder under its prefix; a file that
 // known says previous had with the same size and time is not opened again.
+@(private)
+registry_walk_reuse :: proc(r:^Registry,file:^Registry_File,full,path:string,known:map[string]u32,previous:[]Registry_File,previous_dependencies:[]base.Asset_Id) -> Error {
+    if at,seen:=known[path];seen && previous[at].size==file.size && previous[at].time==file.time && previous[at].imported==file.imported {
+        file^=previous[at]
+        file.first_dependency=u32(len(r.dependencies))
+        append(&r.dependencies,..previous_dependencies[previous[at].first_dependency:][:previous[at].dependency_count])
+        r.stats.reused+=1
+        return .None
+    }
+    file.first_dependency=u32(len(r.dependencies))
+    r.stats.opened+=1
+    return registry_probe(r,full,file,&r.dependencies)
+}
+
 @(private="file")
 registry_walk :: proc(r:^Registry,folder:Registry_Mount,known:map[string]u32,previous:[]Registry_File,previous_dependencies:[]base.Asset_Id) -> Error {
     root,root_error:=os.get_absolute_path(folder.folder,context.temp_allocator)
@@ -522,16 +546,7 @@ registry_walk :: proc(r:^Registry,folder:Registry_Mount,known:map[string]u32,pre
             }
             file:=Registry_File{size=info.size,time=time.time_to_unix_nano(info.modification_time)}
             r.stats.files+=1
-            if at,seen:=known[path];seen && previous[at].size==file.size && previous[at].time==file.time {
-                file=previous[at]
-                file.first_dependency=u32(len(r.dependencies))
-                append(&r.dependencies,..previous_dependencies[previous[at].first_dependency:][:previous[at].dependency_count])
-                r.stats.reused+=1
-            } else {
-                file.first_dependency=u32(len(r.dependencies))
-                registry_probe(r,info.fullpath,&file,&r.dependencies) or_return
-                r.stats.opened+=1
-            }
+            registry_walk_reuse(r,&file,info.fullpath,path,known,previous,previous_dependencies) or_return
             registry_file_add(r,file,path) or_return
         }
     }
@@ -665,7 +680,11 @@ registry_refresh :: proc(r:^Registry,paths:[]string) -> Error {
     changed,exhausted:=false,false
     r.stats.opened,r.stats.reused=0,0
     gone:=make([dynamic]base.Asset_Id,context.temp_allocator)
-    for path in paths {
+    // The paths may be strings of the registry, as those refused are, which the loop frees and moves.
+    own,no_room:=make([]string,len(paths),context.temp_allocator)
+    if no_room!=nil {return .Out_Of_Memory}
+    for path,at in paths {own[at]=strings.clone(path,context.temp_allocator)}
+    for path in own {
         if path=="" || registry_outside(path) || registry_skipped(path) {continue}
         // A file a guest mount refused comes in again: the index refuses it again if its id is taken.
         for listed,at in r.refused {
@@ -677,6 +696,7 @@ registry_refresh :: proc(r:^Registry,paths:[]string) -> Error {
         info,stat_error:=os.stat(full,context.temp_allocator)
         present:=stat_error==nil && info.type==.Regular
         at,known:=r.by_path[path]
+        imported:=known?r.files[at].imported:0
         if !present {
             if !known {continue}
             if !changed {r.revision+=1;changed=true}
@@ -688,7 +708,7 @@ registry_refresh :: proc(r:^Registry,paths:[]string) -> Error {
             r.stats.files-=1
             continue
         }
-        file:=Registry_File{size=info.size,time=time.time_to_unix_nano(info.modification_time)}
+        file:=Registry_File{size=info.size,time=time.time_to_unix_nano(info.modification_time),imported=imported}
         if known && !forgot && r.files[at].size==file.size && r.files[at].time==file.time {
             r.stats.reused+=1
             continue
@@ -849,6 +869,7 @@ registry_save :: proc(r:^Registry,path:string) -> bool {
         serial.write_svarint(&w,file.time)
         serial.write_u8(&w,u8(file.state))
         if file.state!=.Asset {continue}
+        serial.write_u64(&w,file.imported)
         serial.write_u64(&w,file.id[0]);serial.write_u64(&w,file.id[1])
         serial.write_u64(&w,file.owner[0]);serial.write_u64(&w,file.owner[1])
         serial.write_u32(&w,u32(file.kind))
@@ -913,6 +934,7 @@ registry_cache_read :: proc(path:string,files:^[dynamic]Registry_File,dependenci
         if r.failed || state>u8(max(Registry_State)) {ok=false;break}
         file.state=Registry_State(state)
         if file.state==.Asset {
+            file.imported=serial.read_u64(&r)
             file.id={serial.read_u64(&r),serial.read_u64(&r)}
             file.owner={serial.read_u64(&r),serial.read_u64(&r)}
             file.kind=Fourcc(serial.read_u32(&r))

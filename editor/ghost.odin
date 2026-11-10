@@ -53,7 +53,7 @@ placement_same :: proc(a,b:Drag) -> bool {return a.kind==b.kind && a.card==b.car
 @(private)
 placement_measure :: proc(s:^Session,p:^Placement_Preview,part:Placement_Part) {
     append(&p.parts,part)
-    low,high,known:=picker_bounds(s.picker,s.app.assets,part.mesh)
+    low,high,known:=mesh_bounds(s.app.assets,part.mesh)
     if !known {return}
     box:=mm.aabb_transform({low,high},mm.transform_matrix(part.transform))
     if !p.measured {p.low,p.high,p.measured=box.min,box.max,true} else {
@@ -91,7 +91,7 @@ placement_prepare :: proc(s:^Session,d:Drag) -> ^Placement_Preview {
         if error!=.None {return p}
         core.world_settle(w)
         if transforms:=core.world_table_of(w,core.Transform);transforms!=nil {
-            if root:=core.get(transforms,report.root);root!=nil {root.position,root.rotation={},1}
+            if root:=core.edit(transforms,report.root);root!=nil {root.position,root.rotation={},1}
         }
         if meshes:=core.world_table_of(w,erender.Mesh_Renderer);meshes!=nil {
             for mesh,i in meshes.values[:core.count(meshes)] {
@@ -157,7 +157,7 @@ hidden_ghosts_draw :: proc(s:^Session,w:core.World_Ref) {
     key:=[8]u64{
         u64(uintptr(w.data)),worlds!=nil?worlds.layout+worlds.version:0,meshes!=nil?meshes.layout+meshes.version:0,
         hidden!=nil?hidden.layout+hidden.version:0,parents!=nil?parents.layout+parents.version:0,
-        core.world_entities(w).activity,v.levels_serial,a.revision+a.structure,
+        core.world_entities(w).activity.version+core.world_entities(w).activity_tree,v.levels_serial,a.revision+a.structure,
     }
     if key!=v.ghosts_key {
         v.ghosts_key=key
@@ -188,7 +188,7 @@ outline_entity :: proc(s:^Session,w:core.World_Ref,e:core.Entity,color:[4]f32) {
     world:=entity_world(w,e)
     low,high:=[3]f32{-GHOST_MARKER*0.5,-GHOST_MARKER*0.5,-GHOST_MARKER*0.5},[3]f32{GHOST_MARKER*0.5,GHOST_MARKER*0.5,GHOST_MARKER*0.5}
     if mesh,ok:=entity_get(w,e,erender.Mesh_Renderer);ok && (mesh.mesh!={} || mesh.shape!=.None) {
-        if mesh_low,mesh_high,known:=picker_bounds(s.picker,s.app.assets,mesh);known {low,high=mesh_low,mesh_high}
+        if mesh_low,mesh_high,known:=mesh_bounds(s.app.assets,mesh);known {low,high=mesh_low,mesh_high}
     }
     gpu.debug_box_transformed(&s.viewport.lines,mm.transform_matrix(world),low,high,color)
 }

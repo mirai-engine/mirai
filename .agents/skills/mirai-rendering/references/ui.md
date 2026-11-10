@@ -72,11 +72,12 @@ a `Begin_Layer`/`End_Layer` that delimits an isolated group.
   `renderer_depth_probes` one or two frames later, with the farthest surface of each cell.
   `depth_probe_hides` takes a point to that camera and says whether the cell where it falls covers
   it, or that it does not know outside the patch.
-- `mesh_ray(r, mesh, transform, origin, direction)` gives where a ray touches a mesh and its first
-  texture coordinate, from what the renderer keeps on the CPU: its software BVH, or the one that
-  `mesh_ray_prepare` builds when it does not keep it (hardware tracing). A pose of `skin_create`
-  is touched as its palette and its morph weights of the next frame pose it; one that an extension
-  deforms, at rest.
+- `mesh_ray(r, mesh, transform, origin, direction)` gives where a ray touches a mesh, its first
+  texture coordinate and the normal there, from what the renderer keeps on the CPU: its software
+  BVH, or the one that `mesh_ray_prepare` builds when it does not keep it (hardware tracing), which
+  lives until `mesh_ray_release` or the mesh goes. World panels on meshes and editor picking use
+  it. A pose of `skin_create` is touched as its palette and its morph weights of the next frame
+  pose it; one that an extension deforms, at rest.
 
 ## Debug lines
 

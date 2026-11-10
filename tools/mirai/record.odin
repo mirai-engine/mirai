@@ -18,7 +18,7 @@ cmd_record :: proc(root:string,args:[]string) -> int {
     folder,out,scene:=".","",""
     Params :: struct {path:string,format:string,fps:int,duration:string `json:"for"`,width,height:int,audio:bool,sheet:int}
     params:=Params{format="Png16",fps=30,duration="2s",width=1280,height=720,audio=true,sheet=16}
-    mode:Build_Mode=.Keep
+    mode:=Build_Mode.Release
     usage :: proc() -> int {fmt.eprintfln("Usage: mirai %s",RECORD_USAGE);return 2}
     for i:=0;i<len(args);i+=1 {
         ok:=true

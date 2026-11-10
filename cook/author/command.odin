@@ -84,8 +84,8 @@ project_open :: proc(p:^Project,root,engine:string,library:=true,recipes:Plugin_
     p.root=strings.clone(opened.root)
     p.name=strings.clone(base.text_get(opened.manifest.name[:]))
     p.assets_root=project.folder_path(p.root,.Assets)
-    asset.registry_init(&p.registry,p.assets_root)
-    for mount in host.project_asset_mounts(&opened,context.temp_allocator) {asset.registry_mount(&p.registry,mount.folder,mount.prefix)}
+    asset.registry_init(&p.registry,p.assets_root,imported=project.imported_path(p.root,context.temp_allocator))
+    for mount in host.project_asset_mounts(&opened,context.temp_allocator) {asset.registry_mount(&p.registry,mount.folder,mount.prefix,mount.imported)}
     asset.types_init(&p.types)
     p.assets={&p.registry,&p.types}
     if os.is_dir(p.assets_root) && asset.registry_scan(&p.registry)!=.None {return fmt.tprintf("the assets of %s could not be read",p.assets_root)}

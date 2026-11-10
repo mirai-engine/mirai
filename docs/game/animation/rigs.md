@@ -1,4 +1,4 @@
-# IK, look-at, feet, warping, sockets, retarget, mirror
+# IK, feet, warping, sockets, retarget, mirror
 
 Operations live in a `.pose` profile that the rig activates with the `Pose_Modifiers` component
 (`profile`, `weight`, `enabled`). Game code does not edit the profile: it aims and weighs the
@@ -7,10 +7,11 @@ and `animation.inspect` part `Modifiers` list and edit the rest.
 
 ## Aim an operation
 
+To look at something, `anim.look` is enough ([four calls](../animation.md#four-calls)). The
+other operations take a goal:
+
 ```odin
 // goals:^anim.Modifier_Requests
-anim.modifier_goal(goals,{rig=e,kind=.Look,target=anim.spatial_entity(player),weight=1,
-    enabled=true})
 anim.modifier_goal(goals,{rig=e,kind=.IK,target=anim.spatial_bone(other,"hand_r"),weight=1,
     enabled=true})
 anim.modifier_control(goals,{rig=e,kind=.IK,weight=0,enabled=false,fade=.2})  // fade out
@@ -44,7 +45,7 @@ target and the move ends there, by stretching the stride and the root delta:
 ```odin
 // motion:^anim.Motion_Requests
 anim.motion_target(motion,e,"Reach",anim.spatial_point(spot))  // window name of the .motion
-anim.animation_play(a,"stride",.2,loop=false)
+anim.animation_clip(a,"stride",.2,loop=false)
 ```
 
 - The body moves by the warped delta (`body_move` on a `Character`, or the root-motion recipe in

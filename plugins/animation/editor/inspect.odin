@@ -96,19 +96,14 @@ Asset_Inspect_Result :: struct {
     match_clips_total:u32 `mirai:"optional,label=.match"`,
     match_clips:[1]Asset_Match_Clip `mirai:"list,optional,label=.match: a page of its clips with the Locomotion_Mode each serves"`,
     databases:[1]Asset_Match_Database `mirai:"list,optional,label=.match: the database built for each skeleton a rig played it on"`,
-    animation:base.Asset_Id `mirai:"optional,label=.agraph and .action: the source .anim"`,
-    output:[64]u8 `mirai:"text,optional,label=.agraph: the output node"`,
-    nodes_total,parameters_total,masks_total,mask_bones_total:u32 `mirai:"optional,label=.agraph"`,
-    nodes:[1]Authoring_Page(Program_Graph_Node) `mirai:"list,optional"`,
-    parameters:[1]Authoring_Page(anim.Graph_Parameter) `mirai:"list,optional"`,
-    masks:[1]Authoring_Page(Program_Graph_Mask) `mirai:"list,optional"`,
-    mask_bones:[1]Authoring_Page(Program_Graph_Mask_Bone) `mirai:"list,optional"`,
+    animation:base.Asset_Id `mirai:"optional,label=.action: the source .anim"`,
     pose:Motion_Pose_Params `mirai:"optional,label=.motion: pose warping"`,
     windows_total:u32 `mirai:"optional,label=.motion and .action"`,
     windows:[1]Authoring_Page(Asset_Window) `mirai:"list,optional,label=.motion: warp windows; .action: gameplay windows"`,
     distances_total:u32 `mirai:"optional,label=.motion"`,
     distances:[1]Authoring_Page(Motion_Distance_Params) `mirai:"list,optional,label=.motion: distance tracks"`,
-    actions_total,sections_total:u32 `mirai:"optional,label=.action"`,
+    layers_total,actions_total,sections_total:u32 `mirai:"optional,label=.action"`,
+    layers:[1]Authoring_Page(anim.Stack_Layer) `mirai:"list,optional,label=.action: its stack over the base, in order"`,
     actions:[1]Authoring_Page(anim.Action_Definition) `mirai:"list,optional"`,
     sections:[1]Authoring_Page(Action_Section_Params) `mirai:"list,optional"`,
 }
@@ -254,8 +249,9 @@ Instance_Actions :: struct {
     id:base.Entity_Id `mirai:"optional"`,
     profile:base.Asset_Id `mirai:"optional,label=Animation.actions"`,
     problems:[1]Problem_Result `mirai:"list,optional,label=What its actions reported; the most recent first"`,
+    parameters:[1]anim.Stack_Parameter_Info `mirai:"list,optional,label=What animation.request parameters sets: the weight of each layer and the axes of their spaces"`,
     playing:[1]Action_Playing_Result `mirai:"list,optional,label=The actions playing with their effective weight"`,
-    events:[1]Action_Event_Result `mirai:"list,optional,label=The events of this tick"`,
+    events:[1]Action_Event_Result `mirai:"list,optional,label=What its actions told in this tick"`,
 }
 Instance_Motion :: struct {
     available:bool `mirai:"optional,label=false when the entity lacks the part"`,
@@ -298,8 +294,8 @@ Instance_Morphs :: struct {
 inspect_register :: proc(s:^editor.Session) {
     asset_defaults:=Asset_Inspect_Params{limit=128}
     instance_defaults:=Instance_Inspect_Params{limit=128}
-    authoring_method_register(s,{name="animation.asset.inspect",summary="Reads an animation definition: an .anim, .skeleton, .pose, .blend, .match, .agraph, .motion or .action.",params=Asset_Inspect_Params,params_info=type_info_of(Asset_Inspect_Params),defaults=&asset_defaults,flags={.Read_Only},run=asset_inspect},Asset_Inspect_Result,type_info_of(Asset_Inspect_Result))
-    authoring_method_register(s,{name="animation.inspect",summary="Reads what an animated entity does now, part by part; a part the entity lacks says why instead of failing the call.",params=Instance_Inspect_Params,params_info=type_info_of(Instance_Inspect_Params),defaults=&instance_defaults,flags={.Read_Only},run=instance_inspect},Instance_Inspect_Result,type_info_of(Instance_Inspect_Result))
+    editor.api_method_register(s,Asset_Inspect_Params,Asset_Inspect_Result,{name="animation.asset.inspect",summary="Reads an animation definition: an .anim, .skeleton, .pose, .blend, .match, .motion or .action.",defaults=&asset_defaults,flags={.Read_Only},run=asset_inspect,writes_result=true})
+    editor.api_method_register(s,Instance_Inspect_Params,Instance_Inspect_Result,{name="animation.inspect",summary="Reads what an animated entity does now, part by part; a part the entity lacks says why instead of failing the call.",defaults=&instance_defaults,flags={.Read_Only},run=instance_inspect,writes_result=true})
 }
 
 // Runs a handler with params of its own, in the call.
@@ -342,14 +338,12 @@ asset_inspect :: proc(s:^editor.Session,call:^api.Call) {
         inner:=Authoring_Inspect_Params{asset=p.asset,offset=p.offset,limit=limit};inspect_with(s,call,&inner,program_blend_inspect)
     case anim.MATCH_KIND:
         match_inspect(s,call,p.asset,p.offset,limit)
-    case anim.GRAPH_KIND:
-        inner:=Authoring_Inspect_Params{asset=p.asset,offset=p.offset,limit=limit};inspect_with(s,call,&inner,program_graph_inspect)
     case anim.MOTION_KIND:
         inner:=Authoring_Inspect_Params{asset=p.asset,offset=p.offset,limit=limit};inspect_with(s,call,&inner,authoring_motion_profile_inspect)
     case anim.ACTION_KIND:
         inner:=Authoring_Inspect_Params{asset=p.asset,offset=p.offset,limit=limit};inspect_with(s,call,&inner,authoring_action_profile_inspect)
     case:
-        authoring_failure(call,"asset","Invalid_Kind","an .anim, .skeleton, .pose, .blend, .match, .agraph, .motion or .action",fmt.tprintf("%v",record.kind),"The asset is not an animation definition",fix="Use asset.list to find animation assets")
+        authoring_failure(call,"asset","Invalid_Kind","an .anim, .skeleton, .pose, .blend, .match, .motion or .action",fmt.tprintf("%v",record.kind),"The asset is not an animation definition",fix="Use asset.list to find animation assets")
     }
 }
 
@@ -406,7 +400,7 @@ instance_match :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,ent
     state:^anim.Playing;for &playing in playback.states {if playing.entity==entity {state=&playing;break}}
     shared:=core.world_ref(s.app.shared,world.info,.Shared)
     library:=anim.animation_playing_content(core.world_storage_of(shared,anim.Source_Assets),s.app,state)
-    db:=anim.animation_match_database(core.world_storage_of(shared,anim.Graph_Assets),library,state)
+    db:=anim.animation_match_database(core.world_storage_of(shared,anim.Match_Assets),library,state)
     modes:=locomotion_modes(world.info)
     api.write_key(out,"ranges");serial.write_u8(out,'[')
     if db!=nil {
@@ -505,8 +499,8 @@ match_inspect :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id,offset,l
         serial.write_u8(out,'}')
     }
     serial.text_write_raw(out,"]");api.write_key(out,"databases");serial.write_u8(out,'[');written:=0
-    if cache:=core.world_storage_of(core.world_ref(s.app.shared,s.info,.Shared),anim.Graph_Assets);cache!=nil {
-        for &content in cache.matches {
+    if cache:=core.world_storage_of(core.world_ref(s.app.shared,s.info,.Shared),anim.Match_Assets);cache!=nil {
+        for &content in cache.contents {
             if content.id!=id {continue}
             for &built in content.databases {
                 if written>0 {serial.write_u8(out,',')};written+=1

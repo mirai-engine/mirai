@@ -76,7 +76,7 @@ joint_state_read :: proc(states:^core.Table(Joint_State),e:core.Entity) -> (valu
         if pending.entity!=e {continue}
         return pending.value>=0?states.added[pending.value]:Joint_State{},pending.value>=0
     }
-    return core.get(core.read(states),e)
+    return core.get(states,e)
 }
 
 // What the setters of the joint change.
@@ -198,7 +198,7 @@ joints_events :: proc(s:^Sync,events:^Physics_Events,states:^core.Table(Joint_St
         }
         target:=l.applied.target
         l.joint,l.refused,l.applied={},false,{}
-        if row:=core.get(states,e);row!=nil {row.broken=true}
+        if row:=core.edit(states,e);row!=nil {row.broken=true}
         core.push(&events.joint_break,Joint_Break{entity=e,target=target,force=event.force,torque=event.torque})
     }
 }

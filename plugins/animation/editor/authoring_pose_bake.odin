@@ -19,10 +19,9 @@ Pose_Bake_Params :: struct {
     start,end:f32 `mirai:"min=0,unit=s"`,
     rate:f32 `mirai:"optional,min=1,max=240,unit=Hz"`,
     root_motion:Pose_Bake_Root `mirai:"optional,label=Preserve records the trajectory of the root; In_Place removes it"`,
-    parameters:[anim.GRAPH_PARAMETERS]Preview_Parameter `mirai:"optional"`,
+    parameters:[anim.STACK_PARAMETERS]Preview_Parameter `mirai:"optional"`,
     controls:[64]Preview_Control `mirai:"optional"`,
     goals:[64]Preview_Goal `mirai:"optional"`,
-    plays:[16]Request_Play `mirai:"optional"`,
     actions:[64]Preview_Action `mirai:"optional"`,
     motion:[16]Request_Motion `mirai:"optional"`,
     locomotion:Request_Locomotion `mirai:"optional"`,
@@ -45,7 +44,7 @@ pose_bake_defaults :: proc() -> ^Pose_Bake_Params {
 @(private)
 pose_bake_register :: proc(s:^editor.Session) {
     p:=pose_bake_defaults();if p==nil {return}
-    authoring_method_register(s,{name="animation.pose.bake",summary="Bakes the final pose, curves, morph weights and crossed markers of an entity between two times into a clip, on a copy run with the fields of animation.preview without gameplay or physics. In Edit.",params=Pose_Bake_Params,params_info=type_info_of(Pose_Bake_Params),defaults=p,run=authoring_pose_bake},Authoring_Write_Result,type_info_of(Authoring_Write_Result))
+    editor.api_method_register(s,Pose_Bake_Params,Authoring_Write_Result,{name="animation.pose.bake",summary="Bakes the final pose, curves, morph weights and crossed markers of an entity between two times into a clip, on a copy run with the fields of animation.preview without gameplay or physics. In Edit.",defaults=p,run=authoring_pose_bake,writes_result=true})
 }
 
 @(private)
@@ -68,7 +67,7 @@ authoring_pose_bake :: proc(s:^editor.Session,call:^api.Call) {
     preview:=new(Preview_Params,call.allocator)
     if preview==nil {authoring_failure(call,"bake","Out_Of_Memory","memory for bake requests","allocation failed","The bake requests could not be prepared",api.SERVER_ERROR);return}
     copy(preview.entity[:],p.entity[:]);preview.time,preview.ticks,preview.dt=p.start,u32(steps64),1/p.rate
-    copy(preview.parameters[:],p.parameters[:]);copy(preview.controls[:],p.controls[:]);copy(preview.goals[:],p.goals[:]);copy(preview.plays[:],p.plays[:]);copy(preview.actions[:],p.actions[:])
+    copy(preview.parameters[:],p.parameters[:]);copy(preview.controls[:],p.controls[:]);copy(preview.goals[:],p.goals[:]);copy(preview.actions[:],p.actions[:])
     // One store per value until odin-lang/Odin#7937.
     preview.locomotion=p.locomotion;preview.distance=p.distance;preview.locomote=p.locomote
     preview.look=p.look;preview.gesture=p.gesture;preview.reach=p.reach;preview.motion=p.motion

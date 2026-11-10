@@ -70,7 +70,7 @@ hostile_bindings_through_the_input :: proc(t:^testing.T) {
         if testing.failed(t) {return}
         clear(&kinds);clear(&names);clear(&bound)
         in_:Input
-        desc:=Input_Desc{max_actions=hostile_size(&h,HOSTILE_ACTIONS),max_bindings=hostile_size(&h,HOSTILE_BINDINGS),code_count=hostile_size(&h,HOSTILE_CODES),axis_count=hostile_size(&h,HOSTILE_AXES),tap_ticks=hostile_u32(&h),hold_ticks=hostile_u32(&h)}
+        desc:=Input_Desc{max_actions=hostile_size(&h,HOSTILE_ACTIONS),max_bindings=hostile_size(&h,HOSTILE_BINDINGS),code_count=hostile_size(&h,HOSTILE_CODES),axis_count=hostile_size(&h,HOSTILE_AXES),tap=transmute(f32)hostile_u32(&h),hold=transmute(f32)hostile_u32(&h)}
         fits:=desc.max_actions>0 && desc.max_actions<=HOSTILE_ACTIONS+1 && desc.max_bindings>0 && desc.max_bindings<=HOSTILE_BINDINGS+1 && desc.code_count<=HOSTILE_CODES+1 && desc.axis_count<=HOSTILE_AXES+1
         ok:=input_init(&in_,desc)
         testing.expect(t,ok==fits && (ok || mem.check_zero_ptr(&in_,size_of(in_))),"The input takes the sizes it can hold and stays zeroed on the others")
@@ -119,10 +119,10 @@ hostile_bindings_through_the_input :: proc(t:^testing.T) {
                     testing.expect(t,input_set_axis(&in_,axis,a)==(int(axis)<in_.axis_count),"Only an axis in range is reported")
                 case 15: input_release_all(&in_)
                 case 16,17:
-                    input_update(&in_)
+                    input_update(&in_,TEST_DT)
                     for i in 1..=len(kinds) {
                         s:=action_state(&in_,Action(i))
-                        consistent:=!(s.released && s.down) && (!s.pressed || s.down || s.released) && (s.held_ticks>0)==s.down
+                        consistent:=!(s.released && s.down) && (!s.pressed || s.down || s.released) && (s.held>0)==s.down
                         consistent&&=(!s.tapped || s.released) && (!s.holding || s.down) && (!s.hold_started || s.holding)
                         if !testing.expectf(t,consistent,"The state of an action contradicts itself: %v",s) {return}
                     }
@@ -141,7 +141,7 @@ hostile_bindings_through_the_input :: proc(t:^testing.T) {
         zero:Input
         action:=Action(base.hostile_next(&h))
         refused:=input_add_action(&zero,.Button)==0 && !input_bind_code(&zero,action,0) && !input_set_code(&zero,0,true) && !input_set_axis(&zero,0,1)
-        input_update(&zero);input_release_all(&zero);input_unbind(&zero,action)
+        input_update(&zero,TEST_DT);input_release_all(&zero);input_unbind(&zero,action)
         testing.expect(t,refused && input_find_action(&zero,1)==0 && action_state(&zero,action)=={},"A zeroed input has no actions, codes or axes")
         input_destroy(&zero)
     }

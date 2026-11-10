@@ -93,7 +93,6 @@ document_activate :: proc(s:^Session,index:int) -> bool {
     s.gui.drag,s.gui.placement={},{}
     s.inspector.picker,s.inspector.list={},{}
     if s.materials!=nil {s.materials.color,s.materials.list={},{} }
-    if s.picker!=nil {picker_clear(s.picker)}
     if document_is_prefab(s) && !document_dirty(s) {
         assets_rescan(s)
         if file,found:=asset.registry_find(&s.app.assets.registry,s.document.id);found && s.document.source_stamp!=([2]i64{file.size,file.time}) {

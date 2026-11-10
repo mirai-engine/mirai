@@ -239,7 +239,7 @@ stroke_write :: proc(s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,ass
 stroke_apply :: proc(s:^editor.Session,stroke:^Stroke,world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator,color:[3]f32,strength:f32) -> bool {
     a:=assets
     meshes:=core.world_table_of(world,erender.Mesh_Renderer)
-    row:=meshes!=nil?core.get(meshes,stroke.entity):nil
+    row:=meshes!=nil?core.edit(meshes,stroke.entity):nil
     if a==nil || row==nil {return false}
     colors_blend(stroke.canvas.vertices,stroke.before,stroke.weights,color,strength)
     bytes,error:=canvas_bytes(&stroke.canvas,stroke.id,&a.types,allocator)
@@ -288,8 +288,8 @@ paint_restore :: proc(world:core.World_Ref,entities:[]core.Entity) -> (restored:
     meshes:=core.world_table_of(world,erender.Mesh_Renderer)
     if painted==nil || meshes==nil {return}
     for e in entities {
-        record:=core.get(painted,e)
-        row:=core.get(meshes,e)
+        record:=core.edit(painted,e)
+        row:=core.edit(meshes,e)
         if record==nil || row==nil {continue}
         row.mesh,row.shape=record.source,record.shape
         core.remove(painted,e)

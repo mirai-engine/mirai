@@ -27,9 +27,9 @@ Use_Params :: struct {
 
 @(private)
 register :: proc(s:^editor.Session) {
-    editor.api_method_register(s,{name="abilities.inspect",summary="What an Ability_User does and why: its kit, the ability it runs and for how long, the windows open now, its statuses, its attributes with their bases and current values, what waits in its input buffer, its cooldowns and timers, and for every ability of its kit whether it could start now or what blocks it (a status, its mode, a condition, a cost, a cooldown, or no open cancel window of the running ability that accepts its tags). Use it in Play to see why an ability does or does not start.",params=Inspect_Params,params_info=type_info_of(Inspect_Params),flags={.Read_Only},result_schema=`{"type":"object"}`,run=inspect})
+    editor.api_method_register(s,Inspect_Params,{name="abilities.inspect",summary="What an Ability_User does and why: its kit, the ability it runs and for how long, the windows open now, its statuses, its attributes with their bases and current values, what waits in its input buffer, its cooldowns and timers, and for every ability of its kit whether it could start now or what blocks it (a status, its mode, a condition, a cost, a cooldown, or no open cancel window of the running ability that accepts its tags). Use it in Play to see why an ability does or does not start.",flags={.Read_Only},result_schema=`{"type":"object"}`,run=inspect})
     editor.api_method_register(s,{name="abilities.check",summary="Checks every Ability and Ability_Kit row of the project as the game runs them: times, windows, hitboxes, effects, costs and conditions, and references to rows that no table has. Returns each problem with its table, its row and how to fix it; an empty list means every sheet runs. Run it after records.set or records.import of abilities.",flags={.Read_Only},result_schema=`{"type":"object"}`,run=check})
-    editor.api_method_register(s,{name="abilities.use",summary="Asks an Ability_User of the running game to start an ability by the name of its row, as its input would: it starts when it is valid within the buffer of its kit. Needs Play or Simulate; abilities.inspect tells what blocks it.",params=Use_Params,params_info=type_info_of(Use_Params),result_schema=`{"type":"object"}`,run=use})
+    editor.api_method_register(s,Use_Params,{name="abilities.use",summary="Asks an Ability_User of the running game to start an ability by the name of its row, as its input would: it starts when it is valid within the buffer of its kit. Needs Play or Simulate; abilities.inspect tells what blocks it.",result_schema=`{"type":"object"}`,run=use})
 }
 
 @(private)
@@ -82,11 +82,11 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
     e,named:=editor.api_call_entity(call,world,p.entity[:],game=s.mode!=.Edit)
     if !named {return}
     users:=core.world_table_of(world,ab.Ability_User)
-    if users==nil || !core.has(core.read(users),e) {
+    if users==nil || !core.has(users,e) {
         api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with an Ability_User in the shown world: add one, or pick another entity",base.text_get(p.entity[:]))
         return
     }
-    u,_:=core.get(core.read(users),e)
+    u,_:=core.get(users,e)
     abilities,kits:=sets(s)
     time:core.Time
     if t:=core.world_storage_of(world,core.Time);t!=nil {time=t^}
@@ -280,7 +280,7 @@ use :: proc(s:^editor.Session,call:^api.Call) {
     e,named:=editor.api_call_entity(call,world,p.entity[:],game=true)
     if !named {return}
     users:=core.world_table_of(world,ab.Ability_User)
-    if users==nil || !core.has(core.read(users),e) {
+    if users==nil || !core.has(users,e) {
         api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with an Ability_User in the running game: add one, or pick another entity",base.text_get(p.entity[:]))
         return
     }

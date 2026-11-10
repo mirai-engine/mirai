@@ -6,8 +6,9 @@ Each type lives in its `asset/<type>.odin`: its tables and limits as constants, 
 
 ## Fracture
 
-`asset/fracture.odin` defines `.fracture`; the model that consumes it (hulls, hierarchy and limits)
-belongs to [destruction](../../mirai-physics/references/destruction.md).
+The `destruct` plugin defines `.fracture` (`plugins/destruct/runtime/fracture_asset.odin`); the
+model that consumes it (hulls, hierarchy and limits) belongs to
+[destruction](../../mirai-physics/references/destruction.md).
 
 - `Fracture_Info.source_mesh` can link it to the intact mesh; zero allows an independent source.
 - Each piece is a closed mesh with local indices; the vertex and index ranges of the pieces cover
@@ -186,7 +187,7 @@ of a shipped game keeps the stream `anim.library_compress` makes of each clip
   the hierarchy of `animation_parents`; a cooked view already holds its streams.
 - `animation_cooked_document` writes the cooked `.anim` from that library; `animation_descs`
   refuses a cooked view: it is not edited.
-- `.pose`, `.blend`, `.agraph` and authoring by API (clips, tracks, keys, markers, skeletons) belong
+- `.pose`, `.blend`, `.action` and authoring by API (clips, tracks, keys, markers, skeletons) belong
   to the [animation plugin](../../mirai-animation/references/animation.md). Its edits validate the
   whole document and publish the file atomically keeping its identity; they are distinct from the
   scene's undo.

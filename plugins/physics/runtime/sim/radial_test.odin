@@ -62,8 +62,6 @@ an_area_weighs_filters_and_pushes_each_body_once :: proc(t:^testing.T) {
     far.radius=1.9
     count,ok=world_apply_area(&w,test_ball_area(&far),{mass*60,0,0})
     testing.expect(t,ok && count==0)
-    testing.expect_value(t,radial_weight(0.5,1,.Linear),f32(0.5))
-    testing.expect_value(t,box_weight({1,0,0},{},{2,2,2},QUAT_IDENTITY,.Linear),f32(0.5))
 }
 
 @(test)
@@ -79,17 +77,13 @@ each_falloff_curve_goes_from_the_border_to_the_center_within_its_range :: proc(t
     for curve,falloff in expected {
         for value,i in curve {
             distance:=f32(i)*0.5
-            testing.expectf(t,near(radial_weight(distance,1,falloff),value,1e-5),"%v at %v: %v",falloff,distance,radial_weight(distance,1,falloff))
-            testing.expectf(t,near(radial_weight(distance,1,falloff,{0.2,0.8}),0.2+0.6*value,1e-5),"%v in range at %v",falloff,distance)
-            testing.expectf(t,near(radial_weight(distance,1,falloff,{1,0}),1-value,1e-5),"%v inverted at %v",falloff,distance)
-            testing.expectf(t,near(box_weight({0,0,2*distance},{},{1,1,2},QUAT_IDENTITY,falloff),value,1e-5),"%v in a box at %v",falloff,distance)
+            curve:=falloff_curve(1-distance,falloff)
+            testing.expectf(t,near(curve,value,1e-5),"%v at %v: %v",falloff,distance,curve)
+            testing.expectf(t,near(weight_from_range({0.2,0.8},curve),0.2+0.6*value,1e-5),"%v in range at %v",falloff,distance)
+            testing.expectf(t,near(weight_from_range({1,0},curve),1-value,1e-5),"%v inverted at %v",falloff,distance)
         }
-        testing.expect_value(t,radial_weight(1.01,1,falloff,{0.5,1}),f32(0))
     }
-    testing.expect_value(t,radial_weight(0.5,1,Radial_Falloff(5)),f32(0))
-    nan:=f32(0)
-    nan/=nan
-    testing.expect_value(t,radial_weight(0.5,1,.Linear,{nan,1}),f32(0))
+    testing.expect_value(t,falloff_curve(0.5,Radial_Falloff(5)),f32(0))
 }
 
 @(test)

@@ -21,6 +21,7 @@ Physics_Settings :: struct {
     shapes,contacts,joints,characters:i32 `mirai:"advanced"`,
     hulls,meshes,heightfields:i32 `mirai:"advanced"`,
     fluids:i32 `mirai:"advanced"`, // Fluid
+    breakables,pieces,bonds:i32 `mirai:"advanced"`, // of what breaks: a Destructible is a breakable of pieces held by bonds
 
     events:i32 `mirai:"advanced"`, // of each kind per tick: contacts, sleep, hits
     substeps:i32 `mirai:"section=Simulation,advanced"`,
@@ -179,6 +180,7 @@ Body_Request_Kind :: enum u8 {
     Force,
     Area_Force,   // on every body in a volume; it names no entity
     Area_Impulse,
+    Area_Strain,  // of the breakables in a volume, once the step ran (strain_area)
     Kinematic, // the pose a kinematic body reaches in the tick
     Manipulate,
     Release_Manipulation,
@@ -460,6 +462,14 @@ query_prepare :: proc(physics:core.Ref(Physics_State),direction:[3]f32,max_dista
 raycast :: proc(physics:core.Ref(Physics_State),origin,direction:[3]f32,max_distance:f32=1000,ignore:=core.NONE,filter:=QUERY_FILTER_DEFAULT) -> (hit:Hit,ok:bool) {
     translation,prepared:=query_prepare(physics,direction,max_distance,ignore,filter) or_return
     found:=sim.ray_cast_closest(&physics.world,origin,translation,prepared) or_return
+    return hit_of(&physics.world,found,max_distance),true
+}
+
+// The ray against the colliders of one entity as if its body were at a pose, whatever they collide with: where
+// it was at another time, as the lag compensation of the network tells (physics_multiplayer).
+raycast_at :: proc(physics:core.Ref(Physics_State),e:core.Entity,position:[3]f32,rotation:mm.Quat,origin,direction:[3]f32,max_distance:f32=1000) -> (hit:Hit,ok:bool) {
+    translation,_:=query_prepare(physics,direction,max_distance,core.NONE,{}) or_return
+    found:=sim.body_ray_cast(&physics.world,body_of(physics,e),{position,rotation},origin,translation) or_return
     return hit_of(&physics.world,found,max_distance),true
 }
 
@@ -802,6 +812,7 @@ state_make :: proc(state:^Physics_State,settings:^Physics_Settings,job_system:^j
     made:=settings_capacities(settings^)
     desc.body_capacity,desc.shape_capacity,desc.contact_capacity,desc.joint_capacity=int(made.bodies),int(made.shapes),int(made.contacts),int(made.joints)
     desc.character_capacity,desc.fluid_capacity=int(made.characters),int(made.fluids)
+    desc.breakable_capacity,desc.piece_capacity,desc.bond_capacity=int(made.breakables),int(made.pieces),int(made.bonds)
     desc.hull_capacity,desc.mesh_capacity,desc.heightfield_capacity=int(made.hulls),int(made.meshes),int(made.heightfields)
     desc.event_capacity,desc.substeps=int(made.events),int(made.substeps)
     desc.worker_count=jobs_workers(job_system)

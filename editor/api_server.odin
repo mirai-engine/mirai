@@ -75,7 +75,8 @@ Api_State :: struct {
     step_frame:Api_Step_Frame,      // a frame of a step in place of one of the editor; for tests without a window
     commands:Commands, // the entries of menus, shortcuts and buttons that call the methods (commands.odin)
     person:bool,       // the call that runs is a gesture of the person at the editor (api_person)
-    transaction:bool,  // a batch holds one edit open: the edits of its calls join it
+    transaction:bool,  // a batch holds one edit open, which the edits of its calls record into
+    joined:bool,       // its edit records into the gesture that is open: of the person, or of a batch (api_edit_begin)
     left_going:bool,   // that call left what it started going, which a call of an agent waits for
 }
 
@@ -567,9 +568,24 @@ api_plugins_set :: proc(s:^Session,st:^Api_State) {
     api.server_plugins_set(&st.server,plugins)
 }
 
-api_method_register :: proc(s:^Session,m:Api_Method) -> bool {
+// Registers a method of a plugin, with P its params and R its result: their
+// type info comes from the library that declares them, where the procedure
+// instantiates.
+api_method_register :: proc{api_method_register_free,api_method_register_params,api_method_register_typed}
+
+api_method_register_free :: proc(s:^Session,m:Api_Method) -> bool {
     st:=api_state(s)
     return st!=nil && api_register(s,st,m)
+}
+api_method_register_params :: proc(s:^Session,$P:typeid,m:Api_Method) -> bool {
+    m:=m
+    m.params,m.params_info=P,type_info_of(P)
+    return api_method_register_free(s,m)
+}
+api_method_register_typed :: proc(s:^Session,$P,$R:typeid,m:Api_Method) -> bool {
+    m:=m
+    m.result,m.result_info=R,type_info_of(R)
+    return api_method_register_params(s,P,m)
 }
 
 api_register :: proc(s:^Session,st:^Api_State,m:Api_Method) -> bool {
@@ -583,9 +599,13 @@ api_register :: proc(s:^Session,st:^Api_State,m:Api_Method) -> bool {
     }
     entry:=&st.entries[st.count]
     entry^={state=st,session=s,run=m.run}
+    // The types of the editor are known here: the library of the API has its own type table.
+    params_info,result_info:=m.params_info,m.result_info
+    if params_info==nil && m.params!=nil {params_info=type_info_of(m.params)}
+    if result_info==nil && m.result!=nil {result_info=type_info_of(m.result)}
     result:=api.method_register(&st.server,{
         name=m.name,summary=m.summary,plugin=st.plugin,params=m.params,result=m.result,defaults=m.defaults,
-        params_info=m.params_info,result_info=m.result_info,
+        params_info=params_info,result_info=result_info,
         params_schema=m.params_schema,result_schema=m.result_schema,handler=api_trampoline,user=entry,flags=m.flags,writes_result=m.writes_result,
     })
     if result!=.None {
@@ -633,9 +653,14 @@ api_server_transaction :: proc(server:^api.Server,call:^api.Call,open:bool) -> b
 }
 
 // Opens the transaction of an edit. False, with the call failed, when the scene cannot be edited now.
+// A gesture of the person that is open takes the edit of a method the person runs, and a batch
+// that is one step those of its calls: it records into that step, which they close.
 api_edit_begin :: proc(s:^Session,call:^api.Call,label:string) -> bool {
+    if st:=api_state(s);st!=nil && (st.transaction || st.person && s.edits.open && !s.edits.preview) {
+        st.joined=true
+        return true
+    }
     api_guard(s,call) or_return
-    if st:=api_state(s);st!=nil && st.transaction {return true}
     if !history.edits_begin(s.edits,document_selection(s),label) {
         api.call_fail(call,api.SERVER_ERROR,history.edits_error_text(s.edits.error))
         return false
@@ -653,10 +678,11 @@ api_edit_begin :: proc(s:^Session,call:^api.Call,label:string) -> bool {
 api_edit_end :: proc(s:^Session,call:^api.Call,applied:bool) -> bool {
     w:=edited_world(s)
     selection:=document_selection(s)
-    // Inside a batch that is one step, the batch ends it or takes all of it back.
-    if st:=api_state(s);st!=nil && st.transaction {
+    if st:=api_state(s);st!=nil && st.joined {
+        st.joined=false
         if !applied && !call.failed {api.call_fail(call,api.SERVER_ERROR,"The edit could not be applied")}
-        return !call.failed
+        if applied && !call.failed {sections_sync(s)}
+        return applied && !call.failed
     }
     if !applied || call.failed {
         history.edits_cancel(s.edits,w)

@@ -170,7 +170,7 @@ cinematic_advance :: proc(
     }
     for row in 0..<core.count(cinematics) {
         e:=cinematics.entities[row]
-        was:=core.at(core.read(cinematics),row)
+        was:=core.at(cinematics,row)
         animation,animated:=core.get(animations,e)
         if !animated {
             core.report(problems,e,"cinematics.animation","this Cinematic plays nothing: its entity has no Animation; add one whose asset is the .anim of its clip, with playing set for a timeline that starts by itself")
@@ -187,7 +187,7 @@ cinematic_advance :: proc(
                 next.anchor_tick,next.anchor_time,next.anchor_rate=time.tick,at,rate
             }
         }
-        if next!=was {core.at(cinematics,row)^=next}
+        if next!=was {core.edit_at(cinematics,row)^=next}
     }
     for row in 0..<core.count(viewers) {
         viewer_update(&p,es,core.entity_at(viewers,row),core.at(viewers,row),drivables)
@@ -257,14 +257,14 @@ view_ask :: proc(p:^Cine,e,seat:core.Entity,viewer:Cinematic_Viewer,fov,near:f32
 
 @(private)
 viewer_update :: proc(p:^Cine,es:^core.Entities,e:core.Entity,viewer:Cinematic_Viewer,drivables:core.Read(input.Drivable)) {
-    c,has_timeline:=core.get(core.read(p.cinematics),viewer.timeline)
+    c,has_timeline:=core.get(p.cinematics,viewer.timeline)
     ready:=has_timeline && (c.status==.Playing || c.status==.Paused)
     seat:=viewer.seat!=core.NONE?viewer.seat:input.focused(p.seat_state.ptr,p.seats)
-    row:=core.get(p.transforms,e)
+    row:=core.edit(p.transforms,e)
     current,previous,shot_found:=cinematic_shots_at(p.shots,viewer.timeline,c.time)
     active:=ready && shot_found && row!=nil && core.alive(es,seat) && core.has(p.cameras,e)
 
-    binding:=core.get(p.views,e)
+    binding:=core.edit(p.views,e)
     if binding!=nil && (!active || binding.timeline!=viewer.timeline || binding.seat!=seat || binding.mask!=viewer.block_mask) {
         view_release(p,e)
         binding=nil
