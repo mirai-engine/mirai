@@ -1,5 +1,6 @@
 package api
 
+import "base:intrinsics"
 import "core:encoding/json"
 import "core:fmt"
 import "core:mem"
@@ -643,6 +644,87 @@ a_cancelled_call_stops_at_its_safe_point_and_says_so :: proc(t:^testing.T) {
     reply:=parse_json(t,string(bytes))
     testing.expect(t,at(reply,"result","isError").(json.Boolean),string(bytes))
     testing.expect_value(t,integer(at(tool_text(t,reply),"error","code")),CANCELLED)
+}
+
+// What a handler that waits and a request that arrives meanwhile leave of their order.
+@(private="file")
+Wait_Order :: struct {
+    waiting:bool,     // the handler is in its wait
+    ended:bool,
+    during,after:int, // times the other request ran while it waited, and after it ended
+}
+
+// Waits for half a second as a handler that holds the server does, looking for its cancellation.
+@(private="file")
+waiting_handler :: proc(call:^Call) {
+    order:=(^Wait_Order)(call.user)
+    intrinsics.atomic_store(&order.waiting,true)
+    began:=time.tick_now()
+    for time.tick_since(began)<500*time.Millisecond {
+        if server_cancelled(call.server) {return}
+        time.sleep(10*time.Millisecond)
+    }
+    intrinsics.atomic_store(&order.waiting,false)
+    order.ended=true
+    raw(call.out,`{"done":true}`)
+}
+
+@(private="file")
+meanwhile_handler :: proc(call:^Call) {
+    order:=(^Wait_Order)(call.user)
+    if intrinsics.atomic_load(&order.waiting) {order.during+=1}
+    if order.ended {order.after+=1}
+    raw(call.out,`{"echo":`);raw(call.out,call.raw);raw(call.out,"}")
+}
+
+@(private="file")
+Meanwhile :: struct {
+    order:^Wait_Order,
+    port:int,
+    path,body:string,
+    status:int,
+    response:[512]u8,
+    length:int,
+}
+
+// Posts its request once the handler waits, and keeps the answer.
+@(private="file")
+meanwhile_post :: proc(m:^Meanwhile) {
+    began:=time.tick_now()
+    for !intrinsics.atomic_load(&m.order.waiting) && time.tick_since(began)<5*time.Second {time.sleep(time.Millisecond)}
+    status,bytes,_:=client_post(m.port,m.path,m.body,5000,context.temp_allocator)
+    m.status,m.length=status,copy(m.response[:],bytes)
+}
+
+// While a handler waits the server reads what arrives, to hear a cancellation,
+// and runs none of it: a request of either route stays as it came and is
+// answered once the handler ended, and the cancellation of another call is
+// accepted and stops nothing.
+@(test)
+a_request_that_arrives_during_a_wait_is_answered_after_it_intact :: proc(t:^testing.T) {
+    f:=new(Fixture);defer free(f)
+    if !fixture_start(f,t,{timeout_ms=5000}) {return}
+    defer fixture_finish(f)
+    order:Wait_Order
+    testing.expect_value(t,method_register(&f.server,{name="test.wait",summary="Waits.",handler=waiting_handler,user=&order,flags={.Core}}),Register_Error.None)
+    testing.expect_value(t,method_register(&f.server,{name="test.meanwhile",summary="Wraps its params.",handler=meanwhile_handler,user=&order,flags={.Core}}),Register_Error.None)
+    port:=server_port(&f.server)
+    cases:=[?]struct{path,body:string,status:int,says:string,runs:int}{
+        {"/mcp",`{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"test_meanwhile","arguments":{"text":"kept whole"}}}`,200,"kept whole",1},
+        {"/rpc",`{"jsonrpc":"2.0","id":8,"method":"test.meanwhile","params":{"text":"kept whole"}}`,200,"kept whole",1},
+        {"/mcp",`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":99}}`,202,"",0},
+    }
+    for c in cases {
+        order={}
+        late:=Meanwhile{order=&order,port=port,path=c.path,body=c.body}
+        th:=thread.create_and_start_with_poly_data(&late,meanwhile_post)
+        status,bytes,err:=client_post(port,"/mcp",`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"test_wait","arguments":{}}}`,5000,context.temp_allocator)
+        thread.join(th);thread.destroy(th)
+        testing.expectf(t,err.code==0 && status==200 && strings.contains(string(bytes),"done"),"%s: the wait ran to its end: %d %v %s",c.body,status,err,string(bytes))
+        answer:=string(late.response[:late.length])
+        testing.expectf(t,late.status==c.status && strings.contains(answer,c.says),"%s: %d %s",c.body,late.status,answer)
+        testing.expectf(t,order.during==0 && order.after==c.runs,"%s: it ran %d times during the wait and %d after it",c.body,order.during,order.after)
+    }
 }
 
 // initialize says which editor answers, and the bridge what it knows without one.

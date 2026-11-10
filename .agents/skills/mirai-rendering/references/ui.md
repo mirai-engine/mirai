@@ -51,9 +51,9 @@ a `Begin_Layer`/`End_Layer` that delimits an isolated group.
 ## Offscreen UI
 
 - `ui_texture_add(r, width, height, name, effects)` adds to the texture table an sRGB entry that a
-  material or the UI show like any color texture, and what draws it: an RGBA8 target and its
-  copy; with `effects`, also the targets of an effects view. Up to `UI_TEXTURE_CAPACITY`, created
-  in a transaction between frames; `ui_texture_remove` removes them.
+  material or the UI show like any color texture, and what draws it: an RGBA8 target, copied
+  into the entry on the GPU; with `effects`, also the targets of an effects view. Up to
+  `UI_TEXTURE_CAPACITY`, created in a transaction between frames; `ui_texture_remove` removes them.
 - **`Frame_Desc.ui_textures`**: a `Ui_Texture_Draw` is UI in units of `size`, which covers its
   texture: a world panel on a mesh or an interface captured alone. Its layer is drawn before the
   views, over `clear`, with the same pass as the screen layers (`Ui_Surface`): scissors, isolated

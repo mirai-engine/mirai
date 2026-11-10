@@ -187,7 +187,9 @@ Body:
 ## Verification
 
 `demo/game/grounding_physics_test.odin` (`mirai test demo/game`, which has `animation` and
-`physics`), against a real simulation and its `World_Query` (repeat with `--release` only if a failure may depend on optimization). It covers slopes, platforms, procedural steps, spiders, replay and lack of memory.
+`physics`), against a real simulation and its `World_Query` (repeat with `--release` only if a
+failure may depend on optimization). It covers slopes, platforms, procedural steps, spiders, replay
+and lack of memory.
 
 - `grounding_queries_real_slopes_places_both_feet_and_releases_when_jumping`
 - `grounding_procedural_pose_follows_platform_replays_clones_and_allocates_nothing_when_stable`
@@ -197,8 +199,8 @@ Body:
 
 With their own flags:
 
-- `bench_grounding_pose_recomposition_scaling` (`grounding_bench_test.odin`, in the same package)
-  with `MIRAI_BENCH=true`, Speed, `ODIN_TEST_THREADS=1` and a free CPU.
+- `bench_grounding_pose_recomposition_scaling` (`grounding_physics_bench_test.odin`, in the same
+  package) with `MIRAI_BENCH=true`, Speed, `ODIN_TEST_THREADS=1` and a free CPU.
 - `imported_mirai_avatar_walk_and_land_preserve_contact_phases_and_animated_foot_roll_on_slopes`
   with `MIRAI_AVATAR_TEST=true` and the generated local Mirai assets; `MIRAI_AVATAR_TRACE=true`
   prints the ankle and metatarsus sampling of the first walking ticks.

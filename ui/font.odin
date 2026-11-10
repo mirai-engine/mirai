@@ -49,7 +49,6 @@ FONT_EXTRA :: [?]rune{'•','…','–','—','‘','’','“','”','←','↑
 FONT_EXTRA_INDEX :: 0x180
 FONT_GLYPHS :: FONT_EXTRA_INDEX+len(FONT_EXTRA)+0x500-0x370
 FONT_ATLAS_WIDTH :: 2048
-FONT_CAPACITY :: 16
 FONT_FACES_ASKED :: 8 // faces the contexts ask a font on demand for between two of its font_faces_add
 FONT_FACES_MAX :: 96  // faces of a font on demand, with those asked for; other sizes scale the nearest face
 FONT_DENSITY_MIN :: f32(0.5)

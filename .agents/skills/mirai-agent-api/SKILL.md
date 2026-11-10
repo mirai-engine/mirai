@@ -34,11 +34,13 @@ difference with the catalog, it rules.
   [`play.record`, `play.seek`](references/methods.md#play) and
   [`mirai record`](references/api.md#mirai-record).
 - Checking a motion in one or two calls (an input timeline, a table of values per tick, one
-  image of cells around an entity): [`play.step`](references/methods.md#play) and [`capture`](references/methods.md#editor-and-viewport).
+  image of cells around an entity): [`play.step`](references/methods.md#play) and
+  [`capture`](references/methods.md#editor-and-viewport).
 - Walking the player to a place, with no bot, and turning the view at something: `play.step` with
   `drive` or `look_at` ([drive](../../../docs/game/testing/scenario.md#drive)).
 - Writing or changing a `.ui` (one nested document by name: `ui.write asset=<path>
-  document=@<file> save=true`, `ui.inspect` reads it back): [writing-ui](../../../docs/game/ui/writing-ui.md).
+  document=@<file>
+  save=true`, `ui.inspect` reads it back): [writing-ui](../../../docs/game/ui/writing-ui.md).
 - Reading, checking or writing the documents of interfaces, scenes and prefabs with no editor,
   from files of text under `source/`:
   [`mirai ui` and `mirai scene`](references/api.md#mirai-ui-and-mirai-scene).
@@ -226,60 +228,30 @@ positions misses both.
 
 - `mirai check editor/api` and `mirai check editor`; `mirai test editor/api` covers server, HTTP,
   JSON-RPC, batches, limits, schemas, MCP and the CLI against test methods, not the editor's.
-- What is written for the API as it can only be meant: `mirai test editor/api
-  params_are_taken_in_the_singular_or_plural_and_as_a_value_or_a_list_of_one
-  a_limit_past_its_maximum_takes_it_and_the_answer_says_so
-  an_invalid_params_error_says_what_the_method_takes_and_only_it_does
-  a_param_that_names_an_entity_says_so_in_its_schema
-  an_example_is_written_with_key_value_unless_it_needs_json`; names of a registry:
-  `mirai test std/base`, `mirai test std/serial
-  a_reader_of_loose_names_takes_members_as_a_person_writes_them_and_no_other_does` and
-  `mirai test editor a_name_of_a_component_or_a_key_resolves_as_it_is_written_or_says_the_nearest`.
-- Declared results: `mirai test editor/api
-  a_result_the_handler_writes_is_described_by_its_type
-  the_description_of_the_methods_has_the_shape_it_declares`; those of an editor method, with
-  `api_result_shape_expect` in its test (`ai_methods_write_the_results_they_declare`).
-- Writers of a recording (EXR, 16-bit PNG, WAV): `mirai test cook/movie`; its contact sheet:
-  `mirai test cook/image a_sheet_tiles_evenly_spaced_frames_in_order_each_with_its_number`; the
-  held actions of its manifest: `mirai test engine/input
-  a_held_action_reaches_its_seat_from_the_next_tick_whatever_its_bindings`; the Play history:
-  `mirai test editor a_run_goes_to_any_frame_it_played_and_plays_on_from_there
-  a_frame_changed_from_outside_its_input_while_it_plays_does_not_match_when_played_again
-  an_edit_where_a_run_went_back_is_kept_as_a_keyframe_and_drops_the_frames_after_it
-  a_paused_play_resumes_from_its_newest_frame_or_from_where_it_went_back
-  what_the_mouse_does_while_a_play_is_paused_does_not_reach_it_when_it_resumes
-  the_strip_plays_the_past_again_at_the_pace_of_the_clock_with_the_game_paused
-  the_keyframes_of_a_history_fit_its_memory_and_span_its_time
-  a_run_keeps_no_history_when_it_is_off_or_on_the_network
-  the_history_reads_what_a_live_trace_read_and_a_rewound_run_steps_the_same_again
-  verify_says_the_first_tick_and_field_where_playing_the_past_again_differs
-  the_last_play_keeps_its_history_after_stop_until_the_next_play`, and the copy it keeps:
-  `mirai test plugins/physics/runtime
-  a_kept_copy_takes_what_the_simulation_uses_and_copies_back_to_the_same_steps`; the wide image
-  before and after the tonemap, with GPU and validation:
-  `a_recording_reads_its_frames_wide_before_and_after_the_tonemap`; `play.record`, live.
-- The timeline, trace and filmstrip of a step: `mirai test editor
-  a_step_holds_each_segment_for_its_ticks_in_order_with_its_edges_at_its_first
-  a_trace_reads_a_row_before_the_first_tick_every_some_ticks_and_after_the_last
-  a_filmstrip_cell_comes_before_the_first_tick_and_every_every_ticks_around_its_entity`; what
-  fails with no game and `play.start` again after an edit:
-  `play_start_restarts_on_a_changed_document_and_without_a_game_calls_say_so`; the edit API while
-  a game plays:
-  `the_api_edits_the_document_while_a_game_plays`;
-  the input of a person and what the player sees: `mirai test editor
-  a_step_plays_the_devices_of_a_person_tick_by_tick
-  a_key_named_by_consecutive_calls_stays_held_and_a_call_that_omits_it_lets_go
-  a_drive_steers_the_focused_player_to_its_target_and_says_where_and_why_it_stopped
-  a_drive_holds_its_jump_across_a_gap_and_stands_on_a_raised_platform
-  a_drive_heads_for_the_next_point_of_the_way_a_plugin_gives
-  play_view_says_what_the_player_sees_and_where_things_show_on_the_screen`; scenarios:
-  `mirai test editor
-  a_scenario_plays_its_steps_in_order_from_the_first_tick_and_ends_at_the_first_that_fails
-  a_scenario_step_holds_unless_its_check_fails_or_its_until_runs_out`, and a live run of
-  `mirai play test demo`; and the grid of its
-  cells, `mirai test cook/image
-  a_sheet_of_given_columns_takes_regions_of_frames_black_outside_them`; the filmstrip with a GPU,
-  live.
+  `mirai test <package> --list <file>` prints the tests of a file to pass to `mirai test`.
+- What is written for the API as it can only be meant (params in the singular or plural, a limit
+  past its maximum, the text of an invalid-params error, a param that names an entity, the form of
+  an example): `editor/api/shape_test.odin`; names of a registry: `mirai test std/base`,
+  `std/serial/text_test.odin` (a reader of loose names) and
+  `editor/api_runtime_inspect_test.odin` (a name of a component or a key resolves as it is
+  written or says the nearest).
+- Declared results: `editor/api/schema_test.odin` (a result the handler writes is described by its
+  type; the description of the methods has the shape it declares); those of an editor method, with
+  `api_result_shape_expect` of `editor/api_result_shape_test.odin` in its test, as
+  `editor/ai_api_test.odin` does.
+- Writers of a recording (EXR, 16-bit PNG, WAV): `mirai test cook/movie`; its contact sheet and
+  the grid of its cells: `cook/image/image_test.odin`; the held actions of its manifest:
+  `engine/input/holds_test.odin`; the Play history (any frame a run played, edits where a run went
+  back, memory and span of the keyframes, no history off or on the network, the strip, `verify`
+  naming the first tick and field that differ): `editor/play_history_test.odin` and
+  `editor/api_play_test.odin`; the copy a history keeps: `plugins/physics/runtime/copy_test.odin`;
+  the wide image before and after the tonemap, with GPU and validation:
+  `editor/api_play_record_test.odin`; `play.record`, live.
+- The timeline, trace and filmstrip of a step, what fails with no game, `play.start` again after an
+  edit, the edit API while a game plays, the input of a person, `drive` and what the player sees:
+  `editor/api_play_test.odin` and `editor/api_play_view_test.odin`; scenarios:
+  `editor/api_play_test.odin` and `editor/api_play_scenario_test.odin`, and a live run of
+  `mirai play test demo`; the filmstrip with a GPU, live.
 - What an agent plays with, the monitors, a repro replayed and the bot:
   `mirai test plugins/playtest/editor`; its filmstrip, live.
 - `mirai image` and the measure of `mirai capture`: `mirai test cook/image`; `mirai capture`
@@ -289,20 +261,15 @@ positions misses both.
   (`tools/mirai/session_test.odin`); `restart`, the build with an open session and
   `stop --orphans` are tested with a real editor.
 - `mirai rpc` (`--select`, `--wait-until`, `describe`): `mirai test tools/mirai` and
-  `mirai test editor/api the_rpc_and_mcp_commands_drive_the_server`, which runs the tool against
-  the test methods.
-- The paths of `capture`: `mirai test editor
-  capture_paths_take_git_bash_drives_and_are_relative_to_the_project
-  a_capture_makes_its_folder_and_says_why_it_cannot_write`; its wait for textures: `mirai test
-  host a_capture_goes_on_while_textures_are_pending_until_its_wait_runs_out`; what it counted, with
-  GPU: `capture_without_ui_draws_the_world_alone_at_the_size_asked_for`.
+  `editor/api/cli_test.odin`, which runs the tool against the test methods.
+- The paths of `capture`: `editor/api_capture_test.odin`; its wait for textures:
+  `host/capture_test.odin`; what it counted, with GPU: `editor/api_viewport_test.odin`.
 - An editor method: the tests of its `editor/api_<topic>_test.odin` with
   `mirai test editor <test...>`; profiling, `editor/profile_test.odin` and the recorder in
-  `std/base` and `std/jobs`, and for loads
-  `mirai test engine/scene a_load_reports_its_phases_and_the_assets_that_finish_after_it`; a
-  plugin method, those of its skill.
-- `large_mcp_images_keep_the_complete_content_with_small_socket_buffers` (`editor/api`) shrinks
-  the receiving socket buffer: run it when touching partial sends.
+  `std/base` and `std/jobs`, and for loads `engine/scene/loading_test.odin`; a plugin method,
+  those of its skill.
+- `editor/api/mcp_test.odin` shrinks the receiving socket buffer for large images: run it when
+  touching partial sends.
 - Live: `mirai session start demo --dev` (`build.start` after changing project code,
   `mirai session restart demo` after changing engine code),
   repeat the change with `mirai rpc ... --project demo` checking `mirai rpc describe`,

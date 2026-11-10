@@ -9,7 +9,6 @@ view_state_destroy :: proc(r:^Renderer,view:^View_State) {
     extension_textures_release(r,view,all=true)
     if view.glass_dispatch!=0 {rhi.buffer_destroy(r.device,view.glass_dispatch)}
     if view.glass_seen!=0 {rhi.buffer_destroy(r.device,view.glass_seen)}
-    if view.copy!=0 {rhi.buffer_destroy(r.device,view.copy)}
     if view.wide!=0 {rhi.texture_destroy(r.device,view.wide)}
     view_exposure_release(r,view)
     view^={}
@@ -102,15 +101,56 @@ texture_view_find :: proc(r:^Renderer,texture:Texture_Handle) -> ^View_State {
     return nil
 }
 
+// Frames without drawing a view into its texture after which its targets go.
+@(private)
+TEXTURE_VIEW_IDLE_FRAMES :: 3600
+
+// Frees the targets of the views whose texture is not there any more, and of
+// those no frame drew for TEXTURE_VIEW_IDLE_FRAMES that this one does not draw.
+@(private)
+texture_views_evict :: proc(r:^Renderer,views:[]Frame_View) {
+    each: for &state in r.texture_views {
+        if state.texture==0 {continue}
+        if int(state.texture)<=r.textures.count && r.textures.textures[state.texture-1]!=0 {
+            if state.last_frame+TEXTURE_VIEW_IDLE_FRAMES>=r.frame {continue}
+            for view in views {if view.texture==state.texture && !view.disabled {continue each}}
+        }
+        view_state_destroy(r,&state)
+    }
+}
+
+// What the targets of the views drawn into textures hold of the memory of the
+// GPU: the pool of the textures gives it up (texture_pool_room).
+@(private)
+texture_views_count :: proc(r:^Renderer) {
+    bytes:u64
+    for &state in r.texture_views {
+        if state.texture==0 {continue}
+        base,glass:=targets_textures(&state.targets),glass_textures(&state.targets)
+        for texture in base {bytes+=rhi.texture_bytes(r.device,texture)}
+        for texture in glass {bytes+=rhi.texture_bytes(r.device,texture)}
+        bytes+=rhi.texture_bytes(r.device,state.wide)
+        for buffer in ([2]rhi.Buffer{state.targets.direct_traced,state.targets.direct_dispatch}) {bytes+=rhi.buffer_size(r.device,buffer)}
+        for resource in state.resources {
+            if !resource.owned {continue}
+            for texture in resource.textures {bytes+=rhi.texture_bytes(r.device,texture)}
+            for buffer in resource.buffers {bytes+=rhi.buffer_size(r.device,buffer)}
+        }
+        for entry in state.extension_textures {
+            for texture in entry.textures {bytes+=rhi.texture_bytes(r.device,texture)}
+        }
+    }
+    if bytes!=r.texture_view_bytes {r.textures.residency.stale=true}
+    r.texture_view_bytes=bytes
+}
+
 // The targets of the views of the frame that are drawn into a texture: those
-// of each texture are made the first time a view names it and kept, so that
-// going back to one costs nothing. A view of a texture that is not there, or
-// of another size, is left out of the frame.
+// of each texture are made the first time a view names it and kept while
+// frames draw it, so that going back to one costs nothing. A view of a
+// texture that is not there, or of another size, is left out of the frame.
 @(private)
 texture_views_prepare :: proc(r:^Renderer,views:[]Frame_View) -> bool {
-    for &state in r.texture_views {
-        if state.texture!=0 && (int(state.texture)>r.textures.count || r.textures.textures[state.texture-1]==0) {view_state_destroy(r,&state)}
-    }
+    texture_views_evict(r,views)
     for view in views {
         if view.texture==0 || view.disabled {continue}
         index:=int(view.texture)-1
@@ -127,10 +167,8 @@ texture_views_prepare :: proc(r:^Renderer,views:[]Frame_View) -> bool {
             if state.last_frame+1>=r.frame {continue}
             view_state_destroy(r,state)
         }
-        state.texture=view.texture
-        ok:=create_targets(r,state,u32(size[0]),u32(size[1]),1)
-        state.copy=rhi.buffer_create(r.device,{size=u64(size[0])*u64(size[1])*4,usage={.Transfer_Src,.Transfer_Dst},memory=.GPU,name="view texture copy"})
-        if !ok || state.copy==0 || !view_glass_buffers(r,state) {
+        state.texture,state.last_frame=view.texture,r.frame
+        if !create_targets(r,state,u32(size[0]),u32(size[1]),1) || !view_glass_buffers(r,state) {
             set_error(r,"view texture targets: %s",rhi.device_error(r.device))
             view_state_destroy(r,state)
             return false
@@ -157,14 +195,13 @@ texture_views_prepare :: proc(r:^Renderer,views:[]Frame_View) -> bool {
 @(private)
 texture_view_show :: proc(r:^Renderer,cmd:^rhi.Command_List,state:^View_State,slot:int,readback:bool) {
     image:=r.textures.textures[state.texture-1]
-    rhi.cmd_copy_texture_to_buffer(cmd,state.targets.ldr,state.copy,0)
-    rhi.cmd_copy_buffer_to_texture(cmd,state.copy,0,image)
+    rhi.cmd_copy_texture(cmd,state.targets.ldr,image)
     rhi.cmd_barrier_texture(cmd,image,.Shader_Read)
     if !readback {return}
     size:=r.textures.sizes[state.texture-1]
     entry:=extension_readback(r,VIEW_TEXTURE_KEY|u64(state.texture),{name=VIEW_READBACK,size=u64(size[0])*u64(size[1])*4})
     if entry==nil {return}
-    rhi.cmd_copy_buffer(cmd,state.copy,0,entry.buffers[slot],0,entry.size)
+    rhi.cmd_copy_texture_to_buffer(cmd,state.targets.ldr,entry.buffers[slot],0)
     rhi.cmd_barrier_buffer(cmd,entry.buffers[slot],.Host_Read)
     entry.copied[slot]=r.frame+1
 }

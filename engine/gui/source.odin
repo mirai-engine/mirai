@@ -231,8 +231,10 @@ source_texture :: proc(user:rawptr,id:base.Asset_Id) -> ui.Quad {
     return image_quad(app.renderer,texture.handle)
 }
 
-@(private)
+// The quad that shows a texture of the renderer whole; none without a
+// renderer or for a texture it does not have.
 image_quad :: proc(renderer:^render.Renderer,texture:render.Texture_Handle) -> ui.Quad {
+    if renderer==nil {return {}}
     index:=gpu.ui_image(renderer,texture)
     if index==0 {return {}}
     return ui.quad_whole(.Image,index&~gpu.UI_MATERIAL_IMAGE_BIT)

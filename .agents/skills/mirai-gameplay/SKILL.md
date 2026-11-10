@@ -161,7 +161,8 @@ the same attributes and no private paths. Declaration and parameter binding:
   `input.mirai` and the problems of a rejected request); the chord tie-break, in
   `mirai test std/input`.
 - `engine/scene` and `engine/save`: `mirai test engine/scene engine/save` (instantiating leaves the
-  poses to propagation; a save returns without `Id` what it borrowed and does not touch the tables
+  poses to propagation; a prefab spawned again from the form its World keeps is the one read anew;
+  a save returns without `Id` what it borrowed and does not touch the tables
   of the session; a load that fails halfway leaves the world as it was; the header and thumbnail
   of a slot; the rotation and triggers of autosave; the checkpoint; the slot that waits for its
   thumbnail). The real thumbnail is seen in Play in an editor session.

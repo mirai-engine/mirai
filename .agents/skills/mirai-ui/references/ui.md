@@ -347,14 +347,11 @@ or the controls of the editor panels:
   and `reveal` draws a part of its characters where the whole text places them, so it does not
   reflow while it appears. `anchored` hangs a container from a screen point inside the safe area and
   `skin_look` gives a button images or colors per state.
-- **Game controls**: one algorithm per control, used by the tree and by code. A button, a checkbox,
-  a slider and a number are those of the editor with a `look`; a radio, a selector, a field and a
-  dropdown are in `game.odin`. Every color and corner comes from the `Node_Style` resolved for its
-  state (`widget_states` gives the states of a widget before it is built) and a transparent part is
-  not drawn: neither the theme nor constants. A disabled button without a tooltip lets the pointer
-  through. `fill`, `stroke`, the corners and the text are the box;
-  `track` the track of a slider and the row under the pointer in a dropdown's list; `knob` the knob;
-  `mark` the dot of a radio, the tick of a checkbox, the arrows and the chosen option.
+- **Game controls**: a button, a checkbox, a slider and a number are the editor's with a `look`; a
+  radio, a selector, a field and a dropdown are in `game.odin`. Every color and corner comes from
+  the `Node_Style` resolved for its state (`widget_states`): neither the theme nor constants.
+  `fill`, `stroke`, corners and text are the box; `track` the track of a slider and the lit row of
+  a dropdown; `knob` the knob; `mark` the dot, the tick, the arrows and the chosen option.
   - Without a size, a control measures its text plus `GAME_PAD` and `GAME_WIDTH` sizes of width.
   - Left and right change a slider, a selector and a number with the focus; the slider writes only
     when the pointer or the keys move it, and what is written in a number is adjusted to the step
@@ -391,7 +388,8 @@ The node types are in `Node_Kind` (`tree.odin`) and the events in `Tree_Event`.
 - **Controls.** The tree's controls are the game ones, in the parts of the style that the node
   resolves, and **do not write the value**: they emit `Changed` with what they ask for and the game
   writes it; they show what was asked until the game has had a tick to write it. A control bound to
-  a field of a setting (`@(storage,setting)`) writes it itself: a settings screen is data. A `Selector` or a
+  a field of a setting (`@(storage,setting)`) writes it itself: a settings screen is data. A
+  `Selector` or a
   `Dropdown` written `Label=Value` binds the value of the option chosen (a number, a member of an
   enum, a text for a text field), not its index. A `Selector` or a
   `Dropdown` with `bind_items` takes its options from a game array.
@@ -479,7 +477,7 @@ that `tree_node` takes: the loaded tree is, byte for byte, the one the same call
   active. `Focused` is the navigation focus with its ring, not the one a click gives: it does not
   look like hover.
 - `style_resolve` applies the states in order; within the state, a named rule wins over the
-  wildcard, and then the last row.
+  wildcard, and then the last row. A tree keeps its rules by style, in that order.
 - With `Node_Style.transition`, a node's colors, its shadow and what `move` and `scale` give go from
   the style it showed to the new one when its state or variant changes; a change under way starts
   from where it was and a transparent end only fades.
@@ -495,10 +493,12 @@ that `tree_node` takes: the loaded tree is, byte for byte, the one the same call
   `Tree_Token` and `Tree_Param`; the frame reads the flat tables, and each name resolves when the
   file is written or links another (`tree_link`), so changing a token or a style reaches what names
   it without touching the frame. Game documentation: `docs/game/ui/styles.md`.
+- A value a style or a state sets is a `Style_Key` with its row in `STYLE_KEYS`: copying,
+  comparing, tokens and the document go by that row, so a new key is a new row.
 - A node's variant is its own, that of its `bind_variant` or the one it inherits from its box; that
   of the root is given by whoever builds (`Tree_Build_Desc.variant`).
 
-### Widgets
+### Widget files
 
 - A component is a widget: a `.ui` of its own, one root of any kind. A `Component` node is a use;
   `Tree_Component.widget` names the file and its name is the name of the file. A file that no node

@@ -90,7 +90,10 @@ stream_send :: proc(conn:^Conn,bytes:[]u8) -> bool {
 }
 
 // Whether the client cancelled the running call. Reads what arrived at most
-// every CANCEL_POLL; true once, and for the rest of the call.
+// every CANCEL_POLL; true once, and for the rest of the call. It runs inside a
+// handler, so it never dispatches a request: it answers a cancellation and
+// nothing else, and any other request stays in its buffer, whole, for
+// server_poll to answer after the handler ends.
 server_cancelled :: proc(s:^Server) -> bool {
     r:=&s.running
     if !r.active {return false}

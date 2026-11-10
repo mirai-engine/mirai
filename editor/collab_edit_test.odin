@@ -11,6 +11,7 @@ import "mirai:editor/history"
 import "mirai:host"
 import wire "mirai:net"
 import "mirai:std/base"
+import "mirai:std/serial"
 
 @(test)
 an_edit_of_another_end_makes_entities_that_its_other_rows_name_by_id :: proc(t:^testing.T) {
@@ -164,9 +165,10 @@ what_another_editor_selected_is_edited_and_stays_outlined :: proc(t:^testing.T) 
             done=field_write(s,component_table(s,"Transform"),{e},int(offset_of(core.Transform,scale)),mem.ptr_to_bytes(&scale))
         case .Rename: done=entity_rename(s,e,"Crate")
         case .Write:
-            method:=api.Method{result_id=Api_Write_Result}
-            result:Api_Write_Result
-            call:=api.Call{method=&method,result=&result,raw=fmt.tprintf(`{{"root":"0x%016x","entities":[{{"name":"Crate","position":[0,9,0]}}]}}`,u64(id)),allocator=context.temp_allocator}
+            method:=api.Method{result_id=Api_Write_Result,writes_result=true}
+            out:serial.Writer
+            serial.writer_init(&out,0,context.temp_allocator)
+            call:=api.Call{method=&method,out=&out,raw=fmt.tprintf(`{{"root":"0x%016x","entities":[{{"name":"Crate","position":[0,9,0]}}]}}`,u64(id)),allocator=context.temp_allocator}
             api_scene_write(s,&call)
             done=!call.failed
             testing.expect(t,done,call.error.message)

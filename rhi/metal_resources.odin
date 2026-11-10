@@ -150,6 +150,7 @@ texture_destroy :: proc(d: ^Device, texture: Texture) {
 	for entry, index in d.table_textures {if entry == texture {texture_table_set(d, u32(index), 0)}}
 	t, _ := pool_remove(&d.textures, base.Handle(texture))
 	for v in t.mip_views {mtl_defer(d, v)}
+	mtl_defer(d, t.encoded)
 	mtl_defer(d, t.handle)
 	mtl_defer(d, cast(^NS.Object)t.surface)
 }
