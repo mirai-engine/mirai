@@ -141,7 +141,7 @@ inscribed ellipse).
 
 **Travel** (`portals.odin`):
 
-- `portals_travel` (`fixed`, before `locomotion_seat`: before the game input and the physics)
+- `portals_travel` (`fixed`, before `camera_drive`: before the game input and the physics)
   looks at the stretch that each traveler covered in the previous tick. If its point entered
   through the front of an opening, it places it on the other side with `core.place` (a
   [jump][jump]: the `previous` goes with it, so drawing interpolates on the other side), asks

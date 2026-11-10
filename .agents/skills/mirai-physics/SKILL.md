@@ -37,7 +37,8 @@ tables and is the only package that imports it. The game and the other plugins, 
   [the body](references/character.md#the-body) and [step](references/character.md#step);
   its own vertical (walking around a planet, `core.Vertical`) →
   [character.md#the-vertical](references/character.md#the-vertical)
-- Walk, jump, fly, swim, layered movements, seat control, game modes (the `locomotion` plugin) →
+- Walk, jump, fly, swim, layered movements, turning toward the look, game modes (the `locomotion`
+  plugin) →
   [engine.md#locomotion](references/engine.md#locomotion); at normal speed in slow motion
   (`core.Own_Pace`) → [engine.md#own-pace](references/engine.md#own-pace)
 - Breakable bodies of the solver (pieces, bonds, clusters, damage, cut, state, copy) and their
@@ -154,7 +155,8 @@ tables and is the only package that imports it. The game and the other plugins, 
   the step of that mode writes it first, to which locomotion only adds the layered movements.
 - Locomotion is a plugin on top of physics: it drives characters only through the facade, and
   `physics` imports nothing of it. A walker is `Character` + `Walk`; the mode it starts in follows
-  from its mode components, and how a seat drives it is in its `input.Drivable`.
+  from its mode components; whoever drives it writes its `input.Move_Input` (a seat through
+  `engine/camera`), and locomotion is the one that turns it.
 - `Character` and the mode components are authored and never written while playing; what changes
   is in `Locomotion_State`, all `transient`, so a scene saved after play holds no run-time field.
 - A joint is an entity of its own: `a` (by default its parent) and `b`, its frame its Transform, and
@@ -210,7 +212,7 @@ tables and is the only package that imports it. The game and the other plugins, 
   - Locomotion, on the world through the facade (`test_world_test.odin`): `locomotion` (walk, jump,
     coyote, layers, flight, swimming, start mode, locks), `moves` (crouch, slide, mantle, tactical
     sprint, ledge jump), `planet` (own vertical: walking, jumping and a world copy on a planet,
-    crossing fields), `pace` and `seat` (seat control, relative forward); editor: `bodies`.
+    crossing fields), `pace`; editor: `bodies`.
   - `destruct`: `integration`. `geometry_test` does not need a GPU. Grounding with real bodies:
     `demo/game/grounding_physics_test.odin`.
 - Twins and cuts: the tests of `plugins/portals/runtime` (half crossed, walls of any collider, the

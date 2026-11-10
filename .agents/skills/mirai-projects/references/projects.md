@@ -157,8 +157,8 @@ Settings of the engine and its plugins:
 - `Audio_Output` (`audio`, machine): the sound output by its name.
 - `Net_Settings` (plugin `multiplayer`, `Shared`): port, protocol, version, capacities and
   tolerances.
-- `Spawn_Settings` (plugin `spawn`): `players` gives a body at a spawn point to each player that
-  has none; off, the game gives them a body.
+- `Spawn_Settings` (plugin `spawn`): `prefab`, the player prefab, of which each player that has
+  no body gets one at a spawn point; none, and no point with one, the game gives them a body.
 
 ## The `project` package
 

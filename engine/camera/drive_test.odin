@@ -76,12 +76,12 @@ drive_settle :: proc(w:^Drive_World) {
 }
 
 @(private="file")
-drive_run :: proc(w:^Drive_World) {
+drive_run :: proc(w:^Drive_World,problems:^core.Problems) {
     drive_settle(w)
     camera_drive(
         core.read(&w.seats),&w.moves,{state=core.ref(&w.seat_state),seats=core.read(&w.seats),base=DRIVE_MOVE},{state=core.ref(&w.seat_state),seats=core.read(&w.seats),base=DRIVE_LOOK},
         core.ref(&w.bindings),core.read(&w.follows),core.ref(&w.shown),core.read(&w.cameras),core.ref(&w.views),core.ref(&w.hierarchy),core.read(&w.parents),
-        core.read(&w.transforms),core.read(&w.worlds),core.read(&w.verticals),core.read(&w.remotes),
+        core.read(&w.transforms),core.read(&w.worlds),core.read(&w.verticals),core.read(&w.remotes),problems,
     )
 }
 
@@ -113,13 +113,22 @@ a_seat_drives_toward_the_forward_of_the_camera_it_sees :: proc(t:^testing.T) {
         if c.remote {core.add(&w.remotes,bodies[i],core.Remote{})}
         if c.turn!=0 {core.add(&w.verticals,bodies[i],core.Vertical{frame=1,turn=c.turn})}
     }
-    drive_run(w)
+    problems:core.Problems
+    drive_run(w,&problems)
     for c,i in cases {
         move,_:=core.get(&w.moves,bodies[i])
         testing.expectf(t,abs(mm.angle_wrap(move.look_yaw-c.yaw))<1e-4,"%s: it looks at yaw %v, not %v",c.name,move.look_yaw,c.yaw)
         ahead:=c.remote?[3]f32{}:mm.quat_rotate(mm.quat_axis_angle({0,1,0},c.yaw),[3]f32{0,0,-1})
         testing.expectf(t,linalg_close(move.move,ahead),"%s: it goes %v, not %v",c.name,move.move,ahead)
     }
+    testing.expect_value(t,problems.count,0)
+
+    // A look that is no Axis2 in the input map is a problem of the body, which is left as it was.
+    input.input_map_action(&w.bindings,DRIVE_LOOK,.Button)
+    before,_:=core.get(&w.moves,bodies[0])
+    drive_run(w,&problems)
+    after,_:=core.get(&w.moves,bodies[0])
+    testing.expect(t,after==before && core.problem_find(&problems,bodies[0],"camera.seat_actions")!=nil)
 }
 
 @(private="file")

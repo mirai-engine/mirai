@@ -29,8 +29,8 @@ badge and the hum); `mirai content <project>` runs it. It does not go into the g
   `physics`, `destruct`, `multiplayer`, `paint`, `terrain`, `animation`, `previews`,
   `physics_placement`, `navigation`, `behavior` and others. The `destruct_multiplayer` bridge
   activates on its own.
-- `settings.mirai`: `Spawn_Settings` with `"players": true` and `UI_Settings` in English and
-  Spanish, with the prompt pack of `prompts_kenney`.
+- `settings.mirai`: `UI_Settings` in English and Spanish (no player prefab: the spawn points of
+  each gallery name its body), with the prompt pack of `prompts_kenney`.
 - `cook.mirai`: the prefabs and materials that only code picks by path.
 - `render_check.mirai`: the fixed views that `mirai render check` measures
   ([render check](../../mirai-rendering/references/verification.md#render-check)).
@@ -106,8 +106,8 @@ Scenes:
     destruction applies it in the same tick.
   - `game_glow` is the only writer of `Tint`: it also serves the portals' buttons, the lamps of
     `horror` and the fade of the physics gallery.
-  - The cameras of the prefabs are `Camera_Follow`: `Eyes` the player's, `Orbit` with `aim` those of
-    the person and the dog, whose `Drivable` walks them with `move_relative_to` `View`.
+  - The cameras of the prefabs are `Camera_Follow` children of the body: `Eyes` the player's,
+    `Orbit` those of the person and the dog, which walk where their camera says.
 - **`control.odin`**: `Follow` is an AI that takes the body behind its leader while no seat drives
   it.
   - `game_dogs` (`server`) gives each person a dog with `Follow`; `game_follow` writes the
@@ -224,9 +224,9 @@ inventories, dialogues or waves, and these are demo code that can be copied and 
 
 ## Local multiplayer
 
-`control.scene` carries an `inp.Local_Multiplayer{players=2}`, which applies with `mirai play`
-without `--players`; in the editor the Play selector rules. `input` creates one seat per player,
-each receives its person through `Spawn_Settings.players` and `engine/camera` splits the screen. In
+`mirai play --players 2` (or the editor's Play selector) gives the run two local players: `input`
+creates one seat per player, each receives its person at a spawn point of `control.scene` (the
+points name the person) and `engine/camera` splits the screen; each orbit turns with its own pad. In
 Play, F1 releases the mouse and the click that returns it chooses who receives keyboard and mouse.
 
 ## Generated content

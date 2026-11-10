@@ -59,7 +59,8 @@ gui_window_apply :: proc(
     clock:core.Ref(core.Clock),clock_requests:^core.Clock_Requests,network:core.Ref(core.Network),
 ) {
     if gui==nil {return}
-    menu_report(gui,inp.pressed(menu,.Menu))
+    // The menu of the focused slot past the blocks: those of its own screens take it from the game.
+    menu_report(gui,inp.action(&menu.actions.ptr.slots[clamp(state.focus,0,inp.LOCAL_CAPACITY-1)],inp.action_of(menu,.Menu)).pressed)
     clock_apply(gui,clock.paused,clock_requests,network.role)
     if app.platform==nil || app.renderer==nil || app.game_input_blocked || app.game_mouse_off {return}
     if wanted:=mouse_wanted(seats,state.ptr,bindings.ptr,inp.action_of(look,.Look),gui.modal_up);wanted!=platform.window_relative_mouse(app.platform) {

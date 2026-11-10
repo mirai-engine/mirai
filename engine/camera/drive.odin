@@ -36,13 +36,18 @@ camera_drive :: proc(
     seats:core.Read(input.Seat),moves:^core.Table(input.Move_Input),move_actions:input.Input_Of(input.Move_Action),look_actions:input.Input_Of(input.Look_Action),
     bindings:core.Ref(input.Input_Map),follows:core.Read(Camera_Follow),shown:core.Ref(Cameras),cameras:core.Read(render.Camera),views:core.Ref(Camera_Views),
     hierarchy:core.Ref(core.Hierarchy),parents:core.Read(core.Parent),locals:core.Read(core.Transform),worlds:core.Read(core.World_Transform),
-    verticals:core.Read(core.Vertical),remotes:core.Read(core.Remote),
+    verticals:core.Read(core.Vertical),remotes:core.Read(core.Remote),problems:^core.Problems,
 ) {
+    axes:=input.input_map_has(bindings.ptr,input.action_of(move_actions,.Move),.Axis2) && input.input_map_has(bindings.ptr,input.action_of(look_actions,.Look),.Axis2)
     for row in 0..<core.count(seats) {
         seat:=core.entity_at(seats,row)
         source:=core.at(seats,row)
         body:=source.body
         if body==core.NONE || !core.owned(remotes,body) {continue}
+        if !axes {
+            core.report(problems,body,"camera.seat_actions","a seat drives this body, and its actions move and look have another kind than Axis2 in the input map; give them that kind in input.mirai")
+            continue
+        }
         vertical:=core.vertical_of(verticals,body)
         move:=core.edit(moves,body)
         if move==nil {

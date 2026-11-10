@@ -15,7 +15,8 @@ body of it and destroys it with the seat. Without one, the server asks:
 @(step="fixed",server)
 give_bodies :: proc(seats:core.Read(inp.Seat),requests:^spawn.Spawn_Requests) {
     for row in 0..<core.count(seats) {
-        if core.at(seats,row).body==core.NONE {spawn.spawn(requests,core.entity_at(seats,row),PLAYER_PREFAB)}
+        seat:=core.entity_at(seats,row)
+        if core.at(seats,row).body==core.NONE {spawn.spawn(requests,seat,PLAYER_PREFAB)}
     }
 }
 ```

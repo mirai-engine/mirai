@@ -656,7 +656,8 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
   The first call of the API on a run reserves the log of its inputs, which a tick writes into; a
   run the API never touched tests one pointer per tick.
 - `play.player`: fails without a run. The seat is that of the focused local player
-  (`input.focused`); body and camera come from `Drivable` and `render.View_Camera`. The AI context
+  (`input.focused`); its body is `Seat.body` and the camera `render.View_Camera`, or else the one
+  under the body. The AI context
   reads the player with the same `play_player_snapshot`.
 - `play.ui`: what the last `engine/gui` frame built; without `all`, only what is seen, which is
   what can be clicked. Names come from the `.ui` (those of a widget, `instance/node`); the `rect`

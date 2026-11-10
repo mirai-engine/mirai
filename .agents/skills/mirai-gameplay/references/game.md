@@ -22,7 +22,7 @@ of its owner and is taken by the function in parentheses:
   `remove_moves`, `set_mode` in `^locomotion.Locomotion_Requests` (`locomotion_step`).
 - **Damage or cut**: `destruct.damage(&r, e, point, radius, impulse)`, `slice` in
   `^destruct.Destruct_Requests` (`destruct_step`).
-- **Drive a body, block actions**: `inp.drive`, `release`, `swap`, `focus`,
+- **Drive a body, block actions**: `inp.drive`, `release`, `focus`,
   `input_block` in `^inp.Seat_Requests` (`input_drive`).
 - **Change camera**: `camera.camera_override` in `^camera.Camera_Requests` (`camera_select`).
 - **Change the mode of a camera**: `camera.camera_mode` in `^camera.Camera_Changes`

@@ -41,7 +41,7 @@ the same attributes and no private paths. Declaration and parameter binding:
 - Declare an input action (`inp.Action`), its default bindings, `input.mirai` and renaming it:
   [actions](references/control.md#actions). Input contexts (menus, vehicles) and chords:
   [contexts](references/control.md#contexts), [chords](references/control.md#chords).
-- Walking, jumping and flying a character (`Character`, seat control, game modes):
+- Walking, jumping and flying a character (`Character`, turning toward the look, game modes):
   [locomotion](../mirai-physics/references/engine.md#locomotion).
 - Slow or fast world time with the player at normal speed (bullet time: `core.Clock` and
   `core.Own_Pace`): [own pace](../mirai-core/references/core.md#core-storages).
@@ -115,9 +115,9 @@ the same attributes and no private paths. Declaration and parameter binding:
   declares `copy`/`free` or if `core.value_copy`/`value_free` suffice (dynamic arrays and slices;
   not maps or pointers).
 - **A library is the only writer of its own data.**
-  - `engine/input`: `Drivable`. `engine/camera`: `render.View_Camera`, `Camera_Follow`, the lens of
-    its cameras and the `Transform` rows of the ones that follow; a mode is requested with
-    `cam.camera_mode`.
+  - `engine/input`: `Seat.body`. `engine/camera`: `render.View_Camera`, `Camera_Follow`, the lens
+    of its cameras, the `Transform` rows of the ones that follow and the `Move_Input` of the bodies
+    the seats of this end drive; a mode is requested with `cam.camera_mode`.
   - `physics`: `Transform` of the bodies; locomotion, the `Character_Move` of the characters (in a
     game mode, after the step of that mode).
   - `animation_sample`/`animation_advance`: buffers and results of `Playback`.
@@ -130,14 +130,15 @@ the same attributes and no private paths. Declaration and parameter binding:
   The menu of the game is the engine's `Menu` action (`gui.menu_pressed`); pausing and capturing
   the mouse are the engine's too (`UI_Screen.pause`, `input=.Modal`), never game code.
 - **Seats and movement.** A player is a seat (`inp.Seat`), of this machine or of a connection,
-  without telling them apart; it drives a body with `Drivable` and carries its actions. The
-  `locomotion` plugin turns the `Move_Input` of a `Character` with a `Walk` (or `Fly`, `Swim`)
-  into movement: the seat writes it according to the `move_relative_to` of the `Drivable`, the
-  game does (with `Game`, from `inp.seat_*` or `inp.pressed(players, body, ...)`), or an AI for
-  its own bodies; an own mode (swimming, climbing) is requested with `locomotion.set_mode`. Player
-  bodies
-  appear at the `Spawn_Point`s of the `spawn` plugin, not through game code
-  ([control](references/control.md)).
+  without telling them apart; it carries its actions and the one link to what it drives
+  (`Seat.body`); any entity can be driven, and the camera of a body is the one under it. The
+  `Move_Input` of a body is one request for every driver: a move in the world and the yaw to face.
+  The seat's comes from its actions toward the forward of the camera it sees (`camera_drive`); an
+  AI or the game writes it for the bodies no seat drives. The mover turns the body toward its look
+  at its own rate (locomotion: `Character.turn_speed`); nobody else turns it. An own mode
+  (swimming, climbing) is requested with `locomotion.set_mode`. Player bodies appear at the
+  `Spawn_Point`s of the `spawn` plugin when a player prefab is named, not through game code; the
+  number of local players is of the run ([control](references/control.md)).
 - **Volumes: one algorithm and an unbounded base value.** Gravity, wind, reverb, view and fog
   change per zone with a single algorithm: each volume has a priority and says whether it adds to
   or replaces what is below, and the base value is a volume without bounds. An unbounded volume of
