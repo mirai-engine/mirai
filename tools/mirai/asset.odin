@@ -6,6 +6,7 @@ import "core:os"
 import "core:strings"
 import "mirai:asset"
 import "mirai:editor/api"
+import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 
@@ -238,7 +239,7 @@ asset_ls :: proc(args:[]string) -> int {
     }
     if folder=="" {return misuse("ls")}
     r:asset.Registry
-    asset.registry_init(&r,folder,cache)
+    asset.registry_init(&r,folder,cache,imported=imported_beside(folder))
     if error:=asset.registry_scan(&r);error!=.None {return failed("ls",folder,error_text(error))}
     w:serial.Writer;serial.writer_init(&w)
     problems:=0
@@ -291,7 +292,7 @@ asset_deps :: proc(args:[]string) -> int {
         return 0
     }
     r:asset.Registry
-    asset.registry_init(&r,folder)
+    asset.registry_init(&r,folder,imported=imported_beside(folder))
     if error:=asset.registry_scan(&r);error!=.None {return failed("deps",folder,error_text(error))}
     id:=a.blob.header.id
     missing:=0
@@ -625,4 +626,14 @@ asset_pack :: proc(args:[]string) -> int {
     }
     if error:=asset.document_save(&doc,args[1]);error!=.None {return failed("pack",args[1],error_text(error))}
     return 0
+}
+
+// The imported folder that goes with a folder of assets: that of the project
+// or the plugin whose assets folder it is; "" for any other folder.
+@(private="file")
+imported_beside :: proc(folder:string) -> string {
+    absolute:=project.path_absolute(folder,context.temp_allocator)
+    names:=project.FOLDER_NAMES
+    if os.base(absolute)!=names[.Assets] {return ""}
+    return project.imported_path(os.dir(absolute),context.temp_allocator)
 }
