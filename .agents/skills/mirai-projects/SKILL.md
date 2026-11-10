@@ -100,6 +100,8 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 - Every test executable, of `mirai test` and of `build.test`, is built and run by one runner
   (`cook/build/tests.odin`), is current by the content fingerprint of what its build read and
   runs in the engine root: a relative path in a test is relative to the engine.
+- No library compiles a `_test.odin`: the engine, plugin and project libraries compile from
+  stages without them. A test helper a game's tests use is public API of the engine.
 - Only the shaders job (`Shaders_Job`, on its thread) writes to `project.shader_generation(root)`.
   `host` chooses what to load with `project.shader_generation_find`; do not duplicate that path.
 - Manifests are flat structs read and written by their schema; an unknown field is a read error.

@@ -241,7 +241,8 @@ Ai :: struct {
     play_after:[AI_PATH_BYTES]u8, // a scene an answer asked to play: it plays once Open has put it in place
 }
 
-AI_DEFAULT :: Ai{view={show_agents_in_scene=true}}
+AI_VIEW_DEFAULT :: Ai_View{show_agents_in_scene=true}
+AI_DEFAULT :: Ai{view=AI_VIEW_DEFAULT}
 
 ai_task_find :: proc(m:^Ai,id:int) -> ^Ai_Task {
     for &task in m.tasks[:m.task_count] {
@@ -266,6 +267,7 @@ ai_task_reviewable :: proc "contextless" (task:^Ai_Task) -> bool {
 @(private)
 ai_document_closed :: proc(s:^Session,world:rawptr) {
     if s.ai==nil {return}
+    if world==s.edit_world {s.ai.pending=false}
     for &task in s.ai.tasks[:s.ai.task_count] {
         if task.world!=world || task.document_closed {continue}
         task.document_closed=true

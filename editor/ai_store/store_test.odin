@@ -463,3 +463,52 @@ a_write_does_not_wait_for_another_editor_and_lands_in_order :: proc(t:^testing.T
     note,_=note_get(&store,1)
     testing.expect_value(t,note,"third")
 }
+
+// Each save of a chat is a transaction of the database in WAL mode: an
+// editor that dies after it leaves it whole on the disk, and loses only the
+// write it kept for later; one that closes writes that write too.
+@(test)
+a_chat_survives_an_editor_that_dies_between_saves :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"ai-store-crash")
+    if root=="" {return}
+    store:Store
+    defer close(&store)
+    testing.expect_value(t,open(&store,root),"")
+    c:=test_conversation(1,"scene/main.scene")
+    transcript:=make([dynamic]Line,context.temp_allocator)
+    test_add(&transcript,"Build a harbor",.Prompt)
+    testing.expect_value(t,save(&store,&c,transcript[:]),"")
+    test_add(&transcript,"The harbor has a pier and a lighthouse.")
+    testing.expect_value(t,save(&store,&c,transcript[1:]),"")
+    // Another editor holds the database: the next save is kept.
+    other:^sqlite.Db
+    path:=strings.clone_to_cstring(project.path(root,".mirai/ai/chat.db",allocator=context.temp_allocator),context.temp_allocator)
+    testing.expect(t,sqlite.open_v2(path,&other,sqlite.OPEN_READWRITE|sqlite.OPEN_NOMUTEX,nil)==sqlite.OK)
+    defer sqlite.close_v2(other)
+    testing.expect(t,sqlite.exec(other,"BEGIN IMMEDIATE",nil,nil,nil)==sqlite.OK)
+    test_add(&transcript,"Gulls circle it.")
+    testing.expect_value(t,save(&store,&c,transcript[2:]),"")
+    testing.expect_value(t,pending(&store),1)
+    testing.expect(t,sqlite.exec(other,"ROLLBACK",nil,nil,nil)==sqlite.OK)
+
+    // The editor dies here: what is on the disk is what the next editor opens.
+    crashed:=project.path(root,"crashed",allocator=context.temp_allocator)
+    testing.expect(t,os.make_directory_all(project.path(crashed,".mirai/ai",allocator=context.temp_allocator))==nil)
+    for name in ([]string{"chat.db","chat.db-wal"}) {
+        data,error:=os.read_entire_file(project.path(root,".mirai/ai",name,allocator=context.temp_allocator),context.temp_allocator)
+        if !testing.expectf(t,error==nil,"%s: %v",name,error) {return}
+        testing.expect(t,os.write_entire_file(project.path(crashed,".mirai/ai",name,allocator=context.temp_allocator),data)==nil)
+    }
+    lines:[8]Stored_Line
+    reopened:Store
+    testing.expect_value(t,open(&reopened,crashed),"")
+    count,_:=page(&reopened,1,-1,lines[:])
+    testing.expect(t,count==2 && lines[1].text=="The harbor has a pier and a lighthouse.","the saves survive, without the write kept after them")
+    testing.expect(t,find(&reopened,1)!=nil)
+    close(&reopened)
+
+    close(&store)
+    testing.expect_value(t,open(&store,root),"")
+    count,_=page(&store,1,-1,lines[:])
+    testing.expect(t,count==3 && lines[2].text=="Gulls circle it.","closing writes what was kept")
+}

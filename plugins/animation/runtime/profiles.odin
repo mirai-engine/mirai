@@ -475,7 +475,7 @@ modifier_apply_goal :: proc(runtime:^Modifier_Runtime,goal:Modifier_Goal,problem
         if row:=rig_slot_row(&runtime.ik,goal.rig,goal.slot);row>=0 {
             value:=&runtime.ik.values[row]
             if value.target!=goal.target || value.weight!=scaled || value.enabled!=active {
-                out:=core.at(&runtime.ik,row)
+                out:=core.edit_at(&runtime.ik,row)
                 out.target=goal.target
                 out.weight,out.enabled=scaled,active
             }
@@ -484,7 +484,7 @@ modifier_apply_goal :: proc(runtime:^Modifier_Runtime,goal:Modifier_Goal,problem
         if row:=rig_slot_row(&runtime.look,goal.rig,goal.slot);row>=0 {
             value:=&runtime.look.values[row]
             if value.target!=goal.target || value.weight!=scaled || value.enabled!=active {
-                out:=core.at(&runtime.look,row)
+                out:=core.edit_at(&runtime.look,row)
                 out.target=goal.target
                 out.weight,out.enabled=scaled,active
             }
@@ -493,13 +493,13 @@ modifier_apply_goal :: proc(runtime:^Modifier_Runtime,goal:Modifier_Goal,problem
         if row:=rig_slot_row(&runtime.feet,goal.rig,goal.slot);row>=0 {
                 value:=&runtime.feet.values[row]
                 if value.hit_position!=goal.position || value.hit_normal!=goal.normal || value.contact!=goal.weight || value.grounded!=goal.enabled || value.enabled!=active {
-                    out:=core.at(&runtime.feet,row);out.hit_position,out.hit_normal,out.contact,out.grounded,out.enabled=goal.position,goal.normal,goal.weight,goal.enabled,active
+                    out:=core.edit_at(&runtime.feet,row);out.hit_position,out.hit_normal,out.contact,out.grounded,out.enabled=goal.position,goal.normal,goal.weight,goal.enabled,active
                 }
         }
     case .Grounding:
-        if row:=rig_slot_row(&runtime.grounding,goal.rig,goal.slot);row>=0 {value:=&runtime.grounding.values[row];if value.global_contact!=goal.weight || value.enabled!=active {out:=core.at(&runtime.grounding,row);out.global_contact,out.enabled=goal.weight,active}}
+        if row:=rig_slot_row(&runtime.grounding,goal.rig,goal.slot);row>=0 {value:=&runtime.grounding.values[row];if value.global_contact!=goal.weight || value.enabled!=active {out:=core.edit_at(&runtime.grounding,row);out.global_contact,out.enabled=goal.weight,active}}
     case .Limit:
-        if row:=rig_slot_row(&runtime.limits,goal.rig,goal.slot);row>=0 {value:=&runtime.limits.values[row];if value.enabled!=active || value.weight!=scaled {out:=core.at(&runtime.limits,row);out.enabled,out.weight=active,scaled}}
+        if row:=rig_slot_row(&runtime.limits,goal.rig,goal.slot);row>=0 {value:=&runtime.limits.values[row];if value.enabled!=active || value.weight!=scaled {out:=core.edit_at(&runtime.limits,row);out.enabled,out.weight=active,scaled}}
     case .Chain_IK,.Twist,.Spring,.Multi_IK,.Chain_Retarget,.Spline_IK,.Corrective,.Follow:
         rigs_apply_goal(runtime,goal,scaled,active,problems)
     }
@@ -548,7 +548,7 @@ progress_resume :: proc(progress:^core.Table(Animation_Progress),playback:^Playb
     for row in 0..<core.count(progress) {
         e:=core.entity_at(progress,row)
         if constraint_playing(playback,e)!=nil {continue}
-        kept:=core.at(core.read(progress),row)
+        kept:=core.at(progress,row)
         #partial switch kept.transport {
         case .Play: animation_command(requests,e,.Resume)
         case .Pause: animation_command(requests,e,.Pause)
@@ -570,8 +570,8 @@ progress_write :: proc(progress:^core.Table(Animation_Progress),animations:core.
         now:=Animation_Progress{clip_time,constraint_playing(playback,e).transport}
         if at:=core.row_of(progress,e);at<0 {
             core.add(progress,e,now)
-        } else if core.at(core.read(progress),at)!=now {
-            core.at(progress,at)^=now
+        } else if core.at(progress,at)!=now {
+            core.edit_at(progress,at)^=now
         }
     }
 }

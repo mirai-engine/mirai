@@ -316,7 +316,7 @@ server_gone :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets) {
 gone_tell :: proc(s:^Net_Session,w:core.World_Ref,section:core.Entity,id:base.Entity_Id) {
     references:=core.world_table_of(w,scene.Scene_Reference)
     if !s.follows || id==0 || references==nil {return}
-    reference,found:=core.get(core.read(references),section)
+    reference,found:=core.get(references,section)
     if !found || reference.loaded=={} {return}
     server:=&s.server
     message:=Net_Gone{section=core.id_of(core.read(core.world_table_of(w,core.Id)),section),changes=server.changes,count=1}
@@ -420,7 +420,7 @@ server_publish :: proc(s:^Net_Session,w:core.World_Ref,outbox:^Net_Outbox,tick:u
     transforms:=core.world_table_of(w,core.Transform)
     worlds:=core.world_table_of(w,core.World_Transform)
     ids:=core.world_table_of(w,core.Id)
-    sources:=core.world_table_of(w,scene.Prefab_Source)
+    placed:=core.world_table_of(w,scene.Prefab_Instance)
     moves:=core.world_table_of(w,input.Move_Input)
     hierarchy:=core.ref(core.world_storage_of(w,core.Hierarchy))
     seats:=core.world_table_of(w,input.Seat)
@@ -500,7 +500,7 @@ server_publish :: proc(s:^Net_Session,w:core.World_Ref,outbox:^Net_Outbox,tick:u
         // What a client holds comes from it, and of what each end simulates only the creation travels.
         if slot.holder!=0 || config.simulation==.Each {continue}
         if !wire.object_poll_due(h,object,tick) {continue}
-        local,has_pose:=core.get(core.read(transforms),e)
+        local,has_pose:=core.get(transforms,e)
         if !has_pose {continue}
         bindings:=wire.object_binding_revision(h)
         references_changed:=bindings!=slot.bindings
@@ -515,8 +515,8 @@ server_publish :: proc(s:^Net_Session,w:core.World_Ref,outbox:^Net_Outbox,tick:u
             written:=true
             if send {
                 prefab:base.Asset_Id
-                if sources!=nil {
-                    if source:=(^scene.Prefab_Source)(core.raw_find(core.raw(sources),type_info_of(scene.Prefab_Source),e));source!=nil {prefab=source.prefab}
+                if placed!=nil {
+                    if instance:=(^scene.Prefab_Instance)(core.raw_find(core.raw(placed),type_info_of(scene.Prefab_Instance),e));instance!=nil {prefab=instance.prefab}
                 }
                 pose:=Pose{id=core.id_of(core.read(ids),e),prefab=prefab,sections=section_ids(ids,slot.sections),position=local.position,rotation=local.rotation,scale=local.scale,off=off,disabled=disabled}
                 written=wire.object_write(h,object,0,&pose)==.None
@@ -524,7 +524,7 @@ server_publish :: proc(s:^Net_Session,w:core.World_Ref,outbox:^Net_Outbox,tick:u
                 if written {s.stats.fragments_published+=1}
             }
             position:=local.position
-            if world,has:=core.get(core.read(worlds),e);has {position=world.position}
+            if world,has:=core.get(worlds,e);has {position=world.position}
             if linalg.length2(position-slot.position)>1 {
                 if wire.object_set_position(h,object,position)==.None {slot.position=position} else {written=false}
             }
@@ -612,7 +612,7 @@ section_of :: proc(hierarchy:core.Ref(core.Hierarchy),references:^core.Table(sce
 sections_of :: proc(s:^Net_Session,boxes:[]Section_Box,worlds:^core.Table(core.World_Transform),hierarchy:core.Ref(core.Hierarchy),e,home:core.Entity) -> (sections:[wire.OBJECT_GROUPS]core.Entity) {
     sections[0]=home
     if home==core.NONE || len(boxes)==0 {return}
-    place,placed:=core.get(core.read(worlds),e)
+    place,placed:=core.get(worlds,e)
     if !placed {return}
     count:=1
     rows: for &box in boxes {
@@ -640,8 +640,8 @@ section_boxes :: proc(out:^[dynamic]Section_Box,references:^core.Table(scene.Sce
     if references==nil {return}
     for row in 0..<core.count(references) {
         r:=core.entity_at(references,row)
-        reference:=core.at(core.read(references),row)
-        pose,has:=core.get(core.read(worlds),r)
+        reference:=core.at(references,row)
+        pose,has:=core.get(worlds,r)
         if !has || reference.extents=={} {continue}
         half:=reference.extents*mm.Vec3{abs(pose.scale.x),abs(pose.scale.y),abs(pose.scale.z)}
         bounds:=mm.aabb_transform({-half,half},mm.transform_matrix({pose.position,pose.rotation,{1,1,1}}))
@@ -740,12 +740,12 @@ server_create :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity,config:Repli
         return 0
     }
     t:=net_type(s,type)
-    source,_:=core.get(core.read(core.world_table_of(w,scene.Prefab_Source)),e)
+    of_prefab,_:=scene.prefab_instance(w,e)
     ids:=core.world_table_of(w,core.Id)
     hierarchy:=core.ref(core.world_storage_of(w,core.Hierarchy))
     references,worlds:=core.world_table_of(w,scene.Scene_Reference),core.world_table_of(w,core.World_Transform)
     sections:=sections_of(s,s.server.section_boxes[:],worlds,hierarchy,e,section_of(hierarchy,references,e))
-    pose:=Pose{id=core.id_of(core.read(ids),e),prefab=source.prefab,sections=section_ids(ids,sections),position=local.position,rotation=local.rotation,scale=local.scale,off=components_off(w,e,t)}
+    pose:=Pose{id=core.id_of(core.read(ids),e),prefab=of_prefab.prefab,sections=section_ids(ids,sections),position=local.position,rotation=local.rotation,scale=local.scale,off=components_off(w,e,t)}
     position:=local.position
     if world,has:=core.get(core.read(core.world_table_of(w,core.World_Transform)),e);has {position=world.position}
     desc:=wire.Object_Desc{
@@ -820,7 +820,7 @@ remote_look :: proc(session:core.Ref(Net_Session),inputs:core.Ref(Remote_Inputs)
         if !has || seat.peer==0 {continue}
         entry:=remote_entry(inputs.ptr,Connection(seat.peer))
         if entry==nil || !entry.has_look {continue}
-        if move:=core.get(moves,core.entity_at(drivables,row));move!=nil {
+        if move:=core.edit(moves,core.entity_at(drivables,row));move!=nil {
             // The yaw comes wrapped: the shortest turn to it keeps the body's whole turns.
             move.look_yaw+=mm.angle_wrap(entry.look[0]-move.look_yaw)
             move.look_pitch=entry.look[1]

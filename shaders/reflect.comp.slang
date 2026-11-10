@@ -2,13 +2,11 @@
 // The camera looks along its rays: they show a relative emission (hit_emission).
 #define MIRAI_HITS_SHOW_RELATIVE_EMISSION 1
 //! variant hw MIRAI_HW_RT=1
-//! variant color MIRAI_GLASS_MEANS=1
-//! variant color_hw MIRAI_GLASS_MEANS=1 MIRAI_HW_RT=1
+// color: with colored shadows, the rays cross glass as the mean of its instance (trace.slang).
+//! constant color MIRAI_GLASS_MEANS
 // unlayered: while no instance of the scene has layers (gbuffer.slang, scene.slang).
-//! variant unlayered MIRAI_GBUFFER_NO_LAYERS=1 MIRAI_MATERIAL_NO_LAYERS=1
-//! variant unlayered_hw MIRAI_GBUFFER_NO_LAYERS=1 MIRAI_MATERIAL_NO_LAYERS=1 MIRAI_HW_RT=1
-//! variant unlayered_color MIRAI_GBUFFER_NO_LAYERS=1 MIRAI_MATERIAL_NO_LAYERS=1 MIRAI_GLASS_MEANS=1
-//! variant unlayered_color_hw MIRAI_GBUFFER_NO_LAYERS=1 MIRAI_MATERIAL_NO_LAYERS=1 MIRAI_GLASS_MEANS=1 MIRAI_HW_RT=1
+//! constant unlayered MIRAI_GBUFFER_NO_LAYERS
+#define MIRAI_MATERIAL_NO_LAYERS MIRAI_GBUFFER_NO_LAYERS
 // Traced specular reflections. A pixel smoother than the roughness limit
 // picks a direction of its GGX lobe (the visible normals of Heitz 2018, with
 // the tail of the lobe cut short to keep the noise down), traces

@@ -38,13 +38,13 @@ hit :: proc(requests:^Hit_Requests,target:core.Entity,damage:f32) {
 @(step="fixed")
 game_hits :: proc(requests:^Hit_Requests,healths:^core.Table(Health)) {
     for request in core.take(&requests.queue) {
-        if health:=core.get(healths,request.target);health!=nil {health.hp-=request.damage}
+        if health:=core.edit(healths,request.target);health!=nil {health.hp-=request.damage}
     }
 }
 ```
 
 Any other function receives `^Hit_Requests` and calls `hit(requests,e,5)`. The engine's work the
-same way: `scene.spawn(spawner,"arena/Crate.prefab",at)`, `phys.set_velocity(bodies,e,v)`,
+same way: `scene.spawn(spawner,"arena/Crate.scene",at)`, `phys.set_velocity(bodies,e,v)`,
 `save.request_save(saves,"slot")`, `core.place(placer,e,position)` (teleport anything;
 `at_rest=true` also stops a body),
 `inp.drive(seats,seat,body)`, `cam.camera_mode(changes,camera,.Aim)`.

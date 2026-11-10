@@ -108,7 +108,7 @@ cmd_test :: proc(root:string,args:[]string) -> int {
     for p,i in packages {
         if p.nothing || p.owner!="" {continue}
         package_flags,ok:=test_flags(root,p.folder,release,flags[:])
-        if !ok || !test_imports_check(root,p.folder) || !plugin_test_shaders(root,p.folder) {
+        if !ok || !test_imports_check(root,p.folder) || !package_test_shaders(root,p.folder) {
             builds[i].failed=true
             continue
         }

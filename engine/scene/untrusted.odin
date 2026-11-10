@@ -128,7 +128,7 @@ untrusted_check :: proc(w:core.World_Ref,assets:^host.Assets,a:^asset.Asset,rule
         return .Too_Large
     }
     for instance,at in view.instances {
-        if file,found:=asset.registry_find(registry,instance.prefab);!found || file.kind!=asset.KIND_PREFAB {
+        if file,found:=asset.registry_find(registry,instance.prefab);!found || !asset.registry_prefab(file) {
             refused^={entity=view.ids[view.instance_rows[at]],asset=instance.prefab}
             return .Unknown_Reference
         }

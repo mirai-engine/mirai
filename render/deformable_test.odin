@@ -77,8 +77,9 @@ an_instance_whose_program_moves_vertices_shows_a_pose_of_its_own :: proc(t: ^tes
 	if !testing.expect(t, asset.mesh_build({vertices = vertices}, indices, levels[:], &g, context.temp_allocator)) {return}
 	source, added := mesh_add_geometry(r, g, {0})
 	if !testing.expect(t, added) {return}
+	if !fixture_catalog(t, r) {return}
 	pieces := program_find(r, "Pieces", .Surface)
-	if !testing.expect(t, pieces != nil && pieces.vertex.declared && pieces.vertex.reach_offset >= 0, "the engine has the Pieces program, whose reach is a parameter") {return}
+	if !testing.expect(t, pieces != nil && pieces.vertex.declared && pieces.vertex.reach_offset >= 0, "the tests have the Pieces program, whose reach is a parameter") {return}
 	moving := DEFAULT_MATERIAL
 	moving.program_id = pieces.id
 	moving.custom_params = program_defaults(pieces)

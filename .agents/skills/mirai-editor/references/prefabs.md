@@ -2,9 +2,16 @@
 
 Code: `prefabs.odin`, `api_prefab.odin`.
 
-- A prefab is a `.prefab` asset with the shape of a scene. An **instance** is a subtree of the
-  document linked to a prefab; its entities (the **members**) have the effective values in the
-  `World`.
+- A prefab is a scene with exactly one root
+  ([what makes one](../../mirai-assets/references/scenes.md#prefab)): the same `.scene` file as any
+  other, which the registry knows as a prefab from its header. The editor tells them apart by that
+  alone: `shown_kind` gives `SHOWN_PREFAB` for it, which is the color, icon and filter of the
+  content browser, what a field of prefabs lists (a name with `prefab`, or the tag `kind=prefab`)
+  and what a drag carries; `asset.list` says `prefab` of each scene. It is no second kind: a scene
+  saved with another number of roots is shown as a scene from then on.
+- An **instance** is a subtree of the document linked to a prefab; its entities (the **members**)
+  have the effective values in the `World`. A scene with several roots is not instantiated
+  (`Not_Found`, which says why): it hangs from a `Scene_Reference`.
 - An instance is two components of its entities
   ([format](../../mirai-assets/references/scenes.md#prefab-instances)): `scene.Prefab_Instance` on
   its root (the prefab and its stamp when the instance was last brought up to date with it) and
@@ -28,8 +35,8 @@ handles. All require `Edit`.
   of the registry, as any asset an edit changes, and is part of the step: undo and redo give its
   bytes back ([files in the history](document.md#edits-and-undo)). Save writes it. A step that
   wrote a prefab file undoes only in order.
-- A prefab, and a scene or prefab opened as the document, are read through the registry, as is
-  what the prefab names: an unsaved one looks as in the scene.
+- A prefab, and the scene opened as the document, are read through the registry, as is what the
+  prefab names: an unsaved one looks as in the scene.
 - A prefab is read with its own instances up to date with their prefabs (`prefab_scene_load`, by
   the [resolver](../../mirai-assets/references/scenes.md#resolution-against-the-current-prefab)):
   what is applied, the base and what `prefab.inspect` shows start from it. Its components take the
@@ -57,7 +64,7 @@ Procedures, with their action and API method:
   one that changed, found through the dependencies of the registry, are brought up to date and
   written too, unsaved. With `target` `Base` (`Prefab_Apply_Base`) it continues to the base of a
   [variant](#variants).
-- `prefab_variant_create` (`prefab.variant.create`, Create variant in the menu of a `.prefab` in
+- `prefab_variant_create` (`prefab.variant.create`, Create variant in the menu of a prefab in
   Assets) writes a [variant](#variants).
 - `prefab_revert` (`Prefab_Revert`, `prefab.revert`) forgets the overrides and gives back what the
   prefab has; what was added is deleted.
@@ -90,14 +97,17 @@ Instance selection (viewport, Scene and Find): from outside the instance, a clic
 selects the root and the double click, the member; if any selected entity already belongs to that
 instance, a click chooses the member.
 
-Prefab document:
+## Prefab document
 
 - Double click in Assets or on an instance's icon opens it in a tab (`file_open_path`); the scene
-  and its changes stay in its own. It is edited with the common tools, saved to the same `.prefab`
-  keeping identity and root, has its own history and closing asks about the changes.
-- It keeps a single root, which is neither deleted nor moved under another entity. Creating or
-  placing without a parent adds a child of the root keeping the world pose; duplicating the root
-  adds the copy under it. If its scale prevents computing the relative pose, it is rejected.
+  and its changes stay in its own. It is edited with the common tools, saved to the same `.scene`
+  keeping identity, has its own history and closing asks about the changes.
+- A tab is a prefab's while the file it was read from or last saved to has one root
+  (`document_is_prefab`, from the header of that file): it opens beside the scene instead of
+  taking its tab, with the prefab icon, the variants and the preview sunlight.
+- It is a scene as any other: it takes a second root, sections and Play. No rule keeps its one
+  root; saved with several it is a scene, in its tab and in Assets, and the instances other files
+  placed of it stay as they are until it has one root again.
 - Preview sunlight is a preview sun active on opening, with a neutral environment and grid: it only
   changes the renderer, never entities, assets, bounds, selection or history, and on returning to
   the scene its lighting is restored. It is the studio light (`studio_lighting`), which a scene
@@ -161,7 +171,7 @@ Prefab document:
 
 ## Variants
 
-A variant is a common `.prefab` whose root is the root of an instance of another prefab, its
+A variant is a common prefab whose root is the root of an instance of another prefab, its
 **base**: with no new format or fields, it is a prefab that places another at its root.
 
 - `asset.prefab_variant_base` recognizes it by its root; `prefab.inspect` with `path` or `asset`
@@ -190,6 +200,7 @@ A variant is a common `.prefab` whose root is the root of an instance of another
   default; Apply rejects before writing the prefab and the document's capture rejects saving.
   Without memory the migration gives `Out_Of_Memory`; with an invalid schema, `Rejected`.
 - The errors are `Prefab_Error`. By API, those of an entity, path, id or instance that do not exist
-  (`Unknown_Entity`, `No_Id`, `Not_Found`, `Unknown_Path`, `Not_Instance`) and the apply to the
-  base of something that is not a variant (`Not_Variant`) are `INVALID_PARAMS`, and the rest,
+  (`Unknown_Entity`, `No_Id`, `Not_Found`, `Unknown_Path`, `Not_Instance`; a scene without
+  exactly one root is no prefab to find) and the apply to the base of something that is not a
+  variant (`Not_Variant`) are `INVALID_PARAMS`, and the rest,
   `SERVER_ERROR` ([API](../../mirai-agent-api/references/methods.md#prefabs)).

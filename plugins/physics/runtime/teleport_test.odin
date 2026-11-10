@@ -80,7 +80,7 @@ a_body_that_changes_parent_where_it_is_is_no_teleport :: proc(t:^testing.T) {
     section:=core.create(&f.entities)
     core.add(&f.transforms,section,core.Transform{{10,0,0},1,{1,1,1}})
     core.add(&f.parents,box,core.Parent{entity=section})
-    core.get(&f.transforms,box).position-={10,0,0}
+    core.edit(&f.transforms,box).position-={10,0,0}
     physics_test_step(&f)
     physics_test_step(&f)
     testing.expect_value(t,f.state.stats.teleports,u64(0))
@@ -102,7 +102,7 @@ a_write_that_only_turns_a_character_is_a_problem_that_says_how :: proc(t:^testin
     physics_test_step(&f)
     physics_test_step(&f)
     turned:=mm.quat_axis_angle({0,1,0},math.PI/2)
-    core.get(&f.transforms,e).rotation=turned
+    core.edit(&f.transforms,e).rotation=turned
     physics_test_step(&f)
     reported:=false
     for &p in f.problems.entries[:f.problems.count] {

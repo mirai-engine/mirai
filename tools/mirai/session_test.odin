@@ -243,7 +243,7 @@ a_sync_brings_only_the_files_named_into_a_copy :: proc(t:^testing.T) {
         data,_:=os.read_entire_file(project.path(root,file),context.temp_allocator)
         return string(data)
     }
-    for file in ([]string{project.PROJECT_FILE,"game/blade.odin","game/game.odin","assets/items/Blade.prefab","assets/old.tex"}) {write(t,folder,file,"before")}
+    for file in ([]string{project.PROJECT_FILE,"game/blade.odin","game/game.odin","assets/items/Blade.scene","assets/old.tex"}) {write(t,folder,file,"before")}
     copy,lock,problem:=session_copy(folder)
     if !testing.expect_value(t,problem,"") {return}
     workspace.lock_release(&lock)
@@ -251,18 +251,18 @@ a_sync_brings_only_the_files_named_into_a_copy :: proc(t:^testing.T) {
     // Another session half-edits game.odin; this one changes blade.odin and the prefab and deletes old.tex.
     write(t,folder,"game/game.odin","half edited")
     write(t,folder,"game/blade.odin","after")
-    write(t,folder,"assets/items/Blade.prefab","after")
+    write(t,folder,"assets/items/Blade.scene","after")
     testing.expect(t,os.remove(project.path(folder,"assets/old.tex"))==nil)
 
-    plan,refused:=session_sync_plan(folder,copy,{"assets/items/Blade.prefab",`assets\old.tex`})
+    plan,refused:=session_sync_plan(folder,copy,{"assets/items/Blade.scene",`assets\old.tex`})
     if !testing.expect_value(t,refused,"") {return}
     testing.expect(t,!plan.rebuild,"assets alone are read again")
-    plan,refused=session_sync_plan(folder,copy,{"game/blade.odin","assets/items/Blade.prefab","assets/old.tex"})
+    plan,refused=session_sync_plan(folder,copy,{"game/blade.odin","assets/items/Blade.scene","assets/old.tex"})
     if !testing.expect_value(t,refused,"") {return}
     testing.expect(t,plan.rebuild,"code asks for a restart")
     testing.expect_value(t,session_sync_apply(folder,copy,plan),"")
     testing.expect_value(t,read(copy,"game/blade.odin"),"after")
-    testing.expect_value(t,read(copy,"assets/items/Blade.prefab"),"after")
+    testing.expect_value(t,read(copy,"assets/items/Blade.scene"),"after")
     testing.expect_value(t,read(copy,"game/game.odin"),"before")
     testing.expect(t,!os.exists(project.path(copy,"assets/old.tex")),"what the project deleted leaves the copy")
 

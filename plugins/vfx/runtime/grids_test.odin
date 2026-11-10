@@ -76,7 +76,7 @@ grids_keep_their_entities_and_names_as_entities_come_and_go :: proc(t:^testing.T
     again:=grids_fixture_add(&f,"fluid")
     core.destroy(&f.entities,waves)
     grids_fixture_settle(&f)
-    testing.expect(t,core.entity_at(core.read(&f.grids),0)==again,"the new one is in the first row")
+    testing.expect(t,core.entity_at(&f.grids,0)==again,"the new one is in the first row")
     grids_fixture_sync(&f)
     testing.expect_value(t,grid_find(&f.g,base.name_hash("fluid")),grid_of_entity(&f.g,copy))
     testing.expect_value(t,grid_of_entity(&f.g,again),-1)

@@ -88,7 +88,7 @@ instances_taken_out_are_one_entity_for_each_cell_that_the_cell_leaves_out :: pro
     r.network.role=.Client
     foliage_remove(&r.requests,{wood,coord,MANUAL|u64(manual)})
     removal_step(&r)
-    testing.expect_value(t,core.count(core.read(&r.w.removed)),0)
+    testing.expect_value(t,core.count(&r.w.removed),0)
     r.network.role=.Server
     foliage_remove(&r.requests,{wood,coord,MANUAL|u64(manual)})
     foliage_remove(&r.requests,{wood,coord,MANUAL|u64(manual)})
@@ -101,24 +101,24 @@ instances_taken_out_are_one_entity_for_each_cell_that_the_cell_leaves_out :: pro
     testing.expect_value(t,core.count(removed),2)
     for row in 0..<core.count(removed) {
         e:=core.entity_at(removed,row)
-        parent,_:=core.get(core.read(&r.w.parents),e)
+        parent,_:=core.get(&r.w.parents,e)
         page:=core.at(removed,row)
         testing.expect(t,parent.entity==wood && page.foliage==500,"it hangs from its Foliage and names it by its Id")
         testing.expect(t,page.count==1 && page.instances[0].id==(page.coord==coord?MANUAL|u64(manual):generated),"one entity for each cell, with what was taken out of it once")
     }
     testing.expect(t,r.problems.count>0,"a Foliage without an Id says why it cannot")
     // The same again writes nothing.
-    version:=core.version(core.read(&r.w.removed))
+    version:=core.version(&r.w.removed)
     foliage_remove(&r.requests,{wood,coord,MANUAL|u64(manual)})
     removal_step(&r)
-    testing.expect_value(t,core.version(core.read(&r.w.removed)),version)
+    testing.expect_value(t,core.version(&r.w.removed),version)
     // Another of the generated cell goes to its entity, and the other cell keeps its hash.
     gone:=removed_owner(&r.removals,wood)
     _,manual_hash:=removed_cell(gone,coord)
     foliage_remove(&r.requests,{wood,{0,0},other})
     removal_step(&r)
     removal_step(&r)
-    testing.expect_value(t,core.count(core.read(&r.w.removed)),2)
+    testing.expect_value(t,core.count(&r.w.removed),2)
     gone=removed_owner(&r.removals,wood)
     if !testing.expect(t,gone!=nil && len(gone.items)==3) {return}
     testing.expect(t,removed_owner(&r.removals,bare)==nil)
@@ -202,12 +202,12 @@ thousands_of_instances_taken_out_of_a_few_cells_are_a_few_entities :: proc(t:^te
         testing.expect_value(t,len(work.placed),0)
     }
     testing.expect_value(t,len(gone.items),len(all))
-    testing.expect_value(t,core.count(core.read(&r.w.removed)),entities)
+    testing.expect_value(t,core.count(&r.w.removed),entities)
     testing.expect(t,entities<=len(all)/100,"a few entities for thousands of instances")
     // A tick without requests writes nothing.
-    version:=core.version(core.read(&r.w.removed))
+    version:=core.version(&r.w.removed)
     removal_step(&r)
-    testing.expect_value(t,core.version(core.read(&r.w.removed)),version)
+    testing.expect_value(t,core.version(&r.w.removed),version)
 }
 
 // A saved game names a manual instance by its id, so it is the same one
@@ -228,10 +228,10 @@ a_saved_game_takes_out_the_same_instance_after_its_source_is_edited :: proc(t:^t
     wood:=removal_foliage(&r,500)
     foliage_remove(&r.requests,{wood,{0,0},MANUAL|u64(cut)})
     removal_step(&r)
-    if !testing.expect_value(t,core.count(core.read(&r.w.removed)),1) {return}
+    if !testing.expect_value(t,core.count(&r.w.removed),1) {return}
     // What the saved game keeps: the entity's component, written as a row of a document. The level is its asset.
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    taken:=core.at(core.read(&r.w.removed),0)
+    taken:=core.at(&r.w.removed,0)
     document:asset.Document;asset.document_init(&document,asset.fourcc("SAVE"),{1,2});defer asset.document_destroy(&document)
     _,put:=asset.document_put_row(&document,&types,"removed",&taken)
     testing.expect_value(t,put,asset.Error.None)

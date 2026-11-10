@@ -297,8 +297,8 @@ camera_follow :: proc(
 ) {
     // The lens is the one of the mode or the override; the shakes go over it again below.
     for row in 0..<core.count(follows) {
-        if s:=&core.at(follows,row).state;s.fov_shaken {
-            if camera:=core.get(cameras,core.entity_at(follows,row));camera!=nil {shakes_fov_restore(camera,s)}
+        if s:=&core.edit_at(follows,row).state;s.fov_shaken {
+            if camera:=core.edit(cameras,core.entity_at(follows,row));camera!=nil {shakes_fov_restore(camera,s)}
             s.fov_shaken=false
         }
     }
@@ -306,10 +306,10 @@ camera_follow :: proc(
     shakes_take(follows,shakes,problems)
     for item in shown.overrides {
         if !item.active || item.fov<=0 {continue}
-        if camera:=core.get(cameras,item.camera);camera!=nil && (camera.fov!=item.fov || camera.near!=item.near) {camera.fov,camera.near=item.fov,item.near}
+        if camera:=core.edit(cameras,item.camera);camera!=nil && (camera.fov!=item.fov || camera.near!=item.near) {camera.fov,camera.near=item.fov,item.near}
     }
     for look in core.take(&look_input.looks) {
-        follow:=core.get(follows,look.camera)
+        follow:=core.edit(follows,look.camera)
         if follow==nil || !follow.state.ready {continue}
         low,high:=pitch_limits(follow^)
         follow.looking={mm.angle_wrap(follow.looking.x+look.yaw),clamp(follow.looking.y+look.pitch,low,high)}
@@ -319,12 +319,12 @@ camera_follow :: proc(
     // The cameras that turn with the look of the player of the one seen look
     // where it looks, so that the view does not turn when it changes to one.
     for slot in views.slots {
-        seen:=core.get(follows,slot.camera)
+        seen:=core.edit(follows,slot.camera)
         if seen==nil || seen.mode!=.Orbit || seen.aim || !seen.turn || !seen.state.ready {continue}
         target:=follow_target(slot.camera,seen.target,drivables,player)
         for row in 0..<core.count(follows) {
             e:=core.entity_at(follows,row)
-            other:=core.at(follows,row)
+            other:=core.edit_at(follows,row)
             if e==slot.camera || other.mode!=.Orbit || other.aim || !other.turn || !other.state.ready || follow_target(e,other.target,drivables,player)!=target {continue}
             low,high:=pitch_limits(other^)
             other.looking={seen.looking.x,clamp(seen.looking.y,low,high)}
@@ -334,7 +334,7 @@ camera_follow :: proc(
     if seat,ok:=core.get(seats,player);!ok || seat.blocked&input.action_bit(input.action_of(look_actions,.Look))!=0 {turn={}}
     for row in 0..<core.count(follows) {
         e:=core.entity_at(follows,row)
-        follow:=core.at(follows,row)
+        follow:=core.edit_at(follows,row)
         target:=follow_target(e,follow.target,drivables,player)
         if follow.turn && turn!={} && follow.state.ready && follow.mode==.Orbit && !follow.aim && input.seat_of(drivables,target)==player {
             low,high:=pitch_limits(follow^)
@@ -343,7 +343,7 @@ camera_follow :: proc(
         }
         vertical:=core.vertical_of(verticals,target)
         if placed,ok:=core.get(worlds,target);ok && core.has(verticals,target) {vertical=vertical_between(vertical,placed,frame.alpha)}
-        follow_one(e,follow,target,transforms,worlds,parents,moves,vertical,core.world_query(world,queries),frame,time.dt,core.get(cameras,e))
+        follow_one(e,follow,target,transforms,worlds,parents,moves,vertical,core.world_query(world,queries),frame,time.dt,core.edit(cameras,e))
     }
 }
 
@@ -360,7 +360,7 @@ vertical_between :: proc "contextless" (vertical:mm.Quat,placed:core.World_Trans
 // looking where the camera looked, and one with an angle of its own takes it.
 @(private)
 mode_take :: proc(follows:^core.Table(Camera_Follow),cameras:^core.Table(render.Camera),worlds:core.Read(core.World_Transform),change:Camera_Change,problems:^core.Problems) {
-    camera:=core.get(cameras,change.camera)
+    camera:=core.edit(cameras,change.camera)
     if camera==nil {
         core.report(problems,change.camera,"camera.mode_camera","a camera mode for entity 0x%016x was refused: it has no render.Camera; give it one, or ask for the mode of a camera",u64(change.camera))
         return
@@ -374,7 +374,7 @@ mode_take :: proc(follows:^core.Table(Camera_Follow),cameras:^core.Table(render.
         return
     }
     want:=camera_follow_config(change.setup.follow)
-    follow:=core.get(follows,change.camera)
+    follow:=core.edit(follows,change.camera)
     if follow==nil {
         want.target=core.NONE
         want.state.changes=1
@@ -499,7 +499,7 @@ follow_one :: proc(
     camera:^render.Camera=nil,
 ) {
     placed,has_target:=core.get(worlds,target)
-    row:=core.get(transforms,e)
+    row:=core.edit(transforms,e)
     if !has_target || row==nil {return}
     s:=&follow.state
     position:=placed.position

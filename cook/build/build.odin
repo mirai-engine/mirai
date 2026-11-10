@@ -224,6 +224,7 @@ job_start :: proc(desc:Desc) -> ^Job {
         }
         return job_fail(job,.Write_Failed)
     }
+    if desc.target!=.Game && !project_stage_write(p.root) {return job_fail(job,.Write_Failed)}
     job.published=target_output(p,desc.target,desc.output,a,desc.server)
     if desc.target==.Game && project.path_same(job.published[:strings.last_index_byte(job.published,'/')],p.root) {return job_fail(job,.Output_Invalid)}
     job.staged=project.path(job.work,strings.concatenate({job.prefix,desc.target==.Game?project.EXECUTABLE_SUFFIX:project.LIBRARY_SUFFIX},context.temp_allocator),allocator=a)
@@ -602,8 +603,14 @@ job_probe_start :: proc(job:^Job) -> ^Job {
 job_test_start :: proc(job:^Job) -> ^Job {
     a:=virtual.arena_allocator(&job.arena)
     flags:=make([dynamic]string,context.temp_allocator)
+    staged:=fmt.tprintf("-collection:project=%s",project_stage(job.root,context.temp_allocator))
     for flag in job.flags[2:] {
-        if flag!="-build-mode:dll" {append(&flags,flag)}
+        switch flag {
+        case "-build-mode:dll":
+        // A test build reads the tests of the project: the project itself, not its stage.
+        case staged: append(&flags,fmt.tprintf("-collection:project=%s",job.root))
+        case: append(&flags,flag)
+        }
     }
     executable:=test_executable(project_tests_folder(job.root,context.temp_allocator),job.root,job.test_package,a)
     job.test_build=test_build_plan(job.engine_root,job.compiler,job.test_package,executable,flags[:],a)
@@ -663,6 +670,7 @@ job_compile_read :: proc(job:^Job,files:[2]string,links:=false) -> (text:string,
     }
     rest:string
     job.result.diagnostics,rest=diagnostics_parse(streams[0],a)
+    stage_paths_restore(job.root,job.result.diagnostics,a)
     text=strings.trim_space(strings.concatenate({links?link_calls_strip(rest,context.temp_allocator):rest,rest!=""?"\n":"",strings.trim_space(streams[1])},a))
     for diagnostic in job.result.diagnostics {
         if diagnostic.severity==.Error {errors=true}
@@ -796,7 +804,7 @@ target_flags :: proc(p:^project.Project,target:Target,extra:[]string,a:runtime.A
     shipped:=shipped_engine_paths(p.root,context.temp_allocator)
     // A library sees the engine through its declarations; the game, whole, or through those of its library.
     mirai:=target==.Game?(incremental?shipped.decl:p.engine_root):engine_paths(p.engine_root,engine,context.temp_allocator).decl
-    append(&flags,fmt.aprintf("-collection:mirai=%s",mirai,allocator=a),fmt.aprintf("-collection:project=%s",p.root,allocator=a))
+    append(&flags,fmt.aprintf("-collection:mirai=%s",mirai,allocator=a),fmt.aprintf("-collection:project=%s",p.root if target==.Game else project_stage(p.root,context.temp_allocator),allocator=a))
     // A library sees the engine's plugins through the declarations of their libraries; the game, whole.
     plugins:=target==.Game?(incremental?shipped.decl_plugins:project.path(p.engine_root,"plugins",allocator=context.temp_allocator)):plugins_decl(p.root,plugins_mode(p,dev),context.temp_allocator)
     append(&flags,fmt.aprintf("-collection:plugins=%s",plugins,allocator=a))
@@ -971,6 +979,8 @@ job_finish :: proc(job:^Job,compile:Compile,exit_code:int) {
         job_compile_fail(job,exit_code)
         return
     }
+    // What a library read of the stage is what it read of the project, as later fingerprints read it.
+    if job.target!=.Game && !compile.relink {stage_sources_restore(job.root,job.sources_staged)}
     sources,_:=dependencies_read(compile.relink?job.sources_file:job.sources_staged,context.temp_allocator)
     if job.target==.Game {
         if job.result.engine_time=engine_time_packages(sources,job.root,job.engine_root,job.development[:],a);len(job.result.engine_time)>0 {

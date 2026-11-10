@@ -387,6 +387,8 @@ packages_find :: proc(g:^Generator,p:^project.Project) {
     }
     e:=p.engine_root
     add_tree(g,project.path(e,"core"),"mirai:core",false)
+    // The components of prefab instances are declared where a document holds them.
+    add_tree(g,project.path(e,"asset"),"mirai:asset",false)
     add_tree(g,project.path(e,"engine"),"mirai:engine",false)
     names:=project.FOLDER_NAMES
     parts:=project.PART_NAMES

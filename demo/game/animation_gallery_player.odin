@@ -58,7 +58,7 @@ gallery_player_move :: proc(players:core.Read(Gallery_Player),inputs:^core.Table
         body:=inp.body_of(seats.drivables,core.entity_at(players,row))
         if player.focus!=core.NONE {body=player.mirai} // it let go of it to free the mouse
         owner,driven:=core.get(seats.drivables,body)
-        input:=core.get(inputs,body)
+        input:=core.edit(inputs,body)
         placed,exists:=core.get(worlds,body)
         if !driven || input==nil || !exists {continue}
         input.move,input.buttons={},{}
@@ -73,7 +73,7 @@ gallery_player_move :: proc(players:core.Read(Gallery_Player),inputs:^core.Table
 @(step="fixed")
 gallery_interact :: proc(players:^core.Table(Gallery_Player),gallery:core.Read(Animation_Gallery),panels:core.Read(Gallery_Panel),worlds:core.Read(core.World_Transform),seats:inp.Players,actions:inp.Input_Of(Action),requests:^inp.Seat_Requests,cameras:^cam.Camera_Requests) {
     for row in 0..<core.count(players) {
-        player:=core.at(core.read(players),row)
+        player:=core.at(players,row)
         seat:=core.entity_at(players,row)
         body:=inp.body_of(seats.drivables,seat)
         near:=core.NONE
@@ -105,7 +105,7 @@ gallery_interact :: proc(players:^core.Table(Gallery_Player),gallery:core.Read(A
                 }
             }
         }
-        if next!=player {core.at(players,row)^=next}
+        if next!=player {core.edit_at(players,row)^=next}
     }
 }
 
@@ -134,7 +134,7 @@ gallery_widgets :: proc(players:core.Read(Gallery_Player),labels:core.Read(Galle
 }
 
 gallery_widget_set :: proc(widgets:^core.Table(gui.World_Widget),e:core.Entity,size:[2]f32,input:gui.World_Input) {
-    current,exists:=core.get(core.read(widgets),e)
+    current,exists:=core.get(widgets,e)
     if !exists || current.size==size && current.input==input {return}
-    if widget:=core.get(widgets,e);widget!=nil {widget.size,widget.input=size,input}
+    if widget:=core.edit(widgets,e);widget!=nil {widget.size,widget.input=size,input}
 }
