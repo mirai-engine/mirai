@@ -1,6 +1,6 @@
 #include "native.slang"
 // unlayered: while no instance with layers is in sight (gbuffer.slang).
-//! variant unlayered MIRAI_GBUFFER_NO_LAYERS=1
+//! constant unlayered MIRAI_GBUFFER_NO_LAYERS
 // Direct lighting for every visible pixel: the sun, the local lights and
 // those of extensions with nothing in their way, times the share of their
 // light that reaches the blocks around the pixel (shadow_trace.comp,

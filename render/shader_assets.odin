@@ -23,6 +23,8 @@ Shader_Assets :: struct {
 @(private)
 shader_code_destroy :: proc(c:rhi.Shader_Code,allocator:runtime.Allocator) {
     delete(c.name,allocator);delete(c.bindings,allocator)
+    for constant in c.constants {delete(constant,allocator)}
+    delete(c.constants,allocator)
     delete(rhi.shader_code_bytes(c),allocator);delete(rhi.shader_code_entry(c),allocator)
 }
 shader_assets_destroy :: proc(assets:^Shader_Assets) {
@@ -159,6 +161,8 @@ shader_assets_match_codes :: proc(assets:^Shader_Assets,codes:^[Shader_Id]rhi.Sh
 shader_code_matches :: proc(next,current:rhi.Shader_Code)->bool {
     if next.name!=current.name || next.stage!=current.stage || next.threadgroup!=current.threadgroup || len(next.bindings)!=len(current.bindings) {return false}
     for binding,i in next.bindings {if binding!=current.bindings[i] {return false}}
+    if len(next.constants)!=len(current.constants) {return false}
+    for constant,i in next.constants {if constant!=current.constants[i] {return false}}
     return string(rhi.shader_code_bytes(next))==string(rhi.shader_code_bytes(current)) && rhi.shader_code_entry(next)==rhi.shader_code_entry(current)
 }
 // Whether two generations bring the same stages of extensions, or of programs.
@@ -249,6 +253,17 @@ shader_assets_load :: proc(directory:string,allocator:=context.allocator)->(asse
             kind,valid_kind:=reflect.enum_from_name(rhi.Binding_Kind,text(b["kind"]));if !valid_kind {error="invalid binding kind";break}
             slot,valid_slot:=number(b["slot"]);if !valid_slot || !rhi.binding_slot_valid(slot,kind) {error="invalid binding slot";break}
             code.bindings[i]={slot=slot,kind=kind,stages={stage}}
+        }
+        if error!="" {break}
+        constants:=item["constants"].(json.Array) or_else nil
+        if len(constants)>rhi.MAX_SHADER_CONSTANTS {error=fmt.tprintf("shader %s declares more constants than a pipeline sets",code.name);break}
+        constants_error:runtime.Allocator_Error
+        code.constants,constants_error=make([]string,len(constants),allocator)
+        if constants_error!=nil {error=fmt.tprintf("out of memory for the constants of shader %s",code.name);break}
+        for constant,i in constants {
+            if text(constant)=="" {error="invalid shader constant";break}
+            no_constant:runtime.Allocator_Error
+            if code.constants[i],no_constant=strings.clone(text(constant),allocator);no_constant!=nil {error=fmt.tprintf("out of memory for the constants of shader %s",code.name);break}
         }
         if error!="" {break}
     }
