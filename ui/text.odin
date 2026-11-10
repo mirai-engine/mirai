@@ -20,6 +20,7 @@ Text_Span :: struct {
     radius:f32,   // of the corners of back
     pad:f32,      // a chip: room beside its text, half on each side, which does not break at spaces
     height:f32,   // of a chip
+    solid:bool,   // its text breaks at no space: in a text that cuts, where each line ends (code)
 }
 
 // What the layout does not know of a span: how it is drawn and what takes the
@@ -129,7 +130,7 @@ text_span_widget :: proc(ctx:^Context,content:string,span:Text_Span,widget:i32) 
     size,font:=o.style.size,o.style.font
     if span.size>0 {size,font=span.size,span.font}
     plain:=span=={} && widget==0
-    text_put(ctx,{text=stored,size=size,face=font,pad=span.pad,height=span.height},{span=span,widget=widget},plain)
+    text_put(ctx,{text=stored,size=size,face=font,pad=span.pad,height=span.height,solid=span.solid},{span=span,widget=widget},plain)
 }
 // Room as wide as a space of the text begun, where a word ends: what joins two
 // lines of its source.

@@ -8,7 +8,8 @@ import "core:strings"
 // pills inline. The text is parsed line by line and nothing of it is kept: each
 // paragraph and each heading is one text (text.odin) whose spans are its
 // words, its code, its links and its pills, which the layout breaks into
-// lines; fenced code is cut at characters into rows. markdown_height walks
+// lines; each line of fenced code is a text that breaks at no space and is
+// cut where its lines end. markdown_height walks
 // the same procedures and asks the same texts for their heights without
 // building them, so it gives the height markdown builds.
 
@@ -100,10 +101,9 @@ Md :: struct {
     size:f32,
     font:u8,
     text_color:Color,
-    lines:int,        // of a block of code
+    lines:int,        // of a block of code, as its source has them
+    code_height:f32,  // of those lines, measured
     texting:bool,     // the text of its paragraph or heading is begun
-    row:bool,         // a row of code is open
-    row_x:f32,        // where what it holds ends
     bold,em:int,      // where the ** and the * that close the open ones are on their line; -1: none
     labels:[MARKDOWN_LABELS]u8,labels_used:int,
 }
@@ -246,7 +246,7 @@ md_open :: proc(m:^Md,block:Md_Block,level,quote,depth:int,marker:string,blank:b
     quote_width,list_width:=math.floor(s),math.floor(s*1.5)
     outer:=m.width-f32(quote)*quote_width
     m.room=max(outer-f32(depth)*list_width-(2*pad if block==.Code else 0),1)
-    m.lines,m.labels_used=0,0
+    m.lines,m.code_height,m.labels_used=0,0,0
     m.height+=gap
     m.blocks+=1
     m.last_quote,m.last_depth=quote,depth
@@ -294,8 +294,12 @@ md_close :: proc(m:^Md) {
         m.texting=false
         m.height+=high
     case .Code:
-        if m.row || m.lines==0 {md_code_row(m)}
-        m.height+=f32(m.lines)*m.line+2*pad
+        // A block without lines keeps the height of one.
+        if m.lines==0 {
+            if m.build {spacer(ctx,m.room,m.line)}
+            m.code_height=m.line
+        }
+        m.height+=m.code_height+2*pad
     case .Rule: m.height+=m.line
     }
     if !m.build {return}
@@ -321,8 +325,8 @@ md_close :: proc(m:^Md) {
     box_end(ctx,{})
 }
 
-// A line of a fenced code block: cut at characters into rows, its tabs at
-// every four spaces.
+// A line of a fenced code block: a text that breaks at no space, cut where
+// each of its lines ends.
 @(private="file")
 md_code_line :: proc(m:^Md,line:string) {
     if m.collect>0 {
@@ -333,56 +337,29 @@ md_code_line :: proc(m:^Md,line:string) {
         }
         return
     }
-    font:=&m.ctx.font
-    f:=int(m.font)
-    tab:=4*text_width(font," ",m.size,f)
-    pen:=text_pen(font,m.size,f)
-    x,run_x:=f32(0),f32(0)
-    start:=0
-    for c,i in line {
-        if c=='\t' {
-            md_code_run(m,line[start:i],run_x,x-run_x)
-            x=(math.floor(x/tab)+1)*tab if tab>0 else x
-            if x>m.room {md_code_row(m);x=0}
-            start,run_x=i+1,x
-            pen=text_pen(font,m.size,f)
-            continue
-        }
-        kern,advance:=text_pen_step(&pen,c)
-        if x+kern+advance>m.room+0.01 && x>0 {
-            md_code_run(m,line[start:i],run_x,x-run_x)
-            md_code_row(m)
-            x,run_x,start=0,0,i
-            pen=text_pen(font,m.size,f)
-            kern,advance=text_pen_step(&pen,c)
-        }
-        x+=kern+advance
-    }
-    md_code_run(m,line[start:],run_x,x-run_x)
-    md_code_row(m)
-}
-// A run of a row of code at x, in the row open or in one it opens.
-@(private="file")
-md_code_run :: proc(m:^Md,run:string,x,width:f32) {
-    if run=="" || !m.build {return}
     ctx:=m.ctx
-    if !m.row {
-        box_begin(ctx,{width=fixed(m.room),height=fixed(m.line),align_y=.Center})
-        m.row,m.row_x=true,0
-    }
-    if x>m.row_x+0.001 {spacer(ctx,x-m.row_x,0)}
-    text(ctx,run,{font=m.font,size=m.size,color=m.text_color,align_y=.Center},fixed(width),fixed(m.line))
-    m.row_x=x+width
-}
-// Ends a row of code; one that holds nothing keeps its height.
-@(private="file")
-md_code_row :: proc(m:^Md) {
-    if m.build {
-        if !m.row {box_begin(m.ctx,{width=fixed(m.room),height=fixed(m.line)})}
-        box_end(m.ctx,{})
-    }
-    m.row=false
+    font:=&ctx.font
+    f:=int(m.font)
     m.lines+=1
+    if !text_begin(ctx,{font=m.font,size=m.size,color=m.text_color,wrap=.Words},m.line,true,!m.build) {
+        m.code_height+=m.line
+        return
+    }
+    // A tab is room up to the next stop of four spaces of its line.
+    tab:=4*text_width(font," ",m.size,f)
+    x:f32
+    start:=0
+    for i in 0..<len(line) {
+        if line[i]!='\t' {continue}
+        run:=line[start:i]
+        text_span(ctx,run,{solid=true})
+        x+=text_width(font,run,m.size,f)
+        stop:=(math.floor(x/tab)+1)*tab if tab>0 else x
+        text_box(ctx,min(stop-x,m.room),0,{})
+        x,start=stop,i+1
+    }
+    text_span(ctx,line[start:],{solid=true})
+    if m.build {text_end(ctx,{width=fixed(m.room)})} else {m.code_height+=text_end_height(ctx,m.room)}
 }
 
 // ---------------------------------------------------------------- inlines

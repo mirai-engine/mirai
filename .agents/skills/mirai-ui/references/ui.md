@@ -272,8 +272,9 @@ All take the context, an id and their state by parameter.
   - It is parsed line by line: it stores nothing between frames or allocates. What it does not
     recognize (HTML, tables) stays as text; italic has no face and its marks are removed. Bold and
     italic open and close on the same line.
-  - A word longer than the line is cut where the line ends (`text_begin` with `cut`), and fenced
-    code is cut by characters into rows, so the height does not depend on where the spaces fall.
+  - A word longer than the line is cut where the line ends (`text_begin` with `cut`), and a line
+    of fenced code is a `solid` span, which breaks at no space and is cut the same way, so its
+    height does not depend on where the spaces fall. A tab is room up to the next stop of its line.
   - Each link goes through `Markdown_Style.resolve`, which is called when measuring and when
     building and must give the same answer for the same destination in a frame. A `pill` link is not
     split: it passes whole to the next line and, if it is wider than a line, it is cut to it; a

@@ -80,6 +80,7 @@ Layout_Span :: struct {
     size:f32,
     face:u8,
     box:bool,
+    solid:bool, // its text is one piece that breaks at no space: only where a line that cuts ends
     width:f32,  // on one line: of its text with pad, or its own when it is a box or room
     pad:f32,    // of the width of a chip, what is no text. Its text is not words
     gap:f32,    // room after it that is no part of it
@@ -439,9 +440,9 @@ layout_text_ask :: proc "contextless" (t:^Layout_Tree,font:^Font,text:^Layout_Te
     line:f32
     for &s in spans {
         m:=&s.measure
-        if s.box || s.pad>0 || s.text=="" || !m.breaks {
+        if s.box || s.pad>0 || s.solid || s.text=="" || !m.breaks {
             line+=s.width+s.gap
-            if s.box {least=max(least,s.width)} else if s.text!="" && !text.cut {least=max(least,s.width if s.pad>0 else m.min_width)}
+            if s.box {least=max(least,s.width)} else if s.text!="" && !text.cut {least=max(least,s.width if s.pad>0 || s.solid else m.min_width)}
             continue
         }
         if !text.cut {least=max(least,m.min_width)}
@@ -734,7 +735,7 @@ layout_text_wrap :: proc(t:^Layout_Tree,font:^Font,text:^Layout_Text,width:f32,k
     room:=width if text.wrap==.Words else max(f32)
     y:f32
     defer if keep {text.height=max(y,text.line)}
-    if len(spans)==1 && !spans[0].box && spans[0].pad==0 && !text.cut {
+    if len(spans)==1 && !spans[0].box && spans[0].pad==0 && !spans[0].solid && !text.cut {
         s:=&spans[0]
         m:=&s.measure
         if s.text=="" {return text.line}
@@ -764,8 +765,10 @@ layout_text_wrap :: proc(t:^Layout_Tree,font:^Font,text:^Layout_Text,width:f32,k
     f.width,f.cut=room,text.cut
     for &s,i in spans {
         index:=text.spans_first+i32(i)
-        if s.box || s.pad>0 {
+        if s.box || s.pad>0 || s.solid {
             p:=Flow_Piece(i32){text=s.text,width=s.width,gap=s.gap,pad=s.pad,size=s.size,font=s.face,box=s.box,run=index}
+            // What is solid fills the line it starts on, whatever it follows.
+            if s.solid {f.glued,f.unit,f.unit_at,f.unit_x=true,f.count,0,0}
             for !flow_put(&f,font,&p) {layout_flow_line(t,font,text,keep,&f,&y)}
             continue
         }
