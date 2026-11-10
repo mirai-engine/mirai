@@ -157,9 +157,9 @@ the_lint_flags_a_dropped_append_whose_element_is_read :: proc(t:^testing.T) {
                  for v in vs {append(x,v)}
                  if reserve(x,len(x)+4)!=nil {return false}
                  append(x,..vs)
-                 return room(x,1) && append(x,0)>0
+                 return room(x,1)
              }`,
-            {"append(x,1)","append(x,n)","append(x,3)","append(x,v)","append(x,..vs)","append(x,0)"}},
+            {"append(x,1)","append(x,n)","append(x,3)","append(x,v)","append(x,..vs)"}},
         {"a room whose error is dropped",
             `f :: proc(x:^[dynamic]int,a:runtime.Allocator) #no_bounds_check {reserve(x,len(x)+1);append(x,1);y:=make([dynamic]int,0,1,a);append(&y,1)}`,
             {"reserve(x,len(x)+1)","append(x,1)","make([dynamic]int,0,1,a)","append(&y,1)"}},
@@ -171,6 +171,13 @@ the_lint_flags_a_dropped_append_whose_element_is_read :: proc(t:^testing.T) {
                  n:int
                  n,err=append(&s.items,v)
                  return &s.items[len(s.items)-1],err
+             }`,
+            {}},
+        {"a count that is compared",
+            `f :: proc(s:^Set,v:Item) -> ^Item #no_bounds_check {
+                 if append(&s.items,v)!=1 {return nil}
+                 if 2>append(&s.items,v,v) || (append(&s.items,v))==0 {return nil}
+                 return &s.items[len(s.items)-1]
              }`,
             {}},
         {"a room that covers the appends after it",

@@ -216,6 +216,18 @@ alloc_visit :: proc(visitor:^ast.Visitor,node:^ast.Node) -> ^ast.Visitor {
         if len(n.results)==1 && len(s.scopes)>0 && s.scopes[len(s.scopes)-1].results>=2 {alloc_receive(s,n.results[0],nil)}
     case ^ast.Expr_Stmt:
         if call:=alloc_unwrap(n.expr);call!=nil {s.alone[rawptr(call)]=true}
+    case ^ast.Binary_Expr:
+        // The count an append returns tells as much as its error.
+        #partial switch n.op.kind {
+        case .Cmp_Eq,.Not_Eq,.Lt,.Gt,.Lt_Eq,.Gt_Eq:
+            for side in ([2]^ast.Expr{n.left,n.right}) {
+                call:=alloc_unwrap(side)
+                if call==nil {continue}
+                if callee,named:=call.expr.derived.(^ast.Ident);named {
+                    if adds,_:=append_call(callee.name);adds {s.received[rawptr(call)]=true}
+                }
+            }
+        }
     case ^ast.Range_Stmt:
         names_note(s,n.vals,nil)
     case ^ast.Index_Expr:
