@@ -6,6 +6,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
@@ -41,14 +42,14 @@ settings_are_written_by_layer_and_the_project_wins :: proc(t:^testing.T) {
     }
     info:=core.World_Info{entities=offset_of(Layer_World,entities),storages=storages[:]}
     world.setting={quality=1,scale=1}
-    selection:Selection;defer delete(selection.entities)
-    viewport:Viewport;gui:Editor_Ui;edits:Edits;defer edits_free(&edits)
+    selection:history.Selection;defer delete(selection.entities)
+    viewport:Viewport;gui:Editor_Ui;edits:history.Edits;defer history.edits_free(&edits)
     inspector:Inspector
     api_storage:Api
     app:host.App
     session:=Session{info=&info,edit_world=&world,editor_world=&api_storage,app=&app,selection=&selection,viewport=&viewport,gui=&gui,edits=&edits,inspector=&inspector,project_root=root,engine_root=engine,has_project=true}
     defer settings_engine_free(&session)
-    edits_reset(&edits,edited_world(&session))
+    history.edits_reset(&edits,edited_world(&session))
     if !testing.expect(t,api_open(&session,0,true)==.None) {return};defer api_close(&session)
     state:=api_state(&session);state.poll_temp=context.temp_allocator
     if api.method_find(&state.server,"settings.get")==nil {settings_api_register(&session,state)}

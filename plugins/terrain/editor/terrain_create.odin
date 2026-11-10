@@ -7,6 +7,7 @@ import "mirai:asset"
 import "mirai:core"
 import "mirai:cook/textures"
 import "mirai:editor"
+import "mirai:editor/history"
 import phys "plugins:physics/runtime"
 import erender "mirai:engine/render"
 import "mirai:host"
@@ -89,7 +90,7 @@ terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
     } else if tool.create_kind==.Heightfield && tool.create_source==.Selection {
         editor.notify(s,"Heightfield Terrain requires a plane or heightmap");return
     } else if tool.create_kind==.Mesh && tool.create_source==.Selection {
-        converted=editor.selection_active(s.selection)
+        converted=history.selection_active(s.selection)
         static,found:=core.get(core.read(meshes),converted)
         if !found || core.has(core.read(terrains),converted) {editor.notify(s,"Select a static mesh to convert");return}
         if bodies:=core.world_table_of(world,phys.Rigid_Body);bodies!=nil {
@@ -139,8 +140,8 @@ terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
     defer delete(bytes,allocator)
     // The new file is part of the step: undo takes it away, and it stays in
     // the memory of the registry until it is saved.
-    editor.edits_begin(s.edits,editor.document_selection(s),converted!=core.NONE?"Convert to terrain":"Add terrain")
-    if !editor.file_write(s,path,bytes,"Add terrain") {editor.edits_cancel(s.edits,world);editor.notify(s,"The terrain could not be written");return}
+    history.edits_begin(s.edits,editor.document_selection(s),converted!=core.NONE?"Convert to terrain":"Add terrain")
+    if !editor.file_write(s,path,bytes,"Add terrain") {history.edits_cancel(s.edits,world);editor.notify(s,"The terrain could not be written");return}
     e:=converted
     if e==core.NONE {
         position:=placed?at:[3]f32{s.viewport.orbit.target.x,0,s.viewport.orbit.target.z}
@@ -153,7 +154,7 @@ terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
         core.remove(meshes,e)
     }
     core.add(terrains,e,terrain.Terrain{source=id,revision=1,solid=true,ground=over.id})
-    editor.edits_end(s.edits);editor.selection_set(editor.document_selection(s),{e})
+    history.edits_end(s.edits);history.selection_set(editor.document_selection(s),{e})
     append(&tool.applied,Applied{source=id,revision=1,stamp=terrain.terrain_stamp(a,id)})
     stroke_free(tool)
     return e
@@ -208,7 +209,7 @@ edit_error :: proc(s:^editor.Session,error:terrain.Edit_Error) {
 terrain_convert :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator) {
     stroke:=&tool.stroke
     if stroke.active || stroke.id=={} || stroke.source.kind==.Mesh {return}
-    if !editor.selection_has(s.selection,stroke.entity) {editor.notify(s,"Select the terrain to convert");return}
+    if !history.selection_has(s.selection,stroke.entity) {editor.notify(s,"Select the terrain to convert");return}
     source:terrain.Source
     defer terrain.source_destroy(&source)
     if stroke.source.kind==.Volume {
@@ -233,7 +234,7 @@ terrain_convert :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Re
 terrain_operand :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator) {
     stroke:=&tool.stroke
     if stroke.active || stroke.id=={} || stroke.source.kind!=.Mesh {return}
-    if !editor.selection_has(s.selection,stroke.entity) {editor.notify(s,"Select the terrain and a closed mesh operand");return}
+    if !history.selection_has(s.selection,stroke.entity) {editor.notify(s,"Select the terrain and a closed mesh operand");return}
     meshes:=core.world_table_of(world,erender.Mesh_Renderer);worlds:=core.world_table_of(world,core.World_Transform)
     if meshes==nil || worlds==nil {return}
     operand:=core.NONE

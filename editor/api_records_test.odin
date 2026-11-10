@@ -6,6 +6,7 @@ import "mirai:asset"
 import importer "mirai:cook/import"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/records"
 import "mirai:std/base"
 import "mirai:std/serial"
 
@@ -39,7 +40,7 @@ Csv_Fixture :: struct {
     crate_ids:[1]u64,
     crate_names:[1]asset.Records_Name,
     tables:[2]Records_Api_Rows,
-    edit:Records_Edit,
+    edit:records.Edit,
     c:Records_Api_Context,
     session:Session,
 }
@@ -83,9 +84,9 @@ csv_import :: proc(f:^Csv_Fixture,text:string) -> (updated,added:int,rejected:[]
 
 @(private="file")
 csv_row :: proc(f:^Csv_Fixture,name:string) -> (value:Csv_Weapon,found:bool) {
-    row:=records_find(&f.edit,name)
+    row:=records.row_find(&f.edit,name)
     if row<0 {return}
-    return (cast(^Csv_Weapon)raw_data(records_row(&f.edit,row)))^,true
+    return (cast(^Csv_Weapon)raw_data(records.row_bytes(&f.edit,row)))^,true
 }
 
 // Every value of a row is a column by its serial path: structs and arrays
@@ -116,8 +117,8 @@ records_csv_reads_quotes_line_breaks_and_empty_cells :: proc(t:^testing.T) {
     if !testing.expect(t,found) {return}
     testing.expect_value(t,sword.damage,7)
     testing.expect_value(t,serial.text_field(sword.label[:]),"a, b")
-    source,_:=records_text_get(&f.edit,sword.title.id,"")
-    spanish,_:=records_text_get(&f.edit,sword.title.id,"es")
+    source,_:=records.text_get(&f.edit,sword.title.id,"")
+    spanish,_:=records.text_get(&f.edit,sword.title.id,"es")
     testing.expect_value(t,source,"Sharp\nsword")
     testing.expect_value(t,spanish,`Espada "fina"`)
     axe,_:=csv_row(&f,"axe")
@@ -195,7 +196,7 @@ whip,,,,,,,nothing,
     testing.expect_value(t,len(rejected),len(reasons))
     for each,i in rejected[:min(len(rejected),len(reasons))] {
         testing.expectf(t,each.line==reasons[i].line && strings.contains(each.reason,reasons[i].part),"line %d: %s",each.line,each.reason)
-        testing.expect(t,records_find(&f.edit,each.name)<0,"A rejected row is not added")
+        testing.expect(t,records.row_find(&f.edit,each.name)<0,"A rejected row is not added")
     }
 }
 
@@ -227,11 +228,11 @@ records_csv_export_reads_back :: proc(t:^testing.T) {
     testing.expect_value(t,copied.ammo,sword.ammo)
     testing.expect_value(t,copied.label,sword.label)
     testing.expect_value(t,copied.tags,sword.tags)
-    spanish,_:=records_text_get(&g.edit,copied.title.id,"es")
-    hello,_:=records_text_get(&g.edit,copied.lines[0].text.id,"")
+    spanish,_:=records.text_get(&g.edit,copied.title.id,"es")
+    hello,_:=records.text_get(&g.edit,copied.lines[0].text.id,"")
     testing.expect_value(t,spanish,"Espada")
     testing.expect_value(t,hello,"Hi")
-    testing.expect_value(t,records_name(&g.edit,1),"axe")
+    testing.expect_value(t,records.row_name(&g.edit,1),"axe")
 }
 
 // A core.Record is named by a row: its name alone when one table of the type

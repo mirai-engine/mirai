@@ -5,6 +5,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:core"
+import "mirai:editor/history"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -18,8 +19,8 @@ import "mirai:std/serial"
     tables:[2]core.Table_Info,
     storages:[1]core.Storage_Info,
     info:core.World_Info,
-    edits:Edits,
-    selection:Selection,
+    edits:history.Edits,
+    selection:history.Selection,
     session:Session,
     panels:Project_Panels,
     entities:[3]core.Entity, // ids 0x10, 0x20 and 0x30, of groups 1, 2 and 1
@@ -54,12 +55,12 @@ panel_test_init :: proc(f:^Panel_Test_Fixture) {
     f.world.quality={level=1}
     panel_test_settle(&f.world,nil,nil)
     f.session=Session{info=&f.info,edit_world=&f.world,edits=&f.edits,selection=&f.selection,panels=&f.panels}
-    edits_reset(&f.edits,edited_world(&f.session))
+    history.edits_reset(&f.edits,edited_world(&f.session))
 }
 
 @(private="file")
 panel_test_free :: proc(f:^Panel_Test_Fixture) {
-    edits_free(&f.edits)
+    history.edits_free(&f.edits)
     panels_free(&f.panels)
     delete(f.selection.entities)
     core.table_destroy(&f.world.ids);core.table_destroy(&f.world.looks)
@@ -205,26 +206,26 @@ panel_buttons_set_their_fields_as_one_step :: proc(t:^testing.T) {
     changed,problem:=panel_press(s,p,0)
     testing.expect_value(t,problem,"")
     testing.expect_value(t,changed,3)
-    edits_flush(&f.edits,w,&f.selection)
+    history.edits_flush(&f.edits,w,&f.selection)
     testing.expect_value(t,tint(&f,f.entities[0]),[3]f32{1,0,0})
     testing.expect_value(t,tint(&f,f.entities[1]),[3]f32{0,0,0})
     testing.expect_value(t,tint(&f,f.entities[2]),[3]f32{1,0,0})
     testing.expect_value(t,f.world.quality.level,i32(3))
-    testing.expect(t,undo(&f.edits,w,&f.selection))
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
     testing.expect_value(t,tint(&f,f.entities[0]),[3]f32{0,0,0})
     testing.expect_value(t,tint(&f,f.entities[2]),[3]f32{0,0,0})
-    testing.expect(t,!undo(&f.edits,w,&f.selection),"a press is one step")
+    testing.expect(t,!history.undo(&f.edits,w,&f.selection),"a press is one step")
 
     changed,problem=panel_press(s,p,1)
     testing.expect_value(t,problem,"")
     testing.expect_value(t,changed,4)
-    edits_flush(&f.edits,w,&f.selection)
+    history.edits_flush(&f.edits,w,&f.selection)
     testing.expect_value(t,core.get(&f.world.looks,f.entities[1]).exposure.compensation,f32(2))
     testing.expect_value(t,core.get(&f.world.looks,f.entities[0]).exposure.compensation,f32(0))
     for e in f.entities {testing.expect_value(t,core.get(&f.world.looks,e).sky,[3]f32{0.5,0.25,0.1})}
-    testing.expect(t,undo(&f.edits,w,&f.selection))
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
     testing.expect_value(t,core.get(&f.world.looks,f.entities[1]).exposure.compensation,f32(0))
-    testing.expect(t,redo(&f.edits,w,&f.selection))
+    testing.expect(t,history.redo(&f.edits,w,&f.selection))
     testing.expect_value(t,core.get(&f.world.looks,f.entities[1]).exposure.compensation,f32(2))
 
     // A where finds the entities when the button is pressed.
@@ -232,10 +233,10 @@ panel_buttons_set_their_fields_as_one_step :: proc(t:^testing.T) {
     core.add(&f.world.ids,late,{value=0x40})
     core.add(&f.world.looks,late,{group=1})
     panel_test_settle(&f.world,nil,nil)
-    edits_flush(&f.edits,w,&f.selection)
+    history.edits_flush(&f.edits,w,&f.selection)
     _,problem=panel_press(s,p,0)
     testing.expect_value(t,problem,"")
-    edits_flush(&f.edits,w,&f.selection)
+    history.edits_flush(&f.edits,w,&f.selection)
     testing.expect_value(t,tint(&f,late),[3]f32{1,0,0})
 
     // A where no entity matches changes nothing; a value that fails leaves
@@ -299,16 +300,16 @@ panel_restore_puts_back_what_it_changed :: proc(t:^testing.T) {
     base.text_set(p.id[:],"lab")
     _,problem:=panel_press(s,p,0)
     testing.expect_value(t,problem,"")
-    edits_flush(&f.edits,w,&f.selection)
+    history.edits_flush(&f.edits,w,&f.selection)
     late:=core.create(&f.world.entities)
     core.add(&f.world.ids,late,{value=0x40})
     core.add(&f.world.looks,late,{tint={0,1,0},group=1})
     panel_test_settle(&f.world,nil,nil)
-    edits_flush(&f.edits,w,&f.selection)
+    history.edits_flush(&f.edits,w,&f.selection)
     for button in 0..<2 {
         _,problem=panel_press(s,p,button)
         testing.expect_value(t,problem,"")
-        edits_flush(&f.edits,w,&f.selection)
+        history.edits_flush(&f.edits,w,&f.selection)
     }
     testing.expect_value(t,core.get(&f.world.looks,late).tint,[3]f32{1,0,0})
     testing.expect(t,panel_kept_count(&f.panels,p)>0)
@@ -316,7 +317,7 @@ panel_restore_puts_back_what_it_changed :: proc(t:^testing.T) {
     restored,message:=panel_restore(s,p)
     testing.expect_value(t,message,"")
     testing.expect_value(t,restored,panel_test_kept)
-    edits_flush(&f.edits,w,&f.selection)
+    history.edits_flush(&f.edits,w,&f.selection)
     for e in f.entities {
         look:=core.get(&f.world.looks,e)^
         testing.expect_value(t,look.tint,[3]f32{0,0,0})
@@ -326,7 +327,7 @@ panel_restore_puts_back_what_it_changed :: proc(t:^testing.T) {
     testing.expect_value(t,core.get(&f.world.looks,late).tint,[3]f32{0,1,0})
     testing.expect_value(t,f.world.quality.level,i32(1))
     testing.expect_value(t,panel_kept_count(&f.panels,p),0)
-    testing.expect(t,undo(&f.edits,w,&f.selection))
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
     testing.expect_value(t,core.get(&f.world.looks,late).tint,[3]f32{1,0,0})
     testing.expect_value(t,core.get(&f.world.looks,f.entities[1]).exposure.compensation,f32(2))
 }

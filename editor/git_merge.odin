@@ -8,6 +8,7 @@ import "mirai:asset"
 import "mirai:cook/build"
 import "mirai:core"
 import "mirai:editor/git"
+import "mirai:editor/history"
 import scene "mirai:engine/scene"
 import "mirai:project"
 import gpu "mirai:render"
@@ -370,8 +371,8 @@ git_scene_show :: proc(s:^Session,data:[]u8) {
     core.world_settle(w)
     document_previous_free(s.document)
     s.document.previous=loaded
-    edits_reset(s.edits,w)
-    s.document.saved=edits_scene_state(s.edits)
+    history.edits_reset(s.edits,w)
+    s.document.saved=history.edits_scene_state(s.edits)
     s.document.unsaved=true
     s.view_cut=true
     g:=s.git
@@ -382,7 +383,7 @@ git_scene_show :: proc(s:^Session,data:[]u8) {
 git_select :: proc(s:^Session,key:base.Entity_Id) {
     if key==0 {return}
     w:=edited_world(s)
-    if e:=core.entity_of(core.world_entities(w),key);e!=core.NONE {selection_set(s.selection,{e})}
+    if e:=core.entity_of(core.world_entities(w),key);e!=core.NONE {history.selection_set(s.selection,{e})}
 }
 
 // Writes every file as chosen, then adds and commits them.

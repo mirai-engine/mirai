@@ -5,6 +5,7 @@ import "core:mem"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
 import gpu "mirai:render"
@@ -56,8 +57,8 @@ ai_scene_outlines_follow_pending_authors_and_keep_selection_without_steady_alloc
     append(&m.tasks[0].review.changed_ids,1);append(&m.tasks[1].review.changed_ids,2)
     defer delete(m.tasks[0].review.changed_ids);defer delete(m.tasks[1].review.changed_ids)
     v:Viewport;defer viewport_free(&v)
-    selection:Selection;defer delete(selection.entities)
-    selection_set(&selection,{selected})
+    selection:history.Selection;defer delete(selection.entities)
+    history.selection_set(&selection,{selected})
     app:host.App
     g:Editor_Ui
     session:=Session{ai=m,app=&app,viewport=&v,selection=&selection,gui=&g,edit_world=&world}
@@ -66,10 +67,10 @@ ai_scene_outlines_follow_pending_authors_and_keep_selection_without_steady_alloc
     testing.expect_value(t,entity_level(&v,derived),u8(9))
     testing.expect_value(t,entity_level(&v,other),u8(10))
     testing.expect(t,entity_level(&v,selected)==u8(9),"what a working turn was given takes its color over the selection")
-    selection_clear(&selection)
+    history.selection_clear(&selection)
     highlight_sync(&session,ref)
     testing.expect(t,entity_level(&v,selected)==u8(9),"and keeps it after deselection")
-    selection_set(&selection,{selected})
+    history.selection_set(&selection,{selected})
     highlight_sync(&session,ref)
     version:=world.highlights.version
     tracker:mem.Tracking_Allocator
@@ -93,7 +94,7 @@ ai_scene_outlines_follow_pending_authors_and_keep_selection_without_steady_alloc
     m.tasks[0].state=.Done;m.scene_serial+=1
     highlight_sync(&session,ref)
     testing.expect_value(t,entity_level(&v,selected),HIGHLIGHT_SELECTED)
-    selection_clear(&selection)
+    history.selection_clear(&selection)
     highlight_sync(&session,ref)
     testing.expect(t,entity_level(&v,selected)==AI_CONTEXT_LEVEL,"sent context keeps a soft outline of its own after deselection")
     m.show_agents_in_scene=true
@@ -126,7 +127,7 @@ ai_scene_outlines_follow_pending_authors_and_keep_selection_without_steady_alloc
     m.task_count=2
     m.tasks[0].state=.Done
     testing.expect(t,ai_task_finish(&session,m,&m.tasks[0]))
-    selection_clear(&selection)
+    history.selection_clear(&selection)
     highlight_sync(&session,ref)
     testing.expect(t,entity_level(&v,selected)==0,"Finish removes sent context outlines")
 }

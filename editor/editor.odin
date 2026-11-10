@@ -9,6 +9,7 @@ import "core:strconv"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/history"
 import eaudio "mirai:engine/audio"
 import input "mirai:engine/input"
 import erender "mirai:engine/render"
@@ -168,7 +169,7 @@ Session :: struct {
     paused_view:core.View, // what the camera of the game saw at the tick a Play the user paused is at (view_write)
     watch:Watch,
     edit_orbit:Orbit,
-    edit_selection:Selection, // that of the document while the editor shows a game
+    edit_selection:history.Selection, // that of the document while the editor shows a game
     recovery:Recovery,
     events:platform.Crash_Events, // what the crash report names before a fault (events.odin)
     events_turns:u64,             // the turns of the history whose steps were noted
@@ -214,10 +215,10 @@ Session :: struct {
     play_asked:scene.Play_Origin, // where Play from here puts player 1; the next play_start takes it
     toast:[TOAST_BYTES]u8,toast_length:int,
     toast_seconds:f32,
-    id_state:u64,        // of the ids given to new entities
-    selection:^Selection,
+    id_state:u64,        // of the ids given to new entities, assets and rows of tables
+    selection:^history.Selection,
     copied:[dynamic]base.Entity_Id, // by Copy: the ids of the roots that Paste duplicates
-    edits:^Edits,
+    edits:^history.Edits,
     document:^Document,
     documents:[dynamic]Document_Tab,
     active_document,document_request:int,
@@ -278,7 +279,7 @@ playing :: proc "contextless" (s:^Session) -> bool {return s.mode!=.Edit}
 
 // The selection of the document: the one in sight in Edit, the one kept for
 // Stop while the editor shows a game. Edits of the document go with it.
-document_selection :: proc(s:^Session) -> ^Selection {return &s.edit_selection if playing(s) else s.selection}
+document_selection :: proc(s:^Session) -> ^history.Selection {return &s.edit_selection if playing(s) else s.selection}
 
 // The run of an owner: the user (0) or an AI task. nil without one.
 run_find :: proc "contextless" (s:^Session,owner:int) -> ^Run {return run_player(s,owner,0)}
@@ -354,8 +355,8 @@ status :: proc(s:^Session) -> (st:Status) {
     st.dirty=document_dirty(s)
     st.entities=core.world_entities(shown_world(s)).alive
     st.selected=len(s.selection.entities)
-    st.active=selection_active(s.selection)
-    st.undo,st.redo=edits_undo_count(s.edits),edits_redo_count(s.edits)
+    st.active=history.selection_active(s.selection)
+    st.undo,st.redo=history.edits_undo_count(s.edits),history.edits_redo_count(s.edits)
     st.building=s.build.phase==.Running
     st.build=s.build.phase
     st.fps,st.frame=s.app.stats.fps,s.frame
@@ -870,7 +871,7 @@ play_animations_load :: proc(s:^Session,wait:bool) {
 @(private)
 play_view_enter :: proc(s:^Session,simulate:bool) {
     s.edit_orbit=s.viewport.orbit
-    selection_set(&s.edit_selection,s.selection.entities[:])
+    history.selection_set(&s.edit_selection,s.selection.entities[:])
     s.edit_relative_mouse=platform.window_relative_mouse(s.app.platform)
     s.play_input_released,s.play_capture_click,s.play_stepped=false,false,false
     if !simulate {
@@ -914,7 +915,7 @@ run_create :: proc(s:^Session,owner,player:int) -> ^Run {
         if place.world==nil {r=&place;break}
     }
     if r==nil {return nil}
-    if !edits_commit(s.edits,edited_world(s),s.selection) && s.edits.error!=.No_Change {notify(s,edits_error_text(s.edits.error));return nil}
+    if !history.edits_commit(s.edits,edited_world(s),s.selection) && s.edits.error!=.No_Change {notify(s,history.edits_error_text(s.edits.error));return nil}
     if !recovery_protect(s) {return nil}
     world:=host.app_world_create(s.app)
     if world==nil {return nil}
@@ -922,7 +923,7 @@ run_create :: proc(s:^Session,owner,player:int) -> ^Run {
     simulation_settle(s,edited_world(s))
     if !s.info.copy(world,s.edit_world) {host.app_world_free(s.app,world);return nil}
     s.run_serial+=1
-    r^={world=world,id=s.run_serial,owner=owner,player=player,document=edits_scene_state(s.edits)}
+    r^={world=world,id=s.run_serial,owner=owner,player=player,document=history.edits_scene_state(s.edits)}
     return r
 }
 
@@ -1004,8 +1005,8 @@ play_view_restore :: proc(s:^Session) {
     tools_release(s)
     s.viewport.orbit=s.edit_orbit
     viewport_camera(s.viewport)
-    selection_set(s.selection,s.edit_selection.entities[:])
-    selection_clear(&s.edit_selection)
+    history.selection_set(s.selection,s.edit_selection.entities[:])
+    history.selection_clear(&s.edit_selection)
     platform.window_set_relative_mouse(s.app.platform,s.edit_relative_mouse)
     s.app.game_input_excluded={}
     s.app.has_script_input,s.app.script_input,s.app.script_frame_input=false,{},{}
@@ -1013,7 +1014,7 @@ play_view_restore :: proc(s:^Session) {
     s.play_input_released,s.play_capture_click,s.play_stepped=false,false,false
     s.mode=.Edit
     s.view_cut=true
-    selection_prune(s.selection,edited_world(s))
+    history.selection_prune(s.selection,edited_world(s))
 }
 
 // Asks to end: with unsaved changes the editor asks first.
@@ -1034,7 +1035,7 @@ restart :: proc(s:^Session,extra:[]string=nil) -> bool {
     }
     runs_stop(s)
     tools_release(s)
-    if !edits_commit(s.edits,edited_world(s),s.selection) && s.edits.error!=.No_Change {notify(s,edits_error_text(s.edits.error));return false}
+    if !history.edits_commit(s.edits,edited_world(s),s.selection) && s.edits.error!=.No_Change {notify(s,history.edits_error_text(s.edits.error));return false}
     folder:=project.folder_path(s.project_root,.Generated,context.temp_allocator)
     _=os.make_directory_all(folder)
     file,kept:=documents_save_restart(s,folder)
@@ -1085,7 +1086,7 @@ select_ids :: proc(s:^Session,text:string) {
         id,ok:=base.entity_id_parse(strings.trim_space(part))
         if e:=core.entity_of(es,id);ok && e!=core.NONE {append(&picked,e)}
     }
-    selection_set(s.selection,picked[:])
+    history.selection_set(s.selection,picked[:])
 }
 
 @(private)
@@ -1096,7 +1097,7 @@ session_init :: proc(s:^Session,app:^host.App,edit_world,editor_world:rawptr) ->
     if !session_bind(s) {return false}
     viewport_init(s.viewport)
     if !gui_init(s.gui,app) {return false}
-    edits_reset(s.edits,edited_world(s))
+    history.edits_reset(s.edits,edited_world(s))
     document_reset(s)
     documents_ensure(s)
     return true
@@ -1106,8 +1107,8 @@ session_init :: proc(s:^Session,app:^host.App,edit_world,editor_world:rawptr) ->
 @(private)
 session_bind :: proc(s:^Session) -> bool {
     ref:=core.world_ref(s.editor_world,s.info,.Editor)
-    s.selection=core.world_storage_of(ref,Selection)
-    s.edits=core.world_storage_of(ref,Edits)
+    s.selection=core.world_storage_of(ref,history.Selection)
+    s.edits=core.world_storage_of(ref,history.Edits)
     s.document=core.world_storage_of(ref,Document)
     s.viewport=core.world_storage_of(ref,Viewport)
     s.gui=core.world_storage_of(ref,Editor_Ui)
@@ -1160,7 +1161,7 @@ session_destroy :: proc(s:^Session) {
     gui_destroy(s.gui)
     document_previous_free(s.document)
     picker_clear(s.picker)
-    edits_free(s.edits)
+    history.edits_free(s.edits)
     delete(s.edit_selection.entities)
     s.edit_selection={}
     delete(s.copied)

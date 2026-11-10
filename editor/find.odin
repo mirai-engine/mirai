@@ -1,6 +1,7 @@
 package editor
 
 import "mirai:core"
+import "mirai:editor/history"
 import "mirai:std/base"
 import "mirai:ui"
 
@@ -64,7 +65,7 @@ finder_choose :: proc(s:^Session,w:core.World_Ref,e:core.Entity,add:bool) {
         return
     }
     target:=selection_click_target(s,w,e,false)
-    selection_set(s.selection,{target},add)
+    history.selection_set(s.selection,{target},add)
     outliner_reveal(s.outliner,w,target)
     // What is found is in the scene: it comes to the front.
     if scene_covered(s) {asset_document_request(s,-1)}

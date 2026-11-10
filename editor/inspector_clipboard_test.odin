@@ -3,6 +3,7 @@ package editor
 import "core:strings"
 import "core:testing"
 import "mirai:core"
+import "mirai:editor/history"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:ui"
@@ -80,19 +81,19 @@ inspector_copies_and_pastes_values_as_the_json_of_the_api :: proc(t:^testing.T) 
     testing.expect(t,ui.context_init(&ctx,{no_font=true,clipboard_get=clipboard_test_get,clipboard_set=clipboard_test_set,clipboard_user=&board}))
     defer ui.context_destroy(&ctx)
     gui:=Editor_Ui{ctx=&ctx}
-    edits:Edits
-    selection:Selection
+    edits:history.Edits
+    selection:history.Selection
     viewport:Viewport
     inspector:Inspector
     s:=Session{info=&info,edit_world=&world,edits=&edits,selection=&selection,viewport=&viewport,gui=&gui,inspector=&inspector}
     w:=edited_world(&s)
-    edits_reset(&edits,w)
-    defer edits_free(&edits)
+    history.edits_reset(&edits,w)
+    defer history.edits_free(&edits)
     defer delete(selection.entities)
     // A paste, and the end of its frame that records the step.
     paste :: proc(s:^Session,menu:Value_Menu) -> string {
         message:=value_paste(s,edited_world(s),menu)
-        edits_flush(s.edits,edited_world(s),s.selection)
+        history.edits_flush(s.edits,edited_world(s),s.selection)
         return message
     }
     clipboard :: proc(b:^Clipboard_Test_Board) -> string {return string(b.text[:b.length])}
@@ -104,22 +105,22 @@ inspector_copies_and_pastes_values_as_the_json_of_the_api :: proc(t:^testing.T) 
 
     // A component goes under its name, as `components` of the API, with the
     // entity it names by its id.
-    selection_set(&selection,{a})
+    history.selection_set(&selection,{a})
     testing.expect_value(t,value_copy(&s,w,component),"Copied ")
     text:=clipboard(&board)
     testing.expectf(t,strings.has_prefix(text,`{"Clipboard_Test_Lamp":{`) && strings.contains(text,"intensity"),"component text: %s",text)
-    selection_set(&selection,{b})
+    history.selection_set(&selection,{b})
     testing.expect_value(t,paste(&s,component),"")
     testing.expect_value(t,lamp(&world,b),lamp(&world,a))
     testing.expect_value(t,edits.cursor,1)
-    testing.expect(t,undo(&edits,w,&selection))
+    testing.expect(t,history.undo(&edits,w,&selection))
     testing.expect_value(t,lamp(&world,b),Clipboard_Test_Lamp{})
 
     // A field is its value, and goes to a field of the same type.
-    selection_set(&selection,{a})
+    history.selection_set(&selection,{a})
     value_copy(&s,w,color)
     testing.expect_value(t,clipboard(&board),"[1, 0.5, 0.25]")
-    selection_set(&selection,{b})
+    history.selection_set(&selection,{b})
     testing.expect_value(t,paste(&s,color),"")
     testing.expect_value(t,lamp(&world,b).color,[3]f32{1,0.5,0.25})
     testing.expect(t,paste(&s,intensity)!="","three numbers are not an intensity")
@@ -142,11 +143,11 @@ inspector_copies_and_pastes_values_as_the_json_of_the_api :: proc(t:^testing.T) 
     testing.expect_value(t,edits.cursor,cursor)
 
     // The Transform reads as the API writes an entity, rotation in degrees.
-    selection_set(&selection,{a})
+    history.selection_set(&selection,{a})
     value_copy(&s,w,{kind=.Transform})
     text=clipboard(&board)
     testing.expectf(t,strings.has_prefix(text,`{"position":[1,2,3],"rotation_deg":[`) && strings.has_suffix(text,`"scale":[2,2,2]}`),"transform text: %s",text)
-    selection_set(&selection,{b,c})
+    history.selection_set(&selection,{b,c})
     cursor=edits.cursor
     testing.expect_value(t,paste(&s,{kind=.Transform}),"")
     testing.expect_value(t,edits.cursor,cursor+1)
@@ -161,7 +162,7 @@ inspector_copies_and_pastes_values_as_the_json_of_the_api :: proc(t:^testing.T) 
     testing.expect_value(t,entity_local(w,c).position,[3]f32{1,2,3})
 
     // Add component adds what the text names to the entities without it.
-    selection_set(&selection,{c})
+    history.selection_set(&selection,{c})
     put(&board,`{"Clipboard_Test_Lamp":{"intensity":5}}`)
     testing.expect_value(t,paste(&s,{kind=.Components}),"")
     testing.expect(t,core.has(core.read(&world.lamps),c) && lamp(&world,c).intensity==5)

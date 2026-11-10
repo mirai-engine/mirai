@@ -5,6 +5,7 @@ import "core:math"
 import "core:math/linalg"
 import "mirai:core"
 import "mirai:editor"
+import "mirai:editor/history"
 import "mirai:host"
 import gpu "mirai:render"
 import shapes "plugins:shapes/runtime"
@@ -184,7 +185,7 @@ stroke_write :: proc(s:^editor.Session,tool:^Shapes_Tool) -> bool {
     }
     if !stroke_dirty(stroke) {return true}
     if !stroke.opened {
-        if !editor.edits_begin(s.edits,s.selection,stroke.edit.cut?"Cut":"Stamp") {
+        if !history.edits_begin(s.edits,s.selection,stroke.edit.cut?"Cut":"Stamp") {
             stroke_free(stroke)
             return false
         }
@@ -202,14 +203,14 @@ stroke_write :: proc(s:^editor.Session,tool:^Shapes_Tool) -> bool {
 @(private)
 stroke_end :: proc(s:^editor.Session,tool:^Shapes_Tool) {
     stroke:=&tool.stroke
-    if stroke.opened {editor.edits_end(s.edits)}
+    if stroke.opened {history.edits_end(s.edits)}
     stroke_free(stroke)
 }
 
 // The shapes go back to what they were when the stroke began.
 @(private)
 stroke_cancel :: proc(s:^editor.Session,tool:^Shapes_Tool) {
-    if tool.stroke.opened {editor.edits_cancel(s.edits,editor.shown_world(s))}
+    if tool.stroke.opened {history.edits_cancel(s.edits,editor.shown_world(s))}
     stroke_free(&tool.stroke)
 }
 
@@ -273,7 +274,7 @@ select_under :: proc(s:^editor.Session,w:core.World_Ref,input:core.Input) {
     hit:=editor.pick_point(s,w,input.mouse_position)
     if hit.entity==core.NONE || hit.indicator {return}
     e:=editor.entity_author(w,hit.entity)
-    if editor.entity_has(w,e,shapes.Shape) {editor.selection_set(s.selection,{e})}
+    if editor.entity_has(w,e,shapes.Shape) {history.selection_set(s.selection,{e})}
 }
 
 // ---------------------------------------------------------------- brushes
@@ -294,7 +295,7 @@ brush_frame :: proc(s:^editor.Session,tool:^Shapes_Tool,w:core.World_Ref,input:c
         brush,kind,place,found:=brush_under(w,hit_solid,ray,along)
         if !found {return}
         brush_draw(tool,kind,place,editor.BRUSH_CHANGE)
-        if tool.begin {editor.selection_set(s.selection,{brush})}
+        if tool.begin {history.selection_set(s.selection,{brush})}
         return
     }
     target:=hit_solid!=core.NONE?hit_solid:selected_solid(s,w)

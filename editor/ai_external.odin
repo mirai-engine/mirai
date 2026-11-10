@@ -5,6 +5,7 @@ import "core:strings"
 import "core:time"
 import "mirai:editor/ai_store"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:platform"
 import "mirai:std/base"
 
@@ -144,7 +145,7 @@ ai_external_running :: proc(s:^Session,client:string) -> ^Ai_Task {
 ai_external_begin :: proc(s:^Session,task:^Ai_Task) {
     task.state=.Running
     task.started=time.tick_now()
-    if task.state_before==0 {task.state_before=edits_state(s.edits)}
+    if task.state_before==0 {task.state_before=history.edits_state(s.edits)}
     s.ai.scene_serial+=1
     ai_task_dirty(task);ai_task_persist(s,task)
 }
@@ -157,7 +158,7 @@ ai_external_end :: proc(s:^Session,task:^Ai_Task) -> bool {
     task.stop=false
     task.seconds=f32(time.duration_seconds(time.tick_since(task.started)))
     task.conversation.seconds+=task.seconds
-    task.state_after=edits_state(s.edits)
+    task.state_after=history.edits_state(s.edits)
     if ai_review_waiting(&task.review)==0 && !task.declined {task.review_finished=true}
     s.ai.scene_serial+=1
     ai_task_dirty(task);ai_task_persist(s,task)

@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:log"
 import "mirai:core"
 import "mirai:editor"
+import "mirai:editor/history"
 import "mirai:host"
 import wire "mirai:net"
 import "mirai:platform"
@@ -166,7 +167,7 @@ serve :: proc(s:^editor.Session,n:^Net_Play) -> string {
     case s.build.phase==.Running:     return "A build is running; wait for it"
     }
     editor.tools_release(s)
-    editor.edits_commit(s.edits,editor.edited_world(s),s.selection)
+    history.edits_commit(s.edits,editor.edited_world(s),s.selection)
     if error:=editor.document_write(s,editor.play_copy_file(s,editor.PLAY_SCENE),false);error!=.None {
         return fmt.tprintf("The scene could not be copied: %s",editor.document_error_text(error))
     }

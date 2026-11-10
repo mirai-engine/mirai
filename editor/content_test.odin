@@ -6,6 +6,7 @@ import "core:slice"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:ui"
@@ -501,7 +502,7 @@ content_browser_enters_folders_selects_drags_stars_filters_and_searches_from_the
     g:=Editor_Ui{ctx=&ctx}
     c:=CONTENT_DEFAULT
     defer core.value_free(&c,type_info_of(Content))
-    selection:Selection
+    selection:history.Selection
     info:core.World_Info
     session:=Session{app=&app,gui=&g,content=&c,selection=&selection,info=&info,headless=true}
     for _ in 0..<3 {
@@ -638,7 +639,7 @@ content_navigation_gestures_of_the_browser :: proc(t:^testing.T) {
     g:=Editor_Ui{ctx=&ctx}
     c:=CONTENT_DEFAULT
     defer core.value_free(&c,type_info_of(Content))
-    selection:Selection
+    selection:history.Selection
     info:core.World_Info
     session:=Session{app=&app,gui=&g,content=&c,selection=&selection,info=&info,headless=true}
     content_test_depends(&assets.registry,0,1)
@@ -749,7 +750,7 @@ the_zoom_of_the_browser_walks_columns_and_names_follow_it :: proc(t:^testing.T) 
     g:=Editor_Ui{ctx=&ctx}
     c:=CONTENT_DEFAULT
     defer core.value_free(&c,type_info_of(Content))
-    selection:Selection
+    selection:history.Selection
     info:core.World_Info
     session:=Session{app=&app,gui=&g,content=&c,selection=&selection,info=&info,headless=true}
     for _ in 0..<2 {content_test_still(&session)}
@@ -803,7 +804,7 @@ ctrl_and_the_wheel_over_create_resize_its_cards_with_those_of_the_browser :: pro
     g:=Editor_Ui{ctx=&ctx}
     c:=CONTENT_DEFAULT
     defer core.value_free(&c,type_info_of(Content))
-    selection:Selection
+    selection:history.Selection
     session:=Session{app=&app,gui=&g,content=&c,selection=&selection,headless=true}
     frame :: proc(s:^Session,input:ui.Input) {
         ui.frame_begin(s.gui.ctx,input)
@@ -902,7 +903,7 @@ content_hides_the_parts_of_an_import_in_their_folder_and_a_prefab_opens_to_its_v
 content_gear_shows_the_parts_and_details_lists_them_after_the_rest :: proc(t:^testing.T) {
     // On the heap: on the stack, with the copy each literal makes, these come near the
     // megabyte of a test thread on Windows.
-    f:=new(struct{ctx:ui.Context,assets:host.Assets,app:host.App,g:Editor_Ui,ins:Inspector,selection:Selection,info:core.World_Info,session:Session})
+    f:=new(struct{ctx:ui.Context,assets:host.Assets,app:host.App,g:Editor_Ui,ins:Inspector,selection:history.Selection,info:core.World_Info,session:Session})
     defer free(f)
     ctx,assets,g,session:=&f.ctx,&f.assets,&f.g,&f.session
     testing.expect(t,ui.context_init(ctx,{}))
@@ -1026,7 +1027,7 @@ a_right_click_on_a_folder_creates_an_asset_named_in_place :: proc(t:^testing.T) 
     g:=Editor_Ui{ctx=&ctx}
     c:=CONTENT_DEFAULT
     defer core.value_free(&c,type_info_of(Content))
-    selection:Selection
+    selection:history.Selection
     info:core.World_Info
     session:=Session{app=&app,gui=&g,content=&c,selection=&selection,info=&info,headless=true}
     defer delete(session.asset_documents)
@@ -1082,7 +1083,7 @@ a_click_on_the_background_of_the_browser_clears_its_selection :: proc(t:^testing
     g:=Editor_Ui{ctx=&ctx}
     c:=CONTENT_DEFAULT
     defer core.value_free(&c,type_info_of(Content))
-    selection:Selection
+    selection:history.Selection
     info:core.World_Info
     session:=Session{app=&app,gui=&g,content=&c,selection=&selection,info=&info,headless=true}
     for _ in 0..<2 {content_test_still(&session)}

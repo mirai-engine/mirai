@@ -1,8 +1,8 @@
 # Document, edits and selection
 
 Code: `document.odin`, `documents.odin`, `documents_restore.odin`, `asset_documents.odin`,
-`edits.odin`, `edits_transaction.odin`, `edits_selection.odin`, `journal.odin`, `edits_files.odin`,
-`selection.odin` and `world.odin`.
+`edits.odin`, `edits_files.odin`, `history.odin`, `selection.odin` and `world.odin`; the journal,
+the steps and the selection are the package `editor/history`, which knows nothing of the session.
 
 ## Document and scenes
 
@@ -263,8 +263,8 @@ Native failures:
 
 ## Edits and undo
 
-`Edits` is the edited world's journal (`journal.odin`) and keeps rows, not operations with an
-inverse:
+`Edits` is the edited world's journal (`history/journal.odin`) and keeps rows, not operations
+with an inverse:
 
 - **Image.** What the world had the last time the journal took it: the rows of each table the
   scene stores (`type_saved`: some non-`transient` field, or none, like a tag), per entity and
@@ -310,14 +310,14 @@ Procedures:
 - `edits_reset` forgets the history after replacing the world. `edits_sync_initial` makes the image
   take the initial values resolved from assets and rejects any existing history. `edits_state` is
   the stamp that the saved document compares; a step that left the in-order redo does not count.
-- `edit_open(s, label) -> (opened, ready)` and `edit_close(s, opened)` are the pattern of an edit
-  procedure: it opens a gesture only if there is none, prepares its cancellation and closes it only
-  if it opened it; whoever writes checks `ready`. With the Play in view, edits go to that world
-  without history.
+- `edit_open(s, label) -> (opened, ready)` and `edit_close(s, opened)` (`edits.odin`) are the
+  pattern of an edit procedure: it opens a gesture only if there is none, prepares its
+  cancellation and closes it only if it opened it; whoever writes checks `ready`. With the Play
+  in view, edits go to that world without history.
 
-**Project files** (`edits_files.odin`). A file that an edit writes or deletes (a `.mat`, the
-`.slang` source of a program, a `.particle`, an animation asset) is part of the step of its
-gesture, with the same mechanism for all:
+**Project files** (`edits_files.odin`; what a step keeps of a file, `history/files.odin`). A
+file that an edit writes or deletes (a `.mat`, the `.slang` source of a program, a `.particle`,
+an animation asset) is part of the step of its gesture, with the same mechanism for all:
 
 - `file_write(s, path, bytes, label, remove=false)` changes (or deletes) the file as an edit:
   inside the open gesture or in a step of its own. With an asset document in front and without an
@@ -420,7 +420,7 @@ edited afterwards, without overwriting what another wrote later.
 
 ### Selection in undo
 
-`edits_selection.odin`.
+`history/edits_selection.odin`.
 
 - `Edits.selected` is the selection as the history knows it. A step (`edits_publish_prepared`),
   undo, redo and cancel leave it there; `edits_select` makes a step of its author (`Selection_Step`)

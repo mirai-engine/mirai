@@ -6,6 +6,7 @@ import "core:testing"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
 import paint "plugins:paint/runtime"
@@ -28,8 +29,8 @@ Paint_Test :: struct {
     ref:core.World_Ref,
     cube:core.Entity,
     app:host.App,
-    selection:editor.Selection,
-    edits:editor.Edits,
+    selection:history.Selection,
+    edits:history.Edits,
     viewport:editor.Viewport,
     gui:editor.Editor_Ui,
     session:editor.Session,
@@ -50,14 +51,14 @@ paint_test_open :: proc(t:^testing.T,f:^Paint_Test,name:string) -> bool {
     core.add(&w.meshes,f.cube,erender.Mesh_Renderer{shape=.Cube})
     core.world_settle(f.ref)
     f.app={allocator=context.allocator,assets=&f.assets}
-    editor.edits_reset(&f.edits,f.ref)
+    history.edits_reset(&f.edits,f.ref)
     f.session={app=&f.app,info=core.test_world_info(w),edit_world=&f.world,assets_root=f.root,headless=true,selection=&f.selection,edits=&f.edits,viewport=&f.viewport,gui=&f.gui}
     return true
 }
 
 @(private)
 paint_test_close :: proc(f:^Paint_Test) {
-    editor.edits_free(&f.edits)
+    history.edits_free(&f.edits)
     delete(f.selection.entities)
     core.test_world_destroy(&f.world)
     host.assets_destroy(&f.assets)
@@ -95,7 +96,7 @@ painted_copies_stay_in_memory_until_saved_and_go_with_undo_and_cancel :: proc(t:
     tool.stroke.dirty=true
     testing.expect(t,stroke_write(s,&tool,ref,app.assets,app.allocator))
     stroke_end(s,&tool,ref,app.assets,app.allocator)
-    if !testing.expect(t,editor.edits_commit(edits,ref,selection)) {return}
+    if !testing.expect(t,history.edits_commit(edits,ref,selection)) {return}
     testing.expect_value(t,edits.cursor,1)
     testing.expect_value(t,core.get(&world.meshes,e).mesh,first)
     testing.expect(t,editor.file_exists(s,first_path) && !os.exists(first_path))
@@ -114,13 +115,13 @@ painted_copies_stay_in_memory_until_saved_and_go_with_undo_and_cancel :: proc(t:
     testing.expect_value(t,core.get(&world.meshes,e).mesh,first)
     testing.expect_value(t,edits.cursor,1)
 
-    testing.expect(t,editor.undo(edits,ref,selection))
+    testing.expect(t,history.undo(edits,ref,selection))
     editor.files_settle(s)
     testing.expect_value(t,core.get(&world.meshes,e)^,cube)
     testing.expect(t,!core.has(&world.painted,e))
     testing.expect(t,!editor.file_exists(s,first_path))
     testing.expect_value(t,len(editor.assets_unsaved(s)),0)
-    testing.expect(t,editor.redo(edits,ref,selection))
+    testing.expect(t,history.redo(edits,ref,selection))
     editor.files_settle(s)
     testing.expect_value(t,core.get(&world.meshes,e).mesh,first)
     testing.expect(t,editor.file_exists(s,first_path))
@@ -177,9 +178,9 @@ paint_api_strokes_along_points_and_clears_as_steps_of_undo :: proc(t:^testing.T)
     testing.expect(t,again.failed && again.error.code==api.INVALID_PARAMS)
     testing.expect_value(t,f.edits.cursor,2)
 
-    testing.expect(t,editor.undo(&f.edits,f.ref,&f.selection))
+    testing.expect(t,history.undo(&f.edits,f.ref,&f.selection))
     testing.expect_value(t,core.get(&f.world.meshes,e).mesh,result.mesh)
-    testing.expect(t,editor.undo(&f.edits,f.ref,&f.selection))
+    testing.expect(t,history.undo(&f.edits,f.ref,&f.selection))
     editor.files_settle(s)
     testing.expect_value(t,core.get(&f.world.meshes,e)^,erender.Mesh_Renderer{shape=.Cube})
     testing.expect(t,!editor.file_exists(s,path))

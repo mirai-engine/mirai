@@ -7,6 +7,7 @@ import "core:strings"
 import "core:time"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/history"
 import scene "mirai:engine/scene"
 import "mirai:host"
 import wire "mirai:net"
@@ -292,9 +293,9 @@ collab_tables_build :: proc(s:^Session,st:^Collab_State) {
     for &t,i in s.info.tables {
         if t.place!=.World || i>=len(s.edits.saved) || !s.edits.saved[i] {continue}
         size:=t.info.size
-        ranges:=transient_ranges(t.info,context.allocator)
+        ranges:=history.transient_ranges(t.info,context.allocator)
         offsets:=entity_offsets(t.info,context.allocator)
-        st.tables[i]={used=true,size=size,hash=base.name_hash(t.name),fields=saved_fields(t.info,context.allocator),transient=ranges,entities=offsets}
+        st.tables[i]={used=true,size=size,hash=base.name_hash(t.name),fields=history.saved_fields(t.info,context.allocator),transient=ranges,entities=offsets}
         st.by_hash[st.tables[i].hash]=i
     }
 }
@@ -428,8 +429,8 @@ collab_destroy :: proc(s:^Session) {
     delete(st.files_out)
     delete(st.snapshot)
     collab_tables_free(st)
-    journal_reading(s.edits,false)
-    for &tab in s.documents {journal_reading(&tab.edits,false)}
+    history.journal_reading(s.edits,false)
+    for &tab in s.documents {history.journal_reading(&tab.edits,false)}
     free(st)
     c.state=nil
 }
@@ -991,7 +992,7 @@ collab_run_write :: proc(travels:[]u8,start,end:int,into:^serial.Writer) {
 // The others have the World as it is: what changes from now on is what they are told.
 @(private)
 collab_journal_reset :: proc(s:^Session,st:^Collab_State) {
-    st.cursor=journal_reading(s.edits,true)
+    st.cursor=history.journal_reading(s.edits,true)
     clear(&st.told)
     clear(&st.told_values)
     clear(&st.crossed)
@@ -1019,7 +1020,7 @@ collab_edits_send :: proc(s:^Session,st:^Collab_State) {
     edits:=s.edits
     if w.data!=edits.world || core.world_table_of(w,core.Id)==nil {return}
     core.world_settle(w)
-    if !journal_ranges(edits,w) {return}
+    if !history.journal_ranges(edits,w) {return}
     edits.reading=true
     keys:=make(map[Collab_Key]Collab_Before,context.temp_allocator)
     told:=slice.clone(st.told_values[:],context.temp_allocator)
@@ -1028,29 +1029,29 @@ collab_edits_send :: proc(s:^Session,st:^Collab_State) {
         if size:=st.tables[key.table].size;was.present && was.value+size<=len(told) {before.value=told[was.value:][:size]}
         keys[key]=before
     }
-    for change in journal_read(edits,&st.cursor) {
+    for change in history.journal_read(edits,&st.cursor) {
         key:=Collab_Key{change.table,change.entity}
         if key in keys {continue}
         before:=Collab_Before{id=change.id,present=change.present,off=change.off}
-        if value,kept:=journal_change_value(edits,change,st.tables[change.table].size);kept {before.value=value}
+        if value,kept:=history.journal_change_value(edits,change,st.tables[change.table].size);kept {before.value=value}
         keys[key]=before
     }
     clear(&st.told)
     clear(&st.told_values)
-    authors,only_authors:=history_authors(edits,w)
-    id_table:=journal_id_table(w)
+    authors,only_authors:=history.history_authors(edits,w)
+    id_table:=history.journal_id_table(w)
     for &info,i in w.info.tables {
         if !st.tables[i].used || i>=len(edits.image) {continue}
         table:=core.world_table_at(w,&info)
         image:=&edits.image[i]
-        if !journal_moved(table,image) {continue}
+        if !history.journal_moved(table,image) {continue}
         size:=info.info.size
-        d:=journal_diff(table,image,size,edits.ranges[i].ranges,authors,only_authors && i!=id_table)
-        for r in journal_diff_next(&d) {
+        d:=history.journal_diff(table,image,size,edits.ranges[i].ranges,authors,only_authors && i!=id_table)
+        for r in history.journal_diff_next(&d) {
             key:=Collab_Key{i32(i),r.entity}
             if key not_in keys {
-                before:=Collab_Before{id=journal_id(edits,w,id_table,r.entity),present=r.image_row>=0,off=r.image_row>=0 && image.off[r.image_row]}
-                if before.present {before.value=([^]u8)(journal_value(image,size,r.image_row))[:size]}
+                before:=Collab_Before{id=history.journal_id(edits,w,id_table,r.entity),present=r.image_row>=0,off=r.image_row>=0 && image.off[r.image_row]}
+                if before.present {before.value=([^]u8)(history.journal_value(image,size,r.image_row))[:size]}
                 keys[key]=before
             }
             st.told[key]={}
@@ -1058,7 +1059,7 @@ collab_edits_send :: proc(s:^Session,st:^Collab_State) {
     }
     present:=make(map[Collab_Row]bool,len(keys),context.temp_allocator)
     for key,before in keys {
-        id:=journal_id(edits,w,id_table,key.entity)
+        id:=history.journal_id(edits,w,id_table,key.entity)
         if id==0 {id=before.id}
         if core.raw_row(core.world_table_at(w,&w.info.tables[key.table]),key.entity)>=0 {present[{key.table,id}]=true}
     }
@@ -1068,7 +1069,7 @@ collab_edits_send :: proc(s:^Session,st:^Collab_State) {
         info:=&w.info.tables[key.table]
         t:=&st.tables[key.table]
         table:=core.world_table_at(w,info)
-        id:=journal_id(edits,w,id_table,key.entity)
+        id:=history.journal_id(edits,w,id_table,key.entity)
         if id==0 {id=before.id}
         if id==0 {continue}
         is_ids:=info.type==core.Id
@@ -1099,7 +1100,7 @@ collab_edits_send :: proc(s:^Session,st:^Collab_State) {
         }
         if key in st.told {st.told[key]=now}
     }
-    journal_read_done(edits,st.cursor)
+    history.journal_read_done(edits,st.cursor)
     if ops.count==0 {return}
     if st.role==.Host {s.document.unsaved=true}
     for message in collab_ops_pack(&ops,.Edit,st.self) {
@@ -1114,7 +1115,7 @@ collab_edits_send :: proc(s:^Session,st:^Collab_State) {
 collab_unsent :: proc(s:^Session,st:^Collab_State) -> bool {
     edits:=s.edits
     w:=edited_world(s)
-    return len(st.told)>0 || edits.changes_first+u64(len(edits.changes))!=st.cursor || !journal_settled(edits,w)
+    return len(st.told)>0 || edits.changes_first+u64(len(edits.changes))!=st.cursor || !history.journal_settled(edits,w)
 }
 
 @(private)
@@ -1159,12 +1160,12 @@ collab_run_put :: proc(es:^core.Entities,t:^Collab_Table,row:rawptr,offset:int,b
 // Whether this end has an edit of its own in a run of a row: its World and
 // its journal disagree there.
 @(private)
-collab_run_edited :: proc(edits:^Edits,w:core.World_Ref,table:int,e:core.Entity,row:rawptr,offset,size,width:int) -> bool {
+collab_run_edited :: proc(edits:^history.Edits,w:core.World_Ref,table:int,e:core.Entity,row:rawptr,offset,size,width:int) -> bool {
     if w.data!=edits.world || table>=len(edits.image) || offset+size>width {return false}
     image:=&edits.image[table]
-    image_row:=journal_row(image,e)
+    image_row:=history.journal_row(image,e)
     if image_row<0 {return true}
-    return mem.compare_ptrs(rawptr(uintptr(row)+uintptr(offset)),rawptr(uintptr(journal_value(image,width,image_row))+uintptr(offset)),size)!=0
+    return mem.compare_ptrs(rawptr(uintptr(row)+uintptr(offset)),rawptr(uintptr(history.journal_value(image,width,image_row))+uintptr(offset)),size)!=0
 }
 
 // Applies the operations of an Edit message to the World, without a step of
@@ -1260,22 +1261,22 @@ collab_edit_apply :: proc(s:^Session,st:^Collab_State,data:[]u8,own:=false) {
     // an edit of this end.
     edits:=s.edits
     if w.data==edits.world {
-        id_table:=journal_id_table(w)
+        id_table:=history.journal_id_table(w)
         for touch in touched {
             switch {
             case touch.table==id_table:
-                for i in 0..<len(edits.image) {journal_take(edits,w,i,touch.entity)}
-                journal_take_entity(edits,w,touch.entity)
-            case touch.kind==.Fields: journal_take_field(edits,w,touch.table,touch.entity,touch.offset,touch.size)
-            case touch.kind==.Turn:   journal_take_off(edits,w,touch.table,touch.entity)
-            case:                     journal_take(edits,w,touch.table,touch.entity)
+                for i in 0..<len(edits.image) {history.journal_take(edits,w,i,touch.entity)}
+                history.journal_take_entity(edits,w,touch.entity)
+            case touch.kind==.Fields: history.journal_take_field(edits,w,touch.table,touch.entity,touch.offset,touch.size)
+            case touch.kind==.Turn:   history.journal_take_off(edits,w,touch.table,touch.entity)
+            case:                     history.journal_take(edits,w,touch.table,touch.entity)
             }
             collab_told_take(st,w,touch)
         }
     }
     // What the others changed is no step of this history: the overrides derived before it are of before it.
     if s.editor_world!=nil && len(touched)>0 {prefabs_changed(s)}
-    selection_prune(s.selection,w)
+    history.selection_prune(s.selection,w)
     if st.role==.Host {s.document.unsaved=true}
 }
 

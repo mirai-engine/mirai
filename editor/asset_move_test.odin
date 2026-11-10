@@ -9,6 +9,7 @@ import "core:testing"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
@@ -380,7 +381,7 @@ the_line_of_create_renames_a_card_and_a_card_let_go_on_a_folder_moves_there :: p
     g:=Editor_Ui{ctx=&ctx}
     c:=CONTENT_DEFAULT
     defer core.value_free(&c,type_info_of(Content))
-    selection:Selection
+    selection:history.Selection
     info:core.World_Info
     session:=Session{app=&app,gui=&g,content=&c,selection=&selection,info=&info,headless=true}
     defer delete(session.asset_documents)

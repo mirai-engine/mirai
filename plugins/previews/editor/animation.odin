@@ -8,6 +8,7 @@ import "core:strings"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor"
+import "mirai:editor/history"
 import eanim "plugins:animation/runtime"
 import erender "mirai:engine/render"
 import "mirai:host"
@@ -416,7 +417,7 @@ animation_scene_subject :: proc(s:^editor.Session,scene:Scene,chosen:base.Asset_
             if value.asset==chosen {return animation_subject(scene,scene.animations.entities[row])}
         }
     }
-    return animation_subject(scene,editor.selection_active(s.selection))
+    return animation_subject(scene,history.selection_active(s.selection))
 }
 
 // Reads the subject again when it changed and draws the pose of the time when the image does not show it.

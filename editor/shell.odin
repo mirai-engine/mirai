@@ -8,6 +8,7 @@ import "core:strings"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/git"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:platform"
 import gpu "mirai:render"
@@ -1532,7 +1533,7 @@ stats_build :: proc(s:^Session,w:core.World_Ref) {
         row(ctx,"Game",fmt.tprintf("%.2f ms",app.stats.game_ms))
         row(ctx,"Editor",fmt.tprintf("%.2f ms",app.stats.editor_ms))
         row(ctx,"Entities",fmt.tprintf("%d",core.world_entities(w).alive))
-        row(ctx,"Undo steps",fmt.tprintf("%d",edits_undo_count(s.edits)))
+        row(ctx,"Undo steps",fmt.tprintf("%d",history.edits_undo_count(s.edits)))
         if r:=app.renderer;r!=nil {
             stats:=gpu.renderer_stats(r)
             row(ctx,"Render",fmt.tprintf("%.2f ms",app.stats.render_ms))

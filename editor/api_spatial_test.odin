@@ -7,6 +7,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:std/base"
@@ -32,8 +33,8 @@ Spatial_Fixture :: struct {
     w:Spatial_World,
     info:core.World_Info,
     tables:[6]core.Table_Info,
-    edits:Edits,
-    selection:Selection,
+    edits:history.Edits,
+    selection:history.Selection,
     viewport:Viewport,
     gui:Editor_Ui,
     picker:Picker,
@@ -72,7 +73,7 @@ spatial_open :: proc(f:^Spatial_Fixture) {
     f.lamp=entity(w,4,"Lamp",{position={3,2,0},rotation=1,scale={1,1,1}},false)
     f.ramp=entity(w,5,"Ramp",{position={20,0,0},rotation=mm.quat_axis_angle({0,0,1},30*mm.RAD_PER_DEG),scale={6,0.2,6}},true)
     f.boulder=entity(w,6,"Boulder",{position={20,5,0},rotation=1,scale={1,1,1}},true)
-    edits_reset(&f.edits,{data=w,info=&f.info})
+    history.edits_reset(&f.edits,{data=w,info=&f.info})
     f.viewport={size={800,600}}
     f.viewport.view_matrix=mm.look_at({0,3,10},{0,3,0},{0,1,0})
     f.viewport.projection=mm.perspective(50*mm.RAD_PER_DEG,800.0/600,0.1,100)
@@ -80,12 +81,12 @@ spatial_open :: proc(f:^Spatial_Fixture) {
     f.s=Session{info=&f.info,edit_world=w,edits=&f.edits,selection=&f.selection,viewport=&f.viewport,gui=&f.gui,picker=&f.picker,app=&f.app}
     ref:=edited_world(&f.s)
     core.world_settle(ref)
-    edits_reset(&f.edits,ref)
+    history.edits_reset(&f.edits,ref)
 }
 
 @(private="file")
 spatial_close :: proc(f:^Spatial_Fixture) {
-    edits_free(&f.edits)
+    history.edits_free(&f.edits)
     picker_clear(&f.picker);delete(f.picker.meshes)
     delete(f.selection.entities)
     viewport_free(&f.viewport)
@@ -210,19 +211,19 @@ scene_ground_rests_entities_on_what_is_under_them_as_one_undo :: proc(t:^testing
     copy(params.entities[0][:],"Crate")
     copy(params.entities[1][:],"Lamp")
     result:Api_Ground_Result
-    undo_before:=edits_undo_count(&f.edits)
+    undo_before:=history.edits_undo_count(&f.edits)
     call:=spatial_call(f,api_scene_ground,&method,&params,&result,`{"entities":["Crate","Lamp"]}`)
     testing.expect(t,!call.failed,call.error.message)
     testing.expect(t,abs(spatial_y(f,f.crate)-0.5)<1e-3 && abs(spatial_y(f,f.lamp))<1e-3,"the bottom of the crate and the point of the lamp rest on the floor")
     testing.expect(t,abs(spatial_y(f,f.lid)-1)<1e-3,"what hangs from it keeps its local place")
     testing.expect(t,result.entities[0].id==2 && abs(result.entities[0].moved+2.5)<1e-3 && near3(result.entities[0].position,{0,0.5,0}))
     testing.expect(t,result.entities[1].id==4 && abs(result.entities[1].moved+2)<1e-3 && near3(result.entities[1].world_position,{3,0,0}))
-    testing.expect_value(t,edits_undo_count(&f.edits),undo_before+1)
-    testing.expect(t,undo(&f.edits,w,&f.selection))
+    testing.expect_value(t,history.edits_undo_count(&f.edits),undo_before+1)
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
     testing.expect(t,abs(spatial_y(f,f.crate)-3)<1e-3 && abs(spatial_y(f,f.lamp)-2)<1e-3,"one undo puts both back")
     // Buried: it rises to the surface, with the offset over it.
     core.get(&f.w.transforms,f.crate).position.y=-0.2
-    core.world_settle(w);edits_reset(&f.edits,w)
+    core.world_settle(w);history.edits_reset(&f.edits,w)
     params={offset=0.1}
     copy(params.entities[0][:],"Crate")
     result={}
@@ -246,16 +247,16 @@ scene_ground_fails_whole_and_says_which_entity :: proc(t:^testing.T) {
     spatial_open(f);defer spatial_close(f)
     w:=edited_world(&f.s)
     core.get(&f.w.transforms,f.lamp).position={50,2,0}
-    core.world_settle(w);edits_reset(&f.edits,w)
+    core.world_settle(w);history.edits_reset(&f.edits,w)
     method:=api.Method{params_id=Api_Ground_Params,result_id=Api_Ground_Result}
     params:Api_Ground_Params
     copy(params.entities[0][:],"Crate")
     copy(params.entities[1][:],"Lamp")
     result:Api_Ground_Result
-    undo_before:=edits_undo_count(&f.edits)
+    undo_before:=history.edits_undo_count(&f.edits)
     call:=spatial_call(f,api_scene_ground,&method,&params,&result,`{"entities":["Crate","Lamp"]}`)
     testing.expect(t,call.failed && call.error.code==api.INVALID_PARAMS && strings.contains(call.error.message,`entities[1]: nothing shown is under 0x0000000000000004 "Lamp"`),call.error.message)
-    testing.expect(t,abs(spatial_y(f,f.crate)-3)<1e-3 && edits_undo_count(&f.edits)==undo_before,"nothing moves and no step is left")
+    testing.expect(t,abs(spatial_y(f,f.crate)-3)<1e-3 && history.edits_undo_count(&f.edits)==undo_before,"nothing moves and no step is left")
     params={}
     copy(params.entities[0][:],"Crate")
     copy(params.entities[1][:],"Lid")

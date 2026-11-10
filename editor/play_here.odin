@@ -2,6 +2,7 @@ package editor
 
 import "core:math/linalg"
 import "mirai:core"
+import "mirai:editor/history"
 import scene "mirai:engine/scene"
 import mm "mirai:std/math"
 import "mirai:ui"
@@ -88,8 +89,8 @@ viewport_menu_items :: proc(s:^Session,m:^Viewport_Menu) {
     for e,i in m.entities[:m.count] {
         if !entity_alive(w,e) {continue}
         icon,color:=entity_icon(s,w,e)
-        if ui.menu_item(ctx,ui.id(ctx,"entity",i+1),entity_label(w,e),{icon=icon,icon_color=color,checked=selection_has(s.selection,e)}) {
-            selection_set(s.selection,{e})
+        if ui.menu_item(ctx,ui.id(ctx,"entity",i+1),entity_label(w,e),{icon=icon,icon_color=color,checked=history.selection_has(s.selection,e)}) {
+            history.selection_set(s.selection,{e})
             outliner_reveal(s.outliner,w,e)
         }
     }

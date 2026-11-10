@@ -8,6 +8,7 @@ import "core:strconv"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/history"
 import eaudio "mirai:engine/audio"
 import evolume "mirai:engine/volume"
 import erender "mirai:engine/render"
@@ -506,7 +507,7 @@ tool_on :: proc(s:^Session,name:string) -> bool {
 tool_preview_begin :: proc(s:^Session,name,label:string) -> bool {
     if s.mode!=.Edit || !tool_on(s,name) || s.edits.preview {return false}
     tools_release(s)
-    if !edits_commit(s.edits,edited_world(s),s.selection) && s.edits.error!=.No_Change {return false}
+    if !history.edits_commit(s.edits,edited_world(s),s.selection) && s.edits.error!=.No_Change {return false}
     _,edit_ready:=edit_open(s,label)
     if !edit_ready {return false}
     s.edits.preview=true
@@ -521,8 +522,8 @@ tool_preview_end :: proc(s:^Session,name:string,apply:bool) -> bool {
     if !tool_preview_active(s,name) {return false}
     if !apply {tool_preview_cancel(s);return true}
     s.edits.preview=false
-    edits_end(s.edits)
-    if !edits_commit(s.edits,edited_world(s),s.selection) && s.edits.error!=.No_Change {s.edits.preview=true;return false}
+    history.edits_end(s.edits)
+    if !history.edits_commit(s.edits,edited_world(s),s.selection) && s.edits.error!=.No_Change {s.edits.preview=true;return false}
     return true
 }
 
@@ -530,8 +531,8 @@ tool_preview_end :: proc(s:^Session,name:string,apply:bool) -> bool {
 tool_preview_cancel :: proc(s:^Session) {
     if s.edits==nil || !s.edits.preview {return}
     w:=edited_world(s)
-    edits_cancel(s.edits,w)
-    selection_restore(s.selection,w,s.edits.selection[:])
+    history.edits_cancel(s.edits,w)
+    history.selection_restore(s.selection,w,s.edits.selection[:])
 }
 
 // The tool that holds the pointer goes on or lets go; with none, a press on
@@ -641,10 +642,10 @@ tools_update :: proc(s:^Session,w:core.World_Ref) {
         }
         entity:=selection_click_target(s,w,hit.entity,v.individual)
         switch {
-        case v.toggle:          if entity!=core.NONE {selection_toggle(s.selection,entity)}
-        case v.add:             if entity!=core.NONE {selection_add(s.selection,entity)}
-        case entity!=core.NONE: selection_set(s.selection,{entity})
-        case:                   selection_clear(s.selection)
+        case v.toggle:          if entity!=core.NONE {history.selection_toggle(s.selection,entity)}
+        case v.add:             if entity!=core.NONE {history.selection_add(s.selection,entity)}
+        case entity!=core.NONE: history.selection_set(s.selection,{entity})
+        case:                   history.selection_clear(s.selection)
         }
         if entity!=core.NONE {outliner_reveal(s.outliner,w,entity)}
     }
@@ -668,10 +669,10 @@ rect_from_points :: proc "contextless" (a,b:[2]f32) -> ui.Rect {
 
 // Selects what has its origin, or its whole box on the screen, inside a rectangle.
 marquee_select :: proc(s:^Session,w:core.World_Ref,rect:ui.Rect,add:bool) {
-    if !add {selection_clear(s.selection)}
+    if !add {history.selection_clear(s.selection)}
     items:=scene_items(s,w,ghosts_shown(s))
     for item in scene_item_next(&items) {
-        if e:=marquee_entity(s,w,item,rect);e!=core.NONE {selection_add(s.selection,e)}
+        if e:=marquee_entity(s,w,item,rect);e!=core.NONE {history.selection_add(s.selection,e)}
     }
 }
 
@@ -732,12 +733,12 @@ placement_commit :: proc(s:^Session,w:core.World_Ref,d:Drag,hit:Pick,select:bool
     if d.kind==.Asset {content_used(s,d.asset_id)}
     if d.kind==.Asset && d.asset_kind==asset.KIND_PREFAB {
         root:=prefab_place_linked(s,d.asset_id,point)
-        if select && root!=core.NONE {selection_set(s.selection,{root})}
+        if select && root!=core.NONE {history.selection_set(s.selection,{root})}
         return
     }
     if d.kind==.Asset && d.asset_kind==asset.KIND_SCENE {
         root:=section_place(s,d.asset_id,point,asset_label(&d))
-        if select && root!=core.NONE {selection_set(s.selection,{root})}
+        if select && root!=core.NONE {history.selection_set(s.selection,{root})}
         return
     }
     card:=d.kind==.Preset?d.card:int(Preset.Empty)
@@ -750,7 +751,7 @@ placement_commit :: proc(s:^Session,w:core.World_Ref,d:Drag,hit:Pick,select:bool
     } else if d.kind==.Asset {
         if t:=core.world_table_of(w,erender.Mesh_Renderer);t!=nil {core.add(t,e,erender.Mesh_Renderer{mesh=d.asset_id})}
     }
-    if select {selection_set(s.selection,{e})}
+    if select {history.selection_set(s.selection,{e})}
 }
 
 // Where something dropped on the scene goes: on the surface under the
@@ -776,7 +777,7 @@ ground_point :: proc(ray:mm.Ray) -> (point:[3]f32,ok:bool) {
 // A prefab of the assets placed in the scene as an instance linked to it, as one step.
 prefab_place :: proc(s:^Session,w:core.World_Ref,prefab:base.Asset_Id,point:[3]f32) -> core.Entity {
     root:=prefab_place_linked(s,prefab,point)
-    if root!=core.NONE {selection_set(s.selection,{root})}
+    if root!=core.NONE {history.selection_set(s.selection,{root})}
     return root
 }
 

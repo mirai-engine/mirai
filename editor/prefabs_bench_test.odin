@@ -5,6 +5,7 @@ import "core:testing"
 import "core:time"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/history"
 
 // The time of a Save, which derives the overrides of every instance, and of
 // placing one instance more, in a scene that holds many. Run with
@@ -22,7 +23,7 @@ prefab_save_and_placing_in_a_scene_of_many_instances :: proc(t:^testing.T) {
     s:=&f.s
     w:=edited_world(s)
     crate,_,_:=prefab_test_crate(f)
-    edits_reset(&f.edits,w)
+    history.edits_reset(&f.edits,w)
     id,created:=prefab_create(s,crate,"crate")
     if !testing.expect_value(t,created,Prefab_Error.None) {return}
     filling:=time.tick_now()

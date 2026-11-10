@@ -2,6 +2,7 @@ package editor
 
 import "core:testing"
 import "mirai:core"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:std/base"
 import "mirai:ui"
@@ -102,17 +103,17 @@ the_fade_of_a_layer_is_edited_under_its_row_as_one_undo_step :: proc(t:^testing.
 	if !testing.expect(t,ui.context_init(&ctx,{no_font=true})) {return}
 	defer ui.context_destroy(&ctx)
 	gui:=Editor_Ui{ctx=&ctx}
-	edits:Edits
-	selection:Selection
+	edits:history.Edits
+	selection:history.Selection
 	viewport:Viewport
 	inspector:Inspector
 	materials:Materials
 	s:=Session{info=&info,edit_world=&world,edits=&edits,selection=&selection,viewport=&viewport,gui=&gui,inspector=&inspector,materials=&materials}
 	w:=edited_world(&s)
-	edits_reset(&edits,w)
-	defer edits_free(&edits)
+	history.edits_reset(&edits,w)
+	defer history.edits_free(&edits)
 	defer delete(selection.entities)
-	selection_set(&selection,{e})
+	history.selection_set(&selection,{e})
 	fade :: proc(w:^Post_Process_Test_World,e:core.Entity) -> f32 {
 		v,_:=core.get(core.read(&w.volumes),e)
 		return v.layers[0].fade
@@ -129,8 +130,8 @@ the_fade_of_a_layer_is_edited_under_its_row_as_one_undo_step :: proc(t:^testing.
 	if !testing.expect(t,found && track.w>12,"the layer has a fade slider") {return}
 	frame(&s,&world,e,{size=size,pointer=ui.rect_center(track),down={.Left},pressed={.Left}})
 	frame(&s,&world,e,{size=size,pointer=ui.rect_center(track),released={.Left}})
-	edits_flush(&edits,w,&selection)
+	history.edits_flush(&edits,w,&selection)
 	testing.expectf(t,abs(fade(&world,e)-0.5)<0.01,"the middle of the slider is half the fade: %v",fade(&world,e))
-	testing.expect(t,undo(&edits,w,&selection))
+	testing.expect(t,history.undo(&edits,w,&selection))
 	testing.expect_value(t,fade(&world,e),f32(0))
 }

@@ -783,9 +783,11 @@ the user looks at the result, adjusts values and chooses among variants.
 
 ### Records document
 
-`records_document.odin`. A `.records`: a grid with a row per record and a column per field, and on
-the right all the fields of the chosen row with the Details rows (`held_field_row`). On top, the
-type's description; that of a field appears on hovering the name of its column.
+`records_document.odin`, over the table as the package `editor/records` changes it (rows, names,
+ids and texts, without the session). A `.records`: a grid with a row per record and a column per
+field, and on the right all the fields of the chosen row with the Details rows
+(`held_field_row`). On top, the type's description; that of a field appears on hovering the name
+of its column.
 
 - **Columns** (`records_columns_make`): the type's fields, with structs opened up to
   `RECORDS_COLUMN_DEPTH` levels and arrays of up to `RECORDS_ARRAY_COLUMNS` elements, one per

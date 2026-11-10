@@ -3,6 +3,7 @@ package shapes_editor
 import "core:math/linalg"
 import "mirai:core"
 import "mirai:editor"
+import "mirai:editor/history"
 import shapes "plugins:shapes/runtime"
 import mm "mirai:std/math"
 
@@ -51,7 +52,7 @@ corner_drag_move :: proc(s:^editor.Session,drag:^Corner_Drag,to:[2]f32) -> shape
     _,info:=core.world_table(w,shapes.Shape)
     if info==nil {return .Invalid}
     if !drag.opened {
-        if !editor.edits_begin(s.edits,s.selection,"Move corner") {return .Invalid}
+        if !history.edits_begin(s.edits,s.selection,"Move corner") {return .Invalid}
         drag.opened=true
     }
     if !shape_write(s,w,info,drag.entity,&t) {return .Invalid}
@@ -61,12 +62,12 @@ corner_drag_move :: proc(s:^editor.Session,drag:^Corner_Drag,to:[2]f32) -> shape
 
 // The drag becomes its step; without a move that applied there is none.
 corner_drag_end :: proc(s:^editor.Session,drag:^Corner_Drag) {
-    if drag.opened {editor.edits_end(s.edits)}
+    if drag.opened {history.edits_end(s.edits)}
     drag^={}
 }
 
 corner_drag_cancel :: proc(s:^editor.Session,drag:^Corner_Drag) {
-    if drag.opened {editor.edits_cancel(s.edits,editor.editing_world(s))}
+    if drag.opened {history.edits_cancel(s.edits,editor.editing_world(s))}
     drag^={}
 }
 
@@ -86,10 +87,10 @@ corner_edit :: proc(s:^editor.Session,e:core.Entity,op:Corner_Op,index:int,at:[2
     }
     if error!=.None {return error}
     opened:=!s.edits.open
-    if opened && !editor.edits_begin(s.edits,s.selection,label) {return .Invalid}
+    if opened && !history.edits_begin(s.edits,s.selection,label) {return .Invalid}
     written:=shape_write(s,w,info,e,&shape)
     if opened {
-        if written {editor.edits_end(s.edits)} else {editor.edits_cancel(s.edits,w)}
+        if written {history.edits_end(s.edits)} else {history.edits_cancel(s.edits,w)}
     }
     return written?.None:.Invalid
 }

@@ -7,6 +7,7 @@ import "core:slice"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
 import gpu "mirai:render"
@@ -313,7 +314,7 @@ material_apply :: proc(s:^Session,e:core.Entity,slot:int) -> (material:base.Asse
     if !found {return {},"The default material has no file: give the entity a material to apply to"}
     relative:=strings.clone(record.path,context.temp_allocator)
     opened,edit_ready:=edit_open(s,"Apply to material")
-    if !edit_ready {return {},edits_error_text(s.edits.error)}
+    if !edit_ready {return {},history.edits_error_text(s.edits.error)}
     defer edit_close(s,opened)
     if !material_write(s,material,{kind=.Override,override=&given}) {return {},"The material could not be written"}
     table:=core.world_table_of(w,erender.Material_Override)
@@ -1246,7 +1247,7 @@ material_list_build :: proc(s:^Session,w:core.World_Ref) {
     mesh_value:base.Asset_Id
     if (l.kind==.Material || l.kind==.Asset) && l.table>=0 && l.table<len(w.info.tables) {
         t:=&w.info.tables[l.table]
-        if v:=core.raw_find(core.world_table_at(w,t),t.info,selection_active(s.selection));v!=nil {
+        if v:=core.raw_find(core.world_table_at(w,t),t.info,history.selection_active(s.selection));v!=nil {
             mesh_value=(cast(^base.Asset_Id)rawptr(uintptr(v)+uintptr(l.offset)))^
         }
     }

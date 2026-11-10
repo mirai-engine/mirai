@@ -7,6 +7,7 @@ import "core:path/filepath"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
@@ -53,7 +54,7 @@ assets_unsaved_paths :: proc(s:^Session,allocator:=context.temp_allocator) -> []
 // for one of the engine.
 unsaved_name :: proc(s:^Session,path:string) -> string {
     if !asset.registry_outside(path) {return path}
-    if relative:=file_relative(s,path);relative!=path {return relative}
+    if relative:=history.file_relative(s.project_root,path);relative!=path {return relative}
     if s.engine_root!="" && strings.has_prefix(path,s.engine_root) && len(path)>len(s.engine_root) && path[len(s.engine_root)]=='/' {
         return strings.concatenate({"engine",path[len(s.engine_root):]},context.temp_allocator)
     }

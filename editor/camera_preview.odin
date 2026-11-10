@@ -2,6 +2,7 @@ package editor
 
 import "core:mem"
 import "mirai:core"
+import "mirai:editor/history"
 import ecamera "mirai:engine/camera"
 import erender "mirai:engine/render"
 import "mirai:std/base"
@@ -33,7 +34,7 @@ camera_preview_start :: proc(s:^Session,camera:core.Entity) -> bool {
     if s.mode!=.Edit || !entity_has(edited_world(s),camera,erender.Camera) || !play_start(s,true) {return false}
     tools_release(s)
     s.camera_run={camera=camera}
-    selection_set(s.selection,{camera})
+    history.selection_set(s.selection,{camera})
     return true
 }
 
@@ -59,7 +60,7 @@ camera_preview_show :: proc(s:^Session,w:core.World_Ref,camera:core.Entity) {
         blend=activation.blend
     } else if activation,ok=entity_get(w,s.camera_run.camera,ecamera.Camera_Activation);ok {blend=activation.blend}
     s.camera_run.camera,s.camera_run.blend=camera,blend
-    selection_set(s.selection,{camera})
+    history.selection_set(s.selection,{camera})
 }
 
 // The cameras of the document, whose changes Keep writes.
@@ -133,7 +134,7 @@ camera_preview_end :: proc(s:^Session,keep:bool) {
         append(&kept,k)
     }
     play_stop(s,true)
-    if !edits_commit(s.edits,edited,s.selection) && s.edits.error!=.No_Change {return}
+    if !history.edits_commit(s.edits,edited,s.selection) && s.edits.error!=.No_Change {return}
     opened,ready:=edit_open(s,"Preview cameras")
     if !ready {return}
     _,lens_info:=core.world_table(edited,erender.Camera)
@@ -150,5 +151,5 @@ camera_preview_end :: proc(s:^Session,keep:bool) {
         }
     }
     edit_close(s,opened)
-    if !edits_commit(s.edits,edited,s.selection) && s.edits.error!=.No_Change {edits_cancel(s.edits,edited)}
+    if !history.edits_commit(s.edits,edited,s.selection) && s.edits.error!=.No_Change {history.edits_cancel(s.edits,edited)}
 }

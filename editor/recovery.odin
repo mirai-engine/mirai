@@ -9,6 +9,7 @@ import "core:strings"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:platform"
 import "mirai:project"
 import "mirai:std/base"
@@ -225,7 +226,7 @@ document_recovery :: proc(s:^Session) -> bool {
     file:=recovery_file(s,slot)
     if folder:=project.folder_path(s.project_root,.Generated,context.temp_allocator);!os.is_dir(folder) {_=os.make_directory_all(folder)}
     w.path=strings.clone(file,allocator)
-    w.saved,w.error,w.busy=edits_scene_state(s.edits),.None,true
+    w.saved,w.error,w.busy=history.edits_scene_state(s.edits),.None,true
     jobs.run(&s.app.jobs,jobs.OWNER,recovery_write,w,&w.counter)
     // Without threads a job runs when it is waited for.
     if jobs.worker_count(&s.app.jobs)==1 {return recovery_wait(s)}
@@ -297,7 +298,7 @@ recovery_park :: proc(s:^Session) {
     recovery_wait(s)
     if l.following && l.world==s.edits.world && l.epoch==s.edits.epoch {recovery_log_write(s)}
     covered:=l.following && !l.failed && (l.base==.Source || r.owned)
-    if document_dirty(s) && !covered && r.saved!=edits_scene_state(s.edits) {
+    if document_dirty(s) && !covered && r.saved!=history.edits_scene_state(s.edits) {
         document_recovery(s)
         recovery_wait(s)
     }
@@ -408,14 +409,14 @@ recovery_update :: proc(s:^Session) {
         if r.owned {recovery_remove(s)}
         // A clean document begins a chain over its saved file.
         if l.following && (l.records>0 || l.base!=.Source && document_file(s.document)!="") {recovery_log_end(s,true)}
-        r.saved,r.deadline=edits_scene_state(s.edits),0
+        r.saved,r.deadline=history.edits_scene_state(s.edits),0
         return
     }
     now:=platform.clock_ns()
     due:=r.deadline
     if l.failed || !l.following {
         // Without the log, the copy follows every change after a second, as it did before it.
-        if r.saved==edits_scene_state(s.edits) {return}
+        if r.saved==history.edits_scene_state(s.edits) {return}
         if due==0 {r.deadline=now+RECOVERY_DELAY;return}
     } else {
         // A chain over a copy not written yet (a document without a file) has no base a start finds.
@@ -562,7 +563,7 @@ recovery_found_restore :: proc(s:^Session,found:^Recovery_Found) -> string {
     }
     r.slot,r.owned=found.slot,found.scene
     r.log.keep,r.log.following=true,false
-    r.saved,r.deadline=edits_scene_state(s.edits),platform.clock_ns()
+    r.saved,r.deadline=history.edits_scene_state(s.edits),platform.clock_ns()
     return ""
 }
 

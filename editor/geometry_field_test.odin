@@ -2,6 +2,7 @@ package editor
 
 import "core:testing"
 import "mirai:core"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:ui"
@@ -14,7 +15,7 @@ geometry_selector_works_without_selection_and_preserves_materials :: proc(t:^tes
     g:=Editor_Ui{ctx=&ctx}
     app:host.App
     ins:Inspector
-    selection:Selection
+    selection:history.Selection
     session:=Session{app=&app,gui=&g,inspector=&ins,selection=&selection}
     field:=ui.Id(123)
     mesh:=erender.Mesh_Renderer{shape=.Cube,materials={0=1,1=2}}

@@ -7,6 +7,7 @@ import "core:strings"
 import build "mirai:cook/build"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import scene "mirai:engine/scene"
 import "mirai:host"
 import "mirai:project"
@@ -153,7 +154,7 @@ library_migrate :: proc(s:^Session,library:^host.Project_Library) -> bool {
     }
     replay_free(s)
     collab_leave(s)
-    edits_commit(s.edits,edited_world(s),s.selection)
+    history.edits_commit(s.edits,edited_world(s),s.selection)
     for slot in s.app.worlds {
         if slot.data!=nil {core.world_settle(core.world_ref(slot.data,s.info))}
     }

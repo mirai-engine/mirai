@@ -11,6 +11,7 @@ import "core:testing"
 import img "mirai:cook/image"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import input "mirai:engine/input"
 import "mirai:host"
 import "mirai:platform"
@@ -216,8 +217,8 @@ Probe :: struct {
     app:host.App,
     data:rawptr,
     hero,foe,seat:core.Entity,
-    edits:Edits,
-    selection:Selection,
+    edits:history.Edits,
+    selection:history.Selection,
     viewport:Viewport,
     gui:Editor_Ui,
     document:Document,
@@ -283,8 +284,8 @@ probe_open :: proc(t:^testing.T,f:^Probe) -> bool {
     f.viewport={orbit=ORBIT_DEFAULT}
     f.gui={layout={left_open=true,right_open=true,library_tab=.Content,bottom_open=true}}
     f.s={app=&f.app,info=&f.info,edit_world=f.data,editor_world=&f.editor,edits=&f.edits,selection=&f.selection,viewport=&f.viewport,gui=&f.gui,document=&f.document,build=&f.build}
-    edits_reset(&f.edits,edited_world(&f.s))
-    f.document.saved=edits_state(&f.edits)
+    history.edits_reset(&f.edits,edited_world(&f.s))
+    f.document.saved=history.edits_state(&f.edits)
     if !testing.expect(t,api_open(&f.s,0,true)==.None) {return false}
     api_state(&f.s).poll_temp=context.temp_allocator
     serial.writer_init(&f.out)
@@ -296,7 +297,7 @@ probe_close :: proc(f:^Probe) {
     serial.writer_destroy(&f.out)
     runs_stop(&f.s)
     api_close(&f.s)
-    edits_free(&f.edits)
+    history.edits_free(&f.edits)
     delete(f.selection.entities)
     delete(f.s.edit_selection.entities)
     host.app_world_scratch_free(&f.app)
@@ -1164,8 +1165,8 @@ probe_drive :: proc(f:^Probe) {
         world.view=core.View{rotation=1,fov=90*math.RAD_PER_DEG,near=0.1,size={800,600}}
         probe_settle(world,nil,nil)
     }
-    edits_reset(&f.edits,edited_world(&f.s))
-    f.document.saved=edits_state(&f.edits)
+    history.edits_reset(&f.edits,edited_world(&f.s))
+    f.document.saved=history.edits_state(&f.edits)
     api_state(&f.s).step_frame=probe_frame
 }
 
@@ -1215,7 +1216,7 @@ play_start_restarts_on_a_changed_document_and_without_a_game_calls_say_so :: pro
     error,_=probe_call(f,"scene.set",`{"entity":"Hero","name":"Renamed"}`)
     testing.expect_value(t,error.code,0)
     testing.expect(t,run_find(&f.s,0).world==world,"an edit alone does not touch the run")
-    f.document.saved=edits_state(&f.edits)
+    f.document.saved=history.edits_state(&f.edits)
     error,_=probe_call(f,"play.start",`{}`)
     testing.expect_value(t,error.code,0)
     testing.expect(t,run_find(&f.s,7).world==other,"the run of another owner stays")

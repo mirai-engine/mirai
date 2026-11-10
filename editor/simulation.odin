@@ -5,6 +5,7 @@ import "core:math"
 import "core:slice"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:std/base"
 import mm "mirai:std/math"
 
@@ -38,19 +39,19 @@ simulation_apply_poses :: proc(s:^Session,poses:[]Simulation_Pose) -> bool {
     for e,i in entities {placed[i]={parent_table!=nil?core.depth_of(core.read(parent_table),e):0,i}}
     slice.sort_by(placed,proc(a,b:Placed) -> bool {return a.depth<b.depth})
     tools_release(s)
-    if !edits_commit(s.edits,w,s.selection) && s.edits.error!=.No_Change {return false}
+    if !history.edits_commit(s.edits,w,s.selection) && s.edits.error!=.No_Change {return false}
     _,edit_ready:=edit_open(s,"Apply simulation")
     if !edit_ready {return false}
     for item in placed {
         e:=entities[item.pose]
         local,ok:=core.local_under(core.read(transforms),core.read(parent_table),entity_parent(w,e),simulation_transform(poses[item.pose]))
         if !ok || !transform_set(s,e,local) {
-            edits_cancel(s.edits,w)
+            history.edits_cancel(s.edits,w)
             return false
         }
     }
-    edits_end(s.edits)
-    if !edits_commit(s.edits,w,s.selection) && s.edits.error!=.No_Change {edits_cancel(s.edits,w);return false}
+    history.edits_end(s.edits)
+    if !history.edits_commit(s.edits,w,s.selection) && s.edits.error!=.No_Change {history.edits_cancel(s.edits,w);return false}
     return true
 }
 
@@ -132,5 +133,5 @@ api_simulation_apply :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.INVALID_PARAMS,"Give distinct entities that exist in both the document and the simulation")
         return
     }
-    api.call_result(call,Api_History_Result)^={edits_undo_count(s.edits),edits_redo_count(s.edits),0}
+    api.call_result(call,Api_History_Result)^={history.edits_undo_count(s.edits),history.edits_redo_count(s.edits),0}
 }

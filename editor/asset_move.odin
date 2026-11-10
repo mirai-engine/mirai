@@ -8,6 +8,7 @@ import "core:path/filepath"
 import "core:strings"
 import "mirai:asset"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
@@ -354,7 +355,7 @@ asset_document_remap :: proc(doc:^asset.Document,ids:map[base.Asset_Id]base.Asse
 // moved with them.
 @(private)
 asset_history_moved :: proc(s:^Session,from,to:string,folder:bool) {
-    rename :: proc(files:[]Edit_File,from,to:string,folder:bool) {
+    rename :: proc(files:[]history.Edit_File,from,to:string,folder:bool) {
         for &file in files {
             if file.path!=from && !(folder && asset_path_inside(file.path,from)) {continue}
             moved:=strings.concatenate({to,file.path[len(from):]})

@@ -9,6 +9,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import scene "mirai:engine/scene"
 import "mirai:host"
@@ -104,9 +105,9 @@ Prefab_Fixture :: struct {
     assets:host.Assets,
     app:host.App,
     viewport:Viewport,
-    selection:Selection,
+    selection:history.Selection,
     inspector:Inspector,
-    edits:Edits,
+    edits:history.Edits,
     document:Document,
     using editor:Prefab_Fixture_Editor,
     outliner:Outliner,
@@ -149,7 +150,7 @@ prefab_fixture_init :: proc(f:^Prefab_Fixture,name:string) -> bool {
 prefab_fixture_destroy :: proc(f:^Prefab_Fixture) {
     prefabs_free(&f.s)
     document_previous_free(&f.document)
-    edits_free(&f.edits)
+    history.edits_free(&f.edits)
     core.value_free(&f.inspector,type_info_of(Inspector))
     delete(f.selection.entities)
     delete(f.app.worlds)
@@ -166,7 +167,7 @@ Prefab_Fixture_Editor :: struct {prefabs:Prefabs,collab:Collab,api:Api}
 // Commits what was edited, as the end of a frame does.
 @(private)
 prefab_fixture_step :: proc(f:^Prefab_Fixture) {
-    edits_commit(&f.edits,edited_world(&f.s),&f.selection)
+    history.edits_commit(&f.edits,edited_world(&f.s),&f.selection)
 }
 
 @(private="file")
@@ -292,9 +293,9 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     app:=host.App{assets=&assets,info=&info,allocator=context.allocator}
     defer delete(app.worlds)
     viewport:Viewport
-    selection:Selection
+    selection:history.Selection
     inspector:Inspector
-    edits:Edits
+    edits:history.Edits
     document:Document
     prefabs:Prefabs
     ai:=new(Ai)
@@ -308,7 +309,7 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     s.gui,s.viewport,s.selection,s.inspector,s.edits,s.document,s.outliner,s.ai=&g,&viewport,&selection,&inspector,&edits,&document,&outliner,ai
     defer delete(selection.entities)
     defer core.value_free(&inspector,type_info_of(Inspector))
-    defer edits_free(&edits)
+    defer history.edits_free(&edits)
     defer document_previous_free(&document)
     defer prefabs_free(s)
     w:=edited_world(s)
@@ -316,8 +317,8 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     second:=entity_create(s,{name="Second",transform={position={6,0,0},rotation=1,scale={1,1,1}}})
     core.world_settle(w)
     first_id,second_id:=api_entity_id(w,first),api_entity_id(w,second)
-    edits_reset(&edits,w)
-    selection_set(&selection,{first,second})
+    history.edits_reset(&edits,w)
+    history.selection_set(&selection,{first,second})
     testing.expect(t,!prefab_action_disabled(s,.Prefab_Create))
     testing.expect(t,os.write_entire_file(fmt.tprintf("%s/blocked",root),[]u8{1})==nil)
     _,failed:=prefab_create_entities(s,selection.entities[:],"blocked/pair")
@@ -332,34 +333,34 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     if error!=.None {return}
     testing.expect_value(t,edits.cursor,1)
     testing.expect_value(t,core.count(&world.instances),1)
-    group:=selection_active(&selection)
+    group:=history.selection_active(&selection)
     group_id:=api_entity_id(w,group)
     first,second=api_entity(w,first_id),api_entity(w,second_id)
-    selection_clear(&selection)
+    history.selection_clear(&selection)
     testing.expect_value(t,selection_click_target(s,w,first,false),group)
     testing.expect_value(t,selection_click_target(s,w,first,true),first)
-    selection_set(&selection,{group})
+    history.selection_set(&selection,{group})
     testing.expect_value(t,selection_click_target(s,w,first,false),first)
-    selection_set(&selection,{first})
+    history.selection_set(&selection,{first})
     testing.expect_value(t,selection_click_target(s,w,second,false),second)
-    selection_set(&selection,{group})
+    history.selection_set(&selection,{group})
     testing.expect_value(t,entity_parent(w,first),group)
     testing.expect_value(t,entity_parent(w,second),group)
     testing.expect_value(t,entity_world(w,first).position,([3]f32{2,0,0}))
     testing.expect_value(t,entity_world(w,second).position,([3]f32{6,0,0}))
     file:=fmt.tprintf("%s/pair.prefab",root)
     testing.expect(t,file_exists(s,file) && !os.exists(file),"the prefab is an unsaved file of the step")
-    testing.expect(t,undo(&edits,w,&selection))
+    testing.expect(t,history.undo(&edits,w,&selection))
     testing.expect(t,!file_exists(s,file) && core.count(&world.instances)==0)
     testing.expect_value(t,world.entities.alive,2)
     testing.expect_value(t,len(selection.entities),2)
-    testing.expect(t,redo(&edits,w,&selection))
+    testing.expect(t,history.redo(&edits,w,&selection))
     testing.expect(t,file_exists(s,file) && core.count(&world.instances)==1)
     group=api_entity(w,group_id)
     group_placement:=core.to_math(core.Transform{{11,7,-3},quaternion(x=0,y=0.6,z=0,w=0.8),{2,3,4}})
     transform_set(s,group,group_placement)
-    edits_commit(&edits,w,&selection)
-    selection_set(&selection,{group})
+    history.edits_commit(&edits,w,&selection)
+    history.selection_set(&selection,{group})
     testing.expect(t,prefab_action_disabled(s,.Prefab_Apply) && prefab_action_disabled(s,.Prefab_Revert))
     testing.expect_value(t,overrides_held(s),0)
     root_field:=inspect_component(s,w,core.Transform,{group})
@@ -369,31 +370,31 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     testing.expect(t,!inspect_changed(&root_field,int(offset_of(core.Transform,scale)),12))
     placement_cursor:=edits.cursor
     inspect_reset(&root_field,0,size_of(core.Transform))
-    edits_commit(&edits,w,&selection)
+    history.edits_commit(&edits,w,&selection)
     testing.expect_value(t,entity_local(w,group),group_placement)
     testing.expect_value(t,edits.cursor,placement_cursor)
     first=api_entity(w,first_id)
-    selection_set(&selection,{first})
+    history.selection_set(&selection,{first})
     testing.expect(t,prefab_action_disabled(s,.Prefab_Create))
     inherited_position:=entity_local(w,first).position
     changed_transform:=entity_local(w,first)
     changed_transform.position.x+=4
     transform_set(s,first,changed_transform)
-    edits_commit(&edits,w,&selection)
+    history.edits_commit(&edits,w,&selection)
     inherited_field:=inspect_component(s,w,core.Transform,{first})
     position_offset:=int(offset_of(core.Transform,position))
     testing.expect(t,inspect_changed(&inherited_field,position_offset,12))
     mixed_field:=inspect_component(s,w,core.Transform,{group,first})
     testing.expect(t,inspect_changed(&mixed_field,position_offset,12))
     inspect_reset(&mixed_field,position_offset,12)
-    edits_commit(&edits,w,&selection)
+    history.edits_commit(&edits,w,&selection)
     testing.expect_value(t,entity_local(w,group),group_placement)
     testing.expect_value(t,entity_local(w,first).position,inherited_position)
     testing.expect(t,!inspect_changed(&inherited_field,position_offset,12))
     testing.expect_value(t,api_entity_id(w,first),first_id)
     testing.expect(t,entity_rename(s,first,"Changed"))
     testing.expect_value(t,entity_name(w,first),"Changed")
-    edits_commit(&edits,w,&selection)
+    history.edits_commit(&edits,w,&selection)
     testing.expect_value(t,overrides_held(s),1)
     testing.expect(t,!prefab_action_disabled(s,.Prefab_Apply))
     count,apply_error:=prefab_apply(s,first,nil)
@@ -408,7 +409,7 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
         testing.expect_value(t,root_value,core.TRANSFORM_IDENTITY)
         prefab_scene_free(loaded)
     }
-    testing.expect(t,undo(&edits,w,&selection))
+    testing.expect(t,history.undo(&edits,w,&selection))
     testing.expect(t,!prefab_action_disabled(s,.Prefab_Revert))
     loaded,found=prefab_scene_load(s,id)
     testing.expect(t,found)
@@ -417,10 +418,10 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
         testing.expect_value(t,base.text_get(asset.scene_names(loaded)[row][:]),"First")
         prefab_scene_free(loaded)
     }
-    testing.expect(t,redo(&edits,w,&selection))
+    testing.expect(t,history.redo(&edits,w,&selection))
     testing.expect(t,prefab_action_disabled(s,.Prefab_Revert))
-    testing.expect(t,undo(&edits,w,&selection))
-    first=selection_active(&selection)
+    testing.expect(t,history.undo(&edits,w,&selection))
+    first=history.selection_active(&selection)
     reverted,revert_error:=prefab_revert(s,first,nil)
     testing.expect(t,revert_error==.None && reverted==1)
     testing.expect_value(t,entity_name(w,api_entity(w,first_id)),"First")
@@ -429,16 +430,16 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     first,second=api_entity(w,first_id),api_entity(w,second_id)
     entity_rename(s,first,"First changed")
     entity_rename(s,second,"Second changed")
-    edits_commit(&edits,w,&selection)
+    history.edits_commit(&edits,w,&selection)
     reverted,revert_error=prefab_revert(s,first,nil)
     testing.expect(t,revert_error==.None && reverted==1)
     first,second=api_entity(w,first_id),api_entity(w,second_id)
     testing.expect_value(t,entity_name(w,first),"First")
     testing.expect_value(t,entity_name(w,second),"Second changed")
     entity_rename(s,first,"First changed")
-    edits_commit(&edits,w,&selection)
+    history.edits_commit(&edits,w,&selection)
     group=api_entity(w,group_id)
-    selection_set(&selection,{group})
+    history.selection_set(&selection,{group})
     testing.expect(t,!prefab_action_disabled(s,.Prefab_Apply) && !prefab_action_disabled(s,.Prefab_Revert))
     count,apply_error=prefab_apply(s,group,nil,true)
     testing.expect(t,apply_error==.None && count==2)
@@ -451,7 +452,7 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
         testing.expect_value(t,base.text_get(asset.scene_names(loaded)[row][:]),"Second changed")
         prefab_scene_free(loaded)
     }
-    testing.expect(t,undo(&edits,w,&selection))
+    testing.expect(t,history.undo(&edits,w,&selection))
     group=api_entity(w,group_id)
     reverted,revert_error=prefab_revert(s,group,nil,true)
     testing.expect(t,revert_error==.None && reverted==2)
@@ -466,7 +467,7 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     group=api_entity(w,group_id)
     unlinked_field:=inspect_component(s,w,core.Transform,{group})
     testing.expect(t,inspect_changed(&unlinked_field,position_offset,12))
-    testing.expect(t,undo(&edits,w,&selection))
+    testing.expect(t,history.undo(&edits,w,&selection))
     testing.expect(t,prefab_linked(s))
     ctx:=new(ui.Context)
     defer free(ctx)
@@ -477,7 +478,7 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
         for _ in 0..<3 {
             ui.frame_begin(ctx,{size=size,pointer_absent=true})
             if ui.box(ctx,{width=ui.fixed(240),height=ui.FIT,gap=4,align_y=.Center}) {
-                identity_row(s,w,selection_active(&selection))
+                identity_row(s,w,history.selection_active(&selection))
             }
             frame:=ui.frame_end(ctx)
             testing.expect(t,!frame.overflow && ctx.stats.layout_errors==0)
@@ -496,15 +497,15 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
             for _ in 0..<int(ui.TOOLTIP_DELAY*60)+2 {
                 ui.frame_begin(ctx,{size=size,pointer={rect.x+rect.w/2,rect.y+rect.h/2},dt=1.0/60})
                 if ui.box(ctx,{width=ui.fixed(240),height=ui.FIT,gap=4,align_y=.Center}) {
-                    identity_row(s,w,selection_active(&selection))
+                    identity_row(s,w,history.selection_active(&selection))
                 }
                 ui.frame_end(ctx)
             }
             testing.expect_value(t,ctx.tooltip,action_labels[action_index])
         }
-        selected:=selection_active(&selection)
+        selected:=history.selection_active(&selection)
         first=api_entity(w,first_id)
-        selection_set(&selection,{first})
+        history.selection_set(&selection,{first})
         ui.frame_begin(ctx,{size=size,pointer_absent=true})
         if ui.box(ctx,{width=ui.fixed(240),height=ui.FIT,gap=4,align_y=.Center}) {identity_row(s,w,first)}
         ui.frame_end(ctx)
@@ -514,25 +515,25 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
         _,unlink:=ui.widget_rect(ctx,shell_id(&g,"action",int(Action.Prefab_Unlink)+1+64))
         testing.expect(t,revert && !apply && !unlink)
         group=api_entity(w,group_id)
-        selection_set(&selection,{group})
+        history.selection_set(&selection,{group})
         ui.frame_begin(ctx,{size=size,pointer_absent=true})
         if ui.box(ctx,{width=ui.fixed(240),height=ui.FIT,direction=.Column}) {
             transform_rows(s,w)
         }
         ui.frame_end(ctx)
         for paint in ctx.paints[:ctx.paint_count] {testing.expect(t,paint.icon!=.Revert)}
-        selection_set(&selection,{selected})
+        history.selection_set(&selection,{selected})
     }
-    testing.expect(t,redo(&edits,w,&selection))
+    testing.expect(t,history.redo(&edits,w,&selection))
     group=api_entity(w,group_id)
-    selection_set(&selection,{group})
+    history.selection_set(&selection,{group})
     before=edits.cursor
     _,error=prefab_create(s,group,"single")
     testing.expect_value(t,error,Prefab_Error.None)
     testing.expect_value(t,edits.cursor,before+1)
-    testing.expect(t,undo(&edits,w,&selection))
+    testing.expect(t,history.undo(&edits,w,&selection))
     testing.expect(t,!prefab_linked(s) && !file_exists(s,fmt.tprintf("%s/single.prefab",root)))
-    testing.expect(t,redo(&edits,w,&selection))
+    testing.expect(t,history.redo(&edits,w,&selection))
     testing.expect(t,prefab_linked(s))
     file_open_path(s,"single.prefab")
     testing.expect_value(t,g.modal,Modal.None)
@@ -540,7 +541,7 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     testing.expect_value(t,scene_open(s,"single.prefab"),Document_Error.None)
     group=api_entity(w,group_id)
     entity_rename(s,group,"Saved prefab")
-    edits_commit(&edits,w,&selection)
+    history.edits_commit(&edits,w,&selection)
     testing.expect_value(t,scene_save(s),Document_Error.None)
     saved:asset.Scene
     testing.expect_value(t,asset.scene_load(&saved,&assets.types,fmt.tprintf("%s/single.prefab",root)),asset.Error.None)
@@ -573,17 +574,17 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     scene_new(s)
     plain:=entity_create(s,{name="Plain",transform={position={7,2,3},rotation=1,scale={2,3,4}}})
     core.world_settle(w)
-    selection_set(&selection,{plain})
-    edits_commit(&edits,w,&selection)
+    history.selection_set(&selection,{plain})
+    history.edits_commit(&edits,w,&selection)
     c:=inspect_component(s,w,core.Transform,{plain})
     scale_offset:=int(offset_of(core.Transform,scale))
     testing.expect(t,inspect_changed(&c,scale_offset,12))
     inspect_reset(&c,scale_offset,12)
-    edits_commit(&edits,w,&selection)
+    history.edits_commit(&edits,w,&selection)
     testing.expect_value(t,entity_local(w,plain).position,[3]f32{7,2,3})
     testing.expect_value(t,entity_local(w,plain).scale,[3]f32{1,1,1})
     testing.expect(t,!inspect_changed(&c,scale_offset,12))
-    testing.expect(t,undo(&edits,w,&selection))
+    testing.expect(t,history.undo(&edits,w,&selection))
     testing.expect_value(t,entity_local(w,plain).scale,[3]f32{2,3,4})
     viewport_init(&viewport)
     defer viewport_free(&viewport)
@@ -591,7 +592,7 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     viewport.orbit.distance=37
     original_camera:=viewport.orbit
     original_cursor:=edits.cursor
-    original_state:=edits_state(&edits)
+    original_state:=history.edits_state(&edits)
     base.text_set(ai.prompt[:],"Scene draft")
     ai.prompt_length=len("Scene draft")
     ai.selected=7
@@ -606,7 +607,7 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     root_entity:=document_root(s,prefab_world)
     testing.expect(t,root_entity!=core.NONE)
     entity_rename(s,root_entity,"Changed in tab")
-    edits_commit(&edits,prefab_world,&selection)
+    history.edits_commit(&edits,prefab_world,&selection)
     viewport.orbit.distance=9
     viewport.preview_sun=false
     prefab_cursor:=edits.cursor
@@ -621,9 +622,9 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     testing.expect(t,document_activate(s,0))
     testing.expect_value(t,s.edit_world,rawptr(&world))
     testing.expect_value(t,edits.cursor,original_cursor)
-    testing.expect_value(t,edits_state(&edits),original_state)
+    testing.expect_value(t,history.edits_state(&edits),original_state)
     testing.expect_value(t,viewport.orbit,original_camera)
-    testing.expect_value(t,selection_active(&selection),plain)
+    testing.expect_value(t,history.selection_active(&selection),plain)
     testing.expect_value(t,string(ai.prompt[:ai.prompt_length]),"Scene draft")
     testing.expect_value(t,ai.selected,7)
     testing.expect_value(t,document_open_tab(s,"single.prefab"),Document_Error.None)
@@ -633,11 +634,11 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     testing.expect_value(t,viewport.orbit.distance,f32(9))
     testing.expect(t,!viewport.preview_sun)
     testing.expect_value(t,entity_name(prefab_world,root_entity),"Changed in tab")
-    testing.expect(t,undo(&edits,prefab_world,&selection))
+    testing.expect(t,history.undo(&edits,prefab_world,&selection))
     testing.expect_value(t,entity_name(prefab_world,root_entity),"Saved prefab")
-    testing.expect(t,redo(&edits,prefab_world,&selection))
+    testing.expect(t,history.redo(&edits,prefab_world,&selection))
     child:=entity_create(s,{name="New child"})
-    edits_commit(&edits,prefab_world,&selection)
+    history.edits_commit(&edits,prefab_world,&selection)
     testing.expect_value(t,entity_parent(prefab_world,child),root_entity)
     entities_delete(s,{root_entity})
     core.world_settle(prefab_world)
@@ -676,7 +677,7 @@ a_prefab_operation_is_one_step_of_the_rows_of_its_instance :: proc(t:^testing.T)
     w:=edited_world(s)
     other:=entity_create(s,{name="Other",named=true})
     crate,_,lamp:=prefab_test_crate(f)
-    edits_reset(&f.edits,w)
+    history.edits_reset(&f.edits,w)
 
     // Creating: the entities stay, linked, and the prefab is an unsaved file of the step.
     id,created:=prefab_create(s,crate,"crate")
@@ -703,14 +704,14 @@ a_prefab_operation_is_one_step_of_the_rows_of_its_instance :: proc(t:^testing.T)
     testing.expect(t,lamp_of(f,prefab_test_named(f,root,"Lamp")).target==prefab_test_named(f,root,"Lid"),"the references of a member name the members")
 
     // The history carries the instance as it carries any row.
-    testing.expect(t,undo(&f.edits,w,&f.selection))
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
     testing.expect(t,!entity_alive(w,root) && core.count(&f.world.instances)==1 && core.count(&f.world.members)==3)
-    testing.expect(t,redo(&f.edits,w,&f.selection))
+    testing.expect(t,history.redo(&f.edits,w,&f.selection))
     again:=api_entity(w,placed)
     of_again,_:=prefab_link_of(w,again)
     testing.expect(t,again!=core.NONE && of_again.root && of_again.asset==id && len(prefab_members(w,again))==3)
     // Undoing the creation takes the link and the file with it.
-    testing.expect(t,undo(&f.edits,w,&f.selection) && undo(&f.edits,w,&f.selection))
+    testing.expect(t,history.undo(&f.edits,w,&f.selection) && history.undo(&f.edits,w,&f.selection))
     files_settle(s)
     _,still:=prefab_link_of(w,crate)
     testing.expect(t,!still && entity_alive(w,crate) && !file_exists(s,file))
@@ -724,7 +725,7 @@ the_overrides_of_an_instance_are_derived_reverted_and_applied_without_writing_fi
     s:=&f.s
     w:=edited_world(s)
     crate,_,lamp:=prefab_test_crate(f)
-    edits_reset(&f.edits,w)
+    history.edits_reset(&f.edits,w)
     id,created:=prefab_create(s,crate,"crate")
     if !testing.expect_value(t,created,Prefab_Error.None) {return}
     file:=scene_file(s,"crate.prefab")
@@ -761,12 +762,12 @@ the_overrides_of_an_instance_are_derived_reverted_and_applied_without_writing_fi
     testing.expect(t,first.stamp==registered.content_hash && second.stamp==registered.content_hash)
 
     // Undone, the instances and the file are as before it; done again, as after.
-    testing.expect(t,undo(&f.edits,w,&f.selection))
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
     files_settle(s)
     read,_=file_read(s,file)
     testing.expect(t,lamp_of(f,lamp).intensity==2 && prefab_test_named(f,crate,"Sticker")==core.NONE && string(read)==before)
     testing.expect(t,prefab_test_has(f,root,sticker,"",.Child,"") && lamp_of(f,copy).intensity==7)
-    testing.expect(t,redo(&f.edits,w,&f.selection))
+    testing.expect(t,history.redo(&f.edits,w,&f.selection))
     files_settle(s)
     testing.expect(t,lamp_of(f,lamp).intensity==7 && prefab_test_named(f,crate,"Sticker")!=core.NONE)
 
@@ -785,7 +786,7 @@ unlinking_gives_back_what_a_prefab_placed_and_a_variant_applies_to_its_base :: p
     yard:=entity_create(s,{name="Yard",named=true})
     crate,_,lamp:=prefab_test_crate(f,yard)
     lamp_id:=api_entity_id(w,lamp)
-    edits_reset(&f.edits,w)
+    history.edits_reset(&f.edits,w)
     crate_id,_:=prefab_create(s,crate,"crate")
     yard_id,created:=prefab_create(s,yard,"yard")
     if !testing.expect_value(t,created,Prefab_Error.None) {return}
@@ -807,7 +808,7 @@ unlinking_gives_back_what_a_prefab_placed_and_a_variant_applies_to_its_base :: p
     _,yard_linked:=prefab_link_of(w,yard)
     testing.expect(t,!yard_linked && of_crate.root && of_crate.asset==crate_id && of_lamp.instance==crate && of_lamp.source==lamp_id)
     testing.expect(t,core.count(&f.world.instances)==1 && core.count(&f.world.members)==3)
-    testing.expect(t,undo(&f.edits,w,&f.selection))
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
     of_crate,_=prefab_link_of(w,crate)
     testing.expect(t,of_crate.instance==yard && core.count(&f.world.members)==4)
     testing.expect_value(t,prefab_unlink(s,crate,true),Prefab_Error.None)
@@ -844,7 +845,7 @@ a_scene_opened_after_its_prefab_changed_follows_it_and_keeps_what_its_instances_
     s:=&f.s
     w:=edited_world(s)
     crate,_,lamp:=prefab_test_crate(f)
-    edits_reset(&f.edits,w)
+    history.edits_reset(&f.edits,w)
     id,created:=prefab_create(s,crate,"crate")
     if !testing.expect_value(t,created,Prefab_Error.None) {return}
     placed,_:=prefab_instantiate(s,id,{})
@@ -883,7 +884,7 @@ a_refresh_after_a_placed_prefab_changed_leaves_nothing_stale :: proc(t:^testing.
     crate,_,lamp:=prefab_test_crate(f)
     shelf:=entity_create(s,{name="Shelf",named=true})
     core.world_settle(w)
-    edits_reset(&f.edits,w)
+    history.edits_reset(&f.edits,w)
     crate_id,created:=prefab_create(s,crate,"crate")
     if !testing.expect_value(t,created,Prefab_Error.None) {return}
     on_shelf,placed:=prefab_instantiate(s,crate_id,{parent=shelf})
@@ -927,7 +928,7 @@ an_instance_whose_base_is_not_held_keeps_what_it_has_when_it_is_refreshed :: pro
     s:=&f.s
     w:=edited_world(s)
     crate,_,lamp:=prefab_test_crate(f)
-    edits_reset(&f.edits,w)
+    history.edits_reset(&f.edits,w)
     id,created:=prefab_create(s,crate,"crate")
     if !testing.expect_value(t,created,Prefab_Error.None) {return}
     _,saved:=assets_save_all(s)
@@ -962,7 +963,7 @@ a_copy_of_an_instance_is_another_and_a_member_keeps_its_place :: proc(t:^testing
     s:=&f.s
     w:=edited_world(s)
     crate,lid,lamp:=prefab_test_crate(f)
-    edits_reset(&f.edits,w)
+    history.edits_reset(&f.edits,w)
     id,created:=prefab_create(s,crate,"crate")
     if !testing.expect_value(t,created,Prefab_Error.None) {return}
 
@@ -1020,7 +1021,7 @@ prefab_instances_add_entities_and_turn_members_off_through_updates_apply_and_rev
     b:=entity_create(s,{name="B",named=true,parent=root})
     c:=entity_create(s,{name="C",named=true,parent=a})
     core.world_settle(w)
-    edits_reset(&f.edits,w)
+    history.edits_reset(&f.edits,w)
     root_id,a_id,b_id,c_id:=api_entity_id(w,root),api_entity_id(w,a),api_entity_id(w,b),api_entity_id(w,c)
     id,created:=prefab_create(s,root,"places")
     if !testing.expect_value(t,created,Prefab_Error.None) {return}
@@ -1049,17 +1050,17 @@ prefab_instances_add_entities_and_turn_members_off_through_updates_apply_and_rev
 
     // A step that changes one value looks again at that member alone.
     transform_set(s,prefab_fixture_find(f,c_id),core.to_math(core.Transform{{0,4,0},1,{1,1,1}}))
-    edits_commit(&f.edits,w,&f.selection)
+    history.edits_commit(&f.edits,w,&f.selection)
     total:=len(prefab_test_all(f))
     testing.expect(t,total>2 && len(prefab_fixture_kind(f,.Field))==total-2)
     for override in prefab_fixture_kind(f,.Field) {testing.expect_value(t,override.entity,c_id)}
     // Undoing the steps forgets what they marked; redoing them marks it again.
     for _ in 0..<3 {
-        testing.expect(t,undo(&f.edits,w,&f.selection))
+        testing.expect(t,history.undo(&f.edits,w,&f.selection))
     }
     testing.expect_value(t,len(prefab_test_all(f)),0)
     for _ in 0..<3 {
-        testing.expect(t,redo(&f.edits,w,&f.selection))
+        testing.expect(t,history.redo(&f.edits,w,&f.selection))
     }
     testing.expect_value(t,len(prefab_test_all(f)),total)
 
@@ -1096,7 +1097,7 @@ prefab_instances_add_entities_and_turn_members_off_through_updates_apply_and_rev
     testing.expect(t,!entity_has(w,prefab_fixture_find(f,b_id),core.Disabled))
     testing.expect_value(t,len(prefab_test_all(f)),total-2) // C keeps its position
     for _ in 0..<2 {
-        testing.expect(t,undo(&f.edits,w,&f.selection))
+        testing.expect(t,history.undo(&f.edits,w,&f.selection))
     }
     testing.expect_value(t,len(prefab_test_all(f)),total)
 
@@ -1136,18 +1137,18 @@ prefab_overrides_follow_an_undo_another_author_leaves_taken_back :: proc(t:^test
     root:=entity_create(s,{name="Root",named=true})
     a:=entity_create(s,{name="A",named=true,parent=root})
     core.world_settle(w)
-    edits_reset(&f.edits,w)
+    history.edits_reset(&f.edits,w)
     a_id:=api_entity_id(w,a)
     _,created:=prefab_create(s,root,"taken-back")
     if !testing.expect_value(t,created,Prefab_Error.None) {return}
 
     // An agent moves A; the user, later, adds an entity outside the instance.
-    f.edits.author=EDIT_AUTHOR_API
+    f.edits.author=history.EDIT_AUTHOR_API
     transform_set(s,prefab_fixture_find(f,a_id),core.to_math(core.Transform{{0,4,0},1,{1,1,1}}))
     prefab_fixture_step(f)
     testing.expect(t,len(prefab_fixture_kind(f,.Field))>0)
-    testing.expect(t,undo(&f.edits,w,&f.selection))
-    f.edits.author=EDIT_AUTHOR_USER
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
+    f.edits.author=history.EDIT_AUTHOR_USER
     entity_create(s,{name="Elsewhere",named=true})
     prefab_fixture_step(f)
     testing.expect_value(t,len(prefab_fixture_kind(f,.Field)),0)
@@ -1166,7 +1167,7 @@ prefab_variants_follow_their_base_and_apply_to_it :: proc(t:^testing.T) {
     root:=entity_create(s,{name="Crate",named=true})
     lid:=entity_create(s,{name="Lid",named=true,parent=root})
     core.world_settle(w)
-    edits_reset(&f.edits,w)
+    history.edits_reset(&f.edits,w)
     root_id,lid_id:=api_entity_id(w,root),api_entity_id(w,lid)
     crate,created:=prefab_create(s,root,"crate")
     if !testing.expect_value(t,created,Prefab_Error.None) {return}
@@ -1190,9 +1191,9 @@ prefab_variants_follow_their_base_and_apply_to_it :: proc(t:^testing.T) {
         testing.expect(t,based && base_id==crate && len(loaded.overrides)==0)
         prefab_scene_free(loaded)
     }
-    testing.expect(t,undo(&f.edits,w,&f.selection))
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
     testing.expect(t,!file_exists(s,file))
-    testing.expect(t,redo(&f.edits,w,&f.selection))
+    testing.expect(t,history.redo(&f.edits,w,&f.selection))
     testing.expect(t,file_exists(s,file))
 
     // An instance of the variant applies to the variant, which keeps the change as an override of its base.
@@ -1207,7 +1208,7 @@ prefab_variants_follow_their_base_and_apply_to_it :: proc(t:^testing.T) {
     testing.expect_value(t,prefab_variant_of(s,w,link),crate)
     testing.expect_value(t,inspector_variant_name(s,w,prefab_fixture_find(f,placed)),"crate")
     lid_link,_:=prefab_link_of(w,api_entity(w,placed_lid_id))
-    selection_set(&f.selection,{prefab_fixture_find(f,placed)})
+    history.selection_set(&f.selection,{prefab_fixture_find(f,placed)})
     testing.expect(t,prefab_action_disabled(s,.Prefab_Apply_Base))
     raised:=[3]f32{0,3,0}
     transform_set(s,placed_lid,core.to_math(core.Transform{raised,1,{1,1,1}}))
@@ -1272,7 +1273,7 @@ prefab_variants_follow_their_base_and_apply_to_it :: proc(t:^testing.T) {
     }
     _,not_variant:=prefab_apply(s,prefab_fixture_find(f,root_id),nil,true,.Base)
     testing.expect_value(t,not_variant,Prefab_Error.Not_Variant)
-    testing.expect(t,undo(&f.edits,w,&f.selection))
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
     if loaded,found:=prefab_scene_load(s,crate);testing.expect(t,found) {
         row,_:=asset.scene_entity_find(loaded,lid_id)
         testing.expect_value(t,asset.scene_entity(loaded,row).name,"Lid v2")
@@ -1310,7 +1311,7 @@ prefab_apply_writes_fields_the_file_of_the_prefab_did_not_have :: proc(t:^testin
     asset.scene_destroy(&old)
     if !testing.expect_value(t,saved,asset.Error.None) {return}
     core.world_settle(w)
-    edits_reset(&f.edits,w)
+    history.edits_reset(&f.edits,w)
     id,problem:=asset_resolve(s,"lamp",".prefab")
     if !testing.expect_value(t,problem,"") {return}
     placed,placed_error:=prefab_instantiate(s,id,{})
@@ -1338,7 +1339,7 @@ prefab_apply_writes_fields_the_file_of_the_prefab_did_not_have :: proc(t:^testin
 prefab_collab_join :: proc(f:^Prefab_Fixture,role:Collab_Role) {
     w:=edited_world(&f.s)
     core.world_settle(w)
-    edits_reset(&f.edits,w)
+    history.edits_reset(&f.edits,w)
     st:=new(Collab_State)
     st.role,st.phase,st.self=role,.Joined,role==.Host?0:1
     st.peers[role==.Host?1:0].used=true
@@ -1358,7 +1359,7 @@ prefab_collab_leave :: proc(f:^Prefab_Fixture) {
     for path in st.files_out {delete(path)}
     delete(st.files_out)
     collab_tables_free(st)
-    journal_reading(&f.edits,false)
+    history.journal_reading(&f.edits,false)
     free(st)
     f.collab.state=nil
 }
@@ -1440,7 +1441,7 @@ an_asset_is_named_by_its_path_with_or_without_its_extension_or_by_its_id :: proc
     w:=edited_world(s)
     root:=entity_create(s,{name="Crate",named=true})
     core.world_settle(w)
-    edits_reset(&f.edits,w)
+    history.edits_reset(&f.edits,w)
     crate,created:=prefab_create(s,root,"crate")
     if !testing.expect_value(t,created,Prefab_Error.None) {return}
     _=asset.registry_scan(&f.assets.registry)

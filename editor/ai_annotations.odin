@@ -5,6 +5,7 @@ import "core:strings"
 import "mirai:core"
 import "mirai:editor/ai_store"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:platform"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -87,7 +88,7 @@ ai_annotation_at :: proc(a:^Ai_Annotations,id:i64) -> int {
 ai_annotation_entity_name :: proc(s:^Session,document:string,entity:u64) -> string {
     if entity==0 || s.edit_world==nil || document!=ai_annotations_document(s) {return ""}
     w:=edited_world(s)
-    e:=change_entity(w,base.Entity_Id(entity))
+    e:=history.change_entity(w,base.Entity_Id(entity))
     return e!=core.NONE?entity_name(w,e):""
 }
 

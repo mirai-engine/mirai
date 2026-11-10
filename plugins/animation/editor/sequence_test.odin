@@ -5,6 +5,7 @@ import "core:strings"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:project"
 import mm "mirai:std/math"
 import "mirai:std/serial"
@@ -32,11 +33,11 @@ sequence_capture_converts_parent_space_and_is_one_undoable_api_transaction :: pr
     core.add(&w.parents,owner,{entity=root});core.add(&w.sequences,owner,anim.keyframe_path_default())
     core.test_world_settle(&w)
     world:=core.test_world_ref(&w)
-    selection:editor.Selection;defer delete(selection.entities)
-    edits:editor.Edits;defer editor.edits_free(&edits)
+    selection:history.Selection;defer delete(selection.entities)
+    edits:history.Edits;defer history.edits_free(&edits)
     viewport:editor.Viewport;gui:editor.Editor_Ui
     session:=editor.Session{edit_world=&w,info=core.test_world_info(&w),selection=&selection,edits=&edits,viewport=&viewport,gui=&gui}
-    editor.edits_reset(&edits,world)
+    history.edits_reset(&edits,world)
     params:=Sequence_Capture_Params{frame=1};copy(params.entity[:],"0000000000000002");copy(params.source[:],"0000000000000003")
     captured_result:Sequence_Edit_Result
     method:=api.Method{params_id=Sequence_Capture_Params,result_id=Sequence_Edit_Result}
@@ -44,12 +45,12 @@ sequence_capture_converts_parent_space_and_is_one_undoable_api_transaction :: pr
     sequence_capture(&session,&call)
     testing.expect(t,!call.failed && w.sequences.values[0].frames[1].pose.position.x==6)
     testing.expect(t,edits.cursor==1 && w.transforms.values[1].position.x==2)
-    testing.expect(t,editor.undo(&edits,world,&selection))
+    testing.expect(t,history.undo(&edits,world,&selection))
     testing.expect(t,w.sequences.values[0].frames[1].pose==mm.TRANSFORM_IDENTITY)
-    testing.expect(t,editor.redo(&edits,world,&selection))
+    testing.expect(t,history.redo(&edits,world,&selection))
     testing.expect(t,w.sequences.values[0].frames[1].pose.position.x==6)
     core.get(&w.sequences,owner).relative=true
-    editor.edits_commit(&edits,world,&selection)
+    history.edits_commit(&edits,world,&selection)
     previous:=w.sequences.values[0]
     sequence_capture(&session,&call)
     testing.expect(t,call.failed && w.sequences.values[0]==previous)

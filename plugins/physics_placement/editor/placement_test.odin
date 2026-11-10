@@ -4,6 +4,7 @@ import "core:testing"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import destruct "plugins:destruct/runtime"
 import phys "plugins:physics/runtime"
 import erender "mirai:engine/render"
@@ -47,8 +48,8 @@ Placement_Test :: struct {
     steps:[1]core.Step_Info,
     order:[1]i32,
     session:editor.Session,
-    edits:editor.Edits,
-    selection:editor.Selection,
+    edits:history.Edits,
+    selection:history.Selection,
     viewport:editor.Viewport,
     gui:editor.Editor_Ui,
     document:editor.Document,
@@ -76,7 +77,7 @@ placement_test_open :: proc(t:^testing.T,f:^Placement_Test) -> bool {
 
 placement_test_close :: proc(f:^Placement_Test) {
     physics_placement_free(&f.tool)
-    editor.edits_free(&f.edits)
+    history.edits_free(&f.edits)
     delete(f.selection.entities)
     f.info.destroy[.World](&f.world)
     f.info.destroy[.Shared](&f.shared)
@@ -105,8 +106,8 @@ placement_drops_settle_without_gameplay_and_commit_as_one_undo :: proc(t:^testin
     core.add(&f.world.rigids,floor,phys.RIGID_BODY_DYNAMIC)
     core.settle(&f.info,&f.world,nil)
     w:=editor.edited_world(&f.session)
-    editor.edits_reset(&f.edits,w)
-    editor.selection_set(&f.selection,{source})
+    history.edits_reset(&f.edits,w)
+    history.selection_set(&f.selection,{source})
     testing.expect(t,placement_start(&f.session,&f.tool,{mesh={shape=.Cube},scale={0.5,0.1,0.7},height=1,point={3,0,0}}))
     for _ in 0..<60 {testing.expect(t,placement_update(&f.tool,PLACEMENT_DT))}
     bounds,_:=placement_box(f.app.assets,erender.Mesh_Renderer{shape=.Cube})
@@ -126,10 +127,10 @@ placement_drops_settle_without_gameplay_and_commit_as_one_undo :: proc(t:^testin
     testing.expect_value(t,f.edits.cursor,0)
     testing.expect(t,placement_confirm(&f.tool))
     testing.expect_value(t,f.edits.cursor,1)
-    testing.expect(t,editor.undo(&f.edits,w,&f.selection))
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
     testing.expect(t,!core.alive(&f.world.entities,first) && !core.alive(&f.world.entities,second))
-    testing.expect_value(t,editor.selection_active(&f.selection),source)
-    testing.expect(t,editor.redo(&f.edits,w,&f.selection))
+    testing.expect_value(t,history.selection_active(&f.selection),source)
+    testing.expect(t,history.redo(&f.edits,w,&f.selection))
     testing.expect_value(t,editor.entity_world(w,first),first_pose)
     testing.expect_value(t,editor.entity_world(w,second),second_pose)
     testing.expect_value(t,host.app_world_count(&f.app),0)
@@ -158,7 +159,7 @@ placement_cancel_and_tool_release_restore_the_document_and_free_the_preview :: p
     _=placement_test_box(&f,"Floor",{0,-0.5,0},{20,1,20},true)
     source:=placement_test_box(&f,"Book",{0,3,0},{1,1,1},true)
     w:=editor.edited_world(&f.session)
-    editor.edits_reset(&f.edits,w)
+    history.edits_reset(&f.edits,w)
     desc:=Placement_Desc{mesh={shape=.Cube},scale={1,1,1},point={3,0,0},height=3}
     testing.expect(t,placement_start(&f.session,&f.tool,desc))
     placed:=f.tool.roots[0]
@@ -176,7 +177,7 @@ placement_cancel_and_tool_release_restore_the_document_and_free_the_preview :: p
     testing.expect(t,!core.alive(&f.world.entities,copy))
     testing.expect_value(t,host.app_world_count(&f.app),0)
     testing.expect_value(t,f.edits.cursor,0)
-    testing.expect_value(t,editor.selection_active(&f.selection),core.NONE)
+    testing.expect_value(t,history.selection_active(&f.selection),core.NONE)
 }
 
 @(test)
@@ -194,8 +195,8 @@ placement_uses_the_chosen_mesh_and_rejects_invalid_geometry_atomically :: proc(t
     core.add(&f.world.parents,child,core.Parent{root,0})
     core.settle(&f.info,&f.world,nil)
     w:=editor.edited_world(&f.session)
-    editor.edits_reset(&f.edits,w)
-    editor.selection_set(&f.selection,{root,child})
+    history.edits_reset(&f.edits,w)
+    history.selection_set(&f.selection,{root,child})
     desc:=Placement_Desc{mesh={shape=.Sphere},scale={1,1,1},point={4,0,0},height=1}
     testing.expect(t,placement_start(&f.session,&f.tool,desc))
     placed:=f.tool.roots[0]
@@ -211,7 +212,7 @@ placement_uses_the_chosen_mesh_and_rejects_invalid_geometry_atomically :: proc(t
     testing.expect(t,!placement_start(&f.session,&f.tool,desc))
     testing.expect_value(t,f.world.entities.alive,count)
     testing.expect_value(t,f.edits.cursor,cursor)
-    testing.expect_value(t,editor.selection_active(&f.selection),child)
+    testing.expect_value(t,history.selection_active(&f.selection),child)
     testing.expect(t,!f.edits.open)
     testing.expect_value(t,host.app_world_count(&f.app),0)
 }
@@ -223,8 +224,8 @@ placement_api_drops_settle_and_confirm_within_the_call :: proc(t:^testing.T) {
     defer placement_test_close(&f)
     floor:=placement_test_box(&f,"Floor",{0,-0.5,0},{20,1,20},true)
     w:=editor.edited_world(&f.session)
-    editor.edits_reset(&f.edits,w)
-    editor.selection_set(&f.selection,{floor})
+    history.edits_reset(&f.edits,w)
+    history.selection_set(&f.selection,{floor})
     method:=api.Method{params_id=Drop_Params,result_id=Drop_Result}
     params:=Drop_Params{interval=0.2,time=PLACEMENT_TICKS*PLACEMENT_DT}
     params.drops[0]={shape=.Cube,point={3,0,0},height=1,scale={0.5,0.1,0.7}}
@@ -247,9 +248,9 @@ placement_api_drops_settle_and_confirm_within_the_call :: proc(t:^testing.T) {
     placed:=core.entity_of(&f.world.entities,first.id)
     testing.expect_value(t,editor.entity_world(w,placed).position,first.position)
     testing.expect(t,!core.has(&f.world.rigids,placed) && !core.has(&f.world.colliders,placed))
-    testing.expect(t,editor.undo(&f.edits,w,&f.selection))
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
     testing.expect(t,!core.alive(&f.world.entities,placed))
-    testing.expect_value(t,editor.selection_active(&f.selection),floor)
+    testing.expect_value(t,history.selection_active(&f.selection),floor)
 
     // A drop without geometry, a call from Play and an empty list change nothing and leave no preview.
     count:=f.world.entities.alive

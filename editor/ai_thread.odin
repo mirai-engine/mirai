@@ -7,6 +7,7 @@ import "core:strings"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/ai_store"
+import "mirai:editor/history"
 import "mirai:std/base"
 import "mirai:ui"
 
@@ -132,7 +133,7 @@ ai_call_target :: proc(s:^Session,raw:string,buffer:[]u8) -> string {
         id,ok:=ai_entity_id_parse(text)
         if !ok {return ""}
         w:=edited_world(s)
-        e:=change_entity(w,id)
+        e:=history.change_entity(w,id)
         return entity_name(w,e) if e!=core.NONE else ""
     }
     for key in ([]string{"name","path","asset","material","file","preset"}) {
@@ -199,10 +200,10 @@ ai_markdown_resolve :: proc(data:rawptr,target,text:string,buffer:[]u8) -> ui.Ma
         id,ok:=ai_entity_id_parse(target[len("entity:"):])
         if !ok || s.edit_world==nil {return {pill=true,color=s.gui.ctx.theme.text_faint}}
         w:=shown_world(s)
-        e:=change_entity(w,id)
+        e:=history.change_entity(w,id)
         if e==core.NONE {return {pill=true,color=s.gui.ctx.theme.text_faint}}
         name:=string(buffer[:copy(buffer,entity_name(w,e))])
-        return {label=name,pill=true,live=true,selected=s.selection!=nil && selection_has(s.selection,e),color=AI_ENTITY_TEXT}
+        return {label=name,pill=true,live=true,selected=s.selection!=nil && history.selection_has(s.selection,e),color=AI_ENTITY_TEXT}
     case strings.has_prefix(target,"asset:"):
         if a:=s.app!=nil?s.app.assets:nil;a!=nil {
             if _,found:=asset.registry_find_path(&a.registry,target[len("asset:"):]);found {return {pill=true,live=true,color=AI_ENTITY_TEXT}}
@@ -254,7 +255,7 @@ ai_markdown_follow :: proc(s:^Session,target:string) {
     case strings.has_prefix(target,"entity:"):
         id,ok:=ai_entity_id_parse(target[len("entity:"):])
         if !ok || s.edit_world==nil {return}
-        if e:=change_entity(shown_world(s),id);e!=core.NONE {selection_set(s.selection,{e})}
+        if e:=history.change_entity(shown_world(s),id);e!=core.NONE {history.selection_set(s.selection,{e})}
     case strings.has_prefix(target,"asset:"):
         a:=s.app!=nil?s.app.assets:nil
         if a==nil {return}

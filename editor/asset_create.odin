@@ -7,6 +7,7 @@ import "core:slice"
 import "core:strings"
 import "mirai:asset"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:ui"
@@ -202,7 +203,7 @@ asset_create :: proc(s:^Session,kind:asset.Fourcc,path:string,id:base.Asset_Id) 
     }
     label:=asset_create_default(s,kind)
     opened,ready:=asset_create_gesture(s,label)
-    if !ready {return edits_error_text(s.edits.error)}
+    if !ready {return history.edits_error_text(s.edits.error)}
     defer edit_close(s,opened)
     switch kind {
     case asset.KIND_MATERIAL:

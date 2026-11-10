@@ -12,6 +12,7 @@ import "mirai:cook/build"
 import img "mirai:cook/image"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import input "mirai:engine/input"
 import erender "mirai:engine/render"
 import "mirai:host"
@@ -557,7 +558,7 @@ api_gpu_lose :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_history_result :: proc(s:^Session,call:^api.Call,kept:=0) {
     if st:=api_state(s);st!=nil && st.manual {api_frames(s,1,0)}
-    api.call_result(call,Api_History_Result)^={edits_undo_count(s.edits),edits_redo_count(s.edits),kept}
+    api.call_result(call,Api_History_Result)^={history.edits_undo_count(s.edits),history.edits_redo_count(s.edits),kept}
 }
 
 @(private)
@@ -594,8 +595,8 @@ api_editor_select :: proc(s:^Session,call:^api.Call) {
     picked,known:=api_call_entities(call,w,params.entities[:],"entities",call.allocator)
     if !known {return}
     tools_release(s)
-    if len(picked)==0 && !params.add {selection_clear(s.selection)} else {selection_set(s.selection,picked,params.add)}
-    api.call_result(call,Api_Select_Result)^={len(s.selection.entities),api_entity_id(w,selection_active(s.selection))}
+    if len(picked)==0 && !params.add {history.selection_clear(s.selection)} else {history.selection_set(s.selection,picked,params.add)}
+    api.call_result(call,Api_Select_Result)^={len(s.selection.entities),api_entity_id(w,history.selection_active(s.selection))}
 }
 
 @(private)
@@ -650,7 +651,7 @@ api_inspect_write :: proc(s:^Session,w:^serial.Writer) {
     }
     serial.write_u8(w,']')
     api.write_key(w,"active")
-    if active:=api_entity_id(world,selection_active(s.selection));active!=0 {api.write_id(w,active)} else {serial.text_write_raw(w,"null")}
+    if active:=api_entity_id(world,history.selection_active(s.selection));active!=0 {api.write_id(w,active)} else {serial.text_write_raw(w,"null")}
     tool,_:=reflect.enum_name_from_value(v.tool)
     // A plugin tool that holds the scene is the tool; one that lent it to the gizmo is the plugin.
     api.write_key(w,"tool");serial.text_write_string(w,api_lower(tool))
@@ -663,8 +664,8 @@ api_inspect_write :: proc(s:^Session,w:^serial.Writer) {
     api.write_key(w,"document");serial.text_write_raw(w,`{"path":`);serial.text_write_string(w,document_path(s.document))
     api.write_key(w,"dirty");api.write_flag(w,document_dirty(s))
     api.write_key(w,"entities");serial.text_write_int(w,i64(core.world_entities(world).alive))
-    api.write_key(w,"undo");serial.text_write_int(w,i64(edits_undo_count(s.edits)))
-    api.write_key(w,"redo");serial.text_write_int(w,i64(edits_redo_count(s.edits)))
+    api.write_key(w,"undo");serial.text_write_int(w,i64(history.edits_undo_count(s.edits)))
+    api.write_key(w,"redo");serial.text_write_int(w,i64(history.edits_redo_count(s.edits)))
     serial.write_u8(w,'}')
     position:=orbit_position(v.orbit)
     api.write_key(w,"camera");serial.text_write_raw(w,`{"position":`);api.write_list(w,position[:])
@@ -1180,7 +1181,7 @@ api_play_result_fill :: proc(s:^Session,result:^Api_Play_Result,r:^Run) {
 api_play_start :: proc(s:^Session,call:^api.Call) {
     owner:=ai_task_of_call(s,call)
     running:=run_find(s,owner)
-    if running!=nil && running.document==edits_scene_state(s.edits) {
+    if running!=nil && running.document==history.edits_scene_state(s.edits) {
         api_play_result(s,call,running)
         return
     }

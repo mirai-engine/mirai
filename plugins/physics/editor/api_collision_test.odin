@@ -5,6 +5,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import phys "plugins:physics/runtime"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -49,11 +50,11 @@ collision_api_reads_and_edits_presets_masks_and_queries_by_name_in_one_undo_step
     core.add(&world.ids,entity,{value=7});core.add(&world.ids,held,{value=9});core.add(&world.ids,alone,{value=11});core.add(&world.colliders,entity,collider);core.add(&world.colliders,alone,phys.COLLIDER_DEFAULT)
     core.add(&world.filters,entity,config);core.add(&world.nested,entity,{region=config});core.add(&world.wrong,entity,{1,2})
     core.settle(&info,&world,nil)
-    selection:editor.Selection;defer delete(selection.entities)
-    viewport:editor.Viewport;gui:editor.Editor_Ui;edits:editor.Edits;defer editor.edits_free(&edits)
+    selection:history.Selection;defer delete(selection.entities)
+    viewport:editor.Viewport;gui:editor.Editor_Ui;edits:history.Edits;defer history.edits_free(&edits)
     tools:Collision_Test_Editor
     session:=editor.Session{info=&info,edit_world=&world,editor_world=&tools,selection=&selection,viewport=&viewport,gui=&gui,edits=&edits}
-    editor.edits_reset(&edits,editor.edited_world(&session))
+    history.edits_reset(&edits,editor.edited_world(&session))
     if !testing.expect_value(t,editor.api_open(&session,0,true),editor.Api_Open_Error.None) {return};defer editor.api_close(&session)
     state:=editor.api_state(&session);state.poll_temp=context.temp_allocator
     if api.method_find(&state.server,"physics.collision.get")==nil {api_collision_register(&session)}
@@ -106,12 +107,12 @@ collision_api_reads_and_edits_presets_masks_and_queries_by_name_in_one_undo_step
     value,_=core.get(core.read(&world.colliders),entity)
     testing.expect(t,value.preset==phys.PRESET_CUSTOM && value.sensor && value.belongs==1 && value.collides==phys.COLLISION_LAYERS_ALL)
     // The steps are of the API: it undoes them, as history.undo does.
-    edits.author=editor.EDIT_AUTHOR_API
-    for _ in 0..<4 {testing.expect(t,editor.undo(&edits,editor.edited_world(&session),&selection))}
+    edits.author=history.EDIT_AUTHOR_API
+    for _ in 0..<4 {testing.expect(t,history.undo(&edits,editor.edited_world(&session),&selection))}
     value,_=core.get(core.read(&world.colliders),entity);testing.expect_value(t,value,collider)
-    testing.expect(t,editor.redo(&edits,editor.edited_world(&session),&selection))
-    edits.author=editor.EDIT_AUTHOR_USER
-    before:=editor.edits_scene_state(&edits);cursor:=edits.cursor
+    testing.expect(t,history.redo(&edits,editor.edited_world(&session),&selection))
+    edits.author=history.EDIT_AUTHOR_USER
+    before:=history.edits_scene_state(&edits);cursor:=edits.cursor
     for params in ([]string{
         `{"entity":"0000000000000007","component":"Collider","preset":"Trigger"}`,
         `{"entity":"0000000000000007","component":"Collider","belongs":["missing"]}`,
@@ -126,7 +127,7 @@ collision_api_reads_and_edits_presets_masks_and_queries_by_name_in_one_undo_step
     }) {
         error=execute(state,&out,"physics.collision.set",params)
         testing.expect_value(t,error.code,api.INVALID_PARAMS)
-        testing.expect_value(t,editor.edits_scene_state(&edits),before);testing.expect_value(t,edits.cursor,cursor)
+        testing.expect_value(t,history.edits_scene_state(&edits),before);testing.expect_value(t,edits.cursor,cursor)
     }
     error=execute(state,&out,"physics.collision.set",`{"entity":"0000000000000007","component":"Collision_Test_Filter","hits":["player","world"]}`)
     testing.expect_value(t,error.code,0)

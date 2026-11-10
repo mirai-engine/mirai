@@ -1,6 +1,7 @@
 package editor
 
 import "mirai:core"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
 import gpu "mirai:render"
@@ -125,10 +126,10 @@ ai_scene_place :: proc(s:^Session,task:^Ai_Task,w:core.World_Ref,point:[3]f32,en
 }
 
 @(private)
-ai_scene_follow :: proc(s:^Session,task:^Ai_Task,w:core.World_Ref,rows:[]Change_Row) {
+ai_scene_follow :: proc(s:^Session,task:^Ai_Task,w:core.World_Ref,rows:[]history.Change_Row) {
     if s.viewport==nil {return}
     #reverse for row in rows {
-        e:=change_entity(w,row.id)
+        e:=history.change_entity(w,row.id)
         if !entity_alive(w,e) {
             // What it deleted: beside where it was.
             if place,deleted:=ai_review_deleted_world(w,task,row.id,0);deleted {
@@ -231,7 +232,7 @@ ai_scene_ghosts :: proc(s:^Session,w:core.World_Ref,state:^Ai_Scene) {
             if !ai_scene_task_visible(s,w,&task) {continue}
             level:=agent_level(int(task.color_index))
             for id in task.review.changed_ids {
-                if state.ghost_count>=AI_GHOST_CAPACITY || change_entity(w,id)!=core.NONE {continue}
+                if state.ghost_count>=AI_GHOST_CAPACITY || history.change_entity(w,id)!=core.NONE {continue}
                 mesh,shown:=ai_review_deleted_value(w,&task,id,erender.Mesh_Renderer)
                 if !shown {continue}
                 place,placed:=ai_review_deleted_world(w,&task,id,0)

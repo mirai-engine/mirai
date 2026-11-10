@@ -3,6 +3,7 @@ package editor
 import "base:runtime"
 import "core:testing"
 import "mirai:core"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:platform"
 
@@ -77,8 +78,8 @@ Play_Test :: struct {
     app:host.App,
     data:rawptr,
     original:core.Entity,
-    edits:Edits,
-    selection:Selection,
+    edits:history.Edits,
+    selection:history.Selection,
     viewport:Viewport,
     gui:Editor_Ui,
     document:Document,
@@ -114,14 +115,14 @@ play_test_open :: proc(t:^testing.T,f:^Play_Test) -> bool {
     f.viewport={orbit=ORBIT_DEFAULT}
     f.gui={layout={left_open=true,right_open=true,library_tab=.Content,bottom_open=true}}
     f.s={app=&f.app,info=&f.info,edit_world=f.data,edits=&f.edits,selection=&f.selection,viewport=&f.viewport,gui=&f.gui,document=&f.document}
-    edits_reset(&f.edits,edited_world(&f.s))
-    f.document.saved=edits_state(&f.edits)
+    history.edits_reset(&f.edits,edited_world(&f.s))
+    f.document.saved=history.edits_state(&f.edits)
     return true
 }
 
 play_test_close :: proc(f:^Play_Test) {
     runs_stop(&f.s)
-    edits_free(&f.edits)
+    history.edits_free(&f.edits)
     delete(f.selection.entities)
     delete(f.s.edit_selection.entities)
     host.app_world_scratch_free(&f.app)
@@ -138,7 +139,7 @@ play_and_simulation_keep_the_document_and_step_exactly_one_tick :: proc(t:^testi
     s,app,gui,viewport,selection,edits,original,p:=&f.s,&f.app,&f.gui,&f.viewport,&f.selection,&f.edits,f.original,f.p
     world:=cast(^Play_Test_World)f.data
     layout:=gui.layout
-    selection_set(selection,{original})
+    history.selection_set(selection,{original})
     for simulate in ([2]bool{false,true}) {
         testing.expect(t,play_start(s,simulate))
         running:=cast(^Play_Test_World)run_find(s,0).world
@@ -159,20 +160,20 @@ play_and_simulation_keep_the_document_and_step_exactly_one_tick :: proc(t:^testi
         testing.expect_value(t,running.ticks,1)
         core.get(&running.transforms,original).position.x=5
         viewport.orbit.target={8,9,10}
-        selection_clear(selection)
+        history.selection_clear(selection)
         if simulate {
-            selection_set(selection,{original})
+            history.selection_set(selection,{original})
             testing.expect(t,action_run(s,.Apply_Simulation))
             testing.expect(t,run_find(s,0).world==running && .Apply_Simulation in s.requests)
             requests_run(s)
             testing.expect_value(t,entity_local(edited_world(s),original).position.x,f32(5))
             testing.expect_value(t,edits.cursor,1)
-            testing.expect(t,undo(edits,edited_world(s),selection))
+            testing.expect(t,history.undo(edits,edited_world(s),selection))
         } else {play_stop(s)}
         testing.expect(t,run_find(s,0)==nil && s.mode==.Edit && host.app_world_count(app)==1)
         testing.expect_value(t,gui.layout,layout)
         testing.expect_value(t,viewport.orbit,ORBIT_DEFAULT)
-        testing.expect_value(t,selection_active(selection),original)
+        testing.expect_value(t,history.selection_active(selection),original)
         testing.expect_value(t,entity_local(edited_world(s),original).position.x,f32(1))
         testing.expect_value(t,world.ticks,0)
     }

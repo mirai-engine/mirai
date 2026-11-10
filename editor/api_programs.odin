@@ -9,6 +9,7 @@ import "mirai:asset"
 import "mirai:cook/build"
 import "mirai:cook/shaders"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
@@ -385,7 +386,7 @@ api_program_create :: proc(s:^Session,call:^api.Call) {
     }
     path:=project.path(s.project_root,"shaders",strings.concatenate({strings.to_lower(name,context.temp_allocator),".slang"},context.temp_allocator),allocator=context.temp_allocator)
     if file_exists(s,path) {
-        api.call_failf(call,api.INVALID_PARAMS,"%s is there already and declares no program %s: give the new one another name",file_relative(s,path),name)
+        api.call_failf(call,api.INVALID_PARAMS,"%s is there already and declares no program %s: give the new one another name",history.file_relative(s.project_root,path),name)
         return
     }
     _,sources:=program_folders(s)
@@ -463,7 +464,7 @@ api_program_inspect :: proc(s:^Session,call:^api.Call) {
     serial.write_u8(w,'{')
     api.write_text(w,"program",name,true)
     api.write_text(w,"kind",domain)
-    api.write_text(w,"file",file_relative(s,path))
+    api.write_text(w,"file",history.file_relative(s.project_root,path))
     api.write_text(w,"source",text)
     api.write_key(w,"parameters");serial.write_u8(w,'[')
     for field,i in src.parameters {

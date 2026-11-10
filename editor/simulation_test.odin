@@ -2,6 +2,7 @@ package editor
 
 import "core:testing"
 import "mirai:core"
+import "mirai:editor/history"
 
 Simulation_Test_World :: struct {
     entities:core.Entities,
@@ -42,16 +43,16 @@ simulation_poses_apply_atomically_under_selected_parents_and_undo_together :: pr
     core.add(&world.transforms,child,core.Transform{{2,0,0},1,{1,1,1}})
     core.add(&world.parents,child,core.Parent{parent,0})
     simulation_test_settle(&world,nil,nil)
-    edits:Edits
-    selection:Selection
+    edits:history.Edits
+    selection:history.Selection
     viewport:Viewport
     gui:Editor_Ui
     s:=Session{info=&info,edit_world=&world,edits=&edits,selection=&selection,viewport=&viewport,gui=&gui}
     w:=edited_world(&s)
-    edits_reset(&edits,w)
-    defer edits_free(&edits)
+    history.edits_reset(&edits,w)
+    defer history.edits_free(&edits)
     defer delete(selection.entities)
-    selection_set(&selection,{child})
+    history.selection_set(&selection,{child})
     poses:=[2]Simulation_Pose{
         {id=2,position={25,0,0},rotation={0,0,0,1},scale={1,1,1}},
         {id=1,position={20,0,0},rotation={0,0,0,1},scale={1,1,1}},
@@ -60,10 +61,10 @@ simulation_poses_apply_atomically_under_selected_parents_and_undo_together :: pr
     testing.expect_value(t,edits.cursor,1)
     testing.expect_value(t,entity_local(w,child).position.x,f32(5))
     testing.expect_value(t,entity_world(w,child).position.x,f32(25))
-    testing.expect(t,undo(&edits,w,&selection))
+    testing.expect(t,history.undo(&edits,w,&selection))
     testing.expect_value(t,entity_local(w,child).position.x,f32(2))
     testing.expect_value(t,entity_world(w,child).position.x,f32(12))
-    testing.expect(t,redo(&edits,w,&selection))
+    testing.expect(t,history.redo(&edits,w,&selection))
     testing.expect_value(t,entity_world(w,child).position.x,f32(25))
     invalid:=poses
     invalid[0].position.x=30
@@ -84,7 +85,7 @@ simulation_poses_apply_atomically_under_selected_parents_and_undo_together :: pr
     core.get(&world.transforms,parent)^={{10,0,0},quaternion(x=0,y=0,z=0.70710677,w=0.70710677),{2,3,4}}
     core.get(&world.transforms,child)^={{2,0,0},quaternion(x=0,y=0.70710677,z=0,w=0.70710677),{1,2,1}}
     simulation_test_settle(&world,nil,nil)
-    edits_reset(&edits,w)
+    history.edits_reset(&edits,w)
     deep:=[1]Simulation_Pose{{id=3,position={7,8,9},rotation={0,0,0,1},scale={2,3,4}}}
     testing.expect(t,simulation_apply_poses(&s,deep[:]))
     actual:=entity_world(w,grandchild)

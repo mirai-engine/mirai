@@ -7,6 +7,7 @@ import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/ai_store"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
@@ -23,8 +24,8 @@ Files_Test :: struct {
     world:Files_Test_World,
     info:core.World_Info,
     tables:[1]core.Table_Info,
-    edits:Edits,
-    selection:Selection,
+    edits:history.Edits,
+    selection:history.Selection,
     viewport:Viewport,
     gui:Editor_Ui,
     document:Document,
@@ -40,7 +41,7 @@ files_test_open :: proc(f:^Files_Test,name:string) {
     core.table_init(&w.ids,"Id")
     f.tables[0]={name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Files_Test_World,ids)}
     f.info={entities=offset_of(Files_Test_World,entities),tables=f.tables[:]}
-    edits_reset(&f.edits,{data=w,info=&f.info})
+    history.edits_reset(&f.edits,{data=w,info=&f.info})
     f.ai=new(Ai)
     temporary,_:=os.temp_directory(context.temp_allocator)
     root,_:=strings.replace_all(project.path(temporary,name,allocator=context.temp_allocator),"\\","/",context.temp_allocator)
@@ -54,7 +55,7 @@ files_test_open :: proc(f:^Files_Test,name:string) {
 files_test_close :: proc(f:^Files_Test) {
     for &task in f.ai.tasks {ai_review_free(&task.review)}
     free(f.ai)
-    edits_free(&f.edits)
+    history.edits_free(&f.edits)
     delete(f.selection.entities)
     core.table_destroy(&f.world.ids)
     core.entities_destroy(&f.world.entities)
@@ -71,7 +72,7 @@ files_test_read :: proc(path:string) -> string {
 
 @(private)
 files_test_commit :: proc(f:^Files_Test) {
-    edits_commit(&f.edits,edited_world(&f.s),&f.selection)
+    history.edits_commit(&f.edits,edited_world(&f.s),&f.selection)
 }
 
 @(test)
@@ -84,29 +85,29 @@ files_of_a_gesture_are_one_step_and_undo_keeps_what_changed_outside :: proc(t:^t
     path:=project.path(f.root,"assets/rock.mat",allocator=context.temp_allocator)
     testing.expect(t,os.write_entire_file(path,"one")==nil)
 
-    scene:=edits_scene_state(&f.edits)
+    scene:=history.edits_scene_state(&f.edits)
     testing.expect(t,file_write(s,path,transmute([]u8)string("two"),"Write"))
     files_test_commit(&f)
     testing.expect_value(t,len(f.edits.steps),1)
-    testing.expect_value(t,edits_scene_state(&f.edits),scene) // the scene did not change: nothing to save
+    testing.expect_value(t,history.edits_scene_state(&f.edits),scene) // the scene did not change: nothing to save
     testing.expect_value(t,len(f.edits.steps[0].files),1)
     testing.expect_value(t,files_test_read(path),"two")
 
     // Two writes of one gesture are one step: from what was before the first to what the last left.
-    edits_begin(&f.edits,&f.selection,"Two writes")
+    history.edits_begin(&f.edits,&f.selection,"Two writes")
     testing.expect(t,file_write(s,path,transmute([]u8)string("three"),"Write"))
     testing.expect(t,file_write(s,path,transmute([]u8)string("four"),"Write"))
-    edits_end(&f.edits)
+    history.edits_end(&f.edits)
     files_test_commit(&f)
     testing.expect_value(t,len(f.edits.steps),2)
     testing.expect_value(t,string(f.edits.steps[1].files[0].other),"two")
     testing.expect_value(t,string(f.edits.steps[1].files[0].held),"four")
 
-    testing.expect(t,undo(&f.edits,w,&f.selection))
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
     testing.expect_value(t,files_test_read(path),"two")
-    testing.expect(t,undo(&f.edits,w,&f.selection))
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
     testing.expect_value(t,files_test_read(path),"one")
-    testing.expect(t,redo(&f.edits,w,&f.selection))
+    testing.expect(t,history.redo(&f.edits,w,&f.selection))
     testing.expect_value(t,files_test_read(path),"two")
     testing.expect_value(t,len(f.edits.touched),1)
     files_settle(s)
@@ -114,29 +115,29 @@ files_of_a_gesture_are_one_step_and_undo_keeps_what_changed_outside :: proc(t:^t
 
     // A file another program changed since keeps its content, and redo goes on.
     testing.expect(t,os.write_entire_file(path,"outside")==nil)
-    testing.expect(t,redo(&f.edits,w,&f.selection))
+    testing.expect(t,history.redo(&f.edits,w,&f.selection))
     testing.expect_value(t,files_test_read(path),"outside")
     testing.expect_value(t,f.edits.files_kept,1)
     files_settle(s)
     testing.expect_value(t,f.edits.files_kept,0)
-    testing.expect(t,undo(&f.edits,w,&f.selection))
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
     testing.expect_value(t,files_test_read(path),"outside")
 
     // A file an edit creates goes with undo and comes back with redo.
     created:=project.path(f.root,"assets/new.mat",allocator=context.temp_allocator)
     testing.expect(t,file_write(s,created,transmute([]u8)string("made"),"Create"))
     files_test_commit(&f)
-    testing.expect(t,undo(&f.edits,w,&f.selection))
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
     testing.expect(t,!os.exists(created))
-    testing.expect(t,redo(&f.edits,w,&f.selection))
+    testing.expect(t,history.redo(&f.edits,w,&f.selection))
     testing.expect_value(t,files_test_read(created),"made")
 
     // A cancelled gesture puts its files back.
-    edits_begin(&f.edits,&f.selection,"Cancelled")
+    history.edits_begin(&f.edits,&f.selection,"Cancelled")
     testing.expect(t,file_write(s,created,transmute([]u8)string("dropped"),"Write"))
     testing.expect(t,file_write(s,created,nil,"Remove",remove=true))
     testing.expect(t,!os.exists(created))
-    edits_cancel(&f.edits,w)
+    history.edits_cancel(&f.edits,w)
     testing.expect_value(t,files_test_read(created),"made")
     testing.expect_value(t,len(f.edits.files),0)
 
@@ -176,13 +177,13 @@ a_transaction_of_a_turn_says_who_changed_its_entities_and_assets :: proc(t:^test
     task:=provenance_task(t,&f)
     defer ai_store.close(&m.store)
     before:=f.edits.serial
-    edits_begin(&f.edits,&f.selection,"Agent")
+    history.edits_begin(&f.edits,&f.selection,"Agent")
     testing.expect(t,file_write(&f.s,project.path(f.root,"assets/rock.mat",allocator=context.temp_allocator),transmute([]u8)string("wet"),"Write"))
     testing.expect(t,file_write(&f.s,project.path(f.root,"shaders/rock.slang",allocator=context.temp_allocator),transmute([]u8)string("code"),"Write"))
     e:=core.create(&f.world.entities)
     core.add(&f.world.ids,e,core.Id{0x2a})
     core.world_settle(edited_world(&f.s))
-    edits_end(&f.edits)
+    history.edits_end(&f.edits)
     files_test_commit(&f)
     ai_review_record(&f.s,task,before)
     for ref in ([?][2]string{{AI_REF_ASSET,"rock.mat"},{AI_REF_ENTITY,"000000000000002a"}}) {
@@ -250,10 +251,10 @@ ai_review_reverts_restores_and_resolves_the_files_of_a_turn :: proc(t:^testing.T
     a.conversation.id=7
 
     before:=f.edits.serial
-    edits_begin(&f.edits,&f.selection,"Agent A")
+    history.edits_begin(&f.edits,&f.selection,"Agent A")
     testing.expect(t,file_write(s,rock,transmute([]u8)string("rock by a"),"Write"))
     testing.expect(t,file_write(s,program,transmute([]u8)string("program by a"),"Write"))
-    edits_end(&f.edits)
+    history.edits_end(&f.edits)
     files_test_commit(&f)
     ai_review_record(s,a,before)
     before=f.edits.serial
@@ -324,12 +325,12 @@ asset_files_of_edits_stay_in_memory_until_they_are_saved :: proc(t:^testing.T) {
     testing.expect_value(t,files_test_read(rock),"one")
     held,found:=asset.registry_memory_find(&assets.registry,"rock.mat")
     testing.expect(t,found && string(held.data)=="two","the change stays in memory")
-    testing.expect(t,file_holds(&assets.registry,rock,true,transmute([]u8)string("two")))
+    testing.expect(t,history.file_holds(&assets.registry,rock,true,transmute([]u8)string("two")))
 
     // Undo puts back what the disk has: nothing is left unsaved.
-    testing.expect(t,undo(&f.edits,w,&f.selection))
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
     testing.expect_value(t,len(assets.registry.memory),0)
-    testing.expect(t,redo(&f.edits,w,&f.selection))
+    testing.expect(t,history.redo(&f.edits,w,&f.selection))
     held,found=asset.registry_memory_find(&assets.registry,"rock.mat")
     testing.expect(t,found && string(held.data)=="two")
 
@@ -338,7 +339,7 @@ asset_files_of_edits_stay_in_memory_until_they_are_saved :: proc(t:^testing.T) {
     testing.expect(t,file_write(s,created,transmute([]u8)string("made"),"Create"))
     files_test_commit(&f)
     testing.expect(t,!os.exists(created) && file_exists(s,created))
-    testing.expect(t,undo(&f.edits,w,&f.selection))
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
     testing.expect(t,!file_exists(s,created))
     _,found=asset.registry_memory_find(&assets.registry,"new.mat")
     testing.expect(t,!found)
@@ -347,7 +348,7 @@ asset_files_of_edits_stay_in_memory_until_they_are_saved :: proc(t:^testing.T) {
     testing.expect(t,file_write(s,rock,nil,"Remove",remove=true))
     files_test_commit(&f)
     testing.expect(t,os.exists(rock) && !file_exists(s,rock))
-    testing.expect(t,undo(&f.edits,w,&f.selection))
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
     testing.expect(t,file_exists(s,rock))
 
     // The review of a turn reverts and restores what it left in memory.
@@ -413,9 +414,9 @@ program_sources_stay_in_memory_until_they_are_saved :: proc(t:^testing.T) {
     testing.expect(t,len(assets.registry.files)==0,"it is no asset")
 
     // Undo back to the file leaves nothing unsaved; redo brings the change back.
-    testing.expect(t,undo(&f.edits,w,&f.selection))
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
     testing.expect_value(t,len(assets.registry.memory),0)
-    testing.expect(t,redo(&f.edits,w,&f.selection))
+    testing.expect(t,history.redo(&f.edits,w,&f.selection))
     testing.expect_value(t,unsaved(&f,program),"edited")
 
     // The review of a turn reverts and restores it in memory.
@@ -501,7 +502,7 @@ files_an_asset_document_writes_are_steps_of_its_own_history :: proc(t:^testing.T
     defer asset_documents_free(s)
     rock:=project.path(f.root,"assets/rock.mat",allocator=context.temp_allocator)
     testing.expect(t,os.write_entire_file(rock,"one")==nil)
-    holds :: proc(r:^asset.Registry,path,data:string) -> bool {return file_holds(r,path,true,transmute([]u8)data)}
+    holds :: proc(r:^asset.Registry,path,data:string) -> bool {return history.file_holds(r,path,true,transmute([]u8)data)}
     append(&s.asset_documents,Asset_Document{kind=asset.KIND_MATERIAL},Asset_Document{kind=asset.KIND_MATERIAL})
     asset_document_activate(s,1)
     testing.expect(t,asset_document_active(s)==&s.asset_documents[1])
@@ -516,9 +517,9 @@ files_an_asset_document_writes_are_steps_of_its_own_history :: proc(t:^testing.T
     testing.expect_value(t,files_test_read(rock),"one")
 
     // A gesture of the scene that is open (the API, a tool) keeps what it writes.
-    testing.expect(t,edits_begin(&f.edits,&f.selection,"Agent"))
+    testing.expect(t,history.edits_begin(&f.edits,&f.selection,"Agent"))
     testing.expect(t,file_write(s,rock,transmute([]u8)string("three"),"Value"))
-    edits_end(&f.edits)
+    history.edits_end(&f.edits)
     files_test_commit(&f)
     testing.expect_value(t,len(f.edits.steps),1)
     testing.expect_value(t,h.cursor,1)

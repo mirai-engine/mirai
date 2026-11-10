@@ -9,6 +9,7 @@ import "core:time"
 import "mirai:editor/acp"
 import "mirai:editor/ai_store"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:platform"
 import "mirai:project"
@@ -791,7 +792,7 @@ ai_task_start :: proc(s:^Session,m:^Ai,task:^Ai_Task) {
     if !connection.configured {ai_task_fail(task,"Connect the agent in AI connections first");ai_task_dirty(task);ai_task_persist(s,task);ai_task_settle(s,m,task);return}
     worker:=ai_worker_take(s,task,provider)
     if worker==nil {return}
-    task.state=.Running;task.started=time.tick_now();task.state_before=edits_state(s.edits)
+    task.state=.Running;task.started=time.tick_now();task.state_before=history.edits_state(s.edits)
     task.plan_count=0
     task.sources,task.shaders=code_fingerprint(s.project_root),shaders_fingerprint(s.project_root);worker.task,worker.last_task=task.id,task.id;worker.cancel_deadline=0
     ai_code_begin(s,m,task)
@@ -822,7 +823,7 @@ ai_task_end :: proc(s:^Session,m:^Ai,task:^Ai_Task,exit_code:int) {
     if task.compact!=.None {ai_compact_end(s,m,task,exit_code);return}
     task.exit_code=exit_code;task.seconds=f32(time.duration_seconds(time.tick_since(task.started)))
     task.conversation.seconds+=task.seconds
-    task.state_after=edits_state(s.edits)
+    task.state_after=history.edits_state(s.edits)
     if task.stop {task.state=.Cancelled;ai_task_note(s,task,"Cancelled")} else if exit_code!=0 {task.state=.Failed} else {task.state=.Done}
     // Shaders the agent wrote with its own tools are published like those of the API; code needs a Build.
     shaders_changed:=shaders_fingerprint(s.project_root)!=task.shaders

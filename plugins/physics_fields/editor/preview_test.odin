@@ -5,6 +5,7 @@ import "core:mem"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor"
+import "mirai:editor/history"
 import "mirai:host"
 import gpu "mirai:render"
 import mm "mirai:std/math"
@@ -31,8 +32,8 @@ selected_physics_fields_preview_world_regions_force_direction_and_parent_changes
     core.add(&w.transforms,entity,core.Transform{{1,0,0},1,{1,2,3}})
     core.add(&w.transforms,other,core.TRANSFORM_DEFAULT);core.add(&w.parents,entity,{entity=parent})
     core.test_world_settle(&w)
-    selection:editor.Selection;defer delete(selection.entities)
-    editor.selection_set(&selection,{entity})
+    selection:history.Selection;defer delete(selection.entities)
+    history.selection_set(&selection,{entity})
     session:=editor.Session{selection=&selection}
     preview:=new(Physics_Field_Preview);defer free(preview)
     app:host.App
@@ -65,10 +66,10 @@ selected_physics_fields_preview_world_regions_force_direction_and_parent_changes
         testing.expect(t,abs(linalg.length(from-pose.position)-3)<1e-4 && abs(linalg.length(to-pose.position)-1)<1e-4)
     }
     app.extras.debug_count=0
-    editor.selection_clear(&selection)
+    history.selection_clear(&selection)
     physics_fields_preview(&session,preview,{},core.read(&w.regions),core.read(&w.transforms),core.read(&w.parents),&app.extras)
     testing.expect_value(t,app.extras.debug_count,0)
-    editor.selection_set(&selection,{entity})
+    history.selection_set(&selection,{entity})
     versions:=[3]u64{w.regions.version,w.transforms.version,w.parents.version}
     for mode in ([2]editor.Mode{.Simulate,.Simulation_Paused}) {
         session.mode=mode
@@ -95,8 +96,8 @@ physics_field_preview_reuses_vertices_without_allocations_and_omits_incomplete_r
     field:=fields.PHYSICS_FIELD_DEFAULT;field.force=10
     core.add(&w.regions,entity,field);core.add(&w.transforms,entity,core.TRANSFORM_DEFAULT)
     core.test_world_settle(&w)
-    selection:editor.Selection;defer delete(selection.entities)
-    editor.selection_set(&selection,{entity})
+    selection:history.Selection;defer delete(selection.entities)
+    history.selection_set(&selection,{entity})
     session:=editor.Session{selection=&selection}
     preview:=new(Physics_Field_Preview);defer free(preview)
     app:host.App

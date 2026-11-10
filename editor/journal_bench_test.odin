@@ -6,6 +6,7 @@ import "core:mem"
 import "core:testing"
 import "core:time"
 import "mirai:core"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 
 // The memory the editor keeps to compare a large scene, and the time of a
@@ -41,7 +42,7 @@ bench_create :: proc(w:^Bench_World,id:u64,parent:core.Entity,authored:bool) -> 
     if authored {
         core.add(&w.ids,e,{value=type_of(core.Id{}.value)(id)})
         name:core.Name
-        text_put(name.text[:],fmt.tprintf("Cube %d",id))
+        history.text_put(name.text[:],fmt.tprintf("Cube %d",id))
         core.add(&w.names,e,name)
     }
     core.add(&w.transforms,e,core.Transform{{f32(id),0,0},1,{1,1,1}})
@@ -90,47 +91,47 @@ journal_memory_of_a_large_scene :: proc(t:^testing.T) {
     reserve(&world.entities.generation,len(world.entities.generation)+256)
     free_all(context.temp_allocator)
     world_bytes:=tracking.current_memory_allocated
-    edits:Edits
-    selection:Selection
-    image,history,cancel,collab_bytes:i64
+    edits:history.Edits
+    selection:history.Selection
+    image,steps,cancel,collab_bytes:i64
     step_bytes:int
     reset_ms,commit_ms,undo_ms,tick_ms:f64
     {
         start:=time.tick_now()
-        edits_reset(&edits,w)
+        history.edits_reset(&edits,w)
         reset_ms=time.duration_milliseconds(time.tick_since(start))
         image=tracking.current_memory_allocated-world_bytes
         base:=tracking.current_memory_allocated
         for k in 0..<100 {
-            edits_begin(&edits,&selection,"Move")
+            history.edits_begin(&edits,&selection,"Move")
             core.get(&world.transforms,world.transforms.entities[k*7]).position.y+=1
-            edits_end(&edits)
-            edits_commit(&edits,w,&selection)
-            edits_begin(&edits,&selection,"Add")
+            history.edits_end(&edits)
+            history.edits_commit(&edits,w,&selection)
+            history.edits_begin(&edits,&selection,"Add")
             bench_create(world,u64(ENTITIES+k+1),core.NONE,true)
             bench_settle(world,nil,nil)
-            edits_end(&edits)
-            edits_commit(&edits,w,&selection)
+            history.edits_end(&edits)
+            history.edits_commit(&edits,w,&selection)
         }
         free_all(context.temp_allocator)
-        history=tracking.current_memory_allocated-base
+        steps=tracking.current_memory_allocated-base
         step_bytes=edits.bytes
         base=tracking.current_memory_allocated
-        edits_begin(&edits,&selection,"Cancelled")
-        edits_cancel_prepare(&edits,w)
-        edits_cancel(&edits,w)
+        history.edits_begin(&edits,&selection,"Cancelled")
+        history.edits_cancel_prepare(&edits,w)
+        history.edits_cancel(&edits,w)
         cancel=tracking.current_memory_allocated-base
-        edits_begin(&edits,&selection,"Delete")
+        history.edits_begin(&edits,&selection,"Delete")
         core.destroy(&world.entities,world.ids.entities[ENTITIES/2])
         bench_settle(world,nil,nil)
-        edits_end(&edits)
+        history.edits_end(&edits)
         start=time.tick_now()
-        edits_commit(&edits,w,&selection)
+        history.edits_commit(&edits,w,&selection)
         commit_ms=time.duration_milliseconds(time.tick_since(start))
         start=time.tick_now()
-        undo(&edits,w,&selection)
+        history.undo(&edits,w,&selection)
         undo_ms=time.duration_milliseconds(time.tick_since(start))
-        redo(&edits,w,&selection)
+        history.redo(&edits,w,&selection)
         free_all(context.temp_allocator)
         base=tracking.current_memory_allocated
         s:=Session{info=&info,edit_world=world,edits=&edits,selection=&selection}
@@ -149,12 +150,12 @@ journal_memory_of_a_large_scene :: proc(t:^testing.T) {
         delete(st.peers[0].out)
         collab_tables_free(st)
         free(st)
-        edits_free(&edits)
+        history.edits_free(&edits)
         delete(selection.entities)
     }
     MB::1024.0*1024.0
     fmt.printfln("journal: %d entities, World %.2f MB; image %.2f MB; 200 steps %.2f MB (%.2f MB in the steps); cancel reserve %.2f MB; collab %.2f MB; reset %.2f ms; delete commit %.3f ms; undo %.3f ms; collab tick %.3f ms",
-        ENTITIES,f64(world_bytes)/MB,f64(image)/MB,f64(history)/MB,f64(step_bytes)/MB,f64(cancel)/MB,f64(collab_bytes)/MB,reset_ms,commit_ms,undo_ms,tick_ms)
+        ENTITIES,f64(world_bytes)/MB,f64(image)/MB,f64(steps)/MB,f64(step_bytes)/MB,f64(cancel)/MB,f64(collab_bytes)/MB,reset_ms,commit_ms,undo_ms,tick_ms)
     core.table_destroy(&world.ids);core.table_destroy(&world.names);core.table_destroy(&world.transforms)
     core.table_destroy(&world.poses);core.table_destroy(&world.parents);core.table_destroy(&world.meshes)
     core.entities_destroy(&world.entities)

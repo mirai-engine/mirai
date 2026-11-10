@@ -2,6 +2,7 @@ package editor
 
 import "core:testing"
 import "mirai:core"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
 import mm "mirai:std/math"
@@ -110,50 +111,50 @@ hierarchy_and_ai_context_keep_authors_with_the_bounds_of_their_derived_geometry 
     task.region={0,0,400,600}
     entities=ai_entities_gather(&session,&task)
     testing.expect(t,len(entities)==1 && !entities[0].inside && task.entities_total==1,"partial regions keep the complete visual bounds of their author")
-    edits:Edits
-    selection:Selection
+    edits:history.Edits
+    selection:history.Selection
     document:Document
     session.edits,session.selection,session.document=&edits,&selection,&document
     defer delete(selection.entities)
-    selection_set(&selection,{authored_child})
+    history.selection_set(&selection,{authored_child})
     entities=ai_entities_gather(&session,&task)
     testing.expect(t,len(entities)==2 && task.entities_total==1,"selected authors are included even without visible geometry")
     testing.expect_value(t,entities[0].id,ai_entity_id_text(ref,authored_child))
     testing.expect(t,!entities[0].inside)
-    selection_clear(&selection)
+    history.selection_clear(&selection)
     entities=ai_entities_gather(&session,&task)
     testing.expect(t,len(entities)==1 && entities[0].id==ai_entity_id_text(ref,owner),"deselection removes its automatic AI context")
-    defer edits_free(&edits)
-    edits_reset(&edits,ref)
+    defer history.edits_free(&edits)
+    history.edits_reset(&edits,ref)
     late_chunk:=core.create(&world.entities)
     core.add(&world.parents,late_chunk,{entity=owner})
     core.add(&world.transforms,late_chunk,core.TRANSFORM_IDENTITY)
     core.add(&world.meshes,late_chunk,{shape=.Cube})
     authoring_context_settle(&world,nil,nil)
-    edits_cancel(&edits,ref)
+    history.edits_cancel(&edits,ref)
     testing.expect(t,core.alive(&world.entities,late_chunk) && core.has(&world.meshes,late_chunk),"cancel without a gesture preserves derived entities added after history reset")
     copies:=entities_duplicate(&session,{owner})
     testing.expect_value(t,len(copies),1)
     testing.expect(t,world.entities.alive==9,"only the author and its authored child are duplicated")
-    testing.expect(t,edits_commit(&edits,ref,&selection))
-    edits_begin(&edits,&selection,"Terrain source")
+    testing.expect(t,history.edits_commit(&edits,ref,&selection))
+    history.edits_begin(&edits,&selection,"Terrain source")
     core.get(&world.authored,owner).value=43
     core.get(&world.meshes,left).shape=.Sphere
-    edits_end(&edits)
-    testing.expect(t,edits_commit(&edits,ref,&selection))
-    testing.expect(t,undo(&edits,ref,&selection))
+    history.edits_end(&edits)
+    testing.expect(t,history.edits_commit(&edits,ref,&selection))
+    testing.expect(t,history.undo(&edits,ref,&selection))
     authored,_:=core.get(core.read(&world.authored),owner)
     derived,_:=core.get(core.read(&world.meshes),left)
     testing.expect_value(t,authored.value,42)
     testing.expect_value(t,derived.shape,erender.Shape.Sphere)
-    testing.expect(t,redo(&edits,ref,&selection))
+    testing.expect(t,history.redo(&edits,ref,&selection))
     entities_delete(&session,{authored_child})
-    testing.expect(t,edits_commit(&edits,ref,&selection))
-    testing.expect(t,undo(&edits,ref,&selection))
+    testing.expect(t,history.edits_commit(&edits,ref,&selection))
+    testing.expect(t,history.undo(&edits,ref,&selection))
     testing.expect(t,core.alive(&world.entities,authored_child) && core.has(&world.ids,authored_child) && core.has(&world.transforms,authored_child),"undo restores deleted authors from the previous Id table")
     entities_delete(&session,{owner})
-    testing.expect(t,edits_commit(&edits,ref,&selection))
-    testing.expect(t,undo(&edits,ref,&selection))
+    testing.expect(t,history.edits_commit(&edits,ref,&selection))
+    testing.expect(t,history.undo(&edits,ref,&selection))
     testing.expect_value(t,world.entities.alive,5)
     testing.expect(t,core.has(&world.ids,owner) && core.has(&world.ids,authored_child) && !core.alive(&world.entities,left),"structural undo restores authors without leaving empty derived handles alive")
     // A restoration turns entities: what it brought back keeps what holds it.
@@ -165,9 +166,9 @@ hierarchy_and_ai_context_keep_authors_with_the_bounds_of_their_derived_geometry 
     core.add(&world.derived,opaque,{value=7})
     authoring_context_settle(&world,nil,nil)
     marks:=make([]u8,len(world.entities.generation),context.temp_allocator)
-    marks[core.entity_index(orphan)]=ENTITY_TURNED
-    marks[core.entity_index(opaque)]=ENTITY_TURNED
-    world_turned_prune(ref,marks,len(marks),transforms)
+    marks[core.entity_index(orphan)]=history.ENTITY_TURNED
+    marks[core.entity_index(opaque)]=history.ENTITY_TURNED
+    history.world_turned_prune(ref,marks,len(marks),transforms)
     testing.expect(t,!core.alive(&world.entities,orphan),"an obsolete world transform does not keep an orphan handle alive after restoration")
     testing.expect(t,core.alive(&world.entities,opaque) && core.has(&world.derived,opaque),"valid transient-only data is retained by its owner")
     testing.expect_value(t,world.entities.alive,6)
