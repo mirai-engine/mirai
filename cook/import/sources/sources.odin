@@ -166,18 +166,17 @@ import_source :: proc(path,folder:string,options:importer.Import_Options={},form
         if importer.unsafe_path(path) || !os.exists(path) {return {},importer.error_make(.Not_Found,"%s does not exist",path)}
         return {},importer.error_make(.Unsupported,"%s is not a file Mirai imports: a model (%s), an image, a sound (WAV, Ogg Vorbis), a font (TrueType, OpenType), texts (CSV) or a manifest of prompts (%s); the formats a plugin adds import in the editor",path,importer.format_names(formats),importer.PROMPTS_MANIFEST)
     case .Model:
-        report,error=prefab.model_import(path,folder,formats,options,allocator)
+        return prefab.model_import(path,folder,formats,options,allocator)
     case .Image:
-        report,error=importer.import_texture(path,folder,options,allocator)
+        return importer.import_texture(path,folder,options,allocator)
     case .Sound:
-        report,error=importer.import_sound(path,folder,{},options,allocator)
+        return importer.import_sound(path,folder,{},options,allocator)
     case .Font:
-        report,error=importer.import_font(path,folder,options,allocator)
+        return importer.import_font(path,folder,options,allocator)
     case .Strings:
-        report,error=importer.import_strings(path,folder,options,allocator)
+        return importer.import_strings(path,folder,options,allocator)
     case .Prompts:
-        report,error=importer.import_prompts(path,folder,options,allocator)
+        return importer.import_prompts(path,folder,options,allocator)
     }
-    if error.code!=.None {return {},error}
-    return report,{}
+    return
 }
