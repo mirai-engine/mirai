@@ -68,3 +68,5 @@ field of `Audio_Volumes` ([audio](../audio.md)); language and interface scale ar
 - `settings.set` with `"layer":"engine"` changes every project on this machine.
 - A fixed `Graphics_Settings` in `settings.mirai` of the project hides the machine's default for
   the GPU; the player's own options still override it. Leave quality to the player.
+- A settings file names no preset: `Graphics_Settings` holds the fields of one, which
+  `graphics_preset` of `settings.set` or `render.graphics_preset_apply` write.
