@@ -6,7 +6,6 @@ import "core:strings"
 import "core:testing"
 import "mirai:editor/api"
 import "mirai:host"
-import "mirai:project"
 import "mirai:std/jobs"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -64,8 +63,8 @@ a_capture_given_a_path_answers_where_it_is_and_no_image :: proc(t:^testing.T) {
 @(test)
 a_capture_without_a_path_goes_under_the_captures_of_its_project :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    root:=project.path_absolute(fmt.tprintf(".mirai/test-capture-default-%d",os.get_pid()))
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"capture-default")
+    if root=="" {return}
     call:=api.Call{allocator=context.temp_allocator}
     inside:=Session{project_root=root}
     file,ok:=api_capture_file(&inside,&call,"","editor.png")
@@ -97,8 +96,8 @@ a_scaled_capture_averages_what_each_pixel_covers :: proc(t:^testing.T) {
 @(test)
 a_capture_makes_its_folder_and_says_why_it_cannot_write :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    folder:=project.path_absolute(fmt.tprintf(".mirai/test-capture-output-%d",os.get_pid()))
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"capture-output")
+    if folder=="" {return}
     file:=fmt.tprintf("%s/new/deeper/a.png",folder)
     problem,_:=api_output_prepare(file)
     testing.expect_value(t,problem,"")

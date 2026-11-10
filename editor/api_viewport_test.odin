@@ -20,9 +20,8 @@ import "mirai:std/serial"
 
 @(test)
 view_viewport_returns_the_requested_message_snapshot_without_recapturing :: proc(t:^testing.T) {
-    root:=project.path_absolute(fmt.tprintf(".mirai/test-view-viewport-%d",os.get_pid()),context.temp_allocator)
-    if !testing.expect(t,!os.exists(root)) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"view-viewport")
+    if root=="" {return}
     saved:=[2]string{"first message image","second message image"}
     requests:=[2]string{"12-0","12-2"}
     for request,index in requests {
@@ -78,37 +77,20 @@ Api_Viewport_Result_Text :: struct {path:string}
 
 @(private="file")
 Camera_World :: struct {
-    entities:core.Entities,
-    ids:core.Table(core.Id),
-    transforms:core.Table(core.Transform),
-    parents:core.Table(core.Parent),
+    using world:core.Test_World,
+    using scene_tables:Test_Scene,
     cameras:core.Table(erender.Camera),
 }
-
-@(private="file")
-camera_world_settle :: proc(data,shared,editor:rawptr) {
-    w:=cast(^Camera_World)data
-    core.table_settle(&w.ids,&w.entities);core.table_settle(&w.transforms,&w.entities)
-    core.table_settle(&w.parents,&w.entities);core.table_settle(&w.cameras,&w.entities)
-    core.entities_settle(&w.entities)
-}
+@(private="file") Camera_Editor :: struct {api:Api}
 
 @(test)
 camera_set_takes_a_fov_and_looks_through_a_camera_of_the_scene_without_editing_it :: proc(t:^testing.T) {
+    info,described:=core.test_info(t,Camera_World,core.Test_None,Camera_Editor,test_types)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     world:Camera_World
-    core.entities_init(&world.entities);defer core.entities_destroy(&world.entities)
-    defer core.table_destroy(&world.ids);defer core.table_destroy(&world.transforms)
-    defer core.table_destroy(&world.parents);defer core.table_destroy(&world.cameras)
-    tables:=[4]core.Table_Info{
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Camera_World,ids)},
-        {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Camera_World,transforms)},
-        {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Camera_World,parents)},
-        {name="Camera",type=erender.Camera,info=type_info_of(erender.Camera),offset=offset_of(Camera_World,cameras)},
-    }
-    storages:=[1]core.Storage_Info{
-        {type=Api,info=type_info_of(Api),place=.Editor},
-    }
-    info:=core.World_Info{entities=offset_of(Camera_World,entities),tables=tables[:],storages=storages[:]}
+    if !testing.expect(t,info.init[.World](&world,context.allocator)) {return}
+    defer info.destroy[.World](&world)
     rig,eye,cube,flat:=core.create(&world.entities),core.create(&world.entities),core.create(&world.entities),core.create(&world.entities)
     forward:=linalg.normalize([3]f32{-1,-0.5,0})
     core.add(&world.ids,rig,{value=1});core.add(&world.ids,eye,{value=2});core.add(&world.ids,cube,{value=3});core.add(&world.ids,flat,{value=4})
@@ -119,15 +101,15 @@ camera_set_takes_a_fov_and_looks_through_a_camera_of_the_scene_without_editing_i
     core.add(&world.parents,eye,core.Parent{entity=rig})
     core.add(&world.cameras,eye,erender.Camera{fov=40*mm.RAD_PER_DEG,near=0.1,active=true})
     core.add(&world.cameras,flat,erender.Camera{projection=.Orthographic,height=10,active=true})
-    camera_world_settle(&world,nil,nil)
+    core.settle(&info,&world,nil)
     selection:history.Selection;defer delete(selection.entities)
     viewport:Viewport
     viewport_init(&viewport);defer viewport_free(&viewport)
     viewport.size={1280,720}
     gui:Editor_Ui;edits:history.Edits;defer history.edits_free(&edits)
     document:Document
-    api_storage:Api
-    session:=Session{info=&info,edit_world=&world,editor_world=&api_storage,selection=&selection,viewport=&viewport,gui=&gui,edits=&edits,document=&document}
+    editor:Camera_Editor
+    session:=Session{info=&info,edit_world=&world,editor_world=&editor,selection=&selection,viewport=&viewport,gui=&gui,edits=&edits,document=&document}
     history.edits_reset(&edits,edited_world(&session))
     if !testing.expect(t,api_open(&session,0,true)==.None) {return};defer api_close(&session)
     state:=api_state(&session);state.poll_temp=context.temp_allocator
@@ -175,15 +157,17 @@ camera_set_takes_a_fov_and_looks_through_a_camera_of_the_scene_without_editing_i
 
 @(test)
 capture_without_ui_draws_the_world_alone_at_the_size_asked_for :: proc(t:^testing.T) {
+    Shown_World :: struct {using world:core.Test_World}
+    shown:Shown_World
+    if !core.test_world_init(t,&shown) {return}
+    defer core.test_world_destroy(&shown)
     settings:=gpu.DEFAULT_SETTINGS
     settings.gi_enabled,settings.reflections,settings.taa=false,false,false
     app,error:=host.app_create({gpu=true,gpu_validation=true,assets_root="assets",window_desc={size={128,96}},threads=1,render_settings=settings})
     if !testing.expect_value(t,error,host.App_Error.None) || app==nil {return}
     defer host.app_destroy(app)
-    info:core.World_Info
-    app.info=&info
-    shown:struct{entities:core.Entities}
-    session:=Session{app=app,info=&info,edit_world=&shown}
+    app.info=core.test_world_info(&shown)
+    session:=Session{app=app,info=app.info,edit_world=&shown}
     cube,made:=erender.mesh_instance(app.assets,{shape=.Cube},mm.transform_matrix({position={0,0.5,0},rotation=1,scale={1,1,1}}),{color={0.2,0.9,0.5,1},emission={0.05,0.3,0.15}})
     if !testing.expect(t,made) {return}
     cube.uniform_color,cube.highlight=true,HIGHLIGHT_SELECTED
