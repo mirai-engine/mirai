@@ -58,12 +58,15 @@ graphics_default_without_a_device_is_the_high_preset :: proc(t:^testing.T) {
 a_scale_set_by_hand_is_used_as_it_is_and_zero_follows_the_target_of_the_preset :: proc(t:^testing.T) {
     g:=GRAPHICS_SETTINGS_DEFAULT
     settings:=gpu.DEFAULT_SETTINGS
-    settings.render_scale=0.5
+    settings.resolution=gpu.Render_Scale(0.5)
     s:=graphics_render_settings(settings,g,{type=.Discrete})
-    testing.expect(t,s.render_scale==1 && s.render_height==1080)
+    testing.expect_value(t,s.resolution,gpu.Resolution(gpu.Render_Lines(1080)))
     g.render_scale=0.5
     s=graphics_render_settings(settings,g,{type=.Discrete})
-    testing.expect(t,s.render_scale==0.5 && s.render_height==0)
+    testing.expect_value(t,s.resolution,gpu.Resolution(gpu.Render_Scale(0.5)))
+    g.render_scale,g.preset_height=0,0
+    s=graphics_render_settings(settings,g,{type=.Discrete})
+    testing.expect_value(t,s.resolution,gpu.Resolution(gpu.Render_Scale(1)))
     testing.expect(t,s.sun_shadows)
     g.sun_shadows=false
     testing.expect(t,!graphics_render_settings(settings,g,{type=.Discrete}).sun_shadows)
@@ -179,9 +182,9 @@ a_preset_keeps_a_pixel_per_point_within_the_lines_of_its_target :: proc(t:^testi
     presets:=GRAPHICS_PRESETS
     // At the window of the render check the presets it runs draw every pixel, as before.
     for preset in ([]Graphics_Quality{.Medium,.High,.Ultra}) {
-        testing.expect_value(t,gpu.views_render_scale(1,presets[preset].preset_height,900,1),f32(1))
+        testing.expect_value(t,gpu.views_render_scale(gpu.Render_Lines(presets[preset].preset_height),900,1),f32(1))
     }
-    testing.expect_value(t,gpu.views_render_scale(1,presets[.Low].preset_height,900,1),f32(0.8))
-    testing.expect_value(t,gpu.views_render_scale(1,presets[.High].preset_height,2160,1),f32(0.5))
-    testing.expect_value(t,gpu.views_render_scale(0.5,0,2160,1),f32(0.5))
+    testing.expect_value(t,gpu.views_render_scale(gpu.Render_Lines(presets[.Low].preset_height),900,1),f32(0.8))
+    testing.expect_value(t,gpu.views_render_scale(gpu.Render_Lines(presets[.High].preset_height),2160,1),f32(0.5))
+    testing.expect_value(t,gpu.views_render_scale(gpu.Render_Scale(0.5),2160,1),f32(0.5))
 }

@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:os"
 import "core:strconv"
 import "core:strings"
+import "mirai:std/base"
 
 // What the shaders of a project and of its plugins ask of the stages of the
 // engine besides material programs. A source says it with lines of its own:
@@ -166,7 +167,7 @@ owned_constants :: proc(files:^Sources,entry:Extension_Folder) -> (text,problem:
 @(private)
 owned_constants_write :: proc(files:^Sources,include,project:string,sources:[]Source,allocator:=context.allocator) -> (shared,problem:string) {
     every:=strings.builder_make(context.temp_allocator)
-    if folder:=path_join(include,OWNED_CONSTANTS_FOLDER,allocator=context.temp_allocator);os.exists(folder) {os.remove_all(folder)}
+    if folder:=path_join(include,OWNED_CONSTANTS_FOLDER,allocator=context.temp_allocator);os.exists(folder) {base.remove_all(folder)}
     for entry in extension_folders(files,project,sources,context.temp_allocator) {
         text,invalid:=owned_constants(files,entry)
         if invalid!="" {return "",strings.clone(invalid,allocator)}
@@ -288,7 +289,7 @@ extensions_generate :: proc(runner:^Runner,root,project,output,slangc:string,sou
     temporary,temporary_error:=os.make_directory_temp("","mirai-frame-reflection-*",context.temp_allocator)
     if temporary_error!=nil {return {},strings.clone("could not create the temporary reflection folder",allocator)}
     temporary=path_clean(temporary,context.temp_allocator)
-    defer os.remove_all(temporary)
+    defer base.remove_all(temporary)
     wrapper:=path_join(temporary,"frame.comp.slang",allocator=context.temp_allocator)
     reflected:=path_join(temporary,"frame.json",allocator=context.temp_allocator)
     source:="#include \"native.slang\"\n#include \"common.slang\"\n"+

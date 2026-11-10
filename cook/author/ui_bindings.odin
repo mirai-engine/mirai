@@ -19,7 +19,7 @@ import "mirai:ui"
 // checked against the types of the game, and ui.check says what failed.
 
 // What a binding takes: the kinds of fields its list offers.
-Bind_Kind :: enum u8 {Shown,Number,Asset,Color,Name,Entity,Items,Options,Data}
+Bind_Kind :: enum u8 {Shown,Number,Asset,Color,Name,Entity,Items,Options,Data,Any}
 
 BIND_KIND_TAKES :: [Bind_Kind]string{
     .Shown  = "a number, a bool, an enum or a text",
@@ -31,6 +31,7 @@ BIND_KIND_TAKES :: [Bind_Kind]string{
     .Items  = "an array of structs or of entities",
     .Options = "an array of texts or of enums",
     .Data   = "a struct or an Entity",
+    .Any    = "a field of any type: the procedure that draws the node reads its bytes",
 }
 
 // Where a list of paths stands: the sources (the components of the entity
@@ -58,7 +59,7 @@ Path_Entry :: struct {
 bind_kind :: proc(binding:ui.Binding,node:ui.Node_Kind) -> Bind_Kind {
     switch binding {
     case .Text:                         return .Shown
-    case .Value:                        return .Entity if node==.View else .Number
+    case .Value:                        return .Entity if node==.View else .Any if node==.Draw else .Number
     case .Visible,.Selected,.Disabled:  return .Number
     case .Items:                        return .Options if node==.Selector || node==.Dropdown || node==.Tabs else .Items
     case .Image:                        return .Asset
@@ -71,6 +72,7 @@ bind_kind :: proc(binding:ui.Binding,node:ui.Node_Kind) -> Bind_Kind {
 // Whether a binding of kind takes a field of type t, as ui.tree_bind does.
 type_fits :: proc(t:^runtime.Type_Info,kind:Bind_Kind) -> bool {
     if t==nil {return false}
+    if kind==.Any {return t.size>0}
     if t.id==base.Asset_Id {return kind==.Asset}
     if t.id==base.Entity {return kind==.Entity || kind==.Data}
     #partial switch v in runtime.type_info_base(t).variant {
@@ -327,7 +329,10 @@ BIND_PROBLEMS :: 16 // problems a check of one .ui reports at most
 // What fails: a path the game does not have, a name in braces of a text, a
 // widget it uses, records that do not load, or a name of a style, a token, a
 // component or a parameter that resolves to nothing.
-Bind_Fault :: enum u8 {Path,Template,Widget,Load,Name}
+Bind_Fault :: enum u8 {
+    Path,Template,Widget,Load,Name,
+    Code, // of the code of the game, not of a .ui: a name it asks the interfaces for that none has
+}
 
 // Why the widgets the records name do not read: the first one missing, one
 // that is not a .ui that loads, or one that uses the file back.
@@ -341,6 +346,8 @@ widget_why :: proc(a:Assets,data:ui.Tree_Data) -> string {
     return fmt.tprintf("'%s', which it uses, does not load",record.path)
 }
 
+BIND_PROBLEM_TEXT :: 512
+
 // What the paths of a .ui fail at, against the types of the world: a node
 // of its records whose binding the game does not have, or why it does not load.
 Bind_Problem :: struct {
@@ -352,7 +359,7 @@ Bind_Problem :: struct {
     binding:ui.Binding,
     takes:Bind_Kind,      // Path: what that binding takes at that node
     fault:Bind_Fault,
-    path:[ui.TREE_PATH_CAPACITY]u8, // Path: what it binds; Widget and Load: why
+    path:[BIND_PROBLEM_TEXT]u8, // Path: what it binds; Widget, Load, Name and Code: why
 }
 
 // Checks the records of a .ui, linked with the widgets they use (imports, as
@@ -467,6 +474,7 @@ bind_problem_text :: proc(a:Assets,problem:^Bind_Problem) -> string {
     switch problem.fault {
     case .Widget,.Load: return fmt.tprintf("%s does not load: %s",file,serial.text_field(problem.path[:]))
     case .Name:         return fmt.tprintf("%s: %s",file,serial.text_field(problem.path[:]))
+    case .Code:         return fmt.tprintf("%s",serial.text_field(problem.path[:]))
     case .Template:     return fmt.tprintf("%s: node '%s' has a name in braces of its text without a field, or whose field names a path the game does not have or cannot show",file,serial.text_field(problem.name[:]))
     case .Path:
     }
@@ -481,6 +489,7 @@ bind_check_file :: proc(problems:^[dynamic]Bind_Problem,types:^Bind_Types,alloca
     records:Records
     if records_read(a,id,&records,context.temp_allocator) {
         count=records_names_check(a,&records,found[:])
+        count+=draw_names_check(info,&records,found[count:])
         if count<len(found) {
             data:=records_data(&records)
             imports,imported:=tree_imports(a,data)
@@ -709,7 +718,7 @@ problems_write :: proc(out:^serial.Writer,a:Assets,problems:[]Bind_Problem) {
     for &problem,i in problems {
         if i>0 {serial.write_u8(out,',')}
         serial.write_u8(out,'{')
-        serial.json_text(out,"asset",file_name_of(a,problem.asset,"missing"),true)
+        serial.json_text(out,"asset",file_name_of(a,problem.asset,"missing") if problem.fault!=.Code else "",true)
         serial.json_text(out,"node",serial.text_field(problem.name[:]))
         serial.json_text(out,"binding","Text (in braces)" if problem.fault==.Template else fmt.tprintf("%v",problem.binding) if problem.fault==.Path else "")
         serial.json_text(out,"path",serial.text_field(problem.path[:]) if problem.fault==.Path else "")

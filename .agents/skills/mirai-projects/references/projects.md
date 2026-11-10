@@ -227,9 +227,7 @@ with the project library.
   `Editor`, the editor ones. A part imports the runtime of its plugin (the editor one) and the
   parts of the plugins it depends on, with its own, each with all its packages. `Play` links only
   the runtime ones.
-- Flags: those of the project library with `-build-mode:dll`. Optimized (`Size`, `Speed`,
-  `Aggressive`) it is a single LLVM module, as the shipped game compiles it; with `--dev`
-  (`minimal`) or `None`, one module per package.
+- Flags: those of the project library, with the same [modules](build.md#targets).
 - Currency: the fingerprint joins its sources, the declarations of the plugins it imports, the
   hashes `engine.stamp` stores for the engine packages those sources and declarations import, the
   compiler and the flags. An engine change that declares the same compiles no plugin, and a
@@ -518,7 +516,8 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 
 ## Checks and tests
 
-`check` and `test` pass the attributes and the collections of Mirai: `mirai`, and `plugins` or
+`check`, and `test` of a package of the engine, pass the attributes and the collections of Mirai:
+`mirai`, and `plugins` or
 `project` when the package or what it imports uses them (`project` is the closest folder upwards
 with `project.mirai`); a hand-given `-collection:` wins. `check` adds
 `-define:MIRAI_TEST_SHADERS=true`, which also checks the tests with generated shaders. Before that
@@ -527,9 +526,21 @@ generates its backend, because the tables embed only the generated ones.
 
 `mirai test` takes one or more packages: an argument that is a folder with Odin sources is a
 package and the following ones, tests of that package; without tests it runs the whole package. It
-first compiles the executables that need it, at once up to `compilers_at_once()` like the
-[plugin libraries](#plugin-libraries) and inside a single turn, and then runs them one after
-another in the order asked.
+first compiles the executables of the engine packages that need it, at once up to
+`compilers_at_once()` like the [plugin libraries](#plugin-libraries) and inside a single turn, and
+then runs them one after another in the order asked.
+
+- One runner (`cook/build/tests.odin`) builds and runs every test executable, for `mirai test` and
+  for `build.test`. A package of the engine compiles from its sources (its tests use internals)
+  into `bin/tests/`. A package of a project (a `project.mirai` above it) is a `Test` job of its
+  editor, in its turn: it compiles against the libraries the editor links, after the engine
+  binaries when their sources changed, into `<project>/.mirai/build/tests/`.
+- Every test executable runs in the root of the engine, also one of a project package: a relative
+  path in a test is relative to the engine root (`demo/assets/...`).
+- An executable compiles again only when the [fingerprint](build.md#fingerprint) of what its last
+  build read changed, the `_test.odin` of every folder it read included, or its flags or the
+  compiler: a date that moves or a checkout that restores the text compiles nothing. The last
+  line says how many executables were built and how many stood.
 
 - Names are looked up among the `@(test)` of the sources before compiling: one that is not there
   cuts the command with 2 and names the similar ones. They reach the executable as `-tests:`, so
@@ -546,10 +557,8 @@ another in the order asked.
   compiled: it is named in one line and is no failure, also when it is the only one asked.
 - `--failed` runs those that failed last time in the package: each run removes the ones that ran
   and adds the ones that failed.
-- Each package has its executable in `bin/tests/`, which is compiled with the turn only if its
-  sources changed (the engine's, the project's and the `_test.odin` of the package), the flags or
-  the compiler. A package that does not compile is named in its place, with what the compiler
-  said, and the others run.
+- A package that does not compile is named in its place, with what the compiler said, and the
+  others run.
 - Its threads reserve 8 MB of stack on every system (`TEST_STACK_FLAG`: Windows gives 1 MB),
   unless the flags of the call bring linker flags of their own.
 - If no test starts or ends within `--timeout` (`TEST_TIMEOUT`; 0 does not watch; a benchmark only
@@ -562,7 +571,7 @@ another in the order asked.
   gameplay (tables, generator, scene, saves, input, cinematics, physics, destruction, GUI,
   animation, audio, frame and assets of the host, API protocol) run together with `mirai test core
   cook/build engine/scene engine/save engine/input std/input plugins/cinematics/runtime
-  plugins/cinematics/editor plugins/physics/runtime plugins/physics/runtime/sim
+  plugins/physics/runtime plugins/physics/runtime/sim
   plugins/destruct/runtime plugins/destruct/runtime/fracture engine/gui std/anim audio host
   editor/api`; `host` includes GPU tests and `editor/api` uses loopback sockets.
 - **CI.** `.github/workflows/checks.yml` runs on every pull request to `main`, on Windows without

@@ -217,13 +217,11 @@ dependencies_read :: proc(file:string,allocator:runtime.Allocator) -> (sources:[
     return list[:],true
 }
 
-// Whether an Odin file of a folder under root that the build of output read a
-// source from, or a file it loaded, changed after output was written, or a
-// source it read is gone. Test files count only for a build of tests, which
-// reads those of every package it imports: the helpers a package gives the
-// tests of others are there. known is false when the list the compiler
-// exported for it cannot be read or output does not exist.
-sources_newer :: proc(sources_file,output,root:string,tests:=false) -> (newer,known:bool) {
+// Whether an Odin file that is no test, of a folder under root that the build
+// of output read a source from, or a file it loaded, changed after output was
+// written, or a source it read is gone. known is false when the list the
+// compiler exported for it cannot be read or output does not exist.
+sources_newer :: proc(sources_file,output,root:string) -> (newer,known:bool) {
     // The compiler lists its sources with forward slashes, whatever the root was given with.
     root:=slashes(root,context.temp_allocator)
     built,stat_error:=os.modification_time_by_path(output)
@@ -247,7 +245,7 @@ sources_newer :: proc(sources_file,output,root:string,tests:=false) -> (newer,kn
         entries,error:=os.read_all_directory_by_path(folder,context.temp_allocator)
         if error!=nil {return true,true}
         for entry in entries {
-            if !strings.has_suffix(entry.name,".odin") || !tests && strings.has_suffix(entry.name,"_test.odin") {continue}
+            if !strings.has_suffix(entry.name,".odin") || strings.has_suffix(entry.name,"_test.odin") {continue}
             if time.diff(built,entry.modification_time)>0 {return true,true}
         }
     }
@@ -264,8 +262,9 @@ sources_newer :: proc(sources_file,output,root:string,tests:=false) -> (newer,kn
 // read. latest is the newest modification among those files. The sources
 // under masked count with the names of the plugin libraries in their foreign
 // imports masked (link_names_mask): what tells a compile from a link (relink.odin).
+// tests: the build is of tests, which also reads the _test.odin files.
 @(private)
-fingerprint :: proc(root,compiler:string,flags:[]string,sources:[]string,masked:="") -> (hash:u64,latest:time.Time) {
+fingerprint :: proc(root,compiler:string,flags:[]string,sources:[]string,masked:="",tests:=false) -> (hash:u64,latest:time.Time) {
     root:=slashes(root,context.temp_allocator)
     masked:=slashes(masked,context.temp_allocator)
     file_mix :: proc(hash:u64,name,path:string,latest:^time.Time,masked:string) -> u64 {
@@ -311,7 +310,7 @@ fingerprint :: proc(root,compiler:string,flags:[]string,sources:[]string,masked:
         if error!=nil {continue}
         slice.sort_by(entries,proc(a,b:os.File_Info) -> bool {return a.name<b.name})
         for entry in entries {
-            if strings.has_suffix(entry.name,".odin") && !strings.has_suffix(entry.name,"_test.odin") {hash=file_mix(hash,entry.name,slashes(entry.fullpath,context.temp_allocator),&latest,masked)}
+            if strings.has_suffix(entry.name,".odin") && (tests || !strings.has_suffix(entry.name,"_test.odin")) {hash=file_mix(hash,entry.name,slashes(entry.fullpath,context.temp_allocator),&latest,masked)}
         }
     }
     return

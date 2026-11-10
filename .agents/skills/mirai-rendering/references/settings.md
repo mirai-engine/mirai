@@ -10,15 +10,25 @@
   Quality presets, frame limit and vsync belong to whoever presents (`rhi.swapchain_set_vsync`).
 - Exposure belongs to each camera ([exposure](display.md#exposure)), not to the settings.
 - `trace_mode` selects the tracer; `hardware_ray_tracing_active` says whether the hardware one is
-  used and `Renderer.hardware_rt_note` why not. Changing it builds the structures of the other
-  ([tracer in use](gi.md#bvh-and-acceleration-structures)).
+  used and `Renderer.hardware_rt_note` why not. Changing it makes the pipelines and builds the
+  structures of the other ([tracer in use](gi.md#bvh-and-acceleration-structures)); if the
+  software pipelines are not made, `renderer_apply_settings` returns `false` and changes nothing.
 - `reference_lights` and `reference_gi` replace the direct and indirect light with their
   references ([shadows](lights.md#shadows), [indirect](gi.md#indirect-reference)).
-- A change recreates only what depends on it: the states of the additional and texture views
-  always; the main targets with the resolution; the probe volume with its shape and its budget;
-  the glass targets with `glass_layers` (waits for the device). What changes the image the
-  histories keep (`colored_shadows`, the reflection ones, the references) discards them;
-  `colored_shadows` also restarts the probes. `page_pool_bytes` recreates nothing: the
+- A change starts again only what was made with the fields that changed, in every view; the rest,
+  histories, exposure and probes, stays, so a slider drag keeps them:
+  - the main targets with `resolution` (several window views remake theirs in their next frame;
+    texture views draw at the size of their texture); the glass targets with `glass_layers`. Only
+    these wait for the device;
+  - the probe volume with its shape, `colored_shadows` or `sun_shadows`; its probes gather again
+    everywhere, keeping the volume, with `gi_strength`, `light_budget` or `sun_radius`. With
+    either, the worlds not shown lose the light they kept;
+  - the histories that hold what the change alters: shadows with `reference_lights` and
+    `sun_shadows`; reflections, glass, TAA and the indirect reference with `colored_shadows`,
+    `sun_shadows`, `reflection_light_budget` and `reflection_detail_roughness`; the reference
+    also with `reference_gi` and `sun_radius`;
+  - the texture levels with `texture_max_size` and `texture_pool_megabytes`.
+- `page_pool_bytes` recreates nothing: the
   [pages](scene.md#scene-and-instances) region is reserved once, with the first mesh that uses
   it, inside the vertex pool and before the blocks of the meshes that arrive later; a later
   change waits for the renderer to start again.
@@ -28,12 +38,12 @@
 
 ## Scene resolution
 
-- The window views draw the scene at `render_scale` of their points (on Retina, 1 is half the
-  pixels of the drawable per axis) and TAA brings it to the drawable resolution. A texture view
-  draws it at the size of the texture.
-- `render_height` (0: `render_scale`) replaces that scale with a fraction of the lines the window
-  views span together, never above one pixel per point nor below the minimum of `render_scale`. The
-  cost per pixel does not grow with the output, and in split screen all take the same scale.
+- `Settings.resolution` is one of two: a `Render_Scale` of the points of the window views (on
+  Retina, 1 is half the pixels of the drawable per axis), or `Render_Lines`, a fraction of the
+  lines the window views span together, never above one pixel per point nor below the least
+  scale. With lines the cost per pixel does not grow with the output, and in split screen all take
+  the same scale. TAA brings the image to the drawable resolution. A texture view draws it at the
+  size of the texture.
 - The UI, panels, lines and outline are drawn after TAA at the drawable resolution: a budget does
   not blur them. Textures are read with a mip bias of `log2` of the scale, which keeps their
   detail.

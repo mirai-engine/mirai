@@ -52,7 +52,7 @@ Camera_Preview :: struct {
 }
 
 // The view of every local slot; the focused one's is the view of the game.
-@(step="late",stage="end",after="transforms_propagate",before="camera_view")
+@(step="late",stage="end")
 camera_blend :: proc(
     views:^Camera_Views,shown:core.Ref(Cameras),seat_state:core.Ref(input.Seats),seats:core.Read(input.Seat),drivables:core.Read(input.Drivable),
     cameras:core.Read(render.Camera),follows:core.Read(Camera_Follow),worlds:core.Read(core.World_Transform),chosen:^render.View_Camera,

@@ -42,7 +42,7 @@ add :: proc(root,engine_root,url,ref:string,allocator:=context.allocator,catalog
     if read_error.code!=.None {return fail(allocator,"%s",project.error_text(root,read_error,context.temp_allocator))}
     staging,staging_ok:=staging_folder(root)
     if !staging_ok {return fail(allocator,"%s could not be made",staging)}
-    defer os.remove_all(staging)
+    defer base.remove_all(staging)
     if _,failure:=git("","clone","--quiet",url,staging);failure!="" {return fail(allocator,"%s could not be cloned: %s",url,failure)}
     if ref:=strings.trim_space(ref);ref!="" {
         if _,failure:=git(staging,"checkout","--quiet","--detach",ref);failure!="" {return fail(allocator,"%s has no %s: %s",url,ref,failure)}
@@ -75,7 +75,7 @@ add :: proc(root,engine_root,url,ref:string,allocator:=context.allocator,catalog
     if error:=os.make_directory_all(project.path(root,"plugins",allocator=context.temp_allocator));error!=nil && error!=.Exist {return fail(allocator,"The plugins folder of the project could not be made")}
     if error:=os.rename(staging,folder);error!=nil {return fail(allocator,"%s could not be moved to %s: %v",staging,folder,error)}
     if message:=manifest_commit(root,engine_root,&manifest,&before);message!="" {
-        os.remove_all(folder)
+        base.remove_all(folder)
         return fail(allocator,"%s",message)
     }
     ignore_set(root,name,true)
@@ -195,7 +195,7 @@ remove :: proc(root,engine_root,name:string,allocator:=context.allocator) -> (re
     compact(&manifest)
     if error:=project.manifest_write(manifest_path,&manifest);error.code!=.None {return fail(allocator,"%s",project.error_text(root,error,context.temp_allocator))}
     if os.exists(folder) {
-        if error:=os.remove_all(folder);error!=nil {
+        if error:=base.remove_all(folder);error!=nil {
             result.ok=true
             result.message=fmt.aprintf("%s was taken out of the project, but %s could not be deleted: %v",name,folder,error,allocator=allocator)
             return
@@ -326,7 +326,7 @@ catalog_refresh :: proc(engine_root:string,allocator:=context.allocator) -> (mes
         if _,failure:=git(folder,"reset","--quiet","--hard","FETCH_HEAD");failure!="" {return fmt.aprintf("%s",failure,allocator=allocator)}
         return
     }
-    os.remove_all(folder)
+    base.remove_all(folder)
     if error:=os.make_directory_all(project.machine_folder(engine_root,context.temp_allocator));error!=nil && error!=.Exist {return fmt.aprintf("%s could not be made",folder,allocator=allocator)}
     if _,failure:=git("","clone","--quiet","--depth","1",project.CATALOG_URL,folder);failure!="" {return fmt.aprintf("The catalog could not be cloned: %s",failure,allocator=allocator)}
     return
@@ -354,7 +354,7 @@ checkout_ensure :: proc(root:string,source:^project.Source) -> string {
     url,commit:=base.text_get(source.url[:]),base.text_get(source.commit[:])
     staging,staging_ok:=staging_folder(root)
     if !staging_ok {return fmt.tprintf("%s could not be made",staging)}
-    defer os.remove_all(staging)
+    defer base.remove_all(staging)
     if _,failure:=git("","clone","--quiet","--no-checkout",url,staging);failure!="" {return fmt.tprintf("%s could not be cloned: %s",url,failure)}
     if _,failure:=git(staging,"checkout","--quiet","--detach",commit);failure!="" {return fmt.tprintf("%s has no commit %s: %s",url,commit,failure)}
     if error:=os.make_directory_all(project.path(root,"plugins",allocator=context.temp_allocator));error!=nil && error!=.Exist {return "The plugins folder of the project could not be made"}

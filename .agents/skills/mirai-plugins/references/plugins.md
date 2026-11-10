@@ -161,7 +161,7 @@ demo enables. How an `editor/` adds steps, panels and tools:
 - **`spawn`** (`Runtime`, `Editor`): spawn points and bodies for the players, which it destroys
   with their seat; the Spawn card of Create
   ([spawn points](../../mirai-gameplay/references/control.md#spawn-points)).
-- **`cinematics`**: timelines, shots, tracks and viewers
+- **`cinematics`** (depends on `animation`): the shots and the viewers of a clip
   ([cinematics](../../mirai-gameplay/references/cinematics.md)).
 
 - **`paint`** (`Runtime`, `Editor`)
@@ -191,7 +191,7 @@ demo enables. How an `editor/` adds steps, panels and tools:
   - GPU skinning isolated from the world and its histories; what they edit is a step of the
     document.
 - **`animation`** (`Runtime`, `Editor`)
-  - Game: clips, blend spaces, graphs with optional states, layers, dense poses, GPU skinning,
+  - Game: clips, blend spaces, composition graphs without states, layers, dense poses, GPU skinning,
     root motion and constraints. Contract in
     [animation](../../mirai-animation/references/animation.md).
   - Editor: per-instance inspector and
@@ -204,10 +204,6 @@ demo enables. How an `editor/` adds steps, panels and tools:
 - **`ragdoll`** (`Runtime`, `Editor`): [ragdolls](ragdoll.md) with bodies bound to bones, free
   simulation, animated kinematics and physical animation motors; `ragdoll.setup` builds them from
   the skeleton's body.
-- **`physics_fields`** (`Runtime`, `Editor`)
-  - [Persistent fields](physics-fields.md) of sphere, box or plane with radial or directional
-    force, curve with range, noise and independent strain.
-  - Editor: volume and direction arrows when selecting a field in Edit or Simulate/pause.
 - **`ui_inspector`** (`Editor`): [document](ui-inspector.md) that shows a `.ui` as the game builds
   it and edits its nodes, layout, bindings and styles.
 - **`prompts_kenney`** (`Assets`): the Kenney prompt pack (CC0) for keyboard and mouse, Xbox and
@@ -229,9 +225,9 @@ demo enables. How an `editor/` adds steps, panels and tools:
   agent reaches through `call`.
 - **`profiler`** (`Editor`, development) and **`tracy`** (`Runtime`, development): captures panel
   of `profile.*` and Tracy GUI client. See [profiling](profiling.md).
-- **`vfx`** (`Runtime`, `Editor`, `Shaders`; depends on `physics`, whose gravity its particles
-  take): GPU [particles](../../mirai-world/references/vfx.md), their `.particle` format, the
-  inspector and document of an effect and the `particle.*` methods.
+- **`vfx`** (`Runtime`, `Editor`, `Shaders`; no dependencies: its particles take the gravity and
+  wind of the `engine/volume` volumes): GPU [particles](../../mirai-world/references/vfx.md), their
+  `.particle` format, the inspector and document of an effect and the `particle.*` methods.
 - **`fluids`** is not part of the engine: the plugin lives in
   <https://github.com/tomaszbk/mirai-fluids>, with its `water_fluids` bridge, and is installed
   from the catalog.

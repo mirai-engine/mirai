@@ -62,7 +62,7 @@ the name of their type) and a world (handles and tables).
     components of libraries the project does not have and tables that are not components.
   - `transient` fields go as zero; `Entity` ones store the `Id` of their target.
 - `save(world, app, path, previous)` captures and writes.
-- **Changing scene** is a request: `scene.request(&r, id)` or `request_path(&r, path)` in
+- **Changing scene** is a request: `scene.request(&r, path_or_id)` in
   `Scene_Requests` (`queue`, `keep`). `scene_requests` (`input`, both loops) loads them one at a
   time and leaves a `Scene_Result{scene, path, error}` in `Scene_Results` (`events`, `keep`) in the
   frame in which the scene replaces the world, cleared in the next; `result_of` looks it up. One
@@ -520,8 +520,8 @@ the reverb of the room where the listener is and what covers each source.
   `audio.sound`, `audio.bus`, `audio.voices` or `audio.memory`.
 - `Mixer_Listener` (host) is the mixer's listener, one per application: it is set by the world whose
   listener moved, or the one that runs after another.
-- A loose sound: `audio.play_asset(app, time, ...)` and `play_asset_at`, with `.sound` or
-  `.sound_set`; `play_source` plays an `Audio_Source` as configured, without a place, and
+- A loose sound: `audio.play_asset(app,time,path_or_id,...)` and `play_asset_at`, with `.sound`
+  or `.sound_set`; `play_source` plays an `Audio_Source` as configured, without a place, and
   `play_source_at` at a point of the world with its curve (a loop that follows something:
   `source_place` moves it); `source_tune` passes either its changes; `stop` and `playing` on the
   voice they return. Playing takes `^host.App`, which loads the sound; what acts on a voice
@@ -542,8 +542,11 @@ reference](../../mirai-animation/references/animation.md).
 Game `.ui` interfaces over the UI contexts of each world (`Gui`, `host,by_world`): the window's and
 one per local player that has screens or sees a `World_Widget`.
 
-- `UI_Screen`: an interface over the screen; a greater `order` covers a lesser one. `player` 0 is
-  the window; `n`, the part of local player `n` in split screen (`host.app_player_rect`).
+- `UI_Screen`: an interface over the screen; a greater `order` covers a lesser one. `player` `n`
+  is the part of local player `n` in split screen (`host.app_player_rect`). With `player` 0 it is
+  of whoever its entity is of (`screen_owner`): a seat, the body a seat drives or what hangs from
+  them shows in the part of that local player, and not at all for a body nobody drives or one a
+  player of another end drives; any other entity shows on the window.
 - `World_Widget`: an interface in the world, on the entity.
   - `preview` (true by default): in the editor, while the world is not playing, it is shown as it
     will look, without input or screens, with steps of the editor loop that do not run in a world
@@ -572,8 +575,16 @@ one per local player that has screens or sees a `World_Widget`.
   ([paths](../../mirai-ui/references/ui.md#data-tree)): each path starts at a component of
   `UI_Screen.entity` (null: its own; in a `World_Widget`, the panel's) or at a storage of the
   world, and an `Entity` field leads to another entity. The interface is built with a copy of the
-  bytes it reads, which is redone only when a row's stamp moved. What a widget writes to the copy
-  is seen until a tick runs; the game writes what the event asks for.
+  bytes it reads, which is redone only when a row's stamp moved. A control bound to a field of a
+  storage writes it (`bind_commits`), and so does a `Button` that binds a value, with its
+  `choice`; one bound to a component writes the copy, which is seen until a tick runs, and the
+  game writes what the event asks for: a component is simulation state, written in a tick.
+- **A game shows interfaces only as `.ui`.** The generator refuses a step of the `ui` phase
+  outside the engine and the editor parts. What only code can draw is a `Draw` node: the
+  procedure the game declares with `@(draw="name")` draws it from the node alone (its rectangle,
+  its style and the bytes of the value it binds), when the node is built
+  (`source_draw`, [the node](../../mirai-ui/references/ui.md#data-tree)); a name the game lacks is
+  the problem `gui.draw`.
 - **Modes (`UI_Input`).** `Passive` (a HUD) takes no navigation, keys or actions. Of each player's
   screens, the one with the greatest order that is not `Passive` and is not being hidden takes the
   input. `Modal` also blocks the actions of the seats it covers with `input_block`, releases the
@@ -593,8 +604,9 @@ one per local player that has screens or sees a `World_Widget`.
   split frame (`App.local_cameras`).
 - **`UI_Settings`** (project setting): `reference` is the design size in points, which
   `ui.scale_to_fit` brings to the window or the player's part. `languages` are the languages the
-  game is in (`Language`, as stores list them, with their code in `LANGUAGE_CODES`; English by
-  default) and `source` the one the interfaces are written in. Translations live in each `.ui`
+  game is in (`Language`, those the fonts have the glyphs of, with their code in
+  `LANGUAGE_CODES`; English by default) and `source` the one the interfaces are written in.
+  Translations live in each `.ui`
   ([localized texts](../../mirai-ui/references/ui.md#data-tree)). `prompts` picks the prompt
   pack (none: they are drawn). `prompt_images` gives loose entries a texture that wins over that of
   the pack; Project Settings > UI shows them in a table with the entries the game binds.
@@ -638,7 +650,8 @@ one per local player that has screens or sees a `World_Widget`.
 - **Repeated frames.** A context without changes in its interfaces, without trees that say
   `animating`, without input reaching it (pointer, buttons, keys, wheel, gamepad, text), without
   shown cameras or particles, with the same size, scale, density, atlas, family, view and ray of
-  its panels, and in which no `ui` function drew in the previous frame, is not built: it delivers
+  its panels, and in which no `ui` step of the engine or the editor asked for the window's context
+  (`gui_context`: the frame counter) in the previous frame, is not built: it delivers
   its converted layer again (the data of a `ui` frame is valid until its next `frame_begin`).
   `Gui.skipped` counts them. In a context that is built, each screen that did not change, does not
   animate, is not hiding and that no input reaches is drawn again without being built
@@ -652,7 +665,8 @@ one per local player that has screens or sees a `World_Widget`.
   `SCREEN_CAPACITY` visible screens: the one with the lowest order is left out), `gui.widgets`
   (`World_Widget`s in view that did not fit: the farthest are left out; `Gui.dropped_widgets`
   counts them), `gui.mesh` (the renderer did not give the texture of a `Mesh`), `gui.events` (more
-  than `EVENT_BATCH` events in a frame), `gui.play` and `gui.request` (a request that was not
+  than `EVENT_BATCH` events in a frame), `gui.draw` (a `Draw` names a procedure the game does not
+  declare), `gui.play` and `gui.request` (a request that was not
   applied); what does not fit in the renderer is `gui.draws` of the world, and what an interface
   nests deeper than a frame holds (`ui.Stats.dropped_nesting`), `gui.nesting`.
 - `pointer_consumed`/`keyboard_consumed` say whether the UI had the pointer or the keyboard.
@@ -662,10 +676,10 @@ one per local player that has screens or sees a `World_Widget`.
   (`render`, before `render_sync`).
 - Each world has its own contexts, instances and pending events: two worlds built in one frame do
   not mix, and `gui_release` releases those of the world being released.
-- A game that draws its own widgets does so in a `ui` function between `gui_frame_begin` and
-  `gui_frame_end`, with `gui.gui_context(gui)`, the window's context (null outside the phase;
-  requesting it makes the next frame be built). That is why `gui.Gui` is
-  `@(storage,host,by_world,shared)`: the game and the library write their world's in loop order.
+- `gui.gui_context(gui)` gives a `ui` step of the engine, the editor or the editor part of a
+  plugin the window's context between `gui_frame_begin` and `gui_frame_end` (null outside the
+  phase; requesting it makes every frame be built). That is why `gui.Gui` is
+  `@(storage,host,by_world,shared)`.
 - The functions of `gui` and `audio` run only in the game loop.
 
 ## `save`
@@ -766,10 +780,23 @@ Saves: the `World` written in a slot, a file `saves/<slot>.save` in the project'
 
 ## `volume`
 
-The values that change per zone: gravity, wind, reverb, how views look and fog (`Fog_Volume` of the
-`fog` plugin). The value is a component of its library; the `Volume` of the same entity says where
-it applies: unbounded, a box or a sphere by the entity's scale, with `blend` meters of edge where
-its weight goes from 1 to 0.
+`Volume` is the only region of the world: unbounded, a box or a sphere by the entity's scale, or a
+plane (everything under the entity, along its up), with `blend` meters of edge where its weight
+goes from 1 to 0. What happens in it is another component of the same entity, of the library that
+does it.
+
+- **No component carries a shape of its own.** A library that needs a region reads the `Volume`
+  of its entity and asks `depth`, `weight`, `holds` (a point) or `overlaps` (a box of the world),
+  the one containment and overlap test; `valid` says whether a volume can hold anything. A size, a
+  pose or a point that is not a number is outside. Who reads it: the per-zone values below,
+  `Fluid`, `Force_Field` and the area requests of
+  [physics](../../mirai-physics/references/engine.md#requests), `Strain_Field` of destruct,
+  `Environment_Trigger`, the `Nav_Bounds`, `Nav_Area` and `Nav_Obstacle` of
+  [navigation](../../mirai-world/references/navigation.md) and `Foliage_Bender`. Each says which
+  shapes it takes and reports a problem for another.
+
+The values that change per zone are gravity, wind, reverb, how views look and fog (`Fog_Volume` of
+the `fog` plugin):
 
 - **A single algorithm** (`volume.odin`): at a point those that contain it are applied from lowest
   to highest `priority`, and among equals the largest first, over the library's default. Each one
@@ -780,9 +807,10 @@ its weight goes from 1 to 0.
   both for a value that is its row: what is asked at one point per frame (the game's view, once
   per frame in `render_sync`; the listener).
 - What is asked at many points per tick (each body's gravity) keeps an `Index`: the unbounded ones
-  in order and the bounded ones in a tree, redone only when a volume, a value or a place changes. A
-  point asks the tree for the bounded ones that may contain it; without any, it is worth what the
-  library combined of the unbounded ones when redoing it, and without bounded ones nobody asks.
+  in order, the boxes and spheres in a tree and the planes in a list, redone only when a volume, a
+  value or a place changes. A point asks the tree for the bounded ones that may contain it;
+  without any, it is worth what the library combined of the unbounded ones when redoing it, and
+  without bounded ones nobody asks.
 - The value and its `Volume` are replicated; `scope` belongs to each end.
 - **On the GPU** (`shaders/include/volume.slang`): `ordered` gives the rows in the order in which
   they are applied, which does not depend on the point, and `gpu_volume` their shape;

@@ -1,8 +1,12 @@
 package mirai_net
 
 import "core:log"
+import "core:slice"
 import "core:strings"
 import "core:testing"
+import "core:time"
+import "mirai:std/base"
+import "mirai:std/serial"
 
 @(test)
 invitation_codes_round_trip_and_refuse_typos :: proc(t:^testing.T) {
@@ -37,32 +41,164 @@ invitation_codes_round_trip_and_refuse_typos :: proc(t:^testing.T) {
     got,token,ok=invite_decode(long)
     testing.expect(t,ok && got==wide && token==7)
     for _ in 0..<64 {
-        token:=invite_token()
-        testing.expect(t,token!=0 && token<1<<INVITE_TOKEN_BITS)
+        token,made:=invite_token()
+        testing.expect(t,made && token!=0 && token<1<<INVITE_TOKEN_BITS)
+    }
+}
+
+// A transport that counts what its host sends to each address, by type.
+@(private="file")
+Answers :: struct {inner:Transport,sent:[4][Packet_Type]int,all:[Packet_Type]int,only:Address}
+@(private="file")
+answers_transport :: proc(a:^Answers) -> Transport {
+    return {a,proc(data:rawptr,to:Address,bytes:[]u8) -> bool {
+        a:=(^Answers)(data)
+        if to==a.only && len(bytes)>0 && bytes[0]<=u8(max(Packet_Type)) {a.all[Packet_Type(bytes[0])]+=1}
+        if to.kind==.Memory && int(to.port)<len(a.sent) && len(bytes)>0 && bytes[0]<=u8(max(Packet_Type)) {a.sent[to.port][Packet_Type(bytes[0])]+=1}
+        return a.inner.send(a.inner.data,to,bytes)
+    },proc(data:rawptr,buffer:[]u8) -> (size:int,from:Address,ok:bool) {
+        a:=(^Answers)(data)
+        return a.inner.receive(a.inner.data,buffer)
+    }}
+}
+
+// The invitation is in every key of the connection: a client without the
+// right one, or that pinned another server's key, hears only the challenge
+// every request gets, and its proof is dropped without an answer.
+@(test)
+a_server_with_an_invitation_answers_only_who_brings_it :: proc(t:^testing.T) {
+    w:Test_World;test_world_init(&w,5);defer test_world_destroy(&w)
+    server:=test_host(&w,{mode=.Server,invite=0x123456})
+    answers:=Answers{inner=server.desc.transport}
+    server.desc.transport=answers_transport(&answers)
+    none:=test_host(&w,{mode=.Client,connect_timeout=1})
+    other:=test_host(&w,{mode=.Client,invite=0x654321,connect_timeout=1})
+    invited:=test_host(&w,{mode=.Client,invite=0x123456})
+    for client,i in ([2]^Host{none,other}) {
+        host_connect(client,address_memory(0))
+        reason:Disconnect_Reason
+        for _ in 0..<120 {
+            test_step(&w)
+            for command in host_poll(client) {
+                if command.kind==.Disconnected {reason=command.reason}
+                testing.expect(t,command.kind!=.Connected)
+            }
+            for command in host_poll(server) {testing.expect(t,command.kind!=.Connected)}
+            if reason!=.None {break}
+        }
+        testing.expect_value(t,reason,Disconnect_Reason.Connect_Timeout)
+        sent:=answers.sent[1+i]
+        testing.expectf(t,sent[.Challenge]>0 && sent[.Accepted]==0 && sent[.Denied]==0 && sent[.Data]==0,"the server answered %v",sent)
+    }
+    stats:=host_stats(server)
+    testing.expect(t,stats.handshakes_dropped>=2 && stats.handshakes_refused==0)
+
+    // A forger returns a cookie it got at its own address with a proof it made up: nothing comes back.
+    forger:=sim_endpoint_transport(&w.sim,4)
+    buffer,answer:[PACKET_BYTES]u8
+    writer:serial.Bit_Writer
+    buffer[0]=u8(Packet_Type.Request)
+    serial.bit_writer_init(&writer,buffer[1:])
+    serial.bit_write(&writer,0x77,64)
+    forger.send(forger.data,address_memory(0),test_handshake(buffer[:],&writer,server.back.key,HANDSHAKE_BYTES))
+    test_step(&w,2)
+    host_poll(server)
+    size,_,challenged:=forger.receive(forger.data,answer[:])
+    testing.expect(t,challenged && Packet_Type(answer[0])==.Challenge)
+    reader:serial.Bit_Reader
+    serial.bit_reader_init(&reader,answer[1:size-CHECKSUM_BYTES])
+    salt,stamp,cookie:=serial.bit_read(&reader,64),serial.bit_read(&reader,64),serial.bit_read(&reader,64)
+    dropped:=host_stats(server).handshakes_dropped
+    state:=u64(5)
+    for round in 0..<4 {
+        buffer[0]=u8(Packet_Type.Response)
+        serial.bit_writer_init(&writer,buffer[1:])
+        serial.bit_write(&writer,salt,64)
+        serial.bit_write(&writer,stamp,64)
+        serial.bit_write(&writer,cookie,64)
+        serial.bit_write(&writer,host_protocol_hash(server),64)
+        serial.bit_write_bool(&writer,round%2==1)
+        serial.bit_write_align(&writer)
+        for _ in 0..<KEY_BYTES+TOKEN_BYTES+TAG_BYTES {serial.bit_write(&writer,base.splitmix_next(&state)&0xff,8)}
+        forger.send(forger.data,address_memory(0),test_handshake(buffer[:],&writer,server.back.key,HANDSHAKE_BYTES))
+    }
+    test_step(&w,2)
+    host_poll(server)
+    _,_,answered:=forger.receive(forger.data,answer[:])
+    testing.expect(t,!answered)
+    testing.expect_value(t,host_stats(server).handshakes_dropped,dropped+4)
+
+    on_server,on_client:=test_connect(&w,server,invited)
+    testing.expect(t,on_server!=0 && on_client!=0)
+    testing.expect_value(t,host_stats(server).handshakes_refused,u64(0))
+}
+
+// The same over real UDP sockets on loopback, with the address of the code
+// unreachable, as the public address of a router that does not loop back: the
+// right invitation connects through a nearby candidate and carries a message;
+// a wrong one and none hear only the challenge.
+@(test)
+an_invitation_over_udp_on_loopback_answers_only_who_brings_it :: proc(t:^testing.T) {
+    server_socket:Udp
+    if !udp_open(&server_socket,address_loopback(0)) {testing.expect(t,false,"cannot bind a UDP socket on 127.0.0.1");return}
+    defer udp_close(&server_socket)
+    answers:=Answers{inner=udp_transport(&server_socket)}
+    server:=new(Host)
+    defer free(server)
+    if !testing.expect_value(t,host_init(server,{mode=.Server,transport=answers_transport(&answers),channels={{kind=.Reliable}},invite=0x2b3c4d,protocol_id=91}),Error.None) {return}
+    defer host_destroy(server)
+    attempt :: proc(t:^testing.T,server:^Host,answers:^Answers,address:Address,invite:u32) -> (reason:Disconnect_Reason,delivered:bool) {
+        client_socket:Udp
+        if !udp_open(&client_socket,address_ip4(0,0,0,0,0)) {testing.expect(t,false,"cannot bind a UDP socket");return}
+        defer udp_close(&client_socket)
+        client:=new(Host)
+        defer free(client)
+        if !testing.expect_value(t,host_init(client,{mode=.Client,transport=udp_transport(&client_socket),channels={{kind=.Reliable}},invite=invite,protocol_id=91,connect_timeout=1}),Error.None) {return}
+        defer host_destroy(client)
+        answers.all,answers.only={},address_loopback(int(client_socket.address.port))
+        host_connect(client,address,nearby=true)
+        reason=.Timeout
+        start:=host_time(server)
+        for host_time(server)-start<3 {
+            now:=host_time(server)
+            host_update(client,now);host_update(server,now)
+            for command in host_poll(server) {
+                if command.kind==.Message {delivered=true}
+            }
+            for command in host_poll(client) {
+                if command.kind==.Connected {reason=.None;message_send(client,command.connection,0,{1,2,3})}
+                if command.kind==.Disconnected {return command.reason,delivered}
+            }
+            if delivered {return}
+            time.sleep(time.Millisecond)
+        }
+        return
+    }
+    unreachable:=address_ip4(192,0,2,1,int(server_socket.address.port)) // a documentation address
+    reason,delivered:=attempt(t,server,&answers,unreachable,0x2b3c4d)
+    testing.expect(t,reason==.None && delivered,"the right invitation connects and carries a message")
+    for invite in ([2]u32{0x2b3c4e,0}) {
+        reason,_=attempt(t,server,&answers,unreachable,invite)
+        testing.expect_value(t,reason,Disconnect_Reason.Connect_Timeout)
+        testing.expectf(t,answers.all[.Challenge]>0 && answers.all[.Accepted]==0 && answers.all[.Denied]==0 && answers.all[.Data]==0,"invitation %x: the server answered %v",invite,answers.all)
     }
 }
 
 @(test)
-a_server_with_an_invitation_lets_in_only_who_brings_it :: proc(t:^testing.T) {
-    w:Test_World;test_world_init(&w,4);defer test_world_destroy(&w)
-    server:=test_host(&w,{mode=.Server,invite=0x123456})
-    none:=test_host(&w,{mode=.Client})
-    other:=test_host(&w,{mode=.Client,invite=0x654321})
-    invited:=test_host(&w,{mode=.Client,invite=0x123456})
-    for client in ([2]^Host{none,other}) {
-        host_connect(client,address_memory(0))
-        denied:=false
-        for _ in 0..<120 {
-            test_step(&w)
-            for command in host_poll(client) {
-                denied=command.kind==.Disconnected && command.reason==.Denied_Invite
-            }
-            if denied {break}
-        }
-        testing.expect(t,denied)
+a_code_is_looked_for_at_its_address_on_this_machine_and_on_its_network :: proc(t:^testing.T) {
+    public:=address_ip4(203,0,113,7,27500)
+    broadcast:=address_ip4(192,168,1,255,0)
+    Case :: struct {address,broadcast:Address,want:[]Address}
+    for c in ([]Case{
+        {public,broadcast,{public,address_loopback(27500),address_ip4(192,168,1,255,27500)}},
+        {public,{},{public,address_loopback(27500)}},
+        {address_loopback(27500),broadcast,{address_loopback(27500),address_ip4(192,168,1,255,27500)}},
+        {address_loopback6(7950),broadcast,{address_loopback6(7950)}},
+        {address_memory(3),broadcast,{address_memory(3)}},
+    }) {
+        candidates,count:=connect_candidates(c.address,c.broadcast)
+        testing.expectf(t,slice.equal(candidates[:count],c.want),"%v: %v",c.address,candidates[:count])
     }
-    on_server,on_client:=test_connect(&w,server,invited)
-    testing.expect(t,on_server!=0 && on_client!=0)
 }
 
 // The address of this machine on its network is the one of its route to the

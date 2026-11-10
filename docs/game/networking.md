@@ -28,9 +28,10 @@ mirai build server                                      # dedicated build, run w
 ```
 
 `--server [port]` serves, `--connect <address or invitation>` joins, `--invite` makes a code
-(`multiplayer.invite_code`), `--until-empty` ends a server with nobody, `--status <file>` logs.
-`--server` with `--connect` is refused. Settings, read when the session opens, go in
-`settings.mirai`: `{"Net_Settings": {"max_clients": 8}, "Spawn_Settings": {"players": true}}`.
+(`multiplayer.invite_code`, good from anywhere), `--until-empty` ends a server with nobody,
+`--status <file>` logs. `--server` with `--connect` is refused. Settings, read when the session
+opens, go in `settings.mirai`:
+`{"Net_Settings": {"max_clients": 8}, "Spawn_Settings": {"players": true}}`.
 
 ## Replicate
 

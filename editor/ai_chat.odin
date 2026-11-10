@@ -63,7 +63,7 @@ ai_details_rows :: proc(s:^Session,task:^Ai_Task) {
         th:=&ctx.theme
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=8}) {
             if ui.box(ctx,{width=ui.fixed(th.label_width),height=ui.FIT}) {ui.label(ctx,name,th.font_small,th.text_label)}
-            ui.paragraph(ctx,value,th.font_small,th.text)
+            ui.text(ctx,value,ui.prose(ctx,th.font_small,th.text))
         }
     }
     buffer:[256]u8
@@ -100,7 +100,7 @@ ai_details_rows :: proc(s:^Session,task:^Ai_Task) {
         calls+=1
         failed:=strings.has_prefix(text,"Tool failed: ")
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,padding=ui.padding_all(8),fill=th.card,radius=th.radius_control}) {
-            ui.paragraph(ctx,text,th.font_small,failed?th.danger:th.text_muted)
+            ui.text(ctx,text,ui.prose(ctx,th.font_small,failed?th.danger:th.text_muted))
         }
     }
     if calls==0 {ui.label(ctx,"No tool calls",th.font_small,th.text_faint)}
@@ -541,7 +541,7 @@ ai_prompt_height :: proc(s:^Session,width,size:f32) -> f32 {
     m:=s.ai
     text:=string(m.prompt[:m.prompt_length])
     if text=="" {return AI_PROMPT_HEIGHT}
-    return clamp(ui.paragraph_height(s.gui.ctx,text,max(width-AI_PROMPT_ROOM,1),size)+6,AI_PROMPT_HEIGHT,AI_PROMPT_MAX)
+    return clamp(ui.text_height(s.gui.ctx,text,ui.prose(s.gui.ctx,size),max(width-AI_PROMPT_ROOM,1))+6,AI_PROMPT_HEIGHT,AI_PROMPT_MAX)
 }
 @(private) AI_PROMPT_ROOM :: f32(22) // of a composer, what its field does not take of its width
 

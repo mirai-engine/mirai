@@ -89,7 +89,7 @@ git_changes_build :: proc(s:^Session,width,room:f32) {
             if ui.box(ctx,{width=ui.fixed(6),height=ui.fixed(6),fill=UNSAVED_COLOR,radius=3}) {}
             ui.label(ctx,"Unsaved changes",th.font_small,th.text)
             ui.spacer(ctx)
-            if ui.button(ctx,ui.id(ctx,"git_save"),{label="Save all",style=.Field,height=th.control-6}).clicked {action_run(s,.Save_All)}
+            if ui.button(ctx,ui.id(ctx,"git_save"),{label="Save all",style=.Field,height=th.control-6}).clicked {command_run(s,"save_all")}
         }
     }
     // Discarding all of them shows while the pointer is on their head.
@@ -260,5 +260,5 @@ git_status_build :: proc(s:^Session) {
     case .Finish: doing="Finishing the merge..."
     }
     if doing!="" {ui.label(ctx,doing,th.font_small,th.text_muted);return}
-    if failure:=base.text_get(g.error[:]);failure!="" {ui.paragraph(ctx,failure,th.font_small,th.danger)}
+    if failure:=base.text_get(g.error[:]);failure!="" {ui.text(ctx,failure,ui.prose(ctx,th.font_small,th.danger))}
 }

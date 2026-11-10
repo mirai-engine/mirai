@@ -9,9 +9,11 @@ function.
   counted (`failed`).
 - The state of each agent (`Mind`, `Perception_Memory`) is plain, without pointers: it is copied for
   a snapshot.
-- The shared definitions (`Utility`, `Grid`) are created once and do not change during the game. A
-  `Nav_Mesh` changes by whole tiles and links, and a `Nav_Volume` by whole zones, in transactions of
-  the caller.
+- A `Nav_Mesh` changes by whole tiles and links, and a `Nav_Volume` by whole zones, in transactions
+  of the caller.
+- **One way for each thing.** One A* under every space, the navmesh and the volume to find a way,
+  the corridor to follow it, ORCA to step aside, the mind to decide, the places to choose where.
+  There is no grid search, flow field, steering force or second selector beside them.
 
 ## A* search (`search.odin`)
 
@@ -20,7 +22,7 @@ function.
   needed is that of nodes open at the same time, not that of relaxations.
 - Nodes are named with `u64` keys. `Search` is the memory of the searches:
   `search_init(&s, {nodes, keyed, open, max_edges, allocator})` (`open` defaults to `nodes`).
-  - Dense: the key is the place of the node, less than `nodes` (cells of a grid).
+  - Dense: the key is the place of the node, less than `nodes` (the portals of a coarse graph).
   - By key (`keyed`): the first `nodes` keys that a search reaches take a place through a hash
     table, so they may be sparse (polygons of a tiled navmesh, planning states). Running out of
     places is `Open_Full`.
@@ -40,16 +42,7 @@ function.
   - `search_path` copies the path of the last success and `search_path_to` the path to any reached
     node (the closest to an unreachable goal, for a partial path); `search_cost` gives the cost and
     `search.stats` counts searches, expanded nodes and the peak of the open set.
-- Graph by callbacks: `Graph{user, neighbors(user, node, ^Edge_List), heuristic(user, node, goal)}`
-  and `graph_find_path(&s, graph, start, goal, out []u64) -> (count, status)`. `edge_add` writes to
-  the list; the edges that do not fit are counted in `dropped`.
-
-## Grid and flow fields (`grid.odin`, `flowfield.odin`)
-
-- `Grid.cost` 0 is a wall and 1 to 255 the weight of entering the cell. A step costs its length
-  times the cost of the arrival cell, and diagonals do not cut corners.
-- `flow_field_build` is a Dijkstra from the goals over the same `Open_Set` and with the same step
-  rules as `grid_find_path`.
+- `edge_add` writes an edge to the list of a node; those that do not fit are counted in `dropped`.
 
 ## Navigation
 
@@ -72,7 +65,8 @@ counterclockwise seen from above, and the queries do not depend on the winding.
 - A link (`nav_mesh_add_link`) joins two points of the surface: type, direction, area whose cost it
   pays per meter, extra cost, what it requires (`Nav_Need`: climb, width, drop, abilities) and owner
   (`nav_mesh_remove_links_of`). Its ends rest on the nearest polygon within its radius as soon as it
-  exists and are released when the tile leaves.
+  exists and are released when the tile leaves. A one-way link is known at its end too, as an
+  arrival that leads nowhere: a search toward a point walks the links against their way.
 - `nav_box_polys` walks the polygons whose boxes touch a box, through the tree of each tile.
 
 ### Queries (`nav_query.odin`)
@@ -90,6 +84,11 @@ counterclockwise seen from above, and the queries do not depend on the winding.
   the requested polygons are closed; `nav_cost_to` walks the steps it took to one and counts the
   cost as A* toward that end. The polygons may not be those A* chooses: close to its cost, never
   below the straight line.
+- **One search for all who go to the same end.** `nav_toward_begin` starts the same search from the
+  end, against the way agents walk: across the same polygons at the same cost, and along each link
+  that arrives. `nav_toward_reach(ref, budget)` expands it, in slices, as far as the polygon of one
+  of them and `nav_toward_path` reads its way from there in the order it is walked: the search
+  costs what the farthest asks, and each one after it only its path.
 - `nav_straight_path` pulls the path taut with the funnel and cuts at each link: corners with
   `Start`, `End` and `Link` (the start of a link, with its reference).
 - `nav_path_straighten` removes, in one pass, each bend of the pulled path that a raycast skips at
@@ -99,6 +98,9 @@ counterclockwise seen from above, and the queries do not depend on the winding.
 - `nav_find_nearest`, `nav_poly_height` (through the detail mesh), `nav_closest_point_on_poly`,
   `nav_move_along_surface` (moving without crossing walls or links), `nav_raycast` (over the surface
   seen from above), `nav_random_point`, `nav_random_point_around` and `nav_distance_to_wall`.
+- `nav_walls_near` gives the edges of the mesh around a point that lead to nothing the filter
+  walks, nearest first and with the surface to their right: the walls of
+  [avoidance](#avoidance-between-agents-avoidanceodin).
 
 ### Corridor (`nav_corridor.odin`)
 
@@ -258,50 +260,34 @@ It is a rewrite in Odin of Recast and of the tile closing of Detour
   triangles). It samples every `detail_sample_distance`, at least one cell; in a large polygon the
   step grows so as not to exceed a maximum of samples per axis, and the detail vertices of a polygon
   have a cap. Its triangles go in the same direction as the polygons.
+- **Again from its field.** A build asked for a `Nav_Tile_Field` keeps in it the walkable spans its
+  triangles gave, before the volumes mark them. `nav_build_tile_again` builds the tile from that
+  field with other volumes, without triangles: byte for byte the tile the triangles give with those
+  volumes. A field of another grid, or whose spans do not stand one over the other, is `Invalid`.
 - **Determinism.** The same configuration and input give the same bytes in the block: ties are
   broken by index and nothing depends on the order of a hash table. Another platform may round
   differently.
 
-## Flow fields (`flowfield.odin`)
+## Avoidance between agents (`avoidance.odin`)
 
-- `flow_field_init(&f, width, height)` and `flow_field_build(&f, &grid, goals, hood)` compute, with
-  a Dijkstra from the goals over the same `Open_Set`:
-  - `cost`: cost of reaching the nearest goal (`INFINITY` if unreachable).
-  - `direction`: unit direction of the cheapest step of each cell (zero at goals and unreachable
-    cells).
-- It uses the same step and cost rules as `grid_find_path`.
-- Goals in a wall or outside the grid are ignored; without valid goals or with another grid size it
-  returns `Invalid`.
-- `flow_field_direction(f, cell)` and `flow_field_sample(f, position)` (normalized bilinear blend,
-  position in cell units with centers at integers).
-
-## Steering (`steering.odin`)
-
-Pure functions over `Vec2` or `Vec3` that return a force of magnitude at most `max_force`. They are
-combined by adding forces.
-
-- `seek`, `flee`, `arrive(…, slow_radius)`, `pursue` and `evade` (with `max_prediction`).
-- `wander`: the state is the displacement over the circle or sphere; it uses `Rng`, and without it
-  it gives no force.
-- `separation`, `alignment`, `cohesion` over `[]Boid(V){position, velocity}` that does not include
-  the agent itself.
-- `avoid_obstacles` over spheres `Obstacle(V){center, radius}` in the trajectory. A zero velocity
-  has no heading: it gives no force.
-- `steering_integrate`: one Euler step with a velocity limit.
-
-### Avoidance between agents (`avoidance.odin`)
-
-- `avoid_velocity(self, preferred, max_speed, neighbors, horizon, dt) -> [N]f32` applies ORCA, with
-  `neighbors []Avoid_Agent(N){position, velocity, radius}`: a single code for N=2 (disks on the
-  plane) and N=3 (spheres in a volume). Each neighbor forbids a half-space of velocities that would
-  bring the two together before `horizon` seconds, and each agent takes half of the change.
+- `avoid_velocity(self, preferred, max_speed, neighbors, horizon, dt, walls, wall_horizon)`
+  applies ORCA, with `neighbors []Avoid_Agent(N){position, velocity, radius}`: a single code for N=2
+  (disks on the plane) and N=3 (spheres in a volume). Each neighbor forbids a half-space of
+  velocities that would bring the two together before `horizon` seconds, and each agent takes half
+  of the change.
+- **Walls come first.** On the plane, each `Avoid_Wall` (a segment, walked on the side to its
+  right) forbids the velocities that cross it before `wall_horizon` seconds, as the edges of the
+  obstacles of RVO2 do. An agent on a wall may not move into it; at the corner of two walls that
+  turns away from it, only the one the preferred velocity breaks least holds, as either side is
+  walked. A wall the agent is behind is none of its own.
 - It returns the allowed velocity closest to the preferred one (an incremental linear program that
-  drops a dimension over the edge of the violated constraint; if none remains, the one that
-  violates least), without exceeding `max_speed`.
+  drops a dimension over the edge of the violated constraint), without exceeding `max_speed`. If
+  none remains, the one that violates the neighbors least: the walls stay as they are.
 - Agents that already overlap are separated in one step `dt`.
-- Only the `AVOID_MAX_NEIGHBORS` nearest neighbors count.
-- A neighbor that does not avoid receives only half of the space: go around it with
-  `avoid_obstacles` or block it in the navmesh.
+- Only the `AVOID_MAX_NEIGHBORS` nearest neighbors and the first `AVOID_MAX_WALLS` walls count.
+- A neighbor that does not avoid receives only half of the space: block it in the navmesh.
+- Whoever moves the agent moves it at the velocity returned, speed included: a faster body is not
+  where the others, and the walls, were told it would be.
 
 ## Decisions: minds (`mind.odin`)
 
@@ -345,7 +331,9 @@ no GOAP. What those models gave is written this way, without implementing them o
 - `steps(a, x, y, z)` runs other actions of the same mind as steps, one after the other, the next
   in the same tick in which the previous one ends: `Success` when the last ends, `Failure` on the
   first that fails. A step has no steps; the list is the same on each tick.
-- `mind_since` and `mind_ready` give the seconds since an action exited: cooldowns.
+- `mind_since` and `mind_ready` give the seconds since an action exited: cooldowns. A mind counts
+  in ticks (`Mind_Context.tick` and `dt`): `after` and `mind_ready` last the same at any tick
+  rate.
 
 ### Reservations: attack tokens and objects
 
@@ -388,7 +376,7 @@ What those models gave, with a mind:
 - **HTN** (combos, methods): `steps` with the list that the action chooses on entry.
 - **GOAP** (getting ammo to shoot): a smart object; `think` proposes going if one is open, and the
   action reserves it, goes and uses it.
-- **Utility AI:** it is the model; `utility.odin` gives the curves if they are needed.
+- **Utility AI:** it is the model; `consideration.odin` gives the curves if they are needed.
 
 ## Influence maps (`influence.odin`)
 
@@ -403,14 +391,14 @@ What those models gave, with a mind:
   `influence_cover` gives 1 if the direction toward someone is covered, 0.5 if only a neighbor and
   0 if none or unmeasured.
 
-## Utility (`utility.odin`)
+## Considerations (`consideration.odin`)
 
-- The score of an action is the product of its considerations with the compensation for count,
-  times its weight; a zero vetoes it and an action without considerations is worth its weight.
-- `utility_add_action` returns the index or −1; `utility_score`, `utility_scores`,
-  `utility_select` (highest score, the first wins) and `utility_pick` (random proportional to the
-  score, with `Rng`; without it, it does not choose).
+- A `Consideration` reads one input, rescales it and maps it through a `Response` curve to 0..1.
+  `score_considerations` is the product of those of a choice with the compensation for count, times
+  its weight; a zero vetoes it and a choice without considerations is worth its weight.
 - It uses only arithmetic: the scores do not depend on the platform.
+- They score the places of a query; an agent chooses what to do with a
+  [mind](#decisions-minds-mindodin), which takes the score of each proposal from the game.
 
 ## Perception and places (`perception.odin`, `places.odin`)
 
@@ -425,8 +413,8 @@ What those models gave, with a mind:
 - `places_rings` and `places_grid` arrange candidates around a point; `places_mesh`, the mesh points
   joined to a polygon without leaving a radius of the center: a grid over each reached polygon, or
   its middle if none falls on it, in the order in which they are reached. `places_best` scores each
-  one with the considerations and the utility score over the inputs that the caller measured for it
-  and stores the best in order; one that scores zero never stays.
+  one with its considerations over the inputs that the caller measured for it and stores the best
+  in order; one that scores zero never stays.
 
 ## Verification
 
@@ -435,11 +423,17 @@ What those models gave, with a mind:
   and a shared ammo box), that do not oscillate, the trace, the lease of a reservation, that a copy
   gives the same future without allocating and hostile states and proposals; and
   `influence_test.odin`: passes within the budget, falloff per meter, cover and hostile inputs.
-- `bench_minds` (`-define:MIRAI_BENCH=true`) measures the tick of 1000 zombies.
+- `bench_minds` (`-define:MIRAI_BENCH=true`) measures the tick of 1000 zombies; `bench_navmesh`,
+  the followers of one end by a search each and by one toward it; `bench_nav_build_tile`, a tile
+  with an obstacle from its triangles and from its field; `bench_avoidance`, ORCA with walls.
 - `nav_volume_test.odin`: free zone only far from the enlarged obstacles, the same one with any
   order of triangles, a path that passes under a wall between zones without crossing it, corridor
   following, expired references, nearest free point, no allocations and hostile calls.
-  `avoidance_test.odin` covers ORCA in 2D and in 3D.
+  `avoidance_test.odin` covers ORCA in 2D and in 3D, a crowd that meets in a corridor without
+  crossing its walls and the corners of walls.
+- `nav_mesh_test.odin`: one search toward an end that gives every follower the way its own search
+  does, over one-way and two-way links, and the walls near a point. `nav_build_test.odin`: a tile
+  built again from its field, equal to the one its triangles give, and damaged fields.
 - `nav_space_link_test.odin`: a path that leaves the mesh through a link, passes under a wall
   through the volume and returns to the mesh through another, the return, a one-way link and a start
   in the volume.

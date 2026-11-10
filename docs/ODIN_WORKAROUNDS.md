@@ -5,10 +5,6 @@ test each one without its workaround and remove those that are no longer needed,
 and their mention in the skills. An entry without an issue is not yet reported; publishing it
 requires the user's confirmation.
 
-`-use-separate-modules` is for the libraries of a project and, in dev builds (`-o:minimal` and
-`-o:none`), those of plugins (`cook/build/build.odin`, `plugin_flags` in `cook/build/plugins.odin`);
-the optimized engine is compiled whole, because splitting loses `#force_inline` across packages.
-
 ## Odin
 
 Entries are for Odin `dev-2026-11`.
@@ -32,6 +28,7 @@ Entries are for Odin `dev-2026-11`.
 | the BC7Split kernels (`std/compressor/bc7split/kernels.odin`): `[4]u64` arrays between procedures and `#simd` only inside one | odin-lang/Odin#7780, #6410 | `-o:none` inlines `#force_inline` calls (or warns), so a `#simd[4]u64` passed from an `enable_target_feature="avx2"` procedure survives; go back to `Lanes :: #simd[LANES]u64` and run `mirai test std/compressor/bc7split` at `-o:none` |
 | `sad_u8x16` (`cook/compressor/texture/common/vector.odin`) and `sad_halves` (`vector_other.odin`): `simd.reduce_add_ordered` | llvm/llvm-project#239204 | `simd.reduce_add_bisect` of a widened byte difference returns the whole sum at `-o:minimal` and `-o:speed` |
 | the 256-bit kernels (`cook/compressor/texture/common/dispatch_amd64.odin`, `cook/compressor/texture/bc7/dispatch_amd64.odin`): `x86._mm256_shuffle_epi8` and `x86._mm256_permutevar8x32_epi32` | odin-lang/Odin#8199 | `simd.runtime_swizzle` of two `#simd[32]u8` in an `avx2` procedure has no `vpinsrb` with `-build-mode:asm -o:speed` |
+| `base.remove_all` (`std/base/remove_all.odin`): every folder of the engine and its tests is removed with it instead of `os.remove_all`, whose Windows version calls `SHFileOperationW`; the shell raises first-chance C++ exceptions inside it, and the vectored handler of `core:testing` stops the test for any of them ("Signal caught: Unknown"), or kills the runner when the cleanup of a stopped test runs on the main thread | none | `os.remove_all` on Windows walks the folder with `DeleteFileW` and `RemoveDirectoryW`, and `core:testing` on Windows lets an exception that a handler of the program catches go by; go back to `os.remove_all` and run the editor tests of `ai_subagents_test.odin` and `sections_test.odin` together |
 | one kernel body per vector width (`cook/compressor/texture/common/vqhelp.odin`, `bc7/quant.odin`, `dispatch_amd64.odin`) | odin-lang/Odin#8198 | `total :: proc($W:int,v:#simd[W]u32) -> u32` builds |
 
 ## Slang and SPIRV

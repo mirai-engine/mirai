@@ -40,10 +40,27 @@ plugin_libraries_follow_the_parts_and_their_dependencies :: proc(t:^testing.T) {
     for lib in play {testing.expect_value(t,lib.part,project.Plugin_Part.Runtime)}
     testing.expect(t,index_of(play,"profiler/editor")<0 && index_of(editor,"profiler/editor")>=0)
     testing.expect(t,plugins_mode(&p,true)=="minimal" && plugins_mode(&p,false)=="speed")
-    // Optimized, a library is one module, as the game that ships compiles it.
-    dev,release:=plugin_flags(&p,true,context.temp_allocator),plugin_flags(&p,false,context.temp_allocator)
-    testing.expect(t,slice.contains(dev,"-use-separate-modules") && slice.contains(dev,"-o:minimal"))
-    testing.expect(t,!slice.contains(release,"-use-separate-modules") && slice.contains(release,"-o:speed"))
+    // Optimized, a library of a plugin or of the project is one module, as the
+    // game that ships compiles it; unoptimized, one module per package.
+    cases:=[]struct{optimization:project.Optimization,dev:bool,level:string,split:bool}{
+        {.Speed,true,"-o:minimal",true},
+        {.Minimal,false,"-o:minimal",true},
+        {.None,false,"-o:none",true},
+        {.Size,false,"-o:size",false},
+        {.Speed,false,"-o:speed",false},
+        {.Aggressive,false,"-o:aggressive",false},
+    }
+    for c in cases {
+        p.manifest.build.optimization=c.optimization
+        libraries:=[?][]string{
+            plugin_flags(&p,c.dev,context.temp_allocator),
+            target_flags(&p,.Editor,nil,context.temp_allocator,c.dev),
+            target_flags(&p,.Play,nil,context.temp_allocator,c.dev),
+        }
+        for flags,i in libraries {
+            testing.expectf(t,slice.contains(flags,c.level) && slice.contains(flags,"-use-separate-modules")==c.split,"library %d at %v (dev %v): %v",i,c.optimization,c.dev,flags)
+        }
+    }
 }
 
 // A plugin library is built from the same things in every project of an
@@ -207,7 +224,7 @@ a_part_with_folders_is_one_library_that_the_shared_cache_keeps :: proc(t:^testin
     }
 
     // A checkout that has not built it copies it.
-    testing.expect(t,os.remove_all(project.folder_path(p.root,.Generated))==nil)
+    testing.expect(t,base.remove_all(project.folder_path(p.root,.Generated))==nil)
     again:=plugin_job(&p,compiler)
     defer virtual.arena_destroy(&again.arena)
     if !testing.expect_value(t,job_plugins_plan(again,&p,{project=&p,target=.Play,dev=true,engine=.Dev}),Failure.None) {return}

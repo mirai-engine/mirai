@@ -11,10 +11,13 @@ compiles against: [engine binaries](projects.md#engine-binaries). Which folders 
 errors of the attributes.
 
 - `Editor`: exports `mirai_project_info` over `gen/editor_world` (world of the editor, the game,
-  the `editor/` of the project and the active plugins). A library (`-build-mode:dll`,
-  `-use-separate-modules`) against the engine `decl/` and the declarations of the
-  [plugin libraries](projects.md#plugin-libraries), which the job compiles first if they are
-  stale; with the optimization and the `-debug` of the manifest; output `.mirai/editor<ext>`.
+  the `editor/` of the project and the active plugins). A library (`-build-mode:dll`) against the
+  engine `decl/` and the declarations of the [plugin libraries](projects.md#plugin-libraries),
+  which the job compiles first if they are stale; with the optimization and the `-debug` of the
+  manifest; output `.mirai/editor<ext>`. Optimized (`Size`, `Speed`, `Aggressive`) it is a single
+  LLVM module, as the shipped game compiles it, because a `#force_inline` procedure of another
+  package is not inlined across modules; with `--dev` (`minimal`) or `None`, one module per
+  package (`library_optimization_append`).
 - `Play`: the same over `gen/game_world` (game and runtime of the plugins), with the runtime
   libraries of the plugins; output `.mirai/play<ext>`.
 - `Game`: a `main` that calls `host.player_run` over `gen/shipped_world`, the world without the
@@ -90,8 +93,9 @@ and `tools/mirai`. The main checkout of a worktree is `project.shared_root(root)
     say "unchanged" without waiting; if not, they take the lock and each step checks again.
     `build game` always takes it.
   - `mirai test` and `mirai check` generate the engine shaders under the lock only if there are
-    stages to compile; `mirai test` compiles the executables of all its packages under one lock
-    and runs them outside it.
+    stages to compile; `mirai test` compiles the executables of all its packages of the engine
+    under one lock and runs them outside it; a package of a project holds it until its executable
+    runs.
   - `workspace.builds_since` says whether someone compiled since a moment, so that whoever measures
     knows whether builds happened during the measurement. The editor's builds neither take the lock
     nor are annotated.
@@ -160,6 +164,8 @@ successful build and `<target>.stamp` stores their fingerprint (`fingerprint`,
 package changes the dates), the flags except `-thread-count:N`, the name and **content** of the
 `.odin` files of each folder the build read a source from, **except the `*_test.odin`** (a test
 invalidates no build, not even the self-refresh of `bin/mirai`), and what is loaded with `#load`.
+A test executable counts the `*_test.odin` too: a build of tests reads those of every package it
+imports ([checks and tests](projects.md#checks-and-tests)).
 
 - The content is read without carriage returns and paths count relative to the engine root: the
   same content in another checkout, or after a checkout or merge that leaves the files the same,

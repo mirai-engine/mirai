@@ -291,7 +291,7 @@ shipped_cache_store :: proc(engine_root:string,s:^Shipped_Engine) {
     for file in shipped_cache_files(s) {
         if file[0]!=project.library_file(SHIPPED_ENGINE_NAME,context.temp_allocator) && ODIN_OS!=.Windows {continue}
         if os.copy_file(project.path(staging,file[0],allocator=context.temp_allocator),file[1])!=nil {
-            _=os.remove_all(staging)
+            _=base.remove_all(staging)
             return
         }
     }

@@ -316,7 +316,7 @@ cells_version :: proc(next,previous:^Source,versions:^u32) {
 // changes on disk or in the memory of the registry, and drops those no
 // Foliage names. Foliage.revision is the editor's: undo puts back what a
 // step held, 0 included, and the tool restores the source of that revision.
-@(step="fixed frame",loops="game editor",stage="simulate",before="physics_prepare")
+@(step="fixed frame",loops="game editor",stage="simulate")
 foliage_load :: proc(data:^Foliage_Data,foliages:core.Read(Foliage),assets:^host.Assets,allocator:runtime.Allocator,problems:^core.Problems) {
     a:=assets
     if a==nil {return}
@@ -422,7 +422,7 @@ orphans_report :: proc(problems:^core.Problems,e:core.Entity,a:^host.Assets,id:b
 // world show changes nothing here, and neither does a stable frame. Which
 // cells of a Foliage are resident, and in which band each type of them is,
 // is chosen again when the streaming sources move.
-@(step="late",loops="game editor",stage="end",after="transforms_propagate")
+@(step="late",loops="game editor",stage="end")
 foliage_render :: proc(resident:^Foliage_Resident,data:core.Ref(Foliage_Data),grounds:core.Ref(Foliage_Ground),removals:core.Ref(Foliage_Removals),foliages:core.Read(Foliage),worlds:core.Read(core.World_Transform),kept:core.Read(scene.Far_Kept),sources:core.Ref(scene.Streaming_Sources),id:core.World_Id,app:^host.App,problems:^core.Problems) {
     if resident==nil || data.ptr==nil || app.renderer==nil || app.assets==nil {return}
     a:=app.assets

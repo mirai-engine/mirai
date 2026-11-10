@@ -2,11 +2,13 @@ package navigation
 
 import "core:math/linalg"
 import "core:mem"
+import "core:slice"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
 import input "mirai:engine/input"
 import scene "mirai:engine/scene"
+import volume "mirai:engine/volume"
 import "mirai:host"
 import "mirai:std/ai"
 import "mirai:std/base"
@@ -49,6 +51,7 @@ Nav_World :: struct {
     nav_settings:Navigation_Settings,
     nav_requests:Nav_Requests,
     nav_events:Nav_Events,
+    nav_crossings:Nav_Crossings,
     loco:phys.Locomotion_Requests,
 }
 
@@ -94,10 +97,10 @@ nav_test_step :: proc(f:^Nav_Test,ticks:=1) {
             &f.state,core.ref(&f.settings),&f.requests,&f.events,&f.meshes,&f.app,{dt=0,playing=false},
             core.read(&f.rigids),core.read(&f.colliders),core.read(&f.characters),core.read(&f.moves),
             &f.joints,core.read(&f.statics),core.read(&f.parents),core.read(&f.names),
-            &f.transforms,&f.bodies,core.read(&f.replicas),&f.character_states,&f.joint_states,core.read(&f.volumes),&f.joint_requests,core.ref(&f.collision),core.ref(&f.sync_check),&f.simulation_hash,nil,&f.problems,{},{},{},{},{},core.ref(&f.hierarchy),
+            &f.transforms,&f.bodies,core.read(&f.replicas),&f.character_states,&f.joint_states,core.read(&f.fluids),&f.joint_requests,core.ref(&f.collision),core.ref(&f.sync_check),&f.simulation_hash,nil,&f.problems,{},core.read(&f.volumes),{},{},{},core.ref(&f.hierarchy),
         )
         nav_test_settle(f)
-        navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),f.time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.unloaded),core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
+        navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),core.read(&f.volumes),f.time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.unloaded),core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
     }
 }
 
@@ -224,7 +227,8 @@ moving_collision_builds_again_only_the_tiles_it_touches :: proc(t:^testing.T) {
     nav_test_box(&f,{0,-0.5,0},{10,0.5,10})
     region:=core.create(&f.entities)
     core.add(&f.transforms,region,core.Transform{{0,0,0},1,{1,1,1}})
-    core.add(&f.bounds,region,Nav_Bounds{half={10,4,10}})
+    core.add(&f.bounds,region,Nav_Bounds{})
+    core.add(&f.volumes,region,volume.box({10,4,10}))
     wall:=nav_test_box(&f,{0,1,0},{0.5,1,10})
     nav_test_settled(t,&f)
     _,status:=nav_test_path(t,&f,{-5,0,0},{5,0,0})
@@ -249,7 +253,8 @@ tiles_where_the_collision_is_not_loaded_keep_what_they_have_until_it_loads :: pr
     nav_test_box(&f,{0,-0.5,0},{10,0.5,10})
     region:=core.create(&f.entities)
     core.add(&f.transforms,region,core.Transform{{0,0,0},1,{1,1,1}})
-    core.add(&f.bounds,region,Nav_Bounds{half={10,4,10}})
+    core.add(&f.bounds,region,Nav_Bounds{})
+    core.add(&f.volumes,region,volume.box({10,4,10}))
     wall:=nav_test_box(&f,{0,1,0},{0.5,1,10})
     nav_test_settled(t,&f)
     _,status:=nav_test_path(t,&f,{-5,0,0},{5,0,0})
@@ -300,7 +305,8 @@ the_tiles_where_the_terrain_is_not_loaded_go_in_a_run_and_come_back_from_the_bak
     nav_test_box(&f,{0,-0.5,0},{10,0.5,10})
     region:=core.create(&f.entities)
     core.add(&f.transforms,region,core.Transform{{0,0,0},1,{1,1,1}})
-    core.add(&f.bounds,region,Nav_Bounds{half={10,4,10}})
+    core.add(&f.bounds,region,Nav_Bounds{})
+    core.add(&f.volumes,region,volume.box({10,4,10}))
     nav_test_settled(t,&f)
     root:=base.test_folder(t,"nav-paging")
     assets:host.Assets
@@ -363,7 +369,8 @@ the_tiles_of_a_section_that_streams_wait_for_it_to_be_on :: proc(t:^testing.T) {
     nav_test_box(&f,{0,-0.5,0},{10,0.5,10})
     region:=core.create(&f.entities)
     core.add(&f.transforms,region,core.Transform{{0,0,0},1,{1,1,1}})
-    core.add(&f.bounds,region,Nav_Bounds{half={10,4,10}})
+    core.add(&f.bounds,region,Nav_Bounds{})
+    core.add(&f.volumes,region,volume.box({10,4,10}))
     wall:=nav_test_box(&f,{0,1,0},{0.5,1,10})
     section:=core.create(&f.entities)
     core.add(&f.references,section,scene.Scene_Reference{scene={1,1},extents={2,3,12},rule=.Spatial,state=.Active,loaded={1,1}})
@@ -404,21 +411,44 @@ the_bounds_of_the_collision_keep_the_tiles_where_it_is_not_loaded :: proc(t:^tes
     testing.expect_value(t,status,ai.Search_Status.Found)
 }
 
+// Its box is the Volume of its entity: the strip grows and goes with it, and
+// an area whose entity has no box Volume blocks nothing and says so.
 @(test)
-a_blocked_area_takes_the_surface_under_it :: proc(t:^testing.T) {
+a_blocked_area_takes_the_surface_under_the_volume_of_its_entity :: proc(t:^testing.T) {
     f:Nav_Test
     if !nav_test_init(t,&f) {return}
     defer nav_test_destroy(&f)
     nav_test_box(&f,{0,-0.5,0},{10,0.5,10})
     zone:=core.create(&f.entities)
     core.add(&f.transforms,zone,core.Transform{{0,0,0},1,{1,1,1}})
-    core.add(&f.areas,zone,Nav_Area{half={1,2,10},area=AREA_BLOCKED})
+    core.add(&f.areas,zone,Nav_Area{area=AREA_BLOCKED})
+    core.add(&f.volumes,zone,volume.box({1,2,10}))
     nav_test_settled(t,&f)
     // An agent that cannot jump: one that can jumps over the strip, by the links generated across it.
     _,status:=nav_test_path(t,&f,{-5,0,0},{5,0,0},{})
     testing.expect_value(t,status,ai.Search_Status.No_Path)
     _,status=nav_test_path(t,&f,{-5,0,0},{5,0,0})
     testing.expect_value(t,status,ai.Search_Status.Found)
+    // A strip that leaves a way round its end.
+    core.get(&f.volumes,zone).extents={1,2,4}
+    nav_test_settled(t,&f)
+    _,status=nav_test_path(t,&f,{-5,0,0},{5,0,0},{})
+    testing.expect_value(t,status,ai.Search_Status.Found)
+    core.get(&f.volumes,zone).extents={1,2,10}
+    nav_test_settled(t,&f)
+    _,status=nav_test_path(t,&f,{-5,0,0},{5,0,0},{})
+    testing.expect_value(t,status,ai.Search_Status.No_Path)
+    for shapeless in ([2]bool{false,true}) {
+        if shapeless {core.remove(&f.volumes,zone)} else {core.get(&f.volumes,zone)^=volume.sphere(10)}
+        nav_test_settled(t,&f)
+        _,status=nav_test_path(t,&f,{-5,0,0},{5,0,0},{})
+        testing.expect_value(t,status,ai.Search_Status.Found)
+        testing.expect(t,core.problem_find(&f.problems,zone,"navigation.volume")!=nil)
+    }
+    core.add(&f.volumes,zone,volume.box({1,2,10}))
+    nav_test_settled(t,&f)
+    _,status=nav_test_path(t,&f,{-5,0,0},{5,0,0},{})
+    testing.expect_value(t,status,ai.Search_Status.No_Path)
     core.remove(&f.areas,zone)
     nav_test_settled(t,&f)
     _,status=nav_test_path(t,&f,{-5,0,0},{5,0,0},{})
@@ -703,18 +733,18 @@ agents_test_step :: proc(f:^Nav_Test) {
         if w:=core.get(&f.worlds,e);w!=nil {w.transform=t} else {core.add(&f.worlds,e,core.World_Transform{transform=t})}
     }
     nav_test_settle(f)
-    navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.unloaded),core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
-    navigation_agents(core.ref(&f.nav),&f.run,core.read(&f.agents),&f.paths,&f.nav_requests,&f.nav_events,&f.inputs,core.read(&f.drivables),core.read(&f.characters),core.read(&f.colliders),core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.worlds),core.read(&f.obstacles),&f.loco,core.ref(&f.state),core.ref(&f.builds),&f.fars,
-        &f.roamings,&f.disabled,{&f.transforms,core.read(&f.parents),&f.places,&f.jumps},&f.requests,time,&f.problems)
+    navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),core.read(&f.volumes),time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.unloaded),core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
+    navigation_agents(core.ref(&f.nav),&f.run,core.read(&f.agents),&f.paths,&f.nav_requests,&f.nav_events,&f.inputs,core.read(&f.drivables),core.read(&f.characters),core.read(&f.colliders),core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.worlds),core.read(&f.obstacles),core.read(&f.volumes),&f.loco,core.ref(&f.state),core.ref(&f.builds),&f.fars,
+        &f.roamings,&f.disabled,{&f.transforms,core.read(&f.parents),&f.places,&f.jumps},&f.requests,&f.nav_crossings,time,&f.problems)
     nav_test_settle(f)
-    navigation_crossing(core.read(&f.paths),&f.moves,core.read(&f.characters),core.read(&f.walks),core.read(&f.bodies),core.read(&f.worlds),core.ref(&f.state),time)
+    navigation_crossing(core.read(&f.paths),&f.moves,core.read(&f.characters),core.read(&f.walks),core.read(&f.bodies),core.read(&f.worlds),core.ref(&f.state),core.ref(&f.nav_crossings),time)
     phys.locomotion_step(&f.characters,&f.moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),core.read(&f.mantles),core.read(&f.tacticals),core.read(&f.ledges),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.transforms),core.read(&f.parents),core.read(&f.remotes),core.ref(&f.state),{},{},&f.loco,time,core.CLOCK_DEFAULT,&f.problems)
     nav_test_settle(f)
     phys.physics_step(
         &f.state,core.ref(&f.settings),&f.requests,&f.events,&f.meshes,&f.app,time,
         core.read(&f.rigids),core.read(&f.colliders),core.read(&f.characters),core.read(&f.moves),
         &f.joints,core.read(&f.statics),core.read(&f.parents),core.read(&f.names),
-        &f.transforms,&f.bodies,core.read(&f.replicas),&f.character_states,&f.joint_states,core.read(&f.volumes),&f.joint_requests,core.ref(&f.collision),core.ref(&f.sync_check),&f.simulation_hash,nil,&f.problems,{},{},{},{},{},core.ref(&f.hierarchy),
+        &f.transforms,&f.bodies,core.read(&f.replicas),&f.character_states,&f.joint_states,core.read(&f.fluids),&f.joint_requests,core.ref(&f.collision),core.ref(&f.sync_check),&f.simulation_hash,nil,&f.problems,{},core.read(&f.volumes),{},{},{},core.ref(&f.hierarchy),
     )
 }
 
@@ -729,7 +759,8 @@ a_world_without_agents_prepares_no_search :: proc(t:^testing.T) {
     nav_test_settled(t,&f)
     obstacle:=core.create(&f.entities)
     core.add(&f.transforms,obstacle,core.Transform{{5,0.5,2},1,{1,1,1}})
-    core.add(&f.obstacles,obstacle,Nav_Obstacle{half={0.5,0.5,0.5}})
+    core.add(&f.obstacles,obstacle,Nav_Obstacle{})
+    core.add(&f.volumes,obstacle,volume.box({0.5,0.5,0.5}))
     for _ in 0..<3 {agents_test_step(&f)}
     testing.expect(t,f.nav.ready && f.nav.count>0)
     testing.expect(t,len(f.run.query.points)==0 && len(f.run.refs)==0 && len(f.run.near)==0)
@@ -749,7 +780,8 @@ fliers_leave_a_u_shaped_cave_under_its_wall_and_step_aside_from_each_other :: pr
     nav_test_box(&f,{5,6.25,2},{0.5,3.75,3})
     bounds:=core.create(&f.entities)
     core.add(&f.transforms,bounds,core.Transform{{5,5,2},1,{1,1,1}})
-    core.add(&f.bounds,bounds,Nav_Bounds{half={5,5,2},air=true})
+    core.add(&f.bounds,bounds,Nav_Bounds{air=true})
+    core.add(&f.volumes,bounds,volume.box({5,5,2}))
     nav_test_settled(t,&f)
     testing.expect(t,f.nav.count==3 && class_in_volume(&f.nav,1))
     volume:=&f.nav.classes[1].volume
@@ -818,10 +850,12 @@ swimmers_leave_a_u_shaped_cave_under_its_wall_and_keep_out_of_a_dry_box :: proc(
     nav_test_box(&f,{5,6.25,2},{0.5,3.75,3})
     pool:=core.create(&f.entities)
     core.add(&f.transforms,pool,core.Transform{{5,5,2},1,{1,1,1}})
-    core.add(&f.volumes,pool,phys.fluid_volume_box({5,5,2}))
+    core.add(&f.fluids,pool,phys.FLUID_DEFAULT)
+    core.add(&f.volumes,pool,volume.box({5,5,2}))
     dry:=core.create(&f.entities)
     core.add(&f.transforms,dry,core.Transform{{8.5,2,2},1,{1,1,1}})
-    core.add(&f.volumes,dry,phys.fluid_volume_dry({1.5,1.5,2},1))
+    core.add(&f.fluids,dry,phys.Fluid{})
+    core.add(&f.volumes,dry,volume.box({1.5,1.5,2},priority=1))
     nav_test_step(&f)
     nav_test_settled(t,&f)
     testing.expect(t,f.nav.count>=2 && class_in_volume(&f.nav,1))
@@ -868,7 +902,8 @@ the_ground_under_deep_water_is_of_the_water_and_only_swimmers_cross_it :: proc(t
     nav_test_box(&f,{8,-0.5,4},{8,0.5,4})
     pool:=core.create(&f.entities)
     core.add(&f.transforms,pool,core.Transform{{8,1.5,4},1,{1,1,1}})
-    core.add(&f.volumes,pool,phys.fluid_volume_box({3,1.5,4.5}))
+    core.add(&f.fluids,pool,phys.FLUID_DEFAULT)
+    core.add(&f.volumes,pool,volume.box({3,1.5,4.5}))
     nav_test_step(&f)
     nav_test_settled(t,&f)
     walker:=agent_avoids(NAV_AGENT_DEFAULT,false)
@@ -1024,7 +1059,7 @@ the_tiles_of_a_section_go_with_it_and_come_back_with_its_bake :: proc(t:^testing
 }
 
 // Settled with sections here and away, ticks that change nothing build,
-// drop and make nothing.
+// drop and make nothing, and look at nothing.
 @(test)
 nothing_changes_while_nothing_does :: proc(t:^testing.T) {
     f:Nav_Test
@@ -1035,10 +1070,14 @@ nothing_changes_while_nothing_does :: proc(t:^testing.T) {
     nav_test_drop(&f,&s,1)
     nav_test_settled(t,&f)
     revision,stats,coarse:=f.nav.revision,f.nav.stats,f.builds.coarse_revision
+    nav_test_step(&f)
+    looked:=f.builds.looked
     nav_test_step(&f,120)
     testing.expect_value(t,f.nav.revision,revision)
     testing.expect_value(t,f.nav.stats,stats)
     testing.expect_value(t,f.builds.coarse_revision,coarse)
+    // Nor do they go through a row of a table, a mark or a build.
+    testing.expect_value(t,f.builds.looked,looked)
 }
 
 // Two sections in a column, as down a well: the upper holds y in [-1, 5] with
@@ -1267,7 +1306,8 @@ a_flier_far_takes_the_way_through_the_air_of_the_section_away :: proc(t:^testing
     wall:=nav_test_box(&f,{0,6.25,0},{0.5,3.75,6})
     air:=core.create(&f.entities)
     core.add(&f.transforms,air,core.Transform{{0,5,0},1,{1,1,1}})
-    core.add(&f.bounds,air,Nav_Bounds{half={30,5,6},air=true})
+    core.add(&f.bounds,air,Nav_Bounds{air=true})
+    core.add(&f.volumes,air,volume.box({30,5,6}))
     // The ways of a region of the air are searched over ticks.
     on_its_way:=0
     for _ in 0..<400 {
@@ -1361,7 +1401,8 @@ an_amphibian_walks_into_the_water_at_the_shore_swims_across_and_walks_out :: pro
     nav_test_box(&f,{12,-0.5,4},{12,0.5,4})
     pool:=core.create(&f.entities)
     core.add(&f.transforms,pool,core.Transform{{12,1.5,4},1,{1,1,1}})
-    core.add(&f.volumes,pool,phys.fluid_volume_box({4,1.5,4}))
+    core.add(&f.fluids,pool,phys.FLUID_DEFAULT)
+    core.add(&f.volumes,pool,volume.box({4,1.5,4}))
     nav_test_step(&f)
     nav_test_settled(t,&f)
     e:=agents_test_amphibian(&f,{2,0,4},false)
@@ -1393,7 +1434,8 @@ an_agent_that_walks_and_flies_takes_off_and_lands_by_links_of_the_air :: proc(t:
     nav_test_box(&f,{20,2,4},{3,2,4})
     sky:=core.create(&f.entities)
     core.add(&f.transforms,sky,core.Transform{{12,5,4},1,{1,1,1}})
-    core.add(&f.bounds,sky,Nav_Bounds{half={12,5,4},air=true})
+    core.add(&f.bounds,sky,Nav_Bounds{air=true})
+    core.add(&f.volumes,sky,volume.box({12,5,4}))
     off:=core.create(&f.entities)
     core.add(&f.transforms,off,core.Transform{{4,0,4},1,{1,1,1}})
     core.add(&f.links,off,Nav_Link{end={0,3,0},kind=LINK_FLY,area=AREA_WALKABLE})
@@ -1505,7 +1547,8 @@ walkers_that_crowd_at_the_start_of_a_link_keep_to_the_mesh :: proc(t:^testing.T)
     core.add(&f.links,vault,Nav_Link{end={1.6,0,0},kind=VAULT,two_way=true,area=AREA_WALKABLE})
     zone:=core.create(&f.entities)
     core.add(&f.transforms,zone,core.Transform{{4,0,0},1,{1,1,1}})
-    core.add(&f.areas,zone,Nav_Area{half={3,1.02,6},area=AREA_BLOCKED})
+    core.add(&f.areas,zone,Nav_Area{area=AREA_BLOCKED})
+    core.add(&f.volumes,zone,volume.box({3,1.02,6}))
     nav_test_settled(t,&f)
     points:=[4]mm.Vec3{{-15,0,-10},{-7,3.5,1},{17,0,10},{17,0,-10}}
     walkers:[6]core.Entity
@@ -1652,4 +1695,202 @@ a_kept_navigation_copies_its_meshes_again_only_when_a_build_changed_them :: proc
     f.nav.revision=built
     testing.expect(t,copies(t,&f,&tracking,&kept,&whole,"other meshes at the same revision")>0)
     testing.expect(t,copies(t,&f,&tracking,&early,&early_whole,"other meshes than those of the first tick")>0)
+}
+
+// Eight walkers follow a runner around a wall: the first plans its own way
+// and the rest read theirs from one search toward the runner, begun again no
+// more than twice a second as it moves; all of them walk to it.
+@(test)
+followers_of_one_target_share_one_search_toward_it :: proc(t:^testing.T) {
+    f:Nav_Test
+    if !nav_test_init(t,&f) {return}
+    defer nav_test_destroy(&f)
+    nav_test_box(&f,{0,-0.5,0},{20,0.5,12})
+    nav_test_box(&f,{0,1,-3},{0.3,1,9})
+    nav_test_settled(t,&f)
+    runner:=core.create(&f.entities)
+    core.add(&f.transforms,runner,core.Transform{{14,0,-8},1,{1,1,1}})
+    walkers:[8]core.Entity
+    for &e,i in walkers {
+        e=agents_test_walker(&f,{-16+f32(i%4)*1.2,0,-6+f32(i/4)*1.2})
+        nav_follow(&f.nav_requests,e,runner,1)
+    }
+    nav_test_settle(&f)
+    SECONDS :: 12
+    for tick in 0..<60*SECONDS {
+        // It runs along the far side for a while, then waits for them.
+        core.get(&f.transforms,runner).position.z=-8+min(f32(tick)/60,6)*2
+        agents_test_step(&f)
+    }
+    trees,begun:=0,u64(0)
+    // Let go once they all arrived, the search keeps its count.
+    for &tree in f.run.trees {
+        if len(tree.query.points)==0 {continue}
+        trees+=1
+        begun+=tree.query.search.stats.searches
+    }
+    own:=f.run.query.search.stats.searches
+    replans:u32
+    at,_:=core.get(core.read(&f.worlds),runner)
+    for e,i in walkers {
+        p,_:=core.get(core.read(&f.paths),e)
+        pose,_:=core.get(core.read(&f.worlds),e)
+        replans+=p.replans
+        testing.expectf(t,(p.state==.Arrived || p.state==.Moving) && linalg.distance(pose.position,at.position)<4,"walker %d is %v at %v, the runner at %v",i,p.state,pose.position,at.position)
+    }
+    testing.expectf(t,trees==1 && begun>=3 && begun<=2*SECONDS+1,"%d searches shared, begun %d times",trees,begun)
+    testing.expectf(t,own<=4,"%d searches of their own beside the shared one",own)
+    testing.expect_value(t,f.problems.count,0)
+}
+
+// A path that says it crosses a link is driven only while navigation counts
+// one crossing: with none, the crossing of links looks at no path.
+@(test)
+the_crossing_of_links_looks_at_no_path_while_none_crosses :: proc(t:^testing.T) {
+    f:Nav_Test
+    if !nav_test_init(t,&f) {return}
+    defer nav_test_destroy(&f)
+    e:=agents_test_walker(&f,{0,0,0})
+    nav_test_settle(&f)
+    core.add(&f.worlds,e,core.World_Transform{transform={rotation=1,scale=1}})
+    core.add(&f.paths,e,Nav_Path{state=.Crossing,kind=LINK_LADDER,to={0,3,0},class=0,partner=-1})
+    nav_test_settle(&f)
+    time:=core.Time{tick=1,seconds=1,dt=1.0/60,playing=true}
+    cross :: proc(f:^Nav_Test,time:core.Time) {
+        navigation_crossing(core.read(&f.paths),&f.moves,core.read(&f.characters),core.read(&f.walks),core.read(&f.bodies),core.read(&f.worlds),core.ref(&f.state),core.ref(&f.nav_crossings),time)
+    }
+    cross(&f,time)
+    testing.expect(t,core.get(&f.moves,e)^=={},"With no crossing counted, the path was looked at")
+    f.nav_crossings.count=1
+    cross(&f,time)
+    testing.expect(t,.No_Gravity in core.get(&f.moves,e).value.flags,"With a crossing counted, the ladder is not climbed")
+    // Navigation counts those that cross as it steers them, and none once they are done.
+    core.get(&f.paths,e).state=.Idle
+    f.nav_crossings.count=7
+    nav_test_box(&f,{0,-0.5,0},{4,0.5,4})
+    nav_test_settled(t,&f)
+    agents_test_step(&f)
+    testing.expect_value(t,f.nav_crossings.count,0)
+}
+
+// The polygons of every tile of the first class, tile by tile in the order of their coordinates.
+@(private="file")
+nav_test_tile_bytes :: proc(f:^Nav_Test,allocator:=context.allocator) -> (bytes:[dynamic]byte) {
+    bytes=make([dynamic]byte,allocator)
+    mesh:=&f.nav.classes[0].mesh
+    low,high:=ai.nav_mesh_coord(mesh,{-40,0,-40}),ai.nav_mesh_coord(mesh,{40,0,40})
+    for z in low.y..=high.y {
+        for x in low.x..=high.x {
+            tile:=ai.nav_mesh_tile_at(mesh,{x,z})
+            if tile==nil {continue}
+            append(&bytes,..mem.slice_to_bytes(tile.data.vertices))
+            append(&bytes,..mem.slice_to_bytes(tile.data.polys))
+            append(&bytes,..mem.slice_to_bytes(tile.data.detail_vertices))
+            append(&bytes,..mem.slice_to_bytes(tile.data.detail_triangles))
+            hash:=tile.data.hash
+            append(&bytes,..mem.ptr_to_bytes(&hash))
+        }
+    }
+    return
+}
+
+// An area and an obstacle come, move and go over a floor with a box: their
+// tiles are built again from the heightfields their builds kept, without the
+// collision, and are the tiles a build of everything from the collision
+// gives. Collision that changes under a tile has it read again.
+@(test)
+a_tile_that_an_area_or_an_obstacle_changes_is_built_again_from_its_heightfield :: proc(t:^testing.T) {
+    f:Nav_Test
+    if !nav_test_init(t,&f) {return}
+    defer nav_test_destroy(&f)
+    nav_test_box(&f,{0,-0.5,0},{10,0.5,10})
+    crate:=nav_test_box(&f,{-4,0.5,3},{0.5,0.5,0.5})
+    nav_test_settled(t,&f)
+    testing.expect(t,len(f.builds.fields)>0 && len(f.builds.fields)<=NAV_FIELDS && f.nav.stats.carved==0)
+    // What the tiles are when everything is built from the collision.
+    whole :: proc(t:^testing.T,f:^Nav_Test,what:string) {
+        carved:=nav_test_tile_bytes(f)
+        defer delete(carved)
+        built:=f.nav.stats.built+f.nav.stats.emptied
+        nav_rebuild(&f.build_requests)
+        nav_test_settled(t,f)
+        again:=nav_test_tile_bytes(f)
+        defer delete(again)
+        testing.expectf(t,f.nav.stats.built+f.nav.stats.emptied>built && slice.equal(carved[:],again[:]),"%s: the tiles built from their heightfields are not those the collision gives",what)
+    }
+    steps:=[?]struct {what:string,area,obstacle:Maybe([3]f32)}{
+        {"an area comes",[3]f32{3,0,0},nil},
+        {"an obstacle settles",[3]f32{3,0,0},[3]f32{-2,0.5,-3}},
+        {"the obstacle moves onto the area",[3]f32{3,0,0},[3]f32{3.4,0.5,0.6}},
+        {"the area goes",nil,[3]f32{3.4,0.5,0.6}},
+        {"the obstacle goes",nil,nil},
+    }
+    zone,block:core.Entity
+    for step in steps {
+        if at,there:=step.area.?;there && zone==core.NONE {
+            zone=core.create(&f.entities)
+            core.add(&f.transforms,zone,core.Transform{at,1,{1,1,1}})
+            core.add(&f.areas,zone,Nav_Area{area=Nav_Area_Kind(5)})
+            core.add(&f.volumes,zone,volume.box({1.5,2,2.5}))
+        } else if !there && zone!=core.NONE {
+            core.destroy(&f.entities,zone)
+            zone=core.NONE
+        }
+        if at,there:=step.obstacle.?;there {
+            if block==core.NONE {
+                block=core.create(&f.entities)
+                core.add(&f.obstacles,block,Nav_Obstacle{})
+                core.add(&f.volumes,block,volume.box({0.6,0.5,0.6}))
+            }
+            core.add(&f.transforms,block,core.Transform{at,1,{1,1,1}})
+        } else if block!=core.NONE {
+            core.destroy(&f.entities,block)
+            block=core.NONE
+        }
+        before:=f.nav.stats
+        nav_test_settled(t,&f)
+        built:=f.nav.stats.built-before.built
+        testing.expectf(t,built>0 && f.nav.stats.carved-before.carved==built,"%s: %d tiles built, %d of them from their heightfields",step.what,built,f.nav.stats.carved-before.carved)
+        whole(t,&f,step.what)
+    }
+    // The crate slides: its tiles read the collision again, and their heightfields are kept anew.
+    core.add(&f.transforms,crate,core.Transform{{-4,0.5,-2},1,{1,1,1}})
+    before:=f.nav.stats
+    nav_test_settled(t,&f)
+    testing.expect(t,f.nav.stats.built>before.built && f.nav.stats.carved==before.carved)
+    zone=core.create(&f.entities)
+    core.add(&f.transforms,zone,core.Transform{{-4,0,-2},1,{1,1,1}})
+    core.add(&f.areas,zone,Nav_Area{area=AREA_BLOCKED})
+    core.add(&f.volumes,zone,volume.box({2,2,2}))
+    before=f.nav.stats
+    nav_test_settled(t,&f)
+    testing.expect(t,f.nav.stats.carved>before.carved)
+    whole(t,&f,"an area where the crate went")
+    testing.expect_value(t,f.problems.count,0)
+}
+
+// Two walkers that close head-on step aside from as far as they meet within
+// the horizon, cells of the neighbor grid apart; out of that reach, neither turns.
+@(test)
+agents_step_aside_from_those_they_meet_within_the_horizon :: proc(t:^testing.T) {
+    f:Nav_Test
+    if !nav_test_init(t,&f) {return}
+    defer nav_test_destroy(&f)
+    a,b:=core.create(&f.entities),core.create(&f.entities)
+    apart:=[?]f32{9,40}
+    for distance,i in apart {
+        core.add(&f.paths,a,Nav_Path{state=.Moving,velocity={4,0,0},class=-1,partner=-1})
+        core.add(&f.paths,b,Nav_Path{state=.Moving,velocity={-4,0,0},class=-1,partner=-1})
+        nav_test_settle(&f)
+        clear(&f.run.near)
+        append(&f.run.near,Near{entity=a,position={0,1,0.05},velocity={4,0,0},radius=0.4,height=2,avoids=true})
+        append(&f.run.near,Near{entity=b,position={distance,1,0},velocity={-4,0,0},radius=0.4,height=2,avoids=true})
+        agents_avoid(&f.nav,&f.run,&f.paths,1.0/60,&f.problems)
+        first,_:=core.get(core.read(&f.paths),a)
+        second,_:=core.get(core.read(&f.paths),b)
+        turned:=first.velocity!=[3]f32{4,0,0} && second.velocity!=[3]f32{-4,0,0}
+        still:=first.velocity==[3]f32{4,0,0} && second.velocity==[3]f32{-4,0,0}
+        testing.expectf(t,turned if i==0 else still,"%v m apart they go at %v and %v",distance,first.velocity,second.velocity)
+    }
+    testing.expect_value(t,f.problems.count,0)
 }

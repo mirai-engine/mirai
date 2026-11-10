@@ -108,7 +108,7 @@ shaders_start :: proc(p:^project.Project,first:[]string={},overlay:[]shaders.Ove
     for entry in overlay {own||=!entry.removed && strings.has_suffix(entry.path,".slang") && strings.has_prefix(entry.path,folder)}
     if !own && len(sources)==0 {
         if os.is_file(project.path(job.result.output,project.SHADERS_MANIFEST,allocator=context.temp_allocator)) {
-            if os.remove_all(job.result.output)!=nil {return finish(job,.Failed,"the generation of an earlier build could not be removed")}
+            if base.remove_all(job.result.output)!=nil {return finish(job,.Failed,"the generation of an earlier build could not be removed")}
         }
         return finish(job,.None,"")
     }
@@ -222,8 +222,8 @@ shaders_run :: proc(p:^project.Project,allocator:=context.allocator) -> ^Shaders
 shaders_destroy :: proc(job:^Shaders_Job) {
     if job==nil {return}
     shaders_join(job)
-    if job.first!="" {_=os.remove_all(job.first)}
-    if job.active!="" {_=os.remove_all(job.active)}
+    if job.first!="" {_=base.remove_all(job.first)}
+    if job.active!="" {_=base.remove_all(job.active)}
     virtual.arena_destroy(&job.arena)
     free(job,job.allocator)
 }

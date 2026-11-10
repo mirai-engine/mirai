@@ -51,7 +51,9 @@ brush_place :: proc(s:^editor.Session,place:mm.Transform,at:[3]f32,kind:shapes.B
     if solid==core.NONE {
         solid=editor.entity_create(s,{preset=.Empty,name="Solid",transform=core.from_math(solid_world)})
         if solid!=core.NONE {
-            shape:=shapes.Shape{kind=.Solid,uv_scale=1,material=material}
+            // A solid takes its form from its brushes: none of the outline of the default.
+            shape:shapes.Shape
+            shape.kind,shape.uv_scale,shape.material=.Solid,1,material
             editor.component_add(s,solid,shape_info,&shape)
         }
     }
