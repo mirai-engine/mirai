@@ -179,6 +179,40 @@ starts_a_program_without_a_device :: proc(t:^testing.T) {
     for test in test_declared(folder) {testing.expectf(t,!test.device,"%s is told without being asked",test.name)}
 }
 
+// A package with no test to run is left out before anything is built, and is
+// no error: it declares none, or --no-gpu leaves none. A name asked of it is
+// still a wrong name.
+@(test)
+a_package_with_no_test_to_run_is_not_built :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    root:=base.test_folder(t,"test-nothing")
+    if root=="" {return}
+    sources:=[?][3]string{
+        {"empty","empty.odin","package empty\n\nvalue :: proc() -> int {return 1}\n"},
+        {"cpu","cpu_test.odin","package cpu\n\n@(test)\nadds :: proc(t:^testing.T) {}\n"},
+        {"gpu","gpu_test.odin","package gpu\n\n@(test)\ndraws :: proc(t:^testing.T) {device:=shared_device.take_or_skip(t)}\n"},
+    }
+    for source in sources {
+        testing.expect(t,os.make_directory_all(join(root,source[0]))==nil)
+        testing.expect(t,os.write_entire_file(join(root,source[0],source[1]),source[2])==nil)
+    }
+    cases:=[?]struct{folder,name:string,no_gpu,ok,nothing:bool}{
+        {"empty","",false,true,true},
+        {"empty","adds",false,false,false},
+        {"cpu","",false,true,false},
+        {"cpu","",true,true,false},
+        {"gpu","",false,true,false},
+        {"gpu","",true,true,true},
+    }
+    for c in cases {
+        packages:=[1]Test_Package{{path=c.folder,folder=join(root,c.folder)}}
+        if c.name!="" {append(&packages[0].names,c.name)}
+        ok:=test_names_check(root,packages[:],false,c.no_gpu)
+        testing.expectf(t,ok==c.ok,"%v: ok %v",c,ok)
+        if ok {testing.expectf(t,packages[0].nothing==c.nothing,"%v: nothing %v",c,packages[0].nothing)}
+    }
+}
+
 // A name that is not there gets the ones that share its words or most of its letters.
 @(test)
 a_missing_name_gets_the_similar_ones :: proc(t:^testing.T) {

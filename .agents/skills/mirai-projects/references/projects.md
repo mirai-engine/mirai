@@ -537,6 +537,8 @@ another in the order asked.
   declarations of the test files of its package; it is read from the text, like the names, so a
   GPU test takes the device in its test files and not through what is no test. `--list` takes the
   files and `--no-gpu` too, and shows what would run.
+- A package with no test to run (it declares none, or `--failed` or `--no-gpu` leave none) is not
+  compiled: it is named in one line and is no failure, also when it is the only one asked.
 - `--failed` runs those that failed last time in the package: each run removes the ones that ran
   and adds the ones that failed.
 - Each package has its executable in `bin/tests/`, which is compiled with the turn only if its

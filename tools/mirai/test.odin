@@ -20,8 +20,7 @@ TEST_TIMEOUT :: 120*time.Second
 
 // A package of a call to mirai test and what is asked of it: tests by their
 // names and by the files that declare them; neither is all of it. nothing:
-// none of what was asked is left to run.
-@(private="file")
+// there is no test of it to run, so it is not built.
 Test_Package :: struct {path,folder:string,names,files:[dynamic]string,nothing:bool}
 
 // What compiling and running the tests took. turn: waiting for other compilations.
@@ -157,9 +156,9 @@ cmd_test :: proc(root:string,args:[]string) -> int {
         if len(out.failed)>0 {fmt.eprintfln("mirai test: to run only the ones that failed: mirai test %s --failed",p.path)}
         if !ok {append(&failed,p.path)}
     }
-    if len(packages)>1 {
-        if len(failed)==0 {fmt.printfln("mirai test: %d packages, all pass",len(packages))}
-        else {fmt.eprintfln("mirai test: %d of %d packages fail: %s",len(failed),len(packages),strings.join(failed[:],", "))}
+    if pending>1 {
+        if len(failed)==0 {fmt.printfln("mirai test: %d packages, all pass",pending)}
+        else {fmt.eprintfln("mirai test: %d of %d packages fail: %s",len(failed),pending,strings.join(failed[:],", "))}
     }
     turn:=""
     if times.turn>=100*time.Millisecond {turn=fmt.tprintf(" (%.1f s waiting for the turn)",time.duration_seconds(times.turn))}
@@ -340,8 +339,9 @@ test_list :: proc(packages:[]Test_Package,no_gpu:bool) -> int {
 // command and says which ones look like it. The tests of the files asked join
 // them, and with --failed those that failed the last time, but for one the
 // sources no longer declare. With --no-gpu the tests of the files that reach
-// the device of the GPU tests leave.
-@(private="file")
+// the device of the GPU tests leave. A package left with no test to run is
+// named and marked (nothing): the compiler does not link a test executable
+// without tests.
 test_names_check :: proc(root:string,packages:[]Test_Package,failed_only,no_gpu:bool) -> bool {
     ok:=true
     for &p in packages {
@@ -389,6 +389,10 @@ test_names_check :: proc(root:string,packages:[]Test_Package,failed_only,no_gpu:
             case len(similar)>0: fmt.eprintfln("mirai test: %s has no test %s; similar: %s",p.path,name,strings.join(similar,", ",context.temp_allocator))
             case: fmt.eprintfln("mirai test: %s has no test %s; mirai test %s --list shows them",p.path,name,p.path)
             }
+        }
+        if len(names)==0 && len(p.names)==0 && !p.nothing {
+            p.nothing=true
+            fmt.printfln("mirai test: %s declares no test%s; there is nothing to build or run",p.path,len(declared)>0?" that builds on this system":"")
         }
         device:=test_device_files(declared[:])
         if len(device)==0 || p.nothing {continue}
