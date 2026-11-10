@@ -14,7 +14,6 @@ glass_settings :: proc() -> Settings {
 	s.reference_lights = true
 	s.gi_enabled = false
 	s.taa = false
-	s.reflections = false
 	return s
 }
 
@@ -440,7 +439,7 @@ glass_pane_shows_what_a_ray_through_it_finds :: proc(t: ^testing.T) {
 glass_reflects_what_stands_before_it :: proc(t: ^testing.T) {
 	f: Fixture
 	settings := glass_settings()
-	settings.reflections = true
+	settings.reflections = .Detailed
 	if !fixture_init(t, &f, 128, 96, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
@@ -455,13 +454,13 @@ glass_reflects_what_stands_before_it :: proc(t: ^testing.T) {
 		if provider == .Hardware && !r.hardware_rt_verified {continue}
 		applied := r.settings
 		applied.trace_mode = provider
-		applied.reflections = true
+		applied.reflections = .Detailed
 		testing.expect(t, renderer_apply_settings(r, applied))
 		scene_set(r, {pane, lamp}, nil, {}, {})
 		reflected := shown(t, &f, camera, image, 10)
 		away := shown(t, &f, camera, {-2, 1, 0}, 1)
 		testing.expectf(t, reflected.g > 0.5 && reflected.g < 4 && away.g < 0.05, "%v: the pane reflects a few percent of the lamp, and nothing where it is not: %v and %v", provider, reflected, away)
-		applied.reflections = false
+		applied.reflections = .Off
 		testing.expect(t, renderer_apply_settings(r, applied))
 		dark := shown(t, &f, camera, image)
 		testing.expectf(t, dark.g < 0.05, "%v: without traced reflections and without probes the pane reflects nothing: %v", provider, dark)
@@ -499,7 +498,7 @@ glass_rough_scatters_what_shows_through :: proc(t: ^testing.T) {
 glass_and_gloss_show_in_sharp_reflections :: proc(t: ^testing.T) {
 	f: Fixture
 	settings := glass_settings()
-	settings.reflections = true
+	settings.reflections = .Detailed
 	if !fixture_init(t, &f, 128, 96, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
@@ -518,7 +517,7 @@ glass_and_gloss_show_in_sharp_reflections :: proc(t: ^testing.T) {
 		if provider == .Hardware && !r.hardware_rt_verified {continue}
 		applied := r.settings
 		applied.trace_mode = provider
-		applied.reflection_detail_roughness = REFLECTION_SHARED_ROUGHNESS
+		applied.reflections = .Detailed
 		testing.expect(t, renderer_apply_settings(r, applied))
 		scene_set(r, {floor, pane, lamp}, nil, {}, {})
 		filtered := shown(t, &f, camera, {})
@@ -527,7 +526,7 @@ glass_and_gloss_show_in_sharp_reflections :: proc(t: ^testing.T) {
 		// The light is strong enough for the scene to take another light scale: in nits.
 		glossy := shown(t, &f, camera, {}) / r.scene.light_scale
 		testing.expectf(t, glossy.g < 0.05, "%v: a metal plate away from its highlight is dark in the mirror: %v", provider, glossy)
-		applied.reflection_detail_roughness = 0
+		applied.reflections = .Traced
 		testing.expect(t, renderer_apply_settings(r, applied))
 		matte := shown(t, &f, camera, {}) / r.scene.light_scale
 		testing.expectf(t, matte.g > 0.3, "%v: without the detail the plate is a matte surface: %v", provider, matte)
@@ -546,7 +545,7 @@ glass_and_gloss_show_in_sharp_reflections :: proc(t: ^testing.T) {
 reflection_on_a_ball_keeps_its_place_on_the_move :: proc(t: ^testing.T) {
 	f: Fixture
 	settings := glass_settings()
-	settings.reflections = true
+	settings.reflections = .Detailed
 	if !fixture_init(t, &f, 128, 96, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
@@ -619,7 +618,7 @@ glass_frames_stay_allocation_free :: proc(t: ^testing.T) {
 	f: Fixture
 	settings := glass_settings()
 	settings.gi_enabled = true
-	settings.reflections = true
+	settings.reflections = .Detailed
 	settings.glass_layers = 2
 	if !fixture_init(t, &f, 96, 64, settings) {return}
 	defer fixture_destroy(&f)

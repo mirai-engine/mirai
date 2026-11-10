@@ -22,7 +22,7 @@ physical_animation_rejects_a_stale_parent_binding_and_invalid_parent_offsets :: 
     core.edit(&f.bones,f.upper).bone=anim.bone_ref("missing")
     ragdoll_fixture_step(&f)
     child,_=core.get(&f.states,f.lower)
-    driven,_:=core.get(&f.joints,f.lower)
+    driven,_:=core.get(&f.joints,f.joint)
     testing.expect(t,!child.active && child.error==.Missing_Bone && .Disabled in driven.angular[2].drive)
     core.edit(&f.bones,f.upper).bone=anim.bone_ref("upper")
     ragdoll_fixture_step(&f)
@@ -31,7 +31,7 @@ physical_animation_rejects_a_stale_parent_binding_and_invalid_parent_offsets :: 
     core.edit(&f.bones,f.upper).offset.rotation=0
     ragdoll_fixture_step(&f)
     child,_=core.get(&f.states,f.lower)
-    driven,_=core.get(&f.joints,f.lower)
+    driven,_=core.get(&f.joints,f.joint)
     testing.expect(t,!child.active && child.error==.Invalid_Settings && .Disabled in driven.angular[2].drive)
 }
 
@@ -52,7 +52,7 @@ Ragdoll_World :: struct {
 Ragdoll_Fixture :: struct {
     using w:Ragdoll_World,
     using host:phys.Test_Physics_Host,
-    rig,upper,lower:core.Entity,
+    rig,upper,lower,joint:core.Entity,
 }
 
 @(private)
@@ -72,9 +72,14 @@ ragdoll_fixture_init :: proc(t:^testing.T,f:^Ragdoll_Fixture) -> bool {
         binding:=RAGDOLL_BONE_DEFAULT;binding.rig=f.rig;binding.bone=anim.bone_ref("upper" if i==0 else "lower")
         core.add(&f.bones,entity,binding)
     }
-    joint:=phys.joint_sixdof(f.upper,{0,.5,0});joint.auto_target=false;joint.target_anchor={0,-.5,0}
-    for &axis in joint.angular {axis.motion=.Limited;axis.lower=-1;axis.upper=1}
-    core.add(&f.joints,f.lower,joint)
+    // The joint of lower, half a meter over it, meets upper half a meter under it.
+    joint:=phys.joint_fixed(f.upper);joint.b_frame,joint.b_anchor,joint.b_rotation=true,{0,-.5,0},1
+    joint.angular[0]={motion=.Limited,lower=-1,upper=1}
+    joint.angular[1],joint.angular[2]={motion=.Limited,lower=-1,upper=1},{motion=.Limited,lower=-1,upper=1}
+    f.joint=core.create(&f.entities)
+    core.add(&f.transforms,f.joint,{{0,.5,0},1,{1,1,1}})
+    core.add(&f.parents,f.joint,core.Parent{entity=f.lower})
+    core.add(&f.joints,f.joint,joint)
     config:=RAGDOLL_DEFAULT;config.mode=.Animated;config.max_torque=1000
     core.add(&f.configs,f.rig,config)
     f.settings={bodies=32,shapes=32,contacts=128,joints=8,characters=1}
@@ -134,19 +139,19 @@ ragdolls_follow_current_animation_preserve_handoff_velocity_and_drive_real_joint
     upper,_=core.get(&f.transforms,f.upper)
     relative:=mm.quat_inverse(upper.rotation)*child.rotation
     testing.expect(t,mm.quat_angle(relative,f.playback.states[0].sampled[2].rotation)<.08)
-    driven,_:=core.get(&f.joints,f.lower)
+    driven,_:=core.get(&f.joints,f.joint)
     testing.expect(t,.Position in driven.angular[2].drive && driven.angular[2].motion==.Limited)
     core.edit(&f.configs,f.rig).hertz=0
     clear(&f.poses.final_poses.items);ragdoll_fixture_step(&f)
-    driven,_=core.get(&f.joints,f.lower)
+    driven,_=core.get(&f.joints,f.joint)
     testing.expect(t,.Disabled in driven.angular[2].drive)
     core.edit(&f.configs,f.rig).hertz=5
     clear(&f.poses.final_poses.items);ragdoll_fixture_step(&f)
-    driven,_=core.get(&f.joints,f.lower)
+    driven,_=core.get(&f.joints,f.joint)
     testing.expect(t,.Disabled not_in driven.angular[2].drive)
     core.edit(&f.configs,f.rig).mode=.Simulated
     clear(&f.poses.final_poses.items);ragdoll_fixture_step(&f)
-    driven,_=core.get(&f.joints,f.lower)
+    driven,_=core.get(&f.joints,f.joint)
     testing.expect(t,.Disabled in driven.angular[2].drive)
     testing.expect_value(t,f.problems.count,0)
 }
@@ -183,15 +188,15 @@ physical_animation_uses_current_auto_frames_and_reuses_world_buffers :: proc(t:^
     // After the world is made: making it reads its sources into the temporary allocator.
     context.temp_allocator=context.allocator
     core.edit(&f.configs,f.rig).mode=.Driven
-    core.edit(&f.joints,f.lower).auto_target=true
+    core.edit(&f.joints,f.joint).b_frame=false
     turn:=mm.quat_axis_angle({0,1,0},.4)
     core.edit(&f.transforms,f.lower).rotation=turn
     f.playback.states[0].sampled[2].rotation=turn
     ragdoll_fixture_step(&f)
-    joint,_:=core.get(&f.joints,f.lower)
+    joint,_:=core.get(&f.joints,f.joint)
     testing.expect(t,.Position in joint.angular[0].drive && abs(joint.angular[1].position)<.001)
     for tick in 0..<10 {clear(&f.poses.final_poses.items);ragdoll_fixture_step(&f)}
-    joint,_=core.get(&f.joints,f.lower)
+    joint,_=core.get(&f.joints,f.joint)
     testing.expect(t,abs(joint.angular[0].position)<.001 && abs(joint.angular[1].position)<.001 && abs(joint.angular[2].position)<.001)
     allocations:=track.total_allocation_count
     for tick in 0..<60 {clear(&f.poses.final_poses.items);ragdoll_fixture_step(&f)}

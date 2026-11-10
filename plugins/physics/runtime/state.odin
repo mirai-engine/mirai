@@ -59,8 +59,6 @@ Physics_State :: struct {
     // (link_touch); with touched_all, every link.
     touched:[dynamic]u32,
     touched_all:bool,
-    characters_at:[2]u64, // the version and the layout of Character that characters_hash is of
-    characters_hash:u64,
     collision:Collision_Settings, // those the filters of the shapes were made with
     pushes_set:bool, // the simulation has the push rules of collision
     own_gravity:bool, // the bodies fall with the gravity of their place (gravity_apply)
@@ -158,10 +156,10 @@ Shown :: struct {
 @(private)
 Joint_Link :: struct {
     joint:sim.Joint_Handle,
-    body,target:sim.Body_Handle,
+    a,b:sim.Body_Handle,
     applied:Joint,
     frames:Joint_Frames,
-    scale,target_scale:[3]f32,
+    local:core.Transform, // of the entity of the joint, when it was made
     refused:bool,
 }
 
@@ -170,9 +168,8 @@ Joint_Link :: struct {
 @(private)
 Joint_Frames :: struct {
     taken:bool,
-    target_anchor:[3]f32,
-    target_rotation:mm.Quat,
-    length:f32,
+    b_anchor:[3]f32,
+    b_rotation:mm.Quat,
 }
 
 Body_Request_Kind :: enum u8 {
@@ -278,9 +275,9 @@ Contact_End :: struct {a,b,collider_a,collider_b:core.Entity}
 Overlap_Event :: struct {entity,other,collider,other_collider:core.Entity,crossed:bool}
 Body_Event :: struct {entity:core.Entity}
 Joint_Break :: struct {
-    entity,target:core.Entity,
-    force:f32,  // N
-    torque:f32, // N m
+    entity:core.Entity, // of the Joint
+    force:f32,          // N
+    torque:f32,         // N m
 }
 
 // What happened in the last tick. The simulation clears and fills it at the
