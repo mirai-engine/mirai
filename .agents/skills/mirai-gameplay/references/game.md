@@ -30,7 +30,7 @@ of its owner and is taken by the function in parentheses:
 - **Make a body appear**: `spawn.spawn`, `respawn` in `^spawn.Spawn_Requests`
   (`spawn_step`, plugin `spawn`).
 - **Play a clip or a cinematic**: `anim.animation_command` in `^anim.Animation_Requests`
-  (`animation_timeline`, plugin `animation`).
+  (`animation_sample`, plugin `animation`).
 - **Change scene**: `scene.request(&r, id)`, `request_path` or `request_restart` in
   `^scene.Scene_Requests` (`scene_requests`); the result arrives in `scene.Scene_Results`.
 - **Instantiate a prefab**: `scene.spawn(spawner, path_or_id, at)`, which gives the root.

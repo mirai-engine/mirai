@@ -43,7 +43,9 @@ anim.animation_seek(requests,door,0.5)                   // jumps there, skippin
 ```
 
 - The commands are the same for a door, a lift and a cutscene, from any step: they need no
-  `^core.Table(anim.Animation)`. `Animation.playing` in the scene says whether it starts by itself.
+  `^core.Table(anim.Animation)`. `Animation.playing` in the scene says whether it starts by itself,
+  and a command holds until your code writes that field again;
+  `anim.animation_playing(playback.ptr,door)` says what the clip does now.
 
 - `over` names a bone (its branch) or a body region (`@upper_body`, `@arm_l`) that the skeleton
   maps; `mode=.Additive` with `reference` adds what a clip changes over a reference pose (an emote

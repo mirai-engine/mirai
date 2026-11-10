@@ -83,12 +83,14 @@ Animation_Target :: struct {
     animation:core.Entity, // NONE: the animated entity it is below
 }
 
-// Where the clip of the Animation of an entity is while the game plays: what
-// a saved game keeps, since Playback is derived and starts again when the
-// World loads. Only animation_sample writes it.
-@(component,description="Where the clip of the Animation of this entity is while the game plays: a saved game goes on from there.")
+// Where the clip of the Animation of an entity is while the game plays, and
+// what the last command left it doing: what a saved game keeps, since Playback
+// is derived and starts again when the World loads. Only animation_sample
+// writes it.
+@(component,description="Where the clip of the Animation of this entity is while the game plays, and what a command left it doing: a saved game goes on from there.")
 Animation_Progress :: struct {
     time:f32 `mirai:"readonly,unit=s"`,
+    transport:Timeline_Transport `mirai:"readonly"`,
 }
 
 @(storage,queue)
@@ -161,6 +163,9 @@ Playing :: struct {
     ended:bool,                // a clip that does not loop reached the end it heads to; playing again starts it over
     held:bool,                 // its clip did not move in the tick: the entities it drives are not written
     held_weight:f32,
+    transport:Timeline_Transport, // what a command asked of its clip (timeline.odin)
+    component_playing:bool,    // Animation.playing as last seen: a change of it ends the transport
+    playing:bool,              // whether its clip plays in this tick
     was_playing:bool,
     previewed:bool,            // played in the editor in the last tick
     layers:[ANIMATION_LAYERS]Layer_Playing,
@@ -290,6 +295,7 @@ animation_tick :: proc(
         }
         state:=state_get(playback,e)
         if state==nil {memory_problem(problems,e,"its animation");continue}
+        timeline_transport(state,&animation,seeks,time.playing)
         content,source_error:=animation_content(sources,app,state,animation,blends,graphs,actions)
         // Until its sources load it plays on what it played (a weapon's set swapped into library
         // takes over once loaded), or, having played nothing, as an Animation without asset: a rig
@@ -411,6 +417,7 @@ animation_tick :: proc(
         if played<0 {memory_problem(problems,e,"its animation");continue}
         append(&playback.work,Pose_Row{state=playback.rows[core.entity_index(e)]-1,content=played,programmed=programmed,animation=animation,dt=dt,current_dt=current_dt,sought=sought,distance=distance,action_distance=action_distance,distance_error=distance_error,placed=placed})
     }
+    timeline_unclaimed(seeks,time.playing,problems)
     pose_rows_run(playback,core.read(transforms),&app.jobs if budget.parallel else nil,int(budget.job_grain))
     for &row in playback.work {
         state:=&playback.states[row.state]

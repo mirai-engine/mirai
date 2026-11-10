@@ -12,7 +12,8 @@ import anim "plugins:animation/runtime"
 // the Animation of an entity: its tracks move the cameras and the actors (an
 // anim.Animation_Target names the ones that are not below it) and write their
 // fields, anim.animation_command plays, pauses, stops and seeks it as any
-// other clip, and its markers arrive in anim.Animation_Events. What this
+// other clip (anim.animation_playing says whether it plays), and its markers
+// arrive in anim.Animation_Events. What this
 // library adds hangs from that entity:
 //
 //   Cinematic         on the timeline: where its clip is, for its shots and for the network
@@ -154,8 +155,9 @@ cinematic_advance :: proc(
         if !clipped {continue}
         next:=was
         next.time,next.duration=at,duration
+        clip_playing:=anim.animation_playing(playback.ptr,e)
         if core.owned(remotes,e) {
-            next.status=cinematic_status(animation.playing,ended,at)
+            next.status=cinematic_status(clip_playing,ended,at)
             rate:=animation.speed if next.status==.Playing else 0
             if next.status!=was.status || rate!=was.anchor_rate || time.tick<was.anchor_tick || clip_apart(cinematic_anchored(was,time.tick,time.dt,duration,animation.loop),at,duration,animation.loop)>time.dt*max(abs(rate),1)*.5 {
                 next.anchor_tick,next.anchor_time,next.anchor_rate=time.tick,at,rate
@@ -165,7 +167,7 @@ cinematic_advance :: proc(
             // the next tick, in which a clip that plays advances after it is sought.
             want:=cinematic_anchored(was,time.tick+1,time.dt,duration,animation.loop)
             playing:=was.status==.Playing
-            if animation.playing!=playing {anim.animation_command(requests,e,.Resume if playing else .Pause)}
+            if clip_playing!=playing {anim.animation_command(requests,e,.Resume if playing else .Pause)}
             step:=time.dt*animation.speed if playing else 0
             ahead:=Cinematic{anchor_time=at,anchor_rate=1}
             if clip_apart(want,cinematic_anchored(ahead,1,step,duration,animation.loop),duration,animation.loop)>time.dt*max(abs(was.anchor_rate),1)*.5 {

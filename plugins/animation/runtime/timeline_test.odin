@@ -73,7 +73,6 @@ timeline_content :: proc(t:^testing.T,app:^host.App,id:base.Asset_Id,tracks:[]Ti
 @(private="file")
 timeline_tick :: proc(w:^Timeline_World,app:^host.App,problems:^core.Problems,dt:f32=.25) {
     time:=core.Time{dt=dt,playing=true}
-    animation_timeline(&w.animations,&w.requests,time,problems)
     animation_tick(core.read(&w.animations),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),&w.requests,&w.events,core.read(&w.targets),{},&w.playback,app,time,{},nil,problems)
     animation_fields(core.test_world_ref(w),&w.playback,&w.fields,nil,app,problems)
     animation_finish(&w.playback,{problems=problems},&w.constraints,&w.transforms,core.read(&w.parents),dt,nil,{},places=&w.places)
@@ -146,8 +145,7 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
     // Play starts it from its start; every kind of target follows its track.
     animation_command(&w.requests,door,.Play)
     timeline_tick(&w,&app,&problems)
-    playing,_:=core.get(core.read(&w.animations),door)
-    testing.expect(t,playing.playing)
+    testing.expect(t,animation_playing(&w.playback,door),"a command plays a clip whose Animation does not")
     testing.expect_value(t,at(&w,door),[3]f32{0,1,0})
     testing.expect_value(t,at(&w,leaf),[3]f32{2,0,0})
     testing.expect_value(t,at(&w,actor),[3]f32{2,0,0})
@@ -192,9 +190,15 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
     // Stop takes it back to its start and it waits there; the end of a clip that does not loop holds.
     animation_command(&w.requests,door,.Stop)
     timeline_tick(&w,&app,&problems)
-    stopped,_:=core.get(core.read(&w.animations),door)
-    testing.expect(t,!stopped.playing)
+    testing.expect(t,!animation_playing(&w.playback,door))
     testing.expect_value(t,at(&w,leaf),[3]f32{0,0,0})
+    // The Animation is the game's: when the game writes playing, that is what the clip does.
+    core.get(&w.animations,door).playing=true
+    timeline_tick(&w,&app,&problems)
+    testing.expect(t,animation_playing(&w.playback,door))
+    testing.expect_value(t,at(&w,leaf),[3]f32{2,0,0})
+    progress,_=core.get(core.read(&w.progress),door)
+    testing.expect_value(t,progress.transport,Timeline_Transport.Component)
     animation_command(&w.requests,door,.Play)
     for _ in 0..<6 {timeline_tick(&w,&app,&problems)}
     testing.expect_value(t,at(&w,leaf),[3]f32{8,0,0})

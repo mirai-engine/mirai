@@ -547,7 +547,13 @@ animation_sample :: proc(animations:core.Read(Animation),progress:^core.Table(An
 progress_resume :: proc(progress:^core.Table(Animation_Progress),playback:^Playback,requests:^Animation_Requests) {
     for row in 0..<core.count(progress) {
         e:=core.entity_at(progress,row)
-        if constraint_playing(playback,e)==nil {animation_seek(requests,e,core.at(core.read(progress),row).time)}
+        if constraint_playing(playback,e)!=nil {continue}
+        kept:=core.at(core.read(progress),row)
+        #partial switch kept.transport {
+        case .Play: animation_command(requests,e,.Resume)
+        case .Pause: animation_command(requests,e,.Pause)
+        }
+        animation_seek(requests,e,kept.time)
     }
 }
 
@@ -561,10 +567,11 @@ progress_write :: proc(progress:^core.Table(Animation_Progress),animations:core.
         e:=core.entity_at(animations,row)
         clip_time,_,_,ok:=animation_progress(playback,e)
         if !ok {continue}
+        now:=Animation_Progress{clip_time,constraint_playing(playback,e).transport}
         if at:=core.row_of(progress,e);at<0 {
-            core.add(progress,e,Animation_Progress{clip_time})
-        } else if core.at(core.read(progress),at).time!=clip_time {
-            core.at(progress,at).time=clip_time
+            core.add(progress,e,now)
+        } else if core.at(core.read(progress),at)!=now {
+            core.at(progress,at)^=now
         }
     }
 }

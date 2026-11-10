@@ -12,7 +12,8 @@ import "mirai:std/serial"
 // A timeline is the clip of an Animation: the keys of std/anim on tracks that
 // move the transforms of entities and the fields of their components. A door,
 // a lift, the cameras and actors of a cinematic and a light that dims are all
-// that. One queue asks any of them to play, pause, resume, stop or seek.
+// that. One queue asks any of them to play, pause, resume, stop or seek; the
+// game, the one writer of Animation, may also write its playing.
 
 Timeline_Command :: enum u8 {
     Seek,   // jumps to time, without firing the markers it skips
@@ -28,8 +29,12 @@ Animation_Command :: struct {
     command:Timeline_Command,
 }
 
-// Asks the clip of an entity for a command in the next tick: Animation.playing follows Play,
-// Pause, Resume and Stop. The editor, which does not play, takes only Seek.
+// What the last command left a clip doing, in place of Animation.playing, until the game writes
+// that field again: the component is the game's, and what others ask is kept here.
+Timeline_Transport :: enum u8 {Component,Play,Pause}
+
+// Asks the clip of an entity for a command in the next tick. Play, Pause, Resume and Stop hold
+// until the game writes Animation.playing again. The editor, which does not play, takes only Seek.
 animation_command :: proc(requests:^Animation_Requests,entity:core.Entity,command:Timeline_Command,time:f32=0) {
     if requests==nil {return}
     if entity==core.NONE || command>max(Timeline_Command) || !finite(time) {core.refuse(&requests.timeline);return}
@@ -39,23 +44,45 @@ animation_command :: proc(requests:^Animation_Requests,entity:core.Entity,comman
 // Asks for the entity to be at a time of its clip in the next tick, without firing the markers it skips.
 animation_seek :: proc(requests:^Animation_Requests,entity:core.Entity,time:f32) {animation_command(requests,entity,.Seek,time)}
 
-// Turns the commands of the tick into what animation_sample reads: whether each Animation plays,
-// and the seeks left in the queue.
-@(step="fixed",loops="game editor",stage="apply",before="animation_sample")
-animation_timeline :: proc(animations:^core.Table(Animation),requests:^Animation_Requests,time:core.Time,problems:^core.Problems) {
-    for &asked in requests.timeline.items {
-        if asked.command==.Seek {continue}
-        e,command:=asked.entity,asked.command
+// Whether the clip of an entity plays in this tick: what its Animation says, or the last command
+// since. False for an entity that plays nothing.
+animation_playing :: proc(playback:^Playback,entity:core.Entity) -> bool {
+    if playback==nil {return false}
+    state:=constraint_playing(playback,entity)
+    return state!=nil && state.seen==playback.frame && state.playing
+}
+
+// Takes the commands of the tick for a state: whether its clip plays, in animation, and the seeks
+// they leave in the queue for the tick to read.
+@(private)
+timeline_transport :: proc(state:^Playing,animation:^Animation,commands:[]Animation_Command,running:bool) {
+    if running {
+        if animation.playing!=state.component_playing {state.transport=.Component}
+        state.component_playing=animation.playing
+    }
+    for &asked in commands {
+        if asked.entity!=state.entity || asked.command==.Seek {continue}
+        command:=asked.command
         asked.entity=core.NONE
-        if !time.playing {continue}
-        animation,animated:=core.get(core.read(animations),e)
-        if !animated {
-            core.report(problems,e,"animation.command","a %v was asked of this entity, and it has no Animation; give it one whose asset is the .anim of the clip, or ask the entity that has it",command)
-            continue
-        }
-        playing:=command==.Play || command==.Resume
-        if animation.playing!=playing {core.get(animations,e).playing=playing}
-        if command==.Play || command==.Stop {asked={e,0,.Seek}}
+        if !running {continue}
+        state.transport=.Play if command==.Play || command==.Resume else .Pause
+        if command==.Play || command==.Stop {asked={state.entity,0,.Seek}}
+    }
+    switch state.transport {
+    case .Component:
+    case .Play: animation.playing=true
+    case .Pause: animation.playing=false
+    }
+    state.playing=animation.playing
+}
+
+// The commands no state took were asked of entities that play nothing.
+@(private)
+timeline_unclaimed :: proc(commands:[]Animation_Command,running:bool,problems:^core.Problems) {
+    if !running {return}
+    for asked in commands {
+        if asked.command==.Seek || asked.entity==core.NONE {continue}
+        core.report(problems,asked.entity,"animation.command","a %v was asked of this entity, and it plays no clip: it has no Animation, or no Transform, or its Animation is not valid; give it an Animation whose asset is the .anim of the clip, or ask the entity that has it",asked.command)
     }
 }
 

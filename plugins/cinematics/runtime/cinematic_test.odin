@@ -72,7 +72,6 @@ Cinematic_Shared :: struct {
 @(private="file")
 cinematic_tick :: proc(w:^Cinematic_World,s:^Cinematic_Shared,app:^host.App,problems:^core.Problems,tick:u64,dt:f32) {
     time:=core.Time{dt=dt,tick=tick,playing=true}
-    anim.animation_timeline(&w.animations,&w.requests,time,problems)
     anim.animation_sample(core.read(&w.animations),&w.progress,core.read(&w.modifiers),core.read(&w.attachments),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),core.read(&w.targets),core.read(&w.meshes),core.read(&w.sources),&w.requests,&w.events,&w.modifier_requests,&w.modifier_runtime,&w.playback,&s.poses,&s.skeletons,app,time,{},problems,&s.blends,&s.graphs,&w.actions,&w.action_requests,&s.actions,nil,&w.motion_requests,nil,&s.sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
     core.test_world_settle(w)
     anim.animation_fields(core.test_world_ref(w),&w.playback,&w.fields,&s.sources,app,problems)
