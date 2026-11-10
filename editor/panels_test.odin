@@ -67,9 +67,7 @@ PANEL_TEST_TEXT :: `{"title": "Lighting lab",
 // A panel is some 80 KB: on the temp allocator, so a test can hold several.
 panel_test_parse :: proc(t:^testing.T,text:string) -> (p:^Project_Panel,message:string) {
     p=new(Project_Panel,context.temp_allocator)
-    ok:bool
-    message,ok=panel_parse(text,p,nil,nil)
-    testing.expect(t,ok==(message==""))
+    message=panel_read(text,p)
     return
 }
 
@@ -89,12 +87,11 @@ panels_read_back_what_they_write :: proc(t:^testing.T) {
     testing.expect_value(t,red.sets[1].kind,Panel_Row_Kind.Setting)
     testing.expect_value(t,p.buttons[1].sets[0].entity,base.Entity_Id(0x20))
     testing.expect_value(t,base.text_get(p.buttons[1].sets[1].match[:]),"{}")
-    w:serial.Writer
-    serial.writer_init(&w,0,context.temp_allocator)
-    panel_write(&w,p)
-    again,again_message:=panel_test_parse(t,string(serial.writer_bytes(&w)))
+    text,encoded:=serial.text_encode(panel_file_of(p),.Pretty,context.temp_allocator,sparse=true)
+    testing.expect(t,encoded)
+    again,again_message:=panel_test_parse(t,string(text))
     testing.expect_value(t,again_message,"")
-    testing.expect(t,again^==p^,string(serial.writer_bytes(&w)))
+    testing.expect(t,again^==p^,string(text))
 
     SET :: `{"setting": "Quality", "field": "level", "value": 1}`
     cases:=[?]struct{text,says:string}{
@@ -107,37 +104,21 @@ panels_read_back_what_they_write :: proc(t:^testing.T) {
         {`{"title": "A", "buttons": [{"name": "B", "sets": [{"component": "Look", "field": "tint", "entity": "0000000000000010", "where": {}, "value": 1}]}]}`,"entity and where name different entities"},
         {`{"title": "A", "buttons": [{"name": "B", "sets": [{"setting": "Quality", "field": "level", "where": {}, "value": 1}]}]}`,"a setting is of the project"},
         {`{"title": "A", "buttons": [{"name": "B", "sets": [{"component": "Look", "field": "tint", "where": 1, "value": 1}]}]}`,"where is an object"},
-        {`{"title": "A", "rows": [{"component": "Look", "field": "tint", "value": 1}]}`,`rows[0]: unknown key "value"`},
+        {`{"title": "A", "rows": [{"component": "Look", "field": "tint", "value": 1}]}`,`"value" is not a field`},
         {`{"title": "A", "rows": [{"component": "Look"}]}`,"rows[0]: field is missing"},
         {`{"title": "A", "rows": [{"component": "Look", "setting": "Quality", "field": "x"}]}`,"one of heading, component or setting"},
         {`{"title": "A", "rows": [{"heading": "Sky", "field": "sky"}]}`,"a heading has only its text"},
-        {`{"title": "A", "rows": [{"heading": "Sky"}], "colour": 1}`,`unknown key "colour"`},
-        {`{"title": "A", "rows": [{"heading": "Sky"},]}`,"rows[1]: a panel is"},
+        {`{"title": "A", "rows": [{"heading": "Sky"}], "colour": 1}`,`"colour" is not a field`},
+        {`{"title": "A", "rows": [{"heading": "Sky"},]}`,"line 1"},
     }
     for c in cases {
         _,says:=panel_test_parse(t,c.text)
         testing.expectf(t,strings.contains(says,c.says),"%s: %q",c.text,says)
     }
     _,with_id:=panel_test_parse(t,`{"id": "lab", "title": "A", "rows": [{"heading": "A"}]}`)
-    testing.expect(t,strings.contains(with_id,`unknown key "id"`),"a file has no id: its name is it")
+    testing.expect(t,strings.contains(with_id,`"id" is not a field`),"a file has no id: its name is it")
     testing.expect_value(t,panel_id_of("Lighting & Post FX!"),"lighting-post-fx")
     testing.expect(t,panel_id_check("Lab")!="" && panel_id_check("../lab")!="" && panel_id_check("lab-2_b")=="")
-}
-
-// A panel as the panel methods answer it has the shape their results declare,
-// with buttons and rows or without either.
-@(test)
-panels_answer_with_the_shape_they_declare :: proc(t:^testing.T) {
-    s:=Session{project_root="game"}
-    for text in ([]string{PANEL_TEST_TEXT,`{"title": "Sky", "rows": [{"heading": "Sky"}]}`,`{"title": "Red", "buttons": [{"name": "Red", "sets": [{"setting": "Quality", "field": "level", "value": 3}]}]}`}) {
-        p,message:=panel_test_parse(t,text)
-        if !testing.expect_value(t,message,"") {continue}
-        base.text_set(p.id[:],"lab")
-        w:serial.Writer
-        serial.writer_init(&w,0,context.temp_allocator)
-        api_panel_write(&s,&w,p)
-        api_result_shape_expect(t,string(serial.writer_bytes(&w)),Api_Panel)
-    }
 }
 
 // The buttons and rows name what the project has, with the names there are

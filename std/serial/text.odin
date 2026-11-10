@@ -38,12 +38,14 @@ text_write :: proc(w:^Writer,s:^Schema,type:Type_Index,data:[]u8,format:=Text_Fo
 // The text of a value, of any type an unsized schema takes: the form of a
 // file or a message Mirai defines, which text_decode reads back. In
 // allocator; ok is false when it is not of such a type or there is no memory.
-text_encode :: proc(value:any,format:=Text_Format.Pretty,allocator:=context.allocator) -> (text:[]u8,ok:bool) {
+// sparse leaves out a field tagged optional that holds nothing, which a value
+// read over a zero one gets back.
+text_encode :: proc(value:any,format:=Text_Format.Pretty,allocator:=context.allocator,sparse:=false) -> (text:[]u8,ok:bool) {
     if value.data==nil {return nil,false}
     s:Schema
     schema_init(&s,context.temp_allocator)
     defer schema_destroy(&s)
-    s.unsized=true
+    s.unsized,s.sparse=true,sparse
     type:=schema_add_type_info(&s,type_info_of(value.id)) or_return
     w:Writer
     writer_init(&w,256,allocator)
