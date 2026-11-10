@@ -103,32 +103,12 @@ tool_previews_confirm_once_or_restore_the_document_and_selection :: proc(t:^test
     testing.expect_value(t,edits.cursor,1)
     testing.expect(t,!tool_preview_end(&s,"other",true))
 
-    prefabs:=Prefabs{epoch=edits.epoch,last_state=edits_state(&edits)}
-    previous:asset.Scene
-    document:=Document{previous=&previous}
-    storage:=[1]core.Storage_Info{{name="Prefabs",type=Prefabs,info=type_info_of(Prefabs),place=.Editor}}
-    info.storages=storage[:]
-    s.editor_world,s.document=&prefabs,&document
-    defer prefabs_free(&s)
-    defer delete(previous.instances)
-    defer delete(previous.members)
-    defer delete(previous.overrides)
-    previous.info.last_instance=1
-    append(&previous.instances,asset.Instance{id=1,prefab={4,5},root=1})
-    append(&previous.members,asset.Member{instance=1,source=11,entity=1})
     selection_set(&selection,{original})
     testing.expect(t,tool_preview_begin(&s,"other","Place prefab"))
     copies:=entities_duplicate(&s,{original})
     testing.expect_value(t,len(copies),1)
-    testing.expect_value(t,len(previous.instances),2)
-    testing.expect_value(t,len(previous.members),2)
-    testing.expect(t,prefabs.has_pending)
     selection_set(&selection,copies)
     testing.expect(t,tool_preview_end(&s,"other",false))
-    testing.expect_value(t,len(previous.instances),1)
-    testing.expect_value(t,len(previous.members),1)
-    testing.expect_value(t,previous.info.last_instance,u32(1))
-    testing.expect(t,!prefabs.has_pending)
     testing.expect_value(t,selection_active(&selection),original)
     testing.expect_value(t,edits.cursor,1)
 
@@ -136,18 +116,9 @@ tool_previews_confirm_once_or_restore_the_document_and_selection :: proc(t:^test
     copies=entities_duplicate(&s,{original})
     selection_set(&selection,copies)
     testing.expect(t,tool_preview_end(&s,"other",true))
-    testing.expect_value(t,len(previous.instances),2)
-    testing.expect(t,!prefabs.has_pending)
-    testing.expect_value(t,len(prefabs.versions),1)
     testing.expect_value(t,edits.cursor,2)
     testing.expect(t,undo(&edits,w,&selection))
-    prefabs_sync(&s,&prefabs)
-    testing.expect_value(t,len(previous.instances),1)
-    testing.expect_value(t,len(previous.members),1)
     testing.expect(t,redo(&edits,w,&selection))
-    prefabs_sync(&s,&prefabs)
-    testing.expect_value(t,len(previous.instances),2)
-    testing.expect_value(t,len(previous.members),2)
 }
 
 // W, E and R take the scene a plugin tool lends, which stays on and takes it back.

@@ -72,9 +72,6 @@ Request :: enum u8 {
     Camera_Preview, // preview Camera_Preview_Run.request
     Camera_Keep,    // end previewing, keeping what the cameras became
     Camera_Discard, // end previewing without it
-    Prefab_Place,   // Session.prefab_place
-    Prefab_Action,  // Session.prefab_action
-    Variant_Create, // Editor_Ui.variant
 }
 Requests :: bit_set[Request;u64]
 
@@ -236,8 +233,6 @@ Session :: struct {
     inspector:^Inspector,
     content:^Content,
     dropped:Asset_Drop, // what a plugin takes (asset_drop_take)
-    prefab_place:Prefab_Place_Request, // a prefab let go on the scene, placed between frames
-    prefab_action:Action,              // Create prefab, Apply, Revert or Unlink, run between frames
     heard:eaudio.Voice, // what Play sound of the content browser or of Details, or audio.play, plays
     heard_sound:eaudio.Audio_Source, // as it was set when it started, or last changed
     materials:^Materials,
@@ -743,10 +738,7 @@ between_frames :: proc(s:^Session) {
 @(private)
 requests_run :: proc(s:^Session) {
     requests:=s.requests
-    s.requests-={.Prefab_Place,.Prefab_Action,.Variant_Create,.Play,.Simulate,.Apply_Simulation,.Stop,.Pause,.Resume,.Resume_Here,.New,.Open,.Restart,.Quit,.Recover,.Discard_Recovery,.Document_Switch,.Document_Close,.Document_Discard,.Asset_Switch,.Asset_Close,.Asset_Discard,.Quit_Check,.Camera_Preview,.Camera_Keep,.Camera_Discard}
-    if .Prefab_Place in requests {prefab_place_run(s)}
-    if .Prefab_Action in requests {prefab_action_run(s,s.prefab_action)}
-    if .Variant_Create in requests {variant_prompt_run(s)}
+    s.requests-={.Play,.Simulate,.Apply_Simulation,.Stop,.Pause,.Resume,.Resume_Here,.New,.Open,.Restart,.Quit,.Recover,.Discard_Recovery,.Document_Switch,.Document_Close,.Document_Discard,.Asset_Switch,.Asset_Close,.Asset_Discard,.Quit_Check,.Camera_Preview,.Camera_Keep,.Camera_Discard}
     if .Recover in requests {
         if _,why:=recovery_resolve(s,false);why!="" {notify(s,why)}
     }

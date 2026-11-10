@@ -98,7 +98,7 @@ name:
   gesture and opens the preview; it fails if there is already one. `tool_preview_active(s, name)`
   says whether it is still its own on the current document: check it before writing each frame.
   `tool_preview_end(s, name, apply)` confirms everything as a single undo or returns entities,
-  components, poses, selection and prefab records to the start.
+  components, poses and selection to the start.
 - Inside the gesture the public edit procedures are used; `edits_end`, `edits_flush` and
   `edits_commit` do not confirm it.
 - The plugin keeps its temporary resources in its storage and, if `tool_preview_active` stops being

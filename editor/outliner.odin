@@ -158,19 +158,19 @@ OUTLINER_SCOPE :: f32(28) // the bar of the document shown alone
 // The bar over the outliner while it shows one prefab instance or section
 // alone: back to the scene, the document and where it is.
 @(private)
-outliner_scope_bar :: proc(s:^Session,o:^Outliner,w:core.World_Ref,links:map[base.Entity_Id]Prefab_Link) {
+outliner_scope_bar :: proc(s:^Session,o:^Outliner,w:core.World_Ref) {
     ctx:=s.gui.ctx
     th:=&ctx.theme
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(OUTLINER_SCOPE),gap=6,align_y=.Center}) {
         if ui.button(ctx,ui.id(ctx,"outliner_scope_back"),{icon=ui.icon_user(u8(User_Icon.Back)),icon_color=th.text_muted,icon_size=13,style=.Ghost,width=22,height=22}).clicked {o.scope=core.NONE}
-        kind:=container_kind(links,w,o.scope)
+        kind:=container_kind(w,o.scope)
         icon,text:=container_color(s,kind)
         if ui.box(ctx,{width=ui.FIT,height=ui.fixed(20),padding={8,0,8,0},gap=5,align_y=.Center,fill=ui.color_alpha(icon,36),stroke=icon,radius=10}) {
             ui.icon(ctx,kind==.Section?ui.icon_user(u8(User_Icon.Scene)):.Prefab,icon,12)
-            ui.label(ctx,container_document(s,links,w,o.scope),th.font_label,text,0,font=ui.FONT_SEMIBOLD)
+            ui.label(ctx,container_document(s,w,o.scope),th.font_label,text,0,font=ui.FONT_SEMIBOLD)
         }
         path:=make([dynamic]string,context.temp_allocator)
-        for at:=container_of(links,w,o.scope);at!=core.NONE;at=container_of(links,w,at) {append(&path,entity_label(w,at))}
+        for at:=container_of(w,o.scope);at!=core.NONE;at=container_of(w,at) {append(&path,entity_label(w,at))}
         append(&path,document_label(s))
         ui.label(ctx,fmt.tprintf("in %s",strings.join(path[:]," › ",context.temp_allocator)),th.font_label,th.text_faint)
     }
@@ -219,9 +219,8 @@ outliner_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
     v:=s.viewport
     outliner_sync(o,w)
     if search_field(s,ui.id(ctx,"outliner_filter"),o.filter[:],&o.filter_length,"Search entities") {o.scroll=0}
-    links:=prefab_links(s,w)
     if o.scope!=core.NONE && !entity_alive(w,o.scope) {o.scope=core.NONE}
-    if o.scope!=core.NONE {outliner_scope_bar(s,o,w,links)}
+    if o.scope!=core.NONE {outliner_scope_bar(s,o,w)}
     outliner_rows(o,w)
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(16),align_y=.Center}) {
         ui.label(ctx,fmt.tprintf("%d entities",len(o.nodes)),th.font_label,th.text_faint)
@@ -265,7 +264,7 @@ outliner_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
                     at=entity_parent(w,at)
                 }
                 for k in 0..<n {
-                    kind:=container_kind(links,w,ancestors[k])
+                    kind:=container_kind(w,ancestors[k])
                     if kind==.None {
                         ui.spacer(ctx,OUTLINER_INDENT,1)
                         continue
@@ -285,7 +284,7 @@ outliner_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
                 ui.spacer(ctx,16,1)
             }
             icon,color:=entity_icon(s,w,e)
-            kind:=container_kind(links,w,e)
+            kind:=container_kind(w,e)
             text_color:ui.Color
             if kind!=.None {color,text_color=container_color(s,kind)}
             hidden:=entity_hidden(w,e) || core.entity_off(core.world_entities(w),e)
@@ -317,7 +316,7 @@ outliner_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
                     tool_preview_cancel(s)
                     if entity_alive(w,e) {
                         target:=selection_click_target(s,w,e,it.double)
-                        _,linked:=prefab_link_of(s,api_entity_id(w,e))
+                        _,linked:=prefab_link_of(w,e)
                         switch {
                         case v.pick.active:                inspector_pick_finish(s,w,e)
                         case it.double && !linked:         outliner_rename(o,e)
@@ -340,7 +339,7 @@ outliner_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
             }
             // On the row that is selected or under the pointer: the root of what holds it, and its document alone as a tree.
             if selection_has(s.selection,e) || ui.rect_contains(line_rect,ctx.pointer) {
-                up:=container_of(links,w,e)
+                up:=container_of(w,e)
                 tree:=kind!=.None?e:up
                 if up!=core.NONE && ui.button(ctx,ui.id(ctx,"outliner_root",index+1),{icon=ui.icon_user(u8(User_Icon.Up)),icon_color=th.text_muted,icon_size=13,style=.Ghost,width=20,height=OUTLINER_ROW}).clicked {
                     selection_set(s.selection,{up})

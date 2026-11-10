@@ -520,7 +520,7 @@ step_exact :: proc(edits:^Edits,w:core.World_Ref,step:^Edit_Step) -> bool {
             if going(es,marks,e) && (!only_authors || history_is_author(authors,e)) {rows_going-=1}
         }
     }
-    return rows_going==0 && entities_named_keep(w,marks)==0
+    return rows_going==0 && entities_named_keep(w,marks,step)==0
 }
 
 @(private)

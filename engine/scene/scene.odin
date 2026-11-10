@@ -20,9 +20,9 @@ import "mirai:std/serial"
 // type; a world names them by handle and by its tables. Instantiating creates
 // one entity per row of the document; capturing writes a document from the
 // entities that have an Id. What a world cannot hold (the order of its
-// roots, components of libraries the project does not have, the records of
-// prefab instances and tables that are not components) is carried from the
-// document the world was loaded from.
+// roots, components of libraries the project does not have and tables that
+// are not components) is carried from the document the world was loaded
+// from.
 
 Error :: enum u8 {
     None,
@@ -64,6 +64,7 @@ Capture_Desc :: struct {
     sections:bool,          // also what hangs from a Scene_Reference, which its own scene keeps otherwise: a saved game
     section:core.Entity,    // only what hangs from this Scene_Reference, as its own scene, with the Ids of that scene
     excluded:[]typeid,      // components left out: what a network session keeps on entities, which a saved game does not
+    outside:bool,           // with root: its Entity fields keep the Id of an entity outside it, which are empty otherwise
 }
 
 Report :: struct {
@@ -291,7 +292,7 @@ spawn_member :: proc(c:core.Commands,assets:^host.Assets,section_scene:base.Asse
 // whose cook resolved them.
 @(private)
 current :: proc(d:Documents,file:^asset.Asset,resolved:^asset.Asset) -> (document:^asset.Asset,error:Error) {
-    if _,placed:=asset.asset_table(file,asset.TABLE_INSTANCES);!placed || d.cooked || d.open==nil {return file,.None}
+    if _,placed:=asset.asset_table(file,asset.COMPONENT_INSTANCE);!placed || d.cooked || d.open==nil {return file,.None}
     d:=d
     open :: proc(data:rawptr,id:base.Asset_Id) -> (^asset.Asset,asset.Error) {
         d:=(^Documents)(data)
@@ -404,9 +405,9 @@ instantiate :: proc(w:core.World_Ref,a:^asset.Asset,asset_types:^asset.Types,des
     for record in view.off {off[{record.entity,record.component}]=true}
     // The rows a prefab instance of the document brought.
     instanced:=make([]bool,count,context.temp_allocator)
-    for member in view.members {
-        if row,found:=key_find(keys,member.entity);found {instanced[row]=true}
-    }
+    for row in view.member_rows {instanced[row]=true}
+    // A copy is no instance: the prefabs its prefab places are not of this world.
+    copied:=desc.fresh || desc.transient
     for &component in view.components {
         at,known:=core.world_table_index_of_hash(w,component.name_hash)
         if !known {
@@ -415,7 +416,7 @@ instantiate :: proc(w:core.World_Ref,a:^asset.Asset,asset_types:^asset.Types,des
         }
         info:=&w.info.tables[at]
         table:=core.world_table_at(w,info)
-        if is_structural(info.type) {continue}
+        if is_structural(info.type) || copied && (info.type==Prefab_Instance || info.type==Prefab_Member) {continue}
         value_type:=&types.tables[info_index(w,info)]
         size:=info.info.size
         report.components+=len(component.entities)
@@ -715,7 +716,7 @@ capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,des
                 if target!=core.NONE {
                     // Outside what is captured: an entity of a section keeps its Id in the world.
                     if target_row,inside:=row_of[target];inside {saved=asset.scene_ids(scene)[target_row]}
-                    else if desc.root==core.NONE || desc.entities!=nil {saved=core.id_of(ids,target)}
+                    else if desc.root==core.NONE || desc.entities!=nil || desc.outside {saved=core.id_of(ids,target)}
                     if saved==0 {report.dangling+=1}
                 } else {
                     saved=pending[{visit.entity,hash,offset}]
@@ -774,7 +775,7 @@ carry :: proc(w:core.World_Ref,scene,previous:^asset.Scene,report:^Report) -> as
     previous_ids:=asset.scene_ids(previous)
     for &table,at in previous.doc.tables {
         if at==0 {continue}
-        if table.name==asset.TABLE_SCENE || table.name==asset.TABLE_INSTANCES || table.name==asset.TABLE_MEMBERS || table.name==asset.TABLE_OVERRIDES || table.name==asset.TABLE_OFF {continue}
+        if table.name==asset.TABLE_SCENE || table.name==asset.TABLE_OVERRIDES || table.name==asset.TABLE_OFF {continue}
         if _,is_component:=asset.scene_component(previous,table.name);is_component {
             if _,known:=core.world_table_index_of_hash(w,table.name_hash);known {continue}
             clear(&moved)
@@ -809,16 +810,6 @@ carry :: proc(w:core.World_Ref,scene,previous:^asset.Scene,report:^Report) -> as
         for column,c in table.columns {
             if column.ref>0 && copies[column.ref]>0 {scene.doc.tables[copies[at]].columns[c].ref=copies[column.ref]}
         }
-    }
-    for instance in previous.instances {
-        _,rooted:=asset.scene_entity_find(scene,instance.root)
-        if rooted && (instance.outer==0 || asset.scene_instance_find(scene,instance.outer)>=0) {append(&scene.instances,instance)}
-    }
-    for member in previous.members {
-        if _,kept:=asset.scene_entity_find(scene,member.entity);kept && asset.scene_instance_find(scene,member.instance)>=0 {append(&scene.members,member)}
-    }
-    for override in previous.overrides {
-        if _,kept:=asset.scene_entity_find(scene,override.entity);kept && asset.scene_instance_find(scene,override.instance)>=0 {append(&scene.overrides,override)}
     }
     // Components the world does not know keep whether they were off.
     for record in previous.off {

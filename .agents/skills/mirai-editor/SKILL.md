@@ -323,8 +323,8 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   `every_tab_with_changes_keeps_its_chain_and_a_start_recovers_them_all`; what is offered stays
   aside while the document is edited and saved,
   `a_pending_recovery_stays_aside_while_the_document_is_edited_and_saved`; recovery after killing
-  the process, by API in an open editor. Prefab records in collaboration:
-  `prefab_records_of_one_editor_reach_the_others_in_the_order_of_the_host`.
+  the process, by API in an open editor. Prefab instances in collaboration:
+  `prefab_instances_travel_a_session_as_rows_and_their_prefab_as_an_unsaved_file`.
 - Journal, undo and transactions: `editor/journal_test.odin` (each reader's cursors, steps that
   grow with what changed, cancellation and undo without allocating,
   `collaboration_reads_the_journal_and_does_not_echo_what_it_applies`,
@@ -339,13 +339,24 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   `journal_memory_of_a_large_scene` with `-define:EDITOR_JOURNAL_BENCH=true`.
 - The scene a guest receives:
   `a_scene_of_the_host_that_fails_halfway_leaves_the_world_as_it_was`.
-- Prefabs: `editor/prefabs_test.odin`; the added entities and the turned-off members of an
-  instance, incremental observation with undo and redo, refresh, apply and revert, in
-  `prefab_instances_add_entities_and_turn_members_off_through_updates_apply_and_revert`; variants,
-  in `prefab_variants_follow_their_base_and_apply_to_it`; records with undo and redo of each step,
-  `prefab_records_follow_every_step_the_history_holds`; the edits of another editor,
-  `prefab_edits_of_another_editor_mark_overrides`; the node the prefab leaves, in `asset`,
-  `prefab_node_that_leaves_takes_what_hangs_from_it_and_what_named_it_names_none`.
+- Prefabs: `editor/prefabs_test.odin`; an operation as one step of the rows of its instance, in
+  `a_prefab_operation_is_one_step_of_the_rows_of_its_instance`; overrides derived, reverted and
+  applied with the file unsaved, in
+  `the_overrides_of_an_instance_are_derived_reverted_and_applied_without_writing_files`; the added
+  entities and the turned-off members of an instance, refresh, apply and revert, in
+  `prefab_instances_add_entities_and_turn_members_off_through_updates_apply_and_revert`; unlink and
+  variants, in `unlinking_gives_back_what_a_prefab_placed_and_a_variant_applies_to_its_base` and
+  `prefab_variants_follow_their_base_and_apply_to_it`; a document opened after its prefab changed
+  and an instance without its base, in
+  `a_scene_opened_after_its_prefab_changed_follows_it_and_keeps_what_its_instances_set` and
+  `an_instance_whose_base_is_not_held_keeps_what_it_has_when_it_is_refreshed`; the document written
+  onto a world, in `engine/scene`,
+  `an_update_writes_what_differs_onto_the_entities_that_have_the_ids_of_a_document`; the overrides
+  and the node the prefab leaves, in `asset`,
+  `prefab_overrides_derive_from_the_members_survive_an_update_and_go_into_the_prefab` and
+  `prefab_node_that_leaves_takes_what_hangs_from_it_and_what_named_it_names_none`. The time of a
+  Save and of placing one instance in a scene of many:
+  `prefab_save_and_placing_in_a_scene_of_many_instances` with `-define:EDITOR_PREFAB_BENCH=true`.
 - Thumbnails: the stored view of a scene,
   `the_view_of_a_scene_is_kept_at_each_size_and_shown_where_it_already_is`; those of a plugin, in
   its skill ([previews](../mirai-plugins/references/previews.md#verification)); their image,

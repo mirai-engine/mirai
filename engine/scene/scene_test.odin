@@ -180,7 +180,7 @@ a_load_brings_instances_up_to_date_with_their_prefabs_unless_the_assets_are_cook
     lamp_path:=fmt.tprintf("%s/lamp.prefab",p.folder)
     lamp:=lamp_write(t,&p.types,lamp_path,1)
     level:asset.Scene;asset.scene_init(&level,&p.types,asset.KIND_SCENE,{0x1a,2});defer asset.scene_destroy(&level)
-    _,_,placed:=asset.scene_instantiate(&level,&lamp,TEST_LAMP,0)
+    _,placed:=asset.scene_instantiate(&level,&lamp,TEST_LAMP,0)
     testing.expect_value(t,placed,asset.Error.None)
     testing.expect_value(t,asset.scene_save(&level,fmt.tprintf("%s/level.scene",p.folder)),asset.Error.None)
     asset.scene_destroy(&lamp)
@@ -750,8 +750,8 @@ the_sky_of_a_prefab_in_a_scene_document_loads_off :: proc(t:^testing.T) {
     asset.scene_entity_add(&doc,ROOT_SKY,0,"Sky")
     asset.scene_set(&doc,PLACED,"Scene_Test_Sky",&Scene_Test_Sky{2})
     asset.scene_set(&doc,ROOT_SKY,"Scene_Test_Sky",&Scene_Test_Sky{1000})
-    append(&doc.instances,asset.Instance{id=1,prefab={0x5d,1},root=PLACED})
-    append(&doc.members,asset.Member{instance=1,source=1,entity=PLACED})
+    asset.scene_instance_set(&doc,PLACED,{prefab={0x5d,1}})
+    asset.scene_member_set(&doc,PLACED,PLACED,1)
     out:serial.Writer;serial.writer_init(&out,0,context.allocator);defer serial.writer_destroy(&out)
     if !testing.expect(t,asset.scene_write(&doc,&out)==.None) {return}
     file:asset.Asset
