@@ -244,7 +244,8 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
 - **Parallel.** Files are cooked on a job system (`Cook_Desc.worker`, else one of the cook with a
   thread per core), the largest first; what is written and the report are those of a cook on one
   thread, and an error is the first by path. Prefab resolution and texture cache writes take a lock.
-  A `--dev` game is cooked with `asset.Pack.Quick` (`Cook_Desc.quick`), a release one with `Ship`.
+  A `--dev` game is cooked with the pack `QUICK` of `cook/compressor/lz` (`Cook_Desc.quick`), a
+  release one with `SHIP`.
 - **Scope.** The roots and, transitively, the dependencies each asset declares; the rest goes to
   `dropped`. A dependency that is not any file goes to `missing` and does not stop the cooking.
 - **Textures.** With `"textures": "blocks"` (default), an RGBA8 texture is written in blocks
@@ -267,7 +268,7 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
   ([instances](../../mirai-assets/references/scenes.md#resolution-against-the-current-prefab)); the
   shipped game loads them without checking them. If it cannot, `Resolve_Failed` with the file.
 - Every other asset is written again compressed for shipping (`asset.document_repack` with
-  `Ship`, [compression](../../mirai-assets/references/formats.md#compression)), and so are the
+  `SHIP`, [compression](../../mirai-assets/references/formats.md#compression)), and so are the
   textures it writes in blocks; a file that is not an asset is copied byte by byte.
 - **Index.** The folder receives `.index` (`asset.REGISTRY_INDEX`), what a scan would find; with
   it `host.assets_init` does not look at the files

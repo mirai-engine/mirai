@@ -1,6 +1,7 @@
-package match
+package lz_optimal
 
 import "mirai:std/compressor/lz/entropy"
+import "mirai:std/compressor/lz/match"
 
 // A find-all finder over buf[0:size): positions before start_recording_pos are only indexed (the
 // dictionary backup); each process_chunk call then fills the pairs of the next chunk_size
@@ -41,7 +42,7 @@ incremental_create :: proc(kind:Finder_Kind,buf:[^]u8,size,start_recording_pos:i
 // Returns the number of positions filled (0 at the end); matches needs that many * max_pairs
 // entries. Returns -1 when max_pairs < 2, chunk_size < 0 or matches is too short.
 incremental_process_chunk :: proc(f:Incremental_Finder,chunk_size:int,
-    matches:[]Unpacked_Match_Pair,max_pairs:int) -> int {
+    matches:[]match.Unpacked_Match_Pair,max_pairs:int) -> int {
     if max_pairs<2 || chunk_size<0 {return -1}
     switch v in f {
     case ^Cache_Table_Finder:
@@ -66,4 +67,38 @@ incremental_release :: proc(f:^Incremental_Finder,arena:^entropy.Arena) {
         entropy.arena_free(arena,([^]Suffix_Trie_Finder)(v)[:1])
     }
     f^=nil
+}
+
+// Longest first, then lowest offset.
+@(private)
+match_pair_less :: #force_inline proc "contextless" (a,b:match.Unpacked_Match_Pair) -> bool {
+    if a.length!=b.length {return a.length>b.length}
+    return a.offset<b.offset
+}
+@(private)
+match_pair_equal_length :: #force_inline proc "contextless" (a,b:match.Unpacked_Match_Pair) -> bool {
+    return a.length==b.length
+}
+
+// Smallest multiple of an offset below MIN_OFFSET that is at least MIN_OFFSET.
+@(private)
+round_up_small_offset :: #force_inline proc "contextless" (offset:u32) -> u32 {
+    @(static,rodata) rounded_up:=[8]u32{0,8,8,9,8,10,12,14}
+    return rounded_up[offset&7]
+}
+
+// Keeps the first of each run of pairs that `equal` says are the same; returns the new count.
+@(private)
+match_pairs_unique :: proc "contextless" (pairs:[]match.Unpacked_Match_Pair,
+    equal:proc "contextless" (a,b:match.Unpacked_Match_Pair) -> bool) -> int {
+    n:=len(pairs)
+    it:=0
+    for it<n-1 && !equal(pairs[it],pairs[it+1]) {it+=1}
+    if it>=n-1 {return n}
+    out:=it
+    it+=2
+    for ;it<n;it+=1 {
+        if !equal(pairs[out],pairs[it]) {out+=1;pairs[out]=pairs[it]}
+    }
+    return out+1
 }

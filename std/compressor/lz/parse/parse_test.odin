@@ -26,9 +26,9 @@ fill_input :: proc(buf:[]u8, kind:int, r:^rand.Generator) {
     }
 }
 
-// Every level, through setup and encode_chunk: valid chunks of each input kind, then hostile
-// arguments (bad lengths and pointers, tiny output buffers, garbage match pairs) never crash and
-// report expansion.
+// Every level of this package, through setup and encode_chunk: valid chunks of each input kind,
+// then hostile arguments (bad lengths and pointers, tiny output buffers) never crash and report
+// expansion. A level above Normal is refused without its parser.
 @(test)
 hostile_inputs_never_crash :: proc(t:^testing.T) {
     r:=rand.create(7)
@@ -40,7 +40,7 @@ hostile_inputs_never_crash :: proc(t:^testing.T) {
     comp:=make([]u8,compressor.CHUNK_LEN+4096)
     defer delete(comp)
     arena:=entropy.arena_make(context.allocator)
-    levels:=[]i32{-4,-3,-2,-1,1,2,3,4,5,6,7,8,9}
+    levels:=[]i32{-4,-3,-2,-1,1,2,3,4}
     for kind in 0..<4 {
         fill_input(raw,kind,&gen)
         for level in levels {
@@ -67,7 +67,7 @@ hostile_inputs_never_crash :: proc(t:^testing.T) {
                 raw_data(comp),0,&ct,&J,nil,raw_data(pairs)),1000)
             l0:=encode_chunk(&e,&arena,base,base,1000,raw_data(comp),raw_data(comp)[len(comp):],0,
                 nil,nil,nil,nil)
-            testing.expect(t,l0>=0 && l0<=1000 && (level<compressor.LEVEL_OPTIMAL1 || l0==1000))
+            testing.expect(t,l0>=0 && l0<=1000)
             for room in ([]int{0,1,7,8,9,16,40,100,1000}) {
                 l:=encode_chunk(&e,&arena,base,base[compressor.CHUNK_LEN:],4096,raw_data(comp),
                     raw_data(comp)[room:],compressor.CHUNK_LEN,&ct,&J,nil,raw_data(pairs))
@@ -80,6 +80,9 @@ hostile_inputs_never_crash :: proc(t:^testing.T) {
     e:Encoder
     testing.expect(t,!setup(&e,compressor.LEVEL_NONE,raw,&arena))
     testing.expect(t,!setup(&e,42,raw,&arena))
+    testing.expect(t,!setup(&e,compressor.LEVEL_OPTIMAL1,raw,&arena))
+    testing.expect(t,!setup(&e,compressor.LEVEL_OPTIMAL5,raw,&arena,optimal={setup=proc(e:^Encoder,
+        arena:^entropy.Arena) -> bool {return true}}))
     testing.expect(t,!setup(&e,compressor.LEVEL_NORMAL,raw,nil))
     testing.expect_value(t,encode_chunk(nil,&arena,raw_data(raw),raw_data(raw),1000,raw_data(comp),
         raw_data(comp)[100:],0,nil,nil,nil,nil),1000)

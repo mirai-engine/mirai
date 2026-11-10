@@ -309,7 +309,7 @@ document_choice_rename :: proc(doc:^Document,old,name:string) -> int {
 }
 
 // Writes the document as a file into w, which has to be empty, compressed as p says.
-document_write :: proc(doc:^Document,w:^serial.Writer,p:=Pack.Edit,worker:=jobs.Worker_Ref{}) -> Error {
+document_write :: proc(doc:^Document,w:^serial.Writer,p:=PACK_EDIT,worker:=jobs.Worker_Ref{}) -> Error {
     document_check(doc) or_return
     allocator:=doc.allocator
     dependencies:=make([dynamic]base.Asset_Id,allocator);defer delete(dependencies)
@@ -387,14 +387,14 @@ document_write :: proc(doc:^Document,w:^serial.Writer,p:=Pack.Edit,worker:=jobs.
 }
 
 // Writes the document to a file, whole or not at all.
-document_save :: proc(doc:^Document,path:string,sync:=false,p:=Pack.Edit) -> Error {
+document_save :: proc(doc:^Document,path:string,sync:=false,p:=PACK_EDIT) -> Error {
     data:=document_bytes(doc,doc.allocator,p) or_return
     defer mem.free_bytes(data,doc.allocator)
     return serial.file_write_atomic(path,data,sync)==.None?.None:.IO
 }
 
 // The file the document is, as bytes from allocator, aligned for its chunks.
-document_bytes :: proc(doc:^Document,allocator:=context.allocator,p:=Pack.Edit,worker:=jobs.Worker_Ref{}) -> (data:[]u8,error:Error) {
+document_bytes :: proc(doc:^Document,allocator:=context.allocator,p:=PACK_EDIT,worker:=jobs.Worker_Ref{}) -> (data:[]u8,error:Error) {
     w:serial.Writer
     serial.writer_init(&w,allocator=allocator)
     if error=document_write(doc,&w,p,worker);error!=.None {

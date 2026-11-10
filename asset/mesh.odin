@@ -418,7 +418,7 @@ mesh_tables :: proc(doc:^Document,types:^Types,info:^Mesh_Info,view:Mesh_View,de
         document_resize(doc,vertices,len(view.skin)) or_return
         document_column_put(doc,types,vertices,"skin",view.skin,{},.LZ,MESH_BULK_ALIGNMENT) or_return
     }
-    pages,data:=pages_compress(view.geometry,.Edit,doc.allocator) or_return
+    pages,data:=pages_compress(view.geometry,PACK_EDIT,doc.allocator) or_return
     defer {delete(pages,doc.allocator);delete(data)}
     bulk(doc,types,"pages",pages) or_return
     _,error:=document_put(doc,types,"page_data",data[:],{.Bulk},.None,MESH_BULK_ALIGNMENT)
@@ -430,7 +430,7 @@ mesh_tables :: proc(doc:^Document,types:^Types,info:^Mesh_Info,view:Mesh_View,de
 // root is not every page as it does one of a file. In allocator, with
 // scratch from the temporary allocator; false without memory.
 mesh_pages_pack :: proc(g:^Mesh_Geometry,allocator:=context.allocator) -> bool {
-    pages,data,error:=pages_compress(g^,.Edit,allocator)
+    pages,data,error:=pages_compress(g^,PACK_EDIT,allocator)
     if error!=.None {return false}
     delete(g.pages,allocator)
     g.pages,g.page_data=pages,data[:]

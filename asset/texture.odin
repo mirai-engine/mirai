@@ -36,7 +36,7 @@ TEXTURE_BULK_ALIGNMENT :: 16
 // of its levels takes together.
 TEXTURE_TAIL :: 128
 // The LZ level that compares the two layouts of the blocks of a texture: it picks the one that
-// is smaller at Optimal5 too in all but a few, which differ by a fraction of a percent, at a small
+// is smaller at the level a game ships with too in all but a few, which differ by a fraction of a percent, at a small
 // part of its cost.
 TEXTURE_FIELDS_LEVEL :: lz.Level.Fast
 
@@ -224,7 +224,7 @@ texture_fields_smaller :: proc(format:Texture_Format,mips:[]Texture_Mip,texels:[
     defer lz.encoder_destroy(&encoder)
     sizes:[2]int
     for bytes,i in ([2][]u8{texels,split}) {
-        size,compress_error:=lz.compress(&encoder,TEXTURE_FIELDS_LEVEL,bytes,out,PACK_PIECE)
+        size,compress_error:=lz.compress(&encoder,lz.mode(TEXTURE_FIELDS_LEVEL),bytes,out,PACK_PIECE)
         switch compress_error {
         case .None:
         case .Out_Of_Memory: return false,.Out_Of_Memory
@@ -235,7 +235,7 @@ texture_fields_smaller :: proc(format:Texture_Format,mips:[]Texture_Mip,texels:[
     return sizes[1]<sizes[0],.None
 }
 
-texture_save :: proc(path:string,types:^Types,desc:Texture_Desc,allocator:=context.allocator,p:=Pack.Edit) -> Error {
+texture_save :: proc(path:string,types:^Types,desc:Texture_Desc,allocator:=context.allocator,p:=PACK_EDIT) -> Error {
     doc:Document
     texture_document(&doc,types,desc,allocator) or_return
     defer document_destroy(&doc)

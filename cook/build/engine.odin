@@ -75,7 +75,7 @@ ENGINE_PACKAGES :: [?]Engine_Package{
     {.Engine,"engine/volume"},{.Engine,"engine/input"},{.Engine,"engine/scene"},{.Engine,"engine/render"},{.Engine,"engine/audio"},
     {.Engine,"engine/gui"},{.Engine,"engine/camera"},{.Engine,"engine/save"},
 
-    {.Cook,"cook/workspace"},{.Cook,"cook/cache"},{.Cook,"cook/compressor/bc7split"},{.Cook,"cook/compressor/texture/common"},
+    {.Cook,"cook/workspace"},{.Cook,"cook/cache"},{.Cook,"cook/compressor/lz"},{.Cook,"cook/compressor/bc7split"},{.Cook,"cook/compressor/texture/common"},
     {.Cook,"cook/compressor/texture/bc67"},{.Cook,"cook/compressor/texture/bc1"},{.Cook,"cook/compressor/texture/bc4"},
     {.Cook,"cook/compressor/texture/bc6"},{.Cook,"cook/compressor/texture/bc7"},{.Cook,"cook/compressor/texture"},
     {.Cook,"cook/textures"},{.Cook,"cook/image"},{.Cook,"cook/movie"},{.Cook,"cook/rig"},{.Cook,"cook/import"},

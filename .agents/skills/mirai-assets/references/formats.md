@@ -28,15 +28,16 @@ a multiple of its alignment.
 
 ### Compression
 
-LZ streams: `std/compressor` decodes them and `std/compressor/lz` encodes them.
-`pack` and `unpack` are the only entry points
+LZ streams: `std/compressor` decodes them and `std/compressor/lz` encodes them, with
+`cook/compressor/lz` for the levels of a cook. `pack` and `unpack` are the only entry points
 of the formats, also for what compresses outside a chunk (mesh pages, terrain blocks, the parts the
 terrain sends over the network, editor thumbnails, the shaders the executables embed).
 
-- **Packs.** A write says how hard it compresses (`Pack`): `Edit` for what the editor, imports and
-  the game save, `Ship` for the cooking of a shipped game, which writes every asset again with
-  `document_repack` (its chunks and the pages of a mesh), and `Quick` for the cook of a `--dev`
-  game, a few times faster and a little larger. All decode the same way.
+- **Packs.** A write says how hard it compresses (`Pack`): `PACK_EDIT` for what the editor,
+  imports and the game save. A cook hands the packs of `cook/compressor/lz`: `SHIP` for the
+  cooking of a shipped game, which writes every asset again with `document_repack` (its chunks
+  and the pages of a mesh), and `QUICK` for the cook of a `--dev` game, a few times faster and a
+  little larger. All decode the same way.
 - **Pieces.** A chunk over `PACK_PIECE` is a run of LZ streams of that many raw bytes, each
   decoding without the others (the library's `seekChunkReset`): a scene load decodes them at once
   on its workers (`Piece_Decoders`), and a write with a worker compresses them at once into the
@@ -57,10 +58,14 @@ terrain sends over the network, editor thumbnails, the shaders the executables e
   `format.odin`, the stream format both sides read: block, quantum and chunk headers, array types,
   packet layouts, levels and the prediction of packed Huffman code lengths.
 - `std/compressor/bc7split` (runtime): restores BC7 blocks from a BC7Split stream (`decode`).
-- `std/compressor/lz` (runtime, since a game saves with `Edit`): the encoder (`compress`) and its block
-  framing over the packages `entropy` (entropy arrays: Huffman, tANS, RLE, split; costs and log2
-  tables), `match` (hash tables, suffix trie, long range matcher) and `lz`. It allocates its
-  scratch on demand in the `Encoder`, kept across calls.
+- `std/compressor/lz` (runtime, since a game saves with `PACK_EDIT`): the encoder (`compress`) and
+  its block framing over the packages `entropy` (entropy arrays: Huffman, tANS, RLE, split; costs
+  and log2 tables), `match` (hash tables) and `parse` (the fast and lazy parsers). It allocates
+  its scratch on demand in the `Encoder`, kept across calls. A `Mode` is a level and, above
+  `Normal`, what parses it.
+- `cook/compressor/lz` (engine-time, package `lz_optimal`): the optimal parser, its find-all match
+  finders (cache table, suffix trie) and the long range matcher, as the `Mode` of each of its
+  levels. The framing and the entropy coding are those of `std/compressor/lz`.
 - `cook/compressor/bc7split` (engine-time, package `bc7split_encode`): the BC7Split encoder that
   `cook/textures` runs on BC7 levels, on top of `std/compressor/bc7split` and the log2 table of
   `entropy`.

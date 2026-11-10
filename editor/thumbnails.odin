@@ -459,7 +459,7 @@ thumbnail_load :: proc(folder:string,id:base.Asset_Id,side:int,key:u64,file:^Thu
 thumbnail_save :: proc(folder:string,id:base.Asset_Id,side:int,key:u64,image:[]u8,file:^Thumbnail_File) -> bool {
     if len(image)!=side*side*4 {return false}
     resize(&file.bytes,THUMBNAIL_FILE_HEADER+asset.pack_bound(len(image)))
-    packed,error:=asset.pack(&file.encoder,.Edit,image,file.bytes[THUMBNAIL_FILE_HEADER:])
+    packed,error:=asset.pack(&file.encoder,asset.PACK_EDIT,image,file.bytes[THUMBNAIL_FILE_HEADER:])
     if error!=.None {return false}
     w:serial.Writer
     serial.writer_init(&w,allocator=context.temp_allocator)
