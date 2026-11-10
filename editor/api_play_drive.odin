@@ -87,6 +87,7 @@ Api_Drive :: struct {
     height:f32,
     last:[3]f32, // where it was a tick before
     measured:bool,
+    stance:Stance, // of its body at the last measure
     jumping:bool,   // holds the jump
     landing:bool,   // left the ground by a jump of its own and has not stood since
     held,still,rounds,warm,looks,detour,climbs:int, // held: ticks of the jump held
@@ -255,7 +256,8 @@ api_drive_measure :: proc(s:^Session,w:core.World_Ref,d:^Api_Drive) -> (seat,bod
     d.top,d.bottom=goal.y+d.box.max.y,goal.y+d.box.min.y
     d.position,d.distance,d.height=at,linalg.length(across),at.y-d.top
     d.measured=true
-    standing:=api_drive_standing(s,w,body)
+    d.stance=play_stance(s,w,body)
+    standing:=api_drive_grounded(d)
     out_of_reach:=d.bottom>at.y+DRIVE_REACH_HEIGHT || d.top<at.y-DRIVE_REACH_HEIGHT
     // In the air its feet say nothing of what it rose from.
     if standing {
@@ -297,12 +299,12 @@ api_drive_edge :: proc(d:^Api_Drive,goal,at:[3]f32) -> f32 {
     return linalg.length([2]f32{x,z})
 }
 
-// Whether a character stands; true for a game whose bodies do not say.
+// Whether its feet count as on something. A body no plugin answers for
+// (Stance.Unknown) is steered as on the ground: its jumps are asked whenever
+// the way calls for one, and only the rays say what it stands on.
 @(private)
-api_drive_standing :: proc(s:^Session,w:core.World_Ref,body:core.Entity) -> bool {
-    if component_table(s,"Character_State")==nil {return true}
-    value,problem:=api_entity_field(s,w,body,"Character_State.standing",context.temp_allocator)
-    return problem!="" || value=="true"
+api_drive_grounded :: proc(d:^Api_Drive) -> bool {
+    return d.stance!=.Airborne
 }
 
 // Takes off, holding the jump until the steering lets go of it.
@@ -361,7 +363,7 @@ api_drive_steer :: proc(s:^Session,r:^Run,d:^Api_Drive) -> bool {
     if !known {return true}
     if !d.measured {return true}
     query:=api_drive_query(w)
-    standing:=api_drive_standing(s,w,body)
+    standing:=api_drive_grounded(d)
     api_drive_route_update(s,w,d,body,goal)
     if d.route.state==.Waiting && d.route_waited<DRIVE_ROUTE_WAIT {
         d.route_waited+=1

@@ -21,6 +21,8 @@ import "mirai:std/serial"
 @(private="file") Probe_Score :: struct {points:int,state:Probe_State,seen:core.Seen}
 @(private="file") Probe_Ping :: struct {entity:core.Entity,amount:int}
 @(private="file") Probe_Pings :: struct {queue:core.Queue(Probe_Ping)}
+// What a plugin that moves bodies says of the hero.
+@(private="file") Probe_Stance :: struct {hero:editor.Stance}
 @(private="file") PROBE_MOVE :: input.Action(0)
 @(private="file") PROBE_JUMP :: input.Action(2)
 
@@ -49,9 +51,23 @@ Probe_World :: struct {
     id:core.World_Id,
     view:core.View,
     quit_at:int, // the points at which the game asks to quit; 0: never
+    stance:Probe_Stance,
 }
 @(private="file") Probe_Shared :: struct {problems:core.By_World(core.Problems)}
-@(private="file") Probe_Editor :: struct {api:editor.Api,playtest:Playtest,provider:Playtest_Api,listener:Playtest_Listener}
+@(private="file") Probe_Bodies :: struct {provider:editor.Body_Provider}
+@(private="file") Probe_Editor :: struct {api:editor.Api,playtest:Playtest,provider:Playtest_Api,listener:Playtest_Listener,bodies:Probe_Bodies}
+
+@(private="file")
+probe_standing :: proc(w:core.World_Ref,body:core.Entity) -> (standing,known:bool) {
+    stance:=(cast(^Probe_World)w.data).stance.hero
+    return stance==.Standing,stance!=.Unknown
+}
+
+@(private="file")
+probe_types :: proc(types:^[dynamic]core.Test_Type) {
+    test_types(types)
+    append(types,core.test_type(Probe_Bodies,default=proc(dst:^Probe_Bodies) {dst^={provider={standing=probe_standing}}}))
+}
 
 // The seats take their holds and the devices of the tick, as engine/input runs them.
 @(private="file")
@@ -102,7 +118,7 @@ probe_open :: proc(t:^testing.T,f:^Probe) -> bool {
     error:platform.Error
     f.p,error=platform.create({headless=true,fixed_dt=0.1,pacing=platform.Frame_Pacing{}})
     if !testing.expect_value(t,error,platform.Error.None) || f.p==nil {return false}
-    f.info=core.test_info(t,Probe_World,Probe_Shared,Probe_Editor,test_types) or_return
+    f.info=core.test_info(t,Probe_World,Probe_Shared,Probe_Editor,probe_types) or_return
     f.names={{type=input.Action,value=i64(PROBE_MOVE),name="move"},{type=input.Action,value=i64(PROBE_JUMP),name="jump"}}
     f.info.names=f.names[:]
     core.test_info_index(&f.info)
@@ -210,7 +226,7 @@ play_observe_says_in_one_small_answer_what_a_decision_needs :: proc(t:^testing.T
     player,_:=answer["player"].(json.Object)
     position,_:=player["position"].(json.Array)
     testing.expect(t,len(position)==3 && position[0].(json.Float)==1,text)
-    testing.expect(t,"grounded" not_in player,"a game without Character_State does not say")
+    testing.expect(t,"grounded" not_in player,"a body no plugin moves does not say")
     targets,_:=answer["targets"].(json.Array)
     if testing.expect_value(t,len(targets),1) {
         foe,_:=targets[0].(json.Object)
@@ -220,10 +236,13 @@ play_observe_says_in_one_small_answer_what_a_decision_needs :: proc(t:^testing.T
         testing.expect(t,!(foe["on_screen"].(json.Boolean) or_else true),text)
     }
     core.report(host.app_world_storage(&f.app,running,core.Problems),f.hero,"test.broken","The hero is broken: fix it.")
+    running.stance.hero=.Airborne
     error,text=probe_call(f,"play.observe",`{"step":{"for":2},"targets":["Foe"]}`)
     testing.expectf(t,error.code==0,"%v",error)
     testing.expect_value(t,api.result_mismatch(Api_Play_Observe,text),"")
     seen:=probe_json(t,text)
+    grounded,said:=seen["player"].(json.Object)["grounded"].(json.Boolean)
+    testing.expect(t,said && !grounded,"in the air, as the plugin that moves it says")
     testing.expect_value(t,seen["ran"].(json.Float) or_else 0,2)
     testing.expect(t,"playing" not_in seen,"the state of the game is left out")
     problems,_:=seen["problems"].(json.Array)

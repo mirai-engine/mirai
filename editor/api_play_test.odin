@@ -38,7 +38,7 @@ Probe_World :: struct {
     seats:core.Table(input.Seat),
     drivables:core.Table(input.Drivable),
     moves:core.Table(input.Move_Input),
-    standings:core.Table(Probe_Standing) `mirai:"name=Character_State"`,
+    standings:core.Table(Probe_Standing),
     players:input.Seats,
     bindings:input.Input_Map,
     holds:input.Hold_Requests,
@@ -81,6 +81,13 @@ probe_query_probe :: proc(user:rawptr,origin,direction:[3]f32,length,radius:f32,
     top,entity,there:=probe_level_top(world,origin.x,origin.y)
     if !there || origin.y-top>length {return}
     return {point={origin.x,top,origin.z},normal={0,1,0},distance=origin.y-top,entity=entity},true
+}
+
+// What a plugin that moves bodies says of those of the test (Body_Provider).
+@(private="file")
+probe_standing :: proc(w:core.World_Ref,body:core.Entity) -> (standing,known:bool) {
+    state:=core.get(core.read(&(cast(^Probe_World)w.data).standings),body) or_return
+    return state.standing,true
 }
 
 // A character of a test: it runs at 5 m/s, a jump held rises at 6 m/s for up to
@@ -521,6 +528,8 @@ a_drive_heads_for_the_next_point_of_the_way_a_plugin_gives :: proc(t:^testing.T)
 
 // Over a gap a drive takes off at the edge and holds the jump for all it needs,
 // and a platform raised over its feet it arrives at standing on it, not under it.
+// Whether its body stands is what the plugin that moves it says, and nothing
+// without one.
 @(test)
 a_drive_holds_its_jump_across_a_gap_and_stands_on_a_raised_platform :: proc(t:^testing.T) {
     f:=new(Probe);defer free(f)
@@ -533,6 +542,11 @@ a_drive_holds_its_jump_across_a_gap_and_stands_on_a_raised_platform :: proc(t:^t
     core.add(&running.transforms,platform,core.Transform{{13.5,2.9,0},1,{1,1,1}})
     core.add(&running.standings,f.hero,Probe_Standing{standing=true})
     core.settle(&f.info,running,nil)
+    w:=run_ref(&f.s,run_find(&f.s,0))
+    testing.expect_value(t,play_stance(&f.s,w,f.hero),Stance.Unknown)
+    f.s.providers={library=f.s.library_generation+1,bodies={0={standing=probe_standing}},body_count=1}
+    testing.expect_value(t,play_stance(&f.s,w,f.hero),Stance.Standing)
+    testing.expect_value(t,play_stance(&f.s,w,f.foe),Stance.Unknown)
     running.climb.on,running.climb.platform=true,platform
     place:=core.get(&running.transforms,f.hero)
     place.position={0,0,0}
@@ -540,8 +554,7 @@ a_drive_holds_its_jump_across_a_gap_and_stands_on_a_raised_platform :: proc(t:^t
     testing.expectf(t,error.code==0,"%v",error)
     testing.expect(t,strings.contains(text,`"stopped":"Arrived"`),text)
     testing.expect(t,place.position.y==0 && abs(place.position.x-10)<=0.6,"over the gap, on the far floor")
-    error,text=probe_call(f,"play.check",`{"conditions":[{"entity":"Hero","field":"Character_State.standing","compare":"Equal","number":1}]}`)
-    testing.expect(t,error.code==0 && strings.contains(text,`"passed":true`),text)
+    testing.expect_value(t,play_stance(&f.s,run_ref(&f.s,run_find(&f.s,0)),f.hero),Stance.Standing)
     error,text=probe_call(f,"play.step",`{"drive":{"entity":"Platform","move":"move"},"for":"5s"}`)
     testing.expectf(t,error.code==0,"%v",error)
     testing.expect(t,strings.contains(text,`"stopped":"Arrived"`),text)

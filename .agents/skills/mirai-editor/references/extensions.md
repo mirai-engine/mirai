@@ -370,6 +370,11 @@ ended. What it keeps of a run goes in a storage of its own, keyed by `Run.id`. `
 with an `Api_Step_Input` drives a run, and `editor.play_ui_screen` says what its screen on top shows
 ([`playtest`](../../mirai-plugins/references/plugins.md#first-party-plugins)).
 
+What steers or watches a body in those runs asks the plugin that moves it, never a component by
+its name: an Editor storage whose only field is `editor.Body_Provider` answers for the bodies of
+its plugin (`physics`, for its characters), and `editor.play_stance` reads it. A body no provider
+answers for is `Unknown`, which each reader handles; it is not taken as standing.
+
 ## Importers of a plugin
 
 A plugin adds to the editor's import ([import](../../mirai-imports/SKILL.md)) with two providers;

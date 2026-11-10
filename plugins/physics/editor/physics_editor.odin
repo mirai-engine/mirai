@@ -9,8 +9,9 @@ import phys "plugins:physics/runtime"
 
 // What physics gives the editor: the rows of its collision types and of
 // Collision_Settings, the collision API, the Collider of a Character, the
-// bodies Simular drives with the gizmo, the colliders of the selection and
-// the Collision modes of the viewport.
+// bodies Simular drives with the gizmo, what a character says to the bots
+// that play a game, the colliders of the selection and the Collision modes
+// of the viewport.
 
 @(storage)
 Physics_Inspector :: struct {provider:editor.Inspector_Provider}
@@ -31,6 +32,11 @@ PHYSICS_COMPONENTS_DEFAULT :: Physics_Components{provider={added=collider_compan
 Physics_Simulation :: struct {provider:editor.Simulation_Provider}
 
 PHYSICS_SIMULATION_DEFAULT :: Physics_Simulation{provider={owner=body_owner,move=body_move,release=body_release,settle=simulation_settle}}
+
+@(storage)
+Physics_Bodies :: struct {provider:editor.Body_Provider}
+
+PHYSICS_BODIES_DEFAULT :: Physics_Bodies{provider={standing=character_standing}}
 
 @(private)
 collision_settings_problem :: proc(info:^runtime.Type_Info,value:rawptr) -> string {
@@ -62,3 +68,11 @@ body_release :: proc(w:core.World_Ref,e:core.Entity) -> bool {
 
 @(private)
 simulation_settle :: proc(w:core.World_Ref,app:^host.App) {phys.step_world(w,app,0)}
+
+@(private)
+character_standing :: proc(w:core.World_Ref,body:core.Entity) -> (standing,known:bool) {
+    states:=core.world_table_of(w,phys.Character_State)
+    if states==nil {return}
+    state:=core.get(core.read(states),body) or_return
+    return state.standing,true
+}

@@ -119,6 +119,19 @@ Route_Provider :: struct {
     next:proc(s:^Session,w:core.World_Ref,body:core.Entity,goal:[3]f32) -> Route,
 }
 
+// What the plugin that moves a body in a game says of it (physics: its
+// characters): the drive of play.step and the playtest plugin read it with
+// play_stance, never by the name of a component.
+Body_Provider :: struct {
+    standing:proc(w:core.World_Ref,body:core.Entity) -> (standing,known:bool), // known: the body is one it moves
+}
+
+Stance :: enum u8 {
+    Unknown, // no plugin moves the body: nothing says whether it stands
+    Standing,
+    Airborne,
+}
+
 PROVIDER_CAPACITY :: 32 // of a kind the editor holds at once
 
 @(private)
@@ -128,6 +141,8 @@ Providers :: struct {
     play:Play_Provider,
     route:Route_Provider,
     simulates,plays,routes:bool,
+    bodies:[PROVIDER_CAPACITY]Body_Provider,
+    body_count:int,
     inspectors:[PROVIDER_CAPACITY]Inspector_Provider,
     inspector_count:int,
     components:[PROVIDER_CAPACITY]Component_Provider,
@@ -150,6 +165,7 @@ providers :: proc(s:^Session) -> ^Providers {
     p.simulation,p.simulates=provided(s,Simulation_Provider)
     p.play,p.plays=provided(s,Play_Provider)
     p.route,p.routes=provided(s,Route_Provider)
+    p.body_count=provided_all(s,p.bodies[:])
     p.inspector_count=provided_all(s,p.inspectors[:])
     p.component_count=provided_all(s,p.components[:])
     p.menu_count=provided_all(s,p.menus[:])
@@ -294,6 +310,16 @@ provided :: proc(s:^Session,$T:typeid) -> (provider:T,found:bool) {
 route_of_body :: proc(s:^Session,w:core.World_Ref,body:core.Entity,goal:[3]f32) -> Route {
     p:=providers(s)
     return p.routes && p.route.next!=nil?p.route.next(s,w,body,goal):{}
+}
+
+// Whether a body of a game stands, as the plugin that moves it says.
+play_stance :: proc(s:^Session,w:core.World_Ref,body:core.Entity) -> Stance {
+    p:=providers(s)
+    for &each in p.bodies[:p.body_count] {
+        if each.standing==nil {continue}
+        if standing,known:=each.standing(w,body);known {return standing?.Standing:.Airborne}
+    }
+    return .Unknown
 }
 
 // The body a selected entity moves while Simular runs; none without one, or without physics.
