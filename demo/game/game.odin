@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:log"
 import "core:math"
 import "core:math/linalg"
+import "core:strings"
 import "mirai:core"
 import destruct "plugins:destruct/runtime"
 import gui "mirai:engine/gui"
@@ -42,8 +43,11 @@ DOOR_OPEN_GLOW   :: [3]f32{3,48,10}
 DOOR_CLOSED_GLOW :: [3]f32{48,4,2.4}
 // The nose of the dog when it barks, nits, in the light of the control scene.
 BARK_GLOW :: [3]f32{64,25,4.8}
-// The materials a Swatch walks through.
-SWATCH_MATERIALS :: [?]string{"Chrome","Satin metal","Brushed steel","Lacquer","Planks","Stained glass","Neon sign"}
+// The materials a Swatch walks through, by their paths in the assets.
+SWATCH_MATERIALS :: [?]string{
+    "surfaces/metal/Chrome.mat","surfaces/metal/Satin metal.mat","surfaces/metal/Brushed steel.mat",
+    "surfaces/paint/Lacquer.mat","surfaces/wood/Planks.mat","surfaces/glass/Stained glass.mat","surfaces/neon/Neon sign.mat",
+}
 
 THROWN_CUBE :: "characters/player/Thrown cube.prefab"
 
@@ -132,13 +136,6 @@ Pulse :: struct {
     ready:bool `mirai:"transient"`,
 }
 
-// SWATCH_MATERIALS, found once.
-@(storage)
-Palette :: struct {
-    materials:[len(SWATCH_MATERIALS)]base.Asset_Id,
-    ready:bool,
-}
-
 @(storage)
 Game :: struct {
     left:core.Entity, // the body the Menu action let go of
@@ -152,12 +149,6 @@ SWATCH_DEFAULT :: Swatch{reach=3}
 PULSE_DEFAULT :: Pulse{speed=2,low=0.3,high=1}
 PROJECTILE_DEFAULT :: Projectile{speed=THROW_SPEED,seconds_left=CUBE_SECONDS}
 
-// The id of the material <name>.mat, which follows from its name.
-material_asset :: proc(name:string) -> base.Asset_Id {
-    buffer:[192]u8
-    return base.asset_id_named(fmt.bprintf(buffer[:],"material\x1fsource/materials/%s.json\x1f%s",name,name))
-}
-
 // The look yaw of an upright character body: where its front, -Z, heads.
 yaw_of :: proc "contextless" (rotation:mm.Quat) -> f32 {
     ahead:=mm.quat_forward(rotation)
@@ -170,8 +161,8 @@ player_walk :: proc "contextless" () -> phys.Walk {
     return walk
 }
 
-// The actions the game reads, bound by Demo_Actions, those of interface_demo.odin too; move and
-// jump are of physics (phys.Walk_Action) and look of the engine (inp.Look_Action).
+// The actions the game reads, those of interface_demo.odin too; move and jump are of physics
+// (phys.Walk_Action) and look of the engine (inp.Look_Action).
 @(actions)
 Action :: enum u8 {
     Use,Flashlight,Throw,Bark,Switch_Body,Overhead_View,
@@ -180,17 +171,14 @@ Action :: enum u8 {
     Hud_Style,Interface_Menu,Inventory,Talk,
 }
 
-// The bindings of the actions of the demo. The editor (Project Settings > Input), input.set and
-// the player write in an input.mirai only what they change.
-@(storage,host)
-Demo_Actions :: struct {defaults:[Action]inp.Action_Default}
-
-demo_actions_default :: proc "contextless" () -> Demo_Actions {
+// Their bindings. The editor (Project Settings > Input), input.set and the player write in an
+// input.mirai only what they change.
+action_defaults :: proc "contextless" () -> [Action]inp.Action_Default {
     key :: inp.binding_key
     pad :: inp.binding_gamepad_button
     mouse :: inp.binding_mouse_button
     trigger :: inp.binding_gamepad_axis
-    return {defaults={
+    return {
         .Use=inp.action_default(.Button,key(.E),pad(.West)),
         .Flashlight=inp.action_default(.Button,key(.F),pad(.East)),
         .Throw=inp.action_default(.Button,mouse(.Left),trigger(.Right_Trigger)),
@@ -210,7 +198,7 @@ demo_actions_default :: proc "contextless" () -> Demo_Actions {
         .Interface_Menu=inp.action_default(.Button,key(.M),pad(.Dpad_Down)),
         .Inventory=inp.action_default(.Button,key(.I),pad(.Back)),
         .Talk=inp.action_default(.Button,key(.T),pad(.Right_Stick)),
-    }}
+    }
 }
 
 // The Menu action lets the focused seat go of its body, and that frees the mouse; again, it takes
@@ -296,16 +284,12 @@ game_doors :: proc(doors:core.Read(Door),buttons:core.Read(Floor_Button),states:
 // meshes are written through the world so that their version changes only
 // when a material does.
 @(step="fixed")
-game_swatches :: proc(meshes:^core.Table(render.Mesh_Renderer),palette:^Palette,swatches:core.Read(Swatch)) {
-    if !palette.ready {
-        for name,i in SWATCH_MATERIALS {palette.materials[i]=material_asset(name)}
-        palette.ready=true
-    }
+game_swatches :: proc(meshes:^core.Table(render.Mesh_Renderer),swatches:core.Read(Swatch),assets:^host.Assets) {
+    paths:=SWATCH_MATERIALS
     for row in 0..<core.count(swatches) {
         mesh:=core.get(meshes,core.entity_at(swatches,row))
-        if mesh==nil {continue}
-        wanted:=palette.materials[swatch_index(core.at(swatches,row))]
-        if mesh.materials[0]==wanted {continue}
+        wanted,found:=host.assets_id(assets,paths[swatch_index(core.at(swatches,row))])
+        if mesh==nil || !found || mesh.materials[0]==wanted {continue}
         for &material in mesh.materials {material=wanted}
     }
 }
@@ -482,7 +466,8 @@ game_hud :: proc(
     for row in 0..<core.count(swatches) {
         swatch:=core.at(swatches,row)
         if hint!="" || !in_reach(worlds,feet,core.entity_at(swatches,row),swatch.reach) {continue}
-        hint=fmt.tprintf("E: change the material (%s)",swatch_names[swatch_index(swatch)])
+        name:=swatch_names[swatch_index(swatch)]
+        hint=fmt.tprintf("E: change the material (%s)",name[strings.last_index_byte(name,'/')+1:len(name)-len(".mat")])
     }
     if hint!="" {
         if ui.box(ctx,hud_box(ctx,"hint",.Center,.Top_Center,{0,40},ui.fit(),ui.fit(),{},ui.padding_xy(4,2))) {

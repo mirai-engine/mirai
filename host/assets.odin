@@ -361,6 +361,14 @@ assets_unsaved :: proc(a:^Assets) -> []asset.Registry_Memory {return a.registry.
 assets_errors :: proc(a:^Assets) -> []Assets_Error {return a.errors[:]}
 assets_errors_clear :: proc(a:^Assets) {clear(&a.errors)}
 
+// The id of the asset at a path of the folder, as its file is spelled
+// ("arena/Chrome.mat"): what code that names an asset by path resolves.
+assets_id :: proc(a:^Assets,path:string) -> (id:base.Asset_Id,found:bool) {
+    if a==nil {return}
+    file:=asset.registry_find_path(&a.registry,path) or_return
+    return file.id,file.id!={}
+}
+
 // How a message names an asset: its path in the folder, or its id, written in
 // buffer, when the folder has no file with it. Without allocating.
 assets_name :: proc(a:^Assets,id:base.Asset_Id,buffer:^[base.ASSET_ID_TEXT]u8) -> string {

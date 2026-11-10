@@ -54,7 +54,6 @@ adds to it, with `requests:^phys.Body_Requests`. Flying and swimming are compone
 
 ## Pitfalls that fail silently
 
-- `Walk{}` has `max_speed` 0: the body never moves. Start from `phys.WALK_DEFAULT`.
 - A `Character` with no `Collider` is the problem `physics.character_capsule` in
   `engine.diagnostics`.
 - A `Camera_Follow` owns the `Transform` of its entity; do not write it. The player sees through
