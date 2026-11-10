@@ -220,12 +220,13 @@ world_step :: proc(w:^World,dt:f32) {
     joints_break(w)
     islands_sleep(w)
     step_hits(w)
-    profile_lap(&w.profile.sleep,&mark)
     w.stats.awake_bodies=st.awake_count
     w.stats.active_contacts=st.active_count
     w.stats.constraints=st.ref_count
     w.tick+=1
     w.time+=f64(dt)
+    breakables_update(w)
+    profile_lap(&w.profile.sleep,&mark)
 }
 
 @(private)
@@ -606,6 +607,7 @@ step_events :: proc(w:^World) {
         manifold:=&w.manifolds[i]
         shape_a,shape_b,body_a,body_b:=contact_handles(w,contact)
         event:=Contact_Begin_Event{shape_a=shape_a,shape_b=shape_b,body_a=body_a,body_b=body_b,normal=manifold.normal}
+        event.users,_=event_users(w,contact.shape_a,contact.shape_b)
         for point in manifold.points[:manifold.count] {
             event.point+=point.point/f32(manifold.count)
             event.impulse+=point.impulse
