@@ -197,12 +197,10 @@ value and is not checked; a zero value on purpose is a declaration (`none:Audio_
 
 ```text
 .mirai/gen/
-  game_world/world.odin      package world: World, Shared, info()
   editor_world/world.odin    package world: World, Shared, Editor, info()
-  shipped_world/world.odin   game_world without the development plugins (only for the game build)
+  shipped_world/world.odin   the game world without development plugins (only for the game build)
   game/main.odin             main of the shipped game: host.player_run
-  editor/main.odin           editor library: exports mirai_project_info
-  play/main.odin             player library: exports mirai_project_info
+  editor/main.odin           library of the editor and the player: exports mirai_project_info
 ```
 
 `gen` is the `generated` collection; a file is rewritten only if its text changed.
@@ -453,8 +451,7 @@ return.
   library against the engine declarations
   ([binaries](../../mirai-projects/references/projects.md#engine-binaries)) and loaded by
   `mirai-editor` and `mirai-player` ([host](host.md#project-libraries)).
-- `editor` imports `generated:editor_world`; `play`, `generated:game_world`, and `game`,
-  `generated:shipped_world`, as `world`.
+- `editor` imports `generated:editor_world` and `game`, `generated:shipped_world`, as `world`.
 
 ## Changing the generator
 

@@ -45,10 +45,11 @@ on their own; a manual build needs the flag with `build.CUSTOM_ATTRIBUTES`.
 `mirai generate <project>` reads the engine's libraries, the project's and those of its active
 plugins, and writes to `<project>/.mirai/gen`:
 
-- `world` packages: `game_world` (nothing from the editor), `editor_world` and, for the shipped
-  game, `shipped_world` (without the development plugins).
-- Three root packages: `editor` and `play`, which export `mirai_project_info` (it returns the
-  `core.World_Info` of their world), and `game`, the `main` of the shipped game.
+- `world` packages: `editor_world` and, for the shipped game, `shipped_world` (nothing from the
+  editor nor the development plugins).
+- Two root packages: `editor`, which exports `mirai_project_info` (it returns the
+  `core.World_Info` of its world) for the editor and the player, and `game`, the `main` of the
+  shipped game.
 
 Each `world` has:
 

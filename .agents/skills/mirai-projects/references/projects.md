@@ -202,42 +202,49 @@ active plugin and that of the project, only for the editor. The collections are 
 
 ## Plugin libraries
 
-`cook/build/plugins.odin`. Each part (`runtime`, `editor`) of an active engine plugin is a library
-of its own with all its packages, one per optimization (`minimal` with `--dev`, the manifest's
-otherwise), so switching from one to the other compiles nothing. The project's plugins are compiled
-with the project library.
+`cook/build/plugins.odin`. Each part (`runtime`, `editor`) of an active plugin, of the engine or of
+the project, is a library of its own with all its packages, and so are the project's `game/` and
+`editor/`; one per optimization (`minimal` with `--dev`, the manifest's otherwise), so switching
+from one to the other compiles nothing. The library of the project is the generated world alone: a
+change inside a procedure of the game compiles the game library and links the world again; a
+changed declaration of the game compiles the world too.
 
 - The library goes to `project.PLUGIN_LIBRARIES` with the name those who link it look for
-  (`@rpath/`, `soname` or the `LIBRARY` of a `.def`):
-  `plugin-<name>-<part>-<optimization>-<fingerprint>` (`plugin_library_name`). A build that
-  changes it publishes it under another name, so an editor that loaded the previous one loads the
-  new one next to it; those of its family that are no longer the current one are deleted when
-  nobody has them loaded. Their declarations, their stage and their fingerprint, under
-  `plugins/<optimization>/`. The compiler runs in the stage with `/DEF:` without a path: Odin does
-  not pass quotes in `-extra-linker-flags` and a project under a folder with spaces would not link
-  ([workaround](../../../../docs/ODIN_WORKAROUNDS.md)).
+  (`@rpath/`, `soname` or the `LIBRARY` of the import library):
+  `plugin-<name>-<part>-<optimization>-<fingerprint>`, `project-<...>-<optimization>-<fingerprint>`
+  for the project's (`plugin_library_name`). A build that changes it publishes it under another
+  name, so an editor that loaded the previous one loads the new one next to it; those of its
+  family that are no longer the current one are deleted when nobody has them loaded.
   `project.PLUGIN_LIBRARIES` is the folder of all of them.
-- Under `plugins/<optimization>/`: `decl/<name>/<part>` their declarations (`build.declare`, prefix
-  `plugins.`), `stage-<name>-<part>/` the copy it is compiled from, with the declarations of what
-  it imports next to it and at the same depth as `decl/`, and `<name>-<part>.stamp` the fingerprint
-  of the last build.
+- Under `plugins/<optimization>/`: `decl/<name>/<part>` the declarations of the engine plugins
+  (`build.declare`, prefix `plugins.`), the collection `plugins`, and `decl-project/` those of the
+  project (prefix `project.`), the collection `project` of the world; `stage-<id>/` the copy a
+  library is compiled from, with the declarations of what it imports of its own collection next
+  to it and at the same depth as its declarations, and `<id>.stamp` the fingerprint of the last
+  build.
 - The declarations copy the body of `#force_inline`, generic or `where` procedures and declare the
   others as functions of the library, the private ones
   [only when named](#engine-binaries). An `@(private="file")` one is private in the declarations
   file and exported with the name of its file (`mirai.<package>.<file>.<name>`), so a copied body
   can call it.
-- Order: the runtime parts in the order of the plugins (dependencies first) and then, for
-  `Editor`, the editor ones. A part imports the runtime of its plugin (the editor one) and the
-  parts of the plugins it depends on, with its own, each with all its packages. `Play` links only
-  the runtime ones.
+- Order: those of the engine plugins and then those of the project, each with the runtime parts in
+  the order of the plugins (dependencies first) and then the editor ones; `game/` after the runtime
+  parts of the project and `editor/` last. A part imports the runtime of its plugin (the editor
+  one) and the parts of the plugins it depends on, with its own, each with all its packages;
+  `game/` and `editor/` import every part before them that their part may.
 - Flags: those of the project library, with the same [modules](build.md#targets).
 - Currency: the fingerprint joins its sources, the declarations of the plugins it imports, the
   hashes of the [engine declarations](#engine-binaries) those sources and declarations name, the
   compiler and the flags. An engine change that declares the same compiles no plugin, and a
   changed declaration compiles only the parts that name it or something that reaches it. A part
   that names something without a hash follows every build of the engine.
-- The stale ones are declared first, in order, and each compiles as soon as the ones it links are
-  published; the project's, after all. They run at once up to `compilers_at_once()` (by cores and
+- The stale ones are declared first, in order. On Windows `declare` writes a module definition of
+  each with what it exports, and the `lld-link` Odin carries makes its import library from it
+  before anything compiles (`import_libraries_make`): every library, and the library of the
+  project, compiles at once, linking against import libraries that are already there, and links
+  without one of its own. Elsewhere a library links against the ones it needs themselves, so each
+  compiles as soon as those are published, and the project's after all. They run at once up to
+  `compilers_at_once()` (by cores and
   free memory; `MIRAI_COMPILERS` sets it) inside a single [turn](build.md#turns-between-processes).
   If one fails, the job kills the others.
 - Shared cache: `<main>/.mirai/cache/plugins/`, with the most recently used `PLUGIN_CACHE_ENTRIES`.
@@ -246,7 +253,7 @@ with the project library.
   of an engine and its worktrees share the libraries, and an [installed engine](#installed-engine)
   brings its own. A stale part is declared anyway and, if the cache has its fingerprint, it is
   copied. A project with `build.debug` does not use it: the debug information names the files of
-  the build that made it.
+  the build that made it. The project's own libraries do not use it either.
 - Loading: the project library finds them by `rpath`; on Windows `host.project_library_load` tells
   the loader the folder (`SetDllDirectoryW`). Each library is linked with its own array of
   per-thread memory cleaners of the Odin runtime (`-unexported_symbol` on macOS, `-Bsymbolic` on
@@ -293,8 +300,8 @@ Each mode has its folder: switching between them compiles nothing.
   (`cook/build/declared.odin`). Whoever compiles against the declarations (a library, a program,
   a plugin part) hashes the ones its own sources name, `name.Declaration` after the name of each
   import. A name counts wherever it is written: more is followed, never less.
-- Programs `mirai-editor` and `mirai-player`, which load the `editor` or `play` library of the
-  project ([host](../../mirai-core/references/host.md#project-libraries)), and over the editor
+- Programs `mirai-editor` and `mirai-player`, which load the `editor` library of the project
+  ([host](../../mirai-core/references/host.md#project-libraries)), and over the editor
   library `mirai-import`, that of `mirai import`
   ([import](../../mirai-imports/references/imports.md#what-is-written)), and `mirai-author`,
   that of `mirai ui` and `mirai scene`
@@ -319,7 +326,9 @@ Each mode has its folder: switching between them compiles nothing.
   it. The libraries whose sources changed are declared first, all of them, so what every part
   compiles against is known before any compiles; then the stamp zeroes what is about to compile,
   so a build that stops halfway leaves those parts for the next one, and the compilers run at
-  once (`compilers_at_once`), each once the libraries it links against stand. `stage/` is what
+  once (`compilers_at_once`), all of them where the import libraries are made ahead (Windows,
+  [plugin libraries](#plugin-libraries)) and elsewhere each once the libraries it links against
+  stand. `stage/` is what
   the libraries compile from, as the collection `staged`: the packages of a library import each
   other through it and every other package is its declarations. A build without a stamp of its
   version and `--force` remove the stage and the declarations.
@@ -331,7 +340,7 @@ Each mode has its folder: switching between them compiles nothing.
   `build.engine_current` says whether `engine_build` would do nothing, without taking a turn or
   writing.
 - **Shared cache.** `<main>/.mirai/cache/engine-libraries/<library>-<mode>-<fingerprint>/` stores
-  a library with what links against it and its debug information, by what it is built from (its
+  a library with its debug information, by what it is built from (its
   sources, the compiler, the flags and the declarations it names), with the most recently used
   `ENGINE_CACHE_ENTRIES`. `engine_build` declares what changed and copies each library the cache
   has instead of compiling it: checkouts whose branches differ in a few packages share the rest.

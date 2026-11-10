@@ -229,8 +229,6 @@ does not understand. What it does not say:
 - Without `--players`, the local players come from the scene, or none if the role of the world is
   `Server`; with it, a server also has local players.
 - `--surface` implies `--attached` ([image in another process](#image-in-another-process)).
-- `--library` is read by `host.launch` ([project libraries](#project-libraries)); the shipped
-  game ignores it.
 - `--validation` with errors prints the last one on stderr and exits with `PLAYER_VALIDATION`,
   unless it already failed with another code.
 - `--dedicated` is a server nobody plays on: no window, renderer or mixer, frames at the pace of
@@ -283,12 +281,11 @@ player is heard. The end of stdin terminates it.
   editor)` takes them to the layout of another library without moving them in address and makes it
   their `World_Info` ([migration](core.md#world-reflection)); it fails without changing anything
   if one does not fit in its reserve.
-- `host.launch` is the `main` of `mirai-player` (it loads `.mirai/play`, or `.mirai/editor` with
-  `--library editor`) and `editor.launch` that of `mirai-editor` (it loads `.mirai/editor`); if the
-  library does not load, they print the reason and exit with 2. From the `World_Info` of the
-  `editor` library the player makes the same game world as with `play`: an editor package declares
-  nothing of the `World` or of the `Shared`, nor steps of the game loop (the generator rejects it),
-  and the `Editor` place is not created outside the editor.
+- `host.launch` is the `main` of `mirai-player` and `editor.launch` that of `mirai-editor`; both
+  load `.mirai/editor` and, if the library does not load, print the reason and exit with 2. From
+  its `World_Info` the player makes the game world alone: an editor package declares nothing of
+  the `World` or of the `Shared`, nor steps of the game loop (the generator rejects it), and the
+  `Editor` place is not created outside the editor.
   The `--project` folder is made absolute: once it is said where its dependencies are, Windows does
   not look for a relative library in the current folder.
 

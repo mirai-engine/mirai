@@ -452,7 +452,7 @@ job_plugin_spawn :: proc(job:^Job,index:int) -> bool {
             compile:=Compile{library=index,staged=link_staged(record.folder,a),folder=record.folder,relink=true,streams=streams}
             _=os.remove(compile.staged)
             command:=link_command_args(link_command_rename(record.command,job_link_names(job),context.temp_allocator),context.temp_allocator)
-            return job_spawn(job,compile,command,lib.stage)
+            return job_spawn(job,compile,command)
         }
         job.plugin_relink[index]=false
     }
@@ -466,7 +466,7 @@ job_plugin_spawn :: proc(job:^Job,index:int) -> bool {
     append(&command,..plugin_command(lib,job.compiler,job.engine_decl,compile.staged,job.plugin_flags,context.temp_allocator))
     keep:=LINK_KEEP_FLAGS
     append(&command,..keep[:])
-    return job_spawn(job,compile,command[:],lib.stage)
+    return job_spawn(job,compile,command[:])
 }
 
 // The name of now of every plugin library of the job, by its family: what
@@ -480,9 +480,9 @@ job_link_names :: proc(job:^Job) -> map[string]string {
     return names
 }
 
-// Runs a compiler with its streams, in working_dir (empty: where this process is).
+// Runs a compiler with its streams.
 @(private)
-job_spawn :: proc(job:^Job,compile:Compile,command:[]string,working_dir:="",environment:[]string=nil) -> bool {
+job_spawn :: proc(job:^Job,compile:Compile,command:[]string) -> bool {
     streams:[2]^os.File
     for file,i in compile.streams {
         stream,error:=os.open(file,{.Write,.Create,.Trunc})
@@ -494,8 +494,7 @@ job_spawn :: proc(job:^Job,compile:Compile,command:[]string,working_dir:="",envi
         streams[i]=stream
     }
     if job.started=={} {job.started=time.now()}
-    env:=environment!=nil?environment:child_environment(job.engine_root,context.temp_allocator)
-    process,error:=subprocess.start({command=command,working_dir=working_dir,env=env,stderr=streams[0],stdout=streams[1]},compiler_limits(job.engine_root))
+    process,error:=subprocess.start({command=command,env=child_environment(job.engine_root,context.temp_allocator),stderr=streams[0],stdout=streams[1]},compiler_limits(job.engine_root))
     os.close(streams[0]);os.close(streams[1])
     if error!=nil {
         job_fail(job,.Compiler_Failed)
