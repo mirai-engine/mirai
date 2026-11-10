@@ -81,13 +81,13 @@ a_sync_of_the_sealed_rows_gives_what_a_sync_of_every_body_gives :: proc(t:^testi
     for tick in 0..<80 {
         for f in ([2]^Physics_Test{sealed,whole}) {
             if tick%2==0 {
-                holder:=core.get(&f.transforms,scene.holder)
+                holder:=core.edit(&f.transforms,scene.holder)
                 holder.position.x+=0.05
                 holder.rotation=mm.quat_axis_angle({0,1,0},f32(tick)*0.01)
                 if tick==40 {holder.scale={1.5,1,1.5}}
             }
-            core.get(&f.transforms,scene.free_entity).position.y=9+f32(tick)*0.1
-            if tick==51 {core.get(&f.transforms,scene.wall).position.y=1}
+            core.edit(&f.transforms,scene.free_entity).position.y=9+f32(tick)*0.1
+            if tick==51 {core.edit(&f.transforms,scene.wall).position.y=1}
         }
         // A sync of every body leaves its scratch as it was.
         clear(&sealed.state.sealed)
@@ -170,7 +170,7 @@ back_tick :: proc(f:^Physics_Test,scene:Back_Scene,tick:int) -> (dt:f32) {
     case tick==340:             proxy_remove(&f.state,scene.ghost)
     case tick==345:
         // The editor places a body while nothing is stepped.
-        core.get(&f.transforms,scene.stack[0]).position.x=1
+        core.edit(&f.transforms,scene.stack[0]).position.x=1
         dt=0
     case tick==350:             apply_impulse(&f.requests,scene.stack[0],{0,2,0})
     case tick==400:             teleport(&f.requests,scene.kicked,{3,4,0})

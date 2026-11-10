@@ -119,10 +119,10 @@ the_inspector_shows_presets_and_masks_by_name :: proc(t:^testing.T) {
     bit:=ui.id_derive(&f.ctx,ui.id(&f.ctx,"collider_preset_layers"),"bit",1)
     box,boxes:=ui.widget_rect(&f.ctx,bit)
     testing.expect(t,boxes,"a preset shows what it gives, ready to change")
-    before:=core.get(&world.colliders,a)^
+    before:=core.at(&world.colliders,core.row_of(&world.colliders,a))
     center:=[2]f32{box.x+box.w*0.5,box.y+box.h*0.5}
     collision_inspector_frame(t,session,{size={800,600},pointer=center,pressed={.Left},down={.Left}},phys.Collider)
-    after:=core.get(&world.colliders,a)^
+    after:=core.at(&world.colliders,core.row_of(&world.colliders,a))
     testing.expect(t,after.preset==phys.PRESET_CUSTOM && after.belongs!=phys.collision_of_collider(collision_settings_of(editor.edited_world(session)),before).belongs,"changing what a preset gives makes the collider Custom with the change")
     for _ in 0..<3 {collision_inspector_frame(t,session,{size={800,600},pointer_absent=true},phys.Collider)}
     _,boxes=ui.widget_rect(&f.ctx,ui.id_derive(&f.ctx,ui.id(&f.ctx,"matrix",int(offset_of(phys.Collider,belongs))+1),"bit",1))

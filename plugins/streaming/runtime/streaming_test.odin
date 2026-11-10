@@ -44,7 +44,7 @@ a_section_follows_how_near_its_sources_are :: proc(t:^testing.T) {
         streaming_sections(core.ref(sources),core.read(references),core.read(worlds),core.ref(settings),seen,requests)
         state:=core.at(core.read(references),0).streamed
         if len(w.requests.queue.items)>0 {state=w.requests.queue.items[0].state}
-        core.get(references,core.entity_at(core.read(references),0)).streamed=state
+        core.edit(references,core.entity_at(core.read(references),0)).streamed=state
         return state
     }
     testing.expect_value(t,want(&w,100,&settings,&seen,&sources),scene.Section_State.Unloaded)
@@ -90,7 +90,7 @@ what_moves_out_of_its_section_hangs_from_the_one_that_holds_it :: proc(t:^testin
     pose,_:=core.get(core.read(&w.transforms),crate)
     testing.expect_value(t,pose.position,[3]f32{-5,0,0})
     testing.expect(t,!core.has(core.read(&w.members),crate),"it is no longer of the scene of a")
-    core.get(&w.worlds,crate).position={100,0,0}
+    core.edit(&w.worlds,crate).position={100,0,0}
     run(&w)
     testing.expect(t,!core.has(core.read(&w.parents),crate),"out of every box, a root")
     pose,_=core.get(core.read(&w.transforms),crate)

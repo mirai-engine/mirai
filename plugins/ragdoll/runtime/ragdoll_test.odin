@@ -15,20 +15,20 @@ physical_animation_rejects_a_stale_parent_binding_and_invalid_parent_offsets :: 
     f:Ragdoll_Fixture
     if !ragdoll_fixture_init(t,&f) {return}
     defer ragdoll_fixture_free(&f)
-    core.get(&f.configs,f.rig).mode=.Driven
+    core.edit(&f.configs,f.rig).mode=.Driven
     ragdoll_fixture_step(&f)
     child,_:=core.get(core.read(&f.states),f.lower)
     testing.expect(t,child.active && child.error==.None)
-    core.get(&f.bones,f.upper).bone=anim.bone_ref("missing")
+    core.edit(&f.bones,f.upper).bone=anim.bone_ref("missing")
     ragdoll_fixture_step(&f)
     child,_=core.get(core.read(&f.states),f.lower)
     driven,_:=core.get(core.read(&f.joints),f.lower)
     testing.expect(t,!child.active && child.error==.Missing_Bone && .Disabled in driven.angular[2].drive)
-    core.get(&f.bones,f.upper).bone=anim.bone_ref("upper")
+    core.edit(&f.bones,f.upper).bone=anim.bone_ref("upper")
     ragdoll_fixture_step(&f)
     child,_=core.get(core.read(&f.states),f.lower)
     testing.expect(t,child.active && child.error==.None)
-    core.get(&f.bones,f.upper).offset.rotation=0
+    core.edit(&f.bones,f.upper).offset.rotation=0
     ragdoll_fixture_step(&f)
     child,_=core.get(core.read(&f.states),f.lower)
     driven,_=core.get(core.read(&f.joints),f.lower)
@@ -120,14 +120,14 @@ ragdolls_follow_current_animation_preserve_handoff_velocity_and_drive_real_joint
     testing.expect(t,abs(upper.position.x-.1)<.001)
     velocity,_:=core.get(core.read(&f.bodies),f.upper)
     testing.expect(t,velocity.linear.x>5)
-    core.get(&f.configs,f.rig).mode=.Simulated
+    core.edit(&f.configs,f.rig).mode=.Simulated
     ragdoll_fixture_step(&f)
     upper,_=core.get(core.read(&f.transforms),f.upper)
     testing.expect(t,upper.position.x>.15)
     testing.expect_value(t,len(f.poses.final_poses.items),2)
     for pose in f.poses.final_poses.items {testing.expect(t,pose.binding.revision==1 && pose.binding.index>=1)}
     clear(&f.poses.final_poses.items)
-    core.get(&f.configs,f.rig).mode=.Driven
+    core.edit(&f.configs,f.rig).mode=.Driven
     f.playback.states[0].sampled[2].rotation=mm.quat_axis_angle({0,0,1},.4)
     for tick in 0..<120 {clear(&f.poses.final_poses.items);ragdoll_fixture_step(&f)}
     child,_:=core.get(core.read(&f.transforms),f.lower)
@@ -136,15 +136,15 @@ ragdolls_follow_current_animation_preserve_handoff_velocity_and_drive_real_joint
     testing.expect(t,mm.quat_angle(relative,f.playback.states[0].sampled[2].rotation)<.08)
     driven,_:=core.get(core.read(&f.joints),f.lower)
     testing.expect(t,.Position in driven.angular[2].drive && driven.angular[2].motion==.Limited)
-    core.get(&f.configs,f.rig).hertz=0
+    core.edit(&f.configs,f.rig).hertz=0
     clear(&f.poses.final_poses.items);ragdoll_fixture_step(&f)
     driven,_=core.get(core.read(&f.joints),f.lower)
     testing.expect(t,.Disabled in driven.angular[2].drive)
-    core.get(&f.configs,f.rig).hertz=5
+    core.edit(&f.configs,f.rig).hertz=5
     clear(&f.poses.final_poses.items);ragdoll_fixture_step(&f)
     driven,_=core.get(core.read(&f.joints),f.lower)
     testing.expect(t,.Disabled not_in driven.angular[2].drive)
-    core.get(&f.configs,f.rig).mode=.Simulated
+    core.edit(&f.configs,f.rig).mode=.Simulated
     clear(&f.poses.final_poses.items);ragdoll_fixture_step(&f)
     driven,_=core.get(core.read(&f.joints),f.lower)
     testing.expect(t,.Disabled in driven.angular[2].drive)
@@ -157,7 +157,7 @@ invalid_bindings_and_removed_configuration_release_kinematic_bodies :: proc(t:^t
     if !ragdoll_fixture_init(t,&f) {return}
     defer ragdoll_fixture_free(&f)
     ragdoll_fixture_step(&f)
-    core.get(&f.bones,f.lower).bone=anim.bone_ref("missing")
+    core.edit(&f.bones,f.lower).bone=anim.bone_ref("missing")
     ragdoll_fixture_step(&f)
     state,_:=core.get(core.read(&f.states),f.lower)
     testing.expect(t,state.error==.Missing_Bone && !state.active)
@@ -182,10 +182,10 @@ physical_animation_uses_current_auto_frames_and_reuses_world_buffers :: proc(t:^
     defer ragdoll_fixture_free(&f)
     // After the world is made: making it reads its sources into the temporary allocator.
     context.temp_allocator=context.allocator
-    core.get(&f.configs,f.rig).mode=.Driven
-    core.get(&f.joints,f.lower).auto_target=true
+    core.edit(&f.configs,f.rig).mode=.Driven
+    core.edit(&f.joints,f.lower).auto_target=true
     turn:=mm.quat_axis_angle({0,1,0},.4)
-    core.get(&f.transforms,f.lower).rotation=turn
+    core.edit(&f.transforms,f.lower).rotation=turn
     f.playback.states[0].sampled[2].rotation=turn
     ragdoll_fixture_step(&f)
     joint,_:=core.get(core.read(&f.joints),f.lower)

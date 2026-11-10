@@ -98,7 +98,7 @@ morph_api_inspects_named_defaults_final_weights_and_sources_and_controls_instanc
     f.session.mode=.Simulate
     testing.expect_value(t,authoring_test_execute(f,"set",`{"entity":"0000000000000012","name":"Blink","value":3}`).code,0)
     testing.expect_value(t,play.configs.values[0].values[0],f32(3));testing.expect_value(t,edits.cursor,cursor)
-    anim.morph_weight_set(core.get(&play.configs,play.meshes.entities[0]),"Future",4)
+    anim.morph_weight_set(core.edit(&play.configs,play.meshes.entities[0]),"Future",4)
     testing.expect_value(t,authoring_test_execute(f,"inspect",`{"entity":"0000000000000012","diagnostics":true}`).code,0)
     output=string(serial.writer_bytes(&f.out));testing.expect(t,strings.contains(output,`"error": "Unknown_Target"`) && strings.contains(output,`"name_hash"`))
     testing.expect_value(t,authoring_test_execute(f,"set",`{"entity":"0000000000000012","name":"Future","remove":true}`).code,0)
@@ -110,7 +110,7 @@ morph_api_inspects_named_defaults_final_weights_and_sources_and_controls_instanc
     version:=play.configs.version
     testing.expect_value(t,authoring_test_execute(f,"set",`{"entity":"0000000000000012","name":"Blink","remove":true}`).code,0)
     testing.expect_value(t,play.configs.version,version)
-    core.get(&play.configs,play.meshes.entities[0]).source=play.animations.entities[0]
+    core.edit(&play.configs,play.meshes.entities[0]).source=play.animations.entities[0]
     testing.expect_value(t,authoring_test_execute(f,"inspect",`{"entity":"0000000000000012"}`).code,0)
     testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"source_kind":"Explicit"`))
     f.session.mode=.Watch

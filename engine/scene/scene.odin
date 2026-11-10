@@ -692,7 +692,7 @@ scopes_restore :: proc(w:core.World_Ref) {
         section:=core.ancestor_with(core.read(parents),core.read(references),core.entity_at(places,row))
         reference,found:=core.get(core.read(references),section)
         if !found {continue}
-        place:=core.at(places,row)
+        place:=core.edit_at(places,row)
         place.scope,place.scope_extents=section,reference.extents
     }
 }

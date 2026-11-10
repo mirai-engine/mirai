@@ -28,7 +28,7 @@ animation_motor_drive :: proc(motors:core.Read(Animation_Motor),inputs:^core.Tab
     if !time.playing {return}
     for row in 0..<core.count(motors) {
         entity:=core.entity_at(motors,row)
-        input:=core.get(inputs,entity)
+        input:=core.edit(inputs,entity)
         config,configured:=core.get(walks,entity)
         actor,placed:=core.get(worlds,entity)
         if input==nil || !configured || !placed {continue}

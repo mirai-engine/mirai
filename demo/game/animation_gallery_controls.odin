@@ -56,7 +56,7 @@ gallery_playback_commands :: proc(commands:[]Gallery_Command,animations:^core.Ta
         case .Match_Play: anim.match_play(requests,command.entity,base.text_get(command.name[:]),u16(phys.MODE_WALKING));continue
         case .Speed,.Value,.Warp,.Keyframe_Path: continue
         }
-        animation:=core.get(animations,command.entity);if animation==nil {continue}
+        animation:=core.edit(animations,command.entity);if animation==nil {continue}
         #partial switch command.kind {
         case .Automatic: if command.enabled {animation.playing=true}
         case .Playing: animation.playing=command.enabled
@@ -198,6 +198,6 @@ gallery_panels :: proc(panels:^core.Table(Gallery_Panel),gallery:core.Read(Anima
         hint:="manual    E: back" if item.manual else "automatic    E: back"
         if item.kind==.Sequence {path,_:=core.get(paths,current.station);hint="playing    E: back" if path.playing else "paused    E: back"}
         base.text_set(next.hint[:],hint)
-        if next!=current {core.at(panels,row)^=next}
+        if next!=current {core.edit_at(panels,row)^=next}
     }
 }

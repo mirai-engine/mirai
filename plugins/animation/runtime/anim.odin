@@ -225,7 +225,11 @@ Playback :: struct {
     rigs:[dynamic]Rig,
     follow_order:[dynamic]Rig_Follow, // the rigs that follow another, each after the rig it follows
     rigs_stamp:u64,
-    rigs_inputs:[5]u64,
+    rigs_seen:[2]core.Seen, // the meshes and the pose sources the rigs were made from
+    rigs_assets:u64,
+    hierarchy_seen:[3]core.Seen, // the parents, names and targets the bones of the rigs were bound with
+    hierarchy_shapes:[2]core.Shape, // and the rows of the transforms and the animations
+    hierarchy_stamp:u64, // moves when any of them does
     track_maps:[dynamic]Track_Map,
     scratch:[dynamic]Pose_Scratch, // one a job that poses
     bones_peak:int,                // bindings of the largest state bound: the room of each scratch
@@ -251,7 +255,8 @@ animation_tick :: proc(
     // The editor runs this once a frame with dt 0: a preview advances by the frame.
     tick_dt:=time.dt
     if !time.playing {tick_dt=frame.dt if finite(frame.dt) && frame.dt>0 else 0}
-    stamp:=core.layout(parents)+core.version(parents)+core.layout(names)+core.version(names)+core.layout(targets)+core.version(targets)+core.layout(core.read(transforms))+core.layout(animations)+playback.rigs_stamp+1
+    if core.touched(parents,&playback.hierarchy_seen[0]) | core.touched(names,&playback.hierarchy_seen[1]) | core.touched(targets,&playback.hierarchy_seen[2]) | core.reshaped(transforms,&playback.hierarchy_shapes[0]) | core.reshaped(animations,&playback.hierarchy_shapes[1]) {playback.hierarchy_stamp+=1}
+    stamp:=playback.hierarchy_stamp+playback.rigs_stamp+1
     if actions!=nil && !actions_prepare(actions,action_requests,action_assets,animations,playback,app.assets,app.allocator,problems) {return}
     if motion!=nil {if !motion_prepare(motion,motion_requests,animations,playback,motion_assets,app.assets,app.allocator,problems) {return};motion_resolve_targets(motion,playback,skeleton_assets,core.read(transforms),parents,{})}
     distances:=core.take(&requests.distances)
@@ -533,9 +538,12 @@ animation_valid :: proc "contextless" (animation:Animation) -> bool {
 // and is a rig that follows it when they have two.
 @(private)
 rigs_update :: proc(playback:^Playback,meshes:core.Read(erender.Mesh_Renderer),skins:core.Read(Pose_Source),assets:^host.Assets) -> bool {
-    if meshes.table==nil {if len(playback.rigs)>0 {clear(&playback.rigs);clear(&playback.follow_order);playback.rigs_stamp+=1};playback.rigs_inputs={};return true}
-    inputs:=[5]u64{core.layout(meshes),core.version(meshes),core.layout(skins) if skins.table!=nil else 0,core.version(skins) if skins.table!=nil else 0,assets_stamp(assets)}
-    if inputs==playback.rigs_inputs {return true}
+    if meshes.table==nil {if len(playback.rigs)>0 {clear(&playback.rigs);clear(&playback.follow_order);playback.rigs_stamp+=1};playback.rigs_seen,playback.rigs_assets={},0;return true}
+    // Kept only when the rigs were made: without memory they are made again.
+    seen,loaded:=playback.rigs_seen,assets_stamp(assets)
+    moved:=core.touched(meshes,&seen[0])
+    if skins.table!=nil {moved|=core.touched(skins,&seen[1])} else {moved|=seen[1]!={};seen[1]={}}
+    if !moved && loaded==playback.rigs_assets {return true}
     skeleton_of :: proc(meshes:core.Read(erender.Mesh_Renderer),assets:^host.Assets,e:core.Entity) -> base.Asset_Id {
         static,has:=core.get(meshes,e)
         if !has || static.mesh=={} {return {}}
@@ -574,7 +582,7 @@ rigs_update :: proc(playback:^Playback,meshes:core.Read(erender.Mesh_Renderer),s
         delete(playback.rigs);playback.rigs=next;playback.rigs_stamp+=1
         if !follow_order_update(playback) {return false}
     }
-    playback.rigs_inputs=inputs
+    playback.rigs_seen,playback.rigs_assets=seen,loaded
     return true
 }
 

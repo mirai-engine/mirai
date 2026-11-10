@@ -78,7 +78,7 @@ shell_frame :: proc(
 
     // The world runs behind the main menu and stops under the pause and settings pages.
     frozen:=shell.page==.Pause || shell.page==.Settings
-    if value,found:=core.get(core.read(ui_screens),screen);found && value.pause!=frozen {core.get(ui_screens,screen).pause=frozen}
+    if value,found:=core.get(core.read(ui_screens),screen);found && value.pause!=frozen {core.edit(ui_screens,screen).pause=frozen}
     render.set_hidden(hidden,screen,shell.page==.Playing)
     if hud,found:=core.sole(huds);found {render.set_hidden(hidden,hud,shell.page==.Menu)}
 }

@@ -44,7 +44,7 @@ raft_breath :: proc(
 ) {
     if !time.playing || !(time.dt>0) {return}
     for row in 0..<core.count(core.read(games)) {
-        if left:=core.at(core.read(games),row).message;left>0 {core.at(games,row).message=max(left-time.dt,0)}
+        if left:=core.at(core.read(games),row).message;left>0 {core.edit_at(games,row).message=max(left-time.dt,0)}
     }
     for row in 0..<core.count(core.read(divers)) {
         e:=core.entity_at(divers,row)
@@ -58,7 +58,7 @@ raft_breath :: proc(
         } else {next.oxygen=min(next.oxygen+next.refill*time.dt,next.capacity)}
         drowned:=next.oxygen<=0
         if drowned {next.oxygen,next.drowned=next.capacity,next.drowned+1}
-        if next!=core.at(core.read(divers),row) {core.at(divers,row)^=next}
+        if next!=core.at(core.read(divers),row) {core.edit_at(divers,row)^=next}
         if !drowned {continue}
         for &game in core.writable(games) {
             raft,found:=core.get(worlds,game.raft)

@@ -36,7 +36,7 @@ fluid_volumes_follow_their_rows_and_entities :: proc(t:^testing.T) {
     testing.expect(t,fluid_holds({&f.state},found[1].fluid,{10,-2,0}) && !fluid_holds({&f.state},found[1].fluid,{10,-4,0}))
     testing.expect(t,fluid_holds({&f.state},found[0].fluid,{10,-2,0}) && !fluid_holds({&f.state},found[0].fluid,{0,3,0}))
     // The room floods: the floor of its air rises.
-    core.get(&f.transforms,room).position.y=2
+    core.edit(&f.transforms,room).position.y=2
     physics_test_step(&f,0)
     sample,_,_=fluid_at({&f.state},{10,-1.5,0})
     testing.expect(t,abs(sample.height-(-1))<1e-5 && sample.density==1025)

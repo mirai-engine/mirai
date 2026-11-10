@@ -103,7 +103,7 @@ destruct_step :: proc(
 @(private)
 entity_end :: proc(c:^Ctx,e:core.Entity,entry:^Entry) {
     physics.proxy_remove(c.state,e)
-    if st:=core.get(c.states,e);st!=nil {
+    if st:=core.edit(c.states,e);st!=nil {
         if fr.destructible_valid(c.f,st.handle) {
             fr.destructible_destroy(c.f,c.w,st.handle)
             c.cache.stats.destroyed+=1
@@ -257,8 +257,8 @@ reconcile :: proc(c:^Ctx,e:core.Entity,d:Destructible) {
     }
     st.failed,st.handle,st.body=false,handle,fr.destructible_body(f,handle)
     cache.stats.created+=1
-    if local:=core.get(c.transforms,e);local!=nil {
-        st.written_position,st.written_rotation,st.initial=local.position,local.rotation,local^
+    if local,ok:=core.get(c.transforms,e);ok {
+        st.written_position,st.written_rotation,st.initial=local.position,local.rotation,local
         physics.proxy_set(c.state,e,st.body,local.position,local.rotation)
     }
     count:=min(fr.destructible_pieces(f,w,handle,cache.infos),len(cache.infos))
@@ -302,7 +302,7 @@ shortfall_report :: proc(c:^Ctx,e:core.Entity,handle:fr.Destructible_Handle) {
 
 @(private)
 cache_recover :: proc(c:^Ctx,e:core.Entity,d:Destructible,static:render.Mesh_Renderer,scale:[3]f32,entry:^Entry) {
-    st:=core.get(c.states,e)
+    st:=core.edit(c.states,e)
     if st==nil {return}
     if entry.prepared==nil {
         _,interior,generated:=slots_of(c.assets,d,static.mesh)
@@ -343,15 +343,15 @@ follow :: proc(c:^Ctx,e:core.Entity) {
     }
     if has_local && sim.body_valid(w,st.body) {
         if position,rotation,ok:=physics.local_of(c.locals,c.parents,e,sim.body_transform(w,st.body));ok {
-            if local.position!=position || local.rotation!=rotation {if output:=core.get(c.transforms,e);output!=nil {output.position,output.rotation=position,rotation}}
+            if local.position!=position || local.rotation!=rotation {if output:=core.edit(c.transforms,e);output!=nil {output.position,output.rotation=position,rotation}}
             written_position,written_rotation=position,rotation
             physics.proxy_written(c.state,e,position,rotation)
         }
     }
     if written_position!=st.written_position || written_rotation!=st.written_rotation {
-        if output:=core.get(c.states,e);output!=nil {output.written_position,output.written_rotation=written_position,written_rotation}
+        if output:=core.edit(c.states,e);output!=nil {output.written_position,output.written_rotation=written_position,written_rotation}
     }
-    if revision:=fr.destructible_revision(f,st.handle);revision!=st.revision {mirror(c,e,core.get(c.states,e),entry,revision)}
+    if revision:=fr.destructible_revision(f,st.handle);revision!=st.revision {mirror(c,e,core.edit(c.states,e),entry,revision)}
     for &group in entry.groups {
         if !sim.body_valid(w,group.body) {continue}
         row,has_row:=core.get(core.read(c.groups),group.entity)
@@ -363,8 +363,8 @@ follow :: proc(c:^Ctx,e:core.Entity) {
             core.fail("Entity %v is a body of a broken destructible, which owns its Transform: do not write it",group.entity)
         }
         if position,rotation,ok:=physics.local_of(c.locals,c.parents,group.entity,sim.body_transform(w,group.body));ok {
-            if moved.position!=position || moved.rotation!=rotation {if output:=core.get(c.transforms,group.entity);output!=nil {output.position,output.rotation=position,rotation}}
-            if row.written_position!=position || row.written_rotation!=rotation {if output:=core.get(c.groups,group.entity);output!=nil {output.written_position,output.written_rotation=position,rotation}}
+            if moved.position!=position || moved.rotation!=rotation {if output:=core.edit(c.transforms,group.entity);output!=nil {output.position,output.rotation=position,rotation}}
+            if row.written_position!=position || row.written_rotation!=rotation {if output:=core.edit(c.groups,group.entity);output!=nil {output.written_position,output.written_rotation=position,rotation}}
             physics.proxy_written(c.state,group.entity,position,rotation)
         }
     }
@@ -473,7 +473,7 @@ group_sync :: proc(c:^Ctx,owner:core.Entity,entry:^Entry,group:Scratch_Group) {
         if record.mesh!={} {core.add(c.meshes,record.entity,render.Mesh_Renderer{mesh=record.mesh,materials=entry.materials})}
     }
     if !created {
-        if moved:=core.get(c.transforms,record.entity);moved!=nil {physics.proxy_set(c.state,record.entity,group.body,moved.position,moved.rotation)}
+        if moved,ok:=core.get(c.transforms,record.entity);ok {physics.proxy_set(c.state,record.entity,group.body,moved.position,moved.rotation)}
         return
     }
     pose:=core.TRANSFORM_IDENTITY

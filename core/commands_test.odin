@@ -23,7 +23,7 @@ commands_make_an_entity_and_the_function_finishes_what_waits :: proc(t:^testing.
     e:=commands_create(c)
     commands_add(c,e,TRANSFORM_IDENTITY)
     commands_add(c,e,Made{1})
-    testing.expect(t,!has(&w.made,e) && get(&w.made,e)==nil)
+    testing.expect(t,!has(&w.made,e) && !has(&w.made,e))
     waiting:=commands_added(c,e,Made)
     testing.expect(t,waiting!=nil && waiting.value==1)
     waiting.value=2

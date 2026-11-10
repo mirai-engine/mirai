@@ -59,13 +59,11 @@ world :: proc "contextless" () -> Volume {return {shape=.Unbounded}}
 // When a table of volumes changes: an unbounded volume with extents was meant
 // to be a box, and without its shape it rules everywhere.
 @(storage)
-Volume_Check :: struct {seen:u64 `mirai:"transient,hidden"`}
+Volume_Check :: struct {seen:core.Seen `mirai:"transient,hidden"`}
 
 @(step="frame")
 volumes_check :: proc(volumes:core.Read(Volume),check:^Volume_Check,problems:^core.Problems) {
-    seen:=core.version(volumes)+core.layout(volumes)
-    if seen==check.seen {return}
-    check.seen=seen
+    if !core.touched(volumes,&check.seen) {return}
     for row in 0..<core.count(volumes) {
         if v:=core.at(volumes,row);v.shape==.Unbounded && v.extents!={} {
             core.report(problems,core.entity_at(volumes,row),"volume.unbounded_extents","this Volume has extents but its shape is Unbounded, so it rules the whole world: use volume.box or volume.sphere, or leave the extents at zero")
@@ -230,8 +228,8 @@ Place :: struct {
 // The volumes of a value for a library that asks at many points: made again
 // by index_update only when a volume, a value or a place changed.
 Index :: struct {
-    seen:u64,                  // the versions and layouts of the volumes and the values it was made from
-    placed:u64,                // and of the places it compared
+    seen:[2]core.Seen,         // the volumes and the values it was made from
+    placed:core.Seen,          // and the places it compared
     made:bool,
     places:[dynamic]Place,     // one per row of the value
     unbounded:Hits,            // the unbounded ones, weight 1, in the order they apply
@@ -257,23 +255,22 @@ place_of :: proc(volumes:core.Read(Volume),worlds:core.Read(core.World_Transform
 // combined from it is to be combined again. ok is false without memory: then
 // no volume holds any point until an update finds it.
 index_update :: proc(ix:^Index,volumes:core.Read(Volume),worlds:core.Read(core.World_Transform),table:core.Read($T)) -> (changed,ok:bool) {
-    seen:=core.version(volumes)+core.layout(volumes)
+    moved:=core.touched(volumes,&ix.seen[0])
     count:=0
     if table.table!=nil {
-        seen+=core.version(table)+core.layout(table)
+        moved|=core.touched(table,&ix.seen[1])
         count=core.count(table)
     }
-    placed_seen:=core.version(worlds)+core.layout(worlds)
-    if ix.made && seen==ix.seen {
-        if placed_seen==ix.placed {return false,true}
-        ix.placed=placed_seen
+    placed:=core.touched(worlds,&ix.placed)
+    if ix.made && !moved {
+        if !placed {return false,true}
         same:=true
         for p,row in ix.places {
             if place_of(volumes,worlds,core.entity_at(table,row))!=p {same=false;break}
         }
         if same {return false,true}
     }
-    ix.seen,ix.placed,ix.made=seen,placed_seen,false
+    ix.made=false
     clear(&ix.places)
     ix.unbounded={}
     spatial.dynamic_tree_clear(&ix.tree)

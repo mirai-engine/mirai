@@ -86,7 +86,7 @@ correction_body :: proc(w:^Net_Test_World,id:base.Entity_Id,position:[3]f32) -> 
 correction_world :: proc(w:^Net_Test_World,info:^core.World_Info) -> (bodies:[CORRECTION_BODIES]core.Entity) {
     net_test_init(w,info)
     w.settings.bodies,w.settings.shapes,w.settings.contacts=32,32,256
-    core.at(&w.gravities,0).acceleration=9.81
+    core.edit_at(&w.gravities,0).acceleration=9.81
     ground:=core.create(&w.entities)
     core.add(&w.transforms,ground,core.Transform{position={0,-0.5,0},rotation=1,scale={1,1,1}})
     core.add(&w.rigids,ground,phys.RIGID_BODY_STATIC)
@@ -183,7 +183,7 @@ correction_run :: proc(t:^testing.T,settings:Net_Settings,link:Correction_Link,s
         result.frame_resimulated=max(result.frame_resimulated,int(sessions[1].stats.resimulated-before))
         core.value_free(&server_events,type_info_of(Net_Events))
         core.value_free(&client_events,type_info_of(Net_Events))
-        core.get(&worlds[0].values,bodies[0][CORRECTION_BODIES-1]).force=correction_force(tick)
+        core.edit(&worlds[0].values,bodies[0][CORRECTION_BODIES-1]).force=correction_force(tick)
         client_tick:=tick+lead
         worlds[1].input.keys_down=correction_keys(client_tick)
         for &world,index in worlds {

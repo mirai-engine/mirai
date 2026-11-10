@@ -45,7 +45,7 @@ environment_triggers :: proc(
             inside=false
         }
         if inside==trigger.inside {continue}
-        core.get(triggers,e).inside=inside
+        core.edit(triggers,e).inside=inside
         if inside {render.activate(requests,trigger.sky,trigger.sun,trigger.seconds)}
     }
 }

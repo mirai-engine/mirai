@@ -138,7 +138,7 @@ each_world_keeps_its_voices_and_freeing_one_stops_only_its_own :: proc(t:^testin
     testing.expect(t,core.entity_map_get(&shown.voices.entries,e).voice==voice && mixer.voice_valid(m,voice))
 
     // Another bus is another voice.
-    core.get(&shown.sources,e).bus=BUS_MUSIC
+    core.edit(&shown.sources,e).bus=BUS_MUSIC
     world_run(&shown,&listener,&f.app)
     moved:=core.entity_map_get(&shown.voices.entries,e)
     testing.expect(t,moved!=nil && moved.voice!=voice && moved.bus==BUS_MUSIC && mixer.bus_count(m)>int(BUS_MUSIC))
@@ -250,7 +250,7 @@ without_a_listener_the_view_hears_and_moving_gives_it_a_velocity :: proc(t:^test
     testing.expect(t,listener.velocity==[3]f32{},"a view that jumped does not move")
 
     // A source that moves tells its velocity, and stops telling it once it rests.
-    core.get(&w.worlds,e).position={0,0,-9}
+    core.edit(&w.worlds,e).position={0,0,-9}
     world_run(&w,&listener,&f.app,0.5)
     entry:=core.entity_map_get(&w.voices.entries,e)
     testing.expect(t,entry!=nil && entry.moving && entry.position==[3]f32{0,0,-9})
@@ -292,24 +292,24 @@ a_source_behind_a_wall_goes_down_and_duller_and_comes_back_over_its_fade :: proc
     core.test_world_settle(&w.data)
     world_run(&w,&listener,&f.app,0.1)
     entry:=core.entity_map_get(&w.voices.entries,e)
-    testing.expect(t,entry!=nil && core.get(&w.states,e).occlusion==1,"a voice that starts hidden is hidden at once")
+    testing.expect(t,entry!=nil && core.at(&w.states,core.row_of(&w.states,e)).occlusion==1,"a voice that starts hidden is hidden at once")
     testing.expect(t,abs(entry.volume-0.25)<1e-5 && abs(entry.lowpass-500)<0.5)
 
     wall=false
     world_run(&w,&listener,&f.app,0.1)
-    amount:=core.get(&w.states,e).occlusion
+    amount:=core.at(&w.states,core.row_of(&w.states,e)).occlusion
     testing.expect(t,abs(amount-0.8)<1e-4,"it comes back a fifth of the way in a tenth of its fade")
     entry=core.entity_map_get(&w.voices.entries,e)
     testing.expect(t,entry.volume>0.25 && entry.volume<1 && entry.lowpass>500)
     for _ in 0..<5 {world_run(&w,&listener,&f.app,0.1)}
     entry=core.entity_map_get(&w.voices.entries,e)
-    testing.expect(t,core.get(&w.states,e).occlusion==0 && entry.volume==1 && entry.lowpass==0,"in sight it plays as it is")
+    testing.expect(t,core.at(&w.states,core.row_of(&w.states,e)).occlusion==0 && entry.volume==1 && entry.lowpass==0,"in sight it plays as it is")
 
     // Near the listener nothing hides it: that is its own body.
     wall=true
-    core.get(&w.worlds,e).position={0,0,-0.3}
+    core.edit(&w.worlds,e).position={0,0,-0.3}
     world_run(&w,&listener,&f.app,0.1)
-    testing.expect_value(t,core.get(&w.states,e).occlusion,f32(0))
+    testing.expect_value(t,core.at(&w.states,core.row_of(&w.states,e)).occlusion,f32(0))
 }
 
 // The level reverberates as its unbounded Audio_Reverb; a hall replaces it
@@ -520,7 +520,7 @@ a_voice_is_given_its_source_by_what_its_set_drew :: proc(t:^testing.T) {
     volume,pitch:=voice_entry_given(entry^)
     testing.expect(t,abs(volume-0.8*entry.pick[0])<1e-5 && abs(pitch-2*entry.pick[1])<1e-5)
     testing.expect(t,entry.pick[0]>=0.5 && entry.pick[0]<=0.75 && entry.pick[1]>=0.9 && entry.pick[1]<=1.2)
-    changed:=core.get(&w.sources,e)
+    changed:=core.edit(&w.sources,e)
     changed.pitch,changed.volume=0.5,0.4
     world_run(&w,&listener,&f.app)
     entry=core.entity_map_get(&w.voices.entries,e)

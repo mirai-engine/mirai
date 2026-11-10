@@ -49,7 +49,7 @@ sequence_capture_converts_parent_space_and_is_one_undoable_api_transaction :: pr
     testing.expect(t,w.sequences.values[0].frames[1].pose==mm.TRANSFORM_IDENTITY)
     testing.expect(t,history.redo(&edits,world,&selection))
     testing.expect(t,w.sequences.values[0].frames[1].pose.position.x==6)
-    core.get(&w.sequences,owner).relative=true
+    core.edit(&w.sequences,owner).relative=true
     history.edits_commit(&edits,world,&selection)
     previous:=w.sequences.values[0]
     sequence_capture(&session,&call)

@@ -40,7 +40,7 @@ gallery_geometry_actions_restart_once_per_trigger_alternating_forward_and_revers
     core.add(&stations,station,Physics_Gallery{station=17,target=recorded})
     core.table_settle(&views,&entities);core.table_settle(&stations,&entities)
     for activation in 1..=3 {
-        core.get(&stations,station).trigger=u32(activation)
+        core.edit(&stations,station).trigger=u32(activation)
         for repeat in 0..<2 {physics_gallery_actions(&views,&stations,{actions=core.ref(&actions)},&requests,&bodies,&field_configs,&playback,&ragdolls,{playing=true,dt=.5},destruct.Destruct_View{core.ref(&physics),core.ref(&fractures),core.read(&states),core.read(&groups)})}
         testing.expect_value(t,len(playback.queue.items),1)
         for command in core.take(&playback.queue) {
@@ -93,7 +93,7 @@ gallery_internal_strain_holds_then_releases_a_suspended_collection_without_launc
     core.add(&states,target,destruct.Destructible_State{handle=h,body=root})
     core.table_settle(&views,&entities);core.table_settle(&stations,&entities);core.table_settle(&states,&entities)
     for activation in 1..=2 {
-        core.get(&stations,station).trigger=u32(activation)
+        core.edit(&stations,station).trigger=u32(activation)
         physics_gallery_actions(&views,&stations,{actions=core.ref(&actions)},&requests,&bodies,&field_configs,&caches,&ragdolls,{playing=true,dt=1.0/60},destruct.Destruct_View{core.ref(&physics),core.ref(&fractures),core.read(&states),core.read(&groups)})
         command:=requests.queue.items[activation-1]
         testing.expect_value(t,command.vector,mm.Vec3{})
@@ -138,7 +138,7 @@ gallery_keeps_initial_trigger_until_ready_and_slices_through_a_live_piece_center
     core.add(&stations,station,Physics_Gallery{station=2,target=target,trigger=1,origin={3,1,5}})
     core.table_settle(&views,&entities);core.table_settle(&stations,&entities);core.entities_settle(&entities)
     physics_gallery_actions(&views,&stations,{actions=core.ref(&actions)},&requests,&bodies,&field_configs,&caches,&ragdolls,{playing=true,dt=1.0/60},destruct.Destruct_View{core.ref(&physics),core.ref(&fractures),core.read(&states),core.read(&groups)})
-    testing.expect_value(t,core.get(&stations,station).activations,u32(0));testing.expect_value(t,len(requests.queue.items),0)
+    testing.expect_value(t,core.at(&stations,core.row_of(&stations,station)).activations,u32(0));testing.expect_value(t,len(requests.queue.items),0)
     settings:=phys.Physics_Settings{bodies=8,shapes=32,contacts=32,joints=1,hulls=32}
     fd:=fr.desc_default();fd.bodies,fd.destructibles,fd.pieces,fd.connections=int(settings.bodies),1,32,64
     testing.expect(t,gallery_physics_make(&physics,settings))
@@ -151,7 +151,7 @@ gallery_keeps_initial_trigger_until_ready_and_slices_through_a_live_piece_center
     body:=fr.destructible_body(f,h)
     core.add(&states,target,destruct.Destructible_State{handle=h,body=body});core.table_settle(&states,&entities)
     physics_gallery_actions(&views,&stations,{actions=core.ref(&actions)},&requests,&bodies,&field_configs,&caches,&ragdolls,{playing=true,dt=1.0/60},destruct.Destruct_View{core.ref(&physics),core.ref(&fractures),core.read(&states),core.read(&groups)})
-    testing.expect_value(t,core.get(&stations,station).activations,u32(1));testing.expect_value(t,len(requests.queue.items),1)
+    testing.expect_value(t,core.at(&stations,core.row_of(&stations,station)).activations,u32(1));testing.expect_value(t,len(requests.queue.items),1)
     command:=requests.queue.items[0];testing.expect_value(t,command.kind,destruct.Fracture_Kind.Slice)
     _,cut:=fr.destructible_slice(f,&physics.world,h,command.region.point,command.vector)
     testing.expect(t,cut);testing.expect(t,fr.destructible_revision(f,h)>0)
@@ -178,7 +178,7 @@ gallery_keeps_initial_trigger_until_ready_and_slices_through_a_live_piece_center
     }
     testing.expect(t,launched>=2)
     testing.expect(t,gallery_body(&physics,live).pose.position!=before.position)
-    core.get(&stations,station).station=10
+    core.edit(&stations,station).station=10
     physics_gallery_events(core.read(&stations),&counts,core.ref(&events),spawner,&bodies)
     testing.expect_value(t,spawned.count,1)
     testing.expect(t,physics_gallery_burst_at(command.region.point).z>command.region.point.z+.7)

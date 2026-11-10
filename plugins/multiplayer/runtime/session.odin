@@ -625,8 +625,8 @@ status_write :: proc(s:^Net_Session,w:core.World_Ref,frame:u64,tick:u64,problems
         frame,tick,s.mode,s.status,s.reason,s.connections,s.joined,s.left,s.lost,s.stats.objects,problems,s.stats.corrected,s.stats.blended,rtt,sent,received,ahead,bias,jitter,s.stats.deferred,s.stats.unverified,s.stats.overtaken,s.stats.history_resets,margin,margin_low,s.stats.views_corrected))
     transforms:=core.world_table_of(w,core.Transform)
     line :: proc(file:^os.File,transforms:^core.Table(core.Transform),object:Object,e:core.Entity,own:bool) {
-        local:=core.get(transforms,e)
-        if local==nil {return}
+        local,ok:=core.get(transforms,e)
+        if !ok {return}
         os.write_string(file,fmt.tprintf("object %d %d %.3f %.3f %.3f\n",u64(object),int(own),local.position.x,local.position.y,local.position.z))
     }
     if s.mode==.Server {

@@ -820,7 +820,7 @@ remote_look :: proc(session:core.Ref(Net_Session),inputs:core.Ref(Remote_Inputs)
         if !has || seat.peer==0 {continue}
         entry:=remote_entry(inputs.ptr,Connection(seat.peer))
         if entry==nil || !entry.has_look {continue}
-        if move:=core.get(moves,core.entity_at(drivables,row));move!=nil {
+        if move:=core.edit(moves,core.entity_at(drivables,row));move!=nil {
             // The yaw comes wrapped: the shortest turn to it keeps the body's whole turns.
             move.look_yaw+=mm.angle_wrap(entry.look[0]-move.look_yaw)
             move.look_pitch=entry.look[1]

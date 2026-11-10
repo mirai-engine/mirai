@@ -585,7 +585,7 @@ section_load_end :: proc(job:^Load_Job,w:core.World_Ref,e:core.Entity) -> (repor
         return e!=core.NONE && index<len(made)?made[index]:core.NONE
     }
     sleepers_join(w,e,&sleepers,made[:],held)
-    if r:=(^Scene_Reference)(core.raw_get(core.raw(references),type_info_of(Scene_Reference),e));r!=nil {r.loaded,r.held=job.root,held}
+    if r:=(^Scene_Reference)(core.raw_edit(core.raw(references),type_info_of(Scene_Reference),e));r!=nil {r.loaded,r.held=job.root,held}
     // Its unbounded volumes rule in its box: they are found where they wait to join.
     if places,joined_places:=core.world_table_of(apart,volume.Volume),core.world_table_of(w,volume.Volume);places!=nil && joined_places!=nil {
         for row in 0..<core.raw_count(core.raw(places)) {

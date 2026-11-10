@@ -184,7 +184,7 @@ cinematic_advance :: proc(
     for command in core.take(&commands.queue) {command_apply(&p,command)}
     for row in 0..<core.count(cinematics) {
         e:=cinematics.entities[row]
-        c:=core.at(cinematics,row)
+        c:=core.edit_at(cinematics,row)
         if !duration_valid(c) {
             if c.status==.Playing || c.auto_play && !c.started {duration_report(problems,e,c)}
             continue
@@ -211,7 +211,7 @@ duration_report :: proc(problems:^core.Problems,e:core.Entity,c:^Cinematic) {
 
 @(private)
 command_apply :: proc(p:^Cine,command:Cinematic_Command) {
-    c:=core.get(p.cinematics,command.timeline)
+    c:=core.edit(p.cinematics,command.timeline)
     if c==nil {
         core.report(p.problems,command.timeline,"cinematics.missing","a %v of this entity was asked for, and it has no Cinematic; send cinematic commands to the entity of a timeline",command.kind)
         return
@@ -434,11 +434,11 @@ viewer_update :: proc(p:^Cine,es:^core.Entities,e:core.Entity,viewer:Cinematic_V
     ready:=has_timeline && duration_valid(&c) && (c.status==.Playing || c.status==.Paused)
     if ready {position=c.position}
     seat:=viewer.seat!=core.NONE?viewer.seat:input.focused(p.seat_state.ptr,p.seats)
-    row:=core.get(p.placer.transforms,e)
+    row:=core.edit(p.placer.transforms,e)
     current,previous,shot_found:=cinematic_shots_at(p.shots,viewer.timeline,f32(position))
     active:=ready && shot_found && row!=nil && core.alive(es,seat) && core.has(p.cameras,e)
 
-    binding:=core.get(p.views,e)
+    binding:=core.edit(p.views,e)
     if binding!=nil && (!active || binding.timeline!=viewer.timeline || binding.seat!=seat || binding.mask!=viewer.block_mask) {
         view_release(p,e)
         binding=nil

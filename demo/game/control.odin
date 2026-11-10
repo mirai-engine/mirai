@@ -144,7 +144,7 @@ game_follow :: proc(
     for row in 0..<core.count(follows) {
         e:=core.entity_at(follows,row)
         follow:=core.at(follows,row)
-        move:=core.get(moves,e)
+        move:=core.edit(moves,e)
         placed,here:=core.get(worlds,e)
         goal,there:=core.get(worlds,follow.leader)
         if move==nil || !here || !there || inp.seat_of(drivables,e)!=core.NONE || !core.owned(remotes,e) {continue}
@@ -167,11 +167,11 @@ game_barker :: proc(
     for event in events.items {intro_bark ||= event.id==base.name_hash("intro.bark")}
     for row in 0..<core.count(barkers) {
         if intro_bark || inp.pressed(actions,core.entity_at(barkers,row),.Bark) {
-            barker:=core.at(barkers,row)
+            barker:=core.edit_at(barkers,row)
             barker.count+=1
             barker.flash_ticks=18
         } else if barkers.values[row].flash_ticks>0 {
-            core.at(barkers,row).flash_ticks-=1
+            core.edit_at(barkers,row).flash_ticks-=1
         }
     }
 }

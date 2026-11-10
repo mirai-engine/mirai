@@ -226,7 +226,7 @@ edit_commit :: proc(s:^editor.Session,t:^Foliage_Tool,world:core.World_Ref,asset
     editor.revision_push(&t.history,&step,step_destroy)
     edit.stamp=foliage.foliage_stamp(a,edit.id)
     history.edits_begin(s.edits,s.selection,label)
-    for value,row in table.values[:core.count(table)] {if value.source==edit.id {core.at(table,row).revision=next}}
+    for value,row in table.values[:core.count(table)] {if value.source==edit.id {core.edit_at(table,row).revision=next}}
     history.edits_end(s.edits)
     edit.revision=next
     if held:=editor.revision_applied(&t.history,edit.id);held!=nil {held.revision,held.stamp=next,edit.stamp}

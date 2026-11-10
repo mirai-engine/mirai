@@ -125,7 +125,7 @@ gallery_move_inputs :: proc(gallery:core.Read(Animation_Gallery),inputs:^core.Ta
             // While it turns toward its next goal its motor is off: it stands and faces that way.
             if item.kind==.Warp {
                 if warp:=gallery_warp(item,time.dt);warp.turn {
-                    if input:=core.get(inputs,entity);input!=nil {
+                    if input:=core.edit(inputs,entity);input!=nil {
                         // Half a turn in a bit less than the time it has, so that it faces its goal before it strides.
                         desired:=f32(math.PI) if warp.direction>0 else 0
                         input.move,input.buttons={},{}
@@ -138,7 +138,7 @@ gallery_move_inputs :: proc(gallery:core.Read(Animation_Gallery),inputs:^core.Ta
         case: continue
         }
         if owner,driven:=core.get(seats.drivables,entity);driven && owner.seat!=core.NONE {continue}
-        input:=core.get(inputs,entity)
+        input:=core.edit(inputs,entity)
         config,configured:=core.get(walks,entity)
         if input==nil || !configured {continue}
         input.move,input.buttons={},{}
@@ -167,7 +167,7 @@ gallery_direct_clips :: proc(gallery:core.Read(Animation_Gallery),animations:^co
         wanted:="wave" if phase==1 else "walk"
         speed:=f32(-1) if phase==2 else f32(1)
         if base.text_get(value.clip[:])!=wanted || value.speed!=speed {
-            next:=core.get(animations,entity)
+            next:=core.edit(animations,entity)
             base.text_set(next.clip[:],wanted);next.speed=speed
             anim.animation_seek(requests,entity,1.5 if phase==2 else 0)
         }
@@ -194,7 +194,7 @@ gallery_control :: proc(gallery:core.Read(Animation_Gallery),players:core.Read(G
 @(step="fixed",before="animation_sample")
 gallery_animate :: proc(gallery:core.Read(Animation_Gallery),animations:^core.Table(anim.Animation),worlds:core.Read(core.World_Transform),time:core.Time,requests:^anim.Animation_Requests,actions:^anim.Action_Requests,goals:^anim.Modifier_Requests,motion:^anim.Motion_Requests,playback:core.Ref(anim.Playback),motors:^core.Table(Animation_Motor),ui_events:core.Ref(gui.UI_Events),names:core.Read(core.Name),panel:core.Ref(Gallery_UI),morphs:core.Read(Morph_Playground),morph_weights:^core.Table(anim.Morph_Weights)) {
     if morphs.table!=nil && morph_weights!=nil {morph_playground_animate(morphs,animations,morph_weights,time)}
-    for event in ui_events.items {if event.kind==.Clicked && event.name==base.name_hash("toggle") {if value:=core.get(animations,core.entity_named(names,SHOWCASE_LIFT));value!=nil {value.playing=!value.playing}}}
+    for event in ui_events.items {if event.kind==.Clicked && event.name==base.name_hash("toggle") {if value:=core.edit(animations,core.entity_named(names,SHOWCASE_LIFT));value!=nil {value.playing=!value.playing}}}
     commands:=panel.commands[:panel.count]
     gallery_playback_commands(commands,animations,requests,actions,goals)
     gallery_direct_clips(gallery,animations,requests,commands)
@@ -216,10 +216,10 @@ gallery_animate :: proc(gallery:core.Read(Animation_Gallery),animations:^core.Ta
             if !manual && gallery_period(item.age,time.dt,9,4.5) {anim.match_play(requests,entity,"wave",u16(phys.MODE_WALKING))}
         case .Additive,.Graph:
             if manual {continue}
-            if animation:=core.get(animations,entity);animation!=nil {anim.animation_parameter(animation,GALLERY_WAVE,wave)}
+            if animation:=core.edit(animations,entity);animation!=nil {anim.animation_parameter(animation,GALLERY_WAVE,wave)}
             if item.kind==.Graph && gallery_period(item.age,time.dt,8,0) {anim.action_fire(actions,entity,"Greet")}
-        case .Sync: if !manual {if animation:=core.get(animations,entity);animation!=nil {anim.animation_weight(animation,1,.5+.5*math.sin(item.age*.7))}}
-        case .Layered: if !manual {if animation:=core.get(animations,entity);animation!=nil {anim.animation_weight(animation,1,f32(int(item.age/4)%2))}}
+        case .Sync: if !manual {if animation:=core.edit(animations,entity);animation!=nil {anim.animation_weight(animation,1,.5+.5*math.sin(item.age*.7))}}
+        case .Layered: if !manual {if animation:=core.edit(animations,entity);animation!=nil {anim.animation_weight(animation,1,f32(int(item.age/4)%2))}}
         case .Actions:
             if manual {continue}
             if gallery_period(item.age,time.dt,GALLERY_ACTIONS_PERIOD,1) {anim.action_fire(actions,entity,"Greet")}
@@ -227,15 +227,15 @@ gallery_animate :: proc(gallery:core.Read(Animation_Gallery),animations:^core.Ta
         case .Warp:
             // It turns in idle with its motor off, strides by its root motion to the goal and waits
             // there in idle.
-            animation:=core.get(animations,entity)
+            animation:=core.edit(animations,entity)
             if animation==nil {continue}
             warp:=gallery_warp(item,time.dt)
             if warp.turn {
-                if motor:=core.get(motors,entity);motor!=nil && motor.enabled {motor.enabled=false}
+                if motor:=core.edit(motors,entity);motor!=nil && motor.enabled {motor.enabled=false}
                 if base.text_get(animation.clip[:])!="idle" {anim.animation_play(animation,"idle",.2,loop=true)}
             }
             if warp.start {
-                if motor:=core.get(motors,entity);motor!=nil {motor.enabled=true}
+                if motor:=core.edit(motors,entity);motor!=nil {motor.enabled=true}
                 anim.motion_target(motion,entity,GALLERY_REACH,anim.spatial_point(gallery_warp_goal(item,warp)))
                 animation.playing=true
                 anim.animation_play(animation,"stride",.2,loop=false)

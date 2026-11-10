@@ -208,10 +208,10 @@ portal_gun :: proc(
     for passed in passes.queue.items {
         for row in 0..<core.count(guns) {
             if core.entity_at(guns,row)!=passed && guns.values[row].held!=passed {continue}
-            core.at(guns,row).held=core.NONE
+            core.edit_at(guns,row).held=core.NONE
             if core.entity_at(guns,row)!=passed {continue}
             for at in 0..<core.count(mouths) {
-                if mouths.values[at].placed {core.at(mouths,at).placed=false}
+                if mouths.values[at].placed {core.edit_at(mouths,at).placed=false}
             }
         }
     }
@@ -236,11 +236,11 @@ portal_gun :: proc(
             if blue {
                 walking,_:=core.get(characters,player)
                 phys.set_velocity(bodies,held,mm.quat_rotate(carry,aim*THROW_CUBE_SPEED+walking.linear))
-                core.at(guns,row).held=core.NONE
+                core.edit_at(guns,row).held=core.NONE
                 continue
             }
             if dropped {
-                core.at(guns,row).held=core.NONE
+                core.edit_at(guns,row).held=core.NONE
                 continue
             }
             gap:=target-cube.position
@@ -256,12 +256,12 @@ portal_gun :: proc(
             continue
         }
         if grab {
-            if hit,found:=phys.raycast(physics,eye,aim,HOLD_REACH,player);found && core.has(cubes,hit.entity) {core.at(guns,row).held=hit.entity}
+            if hit,found:=phys.raycast(physics,eye,aim,HOLD_REACH,player);found && core.has(cubes,hit.entity) {core.edit_at(guns,row).held=hit.entity}
             continue
         }
         if !blue && !orange {continue}
         color:=blue?Portal_Color.Blue:Portal_Color.Orange
-        core.at(guns,row).shots+=1
+        core.edit_at(guns,row).shots+=1
         hit,found:=portal_ray(physics,openings,worlds,eye,aim,player)
         if !found {continue}
         wall:=hit.collider
@@ -288,10 +288,10 @@ portal_gun :: proc(
         if mine==core.NONE {continue}
         placed,fits:=portal_fit(wall_world.transform,box,hit.point,hit.normal,up,other)
         if !fits {continue}
-        local:=core.get(transforms,mine)
+        local:=core.edit(transforms,mine)
         if local==nil {continue}
         local.position,local.rotation=placed.position,placed.rotation
-        mouth:=core.get(mouths,mine)
+        mouth:=core.edit(mouths,mine)
         mouth.placed,mouth.wall=true,wall
     }
 }
@@ -317,7 +317,7 @@ portal_links :: proc(mouths:core.Read(Portal_Mouth),openings:^core.Table(portals
         exit:=mouth.placed && other_placed?other:core.NONE
         wall:=mouth.placed?mouth.wall:core.NONE
         if portal,has:=core.get(core.read(openings),mouth.opening);has && (portal.exit!=exit || portal.wall!=wall) {
-            written:=core.get(openings,mouth.opening)
+            written:=core.edit(openings,mouth.opening)
             written.exit,written.wall=exit,wall
         }
         ask_hidden(shows,core.entity_at(mouths,row),!mouth.placed)
@@ -342,7 +342,7 @@ portal_chamber :: proc(
         placed,has:=core.get(worlds,e)
         if !has {continue}
         if !cubes.values[row].homed {
-            cube:=core.at(cubes,row)
+            cube:=core.edit_at(cubes,row)
             cube.home,cube.homed=placed.position,true
         } else if placed.position.y<FALL_LIMIT {
             home(cubes,placer,e)
@@ -369,7 +369,7 @@ portal_chamber :: proc(
             count,_:=phys.overlap_box(physics,mm.transform_point(placed.transform,zone.center),zone.size*placed.scale,placed.rotation,found[:],filter)
             for other in found[:min(count,len(found))] {pressed||=core.has(cubes,other) || core.has(guns,other)}
         }
-        if buttons.values[row].pressed!=pressed {core.at(buttons,row).pressed=pressed}
+        if buttons.values[row].pressed!=pressed {core.edit_at(buttons,row).pressed=pressed}
     }
 }
 

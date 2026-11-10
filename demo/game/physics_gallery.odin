@@ -71,7 +71,7 @@ physics_gallery_actions :: proc(
         if held.trigger==held.activations {continue}
         needs_destructible:=held.station>0 && held.station<17 && held.station!=8 && held.station!=12 && held.station!=14
         if needs_destructible && destruct.pieces(view,held.target,nil)==0 {continue}
-        item:=core.at(stations,row)
+        item:=core.edit_at(stations,row)
         item.activations=item.trigger
         point:=physics_gallery_piece_center(view,item.target,item.origin+mm.Vec3{0,.5,0}) if needs_destructible else item.origin
         switch item.station {
@@ -161,7 +161,7 @@ physics_gallery_fade :: proc(stations:core.Read(Physics_Gallery),view:destruct.D
             if !has {tint=render.TINT_DEFAULT}
             if tint.color.a==alpha {continue}
             tint.color.a=alpha
-            if has {core.get(tints,group.entity)^=tint} else {core.add(tints,group.entity,tint)}
+            if has {core.edit(tints,group.entity)^=tint} else {core.add(tints,group.entity,tint)}
         }
     }
 }

@@ -435,7 +435,7 @@ entity_rename :: proc(s:^Session,e:core.Entity,name:string) -> bool {
     opened,edit_ready:=edit_open(s,"Rename")
     if !edit_ready {return false}
     defer edit_close(s,opened)
-    if row:=core.get(names,e);row!=nil {
+    if row:=core.edit(names,e);row!=nil {
         row^=core.name_make(text)
     } else {
         core.add(names,e,core.name_make(text))
@@ -465,7 +465,7 @@ entity_reparent :: proc(s:^Session,e,parent:core.Entity) -> bool {
     if !edit_ready {return false}
     defer edit_close(s,opened)
     if transforms!=nil {
-        if row:=core.get(transforms,e);row!=nil {row^=core.from_math(local)}
+        if row:=core.edit(transforms,e);row!=nil {row^=core.from_math(local)}
     }
     if parent==core.NONE {core.remove(parents,e)} else {core.add(parents,e,core.Parent{parent,order_next(w,parent)})}
     return true
@@ -482,7 +482,7 @@ entity_order_set :: proc(s:^Session,e:core.Entity,order:i32) {
     opened,edit_ready:=edit_open(s,"Order")
     if !edit_ready {return}
     defer edit_close(s,opened)
-    if row:=core.get(parents,e);row!=nil {row.order=order}
+    if row:=core.edit(parents,e);row!=nil {row.order=order}
 }
 
 entity_hidden_set :: proc(s:^Session,e:core.Entity,hidden:bool) {
@@ -506,7 +506,7 @@ transform_set :: proc(s:^Session,e:core.Entity,t:mm.Transform) -> bool {
     opened,edit_ready:=edit_open(s,"Transform")
     if !edit_ready {return false}
     defer edit_close(s,opened)
-    row:=w.data==s.edit_world?core.get(transforms,e):core.free(transforms,e)
+    row:=w.data==s.edit_world?core.edit(transforms,e):core.free(transforms,e)
     if row==nil {return false}
     row^=core.from_math(t)
     return true
@@ -602,7 +602,7 @@ field_write :: proc(s:^Session,t:^core.Table_Info,entities:[]core.Entity,offset:
     written:=false
     for e in entities {
         if t.type==core.Transform && s.mode!=.Edit && core.owner(cast(^core.Table(core.Transform))table,e)!=0 {continue}
-        value:=core.raw_get(table,t.info,e)
+        value:=core.raw_edit(table,t.info,e)
         if value==nil {continue}
         mem.copy(rawptr(uintptr(value)+uintptr(offset)),raw_data(bytes),len(bytes))
         written=true

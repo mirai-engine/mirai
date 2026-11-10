@@ -128,7 +128,7 @@ requests_apply :: proc(
                 case .Override_Clear: override={}
                 }
                 if error==.None {
-                    if row:=core.get(overrides,request.entity);row!=nil {row^=override} else {core.add(overrides,request.entity,override)}
+                    if row:=core.edit(overrides,request.entity);row!=nil {row^=override} else {core.add(overrides,request.entity,override)}
                 }
             case .Parameter_Set,.Parameter_Remove,.Parameter_Clear:
                 given:Particle_Parameters
@@ -139,7 +139,7 @@ requests_apply :: proc(
                 case .Parameter_Clear: given={}
                 }
                 if error==.None {
-                    if row:=core.get(parameters,request.entity);row!=nil {row^=given} else {core.add(parameters,request.entity,given)}
+                    if row:=core.edit(parameters,request.entity);row!=nil {row^=given} else {core.add(parameters,request.entity,given)}
                 }
             }
         }

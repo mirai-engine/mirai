@@ -147,7 +147,7 @@ collision_api_reads_and_edits_presets_masks_and_queries_by_name_in_one_undo_step
     text=string(serial.writer_bytes(&out));testing.expectf(t,strings.contains(text,`"hits":["camera"],"sensors":true`),"%s",text)
     error=execute(state,&out,"physics.collision.set",`{"entity":"000000000000000b","sensor":true}`)
     testing.expect_value(t,error.code,0)
-    testing.expect(t,core.get(&world.colliders,alone).sensor)
+    testing.expect(t,core.at(&world.colliders,core.row_of(&world.colliders,alone)).sensor)
     session.mode=.Play;session.runs[0]={world=&world}
     error=execute(state,&out,"physics.collision.get",`{"entity":"0000000000000007","component":"Collider"}`)
     testing.expect_value(t,error.code,0)

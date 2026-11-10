@@ -100,7 +100,7 @@ new_emitters_start_at_the_current_pose_then_interpolate_motion :: proc(t:^testin
     testing.expect_value(t,len(f.sync.shown.values),1)
     testing.expect_value(t,f.sync.shown.values[0].transform,mm.transform_matrix(current))
     next:=current;next.position.x+=2
-    core.get(&f.worlds,e)^=core.World_Transform{next,current}
+    core.edit(&f.worlds,e)^=core.World_Transform{next,current}
     frame.alpha=.5
     fixture_sync(&f,{0,1},time,frame)
     midpoint:=current;midpoint.position.x+=1

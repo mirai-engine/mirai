@@ -284,7 +284,7 @@ placed_at :: proc(w:^Save_Test_World,id:base.Entity_Id) -> [3]f32 {
 
 @(private="file")
 place :: proc(w:^Save_Test_World,id:base.Entity_Id,position:[3]f32) {
-    core.at(&w.transforms,core.table_row(&w.transforms,core.entity_of(&w.entities,id))).position=position
+    core.edit_at(&w.transforms,core.table_row(&w.transforms,core.entity_of(&w.entities,id))).position=position
 }
 
 @(private="file")
@@ -556,7 +556,7 @@ autosaves_follow_play_scenes_and_levels_but_not_the_start :: proc(t:^testing.T) 
     serve(&f,&s)
     testing.expect_value(t,autosaves_of(&s),0)
 
-    core.at(&w.references,0).held=true
+    core.edit_at(&w.references,0).held=true
     next:=core.create(&w.entities)
     core.add(&w.references,next,scene.Scene_Reference{rule=.Manual,state=.Active,loaded={1,3}})
     core.settle(&f.info,w,nil)

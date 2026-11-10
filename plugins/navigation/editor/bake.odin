@@ -156,7 +156,7 @@ bake_call :: proc(s:^editor.Session,call:^api.Call) {
     if error!=.None {api.call_failf(call,api.SERVER_ERROR,"The meshes cannot be written: %v",error);return}
     if !editor.api_edit_begin(s,call,"Bake navigation") {return}
     if owner!=core.NONE {
-        core.get(table,owner).asset=id
+        core.edit(table,owner).asset=id
     } else if e:=editor.entity_create(s,{preset=.Empty,name="Navigation",parent=section});e!=core.NONE {
         value:=nav.Navigation_Bake{asset=id}
         editor.component_add(s,e,bakes_info,&value)

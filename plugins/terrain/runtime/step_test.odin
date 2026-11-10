@@ -287,7 +287,7 @@ changing_the_source_retires_only_previous_chunks_before_publishing_the_new_shape
     bound,_:=core.get(core.read(&w.terrains),owner)
     mine:=resident_source_find(&resident,bound.source,owner)
     for chunk,index in mine.chunks[:mine.quad.first[1]] {retired[index]=chunk.mesh}
-    core.get(&w.terrains,owner).source=ids[1]
+    core.edit(&w.terrains,owner).source=ids[1]
     terrain_test_update(&w,&resident,&app)
     for e in previous {testing.expect(t,!core.alive(&w.entities,e),"previous chunks retire before the new source publishes")}
     for id in retired {testing.expect(t,!host.assets_mesh_generated(&assets,id),"the unused source releases its immutable geometry")}
@@ -615,7 +615,7 @@ terrain_runtime_reads_unsaved_sources_and_follows_a_discard_without_reloading_ea
     middle:=[3]int{4,0,4}
     source_set(&source,middle,3);source.revision=2
     terrain_test_write(t,&assets,"source.terrain",&source,id)
-    core.get(&w.terrains,owner).revision=2
+    core.edit(&w.terrains,owner).revision=2
     for _ in 0..<4 {terrain_test_update(&w,&resident,&app)}
     testing.expect_value(t,w.data.stats.loads,u64(2))
     testing.expect_value(t,source_value(&w.data.entries[0].source,middle),f32(3))
@@ -637,7 +637,7 @@ terrain_runtime_reads_unsaved_sources_and_follows_a_discard_without_reloading_ea
     if !testing.expect(t,entry!=nil) {return}
     testing.expect_value(t,source_value(&entry.source,middle),f32(0))
     testing.expect_value(t,entry.source.revision,u32(1))
-    testing.expect_value(t,core.get(&w.terrains,owner).revision,u32(2))
+    testing.expect_value(t,core.at(&w.terrains,core.row_of(&w.terrains,owner)).revision,u32(2))
     testing.expect_value(t,w.problems.count,0)
 }
 

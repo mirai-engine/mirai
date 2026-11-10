@@ -635,7 +635,7 @@ a_place_moves_a_character_locked_along_z_to_another_plane_where_it_stays :: proc
     for _ in 0..<60 {physics_test_step(&f)}
     after:=physics_test_pose(&f,e).position
     testing.expectf(t,abs(after.z-3)<1e-3 && after.x>at.x+1.5,"placed at z 3, it is at %v",after)
-    core.get(&f.characters,e).locks={}
+    core.edit(&f.characters,e).locks={}
     for _ in 0..<30 {physics_test_step(&f)}
     free:=physics_test_pose(&f,e).position
     testing.expectf(t,free.z>3.5,"without the lock it walks along Z again: %v",free)

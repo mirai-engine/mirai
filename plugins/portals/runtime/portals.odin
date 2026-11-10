@@ -143,7 +143,7 @@ portals_travel :: proc(
             core.place(placer,e,feet,mm.quat_axis_angle({0,1,0},yaw))
             phys.set_velocity(requests,e,mm.quat_rotate(through.rotation,motion.linear))
         }
-        if move:=core.get(moves,e);move!=nil && core.owned(remotes,e) {look_through(move,through.rotation)}
+        if move:=core.edit(moves,e);move!=nil && core.owned(remotes,e) {look_through(move,through.rotation)}
         core.push(&crossings.queue,Crossing{who=e,portal=portal,turn=through.rotation})
     }
 }

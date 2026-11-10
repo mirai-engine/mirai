@@ -1091,7 +1091,7 @@ prefab_instantiate_in :: proc(s:^Session,prefab_id:base.Asset_Id,placement:Prefa
     for e,row in entities {core.add(members,e,scene.Prefab_Member{root,u64(view.ids[row])})}
     core.add(instances,root,scene.Prefab_Instance{prefab_id,stamp})
     if transforms!=nil {
-        if local:=core.get(transforms,root);local!=nil {
+        if local:=core.edit(transforms,root);local!=nil {
             if placement.rotation!={} {local.rotation=quaternion(x=placement.rotation.x,y=placement.rotation.y,z=placement.rotation.z,w=placement.rotation.w)} else {local.rotation=1}
             local.position=placement.position
             if placement.scale_multiplier!={} {local.scale*=placement.scale_multiplier}

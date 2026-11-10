@@ -17,13 +17,13 @@ edits_prepare_memory_failure_preserves_baselines_redo_and_the_open_gesture :: pr
         w:=core.world_ref(&f.world,&f.info)
         for value in 11..=12 {
             testing.expect(t,edits_begin(&f.edits,&f.selection,"Original"))
-            core.get(&f.world.values,f.entity).value=value
+            core.edit(&f.world.values,f.entity).value=value
             testing.expect(t,edits_commit(&f.edits,w,&f.selection))
         }
         testing.expect(t,undo(&f.edits,w,&f.selection))
         serial,cursor,steps,bytes:=f.edits.serial,f.edits.cursor,len(f.edits.steps),f.edits.bytes
         testing.expect(t,edits_begin(&f.edits,&f.selection,"Candidate"))
-        core.get(&f.world.values,f.entity).value=20
+        core.edit(&f.world.values,f.entity).value=20
         core.remove(&f.world.others,f.entity)
         added:=core.create(&f.world.entities)
         core.add(&f.world.ids,added,{value=2});core.add(&f.world.values,added,{value=30})
@@ -127,12 +127,12 @@ edits_prepared_tokens_reject_changed_tables_pending_writes_and_selection :: proc
     defer test_memory_free(&f)
     w:=core.world_ref(&f.world,&f.info)
     testing.expect(t,edits_begin(&f.edits,&f.selection,"Candidate"))
-    core.get(&f.world.values,f.entity).value=20
+    core.edit(&f.world.values,f.entity).value=20
     for kind in 0..<3 {
         prepared,error:=edits_prepare(&f.edits,w,&f.selection)
         testing.expect_value(t,error,Edit_Error.None)
         switch kind {
-        case 0:core.get(&f.world.values,f.entity).value+=1
+        case 0:core.edit(&f.world.values,f.entity).value+=1
         case 1:core.add(&f.world.others,f.entity,{value=3})
         case 2:selection_clear(&f.selection)
         }

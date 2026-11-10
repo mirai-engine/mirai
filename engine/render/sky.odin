@@ -148,7 +148,7 @@ environment_activate :: proc(
         }
         if core.count(skies)>0 && core.entity_at(skies,0)==r.sky {continue}
         // Only how it arrives is written, in its row, on or off: the rest stays as what drives it wrote it.
-        next:=(^Sky)(core.raw_get(core.raw(skies),type_info_of(Sky),r.sky))
+        next:=(^Sky)(core.raw_edit(core.raw(skies),type_info_of(Sky),r.sky))
         next.arrival,next.arrival_rate=0,0
         if r.seconds>0 && core.count(skies)>0 {
             next.arrival_from=sky_look_now(core.at(core.read(skies),0))
@@ -158,7 +158,7 @@ environment_activate :: proc(
     }
     if core.count(skies)==0 || frame.dt<=0 {return}
     if on:=core.at(core.read(skies),0);on.arrival>0 {
-        sky:=core.get(skies,core.entity_at(skies,0))
+        sky:=core.edit(skies,core.entity_at(skies,0))
         sky.arrival=max(sky.arrival-sky.arrival_rate*frame.dt,0)
     }
 }

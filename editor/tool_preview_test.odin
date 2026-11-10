@@ -35,7 +35,7 @@ tool_previews_confirm_once_or_restore_the_document_and_selection :: proc(t:^test
     core.add(&world.transforms,duplicate,core.Transform{{2,0,0},1,{1,1,1}})
     core.world_settle(w)
     history.selection_set(&selection,{duplicate})
-    core.get(&world.transforms,original).position.x=5
+    core.edit(&world.transforms,original).position.x=5
     history.edits_end(&edits)
     history.edits_flush(&edits,w,&selection)
     testing.expect(t,!history.edits_commit(&edits,w,&selection))
@@ -66,19 +66,19 @@ tool_previews_confirm_once_or_restore_the_document_and_selection :: proc(t:^test
     testing.expect_value(t,history.selection_active(&selection),duplicate)
 
     testing.expect(t,tool_preview_begin(&s,"test","Move"))
-    core.get(&world.transforms,duplicate).position.x=8
+    core.edit(&world.transforms,duplicate).position.x=8
     testing.expect(t,action_run(&s,.Undo))
     testing.expect_value(t,entity_local(w,duplicate).position.x,f32(3))
     testing.expect_value(t,edits.cursor,1)
     testing.expect(t,!tool_preview_active(&s,"test"))
 
     testing.expect(t,tool_preview_begin(&s,"test","Move"))
-    core.get(&world.transforms,duplicate).position.x=9
+    core.edit(&world.transforms,duplicate).position.x=9
     tool_set(&s,"other",true)
     testing.expect(t,!tool_preview_active(&s,"test"))
     testing.expect_value(t,entity_local(w,duplicate).position.x,f32(3))
     testing.expect(t,tool_preview_begin(&s,"other","Move"))
-    core.get(&world.transforms,duplicate).position.x=10
+    core.edit(&world.transforms,duplicate).position.x=10
     call:api.Call
     testing.expect(t,api_guard(&s,&call))
     testing.expect(t,!tool_preview_active(&s,"other"))
@@ -86,7 +86,7 @@ tool_previews_confirm_once_or_restore_the_document_and_selection :: proc(t:^test
     testing.expect_value(t,edits.cursor,1)
 
     testing.expect(t,tool_preview_begin(&s,"other","Move"))
-    core.get(&world.transforms,duplicate).position.x=11
+    core.edit(&world.transforms,duplicate).position.x=11
     testing.expect_value(t,document_write(&s,"unused.scene",false),Document_Error.No_Assets)
     testing.expect(t,!tool_preview_active(&s,"other"))
     testing.expect_value(t,entity_local(w,duplicate).position.x,f32(3))

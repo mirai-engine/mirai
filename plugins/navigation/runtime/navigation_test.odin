@@ -371,13 +371,13 @@ the_tiles_of_a_section_that_streams_wait_for_it_to_be_on :: proc(t:^testing.T) {
     nav_test_settled(t,&f)
     built:=f.nav.stats.built+f.nav.stats.emptied
     // It goes off and its wall with it: nothing is built there.
-    core.get(&f.references,section).state=.Loaded
+    core.edit(&f.references,section).state=.Loaded
     core.destroy(&f.entities,wall)
     nav_test_settled(t,&f)
     _,status:=nav_test_path(t,&f,{-5,0,0},{5,0,0})
     testing.expect_value(t,status,ai.Search_Status.No_Path)
     testing.expect_value(t,f.nav.stats.built+f.nav.stats.emptied,built)
-    core.get(&f.references,section).state=.Active
+    core.edit(&f.references,section).state=.Active
     nav_test_settled(t,&f)
     _,status=nav_test_path(t,&f,{-5,0,0},{5,0,0})
     testing.expect_value(t,status,ai.Search_Status.Found)
@@ -699,8 +699,8 @@ agents_test_step :: proc(f:^Nav_Test) {
     nav_test_settle(f)
     for row in 0..<core.count(&f.transforms) {
         e:=core.entity_at(&f.transforms,row)
-        t:=mm.Transform(core.at(&f.transforms,row)^)
-        if w:=core.get(&f.worlds,e);w!=nil {w.transform=t} else {core.add(&f.worlds,e,core.World_Transform{transform=t})}
+        t:=mm.Transform(core.at(&f.transforms,row))
+        if w:=core.edit(&f.worlds,e);w!=nil {w.transform=t} else {core.add(&f.worlds,e,core.World_Transform{transform=t})}
     }
     nav_test_settle(f)
     navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.unloaded),core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
@@ -906,7 +906,7 @@ nav_test_sections :: proc(f:^Nav_Test,count:int) -> (s:Row_Sections) {
 // The section goes away, and its floor with it.
 @(private)
 nav_test_drop :: proc(f:^Nav_Test,s:^Row_Sections,i:int) {
-    reference:=core.get(&f.references,s.references[i])
+    reference:=core.edit(&f.references,s.references[i])
     reference.loaded,reference.state={},.Unloaded
     core.destroy(&f.entities,s.floors[i])
 }
@@ -1009,7 +1009,7 @@ the_tiles_of_a_section_go_with_it_and_come_back_with_its_bake :: proc(t:^testing
     // Its part of the coarse graph stays.
     testing.expect(t,ai.nav_coarse_region(&f.nav.classes[0].coarse,s.keys[1])!=nil)
     // Back, with its floor; its Navigation_Bake reads the bake.
-    reference:=core.get(&f.references,s.references[1])
+    reference:=core.edit(&f.references,s.references[1])
     reference.loaded,reference.state={1,2},.Active
     s.floors[1]=nav_test_box(&f,{0,-0.5,0},{10,0.5,6})
     file:asset.Asset
@@ -1080,7 +1080,7 @@ the_tiles_over_a_section_away_build_from_what_is_here :: proc(t:^testing.T) {
         return false
     }
     testing.expect(t,down(&f.nav.classes[0].coarse,w))
-    reference:=core.get(&f.references,w.lower)
+    reference:=core.edit(&f.references,w.lower)
     reference.loaded,reference.state={},.Unloaded
     core.destroy(&f.entities,w.ground)
     nav_test_settled(t,&f)
@@ -1195,7 +1195,7 @@ an_agent_that_arrives_far_appears_when_its_section_loads :: proc(t:^testing.T) {
     // It stays where it got while its section is away.
     for _ in 0..<60 {agents_test_step(&f)}
     testing.expect(t,core.entity_off(&f.entities,walker))
-    reference:=core.get(&f.references,s.references[1])
+    reference:=core.edit(&f.references,s.references[1])
     reference.loaded,reference.state={1,2},.Active
     s.floors[1]=nav_test_box(&f,{0,-0.5,0},{10,0.5,6})
     told:=false
@@ -1280,7 +1280,7 @@ a_flier_far_takes_the_way_through_the_air_of_the_section_away :: proc(t:^testing
     coarse:=&f.nav.classes[1].coarse
     middle:=ai.nav_coarse_region(coarse,301)
     testing.expect(t,middle!=nil && middle.portal_count>=2)
-    reference:=core.get(&f.references,references[1])
+    reference:=core.edit(&f.references,references[1])
     reference.loaded,reference.state={},.Unloaded
     core.destroy(&f.entities,floors[1])
     core.destroy(&f.entities,wall)
@@ -1457,9 +1457,9 @@ a_seated_agent_walks_where_it_is_asked_while_its_seat_drives_it :: proc(t:^testi
         core.add(&f.drivables,e,input.Drivable{seat=core.create(&f.entities)})
     }
     nav_test_settle(&f)
-    core.get(&f.agents,walkers[0]).seated=true
+    core.edit(&f.agents,walkers[0]).seated=true
     held:=input.action_bit(2) // a button the seat holds
-    core.get(&f.inputs,walkers[0]).buttons=held
+    core.edit(&f.inputs,walkers[0]).buttons=held
     for e,i in walkers {nav_move_to(&f.nav_requests,e,{6,0,f32(i)*4-2})}
     for _ in 0..<30 {agents_test_step(&f)}
     seated,_:=core.get(core.read(&f.inputs),walkers[0])
@@ -1490,7 +1490,7 @@ walkers_that_crowd_at_the_start_of_a_link_keep_to_the_mesh :: proc(t:^testing.T)
     ladder_user :: proc(f:^Nav_Test,feet:[3]f32) -> core.Entity {
         e:=agents_test_walker(f,feet)
         nav_test_settle(f)
-        core.get(&f.agents,e).abilities=Nav_Abilities(1<<u32(ABILITY_LADDER))
+        core.edit(&f.agents,e).abilities=Nav_Abilities(1<<u32(ABILITY_LADDER))
         return e
     }
     nav_test_box(&f,{0,-0.5,0},{20,0.5,15})

@@ -225,7 +225,7 @@ history_copies_of_what_changed_equal_whole_copies_through_writes_layout_changes_
     c:=&session.client
     for tick in 1..=48 {
         switch tick {
-        case 9:  core.get(&world.values,first).force=-3
+        case 9:  core.edit(&world.values,first).force=-3
         case 14: core.add(&world.move_inputs,second,inp.Move_Input{})
         case 20: core.remove(&world.values,second)
         case 27: core.add(&world.values,second,Net_Test_Value{force=2})

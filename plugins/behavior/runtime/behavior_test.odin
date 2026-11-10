@@ -245,14 +245,14 @@ move_actions_ask_navigation_and_read_where_the_agent_got :: proc(t:^testing.T) {
     testing.expect(t,len(world.moves.queue.items)==1 && world.moves.queue.items[0].kind==.Move_To && world.moves.queue.items[0].point=={1,2,3})
     a.phase=.Update
     testing.expect_value(t,move_act(&w,&a,{}),ai.Status.Running)
-    core.get(&world.paths,e).state=.Arrived
+    core.edit(&world.paths,e).state=.Arrived
     testing.expect_value(t,move_act(&w,&a,{}),ai.Status.Success)
-    core.get(&world.paths,e).partial=true
+    core.edit(&world.paths,e).partial=true
     testing.expect_value(t,path_status(&w),ai.Status.Failure)
     a.phase,a.cause=.Exit,.Aborted
     move_act(&w,&a,{})
     testing.expect(t,world.moves.queue.items[len(world.moves.queue.items)-1].kind==.Stop)
-    core.get(&world.paths,e).state=.Failed
+    core.edit(&world.paths,e).state=.Failed
     a.phase=.Update
     testing.expect_value(t,follow_act(&w,&a,e,1),ai.Status.Failure)
 }
@@ -290,21 +290,21 @@ perceivers_see_the_teams_they_notice_in_their_cone_hear_noises_and_forget :: pro
     core.add(&f.perceivables,behind,Perceivable{team=1,point=1})
     sight_tick(&f,0) // gives the guard its Perception
     sight_tick(&f,0.1)
-    mine:=core.get(&f.perceptions,guard)
+    mine:=core.edit(&f.perceptions,guard)
     testing.expect(t,mine!=nil && mine.memory.count==1 && ai.memory_find(&mine.memory,u64(ahead))!=nil)
     testing.expect(t,len(f.events.queue.items)==1 && f.events.queue.items[0].kind==.Noticed && f.events.queue.items[0].subject==ahead)
     // A noise behind it is heard; out of hearing, not.
     noise(&f.noises,{0,0,4},10,behind)
     noise(&f.noises,{0,0,40},10,friend)
     sight_tick(&f,0.2)
-    mine=core.get(&f.perceptions,guard)
+    mine=core.edit(&f.perceptions,guard)
     heard:=ai.memory_find(&mine.memory,u64(behind))
     testing.expect(t,heard!=nil && heard.senses=={.Hearing} && ai.memory_find(&mine.memory,u64(friend))==nil)
     // What it no longer perceives is forgotten after `forget` seconds.
-    core.get(&f.worlds,ahead).position={0,0,-50}
+    core.edit(&f.worlds,ahead).position={0,0,-50}
     sight_tick(&f,1.2)
     sight_tick(&f,2.5)
-    mine=core.get(&f.perceptions,guard)
+    mine=core.edit(&f.perceptions,guard)
     testing.expect(t,ai.memory_find(&mine.memory,u64(behind))==nil)
     forgot:=false
     for event in f.events.queue.items {forgot|=event.kind==.Forgot && event.subject==behind}
@@ -328,13 +328,13 @@ a_remembered_subject_that_is_destroyed_is_forgotten_at_once :: proc(t:^testing.T
     sight_tick(&f,0)
     noise(&f.noises,{3,0,0},10)
     sight_tick(&f,0.1)
-    mine:=core.get(&f.perceptions,guard)
+    mine:=core.edit(&f.perceptions,guard)
     testing.expect(t,mine!=nil && ai.memory_find(&mine.memory,u64(seen))!=nil && ai.memory_find(&mine.memory,0)!=nil)
     core.destroy(&f.entities,seen)
     core.test_world_settle(&f)
     again:=placed(&f,{0,0,-50})
     sight_tick(&f,0.2)
-    mine=core.get(&f.perceptions,guard)
+    mine=core.edit(&f.perceptions,guard)
     testing.expect(t,ai.memory_find(&mine.memory,u64(seen))==nil,"the destroyed subject is forgotten")
     testing.expect(t,ai.memory_find(&mine.memory,u64(again))==nil)
     testing.expect(t,ai.memory_find(&mine.memory,0)!=nil,"the place of a noise without a maker stays")
@@ -359,7 +359,7 @@ sight_shares_its_rays_among_perceivers_in_turns :: proc(t:^testing.T) {
     sight_tick(&f,0)
     for tick in 1..=3 {sight_tick(&f,f64(tick)*0.1)}
     for g in guards {
-        mine:=core.get(&f.perceptions,g)
+        mine:=core.edit(&f.perceptions,g)
         testing.expect(t,mine!=nil && ai.memory_find(&mine.memory,u64(target))!=nil)
     }
 }
@@ -382,15 +382,15 @@ every_perceiver_gets_its_turn_and_forgets_only_in_it :: proc(t:^testing.T) {
     sight_tick(&f,0)
     for tick in 1..=4 {sight_tick(&f,f64(tick)*0.1)}
     for g in guards {
-        mine:=core.get(&f.perceptions,g)
+        mine:=core.edit(&f.perceptions,g)
         testing.expect(t,mine!=nil && ai.memory_find(&mine.memory,u64(target))!=nil)
     }
     // Long after a subject was perceived, only the one whose turn it is forgets it.
     ghost:=u64(1<<40)
-    for g in guards {ai.memory_perceive(&core.get(&f.perceptions,g).memory,ghost,{},.Sight,1,0)}
+    for g in guards {ai.memory_perceive(&core.edit(&f.perceptions,g).memory,ghost,{},.Sight,1,0)}
     sight_tick(&f,5)
     forgot:=0
-    for g in guards {if ai.memory_find(&core.get(&f.perceptions,g).memory,ghost)==nil {forgot+=1}}
+    for g in guards {if ai.memory_find(&core.edit(&f.perceptions,g).memory,ghost)==nil {forgot+=1}}
     testing.expect_value(t,forgot,1)
 }
 

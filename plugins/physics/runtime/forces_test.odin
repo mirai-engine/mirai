@@ -158,7 +158,7 @@ the_push_force_of_a_character_reaches_the_simulation_without_making_it_again :: 
     testing.expect(t,l!=nil && l.kind==.Character)
     testing.expect_value(t,sim.character_desc(&f.state.world,l.character).push_force,f32(250))
     created:=f.state.stats.characters_created
-    core.get(&f.characters,e).push_force=600
+    core.edit(&f.characters,e).push_force=600
     physics_test_step(&f,0)
     testing.expect_value(t,sim.character_desc(&f.state.world,link_find(&f.state,e).character).push_force,f32(600))
     testing.expect_value(t,f.state.stats.characters_created,created)

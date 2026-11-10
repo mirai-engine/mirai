@@ -21,17 +21,17 @@ ragdoll_gallery_update :: proc(gallery:^core.Table(Ragdoll_Gallery),configs:^cor
         core.report(problems,core.NONE,"demo.ragdoll_requests","out of memory for room for the ragdoll gallery requests; free memory")
     }
     for rig in core.take(&requests.queue) {
-        state:=core.get(gallery,rig);config:=core.get(configs,rig)
+        state:=core.edit(gallery,rig);config:=core.edit(configs,rig)
         if state==nil || config==nil {continue}
         state.auto_cycle=false;state.phase=(state.phase+1)%3;config.mode=modes[state.phase]
     }
     for row in 0..<core.count(core.read(gallery)) {
-        rig:=core.entity_at(core.read(gallery),row);state:=core.at(gallery,row)
+        rig:=core.entity_at(core.read(gallery),row);state:=core.edit_at(gallery,row)
         if !state.auto_cycle || time.dt<=0 || !time.playing {continue}
         state.age+=time.dt
         phase:=u8(int(state.age/3)%3)
         if phase==state.phase {continue}
         state.phase=phase
-        if config:=core.get(configs,rig);config!=nil {config.mode=modes[phase]}
+        if config:=core.edit(configs,rig);config!=nil {config.mode=modes[phase]}
     }
 }

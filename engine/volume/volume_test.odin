@@ -111,7 +111,7 @@ an_unbounded_volume_of_a_section_rules_in_its_box :: proc(t:^testing.T) {
     place(&f,9,Volume{shape=.Unbounded,scope=section,scope_extents={10,10,10}})
     testing.expect_value(t,level_at(&f,{100,0,0}),9)
     testing.expect_value(t,level_at(&f,{0,0,0}),1)
-    core.get(&f.volumes,core.entity_at(core.read(&f.volumes),0)).scope_extents={}
+    core.edit(&f.volumes,core.entity_at(core.read(&f.volumes),0)).scope_extents={}
     testing.expect_value(t,level_at(&f,{100,0,0}),1)
 }
 
@@ -131,7 +131,7 @@ the_index_finds_overlapping_volumes_by_priority_as_a_pass_over_them :: proc(t:^t
     place(&f,40,Volume{shape=.Sphere,extents={3,0,0},priority=7},position={20,0,0})
     place(&f,-6,Volume{shape=.Sphere,extents={2,0,0},priority=6,mode=.Add,blend=1},position={21,0,0})
     turned:=place(&f,7,Volume{shape=.Box,extents={10,1,1},priority=1},position={-30,0,0})
-    core.get(&f.worlds,turned).rotation=mm.quat_axis_angle({0,0,1},mm.PI/2)
+    core.edit(&f.worlds,turned).rotation=mm.quat_axis_angle({0,0,1},mm.PI/2)
     changed,ok:=index_update(&ix,core.read(&f.volumes),core.read(&f.worlds),core.read(&f.levels))
     testing.expect(t,changed && ok)
     points:=[?][3]f32{{},{0.5,0,0},{1.5,0,0},{3,0,0},{4.5,0,0},{19,0,0},{21,0,0},{22.5,0,0},{24,0,0},{-30,8,0},{-38,0,0},{100,100,100}}
@@ -168,12 +168,12 @@ the_index_is_made_again_only_when_its_volumes_change :: proc(t:^testing.T) {
     other:=core.create(&f.entities)
     core.add(&f.worlds,other,core.World_Transform{transform={rotation=1,scale=1}})
     core.test_world_settle(&f)
-    core.get(&f.worlds,other).position={3,0,0}
+    core.edit(&f.worlds,other).position={3,0,0}
     testing.expect(t,!update(&f,&ix),"what moves is not one of its volumes")
     zone:=place(&f,10,Volume{shape=.Box,extents={1,1,1},priority=2})
     testing.expect(t,update(&f,&ix),"a volume came")
     testing.expect_value(t,level_indexed(&f,&ix,{}),f32(10))
-    core.get(&f.worlds,zone).position={5,0,0}
+    core.edit(&f.worlds,zone).position={5,0,0}
     testing.expect(t,update(&f,&ix),"a volume moved")
     testing.expect_value(t,level_indexed(&f,&ix,{}),f32(6))
     testing.expect_value(t,level_indexed(&f,&ix,{5,0,0}),f32(10))

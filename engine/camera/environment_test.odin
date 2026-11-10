@@ -21,7 +21,7 @@ a_trigger_turns_its_sky_on_once_the_body_is_well_inside :: proc(t:^testing.T) {
     core.add(&w.worlds,body,core.World_Transform{transform={position={1.9,0,0},rotation=1,scale=1}})
     core.test_world_settle(&w)
     step :: proc(w:^Test_Cameras,x:f32) {
-        core.get(&w.worlds,core.entity_at(core.read(&w.worlds),1)).position.x=x
+        core.edit(&w.worlds,core.entity_at(core.read(&w.worlds),1)).position.x=x
         environment_triggers(&w.triggers,core.read(&w.worlds),core.ref(&w.seat_state),core.read(&w.seats),core.read(&w.drivables),&w.environment)
         core.test_world_settle(w)
     }

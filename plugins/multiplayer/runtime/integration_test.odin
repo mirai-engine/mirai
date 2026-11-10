@@ -134,7 +134,7 @@ net_test_feed :: proc(w:^Net_Test_World) {
     for row in 0..<core.count(&w.seats) {
         if !inp.seat_local(w.seats.values[row]) {continue}
         device:=w.input
-        inp.seat_feed(core.at(&w.seats,row),&device,&w.bindings,false)
+        inp.seat_feed(core.edit_at(&w.seats,row),&device,&w.bindings,false)
     }
 }
 
@@ -477,14 +477,14 @@ server_publishes_only_changed_rows_at_the_objects_frequency :: proc(t:^testing.T
         core.settle(&info,&world,nil)
     }
     before:=s.stats.fragments_published
-    core.get(&world.values,first).force=9
+    core.edit(&world.values,first).force=9
     server_publish(&s,core.world_ref(&world,&info),&outbox,4)
     testing.expect_value(t,s.stats.fragments_published-before,u64(1))
     // Ten times a second at 60 ticks: on its turn, once every six ticks, whatever changed between turns.
-    core.get(&world.objects,first).update_hz=10
+    core.edit(&world.objects,first).update_hz=10
     before=s.stats.fragments_published
     for tick in 5..<17 {
-        core.get(&world.values,first).force=f32(tick)
+        core.edit(&world.values,first).force=f32(tick)
         server_publish(&s,core.world_ref(&world,&info),&outbox,u32(tick))
     }
     testing.expect_value(t,s.stats.fragments_published-before,u64(2))
@@ -514,7 +514,7 @@ net_test_physical_objects :: proc(w:^Net_Test_World,info:^core.World_Info,entiti
     core.add(&w.joint_states,entities[0],phys.Joint_State{})
     core.disable(&w.joints,entities[0])
     core.settle(info,w,nil)
-    core.get(&w.values,entities[0]).target=entities[1]
+    core.edit(&w.values,entities[0]).target=entities[1]
 }
 
 @(private)
@@ -534,8 +534,8 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
         shares[index].info=&info
         apps[index]={info=&info,allocator=context.allocator,tick_dt=1.0/60,shared=&shares[index]}
         net_test_physics(&world,&shares[index],&apps[index])
-        core.get(&world.values,entities[index][0]).force=0
-        core.get(&world.values,entities[index][1]).force=0
+        core.edit(&world.values,entities[index][0]).force=0
+        core.edit(&world.values,entities[index][1]).force=0
     }
     net_test_player(&worlds[1],&info)
     defer for &world in worlds {core.world_destroy(&info,.World,&world)}
@@ -604,15 +604,15 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
         core.value_free(&server_events,type_info_of(Net_Events))
         core.value_free(&client_events,type_info_of(Net_Events))
         if tick==60 {core.enable(&worlds[0].joints,entities[0][0])}
-        if tick==90 {core.get(&worlds[0].values,entities[0][0]).force=400}
+        if tick==90 {core.edit(&worlds[0].values,entities[0][0]).force=400}
         if tick==140 {
-            core.get(&worlds[0].values,entities[0][0]).force=0
+            core.edit(&worlds[0].values,entities[0][0]).force=0
             joint:=phys.joint_prismatic(entities[0][1])
             joint.motor,joint.motor_speed,joint.max_motor=true,1,100
             core.add(&worlds[0].joints,entities[0][0],joint)
             core.add(&worlds[0].joint_states,entities[0][0],phys.Joint_State{})
         }
-        if tick==200 {core.get(&worlds[0].joints,entities[0][0]).motor_speed=-1}
+        if tick==200 {core.edit(&worlds[0].joints,entities[0][0]).motor_speed=-1}
         if tick==260 {core.disable(&worlds[0].joints,entities[0][0])}
         worlds[1].input.gamepads[0]={connected=true,down={.South},axes={.Left_X=0.75,.Left_Y=0,.Right_X=0,.Right_Y=0,.Left_Trigger=0,.Right_Trigger=0}}
         for &world,index in worlds {
@@ -818,7 +818,7 @@ object_scope_controls_relevance_radius_and_follows_the_replicated_ancestor :: pr
         if tick==20 {core.add(&world.objects,parent,net_test_replicate(audience=.Custom))}
         if tick==40 {testing.expect(t,relevance_set(&sessions[0],parent,connected,true))}
         if tick==70 {testing.expect(t,relevance_set(&sessions[0],parent,connected,false))}
-        if tick==100 {testing.expect(t,relevance_set(&sessions[0],parent,connected,true));core.get(&world.objects,large).radius=10}
+        if tick==100 {testing.expect(t,relevance_set(&sessions[0],parent,connected,true));core.edit(&world.objects,large).radius=10}
         if tick==120 {core.destroy(&world.entities,parent)}
         if tick==121 {
             replacement=net_test_body(world,&info,4,{100,0,0})

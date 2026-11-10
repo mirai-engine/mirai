@@ -91,7 +91,7 @@ modifier_control_apply :: proc(runtime:^Modifier_Runtime,state:^Modifier_Control
         if row<0 || row>=len(table.values) {return}
         value:=&table.values[row]
         if value.weight==weight && value.enabled==enabled {return}
-        out:=core.at(table,row)
+        out:=core.edit_at(table,row)
         out.weight,out.enabled=weight,enabled
     }
     switch state.kind {

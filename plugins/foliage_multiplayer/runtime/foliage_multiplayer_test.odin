@@ -58,7 +58,7 @@ a_server_replicates_the_instances_taken_out_of_each_cell_to_every_connection_as_
     testing.expect(t,REPLICATE.simulation!=.Each,"what is taken out of a cell later travels as a change of its object")
     // Taken out of a cell that has its entity: no other object.
     version:=core.version(core.read(&w.objects))
-    page:=core.get(&w.removed,cells[0])
+    page:=core.edit(&w.removed,cells[0])
     page.instances[page.count]={99}
     page.count+=1
     core.test_world_settle(&w)

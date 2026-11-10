@@ -224,7 +224,7 @@ game_menu :: proc(game:^Game,g:^gui.Gui,state:core.Ref(inp.Seats),seats:core.Rea
         game.left=body
         inp.release(requests,seat)
         // Nobody writes the Move_Input of a body no seat drives: it would keep walking.
-        if move:=core.get(moves,body);move!=nil {move.move,move.buttons={},{}}
+        if move:=core.edit(moves,body);move!=nil {move.move,move.buttons={},{}}
     } else if game.left!=core.NONE {
         inp.drive(requests,seat,game.left)
         game.left=core.NONE
@@ -252,14 +252,14 @@ game_use :: proc(
         feet:=placed.position
         if inp.pressed(actions,e,.Use) {
             for at in 0..<core.count(doors) {
-                door:=core.at(doors,at)
+                door:=core.edit_at(doors,at)
                 other:=core.entity_at(doors,at)
                 if !in_reach(worlds,feet,other,door.reach) {continue}
                 door.open=!door.open
                 log.infof("%s %s",core.name_get(names,other),door.open?"opened":"closed")
             }
             for at in 0..<core.count(swatches) {
-                swatch:=core.at(swatches,at)
+                swatch:=core.edit_at(swatches,at)
                 if in_reach(worlds,feet,core.entity_at(swatches,at),swatch.reach) {swatch.index=i32((swatch_index(swatch^)+1)%len(SWATCH_MATERIALS))}
             }
         }
@@ -267,7 +267,7 @@ game_use :: proc(
             from:=origin+aim*0.8
             turn:=mm.quat_from_euler({input.look_pitch,input.look_yaw,0})
             scene.spawn(spawner,THROWN_CUBE,{from,turn,THROWN_CUBE_SIZE},transient=true)
-            core.at(players,row).thrown+=1
+            core.edit_at(players,row).thrown+=1
         }
     }
 }
@@ -280,7 +280,7 @@ game_doors :: proc(doors:core.Read(Door),buttons:core.Read(Floor_Button),states:
         door:=core.at(doors,row)
         local:=core.free(transforms,e)
         if local==nil {continue}
-        state:=core.get(states,e)
+        state:=core.edit(states,e)
         if state==nil {
             core.add(states,e,Door_State{closed_y=local.position.y,ready=true})
             continue
@@ -302,7 +302,7 @@ game_swatches :: proc(meshes:^core.Table(render.Mesh_Renderer),palette:^Palette,
         palette.ready=true
     }
     for row in 0..<core.count(swatches) {
-        mesh:=core.get(meshes,core.entity_at(swatches,row))
+        mesh:=core.edit(meshes,core.entity_at(swatches,row))
         if mesh==nil {continue}
         wanted:=palette.materials[swatch_index(core.at(swatches,row))]
         if mesh.materials[0]==wanted {continue}
@@ -323,7 +323,7 @@ game_animate :: proc(
         local:=core.free(transforms,e)
         placed,body:=core.get(worlds,e)
         if local==nil && !body {continue}
-        spin:=core.at(spins,row)
+        spin:=core.edit_at(spins,row)
         if !spin.turning {
             spin.angles=mm.quat_to_euler(local!=nil?local.rotation:placed.rotation)*mm.DEG_PER_RAD
             spin.turning=true
@@ -336,12 +336,12 @@ game_animate :: proc(
             continue
         }
         position:=placed.position
-        if bob:=core.get(bobs,e);bob!=nil {position.y=bob_height(bob,position.y,seconds)}
+        if bob:=core.edit(bobs,e);bob!=nil {position.y=bob_height(bob,position.y,seconds)}
         phys.move_kinematic(bodies,e,position,turned)
     }
     for row in 0..<core.count(bobs) {
         e:=core.entity_at(bobs,row)
-        bob:=core.at(bobs,row)
+        bob:=core.edit_at(bobs,row)
         if local:=core.free(transforms,e);local!=nil {
             local.position.y=bob_height(bob,local.position.y,seconds)
         } else if placed,body:=core.get(worlds,e);body && !core.has(spins,e) {
@@ -369,9 +369,9 @@ game_glow :: proc(
     horror_glow(tints,lamps)
     seconds:=f32(time.seconds)
     for row in 0..<core.count(pulses) {
-        tint:=core.get(tints,core.entity_at(pulses,row))
+        tint:=core.edit(tints,core.entity_at(pulses,row))
         if tint==nil {continue}
-        pulse:=core.at(pulses,row)
+        pulse:=core.edit_at(pulses,row)
         if !pulse.ready {
             pulse.base,pulse.ready=tint.emission,true
         }
@@ -381,18 +381,18 @@ game_glow :: proc(
     for row in 0..<core.count(doors) {
         door:=core.at(doors,row)
         glow:=door_opened(doors,buttons,core.entity_at(doors,row))?DOOR_OPEN_GLOW:DOOR_CLOSED_GLOW
-        if tint,has:=core.get(core.read(tints),door.lamp);has && tint.emission!=glow {core.get(tints,door.lamp).emission=glow}
+        if tint,has:=core.get(core.read(tints),door.lamp);has && tint.emission!=glow {core.edit(tints,door.lamp).emission=glow}
     }
     for row in 0..<core.count(buttons) {
         button:=core.at(buttons,row)
         glow:=button.pressed?DOOR_OPEN_GLOW:DOOR_CLOSED_GLOW
-        if tint,has:=core.get(core.read(tints),button.plate);has && tint.emission!=glow {core.get(tints,button.plate).emission=glow}
+        if tint,has:=core.get(core.read(tints),button.plate);has && tint.emission!=glow {core.edit(tints,button.plate).emission=glow}
     }
     for row in 0..<core.count(barkers) {
         flashing:=core.at(barkers,row).flash_ticks>0
         for child:=core.first_child(hierarchy,core.entity_at(barkers,row));child!=core.NONE;child=core.next_sibling(hierarchy,child) {
             if core.name_get(names,child)!="Nose" {continue}
-            if tint:=core.get(tints,child);tint!=nil {tint.emission=flashing?BARK_GLOW:[3]f32{}}
+            if tint:=core.edit(tints,child);tint!=nil {tint.emission=flashing?BARK_GLOW:[3]f32{}}
         }
     }
 }
@@ -408,8 +408,8 @@ game_projectiles :: proc(
     damage:^destruct.Destruct_Requests,time:core.Time,
 ) {
     strike :: proc(projectiles:^core.Table(Projectile),damage:^destruct.Destruct_Requests,cube,struck:core.Entity,point:[3]f32) {
-        projectile:=core.get(projectiles,cube)
-        if projectile==nil || !projectile.launched {return}
+        projectile,ok:=core.get(projectiles,cube)
+        if !ok || !projectile.launched {return}
         destruct.damage(damage,struck,point,PROJECTILE_REACH,projectile.velocity*PROJECTILE_MASS)
     }
     for contact in events.contact_begin.items {
@@ -418,7 +418,7 @@ game_projectiles :: proc(
     }
     for row in 0..<core.count(projectiles) {
         e:=core.entity_at(projectiles,row)
-        projectile:=core.at(projectiles,row)
+        projectile:=core.edit_at(projectiles,row)
         if state,has:=core.get(body_states,e);has {
             if projectile.launched {
                 projectile.velocity=state.linear

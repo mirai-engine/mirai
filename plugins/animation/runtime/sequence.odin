@@ -79,7 +79,7 @@ keyframe_path_evaluate :: proc(animations:^core.Table(Keyframe_Path),progress:^c
             }
         }
         if speed!=value.speed || playing!=value.playing {
-            written:=core.at(animations,row)
+            written:=core.edit_at(animations,row)
             written.speed,written.playing=speed,playing
         }
         state.version=core.stamp(animations,row)
@@ -101,7 +101,7 @@ keyframe_path_evaluate :: proc(animations:^core.Table(Keyframe_Path),progress:^c
         if value.relative {pose=mm.transform_compose(state.origin,pose)}
         result:=core.from_math(pose)
         if result!=local {if written:=core.free(transforms,e);written!=nil {written^=result}}
-        if !exists {core.add(progress,e,state)} else {old,_:=core.get(core.read(progress),e);if state!=old {core.get(progress,e)^=state}}
+        if !exists {core.add(progress,e,state)} else {old,_:=core.get(core.read(progress),e);if state!=old {core.edit(progress,e)^=state}}
     }
     core.queue_clear(&requests.queue)
     for e in progress.entities[:core.count(progress)] {if !core.has(animations,e) {core.remove(progress,e)}}

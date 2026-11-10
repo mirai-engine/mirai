@@ -76,7 +76,7 @@ timing_fixed :: proc(world,shared,editor,application:rawptr) {
     w:=cast(^Net_Test_World)world
     sh:=cast(^Timing_Shared)shared
     sh.ran+=1
-    if local:=core.get(&w.transforms,sh.mover);local!=nil {local.position.x=f32(w.time.tick)*TIMING_STEP}
+    if local:=core.edit(&w.transforms,sh.mover);local!=nil {local.position.x=f32(w.time.tick)*TIMING_STEP}
     if sh.bare {
         app:=cast(^host.App)application
         ref:=core.world_ref(w,sh.info)
@@ -181,7 +181,7 @@ timing_frame_run :: proc(x:^Timing,dt:f32) {
         x.server_tick+=1
         wire.host_update(&s.host,x.server_time)
         server_commands(s,core.world_ref(server,&x.info),nil,wire.host_poll(&s.host),&x.server_events,&server.remote)
-        for row in 0..<core.count(&server.transforms) {core.at(&server.transforms,row).position.x+=x.speed}
+        for row in 0..<core.count(&server.transforms) {core.edit_at(&server.transforms,row).position.x+=x.speed}
         core.settle(&x.info,server,nil)
         server_publish(s,core.world_ref(server,&x.info),&x.outbox,x.server_tick)
     }
@@ -310,7 +310,7 @@ an_interpolated_replica_whose_states_come_further_apart_keeps_moving :: proc(t:^
     if !timing_init(x,t,{latency=0.03,jitter=0.002}) {return}
     random:=u64(31)
     for _ in 0..<240 {timing_frame_run(x,timing_dt(&random,1.0/60,0))}
-    core.get(&x.worlds[0].objects,x.moved).update_hz=10
+    core.edit(&x.worlds[0].objects,x.moved).update_hz=10
     smallest,largest,stalled:=replica_steps(t,x,1.0/60,0,4)
     testing.expectf(t,stalled==0 && smallest>0.7 && largest<1.3,"steps between %v and %v of the steady one, still for %d frames",smallest,largest,stalled)
     c:=&x.sessions[1].client

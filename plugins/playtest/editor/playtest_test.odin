@@ -86,7 +86,7 @@ probe_tick :: proc(data,shared,editor,app:rawptr) {
     w:=cast(^Probe_World)data
     input.input_holds(&w.seats,&w.holds,w.time,nil)
     for row in 0..<core.count(&w.seats) {
-        input.seat_feed(core.at(&w.seats,row),&w.input,&w.bindings,false)
+        input.seat_feed(core.edit_at(&w.seats,row),&w.input,&w.bindings,false)
     }
     w.score.points+=1
     for ping in core.take(&w.pings.queue) {w.score.points+=ping.amount}
@@ -98,8 +98,8 @@ probe_tick :: proc(data,shared,editor,app:rawptr) {
     hero:=w.drivables.entities[0]
     seat:=w.drivables.values[0].seat
     move:=input.seat_action(core.read(&w.seats),seat,PROBE_MOVE)
-    core.get(&w.moves,hero).move={move.vector.x,0,-move.vector.y}
-    place:=core.get(&w.transforms,hero)
+    core.edit(&w.moves,hero).move={move.vector.x,0,-move.vector.y}
+    place:=core.edit(&w.transforms,hero)
     place.position.x=clamp(place.position.x+move.vector.x,-100,6)
     if input.seat_action(core.read(&w.seats),seat,PROBE_JUMP).pressed {place.position.y-=5}
 }
@@ -290,7 +290,7 @@ the_monitors_report_a_violation_with_its_tick_place_and_severity :: proc(t:^test
     testing.expect(t,strings.contains(text,`"repro": true`),text)
     f.app.stats.frame_ms=80
     running:=cast(^Probe_World)editor.run_find(&f.s,0).world
-    transforms:=core.get(&running.transforms,f.foe)
+    transforms:=core.edit(&running.transforms,f.foe)
     transforms.scale.y=f32(math.inf_f32(1))
     error,_=probe_call(f,"play.step",`{"segments":[{"for":2,"keys":["Space"]},{"for":3}]}`)
     testing.expectf(t,error.code==0,"%v",error)

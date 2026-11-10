@@ -63,7 +63,7 @@ state_and_owner_refused_by_a_full_frame_are_sent_on_the_next_interval :: proc(t:
             for e in entities[0] {core.add(&server.objects,e,net_test_replicate(audience=.Always))}
         case 40:
             testing.expect(t,connected!=0)
-            core.get(&server.transforms,entities[0][0]).position={5,0,0}
+            core.edit(&server.transforms,entities[0][0]).position={5,0,0}
             net_test_own(server,entities[0][1],connected)
             core.settle(&info,server,nil)
             object:=wire.object_of_user(&sessions[0].host,u64(entities[0][0]))
@@ -99,7 +99,7 @@ net_test_late_reference :: proc(t:^testing.T,body:bool) {
         net_test_init(&world,&info)
         entities[index][0]=net_test_body(&world,&info,1)
         entities[index][1]=net_test_body(&world,&info,2,{1,0,0})
-        for e in entities[index] {core.get(&world.values,e).force=0}
+        for e in entities[index] {core.edit(&world.values,e).force=0}
         shares[index].info=&info
         apps[index]={allocator=context.allocator,tick_dt=1.0/60,shared=&shares[index]}
         if body {net_test_physics(&world,&shares[index],&apps[index])}
@@ -132,7 +132,7 @@ net_test_late_reference :: proc(t:^testing.T,body:bool) {
         client_commands(&sessions[1],core.world_ref(client,&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host),&client_events)
         switch tick {
         case 21:
-            core.get(&server.values,source).target=target
+            core.edit(&server.values,source).target=target
             core.add(&server.objects,source,net_test_replicate(audience=.Always,update_hz=10,simulation=body?.Lent:.Server))
             if body {
                 core.add(&server.joints,source,phys.joint_fixed(target))
@@ -185,7 +185,7 @@ net_test_late_reference :: proc(t:^testing.T,body:bool) {
                 core.add(&server.joints,source,phys.joint_fixed(core.NONE))
                 core.settle(&info,server,nil)
                 net_test_physics(server,&shares[0],&apps[0])
-            } else {core.get(&server.values,source).target=core.NONE}
+            } else {core.edit(&server.values,source).target=core.NONE}
         case 84:
             if body {
                 joint,has:=core.get(core.read(&client.joints),replica)

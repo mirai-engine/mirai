@@ -151,8 +151,8 @@ far_lift :: proc "contextless" (n:^Navigation,colliders:core.Read(phys.Collider)
 // A request to an agent that is far changes where it goes; false when it is not far.
 @(private)
 far_request :: proc(paths:^core.Table(Nav_Path),fars:^core.Table(Nav_Far),asked:Nav_Request,worlds:core.Read(core.World_Transform)) -> bool {
-    far:=cast(^Nav_Far)core.raw_get(core.raw(fars),type_info_of(Nav_Far),asked.entity)
-    p:=cast(^Nav_Path)core.raw_get(core.raw(paths),type_info_of(Nav_Path),asked.entity)
+    far:=cast(^Nav_Far)core.raw_edit(core.raw(fars),type_info_of(Nav_Far),asked.entity)
+    p:=cast(^Nav_Path)core.raw_edit(core.raw(paths),type_info_of(Nav_Path),asked.entity)
     if far==nil || p==nil {return false}
     #partial switch asked.kind {
     case .Move_To:
@@ -215,7 +215,7 @@ agents_far :: proc(
         far_route(n.ptr,a,s,&far,int(p.class),center,p.goal)
         core.add(fars,e,far)
         core.add(disabled,e,core.Disabled{})
-        written:=core.get(paths,e)
+        written:=core.edit(paths,e)
         written.through,written.velocity=false,{}
     }
     // What is far steps every NAV_FAR_PERIOD, and looks at once when a section comes or goes.
@@ -226,8 +226,8 @@ agents_far :: proc(
     if !step && !changed {return}
     for row:=0;row<len(fars.entities);row+=1 {
         e:=fars.entities[row]
-        far:=cast(^Nav_Far)core.raw_get(core.raw(fars),type_info_of(Nav_Far),e)
-        p:=cast(^Nav_Path)core.raw_get(core.raw(paths),type_info_of(Nav_Path),e)
+        far:=cast(^Nav_Far)core.raw_edit(core.raw(fars),type_info_of(Nav_Far),e)
+        p:=cast(^Nav_Path)core.raw_edit(core.raw(paths),type_info_of(Nav_Path),e)
         pose,placed:=core.get(worlds,e)
         if far==nil || p==nil || !placed {continue}
         // The route of one that flies or swims is of its middle.

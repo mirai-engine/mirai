@@ -254,7 +254,7 @@ physics_verticals :: proc(state:core.Ref(Physics_State),characters:core.Read(Cha
         next:=core.Vertical{sim.character_state(&state.world,l.character).up_frame}
         if at:=core.row_of(verticals,e);at<0 {
             core.add(verticals,e,next)
-        } else if verticals.values[at]!=next {core.at(verticals,at)^=next}
+        } else if verticals.values[at]!=next {core.edit_at(verticals,at)^=next}
     }
     for row:=core.count(verticals)-1;row>=0;row-=1 {
         if e:=core.entity_at(verticals,row);!core.has(characters,e) {core.remove(verticals,e)}
@@ -300,10 +300,9 @@ sealed_sync :: proc(s:^Sync,structure:u64) -> bool {
     c:=core.changes(s.locals,&seen)
     if c.all {return false}
     clear(&state.sealed)
-    for row in 0..<core.count(s.locals) {
-        if core.stamp(s.locals,row)<=c.since {continue}
+    for row in core.each_changed(s.locals,&c) {
         root:=core.entity_at(s.locals,row)
-        if sealed_above(s.locals,h,root,c.since) {continue}
+        if sealed_above(s.locals,h,root,c) {continue}
         for at:=root;at!=core.NONE;at=core.subtree_next(h,root,at) {
             order,body:=sync_order(s,at)
             if !body {continue}
@@ -320,9 +319,9 @@ sealed_sync :: proc(s:^Sync,structure:u64) -> bool {
 
 // Whether something e hangs from has its Transform sealed since: its walk takes e.
 @(private)
-sealed_above :: proc(locals:core.Read(core.Transform),h:core.Ref(core.Hierarchy),e:core.Entity,since:u64) -> bool {
+sealed_above :: proc(locals:core.Read(core.Transform),h:core.Ref(core.Hierarchy),e:core.Entity,c:core.Changes) -> bool {
     for at:=core.parent_of(h,e);at!=core.NONE;at=core.parent_of(h,at) {
-        if row:=core.row_of(locals,at);row>=0 && core.stamp(locals,row)>since {return true}
+        if row:=core.row_of(locals,at);row>=0 && core.changed(locals,c,row) {return true}
     }
     return false
 }
@@ -430,7 +429,7 @@ pose_write :: proc(s:^Sync,l:^Link,e:core.Entity,pose:sim.Transform) {
     l.written_position,l.written_rotation=position,rotation
     local:=s.transforms.values[row]
     if local.position==position && local.rotation==rotation {return}
-    written:=core.at(s.transforms,row)
+    written:=core.edit_at(s.transforms,row)
     written.position,written.rotation=position,rotation
 }
 
@@ -841,7 +840,7 @@ character_sync :: proc(s:^Sync,e:core.Entity,l:^Link,config:Character,capsule:Co
 @(private)
 made_velocity :: proc(s:^Sync,e:core.Entity) -> (linear,angular:[3]f32) {
     if target,on:=core.get(s.targets,e);on {return target.linear,target.angular}
-    if held:=core.get(s.motions,e);held!=nil {return held.linear,held.angular}
+    if held,ok:=core.get(s.motions,e);ok {return held.linear,held.angular}
     return
 }
 
@@ -1191,7 +1190,7 @@ link_write :: proc(s:^Sync,l:^Link,e:core.Entity) -> (again:bool) {
             next.height=sim.character_desc(w,l.character).height
             next.velocity=sim.character_velocity(w,l.character)
             next.cramped=next.height<l.height_asked-HEIGHT_EPSILON
-            if s.character_states.values[row]!=next {core.at(s.character_states,row)^=next}
+            if s.character_states.values[row]!=next {core.edit_at(s.character_states,row)^=next}
         }
         body:=sim.character_body(w,l.character)
         motion_write(s,e,body,sim.body_is_awake(w,body),false)
@@ -1211,7 +1210,7 @@ motion_write :: proc(s:^Sync,e:core.Entity,body:sim.Body_Handle,awake,add:bool) 
         center=center,island=s.grouped?sim.body_group(w,body):0,awake=awake,
     }
     if row:=core.row_of(s.motions,e);row>=0 {
-        if s.motions.values[row]!=next {core.at(s.motions,row)^=next}
+        if s.motions.values[row]!=next {core.edit_at(s.motions,row)^=next}
     } else if add {
         core.add(s.motions,e,next)
     }

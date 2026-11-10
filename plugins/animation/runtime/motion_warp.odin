@@ -203,7 +203,7 @@ Motion_Instance :: struct {
     error:Motion_Error,
 }
 @(storage,free="motion_runtime_free")
-Motion_Runtime :: struct {instances:[dynamic]Motion_Instance,rows:[dynamic]i32,frame,animation_version,animation_layout:u64,discovered:bool}
+Motion_Runtime :: struct {instances:[dynamic]Motion_Instance,rows:[dynamic]i32,frame:u64,animations_seen:core.Seen}
 motion_runtime_free :: proc(runtime:^Motion_Runtime) {if runtime!=nil {for &instance in runtime.instances {motion_instance_free(&instance)};delete(runtime.instances);delete(runtime.rows);runtime^={}}}
 @(private)
 motion_instance_free :: proc(instance:^Motion_Instance) {
@@ -298,18 +298,21 @@ motion_take_requests :: proc(runtime:^Motion_Runtime,requests:^Motion_Requests,p
 
 @(private)
 motion_discover :: proc(runtime:^Motion_Runtime,animations:core.Read(Animation),problems:^core.Problems) -> bool {
-    if runtime.discovered && runtime.animation_layout==core.layout(animations) && runtime.animation_version==core.version(animations) {return true}
-    layout:=!runtime.discovered || runtime.animation_layout!=core.layout(animations)
+    // Kept only when the entities found have their room: without it they are looked for again.
+    seen:=runtime.animations_seen
+    c:=core.changes(animations,&seen)
+    if seen==runtime.animations_seen {return true}
     added,rows:=0,len(runtime.rows)
-    for row in 0..<core.count(animations) {
-        if !layout && core.stamp(animations,row)<=runtime.animation_version || animations.table.values[row].motion=={} {continue}
+    counted:=c
+    for row in core.each_changed(animations,&counted) {
+        if animations.table.values[row].motion=={} {continue}
         index:=core.entity_index(core.entity_at(animations,row));rows=max(rows,index+1)
         slot:=int(runtime.rows[index])-1 if index<len(runtime.rows) else -1
         if slot<0 || slot>=len(runtime.instances) || core.entity_index(runtime.instances[slot].entity)!=index {added+=1}
     }
     if !program_array_reserve(&runtime.instances,len(runtime.instances)+added) || !program_array_resize(&runtime.rows,rows) {memory_problem(problems,core.NONE,"the entities with a motion profile, so none applies");return false}
-    for row in 0..<core.count(animations) {
-        if !layout && core.stamp(animations,row)<=runtime.animation_version || animations.table.values[row].motion=={} {continue}
+    for row in core.each_changed(animations,&c) {
+        if animations.table.values[row].motion=={} {continue}
         entity:=core.entity_at(animations,row);index:=core.entity_index(entity);slot:=int(runtime.rows[index])-1
         if slot<0 || slot>=len(runtime.instances) || core.entity_index(runtime.instances[slot].entity)!=index {
             slot=len(runtime.instances)
@@ -321,7 +324,7 @@ motion_discover :: proc(runtime:^Motion_Runtime,animations:core.Read(Animation),
         }
         runtime.rows[index]=i32(slot+1)
     }
-    runtime.animation_layout,runtime.animation_version=core.layout(animations),core.version(animations);runtime.discovered=true
+    runtime.animations_seen=seen
     return true
 }
 

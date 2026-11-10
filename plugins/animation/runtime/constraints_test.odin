@@ -33,7 +33,7 @@ rotation_limits_blend_from_the_input_pose_and_leave_zero_weight_unchanged :: pro
     problems:core.Problems
     constraints_apply(&state,&playback,{limits=core.read(&w.modifiers.limits),problems=&problems},&cache,&w.transforms,core.read(&w.parents),0)
     testing.expect(t,abs(mm.quat_angle(state.local[1].rotation,mm.QUAT_IDENTITY)-.6)<.001)
-    state.local[1]=pose[1];core.get(&w.modifiers.limits,rig).weight=0
+    state.local[1]=pose[1];core.edit(&w.modifiers.limits,rig).weight=0
     constraints_apply(&state,&playback,{limits=core.read(&w.modifiers.limits),problems=&problems},&cache,&w.transforms,core.read(&w.parents),0)
     testing.expect_value(t,state.local[1],pose[1])
     testing.expect_value(t,problems.count,0)
@@ -74,13 +74,13 @@ in_place_root_motion_preserves_gameplay_actor_placement_and_restores_internal_bo
         testing.expect_value(t,core.to_math(current),expected)
         expected.position+=mm.quat_rotate(expected.rotation,motion.translation)
         expected.rotation*=motion.rotation
-        core.get(&transforms,rig)^=core.from_math(expected)
+        core.edit(&transforms,rig)^=core.from_math(expected)
     }
     testing.expect(t,linalg.length(expected.position-rest[0].position)>0.5 && mm.quat_angle(expected.rotation,rest[0].rotation)>0.3)
     state.bindings[0].driven={}
     state.local[0]=expected
     state.local[1].position={5,2,0};state.local[1].rotation=mm.quat_axis_angle({0,1,0},0.8)
-    core.get(&roots,rig).bone=bone_ref("11")
+    core.edit(&roots,rig).bone=bone_ref("11")
     constraints_apply(&state,&playback,{roots=core.read(&roots),problems=&problems},&cache,&transforms,core.read(&parents),0.25)
     testing.expect_value(t,state.local[0],expected)
     testing.expect_value(t,state.local[1],rest[1])
@@ -198,7 +198,7 @@ retarget_paths_bind_dense_skeletons_preserve_actor_placement_and_apply_explicit_
     constraints_apply(target,&playback,inputs,&cache,&w.transforms,core.read(&w.parents),0.1)
     testing.expect(t,retarget.ready && problems.count==1)
     for mapped,i in ([7]i32{-1,1,2,-1,3,4,-1}) {testing.expect_value(t,retarget.mapping[i],mapped)}
-    core.get(&w.modifiers.retargets,target_entity).enabled=false
+    core.edit(&w.modifiers.retargets,target_entity).enabled=false
     constraints_apply(target,&playback,inputs,&cache,&w.transforms,core.read(&w.parents),0.1)
     testing.expect_value(t,problems.count,1)
     override_entity:=core.create(&w.entities)
@@ -216,7 +216,7 @@ retarget_paths_bind_dense_skeletons_preserve_actor_placement_and_apply_explicit_
         testing.expect(t,mm.quat_angle(target.local[4].rotation,mm.QUAT_IDENTITY)<.001)
         testing.expect_value(t,override_problems.count,0)
         duplicate:=config;duplicate.rig=target_entity
-        core.get(&ordered.retargets,override_entity)^=duplicate
+        core.edit(&ordered.retargets,override_entity)^=duplicate
         constraints_apply(target,&playback,{retargets=core.read(&ordered.retargets),problems=&override_problems},&overrides,&w.transforms,core.read(&w.parents),0.1)
         testing.expect(t,core.problem_find(&override_problems,target_entity,"animation.retarget_mapping")!=nil && !overrides.rigs[core.entity_index(target_entity)].retarget.ready)
     }
@@ -253,7 +253,7 @@ bone_constraints_solve_world_targets_under_rotated_uneven_parents_and_respect_so
     expected,_:=lib.skeleton_socket(state.world[:],2,socket_config.offset)
     testing.expect(t,linalg.length(attached.position-expected.position)<0.001)
     resize(&w.transforms.owners,core.entity_index(socket)+1);w.transforms.owners[core.entity_index(socket)]={core.entity_generation(socket),1}
-    core.get(&w.modifiers.ik,helper).target.position+=mm.Vec3{0.2,0,0}
+    core.edit(&w.modifiers.ik,helper).target.position+=mm.Vec3{0.2,0,0}
     constraints_apply(&state,&playback,inputs,&cache,&w.transforms,core.read(&w.parents),0.1)
     locked,_:=core.get(core.read(&w.transforms),socket)
     testing.expect_value(t,locked,attached)

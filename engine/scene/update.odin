@@ -135,7 +135,7 @@ update :: proc(w:core.World_Ref,a:^asset.Asset,asset_types:^asset.Types,desc:Upd
                     if turned {core.raw_disable(table,e)}
                     continue
                 case size>0 && !saved_same(layout,core.raw_find(table,info.info,e),value,scratch[:]):
-                    saved_put(layout,core.raw_get(table,info.info,e),value)
+                    saved_put(layout,core.raw_edit(table,info.info,e),value)
                     report.components+=1
                 }
                 if turned!=was_turned {
@@ -151,7 +151,7 @@ update :: proc(w:core.World_Ref,a:^asset.Asset,asset_types:^asset.Types,desc:Upd
                 // Every entity has one: the identity where the document gives none.
                 identity:=core.TRANSFORM_IDENTITY
                 held:=created[row]?nil:core.raw_find(table,info.info,e)
-                if held==nil {core.raw_add(table,info.info,e,&identity)} else if !saved_same(layout,held,&identity,scratch[:]) {saved_put(layout,core.raw_get(table,info.info,e),&identity)} else {continue}
+                if held==nil {core.raw_add(table,info.info,e,&identity)} else if !saved_same(layout,held,&identity,scratch[:]) {saved_put(layout,core.raw_edit(table,info.info,e),&identity)} else {continue}
                 report.components+=1
                 continue
             }

@@ -17,8 +17,8 @@ api_edit_end_reports_history_memory_failure_and_rolls_back_the_scene :: proc(t:^
     w:=core.world_ref(&f.world,&f.info)
     testing.expect(t,history.edits_begin(&f.edits,&f.selection,"API candidate"))
     testing.expect_value(t,history.edits_cancel_prepare(&f.edits,w),history.Edit_Error.None)
-    core.get(&f.world.values,f.entity).value=20
-    core.get(&f.world.values,f.entity).derived=99
+    core.edit(&f.world.values,f.entity).value=20
+    core.edit(&f.world.values,f.entity).derived=99
     core.remove(&f.world.others,f.entity)
     history.test_memory_settle(&f)
     history.selection_clear(&f.selection)

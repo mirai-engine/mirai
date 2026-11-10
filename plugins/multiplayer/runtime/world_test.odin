@@ -309,7 +309,7 @@ pair_member :: proc(w:^Net_Test_World,info:^core.World_Info,id:base.Entity_Id,se
 // A section of a client loads, with what it brings, or drops it.
 @(private="file")
 pair_load_section :: proc(w:^Net_Test_World,info:^core.World_Info,section:core.Entity,loaded:bool,member:=core.NONE) {
-    core.get(&w.references,section).loaded=loaded?LEVEL_A:{}
+    core.edit(&w.references,section).loaded=loaded?LEVEL_A:{}
     if !loaded {core.destroy_tree(&w.entities,core.ref(&w.hierarchy),member)}
     core.settle(info,w,nil)
 }
@@ -396,8 +396,8 @@ a_replica_of_a_section_that_is_not_loaded_waits_for_it :: proc(t:^testing.T) {
 @(private="file")
 pair_box :: proc(w:^Net_Test_World,info:^core.World_Info,id:base.Entity_Id,loaded:bool,position,extents:[3]f32) -> core.Entity {
     e:=pair_section(w,info,id,loaded)
-    core.get(&w.references,e).extents=extents
-    core.get(&w.transforms,e).position=position
+    core.edit(&w.references,e).extents=extents
+    core.edit(&w.transforms,e).position=position
     core.add(&w.worlds,e,core.World_Transform{transform={position=position,rotation=1,scale={1,1,1}}})
     core.settle(info,w,nil)
     return e
@@ -408,7 +408,7 @@ pair_box :: proc(w:^Net_Test_World,info:^core.World_Info,id:base.Entity_Id,loade
 @(private="file")
 pair_placed :: proc(w:^Net_Test_World,info:^core.World_Info,id:base.Entity_Id,section:core.Entity,position:[3]f32,replicated:bool) -> core.Entity {
     e:=pair_member(w,info,id,section,replicated)
-    core.get(&w.transforms,e).position=position
+    core.edit(&w.transforms,e).position=position
     core.add(&w.worlds,e,core.World_Transform{transform={position=position,rotation=1,scale={1,1,1}}})
     core.settle(info,w,nil)
     return e
@@ -480,7 +480,7 @@ what_the_server_keeps_of_a_section_wins_over_what_a_client_kept :: proc(t:^testi
     chest:=pair_member(server,&p.info,101,room,true)
     core.add(&server.values,chest,Net_Test_Value{force=5})
     hidden:=pair_member(server,&p.info,103,room,true)
-    core.get(&server.objects,hidden).audience=.Custom
+    core.edit(&server.objects,hidden).audience=.Custom
     // A section the server dropped after a crate in it was destroyed.
     yard:=pair_section(server,&p.info,300,false)
     stone:=core.create(&server.entities)

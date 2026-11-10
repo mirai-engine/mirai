@@ -50,12 +50,12 @@ selected_physics_fields_preview_world_regions_force_direction_and_parent_changes
     direction:=mm.quat_rotate(pose.rotation,mm.Vec3{-1,0,0})
     testing.expect(t,linalg.length(lines.vertices[25].position-pose.position-direction*2)<1e-4)
     app.extras.debug_count=0
-    core.get(&w.transforms,parent).position.x+=10
+    core.edit(&w.transforms,parent).position.x+=10
     physics_fields_preview(&session,preview,{},core.read(&w.regions),core.read(&w.transforms),core.read(&w.parents),&app.extras)
     testing.expect_value(t,app.extras.debug[0].vertices[24].position,pose.position+mm.Vec3{10,0,0})
     app.extras.debug_count=0
     field.shape,field.direction,field.radius=.Sphere,.Radial,2
-    core.get(&w.regions,entity)^=field
+    core.edit(&w.regions,entity)^=field
     physics_fields_preview(&session,preview,{},core.read(&w.regions),core.read(&w.transforms),core.read(&w.parents),&app.extras)
     lines=app.extras.debug[0]
     testing.expect_value(t,lines.count,252)

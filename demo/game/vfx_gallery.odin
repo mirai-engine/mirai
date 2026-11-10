@@ -80,7 +80,7 @@ vfx_gallery_impacts :: proc(impacts:^core.Table(Vfx_Impacts),views:core.Read(Vfx
         e:=core.entity_at(core.read(impacts),row)
         world,placed:=core.get(worlds,e)
         if !placed {continue}
-        wall:=core.at(impacts,row)
+        wall:=core.edit_at(impacts,row)
         due:=u32(0)
         if view.volleys!=wall.volleys {
             if i32(wall.station)==view.volley_station {due=wall.volley}

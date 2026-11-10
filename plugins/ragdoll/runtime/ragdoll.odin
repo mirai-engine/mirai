@@ -86,7 +86,7 @@ ragdoll_release :: proc(state:^Ragdoll_State,entity:core.Entity,bodies:^phys.Bod
 ragdoll_prepare :: proc(configs:core.Read(Ragdoll),bones:core.Read(Ragdoll_Bone),states:^core.Table(Ragdoll_State),rigids:core.Read(phys.Rigid_Body),joint_rows:core.Read(phys.Joint),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),playback:core.Ref(anim.Playback),runtime:^Ragdoll_Runtime,settings:core.Ref(Ragdoll_Settings),bodies:^phys.Body_Requests,joints:^phys.Joint_Requests,time:core.Time,poses:^anim.Animation_Requests,problems:^core.Problems) {
     for row in 0..<core.count(core.read(states)) {
         entity:=core.entity_at(core.read(states),row)
-        state:=core.at(states,row)
+        state:=core.edit_at(states,row)
         bone,exists:=core.get(bones,entity)
         if !exists || !core.has(configs,bone.rig) {ragdoll_release(state,entity,bodies,joints,joint_rows);core.remove(states,entity)}
     }
@@ -103,7 +103,7 @@ ragdoll_prepare :: proc(configs:core.Read(Ragdoll),bones:core.Read(Ragdoll_Bone)
             core.report(problems,core.NONE,"ragdoll.memory","out of memory for the pose of %d bones (Ragdoll_Settings.max_bones), so no ragdoll works; free memory, or lower max_bones",capacity)
         }
         for row in 0..<core.count(core.read(states)) {
-            entity:=core.entity_at(core.read(states),row);state:=core.at(states,row)
+            entity:=core.entity_at(core.read(states),row);state:=core.edit_at(states,row)
             ragdoll_release(state,entity,bodies,joints,joint_rows);state.error=.Pose_Capacity
         }
         return
@@ -122,7 +122,7 @@ ragdoll_prepare :: proc(configs:core.Read(Ragdoll),bones:core.Read(Ragdoll_Bone)
             next_state:=held;state:=&next_state
             defer {
                 if !present_state {core.add(states,entity,next_state)}
-                else if next_state!=held {core.get(states,entity)^=next_state}
+                else if next_state!=held {core.edit(states,entity)^=next_state}
             }
             state.error=.None
             if !ragdoll_valid(config) || !ragdoll_bone_valid(bone) {state.error=.Invalid_Settings}

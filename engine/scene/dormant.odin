@@ -436,7 +436,7 @@ section_unload :: proc(w:core.World_Ref,documents:Documents,e:core.Entity) -> (o
         return order
     }
     for move in moves {
-        if transform:=(^core.Transform)(core.raw_get(core.raw(transforms),type_info_of(core.Transform),move.entity));transform!=nil {transform^=core.from_math(move.local)}
+        if transform:=(^core.Transform)(core.raw_edit(core.raw(transforms),type_info_of(core.Transform),move.entity));transform!=nil {transform^=core.from_math(move.local)}
         if move.parent==core.NONE {
             core.remove(parents,move.entity)
             core.remove(members,move.entity)
@@ -468,7 +468,7 @@ section_unload :: proc(w:core.World_Ref,documents:Documents,e:core.Entity) -> (o
             if tombstones!=nil {core.add(tombstones,t,Tombstone{id_in(salt,local)})}
             marks(disabled,held,t,false)
         }
-        if reference:=(^Scene_Reference)(core.raw_get(core.raw(references),type_info_of(Scene_Reference),s.reference));reference!=nil {
+        if reference:=(^Scene_Reference)(core.raw_edit(core.raw(references),type_info_of(Scene_Reference),s.reference));reference!=nil {
             reference.loaded,reference.held,reference.far={},false,reference.scene
         }
         records_drop(records,s.reference)
@@ -788,7 +788,7 @@ sleepers_join :: proc(w:core.World_Ref,e:core.Entity,s:^Sleepers,made:[]core.Ent
             into:=took(made,k.parent) if k.parent!=core.NONE else core.NONE
             if into==core.NONE {continue}
             core.add(parents,k.entity,core.Parent{into,k.order})
-            if transform:=(^core.Transform)(core.raw_get(core.raw(transforms),type_info_of(core.Transform),k.entity));transform!=nil {transform^=k.local}
+            if transform:=(^core.Transform)(core.raw_edit(core.raw(transforms),type_info_of(core.Transform),k.entity));transform!=nil {transform^=k.local}
         }
     }
     dormants:=core.world_table_of(w,Dormant)
@@ -866,7 +866,7 @@ far_keep :: proc(apart:core.World_Ref) {
     }
     for p in placed {
         core.remove(parents,p.entity)
-        if local:=(^core.Transform)(core.raw_get(core.raw(transforms),type_info_of(core.Transform),p.entity));local!=nil {local^=core.from_math(p.pose)}
+        if local:=(^core.Transform)(core.raw_edit(core.raw(transforms),type_info_of(core.Transform),p.entity));local!=nil {local^=core.from_math(p.pose)}
         core.add(kept,p.entity,Far_Kept{})
     }
     core.world_settle(apart)

@@ -59,12 +59,12 @@ history_at :: proc(f:^History_Fixture,id:base.Entity_Id) -> core.Entity {
 }
 
 @(private="file")
-history_transform :: proc(f:^History_Fixture,id:base.Entity_Id) -> ^core.Transform {return core.get(&f.world.transforms,history_at(f,id))}
+history_transform :: proc(f:^History_Fixture,id:base.Entity_Id) -> ^core.Transform {return core.edit(&f.world.transforms,history_at(f,id))}
 
 // The Lamp of an entity, also while it is turned off; written, the row is stamped.
 @(private="file")
 history_lamp :: proc(f:^History_Fixture,id:base.Entity_Id) -> ^History_Lamp {
-    return (^History_Lamp)(core.raw_get(core.raw(&f.world.lamps),type_info_of(History_Lamp),history_at(f,id)))
+    return (^History_Lamp)(core.raw_edit(core.raw(&f.world.lamps),type_info_of(History_Lamp),history_at(f,id)))
 }
 
 // Opens a gesture of an author; history_commit records it as a step of that author.

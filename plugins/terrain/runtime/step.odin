@@ -724,7 +724,7 @@ terrain_update :: proc(
         }
         if entry==nil {continue}
         if loaded {
-            for shared,index in terrains.values[:core.count(terrains)] {if shared.source==marker.source && shared.revision!=entry.source.revision {core.at(terrains,index).revision=entry.source.revision}}
+            for shared,index in terrains.values[:core.count(terrains)] {if shared.source==marker.source && shared.revision!=entry.source.revision {core.edit_at(terrains,index).revision=entry.source.revision}}
             continue
         }
         if entry.source.revision!=marker.revision {
@@ -733,7 +733,7 @@ terrain_update :: proc(
                 e:=terrains.entities[row]
                 for owner in resident.owners {if owner.entity==e && owner.source!=marker.source {rebound=true;break}}
             }
-            if rebound {core.at(terrains,row).revision=entry.source.revision}
+            if rebound {core.edit_at(terrains,row).revision=entry.source.revision}
         }
     }
     if !time.playing || frame.phase==.Fixed {
@@ -748,7 +748,7 @@ terrain_update :: proc(
             if !change.changed {continue}
             if time.playing {dig_push(digs,request.owner,entry,worlds)}
             entry.source.revision+=1
-            for value,row in terrains.values[:core.count(terrains)] {if value.source==entry.id {core.at(terrains,row).revision=entry.source.revision}}
+            for value,row in terrains.values[:core.count(terrains)] {if value.source==entry.id {core.edit_at(terrains,row).revision=entry.source.revision}}
         }
         for request in core.take(&requests.layers) {
             entry:=request_source(data,core.read(terrains),request.owner,"a layer change",problems,app.assets) or_continue
@@ -756,7 +756,7 @@ terrain_update :: proc(
             layer_report(problems,request.owner,app.assets,entry,request.change,error)
             if !applied {continue}
             entry.source.revision+=1
-            for value,row in terrains.values[:core.count(terrains)] {if value.source==entry.id {core.at(terrains,row).revision=entry.source.revision}}
+            for value,row in terrains.values[:core.count(terrains)] {if value.source==entry.id {core.edit_at(terrains,row).revision=entry.source.revision}}
         }
     }
     full:=terrain_chunks_prune(&c,terrains,resident)

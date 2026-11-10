@@ -899,7 +899,7 @@ client_frame :: proc(s:^Net_Session,w:core.World_Ref,dt:f32) {
     for &r in c.replicas[:c.replica_high] {
         if r.object==0 || r.mode!=.Predicted || !core.alive(es,r.entity) {continue}
         wire.smoothing_update(&r.smoothing,dt)
-        shown:=core.get(offsets,r.entity)
+        shown:=core.edit(offsets,r.entity)
         if shown==nil {continue}
         shown.offset,shown.rotation=r.smoothing.offset,r.smoothing.rotation
     }

@@ -54,7 +54,7 @@ mirai_matching_selects_a_walking_clip :: proc(t:^testing.T) {
     }}}
     testing.expectf(t,walk>2 && walk<3,"inferred walk speed %.3f m/s",walk)
     for wanted in ([6]struct{speed:f32,clip:string}{{0,"idle"},{.3,"walk"},{1,"walk"},{walk,"walk"},{MIRAI_WALK_SPEED,"walk"},{0,"idle"}}) {
-        core.get(&gallery,actor).speed=wanted.speed
+        core.edit(&gallery,actor).speed=wanted.speed
         playing:anim.Animation_Match
         for _ in 0..<90 {playing,_=tick(&f,&gallery,&graphs,&progress,&problems,time)}
         testing.expectf(t,playing.clip==base.name_hash(wanted.clip),"at %.2f m/s plays %s",wanted.speed,wanted.clip)
@@ -69,13 +69,13 @@ mirai_matching_selects_a_walking_clip :: proc(t:^testing.T) {
     // Starting and stopping are searched in that tick, not after the interval of the search: the
     // walk does not hold its legs still while the body stands, nor the idle while it walks.
     for wanted in ([4]struct{speed:f32,clip:string}{{1,"walk"},{0,"idle"},{1,"walk"},{0,"idle"}}) {
-        core.get(&gallery,actor).speed=wanted.speed
+        core.edit(&gallery,actor).speed=wanted.speed
         playing:anim.Animation_Match
         for _ in 0..<2 {playing,_=tick(&f,&gallery,&graphs,&progress,&problems,time)}
         testing.expectf(t,playing.clip==base.name_hash(wanted.clip),"a tick after asking %.0f m/s it plays %s",wanted.speed,wanted.clip)
         for _ in 0..<40 {tick(&f,&gallery,&graphs,&progress,&problems,time)}
     }
-    core.get(&gallery,actor).speed=1
+    core.edit(&gallery,actor).speed=1
     falling:anim.Animation_Match
     for _ in 0..<120 {falling,_=tick(&f,&gallery,&graphs,&progress,&problems,time,phys.MODE_FALLING)}
     testing.expectf(t,falling.clip==base.name_hash("fall"),"while falling with horizontal speed, the fall loop plays")

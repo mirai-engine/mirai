@@ -58,7 +58,7 @@ when #config(MIRAI_AVATAR_TEST,false) {
             leg.contact_offset=max(0,f.state.world[anim.bone_resolve(&f.state,leg.contact_bone)].position.y)
             config.legs[i]=leg
         }
-        core.get(&f.configs,f.rig)^=config
+        core.edit(&f.configs,f.rig)^=config
         maximum,normal_error,pitch_error,stance_drift:f32;samples:=0
         swings:[2]int
         last_probe:[2]mm.Vec3
@@ -210,7 +210,7 @@ grounding_fixture_ground :: proc(f:^Grounding_Fixture) -> core.World_Query {
 grounding_keeps_procedural_swing_and_animated_heels_above_raised_geometry :: proc(t:^testing.T) {
     for mode in ([2]anim.Grounding_Mode{.Procedural,.Animated}) {
         f:Grounding_Fixture;grounding_fixture_init(&f,t,0);defer grounding_fixture_free(&f)
-        config:=core.get(&f.configs,f.rig);config.count=1;config.mode=mode;config.adjust_body=false
+        config:=core.edit(&f.configs,f.rig);config.count=1;config.mode=mode;config.adjust_body=false
         config.legs[0].step_distance=.05;config.legs[0].max_distance=2
         obstacle:=grounding_box(&f.physics,t,{.3,.15,0},{.5,.15,1})
         source:[9]mm.Transform
@@ -257,7 +257,7 @@ grounding_keeps_procedural_swing_and_animated_heels_above_raised_geometry :: pro
 @(test)
 grounding_checks_the_planted_ball_target_when_new_geometry_covers_its_support :: proc(t:^testing.T) {
     f:Grounding_Fixture;grounding_fixture_init(&f,t,0);defer grounding_fixture_free(&f)
-    config:=core.get(&f.configs,f.rig);config.count=1;config.adjust_body=false
+    config:=core.edit(&f.configs,f.rig);config.count=1;config.adjust_body=false
     pose:=mm.Transform{{.4,0,0},1,{1,1,1}}
     append(&f.state.parents,i32(4));append(&f.state.targets,base.name_hash("ball.l"))
     append(&f.state.rest,pose);append(&f.state.local,pose);append(&f.state.world,pose)
@@ -337,7 +337,7 @@ grounding_replants_all_four_blocked_spider_shins_on_the_real_step_without_stretc
 grounding_corrects_released_procedural_reference_clearance_without_restoring_contact :: proc(t:^testing.T) {
     for variant in 0..<4 {
         f:Grounding_Fixture;grounding_fixture_init(&f,t,0);defer grounding_fixture_free(&f)
-        config:=core.get(&f.configs,f.rig);config.mode=.Procedural;config.count=1;config.adjust_body=false;config.blend_time=.1
+        config:=core.edit(&f.configs,f.rig);config.mode=.Procedural;config.count=1;config.adjust_body=false;config.blend_time=.1
         testing.expect(t,anim.grounding_apply(&f.state,&f.cache,grounding_fixture_inputs(&f),.1))
         record:=&f.cache.records[0]
         record.legs[0].anchor.active=false;record.legs[0].swinging=false
@@ -390,7 +390,7 @@ grounding_changes_only_the_knee_plane_for_the_spider_step_corner :: proc(t:^test
     testing.expect(t,lib.skeleton_world(anim.playing_skeleton(&f.state),f.state.local[:],f.state.world[:]))
     hip,knee,foot:=record.bones[0][0],record.bones[0][1],record.bones[0][2]
     points:=[3]mm.Transform{f.state.world[hip],f.state.world[knee],f.state.world[foot]}
-    pole:=points[1].position+mm.quat_rotate(root.rotation,core.get(&f.configs,f.rig).legs[0].pole_offset)
+    pole:=points[1].position+mm.quat_rotate(root.rotation,core.at(&f.configs,core.row_of(&f.configs,f.rig)).legs[0].pole_offset)
     for &point in points {point.position+=record.body_offset}
     original,ok:=lib.two_bone_ik(points[0],points[1],points[2],contact.position,pole)
     testing.expect(t,ok && original.reached)
@@ -431,7 +431,7 @@ grounding_procedural_turn_release_keeps_final_segments_above_the_floor :: proc(t
             f.state.local[0]={{1.172305-f32(turn)*.016667,-.050069,0},mm.quat_axis_angle({0,1,0},-mm.PI*.5-f32(turn)*9*mm.RAD_PER_DEG),{1,1,1}}
             if variant==0 {
                 f.state.local[0]={startup[frame],mm.quat_axis_angle({0,1,0},f32(frame+1)*9*mm.RAD_PER_DEG),{1,1,1}}
-                core.get(&f.configs,f.rig).global_contact=0 if frame<6 else 1
+                core.edit(&f.configs,f.rig).global_contact=0 if frame<6 else 1
             }
             testing.expect(t,lib.skeleton_world(anim.playing_skeleton(&f.state),f.state.local[:],f.state.world[:]))
             source:[26]mm.Transform;copy(source[:],f.state.local[:]);before:=f.cache.records[0]
@@ -523,7 +523,7 @@ grounding_preserves_animated_targets_and_reports_unwalkable_procedural_obstacles
     for mode in ([2]anim.Grounding_Mode{.Animated,.Procedural}) {
         f:Grounding_Fixture;grounding_fixture_init(&f,t,0);defer grounding_fixture_free(&f)
         _=grounding_spider_step_fixture(&f,t)
-        core.get(&f.configs,f.rig).mode=mode
+        core.edit(&f.configs,f.rig).mode=mode
         if mode==.Procedural {
             _=grounding_box(&f.physics,t,{.65,.5,0},{.025,.5,.85})
         }
@@ -568,7 +568,7 @@ grounding_spider_step_fixture :: proc(f:^Grounding_Fixture,t:^testing.T) -> phys
         leg.phase=f32((i+i/4)%2)*.5;leg.step_distance=.3;leg.step_height=.15;leg.sole_height=.03;leg.pole_offset={side,.2,0}
         config.legs[i]=leg
     }
-    core.get(&f.configs,f.rig)^=config
+    core.edit(&f.configs,f.rig)^=config
     phys.owned_body_place(&f.physics,f.platform,{0,-.55,0},1)
     obstacle:=grounding_box(&f.physics,t,{.5,.06,0},{.225,.1,.85})
     f.state.local[0].position={-.15,-.05,0}
@@ -579,10 +579,10 @@ grounding_spider_step_fixture :: proc(f:^Grounding_Fixture,t:^testing.T) -> phys
 @(test)
 grounding_zero_weight_preserves_the_input_pose_after_body_corrections :: proc(t:^testing.T) {
     f:Grounding_Fixture;grounding_fixture_init(&f,t);defer grounding_fixture_free(&f)
-    core.get(&f.configs,f.rig).blend_time=.2
+    core.edit(&f.configs,f.rig).blend_time=.2
     testing.expect(t,anim.grounding_apply(&f.state,&f.cache,grounding_fixture_inputs(&f),.1))
     testing.expect(t,f.cache.records[0].body_offset.y!=0)
-    core.get(&f.configs,f.rig).weight=0
+    core.edit(&f.configs,f.rig).weight=0
     copy(f.state.local[:],f.state.rest[:]);lib.skeleton_world(anim.playing_skeleton(&f.state),f.state.local[:],f.state.world[:])
     expected:[8]mm.Transform;copy(expected[:],f.state.local[:])
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
@@ -606,7 +606,7 @@ grounding_queries_real_slopes_places_both_feet_and_releases_when_jumping :: proc
     }
     testing.expect(t,f.state.local[1].position.y<1.7)
     testing.expect_value(t,f.problems.count,0)
-    core.get(&f.configs,f.rig).global_contact=0
+    core.edit(&f.configs,f.rig).global_contact=0
     copy(f.state.local[:],f.state.rest[:]);f.state.local[0].position.y=1
     testing.expect(t,lib.skeleton_world(anim.playing_skeleton(&f.state),f.state.local[:],f.state.world[:]))
     testing.expect(t,anim.grounding_apply(&f.state,&f.cache,grounding_fixture_inputs(f),0.1))
@@ -623,7 +623,7 @@ grounding_animated_swing_over_lower_ground_preserves_pelvis_and_planted_feet_sti
     context.allocator=mem.tracking_allocator(&track);context.temp_allocator=context.allocator
     defer context=previous_context
     f:Grounding_Fixture;grounding_fixture_init(&f,t,0);defer grounding_fixture_free(&f)
-    config:=core.get(&f.configs,f.rig);config.count=1;config.legs[0].plant_speed=10;config.legs[0].pole_offset={}
+    config:=core.edit(&f.configs,f.rig);config.count=1;config.legs[0].plant_speed=10;config.legs[0].pole_offset={}
     phys.owned_body_place(&f.physics,f.platform,{0,-.9,0},1)
     source:=f.state.rest[1]
     copy(f.state.local[:],f.state.rest[:]);f.state.local[4].position.y+=.12
@@ -657,7 +657,7 @@ grounding_animated_swing_over_lower_ground_preserves_pelvis_and_planted_feet_sti
 @(test)
 grounding_animated_knee_plane_follows_the_corrected_pelvis :: proc(t:^testing.T) {
     f:Grounding_Fixture;grounding_fixture_init(&f,t,0);defer grounding_fixture_free(&f)
-    config:=core.get(&f.configs,f.rig);config.count=1;config.legs[0].plant_speed=10;config.legs[0].pole_offset={}
+    config:=core.edit(&f.configs,f.rig);config.count=1;config.legs[0].plant_speed=10;config.legs[0].pole_offset={}
     phys.owned_body_place(&f.physics,f.platform,{0,-.9,0},1)
     testing.expect(t,anim.grounding_apply(&f.state,&f.cache,grounding_fixture_inputs(&f),.1))
     copy(f.state.local[:],f.state.rest[:]);f.state.local[0].position.x=.15
@@ -677,7 +677,7 @@ grounding_animated_knee_plane_follows_the_corrected_pelvis :: proc(t:^testing.T)
 @(test)
 grounding_animated_rejects_distant_lower_floors_without_planting_or_lowering_the_pose :: proc(t:^testing.T) {
     f:Grounding_Fixture;grounding_fixture_init(&f,t,0);defer grounding_fixture_free(&f)
-    config:=core.get(&f.configs,f.rig);config.count=1;config.blend_time=.08;config.legs[0].pole_offset={}
+    config:=core.edit(&f.configs,f.rig);config.count=1;config.blend_time=.08;config.legs[0].pole_offset={}
     testing.expect(t,anim.grounding_apply(&f.state,&f.cache,grounding_fixture_inputs(&f),.1))
     phys.owned_body_place(&f.physics,f.platform,{0,-1.4,0},1)
     for frame in 0..<30 {
@@ -706,7 +706,7 @@ grounding_animated_rejects_distant_lower_floors_without_planting_or_lowering_the
 @(test)
 grounding_animated_interpolates_descending_support_height_and_normal_without_sliding_locked_contacts :: proc(t:^testing.T) {
     f:Grounding_Fixture;grounding_fixture_init(&f,t,0);defer grounding_fixture_free(&f)
-    config:=core.get(&f.configs,f.rig);config.count=1;config.adjust_body=false;config.blend_time=.1
+    config:=core.edit(&f.configs,f.rig);config.count=1;config.adjust_body=false;config.blend_time=.1
     config.legs[0].pole_offset={};config.legs[0].plant_speed=100
     phys.owned_body_place(&f.physics,f.platform,{0,-.25,0},1)
     testing.expect(t,anim.grounding_apply(&f.state,&f.cache,grounding_fixture_inputs(&f),.1))
@@ -729,7 +729,7 @@ grounding_animated_interpolates_descending_support_height_and_normal_without_sli
 grounding_clears_the_resolved_heel_and_ball_when_an_unreachable_anchor_clamps_inside_a_ledge :: proc(t:^testing.T) {
     for ball in ([2]bool{false,true}) {
         f:Grounding_Fixture;grounding_fixture_init(&f,t,0);defer grounding_fixture_free(&f)
-        config:=core.get(&f.configs,f.rig);config.count=1;config.adjust_body=false;config.trace_above=2;config.trace_below=2
+        config:=core.edit(&f.configs,f.rig);config.count=1;config.adjust_body=false;config.trace_above=2;config.trace_below=2
         config.release_distance=3;config.replant_distance=2;config.legs[0].max_distance=2;config.legs[0].plant_speed=100;config.legs[0].pole_offset={}
         if ball {
             bone:=mm.Transform{{-.2,0,0},1,{1,1,1}}
@@ -769,7 +769,7 @@ grounding_clears_the_resolved_heel_and_ball_when_an_unreachable_anchor_clamps_in
 grounding_animated_clears_the_reference_heel_when_its_ball_ray_only_sees_a_distant_lower_floor :: proc(t:^testing.T) {
     for contact in ([3]f32{0,.25,1}) {
         f:Grounding_Fixture;grounding_fixture_init(&f,t,0);defer grounding_fixture_free(&f)
-        config:=core.get(&f.configs,f.rig);config.count=1;config.adjust_body=false
+        config:=core.edit(&f.configs,f.rig);config.count=1;config.adjust_body=false
         config.legs[0].pole_offset={};config.legs[0].max_distance=.55;config.legs[0].contact=contact
         config.legs[0].contact_bone=anim.bone_ref("ball.l");config.legs[0].contact_offset=.1
         bone:=mm.Transform{{.6,0,0},1,{1,1,1}}
@@ -805,7 +805,7 @@ grounding_animated_raised_contacts_keep_the_source_knee_bending_side_while_cross
     context.allocator=mem.tracking_allocator(&track);context.temp_allocator=context.allocator
     defer context=previous_context
     f:Grounding_Fixture;grounding_fixture_init(&f,t,0);defer grounding_fixture_free(&f)
-    config:=core.get(&f.configs,f.rig);config.count=1;config.adjust_body=false
+    config:=core.edit(&f.configs,f.rig);config.count=1;config.adjust_body=false
     config.legs[0].plant_speed=10;config.legs[0].pole_offset={}
     phys.owned_body_place(&f.physics,f.platform,{0,-.3,0},1)
     testing.expect(t,anim.grounding_apply(&f.state,&f.cache,grounding_fixture_inputs(&f),.1))
@@ -851,7 +851,7 @@ grounding_releases_fast_low_swing_preserves_roll_and_compensates_support_velocit
     defer context=previous_context
     fixture:Grounding_Fixture;grounding_fixture_init(&fixture,t,0);defer grounding_fixture_free(&fixture)
     f:=&fixture
-    config:=core.get(&f.configs,f.rig);config.blend_time=.08
+    config:=core.edit(&f.configs,f.rig);config.blend_time=.08
     testing.expect(t,anim.grounding_apply(&f.state,&f.cache,grounding_fixture_inputs(f),.1))
     allocations:=track.total_allocation_count
     for frame in 1..=120 {
@@ -884,14 +884,14 @@ grounding_fades_missing_contacts_and_recovers_while_preserving_stance_and_swing_
     for swinging in ([2]bool{false,true}) {
         fixture:Grounding_Fixture;grounding_fixture_init(&fixture,t,.2)
         f:=&fixture
-        config:=core.get(&f.configs,f.rig);config.count=1;config.adjust_body=false;config.blend_time=.1
+        config:=core.edit(&f.configs,f.rig);config.count=1;config.adjust_body=false;config.blend_time=.1
         platform:=grounding_pose(&f.physics,f.platform)
         phys.owned_body_place(&f.physics,f.platform,platform.position+mm.Vec3{0,.2,0},platform.rotation)
         source:=f.state.world[4]
         testing.expect(t,anim.grounding_apply(&f.state,&f.cache,grounding_fixture_inputs(f),.1))
         correction:=f.cache.records[0].targets[0].position-source.position
         testing.expect(t,linalg.length(correction)>.1 && f.cache.records[0].targets[0].weight==1)
-        core.get(&f.configs,f.rig).collision_mask=0
+        core.edit(&f.configs,f.rig).collision_mask=0
         for frame in 1..=missing_ticks {
             copy(f.state.local[:],f.state.rest[:])
             if swinging {f.state.local[4].position+={f32(frame)*.04,.12,0}}
@@ -923,7 +923,7 @@ grounding_fades_missing_contacts_and_recovers_while_preserving_stance_and_swing_
                 testing.expect(t,mm.quat_angle(f.state.world[4].rotation,raw.rotation)<1e-4)
             }
         }
-        core.get(&f.configs,f.rig).collision_mask=0xffffffff
+        core.edit(&f.configs,f.rig).collision_mask=0xffffffff
         copy(f.state.local[:],f.state.rest[:])
         if swinging {f.state.local[4].position+={.24,.12,0}}
         f.state.local[4].rotation=mm.quat_axis_angle({1,0,0},.6)
@@ -942,13 +942,13 @@ grounding_fades_missing_contacts_and_recovers_while_preserving_stance_and_swing_
 grounding_contact_bone_requires_a_foot_descendant_and_recovers_after_configuration_edits :: proc(t:^testing.T) {
     fixture:Grounding_Fixture;grounding_fixture_init(&fixture,t,0);defer grounding_fixture_free(&fixture)
     f:=&fixture
-    core.get(&f.configs,f.rig).legs[0].contact_bone=anim.bone_ref("foot.r")
+    core.edit(&f.configs,f.rig).legs[0].contact_bone=anim.bone_ref("foot.r")
     testing.expect(t,!anim.grounding_apply(&f.state,&f.cache,grounding_fixture_inputs(f),0))
-    core.get(&f.configs,f.rig).legs[0].contact_bone=anim.bone_ref("body")
+    core.edit(&f.configs,f.rig).legs[0].contact_bone=anim.bone_ref("body")
     testing.expect(t,!anim.grounding_apply(&f.state,&f.cache,grounding_fixture_inputs(f),0))
-    core.get(&f.configs,f.rig).legs[0].contact_bone=anim.bone_ref("missing")
+    core.edit(&f.configs,f.rig).legs[0].contact_bone=anim.bone_ref("missing")
     testing.expect(t,!anim.grounding_apply(&f.state,&f.cache,grounding_fixture_inputs(f),0))
-    config:=core.get(&f.configs,f.rig)
+    config:=core.edit(&f.configs,f.rig)
     config.legs[0].contact_bone=anim.bone_ref("foot.l");config.legs[0].contact_offset=.1
     testing.expect(t,anim.grounding_apply(&f.state,&f.cache,grounding_fixture_inputs(f),.1))
     testing.expect(t,f.cache.records[0].placements[0].anchor.active)
@@ -963,7 +963,7 @@ grounding_procedural_pose_follows_platform_replays_clones_and_allocates_nothing_
     defer context=previous_context
     fixture:Grounding_Fixture;grounding_fixture_init(&fixture,t,0);defer grounding_fixture_free(&fixture)
     f:=&fixture
-    config:=core.get(&f.configs,f.rig);config.mode=.Procedural;config.body_height=1.65
+    config:=core.edit(&f.configs,f.rig);config.mode=.Procedural;config.body_height=1.65
     testing.expect(t,anim.grounding_apply(&f.state,&f.cache,grounding_fixture_inputs(f),1.0/60))
     allocations:=track.total_allocation_count
     first:=f.cache.records[0].targets
@@ -1105,7 +1105,7 @@ eight_legged_grounding_walks_without_animation_clips_or_per_leg_entities :: proc
         leg.pole_offset={0,1,0};leg.phase=f32((i+i/2)%2)*0.5
         config.legs[i]=leg
     }
-    core.get(&f.configs,f.rig)^=config
+    core.edit(&f.configs,f.rig)^=config
     started:[8]bool
     for frame in 0..<360 {
         copy(f.state.local[:],f.state.rest[:]);f.state.local[0].position.x=f32(frame)*0.002

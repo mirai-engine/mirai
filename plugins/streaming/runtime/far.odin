@@ -476,7 +476,7 @@ streaming_far :: proc(
         if !posed {pose=core.TRANSFORM_IDENTITY}
         if proxy,has:=shown[e];has {
             // It follows its reference.
-            if now,has:=core.get(core.read(transforms),proxy);has && now!=pose {core.get(transforms,proxy)^=pose}
+            if now,has:=core.get(core.read(transforms),proxy);has && now!=pose {core.edit(transforms,proxy)^=pose}
             continue
         }
         if mesh=={} || !far_shows(views.ptr,e,reference) {continue}

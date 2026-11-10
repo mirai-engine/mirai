@@ -48,7 +48,7 @@ locomotion_seat :: proc(
         c:=&characters.table.values[row]
         seat:=input.seat_of(drivables,e)
         if c.move_relative_to==.Game || !c.ready || seat==core.NONE || !core.owned(remotes,e) {continue}
-        move:=core.get(moves,e)
+        move:=core.edit(moves,e)
         if move==nil {continue}
         if !walks {
             core.report(problems,e,"locomotion.seat_action","a seat drives its Character, whose actions move and look have another kind than Axis2 in the input map; give them that kind in input.mirai, or give it move_relative_to Game and write its Move_Input in the game")

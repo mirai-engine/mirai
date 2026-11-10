@@ -193,8 +193,8 @@ a_streamed_section_holds_and_comes_back_as_it_was_left :: proc(t:^testing.T) {
     testing.expect(t,!row_has(&f.world.held,lamp),"without the view it is on again")
 
     chest,crate,book,wanderer:=section_entity(&f,id_in(1,11)),section_entity(&f,id_in(1,12)),section_entity(&f,id_in(1,14)),section_entity(&f,id_in(1,15))
-    core.get(&f.world.lamps,chest).range=9
-    core.get(&f.world.lamps,book).range=8
+    core.edit(&f.world.lamps,chest).range=9
+    core.edit(&f.world.lamps,book).range=8
     core.destroy(&f.world.entities,crate)
     core.add(&f.world.roaming,wanderer,Roaming{})
     coin:=core.create(&f.world.entities)
@@ -446,7 +446,7 @@ a_section_inside_a_dropped_one_keeps_what_changed_in_it :: proc(t:^testing.T) {
     VAULT_ID:=id_in(1,21)
     gold:=section_entity(&f,id_in(VAULT_ID,30))
     if !testing.expect(t,gold!=core.NONE,"the hall and its vault loaded") {return}
-    core.get(&f.world.lamps,gold).range=50
+    core.edit(&f.world.lamps,gold).range=50
 
     hall_entity:=section_entity(&f,1)
     section_request(&f.requests,hall_entity,.Unloaded)

@@ -102,7 +102,7 @@ without_local_fields_a_body_costs_reading_the_gravity_of_the_world :: proc(t:^te
     body:=body_of(core.ref(&f.state),resting)
     testing.expect(t,!sim.body_is_awake(&f.state.world,body),"the body came to rest")
     // The level turns: what fell down now falls along +X, and the body wakes.
-    core.get(&f.worlds,level).rotation=mm.quat_axis_angle({0,0,1},mm.PI/2)
+    core.edit(&f.worlds,level).rotation=mm.quat_axis_angle({0,0,1},mm.PI/2)
     physics_test_step(&f)
     testing.expect(t,linalg.length(gravity(core.ref(&f.state))-{4,-1,0})<1e-4)
     testing.expect(t,sim.body_is_awake(&f.state.world,body),"a body asleep wakes when its gravity changes")

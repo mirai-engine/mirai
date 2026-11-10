@@ -44,7 +44,7 @@ distance_tick_preserves_physical_fade_clocks_root_metadata_and_manual_warp_overr
     animation_distance(&requests,actor,base.name_hash("walk"),.8)
     step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&roots,&requests,&events,&playback,&app,&skeletons,&motion,&motion_requests,&motion_assets,.1,&problems)
     testing.expect(t,abs(state.time-.8)<1e-5 && abs(state.motion.translation.x-.7)<1e-5 && len(events.items)==1)
-    animation_play(core.at(&animations,0),"run",fade=1,loop=false)
+    animation_play(core.edit_at(&animations,0),"run",fade=1,loop=false)
     step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&roots,&requests,&events,&playback,&app,&skeletons,&motion,&motion_requests,&motion_assets,.1,&problems)
     animation_distance(&requests,actor,base.name_hash("run"),.8)
     step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&roots,&requests,&events,&playback,&app,&skeletons,&motion,&motion_requests,&motion_assets,.1,&problems)
@@ -52,7 +52,7 @@ distance_tick_preserves_physical_fade_clocks_root_metadata_and_manual_warp_overr
     clock:=animation_motion_clock(state,&content.animations[0],nil,.1,.7)
     testing.expect(t,abs(state.fader.current.time-.8)<1e-5 && abs(state.fader.outgoing[0].player.time-1)<1e-5 && abs(state.fader.elapsed-.2)<1e-5)
     testing.expect(t,clock.player.clip==1 && abs(clock.from-.9)<1e-5 && abs(clock.to-1)<1e-5 && abs(clock.weight-.8)<1e-5 && clock.root.translation)
-    value:=core.at(&animations,0);value.motion={1,2};value.fade=0
+    value:=core.edit_at(&animations,0);value.motion={1,2};value.fade=0
     animation_distance(&requests,actor,base.name_hash("run"),0,true)
     step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&roots,&requests,&events,&playback,&app,&skeletons,&motion,&motion_requests,&motion_assets,.1,&problems)
     testing.expect(t,state.motion==ROOT_DELTA_DEFAULT && len(events.items)==0)

@@ -123,7 +123,7 @@ placement_prepare :: proc(tool:^Physics_Placement) -> bool {
     if destructibles:=core.world_table_of(w,destruct.Destructible);destructibles!=nil {
         // Intact, it is the mesh it shows, with the surface and collision of its collider.
         for e in destructibles.entities {
-            if collider:=core.get(colliders,e);collider!=nil && collider.kind==.External {collider.kind=.Mesh}
+            if collider:=core.edit(colliders,e);collider!=nil && collider.kind==.External {collider.kind=.Mesh}
             else if !core.has(colliders,e) && editor.entity_has(w,e,erender.Mesh_Renderer) {core.add(colliders,e,phys.collider_mesh())}
         }
     }

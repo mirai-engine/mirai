@@ -100,9 +100,9 @@ api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: p
     text=string(serial.writer_bytes(&out))
     testing.expect(t,strings.contains(text,"compiled") && strings.contains(text,"diagnostics"))
     testing.expect(t,core.world_copy(&info,&running,&world))
-    core.get(&running.transforms,entity).position.x=8
-    core.get(&running.config,entity).diagnostics=99
-    core.get(&running.state,entity).ticks=42
+    core.edit(&running.transforms,entity).position.x=8
+    core.edit(&running.config,entity).diagnostics=99
+    core.edit(&running.state,entity).ticks=42
     session.mode=.Play
     session.runs[0]={world=&running}
     params:=Api_Inspect_Params{include_runtime=true,limit=1}

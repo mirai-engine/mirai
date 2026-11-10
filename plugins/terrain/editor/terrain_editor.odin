@@ -500,7 +500,7 @@ stroke_end :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,ass
     if !editor.revision_push(&tool.history,&step,step_destroy) {editor.notify(s,"The terrain history could not be stored")}
     stroke.stamp=terrain.terrain_stamp(a,stroke.id)
     history.edits_begin(s.edits,s.selection,label)
-    for value,row in table.values[:core.count(table)] {if value.source==stroke.id {core.at(table,row).revision=next}}
+    for value,row in table.values[:core.count(table)] {if value.source==stroke.id {core.edit_at(table,row).revision=next}}
     if consume!=core.NONE {editor.entities_delete(s,{consume});history.selection_set(s.selection,{stroke.entity})}
     history.edits_end(s.edits)
     held.revision,held.stamp=next,stroke.stamp

@@ -123,7 +123,7 @@ the_ground_of_foliage_follows_the_chunks_of_the_terrain_that_change :: proc(t:^t
     testing.expect(t,foliage.ground_tile_find(owner,{-1,0})>=0)
     testing.expect_value(t,foliage.ground_tile_find(owner,{20,0}),-1)
     // The terrain moves away: its tiles go.
-    world:=core.get(&b.worlds,core.entity_at(core.read(&b.terrains),0))
+    world:=core.edit(&b.worlds,core.entity_at(core.read(&b.terrains),0))
     world.transform.position={1000,0,0}
     b.worlds.version+=1
     bridge_step(&b)

@@ -222,7 +222,7 @@ a_wall_blocks_the_player_reports_a_sensor_and_a_new_collision_keeps_the_shape ::
     testing.expect(t,physics_test_pose(&f,movers[1]).position.x>1)
     created:=f.state.stats.shapes_created
     teleport(&f.requests,movers[1],{-2,1,0})
-    core.get(&f.colliders,movers[1]).sensor=false
+    core.edit(&f.colliders,movers[1]).sensor=false
     physics_test_step(&f)
     set_velocity(&f.requests,movers[1],{3,0,0})
     for _ in 0..<60 {physics_test_step(&f)}
@@ -261,14 +261,14 @@ a_character_takes_its_capsule_and_its_collision_from_its_collider :: proc(t:^tes
     testing.expect_value(t,desc.filter,collision_filter(&f.collision,capsule))
     testing.expect(t,desc.mass>100 && desc.mass<1000)
     created:=f.state.stats.characters_created
-    core.get(&f.colliders,e).collides=COLLISION_LAYERS_ALL
+    core.edit(&f.colliders,e).collides=COLLISION_LAYERS_ALL
     // The locomotion writes the rest of the row every tick; that does not make it again.
-    core.get(&f.characters,e).coyote=0.05
+    core.edit(&f.characters,e).coyote=0.05
     physics_test_step(&f,0)
     testing.expect_value(t,f.state.stats.characters_created,created)
     current,_:=core.get(core.read(&f.colliders),e)
     testing.expect_value(t,sim.character_desc(&f.state.world,link_find(&f.state,e).character).filter,collision_filter(&f.collision,current))
-    core.get(&f.colliders,e).size.x=0.3
+    core.edit(&f.colliders,e).size.x=0.3
     physics_test_step(&f,0)
     testing.expect_value(t,f.state.stats.characters_created,created+1)
 }
@@ -299,8 +299,8 @@ contact_rules_of_a_collider_reach_its_shape_without_making_it_again :: proc(t:^t
     v:=sim.body_linear_velocity(w,link_find(&f.state,box).body)
     testing.expectf(t,abs(v.x-2)<0.05,"carried at %v",v)
     created:=f.state.stats.shapes_created
-    core.get(&f.colliders,belt).surface_speed={}
-    core.get(&f.colliders,belt).one_way=true
+    core.edit(&f.colliders,belt).surface_speed={}
+    core.edit(&f.colliders,belt).one_way=true
     for _ in 0..<60 {physics_test_step(&f)}
     testing.expect_value(t,f.state.stats.shapes_created,created)
     speed,one_way,_:=sim.shape_surface(w,link_find(&f.state,belt).shape)

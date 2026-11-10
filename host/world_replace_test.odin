@@ -104,7 +104,7 @@ a_replacement_with_marks_brings_back_only_what_changed :: proc(t:^testing.T) {
         testing.expect(t,core.world_copy_changed(&info,kept,live,marks))
         seen:core.Seen
         _=core.changes(&live.still,&seen)
-        core.get(&live.changed,entities[1])^=77
+        core.edit(&live.changed,entities[1])^=77
         extra:=core.create(&live.entities)
         core.add(&live.changed,extra,5)
         core.settle(&info,live,nil)

@@ -198,7 +198,7 @@ joints_events :: proc(s:^Sync,events:^Physics_Events,states:^core.Table(Joint_St
         }
         target:=l.applied.target
         l.joint,l.refused,l.applied={},false,{}
-        if row:=core.get(states,e);row!=nil {row.broken=true}
+        if row:=core.edit(states,e);row!=nil {row.broken=true}
         core.push(&events.joint_break,Joint_Break{entity=e,target=target,force=event.force,torque=event.torque})
     }
 }
