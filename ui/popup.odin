@@ -606,17 +606,14 @@ dropdown_button :: proc(ctx:^Context,id:Id,shown:string,d:Dropdown) -> (clicked:
 // A row of the list of a dropdown, which takes the pointer but not the focus.
 // check_room: the row of an option, which leaves the room of the check.
 @(private)
-dropdown_row :: proc(ctx:^Context,id:Id,text:string,current,chosen,check_room:bool,height:f32,look:^Node_Style,pad:f32) -> bool {
-    if look==nil {return row(ctx,id,{label=text,selected=current,checked=chosen,check_room=check_room && !chosen,quiet=true,height=height}).clicked}
+dropdown_row :: proc(ctx:^Context,id:Id,shown:string,current,chosen,check_room:bool,height:f32,look:^Node_Style,pad:f32) -> bool {
+    if look==nil {return row(ctx,id,{label=shown,selected=current,checked=chosen,check_room=check_room && !chosen,quiet=true,height=height}).clicked}
     it:=interact(ctx,id)
     style:=look.text
     style.align_y=.Center
     if chosen && look.mark[3]>0 {style.color=look.mark}
     if element_open(ctx,{id=id,layout={width=GROW,height=fixed(height),padding={pad,0,pad,0}},custom=paint_add(ctx,{kind=.Rect,fill=look.track if current else {},corners=look.radius})}) {
-        text_leaf:=text
-        text_begin(ctx,style)
-        text_span(ctx,text_leaf)
-        text_end(ctx,{width=GROW,height=GROW})
+        text(ctx,shown,style,GROW,GROW)
     }
     element_close(ctx)
     return it.clicked

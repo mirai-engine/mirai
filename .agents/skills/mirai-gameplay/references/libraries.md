@@ -404,8 +404,9 @@ their defaults, `input.mirai` and the seats: [actions](control.md#actions).
   - `Axis`: two keys (negative, positive), a gamepad axis or a mouse axis.
   - `Axis2`: four keys (left, right, down, up), a stick or the mouse movement. Key diagonals keep
     unit length.
-- `Action_State`: `down`, `pressed`, `released`, `tapped`, `holding`, `held_ticks`, `value`,
-  `vector`. `tap_ticks` (12) and `hold_ticks` (30) come from the map.
+- `Action_State`: `down`, `pressed`, `released`, `tapped`, `holding`, `held` (seconds), `value`,
+  `vector`. `tap_seconds` and `hold_seconds` come from the map, and each threshold is met at the
+  tick nearest to it, so a tap and a hold last the same at any tick rate.
 - Changing the map at runtime: `input_map_action(&m, jump, .Button)`,
   `input_map_bind(&m, jump, inp.binding_key(.Space))`, `input_map_unbind`, with the action of the
   world (`jump:=inp.action_of(walk, .Jump)`); `input_map_has` says whether it has an action of a
@@ -510,7 +511,7 @@ the reverb of the room where the listener is and what covers each source.
     `platform.audio_device_names`; empty, the system's. `audio_output` moves the mixer to it when
     it changes, without losing its voices, and only if the application has an open output. A name
     the system does not list sounds through the system's and is the problem `audio.output`. Its
-    `kind` (headphones by default, or speakers) is given to every mixer, open output or not.
+    `kind` (speakers by default, or headphones) is given to every mixer, open output or not.
   - `audio_buses` (`late`) compares each bus of the mixer with its entry and its volume and sends
     only what differs; a bus without an entry returns to 0 dB, without filter or ducking. The
     master's mute belongs to the host (the player without focus), not to the settings.

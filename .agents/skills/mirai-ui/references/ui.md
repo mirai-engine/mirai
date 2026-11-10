@@ -54,9 +54,10 @@ each screen that did not change this way.
     child occupies `span` columns and moves to the next row if it does not fit in what is left of
     its own. A child of `row_span` rows keeps its columns in the rows under it and the children
     after it flow around them. A row is as high as its highest child of one row, or what the row
-    tracks of `grid_rows_add` say with the same kinds of `Size`; a child of several rows that
-    needs more gives the rest to its last one. The tracks that the frame cannot store are counted
-    in `Stats.dropped_tracks` and their Grid is left with equal columns, or rows of their children.
+    tracks say (`Box.row_tracks`, from `grid_tracks_add` too) with the same kinds of `Size`; a
+    child of several rows that needs more gives the rest to its last one. The tracks that the
+    frame cannot store are counted in `Stats.dropped_tracks` and their Grid is left with equal
+    columns, or rows of their children.
   - `Wrap` continues on another row where the next child does not fit; `Stack` overlaps the
     children.
   - `self_x`/`self_y` align a child in its place; `Stretch` stretches it like a `GROW` (what is

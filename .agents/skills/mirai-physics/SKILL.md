@@ -1,12 +1,12 @@
 ---
 name: mirai-physics
 description: Modify, use and verify Mirai physics - the `physics` plugin (the
-  `plugins/physics/runtime/sim` solver with bodies, joints, queries, character and snapshots, the
-  `plugins/physics/runtime` integration with character locomotion, and its editor part) and the
-  `destruct` plugin with its fracture model (`plugins/destruct/runtime/fracture`). Use when changing
-  the solver or the model, writing gameplay with bodies and characters (walk, jump, fly, swim,
-  `Character`, `Walk`, `Swim`), working with buoyancy and drag of `Fluid`s, with `Force_Field`s
-  and area forces (the drawn water
+  `plugins/physics/runtime/sim` solver with bodies, joints, queries, character, breakable bodies and
+  snapshots, the `plugins/physics/runtime` integration with character locomotion, and its editor
+  part) and the `destruct` plugin, which makes a `Destructible` a breakable body. Use when changing
+  the solver, breaking things, writing gameplay with bodies and characters (walk, jump, fly, swim,
+  `Character`, `Walk`, `Swim`), working with buoyancy and drag of `Fluid`s, with `Force_Field`s,
+  `Strain_Field`s and area forces (the drawn water
   is in `mirai-world`) or changing how the simulation is reflected in entities.
 ---
 
@@ -14,10 +14,10 @@ description: Modify, use and verify Mirai physics - the `physics` plugin (the
 
 Physics is a first-party plugin that a project activates. Its solver
 (`plugins/physics/runtime/sim`, package `mirai_physics`, imports only `std/*`) is the model and
-does not know what an entity is. The integration (`plugins/physics/runtime`) and the `destruct`
-plugin use it on the world tables; the `destruct` fracture model, only through its public API. The
-game and plugins use the public API of the integration, never the model. It shares `core` tables
-with networking ([networking](../mirai-networking/SKILL.md)).
+does not know what an entity is. The integration (`plugins/physics/runtime`) uses it on the world
+tables and is the only package that imports it. The game and the other plugins, `destruct` among
+them, use the public API of the integration, never the solver. It shares `core` tables with
+networking ([networking](../mirai-networking/SKILL.md)).
 
 ## Map
 
@@ -39,7 +39,8 @@ with networking ([networking](../mirai-networking/SKILL.md)).
 - Walk, jump, fly, swim, layered movements, seat control, game modes →
   [engine.md#locomotion](references/engine.md#locomotion); at normal speed in slow motion
   (`core.Own_Pace`) → [engine.md#own-pace](references/engine.md#own-pace)
-- Fracture (pieces, damage, cut, state, copy) on the public API of the solver →
+- Breakable bodies of the solver (pieces, bonds, clusters, damage, cut, state, copy) and their
+  facade `physics.breakable_*` → [with the world](references/destruction.md#with-the-world),
   [construction](references/destruction.md#construction),
   [damage and fields](references/destruction.md#damage-and-fields),
   [removal](references/destruction.md#removal), [cut](references/destruction.md#cut) and
@@ -63,8 +64,8 @@ with networking ([networking](../mirai-networking/SKILL.md)).
   and [network](references/engine-destruct.md#network)
 - Breaking or digging terrain (craters, debris, pieces with physics per material): not `destruct`
   → [what can be dug](../mirai-world/references/terrain.md#what-digging-leaves)
-- Bodies a library makes from its own data (the cells of a foliage), the capacities of the
-  simulation, who may import the solver → [owned bodies](references/engine.md#owned-bodies)
+- Bodies a library makes from its own data (the cells of a foliage, what breaks), the capacities
+  of the simulation, who may import the solver → [owned bodies](references/engine.md#owned-bodies)
 - `core.place` on a body → [engine.md#requests](references/engine.md#requests);
   `core.World_Queries` (cameras, feet) → [engine.md#queries](references/engine.md#queries)
 - Editor part (collider preset, collision settings, `physics.collision.*` API, Simulate, Collision
@@ -83,10 +84,14 @@ with networking ([networking](../mirai-networking/SKILL.md)).
    - `fluid.odin` (volumes and surface query) and `fluid_load.odin` (buoyancy, damping and drag
      per substep).
    - `character.odin`: support, ground probe at the end of the step, constraint and push.
+   - `breakable.odin` (pools, pieces, bonds, regrouping, cut and the end of the step),
+     `breakable_damage.odin` (regions, clusters, removal) and `breakable_state.odin` (the state
+     without geometry).
    - `debug_draw.odin`: lines and points for a debug view.
 2. Decide whether the new data is **state** or **scratch**.
    - State: lives in `Body`, `Shape`, `Contact`, `Joint`, `Joint_Axes`, `Island`, `Manifold_Block`,
-     `Character`, `World_State` or the trees, and enters the snapshot through `snapshot_blocks`.
+     `Character`, `Breakable`, `Piece`, `Bond`, `World_State` or the trees, and enters the snapshot
+     through `snapshot_blocks`.
    - Scratch: lives in `Step`, `World.manifolds` or the events and is rebuilt every step.
 3. Write the test next to the code (`*_test.odin`, name as a sentence) and run only the affected
    ones.
@@ -118,13 +123,17 @@ with networking ([networking](../mirai-networking/SKILL.md)).
   ground is the one from the end of the previous step, probed again only if it became stale; its
   moves run in parallel and their consequences on other bodies are applied afterwards, in slot
   order. The character constraint does not keep impulses between steps.
-- A fracture event carries no geometry, and applying it to a world in the same state gives the same
+- What breaks is state of the world: no package outside the solver holds a part of a breakable, so
+  a snapshot, a restore and a copy cannot take the bodies without it. Its pools are made with the
+  first breakable: a world that breaks nothing holds none.
+- A break event carries no geometry, and applying it to a world in the same state gives the same
   state. One limited to the body of a piece does not depend on where the other bodies are: it is the
   one that travels over the network.
-- The frame of each body of a destructible is the frame of the destructible: the shapes of its
-  pieces have an identity local transform.
-- Fracture changes bodies and shapes after `world_step` or between ticks, never in the middle of the
-  solver: it reads the hits of the step (`world_events(w).hit`) in `fracture_update`.
+- The frame of each body of a breakable is the frame of the breakable: the shapes of its pieces
+  have an identity local transform.
+- Breaking changes bodies and shapes at the end of `world_step`, once its hits are gathered, or
+  between steps, never in the middle of the solver. An event of a step carries the user data its
+  bodies and shapes had when it was raised: a break may end them before the event is read.
 
 ### Library invariants
 
@@ -132,10 +141,9 @@ with networking ([networking](../mirai-networking/SKILL.md)).
   moves a body sends a request to `Body_Requests`; whoever teleports it uses `core.place`; whoever
   imposes the pose of another owner writes `core.Pose_Target`; whoever owns a body of another
   library uses proxies. Nobody writes the `Transform` of a body.
-- Only the physics plugin and the destruct plugins, whose fracture model is built on it, import
-  the solver: `mirai check` refuses the import in any other package of the engine, tests and tools
-  included, and in a game. A library makes static collision of its own with the owned bodies of
-  the integration.
+- Only the physics plugin imports the solver: `mirai check` refuses the import in any other
+  package of the engine, tests and tools included, and in a game. A library makes static collision
+  of its own with the owned bodies of the integration, and what breaks with its breakables.
 - A Character's body and its look both face -Z.
 - A character moves only through its `Character_Move`: locomotion writes it and, in a game mode,
   the step of that mode writes it first, to which locomotion only adds the layered movements.
@@ -175,15 +183,17 @@ with networking ([networking](../mirai-networking/SKILL.md)).
     `mesh`, `query`, `static` (triangles and change log of static collision),
     `debug_draw`, `world` (stacks and pyramid), `snapshot`, `snapshot_fuzz`, `fluid`,
     `collide`, `gjk`, `cylinder` and `convex_radius` (shapes and rounding); `solver` (overflowed
-    pairs, inertia, islands, uncolored constraints); `far` (the same scene 20 km from the origin).
+    pairs, inertia, islands, uncolored constraints); `far` (the same scene 20 km from the origin);
+    `breakable`, `breakable_damage`, `breakable_state` and `breakable_world` (what a step, a
+    snapshot and a copy do with what breaks).
   - Integration: `collision`, `forces`, `geometry`, `joints`, `manipulation`, `reload`,
-    `static`, `teleport`, `fluids`, `sync` (sealed rows against the full reconciliation);
+    `static`, `teleport`, `fluids`, `sync` (sealed rows against the full reconciliation),
+    `breakables` (the facade, its copies and `strain_area`);
     locomotion: `locomotion` (walk, jump, coyote, layers, flight, swimming, modes),
     `locomotion_moves` (crouch, slide, mantle, tactical sprint, ledge jump), `planet` (own
     vertical: walking, jumping and rollback on a planet, crossing fields) and `locomotion_seat`
     (seat control, relative forward). Editor: `collision`, `api_collision`, `colliders`,
-    `view_mode`. `destruct`: `integration`; its model `plugins/destruct/runtime/fracture`:
-    `fracture`, `features`, `state`. `geometry_test` does not need a GPU. Grounding with real
+    `view_mode`. `destruct`: `integration`. `geometry_test` does not need a GPU. Grounding with real
     bodies: `demo/game/grounding_physics_test.odin`.
 - Twins and cuts: the tests of `plugins/portals/runtime` (half crossed, walls of any collider, the
   twin that leaves, snapshot).
@@ -198,8 +208,8 @@ with networking ([networking](../mirai-networking/SKILL.md)).
   ```sh
   mirai test plugins/physics/runtime/sim bench_steps bench_snapshot bench_characters \
     bench_ccd bench_shapes bench_fluids --release -define:PHYSICS_BENCH=true
-  mirai test plugins/destruct/runtime/fracture bench_wall bench_destruct --release \
-    -define:FRACTURE_BENCH=true
+  mirai test plugins/physics/runtime/sim bench_wall bench_destruct --release \
+    -define:PHYSICS_BENCH=true
   mirai test plugins/physics/runtime/sim bench_colors bench_friction bench_sleep --release \
     -define:PHYSICS_BENCH=true
   mirai test std/spatial --release -define:SPATIAL_BENCH=true

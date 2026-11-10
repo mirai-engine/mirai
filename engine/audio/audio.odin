@@ -385,7 +385,7 @@ buses_apply :: proc(m:^Mixer,settings:^Audio_Settings,volumes:^Audio_Volumes=nil
 @(step="late",stage="end",loops="game editor")
 audio_output :: proc(output:Audio_Output,applied:^Mixer_Output,app:^host.App,problems:^core.Problems) {
     if app.mixer==nil {return}
-    kind:=output.kind if output.kind<=max(Output_Kind) else .Headphones
+    kind:=output.kind if output.kind<=max(Output_Kind) else .Speakers
     if mixer.mixer_output(app.mixer)!=kind {mixer.mixer_set_output(app.mixer,kind)}
     if !platform.audio_device_is_open(app.platform) || applied.set && applied.device==output.device {return}
     first:=!applied.set

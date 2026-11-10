@@ -15,7 +15,7 @@ ability_check :: proc(a:^Ability,out:[]u8) -> string {
     if a.input.on==.None && (a.input.after!=0 || a.input.wait!=.Buffer) {return "input.after or input.wait is set but input.on is none, so no input fires: give the trigger, or clear them"}
     if !finite(a.duration) || a.duration<=0 {return fmt.bprintf(out,"duration is %v: give the seconds the ability lasts, above 0",a.duration)}
     if !seconds_ok(a.cooldown) {return fmt.bprintf(out,"cooldown is %v: give the seconds before it starts again, 0 or more",a.cooldown)}
-    if len(ability_name_text(&a.action))>0 && len(ability_name_text(&a.clip))>0 {return fmt.bprintf(out,"plays both the action %q and the clip %q: keep the action for a layer over locomotion or the clip for the whole body",ability_name_text(&a.action),ability_name_text(&a.clip))}
+    if len(ability_name_text(&a.action))>0 && len(ability_name_text(&a.clip))>0 {return fmt.bprintf(out,"plays both the action %q and the whole-body action %q: keep the action for a layer over locomotion or clip for the whole body",ability_name_text(&a.action),ability_name_text(&a.clip))}
     for c,i in a.conditions {
         if !finite(c.at_least) || !finite(c.at_most) {return fmt.bprintf(out,"conditions[%d] has a bound that is not a number: give finite at_least and at_most",i)}
         if c.attribute==ATTRIBUTE_NONE && (c.at_least!=0 || c.at_most!=0) {return fmt.bprintf(out,"conditions[%d] has bounds and names no attribute: name the attribute it measures",i)}

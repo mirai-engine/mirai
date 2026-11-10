@@ -411,7 +411,7 @@ commands_apply :: proc "contextless" (m:^Mixer) {
         case .Output:
             m.output_now=Output_Kind(command.index)
             // What a voice kept for the other output starts over.
-            for &v in m.voices {v.binaural_live,v.pan_valid=false,false}
+            for &v in m.voices {v.binaural_live=false}
         case .Sound_Release:
             for &v,i in m.voices {
                 if v.has_next && v.next.sound==command.index {voice_next_cancel(m,u32(i))}

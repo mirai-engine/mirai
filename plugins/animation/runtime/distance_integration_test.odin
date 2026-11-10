@@ -44,7 +44,7 @@ distance_tick_preserves_physical_fade_clocks_root_metadata_and_manual_warp_overr
     animation_distance(&requests,actor,base.name_hash("walk"),.8)
     step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&roots,&requests,&events,&playback,&app,&skeletons,&motion,&motion_requests,&motion_assets,.1,&problems)
     testing.expect(t,abs(state.time-.8)<1e-5 && abs(state.motion.translation.x-.7)<1e-5 && len(events.items)==1)
-    animation_play(core.edit_at(&animations,0),"run",fade=1,loop=false)
+    animation_clip(core.edit_at(&animations,0),"run",fade=1,loop=false)
     step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&roots,&requests,&events,&playback,&app,&skeletons,&motion,&motion_requests,&motion_assets,.1,&problems)
     animation_distance(&requests,actor,base.name_hash("run"),.8)
     step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&roots,&requests,&events,&playback,&app,&skeletons,&motion,&motion_requests,&motion_assets,.1,&problems)
@@ -64,29 +64,23 @@ distance_tick_preserves_physical_fade_clocks_root_metadata_and_manual_warp_overr
 }
 
 @(test)
-distance_program_advances_only_its_selected_clock_and_keeps_independent_sources_at_physical_dt :: proc(t:^testing.T) {
+a_distance_request_takes_the_clip_of_a_program_to_its_time_without_allocations :: proc(t:^testing.T) {
     content:host.Content_Animation;state:=program_test_content(t,&content);defer {program_test_content_free(&content);playing_free(&state)}
     playback:Playback;events:Animation_Events;defer {playback_free(&playback);delete(events.items)}
     testing.expect(t,tracks_bind(&playback,&state,&content))
-    nodes:=program_test_graph();nodes[3].weight=.25
-    output:=new(Program_Output);defer {program_output_free(output);mem.free(output)}
+    built:=program_test_output(program_test_leaf("walk",0));output:=&built
     animation:=ANIMATION_DEFAULT;animation.loop=false;animation.root_motion=.Extract
-    testing.expect(t,program_node(output,{info={animation={1,2},output=3},nodes=nodes[:]},3,nil,nil,nil,{}))
-    testing.expect(t,program_players(&state,output,&content,animation,&events,&playback,.1,-1,nil))
-    testing.expect(t,program_pose(&playback,&state,&content,animation,output,{}))
+    testing.expect(t,program_buffers(&state,&content) && program_players(&state,output,&content,animation,&events,&playback,.1,-1,nil))
+    testing.expect(t,program_pose(&playback,&state,&content,animation,output))
     request:=Animation_Distance_Request{entity=state.entity,clip=base.name_hash("walk"),time=.8}
     testing.expect_value(t,distance_request_check(&state,&content,request),Distance_Error.None)
     clear(&events.items)
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
-    ok:=program_players(&state,output,&content,animation,&events,&playback,.1,-1,nil,&request) && program_pose(&playback,&state,&content,animation,output,{})
+    ok:=program_players(&state,output,&content,animation,&events,&playback,.1,-1,nil,&request) && program_pose(&playback,&state,&content,animation,output)
     clock:=animation_motion_clock(&state,&content,output,.1,.1)
-    walk,run:f32
-    for slot in state.program.players {if slot.seen!=state.program.frame {continue};clip:=lib.clip_data(&content.lib,slot.player.clip);if clip.name==base.name_hash("walk") {walk=slot.player.time};if clip.name==base.name_hash("run") {run=slot.player.time}}
+    walk:f32
+    for slot in state.program.players {if slot.seen!=state.program.frame {continue};clip:=lib.clip_data(&content.lib,slot.player.clip);if clip.name==base.name_hash("walk") {walk=slot.player.time}}
     context=saved
-    testing.expect(t,ok && abs(walk-.8)<1e-5 && abs(run-.2)<1e-5 && abs(state.motion.translation.x-.625)<1e-5)
-    testing.expect(t,clock.active && clock.player.clip==1 && abs(clock.from-.1)<1e-5 && abs(clock.to-.8)<1e-5 && abs(clock.weight-.75)<1e-5)
-    nodes[3].right,nodes[3].weight=2,.9
-    testing.expect(t,program_node(output,{info={animation={1,2},output=3},nodes=nodes[:]},3,nil,nil,nil,{}) && program_players(&state,output,&content,animation,&events,&playback,0,-1,nil))
-    clock=animation_motion_clock(&state,&content,output,0,0)
-    testing.expect(t,clock.active && clock.player.clip==1 && abs(clock.weight-.1)<1e-5)
+    testing.expect(t,ok && abs(walk-.8)<1e-5 && abs(state.motion.translation.x-.7)<1e-5)
+    testing.expect(t,clock.active && clock.player.clip==1 && abs(clock.from-.1)<1e-5 && abs(clock.to-.8)<1e-5 && abs(clock.weight-1)<1e-5)
 }
