@@ -238,8 +238,7 @@ api_scenario_steps :: proc(s:^Session,call:^api.Call,sc:^Scenario) -> (ran:[]Api
     server:=call.server
     owner:=ai_task_of_call(s,call)
     answer_buffer:[4096]u8
-    // What a step leaves lives past the scratch of the call its steps rewind.
-    fail :: proc(call:^api.Call,format:string,args:..any) -> string {return fmt.tprintf(format,..args)}
+    fail :: proc(call:^api.Call,format:string,args:..any) -> string {return fmt.aprintf(format,..args,allocator=call.allocator)}
     if run_find(s,owner)!=nil {return nil,fail(call,"a game is already playing: stop it (play.stop) and run the scenario again"),0}
     if sc.scene!="" {
         target:=scene_file(s,sc.scene)
@@ -261,36 +260,34 @@ api_scenario_steps :: proc(s:^Session,call:^api.Call,sc:^Scenario) -> (ran:[]Api
     _,error,ok:=api_scenario_call(server,"play.start",string(sc.start),answer_buffer[:])
     if !ok {return nil,fail(call,"play.start: %s",error.message),0}
     defer api_scenario_call(server,"play.stop","{}",answer_buffer[:])
-    steps:=make([dynamic]Api_Scenario_Step,context.temp_allocator)
+    // Each step rewinds the scratch it used, and the frames it runs free the
+    // temporary memory: what it leaves is kept after the rewind.
+    steps:=make([dynamic]Api_Scenario_Step,call.allocator)
+    answer:serial.Writer
+    serial.writer_init(&answer,0,s.app.allocator)
+    defer serial.writer_destroy(&answer)
     for &step,i in sc.steps {
-        if api_stop_asked(s) {return nil,"cancelled",0}
+        if api_stop_asked(s) {return steps[:],"cancelled",tick}
         api.server_progress(server,fmt.tprintf("step %d of %d: %s",i+1,len(sc.steps),step.name!=""?step.name:step.method),i,len(sc.steps))
         method:=api.method_find(server,step.method)
-        report:=Api_Scenario_Step{name=step.name,method=step.method,result="null"}
-        answer:serial.Writer
-        serial.writer_init(&answer,0,context.temp_allocator)
+        serial.writer_reset(&answer)
         mark:=base.arena_mark(&server.scratch)
         step_error,answered:=api.method_execute(server,method,string(step.params),&answer)
         server.image=""
+        why:=step_error.message
         held:=answered
-        if answered {
-            report.result=serial.Json(string(serial.writer_bytes(&answer)))
-            why:string
-            if held,why=scenario_step_held(string(step.params),string(report.result));!held {failure=fail(call,"steps[%d] %s: %s",i,step.method,why)}
-        } else {
-            report.error=strings.clone(step_error.message,context.temp_allocator)
-            failure=fail(call,"steps[%d] %s: %s",i,step.method,step_error.message)
-        }
+        if answered {held,why=scenario_step_held(string(step.params),string(serial.writer_bytes(&answer)))}
         if r,_:=api_play_run(s,call);r!=nil {
             if t:=core.world_storage_of(run_ref(s,r),core.Time);t!=nil {tick=t.tick}
         } else if held {
-            failure=fail(call,"steps[%d] %s: the game stopped",i,step.method)
-            held=false
+            held,why=false,"the game stopped"
         }
-        report.passed,report.tick=held,tick
-        append(&steps,report)
+        why=fmt.tprintf("steps[%d] %s: %s",i,step.method,why)
         base.arena_rewind(&server.scratch,mark)
-        if !held {break}
+        report:=Api_Scenario_Step{name=step.name,method=step.method,result="null",passed=held,tick=tick}
+        if answered {report.result=serial.Json(strings.clone(string(serial.writer_bytes(&answer)),call.allocator))} else {report.error=strings.clone(step_error.message,call.allocator)}
+        append(&steps,report)
+        if !held {failure=strings.clone(why,call.allocator);break}
     }
     return steps[:],failure,tick
 }
