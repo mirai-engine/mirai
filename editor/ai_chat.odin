@@ -7,6 +7,7 @@ import "core:strings"
 import "core:time"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/ai_store"
 import "mirai:std/base"
 import "mirai:ui"
 
@@ -169,8 +170,8 @@ ai_chat_choose :: proc(s:^Session,provider:Ai_Provider,model,effort:string) {
     task:=ai_chat_target(m)
     if task==nil || task.conversation.id==0 {return}
     c:=&task.conversation
-    if model!="" {ai_conversation_set_text(c.model[:],&c.model_len,model)}
-    if effort!="" {ai_conversation_set_text(c.effort[:],&c.effort_len,effort)}
+    if model!="" {ai_store.conversation_set_text(c.model[:],&c.model_len,model)}
+    if effort!="" {ai_store.conversation_set_text(c.effort[:],&c.effort_len,effort)}
     ai_task_dirty(task)
     ai_task_persist(s,task)
 }

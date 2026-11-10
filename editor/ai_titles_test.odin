@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:os"
 import "core:testing"
 import "mirai:editor/acp"
+import "mirai:editor/ai_store"
 import "mirai:project"
 import "mirai:std/base"
 
@@ -14,13 +15,13 @@ ai_session_titles_update_the_matching_project_chat_after_the_turn :: proc(t:^tes
     if !testing.expect(t,!os.exists(root)) {return}
     defer os.remove_all(root)
     m:=new(Ai);defer free(m)
-    testing.expect_value(t,ai_store_open(&m.store,root),"")
-    defer ai_store_close(&m.store)
+    testing.expect_value(t,ai_store.open(&m.store,root),"")
+    defer ai_store.close(&m.store)
     m.task_count=2
     for &task,index in m.tasks[:m.task_count] {
         task.id=index+1;task.conversation.id=u64(task.id);task.state=.Done
-        ai_conversation_set_text(task.conversation.native_session[:],&task.conversation.native_session_len,fmt.tprintf("native-%d",task.id))
-        ai_conversation_set_text(task.conversation.title[:],&task.conversation.title_len,"Original")
+        ai_store.conversation_set_text(task.conversation.native_session[:],&task.conversation.native_session_len,fmt.tprintf("native-%d",task.id))
+        ai_store.conversation_set_text(task.conversation.title[:],&task.conversation.title_len,"Original")
         ai_transcript_add(&task.transcript,"User message",.Prompt)
         task.dirty=true
     }
@@ -42,8 +43,8 @@ ai_session_titles_update_the_matching_project_chat_after_the_turn :: proc(t:^tes
     testing.expect_value(t,base.text_get(m.tasks[1].title[:]),"Compact scene title")
     testing.expect_value(t,string(m.history[1].title[:m.history[1].title_len]),"Compact scene title")
     testing.expect_value(t,m.tasks[1].transcript.count,1)
-    rows:[2]Ai_Conversation
-    count,message:=ai_store_list(&m.store,rows[:])
+    rows:[2]ai_store.Conversation
+    count,message:=ai_store.list(&m.store,rows[:])
     testing.expect_value(t,message,"");testing.expect_value(t,count,2)
     for &row in rows[:count] {if row.id==2 {testing.expect_value(t,string(row.title[:row.title_len]),"Compact scene title")}}
     m.workers[0].task=1;base.text_set(m.workers[0].client.session[:],"opening")

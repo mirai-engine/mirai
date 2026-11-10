@@ -1,5 +1,6 @@
 package editor
 
+import "mirai:editor/ai_store"
 import "mirai:editor/api"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -104,7 +105,7 @@ Ai_Status_Chat :: struct {
 
 Ai_Permission_Result :: struct {ok:bool}
 
-AI_LINE_NAMES :: [Ai_Line_Kind]string{.Output="output",.Prompt="prompt",.Note="note",.Report="report",.Divider="divider"}
+AI_LINE_NAMES :: [ai_store.Line_Kind]string{.Output="output",.Prompt="prompt",.Note="note",.Report="report",.Divider="divider"}
 
 @(private) AI_HISTORY_RESULT :: `{"type":"array","description":"Without id: the conversations of the project; the last updated first. With id: its messages; the oldest first.","items":{"anyOf":[` +
     `{"type":"object","properties":{"id":{"type":"integer","description":"What id takes"},"title":{"type":"string"},"document":{"type":"string","description":"The document it worked on"},"provider":{"type":"string","description":"The id of its connection"},"model":{"type":"string"},"effort":{"type":"string"},"updated_at":{"type":"integer","description":"Unix time in milliseconds"}},"required":["id","title","document","provider","model","effort","updated_at"],"additionalProperties":false},` +
@@ -171,7 +172,7 @@ ai_put_rect :: proc(w:^serial.Writer,name:string,rect:ui.Rect,first:=false) {
 ai_task_write :: proc(s:^Session,task:^Ai_Task,w:^serial.Writer,transcript:bool,from:int) {
     names:=AI_STATE_NAMES
     kinds:=AI_LINE_NAMES
-    conversation_kinds:=[Ai_Conversation_Kind]string{.Main="main",.Agent="agent",.Archived="archived"}
+    conversation_kinds:=[ai_store.Conversation_Kind]string{.Main="main",.Agent="agent",.Archived="archived"}
     t:=&task.transcript
     serial.write_u8(w,'{')
     api.write_int(w,"id",i64(task.id),true)
@@ -232,7 +233,7 @@ ai_method_task :: proc(s:^Session,call:^api.Call) {
     api_frames(s,1,HEADLESS_DT)
     ai_initialize(s)
     if params.conversation!=0 && ai_task_find(m,params.conversation)==nil {
-        saved:=ai_store_find(&m.store,u64(params.conversation))
+        saved:=ai_store.find(&m.store,u64(params.conversation))
         if saved==nil {api.call_fail(call,api.INVALID_PARAMS,"The conversation does not exist");return}
         conversation:=saved^
         if ai_conversation_restore(s,&conversation)==nil {api.call_fail(call,api.SERVER_ERROR,"Too many conversations are awaiting review");return}
@@ -355,17 +356,17 @@ ai_method_retry :: proc(s:^Session,call:^api.Call) {
 ai_method_history_search :: proc(s:^Session,call:^api.Call) {
     ai_initialize(s)
     p:=api.call_params(call,Ai_History_Search_Params);w:=call.out
-    hits:[AI_SEARCH_HITS]Ai_Search_Hit
+    hits:[ai_store.SEARCH_HITS]ai_store.Search_Hit
     query:=base.text_get(p.query[:])
-    if ai_index_match(query,false)=="" {api.call_fail(call,api.INVALID_PARAMS,AI_SEARCH_NO_WORDS);return}
+    if ai_store.index_match(query,false)=="" {api.call_fail(call,api.INVALID_PARAMS,ai_store.SEARCH_NO_WORDS);return}
     limit:=p.limit if p.limit>0 else 10
-    count,message:=ai_store_search(&s.ai.store,query,hits[:min(limit,len(hits))],u64(p.conversation),marks={"**","**"},allocator=call.allocator)
+    count,message:=ai_store.search(&s.ai.store,query,hits[:min(limit,len(hits))],u64(p.conversation),marks={"**","**"},allocator=call.allocator)
     if message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
     kinds:=AI_LINE_NAMES
     serial.write_u8(w,'[')
     written:=0
     for &hit in hits[:count] {
-        c:=ai_store_find(&s.ai.store,hit.conversation)
+        c:=ai_store.find(&s.ai.store,hit.conversation)
         if c==nil {continue}
         if written>0 {serial.write_u8(w,',')}
         written+=1
@@ -386,8 +387,8 @@ ai_method_history :: proc(s:^Session,call:^api.Call) {
     ai_initialize(s)
     p:=api.call_params(call,Ai_History_Params);w:=call.out
     if p.id==0 {
-        conversations:[64]Ai_Conversation
-        count,message:=ai_store_list(&s.ai.store,conversations[:],"",p.offset)
+        conversations:[64]ai_store.Conversation
+        count,message:=ai_store.list(&s.ai.store,conversations[:],"",p.offset)
         if message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
         serial.write_u8(w,'[')
         for &c,index in conversations[:count] {
@@ -399,8 +400,8 @@ ai_method_history :: proc(s:^Session,call:^api.Call) {
         }
         serial.write_u8(w,']');return
     }
-    lines:[128]Ai_Stored_Line
-    count,message:=ai_store_page(&s.ai.store,u64(p.id),p.before==0?-1:i64(p.before),lines[:],call.allocator)
+    lines:[128]ai_store.Stored_Line
+    count,message:=ai_store.page(&s.ai.store,u64(p.id),p.before==0?-1:i64(p.before),lines[:],call.allocator)
     if message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
     serial.write_u8(w,'[')
     kinds:=AI_LINE_NAMES

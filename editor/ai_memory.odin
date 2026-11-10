@@ -5,6 +5,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "core:time"
+import "mirai:editor/ai_store"
 import "mirai:editor/api"
 import "mirai:project"
 import "mirai:std/base"
@@ -72,7 +73,7 @@ ai_memory_stable_write :: proc(s:^Session,b:^strings.Builder) {
 ai_memory_scan :: proc(s:^Session) {
     m:=s.ai
     if m.store.db==nil || s.project_root=="" {return}
-    indexed,problem:=ai_store_memory_list(&m.store)
+    indexed,problem:=ai_store.memory_list(&m.store)
     if problem!="" {notify(s,problem);return}
     known:=make(map[string]i64,context.temp_allocator)
     for &doc in indexed {known[doc.path]=doc.modified_at}
@@ -85,10 +86,10 @@ ai_memory_scan :: proc(s:^Session) {
         delete_key(&known,path)
         if present && was==modified {continue}
         text,_:=ai_memory_load(entry.fullpath,AI_MEMORY_INDEXED_BYTES)
-        if message:=ai_store_memory_upsert(&m.store,path,modified,text);message!="" {notify(s,message)}
+        if message:=ai_store.memory_upsert(&m.store,path,modified,text);message!="" {notify(s,message)}
     }
     for path in known {
-        if message:=ai_store_memory_remove(&m.store,path);message!="" {notify(s,message)}
+        if message:=ai_store.memory_remove(&m.store,path);message!="" {notify(s,message)}
     }
 }
 
@@ -138,7 +139,7 @@ ai_memory_save :: proc(s:^Session,scope,topic,text:string) -> (path,message:stri
     if serial.file_write_atomic(full,transmute([]u8)text)!=.None {return "",fmt.tprintf("%s could not be written",name)}
     if topic!="" && scope=="project" {
         if info,error:=os.stat(full,context.temp_allocator);error==nil {
-            if problem:=ai_store_memory_upsert(&m.store,name,time.time_to_unix_nano(info.modification_time),text);problem!="" {return name,problem}
+            if problem:=ai_store.memory_upsert(&m.store,name,time.time_to_unix_nano(info.modification_time),text);problem!="" {return name,problem}
         }
     }
     return name,""
@@ -201,11 +202,11 @@ ai_memory_api_register :: proc(s:^Session,st:^Api_State) {
 ai_method_memory_search :: proc(s:^Session,call:^api.Call) {
     ai_initialize(s)
     p:=api.call_params(call,Ai_Memory_Search_Params);w:=call.out
-    hits:[AI_SEARCH_HITS]Ai_Memory_Hit
+    hits:[ai_store.SEARCH_HITS]ai_store.Memory_Hit
     query:=base.text_get(p.query[:])
-    if ai_index_match(query,false)=="" {api.call_fail(call,api.INVALID_PARAMS,AI_SEARCH_NO_WORDS);return}
+    if ai_store.index_match(query,false)=="" {api.call_fail(call,api.INVALID_PARAMS,ai_store.SEARCH_NO_WORDS);return}
     limit:=p.limit if p.limit>0 else AI_MEMORY_DEFAULT_HITS
-    count,message:=ai_store_memory_search(&s.ai.store,query,hits[:min(limit,len(hits))],marks={"**","**"},allocator=call.allocator)
+    count,message:=ai_store.memory_search(&s.ai.store,query,hits[:min(limit,len(hits))],marks={"**","**"},allocator=call.allocator)
     if message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
     serial.text_write_raw(w,`{"hits":[`)
     for &hit,index in hits[:count] {

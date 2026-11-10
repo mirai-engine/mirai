@@ -377,7 +377,7 @@ The chat outlives any native context of its agent.
 
 ## Project data
 
-One SQLite database, `<project>/.mirai/ai/chat.db` (`editor/ai_store.odin`, WAL, without
+One SQLite database, `<project>/.mirai/ai/chat.db` (package `editor/ai_store`, WAL, without
 credentials), holds what Mirai queries and updates; several editors of the same project share it
 and a write waits for another one. The review of each conversation
 (`.mirai/ai/chats/<id>.review.json`, [review](ai-review.md#persistence-and-capacity)), the captures
@@ -406,8 +406,8 @@ and the turn folders stay files.
   `claude-agent-acp` summarizes them from the start of the prompt, which is the editor's
   instructions, and although it announces renaming, a user's Claude Code 2.1 does not implement it
   (`rename_session`) and the turn would fail.
-- **Search** (`editor/ai_search.odin`): a query is words, each a quoted phrase so that no character
-  is syntax (an asset path or a method is the phrase of its parts), all in the line, `OR` between
+- **Search** (`editor/ai_store/search.odin`): a query is words, each a quoted phrase so that no
+  character is syntax (an asset path or a method is the phrase of its parts), all in the line, `OR` between
   two taking either; ranked by BM25, with a prefix option for a box being typed in. Every line is
   indexed, prompts, answers and notes. The search of the clock looks in the main chat, and
   `ai.history.search` in all the conversations; the memory topics have their own table and rules.

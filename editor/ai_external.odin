@@ -3,6 +3,7 @@ package editor
 import "core:fmt"
 import "core:strings"
 import "core:time"
+import "mirai:editor/ai_store"
 import "mirai:editor/api"
 import "mirai:platform"
 import "mirai:std/base"
@@ -97,7 +98,7 @@ ai_external_turn :: proc(s:^Session,client:string) -> ^Ai_Task {
         task.review_finished=false
         task.stream_open=false;task.finish_called=false;task.document_closed=false
     } else {
-        id,error:=ai_store_next_id(&m.store)
+        id,error:=ai_store.next_id(&m.store)
         if error!="" || id>u64(max(int)) {return nil}
         task=ai_task_slot(m)
         if task==nil {return nil}
@@ -106,9 +107,9 @@ ai_external_turn :: proc(s:^Session,client:string) -> ^Ai_Task {
         task.conversation.kind=.Archived
         task.conversation.created_at=time.time_to_unix_nano(time.now())/1_000_000
         title:=ai_external_title(agent[len(AI_EXTERNAL_PREFIX):])
-        ai_conversation_set_text(task.conversation.title[:],&task.conversation.title_len,title)
-        ai_conversation_set_text(task.conversation.document[:],&task.conversation.document_len,document_path(s.document))
-        ai_conversation_set_text(task.conversation.provider[:],&task.conversation.provider_len,agent)
+        ai_store.conversation_set_text(task.conversation.title[:],&task.conversation.title_len,title)
+        ai_store.conversation_set_text(task.conversation.document[:],&task.conversation.document_len,document_path(s.document))
+        ai_store.conversation_set_text(task.conversation.provider[:],&task.conversation.provider_len,agent)
         base.text_set(task.title[:],title)
         base.text_set(task.agent[:],agent)
         task.icon=u8(task.id)%AI_AGENT_ICON_COUNT

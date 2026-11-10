@@ -6,6 +6,7 @@ import "core:strconv"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/ai_store"
 import "mirai:std/base"
 import "mirai:ui"
 
@@ -38,7 +39,7 @@ ai_pins_sync :: proc(s:^Session) {
     if m==nil || m.pins_loaded || m.store.db==nil {return}
     m.pins_loaded=true
     m.pin_count=0
-    pins,message:=ai_store_pins(&m.store)
+    pins,message:=ai_store.pins(&m.store)
     if message!="" {notify(s,message);return}
     for &pin in pins[:min(len(pins),AI_PINS)] {
         row:=&m.pins[m.pin_count]
@@ -64,11 +65,11 @@ ai_pin_toggle :: proc(s:^Session,kind,ref,label:string) {
     if m==nil {return}
     ai_pins_sync(s)
     if at:=ai_pin_at(m,kind,ref);at>=0 {
-        if message:=ai_store_pin_remove(&m.store,m.pins[at].id);message!="" {notify(s,message);return}
+        if message:=ai_store.pin_remove(&m.store,m.pins[at].id);message!="" {notify(s,message);return}
     } else {
         if m.pin_count>=AI_PINS {notify(s,fmt.tprintf("At most %d references can be pinned",AI_PINS));return}
         if len(ref)>=AI_PATH_BYTES {notify(s,"The path of this reference is too long to pin it");return}
-        if _,message:=ai_store_pin_add(&m.store,kind,ref,label);message!="" {notify(s,message);return}
+        if _,message:=ai_store.pin_add(&m.store,kind,ref,label);message!="" {notify(s,message);return}
     }
     m.pins_loaded=false
 }
@@ -201,7 +202,7 @@ ai_pins_build :: proc(s:^Session,width:f32,rows:int) {
 
 // The pins of the project in the delta of every turn: identifiers and paths, no images.
 ai_pins_delta_write :: proc(s:^Session,b:^strings.Builder) {
-    pins,message:=ai_store_pins(&s.ai.store)
+    pins,message:=ai_store.pins(&s.ai.store)
     if message!="" {notify(s,message);return}
     if len(pins)==0 {return}
     strings.write_string(b,"- The user pinned these references for every message of this chat, kind | reference | label. Images are named by their path and are not attached:\n")

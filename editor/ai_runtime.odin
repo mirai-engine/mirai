@@ -7,6 +7,7 @@ import "core:slice"
 import "core:strings"
 import "core:time"
 import "mirai:editor/acp"
+import "mirai:editor/ai_store"
 import "mirai:editor/api"
 import "mirai:host"
 import "mirai:platform"
@@ -62,10 +63,10 @@ ai_initialize :: proc(s:^Session) {
     if m.initialized || !s.has_project {return}
     m.initialized=true
     ai_settings_initialize(s)
-    if message:=ai_store_open(&m.store,s.project_root);message!="" {notify(s,message);return}
+    if message:=ai_store.open(&m.store,s.project_root);message!="" {notify(s,message);return}
     ai_memory_scan(s)
     ai_history_refresh(s)
-    if saved:=ai_store_main(&m.store);saved!=nil {
+    if saved:=ai_store.main_conversation(&m.store);saved!=nil {
         conversation:=saved^
         if task:=ai_conversation_restore(s,&conversation);task!=nil {
             m.main,m.selected=task.id,task.id
@@ -77,8 +78,8 @@ ai_initialize :: proc(s:^Session) {
     }
     ai_agents_interrupted_restore(s,m)
     // What still waits for review: the subagents, and the agents outside the editor.
-    waiting:[64]Ai_Conversation
-    count,_:=ai_store_list(&m.store,waiting[:],document_path(s.document),kinds={.Agent,.Archived})
+    waiting:[64]ai_store.Conversation
+    count,_:=ai_store.list(&m.store,waiting[:],document_path(s.document),kinds={.Agent,.Archived})
     for &conversation in waiting[:count] {
         if m.task_count==AI_TASK_CAPACITY {break}
         if task:=ai_conversation_restore(s,&conversation,only_pending=true);task!=nil {ai_held_count(s,task)}
@@ -88,7 +89,7 @@ ai_initialize :: proc(s:^Session) {
 // The messages a chat kept for its next turn when the editor closed.
 @(private)
 ai_held_count :: proc(s:^Session,task:^Ai_Task) {
-    deliveries,_:=ai_store_deliveries(&s.ai.store,task.conversation.id)
+    deliveries,_:=ai_store.deliveries(&s.ai.store,task.conversation.id)
     for &delivery in deliveries {
         if delivery.kind!=AI_DELIVERY_STEER {continue}
         task.held+=1
@@ -101,34 +102,34 @@ ai_held_count :: proc(s:^Session,task:^Ai_Task) {
 // place of its last answer.
 ai_history_refresh :: proc(s:^Session,offset:int=0,needle:string="") {
     m:=s.ai
-    hits:[AI_HISTORY_HITS]Ai_Search_Hit
-    found:[AI_HISTORY_HITS]u64
+    hits:[ai_store.HISTORY_HITS]ai_store.Search_Hit
+    found:[ai_store.HISTORY_HITS]u64
     found_count:=0
-    if needle!="" && ai_index_match(needle,true)!="" {
+    if needle!="" && ai_store.index_match(needle,true)!="" {
         // Without the index the search keeps to the titles.
-        count,_:=ai_store_search(&m.store,needle,hits[:],prefix=true)
+        count,_:=ai_store.search(&m.store,needle,hits[:],prefix=true)
         for &hit in hits[:count] {
             if !slice.contains(found[:found_count],hit.conversation) {hits[found_count]=hit;found[found_count]=hit.conversation;found_count+=1}
         }
     }
-    count,message:=ai_store_list(&m.store,m.history[:],"",offset,needle,found[:found_count],kinds={.Agent},parent=u64(m.main))
+    count,message:=ai_store.list(&m.store,m.history[:],"",offset,needle,found[:found_count],kinds={.Agent},parent=u64(m.main))
     if message!="" {notify(s,message);return}
     m.history_count,m.history_offset=count,offset
     for &c in m.history[:count] {
         if needle=="" {ai_history_outcome(m,&c)}
         if contains_fold(string(c.title[:c.title_len]),needle) {continue}
         if at,ok:=slice.linear_search(found[:found_count],c.id);ok {
-            plain:[AI_LAST_BYTES*2]u8
-            c.last_len=copy(c.last[:],ai_utf8_cut(ai_entity_marks_plain(hits[at].snippet,plain[:]),AI_LAST_BYTES))
+            plain:[ai_store.LAST_BYTES*2]u8
+            c.last_len=copy(c.last[:],ai_utf8_cut(ai_entity_marks_plain(hits[at].snippet,plain[:]),ai_store.LAST_BYTES))
         }
     }
 }
 
 // How the review of a finished agent ended, in place of its last answer.
 @(private)
-ai_history_outcome :: proc(m:^Ai,c:^Ai_Conversation) {
-    lines:[4]Ai_Stored_Line
-    count,_:=ai_store_page(&m.store,c.id,-1,lines[:])
+ai_history_outcome :: proc(m:^Ai,c:^ai_store.Conversation) {
+    lines:[4]ai_store.Stored_Line
+    count,_:=ai_store.page(&m.store,c.id,-1,lines[:])
     #reverse for &line in lines[:count] {
         if line.kind==.Note && strings.has_prefix(line.text,AI_REVIEWED_NOTE) {
             c.last_len=copy(c.last[:],line.text)
@@ -137,7 +138,7 @@ ai_history_outcome :: proc(m:^Ai,c:^Ai_Conversation) {
     }
 }
 
-ai_conversation_restore :: proc(s:^Session,conversation:^Ai_Conversation,only_pending:bool=false) -> ^Ai_Task {
+ai_conversation_restore :: proc(s:^Session,conversation:^ai_store.Conversation,only_pending:bool=false) -> ^Ai_Task {
     m:=s.ai
     if task:=ai_task_find(m,int(conversation.id));task!=nil {
         ai_task_review_follow(s,task)
@@ -155,12 +156,12 @@ ai_conversation_restore :: proc(s:^Session,conversation:^Ai_Conversation,only_pe
     base.text_set(task.title[:],string(conversation.title[:conversation.title_len]))
     base.text_set(task.agent[:],string(conversation.provider[:conversation.provider_len]))
     ai_task_glyph_set(m,task)
-    if message:=ai_store_load(&m.store,conversation.id,&task.transcript);message!="" {notify(s,message);return task}
+    if message:=ai_transcript_load(&m.store,conversation.id,&task.transcript);message!="" {notify(s,message);return task}
     latest:=-1
     for i:=task.transcript.count-1;i>=0;i-=1 {if task.transcript.lines[i].kind==.Prompt {latest=i;break}}
     if latest>=0 {
         first:=latest
-        sequence:=ai_store_latest_user_message(&m.store,conversation.id)
+        sequence:=ai_store.latest_user_message(&m.store,conversation.id)
         if sequence>=0 {first=int(sequence)-task.transcript.dropped} else {
             for first>0 && task.transcript.lines[first-1].kind==.Prompt {first-=1}
             sequence=i64(task.transcript.dropped+first)
@@ -197,7 +198,7 @@ ai_task_review_follow :: proc(s:^Session,task:^Ai_Task) {
     s.ai.scene_serial+=1
 }
 
-ai_history_select :: proc(s:^Session,conversation:^Ai_Conversation) {
+ai_history_select :: proc(s:^Session,conversation:^ai_store.Conversation) {
     if task:=ai_conversation_restore(s,conversation);task!=nil {ai_chat_select(s,task)}
     else {notify(s,"Too many conversations are awaiting review")}
 }
@@ -212,7 +213,7 @@ ai_task_current :: proc(s:^Session,task:^Ai_Task) -> bool {
 ai_task_persist :: proc(s:^Session,task:^Ai_Task) {
     if !task.dirty || task.conversation.id==0 || s.ai.store.folder=="" {return}
     task.conversation.updated_at=time.to_unix_nanoseconds(time.now())/1_000_000
-    if message:=ai_store_save(&s.ai.store,&task.conversation,&task.transcript,task.dirty_sequence);message!="" {
+    if message:=ai_transcript_save(&s.ai.store,&task.conversation,&task.transcript,task.dirty_sequence);message!="" {
         notify(s,message);return
     }
     task.dirty=false
@@ -441,16 +442,16 @@ ai_send_task_prompt :: proc(s:^Session,worker:^Ai_Worker,task:^Ai_Task) {
     native:=acp.session_id(&worker.client)
     c:=&task.conversation
     new_context:=string(c.native_session[:c.native_session_len])!=native
-    ai_conversation_set_text(c.native_session[:],&c.native_session_len,native)
+    ai_store.conversation_set_text(c.native_session[:],&c.native_session_len,native)
     turn,error:=os.read_entire_file(ai_task_path(s,task,AI_FILE_PROMPT),context.temp_allocator)
     if error!=nil {ai_task_fail(task,"The editor instructions could not be read");ai_task_end(s,s.ai,task,1);return}
     message,message_error:=os.read_entire_file(ai_task_path(s,task,AI_FILE_MESSAGE),context.temp_allocator)
     if message_error!=nil {ai_task_fail(task,"The message of the turn could not be read");ai_task_end(s,s.ai,task,1);return}
     // What waited for this chat goes with its turn, whatever started it.
-    deliveries:[]Ai_Delivery
+    deliveries:[]ai_store.Delivery
     if s.ai.store.db!=nil {
         problem:string
-        deliveries,problem=ai_store_deliveries(&s.ai.store,task.conversation.id)
+        deliveries,problem=ai_store.deliveries(&s.ai.store,task.conversation.id)
         if problem!="" {notify(s,problem)}
     }
     remind:=ai_context_filling(task) && base.text_get(task.notes_native[:])!=native
@@ -471,13 +472,13 @@ ai_send_task_prompt :: proc(s:^Session,worker:^Ai_Worker,task:^Ai_Task) {
     if remind {base.text_set(task.notes_native[:],native)}
     if c.kind==.Main && s.ai.store.db!=nil {
         if new_context {
-            if problem:=ai_store_meta_set(&s.ai.store,AI_META_INTERRUPTED_AGENTS,"");problem!="" {notify(s,problem)}
+            if problem:=ai_store.meta_set(&s.ai.store,AI_META_INTERRUPTED_AGENTS,"");problem!="" {notify(s,problem)}
         }
         now:=time.to_unix_nanoseconds(time.now())/1_000_000
-        if problem:=ai_store_meta_set(&s.ai.store,fmt.tprintf(AI_META_CONTEXT_SINCE,c.id),fmt.tprintf("%d",now));problem!="" {notify(s,problem)}
+        if problem:=ai_store.meta_set(&s.ai.store,fmt.tprintf(AI_META_CONTEXT_SINCE,c.id),fmt.tprintf("%d",now));problem!="" {notify(s,problem)}
     }
     for &delivery in deliveries {
-        if problem:=ai_store_delivery_remove(&s.ai.store,delivery.id);problem!="" {notify(s,problem)}
+        if problem:=ai_store.delivery_remove(&s.ai.store,delivery.id);problem!="" {notify(s,problem)}
     }
     if len(deliveries)>0 {
         task.held,task.held_lines=0,0
@@ -928,6 +929,6 @@ ai_destroy :: proc(s:^Session) {
     ai_code_free(m)
     delete(m.marks);m.marks=nil
     delete(m.asset_marks);m.asset_marks=nil
-    ai_store_close(&m.store)
+    ai_store.close(&m.store)
     m.installer=0
 }

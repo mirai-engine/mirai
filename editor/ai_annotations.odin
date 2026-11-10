@@ -3,6 +3,7 @@ package editor
 import "core:fmt"
 import "core:strings"
 import "mirai:core"
+import "mirai:editor/ai_store"
 import "mirai:editor/api"
 import "mirai:platform"
 import "mirai:std/base"
@@ -63,7 +64,7 @@ ai_annotations_sync :: proc(s:^Session) {
     a.loaded,a.stale=true,false
     base.text_set(a.document[:],document)
     a.count=0
-    notes,message:=ai_store_annotations(&m.store,document)
+    notes,message:=ai_store.annotations(&m.store,document)
     if message!="" {notify(s,message);return}
     for &note in notes[:min(len(notes),AI_ANNOTATIONS)] {
         row:=&a.rows[a.count]
@@ -93,7 +94,7 @@ ai_annotation_entity_name :: proc(s:^Session,document:string,entity:u64) -> stri
 // All the pins of a document, one line each, as the delta of a turn gives them.
 ai_annotations_delta_write :: proc(s:^Session,document:string,b:^strings.Builder) {
     m:=s.ai
-    notes,message:=ai_store_annotations(&m.store,document)
+    notes,message:=ai_store.annotations(&m.store,document)
     if message!="" {notify(s,message);return}
     if len(notes)==0 {return}
     fmt.sbprintf(b,"- The user left these annotations on this document, one per pin, number | group | world position | entity | note. Use `annotation.list` for their ids and `annotation.remove` when you are done with them (both through the tool `call`):\n")
@@ -118,7 +119,7 @@ ai_annotation_drop :: proc(s:^Session,w:core.World_Ref,hit:Pick) {
     ai_annotations_sync(s)
     if a.count>=AI_ANNOTATIONS {notify(s,fmt.tprintf("A document takes at most %d annotations",AI_ANNOTATIONS));return}
     entity:=u64(api_entity_id(w,entity_author(w,hit.entity)))
-    id,message:=ai_store_annotation_add(&m.store,"",ai_annotations_document(s),entity,f64(hit.position.x),f64(hit.position.y),f64(hit.position.z),"")
+    id,message:=ai_store.annotation_add(&m.store,"",ai_annotations_document(s),entity,f64(hit.position.x),f64(hit.position.y),f64(hit.position.z),"")
     if message!="" {notify(s,message);return}
     a.stale=true
     ai_annotation_edit(s,id)
@@ -152,8 +153,8 @@ ai_annotation_close :: proc(s:^Session) {
     text:=strings.trim_space(string(a.draft[:a.draft_length]))
     if text=="" {ai_annotation_remove(s,id);return}
     group:=strings.trim_space(string(a.group[:a.group_length]))
-    message:=ai_store_annotation_set_text(&m.store,id,text)
-    if message=="" {message=ai_store_annotation_set_group(&m.store,id,group)}
+    message:=ai_store.annotation_set_text(&m.store,id,text)
+    if message=="" {message=ai_store.annotation_set_group(&m.store,id,group)}
     a.stale=true
     if message!="" {notify(s,message);return}
     if group!="" {ai_annotation_group_attach(m,group)}
@@ -162,7 +163,7 @@ ai_annotation_close :: proc(s:^Session) {
 @(private)
 ai_annotation_remove :: proc(s:^Session,id:i64) {
     m:=s.ai
-    if message:=ai_store_annotation_remove(&m.store,id);message!="" {notify(s,message)}
+    if message:=ai_store.annotation_remove(&m.store,id);message!="" {notify(s,message)}
     m.annotations.stale=true
 }
 
@@ -354,7 +355,7 @@ ai_method_annotation_list :: proc(s:^Session,call:^api.Call) {
     m:=s.ai
     document:=base.text_get(api.call_params(call,Ai_Annotation_List_Params).document[:])
     if document=="" {document=ai_annotations_document(s)}
-    notes,message:=ai_store_annotations(&m.store,document)
+    notes,message:=ai_store.annotations(&m.store,document)
     if message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
     w:=call.out
     serial.text_write_raw(w,`{"annotations":[`)
@@ -382,12 +383,12 @@ ai_method_annotation_remove :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Ai_Annotation_Remove_Params)
     group:=base.text_get(p.group[:])
     if (p.id==0)==(group=="") {api.call_fail(call,api.INVALID_PARAMS,"give the id of an annotation or the name of a group of them: annotation.list has both");return}
-    notes,message:=ai_store_annotations(&m.store,ai_annotations_document(s))
+    notes,message:=ai_store.annotations(&m.store,ai_annotations_document(s))
     if message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
     removed:=0
     for &note in notes {
         if p.id!=0?note.id!=i64(p.id):note.group_name!=group {continue}
-        if failed:=ai_store_annotation_remove(&m.store,note.id);failed!="" {api.call_fail(call,api.SERVER_ERROR,failed);return}
+        if failed:=ai_store.annotation_remove(&m.store,note.id);failed!="" {api.call_fail(call,api.SERVER_ERROR,failed);return}
         removed+=1
     }
     if p.id!=0 && removed==0 {api.call_failf(call,api.INVALID_PARAMS,"there is no annotation %d in the open document: annotation.list names them",p.id);return}

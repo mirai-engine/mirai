@@ -5,6 +5,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/ai_store"
 import "mirai:editor/api"
 import "mirai:host"
 import "mirai:project"
@@ -149,7 +150,7 @@ files_of_a_gesture_are_one_step_and_undo_keeps_what_changed_outside :: proc(t:^t
 @(private="file")
 provenance_task :: proc(t:^testing.T,f:^Files_Test) -> ^Ai_Task {
     m:=f.ai
-    testing.expect_value(t,ai_store_open(&m.store,f.root),"")
+    testing.expect_value(t,ai_store.open(&m.store,f.root),"")
     task:=&m.tasks[0]
     m.task_count=1
     task.id,task.world=7,&f.world
@@ -157,12 +158,12 @@ provenance_task :: proc(t:^testing.T,f:^Files_Test) -> ^Ai_Task {
     c.id=7
     base.text_set(task.name[:],"7-0")
     base.text_set(task.title[:],"Wet rock")
-    ai_conversation_set_text(c.title[:],&c.title_len,"Wet rock")
-    ai_conversation_set_text(c.model[:],&c.model_len,"gpt-6")
-    ai_conversation_set_text(c.effort[:],&c.effort_len,"high")
+    ai_store.conversation_set_text(c.title[:],&c.title_len,"Wet rock")
+    ai_store.conversation_set_text(c.model[:],&c.model_len,"gpt-6")
+    ai_store.conversation_set_text(c.effort[:],&c.effort_len,"high")
     ai_transcript_add(&task.transcript,"Make the rock wet",.Prompt)
     ai_task_dirty(task)
-    testing.expect_value(t,ai_store_save(&m.store,c,&task.transcript,task.dirty_sequence),"")
+    testing.expect_value(t,ai_transcript_save(&m.store,c,&task.transcript,task.dirty_sequence),"")
     return task
 }
 
@@ -173,7 +174,7 @@ a_transaction_of_a_turn_says_who_changed_its_entities_and_assets :: proc(t:^test
     defer files_test_close(&f)
     m:=f.ai
     task:=provenance_task(t,&f)
-    defer ai_store_close(&m.store)
+    defer ai_store.close(&m.store)
     before:=f.edits.serial
     edits_begin(&f.edits,&f.selection,"Agent")
     testing.expect(t,file_write(&f.s,project.path(f.root,"assets/rock.mat",allocator=context.temp_allocator),transmute([]u8)string("wet"),"Write"))
@@ -185,10 +186,10 @@ a_transaction_of_a_turn_says_who_changed_its_entities_and_assets :: proc(t:^test
     files_test_commit(&f)
     ai_review_record(&f.s,task,before)
     for ref in ([?][2]string{{AI_REF_ASSET,"rock.mat"},{AI_REF_ENTITY,"000000000000002a"}}) {
-        provenance,found,message:=ai_store_provenance_get(&m.store,ref[0],ref[1])
+        provenance,found,message:=ai_store.provenance_get(&m.store,ref[0],ref[1])
         testing.expectf(t,message=="" && found && provenance.conversation==7 && provenance.sequence==0,"%s %s: %v",ref[0],ref[1],provenance)
     }
-    _,source,_:=ai_store_provenance_get(&m.store,AI_REF_ASSET,"../shaders/rock.slang")
+    _,source,_:=ai_store.provenance_get(&m.store,AI_REF_ASSET,"../shaders/rock.slang")
     testing.expect(t,!source,"what is outside the assets is not an asset")
     testing.expect_value(t,base.text_get(ai_provenance_view(m,.Asset,"rock.mat").title[:]),"Wet rock")
     p:=new(Ai_Provenance_Params,context.temp_allocator)
@@ -215,7 +216,7 @@ the_browser_marks_are_the_assets_of_the_units_that_wait_for_review :: proc(t:^te
     m:=f.ai
     defer delete(m.asset_marks)
     task:=provenance_task(t,&f)
-    defer ai_store_close(&m.store)
+    defer ai_store.close(&m.store)
     testing.expect(t,ai_asset_mark(&f.s,"rock.mat")==nil)
     before:=f.edits.serial
     testing.expect(t,file_write(&f.s,project.path(f.root,"assets/rock.mat",allocator=context.temp_allocator),transmute([]u8)string("wet"),"Write"))
