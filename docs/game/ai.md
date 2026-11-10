@@ -14,7 +14,7 @@ Plugin `behavior` (brings `navigation`, `physics`) in `project.mirai`; import
 
 ## Map
 
-- A mind: its `think`, one action and the step that runs it: [mind.md](ai/mind.md).
+- A mind: its `think` and its actions, which the engine runs: [mind.md](ai/mind.md).
 - Smart objects (ammo, cover, turrets), fences the game crosses, place queries:
   [smart-objects.md](ai/smart-objects.md).
 - Animation an agent asks for: [animation](animation.md); over the network:
@@ -41,14 +41,15 @@ The agent's navigation class is chosen from its capsule; with none that fits, th
   `keep` (or its `ai.commit`). Patrol: low score always on; chase: higher if it remembers someone
   (`ai.memory_best(&perception.memory, here)`); attack: highest if close.
 - **Act.** Each action procedure gets `Enter`, `Update`, `Exit` in `a.phase`. Walk with
-  `behavior.move_act`, follow with `behavior.follow_act`, wait with `ai.after(a, seconds)`,
+  `behavior.move_act(a, goal)`, chase with `behavior.chase_act(a, target, distance)` (it follows a
+  new target when it changes), wait with `ai.after(a, seconds)`,
   sequence with `ai.next_stage(a)` and `ai.stage(a)`, or `ai.steps(a, .A, .B)` for a combo.
   `a.memory` is zeroed on `Enter`. Return `.Running`, `.Success` or `.Failure`.
 - **Events** (damage, stun): a field of your component, written by whoever causes it; `think`
   proposes the reaction above the rest and the action clears the field on `Enter`.
 - **Boss phases:** health is data that changes what `think` proposes; an attack calls
   `ai.commit(a, score)` on `Enter` so it finishes; stun and death propose above everything.
-- **Cooldowns:** `ai.mind_ready(&agent.state,.Slam,time.tick,time.dt,5)`, `agent` a `Mind_Agent`.
+- **Cooldowns:** in `think`, `ai.mind_ready(t.mind, .Slam, t.tick, t.dt, 5)`.
 - **Hordes:** the attack takes `ai.token_take(a, u64(target), N)` and `think` proposes it only if
   `ai.reserve_free(t, target, N)`; the rest circle. Tokens release on `Exit`.
 - **Hearing:** `behavior.noise(noises, position, loudness, maker)`; a `Perceiver` hears
@@ -61,16 +62,15 @@ The agent's navigation class is chosen from its capsule; with none that fits, th
   on `Nav_Requests`. `Nav_Path.state` is `Idle`, `Waiting`, `Moving`, `Crossing`, `Arrived` or
   `Failed`; `partial`: it got as near as the mesh goes.
 - **Presentation (multiplayer):** minds run on the server; clients receive `Mind_Presentation`
-  (the action, what it looks at, an animation id). Ask with `behavior.present_look(w, target)` and
-  `behavior.present_animation(w, id)`; the entity must carry it from the start.
+  (the action, what it looks at, an animation id). Ask with `behavior.present_look(a, target)` and
+  `behavior.present_animation(a, id)`; the entity must carry it from the start.
 
 ## Pitfalls that fail silently
 
-- The loop function that calls `behavior.minds_tick` must be `@(step="fixed", server)`; without
-  `server` it runs on clients too. Gate on `time.playing`. Call `minds_unknown` once per tick.
-- A `Mind_Agent` name that no `minds_tick` runs does nothing; `engine.diagnostics` lists the
-  problem `behavior.mind`. `Mind_Name` bounds a name, `MINDS_CAPACITY` the minds of a game.
-- `Exit` must release what `Enter` requested. `move_act` and `follow_act` stop the agent on abort;
+- A `Mind_Agent` name that no `@(mind)` declares does nothing; `engine.diagnostics` lists the
+  problem `behavior.mind`. A missing action, a wrong signature or a name too long fail the build
+  with what to write.
+- `Exit` must release what `Enter` requested. `move_act` and `chase_act` stop the agent on abort;
   an action that calls `nav.nav_move_to` itself must `nav_stop` when `a.cause == .Aborted`.
 - `think` only reads and proposes; state changes go in the actions.
 - `behavior.PERCEIVER_DEFAULT` notices every team, its own included; set `notices`.
