@@ -184,7 +184,7 @@ a_force_field_pushes_in_the_volume_of_its_entity :: proc(t:^testing.T) {
 }
 
 @(test)
-external_proxies_accept_impulses_forces_joints_and_manipulation :: proc(t:^testing.T) {
+external_proxies_replace_the_own_body_and_accept_impulses_forces_joints_and_manipulation :: proc(t:^testing.T) {
     f:Physics_Test
     if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
@@ -197,10 +197,18 @@ external_proxies_accept_impulses_forces_joints_and_manipulation :: proc(t:^testi
     shape.geometry=sim.Box{{0.5,0.5,0.5}}
     sim.shape_create(&f.state.world,body,shape)
     sim.body_set_mass_properties(&f.state.world,body,2,{},sim.Mat3{1,0,0,0,1,0,0,0,1})
+    // The body of its own Collider and Rigid_Body ends: the proxy stands for them, and no sync makes it again.
     e:=core.create(&f.entities)
     core.add(&f.transforms,e,core.Transform{{2,0,0},1,{1,1,1}})
-    physics_test_settle(&f)
+    core.add(&f.rigids,e,RIGID_BODY_DYNAMIC);core.add(&f.colliders,e,collider_sphere(0.5))
+    physics_test_step(&f,0)
+    own:=body_of(core.ref(&f.state),e)
+    testing.expect(t,own!={} && own!=body)
     testing.expect(t,proxy_set(&f.state,e,body,{2,0,0},1))
+    testing.expect(t,!sim.body_valid(&f.state.world,own))
+    core.edit(&f.colliders,e).friction=0.3
+    physics_test_step(&f,0)
+    testing.expect_value(t,body_of(core.ref(&f.state),e),body)
     apply_impulse(&f.requests,e,{2,0,0})
     apply_force(&f.requests,e,{120,0,0})
     physics_test_step(&f)

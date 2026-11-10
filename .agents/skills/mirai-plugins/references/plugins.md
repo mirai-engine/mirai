@@ -288,8 +288,8 @@ The drop:
   added to the same clone without restarting the previous ones.
 - The environment stays fixed. The created meshes are dynamic bodies with their box as the
   collision approximation, also if they are curved or concave. The environment's characters are
-  their static capsule, what another plugin gives its shapes (a `Collider` of kind `External`, as
-  a destructible has) is the mesh it shows, and other surfaces need a collider; joints do not act.
+  their static capsule, what another plugin gives its shapes (a `Collider` of kind `External`) is
+  the mesh it shows, and other surfaces need a collider; joints do not act.
 - When the bodies sleep, advancing stops; `PLACEMENT_TICKS` after the last drop it pauses to
   confirm or cancel, and another drop resumes it.
 

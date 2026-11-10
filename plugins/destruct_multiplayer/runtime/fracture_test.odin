@@ -111,7 +111,7 @@ saved_destroy :: proc(saved:^Saved) {core.test_world_destroy(&saved.w)}
 end_whole :: proc(f:^End) -> core.Entity {
     config:=destruct.destructible();config.fracture={1,2};config.debris_volume=0
     e:=core.create(&f.entities)
-    core.add(&f.configs,e,config);core.add(&f.colliders,e,destruct.collider_fracture());core.add(&f.transforms,e,core.TRANSFORM_IDENTITY)
+    core.add(&f.configs,e,config);core.add(&f.transforms,e,core.TRANSFORM_IDENTITY)
     core.add(&f.meshes,e,render.Mesh_Renderer{shape=.Cube});core.add(&f.ids,e,core.Id{42})
     return e
 }

@@ -3,7 +3,6 @@ package destruct
 import "core:math/linalg"
 import "mirai:core"
 import phys "plugins:physics/runtime"
-import "mirai:host"
 import "mirai:std/base"
 
 // Destruction as a game declares it. An entity with Mesh_Renderer and
@@ -25,21 +24,20 @@ Piece_Flags :: phys.Piece_Flags
 Piece_Flag :: phys.Piece_Flag
 Destruct_Cluster_Info :: phys.Cluster_Info
 
-// The mesh must be closed. The entity needs a Collider of kind External and
-// no Rigid_Body: the pieces are its shapes, with the surface and collision of
-// that Collider. This library owns its Transform: an anchored one is where its
-// entity is placed, a free one follows its body.
-@(component,locks="core.Transform")
+// The mesh must be closed. Its pieces replace the Collider of the entity, of
+// any kind, and take its surface and collision (none: COLLIDER_DEFAULT); they
+// move as its Rigid_Body says (none: dynamic): of a kinematic or static one
+// the body it is made as is kinematic, and every piece falls with its
+// gravity_scale. Physics moves it as a body: physics.move_kinematic moves a
+// kinematic one.
+@(component)
 Destructible :: struct {
     pieces:u32 `mirai:"min=1,section=Fracture"`,
     seed:u64,
     pattern:Destruct_Pattern,
     anchored:bool,                              // the pieces that reach the base of the mesh, its lowest local Y, are fixed to the world
     fracture:base.Asset_Id `mirai:"kind=.fracture"`,
-    kinematic:bool `mirai:"section=Pieces"`,
-    follow_parent:bool,
-    gravity_scale:f32,
-    hull_vertices:u32 `mirai:"min=4,max=255"`,
+    hull_vertices:u32 `mirai:"min=4,max=255,section=Pieces"`,
     strength:f32 `mirai:"min=0,unit=N s/m2,section=Damage"`,    // N s per m2 of shared face that a connection takes before it breaks
     impact_damage:bool,
     damage_threshold:f32 `mirai:"min=0,unit=N s"`, // N s of an impact in one tick below which it does no damage
@@ -51,31 +49,21 @@ Destructible :: struct {
     interior:base.Asset_Id `mirai:"section=Appearance,kind=.mat"`,                    // material of the faces a fracture opens; zero: the one of the first slot
 }
 
-// The values of physics.BREAKABLE_DESC_DEFAULT. Its collider is collider_fracture().
+// The values of physics.BREAKABLE_DESC_DEFAULT.
 destructible :: proc "contextless" (pieces:u32=16,anchored:=false,seed:u64=1) -> Destructible {
     d:=phys.BREAKABLE_DESC_DEFAULT
     return {
-        pieces=pieces,seed=seed,anchored=anchored,gravity_scale=d.gravity_scale,hull_vertices=u32(d.hull_vertices),strength=d.strength,
+        pieces=pieces,seed=seed,anchored=anchored,hull_vertices=u32(d.hull_vertices),strength=d.strength,
         impact_damage=d.impact_damage,damage_threshold=d.damage_threshold,damage_radius=d.damage_radius,debris_volume=d.debris_volume,debris_lifetime=5,
     }
 }
 
 destructible_default :: proc "contextless" () -> Destructible {return destructible()}
 
-// The Collider of a Destructible: External, since this library makes its shapes, with the surface of
-// physics.BREAKABLE_DESC_DEFAULT.
-collider_fracture :: proc "contextless" () -> phys.Collider {
-    c:=phys.COLLIDER_DEFAULT
-    d:=phys.BREAKABLE_DESC_DEFAULT
-    c.kind,c.density,c.friction,c.restitution=.External,d.density,d.friction,d.restitution
-    return c
-}
-
 // What this library keeps of a destructible. Only it writes it.
 @(component)
 Destructible_State :: struct {
     handle:phys.Breakable_Handle `mirai:"transient,readonly,hidden"`,
-    body:phys.Body_Handle `mirai:"transient,readonly,hidden"`, // the one it was created as: where its anchors are, or its largest part
     revision:u32 `mirai:"transient,readonly,hidden"`,         // of the simulation destructible that the groups mirror
     detached:u32 `mirai:"transient,readonly"`,                // pieces that left the body of the entity
     sequence:u32 `mirai:"transient,readonly,hidden"`,         // fracture events applied to it, in order (Fracture_Record.sequence)
@@ -83,28 +71,19 @@ Destructible_State :: struct {
     broken:bool `mirai:"transient,readonly"`,                 // drawn by its groups instead of its own mesh
     waiting:bool `mirai:"transient,readonly,hidden"`,         // its pieces are being cut
     failed:bool `mirai:"transient,readonly,hidden"`,          // it could not be made: not tried again until what it is made from changes
-    configured:bool `mirai:"transient,readonly,hidden"`,      // applied holds what it was made from
-    applied:Destructible `mirai:"transient,readonly,hidden"`,
-    applied_surface:[3]f32 `mirai:"transient,readonly,hidden"`, // density, friction and restitution of its collider; zero without one
-    applied_filter:phys.Collision_Filter `mirai:"transient,readonly,hidden"`,
-    applied_mesh:base.Asset_Id `mirai:"transient,readonly,hidden"`,
-    applied_shape:host.Shape `mirai:"transient,readonly,hidden"`,
-    applied_scale:[3]f32 `mirai:"transient,readonly,hidden"`,
-    initial:core.Transform `mirai:"transient,readonly,hidden"`,
-    written_position:[3]f32 `mirai:"transient,readonly,hidden"`, // the Transform this library left
-    written_rotation:quaternion128 `mirai:"transient,readonly,hidden"`,
 }
 
 // On the entity this library makes for a body of a broken destructible: the
 // body that is still the destructible's own is a child of it (group 0), each
-// one that came off an entity of its own with the Transform of its body.
+// one that came off an entity of its own with the Transform of its body. It is
+// a proxy of that body in physics, which writes its Transform.
 @(component,locks="core.Transform")
 Destructible_Group :: struct {
     owner:core.Entity `mirai:"transient,readonly"`, // the destructible
     group:u32 `mirai:"transient,readonly"`,         // physics.Piece_Info.group: the same on every end of a network session
     debris:bool `mirai:"transient,readonly"`,       // cosmetic: of this world alone
-    written_position:[3]f32 `mirai:"transient,readonly,hidden"`, // group 0; the others keep it in the proxy of physics
-    written_rotation:quaternion128 `mirai:"transient,readonly,hidden"`,
+    mesh:base.Asset_Id `mirai:"transient,readonly,hidden"`, // generated for its pieces, which its Mesh_Renderer shows
+    members:u64 `mirai:"transient,readonly,hidden"`,        // hash of the ids of the pieces mesh was made of
 }
 
 // What is asked of a destructible, or of one body that broke off it: the event each of its bodies gets.

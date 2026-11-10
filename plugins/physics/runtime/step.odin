@@ -457,7 +457,8 @@ foreign_write :: proc(s:^Sync,l:^Link,e:core.Entity,component:string,moved:bool)
 @(private)
 entity_sync :: proc(s:^Sync,e:core.Entity) {
     l:=link_at(s,e)
-    if l==nil || l.pass==s.state.pass {return}
+    // A proxy's body is another library's: a breakable replaces the Collider and Rigid_Body of its entity.
+    if l==nil || l.pass==s.state.pass || l.kind==.Proxy {return}
     if l.kind==.None && !l.refused {
         if s.budget==0 {
             s.waiting=true
