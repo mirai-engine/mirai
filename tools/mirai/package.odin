@@ -15,9 +15,10 @@ PACKAGE_USAGE :: "package engine --out <folder>"
 
 // What a package of the engine takes of what git keeps: the sources the
 // generator of a world reads and a shipped game compiles, the shaders the
-// projects compile with, the templates, the recipes of Create, the skills of the agents, the game
-// documentation mirai docs serves, the license of the engine and the notices of what it carries of others. cook/
-// and tools/ are in its binaries; their sources stay behind, as do the tests.
+// projects compile with, the templates, the recipes of Create, the skills of
+// the agents, the game documentation mirai docs serves, the license of the
+// engine and the notices of what it carries of others. cook/ and tools/ are
+// in its binaries; their sources stay behind, as do the tests.
 @(private="file")
 PACKAGE_TRACKED :: [?]string{
     "asset","audio","core","editor","engine","host","net","platform","plugins","project","render","rhi","std","ui",
