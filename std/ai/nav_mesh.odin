@@ -51,13 +51,14 @@ Nav_Tile :: struct {
 }
 
 NAV_CONNECTION_LINK :: u8(0xff)
+NAV_CONNECTION_ARRIVAL :: u8(0xfe)
 
 // A way out of a polygon that its tile does not know: across an edge on the
 // border of the tile into the polygon of the next tile, or onto a link.
 Nav_Connection :: struct {
     to:Nav_Ref,
     next:u32,     // the next connection of the same polygon, index+1; 0 ends
-    edge:u8,      // the edge it leaves through; NAV_CONNECTION_LINK onto a link
+    edge:u8,      // the edge it leaves through; NAV_CONNECTION_LINK onto a link; NAV_CONNECTION_ARRIVAL: no way out, a one-way link ends here
     low,high:u8,  // the part of the edge it covers, in 255ths from the first vertex of the edge
 }
 
@@ -420,7 +421,9 @@ nav_mesh_remove_links_of :: proc "contextless" (mesh:^Nav_Mesh,owner:u64) -> (re
 }
 
 // Rests the ends of a link on the surface where they are missing, and
-// connects it from its start (and its end if it goes both ways) once both rest.
+// connects it from its start (and its end if it goes both ways) once both
+// rest. A one-way link is known at its end too, as an arrival: a search
+// toward a point walks the links against their way.
 @(private)
 nav_link_rest :: proc "contextless" (mesh:^Nav_Mesh,slot:u32) {
     link:=&mesh.links[slot]
@@ -432,9 +435,11 @@ nav_link_rest :: proc "contextless" (mesh:^Nav_Mesh,slot:u32) {
     if tile,_:=nav_poly_of(mesh,link.start_poly);tile!=nil {
         nav_connect(mesh,tile,int(nav_ref_index(link.start_poly)),{to=nav_ref_link(link.salt,slot,false),edge=NAV_CONNECTION_LINK})
     }
-    if link.desc.two_way {
-        if tile,_:=nav_poly_of(mesh,link.end_poly);tile!=nil {
+    if tile,_:=nav_poly_of(mesh,link.end_poly);tile!=nil {
+        if link.desc.two_way {
             nav_connect(mesh,tile,int(nav_ref_index(link.end_poly)),{to=nav_ref_link(link.salt,slot,true),edge=NAV_CONNECTION_LINK})
+        } else {
+            nav_connect(mesh,tile,int(nav_ref_index(link.end_poly)),{to=nav_ref_link(link.salt,slot,false),edge=NAV_CONNECTION_ARRIVAL})
         }
     }
 }
@@ -442,9 +447,11 @@ nav_link_rest :: proc "contextless" (mesh:^Nav_Mesh,slot:u32) {
 @(private)
 nav_link_lift :: proc "contextless" (mesh:^Nav_Mesh,slot:u32) {
     link:=&mesh.links[slot]
-    for reverse in ([2]bool{false,true}) {
-        at:=link.end_poly if reverse else link.start_poly
-        if tile,_:=nav_poly_of(mesh,at);tile!=nil {nav_disconnect(mesh,tile,nav_ref_link(link.salt,slot,reverse),false)}
+    if tile,_:=nav_poly_of(mesh,link.start_poly);tile!=nil {nav_disconnect(mesh,tile,nav_ref_link(link.salt,slot,false),false)}
+    if tile,_:=nav_poly_of(mesh,link.end_poly);tile!=nil {
+        // Its way back, or its arrival.
+        nav_disconnect(mesh,tile,nav_ref_link(link.salt,slot,true),false)
+        nav_disconnect(mesh,tile,nav_ref_link(link.salt,slot,false),false)
     }
     link.start_poly,link.end_poly=0,0
 }
@@ -458,7 +465,9 @@ nav_link_ends :: proc "contextless" (link:^Nav_Link,ref:Nav_Ref) -> (from,to:mat
 }
 
 // The neighbors of a node: the polygons across its edges and connections, the
-// links leaving it, or the polygon a link leads to.
+// links leaving it, or the polygon a link leads to. With `arrivals`, the
+// one-way links that end on it as well, each as NAV_CONNECTION_ARRIVAL: what
+// leads to the node, for a search against the way agents walk.
 Nav_Step :: struct {
     to:Nav_Ref,
     edge:u8,     // of the polygon left; NAV_CONNECTION_LINK onto or off a link
@@ -472,9 +481,10 @@ Nav_Steps :: struct {
     edge:int,
     chain:u32,
     done:bool,
+    arrivals:bool,
 }
-nav_steps :: proc "contextless" (mesh:^Nav_Mesh,from:Nav_Ref) -> (it:Nav_Steps) {
-    it.mesh,it.from=mesh,from
+nav_steps :: proc "contextless" (mesh:^Nav_Mesh,from:Nav_Ref,arrivals:=false) -> (it:Nav_Steps) {
+    it.mesh,it.from,it.arrivals=mesh,from,arrivals
     if nav_ref_is_link(from) {return}
     it.tile,it.poly=nav_poly_of(mesh,from)
     if it.poly==nil {it.done=true;return}
@@ -498,9 +508,10 @@ nav_steps_next :: proc "contextless" (it:^Nav_Steps) -> (step:Nav_Step,ok:bool) 
         if n==NAV_EDGE_WALL || n&NAV_EDGE_PORTAL!=0 {continue}
         return {to=nav_tile_ref(it.mesh,it.tile,int(n)-1),edge=u8(e),high=255},true
     }
-    if it.chain!=0 {
+    for it.chain!=0 {
         c:=it.mesh.connections[it.chain-1]
         it.chain=c.next
+        if c.edge==NAV_CONNECTION_ARRIVAL && !it.arrivals {continue}
         return {to=c.to,edge=c.edge,low=c.low,high=c.high},true
     }
     it.done=true

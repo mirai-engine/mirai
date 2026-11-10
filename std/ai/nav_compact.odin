@@ -116,6 +116,14 @@ nav_build_compact :: proc(s:^Nav_Build_Scratch,g:^Nav_Grid) -> Nav_Build_Status 
         }
     }
     s.cells[columns]=u32(index)
+    nav_link_compact(s,g)
+    return .Built
+}
+
+// Links each walkable span to the span of each neighbor column an agent steps onto from it.
+@(private)
+nav_link_compact :: proc "contextless" (s:^Nav_Build_Scratch,g:^Nav_Grid) {
+    side:=int(g.side)
     climb,height:=int(g.climb),int(g.height)
     for z in 0..<side {
         for x in 0..<side {
@@ -143,7 +151,6 @@ nav_build_compact :: proc(s:^Nav_Build_Scratch,g:^Nav_Grid) -> Nav_Build_Status 
             }
         }
     }
-    return .Built
 }
 
 // The two passes of a chamfer distance (2 across, 3 diagonally) over the

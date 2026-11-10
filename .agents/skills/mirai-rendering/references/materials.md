@@ -153,7 +153,7 @@ previews studio use it.
   RGBA8, RGBA16 (data precision) and RGBA16F (HDR). The renderer uploads the file's format; the
   encoders are in `cook/textures`
   ([imports](../../mirai-imports/references/imports.md#textures-cooktextures)). Without
-  `Features.texture_bc` or with `texture_compression` off (`texture_limits`), `host` decodes each
+  `Features.texture_bc` (`texture_limits`), `host` decodes each
   level to RGBA8, and BC6H to RGBA16F, before uploading it.
 - **Arrays and cubes.** A layered `.tex` is uploaded through the same `texture_add_data`, all its
   layers in each level (`Texture_Data.layers`, `cube`), whole and without following the distance.
