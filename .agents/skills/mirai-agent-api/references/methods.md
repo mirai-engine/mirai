@@ -935,11 +935,13 @@ one root is none: the error says so), nonexistent override and "is not part of a
   `"engine"`; `settings` are sections with the fields that change
   (`{"Particle_Settings":{"capacity":100000}}`), and `graphics_preset` sets the quality fields of
   `Graphics_Settings` as that preset of the Graphics popup does, before `settings`. Answers as
-  `settings.get` does, for the sections it changed; `preferences.set` and `input.set` too, with
-  `sections` and `actions` as the filters of their gets.
+  `settings.get` does, for the sections it changed; `preferences.set` too, with `sections` as the
+  filter of its get.
   - `engine` admits only `machine` sections; another is `-32602` with those it admits.
   - The edited world and the games that play take the values instantly; the layer's file stores
     what differs.
+  - A section the engine refuses is `-32602` with the fix: an entry of `Input_Settings` that names
+    an action the code does not declare, or a binding its kind does not read, names the action.
   - In `engine`, a field that the project overrides does not change.
   - A section that is not a setting or a field the type does not have is `-32602` with those that
     exist (the file, on the other hand, may store fields the type no longer has, and they are
@@ -1029,16 +1031,11 @@ one root is none: the error says so), nonexistent override and "is not part of a
 Project Settings > Input
 ([panel](../../mirai-editor/references/panels.md#project-settings)).
 
-- `input.get` (read-only): each action the code declares, with its type, its bindings in effect as
-  `input.mirai` writes them, and `source`: `code` if they are the code's, `file` if the file
-  changes them. `problem` says why the file was not read.
-- `input.set`: `action` with `bindings` (and `kind` to change the type) replaces them, `[]` removes
-  them; `action` with `reset: true` gives it back to the code; `tap_ticks` and `hold_ticks` go
-  alone or together with the above. Returns what `input.get` returns.
-  - Everything is checked before writing. An action, key, button, axis or stick that does not
-    exist, a binding that does not fit the type or an unknown parameter is `-32602` with the valid
-    names.
-  - With an `input.mirai` that cannot be read, it fails without writing it.
+- `input.get` (read-only): each action the code declares with what drives it, as an entry of
+  `Input_Settings` writes it, `changed` with the actions the project's setting changes, and the
+  seconds of a tap and of a hold. An entry it gives, changed, is what `settings.set` takes in
+  `Input_Settings.actions`; an entry equal to the code's default stays in the file, and Project
+  Settings > Input removes it.
 
 ## Material programs
 

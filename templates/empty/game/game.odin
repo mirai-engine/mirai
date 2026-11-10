@@ -13,9 +13,9 @@ Spinner :: struct {speed:f32 `mirai:"unit=rad/s"`}
 @(actions)
 Action :: enum u8 {Reverse}
 
-// Their bindings. The editor (Project Settings > Input), input.set and the player write in an
-// input.mirai only what they change of these.
-action_defaults :: proc "contextless" () -> [Action]inp.Action_Default {
+// Their bindings. The editor (Project Settings > Input), settings.set and the
+// player keep in Input_Settings of settings.mirai only what they change of these.
+action_defaults :: proc "contextless" () -> [Action]inp.Action_Bindings {
     return {.Reverse=inp.action_default(.Button,inp.binding_key(.R),inp.binding_gamepad_button(.East))}
 }
 

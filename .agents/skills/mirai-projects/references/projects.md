@@ -8,8 +8,7 @@ Targets, jobs, fingerprint, project shaders, cooking and shipped game (`cook/bui
 ```text
 <project>/
   project.mirai     manifest: what makes the folder a project
-  input.mirai       bindings Project Settings > Input changed from the code (optional, not by hand)
-  settings.mirai    project settings: what differs from the engine (optional)
+  settings.mirai    project settings, the bindings in Input_Settings: what differs (optional)
   cook.mirai        cooking roots that no scene names (optional)
   assets/           assets: what is authored, and the documents imports write
   source/           art sources, each with its sidecar (<source>.import): settings and asset ids
@@ -102,13 +101,16 @@ with the name of the type and the schema of the manifests.
   3. `<project>/settings.mirai`: any setting, also the machine ones (a project can fix its
      quality);
   4. in the player, `settings.mirai` of the player's options (layer `.Player`, in `App.options`,
-     `<user data>/Mirai/<project>`): only machine settings, the ones the player chose; it is
-     written by `host.app_options_save` with what differs from the layers below, at the request of
-     the game ([options](../../mirai-gameplay/references/libraries.md#save)).
+     `<user data>/Mirai/<project>`): only machine settings, the ones the player chose (the
+     bindings too); `host.app_options_save` writes it with what differs from the layers below,
+     when it rests after a change ([options](../../mirai-gameplay/references/libraries.md#save)).
 - The engine file only reads and writes machine settings, so a design datum does not pass from one
   project to another with a type of the same name: a section of a project setting there is not
   applied, it is kept and the editor warns on load (`settings_misplaced`).
-- Each file stores only what differs from the layers below, field by field (an array, whole). When
+- Each file stores only what differs from the layers below, field by field (an array of entries,
+  up to the last that differs). An array tagged `keyed`, of structs whose first field is a text
+  that names each entry, is layered by those names: a file holds the entries that differ from the
+  one with their name below, and reading it replaces those whole and keeps the others. When
   reading, a field the type does not have is omitted; when writing, the sections that no setting
   names (of an inactive plugin) are kept.
 - `host` applies the layers to the `World` settings when creating each world and to the `Shared`
@@ -136,6 +138,8 @@ with the name of the type and the schema of the manifests.
   - Lower level: `settings_parse(text, settings)`, `settings_read(path, settings)` (a file that
     does not exist leaves the values), `settings_default`, `settings_clone`,
     `settings_text(settings, below, kept)` and `settings_write(path, settings, below)`.
+  - `Rest` writes a file a while after the last change to what it holds, once for a burst of
+    changes: the options and the profile of the player, and the editor preferences, use it.
 - In the editor, File > Project settings shows them with the rows of the Details panel and stores
   each change in the chosen layer
   ([dialog](../../mirai-editor/references/panels.md#project-settings)); through the API,
@@ -159,6 +163,9 @@ Settings of the engine and its plugins:
   tolerances.
 - `Spawn_Settings` (plugin `spawn`): `players` gives a body at a spawn point to each player that
   has none; off, the game gives them a body.
+- `Input_Settings` (`engine/input`, machine): the bindings of the actions the project or the
+  player changed, a keyed entry per action
+  ([actions](../../mirai-gameplay/references/control.md#actions)).
 
 ## The `project` package
 

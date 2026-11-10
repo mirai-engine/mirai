@@ -2242,7 +2242,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     // The default bindings of each enum @(actions); the compiler asks for every member.
     for a,ai in g.action_enums {
         value:=actions_defaults_value(a) or_continue
-        fmt.sbprintf(w,"action_defaults_%d :: proc(dst:rawptr) {{(cast(^[%s.%s]%s.Action_Default)dst)^=%s}}\n",ai,a.pkg.alias,a.name,g.actions_type.pkg.alias,value)
+        fmt.sbprintf(w,"action_defaults_%d :: proc(dst:rawptr) {{(cast(^[%s.%s]%s.Action_Bindings)dst)^=%s}}\n",ai,a.pkg.alias,a.name,g.actions_type.pkg.alias,value)
     }
 
     // What a new row of each record type starts as, and the descriptions of their fields.
@@ -2448,7 +2448,7 @@ record_default :: proc(r:^Record_Type) -> (value:string,found:bool) {
 }
 
 // The default bindings of the members of an enum @(actions): <ENUM>_DEFAULTS or
-// <enum>_defaults() of its package, a [E]Action_Default.
+// <enum>_defaults() of its package, a [E]Action_Bindings.
 @(private="file")
 actions_defaults_value :: proc(a:^Action_Enum) -> (value:string,found:bool) {
     buffer:[512]u8
@@ -2625,12 +2625,16 @@ defaults_check :: proc(g:^Generator) {
             if !is_array || array.len==nil {continue}
             elem:=ident_name(array.elem)
             if selector,is_selector:=array.elem.derived.(^ast.Selector_Expr);is_selector {elem=selector.field.name}
-            if elem!="Action_Default" {continue}
+            if elem!="Action_Bindings" {continue}
             enum_name:=ident_name(array.len)
             if selector,is_selector:=array.len.derived.(^ast.Selector_Expr);is_selector {enum_name=selector.field.name}
+            // Indexed by an enum @(actions): its defaults. By anything else: bindings held as data.
+            of_actions:=false
+            for a in g.action_enums {of_actions||=a.name==enum_name}
+            if !of_actions {continue}
             buffer:[512]u8
             constant,maker,_:=core.default_names(enum_name,buffer[:])
-            append(&g.errors,fmt.aprintf("%s(%d): %s carries the defaults of the actions of %s, and a struct carries no defaults of actions: declare them beside the enum as %s :: proc() -> [%s]Action_Default (or a constant %sS), and remove the field",file.fullpath,f.pos.line,name,enum_name,fmt.tprintf("%ss",maker),enum_name,constant))
+            append(&g.errors,fmt.aprintf("%s(%d): %s carries the defaults of the actions of %s, and a struct carries no defaults of actions: declare them beside the enum as %s :: proc() -> [%s]Action_Bindings (or a constant %sS), and remove the field",file.fullpath,f.pos.line,name,enum_name,fmt.tprintf("%ss",maker),enum_name,constant))
         }
         d:=new(Defaulted,context.temp_allocator)
         d.name,d.path,d.pkg,d.order=name,pkg.path,pkg,order[:]
