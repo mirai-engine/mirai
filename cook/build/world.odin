@@ -356,6 +356,7 @@ PROJECT_INFO_SYMBOL :: "mirai_project_info"
 // Writes the generated packages under <project>/.mirai/gen when they changed.
 // out has what was generated, in the temp allocator.
 world_write_files :: proc(p:^project.Project,shipped:=false) -> (out:Generated,ok:bool) {
+    if out.errors=kinds_write(p);len(out.errors)>0 {return}
     out=world_generate(p,context.temp_allocator,shipped)
     if len(out.errors)>0 {return}
     gen:=project.path(project.folder_path(p.root,.Generated,context.temp_allocator),"gen",allocator=context.temp_allocator)

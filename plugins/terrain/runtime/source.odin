@@ -11,8 +11,6 @@ import "mirai:std/geom"
 import mm "mirai:std/math"
 import "mirai:std/serial"
 
-KIND :: asset.Fourcc(u32('T')|u32('E')<<8|u32('R')<<16|u32('R')<<24)
-EXTENSION :: ".terrain"
 VERSION :: 10
 HEIGHT_SAMPLES_MAX :: 16385
 VOLUME_SAMPLES_MAX :: HEIGHT_SAMPLES_MAX
@@ -174,7 +172,7 @@ source_load :: proc(s:^Source,path:string,types:^asset.Types,allocator:=context.
 // pages in that file (asset_load_front opens it without them), read when
 // needed.
 source_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=context.allocator,pages:="") -> (id:base.Asset_Id,ok:bool) {
-    if asset.kind_check(file,KIND,VERSION)!=.None {return}
+    if asset.kind_check(file,TERRAIN_KIND,VERSION)!=.None {return}
     info,error:=asset.asset_row(file,types,"terrain",Source_Info)
     if error!=.None || info==nil || !source_valid(info^) {return}
     temporary:Source
@@ -228,7 +226,7 @@ source_bytes :: proc(s:^Source,id:base.Asset_Id,types:^asset.Types,allocator:=co
     if !source_valid(s.info) || !source_samples_held(s) {return nil,.Invalid}
     if !grid_distances_within(&s.distances,s.cell*SDF_BAND_CELLS) {return nil,.Invalid}
     document:asset.Document
-    asset.document_init(&document,KIND,id,s.allocator)
+    asset.document_init(&document,TERRAIN_KIND,id,s.allocator)
     defer asset.document_destroy(&document)
     document.kind_version=VERSION
     info:=s.info

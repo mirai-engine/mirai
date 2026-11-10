@@ -14,7 +14,6 @@ import "base:runtime"
 // for by name. A layer plays by itself a clip or the aim offsets of a .blend, over a branch of
 // the body or all of it, replacing or adding; an action plays its clip once in a layer, or over
 // the whole body when it names none.
-ACTION_KIND :: asset.Fourcc(u32('A')|u32('C')<<8|u32('T')<<16|u32('N')<<24)
 ACTION_VERSION :: 3
 ACTION_CAPACITY :: 64
 ACTION_ROWS :: 256

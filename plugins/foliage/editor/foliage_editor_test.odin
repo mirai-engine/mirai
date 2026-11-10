@@ -474,11 +474,3 @@ instances_are_counted_by_cell_and_again_only_where_a_cell_or_its_ground_changed 
     testing.expect_value(t,count_text(1234567),"1,234,567")
     testing.expect_value(t,count_text(12),"12")
 }
-
-// What git and the tools know of the kinds of the plugin without loading it.
-@(test)
-the_manifest_declares_the_asset_kinds_the_plugin_registers :: proc(t:^testing.T) {
-    m,error:=project.plugin_read(#directory+"../plugin.mirai")
-    testing.expect_value(t,error.code,project.Error_Code.None)
-    testing.expect_value(t,editor.asset_kinds_differ(FOLIAGE_KINDS_DEFAULT.provider,&m),"")
-}

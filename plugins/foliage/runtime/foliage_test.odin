@@ -671,7 +671,7 @@ a_foliage_file_written_before_the_rules_reads_them_off_and_bad_rules_are_refused
     }
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     document:asset.Document
-    asset.document_init(&document,KIND,{7,8})
+    asset.document_init(&document,FOLIAGE_KIND,{7,8})
     defer asset.document_destroy(&document)
     document.kind_version=VERSION
     info:=Foliage_Info{seed=3,next_type=1}

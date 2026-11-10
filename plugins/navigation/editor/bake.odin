@@ -19,10 +19,6 @@ import nav "plugins:navigation/runtime"
 
 // A .navmesh in the browser and in the field of a Navigation_Bake.
 @(storage)
-Nav_Kinds :: struct {provider:editor.Asset_Kind_Provider}
-NAV_KINDS_DEFAULT :: Nav_Kinds{provider={kinds={0={kind=nav.BAKE_KIND,label="Navmesh",color={60,180,140,255},icon=.Plane,extension=nav.BAKE_EXTENSION,scene_data=true}},count=1}}
-
-@(storage)
 Nav_Bake_Kept :: struct {
     world:rawptr,
     revision:u64,
@@ -86,7 +82,7 @@ bake_path :: proc(s:^editor.Session,id:base.Asset_Id,section:core.Entity) -> (pa
         if beside=="" {return}
         dot:=strings.last_index_byte(beside,'.')
         stem:=beside[:dot] if dot>strings.last_index_byte(beside,'/') else beside
-        path=fmt.tprintf("%s%s",stem,nav.BAKE_EXTENSION)
+        path=fmt.tprintf("%s%s",stem,nav.NAVMESH_EXTENSION)
     }
     return path,asset.registry_file_path(registry,path,context.temp_allocator)
 }

@@ -98,7 +98,7 @@ terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
         if !terrain.source_make(&source,tool.create_kind==.Volume?.Volume:.Heightfield,samples,tool.cell,tool.chunk_cells,allocator) {editor.notify(s,"The terrain dimensions exceed their budget");return}
     }
     if !terrain_budget(s,world,&source) {return}
-    label,path:=editor.asset_new_file(s,fmt.tprintf("%s/terrain",a.registry.root),name!=""?name:terrain_kind_name(source.kind),terrain.EXTENSION,name!="")
+    label,path:=editor.asset_new_file(s,fmt.tprintf("%s/terrain",a.registry.root),name!=""?name:terrain_kind_name(source.kind),terrain.TERRAIN_EXTENSION,name!="")
     source.revision=1;seed:=base.hash_combine(base.name_hash(path),platform.clock_ns())
     id:=base.Asset_Id{seed,base.hash_combine(seed,base.name_hash("Terrain"))}
     bytes,error:=terrain.source_bytes(&source,id,&a.types,allocator)

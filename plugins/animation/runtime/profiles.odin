@@ -10,7 +10,6 @@ import lib "mirai:std/anim"
 import mm "mirai:std/math"
 import "base:runtime"
 
-POSE_KIND :: asset.Fourcc(u32('P')|u32('O')<<8|u32('S')<<16|u32('E')<<24)
 POSE_VERSION :: 6
 POSE_CONSTRAINTS :: 256
 

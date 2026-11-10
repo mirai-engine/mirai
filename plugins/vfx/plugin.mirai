@@ -3,5 +3,8 @@
   "version": "0.1.0",
   "dependencies": [],
   "parts": ["Runtime", "Editor", "Shaders", "Recipes"],
-  "asset_kinds": [{"extension": ".particle", "merged": true}, {"extension": ".grid"}]
+  "asset_kinds": [
+    {"extension": ".particle", "kind": "PART", "merged": true, "folder": "runtime/effect", "label": "Particle", "color": [1, 202, 252], "icon": "Particles", "field": "particle"},
+    {"extension": ".grid", "kind": "VGRD", "folder": "runtime/gridfile", "label": "Grid state", "color": [120, 200, 170], "icon": "Grid", "field": "cached"}
+  ]
 }

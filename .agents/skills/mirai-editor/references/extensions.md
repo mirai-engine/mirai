@@ -220,21 +220,21 @@ A plugin opens asset types in tabs next to the scenes
 
 ## Asset types of a plugin
 
-An Editor storage whose only field is `editor.Asset_Kind_Provider` declares in its default the
-plugin's asset types that the content browser lists (`kinds`, up to `ASSET_KINDS_OF_PROVIDER`, and
-`count`), like the editor's types:
+The plugin's asset types are its `asset_kinds` in `plugin.mirai`
+([manifests](../../mirai-projects/references/projects.md#manifests)), the one declaration: the
+content browser lists the ones with a `label`, like the editor's types, and the build generates
+the constants the code names (`kinds_gen.odin`):
 
-- `label`: the type as a row says it and the name of its filter. `color` and `icon`: those of its
-  cards, fields, rows and tabs (`editor.asset_kind_color`, `asset_icon` and `asset_kind_label` read
-  them with the session).
+- `label`: the type as a row says it and the name of its filter. `color` and `icon` (a `ui.Icon`
+  or a `User_Icon` by name): those of its cards, fields, rows and tabs (`editor.asset_kind_color`,
+  `asset_icon` and `asset_kind_label` read them with the session).
 - `extension`: that of its files; `asset.list` names the type with it without the dot, and the
   `kind=` tag of a field, with it whole ([inspector](inspector.md#rows-by-reflection)).
 - `field`: a word; an `Asset_Id` field whose name has it takes the type.
-- The `asset_kinds` of the plugin's `plugin.mirai` list exactly these extensions
-  ([manifests](../../mirai-projects/references/projects.md#manifests)); a test of the editor part
-  holds it with `editor.asset_kinds_differ`.
-- `clicked` (of the provider): what a click on one's card does, outside Play and with the scene in
-  front (assigning it to the selection).
+
+An Editor storage whose only field is `editor.Asset_Click_Provider` says what a click on the card
+of one of its `kind` does, outside Play and with the scene in front (assigning it to the
+selection).
 
 One whose only field is `editor.Asset_Menu_Provider` adds, with `menu(s, file)`, its entries
 (`ui.menu_item`) to an asset card's menu. To show an asset of the type in a component like a
@@ -280,38 +280,31 @@ or without names): `editor.asset_cards(s, width)` gives the columns and the side
 
 ## Create cards
 
-An Editor storage whose only field is `editor.Card_Provider` adds cards to Create: its default
-fills `cards` and `count`, up to `CARD_PROVIDER_CAPACITY` = 8 per provider and `CARD_CAPACITY` = 64
-with the presets. `decals`, `monitors`, `portals` and `vfx` add Decal, Screen, Portal and Particles
-this way.
+A card shows a [recipe](document.md#recipes) in Create. An Editor storage whose only field is
+`editor.Card_Provider` adds a plugin's cards: its default fills `cards` and `count`, up to
+`CARD_PROVIDER_CAPACITY` = 8 per provider and `CARD_CAPACITY` = 64 with those of the editor
+(`EDITOR_CARDS`). `decals`, `monitors`, `portals`, `mirror`, `fog`, `spawn`, `ui_inspector` and
+`vfx` add theirs this way, each over a scene in the `recipes/` of the plugin (`Recipes` part).
 
 Fields of `Card`:
 
-- `label`: name of the card and of the entity. `scene.write` accepts it in `preset`,
-  case-insensitive and with `_` for space.
-- `group`: Create section: `"Logic"`, `"Shapes"` or one of its own, which goes after those of the
-  editor (`CARD_GROUP_CAPACITY` = 8 sections). Empty: `Logic`.
+- `recipe`: the name of the recipe it places; a card whose recipe is not there is left out.
+  `label` is not given: `cards(s)` fills it with the name of the recipe's entity.
+- `group`: Create section: `"Logic"`, `"Shapes"` or one of its own, in the order the first card of
+  each comes in (`CARD_GROUP_CAPACITY` = 8 sections). Empty: `Logic`.
 - `icon`, `drawing`, `color`: an existing `ui.Icon` or, with empty `icon`, a drawing of its own
   ([icons as data](../../mirai-ui/references/ui.md#widgets)).
-- `body`: primitive of the preview on placing (`None`: a mark). `scale`: the entity's scale. `lift`:
-  meters above the support for what has no body.
-- `make`: `proc(s, w, e)` that adds the components; the entity already has `Id`, `Name`, `Transform`
-  and parent. It runs inside the undo step of the creation.
 - `component`: the component of which the card is the icon; the entity that has it shows it in
   outliner, Find, slots and its viewport disk, and the component's section in its header.
+- `chosen` and `facing`, what a card computes that a scene cannot hold: an empty `Asset_Id` field
+  of what it places whose `kind=` names the asset chosen in the content browser takes it (the
+  `.ui` of Interface, Panel and Billboard), and the placed entity turns to the camera (Panel).
 
 Rules:
 
-- `label` is the name of the card and of the entity; `scene.write` accepts it in `preset`,
-  case-insensitive and with `_` for space. A `group` of its own goes after the editor's sections;
-  empty, in Logic.
-- `make` runs inside the creation's undo step, on an entity that already has `Id`, `Name`,
-  `Transform` and parent.
-- The entity that has the card's `component` carries its icon in outliner, Find, slots and its
-  disk, and the component's section in its header.
-- `cards(s)` returns the presets first (a preset's index is its value) and then the cards.
-  Dragging, the placement click, Edit > Create and `scene.write` create the same:
-  `entity_create` with `Create_Desc.card`.
+- `cards(s)` returns those of the editor first and then those of the plugins. Dragging, the
+  placement click, Edit > Create and `scene.write` create the same: `entity_create` with
+  `Create_Desc.recipe`. The preview of a placement is the recipe's scene, as for a prefab.
 - What a selected entity shows besides the icon (a decal's box, a portal's opening and the path to
   its exit) is drawn by a `frame` `after="editor_tools"` step of the plugin with
   `host.extras_debug_lines_add`, outside a Play.

@@ -419,12 +419,11 @@ An entity is named as [the API names it](api.md#method-conventions). Each edit i
     it declares and does not list), siblings keep their order, and `"delete":true` takes an
     entity away. `{"root":"Lamp","merge":true,"entities":[{"position":[0,2,0]}]}` moves one
     entity; a member of an instance that says `delete` is turned off.
-  - `preset` is a name of `Preset` (`cook/author/presets.odin`), case-insensitive, or the card of
-    an active plugin by its label
-    ([cards](../../mirai-editor/references/extensions.md#create-cards)); it stands for the
-    components it gives, whose values are the starting ones of the fields `components` does not
-    name; without `rotation_deg` or `scale` the entity takes those of the preset, and without
-    `name` its label, with a number if a sibling has it. It also holds when rewriting an entity;
+  - `preset` names a [recipe](../../mirai-editor/references/document.md#recipes) of the engine or
+    of an active plugin by the name of its file, case-insensitive; it stands for the components
+    of its entity, whose values are the starting ones of the fields `components` does not name;
+    without `rotation_deg` or `scale` the entity takes those of the recipe, and without `name`
+    its name, with a number if a sibling has it. It also holds when rewriting an entity;
     `scene.inspect` gives its components, not the preset. Lights shine toward their -Z; `sun`
     looks from `render.SUN_DIRECTION` and `spot_light` downward. Adding, showing or turning on a
     `Sun` turns off the `Sun` that was on, in the same step

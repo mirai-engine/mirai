@@ -19,7 +19,6 @@ import "base:runtime"
 // clips (a jump, a landing). An action without a layer (play) takes the whole body from the search
 // through the same inertial blend (a vault, a hit, a death), and matching goes on when it ends.
 
-MATCH_KIND :: asset.Fourcc(u32('A')|u32('M')<<8|u32('T')<<16|u32('C')<<24)
 MATCH_VERSION :: 7
 MATCH_CLIPS :: 64
 // Share of the speed the pose walks at that its root closes on the body by, with a lag.

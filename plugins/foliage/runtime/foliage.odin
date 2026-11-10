@@ -264,7 +264,7 @@ foliage_stamp :: proc(a:^host.Assets,id:base.Asset_Id) -> File_Stamp {
 // keeps unsaved, or the file.
 foliage_read :: proc(s:^Source,a:^host.Assets,id:base.Asset_Id,allocator:=context.allocator) -> bool {
     file:asset.Asset
-    if host.assets_file(a,id,KIND,&file)!=.None {return false}
+    if host.assets_file(a,id,FOLIAGE_KIND,&file)!=.None {return false}
     defer asset.asset_close(&file)
     read,ok:=source_read(s,&file,&a.types,allocator)
     return ok && read==id
@@ -283,7 +283,7 @@ memory_problem :: proc(problems:^core.Problems,e:core.Entity,what:string) {
 @(private)
 source_unread :: proc(problems:^core.Problems,e:core.Entity,a:^host.Assets,id:base.Asset_Id) {
     name:[base.ASSET_ID_TEXT]u8
-    core.report(problems,e,"foliage.source_unread","foliage source %s cannot be read: it is missing, of another kind or version (%s, version %d), damaged, or memory ran out; give Foliage.source a .foliage asset",host.assets_name(a,id,&name),EXTENSION,VERSION)
+    core.report(problems,e,"foliage.source_unread","foliage source %s cannot be read: it is missing, of another kind or version (%s, version %d), damaged, or memory ran out; give Foliage.source a .foliage asset",host.assets_name(a,id,&name),FOLIAGE_EXTENSION,VERSION)
 }
 
 @(private)

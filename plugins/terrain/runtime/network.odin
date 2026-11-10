@@ -495,7 +495,7 @@ terrain_origin :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id) -> (origin:
 terrain_unread :: proc(data:core.Ref(Terrain_Data),a:^host.Assets,id:base.Asset_Id) -> bool {
     if data.ptr!=nil && slice.contains(data.unread[:],id) {return true}
     record,found:=asset.registry_find(&a.registry,id)
-    return !found || record.kind!=KIND
+    return !found || record.kind!=TERRAIN_KIND
 }
 
 // The pages of a grid of a loaded source over the inclusive region (all of

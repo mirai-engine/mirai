@@ -10,7 +10,6 @@ import lib "mirai:std/anim"
 import mm "mirai:std/math"
 import "base:runtime"
 
-MOTION_KIND :: asset.Fourcc(u32('M')|u32('O')<<8|u32('T')<<16|u32('N')<<24)
 MOTION_VERSION :: 2
 MOTION_WINDOWS :: 64
 MOTION_KEYS :: 4096

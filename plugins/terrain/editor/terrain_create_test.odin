@@ -474,11 +474,3 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     defer delete(after_redo)
     testing.expect_value(t,string(after_redo),string(committed))
 }
-
-// What git and the tools know of the kinds of the plugin without loading it.
-@(test)
-the_manifest_declares_the_asset_kinds_the_plugin_registers :: proc(t:^testing.T) {
-    m,error:=project.plugin_read(#directory+"../plugin.mirai")
-    testing.expect_value(t,error.code,project.Error_Code.None)
-    testing.expect_value(t,editor.asset_kinds_differ(TERRAIN_KINDS_DEFAULT.provider,&m),"")
-}

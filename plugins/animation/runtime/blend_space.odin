@@ -8,7 +8,6 @@ import lib "mirai:std/anim"
 import mm "mirai:std/math"
 import "base:runtime"
 
-BLEND_KIND :: asset.Fourcc(u32('B')|u32('L')<<8|u32('N')<<16|u32('D')<<24)
 BLEND_VERSION :: 1
 Blend_Axis :: struct {name:[32]u8 `mirai:"text"`,min,max:f32}
 Blend_Info :: struct {animation:base.Asset_Id,dimension:lib.Blend_Dimension,x,y:Blend_Axis}
