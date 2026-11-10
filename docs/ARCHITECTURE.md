@@ -344,8 +344,8 @@ Numbered layers; a package only imports lower layers.
   the C library of `third_party/ufbx`) and `cook/import/sources` (the table of formats and
   `import_source`, on top of `cook/prefab`). `cook/author` is what an interface, a scene or a
   prefab is authored with as a nested document, between its text and the file of the asset, on
-  top of `asset`, `ui`, `core` and `host`: the editor's `ui.*` methods and `mirai ui` and
-  `mirai scene` go through it.
+  top of `asset`, `ui`, `core`, `host` and `engine/*`: the editor's `ui.*` methods and `mirai ui`
+  and `mirai scene` go through it, and the presets an entity is made from are there.
 - **6** `editor` and `editor/*`: engine-time; the editor, the JSON-RPC and MCP API,
   collaboration, prefabs and AI, whose chat search uses the C library of `third_party/sqlite`.
 - **7** `plugins/<name>`: first-party plugins, imported as `plugins:<name>/runtime` and

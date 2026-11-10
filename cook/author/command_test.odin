@@ -422,6 +422,13 @@ a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testin
     testing.expect_value(t,len(yard.members),asset.scene_entity_count(&prefab))
     where_,_:=asset.scene_get(&yard,hero,"Transform",core.Transform)
     testing.expect_value(t,where_.position,[3]f32{1,2,3})
+    // The document that placed it, written again, changes nothing: what it leaves out of the instance is what its prefab gives.
+    same,same_why:=scene_write(&p,"arena/yard.scene",`{"entities":[
+        {"name":"Lamp","preset":"point_light","position":[0,3,0],"components":{"Point_Light":{"intensity":7}}},
+        {"name":"Box","preset":"cube","scale":[1,2,1]},
+        {"name":"Board","preset":"scoreboard"},
+        {"name":"Hero","prefab":"player/Player.prefab","position":[1,2,3]}]}`)
+    testing.expect(t,same_why=="" && same.same,fmt.tprintf("%s %v",same_why,same))
     // Its document reads it back and writes it as it is; moving the instance by its id keeps its link.
     testing.expect_value(t,scene_verify(&p,"arena/yard.scene"),"")
     out:serial.Writer

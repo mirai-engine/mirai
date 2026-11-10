@@ -35,21 +35,13 @@ mirai rpc --project . --batch island.jsonl
 ## As a file of text
 
 `mirai scene` reads and writes a scene or a prefab as one nested document, with no editor running,
-against the components of the game as it was built last (`mirai build editor --dev` first):
+against the components of the game as it was built (`mirai build editor . --dev` first):
 
 ```sh
 mirai scene read arena/main.scene --out source/arena/main.scene.json
-mirai scene write source/arena/main.scene.json
+mirai scene write source
 mirai scene check
 ```
 
-- The document is `{"entities": [...]}`, the entities at the top of the file, each as
-  `scene.inspect` gives one with `root`: `id`, `name`, `position`, `rotation_deg`, `scale`,
-  `visible`, `enabled`, `components` by name with the fields that differ from the value a
-  component starts with, `off` and `children`.
-- `write` makes the file say the document: an entity is matched by `id`, else by `name` among its
-  siblings, else by place; the others are made, and those it leaves out go. A path that does not
-  exist yet makes the file. `source/<path>.scene.json` is `assets/<path>.scene` (and
-  `.prefab.json` a prefab), so `mirai scene write source` writes them all.
-- A `preset` and placing a prefab need the editor (`scene.write`, `prefab.instantiate`): here an
-  entity declares its components.
+The document, with presets, placed prefabs and how entities are matched:
+[text-sources.md](text-sources.md#a-scene).

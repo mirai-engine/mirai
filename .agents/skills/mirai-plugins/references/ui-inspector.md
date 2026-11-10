@@ -6,8 +6,9 @@ everything the file stores. Code in `plugins/ui_inspector/editor/`: the provider
 and writing of the file in `ui_inspector_editor.odin`, the hierarchy, the stage, the properties,
 the states, the texts and the paths in their own file, and the methods of the authoring API in
 `api_tree.odin`. What is no editor lives below it, in `cook/author`: each operation on the records
-(`records.odin`, `records_ux.odin`), the document (`ui_document.odin`) and the check of the paths
-(`ui_bindings.odin`). It fails a `Reading` with what is wrong and finds files through a registry
+(`records.odin`, `records_ux.odin`), the document (`ui_document.odin`), the check of the paths
+(`ui_bindings.odin`) and what the uses of a widget give when its parameters move
+(`ui_follow.odin`). It fails a `Reading` with what is wrong and finds files through a registry
 and the types of its tables, so the methods here and
 [`mirai ui`](../../mirai-agent-api/references/api.md#mirai-ui-and-mirai-scene) run the same code.
 

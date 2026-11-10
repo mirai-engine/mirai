@@ -151,7 +151,8 @@ the documents of [`ui.inspect` and `ui.write`](../../mirai-plugins/references/ui
 and of [`scene.inspect` with `root` and `scene.write`](methods.md#scene) with no editor: the tool
 runs `cook/author.command` in the engine's `mirai-author` program
 ([binaries](../../mirai-projects/references/projects.md#engine-binaries)), building the engine
-first when it is not current, as `mirai import` does.
+first when it is not current, as `mirai import` does. What a game-writing agent is told:
+[text sources](../../../../docs/game/assets/text-sources.md).
 
 - **Documents as files.** `source/<path>.ui.json` is the asset `assets/<path>.ui`, and so
   `.scene.json` and `.prefab.json`. `read <asset>` prints the document or writes it to `--out`;
@@ -160,18 +161,28 @@ first when it is not current, as `mirai import` does.
   failed while a round writes something, so a file may use one the same run makes.
 - **A write** is the one of the API method: what it refuses is refused with its message and the
   file stays as it was; a file that already says the document is not written. An asset that does
-  not exist is made with an id that follows from its path.
+  not exist is made with an id that follows from its path. A `.ui` written with other `params`
+  takes along the files that use it as a widget, as the editor does.
 - **Types of the game.** The paths an interface binds and the components of a scene are read
-  against the `editor` or `play` library of the project, the one built last. Without a library
-  an interface is written with its paths unchecked, which the command says, and a scene is not
-  read or written: its components start with the values their types declare.
-- **A scene document** is `{"entities": [...]}`, the entities at the top of the file, and is
-  applied to the file of the asset, with no world: an entity it makes takes the id the document
-  gives when the file is new, the components the game of this build does not know stay with the
-  entities it keeps, and `preset` or a new entity with `prefab` are refused, since a recipe and
-  an instance are made on a world (`scene.write`, `prefab.instantiate`).
+  against the `editor` library of the project, which also has the cards of its plugins. Only
+  `ui read` runs without it: the tool refuses every other command, with the `mirai build editor`
+  that fixes it and exit code 1, when the library is missing or older than the code of the
+  project (`build.target_state`). Nothing is written or checked that nothing could check.
+- **A scene document** is `{"entities": [...]}`, the entities at the top of the file, applied to
+  the file of the asset with no world. `preset` runs its recipe on a world of the game made for
+  it and keeps the components it gives; a new entity with `prefab` is placed with
+  `asset.scene_instantiate`, and what the document changes of an entity of an instance is
+  recorded as an override. An entity that names its prefab by path or id alone declares the
+  instance as its prefab gives it, so the document that placed it writes nothing the next time;
+  with `{asset, root}`, as `read` gives it, it declares all it has. An entity it makes takes the id the document gives when the file is
+  new, and the components the game of this build does not know stay with the entities it keeps.
 - **`check`** lists what would fail in the game and exits with 1: for interfaces what `ui.check`
-  lists, for scenes each file whose document does not write it back unchanged.
+  lists, for scenes each file whose document does not write it back unchanged, with the first
+  thing that differs.
+- **The tracked assets** of the game template and the demo are files their own documents write
+  back byte by byte
+  (`the_documents_of_the_tracked_assets_write_back_the_files_they_were_read_from`): an asset
+  saved by an earlier layout is written again with `mirai ui write` before it is committed.
 
 ## `mirai rpc`
 
