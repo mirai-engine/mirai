@@ -65,7 +65,7 @@ bench_the_longest_frame_of_a_section_that_loads :: proc(t:^testing.T) {
             e:=core.create(&p.world.entities)
             core.add(&p.world.ids,e,core.Id{7})
             core.add(&p.world.references,e,Scene_Reference{scene=scene,rule=.Manual})
-            loading_settle(p.world,nil,nil)
+            core.settle(&p.info,p.world,nil)
             started:=time.tick_now()
             job,error:=section_load_begin(&p.app,world,e)
             if !testing.expect_value(t,error,Error.None) {return}
@@ -85,7 +85,7 @@ bench_the_longest_frame_of_a_section_that_loads :: proc(t:^testing.T) {
                 }
                 frame=time.duration_milliseconds(time.tick_since(started))
             }
-            loading_settle(p.world,nil,nil)
+            core.settle(&p.info,p.world,nil)
             testing.expect_value(t,core.count(core.read(&p.world.models)),scene==ROOM?MESHES:MESHES+1)
         }
         slice.sort(longest[:]);slice.sort(total[:]);slice.sort(frames[:])
