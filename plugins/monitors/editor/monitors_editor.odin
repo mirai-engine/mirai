@@ -4,7 +4,6 @@ import "mirai:core"
 import "mirai:editor"
 import erender "mirai:engine/render"
 import "mirai:host"
-import gpu "mirai:render"
 import "mirai:ui"
 import monitors "plugins:monitors/runtime"
 
@@ -36,14 +35,14 @@ screen_make :: proc(s:^editor.Session,w:core.World_Ref,e:core.Entity) {
 }
 
 @(storage)
-Monitors_Gizmo :: struct {vertices:[GIZMO_VERTICES]gpu.Debug_Vertex}
+Monitors_Gizmo :: struct {vertices:[GIZMO_VERTICES]erender.Debug_Vertex}
 
 // From each selected screen to the camera it shows.
 @(step="frame",after="editor_tools")
 monitors_gizmo :: proc(s:^editor.Session,gizmo:^Monitors_Gizmo,app:^host.App) {
-    draw :: proc(lines:^gpu.Debug_Lines,w:core.World_Ref,e:core.Entity,screen:monitors.Screen) {
+    draw :: proc(lines:^erender.Debug_Lines,w:core.World_Ref,e:core.Entity,screen:monitors.Screen) {
         if !editor.entity_alive(w,screen.camera) {return}
-        gpu.debug_arrow(lines,editor.entity_world(w,screen.camera).position,editor.entity_world(w,e).position,GIZMO_COLOR,0.3)
+        erender.debug_arrow(lines,editor.entity_world(w,screen.camera).position,editor.entity_world(w,e).position,GIZMO_COLOR,0.3)
     }
     editor.selection_gizmo(s,app,gizmo.vertices[:],monitors.Screen,draw)
 }
