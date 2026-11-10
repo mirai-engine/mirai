@@ -1000,7 +1000,7 @@ replica_show :: proc(s:^Net_Session,w:core.World_Ref,r:^Replica,tick:f64) {
 // the newest one with its velocity for a while and then still.
 @(private)
 replica_blend :: proc(s:^Net_Session,replica:^Replica,tick:f64) -> (out:Sample,ok:bool) {
-    from,to,alpha,status:=wire.interpolation_sample(&s.client.interpolation,int(replica.slot),tick)
+    from,to,alpha,status:=wire.interpolation_sample(&s.client.interpolation,int(replica.samples),tick)
     a:Sample
     switch status {
     case .Empty: return

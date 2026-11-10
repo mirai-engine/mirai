@@ -20,6 +20,10 @@ import "mirai:std/base"
 @(component,replicated)
 Net_Test_Value :: struct {force:f32,target:core.Entity}
 
+// A component an entity gains after it is first replicated.
+@(component,replicated)
+Net_Test_Late :: struct {level:i32}
+
 // The forces net_test_physics applied, added up.
 @(private)
 Net_Test_Force :: struct {total:f32}
@@ -30,6 +34,7 @@ Net_Test_Force :: struct {total:f32}
 Net_Test_Tables :: struct {
     using physics:phys.Test_Physics,
     values:core.Table(Net_Test_Value),
+    lates:core.Table(Net_Test_Late),
     identities:core.Table(core.Id),
     objects:core.Table(Replicate),
     links:core.Table(Net_Link),
@@ -72,7 +77,12 @@ Net_Test_World :: struct {
 
 // What the fixed loop of a test takes that its World does not hold.
 @(private)
-Net_Test_Shared :: struct {session:^Net_Session,info:^core.World_Info,colliders:phys.Collider_Meshes}
+Net_Test_Shared :: struct {
+    session:^Net_Session,
+    info:^core.World_Info,
+    colliders:phys.Collider_Meshes,
+    spawn_at:u64, // the tick in which the game makes an entity on both ends (predict_spawn); 0: none
+}
 
 @(private)
 net_test_types :: proc(types:^[dynamic]core.Test_Type) {
@@ -184,6 +194,13 @@ net_test_fixed :: proc(world,shared,editor,application:rawptr) {
         core.settle(sh.info,w,nil)
     }
     net_test_feed(w)
+    if sh.spawn_at!=0 && w.time.tick==sh.spawn_at {
+        e:=core.create(&w.entities)
+        core.add(&w.transforms,e,core.Transform{position={0,5,0},rotation=1,scale={1,1,1}})
+        core.add(&w.values,e,Net_Test_Value{})
+        predict_spawn(core.ref(sh.session),&w.identities,&w.spawns,e,0,w.time)
+        core.settle(sh.info,w,nil)
+    }
     net_test_physics(w,sh,app)
     if sh.session!=nil {
         outbox:Net_Outbox
@@ -616,6 +633,10 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
         }
         if tick==200 {core.get(&worlds[0].joints,entities[0][0]).motor_speed=-1}
         if tick==260 {core.disable(&worlds[0].joints,entities[0][0])}
+        // Components the entities gain and lose long after they were first replicated.
+        if tick==320 {for e in entities[0] {core.add(&worlds[0].lates,e,Net_Test_Late{level=7})}}
+        if tick==400 {core.get(&worlds[0].lates,entities[0][1]).level=9}
+        if tick==480 {core.remove(&worlds[0].lates,entities[0][0])}
         worlds[1].input.gamepads[0]={connected=true,down={.South},axes={.Left_X=0.75,.Left_Y=0,.Right_X=0,.Right_Y=0,.Left_Trigger=0,.Right_Trigger=0}}
         for &world,index in worlds {
             core.settle(&info,&world,nil)
@@ -650,6 +671,10 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
         client_pose,_:=core.get(core.read(&worlds[1].transforms),entities[1][index])
         testing.expectf(t,linalg.length(server_pose.position-client_pose.position)<0.02,"body %d server %v client %v",index,server_pose.position,client_pose.position)
     }
+    late,has_late:=core.get(core.read(&worlds[1].lates),entities[1][1])
+    testing.expectf(t,has_late && late.level==9 && !core.has(&worlds[1].lates,entities[1][0]),"the client has the late component of the second body %v at level %d, and that of the first %v",has_late,late.level,core.has(&worlds[1].lates,entities[1][0]))
+    testing.expect_value(t,sessions[0].stats.retyped,u64(3))
+    testing.expect_value(t,sessions[1].stats.spawned,u64(2))
     testing.expect(t,sessions[1].stats.corrected>0)
     testing.expect_value(t,problems[0].count,0)
     testing.expect_value(t,problems[1].count,0)
@@ -693,6 +718,9 @@ remote_character_intent_is_replayed_from_its_authoritative_tick :: proc(t:^testi
     if !testing.expect(t,net_test_session(&s,&world,&info,&app,&network,1,.Client)) {return}
     defer session_destroy(&s)
     r:=net_test_replica(&s,core.world_ref(&world,&info),e,.Shown,.Server)
+    // Predicted, as while it is within reach of what this client drives.
+    r.pose.predict=true
+    replica_classify(&s,core.world_ref(&world,&info),r)
     driver_fragment:=net_type(&s,r.type).driver
     if !testing.expect(t,driver_fragment>=0,"a Move_Input replicates its driver") {return}
     words:=make([]u32,s.client.words_per)

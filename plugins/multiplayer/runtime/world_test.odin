@@ -1,6 +1,7 @@
 package multiplayer
 
 import "core:strings"
+import "core:mem"
 import "core:testing"
 import "mirai:core"
 import input "mirai:engine/input"
@@ -252,11 +253,11 @@ a_client_follows_the_pause_and_the_time_scale_of_its_server :: proc(t:^testing.T
     testing.expect(t,!client.clock.paused && p.problems[1].count==1)
 }
 
-// Who arrives and who leaves reaches the fixed functions in the first tick
-// after it, once, however many frames go without a tick; a tick run again has
-// those it had.
+// Who arrives and who leaves, and the messages that arrive, reach the fixed
+// functions in the first tick after them, once, however many frames go
+// without a tick; a tick run again has those it had, and sends nothing.
 @(test)
-the_connections_that_come_and_go_reach_the_first_tick_after_them :: proc(t:^testing.T) {
+the_connections_and_the_messages_that_arrive_reach_the_first_tick_after_them :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
     defer core.test_info_destroy(&info)
@@ -265,25 +266,39 @@ the_connections_that_come_and_go_reach_the_first_tick_after_them :: proc(t:^test
     defer core.world_destroy(&info,.World,&world)
     app:=host.App{info=&info,allocator=context.allocator,tick_dt=1.0/60}
     s:Net_Session
-    defer delete(s.arrived)
+    defer {delete(s.arrived);delete(s.received)}
+    outbox:Net_Outbox;defer delete(outbox.queue.items)
     ref:=core.world_ref(&world,&info)
-    tick :: proc(ref:core.World_Ref,app:^host.App,s:^Net_Session,w:^Net_Test_World) -> int {
-        net_tick_head(ref,app,s,&w.remote,&w.connections,nil,nil,nil)
-        return len(w.connections.events.items)
+    // The connection events and the messages the tick has, and whether it sends.
+    tick :: proc(ref:core.World_Ref,app:^host.App,s:^Net_Session,w:^Net_Test_World,outbox:^Net_Outbox) -> [3]int {
+        net_tick_head(ref,app,s,&w.remote,&w.connections,&w.received,outbox,nil)
+        return {len(w.connections.events.items),len(w.received.received.items),int(send(outbox,u32(7)))}
+    }
+    message :: proc(s:^Net_Session,value:u32) {
+        value:=value
+        item:=Received{type=u32,size=size_of(u32)}
+        copy(item.data[:],mem.ptr_to_bytes(&value))
+        append(&s.received,item)
     }
     append(&s.arrived,Connection_Event{kind=.Connected,connection=1})
-    testing.expect_value(t,tick(ref,&app,&s,&world),1)
-    testing.expect_value(t,tick(ref,&app,&s,&world),0)
+    message(&s,10)
+    testing.expect_value(t,tick(ref,&app,&s,&world,&outbox),[3]int{1,1,1})
+    testing.expect_value(t,tick(ref,&app,&s,&world,&outbox),[3]int{0,0,1})
     // Two frames without a tick.
     append(&s.arrived,Connection_Event{kind=.Connected,connection=2})
+    message(&s,11)
     append(&s.arrived,Connection_Event{kind=.Disconnected,connection=1,reason=.Timeout})
-    testing.expect_value(t,tick(ref,&app,&s,&world),2)
+    message(&s,12)
+    testing.expect_value(t,tick(ref,&app,&s,&world,&outbox),[3]int{2,2,1})
     testing.expect_value(t,world.connections.events.items[1],Connection_Event{kind=.Disconnected,connection=1,reason=.Timeout})
+    second,read:=event_read(world.received.received.items[1],u32)
+    testing.expect(t,read && second==12,"in the order they arrived")
     world.time.resimulating=true
     append(&s.arrived,Connection_Event{kind=.Connected,connection=3})
-    testing.expect_value(t,tick(ref,&app,&s,&world),2)
+    message(&s,13)
+    testing.expect_value(t,tick(ref,&app,&s,&world,&outbox),[3]int{2,2,0})
     world.time.resimulating=false
-    testing.expect_value(t,tick(ref,&app,&s,&world),1)
+    testing.expect_value(t,tick(ref,&app,&s,&world,&outbox),[3]int{1,1,1})
 }
 
 // The reference of a section, loaded or not.

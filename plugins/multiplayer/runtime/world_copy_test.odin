@@ -136,16 +136,6 @@ a_rollback_replays_its_ticks_and_leaves_the_clock_and_the_frame_where_they_were 
 }
 
 @(test)
-a_tick_that_runs_again_sends_nothing :: proc(t:^testing.T) {
-    outbox:Net_Outbox;defer delete(outbox.queue.items)
-    outbox.replaying=true
-    testing.expect(t,!send(&outbox,u32(7)))
-    outbox.replaying=false
-    testing.expect(t,send(&outbox,u32(7)))
-    testing.expect_value(t,len(outbox.queue.items),1)
-}
-
-@(test)
 a_tick_a_library_asks_to_go_back_to_runs_again_from_the_copy_it_started_from :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}

@@ -299,7 +299,7 @@ correction_fixture_init :: proc(t:^testing.T,f:^Correction_Fixture,role:Role,set
     if !testing.expect(t,net_test_session(&f.session,&f.world,&f.info,&f.app,&f.network,1,.Client,settings=settings)) {return false}
     f.shared.session=&f.session
     s:=&f.session
-    if !testing.expect_value(t,net_test_replica(s,core.world_ref(&f.world,&f.info),f.e,role,.Server).mode,Mode.Predicted) {return false}
+    if !testing.expect_value(t,net_test_replica(s,core.world_ref(&f.world,&f.info),f.e,role,.Server).mode,role==.Predicted?Mode.Predicted:Mode.Interpolated) {return false}
     for tick in 1..=10 {correction_fixture_tick(f,u32(tick))}
     f.words=make([]u32,s.client.words_per)
     return true
