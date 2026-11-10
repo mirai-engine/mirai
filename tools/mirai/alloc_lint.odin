@@ -30,8 +30,9 @@ alloc_lint_applies :: proc(root,folder:string) -> bool {
 }
 
 // Prints the allocations of the sources of a package, its tests aside, whose
-// allocator error nothing receives. False when there is one or a source does
-// not parse.
+// allocator error nothing receives, and the appends that drop theirs where
+// their element is then read (append_judge). False when there is one or a
+// source does not parse.
 alloc_lint_package :: proc(folder:string) -> bool {
     entries,_:=os.read_all_directory_by_path(folder,context.temp_allocator)
     slice.sort_by(entries,proc(a,b:os.File_Info) -> bool {return a.name<b.name})
