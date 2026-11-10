@@ -37,7 +37,7 @@ Release_Call :: struct {
 app_assets_take :: proc(app:^App,prepared:^Assets_Prepared,over_frames:=false,tally:^Load_Tally=nil) -> bool {
     a:=app.assets
     id,ns,failed:=prepared.source.id,prepared.ns,!prepared.ok
-    kinds:=[Assets_Kind]Load_Asset{.Mesh=.Mesh,.Texture=.Texture,.Material=.Material,.Scene=.Plugin,.Shape=.Mesh,.Document=.Plugin,.Fracture=.Plugin}
+    kinds:=[Assets_Kind]Load_Asset{.Mesh=.Mesh,.Texture=.Texture,.Material=.Material,.Scene=.Plugin,.Shape=.Mesh,.Document=.Plugin}
     kind:=kinds[prepared.kind]
     fresh:=id!={} && !assets_loaded(a,id)
     scope:=load_asset_begin(a.load_profile)

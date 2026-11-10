@@ -30,16 +30,16 @@ sources_are_known_by_their_content :: proc(t:^testing.T) {
         testing.expectf(t,source_kind(path)==c.kind,"%s is a %v source, not %v",c.name,c.kind,source_kind(path))
     }
     // A GLB is read as one whatever its name says.
-    report,error:=import_source(fmt.tprintf("%s/model.bin",folder),fmt.tprintf("%s/out",folder),{no_save=true})
+    report,error:=import_source(fmt.tprintf("%s/model.bin",folder),fmt.tprintf("%s/out",folder),{})
     testing.expectf(t,error.code==.None && len(report.assets)>0,"%v %s",error.code,error.message)
     importer.report_destroy(&report)
     _,refused:=import_source(fmt.tprintf("%s/mesh.txt",folder),fmt.tprintf("%s/out",folder))
     testing.expect(t,refused.code==.Unsupported && strings.contains(refused.message,"glTF, USD, FBX and OBJ"),refused.message)
     _,missing:=import_source(fmt.tprintf("%s/none.obj",folder),fmt.tprintf("%s/out",folder))
     testing.expect_value(t,missing.code,importer.Error_Code.Not_Found)
-    // Fonts, texts and prompts have no settings next to them.
+    // Every source has a sidecar, which keeps its id: without a root, with what it wrote and not next to it.
     texts,texts_error:=import_source(fmt.tprintf("%s/texts.csv",folder),fmt.tprintf("%s/out",folder))
-    testing.expect(t,texts_error.code==.None && len(texts.assets)==1 && texts.assets[0].kind==asset.KIND_STRINGS && texts.saved=="" && !os.exists(fmt.tprintf("%s/texts.csv.import",folder)))
+    testing.expect(t,texts_error.code==.None && len(texts.assets)==1 && texts.assets[0].kind==asset.KIND_STRINGS && os.exists(fmt.tprintf("%s/out/texts.csv.import",folder)) && !os.exists(fmt.tprintf("%s/texts.csv.import",folder)))
     importer.report_destroy(&texts)
     _,collection:=import_source(fmt.tprintf("%s/family.ttc",folder),fmt.tprintf("%s/out",folder))
     testing.expect(t,collection.code==.Unsupported && strings.contains(collection.message,"collection"),collection.message)
@@ -129,15 +129,15 @@ an_import_keeps_what_its_cache_says_is_current_and_builds_again_what_changed :: 
     testing.expect(t,ok && meshes==0 && string(redone)==string(built),"the version of the format in Import_Info decides too")
 
     // A setting of the meshes builds the meshes again and keeps the textures; one of the textures, the other way round.
-    meshes,textures,_,ok=import_kept(t,source,out,{collision=.Hull,ignore_stored=true,no_save=true})
+    meshes,textures,_,ok=import_kept(t,source,out,{collision=.Hull,ignore_stored=true})
     testing.expect(t,ok && meshes==0 && textures==1,"a setting of the meshes builds the mesh again and keeps the texture")
     hulled,_:=os.read_entire_file(mesh_path,context.temp_allocator)
-    meshes,textures,_,ok=import_kept(t,source,out,{collision=.Hull,max_texture_size=16,textures=.Uncompressed,ignore_stored=true,no_save=true})
+    meshes,textures,_,ok=import_kept(t,source,out,{collision=.Hull,max_texture_size=16,textures=.Uncompressed,ignore_stored=true})
     kept,_:=os.read_entire_file(mesh_path,context.temp_allocator)
     testing.expect(t,ok && meshes==1 && textures==0 && string(kept)==string(hulled),"a setting of the textures builds the texture again and keeps the mesh")
 
-    // --rebuild keeps nothing.
-    meshes,textures,others,ok=import_kept(t,source,out,{rebuild=true})
+    // --rebuild keeps nothing; with the settings of the first import, it gives its bytes.
+    meshes,textures,others,ok=import_kept(t,source,out,{rebuild=true,ignore_stored=true})
     testing.expect(t,ok && meshes==0 && textures==0 && others==0,"rebuild builds everything")
     rebuilt,_:=os.read_entire_file(mesh_path,context.temp_allocator)
     testing.expect(t,string(rebuilt)==string(built))
@@ -162,7 +162,7 @@ an_import_takes_a_texture_that_another_import_built_from_the_texture_cache :: pr
         // Each import is another asset, with its own id: the content is what the cache gives.
         return view.info.format,len(view.mips),string(data[asset.HEADER_SIZE:])
     }
-    options:=importer.Import_Options{texture_cache=cache,no_save=true}
+    options:=importer.Import_Options{texture_cache=cache}
     format,mips,first:=imported(t,&types,image,fmt.tprintf("%s/a",folder),options)
     testing.expect(t,format==.BC1 && mips==5)
     entries,_:=os.read_all_directory_by_path(cache,context.temp_allocator)
@@ -193,14 +193,20 @@ an_import_takes_a_texture_that_another_import_built_from_the_texture_cache :: pr
     fast.fast_textures=true
     _,_,taken:=imported(t,&types,image,fmt.tprintf("%s/f",folder),fast)
     testing.expect(t,taken==first,"the Final the cache holds")
+    // Only in the imported folder of a project, where the sync of a build makes it Final.
     fast.texture_cache=fmt.tprintf("%s/empty",folder)
-    report,error:=import_source(image,fmt.tprintf("%s/g",folder),fast)
+    fast.root=folder
+    os.make_directory_all(fmt.tprintf("%s/source",folder))
+    bytes,_:=os.read_entire_file(image,context.temp_allocator)
+    of_project:=fmt.tprintf("%s/source/g.png",folder)
+    testing.expect(t,os.write_entire_file(of_project,bytes)==nil)
+    report,error:=import_source(of_project,"",fast)
     defer importer.report_destroy(&report)
     if testing.expectf(t,error.code==.None && len(report.assets)==1,"%v %s",error.code,error.message) {
         a:asset.Asset
         testing.expect_value(t,asset.asset_load(&a,report.assets[0].path,context.temp_allocator),asset.Error.None)
         view,view_error:=asset.texture_view(&a,&types)
-        testing.expect(t,view_error==.None && .Fast in view.info.flags && view.info.format==.BC1,"Fast, for a cook to encode again")
+        testing.expect(t,view_error==.None && .Fast in view.info.flags && view.info.format==.BC1 && strings.contains(report.assets[0].path,"/.mirai/imported/"),"Fast, for the sync of a build to encode again")
     }
 }
 
@@ -216,7 +222,7 @@ an_import_takes_a_mesh_that_another_import_built_from_the_mesh_cache :: proc(t:^
     }
     source,out:=fmt.tprintf("%s/models/vase.obj",folder),fmt.tprintf("%s/out",folder)
     mesh_path:=fmt.tprintf("%s/Vase.mesh",out)
-    options:=importer.Import_Options{mesh_cache=fmt.tprintf("%s/cache",folder),no_save=true}
+    options:=importer.Import_Options{mesh_cache=fmt.tprintf("%s/cache",folder)}
     colliders :: proc(t:^testing.T,types:^asset.Types,path:string) -> int {
         a:asset.Asset
         if !testing.expect_value(t,asset.asset_load(&a,path,context.temp_allocator),asset.Error.None) {return -1}

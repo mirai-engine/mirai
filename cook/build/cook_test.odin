@@ -260,7 +260,7 @@ a_cook_ships_every_asset_of_an_active_plugin_under_its_prefix :: proc(t:^testing
     material_write(t,&types,fmt.tprintf("%s/brushes/soft.mat",plugin),BRUSH,WOOD_COLOR,{})
     testing.expect(t,os.write_entire_file(fmt.tprintf("%s/readme.txt",plugin),"for the code of the plugin")==nil)
 
-    report:=cook_assets({assets=assets,output=output,plugins={{plugin,"plugins/probe"}},allocator=context.temp_allocator})
+    report:=cook_assets({assets=assets,output=output,plugins={{path=plugin,prefix="plugins/probe"}},allocator=context.temp_allocator})
     testing.expect_value(t,report.error,Cook_Error.None)
     kept,_:=names(&report)
     testing.expect_value(t,kept,"materials/wood.mat models/crate.mesh plugins/probe/brushes/soft.mat plugins/probe/readme.txt prefabs/prop.scene scenes/main.scene textures/wood_color.tex textures/wood_normal.tex ")

@@ -137,13 +137,39 @@ detected unsaved one) and a clip library (by default, the one it plays). With `s
   `clip.set` changes name and root without touching tracks or markers.
 - `animation.track.set` creates, replaces or removes a whole track by `(target,property,slot)`, with
   the clip by name and the destination by canonical path or curve name. `key.set` replaces
-  the key of a track at `time` or inserts one in order; `marker.set` changes a marker by `name`
-  (`at` the time among several of the name, `add` one more). Both work on tracks longer than the
-  capacity of `track.set`.
+  the key of a track at `time` or inserts one in order, moves it with `to` (replacing one already
+  there) or removes it; a field of `key` left out keeps what the key holds, so only a new key needs
+  `value`. `marker.set` changes a marker by `name` (`at` the time among several of the name, `add`
+  one more). Both work on tracks longer than the capacity of `track.set`.
+- `animation.key.capture` keys at `time` every track of the clip of an `Animation` that moves an
+  entity with what the entity has now (its local transform, the fields of its `@field` tracks): one
+  step for all of them. A track names an entity as the runtime binds it: the entity of the
+  `Animation` by an empty target, one below it by its name, an actor by the path of its
+  `Animation_Target`.
 - Times in seconds; keys and markers keep the order of the clip. `Rotation` is a finite, non-zero
   XYZW quaternion
   ([tracks](../../mirai-std/references/anim.md#tracks-keys-and-clips-trackodin-clipodin)). Curves
   are tracks over a name, without ECS components.
+
+### Tracks tool
+
+The one editor of the keys of any clip (a door, a light, a camera move, a cinematic), in
+`plugins/animation/editor/tracks.odin`: Tools > Tracks, or `animation.tracks.show`, on the clip of
+the `Animation` of the selection or of the entity whose clip moves it. Its panel lists the tracks by
+target and field, the key chosen (interpolation, ease) and what adds a track for a value of the
+selected entity; the strip at the bottom has a lane of keys per track in view.
+
+- It keeps only its view (head, zoom, range, the track and key chosen, the `.anim` it reads): every
+  edit is a call of `animation.key.set`, `animation.track.set` or `animation.key.capture` through
+  `editor.command_call`, one step of undo, in memory until Save.
+- The scene shows the clip at the head because the tool seeks it there, as the preview of an
+  `Animation`; turning it off takes the clip back to its start. A new key at the head takes the
+  value the track has there.
+- While it is on, the scene is lent to the selection and the gizmo: letting go of an entity the
+  clip moves with Position, Rotation or Scale tracks keys it at the head with
+  `animation.key.capture`, in the step of the move: one undo takes back both.
+- Another tool shows it on an entity of its own in place of its panel: its frame step calls
+  `tracks_open` while it is on and its panel draws `tracks_rows` (Cinematics).
 
 ## Inspection
 
@@ -292,6 +318,10 @@ The authoring tests invoke `api.method_execute` with real files and typed schema
   rig with mesh and body.
 - `program_api_test.odin`: blend spaces, and parameters, actions and controls through
   `animation.request`.
+- `tracks_test.odin`: `animation.key.set` adds, moves, eases and deletes a key in one step each,
+  undone and redone; `animation.key.capture` keys the tracks of an entity from its transform and
+  fields; the Tools entry of the Tracks tool runs `editor.tool`, and the gizmo letting go of an
+  entity of the clip keys it.
 - `authoring_actions_test.odin`, `authoring_constraints_test.odin`, `preview_trace_test.odin`,
   `pose_bake_test.odin` and `morph_api_test.odin`.
 - The file history is tested in the editor (`editor/edits_files_test.odin`).

@@ -5,7 +5,6 @@ import "core:mem"
 import "core:slice"
 import "mirai:asset"
 import "mirai:core"
-import "mirai:std/geom"
 import "mirai:host"
 import "mirai:std/base"
 
@@ -15,12 +14,12 @@ import "mirai:std/base"
 // and then takes the requests of dig, which terrain_update then
 // finds empty, and says how each went with the check of what it left
 // (Terrain_Replay_Events). A replay is an edit of a brush, a change of the
-// layers, the values of a whole page of a grid or of a section of a Mesh, or
-// the head of a base, which gives a source its shape, layers and materials;
+// layers, the values of a whole page of a grid, or the head of a base, which
+// gives a source its shape and layers;
 // it names its source, not a terrain. What terrain_replay applies does not
 // move Source.revision, the key of the history of the editor.
 
-Replay_Kind :: enum u8 {Edit,Layer,Page,Section,Head}
+Replay_Kind :: enum u8 {Edit,Layer,Page,Head}
 
 // A change of the layers of a source, as request_layer and request_layer_remove ask.
 Layer_Change :: struct {
@@ -36,12 +35,13 @@ Replay :: struct {
     brush:Brush,        // Edit
     layer:Layer_Change, // Layer
     verify:bool,        // Edit and Layer: the check covers low..high, not what it changed
-    low,high:[3]i32,    // samples, or the coordinates of the sections of a Mesh, inclusive
+    low,high:[3]i32,    // samples, inclusive
     grid:Grid_Kind,     // Page
-    page:u32,           // Page; Section: its index
+    page:u32,           // Page: its id
+    span:u8,            // Page without values: above 1, every page of the box that many pages a side from page holds fill, as a part of the directory of a grid in blocks does (terrain_grid_fill)
     fill:u32,           // Page without values: the bits of the one value it holds
-    whole:bool,         // Head: every value of the source starts over, as a new source of that shape holds them; else it takes only the layers and materials
-    values:[]u8,        // Page: its values coded (terrain_page_bytes); Section and Head: terrain_section_bytes and terrain_head_bytes. Who pushed it keeps them until terrain_replay runs
+    whole:bool,         // Head: every value of the source starts over, as a new source of that shape holds them; else it takes only the layers
+    values:[]u8,        // Page: its values coded (terrain_page_bytes); Head: terrain_head_bytes. Who pushed it keeps them until terrain_replay runs
 }
 
 @(storage,queue)
@@ -63,7 +63,7 @@ Replay_Result :: struct {
     loaded:bool,      // the source is loaded
     changed:bool,
     low,high:[3]i32,  // what an Edit or Layer changed, or the region its check covers when verified
-    check:u64,        // Edit: of the values of every grid over low..high (of the sections of a Mesh and its weights there), after it; Layer: of the layers
+    check:u64,        // Edit: of the values of every grid over low..high, after it; Layer: of the layers
 }
 
 // What terrain_replay did in the tick, in the order it did it.
@@ -157,47 +157,29 @@ data_edit :: proc(data:^Terrain_Data,entry:^Data_Source,brush:Brush) -> (change:
     if !brush_pages_read(entry,brush) {return {error=.Out_Of_Memory}}
     data.samples=u32(int(data.samples)-previous_cost+source_cost(&entry.source))
     previous_cost=source_cost(&entry.source)
-    change=source_edit(&entry.source,brush,int(data.settings.samples)-int(data.samples)+previous_cost)
+    change=source_edit(&entry.source,brush)
     if change.error!=.None || !change.changed {return}
-    if !change.mesh {
-        if !source_coarse_update(&entry.source,change.low,change.high,entry.ranges[:entry.quad.first[1]]) {return {error=.Out_Of_Memory}}
-        data_errors_edit(entry,change.low,change.high)
-    }
+    if !source_coarse_update(&entry.source,change.low,change.high,entry.ranges[:entry.quad.first[1]]) {return {error=.Out_Of_Memory}}
+    data_errors_edit(entry,change.low,change.high)
     data.samples=u32(int(data.samples)-previous_cost+source_cost(&entry.source))
     data_mark(entry,change)
     data.stats.edits+=1
     return
 }
 
-// What a change covers for a check: its samples, or the sections of a Mesh.
+// What a change covers for a check: its samples.
 @(private)
 change_region :: proc(s:^Source,change:Change) -> (low,high:[3]i32) {
     if !change.changed {return {},{-1,-1,-1}}
     a,b:=change.low,change.high
-    if change.mesh {a,b=chunk_range(s,change)}
     return {i32(a.x),i32(a.y),i32(a.z)},{i32(b.x),i32(b.y),i32(b.z)}
 }
 
-// Hash of the values of every grid of a source over the inclusive region,
-// or of the sections of a Mesh over it: equal on two ends when they hold the
-// same there. The pages it reads are in memory (source_region_read).
+// Hash of the values of every grid of a source over the inclusive region:
+// equal on two ends when they hold the same there. The pages it reads are in memory (source_region_read).
 @(private)
 source_check :: proc(s:^Source,low,high:[3]i32) -> u64 {
     bytes:=make([dynamic]u8,context.temp_allocator)
-    if s.kind==.Mesh {
-        counts:=chunk_counts(s)
-        for z in max(low.z,0)..=min(high.z,i32(counts.z)-1) {for y in max(low.y,0)..=min(high.y,i32(counts.y)-1) {for x in max(low.x,0)..=min(high.x,i32(counts.x)-1) {
-            index:=chunk_index(s,{x,y,z})
-            if index<0 || index>=len(s.mesh_chunks) {continue}
-            g:=&s.mesh_chunks[index].geometry
-            append(&bytes,..mem.slice_to_bytes(g.positions[:]))
-            append(&bytes,..mem.slice_to_bytes(g.indices[:]))
-            append(&bytes,..mem.slice_to_bytes(g.materials[:]))
-        }}}
-        from,to:=mesh_weights_region(s,low,high)
-        values(&bytes,&s.weights,weights_size(s),from,to)
-        return base.hash64(bytes[:])
-    }
     values :: proc(bytes:^[dynamic]u8,g:^Grid($T),size:[3]int,low,high:[3]i32) {
         for z in max(int(low.z),0)..=min(int(high.z),size.z-1) {for y in max(int(low.y),0)..=min(int(high.y),size.y-1) {for x in max(int(low.x),0)..=min(int(high.x),size.x-1) {
             value:=grid_value(g,{x,y,z})
@@ -216,16 +198,6 @@ source_check :: proc(s:^Source,low,high:[3]i32) -> u64 {
     return base.hash64(bytes[:])
 }
 
-// The samples of the weights the vertices of the sections of a Mesh over the
-// inclusive region read: those of their chunks and of one chunk around them.
-@(private)
-mesh_weights_region :: proc "contextless" (s:^Source,low,high:[3]i32) -> (from,to:[3]i32) {
-    cells:=i32(s.chunk_cells)
-    from={max((low.x-1)*cells,0),0,max((low.z-1)*cells,0)}
-    to={min((high.x+2)*cells,i32(s.samples.x)-1),0,min((high.z+2)*cells,i32(s.samples.z)-1)}
-    return
-}
-
 // The values of a grid of each kind of a source, and its size in samples.
 @(private)
 grid_size :: proc "contextless" (s:^Source,kind:Grid_Kind) -> [3]int {
@@ -239,18 +211,32 @@ grid_size :: proc "contextless" (s:^Source,kind:Grid_Kind) -> [3]int {
 }
 
 // Writes page i of a grid whole: its values coded (page_code), or fill alone
-// when values is empty. low..high is the region of samples it covers. False when the page
-// is not one of the grid, the values are not those of the page or one is
-// not valid, or without memory; then the grid reads as before.
+// when values is empty; with a span above 1, fill for every page of the box
+// that many pages a side from it. low..high is the region of samples it
+// covers. False when the page is not one of the grid, the values are not
+// those of the page or one is not valid, or without memory; then the grid
+// reads as before.
 @(private)
-grid_page_put :: proc(s:^Source,entry:^Data_Source,g:^Grid($T),size:[3]int,i:int,fill:T,values:[]u8,valid:proc "contextless" (value:T) -> bool,band:f32=0) -> (low,high:[3]int,ok:bool) {
+grid_page_put :: proc(s:^Source,entry:^Data_Source,g:^Grid($T),size:[3]int,i:int,fill:T,values:[]u8,valid:proc "contextless" (value:T) -> bool,band:f32=0,span:=1) -> (low,high:[3]int,ok:bool) {
     if size.x<=0 {return}
-    if len(g.pages)==0 {
+    if grid_none(g) {
         zero:T
         if len(values)==0 && fill==zero {return {},{-1,-1,-1},true}
         if !grid_init(g,size,zero,s.allocator) {return}
     }
-    if g.size!=size || i<0 || i>=len(g.pages) {return}
+    if g.size!=size || i<0 || i>=g.counts.x*g.counts.y*g.counts.z {return}
+    if span>1 {
+        if len(values)>0 || !valid(fill) || span!=SLAB && span!=SLAB*TABLE {return}
+        when T==f32 {if band>0 && !(abs(fill)<=band) {return}}
+        from:=grid_page_coord(g,i)
+        to:=from+span-1
+        for axis in 0..<3 {to[axis]=min(to[axis],g.counts[axis]-1)}
+        low,_=grid_page_region(g,i)
+        _,high=grid_page_region(g,grid_page_id(g,to))
+        // What the box held in memory goes with it: nothing of it is read first.
+        if !grid_fill_box(g,from,to,fill,s.allocator) {return}
+        return low,high,true
+    }
     low,high=grid_page_region(g,i)
     _,count:=grid_page_extent(g,i)
     decoded:[PAGE_VALUES]T=---
@@ -260,9 +246,10 @@ grid_page_put :: proc(s:^Source,entry:^Data_Source,g:^Grid($T),size:[3]int,i:int
         if !page_valid(held,valid) {return}
         when T==f32 {if band>0 && !distances_within(held,band) {return}}
     } else if !valid(fill) {return}
+    when T==f32 {if band>0 && len(values)==0 && !(abs(fill)<=band) {return}}
     if !source_region_read(s,low,high,entry) || !grid_prepare(g,low,high,s.allocator) {return}
-    page:=&g.pages[i]
-    if len(page.values)!=count {return}
+    page:=grid_page_ref(g,i,s.allocator)
+    if page==nil || len(page.values)!=count {return}
     if len(values)>0 {
         copy(page.values,held)
     } else {
@@ -275,7 +262,6 @@ grid_page_put :: proc(s:^Source,entry:^Data_Source,g:^Grid($T),size:[3]int,i:int
 @(private)
 replay_page :: proc(data:^Terrain_Data,entry:^Data_Source,replay:Replay) -> (change:Change) {
     s:=&entry.source
-    if s.kind==.Mesh && replay.grid!=.Weights {return {error=.Invalid}}
     work_wait(data,s)
     before:=source_cost(s)
     i:=int(replay.page)
@@ -292,20 +278,14 @@ replay_page :: proc(data:^Terrain_Data,entry:^Data_Source,replay:Replay) -> (cha
         // The samples of the cells: their vertices, and the edges of the collider around them.
         if ok && high.x>=low.x {high+={1,0,1}}
     case .Weights:
-        low,high,ok=grid_page_put(s,entry,&s.weights,grid_size(s,.Weights),i,transmute(Weights)fill,replay.values,weights_full)
+        low,high,ok=grid_page_put(s,entry,&s.weights,grid_size(s,.Weights),i,transmute(Weights)fill,replay.values,weights_full,0,max(int(replay.span),1))
     case .Distances:
         if s.kind!=.Volume {return {error=.Invalid}}
-        low,high,ok=grid_page_put(s,entry,&s.distances,grid_size(s,.Distances),i,transmute(f32)fill,replay.values,distance_finite,s.cell*SDF_BAND_CELLS)
+        low,high,ok=grid_page_put(s,entry,&s.distances,grid_size(s,.Distances),i,transmute(f32)fill,replay.values,distance_finite,s.cell*SDF_BAND_CELLS,max(int(replay.span),1))
     }
     data.samples=u32(max(int(data.samples)-before+source_cost(s),0))
     if !ok {return {error=.Invalid}}
     if high.x<low.x {return}
-    if s.kind==.Mesh {
-        for &dirty in s.mesh_changed {dirty=false}
-        change={changed=mesh_mark_weights(s,low.xz,high.xz),mesh=true}
-        if change.changed {data_mark(entry,change)}
-        return
-    }
     change={changed=true,low=low,high=high}
     if s.kind==.Heightfield {
         if !source_coarse_update(s,low,high,entry.ranges[:entry.quad.first[1]]) {return {error=.Out_Of_Memory}}
@@ -334,7 +314,6 @@ terrain_replay :: proc(replays:^Terrain_Replays,events:^Terrain_Replay_Events,di
             switch replay.kind {
             case .Edit:    change=data_edit(data,entry,replay.brush)
             case .Page:    change=replay_page(data,entry,replay)
-            case .Section: change=replay_section(data,entry,replay)
             case .Layer:   change.changed,change.error=data_layer(data,entry,replay.layer)
             case .Head:
             }
@@ -386,7 +365,7 @@ terrain_replay :: proc(replays:^Terrain_Replays,events:^Terrain_Replay_Events,di
 replay_check :: proc(entry:^Data_Source,low,high:[3]i32) -> u64 {
     if high.x<low.x || high.y<low.y || high.z<low.z {return 0}
     s:=&entry.source
-    if s.kind!=.Mesh && !source_region_read(s,{int(low.x),int(low.y),int(low.z)},{int(high.x),int(high.y),int(high.z)},entry) {return 0}
+    if !source_region_read(s,{int(low.x),int(low.y),int(low.z)},{int(high.x),int(high.y),int(high.z)},entry) {return 0}
     return source_check(s,low,high)
 }
 
@@ -404,53 +383,37 @@ layers_check :: proc(s:^Source) -> u64 {
     return base.hash64(bytes[:])
 }
 
-// All of a source: its samples, or its sections.
+// All of a source: its samples.
 @(private)
 source_region :: proc "contextless" (s:^Source) -> (low,high:[3]i32) {
-    if s.kind==.Mesh {
-        counts:=chunk_counts(s)
-        return {},{i32(counts.x)-1,i32(counts.y)-1,i32(counts.z)-1}
-    }
     return {},{i32(s.samples.x)-1,i32(s.samples.y)-1,i32(s.samples.z)-1}
 }
 
-// The start of a base: the shape, layers and slots of a source and the
-// origin (Source.origin) what it holds is of.
+// The start of a base: the shape and layers of a source and the origin
+// (Source.origin) what it holds is of.
 @(private)
 Head :: struct {
     origin:u64,
     info:Source_Info,
-    slot_count:u32,
-    slots:[asset.MESH_MAX_SLOTS-1]base.Asset_Id,
 }
 HEAD_BYTES :: size_of(Head)
 
 // The head of a loaded source into out, of HEAD_BYTES at least.
 terrain_head_bytes :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,out:[]u8) -> bool {
     s:=terrain_source(data,id)
-    if s==nil || len(out)<HEAD_BYTES || len(s.slots)>=asset.MESH_MAX_SLOTS {return false}
-    head:=Head{origin=s.origin,info=s.info,slot_count=u32(len(s.slots))}
-    copy(head.slots[:],s.slots)
+    if s==nil || len(out)<HEAD_BYTES {return false}
+    head:=Head{origin=s.origin,info=s.info}
     mem.copy_non_overlapping(raw_data(out),&head,HEAD_BYTES)
     return true
 }
 
-// A source of the shape, layers and slots of a head, every value its start:
-// the heights 0, a Volume all air, the weights all of the first layer, the
-// sections of a Mesh empty.
+// A source of the shape and layers of a head, every value its start: the
+// heights 0, a Volume all air, the weights all of the first layer.
 @(private)
 source_start :: proc(s:^Source,head:^Head,allocator:runtime.Allocator) -> bool {
     temporary:Source
     defer source_destroy(&temporary)
-    count:=int(head.slot_count)
-    if head.info.kind==.Mesh {
-        if !source_mesh_allocate(&temporary,head.info,allocator) {return false}
-        error:runtime.Allocator_Error
-        if temporary.slots,error=make([]base.Asset_Id,count,allocator);error!=nil {return false}
-        copy(temporary.slots,head.slots[:count])
-    } else if count!=0 || !source_allocate(&temporary,head.info,allocator) {
-        return false
-    }
+    if !source_allocate(&temporary,head.info,allocator) {return false}
     temporary.origin=head.origin
     source_destroy(s)
     s^=temporary
@@ -459,8 +422,8 @@ source_start :: proc(s:^Source,head:^Head,allocator:runtime.Allocator) -> bool {
 }
 
 // Gives a source what a head says: a source of its shape that starts over
-// when whole, which it creates when it is not loaded, or else its layers and
-// slots. Invalid for bytes that are not a head, and for one that is not
+// when whole, which it creates when it is not loaded, or else its layers.
+// Invalid for bytes that are not a head, and for one that is not
 // whole of another shape.
 @(private)
 replay_head :: proc(data:^Terrain_Data,entry:^Data_Source,replay:Replay,allocator:runtime.Allocator) -> (result:^Data_Source,error:Edit_Error) {
@@ -468,21 +431,13 @@ replay_head :: proc(data:^Terrain_Data,entry:^Data_Source,replay:Replay,allocato
     if len(replay.values)!=HEAD_BYTES || !plain_valid(raw_data(replay.values),type_info_of(Head)) {return result,.Invalid}
     head:Head
     mem.copy_non_overlapping(&head,raw_data(replay.values),HEAD_BYTES)
-    if !source_valid(head.info) || head.slot_count>=asset.MESH_MAX_SLOTS || head.info.kind!=.Mesh && head.slot_count>0 {return result,.Invalid}
+    if !source_valid(head.info) {return result,.Invalid}
     if entry!=nil && !replay.whole {
         s:=&entry.source
-        if s.kind!=head.info.kind || s.samples!=head.info.samples || s.cell!=head.info.cell || s.chunk_cells!=head.info.chunk_cells || s.mesh_origin!=head.info.mesh_origin {return result,.Invalid}
-        slots:=head.slots[:head.slot_count]
-        if s.layer_count==head.info.layer_count && s.layers==head.info.layers && s.layers_material==head.info.layers_material && s.interior==head.info.interior && slice.equal(s.slots,slots) {return}
+        if s.kind!=head.info.kind || s.samples!=head.info.samples || s.cell!=head.info.cell || s.chunk_cells!=head.info.chunk_cells {return result,.Invalid}
+        if s.layer_count==head.info.layer_count && s.layers==head.info.layers && s.layers_material==head.info.layers_material && s.interior==head.info.interior {return}
         work_wait(data,s)
         before:=source_cost(s)
-        if len(s.slots)!=len(slots) {
-            next,made:=make([]base.Asset_Id,len(slots),s.allocator)
-            if made!=nil {return result,.Out_Of_Memory}
-            delete(s.slots,s.allocator)
-            s.slots=next
-        }
-        copy(s.slots,slots)
         // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
         s.layer_count=head.info.layer_count
         s.layers=head.info.layers
@@ -513,90 +468,6 @@ replay_head :: proc(data:^Terrain_Data,entry:^Data_Source,replay:Replay,allocato
     return result,.None
 }
 
-// How a section of a Mesh travels: these counts, then its positions, normals,
-// uvs, colors, indices and the material of each triangle.
-@(private)
-Section_Counts :: struct {vertices,indices,revision,_:u32}
-
-@(private)
-section_size :: proc "contextless" (vertices,indices:int) -> int {
-    return size_of(Section_Counts)+vertices*(size_of([3]f32)*2+size_of([2]f32)+size_of([4]f32))+indices*size_of(u32)+indices/3*size_of(u32)
-}
-
-// The sections of a loaded Mesh source over the inclusive region (all of
-// them for an empty region), as coordinates, and how many there are along
-// each axis.
-terrain_sections :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,low,high:[3]i32) -> (from,to,counts:[3]int,ok:bool) {
-    s:=terrain_source(data,id)
-    if s==nil || s.kind!=.Mesh {return}
-    counts=chunk_counts(s)
-    from,to={},counts-1
-    if high.x>=low.x {
-        for axis in 0..<3 {from[axis],to[axis]=max(int(low[axis]),0),min(int(high[axis]),counts[axis]-1)}
-        if from.x>to.x || from.y>to.y || from.z>to.z {return}
-    }
-    return from,to,counts,true
-}
-
-// The bytes of section i of a loaded Mesh source into out.
-terrain_section_bytes :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,i:int,out:^[dynamic]u8) -> bool {
-    s:=terrain_source(data,id)
-    if s==nil || s.kind!=.Mesh || i<0 || i>=len(s.mesh_chunks) {return false}
-    chunk:=&s.mesh_chunks[i]
-    g:=&chunk.geometry
-    if len(g.normals)!=len(g.positions) || len(g.uvs)!=len(g.positions) || len(g.colors)!=len(g.positions) || len(g.materials)!=len(g.indices)/3 {return false}
-    counts:=Section_Counts{vertices=u32(len(g.positions)),indices=u32(len(g.indices)),revision=chunk.revision}
-    if resize(out,section_size(len(g.positions),len(g.indices)))!=nil {return false}
-    at:=0
-    put :: proc(out:[]u8,at:^int,bytes:[]u8) {copy(out[at^:],bytes);at^+=len(bytes)}
-    put(out[:],&at,mem.ptr_to_bytes(&counts))
-    put(out[:],&at,mem.slice_to_bytes(g.positions[:]));put(out[:],&at,mem.slice_to_bytes(g.normals[:]))
-    put(out[:],&at,mem.slice_to_bytes(g.uvs[:]));put(out[:],&at,mem.slice_to_bytes(g.colors[:]))
-    put(out[:],&at,mem.slice_to_bytes(g.indices[:]));put(out[:],&at,mem.slice_to_bytes(g.materials[:]))
-    return true
-}
-
-// A section of a Mesh takes the geometry of its bytes.
-@(private)
-replay_section :: proc(data:^Terrain_Data,entry:^Data_Source,replay:Replay) -> (change:Change) {
-    s:=&entry.source
-    i:=int(replay.page)
-    if s.kind!=.Mesh || i>=len(s.mesh_chunks) || len(replay.values)<size_of(Section_Counts) {return {error=.Invalid}}
-    counts:Section_Counts
-    mem.copy_non_overlapping(&counts,raw_data(replay.values),size_of(Section_Counts))
-    vertices,indices:=int(counts.vertices),int(counts.indices)
-    if vertices>MESH_TRIANGLES_MAX*3 || indices>MESH_TRIANGLES_MAX*3 || indices%3!=0 || section_size(vertices,indices)!=len(replay.values) {return {error=.Invalid}}
-    at:=size_of(Section_Counts)
-    take :: proc(values:[]u8,at:^int,$T:typeid,count:int) -> []T {
-        part:=slice.reinterpret([]T,values[at^:][:count*size_of(T)])
-        at^+=count*size_of(T)
-        return part
-    }
-    mesh:geom.Mesh
-    mesh.positions=take(replay.values,&at,[3]f32,vertices);mesh.normals=take(replay.values,&at,[3]f32,vertices)
-    mesh.uvs=take(replay.values,&at,[2]f32,vertices);mesh.colors=take(replay.values,&at,[4]f32,vertices)
-    mesh.indices=take(replay.values,&at,u32,indices);mesh.materials=take(replay.values,&at,u32,indices/3)
-    if !mesh_input_valid(mesh) {return {error=.Invalid}}
-    for material in mesh.materials {if int(material)>len(s.slots) {return {error=.Invalid}}}
-    work_wait(data,s)
-    before:=source_cost(s)
-    chunk:=&s.mesh_chunks[i]
-    low,high:=chunk.low,chunk.high
-    mesh_chunk_alone(chunk,s.allocator)
-    copied:=mesh_copy(&chunk.geometry,mesh)
-    data.samples=u32(max(int(data.samples)-before+source_cost(s),0))
-    if !copied {return {error=.Out_Of_Memory}}
-    chunk.low,chunk.high=geom.mesh_bounds(mesh.positions)
-    chunk.revision,chunk.altered=counts.revision,true
-    for axis in 0..<3 {low[axis],high[axis]=min(low[axis],chunk.low[axis]),max(high[axis],chunk.high[axis])}
-    for &dirty in s.mesh_changed {dirty=false}
-    s.mesh_changed[i]=true
-    for &neighbor,j in s.mesh_chunks {if len(neighbor.geometry.indices)>0 && mesh_box_overlap(low,high,neighbor.low,neighbor.high) {s.mesh_changed[j]=true}}
-    change={changed=true,mesh=true}
-    data_mark(entry,change)
-    return
-}
-
 // Hash of every value of a loaded source (source_check over all of it):
 // equal on two ends that hold the same. It reads the pages it does not hold.
 terrain_source_check :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id) -> (check:u64,ok:bool) {
@@ -607,33 +478,16 @@ terrain_source_check :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id) -> (c
 }
 
 // The origin of a loaded source (Source.origin), and whether nothing of it
-// was written since: no page of a grid and no section altered.
+// was written since: no page of a grid altered.
 terrain_origin :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id) -> (origin:u64,clean,ok:bool) {
     s:=terrain_source(data,id)
     if s==nil {return}
     altered :: proc(g:^Grid($T)) -> bool {
         for page in g.pages {if page.altered {return true}}
-        return false
+        return g.filled
     }
     clean=!altered(&s.heights) && !altered(&s.holes) && !altered(&s.distances) && !altered(&s.weights)
-    for chunk in s.mesh_chunks {if chunk.altered {clean=false;break}}
     return s.origin,clean,true
-}
-
-// Whether page i of a grid of a loaded source, or its section i when
-// section, was written since it was read from its file or saved to it.
-terrain_altered :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,kind:Grid_Kind,i:int,section:=false) -> bool {
-    s:=terrain_source(data,id)
-    if s==nil {return false}
-    if section {return i>=0 && i<len(s.mesh_chunks) && s.mesh_chunks[i].altered}
-    altered :: proc(g:^Grid($T),i:int) -> bool {return i>=0 && i<len(g.pages) && g.pages[i].altered}
-    switch kind {
-    case .Heights:   return altered(&s.heights,i)
-    case .Holes:     return altered(&s.holes,i)
-    case .Weights:   return altered(&s.weights,i)
-    case .Distances: return altered(&s.distances,i)
-    }
-    return false
 }
 
 // Whether a source a terrain names cannot be loaded: the assets do not have
@@ -645,17 +499,13 @@ terrain_unread :: proc(data:core.Ref(Terrain_Data),a:^host.Assets,id:base.Asset_
 }
 
 // The pages of a grid of a loaded source over the inclusive region (all of
-// them for an empty region; a region of the sections of a Mesh for its
-// weights), as page coordinates, and how many there are along each axis; ok
+// them for an empty region), as page coordinates, and how many there are along each axis; ok
 // is false for a grid the source does not hold.
 terrain_grid_pages :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,kind:Grid_Kind,low,high:[3]i32) -> (from,to,counts:[3]int,ok:bool) {
     s:=terrain_source(data,id)
     if s==nil {return}
-    low,high:=low,high
-    // The weights a Mesh keeps are in samples; its regions are of sections.
-    if s.kind==.Mesh && high.x>=low.x {low,high=mesh_weights_region(s,low,high)}
     pages :: proc(g:^Grid($T),low,high:[3]i32) -> (from,to,counts:[3]int,ok:bool) {
-        if len(g.pages)==0 {return}
+        if grid_none(g) {return}
         a,b:=[3]int{int(low.x),int(low.y),int(low.z)},[3]int{int(high.x),int(high.y),int(high.z)}
         if b.x<a.x {a,b={},g.size-1}
         if b.x<0 || b.y<0 || b.z<0 || a.x>=g.size.x || a.y>=g.size.y || a.z>=g.size.z {return}
@@ -679,8 +529,8 @@ terrain_page_bytes :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,kind:Gri
     s:=terrain_source(data,id)
     if s==nil || len(out)<PAGE_BYTES_MAX {return}
     read :: proc(g:^Grid($T),i:int,file:string,out:[]u8) -> (size:int,fill:u32,ok:bool) {
-        if i<0 || i>=len(g.pages) {return}
-        page:=&g.pages[i]
+        if grid_none(g) || i<0 || i>=g.counts.x*g.counts.y*g.counts.z {return}
+        page:=grid_page(g,i)
         extent,count:=grid_page_extent(g,i)
         size=PAGE_HEADER+count*size_of(T)
         if page.values!=nil {
@@ -697,8 +547,9 @@ terrain_page_bytes :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,kind:Gri
         read_ok:=page_reader_init(&read,context.temp_allocator)
         defer page_reader_destroy(&read,context.temp_allocator)
         if !read_ok {return}
-        block,block_ok:=page_block_read(g.blocks[i],file,read.block)
-        if !block_ok || !page_unpack(block,g.blocks[i].hash,out[:size],&read.decoder) {return}
+        held:=grid_block(g,i)
+        block,block_ok:=page_block_read(held,file,read.block)
+        if !block_ok || !page_unpack(block,held.hash,out[:size],&read.decoder) {return}
         return size,0,true
     }
     switch kind {
@@ -708,6 +559,86 @@ terrain_page_bytes :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,kind:Gri
     case .Distances: if s.kind==.Volume {return read(&s.distances,i,s.file,out)}
     }
     return
+}
+
+// The pages a grid of a loaded source holds, which a base sends: how many
+// slots hold them (terrain_grid_held_page gives the page of each), and for a
+// grid in blocks whether whole parts of it hold one value without pages
+// (terrain_grid_fill gives those).
+terrain_grid_held :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,kind:Grid_Kind) -> (slots:int,parts:bool) {
+    s:=terrain_source(data,id)
+    if s==nil {return}
+    switch kind {
+    case .Heights:   return len(s.heights.pages),false
+    case .Holes:     return len(s.holes.pages),false
+    case .Weights:   return len(s.weights.pages),s.weights.sparse
+    case .Distances: return len(s.distances.pages),s.distances.sparse
+    }
+    return
+}
+
+// The id of the page a slot of a grid of a loaded source holds, and whether
+// it was written since the source was read from its file or saved to it; ok
+// is false for a slot that holds none.
+terrain_grid_held_page :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,kind:Grid_Kind,slot:int) -> (page:int,altered,ok:bool) {
+    s:=terrain_source(data,id)
+    if s==nil {return}
+    held :: proc(g:^Grid($T),slot:int) -> (page:int,altered,ok:bool) {
+        if slot<0 || slot>=len(g.pages) {return}
+        page=grid_id(g,slot)
+        return page,g.pages[slot].altered,page>=0
+    }
+    switch kind {
+    case .Heights:   return held(&s.heights,slot)
+    case .Holes:     return held(&s.holes,slot)
+    case .Weights:   return held(&s.weights,slot)
+    case .Distances: return held(&s.distances,slot)
+    }
+    return
+}
+
+// The next part of a grid in blocks of a loaded source that holds one value
+// without pages and not the one a new source of its shape starts with, at or
+// after cursor (0 to begin): the id of its first page, how many pages a side
+// its box is and the bits of the value. next: the cursor to go on from.
+terrain_grid_fill :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,kind:Grid_Kind,cursor:int) -> (page:int,span:int,fill:u32,next:int,found:bool) {
+    s:=terrain_source(data,id)
+    if s==nil {return}
+    fills :: proc(g:^Grid($T),start:T,cursor:int) -> (page:int,span:int,fill:u32,next:int,found:bool) {
+        if !g.sparse {return}
+        skip:=fill_bits(start)
+        for at:=max(cursor,0);at<len(g.top)*(TABLE_SLABS+1);at+=1 {
+            top,m:=at/(TABLE_SLABS+1),at%(TABLE_SLABS+1)-1
+            table_low:=[3]int{top%g.top_counts.x,top/g.top_counts.x%g.top_counts.y,top/(g.top_counts.x*g.top_counts.y)}*(TABLE*SLAB)
+            tile:=g.top[top]
+            if tile.child<0 {
+                // The part itself, once; its slabs are not looked at.
+                if m<0 && tile.fill!=skip {return grid_page_id(g,table_low),TABLE*SLAB,tile.fill,(top+1)*(TABLE_SLABS+1),true}
+                at=(top+1)*(TABLE_SLABS+1)-1
+                continue
+            }
+            if m<0 {continue}
+            slab:=g.tables[tile.child][m]
+            slab_low:=table_low+[3]int{m%TABLE,m/TABLE%TABLE,m/(TABLE*TABLE)}*SLAB
+            if slab.child>=0 || slab.fill==skip || grid_box_pages(g,slab_low,SLAB)==0 {continue}
+            return grid_page_id(g,slab_low),SLAB,slab.fill,at+1,true
+        }
+        return
+    }
+    switch kind {
+    case .Heights,.Holes:
+    case .Weights:   return fills(&s.weights,Weights{WEIGHT_FULL,0,0,0},cursor)
+    case .Distances: return fills(&s.distances,s.cell*SDF_BAND_CELLS,cursor)
+    }
+    return
+}
+
+// Whether a part of a grid in blocks of a loaded source took another value
+// without pages since the source was read from its file or saved to it: a
+// base of it sends all of it.
+terrain_filled :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id) -> bool {
+    s:=terrain_source(data,id)
+    return s!=nil && (s.distances.filled || s.weights.filled)
 }
 
 // The terrain of a source whose problems name it, or none.

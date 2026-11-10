@@ -9,6 +9,7 @@ import "mirai:asset"
 import "mirai:rhi"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import "mirai:std/spatial"
 import "mirai:render/abi"
 
 // GPU scene: one global vertex/index pool for every mesh, per-mesh BLAS (a
@@ -303,8 +304,8 @@ Scene_State :: struct {
 	tlas_nodes:           [dynamic]Gpu_Bvh_Node,
 	tlas_refs:            [dynamic]u32,
 	tlas_off:             bool, // rays are traced by hardware: the tree of the instances is not kept, and stays stale until they are not
-	tlas_items:           [dynamic]Bvh_Item,
-	tlas_scratch:         [dynamic]Bvh_Item,         // the items of the instances and of the batches rays meet, while the tree is built
+	tlas_items:           [dynamic]mm.Aabb,
+	tlas_scratch:         [dynamic]mm.Aabb,         // the items of the instances and of the batches rays meet, while the tree is built
 	hw_instances:         [dynamic]rhi.Tlas_Instance, // of the native TLAS, one by instance; their BLAS when it is built (tlas_instances_record)
 	instances_dirty:      bool,
 	touched:              [dynamic]u64, // a bit by instance that goes to the GPU alone: changed since the last upload, or drawn in motion by it
@@ -413,8 +414,8 @@ scene_init :: proc(r: ^Renderer) -> bool {
 	s.material_versions = make([dynamic]u32, a)
 	s.tlas_nodes = make([dynamic]Gpu_Bvh_Node, a)
 	s.tlas_refs = make([dynamic]u32, a)
-	s.tlas_items = make([dynamic]Bvh_Item, a)
-	s.tlas_scratch = make([dynamic]Bvh_Item, a)
+	s.tlas_items = make([dynamic]mm.Aabb, a)
+	s.tlas_scratch = make([dynamic]mm.Aabb, a)
 	batches_init(r)
 	s.touched = make([dynamic]u64, a)
 	s.hw_instances = make([dynamic]rhi.Tlas_Instance, a)
@@ -841,6 +842,7 @@ ray_class :: proc "contextless" (flags: u32) -> u8 {
 meshes_clear :: proc(r: ^Renderer) {
 	s := &r.scene
 	scene_changed(s)
+	for &tree in r.ui_offscreen.trees {mesh_rays_destroy(&tree.rays); tree = {}}
 	for &m in s.meshes {
 		skin_free(r,m.skin);skin_binding_release(r,m.skin_binding)
 		for ray in m.rays[:m.ray_count] {if ray.blas != 0 {rhi.accel_destroy(r.device, ray.blas)}}
@@ -1203,13 +1205,14 @@ tlas_refit :: proc(s: ^Scene_State) -> f32 {
 	if len(s.instances) == 0 && len(s.batch.traced) == 0 || len(nodes) == 0 {return 0}
 	total: f64
 	// Children are stored after their parent.
-	#reverse for &node in nodes {
+	#reverse for &node, i in nodes {
+		if i == BVH_UNUSED_NODE {continue}
 		weight := f64(1)
 		if node.count > 0 {
 			bmin, bmax := Vec3{1e30, 1e30, 1e30}, Vec3{-1e30, -1e30, -1e30}
 			for ref in s.tlas_refs[node.left_first:][:node.count] {
 				item := tlas_item(s, ref)
-				bmin, bmax = linalg.min(bmin, item.bounds_min), linalg.max(bmax, item.bounds_max)
+				bmin, bmax = linalg.min(bmin, item.min), linalg.max(bmax, item.max)
 			}
 			node.bounds_min, node.bounds_max = bmin, bmax
 			weight = f64(node.count)
@@ -1217,7 +1220,7 @@ tlas_refit :: proc(s: ^Scene_State) -> f32 {
 			left, right := &nodes[node.left_first], &nodes[node.left_first + 1]
 			node.bounds_min, node.bounds_max = linalg.min(left.bounds_min, right.bounds_min), linalg.max(left.bounds_max, right.bounds_max)
 		}
-		total += f64(aabb_area(node.bounds_min, node.bounds_max)) * weight
+		total += f64(spatial.aabb_area({node.bounds_min, node.bounds_max})) * weight
 	}
 	for &node in s.tlas_nodes[s.tlas_node_count:] {
 		inst := &s.instances[node.left_first]
@@ -1272,7 +1275,7 @@ scene_move :: proc(r: ^Renderer, descs: []u32, transforms: []Mat4, anchors: []Ve
 		}
 		instance_resized(s, int(index), bmin, bmax)
 		occluder_moved(s, u32(index), before, inst^)
-		s.tlas_items[index] = Bvh_Item{bounds_min = bmin, bounds_max = bmax, center = (bmin + bmax) * 0.5}
+		s.tlas_items[index] = {bmin, bmax}
 		s.hw_instances[index].transform = world if invertible else {}
 		instance_touch(s, u32(index))
 		moved = true
@@ -1342,14 +1345,14 @@ instances_moved :: proc(s: ^Scene_State) {
 	s.bounds_max = {-1e30, -1e30, -1e30}
 	if s.hidden_count == 0 {
 		for &item in s.tlas_items {
-			s.bounds_min, s.bounds_max = linalg.min(s.bounds_min, item.bounds_min), linalg.max(s.bounds_max, item.bounds_max)
+			s.bounds_min, s.bounds_max = linalg.min(s.bounds_min, item.min), linalg.max(s.bounds_max, item.max)
 		}
 		s.has_bounds = len(s.tlas_items) > 0
 	} else {
 		for &inst, i in s.instances {
 			if inst.meta.w & INSTANCE_FLAG_HIDDEN != 0 {continue}
 			item := &s.tlas_items[i]
-			s.bounds_min, s.bounds_max = linalg.min(s.bounds_min, item.bounds_min), linalg.max(s.bounds_max, item.bounds_max)
+			s.bounds_min, s.bounds_max = linalg.min(s.bounds_min, item.min), linalg.max(s.bounds_max, item.max)
 			s.has_bounds = true
 		}
 	}
@@ -1591,7 +1594,7 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 		}
 		s.overlays[index]=layers
 		s.instance_keys[index]=key
-		s.tlas_items[index]=Bvh_Item{bounds_min = bmin, bounds_max = bmax, center = (bmin + bmax) * 0.5}
+		s.tlas_items[index]={bmin, bmax}
 		s.hw_instances[index]=rhi.Tlas_Instance{transform = rows_3x4(desc.transform) if invertible else {}, custom_index = index, mask_flags = tlas_mask_flags(ray_class(flags), tested)}
 		if !hidden {
 			s.bounds_min = linalg.min(s.bounds_min, bmin)

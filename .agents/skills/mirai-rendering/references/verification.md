@@ -164,7 +164,7 @@ While working, `--views` and `--quality`.
   the mean luminance of its art direction. A view with `play` advances Play and leaves it
   paused: only the render changes. One with `fly` flies the camera like a person
   (`editor.input`), with a fixed `ev100` to compare the light and not the eye adapting. One with
-  `push` moves an entity of the scene (`scene.set`, unsaved) one step per frame with the camera
+  `push` moves an entity of the scene (`scene.write`, unsaved) one step per frame with the camera
   still, with a fixed `ev100`.
 - **Metrics**, per view and size:
   - Cost: median and p95 of the frame, GPU, CPU and GPU of each pass (`profile.capture`).

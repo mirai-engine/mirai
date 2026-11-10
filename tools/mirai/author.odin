@@ -6,8 +6,8 @@ import "mirai:cook/build"
 import "mirai:cook/workspace"
 import "mirai:project"
 
-UI_USAGE :: "ui read <asset> [--out <file>] | read --sources | write <asset> <document> | write <file|folder>... | check [<asset>...] [--project P]"
-SCENE_USAGE :: "scene read <asset> [--out <file>] | read --sources | write <asset> <document> | write <file|folder>... | check [<asset>...] [--project P]"
+UI_USAGE :: "ui read <asset> [--out <file>] | write <asset> <document> | check [<asset>...] [--project P]"
+SCENE_USAGE :: "scene read <asset> [--out <file>] | write <asset> <document> | check [<asset>...] [--project P]"
 
 // mirai ui and mirai scene: the documents of the interfaces and the scenes
 // of a project, read, checked and written with no editor. They

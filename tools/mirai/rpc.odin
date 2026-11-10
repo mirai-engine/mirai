@@ -31,7 +31,6 @@ Connection :: struct {
     named:bool,     // --project named project, which a call may open a session of
     near:string,    // with a port: the project at or above the working folder, to know the process of an editor of that port
     client:string,  // the agent outside the editor that calls: --client, MIRAI_CLIENT, or claude-code from its shell
-    link:^api.Client_Connection, // --batch: one connection for all its calls
     rest:[dynamic]string,
 }
 
@@ -195,7 +194,7 @@ rpc_call_waiting :: proc(connection:Connection,method,params:string,id:int) -> (
         editor,err=connection_ready(connection,method)
         if err.code!=0 {return}
         watch:=connection_watch(connection,editor,fmt.tprintf("mirai rpc %s",method))
-        result,err,called=api.rpc_call(editor.port,method,params,id,connection.timeout_ms,context.allocator,connection_task(connection,editor.port),connection.client,watch,connection.link,workspace.measurement(context.temp_allocator))
+        result,err,called=api.rpc_call(editor.port,method,params,id,connection.timeout_ms,context.allocator,connection_task(connection,editor.port),connection.client,watch,workspace.measurement(context.temp_allocator))
         if called || retried || !connection_ended(connection,method,err) {return}
     }
 }
@@ -544,58 +543,10 @@ rpc_describe_text :: proc(result,name:string) -> string {
     return strings.to_string(b)
 }
 
-// What the batch answered so far: each result, for the references of the calls after it.
-// A string that is exactly $N or $N.path stands for that result or its field
-// (the fields go as in --select); $$ begins a text that really starts with $.
-@(private="file")
-rpc_batch_value :: proc(value:json.Value,results:[]string) -> (out:json.Value,problem:string) {
-    #partial switch v in value {
-    case json.String:
-        text:=string(v)
-        if strings.has_prefix(text,"$$") {return json.String(text[1:]),""}
-        if len(text)<2 || text[0]!='$' || text[1]<'0' || text[1]>'9' {return value,""}
-        rest:=text[1:]
-        end:=strings.index_any(rest,".[")
-        digits:=end<0?rest:rest[:end]
-        n,valid:=strconv.parse_int(digits,10)
-        if !valid {return value,""}
-        if n<0 || n>=len(results) {return nil,fmt.tprintf("%s: the batch has %d results so far, $0 to $%d",text,len(results),len(results)-1)}
-        raw:=results[n]
-        if end>=0 {
-            field:=rest[end:]
-            if field[0]=='.' {field=field[1:]}
-            path,ok:=api.json_path_parse(field)
-            if !ok {return nil,fmt.tprintf("%s: %q is not a field path as --select takes it",text,field)}
-            found,missing:=api.json_at(raw,path)
-            if missing!="" {return nil,fmt.tprintf("%s: %s",text,missing)}
-            raw=found
-        }
-        parsed,parse_error:=json.parse(transmute([]u8)raw,parse_integers=true,allocator=context.temp_allocator)
-        if parse_error!=nil {return nil,fmt.tprintf("%s: the result is not JSON",text)}
-        return parsed,""
-    case json.Object:
-        resolved:=make(json.Object,len(v),context.temp_allocator)
-        for key,element in v {
-            resolved[key],problem=rpc_batch_value(element,results)
-            if problem!="" {return nil,problem}
-        }
-        return resolved,""
-    case json.Array:
-        for &element in v {
-            element,problem=rpc_batch_value(element,results)
-            if problem!="" {return nil,problem}
-        }
-        return v,""
-    }
-    return value,""
-}
-
 // mirai rpc --batch <file or ->: one call per line, {"method": "...", "params": {...}},
-// in order and over one connection; prints a JSON array with the result of each
-// and, at the first that fails, the line it is on and its error, and stops. A
-// value of the params that is exactly $N or $N.path (the same paths as --select)
-// stands for the result of the call N of the batch or for that field of it; $$
-// writes a literal $.
+// sent as the calls of one batch of the API, which runs them in order, gives
+// a call what those before it answered ("$N", "$N.path") and stops at the
+// first that fails, saying which.
 @(private="file")
 rpc_batch :: proc(connection:Connection,file:string) -> int {
     text:string
@@ -606,51 +557,25 @@ rpc_batch :: proc(connection:Connection,file:string) -> int {
         if error!=nil {fmt.eprintfln("mirai rpc: could not read %s",file);return 2}
         text=string(data)
     }
-    connection:=connection
-    link:api.Client_Connection
-    defer api.client_connection_close(&link)
-    connection.link=&link
-    Line :: struct {method:string,params:json.Value}
-    out:=strings.builder_make()
-    strings.write_string(&out,"[")
-    results:=make([dynamic]string)
-    failed:=false
-    number:=0
+    calls:=strings.builder_make()
+    strings.write_string(&calls,`{"calls":[`)
+    number,count:=0,0
     for line in strings.split_lines_iterator(&text) {
         number+=1
-        trimmed:=strings.trim_space(line)
-        if trimmed=="" {continue}
-        call:Line
-        err:api.Error
-        params:="{}"
-        if json.unmarshal_string(trimmed,&call,allocator=context.temp_allocator)!=nil || call.method=="" {
-            err={api.INVALID_PARAMS,`not a call: write {"method": "...", "params": {...}}`,""}
-        } else if call.params!=nil {
-            resolved,problem:=rpc_batch_value(call.params,results[:])
-            if problem!="" {err={api.INVALID_PARAMS,problem,""}}
-            else {
-                encoded,marshal_error:=json.marshal(resolved,allocator=context.temp_allocator)
-                if marshal_error!=nil {return 2}
-                params=string(encoded)
-            }
+        call:=strings.trim_space(line)
+        if call=="" {continue}
+        if !params_is_object(call) || !api.json_valid(context.allocator,call) {
+            return rpc_fail({api.INVALID_PARAMS,fmt.tprintf(`line %d is not a call: write {{"method": "...", "params": {{...}}}}`,number),""})
         }
-        if len(results)>0 {strings.write_string(&out,",")}
-        if err.code==0 {
-            result,call_error,called:=rpc_call_waiting(connection,call.method,params,number)
-            if called {
-                append(&results,result)
-                fmt.sbprintf(&out,"\n{{\"method\": %q, \"result\": %s}}",call.method,result)
-                continue
-            }
-            err=call_error
-        }
-        fmt.sbprintf(&out,"\n{{\"line\": %d, \"method\": %q, \"error\": %q}}",number,call.method,api.error_text(err,context.temp_allocator))
-        failed=true
-        break
+        if count>0 {strings.write_byte(&calls,',')}
+        strings.write_string(&calls,call)
+        count+=1
     }
-    strings.write_string(&out,"\n]")
-    fmt.println(strings.to_string(out))
-    return failed?1:0
+    strings.write_string(&calls,"]}")
+    result,err,called:=rpc_call_waiting(connection,"batch",strings.to_string(calls),1)
+    if !called {return rpc_fail(err)}
+    fmt.println(result)
+    return 0
 }
 
 params_is_object :: proc(text:string) -> bool {

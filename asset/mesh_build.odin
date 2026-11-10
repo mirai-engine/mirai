@@ -19,6 +19,7 @@ Mesh_Source :: struct {
     morphs:[]Morph_Target, // their deltas name vertices
     morph_deltas:[]Morph_Delta,
     flags:Mesh_Flags,      // Has_Colors and Has_Uv1: the streams kept
+    locked:[]bool,         // empty, or one per vertex: the levels of mesh_build_dag keep it where it is, as on a border another mesh shares
 }
 
 // A cluster before it is encoded: triangles of one slot, as indices of the
@@ -160,6 +161,9 @@ mesh_build_dag :: proc(source:Mesh_Source,indices:[]u32,out:^Mesh_Geometry,alloc
     ranges:=make([dynamic]geom.Cluster_Range,scratch)
     slot_ranges(source.vertices,indices,&ordered,&ranges)
     positions,attributes,protect:=mesh_simplify_inputs(source.vertices)
+    if len(source.locked)==len(source.vertices) {
+        for locked,at in source.locked {if locked {protect[at]+={.Lock}}}
+    }
     weights:=MESH_SIMPLIFY_WEIGHTS
     dag:geom.Cluster_Dag
     defer geom.cluster_dag_destroy(&dag)

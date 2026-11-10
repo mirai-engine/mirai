@@ -55,9 +55,11 @@ state_and_owner_refused_by_a_full_frame_are_sent_on_the_next_interval :: proc(t:
         now:=f64(tick)/60
         wire.sim_network_advance(&network,now)
         for &session in sessions {wire.host_update(&session.host,now)}
-        server_commands(&sessions[0],core.world_ref(server,&info),nil,wire.host_poll(&sessions[0].host),&server_events,&server.remote)
+        server_commands(&sessions[0],core.world_ref(server,&info),nil,wire.host_poll(&sessions[0].host),&server.remote)
         for event in net_test_arrived(&sessions[0]) {if event.kind==.Connected {connected=event.connection}}
-        client_commands(&sessions[1],core.world_ref(client,&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host),&client_events)
+        client_commands(&sessions[1],core.world_ref(client,&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host))
+        // What it shows in the past takes its components when the display reaches their state.
+        client_place(&sessions[1],core.world_ref(client,&info),f64(max(u32)),nil,false)
         switch tick {
         case 21:
             for e in entities[0] {core.add(&server.objects,e,net_test_replicate(audience=.Always))}
@@ -127,9 +129,11 @@ net_test_late_reference :: proc(t:^testing.T,body:bool) {
         now:=f64(tick)/60
         wire.sim_network_advance(&network,now)
         for &session in sessions {wire.host_update(&session.host,now)}
-        server_commands(&sessions[0],core.world_ref(server,&info),nil,wire.host_poll(&sessions[0].host),&server_events,&server.remote)
+        server_commands(&sessions[0],core.world_ref(server,&info),nil,wire.host_poll(&sessions[0].host),&server.remote)
         for event in net_test_arrived(&sessions[0]) {if event.kind==.Connected {connected=event.connection}}
-        client_commands(&sessions[1],core.world_ref(client,&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host),&client_events)
+        client_commands(&sessions[1],core.world_ref(client,&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host))
+        // What it shows in the past takes its components when the display reaches their state.
+        client_place(&sessions[1],core.world_ref(client,&info),f64(max(u32)),nil,false)
         switch tick {
         case 21:
             core.edit(&server.values,source).target=target
@@ -243,8 +247,10 @@ a_body_replicates_the_collision_and_contact_rules_of_its_collider :: proc(t:^tes
         now:=f64(tick)/60
         wire.sim_network_advance(&network,now)
         for &session in sessions {wire.host_update(&session.host,now)}
-        server_commands(&sessions[0],core.world_ref(server,&info),nil,wire.host_poll(&sessions[0].host),&server_events,&server.remote)
-        client_commands(&sessions[1],core.world_ref(client,&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host),&client_events)
+        server_commands(&sessions[0],core.world_ref(server,&info),nil,wire.host_poll(&sessions[0].host),&server.remote)
+        client_commands(&sessions[1],core.world_ref(client,&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host))
+        // What it shows in the past takes its components when the display reaches their state.
+        client_place(&sessions[1],core.world_ref(client,&info),f64(max(u32)),nil,false)
         switch tick {
         case 21:
             for e in entities[0] {core.add(&server.objects,e,net_test_replicate(audience=.Always))}

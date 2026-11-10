@@ -45,7 +45,7 @@ terraces_level_each_step_and_rise_over_their_riser :: proc(t:^testing.T) {
     change:=source_edit(&source,{kind=.Terrace,center={},radius=40,amount=1,falloff=.Constant,interval=2})
     testing.expect(t,change.changed)
     for x in 0..<33 {testing.expect_value(t,grid_get(&source.heights,x,16),math.floor(f32(x)*0.3/2)*2)}
-    testing.expect(t,source_edit(&source,{kind=.Terrace,center={},radius=4,amount=1}).error==.Invalid,"a terrace without an interval is refused")
+    testing.expect(t,source_edit(&source,{kind=.Terrace,center={},radius=4,amount=1}).error==.Terrace,"a terrace without an interval is refused")
 }
 
 @(test)
@@ -62,7 +62,7 @@ noise_is_the_same_pattern_at_a_point_and_passes_deepen_it :: proc(t:^testing.T) 
     once:=grid_get(&source.heights,14,17)
     source_edit(&source,{kind=.Noise,center={},radius=12,amount=1,scale=3,seed=1,falloff=.Constant})
     testing.expect(t,abs(grid_get(&source.heights,14,17))>=abs(once),"a second pass goes further the same way")
-    testing.expect(t,source_edit(&source,{kind=.Noise,center={},radius=12,amount=1}).error==.Invalid,"noise without a scale is refused")
+    testing.expect(t,source_edit(&source,{kind=.Noise,center={},radius=12,amount=1}).error==.Noise,"noise without a scale is refused")
 }
 
 @(test)

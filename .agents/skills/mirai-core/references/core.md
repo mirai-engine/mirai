@@ -205,9 +205,9 @@ are `copy=false`: they are neither copied nor cleared. `Jumps` and `Hierarchy` a
   - `resimulating`: the network repeats ticks that already ran to correct a prediction. The
     rollback sets it; `tick`, `seconds` and `dt` come back with the copy of the world and the
     repeated ticks advance them up to the present. What is not simulation is not repeated:
-    `audio.play*` makes no sound and `multiplayer.send` does not enqueue. What entered the tick is
-    repeated: each repeated tick receives the UI events it received the first time
-    ([gui](../../mirai-gameplay/references/libraries.md#gui)).
+    `audio_requests` drops the sounds it asks for and `multiplayer.send` does not enqueue. What
+    entered the tick is repeated: each repeated tick receives the UI events it received the first
+    time ([gui](../../mirai-gameplay/references/libraries.md#gui)).
     What stays in the `World` (a prefab, a counter, the clock of a particle emitter) is repeated the
     same as the first time.
 - `Frame_Time` (`copy=false`): the frame the world runs, not its simulation. `accumulator` (seconds

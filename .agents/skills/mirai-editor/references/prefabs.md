@@ -55,9 +55,9 @@ Procedures, with their action and API method:
   reduces the selection to its roots and, with several, creates a group that keeps their world
   poses; grouping, link and file are one step. The action creates `<name of the active entity>`
   beside the scene and is disabled if one of the roots is an internal member of an instance.
-- `prefab_instantiate` (drag to the viewport, placement from Assets, `prefab.instantiate`) places
-  an instance with new ids and returns the root. `scene.write` places the prefab a new entity
-  names with it too, `joined` to the gesture of the write, whose step holds the instance.
+- `prefab_instantiate` (drag to the viewport, placement from Assets) places an instance with new
+  ids and returns the root. By API, `scene.write` places the prefab a new entity names with
+  `prefab`, `joined` to the gesture of the write, whose step holds the instance.
 - `prefab_apply` (`Prefab_Apply`, `prefab.apply`) writes the entity's overrides into its prefab,
   ends them and updates all instances: first the added entities (they pass to the prefab with what
   hangs from them and remain as members), then values and components. The prefabs that place the
@@ -153,8 +153,9 @@ instance, a click chooses the member.
 - A member that is not the root (`prefab_member_locked`) keeps the place the prefab gives it: it is
   not deleted, does not change parent, nor is it the root of a new prefab. It is turned off to
   leave it out of the instance and is duplicated (the copy is an added entity). Deleting a
-  selection leaves it with a notice; by API, `scene.delete` and the `parent` of `scene.set` fail
-  with a message that says what to do. To change its place, edit the prefab or unlink the instance.
+  selection leaves it with a notice; by API, `scene.write` turns off a member that says
+  `delete` and fails, saying what to do, when the document nests it under another parent. To
+  change its place, edit the prefab or unlink the instance.
 - The root moves, deletes and duplicates as an instance.
 
 ## Nested prefabs

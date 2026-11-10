@@ -23,7 +23,7 @@ Api_Network_Result :: struct {
 
 @(private)
 net_play_api_register :: proc(s:^editor.Session) {
-    editor.api_method_register(s,{name="play.join",summary="A guest of the session joins the game its host serves on the network with a player of its own, on the scene the server runs. Outside a turn only.",params=Api_Join_Params,params_info=type_info_of(Api_Join_Params),result=Api_Network_Result,result_info=type_info_of(Api_Network_Result),run=api_play_join})
+    editor.api_method_register(s,Api_Join_Params,Api_Network_Result,{name="play.join",summary="A guest of the session joins the game its host serves on the network with a player of its own, on the scene the server runs. Outside a turn only.",run=api_play_join})
     editor.api_method_register(s,{name="play.network.status",summary="The state of the game on the network.",result=Api_Network_Result,result_info=type_info_of(Api_Network_Result),flags={.Read_Only},run=api_play_network_status})
 }
 

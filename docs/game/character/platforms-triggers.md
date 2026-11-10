@@ -35,8 +35,8 @@ blocks nothing and reports what overlaps it. Scale the entity to size it. `Heal_
 component of the game, `@(component) Heal_Zone :: struct {amount:f32}`.
 
 ```json
-{"method":"scene.add","params":{"name":"Heal zone","scale":[4,2,4],
- "components":{"Collider":{"preset":"trigger"},"Heal_Zone":{"amount":10}}}}
+{"method":"scene.write","params":{"merge":true,"entities":[{"name":"Heal zone","scale":[4,2,4],
+ "components":{"Collider":{"preset":"trigger"},"Heal_Zone":{"amount":10}}}]}}
 ```
 
 Read the events in `stage="react"`; each pair gives one event per side:

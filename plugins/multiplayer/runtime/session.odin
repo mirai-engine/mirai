@@ -36,22 +36,21 @@ Open_Error :: enum u8 {
 
 Net_Stats :: struct {
     objects:int,              // server: entities replicated. Client: replicas with an entity
-    predicted,interpolated:int,
     spawned,despawned:u64,    // client: entities made for a replica, or taken from the scene, and released
     events_received,events_sent:u64,
-    events_dropped:u64,       // arrived while the game was paused and Net_Events held PAUSED_EVENTS
-    confirmed,corrected,snapped:u64, // client: states of the server that matched the prediction, that were replayed, that were taken as they came
+    events_dropped:u64,       // arrived while PENDING_EVENTS waited for a tick
+    confirmed,corrected:u64,  // client: comparisons in which every state of the server matched the prediction, and times the world went back and ran again
     resimulated:u64,          // client: ticks simulated again
     largest_resimulation:int,
-    blended:u64,              // client: errors taken into the present without simulating again: closed over the ticks that follow
-    placed:u64,               // client: of them, those that put the replica where the server had it at once: at rest, or too far to close
+    placed:u64,               // client: replicas put where a state of the server carried them, for the world could not go back to its tick
+    switched:u64,             // client: replicas that went from interpolated to predicted or back
     fragments_published:u64,
+    retyped:u64,              // server: objects given another type because their entity gained or lost a replicated component
     references_deferred,references_resolved:u64,
-    deferred:u64,             // client: corrections that were closed over the next ticks because they were out of the history, of the frame or of the budget
+    deferred:u64,             // client: corrections that did not go back because they were out of the history, of the frame or of the budget
     rewound:u64,              // client: times the world went back to a tick a library asked for (rewind)
     views_corrected:u64,      // server: views a client said it saw that Net_Settings.rewind_tolerance replaced
     unverified:u64,           // client: server states older than the history, which could not be compared
-    overtaken:u64,            // client: of them, the newest of a replica in a frame, which put it where the server had it, carried to the present
     history_resets:u64,       // client: times the history was dropped: a jump of the clock
     sync_tested:u64,          // client: ticks run again by sync_test
     sync_skipped:u64,         // client: of them, those the network gave something else, which are not compared: a state of the server came after they ran
@@ -139,6 +138,7 @@ Net_Session :: struct {
     follows:bool, // the protocol has the messages of the session: a client follows the scene of its server
     secret:[2]u64, // client: of the player it presents (Net_Player); kept while the World lives
     arrived:[dynamic]Connection_Event, // since the last tick began: Net_Connections of the next one
+    received:[dynamic]Received,        // likewise the messages of the game: Net_Events of the next one
     scratch:[]u8, // one event or one component
     placed:u32,   // the places it asked of core.Pose_Target: each a new number
     taken:u32,    // client: the last place asked before a tick began, which its simulation took
@@ -157,7 +157,6 @@ Net_Session :: struct {
     joined,left,lost:u64,
     stats:Net_Stats,
     ended:bool,
-    events_held:bool, // pump left in Net_Events what no frame read yet
     server:Server,
     client:Client,
     status_file:^os.File,
@@ -198,8 +197,10 @@ settings_resolve :: proc(settings:Net_Settings,tick_dt:f32) -> (d:Net_Settings) 
     if d.resimulate_budget<=0 {d.resimulate_budget=int(1/tick_dt+0.5)}
     if d.critical_ticks<=0 {d.critical_ticks=int(0.5/tick_dt+0.5)}
     if d.max_resimulate<=0 {d.max_resimulate=int(0.3/tick_dt+0.5)}
-    if d.correction_time<=0 {d.correction_time=0.1}
     if d.rewind_tolerance==0 {d.rewind_tolerance=0.2}
+    if d.rewind_entities<=0 {d.rewind_entities=64}
+    d.input_delay=clamp(d.input_delay,0,INPUT_DELAY_MAX)
+    d.replication.input_delay=f32(d.input_delay)
     d.sync_test=max(d.sync_test,0)
     return
 }
@@ -348,6 +349,7 @@ session_open :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,port:int) -> 
     }
     s.host_ready=true
     if s.arrived==nil {s.arrived=make([dynamic]Connection_Event,allocator)}
+    if s.received==nil {s.received=make([dynamic]Received,allocator)}
     ready:=s.mode==.Server?server_init(s,allocator):client_init(s,w,app.allocator)
     if !ready {
         session_destroy(s)
@@ -519,6 +521,7 @@ session_destroy :: proc(s:^Net_Session) {
     delete(s.fragments,allocator);s.fragments=nil
     delete(s.events,allocator);s.events=nil
     delete(s.arrived);s.arrived=nil
+    delete(s.received);s.received=nil
     delete(s.scratch,allocator);s.scratch=nil
     delete(s.address,allocator);s.address=""
     delete(s.invite_code,allocator);s.invite_code=""
@@ -631,21 +634,22 @@ status_write :: proc(s:^Net_Session,w:core.World_Ref,frame:u64,tick:u64,problems
         ahead,bias,jitter=f64(tick)-clock.server,clock.bias,clock.jitter*1000
         margin,margin_low=wire.clock_margin_take(&s.host)
     }
-    os.write_string(file,fmt.tprintf("status frame=%d tick=%d role=%v net=%v reason=%v connections=%d joined=%d left=%d lost=%d objects=%d problems=%d resimulations=%d blended=%d rtt_ms=%.0f sent=%d received=%d refused=%d dropped=%d ahead=%.1f bias=%.1f jitter_ms=%.0f deferred=%d unverified=%d overtaken=%d history_resets=%d margin=%.0f margin_low=%.0f views_corrected=%d\n",
-        frame,tick,s.mode,s.status,s.reason,s.connections,s.joined,s.left,s.lost,s.stats.objects,problems,s.stats.corrected,s.stats.blended,rtt,sent,received,refused,dropped,ahead,bias,jitter,s.stats.deferred,s.stats.unverified,s.stats.overtaken,s.stats.history_resets,margin,margin_low,s.stats.views_corrected))
+    os.write_string(file,fmt.tprintf("status frame=%d tick=%d role=%v net=%v reason=%v connections=%d joined=%d left=%d lost=%d objects=%d problems=%d resimulations=%d placed=%d switched=%d retyped=%d rtt_ms=%.0f sent=%d received=%d refused=%d dropped=%d ahead=%.1f bias=%.1f jitter_ms=%.0f deferred=%d unverified=%d history_resets=%d margin=%.0f margin_low=%.0f views_corrected=%d\n",
+        frame,tick,s.mode,s.status,s.reason,s.connections,s.joined,s.left,s.lost,s.stats.objects,problems,s.stats.corrected,s.stats.placed,s.stats.switched,s.stats.retyped,rtt,sent,received,refused,dropped,ahead,bias,jitter,s.stats.deferred,s.stats.unverified,s.stats.history_resets,margin,margin_low,s.stats.views_corrected))
     transforms:=core.world_table_of(w,core.Transform)
-    line :: proc(file:^os.File,transforms:^core.Table(core.Transform),object:Object,e:core.Entity,own:bool) {
+    // own: on a server, 1 for what a connection owns; on a client, how it lives there: 0 here, 1 interpolated, 2 predicted.
+    line :: proc(file:^os.File,transforms:^core.Table(core.Transform),object:Object,e:core.Entity,own:int) {
         local,ok:=core.get(transforms,e)
         if !ok {return}
-        os.write_string(file,fmt.tprintf("object %d %d %.3f %.3f %.3f\n",u64(object),int(own),local.position.x,local.position.y,local.position.z))
+        os.write_string(file,fmt.tprintf("object %d %d %.3f %.3f %.3f\n",u64(object),own,local.position.x,local.position.y,local.position.z))
     }
     if s.mode==.Server {
         for &slot in s.server.objects {
-            if slot.object!=0 {line(file,transforms,slot.object,slot.entity,slot.owner!=0)}
+            if slot.object!=0 {line(file,transforms,slot.object,slot.entity,int(slot.owner!=0))}
         }
     } else {
         for &r in s.client.replicas[:s.client.replica_high] {
-            if r.object!=0 {line(file,transforms,r.object,r.entity,r.role==.Predicted)}
+            if r.object!=0 {line(file,transforms,r.object,r.entity,int(r.mode))}
         }
     }
     os.write_string(file,"end\n")
@@ -686,15 +690,6 @@ own_connection :: proc(s:core.Ref(Net_Session)) -> Connection {return s.host_rea
 // gives it its view and replaces this one.
 view_set :: proc(s:^Net_Session,connection:Connection,position:[3]f32,radius:f32) -> bool {
     return s.host_ready && wire.connection_set_view(&s.host,connection,position,radius)==.None
-}
-
-// Server: whether a connection sees an entity of Custom relevance. An entity
-// whose object the network makes at the end of this tick takes it then. A new
-// object and a connection that arrives start with none. False on a client and
-// when the requests waiting for their objects fill Net_Settings.max_objects.
-relevance_set :: proc(s:^Net_Session,e:core.Entity,connection:Connection,relevant:bool) -> bool {
-    if !s.host_ready || s.mode!=.Server || connection==0 {return false}
-    return server_relevance(s,e,connection,relevant)
 }
 
 // Client: asks for the simulation of a Lent entity, or gives it back.

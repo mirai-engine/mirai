@@ -1,5 +1,6 @@
 package multiplayer
 
+import "core:mem"
 import "mirai:core"
 import input "mirai:engine/input"
 import "mirai:std/base"
@@ -37,12 +38,21 @@ collection_get :: wire.collection_get
 collection_remove :: wire.collection_remove
 collection_count :: wire.collection_count
 
-// Which connections receive an entity.
+// Which connections receive an entity; of them, those Visibility lets.
 Audience :: enum u8 {
     Near,   // connections whose view reaches it
     Always, // every connection
     Owner,  // only the owner
-    Custom, // only connections the game lets in with relevance_set
+}
+
+// Who sees what, as data, like collision layers. Of the connections its
+// audience reaches, an entity with a mask reaches those whose seat has one of
+// its bits in sees; without Visibility or bits, it asks for none, and a seat
+// has none. The server reads it when it changes; it does not travel.
+@(component,description="Who sees this entity on the network (mask), and, on the seat of a player, what that player sees (sees): a connection receives it when they share a bit.")
+Visibility :: struct {
+    mask:u32,
+    sees:u32,
 }
 
 NET_PROTOCOL_ID :: 0x4d495241
@@ -50,7 +60,8 @@ DEFAULT_PORT :: 27500 // of Net_Settings.port
 PLAYER_NET :: 5 // the exit code of a player whose client could not join its server, or lost it with nobody watching
 COMPONENTS :: wire.MAX_FRAGMENTS-3 // replicated components of an entity, besides its pose, motion and driver
 EVENT_BYTES :: 256
-PAUSED_EVENTS :: 1024 // messages Net_Events keeps for the first frame of a paused game; later ones are dropped and reported
+INPUT_DELAY_MAX :: 15 // ticks, of Net_Settings.input_delay
+PENDING_EVENTS :: 1024 // messages that wait for the next tick (a paused game runs none); later ones are dropped and reported
 
 // An entity the network replicates. The game gives it with the entity (in its
 // prefab or its scene), and the network reads it. Its owner, the connection
@@ -64,6 +75,7 @@ Replicate :: struct {
     priority:f32 `mirai:"min=0"`,
     update_hz:f32 `mirai:"min=0"`, // 0: publish every tick
     radius:f32 `mirai:"min=0,unit=m"`,
+    predict:bool, // clients simulate it ahead of the server always, not only while it is in reach of what they drive: a ball to intercept
 }
 
 REPLICATE_DEFAULT :: Replicate{priority=1,radius=1}
@@ -92,6 +104,7 @@ Pose :: struct {
     scale:[3]f32,
     off:u16 `mirai:"bits=13"`, // a bit by replicated component of its type: turned off by itself
     disabled:bool,
+    predict:bool, // Replicate.predict
 }
 #assert(COMPONENTS<=13)
 
@@ -123,6 +136,8 @@ Input_Packet :: struct {
     // with fraction; has_view false while the clock has not placed it.
     view_behind:f32 `mirai:"min=0,max=255,precision=0.00390625"`,
     has_view:bool,
+    // How many ticks before the one of this input the look is of: the input delay of its client.
+    look_behind:u8 `mirai:"bits=4"`,
 }
 
 // What drives a replicated body: its Move_Input, which every end that has it
@@ -144,20 +159,20 @@ Net_Settings :: struct {
     timeout:f64,             // seconds of silence after which the other end is given up. 10
     connect_timeout:f64,     // client. 5
     max_objects:int,         // replicated entities; a client needs as many as its server. 1024
-    max_resimulate:int,      // client: ticks it may simulate again in one frame; what does not fit is closed by correction_time. 0.3 s of ticks, at most the history (replication.history_seconds)
+    max_resimulate:int,      // client: ticks it may simulate again in one frame; what does not fit is put where the server carries it. 0.3 s of ticks, at most the history (replication.history_seconds)
     resimulate_budget:int,   // client: ticks it may simulate again per second. The tick rate
     critical_ticks:int,      // client: ticks a replica stays critical after it last shared an island of the simulation with what the client drives. Half a second
     predicted_capacity:int,  // client: replicas simulated ahead of the server at once. 256
-    // client: what the server simulates and this client does not drive is shown interpolated,
-    // behind the server by Clock.display, instead of simulated ahead: where it was, not where it
-    // may be. Hits are then judged in that past (rewind.odin).
-    interpolate_others:bool,
+    // client: ticks between taking the input of a player and acting on it, here and on the server
+    // alike. The client runs that many ticks less ahead of the server, so it predicts less and
+    // is corrected less, and the player feels them as latency. 0; at most INPUT_DELAY_MAX
+    input_delay:int `mirai:"min=0,max=15"`,
+    rewind_entities:int,     // server: entities with Rewind whose pose each tick remembers. 64
     view_radius:f32,         // server: meters around what a connection owns that count as near. 128
     position_tolerance:f32,  // client: meters a prediction may be off before it is corrected. 0.05
     velocity_tolerance:f32,  // m/s and rad/s. 0.5
     rotation_tolerance:f32,  // radians. 0.07
     scale_tolerance:f32,     // 0.001
-    correction_time:f32,     // client: seconds in which an error that is not simulated again is closed by two thirds. 0.1
     sync_test:int,           // client, to debug: ticks it goes back before each frame to run each again and compare with the first time (net.sync_test); 0: none. At most the history
     // server: seconds the view a client says it saw (Input_Packet.view_behind) may be off from
     // the one its round trip, jitter, input lead and interpolation delay give, before the server
@@ -196,9 +211,11 @@ Received :: struct {
     data:[EVENT_BYTES]u8,
 }
 
-// Event: this library clears it at each frame and pushes the messages that
-// arrived. It stays when a scene replaces the world in the frame.
-@(storage,keep)
+// The messages that arrived, for the fixed functions, like Net_Connections: at
+// the start of each tick the network leaves here what arrived since the tick
+// before. A frame without ticks keeps them for the next tick, of a frame with
+// several only the first has them, and a tick that runs again has those it had.
+@(storage)
 Net_Events :: struct {
     received:core.Queue(Received),
 }
@@ -215,7 +232,10 @@ Outgoing :: struct {
 // Not copied with the world: a correction that brings back an older copy
 // keeps what waits to be sent.
 @(storage,queue,copy=false)
-Net_Outbox :: struct {queue:core.Queue(Outgoing)}
+Net_Outbox :: struct {
+    queue:core.Queue(Outgoing),
+    replaying:bool `mirai:"readonly"`, // what runs now runs again (core.Time.resimulating): it sent the first time
+}
 
 // Client: ticks the client already simulated that a library learned were
 // different, from a reason the network does not compare, as a fracture of
@@ -251,8 +271,11 @@ Remote_Input :: struct {
     status:wire.Input_Status,
     tick:u32,
     view:f64, // the tick of the server, with fraction, its client showed the others at when it sent this input; 0: unknown
-    look:[2]f32, // yaw and pitch of the body it drives, as its client left them
+    look:[2]f32, // yaw and pitch of the body it drives, as its client left them look_behind ticks before this one
     has_look:bool,
+    look_behind:u8,
+    looks:[INPUT_DELAY_MAX+1][2]f32, // by tick modulo its length: the look that body had here after each of the last ticks
+    looks_kept:u8,                   // how many of them are of this connection
 }
 
 // The connections stay when a scene replaces the world, and so do their seats.
@@ -323,12 +346,38 @@ Net_Gone :: struct {
 @(storage,persist)
 Net_Identity :: struct {secret:[2]u64}
 
+// Client: an entity this client made in a tick, ahead of the server, which
+// makes the same one in that tick (predict_spawn). The replica the server
+// sends for it takes it; one the server did not make goes when the history
+// passes. Only the network writes it.
+@(component,description="An entity this client made ahead of its server: the replica the server sends takes it, or it goes.")
+Predicted_Spawn :: struct {
+    tick:u64 `mirai:"transient,readonly"`,
+}
+
+// The Id both ends give an entity a player makes in a tick: from the
+// connection of that player, the tick and which of its spawns of the tick it is.
+spawn_id :: proc(connection:Connection,tick:u64,sequence:u32) -> base.Entity_Id {
+    key:=[3]u64{u64(connection),tick,u64(sequence)}
+    return base.Entity_Id(base.hash64(mem.ptr_to_bytes(&key),NET_PROTOCOL_ID)|1)
+}
+
+// For a fixed function that makes an entity on both ends in the same tick, as
+// the shot of the player a client predicts: e gets the Id both ends draw, so
+// the replica of the server's takes it, also after a correction ran the tick
+// again. peer is Seat.peer of the seat that makes it.
+predict_spawn :: proc(session:core.Ref(Net_Session),ids:^core.Table(core.Id),spawns:^core.Table(Predicted_Spawn),e:core.Entity,peer:u64,time:core.Time,sequence:u32=0) {
+    connection:=peer!=0?Connection(peer):own_connection(session)
+    core.add(ids,e,core.Id{spawn_id(connection,time.tick,sequence)})
+    if is_client(session) {core.add(spawns,e,Predicted_Spawn{time.tick})}
+}
+
 // Sends a message, a @(net_message): from a server to one connection, or to every one
 // that has the entity it is about (to all when it is about none); from a
-// client, to the server. False while resimulating: it was sent the first time.
-send :: proc(outbox:^Net_Outbox,time:core.Time,value:$T,about:=core.NONE,to:Connection=0) -> bool {
+// client, to the server. False in a tick that runs again: it sent the first time.
+send :: proc(outbox:^Net_Outbox,value:$T,about:=core.NONE,to:Connection=0) -> bool {
     #assert(size_of(T)<=EVENT_BYTES)
-    if time.resimulating {return false}
+    if outbox.replaying {return false}
     value:=value
     item:=Outgoing{type=T,about=about,to=to,size=size_of(T)}
     copy(item.data[:],([^]u8)(&value)[:size_of(T)])
