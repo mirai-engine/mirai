@@ -162,7 +162,7 @@ capture_without_ui_draws_the_world_alone_at_the_size_asked_for :: proc(t:^testin
     if !core.test_world_init(t,&shown) {return}
     defer core.test_world_destroy(&shown)
     settings:=gpu.DEFAULT_SETTINGS
-    settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+    settings.gi_enabled,settings.taa=false,false
     app,error:=host.app_create({gpu=true,gpu_validation=true,assets_root="assets",window_desc={size={128,96}},threads=1,render_settings=settings})
     if !testing.expect_value(t,error,host.App_Error.None) || app==nil {return}
     defer host.app_destroy(app)

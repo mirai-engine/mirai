@@ -16,9 +16,12 @@
 //     (set 0, push descriptors) and to Metal [[buffer(N)]]/[[texture(N)]]/
 //     [[sampler(N)]]. Shaders take parameters from uniform buffers, never push
 //     constants, so the same SPIR-V/MSL pair works everywhere.
-//   - Hazards are declared with cmd_barrier_*: the backend tracks the current
-//     access of every resource and emits only the barriers that are needed.
-//     Metal tracks hazards itself and treats these calls as validation.
+//   - Hazards follow from what dispatches and draws bind: the backend tracks the
+//     current access of every resource and emits only the barriers that are
+//     needed, those of a render pass before it begins. cmd_barrier_* declares
+//     the accesses nothing binds: the host reading a buffer, a texture sampled
+//     through the texture table or by another process. Metal tracks hazards
+//     itself and treats these calls as validation.
 //   - Clip space is Y-up with depth in [0,1] on both backends (Vulkan uses a
 //     negative viewport height), so projection matrices are shared.
 //   - Textures a shader picks by index at run time (material maps) live in the

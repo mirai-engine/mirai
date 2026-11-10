@@ -1035,8 +1035,6 @@ geometry_copies_commit :: proc(r:^Renderer,copies:[]Geometry_Copy,pending:[]rhi.
         if !rhi.immediate_end(r.device,list) {set_error(r,"geometry publication: %s",rhi.device_error(r.device));return false}
         return true
     }
-    // The passes of the frame read the pools without declaring it.
-    for buffer in ([]rhi.Buffer{s.vertex_buffer,s.index_buffer,s.mesh_buffer,s.blas_node_buffer,s.blas_triangle_buffer}) {rhi.cmd_barrier_buffer(list,buffer,.Shader_Read)}
     return true
 }
 

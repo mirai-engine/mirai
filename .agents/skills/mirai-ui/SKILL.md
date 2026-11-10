@@ -70,9 +70,11 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
   generation, so starting a frame does not depend on how many ids the previous one had; the
   previous frame's rectangles live in the widget registry, which `frame_end` indexes by id: a
   lookup by id (`widget_rect`) does not go through the widgets.
-- **The only thing the layout keeps between frames is the text measure**: a span of text that did
-  not change is not measured again (`Stats.text_measured` and `text_reused`), and one that does not
-  fit in `max_text_words` is measured again when split into lines, without being discarded.
+- **The layout keeps between frames only the text measure and the rectangles of the elements that
+  transition** (by id, those a style with `transition` asks for: game nodes, never the editor's
+  widgets). A span of text that did not change is not measured again (`Stats.text_measured` and
+  `text_reused`), and one that does not fit in `max_text_words` is measured again when split into
+  lines, without being discarded.
 - **Text goes into a box one way**: the text leaf, whose lines and height the layout computes in
   the frame that builds it ([text](references/ui.md#text)). No widget wraps text, counts its lines
   or reads last frame's width to do it.
@@ -151,8 +153,9 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
   `tree_controls_test.odin`, `game_controls_test.odin`, `tree_names_test.odin` (tokens, extends,
   states, layouts of styles, the first control of a page) and `retain_test.odin`. Paths:
   `tree_kinds_test.odin` and, in `engine/gui`, `gui_test.odin`.
-- Markdown: `markdown_test.odin` (height equal to what was built, each block, whole pills, click on
-  a link, code split by characters, code copy and a stable frame without allocating).
+- Markdown: `markdown_test.odin` (each case of the corpus at each width, each block, whole pills,
+  click on a link, code split by characters, code copy and a stable frame without allocating); the
+  height of a reply in the chat: `editor/ai_chat_test.odin`.
 - Cases with fine behavior: `password_test.odin`, `caret_test.odin` (the caret blinks and restarts
   without allocating), `number_test.odin`, `widgets_test.odin` (the height of running text) and
   `scroll_test.odin` (rows of different heights).

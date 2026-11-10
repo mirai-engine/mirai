@@ -62,7 +62,7 @@ Node_Style :: struct {
     program:[TREE_NAME_CAPACITY]u8 `mirai:"text"`, // a ui program that colors the fill
     program_values:[4]f32,                         // the first parameters of that program
     sounds:[Sound_Cue]base.Asset_Id,
-    transition:f32, // seconds its colors, its shadow and how it moves take to go from one state to the next
+    transition:f32, // seconds its colors, its shadow and how it moves take to go from one state to the next, and its rectangle to a new place or size
     move:[2]f32,    // drawn this far from where the layout put it; the layout and the pointer stay
     scale:f32,      // drawn this size around its center, as move; 0: 1
 }
@@ -795,14 +795,6 @@ tree_build_node :: proc(ctx:^Context,b:^Tree_Build,index:int,values:rawptr,copy:
         }
     } else if !playing && !visible && !room {return next}
     defer if animated {animated_end(ctx)}
-    // Width and Height take the place of its size: the layout around it follows.
-    sized:Node
-    if playing && value.set&{.Width,.Height}!={} {
-        sized=node^
-        if .Width in value.set {sized.layout.width=fixed(max(value.width,0))}
-        if .Height in value.set {sized.layout.height=fixed(max(value.height,0))}
-        node=&sized
-    }
     unseen:=room && !animated
     if unseen {ctx.invisible+=1}
     defer if unseen {ctx.invisible-=1}
@@ -849,7 +841,11 @@ tree_build_node :: proc(ctx:^Context,b:^Tree_Build,index:int,values:rawptr,copy:
         }
     }
     if bound.tint.bound {resolved.fill=bound_color(values,bound.tint)}
-    if base_style.transition>0 && style_transition(&state.look,&resolved,base_style.transition,ctx.input.dt) {b.animating=true}
+    if base_style.transition>0 {
+        if style_transition(&state.look,&resolved,base_style.transition,ctx.input.dt) {b.animating=true}
+        // Its rectangle goes to a new place or size over the same time.
+        if !layout_transition_ask(&ctx.layout,node_id,base_style.transition,ctx.stats.frame) {ctx.stats.dropped_transitions+=1}
+    }
     style:=&resolved
     // A style moves what its node draws, not where the layout or the pointer find it.
     moved:=false

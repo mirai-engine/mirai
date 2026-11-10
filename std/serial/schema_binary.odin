@@ -312,8 +312,8 @@ schema_import :: proc(link:^Schema_Import,type:Type_Index) -> Type_Index {
             field.name=schema_string(dst,from.name)
             field.label,field.unit=schema_string(dst,from.label),schema_string(dst,from.unit)
             field.description=schema_string(dst,from.description)
-            field.asset_kinds=schema_string(dst,from.asset_kinds)
-            whole&&=len(field.name)==len(from.name) && len(field.label)==len(from.label) && len(field.unit)==len(from.unit) && len(field.description)==len(from.description) && len(field.asset_kinds)==len(from.asset_kinds)
+            field.asset_kinds,field.was=schema_string(dst,from.asset_kinds),schema_string(dst,from.was)
+            whole&&=len(field.name)==len(from.name) && len(field.label)==len(from.label) && len(field.unit)==len(from.unit) && len(field.description)==len(from.description) && len(field.asset_kinds)==len(from.asset_kinds) && len(field.was)==len(from.was)
         }
         if !whole {
             for field in fields {schema_field_free(dst,field)}
@@ -365,9 +365,9 @@ schema_clone :: proc(dst:^Schema,src:^Schema,allocator:=context.allocator) -> Sc
         copied.name=schema_string(dst,field.name)
         copied.label,copied.unit=schema_string(dst,field.label),schema_string(dst,field.unit)
         copied.description=schema_string(dst,field.description)
-        copied.asset_kinds=schema_string(dst,field.asset_kinds)
+        copied.asset_kinds,copied.was=schema_string(dst,field.asset_kinds),schema_string(dst,field.was)
         append(&dst.fields,copied)
-        whole&&=len(copied.name)==len(field.name) && len(copied.label)==len(field.label) && len(copied.unit)==len(field.unit) && len(copied.description)==len(field.description) && len(copied.asset_kinds)==len(field.asset_kinds)
+        whole&&=len(copied.name)==len(field.name) && len(copied.label)==len(field.label) && len(copied.unit)==len(field.unit) && len(copied.description)==len(field.description) && len(copied.asset_kinds)==len(field.asset_kinds) && len(copied.was)==len(field.was)
     }
     for choice in src.choices {
         name:=schema_string(dst,choice.name)

@@ -103,19 +103,6 @@ ai_report_changes :: proc(task:^Ai_Task) -> int {
     return task!=nil && ai_task_reviewable(task)?ai_review_count(task):0
 }
 
-@(private)
-ai_report_height :: proc(s:^Session,text:string,width,size:f32) -> f32 {
-    m:=s.ai;ctx:=s.gui.ctx
-    id:=ai_report_id(text)
-    height:=2*AI_REPORT_PAD_Y+AI_REPORT_HEAD+AI_REPORT_GAP+AI_REPORT_ROW
-    if answer:=ai_report_answer(m,id);answer!="" {height+=AI_REPORT_GAP+ui.markdown_height(ctx,answer,width-2*AI_REPORT_PAD_X,ai_markdown_style(s,size))}
-    if count:=ai_report_changes(ai_task_find(m,id));count>0 && m.report_open==id {
-        visible:=min(count,AI_CHANGE_ROWS)
-        height+=AI_REPORT_GAP+f32(visible)*AI_CHANGE_ROW+f32(visible-1)
-    }
-    return height
-}
-
 // Opens the view of a unit, which may no longer be in memory.
 @(private)
 ai_unit_open :: proc(s:^Session,id:int) {

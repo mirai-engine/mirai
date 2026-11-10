@@ -68,5 +68,8 @@ field of `Audio_Volumes` ([audio](../audio.md)); language and interface scale ar
 - `settings.set` with `"layer":"engine"` changes every project on this machine.
 - A fixed `Graphics_Settings` in `settings.mirai` of the project hides the machine's default for
   the GPU; the player's own options still override it. Leave quality to the player.
+- Traced reflections are off unless `Graphics_Settings.reflections` chooses them, and no preset
+  turns them on: `Traced` shares a ray among 2x2 pixels on rough surfaces, `Detailed` traces every
+  pixel. Without them smooth surfaces reflect the probe volume.
 - A settings file names no preset: `Graphics_Settings` holds the fields of one, which
   `graphics_preset` of `settings.set` or `render.graphics_preset_apply` write.
