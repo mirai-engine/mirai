@@ -162,6 +162,43 @@ style_rules_resolve_tokens_variant_and_state_precedence :: proc(t:^testing.T) {
 }
 
 @(test)
+a_tree_keeps_the_rules_of_each_style_in_the_order_they_resolve :: proc(t:^testing.T) {
+    fill :: proc(style:u16,variant:string,states:Style_States,red:u8) -> Tree_Style_Variant {
+        return tree_variant_record(style,variant,states,{fields={.Fill},values={fill={red,0,0,255}}})
+    }
+    texts:=make([dynamic]u8,context.temp_allocator)
+    nodes:=[1]Tree_Node{tree_node_record(&texts,-1,{kind=.Box,name="panel"})}
+    styles:=[3]Node_Style{{},{fill={1,0,0,255}},{fill={2,0,0,255}}}
+    table:=[?]Tree_Style_Variant{
+        fill(2,"",{.Pressed},10),fill(1,"big",{.Hovered},11),fill(2,"",{},12),fill(1,"",{.Hovered},13),
+        fill(2,"big",{},14),fill(1,"",{.Selected},15),fill(2,"",{.Pressed},16),fill(1,"",{.Disabled},17),
+    }
+    tree:Widget_Tree
+    testing.expect(t,tree_load(&tree,{text=texts[:],nodes=nodes[:],styles=styles[:],variants=table[:]},{}))
+    defer tree_destroy(&tree)
+    unordered:=make([]Style_Variant,len(table),context.temp_allocator)
+    for &rule,i in table {unordered[i]={style=rule.style,variant=style_variant(serial.text_field(rule.variant[:])),states=rule.states,patch=rule.patch}}
+    theme:=THEME_EDITOR
+    kept:=0
+    for style in 0..<u16(len(styles)) {
+        rules:=tree_style_rules(&tree,style)
+        kept+=len(rules)
+        for rule,i in rules {
+            testing.expect_value(t,rule.style,style)
+            if i>0 {testing.expect(t,style_rule_order(rules[i-1].states,rules[i-1].variant)<=style_rule_order(rule.states,rule.variant),"a rule comes after those it wins over")}
+        }
+        for variant in ([2]u64{0,style_variant("big")}) {
+            for bits in 0..=STYLE_STATES_NAMED {
+                states:=transmute(Style_States)bits
+                testing.expect_value(t,style_resolve(&theme,styles[style],rules,style,variant,states).fill,style_resolve(&theme,styles[style],unordered,style,variant,states).fill)
+            }
+        }
+    }
+    testing.expect_value(t,kept,len(table))
+    testing.expect_value(t,style_resolve(&theme,styles[2],tree_style_rules(&tree,2),2,0,{.Pressed}).fill,Color{16,0,0,255})
+}
+
+@(test)
 button_appearance_draws_its_gradient_border_shadow_and_disabled_variant :: proc(t:^testing.T) {
     Scene :: struct {disabled:bool,clicks:int}
     scene:Scene

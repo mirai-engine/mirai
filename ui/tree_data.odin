@@ -319,8 +319,9 @@ tree_fill :: proc(tree:^Widget_Tree,data:Tree_Data,resources:Tree_Resources) -> 
         if int(rule.style)>=max(len(data.styles),1) || !tree_style_finite(rule.patch.values) || len(serial.text_field(rule.variant[:]))>=len(rule.variant) || !tree_style_patch_valid(rule.patch) || (transmute(u8)rule.states)&~STYLE_STATES_NAMED!=0 {return false}
         patch:=rule.patch
         if !font_of(&patch.values.text.font,resources.fonts) {return false}
-        if !tree_style_variant(tree,{style=rule.style,variant=style_variant(serial.text_field(rule.variant[:])),states=rule.states,patch=patch}) {return false}
+        if !tree_rule_add(tree,{style=rule.style,variant=style_variant(serial.text_field(rule.variant[:])),states=rule.states,patch=patch}) {return false}
     }
+    tree_rules_order(tree)
     for &image,i in data.images {
         if !tree_finite(image.uv.x,image.uv.y,image.uv.w,image.uv.h) || len(serial.text_field(image.name[:]))>=len(image.name) {return false}
         for side in 0..<4 {if !tree_finite(image.border[side],image.border_uv[side]) {return false}}
