@@ -2,6 +2,7 @@ package mirai_render
 
 import "core:math/linalg"
 import "mirai:rhi"
+import mm "mirai:std/math"
 
 // Blended surfaces. The nearest ones of each pixel are layers: a small
 // G-buffer each, lit by a compute pass once per pixel with what glass needs
@@ -160,9 +161,10 @@ glass_medium :: proc(r: ^Renderer, camera: Vec3) -> (medium: u32) {
 // occlusion too and sizes the compute passes; this spares the rest.
 @(private)
 glass_in_frustum :: proc(r: ^Renderer, planes: [6]Vec4) -> bool {
+	frustum := transmute(mm.Frustum)planes
 	for entry in r.scene.translucent {
 		inst := &r.scene.instances[entry.instance]
-		if bounds_in_frustum(inst.bounds_min.xyz, inst.bounds_max.xyz, planes) {return true}
+		if mm.frustum_overlaps_aabb(frustum, {inst.bounds_min.xyz, inst.bounds_max.xyz}) {return true}
 	}
 	return false
 }

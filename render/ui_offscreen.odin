@@ -4,6 +4,7 @@ import "core:math/linalg"
 import "core:mem"
 import "mirai:asset"
 import "mirai:rhi"
+import mm "mirai:std/math"
 
 // What the UI of a game asks of the renderer besides the screen and the
 // panels of the scene: world panels drawn into textures that materials show
@@ -428,7 +429,7 @@ mesh_ray :: proc(r:^Renderer,mesh:Mesh_Handle,transform:Mat4,origin,direction:Ve
                     corners:=asset.cluster_triangle(g.triangles,c,t)
                     a,b,d=posed_position(skin,a,first+u32(corners[0])),posed_position(skin,b,first+u32(corners[1])),posed_position(skin,d,first+u32(corners[2]))
                 }
-                if hit,_,_:=ray_triangle_barycentric(from,along,a,b-a,d-a);hit>0 && hit<distance {distance,primitive=hit,int(u32(ordinal)<<PRIMITIVE_TRIANGLE_BITS|t)}
+                if hit,_,crossed:=mm.ray_triangle({from,along},{a,b,d});crossed && hit>0 && hit<distance {distance,primitive=hit,int(u32(ordinal)<<PRIMITIVE_TRIANGLE_BITS|t)}
             }
         }
     }
@@ -443,8 +444,8 @@ mesh_ray :: proc(r:^Renderer,mesh:Mesh_Handle,transform:Mat4,origin,direction:Ve
         first:=p.clusters[u32(primitive)>>PRIMITIVE_TRIANGLE_BITS].vertex_first
         a,b,d=posed_position(skin,a,first+u32(corners[0])),posed_position(skin,b,first+u32(corners[1])),posed_position(skin,d,first+u32(corners[2]))
     }
-    _,u,v:=ray_triangle_barycentric(from,along,a,b-a,d-a)
-    return distance,va.uv*(1-u-v)+vb.uv*u+vc.uv*v,true
+    _,weights,_:=mm.ray_triangle({from,along},{a,b,d})
+    return distance,va.uv*(1-weights.x-weights.y)+vb.uv*weights.x+vc.uv*weights.y,true
 }
 
 // Where a vertex of a pose is in the next frame: at rest, with what its

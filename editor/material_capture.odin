@@ -8,6 +8,7 @@ import "mirai:host"
 import gpu "mirai:render"
 import "mirai:std/base"
 import "mirai:std/geom"
+import mm "mirai:std/math"
 import "mirai:std/serial"
 
 // material.preview.capture: a material on the sphere of the studio, the one
@@ -104,11 +105,7 @@ view_value :: proc(view:Material_View,values:[gpu.Thumbnail_Target][][4]f32,pixe
 @(private)
 view_color :: proc(view:Material_View,values:[gpu.Thumbnail_Target][][4]f32,display:[]u8,pixel:int) -> [4]u8 {
     if values[.Lit][pixel].w<0.5 {return {28,28,30,255}}
-    encode :: proc(v:f32) -> u8 {
-        c:=clamp(v,0,1)
-        srgb:=c<=0.0031308?12.92*c:1.055*math.pow(c,1/2.4)-0.055
-        return u8(clamp(srgb*255+0.5,0,255))
-    }
+    encode :: proc(v:f32) -> u8 {return u8(clamp(mm.linear_to_srgb(clamp(v,0,1))*255+0.5,0,255))}
     v:=view_value(view,values,pixel)
     for c in v {if !rpc_finite(c) {return {255,0,255,255}}}
     switch view {
