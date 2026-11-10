@@ -2,6 +2,7 @@ package multiplayer
 
 import "core:testing"
 import "mirai:core"
+import "mirai:engine/scene"
 import "mirai:host"
 import wire "mirai:net"
 
@@ -67,4 +68,31 @@ components_turned_off_on_the_server_turn_off_on_the_client :: proc(t:^testing.T)
         server_publish(&sessions[0],core.world_ref(server,&info),&outbox,u32(tick))
     }
     testing.expect_value(t,problems[0].count,0)
+}
+
+// A replica made from a prefab this client has not read is off until the
+// prefab fills it (scene.Prefab_Pending), whatever the server says, and
+// follows the server once it is filled.
+@(test)
+a_replica_that_waits_for_its_prefab_stays_off_until_it_is_filled :: proc(t:^testing.T) {
+    info,described:=net_test_info(t)
+    if !described {return}
+    defer core.test_info_destroy(&info)
+    w:Net_Test_World
+    net_test_init(&w,&info)
+    defer core.world_destroy(&info,.World,&w)
+    ref:=core.world_ref(&w,&info)
+    e:=net_test_body(&w,&info,1)
+    core.add(&w.disabled,e,core.Disabled{})
+    core.add(&w.pendings,e,scene.Prefab_Pending{prefab={0x5a,9}})
+    core.world_settle(ref)
+    r:=Replica{entity=e}
+    replica_turn(ref,&r)
+    core.world_settle(ref)
+    testing.expect(t,core.raw_row(core.raw(&w.disabled),e)>=0,"the server has it on, and it waits for its prefab")
+    core.remove(&w.pendings,e)
+    core.world_settle(ref)
+    replica_turn(ref,&r)
+    core.world_settle(ref)
+    testing.expect(t,core.raw_row(core.raw(&w.disabled),e)<0,"filled, it follows the server")
 }
