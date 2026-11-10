@@ -126,9 +126,9 @@ a_write_matches_by_id_name_and_place_and_inspect_gives_back_what_it_wrote :: pro
     for id in ids {testing.expect(t,api_entity(w,id)!=core.NONE)}
     testing.expect(t,api_entity(w,d_id)==core.NONE)
     testing.expect_value(t,write_child_names(f,root),"B,A2,C,New")
-    lamp,_:=core.get(core.read(&f.world.lamps),a)
+    lamp,_:=core.get(&f.world.lamps,a)
     testing.expect_value(t,lamp,Prefab_Test_Lamp{intensity=5,uses=7})
-    testing.expect(t,!core.has(core.read(&f.world.lamps),c))
+    testing.expect(t,!core.has(&f.world.lamps,c))
 
     tree,entities:=write_tree(t,f,ids[0])
     testing.expect_value(t,write_names(tree),"B,A2,C,New")
@@ -151,7 +151,7 @@ a_write_matches_by_id_name_and_place_and_inspect_gives_back_what_it_wrote :: pro
     testing.expect(t,history.undo(&f.edits,w,&f.selection))
     core.world_settle(w)
     testing.expect_value(t,write_child_names(f,root),"A,B,C,D")
-    testing.expect(t,core.has(core.read(&f.world.lamps),api_entity(w,ids[3])))
+    testing.expect(t,core.has(&f.world.lamps,api_entity(w,ids[3])))
 
     // Without root the document makes a new root.
     result,failure,ok=write_scene(f,`{"entities":[{"name":"Level","children":[{"name":"Floor","scale":[10,1,10]}]}]}`)
@@ -258,7 +258,7 @@ a_write_places_a_prefab_as_a_linked_instance_with_what_the_document_says_of_it :
     testing.expect(t,linked && link.root && link.asset==id && entity_name(w,north)=="North")
     testing.expect_value(t,entity_local(w,north).position,[3]f32{4,0,0})
     member,is_member:=prefab_link_of(w,lamp)
-    value,_:=core.get(core.read(&f.world.lamps),lamp)
+    value,_:=core.get(&f.world.lamps,lamp)
     testing.expect(t,is_member && !member.root && member.instance==link.instance && value.intensity==9,"What the document says of a member, by its name, the member holds")
     testing.expect(t,prefab_test_has(f,north,lamp,"Prefab_Test_Lamp",.Field,"intensity"),"and the instance holds it on its own")
     held,_:=prefab_overrides_of(s,north)
@@ -285,7 +285,7 @@ a_write_places_a_prefab_as_a_linked_instance_with_what_the_document_says_of_it :
     // Revert gives the member back what the prefab has.
     reverted,revert_error:=prefab_revert(s,north,nil,true)
     _,lamp=placed_lamp(f,level_id)
-    value,_=core.get(core.read(&f.world.lamps),lamp)
+    value,_=core.get(&f.world.lamps,lamp)
     testing.expect(t,revert_error==.None && reverted>0 && value.intensity==2 && value.range==3,fmt.tprintf("%v %d %v",revert_error,reverted,value))
 
     // Without root the instance is the new root, with what the document says of it.
@@ -359,7 +359,7 @@ a_write_that_fails_says_where_in_the_document_and_changes_nothing :: proc(t:^tes
         testing.expect_value(t,len(f.edits.steps),steps)
         testing.expect_value(t,write_child_names(f,root),"A,B")
     }
-    lamp,_:=core.get(core.read(&f.world.lamps),a)
+    lamp,_:=core.get(&f.world.lamps,a)
     testing.expect_value(t,lamp.intensity,f32(2))
 }
 
@@ -379,7 +379,7 @@ a_preset_gives_an_entity_of_a_write_the_components_and_place_it_leaves_out :: pr
         for child in entity_children(w,root) {
             if entity_name(w,child)==name {e=child}
         }
-        value,_=core.get(core.read(&f.world.point_lights),e)
+        value,_=core.get(&f.world.point_lights,e)
         return
     }
     document :: proc(root:base.Entity_Id,plain:string) -> string {

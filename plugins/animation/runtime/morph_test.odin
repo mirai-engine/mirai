@@ -168,7 +168,7 @@ animation_morph_follows_its_mesh_and_its_weights_and_reads_the_curves_of_its_rig
     // A changed weight binds again without memory and without asking for the mesh.
     cache.rigs[0].checked=0
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator();app.allocator=context.allocator
-    morph_weight_set(core.get(&w.configs,entity),"Smile",-.5)
+    morph_weight_set(core.edit(&w.configs,entity),"Smile",-.5)
     morph_test_step(&w,&playback,&cache,&state,&app)
     morph_test_step(&w,&playback,&cache,&state,&app)
     context=saved;app.allocator=context.allocator

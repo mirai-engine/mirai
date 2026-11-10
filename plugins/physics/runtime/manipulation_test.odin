@@ -55,7 +55,7 @@ physics_test_box :: proc(f:^Physics_Test,position,half:[3]f32,rigid:Maybe(Rigid_
 
 @(private)
 physics_test_pose :: proc(f:^Physics_Test,e:core.Entity) -> core.Transform {
-    pose,_:=core.get(core.read(&f.transforms),e)
+    pose,_:=core.get(&f.transforms,e)
     return pose
 }
 
@@ -112,7 +112,7 @@ held_dynamic_bodies_restore_mass_gravity_and_copy_their_manipulation_state :: pr
     manipulation_target(&f.requests,box,{2,3,0})
     manipulation_end(&f.requests,box)
     physics_test_step(&f)
-    actual_rigid,_:=core.get(core.read(&f.rigids),box)
+    actual_rigid,_:=core.get(&f.rigids,box)
     testing.expect_value(t,actual_rigid,rigid)
     testing.expect_value(t,sim.body_type(&f.state.world,body),Body_Type.Dynamic)
     testing.expect_value(t,sim.body_mass(&f.state.world,body),f32(5))

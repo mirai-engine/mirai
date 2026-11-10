@@ -410,18 +410,18 @@ a_mode_needs_its_component :: proc(t:^testing.T) {
     core.test_world_settle(&f.w)
     set_mode(&f.requests,flier,MODE_FLYING)
     loco_step_test_run(&f,true)
-    walking,_:=core.get(core.read(&f.characters),walker)
-    flying,_:=core.get(core.read(&f.characters),flier)
+    walking,_:=core.get(&f.characters,walker)
+    flying,_:=core.get(&f.characters,flier)
     testing.expect(t,walking.mode!=MODE_FLYING,"without a Fly it does not fly")
     testing.expect_value(t,flying.mode,MODE_FLYING)
     testing.expect(t,core.problem_find(&f.problems,walker,"locomotion.mode_component")!=nil)
     set_mode(&f.requests,walker,MODE_FLYING)
     loco_step_test_run(&f,true)
-    walking,_=core.get(core.read(&f.characters),walker)
+    walking,_=core.get(&f.characters,walker)
     testing.expect(t,walking.mode!=MODE_FLYING,"asking for flying without a Fly is refused")
     core.test_world_settle(&f.w)
     testing.expect(t,core.has(&f.inputs,walker) && core.has(&f.moves,walker),"playing adds its Move_Input and its Character_Move")
-    looking,_:=core.get(core.read(&f.inputs),walker)
+    looking,_:=core.get(&f.inputs,walker)
     testing.expectf(t,abs(looking.look_yaw-mm.angle_wrap(2.5))<1e-4,"it looks where its Transform turns its body, not %v",looking.look_yaw)
 }
 
@@ -436,7 +436,7 @@ a_requested_gravity_scale_holds_until_asked_again :: proc(t:^testing.T) {
     core.add(&f.characters,walker,character_default())
     core.add(&f.walks,walker,WALK_DEFAULT)
     core.test_world_settle(&f.w)
-    scale_of :: proc(f:^Loco_Step_Test,e:core.Entity) -> f32 {c,_:=core.get(core.read(&f.characters),e);return c.gravity_scale}
+    scale_of :: proc(f:^Loco_Step_Test,e:core.Entity) -> f32 {c,_:=core.get(&f.characters,e);return c.gravity_scale}
     testing.expect_value(t,scale_of(&f,walker),f32(1))
     set_gravity_scale(&f.requests,walker,0.4)
     loco_step_test_run(&f,false)
@@ -635,7 +635,7 @@ a_place_moves_a_character_locked_along_z_to_another_plane_where_it_stays :: proc
     for _ in 0..<60 {physics_test_step(&f)}
     after:=physics_test_pose(&f,e).position
     testing.expectf(t,abs(after.z-3)<1e-3 && after.x>at.x+1.5,"placed at z 3, it is at %v",after)
-    core.get(&f.characters,e).locks={}
+    core.edit(&f.characters,e).locks={}
     for _ in 0..<30 {physics_test_step(&f)}
     free:=physics_test_pose(&f,e).position
     testing.expectf(t,free.z>3.5,"without the lock it walks along Z again: %v",free)

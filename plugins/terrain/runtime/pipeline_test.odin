@@ -145,13 +145,13 @@ chunks_without_a_slot_for_their_collider_still_show_their_ground_and_the_nearest
     testing.expect_value(t,len(w.colliders.values),6)
     // A terrain that does not collide shows all of it.
     core.remove(&w.colliders,holder);core.test_world_settle(&w.w)
-    core.get(&w.terrains,owner).solid=false
+    core.edit(&w.terrains,owner).solid=false
     for _ in 0..<2 {pipeline_tick(&w,&resident,&app,view=view)}
     testing.expect_value(t,len(w.statics.values),16)
     testing.expect_value(t,len(w.colliders.values),0)
 
     // A collision distance past what the slots admit takes no more: the nearest still collide.
-    core.get(&w.terrains,owner).solid=true
+    core.edit(&w.terrains,owner).solid=true
     problems:=w.problems.count
     for _ in 0..<4 {pipeline_tick(&w,&resident,&app,Terrain_Settings{collision_distance=1000,lod_distance=-1},view)}
     testing.expect_value(t,len(w.statics.values),16)

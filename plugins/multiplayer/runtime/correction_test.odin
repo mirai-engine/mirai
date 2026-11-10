@@ -86,7 +86,7 @@ correction_body :: proc(w:^Net_Test_World,id:base.Entity_Id,position:[3]f32) -> 
 correction_world :: proc(w:^Net_Test_World,info:^core.World_Info) -> (bodies:[CORRECTION_BODIES]core.Entity) {
     net_test_init(w,info)
     w.settings.bodies,w.settings.shapes,w.settings.contacts=32,32,256
-    core.at(&w.gravities,0).acceleration=9.81
+    core.edit_at(&w.gravities,0).acceleration=9.81
     ground:=core.create(&w.entities)
     core.add(&w.transforms,ground,core.Transform{position={0,-0.5,0},rotation=1,scale={1,1,1}})
     core.add(&w.rigids,ground,phys.RIGID_BODY_STATIC)
@@ -183,7 +183,7 @@ correction_run :: proc(t:^testing.T,settings:Net_Settings,link:Correction_Link,s
         result.frame_resimulated=max(result.frame_resimulated,int(sessions[1].stats.resimulated-before))
         core.value_free(&server_events,type_info_of(Net_Events))
         core.value_free(&client_events,type_info_of(Net_Events))
-        core.get(&worlds[0].values,bodies[0][CORRECTION_BODIES-1]).force=correction_force(tick)
+        core.edit(&worlds[0].values,bodies[0][CORRECTION_BODIES-1]).force=correction_force(tick)
         client_tick:=tick+lead
         worlds[1].input.keys_down=correction_keys(client_tick)
         for &world,index in worlds {
@@ -192,12 +192,12 @@ correction_run :: proc(t:^testing.T,settings:Net_Settings,link:Correction_Link,s
             net_test_fixed_with(&world,&shares[index],&apps[index])
         }
         for e,k in bodies[1] {
-            local,_:=core.get(core.read(&worlds[1].transforms),e)
+            local,_:=core.get(&worlds[1].transforms,e)
             shown[client_tick%len(shown)][k]=local.position
         }
         if tick>lead+120 && sessions[1].status==.Connected {
             for e,k in bodies[0] {
-                local,_:=core.get(core.read(&worlds[0].transforms),e)
+                local,_:=core.get(&worlds[0].transforms,e)
                 append(&errors,linalg.length(local.position-shown[tick%len(shown)][k]))
             }
         }
@@ -216,8 +216,8 @@ correction_run :: proc(t:^testing.T,settings:Net_Settings,link:Correction_Link,s
         result.shown_max=errors[len(errors)-1]
     }
     for k in 0..<CORRECTION_BODIES {
-        server_pose,_:=core.get(core.read(&worlds[0].transforms),bodies[0][k])
-        client_pose,_:=core.get(core.read(&worlds[1].transforms),bodies[1][k])
+        server_pose,_:=core.get(&worlds[0].transforms,bodies[0][k])
+        client_pose,_:=core.get(&worlds[1].transforms,bodies[1][k])
         result.converged=max(result.converged,linalg.length(server_pose.position-client_pose.position))
     }
     return
@@ -338,7 +338,7 @@ correction_fixture_send :: proc(f:^Correction_Fixture,tick:u32,pose:Pose,motion:
 
 @(private)
 correction_fixture_position :: proc(f:^Correction_Fixture) -> [3]f32 {
-    local,_:=core.get(core.read(&f.world.transforms),f.e)
+    local,_:=core.get(&f.world.transforms,f.e)
     return local.position
 }
 
@@ -426,7 +426,7 @@ an_error_too_deep_for_the_frame_is_closed_over_the_next_ticks_without_a_teleport
         expected.time.tick=u64(tick)
         net_test_physics(&expected,&reference,&f.app)
     }
-    wanted,_:=core.get(core.read(&expected.transforms),f.e)
+    wanted,_:=core.get(&expected.transforms,f.e)
     got:=correction_fixture_position(&f)
     testing.expectf(t,linalg.length(got-(wanted.position+{0,0.1,0}))<0.005,"after a second the body is at %v, and the server has it at %v",got,wanted.position+{0,0.1,0})
 }
@@ -461,8 +461,8 @@ an_error_of_a_body_out_of_reach_is_closed_over_the_next_ticks_and_its_records_fo
     // Later states of the server agree with what is being closed.
     correction_fixture_send(&f,8,{id=1,position=at_eight.position+offset,rotation=at_eight.rotation,scale=at_eight.scale},{at_eight.linear,at_eight.angular})
     client_reconcile(&f.session,core.world_ref(&f.world,&f.info),&f.app,1.0/60)
-    eleventh,_:=core.get(core.read(&expected.transforms),f.e)
-    motion,_:=core.get(core.read(&expected.bodies),f.e)
+    eleventh,_:=core.get(&expected.transforms,f.e)
+    motion,_:=core.get(&expected.bodies,f.e)
     correction_fixture_send(&f,11,{id=1,position=eleventh.position+offset,rotation=eleventh.rotation,scale=eleventh.scale},{motion.linear,motion.angular})
     client_reconcile(&f.session,core.world_ref(&f.world,&f.info),&f.app,1.0/60)
     testing.expect_value(t,f.session.stats.blended,u64(1))

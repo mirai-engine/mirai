@@ -245,7 +245,7 @@ zombie_bite :: proc(a:^ai.Act(Zombie_Act)) -> ai.Status {
     subject,_,_:=arena_seen(w,w.entity)
     if a.phase==.Enter {
         if subject==core.NONE || !ai.token_take(a,u64(subject),ZOMBIE_BITERS) {return .Failure}
-        if z:=core.get(w.zombies,w.entity);z!=nil {z.bites+=1}
+        if z:=core.edit(w.zombies,w.entity);z!=nil {z.bites+=1}
         behavior.present_look(w,subject)
     }
     return ai.after(a,0.8)
@@ -272,7 +272,7 @@ SOLDIER_ERRAND :: f32(0.8) // what going for a smart object counts once begun: o
 soldier_think :: proc(t:^ai.Think(Soldier_Act)) {
     w:=(^Arena_Tick)(t.user)
     e:=w.entity
-    s:=core.get(w.soldiers,e)
+    s:=core.edit(w.soldiers,e)
     if s==nil {return}
     user:=arena_user(w,e)
     here:=arena_position(w,e)
@@ -304,7 +304,7 @@ soldier_advance :: proc(a:^ai.Act(Soldier_Act)) -> ai.Status {
     _,position,confidence:=arena_seen(w,w.entity)
     if confidence<=0 {
         ahead:=f32(-1)
-        if s:=core.get(w.soldiers,w.entity);s!=nil && s.ahead!=0 {ahead=s.ahead}
+        if s:=core.edit(w.soldiers,w.entity);s!=nil && s.ahead!=0 {ahead=s.ahead}
         position=arena_position(w,w.entity)+{0,0,8*ahead}
     }
     return behavior.move_act(w,a,position)
@@ -358,7 +358,7 @@ soldier_fire :: proc(a:^ai.Act(Soldier_Act)) -> ai.Status {
     w:=(^Arena_Tick)(a.user)
     e:=w.entity
     if a.phase==.Exit {nav.nav_look_along(w.requests,e);return .Success}
-    s:=core.get(w.soldiers,e)
+    s:=core.edit(w.soldiers,e)
     subject,position,confidence:=arena_seen(w,e)
     if s==nil || subject==core.NONE || confidence<SOLDIER_SURE {return .Failure}
     if a.phase==.Enter {
@@ -377,13 +377,13 @@ soldier_fire :: proc(a:^ai.Act(Soldier_Act)) -> ai.Status {
 // A round from e at what it sees: a hit takes health from a soldier, down to 10.
 @(private)
 arena_shot :: proc(w:^Arena_Tick,e,subject:core.Entity,position:mm.Vec3) {
-    s:=core.get(w.soldiers,e)
+    s:=core.edit(w.soldiers,e)
     if s!=nil {s.shots+=1}
     eye:=arena_position(w,e)+{0,1.5,0}
     to:=position+{0,1.2,0}-eye
     if hit,ok:=phys.raycast(w.physics,eye,linalg.normalize0(to),linalg.length(to)+1,e);ok && hit.entity==subject {
         if s!=nil {s.hits+=1}
-        if other:=core.get(w.soldiers,subject);other!=nil {
+        if other:=core.edit(w.soldiers,subject);other!=nil {
             other.hit+=1
             other.health=max(other.health-12,10)
         }
@@ -393,7 +393,7 @@ arena_shot :: proc(w:^Arena_Tick,e,subject:core.Entity,position:mm.Vec3) {
 @(private)
 soldier_reload :: proc(a:^ai.Act(Soldier_Act)) -> ai.Status {
     w:=(^Arena_Tick)(a.user)
-    s:=core.get(w.soldiers,w.entity)
+    s:=core.edit(w.soldiers,w.entity)
     if a.phase==.Exit {return .Success}
     if s==nil {return .Failure}
     if ai.elapsed(a)<1.5 {return .Running}
@@ -411,7 +411,7 @@ soldier_supply :: proc(a:^ai.Act(Soldier_Act)) -> ai.Status {
     status,found:=behavior.offer_act(w,&w.smart,a,use,arena_user(w,w.entity),60,1 if use==USE_AMMO else 2)
     if a.phase==.Enter {ai.commit(a,SOLDIER_ERRAND)}
     if a.phase==.Exit || status!=.Success {return status}
-    if s:=core.get(w.soldiers,w.entity);s!=nil {
+    if s:=core.edit(w.soldiers,w.entity);s!=nil {
         if use==USE_AMMO {s.reserve+=2*SOLDIER_MAG} else {s.health=100}
     }
     behavior.smart_used(w.uses,found)
@@ -477,7 +477,7 @@ BOSS_DEAD :: 100
 @(private)
 boss_think :: proc(t:^ai.Think(Boss_Act)) {
     w:=(^Arena_Tick)(t.user)
-    b:=core.get(w.bosses,w.entity)
+    b:=core.edit(w.bosses,w.entity)
     if b==nil {return}
     alive:=b.health>0
     first:=b.health>BOSS_HEALTH/2
@@ -495,7 +495,7 @@ boss_think :: proc(t:^ai.Think(Boss_Act)) {
 @(private)
 boss_attack :: proc(a:^ai.Act(Boss_Act)) -> ai.Status {
     w:=(^Arena_Tick)(a.user)
-    b:=core.get(w.bosses,w.entity)
+    b:=core.edit(w.bosses,w.entity)
     if b==nil {return .Failure if a.phase!=.Exit else .Success}
     if a.action==.Charge {
         if a.phase==.Enter {
@@ -527,7 +527,7 @@ boss_rage :: proc(a:^ai.Act(Boss_Act)) -> ai.Status {
     w:=(^Arena_Tick)(a.user)
     if a.phase==.Exit {return .Success}
     if ai.entering(a) {
-        if b:=core.get(w.bosses,w.entity);b!=nil && linalg.length(arena_position(w,b.hero)-arena_position(w,w.entity))<4 {a.memory[0]=1}
+        if b,ok:=core.get(w.bosses,w.entity);ok && linalg.length(arena_position(w,b.hero)-arena_position(w,w.entity))<4 {a.memory[0]=1}
     }
     if a.memory[0]==1 {return ai.steps(a,.Slam,.Slam,.Roar)}
     return ai.steps(a,.Charge,.Slam)
@@ -539,7 +539,7 @@ boss_stunned :: proc(a:^ai.Act(Boss_Act)) -> ai.Status {
     w:=(^Arena_Tick)(a.user)
     if ai.entering(a) {
         ai.commit(a,BOSS_STUNNED)
-        if b:=core.get(w.bosses,w.entity);b!=nil {b.staggered=false}
+        if b:=core.edit(w.bosses,w.entity);b!=nil {b.staggered=false}
     }
     return ai.after(a,1.5)
 }
@@ -548,8 +548,8 @@ boss_stunned :: proc(a:^ai.Act(Boss_Act)) -> ai.Status {
 boss_dead :: proc(a:^ai.Act(Boss_Act)) -> ai.Status {
     w:=(^Arena_Tick)(a.user)
     if ai.entering(a) {ai.commit(a,BOSS_DEAD)}
-    b:=core.get(w.bosses,w.entity)
-    return .Success if b==nil || b.health>0 else .Running
+    b,ok:=core.get(w.bosses,w.entity)
+    return .Success if !ok || b.health>0 else .Running
 }
 
 @(private)
@@ -575,7 +575,7 @@ guard_think :: proc(t:^ai.Think(Guard_Act)) {
 @(private)
 guard_patrol :: proc(a:^ai.Act(Guard_Act)) -> ai.Status {
     w:=(^Arena_Tick)(a.user)
-    patrol:=core.get(w.patrols,w.entity)
+    patrol:=core.edit(w.patrols,w.entity)
     if patrol==nil || a.phase==.Exit {return .Success if a.phase==.Exit else .Failure}
     if a.phase==.Enter {
         nav.nav_move_to(w.requests,w.entity,patrol.points[patrol.next])
@@ -607,7 +607,7 @@ arena_build :: proc(
 ) {
     if !time.playing {return}
     for row in 0..<core.count(arenas) {
-        a:=core.at(arenas,row)
+        a:=core.edit_at(arenas,row)
         if a.built {continue}
         a.built=true
         e:=core.entity_at(arenas,row)
@@ -822,7 +822,7 @@ horde_waves :: proc(
 ) {
     if !time.playing || time.dt<=0 {return}
     for row in 0..<core.count(hordes) {
-        h:=core.at(hordes,row)
+        h:=core.edit_at(hordes,row)
         e:=core.entity_at(hordes,row)
         arena,built:=core.get(arenas,e)
         if !built || !arena.built || arena.kind!=.Horde {continue}
@@ -1033,7 +1033,7 @@ arena_targets :: proc(
     round:=[4]mm.Vec3{{-22,0,-22},{22,0,-22},{22,0,22},{-22,0,22}}
     for row in 0..<core.count(targets) {
         e:=core.entity_at(targets,row)
-        t:=core.at(targets,row)
+        t:=core.edit_at(targets,row)
         p,ok:=core.get(paths,e)
         hunting:=false
         for b in bosses.table.values[:core.count(bosses)] {hunting|=b.hero==e}
@@ -1070,7 +1070,7 @@ arena_think :: proc(
     }
     for row in 0..<core.count(bosses) {
         e:=core.entity_at(bosses,row)
-        b:=core.at(bosses,row)
+        b:=core.edit_at(bosses,row)
         if b.health<=0 {
             if b.rises==0 {b.rises=core.deadline(time,3);b.deaths+=1}
             if core.due(time,b.rises) {b.health,b.rises=BOSS_HEALTH,0}

@@ -182,7 +182,7 @@ a_viewer_shows_the_shots_of_a_clip_while_it_plays :: proc(t:^testing.T) {
 
     // On an end that does not decide the timeline, the clip is asked to go where the anchor says.
     core.add(&w.remotes,timeline,core.Remote{});core.test_world_settle(&w)
-    remote:=core.get(&w.cinematics,timeline)
+    remote:=core.edit(&w.cinematics,timeline)
     remote.status,remote.anchor_tick,remote.anchor_time,remote.anchor_rate=.Playing,10,.25,1
     clear(&w.requests.timeline.items)
     cinematic_follow(core.read(&w.cinematics),core.read(&w.animations),core.ref(&w.playback),&w.requests,{dt=DT,tick=11,playing=true},core.read(&w.remotes))

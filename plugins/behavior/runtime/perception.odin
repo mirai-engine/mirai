@@ -106,7 +106,7 @@ Perception_Events :: struct {
 @(storage)
 Perceiving :: struct {
     next:u32,        // the perceiver that looks first in the next tick
-    layouts:[2]u64,  // of the perceivers and the perceptions when the perceivers last got their Perception
+    shapes:[2]core.Shape, // the rows of the perceivers and the perceptions when the perceivers last got their Perception
     remembering:u32, // perceivers, on or off, that remember something
 }
 
@@ -133,9 +133,7 @@ perception_update :: proc(
     noises:^Noises,events:^Perception_Events,physics:core.Ref(phys.Physics_State),fars:core.Read(nav.Nav_Far),entities:core.Ref(core.Entities),time:core.Time,problems:^core.Problems,
 ) {
     core.queue_clear(&events.queue)
-    layouts:=[2]u64{core.layout(perceivers),core.layout(perceptions)}
-    if layouts!=turns.layouts {
-        turns.layouts=layouts
+    if core.reshaped(perceivers,&turns.shapes[0]) | core.reshaped(perceptions,&turns.shapes[1]) {
         for row in 0..<core.count(perceivers) {
             e:=core.entity_at(perceivers,row)
             if !core.has(perceptions,e) {core.add(perceptions,e,Perception{})}
@@ -166,7 +164,7 @@ perception_update :: proc(
         row:=(first+k)%count
         e:=core.entity_at(perceivers,row)
         p:=perceivers.table.values[row]
-        mine:=core.get(perceptions,e)
+        mine:=core.edit(perceptions,e)
         pose,placed:=core.get(worlds,e)
         if mine==nil || !placed {continue}
         remembered:=mine.memory.count>0
@@ -268,7 +266,7 @@ perceive_far :: proc(perceivers:core.Read(Perceiver),perceptions:^core.Table(Per
         e:=perceivers.table.entities[row]
         if !far_of(fars,e) {continue}
         p:=perceivers.table.values[row]
-        mine:=cast(^Perception)core.raw_get(core.raw(perceptions),type_info_of(Perception),e)
+        mine:=cast(^Perception)core.raw_edit(core.raw(perceptions),type_info_of(Perception),e)
         pose,placed:=core.get(worlds,e)
         if mine==nil || !placed {continue}
         remembered:=mine.memory.count>0

@@ -84,7 +84,7 @@ entity_of :: proc(s:^editor.Session,call:^api.Call,named:[]u8,$T:typeid,what:str
     w=editor.shown_world(s)
     e=editor.api_call_entity(call,w,named,game=s.mode!=.Edit) or_return
     table=core.world_table_of(w,T)
-    if table==nil || !core.has(core.read(table),e) {
+    if table==nil || !core.has(table,e) {
         api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with a %s in the shown world",base.text_get(named),what)
         return
     }
@@ -106,7 +106,7 @@ action_name :: proc(entry:^behavior.Mind_Entry,action:u16) -> string {
 
 @(private)
 id_of :: proc(world:core.World_Ref,e:core.Entity) -> base.Entity_Id {
-    if ids:=core.world_table_of(world,core.Id);ids!=nil {if value,has:=core.get(core.read(ids),e);has {return value.value}}
+    if ids:=core.world_table_of(world,core.Id);ids!=nil {if value,has:=core.get(ids,e);has {return value.value}}
     return 0
 }
 
@@ -218,7 +218,7 @@ perception :: proc(s:^editor.Session,call:^api.Call) {
     serial.text_write_raw(w,`{"remembers":[`)
     perceptions:=core.world_table_of(world,behavior.Perception)
     if perceptions!=nil {
-        if mine,found:=core.get(core.read(perceptions),e);found {
+        if mine,found:=core.get(perceptions,e);found {
             for o,i in mine.memory.items[:clamp(mine.memory.count,0,ai.PERCEPTION_CAPACITY)] {
                 if i>0 {serial.text_write_raw(w,",")}
                 serial.text_write_raw(w,"{")
@@ -241,9 +241,9 @@ offers :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Entity_Params)
     world,e,objects,ok:=entity_of(s,call,p.entity[:],behavior.Smart_Object,"Smart_Object")
     if !ok {return}
-    object,_:=core.get(core.read(objects),e)
+    object,_:=core.get(objects,e)
     state:behavior.Smart_State
-    if states:=core.world_table_of(world,behavior.Smart_State);states!=nil {state,_=core.get(core.read(states),e)}
+    if states:=core.world_table_of(world,behavior.Smart_State);states!=nil {state,_=core.get(states,e)}
     claims:=core.world_storage_of(world,behavior.Claims)
     tick:u64
     if t:=core.world_storage_of(world,core.Time);t!=nil {tick=t.tick}

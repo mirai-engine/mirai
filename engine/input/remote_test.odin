@@ -56,7 +56,7 @@ a_seat_takes_the_actions_another_end_sent_as_they_were_there :: proc(t:^testing.
         {},
     }
     for tick,index in ticks {
-        seat:=core.get(&w.seats,local)
+        seat:=core.edit(&w.seats,local)
         seat.contexts=tick.menu?menu:{}
         device:=tick.device
         seat_feed(seat,&device,&m,false)

@@ -138,17 +138,17 @@ skeleton_discovery_preserves_logical_rigs_on_unrelated_changes_and_retries_alloc
     testing.expect(t,rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),app.assets))
     stamp:=w.playback.rigs_stamp;pointer:=raw_data(w.playback.rigs)
     testing.expect(t,rig_find(&w.playback,first)>=0 && rig_find(&w.playback,second)>=0 && rig_find(&w.playback,third)<0)
-    assets.revision+=1;core.get(&w.meshes,first).materials[0]={0xab,0xcd}
+    assets.revision+=1;core.edit(&w.meshes,first).materials[0]={0xab,0xcd}
     saved_context:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     testing.expect(t,rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),app.assets))
     context=saved_context
     testing.expect(t,w.playback.rigs_stamp==stamp && raw_data(w.playback.rigs)==pointer)
     core.add(&w.meshes,third,{mesh=mesh_id});rig_test_settle(&w)
-    inputs:=w.playback.rigs_inputs
+    inputs:=w.playback.rigs_seen
     context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     testing.expect(t,!rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),app.assets))
     context=saved_context
-    testing.expect(t,w.playback.rigs_inputs==inputs && w.playback.rigs_stamp==stamp && raw_data(w.playback.rigs)==pointer && len(w.playback.rigs)==2)
+    testing.expect(t,w.playback.rigs_seen==inputs && w.playback.rigs_stamp==stamp && raw_data(w.playback.rigs)==pointer && len(w.playback.rigs)==2)
     testing.expect(t,rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),app.assets))
     testing.expect(t,w.playback.rigs_stamp==stamp+1 && len(w.playback.rigs)==3 && rig_find(&w.playback,third)>=0)
     testing.expect(t,rig_find(&w.playback,core.entity_make(core.entity_index(first),core.entity_generation(first)+1))<0)
@@ -193,14 +193,14 @@ skeleton_without_clips_evaluates_named_ik_and_pose_requests_without_bone_entitie
     testing.expect_value(t,bone_resolve(state,bone_ref("upper/lower/foot")),3)
     testing.expect_value(t,bone_resolve(state,bone_ref("foot")),3)
     testing.expect_value(t,bone_resolve(state,bone_ref("missing")),-1)
-    core.get(&w.modifiers.ik,helper).enabled=false
+    core.edit(&w.modifiers.ik,helper).enabled=false
     authored:=mm.Transform{position={0,2,0},rotation=mm.quat_axis_angle({0,1,0},0.4),scale={1,1,1}}
     animation_pose(&w.requests,rig,bone_ref("upper"),authored)
     rig_test_advance(&w,&app,{dt=1.0/60,playing=true})
     testing.expect_value(t,state.local[1],authored)
     testing.expect_value(t,w.problems.count,0)
     bound:=state.bound
-    core.get(&w.modifiers.ik,helper).enabled=true
+    core.edit(&w.modifiers.ik,helper).enabled=true
     // A skin follows the pose of another rig: its entity is no rig of its own.
     follower:=core.create(&w.entities)
     core.add(&w.transforms,follower,placed);core.add(&w.meshes,follower,{mesh=mesh_id});core.add(&w.skins,follower,{rig=rig})
@@ -253,11 +253,11 @@ preview_plays_the_clip_in_the_editor_and_returns_to_its_start_when_it_stops :: p
     time :: proc(w:^Rig_Test,rig:core.Entity) -> f32 {clip_time,_,_,_:=animation_progress(&w.playback,rig);return clip_time}
     for _ in 0..<2 {rig_test_advance(&w,&app,editor,preview)}
     testing.expect(t,time(&w,rig)==0 && w.playback.states[0].local[1].rotation==upper)
-    core.get(&w.animations,rig).preview=true
+    core.edit(&w.animations,rig).preview=true
     rig_test_advance(&w,&app,editor,preview);rig_test_advance(&w,&app,editor,preview)
     testing.expect(t,abs(time(&w,rig)-0.5)<0.0001)
     testing.expect(t,abs(mm.quat_angle(w.playback.states[0].local[1].rotation,upper)-mm.PI*0.25)<0.001)
-    core.get(&w.animations,rig).preview=false
+    core.edit(&w.animations,rig).preview=false
     rig_test_advance(&w,&app,editor,preview)
     testing.expect(t,time(&w,rig)==0 && mm.quat_angle(w.playback.states[0].local[1].rotation,upper)<0.0001)
     rig_test_advance(&w,&app,{dt=0.25,playing=true})
@@ -390,7 +390,7 @@ shared_profiles_accept_multiple_goals_at_the_origin_and_evaluate_without_stable_
     testing.expect_value(t,w.constraints.revision,geometry)
     testing.expect_value(t,w.problems.count,0)
     testing.expect_value(t,w.playback.states[0].skeleton,skeleton)
-    core.get(&w.configs,rig).weight=.5
+    core.edit(&w.configs,rig).weight=.5
     step(&w,&app,&cache)
     testing.expect_value(t,w.modifiers.ik.values[1].weight,f32(0))
     testing.expect_value(t,w.modifiers.look.values[0].weight,f32(.125))
@@ -422,7 +422,7 @@ live_retarget_profile_changes_compare_full_asset_ids_and_preserve_source_identit
     testing.expect(t,modifier_prepare(&w.modifiers,core.read(&w.configs),core.read(&w.animations),core.read(&w.attachments),&profiles,&w.cache,&w.playback,app.assets,app.allocator,nil))
     testing.expect_value(t,w.modifiers.retargets.values[0].translation,lib.Retarget_Translation.Reference)
     geometry:=w.modifiers.geometry
-    core.get(&w.animations,target).retarget=b
+    core.edit(&w.animations,target).retarget=b
     testing.expect(t,modifier_prepare(&w.modifiers,core.read(&w.configs),core.read(&w.animations),core.read(&w.attachments),&profiles,&w.cache,&w.playback,app.assets,app.allocator,nil))
     testing.expect_value(t,w.modifiers.geometry,geometry+1)
     testing.expect_value(t,w.modifiers.retargets.values[0].translation,lib.Retarget_Translation.Scaled)
@@ -463,7 +463,7 @@ final_world_poses_update_skin_and_sockets_in_the_same_tick_without_stable_alloca
         actual_a,ok_a:=animation_bone_transform(&w.playback,rig,bone_ref("upper"))
         actual_b,ok_b:=animation_bone_transform(&w.playback,rig,bone_ref("foot"))
         testing.expect(t,ok_a && ok_b && linalg.length(actual_a.position-a.position)<.001 && linalg.length(actual_b.position-b.position)<.001)
-        placed,_:=core.get(core.read(&w.transforms),socket)
+        placed,_:=core.get(&w.transforms,socket)
         expected:=mm.transform_compose(b,binding.offset)
         testing.expect(t,linalg.length(placed.position-expected.position)<.001)
         sampled:[4]mm.Transform
@@ -753,7 +753,7 @@ rig_poses_do_not_depend_on_how_their_jobs_are_split :: proc(t:^testing.T) {
     for tick in 0..<10 {
         saved:=context
         // The clip of some changes at the fourth tick, so they cross-fade; the last ticks are stable.
-        if tick==4 {for &w in worlds {for rig,i in rigs {if i%4==1 {animation_play(core.get(&w.animations,rig),names[(i+1)%3],fade=.1,speed=1)}}}}
+        if tick==4 {for &w in worlds {for rig,i in rigs {if i%4==1 {animation_play(core.edit(&w.animations,rig),names[(i+1)%3],fade=.1,speed=1)}}}}
         if tick>=8 {context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()}
         for &w,k in worlds {step(&w,&app,&caches[k],budgets[k])}
         context=saved

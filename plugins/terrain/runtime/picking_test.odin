@@ -39,8 +39,8 @@ chunks_without_a_collider_keep_their_triangles_on_the_cpu_only_while_the_world_d
         held,bare:=0,0
         for row in 0..<core.count(&w.chunks) {
             e:=core.entity_at(&w.chunks,row)
-            renderer,shown:=core.get(core.read(&w.statics),e)
-            if !shown || core.has(core.read(&w.colliders),e) {continue}
+            renderer,shown:=core.get(&w.statics,e)
+            if !shown || core.has(&w.colliders,e) {continue}
             geometry:geom.Mesh_Buffer
             geom.mesh_buffer_init(&geometry,context.temp_allocator)
             host.assets_geometry(&assets,renderer.mesh,.None,&geometry)

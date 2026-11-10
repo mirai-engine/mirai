@@ -58,7 +58,7 @@ api_look_problem :: proc(s:^Session,w:core.World_Ref,look:^Api_Look) -> string {
     if seen==nil {return "look_at turns what the player sees, and this game has no view"}
     follows:=core.world_table_of(w,ecamera.Camera_Follow)
     if follows==nil {return "look_at turns a camera with a Camera_Follow, and this game has none"}
-    follow,found:=core.get(core.read(follows),seen.camera)
+    follow,found:=core.get(follows,seen.camera)
     if !found {return "look_at turns a camera with a Camera_Follow, and the player sees through one without it; move that one with the game"}
     switch {
     case follow.mode==.Follow:
@@ -87,7 +87,7 @@ api_look_steer :: proc(s:^Session,r:^Run,look:^Api_Look) -> string {
     if problem:=api_look_problem(s,w,look);problem!="" {return problem}
     seen:=core.world_storage_of(w,core.View)
     follows:=core.world_table_of(w,ecamera.Camera_Follow)
-    follow,_:=core.get(core.read(follows),seen.camera)
+    follow,_:=core.get(follows,seen.camera)
     seat,body:=play_focused(w)
     if follow.mode==.Orbit && !follow.aim {
         up:=mm.QUAT_IDENTITY
