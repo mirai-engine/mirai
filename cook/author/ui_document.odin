@@ -2,6 +2,7 @@ package author
 
 import "core:fmt"
 import "core:mem"
+import "core:reflect"
 import "core:slice"
 import "core:strconv"
 import "core:strings"
@@ -36,18 +37,6 @@ DOCUMENT_NODE_SKIP :: [?]string{"kind","parent","name","text","text_id","style",
 DOCUMENT_NODE_KEYS :: [?]string{"name","kind","text","style","look","image","events","children","slot"}
 DOCUMENT_EVENTS :: [?]string{"shown","hidden","hovered","unhovered","pressed","released","focused","unfocused","selected","unselected","clicked"}
 
-// The keys of a style in a document, in the order they are written.
-Doc_Key :: struct {key:string,which:ui.Style_Key}
-DOC_KEYS :: [?]Doc_Key{
-    {"fill",.Fill},{"fill2",.Fill2},{"stroke",.Stroke},{"border",.Border},{"radius",.Radius},
-    {"track",.Track},{"knob",.Knob},{"mark",.Mark},
-    {"size",.Size},{"color",.Color},{"font",.Font},{"outline",.Outline},{"outline_color",.Outline_Color},
-    {"text_x",.Text_Align_X},{"text_y",.Text_Align_Y},{"wrap",.Text_Wrap},{"ellipsis",.Ellipsis},{"line_height",.Line_Height},
-    {"move_x",.Move_X},{"move_y",.Move_Y},{"scale",.Scale},
-    {"fill_mode",.Fill_Mode},{"transition",.Transition},{"blur",.Blur},{"program",.Program},{"program_values",.Program_Values},
-    {"width",.Width},{"height",.Height},{"direction",.Direction},{"padding",.Padding},{"gap",.Gap},
-    {"align_x",.Align_X},{"align_y",.Align_Y},{"columns",.Columns},{"span",.Span},{"self_x",.Self_X},{"self_y",.Self_Y},{"aspect",.Aspect},
-}
 DOC_STATES :: [?]struct{key:string,states:ui.Style_States}{{"hover",{.Hovered}},{"focus",{.Focused}},{"pressed",{.Pressed}},{"disabled",{.Disabled}},{"selected",{.Selected}},{"over",{.Over}}}
 // The fields a parameter of a widget can go to.
 DOC_PARAM_FIELDS :: [ui.Tree_Param_Field]string{.Text="text",.Style="style",.Data="data",.Bind_Text="bind_text",.Bind_Value="bind_value",.Bind_Visible="bind_visible",.Bind_Selected="bind_selected",.Bind_Disabled="bind_disabled",.Bind_Items="bind_items",.Bind_Image="bind_image",.Bind_Tint="bind_tint",.Bind_Variant="bind_variant",.Variant="variant",.Action="action",.Tag="tag",.Accepts="accepts"}
@@ -155,17 +144,19 @@ doc_size_write :: proc(out:^serial.Writer,types:^asset.Types,size:ui.Size) {
     }
 }
 
-// An enum of a document: its name in any case.
-doc_enum_read :: proc(reading:^Reading,text,what:string,$E:typeid,value:^E) -> bool {
-    word,is_text:=doc_string(reading,text)
-    if is_text {
-        for member in E {
-            if strings.equal_fold(fmt.tprintf("%v",member),word) {value^=member;return true}
+// An enum of a document: the name of a member of type, in any case, into
+// the byte of value.
+doc_enum_read :: proc(reading:^Reading,text,what:string,type:typeid,value:rawptr) -> bool {
+    names:=reflect.enum_field_names(type)
+    if word,is_text:=doc_string(reading,text);is_text {
+        values:=reflect.enum_field_values(type)
+        for name,i in names {
+            if strings.equal_fold(name,word) {(^u8)(value)^=u8(values[i]);return true}
         }
     }
-    names:=make([dynamic]string,context.temp_allocator)
-    for member in E {append(&names,strings.to_lower(fmt.tprintf("%v",member),context.temp_allocator))}
-    return doc_failed(reading,"%s: give one of %s",what,strings.join(names[:],", ",context.temp_allocator))
+    lower:=make([dynamic]string,context.temp_allocator)
+    for name in names {append(&lower,strings.to_lower(name,context.temp_allocator))}
+    return doc_failed(reading,"%s: give one of %s",what,strings.join(lower[:],", ",context.temp_allocator))
 }
 doc_enum_text :: proc(value:$E) -> string {return strings.to_lower(fmt.tprintf("%v",value),context.temp_allocator)}
 
@@ -500,7 +491,7 @@ document_style_write :: proc(out:^serial.Writer,types:^asset.Types,r:^Records,ro
         }
         serial.write_u8(out,']')
     }
-    doc_look_write(out,types,r,style,&info,ui.style_own_keys(&info),row,"",{},named,a,&first)
+    doc_look_write(out,types,r,style,&info,ui.style_own_keys(&info),row,"",{},a,&first)
     // Rules: a state alone, a variant alone, and the rest as they are.
     rules:=make([dynamic]^ui.Tree_Style_Variant,context.temp_allocator)
     for &v in r.variants {
@@ -550,7 +541,7 @@ document_style_write :: proc(out:^serial.Writer,types:^asset.Types,r:^Records,ro
             serial.json_key(out,"tokens",inner);inner=false
             serial.text_write_changed(out,&types.schema,tokens_type,mem.ptr_to_bytes(&v.patch.tokens),mem.ptr_to_bytes(&none))
         }
-        doc_look_write(out,types,r,&v.patch.values,nil,ui.rule_own_keys(v),row,name,v.states,false,a,&inner)
+        doc_look_write(out,types,r,&v.patch.values,nil,ui.rule_own_keys(v),row,name,v.states,a,&inner)
         serial.write_u8(out,'}')
     }
     if list {serial.write_u8(out,']')}
@@ -566,74 +557,53 @@ doc_rule_body_write :: proc(out:^serial.Writer,types:^asset.Types,r:^Records,v:^
         serial.json_text(out,"extends",name,true)
         first=false
     }
-    doc_look_write(out,types,r,&v.patch.values,nil,ui.rule_own_keys(v),row,serial.text_field(v.variant[:]),v.states,false,a,&first)
+    doc_look_write(out,types,r,&v.patch.values,nil,ui.rule_own_keys(v),row,serial.text_field(v.variant[:]),v.states,a,&first)
     serial.write_u8(out,'}')
 }
 
-// The keys of a look a style or a rule sets, each one by the token that gives
-// it or written out.
-doc_look_write :: proc(out:^serial.Writer,types:^asset.Types,r:^Records,style:^ui.Node_Style,info:^ui.Tree_Style_Info,own:ui.Style_Keys,row:int,variant:string,states:ui.Style_States,any_zero:bool,a:Assets,first:^bool) {
-    zero:=doc_no_style()
-    keep :: proc(style:^ui.Node_Style,zero:^ui.Node_Style,own:ui.Style_Keys,key:ui.Style_Key,by_sets:bool) -> bool {
-        if key not_in own {return false}
-        return by_sets || ui.style_key_differs(style,zero,key)
+// The key a name is: by itself, or with group a part of that object.
+doc_key_find :: proc(group,name:string) -> (key:ui.Style_Key,ok:bool) {
+    for k,which in ui.STYLE_KEYS {
+        if k.group==group && k.name==name {return which,true}
     }
+    return
+}
+
+// The names a document has for the values of a style, or with rule of a
+// state: its keys and the objects of the others; with group, the parts of it.
+doc_key_names :: proc(group:string,rule:bool) -> string {
+    names:=make([dynamic]string,context.temp_allocator)
+    for k in ui.STYLE_KEYS {
+        if rule && !k.rule {continue}
+        name:=k.name if k.group==group else k.group if group=="" else ""
+        if name!="" && !slice.contains(names[:],name) {append(&names,name)}
+    }
+    return strings.join(names[:],", ",context.temp_allocator)
+}
+
+// The keys of a look a style or a rule sets, each one by the token that gives
+// it or written out; the parts of a shadow go in its object.
+doc_look_write :: proc(out:^serial.Writer,types:^asset.Types,r:^Records,style:^ui.Node_Style,info:^ui.Tree_Style_Info,own:ui.Style_Keys,row:int,variant:string,states:ui.Style_States,a:Assets,first:^bool) {
+    zero:=doc_no_style()
     // A style with an extends writes what it sets even when zero; without, only what is not.
     by_sets:=own!=~ui.Style_Keys{}
-    k:Doc_Key
-    keys:=DOC_KEYS
-    for k in keys {
-        which:=k.which
-        if which in ui.LAYOUT_KEYS || which==.Blur {
-            if info==nil || which not_in info.sets {continue}
-            doc_first(out,first,k.key)
-            doc_layout_value_write(out,types,r,info,row,variant,states,which)
-            continue
+    group:=""
+    part:=false
+    for key in ui.Style_Key {
+        k:=ui.STYLE_KEYS[key]
+        if k.place==.Style {
+            if key not_in own || !by_sets && !ui.style_key_differs(style,&zero,key) {continue}
+        } else if info==nil || key not_in info.sets {continue}
+        if k.group!=group {
+            if group!="" {serial.write_u8(out,'}')}
+            group,part=k.group,false
+            if group!="" {doc_first(out,first,group);serial.write_u8(out,'{')}
         }
-        if !keep(style,&zero,own,which,by_sets) {continue}
-        if which==.Font {
-            doc_first(out,first,k.key)
-            doc_font_write(out,r,style.text.font,a)
-            continue
-        }
-        if which==.Radius {
-            doc_first(out,first,k.key)
-            token:=doc_token_of(r,row,variant,states,which)
-            if token!="" {serial.text_write_string(out,token)} else {
-                radius:=style.radius
-                if radius[0]==radius[1] && radius[1]==radius[2] && radius[2]==radius[3] {serial.json_number(out,radius[0])} else {serial.json_list(out,radius[:])}
-            }
-            continue
-        }
-        doc_first(out,first,k.key)
-        doc_style_value_write(out,r,style,row,variant,states,which)
+        if group!="" {serial.json_key(out,k.name,!part);part=true} else {doc_first(out,first,k.name)}
+        if token:=doc_token_of(r,row,variant,states,key);token!="" {serial.text_write_string(out,token);continue}
+        doc_key_write(out,types,r,a,key,ui.style_value(style,info,key))
     }
-    // A shadow, a text shadow: the parts it sets.
-    group :: proc(out:^serial.Writer,r:^Records,style,zero:^ui.Node_Style,own:ui.Style_Keys,by_sets:bool,name:string,parts:[]struct{key:string,which:ui.Style_Key},row:int,variant:string,states:ui.Style_States,first:^bool) {
-        wrote:=false
-        for p in parts {
-            if p.which not_in own || !by_sets && !ui.style_key_differs(style,zero,p.which) {continue}
-            if !wrote {doc_first(out,first,name);serial.write_u8(out,'{')} else {serial.write_u8(out,',')}
-            wrote=true
-            serial.json_key(out,p.key,true)
-            doc_style_value_write(out,r,style,row,variant,states,p.which)
-        }
-        if wrote {serial.write_u8(out,'}')}
-    }
-    shadow:=[?]struct{key:string,which:ui.Style_Key}{{"color",.Shadow_Color},{"blur",.Shadow_Blur},{"x",.Shadow_X},{"y",.Shadow_Y}}
-    text_shadow:=[?]struct{key:string,which:ui.Style_Key}{{"color",.Text_Shadow_Color},{"x",.Text_Shadow_X},{"y",.Text_Shadow_Y}}
-    group(out,r,style,&zero,own,by_sets,"shadow",shadow[:],row,variant,states,first)
-    group(out,r,style,&zero,own,by_sets,"text_shadow",text_shadow[:],row,variant,states,first)
-    if .Sounds in own && style.sounds!=zero.sounds {
-        doc_first(out,first,"sounds");serial.write_u8(out,'{')
-        once:=true
-        for cue in ui.Sound_Cue {
-            if style.sounds[cue]=={} {continue}
-            serial.json_text(out,strings.to_lower(fmt.tprintf("%v",cue),context.temp_allocator),doc_path(a,style.sounds[cue]),once)
-            once=false
-        }
-        serial.write_u8(out,'}')
-    }
+    if group!="" {serial.write_u8(out,'}')}
 }
 
 doc_first :: proc(out:^serial.Writer,first:^bool,key:string) {
@@ -650,49 +620,35 @@ doc_font_write :: proc(out:^serial.Writer,r:^Records,font:u8,a:Assets) {
     }
 }
 
-// A value of a style: the token that gives it, or written out.
-doc_style_value_write :: proc(out:^serial.Writer,r:^Records,style:^ui.Node_Style,row:int,variant:string,states:ui.Style_States,which:ui.Style_Key) {
-    if token:=doc_token_of(r,row,variant,states,which);token!="" {serial.text_write_string(out,token);return}
-    color :: proc(out:^serial.Writer,c:ui.Color) {serial.text_write_string(out,doc_color_text(c))}
-    #partial switch which {
-    case .Fill: color(out,style.fill)
-    case .Fill2: color(out,style.fill2)
-    case .Stroke: color(out,style.stroke)
-    case .Track: color(out,style.track)
-    case .Knob: color(out,style.knob)
-    case .Mark: color(out,style.mark)
-    case .Color: color(out,style.text.color)
-    case .Outline_Color: color(out,style.text.outline_color)
-    case .Shadow_Color: color(out,style.shadow_color)
-    case .Text_Shadow_Color: color(out,style.text.shadow_color)
-    case .Border: serial.json_number(out,style.stroke_width)
-    case .Size: serial.json_number(out,style.text.size)
-    case .Outline: serial.json_number(out,style.text.outline)
-    case .Shadow_Blur: serial.json_number(out,style.shadow_blur)
-    case .Shadow_X: serial.json_number(out,style.shadow_offset.x)
-    case .Shadow_Y: serial.json_number(out,style.shadow_offset.y)
-    case .Text_Shadow_X: serial.json_number(out,style.text.shadow.x)
-    case .Text_Shadow_Y: serial.json_number(out,style.text.shadow.y)
-    case .Move_X: serial.json_number(out,style.move.x)
-    case .Move_Y: serial.json_number(out,style.move.y)
-    case .Scale: serial.json_number(out,style.scale)
-    case .Line_Height: serial.json_number(out,style.text.line_height)
-    case .Transition: serial.json_number(out,style.transition)
-    case .Text_Align_X: serial.text_write_string(out,doc_enum_text(style.text.align_x))
-    case .Text_Align_Y: serial.text_write_string(out,doc_enum_text(style.text.align_y))
-    case .Text_Wrap: serial.text_write_string(out,doc_enum_text(style.text.wrap))
-    case .Ellipsis: serial.json_flag(out,style.text.ellipsis)
-    case .Fill_Mode: serial.text_write_string(out,doc_enum_text(style.fill_mode))
-    case .Program: serial.text_write_string(out,serial.text_field(style.program[:]))
-    case .Program_Values: values:=style.program_values;serial.json_list(out,values[:])
+// A value as a document says it, from its bytes.
+doc_key_write :: proc(out:^serial.Writer,types:^asset.Types,r:^Records,a:Assets,key:ui.Style_Key,value:[]u8) {
+    k:=ui.STYLE_KEYS[key]
+    p:=raw_data(value)
+    switch k.kind {
+    case .Number:  serial.json_number(out,(^f32)(p)^)
+    case .Color:   serial.text_write_string(out,doc_color_text((^ui.Color)(p)^))
+    case .Enum:    serial.text_write_string(out,doc_enum_text(any{p,k.type}))
+    case .Flag:    serial.json_flag(out,(^bool)(p)^)
+    case .Count:   serial.json_number(out,f32((^u16)(p)^) if k.size==size_of(u16) else f32((^u8)(p)^))
+    case .Corners:
+        v:=(^[4]f32)(p)^
+        if v[0]==v[1] && v[1]==v[2] && v[2]==v[3] {serial.json_number(out,v[0])} else {serial.json_list(out,v[:])}
+    case .Sides:   doc_padding_write(out,(^[4]f32)(p)^)
+    case .Size:    doc_size_write(out,types,(^ui.Size)(p)^)
+    case .Font:    doc_font_write(out,r,(^u8)(p)^,a)
+    case .Program: serial.text_write_string(out,serial.text_field(value))
+    case .Numbers: v:=(^[4]f32)(p)^;serial.json_list(out,v[:])
+    case .Sounds:
+        sounds:=(^[ui.Sound_Cue]base.Asset_Id)(p)
+        serial.write_u8(out,'{')
+        once:=true
+        for cue in ui.Sound_Cue {
+            if sounds[cue]=={} {continue}
+            serial.json_text(out,doc_enum_text(cue),doc_path(a,sounds[cue]),once)
+            once=false
+        }
+        serial.write_u8(out,'}')
     }
-}
-
-// A value of the layout or the blur of a style.
-doc_layout_value_write :: proc(out:^serial.Writer,types:^asset.Types,r:^Records,info:^ui.Tree_Style_Info,row:int,variant:string,states:ui.Style_States,which:ui.Style_Key) {
-    if token:=doc_token_of(r,row,variant,states,which);token!="" {serial.text_write_string(out,token);return}
-    if which==.Blur {serial.json_number(out,info.blur);return}
-    doc_layout_write(out,types,&info.layout,which)
 }
 
 doc_vector_write :: proc(out:^serial.Writer,property:ui.Anim_Property,v:[4]f32) {
@@ -984,37 +940,15 @@ doc_node_fields_write :: proc(w:^Doc_Write,row:int,n:^ui.Tree_Node,root_params:[
     info:ui.Tree_Style_Info
     if int(n.style)<len(r.style_infos) {info=r.style_infos[n.style]}
     d:=defaults.layout
-    keys:=DOC_KEYS
     out:=w.out
-    for k in keys {
-        which:=k.which
-        if which not_in ui.LAYOUT_KEYS {continue}
+    for which in ui.LAYOUT_KEYS {
         given:=which in info.layout_keys && which not_in n.layout_own
         if given {continue}
         probe:=n.layout
         ui.layout_key_copy(&probe,&d,which)
-        same:=probe==n.layout
-        if which not_in n.layout_own && same {continue}
-        serial.json_key(out,k.key)
-        doc_layout_write(out,w.types,&n.layout,which)
-    }
-}
-
-// A key of a layout as a document says it.
-doc_layout_write :: proc(out:^serial.Writer,types:^asset.Types,l:^ui.Layout,which:ui.Style_Key) {
-    #partial switch which {
-    case .Width:     doc_size_write(out,types,l.width)
-    case .Height:    doc_size_write(out,types,l.height)
-    case .Direction: serial.text_write_string(out,doc_enum_text(l.direction))
-    case .Padding:   doc_padding_write(out,l.padding)
-    case .Gap:       serial.json_number(out,l.gap)
-    case .Align_X:   serial.text_write_string(out,doc_enum_text(l.align_x))
-    case .Align_Y:   serial.text_write_string(out,doc_enum_text(l.align_y))
-    case .Columns:   serial.json_number(out,f32(l.columns))
-    case .Span:      serial.json_number(out,f32(l.span))
-    case .Self_X:    serial.text_write_string(out,doc_enum_text(l.self_x))
-    case .Self_Y:    serial.text_write_string(out,doc_enum_text(l.self_y))
-    case .Aspect:    serial.json_number(out,l.aspect)
+        if which not_in n.layout_own && probe==n.layout {continue}
+        serial.json_key(out,ui.STYLE_KEYS[which].name)
+        doc_key_write(out,w.types,r,w.assets,which,ui.layout_key_value(&n.layout,which))
     }
 }
 
@@ -1357,186 +1291,161 @@ doc_rule_apply :: proc(args:^Tree_Args,r:^Records,style,rule:int,keys,values:[dy
     return true
 }
 
-// One key of a look: a color, a number, or their names. own gets what it sets.
+// One key of a look by the name a document gives it, or the object of its
+// parts: those it does not name stay as the base has them. own gets what it sets.
 doc_style_value_apply :: proc(args:^Tree_Args,r:^Records,row:int,style:^ui.Node_Style,info:^ui.Tree_Style_Info,own:^ui.Style_Keys,variant:string,states:ui.Style_States,key,value:string) -> bool {
     reading:=args.reading
     is_rule:=info==nil
-    which:ui.Style_Key
-    found:=false
-    table:=DOC_KEYS
-    for k in table {
-        if k.key==key {which,found=k.which,true;break}
+    if which,found:=doc_key_find("",key);found {
+        return doc_style_key_apply(args,r,row,style,info,own,variant,states,which,key,value)
     }
-    if !found {
-        switch key {
-        case "shadow":
-            return doc_shadow_read(args,r,row,style,own,variant,states,value,{{"color",.Shadow_Color},{"blur",.Shadow_Blur},{"x",.Shadow_X},{"y",.Shadow_Y}},"shadow")
-        case "text_shadow":
-            return doc_shadow_read(args,r,row,style,own,variant,states,value,{{"color",.Text_Shadow_Color},{"x",.Text_Shadow_X},{"y",.Text_Shadow_Y}},"text_shadow")
-        case "sounds":
-            if is_rule {reading_failf(reading,"sounds: a state does not change them");return false}
-            own^+={.Sounds}
-            cues:=DOC_SOUND_CUES
-            keys,values:=tree_object(reading,value,"sounds") or_return
-            for cue_name,i in keys {
-                cue:ui.Sound_Cue
-                known:=false
-                for c,j in cues {if c==cue_name {cue=ui.Sound_Cue(j);known=true}}
-                if !known {reading_failf(reading,"sounds has no '%s'; it has show, hide, hover, focus, press and change",cue_name);return false}
-                path,_:=doc_string(reading,values[i])
-                named:=reading.assets
-                if named.resolve==nil {reading_failf(reading,"sounds.%s: no project to read '%s' from",cue_name,path);return false}
-                id,problem:=named.resolve(named.user,path,".sound")
-                if problem!="" {reading_failf(reading,"sounds.%s: %s",cue_name,problem);return false}
-                style.sounds[cue]=id
-            }
-            return true
-        }
-        names:=make([dynamic]string,context.temp_allocator)
-        for k in table {append(&names,k.key)}
-        append(&names,"shadow","text_shadow")
+    parts:=doc_key_names(key,false)
+    if parts=="" {
         if is_rule {
-            reading_failf(reading,"a state has no '%s'; it has %s and extends",key,strings.join(names[:],", ",context.temp_allocator))
+            reading_failf(reading,"a state has no '%s'; it has %s and extends",key,doc_key_names("",true))
             return false
         }
-        reading_failf(reading,"a style has no '%s'; it has extends, %s, sounds, hover, focus, pressed, disabled, selected, over, variants and rules",key,strings.join(names[:],", ",context.temp_allocator))
+        reading_failf(reading,"a style has no '%s'; it has extends, %s, hover, focus, pressed, disabled, selected, over, variants and rules",key,doc_key_names("",false))
         return false
     }
-    if is_rule && which not_in ui.RULE_KEYS {
-        reading_failf(reading,"a state does not set %s: it goes in the style",key)
-        return false
+    keys,values:=tree_object(reading,value,key) or_return
+    for part,i in keys {
+        which,found:=doc_key_find(key,part)
+        if !found {
+            reading_failf(reading,"%s has no '%s'; it has %s",key,part,parts)
+            return false
+        }
+        if !doc_style_key_apply(args,r,row,style,info,own,variant,states,which,fmt.tprintf("%s.%s",key,part),values[i]) {return false}
     }
-    own^+={which}
-    trimmed:=strings.trim_space(value)
-    token:string
-    set:=false
-    switch {
-    case ui.style_key_color(which):
-        color:ui.Color
-        color,token=doc_color_value(args,r,trimmed,key) or_return
-        ui.style_key_color_set(style,which,color)
-        set=true
-    case which==.Radius:
-        if number,is_number:=doc_number(trimmed);is_number {
-            style.radius={number,number,number,number}
-            set=true
-        } else if word,is_text:=doc_string(reading,trimmed);is_text {
-            number:=doc_number_token(args,r,word,"radius") or_return
-            style.radius={number,number,number,number}
-            token,set=word,true
-        } else {
-            items:=doc_items(reading,trimmed,"radius") or_return
-            if len(items)!=4 {reading_fail(reading,"radius: give a number, a token or four numbers");return false}
-            for item,i in items {
-                n,ok:=doc_number(item)
-                if !ok {reading_fail(reading,"radius: give numbers");return false}
-                style.radius[i]=n
-            }
-            set=true
-        }
-    case which==.Font:
-        word,is_text:=doc_string(reading,trimmed)
-        if !is_text {reading_fail(reading,"font must be regular, medium, semibold, or the path of a .font");return false}
-        switch word {
-        case "regular":  style.text.font=ui.FONT_REGULAR
-        case "medium":   style.text.font=ui.FONT_MEDIUM
-        case "semibold": style.text.font=ui.FONT_SEMIBOLD
-        case:
-            named:=reading.assets
-            if named.resolve==nil {reading_failf(reading,"font: no project to read '%s' from",word);return false}
-            id,problem:=named.resolve(named.user,word,".font")
-            if problem!="" {reading_failf(reading,"font: %s",problem);return false}
-            at:=-1
-            for &f,i in r.fonts {if f.font==id {at=i}}
-            if at<0 {append(&r.fonts,ui.Tree_Font{font=id});at=len(r.fonts)-1}
-            style.text.font=u8(ui.FONT_TREE+at)
-        }
-        set=true
-    case which in ui.LAYOUT_KEYS:
-        token=doc_layout_read(args,r,&info.layout,which,key,trimmed) or_return
-        set=true
-    case which==.Text_Align_X:
-        if !doc_enum_read(reading,trimmed,"text_x",ui.Align,&style.text.align_x) {return false}
-        set=true
-    case which==.Text_Align_Y:
-        if !doc_enum_read(reading,trimmed,"text_y",ui.Align,&style.text.align_y) {return false}
-        set=true
-    case which==.Text_Wrap:
-        if !doc_enum_read(reading,trimmed,"wrap",ui.Text_Wrap,&style.text.wrap) {return false}
-        set=true
-    case which==.Fill_Mode:
-        if !doc_enum_read(reading,trimmed,"fill_mode",ui.Progress_Fill,&style.fill_mode) {return false}
-        set=true
-    case which==.Ellipsis:
-        b,is_bool:=doc_bool(trimmed)
-        if !is_bool {reading_fail(reading,"ellipsis must be true or false");return false}
-        style.text.ellipsis=b
-        set=true
-    case which==.Program:
-        word,is_text:=doc_string(reading,trimmed)
-        if !is_text {reading_fail(reading,"program must be the name of a ui program");return false}
-        ui.tree_text_set(style.program[:],word)
-        set=true
-    case which==.Program_Values:
-        items:=doc_items(reading,trimmed,"program_values") or_return
-        for item,i in items {
-            if i>=4 {break}
-            n,ok:=doc_number(item)
-            if !ok {reading_fail(reading,"program_values: give numbers");return false}
-            style.program_values[i]=n
-        }
-        set=true
-    case which==.Blur || ui.style_key_number(which):
-        number:f32
-        number,token=doc_number_value(args,r,trimmed,key) or_return
-        if which==.Blur {info.blur=number} else {ui.style_key_number_set(style,info,which,number)}
-        set=true
-    }
-    if !set {reading_failf(reading,"%s cannot be set",key);return false}
-    if which==.Shadow_Color && !is_rule {style.shadow=style.shadow_color[3]>0}
-
-    if token!="" {records_token_use(r,row,variant,states,which,token)}
     return true
 }
 
-DOC_SOUND_CUES :: [?]string{"show","hide","hover","focus","press","change"}
+// One value of a look, by its key. what: where the document says it.
+doc_style_key_apply :: proc(args:^Tree_Args,r:^Records,row:int,style:^ui.Node_Style,info:^ui.Tree_Style_Info,own:^ui.Style_Keys,variant:string,states:ui.Style_States,key:ui.Style_Key,what,value:string) -> bool {
+    if info==nil && !ui.STYLE_KEYS[key].rule {
+        reading_failf(args.reading,"a state does not set %s: it goes in the style",what)
+        return false
+    }
+    own^+={key}
+    token:=doc_key_read(args,r,key,what,value,ui.style_value(style,info,key)) or_return
+    if key==.Shadow_Color {style.shadow=style.shadow_color[3]>0}
+    if token!="" {records_token_use(r,row,variant,states,key,token)}
+    return true
+}
+
+// One value by its key, into its bytes: of a style (r), which can give the
+// name of a token of a number or of a color and says so in token, or of a
+// node (r nil), which cannot. False after failing the reading.
+doc_key_read :: proc(args:^Tree_Args,r:^Records,key:ui.Style_Key,what,text:string,value:[]u8) -> (token:string,ok:bool) {
+    reading:=args.reading
+    k:=ui.STYLE_KEYS[key]
+    p:=raw_data(value)
+    trimmed:=strings.trim_space(text)
+    switch k.kind {
+    case .Number:
+        number:f32
+        number,token=doc_number_value(args,r,trimmed,what) or_return
+        (^f32)(p)^=number
+    case .Color:
+        color:ui.Color
+        color,token=doc_color_value(args,r,trimmed,what) or_return
+        (^ui.Color)(p)^=color
+    case .Enum:
+        return "",doc_enum_read(reading,trimmed,what,k.type,p)
+    case .Flag:
+        on,is_bool:=doc_bool(trimmed)
+        if !is_bool {return "",doc_failed(reading,"%s must be true or false",what)}
+        (^bool)(p)^=on
+    case .Count:
+        most:=f32(max(u16)) if k.size==size_of(u16) else f32(max(u8))
+        number,is_number:=doc_number(trimmed)
+        if !is_number || number<0 || number>most || number!=f32(int(number)) {return "",doc_failed(reading,"%s must be a whole number from 0 to %g",what,most)}
+        if k.size==size_of(u16) {(^u16)(p)^=u16(number)} else {(^u8)(p)^=u8(number)}
+    case .Corners:
+        corners:=(^[4]f32)(p)
+        if number,is_number:=doc_number(trimmed);is_number {
+            corners^={number,number,number,number}
+        } else if word,is_text:=doc_string(reading,trimmed);is_text {
+            number:=doc_number_token(args,r,word,what) or_return
+            corners^,token={number,number,number,number},word
+        } else {
+            items:=doc_items(reading,trimmed,what) or_return
+            if len(items)!=4 {return "",doc_failed(reading,"%s: give a number, a token or four numbers",what)}
+            for item,i in items {
+                number,is_number:=doc_number(item)
+                if !is_number {return "",doc_failed(reading,"%s: give numbers",what)}
+                corners[i]=number
+            }
+        }
+    case .Sides:
+        sides:=(^[4]f32)(p)
+        word:=doc_padding_read(reading,trimmed,what,sides) or_return
+        if word!="" {
+            if r==nil {return "",doc_failed(reading,"%s: '%s': on a node give numbers; a token goes in a style",what,word)}
+            number:=doc_number_token(args,r,word,what) or_return
+            sides^,token=ui.padding_all(number),word
+        }
+    case .Size:
+        size:=(^ui.Size)(p)
+        word:=doc_size_read(args,trimmed,what,size) or_return
+        if word!="" {
+            if r==nil {return "",doc_failed(reading,"%s: '%s' is no size: on a node give a number, \"grow\", \"fit\" or \"50%%\"; a token goes in a style",what,word)}
+            number:=doc_number_token(args,r,word,what) or_return
+            size^,token=ui.fixed(number),word
+        }
+    case .Font:
+        word,is_text:=doc_string(reading,trimmed)
+        if !is_text {return "",doc_failed(reading,"%s must be regular, medium, semibold, or the path of a .font",what)}
+        font:=(^u8)(p)
+        switch word {
+        case "regular":  font^=ui.FONT_REGULAR
+        case "medium":   font^=ui.FONT_MEDIUM
+        case "semibold": font^=ui.FONT_SEMIBOLD
+        case:
+            named:=reading.assets
+            if named.resolve==nil {return "",doc_failed(reading,"%s: no project to read '%s' from",what,word)}
+            id,problem:=named.resolve(named.user,word,".font")
+            if problem!="" {return "",doc_failed(reading,"%s: %s",what,problem)}
+            at:=-1
+            for &f,i in r.fonts {if f.font==id {at=i}}
+            if at<0 {append(&r.fonts,ui.Tree_Font{font=id});at=len(r.fonts)-1}
+            font^=u8(ui.FONT_TREE+at)
+        }
+    case .Program:
+        word,is_text:=doc_string(reading,trimmed)
+        if !is_text {return "",doc_failed(reading,"%s must be the name of a ui program",what)}
+        ui.tree_text_set(value,word)
+    case .Numbers:
+        numbers:=(^[4]f32)(p)
+        items:=doc_items(reading,trimmed,what) or_return
+        for item,i in items {
+            if i>=len(numbers) {break}
+            number,is_number:=doc_number(item)
+            if !is_number {return "",doc_failed(reading,"%s: give numbers",what)}
+            numbers[i]=number
+        }
+    case .Sounds:
+        sounds:=(^[ui.Sound_Cue]base.Asset_Id)(p)
+        cues,paths:=tree_object(reading,trimmed,what) or_return
+        for name,i in cues {
+            cue:ui.Sound_Cue
+            known:=false
+            for c in ui.Sound_Cue {if doc_enum_text(c)==name {cue,known=c,true}}
+            if !known {return "",doc_failed(reading,"%s has no '%s'; it has show, hide, hover, focus, press and change",what,name)}
+            path,_:=doc_string(reading,paths[i])
+            named:=reading.assets
+            if named.resolve==nil {return "",doc_failed(reading,"%s.%s: no project to read '%s' from",what,name,path)}
+            id,problem:=named.resolve(named.user,path,".sound")
+            if problem!="" {return "",doc_failed(reading,"%s.%s: %s",what,name,problem)}
+            sounds[cue]=id
+        }
+    }
+    return token,true
+}
 
 doc_libs_slice :: proc(args:^Tree_Args) -> []Doc_Lib {
     if args.libs==nil {return nil}
     return args.libs[:]
-}
-
-// The object of a shadow: color, blur, x and y; the parts it does not name
-// stay as the base has them.
-doc_shadow_read :: proc(args:^Tree_Args,r:^Records,row:int,style:^ui.Node_Style,own:^ui.Style_Keys,variant:string,states:ui.Style_States,value:string,parts:[]struct{key:string,which:ui.Style_Key},what:string) -> bool {
-    reading:=args.reading
-    keys,values:=tree_object(reading,value,what) or_return
-    for key,i in keys {
-        which:ui.Style_Key
-        found:=false
-        for p in parts {if p.key==key {which,found=p.which,true}}
-        if !found {
-            names:=make([dynamic]string,context.temp_allocator)
-            for p in parts {append(&names,p.key)}
-            reading_failf(reading,"%s has no '%s'; it has %s",what,key,strings.join(names[:],", ",context.temp_allocator))
-            return false
-        }
-        own^+={which}
-        trimmed:=strings.trim_space(values[i])
-        field:=fmt.tprintf("%s.%s",what,key)
-        token:string
-        if ui.style_key_color(which) {
-            color:ui.Color
-            color,token=doc_color_value(args,r,trimmed,field) or_return
-            ui.style_key_color_set(style,which,color)
-        } else {
-            number:f32
-            number,token=doc_number_value(args,r,trimmed,field) or_return
-            ui.style_key_number_set(style,nil,which,number)
-        }
-        if token!="" {records_token_use(r,row,variant,states,which,token)}
-    }
-    return true
 }
 
 // An animation as the document declares it: a few fields (a property from one
@@ -1832,49 +1741,8 @@ doc_instance_field :: proc(key:string) -> (field:ui.Node_Field,ok:bool) {
 
 // The key of a layout a name is: width and the others, of a node or a style.
 doc_layout_key :: proc(name:string) -> (which:ui.Style_Key,ok:bool) {
-    keys:=DOC_KEYS
-    for k in keys {if k.key==name && k.which in ui.LAYOUT_KEYS {return k.which,true}}
-    return
-}
-
-// One key of a layout, into l: of a style (r), which can give the name of a
-// token of a number and says so in token, or of a node (r nil), which cannot.
-// False after failing the reading.
-doc_layout_read :: proc(args:^Tree_Args,r:^Records,l:^ui.Layout,which:ui.Style_Key,key,value:string) -> (token:string,ok:bool) {
-    reading:=args.reading
-    trimmed:=strings.trim_space(value)
-    #partial switch which {
-    case .Width,.Height:
-        size:ui.Size
-        word:=doc_size_read(args,trimmed,key,&size) or_return
-        if word!="" {
-            if r==nil {return "",doc_failed(reading,"%s: '%s' is no size: on a node give a number, \"grow\", \"fit\" or \"50%%\"; a token goes in a style",key,word)}
-            number:=doc_number_token(args,r,word,key) or_return
-            size,token=ui.fixed(number),word
-        }
-        if which==.Width {l.width=size} else {l.height=size}
-    case .Padding:
-        word:=doc_padding_read(reading,trimmed,key,&l.padding) or_return
-        if word!="" {
-            if r==nil {return "",doc_failed(reading,"padding: '%s': on a node give numbers; a token goes in a style",word)}
-            number:=doc_number_token(args,r,word,key) or_return
-            l.padding,token=ui.padding_all(number),word
-        }
-    case .Gap,.Aspect:
-        number:f32
-        number,token=doc_number_value(args,r,trimmed,key) or_return
-        if which==.Gap {l.gap=number} else {l.aspect=number}
-    case .Columns,.Span:
-        number,is_number:=doc_number(trimmed)
-        if !is_number {return "",doc_failed(reading,"%s must be a whole number",key)}
-        if which==.Columns {l.columns=u16(number)} else {l.span=u8(number)}
-    case .Direction: return "",doc_enum_read(reading,trimmed,key,ui.Direction,&l.direction)
-    case .Align_X:   return "",doc_enum_read(reading,trimmed,key,ui.Align,&l.align_x)
-    case .Align_Y:   return "",doc_enum_read(reading,trimmed,key,ui.Align,&l.align_y)
-    case .Self_X:    return "",doc_enum_read(reading,trimmed,key,ui.Self_Align,&l.self_x)
-    case .Self_Y:    return "",doc_enum_read(reading,trimmed,key,ui.Self_Align,&l.self_y)
-    }
-    return token,true
+    which=doc_key_find("",name) or_return
+    return which,which in ui.LAYOUT_KEYS
 }
 
 // The node at row (of the records' tree) becomes what d declares: what it
@@ -1953,7 +1821,7 @@ doc_node_keys_apply :: proc(args:^Tree_Args,r:^Records,n:^ui.Tree_Node,row:int,d
         if is_param {append(&param_values,key);continue}
         if which,is_layout:=doc_layout_key(key);is_layout {
             n.layout_own+={which}
-            if _,read:=doc_layout_read(args,nil,&n.layout,which,key,d.values[i]);!read {return false}
+            if _,read:=doc_key_read(args,nil,which,key,d.values[i],ui.layout_key_value(&n.layout,which));!read {return false}
             if is_instance {n.component_fields+={.Layout}}
             continue
         }
