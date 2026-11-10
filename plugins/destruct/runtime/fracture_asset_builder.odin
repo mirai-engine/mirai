@@ -1,12 +1,13 @@
-package asset
+package destruct
 
+import "mirai:asset"
 import "core:math/linalg"
 import "mirai:std/base"
 import "mirai:std/geom"
 import mm "mirai:std/math"
 
 Fracture_Builder :: struct {
-    vertices:[dynamic]Vertex,
+    vertices:[dynamic]asset.Vertex,
     indices:[dynamic]u32,
     pieces:[dynamic]Fracture_Piece,
     connections:[dynamic]Fracture_Connection,
@@ -14,7 +15,7 @@ Fracture_Builder :: struct {
 }
 
 fracture_builder_init :: proc(b:^Fracture_Builder,allocator:=context.allocator) {
-    b.vertices=make([dynamic]Vertex,allocator);b.indices=make([dynamic]u32,allocator)
+    b.vertices=make([dynamic]asset.Vertex,allocator);b.indices=make([dynamic]u32,allocator)
     b.pieces=make([dynamic]Fracture_Piece,allocator);b.connections=make([dynamic]Fracture_Connection,allocator)
     b.clusters=make([dynamic]Fracture_Cluster,allocator)
 }
@@ -24,9 +25,9 @@ fracture_builder_destroy :: proc(b:^Fracture_Builder) {
     b^={}
 }
 
-fracture_piece_add :: proc(b:^Fracture_Builder,mesh:geom.Mesh,pose:=mm.TRANSFORM_IDENTITY,cluster:i32=-1,anchor:=false) -> (piece:u32,error:Error) {
+fracture_piece_add :: proc(b:^Fracture_Builder,mesh:geom.Mesh,pose:=mm.TRANSFORM_IDENTITY,cluster:i32=-1,anchor:=false) -> (piece:u32,error:asset.Error) {
     if !geom.mesh_is_valid(mesh) || !geom.mesh_is_closed(mesh.positions,mesh.indices) || cluster < -1 || int(cluster)>=len(b.clusters) {return 0,.Invalid}
-    if !finite(pose.position.x,pose.position.y,pose.position.z,pose.scale.x,pose.scale.y,pose.scale.z,pose.rotation.x,pose.rotation.y,pose.rotation.z,pose.rotation.w) ||
+    if !asset.finite(pose.position.x,pose.position.y,pose.position.z,pose.scale.x,pose.scale.y,pose.scale.z,pose.rotation.x,pose.rotation.y,pose.rotation.z,pose.rotation.w) ||
        pose.scale.x<=0 || pose.scale.y<=0 || pose.scale.z<=0 {return 0,.Invalid}
     if u64(len(b.vertices))+u64(len(mesh.indices))>u64(max(u32)) || u64(len(b.indices))+u64(len(mesh.indices))>u64(max(u32)) {return 0,.Invalid}
     if reserve(&b.vertices,len(b.vertices)+len(mesh.indices))!=nil || reserve(&b.indices,len(b.indices)+len(mesh.indices))!=nil || reserve(&b.pieces,len(b.pieces)+1)!=nil {return 0,.Out_Of_Memory}
@@ -40,7 +41,7 @@ fracture_piece_add :: proc(b:^Fracture_Builder,mesh:geom.Mesh,pose:=mm.TRANSFORM
         for corner in 0..<3 {
             index:=mesh.indices[triangle*3+corner]
             normal:=len(mesh.normals)>0?mesh.normals[index]:face
-            vertex:=Vertex{position=pose.position+mm.quat_rotate(rotation,mesh.positions[index]*pose.scale),
+            vertex:=asset.Vertex{position=pose.position+mm.quat_rotate(rotation,mesh.positions[index]*pose.scale),
                 normal=mm.normal_pack(mm.quat_rotate(rotation,linalg.normalize0(normal/pose.scale))),color=0xffffffff}
             tangent:=corners[triangle*3+corner]
             vertex.tangent=mm.tangent_pack(mm.quat_rotate(rotation,linalg.normalize0(tangent.xyz*pose.scale)),tangent.w)
@@ -55,8 +56,8 @@ fracture_piece_add :: proc(b:^Fracture_Builder,mesh:geom.Mesh,pose:=mm.TRANSFORM
     return piece,.None
 }
 
-fracture_cluster_add :: proc(b:^Fracture_Builder,parent:i32,strength:f32) -> (cluster:i32,error:Error) {
-    if parent < -1 || int(parent)>=len(b.clusters) || !(strength>0) || !finite(strength) {return -1,.Invalid}
+fracture_cluster_add :: proc(b:^Fracture_Builder,parent:i32,strength:f32) -> (cluster:i32,error:asset.Error) {
+    if parent < -1 || int(parent)>=len(b.clusters) || !(strength>0) || !asset.finite(strength) {return -1,.Invalid}
     if reserve(&b.clusters,len(b.clusters)+1)!=nil {return -1,.Out_Of_Memory}
     cluster=i32(len(b.clusters));append(&b.clusters,Fracture_Cluster{parent,strength})
     return cluster,.None
@@ -84,15 +85,15 @@ fracture_triangles_near :: proc(a,b:mm.Triangle,distance:f32) -> bool {
     return false
 }
 
-fracture_connect_proximity :: proc(b:^Fracture_Builder,distance,area:f32,strength:f32=0) -> Error {
-    if distance<0 || !(area>0) || strength<0 || !finite(distance,area,strength) {return .Invalid}
+fracture_connect_proximity :: proc(b:^Fracture_Builder,distance,area:f32,strength:f32=0) -> asset.Error {
+    if distance<0 || !(area>0) || strength<0 || !asset.finite(distance,area,strength) {return .Invalid}
     bounds,error:=make([]mm.Aabb,len(b.pieces))
     if error!=nil {return .Out_Of_Memory}
     defer delete(bounds)
     for piece,at in b.pieces {
         if u64(piece.first_vertex)+u64(piece.vertex_count)>u64(len(b.vertices)) || u64(piece.first_index)+u64(piece.index_count)>u64(len(b.indices)) || piece.vertex_count==0 || piece.index_count%3!=0 {return .Invalid}
         vertices:=b.vertices[piece.first_vertex:][:piece.vertex_count]
-        low,high:=mesh_bounds(vertices)
+        low,high:=asset.mesh_bounds(vertices)
         bounds[at]={low,high}
         for index in b.indices[piece.first_index:][:piece.index_count] {if index>=piece.vertex_count {return .Invalid}}
     }

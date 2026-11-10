@@ -33,11 +33,11 @@ Destruct_Test :: struct {
 destruct_test_init :: proc(t:^testing.T,f:^Destruct_Test,folder:string,hulls:int=8,anchor_first:bool=true,pieces:int=2,events:int=0) -> bool {
     if folder=="" {return false}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    b:asset.Fracture_Builder;asset.fracture_builder_init(&b);defer asset.fracture_builder_destroy(&b)
+    b:Fracture_Builder;fracture_builder_init(&b);defer fracture_builder_destroy(&b)
     cube:geom.Mesh_Buffer;geom.mesh_buffer_init(&cube);defer geom.mesh_buffer_destroy(&cube);geom.cube_build(&cube)
-    for part in 0..<pieces {asset.fracture_piece_add(&b,geom.mesh_buffer_view(&cube),{{f32(part)*1.02-f32(pieces-1)*.51,0,0},1,{1,1,1}},anchor=anchor_first && part==0)}
-    if asset.fracture_connect_proximity(&b,.03,.5,10)!=.None {return false}
-    if asset.fracture_save(fmt.tprintf("%s/source.fracture",folder),&types,asset.fracture_builder_desc(&b,{1,2}))!=.None {return false}
+    for part in 0..<pieces {fracture_piece_add(&b,geom.mesh_buffer_view(&cube),{{f32(part)*1.02-f32(pieces-1)*.51,0,0},1,{1,1,1}},anchor=anchor_first && part==0)}
+    if fracture_connect_proximity(&b,.03,.5,10)!=.None {return false}
+    if fracture_save(fmt.tprintf("%s/source.fracture",folder),&types,fracture_builder_desc(&b,{1,2}))!=.None {return false}
     if !core.test_world_init(t,&f.w,test_types) {return false}
     f.app.assets,f.app.allocator=&f.assets,context.allocator
     if !jobs.system_init(&f.app.jobs,{threads=0}) {return false}

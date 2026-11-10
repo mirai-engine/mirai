@@ -254,12 +254,11 @@ the `World` (cancelling a drag leaves no trace):
   top) and then the nearest surface. Without `ghosts` it does not see what is hidden or off, so
   that nothing rests or is painted on a ghost; the selection click, the rectangle and the focus
   pass `ghosts_shown(s)`.
-- The ray first tests each mesh's box (the asset's, without reading the mesh) and enters only those
-  it crosses. `Picker` reads a mesh's triangles the first time something needs them and builds its
-  BVH when a ray reaches its box: a click costs what its ray reaches, not the scene. Rectangle,
-  focus and boxes use only the box.
-- A mesh leaves the cache only when its geometry changes: a generated one on being released (its
-  ids are immutable), a file one when size or date change in the registry.
+- The ray first tests each mesh's box (the asset's) and enters only those it crosses, through the
+  renderer ([`mesh_ray`](../../mirai-rendering/references/ui.md#offscreen-ui)): the mesh as it is
+  drawn, posed included, with the renderer's software tree or the one it makes the first time a
+  ray reaches the box under hardware tracing, kept until the mesh goes. The editor keeps no
+  triangles or trees of its own. Rectangle, focus and boxes use only the box.
 - A derived geometry without `Id` selects its first ancestor with `Id` (`entity_author`), with the
   real hit; likewise in rectangle, Select All and focus. The
   [AI context](ai-tasks.md#project-data) groups them by owner.
@@ -867,8 +866,11 @@ sections that fold like those of the settings dialog: Quality and Frame rate.
 - Antialiasing is not part of the presets: Off, TAA and the
   [techniques](../../mirai-rendering/references/views.md#antialiasing-techniques) of the active
   plugins; one that no plugin offers is shown as TAA, which is what is drawn.
-- A plugin adds rows with the fields of its machine setting that carry `graphics=Label` in the tag:
-  an enum or a bool.
+- A row is a field of a machine setting, of the engine or of a plugin, whose tag carries
+  `graphics=Label`: a bool or an enum (its values, named by `choices=A|B` or by their names), a
+  number with the values `choices` lists (`label:value`, or a label that is its value), or the text
+  of the antialiasing technique. The rows of the section `Frames` go to Frame rate. There is no
+  list of options apart from the tags.
 - A choice is applied instantly to the edited world and stored in the engine layer
   (`settings.mirai` in `project.machine_folder`: the main checkout's `.mirai`, which its worktrees
   share). A value the project fixes wins again on rereading. It does not touch the document or its
