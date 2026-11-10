@@ -61,6 +61,7 @@ Smart_Used :: struct {object:core.Entity,offer:u8}
 @(storage,queue)
 Smart_Uses :: struct {
     using queue:core.Queue(Smart_Used),
+    layouts:[2]u64, // of the objects and the states when the objects last got their Smart_State
 }
 
 // The offer was used: it counts once and starts its cooldown at the next step.
@@ -70,9 +71,13 @@ smart_used :: proc(uses:^Smart_Uses,found:Smart_Found) {
 
 @(step="fixed",stage="react",server)
 smart_update :: proc(objects:core.Read(Smart_Object),states:^core.Table(Smart_State),uses:^Smart_Uses,time:core.Time) {
-    for row in 0..<core.count(objects) {
-        e:=core.entity_at(objects,row)
-        if !core.has(states,e) {core.add(states,e,Smart_State{})}
+    layouts:=[2]u64{core.layout(objects),core.layout(states)}
+    if layouts!=uses.layouts {
+        uses.layouts=layouts
+        for row in 0..<core.count(objects) {
+            e:=core.entity_at(objects,row)
+            if !core.has(states,e) {core.add(states,e,Smart_State{})}
+        }
     }
     for used in core.take(&uses.queue) {
         object,found:=core.get(objects,used.object)
