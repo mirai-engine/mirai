@@ -751,8 +751,10 @@ mesh_tangents :: proc(vertices:^[dynamic]Vertex,indices:[]u32,skin:^[dynamic]Ski
         target:=index
         if vertices[index].tangent!=0 {
             target=u32(len(vertices))
-            append(vertices,vertices[index])
-            if skinned {append(skin,skin[index])}
+            _,no_vertex:=append(vertices,vertices[index])
+            no_skin:mem.Allocator_Error
+            if skinned {_,no_skin=append(skin,skin[index])}
+            if no_vertex!=nil || no_skin!=nil {return false}
         }
         vertices[target].tangent=packed
         known[key]=target

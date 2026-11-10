@@ -5,6 +5,7 @@ import "core:mem"
 import "core:os"
 import "core:testing"
 import "mirai:std/base"
+import mm "mirai:std/math"
 import "mirai:std/serial"
 
 @(private) Test_Transform :: struct {position:[3]f32,rotation:quaternion128,scale:[3]f32}
@@ -974,7 +975,9 @@ scene_calls_without_memory_fail_whole :: proc(t:^testing.T) {
     // The prefab as a registry holds it in memory, for whoever resolves instances of it.
     registry:Registry;registry_init(&registry,"");defer registry_destroy(&registry)
     if !testing.expect_value(t,registry_memory_set(&registry,"lamp.prefab",serial.writer_bytes(&out)),Error.None) {return}
-    Call :: enum {View_Check,Instantiate,Set,Remove,Diff,From_Asset,Prefab_File}
+    text:serial.Writer;serial.writer_init(&text);defer serial.writer_destroy(&text)
+    if !testing.expect_value(t,document_text_write(&prefab.doc,&text,{schema=true}),Error.None) {return}
+    Call :: enum {View_Check,Instantiate,Set,Remove,Diff,From_Asset,Prefab_File,Text_Read,Tangents}
     for call in Call {
         scene:Scene
         if !testing.expect_value(t,scene_init(&scene,&types,KIND_SCENE,{0xb,0xb},limited),Error.None) {return}
@@ -1011,6 +1014,24 @@ scene_calls_without_memory_fail_whole :: proc(t:^testing.T) {
                 // A prefab that is there does not read as missing for lack of memory.
                 if error==.None && found==nil {error=.Not_Found}
                 resolver_destroy(&r);registry_prefabs_destroy(&files)
+            case .Text_Read:
+                doc:Document
+                // The text is whole: what refuses it is the memory, whichever rule its reader names.
+                _,read:=document_text_read(&doc,string(serial.writer_bytes(&text)),{},limited)
+                if read {document_destroy(&doc)} else {error=.Out_Of_Memory}
+            case .Tangents:
+                // Two triangles on an edge with their images mirrored: the vertices of the edge are repeated.
+                failure.remaining=max(int)
+                vertices:=make([dynamic]Vertex,0,4,limited)
+                for corner in ([4][2]f32{{0,0},{1,0},{0,1},{0,-1}}) {
+                    append(&vertices,Vertex{position={corner.x,corner.y,0},normal=mm.normal_pack({0,0,1}),uv={corner.x,abs(corner.y)}})
+                }
+                indices:=[6]u32{0,1,2,0,3,1}
+                failure.remaining=served
+                if !mesh_tangents(&vertices,indices[:]) {error=.Out_Of_Memory}
+                else {testing.expectf(t,len(vertices)>4,"the edge of the mirrored triangles kept its %d vertices",len(vertices))}
+                failure.remaining=max(int)
+                delete(vertices)
             }
             failure.remaining=max(int)
             if done=error==.None;done {break}

@@ -457,7 +457,7 @@ bind_named :: proc(b:^Bind,name:u64) -> ^Bound_Source {
     found.index,ok=serial.schema_add_type_info(&gui.schema,found.info)
     if !ok {return nil}
     if gui.source_index==nil {gui.source_index=make(map[u64]int,gui.allocator)}
-    append(&gui.sources,found)
+    if _,err:=append(&gui.sources,found);err!=nil {return nil}
     gui.source_index[name]=len(gui.sources)-1
     return &gui.sources[len(gui.sources)-1]
 }

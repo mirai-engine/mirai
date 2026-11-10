@@ -634,7 +634,9 @@ a_plugin_of_the_project_brings_its_companions :: proc(t:^testing.T) {
 
 // What ordering the plugins asks its allocator for, with the memory ending
 // at each request in turn: Out_Of_Memory with no order and a text that says
-// so, nothing left allocated, and with memory enough the order.
+// so, nothing left allocated, and with memory enough the order. And the merge
+// of the settings, whose fields are in the temporary allocator: without
+// memory for one it is Out_Of_Memory, and with memory enough the merged text.
 @(test)
 plugins_order_without_memory_fails_whole :: proc(t:^testing.T) {
     Limit :: struct {owner:runtime.Allocator,remaining:int}
@@ -673,4 +675,28 @@ plugins_order_without_memory_fails_whole :: proc(t:^testing.T) {
         }
         testing.expectf(t,done && refused,"%v: refused without memory, and with it it goes through",c.wanted)
     }
+
+    folder,_:=os.make_directory_temp("","mirai-settings",context.temp_allocator)
+    defer os.remove_all(folder)
+    root,engine:=path(folder,"project",allocator=context.temp_allocator),path(folder,"engine",allocator=context.temp_allocator)
+    testing.expect(t,os.make_directory_all(root)==nil && os.make_directory_all(path(engine,".mirai",allocator=context.temp_allocator))==nil)
+    testing.expect(t,os.write_entire_file(settings_file(.Engine,root,engine,context.temp_allocator),`{"version": 3, "Sample": {"count": 2, "inner": {"level": 3}}}`)==nil)
+    testing.expect(t,os.write_entire_file(settings_file(.Project,root,engine,context.temp_allocator),`{"Sample": {"count": 7, "inner": {"on": true}}, "Plugin": {"y": "z"}}`)==nil)
+    whole,whole_error,_:=settings_merge(root,engine,{"Sample"})
+    defer delete(whole)
+    testing.expect_value(t,whole_error.code,Error_Code.None)
+    merged,no_field:=false,false
+    for served:=0;!merged && served<512;served+=1 {
+        limit:=Limit{owner=context.temp_allocator,remaining=served}
+        text:string
+        error:Error
+        {
+            context.temp_allocator={limit_proc,&limit}
+            text,error,_=settings_merge(root,engine,{"Sample"})
+        }
+        merged=error.code==.None && text==whole
+        no_field||=error.code==.Out_Of_Memory
+        delete(text)
+    }
+    testing.expect(t,merged && no_field,"a merge without memory for a field says so, and with memory it is whole")
 }

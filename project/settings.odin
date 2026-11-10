@@ -310,6 +310,7 @@ settings_merge :: proc(root,engine_root:string,machine:[]string,allocator:=conte
         r:serial.Text_Reader
         serial.text_reader_init(&r,string(data),context.temp_allocator)
         if !merge_read(&r,&merged,0) || !serial.text_end(&r) {
+            if r.error.code==.None {return "",{code=.Out_Of_Memory},layer}
             line,column:=serial.text_position(r.text,r.error.offset)
             return "",{code=.Text,text=r.error.code,line=line,column=column,detail=serial.text_error_message(&r,allocator=context.temp_allocator)},layer
         }
@@ -396,7 +397,8 @@ Merge_Node :: struct {
 }
 
 // Reads an object over the one in into: a field it has replaces the same one,
-// and an object merges into an object.
+// and an object merges into an object. False with no error of the text:
+// there was no memory for a field.
 @(private="file")
 merge_read :: proc(r:^serial.Text_Reader,into:^Merge_Node,depth:int) -> bool {
     if depth>serial.TEXT_MAX_DEPTH {return serial.text_fail(r,.Too_Deep)}
@@ -412,7 +414,7 @@ merge_read :: proc(r:^serial.Text_Reader,into:^Merge_Node,depth:int) -> bool {
             if field.name==name {found=&field;break}
         }
         if found==nil {
-            append(&into.fields,Merge_Node{name=name})
+            if _,err:=append(&into.fields,Merge_Node{name=name});err!=nil {return false}
             found=&into.fields[len(into.fields)-1]
         }
         if serial.text_peek(r)=='{' {

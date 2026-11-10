@@ -135,7 +135,8 @@ light_tree_build :: proc(nodes: ^[dynamic]Gpu_Light_Node, keys: ^[dynamic]Light_
 	}
 	if len(keys) > 0 {
 		slice.sort_by(keys[:], proc(a, b: Light_Key) -> bool {return a.place < b.place || (a.place == b.place && a.light < b.light)})
-		light_tree_node(nodes, keys[:], leaves[:], lights, 0)
+		// Reserved too: it finds the room of its nodes.
+		if _, built := light_tree_node(nodes, keys[:], leaves[:], lights, 0); !built {return 0, false}
 	}
 	if region.lights > 0 {
 		empty := light_region_empty(u32(len(lights)) + region.lights)
@@ -170,13 +171,13 @@ light_region_root :: proc(nodes: []Gpu_Light_Node, region: Light_Region) {
 }
 
 @(private = "file")
-light_tree_node :: proc(nodes: ^[dynamic]Gpu_Light_Node, keys: []Light_Key, leaves: []u32, lights: []Gpu_Light, depth: int) -> u32 {
-	at := u32(len(nodes))
+light_tree_node :: proc(nodes: ^[dynamic]Gpu_Light_Node, keys: []Light_Key, leaves: []u32, lights: []Gpu_Light, depth: int) -> (at: u32, ok: bool) {
+	at = u32(len(nodes))
 	if len(keys) == 1 {
 		light := keys[0].light
 		leaves[light] = at
-		append(nodes, light_tree_leaf(lights[light], light))
-		return at
+		_, err := append(nodes, light_tree_leaf(lights[light], light))
+		return at, err == nil
 	}
 	first, last := keys[0].place, keys[len(keys) - 1].place
 	split := len(keys) / 2
@@ -191,11 +192,11 @@ light_tree_node :: proc(nodes: ^[dynamic]Gpu_Light_Node, keys: []Light_Key, leav
 		}
 		split = high
 	}
-	append(nodes, Gpu_Light_Node{})
-	light_tree_node(nodes, keys[:split], leaves, lights, depth + 1)
-	second := light_tree_node(nodes, keys[split:], leaves, lights, depth + 1)
+	if _, err := append(nodes, Gpu_Light_Node{}); err != nil {return at, false}
+	light_tree_node(nodes, keys[:split], leaves, lights, depth + 1) or_return
+	second := light_tree_node(nodes, keys[split:], leaves, lights, depth + 1) or_return
 	nodes[at] = light_tree_group(nodes[at + 1], nodes[second], second)
-	return at
+	return at, true
 }
 
 @(private = "file")

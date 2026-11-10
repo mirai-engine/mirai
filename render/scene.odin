@@ -1706,7 +1706,6 @@ scene_set :: proc(r: ^Renderer, instances: []Instance_Desc, lights: []Light_Desc
         desc.transform=origin_matrix(given.transform,r.origin-given.anchor)
         if int(desc.mesh)>=len(s.meshes) || s.meshes[desc.mesh].vertex_count==0 {append(&s.desc_instance,-1);continue}
         index:=u32(len(s.instances))
-        append(&s.desc_instance,i32(index))
         key:=Instance_Key{desc.object_id,desc.copy_owner,desc.copy_variant}
         before,found:=s.previous[key]
         previous:=desc.transform
@@ -1718,7 +1717,9 @@ scene_set :: proc(r: ^Renderer, instances: []Instance_Desc, lights: []Light_Desc
         }
         motion||=previous!=desc.transform
         // Its room was reserved; without it the instance is left out as one of a mesh that is not there.
-        if !instance_write(r,index,desc,previous,given) {s.desc_instance[len(s.desc_instance)-1]=-1;continue}
+        written:=instance_write(r,index,desc,previous,given)
+        append(&s.desc_instance,i32(index) if written else -1)
+        if !written {continue}
         if !found || !instance_lit_same(before,s.instances[index]) {
             instance_changed_near(s,&s.instances[index])
             if found {instance_changed_near(s,&before)}

@@ -417,7 +417,11 @@ document_from_asset :: proc(doc:^Document,a:^Asset,allocator:=context.allocator)
         no_name,no_columns:runtime.Allocator_Error
         table.name,no_name=strings.clone(source.name,allocator)
         table.columns,no_columns=make([dynamic]Doc_Column,0,len(source.columns),allocator)
-        append(&doc.tables,table)
+        if _,no_table:=append(&doc.tables,table);no_table!=nil {
+            delete(table.name,allocator);delete(table.columns)
+            document_destroy(doc)
+            return .Out_Of_Memory
+        }
         if no_name!=nil || no_columns!=nil {document_destroy(doc);return .Out_Of_Memory}
         target:=&doc.tables[len(doc.tables)-1]
         for from,at in source.columns {
