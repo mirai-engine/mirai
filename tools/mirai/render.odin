@@ -61,7 +61,7 @@ RENDER_FLY_EVENTS :: 200      // editor.input events per call, within the API_IN
 RENDER_WAIT :: 300            // seconds the check waits by default for the other programs of the engine to close
 RENDER_KILL :: "taskkill /PID <pid> /F" when ODIN_OS==.Windows else "kill <pid>"
 RENDER_SAVED :: "render-base" // the folder of the shared cache with the measures of the bases, a file per commit
-RENDER_SAVED_VERSION :: 1     // of how a measure is taken and what it holds: a saved one of another version is not read
+RENDER_SAVED_VERSION :: 2     // of how a measure is taken and what it holds: a saved one of another version is not read
 RENDER_SAVED_COST_HOURS :: 24 // a saved base gives the cost only this long after it was measured
 
 Render_View :: struct {
@@ -964,32 +964,10 @@ render_measure :: proc(e:^Render_Editor,plan:Render_Plan,view:Render_View,size:[
         camera["exposure"]="scene"
         if _,ok:=render_call(e,"camera.set",camera);!ok {m.failure="camera.set failed";return}
     }
-    if !headless_step(e,plan.warmup) {m.failure="engine.step failed";return}
-    if e.run.quality {
-        // The frames profile.capture records otherwise: the captures come at
-        // the same frame with the cost and without it.
-        if !headless_step(e,plan.frames) {m.failure="engine.step failed";return}
-    } else {
-        profile:=make(json.Object,context.temp_allocator)
-        profile["frames"]=json.Integer(plan.frames)
-        profile["advance"]=true
-        profile["label"]=view.name
-        profile["top"]=json.Integer(64)
-        text,profiled:=render_call(e,"profile.capture",profile)
-        if !profiled {m.failure="profile.capture failed";return}
-        Summary :: struct {
-            frame:struct {p50_ms,p95_ms,cpu_ms,gpu_ms:f64},
-            gpu:[]struct {name:string,mean_ms:f64},
-            conditions:json.Value,
-        }
-        summary:Summary
-        if json.unmarshal_string(text,&summary)!=nil {m.failure="profile.capture gave no summary";return}
-        m.frame_ms,m.frame_p95_ms,m.gpu_ms,m.cpu_ms=summary.frame.p50_ms,summary.frame.p95_ms,summary.frame.gpu_ms,summary.frame.cpu_ms
-        passes:=make([]Render_Pass,len(summary.gpu))
-        for pass,i in summary.gpu {passes[i]={pass.name,pass.mean_ms}}
-        m.passes=passes
-        if e.run.conditions==nil {e.run.conditions=summary.conditions}
-    }
+    // The captures come a fixed count of frames after the camera was set,
+    // which restarts the jitter of the view: profile.capture runs frames by
+    // the clock until they stop getting faster, so the cost is recorded after them.
+    if !headless_step(e,plan.warmup+plan.frames) {m.failure="engine.step failed";return}
     Status :: struct {render_width,render_height:int,gpu_memory:struct {used_mb,budget_mb:f64}}
     status:Status
     if status_text,ok:=render_call(e,"engine.status",nil);ok {_=json.unmarshal_string(status_text,&status)}
@@ -1015,6 +993,27 @@ render_measure :: proc(e:^Render_Editor,plan:Render_Plan,view:Render_View,size:[
     region,measured:=render_images(&m,rects.window.size,rects.layout.bar,rects.layout.left,rects.layout.right,rects.layout.bottom)
     m.region={region.x,region.y,region.w,region.h}
     if !measured {m.failure="the captures could not be read or compared";return}
+    if !e.run.quality {
+        profile:=make(json.Object,context.temp_allocator)
+        profile["frames"]=json.Integer(plan.frames)
+        profile["advance"]=true
+        profile["label"]=view.name
+        profile["top"]=json.Integer(64)
+        text,profiled:=render_call(e,"profile.capture",profile)
+        if !profiled {m.failure="profile.capture failed";return}
+        Summary :: struct {
+            frame:struct {p50_ms,p95_ms,cpu_ms,gpu_ms:f64},
+            gpu:[]struct {name:string,mean_ms:f64},
+            conditions:json.Value,
+        }
+        summary:Summary
+        if json.unmarshal_string(text,&summary)!=nil {m.failure="profile.capture gave no summary";return}
+        m.frame_ms,m.frame_p95_ms,m.gpu_ms,m.cpu_ms=summary.frame.p50_ms,summary.frame.p95_ms,summary.frame.gpu_ms,summary.frame.cpu_ms
+        passes:=make([]Render_Pass,len(summary.gpu))
+        for pass,i in summary.gpu {passes[i]={pass.name,pass.mean_ms}}
+        m.passes=passes
+        if e.run.conditions==nil {e.run.conditions=summary.conditions}
+    }
     if view.fly.frames>0 {
         free:=render_free_region(rects.window.size,int(rects.window.size.x),int(rects.window.size.y),rects.layout.bar,rects.layout.left,rects.layout.right,rects.layout.bottom)
         m.failure=render_fly(e,plan,view,folder,{f64(free.x)+0.5*f64(free.w),f64(free.y)+0.5*f64(free.h)},region,&m)

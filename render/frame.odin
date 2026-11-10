@@ -666,6 +666,7 @@ record_view :: proc(r:^Renderer,cmd:^rhi.Command_List,state:^View_State,view:Fra
     state.has_previous=true
     state.resources_frames+=1
     state.frames+=1
+    state.turn+=1
     state.last_frame=r.frame
     return true
 }
@@ -727,7 +728,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 	case .None:
 	case .Upscale: phases = upscale_jitter_phases(t.width, t.output_width)
 	}
-	jitter := taa_jitter(p.view.frames, phases) if phases > 0 else Vec2{}
+	jitter := taa_jitter(p.view.turn, phases) if phases > 0 else Vec2{}
 	p.jitter_phases = phases
 	// Sub-pixel offset applied in NDC (pixel y grows downwards, NDC y upwards).
 	shift := Mat4(1)
@@ -745,7 +746,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 		resolution = {f32(t.width), f32(t.height)},
 		inv_resolution = {1 / f32(t.width), 1 / f32(t.height)},
 		time={r.time,r.previous_time,r.delta_time,0},
-		frame_index = u32(p.view.frames),
+		frame_index = u32(p.view.turn),
 		light_nodes = u32(len(s.light_tree)),
 		shadowless_lights = light_region_frame(s.light_region),
 		instance_count = u32(len(s.instances)),
