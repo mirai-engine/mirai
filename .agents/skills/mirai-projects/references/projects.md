@@ -219,9 +219,10 @@ with the project library.
   it imports next to it and at the same depth as `decl/`, and `<name>-<part>.stamp` the fingerprint
   of the last build.
 - The declarations copy the body of `#force_inline`, generic or `where` procedures and declare the
-  others as functions of the library. An `@(private="file")` is also declared, private in the
-  declarations file and exported with the name of its file (`mirai.<package>.<file>.<name>`), so a
-  copied body can call it.
+  others as functions of the library, the private ones
+  [only when named](#engine-binaries). An `@(private="file")` one is private in the declarations
+  file and exported with the name of its file (`mirai.<package>.<file>.<name>`), so a copied body
+  can call it.
 - Order: the runtime parts in the order of the plugins (dependencies first) and then, for
   `Editor`, the editor ones. A part imports the runtime of its plugin (the editor one) and the
   parts of the plugins it depends on, with its own, each with all its packages. `Play` links only
@@ -268,7 +269,8 @@ Each mode has its folder: switching between them compiles nothing.
   are [plugin libraries](#plugin-libraries).
 - **What crosses between libraries** is what crosses to a project: calls, with the context and
   its allocators, and data. Each library has its own Odin runtime and type table, so none looks up
-  a type of another by `typeid` ([reflection](../../../../docs/ARCHITECTURE.md#the-generated-world)),
+  a type of another by `typeid`
+  ([reflection](../../../../docs/ARCHITECTURE.md#the-generated-world)),
   and a package-level variable would be one per library that reads it.
 - `decl/` has the declarations of every library, the `mirai` collection of the project libraries,
   with the `#load` relative to each declaration so the cache serves any checkout. `engine.stamp`
@@ -289,7 +291,9 @@ Each mode has its folder: switching between them compiles nothing.
   those with an `any` in their signature (`..any`, `[]any`) with their body (they are compiled in
   the caller: an `any` carries a typeid that only the caller's type table knows, so `fmt` in the
   library would print an enum or a struct of a plugin as nothing) and the rest `foreign` towards
-  the library. Nothing
+  the library. A private procedure is declared and exported only when the text of the declarations
+  of its package names it (a copied body or value, a default value of a declared procedure): no
+  other package can call it, so changing one that is not named changes no declaration. Nothing
   of the engine is recompiled with what uses it. It writes only the files whose text changes.
 - **Currency by parts.** A library is recompiled by its sources (without `_test.odin`; the one
   with `render`, also by `shaders/build/manifest.json`, which gives the hash of the code it
@@ -301,7 +305,8 @@ Each mode has its folder: switching between them compiles nothing.
   declarations of the libraries it needs; a build without a stamp of its version, `--force` and a
   copy from the shared cache remove the stages.
 - **Mode.** `build`, `edit`, `play` and `session start|restart` accept `--dev` (everything at
-  `-o:minimal`, to check changes) or `--release` (`-o:speed`, for the CPU figures and to ship), not both.
+  `-o:minimal`, to check changes) or `--release` (`-o:speed`, for the CPU figures and to ship), not
+  both.
   Without either, `edit` and `play` use `--release` (a person runs them); `build`, `session start`
   and `import`, the last compiled mode (`Keep`) and the manifest's optimization; `session
   restart`, that of the previous session. An agent always passes `--dev`. `build.engine_current`
@@ -586,7 +591,9 @@ any user and nothing in the engine depends on them; bash remains only in the lau
 - A script that measures times runs with `mirai measure -- uv run scripts/<script>.py`
   ([turns](build.md#turns-between-processes)); `mirai measure -- ./mirai <args>` also works on
   Windows, with the Git Bash of `mirai.cmd`.
-- `scripts/check_docs.py` valida la documentación.
+- `scripts/check_docs.py` checks the documentation: links and anchors, frontmatter, line width,
+  repeated headings, files and tests it names, the skill table of `README.md` and the import of
+  `AGENTS.md`. Its rules are tested by `scripts/tests/test_check_docs.py`.
 - `scripts/video_frames.py` takes the frames (a labelled strip like those of `play.capture`) and
   the sound of a section of a YouTube or X video, or of a file, to compare with Mirai captures. It
   needs Windows, and what it downloads stays in `.mirai/tmp/video_frames`, never in git.

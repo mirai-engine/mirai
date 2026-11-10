@@ -115,7 +115,8 @@ what it perceives; `think` only reads and proposes, and the actions write.
   the height of the point that is looked at.
 - `perception_update` (`fixed`, `input`, `server`) adds `Perception` to each `Perceiver` and is
   its sole writer. Sight sees what is in its cone, around the perceiver's -Z (its front), if a
-  physics ray from the eyes does not hit something else first; the rays of a tick (`Behavior_Settings.rays`) are shared among the
+  physics ray from the eyes does not hit something else first; the rays of a tick
+  (`Behavior_Settings.rays`) are shared among the
   perceivers in turns. Hearing takes the noises of `Noises` (`noise`) within its range by volume.
   Memory lowers confidence until forgetting, only on the perceiver's turn: what it could not look
   at it does not forget before looking at it again. A destroyed subject is forgotten at once.

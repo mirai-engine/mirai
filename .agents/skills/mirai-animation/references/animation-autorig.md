@@ -50,8 +50,8 @@ and sets it moving; there is no step that depends on looking at the mesh by hand
   leaves the pose the clip asks for without correcting the arm angle of the mesh.
 - Correcting a joint is reimporting with what is known about the body: `skeleton.bone.set` changes
   the rest, not where the skin was bound.
-- The model is on +Y and faces -Z once imported, like the templates: a source that faces its +Z arrives so. A humanoid, standing and with the arms
-  separated from the torso.
+- The model is on +Y and faces -Z once imported, like the templates: a source that faces its +Z
+  arrives so. A humanoid, standing and with the arms separated from the torso.
 
 ## Verification
 

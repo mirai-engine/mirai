@@ -88,6 +88,8 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 - A generic procedure, an `inline` one, one with `deferred_*` or one with an `any` in its
   signature is compiled in its caller: it is not exported. An `any` crossing into a library would
   carry a typeid its type table lacks (`%v` of a plugin's enum prints nothing).
+- A private procedure is declared and exported only when the declarations of its package name it:
+  what `declare` copies as text and what it looks for names in are the same set.
 - The project libraries and the engine ones share flags (`engine_flags`: `-custom-attribute` and
   the platform ones); their layouts depend on it.
 - Only the shaders job (`Shaders_Job`, on its thread) writes to `project.shader_generation(root)`.
@@ -138,10 +140,10 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   cache").
 - Environment: `mirai doctor` from a worktree without its own `.deps` finds Odin and the
   dependencies of the main checkout.
-- Installed engine: `mirai test project an_installed_engine_is_told_by_its_manifest`, and in
-  `cook/build` `an_installed_engine_builds_nothing_and_says_what_it_lacks`,
-  `the_compiler_of_an_installed_engine_counts_by_its_manifest_not_its_date` and
-  `a_plugin_library_is_the_same_in_every_project`. If the package changes, by hand:
+- Installed engine: `project/project_test.odin` (told by its manifest) and, in `cook/build`,
+  `engine_test.odin` (builds nothing and says what it lacks), `compiler_test.odin` (the compiler
+  counts by its manifest, not its date) and `plugins_test.odin` (a plugin library is the same in
+  every project). If the package changes, by hand:
   `mirai package engine --out <short folder>`, compress it, decompress it into another folder and,
   with its `bin/mirai`, `new` of each template and `build editor --dev`, which does not compile
   plugin libraries; then `edit --dev` opens the editor. The workflow YAML is validated with

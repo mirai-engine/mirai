@@ -16,11 +16,10 @@ mirai rpc --project . play.explore '{"mode":"World","seed":7,"for":"60s"}' \
 mirai rpc --project . play.stop
 ```
 
+- `mirai rpc --project . describe play.explore` lists its params and the results.
 - `mode` `World`: the seat walks and jumps with its actions toward the cells of the world it
   has been in the least. `Ui`: it presses every button it sees with the pointer, goes back with
-  Escape and follows the pages it reaches.
-- `for` is how long it plays. `seed` varies the walk; `cell` is the side of a coverage
-  cell in meters.
+  Escape and follows the pages it reaches. `seed` varies the walk.
 - `World` finds the action that moves (an `Axis2` bound to keys or the left stick) and the one
   that jumps (`Space` or the south button); name them with `move` and `jump` when it cannot.
   `input.get` lists the actions.
@@ -28,10 +27,10 @@ mirai rpc --project . play.stop
 
 ## Read the result
 
-- `stopped`: `Ticks` (its time ran out; raise it for more coverage), `Ui_Covered` (every
-  button it reached was pressed: done), `No_Ui` (no screen with buttons), `No_Body` (the seat
-  drives nothing: no `Spawn_Point` or prefab), `No_Progress` (presses lead nowhere new),
-  `Blocked_By_Ui` (a modal screen that nothing closes: a menu bug), `Run_Ended`.
+- `stopped` says why it ended (`describe` lists the reasons). `Ticks`: its time ran out; raise
+  `for` for more coverage. `Ui_Covered`: every button it reached was pressed, done. `No_Body`: the
+  seat drives nothing, so there is no `Spawn_Point` or prefab. `Blocked_By_Ui`: a modal screen
+  that nothing closes, a menu bug.
 - `cells`: places of the world it stood in. A level it cannot cross shows fewer cells than you
   expect; compare seeds.
 - `activated` and `never`: buttons pressed, and buttons seen or laid out and never pressed
@@ -52,14 +51,12 @@ mirai rpc --project . play.step '{"for":"10s","keys":["W"]}'
 mirai rpc --project . play.qa.report '{}' --select passed,violations
 ```
 
-- Monitors: `frame_ms`, `memory_mb`, `stuck_seconds` (the body asks to move and does not),
-  `fall_below` (a height), `non_finite` (a NaN or infinite `Transform`) and `problems` (a
-  `core.report` problem). `stuck_seconds` (3), `non_finite` and `problems` are on unless turned
-  off; `frame_ms` and `memory_mb` are off at 0. `fall_below` is a little under the lowest of the
-  scene when absent, and `falls:false` turns it off.
-- A violation has `kind` (`Frame_Time`, `Memory`, `Stuck`, `Fell`, `Non_Finite`, `Problem`), a
-  `severity`, the `tick` it first happened, the `position` of the body and, for a problem, its
-  `code` and `text`.
+- `describe play.qa.start` lists the monitors with their defaults and `describe play.qa.report`
+  the fields of a violation. Stuck means the body asks to move and does not; non-finite, a NaN or
+  infinite `Transform`; a problem, one that `core.report` stored. Stuck, non-finite and problems
+  are on unless turned off; the frame time and memory limits are off until given. Without
+  `fall_below` the fall height is a little under the lowest of the scene.
+- A violation has its `kind`, the `tick` it first happened and the `position` of the body.
 
 ## Repro and filmstrip
 

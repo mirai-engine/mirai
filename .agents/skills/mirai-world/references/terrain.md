@@ -466,8 +466,10 @@ ground in the color of the level it shows, a coarser node one.
 `terrain.create`, `terrain.edit`, `terrain.layer`, `terrain.interior`, `terrain.sample`,
 `terrain.heightmap` and `terrain.resize` (`terrain_api.odin`) do what the panel does in the edited
 world on the entity they name (no selection needed), each change an unsaved undo step like a
-stroke. `terrain.create` takes a `name` for its entity and file, beside the scene. A layer is named by its material
-(`asset.slot_named`: the path or stem, `default` with no material, `#2` for the second of the same). A Volume's interior is edited in Paint,
+stroke. `terrain.create` takes a `name` for its entity and file, beside the scene. A layer is named
+by its material
+(`asset.slot_named`: the path or stem, `default` with no material, `#2` for the second of the same).
+A Volume's interior is edited in Paint,
 under its layers: its rows hold what is changed until Apply. `terrain.edit` is a stroke of a brush
 by its name from `at` to `to`, touching every quarter of the radius with what a pass does; a ramp
 or a shape is a touch from `at` to `to`. A brush that the representation does not have, a layer
@@ -740,7 +742,8 @@ Reading from other plugins (such as the foliage bridge), with `core.Ref(Terrain_
 
 ## Verification
 
-Runtime: `mirai test plugins/terrain/runtime` (CPU); `--release` only if a failure may depend on optimization. It covers
+Runtime: `mirai test plugins/terrain/runtime` (CPU); `--release` only if a failure may depend on
+optimization. It covers
 persistence, clones, validation, memory, halo, raycast, masks, immutable publishing, empty chunks,
 physics, saving, stability and world copy.
 
@@ -831,7 +834,6 @@ Editor: `mirai test plugins/terrain/editor` (CPU).
 - `terrain_history_follows_a_save_and_a_discard_of_its_file`
 - `undoing_a_new_terrain_takes_its_file_away_after_its_strokes`
 - `a_preview_shows_the_level_of_its_chunk_and_a_hole_joins_its_neighbors_at_level_0`
-- `a_landscape_becomes_a_heightfield_that_keeps_four_layers_and_folds_the_rest`
 - `terrain_runtime_reads_unsaved_sources_and_follows_a_discard_without_reloading_each_frame`
 - `volume_strokes_are_steps_of_undo_that_keep_only_their_blocks`
 - `terrain_view_modes_ask_for_their_pipeline_only_while_one_is_shown`

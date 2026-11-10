@@ -34,11 +34,10 @@ mirai import source/sounds/step.wav --out assets/player --root .
 - An image is color unless its name says otherwise (`normal`, `_n`, `rough`, `metal`, `orm`,
   `_ao`, `height`, `mask`); force it with `--srgb`, `--data`, `--normal`, `--normal-green-down`.
 - Flags are saved in `<file>.import` beside the source and repeat on the next import.
-- `--max-triangles N`, `--max-texture N`, `--collision none|hull|pieces|mesh|exact`; colliders a
-  source brings win unless `--force-collision`.
-- A model without a skeleton that must animate: `--rig humanoid` (or `fox`, `horse`, `bird`,
-  `dragon`, `kaiju`, `shark`, `snake`, `spider`). Clips of another file onto a skeleton the
-  project has: `--skeleton <id>` ([animation](animation.md)).
+- Triangle and texture limits and the collision shape are flags too; colliders a source brings
+  win unless `--force-collision`. `mirai import` without arguments prints every flag.
+- A model without a skeleton that must animate: `--rig` with the template that fits it. Clips of
+  another file onto a skeleton the project has: `--skeleton <id>` ([animation](animation.md)).
 - Importing again from the same path updates in place, keeping ids and material edits; after
   moving or renaming the source pass `--into <id>` of its prefab, texture or sound.
 - With an editor session: `asset.import` (MCP `asset_import`) answers when it ends, with what it
