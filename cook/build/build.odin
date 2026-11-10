@@ -9,7 +9,6 @@ import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:time"
-import "mirai:cook/workspace"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/subprocess"
@@ -932,7 +931,7 @@ job_files_remove :: proc(job:^Job) {
             remove=!built || !debug
         } else {
             stale:=built && time.diff(entry.modification_time,job.started)>STALE_AFTER
-            remove=strings.has_suffix(entry.name,".old") || stale && (debug || !workspace.process_alive(job_file_pid(entry.name[len(target):])))
+            remove=strings.has_suffix(entry.name,".old") || stale && (debug || !subprocess.process_alive(job_file_pid(entry.name[len(target):])))
         }
         if !remove {continue}
         if entry.type==.Directory {_=os.remove_all(entry.fullpath)}
