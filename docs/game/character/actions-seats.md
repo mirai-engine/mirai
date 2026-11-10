@@ -10,17 +10,17 @@ in code. A game reads `menu` with `gui.menu_pressed` ([UI](../ui.md#events)).
 @(actions)
 Action :: enum u8 {Use,Fire}
 
-@(storage,host)
-Game_Actions :: struct {defaults:[Action]inp.Action_Default}
-
-game_actions_default :: proc "contextless" () -> Game_Actions {
-    return {defaults={
+action_defaults :: proc "contextless" () -> [Action]inp.Action_Default {
+    return {
         .Use=inp.action_default(.Button,inp.binding_key(.E),inp.binding_gamepad_button(.East)),
         .Fire=inp.action_default(.Button,inp.binding_mouse_button(.Left),
             inp.binding_gamepad_axis(.Right_Trigger)),
-    }}
+    }
 }
 ```
+
+The defaults are found by name, as `NAME_DEFAULT` is: `<enum>_defaults` beside the enum
+(`Weapon_Action` takes `weapon_action_defaults`).
 
 Kinds are `.Button`, `.Axis` and `.Axis2`; bindings come from `inp.binding_key`,
 `binding_key_axis`, `binding_keys` (four keys, an `Axis2`), `binding_mouse_button`,

@@ -177,7 +177,16 @@ package.
 A row created by generic code (adding a component from the editor) and a storage when it is created
 or cleared start at what the package declares: a constant `NAME_DEFAULT` or a procedure
 `name_default()`, with the type name in uppercase or in `snake_case`; without them, zeros. A saved
-scene does not use the default: it reads what it saved.
+scene does not use the default: it reads what it saved. The defaults of the members of an enum
+`@(actions)` follow the same rule with a plural: `<enum>_defaults()` or `<ENUM>_DEFAULTS`, a
+`[E]Action_Default`.
+
+A literal of any type whose package declares its default (`T{...}` or `pkg.T{...}`, outside the
+declaration that builds the default) names every field the default sets to something other than
+zero, or the generator refuses it: one rule for every package it reads, engine, plugins and game,
+so a literal never drops a default silently. Code starts from the default
+(`value:=phys.WALK_DEFAULT`) and changes fields. A literal compared or read a field of makes no
+value and is not checked; a zero value on purpose is a declaration (`none:Audio_Reverb`).
 
 ## Where the data goes
 
@@ -300,6 +309,9 @@ all. The ones most often stumbled on:
   receives one from an editor package.
 - A function that receives twice a datum it writes, when either of the two is a field of a
   `@(params)`.
+- A literal that leaves out a field its type's default sets ([initial values](#initial-values));
+  a struct with a field `[E]Action_Default` (the defaults of actions go beside
+  their enum).
 - A `replicated` on a storage or with a value that is neither `owner` nor `others`; a `net_message`
   that is also a component or storage, of an editor package, or with an unknown `from`.
 - What breaks the [dedicated server](#dedicated-server).

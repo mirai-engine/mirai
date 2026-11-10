@@ -285,8 +285,8 @@ audio_reverb :: proc(
     bus:=BUS_MASTER
     if settings.ptr!=nil {bus=settings.reverb_bus}
     hearing:=Hearing{worlds=worlds,listeners=listeners,view=view}
-    room:Audio_Reverb
-    if position,_,_,found:=listener_pose(&hearing);found {room=volume.at(volumes,worlds,reverbs,position,Audio_Reverb{},reverb_mix)}
+    room,silent:Audio_Reverb
+    if position,_,_,found:=listener_pose(&hearing);found {room=volume.at(volumes,worlds,reverbs,position,silent,reverb_mix)}
     target:=transmute(Reverb)room
     if medium.ptr!=nil {
         if weight:=clamp(medium.weight,0,1);weight>0 {
@@ -615,19 +615,34 @@ voice_start :: proc(app:^host.App,time:core.Time,asset:base.Asset_Id,desc:mixer.
     return mixer.voice_play(app.mixer,pick.sound,desc)
 }
 
-// Plays a .sound, or one of a .sound_set, once, not placed in the world.
-// Zero when the application has no mixer, the asset does not load as a
+// Plays a .sound, or one of a .sound_set, once, not placed in the world: by
+// its path in the assets ("player/step.sound") or its id. Zero when the
+// application has no mixer, the asset is not there or does not load as a
 // sound, no voice is free or the tick runs again (time.resimulating): it
 // played the first time.
-play_asset :: proc(app:^host.App,time:core.Time,asset:base.Asset_Id,volume:f32=1,pitch:f32=1,pan:f32=0,bus:=BUS_EFFECTS) -> Voice {
+play_asset :: proc{play_asset_path,play_asset_id}
+
+play_asset_path :: proc(app:^host.App,time:core.Time,path:string,volume:f32=1,pitch:f32=1,pan:f32=0,bus:=BUS_EFFECTS) -> Voice {
+    id,_:=host.assets_id(app.assets,path)
+    return play_asset_id(app,time,id,volume,pitch,pan,bus)
+}
+
+play_asset_id :: proc(app:^host.App,time:core.Time,asset:base.Asset_Id,volume:f32=1,pitch:f32=1,pan:f32=0,bus:=BUS_EFFECTS) -> Voice {
     desc:=mixer.VOICE_DEFAULT
     desc.bus,desc.volume,desc.pitch,desc.pan=mixer.Bus(bus),volume,pitch,pan
     return voice_start(app,time,asset,desc)
 }
 
 // Plays a .sound, or one of a .sound_set, once at a point of the world,
-// sending reverb of it to the room of the listener.
-play_asset_at :: proc(app:^host.App,time:core.Time,asset:base.Asset_Id,position:[3]f32,volume:f32=1,pitch:f32=1,bus:=BUS_EFFECTS,reverb:f32=1) -> Voice {
+// sending reverb of it to the room of the listener: by path or id, as play_asset.
+play_asset_at :: proc{play_asset_at_path,play_asset_at_id}
+
+play_asset_at_path :: proc(app:^host.App,time:core.Time,path:string,position:[3]f32,volume:f32=1,pitch:f32=1,bus:=BUS_EFFECTS,reverb:f32=1) -> Voice {
+    id,_:=host.assets_id(app.assets,path)
+    return play_asset_at_id(app,time,id,position,volume,pitch,bus,reverb)
+}
+
+play_asset_at_id :: proc(app:^host.App,time:core.Time,asset:base.Asset_Id,position:[3]f32,volume:f32=1,pitch:f32=1,bus:=BUS_EFFECTS,reverb:f32=1) -> Voice {
     desc:=mixer.VOICE_DEFAULT
     desc.bus,desc.volume,desc.pitch,desc.spatial,desc.position,desc.reverb=mixer.Bus(bus),volume,pitch,true,position,reverb
     return voice_start(app,time,asset,desc)

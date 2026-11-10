@@ -76,7 +76,8 @@ A game is a struct in memory and a list of functions that transform it
    settings dialog shows it under an Advanced fold,
    [settings](../mirai-editor/references/panels.md#project-settings)).
 3. A nonzero initial value is declared with `NAME_DEFAULT` or `name_default()` in the same package
-   (`SPIN_DEFAULT :: Spin{...}`).
+   (`SPIN_DEFAULT :: Spin{...}`); a literal of the type that leaves out a field it sets is a
+   generator error ([initial values](references/generator.md#initial-values)).
 4. A loop function is a `proc` without a result with `@(step="<phases>")`; each parameter says what
    it touches ([parameters](references/generator.md#parameters)). What is received together in
    several functions goes in a `@(params)` struct that the function receives by value and passes
@@ -200,8 +201,11 @@ A game is a struct in memory and a list of functions that transform it
   tick ([reflection](references/core.md#world-reflection)).
 - **Clearing a world takes its derived storages to their start.** Loading a scene or a save and
   opening a document call `core.world_clear`; what remains is only what `@(storage,keep)` says
-  (state of the run), the settings and what is not copied. What a save must keep goes in a
-  component, never in a storage ([classes](references/generator.md#attributes)).
+  (engine run state and state only an interface shows), the settings and what is not copied. What
+  a save must keep goes in a component, never in a storage
+  ([classes](references/generator.md#attributes)); the state of a run that crosses a scene change
+  (a score, an inventory) is components on a `core.Keep` root, which passes, is saved and
+  replicates as any entity: the seat of a player is one.
 - **`World` is plain data copied in blocks.** What the application stores for each world that is
   not copied with it (sockets, pointers, mirrors of its state: voices, interfaces, derived meshes,
   its problems) is `@(storage,host,by_world)`: each function receives the value of its world (nil in

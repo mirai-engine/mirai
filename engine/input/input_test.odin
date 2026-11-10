@@ -10,29 +10,18 @@ import "mirai:core"
 @(private="file") JUMP :: Action(4)
 @(private="file") HIT :: Action(40)
 
+// The defaults of Test_Action, as the generator finds them beside the enum.
 @(private="file")
-Test_Defaults :: struct {
-    count:int,
-    defaults:[Test_Action]Action_Default,
-}
-
-@(private="file")
-defaults_types :: proc(types:^[dynamic]core.Test_Type) {
-    append(types,
-        core.test_type(Test_Defaults,default=proc(dst:^Test_Defaults) {
-            dst^={defaults={
-                .Move=action_default(.Axis2,binding_keys(.A,.D,.S,.W),binding_gamepad_stick(.Left)),
-                .Jump=action_default(.Button,binding_key(.Space)),
-            }}
-        }),
-        core.test_type(Loose_Defaults,default=proc(dst:^Loose_Defaults) {dst^={defaults={.Fire=action_default(.Button,binding_key(.F))}}}),
-    )
+test_action_defaults :: proc(dst:rawptr) {
+    (cast(^[Test_Action]Action_Default)dst)^={
+        .Move=action_default(.Axis2,binding_keys(.A,.D,.S,.W),binding_gamepad_stick(.Left)),
+        .Jump=action_default(.Button,binding_key(.Space)),
+    }
 }
 
 @(private="file")
 Defaults_World :: struct {
     using world:core.Test_World,
-    defaults:Test_Defaults,
 }
 
 @(private="file")
@@ -43,10 +32,10 @@ TEST_NAMES :: [3]core.Name_Info{
 }
 
 @(private="file")
-test_info :: proc(t:^testing.T,$W:typeid,names:[]core.Name_Info) -> (info:core.World_Info,ok:bool) {
+test_info :: proc(t:^testing.T,$W:typeid,names:[]core.Name_Info,defaults:proc(dst:rawptr)=test_action_defaults) -> (info:core.World_Info,ok:bool) {
     @(static) actions:=[1]core.Actions_Info{{type=Test_Action,base=3,library="test"}}
-    actions[0].info=type_info_of(Test_Action)
-    info=core.test_info(t,W,defaults_types) or_return
+    actions[0].info,actions[0].defaults=type_info_of(Test_Action),defaults
+    info=core.test_info(t,W) or_return
     info.names,info.actions=names,actions[:]
     return info,true
 }
@@ -81,33 +70,24 @@ the_defaults_of_the_code_need_no_step :: proc(t:^testing.T) {
     testing.expect(t,action(&actions,Action(50))=={},"a value the map does not have is released")
 }
 
-@(private="file") Loose :: enum u8 {Fire}
-
-@(private="file")
-Loose_Defaults :: struct {defaults:[Loose]Action_Default}
-
-@(private="file")
-Loose_World :: struct {
-    using world:core.Test_World,
-    defaults:Test_Defaults,
-    loose:Loose_Defaults,
-}
-
 // Defaults are given by member of an enum @(actions), which take the actions
-// from its base on; those of an enum that is not one are a problem.
+// from its base on; the members of an enum without defaults are unbound.
 @(test)
 defaults_are_given_by_member_of_an_enum_of_actions :: proc(t:^testing.T) {
     names:=TEST_NAMES
-    info,made:=test_info(t,Loose_World,names[:])
-    if !made {return}
-    defer core.test_info_destroy(&info)
-    problems:core.Problems
-    m:Input_Map
-    input_map_make(&m,&info,"","",&problems)
-    testing.expect(t,input_map_has(&m,MOVE,.Axis2) && input_map_has(&m,JUMP,.Button),"the members take 3 and 4")
-    testing.expect(t,m.declared&(action_bit(0)|action_bit(1)|action_bit(2))==0,"below the base nothing is declared")
-    loose:=core.problem_find(&problems,core.NONE,"input.default_unknown")
-    testing.expect(t,loose!=nil && strings.contains(core.problem_text(loose),"Loose_Defaults gives defaults to the members of Loose, which is not an enum @(actions)"))
+    cases:=[]struct{defaults:proc(dst:rawptr),bound:bool}{{test_action_defaults,true},{nil,false}}
+    for c in cases {
+        info,made:=test_info(t,Defaults_World,names[:],c.defaults)
+        if !made {return}
+        defer core.test_info_destroy(&info)
+        problems:core.Problems
+        m:Input_Map
+        input_map_make(&m,&info,"","",&problems)
+        testing.expect_value(t,input_map_has(&m,MOVE,.Axis2) && input_map_has(&m,JUMP,.Button),c.bound)
+        testing.expect(t,m.declared&(action_bit(0)|action_bit(1)|action_bit(2))==0,"below the base nothing is declared")
+        unbound:=core.problem_find(&problems,core.NONE,"input.action_unbound")
+        testing.expect_value(t,unbound!=nil && strings.contains(core.problem_text(unbound),`"move"`),!c.bound)
+    }
 }
 
 // A step reads the actions of its enum by member, and the base of the enum

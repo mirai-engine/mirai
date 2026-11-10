@@ -79,7 +79,6 @@ screen of that player takes input. `Passive` receives only the pointer.
 
 ## Pitfalls that fail silently
 
-- Zeroed `World_Widget`: size 0, nothing shows. Start from `gui.WORLD_WIDGET_DEFAULT`.
 - The component its paths name is missing on the entity: the widget is not shown, and the reason
   is a problem `gui.bind` in `engine.diagnostics`.
 - An entity with `Hidden` hides its screen and its panels.

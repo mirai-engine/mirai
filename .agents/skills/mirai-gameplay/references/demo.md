@@ -31,7 +31,7 @@ badge and the hum); `mirai content <project>` runs it. It does not go into the g
   activates on its own.
 - `settings.mirai`: `Spawn_Settings` with `"players": true` and `UI_Settings` in English and
   Spanish, with the prompt pack of `prompts_kenney`.
-- `cook.mirai`: the prefabs and materials that only code picks by id or name.
+- `cook.mirai`: the prefabs and materials that only code picks by path.
 - `render_check.mirai`: the fixed views that `mirai render check` measures
   ([render check](../../mirai-rendering/references/verification.md#render-check)).
 - `game/`, `assets/` and the art sources in `source/`.

@@ -75,7 +75,7 @@ vfx_gallery_actions :: proc(views:^core.Table(Vfx_Gallery_View),actions:inp.Inpu
 @(step="fixed")
 vfx_gallery_impacts :: proc(impacts:^core.Table(Vfx_Impacts),views:core.Read(Vfx_Gallery_View),worlds:core.Read(core.World_Transform),channels:^vfx.Particle_Channels,time:core.Time) {
     if !time.playing || !(time.dt>0) {return}
-    view:=core.at(views,0) if core.count(views)>0 else Vfx_Gallery_View{}
+    view:=core.at(views,0) if core.count(views)>0 else VFX_GALLERY_VIEW_DEFAULT
     for row in 0..<core.count(core.read(impacts)) {
         e:=core.entity_at(core.read(impacts),row)
         world,placed:=core.get(worlds,e)

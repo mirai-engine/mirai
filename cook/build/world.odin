@@ -257,6 +257,7 @@ world_generate :: proc(p:^project.Project,allocator:=context.allocator,shipped:=
     bundles_settle(&g)
     for pkg in g.packages {steps_read(&g,pkg)}
     rules_check(&g)
+    defaults_check(&g)
     out.errors=g.errors[:]
     if len(g.errors)>0 {return}
     out.game_world=world_write(&g,false)
@@ -1848,6 +1849,12 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     }
     fmt.sbprint(w,"\n")
 
+    // The default bindings of each enum @(actions); the compiler asks for every member.
+    for a,ai in g.action_enums {
+        value:=actions_defaults_value(a) or_continue
+        fmt.sbprintf(w,"action_defaults_%d :: proc(dst:rawptr) {{(cast(^[%s.%s]%s.Action_Default)dst)^=%s}}\n",ai,a.pkg.alias,a.name,g.actions_type.pkg.alias,value)
+    }
+
     // What a new row of each record type starts as, and the descriptions of their fields.
     for r in g.records {
         tag:=fmt.tprintf("%s_%s",snake(r.pkg.name),snake(r.name))
@@ -1941,7 +1948,8 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     }
     fmt.sbprintf(w,"    actions:=make([]%s.Actions_Info,%d)\n",core_alias,len(g.action_enums))
     for a,ai in g.action_enums {
-        fmt.sbprintf(w,"    actions[%d]={{typeid_of(%s.%s),type_info_of(%s.%s),%d,\"%s\"}}\n",ai,a.pkg.alias,a.name,a.pkg.alias,a.name,a.base,a.pkg.name)
+        _,has_defaults:=actions_defaults_value(a)
+        fmt.sbprintf(w,"    actions[%d]={{typeid_of(%s.%s),type_info_of(%s.%s),%d,\"%s\",%s}}\n",ai,a.pkg.alias,a.name,a.pkg.alias,a.name,a.base,a.pkg.name,has_defaults?fmt.tprintf("action_defaults_%d",ai):"nil")
     }
     fmt.sbprintf(w,"    records:=make([]%s.Record_Info,%d)\n",core_alias,len(g.records))
     for r,ri in g.records {
@@ -2019,6 +2027,20 @@ default_value :: proc(t:^Type) -> (value:string,found:bool) {
 @(private="file")
 record_default :: proc(r:^Record_Type) -> (value:string,found:bool) {
     return default_value(&Type{name=r.name,pkg=r.pkg})
+}
+
+// The default bindings of the members of an enum @(actions): <ENUM>_DEFAULTS or
+// <enum>_defaults() of its package, a [E]Action_Default.
+@(private="file")
+actions_defaults_value :: proc(a:^Action_Enum) -> (value:string,found:bool) {
+    buffer:[512]u8
+    constant,maker,_:=core.default_names(a.name,buffer[:])
+    constant,maker=fmt.tprintf("%sS",constant),fmt.tprintf("%ss",maker)
+    switch {
+    case a.pkg.names[constant]: return fmt.aprintf("%s.%s",a.pkg.alias,constant),true
+    case a.pkg.names[maker]:    return fmt.aprintf("%s.%s()",a.pkg.alias,maker),true
+    }
+    return "",false
 }
 
 // The default of a storage on a GPU: <name>_for_device(device:rhi.Device_Info) of its package; "" without one.
@@ -2153,4 +2175,183 @@ expr_text :: proc(file:^ast.File,expr:^ast.Expr) -> string {
 snake :: proc(name:string) -> string {
     buffer:[256]u8
     return strings.clone(core.snake_name(name,buffer[:]))
+}
+
+// A type whose new rows start from a default: the fields its default sets,
+// which a literal of it may not leave out.
+@(private="file")
+Defaulted :: struct {
+    name,path:string,
+    pkg:^Package,
+    default:string,   // NAME_DEFAULT, or name_default()
+    decl:string,      // the declaration that builds it, where its own literal goes
+    order:[]string,   // its fields in order, for a literal without names
+    set:[]string,     // what its default sets; every field for a procedure
+}
+
+// What the defaults of the world ask of the code: the defaults of the
+// actions of an enum @(actions) are <ENUM>_DEFAULTS or <enum>_defaults()
+// beside it, never a field of a component or storage; and a literal of a type
+// whose default sets a field (NAME_DEFAULT or name_default()) names that
+// field or starts from the default, since a field it leaves out is zero.
+@(private="file")
+defaults_check :: proc(g:^Generator) {
+    defaulted:=make(map[string]^Defaulted,context.temp_allocator)
+    add :: proc(g:^Generator,defaulted:^map[string]^Defaulted,name:string,pkg:^Package,file:^ast.File,value:^ast.Expr) {
+        record,is_struct:=value.derived.(^ast.Struct_Type)
+        if !is_struct || record.fields==nil {return}
+        order:=make([dynamic]string,context.temp_allocator)
+        for f in record.fields.list {
+            for n in f.names {append(&order,ident_name(n))}
+            array,is_array:=f.type.derived.(^ast.Array_Type)
+            if !is_array || array.len==nil {continue}
+            elem:=ident_name(array.elem)
+            if selector,is_selector:=array.elem.derived.(^ast.Selector_Expr);is_selector {elem=selector.field.name}
+            if elem!="Action_Default" {continue}
+            enum_name:=ident_name(array.len)
+            if selector,is_selector:=array.len.derived.(^ast.Selector_Expr);is_selector {enum_name=selector.field.name}
+            buffer:[512]u8
+            constant,maker,_:=core.default_names(enum_name,buffer[:])
+            append(&g.errors,fmt.aprintf("%s(%d): %s carries the defaults of the actions of %s, and a struct carries no defaults of actions: declare them beside the enum as %s :: proc() -> [%s]Action_Default (or a constant %sS), and remove the field",file.fullpath,f.pos.line,name,enum_name,fmt.tprintf("%ss",maker),enum_name,constant))
+        }
+        d:=new(Defaulted,context.temp_allocator)
+        d.name,d.path,d.pkg,d.order=name,pkg.path,pkg,order[:]
+        buffer:[512]u8
+        constant,maker,_:=core.default_names(name,buffer[:])
+        switch {
+        case pkg.names[constant]:
+            d.default,d.decl=strings.clone(constant,context.temp_allocator),strings.clone(constant,context.temp_allocator)
+            d.set=order[:]
+            // TRANSFORM_DEFAULT :: TRANSFORM_IDENTITY is built where that one is.
+            for _ in 0..<8 {
+                _,built,found:=type_decl(pkg,d.decl)
+                if !found {break}
+                if other:=ident_name(built);other!="" {
+                    d.decl=strings.clone(other,context.temp_allocator)
+                    continue
+                }
+                if lit,is_lit:=built.derived.(^ast.Comp_Lit);is_lit {d.set=literal_fields(lit,order[:],zero=false)}
+                break
+            }
+        case pkg.names[maker]:
+            // A maker takes nothing: inspect_default(s,...) of a type Inspect is something else.
+            _,built,found:=type_decl(pkg,maker)
+            if !found {return}
+            made,is_proc:=built.derived.(^ast.Proc_Lit)
+            if !is_proc || made.type.params!=nil && len(made.type.params.list)>0 {return}
+            d.default,d.decl=fmt.aprintf("%s()",maker,allocator=context.temp_allocator),strings.clone(maker,context.temp_allocator)
+            d.set=order[:]
+        case:
+            return
+        }
+        if len(d.set)>0 {defaulted[fmt.aprintf("%s.%s",pkg.path,name,allocator=context.temp_allocator)]=d}
+    }
+    for pkg in g.packages {
+        for file in pkg.files {
+            for stmt in file.decls {
+                decl,is_value:=stmt.derived.(^ast.Value_Decl)
+                if !is_value || decl.is_mutable || len(decl.names)!=1 || len(decl.values)!=1 {continue}
+                add(g,&defaulted,ident_name(decl.names[0]),pkg,file,decl.values[0])
+            }
+        }
+    }
+    if len(defaulted)==0 {return}
+    Walk :: struct {
+        g:^Generator,
+        defaulted:^map[string]^Defaulted,
+        pkg:^Package,
+        file:^ast.File,
+        decl:string,          // the top-level declaration walked
+        compared:map[^ast.Node]bool, // literals compared or read a field of, which make no value
+    }
+    unwrapped :: proc(expr:^ast.Expr) -> ^ast.Node {
+        e:=expr
+        for e!=nil {
+            paren,is_paren:=e.derived.(^ast.Paren_Expr)
+            if !is_paren {break}
+            e=paren.expr
+        }
+        return e
+    }
+    visit :: proc(v:^ast.Visitor,node:^ast.Node) -> ^ast.Visitor {
+        if node==nil {return nil}
+        w:=(^Walk)(v.data)
+        #partial switch n in node.derived {
+        case ^ast.Binary_Expr:
+            if n.op.kind==.Cmp_Eq || n.op.kind==.Not_Eq {w.compared[unwrapped(n.left)],w.compared[unwrapped(n.right)]=true,true}
+        case ^ast.Selector_Expr:
+            w.compared[unwrapped(n.expr)]=true
+        }
+        lit,is_lit:=node.derived.(^ast.Comp_Lit)
+        if !is_lit || lit.type==nil || w.compared[node] {return v}
+        key,alias:string
+        #partial switch type in lit.type.derived {
+        case ^ast.Ident:
+            key=fmt.tprintf("%s.%s",w.pkg.path,type.name)
+        case ^ast.Selector_Expr:
+            alias=ident_name(type.expr)
+            path,found:=import_path(w.g,w.file,alias)
+            if !found {return v}
+            key=fmt.tprintf("%s.%s",path,type.field.name)
+        case:
+            return v
+        }
+        d,found:=w.defaulted[key]
+        if !found || w.pkg==d.pkg && w.decl==d.decl {return v}
+        given:=literal_fields(lit,d.order)
+        left:=make([dynamic]string,context.temp_allocator)
+        for field in d.set {
+            if !slice.contains(given,field) {append(&left,field)}
+        }
+        if len(left)==0 {return v}
+        list:=strings.join(left[:],", ",context.temp_allocator)
+        default:=alias!=""?fmt.tprintf("%s.%s",alias,d.default):d.default
+        append(&w.g.errors,fmt.aprintf("%s(%d:%d): %s{{...}} leaves out %s, which %s sets, and a literal leaves a field out as zero: start from the default (value:=%s, then change fields), or name %s in the literal",w.file.fullpath,lit.pos.line,lit.pos.column,expr_text(w.file,lit.type),list,default,default,len(left)==1?"it":"them"))
+        return v
+    }
+    for pkg in g.packages {
+        for file in pkg.files {
+            w:=Walk{g=g,defaulted=&defaulted,pkg=pkg,file=file,compared=make(map[^ast.Node]bool,context.temp_allocator)}
+            visitor:=ast.Visitor{visit=visit,data=&w}
+            for stmt in file.decls {
+                w.decl=""
+                if decl,is_value:=stmt.derived.(^ast.Value_Decl);is_value && len(decl.names)==1 {w.decl=ident_name(decl.names[0])}
+                ast.walk(&visitor,stmt)
+            }
+        }
+    }
+}
+
+// The fields a literal of a struct whose fields are order names: those it
+// names, or the first ones when it gives values without names; without zero,
+// only those it gives a value other than zero.
+@(private="file")
+literal_fields :: proc(lit:^ast.Comp_Lit,order:[]string,zero:=true) -> []string {
+    given:=make([dynamic]string,context.temp_allocator)
+    for elem,i in lit.elems {
+        name,value:=i<len(order)?order[i]:"",elem
+        if field,named:=elem.derived.(^ast.Field_Value);named {name,value=ident_name(field.field),field.value}
+        if name!="" && (zero || !zero_literal(value)) {append(&given,name)}
+    }
+    return given[:]
+}
+
+// 0, false, nil, {} or a literal of only those.
+@(private="file")
+zero_literal :: proc(expr:^ast.Expr) -> bool {
+    #partial switch v in expr.derived {
+    case ^ast.Basic_Lit:
+        value,ok:=strconv.parse_f64(v.tok.text)
+        return ok && value==0
+    case ^ast.Ident:
+        return v.name=="false" || v.name=="nil"
+    case ^ast.Comp_Lit:
+        for elem in v.elems {
+            inner:=elem
+            if field,named:=elem.derived.(^ast.Field_Value);named {inner=field.value}
+            if !zero_literal(inner) {return false}
+        }
+        return true
+    }
+    return false
 }
