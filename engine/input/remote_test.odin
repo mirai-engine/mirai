@@ -35,16 +35,13 @@ same_state :: proc(a,b:Action_State) -> bool {
 // taps included.
 @(test)
 a_seat_takes_the_actions_another_end_sent_as_they_were_there :: proc(t:^testing.T) {
-    es:core.Entities
-    core.entities_init(&es)
-    defer core.entities_destroy(&es)
+    w:Test_Seats
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
     m:=remote_bindings()
-    seats:core.Table(Seat)
-    core.table_init(&seats,"Seat")
-    defer core.table_destroy(&seats)
-    local:=core.create(&es)
-    core.add(&seats,local,Seat{})
-    core.table_settle(&seats,&es)
+    local:=core.create(&w.entities)
+    core.add(&w.seats,local,Seat{})
+    core.test_world_settle(&w)
     there:Seat
     menu:=Context_Stack{layers={0=TEST_MENU},count=1,modal=1}
     Tick :: struct {device:core.Input,menu:bool}
@@ -59,15 +56,15 @@ a_seat_takes_the_actions_another_end_sent_as_they_were_there :: proc(t:^testing.
         {},
     }
     for tick,index in ticks {
-        seat:=core.get(&seats,local)
+        seat:=core.get(&w.seats,local)
         seat.contexts=tick.menu?menu:{}
         device:=tick.device
         seat_feed(seat,&device,&m,false)
-        sent,ok:=seat_remote(core.read(&seats),local,&m)
+        sent,ok:=seat_remote(core.read(&w.seats),local,&m)
         testing.expect(t,ok)
         seat_receive(&there,&m,sent)
         for a in ([]Action{TEST_MOVE,TEST_LOOK,TEST_JUMP,TEST_CONFIRM}) {
-            here:=seat_action(core.read(&seats),local,a)
+            here:=seat_action(core.read(&w.seats),local,a)
             testing.expectf(t,same_state(here,action(&there.actions,a)),"tick %d, action %d: %v here, %v there",index,a,here,action(&there.actions,a))
         }
     }

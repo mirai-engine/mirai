@@ -17,11 +17,22 @@ Test_Defaults :: struct {
 }
 
 @(private="file")
-test_defaults :: proc(dst:rawptr) {
-    (cast(^Test_Defaults)dst)^={defaults={
-        .Move=action_default(.Axis2,binding_keys(.A,.D,.S,.W),binding_gamepad_stick(.Left)),
-        .Jump=action_default(.Button,binding_key(.Space)),
-    }}
+defaults_types :: proc(types:^[dynamic]core.Test_Type) {
+    append(types,
+        core.test_type(Test_Defaults,default=proc(dst:^Test_Defaults) {
+            dst^={defaults={
+                .Move=action_default(.Axis2,binding_keys(.A,.D,.S,.W),binding_gamepad_stick(.Left)),
+                .Jump=action_default(.Button,binding_key(.Space)),
+            }}
+        }),
+        core.test_type(Loose_Defaults,default=proc(dst:^Loose_Defaults) {dst^={defaults={.Fire=action_default(.Button,binding_key(.F))}}}),
+    )
+}
+
+@(private="file")
+Defaults_World :: struct {
+    using world:core.Test_World,
+    defaults:Test_Defaults,
 }
 
 @(private="file")
@@ -32,10 +43,12 @@ TEST_NAMES :: [3]core.Name_Info{
 }
 
 @(private="file")
-test_info :: proc(names:[]core.Name_Info,storages:[]core.Storage_Info) -> core.World_Info {
+test_info :: proc(t:^testing.T,$W:typeid,names:[]core.Name_Info) -> (info:core.World_Info,ok:bool) {
     @(static) actions:=[1]core.Actions_Info{{type=Test_Action,base=3,library="test"}}
     actions[0].info=type_info_of(Test_Action)
-    return {names=names,storages=storages,actions=actions[:]}
+    info=core.test_info(t,W,defaults_types) or_return
+    info.names,info.actions=names,actions[:]
+    return info,true
 }
 
 // The defaults the code gives its actions are in the map without a step that
@@ -43,8 +56,9 @@ test_info :: proc(names:[]core.Name_Info,storages:[]core.Storage_Info) -> core.W
 @(test)
 the_defaults_of_the_code_need_no_step :: proc(t:^testing.T) {
     names:=TEST_NAMES
-    storages:=[]core.Storage_Info{{name="Test_Defaults",type=Test_Defaults,info=type_info_of(Test_Defaults),default=test_defaults}}
-    info:=test_info(names[:],storages)
+    info,made:=test_info(t,Defaults_World,names[:])
+    if !made {return}
+    defer core.test_info_destroy(&info)
     problems:core.Problems
     m:Input_Map
     input_map_make(&m,&info,"input.mirai",`{"actions":[{"name":"hit","kind":"Button","bindings":[{"mouse_button":"Left"}]},{"name":"jump","kind":"Button","bindings":[{"key":"J"}]}]}`,&problems)
@@ -68,18 +82,25 @@ the_defaults_of_the_code_need_no_step :: proc(t:^testing.T) {
 }
 
 @(private="file") Loose :: enum u8 {Fire}
-@(private="file") Loose_Defaults :: struct {defaults:[Loose]Action_Default}
+
+@(private="file")
+Loose_Defaults :: struct {defaults:[Loose]Action_Default}
+
+@(private="file")
+Loose_World :: struct {
+    using world:core.Test_World,
+    defaults:Test_Defaults,
+    loose:Loose_Defaults,
+}
 
 // Defaults are given by member of an enum @(actions), which take the actions
 // from its base on; those of an enum that is not one are a problem.
 @(test)
 defaults_are_given_by_member_of_an_enum_of_actions :: proc(t:^testing.T) {
     names:=TEST_NAMES
-    storages:=[]core.Storage_Info{
-        {name="Test_Defaults",type=Test_Defaults,info=type_info_of(Test_Defaults),default=test_defaults},
-        {name="Loose_Defaults",type=Loose_Defaults,info=type_info_of(Loose_Defaults),default=proc(dst:rawptr) {(cast(^Loose_Defaults)dst)^={defaults={.Fire=action_default(.Button,binding_key(.F))}}}},
-    }
-    info:=test_info(names[:],storages)
+    info,made:=test_info(t,Loose_World,names[:])
+    if !made {return}
+    defer core.test_info_destroy(&info)
     problems:core.Problems
     m:Input_Map
     input_map_make(&m,&info,"","",&problems)
@@ -94,8 +115,9 @@ defaults_are_given_by_member_of_an_enum_of_actions :: proc(t:^testing.T) {
 @(test)
 typed_reads_take_the_actions_of_their_enum :: proc(t:^testing.T) {
     names:=TEST_NAMES
-    storages:=[]core.Storage_Info{{name="Test_Defaults",type=Test_Defaults,info=type_info_of(Test_Defaults),default=test_defaults}}
-    info:=test_info(names[:],storages)
+    info,made:=test_info(t,Defaults_World,names[:])
+    if !made {return}
+    defer core.test_info_destroy(&info)
     m:Input_Map
     input_map_make(&m,&info,"","",nil)
     device:=core.Input{keys_down={.D,.Space},keys_pressed={.D,.Space}}
@@ -121,8 +143,9 @@ typed_reads_take_the_actions_of_their_enum :: proc(t:^testing.T) {
 @(test)
 a_frame_without_a_tick_leaves_input_of_at_the_last_tick :: proc(t:^testing.T) {
     names:=TEST_NAMES
-    storages:=[]core.Storage_Info{{name="Test_Defaults",type=Test_Defaults,info=type_info_of(Test_Defaults),default=test_defaults}}
-    info:=test_info(names[:],storages)
+    info,made:=test_info(t,Defaults_World,names[:])
+    if !made {return}
+    defer core.test_info_destroy(&info)
     m:Input_Map
     input_map_make(&m,&info,"","",nil)
     state:Seats
@@ -153,8 +176,9 @@ a_frame_without_a_tick_leaves_input_of_at_the_last_tick :: proc(t:^testing.T) {
 @(test)
 what_the_code_does_not_declare_is_a_problem :: proc(t:^testing.T) {
     names:=TEST_NAMES
-    storages:=[]core.Storage_Info{{name="Test_Defaults",type=Test_Defaults,info=type_info_of(Test_Defaults),default=test_defaults}}
-    info:=test_info(names[:],storages)
+    info,made:=test_info(t,Defaults_World,names[:])
+    if !made {return}
+    defer core.test_info_destroy(&info)
     problems:core.Problems
     m:Input_Map
     input_map_make(&m,&info,"demo/input.mirai",`{"actions":[{"name":"jump","kind":"Button","bindings":[{"key":"J"}]},{"name":"fire","kind":"Button","bindings":[{"key":"F"}]}]}`,&problems)
@@ -181,8 +205,9 @@ what_the_code_does_not_declare_is_a_problem :: proc(t:^testing.T) {
 @(test)
 the_bindings_the_player_changed_come_back_over_those_of_the_project :: proc(t:^testing.T) {
     names:=TEST_NAMES
-    storages:=[]core.Storage_Info{{name="Test_Defaults",type=Test_Defaults,info=type_info_of(Test_Defaults),default=test_defaults}}
-    info:=test_info(names[:],storages)
+    info,made:=test_info(t,Defaults_World,names[:])
+    if !made {return}
+    defer core.test_info_destroy(&info)
     problems:core.Problems
     PROJECT :: `{"actions":[{"name":"hit","kind":"Button","bindings":[{"mouse_button":"Left"}]}]}`
     below,m:Input_Map
