@@ -8,7 +8,7 @@ import mm "mirai:std/math"
 @(test)
 fluid_volumes_follow_their_rows_and_entities :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     sea:=core.create(&f.entities)
     core.add(&f.volumes,sea,fluid_volume_sea(1025,{1,0,0}))
@@ -54,7 +54,7 @@ fluid_volumes_follow_their_rows_and_entities :: proc(t:^testing.T) {
 @(test)
 a_fluid_volume_that_cannot_be_made_or_overlaps_another_is_a_problem :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     dry:=core.create(&f.entities)
     core.add(&f.volumes,dry,Fluid_Volume{shape=.Plane})
@@ -73,7 +73,7 @@ a_fluid_volume_that_cannot_be_made_or_overlaps_another_is_a_problem :: proc(t:^t
 @(test)
 a_body_floats_on_a_fluid_volume_of_the_world :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     f.gravity={0,-9.81,0}
     sea:=core.create(&f.entities)
@@ -94,7 +94,7 @@ a_body_floats_on_a_fluid_volume_of_the_world :: proc(t:^testing.T) {
 @(test)
 fluids_in_lists_more_fluids_than_one_batch :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     f.settings.fluids=100
     for i in 0..<80 {

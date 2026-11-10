@@ -60,9 +60,9 @@ a_sync_of_the_sealed_rows_gives_what_a_sync_of_every_body_gives :: proc(t:^testi
     tests:=new([2]Physics_Test)
     defer free(tests)
     sealed,whole:=&tests[0],&tests[1]
-    physics_test_init(sealed)
+    if !physics_test_init(t,sealed) {return}
     defer physics_test_destroy(sealed)
-    physics_test_init(whole)
+    if !physics_test_init(t,whole) {return}
     defer physics_test_destroy(whole)
     whole.whole=true
     assets:host.Assets

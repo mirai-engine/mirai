@@ -9,7 +9,7 @@ import mm "mirai:std/math"
 @(test)
 force_and_torque_requests_use_si_units_and_clear_after_one_tick :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     rigid:=RIGID_BODY_DYNAMIC
     rigid.mass=2
@@ -33,7 +33,7 @@ force_and_torque_requests_use_si_units_and_clear_after_one_tick :: proc(t:^testi
 @(test)
 radial_requests_reach_more_than_256_bodies_once_per_compound :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     f.settings.bodies,f.settings.shapes,f.settings.contacts=400,800,1600
     rigid:=RIGID_BODY_DYNAMIC
@@ -65,7 +65,7 @@ radial_requests_reach_more_than_256_bodies_once_per_compound :: proc(t:^testing.
 @(test)
 plane_requests_and_the_range_and_noise_of_volume_requests_reach_the_simulation :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     rigid:=RIGID_BODY_DYNAMIC
     rigid.mass=2
@@ -104,7 +104,7 @@ plane_requests_and_the_range_and_noise_of_volume_requests_reach_the_simulation :
 @(test)
 external_proxies_accept_impulses_forces_joints_and_manipulation :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     physics_test_step(&f,0)
     desc:=sim.BODY_DESC_DEFAULT
@@ -144,7 +144,7 @@ external_proxies_accept_impulses_forces_joints_and_manipulation :: proc(t:^testi
 @(test)
 the_push_force_of_a_character_reaches_the_simulation_without_making_it_again :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     testing.expect_value(t,character_default().push_force,sim.CHARACTER_DESC_DEFAULT.push_force)
     e:=core.create(&f.entities)

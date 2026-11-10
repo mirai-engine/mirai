@@ -343,7 +343,7 @@ made_build :: proc(structs:[Place]^runtime.Type_Info,types:Test_Types,read:bit_s
         }
         if problem=build_fields(&b,place,layout,0);problem!="" {return nil,problem}
     }
-    tables,storages,sources:=b.tables,b.storages,b.sources
+    tables,storages:=b.tables,b.storages
     for list in ([2][]Test_Field{tables[:],storages[:]}) {
         for &f,i in list {
             for &other in list[:i] {
@@ -355,10 +355,10 @@ made_build :: proc(structs:[Place]^runtime.Type_Info,types:Test_Types,read:bit_s
     if verify {
         folders:=make([dynamic]Folder,context.temp_allocator)
         for &f in tables {
-            if problem=field_defaults(&f,&folders,&sources,allocator);problem!="" {return nil,problem}
+            if problem=field_defaults(&f,&folders,&b.sources,allocator);problem!="" {return nil,problem}
         }
         for &f in storages {
-            if problem=field_defaults(&f,&folders,&sources,allocator);problem!="" {return nil,problem}
+            if problem=field_defaults(&f,&folders,&b.sources,allocator);problem!="" {return nil,problem}
         }
     }
     error:runtime.Allocator_Error

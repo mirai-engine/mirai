@@ -35,7 +35,7 @@ field_place :: proc(f:^Physics_Test,fields:^Physics_Test_Fields,g:volume.Gravity
 @(test)
 bodies_fall_with_the_gravity_of_their_place :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     fields:Physics_Test_Fields;fields_init(&f,&fields);defer fields_destroy(&fields)
     field_place(&f,&fields,volume.GRAVITY_DEFAULT,nil,{})
@@ -62,7 +62,7 @@ bodies_fall_with_the_gravity_of_their_place :: proc(t:^testing.T) {
 @(test)
 a_planet_at_the_origin_pulls_bodies_and_leaves_the_gravity_of_the_world :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     fields:Physics_Test_Fields;fields_init(&f,&fields);defer fields_destroy(&fields)
     field_place(&f,&fields,volume.Gravity{pull=.Center,acceleration=9.81,radius=20},nil,{})
@@ -95,7 +95,7 @@ a_center_without_a_radius_pulls_as_strong_at_any_distance :: proc(t:^testing.T) 
 @(test)
 without_local_fields_a_body_costs_reading_the_gravity_of_the_world :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     fields:Physics_Test_Fields;fields_init(&f,&fields);defer fields_destroy(&fields)
     level:=field_place(&f,&fields,volume.Gravity{acceleration=4},nil,{})

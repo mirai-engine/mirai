@@ -11,7 +11,7 @@ import "mirai:std/base"
 @(test)
 a_tick_without_memory_for_its_changed_bodies_reports_it_and_makes_them :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     failure:=Physics_Copy_Failure{owner=context.allocator}
     f.state.sealed=make([dynamic]Sealed_Body,runtime.Allocator{physics_copy_allocator,&failure})

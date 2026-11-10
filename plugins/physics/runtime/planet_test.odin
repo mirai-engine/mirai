@@ -211,7 +211,7 @@ a_restored_snapshot_repeats_a_walk_around_a_planet_exactly :: proc(t:^testing.T)
 @(test)
 a_character_of_the_world_stands_on_a_planet_with_the_up_of_its_place :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     fields:Physics_Test_Fields
     core.table_init(&fields.gravities,"Gravity");defer core.table_destroy(&fields.gravities)
@@ -261,7 +261,7 @@ a_character_of_the_world_stands_on_a_planet_with_the_up_of_its_place :: proc(t:^
 @(test)
 a_character_says_its_vertical_speed_in_its_state :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     faller:=core.create(&f.entities)
     core.add(&f.transforms,faller,core.Transform{{0,50,0},1,{1,1,1}})

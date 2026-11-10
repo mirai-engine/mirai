@@ -616,7 +616,7 @@ a_character_locked_along_z_stays_in_its_plane_in_every_motion :: proc(t:^testing
 @(test)
 a_place_moves_a_character_locked_along_z_to_another_plane_where_it_stays :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     f.gravity={0,-9.81,0}
     physics_test_box(&f,{0,-1,0},{50,1,50})

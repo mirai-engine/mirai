@@ -708,8 +708,8 @@ pieces_mesh :: proc(assets:^host.Assets,boxes:[][2][3]f32) -> (base.Asset_Id,boo
 PIECES_L :: [2][2][3]f32{{{0,0,-1},{2,1,1}},{{0,1,-1},{1,2,1}}}
 
 @(private="file")
-pieces_test_init :: proc(f:^Physics_Test,assets:^host.Assets) -> bool {
-    physics_test_init(f)
+pieces_test_init :: proc(t:^testing.T,f:^Physics_Test,assets:^host.Assets) -> bool {
+    if !physics_test_init(t,f) {return false}
     f.app.assets=assets
     return host.assets_init(assets,{root="assets",capacity=8})
 }
@@ -738,7 +738,7 @@ a_hull_of_convex_pieces_holds_a_sphere_in_its_notch :: proc(t:^testing.T) {
     assets:host.Assets
     defer physics_test_destroy(&f)
     defer host.assets_destroy(&assets)
-    if !testing.expect(t,pieces_test_init(&f,&assets)) {return}
+    if !testing.expect(t,pieces_test_init(t,&f,&assets)) {return}
     f.gravity={0,-9.81,0}
     boxes:=PIECES_L
     mesh,made:=pieces_mesh(&assets,boxes[:])
@@ -780,7 +780,7 @@ the_pieces_of_a_hull_are_shapes_of_every_kind_of_body :: proc(t:^testing.T) {
     assets:host.Assets
     defer physics_test_destroy(&f)
     defer host.assets_destroy(&assets)
-    if !testing.expect(t,pieces_test_init(&f,&assets)) {return}
+    if !testing.expect(t,pieces_test_init(t,&f,&assets)) {return}
     boxes:=PIECES_L
     mesh,made:=pieces_mesh(&assets,boxes[:])
     if !testing.expect(t,made) {return}
@@ -819,7 +819,7 @@ the_pieces_of_a_hull_follow_their_mesh_copies_and_budgets :: proc(t:^testing.T) 
     assets:host.Assets
     defer physics_test_destroy(&f)
     defer host.assets_destroy(&assets)
-    if !testing.expect(t,pieces_test_init(&f,&assets)) {return}
+    if !testing.expect(t,pieces_test_init(t,&f,&assets)) {return}
     f.settings.hulls=3
     two:=PIECES_L
     three:=[3][2][3]f32{two[0],two[1],{{1,1,-1},{1.5,1.5,1}}}

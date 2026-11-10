@@ -11,7 +11,7 @@ import sim "plugins:physics/runtime/sim"
 @(test)
 a_following_target_leads_a_character_where_it_says :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     e:=core.create(&f.entities)
     core.add(&f.transforms,e,core.Transform{{0,1,0},1,{1,1,1}})

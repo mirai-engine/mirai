@@ -10,7 +10,7 @@ import mm "mirai:std/math"
 @(test)
 a_chain_built_only_from_public_components_stays_connected :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     f.gravity={0,-9.81,0}
     links:[9]core.Entity
@@ -33,7 +33,7 @@ a_chain_built_only_from_public_components_stays_connected :: proc(t:^testing.T) 
 @(test)
 joint_requests_drive_disable_repair_and_reject_unsupported_changes :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     rigid:=RIGID_BODY_DYNAMIC
     rigid.mass=1
@@ -79,7 +79,7 @@ joint_requests_drive_disable_repair_and_reject_unsupported_changes :: proc(t:^te
 @(test)
 ending_manipulation_can_preserve_velocity_for_animation_to_physics :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     e:=physics_test_box(&f,{},{0.2,0.2,0.2},RIGID_BODY_DYNAMIC)
     physics_test_step(&f,0)
@@ -97,7 +97,7 @@ ending_manipulation_can_preserve_velocity_for_animation_to_physics :: proc(t:^te
 @(test)
 world_rotation_drives_use_recaptured_frames_and_preserve_request_order :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     rigid:=RIGID_BODY_DYNAMIC;rigid.mass=1
     parent:=physics_test_box(&f,{},{0.2,0.2,0.2})
