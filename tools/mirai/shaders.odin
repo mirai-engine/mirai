@@ -229,12 +229,8 @@ plugin_test_shaders :: proc(root,folder:string) -> bool {
 
 @(private="file")
 takes_shared_device :: proc(folder:string) -> bool {
-    entries,error:=os.read_all_directory_by_path(folder,context.temp_allocator)
-    if error!=nil {return false}
-    for entry in entries {
-        if !strings.has_suffix(entry.name,"_test.odin") {continue}
-        text,_:=os.read_entire_file(entry.fullpath,context.temp_allocator)
-        if strings.contains(string(text),`"mirai:rhi/shared_device"`) {return true}
+    for test in test_declared(folder,device=true,allocator=context.temp_allocator) {
+        if test.device {return true}
     }
     return false
 }

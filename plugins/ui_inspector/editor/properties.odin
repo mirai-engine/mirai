@@ -6,7 +6,7 @@ import "mirai:core"
 import "mirai:editor"
 import inp "mirai:engine/input"
 import "mirai:host"
-import gpu "mirai:render"
+import erender "mirai:engine/render"
 import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:ui"
@@ -948,7 +948,7 @@ style_advanced :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
     chosen:=0
     current:=serial.text_field(st.program[:])
     if a.renderer!=nil {
-        for &program in gpu.renderer_programs(a.renderer) {
+        for &program in erender.programs(a.renderer) {
             if program.domain!=.Ui {continue}
             if program.name==current {chosen=len(programs)}
             append(&programs,program.name)
@@ -959,8 +959,8 @@ style_advanced :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
             name:=programs[chosen] if chosen>0 else ""
             ui.tree_text_set(st.program[:],name)
             st.program_values={}
-            if program:=gpu.program_find(a.renderer,name,.Ui) if a.renderer!=nil && name!="" else nil;program!=nil {
-                defaults:=gpu.program_defaults(program)
+            if program:=erender.program_find(a,name,.Ui) if name!="" else nil;program!=nil {
+                defaults:=erender.program_defaults(program)
                 st.program_values=transmute([4]f32)defaults[0]
             }
             style_changed(p,"Program",true)

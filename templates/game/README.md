@@ -1,6 +1,7 @@
-# Playable game: physics character, destructible wall, animated interface, sound, save game and network
+# Playable game: character, destructible wall, animated interface, sound, saves and network
 
-A small game made only with the public API of the engine, to copy from. It is played in the scene `assets/arena/main.scene`.
+A small game made only with the public API of the engine, to copy from. It is played in the scene
+`assets/arena/main.scene`.
 
 | File | What it is |
 | --- | --- |
@@ -18,8 +19,15 @@ A small game made only with the public API of the engine, to copy from. It is pl
 | `assets/hud/badge.tex` | The badge image. |
 | `assets/arena/hum.sound`, `source/sounds/hum.wav` | The hum of the speaker and its source. |
 
-To play: `mirai play <project>`, or Play in the editor (`mirai edit <project>`). With network: `mirai play <project> --server` and, in another terminal, `mirai play <project> --connect 127.0.0.1`. The server decides the hits and breaks the wall; each client predicts its character. A network session does not save games. `mirai build game` builds the game to distribute in `.mirai/game`.
+To play: `mirai play <project>`, or Play in the editor (`mirai edit <project>`). With network:
+`mirai play <project> --server` and, in another terminal,
+`mirai play <project> --connect 127.0.0.1`. The server decides the hits and breaks the wall; each
+client predicts its character. A network session does not save games. `mirai build game` builds
+the game to distribute in `.mirai/game`.
 
-To test how it plays: write each behavior as a scenario in `tests/scenarios/<name>.mirai` (the scene, then steps that are calls of the play methods: input, ticks, checks) and run them all with `mirai play test <project>`, which exits with 1 when one fails.
+To test how it plays: write each behavior as a scenario in `tests/scenarios/<name>.mirai` (the
+scene, then steps that are calls of the play methods: input, ticks, checks) and run them all with
+`mirai play test <project>`, which exits with 1 when one fails.
 
-Escape or Start pauses the game; while the pause menu shows, the mouse is free. Escape again resumes.
+Escape or Start pauses the game; while the pause menu shows, the mouse is free. Escape again
+resumes.

@@ -238,156 +238,77 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   the tests of the touched `<file>_test.odin`; transport: `mirai test editor/acp`; git commands
   and what they print: `mirai test editor/git`; the journal and undo without a session:
   `mirai test editor/history`; the rows and texts of a table of game data:
-  `mirai test editor/records`. The editor's tests need more memory than the default limit
-  (`MIRAI_COMPILER_MEMORY=14`).
-- AI panel: the line diff, `mirai test editor/diff`; the thread as Markdown and multi-line messages,
-  `ai_answers_are_one_markdown_message_with_the_entities_they_name_as_pills`; the steps of the
-  agent's tools,
-  `ai_codex_models_are_restricted_and_tools_of_the_agent_are_steps_once_they_end`. Its image,
-  `editor.action` `ai_chat` and `capture` with the UI in a session.
+  `mirai test editor/records`; the line diff: `mirai test editor/diff`. The editor's tests need
+  more memory than the default limit (`MIRAI_COMPILER_MEMORY=14`).
+- AI panel: `editor/ai_chat_test.odin` (one status line, the answers as one Markdown message with
+  pills, the cards of subagents, the settings of the header gear); its image, `editor.action`
+  `ai_chat` and `capture` with the UI in a session, also expanded. The steps of the agent's tools,
+  the models and the connections of the machine: `editor/ai_runtime_test.odin`; the popup of the
+  check of connections (Linux and macOS only): `editor/ai_connections_test.odin`.
 - Chat database and its search: `mirai test editor/ai_store` (reopening, search ranked and kept up
   to date, a corrupt database left alone, each table, kinds and parents, a second store on the
   same project, writes kept while another editor holds the database); the frames of a streaming
-  answer with the database held, `ai_stream_does_not_wait_for_another_editor_and_loses_no_line`;
-  live, `ai.history.search` in a session for a word of the chat.
-- Single chat, in `editor/ai_subagents_test.odin` (`mirai test editor <names>`):
-  `the_main_chat_is_restored_with_its_transcript_and_never_evicted`,
-  `a_subagent_runs_in_its_own_conversation_and_keeps_the_view_of_the_user`,
-  `agent_spawn_works_only_from_a_running_turn_of_the_main_chat`,
-  `what_a_subagent_runs_with_follows_the_explicit_values_and_the_default_of_the_project`,
-  `a_finished_subagent_reports_and_what_waits_becomes_one_system_turn_of_the_idle_chat`,
-  `a_message_to_a_working_chat_joins_its_turn_or_waits_for_the_next_one` and
-  `one_worker_is_never_taken_by_a_subagent`.
-- What a turn sends and its memory, in the same file:
-  `the_stable_block_is_the_same_each_turn_and_goes_once_per_native_session`,
-  `the_stable_block_goes_again_after_a_compaction`,
-  `the_delta_has_what_waits_what_is_pinned_and_who_works`,
-  `the_delta_names_pins_and_annotations_every_turn_without_images_even_after_a_compaction`,
-  `a_pinned_chip_stays_over_the_composer_once_it_leaves_the_message`,
-  `annotations_outlive_the_editor_and_the_agent_reads_and_clears_them`,
-  `memory_save_stays_in_its_files_and_within_its_caps` and
-  `the_memory_index_catches_what_is_edited_outside_the_editor`.
-- Compaction, handoff and reopening, in the same file:
-  `a_full_context_asks_for_notes_once_per_native_session`,
-  `without_the_command_compacting_starts_a_new_native_session_with_a_handoff`,
-  `the_compact_command_runs_as_a_turn_that_needs_no_finish_and_keeps_the_review`,
-  `a_handoff_says_what_the_context_before_it_left` and
-  `reopening_starts_a_clean_context_unless_a_build_restarted_the_editor`. Steering and compaction
-  in the transport, in `editor/acp/client_test.odin`:
-  `acp_initialize_announces_compaction_and_reads_steering`,
-  `acp_steer_joins_the_running_turn_and_is_answered_by_id`,
-  `acp_steer_failures_do_not_end_the_turn`, `acp_steer_requires_the_announcement` and
-  `acp_session_commands_track_compact_until_a_session_opens`.
-- The panel of the single chat, in `editor/ai_chat_test.odin`:
-  `ai_chat_has_one_status_line_and_no_new_chat_button`,
-  `ai_a_finished_subagent_is_a_card_in_the_thread_of_the_main_chat`,
-  `ai_a_subagent_is_inspected_from_its_own_view_and_written_to` and
-  `ai_chat_settings_use_the_header_gear_for_connections_and_scene_agents`; its image,
-  `capture` with the UI in a session, also expanded.
-- Attribution of the agent's commands: `an_agent_command_is_attributed_to_the_turn_its_agent_runs`
-  and, in `tools/mirai`, `the_commands_of_an_agent_call_its_editor_in_its_context`; live, a command
-  agent added with `ai.agent.add` whose turn runs `mirai rpc`, then `ai.status` and `ai.revert` of
-  that turn.
-- The rail, the left panel and a docked Details: `editor/shell_dock_test.odin`; its image, `preferences.set` of the
-  `Layout` and `capture` with the UI.
-- Project panels: `panels_read_back_what_they_write`,
-  `panel_buttons_set_their_fields_as_one_step`,
-  `panels_are_kept_in_the_project_and_deleted_with_their_file` and
-  `panel_restore_puts_back_what_it_changed`. Import:
-  `an_import_that_writes_programs_publishes_the_programs_of_the_project` and
-  `a_source_outside_the_project_goes_into_the_folder_asked_for`. Delete permissions:
-  `deleting_files_is_asked_of_the_user_and_moving_them_is_not` and
-  `codex_trusts_the_project_to_read_its_rules_and_claude_gets_them_as_settings`.
-- Connections: `ai_connections_of_codex_and_claude_belong_to_the_machine_and_stay_lazy` (two
-  projects, a user folder, what an `initialize` announced);
-  `codex_is_asked_for_the_sign_in_of_the_user_and_mirai_signs_in_to_nothing` and
-  `ai_connections_check_keeps_its_popup_and_update_starts_without_confirmation` (Linux and macOS
-  only).
-- Own conditions: `ai_scene_figures_render_as_transient_geometry_and_reuse_descriptors` (GPU and
-  validation; loads the dog of `editor/assets`); in `editor/acp`, the optional
-  `acp_codex_smoke_uses_the_requested_model_and_existing_account` (real account,
-  `-define:ACP_SMOKE=true` and `MIRAI_ACP_SMOKE_ADAPTER`, `_BUN`, `_CWD`, `_CODEX`).
+  answer with the database held, in `editor/ai_runtime_test.odin`; live, `ai.history.search` in a
+  session for a word of the chat.
+- Single chat, in `editor/ai_subagents_test.odin` (`mirai test editor <names>`): the main chat and
+  its subagents, what a turn sends (the stable block and the delta), pins, annotations and memory,
+  compaction, handoff and reopening. Steering and compaction in the transport:
+  `editor/acp/client_test.odin`.
+- Attribution of the agent's commands: `editor/ai_lifecycle_test.odin` and, in `tools/mirai`,
+  `rpc_test.odin`; live, a command agent added with `ai.agent.add` whose turn runs `mirai rpc`,
+  then `ai.status` and `ai.revert` of that turn.
+- The rail, the left panel and a docked Details: `editor/shell_dock_test.odin`; its image,
+  `preferences.set` of the `Layout` and `capture` with the UI.
+- Project panels: `editor/panels_test.odin`. Delete permissions and the rules that Codex and Claude
+  read: `editor/ai_permissions_test.odin`.
+- Own conditions: `editor/ai_scene_test.odin` (GPU and validation; loads the dog of
+  `editor/assets`); in `editor/acp`, the optional smoke test `editor/acp/smoke_test.odin` (real
+  account, `-define:ACP_SMOKE=true` and `MIRAI_ACP_SMOKE_ADAPTER`, `_BUN`, `_CWD`, `_CODEX`).
 - Sections: `editor/sections_test.odin` (the view without edits and its returned rule, the lock by
   each path and by `scene.set`, traveling, saving what changed and staying unsaved if one is not
   written, the reference a step makes and what hangs from one that left, the map and its API); its
   panel, `capture` with the UI in the World tab.
-- Picking: `editor/pick_test.odin`; that a click builds only what its ray reaches and the cache
-  stays while other meshes change,
-  `a_pick_builds_only_what_its_ray_reaches_and_keeps_it_while_other_meshes_change`.
-- Stored thumbnails: `stored_thumbnails_last_until_their_asset_or_what_it_needs_changes` (key,
-  read, write and invalidation when saving the asset or a dependency); a provider's images between
-  frames, `a_provider_image_is_drawn_between_frames_after_the_frame_that_asked`.
-- `edits_sync_initial` is tested from `plugins/terrain/editor`:
-  `terrain_initial_asset_revision_is_the_baseline_of_the_first_undo`.
-- Imported material unsaved on reimport and its per-field reversion:
-  `an_imported_material_keeps_unsaved_changes_over_an_import_and_goes_back_by_field`.
-- Recovery: `recovery_copy_is_written_by_a_job_and_read_back` and
-  `recovery_log_writes_each_step_over_the_saved_file_and_puts_them_back` (the chain over the saved
-  file, a truncated log, the replay by `Id` and the copy that deletes the previous one); one chain
-  per tab and all of them at startup,
-  `every_tab_with_changes_keeps_its_chain_and_a_start_recovers_them_all`; what is offered stays
-  aside while the document is edited and saved,
-  `a_pending_recovery_stays_aside_while_the_document_is_edited_and_saved`; recovery after killing
-  the process, by API in an open editor. Prefab instances in collaboration:
-  `prefab_instances_travel_a_session_as_rows_and_their_prefab_as_an_unsaved_file`.
+- Picking: `editor/pick_test.odin`; a click builds only what its ray reaches and the cache stays
+  while other meshes change.
+- Thumbnails: `editor/thumbnails_test.odin` (key, read, write and invalidation when saving the
+  asset or a dependency; a provider's image between frames) and
+  `editor/thumbnail_subjects_test.odin` (the stored view of a scene at each size); those of a
+  plugin, in its skill ([previews](../mirai-plugins/references/previews.md#verification)); their
+  image, `capture` with the UI and the content browser filtered by Animation, Prefab and Scene.
+- The first undo of a drag is tested from `plugins/terrain/editor/terrain_drag_test.odin`; a
+  material imported unsaved on reimport and its per-field reversion: `editor/materials_test.odin`.
+- Recovery: `editor/recovery_test.odin` (the copy written by a job) and
+  `editor/recovery_log_test.odin` (the chain over the saved file, a truncated log, the replay by
+  `Id`, the copy that deletes the previous one, one chain per tab and all of them at startup, what
+  is offered staying aside while the document is edited and saved); recovery after killing the
+  process, by API in an open editor.
 - Journal, undo and transactions: `editor/history/journal_test.odin` (each reader's cursors,
   steps that grow with what changed, cancellation and undo without allocating) and
-  `editor/history/edits_memory_test.odin`; with collaboration, `editor/collab_journal_test.odin`
-  (`collaboration_reads_the_journal_and_does_not_echo_what_it_applies`,
-  `undo_at_each_end_keeps_what_the_other_end_wrote_since`; the fields several editors change in
-  one row, in the order of the host and under undo,
-  `fields_changed_at_several_ends_stay_and_a_field_two_changed_follows_the_host` and
-  `a_gesture_left_open_keeps_what_another_end_writes_to_another_field`); through the API and the
-  inspector, `editor/edits_memory_test.odin`. What another editor selected is edited:
-  `what_another_editor_selected_is_edited_and_stays_outlined`; a file that cannot travel,
-  `a_file_too_large_to_travel_is_told_to_every_editor`.
-  Undo by author and selection steps: `editor/history_test.odin`. Memory with a large scene:
-  `journal_memory_of_a_large_scene` with `-define:EDITOR_JOURNAL_BENCH=true`.
-- The scene a guest receives:
-  `a_scene_of_the_host_that_fails_halfway_leaves_the_world_as_it_was`.
-- Prefabs: `editor/prefabs_test.odin`; an operation as one step of the rows of its instance, in
-  `a_prefab_operation_is_one_step_of_the_rows_of_its_instance`; overrides derived, reverted and
-  applied with the file unsaved, in
-  `the_overrides_of_an_instance_are_derived_reverted_and_applied_without_writing_files`; the added
-  entities and the turned-off members of an instance, refresh, apply and revert, in
-  `prefab_instances_add_entities_and_turn_members_off_through_updates_apply_and_revert`; unlink and
-  variants, in `unlinking_gives_back_what_a_prefab_placed_and_a_variant_applies_to_its_base` and
-  `prefab_variants_follow_their_base_and_apply_to_it`; a document opened after its prefab changed
-  and an instance without its base, in
-  `a_scene_opened_after_its_prefab_changed_follows_it_and_keeps_what_its_instances_set` and
-  `an_instance_whose_base_is_not_held_keeps_what_it_has_when_it_is_refreshed`; the document written
-  onto a world, in `engine/scene`,
-  `an_update_writes_what_differs_onto_the_entities_that_have_the_ids_of_a_document`; the overrides
-  and the node the prefab leaves, in `asset`,
-  `prefab_overrides_derive_from_the_members_survive_an_update_and_go_into_the_prefab` and
-  `prefab_node_that_leaves_takes_what_hangs_from_it_and_what_named_it_names_none`. The time of a
-  Save and of placing one instance in a scene of many:
-  `prefab_save_and_placing_in_a_scene_of_many_instances` with `-define:EDITOR_PREFAB_BENCH=true`.
-- Thumbnails: the stored view of a scene,
-  `the_view_of_a_scene_is_kept_at_each_size_and_shown_where_it_already_is`; those of a plugin, in
-  its skill ([previews](../mirai-plugins/references/previews.md#verification)); their image,
-  `capture` with the UI and the content browser filtered by Animation, Prefab and Scene.
-- `edits_sync_initial`, from `plugins/terrain/editor`:
-  `terrain_initial_asset_revision_is_the_baseline_of_the_first_undo`. A material imported unsaved
-  on reimport:
-  `an_imported_material_keeps_unsaved_changes_over_an_import_and_goes_back_by_field`.
-- Scene settings: `editor/scene_settings_test.odin`, with
-  `a_change_to_the_sky_travels_to_the_other_editors_of_a_session` and
-  `the_review_of_a_turn_keeps_and_reverts_the_settings_of_the_scene_it_changed`. The scene a guest
-  receives: `a_scene_of_the_host_that_fails_halfway_leaves_the_world_as_it_was`.
-- Prefabs: `editor/prefabs_test.odin`, with
-  `prefab_instances_add_entities_and_turn_members_off_through_updates_apply_and_revert`. Content
-  browser: `editor/content_test.odin`, and its image with `capture` with the UI and
-  `editor.input` in a session. Create and `asset.create`: `editor/asset_create_test.odin`,
-  `content_shows_empty_folders_and_the_line_of_create` and
-  `a_right_click_on_a_folder_creates_an_asset_named_in_place`; rename, move and duplicate,
-  `editor/asset_move_test.odin`; the empty `.ui`,
-  `an_empty_interface_is_a_root_box_that_grows_to_the_surface` in `cook/author`.
-- Asset documents: `files_an_asset_document_writes_are_steps_of_its_own_history`,
-  `another_asset_of_the_kind_in_front_takes_its_tab_while_it_has_no_history`,
-  `the_document_of_a_material_reads_its_program_and_gives_its_picks_to_the_next_message` and
-  `a_value_of_a_variant_is_a_number_a_bool_or_its_components`; their view in an open editor,
-  `editor.document` (`Open` with the asset's path) and `capture` with the UI.
+  `editor/history/edits_memory_test.odin`; through the API and the inspector,
+  `editor/edits_memory_test.odin`; undo by author and selection steps: `editor/history_test.odin`.
+  Memory with a large scene: `journal_memory_of_a_large_scene` in
+  `editor/journal_bench_test.odin` with `-define:EDITOR_JOURNAL_BENCH=true`.
+- Collaboration: `editor/collab_journal_test.odin` (the journal is read and not echoed, undo at
+  each end, the fields several editors change in one row, a gesture left open) and
+  `editor/collab_edit_test.odin` (what another editor selected, a file too large to travel, the
+  scene a guest receives when the host fails halfway).
+- Prefabs: `editor/prefabs_test.odin` (an operation as one step of the rows of an instance,
+  overrides derived, reverted and applied with the file unsaved, added entities and turned-off
+  members, unlink and variants, a document opened after its prefab changed, an instance without
+  its base, instances in collaboration); the document written onto a world:
+  `engine/scene/update_test.odin`; the overrides and the node the prefab leaves:
+  `asset/prefab_overrides_test.odin` and `asset/scene_test.odin`. The time of a Save and of placing
+  one instance in a scene of many: `prefab_save_and_placing_in_a_scene_of_many_instances` in
+  `editor/prefabs_bench_test.odin` with `-define:EDITOR_PREFAB_BENCH=true`.
+- Content browser: `editor/content_test.odin`, and its image with `capture` with the UI and
+  `editor.input` in a session. Create and `asset.create`: `editor/asset_create_test.odin`; rename,
+  move and duplicate: `editor/asset_move_test.odin`; the empty `.ui`:
+  `cook/author/records_test.odin`.
+- Asset documents: `editor/edits_files_test.odin` (the files a document writes are steps of its
+  own history, the tab another asset of the kind takes) and `editor/material_document_test.odin`
+  (the program a material document reads, its picks for the next message, the values of a
+  variant); their view in an open editor, `editor.document` (`Open` with the asset's path) and
+  `capture` with the UI.
 - Build and reload, recovery, networked Play (`templates/game`) and collaboration
   (`--share`/`--join`) are checked by API in an open editor. Images:
   [rendering](../mirai-rendering/SKILL.md#verification); protocol:

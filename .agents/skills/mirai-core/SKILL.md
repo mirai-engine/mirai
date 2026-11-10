@@ -225,7 +225,7 @@ A game is a struct in memory and a list of functions that transform it
 - CPU copies of meshes (`host/assets_geometry_test.odin`, `assets_generated_test.odin`): repeat with
   `--release` only if a failure may depend on optimization.
 - Fonts, texts and prompts of the content: `host/content_interface_test.odin`.
-- GPU failure: `a_lost_gpu_leaves_the_frames_running_without_drawing` (`host`, with GPU).
+- GPU failure: `host/gpu_failure_test.odin` (with GPU).
 - Entity pool: also `mirai test plugins/physics/runtime` (scene reload with physics storage).
 - `Id` index or new `Id`s: also `mirai test engine/save` (borrowed `Id`s),
   `plugins/multiplayer/runtime` (rollback and adoption), `plugins/destruct/runtime` (groups) and
@@ -240,10 +240,8 @@ A game is a struct in memory and a list of functions that transform it
 - Copy, swap or replacement of worlds: `mirai test core`, `host` and `cook/build` (cases without
   memory), `plugins/multiplayer/runtime` (rollback), `plugins/physics/runtime` and
   `plugins/terrain/runtime` (their `copy` and `swap`) and `editor` (opening a document and edit
-  transaction). The copy of what changed:
-  `a_copy_of_what_changed_equals_a_whole_copy_after_writes_layout_changes_and_a_swap` (`core`) and
-  `history_copies_of_what_changed_equal_whole_copies_through_writes_layout_changes_and_corrections`
-  (`plugins/multiplayer/runtime`).
+  transaction). The copy of what changed: `core/world_copy_test.odin` and
+  `plugins/multiplayer/runtime/world_copy_test.odin`.
 - Game data: `mirai test core`, `asset`, `cook/build` and `host` (their `records_test.odin`) and
   `editor` (`api_records_test.odin`: CSV and references by name); the grid and `records.*`, with a
   project that declares a `@(record)`, in a session.

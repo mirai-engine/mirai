@@ -278,8 +278,8 @@ without panels and at half the drawable's pixels (`ai_half_pixels`), written by 
 ### Assets of a message
 
 - An asset of the Content Browser dropped on the chat goes with the next message (an entity of
-  Hierarchy joins the selection, which also goes) (up to `AI_ATTACHMENTS`), as a chip with its type's icon; removing it
-  releases it (`ai_attachments.odin`).
+  Hierarchy joins the selection, which also goes) (up to `AI_ATTACHMENTS`), as a chip with its
+  type's icon; removing it releases it (`ai_attachments.odin`).
 - On sending it passes to the turn (`Ai_Task.attachments`); `context.json` lists them by path in
   `assets` and the delta says their paths and types: the agent reads and changes them through the
   API. One that is no longer in the registry is not named.
@@ -544,8 +544,8 @@ the name of its client (`X-Mirai-Client`,
   worker: it appears in the bar and in the status line of the panel with the mark of Claude or
   Codex, the dot while it works, its figure, its steps and the same review as the agents of the
   editor, and it is inspected like a subagent, but it is not one (`Archived` kind); its edits are
-  steps of that turn, and its `history.undo` undoes them. Otherwise it acts as the user does: it plays the
-  user's Play, chooses what is watched and is not refused the user's unsaved work.
+  steps of that turn, and its `history.undo` undoes them. Otherwise it acts as the user does: it
+  plays the user's Play, chooses what is watched and is not refused the user's unsaved work.
 - The turn ends with `ai.turn_end`, which the `Stop` hook of Claude Code in the
   [templates](../../mirai-gameplay/references/demo.md#templates) calls, or after
   `AI_EXTERNAL_IDLE` without calls; its answer stays in its own app, and it does not see `finish`,
