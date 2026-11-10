@@ -120,47 +120,37 @@ asset types, scene/prefab, registry).
 
 - `mirai test std/serial` and `mirai test asset`, whose cases are named for what they check;
   generated assets, with `mirai asset verify`. Focal tests by topic:
-  - merge: `asset/merge_test.odin`; git: the `git_*` tests and
-    `the_git_attributes_of_the_engine_follow_its_kinds` of `cook/build`, and by hand a repository
-    after `mirai setup git` with two branches that edit different fields and the same field of a
-    scene (`git diff`, `git merge`);
-  - prefab instances: the `prefab_*` and
-    `stale_prefab_instances_resolve_against_the_files_of_their_prefabs` (`asset/scene_test.odin`),
-    `mirai test engine/scene` (on loading) and
-    `a_cook_brings_the_prefab_instances_of_what_it_ships_up_to_date` (`cook/build`, on cooking);
-  - textures: `texture_round_trips_every_format_and_checks_level_sizes`,
-    `texture_layers_keep_each_image_of_every_level` and
-    `a_read_of_the_small_levels_decodes_only_the_start_of_the_texels` (`kinds_test.odin`), and
-    the blocks and planes of fields in `texture_blocks_test.odin`;
+  - merge: `asset/merge_test.odin`; git: `cook/build/git_test.odin` (the attributes follow the
+    kinds), and by hand a repository after `mirai setup git` with two branches that edit different
+    fields and the same field of a scene (`git diff`, `git merge`);
+  - prefab instances: `asset/scene_test.odin`, `mirai test engine/scene` (on loading) and
+    `cook/build/cook_test.odin` (on cooking);
+  - textures: `asset/kinds_test.odin` (round trip of every format, layers, partial reads of the
+    small levels) and the blocks and planes of fields in `texture_blocks_test.odin`;
   - animation, skeleton, skin and fracture: `content_test.odin`, `kinds_test.odin`,
     `skeleton_test.odin` and `fracture_test.odin` of `asset`; font, texts and prompts:
     `asset/interface_kinds_test.odin`; game data tables: `asset/records_test.odin`;
   - versions: `asset/versions_test.odin`; a plugin's own steps, in its plugin (`.match` and
-    `.pose`: `match_assets_roundtrip_*` and `rig_shape_profiles_roundtrip_*`);
-  - registry: `asset/registry_test.odin` and, in the editor,
-    `content_lines_follow_registry_revisions_when_storage_and_count_are_reused`;
-  - layers of an imported material:
-    `an_imported_material_follows_its_source_except_the_fields_changed_after_the_import`, and the
-    overrides shared with prefabs in the editor,
-    `prefab_selection_and_file_overrides_share_the_undo_history`;
+    `.pose`);
+  - registry: `asset/registry_test.odin` and, in the editor, `editor/content_test.odin`;
+  - layers of an imported material: `asset/kinds_test.odin`, and the overrides shared with prefabs
+    in the editor, `editor/prefabs_test.odin`;
   - JSON inspection with transient fields: `std/serial/text_runtime_test.odin`.
 - CLI: `asset/cli_test.odin` when touching `tools/mirai/asset.odin`, `asset/doc_text.odin`,
-  `asset/locate.odin` or `asset/diff.odin`; `cli_reads_and_edits_assets_of_every_kind` needs
-  `MIRAI_ROOT`, which `mirai test` defines.
+  `asset/locate.odin` or `asset/diff.odin`; it needs `MIRAI_ROOT`, which `mirai test` defines.
 - Readers: files truncated at every length and mutated bytes in `asset/fuzz_test.odin`, which a new
-  format or chunk extends; `cli_commands_answer_for_damaged_files` requires exit 0, 1 or 2.
+  format or chunk extends; damaged files must give exit 0, 1 or 2 in `asset/cli_test.odin`.
   `-sanitize:address` repeats the tests with the sanitizer.
 - Out of memory: `std/serial/schema_memory_test.odin`, `asset/document_oom_test.odin` (both also
   with `--release`) and `asset/types_memory_test.odin`. If schema validation changes, add
-  `hostile_schema_binary` and `hostile_random_schemas_validate` with `--release` and
-  `-define:SERIAL_HOSTILE_ROUNDS=20000`.
+  `hostile_schema_binary` and `hostile_random_schemas_validate` of `std/serial/hostile_test.odin`
+  with `--release` and `-define:SERIAL_HOSTILE_ROUNDS=20000`.
 - `.pose`, `.blend` and `.agraph` are verified in their [plugin](../mirai-plugins/SKILL.md).
 - Compression: `mirai test std/compressor/lz` (every level decodes through `std/compressor`),
-  `blob_round_trips_chunks_with_alignment_and_compression` and the pages in
+  `asset/container_test.odin` (chunks with alignment and compression) and the pages in
   `asset/mesh_page_code_test.odin`. Codec packages: `mirai test` of `std/compressor` (library
-  streams,
-  hostile streams, `decompress_does_not_allocate`), of each package under `std/compressor/lz`
-  (hostile inputs, determinism), of `std/compressor/bc7split` and of `cook/compressor/bc7split`
-  (`encode_matches_the_library`).
+  streams, hostile streams, decoding without allocating), of each package under
+  `std/compressor/lz` (hostile inputs, determinism), of `std/compressor/bc7split` and of
+  `cook/compressor/bc7split` (the encoder matches the library).
 - Benchmark (not routine):
   `mirai test asset scene_file_against_a_file_per_entity --release -define:ASSET_BENCH=true`.

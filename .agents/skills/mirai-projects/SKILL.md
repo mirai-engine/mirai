@@ -138,10 +138,10 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   cache").
 - Environment: `mirai doctor` from a worktree without its own `.deps` finds Odin and the
   dependencies of the main checkout.
-- Installed engine: `mirai test project an_installed_engine_is_told_by_its_manifest`, and in
-  `cook/build` `an_installed_engine_builds_nothing_and_says_what_it_lacks`,
-  `the_compiler_of_an_installed_engine_counts_by_its_manifest_not_its_date` and
-  `a_plugin_library_is_the_same_in_every_project`. If the package changes, by hand:
+- Installed engine: `project/project_test.odin` (told by its manifest) and, in `cook/build`,
+  `engine_test.odin` (builds nothing and says what it lacks), `compiler_test.odin` (the compiler
+  counts by its manifest, not its date) and `plugins_test.odin` (a plugin library is the same in
+  every project). If the package changes, by hand:
   `mirai package engine --out <short folder>`, compress it, decompress it into another folder and,
   with its `bin/mirai`, `new` of each template and `build editor --dev`, which does not compile
   plugin libraries; then `edit --dev` opens the editor. The workflow YAML is validated with
