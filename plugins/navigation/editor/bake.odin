@@ -163,11 +163,5 @@ bake_call :: proc(s:^editor.Session,call:^api.Call) {
     editor.api_edit_end(s,call,written)
     tiles:=0
     for i in 0..<n.count {for &tile in n.classes[i].mesh.tiles {if tile.used && (!filter.within || mm.aabb_overlaps(filter.inside,tile.data.bounds)) {tiles+=1}}}
-    out:=call.out
-    serial.text_write_raw(out,"{")
-    api.write_text(out,"asset",fmt.tprintf("%016x%016x",id[0],id[1]),true)
-    api.write_text(out,"path",path)
-    api.write_int(out,"tiles",i64(tiles))
-    api.write_bool(out,"settled",settled(n))
-    serial.text_write_raw(out,"}")
+    api.call_result(call,Nav_Bake_Result)^={id,path,tiles,settled(n)}
 }

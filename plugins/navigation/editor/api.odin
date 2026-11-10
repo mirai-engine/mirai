@@ -52,8 +52,19 @@ Path_Params :: struct {
 
 Nav_Status_Result :: struct {
     ready:bool,
-    classes:[]serial.Json,
-    builds:serial.Json `mirai:"optional"`,
+    classes:[]Nav_Class_Status,
+    builds:nav.Build_Stats,
+}
+Nav_Class_Status :: struct {
+    name,space:string,
+    radius,height:f32 `mirai:"unit=m"`,
+    collision:string,
+    voxel,zone_size:f32 `mirai:"optional,unit=m,label=Of a class of the air or the water"`,
+    zones,nodes,split_blocks:int `mirai:"optional,label=Of a class of the air or the water"`,
+    climb,jump_up,jump_across,drop,tile_width:f32 `mirai:"optional,unit=m,label=Of a class of the surface"`,
+    tiles,polygons,links,regions,portals:int `mirai:"optional,label=Of a class of the surface"`,
+    connections_refused:u64 `mirai:"optional"`,
+    waiting,building,unloaded:int `mirai:"label=Tiles or zones that wait for a build, build, or wait for their collision to load"`,
 }
 
 Nav_Build_Result :: struct {
@@ -61,47 +72,96 @@ Nav_Build_Result :: struct {
 }
 
 Nav_Bake_Result :: struct {
-    asset,path:string,
+    asset:base.Asset_Id,
+    path:string,
     tiles:int,
     settled:bool,
 }
 
 Nav_Inspect_Result :: struct {
     class:string,
-    tiles,polygons,links:[]serial.Json,
-    zones,cells:[]serial.Json `mirai:"optional"`,
-    more:bool,
+    space:string `mirai:"optional,label=Air for a class of the air or the water"`,
+    tiles:[]Nav_Tile_Result,
+    polygons:[]Nav_Polygon_Result,
+    links:[]Nav_Link_Result,
+    zones:[]Nav_Zone_Result `mirai:"optional"`,
+    cells:[]Nav_Cell_Result `mirai:"optional,label=Free cells sampled at the voxels of the corners and the center of the box"`,
+    more:bool `mirai:"label=More than limit were inside the box"`,
+}
+Nav_Tile_Result :: struct {
+    coord:[2]i32,
+    polygons:int,
+    min,max:[3]f32,
+}
+Nav_Polygon_Result :: struct {
+    area:string,
+    vertices:[][3]f32,
+    edges:[]string `mirai:"label=wall, inner or border to the next tile"`,
+}
+Nav_Link_Result :: struct {
+    kind:string,
+    start,end:[3]f32,
+    two_way,rested:bool,
+    up,across,down:f32 `mirai:"unit=m"`,
+    abilities:[]string,
+    cost:f32,
+    generated:bool `mirai:"optional,label=The meshes made it"`,
+    made_by:base.Entity_Id `mirai:"optional,label=The entity that made it"`,
+}
+Nav_Zone_Result :: struct {
+    coord:[3]i32,
+    nodes,split_blocks:int,
+    min,max:[3]f32,
+}
+Nav_Cell_Result :: struct {
+    kind:string `mirai:"label=voxel or node"`,
+    min,max:[3]f32,
+}
+
+Nav_Corner_Result :: struct {
+    position:[3]f32,
+    link:string `mirai:"optional,label=The kind of the link it crosses there"`,
+    lands:[3]f32 `mirai:"optional,label=Where the link lands"`,
 }
 
 Nav_Agent_Result :: struct {
-    class:string `mirai:"optional"`,
     state:string,
-    goal:[]serial.Json `mirai:"optional"`,
-    corners:[]serial.Json,
-    partial:bool `mirai:"optional"`,
-    replans:int `mirai:"optional"`,
     far:bool,
+    note:string `mirai:"optional"`,
+    speed:f32 `mirai:"optional,label=Of an agent far"`,
+    complete,arrived:bool `mirai:"optional"`,
+    class:string `mirai:"optional"`,
+    target:base.Entity_Id `mirai:"optional"`,
+    goal:[3]f32,
+    partial:bool,
+    replans:int,
+    looking:bool,
+    crossing:string `mirai:"optional,label=The kind of the link it crosses"`,
+    by_game:bool `mirai:"optional"`,
+    from,to:[3]f32 `mirai:"optional"`,
+    corners:[]Nav_Corner_Result,
+    corridor:int `mirai:"optional"`,
 }
 
 Nav_Path_Result :: struct {
     class,status:string,
     partial:bool,
-    cost:f64 `mirai:"optional"`,
-    corners:[]serial.Json,
+    cost:f32,
     polygons,cells:int `mirai:"optional"`,
+    corners:[]Nav_Corner_Result,
 }
 
 @(private)
 register :: proc(s:^editor.Session) {
     inspect_defaults:=Inspect_Params{limit=256}
     path_defaults:=Path_Params{up=-1,across=-1,down=-1}
-    editor.api_method_register(s,{name="nav.status",summary="The navigation meshes of the shown world: for each class of Navigation_Settings its size and what it can jump or drop, its tiles, polygons and links, the tiles that wait for a build, are building, or wait for their collision to load (unloaded: they keep what they have), the sections and portals of its coarse graph, and what the builds did (dropped: tiles that went with their sections or, in a run, with the terrain not loaded; regions: sections of the coarse graph made). Read it after editing collision to know when the meshes caught up.",flags={.Read_Only},result=Nav_Status_Result,result_info=type_info_of(Nav_Status_Result),writes_result=true,run=status})
-    editor.api_method_register(s,{name="nav.build",summary="Builds again the tiles of every class inside a box (min and max), or all of them, even where nothing changed. The meshes build by themselves when collision, a Nav_Area or a Nav_Bounds changes: this is for what they cannot see.",params=Build_Params,params_info=type_info_of(Build_Params),result=Nav_Build_Result,result_info=type_info_of(Nav_Build_Result),writes_result=true,run=build})
-    editor.api_method_register(s,{name="nav.bake",summary="Saves the navigation meshes with the edited scene, or with the section edited in its world: the first time it makes a .navmesh beside the scene and names it in the Navigation_Bake of an entity of the scene, in one undo step. Neither reaches the disk before the scene is saved; until then the editor keeps the .navmesh as the meshes, in memory. A section keeps the tiles over its box, and loads and drops them with it; the scene that holds it keeps the rest with the coarse graph of every section. A world that loads the scene starts with those meshes and builds only the tiles whose collision changed.",result=Nav_Bake_Result,result_info=type_info_of(Nav_Bake_Result),writes_result=true,run=bake_call})
-    editor.api_method_register(s,{name="nav.inspect",summary="The mesh of a class inside a box, or all of it: its tiles, its polygons (vertices, area and whether each edge is a wall, inner or a border to the next tile) and its links (kind, ends, direction, whether both ends rest on the mesh, what they need to be crossed and who made them). For a class of the air or the water, its zones and the free cells (nodes and voxels of the octree) inside the box.",params=Inspect_Params,params_info=type_info_of(Inspect_Params),defaults=&inspect_defaults,flags={.Read_Only},result=Nav_Inspect_Result,result_info=type_info_of(Nav_Inspect_Result),writes_result=true,run=inspect})
-    editor.api_method_register(s,{name="nav.agent",summary="What a Nav_Agent of the shown world does: its class, state (Idle, Waiting, Moving, Crossing, Arrived, Failed), goal or target, whether its path is partial, the next corners it heads for, the link it crosses and how many times it planned again. An agent far from the players, off where its section is not loaded, says far, with the speed it goes at and, as its corners, what is left of its route through the coarse graph. Use it in Play to see why an agent goes where it goes.",params=Agent_Params,params_info=type_info_of(Agent_Params),flags={.Read_Only},result=Nav_Agent_Result,result_info=type_info_of(Nav_Agent_Result),writes_result=true,run=agent})
-    editor.api_method_register(s,{name="nav.move",summary="Asks a Nav_Agent of the running world to walk to a point, to follow an entity at a distance, or to stop (neither to nor target): what a game asks with nav_move_to, nav_follow and nav_stop. For trying agents in Play; nav.agent tells what it does then.",params=Move_Params,params_info=type_info_of(Move_Params),result=Nav_Build_Result,result_info=type_info_of(Nav_Build_Result),writes_result=true,run=move})
-    editor.api_method_register(s,{name="nav.path",summary="The path an agent of a class would walk, or fly or swim for a class of the air or the water, between two points now: its corners, the links it crosses with their kind, its cost and whether it reaches the end (partial: as near as it can). up, across, down and abilities say what the agent can cross; omitted, what its class can.",params=Path_Params,params_info=type_info_of(Path_Params),defaults=&path_defaults,flags={.Read_Only},result=Nav_Path_Result,result_info=type_info_of(Nav_Path_Result),writes_result=true,run=path})
+    editor.api_method_register(s,{name="nav.status",summary="The navigation meshes of the shown world: for each class of Navigation_Settings its size and what it can jump or drop, its tiles, polygons and links, the tiles that wait for a build, are building, or wait for their collision to load (unloaded: they keep what they have), the sections and portals of its coarse graph, and what the builds did (dropped: tiles that went with their sections or, in a run, with the terrain not loaded; regions: sections of the coarse graph made). Read it after editing collision to know when the meshes caught up.",flags={.Read_Only},result=Nav_Status_Result,result_info=type_info_of(Nav_Status_Result),run=status})
+    editor.api_method_register(s,{name="nav.build",summary="Builds again the tiles of every class inside a box (min and max), or all of them, even where nothing changed. The meshes build by themselves when collision, a Nav_Area or a Nav_Bounds changes: this is for what they cannot see.",params=Build_Params,params_info=type_info_of(Build_Params),result=Nav_Build_Result,result_info=type_info_of(Nav_Build_Result),run=build})
+    editor.api_method_register(s,{name="nav.bake",summary="Saves the navigation meshes with the edited scene, or with the section edited in its world: the first time it makes a .navmesh beside the scene and names it in the Navigation_Bake of an entity of the scene, in one undo step. Neither reaches the disk before the scene is saved; until then the editor keeps the .navmesh as the meshes, in memory. A section keeps the tiles over its box, and loads and drops them with it; the scene that holds it keeps the rest with the coarse graph of every section. A world that loads the scene starts with those meshes and builds only the tiles whose collision changed.",result=Nav_Bake_Result,result_info=type_info_of(Nav_Bake_Result),run=bake_call})
+    editor.api_method_register(s,{name="nav.inspect",summary="The mesh of a class inside a box, or all of it: its tiles, its polygons (vertices, area and whether each edge is a wall, inner or a border to the next tile) and its links (kind, ends, direction, whether both ends rest on the mesh, what they need to be crossed and who made them). For a class of the air or the water, its zones and the free cells (nodes and voxels of the octree) inside the box.",params=Inspect_Params,params_info=type_info_of(Inspect_Params),defaults=&inspect_defaults,flags={.Read_Only},result=Nav_Inspect_Result,result_info=type_info_of(Nav_Inspect_Result),run=inspect})
+    editor.api_method_register(s,{name="nav.agent",summary="What a Nav_Agent of the shown world does: its class, state (Idle, Waiting, Moving, Crossing, Arrived, Failed), goal or target, whether its path is partial, the next corners it heads for, the link it crosses and how many times it planned again. An agent far from the players, off where its section is not loaded, says far, with the speed it goes at and, as its corners, what is left of its route through the coarse graph. Use it in Play to see why an agent goes where it goes.",params=Agent_Params,params_info=type_info_of(Agent_Params),flags={.Read_Only},result=Nav_Agent_Result,result_info=type_info_of(Nav_Agent_Result),run=agent})
+    editor.api_method_register(s,{name="nav.move",summary="Asks a Nav_Agent of the running world to walk to a point, to follow an entity at a distance, or to stop (neither to nor target): what a game asks with nav_move_to, nav_follow and nav_stop. For trying agents in Play; nav.agent tells what it does then.",params=Move_Params,params_info=type_info_of(Move_Params),result=Nav_Build_Result,result_info=type_info_of(Nav_Build_Result),run=move})
+    editor.api_method_register(s,{name="nav.path",summary="The path an agent of a class would walk, or fly or swim for a class of the air or the water, between two points now: its corners, the links it crosses with their kind, its cost and whether it reaches the end (partial: as near as it can). up, across, down and abilities say what the agent can cross; omitted, what its class can.",params=Path_Params,params_info=type_info_of(Path_Params),defaults=&path_defaults,flags={.Read_Only},result=Nav_Path_Result,result_info=type_info_of(Nav_Path_Result),run=path})
 }
 
 @(private)
@@ -126,14 +186,9 @@ class_of :: proc(call:^api.Call,n:^nav.Navigation,name:[]u8) -> (class:int,ok:bo
 status :: proc(s:^editor.Session,call:^api.Call) {
     n,_,ok:=navigation_of(s,call)
     if !ok {return}
-    w:=call.out
-    serial.text_write_raw(w,"{")
-    api.write_bool(w,"ready",n.ready,true)
-    api.write_key(w,"classes")
-    serial.text_write_raw(w,"[")
+    classes:=make([]Nav_Class_Status,n.count,call.allocator)
     for i in 0..<n.count {
-        if i>0 {serial.text_write_raw(w,",")}
-        class:=n.classes[i].class
+        class:=&n.classes[i].class
         c:=&n.classes[i]
         tiles,polygons,links,dirty,building,zones,nodes,blocks,unloaded:=0,0,0,0,0,0,0,0,0
         for &tile in c.mesh.tiles {if tile.used {tiles+=1;polygons+=len(tile.data.polys)}}
@@ -145,54 +200,18 @@ status :: proc(s:^editor.Session,call:^api.Call) {
             if mark.unloaded {unloaded+=1}
             if mark.building {building+=1}
         }
-        serial.text_write_raw(w,"{")
-        api.write_text(w,"name",base.text_get(class.name[:]),true)
-        api.write_text(w,"space",fmt.tprintf("%v",class.space))
-        api.write_key(w,"radius");api.write_number(w,class.radius)
-        api.write_key(w,"height");api.write_number(w,class.height)
-        api.write_text(w,"collision",phys.collision_name(s.app.info if s.app!=nil else nil,phys.Collision_Preset,i64(class.collision)))
+        shown:=&classes[i]
+        shown^={name=base.text_get(class.name[:]),space=fmt.tprintf("%v",class.space),radius=class.radius,height=class.height,waiting=dirty,building=building,unloaded=unloaded}
+        shown.collision=phys.collision_name(s.app.info if s.app!=nil else nil,phys.Collision_Preset,i64(class.collision))
         if class.space!=.Surface {
-            api.write_key(w,"voxel");api.write_number(w,c.volume.voxel)
-            api.write_key(w,"zone_size");api.write_number(w,c.volume.zone_size)
-            api.write_int(w,"zones",i64(zones))
-            api.write_int(w,"nodes",i64(nodes))
-            api.write_int(w,"split_blocks",i64(blocks))
-            api.write_int(w,"waiting",i64(dirty))
-            api.write_int(w,"building",i64(building))
-            api.write_int(w,"unloaded",i64(unloaded))
-            serial.text_write_raw(w,"}")
+            shown.voxel,shown.zone_size,shown.zones,shown.nodes,shown.split_blocks=c.volume.voxel,c.volume.zone_size,zones,nodes,blocks
             continue
         }
-        api.write_key(w,"climb");api.write_number(w,class.climb)
-        api.write_key(w,"jump_up");api.write_number(w,class.jump_up)
-        api.write_key(w,"jump_across");api.write_number(w,class.jump_across)
-        api.write_key(w,"drop");api.write_number(w,class.drop)
-        api.write_key(w,"tile_width");api.write_number(w,c.mesh.tile_width)
-        api.write_int(w,"tiles",i64(tiles))
-        api.write_int(w,"polygons",i64(polygons))
-        api.write_int(w,"links",i64(links))
-        api.write_int(w,"waiting",i64(dirty))
-        api.write_int(w,"building",i64(building))
-        api.write_int(w,"unloaded",i64(unloaded))
-        api.write_int(w,"regions",i64(len(c.coarse.regions)))
-        api.write_int(w,"portals",i64(len(c.coarse.portals)))
-        api.write_uint(w,"connections_refused",c.mesh.failed)
-        serial.text_write_raw(w,"}")
+        shown.climb,shown.jump_up,shown.jump_across,shown.drop,shown.tile_width=class.climb,class.jump_up,class.jump_across,class.drop,c.mesh.tile_width
+        shown.tiles,shown.polygons,shown.links=tiles,polygons,links
+        shown.regions,shown.portals,shown.connections_refused=len(c.coarse.regions),len(c.coarse.portals),u64(c.mesh.failed)
     }
-    serial.text_write_raw(w,"]")
-    api.write_key(w,"builds")
-    st:=n.stats
-    serial.text_write_raw(w,"{")
-    api.write_uint(w,"built",st.built,true)
-    api.write_uint(w,"carved",st.carved)
-    api.write_uint(w,"emptied",st.emptied)
-    api.write_uint(w,"unchanged",st.unchanged)
-    api.write_uint(w,"discarded",st.discarded)
-    api.write_uint(w,"failed",st.failed)
-    api.write_uint(w,"overflowed",st.overflowed)
-    api.write_uint(w,"dropped",st.dropped)
-    api.write_uint(w,"regions",st.regions)
-    serial.text_write_raw(w,"}}")
+    api.call_result(call,Nav_Status_Result)^={n.ready,classes,n.stats}
 }
 
 @(private)
@@ -208,7 +227,7 @@ build :: proc(s:^editor.Session,call:^api.Call) {
         if box.min==box.max {box.max+=0.001}
     }
     nav.nav_rebuild(requests,box)
-    serial.text_write_raw(call.out,`{"queued":true}`)
+    api.call_result(call,Nav_Build_Result).queued=true
 }
 
 @(private)
@@ -227,92 +246,47 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
     }
     mesh:=&n.classes[class].mesh
     limit:=int(p.limit)
-    w:=call.out
-    serial.text_write_raw(w,"{")
-    api.write_text(w,"class",base.text_get(n.classes[class].class.name[:]),true)
-    api.write_key(w,"tiles")
-    serial.text_write_raw(w,"[")
-    first:=true
+    r:=api.call_result(call,Nav_Inspect_Result)
+    r.class=base.text_get(n.classes[class].class.name[:])
+    tiles:=make([dynamic]Nav_Tile_Result,call.allocator)
     for &tile in mesh.tiles {
         if !tile.used || !overlaps(tile.data.bounds,box) {continue}
-        if !first {serial.text_write_raw(w,",")}
-        first=false
-        serial.text_write_raw(w,"{")
-        api.write_key(w,"coord",true)
-        serial.text_write_raw(w,fmt.tprintf("[%d,%d]",tile.data.coord.x,tile.data.coord.y))
-        api.write_int(w,"polygons",i64(len(tile.data.polys)))
-        api.write_numbers(w,"min",tile.data.bounds.min)
-        api.write_numbers(w,"max",tile.data.bounds.max)
-        serial.text_write_raw(w,"}")
+        append(&tiles,Nav_Tile_Result{{i32(tile.data.coord.x),i32(tile.data.coord.y)},len(tile.data.polys),tile.data.bounds.min,tile.data.bounds.max})
     }
-    serial.text_write_raw(w,"]")
-    api.write_key(w,"polygons")
-    serial.text_write_raw(w,"[")
+    polygons:=make([dynamic]Nav_Polygon_Result,call.allocator)
     written:=0
-    more:=false
-    first=true
     tiles: for &tile in mesh.tiles {
         if !tile.used || !overlaps(tile.data.bounds,box) {continue}
         for &poly in tile.data.polys {
             corners:[ai.NAV_VERTS_PER_POLY]mm.Vec3
             count:=ai.nav_poly_vertices(&tile,&poly,&corners)
             if !overlaps(mm.aabb_from_points(corners[:count]),box) {continue}
-            if written>=limit {more=true;break tiles}
+            if written>=limit {r.more=true;break tiles}
             written+=1
-            if !first {serial.text_write_raw(w,",")}
-            first=false
-            serial.text_write_raw(w,"{")
-            api.write_text(w,"area",area_name(world,poly.area),true)
-            api.write_key(w,"vertices")
-            serial.text_write_raw(w,"[")
+            shown:=Nav_Polygon_Result{area=area_name(world,poly.area),vertices=make([][3]f32,count,call.allocator),edges=make([]string,count,call.allocator)}
             for k in 0..<count {
-                if k>0 {serial.text_write_raw(w,",")}
-                api.write_list(w,corners[k][:])
-            }
-            serial.text_write_raw(w,"]")
-            api.write_key(w,"edges")
-            serial.text_write_raw(w,"[")
-            for k in 0..<count {
-                if k>0 {serial.text_write_raw(w,",")}
+                shown.vertices[k]=corners[k]
                 neighbor:=poly.neighbor[k]
-                serial.text_write_string(w,neighbor==ai.NAV_EDGE_WALL?"wall":neighbor&ai.NAV_EDGE_PORTAL!=0?"border":"inner")
+                shown.edges[k]=neighbor==ai.NAV_EDGE_WALL?"wall":neighbor&ai.NAV_EDGE_PORTAL!=0?"border":"inner"
             }
-            serial.text_write_raw(w,"]}")
+            append(&polygons,shown)
         }
     }
-    serial.text_write_raw(w,"]")
-    api.write_key(w,"links")
-    serial.text_write_raw(w,"[")
-    first=true
+    links:=make([dynamic]Nav_Link_Result,call.allocator)
     for &link in mesh.links {
         if !link.used {continue}
         if !overlaps({mm.vec3_min(link.desc.start,link.desc.end),mm.vec3_max(link.desc.start,link.desc.end)},box) {continue}
-        if written>=limit {more=true;break}
+        if written>=limit {r.more=true;break}
         written+=1
-        if !first {serial.text_write_raw(w,",")}
-        first=false
-        serial.text_write_raw(w,"{")
-        api.write_text(w,"kind",link_kind_name(world,link.desc.kind),true)
-        api.write_numbers(w,"start",link.start_point if link.start_poly!=0 else link.desc.start)
-        api.write_numbers(w,"end",link.end_point if link.end_poly!=0 else link.desc.end)
-        api.write_bool(w,"two_way",link.desc.two_way)
-        api.write_bool(w,"rested",link.start_poly!=0 && link.end_poly!=0)
-        api.write_key(w,"up");api.write_number(w,link.desc.need.up)
-        api.write_key(w,"across");api.write_number(w,link.desc.need.across)
-        api.write_key(w,"down");api.write_number(w,link.desc.need.down)
-        abilities_write(w,world,link.desc.need.abilities)
-        api.write_key(w,"cost");api.write_number(w,link.desc.cost)
-        if link.desc.owner&nav.LINK_OWNER_GENERATED!=0 {
-            api.write_text(w,"made_by","generated")
-        } else {
-            api.write_key(w,"made_by")
-            api.write_id(w,entity_id(world,core.Entity(link.desc.owner)))
-        }
-        serial.text_write_raw(w,"}")
+        shown:=Nav_Link_Result{kind=link_kind_name(world,link.desc.kind),two_way=link.desc.two_way,rested=link.start_poly!=0 && link.end_poly!=0}
+        shown.start=link.start_point if link.start_poly!=0 else link.desc.start
+        shown.end=link.end_point if link.end_poly!=0 else link.desc.end
+        shown.up,shown.across,shown.down=link.desc.need.up,link.desc.need.across,link.desc.need.down
+        shown.abilities,shown.cost=abilities_names(call,world,link.desc.need.abilities),link.desc.cost
+        if link.desc.owner&nav.LINK_OWNER_GENERATED!=0 {shown.generated=true} else {shown.made_by=entity_id(world,core.Entity(link.desc.owner))}
+        append(&links,shown)
     }
-    serial.text_write_raw(w,"]")
-    api.write_bool(w,"more",more)
-    serial.text_write_raw(w,"}")
+    r.tiles,r.polygons,r.links=tiles[:],polygons[:],links[:]
 }
 
 @(private) WHOLE_WORLD :: mm.Aabb{{-max(f32),-max(f32),-max(f32)},{max(f32),max(f32),max(f32)}}
@@ -333,33 +307,16 @@ volume_bounds :: proc(volume:^ai.Nav_Volume) -> mm.Aabb {
 @(private)
 inspect_volume :: proc(call:^api.Call,n:^nav.Navigation,class:int,box:mm.Aabb,limit:int) {
     volume:=&n.classes[class].volume
-    w:=call.out
-    serial.text_write_raw(w,"{")
-    api.write_text(w,"class",base.text_get(n.classes[class].class.name[:]),true)
-    serial.text_write_raw(w,`,"space":"Air","tiles":[],"polygons":[],"links":[]`)
-    api.write_key(w,"zones")
-    serial.text_write_raw(w,"[")
-    first:=true
+    r:=api.call_result(call,Nav_Inspect_Result)
+    r.class,r.space=base.text_get(n.classes[class].class.name[:]),"Air"
+    zones:=make([dynamic]Nav_Zone_Result,call.allocator)
     for &zone in volume.zones {
         if !zone.used || !overlaps(ai.nav_volume_zone_box(volume,zone.data.coord),box) {continue}
-        if !first {serial.text_write_raw(w,",")}
-        first=false
         zone_box:=ai.nav_volume_zone_box(volume,zone.data.coord)
-        serial.text_write_raw(w,"{")
-        api.write_key(w,"coord",true)
-        serial.text_write_raw(w,fmt.tprintf("[%d,%d,%d]",zone.data.coord.x,zone.data.coord.y,zone.data.coord.z))
-        api.write_int(w,"nodes",i64(len(zone.data.nodes)))
-        api.write_int(w,"split_blocks",i64(len(zone.data.voxels)))
-        api.write_numbers(w,"min",zone_box.min)
-        api.write_numbers(w,"max",zone_box.max)
-        serial.text_write_raw(w,"}")
+        append(&zones,Nav_Zone_Result{zone.data.coord,len(zone.data.nodes),len(zone.data.voxels),zone_box.min,zone_box.max})
     }
-    serial.text_write_raw(w,"]")
     // The free cells inside the box, sampled at the voxels of its corners and center.
-    api.write_key(w,"cells")
-    serial.text_write_raw(w,"[")
-    written:=0
-    more:=false
+    cells_found:=make([dynamic]Nav_Cell_Result,call.allocator)
     size:=box.max-box.min
     step:=max(volume.voxel,max(size.x,size.y,size.z)/16)
     seen:=make(map[ai.Nav_Ref]bool,64,context.temp_allocator)
@@ -368,29 +325,20 @@ inspect_volume :: proc(call:^api.Call,n:^nav.Navigation,class:int,box:mm.Aabb,li
             for x:=box.min.x;x<=box.max.x;x+=step {
                 ref,free:=ai.nav_volume_find(volume,{x,y,z})
                 if !free || ref in seen {continue}
-                if written>=limit {more=true;break cells}
+                if len(cells_found)>=limit {r.more=true;break cells}
                 seen[ref]=true
                 cell_box,_:=ai.nav_volume_ref_box(volume,ref)
-                if written>0 {serial.text_write_raw(w,",")}
-                written+=1
-                serial.text_write_raw(w,"{")
-                layer:=ai.nav_volume_ref_layer(ref)
-                api.write_text(w,"kind","voxel" if layer<0 else "node",true)
-                api.write_numbers(w,"min",cell_box.min)
-                api.write_numbers(w,"max",cell_box.max)
-                serial.text_write_raw(w,"}")
+                append(&cells_found,Nav_Cell_Result{"voxel" if ai.nav_volume_ref_layer(ref)<0 else "node",cell_box.min,cell_box.max})
             }
         }
     }
-    serial.text_write_raw(w,"]")
-    api.write_bool(w,"more",more)
-    serial.text_write_raw(w,"}")
+    r.zones,r.cells=zones[:],cells_found[:]
 }
 
 // The path through a volume between two points, pulled tight.
 @(private)
 path_volume :: proc(call:^api.Call,n:^nav.Navigation,class:int,from_point,to_point:mm.Vec3) {
-    settings:=n.classes[class].class
+    settings:=&n.classes[class].class
     volume:=&n.classes[class].volume
     extents:=mm.Vec3{1,1,1}*max(settings.radius*4,0.5)
     from,start,found_from:=ai.nav_volume_find_nearest(volume,from_point,extents)
@@ -410,22 +358,9 @@ path_volume :: proc(call:^api.Call,n:^nav.Navigation,class:int,from_point,to_poi
     }
     corners:=make([]mm.Vec3,512,context.temp_allocator)
     n_corners,_:=ai.nav_volume_straight_path(volume,start,target,refs[:count],corners)
-    w:=call.out
-    serial.text_write_raw(w,"{")
-    api.write_text(w,"class",base.text_get(settings.name[:]),true)
-    api.write_text(w,"status",fmt.tprintf("%v",status))
-    api.write_bool(w,"partial",partial)
-    api.write_key(w,"cost");api.write_number(w,ai.search_cost(&q.search) if status==.Found else 0)
-    api.write_int(w,"cells",i64(count))
-    api.write_key(w,"corners")
-    serial.text_write_raw(w,"[")
-    for corner,i in corners[:n_corners] {
-        if i>0 {serial.text_write_raw(w,",")}
-        serial.text_write_raw(w,"{")
-        api.write_numbers(w,"position",corner,true)
-        serial.text_write_raw(w,"}")
-    }
-    serial.text_write_raw(w,"]}")
+    shown:=make([]Nav_Corner_Result,n_corners,call.allocator)
+    for corner,i in corners[:n_corners] {shown[i].position=corner}
+    api.call_result(call,Nav_Path_Result)^={class=base.text_get(settings.name[:]),status=fmt.tprintf("%v",status),partial=partial,cost=ai.search_cost(&q.search) if status==.Found else 0,cells=count,corners=shown}
 }
 
 @(private)
@@ -439,7 +374,7 @@ path :: proc(s:^editor.Session,call:^api.Call) {
         path_volume(call,n,class,p.from,p.to)
         return
     }
-    settings:=n.classes[class].class
+    settings:=&n.classes[class].class
     mesh:=&n.classes[class].mesh
     can:=ai.Nav_Need{up=p.up if p.up>=0 else settings.jump_up,across=p.across if p.across>=0 else settings.jump_across,down=p.down if p.down>=0 else settings.drop}
     can.abilities=u32(p.abilities) if editor.tool_call_given(call,"abilities") else max(u32)
@@ -460,29 +395,16 @@ path :: proc(s:^editor.Session,call:^api.Call) {
     if partial && count>0 {target,_=ai.nav_closest_point_on_poly(mesh,refs[count-1],end)}
     count=ai.nav_path_straighten(mesh,&filter,start,target,refs,count)
     n_corners,_:=ai.nav_straight_path(mesh,start,target,refs[:count],corners)
-    w:=call.out
-    serial.text_write_raw(w,"{")
-    api.write_text(w,"class",base.text_get(settings.name[:]),true)
-    api.write_text(w,"status",fmt.tprintf("%v",status))
-    api.write_bool(w,"partial",partial)
-    api.write_key(w,"cost");api.write_number(w,ai.search_cost(&q.search) if status==.Found else 0)
-    api.write_int(w,"polygons",i64(count))
-    api.write_key(w,"corners")
-    serial.text_write_raw(w,"[")
+    shown:=make([]Nav_Corner_Result,n_corners,call.allocator)
     for corner,i in corners[:n_corners] {
-        if i>0 {serial.text_write_raw(w,",")}
-        serial.text_write_raw(w,"{")
-        api.write_numbers(w,"position",corner.position,true)
-        if .Link in corner.flags {
-            if link:=ai.nav_link_of(mesh,corner.ref);link!=nil {
-                api.write_text(w,"link",link_kind_name(world,link.desc.kind))
-                _,leave,_,_:=ai.nav_link_ends(link,corner.ref)
-                api.write_numbers(w,"lands",leave)
-            }
+        shown[i].position=corner.position
+        if .Link not_in corner.flags {continue}
+        if link:=ai.nav_link_of(mesh,corner.ref);link!=nil {
+            shown[i].link=link_kind_name(world,link.desc.kind)
+            _,shown[i].lands,_,_=ai.nav_link_ends(link,corner.ref)
         }
-        serial.text_write_raw(w,"}")
     }
-    serial.text_write_raw(w,"]}")
+    api.call_result(call,Nav_Path_Result)^={class=base.text_get(settings.name[:]),status=fmt.tprintf("%v",status),partial=partial,cost=ai.search_cost(&q.search) if status==.Found else 0,polygons=count,corners=shown}
 }
 
 @(private)
@@ -492,16 +414,12 @@ overlaps :: proc "contextless" (a,b:mm.Aabb) -> bool {
 
 // The abilities of a mask by name.
 @(private)
-abilities_write :: proc(w:^serial.Writer,world:core.World_Ref,abilities:u32) {
-    api.write_key(w,"abilities");serial.text_write_raw(w,"[")
-    first:=true
+abilities_names :: proc(call:^api.Call,world:core.World_Ref,abilities:u32) -> []string {
+    names:=make([dynamic]string,call.allocator)
     for entry in core.names_of(world.info,nav.Nav_Ability) {
-        if entry.value<0 || entry.value>=32 || abilities&(1<<uint(entry.value))==0 {continue}
-        if !first {serial.text_write_raw(w,",")}
-        first=false
-        serial.text_write_string(w,entry.name)
+        if entry.value>=0 && entry.value<32 && abilities&(1<<uint(entry.value))!=0 {append(&names,entry.name)}
     }
-    serial.text_write_raw(w,"]")
+    return names[:]
 }
 
 @(private)
@@ -533,8 +451,7 @@ agent :: proc(s:^editor.Session,call:^api.Call) {
     agents:=core.world_table_of(world,nav.Nav_Agent)
     far:=far_of(world,e)
     if agents==nil || !core.has(agents,e) && far==nil {api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with a Nav_Agent in the shown world",base.text_get(p.entity[:]));return}
-    w:=call.out
-    serial.text_write_raw(w,"{")
+    r:=api.call_result(call,Nav_Agent_Result)
     value:nav.Nav_Path
     has:=false
     // A far agent is off: its rows are read whether on or not.
@@ -542,78 +459,41 @@ agent :: proc(s:^editor.Session,call:^api.Call) {
         if found:=cast(^nav.Nav_Path)core.raw_find(core.raw(paths),type_info_of(nav.Nav_Path),e);found!=nil {value,has=found^,true}
     }
     if !has {
-        api.write_text(w,"state","Idle",true)
-        serial.text_write_raw(w,`,"far":false,"corners":[],"note":"no path yet: Nav_Path is added on the first tick of a run"}`)
+        r.state,r.note="Idle","no path yet: Nav_Path is added on the first tick of a run"
         return
     }
-    api.write_text(w,"state",fmt.tprintf("%v",value.state),true)
-    api.write_bool(w,"far",far!=nil)
-    if far!=nil {
-        api.write_key(w,"speed")
-        api.write_number(w,far.speed)
-        api.write_bool(w,"complete",far.complete)
-        api.write_bool(w,"arrived",far.arrived)
-    }
-    class_name:=""
-    if value.class>=0 && int(value.class)<n.count {class_name=base.text_get(n.classes[value.class].class.name[:])}
-    api.write_text(w,"class",class_name)
-    if value.target!=core.NONE {
-        api.write_key(w,"target")
-        api.write_id(w,entity_id(world,value.target))
-    }
-    api.write_numbers(w,"goal",value.goal)
-    api.write_bool(w,"partial",value.partial)
-    api.write_uint(w,"replans",u64(value.replans))
-    api.write_bool(w,"looking",value.looking)
-    if value.state==.Crossing {
-        api.write_text(w,"crossing",link_kind_name(world,u8(value.kind)))
-        api.write_bool(w,"by_game",value.manual)
-        api.write_numbers(w,"from",value.from)
-        api.write_numbers(w,"to",value.to)
-    }
-    api.write_key(w,"corners")
-    serial.text_write_raw(w,"[")
-    if far!=nil {
+    r.state,r.far=fmt.tprintf("%v",value.state),far!=nil
+    if far!=nil {r.speed,r.complete,r.arrived=far.speed,far.complete,far.arrived}
+    known:=value.class>=0 && int(value.class)<n.count
+    if known {r.class=base.text_get(n.classes[value.class].class.name[:])}
+    if value.target!=core.NONE {r.target=entity_id(world,value.target)}
+    r.goal,r.partial,r.replans,r.looking=value.goal,value.partial,int(value.replans),value.looking
+    if value.state==.Crossing {r.crossing,r.by_game,r.from,r.to=link_kind_name(world,u8(value.kind)),value.manual,value.from,value.to}
+    corners:=make([dynamic]Nav_Corner_Result,call.allocator)
+    corridor:=value.corridor
+    switch {
+    case far!=nil:
         // What is left of its route: count 0 makes it again at its next step.
-        left:=far.route[clamp(far.next,0,far.count):clamp(far.count,0,nav.NAV_FAR_POINTS)]
-        for corner,i in left {
-            if i>0 {serial.text_write_raw(w,",")}
-            serial.text_write_raw(w,"{")
-            api.write_numbers(w,"position",corner,true)
-            serial.text_write_raw(w,"}")
-        }
-        serial.text_write_raw(w,"]")
-    } else if value.class>=0 && int(value.class)<n.count && nav.class_in_volume(n,int(value.class)) {
-        volume:=&n.classes[value.class].volume
-        corridor:=value.corridor
-        corners:[16]mm.Vec3
-        count,_:=ai.nav_volume_straight_path(volume,corridor.position,corridor.target,corridor.path[:clamp(corridor.count,0,ai.NAV_CORRIDOR_CAPACITY)],corners[:])
-        for corner,i in corners[:count] {
-            if i>0 {serial.text_write_raw(w,",")}
-            serial.text_write_raw(w,"{")
-            api.write_numbers(w,"position",corner,true)
-            serial.text_write_raw(w,"}")
-        }
-        serial.text_write_raw(w,"]")
-        api.write_uint(w,"corridor",u64(max(corridor.count,0)))
-    } else if value.class>=0 && int(value.class)<n.count {
+        for corner in far.route[clamp(far.next,0,far.count):clamp(far.count,0,nav.NAV_FAR_POINTS)] {append(&corners,Nav_Corner_Result{position=corner})}
+    case known && nav.class_in_volume(n,int(value.class)):
+        points:[16]mm.Vec3
+        count,_:=ai.nav_volume_straight_path(&n.classes[value.class].volume,corridor.position,corridor.target,corridor.path[:clamp(corridor.count,0,ai.NAV_CORRIDOR_CAPACITY)],points[:])
+        for corner in points[:count] {append(&corners,Nav_Corner_Result{position=corner})}
+        r.corridor=int(max(corridor.count,0))
+    case known:
         mesh:=&n.classes[value.class].mesh
-        corners:[16]ai.Nav_Corner
-        corridor:=value.corridor
-        count,_:=ai.nav_straight_path(mesh,corridor.position,corridor.target,corridor.path[:clamp(corridor.count,0,ai.NAV_CORRIDOR_CAPACITY)],corners[:])
-        for corner,i in corners[:count] {
-            if i>0 {serial.text_write_raw(w,",")}
-            serial.text_write_raw(w,"{")
-            api.write_numbers(w,"position",corner.position,true)
+        points:[16]ai.Nav_Corner
+        count,_:=ai.nav_straight_path(mesh,corridor.position,corridor.target,corridor.path[:clamp(corridor.count,0,ai.NAV_CORRIDOR_CAPACITY)],points[:])
+        for corner in points[:count] {
+            shown:=Nav_Corner_Result{position=corner.position}
             if .Link in corner.flags {
-                if link:=ai.nav_link_of(mesh,corner.ref);link!=nil {api.write_text(w,"link",link_kind_name(world,link.desc.kind))}
+                if link:=ai.nav_link_of(mesh,corner.ref);link!=nil {shown.link=link_kind_name(world,link.desc.kind)}
             }
-            serial.text_write_raw(w,"}")
+            append(&corners,shown)
         }
-        serial.text_write_raw(w,"]")
-        api.write_uint(w,"corridor",u64(max(corridor.count,0)))
-    } else {serial.text_write_raw(w,"]")}
-    serial.text_write_raw(w,"}")
+        r.corridor=int(max(corridor.count,0))
+    }
+    r.corners=corners[:]
 }
 
 // The Nav_Far of an agent far from the players, whose rows are off; nil when it is not far.
@@ -644,5 +524,5 @@ move :: proc(s:^editor.Session,call:^api.Call) {
     case:
         nav.nav_stop(requests,e)
     }
-    serial.text_write_raw(call.out,`{"queued":true}`)
+    api.call_result(call,Nav_Build_Result).queued=true
 }
