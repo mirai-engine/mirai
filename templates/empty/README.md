@@ -4,8 +4,8 @@
   options.
 - `game/game.odin`: the game library: the `Spinner` component and the `game_spin` function, which
   runs in the `fixed` phase and spins the entities that have it (backwards while the `reverse`
-  action is held, R or East by default in `action_defaults`). Project Settings > Input writes an
-  `input.mirai` with what it changes of those keys.
+  action is held, R or East by default in `action_defaults`). Project Settings > Input writes what
+  it changes of those keys in `Input_Settings` of `settings.mirai`.
 - `plugins/sample/`: a plugin with a `runtime/` part: the `Lifetime` component and the `sample_age`
   function, which counts how long each entity that has it has been simulated.
 - `shaders/pulse.slang`: a Surface program (`Pulse`), an emissive color that pulses.

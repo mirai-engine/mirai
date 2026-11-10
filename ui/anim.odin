@@ -17,8 +17,6 @@ Anim_Property :: enum u8 {
     Rotation, // x: radians, clockwise on screen
     Opacity,  // x: 0 to 1
     Color,    // r, g, b, a that multiply the colors of the element
-    Width,    // x: layout units in place of its width; the layout around it follows
-    Height,
     Value,    // x: what a Progress, a Slider or a Number shows in place of its value
     Frame,    // x: the frame of the sheet of sprites of its image
     Reveal,   // x: 0 to 1, the part of the characters of its text shown
@@ -117,8 +115,8 @@ Anim_Value :: struct {
     rotation:f32,
     opacity:f32,
     color:[4]f32,
-    width,height,value,frame,reveal:f32,
-    set:Anim_Properties, // of Width, Height, Value, Frame and Reveal: those an animation gave
+    value,frame,reveal:f32,
+    set:Anim_Properties, // of Value, Frame and Reveal: those an animation gave
 }
 ANIM_IDENTITY :: Anim_Value{scale={1,1},opacity=1,color={1,1,1,1}}
 
@@ -144,8 +142,8 @@ anim_track_value :: proc(lib:^Anim_Library,track:Anim_Track,time:f32,from:Maybe(
     return std_anim.track_evaluate(lead[:],.Vector,max(time,0))
 }
 
-// What value holds of a property, and whether it holds it: Width, Height,
-// Value, Frame and Reveal only once an animation gave them.
+// What value holds of a property, and whether it holds it: Value, Frame and
+// Reveal only once an animation gave them.
 @(private)
 anim_value_get :: proc "contextless" (v:^Anim_Value,property:Anim_Property) -> (out:[4]f32,held:bool) {
     switch property {
@@ -154,8 +152,6 @@ anim_value_get :: proc "contextless" (v:^Anim_Value,property:Anim_Property) -> (
     case .Rotation:return {v.rotation,0,0,0},true
     case .Opacity:return {v.opacity,0,0,0},true
     case .Color:return v.color,true
-    case .Width:out.x=v.width
-    case .Height:out.x=v.height
     case .Value:out.x=v.value
     case .Frame:out.x=v.frame
     case .Reveal:out.x=v.reveal
@@ -187,8 +183,6 @@ anim_sample :: proc(lib:^Anim_Library,anim:Anim,time:f32,value:^Anim_Value,from:
             case .Rotation:value.rotation=v.x
             case .Opacity:value.opacity=v.x
             case .Color:value.color=v
-            case .Width:value.width=v.x
-            case .Height:value.height=v.x
             case .Value:value.value=v.x
             case .Frame:value.frame=v.x
             case .Reveal:value.reveal=v.x

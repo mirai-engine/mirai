@@ -24,11 +24,13 @@ Ground :: struct {
     count:int,
     revision:u64,  // the epoch of Terrain_Data, then the changes in it
     spacing:f32,
-    stamps:[3]u64, // the versions of Terrain and World_Transform and the change of the data the views were made from
+    seen:[2]core.Seen, // Terrain and World_Transform when the views were made
+    change:u64,        // the change of the data they were made from
     stroke:Terrain_Focus, // the stroke held, its center and radius left out; zero: none
     unloaded:[dynamic]mm.Aabb,
     unloaded_revision:u64,
-    unloaded_stamps:[5]u64,
+    unloaded_seen:[3]core.Seen, // Collider, Terrain and World_Transform when the unloaded boxes were made
+    unloaded_stamps:[2]u64,     // the change of the data and what the owners showed then
 }
 
 // A terrain as the probe reads it.
@@ -55,12 +57,12 @@ ground_open :: proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
 ground_update :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:core.Read(Terrain),colliders:^core.Table(phys.Collider),worlds:core.Read(core.World_Transform),focus:Terrain_Focus) {
     g:=&resident.ground
     if g.revision>>32!=u64(data.epoch) {
-        g.revision,g.count,g.stamps=u64(data.epoch)<<32,0,{}
+        g.revision,g.count,g.seen,g.change=u64(data.epoch)<<32,0,{},0
         clear(&g.views)
     }
-    stamps:=[3]u64{core.version(terrains),core.version(worlds),terrain_data_change({data})}
-    if stamps!=g.stamps {
-        g.stamps=stamps
+    change:=terrain_data_change({data})
+    if core.touched(terrains,&g.seen[0]) | core.touched(worlds,&g.seen[1]) || change!=g.change {
+        g.change=change
         views:=make([dynamic]Ground_View,0,len(g.views),context.temp_allocator)
         g.spacing=0
         for row in 0..<core.count(terrains) {
@@ -224,9 +226,10 @@ shown_weights :: proc "contextless" (s:^Source,local,normal:[3]f32) -> Weights {
 @(private)
 ground_unloaded :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:core.Read(Terrain),colliders:^core.Table(phys.Collider),worlds:core.Read(core.World_Transform)) {
     g:=&resident.ground
-    stamps:=[5]u64{core.version(colliders),core.version(terrains),core.version(worlds),terrain_data_change({data}),u64(len(resident.owners))}
-    for &source in resident.sources {for chunk in source.chunks {stamps[4]=stamps[4]*31+u64(chunk.shown)}}
-    if stamps==g.unloaded_stamps {return}
+    moved:=core.touched(colliders,&g.unloaded_seen[0]) | core.touched(terrains,&g.unloaded_seen[1]) | core.touched(worlds,&g.unloaded_seen[2])
+    stamps:=[2]u64{terrain_data_change({data}),u64(len(resident.owners))}
+    for &source in resident.sources {for chunk in source.chunks {stamps[1]=stamps[1]*31+u64(chunk.shown)}}
+    if !moved && stamps==g.unloaded_stamps {return}
     g.unloaded_stamps=stamps
     before:=len(g.unloaded)
     hash:=base.hash64(transmute([]u8)g.unloaded[:],0) if before>0 else 0

@@ -33,13 +33,12 @@ bench_ragdoll :: proc(w:^World,origin:Vec3) {
     }
     spherical :: proc(w:^World,a,b:Body_Handle,anchor,axis:Vec3,cone,twist:f32) {
         desc:=test_joint(w,.Spherical,a,b,anchor,axis)
-        desc.cone=cone
-        desc.enable_limit,desc.lower,desc.upper=true,-twist,twist
+        desc.angular={{motion=.Limited,lower=-twist,upper=twist},{motion=.Limited,lower=-cone,upper=cone},{motion=.Limited,lower=-cone,upper=cone}}
         joint_create(w,desc)
     }
     revolute :: proc(w:^World,a,b:Body_Handle,anchor,axis:Vec3,lower,upper:f32) {
         desc:=test_joint(w,.Revolute,a,b,anchor,axis)
-        desc.enable_limit,desc.lower,desc.upper=true,lower,upper
+        desc.angular[0]={motion=.Limited,lower=lower,upper=upper}
         joint_create(w,desc)
     }
     o:=origin
@@ -264,6 +263,63 @@ bench_friction :: proc(t:^testing.T) {
         }
         fmt.printfln("BENCH friction box spun at 10 rad/s: stops after %.3f s (even pressure %.3f s), drift %.4f m",stop,(10.0/6)/(0.3826*0.5*9.81),length(body_position(&w,box)*Vec3{1,0,1}))
         world_destroy(&w)
+    }
+}
+
+// 19,000 boxes asleep on the ground and 200 balls that roll apart in a corner and never sleep: the step should
+// cost what the awake ones cost.
+@(test)
+bench_asleep :: proc(t:^testing.T) {
+    if !PHYSICS_BENCH {return}
+    w:=new(World)
+    defer free(w)
+    testing.expect(t,test_world_threaded(w,nil,20480,65536,64))
+    defer world_destroy(w)
+    test_ground(w,{200,1,200})
+    for i in 0..<19000 {
+        desc:=BODY_DESC_DEFAULT
+        desc.position,desc.asleep={(f32(i%140)-70)*1.2,0.25,(f32(i/140)-70)*1.2},true
+        body:=body_create(w,desc)
+        shape:=SHAPE_DESC_DEFAULT
+        shape.geometry=Box{{0.25,0.25,0.25}}
+        shape_create(w,body,shape)
+    }
+    for i in 0..<200 {
+        ball:=test_body(w,Sphere{0.25},{150+f32(i%10)*2,0.25,f32(i/10)*2})
+        body_set_sleep_disabled(w,ball,true)
+        body_set_velocity(w,ball,{0,0,1},{})
+    }
+    times:=new(Bench_Times)
+    defer free(times)
+    cycles:u64
+    for step in 0..<240 {
+        lap:=time.tick_now()
+        before:=bench_thread_cycles()
+        world_step(w,1.0/60)
+        if step>=60 {
+            cycles+=bench_thread_cycles()-before
+            bench_record(times,time.duration_milliseconds(time.tick_since(lap)),world_profile(w))
+        }
+    }
+    result:=bench_result(times)
+    stats:=world_stats(w)
+    fmt.printfln("BENCH asleep %v bodies, %v awake, %v contacts, %v active: %.2f Mcycles of the thread per step; step median %.3f ms (best %.3f); pairs %.3f narrow %.3f prepare %.3f solve %.3f finalize %.3f sleep %.3f",
+        stats.bodies,stats.awake_bodies,stats.contacts,stats.active_contacts,f64(cycles)/180e6,result.median,result.best,result.stages[0],result.stages[1],result.stages[2],result.stages[3],result.stages[4],result.stages[5])
+}
+
+// Cycles the calling thread has run: its work, whatever else shares the machine. Zero where it is not known.
+@(private)
+bench_thread_cycles :: proc() -> (cycles:u64) {
+    when ODIN_OS==.Windows {bench_query_thread_cycles(bench_current_thread(),&cycles)}
+    return
+}
+
+when ODIN_OS==.Windows {
+    foreign import bench_kernel32 "system:Kernel32.lib"
+    @(default_calling_convention="system",private)
+    foreign bench_kernel32 {
+        @(link_name="GetCurrentThread") bench_current_thread :: proc() -> rawptr ---
+        @(link_name="QueryThreadCycleTime") bench_query_thread_cycles :: proc(thread:rawptr,cycles:^u64) -> i32 ---
     }
 }
 

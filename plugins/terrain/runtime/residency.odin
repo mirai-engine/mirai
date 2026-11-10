@@ -41,14 +41,15 @@ split_before :: proc(a,b:Split) -> bool {
 // frame).
 @(private)
 resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:core.Read(core.World_Transform),view:core.View,sources:core.Ref(scene.Streaming_Sources),settings:Terrain_Settings,terrains:core.Read(Terrain),c:^Chunk_Tables,physics:phys.Physics_Settings,problems:^core.Problems,once_more:=true,focus:=Terrain_Focus{}) {
-    stamp:=[5]u64{core.version(worlds),sources.ptr!=nil?sources.ptr.revision:0,u64(len(resident.owners)),resident.marks,core.version(c.colliders)}
+    moved:=core.touched(worlds,&resident.lod_seen[0]) | core.touched(c.colliders,&resident.lod_seen[1])
+    stamp:=[3]u64{sources.ptr!=nil?sources.ptr.revision:0,u64(len(resident.owners)),resident.marks}
     pending:=false
     if once_more {for &source in resident.sources {if len(source.pending)>0 {pending=true;break}}}
     offset:=view.position-resident.lod_view
     distances:=[3]f32{settings.lod_distance,settings.collision_distance,settings.resident_distance}
     // Where the brush is chooses pieces; what its stroke changed does not.
     brush:=Terrain_Focus{source=focus.source,center=focus.center,radius=focus.radius}
-    if !pending && stamp==resident.lod_stamp && distances==resident.lod_distances && brush==resident.focus && linalg.dot(offset,offset)<LOD_MOVE*LOD_MOVE {return}
+    if !pending && !moved && stamp==resident.lod_stamp && distances==resident.lod_distances && brush==resident.focus && linalg.dot(offset,offset)<LOD_MOVE*LOD_MOVE {return}
     resident.lod_view,resident.lod_stamp,resident.lod_distances,resident.focus=view.position,stamp,distances,brush
     resident.cut=true
     stream:=settings.resident_distance>0

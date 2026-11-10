@@ -357,8 +357,7 @@ A plugin adds modes to the [mode menu](panels.md#inspection-mode) and to
   `host.assets_file`.
 - A tool that confirms through its [cancelable preview](#cancelable-previews) does not
   use that pair: after `editor.api_guard_edit` it opens the gesture, advances it and confirms or
-  cancels it inside the call, without leaving it open, and turns the tool that was on back on
-  (`placement.drop`).
+  cancels it inside the call, without leaving it open, and turns the tool that was on back on.
 - The elements of a params array that the call does not give keep their default;
   `api.params_array_count` says how many it gave.
 - An operation on the Play copy declares it in its contract. Evaluation stays in runtime: the
@@ -377,9 +376,10 @@ with an `Api_Step_Input` drives a run, and `editor.play_ui_screen` says what its
 
 What steers or watches a body in those runs asks the plugin that moves it, never a component by
 its name: an Editor storage whose only field is `editor.Body_Provider` answers for the bodies of
-its plugin (`physics`, for its characters), and `editor.play_stance` and `editor.play_body_measure`
-read it. A body no provider answers for is `Unknown`, which each reader handles and is not taken as
-standing, and is measured as `BODY_PERSON`.
+its plugin (`physics`, whether a character stands; `locomotion`, how a walker measures), and
+`editor.play_stance` and `editor.play_body_measure` read it. A body no provider answers for is
+`Unknown`, which each reader handles and is not taken as standing, and is measured as
+`BODY_PERSON`.
 
 A bot of a plugin walks a body with the drive of `play.step`, not with steering of its own:
 `editor.play_drive_to` makes one to a place, `editor.play_drive_steer` runs before each
@@ -449,8 +449,9 @@ and joins them with the engine's.
 ## Simulation and pose confirmation
 
 - `Simulation_Provider` (given by `physics`): the body an entity is part of, taking it to a pose
-  while held, releasing it and settling what was written without simulating time. Without it,
-  Simulate runs the same and the gizmo does not drag bodies. The editor keeps the inspector's
+  while held, releasing it, advancing its simulation alone (by 0: settling what was written) and
+  readying a copy where only some entities move. Without it, Simulate runs the same, the gizmo
+  does not drag bodies and nothing settles. The editor keeps the inspector's
   providers in its cache and does not call their defaults per field.
 - The editor reads `core.Network` ([network](../../mirai-core/references/core.md#network)): a data
   contract that serves any network plugin.
@@ -467,10 +468,10 @@ and joins them with the engine's.
   the simulation. `simulation_apply_poses(s, poses)`, only in Edit, receives world poses
   (`Simulation_Pose`, normalized quaternion), validates everything before changing, respects
   selected parents and records a single undo; it creates no entities nor applies components.
-- To create and arrange entities in one gesture, a tool combines the
-  [cancelable previews](#cancelable-previews) with the primitives of
-  [physics](../../mirai-physics/SKILL.md): it computes the poses in a copy of its own and confirms
-  through the document's gesture.
+- `simulate_until_rest(s, moving, ticks, rested)` is the
+  [Simulate limited](editor.md#simulate) to some entities, and `settle_begin` to `settle_write`
+  the same run a few ticks a frame: a tool that arranges entities by letting them fall uses them
+  instead of keeping a world of its own.
 
 ## A plugin's game and player processes
 

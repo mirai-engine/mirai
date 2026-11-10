@@ -269,7 +269,7 @@ sync_seen :: proc(s:^Sync,structure:u64) -> u64 {return structure+core.version(s
 // Those versions but the values of Transform.
 @(private)
 sync_structure :: proc(s:^Sync) -> u64 {
-    seen:=core.version(s.rigids)+core.layout(s.rigids)+core.version(s.colliders)+core.layout(s.colliders)+core.layout(s.characters)+characters_seen(s.state,s.characters)
+    seen:=core.version(s.rigids)+core.layout(s.rigids)+core.version(s.colliders)+core.layout(s.colliders)+core.version(s.characters)+core.layout(s.characters)
     seen+=core.version(s.statics)+core.layout(s.statics)+core.version(s.parents)+core.layout(s.parents)+core.layout(s.transforms)
     return seen+u64(s.state.epoch)+(s.app.assets!=nil?s.app.assets.structure:0)
 }
@@ -339,23 +339,6 @@ sync_order :: proc(s:^Sync,e:core.Entity) -> (order:u64,body:bool) {
     case character>=0:                                      return 4<<32|u64(character),true
     }
     return
-}
-
-// The fields of the characters the simulation reads, which change seldom; the
-// locomotion writes the rest of their rows every tick. Taken again only when a row was written.
-@(private)
-characters_seen :: proc(state:^Physics_State,characters:core.Read(Character)) -> u64 {
-    at:=[2]u64{core.version(characters),core.layout(characters)}
-    if state.characters_at==at {return state.characters_hash}
-    seen:u64
-    for c in characters.table.values[:core.count(characters)] {
-        for field in ([9]f32{c.mass,c.max_slope,c.step_height,c.traction_force,c.adhesion_force,c.gravity_scale,c.push_force,c.density,c.up_speed}) {
-            seen=base.hash_mix(seen,u64(transmute(u32)field))
-        }
-        seen=base.hash_mix(seen,u64(transmute(u8)c.locks))
-    }
-    state.characters_at,state.characters_hash=at,seen
-    return seen
 }
 
 @(private)
@@ -751,20 +734,12 @@ look_yaw_of :: proc "contextless" (frame,rotation:mm.Quat) -> f32 {
     return sim.up_frame_yaw(sim.up_frame_turn(frame,mm.quat_rotate(rotation,{0,1,0})),rotation)
 }
 
-// The frame of the vertical of the character of e: the identity without one.
-up_frame_of :: proc(physics:core.Ref(Physics_State),e:core.Entity) -> mm.Quat {
-    if physics.ptr==nil || !physics.ready {return mm.QUAT_IDENTITY}
-    l:=link_find(physics.ptr,e)
-    if l==nil || l.kind!=.Character || !sim.character_valid(&physics.world,l.character) {return mm.QUAT_IDENTITY}
-    return sim.character_state(&physics.world,l.character).up_frame
-}
-
 @(private)
 character_sync :: proc(s:^Sync,e:core.Entity,l:^Link,config:Character,capsule:Collider,has_capsule:bool) {
     state:=s.state
     w:=&state.world
     if !has_capsule || capsule.kind!=.Capsule {
-        if !l.refused || !character_body_same(l.config,config) || l.collider!=capsule {
+        if !l.refused || l.config!=config || l.collider!=capsule {
             core.report(s.problems,e,"physics.character_capsule","its Character is not made: it moves as the Collider of kind Capsule of the entity, and it has %s; give it physics.collider_character() or a capsule of its own",has_capsule?"another kind":"none")
         }
         l.refused,l.config,l.collider=true,config,capsule
@@ -776,7 +751,7 @@ character_sync :: proc(s:^Sync,e:core.Entity,l:^Link,config:Character,capsule:Co
     desc:=character_desc(config,capsule,scale,filter,e)
     local,has_local:=core.get(s.locals,e)
     if l.kind==.Character && sim.character_valid(w,l.character) && character_shape_same(l,config,capsule,scale) {
-        if !character_body_same(l.config,config) || l.collider.drag!=capsule.drag {sim.character_set_desc(w,l.character,desc)}
+        if l.config!=config || l.collider.drag!=capsule.drag {sim.character_set_desc(w,l.character,desc)}
         if l.config.locks!=config.locks {sim.character_set_locks(w,l.character,body_locks(config.locks))}
         if l.filter!=filter {sim.character_set_filter(w,l.character,filter)}
         if !collider_surface_same(l.collider,capsule) {surface_set(w,sim.character_shape(w,l.character),capsule)}
@@ -1200,9 +1175,13 @@ link_write :: proc(s:^Sync,l:^Link,e:core.Entity) -> (again:bool) {
     case .Character:
         if !sim.character_valid(w,l.character) {return}
         if row:=core.row_of(s.character_states,e);row>=0 {
-            next:=character_state_of(sim.character_state(w,l.character))
-            next.height=sim.character_desc(w,l.character).height
-            next.velocity=sim.character_velocity(w,l.character)
+            found:=sim.character_state(w,l.character)
+            next:=Character_State{
+                standing=.Standing in found.ground,walkable=.Walkable in found.ground,ground_distance=found.ground_distance,
+                ground_normal=found.ground_normal,ground_velocity=found.ground_velocity,ground_turn=found.ground_turn,wall_normal=found.wall_normal,
+                fluid=found.fluid,submersion=found.submersion,head_depth=found.head_depth,depth=found.depth,fluid_velocity=found.fluid_velocity,
+                height=sim.character_desc(w,l.character).height,velocity=sim.character_velocity(w,l.character),
+            }
             next.cramped=next.height<l.height_asked-HEIGHT_EPSILON
             if s.character_states.values[row]!=next {core.edit_at(s.character_states,row)^=next}
         }

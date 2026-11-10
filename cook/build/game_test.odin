@@ -68,41 +68,6 @@ the_tests_of_runtime_packages_import_no_engine_time_package :: proc(t:^testing.T
     testing.expect(t,tests>0,"the tests of the runtime packages were found")
 }
 
-// The player of a shipped game reads input.mirai next to its manifest, as it
-// does in the folder of the project: the file travels when the project has it.
-@(test)
-a_game_ships_the_bindings_of_its_project_when_it_has_them :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"ship")
-    if folder=="" {return}
-    root:=project.path(folder,"project",allocator=context.temp_allocator)
-    bindings:=`{"actions":[{"name":"jump","kind":"Button","bindings":[{"key":"Space"}]}]}`
-    m:=project.manifest_default("Bound Game")
-    testing.expect(t,os.make_directory_all(project.path(root,"assets",allocator=context.temp_allocator))==nil)
-    testing.expect(t,os.write_entire_file(project.path(root,project.PROJECT_FILE,allocator=context.temp_allocator),project.manifest_text(&m,context.temp_allocator))==nil)
-    testing.expect(t,os.write_entire_file(project.path(root,project.INPUT_FILE,allocator=context.temp_allocator),bindings)==nil)
-    testing.expect(t,os.write_entire_file(project.path(root,"assets","main.scene",allocator=context.temp_allocator),"scene")==nil)
-    p,open_error:=project.open(root,#directory+"testdata/engine")
-    defer project.close(&p)
-    if !testing.expect_value(t,open_error.code,project.Error_Code.None) {return}
-
-    ship:=project.path(folder,"ship",allocator=context.temp_allocator)
-    testing.expect(t,copies_run(game_copies(&p,ship,"odin",context.temp_allocator)))
-    shipped,read_error:=os.read_entire_file(project.path(ship,project.INPUT_FILE,allocator=context.temp_allocator),context.temp_allocator)
-    testing.expect(t,read_error==nil && string(shipped)==bindings)
-    for file in ([]string{project.PROJECT_FILE}) {
-        testing.expect(t,os.is_file(project.path(ship,file,allocator=context.temp_allocator)),file)
-    }
-
-    // Without the file the game ships with the bindings its code declares.
-    testing.expect(t,os.remove(project.path(root,project.INPUT_FILE,allocator=context.temp_allocator))==nil)
-    bare:=project.path(folder,"bare",allocator=context.temp_allocator)
-    copies:=game_copies(&p,bare,"odin",context.temp_allocator)
-    for copy in copies {testing.expect(t,copy.from!=project.path(root,project.INPUT_FILE,allocator=context.temp_allocator))}
-    testing.expect(t,copies_run(copies))
-    testing.expect(t,os.is_file(project.path(bare,project.PROJECT_FILE,allocator=context.temp_allocator)))
-    testing.expect(t,!os.exists(project.path(bare,project.INPUT_FILE,allocator=context.temp_allocator)))
-}
-
 // A shipped game has no engine: it carries the settings of the machine of
 // the file of the engine with those of its project over them, as the editor
 // read them.

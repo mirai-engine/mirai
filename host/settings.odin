@@ -2,7 +2,6 @@ package host
 
 import "core:log"
 import "core:mem"
-import "core:strings"
 import "mirai:core"
 import "mirai:project"
 import "mirai:rhi"
@@ -43,12 +42,6 @@ app_settings_load :: proc(app:^App,data:rawptr,place:core.Place) {
     if error,layer:=project.settings_load(settings,app.root,app.engine_root,layers=project.settings_layers_of_process(),player=app.options);error.code!=.None {
         log.warnf("%s: %v, line %d",project.settings_file(layer,app.root,app.engine_root,context.temp_allocator,app.options),error.code,error.line)
     }
-}
-
-// A file of the options of the player; "" without them.
-app_options_file :: proc(app:^App,name:string) -> string {
-    if app.options=="" {return ""}
-    return strings.concatenate({app.options,"/",name},context.temp_allocator)
 }
 
 // Writes the settings of the machine of the application and of a world, as

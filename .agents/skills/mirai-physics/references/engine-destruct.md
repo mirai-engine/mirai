@@ -149,20 +149,12 @@ rollback.
 
 - The server decides damage and removal. The root needs a stable `core.Id` and both ends the same
   fracture source: a destructible without Id cannot pair its events.
-- `@(net_message)` messages: `Net_Fracture` (reliable, server → clients, in the local frame of the
-  body and with the check of the last event of the tick), `Net_State` (the state without geometry,
-  in chunks, to the requester) and `Net_Ask` (client → server: the complete state of a root).
-- The client keeps an event journal per root and applies them by `sequence` on reaching the server's
-  tick. One that arrives for a tick it already simulated asks to go back to it
-  (`multiplayer.rewind`) and is applied at its tick; without history, frame or budget, in the
-  present.
-- The journal stores the tick at which each event and each state were first applied, and `sequence`
-  lives in the `World`: a correction that goes back before that tick applies them again at that same
-  tick. A state is reapplied if it is ahead of the destructible, or at the tick of the first time if
-  the check does not match.
-- A different check, a lost event or a late join asks for state and repeats the request from time to
-  time without an answer; a tick that the correction repeats does not count it, because `send` does
-  not queue. The server distributes states with a byte budget per tick.
+- Fractures are an
+  [operation journal](../../mirai-networking/references/multiplayer.md#operation-journal) keyed by
+  the root's `Id`: each event of `Destruct_Events.applied` is an operation in the local frame of its
+  body, the last of a root in a tick with its `physics.breakable_check`, and its one part is the
+  state without geometry (`physics.breakable_state_write`; empty: as created), a base. Every late
+  fracture asks to go back to its tick.
 - Non-cosmetic groups receive the `Id` from `core.id_new` from a state derived from the root's Id
   and `group`, the same at each end. If the root has `Replicate`, the bridge gives each group of
   `Destruct_Events.grouped` its `Replicate` and the server publishes it as an authoritative body
@@ -170,18 +162,14 @@ rollback.
   `multiplayer.adopt(&adoptions, id, e)` and the network binds it to its replica at the end of the
   tick. Debris is local.
 - A destructible without Id cannot pair its events between ends.
-- Journals, requests and received states live in `Destruct_Net`, one per world like the session: a
-  server and a client in one process do not share their journals, and a correction does not restore
-  them. A scene that replaces the world forgets them: the new one may have destructibles with the
-  same `Id`.
-- The server sends the state of what is broken to each connection that enters its world (`Entered`:
-  on arrival and after each scene change, a loaded save between them).
+- The journal lives in `Destruct_Net`, one per world like the session.
+- The server offers the state of what is broken to each connection that enters its world
+  (`Entered`: on arrival and after each scene change, a loaded save between them).
 - Clients keep `removal_lifetime` to query their dates, internally disable their non-cosmetic
   automatic removal and follow the server's `Remove`.
-- `destruct_net_register` runs before opening the session; `destruct_net_receive` (`input`)
-  accumulates what was received for later ticks and requests the rewinds, which `net_rewind` serves
-  in the same frame; `destruct_net_follow` (`fixed`, on the client) asks to repeat what arrived at
-  its tick and `destruct_net_send` (after `destruct_step`) sends what was applied.
+- `destruct_net_receive` hands what arrived to the journal; `destruct_net_follow` (on the client)
+  replays what the journal hands; `destruct_net_send` (after `destruct_step`) publishes what was
+  applied and serves the states.
 - Tests (`plugins/destruct_multiplayer/runtime`):
   `a_correction_that_goes_back_before_a_fracture_applies_it_where_it_was_first_applied`,
   `a_fracture_of_a_tick_the_client_simulated_asks_to_go_back_and_is_applied_at_its_tick`,

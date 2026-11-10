@@ -7,6 +7,8 @@
 //! variant plain MIRAI_GBUFFER_PLAIN=1
 //! variant layers MIRAI_GBUFFER_LAYERS=1
 // Both are variants: a stage declares its targets, and a pipeline has them all.
+// Behind a constant, Vulkan warns of a write to an absent target at each draw,
+// and the Metal source, made once, writes a color the pipeline has no target for.
 // nested: the pixels of a nested view, which keep their linear depth negative
 // and the index of the view in the alpha of the motion target.
 //! constant nested MIRAI_NESTED_PIXELS
@@ -14,6 +16,8 @@
 // Without the layers target no instance with layers is in sight.
 #define MIRAI_MATERIAL_NO_LAYERS true
 #endif
+// It reports the levels it samples of each texture (texture_feedback in scene.slang).
+#define MIRAI_TEXTURE_FEEDBACK
 #include "raster.slang"
 #include "gbuffer.slang"
 

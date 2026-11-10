@@ -66,7 +66,7 @@ Destructible_State :: struct {
     handle:phys.Breakable_Handle `mirai:"transient,readonly,hidden"`,
     revision:u32 `mirai:"transient,readonly,hidden"`,         // of the simulation destructible that the groups mirror
     detached:u32 `mirai:"transient,readonly"`,                // pieces that left the body of the entity
-    sequence:u32 `mirai:"transient,readonly,hidden"`,         // fracture events applied to it, in order (Fracture_Record.sequence)
+    sequence:u32 `mirai:"transient,readonly,hidden"`,         // fracture events applied to it since it was made; a state that broke it counts as one
     passive:bool `mirai:"transient,readonly,hidden"`,           // made on a client: only what the server says damages it
     broken:bool `mirai:"transient,readonly"`,                 // drawn by its groups instead of its own mesh
     waiting:bool `mirai:"transient,readonly,hidden"`,         // its pieces are being cut
@@ -96,8 +96,6 @@ Destruct_Request :: struct {
 // about, so that it applies the same to the same destructible made from the
 // same mesh wherever that body is: what another end replays.
 Fracture_Record :: struct {
-    sequence:u32,  // Destructible_State.sequence after it: the events applied to the destructible, from 1
-    tick:u32,      // when it was applied
     piece:u32,     // place in the list of pieces of one of the body it is about, whose frame point and vector are in; max: the destructible's own body
     kind:Fracture_Kind,
     point,vector:[3]f32,
@@ -110,19 +108,21 @@ Fracture_Record :: struct {
 
 // A fracture recorded on another end, to apply to a destructible here. check,
 // when not zero, is physics.breakable_check after it there: the replays of the
-// destructible that follow in the tick wait when it is not the same here.
+// destructible that follow in the tick wait when it is not the same here. tag
+// is of who asked, back in Replayed.
 Replay :: struct {
     entity:core.Entity,
     record:Fracture_Record,
     check:u32,
+    tag:u64,
 }
 
-// The state another end had of a destructible after sequence events
-// (physics.breakable_state_write); empty: as created. data is read in the tick it is asked.
+// The state another end had of a destructible (physics.breakable_state_write);
+// empty: as created. data is read in the tick it is asked.
 State_Replay :: struct {
     entity:core.Entity,
-    sequence:u32,
     data:[]u8,
+    tag:u64,
 }
 
 // What damage and slice ask for, and the replays of what other ends
@@ -135,12 +135,12 @@ Destruct_Requests :: struct {
     states:core.Queue(State_Replay),
 }
 
-replay :: proc(requests:^Destruct_Requests,e:core.Entity,record:Fracture_Record,check:u32=0) {
-    core.push(&requests.replays,Replay{entity=e,record=record,check=check})
+replay :: proc(requests:^Destruct_Requests,e:core.Entity,record:Fracture_Record,check:u32=0,tag:u64=0) {
+    core.push(&requests.replays,Replay{entity=e,record=record,check=check,tag=tag})
 }
 
-state_replay :: proc(requests:^Destruct_Requests,e:core.Entity,sequence:u32,data:[]u8) {
-    core.push(&requests.states,State_Replay{entity=e,sequence=sequence,data=data})
+state_replay :: proc(requests:^Destruct_Requests,e:core.Entity,data:[]u8,tag:u64=0) {
+    core.push(&requests.states,State_Replay{entity=e,data=data,tag=tag})
 }
 
 // Damages a destructible around a world point: every connection within the
@@ -192,7 +192,7 @@ Applied :: struct {
 // made again, which the next tick does.
 Replayed :: struct {
     entity:core.Entity,
-    sequence:u32,
+    tag:u64,     // of the replay
     state:bool,  // of a State_Replay
     done:bool,
     failed:bool, // a state that does not apply here: the ends fracture different meshes

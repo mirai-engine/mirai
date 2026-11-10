@@ -1,6 +1,6 @@
 {
-  "name": "physics_placement",
+  "name": "locomotion",
   "version": "0.1.0",
   "dependencies": ["physics"],
-  "parts": ["Editor"]
+  "parts": ["Runtime", "Editor"]
 }

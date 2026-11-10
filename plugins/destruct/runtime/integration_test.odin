@@ -331,9 +331,10 @@ authored_destruction_proxies_geometry_and_groups_survive_cache_recovery_offline 
     info:[4]Piece_Info;testing.expect_value(t,pieces(Destruct_View{core.ref(&f.physics),core.read(&f.states),core.read(&f.groups)},e,info[:]),2)
     testing.expect(t,piece_geometry(core.ref(&f.cache),e,info[0].id,&cut_geometry))
     testing.expect_value(t,len(cut_geometry.indices),36)
-    transforms_version:=core.version(&f.transforms)
+    transforms:core.Seen
+    _=core.touched(&f.transforms,&transforms)
     destruct_test_step(&f)
-    testing.expect_value(t,core.version(&f.transforms),transforms_version)
+    testing.expect(t,!core.touched(&f.transforms,&transforms))
     core.remove(&f.configs,e);core.remove(&f.states,e);destruct_test_step(&f)
     testing.expect_value(t,phys.body_of(core.ref(&f.physics),e),phys.Body_Handle(0))
     testing.expect_value(t,core.count(core.read(&f.groups)),0)

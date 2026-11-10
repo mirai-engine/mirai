@@ -210,7 +210,7 @@ World_Marks :: struct {
 
 @(private)
 Column_Marks :: struct {
-    stamp:[2]u64, // version and layout of the table when it was marked
+    seen:core.Seen, // the table when it was marked
     marked:bool,
     ids:[dynamic]base.Asset_Id, // in order
 }
@@ -345,13 +345,13 @@ world_mark :: proc(m:^Assets_Marks,marks:^World_Marks,w:core.World_Ref,shared:ra
         if t.place!=w.place || ids_plan_empty(&m.tables[at]) {continue}
         table:=core.world_table_at(w,&t)
         column:=&marks.columns[at]
-        stamp:=[2]u64{table.version,table.layout}
-        if column.marked && column.stamp==stamp {continue}
+        now:=column.seen
+        if !core.raw_touched(table,&now) && column.marked {continue}
         clear(&found)
         seen:=make(map[base.Asset_Id]bool,context.temp_allocator)
         for row in 0..<core.raw_count(table) {ids_take(&m.tables[at],core.raw_value(table,t.info,row),&seen,&found)}
         updated:=ids_update(&column.ids,found[:],marks.ids.allocator) or_return
-        column.marked,column.stamp=true,stamp
+        column.marked,column.seen=true,now
         marks.stale||=updated
     }
     clear(&found)

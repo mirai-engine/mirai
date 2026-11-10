@@ -29,7 +29,7 @@ TABLE_SLABS :: TABLE*TABLE*TABLE
 Page :: struct($T:typeid) {
     fill:T,
     values:[]T,
-    altered:bool, // written since its source was read from its file or saved to it (Source.origin)
+    altered:bool, // written since its source was read from its file (Source.origin)
     kept:bool,    // scratch of source_pages_leave: a resident chunk reads it
 }
 
@@ -114,7 +114,7 @@ Grid :: struct($T:typeid) {
     blocks:[dynamic]Page_Block,    // of a grid read by pages (paged), one per page held
     encoded:[dynamic]Page_Encoded, // the blocks grid_put_document made, kept by a writer that asks for them
     paged:bool,
-    filled:bool,                   // a part of the directory took another value since the grid was read or saved (Page.altered for what holds no page)
+    filled:bool,                   // a part of the directory took another value since the grid was read (Page.altered for what holds no page)
     sparse:bool,                   // in blocks: the directory below names the slabs
     top_counts:[3]int,             // tables along each axis
     top:[]Tile,

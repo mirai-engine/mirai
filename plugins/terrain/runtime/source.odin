@@ -168,24 +168,15 @@ source_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=co
 }
 
 // Writes the .terrain of a source to path. origin: path is the file the
-// source is read from, so what it holds now is as that file has it.
+// source is read from, which is its origin from now on. Its pages stay
+// altered: the file codes their values with loss, so what the source holds
+// is not what the file has until it is read again.
 source_save :: proc(s:^Source,path:string,id:base.Asset_Id,types:^asset.Types,origin:=false) -> asset.Error {
     data:=source_bytes(s,id,types,s.allocator) or_return
     defer delete(data,s.allocator)
     if serial.file_write_atomic(path,data)!=.None {return .IO}
-    if origin {source_origin_set(s,asset.blob_hash(data))}
+    if origin {s.origin=asset.blob_hash(data)}
     return .None
-}
-
-// What a source holds is as the file of that content hash has it.
-@(private)
-source_origin_set :: proc(s:^Source,origin:u64) {
-    s.origin=origin
-    unalter :: proc(g:^Grid($T)) {
-        for &page in g.pages {page.altered=false}
-        g.filled=false
-    }
-    unalter(&s.field);unalter(&s.holes);unalter(&s.weights)
 }
 
 // The .terrain file of a source, as bytes from allocator aligned for its

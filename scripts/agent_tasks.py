@@ -109,7 +109,7 @@ class Session:
     """A headless editor on a fresh copy of a project, which closing deletes."""
 
     def __init__(self, project: Path):
-        printed = mirai("session", "start", project.as_posix(), "--dev", "--copy")
+        printed = mirai("session", "start", project.as_posix(), "--copy")
         lines = [line for line in printed.splitlines() if line.startswith("{")]
         if not lines:
             raise Fatal(f"mirai session start printed no session: {printed[-2000:]}")
@@ -490,7 +490,7 @@ def base_project(template: str, out: Path, built: set[str]) -> Path:
     if template not in built:
         if not (project / "project.mirai").exists():
             mirai("new", project.as_posix(), "--template", template)
-        mirai("build", "editor", project.as_posix(), "--dev")
+        mirai("build", "editor", project.as_posix())
         built.add(template)
     return project
 

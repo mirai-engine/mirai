@@ -1561,7 +1561,7 @@ programs_see_the_vertex_colors_and_the_object_of_their_point_drawn_and_reflected
 	f := new(Gpu_Fixture)
 	defer free(f)
 	settings := test_settings()
-	settings.taa = false
+	settings.taa, settings.reflections = false, .Detailed
 	if !gpu_fixture_init(t, f, 96, 64, settings) {return}
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer

@@ -6,8 +6,8 @@ import "core:os"
 import "core:path/filepath"
 import "mirai:asset"
 import "mirai:core"
-import inp "mirai:engine/input"
 import "mirai:host"
+import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 
@@ -18,16 +18,12 @@ import "mirai:std/serial"
 // layout migrates by the names of its fields; one the file lacks keeps its value.
 //
 // The options of the player (the settings of the machine: graphics, the
-// volumes of the buses, the language and scale of the interfaces; and the
-// bindings it changed) are kept the same way, in their own files. What the
-// library looks at is a hash of what these files hold: a change is written
-// once it rests for a look (a slider being dragged is not written at each
-// step), after KEPT_LOOKS looks of changing all the time, and when the world
+// volumes of the buses, the language and scale of the interfaces, the
+// bindings it changed) are kept the same way, in its settings.mirai. Each
+// file is written a while after it changes (project.Rest), and when the world
 // goes. A game asks for nothing and documents are not concerned.
 
 PROFILE :: "profile.save"
-KEPT_LOOK :: f32(0.5) // s between looks at what the files of the player hold
-KEPT_LOOKS :: 10      // looks that a value that never rests waits to be written
 
 @(private) KIND_PROFILE :: asset.Fourcc(u32('P')|u32('R')<<8|u32('O')<<16|u32('F')<<24)
 @(private) PROFILE_ID :: base.Asset_Id{0x656c69666f727069,1}
@@ -40,14 +36,10 @@ Profile_State :: struct {read:bool}
 @(private)
 Kept_File :: enum u8 {Profile,Options}
 
-// What a file held at the last look, and for how many looks it changed.
-@(private)
-Kept :: struct {seen:u64,waits:u32}
-
 // The hash of the bytes a file of the player holds. A field that is not saved
 // does not count.
 @(private)
-kept_hashes :: proc(w:core.World_Ref,app:^host.App,bindings:^inp.Input_Map) -> (hashes:[Kept_File]u64) {
+kept_hashes :: proc(w:core.World_Ref,app:^host.App) -> (hashes:[Kept_File]u64) {
     ws:=w.info.schema if w.info.schema!=nil else core.world_schema_make(w.info,context.temp_allocator)
     for storage,i in w.info.storages {
         if storage.persist && storage.place==w.place && ws!=nil {
@@ -58,64 +50,52 @@ kept_hashes :: proc(w:core.World_Ref,app:^host.App,bindings:^inp.Input_Map) -> (
         place:=storage.place==.Shared?app.shared:storage.place==.World?w.data:nil
         if place!=nil {hashes[.Options]=base.hash64(mem.byte_slice(rawptr(uintptr(place)+storage.offset),storage.info.size),hashes[.Options])}
     }
-    if bindings!=nil && bindings.built && app.options!="" {hashes[.Options]=base.hash64(mem.ptr_to_bytes(bindings),hashes[.Options])}
     return
 }
 
 @(private)
-kept_write :: proc(file:Kept_File,w:core.World_Ref,app:^host.App,state:^Save_State,bindings:^inp.Input_Map,problems:^core.Problems) {
+kept_write :: proc(file:Kept_File,w:core.World_Ref,app:^host.App,state:^Save_State,problems:^core.Problems) {
     error:Error
     switch file {
     case .Profile: error=profile_write(w,app,state,problems)
-    case .Options: error=options_write(w,app,bindings)
+    case .Options: error=options_write(w,app)
     }
     if error==.None || error==.Unavailable {return}
     core.report(problems,core.NONE,"save.kept","the %v of the player was not written: %s; it is written again when it changes, or check the permissions of its folder",file,error_text(error))
 }
 
-// Takes a look at the files of the player every KEPT_LOOK and writes the ones
-// that rest after changing, or that have been changing for too long.
+// Looks at the files of the player and writes the ones that rest after changing.
 @(private)
-kept_watch :: proc(work:^Save_Work,w:core.World_Ref,app:^host.App,state:^Save_State,bindings:^inp.Input_Map,dt:f32,problems:^core.Problems) {
+kept_watch :: proc(work:^Save_Work,w:core.World_Ref,app:^host.App,state:^Save_State,dt:f32,problems:^core.Problems) {
     if !work.watching {
         work.watching=true
-        hashes:=kept_hashes(w,app,bindings)
-        for &kept,file in work.kept {kept.seen=hashes[file]}
+        hashes:=kept_hashes(w,app)
+        for &kept,file in work.kept {project.rest_init(&kept,hashes[file])}
         return
     }
-    work.look+=dt
-    if work.look<KEPT_LOOK {return}
-    work.look=0
-    hashes:=kept_hashes(w,app,bindings)
+    looked:=false
+    for &kept in work.kept {looked=project.rest_look(&kept,dt)}
+    if !looked {return}
+    hashes:=kept_hashes(w,app)
     for &kept,file in work.kept {
-        changed:=hashes[file]!=kept.seen
-        kept.seen=hashes[file]
-        if changed && kept.waits+1<KEPT_LOOKS {
-            kept.waits+=1
-        } else if changed || kept.waits>0 {
-            kept.waits=0
-            kept_write(file,w,app,state,bindings,problems)
-        }
+        if project.rest_due(&kept,hashes[file]) {kept_write(file,w,app,state,problems)}
     }
 }
 
 // What has not been written yet, when the world goes.
 @(private)
-kept_flush :: proc(work:^Save_Work,w:core.World_Ref,app:^host.App,state:^Save_State,bindings:^inp.Input_Map,problems:^core.Problems) {
+kept_flush :: proc(work:^Save_Work,w:core.World_Ref,app:^host.App,state:^Save_State,problems:^core.Problems) {
     if !work.watching {return}
-    hashes:=kept_hashes(w,app,bindings)
+    hashes:=kept_hashes(w,app)
     for &kept,file in work.kept {
-        if hashes[file]!=kept.seen || kept.waits>0 {kept_write(file,w,app,state,bindings,problems)}
-        kept={seen=hashes[file]}
+        if project.rest_flush(&kept,hashes[file]) {kept_write(file,w,app,state,problems)}
     }
 }
 
-// The options of the player to their files; Unavailable without them (the editor).
-options_write :: proc(w:core.World_Ref,app:^host.App,bindings:^inp.Input_Map) -> Error {
+// The options of the player to their file; Unavailable without them (the editor).
+options_write :: proc(w:core.World_Ref,app:^host.App) -> Error {
     if app.options=="" {return .Unavailable}
-    if !host.app_options_save(app,w.data) {return .Write_Failed}
-    if bindings!=nil && bindings.built && !inp.input_options_write(bindings,app) {return .Write_Failed}
-    return .None
+    return host.app_options_save(app,w.data)?.None:.Write_Failed
 }
 
 // The path of the profile: in the folder that holds the one of the slots.

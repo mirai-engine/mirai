@@ -1,7 +1,7 @@
 {
   "name": "navigation",
   "version": "0.1.0",
-  "dependencies": ["physics"],
+  "dependencies": ["physics", "locomotion"],
   "parts": ["Runtime", "Editor"],
   "asset_kinds": [{"extension": ".navmesh"}]
 }
