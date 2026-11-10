@@ -53,7 +53,7 @@ a_source_needs_a_url_and_a_full_commit :: proc(t:^testing.T) {
 a_catalog_lists_a_file_for_each_plugin_at_a_reviewed_commit :: proc(t:^testing.T) {
     folder,error:=os.make_directory_temp("","mirai-catalog-*",context.temp_allocator)
     testing.expect(t,error==nil)
-    defer os.remove_all(folder)
+    defer base.remove_all(folder)
     c:=new(Catalog,context.temp_allocator)
     testing.expect_value(t,catalog_read(path(folder,"missing",allocator=context.temp_allocator),c).code,Error_Code.Not_Found)
     // A catalog without plugins yet has no folder for them.

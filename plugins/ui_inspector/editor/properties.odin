@@ -379,7 +379,11 @@ section_node :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
     #partial switch n.kind {
     case .Button,.Prompt:
         edit(u,"Action",action_row(p,"Action",n.action[:]))
-        if n.kind==.Button {edit(u,"Hold",value_row(p,"Hold",Seconds_Value,&n.hold,d.hold,"How long the action is held before it clicks; 0 clicks at once"))}
+        if n.kind==.Button {
+            edit(u,"Hold",value_row(p,"Hold",Seconds_Value,&n.hold,d.hold,"How long the action is held before it clicks; 0 clicks at once"))
+            bind_only(p,"Value",n.bind_value[:],.Number,"Where a click writes what Writes says: the page of a menu")
+            if serial.text_field(n.bind_value[:])!="" {edit(u,"Writes",value_row(p,"Writes",Count_Value,&n.choice,d.choice,"What a click writes in its value"))}
+        }
     case .Progress:
         bind_only(p,"Value",n.bind_value[:],.Number,"A number from 0 to 1: how full it is")
     case .Checkbox,.Slider,.Selector,.Dropdown,.Number:
@@ -387,6 +391,9 @@ section_node :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
     case .Radio:
         bind_only(p,"Value",n.bind_value[:],.Number,"It is selected while this value is what it writes, and choosing it writes it there")
         edit(u,"Writes",value_row(p,"Writes",Count_Value,&n.choice,d.choice,"What choosing it writes in its value"))
+    case .Draw:
+        edit(u,"Draw",value_row(p,"Procedure",Name_Value,&n.draw,d.draw,"The name a procedure of the game draws it by: @(draw=\"name\")"))
+        bind_only(p,"Value",n.bind_value[:],.Any,"The field of the game whose bytes its procedure reads")
     case .Switcher:
         if bindable(p,"Child",n.bind_value[:],.Number,"The node it builds: 0 is the first it holds; bound to an enum or a text, the node of that name") {edit(u,"Child",value_row(p,"Child",Count_Value,&n.index,d.index,"The node it builds: 0 is the first it holds"))}
     case .Tabs:

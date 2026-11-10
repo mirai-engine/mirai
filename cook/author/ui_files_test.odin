@@ -1,9 +1,11 @@
 package author
 
 import "core:fmt"
+import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
+import "mirai:core"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -289,4 +291,73 @@ a_parameter_moved_in_a_widget_moves_what_its_uses_give :: proc(t:^testing.T) {
     project_records(t,&p,SCREEN_FILE_ID,&fresh)
     gone:=records_params_follow(p.assets,&fresh,ROW_ID,params_changes(before,before[1:]))
     testing.expect(t,gone.changed)
+}
+
+// The names the code of a game asks the interfaces for by a literal are
+// names of nodes of its .ui, those inside a widget as use/node, and the
+// procedure a Draw names is one the game declares: a name none has is a
+// problem that says where it is and what to write, before the game runs.
+@(test)
+names_the_code_asks_for_and_draws_the_game_lacks_are_problems_before_it_runs :: proc(t:^testing.T) {
+    p:Project
+    if !project_init(t,&p,"code-names") {return}
+    defer project_destroy(&p)
+    if _,ok:=project_doc(t,&p,"row.ui",ROW_ID,`{"nodes":[{"name":"row","kind":"Box","children":[{"name":"pick","kind":"Button","text":"Pick"}]}]}`);!ok {return}
+    screen,ok:=project_doc(t,&p,"screen.ui",SCREEN_FILE_ID,`{"use":["row.ui"],"nodes":[{"name":"menu","kind":"Box","children":[
+        {"name":"menu_play","kind":"Button","text":"Play"},{"name":"first","kind":"row"},
+        {"name":"map","kind":"Draw","draw":"minimap","width":40,"height":40},{"name":"blank","kind":"Draw"}]}]}`)
+    if !ok {return}
+    source:=`package game
+import "core:fmt"
+import shown "mirai:engine/gui"
+shell :: proc(events:^shown.UI_Events,requests:^shown.UI_Requests,screen:u64,name:string) {
+    if shown.clicked(events,screen,"menu_play") || shown.clicked(events,screen,"menu_plya") {}
+    if shown.clicked(events,screen,"first/pick") {shown.focus(requests,screen,"map")}
+    if shown.clicked(events,screen,name) || shown.back(events,screen) {}
+    if _,changed:=shown.changed_value(events,screen,"volume");changed {}
+    fmt.println("clicked(events,screen,\"nothing\")")
+}
+`
+    game:=fmt.tprintf("%s/game",p.root)
+    if !testing.expect(t,os.make_directory_all(game)==nil || os.is_dir(game)) {return}
+    if !testing.expect(t,os.write_entire_file(fmt.tprintf("%s/shell.odin",game),source)==nil) {return}
+    // A source that is not Odin is said, not skipped.
+    if !testing.expect(t,os.write_entire_file(fmt.tprintf("%s/broken.odin",game),"package game\nshell :: proc( {")==nil) {return}
+    problems:=make([dynamic]Bind_Problem,context.temp_allocator)
+    code_names_check(&problems,p.assets,{game})
+    texts:=make([dynamic]string,context.temp_allocator)
+    for &problem in problems {
+        testing.expect_value(t,problem.fault,Bind_Fault.Code)
+        append(&texts,bind_problem_text(p.assets,&problem))
+    }
+    wanted:=[][]string{
+        {"broken.odin does not read as Odin"},
+        {"shell.odin(5)","gui.clicked asks for the node 'menu_plya'","'menu_play' is one"},
+        {"shell.odin(8)","gui.changed_value asks for the node 'volume'"},
+    }
+    for want in wanted {
+        found:=false
+        for text in texts {
+            all:=true
+            for part in want {all&&=strings.contains(text,part)}
+            found||=all
+        }
+        testing.expectf(t,found,"no problem says %v: %v",want,texts)
+    }
+    testing.expect_value(t,len(problems),len(wanted))
+
+    found:[4]Bind_Problem
+    declared:=[1]core.Draw_Info{{name="minimap"}}
+    info:=core.World_Info{draws=declared[:]}
+    testing.expect_value(t,draw_names_check(nil,&screen,found[:]),0)
+    if testing.expect_value(t,draw_names_check(&info,&screen,found[:]),1) {
+        text:=bind_problem_text(p.assets,&found[0])
+        testing.expectf(t,strings.contains(text,"node 'blank' is a Draw without a draw") && strings.contains(text,"minimap"),"%s",text)
+    }
+    info.draws=nil
+    if testing.expect_value(t,draw_names_check(&info,&screen,found[:]),2) {
+        text:=bind_problem_text(p.assets,&found[0])
+        testing.expectf(t,strings.contains(text,"node 'map' is drawn by 'minimap', which the game does not declare") && strings.contains(text,`@(draw="minimap")`),"%s",text)
+    }
+    testing.expect_value(t,draw_names_check(&info,&screen,found[:1]),1)
 }

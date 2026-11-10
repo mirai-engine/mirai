@@ -214,7 +214,7 @@ tree_kinds_read :: proc(reading:^Reading,text:string,family:ui.Style_Family) -> 
 
 tree_kind :: proc(reading:^Reading,name:string) -> (kind:ui.Node_Kind,ok:bool) {
     for k in ui.Node_Kind {if k!=.Component && fmt.tprintf("%v",k)==name {return k,true}}
-    reading_failf(reading,"kind '%s' is none of Box, Text, Image, Button, Progress, Checkbox, Slider, Field, Number, Selector, Dropdown, Radio, Rich_Text, Prompt, Action_Bar, Scroll, List, Switcher, Tabs, Popup, Modal, Context_Menu, Radial, Tooltip, View, Particles, Spacer, or the name of the file of a widget the document uses",name)
+    reading_failf(reading,"kind '%s' is none of Box, Text, Image, Button, Progress, Checkbox, Slider, Field, Number, Selector, Dropdown, Radio, Rich_Text, Prompt, Action_Bar, Scroll, List, Switcher, Tabs, Popup, Modal, Context_Menu, Radial, Tooltip, View, Particles, Draw, Spacer, or the name of the file of a widget the document uses",name)
     return
 }
 

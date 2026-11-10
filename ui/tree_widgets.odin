@@ -71,7 +71,7 @@ tree_build_leaf :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,nod
             fill=style.fill,track=style.track,stroke=style.stroke,corners=style.radius,quad=image_ref.quad,border=image_ref.border,border_uv=image_ref.border_uv,
             fill_mode=style.fill_mode,stroke_width=style.stroke_width,program=tree.programs[node.style] if int(node.style)<len(tree.programs) else 0,program_values=style.program_values})
     case .Button:
-        tree_button(ctx,b,node,index,slot,node_id,item,base_style,style,image_ref,content,selected,disabled)
+        tree_button(ctx,b,node,index,slot,node_id,values,item,base_style,style,image_ref,content,selected,disabled)
     case .Checkbox:
         value:=bound.value.bound && current!=0
         if checkbox(ctx,node_id,&value,disabled,style,node.layout.width,node.layout.height) {
@@ -152,6 +152,14 @@ tree_build_leaf :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,nod
         if node.particle!={} && ctx.game.particles!=nil && size.x>0 && size.y>0 {quad=ctx.game.particles(ctx.game.user,node_id,node.particle,size)}
         tint:=style.fill if style.fill[3]>0 else Color{255,255,255,255}
         image(ctx,{id=node_id,quad=quad,tint=tint if quad!={} else {},width=node.layout.width,height=node.layout.height})
+    case .Draw:
+        data:[]u8
+        if bound.value.bound && values!=nil {data=([^]u8)(rawptr(uintptr(values)+uintptr(bound.value.offset)))[:bound.value.size]}
+        widget_add(ctx,node_id,{.Passive})
+        element_leaf(ctx,{id=node_id,layout={width=node.layout.width,height=node.layout.height},custom=paint_add(ctx,{
+            kind=.Draw,user_data=node.draw,fill=style.fill,stroke=style.stroke,fill2=style.track,icon_color=style.knob,text_color=style.mark,
+            style=style.text,corners=style.radius,stroke_width=style.stroke_width,text=transmute(string)data,caret=int(item),
+        })})
     }
     tree_drop_target(ctx,b,node,index,node_id,item)
 }
@@ -182,9 +190,11 @@ tree_own_text :: proc(b:^Tree_Build,node:^Node,index:int) -> string {
 
 // A Button: clicked by the pointer, by navigation or by its action; with a
 // hold, only once the pointer or the action has held it that long, while a
-// bar of mark a fifth of its text tall fills along its bottom.
+// bar of mark a fifth of its text tall fills along its bottom. One that binds
+// a value writes its choice there when clicked, as a Radio does, and reports
+// Changed after Clicked.
 @(private)
-tree_button :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,node_id:Id,item:i32,base_style,style:^Node_Style,image_ref:Node_Image,content:string,selected,disabled:bool) {
+tree_button :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,node_id:Id,values:rawptr,item:i32,base_style,style:^Node_Style,image_ref:Node_Image,content:string,selected,disabled:bool) {
     instance:=b.instance
     state:=&instance.slot[slot]
     it:=button(ctx,node_id,{label=content,look=style,layout=&node.layout,image=image_ref,block=true,disabled=disabled})
@@ -218,6 +228,10 @@ tree_button :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,node_id
         tree_emit(b,{name=node.name,node=i32(index),kind=.Clicked,item=item})
         tree_sound(ctx,base_style,.Press)
         state.clicked=true
+        if bound:=instance.bounds[index].value;bound.bound {
+            bound_write(values,bound,f64(node.choice))
+            tree_emit(b,{name=node.name,node=i32(index),kind=.Changed,item=item,value=f64(node.choice)})
+        }
     }
     if !takes {return}
     if instance.bar_next_count>=TREE_BAR {ctx.stats.dropped_tree+=1;return}
