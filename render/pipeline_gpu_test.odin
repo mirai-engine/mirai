@@ -144,10 +144,23 @@ pipeline_passes_run_between_stages_over_the_resources_they_declare :: proc(t: ^t
 	read :: proc(t: ^testing.T, device: ^rhi.Device, texture: rhi.Texture, pixels: []u16) -> bool {
 		return testing.expect(t, golden_read_texture(device, texture, mem.slice_to_bytes(pixels)), rhi.device_error(device))
 	}
+	counted := make([]u16, 8 * 8 * 4, context.temp_allocator)
+	current := int((own.frames - 1) % 2)
+	if !read(t, device, own.resources[1].textures[current], counted) {return}
+	testing.expect_value(t, half_to_f32(counted[0]), f32(frames))
+
+	// The display of a view lives within its frame, and views of one size share
+	// it: a frame that draws one of them alone leaves it to be read.
 	size := int(standard.targets.width * standard.targets.height * 4)
 	plain := make([]u16, size, context.temp_allocator)
 	scaled := make([]u16, size, context.temp_allocator)
-	if !read(t, device, standard.targets.display, plain) || !read(t, device, own.targets.display, scaled) {return}
+	for alone, at in ([][]u16{plain, scaled}) {
+		own_pipeline, _ := renderer_pipeline(r, desc)
+		views := []Frame_View{{camera = camera, rect = {0, 0, 64, 64}, disabled = at != 0}, {camera = camera, rect = {64, 0, 64, 64}, pipeline = own_pipeline, disabled = at != 1}}
+		testing.expect(t, renderer_frame(r, {camera = camera, views = views}), r.error)
+		rhi.device_wait_idle(device)
+		if !read(t, device, r.views[at].targets.display, alone) {return}
+	}
 	wrong, lit := 0, 0
 	for value, i in plain {
 		if i % 4 == 3 {continue}
@@ -157,11 +170,6 @@ pipeline_passes_run_between_stages_over_the_resources_they_declare :: proc(t: ^t
 	}
 	testing.expect(t, lit > size / 8, "the scene should light the view")
 	testing.expectf(t, wrong == 0, "%d channels of the view with passes are not 16 times those of the standard one", wrong)
-
-	counted := make([]u16, 8 * 8 * 4, context.temp_allocator)
-	current := int((own.frames - 1) % 2)
-	if !read(t, device, own.resources[1].textures[current], counted) {return}
-	testing.expect_value(t, half_to_f32(counted[0]), f32(frames))
 
 	// Steady frames ask for the same pipeline and allocate nothing.
 	tracker: mem.Tracking_Allocator

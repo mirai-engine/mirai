@@ -117,7 +117,6 @@ displaced_swap :: proc(r: ^Renderer, index: u32, mesh: Mesh_Handle) {
 	m.first_instance = i32(index)
 	inst.meta.x = u32(mesh) | u32(ray_cut_always(m^)) << INSTANCE_RAY_SHIFT
 	s.ray_cuts_stale = true
-	r.textures.residency.stale = true
 	if !pose_instance_box(s, index) {
 		instance_touch(s, index)
 	}
@@ -254,8 +253,6 @@ displaced_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 			if !begun {
 				begun = true
 				rhi.cmd_timestamp(cmd, "surface vertices")
-				for buffer in ([]rhi.Buffer{s.instance_buffer, s.material_buffer, s.mesh_buffer, s.index_buffer}) {rhi.cmd_barrier_buffer(cmd, buffer, .Shader_Read)}
-				rhi.cmd_barrier_buffer(cmd, s.vertex_buffer, .Shader_Write)
 			}
 			params := Displace_Params {
 				mesh = u32(handle), clusters = posed_clusters(s, mesh), instance = index, program = next,
@@ -277,7 +274,6 @@ displaced_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 		// What was not written is written when its pipeline is there.
 		if written {skin.fresh = false} else {skin.inputs = 0}
 	}
-	if begun {rhi.cmd_barrier_buffer(cmd, s.vertex_buffer, .Shader_Read)}
 	return true
 }
 

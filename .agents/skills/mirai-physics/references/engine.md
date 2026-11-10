@@ -544,7 +544,7 @@ the world ([own pace](../../mirai-core/references/core.md#core-storages)).
   `crouch` belong to `locomotion` (`Walk_Action`) and `look` to `engine/input` (`Look_Action`)
   ([actions](../../mirai-gameplay/references/control.md#actions)).
 - Without a seat, before `locomotion_step` takes its initial look or where another end decides
-  (`core.Remote`), it does not touch it: what an AI or the network wrote stays. If `input.mirai`
+  (`core.Remote`), it does not touch it: what an AI or the network wrote stays. If `Input_Settings`
   gives `move` or `look` another type, it is the `locomotion.seat_action` problem.
 - A step that adjusts what it wrote runs with `after="locomotion_seat"`; a portal turns only the
   look of the traveler that drives its tip.
@@ -714,7 +714,9 @@ Joints over the network:
 `plugins/physics/editor` gives the editor what belongs to physics through its
 [providers](../../mirai-editor/references/extensions.md): the preset of a `Collider` and
 `Collision_Settings` in the inspector, the `physics.collision.*` methods of the API, the `Collider`
-that accompanies a new `Character`, the bodies that Simulate drags with the gizmo, the wireframes of
+that accompanies a new `Character`, the bodies that Simulate drags with the gizmo, the
+[Simulate limited](../../mirai-editor/references/editor.md#simulate) to some entities that
+`physics.settle`, **Drop to rest** and the **Drop** tool run, the wireframes of
 the selection's colliders, the `collision` and `collision.<category>` view modes, and the fluids of
 the world that is seen (box edges and a grid over the sea), editing and in Play: nothing else shows
 them while no plugin draws them. Without the plugin none of that appears.
@@ -727,6 +729,15 @@ them while no plugin draws them. Without the plugin none of that appears.
   changing them.
 - The settings list categories, presets, pushes and the entries of undeclared values, with a button
   that removes them.
+- The **Drop** tool (shortcut **P**): the left button held on the scene drops the chosen mesh, at
+  its height and scale, under the pointer and keeps dropping at its speed; what fell is seen
+  falling in the document until **Confirm** (one undo step with the meshes and their poses),
+  **Cancel**, Escape or another tool, which leave the document as it was (`physics.drop` ends it
+  by API). Each dropped mesh gets a `Collider` of kind `Hull`, which stays: in the game it is a
+  static prop that collides.
+- In a settle, the moving entities are dynamic bodies (their `Rigid_Body` when dynamic) and every
+  other body is static and every character the still capsule of its collider; joints act. Only
+  physics runs, so an `External` collider is the mesh its entity shows (a hull when it moves).
 
 ## Changing these libraries
 

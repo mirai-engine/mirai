@@ -45,7 +45,7 @@ mirai rpc --project . --batch island.jsonl
 ## As a file of text
 
 `mirai scene` reads and writes a scene as one nested document, with no editor running,
-against the components of the game as it was built (`mirai build editor . --dev` first):
+against the components of the game as it was built (`mirai build editor .` first):
 
 ```sh
 mirai scene read arena/main.scene --out main.json

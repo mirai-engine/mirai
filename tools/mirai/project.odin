@@ -13,11 +13,11 @@ import "mirai:std/base"
 
 NEW_USAGE :: "new <folder> [--name N] [--template T] | new --list"
 BUILD_USAGE :: "build tools [--debug]"
-BUILD_ENGINE_USAGE :: "build engine [--dev|--release] [--force]"
-BUILD_PROJECT_USAGE :: "build <editor|game|server> [project] [--dev|--release] [--out folder]"
+BUILD_ENGINE_USAGE :: "build engine [--release] [--force]"
+BUILD_PROJECT_USAGE :: "build <editor|game|server> [project] [--release] [--out folder]"
 GENERATE_USAGE :: "generate [project]"
-EDIT_USAGE :: "edit [project] [--dev|--release] [editor arguments]"
-PLAY_USAGE :: "play [project] [--dev|--release] [player arguments]"
+EDIT_USAGE :: "edit [project] [--release] [editor arguments]"
+PLAY_USAGE :: "play [project] [--release] [player arguments]"
 
 // How optimized the engine and a project are built. Dev, what every command
 // builds unless --release is asked for: both at -o:minimal, for checking a
@@ -26,20 +26,14 @@ PLAY_USAGE :: "play [project] [--dev|--release] [player arguments]"
 // Each mode has binaries of its own.
 Build_Mode :: build.Engine_Mode
 
-// Takes --dev and --release out of args: the mode of every command that builds
-// or picks engine binaries, dev unless --release; false when both are there.
-build_mode_take :: proc(args:[]string) -> (mode:Build_Mode,rest:[]string,ok:bool) {
+// Takes --release out of args: the mode of every command that builds or picks
+// engine binaries, dev unless it is there.
+build_mode_take :: proc(args:[]string) -> (mode:Build_Mode,rest:[]string) {
     list:=make([dynamic]string)
-    dev,release:=false,false
     for arg in args {
-        switch arg {
-        case "--dev":     dev=true
-        case "--release": release=true
-        case: append(&list,arg)
-        }
+        if arg=="--release" {mode=.Release} else {append(&list,arg)}
     }
-    if dev && release {return}
-    return .Release if release else .Dev,list[:],true
+    return mode,list[:]
 }
 
 cmd_new :: proc(root:string,args:[]string) -> int {
@@ -82,22 +76,20 @@ cmd_new :: proc(root:string,args:[]string) -> int {
 // server, the same executable (run with --dedicated) without what is only
 // shown or heard, in .mirai/server unless --out says another folder.
 cmd_build_project :: proc(root:string,args:[]string) -> int {
-    mode,rest,ok:=build_mode_take(args[1:])
-    if !ok {fmt.eprintfln("mirai build: --dev and --release do not go together. Usage: mirai %s",BUILD_PROJECT_USAGE);return 2}
+    mode,rest:=build_mode_take(args[1:])
     code,_,shaders_failed:=build_project(root,args[0]=="editor"?.Editor:.Game,rest,mode,server=args[0]=="server")
     return code!=0?code:shaders_failed?1:0
 }
 
-// mirai build engine [--dev|--release] [--force]: the binaries of the engine,
+// mirai build engine [--release] [--force]: the binaries of the engine,
 // unless the ones there were built from the same sources in the same mode.
 cmd_build_engine :: proc(root:string,args:[]string) -> int {
-    mode,rest,ok:=build_mode_take(args)
+    mode,rest:=build_mode_take(args)
     force:=false
     for arg in rest {
         if arg!="--force" {return argument_unknown("build engine",arg)}
         force=true
     }
-    if !ok {fmt.eprintfln("Usage: mirai %s",BUILD_ENGINE_USAGE);return 2}
     mode=build.engine_mode_resolve(root,mode)
     // What has nothing to compile takes no turn.
     if !force && c_libraries_current(root) && build.engine_current(root,mode) {return engine_report({status=.Up_To_Date,mode=mode},root)}
@@ -113,7 +105,7 @@ cmd_build_engine :: proc(root:string,args:[]string) -> int {
 engine_report :: proc(result:build.Engine_Result,root:string,out:=os.stdout) -> int {
     if !engine_shaders_report(result.shaders,out) {return 1}
     paths:=build.engine_paths(root,result.mode,context.temp_allocator)
-    mode:=result.mode==.Dev?"--dev":"--release"
+    mode:="dev" if result.mode==.Dev else "release"
     switch result.status {
     case .Up_To_Date: fmt.fprintfln(out,"%s unchanged (%s).",paths.folder,mode);return 0
     case .Built:
@@ -151,13 +143,12 @@ cmd_generate :: proc(root:string,args:[]string) -> int {
     return 0
 }
 
-// mirai edit [project] [--dev|--release] [arguments]: builds the library of
+// mirai edit [project] [--release] [arguments]: builds the library of
 // the project and opens it in the editor. Without a project, in a folder that is none, it opens
 // the last project an editor opened when the launcher was told so, and the
 // launcher otherwise: the editor of the empty template with --launcher.
 cmd_edit :: proc(root:string,args:[]string) -> int {
-    mode,args,ok:=build_mode_take(args)
-    if !ok {fmt.eprintfln("Usage: mirai %s",EDIT_USAGE);return 2}
+    mode,args:=build_mode_take(args)
     named:=len(args)>0 && !strings.has_prefix(args[0],"-")
     folder:=named?args[0]:"."
     rest:=named?args[1:]:args
@@ -188,12 +179,11 @@ edit_unnamed :: proc(root:string) -> (folder:string,extra:[]string) {
     return build.template_folder(root,allocator=context.temp_allocator),slice.clone(launcher,context.temp_allocator)
 }
 
-// mirai play [project] [--dev|--release] [arguments] (mirai play test: play_test.odin): builds the library of
+// mirai play [project] [--release] [arguments] (mirai play test: play_test.odin): builds the library of
 // the project and plays its game from the project, without cooking.
 cmd_play :: proc(root:string,args:[]string) -> int {
     if len(args)>0 && args[0]=="test" {return cmd_play_test(root,args[1:])}
-    mode,args,ok:=build_mode_take(args)
-    if !ok {fmt.eprintfln("Usage: mirai %s",PLAY_USAGE);return 2}
+    mode,args:=build_mode_take(args)
     folder:=len(args)>0 && !strings.has_prefix(args[0],"-")?args[0]:"."
     rest:=len(args)>0 && folder==args[0]?args[1:]:args
     code,_,_:=build_project(root,.Editor,{folder},mode)
