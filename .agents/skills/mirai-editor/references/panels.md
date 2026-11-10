@@ -964,7 +964,7 @@ or compilation.
   compared as the field stores them; `{}`, all that have the component. With neither, the first
   entity that has the component.
 - A button (`name` unique in the panel, `sets` with up to 12 targets and its `value`) is a variant:
-  it puts each field at its value, with the JSON that `scene.set` and `settings.set` accept (up to
+  it puts each field at its value, with the JSON that `scene.write` and `settings.set` accept (up to
   159 bytes), without those fields having a row. The entities of a `where` are looked up when it is
   pressed, so it reaches those created after saving the panel. Buttons are pressed in any order: if
   one sets fields of a target (same component or setting, `entity` and `where`), it sets all those

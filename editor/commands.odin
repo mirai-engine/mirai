@@ -389,9 +389,9 @@ commands_register :: proc(s:^Session,st:^Api_State) {
         {name="undo",method="history.undo",label="Undo",icon=user(.Undo),shortcut=key(.Z,{.Primary}),state=state_undo},
         {name="redo",method="history.redo",label="Redo",icon=user(.Redo),shortcut=key(.Y,{.Primary}),alternate=key(.Z,{.Primary,.Shift}),state=state_redo},
         {name="copy",method="editor.copy",params=`{"entities":["$roots"]}`,label="Copy",icon=user(.Copy),shortcut=key(.C,{.Primary}),state=state_copy,scene=true},
-        {name="paste",method="scene.duplicate",params=`{"entity":"$copied"}`,label="Paste",shortcut=key(.V,{.Primary}),state=state_paste,scene=true},
-        {name="duplicate",method="scene.duplicate",params=`{"entity":"$roots"}`,label="Duplicate",icon=user(.Copy),shortcut=key(.D,{.Primary}),state=state_scene_edit,scene=true},
-        {name="delete",method="scene.delete",params=`{"entity":"$roots"}`,label="Delete",icon=user(.Trash),shortcut=key(.Delete),alternate=key(.Backspace),state=state_scene_edit,scene=true},
+        {name="paste",method="scene.write",params=`{"merge":true,"entities":[{"copy":"$copied"}]}`,label="Paste",shortcut=key(.V,{.Primary}),state=state_paste,scene=true},
+        {name="duplicate",method="scene.write",params=`{"merge":true,"entities":[{"copy":"$roots"}]}`,label="Duplicate",icon=user(.Copy),shortcut=key(.D,{.Primary}),state=state_scene_edit,scene=true},
+        {name="delete",method="scene.write",params=`{"root":"$roots","merge":true,"entities":[{"delete":true}]}`,label="Delete",icon=user(.Trash),shortcut=key(.Delete),alternate=key(.Backspace),state=state_scene_edit,scene=true},
         // Of a game the editor shows: its entities are not those of the document.
         {name="delete_in_game",method="play.destroy",params=`{"entity":"$roots"}`,label="Delete",icon=user(.Trash),shortcut=key(.Delete),alternate=key(.Backspace),state=state_game_edit,scene=true},
         {name="rename",method="editor.view",params=`{"part":"Rename"}`,label="Rename",icon=.Edit,shortcut=key(.F2),state=state_rename,scene=true},
@@ -620,7 +620,7 @@ commands_methods_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="scene.new",summary="An empty scene in place of the document, with an empty history. Fails with unsaved changes unless discard.",params=Api_Scene_New_Params,result=Api_File_Result,flags={.Destructive},run=api_scene_new})
     api_register(s,st,{name="scene.group",summary="Puts entities under a new empty entity at their center, as one undo step. Returns the group.",params=Api_Group_Params,result=Api_Edit_Result,run=api_scene_group})
     api_register(s,st,{name="scene.thumbnail",summary="Takes the view of the viewport as the thumbnail of the scene of the document, which the content browser and the projects screen show.",result=Api_Thumbnail_Result,run=api_scene_thumbnail})
-    api_register(s,st,{name="editor.copy",summary="Keeps entities for Paste of the editor (Ctrl+V), which duplicates them; scene.duplicate copies one at once.",params=Api_Copy_Params,result=Api_Copy_Result,flags={.Idempotent},run=api_editor_copy})
+    api_register(s,st,{name="editor.copy",summary="Keeps entities for Paste of the editor (Ctrl+V), which duplicates them; scene.write with copy copies one at once.",params=Api_Copy_Params,result=Api_Copy_Result,flags={.Idempotent},run=api_editor_copy})
     api_register(s,st,{name="editor.tool",summary="Chooses what the pointer does in the viewport: the mode of the gizmo, or the tool of a plugin, whose panel takes the place of Details while it is on.",params=Api_Tool_Params,result=Api_Tool_Result,defaults=&tool_on_default,flags={.Idempotent},run=api_editor_tool})
     api_register(s,st,{name="editor.view",summary="Shows or hides a part of the interface of the editor that is not a preference: a dialog, a popup, a tab of the left panel, the name field of Details or the studio light. To see it, capture with ui.",params=Api_View_Params,result=Api_View_Result,defaults=&on,flags={.Idempotent},run=api_editor_view})
     api_register(s,st,{name="editor.save_all",summary="Writes every unsaved asset and every document with changes that has a file.",result=Api_Save_All_Result,run=api_save_all})
@@ -834,7 +834,7 @@ api_editor_view :: proc(s:^Session,call:^api.Call) {
     case .Rename:
         if !params.on {refuse(call,params.part);return}
         if len(s.selection.entities)!=1 || watching(s) {
-            api.call_fail(call,api.SERVER_ERROR,"Rename is of one selected entity: editor.select it; scene.set with name renames without the field")
+            api.call_fail(call,api.SERVER_ERROR,"Rename is of one selected entity: editor.select it; scene.write with root, merge and name renames without the field")
             return
         }
         g.layout.right_open=true
