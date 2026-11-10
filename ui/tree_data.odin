@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:reflect"
 import "mirai:std/base"
 import "mirai:std/serial"
+import uf "mirai:std/ui_format"
 
 // A tree as records: what a .ui asset stores and what a tool edits. Names
 // and texts are written out, images name their texture by asset id and
@@ -13,7 +14,19 @@ import "mirai:std/serial"
 
 TREE_NAME_CAPACITY :: 64
 TREE_TEXT_FIELDS :: 4 // names in braces a text shows
-TREE_CLIP_TRACKS :: 16 // tracks of one clip
+
+// The structure of the records, which the check of a .ui file judges by too.
+Node_Kind :: uf.Node_Kind
+Node_Kinds :: uf.Node_Kinds
+node_kind_holds :: uf.node_kind_holds
+Node_Field :: uf.Node_Field
+Node_Fields :: uf.Node_Fields
+NODE_FIELDS_UNKNOWN :: uf.NODE_FIELDS_UNKNOWN
+Anim_Kind :: uf.Anim_Kind
+TREE_DEPTH :: uf.TREE_DEPTH
+TREE_CLIP_TRACKS :: uf.TREE_CLIP_TRACKS
+FONT_CAPACITY :: uf.FONT_CAPACITY
+FONT_TREE :: uf.FONT_TREE
 
 // A text of the records: bytes of Tree_Data.text, UTF-8.
 Tree_String :: struct {offset,length:u32}
@@ -144,9 +157,6 @@ Tree_Anim :: struct {
     name:[TREE_NAME_CAPACITY]u8 `mirai:"text"`, // what the game names to play it on a node
 }
 
-// A style whose text has a font of FONT_TREE or more takes the font of row
-// font-FONT_TREE of fonts.
-FONT_TREE :: 16
 Tree_Data :: struct {
     nodes:[]Tree_Node,
     styles:[]Node_Style,
@@ -302,10 +312,8 @@ tree_fill :: proc(tree:^Widget_Tree,data:Tree_Data,resources:Tree_Resources) -> 
     textures:=resources.textures
     // A font of the tree becomes the face the resources give it.
     font_of :: proc(font:^u8,fonts:[]u8) -> bool {
-        if font^<FONT_TREE {return int(font^)<FONT_CAPACITY}
-        row:=int(font^)-FONT_TREE
-        if row>=len(fonts) {return false}
-        font^=fonts[row]
+        if !uf.style_font_exists(font^,len(fonts)) {return false}
+        if font^>=FONT_TREE {font^=fonts[font^-FONT_TREE]}
         return true
     }
     for &style,i in data.styles {
