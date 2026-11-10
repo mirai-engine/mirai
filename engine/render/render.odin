@@ -206,16 +206,12 @@ Post_Process_Layer :: struct {
 // What this entity alone shows of its materials. color multiplies their base
 // color and its alpha fades the entity; emission is added to their light.
 // Each value and texture is of the slot beside it, by the base.name_hash of
-// its name: a parameter or a texture of the program of the material of that
-// slot, or one of MATERIAL_VALUE_FIELDS or MATERIAL_MAP_NAMES. With
-// own_overlays its overlays replace those of the material of the first slot.
-// Several functions write it, in loop order: each sets and drops only the
-// names it gives. The color, the emission, the numbers of a program and the
-// values of the standard model an instance holds (material_value_instanced)
-// go to the instance of the entity, given in place when they change; what
-// changes how the surface is drawn (a texture, overlays, an alpha below 1,
-// another value) makes the entity show a row of the material table of its
-// own, which the entities that give the same share.
+// its name: of the program of the material of that slot, or one of
+// MATERIAL_VALUE_FIELDS or MATERIAL_MAP_NAMES. With own_overlays its overlays
+// replace those of the material of the first slot. Several functions write
+// it, in loop order: each sets and drops only the names it gives. What an
+// instance holds of it (values_hold) is given in place when it changes; the
+// rest makes the entity show a row of its own, shared by what gives the same.
 @(component,shared,description="What this entity alone shows of its materials: a color that multiplies theirs, light added to theirs, and values and textures by name.")
 Material_Values :: struct {
     color:[4]f32 `mirai:"color"`,
@@ -585,7 +581,7 @@ render_sync :: proc(
                 }
                 // A material with other values: what derives a row from it derives it again.
                 for drawn,at in sync.drawn.values {
-                    if drawn.derives && instance_shows(sync,a,u32(at),change.id) {instance_changed(sync,u32(at))}
+                    if (drawn.derives || core.has(t.values,sync.drawn.entities[at])) && instance_shows(sync,a,u32(at),change.id) {instance_changed(sync,u32(at))}
                 }
             }
             // Hiding, showing, moving under another or offsetting redraws what hangs from it.
@@ -1486,11 +1482,6 @@ values_settle :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Sync_Ta
         if !usable || !held || made.material!=material || made.slot_materials!=slots || made.overlays!=overlays || !room(&sync.tinted) || !room(&sync.tinted_colors) || !room(&sync.tinted_emissions) || !room(&sync.tinted_values) {
             instance_changed(sync,u32(at))
             continue
-        }
-        sync.drawn.values[at].derives=!material_values_plain(&values) || made.overlays.count>0
-        if sync.drawn.values[at].derives && !slice.contains(sync.deriving[:],u32(at)) {
-            if !room(&sync.deriving) {instance_changed(sync,u32(at));continue}
-            append(&sync.deriving,u32(at))
         }
         append(&sync.tinted,u32(at));append(&sync.tinted_colors,made.tint);append(&sync.tinted_emissions,made.emission);append(&sync.tinted_values,made.material_values)
     }
