@@ -155,7 +155,8 @@ records_look :: proc(w:core.World_Ref) -> Error {
         }
         for &info,at in w.info.tables {
             if info.place!=w.place {continue}
-            record.seen[at]=core.world_table_at(w,&info).version+(at<len(record.fresh) && record.fresh[at]?1:0)
+            t:=core.world_table_at(w,&info)
+            record.seen[at]=core.raw_settle_stamp(t) if at<len(record.fresh) && record.fresh[at] else t.version
         }
         delete(record.fresh)
         record.fresh,record.look=nil,false
