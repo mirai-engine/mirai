@@ -7,7 +7,7 @@ import game "mirai:demo/game"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
-import phys "plugins:physics/runtime"
+import locomotion "plugins:locomotion/runtime"
 
 // Writes the .character of name in folder: set over its clips of animation.
 @(private)
@@ -54,7 +54,7 @@ gallery_program_assets :: proc(o:^Out,model:^importer.Imported_Model,animation:b
     actions:=anim.Action_Profile{layers={greet},actions=definitions[:],sections=sections[:]}
     gallery_set(o,folder,"mirai_actions",animation,{actions=actions})
     clips:[3]anim.Match_Source
-    for name,i in ([3]string{"idle","walk","jog"}) {base.text_set(clips[i].clip[:],name);clips[i].loop=true;clips[i].modes=1<<u32(phys.MODE_WALKING)}
+    for name,i in ([3]string{"idle","walk","jog"}) {base.text_set(clips[i].clip[:],name);clips[i].loop=true;clips[i].modes=1<<u32(locomotion.MODE_WALKING)}
     info:=anim.MATCH_INFO_DEFAULT;info.keep_loop_phase=true;info.stationary_speed=.15
     gallery_set(o,folder,"mirai_gallery",animation,{match={info=info,clips=clips[:]},actions=actions})
     window:=anim.MOTION_WINDOW_DEFAULT;window.rotation=false;window.axes={true,false,true};base.text_set(window.name[:],game.GALLERY_REACH)

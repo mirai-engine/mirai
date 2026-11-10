@@ -221,7 +221,7 @@ gpu_skin_benchmark_reports_the_cost_of_posing_every_level_and_morph_targets :: p
         if !testing.expect(t,device!=nil,message) {return}
         defer rhi.device_destroy(device)
         r:Renderer
-        settings:=DEFAULT_SETTINGS;settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+        settings:=DEFAULT_SETTINGS;settings.gi_enabled,settings.taa=false,false
         if !testing.expect(t,renderer_init(&r,{device=device,width=640,height=360,settings=settings}),r.error) {return}
         defer renderer_destroy(&r)
         vertices,indices,grid:=skin_test_grid(128)

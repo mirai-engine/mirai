@@ -2,7 +2,7 @@ package game
 
 import "core:math"
 import "mirai:core"
-import inp "mirai:engine/input"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 import mm "mirai:std/math"
 
@@ -83,7 +83,7 @@ Raft_Hud :: struct {
 
 @(step="frame")
 raft_hud :: proc(
-    huds:^core.Table(Raft_Hud),divers:core.Read(Diver),games:core.Read(Raft_Game),states:core.Read(phys.Character_State),characters:core.Read(phys.Character),
+    huds:^core.Table(Raft_Hud),divers:core.Read(Diver),games:core.Read(Raft_Game),states:core.Read(phys.Character_State),locomotions:core.Read(locomotion.Locomotion_State),
     time:core.Time,
 ) {
     shown:=core.read(huds)
@@ -92,10 +92,10 @@ raft_hud :: proc(
         next:Raft_Hud
         if diver,is_diver:=core.get(divers,body);is_diver && core.count(games)>0 {
             state,_:=core.get(states,body)
-            character,_:=core.get(characters,body)
+            character,_:=core.get(locomotions,body)
             switch {
-            case character.mode==phys.MODE_SWIMMING && .Underwater in state.fluid: next.doing=.Under
-            case character.mode==phys.MODE_SWIMMING:                               next.doing=.Surface
+            case character.mode==locomotion.MODE_SWIMMING && .Underwater in state.fluid: next.doing=.Under
+            case character.mode==locomotion.MODE_SWIMMING:                               next.doing=.Surface
             case .In_Fluid in state.fluid:                                         next.doing=.Wading
             }
             share:=diver.capacity>0?clamp(diver.oxygen/diver.capacity,0,1):0

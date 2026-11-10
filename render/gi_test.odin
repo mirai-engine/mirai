@@ -33,7 +33,7 @@ GI_BENCHMARK :: #config(GI_BENCHMARK, false)
 gi_reference_gives_the_light_of_a_white_furnace :: proc(t: ^testing.T) {
 	for mode in ([2]Trace_Mode{.Software, .Hardware}) {
 		settings := DEFAULT_SETTINGS
-		settings.reflections, settings.taa, settings.reference_gi, settings.trace_mode = false, false, true, mode
+		settings.taa, settings.reference_gi, settings.trace_mode = false, true, mode
 		f: Fixture
 		if !fixture_init(t, &f, 48, 48, settings, programs = true) {return}
 		defer fixture_destroy(&f)
