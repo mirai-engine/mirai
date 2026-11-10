@@ -67,8 +67,8 @@ depends on `core:`, `std/base` and `std/math`.
 ## Blend spaces (`blend_space.odin`)
 
 - `Blend_Space` (1D or 2D) is a shared definition, immutable in use: points of the parameter space,
-  without clips or engine dependencies. The [plugin's `.blend`
-  format](../../mirai-animation/references/animation.md#additive-spaces)
+  without clips or engine dependencies. A [space of the plugin's
+  `.character`](../../mirai-animation/references/animation.md#additive-spaces)
   associates each point with a clip and normalizes the units of its axes; the plugin uses it only
   for aim offsets and additives, not for locomotion.
 - `blend_space_prepare` is a transaction: it copies the points, orders segments in 1D and
