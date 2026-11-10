@@ -215,7 +215,7 @@ Session :: struct {
     play_asked:scene.Play_Origin, // where Play from here puts player 1; the next play_start takes it
     toast:[TOAST_BYTES]u8,toast_length:int,
     toast_seconds:f32,
-    id_state:u64,        // of the ids given to new entities
+    id_state:u64,        // of the ids given to new entities, assets and rows of tables
     selection:^history.Selection,
     copied:[dynamic]base.Entity_Id, // by Copy: the ids of the roots that Paste duplicates
     edits:^history.Edits,

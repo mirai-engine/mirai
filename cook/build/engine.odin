@@ -83,7 +83,7 @@ ENGINE_PACKAGES :: [?]Engine_Package{
     {.Cook,"cook/shaders"},{.Cook,"cook/prefab"},{.Cook,"cook/import/sources"},{.Cook,"cook/author"},{.Cook,"cook/install"},
     {.Cook,"cook/build"},
 
-    {.Editor,"third_party/sqlite"},{.Editor,"editor/api"},{.Editor,"editor/acp"},{.Editor,"editor/diff"},{.Editor,"editor/ai_store"},{.Editor,"editor/git"},{.Editor,"editor/history"},
+    {.Editor,"third_party/sqlite"},{.Editor,"editor/api"},{.Editor,"editor/acp"},{.Editor,"editor/diff"},{.Editor,"editor/ai_store"},{.Editor,"editor/git"},{.Editor,"editor/history"},{.Editor,"editor/records"},
     {.Editor,"editor"},
 }
 
