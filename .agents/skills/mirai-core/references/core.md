@@ -276,7 +276,8 @@ with its `World_Ref`.
 
 ### Requested places
 
-`place(placer, e, position, rotation, teleport=true, at_rest=false)` is the only public way to place an entity
+`place(placer, e, position, rotation, teleport=true, at_rest=false)` is the only public way to place
+an entity
 without knowing who owns its `Transform`: a free one is written immediately, under its parents; an
 owned one is requested in the `Places` queue. `core.Placer` is a
 [parameter group](generator.md#parameter-groups) with what that needs.

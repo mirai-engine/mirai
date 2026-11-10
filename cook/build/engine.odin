@@ -142,7 +142,7 @@ engine_library_entry :: proc(library:Engine_Library,allocator:=context.allocator
 // Changes when what declare writes changes, so that binaries built by an
 // earlier version are built again.
 @(private)
-DECLARE_VERSION :: 8
+DECLARE_VERSION :: 9
 
 Engine_Paths :: struct {
     folder:string,

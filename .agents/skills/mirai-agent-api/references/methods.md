@@ -76,21 +76,21 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
     entity ([operations](../../mirai-editor/references/prefabs.md#operations)).
 - `editor.section_edit`: `entity` with `Scene_Reference`: its section is edited in the
   world of the open scene, `scene.save` also writes its scene (and that of each section edited
-  this way that changed) and the rest stays read-only; without `entity` it ends. Only in Edit and in a
-  scene. Returns `{editing,unsaved}`: `unsaved` is the section it stopped editing with unsaved
+  this way that changed) and the rest stays read-only; without `entity` it ends. Only in Edit and in
+  a scene. Returns `{editing,unsaved}`: `unsaved` is the section it stopped editing with unsaved
   changes.
 - `editor.sections`: the map of the World tab: each section with its rule, what it asks for
   (`asked`), what the view asks for (`view`, `Auto` with nothing), what it shows (`shown`, with
   `Loading`), its box in the world and its cost (`entities`, `meshes`, `textures`, `gpu_bytes` of
   its assets on the GPU now and `file_bytes`); the streaming sources and the camera.
-- `editor.section_view`: `entity` and `state` (`Active`, `Loaded`, `Unloaded` or `Auto`): turns it on,
-  off or back to the default in the editor view, without editing. It answers once it is loaded.
+- `editor.section_view`: `entity` and `state` (`Active`, `Loaded`, `Unloaded` or `Auto`): turns it
+  on, off or back to the default in the editor view, without editing. It answers once it is loaded.
 - `editor.section_travel`: `entity`: takes the camera to the section and turns it on in the view if
   what asks for it does not ask for it active, loaded when it answers.
 - `editor.section_preview`: `entity` with `Scene_Reference`: the editor draws the `Sky`
   and the `Sun` of its section instead of the enabled ones, and the view takes the look of the
-  inside of its box; without `entity` it goes back. Only in Edit; returns the `{sky,sun}` drawn (0 where the
-  section has none).
+  inside of its box; without `entity` it goes back. Only in Edit; returns the `{sky,sun}` drawn (0
+  where the section has none).
 - `editor.select`: selects `entities`; the last one becomes active and none clears. What names no
   entity is `-32602`. A different selection is an undo step of the caller
   ([selection in undo](../../mirai-editor/references/document.md#selection-in-undo)).
@@ -275,7 +275,8 @@ the GPU passes and the conditions of the measurement. The editor keeps the last 
   `engine.step`, and measures only between checkouts: if another measurement or a `mirai` build is
   running, it queues for them up to `wait` and then fails saying who
   ([turns](../../mirai-projects/references/build.md#turns-between-processes)). With
-  `advance:false` it records the frames the loop runs afterwards (those of a window, or those of `engine.step`, `editor.input` and
+  `advance:false` it records the frames the loop runs afterwards (those of a window, or those of
+  `engine.step`, `editor.input` and
   `play.step` in a manual editor); fails while another one is recording.
 - With `advance`, once it has the turn, it runs frames until they stop speeding up and only then
   records: a GPU that was idle starts at a lower clock and raises it in steps, and lowers it again
@@ -389,11 +390,12 @@ An entity is named as [the API names it](api.md#method-conventions). Each edit i
 - On a large game, `name` or `component`, and `components` for the values of those; `omitted`
   says how many were left out.
 - `scene.add`: creates an entity; everything is optional. Returns `{id}`.
-- `scene.set`: changes `entity`; `name` renames it and `parent:null` makes it a root. A member of an instance that is
-  not its root keeps the `parent` the prefab gives it.
+- `scene.set`: changes `entity`; `name` renames it and `parent:null` makes it a root. A member of an
+  instance that is not its root keeps the `parent` the prefab gives it.
 - `scene.delete`: destroys `entity` and what hangs from it. A member of an instance that is not
   its root is not deleted: it is turned off with `scene.set` `enabled` false.
-- `scene.duplicate`: copies `entity` and returns the id of the copy; it and what hangs from it get new ids.
+- `scene.duplicate`: copies `entity` and returns the id of the copy; it and what hangs from it get
+  new ids.
 - `scene.write`: makes `root`, or without it a new root, and what hangs from it say what
   `entities` declares (that entity, with the rest nested by `children`), in one step:
   - Matches by `id` (an entity of the subtree may change parent inside it), else by `name` among
@@ -435,7 +437,8 @@ An entity is named as [the API names it](api.md#method-conventions). Each edit i
 - `enabled` is `false` if the entity has its own `Disabled`; `active`, if it or something above it
   has it ([turned off](../../mirai-core/references/core.md#disabled-entities)). `off` lists the
   components turned off by themselves, which `components` shows with their values.
-- `parent` is an id or `null` in what it returns; a param `parent` names an entity as any other. `prefab`, if it is a member of an instance:
+- `parent` is an id or `null` in what it returns; a param `parent` names an entity as any other.
+  `prefab`, if it is a member of an instance:
   `{instance,asset,source,root}`, with `instance` the id of the root of the instance.
 - `components` is `{Name:{fields}}` with those the scene stores and the inspector lists; not
   `Transform`, `Name`, `Id`, `Parent`, `Hidden` or `Disabled`, which have fields of their own.
@@ -673,8 +676,8 @@ Runs the whole scene with the editor's camera and controls, without player input
 - `simulation.move`: the movement pushes dynamic bodies and a large one can take several ticks;
   `release` leaves zero velocity on arrival. Rejects characters and children of a compound body:
   the entity that owns the body is moved.
-- `simulation.apply`: the `entities` must be distinct and exist in the copy and the document. It does
-  not include created entities or component changes.
+- `simulation.apply`: the `entities` must be distinct and exist in the copy and the document. It
+  does not include created entities or component changes.
 
 During Simulate, `editor.select`, `editor.inspect`, `editor.input`, `camera.set` and the viewport
 actions act on the copy; `editor.input` still requires a manual editor and `capture` with `ui`
@@ -808,10 +811,11 @@ instance" are `-32602`; the rest, `-32000`
   is an operation on files) while the editor goes on, and answers when it ends: whether it wrote
   (`ok`), its message, the scene of a map and the assets it wrote (`kept`: its file was already
   the one it gives). `asset.import_status` gives the same, and whether one runs (`importing`), at
-  any moment. While it runs, another import and whatever writes assets fail saying what is being imported. Reimporting keeps ids and files;
+  any moment. While it runs, another import and whatever writes assets fail saying what is being
+  imported. Reimporting keeps ids and files;
   `into` (the id of the prefab, texture or sound of the import) updates it from a moved or renamed
-  source. `image` (`color`, `data`, `normal`, `normal_green_down`) says what an image imported on its
-  own holds, over its settings and its name (a packed metallic-roughness or a mask is `data`); a
+  source. `image` (`color`, `data`, `normal`, `normal_green_down`) says what an image imported on
+  its own holds, over its settings and its name (a packed metallic-roughness or a mask is `data`); a
   source in the project keeps the choice in its settings
 - `asset.detach`: `asset` (path or id) is a part that leaves its owner: it is left without `owner`
   and shown alone; the import keeps writing it and leaves it out
@@ -902,18 +906,13 @@ instance" are `-32602`; the rest, `-32000`
 
 ## Graphics and settings
 
-- `graphics.status`: those of the game while one plays, else of the edited world; `preset` is
-  `Low`, `Medium`, `High`, `Ultra` or `Custom`; `render_scale` and
-  `preset_height` say how the scene resolution is chosen; the size it is drawn at is given by
-  `engine.status` (`render_width`, `render_height`). `options` lists every option of the popup with
-  its current choice and its choices.
-- `settings.get` (read-only): `{machine, settings, engine, project}`, narrowed to `sections`
-  ([settings](../../mirai-projects/references/projects.md#project-settings)).
-  - `machine`: the names of the machine settings, the only ones the engine file stores; only
-    without `sections`.
-  - `settings`: all the effective values, one section per setting.
-  - `engine`: what the engine file sets over the code.
-  - `project`: what the project's file sets over both.
+- `graphics.status` (read-only): the graphics of the game while one plays, else of the edited
+  world, with every option of the popup and its choices; the size the scene is drawn at is in
+  `engine.status`.
+- `settings.get` (read-only): the effective values per section and what the engine and project
+  files set over the code, narrowed to `sections`
+  ([settings](../../mirai-projects/references/projects.md#project-settings)); the shape is in
+  `engine.describe`.
 - `settings.set {layer, settings, graphics_preset}`: `layer` is `"project"` (default) or
   `"engine"`; `settings` are sections with the fields that change
   (`{"Particle_Settings":{"capacity":100000}}`), and `graphics_preset` sets the quality fields of
@@ -929,10 +928,10 @@ instance" are `-32602`; the rest, `-32000`
     skipped).
   - An unknown key, an out-of-range value or `engine` without an engine root is `-32602` and
     changes nothing.
-- `preferences.get` (read-only): `{file, preferences, kept}`, the
-  [editor preferences](../../mirai-editor/references/panels.md#preferences) by area: the
-  effective values and what the file stores over the code. `file` empty: the editor does not save
-  (`--headless` without `--preferences`) and a change lasts until it closes.
+- `preferences.get` (read-only): the
+  [editor preferences](../../mirai-editor/references/panels.md#preferences) by area, with what the
+  file stores over the code. Without a `file` the editor does not save (`--headless` without
+  `--preferences`) and a change lasts until it closes.
 - `preferences.set {preferences}`: the areas with the fields that change
   (`{"Viewport_Preferences":{"snap":true}}`); they apply instantly and are written. An area or
   field that does not exist or an out-of-range value is `-32602` with those that exist, and changes

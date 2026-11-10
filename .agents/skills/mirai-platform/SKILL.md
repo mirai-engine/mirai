@@ -71,24 +71,21 @@ SDL; `platform/audio_device.odin` is the only thing that joins the two.
 - Windows: the test executable needs `SDL3.dll` from Odin's `vendor/sdl3` next to it
   (`bin/tests/`) or in `PATH`. Linux: `scripts/setup_linux_deps.py` builds SDL3 and Odin's stb and
   cgltf libraries in `.deps/linux-amd64`, which `mirai` finds by itself.
-- Scale or coordinates: `display_content_scale_changes_points_without_changing_the_drawable`,
-  `scaled_sdl_pointer_events_keep_captured_motion_in_device_units`,
-  `display_scale_changes_rebase_the_pointer_and_preserve_relative_motion`.
+- Scale or coordinates: `platform/dpi_test.odin`.
 - Everything that touches SDL video, events, gamepads or audio runs inside a single test,
   `windowed_platform_works_through_sdl` (those subsystems belong to the process and the tests run
   on several threads). A new check that uses them is added there, as a private procedure.
-- Windows only: `native_hidden_window_checks` (real hidden window, regions with `WM_NCHITTEST`) and
-  `native_veiled_window_checks` (visible window veiled until a presented frame; it never reaches
-  the screen).
+- Windows only: `platform/window_native_test.odin` (a real hidden window, regions with
+  `WM_NCHITTEST`, and a visible window veiled until a presented frame; it never reaches the
+  screen).
 - Vulkan surface, on request: `-define:PLATFORM_TEST_VULKAN=true` with `VK_DRIVER_FILES` pointing
   to the driver (lavapipe avoids the GPU).
 - Audio: the tests render to memory and compare samples; `audio/testdata/*.ogg` are tones
   generated once and not regenerated. Mixers of tests have no decoder thread, so the output is
   exact; a test that uses one decodes with `mixer_decode` before each render.
-- Feeds: `lossless_voices_and_their_offsets_play_the_whole_decode`,
-  `encoded_sound_plays_like_its_decode_in_memory`,
-  `lossless_refuses_what_it_does_not_code_and_survives_damage` and
-  `audio_thread_and_game_thread_share_a_mixer_without_locks` (with the decoder thread).
+- Feeds: `audio/lossless_test.odin` (voices and offsets, an encoded sound against its decode,
+  damaged input) and `audio/stream_test.odin` (the audio and game threads share a mixer without
+  locks, with the decoder thread).
 - Benchmarks, only if the change touches a measured path:
   `mirai test audio benchmark_mixing_ten_milliseconds --release -define:AUDIO_BENCHMARK=true`,
   `benchmark_encoded_sounds_against_decoded_ones` (load, memory and decode per voice) and

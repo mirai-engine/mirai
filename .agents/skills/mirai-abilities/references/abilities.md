@@ -54,7 +54,8 @@ Each tick, for a user its end decides:
    and `next` becomes a candidate; a `hold` ability whose input is up completes.
 2. Each kit ability whose input fires enters the buffer with its tick, unless another ability runs
    and is not yet `input.after` seconds in; requests enter it the same way (`ability_use` waits as
-   the sheet's `input.wait` says; an effect's `use`, the kit's buffer). An entry leaves after the kit's buffer seconds (with `wait` `running`, once the
+   the sheet's `input.wait` says; an effect's `use`, the kit's buffer). An entry leaves after the
+   kit's buffer seconds (with `wait` `running`, once the
    run it came in is also over) or when its ability starts.
 3. Statuses and values are derived (below), and every candidate is checked: requirements, modes,
    conditions, costs, cooldown and, while another ability runs, an open window of that one whose

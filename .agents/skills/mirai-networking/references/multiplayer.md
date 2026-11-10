@@ -584,7 +584,8 @@ melee swing) where that player aimed.
   Negative, the client is believed within `REWIND_SECONDS`.
 - At the end of every tick, under its number, the server keeps in `Rewind_History` the `Transform`
   it publishes of each entity with the `Rewind` component, in a ring as deep as the history,
-  made when the session opens, and `REWIND_ENTITIES` entities per tick; those that do not fit are a problem. `rewind_record` writes
+  made when the session opens, and `REWIND_ENTITIES` entities per tick; those that do not fit are a
+  problem. `rewind_record` writes
   it before `net_tick_tail`, only on the server; it is not copied with the world.
 - It keeps the pose of the entity, not that of its bones: a hit is tested against shapes placed
   from that pose.
@@ -695,7 +696,6 @@ one set by whoever tests those functions by hand).
   `rewind_pose_interpolates_between_ticks_and_not_across_a_teleport`,
   `rewind_tick_is_what_the_client_showed_within_the_limit` and
   `interpolate_others_shows_bodies_of_others_in_the_past`; in `input_packet_test.odin`,
-  `a_button_held_through_a_late_input_is_pressed_once` and
   `a_claimed_view_far_from_the_latency_takes_the_expected_one`; a state older than the history:
   `a_state_older_than_the_history_puts_the_replica_where_the_server_had_it`; in `physics`,
   `a_following_target_leads_a_character_where_it_says`.
@@ -752,7 +752,7 @@ one set by whoever tests those functions by hand).
   `authoritative_physics_joints_and_inputs_converge_over_real_udp_localhost`.
 - `authority_test.odin` and `players_test.odin`: the role, `core.Remote` on the server and on the
   client, the seat of each connection and its body, and the owner of each body by its seat
-  (`a_server_owns_each_body_to_its_seat_and_a_client_drives_what_it_predicts`).
+  (`a_server_owns_each_body_to_the_connection_of_its_seat`).
 - Players (`players_test.odin`):
   `a_seat_waits_for_its_player_and_is_given_back_when_it_connects_again`,
   `the_seats_of_a_saved_game_wait_for_their_players`, `a_client_keeps_the_seats_of_the_server` and

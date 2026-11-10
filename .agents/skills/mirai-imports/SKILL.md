@@ -154,42 +154,36 @@ the assets.
 
 - `mirai test cook/import` (source space, PBR, levels, collision, sounds, hand grips),
   `cook/rig` (fit and weights over a body of boxes, each animal stretched by its skin, meshes
-  that are neither a person nor an animal), `cook/import/obj`, `cook/import/gltf` (with
-  `a_humanoid_rig_fits_the_joints_a_person_placed_and_rests_as_the_template`,
-  `a_humanoid_rig_fits_a_person_whose_arms_hang`,
-  `an_animal_rig_fits_the_joints_a_person_placed_and_rests_as_its_clips` and
-  `meshopt_clips_decode_to_continuous_keys`), `cook/import/usd`, `cook/import/fbx` (each format
-  with its fixtures) and `cook/import/sources` (sniffing, writing, cache, settings, fuzz, CLI);
-  `cook/textures` (decoding, mips, BC blocks and their RDO lambda, inverted green, round trip
-  through `.tex`, cache by content; HDR, every BC6H mode, 16-bit and layers in `layers_test.odin`).
-  The fixtures of `assets/fixtures/` and the models of `demo/source/models` import (without
-  warnings) and what is written reads back with `asset`.
-- Texture cache: `built_textures_are_kept_by_image_and_settings_and_read_back_whole`,
-  `an_import_takes_a_texture_that_another_import_built_from_the_texture_cache` and, in
-  `cook/build`, `a_cook_takes_the_blocks_of_a_texture_from_the_cache_of_its_content` and
-  `a_cook_encodes_a_fast_texture_again_as_final_from_its_source`. Mesh cache:
-  `an_import_takes_a_mesh_that_another_import_built_from_the_mesh_cache`.
+  that are neither a person nor an animal), `cook/import/obj`, `cook/import/gltf` (with the rig
+  fits of `rig_test.odin` and the decoding of `meshopt_test.odin`), `cook/import/usd`,
+  `cook/import/fbx` (each format with its fixtures) and `cook/import/sources` (sniffing, writing,
+  cache, settings, fuzz, CLI); `cook/textures` (decoding, mips, BC blocks and their RDO lambda,
+  inverted green, round trip through `.tex`, cache by content; HDR, every BC6H mode, 16-bit and
+  layers in `layers_test.odin`). The fixtures of `assets/fixtures/` and the models of
+  `demo/source/models` import (without warnings) and what is written reads back with `asset`.
+- Caches: `cook/textures/cache_test.odin` and `cook/import/sources/cache_test.odin` (a texture or
+  a mesh that another import built is taken from the cache);
+  `cook/build/cook_cache_test.odin` (a cook takes the blocks of a texture from the cache of its
+  content) and `cook/import/sources/cook_test.odin` (a fast texture is encoded again as final
+  from its source).
 - Parallel: import a map with `mirai import --rebuild` over a copy of an import made without the
   job system (or before the change) and compare the trees with `diff -r`: the same bytes.
 - Also test `cook/prefab` if the imported hierarchy changes, and `asset` if an asset format or its
   version changes.
 - Fonts, texts and prompts: `cook/import/interface_test.odin` (rejected collections, CSV per
-  RFC 4180, power-of-two atlases without overlap) and
-  `damaged_fonts_texts_and_prompts_are_imported_or_refused` (`cook/import/sources`). After
-  changing the prompt importer, import the `prompts_kenney` pack again
+  RFC 4180, power-of-two atlases without overlap) and `cook/import/sources/fuzz_test.odin`
+  (damaged files are imported or refused). After changing the prompt importer, import the
+  `prompts_kenney` pack again
   ([command](../mirai-plugins/references/plugins.md#first-party-plugins)) and verify it with
   `mirai asset verify`.
-- Identity and reimport (`cook/import/sources/reimport_test.odin`):
-  - `the_parts_of_an_import_name_its_prefab_and_keep_their_ids_where_they_were_moved`;
-  - `a_source_moved_or_renamed_keeps_the_ids_of_its_import`;
-  - `a_material_renamed_in_the_source_keeps_its_id_and_a_part_taken_out_is_left_alone`;
-  - `a_material_is_a_part_only_when_its_texture_is_an_atlas_of_one_model`;
-  - `a_second_model_with_the_same_textures_takes_its_material_and_both_lose_it_as_a_part`;
-  - `importing_again_keeps_what_was_changed_in_a_material_and_takes_the_rest_from_the_source`
-    (over a copy of manny with its roughness changed and another texture in the source).
-- `mirai_import_writes_assets_that_mirai_asset_verifies` needs `MIRAI_ROOT` (defined by
-  `mirai test`); run it when touching `cook/import/sources/command.odin`. It imports in-process
-  with `command`; the whole path (`mirai import` → `mirai-import`) needs the built engine.
+- Identity and reimport: `cook/import/sources/reimport_test.odin` (the parts of an import name
+  their prefab and keep their ids where they were moved, a source moved or renamed keeps the ids of
+  its import, when a material is a part of a model and when two models lose it as a part) and
+  `cook/import/sources/write_test.odin` (importing again keeps what was changed in a material and
+  takes the rest from the source).
+- `cook/import/sources/cli_test.odin` needs `MIRAI_ROOT` (defined by `mirai test`); run it when
+  touching `cook/import/sources/command.odin`. It imports in-process with `command`; the whole
+  path (`mirai import` → `mirai-import`) needs the built engine.
 - The tests that compose USD (`referenced.usda`) or decode the crate (`hierarchy.usdc`) need
   `usdcat` and report that they did not run if it is missing; the process is tested with a fake
   `usdcat`.

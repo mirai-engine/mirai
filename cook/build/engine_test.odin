@@ -133,31 +133,127 @@ declare_says_whether_a_declaration_changed :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
     folder:=base.test_folder(t,"declare")
     if folder=="" {return}
-    source:=project.path(folder,"engine","thing","thing.odin")
+    source:=project.path(folder,"engine","core","thing.odin")
     testing.expect(t,os.make_directory_all(os.dir(source))==nil)
     write :: proc(t:^testing.T,path,text:string) {testing.expect(t,os.write_entire_file(path,text)==nil)}
-    write(t,source,"package thing\n\nvalue :: proc(x:int) -> int {return x+1}\n")
-    desc:=Declare_Desc{root=project.path(folder,"engine"),packages={"thing"},binary="mirai",library=project.path(folder,"out","thing.lib"),stage=project.path(folder,"out","stage"),decl=project.path(folder,"out","decl")}
+    write(t,source,"package core\n\nvalue :: proc(x:int) -> int {return x+1}\n")
+    desc:=Declare_Desc{root=project.path(folder,"engine"),packages={"core"},binary="mirai",library=project.path(folder,"out","thing.lib"),stage=project.path(folder,"out","stage"),decl=project.path(folder,"out","decl")}
     errors,changed:=declare(desc)
     testing.expect_value(t,len(errors),0)
     testing.expect(t,changed.stage && changed.decl,"the first declaration writes both")
     _,changed=declare(desc)
     testing.expect(t,!changed.stage && !changed.decl,"the same sources declare nothing new")
-    write(t,source,"package thing\n\nvalue :: proc(x:int) -> int {return x+2}\n")
+    write(t,source,"package core\n\nvalue :: proc(x:int) -> int {return x+2}\n")
     _,changed=declare(desc)
     testing.expect(t,changed.stage && !changed.decl,"a body moves the stage and is not declared")
-    write(t,source,"package thing\n\nvalue :: proc(x,y:int) -> int {return x+y}\n")
+    write(t,source,"package core\n\nvalue :: proc(x,y:int) -> int {return x+y}\n")
     _,changed=declare(desc)
     testing.expect(t,changed.decl,"another signature is another declaration")
-    extra:=project.path(folder,"engine","thing","more.odin")
-    write(t,extra,"package thing\n\nmore :: proc() {}\n")
+
+    // What whoever imports the package is built again by is the hash of its
+    // declarations: a private procedure they do not name is not in it.
+    core,_:=engine_package_index("core")
+    private :: "package core\n\nvalue :: proc(x,y:int) -> int {{return helper(x)+y}}\n\ntwice :: #force_inline proc(x:int) -> int {{return named(x)}}\n\n@(private)\nhelper :: proc(%s) -> int {{return x}}\n\n@(private)\nnamed :: proc(%s) -> int {{return x*2}}\n"
+    write(t,source,fmt.tprintf(private,"x:int","x:int"))
+    errors,_=declare(desc)
+    testing.expect_value(t,len(errors),0)
+    hashes:=decl_hashes(desc.decl)
+    testing.expect(t,hashes[core]!=0)
+    write(t,source,fmt.tprintf(private,"x:int,y:=0","x:int"))
+    errors,changed=declare(desc)
+    testing.expect(t,len(errors)==0 && changed.stage && !changed.decl,"a private procedure no declaration names is not declared")
+    testing.expect_value(t,decl_hashes(desc.decl)[core],hashes[core])
+    write(t,source,fmt.tprintf(private,"x:int,y:=0","x:int,y:=0"))
+    errors,changed=declare(desc)
+    testing.expect(t,len(errors)==0 && changed.decl,"the one an inline body calls is")
+    testing.expect(t,decl_hashes(desc.decl)[core]!=hashes[core])
+
+    extra:=project.path(folder,"engine","core","more.odin")
+    write(t,extra,"package core\n\nmore :: proc() {}\n")
     _,changed=declare(desc)
     testing.expect(t,changed.stage && changed.decl)
     testing.expect(t,os.remove(extra)==nil)
     _,changed=declare(desc)
     testing.expect(t,changed.stage && changed.decl,"a file taken out of the package goes")
-    testing.expect(t,!os.exists(project.path(folder,"out","decl","thing","more.odin")))
-    testing.expect(t,!os.exists(project.path(folder,"out","stage","thing","more.odin")))
+    testing.expect(t,!os.exists(project.path(folder,"out","decl","core","more.odin")))
+    testing.expect(t,!os.exists(project.path(folder,"out","stage","core","more.odin")))
+}
+
+// A private procedure is declared, and exported, only when the declarations
+// name it: no other package can call it, so only what is copied into them
+// and the default values of what they declare can. One private to a file is
+// looked up in the declarations of its file alone.
+@(test)
+declarations_carry_only_the_private_procedures_they_name :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    cases:=[]struct{what:string,a,b:string,declared,left:[]string}{
+        {
+            what="an inline body calls it",
+            a="@(private)\nhelper :: proc(x:int) -> int {return x}\n\n@(private)\nalone :: proc(x:int) -> int {return helper(x)}\n\nrun :: #force_inline proc(x:int) -> int {return helper(x)}\n",
+            declared={"mirai.thing.helper"},left={"mirai.thing.alone"},
+        },
+        {
+            what="only a private body copied with the one that calls it does",
+            a="@(private)\ninner :: proc() {}\n\n@(private)\nmiddle :: #force_inline proc() {inner()}\n\nrun :: #force_inline proc() {middle()}\n",
+            declared={"mirai.thing.inner"},
+        },
+        {
+            what="a constant and a table take it as a value",
+            a="@(private)\non_event :: proc() {}\n\n@(private)\non_frame :: proc() {}\n\n@(private)\non_nothing :: proc() {}\n\nHANDLER :: on_event\n\n@(rodata)\nHANDLERS := [1]proc(){on_frame}\n",
+            declared={"mirai.thing.on_event","mirai.thing.on_frame"},left={"mirai.thing.on_nothing"},
+        },
+        {
+            what="a default value names it, and its own names another",
+            a="@(private)\nfallback :: proc(then:=last) {}\n\n@(private)\nlast :: proc() {}\n\nrun :: proc(then:=fallback) {then()}\n",
+            declared={"mirai.thing.fallback","mirai.thing.last"},
+        },
+        {
+            what="a group of procedures names it",
+            a="@(private)\nof_int :: proc(x:int) {}\n\n@(private=\"file\")\nof_f32 :: proc(x:f32) {}\n\n@(private)\nof_none :: proc() {}\n\nof :: proc{of_int,of_f32}\n",
+            declared={"mirai.thing.of_int","mirai.thing.a.of_f32"},left={"mirai.thing.of_none"},
+        },
+        {
+            what="a deferred procedure",
+            a="@(private)\nleave :: proc() {}\n\n@(deferred_none=leave)\nenter :: proc() {}\n",
+            declared={"mirai.thing.leave"},
+        },
+        {
+            what="each branch of a when declares its own",
+            a="when ODIN_OS==.Windows {\n    @(private)\n    wait :: proc() {}\n    @(private)\n    idle :: proc() {}\n} else {\n    @(private)\n    wait :: proc(ms:=0) {}\n}\n\nrun :: #force_inline proc() {\n    when ODIN_DEBUG {wait()}\n}\n",
+            declared={"mirai.thing.wait","wait :: proc(ms:=0)"},left={"mirai.thing.idle"},
+        },
+        {
+            what="another file has one of the same name that nothing copied calls",
+            a="@(private=\"file\")\nhelper :: proc() {}\n\nrun :: #force_inline proc() {helper()}\n",
+            b="@(private=\"file\")\nhelper :: proc() {}\n\nother :: proc() {helper()}\n",
+            declared={"mirai.thing.a.helper"},left={"mirai.thing.b.helper"},
+        },
+        {
+            what="a field and a private file have its name",
+            a="Thing :: struct {reset:int}\n\n@(private)\nreset :: proc() {}\n\nread :: #force_inline proc(thing:Thing) -> int {return thing.reset}\n",
+            b="#+private\npackage thing\n\nquiet :: proc() {}\n\nloud :: proc() {}\n\nTABLE :: [1]proc(){loud}\n",
+            declared={"mirai.thing.loud"},left={"mirai.thing.reset","mirai.thing.quiet"},
+        },
+    }
+    root:=base.test_folder(t,"declare-private")
+    if root=="" {return}
+    for c,index in cases {
+        folder:=project.path(root,fmt.tprint(index))
+        source_write(t,folder,"thing","a.odin",strings.concatenate({"package thing\n\n",c.a}))
+        if c.b!="" {source_write(t,folder,"thing","b.odin",strings.has_prefix(c.b,"#+")?c.b:strings.concatenate({"package thing\n\n",c.b}))}
+        desc:=describe(folder,[]string{"thing"})
+        errors,_:=declaring(desc)
+        if !declared_ok(t,errors) {continue}
+        decl:=strings.concatenate({declared(desc.decl,"thing","a.odin"),declared(desc.decl,"thing","b.odin")})
+        stage:=strings.concatenate({declared(desc.stage,"thing","a.odin"),declared(desc.stage,"thing","b.odin")})
+        for name in c.declared {
+            testing.expectf(t,strings.contains(decl,name),"%s: %s is declared:\n%s",c.what,name,decl)
+            if strings.has_prefix(name,"mirai.") {testing.expectf(t,strings.contains(stage,fmt.tprintf("@(export,link_name=%q",name)),"%s: %s is exported:\n%s",c.what,name,stage)}
+        }
+        for name in c.left {
+            testing.expectf(t,!strings.contains(decl,name) && !strings.contains(stage,name),"%s: %s stays in the binary alone:\n%s",c.what,name,decl)
+        }
+    }
 }
 
 // An inline procedure copied into the declarations can call one private to its

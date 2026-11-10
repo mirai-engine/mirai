@@ -51,7 +51,8 @@ own the `Transform` (`locks="core.Transform"`): the game moves through requests.
   supported and the ground that the end of the step found (walkable, distance, normal, velocity and
   `ground_turn`), which is the one the next step will use, the normal of the wall it leans on
   (`wall_normal`, zero without one), and how much it is in a fluid (`fluid`, `submersion`,
-  `head_depth`, `depth` and the current), and its `velocity`. Only the simulation writes them; a save
+  `head_depth`, `depth` and the current), and its `velocity`. Only the simulation writes them; a
+  save
   restores them. Whoever writes the `Character_Move` adds `ground_turn` (how much the ground turned
   the character) to the yaw every step.
 - `core.Vertical`: the vertical frame of each character, for whoever reads it outside physics (the
@@ -386,8 +387,8 @@ writes.
   - Walking (with `Walk`): velocity over the ground plane relative to it, with acceleration or
     braking. Holding the `sprint` action (or always, with `Walk.sprint_default`, Fortnite's
     "Sprint by Default"; the action then only asks for a `Tactical_Sprint`) raises the top speed
-    to `sprint_speed` while the move points within 60° of where it looks, and moving back loses `backward_slowdown` of it; both
-    apply in the air as well.
+    to `sprint_speed` while the move points within 60° of where it looks, and moving back loses
+    `backward_slowdown` of it; both apply in the air as well.
   - Jumping: the edge of the `jump` action among the buttons of the `Move_Input`, supported or
     during the coyote time after leaving an edge, gives the `launch` that reaches `Walk.jump_height`
     and makes `MODE_FALLING` the mode. While the button stays down, for up to `Walk.jump_rise`, each
@@ -396,12 +397,13 @@ writes.
   - Tactical sprint (with `Tactical_Sprint`, `locomotion_moves.odin`): sprinting forward on the
     ground with `min_energy` starts it (`Character.sprint_active`, energy left by
     `tactical_energy`). Its top speed and jump speed grow exponentially to their multipliers over
-    `speed_ramp` and `jump_ramp` (`tactical_boost`), which also the animation bridge reads; the acceleration
-    multiplier acts only on the ground. Energy is spent per second (not in the air with
+    `speed_ramp` and `jump_ramp` (`tactical_boost`), which also the animation bridge reads; the
+    acceleration multiplier acts only on the ground. Energy is spent per second (not in the air with
     `pause_falling`), per jump and per slide start, and comes back `recharge_delay` after it was
-    last spent. It ends without energy, going down in the air past `fall_grace` (`Character.fall_time`: a jump still rising does not count), crouched, sliding or out of
-    walking and falling, as soon as sprint is let go, or after `grace` with sprint held and the move off
-    forward; back within `grace` it keeps its ramp.
+    last spent. It ends without energy, going down in the air past `fall_grace`
+    (`Character.fall_time`: a jump still rising does not count), crouched, sliding or out of
+    walking and falling, as soon as sprint is let go, or after `grace` with sprint held and the move
+    off forward; back within `grace` it keeps its ramp.
     Without energy it sprints as `Walk` says.
   - Ledge jump (with `Ledge_Jump`): standing at `min_speed` for `min_time`, `locomotion_step`
     checks the ground ahead before the move (`ledge_drop_ahead`, own rule): a sphere almost as

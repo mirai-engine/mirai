@@ -262,7 +262,8 @@ of the focused slot in `render.View_Camera`.
 - The view changes when the chosen camera changes or when its camera takes a mode, with the
   transition of the override or of the mode; without a transition it cuts and marks `cut`.
 - A transition starts from what the view was drawing, which travels with the seat's body and
-  turns around it as the new camera turns (a player looking around) while it lasts; meanwhile, `View_Camera.posed` says the view comes from `pose` and does not cut: the
+  turns around it as the new camera turns (a player looking around) while it lasts; meanwhile,
+  `View_Camera.posed` says the view comes from `pose` and does not cut: the
   temporal history of the render continues. One requested in the middle of another starts from
   what is drawn.
 - Around the pivot of an `Orbit` the position rotates, so it does not cross the target. Between a
@@ -394,7 +395,7 @@ where the geometry covers the change.
   that acts from the next tick whatever the bindings, its contexts, blocks and capacity, and the
   same holds giving the same ticks; in `remote_test.odin`, the actions another end sent, a
   repeated tick and hostile ones. The rename that rewrites
-  `input.mirai`: `mirai test editor renaming_an_action_renames_it_in_input_mirai`.
+  `input.mirai`: `mirai test editor renaming_an_action_follows_the_code_in_input_mirai`.
   `mirai test plugins/spawn/runtime`: the bodies of a seat that leaves.
 - `mirai test engine/camera`: modes, views that enter and leave an override and a mode, the orbit
   and the dolly zoom of the blend, the dead zone, the lead and a camera that an action brings, and
