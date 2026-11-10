@@ -14,6 +14,10 @@ import anim "plugins:animation/runtime"
 @(private)
 character_open :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id,file:^Authoring_File) -> (set:anim.Character_Set,ok:bool) {
     if !authoring_open(s,call,id,anim.CHARACTER_KIND,file) {return}
+    return character_read(s,call,file)
+}
+@(private)
+character_read :: proc(s:^editor.Session,call:^api.Call,file:^Authoring_File) -> (set:anim.Character_Set,ok:bool) {
     error:asset.Error
     if set,error=anim.character_view(&file.file,&s.app.assets.types);error!=.None {authoring_failure(call,"asset","Invalid_Asset","a valid .character",fmt.tprintf("%v",error),"The .character is invalid");return}
     return set,true
@@ -25,7 +29,7 @@ character_open :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id,file:^A
 character_target :: proc(s:^editor.Session,call:^api.Call,path:string,animation:base.Asset_Id,file:^Authoring_File,clips:=true) -> (set:anim.Character_Set,id:base.Asset_Id,ok:bool) {
     id,ok=authoring_set_target(s,call,path,anim.CHARACTER_KIND,".character",file);if !ok {return}
     if file.replaced {
-        if set,ok=character_open(s,call,id,file);!ok {return}
+        if set,ok=character_read(s,call,file);!ok {return}
         if animation!={} {set.info.animation=animation}
         return set,id,true
     }
