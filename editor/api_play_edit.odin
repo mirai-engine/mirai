@@ -128,30 +128,11 @@ Api_Play_Change :: struct {
 
 @(private)
 api_play_set :: proc(s:^Session,call:^api.Call) {
-    a:Rpc_Args
-    rpc_init(&a,call,call.raw)
-    selector:[API_ENTITY_TEXT]u8
-    selected,components:string
-    player:int
-    position,rotation_deg:[3]f32
-    has_position,has_rotation:bool
-    object:Rpc_Object
-    if !rpc_object_begin(&a,"params") {return}
-    for key in rpc_next(&a,&object) {
-        switch key {
-        case "entity":       selected,_=rpc_text(&a,key,selector[:])
-        case "player":
-            value,_:=rpc_unsigned(&a,key)
-            if value>3 {rpc_fail(&a,"player is 0 to 3")}
-            player=int(value)
-        case "position":     has_position=rpc_vector(&a,key,position[:])
-        case "rotation_deg": has_rotation=rpc_vector(&a,key,rotation_deg[:])
-        case "components":   components,_=rpc_raw(&a)
-        case:                rpc_fail_type(&a,"unknown field %q: play.set takes entity, position, rotation_deg, components and player",key)
-        }
-    }
-    if a.failed {return}
-    r,ok:=api_play_own_run(s,call,player)
+    p:=api.call_params(call,Api_Play_Set_Params)
+    selected,components:=p.entity,string(p.components)
+    position,rotation_deg:=p.position,p.rotation_deg
+    has_position,has_rotation:=api.call_given(call,"position"),api.call_given(call,"rotation_deg")
+    r,ok:=api_play_own_run(s,call,p.player)
     if !ok {return}
     w:=run_ref(s,r)
     e,problem:=api_entity_select(w,selected,game=true,allocator=call.allocator)
@@ -270,27 +251,9 @@ api_queue_of :: proc(info:^runtime.Type_Info) -> (offset:uintptr,item:^runtime.T
 
 @(private)
 api_play_push :: proc(s:^Session,call:^api.Call) {
-    a:Rpc_Args
-    rpc_init(&a,call,call.raw)
-    name:[64]u8
-    storage,items:string
-    player:int
-    object:Rpc_Object
-    if !rpc_object_begin(&a,"params") {return}
-    for key in rpc_next(&a,&object) {
-        switch key {
-        case "storage": storage,_=rpc_text(&a,key,name[:])
-        case "items":   items,_=rpc_raw(&a)
-        case "player":
-            value,_:=rpc_unsigned(&a,key)
-            if value>3 {rpc_fail(&a,"player is 0 to 3")}
-            player=int(value)
-        case: rpc_fail_type(&a,"unknown field %q: play.push takes storage, items and player",key)
-        }
-    }
-    if a.failed {return}
-    if storage=="" || items=="" {api.call_fail(call,api.INVALID_PARAMS,"give storage, the name of a queue storage, and items, an array of its requests");return}
-    r,ok:=api_play_own_run(s,call,player)
+    p:=api.call_params(call,Api_Play_Push_Params)
+    storage:=p.storage
+    r,ok:=api_play_own_run(s,call,p.player)
     if !ok {return}
     w:=run_ref(s,r)
     st:=api_state(s)
@@ -307,33 +270,26 @@ api_play_push :: proc(s:^Session,call:^api.Call) {
     // Every item is read before any is pushed: a failure pushes nothing.
     size:=item.size
     values:=make([dynamic]u8,call.allocator)
-    count:=0
-    c:Rpc_Args
-    rpc_init(&c,call,items)
-    if !serial.text_accept(&c.r,'[') {api.call_fail(call,api.INVALID_PARAMS,"items must be an array of requests");return}
-    if !serial.text_accept(&c.r,']') {
-        for {
-            if count==API_PLAY_PUSH_LIMIT {api.call_failf(call,api.INVALID_PARAMS,"items holds %d requests at most: push the rest in another call",API_PLAY_PUSH_LIMIT);return}
-            resize(&values,(count+1)*size)
-            bytes:=values[count*size:][:size]
-            path:=fmt.aprintf("items[%d]",count,allocator=call.allocator)
-            if !serial.text_read(&c.r,&st.schema,type,bytes) {
-                line,column:=serial.text_position(c.r.text,c.r.error.offset)
-                api.call_failf(call,api.INVALID_PARAMS,"%s at line %d column %d",serial.text_error_message(&c.r,path,call.allocator),line,column)
+    count:=len(p.items)
+    if count>API_PLAY_PUSH_LIMIT {api.call_failf(call,api.INVALID_PARAMS,"items holds %d requests at most: push the rest in another call",API_PLAY_PUSH_LIMIT);return}
+    resize(&values,count*size)
+    for text,i in p.items {
+        bytes:=values[i*size:][:size]
+        path:=fmt.aprintf("items[%d]",i,allocator=call.allocator)
+        reader:serial.Text_Reader
+        api.call_reader_init(call,&reader,string(text))
+        if !serial.text_read(&reader,&st.schema,type,bytes) {
+            line,column:=serial.text_position(reader.text,reader.error.offset)
+            api.call_failf(call,api.INVALID_PARAMS,"%s at line %d column %d",serial.text_error_message(&reader,path,call.allocator),line,column)
+            return
+        }
+        if message,valid:=api.value_check(&st.schema,type,bytes,path,call.allocator);!valid {api.call_fail(call,api.INVALID_PARAMS,message);return}
+        for at in entity_offsets(item) {
+            named:=core.Entity((cast(^u64)&bytes[at])^)
+            if named!=core.NONE && !core.alive(core.world_entities(w),named) {
+                api.call_failf(call,api.INVALID_PARAMS,"%s names 0x%016x, which is not alive in the game: Entity fields hold handles as play.inspect gives them",path,u64(named))
                 return
             }
-            if message,valid:=api.value_check(&st.schema,type,bytes,path,call.allocator);!valid {api.call_fail(call,api.INVALID_PARAMS,message);return}
-            for at in entity_offsets(item) {
-                named:=core.Entity((cast(^u64)&bytes[at])^)
-                if named!=core.NONE && !core.alive(core.world_entities(w),named) {
-                    api.call_failf(call,api.INVALID_PARAMS,"%s names 0x%016x, which is not alive in the game: Entity fields hold handles as play.inspect gives them",path,u64(named))
-                    return
-                }
-            }
-            count+=1
-            if serial.text_accept(&c.r,',') {continue}
-            if !serial.text_accept(&c.r,']') {api.call_fail(call,api.INVALID_PARAMS,"items must be an array of requests");return}
-            break
         }
     }
     queue:=cast(^runtime.Raw_Dynamic_Array)(uintptr(core.world_storage_at(w,at))+offset)
