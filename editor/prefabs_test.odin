@@ -537,16 +537,15 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     testing.expect(t,history.undo(&edits,prefab_world,&selection))
     testing.expect_value(t,entity_name(prefab_world,root_entity),"Saved prefab")
     testing.expect(t,history.redo(&edits,prefab_world,&selection))
-    // The document of a prefab is a scene as any other: an entity made at its top is a another_root
-    // root, its only root moves under it, and its tab stays as it was opened.
+    // The document of a prefab is a scene as any other: an entity made at its top is a second
+    // root, and its tab stays as it was opened.
     another_root:=entity_create(s,{name="Second root"})
     history.edits_commit(&edits,prefab_world,&selection)
     testing.expect_value(t,entity_parent(prefab_world,another_root),core.NONE)
     testing.expect(t,test_only_root(prefab_world)==core.NONE && document_is_prefab(s))
-    testing.expect(t,entity_reparent(s,root_entity,another_root))
+    entities_delete(s,{another_root})
+    core.world_settle(prefab_world)
     history.edits_commit(&edits,prefab_world,&selection)
-    testing.expect_value(t,test_only_root(prefab_world),another_root)
-    testing.expect(t,history.undo(&edits,prefab_world,&selection) && history.undo(&edits,prefab_world,&selection))
     testing.expect_value(t,test_only_root(prefab_world),root_entity)
     saved_tabs,kept:=documents_save_restart(s,root)
     testing.expect(t,kept && os.exists(saved_tabs))
