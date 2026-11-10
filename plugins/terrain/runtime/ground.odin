@@ -15,7 +15,7 @@ import phys "plugins:physics/runtime"
 // source are not in memory, a Heightfield answers from its coarse grid and a
 // Volume answers Unloaded until the page that comes announces its chunks.
 // Another epoch of Terrain_Data (a copy of the world, a swap, a scene loaded)
-// announces every terrain there was and there is.
+// starts Terrain_Resident anew, and with it every terrain is announced.
 
 Ground :: struct {
     views:[dynamic]Ground_View,
@@ -53,7 +53,7 @@ ground_update :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:cor
     g:=&resident.ground
     placed:=core.touched(terrains,&g.seen[0]) | core.touched(worlds,&g.seen[1])
     change:=terrain_data_change({data})
-    anew,edited:=change>>32!=g.data>>32,change!=g.data
+    edited:=change!=g.data
     g.data=change
     if placed || edited {
         views:=make([dynamic]Ground_View,0,len(g.views),context.temp_allocator)
@@ -78,12 +78,12 @@ ground_update :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:cor
         same :: proc(a,b:Ground_View) -> bool {return a.entity==b.entity && a.id==b.id && a.transform==b.transform}
         for &old in g.views {
             kept:=false
-            for now in views {kept||=!anew && same(old,now)}
+            for now in views {kept||=same(old,now)}
             if !kept {ground_change(&queries.changed,&old,old.low,old.high)}
         }
         for &now in views {
             old:^Ground_View
-            for &seen in g.views {if !anew && same(seen,now) {old=&seen;break}}
+            for &seen in g.views {if same(seen,now) {old=&seen;break}}
             if old==nil {ground_change(&queries.changed,&now,now.low,now.high);continue}
             if old.change==now.change {continue}
             // The cells around the chunks that changed: the normals of the samples next to them change too.

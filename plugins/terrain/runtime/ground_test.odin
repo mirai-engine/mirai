@@ -118,10 +118,11 @@ the_ground_answers_each_line_as_its_terrain_has_it :: proc(t:^testing.T) {
     core.test_world_settle(&w)
     q=ground_step(&w,&resident)
     testing.expect_value(t,len(changed),2)
-    // Another epoch of the data announces every terrain there was and there is.
+    // Another epoch of the data starts the resident anew (terrain_update): every terrain is announced.
     w.data.epoch+=1
+    terrain_resident_free(&resident)
     q=ground_step(&w,&resident)
-    testing.expect_value(t,len(changed),4)
+    testing.expect_value(t,len(changed),2)
     q=ground_step(&w,&resident)
     testing.expect_value(t,len(changed),0)
 }

@@ -501,8 +501,8 @@ each `terrain_update` the views are made again when the terrains or their places
 (`core.touched`) or the data did, and each change is pushed to `changed` as a box of the world: a
 terrain that comes, goes, moves or shows another source (its whole box), the chunks whose version
 passed the change last seen (`terrain_changed`, with a cell around them) and a stroke that begins,
-grows or ends. Another epoch of `Terrain_Data` (a copied, swapped or reloaded world) pushes the box
-of every terrain there was and there is. `unloaded` names the runs of chunks of each solid terrain
+grows or ends. Another epoch of `Terrain_Data` (a copied, swapped or reloaded world) starts the resident meshes
+anew, and with them the box of every terrain is pushed. `unloaded` names the runs of chunks of each solid terrain
 that have no collider now (not resident, beyond `collision_distance`, waiting for a slot or a
 build); a chunk shown empty has nothing to load. They are made again only when the colliders, the
 terrains or the data change or `Terrain_Resident.marks` moves (an owner or a chunk comes, goes or
