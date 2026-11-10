@@ -8,31 +8,29 @@ import render "mirai:engine/render"
 import "mirai:host"
 import mm "mirai:std/math"
 
-// Volumetric fog: a medium where the Volume of its entity says (without one,
-// the whole world) that dims what is behind it and shows the light that
-// crosses it, with the shafts that what stands in the way of the sun and the
-// lights cuts in it. Each view lights a
-// grid of cells along its frustum (froxels), keeps their light over frames
-// and lays it over the lit opaque scene; with glass in view, what lies behind
-// its nearest layer before the glass and what lies in front over it. Past the
-// grid the same media go on to the depth of each pixel and to the sky, in
-// closed form, lit by the sun without shadows and by the light around. Its cost depends
-// neither on the resolution of the view nor on how many lights there are.
+// Volumetric fog: a medium where the Volume of its entity says, a box, a
+// sphere or everything under a plane, that dims what is behind it and shows
+// the light that crosses it, with the shafts that what stands in the way of
+// the sun and the lights cuts in it. The haze over the whole world is the air
+// of the sky (render.Air, its Mie), not a fog: a Fog_Volume without a bounded
+// Volume is a problem and fills nothing. Each view lights a
+// grid of cells along its frustum (froxels, render.media_grid), keeps their
+// light over frames and lays it over the lit opaque scene; with glass in
+// view, what lies behind its nearest layer before the glass and what lies in
+// front over it. Past the grid the same media go on to the depth of each
+// pixel and to the sky, in closed form, lit by the sun without shadows and by
+// the light around. What it integrates is the media of the view
+// (render.MEDIA_TEXTURE): what is blended later, as particles, goes behind
+// the same fog. Its cost depends neither on the resolution of the view nor on
+// how many lights there are.
 // Other plugins add media of their own to a frame (Fog_Media): the water
 // under a surface, which takes the light of the sun that crosses it, and the
 // dry boxes that take it out.
 
 CAPACITY :: 16      // volumes a frame takes
-GRID_COLUMNS :: 160 // across a view; its rows follow its proportion
-GRID_PIXELS :: 8    // a narrower view has a column every this many pixels
-GRID_SLICES :: 64   // along a view, thinner near the eye
-DISTANCE :: f32(128)  // metres along the view the grid reaches: beyond it the media go on in closed form
-FAR_SLICES :: 32        // past the grid, each further than the one before by the same ratio; the last goes on without end
-FAR_REACH :: f32(32768) // metres along the view where the last of them begins
-SLICE_SCALE :: f32(2) // metres: about where slices stop growing in step with the distance and start growing with it
 HISTORY :: f32(0.9)   // the weight of what the frames before found
 
-@(component,description="A medium that dims what is behind it and shows the light that crosses it, with the shafts of the sun and the lights. Fills the Volume of its entity, over what is below it or added to it; without a Volume, the whole world.")
+@(component,description="A medium that dims what is behind it and shows the light that crosses it, with the shafts of the sun and the lights. Fills the Volume of its entity, a box, a sphere or everything under a plane, over what is below it or added to it. The haze of the whole world is the Mie of the air of the Sky.")
 Fog_Volume :: struct {
     density:f32 `mirai:"min=0,unit=1/m"`,        // of the light that crosses a metre of it, about the share it stops
     color:[3]f32 `mirai:"color"`,                // of what it stops, the share it scatters; it absorbs the rest
@@ -182,7 +180,7 @@ medium_add :: proc(media:^Fog_Media,medium:Medium) {core.push(&media.queue,mediu
 @(step="render",loops="game editor",after="render_sync")
 fog_render :: proc(
     state:^Fog_Gpu,volumes:core.Read(Fog_Volume),places:core.Read(volume.Volume),media:^Fog_Media,worlds:core.Read(core.World_Transform),
-    hidden:core.Read(render.Hidden),parents:core.Read(core.Parent),settings:core.Ref(Fog_Settings),app:^host.App,
+    hidden:core.Read(render.Hidden),parents:core.Read(core.Parent),settings:core.Ref(Fog_Settings),app:^host.App,problems:^core.Problems,
 ) {
     state.count,state.dry,state.shade=0,false,false
     state.hidden=settings.hidden==.Every_Fourth?4:1
@@ -195,6 +193,10 @@ fog_render :: proc(
         fog:=core.at(volumes,int(row))
         if !(fog.density>0) || render.is_hidden(hidden,parents,e) {continue}
         place,at,_:=volume.placed(places,worlds,e)
+        if place.shape==.Unbounded {
+            core.report(problems,e,"fog.volume","its Fog_Volume fills nothing: a fog fills a Volume of shape Box, Sphere or Plane; give its entity one, or for a haze over the whole world raise the mie of the air of the Sky")
+            continue
+        }
         volume_gpu(state,fog,place,at)
     }
     for medium in added {medium_gpu(state,medium)}
@@ -271,25 +273,18 @@ medium_gpu :: proc(state:^Fog_Gpu,medium:Medium) -> bool {
     return true
 }
 
-// The grid of a view: a column every GRID_PIXELS pixels up to GRID_COLUMNS,
-// and as many rows as keep its cells about square on the screen.
-grid_size :: proc "contextless" (width,height:u32) -> [3]u32 {
-    if width==0 || height==0 {return {}}
-    columns:=clamp((width+GRID_PIXELS-1)/GRID_PIXELS,1,GRID_COLUMNS)
-    return {columns,max(u32(math.round(f32(columns)*f32(height)/f32(width))),1),GRID_SLICES}
-}
-
 @(private)
 fog_record :: proc(pass:^render.Pass,user:rawptr) {
     state:=cast(^Fog_Gpu)user
-    grid:=grid_size(pass.width,pass.height)
+    media:=render.media_grid(pass.width,pass.height)
+    grid:=media.cells.xyz
     if grid.x==0 {return}
     light:=render.Pass_Texture_Desc{name="fog light",format=.RGBA16_Float,width=grid.x,height=grid.y,depth=grid.z,history=true}
     medium:=render.Pass_Texture_Desc{name="fog medium",format=.RGBA16_Float,width=grid.x,height=grid.y,depth=grid.z}
-    seen:=render.Pass_Texture_Desc{name="fog seen",format=.RGBA16_Float,width=grid.x,height=grid.y,depth=grid.z+FAR_SLICES}
+    seen:=render.Pass_Texture_Desc{name=render.MEDIA_TEXTURE,format=.RGBA16_Float,width=grid.x,height=grid.y,depth=grid.z+media.cells.w}
     far:=render.Pass_Texture_Desc{name="fog far",format=.R32_Float,width=grid.x,height=grid.y}
     reach:=render.Pass_Texture_Desc{name="fog reach",format=.R32_Float,width=grid.x,height=grid.y}
-    params:=Gpu_Params{grid={grid.x,grid.y,grid.z,u32(state.count)},distance=DISTANCE,scale=SLICE_SCALE,history=HISTORY,hidden=state.hidden,dry=state.dry?1:0,shade=state.shade?1:0,far=FAR_SLICES,reach=FAR_REACH,side=u32(pass.glass)}
+    params:=Gpu_Params{grid={grid.x,grid.y,grid.z,u32(state.count)},distance=media.distance,scale=media.scale,history=HISTORY,hidden=state.hidden,dry=state.dry?1:0,shade=state.shade?1:0,far=media.cells.w,reach=media.reach,side=u32(pass.glass)}
     // In front of glass the grid of the view is lit already: the fog from the eye to the glass goes over it.
     if pass.glass==.Front {
         volumes:=volumes_relative(state,pass.origin)

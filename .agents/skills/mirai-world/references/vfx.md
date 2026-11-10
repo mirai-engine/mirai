@@ -478,6 +478,9 @@ In each view:
 
 - **volumes** (`Blend`): the volumes' media, before the sprites.
 - **sprites** (`Blend`): over the lit image, before TAA; the emitters from farthest to nearest.
+  Both go behind the media of the view (`pass_media`, `media_over`): fog dims what they send and
+  adds what it scatters over what they cover, at the place of each sprite and where the ray first
+  meets a volume.
   - `Billboard` (faces the camera, with rotation), `Velocity` (stretched according to `stretch`),
     `Horizontal` (plane in XZ) and `Ribbon` (each particle joined to the next in the list).
   - `Mesh` particles whose material blends (alpha mode `blend`, `Emitter_Desc.blended`): their

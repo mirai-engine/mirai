@@ -36,11 +36,11 @@ $P scene.write '{"merge":true,"entities":[
 ## Fog and haze
 
 `Fog_Volume` (plugin `fog`) is a medium that dims what is behind it and shows the shafts of the
-sun and lights through it. With a `Volume` on its entity (box or sphere, `blend`, `priority`) it
-stays in that place. **With no `Volume` it fills the world and the sky too**: the sky is infinitely
-far, so even a small density replaces it with the color of the fog, a milky gray over a clear day.
-For a clear day leave fog out; for haze near the ground give it a `Volume` with `falloff`, as
-below.
+sun and lights through it, in the `Volume` of its entity: a box, a sphere or everything under a
+plane (`blend`, `priority`). Particles and smoke behind it are fogged as the scene is. The haze
+over the whole world, out to the sky, is not a fog: it is the air of the `Sky` (raise its `mie`
+for a hazier day). A `Fog_Volume` without a `Volume`, or with one of shape `Unbounded`, fills
+nothing (`fog.volume`).
 
 ```sh
 $P scene.write '{"merge":true,"entities":[{"name":"Valley mist","position":[0,0,0],"components":{

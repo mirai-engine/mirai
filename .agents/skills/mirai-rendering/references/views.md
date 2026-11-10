@@ -423,7 +423,14 @@ frame and the current one:
     without requesting it, or with the view;
   - `pass_texture_sample(pass, slot, desc, previous)` binds it so that the draws of the next pass
     read what the earlier dispatches wrote: it goes before `pass_surface_begin` or
-    `pass_mask_begin`, which no longer admit barriers.
+    `pass_mask_begin`, which no longer admit barriers. `pass_volume_sample(pass, slot, name)` does
+    the same for a volume another extension of the view asked for, or binds a stand-in.
+- **The media of a view** (`engine/render/media.odin`, `shaders/include/media_grid.slang`): one
+  volume along the frustum, in the cells of `media_grid`, holding from the eye to each cell what
+  the media scatter towards the eye and let through. The plugin that has media writes it in the
+  `Lit` stage as `MEDIA_TEXTURE` ([fog](../../mirai-plugins/references/render-plugins.md#fog));
+  what is blended later binds it with `pass_media` before its pass and calls `media_over` at its
+  place, so it goes behind the same haze as the opaque scene.
 - **Buffers of a world.** `pass_buffer(pass, slot, Buffer_Desc{name, size})` binds in `SLOT_PASS0 +
   slot` a buffer that the renderer keeps for the extension under that name and the pass's world,
   until it releases it (`buffer_release(renderer, world, name)`, in the world's `release`) or the

@@ -5,6 +5,7 @@ import "core:math"
 import "core:math/linalg"
 import "core:path/filepath"
 import "core:testing"
+import render "mirai:engine/render"
 import volume "mirai:engine/volume"
 import "mirai:host"
 import gpu "mirai:render"
@@ -154,7 +155,7 @@ fog_goes_on_past_the_grid_without_a_seam :: proc(t: ^testing.T) {
 	// Rows from near to far go up the image; the step where the grid ends is no bigger than those around it.
 	boundary := -1
 	for y in 1 ..< HEIGHT {
-		if depths[y] <= DISTANCE && depths[y - 1] > DISTANCE {boundary = y; break}
+		if depths[y] <= render.MEDIA_DISTANCE && depths[y - 1] > render.MEDIA_DISTANCE {boundary = y; break}
 	}
 	if !testing.expectf(t, boundary > 2 && boundary < HEIGHT - 2, "the ground crosses the end of the grid in the view: %d", boundary) {return}
 	step := abs(lumas[boundary - 1] - lumas[boundary])
