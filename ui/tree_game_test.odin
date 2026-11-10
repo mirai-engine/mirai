@@ -39,6 +39,19 @@ Test_Game :: struct {
     sounds:int,
     held:bool,      // the action "use" is down
     pressed:bool,
+    texts:base.Texts, // what test_game_text made the keys say
+    text_slots:[8]base.Text_Slot,
+    text_bytes:[128]u8,
+    text_length:int,
+}
+// Makes a key say a text in the language of the tests.
+test_game_text :: proc(s:^Test_Game,key,text:string) {
+    hash:=base.name_hash(key)
+    at:=base.text_slot(TEST_LANGUAGE,hash)&u64(len(s.text_slots)-1)
+    for s.text_slots[at].key!=0 {at=(at+1)&u64(len(s.text_slots)-1)}
+    s.text_slots[at]={TEST_LANGUAGE,hash,u32(s.text_length),u32(len(text))}
+    s.text_length+=copy(s.text_bytes[s.text_length:],text)
+    s.texts={slots=s.text_slots[:],text=s.text_bytes[:]}
 }
 test_game_init :: proc(t:^testing.T,s:^Test_Game) {
     serial.schema_init(&s.schema)
@@ -58,7 +71,7 @@ test_game_build :: proc(ctx:^Context,user:rawptr) {
 }
 // The instance of the tree over the values, in the language of the tests.
 test_game_instance :: proc(s:^Test_Game) -> bool {
-    return tree_instance_init(&s.instance,&s.tree,test_host(&s.host,&s.schema,s.type,&s.values),TEST_LANGUAGE)
+    return tree_instance_init(&s.instance,&s.tree,test_host(&s.host,&s.schema,s.type,&s.values),&s.texts,TEST_LANGUAGE)
 }
 TEST_LANGUAGE :: u64(0x6573) // a language other than the one the texts are written in
 // A number a node writes in the copy of its instance.
@@ -70,7 +83,7 @@ test_game_context :: proc(t:^testing.T,ctx:^Context,s:^Test_Game,font:=false) {
     ctx.theme.activate_on_press=false
     ctx.game={
         user=s,
-        language=TEST_LANGUAGE,
+        texts=&s.texts,language=TEST_LANGUAGE,
         action=proc(user:rawptr,action:u64) -> (down,pressed:bool) {
             s:=cast(^Test_Game)user
             if action!=base.name_hash("use") {return}
@@ -96,8 +109,8 @@ templates_format_nested_fields_and_keep_the_text_while_values_do_not_change :: p
     root:=tree_node(&s.tree,-1,{kind=.Box,name="hud",layout={direction=.Column}})
     tree_node(&s.tree,root,{kind=.Text,name="health",style=style,text="HP {health:0}/{most} {{ok}}",fields={{"health","Test.stats.health"},{"most","Test.stats.most"},{},{}}})
     tree_node(&s.tree,root,{kind=.Text,name="ratio",style=style,text="{ratio:%1} {time:mm:ss} {level:+}",fields={{"ratio","Test.ratio"},{"time","Test.stats.seconds"},{"level","Test.level"},{}}})
-    tree_node(&s.tree,root,{kind=.Text,name="label",style=style,text="Health {health:0}",text_id=1,fields={{"health","Test.stats.health"},{},{},{}},flags={.Localized}})
-    testing.expect(t,tree_translation_add(&s.tree,1,TEST_LANGUAGE,"Vida {health:0}"))
+    tree_node(&s.tree,root,{kind=.Text,name="label",style=style,text="hud.health",fields={{"health","Test.stats.health"},{},{},{}},flags={.Localized}})
+    test_game_text(&s,"hud.health","Vida {health:0}")
     tree_node(&s.tree,root,{kind=.Text,name="name",style=style,bind_text="Test.name"})
     testing.expect(t,test_game_instance(&s))
     s.values.stats={health=72.6,most=100,seconds=125}
@@ -111,7 +124,7 @@ templates_format_nested_fields_and_keep_the_text_while_values_do_not_change :: p
     test_frame(&ctx,&input,test_game_build,&s)
     testing.expect(t,test_paint(&ctx,"HP 73/100 {ok}")!=nil)
     testing.expect(t,test_paint(&ctx,"45.7% 02:05 +3")!=nil)
-    testing.expect(t,test_paint(&ctx,"Vida 73")!=nil,"A localized text is a template in the language of the game")
+    testing.expect(t,test_paint(&ctx,"Vida 73")!=nil,"What the key of a localized node says is a template in the language of the game")
     testing.expect(t,test_paint(&ctx,"Ana")!=nil)
     // What the refresh copied anew is shown, though the build is not told.
     s.changed=false
@@ -284,8 +297,8 @@ controls_write_their_bound_values_and_report_them :: proc(t:^testing.T) {
     style,_:=tree_style(&s.tree,{fill={30,30,30,255},track={60,60,60,255},stroke={255,255,255,255},text={size=12,color={255,255,255,255}}})
     root:=tree_node(&s.tree,-1,{kind=.Box,name="menu",layout={direction=.Column,gap=4}})
     tree_node(&s.tree,root,{kind=.Slider,name="volume",style=style,bind_value="Test.volume",range={0,1,0.25},layout={width=fixed(112),height=fixed(20)}})
-    tree_node(&s.tree,root,{kind=.Selector,name="quality",style=style,bind_value="Test.level",text="Low|Medium|High",text_id=2,flags={.Localized},layout={width=fixed(160),height=fixed(24)}})
-    testing.expect(t,tree_translation_add(&s.tree,2,TEST_LANGUAGE,"Baja|Media|Alta"))
+    tree_node(&s.tree,root,{kind=.Selector,name="quality",style=style,bind_value="Test.level",text="menu.quality",flags={.Localized},layout={width=fixed(160),height=fixed(24)}})
+    test_game_text(&s,"menu.quality","Baja|Media|Alta")
     tree_node(&s.tree,root,{kind=.Radio,name="red",style=style,bind_value="Test.team",choice=1})
     tree_node(&s.tree,root,{kind=.Radio,name="blue",style=style,bind_value="Test.team",choice=2})
     testing.expect(t,test_game_instance(&s))
@@ -294,7 +307,7 @@ controls_write_their_bound_values_and_report_them :: proc(t:^testing.T) {
     defer context_destroy(&ctx)
     input:=test_input()
     test_frame(&ctx,&input,test_game_build,&s)
-    testing.expect(t,test_paint(&ctx,"Baja")!=nil,"The options of a localized node are those of its translation")
+    testing.expect(t,test_paint(&ctx,"Baja")!=nil,"The options of a localized node are what its key says")
     // The slider follows the pointer in its steps.
     volume:=test_rect(t,&ctx,tree_element_id(&ctx,"volume"))
     input.pointer={volume.x+6+(volume.w-12)*0.6,volume.y+volume.h*0.5}
@@ -721,7 +734,7 @@ a_commit_writes_the_field_of_a_storage_the_host_lets_write :: proc(t:^testing.T)
         return (^Test_Host)(user).type,true,true
     }
     host.commits=proc(user:rawptr,name:u64) -> bool {return name==base.name_hash("Test")}
-    testing.expect(t,tree_instance_init(&s.instance,&s.tree,host,TEST_LANGUAGE))
+    testing.expect(t,tree_instance_init(&s.instance,&s.tree,host,nil,TEST_LANGUAGE))
     tree_values_refresh(&s.instance,host,0)
     node:=[2]i32{1,2}
     testing.expect(t,tree_commit_event(&s.instance,{node=node[0],kind=.Changed,value=0.5},host))

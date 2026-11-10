@@ -133,9 +133,7 @@ damaged_tables_of_game_data_go_through_every_command :: proc(t:^testing.T) {
     index,_:=types_index(&types,Written)
     names:=[2]Records_Name{}
     text_set(names[0][:],"iron_sword");text_set(names[1][:],"bow")
-    texts:=[2]Records_Text{{text=3,offset=0,length=5},{text=3,offset=5,length=6}}
-    text_set(texts[1].language[:],"es")
-    bytes,error:=records_bytes(&types,{id={0x7a,1},type="game.Weapon",ids={11,12},names=names[:],schema=&types.schema,value_type=index,images=mem.slice_to_bytes(values[:]),texts=texts[:],text=transmute([]u8)string("SwordEspada")},context.temp_allocator)
+    bytes,error:=records_bytes(&types,{id={0x7a,1},type="game.Weapon",ids={11,12},names=names[:],schema=&types.schema,value_type=index,images=mem.slice_to_bytes(values[:])},context.temp_allocator)
     testing.expect_value(t,error,Error.None)
     path:=fmt.aprintf("%s/weapons.records",folder);defer delete(path)
     testing.expect(t,os.write_entire_file(path,bytes)==nil)
