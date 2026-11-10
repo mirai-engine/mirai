@@ -50,7 +50,9 @@ the name of their type) and a world (handles and tables).
   `scene_spawns` (`frame`, both loops) places the rest on the root, which keeps what it was given
   meanwhile (a seat that drives it keeps driving it); a prefab that does not place takes its root
   away with the problem. `spawns_fill(all=true)` waits, for an answer of the editor that gives the
-  copy whole. A load, in phases or in the call, reads the prefabs the fields of its World name and
+  copy whole. `spawn_member`, the copy of an entity of a section that is not loaded, waits the same
+  way for the scene of its section. A load, in phases or in the call, reads the prefabs the fields
+  of its World name and
   what they take, so their first spawn is whole in the call.
   The root receives `Prefab_Instance{prefab}`, the one component that says what prefab an
   entity is of (with `Prefab_Member`, a linked instance; alone, a copy), which a server sends
@@ -237,15 +239,19 @@ section is not loaded and on, the far mesh of its scene next to its reference (`
 transient `Mesh_Renderer`, which follow the reference): it is seen from afar, enters the rays and
 keeps covering the sun and the sky.
 
-- The far mesh of a scene is a derived asset of it, one per application, shared by all its
-  references (`cook/far`): the cook of a game writes it beside the scene
-  ([far meshes](../../mirai-projects/references/build.md#asset-cooking)) and `far_mesh` finds it
-  by `asset.far_mesh_id`; in the editor the editor part makes it in jobs (`streaming_far_build`,
-  up to `FAR_BUILDS` at a time) the first time a reference asks for it (`Streaming_Far`) and writes
-  `Streaming_Far_Meshes`, in rounds: the main thread gives the registry's sources (`assets_source`)
-  that each round asked for (`far.far_wanted`: the scene and those it references, their meshes and
-  materials, their textures) and the last one builds it with `asset.mesh_build_far` and its rays. A
-  game makes none.
+- The far mesh of a scene is a derived asset of it, an asset as any, shared by all its references
+  (`cook/far`), which `far_find` finds again when the registry changes (`Streaming_Far`): a
+  shipped game the one its cook wrote beside the scene
+  ([far meshes](../../mirai-projects/references/build.md#asset-cooking)), by
+  `asset.far_mesh_id`; a project that is not cooked, in the editor or in a game, the one of its far
+  cache (`project.FAR_CACHE`, which its registry mounts under `project.FAR_PREFIX`) made of what
+  the scene is now, by `asset.far_key`: the content of the scene and of the scenes, meshes,
+  materials and textures it takes. The editor part makes in jobs the ones the cache lacks
+  (`streaming_far_build`, up to `FAR_BUILDS` at a time), once: the main thread gives each round
+  the registry's sources it asked for (`far.far_wanted`) and the last one builds it with
+  `asset.mesh_build_far` and writes it into the cache, or a mark of a scene without static meshes.
+  A game makes none; while the cache lacks the one of what a scene is now, its proxies show the
+  one before.
 - Every on and drawn `Mesh_Renderer` of the scene and of the scenes it references enters, up to
   `REFERENCE_DEPTH`; not what is under `Hidden`, `Drawn_Elsewhere`, `Disabled`, `Rigid_Body` or
   `Character` (what moves) nor skinned meshes. From a `Mask` material the triangles that it covers
@@ -258,12 +264,6 @@ keeps covering the sun and the sky.
 - It carries the compressed blocks of its pages and the renderer pages it like an archive mesh
   ([pages](../../mirai-rendering/references/scene.md#scene-and-instances)): on the GPU is its
   root, the fine pages arrive when the cull asks for them and the far rays trace the root's cut.
-  In the editor the blocks stay in the renderer; the built geometry and what was read are released
-  in a job on publishing it (`host.app_release`).
-- In the editor it is redone like any cook: it stores each asset it read (and those it asked for
-  without finding) with its content hash, and when the registry revision advances it compares; a
-  different one makes it again, and the references show the previous one until the new one is
-  there.
 - Terrain and foliage do not go into it: they keep their own far shape
   ([what is unloaded](#scene-references)).
 
