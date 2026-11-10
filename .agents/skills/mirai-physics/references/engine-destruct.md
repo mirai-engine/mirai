@@ -45,13 +45,13 @@ simulation starts.
   a `source_mesh` different from the `Mesh_Renderer` is rejected.
 - Voronoi is computed as a transaction in a job, with a key of mesh, shape, pieces, seed, pattern,
   scale, interior slot and source; while it is pending, `waiting` is active.
-- `destruct_step` runs `fixed` after `physics_step`, whose step already damaged the breakables
-  with its hits (`physics.breakable_events`). A destructible is a breakable of `Physics_State`, with
-  the capacities of `Physics_Settings` (`breakables`, `pieces`, `bonds`): what it became is copied,
-  swapped and reset with the simulation. The step creates the breakables and the
-  proxies of their pieces in the simulation, writes `Mesh_Renderer` and `Material_Values` of the group
-  entities and gives them `Parent` with `core.Commands`. It publishes each new group that is not debris, with
-  its Id, in `Destruct_Events.grouped`.
+- `destruct_step` runs `fixed` after `physics_step`, whose step already damaged the breakables with
+  its hits (`physics.breakable_events`). A destructible is a breakable of `Physics_State`, with the
+  capacities of `Physics_Settings` (`breakables`, `pieces`, `bonds`): what it became is copied,
+  swapped and reset with the simulation. The step creates the breakables and the proxies of their
+  pieces in the simulation, writes `Mesh_Renderer` and `Material_Values` of the group entities and
+  gives them `Parent` with `core.Commands`. It publishes each new group that is not debris, with its
+  Id, in `Destruct_Events.grouped`.
 - A failure is a `destruct.*` problem of the destructible
   ([problems](../../mirai-core/references/core.md#problems)), with the cause and the fix, and it is
   not retried until the configuration changes. What the simulation did not give it in a tick is
