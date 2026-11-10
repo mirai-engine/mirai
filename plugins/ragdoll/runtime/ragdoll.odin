@@ -191,12 +191,10 @@ ragdoll_prepare :: proc(configs:core.Read(Ragdoll),bones:core.Read(Ragdoll_Bone)
 @(step="fixed",loops="game editor",stage="react")
 ragdoll_pose :: proc(configs:core.Read(Ragdoll),bones:core.Read(Ragdoll_Bone),states:core.Read(Ragdoll_State),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),requests:^anim.Animation_Requests,time:core.Time,problems:^core.Problems) {
     if time.dt<=0 || !time.playing {return}
-    for row in 0..<core.count(bones) {
-        entity:=core.entity_at(bones,row)
-        bone:=core.at(bones,row)
+    ragdolls:=core.join(bones,states)
+    for entity,bone,state in core.each_joined(&ragdolls) {
         config,exists:=core.get(configs,bone.rig)
-        state,active:=core.get(states,entity)
-        if !exists || !active || !state.active || state.error!=.None || config.mode==.Animated || config.mode==.Disabled || config.weight<=0 {continue}
+        if !exists || !state.active || state.error!=.None || config.mode==.Animated || config.mode==.Disabled || config.weight<=0 {continue}
         body,ok:=core.world_of(transforms,parents,entity)
         if !ok {
             core.report(problems,entity,"ragdoll.pose","the pose of this body was not sent to animation: it or a parent of it has no Transform; give them one")

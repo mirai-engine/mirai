@@ -101,7 +101,7 @@ cmd_build_engine :: proc(root:string,args:[]string) -> int {
     mode=build.engine_mode_resolve(root,mode)
     // What has nothing to compile takes no turn.
     if !force && c_libraries_current(root) && build.engine_current(root,mode) {return engine_report({status=.Up_To_Date,mode=mode},root)}
-    if _,_,released:=engine_release(root,"",mode,"build engine");!released {return 1}
+    engine_release(root,"",mode,"build engine")
     lock:=build_lock(root,"build engine")
     defer workspace.lock_release(&lock)
     // ui links the FreeType library, the importer that of ufbx and the editor that of SQLite.
@@ -264,49 +264,30 @@ build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_M
         }
         output=build.target_output(&p,target,"",context.allocator)
         fmt.printfln("%s unchanged.",output)
+        session_take(root,p.root,engine)
         return 0,output,false
     }
-    // The session of the project that runs the binaries to replace closes
-    // now and opens again after the build.
-    closed:Session_Record
-    discarded:int
-    if !engine_current {
-        released:bool
-        if closed,discarded,released=engine_release(root,p.root,engine,"build");!released {return 1,"",false}
-    }
-    engine_failed,rebuilt:bool
-    code,output,shaders_failed,engine_failed,rebuilt=build_project_run(root,&p,target,out,mode,engine,engine_current,server)
-    if closed.pid!=0 {
-        session_reopen(root,p.root,closed,discarded,engine,!engine_failed,"build")
-    } else if code==0 && rebuilt && target!=.Game {
-        // An open session keeps what it loaded: say so, or it is tried with the code of before.
-        if file,alive:=session_find(p.root);alive {
-            fmt.eprintfln("mirai build: the open session of the project (pid %d) keeps what it loaded; mirai session restart opens it with this build",file.pid)
-        }
-    }
+    if !engine_current {engine_release(root,p.root,engine,"build")}
+    code,output,shaders_failed=build_project_run(root,&p,target,out,mode,engine,engine_current,server)
+    if code==0 && target!=.Game {session_take(root,p.root,engine)}
     return
 }
 
-// What build_project does once it has to compile, in its turn. engine_failed:
-// the binaries of the engine did not build; rebuilt: the engine or the
-// library were built again.
+// What build_project does once it has to compile, in its turn.
 @(private="file")
-build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out:string,mode,engine:Build_Mode,engine_current:bool,server:=false) -> (code:int,output:string,shaders_failed,engine_failed,rebuilt:bool) {
+build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out:string,mode,engine:Build_Mode,engine_current:bool,server:=false) -> (code:int,output:string,shaders_failed:bool) {
     lock:=build_lock(root,fmt.tprintf("build %v %s",target,p.root),{p.root})
     defer workspace.lock_release(&lock)
     // ui links the FreeType library, the importer that of ufbx and the editor that of SQLite.
-    if !ensure_runtime_dependencies(root) {return 1,"",false,true,false}
+    if !ensure_runtime_dependencies(root) {return 1,"",false}
     // The libraries of a project are built against the binaries of the engine;
     // the game, against its sources.
-    engine_built:=false
     if target!=.Game && engine_current {
         _=engine_report({status=.Up_To_Date,mode=engine},root)
     } else if target!=.Game {
-        built:=build.engine_build({engine_root=root,mode=engine})
-        if code:=engine_report(built,root);code!=0 {return code,"",false,true,false}
-        engine_built=built.status==.Built
+        if code:=engine_report(build.engine_build({engine_root=root,mode=engine}),root);code!=0 {return code,"",false}
     } else if !engine_shaders(root,turn_held=true) {
-        return 1,"",false,true,false
+        return 1,"",false
     }
     // The generation first: a game ships the one that is published, and a dedicated server none.
     if !server {
@@ -319,7 +300,7 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
         case .Failed:
             shaders_failed=true
             fmt.eprintfln("mirai build: could not generate the shaders of the project: %s",generation.result.message)
-            if target==.Game {return 1,"",true,false,engine_built}
+            if target==.Game {return 1,"",true}
         }
         if generation.result.status!=.Failed && generation.result.message!="" {fmt.eprintln(generation.result.message)}
     }
@@ -360,13 +341,12 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
                 for folder in result.engine_time {fmt.eprintfln("  %s",folder)}
             }
             if result.failure==.Compile {fmt.eprintfln("mirai build: could not build %s",result.output)}
-            return 1,"",shaders_failed,false,engine_built
+            return 1,"",shaders_failed
         }
-        if target==.Game && !shipped_report(job) {return 1,"",shaders_failed,false,engine_built}
+        if target==.Game && !shipped_report(job) {return 1,"",shaders_failed}
         output=strings.clone(result.output)
-        rebuilt=engine_built || result.status==.Built
     }
-    return 0,output,shaders_failed,false,rebuilt
+    return 0,output,shaders_failed
 }
 
 // Why the compiler stopped at the memory it may use, and how to go on.

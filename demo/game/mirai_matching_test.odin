@@ -16,14 +16,14 @@ mirai_matching_selects_a_walking_clip :: proc(t:^testing.T) {
     problems:core.Problems
     f:Animation_Input_Fixture;defer animation_input_fixture_destroy(&f)
     gallery:core.Table(Animation_Gallery);defer core.table_destroy(&gallery)
-    graphs:anim.Match_Assets;defer anim.match_assets_free(&graphs)
+    graphs:anim.Character_Assets;defer anim.character_assets_free(&graphs)
     progress:core.Table(anim.Animation_Progress);defer core.table_destroy(&progress)
     core.entities_init(&f.entities)
     root,found:=os.lookup_env("MIRAI_ROOT",context.temp_allocator)
-    if !testing.expect(t,found && host.assets_init(&f.assets,{root=fmt.tprintf("%s/demo",root),capacity=512})) {return}
+    if !testing.expect(t,found && host.assets_init(&f.assets,{root=fmt.tprintf("%s/demo/assets",root),imported=fmt.tprintf("%s/demo/.mirai/imported",root),capacity=512})) {return}
     f.app={assets=&f.assets,allocator=context.allocator}
     ids:[2]base.Asset_Id
-    for file,i in ([2]string{"assets/characters/mirai/mirai_matching.match","assets/characters/mirai/output_unwrapped.mesh"}) {
+    for file,i in ([2]string{"characters/mirai/mirai_matching.character","models/mirai/mirai.glb/output_unwrapped.mesh"}) {
         record,present:=asset.registry_find_path(&f.assets.registry,file)
         if !testing.expectf(t,present,"the demo has %s",file) {return}
         ids[i]=record.id
@@ -36,11 +36,11 @@ mirai_matching_selects_a_walking_clip :: proc(t:^testing.T) {
     core.table_settle(&f.transforms,&f.entities);core.table_settle(&f.worlds,&f.entities);core.table_settle(&f.meshes,&f.entities);core.table_settle(&f.animations,&f.entities);core.table_settle(&gallery,&f.entities)
     core.hierarchy_settle(&f.hierarchy,core.read(&f.parents),&f.entities)
     time:=core.Time{dt=1.0/60,playing=true}
-    tick :: proc(f:^Animation_Input_Fixture,gallery:^core.Table(Animation_Gallery),graphs:^anim.Match_Assets,progress:^core.Table(anim.Animation_Progress),problems:^core.Problems,time:core.Time,mode:=phys.MODE_WALKING) -> (anim.Animation_Match,bool) {
+    tick :: proc(f:^Animation_Input_Fixture,gallery:^core.Table(Animation_Gallery),graphs:^anim.Character_Assets,progress:^core.Table(anim.Animation_Progress),problems:^core.Problems,time:core.Time,mode:=phys.MODE_WALKING) -> (anim.Animation_Match,bool) {
         entity:=core.entity_at(gallery,0)
         speed:=core.at(gallery,0).speed
         anim.match_goal(&f.requests,{rig=entity,mode=u16(mode),velocity={0,0,-speed},desired={0,0,-speed},facing={0,0,-1},acceleration=20,braking=20})
-        anim.animation_sample(core.read(&f.animations),progress,core.read(&f.pose_configs),core.read(&f.attachments),&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.meshes),core.read(&f.sources),&f.requests,&f.events,&f.modifier_requests,&f.modifiers,&f.playback,&f.pose_assets,&f.skeletons,&f.app,time,{},problems,nil,graphs,nil,nil,nil,nil,nil,nil,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
+        anim.animation_sample(core.read(&f.animations),progress,core.read(&f.attachments),&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.meshes),core.read(&f.sources),&f.requests,&f.events,&f.modifier_requests,&f.modifiers,&f.playback,graphs,&f.skeletons,&f.app,time,{},problems,nil,nil,nil,nil,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
         return anim.animation_match(&f.playback,core.entity_at(gallery,0))
     }
     // The rig binds its skeleton in its first ticks; then its database says how fast each clip walks.
@@ -49,7 +49,7 @@ mirai_matching_selects_a_walking_clip :: proc(t:^testing.T) {
     walk:=f32(0)
     for &content in graphs.contents {for &built in content.databases {if built.error==.None {
         for range,i in built.database.ranges {
-            if base.text_get(content.profile.clips[i].clip[:])=="walk" {walk=range.speed}
+            if base.text_get(content.set.match.clips[i].clip[:])=="walk" {walk=range.speed}
         }
     }}}
     testing.expectf(t,walk>2 && walk<3,"inferred walk speed %.3f m/s",walk)

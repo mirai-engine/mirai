@@ -25,12 +25,13 @@ import "mirai:std/serial"
 //   @(net_message) @(net_message,from="client",reliable) @(net_message,from="owner")
 //   @(params) @(names) @(name_bits="T") @(name="...") @(actions)
 //   @(draw="minimap")
+//   @(mind="zombie") on a think procedure, @(act="Chase Circle") on an action of its enum
 //
 // The engine's libraries (core, engine/*), the runtime/ of the active plugins
 // and the game/ of the project go into World and Shared; the editor and the
 // editor/ of plugins and of the project into Editor_World.
 
-CUSTOM_ATTRIBUTES :: "component,storage,step,loops,stage,after,before,server,shared,locks,host,by_world,copy,copy_kept,swap,free,replicated,setting,description,queue,keep,persist,single,far,reset,net_message,from,reliable,params,names,name_bits,name,name_requires,presentation,record,actions,draw"
+CUSTOM_ATTRIBUTES :: "component,storage,step,loops,stage,after,before,server,shared,locks,host,by_world,copy,copy_kept,swap,free,replicated,setting,description,queue,keep,persist,single,far,reset,net_message,from,reliable,params,names,name_bits,name,name_requires,presentation,record,actions,draw,mind,act"
 
 PHASES :: [7]string{"input","fixed","frame","late","ui","render","release"}
 UI_PHASE :: 4 // where the interfaces are built: the engine and the editor draw in it, a game shows .ui documents
@@ -211,6 +212,34 @@ Step :: struct {
     where_:string,
     file:string,
     line:int,
+    mind:^Mind_Step, // the step of a mind: it ticks the agents of the mind instead of calling a procedure
+}
+
+// A @(mind="name") think procedure or a @(act="Value ...") action, as read.
+@(private="file")
+Mind_Decl :: struct {
+    name,text,where_:string, // text: the name of the mind, or the values the action runs
+    file:^ast.File,
+    literal:^ast.Proc_Lit, // nil: not a procedure
+    line:int,
+    private:bool,
+}
+
+// A mind: its step ticks its agents with behavior.minds_tick, in a context
+// that begins with Mind_World (arg 0) and holds each other arg of the step.
+@(private="file")
+Mind_Step :: struct {
+    name,enum_name:string, // enum_name: of its actions, in the package of the step
+    runner:^Bundle,        // Mind_World
+    think:Mind_Proc,
+    acts:[dynamic]Mind_Proc, // in the order of the enum
+}
+
+// A procedure of a mind and the args of the step it receives after its first parameter.
+@(private="file")
+Mind_Proc :: struct {
+    ident,value:string, // value: the member of the enum an action runs
+    args:[dynamic]int,
 }
 
 // A procedure of the game that draws the Draw nodes of the interfaces that
@@ -239,6 +268,7 @@ Generator :: struct {
     records:[dynamic]^Record_Type,
     record_by_key:map[string]^Record_Type,
     steps:[dynamic]^Step,
+    mind_names:map[string]string, // the think procedure of each mind, by its name
     draws:[dynamic]Draw_Proc,
     errors:[dynamic]string,
     engine_root,root:string,
@@ -444,9 +474,6 @@ has_sources :: proc(folder:string) -> bool {
     return false
 }
 
-@(private="file",thread_local)
-parse_problem:string
-
 // Reads and parses the sources of a package folder, without its tests, and returns its name and
 // its files in path order. Each problem goes to errors naming the file and the position, as the
 // compiler does. Not parser.parse_package: it reads the package clause of a file that failed to
@@ -463,14 +490,18 @@ sources_read :: proc(folder:string,errors:^[dynamic]string,allocator:=context.al
     }
     slice.sort_by(sorted[:],proc(a,b:^ast.File) -> bool {return a.fullpath<b.fullpath})
     p:=parser.default_parser()
+    // The handler takes no data of its own: it finds the problem through the context it is called in.
+    problem:string
+    context.user_ptr=&problem
     p.err=proc(pos:tokenizer.Pos,format:string,args:..any) {
-        if parse_problem=="" {parse_problem=fmt.aprintf("%s(%d:%d): %s",pos.file,pos.line,pos.column,fmt.tprintf(format,..args))}
+        problem:=(^string)(context.user_ptr)
+        if problem^=="" {problem^=fmt.aprintf("%s(%d:%d): %s",pos.file,pos.line,pos.column,fmt.tprintf(format,..args))}
     }
     ok=true
     for file in sorted {
-        parse_problem=""
+        problem=""
         if !parser.parse_file(&p,file) {
-            append(errors,parse_problem!="" ? parse_problem : fmt.aprintf("%s: the file does not parse",file.fullpath))
+            append(errors,problem!="" ? problem : fmt.aprintf("%s: the file does not parse",file.fullpath))
             ok=false
             continue
         }
@@ -480,7 +511,6 @@ sources_read :: proc(folder:string,errors:^[dynamic]string,allocator:=context.al
             ok=false
         }
     }
-    parse_problem=""
     return name,sorted[:],ok
 }
 
@@ -1052,16 +1082,33 @@ steps_read :: proc(g:^Generator,pkg:^Package) {
     phases:=PHASES
     loops:=LOOPS
     stages:=STAGES
+    minds,acts:=make([dynamic]Mind_Decl,context.temp_allocator),make([dynamic]Mind_Decl,context.temp_allocator)
     for file in pkg.files {
         for stmt in file.decls {
             decl,is_value:=stmt.derived.(^ast.Value_Decl)
             if !is_value || len(decl.names)!=1 || len(decl.values)!=1 {continue}
             options:=attributes_read(decl.attributes[:])
             phase_text,is_step:=options["step"]
-            if !is_step {continue}
-            literal,is_proc:=decl.values[0].derived.(^ast.Proc_Lit)
+            mind_name,is_mind:=options["mind"]
+            act_values,is_act:=options["act"]
             name:=ident_name(decl.names[0])
             where_:=fmt.aprintf("%s(%d)",file.fullpath,decl.pos.line)
+            if is_mind || is_act {
+                literal,_:=decl.values[0].derived.(^ast.Proc_Lit)
+                d:=Mind_Decl{name=name,text=is_mind?mind_name:act_values,where_=where_,file=file,literal=literal,line=decl.pos.line}
+                _,d.private=options["private"]
+                switch {
+                case is_step:
+                    append(&g.errors,fmt.aprintf("%s: %s is a @(step) and a %s: the generator makes the step of a mind from its think procedure; take @(step) out",where_,name,is_mind?"@(mind)":"@(act)"))
+                case is_mind && is_act:
+                    append(&g.errors,fmt.aprintf("%s: %s says @(mind) and @(act): the think procedure of a mind proposes and its actions run; give each its own procedure",where_,name))
+                case is_mind: append(&minds,d)
+                case: append(&acts,d)
+                }
+                continue
+            }
+            if !is_step {continue}
+            literal,is_proc:=decl.values[0].derived.(^ast.Proc_Lit)
             if !is_proc {
                 append(&g.errors,fmt.aprintf("%s: @(step) on %s, which is not a procedure",where_,name))
                 continue
@@ -1107,73 +1154,254 @@ steps_read :: proc(g:^Generator,pkg:^Package) {
             if order,has_order:=options["order"];has_order {
                 append(&g.errors,fmt.aprintf("%s: %s has order=%s, and steps are not ordered by number: give it a stage (begin input intent apply simulate react end; intent when it names none) and order it inside the stage with after=\"step\" or before=\"step\"",where_,name,order))
             }
-            if literal.type.params!=nil {
-                defaulted:=strings.builder_make(context.temp_allocator)
-                for field in literal.type.params.list {
-                    if field.default_value==nil {continue}
-                    for n in field.names {fmt.sbprintf(&defaulted,"%s%s",strings.builder_len(defaulted)>0?", ":"",ident_name(n))}
-                }
-                if strings.builder_len(defaulted)>0 {
-                    append(&g.errors,fmt.aprintf("%s: %s gives a default to %s, and the generator binds every parameter: take the defaults out; code outside the loop runs the function with core.world_run, or passes every parameter",where_,name,strings.to_string(defaulted)))
-                }
-                arg:=0
-                for field in literal.type.params.list {
-                    // A default alone gives it no type to bind: the error above says to take it out.
-                    if field.type==nil {continue}
-                    if b:=bundle_of(g,file,pkg,field.type);b!=nil {
-                        if _,is_pointer:=field.type.derived.(^ast.Pointer_Type);is_pointer {
-                            append(&g.errors,fmt.aprintf("%s: %s receives %s, a @(params) struct, by pointer: receive it by value, %s; its fields already point at what they write",where_,name,expr_text(file,field.type),expr_text(file,field.type)[1:]))
-                            continue
-                        }
-                        if b.pkg.editor && !pkg.editor {
-                            append(&g.errors,fmt.aprintf("%s: %s receives %s, a @(params) of an editor package: the game has no editor code; declare it in a library",where_,name,b.name))
-                            continue
-                        }
-                        actions:^Action_Enum
-                        if call,is_call:=field.type.derived.(^ast.Call_Expr);b.generic {
-                            if is_call && len(call.args)==1 {actions=g.action_by_key[type_key(g,file,pkg,call.args[0])] or_else nil}
-                            if actions==nil {
-                                append(&g.errors,fmt.aprintf("%s: %s receives %s: %s is received for the @(actions) enum whose actions it reads, %s(Action), and that is not one",where_,name,expr_text(file,field.type),b.name,b.name))
-                                continue
-                            }
-                        } else if is_call {
-                            append(&g.errors,fmt.aprintf("%s: %s receives %s: %s has no type parameter; receive it as %s",where_,name,expr_text(file,field.type),b.name,b.name))
-                            continue
-                        }
-                        b.pkg.used=true
-                        for _ in field.names {
-                            for param in b.fields {
-                                bound:=param
-                                bound.arg,bound.actions=arg,actions
-                                append(&s.params,bound)
-                            }
-                            arg+=1
-                        }
-                        continue
-                    }
-                    param,ok:=param_read(g,file,pkg,field.type)
-                    for n in field.names {
-                        if !ok {
-                            if param.kind==.App_Part {
-                                append(&g.errors,part_error(where_,fmt.tprintf("the parameter %s of %s",ident_name(n),name),expr_text(file,field.type),param))
-                            } else {
-                                append(&g.errors,fmt.aprintf("%s: the parameter %s of %s is %s: no table, storage or service of the engine has that type. Mark the type with @(component) or @(storage), receive %s, or a struct marked @(params) whose fields are those",where_,ident_name(n),name,expr_text(file,field.type),PARAM_FORMS))
-                            }
-                            arg+=1
-                            continue
-                        }
-                        param.name,param.arg=ident_name(n),arg
-                        append(&s.params,param)
-                        arg+=1
-                    }
-                }
-            }
+            if literal.type.params!=nil {params_read(g,file,pkg,where_,name,literal.type.params.list[:],&s.params)}
             if literal.type.results!=nil && len(literal.type.results.list)>0 {
                 append(&g.errors,fmt.aprintf("%s: %s returns something; a step returns nothing",where_,name))
             }
             append(&g.steps,s)
         }
     }
+    minds_read(g,pkg,minds[:],acts[:])
+}
+
+// Binds the parameters of a procedure the generator calls, each as its
+// type says, into params: the parameters a @(params) groups share their arg.
+@(private="file")
+params_read :: proc(g:^Generator,file:^ast.File,pkg:^Package,where_,name:string,list:[]^ast.Field,params:^[dynamic]Param) {
+    defaulted:=strings.builder_make(context.temp_allocator)
+    for field in list {
+        if field.default_value==nil {continue}
+        for n in field.names {fmt.sbprintf(&defaulted,"%s%s",strings.builder_len(defaulted)>0?", ":"",ident_name(n))}
+    }
+    if strings.builder_len(defaulted)>0 {
+        append(&g.errors,fmt.aprintf("%s: %s gives a default to %s, and the generator binds every parameter: take the defaults out; code outside the loop runs the function with core.world_run, or passes every parameter",where_,name,strings.to_string(defaulted)))
+    }
+    arg:=0
+    for field in list {
+        // A default alone gives it no type to bind: the error above says to take it out.
+        if field.type==nil {continue}
+        if b:=bundle_of(g,file,pkg,field.type);b!=nil {
+            if _,is_pointer:=field.type.derived.(^ast.Pointer_Type);is_pointer {
+                append(&g.errors,fmt.aprintf("%s: %s receives %s, a @(params) struct, by pointer: receive it by value, %s; its fields already point at what they write",where_,name,expr_text(file,field.type),expr_text(file,field.type)[1:]))
+                continue
+            }
+            if b.pkg.editor && !pkg.editor {
+                append(&g.errors,fmt.aprintf("%s: %s receives %s, a @(params) of an editor package: the game has no editor code; declare it in a library",where_,name,b.name))
+                continue
+            }
+            actions:^Action_Enum
+            if call,is_call:=field.type.derived.(^ast.Call_Expr);b.generic {
+                if is_call && len(call.args)==1 {actions=g.action_by_key[type_key(g,file,pkg,call.args[0])] or_else nil}
+                if actions==nil {
+                    append(&g.errors,fmt.aprintf("%s: %s receives %s: %s is received for the @(actions) enum whose actions it reads, %s(Action), and that is not one",where_,name,expr_text(file,field.type),b.name,b.name))
+                    continue
+                }
+            } else if is_call {
+                append(&g.errors,fmt.aprintf("%s: %s receives %s: %s has no type parameter; receive it as %s",where_,name,expr_text(file,field.type),b.name,b.name))
+                continue
+            }
+            b.pkg.used=true
+            for _ in field.names {
+                for param in b.fields {
+                    bound:=param
+                    bound.arg,bound.actions=arg,actions
+                    append(params,bound)
+                }
+                arg+=1
+            }
+            continue
+        }
+        param,ok:=param_read(g,file,pkg,field.type)
+        for n in field.names {
+            if !ok {
+                if param.kind==.App_Part {
+                    append(&g.errors,part_error(where_,fmt.tprintf("the parameter %s of %s",ident_name(n),name),expr_text(file,field.type),param))
+                } else {
+                    append(&g.errors,fmt.aprintf("%s: the parameter %s of %s is %s: no table, storage or service of the engine has that type. Mark the type with @(component) or @(storage), receive %s, or a struct marked @(params) whose fields are those",where_,ident_name(n),name,expr_text(file,field.type),PARAM_FORMS))
+                }
+                arg+=1
+                continue
+            }
+            param.name,param.arg=ident_name(n),arg
+            append(params,param)
+            arg+=1
+        }
+    }
+}
+
+// The minds of a package: each @(mind) think procedure becomes a step of
+// fixed, server, whose context begins with Mind_World and holds what its
+// think and its actions receive after their first parameter, each once.
+@(private="file")
+minds_read :: proc(g:^Generator,pkg:^Package,minds,acts:[]Mind_Decl) {
+    act_enums:=make([]string,len(acts),context.temp_allocator)
+    for a,i in acts {
+        enum_name,members:=mind_proc_check(g,pkg,a,"act","Act","mirai:std/ai.Status")
+        act_enums[i]=enum_name
+        if enum_name=="" {continue}
+        if strings.trim_space(a.text)=="" {
+            append(&g.errors,fmt.aprintf("%s: %s has @(act) without values: write @(act=\"Value\") with the values of %s it runs",a.where_,a.name,enum_name))
+        }
+        for value in strings.fields(a.text) {
+            known:=false
+            for member in members {known||=member==value}
+            if !known {append(&g.errors,fmt.aprintf("%s: %s runs %q, which is no value of %s: name values of the enum in @(act), separated by spaces",a.where_,a.name,value,enum_name))}
+        }
+    }
+    thought:=make(map[string]bool,context.temp_allocator)
+    for d in minds {
+        enum_name,members:=mind_proc_check(g,pkg,d,"mind","Think","")
+        if enum_name=="" {continue}
+        thought[enum_name]=true
+        if d.text=="" {
+            append(&g.errors,fmt.aprintf("%s: %s has @(mind) without a name: write @(mind=\"name\"), the name its agents say in Mind_Agent.mind",d.where_,d.name))
+            continue
+        }
+        if other,taken:=g.mind_names[d.text];taken {
+            append(&g.errors,fmt.aprintf("%s: the mind %q of %s is also the one of %s: a name has one mind; give one of them another",d.where_,d.text,d.name,other))
+            continue
+        }
+        runner:^Bundle
+        for b in g.bundle_list {
+            if b.name=="Mind_World" {runner=b;break}
+        }
+        if runner==nil || !runner.valid {
+            append(&g.errors,fmt.aprintf("%s: %s is the think procedure of a mind, and the world has no behavior plugin, whose Mind_World every mind reads: add behavior to the plugins of project.mirai",d.where_,d.name))
+            continue
+        }
+        g.mind_names[d.text]=d.name
+        s:=new(Step)
+        s.name,s.pkg,s.where_=d.name,pkg,d.where_
+        s.file,s.line=slashes(d.file.fullpath,context.allocator),d.line
+        s.rank=len(g.steps)
+        s.phases[FIXED_PHASE],s.loops[0],s.stage,s.server=true,true,STAGE_DEFAULT,true
+        m:=new(Mind_Step)
+        m.name,m.enum_name,m.runner=d.text,enum_name,runner
+        s.mind=m
+        for param in runner.fields {append(&s.params,param)}
+        runner.pkg.used=true
+        pkg.used=true
+        m.think=mind_proc_bind(g,pkg,s,d)
+        for member in members {
+            found:=false
+            for a,i in acts {
+                if act_enums[i]!=enum_name || !mind_acts(a,member) {continue}
+                if found {
+                    append(&g.errors,fmt.aprintf("%s: %s runs %s.%s, which another action already runs: a value of the enum has one action; take it out of one @(act)",a.where_,a.name,enum_name,member))
+                    continue
+                }
+                found=true
+                bound:=mind_proc_bind(g,pkg,s,a)
+                bound.value=member
+                append(&m.acts,bound)
+            }
+            if !found {
+                append(&g.errors,fmt.aprintf("%s: %s.%s has no action: give a procedure proc(a:^ai.Act(%s), ...) -> ai.Status the attribute @(act=%q), or take the value out of the enum",d.where_,enum_name,member,enum_name,member))
+            }
+        }
+        append(&g.steps,s)
+    }
+    for a,i in acts {
+        if act_enums[i]=="" || thought[act_enums[i]] {continue}
+        append(&g.errors,fmt.aprintf("%s: %s is an action of %s, and no think procedure of this package proposes them: give one, proc(t:^ai.Think(%s), ...), the attribute @(mind=\"name\")",a.where_,a.name,act_enums[i],act_enums[i]))
+    }
+}
+
+// Whether an action runs a value of the enum.
+@(private="file")
+mind_acts :: proc(a:Mind_Decl,member:string) -> bool {
+    for value in strings.fields(a.text) {
+        if value==member {return true}
+    }
+    return false
+}
+
+// The enum of a procedure of a mind, whose first parameter is ^ai.<form>(E)
+// with E an enum of the package, and its members; "" after an error.
+@(private="file")
+mind_proc_check :: proc(g:^Generator,pkg:^Package,d:Mind_Decl,attribute,form,result:string) -> (enum_name:string,members:[dynamic]string) {
+    shape:=fmt.tprintf("proc(%s:^ai.%s(Actions), ...)%s",form=="Think"?"t":"a",form,result!=""?" -> ai.Status":"")
+    switch {
+    case d.literal==nil:
+        append(&g.errors,fmt.aprintf("%s: @(%s) on %s, which is not a procedure; it goes on a %s",d.where_,attribute,d.name,shape))
+        return
+    case pkg.editor:
+        append(&g.errors,fmt.aprintf("%s: %s is a @(%s) of an editor package: minds decide in the game; declare it in a library or in game/",d.where_,d.name,attribute))
+        return
+    case d.private:
+        append(&g.errors,fmt.aprintf("%s: %s is @(private), and the generated world calls it: take @(private) out",d.where_,d.name))
+        return
+    }
+    params,results:=d.literal.type.params,d.literal.type.results
+    returns:=""
+    if results!=nil && len(results.list)==1 && len(results.list[0].names)<=1 {returns=type_key(g,d.file,pkg,results.list[0].type)}
+    else if results!=nil && len(results.list)>0 {returns="?"}
+    shaped:=params!=nil && len(params.list)>0 && len(params.list[0].names)==1 && returns==result
+    if shaped {
+        shaped=false
+        if pointer,is_pointer:=params.list[0].type.derived.(^ast.Pointer_Type);is_pointer {
+            if call,is_call:=pointer.elem.derived.(^ast.Call_Expr);is_call && len(call.args)==1 && type_key(g,d.file,pkg,call.expr)==fmt.tprintf("mirai:std/ai.%s",form) {
+                enum_name=ident_name(call.args[0])
+                shaped=enum_name!=""
+            }
+        }
+    }
+    if !shaped {
+        append(&g.errors,fmt.aprintf("%s: %s is a @(%s) and is not a %s: its first parameter is the %s of an enum of actions of this package, and the generator binds the others as those of a step",d.where_,d.name,attribute,shape,form=="Think"?"decision":"call"))
+        enum_name=""
+        return
+    }
+    e:^ast.Enum_Type
+    if _,value,found:=type_decl(pkg,enum_name);found {e,_=value.derived.(^ast.Enum_Type)}
+    if e==nil {
+        append(&g.errors,fmt.aprintf("%s: %s runs for %s, which is not an enum of this package: declare the actions of a mind as %s :: enum u8 {{...}} beside it",d.where_,d.name,enum_name,enum_name))
+        enum_name=""
+        return
+    }
+    members=make([dynamic]string,context.temp_allocator)
+    for field in e.fields {
+        member:=ident_name(field)
+        if fv,valued:=field.derived.(^ast.Field_Value);valued {member=ident_name(fv.field)}
+        append(&members,member)
+    }
+    return
+}
+
+// Binds what a procedure of a mind receives after its first parameter into
+// the step of the mind: a datum another procedure already receives the same
+// way keeps its arg, so the context holds it once.
+@(private="file")
+mind_proc_bind :: proc(g:^Generator,pkg:^Package,s:^Step,d:Mind_Decl) -> (bound:Mind_Proc) {
+    bound.ident=d.name
+    params:=d.literal.type.params
+    if params==nil || len(params.list)<2 {return}
+    local:=make([dynamic]Param,context.temp_allocator)
+    params_read(g,d.file,pkg,d.where_,d.name,params.list[1:],&local)
+    last:=-1
+    for param,i in local {
+        if param.arg==last {continue}
+        last=param.arg
+        if param.kind==.App_Part || param.kind==.App {
+            append(&g.errors,fmt.aprintf("%s: %s receives %s, a part of the application: a mind decides from the world; read it in a step and write what the mind needs into a component or a storage",d.where_,d.name,param.name))
+            continue
+        }
+        arg:=-1
+        for other in s.params {
+            same:=param.bundle!=nil ? other.bundle==param.bundle && other.actions==param.actions : other.bundle==nil && other.kind==param.kind && other.type==param.type && other.record==param.record
+            if same {arg=other.arg;break}
+        }
+        if arg<0 {
+            arg=s.params[len(s.params)-1].arg+1
+            for p in local[i:] {
+                if p.arg!=param.arg {break}
+                q:=p
+                q.arg=arg
+                append(&s.params,q)
+            }
+        }
+        append(&bound.args,arg)
+    }
+    return
 }
 
 @(private="file")
@@ -1697,7 +1925,18 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
             break
         }
     }
+    minds:=0
+    for s in g.steps {
+        if s.mind==nil {continue}
+        if minds==0 {fmt.sbprint(w,"import gen_ai \"mirai:std/ai\"\n")}
+        minds+=1
+    }
     fmt.sbprint(w,"\n")
+    for s in g.steps {
+        if s.mind==nil {continue}
+        fmt.sbprintf(w,"#assert(%d<=%s.MINDS_CAPACITY,%q)\n\n",minds,s.mind.runner.pkg.alias,fmt.tprintf("the world declares %d minds, more than behavior.MINDS_CAPACITY: join those that share their actions in one mind",minds))
+        break
+    }
 
     // The functions as info.steps lists them: where each one adds its time.
     kept:=make([dynamic]^Step,context.temp_allocator)
@@ -1767,6 +2006,8 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     // Each function as the loops call it, with its binding, its settle and
     // its time: the loops call these in order, and core.world_run a part of them.
     for step,si in kept {
+        // The value of each arg of the step: a parameter, or a @(params) it builds.
+        values:=make([dynamic]string,context.temp_allocator)
         args:=strings.builder_make(context.temp_allocator)
         // A generic @(params) ends with the base of its enum.
         bundle_close :: proc(g:^Generator,args:^strings.Builder,param:Param) {
@@ -1778,7 +2019,8 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
             first:=pi==0 || step.params[pi-1].arg!=param.arg
             if first && pi>0 {
                 bundle_close(g,&args,step.params[pi-1])
-                strings.write_string(&args,",")
+                append(&values,strings.clone(strings.to_string(args),context.temp_allocator))
+                strings.builder_reset(&args)
             }
             if param.bundle!=nil {
                 if first && param.actions!=nil {
@@ -1817,8 +2059,48 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
                 fmt.sbprintf(&args,"%s.Records(%s.%s){{%s.app_record_set(app,%d)}}",core_alias,param.record.pkg.alias,param.record.name,host_alias,index)
             }
         }
-        if len(step.params)>0 {bundle_close(g,&args,step.params[len(step.params)-1])}
-        call:=fmt.tprintf("%s.%s(%s)",step.pkg.alias,step.name,strings.to_string(args))
+        if len(step.params)>0 {
+            bundle_close(g,&args,step.params[len(step.params)-1])
+            append(&values,strings.to_string(args))
+        }
+        call:=fmt.tprintf("%s.%s(%s)",step.pkg.alias,step.name,strings.join(values[:],",",context.temp_allocator))
+        // A mind ticks its agents in a context that holds each arg once, which
+        // its think and its actions receive through ai.Mind_Context.user.
+        mind_decls:=""
+        if m:=step.mind;m!=nil {
+            ctx_type:=fmt.tprintf("Mind_%s",step.name)
+            enum_type:=fmt.tprintf("%s.%s",step.pkg.alias,m.enum_name)
+            fmt.sbprintf(w,"%s :: struct {{world:%s.%s",ctx_type,m.runner.pkg.alias,m.runner.name)
+            fields:=strings.builder_make(context.temp_allocator)
+            fmt.sbprintf(&fields,"world=%s",values[0])
+            last:=0
+            for param in step.params {
+                if param.arg==last {continue}
+                last=param.arg
+                fmt.sbprintf(w,",a%d:%s",param.arg,param_type(param,core_alias))
+                fmt.sbprintf(&fields,",a%d=%s",param.arg,values[param.arg])
+            }
+            fmt.sbprint(w,"}\n")
+            fmt.sbprintf(w,"#assert(len(%q)<%s.MIND_NAME,%q)\n\n",m.name,m.runner.pkg.alias,fmt.tprintf("%s: the name of the mind %q is longer than a Mind_Agent holds: shorten it",step.where_,m.name))
+            mind_call :: proc(step:^Step,ctx_type:string,p:Mind_Proc,first,returns:string) -> string {
+                text:=strings.builder_make(context.temp_allocator)
+                if len(p.args)>0 {fmt.sbprintf(&text,"c:=cast(^%s)%s.user;",ctx_type,first)}
+                fmt.sbprintf(&text,"%s%s.%s(%s",returns,step.pkg.alias,p.ident,first)
+                for arg in p.args {fmt.sbprintf(&text,",c.a%d",arg)}
+                strings.write_string(&text,")")
+                return strings.to_string(text)
+            }
+            decls:=strings.builder_make(context.temp_allocator)
+            fmt.sbprintf(&decls,"    ctx:=%s{{%s}}\n",ctx_type,strings.to_string(fields))
+            fmt.sbprintf(&decls,"    think:=proc(t:^gen_ai.Think(%s)) {{%s}}\n",enum_type,mind_call(step,ctx_type,m.think,"t",""))
+            fmt.sbprintf(&decls,"    acts:=[%s]proc(a:^gen_ai.Act(%s)) -> gen_ai.Status{{",enum_type,enum_type)
+            for act,i in m.acts {
+                fmt.sbprintf(&decls,"%s\n        .%s=proc(a:^gen_ai.Act(%s)) -> gen_ai.Status {{%s}}",i>0?",":"",act.value,enum_type,mind_call(step,ctx_type,act,"a","return "))
+            }
+            fmt.sbprint(&decls,"}\n")
+            mind_decls=strings.to_string(decls)
+            call=fmt.tprintf("%s.minds_tick(&ctx.world,%q,&acts,think)",m.runner.pkg.alias,m.name)
+        }
         checks:=strings.builder_make(context.temp_allocator)
         for param in step.params {
             if param.kind!=.Table_Write {continue}
@@ -1852,6 +2134,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
             }
             if ticks {fmt.sbprintf(w,"    w.storage_revisions[%d]+=1\n",len(storage_index))}
         }
+        fmt.sbprint(w,mind_decls)
         fmt.sbprintf(w,"    started:=gen_time.tick_now()\n    zone:=%s.profile_step_begin(app,%d)\n",host_alias,si)
         if strings.builder_len(checks)>0 {
             fmt.sbprintf(w,"    when %s.CHECK_WRITES {{\n        checks:=[?]%s.Write_Check{{%s}}\n        %s\n        %s.write_check_end(checks[:],\"%s\")\n    }} else {{%s}}\n",core_alias,core_alias,strings.to_string(checks),call,core_alias,step.name,call)
@@ -2093,6 +2376,29 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     fmt.sbprintf(w,"    %s.world_info_index(&info)\n",core_alias)
     fmt.sbprint(w,"    return info\n}\n")
     return strings.to_string(b)
+}
+
+// The type of an arg of a step as the generated world writes it; "" for a
+// part of the application, which a mind does not receive.
+@(private="file")
+param_type :: proc(param:Param,core_alias:string) -> string {
+    if b:=param.bundle;b!=nil {
+        if param.actions!=nil {return fmt.tprintf("%s.%s(%s.%s)",b.pkg.alias,b.name,param.actions.pkg.alias,param.actions.name)}
+        return fmt.tprintf("%s.%s",b.pkg.alias,b.name)
+    }
+    #partial switch param.kind {
+    case .Table_Write: return fmt.tprintf("^%s.Table(%s.%s)",core_alias,param.type.pkg.alias,param.type.name)
+    case .Table_Read: return fmt.tprintf("%s.Read(%s.%s)",core_alias,param.type.pkg.alias,param.type.name)
+    case .Storage_Write: return fmt.tprintf("^%s.%s",param.type.pkg.alias,param.type.name)
+    case .Storage_Ref: return fmt.tprintf("%s.Ref(%s.%s)",core_alias,param.type.pkg.alias,param.type.name)
+    case .Storage_Value: return fmt.tprintf("%s.%s",param.type.pkg.alias,param.type.name)
+    case .Storage_Stamp: return fmt.tprintf("%s.Stamp(%s.%s)",core_alias,param.type.pkg.alias,param.type.name)
+    case .Entities_Read: return fmt.tprintf("%s.Ref(%s.Entities)",core_alias,core_alias)
+    case .Commands: return fmt.tprintf("%s.Commands",core_alias)
+    case .World_Ref: return fmt.tprintf("%s.World_Ref",core_alias)
+    case .Records: return fmt.tprintf("%s.Records(%s.%s)",core_alias,param.record.pkg.alias,param.record.name)
+    }
+    return ""
 }
 
 @(private="file")

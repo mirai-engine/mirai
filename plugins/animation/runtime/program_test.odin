@@ -40,7 +40,7 @@ program_test_sync_markers :: proc(content:^host.Content_Animation) {
     delete(content.markers);content.markers=make([]u64,2);content.markers[0],content.markers[1]=base.name_hash("step"),base.name_hash("lift")
 }
 
-// The program of one group of clips, as the search of a .match leaves it.
+// The program of one group of clips, as the search of the locomotion of a .character leaves it.
 @(private)
 program_test_output :: proc(leaves:..Program_Leaf) -> Program_Output {
     output:=Program_Output{count=1}

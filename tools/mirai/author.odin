@@ -66,6 +66,16 @@ author_library_problem :: proc(state:build.Target_State,owner:string,dev:bool) -
     return ""
 }
 
+// Builds the engine unless it is current, as mirai import does: what the build
+// says goes to stderr. The exit code of a build that failed, 0 otherwise.
+author_engine :: proc(root,kind:string,mode:Build_Mode) -> int {
+    if c_libraries_current(root) && build.engine_current(root,mode) {return 0}
+    lock:=build_lock(root,kind)
+    defer workspace.lock_release(&lock)
+    if !ensure_runtime_dependencies(root) {return 1}
+    return engine_report(build.engine_build({engine_root=root,mode=mode}),root,os.stderr)
+}
+
 @(private="file")
 author_run :: proc(root,kind,usage:string,args:[]string) -> int {
     mode,without_mode,ok:=build_mode_take(args)
@@ -81,12 +91,7 @@ author_run :: proc(root,kind,usage:string,args:[]string) -> int {
         return 1
     }
     mode=build.engine_mode_resolve(root,mode)
-    if !c_libraries_current(root) || !build.engine_current(root,mode) {
-        lock:=build_lock(root,kind)
-        defer workspace.lock_release(&lock)
-        if !ensure_runtime_dependencies(root) {return 1}
-        if code:=engine_report(build.engine_build({engine_root=root,mode=mode}),root,os.stderr);code!=0 {return code}
-    }
+    if code:=author_engine(root,kind,mode);code!=0 {return code}
     if author_needs_library(kind,rest) {
         p,error:=project.open(owner,root,context.temp_allocator)
         if error.code!=.None {
