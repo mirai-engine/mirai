@@ -57,6 +57,12 @@ Each view is recorded with an explicit `Pass` (`render/frame.odin`) with its `Vi
 and constants: no pass reads targets or camera from the renderer. The targets of a technique are
 created the first time a view uses it (`ensure_*_targets`).
 
+The targets whose contents live within the frame of a view (`targets_frame`: G-buffer, direct
+light, display, rays of the frame, contact, the stack's pair) are shared by the views of one size:
+views are recorded one after another and each writes them before it reads them. Nothing reads
+them once its view is recorded; what outlives it (histories, LDR, coverage, selection mask) is
+the view's own.
+
 ## Cameras and layers
 
 `Camera` describes the projection (perspective, orthographic or a custom matrix), its off-center
@@ -421,9 +427,8 @@ frame and the current one:
   - the renderer creates it at the first request (up to `EXTENSION_TEXTURE_CAPACITY` = 8 per view),
     keeps it while the view's passes request it every frame and frees it after a frame of the view
     without requesting it, or with the view;
-  - `pass_texture_sample(pass, slot, desc, previous)` binds it so that the draws of the next pass
-    read what the earlier dispatches wrote: it goes before `pass_surface_begin` or
-    `pass_mask_begin`, which no longer admit barriers.
+  - `pass_texture_sample(pass, slot, desc, previous)` binds it for the dispatches or draws that
+    read it.
 - **Buffers of a world.** `pass_buffer(pass, slot, Buffer_Desc{name, size})` binds in `SLOT_PASS0 +
   slot` a buffer that the renderer keeps for the extension under that name and the pass's world,
   until it releases it (`buffer_release(renderer, world, name)`, in the world's `release`) or the
@@ -433,9 +438,7 @@ frame and the current one:
   - a world that is not drawn keeps its own: its state waits, still, for its next frame;
   - `pass_buffer_write` copies rows to a part, through frame memory, and `pass_buffer_fill` fills it
     with a value; both outside a draw pass;
-  - `pass_buffer_ready(pass, desc, indirect)` makes readable what the dispatches wrote for the draws
-    of the next pass, or as their indirect arguments: it goes before `pass_gbuffer_begin` or
-    `pass_blend_begin`, which do not admit barriers;
+  - `pass_buffer_held(pass, desc)` says whether the world holds the buffer with that size;
   - `pass_dispatch_indirect` and `pass_draw_indexed_indirect` take their arguments from a buffer;
     `pass_indices(pass, .Scene)` binds the scene indices (`mesh_draw_range` gives those of a mesh)
     and `.Quad`, the six of a quad.

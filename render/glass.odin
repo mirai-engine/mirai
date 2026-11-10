@@ -106,13 +106,9 @@ glass_means_record :: proc(p: ^Pass) -> bool {
 	set_params(cmd, &params)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, t.buffer, t.offset, u64(len(list) * size_of(u32)))
 	points_bind(p)
-	for b in ([]rhi.Buffer{s.mesh_buffer, s.vertex_buffer, s.index_buffer, s.material_buffer}) {rhi.cmd_barrier_buffer(cmd, b, .Shader_Read)}
-	rhi.cmd_barrier_buffer(cmd, s.instance_buffer, .Shader_Write)
 	rhi.cmd_dispatch(cmd, u32(len(list)), 1)
 	// The resume adds to what the dispatch wrote.
-	if batch {rhi.cmd_barrier_buffer(cmd, s.instance_buffer, .Shader_Write)}
 	points_rounds(p, batch, pipeline, &params, 1)
-	rhi.cmd_barrier_buffer(cmd, s.instance_buffer, .Shader_Read)
 	r.glass_stale = false
 	return true
 }
@@ -189,7 +185,6 @@ glass_in_frustum :: proc(r: ^Renderer, planes: [6]Vec4) -> bool {
 glass_layers :: proc(p: ^Pass) {
 	r, cmd, t, camera := p.r, p.cmd, p.t, p.camera
 	s := &r.scene
-	g := &r.ddgi
 	layers := glass_layer_count(r)
 	for &entry in s.translucent {
 		inst := s.instances[entry.instance]
@@ -207,23 +202,9 @@ glass_layers :: proc(p: ^Pass) {
 	}
 	p.glass_medium = glass_medium(r, camera.position)
 	rhi.cmd_timestamp(cmd, "translucent")
-	buffers := []rhi.Buffer{
-		s.instance_buffer, s.mesh_buffer, s.vertex_buffer, s.index_buffer, s.material_buffer, s.light_buffer, s.light_tree_buffer,
-		s.blas_node_buffer, s.blas_triangle_buffer, s.tlas_node_buffer, s.tlas_ref_buffer, g.probes if g.valid else r.dummy_buffer,
-	}
-	for b in buffers {if b != 0 {rhi.cmd_barrier_buffer(cmd, b, .Shader_Read)}}
-	if g.valid {
-		rhi.cmd_barrier_texture(cmd, g.irradiance, .Shader_Read)
-		rhi.cmd_barrier_texture(cmd, g.distance, .Shader_Read)
-	}
-	if r.hardware_rt && s.tlas != 0 {rhi.cmd_barrier_accel(cmd, s.tlas)}
-	rhi.cmd_barrier_texture(cmd, t.linear_depth, .Shader_Read)
-	rhi.cmd_barrier_texture(cmd, r.dummy_texture, .Shader_Read)
-
 	for k in 0 ..< layers {
 		layer := t.glass[k]
 		nearer := t.glass[k - 1].depth if k > 0 else r.dummy_texture
-		rhi.cmd_barrier_texture(cmd, nearer, .Shader_Read)
 		layered := glass_layers_held(r, layer)
 		pass := rhi.Render_Pass_Desc{color_count = 7 if layered else 6, name = "glass layer"}
 		for target, i in ([7]rhi.Texture{layer.albedo, layer.normal, layer.emission, layer.ids, layer.depth, layer.surface, layer.layers}) {
@@ -245,7 +226,7 @@ glass_layers :: proc(p: ^Pass) {
 
 @(private)
 glass_shade :: proc(p: ^Pass, trace_reflections: bool) {
-	r, cmd, t, camera := p.r, p.cmd, p.t, p.camera
+	r, cmd, t := p.r, p.cmd, p.t
 	previous, current := p.previous, p.current
 	s := &r.scene
 	settings := &r.settings
@@ -254,7 +235,6 @@ glass_shade :: proc(p: ^Pass, trace_reflections: bool) {
 		// The depth buffer of the last layer rejects that layer and what is in
 		// front of it before a fragment runs: only the surfaces behind are shaded.
 		last := t.glass[layers - 1].depth
-		rhi.cmd_barrier_texture(cmd, last, .Shader_Read)
 		pass := rhi.Render_Pass_Desc{color_count = 1, name = "translucent"}
 		pass.colors[0] = {texture = t.display, load = .Load, store = .Store}
 		pass.depth = {texture = t.glass_zbuffer, load = .Load, store = .Dont_Care}
@@ -278,11 +258,10 @@ glass_shade :: proc(p: ^Pass, trace_reflections: bool) {
 	if traced {
 		rhi.cmd_timestamp(cmd, "glass reflect")
 		first := t.glass[0]
-		rhi.cmd_barrier_texture(cmd, first.surface, .Shader_Read)
 		rhi.cmd_bind_texture(cmd, SLOT_SURFACE, first.surface)
 		glass_bind_layers(p, first)
-		// Glass reflects a few percent of what its ray finds: a ray per block
-		// of 2x2 pixels is enough at any roughness.
+		// Glass reflects a few percent of what its ray finds: Traced shares a
+		// ray per block of 2x2 pixels at any roughness.
 		reflect_pass(p, first.normal, first.depth, first.albedo, t.glass_history[previous], t.glass_history[current], t.glass_valid, true, 0, GLASS_CACHED_REFLECTANCE, true)
 		rhi.cmd_bind_texture(cmd, SLOT_SURFACE, t.surface if t.surface != 0 else r.dummy_texture)
 	}
@@ -356,7 +335,6 @@ glass_bind_layers :: proc(p: ^Pass, layer: Glass_Layer) {
 		rhi.cmd_bind_texture(cmd, SLOT_LAYERS, r.dummy_layers)
 		return
 	}
-	rhi.cmd_barrier_texture(cmd, layer.layers, .Shader_Read)
 	rhi.cmd_bind_texture(cmd, SLOT_LAYERS, layer.layers)
 }
 
@@ -365,7 +343,6 @@ glass_bind_layers :: proc(p: ^Pass, layer: Glass_Layer) {
 glass_layer_bind :: proc(p: ^Pass, k: int) {
 	cmd, t := p.cmd, p.t
 	layer := t.glass[k]
-	rhi.cmd_barrier_texture(cmd, layer.surface, .Shader_Read)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS9, layer.surface)
 	glass_bind_layers(p, layer)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, layer.albedo)
@@ -385,7 +362,6 @@ glass_inside :: proc(p: ^Pass) {
 	if p.glass_medium == 0 {return}
 	r, cmd, t := p.r, p.cmd, p.t
 	rhi.cmd_timestamp(cmd, "glass inside")
-	rhi.cmd_barrier_texture(cmd, t.display, .Shader_Write)
 	params := glass_params(p)
 	glass_layer_bind(p, 0)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.glass_scene)
