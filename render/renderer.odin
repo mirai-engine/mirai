@@ -1340,7 +1340,6 @@ font_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List, slot: int) -> bool {
 		copy(staging[row * int(region.width):][:region.width], r.font_pixels[(int(region.y) + row) * width + int(region.x):][:region.width])
 	}
 	rhi.cmd_copy_buffer_to_texture(cmd, r.font_staging[slot], 0, r.font, 0, region)
-	rhi.cmd_barrier_texture(cmd, r.font, .Shader_Read)
 	return true
 }
 

@@ -84,11 +84,6 @@ postprocess_passes :: proc(p:^Pass,source:rhi.Texture,after:bool)->rhi.Texture {
         if target==0 {break}
         name:[32]u8
         rhi.cmd_timestamp(cmd,fmt.bprintf(name[:],"postprocess %s %d","display" if after else "hdr",index+1))
-        rhi.cmd_barrier_texture(cmd,current,.Shader_Read)
-        rhi.cmd_barrier_texture(cmd,depth,.Shader_Read)
-        rhi.cmd_barrier_texture(cmd,normal,.Shader_Read)
-        rhi.cmd_barrier_texture(cmd,mask,.Shader_Read)
-        rhi.cmd_barrier_buffer(cmd,p.view.exposure,.Shader_Read)
         pass:=rhi.Render_Pass_Desc{color_count=1,name="postprocess"}
         pass.colors[0]={texture=target,load=.Dont_Care,store=.Store}
         rhi.cmd_begin_render_pass(cmd,&pass)

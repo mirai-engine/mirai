@@ -191,11 +191,6 @@ gbuffer_targets :: proc(p: ^Pass) -> (targets: [8]rhi.Texture, count: int) {
 gbuffer_pass :: proc(p: ^Pass, phase: u32, clear, keep_depth: bool) {
 	r, cmd, t := p.r, p.cmd, p.t
 	s := &r.scene
-	if p.draw {
-		rhi.cmd_barrier_buffer(cmd, s.cull_state_buffer, .Indirect_Read)
-		if program_clusters(r) {rhi.cmd_barrier_buffer(cmd, s.program_bins, .Indirect_Read)}
-		for b in ([]rhi.Buffer{s.instance_buffer, s.vertex_buffer, s.index_buffer, s.material_buffer, s.visible_buffer, s.program_visible}) {rhi.cmd_barrier_buffer(cmd, b, .Shader_Read)}
-	}
 	load: rhi.Load_Op = .Clear if clear else .Load
 	targets, count := gbuffer_targets(p)
 	pass := rhi.Render_Pass_Desc{color_count = count, name = "gbuffer" if clear else "gbuffer late"}
@@ -239,7 +234,6 @@ instance_clusters_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, instance: u
 highlight_pass :: proc(p: ^Pass) {
 	r, cmd, t := p.r, p.cmd, p.t
 	s := &r.scene
-	for b in ([]rhi.Buffer{s.instance_buffer, s.vertex_buffer, s.index_buffer, s.material_buffer}) {rhi.cmd_barrier_buffer(cmd, b, .Shader_Read)}
 	pass := rhi.Render_Pass_Desc{color_count = 1, name = "highlight mask"}
 	pass.colors[0] = {texture = t.highlight, load = .Clear, store = .Store}
 	pass.depth = {texture = t.highlight_depth, load = .Clear, store = .Dont_Care, clear = 0}
@@ -379,7 +373,6 @@ build_depth_pyramid :: proc(p: ^Pass, pyramid: rhi.Texture) {
 @(private)
 present_blit :: proc(r: ^Renderer, cmd: ^rhi.Command_List, target: rhi.Texture, format: rhi.Format, source: rhi.Texture) {
 	if !ensure_blit_pipeline(r, format) {return}
-	rhi.cmd_barrier_texture(cmd, source, .Shader_Read)
 	present := rhi.Render_Pass_Desc{color_count = 1, name = "present"}
 	present.colors[0] = {texture = target, load = .Dont_Care, store = .Store}
 	rhi.cmd_begin_render_pass(cmd, &present)
@@ -922,15 +915,12 @@ cull_programs_dispatch :: proc(r: ^Renderer, cmd: ^rhi.Command_List, mode, phase
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, s.program_visible)
 	switch mode {
 	case 0:
-		rhi.cmd_barrier_buffer(cmd, s.program_bins, .Shader_Write)
 		rhi.cmd_dispatch(cmd, groups(r.points.programs, 64))
 	case 2:
 		rhi.cmd_dispatch(cmd, 1)
 	case:
-		rhi.cmd_barrier_buffer(cmd, s.program_bins, .Indirect_Read)
 		rhi.cmd_dispatch_indirect(cmd, s.program_bins, u64(PROGRAMS_DISPATCH + 3 * phase) * size_of(u32))
 	}
-	rhi.cmd_barrier_buffer(cmd, s.program_bins, .Shader_Write)
 }
 
 // The clusters of Surface programs the cull of a phase listed, by program:
@@ -986,32 +976,17 @@ cull_bind :: proc(p: ^Pass, params: Cull_Params, hiz: rhi.Texture, stats, glass:
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS9, or_dummy(r, s.program_bins))
 }
 
-// The lists a pass of the cull reads and writes, after what the passes and
-// copies before it wrote or read of them: the cluster pass reads the chunks
-// the instance pass just wrote at the same places phase 0 wrote its own, and
-// phase 1 counts in the state the frame reset.
-@(private)
-cull_lists_ready :: proc(p: ^Pass, stats, glass: rhi.Buffer) {
-	s := &p.r.scene
-	for b in ([]rhi.Buffer{s.cull_state_buffer, s.chunk_buffer, s.candidate_buffer, s.cluster_candidate_buffer, s.visible_buffer, s.program_bins, stats, glass, s.pages.request_buffer, s.pages.stamp_buffer}) {
-		if b != 0 {rhi.cmd_barrier_buffer(p.cmd, b, .Shader_Write)}
-	}
-}
-
 // The two passes of a phase of the cull: by instance, which hands the
 // clusters of their cuts over in chunks, and by cluster over the chunks.
 @(private)
 cull_record :: proc(p: ^Pass, params: Cull_Params, hiz: rhi.Texture, stats, glass: rhi.Buffer) {
 	r, cmd := p.r, p.cmd
 	s := &r.scene
-	cull_lists_ready(p, stats, glass)
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Cull])
 	cull_bind(p, params, hiz, stats, glass)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.candidate_buffer)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, glass)
 	rhi.cmd_dispatch(cmd, groups(p.instance_count + p.batch_slots, 64))
-	rhi.cmd_barrier_buffer(cmd, s.cull_state_buffer, .Indirect_Read)
-	cull_lists_ready(p, stats, glass)
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Cull_Clusters])
 	cull_bind(p, params, hiz, stats, glass)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.cluster_candidate_buffer)
@@ -1028,7 +1003,6 @@ cull_record :: proc(p: ^Pass, params: Cull_Params, hiz: rhi.Texture, stats, glas
 pass_gbuffer :: proc(p: ^Pass) -> bool {
 	r, cmd, t := p.r, p.cmd, p.t
 	s := &r.scene
-	settings := &r.settings
 	threads := p.instance_count + p.batch_slots
 	occlusion := threads > 0
 	keep_depth := p.draw_translucent || p.draw_overlays || p.blend || stage_asked(r, .Gbuffer) || r.pass_count > 0 && .Nested in p.plan.stages
@@ -1054,8 +1028,6 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 		if !upload_transient(r, cmd, restart[:], s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, chunk_dispatch))) {return false}
 		params := Cull_Params{phase = 1, occlusion = 1, hiz_levels = t.hiz_levels, glass_groups = glass_groups}
 		cull_record(p, params, t.hiz[p.current], r.stats_buffer, p.view.glass_dispatch)
-		rhi.cmd_barrier_buffer(cmd, s.cull_state_buffer, .Indirect_Read)
-		cull_lists_ready(p, r.stats_buffer, p.view.glass_dispatch)
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Cull_Clusters_Candidates])
 		cull_bind(p, params, t.hiz[p.current], r.stats_buffer, p.view.glass_dispatch)
 		rhi.cmd_dispatch_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, candidate_dispatch)))
@@ -1072,7 +1044,7 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 	} else {
 		t.hiz_valid = false
 	}
-	if p.first && stage_asked(r, .Simulate) {simulate_run(p)}
+	if p.first && stage_asked(r, .Simulate) {stage_run(p, .Simulate)}
 	if stage_asked(r, .Gbuffer) {stage_run(p, .Gbuffer)}
 
 	if !p.texture && s.highlighted > 0 && ensure_highlight_targets(r, t) {
@@ -1124,7 +1096,6 @@ nested_targets :: proc(p: ^Pass) -> bool {
 	if !reflectance || p.reflectance {return true}
 	if !ensure_surface_target(r, t) {return false}
 	rhi.cmd_timestamp(cmd, "nested view reflectance")
-	rhi.cmd_barrier_texture(cmd, t.albedo, .Shader_Read)
 	fill := rhi.Render_Pass_Desc{color_count = 1, name = "reflectance of the view"}
 	fill.colors[0] = {texture = t.surface, load = .Dont_Care, store = .Store}
 	rhi.cmd_begin_render_pass(cmd, &fill)
@@ -1196,7 +1167,6 @@ nested_views_record :: proc(p: ^Pass) -> bool {
 		cull_programs_bin(p, 0)
 
 		// Its pixels alone pass the depth test of its draws: the farthest depth where the mask named it, the nearest elsewhere.
-		rhi.cmd_barrier_texture(cmd, t.motion, .Shader_Read)
 		prime := rhi.Render_Pass_Desc{name = "nested view pixels"}
 		prime.depth = {texture = t.nested_depth, load = .Clear, store = .Store, clear = 1}
 		rhi.cmd_begin_render_pass(cmd, &prime)
@@ -1212,9 +1182,6 @@ nested_views_record :: proc(p: ^Pass) -> bool {
 		rhi.cmd_draw(cmd, 3)
 		rhi.cmd_end_render_pass(cmd)
 
-		rhi.cmd_barrier_buffer(cmd, s.cull_state_buffer, .Indirect_Read)
-		if program_clusters(r) {rhi.cmd_barrier_buffer(cmd, s.program_bins, .Indirect_Read)}
-		for b in ([]rhi.Buffer{s.instance_buffer, s.vertex_buffer, s.index_buffer, s.material_buffer, s.visible_buffer, s.program_visible}) {rhi.cmd_barrier_buffer(cmd, b, .Shader_Read)}
 		targets, count := gbuffer_targets(p)
 		pass := rhi.Render_Pass_Desc{color_count = count, name = "nested view gbuffer"}
 		for texture, i in targets[:count] {pass.colors[i] = {texture = texture, load = .Load, store = .Store}}
@@ -1574,23 +1541,6 @@ side_run :: proc(p: ^Pass, stage: Frame_Stage, side: Glass_Side) {
 	p.glass = .All
 }
 
-// The Simulate stage of extensions, with the first view of the window: what
-// it traces and reads of the scene went up in this frame.
-@(private)
-simulate_run :: proc(p: ^Pass) {
-	r, cmd := p.r, p.cmd
-	s, g := &r.scene, &r.ddgi
-	for b in ([]rhi.Buffer{s.instance_buffer, s.mesh_buffer, s.vertex_buffer, s.index_buffer, s.material_buffer, s.light_buffer, s.light_tree_buffer, s.blas_node_buffer, s.blas_triangle_buffer, s.tlas_node_buffer, s.tlas_ref_buffer, g.probes if g.valid else r.dummy_buffer}) {if b != 0 {rhi.cmd_barrier_buffer(cmd, b, .Shader_Read)}}
-	if r.hardware_rt && s.tlas != 0 {rhi.cmd_barrier_accel(cmd, s.tlas)}
-	rhi.cmd_barrier_texture(cmd, p.t.linear_depth, .Shader_Read)
-	rhi.cmd_barrier_texture(cmd, p.t.normal, .Shader_Read)
-	stage_run(p, .Simulate)
-	if s.light_region.lights > 0 {
-		rhi.cmd_barrier_buffer(cmd, s.light_buffer, .Shader_Read)
-		rhi.cmd_barrier_buffer(cmd, s.light_tree_buffer, .Shader_Read)
-	}
-}
-
 // Temporal anti-aliasing and upscaling to the size the view is shown at.
 @(private)
 pass_taa :: proc(p: ^Pass) {
@@ -1649,16 +1599,7 @@ pass_output :: proc(p: ^Pass, frame: Frame_Desc, ui_written: ^int, overlays := t
 	}
 	rhi.cmd_timestamp(cmd, "tonemap ui")
 	coat := texture_or_dummy(r, t.highlight_filtered)
-	rhi.cmd_barrier_texture(cmd, p.shown, .Shader_Read)
-	rhi.cmd_barrier_texture(cmd, coat, .Shader_Read)
-	rhi.cmd_barrier_texture(cmd, r.font, .Shader_Read)
 	thumbnails := r.thumbnails if r.thumbnails != 0 else r.dummy_texture
-	rhi.cmd_barrier_texture(cmd, thumbnails, .Shader_Read)
-	rhi.cmd_barrier_buffer(cmd, p.view.exposure, .Shader_Read)
-	if len(frame.panels) > 0 || len(frame.debug) > 0 {
-		rhi.cmd_barrier_texture(cmd, t.linear_depth, .Shader_Read)
-		rhi.cmd_barrier_texture(cmd, t.motion, .Shader_Read)
-	}
 	ldr_pass := rhi.Render_Pass_Desc{color_count = 1, name = "tonemap"}
 	ldr_pass.colors[0] = {texture = t.ldr, load = .Dont_Care, store = .Store}
 	rhi.cmd_begin_render_pass(cmd, &ldr_pass)
@@ -1679,7 +1620,6 @@ pass_output :: proc(p: ^Pass, frame: Frame_Desc, ui_written: ^int, overlays := t
 		processed := postprocess_passes(p, t.ldr, true)
 		if processed != t.ldr {
 			rhi.cmd_timestamp(cmd, "postprocess copy")
-			rhi.cmd_barrier_texture(cmd, processed, .Shader_Read)
 			pass := rhi.Render_Pass_Desc{color_count = 1, name = "postprocess copy"}
 			pass.colors[0] = {texture = t.ldr, load = .Dont_Care, store = .Store}
 			rhi.cmd_begin_render_pass(cmd, &pass)
@@ -1738,12 +1678,6 @@ overlays_pass :: proc(p: ^Pass, frame: Frame_Desc, ui_written: ^int, generated: 
 	thumbnails := r.thumbnails if r.thumbnails != 0 else r.dummy_texture
 	points := Vec2{f32(t.output_width), f32(t.output_height)} / ui_scale(r)
 	for image in 0 ..< (2 if generated else 1) {
-		rhi.cmd_barrier_texture(cmd, r.font, .Shader_Read)
-		rhi.cmd_barrier_texture(cmd, thumbnails, .Shader_Read)
-		if len(frame.panels) > 0 || len(frame.debug) > 0 {
-			rhi.cmd_barrier_texture(cmd, t.linear_depth, .Shader_Read)
-			rhi.cmd_barrier_texture(cmd, t.motion, .Shader_Read)
-		}
 		// The passes of the UI draw into t.ldr: over the generated image, it takes its place.
 		if image == 1 {t.ldr, t.generated = t.generated, t.ldr}
 		rhi.cmd_timestamp(cmd, "ui" if image == 0 else "generated ui")

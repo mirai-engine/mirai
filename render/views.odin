@@ -283,17 +283,13 @@ compose_views :: proc(r:^Renderer,cmd:^rhi.Command_List,frame:Frame_Desc,slot:in
     index:=0
     for view in frame.views {
         if view.texture!=0 {continue}
-        if !view.disabled {rhi.cmd_barrier_texture(cmd,shown(r,index,generated),.Shader_Read)}
         index+=1
     }
     thumbnails:=r.thumbnails if r.thumbnails!=0 else r.dummy_texture
-    rhi.cmd_barrier_texture(cmd,r.font,.Shader_Read)
-    rhi.cmd_barrier_texture(cmd,thumbnails,.Shader_Read)
     rhi.cmd_bind_sampler(cmd,SLOT_LINEAR_SAMPLER,r.linear_sampler)
     rhi.cmd_bind_sampler(cmd,SLOT_POINT_SAMPLER,r.point_sampler)
     rhi.cmd_bind_sampler(cmd,SLOT_MATERIAL_SAMPLER,r.material_sampler)
     materials:=or_dummy(r,r.scene.material_buffer)
-    rhi.cmd_barrier_buffer(cmd,materials,.Shader_Read)
     rhi.cmd_bind_buffer(cmd,SLOT_MATERIALS,materials)
     rhi.cmd_bind_transient(cmd,SLOT_FRAME,frame_constants(r,{time={r.time,r.previous_time,r.delta_time,0},resolution={f32(r.window_width),f32(r.window_height)}}))
     t:=&r.main.targets

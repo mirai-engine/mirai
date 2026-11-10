@@ -204,14 +204,14 @@ mtl_accel_encoder :: proc(c: ^Command_List) -> ^MTL.AccelerationStructureCommand
 // ---------------------------------------------------------------- hazards
 
 // Every resource uses MTLHazardTrackingModeTracked, so Metal inserts the
-// required waits itself. The barriers only keep the Vulkan usage rules.
+// waits a pass needs itself, as Vulkan derives them from what the pass binds;
+// the barriers only keep the Vulkan usage rules.
 cmd_barrier_buffer :: proc(c: ^Command_List, buffer: Buffer, access: Access) {
 	if pool_get(&c.device.buffers, base.Handle(buffer)) == nil {return}
 	assert(!c.in_render_pass, "rhi: buffer barriers must be recorded outside render passes")
 }
 
 cmd_barrier_texture :: proc(c: ^Command_List, texture: Texture, access: Access) {}
-cmd_barrier_accel :: proc(c: ^Command_List, accel: Accel) {}
 
 // ---------------------------------------------------------------- render passes
 
