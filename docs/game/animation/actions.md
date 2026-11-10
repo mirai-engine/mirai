@@ -1,11 +1,12 @@
-# The action set: layers and actions
+# Layers and actions
 
-An `.action` asset (`Animation.actions`) is what plays over the base of an entity, its `.match` or
-its clip. It has a stack of **layers**, in order, and the **actions** `anim.play` asks for by name.
-`animation.character.setup` writes gestures; `animation.action.set` writes any set (its `layers`
-and `actions` rows say every field), and `animation.inspect` part `Actions` shows what plays.
+What plays over the base of an entity, its locomotion or its clip, is part of its `.character`: a
+stack of **layers**, in order, and the **actions** `anim.play` asks for by name.
+`animation.character.setup` writes gestures; `animation.action.set` writes the layers and actions
+of any set (its `layers` and `actions` rows say every field), and `animation.inspect` part
+`Actions` shows what plays.
 
-- A layer plays by itself a clip, or the `space` of a `.blend` (aim offsets, additive poses),
+- A layer plays by itself a clip, or a `space` of the set (aim offsets, additive poses),
   over a branch (`over`: a bone or `@upper_body`, `@arm_l`) or the whole pose, replacing
   (`Override`) or adding (`Additive`) over the layers before it.
 - `anim.set(requests,e,"<layer name>",w)` is its weight; `anim.set(requests,e,"<axis name>",v)`
@@ -21,8 +22,10 @@ anim.play(requests,e,"Combo","Second")     // while it plays: moves it to that s
 t,section,ok:=anim.action_playing(runtime,e,"Combo")  // runtime:core.Ref(anim.Action_Runtime)
 ```
 
-Sections chain parts of the clip (`next`); windows are named spans of it that arrive as
-`Span_Begin` and `Span_End` events, `name` the window ([events](../animation.md#one-event-loop)).
+Sections chain parts of the clip (`next`), each the span of its name on the clip: a marker with
+a duration, written once on the clip, so retiming the clip moves them. The other spans of the
+clip of an action are its windows, which arrive as `Span_Begin` and `Span_End` events, `name`
+the span ([events](../animation.md#one-event-loop)).
 
 ## Pitfalls
 

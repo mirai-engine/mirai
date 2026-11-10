@@ -1,9 +1,10 @@
 # IK, feet, warping, sockets, retarget, mirror
 
-Operations live in a `.pose` profile that the rig activates with the `Pose_Modifiers` component
-(`profile`, `weight`, `enabled`). Game code does not edit the profile: it aims and weighs the
-operations it names. `animation.character.setup` writes look-at, hands and feet; `pose.profile.set`
-and `animation.inspect` part `Modifiers` list and edit the rest.
+Operations are modifiers of the `.character` the rig plays (`Animation.asset`); a rig with no
+clips of its own (a rope, a tail) plays a set without clips. Game code does not edit the set: it
+aims and weighs the operations it names. `animation.character.setup` writes look-at, hands and
+feet; `animation.modifier.set` and `animation.inspect` part `Modifiers` edit and list the rest.
+Legs and pelvis come from the skeleton body; a row names a bone only to override it.
 
 ## Aim an operation
 
@@ -30,7 +31,7 @@ anim.modifier_control(goals,{rig=e,kind=.IK,weight=0,enabled=false,fade=.2})  //
 ## Feet on the ground
 
 Grounding adapts the pose to the ground that physics queries; it needs the `physics` plugin and a
-profile with a grounding table. Turn it off in the air:
+set with a grounding row. Turn it off in the air:
 
 ```odin
 anim.modifier_goal(goals,{rig=e,kind=.Grounding,weight=1 if state.standing else 0,enabled=true})
@@ -39,12 +40,13 @@ anim.modifier_goal(goals,{rig=e,kind=.Grounding,weight=1 if state.standing else 
 
 ## Warp a move to a target
 
-A `.motion` asset (`Animation.motion`) names windows over a clip's root motion. Give a window a
-target and the move ends there, by stretching the stride and the root delta:
+A warp window of the set warps the root motion over the span of its name on the clip that plays
+(a marker with a duration, written once on the clip). Give a window a target and the move ends
+there, by stretching the stride and the root delta:
 
 ```odin
 // motion:^anim.Motion_Requests
-anim.motion_target(motion,e,"Reach",anim.spatial_point(spot))  // window name of the .motion
+anim.motion_target(motion,e,"Reach",anim.spatial_point(spot))  // a warp window of the set
 anim.animation_clip(a,"stride",.2,loop=false)
 ```
 
@@ -57,7 +59,13 @@ anim.animation_clip(a,"stride",.2,loop=false)
 - A held object has the `Bone_Attachment` component: `rig` (the character), `socket` (a name in
   the skeleton, `base.text_set(att.socket[:],"hand_r")`) and `offset`. Sockets are authored with
   `skeleton.socket.set`.
-- `Pose_Source{rig}` on another mesh (a head, armor) shares or follows that rig's finished pose.
+- `Pose_Source{rig}` on another mesh is the one way another rig drives a pose: at stage
+  `Finished` (armor, a head) it shares or follows that rig's finished pose; at stage `Sampled` a
+  character of other proportions plays its sampled animation by bone names, or by the
+  `retarget_chains` of its set where the topology differs. Bones without a correspondence keep
+  their own pose.
+- A hand or foot on a contact is an IK row with a spatial target; feet on the ground are
+  grounding.
 - `animation_bone_transform(playback.ptr,rig,anim.bone_ref("head"))` reads a bone in the world;
   `animation_pose(requests,rig,anim.bone_ref("tail"),local)` overrides one bone's local pose.
 - A bone name is a path, a unique short name, or `@hand_l`-style body part that works across
@@ -65,10 +73,8 @@ anim.animation_clip(a,"stride",.2,loop=false)
 
 ## Retarget and mirror
 
-- Clips for another skeleton: `animation.retarget.bake` writes an `.anim` for the destination from
-  a `.pose` profile; the result is a plain `.anim`.
-- Live: set `Animation.source` (the source rig's entity) and `Animation.retarget` (a `.pose`);
-  bones without a correspondence keep their rest pose.
+- Clips for another skeleton: `animation.retarget.bake` writes an `.anim` for the destination by
+  the same mapping as a live `Pose_Source` of stage `Sampled`; the result is a plain `.anim`.
 - `Animation.mirror=true` swaps left and right (bone names must say the side) and reflects root
   motion; without sided names the entity plays unmirrored with the problem `animation.mirror`.
 
@@ -82,6 +88,5 @@ or minor characters.
 
 - A goal whose target entity has no transform, or whose rig did not sample last tick, leaves the
   operation unapplied for that tick without an error at the call.
-- `Look`, `IK` and `Grounding` do nothing if the rig has no `Pose_Modifiers` with a profile that
-  holds that operation.
+- `Look`, `IK` and `Grounding` do nothing if the set of the rig holds no such operation.
 - A `@part` name on a skeleton with no saved body is a problem of the entity.
