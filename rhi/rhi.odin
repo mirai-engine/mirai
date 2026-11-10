@@ -315,6 +315,39 @@ Shader_Code :: struct {
 	stage:       Shader_Stage,
 	threadgroup: [3]u32,
 	bindings:    []Binding_Info,
+	constants:   []string, // the names of its constants (`//! constant`), by id
+}
+
+// The most constants a shader declares; shaders/include/native.slang has as many.
+MAX_SHADER_CONSTANTS :: 8
+// The constants of a shader that are true in a pipeline, by id: the driver
+// compiles the shader with them folded, so one code serves every combination.
+// A SPIR-V specialization constant, a Metal function constant.
+Shader_Constants :: distinct bit_set[0 ..< MAX_SHADER_CONSTANTS; u32]
+
+// The constant of a shader by its name; false when it declares none so named.
+shader_constant :: proc "contextless" (code: ^Shader_Code, name: string) -> (constants: Shader_Constants, found: bool) {
+	if code == nil {return}
+	for constant, id in code.constants[:min(len(code.constants), MAX_SHADER_CONSTANTS)] {
+		if constant == name {return {id}, true}
+	}
+	return
+}
+
+// Whether a pipeline may set constants of code; false with the error of the device.
+@(private)
+shader_constants_valid :: proc(d: ^Device, pipeline: string, code: ^Shader_Code, constants: Shader_Constants) -> bool {
+	if len(code.constants) > MAX_SHADER_CONSTANTS {
+		set_error(d, "shader %s declares %d constants: at most %d", code.name, len(code.constants), MAX_SHADER_CONSTANTS)
+		return false
+	}
+	for id in constants {
+		if id >= len(code.constants) {
+			set_error(d, "pipeline %s sets constant %d of shader %s, which declares %d", pipeline, id, code.name, len(code.constants))
+			return false
+		}
+	}
+	return true
 }
 // The code of a shader as bytes, and the entry point its MSL names ("" for SPIR-V).
 shader_code_bytes :: proc "contextless" (code: Shader_Code) -> []u8 {
@@ -335,12 +368,14 @@ Blend_Mode :: enum u8 {Opaque, Alpha, Premultiplied, Additive, Multiply, Alpha_C
 Topology :: enum u8 {Triangles, Lines}
 
 Compute_Pipeline_Desc :: struct {
-	shader: ^Shader_Code,
-	name:   string,
+	shader:    ^Shader_Code,
+	constants: Shader_Constants,
+	name:      string,
 }
 
 Graphics_Pipeline_Desc :: struct {
 	vertex, fragment: ^Shader_Code,
+	vertex_constants, fragment_constants: Shader_Constants,
 	color_formats:    [MAX_COLOR_TARGETS]Format,
 	color_count:      int,
 	blend:            [MAX_COLOR_TARGETS]Blend_Mode,

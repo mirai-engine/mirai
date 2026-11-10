@@ -1,5 +1,6 @@
 package ui
 
+import std_anim "mirai:std/anim"
 import "mirai:std/base"
 import "mirai:std/serial"
 
@@ -32,7 +33,7 @@ tree_link :: proc(data:Tree_Data,imports:[]Tree_Data,allocator:=context.temp_all
     fonts:=make([dynamic]Tree_Font,allocator)
     anims:=make([dynamic]Tree_Anim,allocator)
     tracks:=make([dynamic]Tree_Track,allocator)
-    keys:=make([dynamic]Keyframe,allocator)
+    keys:=make([dynamic]std_anim.Keyframe,allocator)
     parts:=make([dynamic]Anim,allocator)
     anim_sets:=make([dynamic]Anim_Set,allocator)
     grid_tracks:=make([dynamic]Grid_Tracks,allocator)
@@ -58,7 +59,7 @@ tree_link :: proc(data:Tree_Data,imports:[]Tree_Data,allocator:=context.temp_all
         tracks:u16,
     }
     joined:=make([dynamic]Joined,allocator)
-    join :: proc(file:^Tree_Data,id:base.Asset_Id,joined:^[dynamic]Joined,styles:^[dynamic]Node_Style,variants:^[dynamic]Tree_Style_Variant,images:^[dynamic]Tree_Image,fonts:^[dynamic]Tree_Font,anims:^[dynamic]Tree_Anim,tracks:^[dynamic]Tree_Track,keys:^[dynamic]Keyframe,parts:^[dynamic]Anim,anim_sets:^[dynamic]Anim_Set,grid_tracks:^[dynamic]Grid_Tracks,text:^[dynamic]u8) -> (at:Joined,ok:bool) {
+    join :: proc(file:^Tree_Data,id:base.Asset_Id,joined:^[dynamic]Joined,styles:^[dynamic]Node_Style,variants:^[dynamic]Tree_Style_Variant,images:^[dynamic]Tree_Image,fonts:^[dynamic]Tree_Font,anims:^[dynamic]Tree_Anim,tracks:^[dynamic]Tree_Track,keys:^[dynamic]std_anim.Keyframe,parts:^[dynamic]Anim,anim_sets:^[dynamic]Anim_Set,grid_tracks:^[dynamic]Grid_Tracks,text:^[dynamic]u8) -> (at:Joined,ok:bool) {
         for &j in joined {if j.id==id {return j,true}}
         at={id=id,style=u16(len(styles)),image=u16(len(images)),set=u16(len(anim_sets)),font=u8(len(fonts)),anim=Anim(len(anims)),track=u32(len(tracks)),key=u32(len(keys)),part=u32(len(parts)),text=u32(len(text)),tracks=u16(len(grid_tracks))}
         grow :: proc(list:^[dynamic]$T,rows:[]T) -> bool {

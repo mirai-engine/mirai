@@ -60,8 +60,8 @@ Rules:
 - A plugin that only joins two others is `automatic`: it is enabled by itself when its
   dependencies are there, and neither of the two knows the other.
 - A plugin imports only its `dependencies` and theirs: the generator rejects any other import and
-  names the dependency to declare. Those that use physics name `physics`, and those that damage
-  destructibles also `destruct`.
+  names the dependency to declare. Those that use physics name `physics`, which is also what
+  breaks things; only what works on `Destructible` entities names `destruct`.
 - Its tests also import its `test_dependencies`, which are never enabled with it (`multiplayer`
   tests the network with `physics` bodies); `mirai test` rejects any other import before
   compiling.
@@ -136,7 +136,8 @@ demo enables. How an `editor/` adds steps, panels and tools:
   ([shapes](../../mirai-world/references/shapes.md)).
 - **`multiplayer`**: the game network, without physics, and the editor's networked Play
   ([multiplayer](../../mirai-networking/references/multiplayer.md)).
-- **Automatic bridges**: `destruct_multiplayer` (replicated fractures), `foliage_terrain` (the
+- **Automatic bridges**: `destruct_multiplayer` (replicated fractures), `physics_cache_destruct`
+  (the [recording of destructibles](physics-cache.md#recording)), `foliage_terrain` (the
   [foliage ground](../../mirai-world/references/foliage.md#ground) from the terrains),
   `foliage_multiplayer` (the replicated [removed
   instances](../../mirai-world/references/foliage.md#instances-removed-in-play)),
@@ -161,7 +162,7 @@ demo enables. How an `editor/` adds steps, panels and tools:
 - **`spawn`** (`Runtime`, `Editor`): spawn points and bodies for the players, which it destroys
   with their seat; the Spawn card of Create
   ([spawn points](../../mirai-gameplay/references/control.md#spawn-points)).
-- **`cinematics`**: timelines, shots, tracks and viewers
+- **`cinematics`** (depends on `animation`): the shots and the viewers of a clip
   ([cinematics](../../mirai-gameplay/references/cinematics.md)).
 
 - **`paint`** (`Runtime`, `Editor`)
@@ -191,8 +192,8 @@ demo enables. How an `editor/` adds steps, panels and tools:
   - GPU skinning isolated from the world and its histories; what they edit is a step of the
     document.
 - **`animation`** (`Runtime`, `Editor`)
-  - Game: clips, blend spaces, composition graphs without states, layers, dense poses, GPU skinning,
-    root motion and constraints. Contract in
+  - Game: clips, motion matching, the layers and actions of an action set, dense poses, GPU
+    skinning, root motion and constraints. Contract in
     [animation](../../mirai-animation/references/animation.md).
   - Editor: per-instance inspector and
     [authoring by API](../../mirai-animation/references/animation-authoring.md) of clips, curves,
@@ -204,10 +205,6 @@ demo enables. How an `editor/` adds steps, panels and tools:
 - **`ragdoll`** (`Runtime`, `Editor`): [ragdolls](ragdoll.md) with bodies bound to bones, free
   simulation, animated kinematics and physical animation motors; `ragdoll.setup` builds them from
   the skeleton's body.
-- **`physics_fields`** (`Runtime`, `Editor`)
-  - [Persistent fields](physics-fields.md) of sphere, box or plane with radial or directional
-    force, curve with range, noise and independent strain.
-  - Editor: volume and direction arrows when selecting a field in Edit or Simulate/pause.
 - **`ui_inspector`** (`Editor`): [document](ui-inspector.md) that shows a `.ui` as the game builds
   it and edits its nodes, layout, bindings and styles.
 - **`prompts_kenney`** (`Assets`): the Kenney prompt pack (CC0) for keyboard and mouse, Xbox and
@@ -291,8 +288,8 @@ The drop:
   added to the same clone without restarting the previous ones.
 - The environment stays fixed. The created meshes are dynamic bodies with their box as the
   collision approximation, also if they are curved or concave. The environment's characters are
-  their static capsule, destructibles without a collider are their outer mesh, and other surfaces
-  need a collider; joints do not act.
+  their static capsule, what another plugin gives its shapes (a `Collider` of kind `External`, as
+  a destructible has) is the mesh it shows, and other surfaces need a collider; joints do not act.
 - When the bodies sleep, advancing stops; `PLACEMENT_TICKS` after the last drop it pauses to
   confirm or cancel, and another drop resumes it.
 

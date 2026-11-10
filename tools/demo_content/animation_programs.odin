@@ -10,15 +10,26 @@ import anim "plugins:animation/runtime"
 import phys "plugins:physics/runtime"
 
 @(private)
-Mirai_Programs :: struct {matching,additive,graph,actions,reach,locomotion:base.Asset_Id}
+Mirai_Programs :: struct {matching,greeting,strides,additive,actions,reach,locomotion:base.Asset_Id}
 
+// The action set of a station of the gallery: its layers over the base, and its actions.
+@(private)
+gallery_action_set :: proc(o:^Out,name:string,id,animation:base.Asset_Id,profile:anim.Action_Profile) {
+    profile:=profile;profile.info.animation=animation
+    file:=fmt.tprintf("assets/characters/mirai/%s.action",name)
+    asset.content_check(&o.content,file,anim.action_profile_save(path(o,file),&o.content.types,id,profile))
+}
 
 // The programs of the gallery's Mirai over mirai_gallery.anim: its locomotion by matching over
-// idle, walk and jog, a wave space added over the walk, a greeting layer over the walk, its named
-// actions and the warp of its stride to a target.
+// idle, walk and jog, and the action sets of its stations: a greeting layer over the left arm, a
+// jog layer in step with the walk, a wave space added over the walk, and its named actions, with
+// the warp of its stride to a target.
 @(private)
 gallery_program_assets :: proc(o:^Out,model:^importer.Imported_Model,animation:base.Asset_Id,stride_time:f32) -> (programs:Mirai_Programs) {
-    programs={asset.content_id(PROJECT,"match","mirai_gallery"),asset.content_id(PROJECT,"graph","mirai_wave_additive"),asset.content_id(PROJECT,"graph","mirai_greeting"),asset.content_id(PROJECT,"action","mirai_actions"),asset.content_id(PROJECT,"motion","mirai_reach"),gallery_mirai_motion(o)}
+    programs={
+        matching=asset.content_id(PROJECT,"match","mirai_gallery"),greeting=asset.content_id(PROJECT,"action","mirai_greeting"),strides=asset.content_id(PROJECT,"action","mirai_strides"),
+        additive=asset.content_id(PROJECT,"action","mirai_wave_additive"),actions=asset.content_id(PROJECT,"action","mirai_actions"),reach=asset.content_id(PROJECT,"motion","mirai_reach"),locomotion=gallery_mirai_motion(o),
+    }
     shoulder:=rig_path(model,"LeftShoulder")
     clips:[3]anim.Match_Source
     for name,i in ([3]string{"idle","walk","jog"}) {base.text_set(clips[i].clip[:],name);clips[i].loop=true;clips[i].modes=1<<u32(phys.MODE_WALKING)}
@@ -34,29 +45,27 @@ gallery_program_assets :: proc(o:^Out,model:^importer.Imported_Model,animation:b
     defer {delete(wave.segments);delete(wave.triangles)}
     if wave_error!=.None {asset.content_check(&o.content,"mirai_wave.blend",wave_error);return}
     asset.content_check(&o.content,"assets/characters/mirai/mirai_wave.blend",anim.blend_space_save(path(o,"assets/characters/mirai/mirai_wave.blend"),&o.content.types,space,wave))
-    parameters:=[1]anim.Graph_Parameter{{value=1,min=0,max=1}}
-    base.text_set(parameters[0].name[:],game.GALLERY_WAVE)
-    additive:=[3]anim.Graph_Node{anim.GRAPH_NODE_DEFAULT,anim.GRAPH_NODE_DEFAULT,anim.GRAPH_NODE_DEFAULT}
-    additive[0].kind=.Clip;base.text_set(additive[0].clip[:],"walk");additive[0].sync_mode=.Independent
-    additive[1].kind,additive[1].blend_space,additive[1].x_param=.Blend_Space,space,0
-    additive[2].kind,additive[2].left,additive[2].right,additive[2].weight=.Additive,0,1,1
-    for name,i in ([3]string{"Walk","Wave space","Wave over walk"}) {base.text_set(additive[i].name[:],name)}
-    file:="assets/characters/mirai/mirai_wave_additive.agraph"
-    asset.content_check(&o.content,file,anim.graph_save(path(o,file),&o.content.types,programs.additive,{info={animation=animation,output=2},parameters=parameters[:],nodes=additive[:]}))
-    greeting:=[3]anim.Graph_Node{anim.GRAPH_NODE_DEFAULT,anim.GRAPH_NODE_DEFAULT,anim.GRAPH_NODE_DEFAULT}
-    for name,i in ([2]string{"walk","wave"}) {greeting[i].kind=.Clip;base.text_set(greeting[i].clip[:],name);greeting[i].sync_mode=.Independent}
-    greeting[2].kind,greeting[2].left,greeting[2].right,greeting[2].weight_param=.Layer,0,1,0
-    base.text_set(greeting[2].over[:],shoulder)
-    for name,i in ([3]string{"Walk","Greeting clip","Left arm greeting"}) {base.text_set(greeting[i].name[:],name)}
-    file="assets/characters/mirai/mirai_greeting.agraph"
-    asset.content_check(&o.content,file,anim.graph_save(path(o,file),&o.content.types,programs.graph,{info={animation=animation,output=2},parameters=parameters[:],nodes=greeting[:]}))
-    definitions:=[2]anim.Action_Definition{anim.ACTION_DEFINITION_DEFAULT,anim.ACTION_DEFINITION_DEFAULT}
-    base.text_set(definitions[0].name[:],"Greet");base.text_set(definitions[0].clip[:],"wave");definitions[0].over=anim.bone_ref(shoulder);definitions[0].priority=1
-    base.text_set(definitions[1].name[:],"Step");base.text_set(definitions[1].clip[:],"stride");definitions[1].layer=2;definitions[1].root_motion=.In_Place;definitions[1].priority=2;definitions[1].fade_in=.15;definitions[1].fade_out=.2
+    layer :: proc(name:string) -> anim.Stack_Layer {value:=anim.STACK_LAYER_DEFAULT;base.text_set(value.name[:],name);return value}
+    // The wave over the left arm of the walk, by the weight the game sets.
+    arm:=layer(game.GALLERY_ARM);base.text_set(arm.clip[:],"wave");arm.over,arm.fade=anim.bone_ref(shoulder),.35
+    gallery_action_set(o,"mirai_greeting",programs.greeting,animation,{layers={arm}})
+    // The jog in step with the walk, by the weight the game sets.
+    jog:=layer(game.GALLERY_JOG);base.text_set(jog.clip[:],"jog");jog.sync,jog.weight,jog.fade=true,.5,.25
+    gallery_action_set(o,"mirai_strides",programs.strides,animation,{layers={jog}})
+    // What the wave space changes from its start, added over the walk at the place its axis is set to.
+    offset:=layer("Wave offset");offset.mode,offset.space,offset.fade=.Additive,space,0
+    gallery_action_set(o,"mirai_wave_additive",programs.additive,animation,{layers={offset}})
+    // Greet in a layer over the left arm; Step and Wave over the whole body, which over the matching
+    // of a .match leave it and come back to it by inertialization.
+    greet:=layer("Arm");greet.over=anim.bone_ref(shoulder)
+    definitions:=[3]anim.Action_Definition{anim.ACTION_DEFINITION_DEFAULT,anim.ACTION_DEFINITION_DEFAULT,anim.ACTION_DEFINITION_DEFAULT}
+    base.text_set(definitions[0].name[:],"Greet");base.text_set(definitions[0].clip[:],"wave");base.text_set(definitions[0].layer[:],"Arm");definitions[0].priority=1
+    base.text_set(definitions[1].name[:],"Step");base.text_set(definitions[1].clip[:],"stride");definitions[1].root_motion=.In_Place;definitions[1].priority=2;definitions[1].fade_in=.15;definitions[1].fade_out=.2
+    base.text_set(definitions[2].name[:],"Wave");base.text_set(definitions[2].clip[:],"wave");definitions[2].fade_in,definitions[2].fade_out=.15,.2
     sections:=[2]anim.Action_Section{{action=0,start=0,end=2,next=-1},{action=1,start=0,end=1.5,next=-1}}
     base.text_set(sections[0].name[:],"Greeting");base.text_set(sections[1].name[:],"Advance")
     action_window:=anim.Action_Window{action=1,start=.3,end=1.2};base.text_set(action_window.name[:],"Movement")
-    asset.content_check(&o.content,"assets/characters/mirai/mirai_actions.action",anim.action_profile_save(path(o,"assets/characters/mirai/mirai_actions.action"),&o.content.types,programs.actions,{info={animation=animation},actions=definitions[:],sections=sections[:],windows={action_window}}))
+    gallery_action_set(o,"mirai_actions",programs.actions,animation,{layers={greet},actions=definitions[:],sections=sections[:],windows={action_window}})
     window:=anim.MOTION_WINDOW_DEFAULT;window.end=stride_time;window.rotation=false;window.axes={true,false,true};base.text_set(window.clip[:],"stride");base.text_set(window.name[:],game.GALLERY_REACH)
     asset.content_check(&o.content,"assets/characters/mirai/mirai_reach.motion",anim.motion_profile_save(path(o,"assets/characters/mirai/mirai_reach.motion"),&o.content.types,programs.reach,{info={pose=anim.POSE_WARP_PROFILE_DEFAULT},windows={window}}))
     return

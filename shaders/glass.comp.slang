@@ -2,8 +2,8 @@
 // The camera looks along its rays: they show a relative emission (hit_emission).
 #define MIRAI_HITS_SHOW_RELATIVE_EMISSION 1
 //! variant hw MIRAI_HW_RT=1
-//! variant color MIRAI_GLASS_MEANS=1
-//! variant color_hw MIRAI_GLASS_MEANS=1 MIRAI_HW_RT=1
+// color: with colored shadows, the rays cross glass as the mean of its instance (trace.slang).
+//! constant color MIRAI_GLASS_MEANS
 // One layer of glass over the scene behind it, once per pixel whatever the
 // number of surfaces drawn there: the light of the layer, with its traced
 // reflection, plus what it lets through of the scene. A sheet shows the scene

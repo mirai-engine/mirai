@@ -105,8 +105,8 @@ probe_measure :: proc(w:core.World_Ref,body:core.Entity) -> (measure:Body_Measur
 probe_climb_tick :: proc(w:^Probe_World,hero,seat:core.Entity) {
     dt:=f32(1.0/60)
     climb:=&w.climb
-    place:=core.get(&w.transforms,hero)
-    standing:=&core.get(&w.standings,hero).standing
+    place:=core.edit(&w.transforms,hero)
+    standing:=&core.edit(&w.standings,hero).standing
     jump:=input.seat_action(core.read(&w.seats),seat,PROBE_JUMP)
     if jump.pressed && standing^ {climb.velocity,climb.rise=6,0.6}
     if jump.down && climb.rise>0 {
@@ -132,7 +132,7 @@ probe_tick :: proc(data,shared,editor,app:rawptr) {
     core.revisions_moved(core.world_revisions(core.world_ref(data,(cast(^host.App)app).info)))
     input.input_holds(&w.seats,&w.holds,w.time,nil)
     for row in 0..<core.count(&w.seats) {
-        input.seat_feed(core.at(&w.seats,row),&w.input,&w.bindings,false)
+        input.seat_feed(core.edit_at(&w.seats,row),&w.input,&w.bindings,false,w.time.dt)
     }
     w.score.points+=1
     for ping in core.take(&w.pings.queue) {w.score.points+=ping.amount}
@@ -147,8 +147,8 @@ probe_tick :: proc(data,shared,editor,app:rawptr) {
         return
     }
     move:=input.seat_action(core.read(&w.seats),seat,PROBE_MOVE)
-    core.get(&w.moves,hero).move={move.vector.x,0,-move.vector.y}
-    place:=core.get(&w.transforms,hero)
+    core.edit(&w.moves,hero).move={move.vector.x,0,-move.vector.y}
+    place:=core.edit(&w.transforms,hero)
     place.position.x=clamp(place.position.x+move.vector.x,-100,6)
     if input.seat_action(core.read(&w.seats),seat,PROBE_JUMP).pressed {place.position.y-=5}
 }
@@ -253,7 +253,7 @@ the_game_that_plays_is_changed_and_read_by_its_storages_and_conditions :: proc(t
     error,text=probe_call(f,"play.set",strings.concatenate({`{"entity":"`,hero,`","position":[4,5,6],"components":{"Probe_Health":{"target":"`,fmt.tprintf("%016x",u64(f.foe)),`"}}}`},context.temp_allocator))
     testing.expect_value(t,error.code,0)
     testing.expect(t,strings.contains(text,`"teleported": true`),text)
-    health,_:=core.get(core.read(&running.health),f.hero)
+    health,_:=core.get(&running.health,f.hero)
     testing.expect_value(t,health,Probe_Health{points=3,target=f.foe})
     testing.expect_value(t,entity_world(run_ref(&f.s,run_find(&f.s,0)),f.hero).position,[3]f32{4,5,6})
     testing.expect_value(t,len(running.jumps.queue.items),1)
@@ -490,7 +490,7 @@ a_drive_steers_the_focused_player_to_its_target_and_says_where_and_why_it_stoppe
     defer probe_close(f)
     probe_drive(f)
     running:=cast(^Probe_World)run_find(&f.s,0).world
-    place:=core.get(&running.transforms,f.hero)
+    place:=core.edit(&running.transforms,f.hero)
     moves:=0
     context.user_ptr=&moves
     api_state(&f.s).step_frame=probe_frame_moves
@@ -543,7 +543,7 @@ a_drive_heads_for_the_next_point_of_the_way_a_plugin_gives :: proc(t:^testing.T)
     }
     f.s.providers={library=f.s.library_generation+1,route={next=way},routes=true}
     running:=cast(^Probe_World)run_find(&f.s,0).world
-    place:=core.get(&running.transforms,f.hero)
+    place:=core.edit(&running.transforms,f.hero)
     place.position={0,0,0}
     error,text:=probe_call(f,"play.step",`{"drive":{"position":[-4,0,0],"move":"move"},"for":2}`)
     testing.expect(t,error.code==0 && strings.contains(text,`"stopped":"Ticks"`),text)
@@ -572,7 +572,7 @@ a_drive_holds_its_jump_across_a_gap_and_stands_on_a_raised_platform :: proc(t:^t
     testing.expect_value(t,play_stance(&f.s,w,f.hero),Stance.Standing)
     testing.expect_value(t,play_stance(&f.s,w,f.foe),Stance.Unknown)
     running.climb.on,running.climb.platform=true,platform
-    place:=core.get(&running.transforms,f.hero)
+    place:=core.edit(&running.transforms,f.hero)
     place.position={0,0,0}
     error,text:=probe_call(f,"play.step",`{"drive":{"position":[10,0,0],"within":0.5,"move":"move"},"for":"5s"}`)
     testing.expectf(t,error.code==0,"%v",error)
@@ -596,7 +596,7 @@ a_drive_measures_what_is_at_hand_by_the_body_it_steers :: proc(t:^testing.T) {
     probe_drive(f)
     f.s.providers={library=f.s.library_generation+1,bodies={0={measure=probe_measure}},body_count=1}
     running:=cast(^Probe_World)run_find(&f.s,0).world
-    place:=core.get(&running.transforms,f.hero)
+    place:=core.edit(&running.transforms,f.hero)
     cases:=[?]struct{height:f32,stopped:string}{{0,"Arrived"},{BODY_PERSON.height*0.1,"Ticks"}}
     for c in cases {
         place.position={1,0,0}
@@ -663,7 +663,7 @@ a_step_holds_each_segment_for_its_ticks_in_order_with_its_edges_at_its_first :: 
     testing.expect(t,.Space in seen.pressed[3] && .Space in seen.released[3] && .Space not_in seen.keys[3],"a tap is pressed and released inside its tick, never down")
     // The keys reach the action as those of a person: a hold of two ticks, and a tap shorter than a tick.
     j:=seen.jumps
-    testing.expect(t,j[0].pressed && j[1].down && !j[1].pressed && j[2].released && j[2].released_held==2,"held two ticks")
+    testing.expect(t,j[0].pressed && j[1].down && !j[1].pressed && j[2].released && abs(j[2].released_held-2.0/60)<1e-5,"held two ticks")
     testing.expect(t,j[3].pressed && j[3].released && j[3].tapped && !j[3].down,"tapped inside one tick")
     testing.expect(t,!j[4].down && !j[4].pressed,"let go")
     // A press is the pointer over the button, the button held, and let go.
@@ -721,9 +721,9 @@ a_step_plays_the_devices_of_a_person_tick_by_tick :: proc(t:^testing.T) {
     j:=seen.jumps
     testing.expect(t,j[0].pressed && j[0].released && j[0].tapped && !j[0].down,"a tap inside the first tick")
     testing.expect(t,!j[1].down && !j[2].down)
-    testing.expect(t,j[3].pressed && j[5].down && j[5].held_ticks==3 && j[6].released && j[6].tapped && j[6].released_held==3,"0.05 s is three ticks, a tap")
+    testing.expect(t,j[3].pressed && j[5].down && abs(j[5].held-3.0/60)<1e-5 && j[6].released && j[6].tapped && abs(j[6].released_held-3.0/60)<1e-5,"0.05 s is three ticks, a tap")
     testing.expect(t,j[8].pressed && !j[36].holding && j[37].hold_started && j[55].holding,"0.8 s holds past the hold threshold")
-    testing.expect(t,j[56].released && !j[56].tapped && j[56].released_held==48,"let go after 48 ticks")
+    testing.expect(t,j[56].released && !j[56].tapped && abs(j[56].released_held-48.0/60)<1e-4,"let go after 48 ticks")
     testing.expect(t,!j[57].down && !j[57].pressed && seen.keys[57]=={},"nothing is held after the segments")
 }
 
@@ -898,7 +898,7 @@ the_history_reads_what_a_live_trace_read_and_a_rewound_run_steps_the_same_again 
     f.info.loops[.Game][.Fixed]=proc(data,shared,editor,app:rawptr) {
         probe_tick(data,shared,editor,app)
         w:=cast(^Probe_World)data
-        core.at(&w.transforms,0).position.x=f32(w.score.points)
+        core.edit_at(&w.transforms,0).position.x=f32(w.score.points)
     }
     testing.expect(t,probe_steps(f,1))
     r.history.interval=4
@@ -941,7 +941,7 @@ the_history_reads_what_a_live_trace_read_and_a_rewound_run_steps_the_same_again 
     testing.expect_value(t,error.code,0)
     testing.expect(t,strings.contains(text,`"next": 0`) && strings.count(text,`{"tick":`)==int(last-next)+1,text)
     // An edit while paused is where the frames after it start, not where the ones before lead.
-    core.get(&running.health,f.hero).points=9
+    core.edit(&running.health,f.hero).points=9
     testing.expect(t,probe_steps(f,1))
     error,text=probe_call(f,"play.history",`{"verify":true}`)
     testing.expect_value(t,error.code,0)
@@ -1010,7 +1010,7 @@ verify_says_the_first_tick_and_field_where_playing_the_past_again_differs :: pro
         if w.time.tick==6 {w.score.points+=int(ran)}
         // A change cursor, which reads otherwise in a World restored from a copy, is no difference.
         if w.time.tick==3 {w.score.seen.gone=u64(ran)}
-        if w.time.tick==10 {core.at(&w.transforms,0).position.x+=f32(ran)}
+        if w.time.tick==10 {core.edit_at(&w.transforms,0).position.x+=f32(ran)}
     }
     testing.expect(t,probe_steps(f,1))
     r.history.interval=4

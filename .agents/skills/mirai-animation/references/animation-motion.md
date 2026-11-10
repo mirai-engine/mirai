@@ -29,18 +29,18 @@ Advance by distance:
 - It keeps events and root motion of the traversed interval. `distance_request_check` validates
   player, active clip, time, direction and clock before consuming; the API and the tick share the
   validator.
-- In a graph it advances the clock of the active source: the synchronized ones follow it and the
-  independent ones keep their dt. A dominant action accepts the time if its interval is continuous.
+- In a `.match` it advances the clock of the clip that plays, and those in phase with it follow.
+  A dominant action accepts the time if its interval is continuous.
 - A regressive time asks for `seek=true`: it is a discontinuity, without events or root motion of
   what was skipped.
 
 `Motion_Runtime` (of the world, copied for Play and rollback):
 
-- Flat rows per rig with targets, resolved references and diagnostics. It is discovered by the
-  `layout/version` stamp of `Animation`: without writes it does not walk the table. `motion_prepare`
+- Flat rows per rig with targets, resolved references and diagnostics. It is discovered from
+  the `core.changes` of `Animation`: it looks only at the rows written since. `motion_prepare`
   resolves references when the profile, revision or bind changes and compacts the instances that no
   longer use `.motion`; its index checks the generational handle.
-- A failed reservation keeps the requests and does not confirm the stamp.
+- A failed reservation keeps the requests and does not keep what it saw of `Animation`.
 
 ## Requests and order
 

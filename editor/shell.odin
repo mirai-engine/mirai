@@ -1119,7 +1119,7 @@ bar_build :: proc(s:^Session,w:core.World_Ref) {
                 if ui.button(ctx,graphics,{icon=ui.icon_user(u8(User_Icon.Graphics)),tip="Graphics",style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,active=ui.popup_is_open(ctx,graphics_popup(g))}).clicked {command_run(s,"graphics")}
             }
             if s.mode!=.Play && ctx.size.x>=900 {share_button(s,BAR_BUTTON_HEIGHT)}
-            if !document_is_prefab(s) && document==nil {play_controls(s)}
+            if document==nil {play_controls(s)}
         }
     }
     g.rects.bar={0,0,ctx.size.x,th.bar_height+toolbar_height(g)}
@@ -1542,7 +1542,7 @@ modal_build :: proc(s:^Session) {
             agents:=working==1?"An agent is working":fmt.tprintf("%d agents are working",working)
             others:=scene_switch_others(s,g.pending)
             ui.label(ctx,unsaved?"Unsaved changes":others!=""?"Change the scene?":agents,th.font_title,th.text,font=ui.FONT_SEMIBOLD)
-            if others!="" {ui.paragraph(ctx,others,th.font_small,th.text_muted)}
+            if others!="" {ui.text(ctx,others,ui.prose(ctx,th.font_small,th.text_muted))}
             if pending_plugin(g.pending) {
                 ui.label(ctx,"The players read the saved files",th.font_small,th.text_muted)
             } else if unsaved {
@@ -1644,7 +1644,7 @@ modal_row :: proc(ctx:^ui.Context,icon:ui.Icon,name,kind:string) {
 
 @(private)
 modal_asset_row :: proc(s:^Session,ctx:^ui.Context,file:^asset.Registry_File) {
-    icon,_:=asset_icon(s,file.kind)
+    icon,_:=asset_icon(s,shown_kind(file))
     kind:="File"
     if info,known:=asset.kind_info(file.kind);known {kind=strings.to_upper_camel_case(info.name,context.temp_allocator)}
     modal_row(ctx,icon,asset_name(file.path),kind)

@@ -95,7 +95,7 @@ fuzz_attempt :: proc(f:^Fuzz,data:[]u8) {
         if view,error:=mesh_view(&a,f.types);error==.None {mesh_check_indices(view)}
     case KIND_TEXTURE:  texture_view(&a,f.types)
     case KIND_MATERIAL: material_view(&a,f.types)
-    case KIND_SCENE,KIND_PREFAB:
+    case KIND_SCENE:
         if view,error:=scene_view(&a,f.types);error==.None {_=scene_view_check(view)}
     case KIND_ANIMATION: animation_view(&a,f.types)
     case KIND_SKELETON:  skeleton_view(&a,f.types)
@@ -203,7 +203,7 @@ damaged_authored_fractures_go_through_every_command :: proc(t:^testing.T) {
 @(test)
 damaged_meshes_textures_materials_scenes_and_prefabs_go_through_every_command :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    for file in ([]string{"gallery/plant.gltf/Plant.mesh","gallery/plant.gltf/Leaves.mat","showcase/hud_badge.tex","showcase/showcase.scene","gallery/vase.obj/vase.prefab"}) {
+    for file in ([]string{"gallery/plant.gltf/Plant.mesh","gallery/plant.gltf/Leaves.mat","showcase/hud_badge.tex","showcase/showcase.scene","gallery/vase.obj/vase.scene"}) {
         fuzz_file(t,&types,strings.concatenate({DEMO,file},context.temp_allocator),1200)
     }
 }
@@ -213,7 +213,7 @@ damaged_meshes_textures_materials_scenes_and_prefabs_go_through_every_command ::
 @(test)
 damaged_text_of_an_asset_is_packed_or_refused :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    for file in ([]string{"showcase/hud.ui","showcase/lift.anim","gallery/plant.gltf/Leaves.mat","gallery/vase.obj/vase.prefab"}) {
+    for file in ([]string{"showcase/hud.ui","showcase/lift.anim","gallery/plant.gltf/Leaves.mat","gallery/vase.obj/vase.scene"}) {
         path:=strings.concatenate({DEMO,file},context.temp_allocator)
         seed:Document
         if !testing.expect_value(t,document_load(&seed,path),Error.None) {continue}

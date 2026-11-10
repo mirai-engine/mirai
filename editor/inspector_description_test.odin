@@ -5,7 +5,11 @@ import "mirai:core"
 import "mirai:std/base"
 import "mirai:ui"
 
-@(private="file") Description_Tag :: struct {}
+@(private="file")
+@(component,description="A component description that explains the purpose of this entity capability and wraps to fit beside the pointer without covering the whole screen.")
+Description_Tag :: struct {}
+
+@(private="file") Description_World :: struct {using world:core.Test_World,tags:core.Table(Description_Tag)}
 
 @(test)
 component_descriptions_wait_for_the_pointer_to_rest_on_the_header :: proc(t:^testing.T) {
@@ -16,9 +20,11 @@ component_descriptions_wait_for_the_pointer_to_rest_on_the_header :: proc(t:^tes
     defer core.value_free(&inspector,type_info_of(Inspector))
     gui:=Editor_Ui{ctx=&ctx}
     session:=Session{gui=&gui,inspector=&inspector}
-    metadata:=core.Table_Info{name="Description_Tag",library="physics",type=Description_Tag,info=type_info_of(Description_Tag),
-        description="A component description that explains the purpose of this entity capability and wraps to fit beside the pointer without covering the whole screen."}
-    inspect:=Inspect{s=&session,t=&metadata,size=0}
+    info,described:=core.test_info(t,Description_World,test_types)
+    if !described {return}
+    defer core.test_info_destroy(&info)
+    metadata:=&info.tables[0]
+    inspect:=Inspect{s=&session,t=metadata,size=0}
     frame :: proc(t:^testing.T,inspect:^Inspect,input:ui.Input) {
         ctx:=inspect.s.gui.ctx
         ui.frame_begin(ctx,input)
@@ -49,7 +55,9 @@ component_descriptions_wait_for_the_pointer_to_rest_on_the_header :: proc(t:^tes
     input.dt=ui.TOOLTIP_DELAY+0.1
     frame(t,&inspect,input)
     testing.expect_value(t,ctx.tooltip,metadata.description)
+    description:=metadata.description
     metadata.description=""
     frame(t,&inspect,input)
     testing.expect_value(t,ctx.tooltip,"")
+    metadata.description=description
 }

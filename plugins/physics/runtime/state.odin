@@ -20,7 +20,8 @@ Physics_Settings :: struct {
     bodies:i32 `mirai:"section=Capacity,advanced"`,
     shapes,contacts,joints,characters:i32 `mirai:"advanced"`,
     hulls,meshes,heightfields:i32 `mirai:"advanced"`,
-    fluids:i32 `mirai:"advanced"`, // Fluid_Volume
+    fluids:i32 `mirai:"advanced"`, // Fluid
+    breakables,pieces,bonds:i32 `mirai:"advanced"`, // of what breaks: a Destructible is a breakable of pieces held by bonds
 
     events:i32 `mirai:"advanced"`, // of each kind per tick: contacts, sleep, hits
     substeps:i32 `mirai:"section=Simulation,advanced"`,
@@ -36,7 +37,7 @@ Physics_State :: struct {
     world:sim.World,
     links:core.Entity_Map(Link),        // by entity with a body, a collider, a character or a proxy
     joints:core.Entity_Map(Joint_Link), // by entity with a Joint
-    fluids:core.Entity_Map(Fluid_Link), // by entity with a Fluid_Volume
+    fluids:core.Entity_Map(Fluid_Link), // by entity with a Fluid
     fluids_synced:u64, // the versions of the tables the fluids were last made from
     world_body:sim.Body_Handle, // the static body joints to the world hold on to
     geometry:[dynamic]Geometry_Mark, // by slot of the hulls, then the meshes, then the heightfields of the world
@@ -177,12 +178,9 @@ Body_Request_Kind :: enum u8 {
     Velocity,  // linear and angular
     Impulse,   // linear at the center of mass or at point; angular
     Force,
-    Radial_Force,
-    Radial_Impulse,
-    Box_Force,
-    Sphere_Force,
-    Box_Radial_Force,
-    Plane_Force, // in a box, strongest at its local +Y face and falling with the depth below it
+    Area_Force,   // on every body in a volume; it names no entity
+    Area_Impulse,
+    Area_Strain,  // of the breakables in a volume, once the step ran (strain_area)
     Kinematic, // the pose a kinematic body reaches in the tick
     Manipulate,
     Release_Manipulation,
@@ -196,12 +194,15 @@ Body_Request :: struct {
     linear,angular:[3]f32,
     point:[3]f32,
     at_point,override:bool,
-    radius,strength:f32,
+    // Of an area request: the volume placed at position, rotation and scale; linear is where it pushes,
+    // zero for away from its center.
+    area:volume.Volume,
+    scale:[3]f32,
+    strength:f32,
     falloff:sim.Radial_Falloff,
     filter:Query_Filter,
-    half_extents:[3]f32,
-    falloff_range:Weight_Range, // of a volume request; the zero value is {0,1}
-    noise:Field_Noise,          // of a volume request
+    falloff_range:Weight_Range, // the zero value is {0,1}
+    noise:Field_Noise,
 }
 
 // The game moves bodies and characters by pushing here; the simulation takes
@@ -236,24 +237,17 @@ apply_torque :: proc(requests:^Body_Requests,e:core.Entity,torque:[3]f32) {
 Radial_Falloff :: sim.Radial_Falloff
 Weight_Range :: sim.Weight_Range
 Field_Noise :: sim.Field_Noise
-apply_radial_force :: proc(requests:^Body_Requests,center:[3]f32,radius,strength:f32,falloff:Radial_Falloff=.Linear,filter:=QUERY_FILTER_DEFAULT,range:Weight_Range={},noise:Field_Noise={}) {
-    core.push(&requests.queue,Body_Request{kind=.Radial_Force,position=center,radius=radius,strength=strength,falloff=falloff,filter=filter,falloff_range=range,noise=noise})
-}
-apply_radial_impulse :: proc(requests:^Body_Requests,center:[3]f32,radius,strength:f32,falloff:Radial_Falloff=.Linear,velocity_change:=false,filter:=QUERY_FILTER_DEFAULT,range:Weight_Range={},noise:Field_Noise={}) {
-    core.push(&requests.queue,Body_Request{kind=.Radial_Impulse,position=center,radius=radius,strength=strength,falloff=falloff,override=velocity_change,filter=filter,falloff_range=range,noise=noise})
-}
-apply_box_force :: proc(requests:^Body_Requests,center,half_extents:[3]f32,rotation:mm.Quat,force:[3]f32,falloff:Radial_Falloff=.Constant,filter:=QUERY_FILTER_DEFAULT,range:Weight_Range={},noise:Field_Noise={}) {
-    core.push(&requests.queue,Body_Request{kind=.Box_Force,position=center,half_extents=half_extents,rotation=rotation,linear=force,falloff=falloff,filter=filter,falloff_range=range,noise=noise})
-}
-apply_sphere_force :: proc(requests:^Body_Requests,center:[3]f32,radius:f32,force:[3]f32,falloff:Radial_Falloff=.Constant,filter:=QUERY_FILTER_DEFAULT,range:Weight_Range={},noise:Field_Noise={}) {
-    core.push(&requests.queue,Body_Request{kind=.Sphere_Force,position=center,radius=radius,linear=force,falloff=falloff,filter=filter,falloff_range=range,noise=noise})
-}
-apply_box_radial_force :: proc(requests:^Body_Requests,center,half_extents:[3]f32,rotation:mm.Quat,strength:f32,falloff:Radial_Falloff=.Linear,filter:=QUERY_FILTER_DEFAULT,range:Weight_Range={},noise:Field_Noise={}) {
-    core.push(&requests.queue,Body_Request{kind=.Box_Radial_Force,position=center,half_extents=half_extents,rotation=rotation,strength=strength,falloff=falloff,filter=filter,falloff_range=range,noise=noise})
-}
-// A force in a box whose local +Y face is a plane: the falloff goes from that face down to the -Y face.
-apply_plane_force :: proc(requests:^Body_Requests,center,half_extents:[3]f32,rotation:mm.Quat,force:[3]f32,falloff:Radial_Falloff=.Linear,filter:=QUERY_FILTER_DEFAULT,range:Weight_Range={},noise:Field_Noise={}) {
-    core.push(&requests.queue,Body_Request{kind=.Plane_Force,position=center,half_extents=half_extents,rotation=rotation,linear=force,falloff=falloff,filter=filter,falloff_range=range,noise=noise})
+// A force (N) on every body whose center of mass is in a volume placed at pose, in this tick: a blast, a
+// gust, a magnet. With impulse, an impulse (N s), or a change of velocity (m/s) with velocity_change. It
+// pushes away from the center of the volume, or along the up of a Plane (a negative strength pulls the
+// other way); with `along`, that way of the world instead. The body gets the strength by the weight of the volume
+// where it is, 1 inside and rising over its blend from the border, through the falloff curve; range and
+// noise scale it. A pose without rotation or scale is one that neither turns nor scales.
+apply_area :: proc(requests:^Body_Requests,area:volume.Volume,pose:mm.Transform,strength:f32,along:[3]f32={},impulse:=false,velocity_change:=false,falloff:Radial_Falloff=.Linear,filter:=QUERY_FILTER_DEFAULT,range:Weight_Range={},noise:Field_Noise={}) {
+    core.push(&requests.queue,Body_Request{
+        kind=impulse?.Area_Impulse:.Area_Force,area=area,position=pose.position,rotation=pose.rotation,scale=pose.scale,
+        strength=strength,linear=along,override=velocity_change,falloff=falloff,filter=filter,falloff_range=range,noise=noise,
+    })
 }
 // The kinematic body takes the velocity that reaches the pose in one tick, so it pushes what it touches.
 move_kinematic :: proc(requests:^Body_Requests,e:core.Entity,position:[3]f32,rotation:mm.Quat=1) {
@@ -810,6 +804,7 @@ state_make :: proc(state:^Physics_State,settings:^Physics_Settings,job_system:^j
     made:=settings_capacities(settings^)
     desc.body_capacity,desc.shape_capacity,desc.contact_capacity,desc.joint_capacity=int(made.bodies),int(made.shapes),int(made.contacts),int(made.joints)
     desc.character_capacity,desc.fluid_capacity=int(made.characters),int(made.fluids)
+    desc.breakable_capacity,desc.piece_capacity,desc.bond_capacity=int(made.breakables),int(made.pieces),int(made.bonds)
     desc.hull_capacity,desc.mesh_capacity,desc.heightfield_capacity=int(made.hulls),int(made.meshes),int(made.heightfields)
     desc.event_capacity,desc.substeps=int(made.events),int(made.substeps)
     desc.worker_count=jobs_workers(job_system)

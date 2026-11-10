@@ -43,7 +43,8 @@ an_anchored_ccd_chain_on_the_floor_moves_after_successive_impulses :: proc(t:^te
         for activation in 0..<3 {
             before:[7]Vec3
             for body,index in links {before[index]=body_position(&w,body)}
-            count,ok:=world_apply_radial(&w,{0,.4,0},4,35,impulse=true,velocity_change=true)
+            blast:=Test_Ball{{0,.4,0},4}
+            count,ok:=world_apply_area(&w,test_ball_area(&blast),{35,0,0},radial=true,impulse=true,velocity_change=true)
             testing.expect(t,ok && count==7)
             maximum_move:f32
             stationary_with_velocity:=0

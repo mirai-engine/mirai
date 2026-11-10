@@ -11,9 +11,9 @@ import uf "mirai:std/ui_format"
 //   images      texture (an asset id), the part of it shown and the borders of its nine slice
 //   anims       animations: tracks that play together, or other animations in sequence or in parallel
 //   tracks      a property and its keys
-//   keys        time, value and ease
+//   keys        those of std/anim: time, value, ease and interpolation
 //   parts       the animations a sequence or a parallel plays
-//   anim_sets   the animation a node plays when it is shown, hidden, hovered or pressed
+//   anim_sets   the animation a node plays when it is shown, hidden or clicked
 //   fonts       the .font assets the styles name
 //   grid_tracks  the widths of the columns of the grids that name them
 //   tokens       values by name that styles and other files take
@@ -31,7 +31,7 @@ import uf "mirai:std/ui_format"
 // that links both reads and writes the file: runtime.ui_tree_document and
 // runtime.ui_tree_view.
 
-UI_VERSION :: 6
+UI_VERSION :: 7
 
 UI_TABLE_NODES :: "nodes"
 UI_TABLE_STYLES :: "styles"
@@ -69,7 +69,7 @@ UI_TABLE_TEXT :: "text"
 @(private="file") Ui_Anim_Links :: struct {kind:u8,first,count:u32}
 @(private="file") Ui_Track_Links :: struct {first_key,key_count:u32}
 @(private="file") Ui_Key_Time :: struct {time:f32}
-@(private="file") Ui_Set_Links :: struct {shown,hidden,hovered,unhovered,pressed,released,focused,unfocused,selected,unselected,clicked:u16}
+@(private="file") Ui_Set_Links :: struct {shown,hidden,clicked:u16}
 
 // Whether the records of a .ui are a tree that can be built (ui.tree_load
 // asks the same): the nodes come in pre-order under boxes, no deeper than

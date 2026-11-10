@@ -7,14 +7,14 @@ import inp "mirai:engine/input"
 import phys "plugins:physics/runtime"
 import render "mirai:engine/render"
 import "mirai:engine/scene"
+import volume "mirai:engine/volume"
 import mm "mirai:std/math"
 import cache "plugins:physics_cache/runtime"
-import fields "plugins:physics_fields/runtime"
 import rag "plugins:ragdoll/runtime"
 
 PHYSICS_GALLERY_STATIONS :: 23
 PHYSICS_GALLERY_SCENE :: "physics_gallery/physics.scene"
-PHYSICS_GALLERY_BURST :: "physics_gallery/physics_burst.prefab"
+PHYSICS_GALLERY_BURST :: "physics_gallery/physics_burst.scene"
 
 @(component)
 Physics_Gallery :: struct {
@@ -46,11 +46,11 @@ physics_gallery_reset :: proc(views:core.Read(Physics_Gallery_View),actions:inp.
 @(step="fixed")
 physics_gallery_actions :: proc(
     views:^core.Table(Physics_Gallery_View),stations:^core.Table(Physics_Gallery),actions:inp.Input_Of(Action),
-    requests:^destruct.Destruct_Requests,bodies:^phys.Body_Requests,field_configs:^core.Table(fields.Physics_Field),
+    requests:^destruct.Destruct_Requests,bodies:^phys.Body_Requests,force_fields:^core.Table(phys.Force_Field),strain_fields:^core.Table(destruct.Strain_Field),
     caches:^cache.Geometry_Requests,ragdolls:^Ragdoll_Gallery_Requests,time:core.Time,
     view:destruct.Destruct_View,
 ) {
-    if !time.playing || !(time.dt>0) || core.count(core.read(views))==0 {return}
+    if !time.playing || !(time.dt>0) || core.count(views)==0 {return}
     previous,next,overview:=inp.pressed(actions,.Gallery_Previous),inp.pressed(actions,.Gallery_Next),inp.pressed(actions,.Gallery_Overview)
     use:=inp.pressed(actions,.Use)
     if previous || next || overview || use {for &view in core.writable(views) {
@@ -61,19 +61,19 @@ physics_gallery_actions :: proc(
             for &item in core.writable(stations) {if i32(item.station)==view.station {item.trigger+=1}}
         }
     }}
-    for row in 0..<core.count(core.read(stations)) {
-        held:=core.at(core.read(stations),row)
+    for row in 0..<core.count(stations) {
+        held:=core.at(stations,row)
         if held.trigger==held.activations {continue}
         needs_destructible:=held.station>0 && held.station<17 && held.station!=8 && held.station!=12 && held.station!=14
         if needs_destructible && destruct.pieces(view,held.target,nil)==0 {continue}
-        item:=core.at(stations,row)
+        item:=core.edit_at(stations,row)
         item.activations=item.trigger
         point:=physics_gallery_piece_center(view,item.target,item.origin+mm.Vec3{0,.5,0}) if needs_destructible else item.origin
         switch item.station {
         case 0,8,19,21:
-            phys.apply_radial_impulse(bodies,item.origin+mm.Vec3{0,-.6,0},4,35,velocity_change=true)
+            phys.apply_area(bodies,volume.sphere(4,blend=4),{position=item.origin+mm.Vec3{0,-.6,0}},35,impulse=true,velocity_change=true)
         case 22:
-            phys.apply_radial_impulse(bodies,item.origin+mm.Vec3{0,-1,0},4,6,velocity_change=true)
+            phys.apply_area(bodies,volume.sphere(4,blend=4),{position=item.origin+mm.Vec3{0,-1,0}},6,impulse=true,velocity_change=true)
         case 2,4,5,7:
             normal:=mm.Vec3{1,0,0} if item.activations%2==1 else mm.Vec3{0,1,0}
             destruct.slice(requests,item.target,point,normal)
@@ -81,8 +81,10 @@ physics_gallery_actions :: proc(
             if item.activations%2==1 {destruct.weaken(requests,item.target,point,4,10000)}
             else {destruct.strain(requests,item.target,point,4,1)}
         case 12,14:
-            if on,_,found:=core.raw_state(core.raw(field_configs),item.field);found {
-                core.set_on(field_configs,item.field,!on)
+            // The force of the field and, where it has one, its strain: on and off together.
+            if on,_,found:=core.raw_state(core.raw(force_fields),item.field);found {
+                core.set_on(force_fields,item.field,!on)
+                if _,_,strains:=core.raw_state(core.raw(strain_fields),item.field);strains {core.set_on(strain_fields,item.field,!on)}
             }
         case 17:
             cache.play(caches,item.target,1 if item.activations%2==1 else -1,restart=true)
@@ -132,7 +134,7 @@ physics_gallery_events :: proc(stations:core.Read(Physics_Gallery),counts:^Physi
             if item.target!=event.entity {continue}
             if item.station!=11 && item.station!=13 {
                 center:=event.point-mm.Vec3{0,.5,.3} if event.kind==.Slice else item.origin-mm.Vec3{0,1,.3}
-                phys.apply_radial_impulse(bodies,center,4,3,.Constant,velocity_change=true)
+                phys.apply_area(bodies,volume.sphere(4),{position=center},3,impulse=true,velocity_change=true)
             }
             if item.station<PHYSICS_GALLERY_STATIONS {counts.counts[item.station]+=1}
             if item.station==10 {
@@ -152,11 +154,11 @@ physics_gallery_fade :: proc(stations:core.Read(Physics_Gallery),view:destruct.D
         for group in poses[:count] {
             if !group.expires {continue}
             alpha:=clamp(core.seconds_of(time,u64(group.remaining_ticks))/station.fade_seconds,0,1)
-            tint,has:=core.get(core.read(tints),group.entity)
+            tint,has:=core.get(tints,group.entity)
             if !has {tint=render.TINT_DEFAULT}
             if tint.color.a==alpha {continue}
             tint.color.a=alpha
-            if has {core.get(tints,group.entity)^=tint} else {core.add(tints,group.entity,tint)}
+            if has {core.edit(tints,group.entity)^=tint} else {core.add(tints,group.entity,tint)}
         }
     }
 }
@@ -171,7 +173,7 @@ physics_gallery_camera :: proc(views:core.Read(Physics_Gallery_View),stations:co
             if i32(item.station)==config.station {target=item.origin+mm.Vec3{0,.8,0};position=target+mm.Vec3{3,2.5,5.5};break}
         }
         entity:=core.entity_at(views,row)
-        current,found:=core.get(core.read(transforms),entity)
+        current,found:=core.get(transforms,entity)
         rotation:=mm.quat_look(target-position,{0,1,0})
         if found && (current.position!=position || current.rotation!=rotation) {
             if output:=core.free(transforms,entity);output!=nil {output.position,output.rotation=position,rotation}
@@ -231,6 +233,6 @@ physics_gallery_hud :: proc(huds:^core.Table(Physics_Gallery_Hud),views:core.Rea
             }
             break
         }
-        if core.at(shown,row)!=next {core.at(huds,row)^=next}
+        if core.at(shown,row)!=next {core.edit_at(huds,row)^=next}
     }
 }

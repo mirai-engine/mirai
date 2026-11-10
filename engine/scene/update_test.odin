@@ -114,10 +114,10 @@ an_update_writes_what_differs_onto_the_entities_that_have_the_ids_of_a_document 
     _,turned,_:=core.raw_state(core.raw(&w.lamps),bulb)
     testing.expect(t,held==Update_Lamp{range=5,heat=7} && turned,"the value follows the document, what it does not save stays, and it is off")
     testing.expect_value(t,core.name_get(core.read(&w.names),lamp),"Desk lamp")
-    testing.expect(t,!core.has(&w.links,lamp) && core.get(&w.links,bulb).target==other)
+    testing.expect(t,!core.has(&w.links,lamp) && core.at(&w.links,core.row_of(&w.links,bulb)).target==other)
     shade:=core.entity_of(&w.entities,50)
-    parent,_:=core.get(core.read(&w.parents),shade)
-    testing.expect(t,shade!=core.NONE && parent.entity==lamp && core.get(&w.links,shade).target==bulb && core.has(&w.transforms,shade))
+    parent,_:=core.get(&w.parents,shade)
+    testing.expect(t,shade!=core.NONE && parent.entity==lamp && core.at(&w.links,core.row_of(&w.links,shade)).target==bulb && core.has(&w.transforms,shade))
     testing.expect(t,!core.alive(&w.entities,cable) && core.alive(&w.entities,bulb) && core.alive(&w.entities,other))
     report,error=update_put(t,&f,ref,&document,scope)
     testing.expect(t,error==.None && report.components==0,"the world holds what the document says")
@@ -133,7 +133,7 @@ an_update_writes_what_differs_onto_the_entities_that_have_the_ids_of_a_document 
     asset.scene_set(&document,3,"Update_Link",&lost)
     asset.scene_entities_remove(&document,{50})
     report,error=update_put(t,&f,ref,&document,nil)
-    testing.expect(t,error==.None && report.dangling==1 && core.get(&w.links,bulb).target==core.NONE)
+    testing.expect(t,error==.None && report.dangling==1 && core.at(&w.links,core.row_of(&w.links,bulb)).target==core.NONE)
 }
 
 // asset declares the two components of the instances for a document, where
@@ -143,14 +143,14 @@ an_update_writes_what_differs_onto_the_entities_that_have_the_ids_of_a_document 
 the_components_of_prefab_instances_are_the_ones_asset_declares :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     Pair :: struct {world,document:typeid}
-    for pair in ([]Pair{{Prefab_Instance,asset.Instance},{Prefab_Member,asset.Member}}) {
+    for pair in ([]Pair{{Prefab_Instance,asset.Prefab_Instance},{Prefab_Member,asset.Prefab_Member}}) {
         world,document:=type_info_of(pair.world),type_info_of(pair.document)
         testing.expect(t,world.size==document.size && world.align==document.align)
     }
     world_instance,_:=asset.types_index(&types,Prefab_Instance)
-    document_instance,_:=asset.types_index(&types,asset.Instance)
+    document_instance,_:=asset.types_index(&types,asset.Prefab_Instance)
     world_member,_:=asset.types_index(&types,Prefab_Member)
-    document_member,_:=asset.types_index(&types,asset.Member)
+    document_member,_:=asset.types_index(&types,asset.Prefab_Member)
     testing.expect_value(t,types.hashes[world_instance],types.hashes[document_instance])
     testing.expect_value(t,types.hashes[world_member],types.hashes[document_member])
     testing.expect(t,types.hashes[world_instance]!=types.hashes[world_member])
@@ -173,11 +173,10 @@ the_instances_of_a_document_are_components_of_its_entities_and_a_copy_has_none :
     w:=&f.w
     LAMP :: base.Asset_Id{0x1a,2}
     lamp,level:asset.Scene
-    asset.scene_init(&lamp,&f.types,asset.KIND_PREFAB,LAMP);defer asset.scene_destroy(&lamp)
+    asset.scene_init(&lamp,&f.types,LAMP);defer asset.scene_destroy(&lamp)
     asset.scene_entity_add(&lamp,1,0,"Lamp")
     asset.scene_entity_add(&lamp,2,1,"Bulb")
-    lamp.info.root=1
-    asset.scene_init(&level,&f.types,asset.KIND_SCENE,{0x1a,3});defer asset.scene_destroy(&level)
+    asset.scene_init(&level,&f.types,{0x1a,3});defer asset.scene_destroy(&level)
     asset.scene_entity_add(&level,100,0,"Room")
     root_id,placed:=asset.scene_instantiate(&level,&lamp,LAMP,100)
     testing.expect_value(t,placed,asset.Error.None)
@@ -199,7 +198,7 @@ the_instances_of_a_document_are_components_of_its_entities_and_a_copy_has_none :
 
     // A capture gives the document its instances back.
     captured:asset.Scene
-    _,error=capture(ref,&captured,&f.types,{kind=asset.KIND_SCENE,id={0x1a,3}})
+    _,error=capture(ref,&captured,&f.types,{id={0x1a,3}})
     testing.expect_value(t,error,Error.None)
     defer asset.scene_destroy(&captured)
     _,source,linked:=asset.scene_member(&captured,bulb_id)
@@ -207,9 +206,8 @@ the_instances_of_a_document_are_components_of_its_entities_and_a_copy_has_none :
 
     // A prefab that places the Lamp, copied while the world runs: its entities are of no instance.
     desk:asset.Scene
-    asset.scene_init(&desk,&f.types,asset.KIND_PREFAB,{0x1a,4});defer asset.scene_destroy(&desk)
+    asset.scene_init(&desk,&f.types,{0x1a,4});defer asset.scene_destroy(&desk)
     asset.scene_entity_add(&desk,1,0,"Desk")
-    desk.info.root=1
     asset.scene_instantiate(&desk,&lamp,LAMP,1)
     copied:asset.Asset
     if !update_file(t,&desk,&copied) {return}

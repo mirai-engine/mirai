@@ -8,15 +8,15 @@ import lib "mirai:std/anim"
 import "mirai:std/base"
 import "base:runtime"
 
-// A program whose graph, blend spaces or actions name clips of several .anim
-// plays one library that joins them, prepared once per set of sources and
-// shared by every entity and world. Its primary source is the program's
-// animation: its clips keep their names, those of another source are named by
-// source_clip_name.
+// An Animation whose .match, action set or the spaces of its layers name clips
+// of several .anim plays one library that joins them, prepared once per set of
+// sources and shared by every entity and world. Its primary source is the
+// animation of its asset: its clips keep their names, those of another source
+// are named by source_clip_name.
 
 ANIMATION_SOURCES :: 64
 SOURCE_CACHE_CAPACITY :: 256
-SOURCE_DEPENDENCIES :: ANIMATION_SOURCES+GRAPH_NODES+2
+SOURCE_DEPENDENCIES :: ANIMATION_SOURCES+STACK_LAYERS+2
 // Joined libraries count their generations from here, apart from those of host content.
 SOURCE_GENERATION :: u32(1)<<31
 
@@ -92,21 +92,17 @@ animation_playing_content :: proc(cache:^Source_Assets,app:^host.App,state:^Play
     return host.content_animation(app,state.asset)
 }
 
-// The library an Animation plays, joining the sources of its program when there are several.
-// A tick whose assets did not change reuses the plan without reading them.
-animation_content :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,description:Animation,blends:^Blend_Assets=nil,graphs:^Graph_Assets=nil,actions:^Action_Runtime=nil) -> (content:^host.Content_Animation,error:Program_Error) {
+// The library an Animation plays, joining the sources of its .match and its action set when there
+// are several. A tick whose assets did not change reuses the plan without reading them.
+animation_content :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,description:Animation,blends:^Blend_Assets=nil,matches:^Match_Assets=nil,actions:^Action_Runtime=nil) -> (content:^host.Content_Animation,error:Program_Error) {
     if app.assets==nil || state==nil {return nil,.Invalid_Asset}
     if description.asset=={} {state.source_plan=0;return nil,.None}
-    if record,present:=asset.registry_find(&app.assets.registry,description.asset);present && record.kind==BLEND_KIND {state.source_plan=0;return nil,.Additive_Space}
+    if record,present:=asset.registry_find(&app.assets.registry,description.asset);present && record.kind==BLEND_KIND {state.source_plan=0;return nil,.Layer_Space}
     if cache==nil {
         primary:=description.asset
         if record,present:=asset.registry_find(&app.assets.registry,description.asset);present {
-            switch record.kind {
-            case GRAPH_KIND:
-                graph:=graph_content(graphs,app.assets,app.allocator,description.asset);if graph==nil {return nil,.Invalid_Asset}
-                primary=source_effective({},graph.profile.info.animation,description.library)
-            case MATCH_KIND:
-                match:=match_content(graphs,app.assets,app.allocator,description.asset);if match==nil {return nil,.Invalid_Asset}
+            if record.kind==MATCH_KIND {
+                match:=match_content(matches,app.assets,app.allocator,description.asset);if match==nil {return nil,.Invalid_Asset}
                 primary=source_effective({},match.profile.info.animation,description.library)
             }
         }
@@ -136,7 +132,7 @@ animation_content :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,desc
     primary:=plan.primary
     if changed {
         ok:bool
-        primary,ok=source_collect(app.assets,app.allocator,description,state.entity,blends,graphs,actions,&ids,&count,&dependencies,&dependency_count)
+        primary,ok=source_collect(app.assets,app.allocator,description,state.entity,blends,matches,actions,&ids,&count,&dependencies,&dependency_count)
         if !ok {return nil,.Invalid_Asset}
     } else if plan.set>0 {set:=cache.sets[plan.set-1];count=len(set.ids);copy(ids[:],set.ids)} else {ids[0]=primary;count=1}
     copied:[]Source_Dependency
@@ -167,11 +163,12 @@ source_previous :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,descri
 }
 
 // Gives the markers of a joined library the clip names and .anim of their sources.
-source_markers_resolve :: proc "contextless" (cache:^Source_Assets,state:^Playing,markers:[]Animation_Marker) {
+source_markers_resolve :: proc "contextless" (cache:^Source_Assets,state:^Playing,markers:[]Animation_Event) {
     set:=source_playing_set(cache,state)
     if set==nil {return}
     content:=&set.content
     for &marker in markers {
+        if marker.kind!=.Marker {continue}
         for clip,i in content.lib.clips[:content.clip_count] {
             if clip.name!=marker.clip {continue}
             marker.clip=base.name_hash(base.text_get(content.names[i][:]))
@@ -186,13 +183,13 @@ source_join :: proc(cache:^Source_Assets,set:^Source_Set,primary:base.Asset_Id,s
     if cache==nil || set==nil || primary=={} || len(sources)<2 {return .Invalid}
     allocator:=cache.allocator if cache.allocator.procedure!=nil else context.allocator
     desc:=lib.Library_Desc{allocator=allocator}
-    count,marker_names,streams,morphs:=0,0,0,0
+    count,marker_names,streams,morphs,fields:=0,0,0,0,0
     found:=false
     for source,i in sources {
         if source.id=={} || source.clip_count<0 || source.clip_count>len(source.names) || source.clip_count>len(source.roots) || source.lib.key_count<0 || source.lib.key_count>len(source.lib.keys) || source.lib.track_count<0 || source.lib.track_count>len(source.lib.tracks) || source.lib.marker_count<0 || source.lib.marker_count>len(source.lib.markers) || source.lib.stream_bytes<0 || source.lib.stream_bytes>0 && source.lib.stream_bytes+lib.STREAM_PADDING>len(source.lib.streams) || source.clip_count>source.lib.clip_count || source.clip_count>len(source.lib.clips) {return .Invalid}
         for previous in sources[:i] {if previous.id==source.id {return .Invalid}}
         found ||= source.id==primary
-        count+=source.clip_count;marker_names+=len(source.markers);streams+=source.lib.stream_bytes;morphs+=len(source.morphs)
+        count+=source.clip_count;marker_names+=len(source.markers);streams+=source.lib.stream_bytes;morphs+=len(source.morphs);fields+=len(source.fields)
         desc.max_keys+=source.lib.key_count;desc.max_tracks+=source.lib.track_count;desc.max_markers+=source.lib.marker_count
     }
     if !found || count==0 {return .Invalid}
@@ -202,17 +199,19 @@ source_join :: proc(cache:^Source_Assets,set:^Source_Set,primary:base.Asset_Id,s
     published:=false
     defer {if !published {source_set_free(&next,allocator)}}
     if !lib.library_init(&next.content.lib,desc) {return .Out_Of_Memory}
-    e1,e2,e3,e4,e5:mem.Allocator_Error
+    e1,e2,e3,e4,e5,e6:mem.Allocator_Error
     next.content.markers,e1=make([]u64,marker_names,allocator)
     next.content.names,e2=make([][asset.ANIMATION_NAME_CAPACITY]u8,count,allocator)
     next.content.roots,e3=make([]asset.Animation_Root,count,allocator)
     next.clip_sources,e4=make([]base.Asset_Id,count,allocator)
     next.content.morphs,e5=make([]host.Content_Morph,morphs,allocator)
-    if e1!=nil || e2!=nil || e3!=nil || e4!=nil || e5!=nil {return .Out_Of_Memory}
+    next.content.fields,e6=make([]host.Content_Field,fields,allocator)
+    if e1!=nil || e2!=nil || e3!=nil || e4!=nil || e5!=nil || e6!=nil {return .Out_Of_Memory}
     joined:=&next.content
-    key_at,track_at,marker_at,name_at,clip_at,stream_at,morph_at:=0,0,0,0,0,0,0
+    key_at,track_at,marker_at,name_at,clip_at,stream_at,morph_at,field_at:=0,0,0,0,0,0,0,0
     for source in sources {
         copy(joined.morphs[morph_at:],source.morphs);morph_at+=len(source.morphs)
+        copy(joined.fields[field_at:],source.fields);field_at+=len(source.fields)
         copy(joined.lib.keys[key_at:],source.lib.keys[:source.lib.key_count])
         copy(joined.lib.streams[stream_at:],source.lib.streams[:source.lib.stream_bytes])
         copy(joined.markers[name_at:],source.markers)
@@ -252,7 +251,7 @@ source_join :: proc(cache:^Source_Assets,set:^Source_Set,primary:base.Asset_Id,s
 @(private)
 source_set_free :: proc(set:^Source_Set,allocator:mem.Allocator) {
     lib.library_destroy(&set.content.lib)
-    delete(set.content.markers,allocator);delete(set.content.names,allocator);delete(set.content.roots,allocator);delete(set.content.morphs,allocator)
+    delete(set.content.markers,allocator);delete(set.content.names,allocator);delete(set.content.roots,allocator);delete(set.content.morphs,allocator);delete(set.content.fields,allocator)
     delete(set.clip_sources,allocator);delete(set.ids,allocator);delete(set.generations,allocator)
     set^={}
 }
@@ -305,26 +304,14 @@ source_blend_collect :: proc(profile:Blend_Profile,override:base.Asset_Id,ids:^[
 }
 
 @(private)
-source_collect :: proc(assets:^host.Assets,allocator:runtime.Allocator,description:Animation,entity:core.Entity,blends:^Blend_Assets,graphs:^Graph_Assets,actions:^Action_Runtime,ids:^[ANIMATION_SOURCES]base.Asset_Id,count:^int,dependencies:^[SOURCE_DEPENDENCIES]Source_Dependency,dependency_count:^int) -> (primary:base.Asset_Id,ok:bool) {
+source_collect :: proc(assets:^host.Assets,allocator:runtime.Allocator,description:Animation,entity:core.Entity,blends:^Blend_Assets,matches:^Match_Assets,actions:^Action_Runtime,ids:^[ANIMATION_SOURCES]base.Asset_Id,count:^int,dependencies:^[SOURCE_DEPENDENCIES]Source_Dependency,dependency_count:^int) -> (primary:base.Asset_Id,ok:bool) {
     if !source_dependency_add(assets,dependencies,dependency_count,description.asset) {return}
     record,present:=asset.registry_find(&assets.registry,description.asset)
     kind:=record.kind if present else asset.KIND_ANIMATION
     primary=description.asset
     switch kind {
-    case GRAPH_KIND:
-        graph:=graph_content(graphs,assets,allocator,description.asset);if graph==nil {return}
-        primary=source_effective({},graph.profile.info.animation,description.library)
-        if !source_id_add(ids,count,primary) {return}
-        for node in graph.profile.nodes {
-            if node.kind==.Clip {if !source_id_add(ids,count,source_effective(node.animation,graph.profile.info.animation,description.library)) {return}}
-            else if node.kind==.Blend_Space {
-                if !source_dependency_add(assets,dependencies,dependency_count,node.blend_space) {return}
-                blend:=blend_content(blends,assets,allocator,node.blend_space)
-                if blend==nil || !source_blend_collect(blend.profile,description.library,ids,count) {return}
-            }
-        }
     case MATCH_KIND:
-        match:=match_content(graphs,assets,allocator,description.asset);if match==nil {return}
+        match:=match_content(matches,assets,allocator,description.asset);if match==nil {return}
         primary=source_effective({},match.profile.info.animation,description.library)
         if !source_id_add(ids,count,primary) {return}
         for clip in match.profile.clips {if !source_id_add(ids,count,source_effective(clip.animation,match.profile.info.animation,description.library)) {return}}
@@ -338,6 +325,13 @@ source_collect :: proc(assets:^host.Assets,allocator:runtime.Allocator,descripti
         if active==nil || active.plan<0 || int(active.plan)>=len(actions.plans) {return}
         profile:=actions.plans[active.plan].profile
         for action in profile.actions {if !source_id_add(ids,count,source_effective(action.animation,profile.info.animation,description.library)) {return}}
+        for layer in profile.layers {
+            if layer.clip[0]!=0 || layer.reference_clip[0]!=0 {if !source_id_add(ids,count,source_effective(layer.animation,profile.info.animation,description.library)) {return}}
+            if layer.space=={} {continue}
+            if !source_dependency_add(assets,dependencies,dependency_count,layer.space) {return}
+            // A space that cannot be read is the problem of its layer, not of what the entity plays.
+            if blend:=blend_content(blends,assets,allocator,layer.space);blend!=nil && !source_blend_collect(blend.profile,description.library,ids,count) {return}
+        }
     }
     for id in ids[:count^] {if !source_dependency_add(assets,dependencies,dependency_count,id) {return}}
     // The primary source stays first and the rest are sorted, so equal sets share one library.

@@ -1,7 +1,7 @@
 #include "native.slang"
 //! variant hw MIRAI_HW_RT=1
-//! variant color MIRAI_COLORED_SHADOWS=1
-//! variant color_hw MIRAI_COLORED_SHADOWS=1 MIRAI_HW_RT=1
+// color: colored shadows, whose rays take the filters of the glass they cross (trace.slang).
+//! constant color MIRAI_COLORED_SHADOWS
 // Shadows, first pass: one pixel of each block, a different one every frame,
 // traces a shadow ray to the sun, to each node of its cut of the local lights
 // (lighting.slang): each light that reaches it while they fit in the budget,
@@ -54,8 +54,7 @@ static const float WIDTH_BLUR = 0.1;
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
 void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint local : SV_GroupIndex) {
-#ifdef MIRAI_FILTER_POINTS
-    if (params.resume != 0u) {
+    if (MIRAI_COLORED_SHADOWS && params.resume != 0u) {
         Point_Head head;
         if (!head_of_round(group.x * (MIRAI_GROUP_X * MIRAI_GROUP_Y) + local, head)) return;
         int2 at = int2(head.owner & 0xffffu, head.owner >> 16u);
@@ -66,7 +65,6 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         out_shadow[at] = float4(clamp(share, 0.0, 1.0), held.a);
         return;
     }
-#endif
     int2 block = int2(dispatch_id.xy);
     int2 size = texture_size(out_shadow);
     if (any(((block) >= (size)))) return;
@@ -178,9 +176,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         float travelled = 0.0;
         float3 from = origin;
         float3 through = float3(1.0);
-#ifdef MIRAI_FILTER_POINTS
-        filters_begin();
-#endif
+        if (MIRAI_COLORED_SHADOWS) filters_begin();
         for (uint segment = 0u; segment < 2u; segment++) {
             float hit;
             uint stopper;
@@ -193,9 +189,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
             dir = beyond_dir;
             reach = beyond_reach;
         }
-#ifdef MIRAI_FILTER_POINTS
-        filters_weigh(irradiance);
-#endif
+        if (MIRAI_COLORED_SHADOWS) filters_weigh(irradiance);
         unshadowed += irradiance;
         reaching += irradiance * through;
         if (blocker < FLT_MAX) {
@@ -214,10 +208,9 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
     float whole = luminance(reaching) / total;
     bool3 lit = unshadowed > float3(1e-4 * total);
     float3 share = select(lit, reaching / max(unshadowed, float3(1e-6)), float3(whole));
-#ifdef MIRAI_FILTER_POINTS
     // What the share of each channel changes by per unit of light, for the
     // resume: that of the channel, or that of the whole where the channel has none.
-    if (filter_chain != INVALID) {
+    if (MIRAI_COLORED_SHADOWS && filter_chain != INVALID) {
         Point_Head head = point_head(INVALID, filter_chain, uint(block.x) | (uint(block.y) << 16u));
         float3 inverse = select(lit, 1.0 / max(unshadowed, float3(1e-6)), float3(0.0));
         head.aux[0] = asuint(inverse.r);
@@ -226,7 +219,6 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         head.aux[3] = asuint(1.0 / total);
         head_append(head);
     }
-#endif
     float state = lost_sum > 0.0 ? 2.0 + min(width_sum / lost_sum, BLUR_MAX) : 1.0;
     out_shadow[block] = float4(clamp(share, 0.0, 1.0), moved ? state + SHADOW_RAY_MOVED : state);
 }

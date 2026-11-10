@@ -186,7 +186,7 @@ of a shipped game keeps the stream `anim.library_compress` makes of each clip
   the hierarchy of `animation_parents`; a cooked view already holds its streams.
 - `animation_cooked_document` writes the cooked `.anim` from that library; `animation_descs`
   refuses a cooked view: it is not edited.
-- `.pose`, `.blend`, `.agraph` and authoring by API (clips, tracks, keys, markers, skeletons) belong
+- `.pose`, `.blend`, `.action` and authoring by API (clips, tracks, keys, markers, skeletons) belong
   to the [animation plugin](../../mirai-animation/references/animation.md). Its edits validate the
   whole document and publish the file atomically keeping its identity; they are distinct from the
   scene's undo.

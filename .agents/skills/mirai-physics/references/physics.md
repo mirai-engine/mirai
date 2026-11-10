@@ -7,9 +7,10 @@ constants and parameters: `types.odin` and the comments of each file.
 ## World and memory
 
 - `world_init(&w,desc)` reserves everything according to `World_Desc`: capacities (bodies, shapes,
-  contacts, joints, hulls, meshes, heightfields, events, characters, fluids, destructibles, pieces,
-  connections, [static changes](#static-collision)), gravity, `substeps` (4 by default) and
-  stiffness parameters.
+  contacts, joints, hulls, meshes, heightfields, events, characters, fluids, breakables, pieces,
+  bonds, [static changes](#static-collision)), gravity, `substeps` (4 by default) and
+  stiffness parameters. The pools of [what breaks](destruction.md#with-the-world) wait for the
+  first breakable.
 - `world_desc_default()` gives the initial values; `world_destroy` frees; `world_step(&w,dt)`
   advances one tick.
 - `Body_Handle`, `Shape_Handle` and `Joint_Handle` are `distinct` generational handles. Zero is null
@@ -32,19 +33,19 @@ constants and parameters: `types.odin` and the comments of each file.
   pose in one step, so that it pushes and carries. `body_set_transform` teleports; `body_set_type`
   discards the body's contacts.
 
-### Volume forces
+### Area forces
 
-- `world_apply_radial` (force, impulse or velocity change; a negative intensity attracts),
-  `world_apply_sphere_force`, `world_apply_box_force`, `world_apply_box_radial_force` and
-  `world_apply_plane_force` (an oriented box whose +Y face is the plane: the weight falls with
-  depth) apply to dynamics and return the amount applied and the validity of the request.
-- They walk the spatial tree with the query filter and deduplicate compound bodies in preallocated
+- `world_apply_area` (force, impulse or velocity change; radial from the center of the area, where
+  a negative intensity attracts, or along a vector) applies to dynamics and returns the amount
+  applied and the validity of the request.
+- The model has no shape for an area: `Area` is a box of the world that bounds it, which may have
+  no end, and a `weight` callback that says how much of it a point is in (0 outside, up to 1).
+  The integration gives `volume.weight` of a `Volume`, so the region is tested in one place.
+- It walks the spatial tree with the query filter and deduplicates compound bodies in preallocated
   scratch. The center of mass sets direction and weight; the force produces no torque.
-  `radial_weight`, `box_weight`, `plane_weight` and `noise_weight` are the same pure computation,
-  for gameplay fields.
-- `Radial_Falloff` are the curves of Chaos fields between the edge (0) and the center (1), and
-  `Weight_Range` takes them from `min` to `max` like Chaos `MinRange`/`MaxRange`; outside the volume
-  the weight is zero.
+- `Radial_Falloff` are the curves of Chaos fields over that weight, from the edge (0) to the inside
+  (1), and `Weight_Range` takes them from `min` to `max` like Chaos `MinRange`/`MaxRange`; outside
+  the area the weight is zero.
 - `Field_Noise` multiplies the weight by gradient noise (`noise_perlin3`) in the frame of the
   volume: a pure function of position and seed, stateless, the same with any number of workers.
 - A curve outside the enum, a non-finite range or a negative `scale` invalidate the request. A
@@ -300,8 +301,8 @@ the snapshot; the [`water`](../../mirai-world/references/water.md) plugin draws 
     `Fluid_Info.top` is the still surface and `desc.waves` its waves, which it evaluates with
     `wave_terms` at `fluid_time`) and whether a point is in it, without subtracting dry boxes, with
     `fluid_holds`: it does not repeat the shape or the priority rule.
-  - **`Fluid_Waves`** (integration, replicated) on the entity of a flat `Fluid_Volume` describes its
-    waves: its own (amplitude, length and heading from the front of the entity) and those of the
+  - **`Fluid_Waves`** (integration, replicated) on the entity of a `Fluid` in a `Plane` describes
+    its waves: its own (amplitude, length and heading from the front of the entity) and those of the
     world's `Wind` where the volume is, a Pierson-Moskowitz sea in the waves that remain free, with
     its significant height from `wind`; `spread`, `steepness`, `speed` and `seed` are the artistic
     options. Changing the wind or the component redoes the waves of the volume. On a box it is a
@@ -363,7 +364,7 @@ geometry.
 
 - `world_snapshot_size`, `world_snapshot_capacity`, `world_snapshot(&w,buffer)` and
   `world_restore(&w,buffer)` copy in blocks bodies, shapes, contacts, joints, joint axes, islands,
-  manifold blocks, characters, fluids, destructibles, pieces, connections and the two trees.
+  manifold blocks, characters, fluids, breakables, pieces, bonds and the two trees.
 - The block table is `snapshot_blocks`: a new state array is added there, with its counter in
   `World_State`, which also stores gravity and the push rules. `world_hash` hashes that same state.
 - Restoring and simulating again repeats the original trajectory bit for bit in the same binary. A
@@ -451,7 +452,9 @@ What whoever builds from the level needs, like the navmesh, without allocating.
 
 - `world_events` returns slices valid until the next step; `overlap_begin`/`overlap_end` go one per
   side, with `crossed` when a bullet crossed it in the step. Destroying shapes or bodies outside the
-  step emits no end events.
+  step emits no end events. A contact or overlap event carries in `users` the user data of its
+  bodies and shapes, which may be gone when it is read; `breaks` lists
+  [what broke](destruction.md#reading-and-replay).
 - `body_contacts` lists the contacts of an awake body, with the normal impulse of each point and the
   velocity with which they approached before solving it (`approach`). `world_stats` gives counts and
   exhausted capacities; `world_profile`, the time per stage.

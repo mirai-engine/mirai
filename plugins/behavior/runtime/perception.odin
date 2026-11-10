@@ -106,7 +106,7 @@ Perception_Events :: struct {
 @(storage)
 Perceiving :: struct {
     next:u32,        // the perceiver that looks first in the next tick
-    layouts:[2]u64,  // of the perceivers and the perceptions when the perceivers last got their Perception
+    shapes:[2]core.Shape, // the rows of the perceivers and the perceptions when the perceivers last got their Perception
     remembering:u32, // perceivers, on or off, that remember something
 }
 
@@ -133,9 +133,7 @@ perception_update :: proc(
     noises:^Noises,events:^Perception_Events,physics:core.Ref(phys.Physics_State),fars:core.Read(nav.Nav_Far),entities:core.Ref(core.Entities),time:core.Time,problems:^core.Problems,
 ) {
     core.queue_clear(&events.queue)
-    layouts:=[2]u64{core.layout(perceivers),core.layout(perceptions)}
-    if layouts!=turns.layouts {
-        turns.layouts=layouts
+    if core.reshaped(perceivers,&turns.shapes[0]) | core.reshaped(perceptions,&turns.shapes[1]) {
         for row in 0..<core.count(perceivers) {
             e:=core.entity_at(perceivers,row)
             if !core.has(perceptions,e) {core.add(perceptions,e,Perception{})}
@@ -149,7 +147,6 @@ perception_update :: proc(
     if !time.playing || time.dt<=0 {return}
     // With nobody to look at or to hear, and nothing remembered, nobody perceives or forgets.
     if len(perceivers.table.entities)==0 || len(perceivables.table.entities)==0 && len(heard)==0 && turns.remembering==0 {return}
-    now:=time.seconds
     count:=core.count(perceivers)
     rays:=int(settings.rays) if settings.ptr!=nil else 256
     far:=nav.nav_far_decide(time) && fars.table!=nil && len(perceivers.table.entities)>count
@@ -159,14 +156,14 @@ perception_update :: proc(
         core.report(problems,core.NONE,"behavior.memory","No memory to look for the %d Perceivables around each perceiver: nobody sees in this tick; free memory",len(perceivables.table.entities))
         sighted,rays,far=false,0,false
     }
-    if far {perceive_far(perceivers,perceptions,perceivables,worlds,fars,sight,heard,events,turns,entities.ptr,now)}
+    if far {perceive_far(perceivers,perceptions,perceivables,worlds,fars,sight,heard,events,turns,entities.ptr,time)}
     if count==0 {return}
     first:=int(turns.next)%count
     for k in 0..<count {
         row:=(first+k)%count
         e:=core.entity_at(perceivers,row)
         p:=perceivers.table.values[row]
-        mine:=core.get(perceptions,e)
+        mine:=core.edit(perceptions,e)
         pose,placed:=core.get(worlds,e)
         if mine==nil || !placed {continue}
         remembered:=mine.memory.count>0
@@ -191,14 +188,14 @@ perception_update :: proc(
                 if distance>1e-4 {
                     if hit,blocked:=phys.raycast(physics,eye,to/distance,distance,e);blocked && hit.entity!=subject {continue}
                 }
-                if ai.memory_perceive(&mine.memory,u64(subject),at.position,.Sight,1,now)==.New {
+                if ai.memory_perceive(&mine.memory,u64(subject),at.position,.Sight,1,time.tick)==.New {
                     core.push(&events.queue,Perception_Event{kind=.Noticed,perceiver=e,subject=subject,sense=.Sight,position=at.position})
                 }
             }
         }
         if turn && sighted && rays<=0 && k+1<count {turns.next=u32((row+1)%count)}
-        hear(&mine.memory,e,p,pose.position,heard,events,now)
-        if turn {forget(&mine.memory,e,p,events,entities.ptr,now)}
+        hear(&mine.memory,e,p,pose.position,heard,events,time)
+        if turn {forget(&mine.memory,e,p,events,entities.ptr,time)}
         remembering_count(turns,remembered,mine.memory.count>0)
     }
 }
@@ -263,12 +260,12 @@ far_of :: proc(fars:core.Read(nav.Nav_Far),e:core.Entity) -> bool {return core.r
 // itself, as if nothing hid it (the collision there is not loaded), and the
 // noises of the tick; then they forget.
 @(private)
-perceive_far :: proc(perceivers:core.Read(Perceiver),perceptions:^core.Table(Perception),perceivables:core.Read(Perceivable),worlds:core.Read(core.World_Transform),fars:core.Read(nav.Nav_Far),sight:^Sight,heard:[]Noise,events:^Perception_Events,turns:^Perceiving,entities:^core.Entities,now:f64) {
+perceive_far :: proc(perceivers:core.Read(Perceiver),perceptions:^core.Table(Perception),perceivables:core.Read(Perceivable),worlds:core.Read(core.World_Transform),fars:core.Read(nav.Nav_Far),sight:^Sight,heard:[]Noise,events:^Perception_Events,turns:^Perceiving,entities:^core.Entities,time:core.Time) {
     for row in core.count(perceivers)..<len(perceivers.table.entities) {
         e:=perceivers.table.entities[row]
         if !far_of(fars,e) {continue}
         p:=perceivers.table.values[row]
-        mine:=cast(^Perception)core.raw_get(core.raw(perceptions),type_info_of(Perception),e)
+        mine:=cast(^Perception)core.raw_edit(core.raw(perceptions),type_info_of(Perception),e)
         pose,placed:=core.get(worlds,e)
         if mine==nil || !placed {continue}
         remembered:=mine.memory.count>0
@@ -281,21 +278,21 @@ perceive_far :: proc(perceivers:core.Read(Perceiver),perceptions:^core.Table(Per
             if u32(p.notices)&(1<<u32(seen.team))==0 {continue}
             at,ok:=core.get(worlds,subject)
             if !ok || !ai.sight_in_cone(eye,forward,at.position+mm.Vec3{0,seen.point,0},p.sight,p.angle) {continue}
-            if ai.memory_perceive(&mine.memory,u64(subject),at.position,.Sight,1,now)==.New {
+            if ai.memory_perceive(&mine.memory,u64(subject),at.position,.Sight,1,time.tick)==.New {
                 core.push(&events.queue,Perception_Event{kind=.Noticed,perceiver=e,subject=subject,sense=.Sight,position=at.position})
             }
         }
-        hear(&mine.memory,e,p,pose.position,heard,events,now)
-        forget(&mine.memory,e,p,events,entities,now)
+        hear(&mine.memory,e,p,pose.position,heard,events,time)
+        forget(&mine.memory,e,p,events,entities,time)
         remembering_count(turns,remembered,mine.memory.count>0)
     }
 }
 
 @(private)
-hear :: proc(memory:^ai.Perception_Memory,e:core.Entity,p:Perceiver,position:mm.Vec3,heard:[]Noise,events:^Perception_Events,now:f64) {
+hear :: proc(memory:^ai.Perception_Memory,e:core.Entity,p:Perceiver,position:mm.Vec3,heard:[]Noise,events:^Perception_Events,time:core.Time) {
     for n in heard {
         if !(n.loudness>0) || linalg.length(mm.Vec3(n.position)-position)>n.loudness*p.hearing {continue}
-        if ai.memory_perceive(memory,u64(n.maker),n.position,.Hearing,0.75,now)==.New {
+        if ai.memory_perceive(memory,u64(n.maker),n.position,.Hearing,0.75,time.tick)==.New {
             core.push(&events.queue,Perception_Event{kind=.Noticed,perceiver=e,subject=n.maker,sense=.Hearing,position=n.position})
         }
     }
@@ -304,7 +301,7 @@ hear :: proc(memory:^ai.Perception_Memory,e:core.Entity,p:Perceiver,position:mm.
 // Forgets at once what was destroyed (its handle names nothing), and the
 // rest `forget` seconds after it was last perceived.
 @(private)
-forget :: proc(memory:^ai.Perception_Memory,e:core.Entity,p:Perceiver,events:^Perception_Events,entities:^core.Entities,now:f64) {
+forget :: proc(memory:^ai.Perception_Memory,e:core.Entity,p:Perceiver,events:^Perception_Events,entities:^core.Entities,time:core.Time) {
     gone:[ai.PERCEPTION_CAPACITY]u64
     dead:=0
     for o in memory.items[:clamp(memory.count,0,ai.PERCEPTION_CAPACITY)] {
@@ -314,7 +311,7 @@ forget :: proc(memory:^ai.Perception_Memory,e:core.Entity,p:Perceiver,events:^Pe
         ai.memory_remove(memory,subject)
         core.push(&events.queue,Perception_Event{kind=.Forgot,perceiver=e,subject=core.Entity(subject)})
     }
-    forgotten:=ai.memory_forget(memory,now,p.forget,gone[:])
+    forgotten:=ai.memory_forget(memory,time.tick,time.dt,p.forget,gone[:])
     for subject in gone[:min(forgotten,len(gone))] {
         core.push(&events.queue,Perception_Event{kind=.Forgot,perceiver=e,subject=core.Entity(subject)})
     }

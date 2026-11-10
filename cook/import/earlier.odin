@@ -404,6 +404,8 @@ source_exists :: proc(w:^Writer,source:string) -> bool {
 
 @(private)
 kind_name :: proc(kind:asset.Fourcc) -> string {
+    // The scene an import writes has one root: the prefab of its model.
+    if kind==asset.KIND_SCENE {return "prefab"}
     if info,found:=asset.kind_info(kind);found {return info.name}
     return "asset"
 }

@@ -3,6 +3,7 @@ package host
 import "base:runtime"
 import "core:fmt"
 import "mirai:asset"
+import anim "mirai:std/anim"
 import "mirai:std/base"
 import "mirai:ui"
 
@@ -83,7 +84,7 @@ ui_tree_view :: proc(a:^asset.Asset,types:^asset.Types) -> (data:ui.Tree_Data,er
     data.images=rows(a,types,asset.UI_TABLE_IMAGES,ui.Tree_Image) or_return
     data.anims=rows(a,types,asset.UI_TABLE_ANIMS,ui.Tree_Anim) or_return
     data.tracks=rows(a,types,asset.UI_TABLE_TRACKS,ui.Tree_Track) or_return
-    data.keys=rows(a,types,asset.UI_TABLE_KEYS,ui.Keyframe) or_return
+    data.keys=rows(a,types,asset.UI_TABLE_KEYS,anim.Keyframe) or_return
     data.parts=rows(a,types,asset.UI_TABLE_PARTS,ui.Anim) or_return
     data.anim_sets=rows(a,types,asset.UI_TABLE_ANIM_SETS,ui.Anim_Set) or_return
     data.fonts=rows(a,types,asset.UI_TABLE_FONTS,ui.Tree_Font) or_return

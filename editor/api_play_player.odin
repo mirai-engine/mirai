@@ -53,7 +53,7 @@ play_player_snapshot :: proc(w:core.World_Ref) -> (value:Play_Player_Snapshot) {
         body:=input.body_of(core.read(bodies),player)
         value.body=play_player_entity(w,body)
         if value.camera.entity=="" {
-            if owned,found:=core.get(core.read(bodies),body);found {value.camera=play_player_entity(w,owned.camera)}
+            if owned,found:=core.get(bodies,body);found {value.camera=play_player_entity(w,owned.camera)}
         }
     }
     return

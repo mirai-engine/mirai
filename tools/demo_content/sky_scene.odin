@@ -21,7 +21,7 @@ SKY_SCENE_MOUNTAINS :: [?][4]f32{
 // lays its haze. How the sky changes over a day shows by turning the sun.
 write_sky_scene :: proc(o:^Out) {
     s:asset.Scene_Builder
-    asset.builder_init(&s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene","sky"))
+    asset.builder_init(&s,&o.content,asset.content_id(PROJECT,"scene","sky"))
     sky:=render.SKY_DEFAULT
     sky.atmosphere,sky.use_background=true,false
     sky_set(&s,&sky)

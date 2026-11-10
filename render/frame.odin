@@ -349,7 +349,7 @@ reflect_pass :: proc(p: ^Pass, normal, depth, albedo, history_previous, history_
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.reflect_raw)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS2, depth)
-	if glass {rhi.cmd_bind_buffer(cmd, SLOT_PASS4, p.view.glass_seen)}
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, p.view.glass_seen if glass else r.dummy_buffer)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS5, history_previous)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.motion)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS8, history_current)

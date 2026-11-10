@@ -221,7 +221,7 @@ THEME_DOCUMENT :: `{"tokens":{"ink":"#102030","round":8},
     "focus":{"extends":"hover","stroke":"#00ff00","border":3},"pressed":{"scale":0.9},"variants":{"gold":{"fill":"#ffd700"}}},
 "row":{"width":"grow","gap":22,"align_y":"center"},
 "label":{"size":12,"color":"#000000"}},
-"animations":{"pulse":{"scale":[1,1.2],"seconds":0.6,"ease":"In_Out_Quad","loop":"Ping_Pong"}},
+"animations":{"pulse":{"scale":[1,1.2],"seconds":0.6,"ease":"Quad_In_Out","loop":"Ping_Pong"}},
 "nodes":[{"name":"panel","kind":"Box","style":"base","float":{"to":"Surface"},"children":[
     {"name":"play","kind":"Button","style":"button","text":"Play","height":64,"events":{"shown":"pulse"}}]}]}`
 

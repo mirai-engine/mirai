@@ -55,12 +55,12 @@ inspectors_read_every_definition_kind_and_the_parts_of_an_instance :: proc(t:^te
     testing.expect_value(t,result_shape_mismatch(Instance_Inspect_Result,string(serial_bytes(a))),"")
     result=authoring_test_execute(a,"instance",`{"entity":"0000000000000011","parts":["Match"]}`)
     testing.expect(t,result.code==0 && !strings.contains(string(serial_bytes(a)),`"rig"`))
-    // A preview plays the .match on a copy: it builds the database of the skeleton, and a play
-    // forces its clip until matching takes over.
-    result=authoring_test_execute(a,"preview",`{"entity":"0000000000000011","ticks":2,"plays":[{"clip":"Walk","mode":"Walking","tick":1}]}`)
+    // A preview plays the .match on a copy: it builds the database of the skeleton, and an action
+    // of its set plays over it at the tick asked.
+    result=authoring_test_execute(a,"preview",`{"entity":"0000000000000011","ticks":2,"trace":true,"actions":[{"name":"Wave","tick":1}]}`)
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
     text=string(serial_bytes(a))
-    testing.expectf(t,strings.contains(text,`"match":{"available": true`) && strings.contains(text,`"clip": "Walk", "mode": "WALKING", "forced": true`),"preview %s",text)
+    testing.expectf(t,strings.contains(text,`"match":{"available": true`) && strings.contains(text,`"kind": "Started", "action": "Wave"`),"preview %s",text)
     testing.expect_value(t,result_shape_mismatch(Preview_Result,text),"")
     expect(t,a,fmt.tprintf(`{{"asset":"%s"}}`,id(a,"c/figure.match")),`"databases":[{"rows": `,`"error": "None"`)
 

@@ -53,6 +53,7 @@ Content_Animation :: struct {
     markers:[]u64, // name_hash of each marker: anim.Marker.id is its index
     names:[][asset.ANIMATION_NAME_CAPACITY]u8, // of each clip
     morphs:[]Content_Morph, // its curves of morph weights, each once
+    fields:[]Content_Field, // its curves that drive a field of a component, each once
     load:^Content_Animation_Load, // a load of its file under way (content_animation.odin)
     adopted:u32, // generation of its first load when a job made it; 0 when it loaded at once
 }
@@ -76,6 +77,34 @@ content_animation_morphs :: proc(view:asset.Animation_View,allocator:runtime.All
     if error!=nil {return nil,false}
     copy(morphs,found[:])
     return morphs,true
+}
+
+// A curve "<path>/@field/<Component>.<field>": the name_hash of the curve and of the path of the
+// entity it drives below the one that plays the clip (0: that entity), and the field it writes.
+Content_Field :: struct {
+    curve,node:u64,
+    property:anim.Property, // Float or Vector
+    slot:u8,
+    component:[asset.ANIMATION_NAME_CAPACITY]u8, // the name of the component, as the world names its table
+    field:[asset.ANIMATION_FIELD_CAPACITY]u8,    // the path of the field inside it, as std/serial reads it
+}
+
+// The curves of an animation that drive a field, each once.
+content_animation_fields :: proc(view:asset.Animation_View,allocator:runtime.Allocator) -> (fields:[]Content_Field,ok:bool) {
+    found:=make([dynamic]Content_Field,context.temp_allocator)
+    for &track in view.tracks {
+        if track.property!=.Float && track.property!=.Vector {continue}
+        text:=serial.text_field(track.target[:])
+        node,component,path:=asset.animation_field_target(text) or_continue
+        field:=Content_Field{curve=base.name_hash(text),node=base.name_hash(node) if node!="" else 0,property=track.property,slot=track.slot}
+        copy(field.component[:],component);copy(field.field[:],path)
+        if !slice.contains(found[:],field) {append(&found,field)}
+    }
+    error:runtime.Allocator_Error
+    fields,error=make([]Content_Field,len(found),allocator)
+    if error!=nil {return nil,false}
+    copy(fields,found[:])
+    return fields,true
 }
 
 // Adds the looping copy of the first `count` clips of a library.
@@ -235,8 +264,8 @@ content_ui_free :: proc(c:^Content,entry:^Content_Ui) {
 @(private)
 content_animation_free :: proc(c:^Content,entry:^Content_Animation) {
     anim.library_destroy(&entry.lib)
-    delete(entry.markers,c.allocator);delete(entry.names,c.allocator);delete(entry.roots,c.allocator);delete(entry.morphs,c.allocator)
-    entry.markers,entry.names,entry.roots,entry.morphs,entry.clip_count=nil,nil,nil,nil,0
+    delete(entry.markers,c.allocator);delete(entry.names,c.allocator);delete(entry.roots,c.allocator);delete(entry.morphs,c.allocator);delete(entry.fields,c.allocator)
+    entry.markers,entry.names,entry.roots,entry.morphs,entry.fields,entry.clip_count=nil,nil,nil,nil,nil,0
 }
 // The mixer reads the file of a stream until its audio thread lets go of the
 // sound, which nothing reports: the file of a stream that is replaced stays

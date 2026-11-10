@@ -25,10 +25,16 @@ Inspect_World :: struct {
 }
 @(private="file") Inspect_Editor :: struct {api:Api}
 
+@(private="file") Hidden_State :: struct {value:u32}
+@(private="file") Lights_World :: struct {using world:core.Test_World,points:core.Table(erender.Point_Light),spots:core.Table(erender.Spot_Light)}
+@(private="file") Lights_Editor :: struct {hidden:core.Table(Hidden_State)}
+
 @(test)
 a_name_of_a_component_or_a_key_resolves_as_it_is_written_or_says_the_nearest :: proc(t:^testing.T) {
-    tables:=[]core.Table_Info{{name="Point_Light",place=.World},{name="Spot_Light",place=.World},{name="Hidden_State",place=.Editor}}
-    info:=core.World_Info{tables=tables}
+    info,described:=core.test_info(t,Lights_World,core.Test_None,Lights_Editor,test_types)
+    if !described {return}
+    defer core.test_info_destroy(&info)
+    tables:=info.tables
     w:=core.World_Ref{info=&info,place=.World}
     cases:=[]struct{name:string,found:^core.Table_Info,says:string}{
         {"Point_Light",&tables[0],""},
@@ -88,7 +94,7 @@ api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: p
     testing.expect(t,strings.contains(text,`"compiled": [8, 9]`))
     testing.expect(t,strings.contains(text,`"Inspect_Runtime":{"ticks": 21}`))
     testing.expect_value(t,world.config.version,version)
-    config,_:=core.get(core.read(&world.config),entity)
+    config,_:=core.get(&world.config,entity)
     testing.expect_value(t,config.diagnostics,u32(13))
     testing.expect_value(t,config.compiled,[2]u32{8,9})
     out.count=0;first:=true
@@ -100,9 +106,9 @@ api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: p
     text=string(serial.writer_bytes(&out))
     testing.expect(t,strings.contains(text,"compiled") && strings.contains(text,"diagnostics"))
     testing.expect(t,core.world_copy(&info,&running,&world))
-    core.get(&running.transforms,entity).position.x=8
-    core.get(&running.config,entity).diagnostics=99
-    core.get(&running.state,entity).ticks=42
+    core.edit(&running.transforms,entity).position.x=8
+    core.edit(&running.config,entity).diagnostics=99
+    core.edit(&running.state,entity).ticks=42
     session.mode=.Play
     session.runs[0]={world=&running}
     params:=Api_Inspect_Params{include_runtime=true,limit=1}
@@ -143,7 +149,7 @@ api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: p
     testing.expect(t,strings.contains(text,`"position":[0,0,0]`))
     testing.expect(t,strings.contains(text,`"diagnostics": 13`) && strings.contains(text,`"ticks": 21`))
     testing.expect_value(t,world.config.version,version)
-    config,_=core.get(core.read(&world.config),entity)
+    config,_=core.get(&world.config,entity)
     testing.expect_value(t,config.diagnostics,u32(13))
 }
 

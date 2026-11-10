@@ -731,7 +731,7 @@ placement_commit :: proc(s:^Session,w:core.World_Ref,d:Drag,hit:Pick,select:bool
     }
     point:=placement_point(s,d,hit)
     if d.kind==.Asset {content_used(s,d.asset_id)}
-    if d.kind==.Asset && d.asset_kind==asset.KIND_PREFAB {
+    if d.kind==.Asset && d.asset_kind==SHOWN_PREFAB {
         root:=prefab_place_linked(s,d.asset_id,point)
         if select && root!=core.NONE {history.selection_set(s.selection,{root})}
         return
@@ -790,7 +790,7 @@ material_assign :: proc(s:^Session,w:core.World_Ref,entities:[]core.Entity,mater
     if !edit_ready {return}
     defer edit_close(s,opened)
     for e in entities {
-        if mesh:=core.get(t,e);mesh!=nil {mesh.materials[0]=material}
+        if mesh:=core.edit(t,e);mesh!=nil {mesh.materials[0]=material}
     }
 }
 
@@ -838,7 +838,7 @@ indicators_draw :: proc(s:^Session,w:core.World_Ref) {
         icon,base_color:=entity_icon(s,w,e)
         hidden:=entity_hidden(w,e) || core.entity_off(es,e)
         radius:=INDICATOR_RADIUS
-        if spots!=nil && core.has(core.read(spots),e) {
+        if spots!=nil && core.has(spots,e) {
             tip,tip_front:=viewport_screen(v,world.position+mm.quat_forward(world.rotation))
             if length:=linalg.distance(tip,p);tip_front && length>radius {
                 direction:=(tip-p)/length
@@ -873,7 +873,7 @@ indicators_sync :: proc(s:^Session,w:core.World_Ref,ghosts:bool) {
         clear(&v.indicators)
         return
     }
-    key:=[6]u64{u64(uintptr(w.data)),transforms.layout,meshes!=nil?meshes.layout+meshes.version:0,(hidden!=nil?hidden.layout:0)+(parents!=nil?parents.layout+parents.version:0),ids!=nil?ids.layout:0,core.world_entities(w).activity<<1|u64(ghosts)}
+    key:=[6]u64{u64(uintptr(w.data)),transforms.layout,meshes!=nil?meshes.layout+meshes.version:0,(hidden!=nil?hidden.layout:0)+(parents!=nil?parents.layout+parents.version:0),ids!=nil?ids.layout:0,(core.world_entities(w).activity.version+core.world_entities(w).activity_tree)<<1|u64(ghosts)}
     if key==v.indicators_key {return}
     v.indicators_key=key
     clear(&v.indicators)
@@ -957,7 +957,7 @@ highlight_sync :: proc(s:^Session,w:core.World_Ref) {
     if table==nil {return}
     for e,row in table.entities[:core.count(table)] {
         level:=entity_level(v,e)
-        if table.values[row].level!=level {core.at(table,row).level=level}
+        if table.values[row].level!=level {core.edit_at(table,row).level=level}
     }
     if meshes==nil {return}
     for e in meshes.entities[:core.count(meshes)] {
@@ -968,6 +968,7 @@ highlight_sync :: proc(s:^Session,w:core.World_Ref) {
 REACH_LIGHT :: ui.Color{255,205,90,255}
 REACH_SOUND :: ui.Color{176,160,255,255}
 REACH_VOLUME :: ui.Color{120,220,200,255}
+REACH_PLANE :: f32(4) // m, half the side of the patch that shows a plane volume
 REACH_FAINT :: u8(150)  // alpha of the outer shape of a reach
 REACH_WIDTH :: f32(2)   // points
 REACH_SEGMENTS :: 64    // of a circle
@@ -1052,6 +1053,11 @@ reach_draw :: proc(s:^Session,w:core.World_Ref) {
             stroke_sphere(ctx,v,world.position,zone.extents.x*max(scale.x,scale.y,scale.z),REACH_VOLUME)
         } else if ok && zone.shape==.Box {
             stroke_box(ctx,v,world,zone.extents,REACH_VOLUME)
+        } else if ok && zone.shape==.Plane {
+            // A patch of the plane, and under it, where it rules.
+            flat:=mm.Transform{world.position,world.rotation,{1,1,1}}
+            stroke_box(ctx,v,flat,{REACH_PLANE,0,REACH_PLANE},REACH_VOLUME)
+            stroke_line(ctx,v,world.position,world.position-mm.quat_rotate(world.rotation,[3]f32{0,REACH_PLANE*0.5,0}),REACH_VOLUME)
         }
         if entity_has(w,e,erender.Mesh_Renderer) {continue}
         if point,ok:=entity_get(w,e,erender.Point_Light);ok && point.range>0 {stroke_sphere(ctx,v,world.position,point.range,REACH_LIGHT)}

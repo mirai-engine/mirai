@@ -10,9 +10,9 @@ UI_USAGE :: "ui read <asset> [--out <file>] | read --sources | write <asset> <do
 TEXTS_USAGE :: "texts list | missing | set <key> <language> <text> | export <file.csv> | import <file.csv> [--project P]"
 SCENE_USAGE :: "scene read <asset> [--out <file>] | read --sources | write <asset> <document> | write <file|folder>... | check [<asset>...] [--project P]"
 
-// mirai ui, mirai scene and mirai texts: the documents of the interfaces,
-// the scenes and the prefabs of a project and the texts of its .strings,
-// read, checked and written with no editor. They
+// mirai ui, mirai scene and mirai texts: the documents of the interfaces and
+// the scenes of a project and the texts of its .strings, read, checked and
+// written with no editor. They
 // run in the author program of the engine (cook/author.command), which the
 // build of the engine makes next to the editor and the player: the documents
 // and the assets they write are engine code, and the tool builds without it.

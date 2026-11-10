@@ -785,8 +785,7 @@ tree_build_node :: proc(ctx:^Context,b:^Tree_Build,index:int,values:rawptr,copy:
     if !playing && node.anims!=0 && int(node.anims)<=tree.anim_set_count {
         anim:=&instance.states[slot]
         set:=tree.anim_sets[node.anims-1]
-        // Without animations of its own, the focus plays those of the pointer.
-        flags:=Anim_Flags{shown=visible,hovered=hovered || focused && set.focused==0 && set.unfocused==0,pressed=ctx.active==node_id,focused=focused,selected=selected,clicked=clicked}
+        flags:=Anim_Flags{shown=visible,clicked=clicked}
         present:=anim_react(&tree.anims,anim,set,flags,ctx.input.dt)
         if !present && !room {return next}
         if anim.playing {b.animating=true}

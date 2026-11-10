@@ -10,6 +10,7 @@ import "mirai:asset"
 import "mirai:engine/gui"
 import "mirai:host"
 import "mirai:std/base"
+import mm "mirai:std/math"
 import "mirai:std/serial"
 import "mirai:ui"
 
@@ -37,7 +38,7 @@ Doc_Lib :: struct {
 // What a node gives by keys of its own, or keeps: none of it goes flat.
 DOCUMENT_NODE_SKIP :: [?]string{"kind","parent","name","text","style","image","anims","component","component_fields","layout","layout_own"}
 DOCUMENT_NODE_KEYS :: [?]string{"name","kind","text","key","style","look","image","events","children","slot"}
-DOCUMENT_EVENTS :: [?]string{"shown","hidden","hovered","unhovered","pressed","released","focused","unfocused","selected","unselected","clicked"}
+DOCUMENT_EVENTS :: [?]string{"shown","hidden","clicked"}
 
 DOC_STATES :: [?]struct{key:string,states:ui.Style_States}{{"hover",{.Hovered}},{"focus",{.Focused}},{"pressed",{.Pressed}},{"disabled",{.Disabled}},{"selected",{.Selected}},{"over",{.Over}}}
 // The fields a parameter of a widget can go to.
@@ -700,6 +701,12 @@ document_anim_write :: proc(out:^serial.Writer,r:^Records,row:int) {
                         serial.json_key(out,"time",true);serial.json_number(out,k.time)
                         serial.json_key(out,"value");serial.json_list(out,k.value[:])
                         serial.json_text(out,"ease",fmt.tprintf("%v",k.ease))
+                        if k.interpolation!=.Linear {serial.json_text(out,"interpolation",fmt.tprintf("%v",k.interpolation))}
+                        if k.tangents {
+                            serial.json_key(out,"tangents");serial.text_write_raw(out,"true")
+                            serial.json_key(out,"in_slope");serial.json_list(out,k.in_slope[:])
+                            serial.json_key(out,"out_slope");serial.json_list(out,k.out_slope[:])
+                        }
                         serial.write_u8(out,'}')
                     }
                 }
@@ -721,17 +728,17 @@ document_anim_write :: proc(out:^serial.Writer,r:^Records,row:int) {
     serial.write_u8(out,'}')
 }
 
-// Whether an animation is a few fields: a clip whose tracks each go from a
-// value at 0 to one at the same time, with the same ease.
+// Whether an animation is a few fields: a clip whose tracks each go in a
+// line from a value at 0 to one at the same time, with the same ease.
 doc_anim_short :: proc(r:^Records,row:int) -> bool {
     a:=r.anims[row]
     if a.kind!=.Clip || a.count==0 || u64(a.first)+u64(a.count)>u64(len(r.tracks)) {return false}
     seconds:f32
-    ease:ui.Ease
+    ease:mm.Ease
     for t,i in r.tracks[a.first:][:a.count] {
         if t.key_count!=2 || u64(t.first_key)+2>u64(len(r.keys)) {return false}
         from,to:=r.keys[t.first_key],r.keys[t.first_key+1]
-        if from.time!=0 || from.ease!=.Linear {return false}
+        if from.time!=0 || from.ease!=.Linear || from.interpolation!=.Linear || to.interpolation!=.Linear || from.tangents || to.tangents {return false}
         if i==0 {seconds,ease=to.time,to.ease} else if to.time!=seconds || to.ease!=ease {return false}
     }
     return true
@@ -1489,7 +1496,7 @@ document_anim_apply :: proc(args:^Tree_Args,r:^Records,name,text:string) -> bool
             seconds=number
         case key=="ease":
             word,is_text:=doc_string(reading,values[i])
-            if !is_text {reading_fail(reading,"ease must be the name of a ui.Ease");return false}
+            if !is_text {reading_fail(reading,"ease must be the name of an ease of std/math, as Linear, Cubic_Out or Back_Out");return false}
             ease=word
         case key=="kind" || key=="loop" || key=="tracks" || key=="parts":
             append(&fixed_keys,key);append(&fixed_values,values[i])
@@ -1972,7 +1979,7 @@ doc_node_events_apply :: proc(args:^Tree_Args,r:^Records,n:^ui.Tree_Node,events:
         }
         slot:=-1
         for event,j in names {if event==key {slot=j}}
-        if slot<0 {return doc_failed(reading,"events has no trigger '%s'; it has shown, hidden, hovered, unhovered, pressed, released, focused, unfocused, selected, unselected and clicked",key)}
+        if slot<0 {return doc_failed(reading,"events has no trigger '%s'; it has shown, hidden and clicked; what a node looks like hovered, pressed, focused or selected is a state of its style, with its transition",key)}
         slots[slot]=played
     }
     return true

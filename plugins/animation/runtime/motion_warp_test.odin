@@ -54,7 +54,7 @@ motion_targets_queued_before_the_first_tick_bind_and_warp_the_same_interval :: p
     hierarchy:core.Hierarchy;defer core.value_free(&hierarchy,type_info_of(core.Hierarchy))
     core.hierarchy_settle(&hierarchy,core.read(&parents),&entities)
     requests:Animation_Requests;events:Animation_Events;playback:Playback;skeletons:Skeleton_Assets
-    defer {delete(requests.seeks.items);delete(requests.poses.items);delete(requests.distances.items);delete(events.items);playback_free(&playback);skeleton_assets_free(&skeletons)}
+    defer {delete(requests.timeline.items);delete(requests.poses.items);delete(requests.distances.items);delete(events.items);playback_free(&playback);skeleton_assets_free(&skeletons)}
     motion:Motion_Runtime;motion_requests:Motion_Requests;motion_assets:=Motion_Assets{allocator=context.allocator}
     defer {motion_runtime_free(&motion);delete(motion_requests.targets.items);delete(motion_requests.locomotion.items);motion_assets_free(&motion_assets)}
     profile:=motion_test_profile();profile.windows[0].end=1
@@ -320,18 +320,18 @@ motion_discovers_changed_profiles_retries_first_targets_and_compacts_instances_i
     prepared:=motion_prepare(&motion,&requests,core.read(&w.animations),&playback,&cache,app.assets,app.allocator,nil)
     context=saved;app.allocator=saved.allocator
     testing.expect(t,prepared && len(motion.instances)==0 && cap(motion.rows)==0)
-    core.get(&w.animations,first).motion={3,4};core.get(&w.animations,second).motion={3,5}
+    core.edit(&w.animations,first).motion={3,4};core.edit(&w.animations,second).motion={3,5}
     target:=mm.TRANSFORM_IDENTITY;target.position.x=4;motion_target(&requests,first,"ledge",spatial_world(target))
-    observed:=motion.animation_version
+    observed:=motion.animations_seen
     context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;app.allocator=context.allocator
     prepared=motion_prepare(&motion,&requests,core.read(&w.animations),&playback,&cache,app.assets,app.allocator,nil)
     context=saved;app.allocator=saved.allocator
-    testing.expect(t,!prepared && len(motion.instances)==0 && len(requests.targets.items)==1 && motion.animation_version==observed)
+    testing.expect(t,!prepared && len(motion.instances)==0 && len(requests.targets.items)==1 && motion.animations_seen==observed)
     testing.expect(t,motion_prepare(&motion,&requests,core.read(&w.animations),&playback,&cache,app.assets,app.allocator,nil) && len(motion.instances)==2 && motion_instance(&motion,first).targets[0].world==target && len(requests.targets.items)==0)
     copied:Motion_Runtime;core.value_copy(&copied,&motion,type_info_of(Motion_Runtime));defer motion_runtime_free(&copied)
     motion_instance(&copied,first).targets[0].world.position.x=9
     testing.expect(t,motion_instance(&motion,first).targets[0].world.position.x==4)
-    core.get(&w.animations,first).motion={3,5};core.get(&w.animations,second).motion={};core.get(&w.animations,plain).weight=.3
+    core.edit(&w.animations,first).motion={3,5};core.edit(&w.animations,second).motion={};core.edit(&w.animations,plain).weight=.3
     context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;app.allocator=context.allocator
     prepared=motion_prepare(&motion,&requests,core.read(&w.animations),&playback,&cache,app.assets,app.allocator,nil)
     context=saved;app.allocator=saved.allocator;cache.allocator=saved.allocator

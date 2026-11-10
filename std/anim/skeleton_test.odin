@@ -59,23 +59,12 @@ world_poses_validate_topology_values_and_aliases_without_a_reference_skeleton ::
 }
 
 @(test)
-skeletal_layers_mask_bones_and_add_reference_relative_rotations :: proc(t:^testing.T) {
+a_branch_mask_weighs_the_bones_under_its_bone :: proc(t:^testing.T) {
     rest:=[2]math.Transform{math.TRANSFORM_IDENTITY,math.TRANSFORM_IDENTITY}
-    layer:=rest
-    layer[0].position={5,0,0};layer[1].position={3,0,0}
-    layer[1].rotation=math.quat_axis_angle({0,1,0},1)
-    layer[0].rotation=-rest[0].rotation
     weights:=[2]f32{0,0.5}
-    out:[2]math.Transform
-    testing.expect(t,pose_layer(rest[:],layer[:],weights[:],1,out[:]))
-    testing.expect(t,out[0]==rest[0] && near(out[1].position.x,1.5))
-    testing.expect(t,math.quat_angle(out[1].rotation,math.quat_axis_angle({0,1,0},0.5))<0.001)
-    testing.expect(t,pose_additive(out[:],layer[:],rest[:],weights[:],1,out[:]))
-    testing.expect(t,near(out[1].position.x,3) && math.quat_angle(out[1].rotation,layer[1].rotation)<0.001)
     parents:=[2]i32{-1,0};names:=[2]u64{1,2}
     testing.expect(t,pose_mask_branch({parents[:],names[:],rest[:]},1,0.7,weights[:]))
     testing.expect(t,weights=={0,0.7})
-    testing.expect(t,!pose_layer(rest[:],layer[:],nil,f32(0h7fc00000),out[:]))
     zero:Skeleton
     testing.expect(t,!skeleton_validate(zero) && !skeleton_world(zero,nil,nil))
 }

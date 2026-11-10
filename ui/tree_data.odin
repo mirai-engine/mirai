@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:reflect"
 import "mirai:std/base"
 import "mirai:std/serial"
+import std_anim "mirai:std/anim"
 import uf "mirai:std/ui_format"
 
 // A tree as records: what a .ui asset stores and what a tool edits. Names
@@ -145,7 +146,7 @@ Tree_Track :: struct {
 }
 Tree_Anim :: struct {
     kind:Anim_Kind,
-    loop:Anim_Loop,
+    loop:std_anim.Loop,
     first,count:u32, // rows of tracks for a Clip, of parts for a Sequence or a Parallel
     name:[TREE_NAME_CAPACITY]u8 `mirai:"text"`, // what the game names to play it on a node
 }
@@ -160,7 +161,7 @@ Tree_Data :: struct {
     images:[]Tree_Image,
     anims:[]Tree_Anim,     // an Anim is its row plus one
     tracks:[]Tree_Track,
-    keys:[]Keyframe,
+    keys:[]std_anim.Keyframe,
     parts:[]Anim,          // what the groups play: animations of earlier rows
     anim_sets:[]Anim_Set,
     fonts:[]Tree_Font,

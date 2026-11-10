@@ -64,11 +64,17 @@ own the `Transform` (`locks="core.Transform"`): the game moves through requests.
   removed one (in batches, see [binding](#binding-and-world-step)), but keeps its values and its
   `core.Motion`: on turning on, the body is rebuilt where its `Transform` is and with that velocity.
   While it is off it does not own the `Transform`.
-- `Fluid_Volume`: water or another fluid where its entity is ([fluids](physics.md#fluids)): `Plane`
-  (below the height of the entity) or `Box` (of half-extents `size` times the scale), density,
-  current in the frame of the entity and priority; with zero density, a dry box. The entity's yaw
-  turns the box and its current. Constructors `fluid_volume_sea|box|dry`. It is `replicated`: a
-  flood that the server decides reaches the clients.
+- `Fluid`: water or another fluid in the
+  [`Volume`](../../mirai-gameplay/references/libraries.md#volume) of its entity
+  ([fluids](physics.md#fluids)): a `Plane` (below the height of the entity) or a
+  `Box` (its extents times the scale), with density and current in the frame of the entity; with
+  zero density, a dry box over the fluids of lower `Volume.priority`. The entity's yaw turns the
+  box and its current; the blend and the mode of the `Volume` do nothing to a fluid. It is
+  `replicated`: a flood that the server decides reaches the clients.
+- `Force_Field`: a force that lasts on the bodies in the `Volume` of its entity (any shape; without
+  one, the whole world). `force_fields_step` (`fixed`, before `physics_prepare`) asks `apply_area`
+  for it each tick while it is on; its `along` turns with the entity. The editor part draws where
+  a selected one pushes (`force_field_preview`).
 - `Joint`, `Joint_State`: joins the body of the entity with that of `target` (or with the world if
   it is `NONE`). Types `Fixed`, `Spherical`, `Revolute`, `Prismatic`, `Distance`, `SixDOF`, with
   limits, drives, motor, spring and breaking. The configuration, the captured frames and the
@@ -171,7 +177,7 @@ differs from its defaults:
   `physics.collision` and keeps its number; a push that does not apply, `physics.collision_push`.
 - `collision_filter` resolves preset, own collision and group into the bit `Filter` that the solver
   sees. A collision change (preset, sensor, masks, group or settings) re-filters the shape
-  (`shape_set_filter`, `character_set_filter`, `destructible_set_filter`), never rebuilds it.
+  (`shape_set_filter`, `character_set_filter`, `breakable_set_filter`), never rebuilds it.
 - `collision_off` leaves the collider colliding with nothing; queries pass through it. Over the
   network the `Collider` travels whole
   ([multiplayer](../../mirai-networking/references/multiplayer.md#what-another-library-simulates)).
@@ -197,7 +203,9 @@ Overlaps:
 - `Physics_Settings` (storage) sets the capacities when the simulation world is created; zero takes
   the value of the package. Gravity is a component ([gravity](#gravity)). `hulls`, `meshes` and
   `heightfields` budget the resident geometry (the defaults of `sim.world_desc_default` leave room
-  for a terrain of hundreds of chunks, one per slot); `events`, the events of each type per tick.
+  for a terrain of hundreds of chunks, one per slot); `events`, the events of each type per tick;
+  `breakables`, `pieces` and `bonds`, [what breaks](destruction.md#with-the-world), whose pools
+  are made with the first breakable.
 - `Physics_State` (storage with its own `copy`/`swap`/`free`) holds the `sim.World` and the
   entity → body and entity → joint links in two `core.Entity_Map`: dense, the size of what the
   simulation has and not of the entity indices. The link of another generation of an index is
@@ -251,10 +259,11 @@ gives the [world queries](#queries). `physics_step` (`fixed`, `simulate` stage),
    repeats in the next tick; a request to a body that is still waiting is the
    `physics.request_body` problem.
 3. Applies `Body_Requests` and `Joint_Requests`; creates, adjusts and removes joints. Before that,
-   in both loops and only if their rows, poses or the epoch changed, it takes each `Fluid_Volume`
-   to a simulation fluid where its entity is (`Physics_State.fluids`). One that cannot be made is
-   the `physics.fluid` problem (a dry plane, a box without size) or `physics.fluids`
-   (`Physics_Settings.fluids`); two fluids or two dry boxes that overlap, `physics.fluid_overlap`.
+   in both loops and only if their rows, volumes, poses or the epoch changed, it takes each `Fluid`
+   to a simulation fluid in the `Volume` of its entity (`Physics_State.fluids`). One that cannot
+   be made is the `physics.fluid` problem (no `Volume` or one that is not a plane or a box, a dry
+   plane, a box without size) or `physics.fluids` (`Physics_Settings.fluids`); two fluids or two
+   dry boxes that meet at the same priority, `physics.fluid_overlap`.
 4. Hands the `Character_Move` to the characters.
 5. **Advances the simulation** with `time.dt` (only if `Time.playing`, with the application's
    threads) and writes the poses into `Transform` and the states into `core.Motion` and
@@ -312,8 +321,8 @@ zone; `gravity.odin` applies it to the simulation.
   character takes its length from it for its jumps, and its vertical turns toward the opposite
   ([vertical](character.md#the-vertical)). Particles fall with the same fields
   ([vfx](../../mirai-world/references/vfx.md#game)).
-- Pushing is not gravity: a force in newtons that weighs the mass (a fan, an explosion) is a field
-  of [physics_fields](../../mirai-plugins/references/physics-fields.md).
+- Pushing is not gravity: a force in newtons that weighs the mass (a fan, an explosion) is a
+  `Force_Field` or an area request ([requests](#requests)).
 
 ## Requests
 
@@ -330,10 +339,16 @@ zone; `gravity.odin` applies it to the simulation.
   [transform and hierarchy](../../mirai-core/references/core.md#transform-and-hierarchy)).
 - A request that does nothing (non-finite values, without a body of its own, kinematic or
   manipulation of a character) is a `physics.request_*` problem of its entity.
-- Forces: `apply_force` and `apply_torque` accumulate during one tick; the area ones
-  (`apply_radial_*`, `apply_sphere_force`, `apply_box_*`, `apply_plane_force`) follow the model's
-  [volume forces](physics.md#volume-forces) in world coordinates and also affect characters (a
-  radial impulse is a `launch`) and proxies.
+- Forces: `apply_force` and `apply_torque` accumulate during one tick. The area one, `apply_area`,
+  takes a `volume.Volume` and the pose it is placed at: a force, an impulse or a velocity change
+  on every body whose center of mass is in it, away from its center (along the up of a plane) or
+  along a direction of the world, weighted by `volume.weight` through the model's
+  [area forces](physics.md#area-forces). It also affects characters (an impulse is a `launch`) and
+  proxies. A volume without size or values that are not finite are the `physics.request_area`
+  problem.
+- `strain_area` strains the [breakables](destruction.md#damage-and-fields) its filter meets in a
+  box or sphere `volume.Volume` placed at a pose, once the step of the tick ran, with or without
+  breaking them (`weakening`); what it did is in `breakable_events` with the hits of the step.
 
 Manipulation:
 
@@ -605,7 +620,11 @@ cells, makes static bodies of its own in the simulation (`owned.odin`) instead o
   `owned_shape_destroy`): physics never makes, moves or ends an owned body.
 - `owned_body_of` and `owned_shape_user` say from the body and the shape of a `Hit` whose they are
   and which ones, without the owner searching its own lists.
-- `body_info` reads any body of the simulation: of an entity, of a hit, owned or of a fracture.
+- `body_info` reads any body of the simulation: of an entity, of a hit, owned or of a breakable.
+- What breaks is made with `breakable_create` and read, damaged, cut and ended with the other
+  `breakable_*` of `breakables.odin`, which are those of the [solver](destruction.md) on a
+  `Physics_State`: its state is the simulation's, so the library keeps only its handle in a table.
+  Its bodies name the entity it was made for until `breakable_body_name` gives them one.
 - A bake or a test that simulates without a world makes the simulation with `state_make` and
   advances it with `simulate`, which applies only the requests of areas.
 - A cache outside the world that keeps bodies asks `simulation_replaced` whether they are still

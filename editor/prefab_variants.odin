@@ -59,7 +59,7 @@ variant_prompt_build :: proc(s:^Session) {
         }
     }
     if !create {return}
-    name:=strings.trim_suffix(strings.trim_space(string(p.name[:p.length])),PREFAB_EXTENSION)
+    name:=strings.trim_suffix(strings.trim_space(string(p.name[:p.length])),SCENE_EXTENSION)
     if name=="" {return}
     if strings.contains_any(name,"/\\:*?\"<>|") {
         notify(s,"Give the variant a name without / \\ : * ? \" < > or |")

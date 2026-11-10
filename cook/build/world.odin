@@ -388,6 +388,8 @@ packages_find :: proc(g:^Generator,p:^project.Project) {
     }
     e:=p.engine_root
     add_tree(g,project.path(e,"core"),"mirai:core",false)
+    // The components of prefab instances are declared where a document holds them.
+    add_tree(g,project.path(e,"asset"),"mirai:asset",false)
     add_tree(g,project.path(e,"engine"),"mirai:engine",false)
     names:=project.FOLDER_NAMES
     parts:=project.PART_NAMES
@@ -1102,6 +1104,8 @@ steps_read :: proc(g:^Generator,pkg:^Package) {
                 }
                 arg:=0
                 for field in literal.type.params.list {
+                    // A default alone gives it no type to bind: the error above says to take it out.
+                    if field.type==nil {continue}
                     if b:=bundle_of(g,file,pkg,field.type);b!=nil {
                         if _,is_pointer:=field.type.derived.(^ast.Pointer_Type);is_pointer {
                             append(&g.errors,fmt.aprintf("%s: %s receives %s, a @(params) struct, by pointer: receive it by value, %s; its fields already point at what they write",where_,name,expr_text(file,field.type),expr_text(file,field.type)[1:]))

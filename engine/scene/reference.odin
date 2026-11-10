@@ -86,7 +86,7 @@ section_path :: proc(w:core.World_Ref,e:core.Entity,allocator:=context.temp_allo
     if references!=nil && parents!=nil {
         at:=e
         for _ in 0..<core.HIERARCHY_DEPTH {
-            parent,placed:=core.get(core.read(parents),at)
+            parent,placed:=core.get(parents,at)
             if !placed || parent.entity==core.NONE {break}
             at=parent.entity
             if reference:=(^Scene_Reference)(core.raw_find(core.raw(references),type_info_of(Scene_Reference),at));reference!=nil {append(&path,reference.scene)}

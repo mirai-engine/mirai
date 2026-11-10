@@ -86,7 +86,7 @@ bench_the_longest_frame_of_a_section_that_loads :: proc(t:^testing.T) {
                 frame=time.duration_milliseconds(time.tick_since(started))
             }
             core.settle(&p.info,p.world,nil)
-            testing.expect_value(t,core.count(core.read(&p.world.models)),scene==ROOM?MESHES:MESHES+1)
+            testing.expect_value(t,core.count(&p.world.models),scene==ROOM?MESHES:MESHES+1)
         }
         slice.sort(longest[:]);slice.sort(total[:]);slice.sort(frames[:])
         log.infof("%s: longest frame %.3f ms (%.3f to %.3f), main thread %.3f ms in %v frames, medians of %d",scene==ROOM?"48 meshes, 16 textures":"and a 24 MiB mesh",longest[ROUNDS/2],longest[0],longest[ROUNDS-1],total[ROUNDS/2],frames[ROUNDS/2],ROUNDS)

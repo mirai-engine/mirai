@@ -148,8 +148,8 @@ match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips
     for bone in ([3]i32{rig.left_foot,rig.right_foot,rig.hips}) {if bone<0 || int(bone)>=n {return}}
     for weight in weights {if !anim_finite(weight) || weight<0 {return}}
     MAX_FRAMES :: 1<<20
-    total,longest,blend_tracks:=0,0,0
-    events:=false
+    total,longest:=0,0
+    events,blended_any:=false,false
     for c in clips {
         if !anim_finite(c.speed) || c.speed<0 || !match_rates_valid(c.rates) {return}
         duration,blended,valid:=match_clip_duration(lib,c,rate)
@@ -158,9 +158,7 @@ match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips
         if count<2 {return}
         total+=count;longest=max(longest,count)
         if blended {
-            tracks:=0
-            for clip,k in c.clips {if c.weights[k]>0 {tracks+=len(clip_tracks(lib,clip))}}
-            blend_tracks=max(blend_tracks,tracks)
+            blended_any=true
         } else if len(event)>0 {
             for marker in clip_markers(lib,c.clips[0]) {if slice.contains(event,marker.id) {events=true}}
         }
@@ -175,8 +173,16 @@ match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips
     rest,e4:=make([]math.Transform,n);defer delete(rest)
     ranges,e5:=make([]Match_Range,len(clips))
     defer if !ok {delete(ranges)}
-    pose:Pose;defer pose_destroy(&pose)
-    if e0!=nil || e1!=nil || e2!=nil || e3!=nil || e4!=nil || e5!=nil || blend_tracks>0 && !pose_init(&pose,blend_tracks) {return .Out_Of_Memory}
+    // A blend mixes its clips by bone: the bone of each track of the library, and a blend a bone.
+    track_bones:[]i32;blend:[]Bone_Blend
+    defer {delete(track_bones);delete(blend)}
+    if blended_any {
+        e6,e7:mem.Allocator_Error
+        track_bones,e6=make([]i32,max(lib.track_count,0))
+        blend,e7=make([]Bone_Blend,n)
+        if e6!=nil || e7!=nil || !library_track_bones(lib,rig.skeleton.names,track_bones) {return .Out_Of_Memory}
+    }
+    if e0!=nil || e1!=nil || e2!=nil || e3!=nil || e4!=nil || e5!=nil {return .Out_Of_Memory}
     copy(rest,rig.skeleton.rest)
     skeleton:=rig.skeleton;skeleton.rest=rest
     body_rig:=Body_Rig{parents=skeleton.parents,rest=rest,body=rig.body,root=-1}
@@ -189,7 +195,7 @@ match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips
         frames:=Frames{rate=exact,bones=n,loop=clip_data(lib,c.clips[first]).loop==.Loop,local=local[:count*n]}
         weights:=[MATCH_BLEND]f32{0=1}
         if blended {
-            if !match_sample_blend(lib,c,skeleton,&pose,frames) {return}
+            if !match_sample_blend(lib,c,skeleton,track_bones,blend,frames) {return}
             sum:f32;for w in c.weights {sum+=w}
             for w,k in c.weights {weights[k]=w/sum}
         } else if !skeleton_bind(lib,c.clips[0],skeleton,tracks) || !frames_sample_clip(lib,c.clips[0],tracks,rest,nil,frames) {return}
@@ -713,24 +719,24 @@ match_clip_duration :: proc "contextless" (lib:^Library,c:Match_Clip,rate:f32) -
 }
 
 // Samples a blend into out: at each frame each clip with a weight at the same share of its
-// duration, mixed as the program mixes the leaves of a group (pose_blend, then pose_bone over the
-// rest of the skeleton).
+// duration, mixed as the program mixes the leaves of a group (bones_blend, then bone_transform
+// over the rest of the skeleton).
 @(private)
-match_sample_blend :: proc(lib:^Library,c:Match_Clip,skeleton:Skeleton,pose:^Pose,out:Frames) -> bool {
+match_sample_blend :: proc "contextless" (lib:^Library,c:Match_Clip,skeleton:Skeleton,track_bones:[]i32,blend:[]Bone_Blend,out:Frames) -> bool {
     count:=frames_count(out)
-    if count<2 || len(skeleton.names)!=out.bones || len(skeleton.rest)!=out.bones {return false}
+    if count<2 || len(skeleton.names)!=out.bones || len(skeleton.rest)!=out.bones || len(blend)!=out.bones {return false}
     sum:f32;for w in c.weights {sum+=w}
     for frame in 0..<count {
         share:=f32(frame)/f32(count-1)
-        pose_clear(pose)
+        for &bone in blend {bone={}}
         for clip,k in c.clips {
             if c.weights[k]<=0 {continue}
             player:=player_make(clip);player.time=share*clip_duration(lib,clip)
-            if !pose_blend(pose,lib,player,c.weights[k]/sum) {return false}
+            bones_blend(blend,track_bones,lib,player,c.weights[k]/sum)
         }
         local:=frames_pose(out,frame)
-        for name,bone in skeleton.names {
-            value,_,_:=pose_bone(pose,name,skeleton.rest[bone])
+        for mixed,bone in blend {
+            value,_,_:=bone_transform(mixed,skeleton.rest[bone])
             if !anim_transform_valid(value) {return false}
             local[bone]=value
         }

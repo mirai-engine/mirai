@@ -194,7 +194,7 @@ a_text_draws_what_its_style_fills_behind_it_with_its_padding :: proc(t:^testing.
     words:=test_paint(&ctx,"Coconut 1 of 10")
     if !testing.expect(t,words!=nil && test_paint(&ctx,"Plain text")!=nil) {return}
     area:=test_rect(t,&ctx,tree_element_id(&ctx,"pill"))
-    testing.expect(t,area.w>=text_width(&ctx.font,"Coconut 1 of 10",12,int(FONT_TREE)) && area.h>=24,"the box holds the text and its padding")
+    testing.expect(t,area.w>=text_width(&ctx.font,"Coconut 1 of 10",12,int(FONT_TREE)) && area.h>=12*TEXT_LINE+8,"the box holds the text and its padding")
 }
 
 @(test)
@@ -518,9 +518,9 @@ rich_text_breaks_its_words_with_their_styles :: proc(t:^testing.T) {
     }
     test_frame(&ctx,&input,build)
     // The words of a span on a line are one piece, without the space the line breaks at.
-    lines:=0
-    for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Text_Block && p.text=="one two" {lines+=1}}
-    testing.expect_value(t,lines,1)
+    broken:[8]string
+    lines:=test_text_lines(&ctx,id(&ctx,"rich"),broken[:])
+    testing.expect(t,lines>1 && broken[0]=="one two")
     r:=test_rect(t,&ctx,id(&ctx,"rich"))
     testing.expect(t,r.h>12*TEXT_LINE*2,"The words break into several lines")
 }
@@ -633,7 +633,7 @@ hovering_applies_the_hovered_rule_of_its_style :: proc(t:^testing.T) {
         test_point(&input,test_rect(t,&ctx,tree_element_id(&ctx,name)))
         for _ in 0..<3 {test_frame(&ctx,&input,test_game_build,&s)}
         found:=false
-        for p in ctx.paints[:ctx.paint_count] {if (p.kind==.Text_Block || p.kind==.Box) && p.style.color==red {found=true}}
+        for p in ctx.paints[:ctx.paint_count] {if (test_paint_is_text(p) || p.kind==.Box) && p.style.color==red {found=true}}
         testing.expectf(t,found,"%s draws its text red under the pointer",name)
     }
     // Pressed over a Text, the rule of Pressed applies.
@@ -644,7 +644,7 @@ hovering_applies_the_hovered_rule_of_its_style :: proc(t:^testing.T) {
     for _ in 0..<2 {test_frame(&ctx,&input,test_game_build,&s)}
     {
         found:=false
-        for p in ctx.paints[:ctx.paint_count] {if p.kind==.Text_Block && p.style.color==blue {found=true}}
+        for p in ctx.paints[:ctx.paint_count] {if test_paint_is_text(p) && p.style.color==blue {found=true}}
         testing.expect(t,found,"A Text draws its Pressed look while the pointer holds over it")
     }
     // Passive, as the preview in Edit, a Text ignores the pointer; a node a tool shows in a state draws it.
@@ -653,18 +653,18 @@ hovering_applies_the_hovered_rule_of_its_style :: proc(t:^testing.T) {
     for _ in 0..<2 {test_frame(&ctx,&input,test_game_build,&s)}
     {
         found:=false
-        for p in ctx.paints[:ctx.paint_count] {if p.kind==.Text_Block && (p.style.color==blue || p.style.color==red) {found=true}}
+        for p in ctx.paints[:ctx.paint_count] {if test_paint_is_text(p) && (p.style.color==blue || p.style.color==red) {found=true}}
         testing.expect(t,!found,"A passive tree takes no hover nor press")
         s.shown,s.shown_states=2,{.Hovered}
         input.pointer={-100,-100}
         for _ in 0..<2 {test_frame(&ctx,&input,test_game_build,&s)}
         reds:=0
-        for p in ctx.paints[:ctx.paint_count] {if (p.kind==.Text_Block || p.kind==.Box) && p.style.color==red {reds+=1}}
+        for p in ctx.paints[:ctx.paint_count] {if (test_paint_is_text(p) || p.kind==.Box) && p.style.color==red {reds+=1}}
         testing.expect_value(t,reds,1)
         s.shown=3
         for _ in 0..<2 {test_frame(&ctx,&input,test_game_build,&s)}
         reds=0
-        for p in ctx.paints[:ctx.paint_count] {if (p.kind==.Text_Block || p.kind==.Box) && p.style.color==red {reds+=1}}
+        for p in ctx.paints[:ctx.paint_count] {if (test_paint_is_text(p) || p.kind==.Box) && p.style.color==red {reds+=1}}
         testing.expect_value(t,reds,1)
     }
 }

@@ -47,7 +47,7 @@ preferences_list :: proc(s:^Session) -> []project.Setting {
         {"Console_Filter",type_info_of(Console_Filter),s.console!=nil?&s.console.filter:nil,proc(dst:rawptr) {(^Console_Filter)(dst)^=CONSOLE_DEFAULT.filter}},
         {"Play_Players",type_info_of(Play_Players),s.play_players,proc(dst:rawptr) {(^Play_Players)(dst)^=PLAY_PLAYERS_DEFAULT}},
         {"Play_History",type_info_of(Play_History),s.play_history,proc(dst:rawptr) {(^Play_History)(dst)^=PLAY_HISTORY_DEFAULT}},
-        {"Ai_View",type_info_of(Ai_View),s.ai!=nil?&s.ai.view:nil,proc(dst:rawptr) {(^Ai_View)(dst)^=AI_DEFAULT.view}},
+        {"Ai_View",type_info_of(Ai_View),ai_view_preferences(s.ai),proc(dst:rawptr) {(^Ai_View)(dst)^=AI_VIEW_DEFAULT}},
     }
     // The areas the plugins keep.
     provided:[PROVIDER_CAPACITY]Preferences_Provider

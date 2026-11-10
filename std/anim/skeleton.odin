@@ -155,31 +155,6 @@ skeleton_socket :: proc "contextless" (world:[]math.Transform,bone:int,offset:ma
     return math.transform_compose(world[bone],offset),true
 }
 
-pose_layer :: proc "contextless" (base,layer:[]math.Transform,mask:[]f32,weight:f32,out:[]math.Transform) -> bool {
-    if len(base)!=len(layer) || len(out)!=len(base) || (len(mask)!=0 && len(mask)!=len(base)) || !anim_finite(weight) || !anim_pose_valid(base) || !anim_pose_valid(layer) {return false}
-    for v in mask {if !anim_finite(v) {return false}}
-    weight:=math.saturate(weight)
-    for value,i in base {
-        w:=weight*(math.saturate(mask[i]) if len(mask)>0 else 1)
-        out[i]=math.transform_interpolate(value,layer[i],w)
-    }
-    return true
-}
-
-pose_additive :: proc "contextless" (base,layer,reference:[]math.Transform,mask:[]f32,weight:f32,out:[]math.Transform) -> bool {
-    if len(base)!=len(layer) || len(base)!=len(reference) || len(out)!=len(base) || (len(mask)!=0 && len(mask)!=len(base)) || !anim_finite(weight) || !anim_pose_valid(base) || !anim_pose_valid(layer) || !anim_pose_valid(reference) {return false}
-    for v in mask {if !anim_finite(v) {return false}}
-    for value,i in base {
-        w:=weight*(math.saturate(mask[i]) if len(mask)>0 else 1)
-        delta:=conj(reference[i].rotation)*layer[i].rotation
-        if real(delta)<0 {delta=-delta}
-        turn:=quat_exp(quat_log(delta)*w)
-        out[i]={value.position+(layer[i].position-reference[i].position)*w,linalg.normalize0(value.rotation*turn),value.scale+(layer[i].scale-reference[i].scale)*w}
-        if !anim_transform_valid(out[i]) {return false}
-    }
-    return true
-}
-
 pose_mask_branch :: proc "contextless" (s:Skeleton,bone:int,weight:f32,out:[]f32) -> bool {
     if !skeleton_validate(s) || bone<0 || bone>=len(s.parents) || len(out)!=len(s.parents) || !anim_finite(weight) {return false}
     for i in 0..<len(out) {

@@ -42,12 +42,12 @@ animation_stop_and_seek_operate_on_the_play_world_and_refuse_edit_seeks :: proc(
     p=request_defaults();copy(p.entity[:],"0000000000000011");p.seek=1.25
     call=api.Call{method=&method,params=p,raw=`{"entity":"0000000000000011","seek":1.25}`,out=&out,allocator=context.temp_allocator}
     request(&s,&call)
-    testing.expect(t,!call.failed && len(play_world.requests.seeks.items)==1 && len(document.requests.seeks.items)==0)
+    testing.expect(t,!call.failed && len(play_world.requests.timeline.items)==1 && len(document.requests.timeline.items)==0)
     s.mode=.Edit
     s.runs[0]={}
     call.failed=false
     request(&s,&call)
-    testing.expect(t,call.failed && call.error.code==api.INVALID_PARAMS && strings.contains(call.error.data,"Runtime_Required") && len(document.requests.seeks.items)==0)
+    testing.expect(t,call.failed && call.error.code==api.INVALID_PARAMS && strings.contains(call.error.data,"Runtime_Required") && len(document.requests.timeline.items)==0)
 }
 
 @(test)
@@ -72,7 +72,7 @@ animation_api_refuses_non_finite_configuration_before_touching_the_world :: proc
     call:=api.Call{method=&method,params=&params,allocator=context.temp_allocator}
     play(&s,&call)
     testing.expect(t,call.failed && call.error.code==api.INVALID_PARAMS)
-    params=Play_Params{speed=1,weight=invalid}
+    params=Play_Params{speed=1,fade=invalid}
     call.failed=false
     play(&s,&call)
     testing.expect(t,call.failed && call.error.code==api.INVALID_PARAMS)
