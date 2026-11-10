@@ -6,6 +6,7 @@ import "core:slice"
 import "mirai:core"
 import "mirai:editor/api"
 import "mirai:editor/history"
+import "mirai:host"
 import "mirai:std/base"
 import mm "mirai:std/math"
 
@@ -86,6 +87,50 @@ simulation_apply :: proc(s:^Session,ids:[]base.Entity_Id) -> bool {
     }
     play_stop(s,true)
     return simulation_apply_poses(s,poses)
+}
+
+// A Simulate limited to moving, from Edit: on a copy of the document they alone move and every
+// other body is still, tick after tick of the project's rate, until all rest or ticks run out;
+// then their world poses are applied to the document as one undo step. rested, by index of
+// moving, says which came to rest. A problem says what failed and how to fix it, with nothing
+// applied; at is the index in moving it is about, -1 for none.
+simulate_until_rest :: proc(s:^Session,moving:[]core.Entity,ticks:int,rested:[]bool) -> (ran,at:int,problem:string) {
+    p:=providers(s)
+    if !p.simulates {return 0,-1,"No plugin simulates bodies: add physics to the plugins of the project"}
+    if s.mode!=.Edit {return 0,-1,"Only the document being edited settles: play.stop first"}
+    if len(moving)==0 || len(rested)!=len(moving) {return 0,-1,"Give at least one entity to settle"}
+    if ticks<1 {return 0,-1,"ticks must be at least 1"}
+    if !(s.app.tick_dt>0) {return 0,-1,"The project has no tick rate: set Simulation_Settings.tick_rate"}
+    w:=edited_world(s)
+    for e,i in moving {
+        if !core.alive(core.world_entities(w),e) || !entity_has(w,e,core.Transform) || api_entity_id(w,e)==0 {return 0,i,"is not an entity of the document: it was destroyed or never made"}
+        for previous in moving[:i] {if previous==e {return 0,i,"is given twice"}}
+    }
+    world:=document_copy(s)
+    if world==nil {return 0,-1,"The document could not be copied: there is no memory for another world"}
+    defer host.app_world_free(s.app,world)
+    run:=host.app_world_ref(s.app,world)
+    if at,problem=p.simulation.limit(run,s.app,moving);problem!="" {return}
+    motions:=core.read(core.world_table_of(run,core.Motion))
+    for ran<ticks {
+        if !p.simulation.step(run,s.app,s.app.tick_dt) {return ran,-1,"Physics stopped while they fell: engine.diagnostics names what failed"}
+        ran+=1
+        all:=true
+        for e,i in moving {
+            motion,made:=core.get(motions,e)
+            rested[i]=made && !motion.awake
+            all&&=rested[i]
+        }
+        if all {break}
+    }
+    poses:=make([]Simulation_Pose,len(moving),context.temp_allocator)
+    for e,i in moving {
+        t:=entity_world(run,e)
+        q:=t.rotation
+        poses[i]={api_entity_id(w,e),t.position,{q.x,q.y,q.z,q.w},t.scale}
+    }
+    if !simulation_apply_poses(s,poses) {return ran,-1,"The poses could not be kept as a step of undo: an edit of the document is open"}
+    return ran,-1,""
 }
 
 Api_Simulation_Apply_Params :: struct {

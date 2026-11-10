@@ -2,9 +2,9 @@
 name: mirai-plugins
 description: The Mirai plugin system - manifests (`plugin.mirai`), the runtime and editor parts,
   dependencies and order, plugins from git and the catalog (`cook/install`, `mirai plugin`) - and
-  the tool, physics add-on and renderer plugins `paint`, `physics_placement`, `physics_cache`,
-  `ragdoll`, `playtest`, `previews`, `profiler`, `tracy`, `ui_inspector`,
-  `prompts_kenney`, `decals`, `deform`, `monitors`, `portals`, `mirror`, `fog`, `fsr` and `lens`.
+  the tool, physics add-on and renderer plugins `paint`, `physics_cache`, `ragdoll`, `playtest`,
+  `previews`, `profiler`, `tracy`, `ui_inspector`, `prompts_kenney`, `decals`, `deform`,
+  `monitors`, `portals`, `mirror`, `fog`, `fsr` and `lens`.
   Use when creating, changing, splitting, installing or publishing a plugin, when a plugin must
   extend the engine or integrate with the project world, or when working on one of those plugins.
   The plugins of terrain, vegetation, water, particles, navigation and AI are in `mirai-world`.
@@ -34,8 +34,6 @@ project world. Layout, manifests and build:
 - World content (`terrain`, `foliage`, `water`, `imprint`, `vfx`, `navigation`, `behavior`,
   `shapes` and their bridges): [mirai-world](../mirai-world/SKILL.md)
 - `paint` (vertex color brush, `paint.*`): [plugins.md#paint](references/plugins.md#paint)
-- `physics_placement` (`placement.drop`):
-  [plugins.md#physics-placement](references/plugins.md#physics-placement)
 - `previews` (animation documents, animation and skeleton thumbnails; `animation.capture`):
   [animation document](references/previews.md#animation-document),
   [thumbnails](references/previews.md#animation-thumbnails),

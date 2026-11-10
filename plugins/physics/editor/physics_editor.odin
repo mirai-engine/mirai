@@ -3,15 +3,15 @@ package physics_editor
 import "base:runtime"
 import "mirai:core"
 import "mirai:editor"
-import "mirai:host"
 import mm "mirai:std/math"
 import phys "plugins:physics/runtime"
 
 // What physics gives the editor: the rows of its collision types and of
 // Collision_Settings, the collision API, the Collider of a Character, the
-// bodies Simular drives with the gizmo, what a character says to the bots
-// that play a game, the colliders of the selection and the Collision modes
-// of the viewport.
+// bodies Simulate drives with the gizmo, the Simulate limited to some
+// entities that drops them to rest (physics.settle), what a character says to
+// the bots that play a game, the colliders of the selection and the Collision
+// modes of the viewport.
 
 @(storage)
 Physics_Inspector :: struct {provider:editor.Inspector_Provider}
@@ -21,7 +21,13 @@ PHYSICS_INSPECTOR_DEFAULT :: Physics_Inspector{provider={field=collision_collide
 @(storage)
 Physics_Api :: struct {provider:editor.Api_Provider}
 
-PHYSICS_API_DEFAULT :: Physics_Api{provider={register=api_collision_register}}
+PHYSICS_API_DEFAULT :: Physics_Api{provider={register=api_register}}
+
+@(private)
+api_register :: proc(s:^editor.Session) {
+    api_collision_register(s)
+    api_settle_register(s)
+}
 
 @(storage)
 Physics_Components :: struct {provider:editor.Component_Provider}
@@ -31,7 +37,7 @@ PHYSICS_COMPONENTS_DEFAULT :: Physics_Components{provider={added=collider_compan
 @(storage)
 Physics_Simulation :: struct {provider:editor.Simulation_Provider}
 
-PHYSICS_SIMULATION_DEFAULT :: Physics_Simulation{provider={owner=body_owner,move=body_move,release=body_release,settle=simulation_settle}}
+PHYSICS_SIMULATION_DEFAULT :: Physics_Simulation{provider={owner=body_owner,move=body_move,release=body_release,step=phys.step_world,limit=simulation_limit}}
 
 @(storage)
 Physics_Bodies :: struct {provider:editor.Body_Provider}
@@ -65,9 +71,6 @@ body_release :: proc(w:core.World_Ref,e:core.Entity) -> bool {
     phys.manipulation_end(requests,e)
     return true
 }
-
-@(private)
-simulation_settle :: proc(w:core.World_Ref,app:^host.App) {phys.step_world(w,app,0)}
 
 @(private)
 character_standing :: proc(w:core.World_Ref,body:core.Entity) -> (standing,known:bool) {

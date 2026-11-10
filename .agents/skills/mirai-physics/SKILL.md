@@ -68,8 +68,9 @@ networking ([networking](../mirai-networking/SKILL.md)).
   of the simulation, who may import the solver → [owned bodies](references/engine.md#owned-bodies)
 - `core.place` on a body → [engine.md#requests](references/engine.md#requests);
   `core.World_Queries` (cameras, feet) → [engine.md#queries](references/engine.md#queries)
-- Editor part (collider preset, collision settings, `physics.collision.*` API, Simulate, Collision
-  view modes) → [engine.md#editor-part](references/engine.md#editor-part)
+- Editor part (collider preset, collision settings, `physics.collision.*` API, Simulate, dropping
+  objects to rest with `physics.settle`, Collision view modes) →
+  [engine.md#editor-part](references/engine.md#editor-part)
 
 ## Workflow
 
@@ -196,8 +197,8 @@ networking ([networking](../mirai-networking/SKILL.md)).
     `locomotion_moves` (crouch, slide, mantle, tactical sprint, ledge jump), `planet` (own
     vertical: walking, jumping and rollback on a planet, crossing fields) and `locomotion_seat`
     (seat control, relative forward). Editor: `collision`, `api_collision`, `colliders`,
-    `view_mode`. `destruct`: `integration`. `geometry_test` does not need a GPU. Grounding with real
-    bodies: `demo/game/grounding_physics_test.odin`.
+    `view_mode`, `settle`. `destruct`: `integration`. `geometry_test` does not need a GPU.
+    Grounding with real bodies: `demo/game/grounding_physics_test.odin`.
 - Twins and cuts: the tests of `plugins/portals/runtime` (half crossed, walls of any collider, the
   twin that leaves, snapshot).
 - A change in step, contacts, solver, CCD, joints or characters keeps determinism:

@@ -297,6 +297,12 @@ physics; `physics` adds dragging bodies with the gizmo through its `Simulation_P
   distinct ids and finite poses and computes local transforms under the original hierarchy.
   Without changes it adds no undo; it does not keep entities created at run time, components,
   velocities or other state.
+- **Limited to some entities** (`simulate_until_rest`, `physics.settle` and its **Drop to rest**
+  entry on the selection): from Edit and inside the call, a copy of the document advances only its
+  simulation, at the project's tick rate, with those entities moving and every other body still,
+  until they rest or the ticks run out; their poses are applied as Apply transforms does, and
+  nothing else of the copy is kept. It is how objects are dropped onto the scene and onto each
+  other.
 
 Public API for tools in [extensions](extensions.md#simulation-and-pose-confirmation); methods in
 [API](../../mirai-agent-api/references/methods.md#simulation).

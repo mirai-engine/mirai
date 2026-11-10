@@ -250,12 +250,11 @@ or a part of it, with `ui.write` (`document=@file`, `save=true`); `ui.capture` s
 it alone, at its size, as a PNG.
 Contract: [the inspector](../../mirai-plugins/references/ui-inspector.md#api).
 
-## Painting and placement
+## Painting and shapes
 
-Viewport tools through the API, on the document whatever plays (`placement.drop`, only in Edit: it
-simulates on the document) and with the scene in front; each call is an undo step and an error
-leaves nothing. Contract: [paint](../../mirai-plugins/references/plugins.md#paint) and
-[Physics placement](../../mirai-plugins/references/plugins.md#physics-placement).
+Viewport tools through the API, on the document whatever plays and with the scene in front; each
+call is an undo step and an error leaves nothing. Contract:
+[paint](../../mirai-plugins/references/plugins.md#paint).
 
 - `paint.stroke`: the points are world points and need not be on the surface; paints the vertices
   within `radius` of the stroke. A stroke that reaches no vertex is `-32602` and does not write the
@@ -265,11 +264,6 @@ leaves nothing. Contract: [paint](../../mirai-plugins/references/plugins.md#pain
   points ([shapes tool](../../mirai-world/references/shapes.md#shapes-tool)). A cut that touches
   no outline shape, a refused stamp or a corner move that would cross edges is `-32602`. The
   brushes of a Solid are child entities with `Shape_Brush`, edited with the `scene.*` methods.
-- `placement.drop`: creates the entities, simulates only physics on a copy of the scene with the
-  environment fixed and commits when everything sleeps or when `time` runs out; `rested` says
-  which ones slept. It cancels the user's open preview and leaves the tool that was active turned
-  on. A body or a shape that physics cannot make is `-32000`, with the detail in
-  `engine.diagnostics`.
 
 ## Profiling
 
@@ -691,6 +685,11 @@ Runs the whole scene with the editor's camera and controls, without player input
   the entity that owns the body is moved.
 - `simulation.apply`: the `entities` must be distinct and exist in the copy and the document. It
   does not include created entities or component changes.
+- `physics.settle`, only in Edit: the
+  [Simulate limited](../../mirai-editor/references/editor.md#simulate) to its `entities`, which
+  need a `Collider`. Dropping a pile is `scene.write` of the objects
+  above where they fall, then `physics.settle` of them; the poses are one undo step. An entity that
+  cannot fall is `-32602` naming its index; `rested` false and `reason` say what the tick limit cut.
 
 During Simulate, `editor.select`, `editor.inspect`, `editor.input`, `camera.set` and the viewport
 actions act on the copy; `editor.input` still requires a manual editor and `capture` with `ui`

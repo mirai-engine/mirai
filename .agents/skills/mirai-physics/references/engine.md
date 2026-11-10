@@ -690,7 +690,9 @@ Joints over the network:
 `plugins/physics/editor` gives the editor what belongs to physics through its
 [providers](../../mirai-editor/references/extensions.md): the preset of a `Collider` and
 `Collision_Settings` in the inspector, the `physics.collision.*` methods of the API, the `Collider`
-that accompanies a new `Character`, the bodies that Simulate drags with the gizmo, the wireframes of
+that accompanies a new `Character`, the bodies that Simulate drags with the gizmo, the
+[Simulate limited](../../mirai-editor/references/editor.md#simulate) to some entities that
+`physics.settle` and **Drop to rest** run, the wireframes of
 the selection's colliders, the `collision` and `collision.<category>` view modes, and the fluids of
 the world that is seen (box edges and a grid over the sea), editing and in Play: nothing else shows
 them while no plugin draws them. Without the plugin none of that appears.
@@ -703,6 +705,9 @@ them while no plugin draws them. Without the plugin none of that appears.
   changing them.
 - The settings list categories, presets, pushes and the entries of undeclared values, with a button
   that removes them.
+- In a settle, the moving entities are dynamic bodies (their `Rigid_Body` when dynamic) and every
+  other body is static and every character the still capsule of its collider; joints act. Only
+  physics runs, so an `External` collider is the mesh its entity shows (a hull when it moves).
 
 ## Changing these libraries
 
