@@ -654,42 +654,42 @@ node_drop :: proc(list:[]ui.Tree_Node,i:int,rect:ui.Rect,y:f32) -> Node_Drop {
     return {parent=int(list[i].parent),before=before,inside=-1,line=rect.y+rect.h,ok=true}
 }
 
-// The menu of a node of the hierarchy, and what the Edit menu asks of the
-// document: on every node chosen.
+// The menu of a node of the hierarchy, and the entries of the editor the
+// document takes in place of the scene (Copy, Paste, Duplicate, Rename,
+// Delete), by their names: on every node chosen.
 @(private)
 nodes_actions :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,d:^editor.Asset_Document) {
     ctx:=s.gui.ctx
     r:=&u.records
     ux_sync(u)
     popup:=ui.id_derive(ctx,SCOPE,"node_menu")
-    request:=editor.Action.Quit
-    asked:=false
+    request:=""
     if d.request_serial!=u.request_seen {
         u.request_seen=d.request_serial
-        request,asked=d.request,true
+        request=d.request
     }
     if ui.popup(ctx,popup,{min_width=180}) {
         none:=u.selected<0 || u.selected>=len(r.nodes)
-        shortcut :: proc(action:editor.Action) -> string {return editor.shortcut_text(editor.ACTION_SHORTCUTS[action])}
-        if ui.menu_item(ctx,ui.id(ctx,"menu_copy"),"Copy",{shortcut=shortcut(.Copy),disabled=none}) {request,asked=.Copy,true}
-        if ui.menu_item(ctx,ui.id(ctx,"menu_paste"),"Paste",{shortcut=shortcut(.Paste),disabled=len(u.clip.records.nodes)==0}) {request,asked=.Paste,true}
-        if ui.menu_item(ctx,ui.id(ctx,"menu_duplicate"),"Duplicate",{shortcut=shortcut(.Duplicate),disabled=none}) {request,asked=.Duplicate,true}
-        if ui.menu_item(ctx,ui.id(ctx,"menu_rename"),"Rename",{shortcut=shortcut(.Rename),disabled=none}) {request,asked=.Rename,true}
-        if ui.menu_item(ctx,ui.id(ctx,"menu_delete"),"Delete",{shortcut=shortcut(.Delete),disabled=none}) {request,asked=.Delete,true}
+        entries:=[5]string{"copy","paste","duplicate","rename","delete"}
+        labels:=[5]string{"Copy","Paste","Duplicate","Rename","Delete"}
+        for entry,i in entries {
+            off:=none if entry!="paste" else len(u.clip.records.nodes)==0
+            if ui.menu_item(ctx,ui.id(ctx,"menu_entry",i+1),labels[i],{shortcut=editor.command_shortcut_text(s,entry),disabled=off}) {request=entry}
+        }
         ui.menu_separator(ctx)
         box:=!none && r.nodes[u.selected].kind==.Box && len(chosen_rows(u))==1
         if ui.menu_item(ctx,ui.id(ctx,"menu_widget"),"Make widget",{disabled=!box}) {make_widget(s,u,a,d)}
     }
-    if !asked {return}
+    if request=="" {return}
     row:=u.selected if u.selected>=0 && u.selected<len(r.nodes) else -1
     rows:=chosen_rows(u)
-    #partial switch request {
-    case .Copy:
+    switch request {
+    case "copy":
         if row>=0 {
             author.records_copy_rows(r,rows,&u.clip,u.allocator)
             u.clip.source=u.id
         }
-    case .Paste:
+    case "paste":
         clip:=&u.clip.records
         for &template in clip.components {
             if template.widget==u.id {
@@ -701,19 +701,19 @@ nodes_actions :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,d:^editor
             choose_rows(u,pasted)
             changed(u,"Paste node" if len(pasted)==1 else "Paste nodes")
         } else if len(clip.nodes)>0 {editor.notify(s,"That node holds no other node: choose a container")}
-    case .Duplicate:
+    case "duplicate":
         if row>=0 {
             if copies:=author.records_duplicate_rows(r,rows);len(copies)>0 {
                 choose_rows(u,copies)
                 changed(u,"Duplicate node" if len(copies)==1 else "Duplicate nodes")
             }
         }
-    case .Rename:
+    case "rename":
         if row>=0 {
             rename_begin(u,row)
             if !(s.gui.layout.left_open && s.gui.layout.library_tab==.Hierarchy) {editor.notify(s,"Hierarchy shows the name to type: open it in the left panel")}
         }
-    case .Delete:
+    case "delete":
         if row>=0 {
             first:=author.selection_roots(r.nodes[:],rows)[0]
             author.records_delete_rows(r,rows)

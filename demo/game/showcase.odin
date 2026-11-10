@@ -23,7 +23,7 @@ Showcase :: struct {
 
 // The button of the sign stops and resumes the lift; every arrival at the
 // top, a marker of the clip, is counted.
-@(step="fixed",stage="react",after="animation_advance")
+@(step="fixed",stage="react")
 game_showcase :: proc(
     shown:^core.Table(Showcase),animations:core.Read(anim.Animation),playback:core.Ref(anim.Playback),
     markers:core.Ref(anim.Animation_Events),names:core.Read(core.Name),

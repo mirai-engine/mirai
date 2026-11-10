@@ -62,7 +62,7 @@ the name of their type) and a world (handles and tables).
     components of libraries the project does not have and tables that are not components.
   - `transient` fields go as zero; `Entity` ones store the `Id` of their target.
 - `save(world, app, path, previous)` captures and writes.
-- **Changing scene** is a request: `scene.request(&r, id)` or `request_path(&r, path)` in
+- **Changing scene** is a request: `scene.request(&r, path_or_id)` in
   `Scene_Requests` (`queue`, `keep`). `scene_requests` (`input`, both loops) loads them one at a
   time and leaves a `Scene_Result{scene, path, error}` in `Scene_Results` (`events`, `keep`) in the
   frame in which the scene replaces the world, cleared in the next; `result_of` looks it up. One
@@ -512,8 +512,8 @@ the reverb of the room where the listener is and what covers each source.
   `audio.sound`, `audio.bus`, `audio.voices` or `audio.memory`.
 - `Mixer_Listener` (host) is the mixer's listener, one per application: it is set by the world whose
   listener moved, or the one that runs after another.
-- A loose sound: `audio.play_asset(app, time, ...)` and `play_asset_at`, with `.sound` or
-  `.sound_set`; `play_source` plays an `Audio_Source` as configured, without a place, and
+- A loose sound: `audio.play_asset(app,time,path_or_id,...)` and `play_asset_at`, with `.sound`
+  or `.sound_set`; `play_source` plays an `Audio_Source` as configured, without a place, and
   `play_source_at` at a point of the world with its curve (a loop that follows something:
   `source_place` moves it); `source_tune` passes either its changes; `stop` and `playing` on the
   voice they return. Playing takes `^host.App`, which loads the sound; what acts on a voice

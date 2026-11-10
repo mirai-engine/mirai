@@ -657,7 +657,7 @@ gui_widgets :: proc(world:core.World_Ref,gui:^Gui,app:^host.App,problems:^core.P
     widgets_build(world,gui,app,problems)
 }
 
-@(step="ui",loops="editor",after="gui_preview_begin")
+@(step="ui",loops="editor")
 gui_preview_widgets :: proc(world:core.World_Ref,gui:^Gui,app:^host.App,time:core.Time,problems:^core.Problems) {
     if time.playing {return}
     widgets_build(world,gui,app,problems)

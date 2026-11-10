@@ -157,7 +157,7 @@ receives the place of its origin: a type or a function of an editor package neve
   editor package.
 - `stage="stage"`: in which stage of its phases it runs; by default `intent` ([order](#order)).
 - `after="a b"` and `before="c, d"`: after or before those functions, separated by spaces or
-  commas, within its stage ([order](#order)).
+  commas, within its stage, for what its parameters do not say ([order](#order)).
 - `server`: runs only where the rules are decided, a lone game or a server (`core.Network.role` is
   not `Client`). On a client the generated code returns before calling it, also when a correction
   resimulates ticks, like the `if` it replaces: what it decides reaches the client over the network.
@@ -182,7 +182,16 @@ package.
 A row created by generic code (adding a component from the editor) and a storage when it is created
 or cleared start at what the package declares: a constant `NAME_DEFAULT` or a procedure
 `name_default()`, with the type name in uppercase or in `snake_case`; without them, zeros. A saved
-scene does not use the default: it reads what it saved.
+scene does not use the default: it reads what it saved. The defaults of the members of an enum
+`@(actions)` follow the same rule with a plural: `<enum>_defaults()` or `<ENUM>_DEFAULTS`, a
+`[E]Action_Default`.
+
+A literal of any type whose package declares its default (`T{...}` or `pkg.T{...}`, outside the
+declaration that builds the default) names every field the default sets to something other than
+zero, or the generator refuses it: one rule for every package it reads, engine, plugins and game,
+so a literal never drops a default silently. Code starts from the default
+(`value:=phys.WALK_DEFAULT`) and changes fields. A literal compared or read a field of makes no
+value and is not checked; a zero value on purpose is a declaration (`none:Audio_Reverb`).
 
 ## Where the data goes
 
@@ -288,8 +297,9 @@ all. The ones most often stumbled on:
 - An `order=`: functions are not ordered by number; the message says to use a stage and
   `after`/`before`. A stage that does not exist.
 - An `after` or `before` that names a function the project does not have; one against the order of
-  the stages (an `after` of a function of a later stage); a cycle of `after` and `before` within a
-  phase, which the message names function by function.
+  the stages (an `after` of a function of a later stage); functions of a stage that wait for each
+  other through what they name, read, write, push and take: the message names each one, what
+  makes it wait and the name that settles it.
 - A `server` function in a world without `core.Network`.
 - Two functions with the same name; a phase or a loop that does not exist.
 - A function of an editor package that asks for the `game` loop; one of the `game` loop or of
@@ -304,6 +314,9 @@ all. The ones most often stumbled on:
   receives one from an editor package.
 - A function that receives twice a datum it writes, when either of the two is a field of a
   `@(params)`.
+- A literal that leaves out a field its type's default sets ([initial values](#initial-values));
+  a struct with a field `[E]Action_Default` (the defaults of actions go beside
+  their enum).
 - A `replicated` on a storage or with a value that is neither `owner` nor `others`; a `net_message`
   that is also a component or storage, of an editor package, or with an unknown `from`.
 - What breaks the [dedicated server](#dedicated-server).
@@ -383,9 +396,23 @@ of the frame (the network, the UI and editor frame, `input.mirai`) and in `late`
 cameras before `camera_follow`. A function of several phases has the same stage in all of them.
 
 - **Within a stage**, in the order of the libraries (engine, plugins with their dependencies first,
-  game; files by path and declaration within the file). A function runs after those it waits for,
-  its `after` ones and those that name it in `before`, in that same order: `before="b"` puts the
-  function right before `b`.
+  game; files by path and declaration within the file), where what a function waits for runs
+  right before it. A function waits for:
+  - the ones that push to a `queue` of its library that it receives: a request reaches its owner
+    in the tick it is pushed;
+  - the ones that write a table or a storage that it reads (`core.Read`, `core.Ref`, by value): a
+    reader sees the values and the events of the tick;
+  - its `after` ones and those that name it in `before`.
+- **A name wins over a request, and a request over a read.** A function that pushes a request to
+  the writer of what it reads runs before it, and so does one that names that writer in `before`:
+  it reads what the last tick left. Functions that still wait for each other are a generator
+  error, which one name settles.
+- **`after` and `before` say what the parameters do not**: an order against the data (reading the
+  last tick on purpose), which one of a cycle runs first, functions of one library that receive
+  the same queue or write the same storage, and what goes through `shared` data,
+  `core.Commands`, `^core.Entities` or the application (the renderer, the UI context, the
+  simulation of physics), which order nothing. The order depends only on which function waits for
+  which: a name that repeats what the data says changes nothing.
 - **Between stages** the order is already given: an `after` toward an earlier stage is met on its
   own, and one toward a later one is an error. Toward another phase or loop it orders nothing.
 - **What is named.** Functions of the engine or of the plugins the library depends on; one that is
@@ -396,8 +423,8 @@ cameras before `camera_follow`. A function of several phases has the same stage 
 
 ### What a parameter declares
 
-The functions of a phase never run at once, so how a function receives a datum orders nothing. It
-still says what the function does with it, and each form has its reader:
+The functions of a phase never run at once. How a function receives a datum says what it does with
+it, which [orders it inside its stage](#order), and each form has its reader:
 
 - `^core.Table(C)`: the function is the writer of `C` (one per table that is not `shared`), its
   rows are checked with `CHECK_WRITES`, and the table settles after it. Writing `Disabled` or

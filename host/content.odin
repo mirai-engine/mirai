@@ -664,9 +664,17 @@ strings_text :: proc "contextless" (s:^Content_Strings,language:u64,key:u64) -> 
     }
 }
 
-// The texts of a .strings, loaded the first time. nil for the zero id, an
-// asset that is not a .strings or cannot be loaded, and when no room is left.
-content_strings :: proc(app:^App,id:base.Asset_Id) -> ^Content_Strings {
+// The texts of a .strings, by its path in the assets or its id, loaded the
+// first time. nil for a path the assets do not have, the zero id, an asset
+// that is not a .strings or cannot be loaded, and when no room is left.
+content_strings :: proc{content_strings_path,content_strings_id}
+
+content_strings_path :: proc(app:^App,path:string) -> ^Content_Strings {
+    id,_:=assets_id(app.assets,path)
+    return content_strings_id(app,id)
+}
+
+content_strings_id :: proc(app:^App,id:base.Asset_Id) -> ^Content_Strings {
     c:=app_content(app)
     if c==nil || id=={} {return nil}
     entry,fresh:=content_slot(c,&c.texts,id,.Strings)

@@ -25,6 +25,7 @@ Dig_Site :: struct {
     radius:f32 `mirai:"min=0.1,unit=m"`, // of each ball it digs
     digs:u32,                            // balls it digs by itself
     every:u32,                           // ticks between those
+    dug:u32 `mirai:"readonly"`,          // of those, the ones it dug
 }
 
 DIG_SITE_DEFAULT :: Dig_Site{radius=1.6,digs=14,every=10}
@@ -34,32 +35,39 @@ Dig_Pickup :: struct {
     material:base.Asset_Id,
 }
 
-// What the player took, by material: cubic metres dug and drops picked up.
-@(storage)
+// What the players took, by material: cubic metres dug and drops picked up. On a
+// core.Keep root: it passes to the next scene, and a save keeps it.
+@(component)
 Dig_Inventory :: struct {
     materials:[DIG_MATERIALS]base.Asset_Id,
     cubic_metres:[DIG_MATERIALS]f32,
     drops:[DIG_MATERIALS]u32,
     count:int,
-    dug:u32, // balls the sites dug by themselves
 }
 
 @(step="fixed",stage="react")
 dig_site :: proc(
-    commands:core.Commands,sites:core.Read(Dig_Site),pickups:core.Read(Dig_Pickup),players:core.Read(Player),
+    commands:core.Commands,sites:^core.Table(Dig_Site),pickups:core.Read(Dig_Pickup),players:core.Read(Player),
     drivables:core.Read(inp.Drivable),actions:inp.Input_Of(Action),worlds:core.Read(core.World_Transform),
-    requests:^terrain.Terrain_Requests,digs:core.Ref(terrain.Terrain_Digs),inventory:^Dig_Inventory,network:core.Network,time:core.Time,
+    requests:^terrain.Terrain_Requests,digs:core.Ref(terrain.Terrain_Digs),inventories:^core.Table(Dig_Inventory),network:core.Network,time:core.Time,
 ) {
     site_entity,found:=core.sole(sites)
     if !found || network.role==.Client {return}
+    if core.count(inventories)==0 {
+        run:=core.commands_create(commands)
+        core.commands_add(commands,run,core.Keep{})
+        core.commands_add(commands,run,Dig_Inventory{})
+        return
+    }
+    inventory:=core.at(inventories,0)
     site:=core.at(sites,0)
-    if site.every>0 && inventory.dug<site.digs && time.tick%u64(site.every)==0 {
+    if site.every>0 && site.dug<site.digs && time.tick%u64(site.every)==0 {
         // Down a spiral, a little deeper each time: a pit with walls through every stratum.
-        i:=f32(inventory.dug)
+        i:=f32(site.dug)
         center:=[3]f32{math.cos(i*1.9)*1.5,0.3-i*0.42,math.sin(i*1.9)*1.5}
         site_world,_:=core.get(worlds,site_entity)
         terrain.dig(requests,{kind=.Subtract,shape=.Sphere,center=mm.transform_point(site_world.transform,center),radius=site.radius,amount=1,blend=0.3},site_entity)
-        inventory.dug+=1
+        site.dug+=1
     }
     for row in 0..<core.count(players) {
         e:=core.entity_at(players,row)
@@ -111,9 +119,12 @@ Dig_Hud :: struct {
 }
 
 @(step="frame")
-dig_hud :: proc(huds:^core.Table(Dig_Hud),inventory:core.Ref(Dig_Inventory),assets:^host.Assets) {
+dig_hud :: proc(huds:^core.Table(Dig_Hud),inventories:core.Read(Dig_Inventory),assets:^host.Assets) {
     shown:=core.read(huds)
     if core.count(shown)==0 {return}
+    // The inventory is on the Keep root the first tick of a dig makes: none before it.
+    inventory:Dig_Inventory
+    if core.count(inventories)>0 {inventory=core.at(inventories,0)}
     next:=Dig_Hud{count=i32(inventory.count)}
     for i in 0..<inventory.count {
         row:=&next.rows[i]

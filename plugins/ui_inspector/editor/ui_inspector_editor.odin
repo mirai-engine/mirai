@@ -35,7 +35,7 @@ UI_RENAMES :: 8   // nodes of the tree renamed before a write, which the .ui tha
 @(storage)
 Ui_Documents :: struct {provider:editor.Asset_Document_Provider}
 ui_documents_default :: proc() -> Ui_Documents {
-    return {provider={kinds={0=asset.KIND_UI},count=1,hierarchy={0},flat={0},creates={0},create=ui_create,actions={.Copy,.Paste,.Duplicate,.Delete,.Rename}}}
+    return {provider={kinds={0=asset.KIND_UI},count=1,hierarchy={0},flat={0},creates={0},create=ui_create,takes={0="copy",1="paste",2="duplicate",3="delete",4="rename"}}}
 }
 
 // The bytes of the empty .ui Create of the content browser and asset.create make.
