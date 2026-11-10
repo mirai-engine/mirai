@@ -1118,7 +1118,7 @@ nested_views_record :: proc(p: ^Pass) -> bool {
 	r, cmd, t := p.r, p.cmd, p.t
 	d := r.device
 	s := &r.scene
-	if !target(r, nil, &t.nested_depth, t.width, t.height, .D32_Float, {.Depth_Target}, "nested view depth") {return false}
+	if !target(r, nil, &t.nested_depth, t.width, t.height, .D32_Float, {.Depth_Target}, "nested view depth", shared = true) {return false}
 	rhi.cmd_timestamp(cmd, "nested views")
 	for &nested, at in p.nested[:p.nested_count] {
 		index := u32(at + 1)
@@ -1419,8 +1419,8 @@ CONTACT_RAYS :: abi.CONTACT_RAYS
 @(private)
 pass_contact :: proc(p: ^Pass) -> bool {
 	r, cmd, t := p.r, p.cmd, p.t
-	ok := target(r, cmd, &t.contact[0], t.width, t.height, .R16_Float, HISTORY_USAGE, "contact", true)
-	ok &&= target(r, cmd, &t.contact[1], t.width, t.height, .R16_Float, HISTORY_USAGE, "contact blurred", true)
+	ok := target(r, cmd, &t.contact[0], t.width, t.height, .R16_Float, HISTORY_USAGE, "contact", true, true)
+	ok &&= target(r, cmd, &t.contact[1], t.width, t.height, .R16_Float, HISTORY_USAGE, "contact blurred", true, true)
 	if !ok {return false}
 	rhi.cmd_timestamp(cmd, "contact")
 	Params :: struct {mode, pad0, pad1, pad2: u32}
