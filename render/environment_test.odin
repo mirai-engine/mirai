@@ -7,7 +7,7 @@ import "mirai:rhi"
 
 @(test)
 ground_grid_is_visible_on_the_background_and_occluded_by_geometry :: proc(t:^testing.T) {
-    settings:=DEFAULT_SETTINGS;settings.gi_enabled=false;settings.reflections=false;settings.taa=false
+    settings:=DEFAULT_SETTINGS;settings.gi_enabled=false;settings.taa=false
     f:Fixture
     if !fixture_init(t,&f,160,120,settings,hardware_rt=false) {return}
     defer fixture_destroy(&f)
@@ -60,7 +60,7 @@ grid_read_hdr :: proc(t:^testing.T,r:^Renderer,target:rhi.Texture)->[]f16 {
 
 @(test)
 ground_grid_blends_behind_transparency :: proc(t:^testing.T) {
-    settings:=DEFAULT_SETTINGS;settings.gi_enabled=false;settings.reflections=false;settings.taa=false
+    settings:=DEFAULT_SETTINGS;settings.gi_enabled=false;settings.taa=false
     f:Fixture
     if !fixture_init(t,&f,160,120,settings,hardware_rt=false) {return}
     defer fixture_destroy(&f)
@@ -121,7 +121,7 @@ ground_grid_blends_behind_transparency :: proc(t:^testing.T) {
 
 @(test)
 a_backdrop_is_shown_behind_the_scene_instead_of_the_sky_until_it_is_removed :: proc(t:^testing.T) {
-    settings:=DEFAULT_SETTINGS;settings.gi_enabled=false;settings.reflections=false;settings.taa=false
+    settings:=DEFAULT_SETTINGS;settings.gi_enabled=false;settings.taa=false
     f:Fixture
     if !fixture_init(t,&f,96,64,settings,hardware_rt=false) {return}
     defer fixture_destroy(&f)

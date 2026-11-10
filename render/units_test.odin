@@ -15,7 +15,7 @@ Units_Fixture :: struct {
 @(private = "file")
 units_fixture :: proc(t: ^testing.T, f: ^Units_Fixture, gi := false, loc := #caller_location) -> bool {
 	settings := DEFAULT_SETTINGS
-	settings.gi_enabled, settings.reflections, settings.taa = gi, false, false
+	settings.gi_enabled, settings.taa = gi, false
 	if !fixture_init(t, f, 64, 64, settings, hardware_rt = false, loc = loc) {return false}
 	lambert := DEFAULT_MATERIAL
 	lambert.specular_factor = 0

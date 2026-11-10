@@ -12,7 +12,7 @@ import "mirai:rhi"
 @(test)
 debug_views_show_their_buffers_and_say_what_they_cannot_show :: proc(t: ^testing.T) {
 	settings := DEFAULT_SETTINGS
-	settings.taa = false
+	settings.taa, settings.reflections = false, .Traced
 	f: Fixture
 	if !fixture_init(t, &f, 96, 96, settings) {return}
 	defer fixture_destroy(&f)

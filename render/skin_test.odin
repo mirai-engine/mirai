@@ -72,7 +72,7 @@ gpu_skin_preview_reuses_compute_and_buffers_without_mutating_the_scene :: proc(t
 @(private)
 skin_fixture :: proc(t:^testing.T,f:^Fixture,hardware:bool,allocator:=context.allocator,programs:=false,loc:=#caller_location)->bool {
     settings:=DEFAULT_SETTINGS
-    settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+    settings.gi_enabled,settings.taa=false,false
     // Images are compared pixel by pixel: every pixel traces its own rays,
     // to a sun with no size.
     settings.reference_lights=true
@@ -152,7 +152,7 @@ gpu_skin_benchmark_reports_skinning_and_refit_time :: proc(t:^testing.T) {
         if !testing.expect(t,device!=nil,message) {return}
         defer rhi.device_destroy(device)
         r:Renderer
-        settings:=DEFAULT_SETTINGS;settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+        settings:=DEFAULT_SETTINGS;settings.gi_enabled,settings.taa=false,false
         if !testing.expect(t,renderer_init(&r,{device=device,width=640,height=360,settings=settings}),r.error) {return}
         defer renderer_destroy(&r)
         vertices,indices,influences:=skin_test_grid(128)

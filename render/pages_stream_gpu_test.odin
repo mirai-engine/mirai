@@ -8,7 +8,7 @@ import "mirai:rhi"
 @(test)
 gpu_streamed_pages_load_what_a_near_view_asks_for :: proc(t: ^testing.T) {
 	settings := DEFAULT_SETTINGS
-	settings.reflections, settings.taa = false, false
+	settings.taa = false
 	settings.page_pool_bytes = 64 * PAGE_SLOT_WORDS * 4
 	f: Fixture
 	if !fixture_init(t, &f, 256, 256, settings) {return}

@@ -67,7 +67,7 @@ trace_at :: proc(image: Trace_Image, p: [2]f32) -> Vec3 {
 @(test)
 a_batch_casts_the_shadows_and_shows_in_the_reflections_of_its_instances :: proc(t: ^testing.T) {
 	settings := DEFAULT_SETTINGS
-	settings.reflections = true
+	settings.reflections = .Detailed
 	f: Fixture
 	if !fixture_init(t, &f, 160, 96, settings) {return}
 	defer fixture_destroy(&f)

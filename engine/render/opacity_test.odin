@@ -15,7 +15,7 @@ tint_opacity_updates_only_dirty_instances_and_reuses_materials_without_allocatin
     defer mem.tracking_allocator_destroy(&tracking)
     context.allocator=mem.tracking_allocator(&tracking)
     settings:=gpu.DEFAULT_SETTINGS
-    settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+    settings.gi_enabled,settings.taa=false,false
     app,error:=host.app_create({gpu=true,gpu_validation=true,assets_root="assets",window_desc={size={160,120}},threads=1,render_settings=settings})
     if !testing.expect_value(t,error,host.App_Error.None) || app==nil {return}
     defer host.app_destroy(app)

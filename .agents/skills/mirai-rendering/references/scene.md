@@ -327,10 +327,9 @@ instances.
 - `renderer_commit_geometry` publishes the pending ranges of vertices, indices, mesh rows, nodes
   and triangles, and builds the new native BLAS. In a frame it is recorded at the start of its
   list and the CPU does not wait for the GPU: creating a mesh at runtime (a terrain chunk) does
-  not stall the frame. The publication leaves the read barriers of the pools, which the passes do
-  not declare. Outside a frame it is an immediate transaction with its wait, which also sends
-  everything the queue of [several frames](#geometry-over-several-frames) has and shows it on
-  return.
+  not stall the frame. Outside a frame it is an immediate transaction with its wait, which also
+  sends everything the queue of [several frames](#geometry-over-several-frames) has and shows it
+  on return.
 - One staging per frame in flight and another for the immediate copies, which no frame in flight
   reads, in host memory (`rhi.Memory.Staging`): loading a level does not occupy GPU memory with
   copies. If a reservation fails, it keeps the dirty ranges and withdraws the new BLAS of that

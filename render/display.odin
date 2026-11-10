@@ -92,7 +92,6 @@ display_build :: proc(r: ^Renderer, display: Display_Desc) -> bool {
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, r.display_lut)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, tables)
 	rhi.cmd_dispatch(cmd, groups(DISPLAY_LUT_SIZE, 4), groups(DISPLAY_LUT_SIZE, 4), groups(DISPLAY_LUT_SIZE, 4))
-	rhi.cmd_barrier_texture(cmd, r.display_lut, .Shader_Read)
 	if !rhi.immediate_end(d, cmd) {
 		set_error(r, "display lut: %s", rhi.device_error(d))
 		return false

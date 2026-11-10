@@ -19,7 +19,7 @@ Area_Fixture :: struct {
 @(private)
 area_init :: proc(t: ^testing.T, f: ^Area_Fixture, loc := #caller_location) -> bool {
 	settings := DEFAULT_SETTINGS
-	settings.gi_enabled, settings.reflections, settings.taa = false, false, false
+	settings.gi_enabled, settings.taa = false, false
 	if !fixture_init(t, f, 96, 96, settings, loc = loc) {return false}
 	vertices: [24]Mesh_Vertex
 	indices: [36]u32

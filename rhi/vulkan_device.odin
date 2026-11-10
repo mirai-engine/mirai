@@ -379,7 +379,12 @@ vk_create_pools :: proc(d: ^Device) -> bool {
 		err: runtime.Allocator_Error
 		f.deletions, err = make([dynamic]Vk_Deferred, 0, c.deletions, d.allocator)
 		ok &&= err == nil
+		f.list.commands, err = make([]Pass_Command, PASS_COMMAND_CAPACITY, d.allocator)
+		ok &&= err == nil
 	}
+	commands_error: runtime.Allocator_Error
+	d.immediate.commands, commands_error = make([]Pass_Command, PASS_COMMAND_CAPACITY, d.allocator)
+	ok &&= commands_error == nil
 	images_error, present_error: runtime.Allocator_Error
 	d.swapchain.images, images_error = make([dynamic]Texture, 0, 8, d.allocator)
 	d.swapchain.present, present_error = make([dynamic]vk.Semaphore, 0, 8, d.allocator)
@@ -843,7 +848,8 @@ device_destroy :: proc(d: ^Device) {
 	vk_memory_shutdown(d, false)
 	pipeline_store_destroy(&d.pipelines_kept)
 	delete(d.fresh)
-	for &f in d.frames {delete(f.deletions)}
+	for &f in d.frames {delete(f.deletions); delete(f.list.commands, d.allocator)}
+	delete(d.immediate.commands, d.allocator)
 	delete(d.swapchain.images)
 	delete(d.swapchain.present)
 	pool_destroy(&d.buffers, d.allocator)

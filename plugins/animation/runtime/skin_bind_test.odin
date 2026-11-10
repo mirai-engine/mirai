@@ -71,7 +71,7 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     device:=shared_device.take_or_skip(t,hardware_rt=false)
     if device==nil {return}
     renderer:=new(gpu.Renderer);defer free(renderer)
-    settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+    settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled,settings.taa=false,false
     if !testing.expect(t,gpu.renderer_init(renderer,{device=device,width=96,height=64,settings=settings}),renderer.error) {return}
     defer gpu.renderer_destroy(renderer)
     assets:host.Assets

@@ -19,7 +19,7 @@ Overlay_Fixture :: struct {
 overlay_fixture :: proc(t:^testing.T,f:^Overlay_Fixture,width,height:u32,taa:=false,ui_capacity:=0,debug_capacity:=0,ui_shape_capacity:=0,ui_layer_depth:=0,loc:=#caller_location) -> bool {
     mem.tracking_allocator_init(&f.tracking,context.allocator)
     settings:=DEFAULT_SETTINGS
-    settings.gi_enabled,settings.reflections,settings.taa=false,false,taa
+    settings.gi_enabled,settings.taa=false,taa
     settings.trace_mode=.Software
     if !fixture_init(t,f,width,height,settings,hardware_rt=false,desc={allocator=mem.tracking_allocator(&f.tracking),ui_vertex_capacity=ui_capacity,debug_vertex_capacity=debug_capacity,ui_shape_capacity=ui_shape_capacity,ui_layer_depth=ui_layer_depth},loc=loc) {
         mem.tracking_allocator_destroy(&f.tracking)

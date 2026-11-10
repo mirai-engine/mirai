@@ -127,7 +127,7 @@ ai_sent_context_is_not_evicted_before_its_review_is_finished :: proc(t:^testing.
 @(test)
 ai_scene_figures_render_as_transient_geometry_and_reuse_descriptors :: proc(t:^testing.T) {
     settings:=gpu.DEFAULT_SETTINGS
-    settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+    settings.gi_enabled,settings.taa=false,false
     mounts:=[1]asset.Registry_Mount{{folder=EDITOR_ASSETS,prefix=EDITOR_ASSETS_PREFIX}}
     app,error:=host.app_create({gpu=true,gpu_validation=true,assets_root="assets",asset_mounts=mounts[:],window_desc={size={128,128}},threads=1,render_settings=settings})
     if !testing.expect_value(t,error,host.App_Error.None) || app==nil {return}

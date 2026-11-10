@@ -17,6 +17,7 @@ material_settings :: proc() -> Settings {
 	s.reference_lights = true
 	s.gi_enabled = false
 	s.taa = false
+	s.reflections = .Detailed
 	return s
 }
 
@@ -670,13 +671,13 @@ material_smooth_surfaces_reflect_the_scene :: proc(t: ^testing.T) {
 	testing.expect_value(t, r.stats.rays_per_frame, u64(r.targets.width * r.targets.height) * 2) // a sun ray and a mirror ray per pixel
 
 	settings := r.settings
-	settings.reflections = false
+	settings.reflections = .Off
 	testing.expect(t, renderer_apply_settings(r, settings))
 	untraced := floor_point(t, &f, camera, {0, 0, 0})
 	testing.expectf(t, untraced.r < 40, "without traced reflections the mirror only has the probe volume: %v", untraced)
 
 	// A rough floor never traces: the pass is skipped altogether.
-	settings.reflections = true
+	settings.reflections = .Detailed
 	testing.expect(t, renderer_apply_settings(r, settings))
 	mirror.roughness = 0.9
 	materials_set(r, {mirror, lamp})
@@ -1404,7 +1405,9 @@ material_mirror_lighting_is_exact_with_four_local_lights :: proc(t:^testing.T) {
 @(test)
 material_rough_reflections_are_blurred_and_steady :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 96, 64, material_settings()) {return}
+	settings := material_settings()
+	settings.reflections = .Traced
+	if !fixture_init(t, &f, 96, 64, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	floor, lamp := DEFAULT_MATERIAL, DEFAULT_MATERIAL
@@ -1450,8 +1453,7 @@ material_rough_reflections_are_blurred_and_steady :: proc(t: ^testing.T) {
 	// The rays above were one per block of 2x2 pixels. A ray per pixel shows the same image.
 	pixels := u64(r.targets.width * r.targets.height)
 	testing.expect_value(t, r.stats.rays_per_frame, pixels + u64(r.targets.half_width * r.targets.half_height))
-	settings := r.settings
-	settings.reflection_half_resolution = false
+	settings.reflections = .Detailed
 	testing.expect(t, renderer_apply_settings(r, settings))
 	full_inside := settled(t, &f, camera, inside)
 	full_beside := settled(t, &f, camera, beside)
@@ -1619,7 +1621,7 @@ material_independent_uv1_bindings_rotation_and_specular_reach_gbuffer :: proc(t:
 @(test)
 material_specular_conserves_diffuse_energy_and_ior_zero_is_angle_independent :: proc(t:^testing.T) {
     f:Fixture
-    settings:=material_settings();settings.reflections=false;settings.reflection_detail_roughness=0
+    settings:=material_settings();settings.reflections=.Traced
     if !fixture_init(t,&f,64,64,settings) {return}
     defer fixture_destroy(&f)
     r:=f.renderer
@@ -1785,8 +1787,7 @@ read_reflectance :: proc(t:^testing.T,device:^rhi.Device,r:^Renderer,target:rhi.
 @(private = "file")
 layer_settings :: proc() -> Settings {
     s:=material_settings()
-    s.reflections=false
-    s.reflection_detail_roughness=0
+    s.reflections=.Off
     return s
 }
 
