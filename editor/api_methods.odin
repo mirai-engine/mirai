@@ -353,7 +353,8 @@ api_methods_register :: proc(s:^Session,st:^Api_State) {
     check_defaults:=Api_Build_Check_Params{seconds=300}
     api_register(s,st,{name="build.check",summary="Checks the types of the code of the project, its game, editor and plugins, without building or loading anything; answers when it ends, with each error and its file and line.",params=Api_Build_Check_Params,defaults=&check_defaults,result_schema=API_CHECK_RESULT,flags={.Core,.Read_Only},run=api_build_check})
     test_defaults:=Api_Build_Test_Params{seconds=600}
-    api_register(s,st,{name="build.test",summary="Builds and runs the @(test) procedures of a package of the project against the engine it uses, without loading anything; answers when they end, with each failed test and what it logged.",params=Api_Build_Test_Params,defaults=&test_defaults,result_schema=API_TEST_RESULT,flags={.Read_Only},run=api_build_test})
+    api_register(s,st,{name="build.test",summary="Starts building and running the @(test) procedures of a package of the project against the engine it uses, without loading anything, and answers at once: poll build.test.status until running is false, for each failed test and what it logged.",params=Api_Build_Test_Params,defaults=&test_defaults,result_schema=API_TEST_RESULT,flags={.Read_Only},run=api_build_test})
+    api_register(s,st,{name="build.test.status",summary="The last run of the tests build.test started: how long it has run while it runs, then each failed test and what it logged.",result_schema=API_TEST_RESULT,flags={.Read_Only},run=api_build_test_status})
     api_play_record_register(s,st)
     api_play_history_register(s,st)
     api_scene_register(s,st)
@@ -1613,22 +1614,31 @@ Api_Build_Test_Params :: struct {
 
 @(private) API_PROBE_DIAGNOSTICS :: `"diagnostics":{"type":"array","items":{"type":"object","properties":{"severity":{"enum":["Error","Warning"]},"file":{"type":"string"},"line":{"type":"integer"},"column":{"type":"integer"},"message":{"type":"string"}},"required":["severity","file","line","column","message"]}}`
 @(private) API_CHECK_RESULT :: `{"type":"object","properties":{"ok":{"type":"boolean"},"failure":{"type":"string"},"seconds":{"type":"number"},"errors":{"type":"integer"},` + API_PROBE_DIAGNOSTICS + `,"text":{"type":"string"}},"required":["ok","failure","seconds","errors","diagnostics","text"],"additionalProperties":false}`
-@(private) API_TEST_RESULT :: `{"type":"object","properties":{"ok":{"type":"boolean"},"failure":{"type":"string"},"seconds":{"type":"number"},"compiled":{"type":"boolean","description":"false: the package did not build; diagnostics say why"},"total":{"type":"integer"},"passed":{"type":"integer"},` +
+@(private) API_TEST_RESULT :: `{"type":"object","properties":{"ok":{"type":"boolean"},"failure":{"type":"string"},"seconds":{"type":"number"},"running":{"type":"boolean","description":"it still builds or runs: build.test.status says when it ends"},"compiled":{"type":"boolean","description":"false: the package did not build; diagnostics say why"},"total":{"type":"integer"},"passed":{"type":"integer"},` +
     `"failed":{"type":"array","items":{"type":"object","properties":{"package":{"type":"string"},"name":{"type":"string"},"messages":{"type":"array","items":{"type":"string"},"description":"what it logged at error level and above, with where"}},"required":["package","name","messages"]}},` +
-    `"errors":{"type":"integer"},` + API_PROBE_DIAGNOSTICS + `,"text":{"type":"string","description":"what the compiler or the tests printed, when they failed"}},"required":["ok","failure","seconds","compiled","total","passed","failed","errors","diagnostics","text"],"additionalProperties":false}`
+    `"errors":{"type":"integer"},` + API_PROBE_DIAGNOSTICS + `,"text":{"type":"string","description":"what the compiler or the tests printed, when they failed"}},"required":["ok","failure","seconds","running","compiled","total","passed","failed","errors","diagnostics","text"],"additionalProperties":false}`
 
 @(private)
 api_build_check :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Build_Check_Params)
-    job,error:=code_probe(s,.Check,"",nil,f64(params.seconds))
-    if error!="" {api.call_fail(call,api.SERVER_ERROR,error);return}
-    defer build.job_destroy(job)
+    if error:=code_probe_start(s,.Check,"",nil,f64(params.seconds));error!="" {api.call_fail(call,api.SERVER_ERROR,error);return}
+    // An odin check compiles nothing: it answers when it ends, saying how long it has run meanwhile.
+    checking :: proc(s:^Session,user:rawptr) -> bool {return probe_running(s.build)}
+    api_wait(s,f64(params.seconds)+5,nil,checking,"checking")
+    probe_poll(s)
+    if probe_running(s.build) {
+        api.call_fail(call,api.SERVER_ERROR,"The check did not end in its seconds")
+        return
+    }
     out:=call.out
     serial.write_u8(out,'{')
-    api_probe_write(out,&job.result)
+    api_probe_write(out,probe_result(s.build))
     serial.write_u8(out,'}')
 }
 
+// Starts building and running the tests and answers at once, as
+// build.test.status answers while they run: the editor answers other calls
+// meanwhile.
 @(private)
 api_build_test :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Build_Test_Params)
@@ -1645,13 +1655,32 @@ api_build_test :: proc(s:^Session,call:^api.Call) {
     for name in strings.split_iterator(&rest,",") {
         if trimmed:=strings.trim_space(name);trimmed!="" {append(&names,trimmed)}
     }
-    job,error:=code_probe(s,.Test,path,names[:],f64(params.seconds))
-    if error!="" {api.call_fail(call,api.SERVER_ERROR,error);return}
-    defer build.job_destroy(job)
-    out:=call.out
-    report:=&job.result.tests
+    if error:=code_probe_start(s,.Test,path,names[:],f64(params.seconds));error!="" {api.call_fail(call,api.SERVER_ERROR,error);return}
+    api_test_write(call.out,s.build)
+}
+
+@(private)
+api_build_test_status :: proc(s:^Session,call:^api.Call) {
+    probe_poll(s)
+    if s.build.probe==nil || s.build.probe.action!=.Test {
+        api.call_fail(call,api.SERVER_ERROR,"No run of the tests since the editor opened: build.test starts one")
+        return
+    }
+    api_test_write(call.out,s.build)
+}
+
+// A run of the tests: while it runs, how long it has run; once it ended,
+// what it ended with.
+@(private)
+api_test_write :: proc(out:^serial.Writer,b:^Build_State) {
+    running:=probe_running(b)
+    // While it runs, seconds is how long it has run.
+    shown:=probe_result(b)^
+    if running {shown.seconds=time.duration_seconds(time.tick_since(b.probe.started))}
+    report:=&shown.tests
     serial.write_u8(out,'{')
-    api_probe_write(out,&job.result)
+    api_probe_write(out,&shown)
+    api.write_bool(out,"running",running)
     api.write_bool(out,"compiled",report.compiled)
     api.write_int(out,"total",i64(report.total))
     api.write_int(out,"passed",i64(report.passed))
@@ -1671,6 +1700,16 @@ api_build_test :: proc(s:^Session,call:^api.Call) {
     }
     serial.write_u8(out,']')
     serial.write_u8(out,'}')
+}
+
+// What the last probe ended with; while it runs, or when its project could
+// not be opened, a result that says so.
+@(private)
+probe_result :: proc(b:^Build_State) -> ^build.Result {
+    if job:=probe_job(b);job!=nil {return &job.result}
+    result:=new(build.Result,context.temp_allocator)
+    if b.probe!=nil && b.probe.thread==nil {result.status,result.text=.Failed,"The project could not be opened"}
+    return result
 }
 
 // What a check or a run of the tests ended with, without the braces.
