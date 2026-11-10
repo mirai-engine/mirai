@@ -134,7 +134,7 @@ net_test_feed :: proc(w:^Net_Test_World) {
     for row in 0..<core.count(&w.seats) {
         if !inp.seat_local(w.seats.values[row]) {continue}
         device:=w.input
-        inp.seat_feed(core.edit_at(&w.seats,row),&device,&w.bindings,false)
+        inp.seat_feed(core.edit_at(&w.seats,row),&device,&w.bindings,false,1.0/60)
     }
 }
 

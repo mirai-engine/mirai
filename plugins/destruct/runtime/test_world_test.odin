@@ -21,9 +21,7 @@ Test_Destruct :: struct {
     tints:core.Table(render.Material_Values),
     elsewhere:core.Table(render.Drawn_Elsewhere),
     ids:core.Table(core.Id),
-    fractures:Fracture_State,
     physics:phys.Physics_State,
-    settings:Destruct_Settings,
     requests:Destruct_Requests,
     events:Destruct_Events,
     authority:core.Network,
@@ -45,13 +43,12 @@ test_types :: proc(types:^[dynamic]core.Test_Type) {
     append(types,
         core.test_type(Destructible,default=proc(dst:^Destructible) {dst^=destructible_default()}),
         core.test_type(Strain_Field,default=proc(dst:^Strain_Field) {dst^=STRAIN_FIELD_DEFAULT}),
-        core.test_type(Fracture_State,copy=fracture_state_copy,swap=fracture_state_swap,free=fracture_state_destroy,reset=fracture_state_reset),
         core.test_type(Destruct_Cache,free=cache_free),
     )
 }
 
 // destruct_step alone, on the rows as they are and as the loop calls it.
 test_step :: proc(d:^Test_Destruct,h:^Test_Destruct_Host,commands:core.Commands,time:core.Time) {
-    destruct_step(&d.physics,&d.fractures,core.ref(&d.settings),&h.cache,&d.requests,&d.events,core.ref(&d.authority),h.app.assets,&h.app.jobs,time,commands,
+    destruct_step(&d.physics,&h.cache,&d.requests,&d.events,core.ref(&d.authority),h.app.assets,&h.app.jobs,time,commands,
         core.read(&d.configs),&d.meshes,&d.tints,core.read(&d.parents),&d.states,&d.groups,&d.elsewhere,&d.transforms,&d.ids,core.read(&d.colliders),{},&h.problems)
 }

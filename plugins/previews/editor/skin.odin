@@ -150,13 +150,13 @@ subject_skin_ready :: proc(app:^host.App,w:core.World_Ref,skin:^Subject_Skin)->b
     return editor.skin_preview_init(app.renderer,&skin.buffers,skin_geometry_level(&skin.geometry),skin.geometry.influences,u32(len(skin.palette)))
 }
 
-// The bones of a skin at rest with what pose puts over them, from root, and
+// The bones of a skin at rest with what the clip of at puts over them, from root, and
 // its vertices skinned on the GPU into geometry.posed.
 @(private)
-skin_pose :: proc(renderer:^erender.Renderer,skin:^Subject_Skin,pose:^anim.Pose,root:mm.Transform)->bool {
+skin_pose :: proc(renderer:^erender.Renderer,skin:^Subject_Skin,at:Clip_Time,root:mm.Transform)->bool {
     for rest,i in skin.rest {
         skin.local[i]=rest
-        if pose!=nil {pose_put(pose,skin.names[i],&skin.local[i])}
+        clip_put(at,skin.names[i],&skin.local[i])
     }
     skeleton:=anim.Skeleton{parents=skin.parents,names=skin.names,rest=skin.rest}
     if !anim.skeleton_world(skeleton,skin.local,skin.world,root) {return false}
@@ -178,7 +178,7 @@ subject_skins_place :: proc(p:^Animation)->bool {
     sub:=&p.subject
     for &skin in sub.skins {
         if skin.buffers.vertex_count==0 || skin.rig_part<0 || skin.rig_part>=sub.part_count {return false}
-        if !skin_pose(sub.renderer,&skin,&p.pose,sub.worlds[skin.rig_part]) {return false}
+        if !skin_pose(sub.renderer,&skin,{&p.lib,sub.clip,sub.time},sub.worlds[skin.rig_part]) {return false}
         part:=sub.parts[skin.part]
         posed:=sub.posed[part.first:][:part.count]
         copy(posed,sub.locals[part.first:][:part.count])

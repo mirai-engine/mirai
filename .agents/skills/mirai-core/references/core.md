@@ -173,10 +173,8 @@ back with the world, and a save keeps it with the clock.
 - The row is written when the wait starts and when it ends: nothing counts down tick by tick.
 - An entity with an `Own_Pace` waits on `own_time(time, clock, paces, e)`, the clock at the pace it
   has now. What must follow a pace that changes during the wait adds its own time up every tick.
-- A request waits in its queue: `later(&q, time, seconds, item)`, and its owner takes with
-  `take_due(&q, time)` what was pushed and what is due. An owner that takes with `take` refuses
-  what was pushed for later, and its `queue_serve` reports it. A queue is not saved: a wait that
-  a save must keep is a deadline in a component.
+- A request is never delayed: a queue is taken in the tick it was pushed in. What must happen
+  later keeps its deadline in a component.
 - There is no coroutine and no `await`: what waits and then acts is a component with its tick.
 
 ## Core storages
@@ -533,9 +531,10 @@ those that happen in the loop are reported as [problems](#problems).
 
 ## Test worlds
 
-A test that needs a world declares a struct and lets `core` describe it
-(`core/test_world_test.odin`): no test writes `Table_Info` or `Storage_Info` rows, nor the init,
-destroy, settle, copy and swap of its tables.
+A test that needs a world declares a struct and lets `core` describe it (`core/test_world.odin`,
+public API, so a game's tests reach it through the declarations of the engine libraries): no test
+writes `Table_Info` or `Storage_Info` rows, nor the init, destroy, settle, copy and swap of its
+tables.
 
 - The struct starts with `using world:core.Test_World`; each other field is a `core.Table(T)` of a
   component, an array of them (a table per element, named `<T>_<index>`) or the value of a

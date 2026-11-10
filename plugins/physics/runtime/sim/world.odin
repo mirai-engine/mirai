@@ -17,17 +17,19 @@ World_State :: struct {
     character_high,character_free,character_count:i32,
     island_high,island_free,island_count:i32,
     fluid_high,fluid_free,fluid_count:i32,
+    breakable_high,breakable_free,breakable_count:i32,
+    piece_high,piece_free,piece_count:i32,
+    bond_high,bond_free,bond_count:i32,
     push_rule_count:i32,
     hit_shapes:i32,    // live shapes that raise hits
     grounds_stale:b32, // a body or shape changed since the characters last found their ground
     twin_count:i32,
     push_rules:[PUSH_RULE_CAPACITY]Push_Rule,
     cut_count:i32,
-    _:i32,
     twins:[TWIN_CAPACITY]Twin,
     cuts:[CUT_CAPACITY]Cut,
 }
-#assert(size_of(World_State)==2640)
+#assert(size_of(World_State)==2672)
 
 @(private) Hull_Slot :: struct {hull:Hull,generation:u32,refs:i32,revision:u32} // revision: rebuilds under its handle
 @(private) Mesh_Slot :: struct {mesh:Mesh,generation:u32,refs:i32}
@@ -50,15 +52,22 @@ World :: struct {
     blocks:[]Manifold_Block,
     characters:[]Character,
     fluids:[]Fluid,
+    breakables:[]Breakable, // nil, with their pieces and bonds, until the first one is made
+    pieces:[]Piece,
+    bonds:[]Bond,
     trees:[2]spatial.Dynamic_Tree,
     // Geometry shared by shapes; immutable and outside snapshots.
     hulls:[]Hull_Slot,
     meshes:[]Mesh_Slot,
     heightfields:[]Heightfield_Slot,
+    piece_hulls:[]Hull_Handle,    // hull each piece slot owns; it outlives its piece until the slot is used again
+    piece_origins:[]Piece_Origin, // where the piece of each slot came from; rewritten with its hull
+    piece_hull_high:i32,          // one past the last piece slot that was given a hull
     // Scratch of the step, rebuilt from the state.
     manifolds:[]Manifold,
     extra_manifolds:[][EXTRA_MANIFOLDS]Manifold,
     step:Step,
+    breaking:Break_Scratch,
     events:Event_Buffers,
     static_log:Static_Log,
     stats:Stats,
@@ -74,7 +83,8 @@ Event_Buffers :: struct {
     joint_break:[]Joint_Break_Event,
     sleep,wake:[]Body_Event,
     hit:[]Contact_Hit_Event,
-    counts:[8]int,
+    breaks:[]Break_Event,
+    counts:[9]int,
 }
 
 world_init :: proc(w:^World,desc:World_Desc) -> bool {
@@ -97,12 +107,14 @@ world_init :: proc(w:^World,desc:World_Desc) -> bool {
     d.character_capacity=max(d.character_capacity,0)
     d.fluid_capacity=max(d.fluid_capacity,0)
     d.static_change_capacity=max(d.static_change_capacity,0)
+    d.breakable_capacity,d.piece_capacity,d.bond_capacity=max(d.breakable_capacity,0),max(d.piece_capacity,0),max(d.bond_capacity,0)
     if !(d.hit_speed>=0) {d.hit_speed=0.5}
     w.desc=d
     w.allocator=d.allocator
     w.gravity=d.gravity
     w.body_free,w.shape_free,w.contact_free,w.joint_free,w.block_free,w.character_free=-1,-1,-1,-1,-1,-1
     w.island_free,w.fluid_free=-1,-1
+    w.breakable_free,w.piece_free,w.bond_free=-1,-1,-1
     a:=d.allocator
     ok:=true
     alloc :: proc($T:typeid,count:int,a:mem.Allocator,ok:^bool) -> []T {
@@ -163,6 +175,7 @@ world_destroy :: proc(w:^World) {
     delete(w.events.overlap_begin,a);delete(w.events.overlap_end,a)
     delete(w.events.joint_break,a);delete(w.events.sleep,a);delete(w.events.wake,a)
     delete(w.static_log.boxes,a)
+    breakables_free(w)
     for &tree in w.trees {spatial.dynamic_tree_destroy(&tree)}
     step_destroy(&w.step,a)
     w^={}
@@ -201,6 +214,7 @@ world_stats :: proc(w:^World) -> Stats {
     s:=w.stats
     s.bodies,s.shapes,s.contacts,s.joints=int(w.body_count),int(w.shape_count),int(w.contact_count),int(w.joint_count)
     s.characters,s.fluids=int(w.character_count),int(w.fluid_count)
+    s.breakables,s.pieces=int(w.breakable_count),int(w.piece_count)
     return s
 }
 
@@ -209,6 +223,7 @@ world_events :: proc(w:^World) -> Events {
     return {
         e.contact_begin[:e.counts[0]],e.contact_end[:e.counts[1]],e.overlap_begin[:e.counts[2]],e.overlap_end[:e.counts[3]],
         e.joint_break[:e.counts[4]],e.sleep[:e.counts[5]],e.wake[:e.counts[6]],e.hit[:e.counts[7]],
+        e.breaks[:e.counts[8]],
     }
 }
 

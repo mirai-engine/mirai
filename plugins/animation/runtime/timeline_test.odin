@@ -169,7 +169,7 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
     testing.expect_value(t,at(&w,leaf),[3]f32{4,0,0})
     timeline_tick(&w,&app,&problems)
     testing.expect_value(t,at(&w,leaf),[3]f32{6,0,0})
-    testing.expect(t,len(w.events.items)==1 && w.events.items[0].entity==door && w.events.items[0].marker==base.name_hash("half"))
+    testing.expect(t,len(w.events.items)==1 && w.events.items[0].entity==door && w.events.items[0].kind==.Marker && w.events.items[0].name==base.name_hash("half"))
     lamp,_=core.get(core.read(&w.lamps),actor)
     testing.expect(t,lamp.on && lamp.flags=={.Lit,.Flickers} && lamp.intensity==5,"a Float track sets a flag and a member of a bit set from a half up")
 

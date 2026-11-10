@@ -106,7 +106,7 @@ the tag choose the row:
   in the content browser (`content_reveal`); double click on the thumbnail opens the asset in its
   document. A field that does not take any asset says so in its tag: an engine type or that of a
   plugin whose editor declares it ([asset types](extensions.md#asset-types-of-a-plugin));
-  several go separated by spaces (`kind=.anim .match .agraph`) and the first gives the empty
+  several go separated by spaces (`kind=.anim .match`) and the first gives the empty
   thumbnail. With `with=Component`, the list offers only the prefabs that have it (a player's
   body: `with=Drivable`), read once on opening it. It receives a dropped asset of its types; one
   of another type is warned about. A `.sound` field also takes a `.sound_set` (`asset_kind_takes`)

@@ -29,8 +29,8 @@ Advance by distance:
 - It keeps events and root motion of the traversed interval. `distance_request_check` validates
   player, active clip, time, direction and clock before consuming; the API and the tick share the
   validator.
-- In a graph it advances the clock of the active source: the synchronized ones follow it and the
-  independent ones keep their dt. A dominant action accepts the time if its interval is continuous.
+- In a `.match` it advances the clock of the clip that plays, and those in phase with it follow.
+  A dominant action accepts the time if its interval is continuous.
 - A regressive time asks for `seek=true`: it is a discontinuity, without events or root motion of
   what was skipped.
 

@@ -37,16 +37,14 @@ program_bench_pose_hash :: proc(pose:[]mm.Transform) -> u64 {
     return result
 }
 
+// What a tick does for the pose of one rig: the clip of its component, or the program output is
+// when given (the clip a .match picked), then the slots of its stack.
 @(private)
-program_bench_step :: proc(state:^Playing,playback:^Playback,content:^host.Content_Animation,animation:Animation,events:^Animation_Events,app:^host.App,blends:^Blend_Assets,graphs:^Graph_Assets) -> bool {
+program_bench_step :: proc(state:^Playing,playback:^Playback,content:^host.Content_Animation,animation:Animation,events:^Animation_Events,output:^Program_Output) -> bool {
     clear(&events.items)
     copy(state.local[:],state.rest[:])
-    output,programmed,ok:=program_resolve(state,animation,app,blends,graphs,1.0/60)
-    if !ok {return false}
-    if programmed {
-        if !program_masks_prepare(state,output,content,graphs,app.assets,app.allocator) {return false}
-        if !program_players(state,output,content,animation,events,playback,1.0/60,-1,nil) {return false}
-        if !program_pose(playback,state,content,animation,output,{}) {return false}
+    if output!=nil {
+        if !program_buffers(state,content) || !program_players(state,output,content,animation,events,playback,1.0/60,-1,nil) || !program_pose(playback,state,content,animation,output) {return false}
         layers_advance(playback,state,content,animation,events,1.0/60,nil)
         pose_layers(playback,state,&content.lib,animation)
     } else {
@@ -74,40 +72,33 @@ bench_animation_programs_64_bones :: proc(t:^testing.T) {
         tracks[i*2+1]={target=target,property=.Rotation,keys=rotations[i][:]}
     }
     clips:=[2]asset.Animation_Clip_Desc{{name="first",tracks=tracks[:]},{name="second",tracks=tracks[:]}}
-    animation_id:=base.Asset_Id{100,1};blend_id:=base.Asset_Id{100,2};graph_clip_id:=base.Asset_Id{100,3};graph_layer_id:=base.Asset_Id{100,4}
+    animation_id:=base.Asset_Id{100,1}
     if !testing.expect_value(t,asset.animation_save(fmt.tprintf("%s/source.anim",directory),&types,{id=animation_id,clips=clips[:]}),asset.Error.None) {return}
-    nodes:=[3]Graph_Node{GRAPH_NODE_DEFAULT,GRAPH_NODE_DEFAULT,GRAPH_NODE_DEFAULT}
-    for &node,i in nodes {base.text_set(node.name[:],fmt.tprintf("node%d",i))}
-    base.text_set(nodes[0].clip[:],"first");base.text_set(nodes[1].clip[:],"second")
-    nodes[2].kind=.Layer;nodes[2].left,nodes[2].right=0,1;base.text_set(nodes[2].over[:],"bone32")
-    graph:=Graph_Profile{info={animation=animation_id},nodes=nodes[:]}
-    if !testing.expect_value(t,graph_save(fmt.tprintf("%s/one.agraph",directory),&types,graph_clip_id,graph),asset.Error.None) {return}
-    graph.info.output=2
-    if !testing.expect_value(t,graph_save(fmt.tprintf("%s/layer.agraph",directory),&types,graph_layer_id,graph),asset.Error.None) {return}
-    blend_nodes:=[3]Graph_Node{nodes[0],nodes[1],GRAPH_NODE_DEFAULT}
-    base.text_set(blend_nodes[2].name[:],"blend")
-    blend_nodes[2].kind,blend_nodes[2].left,blend_nodes[2].right,blend_nodes[2].weight_param=.Blend,0,1,0
-    parameters:=[1]Graph_Parameter{{value=.5,min=0,max=1}};base.text_set(parameters[0].name[:],"blend")
-    blended:=Graph_Profile{info={animation=animation_id,output=2},nodes=blend_nodes[:],parameters=parameters[:]}
-    if !testing.expect_value(t,graph_save(fmt.tprintf("%s/blend.agraph",directory),&types,blend_id,blended),asset.Error.None) {return}
     assets:host.Assets;if !testing.expect(t,host.assets_init(&assets,{root=directory,capacity=8})) {return};defer host.assets_destroy(&assets)
     allocation:=Runtime_Allocation_Failure{owner=context.allocator,remaining=100000}
     app:=host.App{assets=&assets,allocator={runtime_failure_allocator,&allocation}};defer host.app_content_destroy(&app)
     content:=host.content_animation(&app,animation_id);if !testing.expect(t,content!=nil) {return}
-    blends:Blend_Assets;graphs:Graph_Assets;defer blend_assets_free(&blends);defer graph_assets_free(&graphs)
     // All cases sample identical clips, so their resulting poses are equal.
-    ids:=[4]base.Asset_Id{animation_id,graph_clip_id,blend_id,graph_layer_id}
-    labels:=[4]string{"direct clip","graph one clip","graph blend two clips","graph two clips + branch layer"}
-    results:[4]f64
+    Case :: enum {Direct,Program,Layer,Branch}
+    labels:=[Case]string{.Direct="direct clip",.Program="program one clip",.Layer="clip + layer of a second clip by weight",.Branch="clip + layer over a branch"}
+    results:[Case]f64
     sink:f32
-    for id,case_index in ids {
+    setup :: proc(state:^Playing,kind:Case) {
+        #partial switch kind {
+        case .Layer: test_layer(state,1,"second",weight=.5)
+        case .Branch: test_layer(state,1,"second",over="bone32")
+        }
+    }
+    built:=program_test_output(program_test_leaf("first",0,1,true))
+    for kind in Case {
         state:=program_bench_state();defer playing_free(&state)
         playback:Playback;defer playback_free(&playback)
         if !testing.expect(t,tracks_bind(&playback,&state,content)) {return}
         events:Animation_Events;defer delete(events.items)
-        animation:=ANIMATION_DEFAULT;animation.asset=id
-        if id==blend_id {animation_parameter(&animation,"blend",.5)}
-        for _ in 0..<4 {if !testing.expect(t,program_bench_step(&state,&playback,content,animation,&events,&app,&blends,&graphs)) {return}}
+        animation:=ANIMATION_DEFAULT;animation.asset=animation_id
+        output:=&built if kind==.Program else nil
+        setup(&state,kind)
+        for _ in 0..<4 {if !testing.expect(t,program_bench_step(&state,&playback,content,animation,&events,output)) {return}}
         allocations:=allocation.calls
         best:=max(time.Duration)
         stable:=true
@@ -115,55 +106,53 @@ bench_animation_programs_64_bones :: proc(t:^testing.T) {
         for _ in 0..<5 {
             start:=time.tick_now()
             for _ in 0..<REPEATS {
-                stable &&=program_bench_step(&state,&playback,content,animation,&events,&app,&blends,&graphs)
+                stable &&=program_bench_step(&state,&playback,content,animation,&events,output)
                 sink+=state.local[63].position.x+state.local[63].rotation.y
             }
             best=min(best,time.tick_since(start))
         }
         context=saved;allocation.remaining=100000
         testing.expect(t,stable && allocation.calls==allocations)
-        results[case_index]=f64(time.duration_nanoseconds(best))/REPEATS
-        log.infof("animation program, 64 bones / position+rotation, %s: %.2f ns/pose (check %v)",labels[case_index],results[case_index],sink)
+        results[kind]=f64(time.duration_nanoseconds(best))/REPEATS
+        log.infof("animation pose, 64 bones / position+rotation, %s: %.2f ns/pose (check %v)",labels[kind],results[kind],sink)
     }
-    log.infof("animation program ratios vs direct: graph-one %.3fx, graph-blend %.3fx, graph-layer %.3fx",results[1]/results[0],results[2]/results[0],results[3]/results[0])
+    log.infof("animation pose ratios vs direct: program %.3fx, layer %.3fx, branch layer %.3fx",results[.Program]/results[.Direct],results[.Layer]/results[.Direct],results[.Branch]/results[.Direct])
     for actor_count in ([2]int{1,128}) {
         for workload in 0..<2 {
             states:=make([]Playing,actor_count)
             playback:Playback;events:Animation_Events
             allocation.remaining=100000
             saved:=context;context.allocator={runtime_failure_allocator,&allocation};context.temp_allocator=context.allocator
-            animation:=ANIMATION_DEFAULT
-            animation.asset=graph_clip_id if workload==0 else blend_id
-            if workload==1 {animation_parameter(&animation,"blend",.5)}
+            animation:=ANIMATION_DEFAULT;animation.asset=animation_id
+            output:=&built if workload==0 else nil
             valid:=true
             for &state,i in states {
                 state=program_bench_state();state.entity=core.Entity(i+1)
                 valid &&=tracks_bind(&playback,&state,content)
-                for _ in 0..<128 {valid &&=program_bench_step(&state,&playback,content,animation,&events,&app,&blends,&graphs)}
+                if workload==1 {test_layer(&state,1,"second",weight=.5)}
+                for _ in 0..<128 {valid &&=program_bench_step(&state,&playback,content,animation,&events,output)}
             }
             context=saved
-            output:=states[0].program.output
-            resident:=size_of(Program_Output)+cap(output.groups)*size_of(Program_Group)+cap(output.instructions)*size_of(Program_Instruction)
             allocations:=allocation.calls;allocation.remaining=0
             best:=max(time.Duration);check:f32
             context.allocator={runtime_failure_allocator,&allocation};context.temp_allocator=context.allocator
             for _ in 0..<5 {
                 start:=time.tick_now()
                 for frame in 0..<256 {
-                    if workload==1 {animation_parameter(&animation,"blend",f32(frame%61)/60)}
                     for &state in states {
-                        valid &&=program_bench_step(&state,&playback,content,animation,&events,&app,&blends,&graphs)
+                        if workload==1 {test_layer_weight(&state,1,f32(frame%61)/60)}
+                        valid &&=program_bench_step(&state,&playback,content,animation,&events,output)
                         check+=state.local[63].position.x+state.local[63].rotation.y
                     }
                 }
                 best=min(best,time.tick_since(start))
             }
             context=saved;allocation.remaining=100000
-            labels:=[2]string{"cached one clip","changing blend parameter"}
+            labels:=[2]string{"program one clip","clip + layer whose weight changes"}
             pose_hash:=program_bench_pose_hash(states[0].local[:])
             for state in states {testing.expect_value(t,program_bench_pose_hash(state.local[:]),pose_hash)}
             testing.expect(t,valid && finite(check) && allocation.calls==allocations)
-            log.infof("animation program multiactor, 64 bones, %s, actors %d: %.2f ns/actor/tick, output %d B/actor, Program_Output %d B, pose %x, check %.6f",labels[workload],actor_count,f64(time.duration_nanoseconds(best))/f64(256*actor_count),resident,size_of(Program_Output),pose_hash,check)
+            log.infof("animation pose multiactor, 64 bones, %s, actors %d: %.2f ns/actor/tick, Playing %d B, pose %x, check %.6f",labels[workload],actor_count,f64(time.duration_nanoseconds(best))/f64(256*actor_count),size_of(Playing),pose_hash,check)
             for &state in states {playing_free(&state)}
             delete(states);delete(events.items);playback_free(&playback)
         }

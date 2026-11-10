@@ -542,7 +542,7 @@ tint_rows :: proc(s:^Session,a:^Appearance,color,emission:string) {
 material_parameters :: proc(c:^Inspect,a:^Appearance) {
     s:=c.s
     values:=&a.values
-    // The slots of a model share the Tint, shown once over them; one slot shows it in its colors.
+    // The slots of a model share the color of the entity, shown once over them; one slot shows it in its colors.
     shared:=a.slots>1
     if a.program!=nil {
         // A program keeps its colors: the entity tints them and adds its emission.

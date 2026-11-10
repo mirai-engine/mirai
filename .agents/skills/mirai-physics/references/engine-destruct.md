@@ -1,7 +1,8 @@
 # Plugin `destruct`
 
-It is imported as `destruct "plugins:destruct/runtime"` and depends on the `physics` plugin. It
-connects the [destruction model](destruction.md) with entities, materials, requests and queries;
+It is imported as `destruct "plugins:destruct/runtime"` and depends on the `physics` plugin, of
+which it knows the integration alone. It connects the
+[breakable bodies of the solver](destruction.md) with entities, materials, requests and queries;
 networking is the automatic bridge `destruct_multiplayer` ([network](#network)). Body physics is in
 [physics](engine.md); integration verification is in [engine.md](engine.md#verification). Fields
 and defaults: `components.odin` (`destructible()`, `collider_fracture()`).
@@ -24,7 +25,7 @@ simulation starts.
 ## Components
 
 - `Destructible`: Voronoi (`pieces`, `seed`, `pattern`, `anchored`) or a `.fracture` source, and the
-  parameters of [`Destructible_Desc`](destruction.md#construction). `kinematic` and `follow_parent`
+  parameters of [`Breakable_Desc`](destruction.md#construction). `kinematic` and `follow_parent`
   allow kinematic or anchored collections that follow their parent.
 - `Destructible_State`: what this library stores of the destructible; `initial` is the local
   authoring pose that `follow_parent` uses.
@@ -44,35 +45,36 @@ simulation starts.
   a `source_mesh` different from the `Mesh_Renderer` is rejected.
 - Voronoi is computed as a transaction in a job, with a key of mesh, shape, pieces, seed, pattern,
   scale, interior slot and source; while it is pending, `waiting` is active.
-- `destruct_step` runs `fixed` after `physics_step`: first `fracture_update` with the hits of the
-  step. `Fracture_State` (`@(storage,shared)`, copied, swapped and reset like `Physics_State`) holds
-  the model, with the capacities of `Destruct_Settings`. It creates its destructibles and the
-  proxies of their pieces in the simulation, writes `Mesh_Renderer` and `Material_Values` of the
-  group entities and gives them `Parent` with `core.Commands`. It publishes each new group that is
-  not debris, with its Id, in `Destruct_Events.grouped`.
+- `destruct_step` runs `fixed` after `physics_step`, whose step already damaged the breakables
+  with its hits (`physics.breakable_events`). A destructible is a breakable of `Physics_State`, with
+  the capacities of `Physics_Settings` (`breakables`, `pieces`, `bonds`): what it became is copied,
+  swapped and reset with the simulation. The step creates the breakables and the
+  proxies of their pieces in the simulation, writes `Mesh_Renderer` and `Material_Values` of the group
+  entities and gives them `Parent` with `core.Commands`. It publishes each new group that is not debris, with
+  its Id, in `Destruct_Events.grouped`.
 - A failure is a `destruct.*` problem of the destructible
   ([problems](../../mirai-core/references/core.md#problems)), with the cause and the fix, and it is
-  not retried until the configuration changes. What fracture or the simulation did not give it in a
-  tick is also one, with the field to raise:
-  - `destruct.events`: impacts that did not fit in the fracture events of a step
-    (`Destruct_Settings.events`), whose damage was not done or not sent to clients. Solver hits
-    count against `Physics_Settings.events`.
-  - `destruct.capacity`: a breakage or a cut without room in `Destruct_Settings` or
-    `Physics_Settings`. A destructible keeps the cut, expired or removed pieces until it is
-    destroyed ([limit](destruction.md#known-limits)).
-- The copy of the model keeps strain, cluster levels and removal policies; the physical geometry
-  travels with that of `Physics_State`.
+  not retried until the configuration changes. What the simulation did not give it in a tick is
+  also one, with the field to raise:
+  - `destruct.events`: break events that did not fit in those of a step
+    (`Physics_Settings.events`): they were applied, and not told to the game or sent to clients.
+  - `destruct.capacity`: a breakage or a cut without room in `Physics_Settings`. A destructible
+    keeps the cut, expired or removed pieces until it is destroyed
+    ([limit](destruction.md#known-limits)).
+- A copy of `Physics_State` keeps strain, cluster levels and removal policies with the bodies and
+  their geometry.
 - `Destruct_Cache` is derived (`host,by_world`, not copied): on changing epoch it rebuilds geometry,
   cuts and meshes without modifying the simulation, reusing the group entities of the restored
-  world. `destruct_release` releases it when its world is freed. A scene removal also cleans the
-  model whose state component has already disappeared.
+  world. `destruct_release` releases it when its world is freed. A scene removal also ends the
+  breakable whose state component has already disappeared.
 
 ## Requests and movement
 
 `Destruct_Requests` receives `damage`, `strain` (breaks without impulse), `weaken` (accumulates
-without breaking), `slice` (deactivates the cluster hierarchy and continues on the piece graph),
-`field_strain` (a `Destruct_Region` with any `Radial_Falloff`, which can exclude a body with
-`ignore_body`) and `remove`.
+without breaking), `slice` (deactivates the cluster hierarchy and continues on the piece graph)
+and `remove`. Strain that lasts in a region is a `Strain_Field` on an entity with a `Volume`
+([damage](destruction.md#damage-and-fields)): it goes through `physics.strain_area`, and what it
+breaks comes back as events of the step like the impacts.
 
 - `remove` asks to remove a detached group and returns `Remove_Error` (group zero is retained). It
   removes body, proxy, entity and mesh with the same `Remove` event as the automatic policies. A
@@ -102,14 +104,14 @@ Proxies and movement:
 
 ## Reflection, queries and events
 
-- A different physical revision redoes the reflection from the pieces of the model. Intact, the
+- A different physical revision redoes the reflection from the pieces of the breakable. Intact, the
   original mesh is drawn; broken, `Drawn_Elsewhere` is added and a mesh generated per body with the
   material slots of its pieces. Group zero hangs from the root with inverse scale; detached ones are
   world roots. Each removal drops the proxy before destroying its entity and frees its mesh.
 - Queries (`pieces`, `clusters`, `groups`) receive `destruct.Destruct_View`, a
   [parameter group](../../mirai-core/references/generator.md#parameter-groups) with the physics
-  and fracture states and the tables of states and groups; they return the total and write up to
-  the capacity given (an empty `out` measures).
+  state and the tables of states and groups; they return the total and write up to the capacity
+  given (an empty `out` measures).
 - `Group_Info.remaining_ticks` reads the physical removal date
   ([removal](destruction.md#removal)); a reached date stays so on a passive client until `Remove`
   arrives.
