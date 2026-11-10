@@ -21,9 +21,10 @@ SDL; `platform/audio_device.odin` is the only thing that joins the two.
   [processes](references/platform.md#processes), [crashes](references/platform.md#crashes),
   [file watching](references/platform.md#file-watching), [paths](references/platform.md#paths) and
   [audio device](references/platform.md#audio-device).
-- Mixer, threads, sounds, decoders, feeds and streams, voices, buses, reverb, positional audio:
-  [mixer](references/audio.md#mixer), [sounds](references/audio.md#sounds),
-  [voices](references/audio.md#voices), [buses](references/audio.md#buses),
+- Mixer, threads, sounds, decoders, feeds and streams, voices, buses, sends, the master limiter,
+  reverb, positional audio: [mixer](references/audio.md#mixer),
+  [sounds](references/audio.md#sounds), [voices](references/audio.md#voices),
+  [buses, sends and limiter](references/audio.md#buses),
   [reverb](references/audio.md#reverb) and [positional audio](references/audio.md#positional-audio).
 - Code: one file per topic in `platform/` and `audio/`. What depends on the system goes in
   variants with build tags and the same signatures (`*_windows`, `*_posix`, `*_darwin`,

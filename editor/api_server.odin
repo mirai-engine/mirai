@@ -75,6 +75,7 @@ Api_State :: struct {
     step_frame:Api_Step_Frame,      // a frame of a step in place of one of the editor; for tests without a window
     commands:Commands, // the entries of menus, shortcuts and buttons that call the methods (commands.odin)
     person:bool,       // the call that runs is a gesture of the person at the editor (api_person)
+    joined:bool,       // its edit records into the gesture of the person that is open (api_edit_begin)
     left_going:bool,   // that call left what it started going, which a call of an agent waits for
 }
 
@@ -636,7 +637,13 @@ api_guard :: proc(s:^Session,call:^api.Call) -> bool {
 }
 
 // Opens the transaction of an edit. False, with the call failed, when the scene cannot be edited now.
+// A gesture of the person that is open takes the edit of a method the person runs: it records into
+// that step, which the gesture closes.
 api_edit_begin :: proc(s:^Session,call:^api.Call,label:string) -> bool {
+    if st:=api_state(s);st!=nil && st.person && s.edits.open && !s.edits.preview {
+        st.joined=true
+        return true
+    }
     api_guard(s,call) or_return
     if !history.edits_begin(s.edits,document_selection(s),label) {
         api.call_fail(call,api.SERVER_ERROR,history.edits_error_text(s.edits.error))
@@ -655,6 +662,12 @@ api_edit_begin :: proc(s:^Session,call:^api.Call,label:string) -> bool {
 api_edit_end :: proc(s:^Session,call:^api.Call,applied:bool) -> bool {
     w:=edited_world(s)
     selection:=document_selection(s)
+    if st:=api_state(s);st!=nil && st.joined {
+        st.joined=false
+        if !applied && !call.failed {api.call_fail(call,api.SERVER_ERROR,"The edit could not be applied")}
+        if applied && !call.failed {sections_sync(s)}
+        return applied && !call.failed
+    }
     if !applied || call.failed {
         history.edits_cancel(s.edits,w)
         history.selection_restore(selection,w,s.edits.selection[:])

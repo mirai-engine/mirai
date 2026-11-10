@@ -130,7 +130,7 @@ gpu_skin_refits_inner_nodes_after_a_large_deformation :: proc(t:^testing.T) {
         record:=r.scene.meshes[skin]
         nodes,triangles,read:=test_tree(device,r,skin)
         testing.expect(t,read)
-        for node in nodes {if node.count==0 {
+        for node,i in nodes {if node.count==0 && i!=BVH_UNUSED_NODE {
             left,right:=nodes[node.left_first],nodes[node.left_first+1]
             testing.expect_value(t,node.bounds_min,linalg.min(left.bounds_min,right.bounds_min))
             testing.expect_value(t,node.bounds_max,linalg.max(left.bounds_max,right.bounds_max))

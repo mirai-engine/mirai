@@ -209,8 +209,9 @@ camera_valid :: proc(cameras:core.Read(render.Camera),e:core.Entity) -> bool {
     return ok && camera.fov>=0 && camera.fov<3.14159 && camera.near>=0
 }
 
-// The overrides as they were asked, and those of the activations whose action is held.
-@(step="fixed",stage="apply")
+// The overrides as they were asked, and those of the activations whose action is held: with who
+// drives what, so a camera and a seat request land together, before the Move_Input of the seats.
+@(step="fixed",stage="input")
 camera_select :: proc(
     es:core.Ref(core.Entities),cameras:core.Read(render.Camera),cameras_state:^Cameras,requests:^Camera_Requests,
     activations:core.Read(Camera_Activation),follows:core.Read(Camera_Follow),drivables:core.Read(input.Drivable),
