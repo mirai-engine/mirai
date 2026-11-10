@@ -899,8 +899,9 @@ instance" are `-32602`; the rest, `-32000`
   - `records.import {records,file}` reads a CSV (RFC 4180, UTF-8) whose header is `name` and paths
     of leaf fields (`damage`, `stats.speed`, `position[1]`; `title.key` is the key of a
     `core.Text`): each row changes the one of the same name or is added, an empty cell changes
-    nothing and there are no formulas. It is one step; returns `{updated,added,rejected:[{line,row,reason}]}`, and an invalid
-    header writes nothing. `records.export {records,file}` writes that CSV.
+    nothing and there are no formulas. It is one step; returns
+    `{updated,added,rejected:[{line,row,reason}]}`, and an invalid header writes nothing.
+    `records.export {records,file}` writes that CSV.
 - **Unsaved assets.** The methods that edit assets (`material.*`, `particle.*`, `sound_set.*`,
   `records.*`) and programs (`material.program.create` and `edit`) change them in memory, in an
   undo step attributed to the AI turn that calls:
