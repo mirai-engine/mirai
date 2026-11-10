@@ -35,16 +35,13 @@ api_test_run_v1 :: proc(s:^Session,call:^api.Call) {
 }
 api_test_run_v2 :: proc(s:^Session,call:^api.Call) {api.call_result(call,Api_Test_Result).value=2*api.call_params(call,Api_Test_Params).value}
 
-// The methods that still write their result into call.out or read their
-// params from the text: engine.describe writes the schemas themselves, and
-// what remains of rpc_init reads an object whose keys the world or a program
-// names. A file holds exactly these; one that holds fewer lowers its count
-// here, and none is added.
+// What is still written or read by hand, each for its reason. A file holds
+// exactly these; one that holds fewer lowers its count here, and none is added.
 @(private="file")
 API_HAND_WRITTEN :: [?]struct{file,pattern:string,count:int}{
-    {"editor/api/rpc.odin","writes_result=true",1},
-    {"editor/api_material_instance.odin","rpc_init(",2},
-    {"editor/api_play_edit.odin","rpc_init(",1},
+    {"editor/api/rpc.odin","writes_result=true",1},      // engine.describe writes the schemas themselves
+    {"editor/api_material_instance.odin","rpc_init(",2}, // parameters and textures by the names the program of the material gives
+    {"editor/api_play_edit.odin","rpc_init(",1},         // components by the names the world declares
 }
 
 // No method is described, read or written by hand past the files above.
