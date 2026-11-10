@@ -894,7 +894,7 @@ prefab_observation_from_the_world_never_marks_the_root_placement :: proc(t:^test
     testing.expect_value(t,len(f.document.previous.overrides),0)
     // A record that names it is dropped by the next observation, also without a base.
     instance:=f.document.previous.instances[0].id
-    append(&f.document.previous.overrides,prefab_override_make(instance,root_id,base.name_hash("Transform"),.Field,"position"))
+    append(&f.document.previous.overrides,asset.override_make(instance,root_id,base.name_hash("Transform"),.Field,"position"))
     f.prefabs.observed=false
     testing.expect_value(t,prefab_observe(s),Prefab_Error.None)
     testing.expect_value(t,len(f.document.previous.overrides),0)

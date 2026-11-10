@@ -973,21 +973,15 @@ prefab_observe_world :: proc(s:^Session,p:^Prefabs,touched:^Prefab_Touched,whole
         cap:asset.Scene
         if _,error:=scene.capture(w,&cap,&s.app.assets.types,{entities=compared[:],kind=asset.KIND_PREFAB});error!=.None {return .Capture_Failed}
         defer asset.scene_destroy(&cap)
-        pairs:=make(map[base.Asset_Id][]Prefab_Pair,context.temp_allocator)
-        remaps:=make(map[u32]map[base.Entity_Id]base.Entity_Id,context.temp_allocator)
-        for member in previous.members {
-            if !compared_ids[member.entity] || member.instance!=members[member.entity].instance {continue}
-            instance:=previous.instances[asset.scene_instance_find(previous,member.instance)]
-            b:=based[instance.id]
-            if !(b.id in pairs) {pairs[b.id]=prefab_pairs(&cap,b.scene) or_return}
-            if !(instance.id in remaps) {
-                remap:=make(map[base.Entity_Id]base.Entity_Id,context.temp_allocator)
-                for other in previous.members {
-                    if other.instance==instance.id {remap[other.source]=other.entity}
-                }
-                remaps[instance.id]=remap
+        // The captured members with the records of their instances, whose other members their references name.
+        for instance in previous.instances {
+            b,placed:=based[instance.id]
+            if _,looked:=scopes[instance.id];!looked || !placed {continue}
+            append(&cap.instances,instance)
+            for member in previous.members {
+                if member.instance==instance.id {append(&cap.members,member)}
             }
-            prefab_member_observe(&fresh,instance,member.entity,member.source,&cap,b.scene,pairs[b.id],remaps[instance.id])
+            prefab_place_error(asset.scene_overrides_derive(&fresh,&cap,instance.id,b.scene,false)) or_return
         }
     }
     for instance in previous.instances {
@@ -1025,20 +1019,9 @@ prefab_places_observe :: proc(out:^[dynamic]asset.Override,w:core.World_Ref,inst
         if e==core.NONE {continue}
         for child in entity_children(w,e) {
             if child in inside {continue}
-            if id:=core.id_of(ids,child);id!=0 {append(out,prefab_override_make(instance.id,id,0,.Child,""))}
+            if id:=core.id_of(ids,child);id!=0 {append(out,asset.override_make(instance.id,id,0,.Child,""))}
         }
     }
-}
-
-@(private)
-Prefab_Pair :: struct {
-    cap_table,base_table:int, // -1 where the scene or the prefab lacks the component
-    hash:u64,
-    name:string,
-    size:int,
-    migration:serial.Migration,
-    refs:[dynamic]serial.Ref,
-    leaves:[dynamic]asset.Value_Leaf,
 }
 
 @(private)
@@ -1051,94 +1034,8 @@ prefab_component_tables :: proc(sc:^asset.Scene) -> []int {
     return found[:]
 }
 
-// The pairs of tables of a scene and of a prefab, allocated in scratch memory.
-@(private)
-prefab_pairs :: proc(cap,prefab:^asset.Scene) -> ([]Prefab_Pair,Prefab_Error) {
-    pairs:=make([dynamic]Prefab_Pair,context.temp_allocator)
-    matched:=make(map[u64]bool,context.temp_allocator)
-    for at in prefab_component_tables(cap) {
-        table:=&cap.doc.tables[at]
-        pair:=Prefab_Pair{cap_table=at,base_table=-1,hash=table.name_hash,name=table.name,size=table.columns[1].size}
-        if bt,found:=asset.scene_component_by_hash(prefab,table.name_hash);found {
-            pair.base_table=bt
-            matched[table.name_hash]=true
-            if error:=serial.migration_init(&pair.migration,&prefab.doc.schema,prefab.doc.tables[bt].columns[1].type,&cap.doc.schema,table.columns[1].type,context.temp_allocator);error!=.None {
-                return nil,.Out_Of_Memory if error==.Out_Of_Memory else .Rejected
-            }
-        }
-        pair.refs.allocator=context.temp_allocator
-        pair.leaves.allocator=context.temp_allocator
-        serial.refs_collect(&cap.doc.schema,table.columns[1].type,&pair.refs)
-        asset.value_leaves(&cap.doc.schema,table.columns[1].type,&pair.leaves)
-        append(&pairs,pair)
-    }
-    for bt in prefab_component_tables(prefab) {
-        table:=&prefab.doc.tables[bt]
-        if matched[table.name_hash] {continue}
-        append(&pairs,Prefab_Pair{cap_table=-1,base_table=bt,hash=table.name_hash,name=table.name})
-    }
-    return pairs[:],.None
-}
-
-// The image of a component of the prefab in the layout of the scene, its references pointing at the members.
-@(private)
-prefab_image :: proc(pair:^Prefab_Pair,prefab:^asset.Scene,source:base.Entity_Id,remap:map[base.Entity_Id]base.Entity_Id) -> (image:[]u8,found:bool) {
-    stored:[]u8
-    stored,found=asset.scene_component_get(prefab,pair.base_table,source)
-    if !found {return}
-    image=make([]u8,max(pair.size,1),context.temp_allocator)
-    if pair.cap_table<0 {return image,true}
-    serial.migration_apply(&pair.migration,image[:pair.size],stored,1)
-    for ref in pair.refs {
-        if ref.kind==.Asset {continue}
-        target:=(^u64)(&image[ref.offset])
-        if target^!=0 {target^=u64(remap[base.Entity_Id(target^)])}
-    }
-    return image,true
-}
-
 @(private)
 prefab_override_text :: proc(override:^asset.Override) -> string {return serial.text_field(override.path[:])}
-
-@(private)
-prefab_override_make :: proc(instance:u32,entity:base.Entity_Id,component:u64,kind:asset.Override_Kind,path:string) -> (o:asset.Override) {
-    o={instance=instance,entity=entity,component=component,kind=kind}
-    if len(path)<len(o.path) {copy(o.path[:],path)}
-    return
-}
-
-// Marks what a member of a placed instance holds that its entity of the
-// prefab does not: its name, and components added, removed, turned or with
-// other values. cap holds the member as the World has it.
-@(private)
-prefab_member_observe :: proc(out:^[dynamic]asset.Override,instance:asset.Instance,entity,source:base.Entity_Id,cap,prefab:^asset.Scene,pairs:[]Prefab_Pair,remap:map[base.Entity_Id]base.Entity_Id) {
-    row,in_cap:=asset.scene_entity_find(cap,entity)
-    base_row,in_base:=asset.scene_entity_find(prefab,source)
-    if !in_cap || !in_base {return}
-    if asset.scene_names(cap)[row]!=asset.scene_names(prefab)[base_row] {append(out,prefab_override_make(instance.id,entity,0,.Field,"name"))}
-    placement:=instance.root==entity?base.name_hash(asset.INSTANCE_PLACEMENT):0
-    for &pair in pairs {
-        if pair.hash==placement {continue}
-        cap_image:[]u8
-        cap_has,base_has:=false,false
-        if pair.cap_table>=0 {cap_image,cap_has=asset.scene_component_get(cap,pair.cap_table,entity)}
-        if pair.base_table>=0 {_,base_has=asset.scene_component_get(prefab,pair.base_table,source)}
-        switch {
-        case cap_has && !base_has:
-            append(out,prefab_override_make(instance.id,entity,pair.hash,.Added,""))
-        case !cap_has && base_has:
-            append(out,prefab_override_make(instance.id,entity,pair.hash,.Removed,""))
-        case cap_has && base_has:
-            if asset.scene_component_off(cap,entity,pair.hash)!=asset.scene_component_off(prefab,source,pair.hash) {
-                append(out,prefab_override_make(instance.id,entity,pair.hash,.Turned,""))
-            }
-            image,_:=prefab_image(&pair,prefab,source,remap)
-            marked:=make([dynamic]string,context.temp_allocator)
-            asset.overrides_mark(pair.leaves[:],cap_image,image,&marked)
-            for path in marked {append(out,prefab_override_make(instance.id,entity,pair.hash,.Field,len(path)<asset.OVERRIDE_PATH_BYTES?path:""))}
-        }
-    }
-}
 
 // ---------------------------------------------------------------- queries
 
@@ -1705,7 +1602,7 @@ prefab_apply :: proc(s:^Session,entity:core.Entity,paths:[]string,all_members:=f
         prefab_abort(&edit)
         return 0,.Not_Variant
     }
-    if error=prefab_overrides_write(cap,instance,selected,prefab);error!=.None {prefab_abort(&edit);return 0,error}
+    if error=prefab_place_error(asset.scene_overrides_apply(cap,instance,selected,prefab));error!=.None {prefab_abort(&edit);return 0,error}
     count=len(selected)
     prefab_overrides_drop(cap,selected)
     if error=prefab_scene_mark(s,prefab);error!=.None {prefab_abort(&edit);return 0,error}
@@ -1724,7 +1621,7 @@ prefab_apply :: proc(s:^Session,entity:core.Entity,paths:[]string,all_members:=f
                 prefab_abort(&edit)
                 return 0,.Not_Found
             }
-            if error=prefab_overrides_write(prefab,based,chosen,base_scene);error!=.None {prefab_abort(&edit);return 0,error}
+            if error=prefab_place_error(asset.scene_overrides_apply(prefab,based,chosen,base_scene));error!=.None {prefab_abort(&edit);return 0,error}
             prefab_overrides_drop(prefab,chosen)
             if error=prefab_scene_mark(s,base_scene);error!=.None {prefab_abort(&edit);return 0,error}
             if !prefab_file_save(base_scene,base_path,&edit.files) {
@@ -1764,56 +1661,6 @@ prefab_apply :: proc(s:^Session,entity:core.Entity,paths:[]string,all_members:=f
     return
 }
 
-// Writes overrides of an instance placed in a scene into its prefab: first the entities it added, which the
-// values of members may name, then names, values and components.
-@(private)
-prefab_overrides_write :: proc(cap:^asset.Scene,instance:u32,selected:[]asset.Override,prefab:^asset.Scene) -> Prefab_Error {
-    for override in selected {
-        if override.kind!=.Child {continue}
-        prefab_place_error(asset.scene_child_apply(cap,instance,override.entity,prefab)) or_return
-    }
-    inverse:=make(map[base.Entity_Id]base.Entity_Id,context.temp_allocator)
-    for member in cap.members {
-        if member.instance==instance {inverse[member.entity]=member.source}
-    }
-    pairs:=prefab_pairs(cap,prefab) or_return
-    for &override in selected {
-        if override.kind>=.Child {continue}
-        entity:=override.entity
-        source:=inverse[entity]
-        if source==0 {return .Not_Instance}
-        if override.component==0 {
-            row,exists:=asset.scene_entity_find(cap,entity)
-            if !exists {return .Unknown_Entity}
-            asset.scene_entity_rename(prefab,source,string(serial.text_field(asset.scene_names(cap)[row][:])))
-            continue
-        }
-        for &pair in pairs {
-            if pair.hash!=override.component || pair.cap_table<0 && override.kind!=.Removed {continue}
-            switch override.kind {
-            case .Removed:
-                if pair.base_table>=0 {asset.scene_component_remove(prefab,pair.base_table,source)}
-            case .Added:
-                if pair.base_table<0 {
-                    bt,add_error:=asset.scene_component_add(prefab,pair.name,&cap.doc.schema,cap.doc.tables[pair.cap_table].columns[1].type)
-                    if add_error!=.None {return .Out_Of_Memory if add_error==.Out_Of_Memory else .Rejected}
-                    pair.base_table=bt
-                }
-                prefab_value_apply(&pair,cap,prefab,entity,source,"",inverse) or_return
-                fallthrough
-            case .Turned:
-                if pair.base_table<0 {continue}
-                if asset.scene_component_turn(prefab,source,pair.hash,asset.scene_component_off(cap,entity,pair.hash))!=.None {return .Out_Of_Memory}
-            case .Field:
-                if pair.base_table<0 {continue}
-                prefab_value_apply(&pair,cap,prefab,entity,source,prefab_override_text(&override),inverse) or_return
-            case .Child:
-            }
-        }
-    }
-    return .None
-}
-
 // Marks again the overrides of the instances placed in a prefab against their prefabs as they are now, as
 // the observation of an open document does: what an apply wrote on their members stays the prefab's own
 // when the prefab they place changes.
@@ -1826,18 +1673,7 @@ prefab_scene_mark :: proc(s:^Session,sc:^asset.Scene) -> Prefab_Error {
         inner,loaded:=prefab_scene_load(s,instance.prefab)
         if !loaded {continue}
         defer prefab_scene_free(inner)
-        pairs:=prefab_pairs(sc,inner) or_return
-        remap:=make(map[base.Entity_Id]base.Entity_Id,context.temp_allocator)
-        inside:=make(map[base.Entity_Id]bool,context.temp_allocator)
-        for member in sc.members {
-            if member.instance==instance.id {remap[member.source],inside[member.entity]=member.entity,true}
-        }
-        for member in sc.members {
-            if member.instance==instance.id {prefab_member_observe(&fresh,instance,member.entity,member.source,sc,inner,pairs,remap)}
-        }
-        for entity,row in asset.scene_ids(sc) {
-            if !inside[entity] && inside[asset.scene_parents(sc)[row]] {append(&fresh,prefab_override_make(instance.id,entity,0,.Child,""))}
-        }
+        prefab_place_error(asset.scene_overrides_derive(&fresh,sc,instance.id,inner)) or_return
         marked[instance.id]=true
     }
     left:=0
@@ -1872,55 +1708,6 @@ prefab_variant_overrides :: proc(cap:^asset.Scene,instance:u32,selected:[]asset.
         }
     }
     return chosen[:]
-}
-
-// Copies the value of the part of a component an override names from the scene into the prefab.
-@(private)
-prefab_value_apply :: proc(pair:^Prefab_Pair,cap,prefab:^asset.Scene,entity,source:base.Entity_Id,path:string,inverse:map[base.Entity_Id]base.Entity_Id) -> Prefab_Error {
-    if pair.cap_table<0 || pair.base_table<0 {return .Rejected}
-    cap_type:=cap.doc.tables[pair.cap_table].columns[1].type
-    base_type:=prefab.doc.tables[pair.base_table].columns[1].type
-    cap_image,has:=asset.scene_component_get(cap,pair.cap_table,entity)
-    if !has {return .Rejected}
-    // The value in the layout of the prefab, its references pointing at the entities of the prefab.
-    size:=prefab.doc.tables[pair.base_table].columns[1].size
-    buffer,allocation_error:=make([]u8,max(size,1),context.temp_allocator)
-    if allocation_error!=nil {return .Out_Of_Memory}
-    converted:=buffer[:size] // a tag has no bytes
-    migration:serial.Migration
-    defer serial.migration_destroy(&migration)
-    if error:=serial.migration_init(&migration,&cap.doc.schema,cap_type,&prefab.doc.schema,base_type,context.temp_allocator);error!=.None {
-        return .Out_Of_Memory if error==.Out_Of_Memory else .Rejected
-    }
-    serial.migration_apply(&migration,converted,cap_image,1)
-    refs:[dynamic]serial.Ref
-    refs.allocator=context.temp_allocator
-    if !serial.refs_collect(&prefab.doc.schema,base_type,&refs) {return .Out_Of_Memory}
-    for ref in refs {
-        if ref.kind==.Asset {continue}
-        target:=(^u64)(&converted[ref.offset])
-        if target^!=0 {target^=u64(inverse[base.Entity_Id(target^)])}
-    }
-    current,exists:=asset.scene_component_get(prefab,pair.base_table,source)
-    if path=="" || !exists {
-        if error:=asset.scene_component_set(prefab,pair.base_table,source,converted);error!=.None {
-            return .Out_Of_Memory if error==.Out_Of_Memory else .Rejected
-        }
-        return .None
-    }
-    merged,merge_error:=make([]u8,len(current),context.temp_allocator)
-    if merge_error!=nil {return .Out_Of_Memory}
-    copy(merged,current)
-    _,to,to_error:=serial.value_slice(&prefab.doc.schema,base_type,merged,path)
-    _,from,from_error:=serial.value_slice(&prefab.doc.schema,base_type,converted,path)
-    if to_error==.None && from_error==.None && len(to)==len(from) {
-        copy(to,from)
-        if error:=asset.scene_component_set(prefab,pair.base_table,source,merged);error!=.None {
-            return .Out_Of_Memory if error==.Out_Of_Memory else .Rejected
-        }
-        return .None
-    }
-    return .Unknown_Path
 }
 
 // The prefabs of the registry that place a prefab that changed are updated from it and written, outwards.
