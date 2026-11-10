@@ -25,8 +25,8 @@ and `Rigid_Body` set to `phys.RIGID_BODY_KINEMATIC`. A conveyor belt needs no co
 `Collider.surface_speed` carries what stands on it.
 
 - `phys.Character_State` says what the character stands on: `standing`, `ground_velocity`,
-  `ground_turn`. With `move_relative_to=.Game`, add `ground_turn` to the `look_yaw` you write, or
-  the body rides the platform without turning with it.
+  `ground_turn`. With `Drivable.move_relative_to=.Game`, add `ground_turn` to the `look_yaw` you
+  write, or the body rides the platform without turning with it.
 
 ## Trigger zones
 

@@ -1,7 +1,7 @@
 {
   "name": "animation_physics",
   "version": "0.1.0",
-  "dependencies": ["animation", "physics"],
+  "dependencies": ["animation", "physics", "locomotion"],
   "parts": ["Runtime"],
   "automatic": true
 }
