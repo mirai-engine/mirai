@@ -18,7 +18,7 @@ Spawn_World :: struct {
 @(test)
 a_body_given_to_a_seat_goes_when_the_seat_goes :: proc(t:^testing.T) {
     w:Spawn_World
-    if !core.test_world_init(t,&w) {return}
+    if !core.test_world_init(t,&w,input.test_types) {return}
     defer core.test_world_destroy(&w)
     es,bodies,drivables,hierarchy:=&w.entities,&w.bodies,&w.drivables,&w.hierarchy
     seat,given,other:=core.create(es),core.create(es),core.create(es)
@@ -44,7 +44,7 @@ a_body_given_to_a_seat_goes_when_the_seat_goes :: proc(t:^testing.T) {
 @(test)
 spawn_points_are_taken_in_turn_by_their_kind_or_as_asked :: proc(t:^testing.T) {
     w:Spawn_World
-    if !core.test_world_init(t,&w) {return}
+    if !core.test_world_init(t,&w,input.test_types) {return}
     defer core.test_world_destroy(&w)
     es,points:=&w.entities,&w.points
     bare,first,enemy,second,crate:=core.create(es),core.create(es),core.create(es),core.create(es),core.create(es)
@@ -87,7 +87,7 @@ spawn_points_are_taken_in_turn_by_their_kind_or_as_asked :: proc(t:^testing.T) {
 @(test)
 the_place_the_editor_asks_comes_before_the_points_for_player_1_once :: proc(t:^testing.T) {
     w:Spawn_World
-    if !core.test_world_init(t,&w) {return}
+    if !core.test_world_init(t,&w,input.test_types) {return}
     defer core.test_world_destroy(&w)
     es,points,seats:=&w.entities,&w.points,&w.seats
     point,enemy,first,second,remote:=core.create(es),core.create(es),core.create(es),core.create(es),core.create(es)

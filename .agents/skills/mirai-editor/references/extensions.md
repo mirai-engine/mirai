@@ -62,7 +62,7 @@ Outline of `paint` and `terrain` (`plugins/*/editor/`):
 7. **Show.** Guides with `host.extras_debug_lines_add`; a ring of constant width on screen, with
    `viewport_screen` and `ui.draw_line` or `ui.draw_polyline`. The panel, only with the tool
    active: `if ui.panel(ctx, id, editor.tool_panel(g, id)) { controls }`. The result, with
-   `editor.notify`. What a component draws over the selection (a mirror's face, a decal's box) goes
+   `editor.notify`. What a component draws over the selection (a portal's face, a decal's box) goes
    through `editor.selection_gizmo`; `gizmo_face` is the outline of a face of side 1, ellipse or
    rectangle, with the arrow of its front.
 8. **Brushes.** `editor/brush.odin` is what the tools' brushes share (terrain and foliage):
@@ -282,8 +282,8 @@ or without names): `editor.asset_cards(s, width)` gives the columns and the side
 
 An Editor storage whose only field is `editor.Card_Provider` adds cards to Create: its default
 fills `cards` and `count`, up to `CARD_PROVIDER_CAPACITY` = 8 per provider and `CARD_CAPACITY` = 64
-with the presets. `decals`, `monitors`, `portals` and `vfx` add Decal, Screen, Portal and Particles
-this way.
+with the presets. `decals`, `monitors`, `portals` and `vfx` add Decal, Screen, Portal and Mirror,
+and Particles this way.
 
 Fields of `Card`:
 
@@ -377,9 +377,10 @@ with an `Api_Step_Input` drives a run, and `editor.play_ui_screen` says what its
 
 What steers or watches a body in those runs asks the plugin that moves it, never a component by
 its name: an Editor storage whose only field is `editor.Body_Provider` answers for the bodies of
-its plugin (`physics`, for its characters), and `editor.play_stance` and `editor.play_body_measure`
-read it. A body no provider answers for is `Unknown`, which each reader handles and is not taken as
-standing, and is measured as `BODY_PERSON`.
+its plugin (`physics`, whether a character stands; `locomotion`, how a walker measures), and
+`editor.play_stance` and `editor.play_body_measure` read it. A body no provider answers for is
+`Unknown`, which each reader handles and is not taken as standing, and is measured as
+`BODY_PERSON`.
 
 A bot of a plugin walks a body with the drive of `play.step`, not with steering of its own:
 `editor.play_drive_to` makes one to a place, `editor.play_drive_steer` runs before each

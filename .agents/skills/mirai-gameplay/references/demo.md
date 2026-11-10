@@ -107,7 +107,7 @@ Scenes:
   - `game_glow` is the only writer of `Tint`: it also serves the portals' buttons, the lamps of
     `horror` and the fade of the physics gallery.
   - The cameras of the prefabs are `Camera_Follow`: `Eyes` the player's, `Orbit` with `aim` those of
-    the person and the dog, which walk with `move_relative_to` `View`.
+    the person and the dog, whose `Drivable` walks them with `move_relative_to` `View`.
 - **`control.odin`**: `Follow` is an AI that takes the body behind its leader while no seat drives
   it.
   - `game_dogs` (`server`) gives each person a dog with `Follow`; `game_follow` writes the

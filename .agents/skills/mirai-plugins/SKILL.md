@@ -4,7 +4,8 @@ description: The Mirai plugin system - manifests (`plugin.mirai`), the runtime a
   dependencies and order, plugins from git and the catalog (`cook/install`, `mirai plugin`) - and
   the tool, physics add-on and renderer plugins `paint`, `physics_placement`, `physics_cache`,
   `ragdoll`, `playtest`, `previews`, `profiler`, `tracy`, `ui_inspector`,
-  `prompts_kenney`, `decals`, `deform`, `monitors`, `portals`, `mirror`, `fog`, `fsr` and `lens`.
+  `prompts_kenney`, `decals`, `deform`, `monitors`, `portals` (also mirrors), `fog`, `fsr` and
+  `lens`.
   Use when creating, changing, splitting, installing or publishing a plugin, when a plugin must
   extend the engine or integrate with the project world, or when working on one of those plugins.
   The plugins of terrain, vegetation, water, particles, navigation and AI are in `mirai-world`.
@@ -41,8 +42,8 @@ project world. Layout, manifests and build:
   [thumbnails](references/previews.md#animation-thumbnails),
   [capture](references/previews.md#animation-capture) and
   [sound documents](references/previews.md#sound-documents)
-- `animation_physics` (automatic bridge: the mode, velocity and request of each `Character` feed
-  the motion matching of its `Animation`):
+- `animation_physics` (automatic bridge of `animation` and `locomotion`: the mode, velocity and
+  request of each `Character` feed the motion matching of its `Animation`):
   [locomotion](../mirai-animation/references/animation.md#locomotion-by-motion-matching)
 - `unreal` and its `unreal_*` bridges (import Unreal packages and maps in the editor) are not part
   of the engine: they are installed from the catalog (`mirai plugin add unreal`); code and
@@ -66,10 +67,10 @@ project world. Layout, manifests and build:
 - `profiler` and `tracy` (development: captures panel and Tracy client in Odin):
   [profiler in the editor](references/profiling.md#profiler-editor) and
   [Tracy at runtime](references/profiling.md#tracy-runtime)
-- `decals`, `deform`, `monitors`, `portals`, `mirror`, `fog`, `fsr`, `lens` and plugins that
-  extend the renderer: [decals](references/render-plugins.md#decals),
+- `decals`, `deform`, `monitors`, `portals` (portals and mirrors), `fog`, `fsr`, `lens` and
+  plugins that extend the renderer: [decals](references/render-plugins.md#decals),
   [deform](references/render-plugins.md#deform), [monitors](references/render-plugins.md#monitors),
-  [portals](references/render-plugins.md#portals), [mirror](references/render-plugins.md#mirror),
+  [portals and mirrors](references/render-plugins.md#portals),
   [fog](references/render-plugins.md#fog), [fsr](references/render-plugins.md#fsr) and [renderer
   extensions](../mirai-rendering/references/views.md#extension-stages)
 - `prompts_kenney` (Kenney prompt pack and how it is regenerated):

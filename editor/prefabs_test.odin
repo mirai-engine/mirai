@@ -1256,7 +1256,7 @@ prefab_collab_leave :: proc(f:^Prefab_Fixture) {
     st:=f.collab.state
     for &peer in st.peers {
         for message in peer.out {delete(message)}
-        delete(peer.out);delete(peer.file_bytes)
+        delete(peer.out);delete(peer.incoming)
     }
     for path in st.files_out {delete(path)}
     delete(st.files_out)

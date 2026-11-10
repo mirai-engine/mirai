@@ -2,13 +2,13 @@ package animation_physics
 
 import "core:testing"
 import mm "mirai:std/math"
-import phys "plugins:physics/runtime"
+import locomotion "plugins:locomotion/runtime"
 
 // The matching is told what the body will do: in the air, a body that lets go of the stick keeps
 // its course, so the trajectory goes on and not to a stop; a sprint asks for its own speed.
 @(test)
 the_goal_of_a_walk_follows_what_the_character_does_on_the_ground_and_in_the_air :: proc(t:^testing.T) {
-    walk:=phys.Walk{max_speed=8,acceleration=24,braking=40,air_control=0.8}
+    walk:=locomotion.Walk{max_speed=8,acceleration=24,braking=40,air_control=0.8}
     going:=mm.Vec3{7,-3,0}
     cases:=[?]struct {falling:bool,wish,desired:mm.Vec3,acceleration,braking,speed:f32}{
         {false,{1,0,0},{8,0,0},24,40,8},
