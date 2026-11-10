@@ -63,6 +63,7 @@ UNTRACKED_NAMES = (
     "render/shaders_gen.odin",
     "shaders_gen_test.odin",
     "material_schema.slang",
+    "shared_constants.slang",
     "surface_programs.slang",
     "surface_coverage.slang",
     "postprocess_programs.slang",

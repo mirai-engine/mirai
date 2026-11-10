@@ -1034,8 +1034,9 @@ programs_reflect :: proc(r:^Program_Reflection,workers:int) {
 // `cache`, named by the digest of what the program is compiled from, and
 // reused wherever that digest comes up again; what the cache lacks is
 // reflected by up to `workers` compilations at once. files: what the
-// generation has read already; nil reads everything here. All results are
-// in `allocator`.
+// generation has read already; nil reads everything here. A program of a
+// project or of a plugin that fails is left out and named in the catalog; one
+// of the engine that fails is an error. All results are in `allocator`.
 programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cache:string,sources:[]Source={},allocator:=context.allocator,files:^Sources=nil,workers:=1) -> (catalog:Catalog,error:string) {
     local:Sources
     files:=files
@@ -1180,7 +1181,10 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
     reflection:=Program_Reflection{entries=entries[:],runner=runner,slangc=slangc,root=root,copied=copied,temporary=temporary,plugins=plugin_folders[:]}
     programs_reflect(&reflection,workers)
     defer for &e in entries {virtual.arena_destroy(&e.arena)}
+    broken:=make([dynamic]string,context.temp_allocator)
     programs_loop: for &e in entries {
+        left_out:=len(refused)
+        defer if path_inside(e.path,materials) {append(&broken,..refused[left_out:])}
         name,text_bytes:=e.name,transmute([]u8)e.text
         of,_:=program_domain(e.domain)
         taken:=name=="pbr"
@@ -1252,6 +1256,10 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
         }
         moves,births,prepare:=of==.Vfx && e.said.moves,of==.Vfx && e.said.births,of==.Vfx && e.said.prepare
         append(&programs,Program{id=id,name=strings.clone(name,allocator),domain=strings.clone(e.domain,allocator),source=relative,size=layout.size,parameters=parameters,layers=layers[:],attributes=attributes,resources=resources,stages=stages,moves=moves,births=births,prepare=prepare,coverage=e.coverage,vertex=vertex})
+    }
+    // A project does without a program of its own that fails; nothing does without one of the engine.
+    if len(broken)>0 {
+        return {},fmt.aprintf("the programs of the engine in shaders/materials must all compile, and these do not:\n%s\nFix the source each one names, or the include of the engine it takes, and generate the shaders again (`mirai shaders`)",strings.join(broken[:],"\n",context.temp_allocator),allocator=allocator)
     }
     if failed:=dispatchers_write(&dispatchers,include);failed!="" {return {},fmt.aprintf("could not write %s",failed,allocator=allocator)}
     catalog={fingerprint=sha_hex(&hash,allocator),compiler=strings.clone(version,allocator),programs=programs[:],refused=refused[:],vfx=vfx_names[:],surface=surface_names[:],vertex=vertex_names[:]}

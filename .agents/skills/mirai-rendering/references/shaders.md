@@ -273,6 +273,9 @@
   (`<fingerprint>.refused.txt`, with what Slang said): it is not compiled again while its sources
   do not change. A compiler that ends without diagnostics (a cancelled generation) leaves nothing
   in the cache.
+- A program of a project or of a plugin that does not compile is left out of the catalog, which
+  names it (`Result.refused`), and the others are published; one of the engine fails the
+  generation.
 - `Sources` reads each source once and stores two hashes: the full one (catalog, engine identity,
   stamp) and the compilation one (stages and reflection).
 - The compilation hash omits only whole `//! parameter` lines that are line comments in code,
