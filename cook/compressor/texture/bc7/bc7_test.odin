@@ -129,3 +129,56 @@ compress_and_rd_are_deterministic_and_valid :: proc(t:^testing.T) {
     defer delete(zero)
     testing.expect_value(t,rd(a[:16],blocks[:1],zero,activity[:1],30,{},{}),common.Error.Invalid)
 }
+
+// The texels of a block from the fields the encoder reads back and its tables.
+@(private="file")
+decode_from_fields :: proc(block:^[16]u8) -> (out:common.Color_Block) {
+    desc:bc67.Block_Raw_Desc
+    if !bc67.bc7_analyze_block_raw(&desc,block) {return}
+    m:=desc.mode
+    subsets:=bc67.partition_of(m.ns,u32(desc.partition_id)).subset_mask
+    for &texel,i in out {
+        s:=int((subsets>>(u32(i)*2))&3)
+        color,alpha:=desc.inds[0][i],desc.inds[0][i]
+        color_bits,alpha_bits:=m.ib,m.ib
+        if m.ib2!=0 {
+            alpha,alpha_bits=desc.inds[1][i],m.ib2
+            if desc.ind_sel!=0 {color,alpha,color_bits,alpha_bits=alpha,color,alpha_bits,color_bits}
+        }
+        for c in 0..<4 {
+            w:=u32(asset.BC7_WEIGHTS[c<3 ? color_bits : alpha_bits][c<3 ? color : alpha])
+            low,high:=u32(desc.endpoints_raw[c][s*2]),u32(desc.endpoints_raw[c][s*2+1])
+            texel[c]=u8((low*(64-w)+high*w+32)>>6)
+        }
+        if desc.rot!=0 {texel[desc.rot-1],texel[3]=texel[3],texel[desc.rot-1]}
+    }
+    return
+}
+
+// What the encoder reads back from a block and what the runtime decodes are one format: any
+// bits of every mode, and what the encoder writes, give the same texels both ways.
+@(test)
+the_fields_the_encoder_reads_decode_to_the_texels_of_the_runtime :: proc(t:^testing.T) {
+    seed:=u32(99)
+    for n in 0..<8*4096 {
+        block:[16]u8
+        for &b in block {b=lcg(&seed)}
+        mode:=uint(n&7)
+        block[0]=(block[0]<<(mode+1))|u8(1)<<mode
+        if n%1024==0 {block[0]=0}
+        if decode(block[:])!=decode_from_fields(&block) {
+            testing.expectf(t,false,"mode %d: %v decodes to %v, its fields to %v",mode,block,decode(block[:]),decode_from_fields(&block))
+            return
+        }
+    }
+    blocks:=hostile_blocks()
+    defer delete(blocks)
+    out:=make([]u8,len(blocks)*16)
+    defer delete(out)
+    for level in ([]common.Level{.Very_Fast,.Slow}) {
+        testing.expect_value(t,compress(out,blocks[:],level,{}),common.Error.None)
+        for bi in 0..<len(blocks) {
+            testing.expect(t,decode(out[bi*16:])==decode_from_fields((^[16]u8)(&out[bi*16])))
+        }
+    }
+}

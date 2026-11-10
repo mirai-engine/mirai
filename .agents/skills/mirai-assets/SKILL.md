@@ -107,6 +107,9 @@ compression, typed tables, asset types, scene/prefab, registry).
   the optimal parser and its match finders are in `cook/compressor/lz`, and a write reaches them
   through its `Pack`: `asset` never imports `cook`, and every level is the same stream format.
 - **The encoders are deterministic**: the same input, codec and level give the same bytes.
+- **A block format is described once.** `asset/texture_bc7.odin` and `asset/texture_bc6h.odin`
+  hold the modes, partitions, anchors, weights and decode of BC7 and BC6H; the encoders of
+  `cook/compressor/texture` build their records from those tables and keep no rows of their own.
 - `asset.Types` is the context with the schema of the program's types: it is created once and
   passed to reads and writes.
 - **Atomic writing.** `document_save` and `scene_save` write a temporary and rename;
