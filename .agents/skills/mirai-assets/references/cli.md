@@ -16,16 +16,28 @@ subcommands with their usage.
   the problems at the end (`! broken`, `! duplicate`, `! missing`); `dump` does not show the data of
   `Bulk` tables ([JSON shape](formats.md#text)), and `dump --textconv` prints the text
   [git diffs](#git).
+- **A scene and a `.ui` have one text: their document**, the one `mirai scene read` and
+  `mirai ui read` give and `scene.write`/`ui.write` take. `dump` (and `--textconv`) of one prints
+  that document, read by the author program of the engine against the project the file is of: the
+  one it is in, else the one of the current folder, else, from a folder with several (a checkout
+  of the engine), the one whose assets have its id. A file outside the assets (another version of
+  one, as git gives it) reads as the asset with its id. `unpack`, `pack` and `dump --schema`
+  refuse them.
 - **`verify`** checks container, hash, decompression, schema and tables, that the stored
   dependencies are the derived ones and that each value meets its schema. For the engine's types it
   checks their version (for one the build does not read, the reason is `version_message`, with the
   `mirai import` that rebuilds it) and their rules (`*_check`). For a `.ui` it only checks the
   tree's structure (`asset.ui_check`): the rest is validated on loading it
-  ([interface](kinds.md#interface)).
+  ([interface](kinds.md#interface)). The scenes that pass then go through `mirai scene check`
+  against the game of their project: whether their documents write them back, and each component
+  stored otherwise than the game reads it (one the game lacks, a stored field it has under no
+  name, a value that does not convert), named by scene, component and field; a loss is a problem.
+  A scene of no project says it was not checked against a game.
 - **`set`** rewrites the file atomically, with the dependencies recomputed; if an assignment fails
   nothing is written. The value is JSON of the field's type; from a shell, texts, enum members and
   ids need no quotes, and in a struct the unnamed fields are kept. A number must fit exactly in its
-  field. It neither adds nor removes rows: for that, `unpack`, edit and `pack`.
+  field. It neither adds nor removes rows: for that, `unpack`, edit and `pack`, or the document of
+  a scene or a `.ui`.
 
   ```sh
   mirai asset set level.scene 'Light[@0x20].value.intensity=7.5' 'entities[@0x20].name=Lamp'
@@ -85,6 +97,7 @@ result is not valid, and then `<ours>` stays as it was.
 
 ## Editing by `unpack`/`pack`
 
+Of any kind but a scene and a `.ui`, which are edited as their documents.
 `asset.json` is the complete asset (with schema), next to one file per bulk column: rows of `data`
 can be added or removed, values or columns changed. `pack` of an unedited `unpack` gives the same
 bytes.
@@ -121,7 +134,10 @@ makes is kept whole.
   git runs drivers from: one line serves every clone and worktree. In another repository it is the
   absolute path of the engine, so after moving the engine `mirai setup git` runs again; the editor
   does the same on each state read.
-- `dump --textconv` differs from `dump` in what would change without a value changing: a row names
-  the row it refers to by its key, not by its position, and a column leaves out the index of its
-  type. A file the build does not read prints one line that says why and ends with 0, so a log
-  that reaches one goes on. `pack` does not read this text.
+- `dump --textconv` of a scene or a `.ui` is its document, so a diff reads as what agents write.
+  It never builds the engine: without the author program, the project or the library of its game
+  it prints the one line of a file it cannot show. Of the other kinds it differs from `dump` in
+  what would change without a value changing: a row names the row it refers to by its key, not by
+  its position, and a column leaves out the index of its type. A file the build does not read
+  prints one line that says why and ends with 0, so a log that reaches one goes on. `pack` does
+  not read this text.

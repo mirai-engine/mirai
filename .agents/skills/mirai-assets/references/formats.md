@@ -273,7 +273,8 @@ scan opens every file and writes it again.
 
 ## Text
 
-`document_text_write` produces the JSON that `mirai asset dump` prints and `unpack` saves:
+`document_text_write` produces the JSON that `mirai asset dump` prints and `unpack` saves, of
+every kind but a scene and a `.ui`, whose text is their document ([CLI](cli.md#subcommands)):
 `mirai_asset`, the header (`kind`, `kind_version`, `id`, `owner` only on a part of another asset,
 `flags`), `dependencies`, the optional `schema` and the `tables`, each with its columns and `data`.
 
