@@ -170,10 +170,8 @@ library_migrate :: proc(s:^Session,library:^host.Project_Library) -> bool {
         if i==s.active_document || tab.world==nil {continue}
         edits_relayout(&tab.edits,core.world_ref(tab.world,info),&m)
     }
-    if s.ai!=nil {
-        for &task in s.ai.tasks[:s.ai.task_count] {
-            for &set in task.review.transactions {change_rows_relayout(&set,&m)}
-        }
+    for &task in ai_tasks(s.ai) {
+        for &set in task.review.transactions {change_rows_relayout(&set,&m)}
     }
     sections_relayout(s,&m)
     log.infof("the layout of the world changed: its worlds moved to it")

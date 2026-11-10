@@ -1,5 +1,6 @@
 package editor
 
+import "mirai:editor/ai_store"
 import "mirai:editor/api"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -74,7 +75,7 @@ ai_subagent_of :: proc(s:^Session,call:^api.Call,id:int) -> ^Ai_Task {
     ai_initialize(s)
     task:=ai_task_find(m,id)
     if task==nil {
-        if saved:=ai_store_find(&m.store,u64(id));saved!=nil && saved.kind==.Agent {
+        if saved:=ai_store.find(&m.store,u64(id));saved!=nil && saved.kind==.Agent {
             conversation:=saved^
             task=ai_conversation_restore(s,&conversation)
         }
@@ -110,9 +111,9 @@ ai_method_agent_list :: proc(s:^Session,call:^api.Call) {
     m:=s.ai;w:=call.out
     serial.text_write_raw(w,`{"agents":[`)
     names:=AI_STATE_NAMES
-    conversations:[64]Ai_Conversation
+    conversations:[64]ai_store.Conversation
     if m.main!=0 {
-        count,message:=ai_store_list(&m.store,conversations[:],kinds={.Agent},parent=u64(m.main))
+        count,message:=ai_store.list(&m.store,conversations[:],kinds={.Agent},parent=u64(m.main))
         if message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
         for &c,index in conversations[:count] {
             if index>0 {serial.write_u8(w,',')}
@@ -154,6 +155,6 @@ ai_method_chat_note :: proc(s:^Session,call:^api.Call) {
     m:=s.ai
     main:=ai_task_find(m,m.main)
     if main==nil {api.call_fail(call,api.SERVER_ERROR,"There is no main chat yet: it starts with the first message");return}
-    if message:=ai_store_note_set(&m.store,main.conversation.id,base.text_get(api.call_params(call,Ai_Chat_Note_Params).text[:]));message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
+    if message:=ai_store.note_set(&m.store,main.conversation.id,base.text_get(api.call_params(call,Ai_Chat_Note_Params).text[:]));message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
     api.call_result(call,Ai_Chat_Note_Result).saved=true
 }

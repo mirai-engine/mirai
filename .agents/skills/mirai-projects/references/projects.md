@@ -257,14 +257,24 @@ with the project library.
 compiles into `<engine>/.mirai/engine/<mode>/` once per version of sources, compiler and flags.
 Each mode has its folder: switching between them compiles nothing.
 
-- Libraries `mirai-engine` (`ENGINE_RUNTIME_PACKAGES`) and `mirai-editor` (what is engine-time,
-  `ENGINE_EDITOR_PACKAGES`, linked against the former); physics, destruction, game networking,
-  control and cinematics are [plugin libraries](#plugin-libraries). `decl/` has their
-  declarations, the `mirai` collection of the project libraries, with the `#load` relative to each
-  declaration so the cache serves any checkout. `engine.stamp` stores the fingerprints of each
-  part, one hash per package (of its declarations and of those of the engine packages they import,
-  directly or not: what whoever imports it compiles against) and whether the runtime compilation
-  was left half done.
+- **Libraries.** `ENGINE_LIBRARIES` and `ENGINE_PACKAGES` (`cook/build/engine.odin`) are the only
+  list of the libraries, of the ones each needs and of the packages each holds: the build, the
+  shipped game, the installed engine and the allocation lint read it. A library is a layer of the
+  [package map](../../../../docs/ARCHITECTURE.md#package-map), linked against the ones it needs,
+  and the cuts are where no import goes up: what needs no renderer (`std`, `audio`, `platform`,
+  `rhi`, `project`, `core`), the rest of what a game or a plugin imports, and, engine-time, `cook`
+  and the editor. A package goes in the lowest library that has what it imports, and a C library
+  with the package that binds it. Physics, destruction, game networking, control and cinematics
+  are [plugin libraries](#plugin-libraries).
+- **What crosses between libraries** is what crosses to a project: calls, with the context and
+  its allocators, and data. Each library has its own Odin runtime and type table, so none looks up
+  a type of another by `typeid` ([reflection](../../../../docs/ARCHITECTURE.md#the-generated-world)),
+  and a package-level variable would be one per library that reads it.
+- `decl/` has the declarations of every library, the `mirai` collection of the project libraries,
+  with the `#load` relative to each declaration so the cache serves any checkout. `engine.stamp`
+  stores the fingerprint of each library and of the programs and one hash per package (of its
+  declarations and of those of the engine packages they import, directly or not: what whoever
+  imports it compiles against).
 - Programs `mirai-editor` and `mirai-player`, which load the `editor` or `play` library of the
   project ([host](../../mirai-core/references/host.md#project-libraries)), and over the editor
   library `mirai-import`, that of `mirai import`
@@ -281,11 +291,15 @@ Each mode has its folder: switching between them compiles nothing.
   library would print an enum or a struct of a plugin as nothing) and the rest `foreign` towards
   the library. Nothing
   of the engine is recompiled with what uses it. It writes only the files whose text changes.
-- **Currency by parts.** The runtime is recompiled by its sources (without `_test.odin`) and by
-  `shaders/build/manifest.json`, which gives the hash of the code `render` embeds; the editor one,
-  by its sources or by a changed runtime declaration; the programs, by the compiler, the flags or a
-  changed declaration of any. Before compiling a part, the stamp zeroes what depends on what
-  changed: a build that fails halfway leaves those parts for the next one.
+- **Currency by parts.** A library is recompiled by its sources (without `_test.odin`; the one
+  with `render`, also by `shaders/build/manifest.json`, which gives the hash of the code it
+  embeds) or by a changed declaration of a package its sources import from the libraries it needs;
+  the programs, by the compiler, the flags or a changed declaration of a package they reach. A
+  change in the body of a procedure compiles its library and nothing else. Before compiling a
+  part, the stamp zeroes what depends on what changed: a build that stops halfway leaves those
+  parts for the next one. `stage-<library>/` is what a library compiles from, with the
+  declarations of the libraries it needs; a build without a stamp of its version, `--force` and a
+  copy from the shared cache remove the stages.
 - **Mode.** `build`, `edit`, `play` and `session start|restart` accept `--dev` (everything at
   `-o:minimal`, to check changes) or `--release` (`-o:speed`, for the CPU figures and to ship), not both.
   Without either, `edit` and `play` use `--release` (a person runs them); `build`, `session start`

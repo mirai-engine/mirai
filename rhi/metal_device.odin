@@ -215,7 +215,7 @@ Device :: struct {
 	immediate_pool: ^NS.AutoreleasePool,
 	scratch:        Buffer,
 	tlas_translator: Pipeline, // tlas_translator_set
-	accel_arena:    Accel_Arena,            // where acceleration structures live
+	accel_arena:    Arena,                  // where acceleration structures live
 	accel_heaps:    [dynamic]^MTL.Heap,     // the placement heap of each block of the arena
 	accel_empty:    [dynamic]int,           // blocks a release left empty, which go at the next creation
 	compact_sizes:  Buffer,                 // the compacted sizes of BLASes, a u32 a slot (accel_compact.odin)
@@ -609,7 +609,7 @@ device_destroy :: proc(d: ^Device) {
 		delete(f.ranges)
 	}
 	for heap in d.accel_heaps {mtl_release(heap)}
-	accel_arena_destroy(&d.accel_arena)
+	arena_destroy(&d.accel_arena)
 	delete(d.accel_heaps)
 	delete(d.accel_empty)
 	if d.compact_sizes != 0 {buffer_destroy(d, d.compact_sizes)}
@@ -740,7 +740,7 @@ mtl_defer_range :: proc(d: ^Device, block: i32, offset, size: u64) {
 @(private)
 mtl_flush_ranges :: proc(d: ^Device, f: ^Mtl_Frame) {
 	for r in f.ranges {
-		if d.accel_arena.blocks != nil && accel_arena_give(&d.accel_arena, int(r[0]), r[1], r[2]) {append(&d.accel_empty, int(r[0]))}
+		if arena_give(&d.accel_arena, int(r[0]), r[1], r[2]) {append(&d.accel_empty, int(r[0]))}
 	}
 	clear(&f.ranges)
 }

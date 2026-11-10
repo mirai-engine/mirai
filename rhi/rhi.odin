@@ -188,6 +188,9 @@ Memory :: enum u8 {
 Buffer_Usage_Flag :: enum u8 {Index, Uniform, Storage, Indirect, Transfer_Src, Transfer_Dst, Accel_Input}
 Buffer_Usage :: bit_set[Buffer_Usage_Flag; u16]
 
+// A new buffer reads zero in every byte, whatever its memory. One of GPU
+// memory is zeroed by the GPU unless an upload writes all of it first, and is
+// made outside render passes, which cannot hold that fill.
 Buffer_Desc :: struct {
 	size:   u64,
 	usage:  Buffer_Usage,
@@ -198,6 +201,8 @@ Buffer_Desc :: struct {
 Texture_Usage_Flag :: enum u8 {Sampled, Storage, Color_Target, Depth_Target, Transfer_Src, Transfer_Dst}
 Texture_Usage :: bit_set[Texture_Usage_Flag; u8]
 
+// The texels of a new texture are undefined until an upload, a clear or a
+// pass writes them: nothing reads a texture it did not write.
 Texture_Desc :: struct {
 	width, height: u32,
 	depth:         u32, // slices of a 3D texture, which shaders alone write; 0 or 1 = a 2D texture

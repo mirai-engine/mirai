@@ -6,6 +6,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:core"
+import "mirai:editor/ai_store"
 import "mirai:editor/api"
 import "mirai:host"
 import "mirai:project"
@@ -78,8 +79,8 @@ ai_context_continues_project_chats_and_passes_instructions_skills_and_live_play 
     for &worker in ai.workers {worker.task=-1}
     base.text_set(ai.connections[AI_CODEX].model[:],"gpt-6-luna")
     base.text_set(ai.connections[AI_CODEX].effort[:],"low")
-    testing.expect_value(t,ai_store_open(&ai.store,root),"")
-    defer ai_store_close(&ai.store)
+    testing.expect_value(t,ai_store.open(&ai.store,root),"")
+    defer ai_store.close(&ai.store)
     s:=Session{info=&info,edit_world=&world,editor_world=&editor_world,app=&app,viewport=&viewport,
         selection=&selection,edits=&edits,document=&document,ai=ai,project_root=root,engine_root=engine,has_project=true}
     testing.expect_value(t,ai_instructions_write(&s,"Explain the player's current state precisely."),"")
@@ -123,7 +124,7 @@ ai_context_continues_project_chats_and_passes_instructions_skills_and_live_play 
     first.state=.Done
     first.finish_called=true
     selection_clear(&selection)
-    ai_conversation_set_text(first.conversation.native_session[:],&first.conversation.native_session_len,"persisted-native-session")
+    ai_store.conversation_set_text(first.conversation.native_session[:],&first.conversation.native_session_len,"persisted-native-session")
     ai_transcript_add(&first.transcript,"The prior answer",.Output)
     ai_task_dirty(first);ai_task_persist(&s,first)
     previous_lines:=first.transcript.count
@@ -161,7 +162,7 @@ ai_context_continues_project_chats_and_passes_instructions_skills_and_live_play 
     play_prompt,_:=os.read_entire_file(ai_task_path(&s,playing,AI_FILE_PROMPT),context.temp_allocator)
     testing.expect(t,strings.contains(string(play_prompt),"play.player") && strings.contains(string(play_prompt),"include_runtime=true") && strings.contains(string(play_prompt),"read-only"))
     restored:Ai_Transcript
-    testing.expect_value(t,ai_store_load(&ai.store,first.conversation.id,&restored),"")
+    testing.expect_value(t,ai_transcript_load(&ai.store,first.conversation.id,&restored),"")
     testing.expect_value(t,restored.count,playing.transcript.count)
     playing.state=.Done
     // Sent from the pause, the turn has the selected entities with their values at that tick;

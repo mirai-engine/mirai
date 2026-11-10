@@ -229,7 +229,7 @@ section :: proc(p:^Pane,which:Section,title:string,icon:ui.Icon=.None,whole:=fal
     ui.id_push(ctx,ui.id(ctx,"section",int(which)+1))
     p.which,p.icon,p.pending,p.whole=which,icon,"",false
     if p.needle!="" {
-        if editor.contains_fold(title,p.needle) {
+        if base.contains_fold(title,p.needle) {
             p.whole=true
             return card_open(p,title)
         }
@@ -276,7 +276,7 @@ card_open :: proc(p:^Pane,title:string) -> bool {
 @(private)
 shown :: proc(p:^Pane,label:string) -> bool {
     if p.needle=="" || p.whole {return true}
-    if !editor.contains_fold(label,p.needle) {return false}
+    if !base.contains_fold(label,p.needle) {return false}
     if p.pending!="" {
         title:=p.pending
         p.pending=""

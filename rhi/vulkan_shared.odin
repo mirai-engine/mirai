@@ -27,7 +27,7 @@ texture_create_shared :: proc(d: ^Device, desc: Texture_Desc) -> (Texture, Share
 	d.shared_serial = d.shared_serial % 0xFFFF + 1
 	vk_shared_export_info(d, &export, &name, d.shared_serial)
 	if !vk_shared_memory(d, &t, &export) {return 0, 0}
-	handle, id, exported := vk_shared_export(d, t.memory, d.shared_serial)
+	handle, id, exported := vk_shared_export(d, t.memory.handle, d.shared_serial)
 	if !exported {vk_release_texture(d, &t); return 0, 0}
 	if id > 0xFFFF {
 		vk_shared_close(handle)
@@ -104,17 +104,27 @@ vk_shared_memory :: proc(d: ^Device, t: ^Vk_Texture, next: rawptr) -> bool {
 	types, count := vk_memory_candidates(d, requirements.memoryTypeBits, {.DEVICE_LOCAL}, {})
 	if count == 0 {types, count = vk_memory_candidates(d, requirements.memoryTypeBits, {}, {})}
 	dedicated := vk.MemoryDedicatedAllocateInfo{sType = .MEMORY_DEDICATED_ALLOCATE_INFO, pNext = next, image = t.image}
-	result := vk.Result.ERROR_OUT_OF_DEVICE_MEMORY
-	for i in 0 ..< count {
-		info := vk.MemoryAllocateInfo{sType = .MEMORY_ALLOCATE_INFO, pNext = &dedicated, allocationSize = requirements.size, memoryTypeIndex = types[i]}
-		if result = d.dvk.AllocateMemory(d.handle, &info, nil, &t.memory); result == .SUCCESS {break}
-	}
-	if result != .SUCCESS {
-		set_error(d, "shared texture: vkAllocateMemory failed: %v", result)
+	if !vk_memory_room(&d.memory) {
+		set_error(d, "shared texture: the driver gives %d memory allocations at once (maxMemoryAllocationCount) and all are taken", d.memory.limit)
 		vk_release_texture(d, t)
 		return false
 	}
-	d.dvk.BindImageMemory(d.handle, t.image, t.memory, 0)
+	result := vk.Result.ERROR_OUT_OF_DEVICE_MEMORY
+	memory: vk.DeviceMemory
+	for i in 0 ..< count {
+		info := vk.MemoryAllocateInfo{sType = .MEMORY_ALLOCATE_INFO, pNext = &dedicated, allocationSize = requirements.size, memoryTypeIndex = types[i]}
+		if result = d.dvk.AllocateMemory(d.handle, &info, nil, &memory); result == .SUCCESS {break}
+	}
+	if result != .SUCCESS {
+		set_error(d, "shared texture: vkAllocateMemory failed for %d bytes: %v", requirements.size, result)
+		vk_release_texture(d, t)
+		return false
+	}
+	t.memory = vk_memory_adopt(&d.memory, memory, u64(requirements.size))
+	if !vk_check(d, d.dvk.BindImageMemory(d.handle, t.image, memory, 0), "binding memory") {
+		vk_release_texture(d, t)
+		return false
+	}
 	return true
 }
 

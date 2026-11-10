@@ -53,15 +53,13 @@ presence_hit :: proc(s:^Session,w:core.World_Ref) -> bool {
     g:=s.gui
     if g.ctx.popup.count>0 || g.modal!=.None {return false}
     point:=s.viewport.pointer
-    if m:=s.ai;m!=nil {
-        for &task in m.tasks[:m.task_count] {
-            if !ai_scene_figure_shown(s,w,&task) {continue}
-            glyph,on_glyph:=ai_scene_screen(s,w,&task)
-            body,on_body:=ai_scene_body_screen(s,w,&task)
-            if on_glyph && ui.rect_contains(glyph,point) || on_body && ui.rect_contains(body,point) {
-                ai_chat_select(s,&task)
-                return true
-            }
+    for &task in ai_tasks(s.ai) {
+        if !ai_scene_figure_shown(s,w,&task) {continue}
+        glyph,on_glyph:=ai_scene_screen(s,w,&task)
+        body,on_body:=ai_scene_body_screen(s,w,&task)
+        if on_glyph && ui.rect_contains(glyph,point) || on_body && ui.rect_contains(body,point) {
+            ai_chat_select(s,&task)
+            return true
         }
     }
     if peer,rect,found:=collab_peer_at(s,point);found {
@@ -99,13 +97,12 @@ presence_menu_items :: proc(s:^Session,menu:Presence_Menu) {
     case .None:
         ui.popup_close(ctx)
     case .Agent:
-        m:=s.ai
-        task:=m!=nil?ai_task_find(m,menu.task):nil
+        task:=s.ai!=nil?ai_task_find(s.ai,menu.task):nil
         if task==nil {ui.popup_close(ctx);return}
         header(ctx,ai_chat_menu_label(ctx,base.text_get(task.title[:]),180,th.font_small))
         if ui.menu_item(ctx,ui.id(ctx,"chat"),"Open chat",{icon=.Sparkle}) {
             ai_chat_select(s,task)
-            m.chat_open=true
+            ai_chat_show(s.ai,true)
         }
         eyes,_,shown:=ai_scene_eyes(s,task)
         if ui.menu_item(ctx,ui.id(ctx,"go"),"Go to",{icon=.Target,disabled=!shown || !editing || !ai_scene_task_visible(s,shown_world(s),task)}) {presence_go_to(s,eyes,task.facing)}
@@ -143,7 +140,7 @@ presence_menu_items :: proc(s:^Session,menu:Presence_Menu) {
     case .Remote_Agent:
         st:=collab_state(s)
         if st==nil || st.phase!=.Joined {ui.popup_close(ctx);return}
-        agents:=collab_remote_agents(s,st,menu.peer,wire.host_time(&st.host))
+        agents:=collab_remote_agents(s.ai,st,menu.peer,wire.host_time(&st.host))
         if menu.agent>=len(agents) {ui.popup_close(ctx);return}
         agent:=agents[menu.agent]
         header(ctx,fmt.tprintf("%s of %s",string(agent.name[:agent.name_length]),collab_peer_name(s,menu.peer)))

@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:strconv"
 import "core:strings"
 import "mirai:editor/acp"
+import "mirai:editor/ai_store"
 import "mirai:std/base"
 import "mirai:ui"
 
@@ -149,7 +150,7 @@ ai_task_answer :: proc(task:^Ai_Task) -> string {
 
 // Adds a line to a chat that may be working, saving first what would be lost.
 @(private)
-ai_task_line_add :: proc(s:^Session,task:^Ai_Task,text:string,kind:Ai_Line_Kind) {
+ai_task_line_add :: proc(s:^Session,task:^Ai_Task,text:string,kind:ai_store.Line_Kind) {
     if task.transcript.count==AI_TRANSCRIPT_LINES || task.transcript.used+len(text)>AI_TRANSCRIPT_BYTES {ai_task_persist(s,task)}
     ai_task_dirty(task)
     task.stream_open=false
@@ -170,7 +171,7 @@ ai_agent_report :: proc(s:^Session,m:^Ai,task:^Ai_Task) {
     fmt.sbprintf(&b,"Subagent %d, %q, ended a turn: %s, %d changes waiting for review.",task.id,base.text_get(task.title[:]),names[task.state],ai_review_count(task))
     if task.question!=.None {strings.write_string(&b," It asked the user a question and waits for the answer.")}
     if answer:=ai_task_answer(task);answer!="" {fmt.sbprintf(&b,"\nIts answer:\n%s",answer)}
-    if message:=ai_store_delivery_add(&m.store,main.conversation.id,AI_DELIVERY_REPORT,strings.to_string(b));message!="" {notify(s,message)}
+    if message:=ai_store.delivery_add(&m.store,main.conversation.id,AI_DELIVERY_REPORT,strings.to_string(b));message!="" {notify(s,message)}
 }
 
 // A turn reached its end, or will not start. A subagent that goes on with a
@@ -186,7 +187,7 @@ ai_task_settle :: proc(s:^Session,m:^Ai,task:^Ai_Task) {
 // Keeps a message for the next turn of its chat. Its line is in the chat already.
 @(private)
 ai_steer_hold :: proc(s:^Session,m:^Ai,task:^Ai_Task,text:string) -> string {
-    if message:=ai_store_delivery_add(&m.store,task.conversation.id,AI_DELIVERY_STEER,text);message!="" {return message}
+    if message:=ai_store.delivery_add(&m.store,task.conversation.id,AI_DELIVERY_STEER,text);message!="" {return message}
     task.held+=1
     return ""
 }
@@ -246,7 +247,7 @@ ai_steer_done :: proc(s:^Session,worker:^Ai_Worker,event:acp.Event) {
 
 // What waits to reach a conversation, as the text of one block.
 @(private)
-ai_deliveries_text :: proc(deliveries:[]Ai_Delivery) -> string {
+ai_deliveries_text :: proc(deliveries:[]ai_store.Delivery) -> string {
     b:=strings.builder_make(context.temp_allocator)
     for &delivery,index in deliveries {
         if index>0 {strings.write_string(&b,"\n\n")}
@@ -275,7 +276,7 @@ ai_deliveries_advance :: proc(s:^Session,m:^Ai) {
     if main==nil || main.state!=.Done || main.steer_count>0 {return}
     if main.held==0 {
         if ai_subagents_working(m) || main.review.pending {return}
-        deliveries,message:=ai_store_deliveries(&m.store,main.conversation.id)
+        deliveries,message:=ai_store.deliveries(&m.store,main.conversation.id)
         if message!="" {notify(s,message);return}
         if len(deliveries)==0 {return}
     }
@@ -287,7 +288,7 @@ ai_unit_title :: proc(m:^Ai,id:int) -> string {
     title:=""
     if task:=ai_task_find(m,id);task!=nil {
         title=base.text_get(task.title[:])
-    } else if saved:=ai_store_find(&m.store,u64(id));saved!=nil {
+    } else if saved:=ai_store.find(&m.store,u64(id));saved!=nil {
         title=string(saved.title[:saved.title_len])
     }
     return ai_chat_title(title)

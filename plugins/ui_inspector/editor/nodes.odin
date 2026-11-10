@@ -275,7 +275,7 @@ add_popup :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,popup:ui.Id,p
             kinds:=ADDED_KINDS
             labels:=KIND_LABELS
             for kind in kinds {
-                if !editor.contains_fold(labels[kind],needle) {continue}
+                if !base.contains_fold(labels[kind],needle) {continue}
                 shown:=ui.Tree_Node{kind=kind,layout={direction=.Column}}
                 if ui.menu_item(ctx,ui.id(ctx,"kind",int(kind)+1),labels[kind],{icon=node_icon(&shown)}) {
                     if row:=author.records_insert(r,parent,kind);row>=0 {
@@ -289,7 +289,7 @@ add_popup :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,popup:ui.Id,p
                 if file.kind!=asset.KIND_UI || file.id=={} || file.id==u.id {continue}
                 dot:=strings.last_index_byte(file.path,'.')
                 path:=file.path[:dot] if dot>0 else file.path
-                if !editor.contains_fold(path,needle) || widget_holds_document(u,a,file.id) {continue}
+                if !base.contains_fold(path,needle) || widget_holds_document(u,a,file.id) {continue}
                 if !caption {
                     ui.menu_separator(ctx)
                     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(20),padding={8,0,8,0},align_y=.Center}) {ui.label(ctx,"WIDGETS",th.font_caption,th.text_caption,font=ui.FONT_SEMIBOLD)}
@@ -359,7 +359,7 @@ shown_rows :: proc(u:^Ui_Inspector,a:^host.Assets,filter:string) -> []Shown_Row 
     if filter!="" {
         keep:=make([]bool,len(list),context.temp_allocator)
         for &n,i in list {
-            if !editor.contains_fold(serial.text_field(n.name[:]),filter) && !editor.contains_fold(labels[n.kind],filter) {continue}
+            if !base.contains_fold(serial.text_field(n.name[:]),filter) && !base.contains_fold(labels[n.kind],filter) {continue}
             for at:=i;at>=0;at=int(list[at].parent) {keep[at]=true}
         }
         for &n,i in list {

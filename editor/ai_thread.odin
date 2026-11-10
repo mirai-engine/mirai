@@ -6,6 +6,7 @@ import "core:strconv"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/ai_store"
 import "mirai:std/base"
 import "mirai:ui"
 
@@ -13,7 +14,6 @@ import "mirai:ui"
 // the agent as text, with the entities it names as pills; the calls of each
 // turn folded under "N steps"; and the line of what the agent does now.
 
-AI_LAST_BYTES :: 160
 AI_ENTITY_MARK :: "](entity:" // the agent names an entity as [Name](entity:ID)
 AI_ASSET_MARK :: "](asset:"   // and an asset as [Name](asset:path under the assets folder)
 AI_ASSET_PATH_BYTES :: 256
@@ -321,7 +321,7 @@ ai_transcript_shown :: proc(task:^Ai_Task,shown:[]bool,steps:[]int=nil) -> (doin
 
 // The API calls of a turn, saved as notes: they fold under its steps.
 @(private)
-ai_transcript_hidden :: proc(text:string,kind:Ai_Line_Kind) -> bool {
+ai_transcript_hidden :: proc(text:string,kind:ai_store.Line_Kind) -> bool {
     return kind==.Note && (strings.has_prefix(text,"Tool: ") || strings.has_prefix(text,"Tool failed: "))
 }
 

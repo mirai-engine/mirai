@@ -8,6 +8,7 @@ import "core:testing"
 import "core:time"
 import "mirai:core"
 import "mirai:editor/acp"
+import "mirai:editor/ai_store"
 import "mirai:editor/api"
 import "mirai:host"
 import "mirai:project"
@@ -61,7 +62,7 @@ fixture_open :: proc(t:^testing.T,name:string) -> ^Fixture {
     base.text_set(f.ai.agents_home[:],project.path(f.root,"agents",allocator=context.temp_allocator))
     for &worker in f.ai.workers {worker.task=-1}
     f.ai.connections[AI_CODEX].configured,f.ai.connections[AI_CLAUDE].configured=true,true
-    testing.expect_value(t,ai_store_open(&f.ai.store,f.root),"")
+    testing.expect_value(t,ai_store.open(&f.ai.store,f.root),"")
     f.s={info=&f.info,edit_world=&f.world,editor_world=&f.editor_world,app=&f.app,viewport=&f.viewport,selection=&f.selection,edits=&f.edits,document=&f.document,ai=f.ai,project_root=f.root,has_project=true}
     return f
 }
@@ -69,7 +70,7 @@ fixture_open :: proc(t:^testing.T,name:string) -> ^Fixture {
 @(private="file")
 fixture_close :: proc(f:^Fixture) {
     for &task in f.ai.tasks[:f.ai.task_count] {ai_review_free(&task.review);ai_steers_free(&task)}
-    ai_store_close(&f.ai.store)
+    ai_store.close(&f.ai.store)
     os.remove_all(f.root)
     delete(f.root)
     delete(f.selection.entities)
@@ -95,8 +96,8 @@ fixture_worker_close :: proc(worker:^Ai_Worker) {acp.destroy(&worker.client,nil)
 sent_text :: proc(worker:^Ai_Worker) -> string {return string(worker.client.tx[:worker.client.queued])}
 
 @(private="file")
-deliveries_of :: proc(f:^Fixture,task:^Ai_Task) -> []Ai_Delivery {
-    deliveries,_:=ai_store_deliveries(&f.ai.store,task.conversation.id)
+deliveries_of :: proc(f:^Fixture,task:^Ai_Task) -> []ai_store.Delivery {
+    deliveries,_:=ai_store.deliveries(&f.ai.store,task.conversation.id)
     return deliveries
 }
 
@@ -117,22 +118,22 @@ the_main_chat_is_restored_with_its_transcript_and_never_evicted :: proc(t:^testi
     main.state=.Done
     ai_transcript_add(&main.transcript,"The room is ready",.Output)
     ai_task_dirty(main);ai_task_persist(&f.s,main)
-    archived:=Ai_Conversation{id=500,kind=.Archived,updated_at=9}
-    testing.expect_value(t,ai_store_save(&f.ai.store,&archived,&main.transcript),"")
+    archived:=ai_store.Conversation{id=500,kind=.Archived,updated_at=9}
+    testing.expect_value(t,ai_transcript_save(&f.ai.store,&archived,&main.transcript),"")
     restored:=new(Ai);defer free(restored)
     ai_connections_reset(restored)
     restored.agents_home=f.ai.agents_home
     other:=f.s
     other.ai=restored
     ai_initialize(&other)
-    defer ai_store_close(&restored.store)
+    defer ai_store.close(&restored.store)
     defer for &task in restored.tasks[:restored.task_count] {ai_review_free(&task.review)}
     testing.expect(t,restored.main==main.id && restored.selected==main.id,"the first frame of a project shows its chat")
     loaded:=ai_task_find(restored,restored.main)
     if !testing.expect(t,loaded!=nil) {return}
     testing.expect(t,loaded.conversation.kind==.Main && loaded.state==.Done && loaded.transcript.count==main.transcript.count)
     testing.expect_value(t,restored.task_count,1)
-    testing.expect(t,ai_task_find(restored,500)==nil && restored.history_count==0 && ai_store_find(&restored.store,500)!=nil,"what was archived stays readable and nothing more")
+    testing.expect(t,ai_task_find(restored,500)==nil && restored.history_count==0 && ai_store.find(&restored.store,500)!=nil,"what was archived stays readable and nothing more")
     for index in restored.task_count..<AI_TASK_CAPACITY {
         task:=&restored.tasks[index]
         task.id,task.state,task.review_finished=100+index,.Done,true
@@ -217,8 +218,8 @@ what_a_subagent_runs_with_follows_the_explicit_values_and_the_default_of_the_pro
     main:=new(Ai_Task);defer free(main)
     base.text_set(main.agent[:],"codex")
     c:=&main.conversation
-    ai_conversation_set_text(c.model[:],&c.model_len,"gpt-6.1-sol")
-    ai_conversation_set_text(c.effort[:],&c.effort_len,"high")
+    ai_store.conversation_set_text(c.model[:],&c.model_len,"gpt-6.1-sol")
+    ai_store.conversation_set_text(c.effort[:],&c.effort_len,"high")
     base.text_set(m.connections[2].id[:],"local")
     m.connections[2].agent=.Command
     m.connection_count=3
@@ -312,7 +313,7 @@ a_finished_subagent_reports_and_what_waits_becomes_one_system_turn_of_the_idle_c
     // What arrives while the user writes goes with what they send.
     ai_task_end(&f.s,m,main,0)
     worker.task=-1
-    testing.expect_value(t,ai_store_delivery_add(&m.store,main.conversation.id,AI_DELIVERY_REPORT,"Subagent 9 ended"),"")
+    testing.expect_value(t,ai_store.delivery_add(&m.store,main.conversation.id,AI_DELIVERY_REPORT,"Subagent 9 ended"),"")
     continued,message:=ai_task_create(&f.s,m,{0,0,800,600},"Also the door","codex",main.id)
     testing.expect(t,continued==main && message=="" && main.state==.Queued)
     testing.expect_value(t,len(deliveries_of(f,main)),1)
@@ -326,7 +327,7 @@ a_finished_subagent_reports_and_what_waits_becomes_one_system_turn_of_the_idle_c
     worker.task=-1
     ai_deliveries_advance(&f.s,m)
     testing.expect_value(t,main.state,Ai_Task_State.Done)
-    testing.expect_value(t,ai_store_delivery_add(&m.store,main.conversation.id,AI_DELIVERY_REPORT,"Subagent 9 ended"),"")
+    testing.expect_value(t,ai_store.delivery_add(&m.store,main.conversation.id,AI_DELIVERY_REPORT,"Subagent 9 ended"),"")
     main.review.pending=true
     m.deliveries_due=true
     ai_deliveries_advance(&f.s,m)
@@ -398,7 +399,7 @@ a_message_to_a_working_chat_joins_its_turn_or_waits_for_the_next_one :: proc(t:^
     ai_task_end(&f.s,m,main,0)
     worker.task=-1
     main.stop=false
-    testing.expect_value(t,ai_store_delivery_add(&m.store,main.conversation.id,AI_DELIVERY_STEER,"Later"),"")
+    testing.expect_value(t,ai_store.delivery_add(&m.store,main.conversation.id,AI_DELIVERY_STEER,"Later"),"")
     main.held=1
     main.state=.Cancelled
     m.deliveries_due=true
@@ -517,12 +518,12 @@ the_delta_has_what_waits_what_is_pinned_and_who_works :: proc(t:^testing.T) {
     if main==nil {return}
     agent,_:=ai_agent_spawn(&f.s,m,"Paint the wall","Painter","","","")
     if !testing.expect(t,agent!=nil) {return}
-    testing.expect_value(t,ai_store_delivery_add(&m.store,main.conversation.id,AI_DELIVERY_REPORT,"Subagent 9 ended well"),"")
-    _,pin_error:=ai_store_pin_add(&m.store,"asset","materials/wall.mat","The wall")
+    testing.expect_value(t,ai_store.delivery_add(&m.store,main.conversation.id,AI_DELIVERY_REPORT,"Subagent 9 ended well"),"")
+    pin_error:=ai_store.pin_add(&m.store,"asset","materials/wall.mat","The wall")
     testing.expect_value(t,pin_error,"")
-    _,here:=ai_store_annotation_add(&m.store,"todo","scenes/main.scene",33,1,2,3,"Fix this corner")
+    _,here:=ai_store.annotation_add(&m.store,"todo","scenes/main.scene",33,1,2,3,"Fix this corner")
     testing.expect_value(t,here,"")
-    _,there:=ai_store_annotation_add(&m.store,"todo","scenes/other.scene",33,1,2,3,"Another scene")
+    _,there:=ai_store.annotation_add(&m.store,"todo","scenes/other.scene",33,1,2,3,"Another scene")
     testing.expect_value(t,there,"")
     sent:=turn_sent(t,f,main,"native-1")
     for fragment in ([?]string{"Subagent 9 ended well","materials/wall.mat","The wall","Fix this corner","Painter",base.text_get(main.name[:])}) {
@@ -547,12 +548,12 @@ the_delta_names_pins_and_annotations_every_turn_without_images_even_after_a_comp
     base.text_set(name.text[:],"Lamp")
     core.add(&f.world.names,lamp,name)
     core.table_settle(&f.world.ids,&f.world.entities);core.table_settle(&f.world.names,&f.world.entities)
-    for pin in ([?][3]string{{AI_PIN_IMAGE,"C:/art/mood.png","mood.png"},{AI_PIN_ENTITY,"000000000000002a","Lamp"},{AI_PIN_GROUP,"lights","lights"}}) {ai_pin_toggle(&f.s,pin[0],pin[1],pin[2])}
-    ai_pins_sync(&f.s)
+    for pin in ([?][3]string{{AI_PIN_IMAGE,"C:/art/mood.png","mood.png"},{AI_PIN_ENTITY,"000000000000002a","Lamp"},{AI_PIN_GROUP,"lights","lights"}}) {testing.expect_value(t,ai_pin_toggle(f.s.ai,pin[0],pin[1],pin[2]),"")}
+    _=ai_pins_sync(f.s.ai)
     testing.expect_value(t,m.pin_count,3)
-    _,on_entity:=ai_store_annotation_add(&m.store,"lights","scenes/main.scene",0x2a,1.5,2,-3,"Too dark\nhere")
+    _,on_entity:=ai_store.annotation_add(&m.store,"lights","scenes/main.scene",0x2a,1.5,2,-3,"Too dark\nhere")
     testing.expect_value(t,on_entity,"")
-    _,on_surface:=ai_store_annotation_add(&m.store,"","scenes/main.scene",0,4,5,6,"A door")
+    _,on_surface:=ai_store.annotation_add(&m.store,"","scenes/main.scene",0,4,5,6,"A door")
     testing.expect_value(t,on_surface,"")
     present :: proc(t:^testing.T,sent:string) {
         for fragment in ([?]string{"C:/art/mood.png","mood.png","000000000000002a | Lamp","| lights | lights","1 | lights | 1.500 2.000 -3.000 | 000000000000002a Lamp | Too dark here","2 | - | 4.000 5.000 6.000 | - | A door"}) {
@@ -564,8 +565,8 @@ the_delta_names_pins_and_annotations_every_turn_without_images_even_after_a_comp
     next_message(t,f,main,"And the door")
     ai_context_compacted(&f.s,main)
     present(t,turn_sent(t,f,main,"native-1"))
-    ai_pin_toggle(&f.s,AI_PIN_IMAGE,"C:/art/mood.png","mood.png")
-    ai_pins_sync(&f.s)
+    _=ai_pin_toggle(f.s.ai,AI_PIN_IMAGE,"C:/art/mood.png","mood.png")
+    _=ai_pins_sync(f.s.ai)
     testing.expect_value(t,m.pin_count,2)
     next_message(t,f,main,"And the floor")
     testing.expect(t,!strings.contains(turn_sent(t,f,main,"native-1"),"C:/art/mood.png"),"unpinning takes it out")
@@ -580,14 +581,14 @@ a_pinned_chip_stays_over_the_composer_once_it_leaves_the_message :: proc(t:^test
     path:="C:/art/mood.png"
     base.text_set(m.references[0][:],path)
     m.reference_count=1
-    ai_pin_toggle(&f.s,AI_PIN_IMAGE,path,"mood.png")
+    _=ai_pin_toggle(f.s.ai,AI_PIN_IMAGE,path,"mood.png")
     listed:[AI_PINS]int
     testing.expect_value(t,ai_pins_listed(&f.s,listed[:]),0)
     m.reference_count=0
     count:=ai_pins_listed(&f.s,listed[:])
     testing.expect_value(t,count,1)
     testing.expect_value(t,base.text_get(m.pins[listed[0]].ref[:]),path)
-    ai_pin_toggle(&f.s,AI_PIN_IMAGE,path,"mood.png")
+    _=ai_pin_toggle(f.s.ai,AI_PIN_IMAGE,path,"mood.png")
     testing.expect_value(t,ai_pins_listed(&f.s,listed[:]),0)
 }
 
@@ -623,19 +624,19 @@ annotations_outlive_the_editor_and_the_agent_reads_and_clears_them :: proc(t:^te
     if f==nil {return}
     defer fixture_close(f)
     m:=f.ai
-    first,error:=ai_store_annotation_add(&m.store,"lights","scenes/main.scene",0,1,2,3,"Too dark")
+    first,error:=ai_store.annotation_add(&m.store,"lights","scenes/main.scene",0,1,2,3,"Too dark")
     testing.expect_value(t,error,"")
-    _,error=ai_store_annotation_add(&m.store,"lights","scenes/main.scene",0,4,5,6,"Too bright")
+    _,error=ai_store.annotation_add(&m.store,"lights","scenes/main.scene",0,4,5,6,"Too bright")
     testing.expect_value(t,error,"")
-    _,error=ai_store_annotation_add(&m.store,"","scenes/main.scene",0,7,8,9,"A door")
+    _,error=ai_store.annotation_add(&m.store,"","scenes/main.scene",0,7,8,9,"A door")
     testing.expect_value(t,error,"")
-    _,error=ai_store_annotation_add(&m.store,"lights","scenes/other.scene",0,0,0,0,"Elsewhere")
+    _,error=ai_store.annotation_add(&m.store,"lights","scenes/other.scene",0,0,0,0,"Elsewhere")
     testing.expect_value(t,error,"")
     ai_annotations_sync(&f.s)
     testing.expect_value(t,m.annotations.count,3)
-    ai_store_close(&m.store)
+    ai_store.close(&m.store)
     m.annotations={}
-    testing.expect_value(t,ai_store_open(&m.store,f.root),"")
+    testing.expect_value(t,ai_store.open(&m.store,f.root),"")
     ai_annotations_sync(&f.s)
     testing.expect(t,m.annotations.count==3 && base.text_get(m.annotations.rows[0].text[:])=="Too dark","they are read back after the editor reopens")
     text:=annotation_list(t,f)
@@ -701,8 +702,8 @@ the_memory_index_catches_what_is_edited_outside_the_editor :: proc(t:^testing.T)
     defer fixture_close(f)
     m:=f.ai
     found :: proc(m:^Ai,word:string) -> int {
-        hits:[4]Ai_Memory_Hit
-        count,_:=ai_store_memory_search(&m.store,word,hits[:])
+        hits:[4]ai_store.Memory_Hit
+        count,_:=ai_store.memory_search(&m.store,word,hits[:])
         return count
     }
     folder:=ai_memory_topics_folder(&f.s)
@@ -810,7 +811,7 @@ a_handoff_says_what_the_context_before_it_left :: proc(t:^testing.T) {
     ai_transcript_add(&main.transcript,"The room has two doors",.Output)
     ai_transcript_add(&main.transcript,"Tool: scene.add Door · +1.0 s · 1.0 ms",.Note)
     ai_task_persist(&f.s,main)
-    testing.expect_value(t,ai_store_note_set(&m.store,main.conversation.id,"Doors are done, windows are next"),"")
+    testing.expect_value(t,ai_store.note_set(&m.store,main.conversation.id,"Doors are done, windows are next"),"")
     ended,_:=ai_agent_spawn(&f.s,m,"Paint the wall","Painter","","","")
     gone,_:=ai_agent_spawn(&f.s,m,"Light the wall","Lighter","","","")
     if !testing.expect(t,ended!=nil && gone!=nil) {return}
@@ -818,7 +819,7 @@ a_handoff_says_what_the_context_before_it_left :: proc(t:^testing.T) {
     ended.review.pending=true
     append(&ended.review.changed_files,strings.clone("assets/wall.mat"))
     gone.state=.Interrupted
-    testing.expect_value(t,ai_store_meta_set(&m.store,AI_META_INTERRUPTED_AGENTS,fmt.tprintf("%d,",gone.id)),"")
+    testing.expect_value(t,ai_store.meta_set(&m.store,AI_META_INTERRUPTED_AGENTS,fmt.tprintf("%d,",gone.id)),"")
     next_message(t,f,main,"The next message")
     text:=ai_handoff_build(&f.s,main,ai_task_turn_sequence(main))
     for fragment in ([?]string{AI_HANDOFF_HEADER,"Doors are done, windows are next","Make a room","The room has two doors","Painter","Lighter","interrupted","1 changes"}) {
@@ -840,7 +841,7 @@ reopening_starts_a_clean_context_unless_a_build_restarted_the_editor :: proc(t:^
     if main==nil {return}
     main.state=.Done
     set_native :: proc(f:^Fixture,task:^Ai_Task) {
-        ai_conversation_set_text(task.conversation.native_session[:],&task.conversation.native_session_len,"native-1")
+        ai_store.conversation_set_text(task.conversation.native_session[:],&task.conversation.native_session_len,"native-1")
         ai_task_dirty(task);ai_task_persist(&f.s,task)
     }
     set_native(f,main)
@@ -857,7 +858,7 @@ reopening_starts_a_clean_context_unless_a_build_restarted_the_editor :: proc(t:^
     }
     close :: proc(restored:^Ai) {
         for &task in restored.tasks[:restored.task_count] {ai_review_free(&task.review)}
-        ai_store_close(&restored.store)
+        ai_store.close(&restored.store)
         free(restored)
     }
     reopened_lines:=0
@@ -878,7 +879,7 @@ reopening_starts_a_clean_context_unless_a_build_restarted_the_editor :: proc(t:^
         reopened_lines=loaded.transcript.count
     }
     set_native(f,main)
-    testing.expect_value(t,ai_store_meta_set(&m.store,AI_META_WORKING_AGENTS,""),"")
+    testing.expect_value(t,ai_store.meta_set(&m.store,AI_META_WORKING_AGENTS,""),"")
     ai_resume_native_mark(&f.s)
     {
         restored,_:=open(f)
@@ -889,7 +890,7 @@ reopening_starts_a_clean_context_unless_a_build_restarted_the_editor :: proc(t:^
         testing.expect_value(t,base.text_get(loaded.stable_native[:]),"native-1")
         testing.expect_value(t,loaded.transcript.count,reopened_lines)
     }
-    value,_:=ai_store_meta_get(&m.store,AI_META_RESUME_NATIVE)
+    value,_:=ai_store.meta_get(&m.store,AI_META_RESUME_NATIVE)
     testing.expect_value(t,value,"")
     {
         restored,_:=open(f)

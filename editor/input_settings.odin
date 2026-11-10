@@ -179,13 +179,13 @@ INPUT_TIMING :: "Timing"
 @(private)
 input_cards :: proc(s:^Session,needle:string) -> []Input_Card {
     cards:=make([dynamic]Input_Card,context.temp_allocator)
-    every:=needle=="" || contains_fold("Input",needle)
+    every:=needle=="" || base.contains_fold("Input",needle)
     for entry in core.names_of(s.info,input.Action) {
         if entry.value<0 || entry.value>=input.ACTION_CAPACITY {continue}
         title:=readable(entry.name)
-        if every || contains_fold(title,needle) {append(&cards,Input_Card{title,entry.value})}
+        if every || base.contains_fold(title,needle) {append(&cards,Input_Card{title,entry.value})}
     }
-    if every || contains_fold(INPUT_TIMING,needle) || contains_fold("Tap ticks",needle) || contains_fold("Hold ticks",needle) {append(&cards,Input_Card{INPUT_TIMING,-1})}
+    if every || base.contains_fold(INPUT_TIMING,needle) || base.contains_fold("Tap ticks",needle) || base.contains_fold("Hold ticks",needle) {append(&cards,Input_Card{INPUT_TIMING,-1})}
     return cards[:]
 }
 

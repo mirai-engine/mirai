@@ -5,6 +5,7 @@ import "core:math"
 import "core:path/filepath"
 import "core:strings"
 import "mirai:core"
+import "mirai:editor/ai_store"
 import erender "mirai:engine/render"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -30,7 +31,7 @@ ai_agent_glyph :: proc "contextless" (task:^Ai_Task) -> ui.Icon {
 
 // The glyph and color of a saved conversation that is not loaded: those of
 // its agent, the color as a new session takes it.
-ai_conversation_glyph :: proc(m:^Ai,c:^Ai_Conversation) -> (glyph:ui.Icon,color:ui.Color) {
+ai_conversation_glyph :: proc(m:^Ai,c:^ai_store.Conversation) -> (glyph:ui.Icon,color:ui.Color) {
     icon:=u8(c.id%AI_AGENT_ICON_COUNT)
     if glyph,ok:=ai_external_glyph(ai_external_client(string(c.provider[:c.provider_len])));ok {
         icon=glyph

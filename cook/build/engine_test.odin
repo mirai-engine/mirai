@@ -22,14 +22,14 @@ engine_modes_have_folders_of_their_own :: proc(t:^testing.T) {
     testing.expect_value(t,engine_mode_resolve(root,.Dev),Engine_Mode.Dev)
     for paths,i in ([2]Engine_Paths{release,dev}) {
         testing.expect(t,os.make_directory_all(paths.folder)==nil)
-        testing.expect(t,engine_stamp_write(paths.stamp,{runtime=1,editor=2,programs=3,declares=DECLARE_VERSION})==nil)
+        testing.expect(t,engine_stamp_write(paths.stamp,{libraries=#partial{.Base={sources=1,tools=2}},programs=3,declares=DECLARE_VERSION})==nil)
         if i==0 {time.sleep(20*time.Millisecond)}
     }
     testing.expect_value(t,engine_mode_resolve(root,.Keep),Engine_Mode.Dev)
     testing.expect_value(t,engine_paths(root,.Keep).folder,dev.folder)
     stamp,read:=engine_stamp_read(dev.stamp)
     testing.expect(t,read)
-    testing.expect_value(t,stamp,Engine_Stamp{runtime=1,editor=2,programs=3,declares=DECLARE_VERSION})
+    testing.expect_value(t,stamp,Engine_Stamp{libraries=#partial{.Base={sources=1,tools=2}},programs=3,declares=DECLARE_VERSION})
 }
 
 // An installed engine has the binaries of one mode and builds none: it is
@@ -50,7 +50,10 @@ an_installed_engine_builds_nothing_and_says_what_it_lacks :: proc(t:^testing.T) 
     testing.expect(t,!engine_current(root,.Keep))
     paths:=engine_paths(root,.Dev)
     testing.expect(t,os.make_directory_all(paths.decl)==nil)
-    for file in ([]string{paths.runtime,paths.runtime_import,paths.editor,paths.editor_import,paths.editor_program,paths.player_program,paths.import_program,paths.author_program,paths.stamp}) {
+    files:=make([dynamic]string,context.temp_allocator)
+    for library,which in paths.libraries {append(&files,library,paths.imports[which])}
+    append(&files,paths.editor_program,paths.player_program,paths.import_program,paths.author_program,paths.stamp)
+    for file in files {
         testing.expect(t,os.write_entire_file(file,"built")==nil,file)
     }
     result=engine_build({engine_root=root,mode=.Dev})
@@ -221,8 +224,8 @@ declarations_load_their_files_relative_to_their_folder :: proc(t:^testing.T) {
 
 // A procedure a project calls through the library is declared foreign and its
 // body travels only in the stage: changing the body moves the stage and leaves
-// the declarations as they were, which is what keeps the editor library and
-// the projects from being built again.
+// the declarations as they were, which is what keeps the libraries above
+// it and the projects from being built again.
 @(test)
 a_body_only_the_library_carries_changes_the_stage_and_leaves_the_declarations :: proc(t:^testing.T) {
     root:=declare_folder("body")
@@ -323,7 +326,7 @@ a_declaration_leaves_the_files_of_the_package_below_it :: proc(t:^testing.T) {
 
 // What links against a library of the engine is a file of its own on Windows:
 // a build that finds the library and not that file compiles it again, which is
-// what every half of the build asks before it keeps what is there.
+// what the build asks of every library before it keeps what is there.
 @(test)
 a_library_of_the_engine_is_not_there_without_what_links_against_it :: proc(t:^testing.T) {
     root:=declare_folder("library")
@@ -359,11 +362,8 @@ a_stamp_that_is_not_the_one_of_a_build_is_not_read :: proc(t:^testing.T) {
     _,stamped=engine_stamp_read(file)
     testing.expect(t,!stamped,"a stamp of another shape is not read")
 
-    testing.expect(t,os.write_entire_file(file,fmt.tprintf("1 2 3 4 5 6 7 %d 0",DECLARE_VERSION))==nil)
-    _,stamped=engine_stamp_read(file)
-    testing.expect(t,!stamped,"a stamp with one hash for the declarations of each library is not read")
-
-    written:=Engine_Stamp{runtime=0xabc,editor=0xdef,programs=0x123,tools=0x456,loads=0x789,declares=DECLARE_VERSION,runtime_pending=true}
+    written:=Engine_Stamp{programs=0x123,declares=DECLARE_VERSION}
+    for &library,which in written.libraries {library={sources=0xabc+u64(which),tools=0x456+u64(which)}}
     for &hash,index in written.declared {hash=0xfed+u64(index)}
     testing.expect(t,engine_stamp_write(file,written)==nil)
     read,ok:=engine_stamp_read(file)
@@ -375,10 +375,14 @@ a_stamp_that_is_not_the_one_of_a_build_is_not_read :: proc(t:^testing.T) {
     lines:=strings.split_lines(string(text),context.temp_allocator)
     extra,letters,swapped:=slice.clone(lines,context.temp_allocator),slice.clone(lines,context.temp_allocator),slice.clone(lines,context.temp_allocator)
     extra[0]=strings.concatenate({lines[0]," 9"},context.temp_allocator)
+    without_library:=slice.clone(lines,context.temp_allocator)
+    without_library[0]=lines[0][:strings.last_index_byte(lines[0],' ')]
+    without_library[0]=without_library[0][:strings.last_index_byte(without_library[0],' ')]
     letters[0]=strings.concatenate({"zz",lines[0]},context.temp_allocator)
     swapped[1],swapped[2]=lines[2],lines[1]
     cases:=[]struct{what:string,lines:[]string}{
         {"a stamp with an extra field",extra},
+        {"a stamp without one of the libraries",without_library},
         {"a stamp whose hashes are not numbers",letters},
         {"a stamp without one of the packages",lines[:len(lines)-1]},
         {"a stamp with its packages in another order",swapped},
@@ -390,11 +394,11 @@ a_stamp_that_is_not_the_one_of_a_build_is_not_read :: proc(t:^testing.T) {
     }
 }
 
-// What a half decides once declare has run: the library follows the stage, so
-// a source that only changed in date declares the same and does not compile
-// again; what moved the compiler or the flags compiles it anyway.
+// What the build decides of a library once declare has run: the library
+// follows its stage, so sources that stage the same do not compile again;
+// what moved the compiler or the flags compiles it anyway.
 @(test)
-a_runtime_half_leaves_a_library_that_follows_its_stage :: proc(t:^testing.T) {
+a_library_of_the_engine_follows_its_stage :: proc(t:^testing.T) {
     testing.expect(t,!engine_library_compile(false,true,false,false),"a stage that did not change is not compiled")
     testing.expect(t,engine_library_compile(false,true,true,false),"the stage that changed is compiled")
     testing.expect(t,engine_library_compile(true,true,false,false),"--force compiles the library")
@@ -402,8 +406,54 @@ a_runtime_half_leaves_a_library_that_follows_its_stage :: proc(t:^testing.T) {
     testing.expect(t,engine_library_compile(false,false,false,false),"a library that is not there is compiled")
 }
 
-// The stage of the editor gets the declarations of the runtime as they are,
-// copying only what changed.
+// A library compiles against the declarations its sources import from the
+// libraries it needs: a declaration that changes builds again the libraries
+// that reach its package and no other. A literal that names a package of a
+// library above is no import, since nothing above a library is staged for it.
+@(test)
+a_library_follows_the_declarations_it_reaches_below :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    root:=declare_folder("reach")
+    defer os.remove_all(root)
+    source_write(t,root,"core","core.odin","package core\n")
+    source_write(t,root,"render","render.odin","package render\n\nimport \"mirai:core\"\n")
+    source_write(t,root,"cook/build","build.odin","package build\n\nimport \"mirai:render\"\n\nPROGRAM :: `import \"mirai:editor\"`\n")
+    source_write(t,root,"editor","editor.odin","package editor\n\nimport \"mirai:ui\"\n")
+    paths:=engine_paths(root,.Dev)
+    reaches:[Engine_Library][ENGINE_PACKAGE_COUNT]bool
+    for &reached,library in reaches {reached=engine_library_reach(root,paths,library)}
+    index :: proc(t:^testing.T,path:string) -> int {
+        at,found:=engine_package_index(path)
+        testing.expect(t,found,path)
+        return at
+    }
+    core,render,ui,editor:=index(t,"core"),index(t,"render"),index(t,"ui"),index(t,"editor")
+    testing.expect(t,reaches[.Engine][core] && reaches[.Cook][render] && reaches[.Editor][ui])
+    testing.expect(t,!reaches[.Cook][editor],"a library reaches nothing of a library above it")
+    testing.expect(t,reaches[.Base]=={},"the lowest library compiles against no other")
+
+    before:[ENGINE_PACKAGE_COUNT]u64
+    for &hash,at in before {hash=0x100+u64(at)}
+    cases:=[]struct{what:string,changed:int,built_again:bit_set[Engine_Library]}{
+        {"a declaration of the lowest library",core,{.Engine}},
+        {"a declaration only the editor imports",ui,{.Editor}},
+        {"a declaration of the highest library",editor,{}},
+    }
+    for c in cases {
+        after:=before
+        after[c.changed]+=1
+        for &reached,library in reaches {
+            testing.expectf(t,declared_same(&before,&after,&reached)==(library not_in c.built_again),"%s: %v",c.what,library)
+        }
+    }
+    unknown:=before
+    unknown[render]=0
+    testing.expect(t,!declared_same(&unknown,&unknown,&reaches[.Cook]),"what reaches a declaration without a hash is built again")
+    testing.expect(t,declared_same(&unknown,&unknown,&reaches[.Engine]))
+}
+
+// A stage gets the declarations it compiles against as they are, copying
+// only what changed.
 @(test)
 decl_mirror_copies_what_changed_and_drops_what_went :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
@@ -427,7 +477,8 @@ decl_mirror_copies_what_changed_and_drops_what_went :: proc(t:^testing.T) {
 
 // An entry of the shared cache restores into a checkout at another place, once
 // the checkout that stored it is gone: the declarations load their files, and
-// link against the library, by paths that stand in every checkout.
+// link against the library, by paths that stand in every checkout. The stages
+// there go: the libraries restored were not compiled from them.
 @(test)
 a_cache_entry_restores_into_another_checkout_without_naming_the_first :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
@@ -442,19 +493,21 @@ a_cache_entry_restores_into_another_checkout_without_naming_the_first :: proc(t:
         source_write(t,root,"assets","data.txt","data")
     }
     paths:=engine_paths(first,.Dev)
-    errors,_:=declaring({root=first,packages={"thing"},binary="mirai",library=paths.runtime_import,stage=paths.stage_runtime,decl=paths.decl})
+    errors,_:=declaring({root=first,packages={"thing"},binary="mirai",library=paths.imports[.Base],stage=paths.stages[.Base],decl=paths.decl})
     if !declared_ok(t,errors) {return}
     testing.expect(t,os.make_directory_all(paths.folder)==nil)
-    for file in ([2]string{paths.runtime,paths.runtime_import}) {testing.expect(t,os.write_entire_file(file,"library")==nil)}
-    testing.expect(t,engine_stamp_write(paths.stamp,{runtime=1,editor=2,programs=3,declares=DECLARE_VERSION})==nil)
+    for file in ([2]string{paths.libraries[.Base],paths.imports[.Base]}) {testing.expect(t,os.write_entire_file(file,"library")==nil)}
+    testing.expect(t,engine_stamp_write(paths.stamp,{libraries=#partial{.Base={sources=1,tools=2}},programs=3,declares=DECLARE_VERSION})==nil)
     entry:=project.path(folder,"cache","entry")
     engine_cache_store(paths,entry)
     testing.expect(t,os.is_file(project.path(entry,CACHE_COMPLETE)),"the build is kept")
     testing.expect(t,os.remove_all(first)==nil)
 
     restored:=engine_paths(second,.Dev)
+    testing.expect(t,os.make_directory_all(restored.stages[.Editor])==nil)
     if !testing.expect(t,engine_cache_restore(entry,restored)) {return}
-    testing.expect(t,os.is_file(restored.runtime) && os.is_file(restored.runtime_import) && os.is_file(restored.stamp))
+    testing.expect(t,os.is_file(restored.libraries[.Base]) && os.is_file(restored.imports[.Base]) && os.is_file(restored.stamp))
+    testing.expect(t,!os.exists(restored.stages[.Editor]),"a stage of other libraries does not stay")
     text:=declared(restored.decl,"thing","thing.odin")
     testing.expect(t,text!="" && !strings.contains(text,"first"),"the declarations name nothing of the first checkout")
     loaded:=0

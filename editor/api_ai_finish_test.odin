@@ -7,6 +7,7 @@ import "core:strings"
 import "core:testing"
 import "core:time"
 import "mirai:editor/acp"
+import "mirai:editor/ai_store"
 import "mirai:editor/api"
 import "mirai:host"
 import "mirai:project"
@@ -68,7 +69,7 @@ finish_writes_only_the_final_answer_and_waits_for_acp_completion :: proc(t:^test
     if !testing.expect(t,!os.exists(root)) {return}
     defer os.remove_all(root)
     m:=new(Ai);defer free(m)
-    testing.expect_value(t,ai_store_open(&m.store,root),"");defer ai_store_close(&m.store)
+    testing.expect_value(t,ai_store.open(&m.store,root),"");defer ai_store.close(&m.store)
     app:host.App
     edits:Edits
     s:=Session{ai=m,app=&app,edits=&edits,project_root=root}
@@ -112,8 +113,8 @@ finish_writes_only_the_final_answer_and_waits_for_acp_completion :: proc(t:^test
     testing.expect(t,text=="The player's health is 100." && kind==.Output)
     ai_acp_event(&callback,acp.Event{kind=.Update,value=chatter})
     testing.expect_value(t,task.transcript.count,2)
-    saved:[8]Ai_Stored_Line
-    count,message:=ai_store_page(&m.store,1,-1,saved[:])
+    saved:[8]ai_store.Stored_Line
+    count,message:=ai_store.page(&m.store,1,-1,saved[:])
     testing.expect(t,message=="" && count==2 && saved[1].role=="assistant" && saved[1].text==text,"the finish answer is saved as assistant content")
     ai_acp_event(&callback,acp.Event{kind=.Prompt_Done})
     testing.expect(t,task.state==.Done && m.workers[0].task==0)

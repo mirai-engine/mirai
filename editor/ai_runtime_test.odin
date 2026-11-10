@@ -5,11 +5,14 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "core:time"
+import "mirai:editor/ai_store"
 import "mirai:project"
 import "mirai:host"
 import "mirai:platform"
 import "mirai:editor/acp"
 import "mirai:std/base"
+import "mirai:third_party/sqlite"
 
 @(test)
 ai_stream_persists_before_cache_eviction_and_preserves_unicode :: proc(t:^testing.T) {
@@ -17,8 +20,8 @@ ai_stream_persists_before_cache_eviction_and_preserves_unicode :: proc(t:^testin
     testing.expect(t,!os.exists(root));if os.exists(root) {return}
     defer os.remove_all(root)
     m:=new(Ai);defer free(m);ai_connections_reset(m)
-    testing.expect_value(t,ai_store_open(&m.store,root),"")
-    defer ai_store_close(&m.store)
+    testing.expect_value(t,ai_store.open(&m.store,root),"")
+    defer ai_store.close(&m.store)
     task:=&m.tasks[0];task.id=1;task.conversation.id=1
     s:=Session{ai=m}
     chunk:=strings.concatenate({strings.repeat("a",1023,context.temp_allocator),"🙂é\n"},context.temp_allocator)
@@ -30,8 +33,8 @@ ai_stream_persists_before_cache_eviction_and_preserves_unicode :: proc(t:^testin
     total,notes:=0,0
     before:i64=-1
     for {
-        lines:[128]Ai_Stored_Line
-        count,message:=ai_store_page(&m.store,1,before,lines[:])
+        lines:[128]ai_store.Stored_Line
+        count,message:=ai_store.page(&m.store,1,before,lines[:])
         testing.expect_value(t,message,"")
         if count==0 {break}
         before=i64(lines[0].sequence)
@@ -317,4 +320,88 @@ ai_turns_say_when_the_agent_is_silent_and_what_it_printed :: proc(t:^testing.T) 
     testing.expect(t,task.transcript.count==2 && task.heard==500 && !task.silent)
     text,kind=ai_transcript_line(&task.transcript,1)
     testing.expect_value(t,text,"The agent reported: Reconnecting... 2/5 (stream disconnected before completion: idle timeout waiting for SSE)")
+}
+
+@(test)
+ai_history_search_feeds_by_title_or_by_what_chats_said :: proc(t:^testing.T) {
+    root:=project.path_absolute(fmt.tprintf(".mirai/test-ai-history-search-%d",os.get_pid()),context.temp_allocator)
+    testing.expect(t,!os.exists(root))
+    if os.exists(root) {return}
+    defer os.remove_all(root)
+    m:=new(Ai);defer free(m)
+    document:=new(Document);defer free(document)
+    document.path_length=copy(document.path[:],"scene/main.scene")
+    s:=Session{ai=m,document=document}
+    defer ai_store.close(&m.store)
+    testing.expect_value(t,ai_store.open(&m.store,root),"")
+    titled:=ai_store.Conversation{id=1,kind=.Agent,created_at=100,updated_at=200}
+    ai_store.conversation_set_text(titled.title[:],&titled.title_len,"Lanterns of the harbor")
+    said:=ai_store.Conversation{id=2,kind=.Agent,created_at=100,updated_at=200}
+    ai_store.conversation_set_text(said.title[:],&said.title_len,"Player questions")
+    transcript:=new(Ai_Transcript,context.temp_allocator)
+    ai_transcript_add(transcript,"Light the pier",.Prompt)
+    ai_transcript_add(transcript,"Hung a [lantern](entity:0x2a) on the pier.",.Output)
+    testing.expect_value(t,ai_transcript_save(&m.store,&said,transcript),"")
+    testing.expect_value(t,string(said.last[:said.last_len]),"Hung a lantern on the pier.")
+    transcript^={}
+    ai_transcript_add(transcript,"Name the boats",.Prompt)
+    testing.expect_value(t,ai_transcript_save(&m.store,&titled,transcript),"")
+    ai_history_refresh(m,0,"lant")
+    testing.expect_value(t,m.history_count,2)
+    for &c in m.history[:m.history_count] {
+        last:=string(c.last[:c.last_len])
+        if c.id==2 {testing.expectf(t,strings.contains(last,"Hung a lantern on the pier"),"a chat found by its lines shows what matched, got %q",last)}
+    }
+    ai_history_refresh(m,0,"boats")
+    testing.expect(t,m.history_count==1 && m.history[0].id==1)
+    ai_history_refresh(m,0,"·")
+    testing.expect_value(t,m.history_count,0)
+}
+
+@(test)
+ai_stream_does_not_wait_for_another_editor_and_loses_no_line :: proc(t:^testing.T) {
+    root:=project.path_absolute(fmt.tprintf(".mirai/test-ai-stream-busy-%d",os.get_pid()),context.temp_allocator)
+    testing.expect(t,!os.exists(root));if os.exists(root) {return}
+    defer os.remove_all(root)
+    m:=new(Ai);defer free(m);ai_connections_reset(m)
+    testing.expect_value(t,ai_store.open(&m.store,root),"")
+    defer ai_store.close(&m.store)
+    m.task_count=1
+    task:=&m.tasks[0];task.id=1;task.conversation.id=1
+    s:=Session{ai=m}
+    // Another editor of the project, in a write that does not end.
+    other:^sqlite.Db
+    path:=strings.clone_to_cstring(project.path(root,".mirai/ai/chat.db",allocator=context.temp_allocator),context.temp_allocator)
+    testing.expect(t,sqlite.open_v2(path,&other,sqlite.OPEN_READWRITE|sqlite.OPEN_NOMUTEX,nil)==sqlite.OK)
+    defer sqlite.close_v2(other)
+    testing.expect(t,sqlite.exec(other,"BEGIN IMMEDIATE",nil,nil,nil)==sqlite.OK)
+
+    // An answer long enough for the transcript to forget lines the database does not have yet.
+    chunk:=strings.concatenate({strings.repeat("a",1023,context.temp_allocator),"\n"},context.temp_allocator)
+    started:=time.tick_now()
+    now:=f64(1)
+    for i in 0..<200 {
+        ai_stream_add(&s,task,fmt.tprintf("%04d%s",i,chunk))
+        now+=AI_FLUSH_SECONDS
+        ai_persist_poll(&s,m,now)
+    }
+    testing.expect(t,time.tick_since(started)<ai_store.OPEN_BUSY_MS*time.Millisecond/2,"the frames did not wait for the other editor")
+    testing.expect(t,task.transcript.dropped>0 && ai_store.pending(&m.store)>0)
+    testing.expect_value(t,s.toast_length,0)
+    lines:=make([]ai_store.Stored_Line,400,context.temp_allocator)
+    count,_:=ai_store.page(&m.store,1,-1,lines)
+    testing.expect_value(t,count,0)
+
+    testing.expect(t,sqlite.exec(other,"COMMIT",nil,nil,nil)==sqlite.OK)
+    ai_persist_poll(&s,m,now+AI_FLUSH_SECONDS)
+    testing.expect(t,ai_store.pending(&m.store)==0 && !task.dirty)
+    count,_=ai_store.page(&m.store,1,-1,lines)
+    testing.expect_value(t,count,400)
+    for line,index in lines[:count] {
+        // Each chunk is two lines: its number with what fits of it, and its last characters.
+        if line.sequence!=u64(index) || index%2==0 && !strings.has_prefix(line.text,fmt.tprintf("%04d",index/2)) {
+            testing.expectf(t,false,"line %d of the answer was lost or changed place",index)
+            break
+        }
+    }
 }

@@ -6,6 +6,7 @@ import "core:strconv"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/ai_store"
 import "mirai:std/base"
 import "mirai:ui"
 
@@ -33,13 +34,12 @@ Ai_Pin_Row :: struct {
 
 // Reads the pins when the table changed.
 @(private)
-ai_pins_sync :: proc(s:^Session) {
-    m:=s.ai
-    if m==nil || m.pins_loaded || m.store.db==nil {return}
+ai_pins_sync :: proc(m:^Ai) -> string {
+    if m==nil || m.pins_loaded || m.store.db==nil {return ""}
     m.pins_loaded=true
     m.pin_count=0
-    pins,message:=ai_store_pins(&m.store)
-    if message!="" {notify(s,message);return}
+    pins,message:=ai_store.pins(&m.store)
+    if message!="" {return message}
     for &pin in pins[:min(len(pins),AI_PINS)] {
         row:=&m.pins[m.pin_count]
         row^={id=pin.id}
@@ -48,6 +48,7 @@ ai_pins_sync :: proc(s:^Session) {
         base.text_set(row.label[:],pin.label)
         m.pin_count+=1
     }
+    return ""
 }
 
 @(private)
@@ -59,18 +60,18 @@ ai_pin_at :: proc(m:^Ai,kind,ref:string) -> int {
 }
 
 // Pins a reference, or takes the pin out if it has one.
-ai_pin_toggle :: proc(s:^Session,kind,ref,label:string) {
-    m:=s.ai
-    if m==nil {return}
-    ai_pins_sync(s)
+ai_pin_toggle :: proc(m:^Ai,kind,ref,label:string) -> string {
+    if m==nil {return ""}
+    if message:=ai_pins_sync(m);message!="" {return message}
     if at:=ai_pin_at(m,kind,ref);at>=0 {
-        if message:=ai_store_pin_remove(&m.store,m.pins[at].id);message!="" {notify(s,message);return}
+        if message:=ai_store.pin_remove(&m.store,m.pins[at].id);message!="" {return message}
     } else {
-        if m.pin_count>=AI_PINS {notify(s,fmt.tprintf("At most %d references can be pinned",AI_PINS));return}
-        if len(ref)>=AI_PATH_BYTES {notify(s,"The path of this reference is too long to pin it");return}
-        if _,message:=ai_store_pin_add(&m.store,kind,ref,label);message!="" {notify(s,message);return}
+        if m.pin_count>=AI_PINS {return fmt.tprintf("At most %d references can be pinned",AI_PINS)}
+        if len(ref)>=AI_PATH_BYTES {return "The path of this reference is too long to pin it"}
+        if message:=ai_store.pin_add(&m.store,kind,ref,label);message!="" {return message}
     }
     m.pins_loaded=false
+    return ""
 }
 
 // The pins that do not show as a chip of what the next message takes: the
@@ -78,7 +79,7 @@ ai_pin_toggle :: proc(s:^Session,kind,ref,label:string) {
 @(private)
 ai_pins_listed :: proc(s:^Session,out:[]int) -> int {
     m:=s.ai
-    ai_pins_sync(s)
+    if message:=ai_pins_sync(m);message!="" {notify(s,message)}
     count:=0
     for &row,index in m.pins[:m.pin_count] {
         if ai_pin_in_message(s,&row) {continue}
@@ -126,10 +127,12 @@ ai_chip_width :: proc(ctx:^ui.Context,label:string,width:f32) -> f32 {
 ai_chip_pin :: proc(s:^Session,id:ui.Id,kind,ref,label:string) {
     if ref=="" {return}
     ctx:=s.gui.ctx;th:=&ctx.theme
-    ai_pins_sync(s)
+    if message:=ai_pins_sync(s.ai);message!="" {notify(s,message)}
     pinned:=ai_pin_at(s.ai,kind,ref)>=0
     icon:=pinned?User_Icon.Pin_Filled:User_Icon.Pin
-    if ui.button(ctx,id,{icon=ui.icon_user(u8(icon)),icon_color=pinned?th.accent:th.text_faint,icon_size=10,padding=-1,style=.Ghost,width=12,height=12}).clicked {ai_pin_toggle(s,kind,ref,label)}
+    if ui.button(ctx,id,{icon=ui.icon_user(u8(icon)),icon_color=pinned?th.accent:th.text_faint,icon_size=10,padding=-1,style=.Ghost,width=12,height=12}).clicked {
+        if message:=ai_pin_toggle(s.ai,kind,ref,label);message!="" {notify(s,message)}
+    }
 }
 
 @(private)
@@ -201,7 +204,7 @@ ai_pins_build :: proc(s:^Session,width:f32,rows:int) {
 
 // The pins of the project in the delta of every turn: identifiers and paths, no images.
 ai_pins_delta_write :: proc(s:^Session,b:^strings.Builder) {
-    pins,message:=ai_store_pins(&s.ai.store)
+    pins,message:=ai_store.pins(&s.ai.store)
     if message!="" {notify(s,message);return}
     if len(pins)==0 {return}
     strings.write_string(b,"- The user pinned these references for every message of this chat, kind | reference | label. Images are named by their path and are not attached:\n")

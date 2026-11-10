@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:strings"
 import "mirai:asset"
 import "mirai:editor/api"
+import "mirai:editor/git"
 import "mirai:platform"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -11,24 +12,24 @@ import "mirai:std/serial"
 // returns: git.status says while it runs ("busy") and what it left.
 
 Api_Git_Init_Params :: struct {
-    remote:[GIT_PATH_BYTES]u8 `mirai:"text,optional,label=The url of the remote origin; empty for none"`,
+    remote:[git.PATH_BYTES]u8 `mirai:"text,optional,label=The url of the remote origin; empty for none"`,
     lfs:bool `mirai:"optional,label=Keep textures and meshes and sounds and their sources in Git LFS"`,
 }
 
 Api_Git_Commit_Params :: struct {
-    message:[GIT_MESSAGE_BYTES]u8 `mirai:"text,label=The message of the commit"`,
+    message:[git.MESSAGE_BYTES]u8 `mirai:"text,label=The message of the commit"`,
     push:bool `mirai:"optional,label=Push the commit after"`,
 }
 
 Api_Git_Choose_Params :: struct {
-    file:[GIT_PATH_BYTES]u8 `mirai:"text,label=The file as git.conflicts lists it"`,
-    path:[GIT_PATH_BYTES]u8 `mirai:"text,optional,label=A conflict of a value or a row of the file by its path in git.conflicts; a file merged whole takes none"`,
+    file:[git.PATH_BYTES]u8 `mirai:"text,label=The file as git.conflicts lists it"`,
+    path:[git.PATH_BYTES]u8 `mirai:"text,optional,label=A conflict of a value or a row of the file by its path in git.conflicts; a file merged whole takes none"`,
     choice:[16]u8 `mirai:"text,label=ours or theirs; for a file merged whole also folder: as it is in the work tree"`,
 }
 
 Api_Git_Accept_Params :: struct {
-    file:[GIT_PATH_BYTES]u8 `mirai:"text,optional,label=The file whose items to accept as git.conflicts lists it; omitted: every item"`,
-    path:[GIT_PATH_BYTES]u8 `mirai:"text,optional,label=With file: only the item that has the conflict of this path"`,
+    file:[git.PATH_BYTES]u8 `mirai:"text,optional,label=The file whose items to accept as git.conflicts lists it; omitted: every item"`,
+    path:[git.PATH_BYTES]u8 `mirai:"text,optional,label=With file: only the item that has the conflict of this path"`,
     reject:bool `mirai:"optional,label=Keep ours for every conflict of the item instead"`,
 }
 
@@ -44,17 +45,17 @@ Api_Git_Status :: struct {
     repository:bool `mirai:"label=Whether the project is in a repository"`,
     busy:[16]u8 `mirai:"text,label=The operation that runs (init commit push pull fetch discard abort finish...); empty when none"`,
     error:[512]u8 `mirai:"text,label=What the last operation that failed said"`,
-    root:[GIT_PATH_BYTES]u8 `mirai:"text,label=The work tree"`,
+    root:[git.PATH_BYTES]u8 `mirai:"text,label=The work tree"`,
     branch:[96]u8 `mirai:"text"`,
     upstream:bool `mirai:"label=Whether the branch has an upstream; ahead and behind count against it"`,
     ahead,behind:int,
-    remote:[GIT_PATH_BYTES]u8 `mirai:"text,label=The url of origin"`,
+    remote:[git.PATH_BYTES]u8 `mirai:"text,label=The url of origin"`,
     merging:bool `mirai:"label=A pull left conflicts: git.conflicts lists them"`,
     changes:[1]Api_Git_Change `mirai:"list,label=Every file changed under the project"`,
     history:[1]Api_Git_Commit `mirai:"list,label=The last commits"`,
 }
 Api_Git_Change :: struct {
-    path:[GIT_PATH_BYTES]u8 `mirai:"text,label=From the root of the repository; git.discard takes it"`,
+    path:[git.PATH_BYTES]u8 `mirai:"text,label=From the root of the repository; git.discard takes it"`,
     status:[1]u8 `mirai:"text,label=M changed; A added; D removed; U in conflict"`,
     included:bool `mirai:"label=Whether the next commit takes it"`,
 }
@@ -71,7 +72,7 @@ Api_Git_Conflicts :: struct {
     items:[1]Api_Git_Item `mirai:"list"`,
 }
 Api_Git_Item :: struct {
-    file:[GIT_PATH_BYTES]u8 `mirai:"text,label=From the folder of the project; what git.choose and git.accept take as file"`,
+    file:[git.PATH_BYTES]u8 `mirai:"text,label=From the folder of the project; what git.choose and git.accept take as file"`,
     name:[64]u8 `mirai:"text"`,
     entity:base.Entity_Id `mirai:"optional,label=The entity of a scene the item merges"`,
     accepted:bool,
@@ -81,7 +82,7 @@ Api_Git_Item :: struct {
 }
 Api_Git_Conflict :: struct {
     kind:[8]u8 `mirai:"text,label=value: both changed it; removed: one side removed the row; table: both changed a table"`,
-    path:[GIT_PATH_BYTES]u8 `mirai:"text,label=Where in the asset; what git.choose and git.accept take as path"`,
+    path:[git.PATH_BYTES]u8 `mirai:"text,label=Where in the asset; what git.choose and git.accept take as path"`,
     component:[64]u8 `mirai:"text,label=The component or the table"`,
     field:[160]u8 `mirai:"text"`,
     ours:u8 `mirai:"any,optional,label=Of a value: ours as JSON"`,
@@ -111,7 +112,7 @@ git_api_register :: proc(s:^Session,st:^Api_State) {
 @(private)
 api_git_ended :: proc(s:^Session,call:^api.Call,message:string) {
     if message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
-    running :: proc(s:^Session,user:rawptr) -> bool {return git_busy(s.git)}
+    running :: proc(s:^Session,user:rawptr) -> bool {return git.busy(s.git)}
     if !api_wait(s,API_GIT_SECONDS,nil,running,"git") {
         api.call_failf(call,api.SERVER_ERROR,"git still runs after %d s; git.status says when it ends",API_GIT_SECONDS)
         return
@@ -123,13 +124,13 @@ api_git_ended :: proc(s:^Session,call:^api.Call,message:string) {
 @(private)
 api_git_status :: proc(s:^Session,call:^api.Call) {
     g:=s.git
-    if !git_busy(g) && (!g.checked || platform.clock_seconds()-g.refreshed>1) {git_refresh(s)}
+    if !git.busy(g) && (!g.checked || platform.clock_seconds()-g.refreshed>1) {git_refresh(s)}
     out:=call.out
     serial.write_u8(out,'{')
     api.write_bool(out,"available",g.available,true)
     api.write_bool(out,"checked",g.checked)
     api.write_bool(out,"repository",g.repository)
-    operations:=[Git_Operation]string{.None="",.Check="check",.Refresh="refresh",.Init="init",.Commit="commit",.Commit_Push="commit",.Push="push",.Pull="pull",.Abort="abort",.Finish="finish",.Load="load",.Fetch="fetch",.Discard="discard"}
+    operations:=[git.Operation]string{.None="",.Check="check",.Refresh="refresh",.Init="init",.Commit="commit",.Commit_Push="commit",.Push="push",.Pull="pull",.Abort="abort",.Finish="finish",.Load="load",.Fetch="fetch",.Discard="discard"}
     api.write_text(out,"busy",operations[g.operation])
     api.write_text(out,"error",base.text_get(g.error[:]))
     api.write_text(out,"root",base.text_get(g.root[:]))
@@ -144,7 +145,7 @@ api_git_status :: proc(s:^Session,call:^api.Call) {
     for &change,i in g.changes {
         if i>0 {serial.write_u8(out,',')}
         serial.write_u8(out,'{')
-        api.write_text(out,"path",git_change_path(g,&change),true)
+        api.write_text(out,"path",git.change_path(g,&change),true)
         status:=[1]u8{change.status}
         api.write_text(out,"status",string(status[:]))
         api.write_bool(out,"included",!change.left_out)
@@ -185,14 +186,14 @@ api_git_commit :: proc(s:^Session,call:^api.Call) {
 }
 
 @(private)
-api_git_push :: proc(s:^Session,call:^api.Call) {api_git_ended(s,call,git_push(s))}
+api_git_push :: proc(s:^Session,call:^api.Call) {api_git_ended(s,call,git.push(s.git,s.app.platform,git_roots(s)))}
 @(private)
 api_git_pull :: proc(s:^Session,call:^api.Call) {api_git_ended(s,call,git_pull(s))}
 @(private)
-api_git_abort :: proc(s:^Session,call:^api.Call) {api_git_ended(s,call,git_abort(s))}
+api_git_abort :: proc(s:^Session,call:^api.Call) {api_git_ended(s,call,git.abort(s.git,s.app.platform,git_roots(s)))}
 
 Api_Git_Discard_Params :: struct {
-    path:[GIT_PATH_BYTES]u8 `mirai:"text,optional,label=The file to put back from the root of the repository as git.status lists it; every change without it"`,
+    path:[git.PATH_BYTES]u8 `mirai:"text,optional,label=The file to put back from the root of the repository as git.status lists it; every change without it"`,
 }
 
 @(private)

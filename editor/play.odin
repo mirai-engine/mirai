@@ -23,7 +23,7 @@ play_release_input :: proc(s:^Session) {
 play_chat_set :: proc(s:^Session,open:bool) {
     if s.ai==nil || !play_shown(s) {return}
     open:=open && s.mode==.Paused
-    s.ai.chat_open=open
+    ai_chat_show(s.ai,open)
     if s.play_chat_open==open {return}
     s.play_chat_open=open
     if open {
@@ -31,7 +31,7 @@ play_chat_set :: proc(s:^Session,open:bool) {
         library_select(s,.Ai)
     } else {
         s.gui.layout.left_open=false
-        s.ai.focus=false
+        ai_chat_focus(s.ai,false)
         if s.gui.ctx!=nil {s.gui.ctx.edit={};ui.popup_close(s.gui.ctx)}
         s.play_input_released=s.play_chat_input_released
         s.play_capture_click=false
@@ -53,7 +53,7 @@ play_input_update :: proc(s:^Session) {
             play_chat_set(s,!s.play_chat_open)
             app.ui_input.keys_pressed-={.Tab}
             app.ui_input.keys_repeated-={.Tab}
-        } else if s.ai!=nil && s.ai.chat_open!=s.play_chat_open {play_chat_set(s,s.ai.chat_open)}
+        } else if s.ai!=nil && ai_chat_open(s.ai)!=s.play_chat_open {play_chat_set(s,ai_chat_open(s.ai))}
     }
     app.game_input_blocked=s.mode!=.Play && !s.viewport.hovered
     if s.mode!=.Play {

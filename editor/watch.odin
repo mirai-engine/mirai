@@ -134,13 +134,10 @@ watch_bar_build :: proc(s:^Session) {
     g:=s.gui
     ctx:=g.ctx
     th:=&ctx.theme
-    if s.ai!=nil {
-        m:=s.ai
-        agent :: proc(s:^Session,g:^Editor_Ui,task:^Ai_Task) {
+    {
+        agent :: proc(s:^Session,g:^Editor_Ui,task:^Ai_Task,main:bool) {
             ctx:=g.ctx
             th:=&ctx.theme
-            m:=s.ai
-            main:=task.id==m.main
             subagent:=ai_task_subagent(task)
             color:=main?th.accent:ai_agent_color(task)
             watched:=s.mode==.Watch && s.watch.task==task.id
@@ -165,16 +162,17 @@ watch_bar_build :: proc(s:^Session) {
                 }
                 if subagent {
                     buffer:[16]u8
-                    if badge:=ai_session_badge(m,task,buffer[:]);badge!="" {
+                    if badge:=ai_session_badge(s.ai,task,buffer[:]);badge!="" {
                         if ui.box(ctx,{width=ui.FIT,height=ui.FIT,float={to=.Parent,anchor=.Top_Right,pivot=.Top_Right,offset={6,-5}}}) {ai_session_badge_build(ctx,badge,color)}
                     }
                 }
                 if run_find(s,task.id)!=nil {ui.icon(ctx,.Play,color,9)}
             }
         }
-        if main:=ai_task_find(m,m.main);main!=nil {agent(s,g,main)}
-        for &task in m.tasks[:m.task_count] {
-            if task.id!=m.main && ai_task_on_bar(s,&task) {agent(s,g,&task)}
+        main:=ai_main_task(s.ai)
+        if main!=nil {agent(s,g,main,true)}
+        for &task in ai_tasks(s.ai) {
+            if &task!=main && ai_task_on_bar(s,&task) {agent(s,g,&task,false)}
         }
     }
     st:=collab_state(s)
