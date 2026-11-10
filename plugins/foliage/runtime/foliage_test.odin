@@ -458,13 +458,12 @@ a_part_of_a_prefab_composes_with_its_instance_and_says_what_it_leaves_out :: pro
 the_parts_of_a_prefab_are_its_shown_meshes_placed_from_its_root :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     prefab:asset.Scene
-    testing.expect_value(t,asset.scene_init(&prefab,&types,asset.KIND_PREFAB,{0xf0,0xf1}),asset.Error.None)
+    testing.expect_value(t,asset.scene_init(&prefab,&types,{0xf0,0xf1}),asset.Error.None)
     defer asset.scene_destroy(&prefab)
     asset.scene_entity_add(&prefab,1,0,"Tree")
     asset.scene_entity_add(&prefab,2,1,"Trunk")
     asset.scene_entity_add(&prefab,3,2,"Crown")
     asset.scene_entity_add(&prefab,4,1,"Hidden")
-    prefab.info.root=1
     places:=[4]core.Transform{{position={5,0,0},rotation=1,scale=1},{position={0,1,0},rotation=1,scale=2},{position={1,0,0},rotation=1,scale=1},{rotation=1,scale=1}}
     for &place,i in places {asset.scene_set(&prefab,base.Entity_Id(i+1),"Transform",&place)}
     crown:=render.Mesh_Renderer{mesh={7,7}}

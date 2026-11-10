@@ -421,7 +421,7 @@ An entity is named as [the API names it](api.md#method-conventions). Each edit i
     when rewriting an entity; `scene.inspect` gives its components, not the preset.
   - A member of an instance of a prefab that is not its root keeps its parent: declaring it under
     another fails, and leaving it out turns it off (`disabled` of the result).
-  - A new entity with `prefab` (the path or the id of a `.prefab`) is placed as a linked instance,
+  - A new entity with `prefab` (the path or the id of a `.scene`) is placed as a linked instance,
     in the step of the write, with the rules and the errors of the write with no editor
     ([`mirai scene`](api.md#mirai-ui-and-mirai-scene)): what it and the entities under it leave
     out stays as the prefab gives it, also in a later write that names it the same way, and what
@@ -440,7 +440,7 @@ An entity is named as [the API names it](api.md#method-conventions). Each edit i
 - `scene.save`: `path` is a file or a path under `assets/` (by default, the document's); a new path
   becomes the document's file. Fails with a Play, as a guest of a session, or without a path in a
   scene never saved.
-- `scene.open`: opens a scene or a prefab in the active document, with an empty history; without
+- `scene.open`: opens a scene, a prefab too, in the active document, with an empty history; without
   `path` it rereads the document's file. Fails as a guest.
 
 **Entity of `scene.inspect`** with `components` true or a list of names; without it, `id`, `name`,
@@ -511,7 +511,7 @@ foliage) at the place the locals give them, with the edits of the same frame.
   documents; without it `Activate` and `Preview_Sun` are the active tab and `Close` the asset
   document in front when one is.
   - Opening an already open file activates its tab; activating or opening a scene brings it to the
-    front. `Open` of an asset that is neither scene nor prefab opens its
+    front. `Open` of an asset that is no scene opens its
     [document](../../mirai-editor/references/document.md#asset-documents); one of a type
     without a document is `-32602`. `Close` of an unsaved asset that no open scene uses asks for
     `discard`, which gives back what the file has.
@@ -602,7 +602,7 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
     `null` removes one. `position` and `rotation_deg` are world values and teleport with
     `core.place`: a free `Transform` changes now and one owned by a library (a physics body) jumps
     on the next tick. It reads everything before changing anything.
-  - `play.spawn`: the prefab appears now (`scene.spawn`), with `Prefab_Source` on its root, which
+  - `play.spawn`: the prefab appears now (`scene.spawn`), with `Prefab_Instance` on its root, which
     it returns as a handle.
   - `play.push`: requests to a storage with a `core.Queue` (`Seat_Requests`, `Spawns`, `Places` or
     one of the game), with the schema of the type of its elements; the functions of the next tick
@@ -771,9 +771,11 @@ when the viewport draws with them, which `mirai shaders` asks for.
 
 ## Prefabs
 
-A prefab is named by `asset`, as any asset is: a path under `assets/` or its id. Those that edit are
-transactions. Unknown id, no id, prefab not found, nonexistent override and "is not part of an
-instance" are `-32602`; the rest, `-32000`
+A prefab is a scene with exactly one root, named by `asset` as any asset is: a path under
+`assets/` or its id. `asset.list` says `prefab` of every scene and `prefab.list` lists them.
+Those that edit are transactions. Unknown id, no id, prefab not found (a scene without exactly
+one root is none: the error says so), nonexistent override and "is not part of an instance" are
+`-32602`; the rest, `-32000`
 ([errors](../../mirai-editor/references/prefabs.md#errors)).
 
 - An instance is named by its `root`. `prefab.create`, `prefab.variant.create` and `prefab.apply`
@@ -815,9 +817,10 @@ instance" are `-32602`; the rest, `-32000`
 - `asset.list`: rescans the registry. `kind` filters by the name of the type as the result gives it
   (`mesh`, `sound set`, case-insensitive and with `_` for a space; that of a plugin type is the
   extension of its files, `particle`); empty or `all`, all of them. Free-form result
-  `{root,assets:[{path,asset,kind,size,dependencies,used_by,owner}],total,offset,shown,broken,
-  duplicates,missing}`; `used_by` counts the files that depend on the asset (the inverse index of
-  the [registry](../../mirai-assets/references/formats.md#registry)) and `owner`, only on a part of
+  `{root,assets:[{path,asset,kind,prefab,size,dependencies,used_by,owner}],total,offset,shown,
+  broken,duplicates,missing}`; `prefab`, only on a scene, says whether it is one; `used_by` counts
+  the files that depend on the asset (the inverse index of the
+  [registry](../../mirai-assets/references/formats.md#registry)) and `owner`, only on a part of
   another asset (that of an imported prefab), is its owner.
 - `asset.import`: what the Import button of the content browser does with any source it imports
   ([import](../../mirai-editor/references/panels.md#import)), wherever it is on disk: the
@@ -844,9 +847,6 @@ instance" are `-32602`; the rest, `-32000`
   unsaved edit, with undo, and that of a plugin is written by its plugin in a frame the method
   runs. Returns `{id,path,unsaved}`; an unknown type fails naming the valid ones, and a taken or
   invalid name says why.
-- `asset.convert`: `asset` (path or id) of a scene becomes a prefab or of a prefab becomes a scene,
-  with the same id and a new extension, at once. Returns `{path}`. Fails with the document open,
-  outside Edit, a scene without exactly one root or with `Scene_Reference`.
 - `asset.delete`: `asset` (path or id) goes to the system trash with the import parts it owns, like
   Delete of the [content browser](../../mirai-editor/references/panels.md#content-browser): at
   once, without undo or `asset.save`. Returns `{moved,used_by}`; those that use it keep the

@@ -67,7 +67,7 @@ scene_write :: proc(t:^testing.T,types:^asset.Types,path:string,kind:asset.Fourc
         return
     }
     scene:asset.Scene
-    asset.scene_init(&scene,types,kind,id)
+    asset.scene_init(&scene,types,id)
     defer asset.scene_destroy(&scene)
     asset.scene_entity_add(&scene,1,0,"thing")
     shown:=Shown{named}
@@ -76,7 +76,7 @@ scene_write :: proc(t:^testing.T,types:^asset.Types,path:string,kind:asset.Fourc
 }
 
 // main.scene -> crate.mesh -> wood.mat -> wood_color.tex, wood_normal.tex.
-// hud.ui -> icon.tex. prop.prefab -> crate.mesh. spare.mat -> blocks.tex,
+// hud.ui -> icon.tex. prop.scene -> crate.mesh. spare.mat -> blocks.tex,
 // lonely.mat -> unused.tex and lost.mat -> a texture that is no file: nothing
 // names them. notes.txt is no asset.
 @(private="file")
@@ -97,7 +97,7 @@ project_write :: proc(t:^testing.T,types:^asset.Types,assets:string) {
     testing.expect(t,asset.mesh_build({vertices=corners[:]},{0,2,1},nil,&geometry,context.temp_allocator))
     testing.expect_value(t,asset.mesh_save(fmt.tprintf("%s/models/crate.mesh",assets),types,{id=CRATE,geometry=geometry,slots=slots[:]}),asset.Error.None)
     scene_write(t,types,fmt.tprintf("%s/scenes/main.scene",assets),asset.KIND_SCENE,MAIN,CRATE)
-    scene_write(t,types,fmt.tprintf("%s/prefabs/prop.prefab",assets),asset.KIND_PREFAB,PROP,CRATE)
+    scene_write(t,types,fmt.tprintf("%s/prefabs/prop.scene",assets),asset.KIND_SCENE,PROP,CRATE)
     scene_write(t,types,fmt.tprintf("%s/ui/hud.ui",assets),asset.KIND_UI,HUD,ICON)
     testing.expect(t,os.write_entire_file(fmt.tprintf("%s/notes.txt",assets),"not an asset")==nil)
 }
@@ -136,7 +136,7 @@ a_cook_ships_what_the_scenes_and_the_roots_reach_as_the_runtime_loads_it :: proc
     report:=cook_assets({assets=assets,output=output,manifest=manifest,allocator=context.temp_allocator})
     testing.expect_value(t,report.error,Cook_Error.None)
     kept,dropped:=names(&report)
-    testing.expect_value(t,kept,"materials/wood.mat models/crate.mesh prefabs/prop.prefab scenes/main.scene textures/wood_color.tex textures/wood_normal.tex ")
+    testing.expect_value(t,kept,"materials/wood.mat models/crate.mesh prefabs/prop.scene scenes/main.scene textures/wood_color.tex textures/wood_normal.tex ")
     testing.expect_value(t,dropped,"materials/lonely.mat materials/lost.mat materials/spare.mat notes.txt textures/blocks.tex textures/icon.tex textures/unused.tex ui/hud.ui ")
     testing.expect(t,report.roots==2 && len(report.missing)==0 && report.removed==0)
     for file in report.dropped {testing.expect(t,file.asset==(file.path!="notes.txt") && file.bytes>0)}
@@ -174,7 +174,7 @@ a_cook_ships_what_the_scenes_and_the_roots_reach_as_the_runtime_loads_it :: proc
     report=cook_assets({assets=assets,output=output,manifest=manifest,allocator=context.temp_allocator})
     testing.expect_value(t,report.error,Cook_Error.None)
     kept,dropped=names(&report)
-    testing.expect_value(t,kept,"materials/lost.mat materials/spare.mat materials/wood.mat models/crate.mesh notes.txt prefabs/prop.prefab scenes/main.scene textures/blocks.tex textures/icon.tex textures/wood_color.tex textures/wood_normal.tex ui/hud.ui ")
+    testing.expect_value(t,kept,"materials/lost.mat materials/spare.mat materials/wood.mat models/crate.mesh notes.txt prefabs/prop.scene scenes/main.scene textures/blocks.tex textures/icon.tex textures/wood_color.tex textures/wood_normal.tex ui/hud.ui ")
     testing.expect_value(t,dropped,"materials/lonely.mat textures/unused.tex ")
     testing.expect_value(t,report.roots,6)
     testing.expect(t,len(report.missing)==1 && report.missing[0].path=="materials/lost.mat" && report.missing[0].id==ABSENT,"a dependency that is no file is reported")
@@ -202,7 +202,7 @@ a_cook_ships_what_the_scenes_and_the_roots_reach_as_the_runtime_loads_it :: proc
     report=cook_assets({assets=assets,output=server,manifest=manifest,server=true,allocator=context.temp_allocator})
     testing.expect_value(t,report.error,Cook_Error.None)
     kept,_=names(&report)
-    testing.expect_value(t,kept,"materials/lost.mat materials/spare.mat materials/wood.mat models/crate.mesh notes.txt prefabs/prop.prefab scenes/main.scene ")
+    testing.expect_value(t,kept,"materials/lost.mat materials/spare.mat materials/wood.mat models/crate.mesh notes.txt prefabs/prop.scene scenes/main.scene ")
     testing.expect(t,len(report.missing)==1 && report.missing[0].id==ABSENT,"a texture a material names is not missing on a server")
     testing.expect(t,!os.exists(fmt.tprintf("%s/textures",server)) && !os.exists(fmt.tprintf("%s/ui",server)))
     summary=cook_summary(&report,context.temp_allocator)
@@ -263,7 +263,7 @@ a_cook_ships_every_asset_of_an_active_plugin_under_its_prefix :: proc(t:^testing
     report:=cook_assets({assets=assets,output=output,plugins={{path=plugin,prefix="plugins/probe"}},allocator=context.temp_allocator})
     testing.expect_value(t,report.error,Cook_Error.None)
     kept,_:=names(&report)
-    testing.expect_value(t,kept,"materials/wood.mat models/crate.mesh plugins/probe/brushes/soft.mat plugins/probe/readme.txt prefabs/prop.prefab scenes/main.scene textures/wood_color.tex textures/wood_normal.tex ")
+    testing.expect_value(t,kept,"materials/wood.mat models/crate.mesh plugins/probe/brushes/soft.mat plugins/probe/readme.txt prefabs/prop.scene scenes/main.scene textures/wood_color.tex textures/wood_normal.tex ")
     testing.expect(t,os.is_file(fmt.tprintf("%s/plugins/probe/brushes/soft.mat",output)) && os.is_file(fmt.tprintf("%s/plugins/probe/readme.txt",output)))
     indexed:asset.Registry
     asset.registry_init(&indexed,output);defer asset.registry_destroy(&indexed)
@@ -287,10 +287,9 @@ Glow :: struct {range:f32}
 
 @(private="file")
 glow_prefab_write :: proc(t:^testing.T,types:^asset.Types,path:string,range:f32) -> (lamp:asset.Scene) {
-    asset.scene_init(&lamp,types,asset.KIND_PREFAB,PROP)
+    asset.scene_init(&lamp,types,PROP)
     asset.scene_entity_add(&lamp,1,0,"Lamp")
     asset.scene_entity_add(&lamp,2,1,"Bulb")
-    lamp.info.root=1
     glow:=Glow{range}
     asset.scene_set(&lamp,2,"Glow",&glow)
     testing.expect_value(t,asset.scene_save(&lamp,path),asset.Error.None)
@@ -320,9 +319,9 @@ a_cook_brings_the_prefab_instances_of_what_it_ships_up_to_date :: proc(t:^testin
     if folder=="" {return}
     assets,output:=fmt.tprintf("%s/project/assets",folder),fmt.tprintf("%s/ship/assets",folder)
     for inside in ([]string{"prefabs","scenes"}) {os.make_directory_all(fmt.tprintf("%s/%s",assets,inside))}
-    lamp_path,level_path:=fmt.tprintf("%s/prefabs/lamp.prefab",assets),fmt.tprintf("%s/scenes/level.scene",assets)
+    lamp_path,level_path:=fmt.tprintf("%s/prefabs/lamp.scene",assets),fmt.tprintf("%s/scenes/level.scene",assets)
     lamp:=glow_prefab_write(t,&types,lamp_path,1)
-    level:asset.Scene;asset.scene_init(&level,&types,asset.KIND_SCENE,MAIN);defer asset.scene_destroy(&level)
+    level:asset.Scene;asset.scene_init(&level,&types,MAIN);defer asset.scene_destroy(&level)
     _,placed:=asset.scene_instantiate(&level,&lamp,PROP,0)
     testing.expect_value(t,placed,asset.Error.None)
     testing.expect_value(t,asset.scene_save(&level,level_path),asset.Error.None)
@@ -342,7 +341,7 @@ a_cook_brings_the_prefab_instances_of_what_it_ships_up_to_date :: proc(t:^testin
     // The prefab an instance places is a dependency of its scene: the scenes are the roots of this cook,
     // which reaches it through them, and a cook whose prefab is gone says so and ships the scene as it is.
     reached:=false
-    for file in report.files {reached||=file.path=="prefabs/lamp.prefab"}
+    for file in report.files {reached||=file.path=="prefabs/lamp.scene"}
     testing.expect(t,report.error==.None && reached && len(report.missing)==0)
     testing.expect_value(t,os.remove(lamp_path),nil)
     report=cook_assets({assets=assets,output=output,allocator=context.temp_allocator})
@@ -364,10 +363,10 @@ a_cook_on_many_workers_writes_what_a_cook_on_one_does :: proc(t:^testing.T) {
         texture_write(t,&types,fmt.tprintf("%s/textures/tile_%02d.tex",assets,at),{8,u64(at)},{.Srgb},at%2==1)
         material_write(t,&types,fmt.tprintf("%s/materials/tile_%02d.mat",assets,at),{10,u64(at)},{8,u64(at)},{})
     }
-    lamp_path:=fmt.tprintf("%s/prefabs/lamp.prefab",assets)
+    lamp_path:=fmt.tprintf("%s/prefabs/lamp.scene",assets)
     lamp:=glow_prefab_write(t,&types,lamp_path,1)
     for at in 0..<6 {
-        level:asset.Scene;asset.scene_init(&level,&types,asset.KIND_SCENE,{11,u64(at)})
+        level:asset.Scene;asset.scene_init(&level,&types,{11,u64(at)})
         _,placed:=asset.scene_instantiate(&level,&lamp,PROP,0)
         testing.expect_value(t,placed,asset.Error.None)
         testing.expect_value(t,asset.scene_save(&level,fmt.tprintf("%s/scenes/level_%d.scene",assets,at)),asset.Error.None)

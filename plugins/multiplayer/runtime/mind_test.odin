@@ -129,8 +129,8 @@ a_mind_decides_on_the_server_and_the_client_sees_its_presentation :: proc(t:^tes
         // The server decides; the client, a function `server` that does not run there, does not.
         mind_net_decide(server,&info,minds,u64(tick))
         if tick==1 {core.add(&server.objects,agent,net_test_replicate(audience=.Always));core.settle(&info,server,nil)}
-        shown[tick],_=core.get(core.read(&server.shows),agent)
-        if seen,ok:=core.get(core.read(&client.shows),mine);ok && tick>40 {
+        shown[tick],_=core.get(&server.shows,agent)
+        if seen,ok:=core.get(&client.shows,mine);ok && tick>40 {
             // What it shows is what the server showed a few ticks before.
             recent:=false
             for back in 0..<12 {recent||=tick-back>0 && shown[tick-back]==seen}
@@ -145,14 +145,14 @@ a_mind_decides_on_the_server_and_the_client_sees_its_presentation :: proc(t:^tes
         server_publish(&sessions[0],core.world_ref(server,&info),&outbox,u32(tick))
     }
     testing.expect_value(t,seen_steps,bit_set[Net_Act]{.Walk,.Look})
-    last,_:=core.get(core.read(&client.shows),mine)
+    last,_:=core.get(&client.shows,mine)
     testing.expect(t,last.animation==7 && last.animations>=3)
     testing.expect_value(t,client.agents.values[0].state.ticks,0)
     // The snapshot taken at tick 100 decides from there as the world did.
     if snapshot!=nil {
         for tick in 101..<200 {mind_net_decide(snapshot,&info,minds,u64(tick))}
         testing.expect(t,mem.compare_ptrs(&snapshot.agents.values[0].state,&server.agents.values[0].state,size_of(ai.Mind))==0,"the copy decides as the world")
-        copied,_:=core.get(core.read(&snapshot.shows),snapshot.agents.entities[0])
+        copied,_:=core.get(&snapshot.shows,snapshot.agents.entities[0])
         testing.expect_value(t,copied,shown[199])
     }
     testing.expect_value(t,problems[0].count,0)

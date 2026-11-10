@@ -100,7 +100,7 @@ play_and_simulation_keep_the_document_and_step_exactly_one_tick :: proc(t:^testi
         testing.expect_value(t,world.ticks.count,0)
         game_frame(s)
         testing.expect_value(t,running.ticks.count,1)
-        core.get(&running.transforms,original).position.x=5
+        core.edit(&running.transforms,original).position.x=5
         viewport.orbit.target={8,9,10}
         history.selection_clear(selection)
         if simulate {

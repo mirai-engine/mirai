@@ -430,7 +430,7 @@ assets_open :: proc(a:^Assets,id:base.Asset_Id,kind:Assets_Kind,file:^asset.Asse
     case .Mesh:     expected=record.kind==asset.KIND_MESH
     case .Texture:  expected=record.kind==asset.KIND_TEXTURE
     case .Material: expected=record.kind==asset.KIND_MATERIAL
-    case .Scene:    expected=record.kind==asset.KIND_SCENE || record.kind==asset.KIND_PREFAB
+    case .Scene:    expected=record.kind==asset.KIND_SCENE
     case .Document: expected=record.kind==document
     case .Fracture: expected=record.kind==asset.KIND_FRACTURE
     }
@@ -1837,7 +1837,7 @@ assets_scene :: proc(a:^Assets,id:base.Asset_Id) -> ^asset.Asset {return assets_
 // kept open where it is as scenes are, and read again when its file changes
 // (a.revision moves). nil when it cannot be loaded.
 assets_document :: proc(a:^Assets,id:base.Asset_Id,kind:asset.Fourcc) -> ^asset.Asset {
-    return assets_open_document(a,id,.Scene if kind==asset.KIND_SCENE || kind==asset.KIND_PREFAB else .Document,kind)
+    return assets_open_document(a,id,.Scene if kind==asset.KIND_SCENE else .Document,kind)
 }
 
 // A document of assets_document whose tables its plugin refuses: a problem

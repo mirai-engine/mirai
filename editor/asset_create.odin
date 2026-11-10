@@ -183,7 +183,7 @@ asset_create :: proc(s:^Session,kind:asset.Fourcc,path:string,id:base.Asset_Id) 
         return ""
     case asset.KIND_SCENE:
         scene:asset.Scene
-        if asset.scene_init(&scene,&a.types,asset.KIND_SCENE,id)!=.None {return "The scene could not be made"}
+        if asset.scene_init(&scene,&a.types,id)!=.None {return "The scene could not be made"}
         defer asset.scene_destroy(&scene)
         if folder:=filepath.dir(file);!os.is_dir(folder) {_=os.make_directory_all(folder)}
         if asset.scene_save(&scene,file)!=.None {return fmt.tprintf("%s could not be written",path)}

@@ -60,8 +60,8 @@ simulation_poses_apply_atomically_under_selected_parents_and_undo_together :: pr
     core.add(&world.ids,grandchild,core.Id{3})
     core.add(&world.transforms,grandchild,core.Transform{{1,2,3},1,{1,1,1}})
     core.add(&world.parents,grandchild,core.Parent{child,0})
-    core.get(&world.transforms,parent)^={{10,0,0},quaternion(x=0,y=0,z=0.70710677,w=0.70710677),{2,3,4}}
-    core.get(&world.transforms,child)^={{2,0,0},quaternion(x=0,y=0.70710677,z=0,w=0.70710677),{1,2,1}}
+    core.edit(&world.transforms,parent)^={{10,0,0},quaternion(x=0,y=0,z=0.70710677,w=0.70710677),{2,3,4}}
+    core.edit(&world.transforms,child)^={{2,0,0},quaternion(x=0,y=0.70710677,z=0,w=0.70710677),{1,2,1}}
     core.test_world_settle(&world)
     history.edits_reset(&edits,w)
     deep:=[1]Simulation_Pose{{id=3,position={7,8,9},rotation={0,0,0,1},scale={2,3,4}}}

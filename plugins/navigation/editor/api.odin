@@ -482,7 +482,7 @@ link_kind_name :: proc(w:core.World_Ref,kind:u8) -> string {
 entity_id :: proc(w:core.World_Ref,e:core.Entity) -> base.Entity_Id {
     ids:=core.world_table_of(w,core.Id)
     if ids==nil {return 0}
-    id,found:=core.get(core.read(ids),e)
+    id,found:=core.get(ids,e)
     return id.value if found else 0
 }
 
@@ -496,7 +496,7 @@ agent :: proc(s:^editor.Session,call:^api.Call) {
     paths:=core.world_table_of(world,nav.Nav_Path)
     agents:=core.world_table_of(world,nav.Nav_Agent)
     far:=far_of(world,e)
-    if agents==nil || !core.has(core.read(agents),e) && far==nil {api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with a Nav_Agent in the shown world",base.text_get(p.entity[:]));return}
+    if agents==nil || !core.has(agents,e) && far==nil {api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with a Nav_Agent in the shown world",base.text_get(p.entity[:]));return}
     w:=call.out
     serial.text_write_raw(w,"{")
     value:nav.Nav_Path
@@ -597,7 +597,7 @@ move :: proc(s:^editor.Session,call:^api.Call) {
     agents:=core.world_table_of(world,nav.Nav_Agent)
     e,named:=editor.api_call_entity(call,world,p.entity[:],game=true)
     if !named {return}
-    if requests==nil || agents==nil || !core.has(core.read(agents),e) && far_of(world,e)==nil {api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with a Nav_Agent in the running world",base.text_get(p.entity[:]));return}
+    if requests==nil || agents==nil || !core.has(agents,e) && far_of(world,e)==nil {api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with a Nav_Agent in the running world",base.text_get(p.entity[:]));return}
     switch {
     case p.target[0]!=0:
         target,known:=editor.api_call_entity(call,world,p.target[:],"target",true)

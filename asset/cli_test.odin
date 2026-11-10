@@ -85,7 +85,7 @@ write_assets :: proc(cli:^Cli,types:^Types) {
     info.roughness=0.5
     testing.expect_value(t,material_save(file(cli,"leaf.mat"),types,{id={0x3a7,1},info=info}),Error.None)
 
-    scene:Scene;scene_init(&scene,types,KIND_SCENE,{0x5ce,1})
+    scene:Scene;scene_init(&scene,types,{0x5ce,1})
     scene_entity_add(&scene,0x10,0,"Room")
     scene_entity_add(&scene,0x20,0x10,"Lamp")
     scene_entity_add(&scene,0x30,0x10,"Plant")

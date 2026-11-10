@@ -81,7 +81,7 @@ previews_drop :: proc(s:^editor.Session) {
     if t==nil || !history.edits_begin(s.edits,s.selection,"Play animation") {return}
     defer history.edits_end(s.edits)
     // An added component is there at the end of the function: it goes whole.
-    if animation:=core.get(t,drop.entity);animation!=nil {
+    if animation:=core.edit(t,drop.entity);animation!=nil {
         animation.asset,animation.clip=drop.id,drop.part
         return
     }

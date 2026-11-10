@@ -114,7 +114,7 @@ the_mouse_is_captured_while_the_seat_with_it_drives_a_body_with_look :: proc(t:^
     testing.expect(t,!wants(&w.seats,&w.drivables,&state,&bindings,false),"a stick does not need the mouse")
     inp.input_map_bind(&bindings,LOOK,inp.binding_mouse_delta())
     testing.expect(t,!wants(&w.seats,&w.drivables,&state,&bindings,false),"no body driven")
-    core.get(&w.drivables,body).seat=seat
+    core.edit(&w.drivables,body).seat=seat
     testing.expect(t,wants(&w.seats,&w.drivables,&state,&bindings,false))
     testing.expect(t,!wants(&w.seats,&w.drivables,&state,&bindings,true),"a Modal frees it")
 }

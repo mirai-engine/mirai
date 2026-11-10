@@ -249,7 +249,7 @@ sources and their sidecars ([sync](../../mirai-imports/references/imports.md#syn
 job calls it with the project assets, `cook.mirai`, the asset folders of the active plugins and the
 texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error` and `detail`.
 
-- **Roots.** Every `.scene`, `.prefab` (code reaches one only by instantiating it) and `.records`
+- **Roots.** Every `.scene` (code reaches a prefab only by instantiating it) and `.records`
   of the folder and what `cook.mirai` (`COOK_FILE`) names: the other assets only code refers to (a
   material chosen by name).
 
@@ -283,7 +283,7 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
   finds one still Fast fails with `Source_Failed` and says so.
 - **Animations.** An `.anim` is written cooked: its clips sampled as the runtime plays them
   (`asset.animation_compress`, [storage](../../mirai-std/references/anim-storage.md)).
-- **Prefab instances.** A scene or a prefab with a stale instance is written with its instances up
+- **Prefab instances.** A scene with a stale instance is written with its instances up
   to date, by an `asset.Prefab_Resolver` of the project prefabs
   ([instances](../../mirai-assets/references/scenes.md#resolution-against-the-current-prefab)); the
   shipped game loads them without checking them. If it cannot, `Resolve_Failed` with the file.
@@ -308,7 +308,7 @@ publish. A new engine-time folder of the engine is added there.
 
 The compiler also reads the `_test.odin` files of every package the game imports, with their
 imports: a test of a runtime package does not import an engine-time one. A GPU test of a plugin
-loads the shaders that `mirai test` generates for it (`plugin_test_shaders`) instead of generating
+loads the shaders that `mirai test` generates for it (`package_test_shaders`) instead of generating
 them with `cook/shaders`.
 
 ## Known limits

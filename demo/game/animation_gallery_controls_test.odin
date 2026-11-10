@@ -31,20 +31,20 @@ gallery_manual_controls_survive_the_automatic_demo_and_keep_other_stations_runni
     commands:=panel.commands[:panel.count]
     gallery_playback_commands(commands,&animations,&requests,&actions,&modifiers)
     gallery_direct_clips(core.read(&gallery),&animations,&requests,commands)
-    first_value,_:=core.get(core.read(&animations),first)
-    second_value,_:=core.get(core.read(&animations),second)
+    first_value,_:=core.get(&animations,first)
+    second_value,_:=core.get(&animations,second)
     testing.expect(t,!first_value.playing && first_value.parameters[0]==.75 && first_value.parameter_names[0]==base.name_hash(GALLERY_WAVE) && base.text_get(first_value.clip[:])=="walk")
     testing.expect(t,second_value.playing && base.text_get(second_value.clip[:])=="wave")
     testing.expect(t,len(modifiers.controls.items)==1 && modifiers.controls.items[0].kind==.Look && modifiers.controls.items[0].weight==.25)
-    core.get(&gallery,first).manual=gallery_manual(false,first,commands)
+    core.edit(&gallery,first).manual=gallery_manual(false,first,commands)
     panel.count=0
     gallery_direct_clips(core.read(&gallery),&animations,&requests,nil)
-    first_value,_=core.get(core.read(&animations),first)
+    first_value,_=core.get(&animations,first)
     testing.expect(t,!first_value.playing && base.text_get(first_value.clip[:])=="walk")
     testing.expect(t,gallery_request(&panel,.Automatic,first,enabled=true))
     gallery_playback_commands(panel.commands[:panel.count],&animations,&requests,&actions,&modifiers)
     gallery_direct_clips(core.read(&gallery),&animations,&requests,panel.commands[:panel.count])
-    first_value,_=core.get(core.read(&animations),first)
+    first_value,_=core.get(&animations,first)
     testing.expect(t,first_value.playing && base.text_get(first_value.clip[:])=="wave" && !gallery_manual(true,first,panel.commands[:panel.count]))
 }
 

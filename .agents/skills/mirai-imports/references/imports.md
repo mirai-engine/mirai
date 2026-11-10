@@ -414,7 +414,7 @@ those a mesh uses; repeated names are told apart with `name (n)`.
 ## What is written
 
 What is new gets a flat file in the folder (`<name>.mesh`, `.skeleton`, `.anim`, `.mat`, `.tex` and,
-with `import_source`, the model's `.prefab`), with a valid file name that does not overwrite
+with `import_source`, the model's `.scene`), with a valid file name that does not overwrite
 another asset, of the assets folder for a document; what is of the cache is a file of the imported
 folder named by its id. What already existed is written where it is
 ([identity](#identity-and-reimport)).

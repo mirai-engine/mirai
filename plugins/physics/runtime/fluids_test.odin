@@ -39,7 +39,7 @@ fluids_follow_their_rows_their_volumes_and_their_entities :: proc(t:^testing.T) 
     testing.expect(t,fluid_holds({&f.state},found[1].fluid,{10,-2,0}) && !fluid_holds({&f.state},found[1].fluid,{10,-4,0}))
     testing.expect(t,fluid_holds({&f.state},found[0].fluid,{10,-2,0}) && !fluid_holds({&f.state},found[0].fluid,{0,3,0}))
     // The room floods: the floor of its air rises.
-    core.get(&f.transforms,room).position.y=2
+    core.edit(&f.transforms,room).position.y=2
     physics_test_step(&f,0)
     sample,_,_=fluid_at({&f.state},{10,-1.5,0})
     testing.expect(t,abs(sample.height-(-1))<1e-5 && sample.density==1025)
@@ -52,7 +52,7 @@ fluids_follow_their_rows_their_volumes_and_their_entities :: proc(t:^testing.T) 
     // The priority of its Volume is what puts the air over the sea: at that of the sea, the sea is there.
     sample,_,_=fluid_at({&f.state},{10,0,0})
     testing.expect_value(t,sample.density,f32(0))
-    core.get(&f.volumes,room).priority=0
+    core.edit(&f.volumes,room).priority=0
     physics_test_step(&f,0)
     sample,_,_=fluid_at({&f.state},{10,0,0})
     testing.expect(t,sample.density==1025 && f.state.world.fluid_count==2)
@@ -118,7 +118,7 @@ a_body_floats_on_a_fluid_of_the_world :: proc(t:^testing.T) {
     core.add(&f.colliders,raft,collider)
     core.add(&f.transforms,raft,core.Transform{{0,1,0},1,{1,1,1}})
     for _ in 0..<600 {physics_test_step(&f)}
-    placed,_:=core.get(core.read(&f.transforms),raft)
+    placed,_:=core.get(&f.transforms,raft)
     // Half its thickness under the surface.
     testing.expectf(t,abs(placed.position.y)<0.002,"floats at %v",placed.position.y)
 }

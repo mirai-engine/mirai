@@ -162,7 +162,7 @@ components_turn :: proc(w:core.World_Ref,e:core.Entity,t:^Net_Type,mask:u16) {
 @(private)
 driver_read :: proc(w:core.World_Ref,e:core.Entity) -> (value:Driver_State) {
     moves:=core.world_table_of(w,input.Move_Input)
-    if moves!=nil {value.move,value.has_move=core.get(core.read(moves),e)}
+    if moves!=nil {value.move,value.has_move=core.get(moves,e)}
     return
 }
 

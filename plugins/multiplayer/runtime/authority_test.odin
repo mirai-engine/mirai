@@ -130,7 +130,7 @@ Crowded_World :: struct {
     using world:core.Test_World,
     transforms:core.Table(core.Transform),
     worlds:core.Table(core.World_Transform),
-    sources:core.Table(scene.Prefab_Source),
+    instances:core.Table(scene.Prefab_Instance),
     motions:core.Table(core.Motion),
     moves:core.Table(input.Move_Input),
     values:[COMPONENTS+1]core.Table(Net_Test_Value),

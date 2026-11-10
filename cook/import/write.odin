@@ -410,10 +410,10 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
 
     // The prefab of the model: the one its sidecar lists, which a model that lost its nodes keeps.
     listed:=false
-    for output in w.sidecar.outputs {listed||=output.kind==asset.KIND_PREFAB}
+    for output in w.sidecar.outputs {listed||=output.kind==asset.KIND_SCENE}
     if listed || len(model.nodes)>0 {
         prefab_path:string
-        w.owner,prefab_path=root_take(w,asset.KIND_PREFAB,name,".prefab")
+        w.owner,prefab_path=root_take(w,asset.KIND_SCENE,name,".scene")
         w.report.prefab,w.report.prefab_path=w.owner,strings.clone(prefab_path,w.allocator)
         w.report.prefab_info=import_info(source,name,0,model.source_size,model.source_hash,0,model.version)
     }

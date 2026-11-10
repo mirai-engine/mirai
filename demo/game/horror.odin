@@ -60,11 +60,11 @@ horror_switches :: proc(
         if inp.pressed(actions,e,.Use) {
             for at in 0..<core.count(switches) {
                 switch_entity:=core.entity_at(switches,at)
-                if in_reach(worlds,placed.position,switch_entity,core.at(switches,at).reach) {core.at(switches,at).on=!core.at(switches,at).on}
+                if in_reach(worlds,placed.position,switch_entity,core.at(switches,at).reach) {core.edit_at(switches,at).on=!core.at(switches,at).on}
             }
         }
         if inp.pressed(actions,e,.Flashlight) {
-            for at in 0..<core.count(flashlights) {core.at(flashlights,at).on=!core.at(flashlights,at).on}
+            for at in 0..<core.count(flashlights) {core.edit_at(flashlights,at).on=!core.at(flashlights,at).on}
         }
     }
 }
@@ -88,10 +88,12 @@ horror_lights :: proc(
             on=flicker_hash(slice)>0.3
         }
         lamp.lit=on
-        light:=core.get(points,core.entity_at(lamps,row))
-        if light==nil {continue}
-        intensity:=on?lamp.intensity:0
-        if light.intensity!=intensity {light.intensity=intensity}
+        core.set_at(lamps,row,lamp)
+        e:=core.entity_at(lamps,row)
+        if light,lights:=core.get(points,e);lights {
+            light.intensity=on?lamp.intensity:0
+            core.set(points,e,light)
+        }
     }
     player,found:=core.first(players)
     if !found {return}
@@ -105,13 +107,13 @@ horror_lights :: proc(
         flashlight:=core.at(flashlights,row)
         // A write marks the light as moved, and a moved light restarts the indirect light around it.
         if row:=core.row_of(transforms,e);row>=0 {
-            if placed:=core.at(core.read(transforms),row);placed.position!=eye || placed.rotation!=turn {
+            if placed:=core.at(transforms,row);placed.position!=eye || placed.rotation!=turn {
                 if local:=core.free(transforms,e);local!=nil {local.position,local.rotation=eye,turn}
             }
         }
-        if spot:=core.get(spots,e);spot!=nil {
-            intensity:=flashlight.on?flashlight.intensity:0
-            if spot.intensity!=intensity {spot.intensity=intensity}
+        if spot,lights:=core.get(spots,e);lights {
+            spot.intensity=flashlight.on?flashlight.intensity:0
+            core.set(spots,e,spot)
         }
     }
 }
@@ -128,9 +130,9 @@ flicker_hash :: proc "contextless" (v:u32) -> f32 {
 horror_glow :: proc(tints:^core.Table(render.Tint),lamps:core.Read(House_Lamp)) {
     for row in 0..<core.count(lamps) {
         lamp:=core.at(lamps,row)
-        tint:=core.get(tints,lamp.globe)
-        if tint==nil {continue}
-        glow:=lamp.lit?lamp.glow:[3]f32{}
-        if tint.emission!=glow {tint.emission=glow}
+        if tint,found:=core.get(tints,lamp.globe);found {
+            tint.emission=lamp.lit?lamp.glow:[3]f32{}
+            core.set(tints,lamp.globe,tint)
+        }
     }
 }

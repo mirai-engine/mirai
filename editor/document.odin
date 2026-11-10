@@ -31,7 +31,7 @@ Document_Error :: enum u8 {
     None,
     No_Assets,   // the application has no assets folder
     Not_Found,
-    Not_A_Scene, // unreadable, or not a scene nor a prefab
+    Not_A_Scene, // unreadable, or not a scene
     Rejected,    // the World could not take it
     Write_Failed,
     Out_Of_Memory, // the World could not be copied out to be written
@@ -84,7 +84,7 @@ document_error_text :: proc(error:Document_Error) -> string {
     case .None:         return ""
     case .No_Assets:    return "the project has no assets folder"
     case .Not_Found:    return "no such file"
-    case .Not_A_Scene:  return "not a scene nor a prefab"
+    case .Not_A_Scene:  return "not a scene"
     case .Rejected:     return "the world could not take it"
     case .Write_Failed: return "the file could not be written"
     case .Out_Of_Memory: return "there is not enough memory to copy the scene out of the World; the file was not changed"
@@ -112,7 +112,7 @@ scene_path :: proc(s:^Session,file:string) -> string {
     return file
 }
 
-// Replaces the edited World with a scene or a prefab, by file or by a path
+// Replaces the edited World with a scene, by file or by a path
 // inside the assets folder. A Play is stopped first. On failure the World
 // stays as it was only when the file could not be read.
 scene_open :: proc(s:^Session,path:string) -> Document_Error {
@@ -140,7 +140,7 @@ scene_open :: proc(s:^Session,path:string) -> Document_Error {
     d.id=loaded.doc.id
     document_name(d,scene_path(s,file),file)
     document_opened(s)
-    if loaded.doc.kind==asset.KIND_SCENE {thumbnail_scene_opened(s,d.id)}
+    if !document_is_prefab(s) {thumbnail_scene_opened(s,d.id)}
     log.infof("opened %s",file)
     return .None
 }
@@ -177,7 +177,7 @@ scene_save :: proc(s:^Session,path:="") -> Document_Error {
     }
     file:=scene_file(s,target)
     if file=="" {return .Bad_Path}
-    if !strings.has_suffix(file,SCENE_EXTENSION) && !strings.has_suffix(file,PREFAB_EXTENSION) {file=strings.concatenate({file,document_is_prefab(s)?PREFAB_EXTENSION:SCENE_EXTENSION},context.temp_allocator)}
+    if !strings.has_suffix(file,SCENE_EXTENSION) {file=strings.concatenate({file,SCENE_EXTENSION},context.temp_allocator)}
     if !history.edits_commit(s.edits,edited_world(s),document_selection(s)) && s.edits.error!=.No_Change {return .Rejected}
     if file!=document_file(d) || d.id=={} {d.id=asset_id_new(s)}
     if error:=document_write(s,file,true);error!=.None {return error}
@@ -455,7 +455,7 @@ pending_continue :: proc(s:^Session,pending:Pending) {
 
 @(private)
 dialog_open :: proc(s:^Session) {
-    filters:=[2]platform.Dialog_Filter{{"Scene","scene"},{"Prefab","prefab"}}
+    filters:=[1]platform.Dialog_Filter{{"Scene","scene"}}
     if !platform.dialog_show(s.app.platform,{kind=.Open_File,tag=DIALOG_OPEN,filters=filters[:],location=s.assets_root}) {notify(s,"A file dialog is already open")}
 }
 
@@ -463,7 +463,6 @@ dialog_open :: proc(s:^Session) {
 dialog_save :: proc(s:^Session) {
     tool_preview_cancel(s)
     filters:=[1]platform.Dialog_Filter{{"Scene","scene"}}
-    if document_is_prefab(s) {filters[0]={"Prefab","prefab"}}
     location:=document_file(s.document)
     if location=="" {location=s.assets_root}
     if !platform.dialog_show(s.app.platform,{kind=.Save_File,tag=DIALOG_SAVE,filters=filters[:],location=location}) {notify(s,"A file dialog is already open")}
@@ -525,7 +524,7 @@ scene_load_file :: proc(s:^Session,file:string) -> (loaded:^asset.Scene,error:Do
     }
     defer asset.asset_close(&source)
     kind:=source.blob.header.kind
-    if kind!=asset.KIND_SCENE && kind!=asset.KIND_PREFAB {return nil,.Not_A_Scene}
+    if kind!=asset.KIND_SCENE {return nil,.Not_A_Scene}
     loaded=new(asset.Scene)
     if asset.scene_from_asset(loaded,&a.types,&source)!=.None {
         free(loaded)

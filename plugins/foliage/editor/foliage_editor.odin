@@ -226,7 +226,7 @@ edit_commit :: proc(s:^editor.Session,t:^Foliage_Tool,world:core.World_Ref,asset
     editor.revision_push(&t.history,&step,step_destroy)
     edit.stamp=foliage.foliage_stamp(a,edit.id)
     history.edits_begin(s.edits,s.selection,label)
-    for value,row in table.values[:core.count(table)] {if value.source==edit.id {core.at(table,row).revision=next}}
+    for value,row in table.values[:core.count(table)] {if value.source==edit.id {core.edit_at(table,row).revision=next}}
     history.edits_end(s.edits)
     edit.revision=next
     if held:=editor.revision_applied(&t.history,edit.id);held!=nil {held.revision,held.stamp=next,edit.stamp}
@@ -471,7 +471,7 @@ types_list :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,ass
                 for id in shown[first:min(first+columns,len(shown))] {
                     t,_:=foliage.source_type(source,id)
                     shown_asset,kind:=t.mesh,asset.KIND_MESH
-                    if shown_asset=={} {shown_asset,kind=t.prefab,asset.KIND_PREFAB}
+                    if shown_asset=={} {shown_asset,kind=t.prefab,editor.SHOWN_PREFAB}
                     card:=ui.id(ctx,"type",int(id)+1)
                     if tool.reveal==id {ctx.reveal_next,tool.reveal=card,0}
                     it:=editor.asset_card_begin(s,card,shown_asset,kind,type_name(t),slice.contains(tool.painted[:],id),cell)
@@ -681,7 +681,7 @@ foliage_thumbnail :: proc(s:^editor.Session,file:^asset.Registry_File,clip:u32,s
         used,found:=asset.registry_find(&a.registry,id)
         if !found {continue}
         if used.kind==asset.KIND_MESH {subject^={mesh={mesh=id},tint=erender.TINT_DEFAULT};return true}
-        if used.kind==asset.KIND_PREFAB && prefab=={} {prefab=id}
+        if asset.registry_prefab(used) && prefab=={} {prefab=id}
     }
     if prefab=={} {return false}
     subject^={document=prefab}

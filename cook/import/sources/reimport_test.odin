@@ -69,7 +69,7 @@ the_parts_of_an_import_name_its_prefab_and_keep_their_ids_where_they_were_moved 
     source:=box_source(fmt.tprintf("%s/source",root),"box.gltf","Wood","Paint")
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     first,ok:=box_import(t,source,root);if !ok {return};defer importer.report_destroy(&first)
-    prefab,has_prefab:=written_of(&first,asset.KIND_PREFAB,"box")
+    prefab,has_prefab:=written_of(&first,asset.KIND_SCENE,"box")
     wood,has_wood:=written_of(&first,asset.KIND_MATERIAL,"Wood")
     if !testing.expect(t,has_prefab && has_wood && prefab.id!={} && prefab.id==first.prefab) {return}
     // The mesh is a part; Wood, whose island reaches across its texture, and Paint, without one, are not.
@@ -86,7 +86,7 @@ the_parts_of_an_import_name_its_prefab_and_keep_their_ids_where_they_were_moved 
     sidecar,found,_:=importer.sidecar_load(fmt.tprintf("%s.import",source),context.temp_allocator)
     testing.expect(t,found && len(sidecar.outputs)==len(first.assets),"the sidecar next to the source lists what it gives")
     for output in sidecar.outputs {
-        written,listed:=written_of(&first,output.kind,output.kind==asset.KIND_PREFAB?"box":output.name)
+        written,listed:=written_of(&first,output.kind,output.kind==asset.KIND_SCENE?"box":output.name)
         testing.expectf(t,listed && written.id==output.id && output.part==(output.kind==asset.KIND_MESH),"%s is listed with its id: %v",output.name,output)
     }
     a,loaded:=read_asset(t,prefab,&types)
@@ -130,12 +130,12 @@ a_source_keeps_the_ids_of_its_import_with_its_sidecar_and_a_copy_without_it_is_a
     moved,moved_ok:=box_import(t,crate,root);if !moved_ok {return};defer importer.report_destroy(&moved)
     testing.expect_value(t,moved.prefab,first.prefab)
     for written in first.assets {
-        same,found:=written_of(&moved,written.kind,written.kind==asset.KIND_PREFAB?"crate":written.name)
+        same,found:=written_of(&moved,written.kind,written.kind==asset.KIND_SCENE?"crate":written.name)
         testing.expectf(t,found && same.id==written.id && same.path==written.path,"%s keeps its id and its file",written.name)
     }
     testing.expect_value(t,len(moved.warnings),0)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    prefab,_:=written_of(&moved,asset.KIND_PREFAB,"crate")
+    prefab,_:=written_of(&moved,asset.KIND_SCENE,"crate")
     if a,loaded:=read_asset(t,prefab,&types);loaded {
         info,_:=asset.import_info(&a,&types)
         testing.expect(t,info!=nil && string_of(info.source[:])=="source/props/crate.gltf","the import names the source where it is now")
@@ -148,7 +148,7 @@ a_source_keeps_the_ids_of_its_import_with_its_sidecar_and_a_copy_without_it_is_a
     if !testing.expectf(t,second_error.code==.None,"%s",second_error.message) {return};defer importer.report_destroy(&second)
     testing.expect(t,second.prefab!={} && second.prefab!=first.prefab,"the copy writes a prefab of its own")
     for written in second.assets {
-        if written.kind==asset.KIND_MESH || written.kind==asset.KIND_PREFAB {
+        if written.kind==asset.KIND_MESH || written.kind==asset.KIND_SCENE {
             for other in first.assets {testing.expectf(t,other.id!=written.id,"%s has an id of its own",written.path)}
         }
     }
@@ -276,7 +276,7 @@ a_material_is_a_part_only_when_its_texture_is_an_atlas_of_one_model :: proc(t:^t
         return "?"
     }
     for written in report.assets {
-        if written.kind==asset.KIND_PREFAB {continue}
+        if written.kind==asset.KIND_SCENE {continue}
         part:=written.kind==asset.KIND_MESH || written.name=="Atlas" || written.name=="atlas"
         owner:=header_of(written.path).owner
         testing.expectf(t,owner==(part?report.prefab:base.Asset_Id{}),"%s: owner %v",written.path,owner)

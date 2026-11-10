@@ -17,7 +17,7 @@ DESTRUCTION_BLOCKS :: 3
 write_destruction_scene :: proc(o:^Out) {
     write_physics_gallery(o)
     s:asset.Scene_Builder
-    asset.builder_init(&s,&o.content,asset.KIND_SCENE,DESTRUCTION_SCENE)
+    asset.builder_init(&s,&o.content,DESTRUCTION_SCENE)
     defer asset.builder_destroy(&s)
 
     environment,turn,to_sun,disc:=sky_of(o,.Overcast,mm.quat_rotate(mm.quat_from_euler({-0.9,0.5,0}),render.SUN_DIRECTION),LAMPLIT,1)
