@@ -429,7 +429,7 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 | Run the content tool of a project | `mirai content [project] [-- arguments]` |
 | Documents of interfaces and scenes, no editor | `mirai ui\|scene read\|write\|check ... [--project P]` |
 | Git plugins of a project | `mirai plugin add\|update\|remove\|sync\|list\|catalog\|check ...` |
-| Check types | `mirai check [<package> [-flag...]]`: a package relative to the working folder or to the engine, or absolute; none inside a project: its game, editor and plugins. In a runtime package it also fails on an allocation whose error nothing receives (`tools/mirai/alloc_lint.odin` says which calls and which packages) |
+| Check types | `mirai check [<package> [-flag...]]`: a package relative to the working folder or to the engine, or absolute; none inside a project: its game, editor and plugins. In a runtime package it also fails on an allocation whose error nothing receives (`tools/mirai/alloc_lint.odin` says which calls and which packages), and in a plugin or a game on an import of the physics solver (`tools/mirai/solver_lint.odin`) |
 | Run tests | `mirai test [<package>] [test...] [--list\|--failed\|--quiet] [-flag...]`: the package as for `check`; none inside a project: its game |
 | Headless background editor | `mirai session start\|restart\|stop\|status [project] [--dev] [--copy]` |
 | Call the editor API | `mirai rpc <method> [key=value...\|json] [--select c] [--wait-until c=v] [--project P]` |

@@ -51,6 +51,7 @@ Physics_State :: struct {
     unmade:bool, // the last sync left a body or character unmade, which a whole sync tries again
     sealed:[dynamic]Sealed_Body, // scratch of sealed_sync, as long as the rows of the bodies
     proxies:[dynamic]core.Entity, // the entities of the Proxy links
+    owned:[dynamic]Owned, // by slot of the bodies of the world: those another library owns (owned.odin)
     // The links, by where they are, whose rows the next step brings back besides those of the bodies it moves
     // (link_touch); with touched_all, every link.
     touched:[dynamic]u32,
@@ -559,6 +560,7 @@ state_copy_as :: proc(dst,src:^Physics_State,kept:bool) -> bool {
     if !core.value_copy(&dst.sources,&src.sources,type_info_of([dynamic]Geometry_Source)) {return false}
     if !core.value_copy(&dst.pieces,&src.pieces,type_info_of([dynamic]Piece)) {return false}
     if !core.value_copy(&dst.proxies,&src.proxies,type_info_of([dynamic]core.Entity)) {return false}
+    if !core.value_copy(&dst.owned,&src.owned,type_info_of([dynamic]Owned)) {return false}
     dst.touched_all=true
     dst.world_body,dst.pass,dst.stats,dst.collision,dst.targets_seen=src.world_body,src.pass,src.stats,src.collision,src.targets_seen
     dst.forwarded={}
@@ -609,7 +611,7 @@ state_swap :: proc(a,b:^Physics_State) {
 state_destroy :: proc(state:^Physics_State) {
     if state.ready {sim.world_destroy(&state.world)}
     core.entity_map_destroy(&state.links);core.entity_map_destroy(&state.joints);core.entity_map_destroy(&state.fluids);delete(state.geometry);delete(state.sources);delete(state.pieces)
-    delete(state.sealed);delete(state.proxies);delete(state.touched)
+    delete(state.sealed);delete(state.proxies);delete(state.touched);delete(state.owned)
     volume.index_destroy(&state.gravity.index)
     state^={}
 }
@@ -623,6 +625,7 @@ state_reset :: proc(state:^Physics_State) {
     clear(&state.pieces)
     clear(&state.proxies)
     clear(&state.touched)
+    clear(&state.owned)
     core.entity_map_clear(&state.links);core.entity_map_clear(&state.joints);core.entity_map_clear(&state.fluids)
     state.world_body={}
     state.forwarded={}
@@ -774,21 +777,16 @@ state_make :: proc(state:^Physics_State,settings:^Physics_Settings,job_system:^j
     if state.ready {return true}
     desc:=sim.world_desc_default()
     desc.allocator=context.allocator
-    if settings.bodies>0 {desc.body_capacity=int(settings.bodies)}
-    if settings.shapes>0 {desc.shape_capacity=int(settings.shapes)}
-    if settings.contacts>0 {desc.contact_capacity=int(settings.contacts)}
-    if settings.joints>0 {desc.joint_capacity=int(settings.joints)}
-    if settings.characters>0 {desc.character_capacity=int(settings.characters)}
-    if settings.fluids>0 {desc.fluid_capacity=int(settings.fluids)}
-    if settings.hulls>0 {desc.hull_capacity=int(settings.hulls)}
-    if settings.meshes>0 {desc.mesh_capacity=int(settings.meshes)}
-    if settings.heightfields>0 {desc.heightfield_capacity=int(settings.heightfields)}
-    if settings.events>0 {desc.event_capacity=int(settings.events)}
-    if settings.substeps>0 {desc.substeps=int(settings.substeps)}
+    made:=settings_capacities(settings^)
+    desc.body_capacity,desc.shape_capacity,desc.contact_capacity,desc.joint_capacity=int(made.bodies),int(made.shapes),int(made.contacts),int(made.joints)
+    desc.character_capacity,desc.fluid_capacity=int(made.characters),int(made.fluids)
+    desc.hull_capacity,desc.mesh_capacity,desc.heightfield_capacity=int(made.hulls),int(made.meshes),int(made.heightfields)
+    desc.event_capacity,desc.substeps=int(made.events),int(made.substeps)
     desc.worker_count=jobs_workers(job_system)
     desc.parallel_for=physics_parallel_for
     clear(&state.geometry)
     clear(&state.sources)
+    clear(&state.owned)
     if !sim.world_init(&state.world,desc) {
         core.report(problems,core.NONE,"physics.world","the simulation of this world was not made: out of memory for the capacities of Physics_Settings (%d bodies, %d shapes, %d contacts), or one of them is not valid; lower them, or free memory",desc.body_capacity,desc.shape_capacity,desc.contact_capacity)
         return false

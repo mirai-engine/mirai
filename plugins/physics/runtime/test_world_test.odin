@@ -2,6 +2,7 @@ package physics
 
 import "mirai:core"
 import "mirai:host"
+import "mirai:std/jobs"
 import cam "mirai:engine/camera"
 import render "mirai:engine/render"
 import volume "mirai:engine/volume"
@@ -77,6 +78,15 @@ test_types :: proc(types:^[dynamic]core.Test_Type) {
         core.test_type(Ledge_Jump,default=proc(dst:^Ledge_Jump) {dst^=LEDGE_JUMP_DEFAULT}),
         core.test_type(Walk_Actions,default=proc(dst:^Walk_Actions) {dst^=walk_actions_default()}),
     )
+}
+
+// A simulation alone, with the default capacities: where the test of a library that owns bodies makes them.
+// state_destroy frees it.
+test_state_make :: proc(state:^Physics_State) -> bool {
+    settings:Physics_Settings
+    job_system:jobs.Job_System
+    problems:core.Problems
+    return state_make(state,&settings,&job_system,&problems)
 }
 
 test_host_destroy :: proc(h:^Test_Physics_Host) {
