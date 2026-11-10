@@ -102,7 +102,7 @@ reports for each ability of the kit.
   cancellation: the ability decides the timing and the animation follows. An ability interrupted
   or cancelled stops its action unless the one that follows plays the same action: in another
   layer nothing else would end it, and a looping section would play on.
-- Movement: `phys.add_move` with the window's velocity and length, `phys.remove_moves` when the
+- Movement: `locomotion.add_move` with the window's velocity and length, `remove_moves` when the
   ability ends before the window closes; knockback is a move of the target. The dash is a layered
   move, not a teleport.
 - Hitboxes: `phys.overlap_box`, `overlap_sphere` and `overlap_capsule` at the user's

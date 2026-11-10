@@ -45,8 +45,14 @@ copied as a block or used in place.
 
 **Migration** (`Migration`, compiled once per pair of types and applied per row):
 
-- Fields are paired by name. One without a source keeps the default given by whoever reads (zero if
-  none is given); one without a destination is discarded.
+- Fields are paired by name, or by a name the destination field had: the tag `was=` lists them
+  (`mirai:"was=strength power"`), so a value stored before a rename, or before several, is read.
+  An earlier name that is another field of the struct is refused when the type is added. The tag
+  is not in the binary schema: only the program's type reads by it.
+- One without a source keeps the default given by whoever reads (zero if none is given). One
+  without a destination is lost, and `Migration.removed` lists it by its path, as
+  `Migration.incompatible` lists the fields whose shapes do not convert; whoever reads a document
+  reports both (scene loads: `engine/scene` `Stored`).
 - Numbers are converted by value and saturate in the destination's range (NaN to integer is 0);
   bool is nonzero.
 - Enums and bit sets go by member name: a member the destination does not have leaves the default
