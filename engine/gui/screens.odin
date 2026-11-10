@@ -537,8 +537,8 @@ bind_rows :: proc(user:rawptr,name:u64) -> (data:rawptr,count,stride:int,stamp:u
     if source==nil || source.storage {return}
     table,_:=core.world_table(b.world,source.type)
     if table==nil || table.on<=0 {return}
-    // Both only grow: a write raises the version, rows that come or go the layout.
-    return core.raw_value(table,source.info,0),table.on,source.info.size,table.version+table.layout
+    // The version only grows, with every write and every row that comes, goes or moves.
+    return core.raw_value(table,source.info,0),table.on,source.info.size,table.version
 }
 
 // Brings the copy an interface is built with up to date: what its paths
