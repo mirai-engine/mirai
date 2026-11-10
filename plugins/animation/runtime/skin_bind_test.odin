@@ -54,8 +54,8 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     skeleton_id:=base.Asset_Id{0x618,0x98}
     if !testing.expect_value(t,asset.skeleton_save(skeleton_path,&types,{id=skeleton_id,bones=nodes[:]}),asset.Error.None) {return}
     if !testing.expect_value(t,rig_mesh_save(path,&types,{id=id,skeleton=skeleton_id,joints=joints[:]},vertices,indices[:],influences),asset.Error.None) {return}
-    device,message:=shared_device.take(t, hardware_rt = false)
-    if device==nil {if !rhi.gpu_skip_allowed() {testing.expect(t,false,message)};return}
+    device:=shared_device.take_or_skip(t,hardware_rt=false)
+    if device==nil {return}
     renderer:=new(gpu.Renderer);defer free(renderer)
     settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled,settings.reflections,settings.taa=false,false,false
     if !testing.expect(t,gpu.renderer_init(renderer,{device=device,width=96,height=64,settings=settings}),renderer.error) {return}

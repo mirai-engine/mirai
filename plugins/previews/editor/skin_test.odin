@@ -14,8 +14,8 @@ import eanim "plugins:animation/runtime"
 
 @(test)
 preview_samples_compact_bones_and_frames_the_clip_without_changing_authored_poses :: proc(t:^testing.T) {
-    device,message:=shared_device.take(t, hardware_rt = false)
-    if device==nil {if !rhi.gpu_skip_allowed() {testing.expect(t,false,message)};return}
+    device:=shared_device.take_or_skip(t,hardware_rt=false)
+    if device==nil {return}
     renderer:gpu.Renderer
     settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled,settings.reflections=false,false
     if !testing.expect(t,gpu.renderer_init(&renderer,{device=device,width=64,height=64,settings=settings}),renderer.error) {return}
