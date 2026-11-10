@@ -9,16 +9,16 @@ import multiplayer "plugins:multiplayer/runtime"
 
 @(private="file")
 Net_World :: struct {
-    entities:core.Entities,
+    using world:core.Test_World,
     removed:core.Table(foliage.Foliage_Removed),
     objects:core.Table(multiplayer.Replicate),
     transforms:core.Table(core.Transform),
 }
 
 @(private="file")
-net_settle :: proc(w:^Net_World) {
-    core.table_settle(&w.removed,&w.entities);core.table_settle(&w.objects,&w.entities);core.table_settle(&w.transforms,&w.entities)
-    core.entities_settle(&w.entities)
+net_types :: proc(types:^[dynamic]core.Test_Type) {
+    foliage.test_types(types)
+    multiplayer.test_types(types)
 }
 
 // A server replicates each entity of the instances taken out of a cell
@@ -27,16 +27,9 @@ net_settle :: proc(w:^Net_World) {
 @(test)
 a_server_replicates_the_instances_taken_out_of_each_cell_to_every_connection_as_one_object :: proc(t:^testing.T) {
     w:Net_World
-    core.entities_init(&w.entities)
-    core.table_init(&w.removed,"Foliage_Removed");core.table_init(&w.objects,"Replicate");core.table_init(&w.transforms,"Transform")
-    defer {core.table_destroy(&w.removed);core.table_destroy(&w.objects);core.table_destroy(&w.transforms);core.entities_destroy(&w.entities)}
-    tables:=[?]core.Table_Info{
-        {name="Foliage_Removed",type=foliage.Foliage_Removed,info=type_info_of(foliage.Foliage_Removed),offset=offset_of(Net_World,removed)},
-        {name="Replicate",type=multiplayer.Replicate,info=type_info_of(multiplayer.Replicate),offset=offset_of(Net_World,objects)},
-        {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Net_World,transforms)},
-    }
-    info:=core.World_Info{entities=offset_of(Net_World,entities),tables=tables[:]}
-    commands:=core.commands(&w,&info)
+    if !core.test_world_init(t,&w,net_types) {return}
+    defer core.test_world_destroy(&w)
+    commands:=core.commands(&w,core.test_world_info(&w))
     cells:[2]core.Entity
     for &e,i in cells {
         e=core.create(&w.entities)
@@ -44,12 +37,12 @@ a_server_replicates_the_instances_taken_out_of_each_cell_to_every_connection_as_
         page.instances[0],page.instances[1]={u64(i)},{u64(i)+10}
         core.add(&w.removed,e,page)
     }
-    net_settle(&w)
+    core.test_world_settle(&w)
     net:Foliage_Net
     network:core.Network
     step :: proc(net:^Foliage_Net,network:^core.Network,w:^Net_World,commands:core.Commands) {
         foliage_net_removals(net,core.ref(network),core.read(&w.removed),core.read(&w.objects),core.read(&w.transforms),commands)
-        net_settle(w)
+        core.test_world_settle(w)
     }
     for role in ([2]core.Network_Role{.Standalone,.Client}) {
         network.role=role
@@ -68,13 +61,13 @@ a_server_replicates_the_instances_taken_out_of_each_cell_to_every_connection_as_
     page:=core.get(&w.removed,cells[0])
     page.instances[page.count]={99}
     page.count+=1
-    net_settle(&w)
+    core.test_world_settle(&w)
     step(&net,&network,&w,commands)
     testing.expect_value(t,core.version(core.read(&w.objects)),version)
     // A cell that has its first, or one that fills its entity, is one object more.
     later:=core.create(&w.entities)
     core.add(&w.removed,later,foliage.Foliage_Removed{foliage=500,coord={7,7},count=1})
-    net_settle(&w)
+    core.test_world_settle(&w)
     step(&net,&network,&w,commands)
     testing.expect(t,core.has(core.read(&w.objects),later))
     testing.expect_value(t,core.count(core.read(&w.objects)),3)
