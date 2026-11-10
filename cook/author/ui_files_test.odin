@@ -1,7 +1,6 @@
 package author
 
 import "core:fmt"
-import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
@@ -23,10 +22,8 @@ Project :: struct {
 
 @(private="file")
 project_init :: proc(t:^testing.T,p:^Project,name:string) -> bool {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    p.root=fmt.aprintf("%s/mirai-ui-inspector-%d-%s",directory,os.get_pid(),name)
-    os.remove_all(p.root)
-    os.make_directory_all(p.root)
+    p.root=base.test_folder(t,fmt.tprintf("ui-inspector-%s",name))
+    if p.root=="" {return false}
     asset.registry_init(&p.registry,p.root)
     asset.types_init(&p.types)
     p.assets={&p.registry,&p.types}
@@ -37,8 +34,6 @@ project_init :: proc(t:^testing.T,p:^Project,name:string) -> bool {
 project_destroy :: proc(p:^Project) {
     asset.registry_destroy(&p.registry)
     asset.types_destroy(&p.types)
-    os.remove_all(p.root)
-    delete(p.root)
 }
 
 // Writes records to path as the .ui id; imports as host.ui_tree_imports reads them.
