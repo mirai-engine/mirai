@@ -33,7 +33,7 @@ Ai_Agent_Result :: struct {
     answer:[AI_FINISH_RESPONSE_BYTES+1]u8 `mirai:"text,label=What it answered once it finished; empty while it works"`,
 }
 Ai_Agent_List_Result :: struct {
-    agents:[1]Ai_Agent_Result `mirai:"list,label=The subagents of the main chat; the latest first"`,
+    agents:[]Ai_Agent_Result `mirai:"label=The subagents of the main chat; the latest first"`,
 }
 
 @(private)

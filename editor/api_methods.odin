@@ -269,8 +269,8 @@ Api_Build_Result :: struct {
 
 Api_Editor_Inspect :: struct {
     frame:u64,
-    selection:[1]base.Entity_Id `mirai:"list"`,
-    active:u8 `mirai:"any,label=The id of the active entity of the selection; null without a selection"`,
+    selection:[]base.Entity_Id,
+    active:serial.Json `mirai:"label=The id of the active entity of the selection; null without a selection"`,
     tool:[8]u8 `mirai:"text,label=move rotate or scale"`,
     plugin_tool:[32]u8 `mirai:"text,optional,label=The plugin tool that is on (such as terrain or foliage) by the name it turns on with"`,
     plugin_tool_aside:bool `mirai:"optional,label=It lent the scene to the gizmo (W or E or R) and stays on"`,
@@ -282,7 +282,7 @@ Api_Editor_Inspect :: struct {
     interactions:Api_Editor_Interactions,
     window:Api_Editor_Window,
     layout:Api_Editor_Layout `mirai:"label=Rectangles as x y width height in points from the top left of the window"`,
-    actions:[1]Api_Editor_Action `mirai:"list,label=Every action; editor.action runs them by name"`,
+    actions:[]Api_Editor_Action `mirai:"label=Every action; editor.action runs them by name"`,
 }
 Api_Editor_Document :: struct {
     path:[API_PATH_BYTES]u8 `mirai:"text"`,
@@ -313,7 +313,7 @@ Api_Editor_Window :: struct {
 }
 Api_Editor_Layout :: struct {
     bar,left,right,bottom:[4]f32,
-    widgets:u8 `mirai:"any,label=The rectangle of each widget drawn by key: action.<name> for an action; menu.<name> for a menu; stats; share"`,
+    widgets:serial.Json `mirai:"label=The rectangle of each widget drawn by key: action.<name> for an action; menu.<name> for a menu; stats; share"`,
 }
 Api_Editor_Action :: struct {
     name:[32]u8 `mirai:"text"`,

@@ -40,9 +40,9 @@ Api_Play_Observe :: struct {
     stuck:bool `mirai:"label=The body asks to move and has not moved for a while"`,
     player:Api_Play_Observe_Player `mirai:"optional,label=The body the focused seat drives; absent without one"`,
     ui:Api_Play_Observe_Ui `mirai:"optional,label=The top screen of the focused player; absent without one"`,
-    problems:[1]Api_Play_Observe_Problem `mirai:"list,optional,label=core.report problems since the last observe"`,
+    problems:[]Api_Play_Observe_Problem `mirai:"optional,label=core.report problems since the last observe"`,
     problems_more:int `mirai:"optional,label=New problems that did not fit"`,
-    targets:[1]Api_Play_Observe_Target `mirai:"list,optional,label=The nearest matches of targets"`,
+    targets:[]Api_Play_Observe_Target `mirai:"optional,label=The nearest matches of targets"`,
     capture:editor.Api_Capture_Result `mirai:"optional,label=The image written to path"`,
     capture_error:[256]u8 `mirai:"optional,text,label=Why the image of path could not be written"`,
     ran:int `mirai:"optional,label=With step: the ticks it ran"`,
@@ -60,7 +60,7 @@ Api_Play_Observe_Ui :: struct {
     screen:[editor.API_PATH_BYTES]u8 `mirai:"text,label=The .ui that takes the input"`,
     modal:bool `mirai:"optional"`,
     focused:[ui.TREE_NAME_CAPACITY]u8 `mirai:"optional,text,label=The node with the focus"`,
-    buttons:[1]Api_Play_Observe_Button `mirai:"list,label=What can be pressed, in window points play.step takes"`,
+    buttons:[]Api_Play_Observe_Button `mirai:"label=What can be pressed, in window points play.step takes"`,
     buttons_more:int `mirai:"optional,label=Buttons that did not fit"`,
 }
 Api_Play_Observe_Button :: struct {

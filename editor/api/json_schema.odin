@@ -14,9 +14,9 @@ import "mirai:std/serial"
 // string of at most N bytes; an
 // array of numbers has exactly its length and any other array at most that.
 // An array has no default of its own: its items carry the default of an
-// element when every element has the same one. A list (an array tagged list)
-// has no bounds on its length and its texts may be empty, and a field tagged
-// any takes any JSON value.
+// element when every element has the same one. A slice is a list with no
+// bounds on its length, whose texts may be empty; a string has no bound on
+// its length, and a serial.Json field takes any JSON value.
 
 @(private)
 raw :: #force_inline proc(w:^serial.Writer,text:string) {serial.text_write_raw(w,text)}
@@ -81,9 +81,9 @@ array_element :: proc(sc:^serial.Schema,type:serial.Type,image:[]u8) -> []u8 {
 // field: the field that holds the value; it gives the bounds, the text flag
 // and, when decor is set, the description. image: the value of a struct or
 // an array as the defaults hold it. default: the value to show as the
-// default of an optional field. list: an array of any length. params: the
-// value is of the params of a method.
-schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^serial.Field=nil,image:[]u8=nil,decor:=false,default:[]u8=nil,list:=false,params:=false) {
+// default of an optional field. params: the value is of the params of a
+// method.
+schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^serial.Field=nil,image:[]u8=nil,decor:=false,default:[]u8=nil,params:=false) {
     sc:=&s.schema
     type:=sc.types[index]
     count:=0
@@ -139,17 +139,12 @@ schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^s
             if emitted>0 {raw(w,",")}
             emitted+=1
             serial.text_write_string(w,f.name);raw(w,":")
-            tags:=f.hints
-            if .Any in tags {
-                described:=0
-                raw(w,"{");write_decor(w,&described,&f);raw(w,"}")
-                continue
-            }
             part:[]u8
             if image!=nil {part=image[f.offset:][:sc.types[f.type].size]}
             value:[]u8
-            if part!=nil && .Optional in tags && sc.types[f.type].kind!=.Struct && !all_zero(part) {value=part}
-            schema_write(w,s,f.type,&f,part,true,value,.List in tags,params)
+            kind:=sc.types[f.type].kind
+            if part!=nil && .Optional in f.hints && kind!=.Struct && kind!=.Slice && kind!=.String && kind!=.Json && !all_zero(part) {value=part}
+            schema_write(w,s,f.type,&f,part,true,value,params)
         }
         raw(w,"}")
         required:=0
@@ -169,8 +164,8 @@ schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^s
         } else if field!=nil && .Text in field.flags && serial.type_is_texts(sc,index) {
             shown=nil
             entry(w,&count,"type");raw(w,`"array"`)
-            entry(w,&count,"items");raw(w,list?`{"type":"string","maxLength":`:`{"type":"string","minLength":1,"maxLength":`);serial.text_write_uint(w,u64(sc.types[type.elem].count));raw(w,"}")
-            if !list {entry(w,&count,"maxItems");serial.text_write_uint(w,u64(type.count))}
+            entry(w,&count,"items");raw(w,`{"type":"string","minLength":1,"maxLength":`);serial.text_write_uint(w,u64(sc.types[type.elem].count));raw(w,"}")
+            entry(w,&count,"maxItems");serial.text_write_uint(w,u64(type.count))
         } else {
             shown=nil
             elem:=sc.types[type.elem]
@@ -178,14 +173,27 @@ schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^s
             element_default:[]u8
             if default!=nil && elem.kind!=.Struct && value!=nil && !all_zero(value) {element_default=value}
             entry(w,&count,"type");raw(w,`"array"`)
-            entry(w,&count,"items");schema_write(w,s,type.elem,field,value,false,element_default,false,params)
-            if !list {
-                if elem.kind==.Float || elem.kind==.Int || elem.kind==.Uint {
-                    entry(w,&count,"minItems");serial.text_write_uint(w,u64(type.count))
-                }
-                entry(w,&count,"maxItems");serial.text_write_uint(w,u64(type.count))
+            entry(w,&count,"items");schema_write(w,s,type.elem,field,value,false,element_default,params)
+            if elem.kind==.Float || elem.kind==.Int || elem.kind==.Uint {
+                entry(w,&count,"minItems");serial.text_write_uint(w,u64(type.count))
             }
+            entry(w,&count,"maxItems");serial.text_write_uint(w,u64(type.count))
         }
+    case .Slice:
+        shown=nil
+        entry(w,&count,"type");raw(w,`"array"`)
+        entry(w,&count,"items")
+        if field!=nil && .Text in field.flags && serial.type_is_bytes(sc,type.elem) {
+            raw(w,`{"type":"string","maxLength":`);serial.text_write_uint(w,u64(sc.types[type.elem].count));raw(w,"}")
+        } else {
+            schema_write(w,s,type.elem,field,nil,false,nil,params)
+        }
+    case .String:
+        shown=nil
+        entry(w,&count,"type");raw(w,`"string"`)
+        if field!=nil && .Entity in field.hints {entry(w,&count,"x-entity");raw(w,ENTITY_NAMES)}
+    case .Json:
+        shown=nil
     }
     if decor && field!=nil {write_decor(w,&count,field)}
     if shown!=nil {

@@ -163,7 +163,8 @@ schema_string :: proc(s:^Schema,text:string) -> string {
     return copied
 }
 
-// Checks what schema_read promises. Also true of every schema built by schema_add.
+// Checks what schema_read promises. Also true of every schema built by
+// schema_add that is not unsized: a type of an unsized one has no binary form.
 schema_validate :: proc(s:^Schema) -> Schema_Error {
     depths,error:=make([]u8,len(s.types),s.allocator)
     if error!=nil {return .Out_Of_Memory}
@@ -224,6 +225,8 @@ schema_validate :: proc(s:^Schema) -> Schema_Error {
             if s.types[type.elem].size==0 && type.count>0 {return .Invalid_Type}
             type.first=0
             depth=depths[type.elem]+1
+        case .Slice,.String,.Json:
+            return .Invalid_Type
         }
         if depth>SCHEMA_MAX_DEPTH {return .Too_Deep}
         depths[index]=depth
@@ -251,7 +254,7 @@ schema_hashes_update :: proc(s:^Schema,hashes:^[dynamic]u64) -> bool {
                 hash=base.hash_combine(hash,u64(field.offset))
                 hash=base.hash_combine(hash,hashes[field.type])
             }
-        case .Array:
+        case .Array,.Slice:
             hash=base.hash_combine(hash,hashes[type.elem])
         }
         if layout_named(type) {hash=layout_choices(s,type,hash)}
@@ -324,7 +327,7 @@ schema_import :: proc(link:^Schema_Import,type:Type_Index) -> Type_Index {
             schema_type_drop(dst,copied)
             return TYPE_NONE
         }
-    case .Array:
+    case .Array,.Slice:
         copied.elem=schema_import(link,source.elem)
         if copied.elem==TYPE_NONE {return TYPE_NONE}
     }

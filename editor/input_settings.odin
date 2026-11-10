@@ -752,14 +752,14 @@ Api_Input :: struct {
     tap_ticks:u32 `mirai:"label=Ticks a press may be held and still be a tap"`,
     hold_ticks:u32 `mirai:"label=Ticks a press is held before it is a hold"`,
     problem:[512]u8 `mirai:"text,label=Why input.mirai of the project was not read, so that input.set does not write over it; empty when it was"`,
-    actions:[1]Api_Input_Action `mirai:"list,label=The actions the code declares"`,
+    actions:[]Api_Input_Action `mirai:"label=The actions the code declares"`,
 }
 Api_Input_Action :: struct {
     name:[64]u8 `mirai:"text,label=What input.set and input.mirai call it"`,
 
     kind:[8]u8 `mirai:"text,label=Button; Axis or Axis2"`,
     source:[8]u8 `mirai:"text,label=code: the default of the code; file: input.mirai of the project changes it"`,
-    bindings:u8 `mirai:"any,label=The bindings in effect as input.mirai writes them"`,
+    bindings:serial.Json `mirai:"label=The bindings in effect as input.mirai writes them"`,
 }
 
 @(private)

@@ -26,7 +26,7 @@ Api_Asset_Users_Params :: struct {
 }
 
 Api_Asset_Users_Result :: struct {
-    used_by:[1][API_PATH_BYTES]u8 `mirai:"text,list,label=The files that reference the asset or a part it owns, by id: moving it keeps them working and deleting it breaks them"`,
+    used_by:[][API_PATH_BYTES]u8 `mirai:"text,label=The files that reference the asset or a part it owns, by id: moving it keeps them working and deleting it breaks them"`,
 }
 
 ASSET_DELETE_USERS :: 4 // rows of the files that use it; the rest is a count

@@ -42,13 +42,13 @@ Api_Play_Scenario_Result :: struct {
     passed:bool `mirai:"label=Every scenario passed"`,
     total:int `mirai:"label=Scenarios it ran"`,
     failed:int `mirai:"label=Scenarios that failed"`,
-    scenarios:[1]Api_Scenario_Report `mirai:"list,label=One per file in the order of their names"`,
+    scenarios:[]Api_Scenario_Report `mirai:"label=One per file in the order of their names"`,
 }
 Api_Scenario_Report :: struct {
     path:[API_PATH_BYTES]u8 `mirai:"text,label=The file: relative to the project when it is inside"`,
     scene:[API_PATH_BYTES]u8 `mirai:"text,label=The scene it played as the file names it; empty: the one open"`,
     steps:int `mirai:"label=Steps of the file"`,
-    ran:[1]Api_Scenario_Step `mirai:"list,label=The steps it ran in order up to the first that failed"`,
+    ran:[]Api_Scenario_Step `mirai:"label=The steps it ran in order up to the first that failed"`,
     passed:bool,
     failure:[API_SCENARIO_TEXT]u8 `mirai:"text,label=What failed first and why; empty when it passed"`,
     tick:u64 `mirai:"label=The tick of the game when it stopped"`,
@@ -56,7 +56,7 @@ Api_Scenario_Report :: struct {
 Api_Scenario_Step :: struct {
     name:[128]u8 `mirai:"optional,text,label=The name the file gives it"`,
     method:[64]u8 `mirai:"text"`,
-    result:u8 `mirai:"any,label=What the method answered as it answers a call; null when the call failed"`,
+    result:serial.Json `mirai:"label=What the method answered as it answers a call; null when the call failed"`,
     passed:bool,
     tick:u64 `mirai:"label=The tick of the game after it"`,
     error:[API_SCENARIO_TEXT]u8 `mirai:"text,label=Why the call failed; empty when it answered"`,

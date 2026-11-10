@@ -60,8 +60,8 @@ Ai_Task_Result :: struct {
     review_finished:bool `mirai:"label=The user confirmed its result"`,
     review_pending:bool `mirai:"label=Changes to the scene or its settings or files wait for review"`,
     files_changed:bool `mirai:"label=The agent changed files of the project its review could not keep (larger than 1 MB, or past its capacity); ai.revert refuses it"`,
-    changed:[1]base.Entity_Id `mirai:"list,label=The entities it changed"`,
-    changed_files:[1][AI_PATH_BYTES]u8 `mirai:"text,list,label=Project paths of the files it wrote through the API"`,
+    changed:[]base.Entity_Id `mirai:"label=The entities it changed"`,
+    changed_files:[][AI_PATH_BYTES]u8 `mirai:"text,label=Project paths of the files it wrote through the API"`,
     skipped:int `mirai:"label=Changes that reverting it kept because others changed them later"`,
     undone:bool `mirai:"label=Its changes were reverted"`,
     declined:bool `mirai:"label=The user reverted it; ai.restore takes the changes back for review"`,
@@ -69,7 +69,7 @@ Ai_Task_Result :: struct {
     finish_called:bool `mirai:"label=The agent called finish; the task runs until its ACP turn ends"`,
     lines:int `mirai:"label=Lines of its transcript so far"`,
     first:int `mirai:"optional,label=Of a task asked by id: the line its transcript starts at"`,
-    transcript:[1]Ai_Task_Line `mirai:"list,optional,label=Of a task asked by id: its lines from first"`,
+    transcript:[]Ai_Task_Line `mirai:"optional,label=Of a task asked by id: its lines from first"`,
 }
 Ai_Task_Line :: struct {
     kind:[8]u8 `mirai:"text,label=prompt (what it was asked); output (printed by the agent); note (said by the editor); report (a subagent with this id ended a turn) or divider (a new context of the chat began)"`,
@@ -77,13 +77,13 @@ Ai_Task_Line :: struct {
 }
 
 Ai_Status_Result :: struct {
-    running:[1]int `mirai:"list,label=The tasks a worker runs"`,
+    running:[]int `mirai:"label=The tasks a worker runs"`,
     process_running:bool `mirai:"label=Whether a process of an agent is open; also between turns"`,
     capacity:int `mirai:"label=How many conversations run at once"`,
     show_agents_in_scene:bool,
-    permissions:[1]Ai_Status_Permission `mirai:"list,label=The requests of agents that wait for the user"`,
+    permissions:[]Ai_Status_Permission `mirai:"label=The requests of agents that wait for the user"`,
     chat:Ai_Status_Chat,
-    tasks:[1]Ai_Task_Result `mirai:"list,label=Every task; with id only that one"`,
+    tasks:[]Ai_Task_Result `mirai:"label=Every task; with id only that one"`,
 }
 Ai_Status_Permission :: struct {
     index:int `mirai:"label=What ai.permission takes as index"`,

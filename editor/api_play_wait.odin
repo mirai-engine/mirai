@@ -38,11 +38,11 @@ Api_Play_Check_Params :: struct {
 Api_Play_Check_Result :: struct {
     passed:bool `mirai:"label=Every condition holds"`,
     tick:u64 `mirai:"label=The tick of the game they were read at"`,
-    results:[1]Api_Play_Check_Entry `mirai:"list,label=One per condition in their order"`,
+    results:[]Api_Play_Check_Entry `mirai:"label=One per condition in their order"`,
 }
 Api_Play_Check_Entry :: struct {
     passed:bool,
-    value:u8 `mirai:"any,label=What it read as play.inspect writes it; null when the entity or the component or the storage is not there"`,
+    value:serial.Json `mirai:"label=What it read as play.inspect writes it; null when the entity or the component or the storage is not there"`,
 }
 
 Api_Play_Get_Params :: struct {
@@ -54,7 +54,7 @@ Api_Play_Get_Params :: struct {
 Api_Play_Get_Result :: struct {
     entity:[API_HANDLE_TEXT]u8 `mirai:"text,label=The handle of the entity"`,
     tick:u64 `mirai:"label=The tick of the game it was read at"`,
-    value:u8 `mirai:"any,label=The value as play.inspect writes it"`,
+    value:serial.Json `mirai:"label=The value as play.inspect writes it"`,
 }
 
 @(private)

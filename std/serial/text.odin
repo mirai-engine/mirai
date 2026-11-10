@@ -1,6 +1,7 @@
 package serial
 
 import "base:intrinsics"
+import "base:runtime"
 import "core:mem"
 import "core:slice"
 import "core:strconv"
@@ -30,6 +31,12 @@ Text_Format :: enum u8 {
 text_write :: proc(w:^Writer,s:^Schema,type:Type_Index,data:[]u8,format:=Text_Format.Pretty,depth:=0,is_text:=false,omit_fields:Field_Flags={.Transient}) {
     if !type_valid(s,type) || len(data)<int(s.types[type].size) {return}
     text_write_value(w,s,type,data[:s.types[type].size],is_text && (type_is_bytes(s,type) || type_is_texts(s,type)),format,depth,omit_fields)
+}
+
+// The value of a struct, a slice or a string of a type the schema has: T is
+// what a schema describes, and one that is unsized is what holds it.
+text_write_of :: proc(w:^Writer,s:^Schema,type:Type_Index,value:^$T,format:=Text_Format.Pretty) {
+    text_write(w,s,type,mem.ptr_to_bytes(value),format)
 }
 
 text_write_raw :: #force_inline proc(w:^Writer,text:string) {write_bytes(w,transmute([]u8)text)}
@@ -240,6 +247,15 @@ text_write_value :: proc(w:^Writer,s:^Schema,index:Type_Index,bytes:[]u8,is_text
             return
         }
         text_write_array(w,s,index,bytes,int(type.count),format,depth,omit_fields,is_text && type_is_texts(s,index))
+    case .Slice:
+        held:=intrinsics.unaligned_load((^runtime.Raw_Slice)(raw_data(bytes)))
+        count:=held.data==nil?0:max(held.len,0)
+        text_write_array(w,s,index,mem.byte_slice(held.data,count*int(s.types[type.elem].size)),count,format,depth,omit_fields,is_text && type_is_bytes(s,type.elem))
+    case .String:
+        text_write_string(w,intrinsics.unaligned_load((^string)(raw_data(bytes))))
+    case .Json:
+        text:=intrinsics.unaligned_load((^string)(raw_data(bytes)))
+        text_write_raw(w,text!=""?text:"null")
     }
 }
 
@@ -293,7 +309,7 @@ text_write_field :: proc(w:^Writer,s:^Schema,field:Field,part:[]u8,format:Text_F
     text_write_value(w,s,field.type,part,.Text in field.flags && (type_is_bytes(s,field.type) || type_is_texts(s,field.type)),format,depth,omit_fields)
 }
 
-// The first count elements of a fixed array; texts: they are text fields.
+// The first count elements of an array or of what a slice holds; texts: they are text fields.
 @(private="file")
 text_write_array :: proc(w:^Writer,s:^Schema,index:Type_Index,bytes:[]u8,count:int,format:Text_Format,depth:int,omit_fields:Field_Flags,texts:=false) {
     type:=s.types[index]
@@ -340,6 +356,7 @@ Text_Error_Code :: enum u8 {
     Unknown_Entity,    // a text a reader with entities could not take for one: names says why
     Too_Deep,
     Invalid_Type,      // the type is not of the schema, or the destination is shorter than it
+    Out_Of_Memory,     // no memory for what a slice or a string holds
 }
 
 Text_Error :: struct {
@@ -367,6 +384,7 @@ Text_Reader :: struct {
     names:[dynamic]u8, // of the error
     assets:Text_Assets,
     asset_kinds:string, // of the field being read
+    values:runtime.Allocator, // where what a slice or a string read holds goes: the allocator of the reader
     loose_names:bool,   // text a person or an agent wrote: members of enums and bit sets as base.name_find takes them
 }
 
@@ -379,7 +397,7 @@ Text_Assets :: struct {
 }
 
 text_reader_init :: proc(r:^Text_Reader,text:string,allocator:=context.allocator) {
-    r^={text=text}
+    r^={text=text,values=allocator}
     r.scratch=make([dynamic]u8,allocator)
     r.names=make([dynamic]u8,allocator)
 }
@@ -540,6 +558,7 @@ text_error_words :: proc(code:Text_Error_Code) -> string {
     case .Unknown_Entity: return "no such entity"
     case .Too_Deep: return "nesting too deep"
     case .Invalid_Type: return "a type that is not of the schema, or a destination shorter than it"
+    case .Out_Of_Memory: return "not enough memory for the value"
     }
     return "invalid"
 }
@@ -874,9 +893,7 @@ text_read_value :: proc(r:^Text_Reader,s:^Schema,index:Type_Index,bytes:[]u8,is_
             text_expect(r,':') or_return
             r.asset_kinds=found.asset_kinds
             part:=bytes[found.offset:][:s.types[found.type].size]
-            if .Any in found.hints {
-                text_skip(r) or_return
-            } else if !text_read_value(r,s,found.type,part,.Text in found.flags && (type_is_bytes(s,found.type) || type_is_texts(s,found.type))) {
+            if !text_read_value(r,s,found.type,part,.Text in found.flags && (type_is_bytes(s,found.type) || type_is_texts(s,found.type))) {
                 text_error_within(r,found.name)
                 return false
             }
@@ -906,6 +923,54 @@ text_read_value :: proc(r:^Text_Reader,s:^Schema,index:Type_Index,bytes:[]u8,is_
             if text_accept(r,',') {continue}
             return text_expect(r,']')
         }
+    case .Slice:
+        if !text_accept(r,'[') {return text_fail(r,.Expected_Array)}
+        first:=r.offset
+        count:=0
+        if !text_accept(r,']') {
+            for {
+                text_skip(r) or_return
+                count+=1
+                if text_accept(r,',') {continue}
+                text_expect(r,']') or_return
+                break
+            }
+        }
+        elem:=s.types[type.elem]
+        held:runtime.Raw_Slice
+        if count>0 && elem.size>0 {
+            if count>max(int)/int(elem.size) {return text_fail(r,.Out_Of_Memory,start)}
+            data,error:=mem.alloc_bytes(count*int(elem.size),int(elem.align),r.values)
+            if error!=nil || len(data)<count*int(elem.size) {return text_fail(r,.Out_Of_Memory,start)}
+            r.offset=first
+            for i in 0..<count {
+                if !text_read_value(r,s,type.elem,data[i*int(elem.size):][:elem.size],is_text && type_is_bytes(s,type.elem)) {
+                    text_error_within_index(r,i)
+                    return false
+                }
+                text_accept(r,',')
+            }
+            text_expect(r,']') or_return
+            held.data=raw_data(data)
+        }
+        held.len=count
+        intrinsics.unaligned_store((^runtime.Raw_Slice)(raw_data(bytes)),held)
+        return true
+    case .String:
+        text:=text_string(r) or_return
+        copied:string
+        if text!="" {
+            data,error:=mem.alloc_bytes(len(text),1,r.values)
+            if error!=nil || len(data)<len(text) {return text_fail(r,.Out_Of_Memory,start)}
+            copy(data,text)
+            copied=string(data)
+        }
+        intrinsics.unaligned_store((^string)(raw_data(bytes)),copied)
+        return true
+    case .Json:
+        text_skip(r) or_return
+        intrinsics.unaligned_store((^string)(raw_data(bytes)),r.text[start:r.offset])
+        return true
     }
     return false
 }

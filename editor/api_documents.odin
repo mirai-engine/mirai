@@ -16,9 +16,9 @@ Api_Document_Params :: struct {
 
 Api_Documents_Result :: struct {
     active:[DOCUMENT_PATH_BYTES]u8 `mirai:"text,label=The file of the active tab; empty before it has one"`,
-    documents:[1]Api_Document_Tab `mirai:"list,label=The tabs of scenes and prefabs"`,
+    documents:[]Api_Document_Tab `mirai:"label=The tabs of scenes and prefabs"`,
     asset:[API_PATH_BYTES]u8 `mirai:"text,label=The asset document in front; empty when the active tab is in front"`,
-    assets:[1]Api_Asset_Document_Tab `mirai:"list,label=The asset documents"`,
+    assets:[]Api_Asset_Document_Tab `mirai:"label=The asset documents"`,
 }
 Api_Document_Tab :: struct {
     path:[DOCUMENT_PATH_BYTES]u8 `mirai:"text,label=Its file; empty before it has one"`,

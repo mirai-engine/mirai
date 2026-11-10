@@ -100,8 +100,8 @@ SOUND_SET_PARAMS_SCHEMA :: `{"type":"object","properties":{"sound_set":{"type":"
 Api_Sound_Set_Result :: struct {
     sound_set:base.Asset_Id,
     path:[API_PATH_BYTES]u8 `mirai:"text,optional,label=Under the assets folder"`,
-    values:u8 `mirai:"any,label=Its sounds by id with their weights; the ranges of volume and pitch it draws from and whether it repeats a sound; as sound_set.set takes them"`,
-    sounds:u8 `mirai:"any,label=A list with the path of each of its sounds; empty for one the assets do not have"`,
+    values:serial.Json `mirai:"label=Its sounds by id with their weights; the ranges of volume and pitch it draws from and whether it repeats a sound; as sound_set.set takes them"`,
+    sounds:serial.Json `mirai:"label=A list with the path of each of its sounds; empty for one the assets do not have"`,
 }
 
 @(private)

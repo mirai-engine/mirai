@@ -35,13 +35,13 @@ Api_Material_Capture_Result :: struct {
     program:[256]u8 `mirai:"text,label=The program it shows; empty for a material without one"`,
     image:[API_PATH_BYTES]u8 `mirai:"text,label=The PNG written with the views three per row and NaN pixels in magenta; MCP also returns the image"`,
     size:int `mirai:"label=Pixels of a side of each view"`,
-    views:[1]Api_Material_Capture_View `mirai:"list,label=What each view gives over the pixels the sphere covers"`,
+    views:[]Api_Material_Capture_View `mirai:"label=What each view gives over the pixels the sphere covers"`,
 }
 Api_Material_Capture_View :: struct {
     view:[16]u8 `mirai:"text"`,
     pixels:int `mirai:"label=Pixels with finite values"`,
     nan_count:int,
-    min,max,mean:[1]f32 `mirai:"list,label=One number per component"`,
+    min,max,mean:[]f32 `mirai:"label=One number per component"`,
     uniform:bool `mirai:"label=The same value at every pixel"`,
 }
 

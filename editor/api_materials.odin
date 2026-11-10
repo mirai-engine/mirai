@@ -25,9 +25,9 @@ Api_Material_Revert_Params :: struct {
 Api_Material_Result :: struct {
     material:base.Asset_Id,
     path:[API_PATH_BYTES]u8 `mirai:"text,optional,label=Under the assets folder"`,
-    values:u8 `mirai:"any,label=Its base; its layers (coat; fuzz; anisotropy; diffuse transmission; unlit); its maps and its program; as material.set takes them"`,
-    imported:u8 `mirai:"any,optional,label=Of an imported material: the values its source gave at the last import"`,
-    overrides:[1][asset.OVERRIDE_PATH_BYTES]u8 `mirai:"text,list,optional,label=Of an imported material: every field that differs from imported; importing it again keeps them"`,
+    values:serial.Json `mirai:"label=Its base; its layers (coat; fuzz; anisotropy; diffuse transmission; unlit); its maps and its program; as material.set takes them"`,
+    imported:serial.Json `mirai:"optional,label=Of an imported material: the values its source gave at the last import"`,
+    overrides:[][asset.OVERRIDE_PATH_BYTES]u8 `mirai:"text,optional,label=Of an imported material: every field that differs from imported; importing it again keeps them"`,
 }
 
 @(private)

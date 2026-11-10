@@ -21,7 +21,7 @@ Api_Component_Params :: struct {
 }
 
 Api_Component_List :: struct {
-    components:[1]Api_Component_Entry `mirai:"list"`,
+    components:[]Api_Component_Entry,
     left_out:[256]u8 `mirai:"text,optional,label=What the answer leaves out and how to ask for it"`,
 }
 Api_Component_Entry :: struct {
@@ -29,15 +29,15 @@ Api_Component_Entry :: struct {
     library:[64]u8 `mirai:"text,label=The package that declares it"`,
     description:[1024]u8 `mirai:"text,optional"`,
     plain_data:bool `mirai:"optional,label=Present and false when the component is not plain data: it has no default nor fields"`,
-    default:u8 `mirai:"any,optional,label=The value of a new component"`,
-    fields:[1]Api_Component_Field `mirai:"list,optional,label=Every field down to those of nested structs"`,
+    default:serial.Json `mirai:"optional,label=The value of a new component"`,
+    fields:[]Api_Component_Field `mirai:"optional,label=Every field down to those of nested structs"`,
 }
 Api_Component_Field :: struct {
     path:[256]u8 `mirai:"text,label=The field after those it is inside; separated by dots"`,
     type:[16]u8 `mirai:"text,label=Bool Int Uint Float Enum Bit_Set Entity Entity_Id Asset or Array; Text Color or Quaternion by its flags"`,
     element:[16]u8 `mirai:"text,optional,label=Of an Array: the kind of its elements"`,
     count:int `mirai:"optional,label=Of an Array: its length"`,
-    options:[1][64]u8 `mirai:"text,list,optional,label=Of an Enum or a Bit_Set: the names it takes"`,
+    options:[][64]u8 `mirai:"text,optional,label=Of an Enum or a Bit_Set: the names it takes"`,
     min:f32 `mirai:"optional"`,
     max:f32 `mirai:"optional"`,
     unit:[32]u8 `mirai:"text,optional"`,
@@ -55,7 +55,7 @@ Api_Asset_Params :: struct {
 
 Api_Asset_List :: struct {
     root:[API_PATH_BYTES]u8 `mirai:"text,label=The asset folder"`,
-    assets:[1]Api_Asset_Entry `mirai:"list"`,
+    assets:[]Api_Asset_Entry,
     total:int `mirai:"label=Assets the filters take"`,
     offset:int,
     shown:int,
@@ -83,8 +83,8 @@ Api_Detach_Result :: struct {
 
 // What api_asset_delete (asset_delete.odin) writes.
 Api_Asset_Delete_Result :: struct {
-    moved:[1][API_PATH_BYTES]u8 `mirai:"text,list,label=The paths moved to the trash: the asset and its parts"`,
-    used_by:[1][API_PATH_BYTES]u8 `mirai:"text,list,label=The files that use what moved; they keep the reference"`,
+    moved:[][API_PATH_BYTES]u8 `mirai:"text,label=The paths moved to the trash: the asset and its parts"`,
+    used_by:[][API_PATH_BYTES]u8 `mirai:"text,label=The files that use what moved; they keep the reference"`,
     error:[API_PATH_BYTES+64]u8 `mirai:"text,optional,label=Why the rest could not be moved after some were"`,
 }
 

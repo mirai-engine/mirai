@@ -3,6 +3,7 @@ package api
 import "base:intrinsics"
 import "base:runtime"
 import "core:math"
+import "core:mem"
 import "mirai:std/serial"
 
 // What reading params into a struct does not prove: required fields, the
@@ -112,6 +113,23 @@ check_required :: proc(c:^Checker,r:^serial.Text_Reader,index:serial.Type_Index)
         }
         if is_number_kind(elem.kind) && n!=int(type.count) {return check_fail(c,"must have %d elements, not %d",type.count,n)}
         return true
+    case .Slice:
+        if !serial.text_accept(r,'[') {return serial.text_skip(r)}
+        elem:=s.types[type.elem]
+        if elem.kind!=.Struct && elem.kind!=.Array && elem.kind!=.Slice {
+            r.offset-=1
+            return serial.text_skip(r)
+        }
+        if serial.text_accept(r,']') {return true}
+        for n:=0;;n+=1 {
+            mark:=c.path_len
+            path_index(c,n)
+            ok:=check_required(c,r,type.elem)
+            c.path_len=mark
+            if !ok {return false}
+            if serial.text_accept(r,',') {continue}
+            return serial.text_expect(r,']')
+        }
     }
     return serial.text_skip(r)
 }
@@ -197,6 +215,18 @@ check_value :: proc(c:^Checker,index:serial.Type_Index,bytes:[]u8,field:^serial.
             c.path_len=mark
             if !ok {return false}
         }
+    case .Slice:
+        if field!=nil && .Text in field.flags && serial.type_is_bytes(s,type.elem) {return true}
+        held:=(^runtime.Raw_Slice)(raw_data(bytes))^
+        elem:=int(s.types[type.elem].size)
+        for i in 0..<(held.data==nil?0:held.len) {
+            mark:=c.path_len
+            path_index(c,i)
+            ok:=check_value(c,type.elem,mem.byte_slice(rawptr(uintptr(held.data)+uintptr(i*elem)),elem),field,clamp)
+            c.path_len=mark
+            if !ok {return false}
+        }
+    case .String,.Json:
     }
     return true
 }

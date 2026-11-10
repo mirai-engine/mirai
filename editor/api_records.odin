@@ -94,20 +94,20 @@ Records_Api_Rejected :: struct {
 
 @(private)
 Api_Records_Types :: struct {
-    types:[1]Api_Records_Type `mirai:"list"`,
+    types:[]Api_Records_Type,
 }
 @(private)
 Api_Records_Type :: struct {
     type:[asset.RECORDS_TYPE]u8 `mirai:"text,label=library.Name: what records.create takes"`,
     description:[1024]u8 `mirai:"text,optional"`,
-    fields:[1]Api_Records_Field `mirai:"list,label=The fields of its rows"`,
-    tables:[1]Api_Records_Table_Entry `mirai:"list,label=Its .records in the assets"`,
+    fields:[]Api_Records_Field `mirai:"label=The fields of its rows"`,
+    tables:[]Api_Records_Table_Entry `mirai:"label=Its .records in the assets"`,
 }
 @(private)
 Api_Records_Field :: struct {
     name:[64]u8 `mirai:"text"`,
     type:[128]u8 `mirai:"text,label=As the code writes it"`,
-    options:[1][64]u8 `mirai:"text,list,optional,label=Of an enum: the names it takes"`,
+    options:[][64]u8 `mirai:"text,optional,label=Of an enum: the names it takes"`,
     records:[asset.RECORDS_TYPE]u8 `mirai:"text,optional,label=Of a core.Record: the type of the rows it names"`,
     description:[1024]u8 `mirai:"text,optional"`,
 }
@@ -122,20 +122,20 @@ Api_Records_Table :: struct {
     records:base.Asset_Id,
     path:[API_PATH_BYTES]u8 `mirai:"text,optional,label=Under the assets folder"`,
     type:[asset.RECORDS_TYPE]u8 `mirai:"text,label=library.Name of its rows"`,
-    rows:[1]Api_Records_Row `mirai:"list"`,
+    rows:[]Api_Records_Row,
 }
 @(private)
 Api_Records_Row :: struct {
     id:u64 `mirai:"label=What a core.Record keeps"`,
     name:[asset.RECORDS_NAME]u8 `mirai:"text"`,
-    values:u8 `mirai:"any,label=The row as records.set takes it; a core.Text is its id and a core.Record its table and row"`,
+    values:serial.Json `mirai:"label=The row as records.set takes it; a core.Text is its id and a core.Record its table and row"`,
     texts:u8 `mirai:"any,optional,label=By path of each core.Text field with a text: its text by language code; the key \"\" is the language the game is written in"`,
 }
 @(private)
 Api_Records_Removed :: struct {
     records:base.Asset_Id,
     path:[API_PATH_BYTES]u8 `mirai:"text,optional"`,
-    removed:[1][asset.RECORDS_NAME]u8 `mirai:"text,list"`,
+    removed:[][asset.RECORDS_NAME]u8 `mirai:"text"`,
 }
 @(private)
 Api_Records_Import :: struct {
@@ -143,7 +143,7 @@ Api_Records_Import :: struct {
     path:[API_PATH_BYTES]u8 `mirai:"text,optional"`,
     updated:int `mirai:"label=Rows of the table the file changed"`,
     added:int `mirai:"label=Rows the file added at the end"`,
-    rejected:[1]Api_Records_Rejected `mirai:"list,label=Rows of the file that changed nothing"`,
+    rejected:[]Api_Records_Rejected `mirai:"label=Rows of the file that changed nothing"`,
 }
 @(private)
 Api_Records_Rejected :: struct {

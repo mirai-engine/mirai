@@ -180,7 +180,7 @@ value_get :: proc(s:^Schema,type:Type_Index,data:[]u8,path:string) -> (value:Val
     case .Entity: return base.Entity(scalar_unsigned(bytes)),.None
     case .Entity_Id: return base.Entity_Id(scalar_unsigned(bytes)),.None
     case .Asset: return intrinsics.unaligned_load((^base.Asset_Id)(raw_data(bytes))),.None
-    case .Struct,.Array:
+    case .Struct,.Array,.Slice,.String,.Json:
     }
     return nil,.Not_A_Value
 }
@@ -276,7 +276,7 @@ value_set :: proc(s:^Schema,type:Type_Index,data:[]u8,path:string,value:Value) -
         id,ok:=value.(base.Asset_Id)
         if !ok {return .Wrong_Type}
         intrinsics.unaligned_store((^base.Asset_Id)(raw_data(bytes)),id)
-    case .Struct,.Array:
+    case .Struct,.Array,.Slice,.String,.Json:
         return .Not_A_Value
     }
     return .None

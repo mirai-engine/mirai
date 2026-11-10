@@ -75,16 +75,16 @@ Api_Profile_Load :: struct {
     elapsed_ms:f32 `mirai:"label=Since it began, until it ended or now"`,
     frames:int `mirai:"label=Frames while it loaded"`,
     entities:int,
-    waiting:[1]host.Load_Busy `mirai:"list,label=While Loading: what the last frame was busy with"`,
-    phases:[1]Api_Profile_Load_Phase `mirai:"list,label=The costliest first; Collision is part of Physics; Physics Collision Nav_Bake and Nav_Tiles happen in the ticks, inside physics_step and navigation_build"`,
-    assets:[1]Api_Profile_Load_Assets `mirai:"list,label=By kind, the costliest first"`,
-    slowest:[1]Api_Profile_Load_Asset `mirai:"list,label=The slowest assets, the slowest first"`,
-    functions:[1]Api_Profile_Load_Function `mirai:"list,label=The loop functions that cost the most while it loaded; none for a section"`,
-    waits:[1]Api_Profile_Load_Wait `mirai:"list,label=What it waited for before it was resident, the one that ended last first"`,
-    notes:[1][PROFILE_NOTE_BYTES]u8 `mirai:"text,list,label=How to read it and what to look at first"`,
+    waiting:[]host.Load_Busy `mirai:"label=While Loading: what the last frame was busy with"`,
+    phases:[]Api_Profile_Load_Phase `mirai:"label=The costliest first; Collision is part of Physics; Physics Collision Nav_Bake and Nav_Tiles happen in the ticks, inside physics_step and navigation_build"`,
+    assets:[]Api_Profile_Load_Assets `mirai:"label=By kind, the costliest first"`,
+    slowest:[]Api_Profile_Load_Asset `mirai:"label=The slowest assets, the slowest first"`,
+    functions:[]Api_Profile_Load_Function `mirai:"label=The loop functions that cost the most while it loaded; none for a section"`,
+    waits:[]Api_Profile_Load_Wait `mirai:"label=What it waited for before it was resident, the one that ended last first"`,
+    notes:[][PROFILE_NOTE_BYTES]u8 `mirai:"text,label=How to read it and what to look at first"`,
 }
 Api_Profile_Loads :: struct {
-    loads:[1]Api_Profile_Load `mirai:"list"`,
+    loads:[]Api_Profile_Load,
 }
 
 @(private)

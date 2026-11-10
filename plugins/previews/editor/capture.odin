@@ -53,8 +53,8 @@ Animation_Capture_Result :: struct {
     image:[1024]u8 `mirai:"text,label=The PNG written; MCP also returns the image"`,
     size:int `mirai:"label=Pixels of a side of a frame"`,
     short:bool `mirai:"label=The copy of the character shows only part of what the entity does"`,
-    frames:[1]f32 `mirai:"list,unit=s,label=The time of each frame of the strip"`,
-    views:[1][16]u8 `mirai:"text,list,label=The view of each row"`,
+    frames:[]f32 `mirai:"unit=s,label=The time of each frame of the strip"`,
+    views:[][16]u8 `mirai:"text,label=The view of each row"`,
 }
 
 @(private)

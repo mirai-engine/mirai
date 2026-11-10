@@ -25,7 +25,7 @@ Inspect_Track :: struct {
     property:cine.Cinematic_Property,
     valid:bool `mirai:"label=Its keys are in order of tick and its target can take them"`,
     value:[4]f32 `mirai:"label=At the position: xyz in the world for Position; a quaternion xyzw for Rotation; xyz of its own for Scale; x for Fov in radians or Near in meters"`,
-    keys:[1]Inspect_Key `mirai:"list"`,
+    keys:[]Inspect_Key,
 }
 Inspect_Shot :: struct {id,camera:base.Entity_Id,camera_name:[64]u8 `mirai:"text"`,tick,blend_ticks:u32 `mirai:"unit=ticks"`,ease:mm.Ease}
 Inspect_Marker :: struct {id:base.Entity_Id,name:[64]u8 `mirai:"text"`,tick:u32 `mirai:"unit=ticks"`,marker:[16]u8 `mirai:"text,label=Its id in hexadecimal"`,values:[4]f32}
@@ -40,10 +40,10 @@ Inspect_Result :: struct {
     looping,auto_play:bool,
     status:cine.Cinematic_Status,
     position:f32 `mirai:"unit=ticks,label=Where tracks and view are sampled"`,
-    tracks:[1]Inspect_Track `mirai:"list"`,
-    shots:[1]Inspect_Shot `mirai:"list"`,
-    markers:[1]Inspect_Marker `mirai:"list"`,
-    viewers:[1]Inspect_Viewer `mirai:"list"`,
+    tracks:[]Inspect_Track,
+    shots:[]Inspect_Shot,
+    markers:[]Inspect_Marker,
+    viewers:[]Inspect_Viewer,
     view:Inspect_View `mirai:"optional,label=What the viewers show at the position; absent without a shot in force"`,
     preview:Inspect_Preview `mirai:"label=The Cinematics tool of the editor"`,
 }

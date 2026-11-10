@@ -55,7 +55,7 @@ Api_Play_Qa_Report_Params :: struct {
 Api_Play_Qa_Report :: struct {
     passed:bool `mirai:"label=No violation"`,
     tick:u64 `mirai:"label=The tick of the game now"`,
-    violations:[1]Api_Play_Qa_Violation `mirai:"list"`,
+    violations:[]Api_Play_Qa_Violation,
     dropped:int `mirai:"optional,label=Violations that did not fit"`,
     repro:[editor.API_PATH_BYTES]u8 `mirai:"optional,text,label=The scenario written"`,
     filmstrip:editor.Api_Capture_Result `mirai:"optional,label=The filmstrip written"`,

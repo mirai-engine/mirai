@@ -28,7 +28,7 @@ Skeleton_Bone_Add_Result :: struct {
     asset:base.Asset_Id,
     path:[1024]u8 `mirai:"text"`,
     bone:[aa.NODE_PATH_CAPACITY]u8 `mirai:"text,label=Its canonical path: the target its tracks name"`,
-    clips:[1]Skeleton_Bone_Add_Clip `mirai:"list,label=The clips given: how many tracks now drive the bone"`,
+    clips:[]Skeleton_Bone_Add_Clip `mirai:"label=The clips given: how many tracks now drive the bone"`,
     dry_run:bool `mirai:"optional,label=Only on a dry run: nothing was written"`,
 }
 Skeleton_Bone_Add_Clip :: struct {

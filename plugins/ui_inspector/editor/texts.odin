@@ -175,7 +175,7 @@ Ui_Texts_File_Params :: struct {
 Ui_Texts_Result :: struct {
     localized:bool `mirai:"label=Whether it keeps a translation for each other language"`,
     source:gui.Language `mirai:"label=The language interfaces are written in"`,
-    texts:[1]Ui_Text_Entry `mirai:"list,label=One for each language of the game (Project Settings > UI)"`,
+    texts:[]Ui_Text_Entry `mirai:"label=One for each language of the game (Project Settings > UI)"`,
 }
 Ui_Text_Entry :: struct {
     language:gui.Language,
@@ -187,8 +187,8 @@ Ui_Texts_Exported :: struct {
     texts:int `mirai:"label=The localized texts written"`,
 }
 Ui_Texts_Imported :: struct {
-    files:[1][editor.API_PATH_BYTES]u8 `mirai:"list,text,label=The paths of the .ui it changed; each waits for Save"`,
-    rejected:[1]Ui_Texts_Rejected `mirai:"list"`,
+    files:[][editor.API_PATH_BYTES]u8 `mirai:"text,label=The paths of the .ui it changed; each waits for Save"`,
+    rejected:[]Ui_Texts_Rejected,
 }
 Ui_Texts_Rejected :: struct {
     row:int `mirai:"label=Of the CSV; the row of the columns is 1"`,

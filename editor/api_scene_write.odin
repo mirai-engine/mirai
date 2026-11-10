@@ -37,7 +37,7 @@ Api_Write_Result :: struct {
     made:int `mirai:"label=Entities the document made"`,
     removed:int `mirai:"label=Entities it took away with what hung from them"`,
     disabled:int `mirai:"label=Members of an instance of a prefab it left out and turned off"`,
-    created:[1]Api_Write_Made `mirai:"list,label=The entities of the document it made in its order; of a prefab it placed the root of the instance, whose members hang from it"`,
+    created:[]Api_Write_Made `mirai:"label=The entities of the document it made in its order; of a prefab it placed the root of the instance, whose members hang from it"`,
 }
 Api_Write_Made :: struct {
     id:base.Entity_Id,

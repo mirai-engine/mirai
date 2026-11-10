@@ -334,7 +334,7 @@ Ai_Annotation_Result :: struct {
     note:[AI_ANNOTATION_TEXT_BYTES]u8 `mirai:"text"`,
 }
 Ai_Annotation_List_Result :: struct {
-    annotations:[1]Ai_Annotation_Result `mirai:"list,label=The pins of the document in the order of their numbers"`,
+    annotations:[]Ai_Annotation_Result `mirai:"label=The pins of the document in the order of their numbers"`,
 }
 Ai_Annotation_Remove_Params :: struct {
     id:int `mirai:"optional,min=0,label=One annotation by the id annotation.list gives; give id or group"`,

@@ -58,8 +58,8 @@ Api_Play_Step_Result :: struct {
     trace:Api_Play_Trace_Table `mirai:"optional,label=With trace: the values it read"`,
 }
 Api_Play_Trace_Table :: struct {
-    columns:[1]Api_Play_Trace_Column `mirai:"list,label=What each value of a row is: every field of the first entity and then of the next"`,
-    rows:[1]Api_Play_Trace_Row `mirai:"list,label=One before the first tick and one every every ticks and one after the last"`,
+    columns:[]Api_Play_Trace_Column `mirai:"label=What each value of a row is: every field of the first entity and then of the next"`,
+    rows:[]Api_Play_Trace_Row `mirai:"label=One before the first tick and one every every ticks and one after the last"`,
 }
 Api_Play_Trace_Column :: struct {
     entity:core.Entity `mirai:"optional,label=The handle of the entity"`,
@@ -70,7 +70,7 @@ Api_Play_Trace_Column :: struct {
 }
 Api_Play_Trace_Row :: struct {
     tick:u64 `mirai:"label=The tick of the game it was read at"`,
-    values:u8 `mirai:"any,label=One per column as play.inspect writes it; null where the entity or its component is gone"`,
+    values:serial.Json `mirai:"label=One per column as play.inspect writes it; null where the entity or its component is gone"`,
 }
 
 // One segment of input of a step, checked.

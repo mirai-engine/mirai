@@ -25,8 +25,8 @@ Api_Play_Ui_Params :: struct {
 }
 
 Api_Play_Ui :: struct {
-    contexts:[1]Api_Play_Ui_Context `mirai:"list,label=The window and the part of each local player that showed interfaces"`,
-    interfaces:[1]Api_Play_Ui_Interface `mirai:"list,label=Each context from the bottom up: screens by order then World_Widgets"`,
+    contexts:[]Api_Play_Ui_Context `mirai:"label=The window and the part of each local player that showed interfaces"`,
+    interfaces:[]Api_Play_Ui_Interface `mirai:"label=Each context from the bottom up: screens by order then World_Widgets"`,
 }
 Api_Play_Ui_Context :: struct {
     player:int `mirai:"label=0: the window; n: the part of local player n"`,
@@ -53,7 +53,7 @@ Api_Play_Ui_Interface :: struct {
     shown:bool `mirai:"label=The last frame built it and something of it shows"`,
     top:bool `mirai:"label=It takes the input of its player: the top screen that is not passive or the World_Widget the player points at"`,
     modal:bool `mirai:"label=A Modal on top: the seats it covers get no actions"`,
-    nodes:[1]Api_Play_Ui_Node `mirai:"list,optional,label=In pre-order; absent when the last frame did not build it"`,
+    nodes:[]Api_Play_Ui_Node `mirai:"optional,label=In pre-order; absent when the last frame did not build it"`,
 }
 Api_Play_Ui_Node :: struct {
     row:int `mirai:"label=Of the node in the tree with its widgets expanded"`,
@@ -75,7 +75,7 @@ Api_Play_Audio_Params :: struct {
 }
 
 Api_Play_Audio :: struct {
-    voices:[1]Api_Play_Audio_Voice `mirai:"list,label=One per Audio_Source that plays"`,
+    voices:[]Api_Play_Audio_Voice `mirai:"label=One per Audio_Source that plays"`,
     stats:Api_Play_Audio_Stats `mirai:"label=Of the voices of this game"`,
     mixer:Api_Play_Audio_Mixer `mirai:"optional,label=The mixer of the editor that every game and the editor share; absent without one and then nothing plays"`,
 }

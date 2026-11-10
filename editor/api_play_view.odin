@@ -47,7 +47,7 @@ Api_Play_View :: struct {
     preset:[16]u8 `mirai:"text,label=The preset its setup is when it is one"`,
     blend:Api_Play_View_Blend `mirai:"label=How the view comes into its camera or mode from what it showed before"`,
     follow:Api_Play_View_Follow `mirai:"label=What its camera follows"`,
-    points:[1]Api_Play_View_Shown `mirai:"list,label=One per point asked for in their order"`,
+    points:[]Api_Play_View_Shown `mirai:"label=One per point asked for in their order"`,
 }
 Api_Play_View_Blend :: struct {
     active:bool `mirai:"label=It is coming into the camera or the mode"`,

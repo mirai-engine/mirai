@@ -800,10 +800,10 @@ Api_Settings_Get_Params :: struct {
 }
 
 Api_Settings :: struct {
-    machine:[1][64]u8 `mirai:"text,list,optional,label=The settings of the machine: the only ones the file of the engine holds; only without sections"`,
-    settings:u8 `mirai:"any,label=Every value in effect: a section per setting with its fields"`,
-    engine:u8 `mirai:"any,label=The sections and fields the file of the engine sets over the values of the code"`,
-    project:u8 `mirai:"any,label=The sections and fields the file of the project sets over the engine and the code"`,
+    machine:[][64]u8 `mirai:"text,optional,label=The settings of the machine: the only ones the file of the engine holds; only without sections"`,
+    settings:serial.Json `mirai:"label=Every value in effect: a section per setting with its fields"`,
+    engine:serial.Json `mirai:"label=The sections and fields the file of the engine sets over the values of the code"`,
+    project:serial.Json `mirai:"label=The sections and fields the file of the project sets over the engine and the code"`,
 }
 
 @(private)

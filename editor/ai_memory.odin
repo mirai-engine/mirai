@@ -172,7 +172,7 @@ Ai_Memory_Search_Hit :: struct {
     snippet:[512]u8 `mirai:"text,label=Words around the matches, which go between **"`,
 }
 Ai_Memory_Search_Result :: struct {
-    hits:[1]Ai_Memory_Search_Hit `mirai:"list,label=The topics that match; the best first"`,
+    hits:[]Ai_Memory_Search_Hit `mirai:"label=The topics that match; the best first"`,
 }
 Ai_Memory_Read_Params :: struct {
     path:[AI_PATH_BYTES]u8 `mirai:"text,label=Of a topic as memory.search gives it; or the file of the user"`,

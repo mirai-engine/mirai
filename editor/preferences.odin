@@ -158,8 +158,8 @@ Api_Preferences_Get_Params :: struct {
 
 Api_Preferences :: struct {
     file:[512]u8 `mirai:"text,label=The file that keeps them; empty: this editor keeps none (--headless without --preferences) and a change lasts until it closes"`,
-    preferences:u8 `mirai:"any,label=Every value in effect: a section per area of the editor with its fields"`,
-    kept:u8 `mirai:"any,label=The sections and fields the file sets over the values of the code"`,
+    preferences:serial.Json `mirai:"label=Every value in effect: a section per area of the editor with its fields"`,
+    kept:serial.Json `mirai:"label=The sections and fields the file sets over the values of the code"`,
 }
 
 @(private)

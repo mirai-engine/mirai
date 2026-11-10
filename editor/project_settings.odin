@@ -226,15 +226,15 @@ Api_Project_Plugin :: struct {
 
 Api_Project :: struct {
     file:[256]u8 `mirai:"text,label=The project.mirai it reads and writes"`,
-    manifest:u8 `mirai:"any,label=project.mirai: name version identifier icon thumbnail start_scene plugins window and build"`,
-    plugins:[1]Api_Project_Plugin `mirai:"list,label=Every plugin the project can see"`,
+    manifest:serial.Json `mirai:"label=project.mirai: name version identifier icon thumbnail start_scene plugins window and build"`,
+    plugins:[]Api_Project_Plugin `mirai:"label=Every plugin the project can see"`,
 }
 
 // What project.set writes.
 Api_Project_Changed :: struct {
     building:bool `mirai:"label=A build of the project still runs: the plugins or the options of the build changed and its wait ran out"`,
     build_error:[512]u8 `mirai:"text,label=Empty; or the first error of the build the change started and that failed"`,
-    active_plugins:[1][64]u8 `mirai:"text,list,label=The plugins on after the change; project.get gives the manifest and every plugin"`,
+    active_plugins:[][64]u8 `mirai:"text,label=The plugins on after the change; project.get gives the manifest and every plugin"`,
 }
 
 @(private)

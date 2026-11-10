@@ -74,9 +74,9 @@ an_array_shows_the_default_of_its_elements_and_not_its_own :: proc(t:^testing.T)
 
 Written :: struct {
     count:u8,
-    names:[1][16]u8 `mirai:"text,list"`,
-    rows:[1]Inner `mirai:"list"`,
-    value:u8 `mirai:"any,optional,label=Any JSON"`,
+    names:[][16]u8 `mirai:"text"`,
+    rows:[]Inner,
+    value:serial.Json `mirai:"optional,label=Any JSON"`,
     filter:bool `mirai:"name=where"`,
 }
 

@@ -51,8 +51,8 @@ Api_Git_Status :: struct {
     ahead,behind:int,
     remote:[git.PATH_BYTES]u8 `mirai:"text,label=The url of origin"`,
     merging:bool `mirai:"label=A pull left conflicts: git.conflicts lists them"`,
-    changes:[1]Api_Git_Change `mirai:"list,label=Every file changed under the project"`,
-    history:[1]Api_Git_Commit `mirai:"list,label=The last commits"`,
+    changes:[]Api_Git_Change `mirai:"label=Every file changed under the project"`,
+    history:[]Api_Git_Commit `mirai:"label=The last commits"`,
 }
 Api_Git_Change :: struct {
     path:[git.PATH_BYTES]u8 `mirai:"text,label=From the root of the repository; git.discard takes it"`,
@@ -69,7 +69,7 @@ Api_Git_Commit :: struct {
 Api_Git_Conflicts :: struct {
     merging:bool,
     loaded:bool `mirai:"label=Whether the conflicts of the merge were read"`,
-    items:[1]Api_Git_Item `mirai:"list"`,
+    items:[]Api_Git_Item,
 }
 Api_Git_Item :: struct {
     file:[git.PATH_BYTES]u8 `mirai:"text,label=From the folder of the project; what git.choose and git.accept take as file"`,
@@ -78,15 +78,15 @@ Api_Git_Item :: struct {
     accepted:bool,
     whole:[8]u8 `mirai:"text,optional,label=Of a file merged whole: the version chosen (ours theirs or folder)"`,
     text:bool `mirai:"optional,label=Of a file merged whole: whether it is text"`,
-    conflicts:[1]Api_Git_Conflict `mirai:"list"`,
+    conflicts:[]Api_Git_Conflict,
 }
 Api_Git_Conflict :: struct {
     kind:[8]u8 `mirai:"text,label=value: both changed it; removed: one side removed the row; table: both changed a table"`,
     path:[git.PATH_BYTES]u8 `mirai:"text,label=Where in the asset; what git.choose and git.accept take as path"`,
     component:[64]u8 `mirai:"text,label=The component or the table"`,
     field:[160]u8 `mirai:"text"`,
-    ours:u8 `mirai:"any,optional,label=Of a value: ours as JSON"`,
-    theirs:u8 `mirai:"any,optional,label=Of a value: theirs as JSON"`,
+    ours:serial.Json `mirai:"optional,label=Of a value: ours as JSON"`,
+    theirs:serial.Json `mirai:"optional,label=Of a value: theirs as JSON"`,
     ours_has:bool `mirai:"optional,label=Of a row: whether ours has it"`,
     theirs_has:bool `mirai:"optional,label=Of a row: whether theirs has it"`,
     choice:[8]u8 `mirai:"text,label=ours or theirs; theirs until chosen"`,

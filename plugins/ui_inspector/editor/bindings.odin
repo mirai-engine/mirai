@@ -453,7 +453,7 @@ Ui_Empty_Params :: struct {}
 
 Ui_Paths_Result :: struct {
     scope:author.Path_Scope_Kind `mirai:"label=What the entries are: the sources; the fields of a struct; or the components of an entity"`,
-    entries:[1]Ui_Path_Entry `mirai:"list"`,
+    entries:[]Ui_Path_Entry,
 }
 Ui_Path_Entry :: struct {
     name:[RESULT_TEXT_BYTES]u8 `mirai:"text,label=@ is the data an instance of the widget gives it"`,
@@ -464,7 +464,7 @@ Ui_Path_Entry :: struct {
     storage:bool `mirai:"optional,label=A storage; absent: a component or a field"`,
 }
 Ui_Check_Result :: struct {
-    problems:[1]Ui_Check_Problem `mirai:"list,label=Each binding the game lacks once and each .ui that does not load; at most 16 by .ui"`,
+    problems:[]Ui_Check_Problem `mirai:"label=Each binding the game lacks once and each .ui that does not load; at most 16 by .ui"`,
 }
 Ui_Check_Problem :: struct {
     asset:[editor.API_PATH_BYTES]u8 `mirai:"text,label=The name of the file of the .ui"`,
@@ -475,7 +475,7 @@ Ui_Check_Problem :: struct {
     message:[RESULT_TEXT_BYTES]u8 `mirai:"text,label=What fails for a person"`,
 }
 Ui_Rename_Result :: struct {
-    files:[1][editor.API_PATH_BYTES]u8 `mirai:"list,text,label=The paths of the .ui it changed; each waits for Save"`,
+    files:[][editor.API_PATH_BYTES]u8 `mirai:"text,label=The paths of the .ui it changed; each waits for Save"`,
 }
 
 @(private)

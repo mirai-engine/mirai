@@ -29,10 +29,10 @@ Api_Material_Instance :: struct {
     slot:int,
     slots:int `mirai:"label=The slots of its mesh"`,
     material:base.Asset_Id `mirai:"label=The material of the slot"`,
-    values:u8 `mirai:"any,label=The values of its material with those of the entity over them"`,
-    overrides:[1][asset.MATERIAL_NAME_BYTES]u8 `mirai:"text,list,label=What the entity changes: values; maps; parameters and textures of the program by name; and overlays"`,
-    parameters:u8 `mirai:"any,optional,label=Of the Surface program of its material by name: a list of the numbers it shows; or the id of the texture the entity gives it (all zeros: none)"`,
-    overlays:[1]Api_Material_Instance_Overlay `mirai:"list,label=The layers it shows over the material of its first slot"`,
+    values:serial.Json `mirai:"label=The values of its material with those of the entity over them"`,
+    overrides:[][asset.MATERIAL_NAME_BYTES]u8 `mirai:"text,label=What the entity changes: values; maps; parameters and textures of the program by name; and overlays"`,
+    parameters:serial.Json `mirai:"optional,label=Of the Surface program of its material by name: a list of the numbers it shows; or the id of the texture the entity gives it (all zeros: none)"`,
+    overlays:[]Api_Material_Instance_Overlay `mirai:"label=The layers it shows over the material of its first slot"`,
 }
 
 @(private)

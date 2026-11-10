@@ -49,7 +49,7 @@ Api_Program_Result :: struct {
     errors:int,
     warnings:int,
     parameters_size:int `mirai:"label=Bytes of its struct Parameters"`,
-    diagnostics:[1]Api_Program_Diagnostic `mirai:"list"`,
+    diagnostics:[]Api_Program_Diagnostic,
     publishing:bool `mirai:"optional,label=Of material.program.create and .edit: the renderer does not have the whole generation yet; the stages the previews draw with come first (material.preview.capture waits for them) and then the rest for the viewport"`,
 }
 
@@ -74,7 +74,7 @@ Api_Program_Inspect :: struct {
     kind:[16]u8 `mirai:"text,label=surface; postprocess; vfx or ui"`,
     file:[API_PATH_BYTES]u8 `mirai:"text,label=Its .slang: from the folder of the project when it is in it"`,
     source:[PROGRAM_TEXT_BYTES]u8 `mirai:"text"`,
-    parameters:[1]Api_Program_Parameter `mirai:"list,label=The fields of its struct Parameters"`,
+    parameters:[]Api_Program_Parameter `mirai:"label=The fields of its struct Parameters"`,
     graph:Api_Program_Graph `mirai:"label=Derived from the source and read only: the source is what changes"`,
 }
 
@@ -83,14 +83,14 @@ Api_Program_Parameter :: struct {
     name:[256]u8 `mirai:"text"`,
     type:[128]u8 `mirai:"text"`,
     line:int,
-    metadata:u8 `mirai:"any,label=The JSON of its //! parameter line; null without one"`,
+    metadata:serial.Json `mirai:"label=The JSON of its //! parameter line; null without one"`,
     metadata_line:int `mirai:"optional"`,
 }
 
 @(private)
 Api_Program_Graph :: struct {
-    nodes:[1]Api_Program_Node `mirai:"list"`,
-    edges:[1]Api_Program_Edge `mirai:"list"`,
+    nodes:[]Api_Program_Node,
+    edges:[]Api_Program_Edge,
 }
 
 @(private)

@@ -26,20 +26,20 @@ Api_Panel :: struct {
 }
 Api_Panel_File :: struct {
     title:[PANEL_TITLE_BYTES]u8 `mirai:"text"`,
-    buttons:[1]Api_Panel_Button `mirai:"list,optional"`,
-    rows:[1]Api_Panel_Row `mirai:"list,optional,label=Its headings and fields as panel.save takes them"`,
+    buttons:[]Api_Panel_Button `mirai:"optional"`,
+    rows:[]Api_Panel_Row `mirai:"optional,label=Its headings and fields as panel.save takes them"`,
 }
 Api_Panel_Button :: struct {
     name:[PANEL_TITLE_BYTES]u8 `mirai:"text,label=What panel.apply takes as button"`,
-    sets:[1]Api_Panel_Set `mirai:"list,label=The fields it sets and their values as panel.save takes them"`,
+    sets:[]Api_Panel_Set `mirai:"label=The fields it sets and their values as panel.save takes them"`,
 }
 Api_Panel_Set :: struct {
     component:[PANEL_NAME_BYTES]u8 `mirai:"text,optional"`,
     setting:[PANEL_NAME_BYTES]u8 `mirai:"text,optional,label=A section of the settings"`,
     field:[PANEL_FIELD_BYTES]u8 `mirai:"text"`,
     entity:base.Entity_Id `mirai:"optional"`,
-    match:u8 `mirai:"any,optional,name=where,label=The fields an entity must have; {} is every entity with the component"`,
-    value:u8 `mirai:"any,label=The JSON the field takes"`,
+    match:serial.Json `mirai:"optional,name=where,label=The fields an entity must have; {} is every entity with the component"`,
+    value:serial.Json `mirai:"label=The JSON the field takes"`,
 }
 Api_Panel_Row :: struct {
     heading:[PANEL_TITLE_BYTES]u8 `mirai:"text,optional"`,
@@ -47,10 +47,10 @@ Api_Panel_Row :: struct {
     setting:[PANEL_NAME_BYTES]u8 `mirai:"text,optional"`,
     field:[PANEL_FIELD_BYTES]u8 `mirai:"text,optional"`,
     entity:base.Entity_Id `mirai:"optional"`,
-    match:u8 `mirai:"any,optional,name=where"`,
+    match:serial.Json `mirai:"optional,name=where"`,
     label:[PANEL_TITLE_BYTES]u8 `mirai:"text,optional"`,
 }
-Api_Panel_List :: struct {panels:[1]Api_Panel `mirai:"list"`}
+Api_Panel_List :: struct {panels:[]Api_Panel}
 Api_Panel_Deleted :: struct {deleted:[PANEL_ID_BYTES]u8 `mirai:"text,label=The id of the panel"`}
 Api_Panel_Applied :: struct {
     button:[PANEL_TITLE_BYTES]u8 `mirai:"text"`,

@@ -36,23 +36,23 @@ Tree_Inspect :: struct {
     document:Tree_Document `mirai:"label=What ui.write takes back"`,
 }
 Tree_Document :: struct {
-    use:u8 `mirai:"any,optional,label=The paths of the .ui it takes styles and tokens from and whose widgets its nodes name by the name of their file"`,
-    params:u8 `mirai:"any,optional,label=What the widget of this file takes, by name: node.field, node.parameter of a use it holds, or the field of its root"`,
-    tokens:u8 `mirai:"any,optional,label=By name: a color or a number that styles name"`,
-    styles:u8 `mirai:"any,label=The named styles, or those its nodes take, by name: extends, family, defaults (the kinds whose new nodes take it), its keys (fill, size, width, shadow...), the states hover, focus, pressed, disabled, selected and over, variants by name, and rules {variant, states, tokens and the keys of a state}"`,
-    animations:u8 `mirai:"any,label=By name: kind, loop, and from-to properties with seconds and ease, tracks of a Clip or parts of a Sequence or a Parallel"`,
-    nodes:[1]Tree_Document_Node `mirai:"list,label=The roots in order, each also with the keys of ui.Tree_Node and of its layout that differ from a new node of its kind, and a use with the parameters of its widget; with node, that node alone"`,
+    use:serial.Json `mirai:"optional,label=The paths of the .ui it takes styles and tokens from and whose widgets its nodes name by the name of their file"`,
+    params:serial.Json `mirai:"optional,label=What the widget of this file takes, by name: node.field, node.parameter of a use it holds, or the field of its root"`,
+    tokens:serial.Json `mirai:"optional,label=By name: a color or a number that styles name"`,
+    styles:serial.Json `mirai:"label=The named styles, or those its nodes take, by name: extends, family, defaults (the kinds whose new nodes take it), its keys (fill, size, width, shadow...), the states hover, focus, pressed, disabled, selected and over, variants by name, and rules {variant, states, tokens and the keys of a state}"`,
+    animations:serial.Json `mirai:"label=By name: kind, loop, and from-to properties with seconds and ease, tracks of a Clip or parts of a Sequence or a Parallel"`,
+    nodes:[]Tree_Document_Node `mirai:"label=The roots in order, each also with the keys of ui.Tree_Node and of its layout that differ from a new node of its kind, and a use with the parameters of its widget; with node, that node alone"`,
 }
 Tree_Document_Node :: struct {
     name:[ui.TREE_NAME_CAPACITY]u8 `mirai:"text,label=What ui.write matches it by"`,
-    kind:u8 `mirai:"any,optional,label=A ui.Node_Kind, or the name of the file of a widget it uses"`,
+    kind:serial.Json `mirai:"optional,label=A ui.Node_Kind, or the name of the file of a widget it uses"`,
     text:[RESULT_TEXT_BYTES]u8 `mirai:"text,optional,label=In the language interfaces are written in"`,
     style:[ui.TREE_NAME_CAPACITY]u8 `mirai:"text,optional,label=The named style it takes; empty: none, where its kind would take one; absent: the one its kind takes"`,
-    look:u8 `mirai:"any,optional,label=Its own look, instead of style: a style without family; with extends it says what it changes of that style, which it follows otherwise"`,
+    look:serial.Json `mirai:"optional,label=Its own look, instead of style: a style without family; with extends it says what it changes of that style, which it follows otherwise"`,
     image:ui.Tree_Image `mirai:"optional"`,
-    events:u8 `mirai:"any,optional,label=By trigger (shown, hovered, clicked, ...): the animation it plays"`,
+    events:serial.Json `mirai:"optional,label=By trigger (shown, hovered, clicked, ...): the animation it plays"`,
     slot:bool `mirai:"optional,label=Whether it takes what a use of this widget holds"`,
-    children:u8 `mirai:"any,optional,label=The nodes it holds, in order, as this one"`,
+    children:serial.Json `mirai:"optional,label=The nodes it holds, in order, as this one"`,
 }
 
 @(private)

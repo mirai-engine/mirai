@@ -59,12 +59,12 @@ Import_Status_Result :: struct {
     path:[API_PATH_BYTES]u8 `mirai:"text,label=The source"`,
     scene:[API_PATH_BYTES]u8 `mirai:"text,label=The scene a map became; empty for another source"`,
     message:[IMPORT_MESSAGE_BYTES]u8 `mirai:"text"`,
-    warnings:[1][IMPORT_MESSAGE_BYTES]u8 `mirai:"list,text,label=What the last import that ended warned of: what it left out or assumed, and how to change it"`,
+    warnings:[][IMPORT_MESSAGE_BYTES]u8 `mirai:"text,label=What the last import that ended warned of: what it left out or assumed, and how to change it"`,
     seconds:f64 `mirai:"label=From the request until the editor took what it wrote"`,
     unzoned:f64 `mirai:"label=Of seconds, those no zone covers on the thread that imports and the editor's; with profile"`,
     publishing:bool `mirai:"label=The programs the last import wrote are being published; with profile, programs.publish is a zone once they are"`,
-    assets:[1]Import_Status_Asset `mirai:"list,label=What the last import that ended wrote"`,
-    zones:[1]Import_Status_Zone `mirai:"list,label=With profile: each zone of the last import by name and the zone that held it, the zones a zone held after it and one deeper, heaviest first"`,
+    assets:[]Import_Status_Asset `mirai:"label=What the last import that ended wrote"`,
+    zones:[]Import_Status_Zone `mirai:"label=With profile: each zone of the last import by name and the zone that held it, the zones a zone held after it and one deeper, heaviest first"`,
 }
 Import_Status_Zone :: struct {
     name:[48]u8 `mirai:"text"`,

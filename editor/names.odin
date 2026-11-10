@@ -286,11 +286,11 @@ Api_Names_Params :: struct {
 
 // Written by hand: a field of Odin cannot be named package.
 @(private)
-Api_Names_Result :: struct {types:[1]Api_Names_Type `mirai:"list"`}
+Api_Names_Result :: struct {types:[]Api_Names_Type}
 Api_Names_Type :: struct {
     type:[128]u8 `mirai:"text"`,
     path:[API_PATH_BYTES]u8 `mirai:"text,name=package,label=The import path of the package that declares it"`,
-    names:[1]Api_Names_Value `mirai:"list,label=The values the code declares"`,
+    names:[]Api_Names_Value `mirai:"label=The values the code declares"`,
 }
 Api_Names_Value :: struct {
     name:[128]u8 `mirai:"text,label=What a field of the type takes in scene.set and gives back"`,

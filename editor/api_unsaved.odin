@@ -28,8 +28,8 @@ Api_Unsaved_Params :: struct {
 }
 
 Api_Unsaved_Result :: struct {
-    assets:[1]Api_Unsaved_Asset `mirai:"list"`,
-    scene:[1][API_PATH_BYTES]u8 `mirai:"text,list,label=The unsaved assets the scene of the document uses"`,
+    assets:[]Api_Unsaved_Asset,
+    scene:[][API_PATH_BYTES]u8 `mirai:"text,label=The unsaved assets the scene of the document uses"`,
 }
 Api_Unsaved_Asset :: struct {
     path:[API_PATH_BYTES]u8 `mirai:"text,label=Under the asset folder; of a Slang program the path of its .slang under the project or under engine/ for one of the engine"`,

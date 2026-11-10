@@ -11,9 +11,8 @@ authoring_result_schema :: proc($T:typeid, info:^runtime.Type_Info, allocator:=c
     server:api.Server
     server.allocator=allocator
     serial.schema_init(&server.schema,allocator)
+    server.schema.unsized=true
     defer serial.schema_destroy(&server.schema)
-    defer delete(server.tags)
-    defer {for key in server.keys {delete(key,allocator)};delete(server.keys)}
     index,ok:=api.schema_register(&server,T,info)
     if !ok {return ""}
     writer:serial.Writer

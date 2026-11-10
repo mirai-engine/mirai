@@ -78,8 +78,8 @@ Api_Prefab_Refresh_Result :: struct {
 }
 
 Api_Prefab_List :: struct {
-    prefabs:[1]Api_Prefab_File `mirai:"list,label=The prefab files of the assets"`,
-    instances:[1]Api_Prefab_Instance `mirai:"list,label=The instances of the document whose root exists"`,
+    prefabs:[]Api_Prefab_File `mirai:"label=The prefab files of the assets"`,
+    instances:[]Api_Prefab_Instance `mirai:"label=The instances of the document whose root exists"`,
 }
 Api_Prefab_File :: struct {
     path:[API_PATH_BYTES]u8 `mirai:"text"`,
@@ -97,16 +97,16 @@ Api_Prefab_Instance :: struct {
 Api_Prefab_Inspect_Result :: struct {
     id:base.Entity_Id `mirai:"optional,label=With entity: the entity"`,
     locked:bool `mirai:"optional,label=With entity: whether it keeps the place its prefab gives it as a member of an instance that is not its root"`,
-    links:[1]Api_Prefab_Link `mirai:"list,optional,label=With entity: the instance that placed it in the document and then each instance the prefab of the one before places that the entity is of; empty for an entity no instance placed"`,
-    overrides:[1]Api_Prefab_Override `mirai:"list,optional,label=With entity: what it holds that its prefab does not; its placement left out"`,
+    links:[]Api_Prefab_Link `mirai:"optional,label=With entity: the instance that placed it in the document and then each instance the prefab of the one before places that the entity is of; empty for an entity no instance placed"`,
+    overrides:[]Api_Prefab_Override `mirai:"optional,label=With entity: what it holds that its prefab does not; its placement left out"`,
     stale:bool `mirai:"optional,label=With entity: whether its instance is not up to date with its prefab as its files give it now; prefab.refresh updates it"`,
     asset:base.Asset_Id `mirai:"optional,label=With asset: the prefab"`,
     path:[API_PATH_BYTES]u8 `mirai:"text,optional,label=With asset: the file of the prefab"`,
     root:base.Entity_Id `mirai:"optional,label=With asset: the root of the prefab"`,
-    entities:[1]Api_Prefab_Entity `mirai:"list,optional,label=With asset: every entity of the prefab"`,
+    entities:[]Api_Prefab_Entity `mirai:"optional,label=With asset: every entity of the prefab"`,
     instances:int `mirai:"optional,label=With asset: the instances of other prefabs it places"`,
     base:Api_Asset_Id `mirai:"optional,label=With asset: the prefab its root is an instance of when it is a variant; zero when it is not"`,
-    chain:[1]Api_Asset_Id `mirai:"list,optional,label=With asset: its base, the base of that one and so on"`,
+    chain:[]Api_Asset_Id `mirai:"optional,label=With asset: its base, the base of that one and so on"`,
 }
 // base.Asset_Id where a field is named base.
 Api_Asset_Id :: base.Asset_Id
@@ -123,7 +123,7 @@ Api_Prefab_Override :: struct {
 }
 Api_Prefab_Entity :: struct {
     id:base.Entity_Id,
-    parent:u8 `mirai:"any,label=The id of its parent; null for the root"`,
+    parent:serial.Json `mirai:"label=The id of its parent; null for the root"`,
     name:[64]u8 `mirai:"text"`,
 }
 

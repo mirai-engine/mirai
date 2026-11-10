@@ -31,7 +31,7 @@ Api_Inspect_Params :: struct {
     entity:[API_ENTITY_TEXT]u8 `mirai:"optional,text,entity,label=By its name or a path Parent/Child or its id or handle: only this entity"`,
     name:[128]u8 `mirai:"optional,text,label=Only the entities with this name; * stands for any run of characters"`,
     component:[64]u8 `mirai:"optional,text,label=Only the entities that have this component"`,
-    components:u8 `mirai:"any,optional,label=true: the values of every component; a list of names: only those; omitted: id, name, parent, position and the names of the components"`,
+    components:serial.Json `mirai:"optional,label=true: the values of every component; a list of names: only those; omitted: id, name, parent, position and the names of the components"`,
     include_runtime:bool `mirai:"optional,label=Include hidden fields and transient component state for inspection"`,
     offset:int `mirai:"optional,min=0"`,
     limit:int `mirai:"optional,min=0,max=4096,clamp,label=Entities it gives at most; 0 or omitted: a few when no entity or name or component narrows them"`,
@@ -64,18 +64,18 @@ Api_Inspect_Result :: struct {
     playing:bool `mirai:"label=scene.inspect: whether the editor is out of Edit mode; play.inspect: true"`,
     total:int `mirai:"label=Entities alive in the world"`,
     offset:int,
-    entities:[1]Api_Inspect_Entity `mirai:"list,label=Parents before their children and siblings in their order"`,
+    entities:[]Api_Inspect_Entity `mirai:"label=Parents before their children and siblings in their order"`,
     shown:int,
     matched:int `mirai:"label=Entities the filters take"`,
     omitted:int `mirai:"label=Entities matched past the limit"`,
     left_out:[256]u8 `mirai:"text,optional,label=What the answer leaves out and how to ask for it"`,
-    storages:u8 `mirai:"any,optional,label=With storages: by name the value of each storage of the world that is plain data with Entity fields as the entities are named"`,
+    storages:serial.Json `mirai:"optional,label=With storages: by name the value of each storage of the world that is plain data with Entity fields as the entities are named"`,
 }
 Api_Inspect_Entity :: struct {
-    id:u8 `mirai:"any,label=The id in hexadecimal; null for an entity of a game that has none"`,
+    id:serial.Json `mirai:"label=The id in hexadecimal; null for an entity of a game that has none"`,
     entity:core.Entity `mirai:"optional,label=play.inspect: the handle of the entity in the game"`,
     name:[64]u8 `mirai:"text"`,
-    parent:u8 `mirai:"any,optional,label=The id of the parent (in play.inspect its handle); null for a root; with root the nesting gives it"`,
+    parent:serial.Json `mirai:"optional,label=The id of the parent (in play.inspect its handle); null for a root; with root the nesting gives it"`,
     position:[3]f32 `mirai:"optional,label=Local to the parent"`,
     rotation_deg:[3]f32 `mirai:"optional,label=Local to the parent in degrees"`,
     scale:[3]f32 `mirai:"optional"`,
@@ -83,10 +83,10 @@ Api_Inspect_Entity :: struct {
     visible:bool `mirai:"optional"`,
     enabled:bool `mirai:"optional"`,
     active:bool `mirai:"optional,label=Whether it runs: false when it or a parent is disabled"`,
-    off:[1][64]u8 `mirai:"text,list,optional,label=The components turned off by themselves"`,
+    off:[][64]u8 `mirai:"text,optional,label=The components turned off by themselves"`,
     prefab:Api_Inspect_Prefab `mirai:"optional,label=scene.inspect: the link of a member of an instance of a prefab"`,
-    components:u8 `mirai:"any,optional,label=By name the value of each component as component.list describes it with Entity fields holding ids (in play.inspect handles); without components in the params the list of their names; with root only the fields that differ from the value it starts with"`,
-    children:u8 `mirai:"any,optional,label=With root: the entities that hang from it in their order nested the same way"`,
+    components:serial.Json `mirai:"optional,label=By name the value of each component as component.list describes it with Entity fields holding ids (in play.inspect handles); without components in the params the list of their names; with root only the fields that differ from the value it starts with"`,
+    children:serial.Json `mirai:"optional,label=With root: the entities that hang from it in their order nested the same way"`,
 }
 Api_Inspect_Prefab :: struct {
     instance:u32 `mirai:"optional,label=The instance placed in the document as prefab.list lists it; not with root"`,
@@ -115,7 +115,7 @@ Api_Play_Player_Entity :: struct {
 }
 
 Api_Batch_Result :: struct {
-    results:[1]Api_Batch_Entry `mirai:"list,label=One per operation in their order"`,
+    results:[]Api_Batch_Entry `mirai:"label=One per operation in their order"`,
 }
 Api_Batch_Entry :: struct {
     id:base.Entity_Id `mirai:"label=The entity of the operation; the new one of scene.add and scene.duplicate"`,

@@ -73,7 +73,7 @@ layout_add :: proc(l:^Layout,s:^Schema,index:Type_Index,offset:u32) {
 // An array of one-byte integers: what a text field is.
 // A fixed array of texts: a text field of this type is a list of strings.
 type_is_texts :: proc(s:^Schema,index:Type_Index) -> bool {
-    return type_valid(s,index) && s.types[index].kind==.Array && type_is_bytes(s,s.types[index].elem)
+    return type_valid(s,index) && (s.types[index].kind==.Array || s.types[index].kind==.Slice) && type_is_bytes(s,s.types[index].elem)
 }
 
 type_is_bytes :: proc(s:^Schema,index:Type_Index) -> bool {

@@ -3,6 +3,7 @@ package serial
 import "base:runtime"
 import "core:fmt"
 import "core:reflect"
+import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "mirai:std/base"
@@ -26,7 +27,17 @@ Type_Kind :: enum u8 {
     Asset,     // base.Asset_Id
     Struct,    // fields
     Array,     // count elements of type elem; vectors, quaternions and matrices are arrays of floats
+    // Only in a schema that takes them (Schema.unsized): values that live in
+    // memory and in text, with no image, no binary schema and no migration.
+    Slice,     // []T: any number of elements of type elem
+    String,    // string
+    Json,      // serial.Json
 }
+
+// Any JSON value, as its text: what a field holds when only whoever reads it
+// knows its shape (the values of a component, by the schema of the world).
+// Empty is null. Read, it is a view of the text it was read from.
+Json :: distinct string
 
 // An integer whose values have names (core @(names)) or whose bits do: text
 // and paths read and write it by those names. Saved data keeps the number and
@@ -61,10 +72,8 @@ Field_Flags :: bit_set[Field_Flag;u8]
 // What the tag of a field says besides its flags. Not in the binary schema.
 Field_Hint :: enum u8 {
     Trim,     // a fixed array the text writes up to its last element with a byte set
-    Any,      // text_read takes any JSON there and leaves the bytes, for whoever reads it from the text
     Entity,   // a text that names an entity: the API says so in its schema
     Optional, // a param a caller may leave out, or a part of a result that is not always there
-    List,     // a result a handler writes: an array of any length
     Clamp,    // an integer param that only bounds how much a method answers: past its max it takes the max
     Advanced, // the inspector shows it with the advanced fields of its component
     Owned,    // an asset the component makes and owns: a copy of the entity takes a copy of it
@@ -122,6 +131,8 @@ Schema :: struct {
     lookup:map[typeid]Type_Index,
     named:map[typeid]Named, // whoever builds it sets and keeps it before adding types; the schema copies the names it takes
     error:string, // set when schema_add fails: the path of the field that is not plain data; empty when it had no memory
+    unsized:bool, // its types may hold slices, strings and Json; whoever builds it sets it before adding types
+    adding:[dynamic]typeid, // the structs schema_add is inside of: one that holds itself is not added
     allocator:runtime.Allocator,
 }
 
@@ -131,6 +142,7 @@ schema_init :: proc(s:^Schema,allocator:=context.allocator) {
     s.fields=make([dynamic]Field,allocator)
     s.choices=make([dynamic]Choice,allocator)
     s.lookup=make(map[typeid]Type_Index,allocator)
+    s.adding=make([dynamic]typeid,allocator)
 }
 
 schema_destroy :: proc(s:^Schema) {
@@ -138,7 +150,7 @@ schema_destroy :: proc(s:^Schema) {
     for field in s.fields {schema_field_free(s,field)}
     for choice in s.choices {delete(choice.name,s.allocator)}
     delete(s.error,s.allocator)
-    delete(s.types);delete(s.fields);delete(s.choices);delete(s.lookup)
+    delete(s.types);delete(s.fields);delete(s.choices);delete(s.lookup);delete(s.adding)
     s^={}
 }
 
@@ -263,7 +275,9 @@ schema_choice_rename :: proc(s:^Schema,old,name:string) -> (renamed:int) {
 
 // Adds T and every type it contains. Fails, with s.error set, when T holds
 // anything that is not plain data: pointers, slices, strings, maps, unions;
-// and without memory, with the types it had added before kept whole.
+// and without memory, with the types it had added before kept whole. A
+// schema that is unsized also takes slices, strings and Json, in types that do not
+// hold themselves.
 schema_add :: proc(s:^Schema,$T:typeid) -> (index:Type_Index,ok:bool) {
     return schema_add_type_info(s,type_info_of(T))
 }
@@ -288,7 +302,7 @@ schema_layout_hash :: proc(s:^Schema,index:Type_Index) -> u64 {
             hash=base.hash_combine(hash,u64(field.offset))
             hash=base.hash_combine(hash,schema_layout_hash(s,field.type))
         }
-    case .Array:
+    case .Array,.Slice:
         hash=base.hash_combine(hash,schema_layout_hash(s,type.elem))
     }
     if layout_named(type) {hash=layout_choices(s,type,hash)}
@@ -371,6 +385,9 @@ schema_add_info :: proc(s:^Schema,info:^runtime.Type_Info,path:string) -> (Type_
     case base.Entity:    return schema_push(s,info.id,{kind=.Entity,size=size,align=align,elem=TYPE_NONE})
     case base.Entity_Id: return schema_push(s,info.id,{kind=.Entity_Id,size=size,align=align,elem=TYPE_NONE})
     case base.Asset_Id:  return schema_push(s,info.id,{kind=.Asset,size=size,align=align,elem=TYPE_NONE})
+    case Json:
+        if !s.unsized {return schema_fail(s,path,info)}
+        return schema_push(s,info.id,{kind=.Json,size=size,align=align,elem=TYPE_NONE})
     }
     type:=Type{size=size,align=align,elem=TYPE_NONE}
     if named,is_named:=info.variant.(runtime.Type_Info_Named);is_named {
@@ -422,13 +439,33 @@ schema_add_info :: proc(s:^Schema,info:^runtime.Type_Info,path:string) -> (Type_
             return schema_fail(s,path,info)
         }
         return schema_add_elements(s,info,type,variant.elem,variant.count,path)
+    case runtime.Type_Info_String:
+        if !s.unsized || variant.is_cstring || variant.encoding!=.UTF_8 {
+            delete(type.name,s.allocator)
+            return schema_fail(s,path,info)
+        }
+        type.kind=.String
+    case runtime.Type_Info_Slice:
+        if !s.unsized {
+            delete(type.name,s.allocator)
+            return schema_fail(s,path,info)
+        }
+        elem_type,ok:=schema_add_info(s,variant.elem,path)
+        if !ok {delete(type.name,s.allocator);return TYPE_NONE,false}
+        type.kind,type.elem=.Slice,elem_type
     case runtime.Type_Info_Struct:
-        if .raw_union in variant.flags || variant.soa_kind!=.None {
+        if .raw_union in variant.flags || variant.soa_kind!=.None || slice.contains(s.adding[:],info.id) {
             delete(type.name,s.allocator)
             return schema_fail(s,path,info)
         }
         fields:=make([dynamic]Field,0,int(variant.field_count),context.temp_allocator)
-        if !schema_fields_add(s,variant,0,path,&fields) || reserve(&s.fields,len(s.fields)+len(fields))!=nil {
+        if _,no_room:=append(&s.adding,info.id);no_room!=nil {
+            delete(type.name,s.allocator)
+            return TYPE_NONE,false
+        }
+        added:=schema_fields_add(s,variant,0,path,&fields)
+        pop(&s.adding)
+        if !added || reserve(&s.fields,len(s.fields)+len(fields))!=nil {
             for added in fields {schema_field_free(s,added)}
             delete(type.name,s.allocator)
             return TYPE_NONE,false
@@ -512,7 +549,7 @@ schema_add_floats :: proc(s:^Schema,info:^runtime.Type_Info,type:Type,count:int,
 }
 
 // The options a tag takes, as an error names them.
-FIELD_TAGS :: "transient, local, readonly, hidden, color, angle, text, trim, any, entity, inline, optional, list, clamp, advanced, owned, game, hex, data, min=, max=, step=, precision=, bits=, unit=, name=, kind=, requires=, section=, with=, icons=, axes=, graphics= and, last, label="
+FIELD_TAGS :: "transient, local, readonly, hidden, color, angle, text, trim, entity, inline, optional, clamp, advanced, owned, game, hex, data, min=, max=, step=, precision=, bits=, unit=, name=, kind=, requires=, section=, with=, icons=, axes=, graphics= and, last, label="
 
 // What the tag of a field says: the only reader of `mirai:"..."`, for the
 // schema and for whoever walks the type information of a struct itself. The
@@ -549,11 +586,9 @@ field_tag :: proc(tag:string) -> (field:Field,problem:string) {
         case "angle":     field.flags+={.Angle}
         case "text":      field.flags+={.Text}
         case "trim":      field.hints+={.Trim}
-        case "any":       field.hints+={.Any}
         case "entity":    field.hints+={.Entity}
         case "inline":    field.hints+={.Inline}
         case "optional":  field.hints+={.Optional}
-        case "list":      field.hints+={.List}
         case "clamp":     field.hints+={.Clamp}
         case "advanced":  field.hints+={.Advanced}
         case "owned":     field.hints+={.Owned}

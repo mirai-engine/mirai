@@ -175,7 +175,7 @@ Api_Profile_Frame_Stats :: struct {
     gpu_ms:f32 `mirai:"label=Mean of the GPU"`,
     bound:Api_Profile_Bounds `mirai:"label=Frames by what they waited for"`,
     spikes:int `mirai:"label=Frames over twice the median"`,
-    worst:[1]int `mirai:"list,label=The slowest frames by index; the slowest first"`,
+    worst:[]int `mirai:"label=The slowest frames by index; the slowest first"`,
 }
 Api_Profile_Zone :: struct {
     name:[PROFILE_NAME_BYTES]u8 `mirai:"text"`,
@@ -235,12 +235,12 @@ Api_Profile_Summary :: struct {
     comparable:bool `mirai:"optional,label=Measured without VSync or a frame limit or graphics validation: its frame time is the cost"`,
     frame:Api_Profile_Frame_Stats `mirai:"optional"`,
     presentation:Api_Profile_Presentation `mirai:"optional,label=The images given to the display, the generated ones included"`,
-    parts:[1]Api_Profile_Stat `mirai:"list,optional,label=The parts of the frame by their mean time; other: what the frame took besides them; between: what ran between frames"`,
-    zones:[1]Api_Profile_Zone `mirai:"list,optional,label=The other zones that cost the most by their own time"`,
-    gpu:[1]Api_Profile_Stat `mirai:"list,optional,label=The GPU passes that cost the most"`,
+    parts:[]Api_Profile_Stat `mirai:"optional,label=The parts of the frame by their mean time; other: what the frame took besides them; between: what ran between frames"`,
+    zones:[]Api_Profile_Zone `mirai:"optional,label=The other zones that cost the most by their own time"`,
+    gpu:[]Api_Profile_Stat `mirai:"optional,label=The GPU passes that cost the most"`,
     workers:Api_Profile_Workers `mirai:"optional"`,
     lost_zones:u64 `mirai:"optional,label=Zones the recorder had no room for"`,
-    notes:[1][PROFILE_NOTE_BYTES]u8 `mirai:"text,list,optional,label=What to know before reading the numbers"`,
+    notes:[][PROFILE_NOTE_BYTES]u8 `mirai:"text,optional,label=What to know before reading the numbers"`,
 }
 
 Api_Profile_Tree :: struct {
@@ -265,13 +265,13 @@ Api_Profile_Frame :: struct {
     bound:Profile_Bound `mirai:"label=What it waited for"`,
     workers_busy_ms:f32,
     jobs:int,
-    zones:[1]Api_Profile_Tree `mirai:"list,label=Of the main thread by start"`,
+    zones:[]Api_Profile_Tree `mirai:"label=Of the main thread by start"`,
     hidden_zones:int `mirai:"label=Deeper or shorter than asked or past the most listed"`,
-    gpu:[1]Api_Profile_Pass `mirai:"list,label=The passes that took the longest"`,
+    gpu:[]Api_Profile_Pass `mirai:"label=The passes that took the longest"`,
 }
 Api_Profile_Frames :: struct {
     id:int,
-    frames:[1]Api_Profile_Frame `mirai:"list"`,
+    frames:[]Api_Profile_Frame,
 }
 
 Api_Profile_Spread :: struct {mean_ms,p50_ms,p95_ms,max_ms:f32}
@@ -298,9 +298,9 @@ Api_Profile_Zone_Detail :: struct {
     total:Api_Profile_Spread `mirai:"label=Of its time per frame"`,
     self:Api_Profile_Spread `mirai:"label=Of its time per frame without the zones inside"`,
     share:f32 `mirai:"label=The mean of self over the mean frame"`,
-    parents:[1]Api_Profile_Parent `mirai:"list,label=The zones around it; empty on the workers"`,
-    children:[1]Api_Profile_Related `mirai:"list,label=The zones inside it per frame by their time; empty on the workers"`,
-    worst_frames:[1]Api_Profile_Worst `mirai:"list,label=Where it took the longest"`,
+    parents:[]Api_Profile_Parent `mirai:"label=The zones around it; empty on the workers"`,
+    children:[]Api_Profile_Related `mirai:"label=The zones inside it per frame by their time; empty on the workers"`,
+    worst_frames:[]Api_Profile_Worst `mirai:"label=Where it took the longest"`,
 }
 
 Api_Profile_Delta :: struct {
@@ -323,16 +323,16 @@ Api_Profile_Difference :: struct {
 Api_Profile_Compare :: struct {
     base,id:int,
     comparable:bool `mirai:"label=No blocking difference and neither measured with VSync or a frame limit or graphics validation"`,
-    differences:[1]Api_Profile_Difference `mirai:"list,label=How their conditions differ"`,
+    differences:[]Api_Profile_Difference `mirai:"label=How their conditions differ"`,
     mean_ms:Api_Profile_Delta `mirai:"label=Of the time of a frame"`,
     p95_ms:Api_Profile_Delta,
     cpu_ms:Api_Profile_Delta `mirai:"label=Mean of the main thread when it was not waiting"`,
     gpu_ms:Api_Profile_Delta `mirai:"label=Mean of the GPU"`,
-    zones:[1]Api_Profile_Change `mirai:"list,label=Own time per frame of the zones both have; the largest change first"`,
-    gpu:[1]Api_Profile_Change `mirai:"list,label=The GPU passes both have; the largest change first"`,
-    only_in_base:[1][PROFILE_NAME_BYTES]u8 `mirai:"text,list,label=Zones only base has"`,
-    only_in_id:[1][PROFILE_NAME_BYTES]u8 `mirai:"text,list,label=Zones only id has"`,
-    notes:[1][PROFILE_NOTE_BYTES]u8 `mirai:"text,list,label=What to know before reading the changes"`,
+    zones:[]Api_Profile_Change `mirai:"label=Own time per frame of the zones both have; the largest change first"`,
+    gpu:[]Api_Profile_Change `mirai:"label=The GPU passes both have; the largest change first"`,
+    only_in_base:[][PROFILE_NAME_BYTES]u8 `mirai:"text,label=Zones only base has"`,
+    only_in_id:[][PROFILE_NAME_BYTES]u8 `mirai:"text,label=Zones only id has"`,
+    notes:[][PROFILE_NOTE_BYTES]u8 `mirai:"text,label=What to know before reading the changes"`,
 }
 
 Api_Profile_Export :: struct {
@@ -357,7 +357,7 @@ Api_Profile_List :: struct {
     recording:int `mirai:"label=The capture that records; 0: none"`,
     recorded:int `mirai:"label=Frames the capture that records recorded so far"`,
     requested:int `mirai:"label=Frames the capture that records asked for"`,
-    captures:[1]Api_Profile_List_Item `mirai:"list,label=Those that ended; the newest last"`,
+    captures:[]Api_Profile_List_Item `mirai:"label=Those that ended; the newest last"`,
 }
 
 @(private)

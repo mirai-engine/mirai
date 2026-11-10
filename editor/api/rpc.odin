@@ -424,12 +424,12 @@ Describe_Params :: struct {
 
 Describe_Result :: struct {
     server:struct {name,version:[MAX_NAME]u8 `mirai:"text"`},
-    methods:[1]Describe_Method `mirai:"list,optional,label=With methods; prefix or plugin"`,
-    guides:[1][8192]u8 `mirai:"text,list,optional,label=How to use the methods given: read before using them"`,
-    core:[1]Describe_Brief `mirai:"list,optional,label=Without params: the methods used most and what each is for"`,
-    others:[1]Describe_Group `mirai:"list,optional,label=Without params: the names of the other methods by plugin"`,
-    active_plugins:[1][MAX_NAME]u8 `mirai:"text,list,optional,label=Without params: the plugins the project uses"`,
-    other_plugins:[1][MAX_NAME]u8 `mirai:"text,list,optional,label=Without params: the plugins it finds and does not use"`,
+    methods:[]Describe_Method `mirai:"optional,label=With methods; prefix or plugin"`,
+    guides:[][8192]u8 `mirai:"text,optional,label=How to use the methods given: read before using them"`,
+    core:[]Describe_Brief `mirai:"optional,label=Without params: the methods used most and what each is for"`,
+    others:[]Describe_Group `mirai:"optional,label=Without params: the names of the other methods by plugin"`,
+    active_plugins:[][MAX_NAME]u8 `mirai:"text,optional,label=Without params: the plugins the project uses"`,
+    other_plugins:[][MAX_NAME]u8 `mirai:"text,optional,label=Without params: the plugins it finds and does not use"`,
     more:[256]u8 `mirai:"text,optional,label=Without params: how to ask for the rest"`,
 }
 Describe_Brief :: struct {
@@ -445,9 +445,9 @@ Describe_Method :: struct {
     plugin:[MAX_NAME]u8 `mirai:"text,label=The plugin that registers it; editor for those of the editor"`,
     tool:[MAX_NAME]u8 `mirai:"text,optional,label=Its name as an MCP tool"`,
     summary:[1024]u8 `mirai:"text"`,
-    flags:[1][16]u8 `mirai:"text,list,optional,label=read_only; destructive; idempotent"`,
-    params:u8 `mirai:"any,optional,label=The JSON Schema of its params"`,
-    result:u8 `mirai:"any,optional,label=The JSON Schema of its result"`,
+    flags:[][16]u8 `mirai:"text,optional,label=read_only; destructive; idempotent"`,
+    params:serial.Json `mirai:"optional,label=The JSON Schema of its params"`,
+    result:serial.Json `mirai:"optional,label=The JSON Schema of its result"`,
 }
 @(private)
 tool_name :: proc(name:string,buffer:[]u8) -> string {

@@ -65,7 +65,7 @@ Api_Capture_Result :: struct {
     rows:int `mirai:"optional,label=A filmstrip: its cells down"`,
     cell:[2]int `mirai:"optional,label=A filmstrip: the pixels of a cell"`,
     ticks:int `mirai:"optional,label=A filmstrip: the ticks it ran"`,
-    cells:[1]Api_Capture_Cell `mirai:"list,optional,label=A filmstrip: its cells from the top left row by row"`,
+    cells:[]Api_Capture_Cell `mirai:"optional,label=A filmstrip: its cells from the top left row by row"`,
     textures_pending:int `mirai:"optional,label=Textures still streaming when the image was taken; above 0 with frames left automatic: its wait ran out. This and the instance counts are given only when it is above 0 or no instance was drawn"`,
     instances_drawn:int `mirai:"optional,label=Instances drawn in the image; 0 with instances_culled above 0: the camera sees none of what is there; all three 0: nothing is there for it to see"`,
     instances_culled:int `mirai:"optional,label=Instances outside the view of its camera or hidden from it"`,
@@ -73,7 +73,7 @@ Api_Capture_Result :: struct {
 }
 Api_Capture_Cell :: struct {
     tick:u64 `mirai:"label=The tick of the game it shows"`,
-    at:u8 `mirai:"any,optional,label=Following an entity: where it shows in points of the image; null when it is behind the camera or gone"`,
+    at:serial.Json `mirai:"optional,label=Following an entity: where it shows in points of the image; null when it is behind the camera or gone"`,
 }
 
 @(private)
