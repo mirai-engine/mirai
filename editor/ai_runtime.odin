@@ -65,14 +65,14 @@ ai_initialize :: proc(s:^Session) {
     ai_settings_initialize(s)
     if message:=ai_store.open(&m.store,s.project_root);message!="" {notify(s,message);return}
     ai_memory_scan(s)
-    ai_history_refresh(s)
+    if message:=ai_history_refresh(m);message!="" {notify(s,message)}
     if saved:=ai_store.main_conversation(&m.store);saved!=nil {
         conversation:=saved^
         if task:=ai_conversation_restore(s,&conversation);task!=nil {
             m.main,m.selected=task.id,task.id
             m.stick=true
             base.text_set(m.agent[:],base.text_get(task.agent[:]))
-            ai_held_count(s,task)
+            ai_held_count(&m.store,task)
             ai_main_reopen(s,m,task)
         }
     }
@@ -82,14 +82,14 @@ ai_initialize :: proc(s:^Session) {
     count,_:=ai_store.list(&m.store,waiting[:],document_path(s.document),kinds={.Agent,.Archived})
     for &conversation in waiting[:count] {
         if m.task_count==AI_TASK_CAPACITY {break}
-        if task:=ai_conversation_restore(s,&conversation,only_pending=true);task!=nil {ai_held_count(s,task)}
+        if task:=ai_conversation_restore(s,&conversation,only_pending=true);task!=nil {ai_held_count(&m.store,task)}
     }
 }
 
 // The messages a chat kept for its next turn when the editor closed.
 @(private)
-ai_held_count :: proc(s:^Session,task:^Ai_Task) {
-    deliveries,_:=ai_store.deliveries(&s.ai.store,task.conversation.id)
+ai_held_count :: proc(store:^ai_store.Store,task:^Ai_Task) {
+    deliveries,_:=ai_store.deliveries(store,task.conversation.id)
     for &delivery in deliveries {
         if delivery.kind!=AI_DELIVERY_STEER {continue}
         task.held+=1
@@ -100,8 +100,7 @@ ai_held_count :: proc(s:^Session,task:^Ai_Task) {
 // Lists a page of the saved subagents whose titles have needle or whose lines
 // match it in the search index; one found by its lines shows what matched in
 // place of its last answer.
-ai_history_refresh :: proc(s:^Session,offset:int=0,needle:string="") {
-    m:=s.ai
+ai_history_refresh :: proc(m:^Ai,offset:int=0,needle:string="") -> string {
     hits:[ai_store.HISTORY_HITS]ai_store.Search_Hit
     found:[ai_store.HISTORY_HITS]u64
     found_count:=0
@@ -113,7 +112,7 @@ ai_history_refresh :: proc(s:^Session,offset:int=0,needle:string="") {
         }
     }
     count,message:=ai_store.list(&m.store,m.history[:],"",offset,needle,found[:found_count],kinds={.Agent},parent=u64(m.main))
-    if message!="" {notify(s,message);return}
+    if message!="" {return message}
     m.history_count,m.history_offset=count,offset
     for &c in m.history[:count] {
         if needle=="" {ai_history_outcome(m,&c)}
@@ -123,6 +122,7 @@ ai_history_refresh :: proc(s:^Session,offset:int=0,needle:string="") {
             c.last_len=copy(c.last[:],ai_utf8_cut(ai_entity_marks_plain(hits[at].snippet,plain[:]),ai_store.LAST_BYTES))
         }
     }
+    return ""
 }
 
 // How the review of a finished agent ended, in place of its last answer.

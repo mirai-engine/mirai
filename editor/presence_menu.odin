@@ -140,7 +140,7 @@ presence_menu_items :: proc(s:^Session,menu:Presence_Menu) {
     case .Remote_Agent:
         st:=collab_state(s)
         if st==nil || st.phase!=.Joined {ui.popup_close(ctx);return}
-        agents:=collab_remote_agents(s,st,menu.peer,wire.host_time(&st.host))
+        agents:=collab_remote_agents(s.ai,st,menu.peer,wire.host_time(&st.host))
         if menu.agent>=len(agents) {ui.popup_close(ctx);return}
         agent:=agents[menu.agent]
         header(ctx,fmt.tprintf("%s of %s",string(agent.name[:agent.name_length]),collab_peer_name(s,menu.peer)))

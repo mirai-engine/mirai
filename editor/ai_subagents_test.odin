@@ -548,8 +548,8 @@ the_delta_names_pins_and_annotations_every_turn_without_images_even_after_a_comp
     base.text_set(name.text[:],"Lamp")
     core.add(&f.world.names,lamp,name)
     core.table_settle(&f.world.ids,&f.world.entities);core.table_settle(&f.world.names,&f.world.entities)
-    for pin in ([?][3]string{{AI_PIN_IMAGE,"C:/art/mood.png","mood.png"},{AI_PIN_ENTITY,"000000000000002a","Lamp"},{AI_PIN_GROUP,"lights","lights"}}) {ai_pin_toggle(&f.s,pin[0],pin[1],pin[2])}
-    ai_pins_sync(&f.s)
+    for pin in ([?][3]string{{AI_PIN_IMAGE,"C:/art/mood.png","mood.png"},{AI_PIN_ENTITY,"000000000000002a","Lamp"},{AI_PIN_GROUP,"lights","lights"}}) {testing.expect_value(t,ai_pin_toggle(f.s.ai,pin[0],pin[1],pin[2]),"")}
+    _=ai_pins_sync(f.s.ai)
     testing.expect_value(t,m.pin_count,3)
     _,on_entity:=ai_store.annotation_add(&m.store,"lights","scenes/main.scene",0x2a,1.5,2,-3,"Too dark\nhere")
     testing.expect_value(t,on_entity,"")
@@ -565,8 +565,8 @@ the_delta_names_pins_and_annotations_every_turn_without_images_even_after_a_comp
     next_message(t,f,main,"And the door")
     ai_context_compacted(&f.s,main)
     present(t,turn_sent(t,f,main,"native-1"))
-    ai_pin_toggle(&f.s,AI_PIN_IMAGE,"C:/art/mood.png","mood.png")
-    ai_pins_sync(&f.s)
+    _=ai_pin_toggle(f.s.ai,AI_PIN_IMAGE,"C:/art/mood.png","mood.png")
+    _=ai_pins_sync(f.s.ai)
     testing.expect_value(t,m.pin_count,2)
     next_message(t,f,main,"And the floor")
     testing.expect(t,!strings.contains(turn_sent(t,f,main,"native-1"),"C:/art/mood.png"),"unpinning takes it out")
@@ -581,14 +581,14 @@ a_pinned_chip_stays_over_the_composer_once_it_leaves_the_message :: proc(t:^test
     path:="C:/art/mood.png"
     base.text_set(m.references[0][:],path)
     m.reference_count=1
-    ai_pin_toggle(&f.s,AI_PIN_IMAGE,path,"mood.png")
+    _=ai_pin_toggle(f.s.ai,AI_PIN_IMAGE,path,"mood.png")
     listed:[AI_PINS]int
     testing.expect_value(t,ai_pins_listed(&f.s,listed[:]),0)
     m.reference_count=0
     count:=ai_pins_listed(&f.s,listed[:])
     testing.expect_value(t,count,1)
     testing.expect_value(t,base.text_get(m.pins[listed[0]].ref[:]),path)
-    ai_pin_toggle(&f.s,AI_PIN_IMAGE,path,"mood.png")
+    _=ai_pin_toggle(f.s.ai,AI_PIN_IMAGE,path,"mood.png")
     testing.expect_value(t,ai_pins_listed(&f.s,listed[:]),0)
 }
 

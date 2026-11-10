@@ -125,7 +125,7 @@ ai_external_turn :: proc(s:^Session,client:string) -> ^Ai_Task {
     base.text_format(task.name[:],"%d-%d",task.id,task.transcript.dropped+task.transcript.count)
     ai_external_begin(s,task)
     task.heard=now
-    ai_history_refresh(s)
+    if message:=ai_history_refresh(m);message!="" {notify(s,message)}
     return task
 }
 

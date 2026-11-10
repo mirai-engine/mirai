@@ -110,8 +110,8 @@ collab_agents_receive :: proc(st:^Collab_State,from:int,data:[]u8) {
 
 // The agents of another editor that is in the session now.
 @(private)
-collab_remote_agents :: proc(s:^Session,st:^Collab_State,i:int,now:f64) -> []Collab_Agent {
-    if !collab_peer_live(st,i,now) || !ai_agents_in_scene(s.ai) {return nil}
+collab_remote_agents :: proc(m:^Ai,st:^Collab_State,i:int,now:f64) -> []Collab_Agent {
+    if !collab_peer_live(st,i,now) || !ai_agents_in_scene(m) {return nil}
     agents:=&st.peers[i].agents
     return agents.list[:agents.count]
 }
@@ -122,7 +122,7 @@ collab_agents_draw :: proc(s:^Session,st:^Collab_State,now:f64) {
     _,low,high,loaded:=presence_mesh(s.app.assets)
     if !loaded {return}
     for i in 0..<COLLAB_PEERS {
-        for &agent,k in collab_remote_agents(s,st,i,now) {
+        for &agent,k in collab_remote_agents(s.ai,st,i,now) {
             color:=agent_color(int(agent.color))
             eyes:=agent.anchor+{0,-low.y,0}
             figure:=&st.agent_figures[i][k]
@@ -146,7 +146,7 @@ collab_agents_highlights :: proc(s:^Session,st:^Collab_State,w:core.World_Ref,le
     es:=core.world_entities(w)
     for i in 0..<COLLAB_PEERS {
         agents:=&st.peers[i].agents
-        for agent in collab_remote_agents(s,st,i,now) {
+        for agent in collab_remote_agents(s.ai,st,i,now) {
             for id in agents.ids[agent.first:][:agent.count] {
                 e:=api_entity(w,id)
                 if e==core.NONE || !core.alive(es,e) {continue}
@@ -162,7 +162,7 @@ collab_agents_key :: proc(s:^Session,st:^Collab_State,now:f64) -> u64 {
     key:=u64(0)
     for i in 0..<COLLAB_PEERS {
         agents:=&st.peers[i].agents
-        for agent in collab_remote_agents(s,st,i,now) {
+        for agent in collab_remote_agents(s.ai,st,i,now) {
             key=base.hash_combine(key,u64(agent.color)+1)
             for id in agents.ids[agent.first:][:agent.count] {key=base.hash_combine(key,u64(id))}
         }
@@ -179,7 +179,7 @@ collab_agent_at :: proc(s:^Session,point:[2]f32) -> (peer,agent:int,rect:ui.Rect
     if !loaded {return}
     now:=wire.host_time(&st.host)
     for i in 0..<COLLAB_PEERS {
-        for &a,k in collab_remote_agents(s,st,i,now) {
+        for &a,k in collab_remote_agents(s.ai,st,i,now) {
             r,shown:=presence_glyph_rect(s,presence_shown(&st.agent_figures[i][k],a.anchor+{0,-low.y,0})+{0,high.y,0},s.viewport.view_projection)
             if shown && ui.rect_contains(r,point) {return i,k,r,true}
         }

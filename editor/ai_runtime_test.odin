@@ -346,15 +346,15 @@ ai_history_search_feeds_by_title_or_by_what_chats_said :: proc(t:^testing.T) {
     transcript^={}
     ai_transcript_add(transcript,"Name the boats",.Prompt)
     testing.expect_value(t,ai_transcript_save(&m.store,&titled,transcript),"")
-    ai_history_refresh(&s,0,"lant")
+    ai_history_refresh(m,0,"lant")
     testing.expect_value(t,m.history_count,2)
     for &c in m.history[:m.history_count] {
         last:=string(c.last[:c.last_len])
         if c.id==2 {testing.expectf(t,strings.contains(last,"Hung a lantern on the pier"),"a chat found by its lines shows what matched, got %q",last)}
     }
-    ai_history_refresh(&s,0,"boats")
+    ai_history_refresh(m,0,"boats")
     testing.expect(t,m.history_count==1 && m.history[0].id==1)
-    ai_history_refresh(&s,0,"·")
+    ai_history_refresh(m,0,"·")
     testing.expect_value(t,m.history_count,0)
 }
 

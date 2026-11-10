@@ -593,7 +593,7 @@ material_document_build :: proc(s:^Session) {
         if _,found:=asset.registry_find(&a.registry,w.material);!found {return}
     }
     material_document_read(s,w)
-    material_document_context(s,w)
+    material_document_context(s.ai,a!=nil?&a.registry:nil,w)
     document:=asset_workspace(g)
     details:ui.Panel_Float
     room:f32
@@ -910,10 +910,10 @@ material_variant_value :: proc(text:string,components:int,is_bool:bool,out:^[4]f
 // What the next message takes of the document: the material, its program,
 // the values picked, the channel shown and the variant set last.
 @(private)
-material_document_context :: proc(s:^Session,w:^Material_Document) {
+material_document_context :: proc(ai:^Ai,registry:^asset.Registry,w:^Material_Document) {
     m:=Ai_Material_Context{open=true,id=w.material}
-    if w.material!={} && s.app.assets!=nil {
-        if file,found:=asset.registry_find(&s.app.assets.registry,w.material);found {base.text_set(m.material[:],file.path)}
+    if w.material!={} && registry!=nil {
+        if file,found:=asset.registry_find(registry,w.material);found {base.text_set(m.material[:],file.path)}
     }
     m.program=w.program
     m.pick_count=w.pick_count
@@ -923,5 +923,5 @@ material_document_context :: proc(s:^Session,w:^Material_Document) {
         base.text_set(m.channel[:],ids[w.channel])
     }
     if w.chosen>0 {m.variant=w.variants[w.chosen-1].label} else {m.variant,m.variant_applied=w.applied,base.text_get(w.applied[:])!=""}
-    ai_material_set(s.ai,m)
+    ai_material_set(ai,m)
 }

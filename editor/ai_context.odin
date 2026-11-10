@@ -753,7 +753,7 @@ ai_task_create :: proc(s:^Session,m:^Ai,region:ui.Rect,prompt,agent:string,conti
             if error:=ai_store.annotate(&m.store,task.conversation.id,u64(prompt_sequence),"user","user_message","",string(snapshot));error!="" {notify(s,error)}
         }
     }
-    ai_history_refresh(s)
+    if message:=ai_history_refresh(m);message!="" {notify(s,message)}
     ai_queue_advance(s,m)
     return task,""
 }
