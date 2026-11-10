@@ -50,7 +50,7 @@ player_normalized :: proc "contextless" (lib:^Library,p:Player) -> f32 {
     return time/data.duration
 }
 
-// Moves the playback by dt*speed and writes the markers it crossed, in the
+// Moves the playback by dt*speed and writes the markers it crossed (not spans), in the
 // order it crossed them, to `events`. Returns how many were written and how
 // many did not fit. A marker is crossed when playback passes it going in its
 // direction; the start of a playback counts once, and in a loop the markers at
@@ -108,6 +108,7 @@ fire_markers :: proc "contextless" (lib:^Library,clip:Clip,weight:f32,data:Clip_
         for k in 0..<len(markers) {
             index:=k if ascending else len(markers)-1-k
             marker:=markers[index]
+            if marker.duration>0 {continue} // a span: what plays it tells it
             x:=duration-marker.time if reversed else marker.time
             if x<x_low || x>x_high {continue}
             if x==x_low && !low_inclusive {continue}
