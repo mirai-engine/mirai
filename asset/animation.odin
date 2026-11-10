@@ -24,6 +24,9 @@ import "mirai:std/serial"
 // if any: its rest pose holds what the clip does not move, and compression
 // measures the error on it. How a clip repeats belongs to whoever
 // plays it. A morph target's weight is the target "<path>/@morph/<target>".
+// A Float or Vector track whose target is "<path>/@field/<Component>.<field>"
+// writes that field of that component of the entity at path: a light's
+// intensity, a camera's field of view, any number, vector, color or flag.
 
 ANIMATION_VERSION :: 4
 ANIMATION_NAME_CAPACITY :: 64
@@ -36,6 +39,8 @@ ANIMATION_MAX_KEYS :: 1<<24
 ANIMATION_MAX_MARKERS :: 1<<20
 ANIMATION_STREAMS_ALIGNMENT :: 8
 ANIMATION_MORPH_PATH :: "/@morph/"
+ANIMATION_FIELD_PATH :: "@field/"
+ANIMATION_FIELD_CAPACITY :: 128
 
 Animation_Clip :: struct {
     name:[ANIMATION_NAME_CAPACITY]u8 `mirai:"text"`,
@@ -59,6 +64,22 @@ Animation_Track :: struct {
 Animation_Marker :: struct {
     time:f32,
     name:[ANIMATION_NAME_CAPACITY]u8 `mirai:"text"`,
+}
+
+// The parts of a track target that drives a field, "<path>/@field/<Component>.<field>" or, for
+// the entity that plays the clip, "@field/<Component>.<field>": the path of the entity, the name of
+// the component and the path of the field inside it. False for any other target.
+animation_field_target :: proc "contextless" (target:string) -> (node,component,field:string,ok:bool) {
+    at:=-1
+    for i:=len(target)-len(ANIMATION_FIELD_PATH);i>=0;i-=1 {
+        if target[i:][:len(ANIMATION_FIELD_PATH)]==ANIMATION_FIELD_PATH && (i==0 || target[i-1]=='/') {at=i;break}
+    }
+    if at<0 {return}
+    named:=target[at+len(ANIMATION_FIELD_PATH):]
+    dot:=-1
+    for i in 0..<len(named) {if named[i]=='.' {dot=i;break}}
+    if dot<=0 || dot==len(named)-1 || dot>=ANIMATION_NAME_CAPACITY || len(named)-dot-1>=ANIMATION_FIELD_CAPACITY {return}
+    return target[:max(at-1,0)],named[:dot],named[dot+1:],true
 }
 
 Animation_Track_Desc :: struct {

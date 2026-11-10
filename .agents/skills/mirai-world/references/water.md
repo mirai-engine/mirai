@@ -1,7 +1,7 @@
 # Water: the `water` plugin
 
 `plugins/water` (`Runtime`, `Shaders`; depends on `physics`, `fog` and `vfx`) draws each
-`Fluid_Volume` of [physics](../../mirai-physics/references/physics.md#fluids) as water, from the
+`Fluid` of [physics](../../mirai-physics/references/physics.md#fluids) as water, from the
 same fluids in which bodies float (`phys.fluids_in`): one datum, one place. Without volumes it
 adds no instances or passes. `water` does not depend on `fluids` (an external plugin,
 <https://github.com/tomaszbk/mirai-fluids>): its `water_fluids` bridge emits the wakes of floating
@@ -12,7 +12,7 @@ names the Surface program of a water without its own material (empty or unknown:
 
 ## Appearance
 
-- `Water` on the `Fluid_Volume` entity changes its appearance; without it, `WATER_DEFAULT`.
+- `Water` on the `Fluid` entity changes its appearance; without it, `WATER_DEFAULT`.
   `material` is a `.mat` like any other; without it, a glass derived with the water's IOR, the
   `Water_Surface` program and the absorption and scattering of `Water`.
 - **Surface.** A [glass](../../mirai-rendering/references/materials.md#glass) solid: that of a
@@ -96,10 +96,10 @@ dry box, the master loses the highs (`UNDER_LOWPASS`) and the water reverb sound
 
 ## Scene
 
-A scene with water has the `Fluid_Volume` entity (with `Water` if its appearance changes and
-`Fluid_Waves` if it has waves) and, for splashes, bubbles and suspended particles, an emitter with
-a `Particle_Channel` `splashes`, `bubbles` or `motes`. The `raft` scene of the demo builds them
-from `tools/demo_content`.
+A scene with water has the `Fluid` entity with its `Volume` (with `Water` if its appearance
+changes and `Fluid_Waves` if it has waves) and, for splashes, bubbles and suspended particles, an
+emitter with a `Particle_Channel` `splashes`, `bubbles` or `motes`. The `raft` scene of the demo
+builds them from `tools/demo_content`.
 
 ## Limits
 

@@ -8,6 +8,7 @@ import "core:slice"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
+import anim "mirai:std/anim"
 import "mirai:std/base"
 import "mirai:ui"
 
@@ -41,11 +42,11 @@ ui_check_base :: proc() -> (d:ui.Tree_Data) {
     ui.tree_text_set(d.style_infos[2].name[:],"accent2")
     d.fonts=slice.clone([]ui.Tree_Font{{font={0xf0,2}}},a)
     d.images=slice.clone([]ui.Tree_Image{{texture={0x7e,2}}},a)
-    d.keys=slice.clone([]ui.Keyframe{{time=0},{time=0.2,value={1,0,0,0}},{time=0},{time=0.1},{time=0.3},{time=0},{time=0},{time=0.5}},a)
+    d.keys=slice.clone([]anim.Keyframe{{time=0},{time=0.2,value={1,0,0,0}},{time=0},{time=0.1},{time=0.3},{time=0},{time=0},{time=0.5}},a)
     d.tracks=slice.clone([]ui.Tree_Track{{.Opacity,0,2},{.Offset,2,3},{.Scale,5,1},{.Opacity,6,2}},a)
     d.parts=slice.clone([]ui.Anim{1,2,1,3},a)
     d.anims=slice.clone([]ui.Tree_Anim{{kind=.Clip,first=0,count=2},{kind=.Clip,first=2,count=1},{kind=.Sequence,first=0,count=2},{kind=.Parallel,first=2,count=2}},a)
-    d.anim_sets=slice.clone([]ui.Anim_Set{{shown=1,hidden=3,clicked=4},{hovered=2,focused=4,unselected=1}},a)
+    d.anim_sets=slice.clone([]ui.Anim_Set{{shown=1,hidden=3,clicked=4},{shown=2,hidden=4,clicked=1}},a)
     d.translations=make([]ui.Tree_Translation,1,a)
     d.translations[0]={id=7,text={2,4}};ui.tree_text_set(d.translations[0].language[:],"es")
     d.grid_tracks=slice.clone([]ui.Grid_Tracks{{count=2}},a)

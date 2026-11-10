@@ -7,6 +7,7 @@ import "core:slice"
 import "core:strings"
 import "core:time"
 import "mirai:asset"
+import std_anim "mirai:std/anim"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -26,7 +27,7 @@ Records :: struct {
     images:[dynamic]ui.Tree_Image,
     anims:[dynamic]ui.Tree_Anim,
     tracks:[dynamic]ui.Tree_Track,
-    keys:[dynamic]ui.Keyframe,
+    keys:[dynamic]std_anim.Keyframe,
     parts:[dynamic]ui.Anim,
     anim_sets:[dynamic]ui.Anim_Set,
     fonts:[dynamic]ui.Tree_Font,
@@ -848,7 +849,7 @@ property_default :: proc "contextless" (property:ui.Anim_Property) -> [4]f32 {
 // seconds; returns its row.
 records_clip :: proc(r:^Records,name:string,property:ui.Anim_Property,from,to:[4]f32,duration:f32) -> int {
     first_key:=u32(len(r.keys))
-    append(&r.keys,ui.Keyframe{time=0,value=from},ui.Keyframe{time=duration,value=to,ease=.Out_Cubic})
+    append(&r.keys,std_anim.Keyframe{time=0,value=from},std_anim.Keyframe{time=duration,value=to,ease=.Cubic_Out})
     append(&r.tracks,ui.Tree_Track{property=property,first_key=first_key,key_count=2})
     a:=ui.Tree_Anim{kind=.Clip,first=u32(len(r.tracks)-1),count=1}
     ui.tree_text_set(a.name[:],name)
@@ -862,7 +863,7 @@ records_track_add :: proc(r:^Records,anim:int,property:ui.Anim_Property) -> bool
     if a.kind!=.Clip || a.count>=ui.TREE_CLIP_TRACKS {return false}
     at:=int(a.first+a.count)
     key:=u32(len(r.keys))
-    append(&r.keys,ui.Keyframe{value=property_default(property)})
+    append(&r.keys,std_anim.Keyframe{value=property_default(property)})
     inject_at(&r.tracks,at,ui.Tree_Track{property=property,first_key=key,key_count=1})
     // Clips whose tracks come after it move by one.
     for &other,i in r.anims {
@@ -890,7 +891,7 @@ records_track_remove :: proc(r:^Records,anim,track:int) {
 records_key_add :: proc(r:^Records,track:int) {
     t:=&r.tracks[track]
     at:=int(t.first_key+t.key_count)
-    key:=ui.Keyframe{}
+    key:=std_anim.Keyframe{}
     if t.key_count>0 {key=r.keys[at-1];key.time+=1}
     inject_at(&r.keys,at,key)
     for &other,i in r.tracks {
@@ -919,7 +920,7 @@ records_keys_remove :: proc(r:^Records,at,count:int) {
 records_keys_sort :: proc(r:^Records) {
     for t in r.tracks {
         if u64(t.first_key)+u64(t.key_count)>u64(len(r.keys)) {continue}
-        slice.stable_sort_by(r.keys[t.first_key:][:t.key_count],proc(a,b:ui.Keyframe) -> bool {return a.time<b.time})
+        slice.stable_sort_by(r.keys[t.first_key:][:t.key_count],proc(a,b:std_anim.Keyframe) -> bool {return a.time<b.time})
     }
 }
 

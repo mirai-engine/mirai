@@ -8,14 +8,14 @@
 struct Gpu_Volume {
     float4 to_local[3]; // rows: from the world to the volume, turned and moved, not scaled
     float4 shape;       // xyz half its size along each axis, metres (x the radius of a sphere); w its blend
-    uint4 kind;         // x 0 unbounded, 1 box, 2 sphere; y 1 when it adds
+    uint4 kind;         // x 0 unbounded, 1 box, 2 sphere, 3 plane (everything under its local y); y 1 when it adds
 };
 
 // 1 inside, going to 0 over its blend before its border, 0 outside.
 float volume_weight(Gpu_Volume v, float3 p) {
     if (v.kind.x == 0u) return 1.0;
     float3 local = float3(dot(v.to_local[0].xyz, p) + v.to_local[0].w, dot(v.to_local[1].xyz, p) + v.to_local[1].w, dot(v.to_local[2].xyz, p) + v.to_local[2].w);
-    float depth = v.kind.x == 1u ? min(v.shape.x - abs(local.x), min(v.shape.y - abs(local.y), v.shape.z - abs(local.z))) : v.shape.x - length(local);
+    float depth = v.kind.x == 1u ? min(v.shape.x - abs(local.x), min(v.shape.y - abs(local.y), v.shape.z - abs(local.z))) : v.kind.x == 2u ? v.shape.x - length(local) : v.kind.x == 3u ? -local.y : -1.0;
     if (depth < 0.0) return 0.0;
     return v.shape.w > 0.0 ? min(depth / v.shape.w, 1.0) : 1.0;
 }

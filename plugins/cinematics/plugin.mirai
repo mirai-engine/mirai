@@ -1,6 +1,6 @@
 {
   "name": "cinematics",
   "version": "0.1.0",
-  "dependencies": [],
+  "dependencies": ["animation"],
   "parts": ["Runtime", "Editor"]
 }

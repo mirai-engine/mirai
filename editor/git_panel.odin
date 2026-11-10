@@ -260,5 +260,5 @@ git_status_build :: proc(s:^Session) {
     case .Finish: doing="Finishing the merge..."
     }
     if doing!="" {ui.label(ctx,doing,th.font_small,th.text_muted);return}
-    if failure:=base.text_get(g.error[:]);failure!="" {ui.paragraph(ctx,failure,th.font_small,th.danger)}
+    if failure:=base.text_get(g.error[:]);failure!="" {ui.text(ctx,failure,ui.prose(ctx,th.font_small,th.danger))}
 }

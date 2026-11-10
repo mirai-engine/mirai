@@ -15,8 +15,6 @@ Paint_Kind :: enum u8 {
     Bar,        // vertical gradient from fill to fill2 over a line of stroke
     Box,        // fill and stroke, or quad2 tinted by fill, around an icon, a quad, a text and a right aligned detail
     Card,       // an icon over a centered label
-    Text,       // one line clipped to its box
-    Text_Block, // lines wrapped and aligned inside the box, with style
     Field,      // a text or number field, edited or not
     Swatch,     // a color
     Sat_Value,  // the square of saturation and value of a color picker
@@ -47,7 +45,7 @@ Text_Style :: struct {
     align_x,align_y:Align,
     wrap:Text_Wrap,
     ellipsis:bool,       // text that does not fit ends in an ellipsis
-    line_height:f32,     // in sizes; 0 means TEXT_LINE, or PARAGRAPH_LINE in a paragraph
+    line_height:f32,     // in sizes; 0 means TEXT_LINE
     outline:f32,         // width, in layout units
     outline_color:Color,
     shadow:[2]f32,       // offset of the shadow
@@ -67,7 +65,7 @@ Paint :: struct {
     effect_clip:u16,
     clip_data:Clip,
     shadow:bool,
-    text,detail:string,      // detail is right aligned (shortcuts, counts)
+    text,detail:string,      // detail is right aligned (shortcuts, counts); of a text of one span: what it says
     text_color,detail_color:Color,
     size:f32,
     center:bool,
@@ -76,14 +74,14 @@ Paint :: struct {
     icon_color:Color,
     icon_size:f32,
     icon_after:bool,         // the icon follows the text instead of leading it
-    fade:bool,               // a Text wider than its rectangle fades out at its end
+    fade:bool,               // of a text: a line wider than its rectangle fades out at its end
     hidden:bool,             // it keeps its place in the layout and draws nothing (Context.invisible)
     quad,quad2:Quad,         // preview or image; quad2: the track of a progress bar
     label:string,            // axis letter of a number field
     strip:Color,             // axis color of a number field
     caret:int,               // caret index in text, -1 when not editing
     caret_hidden:bool,
-    multiline:bool,          // the text wraps and keeps its line breaks; of a Box: its text is a block in its style
+    multiline:bool,          // of a Field: the text wraps and keeps its line breaks
     selection:[2]int,        // selected byte range of the edited text (empty when equal)
     scroll:f32,              // units the edited text is shifted left
     scroll_y:f32,            // units the edited text is shifted up
@@ -101,8 +99,8 @@ Paint :: struct {
     faint:Color,             // the placeholder of a Field; the theme's text_faint when transparent
     fit:Image_Fit,           // of an Image, keeping image_size
     image_size:[2]f32,       // of the part of the image shown, in texels; zero: unknown, it stretches
-    decoration:Text_Decorations, // of a Text_Block
-    revealed:i32,            // of a Text_Block: the characters it draws plus one; 0: all
+    decoration:Text_Decorations, // of a text
+    revealed:i32,            // of a text: the characters it draws plus one; 0: all
 }
 
 FIELD_UNIT :: f32(9.5) // size of the unit at the right end of a number field
@@ -234,10 +232,6 @@ paint_draw :: proc(ctx:^Context,r:Rect,p:^Paint) {
         case p.border!={}:         draw_nine_slice(ctx,r,p.quad2,p.border,p.border_uv,p.fill)
         case:                      draw_image(ctx,r,p.quad2,p.fill)
         }
-        if p.multiline {
-            draw_text_block(ctx,p.text,r,p.style)
-            break
-        }
         clip_push(ctx,r)
         x:=r.x+p.padding
         width:=text_width(font,p.text,p.size,int(p.style.font))
@@ -279,14 +273,6 @@ paint_draw :: proc(ctx:^Context,r:Rect,p:^Paint) {
             if detail_x>right-w {clip_pop(ctx)}
         }
         clip_pop(ctx)
-    case .Text:
-        clip_push(ctx,r)
-        x:=r.x
-        if p.center {x=r.x+(r.w-text_width(font,p.text,p.size,int(p.style.font)))*0.5}
-        if p.fade && text_width(font,p.text,p.size,int(p.style.font))>r.w {paint_text_faded(ctx,p,r,x,r.x+r.w,p.text_color)} else {paint_text_line(ctx,p,r,x,p.text_color)}
-        clip_pop(ctx)
-    case .Text_Block:
-        draw_text_block(ctx,p.text,r,p.style,p.decoration,int(p.revealed)-1)
     case .Field:
         // A field of a game gives its corners, its selection and its placeholder; one of the editor takes the theme.
         radii:=p.corners if p.corners!={} else [4]f32{th.radius_control,th.radius_control,th.radius_control,th.radius_control}
@@ -491,63 +477,6 @@ draw_text_decorated :: proc(ctx:^Context,text:string,x,y:f32,style:Text_Style,de
     baseline:=y+ascent*style.size
     if .Underline in decoration {draw_rect(ctx,{x,baseline+thickness,width,thickness},style.color)}
     if .Strike in decoration {draw_rect(ctx,{x,baseline-style.size*0.3-thickness*0.5,width,thickness},style.color)}
-}
-
-// Text wrapped, aligned and clipped inside r. limit: how many of its
-// characters are drawn, each line where all of them would go; negative: all.
-draw_text_block :: proc(ctx:^Context,text:string,r:Rect,style:Text_Style,decoration:Text_Decorations={},limit:=-1) {
-    if style.size<=0 || text=="" || limit==0 {return}
-    font:=&ctx.font
-    f:=int(style.font)
-    line_height:=style.size*(style.line_height if style.line_height>0 else TEXT_LINE)
-    leading:=text_leading(style.size,line_height)
-    lines:=text_line_count(font,text,style.size,r.w,style.wrap,f)
-    // Lines whose text fits; at least one is drawn.
-    visible:=max(min(lines,int((r.h-leading-style.size*TEXT_LINE)/line_height)+1),1) if r.h>0 else lines
-    height:=f32(visible)*line_height
-    y:=r.y
-    switch style.align_y {
-    case .Start:
-    case .Center:y=r.y+(r.h-height)*0.5
-    case .End:y=r.y+r.h-height
-    }
-    margin:=style.outline+max(abs(style.shadow.x),abs(style.shadow.y))+(style.size*TEXT_ITALIC if .Italic in decoration else 0)
-    clip_push(ctx,{r.x-margin,r.y-margin,r.w+2*margin,r.h+2*margin})
-    rest:=text
-    left:=limit
-    for index in 0..<visible {
-        line:string;width:f32
-        before:=rest
-        line,rest,width=text_line(font,rest,style.size,r.w,style.wrap,f)
-        cut:=false
-        // A line too wide, or the last one in sight of more text, ends in an ellipsis.
-        if style.ellipsis && (width>r.w+0.01 || (index==visible-1 && rest!="")) {
-            line=text_cut(font,line,style.size,r.w,f)
-            cut=true
-            width=text_width(font,line,style.size,f)+text_width(font,ELLIPSIS,style.size,f)
-        }
-        x:=r.x
-        switch style.align_x {
-        case .Start:
-        case .Center:x=r.x+(r.w-width)*0.5
-        case .End:x=r.x+r.w-width
-        }
-        shown:=line
-        if left>=0 {
-            count:=0
-            for _,i in line {
-                if count==left {shown=line[:i];break}
-                count+=1
-            }
-            // The spaces or the break the line ended at count as characters too.
-            left=max(left-count-(len(before)-len(line)-len(rest)),0)
-        }
-        draw_text_decorated(ctx,shown,x,y+leading,style,decoration)
-        if cut && len(shown)==len(line) {draw_text_decorated(ctx,ELLIPSIS,x+text_width(font,line,style.size,f),y+leading,style,decoration)}
-        if left==0 {break}
-        y+=line_height
-    }
-    clip_pop(ctx)
 }
 
 // Where an image whose part shown is size texels goes in r as fit says, and

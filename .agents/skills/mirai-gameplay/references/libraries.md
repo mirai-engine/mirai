@@ -447,14 +447,16 @@ at the first `Audio_Listener` or, without one, at the `View`, the buses as `Audi
 the reverb of the room where the listener is and what covers each source.
 
 - **Sources.** `Audio_Source.sound` is a `.sound` or a `.sound_set`; there are no hand-made sounds
-  in the mixer. With `spatial` it sounds at the entity, attenuated by its curve between
-  `min_distance` and `max_distance`; without it, with its `pan`. `audio_sources` (`late`, after
+  in the mixer. With `spatial` it sounds at the entity
+  ([positional audio](../../mirai-platform/references/audio.md#positional-audio)), attenuated by
+  its curve between `min_distance` and `max_distance`, and with `directivity` louder toward -Z of
+  the entity; without it, with its `pan`. `audio_sources` (`late`, after
   `transforms_propagate` and `camera_view`) starts, moves and updates the voices and sends only
   what changed.
   - `pitch` is the speed: it moves the tone with it, like a "slowed" song; with the reverb of its
     bus it gives "slowed + reverb". There is no speed change without a tone change.
   - Volume, pitch, pan and loop are applied to the voice that is sounding; another sound, another
-    bus, another curve, another doppler or a file that was reloaded start it anew.
+    bus, another curve, another doppler or directivity or a file that was reloaded start it anew.
   - Clearing `playing` or removing the component stops the voice. A sound without `loop` that ends
     leaves `Audio_Source_State.ended` until `playing` is cleared.
   - Doppler: the source's and the listener's velocity come from how much they moved in the frame; a
@@ -475,14 +477,19 @@ the reverb of the room where the listener is and what covers each source.
   `audio_reverb` mixes its reverb by its weight over that of the room, with the same fade, and
   `audio_buses` gives the master the lower cutoff between that of `Audio_Settings` and that of the
   medium.
-- **Occlusion.** A spatial source with `Audio_Occlusion` lowers in volume and loses highs (the
-  voice's low-pass, from 20 kHz to the occlusion's cutoff on a logarithmic scale) while something
-  solid is between it and the listener. What collides is told by `core.World_Query`: one ray per
-  source per frame from it to `OCCLUSION_CLEARANCE` before the listener, ignoring its own body;
-  that margin leaves the player's body out. Without a library that gives the query (physics),
+- **Occlusion.** A spatial source with `Audio_Occlusion` is heard through what stands between it
+  and the listener, as far as it is hidden: the mixer's direct effect blends each band toward what
+  the bodies crossed let through (`Audio_Material.transmission`, `AUDIO_MATERIAL_DEFAULT` for a
+  body without one), so a hidden source is muffled, not silenced. What collides is told by
+  `core.World_Query`, ignoring the source's body and stopping `OCCLUSION_CLEARANCE` before the
+  listener, which leaves the player's body out. Without a library that gives the query (physics),
   nothing covers.
-  - `Audio_Source_State.occlusion` goes from 0 to 1 over `fade` seconds; a voice that starts takes
-    that of that moment.
+  - How hidden: with `radius` 0 one ray; with a radius, the share of `OCCLUSION_SAMPLES` points of
+    its sphere that the source reaches and the listener does not see, `OCCLUSION_SAMPLES_PER_FRAME`
+    of them retested each frame. A voice that starts tests them all.
+  - What gets through: rays from the listener and from the source take turns across up to
+    `TRANSMISSION_SURFACES` surfaces, only while it is hidden.
+  - `Audio_Source_State.occlusion` follows that share over `fade` seconds.
 - **Sets.** A `.sound_set` ([format](../../mirai-assets/references/kinds.md#sound-set)) picks one
   of its sounds each time a voice starts, with `host.content_sound_pick` and the content generator:
   it does not repeat in a rollback because voices are not resimulated.
@@ -500,7 +507,8 @@ the reverb of the room where the listener is and what covers each source.
   - `Audio_Output` (machine setting) is the output the player chose, by its name in
     `platform.audio_device_names`; empty, the system's. `audio_output` moves the mixer to it when
     it changes, without losing its voices, and only if the application has an open output. A name
-    the system does not list sounds through the system's and is the problem `audio.output`.
+    the system does not list sounds through the system's and is the problem `audio.output`. Its
+    `kind` (headphones by default, or speakers) is given to every mixer, open output or not.
   - `audio_buses` (`late`) compares each bus of the mixer with its entry and its volume and sends
     only what differs; a bus without an entry returns to 0 dB, without filter or ducking. The
     master's mute belongs to the host (the player without focus), not to the settings.
@@ -772,10 +780,23 @@ Saves: the `World` written in a slot, a file `saves/<slot>.save` in the project'
 
 ## `volume`
 
-The values that change per zone: gravity, wind, reverb, how views look and fog (`Fog_Volume` of the
-`fog` plugin). The value is a component of its library; the `Volume` of the same entity says where
-it applies: unbounded, a box or a sphere by the entity's scale, with `blend` meters of edge where
-its weight goes from 1 to 0.
+`Volume` is the only region of the world: unbounded, a box or a sphere by the entity's scale, or a
+plane (everything under the entity, along its up), with `blend` meters of edge where its weight
+goes from 1 to 0. What happens in it is another component of the same entity, of the library that
+does it.
+
+- **No component carries a shape of its own.** A library that needs a region reads the `Volume`
+  of its entity and asks `depth`, `weight`, `holds` (a point) or `overlaps` (a box of the world),
+  the one containment and overlap test; `valid` says whether a volume can hold anything. A size, a
+  pose or a point that is not a number is outside. Who reads it: the per-zone values below,
+  `Fluid`, `Force_Field` and the area requests of
+  [physics](../../mirai-physics/references/engine.md#requests), `Strain_Field` of destruct,
+  `Environment_Trigger`, the `Nav_Bounds`, `Nav_Area` and `Nav_Obstacle` of
+  [navigation](../../mirai-world/references/navigation.md) and `Foliage_Bender`. Each says which
+  shapes it takes and reports a problem for another.
+
+The values that change per zone are gravity, wind, reverb, how views look and fog (`Fog_Volume` of
+the `fog` plugin):
 
 - **A single algorithm** (`volume.odin`): at a point those that contain it are applied from lowest
   to highest `priority`, and among equals the largest first, over the library's default. Each one
@@ -786,9 +807,10 @@ its weight goes from 1 to 0.
   both for a value that is its row: what is asked at one point per frame (the game's view, once
   per frame in `render_sync`; the listener).
 - What is asked at many points per tick (each body's gravity) keeps an `Index`: the unbounded ones
-  in order and the bounded ones in a tree, redone only when a volume, a value or a place changes. A
-  point asks the tree for the bounded ones that may contain it; without any, it is worth what the
-  library combined of the unbounded ones when redoing it, and without bounded ones nobody asks.
+  in order, the boxes and spheres in a tree and the planes in a list, redone only when a volume, a
+  value or a place changes. A point asks the tree for the bounded ones that may contain it;
+  without any, it is worth what the library combined of the unbounded ones when redoing it, and
+  without bounded ones nobody asks.
 - The value and its `Volume` are replicated; `scope` belongs to each end.
 - **On the GPU** (`shaders/include/volume.slang`): `ordered` gives the rows in the order in which
   they are applied, which does not depend on the point, and `gpu_volume` their shape;

@@ -54,7 +54,7 @@ motion_targets_queued_before_the_first_tick_bind_and_warp_the_same_interval :: p
     hierarchy:core.Hierarchy;defer core.value_free(&hierarchy,type_info_of(core.Hierarchy))
     core.hierarchy_settle(&hierarchy,core.read(&parents),&entities)
     requests:Animation_Requests;events:Animation_Events;playback:Playback;skeletons:Skeleton_Assets
-    defer {delete(requests.seeks.items);delete(requests.poses.items);delete(requests.distances.items);delete(events.items);playback_free(&playback);skeleton_assets_free(&skeletons)}
+    defer {delete(requests.timeline.items);delete(requests.poses.items);delete(requests.distances.items);delete(events.items);playback_free(&playback);skeleton_assets_free(&skeletons)}
     motion:Motion_Runtime;motion_requests:Motion_Requests;motion_assets:=Motion_Assets{allocator=context.allocator}
     defer {motion_runtime_free(&motion);delete(motion_requests.targets.items);delete(motion_requests.locomotion.items);motion_assets_free(&motion_assets)}
     profile:=motion_test_profile();profile.windows[0].end=1

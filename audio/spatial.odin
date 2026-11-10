@@ -22,6 +22,11 @@ Attenuation :: struct {
 }
 ATTENUATION_DEFAULT :: Attenuation{model=.Inverse,min_distance=1,max_distance=100,rolloff=1}
 
+// What the output plays on. Headphones hear each spatial voice through the
+// HRTF of its direction, which tells ahead from behind and above from below;
+// speakers pan it between them. A mono output plays every voice centered.
+Output_Kind :: enum u8 {Headphones,Speakers}
+
 @(private)
 Listener :: struct {
     position,velocity:[3]f32,
@@ -56,23 +61,23 @@ balance_gains :: proc "contextless" (pan:f32) -> [2]f32 {
     return {min(1,1-p),min(1,1+p)}
 }
 
-// Pan of a source for a listener: -1 at its left, 1 at its right, 0 ahead,
-// behind, above, below or in the same place.
-listener_pan :: proc "contextless" (listener_position:[3]f32,listener_rotation:quaternion128,source:[3]f32) -> f32 {
-    to_source:=source-listener_position
-    distance:=math.sqrt(to_source.x*to_source.x+to_source.y*to_source.y+to_source.z*to_source.z)
-    if distance<1e-5 {return 0}
-    right:=mm.quat_rotate(listener_rotation,{1,0,0})
-    return clamp((to_source.x*right.x+to_source.y*right.y+to_source.z*right.z)/distance,-1,1)
+// Where a source is for a listener: the unit direction in the listener's
+// space (+X right, +Y up, -Z ahead) and the distance. A source at the
+// listener comes from above.
+listener_direction :: proc "contextless" (listener_position:[3]f32,listener_rotation:quaternion128,source:[3]f32) -> (direction:[3]f32,distance:f32) {
+    offset:=source-listener_position
+    distance=math.sqrt(offset.x*offset.x+offset.y*offset.y+offset.z*offset.z)
+    if !(distance>1e-5) || !finite(distance) {return {0,1,0},0}
+    return mm.quat_rotate(conj(quat_unit(listener_rotation)),offset/distance),distance
 }
 
 // Factor on the pitch of a source heard by a listener, both moving. factor
 // scales the effect: 0 turns it off, 1 is the physical one.
 doppler_pitch :: proc "contextless" (listener_position,listener_velocity,source_position,source_velocity:[3]f32,factor,speed_of_sound:f32) -> f32 {
-    if factor<=0 || speed_of_sound<=0 {return 1}
+    if !(factor>0) || !(speed_of_sound>0) {return 1}
     to_listener:=listener_position-source_position
     distance:=math.sqrt(to_listener.x*to_listener.x+to_listener.y*to_listener.y+to_listener.z*to_listener.z)
-    if distance<1e-5 {return 1}
+    if !(distance>=1e-5) {return 1}
     direction:=to_listener/distance
     // Speeds along the line from the source to the listener; neither reaches the speed of sound.
     limit:=speed_of_sound/factor*0.99
@@ -81,17 +86,85 @@ doppler_pitch :: proc "contextless" (listener_position,listener_velocity,source_
     return clamp((speed_of_sound-factor*listener_speed)/(speed_of_sound-factor*source_speed),0.25,4)
 }
 
-// Gains for the two outputs, without the volume of the voice, and pitch factor.
+// Turns the mono signal a spatial voice left in the left channel of frames
+// [from,to) of out into its place: the direct effect (EQ and gain), then the
+// pan on speakers. On headphones it leaves the signal in both channels and
+// returns true: the HRTF is applied with the other voices of its bus.
 @(private)
-spatialize :: proc "contextless" (listener:Listener,position,velocity:[3]f32,attenuation:Attenuation,doppler,speed_of_sound:f32) -> (gains:[2]f32,pitch:f32) {
-    offset:=position-listener.position
-    distance:=math.sqrt(offset.x*offset.x+offset.y*offset.y+offset.z*offset.z)
-    gains=pan_gains(listener_pan(listener.position,listener.rotation,position))*attenuation_gain(attenuation,distance)
-    pitch=doppler_pitch(listener.position,listener.velocity,position,velocity,doppler,speed_of_sound)
+spatial_post :: proc "contextless" (m:^Mixer,v:^Mix_Voice,index:u32,out:[^]f32,from,to:int) -> (binaural:bool) #no_bounds_check {
+    count:=to-from
+    binaural=m.output_now==.Headphones && m.channels==2
+    if count<=0 {return}
+    mono:=m.spatial_mono[:count]
+    for i in 0..<count {mono[i]=out[(from+i)*2]}
+    if !v.direct_ready {
+        v.eq_gains=v.eq_target
+        v.eq_current=0
+        v.eq[0]=eq_filters(v.eq_gains,m.sample_rate)
+        v.eq_state={}
+        v.direct_gain_now=v.direct_gain
+        v.direct_ready=true
+    }
+    current:=int(v.eq_current)
+    // A band that moved less than EQ_GAIN_STEP of its gain keeps the filters it has.
+    moved:=false
+    for i in 0..<BANDS {moved||=!(abs(v.eq_target[i]-v.eq_gains[i])<=EQ_GAIN_STEP*v.eq_gains[i])}
+    if moved {
+        // EQEffect: the cascade of the old gains and that of the new ones, which
+        // starts from its state, crossfade over the chunk.
+        previous:=current
+        current=1-current
+        v.eq[current]=eq_filters(v.eq_target,m.sample_rate)
+        v.eq_state[current]=v.eq_state[previous]
+        old:=m.spatial_old[:count]
+        copy(old,mono)
+        eq_run(&v.eq[previous],&v.eq_state[previous],old)
+        eq_run(&v.eq[current],&v.eq_state[current],mono)
+        for i in 0..<count {
+            w:=f32(i)/f32(count)
+            mono[i]=w*mono[i]+(1-w)*old[i]
+        }
+        v.eq_current=u8(current)
+        v.eq_gains=v.eq_target
+    } else {
+        eq_run(&v.eq[current],&v.eq_state[current],mono)
+    }
+    g0,dg:=v.direct_gain_now,(v.direct_gain-v.direct_gain_now)/f32(count)
+    for i in 0..<count {mono[i]*=g0+dg*f32(i)}
+    v.direct_gain_now=v.direct_gain
+    if binaural {
+        for i in 0..<count {out[(from+i)*2],out[(from+i)*2+1]=mono[i],mono[i]}
+        return
+    }
+    // PanningEffect::stereoPanningWeight: the side once brought to the
+    // horizontal plane, so ahead and behind both sit in the middle.
+    pan:=f32(0)
+    if horizontal:=math.sqrt(v.direction.x*v.direction.x+v.direction.z*v.direction.z);m.channels==2 && horizontal>1e-6 {pan=v.direction.x/horizontal}
+    weights:=pan_gains(pan)
+    if !v.pan_valid {v.pan_now,v.pan_valid=weights,true}
+    dw:=(weights-v.pan_now)/f32(count)
+    for i in 0..<count {
+        g:=v.pan_now+dw*f32(i)
+        out[(from+i)*2]=mono[i]*g[0]
+        out[(from+i)*2+1]=mono[i]*g[1]
+    }
+    v.pan_now=weights
     return
 }
 
-// Where the listener is, how it is turned and how fast it moves.
+// Where the listener is, how it is turned and how fast it moves. False for a
+// position or velocity that is not a number.
 listener_set :: proc(m:^Mixer,position:[3]f32,rotation:quaternion128,velocity:[3]f32={}) -> bool {
-    return command_push(m,{kind=.Listener,vectors={position,velocity},rotation=rotation})
+    if !finite3(position) || !finite3(velocity) {return false}
+    return command_push(m,{kind=.Listener,vectors={position,velocity},rotation=quat_unit(rotation)})
 }
+
+// What the output plays on: the HRTF for headphones or the pan for speakers.
+mixer_set_output :: proc(m:^Mixer,kind:Output_Kind) -> bool {
+    if kind!=.Headphones && kind!=.Speakers {return false}
+    if kind==m.output {return true}
+    if !command_push(m,{kind=.Output,index=u32(kind)}) {return false}
+    m.output=kind
+    return true
+}
+mixer_output :: proc(m:^Mixer) -> Output_Kind {return m.output}

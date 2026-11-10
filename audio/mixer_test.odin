@@ -66,6 +66,8 @@ mixer_rejects_a_desc_it_cannot_serve :: proc(t:^testing.T) {
     testing.expect(t,m==nil && error==.Invalid_Desc)
     m,error=mixer_create({voice_capacity=-4})
     testing.expect(t,m==nil && error==.Invalid_Desc)
+    m,error=mixer_create({output=Output_Kind(9)})
+    testing.expect(t,m==nil && error==.Invalid_Desc)
     for desc in ([?]Mixer_Desc{{feed_capacity=max(int)},{feed_frames=max(int)},{stream_frames=max(int)},{voice_capacity=max(int)},{command_capacity=max(int)},{feed_frames=-1}}) {
         m,error=mixer_create(desc)
         testing.expect(t,m==nil && error==.Invalid_Desc)
@@ -671,6 +673,8 @@ steady_playback_allocates_nothing :: proc(t:^testing.T) {
             voice:=voice_play(m,sounds[frame%2],desc)
             voice_set_volume(m,voice,0.8)
             voice_set_position(m,voice,{1,0,f32(frame%5)},{0,0,3})
+            voice_set_occlusion(m,voice,f32(frame%3)*0.5,TRANSMISSION_DEFAULT)
+            if frame%50==0 {mixer_set_output(m,.Speakers if frame%100==0 else .Headphones)}
             if frame%4==0 {voice_stop(m,voice,0.02)}
             listener_set(m,{f32(frame%3),0,0},1,{1,0,0})
             bus_set_volume(m,bus,0.5+f32(frame%2)*0.5)

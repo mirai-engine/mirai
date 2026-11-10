@@ -40,7 +40,6 @@ Request_Locomotion :: struct {
     enabled:bool `mirai:"optional"`,
 }
 Request_Distance :: struct {name:[32]u8 `mirai:"text,label=A distance track of the motion profile"`,distance:f32 `mirai:"unit=m"`,seek:bool `mirai:"optional,label=Jumps to its time instead of advancing the clock with crossed events and root motion"`}
-Request_Sequence :: struct {action:anim.Keyframe_Path_Command_Kind,value:f32 `mirai:"optional"`}
 Hand_Side :: enum u8 {Left,Right}
 Gesture_Mask :: enum u8 {Upper_Body,Arm_L,Arm_R}
 Intent_Look :: struct {
@@ -78,7 +77,6 @@ Request_Params :: struct {
     motion:[16]Request_Motion `mirai:"optional,label=Targets of warp windows"`,
     locomotion:Request_Locomotion `mirai:"optional,label=Velocity the body travels at for orientation and stride"`,
     distance:Request_Distance `mirai:"optional,label=Plays a clip by distance left"`,
-    sequence:Request_Sequence `mirai:"optional,label=Controls a Keyframe_Path sequence"`,
     locomote:Intent_Locomote `mirai:"optional,label=Walk toward a point or entity"`,
     look:Intent_Look `mirai:"optional,label=Look at something"`,
     gesture:Intent_Gesture `mirai:"optional,label=Play a gesture over the moving body"`,
@@ -108,7 +106,7 @@ request_rows_defaults :: proc(p:^$T) {
 @(private)
 request_register :: proc(s:^editor.Session) {
     defaults:=request_defaults();if defaults==nil {return}
-    authoring_method_register(s,{name="animation.request",summary="Asks an animated entity what to do, from playback, graph parameters and clips of its .match to intents. Edit takes only stop, parameters and sequence play, pause and speed; the rest needs Play or Simulation.",params=Request_Params,params_info=type_info_of(Request_Params),defaults=defaults,run=request},Request_Result,type_info_of(Request_Result))
+    authoring_method_register(s,{name="animation.request",summary="Asks an animated entity what to do, from playback, graph parameters and clips of its .match to intents. Edit takes only stop and parameters; the rest needs Play or Simulation.",params=Request_Params,params_info=type_info_of(Request_Params),defaults=defaults,run=request},Request_Result,type_info_of(Request_Result))
 }
 
 // Fields of a request that change the document in Edit; the rest change only a running world.
@@ -116,10 +114,6 @@ request_register :: proc(s:^editor.Session) {
 request_runtime_field :: proc(call:^api.Call) -> string {
     for field in ([?]string{"seek","plays","actions","goals","controls","motion","locomotion","distance","locomote","look","gesture","reach"}) {
         if authoring_field_present(call,field) {return field}
-    }
-    if authoring_field_present(call,"sequence") {
-        value:=api.json_member(call.raw,"sequence")
-        if strings.contains(value,"Restart") || strings.contains(value,"Seek") {return "sequence"}
     }
     return ""
 }
@@ -192,9 +186,9 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
     when intrinsics.type_has_field(T,"seek") {
         if authoring_field_present(call,"seek") {
             requested:=core.world_storage_of(world,anim.Animation_Requests)
-            waiting:=len(requested.seeks.items)
+            waiting:=len(requested.timeline.items)
             anim.animation_seek(requested,entity,p.seek)
-            if len(requested.seeks.items)==waiting {authoring_failure(call,"seek","Request_Failed","a finite nonnegative time and available seek queue",fmt.tprintf("%v",p.seek),"The seek could not be queued",api.SERVER_ERROR);return false}
+            if len(requested.timeline.items)==waiting {authoring_failure(call,"seek","Request_Failed","a finite nonnegative time and available seek queue",fmt.tprintf("%v",p.seek),"The seek could not be queued",api.SERVER_ERROR);return false}
             request_note(applied,"Seek","",p.seek)
         }
     }
@@ -326,27 +320,6 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
                     break
                 }
             }
-        }
-    }
-    when intrinsics.type_has_field(T,"sequence") {
-        if authoring_field_present(call,"sequence") {
-            value,has:=editor.entity_get(world,entity,anim.Keyframe_Path)
-            if !has {authoring_failure(call,"sequence","Missing_Component","a Keyframe_Path component","missing component","The entity has no Keyframe_Path sequence");return false}
-            if !finite(p.sequence.value) {authoring_failure(call,"sequence.value","Invalid_Value","a finite value",fmt.tprintf("%v",p.sequence.value),"The sequence value is invalid");return false}
-            if s.mode==.Edit {
-                #partial switch p.sequence.action {
-                case .Play: value.playing=true
-                case .Pause: value.playing=false
-                case .Speed: value.speed=p.sequence.value
-                }
-                core.add(core.world_table_of(world,anim.Keyframe_Path),entity,value)
-            } else {
-                requested:=core.world_storage_of(world,anim.Keyframe_Path_Requests)
-                waiting:=len(requested.queue.items)
-                anim.keyframe_path_request(requested,entity,p.sequence.action,p.sequence.value)
-                if len(requested.queue.items)==waiting {authoring_failure(call,"sequence","Capacity","an available sequence queue","full or unavailable queue","The sequence request could not be queued",api.SERVER_ERROR);return false}
-            }
-            request_note(applied,"Sequence",fmt.tprintf("%v",p.sequence.action),p.sequence.value)
         }
     }
     return request_tick(call,world,entity,p,0,applied)
