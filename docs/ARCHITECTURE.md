@@ -342,7 +342,10 @@ Numbered layers; a package only imports lower layers.
   project's plugins that come from git, and the catalog). The importers are `cook/import` (core,
   no formats), one package per format (`cook/import/obj`, `gltf`, `usd`, `fbx`, which reads with
   the C library of `third_party/ufbx`) and `cook/import/sources` (the table of formats and
-  `import_source`, on top of `cook/prefab`).
+  `import_source`, on top of `cook/prefab`). `cook/author` is what an interface, a scene or a
+  prefab is authored with as a nested document, between its text and the file of the asset, on
+  top of `asset`, `ui`, `core`, `host` and `engine/*`: the editor's `ui.*` methods and `mirai ui`
+  and `mirai scene` go through it, and the presets an entity is made from are there.
 - **6** `editor` and `editor/*`: engine-time; the editor, the JSON-RPC and MCP API,
   collaboration, prefabs and AI, whose chat search uses the C library of `third_party/sqlite`.
 - **7** `plugins/<name>`: first-party plugins, imported as `plugins:<name>/runtime` and
@@ -364,7 +367,7 @@ Numbered layers; a package only imports lower layers.
     `engine/render` (a world's buffers and the `Simulate`, `Gbuffer` and `Blend` stages).
 - **no layer** `tools/mirai`: CLI with `generate`, `build` (`tools`, `engine`, `editor`, `game`),
   `edit`, `play`, `new`, `worktree`, `doctor`, `test`, `check`, `deps`, `setup`, `shaders`,
-  `asset`, `image`, `import`, `session`, `capture`, `record`, `rpc`, `mcp`.
+  `asset`, `image`, `import`, `ui`, `scene`, `session`, `capture`, `record`, `rpc`, `mcp`.
 - **no layer** `demo`, `templates`, `tools/demo_content`: the demo project, the `mirai new`
   templates and the generator of the demo's assets.
 - **no layer** `shaders/`: the single Slang source.

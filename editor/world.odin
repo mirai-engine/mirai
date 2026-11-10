@@ -7,6 +7,7 @@ import "core:mem"
 import "core:reflect"
 import "core:strconv"
 import "core:strings"
+import "mirai:cook/author"
 import "mirai:core"
 import eaudio "mirai:engine/audio"
 import evolume "mirai:engine/volume"
@@ -21,7 +22,7 @@ import "mirai:ui"
 // the engine that every scene entity has: Id, Name, Transform and Parent.
 
 // What the Create panel and the API make: recipes of components, not kinds.
-Preset :: enum u8 {Empty,Cube,Sphere,Cylinder,Cone,Capsule,Plane,Prism,Pyramid,Point_Light,Spot_Light,Sun,Camera,Rect_Light,Isometric_Camera,Top_Down_Camera,Side_Camera,First_Person_Camera,Third_Person_Camera,Aim_Camera,Sound,Reverb_Zone}
+Preset :: author.Preset
 
 Preset_Card :: struct {
     label:string,
@@ -66,15 +67,7 @@ PRESETS :: [Preset]Preset_Card{
 // The mode of engine/camera a camera preset follows the player in.
 @(private)
 preset_camera_mode :: proc "contextless" (preset:Preset) -> (ecamera.Camera_Preset,bool) {
-    #partial switch preset {
-    case .Isometric_Camera:    return .Isometric,true
-    case .Top_Down_Camera:     return .Top_Down,true
-    case .Side_Camera:         return .Side,true
-    case .First_Person_Camera: return .First_Person,true
-    case .Third_Person_Camera: return .Third_Person,true
-    case .Aim_Camera:          return .Aim,true
-    }
-    return {},false
+    return author.preset_camera_mode(preset)
 }
 
 SHAPE_ICONS :: [erender.Shape]ui.Icon{.None=.Mesh,.Cube=.Cube,.Sphere=.Sphere,.Cylinder=.Cylinder,.Cone=.Cone,.Capsule=.Cylinder,.Plane=.Plane,.Prism=.Prism,.Pyramid=.Pyramid}
@@ -292,69 +285,24 @@ entity_make :: proc(s:^Session,w:core.World_Ref,desc:Create_Desc) -> core.Entity
 
 @(private)
 preset_components :: proc(w:core.World_Ref,e:core.Entity,preset:Preset) {
-    if shape:=preset_shape(preset);shape!=.None {
-        if t:=core.world_table_of(w,erender.Mesh_Renderer);t!=nil {core.add(t,e,erender.Mesh_Renderer{shape=shape})}
-        return
-    }
-    #partial switch preset {
-    case .Point_Light: if t:=core.world_table_of(w,erender.Point_Light);t!=nil {core.add(t,e,erender.POINT_LIGHT_DEFAULT)}
-    case .Spot_Light:  if t:=core.world_table_of(w,erender.Spot_Light);t!=nil {core.add(t,e,erender.SPOT_LIGHT_DEFAULT)}
-    case .Rect_Light:  if t:=core.world_table_of(w,erender.Rect_Light);t!=nil {core.add(t,e,erender.RECT_LIGHT_DEFAULT)}
-    case .Sun:         if t:=core.world_table_of(w,erender.Sun);t!=nil {core.add(t,e,erender.SUN_DEFAULT)}
-    case .Camera:      if t:=core.world_table_of(w,erender.Camera);t!=nil {core.add(t,e,erender.CAMERA_DEFAULT)}
-    case .Isometric_Camera,.Top_Down_Camera,.Side_Camera,.First_Person_Camera,.Third_Person_Camera,.Aim_Camera:
-        mode,_:=preset_camera_mode(preset)
-        setup:=ecamera.camera_preset(mode)
-        if t:=core.world_table_of(w,erender.Camera);t!=nil {
-            camera:=erender.CAMERA_DEFAULT
-            ecamera.camera_lens_set(&camera,setup.lens)
-            core.add(t,e,camera)
-        }
-        if t:=core.world_table_of(w,ecamera.Camera_Follow);t!=nil {core.add(t,e,setup.follow)}
-        if preset==.Aim_Camera {
-            if t:=core.world_table_of(w,ecamera.Camera_Activation);t!=nil {core.add(t,e,ecamera.CAMERA_ACTIVATION_DEFAULT)}
-        }
-    case .Sound:       sound_components(w,e,{})
-    case .Reverb_Zone:
-        if t:=core.world_table_of(w,eaudio.Audio_Reverb);t!=nil {core.add(t,e,eaudio.AUDIO_REVERB_DEFAULT)}
-        if t:=core.world_table_of(w,evolume.Volume);t!=nil {core.add(t,e,evolume.Volume{shape=.Box,extents={5,3,5},blend=1})}
-    }
+    author.preset_components(w,e,preset)
 }
 
 // A sound placed in the scene: a spatial source in a loop that the room
 // reverberates and walls hide.
 sound_components :: proc(w:core.World_Ref,e:core.Entity,sound:base.Asset_Id) {
-    if t:=core.world_table_of(w,eaudio.Audio_Source);t!=nil {
-        source:=eaudio.AUDIO_SOURCE_DEFAULT
-        source.sound,source.loop,source.spatial,source.reverb=sound,true,true,1
-        core.add(t,e,source)
-    }
-    if t:=core.world_table_of(w,eaudio.Audio_Occlusion);t!=nil {core.add(t,e,eaudio.AUDIO_OCCLUSION_DEFAULT)}
+    author.sound_components(w,e,sound)
 }
 
 // How a preset turns what it makes when no rotation is given: a sun shines
 // from the morning of SUN_DIRECTION and a spot down. Lights shine toward -Z.
 preset_rotation :: proc(preset:Preset) -> mm.Quat {
-    #partial switch preset {
-    case .Sun:        return mm.quat_between([3]f32{0,0,1},linalg.normalize(erender.SUN_DIRECTION))
-    case .Spot_Light: return mm.quat_between(mm.FORWARD,[3]f32{0,-1,0})
-    }
-    return 1
+    return author.preset_rotation(preset)
 }
 
 // The primitive a preset shows; None for one without a body.
 preset_shape :: proc "contextless" (preset:Preset) -> erender.Shape {
-    #partial switch preset {
-    case .Cube:     return .Cube
-    case .Sphere:   return .Sphere
-    case .Cylinder: return .Cylinder
-    case .Cone:     return .Cone
-    case .Capsule:  return .Capsule
-    case .Plane:    return .Plane
-    case .Prism:    return .Prism
-    case .Pyramid:  return .Pyramid
-    }
-    return .None
+    return author.preset_shape(preset)
 }
 
 // Destroys entities and everything under them.
@@ -665,35 +613,12 @@ field_write :: proc(s:^Session,t:^core.Table_Info,entities:[]core.Entity,offset:
 
 // The value a component starts with when the editor adds it.
 component_default :: proc(type:typeid,out:[]u8) {
-    put :: proc(out:[]u8,value:$T) {
-        value:=value
-        if len(out)>=size_of(T) {mem.copy(raw_data(out),&value,size_of(T))}
-    }
-    mem.zero_slice(out)
-    switch type {
-    case core.Transform:          put(out,core.TRANSFORM_IDENTITY)
-    case erender.Mesh_Renderer:     put(out,erender.Mesh_Renderer{shape=.Cube})
-    case erender.Tint:            put(out,erender.TINT_DEFAULT)
-    case erender.Camera:          put(out,erender.CAMERA_DEFAULT)
-    case erender.Exposure:        put(out,erender.EXPOSURE_DEFAULT)
-    case erender.Draw_Offset:     put(out,erender.Draw_Offset{rotation=1})
-    }
+    author.component_default(type,out)
 }
 
 // Offsets of the Entity fields of a type, nested ones included.
 entity_offsets :: proc(type:^runtime.Type_Info,allocator:=context.temp_allocator) -> []uintptr {
-    out:=make([dynamic]uintptr,allocator)
-    walk :: proc(info:^runtime.Type_Info,at:uintptr,out:^[dynamic]uintptr) {
-        if info.id==core.Entity {append(out,at);return}
-        #partial switch v in runtime.type_info_base(info).variant {
-        case runtime.Type_Info_Struct:
-            for i in 0..<int(v.field_count) {walk(v.types[i],at+v.offsets[i],out)}
-        case runtime.Type_Info_Array:
-            for i in 0..<v.count {walk(v.elem,at+uintptr(i*v.elem_size),out)}
-        }
-    }
-    walk(type,0,&out)
-    return out[:]
+    return author.entity_offsets(type,allocator)
 }
 
 // Byte ranges of the transient fields of a type: what a copy leaves zero.

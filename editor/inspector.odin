@@ -9,6 +9,7 @@ import "core:strconv"
 import "core:slice"
 import "core:strings"
 import "mirai:asset"
+import "mirai:cook/author"
 import "mirai:core"
 import eaudio "mirai:engine/audio"
 import evolume "mirai:engine/volume"
@@ -491,17 +492,7 @@ inspector_popups :: proc(s:^Session,w:core.World_Ref) {
 // The components that are sections: what a scene saves, besides the identity
 // and the place of an entity, and what the section of another shows.
 inspector_listed :: proc(s:^Session,t:^core.Table_Info) -> bool {
-    switch t.type {
-    case core.Transform,core.Name,core.Id,core.Parent,core.Disabled,erender.Hidden,erender.Material_Override: return false
-    }
-    if inspector_within(s,t) {return false}
-    fields,structured:=runtime.type_info_base(t.info).variant.(runtime.Type_Info_Struct)
-    if structured && fields.field_count>0 {
-        visible:=false
-        for tag in fields.tags[:fields.field_count] {if _,hidden:=core.field_option(reflect.Struct_Tag(tag),"hidden");!hidden {visible=true;break}}
-        if !visible {return false}
-    }
-    return type_saved(t.info)
+    return !inspector_within(s,t) && author.component_listed(t)
 }
 
 @(private)

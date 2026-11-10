@@ -6,6 +6,7 @@ import "core:mem"
 import "core:reflect"
 import "core:slice"
 import "core:strings"
+import "mirai:cook/author"
 import "mirai:core"
 import "mirai:editor/api"
 import erender "mirai:engine/render"
@@ -464,18 +465,7 @@ api_component_apply :: proc(s:^Session,a:^Rpc_Args,w:core.World_Ref,e:core.Entit
 // The path of the first read-only field whose bytes the reader changed; "" when none did.
 @(private)
 read_only_written :: proc(schema:^serial.Schema,type:serial.Type_Index,before,after:[]u8,prefix:string) -> string {
-    for field in serial.schema_fields(schema,type) {
-        inner:=serial.schema_type(schema,field.type)
-        if inner==nil || int(field.offset+inner.size)>len(after) {continue}
-        path:=prefix==""?field.name:strings.concatenate({prefix,".",field.name},context.temp_allocator)
-        at:=before[field.offset:][:inner.size]
-        now:=after[field.offset:][:inner.size]
-        if .Read_Only in field.flags && !slice.equal(at,now) {return path}
-        if inner.kind==.Struct {
-            if found:=read_only_written(schema,field.type,at,now,path);found!="" {return found}
-        }
-    }
-    return ""
+    return author.read_only_written(schema,type,before,after,prefix)
 }
 
 // The value a component starts with, as the API shows it: Entity fields hold no id.
@@ -489,16 +479,7 @@ component_start :: proc(t:^core.Table_Info,bytes:[]u8) {
 // Copies from kept the fields the API neither shows nor changes: hidden, transient and read-only ones.
 @(private)
 fields_kept :: proc(schema:^serial.Schema,type:serial.Type_Index,bytes,kept:[]u8) {
-    for field in serial.schema_fields(schema,type) {
-        inner:=serial.schema_type(schema,field.type)
-        if inner==nil || int(field.offset+inner.size)>len(bytes) {continue}
-        part:=bytes[field.offset:][:inner.size]
-        if field.flags&{.Hidden,.Transient,.Read_Only}!={} {
-            copy(part,kept[field.offset:][:inner.size])
-        } else if inner.kind==.Struct {
-            fields_kept(schema,field.type,part,kept[field.offset:][:inner.size])
-        }
-    }
+    author.fields_kept(schema,type,bytes,kept)
 }
 
 // The value of a component with the JSON object at r applied over it: the

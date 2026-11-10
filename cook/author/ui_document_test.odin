@@ -1,10 +1,9 @@
-package ui_inspector_editor
+package author
 
 import "core:mem"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
-import "mirai:editor/api"
 import "mirai:std/serial"
 import "mirai:ui"
 
@@ -60,10 +59,10 @@ a_document_written_back_leaves_the_file_as_it_was :: proc(t:^testing.T) {
     defer records_destroy(&r)
     for root in ([2]int{-1,0}) {
         before:=document_text(&types,&r,root)
-        call:api.Call
-        args:=call_args(&call,&types,"{}")
+        reading:Reading
+        args:=call_args(&reading,&types,"{}")
         made,removed,ok:=document_apply(&args,&r,root,before)
-        if !testing.expectf(t,ok,"%s",call.error.message) {return}
+        if !testing.expectf(t,ok,"%s",reading.problem) {return}
         testing.expect(t,made==0 && removed==0)
         testing.expect_value(t,document_text(&types,&r,root),before)
     }
@@ -80,12 +79,12 @@ a_document_of_a_node_changes_that_node_alone :: proc(t:^testing.T) {
     if !document_sample(t,&r) {return}
     defer records_destroy(&r)
     menu:=r.nodes[document_row_of(&r,"menu")]
-    call:api.Call
-    args:=call_args(&call,&types,"{}")
+    reading:Reading
+    args:=call_args(&reading,&types,"{}")
     made,removed,ok:=document_apply(&args,&r,document_row_of(&r,"hud"),`{"nodes":[{"name":"hud","kind":"Box","style":"card","children":[
         {"name":"fuel","kind":"Progress","bind_value":"fuel"},
         {"name":"note","kind":"Text","text":"Hi"}]}]}`)
-    if !testing.expectf(t,ok,"%s",call.error.message) {return}
+    if !testing.expectf(t,ok,"%s",reading.problem) {return}
     testing.expect_value(t,made,1)
     testing.expect_value(t,removed,3)
     expected:=[?]string{"hud","fuel","note","menu"}
@@ -107,10 +106,10 @@ a_document_without_nodes_changes_only_the_styles_and_animations_it_names :: proc
     if !document_sample(t,&r) {return}
     defer records_destroy(&r)
     nodes:=len(r.nodes)
-    call:api.Call
-    args:=call_args(&call,&types,"{}")
+    reading:Reading
+    args:=call_args(&reading,&types,"{}")
     _,_,ok:=document_apply(&args,&r,-1,`{"styles":{"card":{"family":"Box","radius":4},"panel":{"family":"Box","defaults":["Box"]}},"animations":{"pop":null}}`)
-    if !testing.expectf(t,ok,"%s",call.error.message) {return}
+    if !testing.expectf(t,ok,"%s",reading.problem) {return}
     testing.expect_value(t,len(r.nodes),nodes)
     card:=tree_style_row(&r,"card")
     testing.expect(t,r.styles[card].radius==[4]f32{4,4,4,4} && r.styles[card].fill==ui.Color{})
@@ -140,12 +139,12 @@ a_document_says_where_it_cannot_be_written :: proc(t:^testing.T) {
     for c in cases {
         r:Records
         if !document_sample(t,&r) {return}
-        call:api.Call
-        args:=call_args(&call,&types,"{}")
+        reading:Reading
+        args:=call_args(&reading,&types,"{}")
         root:=document_row_of(&r,c.node) if c.node!="" else -1
         _,_,ok:=document_apply(&args,&r,root,c.document)
         testing.expect(t,!ok)
-        testing.expectf(t,strings.has_prefix(call.error.message,c.message),"%s gave '%s'",c.document,call.error.message)
+        testing.expectf(t,strings.has_prefix(reading.problem,c.message),"%s gave '%s'",c.document,reading.problem)
         records_destroy(&r)
     }
 }
@@ -166,10 +165,10 @@ THEME_DOCUMENT :: `{"tokens":{"ink":"#102030","round":8},
 document_of :: proc(t:^testing.T,types:^asset.Types,r:^Records,text:string) -> bool {
     empty:=[1]ui.Node_Style{{}}
     if !testing.expect(t,records_load(r,{styles=empty[:]},context.temp_allocator)) {return false}
-    call:api.Call
-    args:=call_args(&call,types,"{}")
+    reading:Reading
+    args:=call_args(&reading,types,"{}")
     _,_,ok:=document_apply(&args,r,-1,text)
-    if !testing.expectf(t,ok,"%s",call.error.message) {return false}
+    if !testing.expectf(t,ok,"%s",reading.problem) {return false}
     ui.tree_settle(r.styles[:],r.style_infos[:],&r.variants,r.tokens[:],r.token_uses[:])
     return true
 }
@@ -184,10 +183,10 @@ a_document_with_names_comes_back_the_same_and_changes_nothing_when_written :: pr
         testing.expectf(t,strings.contains(first,expected),"the document names %s: %s",expected,first)
     }
     testing.expect(t,!strings.contains(first,"#ff0000\",\"fields"),"no field masks")
-    call:api.Call
-    args:=call_args(&call,&types,"{}")
+    reading:Reading
+    args:=call_args(&reading,&types,"{}")
     made,removed,ok:=document_apply(&args,&r,-1,first)
-    if !testing.expectf(t,ok,"%s",call.error.message) {return}
+    if !testing.expectf(t,ok,"%s",reading.problem) {return}
     testing.expect(t,made==0 && removed==0,"writing what it gave makes and takes nothing")
     ui.tree_settle(r.styles[:],r.style_infos[:],&r.variants,r.tokens[:],r.token_uses[:])
     testing.expect_value(t,document_text(&types,&r,-1),first)
@@ -210,16 +209,16 @@ a_look_that_extends_a_style_follows_it_and_comes_back_the_same :: proc(t:^testin
         testing.expectf(t,strings.contains(first,expected),"the document says %s: %s",expected,first)
     }
     testing.expect(t,!strings.contains(first,`"radius":9,"hover":{"color"`),"it does not copy the style's own")
-    call:api.Call
-    args:=call_args(&call,&types,"{}")
+    reading:Reading
+    args:=call_args(&reading,&types,"{}")
     _,_,ok:=document_apply(&args,&r,-1,first)
-    if !testing.expectf(t,ok,"%s",call.error.message) {return}
+    if !testing.expectf(t,ok,"%s",reading.problem) {return}
     ui.tree_settle(r.styles[:],r.style_infos[:],&r.variants,r.tokens[:],r.token_uses[:])
     testing.expect_value(t,document_text(&types,&r,-1),first)
     // A later change of the style reaches the look.
-    args=call_args(&call,&types,"{}")
+    args=call_args(&reading,&types,"{}")
     _,_,ok=document_apply(&args,&r,-1,`{"styles":{"label":{"size":20,"color":"#445566","hover":{"color":"#000000"}}}}`)
-    if !testing.expectf(t,ok,"%s",call.error.message) {return}
+    if !testing.expectf(t,ok,"%s",reading.problem) {return}
     ui.tree_settle(r.styles[:],r.style_infos[:],&r.variants,r.tokens[:],r.token_uses[:])
     b=int(r.nodes[document_row_of(&r,"b")].style)
     testing.expect_value(t,r.styles[b].text.size,f32(20))
@@ -248,10 +247,10 @@ what_a_style_extends_reaches_its_values_rules_and_nodes_when_they_change :: proc
     testing.expect_value(t,focus.patch.values.stroke,ui.Color{0,255,0,255})
     testing.expect(t,.Shadow in focus.patch.fields && focus.patch.values.shadow_offset.y==4 && focus.patch.values.shadow_color==ui.Color{0x10,0x20,0x30,255},"its shadow took what hover says and its color from the token")
     // A token changed: every style that names it, however far.
-    call:api.Call
-    args:=call_args(&call,&types,"{}")
+    reading:Reading
+    args:=call_args(&reading,&types,"{}")
     _,_,ok:=document_apply(&args,&r,-1,`{"tokens":{"ink":"#aabbcc"},"styles":{"base":{"fill":"ink","radius":"round","width":"grow","gap":6,"padding":4,"size":14,"color":"#ffffff","text_x":"center"}}}`)
-    if !testing.expectf(t,ok,"%s",call.error.message) {return}
+    if !testing.expectf(t,ok,"%s",reading.problem) {return}
     ui.tree_settle(r.styles[:],r.style_infos[:],&r.variants,r.tokens[:],r.token_uses[:])
     testing.expect_value(t,r.styles[button].fill,ui.Color{0xaa,0xbb,0xcc,255})
     focus=rule(&r,button,{.Focused})

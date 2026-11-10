@@ -262,8 +262,13 @@ asset_plugin_menus :: proc(s:^Session,file:^asset.Registry_File) {
 // Every provider of the type of out the plugins give, as many as fit; in
 // plugins, when given, the plugin that gives each.
 provided_all :: proc(s:^Session,out:[]$T,plugins:[]string=nil) -> (count:int) {
-    if s.info==nil {return}
-    for &storage in s.info.storages {
+    return provided_in(s.info,out,plugins)
+}
+
+// provided_all for the library a World_Info is of, with no session.
+provided_in :: proc(info:^core.World_Info,out:[]$T,plugins:[]string=nil) -> (count:int) {
+    if info==nil {return}
+    for &storage in info.storages {
         if storage.place!=.Editor || storage.default==nil || storage.info.size!=size_of(T) {continue}
         fields,ok:=runtime.type_info_base(storage.info).variant.(runtime.Type_Info_Struct)
         if !ok || fields.field_count!=1 || fields.types[0].id!=T {continue}

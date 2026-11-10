@@ -3,6 +3,7 @@ package ui_inspector_editor
 import "core:fmt"
 import "core:strings"
 import "mirai:asset"
+import "mirai:cook/author"
 import "mirai:editor"
 import "mirai:host"
 import "mirai:std/base"
@@ -112,13 +113,13 @@ Peek :: struct {
 @(private)
 Widget_Peek :: struct {
     id:base.Asset_Id,
-    records:Records,
+    records:author.Records,
     ok:bool,
 }
 
 ux_free :: proc(x:^Ux) {
     delete(x.folds);delete(x.picked)
-    for &w in x.widgets {if w.ok {records_destroy(&w.records)}}
+    for &w in x.widgets {if w.ok {author.records_destroy(&w.records)}}
     delete(x.widgets)
     x^={}
 }
@@ -211,16 +212,16 @@ node_open_set :: proc(u:^Ui_Inspector,n:^ui.Tree_Node,row:int,open:bool) {
 
 // The records of a widget of the project, read once for each revision of the assets.
 @(private)
-widget_records :: proc(u:^Ui_Inspector,a:^host.Assets,id:base.Asset_Id) -> ^Records {
+widget_records :: proc(u:^Ui_Inspector,a:^host.Assets,id:base.Asset_Id) -> ^author.Records {
     x:=&u.ux
     if x.widgets_revision!=a.revision {
-        for &w in x.widgets {if w.ok {records_destroy(&w.records)}}
+        for &w in x.widgets {if w.ok {author.records_destroy(&w.records)}}
         clear(&x.widgets)
         x.widgets_revision=a.revision
     }
     for &w in x.widgets {if w.id==id {return &w.records if w.ok else nil}}
     w:=Widget_Peek{id=id}
-    w.ok=records_read(a,id,&w.records,u.allocator)
+    w.ok=author.records_read(author.assets_of(a),id,&w.records,u.allocator)
     append(&x.widgets,w)
     last:=&x.widgets[len(x.widgets)-1]
     return &last.records if last.ok else nil
@@ -239,7 +240,7 @@ widget_one_root :: proc(u:^Ui_Inspector,a:^host.Assets,id:base.Asset_Id) -> bool
 
 // The widget a node of the tree is an instance of; none for another node.
 @(private)
-node_widget :: proc(r:^Records,n:^ui.Tree_Node) -> base.Asset_Id {
+node_widget :: proc(r:^author.Records,n:^ui.Tree_Node) -> base.Asset_Id {
     if n.kind!=.Component || n.component==0 || int(n.component)>len(r.components) {return {}}
     return r.components[n.component-1].widget
 }
@@ -250,7 +251,7 @@ node_widget :: proc(r:^Records,n:^ui.Tree_Node) -> base.Asset_Id {
 widget_holds_document :: proc(u:^Ui_Inspector,a:^host.Assets,widget:base.Asset_Id) -> bool {
     Reach :: struct {u:^Ui_Inspector,a:^host.Assets}
     reach:=Reach{u,a}
-    return widget_reaches(widget,u.id,proc(user:rawptr,id:base.Asset_Id) -> (used:[]ui.Tree_Component,read:bool) {
+    return author.widget_reaches(widget,u.id,proc(user:rawptr,id:base.Asset_Id) -> (used:[]ui.Tree_Component,read:bool) {
         reach:=(^Reach)(user)
         r:=widget_records(reach.u,reach.a,id)
         if r==nil {return}
@@ -277,7 +278,7 @@ add_popup :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,popup:ui.Id,p
                 if !editor.contains_fold(labels[kind],needle) {continue}
                 shown:=ui.Tree_Node{kind=kind,layout={direction=.Column}}
                 if ui.menu_item(ctx,ui.id(ctx,"kind",int(kind)+1),labels[kind],{icon=node_icon(&shown)}) {
-                    if row:=records_insert(r,parent,kind);row>=0 {
+                    if row:=author.records_insert(r,parent,kind);row>=0 {
                         choose_rows(u,{row})
                         changed(u,"Add node")
                     } else {editor.notify(s,"That node holds no other node: choose a container")}
@@ -296,7 +297,7 @@ add_popup :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,popup:ui.Id,p
                 }
                 if ui.menu_item(ctx,ui.id(ctx,"widget",i+1),path,{icon=.Prefab}) {
                     name:=path[strings.last_index_byte(path,'/')+1:]
-                    if row:=records_widget(r,parent,file.id,name,name);row>=0 {
+                    if row:=author.records_widget(r,parent,file.id,name,name);row>=0 {
                         choose_rows(u,{row})
                         changed(u,"Add widget")
                     } else {editor.notify(s,"That node holds no other node: choose a container")}
@@ -362,20 +363,20 @@ shown_rows :: proc(u:^Ui_Inspector,a:^host.Assets,filter:string) -> []Shown_Row 
             for at:=i;at>=0;at=int(list[at].parent) {keep[at]=true}
         }
         for &n,i in list {
-            if keep[i] {append(&rows,Shown_Row{row=i,instance=-1,depth=records_depth(list,i)})}
+            if keep[i] {append(&rows,Shown_Row{row=i,instance=-1,depth=author.records_depth(list,i)})}
         }
         return rows[:]
     }
     for i:=0;i<len(list); {
         n:=&list[i]
-        inside:=records_subtree(list,i)
+        inside:=author.records_subtree(list,i)
         widget:=node_widget(r,n)
         open:=node_open(u,n,i)
-        row:=Shown_Row{row=i,instance=-1,depth=records_depth(list,i),arrow=inside>0 || widget!={},open=open}
+        row:=Shown_Row{row=i,instance=-1,depth=author.records_depth(list,i),arrow=inside>0 || widget!={},open=open}
         append(&rows,row)
         if widget!={} && open {
             if w:=widget_records(u,a,widget);w!=nil {
-                for _,k in w.nodes {append(&rows,Shown_Row{row=k,instance=i,depth=row.depth+1+records_depth(w.nodes[:],k)})}
+                for _,k in w.nodes {append(&rows,Shown_Row{row=k,instance=i,depth=row.depth+1+author.records_depth(w.nodes[:],k)})}
             }
         }
         i+=1 if open || inside==0 else inside+1
@@ -465,7 +466,7 @@ nodes_column :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets) {
                 }
             }
             // A node that takes paths of the game shows a link before its kind.
-            if node_bound(n) {
+            if author.node_bound(n) {
                 if r,found:=ui.widget_rect(ctx,row_id);found {
                     if area,shown:=ui.widget_rect(ctx,rows_id);shown && r.y>=area.y && r.y+r.h<=area.y+area.h {
                         detail:=kind if name!="" else ""
@@ -514,13 +515,13 @@ nodes_column :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets) {
         together=held
     }
     if together {
-        if placed:=records_place_rows(r,moved,drop.parent,drop.before);placed!=nil {
+        if placed:=author.records_place_rows(r,moved,drop.parent,drop.before);placed!=nil {
             choose_rows(u,placed)
             changed(u,"Move nodes")
         } else {editor.notify(s,"They cannot go there: a node does not go inside itself, and only containers hold nodes")}
         return
     }
-    if row:=records_place(r,from,drop.parent,drop.before);row>=0 {
+    if row:=author.records_place(r,from,drop.parent,drop.before);row>=0 {
         choose_rows(u,{row})
         changed(u,"Move node")
     } else {editor.notify(s,"It cannot go there: a node does not go inside itself, and only containers hold nodes")}
@@ -647,7 +648,7 @@ node_drop :: proc(list:[]ui.Tree_Node,i:int,rect:ui.Rect,y:f32) -> Node_Drop {
         return {parent=i,before=-1,inside=i,ok=true}
     }
     if at<0.5 {return {parent=int(list[i].parent),before=i,inside=-1,line=rect.y,ok=true}}
-    next:=i+records_subtree(list,i)+1
+    next:=i+author.records_subtree(list,i)+1
     before:=next if next<len(list) && list[next].parent==list[i].parent else -1
     return {parent=int(list[i].parent),before=before,inside=-1,line=rect.y+rect.h,ok=true}
 }
@@ -684,7 +685,7 @@ nodes_actions :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,d:^editor
     #partial switch request {
     case .Copy:
         if row>=0 {
-            records_copy_rows(r,rows,&u.clip,u.allocator)
+            author.records_copy_rows(r,rows,&u.clip,u.allocator)
             u.clip.source=u.id
         }
     case .Paste:
@@ -695,13 +696,13 @@ nodes_actions :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,d:^editor
                 return
             }
         }
-        if pasted:=records_paste_rows(r,row,&u.clip);len(pasted)>0 {
+        if pasted:=author.records_paste_rows(r,row,&u.clip);len(pasted)>0 {
             choose_rows(u,pasted)
             changed(u,"Paste node" if len(pasted)==1 else "Paste nodes")
         } else if len(clip.nodes)>0 {editor.notify(s,"That node holds no other node: choose a container")}
     case .Duplicate:
         if row>=0 {
-            if copies:=records_duplicate_rows(r,rows);len(copies)>0 {
+            if copies:=author.records_duplicate_rows(r,rows);len(copies)>0 {
                 choose_rows(u,copies)
                 changed(u,"Duplicate node" if len(copies)==1 else "Duplicate nodes")
             }
@@ -713,8 +714,8 @@ nodes_actions :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,d:^editor
         }
     case .Delete:
         if row>=0 {
-            first:=selection_roots(r.nodes[:],rows)[0]
-            records_delete_rows(r,rows)
+            first:=author.selection_roots(r.nodes[:],rows)[0]
+            author.records_delete_rows(r,rows)
             choose_rows(u,{min(first,len(r.nodes)-1)} if len(r.nodes)>0 else {})
             changed(u,"Delete node" if len(rows)==1 else "Delete nodes")
         }
@@ -725,7 +726,7 @@ nodes_actions :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,d:^editor
 // and what named it follows: here at once and, for the tree, in the .ui that
 // instance this one when it is written.
 node_renamed :: proc(u:^Ui_Inspector,from:string) {
-    name:=records_rename(&u.records,u.selected,from)
+    name:=author.records_rename(&u.records,u.selected,from)
     if from!="" && name!=from && u.rename_count<len(u.renames) {
         rename:=&u.renames[u.rename_count]
         ui.tree_text_set(rename.from[:],from)
@@ -742,9 +743,9 @@ node_renamed :: proc(u:^Ui_Inspector,from:string) {
 make_widget :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,d:^editor.Asset_Document) {
     r:=&u.records
     row:=u.selected
-    widget:Records
+    widget:author.Records
     record,found:=asset.registry_find(&a.registry,u.id)
-    if !found || !records_widget_data(r,row,&widget,context.temp_allocator) {
+    if !found || !author.records_widget_data(r,row,&widget,context.temp_allocator) {
         editor.notify(s,"Only a Box becomes a widget")
         return
     }
@@ -756,7 +757,7 @@ make_widget :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,d:^editor.A
         path=fmt.tprintf("%s%s%d.ui",folder,name,n)
     }
     id:=editor.asset_id_new(s)
-    data:=records_data(&widget)
+    data:=author.records_data(&widget)
     imports,imported:=host.ui_tree_imports(a,data)
     bytes:[]u8
     error:=asset.Error.Invalid
@@ -771,12 +772,12 @@ make_widget :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,d:^editor.A
     if written {
         root:=r.nodes[row]
         parent:=int(root.parent)
-        records_remove(r,row)
+        author.records_remove(r,row)
         // The instance keeps the name of the box, which the focus of other nodes may name.
         box:=serial.text_field(root.name[:])
-        at:=records_widget(r,parent,id,box if box!="" else name,name)
+        at:=author.records_widget(r,parent,id,box if box!="" else name,name)
         // In the place of the box, laid out as it was.
-        if at>=0 && at!=row && row<len(r.nodes) && int(r.nodes[row].parent)==parent {at=records_place(r,at,parent,row)}
+        if at>=0 && at!=row && row<len(r.nodes) && int(r.nodes[row].parent)==parent {at=author.records_place(r,at,parent,row)}
         if at>=0 {
             r.nodes[at].layout=root.layout
             r.nodes[at].float=root.float
