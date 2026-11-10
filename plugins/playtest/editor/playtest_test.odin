@@ -86,7 +86,7 @@ probe_tick :: proc(data,shared,editor,app:rawptr) {
     w:=cast(^Probe_World)data
     input.input_holds(&w.seats,&w.holds,w.time,nil)
     for row in 0..<core.count(&w.seats) {
-        input.seat_feed(core.edit_at(&w.seats,row),&w.input,&w.bindings,false)
+        input.seat_feed(core.edit_at(&w.seats,row),&w.input,&w.bindings,false,1.0/60)
     }
     w.score.points+=1
     for ping in core.take(&w.pings.queue) {w.score.points+=ping.amount}

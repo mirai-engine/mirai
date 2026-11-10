@@ -4,7 +4,7 @@ import "mirai:core"
 import rag "plugins:ragdoll/runtime"
 
 @(component)
-Ragdoll_Gallery :: struct {auto_cycle:bool,age:f32 `mirai:"transient"`,phase:u8 `mirai:"transient"`}
+Ragdoll_Gallery :: struct {auto_cycle:bool,phase:u8 `mirai:"transient"`}
 @(storage,queue)
 Ragdoll_Gallery_Requests :: struct {queue:core.Queue(core.Entity)}
 
@@ -25,13 +25,11 @@ ragdoll_gallery_update :: proc(gallery:^core.Table(Ragdoll_Gallery),configs:^cor
         if state==nil || config==nil {continue}
         state.auto_cycle=false;state.phase=(state.phase+1)%3;config.mode=modes[state.phase]
     }
+    phase:=u8(int(time.seconds/3)%3)
     for row in 0..<core.count(gallery) {
-        rig:=core.entity_at(gallery,row);state:=core.edit_at(gallery,row)
-        if !state.auto_cycle || time.dt<=0 || !time.playing {continue}
-        state.age+=time.dt
-        phase:=u8(int(state.age/3)%3)
-        if phase==state.phase {continue}
-        state.phase=phase
-        if config:=core.edit(configs,rig);config!=nil {config.mode=modes[phase]}
+        state:=core.at(gallery,row)
+        if !state.auto_cycle || time.dt<=0 || !time.playing || phase==state.phase {continue}
+        core.edit_at(gallery,row).phase=phase
+        if config:=core.edit(configs,core.entity_at(gallery,row));config!=nil {config.mode=modes[phase]}
     }
 }

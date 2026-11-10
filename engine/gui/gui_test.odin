@@ -481,7 +481,7 @@ the_buttons_of_a_modal_get_the_actions_it_takes_from_the_game :: proc(t:^testing
     inp.input_map_action(&bindings,DROP,.Button)
     inp.input_map_bind(&bindings,DROP,inp.binding_key(.X))
     device:=core.Input{keys_down={.X},keys_pressed={.X}}
-    inp.seat_feed(core.edit(&w.seats,seat),&device,&bindings,false)
+    inp.seat_feed(core.edit(&w.seats,seat),&device,&bindings,false,1.0/60)
     state:inp.Seats
     state.blocks[0]={owner=inventory,mask=inp.ALL_ACTIONS,active=true}
     core.edit(&w.seats,seat).blocked=inp.ALL_ACTIONS

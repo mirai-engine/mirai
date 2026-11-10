@@ -238,8 +238,8 @@ reconcile :: proc(c:^Ctx,e:core.Entity,d:Destructible) {
         core.report(c.problems,e,"destruct.lifetime","Destructible.debris_lifetime (%v s) or removal_lifetime (%v s) is negative, not finite or longer than the ticks can count; give 0 or more seconds",d.debris_lifetime,d.removal_lifetime)
         return
     }
-    desc.debris_ticks=u32(d.debris_lifetime/c.time.dt+0.5)
-    desc.removal_ticks=u32(d.removal_lifetime/c.time.dt+0.5)
+    desc.debris_ticks=u32(core.ticks_of(c.time,d.debris_lifetime))
+    desc.removal_ticks=u32(core.ticks_of(c.time,d.removal_lifetime))
     desc.remove_on_sleep=d.remove_on_sleep
     desc.passive_removal=c.authority==.Client
     desc.user_data=u64(e)

@@ -111,6 +111,71 @@ not_asked :: proc(t:^testing.T) {testing.expect(t,false,"ran without being asked
     }
 }
 
+// A test of a game compiles against the declarations of the engine libraries,
+// which carry no test file: the test-world builder of core, how a test builds
+// a world of its steps, is public API in them.
+@(test)
+the_declarations_of_core_carry_the_test_world_builder :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    folder:=base.test_folder(t,"decl-core")
+    if folder=="" {return}
+    engine:=project.path_absolute(project.path(#directory,"..",".."))
+    decl:=project.path(folder,"decl")
+    errors,_:=declare({root=engine,packages={"core"},binary="mirai",library=project.path(folder,"core.lib"),stage=project.path(folder,"stage"),decl=decl})
+    if !testing.expectf(t,len(errors)==0,"%v",errors) {return}
+    text:=strings.builder_make()
+    entries,_:=os.read_all_directory_by_path(project.path(decl,"core"),context.temp_allocator)
+    for entry in entries {
+        data,_:=os.read_entire_file(entry.fullpath,context.temp_allocator)
+        strings.write_string(&text,string(data))
+    }
+    declared:=strings.to_string(text)
+    for name in ([]string{"Test_World :: struct","test_world_init ::","test_world_destroy ::","test_info ::"}) {
+        testing.expectf(t,strings.contains(declared,name),"the declarations of core lack %s",name)
+    }
+}
+
+// A library of a project compiles its packages from a stage without their
+// tests, which the compiler would otherwise read with their folder; the game
+// that ships and a test build read the project itself. What the compiler says
+// of the stage is said of the project.
+@(test)
+a_library_of_a_project_compiles_its_packages_without_their_tests :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    folder:=base.test_folder(t,"stage")
+    if folder=="" {return}
+    root,engine:=project.path(folder,"project"),project.path(folder,"engine")
+    files:=[?]string{"game/game.odin","game/game_test.odin","game/testdata/fixture.odin","plugins/own/runtime/own.odin","assets/script.odin","editor/tool.odin"}
+    for file in files {
+        path:=project.path(root,file)
+        if !testing.expect(t,os.make_directory_all(path[:strings.last_index_byte(path,'/')])==nil) {return}
+        if !testing.expect(t,os.write_entire_file(path,"package x\n")==nil) {return}
+    }
+    if !testing.expect(t,os.make_directory_all(project.path(engine,"plugins"))==nil) {return}
+    if !testing.expect(t,project_stage_write(root)) {return}
+    stage:=project_stage(root)
+    staged:=[?]struct{file:string,there:bool}{
+        {"game/game.odin",true},{"plugins/own/runtime/own.odin",true},{"editor/tool.odin",true},
+        {"game/game_test.odin",false},{"game/testdata/fixture.odin",false},{"assets/script.odin",false},
+    }
+    for c in staged {testing.expectf(t,os.is_file(project.path(stage,c.file))==c.there,"%s staged: %v",c.file,!c.there)}
+    testing.expect(t,os.remove(project.path(root,"editor/tool.odin"))==nil)
+    testing.expect(t,project_stage_write(root))
+    testing.expect(t,!os.is_file(project.path(stage,"editor/tool.odin")),"what the project no longer has leaves the stage")
+
+    p:=project.Project{root=root,engine_root=engine}
+    collection :: proc(flags:[]string) -> string {
+        for flag in flags {if strings.has_prefix(flag,"-collection:project=") {return flag[len("-collection:project="):]}}
+        return ""
+    }
+    testing.expect_value(t,collection(target_flags(&p,.Editor,nil,context.temp_allocator,dev=true)),stage)
+    testing.expect_value(t,collection(target_flags(&p,.Game,nil,context.temp_allocator,dev=true)),root)
+    diagnostics:=[]Diagnostic{{file=project.path(stage,"game/game.odin")},{file=project.path(engine,"core/core.odin")}}
+    stage_paths_restore(root,diagnostics,context.temp_allocator)
+    testing.expect_value(t,diagnostics[0].file,project.path(root,"game/game.odin"))
+    testing.expect_value(t,diagnostics[1].file,project.path(engine,"core/core.odin"))
+}
+
 // The output of the runner: which tests run and which failed with what they
 // logged, the state changes the runner asked for hidden, the info hidden when
 // quiet, and the hint to recompile with ODIN_TEST_NAMES left out. The fatal
