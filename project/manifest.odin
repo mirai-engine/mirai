@@ -19,7 +19,6 @@ PLUGIN_FILE :: "plugin.mirai"
 // one per folder, that come and go with it, like its bridges to others. A
 // repository of git brings them with its plugin; a companion has none.
 PLUGIN_COMPANIONS :: "plugins"
-INPUT_FILE :: "input.mirai" // the bindings of the input actions of a project, next to PROJECT_FILE
 
 // Changes with every release whose shared structures or procedures are not
 // compatible with the previous one.
@@ -613,6 +612,23 @@ struct_write :: proc(w:^serial.Writer,s:^serial.Schema,type:serial.Type_Index,da
                 written+=1
             }
             serial.write_u8(w,']')
+        case field.keyed:
+            // The entries that differ from the one with their name in the layer below, or that it lacks, each whole.
+            size:=int(serial.schema_type(s,field_type.elem).size)
+            written:=0
+            serial.write_u8(w,'[')
+            for index in 0..<int(field_type.count) {
+                entry:=part[index*size:][:size]
+                key:=entry_key(s,field_type.elem,entry)
+                if key=="" {continue}
+                if found:=entry_find(s,field_type.elem,under,int(field_type.count),key);found!=nil && mem.compare(entry,found)==0 {continue}
+                if written>0 {serial.write_u8(w,',')}
+                serial.text_write_break(w,depth+2)
+                serial.text_write(w,s,field_type.elem,entry,.Pretty,depth+2)
+                written+=1
+            }
+            if written>0 {serial.text_write_break(w,depth+1)}
+            serial.write_u8(w,']')
         case field_type.kind==.Array && serial.schema_type(s,field_type.elem).kind==.Struct && len(under)>0:
             // A list of entries ends at the last that differs from the layer below: the rest are read from it.
             size:=int(serial.schema_type(s,field_type.elem).size)
@@ -685,6 +701,35 @@ struct_read :: proc(r:^serial.Text_Reader,s:^serial.Schema,type:serial.Type_Inde
         switch {
         case field_type.kind==.Struct:
             struct_read(r,s,found.type,part,lenient) or_return
+        case found.keyed:
+            // Each entry replaces the one with its name, or takes a free one.
+            size:=int(serial.schema_type(s,field_type.elem).size)
+            if !serial.text_accept(r,'[') {return serial.text_fail(r,.Expected_Array)}
+            if !serial.text_accept(r,']') {
+                entry:=make([]u8,size,context.temp_allocator)
+                for index:=0;;index+=1 {
+                    serial.text_space(r)
+                    start:=r.offset
+                    mem.zero_slice(entry)
+                    if !serial.text_read(r,s,field_type.elem,entry) {
+                        serial.text_error_within_index(r,index)
+                        return false
+                    }
+                    key:=entry_key(s,field_type.elem,entry)
+                    if key=="" {
+                        serial.text_fail(r,.Expected_String,start)
+                        serial.text_error_within_index(r,index)
+                        return false
+                    }
+                    slot:=entry_find(s,field_type.elem,part,int(field_type.count),key)
+                    if slot==nil {slot=entry_find(s,field_type.elem,part,int(field_type.count),"")}
+                    if slot==nil {return serial.text_fail(r,.Too_Many_Elements,start)}
+                    copy(slot,entry)
+                    if serial.text_accept(r,',') {continue}
+                    serial.text_expect(r,']') or_return
+                    break
+                }
+            }
         case field_is_text_list(s,found):
             size:=int(serial.schema_type(s,field_type.elem).size)
             if !serial.text_accept(r,'[') {return serial.text_fail(r,.Expected_Array)}
@@ -709,4 +754,24 @@ struct_read :: proc(r:^serial.Text_Reader,s:^serial.Schema,type:serial.Type_Inde
         if serial.text_accept(r,',') {continue}
         return serial.text_expect(r,'}')
     }
+}
+
+// The name of an entry of a keyed list: the text of its first field.
+@(private)
+entry_key :: proc(s:^serial.Schema,elem:serial.Type_Index,entry:[]u8) -> string {
+    fields:=serial.schema_fields(s,elem)
+    if len(fields)==0 {return ""}
+    return base.text_get(entry[fields[0].offset:][:serial.schema_type(s,fields[0].type).size])
+}
+
+// The entry of a keyed list named key ("": the first free one); nil without one.
+@(private)
+entry_find :: proc(s:^serial.Schema,elem:serial.Type_Index,list:[]u8,count:int,key:string) -> []u8 {
+    size:=int(serial.schema_type(s,elem).size)
+    if len(list)<count*size {return nil}
+    for index in 0..<count {
+        entry:=list[index*size:][:size]
+        if entry_key(s,elem,entry)==key {return entry}
+    }
+    return nil
 }

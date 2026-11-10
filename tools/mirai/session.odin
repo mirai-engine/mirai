@@ -15,7 +15,7 @@ import "mirai:project"
 import "mirai:std/subprocess"
 import "mirai:std/base"
 
-SESSION_USAGE :: "session start|restart|stop|status|sync [project] [paths of sync] [--dev|--release] [--no-build] [--copy] [--discard] [--orphans] [--timeout S] [editor arguments]"
+SESSION_USAGE :: "session start|restart|stop|status|sync [project] [paths of sync] [--release] [--no-build] [--copy] [--discard] [--orphans] [--timeout S] [editor arguments]"
 
 SESSION_FILE :: api.SESSION_FILE
 Session_Record :: api.Session_Record
@@ -74,7 +74,6 @@ cmd_session :: proc(root:string,args:[]string) -> int {
 // What start and restart take; what is not theirs goes to the editor.
 Session_Options :: struct {
     mode:Build_Mode,
-    mode_asked:bool, // --dev or --release was given
     no_build,discard,orphans,copy:bool,
     timeout:int, // seconds for the API to answer
     editor_args:[]string,
@@ -84,10 +83,7 @@ Session_Options :: struct {
 session_options :: proc(arguments:[]string) -> (options:Session_Options,problem:string) {
     options.timeout=180
     args:[]string
-    modes_valid:bool
-    options.mode,args,modes_valid=build_mode_take(arguments)
-    if !modes_valid {return {},"--dev and --release do not go together"}
-    options.mode_asked=len(args)<len(arguments)
+    options.mode,args=build_mode_take(arguments)
     editor_args:=make([dynamic]string,context.temp_allocator)
     for i:=0;i<len(args);i+=1 {
         switch args[i] {
@@ -164,15 +160,6 @@ session_record :: proc(folder:string) -> (record:Session_Record,found:bool) {
     return record,true
 }
 
-// The mode of the binaries a record names; false when it names none.
-session_record_mode :: proc(record:Session_Record) -> (mode:Build_Mode,named:bool) {
-    switch record.mode {
-    case "dev":     return .Dev,true
-    case "release": return .Release,true
-    }
-    return
-}
-
 @(private="file")
 session_record_write :: proc(folder:string,record:Session_Record) {
     data,error:=json.marshal(record,{pretty=true},context.temp_allocator)
@@ -225,11 +212,8 @@ session_restart :: proc(root,folder:string,args:[]string) -> int {
     if problem=="" && (options.orphans || options.copy) {problem="--orphans belongs to stop, and --copy to start"}
     if problem!="" {fmt.eprintfln("mirai session restart: %s. Usage: mirai %s",problem,SESSION_USAGE);return 2}
     mode,editor_args:=options.mode,options.editor_args
-    if record,recorded:=session_record(folder);recorded {
-        // The session opens again as it was opened, unless a mode is asked for.
-        if recorded_mode,named:=session_record_mode(record);named && !options.mode_asked {mode=recorded_mode}
-        if len(editor_args)==0 {editor_args=record.args}
-    }
+    // The session opens again with the arguments it was opened with, unless others are given.
+    if record,recorded:=session_record(folder);recorded && len(editor_args)==0 {editor_args=record.args}
     closed:=false
     if file,alive:=session_find(folder);alive {
         if !file.manual {
@@ -287,7 +271,7 @@ session_open :: proc(root,folder:string,mode:Build_Mode,no_build:bool,timeout:in
     append(&command,..editor_args)
     process,error:=subprocess.detached(command[:],log,root)
     if error!=nil {fmt.eprintfln("mirai session: could not open %s: %v",command[0],error);return {},1}
-    session_record_write(folder,{process.pid,engine==.Dev?"dev":"release",editor_args})
+    session_record_write(folder,{process.pid,editor_args})
     deadline:=time.tick_now()
     for time.duration_seconds(time.tick_since(deadline))<f64(timeout) {
         if found,alive:=session_find(folder);alive && session_answers(found.port) {return found,0}

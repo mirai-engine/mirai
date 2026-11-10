@@ -22,9 +22,6 @@ game_copies :: proc(p:^project.Project,folder,compiler:string,a:runtime.Allocato
     if icon:=base.text_get(p.manifest.icon[:]);icon!="" && !server {
         if from:=project.path(p.root,icon,allocator=a);os.is_file(from) {append(&copies,Copy{from,project.path(folder,icon,allocator=a),false})}
     }
-    if from:=project.path(p.root,project.INPUT_FILE,allocator=a);os.is_file(from) {
-        append(&copies,Copy{from,project.path(folder,project.INPUT_FILE,allocator=a),false})
-    }
     if !server {shaders_copies(&copies,p.root,folder,a)}
     when ODIN_OS==.Windows {
         // SDL3 is linked dynamically and ships with the compiler.

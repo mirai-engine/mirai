@@ -187,3 +187,27 @@ import inp "mirai:engine/input"
     }
     testing.expect_value(t,len(output.errors),len(refused))
 }
+
+// A plugin imports only what it depends on and its tests also what they depend on, wherever an
+// import stands: split over lines or inside a when.
+@(test)
+a_plugin_imports_only_what_it_depends_on :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"plugin-imports")
+    if folder=="" {return}
+    sources:=[][2]string{
+        {"a.odin","package a\nimport \"plugins:b/runtime\"\nwhen ODIN_OS==.Windows {\n    import\n    c \"plugins:c/runtime\"\n}\n"},
+        {"a_test.odin","package a\nimport \"plugins:t/runtime\"\nimport \"plugins:c/runtime\"\n"},
+    }
+    for source in sources {testing.expect(t,os.write_entire_file(project.path(folder,source[0],allocator=context.temp_allocator),source[1])==nil)}
+    plugins:=make([]project.Plugin,4,context.temp_allocator)
+    for name,i in ([]string{"a","b","c","t"}) {base.text_set(plugins[i].manifest.name[:],name)}
+    base.text_set(plugins[0].manifest.dependencies[0][:],"b")
+    base.text_set(plugins[0].manifest.test_dependencies[0][:],"t")
+    errors:=make([dynamic]string,context.temp_allocator)
+    _,files,ok:=sources_read(folder,&errors,context.temp_allocator,tests=true)
+    if !testing.expect(t,ok) {return}
+    plugin_imports_check(plugins,0,files,&errors)
+    if !testing.expect_value(t,len(errors),2) {return}
+    testing.expectf(t,strings.contains(errors[0],"a.odin(4:5): imports plugins:c/runtime") && strings.contains(errors[0],"to the dependencies"),"%s",errors[0])
+    testing.expectf(t,strings.contains(errors[1],"a_test.odin(3:1): imports plugins:c/runtime") && strings.contains(errors[1],"to the test_dependencies"),"%s",errors[1])
+}

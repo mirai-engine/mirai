@@ -70,12 +70,10 @@ incomplete_terrain_chunks_are_reconstructed_without_ghosts_or_changes_to_authors
         }
         core.test_world_settle(&w.w)
         if damage==.Wrong_Parent {
-            testing.expect_value(t,w.transforms.layout,resident.gc_stamps[0])
-            testing.expect_value(t,w.parents.layout,resident.gc_stamps[1])
-            testing.expect(t,w.parents.version!=resident.gc_stamps[2])
-            testing.expect_value(t,w.chunks.layout,resident.gc_stamps[3])
-            testing.expect_value(t,w.ids.layout,resident.gc_stamps[4])
-            testing.expect_value(t,w.terrains.layout,resident.gc_stamps[5])
+            // Only a parent written: the prune sees it all the same.
+            shapes,parents:=resident.gc_shapes,resident.gc_parents
+            testing.expect(t,!(core.reshaped(&w.transforms,&shapes[0]) | core.reshaped(&w.chunks,&shapes[1]) | core.reshaped(&w.ids,&shapes[2]) | core.reshaped(&w.terrains,&shapes[3])))
+            testing.expect(t,core.touched(&w.parents,&parents))
         }
         terrain_test_update(&w,&resident,&app)
         testing.expect_value(t,w.data.epoch,epoch)
@@ -110,9 +108,9 @@ incomplete_terrain_chunks_are_reconstructed_without_ghosts_or_changes_to_authors
             } else {testing.expect(t,!core.has(&w.colliders,author))}
         }
         terrain_test_update(&w,&resident,&app)
-        stamps,structure,version:=resident.gc_stamps,assets.structure,w.statics.version
+        shapes,parents,structure,version:=resident.gc_shapes,resident.gc_parents,assets.structure,w.statics.version
         for _ in 0..<5 {terrain_test_update(&w,&resident,&app)}
-        testing.expect_value(t,resident.gc_stamps,stamps)
+        testing.expect(t,resident.gc_shapes==shapes && resident.gc_parents==parents)
         testing.expect_value(t,assets.structure,structure)
         testing.expect_value(t,w.statics.version,version)
         testing.expect_value(t,w.entities.alive,len(w.ids.values)+expected)

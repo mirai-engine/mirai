@@ -25,16 +25,15 @@ a_session_leaves_the_default_api_port_to_the_users_editor :: proc(t:^testing.T) 
 @(test)
 session_options_take_their_flags_and_leave_the_rest_to_the_editor :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    options,problem:=session_options({"--dev","--discard","--copy","--timeout","30","--frames","5","--dev"})
+    options,problem:=session_options({"--release","--discard","--copy","--timeout","30","--frames","5","--dev"})
     testing.expect_value(t,problem,"")
-    testing.expect_value(t,options.mode,Build_Mode.Dev)
-    testing.expect(t,options.mode_asked)
+    testing.expect_value(t,options.mode,Build_Mode.Release)
     testing.expect(t,options.discard && options.copy && !options.no_build && !options.orphans)
     testing.expect_value(t,options.timeout,30)
-    testing.expect(t,slice.equal(options.editor_args,[]string{"--frames","5"}))
+    testing.expect(t,slice.equal(options.editor_args,[]string{"--frames","5","--dev"}),"--dev is no flag of theirs: it goes to the editor")
     options,problem=session_options({})
     testing.expect_value(t,problem,"")
-    testing.expect(t,options.mode==.Dev && !options.mode_asked,"dev unless a mode is asked for")
+    testing.expect(t,options.mode==.Dev,"dev unless --release is asked for")
     testing.expect_value(t,options.timeout,180)
     testing.expect_value(t,len(options.editor_args),0)
 }
@@ -44,19 +43,13 @@ session_options_take_their_flags_and_leave_the_rest_to_the_editor :: proc(t:^tes
 @(test)
 build_mode_is_dev_unless_release_is_asked_for :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    Case :: struct {args:[]string,mode:Build_Mode,ok:bool}
-    cases:=[]Case{
-        {{"demo"},.Dev,true},
-        {{"demo","--release"},.Release,true},
-        {{"--dev","demo"},.Dev,true},
-        {{"--dev","demo","--release"},{},false},
-    }
+    Case :: struct {args:[]string,mode:Build_Mode}
+    cases:=[]Case{{{"demo"},.Dev},{{"demo","--release"},.Release},{{"--release","demo"},.Release}}
     for c in cases {
-        mode,rest,ok:=build_mode_take(c.args)
-        testing.expectf(t,ok==c.ok && (!ok || mode==c.mode && slice.equal(rest,[]string{"demo"})),"build_mode_take %v: %v %v %v",c.args,mode,rest,ok)
+        mode,rest:=build_mode_take(c.args)
+        testing.expectf(t,mode==c.mode && slice.equal(rest,[]string{"demo"}),"build_mode_take %v: %v %v",c.args,mode,rest)
         options,problem:=session_options(c.args)
-        testing.expectf(t,(problem=="")==c.ok && (!c.ok || options.mode==c.mode),"session_options %v: %v %q",c.args,options.mode,problem)
-        if !c.ok {testing.expectf(t,strings.contains(problem,"--dev and --release"),"%q says the two modes clash",problem)}
+        testing.expectf(t,problem=="" && options.mode==c.mode,"session_options %v: %v %q",c.args,options.mode,problem)
     }
 }
 
@@ -153,17 +146,13 @@ the_role_and_the_record_come_from_the_files_of_the_project :: proc(t:^testing.T)
     testing.expect(t,os.write_entire_file(project.path(folder,".mirai","api.json"),fmt.tprintf(`{{"port":7999,"pid":%d,"manual":true}}`,pid))==nil)
     editor:=Engine_Process{pid=pid,program="mirai-editor",project=folder,headless=true,read=true}
     testing.expect_value(t,engine_process_role(editor),Engine_Role.Reachable)
-    testing.expect(t,os.write_entire_file(project.path(folder,".mirai",SESSION_FILE),fmt.tprintf(`{{"pid":%d,"mode":"dev","args":["--frames","2"]}}`,pid))==nil)
+    testing.expect(t,os.write_entire_file(project.path(folder,".mirai",SESSION_FILE),fmt.tprintf(`{{"pid":%d,"args":["--frames","2"]}}`,pid))==nil)
     testing.expect_value(t,engine_process_role(editor),Engine_Role.Session)
     other:=editor
     other.pid=pid+1
     testing.expect_value(t,engine_process_role(other),Engine_Role.Orphan)
     record,found:=session_record(folder)
     testing.expect(t,found)
-    mode,named:=session_record_mode(record)
-    testing.expect(t,named && mode==.Dev)
-    _,named=session_record_mode({pid=pid})
-    testing.expect(t,!named,"a record without a mode names none")
     testing.expect(t,slice.equal(record.args,[]string{"--frames","2"}))
     file,alive:=session_find(folder)
     testing.expect(t,alive && file.port==7999 && file.manual,"this process is the one the port file names")

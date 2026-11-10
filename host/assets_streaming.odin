@@ -7,7 +7,7 @@ import "mirai:asset"
 import render "mirai:render"
 import "mirai:std/jobs"
 
-// The levels of the textures of assets follow their distance
+// The levels of the textures of assets follow what the GPU samples of them
 // (render/texture_residency.odin): between frames the renderer says which
 // textures need other levels of their files, jobs read and decode them,
 // TEXTURE_READS at once, and the renderer takes them as the loads give it
