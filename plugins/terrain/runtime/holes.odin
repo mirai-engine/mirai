@@ -38,8 +38,7 @@ chunk_holed :: proc "contextless" (s:^Source,index:int) -> bool {
 // within brush.radius of brush.center, over X/Z.
 @(private)
 source_holes_edit :: proc(s:^Source,brush:Brush) -> (change:Change) {
-    finite :: proc "contextless" (value:f32) -> bool {return value-value==0}
-    if s.kind!=.Heightfield || !(brush.radius>0) || !finite(brush.radius) || !finite(brush.center.x) || !finite(brush.center.z) || !source_samples_held(s) {change.error=.Invalid;return}
+    if s.kind!=.Heightfield {change.error=.Kind;return}
     size:=[2]int{int(s.samples.x)-1,int(s.samples.z)-1}
     if len(s.holes.pages)==0 {
         if brush.kind==.Fill {return}

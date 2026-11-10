@@ -89,12 +89,11 @@ a_change_of_kind_keeps_the_whole_source_once :: proc(t:^testing.T) {
     head,edited:terrain.Source
     defer terrain.source_destroy(&head);defer terrain.source_destroy(&edited)
     testing.expect(t,terrain.source_make(&head,.Heightfield,{9,1,9},1,4))
-    testing.expect(t,terrain.source_make(&edited,.Heightfield,{9,1,9},1,4))
-    testing.expect(t,terrain.source_convert_heightfield(&edited,&edited,0))
+    testing.expect(t,terrain.source_make(&edited,.Volume,{9,9,9},1,4))
     step:=Step{source={1,1},from=1,to=2}
     defer step_destroy(&step)
     testing.expect(t,step_make(&step,&head,&edited,{},{},false))
-    testing.expect(t,step.whole && step.other.kind==.Heightfield && head.kind==.Mesh)
+    testing.expect(t,step.whole && step.other.kind==.Heightfield && head.kind==.Volume)
     step_apply(&step,&head)
-    testing.expect(t,head.kind==.Heightfield && step.other.kind==.Mesh,"undo trades the whole source back")
+    testing.expect(t,head.kind==.Heightfield && step.other.kind==.Volume,"undo trades the whole source back")
 }

@@ -39,8 +39,8 @@ terrain_editor_budget_counts_sources_chunks_and_replacement_without_double_charg
     testing.expect(t,page==25 && cost==81)
     session:editor.Session
     world:=core.test_world_ref(&w)
-    testing.expect_value(t,terrain_vertex_budget(world,{}),13000-2*page)
-    testing.expect_value(t,terrain_vertex_budget(world,ids[0]),13000-page)
+    testing.expect_value(t,terrain_samples_left(world,{}),13000-2*page)
+    testing.expect_value(t,terrain_samples_left(world,ids[0]),13000-page)
     testing.expect(t,!terrain_budget(&session,world,&source))
     testing.expect(t,terrain_budget(&session,world,&source,ids[0]))
     w.settings.sources=3
@@ -49,7 +49,7 @@ terrain_editor_budget_counts_sources_chunks_and_replacement_without_double_charg
     testing.expect(t,!terrain_budget(&session,world,&source))
     testing.expect(t,terrain_budget(&session,world,&source,ids[0]))
     w.data.ready=true;w.data.settings={sources=8,chunks=64,samples=20000}
-    testing.expect_value(t,terrain_vertex_budget(world,{}),20000-2*page)
+    testing.expect_value(t,terrain_samples_left(world,{}),20000-2*page)
     testing.expect(t,terrain_budget(&session,world,&source))
 }
 

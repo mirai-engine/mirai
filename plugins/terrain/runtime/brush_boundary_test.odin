@@ -12,7 +12,7 @@ bounded_volume_brushes_preserve_air_margin_and_can_remove_and_restore_all_materi
     part:Chunk_Mesh;chunk_mesh_init(&part);defer chunk_mesh_destroy(&part)
     combined,welded:geom.Mesh_Buffer;geom.mesh_buffer_init(&combined);geom.mesh_buffer_init(&welded)
     defer geom.mesh_buffer_destroy(&combined);defer geom.mesh_buffer_destroy(&welded)
-    for kind in ([5]Brush_Kind{.Add,.Remove,.Add,.Smooth,.Flatten}) {
+    for kind in ([5]Brush_Kind{.Add,.Carve,.Add,.Smooth,.Flatten}) {
         testing.expect(t,source_edit(&source,{kind=kind,center={},radius=30,amount=1}).changed)
         boundary_ok:=true
         for z in 0..<int(source.samples.z) {for y in 0..<int(source.samples.y) {for x in 0..<int(source.samples.x) {
@@ -29,7 +29,7 @@ bounded_volume_brushes_preserve_air_margin_and_can_remove_and_restore_all_materi
             append(&combined.positions,..part.geometry.positions[:])
             for index in part.geometry.indices {append(&combined.indices,index+offset)}
         }
-        if kind==.Remove {
+        if kind==.Carve {
             testing.expect_value(t,len(combined.indices),0)
             for z in 0..<n.z {for y in 0..<n.y {for x in 0..<n.x {testing.expect(t,source_value(&source,{x,y,z})>0)}}}
         } else {

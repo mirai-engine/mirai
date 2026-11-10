@@ -2,8 +2,8 @@ package terrain
 
 import "mirai:std/base"
 
-// The quadtree of a source whose chunks lie on one layer (Heightfield and
-// Mesh): its leaves are the chunks, in the order of chunk_index, and above
+// The quadtree of a source whose chunks lie on one layer (a Heightfield):
+// its leaves are the chunks, in the order of chunk_index, and above
 // them the nodes of each depth, in rows, up to the root, which covers every
 // chunk. A node covers the chunks of its children: four, or fewer at the far
 // edges of the source. A Volume source has only its chunks. Every piece a
@@ -100,15 +100,6 @@ node_box :: proc "contextless" (s:^Source,q:^Quad,ranges:[][2]f32,i:int) -> (low
     if s.kind==.Volume || q.depth==0 {
         heights:=i<len(ranges)?ranges[i]:{-HEIGHT_LIMIT,HEIGHT_LIMIT}
         return chunk_box(s,source_origin(s),i,heights)
-    }
-    if s.kind==.Mesh {
-        a,b:=quad_chunks(q,i)
-        low,high={max(f32),max(f32),max(f32)},{-max(f32),-max(f32),-max(f32)}
-        for z in a.y..<b.y {for x in a.x..<b.x {
-            chunk:=&s.mesh_chunks[x+q.counts[0].x*z]
-            for axis in 0..<3 {low[axis]=min(low[axis],chunk.low[axis]);high[axis]=max(high[axis],chunk.high[axis])}
-        }}
-        return
     }
     a,b:=quad_region(s,q,i)
     origin:=source_origin(s)
@@ -209,19 +200,12 @@ piece_border_of_lod :: proc(lod:Chunk_Lod,border:^Piece_Border) {
     append(&border.corners[2],lod.corners[0],lod.corners[1]);append(&border.corners[3],lod.corners[2],lod.corners[3])
 }
 
-// The coarsest level of node i of a Heightfield or Mesh: as chunk_lod_max,
-// over its region or its sections.
+// The coarsest level of node i of a Heightfield: as chunk_lod_max, over its
+// region.
 node_lod_max :: proc "contextless" (s:^Source,q:^Quad,i:int) -> u8 {
     depth,_:=quad_coord(q,i)
     if depth==0 {return chunk_lod_max(s,chunk_coord(s,i))}
     level:=0
-    if s.kind==.Mesh {
-        a,b:=quad_chunks(q,i)
-        triangles:=0
-        for z in a.y..<b.y {for x in a.x..<b.x {triangles+=len(s.mesh_chunks[x+q.counts[0].x*z].geometry.indices)/3}}
-        for level<LOD_LEVELS_MAX+QUAD_DEPTH_MAX && triangles>>(2*uint(level+1))>=MESH_LOD_TRIANGLES {level+=1}
-        return u8(level)
-    }
     low,high:=quad_region(s,q,i)
     size:=min(high.x-low.x,high.y-low.y)
     for level<LOD_LEVELS_MAX+QUAD_DEPTH_MAX && 2<<uint(level+1)<=size {level+=1}
@@ -229,8 +213,7 @@ node_lod_max :: proc "contextless" (s:^Source,q:^Quad,i:int) -> u8 {
 }
 
 // The finest level node i of depth above 0 shows: a node of a Heightfield is
-// built from the coarse grid, never finer than it; a node of a Mesh shows at
-// most a quarter of the triangles of its sections for each depth.
+// built from the coarse grid, never finer than it.
 node_lod_min :: proc "contextless" (s:^Source,q:^Quad,i:int) -> u8 {
     depth,_:=quad_coord(q,i)
     if depth==0 {return 0}

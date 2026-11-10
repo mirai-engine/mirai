@@ -9,12 +9,8 @@ import "mirai:std/geom"
 // of the two chunks it joins, so every piece that shares it builds the same
 // vertices along it and no crack opens between them; a strip of triangles
 // joins that side to the inner grid of the piece. A Volume chunk does it with
-// its faces and edges (geom.Iso_Lod). Mesh: level k aims at a 4^k-th of the
-// triangles of its section, which keeps its border, so any levels of two
-// sections join.
+// its faces and edges (geom.Iso_Lod).
 LOD_LEVELS_MAX :: 7
-// A Mesh section has no level that aims at fewer triangles than this.
-MESH_LOD_TRIANGLES :: 64
 // A chunk changes level only once its distance passes the boundary by this factor.
 LOD_HYSTERESIS :: f32(1.1)
 // Without Terrain_Settings.lod_distance, level 0 reaches this many chunk widths.
@@ -23,22 +19,14 @@ LOD_CHUNKS :: 4
 // The level of a chunk, of its faces (-X,+X,-Y,+Y,-Z,+Z) and of its edges,
 // in the order of geom.Iso_Lod. The sides of a Heightfield chunk are its
 // faces along X and Z, and its corners (-X-Z, +X-Z, -X+Z, +X+Z) the points
-// of the chunk grid where they meet; a Mesh section has only its level. Of
+// of the chunk grid where they meet. Of
 // a node of the quadtree, the level of its inner grid and the finest of each side.
 Chunk_Lod :: struct {level:u8,faces:[6]u8,edges:[12]u8,corners:[4]u8}
 
 // The coarsest level of a chunk: that which still leaves a sample inside it
-// along each axis, or for a Mesh section the last that aims at
-// MESH_LOD_TRIANGLES or more.
+// along each axis.
 chunk_lod_max :: proc "contextless" (s:^Source,coord:[3]i32) -> u8 {
     level:=0
-    if s.kind==.Mesh {
-        index:=chunk_index(s,coord)
-        if index<0 || index>=len(s.mesh_chunks) {return 0}
-        triangles:=len(s.mesh_chunks[index].geometry.indices)/3
-        for level<LOD_LEVELS_MAX && triangles>>(2*uint(level+1))>=MESH_LOD_TRIANGLES {level+=1}
-        return u8(level)
-    }
     low,high,valid:=chunk_region(s,coord)
     if !valid {return 0}
     size:=min(high.x-low.x,high.z-low.z)
@@ -61,13 +49,11 @@ lod_level :: proc "contextless" (distance,base:f32,maximum,current:u8) -> u8 {
 }
 
 // The faces, edges and corners of a chunk take the finer level of the chunks
-// that share them; levels holds the level of every chunk of the source. The
-// level of a Mesh section does not depend on its neighbors.
+// that share them; levels holds the level of every chunk of the source.
 chunk_lod_sides :: proc "contextless" (s:^Source,levels:[]u8,coord:[3]i32) -> (lod:Chunk_Lod) {
     lod.level=levels[chunk_index(s,coord)]
     for &face in lod.faces {face=lod.level}
     for &edge in lod.edges {edge=lod.level}
-    if s.kind==.Mesh {return}
     if s.kind==.Heightfield {
         n:=chunk_counts(s)
         b:=Border_Levels{counts={n.x,n.z},levels=levels}

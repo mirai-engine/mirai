@@ -14,7 +14,6 @@ KIND :: asset.Fourcc(u32('T')|u32('E')<<8|u32('R')<<16|u32('R')<<24)
 EXTENSION :: ".terrain"
 VERSION :: 9
 HEIGHT_SAMPLES_MAX :: 16385
-MESH_SAMPLES_MAX :: 1025
 VOLUME_SAMPLES_MAX :: 129
 CHUNK_CELLS_MIN :: 4
 CHUNK_CELLS_MAX :: 256
@@ -22,7 +21,7 @@ UV_METERS :: f32(4)
 SDF_BAND_CELLS :: f32(4)
 HEIGHT_LIMIT :: f32(100000)
 
-Source_Kind :: enum u8 {Heightfield,Volume,Mesh}
+Source_Kind :: enum u8 {Heightfield,Volume}
 
 Source_Info :: struct {
     kind:Source_Kind,
@@ -30,7 +29,6 @@ Source_Info :: struct {
     cell:f32 `mirai:"unit=m"`,
     chunk_cells:u32,
     revision:u32,
-    mesh_origin:[3]f32,
     layer_count:u32, // at least 1
     layers:[LAYERS_MAX]Terrain_Layer,
     // The material slot 0 shows: a Surface program that blends the layers by
@@ -48,10 +46,6 @@ Source :: struct {
     distances:Grid(f32),  // Volume: samples.x by y by z in blocks; one all air or all solid holds no values
     scratch:[dynamic]f32, // the region a brush reads while it writes
     ray_mesh:geom.Mesh_Buffer,
-    mesh_chunks:[]Mesh_Chunk,
-    mesh_changed:[]bool,
-    slots:[]base.Asset_Id, // the materials of the slots of a Mesh past 0, which shows the layers: slots[k-1] of slot k; none for a Heightfield or Volume
-    mesh_work:Mesh_Work,
     weights:Grid(Weights), // samples.x by samples.z, or of each sample of a Volume in blocks
     dug:Dug,               // what the last edit took out
     file:string,           // Heightfield and Volume: where the pages of its grids in blocks are read from
@@ -69,9 +63,6 @@ source_valid :: proc "contextless" (info:Source_Info) -> bool {
     switch info.kind {
     case .Heightfield: return info.samples.y==1 && info.samples.x>=2 && info.samples.z>=2 && info.samples.x<=HEIGHT_SAMPLES_MAX && info.samples.z<=HEIGHT_SAMPLES_MAX
     case .Volume: return info.samples.x>=3 && info.samples.y>=3 && info.samples.z>=3 && info.samples.x<=VOLUME_SAMPLES_MAX && info.samples.y<=VOLUME_SAMPLES_MAX && info.samples.z<=VOLUME_SAMPLES_MAX
-    case .Mesh:
-        for value in info.mesh_origin {if value-value!=0 || abs(value)>HEIGHT_LIMIT {return false}}
-        return info.samples.y==1 && info.samples.x>=2 && info.samples.z>=2 && info.samples.x<=MESH_SAMPLES_MAX && info.samples.z<=MESH_SAMPLES_MAX
     }
     return false
 }
@@ -99,12 +90,6 @@ source_allocate :: proc(s:^Source,info:Source_Info,allocator:=context.allocator,
 }
 
 source_make :: proc(s:^Source,kind:Source_Kind,samples:[3]int,cell:f32,chunk_cells:int,allocator:=context.allocator) -> bool {
-    if kind==.Mesh {
-        if samples.x>MESH_SAMPLES_MAX || samples.z>MESH_SAMPLES_MAX {return false}
-        height:Source
-        defer source_destroy(&height)
-        return source_make(&height,.Heightfield,{samples.x,1,samples.z},cell,chunk_cells,allocator) && source_convert_heightfield(s,&height,0,allocator)
-    }
     for n in samples {if n<1 || n>HEIGHT_SAMPLES_MAX {return false}}
     if chunk_cells<CHUNK_CELLS_MIN || chunk_cells>CHUNK_CELLS_MAX {return false}
     info:=Source_Info{kind=kind,samples={u32(samples.x),u32(samples.y),u32(samples.z)},cell=cell,chunk_cells=u32(chunk_cells),layer_count=1,layers={0=LAYER_DEFAULT}}
@@ -148,7 +133,6 @@ source_destroy :: proc(s:^Source) {
     grid_destroy(&s.weights,s.allocator)
     coarse_destroy(&s.coarse,s.allocator)
     geom.mesh_buffer_destroy(&s.ray_mesh)
-    source_mesh_destroy(s)
     delete(s.file,s.allocator)
     s^={}
 }
@@ -161,7 +145,6 @@ source_samples_held :: proc "contextless" (s:^Source) -> bool {
 }
 
 source_clone :: proc(dst,src:^Source,allocator:=context.allocator,editable:=true) -> bool {
-    if src.kind==.Mesh {return source_mesh_clone(dst,src,allocator)}
     if !source_valid(src.info) || !source_samples_held(src) {return false}
     temporary:Source
     if !source_allocate(&temporary,src.info,allocator,editable) {return false}
@@ -192,7 +175,6 @@ source_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=co
     if asset.kind_check(file,KIND,VERSION)!=.None {return}
     info,error:=asset.asset_row(file,types,"terrain",Source_Info)
     if error!=.None || info==nil || !source_valid(info^) {return}
-    if info.kind==.Mesh {return source_mesh_load(s,file,info^,types,allocator)}
     temporary:Source
     if !source_allocate(&temporary,info^,allocator,editable) {return}
     defer source_destroy(&temporary)
@@ -233,15 +215,13 @@ source_origin_set :: proc(s:^Source,origin:u64) {
     s.origin=origin
     unalter :: proc(g:^Grid($T)) {for &page in g.pages {page.altered=false}}
     unalter(&s.heights);unalter(&s.holes);unalter(&s.distances);unalter(&s.weights)
-    for &chunk in s.mesh_chunks {chunk.altered=false}
 }
 
 // The .terrain file of a source, as bytes from allocator aligned for its
 // chunks; with import_info, the record of the import it comes from. keep has
 // the grids keep their blocks for the next time (grid_put_document).
 source_bytes :: proc(s:^Source,id:base.Asset_Id,types:^asset.Types,allocator:=context.allocator,import_info:^asset.Import_Info=nil,keep:=false) -> (data:[]u8,error:asset.Error) {
-    if s.kind==.Mesh {return source_mesh_bytes(s,id,types,allocator,import_info)}
-    if !source_valid(s.info) || !source_samples_held(s) || len(s.slots)!=0 {return nil,.Invalid}
+    if !source_valid(s.info) || !source_samples_held(s) {return nil,.Invalid}
     band:=s.cell*SDF_BAND_CELLS
     for page in s.distances.pages {if !(abs(page.fill)<=band) || !distances_within(page.values,band) {return nil,.Invalid}}
     document:asset.Document
@@ -261,6 +241,14 @@ source_bytes :: proc(s:^Source,id:base.Asset_Id,types:^asset.Types,allocator:=co
     return asset.document_bytes(&document,allocator)
 }
 
+// What a source counts against Terrain_Settings.samples: the samples its
+// pages hold in memory, with the coarse grid of a Heightfield and the weights
+// of a Volume.
+source_cost :: proc(s:^Source) -> int {
+    if s.kind==.Heightfield {return grid_dense(&s.heights)+grid_dense(&s.coarse.heights)}
+    return grid_dense(&s.distances)+grid_dense(&s.weights)
+}
+
 // The value of a sample: a height of a Heightfield, a distance of a Volume.
 source_value :: #force_inline proc "contextless" (s:^Source,p:[3]int) -> f32 {
     if s.kind==.Heightfield {return grid_get(&s.heights,p.x,p.z)}
@@ -274,7 +262,6 @@ source_set :: proc(s:^Source,p:[3]int,value:f32) -> bool {
 }
 
 source_origin :: proc "contextless" (s:^Source) -> [3]f32 {
-    if s.kind==.Mesh {return s.mesh_origin}
     return -[3]f32{f32(s.samples.x-1),f32(s.samples.y-1),f32(s.samples.z-1)}*(s.cell*0.5)
 }
 
@@ -296,7 +283,6 @@ source_height :: proc "contextless" (s:^Source,x,z:f32) -> f32 {
 }
 
 source_density :: proc "contextless" (s:^Source,point:[3]f32) -> f32 {
-    if s.kind==.Mesh {return 0}
     if s.kind==.Heightfield {return point.y-source_height(s,point.x,point.z)}
     p:=(point-source_origin(s))/s.cell
     base_cell:[3]int
@@ -325,7 +311,6 @@ source_normal :: proc "contextless" (s:^Source,p:[3]f32) -> [3]f32 {
 }
 
 source_ray :: proc(s:^Source,origin,direction:[3]f32) -> (point,normal:[3]f32,ok:bool) {
-    if s.kind==.Mesh {return source_mesh_ray(s,origin,direction)}
     if !source_valid(s.info) || !source_samples_held(s) {return}
     for axis in 0..<3 {if origin[axis]-origin[axis]!=0 || direction[axis]-direction[axis]!=0 {return}}
     d:=linalg.normalize0(direction)

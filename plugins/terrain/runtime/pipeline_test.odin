@@ -292,7 +292,7 @@ a_volume_lets_go_of_the_blocks_far_from_its_viewers_and_reading_them_again_keeps
         _,ok=phys.raycast({&w.state},{50,20,50},{0,-1,0})
         testing.expect(t,!ok,"far from the viewer there is no collider")
         // Excavate near the viewer.
-        dig(&w.terrain_requests,{kind=.Remove,center=near,radius=2,amount=1},owner)
+        dig(&w.terrain_requests,{kind=.Carve,center=near,radius=2,amount=1},owner)
         for _ in 0..<2 {pipeline_tick(&w,&resident,&app,settings)}
         hit,ok=phys.raycast({&w.state},near+{0,20,0},{0,-1,0})
         testing.expectf(t,ok && hit.point.y< -1.5,"the excavation: %v",hit.point)

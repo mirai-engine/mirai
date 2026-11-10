@@ -110,7 +110,7 @@ terrain_panel_hides_creation_while_a_terrain_is_selected_and_reaches_it_on_short
     tool.stroke.entity,tool.stroke.id=owner,{1,1}
     id:=ui.id_derive(ctx,PANEL_SCOPE,"panel")
     // A selected terrain shows its modes, not the controls to create another.
-    for kind in ([2]terrain.Source_Kind{.Heightfield,.Mesh}) {
+    for kind in ([2]terrain.Source_Kind{.Heightfield,.Volume}) {
         tool.stroke.source.kind=kind
         input:=ui.Input{size={1000,900},pointer_absent=true,dt=1.0/60}
         for _ in 0..<2 {create_test_tool_panel_frame(t,&s,&tool,ref,&input)}
@@ -121,7 +121,7 @@ terrain_panel_hides_creation_while_a_terrain_is_selected_and_reaches_it_on_short
     input:=ui.Input{size={1000,900},pointer_absent=true,dt=1.0/60}
     create_test_tool_panel_frame(t,&s,&tool,ref,&input)
     testing.expect(t,tool.stroke.id=={})
-    for kind in ([2]terrain.Source_Kind{.Heightfield,.Mesh}) {
+    for kind in ([2]terrain.Source_Kind{.Heightfield,.Volume}) {
         tool.create_kind=kind
         for height in ([2]f32{600,900}) {
             input=ui.Input{size={1000,height},pointer_absent=true,dt=1.0/60}
@@ -151,15 +151,13 @@ create_test_tool_panel_frame :: proc(t:^testing.T,s:^editor.Session,tool:^Terrai
 }
 
 @(test)
-terrain_creation_separates_heightfield_mesh_and_volume_and_keeps_undo :: proc(t:^testing.T) {
-    create_test_plane(t,.Heightfield,0)
-    create_test_plane(t,.Mesh,0)
-    create_test_plane(t,.Mesh,8)
-    create_test_plane(t,.Volume,0)
+terrain_creation_separates_heightfield_and_volume_and_keeps_undo :: proc(t:^testing.T) {
+    create_test_plane(t,.Heightfield)
+    create_test_plane(t,.Volume)
 }
 
 @(private)
-create_test_plane :: proc(t:^testing.T,kind:terrain.Source_Kind,depth:f32) {
+create_test_plane :: proc(t:^testing.T,kind:terrain.Source_Kind) {
     root:=base.test_folder(t,"terrain")
     path:=fmt.tprintf("%s/terrain/%s.terrain",root,terrain_kind_name(kind))
     assets:host.Assets
@@ -183,24 +181,20 @@ create_test_plane :: proc(t:^testing.T,kind:terrain.Source_Kind,depth:f32) {
     gui:=editor.Editor_Ui{ctx=ctx,begun=true}
     s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,viewport=&viewport,gui=&gui,id_state=331}
     tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
-    testing.expect_value(t,tool.create_kind,terrain.Source_Kind.Mesh)
-    testing.expect_value(t,tool.solid_depth,f32(8))
+    testing.expect_value(t,tool.create_kind,terrain.Source_Kind.Heightfield)
     tool.samples,tool.depth,tool.chunk_cells=5,5,4
     input:=ui.Input{size={800,600},pointer_absent=true,dt=1.0/60}
     create_test_frame(t,&s,&tool,&input)
     create_test_click(t,&s,&tool,&input,"source_kind")
     list:=ui.id_derive(ctx,ui.id(ctx,"source_kind"),"list")
-    index:=kind==.Heightfield?0:kind==.Mesh?1:2
-    for option in 0..<3 {
+    index:=int(kind)
+    for option in 0..<2 {
         rect,found:=ui.widget_rect(ctx,ui.id_derive(ctx,list,"row",option+1))
         testing.expect(t,found && rect.w>=200)
     }
     create_test_click_id(t,&s,&tool,&input,ui.id_derive(ctx,list,"row",index+1))
     testing.expect_value(t,tool.create_kind,kind)
-    tool.solid_depth=depth
     create_test_frame(t,&s,&tool,&input)
-    _,has_solid:=ui.widget_rect(ctx,ui.id(ctx,"create_solid"))
-    testing.expect_value(t,has_solid,kind==.Mesh)
     create_test_click(t,&s,&tool,&input,"create")
     if !testing.expect(t,history.edits_commit(&edits,ref,&selection)) {return}
     testing.expect_value(t,len(world.terrains.values),1)
@@ -214,13 +208,7 @@ create_test_plane :: proc(t:^testing.T,kind:terrain.Source_Kind,depth:f32) {
     // Every kind starts with one layer that covers all of it.
     testing.expect_value(t,source.layer_count,u32(1))
     testing.expect_value(t,terrain.source_weights_at(&source,terrain.source_origin(&source)),[4]f32{1,0,0,0})
-    if kind==.Mesh {
-        testing.expect_value(t,len(source.distances.pages),0)
-        mesh:geom.Mesh_Buffer;geom.mesh_buffer_init(&mesh);defer geom.mesh_buffer_destroy(&mesh)
-        testing.expect(t,terrain.source_mesh_collect(&source,&mesh))
-        testing.expect_value(t,geom.mesh_is_closed(mesh.positions[:],mesh.indices[:]),depth>0)
-        testing.expect(t,abs(geom.mesh_volume(mesh.positions[:],mesh.indices[:])-16*depth)<0.001)
-    } else if kind==.Volume {testing.expect_value(t,source.distances.size,[3]int{5,5,5})} else {testing.expect_value(t,source.heights.size,[3]int{5,1,5})}
+    if kind==.Volume {testing.expect_value(t,source.distances.size,[3]int{5,5,5})} else {testing.expect_value(t,source.heights.size,[3]int{5,1,5})}
     testing.expect(t,history.undo(&edits,ref,&selection))
     testing.expect_value(t,len(world.terrains.values),0)
     testing.expect(t,!editor.file_exists(&s,path))
@@ -299,63 +287,12 @@ a_volume_created_on_a_heightfield_is_filled_with_its_ground :: proc(t:^testing.T
 }
 
 @(test)
-mesh_terrain_creation_from_selection_preserves_authoring_and_undo :: proc(t:^testing.T) {
-    root:=base.test_folder(t,"terrain")
-    path:=fmt.tprintf("%s/terrain/3D Terrain.terrain",root)
-    assets:host.Assets
-    if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
-    defer host.assets_destroy(&assets)
-    world:Create_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
-    app:=host.App{allocator=context.allocator,assets=&assets}
-    selection:history.Selection;defer delete(selection.entities)
-    edits:history.Edits;defer history.edits_free(&edits)
-    s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,id_state=971}
-    owner:=editor.entity_create(&s,{preset=.Cube,name="Rock",transform={position={4,5,6},rotation=1,scale={2,3,4}}})
-    core.world_settle(ref)
-    static:=core.get(&world.meshes,owner)^
-    static.materials[0]={71,72};core.add(&world.meshes,owner,static)
-    core.world_settle(ref)
-    transform:=core.get(&world.transforms,owner)^
-    history.selection_set(&selection,{owner})
-    history.edits_reset(&edits,ref)
-    tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
-    tool.create_source=.Selection;tool.create_kind=.Heightfield
-    terrain_create(&s,&tool,ref,app.assets,app.allocator)
-    testing.expect(t,!edits.open && !edits.commit && !os.exists(path))
-    testing.expect_value(t,len(world.terrains.values),0)
-    tool.create_kind=.Mesh
-    terrain_create(&s,&tool,ref,app.assets,app.allocator)
-    if !testing.expect(t,history.edits_commit(&edits,ref,&selection)) {return}
-    testing.expect_value(t,world.entities.alive,1)
-    testing.expect(t,core.has(&world.terrains,owner))
-    testing.expect_value(t,core.get(&world.transforms,owner)^,transform)
-    // The material it showed over its mesh is the one of the source.
-    testing.expect(t,!core.has(&world.meshes,owner))
-    testing.expect_value(t,history.selection_active(&selection),owner)
-    source:terrain.Source;defer terrain.source_destroy(&source)
-    loaded:=terrain.terrain_read(&source,&assets,core.get(&world.terrains,owner).source)
-    testing.expect(t,loaded && source.kind==.Mesh && len(source.distances.pages)==0 && !os.exists(path))
-    testing.expect_value(t,source.layers[0].material,static.materials[0])
-    testing.expect(t,history.undo(&edits,ref,&selection))
-    testing.expect(t,!core.has(&world.terrains,owner))
-    testing.expect_value(t,core.get(&world.meshes,owner)^,static)
-    testing.expect_value(t,core.get(&world.transforms,owner)^,transform)
-    testing.expect(t,history.redo(&edits,ref,&selection))
-    testing.expect(t,core.has(&world.terrains,owner))
-}
-
-@(test)
 heightmap_dialog_creates_scaled_terrain_with_one_undo_step :: proc(t:^testing.T) {
-    create_test_heightmap(t,.Heightfield,0)
-    create_test_heightmap(t,.Mesh,0)
-    create_test_heightmap(t,.Mesh,8)
+    create_test_heightmap(t,.Heightfield)
 }
 
 @(private)
-create_test_heightmap :: proc(t:^testing.T,kind:terrain.Source_Kind,depth:f32) {
+create_test_heightmap :: proc(t:^testing.T,kind:terrain.Source_Kind) {
     root:=base.test_folder(t,"terrain")
     path:=fmt.tprintf("%s/height16.png",root)
     saved:=fmt.tprintf("%s/terrain/%s.terrain",root,terrain_kind_name(kind))
@@ -390,7 +327,7 @@ create_test_heightmap :: proc(t:^testing.T,kind:terrain.Source_Kind,depth:f32) {
     gui:=editor.Editor_Ui{ctx=ctx,begun=true}
     s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,viewport=&viewport,gui=&gui,id_state=731}
     tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
-    tool.create_kind=kind;tool.create_source=.Heightmap;tool.solid_depth=depth;tool.height_scale=20;tool.height_offset=-3;tool.cell=0.5;tool.chunk_cells=4
+    tool.create_kind=kind;tool.create_source=.Heightmap;tool.height_scale=20;tool.height_offset=-3;tool.cell=0.5;tool.chunk_cells=4
     input:=ui.Input{size={800,600},pointer_absent=true,dt=1.0/60}
     create_test_frame(t,&s,&tool,&input)
     create_test_click(t,&s,&tool,&input,"heightmap")
@@ -425,22 +362,9 @@ create_test_heightmap :: proc(t:^testing.T,kind:terrain.Source_Kind,depth:f32) {
     testing.expect_value(t,source.kind,kind)
     testing.expect_value(t,source.cell,f32(0.5))
     values:=[6]u16{0,1,255,256,32768,65535}
-    if kind==.Heightfield {
-        testing.expect_value(t,source.samples,[3]u32{3,1,2})
-        // Its file keeps them to the step of its heights, finer than 8 bits.
-        for value,i in values {testing.expect_value(t,terrain.source_value(&source,{i%3,0,i/3}),terrain.height_quantize(f32(value)/65535*20-3))}
-    } else {
-        testing.expect_value(t,len(source.distances.pages),0)
-        mesh:geom.Mesh_Buffer;geom.mesh_buffer_init(&mesh);defer geom.mesh_buffer_destroy(&mesh)
-        testing.expect(t,terrain.source_mesh_collect(&source,&mesh))
-        testing.expect_value(t,geom.mesh_is_closed(mesh.positions[:],mesh.indices[:]),depth>0)
-        for value,i in values {
-            expected:=[3]f32{(f32(i%3)-1)*0.5,f32(value)/65535*20-3,(f32(i/3)-0.5)*0.5}
-            found:=false
-            for p in mesh.positions {if p==expected {found=true;break}}
-            testing.expectf(t,found,"%v heightmap lost sample %d at %v",kind,i,expected)
-        }
-    }
+    testing.expect_value(t,source.samples,[3]u32{3,1,2})
+    // Its file keeps them to the step of its heights, finer than 8 bits.
+    for value,i in values {testing.expect_value(t,terrain.source_value(&source,{i%3,0,i/3}),terrain.height_quantize(f32(value)/65535*20-3))}
     testing.expect(t,history.undo(&edits,ref,&selection))
     testing.expect_value(t,len(world.terrains.values),0)
     testing.expect(t,!editor.file_exists(&s,saved))
@@ -495,7 +419,7 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     testing.expect_value(t,tool.stroke.id,id)
     testing.expect_value(t,tool.stroke.revision,u32(2))
     testing.expect_value(t,raw_data(tool.stroke.source.heights.pages[0].values),cached_values)
-    testing.expect(t,!tool.stroke.active && !tool.stroke.changed && !tool.stroke.applied_once)
+    testing.expect(t,!tool.stroke.active && !tool.stroke.changed)
     committed:=test_held(t,&assets,relative)
     defer delete(committed)
     testing.expect(t,string(committed)!=string(original))

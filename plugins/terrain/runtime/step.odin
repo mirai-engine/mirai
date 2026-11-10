@@ -544,12 +544,6 @@ dig_owner :: proc(brush:Brush,data:^Terrain_Data,terrains:core.Read(Terrain),wor
         s:=&entry.source
         low:=source_origin(s)
         high:=low+[3]f32{f32(s.samples.x-1),f32(s.samples.y-1),f32(s.samples.z-1)}*s.cell
-        if s.kind==.Mesh {
-            low,high=max(f32),min(f32)
-            for chunk in s.mesh_chunks {
-                for axis in 0..<3 {low[axis],high[axis]=min(low[axis],chunk.low[axis]),max(high[axis],chunk.high[axis])}
-            }
-        }
         outside:=linalg.max(low-local.center,local.center-high,[3]f32{})
         if s.kind==.Heightfield {outside.y=0}
         distance:=linalg.length(outside)
@@ -585,18 +579,14 @@ request_source :: proc(data:^Terrain_Data,terrains:core.Read(Terrain),owner:core
 edit_report :: proc(problems:^core.Problems,owner:core.Entity,a:^host.Assets,entry:^Data_Source,brush:Brush,error:Edit_Error) {
     name:[base.ASSET_ID_TEXT]u8
     source:=host.assets_name(a,entry.id,&name)
-    switch error {
+    #partial switch error {
     case .None:
-    case .Invalid:
-        core.report(problems,owner,"terrain.edit_invalid","a %v brush cannot edit %s, a %v source, or a value of it is not finite; heightfields take Raise, Lower, Smooth and Flatten; volumes Add, Remove, Smooth, Flatten and Grow; meshes Raise, Lower, Smooth, Flatten, Refine, Grow, Union and Subtract",brush.kind,source,entry.source.kind)
-    case .Not_Closed:
-        core.report(problems,owner,"terrain.edit_not_closed","a %v of mesh source %s was refused: the mesh is not closed, so it has no inside to add to or cut; close its holes in the modeling tool, or use a sculpt brush",brush.kind,source)
-    case .Topology:
-        core.report(problems,owner,"terrain.edit_topology","a %v of mesh source %s was refused: the result would not be a valid surface; use a smaller radius, or another place",brush.kind,source)
-    case .Budget:
-        core.report(problems,owner,"terrain.edit_budget","a %v of source %s was refused: the result would pass the triangles of a mesh source or the samples of Terrain_Settings; raise Terrain_Settings.samples, or use a smaller brush",brush.kind,source)
+    case .Kind:
+        core.report(problems,owner,"terrain.edit_kind","a %v brush changed nothing of %s, a %v: %s",brush.kind,source,entry.source.kind,edit_error_fix(error,brush.kind))
     case .Out_Of_Memory:
-        core.report(problems,owner,"terrain.memory","a %v of source %s ran out of memory and changed nothing; free memory, or use a smaller brush",brush.kind,source)
+        core.report(problems,owner,"terrain.memory","a %v of source %s changed nothing: %s",brush.kind,source,edit_error_fix(error,brush.kind))
+    case:
+        core.report(problems,owner,"terrain.edit_invalid","a %v brush changed nothing of %s: %s",brush.kind,source,edit_error_fix(error,brush.kind))
     }
 }
 
@@ -635,16 +625,16 @@ layer_report :: proc(problems:^core.Problems,owner:core.Entity,a:^host.Assets,en
 brush_pages_read :: proc(entry:^Data_Source,brush:Brush) -> bool {
     s:=&entry.source
     if !source_paged(s) {return true}
-    for value in ([?]f32{brush.center.x,brush.center.y,brush.center.z,brush.radius,brush.delta.x,brush.delta.y,brush.delta.z}) {if !distance_finite(value) {return true}}
+    if brush_check(brush)!=.None {return true}
     origin:=source_origin(s)
-    reach:=max(brush.radius,0)/s.cell+3
+    reach:=max(brush.radius,brush.extent.x,brush.extent.y,brush.extent.z,0)*1.75/s.cell+max(brush.blend,0)/s.cell+3
     if s.kind==.Volume {reach+=SDF_BAND_CELLS}
     limit:=f32(HEIGHT_SAMPLES_MAX)
     low,high:[3]int
     for axis in 0..<3 {
         if s.kind==.Heightfield && axis==1 {continue}
         center:=(brush.center[axis]-origin[axis])/s.cell
-        end:=center+(brush.kind==.Grow?brush.delta[axis]/s.cell:0)
+        end:=center+(brush.kind==.Ramp || brush.shape==.Capsule?brush.delta[axis]/s.cell:0)
         low[axis],high[axis]=int(clamp(min(center,end)-reach,-1,limit)),int(clamp(max(center,end)+reach,-1,limit))
         if high[axis]<0 {return true}
     }

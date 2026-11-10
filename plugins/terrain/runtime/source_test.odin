@@ -28,7 +28,6 @@ terrain_sources_save_load_and_clone_preserve_both_representations :: proc(t:^tes
         got,ok:=source_load(&loaded,path,&types)
         testing.expect(t,ok && got==id)
         testing.expect_value(t,loaded.info,original.info)
-        testing.expect_value(t,len(loaded.slots),0)
         for z in 0..<samples.z {for y in 0..<samples.y {for x in 0..<samples.x {testing.expect_value(t,source_value(&loaded,{x,y,z}),source_value(&original,{x,y,z}))}}}
         testing.expect(t,source_clone(&cloned,&loaded))
         testing.expect_value(t,cloned.layers[0].material,original.layers[0].material)
@@ -118,17 +117,13 @@ chunk_collision_masks_remove_flat_seams_and_preserve_convex_crests_and_source_bo
 
 @(test)
 chunk_visual_build_preserves_geometry_and_reuses_collision_buffers_for_all_sources :: proc(t:^testing.T) {
-    height,volume,mesh_source:Source
-    defer source_destroy(&height);defer source_destroy(&volume);defer source_destroy(&mesh_source)
+    height,volume:Source
+    defer source_destroy(&height);defer source_destroy(&volume)
     if !testing.expect(t,source_make(&height,.Heightfield,{9,1,9},1,4)) {return}
     source_set(&height,{3,0,3},0.75)
     if !testing.expect(t,source_make(&volume,.Volume,{9,9,9},1,4)) {return}
-    if !testing.expect(t,source_convert_heightfield(&mesh_source,&height,4)) {return}
-    mesh_source.layers[0].material={7,8}
-    mesh_source.mesh_chunks[0].geometry.colors[0]={0.1,0.2,0.3,1}
-    mesh_source.mesh_chunks[0].geometry.uvs[0]={0.25,0.75}
     reused:Chunk_Mesh;chunk_mesh_init(&reused);defer chunk_mesh_destroy(&reused)
-    for source in ([3]^Source{&height,&volume,&mesh_source}) {
+    for source in ([2]^Source{&height,&volume}) {
         expected:Chunk_Mesh;chunk_mesh_init(&expected);defer chunk_mesh_destroy(&expected)
         if !testing.expect(t,chunk_build(source,{0,0,0},&expected)) {return}
         testing.expect(t,len(expected.geometry.indices)>0)
@@ -144,9 +139,6 @@ chunk_visual_build_preserves_geometry_and_reuses_collision_buffers_for_all_sourc
             testing.expect(t,slice.equal(a.materials[:],b.materials[:]))
             if testing.expect_value(t,len(reused.uv1s),len(expected.uv1s)) {
                 for uv,i in expected.uv1s {testing.expect_value(t,reused.uv1s[i],uv)}
-            }
-            if testing.expect_value(t,len(reused.materials),len(expected.materials)) {
-                for material,i in expected.materials {testing.expect_value(t,reused.materials[i],material)}
             }
             if collision {
                 if testing.expect_value(t,len(reused.disabled_edges),len(expected.disabled_edges)) {
@@ -223,7 +215,7 @@ volume_removal_creates_a_cavity_with_a_roof_and_addition_refills_it :: proc(t:^t
     source:Source;testing.expect(t,source_make(&source,.Volume,{17,17,17},1,8));defer source_destroy(&source)
     center:=[3]f32{0,-3,0}
     testing.expect(t,source_density(&source,center)<0)
-    testing.expect(t,source_edit(&source,{kind=.Remove,center=center,radius=1.5,amount=1}).changed)
+    testing.expect(t,source_edit(&source,{kind=.Carve,center=center,radius=1.5,amount=1}).changed)
     testing.expect(t,source_density(&source,center)>0)
     for direction in ([2][3]f32{{0,1,0},{0,-1,0}}) {
         point,normal,ok:=source_ray(&source,center,direction)

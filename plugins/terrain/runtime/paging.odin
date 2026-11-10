@@ -7,8 +7,7 @@ import "mirai:std/base"
 // Pages of a Heightfield and blocks of a Volume read from its file when a
 // resident chunk needs them and let go when none does; a page with edits
 // leaves them in a block of its own, so it comes back as it was. The weights
-// of a Volume, in blocks as its distances, come and go with them. Mesh
-// sources stay whole.
+// of a Volume, in blocks as its distances, come and go with them.
 
 Grid_Kind :: enum u8 {Heights,Weights,Holes,Distances}
 
@@ -42,7 +41,7 @@ chunk_pages_region :: proc "contextless" (s:^Source,index:int) -> (low,high:[3]i
 
 // Whether a source reads pages from its file.
 @(private)
-source_paged :: #force_inline proc "contextless" (s:^Source) -> bool {return s.kind!=.Mesh && len(source_samples_grid(s).blocks)>0}
+source_paged :: #force_inline proc "contextless" (s:^Source) -> bool {return len(source_samples_grid(s).blocks)>0}
 
 @(private)
 distance_finite :: proc "contextless" (value:f32) -> bool {return value-value==0}

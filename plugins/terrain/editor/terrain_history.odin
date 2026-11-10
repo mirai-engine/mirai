@@ -10,7 +10,7 @@ import "mirai:std/base"
 // A step between two revisions keeps what the source held at the one the
 // head is not at, only where the two differ: the pages of the grids of a
 // Heightfield, the blocks of a Volume and its info, or the
-// whole source when its kind or size changed and for a Mesh. A stroke costs
+// whole source when its kind or size changed. A stroke costs
 // what it changed, not the size of its terrain.
 
 Revisions :: editor.Revision_History(Step,terrain.Source,terrain.File_Stamp)
@@ -71,7 +71,7 @@ step_destroy :: proc(step:^Step) {
 // parts, otherwise the whole source.
 @(private)
 step_shaped :: proc "contextless" (a,b:^terrain.Source) -> bool {
-    return a.kind==b.kind && a.kind!=.Mesh && a.samples==b.samples && a.cell==b.cell && a.chunk_cells==b.chunk_cells
+    return a.kind==b.kind && a.samples==b.samples && a.cell==b.cell && a.chunk_cells==b.chunk_cells
 }
 
 // A region of samples over x and z as one of a grid: every sample along y.

@@ -196,7 +196,6 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:core.R
                 switch {
                 case settings.lod_distance<0: level=minimum
                 case by_error: level=lod_level_error(entry.errors,q,i,minimum,maximum,chunk.pixels,chunk.spacing,s.cell,level)
-                case s.kind==.Mesh: level=depth+lod_level(chunk.distance,base,maximum>depth?maximum-depth:0,level>depth?level-depth:0)
                 case: level=lod_level(chunk.distance,base,maximum,level)
                 }
                 key.lod=Chunk_Lod{level=clamp(level,minimum,maximum)}
@@ -378,9 +377,8 @@ owner_cut :: proc(owner:^Resident_Owner,source:^Resident_Source,stream:bool) {
 }
 
 // The local box of chunk i: its region of the source, with the heights it
-// reaches for a Heightfield, or the bounds of its section.
+// reaches for a Heightfield.
 chunk_box :: proc "contextless" (s:^Source,origin:[3]f32,i:int,heights:[2]f32) -> (low,high:[3]f32) {
-    if s.kind==.Mesh {return s.mesh_chunks[i].low,s.mesh_chunks[i].high}
     from,to,_:=chunk_region(s,chunk_coord(s,i))
     low=origin+[3]f32{f32(from.x),f32(from.y),f32(from.z)}*s.cell
     high=origin+[3]f32{f32(to.x),f32(to.y),f32(to.z)}*s.cell

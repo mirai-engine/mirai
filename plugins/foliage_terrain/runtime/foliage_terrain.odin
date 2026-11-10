@@ -75,7 +75,6 @@ Tile_Work :: struct {
 Seen_Source :: struct {
     id:base.Asset_Id,
     versions:[dynamic]u32,   // of each chunk
-    boxes:[dynamic][2][3]f32, // of each chunk of a Mesh source, in its space
 }
 Seen_Terrain :: struct {
     entity:core.Entity,
@@ -115,11 +114,6 @@ box_corners :: proc "contextless" (m:mm.Mat4,low,high:[3]f32) -> (a,b:[3]f32) {
 
 // The box of a source in its own space.
 source_box :: proc "contextless" (s:^terrain.Source) -> (low,high:[3]f32) {
-    if s.kind==.Mesh {
-        low,high={1e30,1e30,1e30},{-1e30,-1e30,-1e30}
-        for chunk in s.mesh_chunks {low,high=linalg.min(low,chunk.low),linalg.max(high,chunk.high)}
-        return
-    }
     low=terrain.source_origin(s)
     high=low+[3]f32{f32(s.samples.x-1),f32(s.samples.y-1),f32(s.samples.z-1)}*s.cell
     if s.kind==.Heightfield {low.y,high.y=-terrain.HEIGHT_LIMIT,terrain.HEIGHT_LIMIT}
@@ -325,26 +319,20 @@ foliage_terrain_ground :: proc(
             whole:=rebuilt || seen==nil || len(seen.versions)!=len(entry.versions)
             for version,i in entry.versions {
                 if !whole && seen.versions[i]==version {continue}
-                low,high:[3]f32
-                if s.kind==.Mesh {
-                    if i>=len(s.mesh_chunks) {continue}
-                    low,high=s.mesh_chunks[i].low,s.mesh_chunks[i].high
-                    if seen!=nil && i<len(seen.boxes) {low,high=linalg.min(low,seen.boxes[i][0]),linalg.max(high,seen.boxes[i][1])}
-                } else {low,high=chunk_box(s,i)}
+                low,high:=chunk_box(s,i)
                 for &view in state.views {if view.source==s {region_add(state,view.to_world,low,high)}}
             }
             // Forgotten without memory: its next change takes the whole source as changed.
-            if seen==nil || resize(&seen.versions,len(entry.versions))!=nil || resize(&seen.boxes,s.kind==.Mesh?len(s.mesh_chunks):0)!=nil {
-                if seen!=nil {clear(&seen.versions);clear(&seen.boxes)}
+            if seen==nil || resize(&seen.versions,len(entry.versions))!=nil {
+                if seen!=nil {clear(&seen.versions)}
                 core.report(problems,core.NONE,"foliage_terrain.memory","out of memory to remember the chunks of a terrain under the foliage; its next change places again the foliage of all of it: free memory")
                 continue
             }
             copy(seen.versions[:],entry.versions[:])
-            if s.kind==.Mesh {for chunk,i in s.mesh_chunks {seen.boxes[i]={chunk.low,chunk.high}}}
         }
         for i:=len(state.sources)-1;i>=0;i-=1 {
             if terrain.terrain_source(terrain_data,state.sources[i].id)!=nil {continue}
-            delete(state.sources[i].versions);delete(state.sources[i].boxes)
+            delete(state.sources[i].versions)
             unordered_remove(&state.sources,i)
         }
     }

@@ -20,14 +20,10 @@ Chunk_Mesh :: struct {
     columns,rows:int,
     origin:[3]f32, // the place of the chunk in its terrain, which its vertices and what collides are relative to (chunk_place)
     cell:[3]f32,
-    materials:[dynamic]base.Asset_Id,
     remap:[dynamic]i32,
     holes:[dynamic]u8, // of the cells of a Heightfield collider
     samples:[dynamic]f32, // of a Volume: the window of samples a build reads
-    collision:geom.Mesh_Buffer, // Mesh and Volume at a level above 0: what collides, level 0
-    kept:[dynamic]u32,
-    corners:[dynamic]u32,
-    moved:map[u64]u32, // the vertex of a corner that took another position, by its two sources
+    collision:geom.Mesh_Buffer, // a Volume at a level above 0: what collides, level 0
     render:host.Mesh_Render_Geometry, // what the renderer takes of geometry, made by the job that built it
     render_ready:bool,                // render is that of geometry as it is
     // A piece of a Heightfield: the border of a chunk, and the lines it joins.
@@ -46,14 +42,10 @@ chunk_mesh_init :: proc(mesh:^Chunk_Mesh,allocator:=context.allocator) {
     mesh.disabled_borders=make([dynamic]u8,allocator)
     mesh.uv1s=make([dynamic][2]f32,allocator)
     mesh.heights=make([dynamic]f32,allocator)
-    mesh.materials=make([dynamic]base.Asset_Id,allocator)
     mesh.remap=make([dynamic]i32,allocator)
     mesh.holes=make([dynamic]u8,allocator)
     mesh.samples=make([dynamic]f32,allocator)
     geom.mesh_buffer_init(&mesh.collision,allocator)
-    mesh.kept=make([dynamic]u32,allocator)
-    mesh.corners=make([dynamic]u32,allocator)
-    mesh.moved=make(map[u64]u32,allocator)
     host.assets_render_geometry_init(&mesh.render,allocator)
     for i in 0..<4 {mesh.border.sides[i]=make([dynamic]u8,allocator);mesh.border.corners[i]=make([dynamic]u8,allocator)}
     mesh.lines.xs,mesh.lines.zs=make([dynamic]int,allocator),make([dynamic]int,allocator)
@@ -68,11 +60,9 @@ chunk_mesh_destroy :: proc(mesh:^Chunk_Mesh) {
     geom.mesh_buffer_destroy(&mesh.halo)
     delete(mesh.halo_edges);delete(mesh.disabled_edges);delete(mesh.disabled_borders)
     delete(mesh.uv1s);delete(mesh.heights)
-    delete(mesh.materials)
     delete(mesh.remap)
     delete(mesh.holes);delete(mesh.samples)
     geom.mesh_buffer_destroy(&mesh.collision)
-    delete(mesh.kept);delete(mesh.corners);delete(mesh.moved)
     host.assets_render_geometry_destroy(&mesh.render)
     piece_border_destroy(&mesh.border)
     delete(mesh.lines.xs);delete(mesh.lines.zs);delete(mesh.lines.column);delete(mesh.lines.row)
@@ -98,15 +88,6 @@ chunk_index :: proc "contextless" (s:^Source,coord:[3]i32) -> int {
 
 chunk_range :: proc "contextless" (s:^Source,change:Change) -> (low,high:[3]int) {
     if !change.changed {return {},{-1,-1,-1}}
-    if change.mesh {
-        counts:=chunk_counts(s);low=counts;high={-1,-1,-1}
-        for dirty,index in s.mesh_changed {
-            if !dirty {continue}
-            coord:=chunk_coord(s,index)
-            for axis in 0..<3 {low[axis]=min(low[axis],int(coord[axis]));high[axis]=max(high[axis],int(coord[axis]))}
-        }
-        return
-    }
     for axis in 0..<3 {
         maximum:=max(int(s.samples[axis])-2,0)
         low[axis]=clamp(change.low[axis]-2,0,maximum)/int(s.chunk_cells)
@@ -116,10 +97,6 @@ chunk_range :: proc "contextless" (s:^Source,change:Change) -> (low,high:[3]int)
 }
 
 chunk_touched :: proc "contextless" (s:^Source,coord:[3]i32,change:Change) -> bool {
-    if change.mesh {
-        index:=chunk_index(s,coord)
-        return change.changed && index>=0 && index<len(s.mesh_changed) && s.mesh_changed[index]
-    }
     low,high:=chunk_range(s,change)
     return change.changed && int(coord.x)>=low.x && int(coord.y)>=low.y && int(coord.z)>=low.z && int(coord.x)<=high.x && int(coord.y)<=high.y && int(coord.z)<=high.z
 }
@@ -142,9 +119,7 @@ chunk_build :: proc(s:^Source,coord:[3]i32,mesh:^Chunk_Mesh,collision:=true,lod:
 
 // The visible mesh of node index of the quadtree (above the chunks), in its
 // own space, without collider. A Heightfield node shows its region at
-// lod.level from the coarse grid, joined by its border; a Mesh node, the
-// sections it covers simplified to lod.level (one more for each depth: a
-// quarter of the triangles), their outer border kept.
+// lod.level from the coarse grid, joined by its border.
 node_build :: proc(s:^Source,q:^Quad,index:int,lod:Chunk_Lod,border:^Piece_Border,mesh:^Chunk_Mesh) -> bool {
     chunk_mesh_clear(mesh)
     if index<q.first[1] || index>=quad_total(q) {return false}
@@ -153,19 +128,6 @@ node_build :: proc(s:^Source,q:^Quad,index:int,lod:Chunk_Lod,border:^Piece_Borde
     case .Heightfield:
         low,high:=quad_region(s,q,index)
         if !piece_build(s,{low=low,high=high,level=lod.level,coarse=true,border=border},mesh) {return false}
-    case .Mesh:
-        a,b:=quad_chunks(q,index)
-        merged:=&mesh.halo
-        geom.mesh_buffer_clear(merged)
-        for z in a.y..<b.y {for x in a.x..<b.x {
-            if !mesh_append(merged,geom.mesh_buffer_view(&s.mesh_chunks[x+q.counts[0].x*z].geometry)) {return false}
-        }}
-        if len(merged.indices)>0 && !chunk_mesh_simplify(geom.mesh_buffer_view(merged),lod.level,mesh) {return false}
-        if resize(&mesh.uv1s,len(m.positions))!=nil || append(&mesh.materials,base.Asset_Id{})!=1 || append(&mesh.materials,..s.slots)!=len(s.slots) {return false}
-        origin:=source_origin(s)
-        size:=[2]f32{f32(s.samples.x-1),f32(s.samples.z-1)}*s.cell
-        for position,i in m.positions {mesh.uv1s[i]=[2]f32{position.x-origin.x,position.z-origin.z}/size}
-        if !chunk_mesh_layers(s,mesh) {return false}
     case .Volume:
         return false
     }
@@ -212,7 +174,6 @@ chunk_mesh_clear :: proc(mesh:^Chunk_Mesh) {
     clear(&mesh.uv1s);clear(&mesh.heights);clear(&mesh.disabled_edges);clear(&mesh.disabled_borders);clear(&mesh.holes)
     mesh.columns,mesh.rows=0,0
     mesh.origin,mesh.cell={},{}
-    clear(&mesh.materials)
 }
 
 // A displaced chunk (displacement.odin), without collider: at level 0 with
@@ -234,20 +195,6 @@ chunk_build_terrain :: proc(s:^Source,coord:[3]i32,mesh:^Chunk_Mesh,collision:=t
     low,high,valid:=chunk_region(s,coord)
     if !valid {return false}
     m:=&mesh.geometry
-    if s.kind==.Mesh {
-        index:=chunk_index(s,coord)
-        if index<0 || index>=len(s.mesh_chunks) {return false}
-        section:=geom.mesh_buffer_view(&s.mesh_chunks[index].geometry)
-        if lod.level>0 {
-            if !chunk_mesh_simplify(section,lod.level,mesh) || collision && !mesh_copy(&mesh.collision,section) {return false}
-        } else if !mesh_copy(m,section) {return false}
-        if resize(&mesh.uv1s,len(m.positions))!=nil || append(&mesh.materials,base.Asset_Id{})!=1 || append(&mesh.materials,..s.slots)!=len(s.slots) {return false}
-        origin:=source_origin(s)
-        size:=[2]f32{f32(s.samples.x-1),f32(s.samples.z-1)}*s.cell
-        for position,i in m.positions {mesh.uv1s[i]=[2]f32{position.x-origin.x,position.z-origin.z}/size}
-        if !chunk_mesh_layers(s,mesh) {return false}
-        return !collision || chunk_mesh_edges(s,index,mesh,lod.level>0?&mesh.collision:m)
-    }
     if s.kind==.Volume {
         grid:geom.Scalar_Grid
         surface,ok:=chunk_volume_window(s,low,high,lod.level,&mesh.samples,&grid,join)
@@ -352,7 +299,7 @@ chunk_render_prepare :: proc(kind:Source_Kind,mesh:^Chunk_Mesh,limits:host.Asset
         tangents=make([][4]f32,len(mesh.geometry.normals),context.temp_allocator)
         heightfield_tangents(mesh.geometry.normals[:],tangents)
     }
-    mesh.render_ready=host.assets_render_geometry_make(geom.mesh_buffer_view(&mesh.geometry),mesh.uv1s[:],max(len(mesh.materials),1),&mesh.render,limits,tangents)
+    mesh.render_ready=host.assets_render_geometry_make(geom.mesh_buffer_view(&mesh.geometry),mesh.uv1s[:],1,&mesh.render,limits,tangents)
     return mesh.render_ready
 }
 
@@ -513,110 +460,6 @@ chunk_publish :: proc(a:^host.Assets,kind:Source_Kind,mesh:^Chunk_Mesh,collision
         options.heightfield=&heightfield
     }
     slots:=[1]base.Asset_Id{}
-    materials:=len(mesh.materials)>0?mesh.materials[:]:slots[:]
-    return host.assets_mesh_generate(a,geom.mesh_buffer_view(&mesh.geometry),materials,mesh.uv1s[:],options)
+    return host.assets_mesh_generate(a,geom.mesh_buffer_view(&mesh.geometry),slots[:],mesh.uv1s[:],options)
 }
 
-@(private)
-chunk_mesh_edges :: proc(s:^Source,index:int,mesh:^Chunk_Mesh,m:^geom.Mesh_Buffer) -> bool {
-    if resize(&mesh.disabled_edges,len(m.indices)/3)!=nil {return false}
-    for &mask in mesh.disabled_edges {mask=0}
-    clear(&mesh.halo_edges)
-    source:=&s.mesh_chunks[index]
-    // An edge the section shares has both ends within its bounds: only those of its neighbors go to the map.
-    inside :: #force_inline proc "contextless" (p,low,high:geom.Vec3) -> bool {
-        return p.x>=low.x && p.y>=low.y && p.z>=low.z && p.x<=high.x && p.y<=high.y && p.z<=high.z
-    }
-    for pass in 0..<2 {
-        count:=0
-        for &neighbor,i in s.mesh_chunks {
-            if i==index || len(neighbor.geometry.indices)==0 || !mesh_box_overlap(source.low,source.high,neighbor.low,neighbor.high) {continue}
-            n:=&neighbor.geometry
-            for triangle:=0;triangle<len(n.indices);triangle+=3 {
-                p:=[3]geom.Vec3{n.positions[n.indices[triangle]],n.positions[n.indices[triangle+1]],n.positions[n.indices[triangle+2]]}
-                within:=[3]bool{inside(p[0],source.low,source.high),inside(p[1],source.low,source.high),inside(p[2],source.low,source.high)}
-                for edge in 0..<3 {
-                    if !within[edge] || !within[(edge+1)%3] {continue}
-                    if pass==0 {count+=1} else {mesh.halo_edges[{p[edge],p[(edge+1)%3]}]=p[(edge+2)%3]}
-                }
-            }
-        }
-        if pass==0 && reserve(&mesh.halo_edges,count)!=nil {return false}
-    }
-    for triangle:=0;triangle<len(m.indices);triangle+=3 {
-        p:=[3]geom.Vec3{m.positions[m.indices[triangle]],m.positions[m.indices[triangle+1]],m.positions[m.indices[triangle+2]]}
-        normal:=linalg.normalize0(linalg.cross(p[1]-p[0],p[2]-p[0]))
-        for edge in 0..<3 {if opposite,found:=mesh.halo_edges[{p[(edge+1)%3],p[edge]}];found && !phys.collision_edge_active(normal,p[edge],p[(edge+1)%3],opposite) {mesh.disabled_edges[triangle/3]|=u8(1<<uint(edge))}}
-    }
-    return true
-}
-
-// The visible mesh of a Mesh section at a level above 0: its surface
-// simplified (geom.simplify) to a 4^level-th of its triangles, with its
-// normals and uvs weighed, its border locked and the outlines between its
-// materials kept, since a vertex of triangles of several materials is one
-// vertex per material, which the simplifier keeps as a seam. Every vertex
-// is one of the section.
-@(private)
-chunk_mesh_simplify :: proc(section:geom.Mesh,level:u8,mesh:^Chunk_Mesh) -> bool {
-    m:=&mesh.geometry
-    triangles:=len(section.indices)/3
-    target:=triangles>>(2*uint(level))
-    // corners names those vertices; kept holds the vertex of the section and the material of each.
-    if resize(&mesh.remap,len(section.positions))!=nil || resize(&mesh.corners,len(section.indices))!=nil {return false}
-    for &at in mesh.remap {at=-1}
-    clear(&mesh.kept);clear(&mesh.moved)
-    for t in 0..<triangles {
-        material:=len(section.materials)>0?section.materials[t]:0
-        for k in 0..<3 {
-            v:=section.indices[t*3+k]
-            split:u32
-            if mesh.remap[v]<0 {
-                split=u32(len(mesh.kept)/2)
-                mesh.remap[v]=i32(split)
-                if append(&mesh.kept,v,material)!=2 {return false}
-            } else if first:=u32(mesh.remap[v]);mesh.kept[first*2+1]==material {
-                split=first
-            } else if known,found:=mesh.moved[u64(v)|u64(material)<<32];found {
-                split=known
-            } else {
-                split=u32(len(mesh.kept)/2)
-                mesh.moved[u64(v)|u64(material)<<32]=split
-                if append(&mesh.kept,v,material)!=2 {return false}
-            }
-            mesh.corners[t*3+k]=split
-        }
-    }
-    runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
-    count:=len(mesh.kept)/2
-    positions:=make([]geom.Vec3,count,context.temp_allocator)
-    attributes:=make([]f32,count*5,context.temp_allocator)
-    weights:=[5]f32{0.5,0.5,0.5,1,1} // of the normal and the uv, against positions scaled to an extent of 1
-    if len(section.normals)==0 {weights[0],weights[1],weights[2]=0,0,0}
-    if len(section.uvs)==0 {weights[3],weights[4]=0,0}
-    for split in 0..<count {
-        v:=mesh.kept[split*2]
-        positions[split]=section.positions[v]
-        if len(section.normals)>0 {copy(attributes[split*5:],section.normals[v][:])}
-        if len(section.uvs)>0 {copy(attributes[split*5+3:],section.uvs[v][:])}
-    }
-    result,failed:=geom.simplify(mesh.corners[:],mesh.corners[:],positions,target*3,max(f32),{.Lock_Border},attributes,weights[:])
-    if failed!=.None {return false}
-    index_count:=result.index_count
-    // The vertices the triangles that remain use, in their order.
-    if resize(&mesh.remap,count)!=nil || reserve(&m.indices,index_count)!=nil || reserve(&m.materials,index_count/3)!=nil {return false}
-    for &at in mesh.remap {at=-1}
-    for split,at in mesh.corners[:index_count] {
-        if mesh.remap[split]<0 {
-            mesh.remap[split]=i32(len(m.positions))
-            v:=mesh.kept[split*2]
-            if append(&m.positions,section.positions[v])!=1 {return false}
-            if len(section.normals)>0 && append(&m.normals,section.normals[v])!=1 {return false}
-            if len(section.uvs)>0 && append(&m.uvs,section.uvs[v])!=1 {return false}
-            if len(section.colors)>0 && append(&m.colors,section.colors[v])!=1 {return false}
-        }
-        append(&m.indices,u32(mesh.remap[split]))
-        if at%3==0 && len(section.materials)>0 {append(&m.materials,mesh.kept[split*2+1])}
-    }
-    return true
-}

@@ -19,7 +19,7 @@ bench_terrain_volume_memory :: proc(t:^testing.T) {
             for i in 0..<24 {
                 a:=f32(i)*0.45
                 center:=[3]f32{math.cos(a)*f32(s.samples.x)*0.3,-f32(s.samples.y)*0.25+math.sin(a*2)*3,math.sin(a)*f32(s.samples.z)*0.3}*s.cell
-                source_edit(s,{kind=.Remove,center=center,radius=5*s.cell,amount=1})
+                source_edit(s,{kind=.Carve,center=center,radius=5*s.cell,amount=1})
             }
             for i in 0..<12 {
                 a:=f32(i)*0.9

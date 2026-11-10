@@ -22,8 +22,9 @@ terrain_limits :: proc(world:core.World_Ref) -> terrain.Terrain_Settings {
     return settings
 }
 
+// The samples Terrain_Settings.samples leaves for a source, without the one it replaces.
 @(private)
-terrain_vertex_budget :: proc(world:core.World_Ref,replace_id:base.Asset_Id) -> int {
+terrain_samples_left :: proc(world:core.World_Ref,replace_id:base.Asset_Id) -> int {
     settings:=terrain_limits(world)
     available:=int(settings.samples)
     if data:=core.world_storage_of(world,terrain.Terrain_Data);data!=nil {
@@ -33,9 +34,9 @@ terrain_vertex_budget :: proc(world:core.World_Ref,replace_id:base.Asset_Id) -> 
 }
 
 // Whether a source fits Terrain_Settings with the loaded ones. A Heightfield
-// or a Mesh shows coarser nodes of its quadtree past the pieces of
+// shows coarser nodes of its quadtree past the pieces of
 // Terrain_Settings.chunks, and its nearest chunks take the colliders
-// Physics_Settings has room for: only its samples or vertices can fail. A
+// Physics_Settings has room for: only its samples can fail. A
 // Volume, without nodes, needs a chunk for each of its chunks unless it streams.
 @(private)
 terrain_budget :: proc(s:^editor.Session,world:core.World_Ref,source:^terrain.Source,replace_id:base.Asset_Id={}) -> bool {
@@ -52,7 +53,7 @@ terrain_budget :: proc(s:^editor.Session,world:core.World_Ref,source:^terrain.So
     if sources>int(settings.sources) {editor.notify(s,fmt.tprintf("Terrain needs %d sources; the limit is %d",sources,settings.sources));return false}
     if source.kind==.Volume && chunks>int(settings.chunks) && settings.resident_distance<=0 {editor.notify(s,fmt.tprintf("Terrain needs %d chunks; the limit is %d",chunks,settings.chunks));return false}
     cost:=terrain.source_cost(source)
-    available:=terrain_vertex_budget(world,replace_id)
-    if cost>available {editor.notify(s,fmt.tprintf("Terrain needs %d samples or vertices; %d are available",cost,available));return false}
+    available:=terrain_samples_left(world,replace_id)
+    if cost>available {editor.notify(s,fmt.tprintf("Terrain needs %d samples; %d are available",cost,available));return false}
     return true
 }

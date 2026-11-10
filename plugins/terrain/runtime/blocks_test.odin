@@ -55,7 +55,7 @@ volume_blocks_all_air_or_all_solid_hold_no_values_through_brushes_and_the_file :
     testing.expect(t,held<97*97*97,"fewer values than samples: a block at a far edge holds only those of the field there")
     testing.expect(t,g.pages[BLOCKS_DEEP].values==nil && g.pages[BLOCKS_DEEP].fill==-band)
     // A brush gives the blocks it changes values of their own; one it leaves all air holds none again.
-    change:=source_edit(&source,{kind=.Remove,center=BLOCKS_CENTER,radius=20,amount=1})
+    change:=source_edit(&source,{kind=.Carve,center=BLOCKS_CENTER,radius=20,amount=1})
     testing.expect(t,change.changed)
     testing.expect(t,g.pages[BLOCKS_DEEP].values==nil && g.pages[BLOCKS_DEEP].fill==band,"the carved block is all air and holds no values")
     testing.expect(t,source_value(&source,{40,24,40})==band)
@@ -152,7 +152,7 @@ a_volume_read_by_pages_holds_only_the_blocks_it_reads_and_a_block_that_leaves_ke
     testing.expect(t,source_paged(&copied) && copied.file==paged.file)
     // An edit stays in a block of its own when its block leaves, and comes back with it.
     at:=[3]int{40,46,40}
-    testing.expect(t,source_edit(&paged,{kind=.Remove,center=[3]f32{40,46,40}-48,radius=1.5,amount=1}).changed)
+    testing.expect(t,source_edit(&paged,{kind=.Carve,center=[3]f32{40,46,40}-48,radius=1.5,amount=1}).changed)
     edited:=source_value(&paged,at)
     testing.expect(t,edited>source_value(&source,at))
     needed:=make([]bool,len(g.pages));defer delete(needed)
@@ -176,7 +176,7 @@ volume_snapshots_hold_only_their_blocks_and_give_back_each_stroke :: proc(t:^tes
     testing.expect(t,source_clone(&before,&source,editable=false))
     dense:=97*97*97
     testing.expect(t,grid_dense(&before.distances)<dense,"a snapshot holds no values for the blocks all air or all solid")
-    testing.expect(t,source_edit(&source,{kind=.Remove,center=BLOCKS_CENTER,radius=20,amount=1}).changed)
+    testing.expect(t,source_edit(&source,{kind=.Carve,center=BLOCKS_CENTER,radius=20,amount=1}).changed)
     testing.expect(t,source_edit(&source,{kind=.Add,center=BLOCKS_CENTER,radius=6,amount=1}).changed)
     testing.expect(t,source_clone(&after,&source,editable=false))
     testing.expect_value(t,grid_dense(&after.distances),grid_dense(&source.distances))
