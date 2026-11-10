@@ -18,10 +18,10 @@ rig_path :: proc(model:^importer.Imported_Model,name:string) -> string {
 
 // The walkway of animation_gallery/animation.scene runs toward -Z from where the player starts;
 // its stations alternate on its left and right, one row every GALLERY_ROW meters. A constraint of
-// a profile aims at a point of the world, so the profile follows where the scene puts its station.
+// a set aims at a point of the world, so the set follows where the scene puts its station.
 @(private) GALLERY_SIDE :: 5.5 // m from the center of the walkway to a station
 @(private) GALLERY_ROW :: 5
-@(private) GALLERY_CONSTRAINTS :: 12 // the stations of the profiles, in the order of the scene
+@(private) GALLERY_CONSTRAINTS :: 12 // the stations of the sets, in the order of the scene
 @(private) GALLERY_RIGS :: 14
 
 // Where a station stands, and the turn of its actor toward the walkway.
@@ -31,16 +31,10 @@ gallery_place :: proc(index:int) -> (origin:mm.Vec3,facing:mm.Quat) {
     return {side*GALLERY_SIDE,0,2-f32(index/2)*GALLERY_ROW},mm.quat_axis_angle({0,1,0},side*mm.PI*.5)
 }
 
-@(private)
-pose_write :: proc(o:^Out,folder,name:string,profile:anim.Pose_Profile) {
-    id:=asset.content_id(PROJECT,"pose",name)
-    asset.content_check(&o.content,name,anim.pose_profile_save(path(o,fmt.tprintf("assets/%s/%s.pose",folder,name)),&o.content.types,id,profile))
-}
-
 // The right hand of the actor of the constraints station reaches a point in front of it, in line
-// with its forearm, and its head looks at that point within a limit.
+// with its forearm, and its head looks at that point within a limit, over the clips of animation.
 @(private)
-mirai_constraints :: proc(o:^Out,model:^importer.Imported_Model) {
+mirai_constraints :: proc(o:^Out,model:^importer.Imported_Model,animation:base.Asset_Id) {
     origin,facing:=gallery_place(GALLERY_CONSTRAINTS)
     reach,pole:=origin+mm.quat_rotate(facing,{.42,1.3,-.42}),origin+mm.quat_rotate(facing,{.9,.9,.6})
     ik:=anim.IK_CONSTRAINT_DEFAULT;ik.target,ik.hold,ik.pole=anim.spatial_point(reach),.Joint,pole
@@ -50,7 +44,7 @@ mirai_constraints :: proc(o:^Out,model:^importer.Imported_Model) {
     look:=anim.LOOK_CONSTRAINT_DEFAULT;look.bone=anim.bone_ref("Head");look.target=ik.target
     look.forward,look.max_angle=linalg.normalize0(mm.quat_forward(mm.quat_inverse(rig.rest_world[head].rotation))),.6
     limit:=anim.ROTATION_CONSTRAINT_DEFAULT;limit.bone=anim.bone_ref("Head");limit.max_swing,limit.min_twist,limit.max_twist=.35,-.6,.6
-    pose_write(o,"characters/mirai","mirai_constraints",{ik={ik},look={look},limits={limit}})
+    gallery_set(o,"characters/mirai","mirai_constraints",animation,{pose={ik={ik},look={look},limits={limit}}})
 }
 
 // The clips of the source hold each hand 25 to 50 degrees off its bind, bent out of line with the
@@ -117,7 +111,8 @@ mirai_animation :: proc(o:^Out,model:^importer.Imported_Model) -> (id:base.Asset
 
 @(private)
 mirai_feet :: proc(model:^importer.Imported_Model) -> anim.Foot_Grounding {
-    feet:=anim.FOOT_GROUNDING_DEFAULT;feet.count=2;feet.body=anim.bone_ref("Hips")
+    // Its body and legs are those of the body of its skeleton.
+    feet:=anim.FOOT_GROUNDING_DEFAULT;feet.count=2
     feet.global_contact=0;feet.max_rise=.15;feet.trace_above=.55;feet.trace_below=.9;feet.blend_time=.08
     bones:=model.skeletons[0].bones
     rest:=make([]mm.Transform,len(bones),context.temp_allocator)
@@ -127,8 +122,6 @@ mirai_feet :: proc(model:^importer.Imported_Model) -> anim.Foot_Grounding {
     }
     for side,i in ([]string{"Left","Right"}) {
         leg:=anim.GROUNDED_LEG_DEFAULT
-        leg.hip=anim.bone_ref(fmt.tprintf("%sUpLeg",side));leg.knee=anim.bone_ref(fmt.tprintf("%sLeg",side));leg.foot=anim.bone_ref(fmt.tprintf("%sFoot",side))
-        leg.contact_bone=anim.bone_ref(fmt.tprintf("%sToeBase",side))
         leg.pole_offset={};leg.max_distance=.55;leg.contact_height=.04;leg.plant_speed=.6
         for &bone,j in bones {
             if base.text_get(bone.name[:])==fmt.tprintf("%sFoot",side) {
@@ -168,7 +161,7 @@ write_sequence_clip :: proc(o:^Out) {
     asset.content_check(&o.content,"assets/animation_gallery/sequence.anim",asset.animation_save(path(o,"assets/animation_gallery/sequence.anim"),&o.content.types,{id=id,clips=clips}))
 }
 
-// The clips, programs, profiles, rigs and meshes of the animation gallery
+// The clips, .character sets, rigs and meshes of the animation gallery
 // (animation_gallery/animation.scene), made from the import of Mirai.
 write_animation_assets :: proc(o:^Out) {
     source:="source/models/mirai/mirai.glb"
@@ -177,13 +170,12 @@ write_animation_assets :: proc(o:^Out) {
     defer importer.model_destroy(&model)
     locomotion,locomotion_clips:=mirai_animation(o,&model)
     if o.content.failed {return}
-    clip,stride_time:=mirai_gallery_animation(o,&model,locomotion_clips)
+    clip:=mirai_gallery_animation(o,&model,locomotion_clips)
     if o.content.failed {return}
-    gallery_program_assets(o,&model,clip,stride_time)
-    gallery_mirai_matching(o,locomotion)
+    gallery_program_assets(o,&model,clip)
+    gallery_mirai_matching(o,&model,locomotion)
     write_sequence_clip(o)
-    pose_write(o,"characters/mirai","mirai_grounding",{grounding={mirai_feet(&model)}})
-    mirai_constraints(o,&model)
+    mirai_constraints(o,&model,clip)
     gallery_retarget(o,&model,source)
     gallery_rigs(o)
     gallery_spider(o)

@@ -82,7 +82,9 @@ A game is a struct in memory and a list of functions that transform it
    (`SPIN_DEFAULT :: Spin{...}`); a literal of the type that leaves out a field it sets is a
    generator error ([initial values](references/generator.md#initial-values)).
 4. A loop function is a `proc` without a result with `@(step="<phases>")`; each parameter says what
-   it touches ([parameters](references/generator.md#parameters)). What is received together in
+   it touches ([parameters](references/generator.md#parameters)). The think procedure of a mind
+   and its actions are bound the same way (`@(mind)`, `@(act)`:
+   [minds](references/generator.md#minds)). What is received together in
    several functions goes in a `@(params)` struct that the function receives by value and passes
    whole to its helpers ([groups](references/generator.md#parameter-groups)).
 5. A table that is not `@(component,shared)` and a storage have a single library that writes them,

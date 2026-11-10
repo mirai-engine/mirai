@@ -11,17 +11,33 @@ import lib "mirai:std/anim"
 import "mirai:std/serial"
 import mm "mirai:std/math"
 
+// Two actions of the walk: attack, in the sections windup and recover, and interrupt. The spans
+// of the walk (action_test_spans) place its sections and its window contact.
 @(private)
 action_test_profile :: proc() -> Action_Profile {
-    profile:=Action_Profile{info={animation={1,2}}}
-    profile.actions=make([]Action_Definition,2);profile.sections=make([]Action_Section,2);profile.windows=make([]Action_Window,1)
+    profile:Action_Profile
+    profile.actions=make([]Action_Definition,2);profile.sections=make([]Action_Section,2)
     for &value in profile.actions {value=ACTION_DEFINITION_DEFAULT;value.fade_in,value.fade_out=0,.2;base.text_set(value.clip[:],"walk")}
     base.text_set(profile.actions[0].name[:],"attack");base.text_set(profile.actions[1].name[:],"interrupt");profile.actions[1].priority=1
-    profile.sections[0]={action=0,start=0,end=.25,next=1};base.text_set(profile.sections[0].name[:],"windup")
-    profile.sections[1]={action=0,start=1,end=1.5,next=-1};base.text_set(profile.sections[1].name[:],"recover")
-    profile.windows[0]={action=0,start=.1,end=.2};base.text_set(profile.windows[0].name[:],"contact")
+    profile.sections[0]={action=0,next=1};base.text_set(profile.sections[0].name[:],"windup")
+    profile.sections[1]={action=0,next=-1};base.text_set(profile.sections[1].name[:],"recover")
     return profile
 }
+// The spans of the walk of layer_fixture: windup 0 to .25, contact .1 to .2 and recover 1 to 1.5,
+// with markers windup at .1 and recover at 1.1.
+@(private)
+action_test_spans :: proc(content:^host.Content_Animation) {
+    content.lib.markers=make([]lib.Marker,5);content.lib.marker_count=5
+    content.lib.markers[0],content.lib.markers[1],content.lib.markers[2]={time=0,id=0,duration=.25},{time=.1,id=0},{time=.1,id=1,duration=.1}
+    content.lib.markers[3],content.lib.markers[4]={time=1,id=2,duration=.5},{time=1.1,id=2}
+    content.lib.clips[0].marker_count=5;content.lib.clips[3].marker_count=5
+    content.markers=make([]u64,3);content.markers[0],content.markers[1],content.markers[2]=base.name_hash("windup"),base.name_hash("contact"),base.name_hash("recover")
+}
+@(private)
+action_test_spans_free :: proc(content:^host.Content_Animation) {delete(content.markers);content.markers=nil}
+// The .character {3,4} of the actions of profile over the clips {1,2} of layer_fixture.
+@(private)
+action_test_set :: proc(profile:Action_Profile) -> Character_Set {return {info={animation={1,2}},match={info=MATCH_INFO_DEFAULT},actions=profile,motion={warp=POSE_WARP_PROFILE_DEFAULT}}}
 
 @(private)
 action_test_add_state :: proc(runtime:^Action_Runtime,value:Action_State) {
@@ -31,7 +47,7 @@ action_test_add_state :: proc(runtime:^Action_Runtime,value:Action_State) {
 // A plan of the runtime as actions_prepare leaves one: its slots and layers resolved.
 @(private)
 action_test_plan :: proc(runtime:^Action_Runtime,plan:Action_Plan) {
-    append(&runtime.plans,plan);action_plan_bind(&runtime.plans[len(runtime.plans)-1])
+    append(&runtime.plans,plan);action_plan_bind(&runtime.plans[len(runtime.plans)-1],action_test_set(plan.profile))
 }
 // A second layer for the action that does not take the whole body.
 @(private)
@@ -41,9 +57,9 @@ action_test_layered :: proc(profile:^Action_Profile,action:int) {
 }
 // actions_prepare over the events of a tick of its own, as animation_tick clears them.
 @(private="file")
-prepare :: proc(actions:^Action_Runtime,requests:^Animation_Requests,cache:^Actions_Assets,descriptions:^core.Table(Animation),playback:^Playback,events:^Animation_Events,app:^host.App,problems:^core.Problems) -> bool {
+prepare :: proc(actions:^Action_Runtime,requests:^Animation_Requests,cache:^Character_Assets,descriptions:^core.Table(Animation),playback:^Playback,events:^Animation_Events,app:^host.App,problems:^core.Problems) -> bool {
     clear(&events.items)
-    return actions_prepare(actions,requests,cache,core.read(descriptions),playback,events,app.assets,app.allocator,problems)
+    return actions_prepare(actions,requests,cache,core.read(descriptions),playback,events,app,problems)
 }
 // How many events of a kind the tick left.
 @(private="file")
@@ -58,17 +74,20 @@ action_sets_roundtrip_and_reject_invalid_layers_section_links_and_root_policies 
     for &action in profile.actions {action.clock=.World}
     profile.layers=make([]Stack_Layer,2)
     profile.layers[0]=test_stack_layer("wave",over="arm",weight=.5,fade=.2,mesh_space=true,name="Arm")
-    profile.layers[1]=STACK_LAYER_DEFAULT;base.text_set(profile.layers[1].name[:],"Aim");profile.layers[1].mode,profile.layers[1].space=.Additive,{9,9}
+    profile.layers[1]=STACK_LAYER_DEFAULT;base.text_set(profile.layers[1].name[:],"Aim");profile.layers[1].mode=.Additive
     base.text_set(profile.actions[1].layer[:],"Arm");profile.actions[1].entry,profile.actions[1].exit=.Match_Phase,.5;base.text_set(profile.actions[1].exit_marker[:],"release")
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    doc:asset.Document;defer asset.document_destroy(&doc)
-    testing.expect_value(t,action_profile_document(&doc,&types,{3,4},profile),asset.Error.None)
-    writer:serial.Writer;serial.writer_init(&writer);defer serial.writer_destroy(&writer)
-    testing.expect_value(t,asset.document_write(&doc,&writer),asset.Error.None)
-    file:asset.Asset;defer asset.asset_close(&file)
-    testing.expect_value(t,asset.asset_open(&file,serial.writer_bytes(&writer)),asset.Error.None)
-    view,error:=action_profile_view(&file,&types);testing.expect_value(t,error,asset.Error.None)
-    testing.expect_value(t,view.sections[1],profile.sections[1]);testing.expect_value(t,view.windows[0],profile.windows[0])
+    roundtrip :: proc(t:^testing.T,types:^asset.Types,profile:Action_Profile) -> (view:Action_Profile,file:asset.Asset,ok:bool) {
+        doc:asset.Document;defer asset.document_destroy(&doc)
+        if !testing.expect_value(t,character_document(&doc,types,{3,4},action_test_set(profile)),asset.Error.None) {return}
+        bytes,written:=asset.document_bytes(&doc,context.temp_allocator);testing.expect_value(t,written,asset.Error.None)
+        if !testing.expect_value(t,asset.asset_open(&file,bytes,context.temp_allocator),asset.Error.None) {return}
+        set,error:=character_view(&file,types)
+        return set.actions,file,testing.expect_value(t,error,asset.Error.None)
+    }
+    view,file,read:=roundtrip(t,&types,profile);defer asset.asset_close(&file)
+    if !read {return}
+    testing.expect_value(t,view.sections[1],profile.sections[1])
     testing.expect(t,view.actions[0].clock==.World && view.actions[1]==profile.actions[1] && view.layers[0]==profile.layers[0] && view.layers[1]==profile.layers[1])
     // What a table of cases breaks, each put back: the set is refused with it and taken without.
     Break :: proc(profile:^Action_Profile)
@@ -81,7 +100,7 @@ action_sets_roundtrip_and_reject_invalid_layers_section_links_and_root_policies 
         {"an exit of no share of the clip",proc(p:^Action_Profile) {p.actions[0].exit=0},proc(p:^Action_Profile) {p.actions[0].exit=1}},
         {"an exit past the clip",proc(p:^Action_Profile) {p.actions[0].exit=1.5},proc(p:^Action_Profile) {p.actions[0].exit=1}},
         {"two layers of one name",proc(p:^Action_Profile) {p.layers[1].name=p.layers[0].name},proc(p:^Action_Profile) {base.text_set(p.layers[1].name[:],"Aim")}},
-        {"a layer with a clip and a space",proc(p:^Action_Profile) {p.layers[0].space={9,9}},proc(p:^Action_Profile) {p.layers[0].space={}}},
+        {"a layer with a clip and a space",proc(p:^Action_Profile) {base.text_set(p.layers[0].space[:],"aim")},proc(p:^Action_Profile) {p.layers[0].space={}}},
         {"a layer that keeps the phase of the base with no clip",proc(p:^Action_Profile) {p.layers[1].sync=true},proc(p:^Action_Profile) {p.layers[1].sync=false}},
         {"a layer weight past 1",proc(p:^Action_Profile) {p.layers[0].weight=2},proc(p:^Action_Profile) {p.layers[0].weight=.5}},
         {"a layer weight that is not a number",proc(p:^Action_Profile) {zero:f32;p.layers[0].weight=zero/zero},proc(p:^Action_Profile) {p.layers[0].weight=.5}},
@@ -95,16 +114,8 @@ action_sets_roundtrip_and_reject_invalid_layers_section_links_and_root_policies 
     // An action that takes the whole body moves its body by its root motion, vertical too.
     profile.actions[0].root_motion,profile.actions[0].body_move,profile.actions[0].body_vertical=.In_Place,.Override,true
     testing.expect(t,action_profile_check(profile))
-    moved:asset.Document;defer asset.document_destroy(&moved)
-    testing.expect_value(t,action_profile_document(&moved,&types,{3,4},profile),asset.Error.None)
-    bytes,written:=asset.document_bytes(&moved,context.temp_allocator);testing.expect_value(t,written,asset.Error.None)
-    moving:asset.Asset;defer asset.asset_close(&moving)
-    testing.expect_value(t,asset.asset_open(&moving,bytes,context.temp_allocator),asset.Error.None)
-    view,error=action_profile_view(&moving,&types)
-    testing.expect(t,error==.None && view.actions[0]==profile.actions[0])
-    // A set of only layers is one; an empty one is not.
-    layers_only:=Action_Profile{info=profile.info,layers=profile.layers}
-    testing.expect(t,action_profile_check(layers_only) && !action_profile_check({info=profile.info}))
+    moved,moving,again:=roundtrip(t,&types,profile);defer asset.asset_close(&moving)
+    testing.expect(t,again && moved.actions[0]==profile.actions[0])
 }
 
 @(private="file")
@@ -122,16 +133,18 @@ an_action_that_moves_its_body_gives_it_its_share_of_the_root_delta :: proc(t:^te
     if !core.test_world_init(t,&w,test_types) {return}
     defer core.test_world_destroy(&w)
     entity:=core.create(&w.entities)
-    description:=ANIMATION_DEFAULT;description.asset={1,2};description.actions={3,4};core.add(&w.descriptions,entity,description);core.test_world_settle(&w)
+    description:=ANIMATION_DEFAULT;description.asset={3,4};core.add(&w.descriptions,entity,description);core.test_world_settle(&w)
     profile:=action_test_profile();profile.actions[0].weight=.75
     for &action in profile.actions {action.root_motion=.In_Place;action.body_move=.Additive}
-    cache:=Actions_Assets{allocator=context.allocator};defer actions_assets_free(&cache)
-    append(&cache.contents,Action_Content{id={3,4},checked=1,revision=1,profile=profile,valid=true})
+    cache:Character_Assets;defer character_assets_free(&cache);defer action_profile_free(&profile)
+    test_character_seed(&cache,{3,4},action_test_set(profile))
     host_assets:host.Assets;app:=host.App{assets=&host_assets,allocator=context.allocator}
+    test_character_register(&host_assets,{3,4});defer test_registry_free(&host_assets)
     content:host.Content_Animation;defer lib.library_destroy(&content.lib)
     playback:Playback;defer playback_free(&playback)
     append(&playback.states,layer_fixture(t,&content));resize(&playback.rows,core.entity_index(entity)+1);playback.rows[core.entity_index(entity)]=1
-    state:=&playback.states[0];state.entity,state.asset,state.seen=entity,description.asset,playback.frame
+    action_test_spans(&content);defer action_test_spans_free(&content)
+    state:=&playback.states[0];state.entity,state.asset,state.seen=entity,content.id,playback.frame
     content.roots=make([]asset.Animation_Root,3);defer delete(content.roots);base.text_set(content.roots[0].bone[:],"hip");content.roots[0].translation=true
     requests:Animation_Requests;defer delete(requests.plays.items);actions:Action_Runtime;defer actions_runtime_free(&actions)
     events:Animation_Events;defer delete(events.items)
@@ -152,13 +165,14 @@ actions_segment_sections_and_windows_copy_state_and_obey_cancellation_without_st
     if !core.test_world_init(t,&w,test_types) {return}
     defer core.test_world_destroy(&w)
     entity:=core.create(&w.entities)
-    description:=ANIMATION_DEFAULT;description.asset={1,2};description.actions={3,4};description.loop=false;core.add(&w.descriptions,entity,description);core.test_world_settle(&w)
-    content:host.Content_Animation;state:=layer_fixture(t,&content);defer lib.library_destroy(&content.lib);defer playing_free(&state);state.entity=entity;state.asset=description.asset
-    content.lib.markers=make([]lib.Marker,2);content.lib.marker_count=2;content.lib.markers[0]={time=.1,id=0};content.lib.markers[1]={time=1.1,id=1}
-    content.lib.clips[0].marker_count=2;content.markers=make([]u64,2);defer delete(content.markers);content.markers[0],content.markers[1]=base.name_hash("windup"),base.name_hash("recover")
-    cache:=Actions_Assets{allocator=context.allocator};defer actions_assets_free(&cache)
-    append(&cache.contents,Action_Content{id=description.actions,checked=1,revision=1,profile=action_test_profile(),valid=true})
+    description:=ANIMATION_DEFAULT;description.asset={3,4};description.loop=false;core.add(&w.descriptions,entity,description);core.test_world_settle(&w)
+    content:host.Content_Animation;state:=layer_fixture(t,&content);defer lib.library_destroy(&content.lib);defer playing_free(&state);state.entity=entity;state.asset=content.id
+    action_test_spans(&content);defer action_test_spans_free(&content)
+    profile:=action_test_profile();defer action_profile_free(&profile)
+    cache:Character_Assets;defer character_assets_free(&cache)
+    test_character_seed(&cache,description.asset,action_test_set(profile))
     host_assets:host.Assets;app:=host.App{assets=&host_assets,allocator=context.allocator}
+    test_character_register(&host_assets,description.asset);defer test_registry_free(&host_assets)
     playback:Playback;defer playback_free(&playback);events:Animation_Events;defer delete(events.items)
     requests:Animation_Requests;defer delete(requests.plays.items);actions:Action_Runtime;defer actions_runtime_free(&actions)
     problems:core.Problems
@@ -168,7 +182,8 @@ actions_segment_sections_and_windows_copy_state_and_obey_cancellation_without_st
     context=initial_context;app.allocator=initial_context.allocator;actions.allocator=initial_context.allocator
     testing.expect(t,!prepared && len(requests.plays.items)==1 && requests.plays.items[0]==initial_request && len(actions.states)==0 && len(events.items)==0)
     testing.expect(t,prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil))
-    testing.expect(t,len(requests.plays.items)==0 && actions.states[0].slots[0].active && events.items[0].kind==.Started && events.items[0].action==base.name_hash("attack"))
+    // It tells it started when it plays, in the sample of the tick.
+    testing.expect(t,len(requests.plays.items)==0 && actions.states[0].slots[0].active && len(events.items)==0)
     stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.4,nil,&content,&playback,&events)
     layers_advance(&playback,&state,&content,description,&events,.4,nil);actions_layer_finish(&actions,&state)
     testing.expect(t,abs(state.layers[0].fader.current.time-1.15)<1e-5)
@@ -184,7 +199,7 @@ actions_segment_sections_and_windows_copy_state_and_obey_cancellation_without_st
     copied:Action_Runtime;core.value_copy(&copied,&actions,type_info_of(Action_Runtime));defer actions_runtime_free(&copied)
     copied.states[0].slots[0].time=7;copied.plans[0].profile.actions[0].priority=99
     testing.expect(t,actions.states[0].slots[0].time!=7 && actions.plans[0].profile.actions[0].priority!=99)
-    cache.contents[0].profile.actions[0].cancel=.Finish_Section;actions.plans[0].profile.actions[0].cancel=.Finish_Section
+    profile.actions[0].cancel=.Finish_Section;actions.plans[0].profile.actions[0].cancel=.Finish_Section
     stop(&requests,entity,"attack");testing.expect(t,prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil))
     testing.expect(t,actions.states[0].slots[0].cancel_pending && !actions.states[0].slots[0].finishing && len(events.items)==0,"a stop of Finish_Section waits for the end of the section")
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator();app.allocator=context.allocator
@@ -207,6 +222,7 @@ actions_segment_sections_and_windows_copy_state_and_obey_cancellation_without_st
 @(test)
 action_root_motion_uses_section_segments_fade_weight_and_exposes_a_continuous_warp_clock :: proc(t:^testing.T) {
     content:host.Content_Animation;state:=layer_fixture(t,&content);defer lib.library_destroy(&content.lib);defer playing_free(&state);state.asset={1,2}
+    action_test_spans(&content);defer action_test_spans_free(&content)
     content.roots=make([]asset.Animation_Root,3);defer delete(content.roots);base.text_set(content.roots[0].bone[:],"hip");content.roots[0].translation=true
     actions:=Action_Runtime{allocator=context.allocator};defer actions_runtime_free(&actions)
     profile:=action_test_profile();profile.actions[0].root_motion=.In_Place;profile.actions[0].weight=.75
@@ -235,6 +251,7 @@ action_root_motion_uses_section_segments_fade_weight_and_exposes_a_continuous_wa
 @(test)
 action_distance_requests_advance_only_the_selected_clip_and_reject_discontinuous_sections :: proc(t:^testing.T) {
     content:host.Content_Animation;state:=layer_fixture(t,&content);defer lib.library_destroy(&content.lib);defer playing_free(&state);state.asset={1,2}
+    action_test_spans(&content);defer action_test_spans_free(&content)
     actions:=Action_Runtime{allocator=context.allocator};defer actions_runtime_free(&actions)
     action_test_plan(&actions,Action_Plan{profile=action_test_profile()});action_test_add_state(&actions,Action_State{entity=state.entity,plan=0})
     actions.states[0].slots[0]={active=true,starting=true,seeking=true,action=0,section=0}
@@ -253,7 +270,7 @@ action_distance_requests_advance_only_the_selected_clip_and_reject_discontinuous
     testing.expect(t,state.layers[0].fader.current.time==.1 && !actions.states[0].slots[0].continuous && actions.states[0].slots[0].delta==ROOT_DELTA_DEFAULT && len(events.items)==before)
     request.clip=base.name_hash("run");request.seek=false;request.time=1;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.02,nil,&content,distance=&request)
     testing.expect(t,abs(state.layers[0].fader.current.time-.12)<1e-5)
-    actions.plans[0].profile.sections[1].start=.25
+    content.lib.markers[3].time=.25
     request.clip=base.name_hash("walk");request.time=.4;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.01,nil,&content,distance=&request)
     testing.expect(t,abs(state.layers[0].fader.current.time-.4)<1e-5 && actions.states[0].slots[0].section==1 && actions.states[0].slots[0].continuous)
 }
@@ -261,6 +278,7 @@ action_distance_requests_advance_only_the_selected_clip_and_reject_discontinuous
 @(test)
 root_actions_can_start_over_an_idle_clip_without_root_channels :: proc(t:^testing.T) {
     content:host.Content_Animation;state:=layer_fixture(t,&content);defer {lib.library_destroy(&content.lib);playing_free(&state)}
+    action_test_spans(&content);defer action_test_spans_free(&content)
     content.roots=make([]asset.Animation_Root,3);defer delete(content.roots)
     base.text_set(content.roots[0].bone[:],"hip");content.roots[0].translation=true
     state.asset,state.clip={1,2},1
@@ -277,6 +295,7 @@ root_actions_can_start_over_an_idle_clip_without_root_channels :: proc(t:^testin
 @(test)
 action_root_projection_preserves_each_base_and_action_contribution_and_validates_active_metadata :: proc(t:^testing.T) {
     content:host.Content_Animation;state:=layer_fixture(t,&content);defer lib.library_destroy(&content.lib);defer playing_free(&state);state.asset={1,2}
+    action_test_spans(&content);defer action_test_spans_free(&content)
     content.roots=make([]asset.Animation_Root,3);defer delete(content.roots);base.text_set(content.roots[0].bone[:],"hip");content.roots[0].translation=true
     actions:=Action_Runtime{allocator=context.allocator};defer actions_runtime_free(&actions)
     profile:=action_test_profile();profile.actions[0].root_motion=.In_Place;profile.actions[0].weight=.5;action_test_layered(&profile,1);profile.actions[1].root_motion=.Extract;base.text_set(profile.actions[1].clip[:],"run")
@@ -305,9 +324,6 @@ action_root_projection_preserves_each_base_and_action_contribution_and_validates
     problems:core.Problems
     description:=ANIMATION_DEFAULT;description.asset=state.asset;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.1,&problems,&content)
     testing.expect(t,problems.count==1 && core.problem_find(&problems,state.entity,"animation.action_clip")!=nil && state.action_root_mask==1 && actions.states[0].slots[1].finishing && !actions.states[0].slots[1].has_root)
-    actions.states[0].slots[0]={active=true,starting=true,seeking=true,action=0,section=-1};description=ANIMATION_DEFAULT;description.asset=state.asset;description.source=core.entity_make(2,1)
-    stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.1,nil,&content)
-    testing.expect(t,state.action_root_mask==0 && actions.states[0].slots[0].finishing,"an action with root motion stops on an Animation that follows a source")
 }
 
 @(test)
@@ -316,25 +332,28 @@ actions_preserve_the_previous_asset_state_when_appending_a_replacement_plan_fail
     if !core.test_world_init(t,&w,test_types) {return}
     defer core.test_world_destroy(&w)
     entity:=core.create(&w.entities)
-    description:=ANIMATION_DEFAULT;description.asset={1,2};description.actions={3,4};core.add(&w.descriptions,entity,description);core.test_world_settle(&w)
-    cache:=Actions_Assets{allocator=context.allocator};defer actions_assets_free(&cache)
-    append(&cache.contents,Action_Content{id={3,4},checked=1,revision=1,profile=action_test_profile(),valid=true},Action_Content{id={5,6},checked=1,revision=1,profile=action_test_profile(),valid=true})
+    description:=ANIMATION_DEFAULT;description.asset={3,4};core.add(&w.descriptions,entity,description);core.test_world_settle(&w)
+    cache:Character_Assets;defer character_assets_free(&cache)
+    profiles:=[2]Action_Profile{action_test_profile(),action_test_profile()};defer for &value in profiles {action_profile_free(&value)}
+    test_character_seed(&cache,{3,4},action_test_set(profiles[0]));test_character_seed(&cache,{5,6},action_test_set(profiles[1]))
     host_assets:host.Assets;app:=host.App{assets=&host_assets,allocator=context.allocator}
+    test_character_register(&host_assets,{3,4},{5,6});defer test_registry_free(&host_assets)
     playback:Playback;defer playback_free(&playback);requests:Animation_Requests;defer delete(requests.plays.items);actions:Action_Runtime;defer actions_runtime_free(&actions)
     events:Animation_Events;defer delete(events.items)
     play(&requests,entity,"attack");if !testing.expect(t,prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil)) {return}
     previous:=actions.states[0].slots;previous_plan:=actions.plans[0]
     failure:=Runtime_Allocation_Failure{owner=context.allocator,remaining=100};failing:=runtime.Allocator{procedure=runtime_failure_allocator,data=&failure}
     limited:=make([dynamic]Action_Plan,1,1,failing);limited[0]=actions.plans[0];delete(actions.plans);actions.plans=limited
-    core.free(&w.descriptions,entity).actions={5,6};failure.remaining,failure.calls=3,0;app.allocator=failing
+    core.free(&w.descriptions,entity).asset={5,6};failure.remaining,failure.calls=2,0;app.allocator=failing
     problems:core.Problems
     prepared:=prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,&problems)
     app.allocator=failure.owner;actions.allocator=failure.owner
-    testing.expect(t,prepared && failure.calls==4 && core.problem_find(&problems,entity,"animation.memory")!=nil && len(actions.plans)==1 && len(actions.states)==1)
+    testing.expect(t,prepared && failure.calls==3 && core.problem_find(&problems,entity,"animation.memory")!=nil && len(actions.plans)==1 && len(actions.states)==1)
     testing.expect(t,actions.states[0].plan==0 && actions.states[0].slots==previous && actions.states[0].seen==actions.frame && actions.plans[0].asset==previous_plan.asset && actions.plans[0].revision==previous_plan.revision && raw_data(actions.plans[0].profile.actions)==raw_data(previous_plan.profile.actions) && len(events.items)==0)
     failure.remaining=100
     testing.expect(t,prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil))
-    testing.expect(t,len(actions.plans)==2 && actions.plans[1].asset==base.Asset_Id{5,6} && actions.states[0].plan==1 && actions.states[0].slots[0].finishing && events.items[0].kind==.Interrupted)
+    // The action asked had not played yet: it ends without telling.
+    testing.expect(t,len(actions.plans)==2 && actions.plans[1].asset==base.Asset_Id{5,6} && actions.states[0].plan==1 && actions.states[0].slots[0].finishing && len(events.items)==0)
 }
 
 @(test)
@@ -344,17 +363,20 @@ a_new_actions_asset_or_revision_interrupts_the_playing_action_and_fades_its_laye
         if !core.test_world_init(t,&w,test_types) {return}
         defer core.test_world_destroy(&w)
         entity:=core.create(&w.entities)
-        description:=ANIMATION_DEFAULT;description.asset={1,2};description.actions={3,4};core.add(&w.descriptions,entity,description);core.test_world_settle(&w)
-        cache:=Actions_Assets{allocator=context.allocator};defer actions_assets_free(&cache)
-        append(&cache.contents,Action_Content{id={3,4},checked=1,revision=1,profile=action_test_profile(),valid=true},Action_Content{id={5,6},checked=1,revision=1,profile=action_test_profile(),valid=true})
+        description:=ANIMATION_DEFAULT;description.asset={3,4};core.add(&w.descriptions,entity,description);core.test_world_settle(&w)
+        cache:Character_Assets;defer character_assets_free(&cache)
+        profiles:=[2]Action_Profile{action_test_profile(),action_test_profile()};defer for &value in profiles {action_profile_free(&value)}
+        test_character_seed(&cache,{3,4},action_test_set(profiles[0]));test_character_seed(&cache,{5,6},action_test_set(profiles[1]))
         host_assets:host.Assets;app:=host.App{assets=&host_assets,allocator=context.allocator}
+        test_character_register(&host_assets,{3,4},{5,6});defer test_registry_free(&host_assets)
         content:host.Content_Animation;defer lib.library_destroy(&content.lib)
         playback:Playback;defer playback_free(&playback)
         append(&playback.states,layer_fixture(t,&content));resize(&playback.rows,core.entity_index(entity)+1);playback.rows[core.entity_index(entity)]=1
-        state:=&playback.states[0];state.entity,state.asset=entity,description.asset
+        action_test_spans(&content);defer action_test_spans_free(&content)
+        state:=&playback.states[0];state.entity,state.asset=entity,content.id
         events:Animation_Events;defer delete(events.items)
         requests:Animation_Requests;defer delete(requests.plays.items);actions:Action_Runtime;defer actions_runtime_free(&actions)
-        tick :: proc(actions:^Action_Runtime,requests:^Animation_Requests,cache:^Actions_Assets,descriptions:^core.Table(Animation),playback:^Playback,app:^host.App,content:^host.Content_Animation,events:^Animation_Events,dt:f32) -> bool {
+        tick :: proc(actions:^Action_Runtime,requests:^Animation_Requests,cache:^Character_Assets,descriptions:^core.Table(Animation),playback:^Playback,app:^host.App,content:^host.Content_Animation,events:^Animation_Events,dt:f32) -> bool {
             if !prepare(actions,requests,cache,descriptions,playback,events,app,nil) {return false}
             state:=&playback.states[0];sampled,_:=core.get(core.read(descriptions),state.entity)
             stack_asks(actions,state,sampled,content)
@@ -363,7 +385,7 @@ a_new_actions_asset_or_revision_interrupts_the_playing_action_and_fades_its_laye
         }
         play(&requests,entity,"attack")
         if !testing.expect(t,tick(&actions,&requests,&cache,&w.descriptions,&playback,&app,&content,&events,.1) && state.layers[0].weight==1) {continue}
-        if change=="another asset" {core.free(&w.descriptions,entity).actions={5,6}} else {cache.contents[0].revision+=1}
+        if change=="another asset" {core.free(&w.descriptions,entity).asset={5,6}} else {cache.contents[0].revision+=1}
         weights:[dynamic]f32;defer delete(weights)
         interrupted:=0
         for _ in 0..<10 {
@@ -386,9 +408,11 @@ actions_discover_changed_components_retry_requests_and_compact_generational_rows
     first,second,plain:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     for entity in ([3]core.Entity{first,second,plain}) {core.add(&w.descriptions,entity,ANIMATION_DEFAULT)}
     core.test_world_settle(&w)
-    cache:=Actions_Assets{allocator=context.allocator};defer actions_assets_free(&cache)
-    append(&cache.contents,Action_Content{id={3,4},checked=1,revision=1,profile=action_test_profile(),valid=true},Action_Content{id={3,5},checked=1,revision=1,profile=action_test_profile(),valid=true})
+    cache:Character_Assets;defer character_assets_free(&cache)
+    profiles:=[2]Action_Profile{action_test_profile(),action_test_profile()};defer for &value in profiles {action_profile_free(&value)}
+    test_character_seed(&cache,{3,4},action_test_set(profiles[0]));test_character_seed(&cache,{5,6},action_test_set(profiles[1]))
     host_assets:host.Assets;app:=host.App{assets=&host_assets,allocator=context.allocator}
+    test_character_register(&host_assets,{3,4},{5,6});defer test_registry_free(&host_assets)
     playback:Playback;defer playback_free(&playback);requests:Animation_Requests;defer delete(requests.plays.items)
     actions:Action_Runtime;defer actions_runtime_free(&actions)
     events:Animation_Events;defer delete(events.items)
@@ -397,7 +421,7 @@ actions_discover_changed_components_retry_requests_and_compact_generational_rows
     empty:=prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil)
     context=saved;app.allocator=saved.allocator;actions.allocator=saved.allocator
     testing.expect(t,empty && len(actions.states)==0 && len(events.items)==0)
-    core.edit(&w.descriptions,first).actions={3,4};core.edit(&w.descriptions,second).actions={3,5}
+    core.edit(&w.descriptions,first).asset={3,4};core.edit(&w.descriptions,second).asset={5,6}
     play(&requests,first,"attack")
     observed:=actions.animations_seen
     context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;app.allocator=context.allocator
@@ -408,17 +432,17 @@ actions_discover_changed_components_retry_requests_and_compact_generational_rows
     copied:Action_Runtime;core.value_copy(&copied,&actions,type_info_of(Action_Runtime));defer actions_runtime_free(&copied)
     first_state:=action_state(&copied,first);first_state.slots[0].time=9
     testing.expect(t,action_state(&actions,first).slots[0].time!=9)
-    core.edit(&w.descriptions,first).actions={3,5}
+    core.edit(&w.descriptions,first).asset={5,6}
     core.edit(&w.descriptions,plain).weight=.4
     context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;app.allocator=context.allocator
     prepared=prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil)
     context=saved;app.allocator=saved.allocator;actions.allocator=saved.allocator;cache.allocator=saved.allocator
-    testing.expect(t,prepared && actions.plans[action_state(&actions,first).plan].asset==base.Asset_Id{3,5} && len(actions.states)==2 && events.items[0].kind==.Interrupted)
+    testing.expect(t,prepared && actions.plans[action_state(&actions,first).plan].asset==base.Asset_Id{5,6} && len(actions.states)==2)
     core.remove(&w.descriptions,first);core.test_world_settle(&w)
     testing.expect(t,prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil) && action_state(&actions,first)==nil && action_state(&actions,second)!=nil && len(actions.states)==1)
     old:=second;index:=core.entity_index(second)
     core.destroy(&w.entities,second);core.test_world_settle(&w)
-    second=core.create(&w.entities);core.add(&w.descriptions,second,Animation{actions={3,4}});core.test_world_settle(&w)
+    second=core.create(&w.entities);core.add(&w.descriptions,second,Animation{asset={3,4}});core.test_world_settle(&w)
     context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;app.allocator=context.allocator
     prepared=prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil)
     context=saved;app.allocator=saved.allocator;actions.allocator=saved.allocator;cache.allocator=saved.allocator
@@ -431,19 +455,21 @@ actions_retry_a_first_fire_when_profile_preparation_has_no_memory :: proc(t:^tes
     if !core.test_world_init(t,&w,test_types) {return}
     defer core.test_world_destroy(&w)
     entity:=core.create(&w.entities)
-    description:=ANIMATION_DEFAULT;description.actions={3,4};core.add(&w.descriptions,entity,description);core.test_world_settle(&w)
-    cache:=Actions_Assets{allocator=context.allocator};defer actions_assets_free(&cache);append(&cache.contents,Action_Content{id={3,4},checked=1,revision=1,profile=action_test_profile(),valid=true})
+    description:=ANIMATION_DEFAULT;description.asset={3,4};core.add(&w.descriptions,entity,description);core.test_world_settle(&w)
+    profile:=action_test_profile();defer action_profile_free(&profile)
+    cache:Character_Assets;defer character_assets_free(&cache);test_character_seed(&cache,{3,4},action_test_set(profile))
     host_assets:host.Assets;app:=host.App{assets=&host_assets,allocator=context.allocator};playback:Playback;defer playback_free(&playback)
+    test_character_register(&host_assets,{3,4});defer test_registry_free(&host_assets)
     actions:Action_Runtime;defer actions_runtime_free(&actions);requests:Animation_Requests;defer delete(requests.plays.items)
     events:Animation_Events;defer delete(events.items)
     reserve(&events.items,EVENT_BATCH)
-    testing.expect(t,actions_discover(&actions,core.read(&w.descriptions),&playback,&events,nil))
+    testing.expect(t,actions_discover(&actions,core.read(&w.descriptions),&playback,&events,&host_assets,nil))
     play(&requests,entity,"attack")
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;app.allocator=context.allocator
     prepared:=prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil)
     context=saved;app.allocator=saved.allocator;actions.allocator=saved.allocator;cache.allocator=saved.allocator
     testing.expect(t,prepared && len(requests.plays.items)==1 && len(actions.plans)==0 && !action_state(&actions,entity).slots[0].active)
-    testing.expect(t,prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil) && len(requests.plays.items)==0 && action_state(&actions,entity).slots[0].active && events.items[0].kind==.Started)
+    testing.expect(t,prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil) && len(requests.plays.items)==0 && action_state(&actions,entity).slots[0].active)
 }
 
 @(test)
@@ -452,15 +478,22 @@ action_playing_answers_while_an_action_plays_and_a_section_asked_of_it_moves_it_
     if !core.test_world_init(t,&w,test_types) {return}
     defer core.test_world_destroy(&w)
     entity:=core.create(&w.entities)
-    description:=ANIMATION_DEFAULT;description.actions={3,4};core.add(&w.descriptions,entity,description);core.test_world_settle(&w)
-    cache:=Actions_Assets{allocator=context.allocator};defer actions_assets_free(&cache);append(&cache.contents,Action_Content{id={3,4},checked=1,revision=1,profile=action_test_profile(),valid=true})
+    description:=ANIMATION_DEFAULT;description.asset={3,4};core.add(&w.descriptions,entity,description);core.test_world_settle(&w)
+    profile:=action_test_profile();defer action_profile_free(&profile)
+    cache:Character_Assets;defer character_assets_free(&cache);test_character_seed(&cache,{3,4},action_test_set(profile))
     host_assets:host.Assets;app:=host.App{assets=&host_assets,allocator=context.allocator};playback:Playback;defer playback_free(&playback)
+    test_character_register(&host_assets,{3,4});defer test_registry_free(&host_assets)
     actions:Action_Runtime;defer actions_runtime_free(&actions);requests:Animation_Requests;defer delete(requests.plays.items)
     events:Animation_Events;defer delete(events.items)
+    content:host.Content_Animation;state:=layer_fixture(t,&content);defer lib.library_destroy(&content.lib);defer playing_free(&state);state.entity,state.asset=entity,content.id
+    action_test_spans(&content);defer action_test_spans_free(&content)
+    // What plays tells what it does and where it is in the sample of the tick.
+    sample :: proc(actions:^Action_Runtime,state:^Playing,description:Animation,content:^host.Content_Animation,playback:^Playback,events:^Animation_Events) {stack_asks(actions,state,description,content);actions_sample(actions,state,description,0,nil,content,playback,events)}
     problems:core.Problems
     _,_,playing:=action_playing({&actions},entity,"attack");testing.expect(t,!playing)
     play(&requests,entity,"attack")
     testing.expect(t,prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,&problems))
+    sample(&actions,&state,description,&content,&playback,&events)
     time,section,ok:=action_playing({&actions},entity,"attack")
     testing.expect(t,problems.count==0 && ok && time==0 && section==base.name_hash("windup"))
     _,_,playing=action_playing({&actions},entity,"interrupt");testing.expect(t,!playing)
@@ -468,6 +501,7 @@ action_playing_answers_while_an_action_plays_and_a_section_asked_of_it_moves_it_
     // A section asked of it while it plays moves it there, and does not start it again.
     play(&requests,entity,"attack","recover")
     testing.expect(t,prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,&problems))
+    sample(&actions,&state,description,&content,&playback,&events)
     time,section,ok=action_playing({&actions},entity,"attack");testing.expect(t,ok && time==1 && section==base.name_hash("recover"))
     testing.expect(t,count(&events,.Section)==1 && count(&events,.Started)==0 && count(&events,.Interrupted)==0 && events.items[0].name==base.name_hash("recover"))
     play(&requests,entity,"attack","missing")
@@ -485,12 +519,14 @@ a_world_action_plays_at_its_speed_while_its_entity_is_slowed :: proc(t:^testing.
         if !core.test_world_init(t,&w,test_types) {return}
         defer core.test_world_destroy(&w)
         entity:=core.create(&w.entities)
-        description:=ANIMATION_DEFAULT;description.asset={1,2};description.actions={3,4};description.loop=false;core.add(&w.descriptions,entity,description);core.test_world_settle(&w)
-        content:host.Content_Animation;state:=layer_fixture(t,&content);defer lib.library_destroy(&content.lib);defer playing_free(&state);state.entity=entity;state.asset=description.asset
-        cache:=Actions_Assets{allocator=context.allocator};defer actions_assets_free(&cache)
-        append(&cache.contents,Action_Content{id=description.actions,checked=1,revision=1,profile=action_test_profile(),valid=true})
-        cache.contents[0].profile.actions[0].clock=clock
+        description:=ANIMATION_DEFAULT;description.asset={3,4};description.loop=false;core.add(&w.descriptions,entity,description);core.test_world_settle(&w)
+        content:host.Content_Animation;state:=layer_fixture(t,&content);defer lib.library_destroy(&content.lib);defer playing_free(&state);state.entity=entity;state.asset=content.id
+        action_test_spans(&content);defer action_test_spans_free(&content)
+        profile:=action_test_profile();defer action_profile_free(&profile);profile.actions[0].clock=clock
+        cache:Character_Assets;defer character_assets_free(&cache)
+        test_character_seed(&cache,description.asset,action_test_set(profile))
         host_assets:host.Assets;app:=host.App{assets=&host_assets,allocator=context.allocator}
+        test_character_register(&host_assets,description.asset);defer test_registry_free(&host_assets)
         playback:Playback;defer playback_free(&playback);events:Animation_Events;defer delete(events.items)
         requests:Animation_Requests;defer delete(requests.plays.items);actions:Action_Runtime;defer actions_runtime_free(&actions)
         play(&requests,entity,"attack")
