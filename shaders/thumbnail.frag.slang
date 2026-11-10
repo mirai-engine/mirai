@@ -19,14 +19,6 @@ struct Stage_Input {
     [[vk::location(7)]] float4 tangent : TEXCOORD7;
 };
 
-// The values of render.Debug_View a preview shows instead of its lit image.
-#define DEBUG_NONE 0u
-#define DEBUG_ALBEDO 1u
-#define DEBUG_NORMAL 2u
-#define DEBUG_ROUGHNESS 8u
-#define DEBUG_METALLIC 9u
-#define DEBUG_EMISSION 10u
-
 #ifdef MIRAI_THUMBNAIL_IMPOSTOR
 // A frame of an impostor: its base color and coverage, and the normal in the
 // space of the mesh with the depth from the near plane of the frame (0) to

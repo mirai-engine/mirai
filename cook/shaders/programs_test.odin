@@ -578,6 +578,14 @@ programs_leave_out_one_that_fails_and_publish_the_others :: proc(t:^testing.T) {
     _,broken:=program_named(catalog,"Broken")
     testing.expect(t,good && !broken,"the program that compiles is published and the broken one is left out")
     testing.expect(t,len(catalog.refused)==1 && strings.contains(catalog.refused[0],"Broken"),"the refusal names the program")
+    // Nothing does without a program of the engine: one that fails fails the catalog, which names it and what to do.
+    engine:=path_join(f.project,"engine",allocator=context.temp_allocator)
+    files:Sources
+    sources_init(&files,context.temp_allocator)
+    testing.expect_value(t,copy_sources(&files,path_join(path_clean(ENGINE_ROOT,context.temp_allocator),"shaders/include",allocator=context.temp_allocator),path_join(engine,"shaders/include",allocator=context.temp_allocator)),"")
+    fixture_write(t,engine,"shaders/materials/broken.slang","//! mirai surface Broken\nnamespace Broken {struct Parameters {float amount;}; Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {return not_a_function(ctx);}}\n")
+    _,problem=programs_generate(&f.runner,engine,"",path_join(f.project,"engine-out",allocator=context.temp_allocator),f.slangc,f.version,f.cache,allocator=context.temp_allocator)
+    testing.expect(t,strings.contains(problem,"Broken") && strings.contains(problem,"shaders/materials") && strings.contains(problem,"mirai shaders"),problem)
 }
 
 // A Surface program that says `//! vertex` has its function vertex called in

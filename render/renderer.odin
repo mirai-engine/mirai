@@ -33,6 +33,7 @@ import "mirai:asset"
 import "mirai:std/jobs"
 import mm "mirai:std/math"
 import "mirai:rhi"
+import "mirai:render/abi"
 
 Trace_Mode :: enum u8 {Auto, Software, Hardware}
 
@@ -118,7 +119,7 @@ SHADOW_HISTORY_FRAMES :: f32(16)
 SHADOW_HISTORY_STILL_FRAMES :: f32(TAA_JITTER_PHASES)
 
 // SHARED_RAY_ROUGHNESS of the shaders.
-REFLECTION_SHARED_ROUGHNESS :: f32(0.15)
+REFLECTION_SHARED_ROUGHNESS :: abi.REFLECTION_SHARED_ROUGHNESS
 
 // Conservative budgets for software rasterizers (lavapipe, SwiftShader).
 CPU_DEVICE_SETTINGS :: Settings{
@@ -195,7 +196,7 @@ Exposure :: struct {
 AUTO_EXPOSURE_RANGE :: [2]f32{-6, 18}
 // The calibration of a reflected-light meter, cd/m^2 at ISO 100 and EV 0 times 100.
 LIGHT_METER_K :: f32(12.5)
-MIDDLE_GRAY :: f32(0.18)
+MIDDLE_GRAY :: abi.MIDDLE_GRAY
 // EV a view is exposed above what its meter or its camera gives under ACES 2.0, as Unreal's default
 // exposure bias: ACES 2.0 shows a middle gray at the meter's value dim on an SDR display. Another
 // transform calibrates to it (display_exposure_bias).
@@ -443,7 +444,7 @@ Frame_Desc :: struct {
 	ui_only: bool,
 }
 
-VIEW_CAPACITY :: 4
+VIEW_CAPACITY :: abi.VIEW_CAPACITY
 // Views drawn into a texture that the renderer keeps targets for, counting
 // every size each one is drawn at.
 TEXTURE_VIEW_CAPACITY :: 16
@@ -769,8 +770,8 @@ renderer_destroy :: proc(r: ^Renderer) {
 }
 
 // DFG_SIZE and DFG_TEXTURE of brdf.slang.
-DFG_SIZE :: 64
-DFG_TEXTURE :: 0
+DFG_SIZE :: abi.DFG_SIZE
+DFG_TEXTURE :: abi.DFG_TEXTURE
 
 // The split-sum table of the specular lobe (dfg.comp), built once into the
 // last entry of the texture table, which materials leave free.
