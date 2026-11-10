@@ -13,6 +13,7 @@ import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/geom"
 import mm "mirai:std/math"
+import "mirai:std/jobs"
 
 // The foliage of a scene, from its .foliage asset, without an entity per
 // instance: the renderer draws batches per cell, type and part (engine/render
@@ -204,7 +205,7 @@ build_work_destroy :: proc(w:^Build_Work) {
 
 @(private)
 resident_cell_free :: proc(resident:^Foliage_Resident,cell:^Resident_Cell) {
-    if resident.app!=nil {for b in cell.batches {render.batch_remove(resident.app,b.handle)}}
+    if resident.app!=nil {for b in cell.batches {render.batch_remove(resident.app.renderer,b.handle)}}
     crown_release(resident,cell.crown)
     cell.crown={}
     if len(cell.impostors)>0 {resident.impostors.dirty=true}
@@ -236,7 +237,7 @@ resident_sweep :: proc(resident:^Foliage_Resident,all:=false) {
         used:=false
         if !all {for owner in resident.owners {for key in owner.winds {used||=key==Wind_Key{set.source,set.count,set.amount}}}}
         if used {continue}
-        if app!=nil {wind_set_free(app,set)}
+        if app!=nil {wind_set_free(app.renderer,set)}
         unordered_remove(&resident.winds,i)
     }
 }
@@ -245,7 +246,7 @@ foliage_resident_free :: proc(resident:^Foliage_Resident) {
     for &owner in resident.owners {resident_owner_free(resident,&owner)}
     clear(&resident.owners)
     resident_sweep(resident,true)
-    if resident.app!=nil {render.buffer_release(resident.app,resident.world,IMPOSTOR_BUFFER)}
+    if resident.app!=nil {render.buffer_release(resident.app.renderer,resident.world,IMPOSTOR_BUFFER)}
     for &prefab in resident.prefabs {delete(prefab.parts)}
     delete(resident.owners);delete(resident.prefabs);delete(resident.kinds);delete(resident.winds);delete(resident.crowns)
     impostor_draw_destroy(&resident.impostors)
@@ -316,10 +317,10 @@ cells_version :: proc(next,previous:^Source,versions:^u32) {
 // Foliage names. Foliage.revision is the editor's: undo puts back what a
 // step held, 0 included, and the tool restores the source of that revision.
 @(step="fixed frame",loops="game editor",stage="simulate",before="physics_prepare")
-foliage_load :: proc(data:^Foliage_Data,foliages:core.Read(Foliage),app:^host.App,problems:^core.Problems) {
-    a:=app.assets
+foliage_load :: proc(data:^Foliage_Data,foliages:core.Read(Foliage),assets:^host.Assets,allocator:runtime.Allocator,problems:^core.Problems) {
+    a:=assets
     if a==nil {return}
-    context.allocator=app.allocator
+    context.allocator=allocator
     if data.registry!=a.registry.revision {
         data.registry=a.registry.revision
         for &entry in data.entries {
@@ -428,7 +429,7 @@ foliage_render :: proc(resident:^Foliage_Resident,data:core.Ref(Foliage_Data),gr
     context.allocator=app.allocator
     resident.app,resident.world=app,id
     changed:=false
-    if resident.epoch!=render.batches_epoch(app) {
+    if resident.epoch!=render.batches_epoch(app.renderer) {
         // The renderer forgot them, and every mesh with them: their handles name nothing.
         for &owner in resident.owners {
             for &cell in owner.cells {delete(cell.batches);delete(cell.impostors);delete(cell.near)}
@@ -437,7 +438,7 @@ foliage_render :: proc(resident:^Foliage_Resident,data:core.Ref(Foliage_Data),gr
         }
         clear(&resident.winds)
         resident.impostors.dirty=true
-        resident.epoch=render.batches_epoch(app)
+        resident.epoch=render.batches_epoch(app.renderer)
     }
     if resident.structure!=a.structure {
         changes,complete:=host.assets_structure_changes(a,resident.structure)
@@ -521,7 +522,7 @@ resident_prefab :: proc(resident:^Foliage_Resident,a:^host.Assets,id:base.Asset_
 // parts, the variants each part sways with, and its far form, made the first
 // time a type shows its asset.
 @(private)
-types_draw :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Data_Entry,app:^host.App,problems:^core.Problems) {
+types_draw :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Data_Entry,assets:^host.Assets,renderer:^render.Renderer,job_system:^jobs.Job_System,allocator:runtime.Allocator,problems:^core.Problems) {
     work:=&resident.work
     clear(&work.types);clear(&work.parts)
     clear(&owner.kinds);clear(&owner.winds)
@@ -533,14 +534,14 @@ types_draw :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Data_
         switch {
         case t.mesh!={}: pieces=single[:]
         case t.prefab!={}:
-            prefab:=resident_prefab(resident,app.assets,t.prefab)
+            prefab:=resident_prefab(resident,assets,t.prefab)
             if prefab==nil {
                 memory_problem(problems,owner.entity,"the prefab of a type of this Foliage, which is not drawn")
                 owner.pending=true
                 break
             }
             if !prefab.read || len(prefab.parts)==0 {
-                core.report(problems,owner.entity,"foliage.prefab","foliage type '%s' of source %s shows prefab %s, which is not loaded or has no Mesh_Renderer under a single root; give the type a prefab with meshes, or a mesh",base.text_get(t.name[:]),host.assets_name(app.assets,entry.id,&name),host.assets_name(app.assets,t.prefab,&other))
+                core.report(problems,owner.entity,"foliage.prefab","foliage type '%s' of source %s shows prefab %s, which is not loaded or has no Mesh_Renderer under a single root; give the type a prefab with meshes, or a mesh",base.text_get(t.name[:]),host.assets_name(assets,entry.id,&name),host.assets_name(assets,t.prefab,&other))
             }
             pieces=prefab.parts[:]
         }
@@ -548,9 +549,9 @@ types_draw :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Data_
         amount:=sway_amount(t)
         fade,cull:=mesh_distances(t,false)
         for piece in pieces {
-            desc,ok:=render.batch_desc(app.assets,piece.renderer)
+            desc,ok:=render.batch_desc(assets,piece.renderer)
             if !ok {
-                core.report(problems,owner.entity,"foliage.mesh","foliage type '%s' of source %s shows mesh %s, which is not loaded; give the type a .mesh of the assets",base.text_get(t.name[:]),host.assets_name(app.assets,entry.id,&name),host.assets_name(app.assets,piece.renderer.mesh,&other))
+                core.report(problems,owner.entity,"foliage.mesh","foliage type '%s' of source %s shows mesh %s, which is not loaded; give the type a .mesh of the assets",base.text_get(t.name[:]),host.assets_name(assets,entry.id,&name),host.assets_name(assets,piece.renderer.mesh,&other))
                 continue
             }
             desc.flags={}
@@ -560,14 +561,14 @@ types_draw :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Data_
             desc.object_id=u64(owner.entity)
             part:=Part_Draw{desc=desc,placement=piece.placement,identity=piece.placement==1,wind=-1}
             if variants>0 {
-                part.wind=wind_set(resident,app,desc.mesh,variants,amount)
+                part.wind=wind_set(resident,renderer,desc.mesh,variants,amount)
                 append(&owner.winds,Wind_Key{desc.mesh,variants,amount})
             }
             // What sways in the hook and not in variants.
             if part.wind<0 && t.wind>0 {
                 part.desc.vertex={amount,0,0,0}
                 // The views cull it by boxes that hold how far the wind and the benders move it.
-                if low,high,known:=render.mesh_bounds(app,desc.mesh);known {
+                if low,high,known:=render.mesh_bounds(renderer,desc.mesh);known {
                     corner:=linalg.max(linalg.abs(low),linalg.abs(high))
                     part.desc.reach=hook_reach(amount,linalg.length(corner)*t.scale[1]*max(t.height[1],1))
                 }
@@ -577,7 +578,7 @@ types_draw :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Data_
         draw.count=len(work.parts)-draw.first
         if type_far(t) && draw.count>0 {
             id:=t.mesh if t.mesh!={} else t.prefab
-            draw.kind=kind_ensure(resident,app,id,work.parts[draw.first:][:draw.count],problems,owner.entity)
+            draw.kind=kind_ensure(resident,assets,renderer,job_system,allocator,id,work.parts[draw.first:][:draw.count],problems,owner.entity)
             append(&owner.kinds,id)
             if draw.kind>=0 && kind_ready(&resident.kinds[draw.kind]) {
                 draw.far=true
@@ -615,7 +616,7 @@ owner_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Da
     s:=&entry.source
     work:=&resident.work
     owner.pending=false
-    types_draw(resident,owner,entry,app,problems)
+    types_draw(resident,owner,entry,app.assets,app.renderer,&app.jobs,app.allocator,problems)
     // Its cells wait for the far forms of its types.
     for draw,i in work.types {
         if type_far(s.types[i]) && draw.count>0 && draw.kind<0 {
@@ -776,9 +777,9 @@ cell_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,held:^Resi
         if len(work.instances)==0 {return}
         handle:render.Batch_Handle
         for &b in held.batches {if b.type==t.id && b.part==part && b.role==role && b.handle!=0 {handle,b.handle=b.handle,0;break}}
-        next,error:=render.batch_set(app,id,handle,desc,work.instances[:])
+        next,error:=render.batch_set(app.renderer,id,handle,desc,work.instances[:])
         if error!="" {
-            if handle!=0 {render.batch_remove(app,handle)}
+            if handle!=0 {render.batch_remove(app.renderer,handle)}
             core.report(problems,owner.entity,"foliage.batch","the foliage of cell %v, type '%s', is not drawn: %s",coord,base.text_get(t.name[:]),error)
             return
         }
@@ -844,9 +845,9 @@ cell_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,held:^Resi
     }
     previous:=held.crown
     held.crown={}
-    cell_crown_publish(resident,owner,held,s,transform,id,app,problems)
+    cell_crown_publish(resident,owner,held,s,transform,id,app.assets,app.renderer,problems)
     // What the cell no longer shows goes.
-    for b in held.batches {if b.handle!=0 {render.batch_remove(app,b.handle)}}
+    for b in held.batches {if b.handle!=0 {render.batch_remove(app.renderer,b.handle)}}
     clear(&held.batches)
     append(&held.batches,..work.batches[:])
     crown_release(resident,previous)
@@ -882,10 +883,10 @@ foliage_release :: proc(resident:^Foliage_Resident,app:^host.App) {
 // made again with its batches. Called with the instances of the cell placed
 // and grouped (cell_publish).
 @(private)
-cell_crown_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,held:^Resident_Cell,s:^Source,transform:mm.Transform,id:core.World_Id,app:^host.App,problems:^core.Problems) {
+cell_crown_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,held:^Resident_Cell,s:^Source,transform:mm.Transform,id:core.World_Id,assets:^host.Assets,renderer:^render.Renderer,problems:^core.Problems) {
     work:=&resident.work
     held.crown={}
-    if !held.far || app.assets==nil {return}
+    if !held.far || assets==nil {return}
     clear(&work.crowns)
     if resize(&work.crowns,len(work.types))!=nil {
         memory_problem(problems,owner.entity,"the crown of a cell of this Foliage")
@@ -922,21 +923,21 @@ cell_crown_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,held
         }
         if !cell_crown_build(placed[:],work.crowns[:],&shape) {return}
         made:bool
-        crown,made=host.assets_mesh_generate(app.assets,geom.mesh_buffer_view(&shape),options={no_lods=true})
+        crown,made=host.assets_mesh_generate(assets,geom.mesh_buffer_view(&shape),options={no_lods=true})
         if !made {return}
         append(&resident.crowns,Shared_Crown{owner.source,held.coord,held.version,held.removed,crown,1})
     }
     held.crown=crown
-    desc,ok:=render.batch_desc(app.assets,{mesh=crown})
+    desc,ok:=render.batch_desc(assets,{mesh=crown})
     if !ok {return}
     desc.flags={.Casts_Shadow,.Rays_Only}
     desc.object_id=u64(owner.entity)
     handle:render.Batch_Handle
     for &b in held.batches {if b.role==ROLE_CELL_CROWN && b.handle!=0 {handle,b.handle=b.handle,0;break}}
     instance:=[1]render.Batch_Instance{render.batch_instance(transform.position,transform.rotation,transform.scale.x,transform.scale.y)}
-    next,error:=render.batch_set(app,id,handle,desc,instance[:])
+    next,error:=render.batch_set(renderer,id,handle,desc,instance[:])
     if error!="" {
-        if handle!=0 {render.batch_remove(app,handle)}
+        if handle!=0 {render.batch_remove(renderer,handle)}
         core.report(problems,owner.entity,"foliage.batch","the crown of foliage cell %v is not traced: %s",held.coord,error)
         return
     }

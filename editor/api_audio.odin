@@ -17,7 +17,7 @@ import "mirai:std/serial"
 
 // Whether the editor plays this asset to be heard now.
 sound_heard :: proc(s:^Session,id:base.Asset_Id) -> bool {
-    return s.heard_sound.sound==id && eaudio.playing(s.app,s.heard)
+    return s.heard_sound.sound==id && eaudio.playing(s.app.mixer,s.heard)
 }
 
 // Plays an asset to be heard, at its own volume and pitch on the master bus,
@@ -31,7 +31,7 @@ sound_hear :: proc(s:^Session,id:base.Asset_Id,volume:f32=1,pitch:f32=1) -> bool
 sound_hear_source :: proc(s:^Session,source:eaudio.Audio_Source) -> bool {
     sound_hear_stop(s)
     content_used(s,source.sound)
-    eaudio.buses_apply(s.app,core.world_storage_of(edited_world(s),eaudio.Audio_Settings),core.world_storage_of(edited_world(s),eaudio.Audio_Volumes))
+    eaudio.buses_apply(s.app.mixer,core.world_storage_of(edited_world(s),eaudio.Audio_Settings),core.world_storage_of(edited_world(s),eaudio.Audio_Volumes))
     s.heard=eaudio.play_source(s.app,{},source)
     if s.heard=={} {return false}
     s.heard_sound=source
@@ -45,12 +45,12 @@ sound_hear_tune :: proc(s:^Session,source:eaudio.Audio_Source) {
         sound_hear_source(s,source)
         return
     }
-    eaudio.source_tune(s.app,s.heard,source)
+    eaudio.source_tune(s.app.mixer,s.heard,source)
     s.heard_sound=source
 }
 
 sound_hear_stop :: proc(s:^Session) {
-    if s.heard!={} {eaudio.stop(s.app,s.heard)}
+    if s.heard!={} {eaudio.stop(s.app.mixer,s.heard)}
     s.heard,s.heard_sound={},{}
 }
 

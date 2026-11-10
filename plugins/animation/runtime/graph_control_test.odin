@@ -151,7 +151,7 @@ mirrored_graph_sources_and_rigs_swap_sides_and_reflect_root_motion :: proc(t:^te
         if !testing.expect(t,graph_check(profile)) {return}
         program_free(&state.program)
         output:=new(Program_Output);defer {program_output_free(output);mem.free(output)}
-        if !testing.expect(t,program_node(output,profile,0,nil,nil,nil) && output.groups[0].mirror==mirror) {return}
+        if !testing.expect(t,program_node(output,profile,0,nil,nil,nil,{}) && output.groups[0].mirror==mirror) {return}
         f.playback.frame+=1;state.seen=f.playback.frame;state.program.ready=true
         copy(state.local[:],state.rest[:])
         if !testing.expect(t,program_players(state,output,&f.content,animation,&events,&f.playback,.5,-1,nil) && program_pose(&f.playback,state,&f.content,animation,output,{})) {return}
@@ -172,7 +172,7 @@ mirrored_graph_sources_and_rigs_swap_sides_and_reflect_root_motion :: proc(t:^te
     plain_nodes:=program_test_graph();plain_nodes[0].mirror=true
     plain_profile:=Graph_Profile{info={animation={1,2}},nodes=plain_nodes[:]}
     output:=new(Program_Output);defer {program_output_free(output);mem.free(output)}
-    testing.expect(t,program_node(output,plain_profile,0,nil,nil,nil))
+    testing.expect(t,program_node(output,plain_profile,0,nil,nil,nil,{}))
     f.playback.frame+=1;plain.program.ready=true
     testing.expect(t,program_players(&plain,output,&content,ANIMATION_DEFAULT,&events,&f.playback,.1,-1,nil))
     testing.expect(t,!program_pose(&f.playback,&plain,&content,ANIMATION_DEFAULT,output,{}) && plain.program.error==.Unsupported_Mirror,"a rig without skeleton cannot mirror")

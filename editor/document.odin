@@ -583,7 +583,7 @@ document_opened :: proc(s:^Session) {
     if s.viewport.exposure_source==.Camera {s.viewport.exposure_source=.Scene}
     s.view_cut=true
     // Opened with another world on screen, what was kept of this one's light is not of this scene.
-    erender.world_light_forget(s.app,host.app_world_id(s.app,w.data))
+    erender.world_light_forget(s.app.renderer,host.app_world_id(s.app,w.data))
     document_source_stamp(s)
     // What Play will play compresses meanwhile.
     play_animations_load(s,wait=false)

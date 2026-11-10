@@ -104,7 +104,7 @@ grid_bake_wait :: proc(s:^editor.Session,user:rawptr) -> bool {
     app:=s.app
     sync:=host.app_world_storage(app,s.edit_world,vfx.Particle_Sync)
     if sync==nil {return false}
-    info,cells,taken:=vfx.grid_bake_take(sync,app,host.app_world_id(app,s.edit_world),context.temp_allocator)
+    info,cells,taken:=vfx.grid_bake_take(sync,app.renderer,host.app_world_id(app,s.edit_world),context.temp_allocator)
     if !taken {return true}
     wait.taken=true
     bytes,error:=gridfile.grid_bytes(&app.assets.types,{id=wait.id,info=info,cells=cells},context.temp_allocator)

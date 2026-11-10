@@ -448,7 +448,7 @@ api_status :: proc(s:^Session,call:^api.Call) {
     base.text_set(r.document[:],status_value.document)
     r.fps=s.app.stats.fps
     r.undo,r.redo=status_value.undo,status_value.redo
-    r.ticks_dropped,r.extras_dropped=app.stats.ticks_dropped,app.stats.extras_dropped
+    r.ticks_dropped,r.extras_dropped=app.stats.ticks_dropped,app.extras.dropped
     a:=api_of(s)
     functions_fill(s,st,r)
     r.cpu={

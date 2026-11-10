@@ -88,7 +88,7 @@ respawn :: proc(r:^Spawn_Requests,body:core.Entity,point:=core.NONE) {
 @(private)
 Apply :: struct {
     commands:core.Commands,
-    app:^host.App,
+    assets:^host.Assets,
     bodies:^core.Table(Seat_Body),
     seats:core.Read(input.Seat),
     points:core.Read(Spawn_Point),
@@ -117,12 +117,12 @@ spawn_seat_bodies :: proc(es:^core.Entities,hierarchy:core.Ref(core.Hierarchy),b
 // appear to their seats in the same tick.
 @(step="fixed",stage="input",after="input_seats",before="input_drive")
 spawn_step :: proc(
-    commands:core.Commands,app:^host.App,drivables:core.Read(input.Drivable),bodies:^core.Table(Seat_Body),
+    commands:core.Commands,assets:^host.Assets,drivables:core.Read(input.Drivable),bodies:^core.Table(Seat_Body),
     seats:core.Read(input.Seat),points:core.Read(Spawn_Point),placer:core.Placer,driving:^input.Seat_Requests,requests:^Spawn_Requests,spawning:^Spawning,
     settings:core.Ref(Spawn_Settings),network:core.Ref(core.Network),time:core.Time,origin:core.Ref(scene.Play_Origin),at_origin:^Spawned_At_Origin,problems:^core.Problems,
 ) {
     core.queue_clear(&at_origin.queue)
-    a:=Apply{commands=commands,app=app,bodies=bodies,seats=seats,points=points,placer=placer,driving=driving,spawning=spawning,at_origin=at_origin,problems=problems}
+    a:=Apply{commands=commands,assets=assets,bodies=bodies,seats=seats,points=points,placer=placer,driving=driving,spawning=spawning,at_origin=at_origin,problems=problems}
     if settings.ptr!=nil {a.settings=settings.ptr^}
     if origin.ptr!=nil {a.origin=origin.ptr^}
     client:=network.role==.Client
@@ -207,7 +207,7 @@ spawn_body :: proc(a:^Apply,r:Spawn_Request) -> bool {
     }
     placed:=mm.Transform{a.origin.position,a.origin.rotation,{1,1,1}}
     if point!=core.NONE && !asked {placed=spawn_place(a,point) or_return}
-    spawner:=scene.Spawner{a.commands,a.app,a.problems}
+    spawner:=scene.Spawner{a.commands,a.assets,a.problems}
     at:=core.Transform{placed.position,placed.rotation,{1,1,1}}
     root:=path[0]==0?scene.spawn(spawner,prefab,at,transient=true):scene.spawn(spawner,base.text_get(path[:]),at,transient=true)
     if root==core.NONE {return false}

@@ -8,6 +8,7 @@ import "mirai:host"
 import terrain "plugins:terrain/runtime"
 import "mirai:std/geom"
 import "mirai:ui"
+import "base:runtime"
 
 FIELD_WIDTH :: f32(84) // of the number fields of the panel: a value and its unit
 @(rodata) KEY_NAMES := [9]string{"1","2","3","4","5","6","7","8","9"}
@@ -32,7 +33,7 @@ terrain_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,
         if terrains!=nil && (selected_entity!=tool.selection || target==core.NONE) && core.has(core.read(terrains),selected_entity) {target=selected_entity}
         tool.selection=selected_entity
         if terrains!=nil && worlds!=nil && core.has(core.read(terrains),target) {
-            _=stroke_prepare(tool,app,core.read(terrains),core.read(worlds),editor.Pick{entity=target})
+            _=stroke_prepare(tool,app.assets,app.allocator,core.read(terrains),core.read(worlds),editor.Pick{entity=target})
         } else if tool.stroke.id!={} {stroke_free(tool)}
     }
     terrain_heightmap_dialogs(s,tool,world,app)
@@ -51,11 +52,11 @@ terrain_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,
             kind:=tool.stroke.source.kind
             ui.section(ctx,editor.entity_label(world,tool.stroke.entity),terrain_kind_name(kind),140)
             mode:=tool_mode_index(tool)
-            if ui.tabs(ctx,ui.id(ctx,"mode"),mode_names(kind),&mode) {mode_set(s,tool,world,app,mode)}
+            if ui.tabs(ctx,ui.id(ctx,"mode"),mode_names(kind),&mode) {mode_set(s,tool,world,app.assets,mode)}
             switch {
-            case tool_painting(tool): terrain_paint_panel(s,tool,world,app)
+            case tool_painting(tool): terrain_paint_panel(s,tool,world,app.assets)
             case tool_holing(tool):   terrain_holes_panel(s,tool)
-            case tool_shaping(tool):  terrain_shapes_panel(s,tool,world,app)
+            case tool_shaping(tool):  terrain_shapes_panel(s,tool,world,app.assets,app.allocator)
             case:                     terrain_sculpt_panel(s,tool,world,app)
             }
             // The entity of the terrain, as Details shows it, which the panel covers.
@@ -79,10 +80,10 @@ tool_mode_index :: proc "contextless" (tool:^Terrain_Tool) -> int {return tool_p
 // the number keys too. A ramp or a shape placed and not applied is applied:
 // the work of a drag does not go with a change of mode.
 @(private)
-mode_set :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App,mode:int) {
+mode_set :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets,mode:int) {
     if mode==tool_mode_index(tool) {return}
     stroke:=&tool.stroke
-    if stroke.active && stroke.pending.kind!=.None && !stroke.pending.placing {pending_apply(s,tool,world,app)}
+    if stroke.active && stroke.pending.kind!=.None && !stroke.pending.placing {pending_apply(s,tool,world,assets)}
     if stroke.active {stroke_cancel(tool)}
     kind:=stroke.source.kind
     switch mode {
@@ -146,7 +147,7 @@ terrain_sculpt_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.Wor
             a,b:=f64(p.a.y),f64(p.b.y)
             if ui.property(ctx,"Height A") {if ui.number_field(ctx,ui.id(ctx,"ramp_a"),&a,{width=ui.fixed(FIELD_WIDTH),speed=0.05,unit="m"}).changed {p.a.y=f32(a)}}
             if ui.property(ctx,"Height B") {if ui.number_field(ctx,ui.id(ctx,"ramp_b"),&b,{width=ui.fixed(FIELD_WIDTH),speed=0.05,unit="m"}).changed {p.b.y=f32(b)}}
-            pending_buttons(s,tool,world,app)
+            pending_buttons(s,tool,world,app.assets)
         }
     }
     if drag {
@@ -173,15 +174,15 @@ terrain_sculpt_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.Wor
             if ui.button(ctx,ui.id(ctx,"heightmap_export"),{label="Export",style=.Field,width=-1,center=true}).clicked {heightmap_dialog(s,tool,app,EXPORT_DIALOG)}
         }
         ui.section(ctx,"Size",fmt.tprintf("%.0f × %.0f m",f32(stroke.source.samples.x-1)*stroke.source.cell,f32(stroke.source.samples.z-1)*stroke.source.cell),140)
-        resize_fields(s,tool,world,app)
+        resize_fields(s,tool,world,app.assets)
         ui.section(ctx,"Convert","",80)
         depth:=f64(tool.solid_depth)
         if ui.property(ctx,"Base depth") {if ui.number_field(ctx,ui.id(ctx,"solid"),&depth,{width=ui.fixed(FIELD_WIDTH),min=0,max=10000,has_min=true,has_max=true,speed=0.1,unit="m"}).changed {tool.solid_depth=f32(depth)}}
-        if ui.button(ctx,ui.id(ctx,"convert"),{label=tool.solid_depth>0?"Convert to solid mesh":"Convert to open mesh",style=.Field,width=-1,center=true}).clicked {terrain_convert(s,tool,world,app)}
+        if ui.button(ctx,ui.id(ctx,"convert"),{label=tool.solid_depth>0?"Convert to solid mesh":"Convert to open mesh",style=.Field,width=-1,center=true}).clicked {terrain_convert(s,tool,world,app.assets,app.allocator)}
     }
     if kind==.Volume {
         ui.section(ctx,"Convert","",80)
-        if ui.button(ctx,ui.id(ctx,"convert"),{label="Convert to mesh",style=.Field,width=-1,center=true}).clicked {terrain_convert(s,tool,world,app)}
+        if ui.button(ctx,ui.id(ctx,"convert"),{label="Convert to mesh",style=.Field,width=-1,center=true}).clicked {terrain_convert(s,tool,world,app.assets,app.allocator)}
     }
 }
 
@@ -262,7 +263,7 @@ slope_fields :: proc(s:^editor.Session,tool:^Terrain_Tool) {
 }
 
 @(private)
-terrain_shapes_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App) {
+terrain_shapes_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator) {
     ctx:=s.gui.ctx
     stroke:=&tool.stroke
     count:=stroke.source.kind==.Mesh?len(Shape_Kind):len(Shape_Kind)-1
@@ -271,7 +272,7 @@ terrain_shapes_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.Wor
     mode:=tool.brush==.Subtract?1:0
     if ui.property(ctx,"Mode") {if ui.tabs(ctx,ui.id(ctx,"shape_mode"),{"Add","Carve"},&mode) {tool.brush=mode==1?.Subtract:.Union}}
     if tool.shape==.Selected {
-        if ui.button(ctx,ui.id(ctx,"operand"),{label="Apply and consume selected mesh",style=.Field,width=-1,center=true}).clicked {terrain_operand(s,tool,world,app)}
+        if ui.button(ctx,ui.id(ctx,"operand"),{label="Apply and consume selected mesh",style=.Field,width=-1,center=true}).clicked {terrain_operand(s,tool,world,assets,allocator)}
         return
     }
     brush_fields(s,tool,false,false)
@@ -279,14 +280,14 @@ terrain_shapes_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.Wor
         blend:=f64(tool.blend)
         if ui.property(ctx,"Blend") {if ui.number_field(ctx,ui.id(ctx,"blend"),&blend,{width=ui.fixed(FIELD_WIDTH),min=0,max=100,has_min=true,has_max=true,speed=0.02,unit="m"}).changed {tool.blend=f32(blend)}}
     }
-    if stroke.active && stroke.pending.kind==.Shape && !stroke.pending.placing {pending_buttons(s,tool,world,app)}
+    if stroke.active && stroke.pending.kind==.Shape && !stroke.pending.placing {pending_buttons(s,tool,world,assets)}
 }
 
 @(private)
-pending_buttons :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App) {
+pending_buttons :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets) {
     ctx:=s.gui.ctx
     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6}) {
-        if ui.button(ctx,ui.id(ctx,"apply"),{label="Apply",detail="Enter",style=.Accent,width=-1,center=true}).clicked {pending_apply(s,tool,world,app)}
+        if ui.button(ctx,ui.id(ctx,"apply"),{label="Apply",detail="Enter",style=.Accent,width=-1,center=true}).clicked {pending_apply(s,tool,world,assets)}
         if ui.button(ctx,ui.id(ctx,"cancel"),{label="Cancel",detail="Esc",style=.Field,width=-1,center=true}).clicked {stroke_cancel(tool)}
     }
 }

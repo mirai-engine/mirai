@@ -100,7 +100,7 @@ inventory_slot :: proc(inventory:^Dig_Inventory,material:base.Asset_Id) -> int {
 
 // What the player took, by material, while the scene has a site.
 @(step="ui")
-dig_hud :: proc(g:^gui.Gui,sites:core.Read(Dig_Site),inventory:core.Ref(Dig_Inventory),app:^host.App) {
+dig_hud :: proc(g:^gui.Gui,sites:core.Read(Dig_Site),inventory:core.Ref(Dig_Inventory),assets:^host.Assets) {
     ctx:=gui.gui_context(g)
     if ctx==nil || core.count(sites)==0 {return}
     panel:=hud_box(ctx,"dig.inventory",.Top_Left,.Top_Left,{12,12},ui.fixed(300),ui.fit(),{0,0,0,160},ui.padding_xy(12,8))
@@ -110,7 +110,7 @@ dig_hud :: proc(g:^gui.Gui,sites:core.Read(Dig_Site),inventory:core.Ref(Dig_Inve
         ui.label(ctx,"Dug",size=18)
         for i in 0..<inventory.count {
             name:[base.ASSET_ID_TEXT]u8
-            label:=app.assets!=nil?host.assets_name(app.assets,inventory.materials[i],&name):"Material"
+            label:=assets!=nil?host.assets_name(assets,inventory.materials[i],&name):"Material"
             line:=fmt.tprintf("%s  %.2f m3",label,inventory.cubic_metres[i])
             if inventory.drops[i]>0 {line=fmt.tprintf("%s   %d picked up",line,inventory.drops[i])}
             ui.label(ctx,line,size=13,color={225,225,230,255})

@@ -12,7 +12,7 @@ bench_arrival :: proc(t:^testing.T) {
     if !PHYSICS_BENCH {return}
     COUNT :: 8192
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     f.settings.bodies,f.settings.shapes=COUNT+8,COUNT+8
     for i in 0..<COUNT {_=physics_test_box(&f,{f32(i%64)*3,0,f32(i/64)*3},{1,0.1,1})}

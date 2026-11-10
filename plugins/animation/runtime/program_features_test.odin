@@ -27,7 +27,7 @@ program_feature_free :: proc(f:^Program_Feature_Fixture) {
 @(private)
 program_feature_sample :: proc(f:^Program_Feature_Fixture,nodes:[]Graph_Node,output:u16,dt:f32) -> bool {
     clear(&f.events.items)
-    return program_node(f.output,{info={animation={1,2},output=output},nodes=nodes},output,nil,nil,nil) && program_players(&f.state,f.output,&f.content,f.animation,&f.events,&f.playback,dt,-1,nil) && program_pose(&f.playback,&f.state,&f.content,f.animation,f.output,{})
+    return program_node(f.output,{info={animation={1,2},output=output},nodes=nodes},output,nil,nil,nil,{}) && program_players(&f.state,f.output,&f.content,f.animation,&f.events,&f.playback,dt,-1,nil) && program_pose(&f.playback,&f.state,&f.content,f.animation,f.output,{})
 }
 
 @(test)
@@ -95,14 +95,14 @@ weighted_graph_masks_keep_root_delta_consistent_with_the_masked_root_pose :: pro
     for _,i in nodes {compiled.plans[i],_=graph_plan(profile,i)}
     append(&graphs.contents,compiled)
     f.state.bound=1;f.state.program.kind=GRAPH_KIND;f.state.program.asset={1,2};f.state.program.revision=1
-    if !testing.expect(t,program_node(f.output,profile,3,nil,nil,nil) && program_masks_prepare(&f.state,f.output,&f.content,&graphs,&app)) {return}
+    if !testing.expect(t,program_node(f.output,profile,3,nil,nil,nil,{}) && program_masks_prepare(&f.state,f.output,&f.content,&graphs,app.assets,app.allocator)) {return}
     if !testing.expect(t,program_players(&f.state,f.output,&f.content,f.animation,&f.events,&f.playback,.5,-1,nil) && program_pose(&f.playback,&f.state,&f.content,f.animation,f.output,{})) {return}
     testing.expect(t,abs(f.state.local[1].position.x-.6875)<1e-5)
     testing.expect(t,abs(f.state.local[3].position.z-.5)<1e-5)
     testing.expect(t,abs(f.state.motion.translation.x-.6875)<1e-5)
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     app.allocator=runtime.nil_allocator()
-    stable:=program_masks_prepare(&f.state,f.output,&f.content,&graphs,&app) && program_players(&f.state,f.output,&f.content,f.animation,&f.events,&f.playback,0,-1,nil) && program_pose(&f.playback,&f.state,&f.content,f.animation,f.output,{})
+    stable:=program_masks_prepare(&f.state,f.output,&f.content,&graphs,app.assets,app.allocator) && program_players(&f.state,f.output,&f.content,f.animation,&f.events,&f.playback,0,-1,nil) && program_pose(&f.playback,&f.state,&f.content,f.animation,f.output,{})
     context=saved;testing.expect(t,stable)
 }
 
@@ -142,7 +142,7 @@ source_masks_blend_against_bind_pose_scale_root_motion_and_keep_property_curves 
     for _,i in nodes {compiled.plans[i],_=graph_plan(profile,i)}
     append(&graphs.contents,compiled)
     f.state.bound=1;f.state.program.kind=GRAPH_KIND;f.state.program.asset={1,2};f.state.program.revision=1
-    if !testing.expect(t,program_node(f.output,profile,1,nil,nil,nil) && program_masks_prepare(&f.state,f.output,&f.content,&graphs,&app)) {return}
+    if !testing.expect(t,program_node(f.output,profile,1,nil,nil,nil,{}) && program_masks_prepare(&f.state,f.output,&f.content,&graphs,app.assets,app.allocator)) {return}
     if !testing.expect(t,program_players(&f.state,f.output,&f.content,f.animation,&f.events,&f.playback,.5,-1,nil) && program_pose(&f.playback,&f.state,&f.content,f.animation,f.output,{})) {return}
     testing.expect_value(t,f.state.local[1].position,mm.Vec3{2.75,1.5,.75})
     testing.expect(t,abs(f.state.motion.translation.x-.5)<1e-5)
@@ -150,7 +150,7 @@ source_masks_blend_against_bind_pose_scale_root_motion_and_keep_property_curves 
     for curve in f.state.curves {if curve.target==base.name_hash("pulse") {testing.expect_value(t,curve.value.x,f32(6));testing.expect_value(t,curve.weight,f32(1));found=true}}
     testing.expect(t,found)
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator();app.allocator=runtime.nil_allocator()
-    stable:=program_masks_prepare(&f.state,f.output,&f.content,&graphs,&app) && program_players(&f.state,f.output,&f.content,f.animation,&f.events,&f.playback,0,-1,nil) && program_pose(&f.playback,&f.state,&f.content,f.animation,f.output,{})
+    stable:=program_masks_prepare(&f.state,f.output,&f.content,&graphs,app.assets,app.allocator) && program_players(&f.state,f.output,&f.content,f.animation,&f.events,&f.playback,0,-1,nil) && program_pose(&f.playback,&f.state,&f.content,f.animation,f.output,{})
     context=saved;testing.expect(t,stable)
     testing.expect_value(t,f.state.local[1].position,mm.Vec3{2.75,1.5,.75})
 }
@@ -196,7 +196,7 @@ switching_graph_assets_with_equal_revisions_refreshes_named_masks_without_rebind
     f.state.bound=1;f.animation.asset=ids[0]
     step :: proc(f:^Program_Feature_Fixture,app:^host.App,graphs:^Graph_Assets) -> bool {
         output,programmed,ok:=program_resolve(&f.state,f.animation,app,nil,graphs,.25,nil)
-        return ok && programmed && program_masks_prepare(&f.state,output,&f.content,graphs,app) && program_players(&f.state,output,&f.content,f.animation,&f.events,&f.playback,.25,-1,nil) && program_pose(&f.playback,&f.state,&f.content,f.animation,output,{})
+        return ok && programmed && program_masks_prepare(&f.state,output,&f.content,graphs,app.assets,app.allocator) && program_players(&f.state,output,&f.content,f.animation,&f.events,&f.playback,.25,-1,nil) && program_pose(&f.playback,&f.state,&f.content,f.animation,output,{})
     }
     if !testing.expect(t,step(&f,&app,&graphs)) {return}
     testing.expect_value(t,f.state.local[1].position.x,f32(.25));testing.expect_value(t,f.state.motion.translation.x,f32(.25))

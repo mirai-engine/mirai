@@ -54,7 +54,7 @@ Owed :: struct {
 
 @(step="fixed",loops="game",stage="react")
 terrain_debris :: proc(
-    commands:core.Commands,app:^host.App,digs:core.Ref(terrain.Terrain_Digs),debris:core.Read(Terrain_Debris),
+    commands:core.Commands,assets:^host.Assets,digs:core.Ref(terrain.Terrain_Digs),debris:core.Read(Terrain_Debris),
     owed:^Debris_Owed,bodies:^phys.Body_Requests,network:core.Network,time:core.Time,problems:^core.Problems,
 ) {
     if network.role==.Client || len(digs.digs.items)==0 {return}
@@ -77,13 +77,13 @@ terrain_debris :: proc(
             if layer.piece!={} {
                 for _ in 0..<debris_count(&o.pieces[i],taken,layer.piece_volume,&rooms[slot][0]) {
                     direction:=spread(&seed)
-                    root,ok:=debris_spawn(commands,app,layer.piece,dig.center+direction*dig.radius*0.2,problems)
+                    root,ok:=debris_spawn(commands,assets,layer.piece,dig.center+direction*dig.radius*0.2,problems)
                     if ok && config.speed>0 {phys.set_velocity(bodies,root,(direction+{0,1,0})*config.speed*0.5)}
                 }
             }
             if layer.drop!={} {
                 for _ in 0..<debris_count(&o.drops[i],taken,layer.drop_volume,&rooms[slot][1]) {
-                    debris_spawn(commands,app,layer.drop,dig.center+spread(&seed)*dig.radius*0.1,problems)
+                    debris_spawn(commands,assets,layer.drop,dig.center+spread(&seed)*dig.radius*0.1,problems)
                 }
             }
         }
@@ -133,9 +133,9 @@ spread :: proc "contextless" (seed:^u64) -> [3]f32 {
 }
 
 @(private)
-debris_spawn :: proc(commands:core.Commands,app:^host.App,prefab:base.Asset_Id,at:[3]f32,problems:^core.Problems) -> (root:core.Entity,ok:bool) {
+debris_spawn :: proc(commands:core.Commands,assets:^host.Assets,prefab:base.Asset_Id,at:[3]f32,problems:^core.Problems) -> (root:core.Entity,ok:bool) {
     transform:=core.TRANSFORM_IDENTITY
     transform.position=at
-    root=scene.spawn(scene.Spawner{commands,app,problems},prefab,transform)
+    root=scene.spawn(scene.Spawner{commands,assets,problems},prefab,transform)
     return root,root!=core.NONE
 }

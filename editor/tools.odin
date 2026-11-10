@@ -251,7 +251,7 @@ api_graphics_fill :: proc(s:^Session,result:^Graphics_Status,g:^erender.Graphics
     technique:=g.antialiasing
     base.text_set(result.antialiasing[:],base.text_get(technique[:]))
     option_labels:=GRAPHICS_OPTION_LABELS
-    offered:=erender.antialiasing_offered(s.app)
+    offered:=erender.antialiasing_offered(s.app.renderer)
     choices:=graphics_choices(g^,offered)
     at:=0
     for option in Graphics_Option {
@@ -320,7 +320,7 @@ selection_gizmo :: proc(s:^Session,app:^host.App,vertices:[]gpu.Debug_Vertex,$T:
         if !entity_alive(w,e) {continue}
         if value,ok:=entity_get(w,e,T);ok {draw(&lines,w,e,value)}
     }
-    if lines.count>0 {host.app_debug_lines_add(app,lines)}
+    if lines.count>0 {host.extras_debug_lines_add(&app.extras,lines)}
 }
 
 // The outline of a face of side 1 on the XY plane of placed, an ellipse or a

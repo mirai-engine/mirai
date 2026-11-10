@@ -178,7 +178,7 @@ hidden_ghosts_draw :: proc(s:^Session,w:core.World_Ref) {
         }
         host.assets_commit(a)
     }
-    for instance in v.ghosts {host.app_instance_add(s.app,instance)}
+    for instance in v.ghosts {host.extras_instance_add(&s.app.extras,instance)}
 }
 
 // The box an entity occupies in the world, drawn over the scene.
@@ -210,7 +210,7 @@ ghost_draw :: proc(s:^Session,w:core.World_Ref) {
         transform.position+=point
         if instance,ok:=erender.mesh_instance(s.app.assets,part.mesh,mm.transform_matrix(transform),part.tint,part.override);ok {
             instance.copy_owner,instance.copy_variant=0x706c6163656d656e,u64(i+1)
-            host.app_instance_add(s.app,instance)
+            host.extras_instance_add(&s.app.extras,instance)
         }
     }
     if len(p.parts)==0 {gpu.debug_circle(&v.lines,point,{0,1,0},GHOST_MARKER,GHOST_COLOR,32)}

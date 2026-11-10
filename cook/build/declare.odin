@@ -17,7 +17,7 @@ import "mirai:project"
 // rest declared foreign in the binary. Nothing of the engine is compiled again with what
 // uses it. A file is written only when its text changes: a declaration that
 // comes out the same leaves the stage and the declarations as they were, and
-// the halves of the engine follow each folder by itself.
+// the libraries of the engine follow each folder by itself.
 
 Declare_Desc :: struct {
     root:string,       // where the packages are
@@ -30,7 +30,7 @@ Declare_Desc :: struct {
 
 // What the call wrote: of each folder, whether any file was written, or
 // removed. The stage is what the library is compiled from; the declarations
-// are what the halves that compile against it read.
+// are what the libraries that compile against it read.
 @(private)
 Declare_Changed :: struct {
     stage,decl:bool,

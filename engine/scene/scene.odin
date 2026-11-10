@@ -100,7 +100,7 @@ Prefab_Source :: struct {
 @(params)
 Spawner :: struct {
     commands:core.Commands,
-    app:^host.App,
+    assets:^host.Assets,
     problems:^core.Problems,
 }
 
@@ -112,22 +112,22 @@ spawn :: proc{spawn_path,spawn_id}
 spawn_path :: proc(s:Spawner,path:string,at:core.Transform={},parent:=core.NONE,transient:=false) -> core.Entity {
     prefab:base.Asset_Id
     error:=Error.No_Assets
-    if s.app.assets!=nil {
+    if s.assets!=nil {
         error=.Not_Found
-        if named,found:=asset.registry_find_path(&s.app.assets.registry,path);found {prefab=named.id;error=.None}
+        if named,found:=asset.registry_find_path(&s.assets.registry,path);found {prefab=named.id;error=.None}
     }
     return spawn_report(s,{prefab=prefab,parent=parent,transform=at,transient=transient},path,error)
 }
 
 spawn_id :: proc(s:Spawner,prefab:base.Asset_Id,at:core.Transform={},parent:=core.NONE,transient:=false) -> core.Entity {
     name:[base.ASSET_ID_TEXT]u8
-    return spawn_report(s,{prefab=prefab,parent=parent,transform=at,transient=transient},host.assets_name(s.app.assets,prefab,&name),.None)
+    return spawn_report(s,{prefab=prefab,parent=parent,transform=at,transient=transient},host.assets_name(s.assets,prefab,&name),.None)
 }
 
 @(private)
 spawn_report :: proc(s:Spawner,order:Spawn,name:string,found:Error) -> core.Entity {
     report,error:=Report{},found
-    if error==.None {report,error=spawn_prefab(s.commands,s.app,order)}
+    if error==.None {report,error=spawn_prefab(s.commands,s.assets,order)}
     if error==.None {return report.root}
     fix:string
     #partial switch error {
@@ -250,15 +250,15 @@ propagate :: proc(w:core.World_Ref,app:^host.App) {
 // error: games and plugins call spawn. Its entities exist at once and their
 // rows wait for the end of the function: whoever spawned it reads and finishes
 // them with core.added.
-spawn_prefab :: proc(c:core.Commands,app:^host.App,s:Spawn) -> (report:Report,error:Error) {
-    if app.assets==nil {return {},.No_Assets}
-    file:=host.assets_scene(app.assets,s.prefab)
+spawn_prefab :: proc(c:core.Commands,assets:^host.Assets,s:Spawn) -> (report:Report,error:Error) {
+    if assets==nil {return {},.No_Assets}
+    file:=host.assets_scene(assets,s.prefab)
     if file==nil {return {},.Not_Found}
     if file.blob.header.kind!=asset.KIND_PREFAB {return {},.Not_A_Prefab}
     resolved:asset.Asset
     defer asset.asset_close(&resolved)
-    document:=current(assets_documents(app.assets),file,&resolved) or_return
-    report,error=instantiate(core.world_ref(c.data,c.info),document,&app.assets.types,{parent=s.parent,transient=s.transient,fresh=!s.transient})
+    document:=current(assets_documents(assets),file,&resolved) or_return
+    report,error=instantiate(core.world_ref(c.data,c.info),document,&assets.types,{parent=s.parent,transient=s.transient,fresh=!s.transient})
     if error!=.None {return}
     if root:=core.commands_added(c,report.root,core.Transform);root!=nil {
         root^=s.transform
@@ -273,14 +273,14 @@ spawn_prefab :: proc(c:core.Commands,app:^host.App,s:Spawn) -> (report:Report,er
 // of what hangs from it, as a root of the world without Ids (Spawn.transient):
 // what stands for it where its section is not loaded. salt is the Id of the
 // reference of the section.
-spawn_member :: proc(c:core.Commands,app:^host.App,section_scene:base.Asset_Id,salt,id:base.Entity_Id,transform:core.Transform) -> (report:Report,error:Error) {
-    if app.assets==nil {return {},.No_Assets}
-    file:=host.assets_scene(app.assets,section_scene)
+spawn_member :: proc(c:core.Commands,assets:^host.Assets,section_scene:base.Asset_Id,salt,id:base.Entity_Id,transform:core.Transform) -> (report:Report,error:Error) {
+    if assets==nil {return {},.No_Assets}
+    file:=host.assets_scene(assets,section_scene)
     if file==nil {return {},.Not_Found}
     resolved:asset.Asset
     defer asset.asset_close(&resolved)
-    document:=current(assets_documents(app.assets),file,&resolved) or_return
-    report,error=instantiate(core.world_ref(c.data,c.info),document,&app.assets.types,{transient=true,salt=salt,only=id})
+    document:=current(assets_documents(assets),file,&resolved) or_return
+    report,error=instantiate(core.world_ref(c.data,c.info),document,&assets.types,{transient=true,salt=salt,only=id})
     if error!=.None {return}
     if root:=core.commands_added(c,report.root,core.Transform);root!=nil {root^=transform}
     return
@@ -743,10 +743,10 @@ capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,des
 }
 
 // Captures the world and writes it to a file of the assets.
-save :: proc(w:core.World_Ref,app:^host.App,path:string,previous:^asset.Scene=nil,id:base.Asset_Id={}) -> (report:Report,error:Error) {
-    if app.assets==nil {return {},.No_Assets}
+save :: proc(w:core.World_Ref,assets:^host.Assets,path:string,previous:^asset.Scene=nil,id:base.Asset_Id={}) -> (report:Report,error:Error) {
+    if assets==nil {return {},.No_Assets}
     doc:asset.Scene
-    report,error=capture(w,&doc,&app.assets.types,{previous=previous,id=id})
+    report,error=capture(w,&doc,&assets.types,{previous=previous,id=id})
     if error!=.None {return}
     defer asset.scene_destroy(&doc)
     if asset.scene_save(&doc,path)!=.None {return report,.Write_Failed}

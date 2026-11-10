@@ -514,8 +514,8 @@ content_token_score :: proc(c:^Content,file:^asset.Registry_File,name,token:stri
     for i in 0..<len(name) {
         if name[i]=='_' && content_has_prefix_fold(name[i+1:],token) {return 3}
     }
-    if contains_fold(name,token) {return 2}
-    if contains_fold(content_folder_of(file.path),token) {return 1}
+    if base.contains_fold(name,token) {return 2}
+    if base.contains_fold(content_folder_of(file.path),token) {return 1}
     if content_clip_matches(c,file.id,token) {return 1}
     return -1
 }
@@ -539,7 +539,7 @@ content_score :: proc(c:^Content,file:^asset.Registry_File,filter:string) -> int
 content_clip_found :: proc(name,filter:string) -> bool {
     rest:=filter
     for token in strings.fields_iterator(&rest) {
-        if contains_fold(name,token) {return true}
+        if base.contains_fold(name,token) {return true}
     }
     return false
 }
@@ -759,7 +759,7 @@ content_unfold :: proc(c:^Content,id:base.Asset_Id) {
 content_clip_matches :: proc(c:^Content,library:base.Asset_Id,filter:string) -> bool {
     if filter=="" {return false}
     for clip,k in c.clips {
-        if clip.library==library && contains_fold(content_clip_name(c,k),filter) {return true}
+        if clip.library==library && base.contains_fold(content_clip_name(c,k),filter) {return true}
     }
     return false
 }

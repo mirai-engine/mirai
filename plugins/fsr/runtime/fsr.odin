@@ -96,26 +96,26 @@ FSR_RESOURCES :: [?]render.Render_Resource_Desc{
 @(step="render",loops="game editor",after="render_sync")
 fsr_render :: proc(state:^Fsr_Runtime,graphics:render.Graphics_Settings,settings:Fsr_Settings,app:^host.App) {
     if app.renderer==nil {return}
-    render.antialiasing_offer(app,FSR3_NAME,FSR3_LABEL)
+    render.antialiasing_offer(app.renderer,FSR3_NAME,FSR3_LABEL)
     technique:=graphics.antialiasing
     if base.text_get(technique[:])!=FSR3_NAME {return}
     shaders:=FSR_SHADERS
     for &pipeline,pass in state.pipelines {
-        pipeline=render.stage_pipeline(app,{stage=.Custom,shader=shaders[pass],name=shaders[pass]})
+        pipeline=render.stage_pipeline(app.renderer,{stage=.Custom,shader=shaders[pass],name=shaders[pass]})
         if pipeline==0 {return}
     }
     generate:=render.graphics_generates(graphics,app)
     if generate {
         shaders:=FG_SHADERS
         for &pipeline,pass in state.framegen {
-            pipeline=render.stage_pipeline(app,{stage=.Custom,shader=shaders[pass],name=shaders[pass]})
+            pipeline=render.stage_pipeline(app.renderer,{stage=.Custom,shader=shaders[pass],name=shaders[pass]})
             generate&&=pipeline!=0
         }
     }
     sharpness:=FSR_SHARPNESS
     state.sharpness=sharpness[settings.sharpness] if settings.sharpness<=max(Fsr_Sharpness) else 0
-    handle,_:=render.pipeline(app,fsr_pipeline(state,generate))
-    if handle!=0 {render.pipeline_main(app,handle)}
+    handle,_:=render.pipeline(app.renderer,fsr_pipeline(state,generate))
+    if handle!=0 {render.pipeline_main(app.renderer,handle)}
 }
 
 Use :: render.Render_Use

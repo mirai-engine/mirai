@@ -84,10 +84,10 @@ pool_of_no_capacity_holds_nothing :: proc(t:^testing.T) {
 }
 
 // An allocator that serves `remaining` requests of its owner and refuses the rest.
-@(private="file")
+@(private)
 Memory_Limit :: struct {owner:runtime.Allocator,remaining:int}
 
-@(private="file")
+@(private)
 memory_limit_proc :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment:int,old_memory:rawptr,old_size:int,loc:=#caller_location) -> ([]byte,runtime.Allocator_Error) {
     limit:=(^Memory_Limit)(data)
     if mode==.Alloc || mode==.Alloc_Non_Zeroed || mode==.Resize || mode==.Resize_Non_Zeroed {
@@ -104,13 +104,14 @@ memory_limit_proc :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment
 device_tables_without_memory_are_refused_and_keep_what_they_had :: proc(t:^testing.T) {
     limit:=Memory_Limit{owner=context.allocator,remaining=max(int)}
     limited:=runtime.Allocator{memory_limit_proc,&limit}
-    Table :: enum {Pool,Changes,Compact}
+    Table :: enum {Pool,Changes,Compact,Arena}
     for table in Table {
         pool:Pool(int)
         changes:Table_Changes
         for &copy in changes {copy=make([dynamic]u64,limited)}
         device:=new(Device)
         device.allocator=limited
+        arena:=Arena{allocator=limited}
         if table==.Changes {
             if !testing.expect(t,table_changes_reset(&changes,64)) {return}
             table_changed(&changes,5)
@@ -122,6 +123,8 @@ device_tables_without_memory_are_refused_and_keep_what_they_had :: proc(t:^testi
             case .Pool:    done=pool_init(&pool,8,limited)
             case .Changes: done=table_changes_reset(&changes,1<<16)
             case .Compact: done=compact_slot_take(device)>0
+            case .Arena:
+                if _,added:=arena_add(&arena,1<<16);added {_,_,done=arena_take(&arena,256,256)}
             }
             limit.remaining=max(int)
             if done {break}
@@ -133,6 +136,9 @@ device_tables_without_memory_are_refused_and_keep_what_they_had :: proc(t:^testi
                 for copy in changes {testing.expectf(t,copy[0]==1<<5,"a copy lost the entry it had not taken with %d requests served",served)}
             case .Compact:
                 testing.expectf(t,device.compact_free==nil,"the free slots stay unmade with %d requests served",served)
+            case .Arena:
+                _,used:=arena_bytes(&arena)
+                testing.expectf(t,used==0,"an arena refused with %d requests served gave no range",served)
             }
         }
         testing.expectf(t,done && refused,"%v: refused without memory, and with it it goes through",table)
@@ -142,6 +148,7 @@ device_tables_without_memory_are_refused_and_keep_what_they_had :: proc(t:^testi
         pool_destroy(&pool,limited)
         table_changes_destroy(&changes)
         delete(device.compact_free)
+        arena_destroy(&arena)
         free(device)
     }
 }

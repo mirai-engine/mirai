@@ -55,15 +55,15 @@ Work_Slot :: struct {
 // the job system its jobs run on: none for a single thread, where each runs
 // when it is made.
 @(private)
-work_ready :: proc(data:^Terrain_Data,app:^host.App) -> bool {
-    workers:=jobs.worker_count(&app.jobs)
-    data.jobs=workers>1?&app.jobs:nil
+work_ready :: proc(data:^Terrain_Data,job_system:^jobs.Job_System,allocator:runtime.Allocator) -> bool {
+    workers:=jobs.worker_count(job_system)
+    data.jobs=workers>1?job_system:nil
     if len(data.work)>0 {return true}
-    slots,error:=make([]Work_Slot,clamp(2*workers,WORK_SLOTS_MIN,WORK_SLOTS_MAX),app.allocator)
+    slots,error:=make([]Work_Slot,clamp(2*workers,WORK_SLOTS_MIN,WORK_SLOTS_MAX),allocator)
     if error!=nil {return false}
     for &slot in slots {
-        chunk_mesh_init(&slot.mesh,app.allocator);slot.allocator=app.allocator
-        for i in 0..<4 {slot.border.sides[i]=make([dynamic]u8,app.allocator);slot.border.corners[i]=make([dynamic]u8,app.allocator)}
+        chunk_mesh_init(&slot.mesh,allocator);slot.allocator=allocator
+        for i in 0..<4 {slot.border.sides[i]=make([dynamic]u8,allocator);slot.border.corners[i]=make([dynamic]u8,allocator)}
     }
     data.work=slots
     return true

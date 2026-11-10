@@ -8,7 +8,7 @@ import "mirai:core"
 @(test)
 a_body_turned_off_stops_and_comes_back_with_its_velocity :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     box:=physics_test_box(&f,{0,10,0},{0.5,0.5,0.5},RIGID_BODY_DYNAMIC)
     core.add(&f.bodies,box,core.Motion{linear={0,0,-3}}) // the fixture has no gravity

@@ -69,7 +69,7 @@ timing_input :: proc(world,shared,editor,application:rawptr) {
     ref:=core.world_ref(w,sh.info)
     core.queue_clear(&sh.events.received)
     s.now=sh.now
-    client_commands(s,ref,app,wire.host_poll(&s.host),&sh.events)
+    client_commands(s,ref,app.assets,app.allocator,wire.host_poll(&s.host),&sh.events)
     client_reconcile(s,ref,app,w.frame.dt)
     client_clock(s,ref,app)
 }
@@ -89,7 +89,7 @@ timing_fixed :: proc(world,shared,editor,application:rawptr) {
         net_test_settle(w,nil,nil)
         outbox:Net_Outbox
         adoptions:Net_Adoptions
-        net_tick_tail(ref,app,sh.session,&outbox,&adoptions,sh.session.problems)
+        net_tick_tail(ref,sh.session,&outbox,&adoptions,sh.session.problems)
         core.value_free(&outbox,type_info_of(Net_Outbox))
         core.value_free(&adoptions,type_info_of(Net_Adoptions))
         net_test_settle(w,nil,nil)
@@ -187,7 +187,7 @@ timing_frame_run :: proc(x:^Timing,dt:f32) {
         server_commands(s,core.world_ref(server,&x.info),nil,wire.host_poll(&s.host),&x.server_events,&server.remote)
         for row in 0..<core.count(&server.transforms) {core.at(&server.transforms,row).position.x+=x.speed}
         net_test_settle(server,nil,nil)
-        server_publish(s,core.world_ref(server,&x.info),&x.apps[0],&x.outbox,x.server_tick)
+        server_publish(s,core.world_ref(server,&x.info),&x.outbox,x.server_tick)
     }
     wire.host_update(&x.sessions[1].host,now)
     x.platform.fixed_dt=dt

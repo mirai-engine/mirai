@@ -381,7 +381,8 @@ test_build :: proc(root,path,folder,executable,optimization:string,flags:[]strin
 
 // Whether the executable there was built from this key and from sources that
 // did not change since: those of the engine, of the project of the package
-// and of the package itself when it lies outside them.
+// and of the package itself when it lies outside them, with the test files
+// of every package it imports.
 @(private="file")
 test_current :: proc(root,folder,executable,sources,stamp,key:string) -> bool {
     saved,error:=os.read_entire_file(stamp,context.temp_allocator)
@@ -391,7 +392,7 @@ test_current :: proc(root,folder,executable,sources,stamp,key:string) -> bool {
     if owner:=project_of(folder);owner!="" && !path_inside(owner,root) {append(&roots,owner)}
     if !path_inside(folder,root) {append(&roots,folder)}
     for top in roots {
-        newer,known:=build.sources_newer(sources,executable,top,tests=folder)
+        newer,known:=build.sources_newer(sources,executable,top,tests=true)
         if !known || newer {return false}
     }
     return true

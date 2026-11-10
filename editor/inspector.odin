@@ -267,7 +267,7 @@ fields_match :: proc(info:^runtime.Type_Info,needle:string) -> bool {
         }
         label:=readable(v.names[i])
         if custom,found:=core.field_option(tag,"label");found && custom!="" {label=custom}
-        if contains_fold(label,needle) {return true}
+        if base.contains_fold(label,needle) {return true}
     }
     return false
 }
@@ -428,7 +428,7 @@ inspector_build :: proc(s:^Session,w:core.World_Ref,width,max_height:f32) {
         needle:=inspector_needle(ins)
         if single && review==nil {ai_review_entity_bar(s,w,active,width-16)}
         inner:=width-16
-        if needle=="" || contains_fold("Transform Position Rotation Scale",needle) {
+        if needle=="" || base.contains_fold("Transform Position Rotation Scale",needle) {
             card(s)
             _,transform:=core.world_table(w,core.Transform)
             description:=transform.description if transform!=nil else ""
@@ -438,7 +438,7 @@ inspector_build :: proc(s:^Session,w:core.World_Ref,width,max_height:f32) {
             }
             if menu {value_menu_open(s,{kind=.Transform},"Transform")}
         }
-        if single && (needle=="" || contains_fold("Hierarchy Parent Children",needle)) {hierarchy_section(s,w,active,inner)}
+        if single && (needle=="" || base.contains_fold("Hierarchy Parent Children",needle)) {hierarchy_section(s,w,active,inner)}
         for pass in 0..<2 {
             for &t,index in w.info.tables {
                 if t.place!=.World || !inspector_visible(s,&t) || inspector_primary(&t)!=(pass==0) {continue}
@@ -455,7 +455,7 @@ inspector_build :: proc(s:^Session,w:core.World_Ref,width,max_height:f32) {
                 append(&entities,active)
                 c:=Inspect{s=s,w=w,t=&t,index=index,table=table,entities=entities[:],name=t.name,type=t.type,value=cast([^]u8)core.raw_find(table,t.info,active),size=t.info.size}
                 // A card whose title the search finds shows whole; another, the fields it finds.
-                if needle!="" && !contains_fold(readable(t.name),needle) {
+                if needle!="" && !base.contains_fold(readable(t.name),needle) {
                     if !fields_match(t.info,needle) {continue}
                     c.needle=needle
                 }
@@ -981,7 +981,7 @@ fields_rows :: proc(c:^Inspect,info:^runtime.Type_Info,origin:uintptr,depth:int,
             if v.names[i]=="rotation" {label="Rot"}
         }
         if prefix!="" {label=fmt.tprintf("%s %s",prefix,strings.to_lower(label,context.temp_allocator))}
-        if depth==0 && c.needle!="" && !contains_fold(label,c.needle) {continue}
+        if depth==0 && c.needle!="" && !base.contains_fold(label,c.needle) {continue}
         if title,found:=core.field_option(tag,"section");found && title!="" && depth==0 && !c.sections {
             if banded {fold_band_end(c.s);banded=false}
             folded=false
@@ -2432,7 +2432,7 @@ list_build :: proc(s:^Session,w:core.World_Ref) {
             if t.place!=.World || !inspector_visible(s,&t) {continue}
             if core.raw_find(core.world_table_at(w,&t),t.info,active)!=nil {continue}
             label:=readable(t.name)
-            if !contains_fold(label,filter) {continue}
+            if !base.contains_fold(label,filter) {continue}
             append(&choices,label)
             append(&tables,index)
         }
@@ -2441,7 +2441,7 @@ list_build :: proc(s:^Session,w:core.World_Ref) {
             for shape in erender.Shape {
                 if shape==.None {continue}
                 label:=fmt.tprint(shape)
-                if !contains_fold(label,filter) {continue}
+                if !base.contains_fold(label,filter) {continue}
                 append(&choices,label);append(&ids,base.Asset_Id{});append(&shapes,shape)
             }
         } else {
@@ -2453,7 +2453,7 @@ list_build :: proc(s:^Session,w:core.World_Ref) {
             // The parts of imports, which the browser hides, after the rest.
             parts:=make([dynamic]^asset.Registry_File,context.temp_allocator)
             for &file in a.registry.files {
-                if file.state!=.Asset || !asset_kind_takes(l.kinds,file.kind) || !asset.registry_listed(&file) || !contains_fold(file.path,filter) {continue}
+                if file.state!=.Asset || !asset_kind_takes(l.kinds,file.kind) || !asset.registry_listed(&file) || !base.contains_fold(file.path,filter) {continue}
                 if l.path>0 && (len(file.path)>=l.path || !asset_under_root(&a.registry,file.path)) {continue}
                 if l.with && !slice.contains(ins.list_with[:],file.id) {continue}
                 if content_part(&a.registry,&file) {

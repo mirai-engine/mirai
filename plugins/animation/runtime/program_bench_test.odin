@@ -45,7 +45,7 @@ program_bench_step :: proc(state:^Playing,playback:^Playback,content:^host.Conte
     output,programmed,ok:=program_resolve(state,animation,app,blends,graphs,1.0/60)
     if !ok {return false}
     if programmed {
-        if !program_masks_prepare(state,output,content,graphs,app) {return false}
+        if !program_masks_prepare(state,output,content,graphs,app.assets,app.allocator) {return false}
         if !program_players(state,output,content,animation,events,playback,1.0/60,-1,nil) {return false}
         if !program_pose(playback,state,content,animation,output,{}) {return false}
         layers_advance(playback,state,content,animation,events,1.0/60,nil)

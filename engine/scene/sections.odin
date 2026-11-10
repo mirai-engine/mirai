@@ -134,7 +134,7 @@ scene_sections :: proc(
                 continue
             }
             scene:=job.root
-            if _,error:=section_load_end(job,world,e);error!=.None {section_failed(world,app,references,e,scene,error,problems)}
+            if _,error:=section_load_end(job,world,e);error!=.None {section_failed(world,app.assets,references,e,scene,error,problems)}
         }
         for &l in loads.far {
             if l.job==nil || !load_step(l.job) {continue}
@@ -172,7 +172,7 @@ scene_sections :: proc(
             if free<0 {break}
             job,error:=section_load_begin(app,world,e)
             if error!=.None {
-                section_failed(world,app,references,e,reference.scene,error,problems)
+                section_failed(world,app.assets,references,e,reference.scene,error,problems)
                 break
             }
             // With libraries to wait for, it joins once what they prepare of it is ready.
@@ -217,13 +217,13 @@ scene_sections :: proc(
 // A section that did not load says why, and is not tried again until it is
 // asked again; one whose scene is inside itself names the scenes around it.
 @(private)
-section_failed :: proc(w:core.World_Ref,app:^host.App,references:^core.Table(Scene_Reference),e:core.Entity,scene:base.Asset_Id,error:Error,problems:^core.Problems) {
+section_failed :: proc(w:core.World_Ref,assets:^host.Assets,references:^core.Table(Scene_Reference),e:core.Entity,scene:base.Asset_Id,error:Error,problems:^core.Problems) {
     if reference:=core.get(references,e);reference!=nil {reference.failed=scene}
     if error==.Cycle {
         path:=make([dynamic]base.Asset_Id,context.temp_allocator)
         append(&path,..section_path(w,e))
         append(&path,scene)
-        core.report(problems,e,"scene.section","the section did not load: its scene is inside itself (%s); take out the reference that closes the loop, or move what both share to a scene of its own",path_text(app,path[:]))
+        core.report(problems,e,"scene.section","the section did not load: its scene is inside itself (%s); take out the reference that closes the loop, or move what both share to a scene of its own",path_text(assets,path[:]))
         return
     }
     core.report(problems,e,"scene.section","the section did not load: %s; %s",error_text(error),load_fix(error))

@@ -303,11 +303,11 @@ brush_make :: proc(tool:^Terrain_Tool,kind:terrain.Brush_Kind,point,normal:[3]f3
 // The number keys choose a brush of the mode and with Shift the mode, [ and ]
 // change the radius.
 @(private)
-terrain_keys :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App,input:core.Input) {
+terrain_keys :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets,input:core.Input) {
     ctx:=s.gui.ctx
     if ctx.edit.id!=0 || s.gui.modal!=.None || ctx.popup.count!=0 {return}
     if ctx.input.modifiers=={.Shift} {
-        for key,index in BRUSH_KEYS[:3] {if core.key_pressed(input,key) {mode_set(s,tool,world,app,index)}}
+        for key,index in BRUSH_KEYS[:3] {if core.key_pressed(input,key) {mode_set(s,tool,world,assets,index)}}
         return
     }
     if ctx.input.modifiers!={} {return}

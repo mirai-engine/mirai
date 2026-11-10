@@ -11,13 +11,6 @@ import "mirai:std/base"
 import "mirai:std/serial"
 
 @(private="file")
-test_folder :: proc(t:^testing.T) -> string {
-    folder,error:=os.make_directory_temp("","mirai-project-*",context.temp_allocator)
-    testing.expect(t,error==nil)
-    return path_absolute(folder,context.temp_allocator)
-}
-
-@(private="file")
 test_write :: proc(t:^testing.T,parts:..string,text:="") {
     file:=path(..parts,allocator=context.temp_allocator)
     directory:=file[:strings.last_index_byte(file,'/')]
@@ -89,8 +82,7 @@ a_project_manifest_round_trips_as_json :: proc(t:^testing.T) {
 
 @(test)
 the_size_of_a_png_is_read_from_its_header :: proc(t:^testing.T) {
-    folder:=test_folder(t)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"project")
     header:=[24]u8{0x89,'P','N','G',0x0d,0x0a,0x1a,0x0a,0,0,0,13,'I','H','D','R',0,0,0,200,0,0,0,100}
     file:=path(folder,"icon.png",allocator=context.temp_allocator)
     testing.expect(t,os.write_entire_file(file,header[:])==nil)
@@ -125,8 +117,7 @@ a_plugin_manifest_round_trips_as_json :: proc(t:^testing.T) {
 
 @(test)
 an_installed_engine_is_told_by_its_manifest :: proc(t:^testing.T) {
-    installed:=test_folder(t)
-    defer os.remove_all(installed)
+    installed:=base.test_folder(t,"project")
     testing.expect(t,!engine_installed(installed) && !engine_root_is(installed))
     m:Engine_Manifest
     base.text_set(m.version[:],ENGINE_VERSION)
@@ -142,8 +133,7 @@ an_installed_engine_is_told_by_its_manifest :: proc(t:^testing.T) {
     testing.expect_value(t,engine_root_find(installed,context.temp_allocator),installed)
 
     // A checkout is told by its sources; one without them is no engine.
-    checkout:=test_folder(t)
-    defer os.remove_all(checkout)
+    checkout:=base.test_folder(t,"project")
     test_write(t,checkout,"AGENTS.md")
     testing.expect(t,!engine_root_is(checkout))
     testing.expect(t,os.make_directory_all(path(checkout,"tools/mirai",allocator=context.temp_allocator))==nil)
@@ -272,8 +262,7 @@ a_plugin_states_the_engines_it_works_with_as_a_range :: proc(t:^testing.T) {
 
 @(test)
 manifests_are_written_to_and_read_from_files :: proc(t:^testing.T) {
-    folder:=test_folder(t)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"project")
     file:=path(folder,PROJECT_FILE,allocator=context.temp_allocator)
     _,error:=manifest_read(file)
     testing.expect_value(t,error.code,Error_Code.Not_Found)
@@ -394,8 +383,7 @@ paths_of_git_bash_name_the_drive_on_windows :: proc(t:^testing.T) {
 
 @(test)
 a_project_finds_its_plugins_and_orders_them_by_dependency :: proc(t:^testing.T) {
-    root:=test_folder(t)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"project")
     plugins:=folder_path(root,.Plugins,context.temp_allocator)
     test_plugin(t,plugins,"water",{"terrain","noise"})
     test_plugin(t,plugins,"terrain",{"noise"},{.Runtime,.Editor,.Shaders,.Assets})
@@ -433,10 +421,8 @@ a_project_finds_its_plugins_and_orders_them_by_dependency :: proc(t:^testing.T) 
 
 @(test)
 a_first_party_plugin_of_the_engine_is_found :: proc(t:^testing.T) {
-    root:=test_folder(t)
-    defer os.remove_all(root)
-    engine:=test_folder(t)
-    defer os.remove_all(engine)
+    root:=base.test_folder(t,"project")
+    engine:=base.test_folder(t,"project")
     test_plugin(t,folder_path(engine,.Plugins,context.temp_allocator),"terrain")
     test_plugin(t,folder_path(engine,.Plugins,context.temp_allocator),"idle")
     test_plugin(t,folder_path(root,.Plugins,context.temp_allocator),"rivers",{"terrain"})
@@ -469,8 +455,7 @@ a_first_party_plugin_of_the_engine_is_found :: proc(t:^testing.T) {
 
 @(test)
 plugins_that_cannot_be_ordered_or_found_are_errors :: proc(t:^testing.T) {
-    root:=test_folder(t)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"project")
     plugins:=folder_path(root,.Plugins,context.temp_allocator)
     _,error:=open(root)
     testing.expect_value(t,error.code,Error_Code.Not_Found)
@@ -510,8 +495,7 @@ plugins_that_cannot_be_ordered_or_found_are_errors :: proc(t:^testing.T) {
 // does not name one.
 @(test)
 an_automatic_plugin_joins_when_its_dependencies_are_active :: proc(t:^testing.T) {
-    root:=test_folder(t)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"project")
     plugins:=folder_path(root,.Plugins,context.temp_allocator)
     test_plugin(t,plugins,"simulation")
     test_plugin(t,plugins,"network")
@@ -550,8 +534,7 @@ an_automatic_plugin_joins_when_its_dependencies_are_active :: proc(t:^testing.T)
 
 @(test)
 a_plugin_folder_has_to_match_its_manifest :: proc(t:^testing.T) {
-    root:=test_folder(t)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"project")
     plugins:=folder_path(root,.Plugins,context.temp_allocator)
     test_project(t,root)
 
@@ -587,8 +570,7 @@ a_plugin_folder_has_to_match_its_manifest :: proc(t:^testing.T) {
 
 @(test)
 a_file_where_the_plugins_folder_goes_is_a_project_without_plugins :: proc(t:^testing.T) {
-    root:=test_folder(t)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"project")
     test_project(t,root)
     test_write(t,root,"plugins",text="not a folder")
     p,error:=open(root)
@@ -599,10 +581,8 @@ a_file_where_the_plugins_folder_goes_is_a_project_without_plugins :: proc(t:^tes
 
 @(test)
 a_plugin_of_the_project_brings_its_companions :: proc(t:^testing.T) {
-    root:=test_folder(t)
-    defer os.remove_all(root)
-    engine:=test_folder(t)
-    defer os.remove_all(engine)
+    root:=base.test_folder(t,"project")
+    engine:=base.test_folder(t,"project")
     plugins:=folder_path(root,.Plugins,context.temp_allocator)
     companions:=path(plugins,"unreal",PLUGIN_COMPANIONS,allocator=context.temp_allocator)
     test_plugin(t,folder_path(engine,.Plugins,context.temp_allocator),"terrain")

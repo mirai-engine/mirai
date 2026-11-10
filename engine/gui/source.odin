@@ -100,21 +100,21 @@ source_prompts :: proc(user:rawptr,action:u64,family:ui.Prompt_Family,out:[]ui.P
     found,named:=action_named(src.gui,src.app.info,action)
     if !named {return 0}
     count:=prompts_of(src.bindings,found,family,src.gamepad,out)
-    for &prompt in out[:count] {prompt=prompt_shown(src.app,&src.gui.settings,src.pack,prompt)}
+    for &prompt in out[:count] {prompt=prompt_shown(src.app.assets,src.app.renderer,&src.gui.settings,src.pack,prompt)}
     return count
 }
 
 // A prompt with its image: the one the settings give its input, or else that
 // of the pack (UI_Settings.prompts); without either it is drawn.
-prompt_shown :: proc(app:^host.App,settings:^UI_Settings,pack:^host.Content_Prompts,prompt:ui.Prompt) -> ui.Prompt {
+prompt_shown :: proc(assets:^host.Assets,renderer:^render.Renderer,settings:^UI_Settings,pack:^host.Content_Prompts,prompt:ui.Prompt) -> ui.Prompt {
     prompt:=prompt
-    if at:=prompt_image_find(settings,prompt.family,prompt.input,prompt.text);at>=0 && app.assets!=nil && app.renderer!=nil {
-        if texture:=host.assets_texture_image(app.assets,settings.prompt_images[at].texture);texture!=nil && texture.height>0 {
-            prompt.quad,prompt.aspect=image_quad(app,texture.handle),f32(texture.width)/f32(texture.height)
+    if at:=prompt_image_find(settings,prompt.family,prompt.input,prompt.text);at>=0 && assets!=nil && renderer!=nil {
+        if texture:=host.assets_texture_image(assets,settings.prompt_images[at].texture);texture!=nil && texture.height>0 {
+            prompt.quad,prompt.aspect=image_quad(renderer,texture.handle),f32(texture.width)/f32(texture.height)
             return prompt
         }
     }
-    if found,ok:=host.prompts_find(pack,app.assets,prompt.family,prompt.input,prompt.text);ok {return found}
+    if found,ok:=host.prompts_find(pack,assets,prompt.family,prompt.input,prompt.text);ok {return found}
     return prompt
 }
 
@@ -228,12 +228,12 @@ source_texture :: proc(user:rawptr,id:base.Asset_Id) -> ui.Quad {
     if app.assets==nil || app.renderer==nil {return {}}
     texture:=host.assets_texture_image(app.assets,id)
     if texture==nil {return {}}
-    return image_quad(app,texture.handle)
+    return image_quad(app.renderer,texture.handle)
 }
 
 @(private)
-image_quad :: proc(app:^host.App,texture:render.Texture_Handle) -> ui.Quad {
-    index:=gpu.ui_image(app.renderer,texture)
+image_quad :: proc(renderer:^render.Renderer,texture:render.Texture_Handle) -> ui.Quad {
+    index:=gpu.ui_image(renderer,texture)
     if index==0 {return {}}
     return ui.quad_whole(.Image,index&~gpu.UI_MATERIAL_IMAGE_BIT)
 }
@@ -254,13 +254,13 @@ source_view :: proc(user:rawptr,camera:base.Entity,size:[2]f32) -> ui.Quad {
     }
     // Another size of a camera not drawn yet in this frame takes its texture.
     if at>=0 && gui.views_shown[at].size!=pixels {
-        render.view_texture_remove(app,gui.views_shown[at].texture)
+        render.view_texture_remove(app.renderer,gui.views_shown[at].texture)
         unordered_remove(&gui.views_shown,at)
         at=-1
     }
     if at<0 {
         if len(gui.views_shown)>=VIEW_CAPACITY {return {}}
-        texture,added:=render.view_texture_add(app,pixels.x,pixels.y,"ui view")
+        texture,added:=render.view_texture_add(app.renderer,pixels.x,pixels.y,"ui view")
         if !added {return {}}
         append(&gui.views_shown,View_Texture{camera=camera,size=pixels,texture=texture})
         at=len(gui.views_shown)-1
@@ -272,17 +272,17 @@ source_view :: proc(user:rawptr,camera:base.Entity,size:[2]f32) -> ui.Quad {
         found.drawn=gui.frame
         render.view_of_camera(&found.view,src.cameras,src.exposures,src.worlds,camera,{f32(pixels.x),f32(pixels.y)})
         render.view_volume_expose(&found.view,src.view_volumes,src.volumes,src.worlds)
-        render.view_texture_draw(app,found.texture,found.view,pixels.x,pixels.y,found.view.cut)
+        render.view_texture_draw(&app.extras,found.texture,found.view,pixels.x,pixels.y,found.view.cut)
     }
-    return image_quad(app,found.texture)
+    return image_quad(app.renderer,found.texture)
 }
 
 // The cameras no interface showed this frame let go of their textures.
 @(private)
-views_sweep :: proc(gui:^Gui,app:^host.App) {
+views_sweep :: proc(gui:^Gui,renderer:^render.Renderer) {
     #reverse for view,i in gui.views_shown {
         if view.drawn==gui.frame {continue}
-        render.view_texture_remove(app,view.texture)
+        render.view_texture_remove(renderer,view.texture)
         unordered_remove(&gui.views_shown,i)
     }
 }
@@ -306,13 +306,13 @@ source_particles :: proc(user:rawptr,id:ui.Id,effect:base.Asset_Id,size:[2]f32) 
         } else if shown.key==key {at=i}
     }
     if at>=0 && gui.particles[at].size!=pixels {
-        render.ui_texture_remove(app,gui.particles[at].texture)
+        render.ui_texture_remove(app.renderer,gui.particles[at].texture)
         gui.particles[at]={}
         free,at=at,-1
     }
     if at<0 {
         if free<0 {return {}}
-        texture,added:=render.ui_texture_add(app,pixels.x,pixels.y,"ui particles",effects=true)
+        texture,added:=render.ui_texture_add(app.renderer,pixels.x,pixels.y,"ui particles",effects=true)
         if !added {return {}}
         gui.particles[free]={key=key,size=pixels,texture=texture}
         at=free
@@ -327,17 +327,17 @@ source_particles :: proc(user:rawptr,id:ui.Id,effect:base.Asset_Id,size:[2]f32) 
             position={0,0,2*PARTICLE_VIEW_METERS},forward=mm.FORWARD,up={0,1,0},fov_y=60,near=0.01,far=8*PARTICLE_VIEW_METERS,
             projection=.Orthographic,height=PARTICLE_VIEW_METERS,
         }
-        host.app_effect_view_add(app,{texture=shown.texture,camera=camera})
+        host.extras_effect_view_add(&app.extras,{texture=shown.texture,camera=camera})
     }
-    return image_quad(app,shown.texture)
+    return image_quad(app.renderer,shown.texture)
 }
 
 // The particle effects no interface showed this frame let go of their textures.
 @(private)
-particles_sweep :: proc(gui:^Gui,app:^host.App) {
+particles_sweep :: proc(gui:^Gui,renderer:^render.Renderer) {
     for &shown in gui.particles {
         if shown.texture==0 || shown.drawn==gui.frame {continue}
-        render.ui_texture_remove(app,shown.texture)
+        render.ui_texture_remove(renderer,shown.texture)
         shown={}
     }
 }

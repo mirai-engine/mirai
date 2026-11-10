@@ -87,7 +87,7 @@ end_init :: proc(f:^End,name:string,role:core.Network_Role) -> bool {
 
 @(private="file")
 end_destroy :: proc(f:^End) {
-    destruct.cache_destroy(&f.app,&f.cache);jobs.system_destroy(&f.app.jobs);destruct.fracture_state_destroy(&f.fractures);phys.state_destroy(&f.physics);host.assets_destroy(&f.assets)
+    destruct.cache_destroy(f.app.assets,&f.app.jobs,&f.cache);jobs.system_destroy(&f.app.jobs);destruct.fracture_state_destroy(&f.fractures);phys.state_destroy(&f.physics);host.assets_destroy(&f.assets)
     core.table_destroy(&f.configs);core.table_destroy(&f.colliders);core.table_destroy(&f.states);core.table_destroy(&f.groups)
     core.table_destroy(&f.transforms);core.table_destroy(&f.parents);core.table_destroy(&f.meshes);core.table_destroy(&f.tints)
     core.table_destroy(&f.elsewhere);core.table_destroy(&f.ids);core.table_destroy(&f.objects);core.entities_destroy(&f.entities)
@@ -113,7 +113,7 @@ end_tick :: proc(f:^End,resimulating:=false) {
     f.tick+=1
     time:=core.Time{dt=1.0/60,playing=true,tick=f.tick,resimulating=resimulating}
     destruct_net_follow(core.ref(&f.authority),&f.net,time,&f.requests,core.ref(&f.fractures),core.read(&f.configs),core.read(&f.states),core.read(&f.ids),core.ref(&f.root))
-    destruct.destruct_step(&f.physics,&f.fractures,core.ref(&f.settings),&f.cache,&f.requests,&f.events,core.ref(&f.authority),&f.app,time,core.commands(f,&f.info),
+    destruct.destruct_step(&f.physics,&f.fractures,core.ref(&f.settings),&f.cache,&f.requests,&f.events,core.ref(&f.authority),f.app.assets,&f.app.jobs,time,core.commands(f,&f.info),
         core.read(&f.configs),&f.meshes,&f.tints,core.read(&f.parents),&f.states,&f.groups,&f.elsewhere,&f.transforms,&f.ids,core.read(&f.colliders),{},&f.problems)
     end_settle(f)
     destruct_net_send(core.ref(&f.authority),&f.net,time,&f.outbox,&f.adoptions,core.ref(&f.session),core.ref(&f.connections),core.ref(&f.events),core.ref(&f.physics),core.ref(&f.fractures),core.commands(f,&f.info),

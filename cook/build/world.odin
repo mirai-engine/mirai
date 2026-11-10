@@ -62,25 +62,10 @@ Type :: struct {
     name:string,
     pkg:^Package,
     kind:Kind,
-    description:string,
+    using declared:core.Declared,
     fields:[dynamic]core.Field_Description, // a component: the comments on the lines of its fields
-    shared,host,by_world:bool,
-    single:bool, // a component the world uses one of at a time: its table keeps one row on
-    far:bool,    // a component that draws a far form of its own: its entity stays when its section unloads
-    replication:core.Replication,
-    queue,events:bool, // a storage of requests that many push and one library takes; of what one library reports and the others read
-    keep:bool,         // a storage of the World that survives clearing it: the state of the run, not of its entities
-    persist:bool,      // a keep storage that the save library writes to the profile of the player and reads back
-    presentation:bool, // what comes back from the GPU: it decides nothing a rollback runs again, so no function of fixed reads it
-    reset:string,      // procedure that gives a storage of the World its start when the World is cleared
-    setting:core.Setting_Kind,
     locks:[dynamic]string, // keys, resolved later
-    copy:string,
-    copy_kept:string, // procedure of the copy a history keeps, which copy_changed makes; copy otherwise
-    swap:string,
-    free:string, // procedure that releases what the storage holds; core.value_free otherwise
     field:string,
-    place:core.Place,
     lock_id:int,
     file:^ast.File,   // where it is declared
     value:^ast.Expr,  // its struct
@@ -108,13 +93,39 @@ Message :: struct {
 }
 
 @(private="file")
-Param_Kind :: enum u8 {Table_Write,Table_Read,Storage_Write,Storage_Ref,Storage_Value,Entities,Entities_Read,Commands,World_Ref,App,Records}
+Param_Kind :: enum u8 {Table_Write,Table_Read,Storage_Write,Storage_Ref,Storage_Value,Entities,Entities_Read,Commands,World_Ref,App,App_Part,Records}
+
+// What host.App holds that a step receives by itself, bound by the type that
+// names it: the call hands out what the application owns.
+@(private="file")
+App_Part :: struct {
+    key:string,   // the type as a file names it: import path and name
+    form:string,  // how a step receives it
+    value:string, // in the generated call, from app
+}
+
+@(private="file")
+APP_PARTS :: [?]App_Part{
+    {"mirai:host.Assets","^host.Assets","app.assets"},
+    {"mirai:host.Frame_Extras","^host.Frame_Extras","&app.extras"},
+    {"mirai:render.Renderer","^render.Renderer","app.renderer"},
+    {"mirai:engine/render.Renderer","^render.Renderer","app.renderer"},
+    {"mirai:audio.Mixer","^audio.Mixer","app.mixer"},
+    {"mirai:engine/audio.Mixer","^audio.Mixer","app.mixer"},
+    {"mirai:std/jobs.Job_System","^jobs.Job_System","&app.jobs"},
+    {"base:runtime.Allocator","runtime.Allocator","app.allocator"},
+    {"core:mem.Allocator","mem.Allocator","app.allocator"},
+}
+
+@(private="file")
+PARAM_FORMS :: "^core.Table(T), core.Read(T), ^S, core.Ref(S), S, ^core.Entities, core.Ref(core.Entities), core.Commands, core.World_Ref, a part of the application (^host.Assets, ^host.Frame_Extras, ^render.Renderer, ^audio.Mixer, ^jobs.Job_System, runtime.Allocator) or ^host.App"
 
 @(private="file")
 Param :: struct {
     kind:Param_Kind,
     type:^Type,
     record:^Record_Type, // Records
+    part:int,            // App_Part: its index in APP_PARTS
     actions:^Action_Enum, // the enum of the generic @(params) it is a field of
     bundle:^Bundle, // the @(params) the step receives it in; nil when it receives it by itself
     name:string,    // of the field in the bundle, or of the parameter
@@ -501,24 +512,18 @@ package_read :: proc(g:^Generator,pkg:^Package) {
             t.file,t.value=file,decl.values[0]
             t.key=fmt.aprintf("%s.%s",pkg.path,name)
             t.kind=is_component?.Component:.Storage
-            _,t.shared=options["shared"]
-            _,t.host=options["host"]
-            _,t.by_world=options["by_world"]
-            if replicated,has:=options["replicated"];has {
-                switch replicated {
-                case "":       t.replication=.All
-                case "owner":  t.replication=.Owner
-                case "others": t.replication=.Others
-                case:
-                    append(&g.errors,fmt.aprintf("%s: %s has replicated=%q: write @(component,replicated) for every end that has the entity, replicated=\"owner\" for its owner or replicated=\"others\" for the rest",pkg.folder,name,replicated))
-                    continue
-                }
-                if !is_component {
-                    append(&g.errors,fmt.aprintf("%s: %s is a storage and says replicated: the network replicates components of entities; make it a @(component,replicated), or send it as a @(net_message)",pkg.folder,name))
-                    continue
-                }
+            switch core.declared_read(&t.declared,options,pkg.editor) {
+            case "replicated":
+                append(&g.errors,fmt.aprintf("%s: %s has replicated=%q: write @(component,replicated) for every end that has the entity, replicated=\"owner\" for its owner or replicated=\"others\" for the rest",pkg.folder,name,options["replicated"]))
+                continue
+            case "setting":
+                append(&g.errors,fmt.aprintf("%s: %s has setting=%q, which is not a kind of setting: write @(storage,setting) for a setting of the project or @(storage,setting=\"machine\") for a preference of whoever uses the engine on this machine",pkg.folder,name,options["setting"]))
+                continue
             }
-            _,t.single=options["single"]
+            if t.replication!=.None && !is_component {
+                append(&g.errors,fmt.aprintf("%s: %s is a storage and says replicated: the network replicates components of entities; make it a @(component,replicated), or send it as a @(net_message)",pkg.folder,name))
+                continue
+            }
             if _,scene:=options["scene"];scene {
                 append(&g.errors,fmt.aprintf("%s: %s says scene: a setting of the scene is a component on an entity of the root scene, which saves, replicates and changes while the game runs; make it a @(component), with single if the world uses one at a time",pkg.folder,name))
                 continue
@@ -527,40 +532,16 @@ package_read :: proc(g:^Generator,pkg:^Package) {
                 append(&g.errors,fmt.aprintf("%s: %s says single, which is of a component the world uses one of at a time: write @(component,single)",pkg.folder,name))
                 continue
             }
-            _,t.far=options["far"]
             if t.far && !is_component {
                 append(&g.errors,fmt.aprintf("%s: %s says far, which is of a component whose entity draws a far form of its own and stays when its section unloads: write @(component,far)",pkg.folder,name))
                 continue
             }
-            _,t.queue=options["queue"]
-            _,t.events=options["events"]
             if (t.queue || t.events) && (t.kind!=.Storage || t.queue && t.events) {
                 append(&g.errors,fmt.aprintf("%s: %s says queue or events: a storage of requests is @(storage,queue), one of what a library reports is @(storage,events), and none is both",pkg.folder,name))
                 continue
             }
-            if kind,is_setting:=options["setting"];is_setting {
-                switch kind {
-                case "":        t.setting=.Project
-                case "machine": t.setting=.Machine
-                case:
-                    append(&g.errors,fmt.aprintf("%s: %s has setting=%q, which is not a kind of setting: write @(storage,setting) for a setting of the project or @(storage,setting=\"machine\") for a preference of whoever uses the engine on this machine",pkg.folder,name,kind))
-                    continue
-                }
-            }
-            t.copy=options["copy"] or_else ""
-            t.copy_kept=options["copy_kept"] or_else ""
-            t.swap=options["swap"] or_else ""
-            t.free=options["free"] or_else ""
-            _,t.keep=options["keep"]
-            _,t.persist=options["persist"]
-            _,t.presentation=options["presentation"]
-            t.reset=options["reset"] or_else ""
-            t.description=options["description"] or_else ""
             if t.kind==.Component {field_comments(&t.fields,decl.values[0])}
-            if locks,has_locks:=options["locks"];has_locks {
-                for lock in strings.fields(locks) {append(&t.locks,qualified(g,file,pkg,lock))}
-            }
-            t.place=pkg.editor?.Editor:(t.host?.Shared:.World)
+            for lock in strings.fields(t.lock_names) {append(&t.locks,qualified(g,file,pkg,lock))}
             if t.setting!=.None && (t.kind!=.Storage || t.place==.Editor) {
                 append(&g.errors,fmt.aprintf("%s: %s is a setting: mark it @(storage,setting) or @(storage,setting=\"machine\") in a library",pkg.folder,name))
                 continue
@@ -577,7 +558,6 @@ package_read :: proc(g:^Generator,pkg:^Package) {
                 append(&g.errors,fmt.aprintf("%s: %s says copy_kept, the copy of a storage of the World that a history keeps: write it on a @(storage) of a library that is copied",pkg.folder,name))
                 continue
             }
-            if t.persist {t.keep=true}
             if (t.keep || t.reset!="") && (t.kind!=.Storage || t.place!=.World) {
                 append(&g.errors,fmt.aprintf("%s: %s says keep or reset, which are of a storage of the World: clearing a World resets its storages, and the others have no World to follow",pkg.folder,name))
                 continue
@@ -898,7 +878,11 @@ bundles_settle :: proc(g:^Generator) {
             param,ok:=param_read(g,b.file,b.pkg,field.type)
             for n in field.names {
                 if !ok {
-                    append(&g.errors,fmt.aprintf("%s: the field %s of %s is %s: no table, storage or service of the engine has that type. A @(params) struct holds parameters of steps: ^core.Table(T), core.Read(T), ^S, core.Ref(S), S, ^core.Entities, core.Ref(core.Entities), core.Commands, core.World_Ref or ^host.App",b.where_,ident_name(n),b.name,expr_text(b.file,field.type)))
+                    if param.kind==.App_Part {
+                        append(&g.errors,part_error(b.where_,fmt.tprintf("the field %s of %s",ident_name(n),b.name),expr_text(b.file,field.type),param))
+                    } else {
+                        append(&g.errors,fmt.aprintf("%s: the field %s of %s is %s: no table, storage or service of the engine has that type. A @(params) struct holds parameters of steps: %s",b.where_,ident_name(n),b.name,expr_text(b.file,field.type),PARAM_FORMS))
+                    }
                     b.valid=false
                     continue
                 }
@@ -1082,7 +1066,11 @@ steps_read :: proc(g:^Generator,pkg:^Package) {
                     param,ok:=param_read(g,file,pkg,field.type)
                     for n in field.names {
                         if !ok {
-                            append(&g.errors,fmt.aprintf("%s: the parameter %s of %s is %s: no table, storage or service of the engine has that type. Mark the type with @(component) or @(storage), receive ^core.Table(T), core.Read(T), ^S, core.Ref(S), S, ^core.Entities, core.Ref(core.Entities), core.Commands, core.World_Ref or ^host.App, or a struct marked @(params) whose fields are those",where_,ident_name(n),name,expr_text(file,field.type)))
+                            if param.kind==.App_Part {
+                                append(&g.errors,part_error(where_,fmt.tprintf("the parameter %s of %s",ident_name(n),name),expr_text(file,field.type),param))
+                            } else {
+                                append(&g.errors,fmt.aprintf("%s: the parameter %s of %s is %s: no table, storage or service of the engine has that type. Mark the type with @(component) or @(storage), receive %s, or a struct marked @(params) whose fields are those",where_,ident_name(n),name,expr_text(file,field.type),PARAM_FORMS))
+                            }
                             arg+=1
                             continue
                         }
@@ -1132,9 +1120,20 @@ param_read :: proc(g:^Generator,file:^ast.File,pkg:^Package,expr:^ast.Expr) -> (
     case "mirai:core.World_Ref": return {kind=.World_Ref,type=nil},!pointer
     case "mirai:host.App": return {kind=.App,type=nil},pointer
     }
+    for part,index in APP_PARTS {
+        if part.key==key {return {kind=.App_Part,part=index},pointer==(part.form[0]=='^')}
+    }
     t,found:=g.by_key[key]
     if !found || t.kind!=.Storage {return}
     return {kind=pointer?.Storage_Write:.Storage_Value,type=t},true
+}
+
+// A part of the application asked for in a form it is not handed out in.
+@(private="file")
+part_error :: proc(where_,what,written:string,param:Param) -> string {
+    parts:=APP_PARTS
+    form:=parts[param.part].form
+    return fmt.aprintf("%s: %s is %s, and the application hands that part out as %s: receive %s",where_,what,written,form,form)
 }
 
 @(private="file")
@@ -1745,6 +1744,9 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
             case .Commands: fmt.sbprintf(&args,"%s.commands(w,app.info)",core_alias)
             case .World_Ref: fmt.sbprintf(&args,"%s.world_ref(w,app.info)",core_alias)
             case .App: fmt.sbprint(&args,"app")
+            case .App_Part:
+                parts:=APP_PARTS
+                fmt.sbprint(&args,parts[param.part].value)
             case .Records:
                 index,_:=slice.linear_search(g.records[:],param.record)
                 fmt.sbprintf(&args,"%s.Records(%s.%s){{%s.app_record_set(app,%d)}}",core_alias,param.record.pkg.alias,param.record.name,host_alias,index)
@@ -1998,8 +2000,8 @@ value_free_call :: proc(t:^Type,core_alias,pointer:string) -> string {
 // What a component row or a storage starts as: <NAME>_DEFAULT or <name>_default() of its package.
 @(private="file")
 default_value :: proc(t:^Type) -> (value:string,found:bool) {
-    constant:=fmt.aprintf("%s_DEFAULT",strings.to_upper(snake(t.name),context.temp_allocator))
-    maker:=fmt.aprintf("%s_default",snake(t.name))
+    buffer:[512]u8
+    constant,maker,_:=core.default_names(t.name,buffer[:])
     switch {
     case t.pkg.names[constant]: return fmt.aprintf("%s.%s",t.pkg.alias,constant),true
     case t.pkg.names[maker]:    return fmt.aprintf("%s.%s()",t.pkg.alias,maker),true
@@ -2016,12 +2018,12 @@ record_default :: proc(r:^Record_Type) -> (value:string,found:bool) {
 // The default of a storage on a GPU: <name>_for_device(device:rhi.Device_Info) of its package; "" without one.
 @(private="file")
 for_device_value :: proc(t:^Type) -> string {
-    maker:=fmt.tprintf("%s_for_device",snake(t.name))
+    buffer:[512]u8
+    _,_,maker:=core.default_names(t.name,buffer[:])
     return t.pkg.names[maker]?fmt.aprintf("%s.%s",t.pkg.alias,maker):""
 }
 
 // The options of the attributes of a declaration: name, or name="value", or name=number.
-@(private="file")
 attributes_read :: proc(attributes:[]^ast.Attribute) -> map[string]string {
     options:=make(map[string]string,context.temp_allocator)
     for attribute in attributes {
@@ -2143,17 +2145,6 @@ expr_text :: proc(file:^ast.File,expr:^ast.Expr) -> string {
 
 @(private="file")
 snake :: proc(name:string) -> string {
-    b:=strings.builder_make()
-    for c,i in name {
-        if c>='A' && c<='Z' {
-            // A capital after a capital is in the same word: UI_Settings is ui_settings.
-            if i>0 && name[i-1]!='_' && !(name[i-1]>='A' && name[i-1]<='Z') {strings.write_byte(&b,'_')}
-            strings.write_rune(&b,c+('a'-'A'))
-        } else {
-            strings.write_rune(&b,c)
-        }
-    }
-    text:=strings.to_string(b)
-    text,_=strings.replace_all(text,"__","_")
-    return text
+    buffer:[256]u8
+    return strings.clone(core.snake_name(name,buffer[:]))
 }

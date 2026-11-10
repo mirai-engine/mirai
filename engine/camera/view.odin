@@ -266,7 +266,7 @@ camera_local_views :: proc(
         render.view_of_camera(view,cameras,exposures,worlds,seen.camera,{f32(rects[slot].z),f32(rects[slot].w)},seen.blending?&seen.pose:nil,seen.cut)
         look:=render.view_volume_at(view_volumes,volumes,worlds,view.position)
         if !view.exposure.own {view.exposure=render.view_exposure_of(look)}
-        render.view_postprocess_sync(app,slot,look.layers,&views.effects[slot])
+        render.view_postprocess_sync(app.assets,app.renderer,slot,look.layers,&views.effects[slot])
         view.own,view.slot=u8(slot+1),u8(slot+1)
         view.fade,view.focus=seen.fade,seen.pose.focus
     }

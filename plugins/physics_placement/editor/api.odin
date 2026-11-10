@@ -73,7 +73,7 @@ placement_api_run :: proc(s:^editor.Session,call:^api.Call,tool:^Physics_Placeme
             return
         }
         measured:bool
-        if bounds[at],measured=placement_box(s.app,mesh);!measured {
+        if bounds[at],measured=placement_box(s.app.assets,mesh);!measured {
             api.call_failf(call,api.INVALID_PARAMS,"drops[%d]: %s has no geometry to measure; give a static .mesh asset or a shape other than None",at,drop.mesh!={}?"the mesh":"the shape")
             return
         }

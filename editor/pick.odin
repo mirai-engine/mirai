@@ -258,7 +258,7 @@ pick_ray :: proc(s:^Session,w:core.World_Ref,ray:mm.Ray,reach:f32=PICK_REACH,gho
     }
     if batches {
         if id:=core.world_storage_of(w,core.World_Id);id!=nil {
-            if met,found:=erender.batch_ray(s.app,id^,ray.origin,ray.direction,nearest);found && met.distance<nearest {
+            if met,found:=erender.batch_ray(s.app.renderer,id^,ray.origin,ray.direction,nearest);found && met.distance<nearest {
                 e:=core.Entity(met.object_id)
                 if entity_alive(w,e) {
                     hit={entity=entity_author(w,e),distance=met.distance,position=ray.origin+ray.direction*met.distance,normal=met.normal,batch=met.handle,instance=met.instance}

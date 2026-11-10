@@ -206,7 +206,7 @@ ai_scene_draw :: proc(s:^Session,w:core.World_Ref) {
     for &task,index in m.tasks[:m.task_count] {
         if !ai_scene_figure_shown(s,w,&task) {continue}
         task.figure_shown=true
-        if ai_scene_figure_prepare(s,&task,&state.figures[index]) {host.app_instance_add(s.app,state.figures[index].instance)}
+        if ai_scene_figure_prepare(s,&task,&state.figures[index]) {host.extras_instance_add(&s.app.extras,state.figures[index].instance)}
         if rect,ok:=ai_scene_screen(s,w,&task);ok {
             color:=ai_agent_color(&task)
             presence_icon_draw(s,rect,ai_agent_icon(&task),color)
@@ -247,5 +247,5 @@ ai_scene_ghosts :: proc(s:^Session,w:core.World_Ref,state:^Ai_Scene) {
         // A mesh still loading is asked for again the next frame.
         state.ghost_key=complete?key:0
     }
-    for instance in state.ghosts[:state.ghost_count] {host.app_instance_add(s.app,instance)}
+    for instance in state.ghosts[:state.ghost_count] {host.extras_instance_add(&s.app.extras,instance)}
 }

@@ -57,7 +57,7 @@ preview_trace_sources_close :: proc(trace:^Preview_Trace) {
     trace.source_count,trace.source_generation=0,0
 }
 @(private)
-preview_trace_sources_prepare :: proc(call:^api.Call,trace:^Preview_Trace,cache:^anim.Source_Assets,state:^anim.Playing,content:^host.Content_Animation,app:^host.App) -> bool {
+preview_trace_sources_prepare :: proc(call:^api.Call,trace:^Preview_Trace,cache:^anim.Source_Assets,state:^anim.Playing,content:^host.Content_Animation,assets:^host.Assets) -> bool {
     ids:=anim.source_ids(cache,state)
     if content==nil || len(ids)==0 || trace.source_generation==content.generation {return true}
     preview_trace_sources_close(trace)
@@ -68,8 +68,8 @@ preview_trace_sources_prepare :: proc(call:^api.Call,trace:^Preview_Trace,cache:
         if found {continue}
         if trace.source_count>=len(trace.sources) {authoring_failure(call,"trace.sources","Capacity","at most 64 animation sources","too many sources","The preview metadata exceeds its source capacity",api.SERVER_ERROR);return false}
         source:=&trace.sources[trace.source_count]
-        error:=host.assets_file(app.assets,id,asset.KIND_ANIMATION,&source.file)
-        if error==.None {source.view,error=asset.animation_view(&source.file,&app.assets.types)}
+        error:=host.assets_file(assets,id,asset.KIND_ANIMATION,&source.file)
+        if error==.None {source.view,error=asset.animation_view(&source.file,&assets.types)}
         if error!=.None {asset.asset_close(&source.file);authoring_failure(call,"trace.sources","Invalid_Asset","readable animation source metadata","source load failed","The preview could not read its animation source metadata",api.SERVER_ERROR);return false}
         source.id=id;trace.source_count+=1
     }
@@ -145,7 +145,7 @@ preview_trace_frame :: proc(call:^api.Call,trace:^Preview_Trace,world:core.World
     state:^anim.Playing;for &value in playback.states {if value.entity==entity {state=&value;break}}
     if state==nil {return true}
     description,_:=editor.entity_get(world,entity,anim.Animation);sources:=core.world_storage_of(core.world_ref(app.shared,world.info,.Shared),anim.Source_Assets);content:=anim.animation_playing_content(sources,app,state)
-    if !preview_trace_sources_prepare(call,trace,sources,state,content,app) {return false}
+    if !preview_trace_sources_prepare(call,trace,sources,state,content,app.assets) {return false}
     saved:=call.out;call.out=&trace.writer;defer {call.out=saved}
     start:=trace.writer.count
     if trace.shown>0 {serial.write_u8(call.out,',')}

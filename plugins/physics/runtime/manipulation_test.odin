@@ -2,122 +2,36 @@ package physics
 
 import "core:testing"
 import "mirai:core"
-import "mirai:host"
-import render "mirai:engine/render"
-import volume "mirai:engine/volume"
 import sim "plugins:physics/runtime/sim"
 import mm "mirai:std/math"
 
 @(private)
+Physics_Test_World :: struct {
+    using world:core.Test_World,
+    using physics:Test_Physics,
+}
+
+@(private)
 Physics_Test :: struct {
-    entities:core.Entities,
-    gravity:[3]f32, // of its world: none unless a test gives it, or fields does
-    fields:^Physics_Test_Fields,
-    rigids:core.Table(Rigid_Body),
-    colliders:core.Table(Collider),
-    characters:core.Table(Character),
-    moves:core.Table(Character_Move),
-    joints:core.Table(Joint),
-    statics:core.Table(render.Mesh_Renderer),
-    parents:core.Table(core.Parent),
-    hierarchy:core.Hierarchy,
-    whole:bool, // physics_step gets no hierarchy: every sync goes through every body
-    names:core.Table(core.Name),
-    transforms:core.Table(core.Transform),
-    bodies:core.Table(core.Motion),
-    replicas:core.Table(core.Pose_Target),
-    character_states:core.Table(Character_State),
-    joint_states:core.Table(Joint_State),
-    volumes:core.Table(Fluid_Volume),
-    state:Physics_State,
-    settings:Physics_Settings,
-    collision:Collision_Settings,
-    sync_check:core.Sync_Check,
-    simulation_hash:core.Simulation_Hash,
-    requests:Body_Requests,
-    joint_requests:Joint_Requests,
-    events:Physics_Events,
-    meshes:Collider_Meshes,
-    app:host.App,
-    problems:core.Problems,
+    using w:Physics_Test_World,
+    using host:Test_Physics_Host,
 }
 
 @(private)
-physics_test_init :: proc(f:^Physics_Test) {
-    core.entities_init(&f.entities)
-    core.table_init(&f.rigids,"Rigid_Body")
-    core.table_init(&f.colliders,"Collider")
-    core.table_init(&f.characters,"Character")
-    core.table_init(&f.moves,"Character_Move")
-    core.table_init(&f.joints,"Joint")
-    core.table_init(&f.statics,"Mesh_Renderer")
-    core.table_init(&f.parents,"Parent")
-    core.table_init(&f.names,"Name")
-    core.table_init(&f.transforms,"Transform")
-    core.table_init(&f.bodies,"Motion")
-    core.table_init(&f.replicas,"Replica")
-    core.table_init(&f.character_states,"Character_State")
-    core.table_init(&f.joint_states,"Joint_State")
-    core.table_init(&f.volumes,"Fluid_Volume")
+physics_test_init :: proc(t:^testing.T,f:^Physics_Test) -> bool {
+    if !core.test_world_init(t,&f.w,test_types) {return false}
     f.settings={bodies=32,shapes=32,contacts=128,joints=8,characters=2}
-    f.collision=COLLISION_SETTINGS_DEFAULT
-}
-
-// The Gravity of a test, with its own World_Transform: the bodies of the
-// test have none.
-@(private)
-Physics_Test_Fields :: struct {
-    gravities:core.Table(volume.Gravity),
-    volumes:core.Table(volume.Volume),
-    worlds:core.Table(core.World_Transform),
+    return true
 }
 
 @(private)
 physics_test_destroy :: proc(f:^Physics_Test) {
-    state_destroy(&f.state)
-    collider_meshes_destroy(&f.meshes)
-    core.table_destroy(&f.rigids)
-    core.table_destroy(&f.colliders)
-    core.table_destroy(&f.characters)
-    core.table_destroy(&f.moves)
-    core.table_destroy(&f.joints)
-    core.table_destroy(&f.statics)
-    core.table_destroy(&f.parents)
-    core.value_free(&f.hierarchy,type_info_of(core.Hierarchy))
-    core.table_destroy(&f.names)
-    core.table_destroy(&f.transforms)
-    core.table_destroy(&f.bodies)
-    core.table_destroy(&f.replicas)
-    core.table_destroy(&f.character_states)
-    core.table_destroy(&f.joint_states)
-    core.table_destroy(&f.volumes)
-    core.entities_destroy(&f.entities)
-    delete(f.requests.queue.items)
-    delete(f.joint_requests.queue.items)
-    delete(f.events.contact_begin.items);delete(f.events.contact_end.items)
-    delete(f.events.overlap_begin.items);delete(f.events.overlap_end.items)
-    delete(f.events.sleep.items);delete(f.events.wake.items);delete(f.events.joint_break.items)
+    test_host_destroy(&f.host)
+    core.test_world_destroy(&f.w)
 }
 
 @(private)
-physics_test_settle :: proc(f:^Physics_Test) {
-    core.table_settle(&f.rigids,&f.entities)
-    core.table_settle(&f.colliders,&f.entities)
-    core.table_settle(&f.characters,&f.entities)
-    core.table_settle(&f.moves,&f.entities)
-    core.table_settle(&f.joints,&f.entities)
-    core.table_settle(&f.statics,&f.entities)
-    core.table_settle(&f.parents,&f.entities)
-    core.hierarchy_settle(&f.hierarchy,core.read(&f.parents),&f.entities)
-    core.table_settle(&f.names,&f.entities)
-    core.table_settle(&f.transforms,&f.entities)
-    core.table_settle(&f.bodies,&f.entities)
-    core.table_settle(&f.replicas,&f.entities)
-    core.table_settle(&f.character_states,&f.entities)
-    core.table_settle(&f.joint_states,&f.entities)
-    core.table_settle(&f.volumes,&f.entities)
-    core.entities_settle(&f.entities)
-}
+physics_test_settle :: proc(f:^Physics_Test) {core.test_world_settle(&f.w)}
 
 @(private)
 physics_test_step :: proc(f:^Physics_Test,dt:f32=1.0/60) {
@@ -128,20 +42,7 @@ physics_test_step :: proc(f:^Physics_Test,dt:f32=1.0/60) {
 
 // physics_step alone, on the rows as they are.
 @(private)
-physics_test_run :: proc(f:^Physics_Test,dt:f32) {
-    gravities:core.Read(volume.Gravity);gravity_volumes:core.Read(volume.Volume);worlds:core.Read(core.World_Transform)
-    if g:=f.fields;g!=nil {gravities,gravity_volumes,worlds=core.read(&g.gravities),core.read(&g.volumes),core.read(&g.worlds)}
-    if state_make(&f.state,&f.settings,&f.app,&f.problems) {
-        if f.fields==nil {sim.world_set_gravity(&f.state.world,f.gravity)}
-    }
-    physics_step(
-        &f.state,core.ref(&f.settings),&f.requests,&f.events,&f.meshes,&f.app,{dt=dt,playing=dt>0},
-        core.read(&f.rigids),core.read(&f.colliders),core.read(&f.characters),core.read(&f.moves),
-        &f.joints,core.read(&f.statics),core.read(&f.parents),core.read(&f.names),
-        &f.transforms,&f.bodies,core.read(&f.replicas),&f.character_states,&f.joint_states,core.read(&f.volumes),&f.joint_requests,core.ref(&f.collision),core.ref(&f.sync_check),&f.simulation_hash,nil,&f.problems,
-        gravities,gravity_volumes,worlds,{},{},f.whole?{}:core.ref(&f.hierarchy),
-    )
-}
+physics_test_run :: proc(f:^Physics_Test,dt:f32) {test_step(&f.physics,&f.host,dt)}
 
 @(private)
 physics_test_box :: proc(f:^Physics_Test,position,half:[3]f32,rigid:Maybe(Rigid_Body)=nil) -> core.Entity {
@@ -161,7 +62,7 @@ physics_test_pose :: proc(f:^Physics_Test,e:core.Entity) -> core.Transform {
 @(test)
 moving_a_collider_only_wall_pushes_bodies_then_restores_static_motion :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     wall:=physics_test_box(&f,{0,0,0},{0.5,2,2})
     box:=physics_test_box(&f,{1.1,0,0},{0.5,0.5,0.5},RIGID_BODY_DYNAMIC)
@@ -191,7 +92,7 @@ moving_a_collider_only_wall_pushes_bodies_then_restores_static_motion :: proc(t:
 @(test)
 held_dynamic_bodies_restore_mass_gravity_and_copy_their_manipulation_state :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     f.gravity={0,-9.81,0}
     rigid:=RIGID_BODY_DYNAMIC
@@ -224,7 +125,7 @@ held_dynamic_bodies_restore_mass_gravity_and_copy_their_manipulation_state :: pr
 @(test)
 manipulation_resolves_compounds_and_world_rotation_under_a_scaled_parent :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     parent:=core.create(&f.entities)
     core.add(&f.transforms,parent,core.Transform{{10,0,0},mm.quat_axis_angle({0,1,0},0.6),{2,3,4}})
@@ -251,7 +152,7 @@ manipulation_resolves_compounds_and_world_rotation_under_a_scaled_parent :: proc
 @(test)
 large_manipulations_reach_the_target_before_releasing_and_can_return :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     wall:=physics_test_box(&f,{0,0,0},{0.5,0.5,0.5})
     physics_test_step(&f,0)

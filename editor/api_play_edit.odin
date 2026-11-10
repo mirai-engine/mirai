@@ -209,7 +209,7 @@ api_play_spawn :: proc(s:^Session,call:^api.Call) {
         if spawned.parent,known=api_call_entity(call,w,params.parent[:],"parent",game=true);!known {return}
     }
     spawned.transform={position=params.position,rotation=mm.quat_from_euler(params.rotation_deg*mm.RAD_PER_DEG),scale=params.scale}
-    report,error:=scene.spawn_prefab(core.commands_of(w),s.app,spawned)
+    report,error:=scene.spawn_prefab(core.commands_of(w),s.app.assets,spawned)
     core.world_settle(w)
     if error!=.None {
         api.call_failf(call,api.SERVER_ERROR,"The prefab could not be spawned: %v",error)

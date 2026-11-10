@@ -223,10 +223,10 @@ imprint_render :: proc(
     state.job_count=0
     if steps.ptr!=nil && steps.ptr.pressed!=state.pressed {state.pressed,state.pressed_at=steps.ptr.pressed,app.seconds}
     place,has_field:=vfx.world_texture_place(sync.ptr,IMPRINT_GRID)
-    state.pipeline=erender.stage_pipeline(app,{stage=.Geometry,shader="imprint_displace",name="imprint"})
+    state.pipeline=erender.stage_pipeline(app.renderer,{stage=.Geometry,shader="imprint_displace",name="imprint"})
     if has_field && state.pipeline!=0 && core.count(grounds)>0 && hierarchy.ptr!=nil {
         settling:=app.seconds-state.pressed_at<SETTLE
-        made:=erender.vertices_made(app)
+        made:=erender.vertices_made(app.renderer)
         cell:=f64(place.cell_size)
         low:=[2]f64{f64(place.first.x)*cell,f64(place.first.y)*cell}
         high:=low+{f64(place.cells.x)*cell,f64(place.cells.y)*cell}
@@ -243,7 +243,7 @@ imprint_render :: proc(
             // The entity and those under it, depth first, DEPTH deep at most.
             e,depth:=root,0
             for e!=core.NONE {
-                displace(state,e,ground,write,meshes,worlds,parents,tints,overrides,hidden,highlights,outlines,offsets,layers,locals,cameras,app,frame,place,start,low,high,made)
+                displace(state,e,ground,write,meshes,worlds,parents,tints,overrides,hidden,highlights,outlines,offsets,layers,locals,cameras,app.assets,app.renderer,&app.extras,frame,place,start,low,high,made)
                 i:=core.entity_index(e)
                 if depth<DEPTH && i<len(h.first_child) && h.first_child[i]!=core.NONE {e,depth=h.first_child[i],depth+1;continue}
                 // Up to the nearest that has a next sibling, never past the root.
@@ -259,10 +259,10 @@ imprint_render :: proc(
     }
     for &displaced in state.displaced {
         if !displaced.valid || displaced.seen==state.frame {continue}
-        erender.mesh_remove(app,displaced.mesh)
+        erender.mesh_remove(app.renderer,displaced.mesh)
         displaced={}
     }
-    if state.job_count>0 {erender.frame_pass(app,.Geometry,imprint_record,state)}
+    if state.job_count>0 {erender.frame_pass(app.renderer,.Geometry,imprint_record,state)}
 }
 
 // A mesh under an Imprint_Ground: drawn through its copy while the region
@@ -272,7 +272,7 @@ displace :: proc(
     state:^Imprint_Gpu,e:core.Entity,ground:Imprint_Ground,write:bool,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),
     parents:core.Read(core.Parent),tints:core.Read(erender.Tint),overrides:core.Read(erender.Material_Override),hidden:core.Read(erender.Hidden),
     highlights:core.Read(erender.Highlight),outlines:core.Read(erender.Outline),offsets:core.Read(erender.Draw_Offset),layers:core.Read(erender.Layers),
-    locals:core.Read(core.Transform),cameras:core.Read(erender.Camera),app:^host.App,frame:core.Frame_Time,
+    locals:core.Read(core.Transform),cameras:core.Read(erender.Camera),assets:^host.Assets,renderer:^erender.Renderer,extras:^host.Frame_Extras,frame:core.Frame_Time,
     place:vfx.World_Texture_Place,start:[2]i32,low,high:[2]f64,made:u64,
 ) {
     static,has_mesh:=core.get(meshes,e)
@@ -282,11 +282,11 @@ displace :: proc(
     if value,exists:=core.get(tints,e);exists {tint=value}
     override,_:=core.get(overrides,e)
     anchor,transform:=erender.instance_place(world,frame,offsets,parents,worlds,locals,cameras,e)
-    shown,usable:=erender.mesh_instance(app.assets,static,transform,tint,override)
+    shown,usable:=erender.mesh_instance(assets,static,transform,tint,override)
     shown.anchor=anchor
     // A mesh whose geometry still goes to the GPU has no vertices to copy yet: it is drawn as it is.
-    if !usable || erender.mesh_uploading(app,shown.mesh) {return}
-    rest_min,rest_max,known:=erender.mesh_bounds(app,shown.mesh)
+    if !usable || erender.mesh_uploading(renderer,shown.mesh) {return}
+    rest_min,rest_max,known:=erender.mesh_bounds(renderer,shown.mesh)
     if !known {return}
     // The box of the mesh in the world, level: whether the region reaches it.
     corner_low,corner_high:=[2]f64{max(f64),max(f64)},[2]f64{-max(f64),-max(f64)}
@@ -305,12 +305,12 @@ displace :: proc(
     if at<0 {return}
     displaced:=&state.displaced[at]
     if displaced.valid && (displaced.entity!=e || displaced.source!=shown.mesh) {
-        erender.mesh_remove(app,displaced.mesh)
+        erender.mesh_remove(renderer,displaced.mesh)
         displaced^={}
     }
     fresh:=false
     if !displaced.valid {
-        mesh,created:=erender.deformable_create(app,shown.mesh)
+        mesh,created:=erender.deformable_create(renderer,shown.mesh)
         if !created {return}
         displaced^={entity=e,source=shown.mesh,mesh=mesh,rest_min=rest_min,rest_max=rest_max,valid=true}
         fresh=true
@@ -334,7 +334,7 @@ displace :: proc(
     if fresh || write || params!=displaced.params || made!=displaced.made {
         // The box the surface stays in: that at rest and how far it can leave it along up.
         reach:=linalg.abs(up)*max(ground.depth_max,ground.rise_max)
-        if erender.deformable_update(app,displaced.mesh,displaced.rest_min-reach,displaced.rest_max+reach) {
+        if erender.deformable_update(renderer,displaced.mesh,displaced.rest_min-reach,displaced.rest_max+reach) {
             displaced.params,displaced.made=params,made
             params.rest=u32(at)
             if state.job_count<len(state.jobs) {
@@ -347,7 +347,7 @@ displace :: proc(
     shown.copy_owner,shown.replace_source=base.name_hash("imprint"),true
     shown.highlight=erender.instance_outline(highlights,outlines,e)
     if in_layers,exists:=core.get(layers,e);exists {shown.layers=in_layers.mask}
-    erender.instance_add(app,shown)
+    erender.instance_add(extras,shown)
 }
 
 @(private)
@@ -369,10 +369,10 @@ imprint_record :: proc(pass:^erender.Pass,user:rawptr) {
 
 // The copies of a world that goes.
 @(step="release")
-imprint_release :: proc(state:^Imprint_Gpu,app:^host.App) {
+imprint_release :: proc(state:^Imprint_Gpu,renderer:^erender.Renderer) {
     if state==nil {return}
     for &displaced in state.displaced {
-        if displaced.valid && app.renderer!=nil {erender.mesh_remove(app,displaced.mesh)}
+        if displaced.valid && renderer!=nil {erender.mesh_remove(renderer,displaced.mesh)}
         displaced={}
     }
     state.job_count=0

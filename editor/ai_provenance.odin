@@ -2,6 +2,7 @@ package editor
 
 import "core:strings"
 import "core:time"
+import "mirai:editor/ai_store"
 import "mirai:editor/api"
 import "mirai:project"
 import "mirai:std/base"
@@ -44,18 +45,18 @@ ai_provenance_record :: proc(s:^Session,task:^Ai_Task,transaction:^Change_Set) {
     if m.store.db==nil || task.conversation.id==0 {return}
     sequence:=ai_task_turn_sequence(task)
     if sequence<0 {return}
-    refs:=make([dynamic]Ai_Provenance_Ref,context.temp_allocator)
+    refs:=make([dynamic]ai_store.Provenance_Ref,context.temp_allocator)
     seen:=make(map[base.Entity_Id]bool,context.temp_allocator)
     text:[16]u8
     for &row in transaction.rows {
         if row.id==0 || row.id in seen {continue}
         seen[row.id]=true
-        append(&refs,Ai_Provenance_Ref{AI_REF_ENTITY,strings.clone(base.entity_id_format(row.id,text[:]),context.temp_allocator)})
+        append(&refs,ai_store.Provenance_Ref{AI_REF_ENTITY,strings.clone(base.entity_id_format(row.id,text[:]),context.temp_allocator)})
     }
     for &file in transaction.files {
-        if path,ok:=ai_asset_path_of(s,file.path);ok {append(&refs,Ai_Provenance_Ref{AI_REF_ASSET,path})}
+        if path,ok:=ai_asset_path_of(s,file.path);ok {append(&refs,ai_store.Provenance_Ref{AI_REF_ASSET,path})}
     }
-    if message:=ai_store_provenance_record(&m.store,refs[:],task.conversation.id,u64(sequence));message!="" {notify(s,message)}
+    if message:=ai_store.provenance_record(&m.store,refs[:],task.conversation.id,u64(sequence));message!="" {notify(s,message)}
 }
 
 @(private)
@@ -64,7 +65,7 @@ ai_provenance_view :: proc(m:^Ai,kind:Ai_Provenance_Kind,ref:string) -> ^Ai_Prov
     hash:=base.hash64(transmute([]u8)ref)
     if view.read && view.ref==hash && view.serial==m.scene_serial {return view}
     view^={read=true,ref=hash,serial=m.scene_serial}
-    provenance,found,message:=ai_store_provenance_get(&m.store,kind==.Entity?AI_REF_ENTITY:AI_REF_ASSET,ref)
+    provenance,found,message:=ai_store.provenance_get(&m.store,kind==.Entity?AI_REF_ENTITY:AI_REF_ASSET,ref)
     if message!="" || !found {return view}
     view.found,view.conversation,view.sequence,view.at=true,provenance.conversation,provenance.sequence,provenance.at
     base.text_set(view.title[:],ai_unit_title(m,int(provenance.conversation)))
@@ -161,15 +162,15 @@ ai_method_provenance :: proc(s:^Session,call:^api.Call) {
     text:[16]u8
     kind,ref:=AI_REF_ASSET,path
     if p.entity!=0 {kind,ref=AI_REF_ENTITY,base.entity_id_format(p.entity,text[:])}
-    provenance,found,message:=ai_store_provenance_get(&m.store,kind,ref)
+    provenance,found,message:=ai_store.provenance_get(&m.store,kind,ref)
     if message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
     title,prompt,model,effort:="","","",""
     if found {
-        if saved:=ai_store_find(&m.store,provenance.conversation);saved!=nil {
+        if saved:=ai_store.find(&m.store,provenance.conversation);saved!=nil {
             title,model,effort=string(saved.title[:saved.title_len]),string(saved.model[:saved.model_len]),string(saved.effort[:saved.effort_len])
         }
-        line:[1]Ai_Stored_Line
-        if count,_:=ai_store_page(&m.store,provenance.conversation,i64(provenance.sequence)+1,line[:]);count==1 && line[0].sequence==provenance.sequence && line[0].kind==.Prompt {prompt=line[0].text}
+        line:[1]ai_store.Stored_Line
+        if count,_:=ai_store.page(&m.store,provenance.conversation,i64(provenance.sequence)+1,line[:]);count==1 && line[0].sequence==provenance.sequence && line[0].kind==.Prompt {prompt=line[0].text}
     }
     w:=call.out
     serial.write_u8(w,'{')

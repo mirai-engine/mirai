@@ -1236,7 +1236,7 @@ material_list_build :: proc(s:^Session,w:core.World_Ref) {
     files:=make([dynamic]^asset.Registry_File,0,len(all),context.temp_allocator)
     for file in all {
         if l.kind==.Overlay && file.id==l.owner {continue}
-        if !contains_fold(file.path,filter) {continue}
+        if !base.contains_fold(file.path,filter) {continue}
         append(&files,file)
     }
     first_row:=l.kind==.Overlay?0:1 // a row for none or for the default material

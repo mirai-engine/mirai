@@ -875,9 +875,9 @@ play_view_enter :: proc(s:^Session,simulate:bool) {
     s.play_input_released,s.play_capture_click,s.play_stepped=false,false,false
     if !simulate {
         s.edit_layout=s.gui.layout
-        s.edit_chat_open=s.ai!=nil && s.ai.chat_open
+        s.edit_chat_open=ai_chat_open(s.ai)
         s.gui.layout.left_open=false
-        if s.ai!=nil {s.ai.chat_open,s.ai.focus=false,false}
+        ai_chat_show(s.ai,false);ai_chat_focus(s.ai,false)
         s.play_chat_open,s.play_chat_input_released=false,false
         if s.gui.ctx!=nil {s.gui.ctx.edit={};ui.popup_close(s.gui.ctx)}
     }
@@ -947,7 +947,7 @@ play_stop :: proc(s:^Session,force:=false) {
     // A Play that kept its past stays, with its World, until the next Play;
     // its voices stop as those of a World that is freed.
     if (s.mode==.Play || s.mode==.Paused) && r.history!=nil && r.history.count>0 {
-        eaudio.audio_release(host.app_world_storage(s.app,r.world,eaudio.Voices),s.app)
+        eaudio.audio_release(host.app_world_storage(s.app,r.world,eaudio.Voices),s.app.mixer)
         replay_free(s)
         run_tell_ended(s,r)
         s.replay=r^
@@ -984,8 +984,8 @@ run_free :: proc(s:^Session,r:^Run) {
 // began inside it, has not ended and has no run of its own.
 @(private)
 play_heir :: proc(s:^Session) -> int {
-    if s.ai==nil || s.mode==.Edit {return 0}
-    for &task in s.ai.tasks[:s.ai.task_count] {
+    if s.mode==.Edit {return 0}
+    for &task in ai_tasks(s.ai) {
         if task.play && !ai_task_finished(&task) && ai_task_current(s,&task) && run_find(s,task.id)==nil {return task.id}
     }
     return 0
@@ -997,7 +997,7 @@ play_view_restore :: proc(s:^Session) {
     if s.mode==.Edit {return}
     if !simulating(s) {
         s.gui.layout=s.edit_layout
-        if s.ai!=nil {s.ai.chat_open,s.ai.focus=s.edit_chat_open,false}
+        ai_chat_show(s.ai,s.edit_chat_open);ai_chat_focus(s.ai,false)
         s.play_chat_open,s.play_chat_input_released=false,false
         if s.gui.ctx!=nil {s.gui.ctx.edit={};ui.popup_close(s.gui.ctx)}
     }

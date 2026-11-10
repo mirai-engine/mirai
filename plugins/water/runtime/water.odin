@@ -98,13 +98,13 @@ Water_Look :: struct {
 
 // The row of the material of a volume and the index of refraction of its surface.
 @(private)
-look_of :: proc(state:^Water_Gpu,app:^host.App,e:core.Entity,look:Water,program:string) -> Water_Look {
+look_of :: proc(state:^Water_Gpu,assets:^host.Assets,e:core.Entity,look:Water,program:string) -> Water_Look {
     for known in state.looks[:state.look_count] {if known.entity==e {return known}}
     made:=Water_Look{entity=e,ior=WATER_IOR}
     if look.material!={} {
-        made.row=host.assets_material_row(app.assets,look.material)
-        made.ior=max(host.assets_material_values(app.assets,made.row).ior,1)
-    } else {made.row,_=default_material(app,look,program)}
+        made.row=host.assets_material_row(assets,look.material)
+        made.ior=max(host.assets_material_values(assets,made.row).ior,1)
+    } else {made.row,_=default_material(assets,look,program)}
     // A material not loaded yet is asked for again.
     if made.row!=0 && state.look_count<CAPACITY {
         state.looks[state.look_count]=made
@@ -117,19 +117,19 @@ look_of :: proc(state:^Water_Gpu,app:^host.App,e:core.Entity,look:Water,program:
 // glass that absorbs and scatters as its Water says, with the Surface program
 // named (Water_Settings).
 @(private)
-default_material :: proc(app:^host.App,look:Water,name:string) -> (row:u32,ok:bool) {
-    desc:=host.assets_material_values(app.assets,0)
+default_material :: proc(assets:^host.Assets,look:Water,name:string) -> (row:u32,ok:bool) {
+    desc:=host.assets_material_values(assets,0)
     desc.roughness,desc.transmission,desc.ior,desc.thickness=0.02,1,WATER_IOR,1
     desc.attenuation_color,desc.attenuation_distance,desc.scatter_color=look.attenuation_color,look.attenuation_distance,look.scatter_color
     name:=name
-    program:=render.program_find(app.assets,name,.Surface) if name!="" else nil
-    if program==nil {name,program=SURFACE_PROGRAM,render.program_find(app.assets,SURFACE_PROGRAM,.Surface)}
+    program:=render.program_find(assets,name,.Surface) if name!="" else nil
+    if program==nil {name,program=SURFACE_PROGRAM,render.program_find(assets,SURFACE_PROGRAM,.Surface)}
     if program!=nil {
         desc.program_id=program.id
         desc.custom_params=render.program_defaults(program)
         base.text_set(desc.program[:],name)
     }
-    return host.assets_material_derive(app.assets,desc)
+    return host.assets_material_derive(assets,desc)
 }
 
 // The bodies of the frame for its shaders, whose places are relative to an
@@ -187,7 +187,7 @@ water_render :: proc(
 ) {
     state.count,state.caustic,state.ior=0,false,WATER_IOR
     state.frame+=1
-    defer sheets_release(state,app)
+    defer sheets_release(state,app.renderer)
     if app.renderer==nil || app.assets==nil {return}
     found:[CAPACITY]phys.Fluid_Info
     far:=f32(1e30)
@@ -218,7 +218,7 @@ water_render :: proc(
         look,custom:=core.get(waters,info.entity)
         if !custom {look=WATER_DEFAULT}
         dry:=desc.density<=0
-        made:=look_of(state,app,info.entity,look,program)
+        made:=look_of(state,app.assets,info.entity,look,program)
         body:Gpu_Body
         box:=fluid_box(desc)
         top:=info.top
@@ -230,7 +230,7 @@ water_render :: proc(
             if instance,usable:=render.mesh_instance(app.assets,{shape=.Cube},mm.transform_matrix(box));usable {
                 instance.material=render.Material_Handle(made.row)
                 instance.object_id,instance.copy_owner=u64(info.entity),base.name_hash("water")
-                render.instance_add(app,instance)
+                render.instance_add(&app.extras,instance)
             }
         }
         if dry && phys.fluid_holds(physics,info.fluid,view.position) {
@@ -245,7 +245,7 @@ water_render :: proc(
                 if instance,usable:=render.mesh_instance(app.assets,{shape=.Cube},mm.transform_matrix(box));usable {
                     instance.material=render.Material_Handle(state.air)
                     instance.object_id,instance.copy_owner=u64(info.entity),base.name_hash("water air")
-                    render.instance_add(app,instance)
+                    render.instance_add(&app.extras,instance)
                 }
             }
         }
@@ -273,7 +273,7 @@ water_render :: proc(
     for info,i in kept[:state.count] {
         desc:=info.desc
         if desc.shape==.Plane {
-            sheet_place(state,app,view,i,info.entity,materials[i])
+            sheet_place(state,app.assets,app.renderer,&app.extras,view,i,info.entity,materials[i])
         } else if desc.density<=0 && !crosses_plane(state,i) && floor_in_fluid(physics,desc) {
             // The floor of the air of a dry box in a fluid is a surface of that fluid, seen from over it; where the
             // box crosses the surface of a plane, the sheet of the plane goes down to it instead.
@@ -282,19 +282,19 @@ water_render :: proc(
             if instance,usable:=render.mesh_instance(app.assets,{shape=.Plane},mm.transform_matrix(floor));usable {
                 instance.material=render.Material_Handle(materials[i])
                 instance.object_id,instance.copy_owner=u64(info.entity),base.name_hash("water floor")
-                render.instance_add(app,instance)
+                render.instance_add(&app.extras,instance)
             }
         }
     }
     if state.count==0 {return}
     state.pipelines={
-        render.stage_pipeline(app,{stage=.Lit,shader="water_caustics",name="water caustics"}),
-        render.stage_pipeline(app,{stage=.Lit,shader="water_light",name="water light"}),
-        render.stage_pipeline(app,{stage=.Blend,shader="water_over",name="water over",blend=.Alpha}),
+        render.stage_pipeline(app.renderer,{stage=.Lit,shader="water_caustics",name="water caustics"}),
+        render.stage_pipeline(app.renderer,{stage=.Lit,shader="water_light",name="water light"}),
+        render.stage_pipeline(app.renderer,{stage=.Blend,shader="water_over",name="water over",blend=.Alpha}),
     }
-    if state.caustic && state.pipelines[0]!=0 && state.pipelines[1]!=0 {render.frame_pass(app,.Lit,caustics_record,state)}
+    if state.caustic && state.pipelines[0]!=0 && state.pipelines[1]!=0 {render.frame_pass(app.renderer,.Lit,caustics_record,state)}
     // Over the glass: the line of a surface the near plane may cross.
-    if state.pipelines[2]!=0 && lens {render.frame_pass(app,.Blend,over_record,state)}
+    if state.pipelines[2]!=0 && lens {render.frame_pass(app.renderer,.Blend,over_record,state)}
 }
 
 // How far from the eye of a view its near plane reaches within the image: where a surface can cross the lens.

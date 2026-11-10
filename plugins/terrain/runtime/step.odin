@@ -665,7 +665,7 @@ terrain_update :: proc(
 ) {
     c:=Chunk_Tables{commands,chunks,locals,parents,ids,colliders,meshes,tints,overrides}
     if resident==nil || app.assets==nil {return}
-    if !data_ready(data,settings,app.allocator) || !work_ready(data,app) {
+    if !data_ready(data,settings,app.allocator) || !work_ready(data,&app.jobs,app.allocator) {
         core.report(problems,core.NONE,"terrain.memory","out of memory for the list of %d terrain sources of Terrain_Settings.sources; no terrain shows until it fits: free memory, or lower it",max(settings.sources,1))
         return
     }

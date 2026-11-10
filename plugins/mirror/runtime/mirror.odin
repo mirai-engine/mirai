@@ -62,16 +62,16 @@ reflection :: proc "contextless" (plane:[4]f32) -> (m:mm.Mat4) {
 @(step="render",loops="game editor",after="render_sync")
 mirrors_render :: proc(
     state:^Mirrors_Gpu,mirrors:core.Read(Mirror),worlds:core.Read(core.World_Transform),layers:core.Read(render.Layers),
-    highlights:core.Read(render.Highlight),outlines:core.Read(render.Outline),hidden:core.Read(render.Hidden),parents:core.Read(core.Parent),app:^host.App,frame:core.Frame_Time,
+    highlights:core.Read(render.Highlight),outlines:core.Read(render.Outline),hidden:core.Read(render.Hidden),parents:core.Read(core.Parent),assets:^host.Assets,renderer:^render.Renderer,extras:^host.Frame_Extras,frame:core.Frame_Time,
 ) {
     state.last,state.last_count=state.faces,state.count
     state.count=0
-    if app.renderer==nil || app.assets==nil || core.count(mirrors)==0 {return}
+    if renderer==nil || assets==nil || core.count(mirrors)==0 {return}
     // 0 while the shaders in use have no mirrors: the bodies reflect by themselves.
-    state.pipeline=render.stage_pipeline(app,{stage=.Mask,shader="mirror_mask",name="mirror masks"})
-    surface:=host.assets_material_values(app.assets,0)
+    state.pipeline=render.stage_pipeline(renderer,{stage=.Mask,shader="mirror_mask",name="mirror masks"})
+    surface:=host.assets_material_values(assets,0)
     surface.base_color,surface.metallic,surface.roughness={1,1,1},1,0
-    material,has_material:=host.assets_material_derive(app.assets,surface)
+    material,has_material:=host.assets_material_derive(assets,surface)
     for row in 0..<core.count(mirrors) {
         if state.count>=CAPACITY {break}
         e:=core.entity_at(mirrors,row)
@@ -88,12 +88,12 @@ mirrors_render :: proc(
         behind:=shown.position-normal*(BODY_BEHIND+0.5*BODY_DEPTH)
         body:=mm.Transform{behind,shown.rotation,{size.x,size.y,BODY_DEPTH}}
         if mirror.ellipse {body={behind,shown.rotation*mm.quat_axis_angle({1,0,0},0.5*math.PI),{size.x,BODY_DEPTH,size.y}}}
-        if instance,usable:=render.mesh_instance(app.assets,{shape=mirror.ellipse?.Cylinder:.Cube},mm.transform_matrix(body));usable && has_material {
+        if instance,usable:=render.mesh_instance(assets,{shape=mirror.ellipse?.Cylinder:.Cube},mm.transform_matrix(body));usable && has_material {
             instance.material=render.Material_Handle(material)
             instance.object_id,instance.copy_owner=u64(e),base.name_hash("mirror")
             instance.highlight=render.instance_outline(highlights,outlines,e)
             if in_layers,exists:=core.get(layers,e);exists {instance.layers=in_layers.mask}
-            render.instance_add(app,instance)
+            render.instance_add(extras,instance)
         }
 
         face:=&state.faces[state.count]
@@ -107,8 +107,8 @@ mirrors_render :: proc(
         }
         state.count+=1
     }
-    host.assets_commit(app.assets)
-    if state.count>0 && state.pipeline!=0 {render.frame_pass(app,.Mask,mirrors_record,state)}
+    host.assets_commit(assets)
+    if state.count>0 && state.pipeline!=0 {render.frame_pass(renderer,.Mask,mirrors_record,state)}
 }
 
 // The space and the plane of a face for a view whose places are relative to

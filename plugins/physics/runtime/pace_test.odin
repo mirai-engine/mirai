@@ -8,45 +8,51 @@ import sim "plugins:physics/runtime/sim"
 @(private="file")
 PACED_RATE :: 60 // ticks per second the walkers step at
 
+@(private="file")
+Paced_World :: struct {
+    using world:core.Test_World,
+    paces:core.Table(core.Own_Pace),
+}
+
 // Two walkers on a floor under one clock, the first with an Own_Pace of rate 1,
 // driven as locomotion_step drives them.
 @(private="file")
 Paced :: struct {
     w:sim.World,
-    es:core.Entities,
-    paces:core.Table(core.Own_Pace),
-    entities:[2]core.Entity,
+    using rows:Paced_World,
+    walkers:[2]core.Entity,
     chars:[2]sim.Character_Handle,
     locos:[2]Character,
 }
 
 @(private="file")
-paced_init :: proc(f:^Paced) -> bool {
+paced_init :: proc(t:^testing.T,f:^Paced) -> bool {
     desc:=sim.world_desc_default()
     desc.body_capacity,desc.shape_capacity,desc.contact_capacity,desc.character_capacity=16,16,128,2
     desc.hull_capacity,desc.mesh_capacity,desc.heightfield_capacity,desc.event_capacity=1,1,1,64
-    if !sim.world_init(&f.w,desc) {return false}
+    if !testing.expect(t,sim.world_init(&f.w,desc)) {return false}
+    if !core.test_world_init(t,&f.rows) {
+        sim.world_destroy(&f.w)
+        return false
+    }
     floor:=sim.BODY_DESC_DEFAULT
     floor.type,floor.position=.Static,{0,-1,0}
     shape:=sim.SHAPE_DESC_DEFAULT
     shape.geometry=sim.Box{{200,1,200}}
     sim.shape_create(&f.w,sim.body_create(&f.w,floor),shape)
-    core.entities_init(&f.es)
-    core.table_init(&f.paces,"Own_Pace")
     for i in 0..<2 {
-        f.entities[i]=core.create(&f.es)
+        f.walkers[i]=core.create(&f.entities)
         f.chars[i]=sim.character_create(&f.w,sim.CHARACTER_DESC_DEFAULT,{f32(i)*4,0,0})
         f.locos[i]=character_default()
     }
-    core.add(&f.paces,f.entities[0],core.OWN_PACE_DEFAULT)
-    core.table_settle(&f.paces,&f.es)
+    core.add(&f.paces,f.walkers[0],core.OWN_PACE_DEFAULT)
+    core.test_world_settle(&f.rows)
     return true
 }
 
 @(private="file")
 paced_destroy :: proc(f:^Paced) {
-    core.table_destroy(&f.paces)
-    core.entities_destroy(&f.es)
+    core.test_world_destroy(&f.rows)
     sim.world_destroy(&f.w)
 }
 
@@ -56,7 +62,7 @@ paced_ticks :: proc(f:^Paced,clock:core.Clock,ticks:int,move:[3]f32,buttons:=inp
         for i in 0..<2 {
             found:=character_state_of(sim.character_state(&f.w,f.chars[i]))
             given:=input.Move_Input{move=move,buttons=buttons}
-            pace:=core.pace_of(clock,core.read(&f.paces),f.entities[i])
+            pace:=core.pace_of(clock,core.read(&f.paces),f.walkers[i])
             m:=locomotion_move_paced(&f.locos[i],WALK_DEFAULT,{},nil,{},found,1,given,TEST_JUMP,TEST_SPRINT,TEST_CROUCH,sim.character_velocity(&f.w,f.chars[i]),f.w.gravity,1.0/PACED_RATE,pace)
             sim.character_set_move(&f.w,f.chars[i],m)
         }
@@ -76,7 +82,7 @@ paced_second :: proc(f:^Paced,clock:core.Clock) -> (went:[2]f32) {
 @(test)
 a_character_with_its_own_pace_walks_as_far_in_a_second_whatever_the_time_scale :: proc(t:^testing.T) {
     f:Paced
-    if !testing.expect(t,paced_init(&f)) {return}
+    if !paced_init(t,&f) {return}
     defer paced_destroy(&f)
     normal:=core.CLOCK_DEFAULT
     slow:=core.Clock{scale=0.25}
@@ -95,7 +101,7 @@ a_character_with_its_own_pace_walks_as_far_in_a_second_whatever_the_time_scale :
 @(test)
 a_character_with_its_own_pace_jumps_as_high_and_as_long_in_slow_motion :: proc(t:^testing.T) {
     f:Paced
-    if !testing.expect(t,paced_init(&f)) {return}
+    if !paced_init(t,&f) {return}
     defer paced_destroy(&f)
     slow:=core.Clock{scale=0.25}
     paced_ticks(&f,slow,10,{})

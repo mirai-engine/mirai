@@ -33,7 +33,7 @@ Diagnostic :: struct {
 // multiple assignment of a large value makes it do (odin-lang/Odin#7937).
 // COMPILER_MEMORY_ENV sets it in GiB, 0 for none; by default it is half the
 // memory of the machine within COMPILER_MEMORY_LEAST and COMPILER_MEMORY_MOST,
-// above the 3.2 GB of the largest build (the runtime library at -o:speed).
+// above the 3.2 GB of the largest build (a library of the engine at -o:speed).
 // macOS has no reliable cap for another process: there it is none.
 COMPILER_MEMORY_ENV :: "MIRAI_COMPILER_MEMORY"
 COMPILER_MEMORY_LEAST :: 4<<30
@@ -222,13 +222,13 @@ dependencies_read :: proc(file:string,allocator:runtime.Allocator) -> (sources:[
 
 // Whether an Odin file of a folder under root that the build of output read a
 // source from, or a file it loaded, changed after output was written, or a
-// source it read is gone. Test files count only in tests, the folder whose
-// tests the build compiled ("" for none). known is false when the list the
-// compiler exported for it cannot be read or output does not exist.
-sources_newer :: proc(sources_file,output,root:string,tests:="") -> (newer,known:bool) {
+// source it read is gone. Test files count only for a build of tests, which
+// reads those of every package it imports: the helpers a package gives the
+// tests of others are there. known is false when the list the compiler
+// exported for it cannot be read or output does not exist.
+sources_newer :: proc(sources_file,output,root:string,tests:=false) -> (newer,known:bool) {
     // The compiler lists its sources with forward slashes, whatever the root was given with.
     root:=slashes(root,context.temp_allocator)
-    tests:=slashes(tests,context.temp_allocator)
     built,stat_error:=os.modification_time_by_path(output)
     if stat_error!=nil {return false,false}
     sources:=dependencies_read(sources_file,context.temp_allocator) or_return
@@ -249,9 +249,8 @@ sources_newer :: proc(sources_file,output,root:string,tests:="") -> (newer,known
     for folder in folders {
         entries,error:=os.read_all_directory_by_path(folder,context.temp_allocator)
         if error!=nil {return true,true}
-        tested:=tests!="" && path_equal(folder,tests)
         for entry in entries {
-            if !strings.has_suffix(entry.name,".odin") || !tested && strings.has_suffix(entry.name,"_test.odin") {continue}
+            if !strings.has_suffix(entry.name,".odin") || !tests && strings.has_suffix(entry.name,"_test.odin") {continue}
             if time.diff(built,entry.modification_time)>0 {return true,true}
         }
     }

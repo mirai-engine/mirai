@@ -211,21 +211,15 @@ a_restored_snapshot_repeats_a_walk_around_a_planet_exactly :: proc(t:^testing.T)
 @(test)
 a_character_of_the_world_stands_on_a_planet_with_the_up_of_its_place :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
-    fields:Physics_Test_Fields
-    core.table_init(&fields.gravities,"Gravity");defer core.table_destroy(&fields.gravities)
-    core.table_init(&fields.volumes,"Volume");defer core.table_destroy(&fields.volumes)
-    core.table_init(&fields.worlds,"World_Transform");defer core.table_destroy(&fields.worlds)
-    f.fields=&fields
-    verticals:core.Table(core.Vertical)
-    core.table_init(&verticals,"Vertical");defer core.table_destroy(&verticals)
+    f.fields=true
     planet:=core.create(&f.entities)
-    core.add(&fields.gravities,planet,volume.Gravity{pull=.Center,acceleration=9.81,radius=PLANET_RADIUS})
-    core.add(&fields.worlds,planet,core.World_Transform{transform=mm.TRANSFORM_IDENTITY})
+    core.add(&f.gravities,planet,volume.Gravity{pull=.Center,acceleration=9.81,radius=PLANET_RADIUS})
+    core.add(&f.worlds,planet,core.World_Transform{transform=mm.TRANSFORM_IDENTITY})
     core.add(&f.transforms,planet,core.Transform{{},1,{1,1,1}})
     core.add(&f.colliders,planet,collider_sphere(PLANET_RADIUS))
-    core.table_settle(&fields.gravities,&f.entities);core.table_settle(&fields.worlds,&f.entities)
+    physics_test_settle(&f)
     side:=mm.quat_between([3]f32{0,1,0},[3]f32{1,0,0})
     walker:=core.create(&f.entities)
     core.add(&f.transforms,walker,core.Transform{{PLANET_RADIUS,0,0},side,{1,1,1}})
@@ -242,11 +236,11 @@ a_character_of_the_world_stands_on_a_planet_with_the_up_of_its_place :: proc(t:^
     found,_:=core.get(core.read(&f.character_states),walker)
     testing.expect(t,found.standing)
     testing.expectf(t,linalg.length(mm.quat_rotate(pose.rotation,{0,1,0})-[3]f32{1,0,0})<1e-4,"its Transform turned %v",pose.rotation)
-    up:=vertical(&f,&verticals,walker)
+    up:=vertical(&f,&f.verticals,walker)
     testing.expectf(t,linalg.length(up-[3]f32{1,0,0})<1e-4,"its vertical %v",up)
     teleport(&f.requests,walker,{0,-PLANET_RADIUS,0},mm.quat_axis_angle({1,0,0},cmath.PI))
     physics_test_step(&f)
-    up=vertical(&f,&verticals,walker)
+    up=vertical(&f,&f.verticals,walker)
     testing.expectf(t,linalg.length(up-[3]f32{0,-1,0})<1e-4,"the teleport turned it to %v",up)
     for _ in 0..<30 {physics_test_step(&f)}
     pose=physics_test_pose(&f,walker)
@@ -261,7 +255,7 @@ a_character_of_the_world_stands_on_a_planet_with_the_up_of_its_place :: proc(t:^
 @(test)
 a_character_says_its_vertical_speed_in_its_state :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     faller:=core.create(&f.entities)
     core.add(&f.transforms,faller,core.Transform{{0,50,0},1,{1,1,1}})

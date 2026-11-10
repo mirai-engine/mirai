@@ -74,7 +74,7 @@ fixture_emitter :: proc(f:^Emitters_Fixture,emitter:Particle_Emitter,position:[3
 
 @(private="file")
 fixture_tick :: proc(f:^Emitters_Fixture,time:core.Time,frame:=FRAME) {
-    particles_tick(core.read(&f.emitters),&f.overrides,&f.parameters,core.read(&f.worlds),core.ref(&f.hierarchy),&f.entities,&f.clocks,&f.requests,&f.channels,core.read(&f.listeners),time,frame,&f.app,&f.problems)
+    particles_tick(core.read(&f.emitters),&f.overrides,&f.parameters,core.read(&f.worlds),core.ref(&f.hierarchy),&f.entities,&f.clocks,&f.requests,&f.channels,core.read(&f.listeners),time,frame,f.app.assets,&f.problems)
     fixture_settle(f)
 }
 
@@ -660,7 +660,7 @@ mesh_facing_reaches_the_row_of_the_emitter :: proc(t:^testing.T) {
     info:=effect.PARTICLE_DEFAULTS
     app:host.App
     s:Pool_Slot
-    s.desc,_=emitter_desc(&info,&app,1)
+    s.desc,_=emitter_desc(&info,app.assets,app.renderer,1)
     g:Gpu_Emitter
     emitter_row(&g,&s,8)
     testing.expect_value(t,g.mesh.z,u32(effect.Particle_Facing.Random))
@@ -668,7 +668,7 @@ mesh_facing_reaches_the_row_of_the_emitter :: proc(t:^testing.T) {
     testing.expect_value(t,g.mesh_axis,[4]f32{1,0,0,0})
     testing.expect_value(t,g.mesh_scale,[4]f32{1,1,1,1})
     info.facing,info.spin_axis,info.mesh_rotation,info.mesh_scale=.Camera_Position,{0,2,0},{0,0,2,0},{0.5,3,1}
-    s.desc,_=emitter_desc(&info,&app,1)
+    s.desc,_=emitter_desc(&info,app.assets,app.renderer,1)
     emitter_row(&g,&s,8)
     testing.expect_value(t,g.mesh.z,u32(effect.Particle_Facing.Camera_Position))
     testing.expect_value(t,g.mesh_rotation,[4]f32{0,0,1,0})
@@ -686,13 +686,13 @@ emitters_take_their_lights_from_the_part_of_the_room_of_their_kind :: proc(t:^te
     info:=effect.PARTICLE_DEFAULTS
     info.lights=3
     app:host.App
-    desc,_:=emitter_desc(&info,&app,1)
+    desc,_:=emitter_desc(&info,app.assets,app.renderer,1)
     testing.expect(t,desc.lights==3 && !desc.shadows,"the lights of an effect cast no shadows unless it asks")
     info.light_shadows=true
-    desc,_=emitter_desc(&info,&app,1)
+    desc,_=emitter_desc(&info,app.assets,app.renderer,1)
     testing.expect(t,desc.shadows)
     info.light_range=0
-    desc,_=emitter_desc(&info,&app,1)
+    desc,_=emitter_desc(&info,app.assets,app.renderer,1)
     testing.expect_value(t,desc.lights,u32(0))
 
     Want :: struct {lights:u32,shadows,live:bool}

@@ -241,14 +241,14 @@ animation_morph :: proc(
     context.allocator=app.allocator
     cache.allocator=app.allocator
     state.frame+=1
-    inputs:=[9]u64{core.layout(meshes),core.version(meshes),core.layout(configs),core.layout(animations),core.version(parents),core.layout(sources),core.version(sources),core.layout(targets),assets_stamp(app)}
+    inputs:=[9]u64{core.layout(meshes),core.version(meshes),core.layout(configs),core.layout(animations),core.version(parents),core.layout(sources),core.version(sources),core.layout(targets),assets_stamp(app.assets)}
     if state.inputs!=inputs {
         found:=true
         for row in 0..<core.count(meshes) {
             entity:=core.entity_at(meshes,row)
             mesh:=core.at(meshes,row).mesh
             if mesh=={} {continue}
-            index:=skin_rig_load(cache,app,mesh,problems,entity)
+            index:=skin_rig_load(cache,app.assets,app.allocator,mesh,problems,entity)
             if index==max(u32) {found=false;continue}
             if len(cache.rigs[index].morphs)==0 {continue}
             playing:=morph_playing(state,entity)

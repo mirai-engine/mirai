@@ -587,7 +587,7 @@ terrain_net_follow :: proc(
     authority:core.Ref(core.Network),n:^Terrain_Net,state:^Terrain_Net_World,time:core.Time,replays:^terrain.Terrain_Replays,outbox:^multiplayer.Net_Outbox,
     session:core.Ref(multiplayer.Net_Session),data:core.Ref(terrain.Terrain_Data),terrains:core.Read(terrain.Terrain),
     seats:core.Read(input.Seat),drivables:core.Read(input.Drivable),worlds:core.Read(core.World_Transform),
-    settings:Terrain_Net_Settings,root:core.Ref(scene.Scene_Root),app:^host.App,problems:^core.Problems,
+    settings:Terrain_Net_Settings,root:core.Ref(scene.Scene_Root),assets:^host.Assets,problems:^core.Problems,
 ) {
     if n==nil {return}
     net_world(n,root)
@@ -627,7 +627,7 @@ terrain_net_follow :: proc(
     // Every source a terrain shows here, or cannot read, follows its stream.
     if terrains.table!=nil {
         for marker in terrains.table.values[:core.count(terrains)] {
-            if marker.source!={} && (terrain.terrain_source(data,marker.source)!=nil || terrain.terrain_unread(data,app.assets,marker.source)) {
+            if marker.source!={} && (terrain.terrain_source(data,marker.source)!=nil || terrain.terrain_unread(data,assets,marker.source)) {
                 if net_source(n,marker.source,true)==nil {memory_problem(problems)}
             }
         }
@@ -641,7 +641,7 @@ terrain_net_follow :: proc(
         if terrain.terrain_source(data,src.id)==nil {
             src.loaded,src.based=false,false
             // One it cannot read waits for the head of a whole base, which makes it.
-            unread:=terrain.terrain_unread(data,app.assets,src.id)
+            unread:=terrain.terrain_unread(data,assets,src.id)
             if !unread || !stream_skip_to_head(&src,cursor,time) {
                 stream_skip(&src,cursor,time)
                 if unread && !src.missing {src.missing=true;base_ask(&src,data,true)}

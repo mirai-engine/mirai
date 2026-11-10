@@ -489,3 +489,28 @@ how to fix it. `engine.diagnostics` lists it
 `core.fail(format, args...)` records a rule violation with how to fix it; in a test build
 (`ODIN_TEST`) it also stops the program. Expected errors are return values or enums, not `fail`;
 those that happen in the loop are reported as [problems](#problems).
+
+## Test worlds
+
+A test that needs a world declares a struct and lets `core` describe it
+(`core/test_world_test.odin`): no test writes `Table_Info` or `Storage_Info` rows, nor the init,
+destroy, settle, copy and swap of its tables.
+
+- The struct starts with `using world:core.Test_World`; each other field is a `core.Table(T)` of a
+  component or the value of a storage. What the attributes of `T` say is read from the source that
+  declares it, through the `core.declared_read` the generator uses: a test world cannot say
+  something else of a type than a generated one. A type a test file declares may have no attribute.
+- What the application and the editor hold go in two more structs, given to `core.test_info`: a
+  `@(storage,host)` as a value, a `by_world` one as a `core.By_World(T)`.
+- `core.test_world_init` makes a world that holds its own `World_Info`, for a test of one world;
+  `core.test_info` gives the `World_Info` alone, whose `init`, `copy`, `swap` and `clear` do what
+  the generated ones do, for a test that hands it to the application, the editor or a history.
+- Reflection does not find the defaults (`NAME_DEFAULT`, `name_default()`) nor the procedures the
+  attributes name. A library that declares them exports `test_types` from a test file, which adds
+  them with `core.test_type` and calls the `test_types` of the libraries it uses; the world is
+  given the one of its library. A world that lacks one fails saying which entry to add.
+- A library whose tables other libraries need in their tests exports them as a struct those hold
+  with `using`, with the step that runs on them: `physics.Test_Physics` and `physics.test_step`.
+- Test files of an imported package are compiled into every build of tests, and into no other.
+- A test that writes files takes its folder from `base.test_folder`, which removes it when the test
+  ends.

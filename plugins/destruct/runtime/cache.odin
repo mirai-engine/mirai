@@ -118,8 +118,8 @@ Entry :: struct {
 }
 
 // Frees the memory of the cache and the meshes it made.
-cache_destroy :: proc(app:^host.App,cache:^Destruct_Cache) {
-    cache_reset(app,cache)
+cache_destroy :: proc(assets:^host.Assets,job_system:^jobs.Job_System,cache:^Destruct_Cache) {
+    cache_reset(assets,job_system,cache)
     cache_free(cache)
 }
 
@@ -137,14 +137,14 @@ cache_free :: proc(cache:^Destruct_Cache) {
 
 // What the cache derived for a World that is freed goes with it.
 @(step="release")
-destruct_release :: proc(cache:^Destruct_Cache,app:^host.App) {
-    if cache!=nil {cache_reset(app,cache)}
+destruct_release :: proc(cache:^Destruct_Cache,assets:^host.Assets,job_system:^jobs.Job_System) {
+    if cache!=nil {cache_reset(assets,job_system,cache)}
 }
 
 // Releases what the cache derived, for a simulation that was replaced.
 @(private)
-cache_reset :: proc(app:^host.App,cache:^Destruct_Cache) {
-    for &entry in cache.entries.values {entry_release(app,cache,&entry)}
+cache_reset :: proc(assets:^host.Assets,job_system:^jobs.Job_System,cache:^Destruct_Cache) {
+    for &entry in cache.entries.values {entry_release(assets,job_system,cache,&entry)}
     core.entity_map_clear(&cache.entries)
 }
 
@@ -191,19 +191,19 @@ visuals_release :: proc(entry:^Entry) {
 
 // Releases the generated meshes of the groups of an entry. The entities are the caller's.
 @(private)
-groups_release :: proc(app:^host.App,cache:^Destruct_Cache,entry:^Entry) {
+groups_release :: proc(assets:^host.Assets,cache:^Destruct_Cache,entry:^Entry) {
     for &group in entry.groups {
-        if group.mesh!={} && app.assets!=nil && host.assets_mesh_release(app.assets,group.mesh) {cache.stats.meshes-=1}
+        if group.mesh!={} && assets!=nil && host.assets_mesh_release(assets,group.mesh) {cache.stats.meshes-=1}
         delete(group.members)
     }
     clear(&entry.groups)
 }
 
 @(private)
-prepared_release :: proc(app:^host.App,entry:^Entry) {
+prepared_release :: proc(job_system:^jobs.Job_System,entry:^Entry) {
     p:=entry.prepared
     if p==nil {return}
-    jobs.wait(&app.jobs,jobs.OWNER,&p.counter)
+    jobs.wait(job_system,jobs.OWNER,&p.counter)
     geom.mesh_buffer_destroy(&p.source)
     delete(p.sites)
     geom.fracture_destroy(&p.fracture)
@@ -215,22 +215,22 @@ prepared_release :: proc(app:^host.App,entry:^Entry) {
 // Ends an entry: its meshes, its geometry and its cut. The entities of its
 // groups are the caller's, and so is taking it out of the cache.
 @(private)
-entry_release :: proc(app:^host.App,cache:^Destruct_Cache,entry:^Entry) {
-    groups_release(app,cache,entry)
+entry_release :: proc(assets:^host.Assets,job_system:^jobs.Job_System,cache:^Destruct_Cache,entry:^Entry) {
+    groups_release(assets,cache,entry)
     delete(entry.groups)
     visuals_release(entry)
     delete(entry.visuals)
-    prepared_release(app,entry)
+    prepared_release(job_system,entry)
     entry^={}
 }
 
 // The material slots of the meshes of the pieces: those of the mesh of the
 // entity and one more, the last, for the faces the fracture opens.
 @(private)
-slots_of :: proc(app:^host.App,d:Destructible,mesh:base.Asset_Id) -> (slots,interior:u32,generated:[asset.MESH_MAX_SLOTS]base.Asset_Id) {
+slots_of :: proc(assets:^host.Assets,d:Destructible,mesh:base.Asset_Id) -> (slots,interior:u32,generated:[asset.MESH_MAX_SLOTS]base.Asset_Id) {
     slots=1
-    if mesh!={} && app.assets!=nil {
-        if found:=host.assets_mesh(app.assets,mesh);found!=nil && found.slot_count>0 {
+    if mesh!={} && assets!=nil {
+        if found:=host.assets_mesh(assets,mesh);found!=nil && found.slot_count>0 {
             slots=found.slot_count
             generated=found.slot_materials
         }
@@ -244,7 +244,7 @@ slots_of :: proc(app:^host.App,d:Destructible,mesh:base.Asset_Id) -> (slots,inte
 // read here; the cut runs as a job, which a thread of the application takes or
 // whoever waits for its counter runs. False when there is no geometry to cut.
 @(private)
-prepare_start :: proc(app:^host.App,entry:^Entry,d:Destructible,static:render.Mesh_Renderer,scale:[3]f32,interior:u32) -> bool {
+prepare_start :: proc(assets:^host.Assets,job_system:^jobs.Job_System,entry:^Entry,d:Destructible,static:render.Mesh_Renderer,scale:[3]f32,interior:u32) -> bool {
     p:=entry.prepared
     if p==nil {
         allocated,error:=new(Prepared)
@@ -261,16 +261,16 @@ prepare_start :: proc(app:^host.App,entry:^Entry,d:Destructible,static:render.Me
         entry.prepared=p
     } else {
         // The job of what it was cut from before may still be writing.
-        jobs.wait(&app.jobs,jobs.OWNER,&p.counter)
+        jobs.wait(job_system,jobs.OWNER,&p.counter)
     }
     p.key,p.error={},.None
     clear(&p.anchors);clear(&p.clusters);clear(&p.cluster_points);clear(&p.piece_clusters);clear(&p.connection_strength)
     geom.mesh_buffer_clear(&p.source)
     if d.fracture!={} {
-        if !prepare_authored(app,p,d,static,scale,interior) {p.error=.Invalid_Mesh;return false}
+        if !prepare_authored(assets,p,d,static,scale,interior) {p.error=.Invalid_Mesh;return false}
         return true
     }
-    if !host.assets_geometry(app.assets,static.mesh,static.shape,&p.source,true) {p.error=.Invalid_Mesh;return false}
+    if !host.assets_geometry(assets,static.mesh,static.shape,&p.source,true) {p.error=.Invalid_Mesh;return false}
     for &position in p.source.positions {position*=scale}
     for &normal in p.source.normals {normal=linalg.normalize0(normal/scale)}
     lo,hi:=geom.mesh_bounds(p.source.positions[:])
@@ -278,9 +278,9 @@ prepare_start :: proc(app:^host.App,entry:^Entry,d:Destructible,static:render.Me
     p.desc={pattern=geom.Site_Pattern(d.pattern),seed=d.seed,lo=lo,hi=hi,center=0.5*(lo+hi)}
     p.interior=interior
     p.key={pieces=d.pieces,seed=d.seed,pattern=d.pattern,mesh=static.mesh,shape=static.shape,scale=scale,interior=interior}
-    jobs.run(&app.jobs,jobs.OWNER,prepare_job,p,&p.counter)
+    jobs.run(job_system,jobs.OWNER,prepare_job,p,&p.counter)
     // Without other threads nobody would cut them while the ticks go on.
-    if jobs.worker_count(&app.jobs)==1 {jobs.wait(&app.jobs,jobs.OWNER,&p.counter)}
+    if jobs.worker_count(job_system)==1 {jobs.wait(job_system,jobs.OWNER,&p.counter)}
     return true
 }
 
@@ -370,8 +370,8 @@ visual_cut :: proc(cache:^Destruct_Cache,entry:^Entry,piece:fr.Piece_Info) -> bo
 // A mesh with the geometry of the pieces of a body, generated for the renderer:
 // none and true when they have no geometry, false when it was not made.
 @(private)
-group_mesh_make :: proc(app:^host.App,cache:^Destruct_Cache,entry:^Entry,members:[]i32) -> (id:base.Asset_Id,ok:bool) {
-    if app.assets==nil {return}
+group_mesh_make :: proc(assets:^host.Assets,cache:^Destruct_Cache,entry:^Entry,members:[]i32) -> (id:base.Asset_Id,ok:bool) {
+    if assets==nil {return}
     m:=&cache.merged
     geom.mesh_buffer_clear(m)
     for piece in members {
@@ -393,7 +393,7 @@ group_mesh_make :: proc(app:^host.App,cache:^Destruct_Cache,entry:^Entry,members
     if len(m.uvs)!=len(m.positions) {clear(&m.uvs)}
     if len(m.colors)!=len(m.positions) {clear(&m.colors)}
     if len(m.materials)*3!=len(m.indices) {clear(&m.materials)}
-    id,ok=host.assets_mesh_generate(app.assets,geom.mesh_buffer_view(m),entry.generated[:entry.slots])
+    id,ok=host.assets_mesh_generate(assets,geom.mesh_buffer_view(m),entry.generated[:entry.slots])
     if ok {cache.stats.meshes+=1}
     return
 }

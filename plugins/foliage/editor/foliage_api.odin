@@ -137,7 +137,7 @@ api_foliage :: proc(s:^editor.Session,call:^api.Call,named:[]u8) -> (tool:^Folia
     found:bool
     if e,found=editor.api_call_entity(call,world,named);!found {return}
     if !core.has(core.read(table),e) {api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with a Foliage: scene.inspect lists them",given);return}
-    if !edit_prepare(tool,s.app,core.read(table),e) {api.call_failf(call,api.INVALID_PARAMS,"The source of foliage %s could not be read: engine.diagnostics says why",given);return}
+    if !edit_prepare(tool,s.app.assets,s.app.allocator,core.read(table),e) {api.call_failf(call,api.INVALID_PARAMS,"The source of foliage %s could not be read: engine.diagnostics says why",given);return}
     placed,has_place:=core.get(core.read(worlds),e)
     if !has_place {api.call_failf(call,api.INVALID_PARAMS,"Foliage %s has no place in the world: give its entity a Transform with scene.set",given);return}
     owner=placed.transform
@@ -256,7 +256,7 @@ api_create :: proc(s:^editor.Session,call:^api.Call) {
         if !editor.asset_stem_valid(name) {api.call_failf(call,api.INVALID_PARAMS,"name %q cannot name a file: leave out / \\ : * ? \" < > | and a leading dot",name);return}
         if found,several:=editor.api_entity_find(world,name);found!=core.NONE || several!="" {api.call_failf(call,api.INVALID_PARAMS,"An entity is already named %q: give this one another name, or edit that one",name);return}
     }
-    e:=foliage_create(s,tool,world,s.app,p.at,editor.tool_call_given(call,"at"),name)
+    e:=foliage_create(s,tool,world,s.app.assets,s.app.allocator,p.at,editor.tool_call_given(call,"at"),name)
     if e==core.NONE {editor.tool_call_fail(s,call,"The foliage could not be made");return}
     core.world_settle(world)
     w:=call.out
@@ -275,14 +275,14 @@ api_type_add :: proc(s:^editor.Session,call:^api.Call) {
     layers,named:=rule_layers(s,call,ground,p.layers[:],count)
     if !named {return}
     s.toast_length=0
-    t:=type_make(s,tool,s.app,p.mesh,base.text_get(p.name[:]))
+    t:=type_make(s,tool,s.app.assets,p.mesh,base.text_get(p.name[:]))
     if t==nil {editor.tool_call_fail(s,call,"The type could not be added");return}
     id:=t.id
     type_values(call,t,p,layers)
     source:=&tool.edit.source
     if !foliage.source_valid(source) {foliage.source_type_remove(source,id);api.call_fail(call,api.INVALID_PARAMS,TYPE_OUT_OF_RANGE);return}
     name:=strings.clone(type_name(t),context.temp_allocator)
-    if !edit_commit(s,tool,world,s.app,"Add foliage type") {editor.tool_call_fail(s,call,"The type could not be added");return}
+    if !edit_commit(s,tool,world,s.app.assets,"Add foliage type") {editor.tool_call_fail(s,call,"The type could not be added");return}
     type_write(call,name)
 }
 
@@ -313,7 +313,7 @@ api_type_set :: proc(s:^editor.Session,call:^api.Call) {
     if t^==before {type_write(call,final);return}
     tool.held_dirty=false
     s.toast_length=0
-    if !edit_commit(s,tool,world,s.app,"Foliage type") {editor.tool_call_fail(s,call,"The type could not be kept");return}
+    if !edit_commit(s,tool,world,s.app.assets,"Foliage type") {editor.tool_call_fail(s,call,"The type could not be kept");return}
     type_write(call,final)
 }
 
@@ -326,7 +326,7 @@ api_type_remove :: proc(s:^editor.Session,call:^api.Call) {
     if t==nil {return}
     id,name:=t.id,strings.clone(type_name(t),context.temp_allocator)
     s.toast_length=0
-    if !types_remove(s,tool,world,s.app,{id}) {editor.tool_call_fail(s,call,"The type could not be taken out");return}
+    if !types_remove(s,tool,world,s.app.assets,{id}) {editor.tool_call_fail(s,call,"The type could not be taken out");return}
     type_write(call,name)
 }
 
@@ -385,7 +385,7 @@ api_paint :: proc(s:^editor.Session,call:^api.Call) {
     if !changed {changed_write(call,false);return}
     labels:=[Foliage_Mode]string{.Paint="Paint foliage",.Erase="Erase foliage",.Select="",.Place="",.Reapply="Reapply foliage",.Generate="Generate foliage"}
     s.toast_length=0
-    if !edit_commit(s,tool,world,s.app,labels[mode]) {editor.tool_call_fail(s,call,"The stroke could not be kept");return}
+    if !edit_commit(s,tool,world,s.app.assets,labels[mode]) {editor.tool_call_fail(s,call,"The stroke could not be kept");return}
     changed_write(call,true)
 }
 
@@ -409,7 +409,7 @@ api_place :: proc(s:^editor.Session,call:^api.Call) {
     paint_instance(source,t,mm.mat4_point(to_local,at),up,&random,ground)
     s.toast_length=0
     placed_name:=strings.clone(type_name(t),context.temp_allocator)
-    if !edit_commit(s,tool,world,s.app,"Place foliage instance") {editor.tool_call_fail(s,call,"The instance could not be kept");return}
+    if !edit_commit(s,tool,world,s.app.assets,"Place foliage instance") {editor.tool_call_fail(s,call,"The instance could not be kept");return}
     type_write(call,placed_name)
 }
 

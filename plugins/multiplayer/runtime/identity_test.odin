@@ -82,7 +82,7 @@ party_frames :: proc(p:^Party,frames:int) {
             session:=&p.sessions[index]
             if !session.host_ready || session.ended {continue}
             session.now=p.now
-            client_commands(session,core.world_ref(&p.worlds[index],&p.info),&p.apps[index],wire.host_poll(&session.host),&p.worlds[index].received)
+            client_commands(session,core.world_ref(&p.worlds[index],&p.info),p.apps[index].assets,p.apps[index].allocator,wire.host_poll(&session.host),&p.worlds[index].received)
         }
         net_seats(&server.es,&server.seats,&p.absents,&server.disabled,&server.objects,&server.transforms,nil,core.read(&server.links),
             core.ref(&p.bindings),core.ref(&server.remote),core.ref(&server.network),core.ref(&server.hierarchy),{},server.time)

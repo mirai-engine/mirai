@@ -130,7 +130,7 @@ does not is turned about +Y after the read (`model_front`), in place: the source
    meshes with `Mesh_Builder`, materials with the values of `.mat` and the shared PBR conversions,
    images by path or bytes (`green_down` for a normal map with green pointing down) and parent
    nodes before children. What cannot be represented fails with a named error or leaves a warning.
-4. A line in `sources.FORMATS` and its package in `ENGINE_EDITOR_PACKAGES`
+4. A line in `sources.FORMATS` and its package in `ENGINE_PACKAGES`, in the library of `cook`
    (`cook/build/engine.odin`).
 5. Tests in its package with `importer.import_model(path,[]importer.Format{FORMAT})`; the fuzz of
    `cook/import/sources` is extended with its fixtures.

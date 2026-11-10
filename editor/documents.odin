@@ -76,14 +76,7 @@ document_activate :: proc(s:^Session,index:int) -> bool {
     if !collab_can_open(s) {return false}
     runs_stop(s)
     tools_release(s)
-    if s.ai!=nil {
-        if s.ai.pending {s.ai.pending=false}
-        for &task in s.ai.tasks[:s.ai.task_count] {
-            if task.state!=.Running && task.state!=.Queued {continue}
-            ai_note(&task,"Stopped when switching documents")
-            ai_task_cancel(s,s.ai,&task)
-        }
-    }
+    ai_turns_stop(s,s.ai,"Stopped when switching documents")
     if s.gui.ctx!=nil {s.gui.ctx.edit={};s.gui.ctx.scrub={}}
     s.inspector.gesture=0
     settings_flush(s)

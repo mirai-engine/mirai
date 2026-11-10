@@ -824,9 +824,9 @@ source_compare :: proc(next,s:^Source) -> (change:Change,ok:bool) {
 
 // The meshes of the terrains of a World that is freed go with it.
 @(step="release")
-terrain_release :: proc(resident:^Terrain_Resident,app:^host.App) {
+terrain_release :: proc(resident:^Terrain_Resident,allocator:runtime.Allocator) {
     if resident==nil {return}
-    context.allocator=app.allocator
+    context.allocator=allocator
     stats:=resident.stats
     terrain_resident_free(resident)
     resident.stats=stats

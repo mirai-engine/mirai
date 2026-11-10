@@ -1,5 +1,6 @@
 package vfx
 
+import erender "mirai:engine/render"
 import gui "mirai:engine/gui"
 import "mirai:host"
 import "mirai:std/base"
@@ -33,7 +34,7 @@ UI_Effect :: struct {
 // world; those it did not show go. Past UI_EFFECT_CAPACITY, the last asked
 // for are left out.
 @(private)
-ui_effects_sync :: proc(p:^UI_Particles,requests:[]gui.UI_Effect,app:^host.App,dt:f32,shaders:u64,descs:^[dynamic]Emitter_Desc) {
+ui_effects_sync :: proc(p:^UI_Particles,requests:[]gui.UI_Effect,assets:^host.Assets,renderer:^erender.Renderer,dt:f32,shaders:u64,descs:^[dynamic]Emitter_Desc) {
     each: for request in requests {
         for &effect in p.effects[:p.count] {
             if effect.key!=request.key {continue}
@@ -50,7 +51,7 @@ ui_effects_sync :: proc(p:^UI_Particles,requests:[]gui.UI_Effect,app:^host.App,d
         p.effects[i]=p.effects[p.count-1]
         p.count-=1
     }
-    a:=app.assets
+    a:=assets
     if a==nil {return}
     for &effect in p.effects[:p.count] {
         effect.asked=false
@@ -67,12 +68,12 @@ ui_effects_sync :: proc(p:^UI_Particles,requests:[]gui.UI_Effect,app:^host.App,d
                 if problem=="" {problem=sub_problem}
             }
             base.text_set(shown.problem[:],problem)
-            desc,ready:=emitter_desc(&shown.info,app,base.hash_combine(effect.key,0x75695f7061727469))
+            desc,ready:=emitter_desc(&shown.info,assets,renderer,base.hash_combine(effect.key,0x75695f7061727469))
             shown.desc=desc
             shown.desc.program,shown.desc.view=shown.program,effect.view
             shown.sub_desc={}
             if shown.has_sub {
-                sub_desc,sub_ready:=emitter_desc(&shown.sub,app,base.hash_combine(effect.key,0x75695f7375625f70))
+                sub_desc,sub_ready:=emitter_desc(&shown.sub,assets,renderer,base.hash_combine(effect.key,0x75695f7375625f70))
                 ready&&=sub_ready
                 shown.sub_desc=sub_desc
                 sub:=&shown.sub_desc

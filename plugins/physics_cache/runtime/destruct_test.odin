@@ -50,7 +50,7 @@ cache_test_world_free :: proc(w:^Cache_Test_World) {
 cache_test_step :: proc(w:^Cache_Test_World,physics:^phys.Physics_State,fractures:^destruct.Fracture_State,geometry:^destruct.Destruct_Cache,requests:^destruct.Destruct_Requests,events:^destruct.Destruct_Events,app:^host.App,info:^core.World_Info,tick:u64) {
     alone:core.Network
     settings:=destruct.Destruct_Settings{destructibles=2,pieces=16,connections=64}
-    destruct.destruct_step(physics,fractures,core.ref(&settings),geometry,requests,events,core.ref(&alone),app,{playing=true,dt=1.0/60,tick=tick},core.commands(w,info),
+    destruct.destruct_step(physics,fractures,core.ref(&settings),geometry,requests,events,core.ref(&alone),app.assets,&app.jobs,{playing=true,dt=1.0/60,tick=tick},core.commands(w,info),
         core.read(&w.configs),&w.meshes,&w.tints,core.read(&w.parents),&w.states,&w.groups,&w.elsewhere,&w.transforms,&w.ids,core.read(&w.colliders),{},nil)
     cache_test_settle(w,nil,nil)
 }
@@ -84,7 +84,7 @@ destructible_geometry_and_detached_group_poses_play_after_the_source_world_is_de
     fractures:destruct.Fracture_State
     defer destruct.fracture_state_destroy(&fractures)
     geometry:destruct.Destruct_Cache
-    defer destruct.cache_destroy(&app,&geometry)
+    defer destruct.cache_destroy(app.assets,&app.jobs,&geometry)
     requests:destruct.Destruct_Requests
     events:destruct.Destruct_Events
     defer core.value_free(&requests,type_info_of(destruct.Destruct_Requests))
@@ -128,7 +128,7 @@ destructible_geometry_and_detached_group_poses_play_after_the_source_world_is_de
     path:=fmt.tprintf("%s/mirai-cache-%d.physics_cache",directory,os.get_pid())
     defer os.remove(path)
     testing.expect_value(t,cache_save(path,&assets.types,{456,789},record_view(&record)),asset.Error.None)
-    destruct.cache_destroy(&app,&geometry)
+    destruct.cache_destroy(app.assets,&app.jobs,&geometry)
     phys.state_destroy(&physics)
     file:asset.Asset
     testing.expect_value(t,asset.asset_load(&file,path),asset.Error.None)

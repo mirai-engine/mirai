@@ -30,7 +30,7 @@ source.volume, source.max_distance = 0.7, 25
 
 ## One-shots from code
 
-Only from a function that takes `app:^host.App` and `time:core.Time`:
+Only from a function that takes `app:^host.App` (it loads the sound) and `time:core.Time`:
 
 ```odin
 @(step="fixed")
@@ -41,8 +41,8 @@ crash_sound :: proc(app:^host.App, time:core.Time, broken:core.Ref(destruct.Dest
 
 - `play_asset` has no place (`pan`) and no room reverb; `play_asset_at` is positional with all
   of it. Both default to `BUS_EFFECTS`. `play_source(_at)` take a whole `Audio_Source`.
-- They return a `Voice`: `audio.stop(app, voice, fade)`, `audio.playing`, `audio.source_place`,
-  `audio.source_tune`. What loops or follows a thing is better as an `Audio_Source`.
+- They return a `Voice`; `audio.stop(mixer, voice, fade)`, `playing`, `source_place`, `source_tune`
+  take `mixer:^audio.Mixer`. What loops or follows a thing is better as an `Audio_Source`.
 
 ## Sets
 A `.sound_set` picks one sound (weights, volume and pitch ranges) each time it starts; use its

@@ -65,7 +65,7 @@ the_document_of_a_material_reads_its_program_and_gives_its_picks_to_the_next_mes
     w.channel=.Roughness
     base.text_set(w.variants[0].label[:],"Wet")
     w.variant_count,w.chosen=1,1
-    material_document_context(&s,w)
+    material_document_context(m,nil,w)
     testing.expect(t,m.material.open)
     testing.expect_value(t,base.text_get(m.material.program[:]),"Window_Test")
     testing.expect_value(t,m.material.pick_count,1)

@@ -2,7 +2,6 @@ package vfx
 
 import "mirai:core"
 import erender "mirai:engine/render"
-import "mirai:host"
 import "plugins:vfx/runtime/effect"
 
 // What the particles tell the game: a particle of an effect whose report
@@ -60,9 +59,9 @@ reports_readback :: proc "contextless" () -> erender.Buffer_Desc {return {"vfx p
 // The reports the GPU brought back since the last frame, by the entity of
 // their emitter.
 @(private)
-reports_read :: proc(reports:^Particle_Reports,sync:^Particle_Sync,app:^host.App,id:core.World_Id) {
+reports_read :: proc(reports:^Particle_Reports,sync:^Particle_Sync,renderer:^erender.Renderer,id:core.World_Id) {
     clear(&reports.reports)
-    data,frame,ok:=erender.readback(app,id,reports_readback().name)
+    data,frame,ok:=erender.readback(renderer,id,reports_readback().name)
     if !ok || frame==reports.frame {return}
     reports.frame=frame
     reports_take(reports,&sync.pool,data)
@@ -122,19 +121,19 @@ Watched_Particle :: struct {
 
 // The counters of the watched emitter as the GPU had them: free slots, births of a frame and all
 // it started, of a program that gives its births.
-watched_state :: proc(sync:^Particle_Sync,app:^host.App) -> (state:Gpu_State,ok:bool) {
-    data,_,read:=erender.readback(app,sync.world_id,"vfx watched state")
+watched_state :: proc(sync:^Particle_Sync,renderer:^erender.Renderer) -> (state:Gpu_State,ok:bool) {
+    data,_,read:=erender.readback(renderer,sync.world_id,"vfx watched state")
     if !read || len(data)<size_of(Gpu_State) {return}
     return (^Gpu_State)(raw_data(data))^,true
 }
 
 // The living particles of the watched emitter, from what the GPU copied back.
-watched :: proc(sync:^Particle_Sync,app:^host.App,allocator:=context.temp_allocator) -> (list:[]Watched_Particle,frame:u64,ok:bool) {
+watched :: proc(sync:^Particle_Sync,renderer:^erender.Renderer,allocator:=context.temp_allocator) -> (list:[]Watched_Particle,frame:u64,ok:bool) {
     at:=pool_slot_find(&sync.pool,sync.watch)
     if sync.watch==0 || at<0 {return}
-    data,copied,read:=erender.readback(app,sync.world_id,watch_readback(false,0).name)
+    data,copied,read:=erender.readback(renderer,sync.world_id,watch_readback(false,0).name)
     if !read || len(data)<size_of(Gpu_Particle) {return}
-    words,_,_:=erender.readback(app,sync.world_id,watch_readback(true,0).name)
+    words,_,_:=erender.readback(renderer,sync.world_id,watch_readback(true,0).name)
     stride:=int(sync.pool.slots[at].stride)
     // In the world, as the reports: those local to their emitter or of an effect view keep their places.
     desc:=&sync.pool.slots[at].desc
