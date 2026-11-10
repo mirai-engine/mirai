@@ -97,9 +97,9 @@ Perception_Event :: struct {
     position:[3]f32,
 }
 
-@(storage,events)
+@(storage)
 Perception_Events :: struct {
-    using queue:core.Queue(Perception_Event),
+    using queue:core.Events(Perception_Event),
 }
 
 // Where the turns of sight are.
@@ -132,7 +132,6 @@ perception_update :: proc(
     worlds:core.Read(core.World_Transform),settings:core.Ref(Behavior_Settings),turns:^Perceiving,sight:^Sight,
     noises:^Noises,events:^Perception_Events,physics:core.Ref(phys.Physics_State),fars:core.Read(nav.Nav_Far),entities:core.Ref(core.Entities),time:core.Time,problems:^core.Problems,
 ) {
-    core.queue_clear(&events.queue)
     if core.reshaped(perceivers,&turns.shapes[0]) | core.reshaped(perceptions,&turns.shapes[1]) {
         for row in 0..<core.count(perceivers) {
             e:=core.entity_at(perceivers,row)

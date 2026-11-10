@@ -212,7 +212,7 @@ UI_Event :: struct {
 // runs (the time of the world stopped, as under a pause menu), they go to the
 // frame phase of the next frame instead, for a frame step to read once.
 // gui_events_deliver and gui_events_frame clear and fill it.
-@(storage,events)
+@(storage)
 UI_Events :: struct {
     using queue:core.Queue(UI_Event),
     pointer_consumed:bool,  // the pointer was over the UI or held by a widget
@@ -236,7 +236,7 @@ GUI_ASKS :: 128
 // the effect view of its texture (render.Effect_View) by the plugin that
 // plays effects, which reads them. gui_frame_begin clears it and the
 // interfaces fill it as they are built.
-@(storage,events)
+@(storage)
 UI_Effects :: struct {
     using queue:core.Queue(UI_Effect),
 }

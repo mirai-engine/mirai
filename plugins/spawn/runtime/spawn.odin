@@ -50,9 +50,9 @@ Spawning :: struct {
 // The bodies placed in this tick where the Play of the editor put the player
 // and not at a Spawn_Point: a library that knows their shape fits them
 // there (spawn_physics).
-@(storage,events)
+@(storage)
 Spawned_At_Origin :: struct {
-    using queue:core.Queue(core.Entity),
+    using queue:core.Events(core.Entity),
 }
 
 Spawn_Kind :: enum u8 {
@@ -121,7 +121,6 @@ spawn_step :: proc(
     seats:core.Read(input.Seat),points:core.Read(Spawn_Point),placer:core.Placer,driving:^input.Seat_Requests,requests:^Spawn_Requests,spawning:^Spawning,
     settings:core.Ref(Spawn_Settings),network:core.Ref(core.Network),time:core.Time,origin:core.Ref(scene.Play_Origin),at_origin:^Spawned_At_Origin,problems:^core.Problems,
 ) {
-    core.queue_clear(&at_origin.queue)
     a:=Apply{commands=commands,assets=assets,bodies=bodies,seats=seats,points=points,placer=placer,driving=driving,spawning=spawning,at_origin=at_origin,problems=problems}
     if settings.ptr!=nil {a.settings=settings.ptr^}
     if origin.ptr!=nil {a.origin=origin.ptr^}

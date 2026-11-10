@@ -67,6 +67,7 @@ Type :: struct {
     using declared:core.Declared,
     fields:[dynamic]core.Field_Description, // a component: the comments on the lines of its fields
     locks:[dynamic]string, // keys, resolved later
+    logs:[dynamic]string,  // a storage: its fields that are a core.Events
     field:string,
     lock_id:int,
     file:^ast.File,   // where it is declared
@@ -552,8 +553,20 @@ package_read :: proc(g:^Generator,pkg:^Package) {
                 append(&g.errors,fmt.aprintf("%s: %s says far, which is of a component whose entity draws a far form of its own and stays when its section unloads: write @(component,far)",pkg.folder,name))
                 continue
             }
-            if (t.queue || t.events) && (t.kind!=.Storage || t.queue && t.events) {
-                append(&g.errors,fmt.aprintf("%s: %s says queue or events: a storage of requests is @(storage,queue), one of what a library reports is @(storage,events), and none is both",pkg.folder,name))
+            if _,old:=options["events"];old {
+                append(&g.errors,fmt.aprintf("%s: %s says events, which is no option: what a library reports is a field core.Events(T) of a @(storage), which its owner pushes to and never clears; take events out and make its core.Queue(T) a core.Events(T)",pkg.folder,name))
+                continue
+            }
+            if record,is_struct:=decl.values[0].derived.(^ast.Struct_Type);is_struct && is_storage {
+                for field in record.fields.list {
+                    call,is_call:=field.type.derived.(^ast.Call_Expr)
+                    if !is_call || type_key(g,file,pkg,call.expr)!="mirai:core.Events" {continue}
+                    for n in field.names {append(&t.logs,ident_name(n))}
+                }
+                t.events=len(t.logs)>0
+            }
+            if t.queue && (t.kind!=.Storage || t.events) {
+                append(&g.errors,fmt.aprintf("%s: %s says queue: a storage of requests is @(storage,queue), and it holds no core.Events, which are what a library reports",pkg.folder,name))
                 continue
             }
             if t.kind==.Component {field_comments(&t.fields,decl.values[0])}
@@ -1357,26 +1370,6 @@ rules_check :: proc(g:^Generator) {
             append(&g.errors,fmt.aprintf("%s: %s reads %s, which only %s writes, in ui or render: a dedicated server runs neither and there %s keeps the value it starts with; write it in input, fixed, frame or late, or read it in ui or render",s.where_,s.name,param.type.name,writer.name,param.type.name))
         }
     }
-    // A frame runs any number of ticks: a fixed step would see twice, or never,
-    // what only the frame fills and empties.
-    filled_outside:=make(map[^Type]^Step,context.temp_allocator)
-    filled_in_fixed:=make(map[^Type]bool,context.temp_allocator)
-    for s in g.steps {
-        if !s.loops[0] {continue}
-        for param in s.params {
-            if param.kind!=.Storage_Write || !param.type.events {continue}
-            if s.phases[FIXED_PHASE] {filled_in_fixed[param.type]=true} else {filled_outside[param.type]=s}
-        }
-    }
-    for s in g.steps {
-        if !s.loops[0] || !s.phases[FIXED_PHASE] {continue}
-        for param in s.params {
-            if param.type==nil || !param.type.events || param.kind==.Storage_Write || filled_in_fixed[param.type] {continue}
-            writer,outside:=filled_outside[param.type]
-            if !outside {continue}
-            append(&g.errors,fmt.aprintf("%s: %s runs in fixed and reads %s, which only %s fills, and which is emptied every frame: a frame runs any number of ticks, so a tick would see it twice or never; read it in a frame step",s.where_,s.name,param.type.name,writer.name))
-        }
-    }
     // A cycle is reported once, also when its steps share several phases.
     reported:=make(map[string]bool,context.temp_allocator)
     phases:=PHASES
@@ -1701,6 +1694,38 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     }
     fmt.sbprint(w,"\n")
 
+    // The functions as info.steps lists them: where each one adds its time.
+    kept:=make([dynamic]^Step,context.temp_allocator)
+    index_of:=make(map[^Step]int,context.temp_allocator)
+    for s in g.steps {
+        if editor || !s.pkg.editor {
+            index_of[s]=len(kept)
+            append(&kept,s)
+        }
+    }
+
+    // Where each step that reads the occurrences of a storage left off in each
+    // of its logs: for a step of fixed, which a rollback runs again, in a
+    // storage copied with the World; for the others, in the World, with its
+    // frame. A log a fixed step reads waits for a tick before it ages.
+    reads_log :: proc(p:Param) -> bool {
+        return p.type!=nil && len(p.type.logs)>0 && p.type.place==.World && (p.kind==.Storage_Ref || p.kind==.Storage_Value)
+    }
+    cursor_of:=make(map[[2]rawptr]int,context.temp_allocator)
+    cursors:[2]int // of the frame, of the ticks
+    waits_tick:=make(map[^Type]bool,context.temp_allocator)
+    for step in kept {
+        ticks:=int(step.phases[FIXED_PHASE])
+        for param in step.params {
+            key:=[2]rawptr{step,param.type}
+            if !reads_log(param) || key in cursor_of {continue}
+            cursor_of[key]=cursors[ticks]
+            cursors[ticks]+=len(param.type.logs)
+            if ticks==1 {waits_tick[param.type]=true}
+        }
+    }
+    if cursors[1]>0 {fmt.sbprintf(w,"Event_Cursors :: struct {{seen:[%d]u64}}\n\n",cursors[1])}
+
     places:=[3]core.Place{.World,.Shared,.Editor}
     struct_names:=[3]string{"World","Shared","Editor"}
     // Each storage by its index in info.storages, where its revision is.
@@ -1710,7 +1735,11 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     }
     for place,pi in places {
         fmt.sbprintf(w,"%s :: struct {{\n",struct_names[pi])
-        if place==.World {fmt.sbprintf(w,"    entities:%s.Entities,\n    storage_revisions:[%d]u64,\n",core_alias,len(storage_index))}
+        if place==.World {
+            fmt.sbprintf(w,"    entities:%s.Entities,\n    storage_revisions:[%d]u64,\n",core_alias,len(storage_index)+int(cursors[1]>0))
+            if cursors[1]>0 {fmt.sbprint(w,"    event_cursors:Event_Cursors,\n")}
+            if cursors[0]>0 {fmt.sbprintf(w,"    frame_cursors:[%d]u64,\n",cursors[0])}
+        }
         for t in g.types {
             if t.place!=place || !included(t,editor) {continue}
             if t.kind==.Component {fmt.sbprintf(w,"    %s:%s.Table(%s.%s),\n",t.field,core_alias,t.pkg.alias,t.name)}
@@ -1729,16 +1758,6 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     fmt.sbprint(w,"}\n\n")
 
     world_id:=g.by_key["mirai:core.World_Id"]
-
-    // The functions as info.steps lists them: where each one adds its time.
-    kept:=make([dynamic]^Step,context.temp_allocator)
-    index_of:=make(map[^Step]int,context.temp_allocator)
-    for s in g.steps {
-        if editor || !s.pkg.editor {
-            index_of[s]=len(kept)
-            append(&kept,s)
-        }
-    }
 
     // Each function as the loops call it, with its binding, its settle and
     // its time: the loops call these in order, and core.world_run a part of them.
@@ -1776,8 +1795,9 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
             case .Storage_Write:
                 if param.type.by_world {fmt.sbprintf(&args,"%s.by_world_get(&%s.%s,w.%s)",core_alias,holder,param.type.field,world_id.field)} else {fmt.sbprintf(&args,"&%s.%s",holder,param.type.field)}
             case .Storage_Ref:
-                if param.type.by_world {fmt.sbprintf(&args,"%s.ref(%s.by_world_get(&%s.%s,w.%s))",core_alias,core_alias,holder,param.type.field,world_id.field)} else {fmt.sbprintf(&args,"%s.ref(&%s.%s)",core_alias,holder,param.type.field)}
-            case .Storage_Value: fmt.sbprintf(&args,"%s.%s",holder,param.type.field)
+                if reads_log(param) {fmt.sbprintf(&args,"%s.ref(&view_%s)",core_alias,param.type.field)} else if param.type.by_world {fmt.sbprintf(&args,"%s.ref(%s.by_world_get(&%s.%s,w.%s))",core_alias,core_alias,holder,param.type.field,world_id.field)} else {fmt.sbprintf(&args,"%s.ref(&%s.%s)",core_alias,holder,param.type.field)}
+            case .Storage_Value:
+                if reads_log(param) {fmt.sbprintf(&args,"view_%s",param.type.field)} else {fmt.sbprintf(&args,"%s.%s",holder,param.type.field)}
             case .Entities_Read: fmt.sbprintf(&args,"%s.ref(&w.entities)",core_alias)
             case .Commands: fmt.sbprintf(&args,"%s.commands(w,app.info)",core_alias)
             case .World_Ref: fmt.sbprintf(&args,"%s.world_ref(w,app.info)",core_alias)
@@ -1810,6 +1830,20 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
             again:=false
             for other in step.params[:pi] {again||=other.kind==.Storage_Write && other.type==param.type}
             if !again {fmt.sbprintf(w,"    w.storage_revisions[%d]+=1\n",storage_index[param.type])}
+        }
+        // Of a log it reads, the step is handed what came since it last ran.
+        ticks:=step.phases[FIXED_PHASE]
+        for param,pi in step.params {
+            at,reads:=cursor_of[[2]rawptr{step,param.type}]
+            if !reads || !reads_log(param) {continue}
+            again:=false
+            for other in step.params[:pi] {again||=other.type==param.type && reads_log(other)}
+            if again {continue}
+            fmt.sbprintf(w,"    view_%s:=w.%s\n",param.type.field,param.type.field)
+            for log,li in param.type.logs {
+                fmt.sbprintf(w,"    %s.events_read(&view_%s.%s,&w.%s[%d])\n",core_alias,param.type.field,log,ticks?"event_cursors.seen":"frame_cursors",at+li)
+            }
+            if ticks {fmt.sbprintf(w,"    w.storage_revisions[%d]+=1\n",len(storage_index))}
         }
         fmt.sbprintf(w,"    started:=gen_time.tick_now()\n    zone:=%s.profile_step_begin(app,%d)\n",host_alias,si)
         if strings.builder_len(checks)>0 {
@@ -1850,6 +1884,19 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
             fmt.sbprint(w,"\n")
         }
     }
+
+    // What every reader of the logs has had a frame and a tick to read goes.
+    aged:=false
+    for pass in 0..<2 {
+        for t in g.types {
+            if len(t.logs)==0 || t.place!=.World || !included(t,editor) || waits_tick[t]!=(pass==1) {continue}
+            if !aged {fmt.sbprint(w,"events_age :: proc(world:rawptr,ticked:bool) {\n    w:=cast(^World)world\n")}
+            aged=true
+            // An aged log is another: the copy of what changed takes its storage again.
+            for log in t.logs {fmt.sbprintf(w,"    if %s%s.events_age(&w.%s.%s) {{w.storage_revisions[%d]+=1}}\n",pass==1?"ticked && ":"",core_alias,t.field,log,storage_index[t])}
+        }
+    }
+    if aged {fmt.sbprint(w,"}\n\n")}
 
     // Defaults are also metadata for storage providers and project settings.
     defaults:=make(map[^Type]string,context.temp_allocator)
@@ -1947,7 +1994,8 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
         fmt.sbprintf(w,"    tables[%d]={{\"%s\",\"%s\",typeid_of(%s.%s),type_info_of(%s.%s),offset_of(%s,%s),.%v,%v,.%v,%v,%s,%q,%s,%v,%v,%v,%s,false}}\n",i,t.name,t.pkg.name,t.pkg.alias,t.name,t.pkg.alias,t.name,struct_names[int(t.place)],t.field,t.place,t.shared,t.replication,game,defaults[t] or_else "nil",t.description,fields,t.single,t.far,t.pkg.path=="mirai:core",locks)
         i+=1
     }
-    fmt.sbprintf(w,"    storages:=make([]%s.Storage_Info,%d)\n",core_alias,count_kind(g,.Storage,editor))
+    fmt.sbprintf(w,"    storages:=make([]%s.Storage_Info,%d)\n",core_alias,len(storage_index)+int(cursors[1]>0))
+    if cursors[1]>0 {fmt.sbprintf(w,"    storages[%d]={{name=\"Event_Cursors\",library=\"world\",type=typeid_of(Event_Cursors),info=type_info_of(Event_Cursors),offset=offset_of(World,event_cursors)}}\n",len(storage_index))}
     i=0
     for t in g.types {
         if t.kind!=.Storage || !included(t,editor) {continue}
@@ -2029,6 +2077,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     fmt.sbprint(w,"    info.named_types,info.names,info.name_bits,info.actions=named_types,names,name_bits,actions\n")
     fmt.sbprint(w,"    info.records=records\n")
     fmt.sbprint(w,"    info.draws=draws\n")
+    if aged {fmt.sbprint(w,"    info.events_age=events_age\n")}
     for loop in 0..<(editor?2:1) {
         for phase in 0..<len(PHASES) {
             if defined[loop][phase] {fmt.sbprintf(w,"    info.loops[.%s][.%s],info.order[.%s][.%s]=%s_%s,order_%s_%s[:]\n",loop==0?"Game":"Editor",titles[phase],loop==0?"Game":"Editor",titles[phase],loops[loop],phases[phase],loops[loop],phases[phase])}

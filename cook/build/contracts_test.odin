@@ -33,7 +33,7 @@ data_has_one_writing_library_and_commands_make_entities :: proc(t:^testing.T) {
 @(storage) State :: struct {value:i32}
 @(storage,queue) Requests :: struct {count:i32}
 @(storage,shared) Board :: struct {value:i32}
-@(storage,events) Reports :: struct {count:i32}
+@(storage) Reports :: struct {log:Events(i32),lost:Events(i32)}
 @(component) Thing :: struct {value:f32}
 @(step="fixed") state_step :: proc(state:^State,requests:^Requests,board:^Board,reports:^Reports) {}
 @(step="fixed") things_make :: proc(commands:Commands,entities:Ref(Entities),things:Read(Thing)) {}
@@ -52,6 +52,10 @@ import "mirai:core"
         testing.expect(t,strings.contains(text,"p_core.things_make(p_core.commands(w,app.info),p_core.ref(&w.entities),p_core.read(&w.thing))"),text)
         at:=strings.index(text,"p_core.things_make(")
         testing.expect(t,at>=0 && strings.contains(text[at:][:400],"p_core.settle(app.info,w,e)"))
+        // A reader of occurrences is handed what came since it last ran, by a cursor of its own
+        // in each log, which the World copies with it for a step a rollback runs again.
+        testing.expect(t,strings.contains(text,"    view_reports:=w.reports\n    p_core.events_read(&view_reports.log,&w.event_cursors.seen[0])\n    p_core.events_read(&view_reports.lost,&w.event_cursors.seen[1])\n"),text)
+        testing.expect(t,strings.contains(text,"p_core.ref(&view_reports))") && strings.contains(text,"if ticked && p_core.events_age(&w.reports.log) {w.storage_revisions[") && strings.contains(text,"info.events_age=events_age"),text)
         // The settle is one loop of core over the tables of the World: none is written for it.
         testing.expect(t,!strings.contains(text,"settle :: proc") && !strings.contains(text,"info.settle"),text)
         count:=strings.index(text,"p_core.things_count(")
@@ -74,17 +78,17 @@ import "mirai:core"
         things||=strings.contains(message,"of core and game_push of game write Thing in the game loop; a table or a storage has one writing library") && fix
     }
     testing.expectf(t,state && reports && things,"%v",output.errors)
-    // queue and events are of storages, and a storage is not both.
+    // queue is of storages, and a storage of requests reports nothing.
     both:=`package core
-@(storage,queue,events) Mixed :: struct {}
+@(storage,queue) Mixed :: struct {log:Events(i32)}
 @(component,queue) Row :: struct {}
 `
     testing.expect(t,os.write_entire_file(project.path(p.engine_root,"core","data.odin",allocator=context.temp_allocator),both)==nil)
     output=world_generate(&p,context.temp_allocator)
     mixed,row:=false,false
     for message in output.errors {
-        mixed||=strings.contains(message,"Mixed says queue or events")
-        row||=strings.contains(message,"Row says queue or events")
+        mixed||=strings.contains(message,"Mixed says queue")
+        row||=strings.contains(message,"Row says queue")
     }
     testing.expectf(t,mixed && row,"%v",output.errors)
 }

@@ -198,7 +198,7 @@ Received :: struct {
 
 // Event: this library clears it at each frame and pushes the messages that
 // arrived. It stays when a scene replaces the world in the frame.
-@(storage,events,keep)
+@(storage,keep)
 Net_Events :: struct {
     received:core.Queue(Received),
 }

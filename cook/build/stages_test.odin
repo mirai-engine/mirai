@@ -156,7 +156,7 @@ the_data_of_a_stage_orders_its_steps :: proc(t:^testing.T) {
     if folder=="" {return}
     core_source:=`package core
 @(storage,queue) Orders :: struct {count:int}
-@(storage,events) News :: struct {count:int}
+@(storage) News :: struct {log:Events(int)}
 @(storage) Board :: struct {value:int}
 @(component) Score :: struct {value:f32}
 @(component,shared) Place :: struct {value:f32}
