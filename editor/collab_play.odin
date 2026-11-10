@@ -87,16 +87,20 @@ collab_play_scene_send :: proc(s:^Session,st:^Collab_State,peer:^Collab_Peer,gam
     if !p.plays || p.play.game==nil || game==0 || p.play.game(s)!=game {return}
     data,error:=os.read_entire_file(play_copy_file(s,PLAY_SCENE),context.temp_allocator)
     if error!=nil {return}
-    collab_chunks_queue(peer,.Play_Scene,data,game)
+    w:serial.Writer
+    collab_begin(&w,.Play_Scene,len(data)+8)
+    serial.write_scalar(&w,game)
+    serial.write_bytes(&w,data)
+    collab_queue(peer,serial.writer_bytes(&w))
 }
 
 @(private)
 collab_play_scene_take :: proc(s:^Session,st:^Collab_State,r:^serial.Reader) {
-    game,complete:=collab_chunk_take(r,&st.play_bytes,&st.play_total)
-    if !complete {return}
-    defer clear(&st.play_bytes)
+    game:=serial.read_u32(r)
+    data:=serial.read_bytes(r,serial.reader_remaining(r))
+    if r.failed {return}
     file:=play_copy_file(s,PLAY_HOST_SCENE)
-    if os.write_entire_file(file,st.play_bytes[:])!=nil {return}
+    if os.write_entire_file(file,data)!=nil {return}
     st.play_serial,st.play_copied=game,true
     if p:=providers(s);p.plays && p.play.scene_arrived!=nil {p.play.scene_arrived(s,game)}
 }
