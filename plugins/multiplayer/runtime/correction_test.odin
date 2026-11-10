@@ -48,7 +48,7 @@ correction_fixed :: proc(world,shared,editor,application:rawptr) {
     ref:=core.world_ref(w,sh.info)
     if sh.session!=nil {
         net_tick_head(ref,app,sh.session,&w.remote,nil,sh.session.problems)
-        net_test_settle(w,nil,nil)
+        core.settle(sh.info,w,nil)
     }
     net_test_feed(w)
     push:f32
@@ -71,7 +71,7 @@ correction_fixed :: proc(world,shared,editor,application:rawptr) {
 
 @(private)
 correction_body :: proc(w:^Net_Test_World,id:base.Entity_Id,position:[3]f32) -> core.Entity {
-    e:=core.create(&w.es)
+    e:=core.create(&w.entities)
     core.add(&w.identities,e,core.Id{id})
     core.add(&w.transforms,e,core.Transform{position=position,rotation=1,scale={1,1,1}})
     rigid:=phys.RIGID_BODY_DYNAMIC
@@ -83,11 +83,11 @@ correction_body :: proc(w:^Net_Test_World,id:base.Entity_Id,position:[3]f32) -> 
 }
 
 @(private)
-correction_world :: proc(w:^Net_Test_World) -> (bodies:[CORRECTION_BODIES]core.Entity) {
-    net_test_init(w,context.allocator)
+correction_world :: proc(w:^Net_Test_World,info:^core.World_Info) -> (bodies:[CORRECTION_BODIES]core.Entity) {
+    net_test_init(w,info)
     w.settings.bodies,w.settings.shapes,w.settings.contacts=32,32,256
     core.at(&w.gravities,0).acceleration=9.81
-    ground:=core.create(&w.es)
+    ground:=core.create(&w.entities)
     core.add(&w.transforms,ground,core.Transform{position={0,-0.5,0},rotation=1,scale={1,1,1}})
     core.add(&w.rigids,ground,phys.RIGID_BODY_STATIC)
     core.add(&w.colliders,ground,phys.collider_box({40,0.5,10}))
@@ -95,7 +95,7 @@ correction_world :: proc(w:^Net_Test_World) -> (bodies:[CORRECTION_BODIES]core.E
     for k in 0..<4 {bodies[1+k]=correction_body(w,base.Entity_Id(2+k),{1+0.55*f32(k),0.25,0})}
     for k in 0..<3 {bodies[5+k]=correction_body(w,base.Entity_Id(6+k),{1.275+0.55*f32(k),0.75,0})}
     bodies[8]=correction_body(w,9,{5,0.25,0})
-    net_test_settle(w,nil,nil)
+    core.settle(info,w,nil)
     return
 }
 
@@ -122,23 +122,23 @@ correction_force :: proc(tick:int) -> f32 {
 
 @(private)
 correction_run :: proc(t:^testing.T,settings:Net_Settings,link:Correction_Link,seed:u64) -> (result:Correction_Result) {
-    info:=net_test_info()
+    info,described:=net_test_info(t)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     info.loops[.Game][.Fixed]=correction_fixed
-    defer delete(info.tables)
-    defer delete(info.storages)
     worlds:[2]Net_Test_World
     shares:[2]Correction_Shared
     apps:[2]host.App
     sessions:[2]Net_Session
     bodies:[2][CORRECTION_BODIES]core.Entity
     for &world,index in worlds {
-        bodies[index]=correction_world(&world)
+        bodies[index]=correction_world(&world,&info)
         shares[index]={net={info=&info},player=bodies[index][0],server=index==0}
         apps[index]={info=&info,allocator=context.allocator,tick_dt=1.0/60,shared=&shares[index]}
         net_test_physics(&world,&shares[index],&apps[index])
     }
-    net_test_player(&worlds[1])
-    defer for &world in worlds {net_test_destroy(&world)}
+    net_test_player(&worlds[1],&info)
+    defer for &world in worlds {info.destroy[.World](&world)}
     defer for &app in apps {host.app_world_scratch_free(&app);delete(app.worlds)}
     defer for &share in shares {phys.collider_meshes_destroy(&share.colliders)}
     network:wire.Sim_Network
@@ -175,7 +175,7 @@ correction_run :: proc(t:^testing.T,settings:Net_Settings,link:Correction_Link,s
             core.add(&worlds[0].objects,bodies[0][0],net_test_replicate(audience=.Always))
             net_test_own(&worlds[0],bodies[0][0],event.connection)
             for e in bodies[0][1:] {core.add(&worlds[0].objects,e,net_test_replicate(audience=.Always))}
-            net_test_settle(&worlds[0],nil,nil)
+            core.settle(&info,&worlds[0],nil)
         }
         client_commands(&sessions[1],core.world_ref(&worlds[1],&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host),&client_events)
         before:=sessions[1].stats.resimulated
@@ -187,7 +187,7 @@ correction_run :: proc(t:^testing.T,settings:Net_Settings,link:Correction_Link,s
         client_tick:=tick+lead
         worlds[1].input.keys_down=correction_keys(client_tick)
         for &world,index in worlds {
-            net_test_settle(&world,nil,nil)
+            core.settle(&info,&world,nil)
             world.time.tick=u64(index==1?client_tick:tick)
             net_test_fixed_with(&world,&shares[index],&apps[index])
         }
@@ -287,9 +287,9 @@ Correction_Fixture :: struct {
 
 @(private)
 correction_fixture_init :: proc(t:^testing.T,f:^Correction_Fixture,role:Role,settings:Net_Settings,rate:=60) -> bool {
-    f.info=net_test_info()
-    net_test_init(&f.world,context.allocator)
-    f.e=net_test_body(&f.world,1)
+    f.info=net_test_info(t) or_return
+    net_test_init(&f.world,&f.info)
+    f.e=net_test_body(&f.world,&f.info,1)
     f.shared={info=&f.info}
     f.app={info=&f.info,allocator=context.allocator,tick_dt=1/f32(rate),shared=&f.shared}
     net_test_physics(&f.world,&f.shared,&f.app)
@@ -316,8 +316,9 @@ correction_fixture_destroy :: proc(f:^Correction_Fixture) {
     wire.sim_network_destroy(&f.network)
     host.app_world_scratch_free(&f.app);delete(f.app.worlds)
     phys.collider_meshes_destroy(&f.shared.colliders)
-    net_test_destroy(&f.world)
-    delete(f.info.tables);delete(f.info.storages)
+    if f.info.destroy[.World]==nil {return}
+    f.info.destroy[.World](&f.world)
+    core.test_info_destroy(&f.info)
 }
 
 // What the server had after tick: what was predicted for it, offset meters away.
@@ -368,12 +369,14 @@ a_correction_holds_its_window_at_every_tick_rate :: proc(t:^testing.T) {
 // A client takes the history its server announces when it accepts, in place of its own.
 @(test)
 a_client_keeps_the_history_of_its_server :: proc(t:^testing.T) {
-    info:=net_test_info();defer delete(info.tables);defer delete(info.storages)
+    info,described:=net_test_info(t)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     worlds:[2]Net_Test_World
     apps:[2]host.App
     sessions:[2]Net_Session
-    for &world,index in worlds {net_test_init(&world,context.allocator);apps[index]={info=&info,allocator=context.allocator,tick_dt=1.0/240}}
-    defer for &world in worlds {net_test_destroy(&world)}
+    for &world,index in worlds {net_test_init(&world,&info);apps[index]={info=&info,allocator=context.allocator,tick_dt=1.0/240}}
+    defer for &world in worlds {info.destroy[.World](&world)}
     defer for &app in apps {host.app_world_scratch_free(&app);delete(app.worlds)}
     network:wire.Sim_Network
     testing.expect(t,wire.sim_network_init(&network,{seed=5,endpoints=2,packets=256}))
@@ -407,8 +410,9 @@ an_error_too_deep_for_the_frame_is_closed_over_the_next_ticks_without_a_teleport
     defer correction_fixture_destroy(&f)
     if !correction_fixture_init(t,&f,.Predicted,{max_objects=8,predicted_capacity=8,replication={history_seconds=0.5},max_resimulate=4}) {return}
     expected:Net_Test_World
-    net_test_copy(&expected,&f.world)
-    defer net_test_destroy(&expected)
+    f.info.init[.World](&expected,context.allocator)
+    f.info.copy(&expected,&f.world)
+    defer f.info.destroy[.World](&expected)
     reference:=Net_Test_Shared{info=&f.info}
     defer phys.collider_meshes_destroy(&reference.colliders)
     before:=correction_fixture_position(&f)
@@ -437,8 +441,9 @@ an_error_of_a_body_out_of_reach_is_closed_over_the_next_ticks_and_its_records_fo
     eighth,_:=record_of(c,&f.session.desc,&c.replicas[1],8)
     at_four,at_eight:=fourth^,eighth^
     expected:Net_Test_World
-    net_test_copy(&expected,&f.world)
-    defer net_test_destroy(&expected)
+    f.info.init[.World](&expected,context.allocator)
+    f.info.copy(&expected,&f.world)
+    defer f.info.destroy[.World](&expected)
     reference:=Net_Test_Shared{info=&f.info}
     defer phys.collider_meshes_destroy(&reference.colliders)
     expected.time.tick=11
@@ -457,7 +462,7 @@ an_error_of_a_body_out_of_reach_is_closed_over_the_next_ticks_and_its_records_fo
     correction_fixture_send(&f,8,{id=1,position=at_eight.position+offset,rotation=at_eight.rotation,scale=at_eight.scale},{at_eight.linear,at_eight.angular})
     client_reconcile(&f.session,core.world_ref(&f.world,&f.info),&f.app,1.0/60)
     eleventh,_:=core.get(core.read(&expected.transforms),f.e)
-    motion,_:=core.get(core.read(&expected.motions),f.e)
+    motion,_:=core.get(core.read(&expected.bodies),f.e)
     correction_fixture_send(&f,11,{id=1,position=eleventh.position+offset,rotation=eleventh.rotation,scale=eleventh.scale},{motion.linear,motion.angular})
     client_reconcile(&f.session,core.world_ref(&f.world,&f.info),&f.app,1.0/60)
     testing.expect_value(t,f.session.stats.blended,u64(1))

@@ -15,10 +15,12 @@ import wire "mirai:net"
 // still ends, with the code of the network.
 @(test)
 a_session_without_memory_is_refused_and_a_connection_without_room_is_closed :: proc(t:^testing.T) {
-    info:=net_test_info();defer delete(info.tables);defer delete(info.storages)
+    info,described:=net_test_info(t)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     world:Net_Test_World
-    net_test_init(&world,context.allocator)
-    defer net_test_destroy(&world)
+    net_test_init(&world,&info)
+    defer info.destroy[.World](&world)
     ref:=core.world_ref(&world,&info)
     failure:=Rollback_Allocation{owner=context.allocator}
     limited:=runtime.Allocator{rollback_allocator,&failure}

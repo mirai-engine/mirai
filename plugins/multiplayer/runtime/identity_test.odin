@@ -16,19 +16,16 @@ Party :: struct {
     sessions:[3]Net_Session,
     problems:[3]core.Problems,
     network:wire.Sim_Network,
-    absents:core.Table(Seat_Absent),
     bindings:input.Input_Map,
     now:f64,
 }
 
 @(private="file")
 party_init :: proc(t:^testing.T,p:^Party) -> bool {
-    p.info=net_test_info(follows=true)
-    core.world_info_index(&p.info)
-    core.table_init(&p.absents,"Seat_Absent")
+    p.info=net_test_info(t,follows=true) or_return
     if !testing.expect(t,wire.sim_network_init(&p.network,{seed=7,endpoints=3,packets=512})) {return false}
     for &world,index in p.worlds {
-        net_test_init(&world,context.allocator)
+        net_test_init(&world,&p.info)
         world.root={changes=1}
         world.network.role=index==0?.Server:.Client
         p.apps[index]={info=&p.info,allocator=context.allocator,tick_dt=1.0/60}
@@ -42,11 +39,9 @@ party_init :: proc(t:^testing.T,p:^Party) -> bool {
 party_destroy :: proc(p:^Party) {
     for &session in p.sessions {session_destroy(&session);delete(session.reason_text)}
     wire.sim_network_destroy(&p.network)
-    for &world in p.worlds {net_test_destroy(&world)}
-    core.table_destroy(&p.absents)
-    core.world_schema_destroy(p.info.schema)
-    delete(p.info.tables_by_type);delete(p.info.storages_by_type)
-    delete(p.info.tables);delete(p.info.storages);delete(p.info.messages)
+    for &world in p.worlds {p.info.destroy[.World](&world)}
+    delete(p.info.messages)
+    core.test_info_destroy(&p.info)
 }
 
 // A client connects to the server.
@@ -84,12 +79,9 @@ party_frames :: proc(p:^Party,frames:int) {
             session.now=p.now
             client_commands(session,core.world_ref(&p.worlds[index],&p.info),p.apps[index].assets,p.apps[index].allocator,wire.host_poll(&session.host),&p.worlds[index].received)
         }
-        net_seats(&server.es,&server.seats,&p.absents,&server.disabled,&server.objects,&server.transforms,nil,core.read(&server.links),
+        net_seats(&server.entities,&server.seats,&server.absents,&server.disabled,&server.objects,&server.transforms,nil,core.read(&server.links),
             core.ref(&p.bindings),core.ref(&server.remote),core.ref(&server.network),core.ref(&server.hierarchy),{},server.time)
-        core.table_settle(&server.disabled,&server.es)
-        core.entities_activity(&server.es,core.read(&server.disabled),core.ref(&server.hierarchy))
-        core.table_settle(&p.absents,&server.es)
-        net_test_settle(server,nil,nil)
+        core.settle(&p.info,server,nil)
         server.time.tick+=1
         server_world_update(&p.sessions[0])
         for &session in p.sessions {
@@ -158,7 +150,7 @@ a_player_that_comes_back_with_its_secret_gets_its_seat_back :: proc(t:^testing.T
     // It leaves: its seat waits for it, off.
     session_destroy(&p.sessions[1])
     party_frames(p,30)
-    testing.expect(t,core.alive(&p.worlds[0].es,seat) && core.count(&p.worlds[0].seats)==0)
+    testing.expect(t,core.alive(&p.worlds[0].entities,seat) && core.count(&p.worlds[0].seats)==0)
 
     // Another run of the same machine, with the same profile.
     p.worlds[2].identity.secret=secret
@@ -167,7 +159,7 @@ a_player_that_comes_back_with_its_secret_gets_its_seat_back :: proc(t:^testing.T
     again,value:=seat_of_player(p,player_id(secret))
     testing.expect_value(t,again,seat)
     testing.expect_value(t,value.peer,u64(connection_of(p,2)))
-    testing.expect(t,!core.has(&p.worlds[0].disabled,seat) && core.raw_find(core.raw(&p.absents),type_info_of(Seat_Absent),seat)==nil,"on again")
+    testing.expect(t,!core.has(&p.worlds[0].disabled,seat) && core.raw_find(core.raw(&p.worlds[0].absents),type_info_of(Seat_Absent),seat)==nil,"on again")
 
     // The same player again while it is connected: the newer connection takes the seat.
     if !party_rejoin(t,p,1) {return}
