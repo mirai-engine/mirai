@@ -51,7 +51,14 @@ ground_open :: proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
 @(private)
 ground_update :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:core.Read(Terrain),colliders:^core.Table(phys.Collider),worlds:core.Read(core.World_Transform),focus:Terrain_Focus,queries:^core.Ground_Queries) {
     g:=&resident.ground
-    placed:=core.touched(terrains,&g.seen[0]) | core.touched(worlds,&g.seen[1])
+    // A terrain that came, went or moved: the transforms of the rest do not count.
+    placed:=core.touched(terrains,&g.seen[0])
+    moved:=core.changes(worlds,&g.seen[1])
+    for e in moved.gone {placed||=core.has(terrains,e)}
+    for row:=0;!placed && moved.written && row<core.count(terrains);row+=1 {
+        at:=core.row_of(worlds,core.entity_at(terrains,row))
+        placed=at>=0 && core.changed(worlds,moved,at)
+    }
     change:=terrain_data_change({data})
     edited:=change!=g.data
     g.data=change

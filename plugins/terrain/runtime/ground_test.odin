@@ -162,8 +162,12 @@ the_chunks_of_a_terrain_without_collider_are_unloaded_ground :: proc(t:^testing.
         // The loaded chunks, from -32 to -16 m and -16 to 0 m along x on the first row, are left out.
         testing.expect(t,!(box.max.z<=-16 && box.min.x< -16+1e-3 && box.max.x> -32+1e-3 && box.max.x<= -16+1e-3))
     }
-    // A call where nothing changed looks at no chunk: one that turns shown waits for its mark.
+    // A call where nothing of the terrains changed looks at no chunk, also while another entity
+    // moves: one that turns shown waits for its mark.
     shown[9].shown=true
+    other:=core.create(&w.entities)
+    core.add(&w.worlds,other,core.World_Transform{transform={rotation=1,scale={1,1,1}}})
+    core.test_world_settle(&w)
     q=ground_step(&w,&resident)
     testing.expect(t,len(q.unloaded)==5 && len(unloaded)==0)
     resident.marks+=1
