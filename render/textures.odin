@@ -168,7 +168,7 @@ texture_limits :: proc(r: ^Renderer) -> Texture_Limits {return texture_limits_of
 texture_limits_of :: proc(r: ^Renderer, settings: Settings) -> Texture_Limits {
 	info := rhi.device_info(r.device)
 	limit := min(max(settings.texture_max_size, 1), info.max_texture_size, 1 << (rhi.MAX_TEXTURE_MIPS - 1))
-	return {max_size = int(limit), blocks = settings.texture_compression && info.features.texture_bc}
+	return {max_size = int(limit), blocks = info.features.texture_bc}
 }
 
 // Builds the levels of a texture from its RGBA8 pixels. Images larger than

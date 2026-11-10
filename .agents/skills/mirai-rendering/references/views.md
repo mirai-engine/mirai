@@ -339,12 +339,12 @@ frame and the current one:
 - **`Lit`**: each view, after composite and before the `Blend` stage and TAA, except in a view with
   an inspection mode. It dispatches over the lit opaque image, which `pass_image_bind(pass, slot)`
   binds to read and write (`rgba16f`, render units before exposure), and reads the G-buffer with
-  `pass_surface_read`, also the direct light already in the image (`Direct`). It does not change
-  `Hdr`. With glass in view it runs twice, like `Blend`: behind the nearest layer (`glass`
-  `Behind`), with the layers already rasterized and before the glass reads what is behind it, and
-  in front (`Front`), over the lit glass; without glass, once (`All`). `.Glass_Depth` gives the
-  layer: a medium applies its share of the path on each side, and what only changes opaque surfaces
-  does nothing in front. The [fog](../../mirai-plugins/references/render-plugins.md#fog) and the
+  `pass_surface_read`, also the direct light already in the image (`Direct`). With glass in view
+  it runs twice, like `Blend`: behind the nearest layer (`glass` `Behind`), with the layers
+  already rasterized and before the glass reads what is behind it, and in front (`Front`), over
+  the lit glass; without glass, once (`All`). `.Glass_Depth` gives the layer: a medium applies its
+  share of the path on each side, and what only changes opaque surfaces does nothing in front.
+  The [fog](../../mirai-plugins/references/render-plugins.md#fog) and the
   [water](../../mirai-world/references/water.md) caustics use it.
 - **`Blend`**: each view, over the lit image before TAA, except in a view with an inspection mode.
   With glass in view it runs twice: behind the nearest layer, after its raster and before the glass
