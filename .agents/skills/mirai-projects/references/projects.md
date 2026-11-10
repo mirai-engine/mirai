@@ -520,9 +520,11 @@ with `project.mirai`); a hand-given `-collection:` wins. `check` adds
 they generate the engine shaders, which git does not store; a `-target:` of another system also
 generates its backend, because the tables embed only the generated ones.
 
-`mirai test` runs one or more packages in series: an argument that is a folder with Odin sources
-is a package and the following ones, tests of that package; without tests it runs the whole
-package.
+`mirai test` takes one or more packages: an argument that is a folder with Odin sources is a
+package and the following ones, tests of that package; without tests it runs the whole package. It
+first compiles the executables that need it, at once up to `compilers_at_once()` like the
+[plugin libraries](#plugin-libraries) and inside a single turn, and then runs them one after
+another in the order asked.
 
 - Names are looked up among the `@(test)` of the sources before compiling: one that is not there
   cuts the command with 2 and names the similar ones. They reach the executable as `-tests:`, so
@@ -539,7 +541,8 @@ package.
   and adds the ones that failed.
 - Each package has its executable in `bin/tests/`, which is compiled with the turn only if its
   sources changed (the engine's, the project's and the `_test.odin` of the package), the flags or
-  the compiler. A package that does not compile is named and the others run.
+  the compiler. A package that does not compile is named in its place, with what the compiler
+  said, and the others run.
 - Its threads reserve 8 MB of stack on every system (`TEST_STACK_FLAG`: Windows gives 1 MB),
   unless the flags of the call bring linker flags of their own.
 - If no test starts or ends within `--timeout` (`TEST_TIMEOUT`; 0 does not watch; a benchmark only

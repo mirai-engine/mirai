@@ -90,7 +90,8 @@ and `tools/mirai`. The main checkout of a worktree is `project.shared_root(root)
     say "unchanged" without waiting; if not, they take the lock and each step checks again.
     `build game` always takes it.
   - `mirai test` and `mirai check` generate the engine shaders under the lock only if there are
-    stages to compile; `mirai test` compiles under the lock and runs outside it.
+    stages to compile; `mirai test` compiles the executables of all its packages under one lock
+    and runs them outside it.
   - `workspace.builds_since` says whether someone compiled since a moment, so that whoever measures
     knows whether builds happened during the measurement. The editor's builds neither take the lock
     nor are annotated.

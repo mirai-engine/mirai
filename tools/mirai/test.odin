@@ -28,10 +28,25 @@ Test_Package :: struct {path,folder:string,names,files:[dynamic]string,nothing:b
 @(private="file")
 Test_Times :: struct {build,turn,run:time.Duration}
 
-// mirai test: the tests of one package or of several, one after another. Each
-// is compiled, taking turns with other compilations, only when its sources,
-// its flags or the compiler changed since the executable there was built,
-// and run without the implicit layers of Vulkan (layers_isolate). The names
+// The build of the test executable of a package.
+@(private="file")
+Test_Build :: struct {
+    executable:string,
+    command:[dynamic]string, // of the compiler; none when the executable there stands
+    key:string,              // what it is built from besides its sources
+    staging,log:string,      // what the compiler writes, and what it says
+    process:os.Process,
+    running,failed:bool,
+    code:int,                // of a compiler that failed
+    said:string,             // by the compiler, shown in the turn of the package
+}
+
+// mirai test: the tests of one package or of several. Their executables are
+// compiled first, several at once (test_builds_run), each only when its
+// sources, its flags or the compiler changed since the one there was built;
+// then they run one after another in the order asked, without the implicit
+// layers of Vulkan (layers_isolate), and one that was not built does not stop
+// the others. The names
 // of tests go to the runner (-tests:), so asking for others compiles nothing;
 // a name the sources do not declare stops the command before it compiles.
 // An argument that is a folder of the engine, or a path to one, is a package;
@@ -109,18 +124,24 @@ cmd_test :: proc(root:string,args:[]string) -> int {
     // ui links the FreeType library, the importer that of ufbx and the editor that of SQLite.
     if !engine_shaders(root) || !ensure_runtime_dependencies(root) {return 1}
     ensure_sdl(root,tests)
+    builds:=make([]Test_Build,len(packages))
+    for p,i in packages {
+        if p.nothing {continue}
+        if !test_imports_check(root,p.folder) || !plugin_test_shaders(root,p.folder) {
+            builds[i].failed=true
+            continue
+        }
+        builds[i]=test_build_plan(root,p.folder,optimization,build_flags[:])
+    }
+    test_builds_run(root,packages[:],builds,&times)
     times.build+=time.tick_since(prepared)
     layers_isolate(root)
     failed:=make([dynamic]string)
-    for &p in packages {
+    for &p,i in packages {
         if p.nothing {continue}
         if len(packages)>1 {fmt.printfln("== %s",p.path)}
-        if !test_imports_check(root,p.folder) || !plugin_test_shaders(root,p.folder) {
-            append(&failed,p.path)
-            continue
-        }
-        executable:=test_executable(root,p.folder)
-        if !test_build(root,p.path,p.folder,executable,optimization,build_flags[:],&times) {
+        executable:=builds[i].executable
+        if !test_build_say(p.path,builds[i]) {
             append(&failed,p.path)
             continue
         }
@@ -401,18 +422,19 @@ test_link_flag :: proc(flags:[]string) -> string {
     return TEST_STACK_FLAG
 }
 
-// Compiles the test executable of a package when what it was built from changed.
+// What building the test executable of a package takes: no command when the
+// one there was built from the same. failed, after saying why, when the
+// collections it reaches cannot be told.
 @(private="file")
-test_build :: proc(root,path,folder,executable,optimization:string,flags:[]string,times:^Test_Times) -> bool {
-    started:=time.tick_now()
-    defer times.build+=time.tick_since(started)
-    name:=test_name(root,folder)
-    sources:=fmt.aprintf("%s.sources.json",executable)
-    stamp:=fmt.aprintf("%s.build",executable)
+test_build_plan :: proc(root,folder,optimization:string,flags:[]string) -> (planned:Test_Build) {
+    planned.executable=test_executable(root,folder)
     command:=odin_command(root,"build",folder)
     append(&command,"-build-mode:test",fmt.aprintf("-o:%s",optimization))
     collections,collections_ok:=package_collections(root,folder,flags)
-    if !collections_ok {return false}
+    if !collections_ok {
+        planned.failed=true
+        return
+    }
     append(&command,..collections)
     append(&command,..flags)
     if stack:=test_link_flag(flags);stack!="" {append(&command,stack)}
@@ -420,25 +442,119 @@ test_build :: proc(root,path,folder,executable,optimization:string,flags:[]strin
     key:=strings.builder_make()
     for argument in command {fmt.sbprintln(&key,argument)}
     if info,error:=os.stat(command[0],context.temp_allocator);error==nil {fmt.sbprintf(&key,"%d %v",info.size,info.modification_time)}
-    if test_current(root,folder,executable,sources,stamp,strings.to_string(key)) {return true}
-    staging:=join(root,"bin","tests",fmt.aprintf(".%s-build-%d%s",name,os.get_pid(),EXE))
-    staged_sources:=fmt.aprintf("%s.sources.json",staging)
-    append(&command,fmt.aprintf("-out:%s",staging),"-export-dependencies:json",fmt.aprintf("-export-dependencies-file:%s",staged_sources))
-    {
-        waiting:=time.tick_now()
-        lock:=build_lock(root,fmt.tprintf("test %s",path))
-        times.turn+=time.tick_since(waiting)
-        defer workspace.lock_release(&lock)
-        if code:=run_compiler(root,command[:],"mirai test");code!=0 {
-            fmt.eprintfln("mirai test: could not build %s (the compiler exited with %d)",path,code)
-            os.remove(staging);os.remove(staged_sources)
-            return false
-        }
+    planned.key=strings.to_string(key)
+    if test_current(root,folder,planned.executable,test_sources_file(planned.executable),test_stamp_file(planned.executable),planned.key) {return}
+    planned.staging=join(root,"bin","tests",fmt.aprintf(".%s-build-%d%s",test_name(root,folder),os.get_pid(),EXE))
+    planned.log=fmt.aprintf("%s.log",planned.staging)
+    append(&command,fmt.aprintf("-out:%s",planned.staging),"-export-dependencies:json",fmt.aprintf("-export-dependencies-file:%s",test_sources_file(planned.staging)))
+    planned.command=command
+    return
+}
+
+// What the compiler read to build a test executable, and what else it was built from.
+@(private="file")
+test_sources_file :: proc(executable:string) -> string {return fmt.aprintf("%s.sources.json",executable)}
+
+@(private="file")
+test_stamp_file :: proc(executable:string) -> string {return fmt.aprintf("%s.build",executable)}
+
+// Compiles the test executables that have a command, as many at once as a
+// build runs compilers (build.compilers_at_once), in the order asked and
+// within one turn of the compilations: together they are one build of this
+// checkout. What each compiler says is kept for the turn of its package
+// (test_build_say); one that fails leaves the executable of before in place.
+@(private="file")
+test_builds_run :: proc(root:string,packages:[]Test_Package,builds:[]Test_Build,times:^Test_Times) {
+    waiting:=make([dynamic]int,context.temp_allocator)
+    paths:=make([dynamic]string,context.temp_allocator)
+    for planned,i in builds {
+        if len(planned.command)==0 {continue}
+        append(&waiting,i)
+        append(&paths,packages[i].path)
     }
-    // Replaces an executable that another call may be running.
-    if !executable_publish(root,staging,executable,staged_sources,sources) {return false}
-    _=os.write_entire_file(stamp,strings.to_string(key))
+    if len(waiting)==0 {return}
+    limit:=build.compilers_at_once()
+    if len(waiting)>1 {fmt.eprintfln("mirai test: building %d packages, %d at once",len(waiting),min(limit,len(waiting)))}
+    asked:=time.tick_now()
+    lock:=build_lock(root,fmt.tprintf("test %s",strings.join(paths[:]," ",context.temp_allocator)))
+    defer workspace.lock_release(&lock)
+    times.turn+=time.tick_since(asked)
+    running:=0
+    for len(waiting)>0 || running>0 {
+        for len(waiting)>0 && running<limit {
+            if test_build_start(root,&builds[waiting[0]]) {running+=1}
+            ordered_remove(&waiting,0)
+        }
+        ended:=false
+        for &b in builds {
+            if !b.running {continue}
+            state,error:=os.process_wait(b.process,0)
+            if error==os.General_Error.Timeout || (error==nil && !state.exited) {continue}
+            b.running=false
+            running-=1
+            ended=true
+            if said,read_error:=os.read_entire_file(b.log,context.allocator);read_error==nil {b.said=string(said)}
+            os.remove(b.log)
+            staged_sources:=test_sources_file(b.staging)
+            switch {
+            case error!=nil:
+                fmt.eprintfln("mirai test: %s: %v",b.command[0],error)
+                b.failed=true
+            case state.exit_code!=0:
+                b.failed,b.code=true,state.exit_code
+            case !executable_publish(root,b.staging,b.executable,staged_sources,test_sources_file(b.executable)):
+                b.failed=true
+            case:
+                _=os.write_entire_file(test_stamp_file(b.executable),b.key)
+            }
+            if b.failed {os.remove(b.staging);os.remove(staged_sources)}
+        }
+        if !ended {time.sleep(10*time.Millisecond)}
+    }
+}
+
+// Starts the compiler of a test executable within what it may use
+// (build.compiler_limits), with what it says going to its log. false, after
+// saying why, when it does not start.
+@(private="file")
+test_build_start :: proc(root:string,b:^Test_Build) -> bool {
+    log,error:=os.open(b.log,{.Write,.Create,.Trunc})
+    if error!=nil {
+        fmt.eprintfln("mirai test: could not write %s: %v",b.log,error)
+        b.failed=true
+        return false
+    }
+    b.process,error=subprocess.start({working_dir=root,command=b.command[:],stdout=log,stderr=log},build.compiler_limits(root))
+    os.close(log)
+    if error!=nil {
+        fmt.eprintfln("mirai test: could not run %s: %v",b.command[0],error)
+        os.remove(b.log)
+        b.failed=true
+        return false
+    }
+    b.running=true
     return true
+}
+
+// Shows, in the turn of a package, what the compiler of its test executable
+// said. false, after saying that it was not built, when there is none to run.
+@(private="file")
+test_build_say :: proc(path:string,b:Test_Build) -> bool {
+    if said:=strings.trim_right_space(b.said);said!="" {fmt.eprintln(said)}
+    switch {
+    case !b.failed:
+        return true
+    case b.code==0:
+        fmt.eprintfln("mirai test: %s was not built; why is said above",path)
+    case:
+        if build.compiler_out_of_memory(b.said) {
+            fmt.eprintln(out_of_memory_text("mirai test"))
+        } else if strings.trim_space(b.said)=="" && build.compiler_crashed(b.code) {
+            fmt.eprintfln("mirai test: %s",build.compiler_silent_failure(b.code,context.temp_allocator))
+        }
+        fmt.eprintfln("mirai test: could not build %s (the compiler exited with %d)",path,b.code)
+    }
+    return false
 }
 
 // Whether the executable there was built from this key and from sources that
