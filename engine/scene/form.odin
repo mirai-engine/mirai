@@ -29,7 +29,6 @@ Form :: struct {
     instanced:[]bool,          // a prefab instance of the document placed it
     placed:[]bool,             // it has a Transform
     components:[]Form_Component,
-    migrated,unknown:int,
     block:[]u8,
 }
 
@@ -142,10 +141,7 @@ form_read :: proc(m:^Form_Memory,form:^Form,w:core.World_Ref,a:^asset.Asset,view
     known:=0
     for &component in view.components {
         at,found:=core.world_table_index_of_hash(w,component.name_hash)
-        if !found {
-            form.unknown+=1
-            continue
-        }
+        if !found {continue}
         info:=&w.info.tables[at]
         if is_structural(info.type) {continue}
         value_type:=&types.tables[at]
@@ -162,10 +158,7 @@ form_read :: proc(m:^Form_Memory,form:^Form,w:core.World_Ref,a:^asset.Asset,view
                 stored,stored_error:=asset.scene_component_values(a,&component)
                 if stored_error!=.None {return .Corrupt}
                 copy(c.values,stored)
-            } else {
-                if !component_read(a,&component,types,info,value_type,c.values) {return .Corrupt}
-                if !asset.asset_column_matches(a,component.table,1,value_type.hash) {form.migrated+=1}
-            }
+            } else if !component_read(a,&component,types,info,value_type,c.values) {return .Corrupt}
             named:=0
             for i in 0..<rows {
                 image:=c.values[i*size:][:size]
@@ -251,7 +244,6 @@ form_place :: proc(w:core.World_Ref,form:^Form,asset_types:^asset.Types,desc:Ins
     sections:=make([dynamic]Form_Section,context.temp_allocator)
     // A copy is no instance: the prefabs its prefab places are not of this world.
     copied:=desc.fresh || desc.transient
-    report.migrated,report.unknown=form.migrated,form.unknown
     for &c in form.components {
         if copied && c.membership {continue}
         info:=&w.info.tables[c.table]

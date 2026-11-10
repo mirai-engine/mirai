@@ -153,8 +153,8 @@ a_fracture_of_the_server_breaks_the_client_alike :: proc(t:^testing.T) {
     end_tick(&b)
     testing.expect_value(t,core.at(&b.states,core.row_of(&b.states,client)).sequence,u32(1))
     testing.expect_value(t,physics.breakable_check(core.ref(&b.physics),core.at(&b.states,core.row_of(&b.states,client)).handle),physics.breakable_check(core.ref(&a.physics),core.at(&a.states,core.row_of(&a.states,server)).handle))
-    testing.expect_value(t,b.net.stats.desyncs,u64(0))
-    testing.expect_value(t,a.net.stats.sent,u64(1))
+    testing.expect_value(t,b.net.journal.stats.desyncs,u64(0))
+    testing.expect_value(t,a.net.journal.stats.sent,u64(1))
 }
 
 @(test)
@@ -231,9 +231,9 @@ a_connection_that_enters_the_world_gets_the_state_of_what_is_broken :: proc(t:^t
     end_tick(&a)
     states:=0
     for item in a.outbox.queue.items {
-        if chunk,is:=multiplayer.event_read(multiplayer.Received{type=item.type,size=item.size,data=item.data},Net_State);is && item.to==connection {
+        if part,is:=multiplayer.event_read(multiplayer.Received{type=item.type,size=item.size,data=item.data},multiplayer.Net_Journal_Part);is && item.to==connection {
             states+=1
-            testing.expect_value(t,chunk.sequence,u32(1))
+            testing.expect_value(t,part.after,u32(1))
         }
     }
     testing.expect(t,states>0,"the state of what is broken goes to the connection that entered the world")
@@ -271,7 +271,7 @@ a_scene_that_replaces_the_world_forgets_its_logs_and_the_server_sends_what_is_br
     c.tick=b.tick
     for _ in 0..<4 {end_tick(&c)}
     testing.expect_value(t,core.at(&c.states,core.row_of(&c.states,again)).sequence,u32(0))
-    testing.expect_value(t,len(c.net.links),0)
+    testing.expect_value(t,len(c.net.journal.streams),0)
 
     // The server loads a game where it is broken: a scene that replaces its world.
     a.root.changes+=1
