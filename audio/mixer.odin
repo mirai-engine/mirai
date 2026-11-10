@@ -70,7 +70,7 @@ Mixer_Stats :: struct {
 
 @(private)
 Command_Kind :: enum u8 {
-    Voice_Play,Voice_Stop,Voice_Pause,Voice_Volume,Voice_Pitch,Voice_Pan,Voice_Loop,Voice_Fade,Voice_Place,Voice_Occlusion,Voice_Lowpass,Voice_Reverb,
+    Voice_Play,Voice_Stop,Voice_Pause,Voice_Volume,Voice_Pitch,Voice_Pan,Voice_Loop,Voice_Fade,Voice_Place,Voice_Occlusion,Voice_Reverb,
     Bus_Volume,Bus_Mute,Bus_Lowpass,Bus_Duck,Bus_Reverb,Bus_Send,
     Reverb,
     Listener,
@@ -142,6 +142,7 @@ Mixer :: struct {
     listener:Listener,
     listener_serial:u32,
     output_now:Output_Kind,
+    binaural_ready:bool, // binaural_init was done before output_now was ever headphones
     spatial_mono,spatial_old:[]f32, // CHUNK_FRAMES: a spatial voice before it is placed
     hrtf:Hrtf,
     conv:Fft, // of the binaural convolution
@@ -261,7 +262,24 @@ mixer_init :: proc(m:^Mixer,desc:Mixer_Desc) -> Error {
     m.limiter.gain=1
     if m.spatial_mono,failed=make([]f32,CHUNK_FRAMES,allocator);failed!=nil {return .Out_Of_Memory}
     if m.spatial_old,failed=make([]f32,CHUNK_FRAMES,allocator);failed!=nil {return .Out_Of_Memory}
-    if error:=hrtf_load(&m.hrtf,m.sample_rate,allocator);error!=.None {return .Invalid_Desc if error==.Unsupported_Format else error}
+    if desc.output==.Headphones {
+        binaural_init(m) or_return
+        m.binaural_ready=true
+    }
+    return .None
+}
+
+// The HRTF at the rate of the mixer and what binaural output needs per voice
+// and bus, built the first time the output is headphones and kept after:
+// Invalid_Desc for a rate the HRTF has no measurements at.
+@(private)
+binaural_init :: proc(m:^Mixer) -> (error:Error) {
+    if m.conv.n>0 {return .None}
+    defer if error!=.None {binaural_destroy(m)}
+    allocator:=m.allocator
+    failed:runtime.Allocator_Error
+    voices,buses:=len(m.voices),len(m.buses)
+    if error=hrtf_load(&m.hrtf,m.sample_rate,allocator);error!=.None {return .Invalid_Desc if error==.Unsupported_Format else error}
     fft_init(&m.conv,BINAURAL_WINDOW+m.hrtf.samples-1,allocator) or_return
     bins:=m.conv.n/2+1
     m.binaural_ring=next_pow2(m.conv.n+BINAURAL_OVERLAP)
@@ -300,13 +318,21 @@ mixer_destroy :: proc(m:^Mixer) {
     delete(m.bus_reverbs,allocator)
     delete(m.scratch,allocator)
     delete(m.spatial_mono,allocator);delete(m.spatial_old,allocator)
+    binaural_destroy(m)
+    free(m,allocator)
+}
+
+@(private)
+binaural_destroy :: proc(m:^Mixer) {
+    allocator:=m.allocator
     hrtf_destroy(&m.hrtf,allocator)
     fft_destroy(&m.conv,allocator)
     delete(m.binaural_spectra,allocator);delete(m.binaural_rings,allocator);delete(m.binaural_dry,allocator)
     delete(m.binaural_window,allocator);delete(m.binaural_windowed,allocator);delete(m.binaural_wet,allocator)
     delete(m.binaural_dry_spectrum,allocator);delete(m.binaural_sums,allocator);delete(m.binaural_used,allocator)
     delete(m.binaural_left,allocator);delete(m.binaural_input,allocator)
-    free(m,allocator)
+    m.binaural_spectra,m.binaural_rings,m.binaural_dry,m.binaural_window,m.binaural_windowed,m.binaural_wet=nil,nil,nil,nil,nil,nil
+    m.binaural_dry_spectrum,m.binaural_sums,m.binaural_used,m.binaural_left,m.binaural_input=nil,nil,nil,nil,nil
 }
 
 // Frames rendered since the mixer was created: the time base of Voice_Desc.start_frame.
@@ -395,7 +421,7 @@ commands_apply :: proc "contextless" (m:^Mixer) {
                 if v.has_next {feed_release(m,&v.next)}
                 v.next=command.start;v.has_next=true
             }
-        case .Voice_Stop,.Voice_Pause,.Voice_Volume,.Voice_Pitch,.Voice_Pan,.Voice_Loop,.Voice_Fade,.Voice_Place,.Voice_Occlusion,.Voice_Lowpass,.Voice_Reverb:
+        case .Voice_Stop,.Voice_Pause,.Voice_Volume,.Voice_Pitch,.Voice_Pan,.Voice_Loop,.Voice_Fade,.Voice_Place,.Voice_Occlusion,.Voice_Reverb:
             voice_command(m,&command)
         case .Bus_Volume:m.buses[command.index].volume=command.value
         case .Bus_Mute:m.buses[command.index].muted=command.flag
@@ -413,6 +439,7 @@ commands_apply :: proc "contextless" (m:^Mixer) {
             m.listener_serial+=1
         case .Output:
             m.output_now=Output_Kind(command.index)
+            m.binaural_ready||=m.output_now==.Headphones
             // What a voice kept for the other output starts over.
             for &v in m.voices {v.binaural_live=false}
         case .Sound_Release:

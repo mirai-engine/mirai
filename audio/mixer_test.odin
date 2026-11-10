@@ -664,6 +664,8 @@ steady_playback_allocates_nothing :: proc(t:^testing.T) {
     sent,_:=bus_create(m)
     out:=make([]f32,480*2)
     defer delete(out)
+    // Headphones build their HRTF the first time they are chosen, a change of settings and not a steady frame.
+    testing.expect(t,mixer_set_output(m,.Headphones) && mixer_set_output(m,.Speakers))
     count:=0
     {
         context.allocator=test_no_allocator(&count)

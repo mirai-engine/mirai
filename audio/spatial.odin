@@ -195,9 +195,12 @@ listener_set :: proc(m:^Mixer,position:[3]f32,rotation:quaternion128,velocity:[3
 }
 
 // What the output plays on: the HRTF for headphones or the pan for speakers.
+// False for headphones at a rate the HRTF has no measurements at, or without
+// memory for them.
 mixer_set_output :: proc(m:^Mixer,kind:Output_Kind) -> bool {
     if kind!=.Headphones && kind!=.Speakers {return false}
     if kind==m.output {return true}
+    if kind==.Headphones && binaural_init(m)!=.None {return false}
     if !command_push(m,{kind=.Output,index=u32(kind)}) {return false}
     m.output=kind
     return true
