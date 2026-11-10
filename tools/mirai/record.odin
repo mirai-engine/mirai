@@ -18,7 +18,8 @@ cmd_record :: proc(root:string,args:[]string) -> int {
     folder,out,scene:=".","",""
     Params :: struct {path:string,format:string,fps:int,duration:string `json:"for"`,width,height:int,audio:bool,sheet:int}
     params:=Params{format="Png16",fps=30,duration="2s",width=1280,height=720,audio=true,sheet=16}
-    mode:Build_Mode=.Keep
+    mode:=Build_Mode.Release
+    mode_asked:=false
     usage :: proc() -> int {fmt.eprintfln("Usage: mirai %s",RECORD_USAGE);return 2}
     for i:=0;i<len(args);i+=1 {
         ok:=true
@@ -51,8 +52,8 @@ cmd_record :: proc(root:string,args:[]string) -> int {
             number,valid:=strconv.parse_int(text,10)
             params.sheet,ok=number,ok && valid
         case "--no-audio": params.audio=false
-        case "--dev":  mode=.Dev
-        case "--release": mode=.Release
+        case "--dev":  mode,mode_asked=.Dev,true
+        case "--release": mode,mode_asked=.Release,true
         case:
             if !positional(args[i]) || folder!="." {return argument_unknown("record",args[i])}
             folder=args[i]
@@ -66,7 +67,7 @@ cmd_record :: proc(root:string,args:[]string) -> int {
     folder=project.path_absolute(folder)
     if out!="" {params.path=project.path_absolute(out)}
 
-    file,reused,code:=session_borrow(root,folder,mode,"record")
+    file,reused,code:=session_borrow(root,folder,mode,mode_asked,"record")
     if code!=0 {return code}
     defer if !reused {session_close(folder,file,true)}
 

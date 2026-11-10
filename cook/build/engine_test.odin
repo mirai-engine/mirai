@@ -10,26 +10,74 @@ import "core:time"
 import "mirai:project"
 import "mirai:std/base"
 
-// Each mode has its folder; Keep is the one built last, Release with none.
+// Each mode has its folder and its libraries: release one per layer, dev one
+// per package or per few packages that change together. Every package is in
+// one library of each, beside the others of it, so a library imports only
+// from the ones before it.
 @(test)
-engine_modes_have_folders_of_their_own :: proc(t:^testing.T) {
+engine_modes_have_folders_and_libraries_of_their_own :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
     root:=base.test_folder(t,"engine-modes")
     if root=="" {return}
     dev,release:=engine_paths(root,.Dev),engine_paths(root,.Release)
     testing.expect(t,dev.folder!=release.folder && dev.decl!=release.decl)
-    testing.expect_value(t,engine_mode_resolve(root,.Keep),Engine_Mode.Release)
     testing.expect_value(t,engine_mode_resolve(root,.Dev),Engine_Mode.Dev)
-    for paths,i in ([2]Engine_Paths{release,dev}) {
-        testing.expect(t,os.make_directory_all(paths.folder)==nil)
-        testing.expect(t,engine_stamp_write(paths.stamp,{libraries=#partial{.Base={sources=1,tools=2}},programs=3,declares=DECLARE_VERSION})==nil)
-        if i==0 {time.sleep(20*time.Millisecond)}
+    testing.expect_value(t,engine_mode_resolve(root,Engine_Mode{}),Engine_Mode.Release)
+    layers:=ENGINE_LAYERS
+    testing.expect_value(t,len(engine_libraries(.Release)),len(layers))
+    for mode in Engine_Mode {
+        libraries:=engine_libraries(mode)
+        next:=0
+        files:=make(map[string]bool)
+        for library in libraries {
+            testing.expectf(t,library.first==next && len(library.packages)>0,"%v: %s starts where the one before it ends",mode,library.name)
+            testing.expectf(t,library.file not_in files,"%v: two libraries are %s",mode,library.file)
+            files[library.file]=true
+            for path,at in library.packages {testing.expect_value(t,path,engine_package(library.first+at))}
+            next+=len(library.packages)
+        }
+        testing.expect_value(t,next,ENGINE_PACKAGE_COUNT)
     }
-    testing.expect_value(t,engine_mode_resolve(root,.Keep),Engine_Mode.Dev)
-    testing.expect_value(t,engine_paths(root,.Keep).folder,dev.folder)
-    stamp,read:=engine_stamp_read(dev.stamp)
-    testing.expect(t,read)
-    testing.expect_value(t,stamp,Engine_Stamp{libraries=#partial{.Base={sources=1,tools=2}},programs=3,declares=DECLARE_VERSION})
+    core_library:^Engine_Library
+    packages:=ENGINE_PACKAGES
+    units:=make(map[string]int)
+    for &library in engine_libraries(.Dev) {
+        if slice.contains(library.packages,"core") {core_library=&library}
+        if unit:=packages[library.first].unit;unit!="" {
+            testing.expectf(t,unit not_in units,"the packages of the unit %s stand together",unit)
+            units[unit]=library.first
+            testing.expect_value(t,library.name,unit)
+        }
+    }
+    testing.expect(t,core_library!=nil && len(core_library.packages)==1 && core_library.file=="mirai-core","in dev a package is a library")
+}
+
+// The packages of the engine are listed each after the ones it imports: what
+// a library links against is built before it.
+@(test)
+a_package_of_the_engine_imports_only_the_ones_before_it :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    root:=slashes(project.path_absolute(#directory+"../..",context.temp_allocator),context.temp_allocator)
+    for index in 0..<ENGINE_PACKAGE_COUNT {
+        for file in engine_sources(root,{engine_package(index)}) {
+            data,error:=os.read_entire_file(file,context.temp_allocator)
+            if !testing.expect(t,error==nil,file) {continue}
+            rest:=string(data)
+            quoted:=false
+            for line in strings.split_lines_iterator(&rest) {
+                // The source of a program inside a raw string is no import of this file.
+                inside:=quoted
+                if strings.count(line,"`")%2==1 {quoted=!quoted}
+                if inside || !strings.has_prefix(line,"import ") {continue}
+                at:=strings.index(line,"\"mirai:")
+                if at<0 {continue}
+                path:=line[at+len("\"mirai:"):]
+                path=path[:max(strings.index_byte(path,'"'),0)]
+                imported,found:=engine_package_index(path)
+                testing.expectf(t,found && imported<index,"%s imports %s, which ENGINE_PACKAGES does not list before %s",file,path,engine_package(index))
+            }
+        }
+    }
 }
 
 // An installed engine has the binaries of one mode and builds none: it is
@@ -45,11 +93,14 @@ an_installed_engine_builds_nothing_and_says_what_it_lacks :: proc(t:^testing.T) 
     result:=engine_build({engine_root=root,mode=.Dev})
     testing.expect_value(t,result.status,Status.Failed)
     testing.expect_value(t,result.failure,Failure.Engine_Incomplete)
-    testing.expect(t,!engine_current(root,.Keep))
+    testing.expect(t,!engine_current(root,.Release))
     paths:=engine_paths(root,.Dev)
     testing.expect(t,os.make_directory_all(paths.decl)==nil)
     files:=make([dynamic]string,context.temp_allocator)
-    for library,which in paths.libraries {append(&files,library,paths.imports[which])}
+    for library in engine_libraries(ENGINE_MODE_INSTALLED) {
+        file,linked:=engine_library_files(paths,library)
+        append(&files,file,linked)
+    }
     append(&files,paths.editor_program,paths.player_program,paths.import_program,paths.author_program,paths.stamp)
     for file in files {
         testing.expect(t,os.write_entire_file(file,"built")==nil,file)
@@ -58,7 +109,7 @@ an_installed_engine_builds_nothing_and_says_what_it_lacks :: proc(t:^testing.T) 
     testing.expect_value(t,result.status,Status.Up_To_Date)
     testing.expect_value(t,result.mode,ENGINE_MODE_INSTALLED)
     testing.expect(t,engine_current(root,.Dev))
-    stamped,current:=engine_state(root,.Keep)
+    stamped,current:=engine_state(root,.Release)
     testing.expect(t,stamped && current)
 }
 
@@ -150,23 +201,17 @@ declare_says_whether_a_declaration_changed :: proc(t:^testing.T) {
     _,changed=declare(desc)
     testing.expect(t,changed.decl,"another signature is another declaration")
 
-    // What whoever imports the package is built again by is the hash of its
-    // declarations: a private procedure they do not name is not in it.
-    core,_:=engine_package_index("core")
+    // A private procedure the declarations do not name is not declared.
     private :: "package core\n\nvalue :: proc(x,y:int) -> int {{return helper(x)+y}}\n\ntwice :: #force_inline proc(x:int) -> int {{return named(x)}}\n\n@(private)\nhelper :: proc(%s) -> int {{return x}}\n\n@(private)\nnamed :: proc(%s) -> int {{return x*2}}\n"
     write(t,source,fmt.tprintf(private,"x:int","x:int"))
     errors,_=declare(desc)
     testing.expect_value(t,len(errors),0)
-    hashes:=decl_hashes(desc.decl)
-    testing.expect(t,hashes[core]!=0)
     write(t,source,fmt.tprintf(private,"x:int,y:=0","x:int"))
     errors,changed=declare(desc)
     testing.expect(t,len(errors)==0 && changed.stage && !changed.decl,"a private procedure no declaration names is not declared")
-    testing.expect_value(t,decl_hashes(desc.decl)[core],hashes[core])
     write(t,source,fmt.tprintf(private,"x:int,y:=0","x:int,y:=0"))
     errors,changed=declare(desc)
     testing.expect(t,len(errors)==0 && changed.decl,"the one an inline body calls is")
-    testing.expect(t,decl_hashes(desc.decl)[core]!=hashes[core])
 
     extra:=project.path(folder,"engine","core","more.odin")
     write(t,extra,"package core\n\nmore :: proc() {}\n")
@@ -433,25 +478,32 @@ a_stamp_that_is_not_the_one_of_a_build_is_not_read :: proc(t:^testing.T) {
     if root=="" {return}
     file:=project.path(root,"engine.stamp",allocator=context.temp_allocator)
 
-    _,stamped:=engine_stamp_read(file)
+    _,stamped:=engine_stamp_read(file,engine_libraries(.Dev,context.temp_allocator))
     testing.expect(t,!stamped,"a stamp that is not there is not read")
 
     testing.expect(t,os.write_entire_file(file,"not a stamp")==nil)
-    _,stamped=engine_stamp_read(file)
+    _,stamped=engine_stamp_read(file,engine_libraries(.Dev,context.temp_allocator))
     testing.expect(t,!stamped,"a stamp that does not parse is not read")
 
     testing.expect(t,os.write_entire_file(file,"1 2 3 Modules")==nil)
-    _,stamped=engine_stamp_read(file)
+    _,stamped=engine_stamp_read(file,engine_libraries(.Dev,context.temp_allocator))
     testing.expect(t,!stamped,"a stamp of another shape is not read")
 
-    written:=Engine_Stamp{programs=0x123,declares=DECLARE_VERSION}
-    for &library,which in written.libraries {library={sources=0xabc+u64(which),tools=0x456+u64(which)}}
-    for &hash,index in written.declared {hash=0xfed+u64(index)}
-    testing.expect(t,engine_stamp_write(file,written)==nil)
-    read,ok:=engine_stamp_read(file)
+    libraries:=engine_libraries(.Dev,context.temp_allocator)
+    written:=Engine_Stamp{programs=0x123,programs_against=0x321,declares=DECLARE_VERSION,libraries=make([]Library_Stamp,len(libraries),context.temp_allocator)}
+    for &library,which in written.libraries {library={sources=0xabc+u64(which),tools=0x456+u64(which),against=0xfed+u64(which)}}
+    testing.expect(t,engine_stamp_write(file,written,libraries)==nil)
+    read,ok:=engine_stamp_read(file,libraries)
     testing.expect(t,ok,"the stamp a build writes is read")
-    testing.expect_value(t,read,written)
-    testing.expect(t,!strings.contains(engine_stamp_of(root,context.temp_allocator),"\n"),"what a program keeps of the stamp is one line")
+    testing.expect(t,read.programs==written.programs && read.programs_against==written.programs_against && read.declares==written.declares && slice.equal(read.libraries,written.libraries),"as it was written")
+    line:=engine_stamp_of(root,context.temp_allocator)
+    testing.expect(t,!strings.contains(line,"\n"),"what a program keeps of the stamp is one line")
+    // A library built again moves that line, whichever it is.
+    written.libraries[len(libraries)-1].against+=1
+    testing.expect(t,engine_stamp_write(file,written,libraries)==nil)
+    testing.expect(t,engine_stamp_of(root,context.temp_allocator)!=line,"the line follows every library")
+    _,stamped=engine_stamp_read(file,engine_libraries(.Release,context.temp_allocator))
+    testing.expect(t,!stamped,"the stamp of other libraries is not read")
 
     text,_:=os.read_entire_file(file,context.temp_allocator)
     lines:=strings.split_lines(string(text),context.temp_allocator)
@@ -459,19 +511,18 @@ a_stamp_that_is_not_the_one_of_a_build_is_not_read :: proc(t:^testing.T) {
     extra[0]=strings.concatenate({lines[0]," 9"},context.temp_allocator)
     without_library:=slice.clone(lines,context.temp_allocator)
     without_library[0]=lines[0][:strings.last_index_byte(lines[0],' ')]
-    without_library[0]=without_library[0][:strings.last_index_byte(without_library[0],' ')]
     letters[0]=strings.concatenate({"zz",lines[0]},context.temp_allocator)
     swapped[1],swapped[2]=lines[2],lines[1]
     cases:=[]struct{what:string,lines:[]string}{
         {"a stamp with an extra field",extra},
-        {"a stamp without one of the libraries",without_library},
+        {"a stamp without one of its fields",without_library},
         {"a stamp whose hashes are not numbers",letters},
-        {"a stamp without one of the packages",lines[:len(lines)-1]},
-        {"a stamp with its packages in another order",swapped},
+        {"a stamp without one of the libraries",lines[:len(lines)-1]},
+        {"a stamp with its libraries in another order",swapped},
     }
     for c in cases {
         testing.expect(t,os.write_entire_file(file,strings.join(c.lines,"\n",context.temp_allocator))==nil)
-        _,stamped=engine_stamp_read(file)
+        _,stamped=engine_stamp_read(file,libraries)
         testing.expectf(t,!stamped,"%s is not read",c.what)
     }
 }
@@ -488,50 +539,138 @@ a_library_of_the_engine_follows_its_stage :: proc(t:^testing.T) {
     testing.expect(t,engine_library_compile(false,false,false,false),"a library that is not there is compiled")
 }
 
-// A library compiles against the declarations its sources import from the
-// libraries it needs: a declaration that changes builds again the libraries
-// that reach its package and no other. A literal that names a package of a
-// library above is no import, since nothing above a library is staged for it.
+// A library links against the libraries its imports reach before it, directly
+// or through another, and names the declarations of those its sources write
+// after the name of an import: what it is built again by. A literal that
+// names a package after its own is no import, nor is one inside another string.
 @(test)
-a_library_follows_the_declarations_it_reaches_below :: proc(t:^testing.T) {
+a_library_needs_the_libraries_it_reaches_and_names_what_it_writes :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
     root:=base.test_folder(t,"declare-reach")
     if root=="" {return}
     source_write(t,root,"core","core.odin","package core\n")
-    source_write(t,root,"render","render.odin","package render\n\nimport \"mirai:core\"\n")
-    source_write(t,root,"cook/build","build.odin","package build\n\nimport \"mirai:render\"\n\nPROGRAM :: `import \"mirai:editor\"`\n")
-    source_write(t,root,"editor","editor.odin","package editor\n\nimport \"mirai:ui\"\n")
-    paths:=engine_paths(root,.Dev)
-    reaches:[Engine_Library][ENGINE_PACKAGE_COUNT]bool
-    for &reached,library in reaches {reached=engine_library_reach(root,paths,library)}
-    index :: proc(t:^testing.T,path:string) -> int {
-        at,found:=engine_package_index(path)
-        testing.expect(t,found,path)
-        return at
+    source_write(t,root,"render","render.odin","package render\n\nimport \"mirai:core\"\n\nframes :: proc() -> int {return core.count()+core .\n  more(..core.rest())}\n")
+    source_write(t,root,"cook/build","build.odin","package build\n\nimport draw \"mirai:render\"\n\nPROGRAM :: `import \"mirai:editor\"`\n\nPLAYER :: \"import \\\"mirai:host\\\"\"\n\nNAMED :: \"mirai:asset\"\n\nrun :: proc() {draw.frames()}\n")
+    source_write(t,root,"editor","editor.odin","package editor\n\nimport \"mirai:ui\"\nimport _ \"mirai:cook/build\"\n")
+    for mode in Engine_Mode {
+        libraries:=engine_libraries(mode)
+        reach:=engine_reach(root,engine_paths(root,mode),libraries)
+        of :: proc(t:^testing.T,libraries:[]Engine_Library,path:string) -> int {
+            for library,which in libraries {
+                if slice.contains(library.packages,path) {return which}
+            }
+            testing.expect(t,false,path)
+            return 0
+        }
+        core,render,ui,asset,host:=of(t,libraries,"core"),of(t,libraries,"render"),of(t,libraries,"ui"),of(t,libraries,"asset"),of(t,libraries,"host")
+        cook,editor:=of(t,libraries,"cook/build"),of(t,libraries,"editor")
+        testing.expectf(t,reach.needs[cook][render] && reach.needs[cook][core] && reach.needs[cook][asset],"%v: what it imports, what that imports and what it names",mode)
+        testing.expectf(t,reach.needs[editor][cook] && reach.needs[editor][ui] && reach.needs[editor][core],"%v: the editor reaches them all",mode)
+        testing.expectf(t,!reach.needs[cook][editor] && !slice.contains(reach.needs[core],true),"%v: a library needs nothing after it",mode)
+        if mode==.Dev {
+            testing.expect(t,reach.needs[render][core] && !reach.needs[cook][host],"a package is a library, and a literal inside another string is no import")
+            names:=reach.names[render]
+            testing.expect(t,"core.count" in names && "core.more" in names && "core.rest" in names && "core." in names,"what follows the name of the import, and the head of its package")
+            testing.expect(t,"render.frames" in reach.names[cook] && "asset.*" in reach.names[cook],"under the name it is imported with; all of a package named outside an import")
+            testing.expect(t,"cook/build." in reach.names[editor] && "ui." in reach.names[editor])
+            for name in reach.names[cook] {testing.expectf(t,!strings.has_prefix(name,"editor.") && !strings.has_prefix(name,"host."),"%s is of no import",name)}
+        } else {
+            // In release render and core are one library: the first compiles the second from the stage.
+            testing.expect(t,core!=render || len(reach.names[core])==0)
+        }
+        testing.expect(t,reach.followed[cook] && reach.followed[editor])
     }
-    core,render,ui,editor:=index(t,"core"),index(t,"render"),index(t,"ui"),index(t,"editor")
-    testing.expect(t,reaches[.Engine][core] && reaches[.Cook][render] && reaches[.Editor][ui])
-    testing.expect(t,!reaches[.Cook][editor],"a library reaches nothing of a library above it")
-    testing.expect(t,reaches[.Base]=={},"the lowest library compiles against no other")
+}
 
-    before:[ENGINE_PACKAGE_COUNT]u64
-    for &hash,at in before {hash=0x100+u64(at)}
-    cases:=[]struct{what:string,changed:int,built_again:bit_set[Engine_Library]}{
-        {"a declaration of the lowest library",core,{.Engine}},
-        {"a declaration only the editor imports",ui,{.Editor}},
-        {"a declaration of the highest library",editor,{}},
+// What names a declaration is built again when that declaration, or one it
+// reaches, changes: a type with those of its fields, also through a pointer, a
+// procedure with those of its signature, an inline body with what it calls.
+// The body of a procedure the library carries, and a declaration nothing
+// names, build nothing again.
+@(test)
+what_names_a_declaration_follows_it_and_what_it_reaches :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    root:=base.test_folder(t,"declare-names")
+    if root=="" {return}
+    CORE :: "package core\n\nEntity :: struct {{id:u32%s}}\n\nTable :: struct {{rows:[]Entity}}\n\nConfig :: struct {{size:int%s}}\n\ncount :: proc(t:^Table) -> int {{return len(t.rows)%s}}\n\nlimit :: proc(%s) -> int {{return 4}}\n\ntwice :: #force_inline proc(x:int) -> int {{return helper(x)%s}}\n\n@(private)\nhelper :: proc(x:int%s) -> int {{return x*2%s}}\n%s\nwhen ODIN_DEBUG%s {{\n    checked :: proc() {{}}\n}}\n"
+    RENDER :: "package render\n\nimport data \"mirai:core\"\n\nView :: struct {{config:^data.Config}}\n\ndraw :: proc(v:^View%s) {{}}\n"
+    Consumer :: enum {Counts,Limits,Twices,Draws,Checks,Imports}
+    consumers:=[Consumer]string{
+        .Counts="package game\n\nimport \"mirai:core\"\n\nrun :: proc() {_=core.count(nil)}\n",
+        .Limits="package game\n\nimport c \"mirai:core\"\n\nrun :: proc() {_=c.limit()}\n",
+        .Twices="package game\n\nimport \"mirai:core\"\n\nrun :: proc() {_=core.twice(1)}\n",
+        .Draws="package game\n\nimport \"mirai:render\"\n\nrun :: proc() {render.draw(nil)}\n",
+        .Checks="package game\n\nimport \"mirai:core\"\n\nrun :: proc() {core.checked()}\n",
+        .Imports="package game\n\nimport _ \"mirai:core\"\n",
+    }
+    desc:=describe(root,[]string{"core","render"})
+    desc.names=true
+    index:=project.path(root,"engine.declared")
+    keys :: proc(t:^testing.T,root:string,desc:Declare_Desc,index:string,consumers:[Consumer]string,core:[9]string,render:string) -> (keys:[Consumer]u64) {
+        source_write(t,root,"core","core.odin",fmt.tprintf(CORE,core[0],core[1],core[2],core[3],core[4],core[5],core[6],core[7],core[8]))
+        source_write(t,root,"render","render.odin",fmt.tprintf(RENDER,render))
+        errors,_:=declaring(desc)
+        if !declared_ok(t,errors) {return}
+        testing.expect(t,declared_write(desc.decl,index))
+        declared:=declared_read(index,context.temp_allocator)
+        testing.expect(t,declared.known && "core.Entity" in declared.hashes && "render.draw" in declared.hashes)
+        for source,consumer in consumers {
+            names:=make(map[string]bool,context.temp_allocator)
+            testing.expect(t,declared_names(desc.decl,source,nil,&names))
+            keys[consumer]=declared_key(&declared,names)
+        }
+        return
+    }
+    before:=keys(t,root,desc,index,consumers,{},"")
+    cases:=[]struct{what:string,core:[9]string,render:string,built_again:bit_set[Consumer]}{
+        {what="the body of a procedure the library carries",core={2="+0"}},
+        {what="a field of a type a signature reaches through another",core={0=",generation:u32"},built_again={.Counts}},
+        {what="a field of a type reached through a pointer of another package",core={1=",scale:f32"},built_again={.Draws}},
+        {what="the signature of a procedure",core={3="floor:=0"},built_again={.Limits}},
+        {what="the body of an inline procedure",core={4="+0"},built_again={.Twices}},
+        {what="the body of a private procedure an inline one calls",core={6="+0"}},
+        {what="the signature of a private procedure an inline one calls",core={5=",y:=0"},built_again={.Twices}},
+        {what="a declaration nothing names",core={7="\nextra :: proc() {}\n"}},
+        {what="the condition of the when around a declaration",core={8=" && ODIN_OS==.Windows"},built_again={.Checks}},
+        {what="the signature of a procedure of another package",render=",layer:=0",built_again={.Draws}},
     }
     for c in cases {
-        after:=before
-        after[c.changed]+=1
-        for &reached,library in reaches {
-            testing.expectf(t,declared_same(&before,&after,&reached)==(library not_in c.built_again),"%s: %v",c.what,library)
+        after:=keys(t,root,desc,index,consumers,c.core,c.render)
+        for consumer in Consumer {
+            testing.expectf(t,(after[consumer]!=before[consumer])==(consumer in c.built_again),"%s: %v built again %v",c.what,consumer,after[consumer]!=before[consumer])
         }
     }
-    unknown:=before
-    unknown[render]=0
-    testing.expect(t,!declared_same(&unknown,&unknown,&reaches[.Cook]),"what reaches a declaration without a hash is built again")
-    testing.expect(t,declared_same(&unknown,&unknown,&reaches[.Engine]))
+    // Without the index nothing is known, and what is not declared yet moves a key once it is.
+    missing:=declared_read(project.path(root,"none"),context.temp_allocator)
+    testing.expect(t,!missing.known)
+    names:=make(map[string]bool,context.temp_allocator)
+    testing.expect(t,declared_names(desc.decl,"package game\n\nimport \"mirai:core\"\n\nrun :: proc() {core.extra()}\n",nil,&names))
+    declared:=declared_read(index,context.temp_allocator)
+    without:=declared_key(&declared,names)
+    _=keys(t,root,desc,index,consumers,{7="\nextra :: proc() {}\n"},"")
+    declared=declared_read(index,context.temp_allocator)
+    testing.expect(t,declared_key(&declared,names)!=without,"a declaration that appears moves what already named it")
+}
+
+// The packages of a library are compiled together from the stage, as the
+// collection it is compiled as, and every other package is its declarations:
+// in the stage they import each other through that collection, and nothing
+// else changes.
+@(test)
+the_packages_of_a_library_import_each_other_from_the_stage :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    root:=base.test_folder(t,"declare-staged")
+    if root=="" {return}
+    source_write(t,root,"thing","thing.odin","package thing\n\nimport \"core:fmt\"\nimport below \"mirai:thing/nested\"\nimport \"mirai:other\"\n\nvalue_of :: proc() -> int {return below.nested_of(other.ONE)}\n")
+    source_write(t,root,"thing/nested","nested.odin","package thing_nested\n\nnested_of :: proc(value:int) -> int {return value}\n")
+    desc:=describe(root,[]string{"thing","thing/nested"})
+    desc.staged="staged"
+    errors,_:=declaring(desc)
+    if !declared_ok(t,errors) {return}
+    staged,declaration:=declared(desc.stage,"thing","thing.odin"),declared(desc.decl,"thing","thing.odin")
+    testing.expect(t,strings.contains(staged,"import below \"staged:thing/nested\"") && strings.contains(staged,"import \"mirai:other\"") && strings.contains(staged,"import \"core:fmt\""),staged)
+    testing.expect(t,strings.contains(declaration,"import below \"mirai:thing/nested\""),declaration)
+    testing.expect_value(t,strings.count(staged[:strings.index(staged,"value_of")],"\n"),6)
 }
 
 // A stage gets the declarations it compiles against as they are, copying
@@ -556,57 +695,54 @@ decl_mirror_copies_what_changed_and_drops_what_went :: proc(t:^testing.T) {
     testing.expect(t,!os.exists(project.path(stage,"core","b.odin")))
 }
 
-// An entry of the shared cache restores into a checkout at another place, once
-// the checkout that stored it is gone: the declarations load their files, and
-// link against the library, by paths that stand in every checkout. The stages
-// there go: the libraries restored were not compiled from them.
+// A library of the engine is kept in the shared cache by what it is built
+// from, and another checkout that builds it from the same takes it: the
+// library, what links against it and its debug information, and nothing else.
+// A library built from other sources, against other declarations or in
+// another mode is another entry.
 @(test)
-a_cache_entry_restores_into_another_checkout_without_naming_the_first :: proc(t:^testing.T) {
+a_library_of_the_engine_is_shared_by_what_it_is_built_from :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
     folder:=base.test_folder(t,"cache")
     if folder=="" {return}
-    source:="package thing\n\nDATA :: #load(\"../assets/data.txt\")\n\nTable :: [1]struct{binary:[]byte}{{binary = #load(\"../assets/data.txt\")}}\n\nvalue_of :: proc(value:int) -> int {return value}\n"
     first,second:=project.path(folder,"first"),project.path(folder,"deeper","second")
-    for root in ([2]string{first,second}) {
-        source_write(t,root,"thing","thing.odin",source)
-        source_write(t,root,"assets","data.txt","data")
-    }
+    libraries:=engine_libraries(.Dev)
+    library:=libraries[0]
+    built:=Library_Stamp{sources=1,tools=2}
     paths:=engine_paths(first,.Dev)
-    errors,_:=declaring({root=first,packages={"thing"},binary="mirai",library=paths.imports[.Base],stage=paths.stages[.Base],decl=paths.decl})
-    if !declared_ok(t,errors) {return}
     testing.expect(t,os.make_directory_all(paths.folder)==nil)
-    for file in ([2]string{paths.libraries[.Base],paths.imports[.Base]}) {testing.expect(t,os.write_entire_file(file,"library")==nil)}
-    testing.expect(t,engine_stamp_write(paths.stamp,{libraries=#partial{.Base={sources=1,tools=2}},programs=3,declares=DECLARE_VERSION})==nil)
+    for name in engine_cache_files(library) {
+        if name!="" {testing.expect(t,os.write_entire_file(project.path(paths.folder,name),name)==nil)}
+    }
+    testing.expect(t,os.write_entire_file(project.path(paths.folder,"mirai-other.txt"),"other")==nil)
     entry:=project.path(folder,"cache","entry")
-    engine_cache_store(paths,entry)
-    testing.expect(t,os.is_file(project.path(entry,CACHE_COMPLETE)),"the build is kept")
+    engine_cache_store(entry,paths,library)
+    testing.expect(t,os.is_file(project.path(entry,CACHE_COMPLETE)),"the library is kept")
+    testing.expect(t,!os.exists(project.path(entry,"mirai-other.txt")),"with nothing of another")
     testing.expect(t,os.remove_all(first)==nil)
 
     restored:=engine_paths(second,.Dev)
-    testing.expect(t,os.make_directory_all(restored.stages[.Editor])==nil)
-    if !testing.expect(t,engine_cache_restore(entry,restored)) {return}
-    testing.expect(t,os.is_file(restored.libraries[.Base]) && os.is_file(restored.imports[.Base]) && os.is_file(restored.stamp))
-    testing.expect(t,!os.exists(restored.stages[.Editor]),"a stage of other libraries does not stay")
-    text:=declared(restored.decl,"thing","thing.odin")
-    testing.expect(t,text!="" && !strings.contains(text,"first"),"the declarations name nothing of the first checkout")
-    loaded:=0
-    rest:=text
-    for {
-        at:=strings.index(rest,"#load(\"")
-        if at<0 {break}
-        rest=rest[at+len("#load(\""):]
-        path:=rest[:strings.index_byte(rest,'"')]
-        resolved,_:=filepath.join({restored.decl,"thing",path},context.temp_allocator)
-        testing.expectf(t,os.is_file(resolved),"%s is loaded from the second checkout",path)
-        loaded+=1
-    }
-    testing.expect_value(t,loaded,2)
-    linked:=strings.index(text,"foreign import __mirai \"")
-    if testing.expect(t,linked>=0) {
-        rest=text[linked+len("foreign import __mirai \""):]
-        resolved,_:=filepath.join({restored.decl,"thing",rest[:strings.index_byte(rest,'"')]},context.temp_allocator)
-        testing.expect(t,os.is_file(resolved),"the declarations link against the library of the second checkout")
-    }
+    testing.expect(t,os.make_directory_all(restored.folder)==nil)
+    testing.expect(t,!engine_cache_take(project.path(folder,"cache","none"),restored,library),"an entry the cache does not have is not taken")
+    if !testing.expect(t,engine_cache_take(entry,restored,library)) {return}
+    file,linked:=engine_library_files(restored,library)
+    testing.expect(t,library_present(file,linked),"the library and what links against it")
+
+    keys:=make(map[string]bool)
+    keys[engine_cache_entry(first,library,.Dev,built,3)]=true
+    keys[engine_cache_entry(first,library,.Dev,{sources=9,tools=2},3)]=true
+    keys[engine_cache_entry(first,library,.Dev,{sources=1,tools=9},3)]=true
+    keys[engine_cache_entry(first,library,.Dev,built,9)]=true
+    keys[engine_cache_entry(first,library,.Release,built,3)]=true
+    keys[engine_cache_entry(first,libraries[1],.Dev,built,3)]=true
+    testing.expect_value(t,len(keys),6)
+    here,there:=engine_cache_entry(first,library,.Dev,built,3),engine_cache_entry(second,library,.Dev,built,3)
+    testing.expect_value(t,here[strings.last_index_byte(here,'/'):],there[strings.last_index_byte(there,'/'):])
+
+    // A build without a stamp removes the binaries there, of whatever libraries.
+    testing.expect(t,os.write_entire_file(project.path(restored.folder,"SDL3.dll"),"sdl")==nil)
+    engine_binaries_remove(restored.folder)
+    testing.expect(t,!os.exists(file) && os.is_file(project.path(restored.folder,"SDL3.dll")),"what is not of the engine stays")
 }
 
 // A source without a package clause, a comment alone, is an error that names the file for the

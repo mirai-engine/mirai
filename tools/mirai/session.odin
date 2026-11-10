@@ -73,6 +73,7 @@ cmd_session :: proc(root:string,args:[]string) -> int {
 // What start and restart take; what is not theirs goes to the editor.
 Session_Options :: struct {
     mode:Build_Mode,
+    mode_asked:bool, // --dev or --release was given
     no_build,discard,orphans,copy:bool,
     timeout:int, // seconds for the API to answer
     editor_args:[]string,
@@ -86,8 +87,8 @@ session_options :: proc(args:[]string) -> (options:Session_Options,problem:strin
         switch args[i] {
         case "--dev","--release":
             mode:=args[i]=="--dev"?Build_Mode.Dev:Build_Mode.Release
-            if options.mode!=.Keep && options.mode!=mode {return {},"--dev and --release do not go together"}
-            options.mode=mode
+            if options.mode_asked && options.mode!=mode {return {},"--dev and --release do not go together"}
+            options.mode,options.mode_asked=mode,true
         case "--no-build": options.no_build=true
         case "--discard":  options.discard=true
         case "--orphans":  options.orphans=true
@@ -133,10 +134,15 @@ process_end :: proc(pid:int,wait:time.Duration) {
 
 // The session of the project that answers, or one opened for a command, which
 // closes it when reused is false; code is not 0 after saying why there is none.
-session_borrow :: proc(root,folder:string,mode:Build_Mode,command:string) -> (file:api.Port_File,reused:bool,code:int) {
+// The open session is taken in the mode it was opened in, unless one is asked for.
+session_borrow :: proc(root,folder:string,mode:Build_Mode,mode_asked:bool,command:string) -> (file:api.Port_File,reused:bool,code:int) {
     alive:bool
     file,alive=session_find(folder)
     reused=alive && session_answers(file.port)
+    mode:=mode
+    if record,recorded:=session_record(folder);reused && recorded && !mode_asked {
+        if opened_in,named:=session_record_mode(record);named {mode=opened_in}
+    }
     if reused && !session_reusable(root,folder,mode,file,command) {return file,reused,1}
     if !reused {file,code=session_open(root,folder,mode,false,180,{})}
     return
@@ -161,13 +167,13 @@ session_record :: proc(folder:string) -> (record:Session_Record,found:bool) {
     return record,true
 }
 
-// The mode of the binaries a record names; Keep when it names none.
-session_record_mode :: proc(record:Session_Record) -> Build_Mode {
+// The mode of the binaries a record names; false when it names none.
+session_record_mode :: proc(record:Session_Record) -> (mode:Build_Mode,named:bool) {
     switch record.mode {
-    case "dev":     return .Dev
-    case "release": return .Release
+    case "dev":     return .Dev,true
+    case "release": return .Release,true
     }
-    return .Keep
+    return
 }
 
 @(private="file")
@@ -223,7 +229,8 @@ session_restart :: proc(root,folder:string,args:[]string) -> int {
     if problem!="" {fmt.eprintfln("mirai session restart: %s. Usage: mirai %s",problem,SESSION_USAGE);return 2}
     mode,editor_args:=options.mode,options.editor_args
     if record,recorded:=session_record(folder);recorded {
-        if mode==.Keep {mode=session_record_mode(record)}
+        // The session opens again as it was opened, unless a mode is asked for.
+        if recorded_mode,named:=session_record_mode(record);named && !options.mode_asked {mode=recorded_mode}
         if len(editor_args)==0 {editor_args=record.args}
     }
     closed:=false

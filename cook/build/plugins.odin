@@ -202,30 +202,30 @@ plugin_decl_of :: proc(lib:^Plugin_Library) -> string {
 }
 
 // What a library is built from: its sources, the declarations of the
-// plugins it compiles against as they are now, those of the packages of the
-// engine that its sources and those declarations import (by the hashes the
-// stamp of the engine keeps, each of a package and of what it reaches), the
-// compiler and the flags. A change of the engine that declares the same
-// builds no plugin again, and one of a declaration builds again the parts
-// that reach its package. Nothing of it names the project: with the same
+// plugins it compiles against as they are now, the declarations of the
+// engine that its sources and those declarations name (by the hashes the
+// build of the engine keeps, each of a declaration and of what it reaches:
+// declared.odin), the compiler and the flags. A change of the engine that
+// declares the same builds no plugin again, and one of a declaration builds
+// again the parts that name it or something that reaches it. Nothing of it names the project: with the same
 // flags, every project of an engine shares its libraries through the cache,
 // and those a package of the engine brings. It names the library
 // (plugin_library_name).
 @(private)
-plugin_library_hash :: proc(p:^project.Project,lib:^Plugin_Library,compiler:string,flags:[]string,engine:Engine_Paths) -> u64 {
-	return plugin_library_hash_of(p,lib,compiler,flags,engine,false)
+plugin_library_hash :: proc(p:^project.Project,lib:^Plugin_Library,compiler:string,flags:[]string,engine:Engine_Paths,declared:^Declared) -> u64 {
+	return plugin_library_hash_of(p,lib,compiler,flags,engine,declared,false)
 }
 
 // The same with the names of the libraries it links against masked: what its
 // objects are compiled from. A library whose name moves and whose compile
 // hash does not is linked again (relink.odin).
 @(private)
-plugin_library_compile_hash :: proc(p:^project.Project,lib:^Plugin_Library,compiler:string,flags:[]string,engine:Engine_Paths) -> u64 {
-	return plugin_library_hash_of(p,lib,compiler,flags,engine,true)
+plugin_library_compile_hash :: proc(p:^project.Project,lib:^Plugin_Library,compiler:string,flags:[]string,engine:Engine_Paths,declared:^Declared) -> u64 {
+	return plugin_library_hash_of(p,lib,compiler,flags,engine,declared,true)
 }
 
 @(private="file")
-plugin_library_hash_of :: proc(p:^project.Project,lib:^Plugin_Library,compiler:string,flags:[]string,engine:Engine_Paths,masked:bool) -> u64 {
+plugin_library_hash_of :: proc(p:^project.Project,lib:^Plugin_Library,compiler:string,flags:[]string,engine:Engine_Paths,declared:^Declared,masked:bool) -> u64 {
 	sources:=make([dynamic]string,context.temp_allocator)
 	append(&sources,..engine_sources(project.path(p.engine_root,"plugins",allocator=context.temp_allocator),lib.packages))
 	hashed:=make([dynamic]string,context.temp_allocator)
@@ -233,20 +233,14 @@ plugin_library_hash_of :: proc(p:^project.Project,lib:^Plugin_Library,compiler:s
 	// The declarations it compiles against, relative to the folder of the project that has them.
 	decl:=plugin_decl_of(lib)
 	needed:=engine_sources(decl,lib.needs)
-	declared,_:=fingerprint(decl,"",nil,needed,masked=decl if masked else "")
-	append(&hashed,fmt.tprintf("<plugin declarations %x>",declared))
-	reached:[ENGINE_PACKAGE_COUNT]bool
-	own_followed:=engine_imports(engine.decl,sources[:],&reached)
-	needed_followed:=engine_imports(engine.decl,needed,&reached)
-	stamp,stamped:=engine_stamp_read(engine.stamp)
-	known:=stamped && own_followed && needed_followed
-	for package_reached,index in reached {
-		if !package_reached {continue}
-		known&&=stamp.declared[index]!=0
-		append(&hashed,fmt.tprintf("<%s%s %x>",ENGINE_COLLECTION,engine_package(index),stamp.declared[index]))
-	}
-	// Without the hash of something it reaches, every build of the engine builds it again.
-	if !known {append(&sources,engine.stamp)}
+	plugins_declared,_:=fingerprint(decl,"",nil,needed,masked=decl if masked else "")
+	append(&hashed,fmt.tprintf("<plugin declarations %x>",plugins_declared))
+	names:=make(map[string]bool,context.temp_allocator)
+	own_followed:=declared_names_of(engine.decl,sources[:],nil,&names)
+	needed_followed:=declared_names_of(engine.decl,needed,nil,&names)
+	append(&hashed,fmt.tprintf("<%sdeclarations %x>",ENGINE_COLLECTION,declared_key(declared,names)))
+	// Without the hash of something it names, every build of the engine builds it again.
+	if !declared.known || !own_followed || !needed_followed {append(&sources,engine.stamp)}
 	hash,_:=fingerprint(p.engine_root,compiler,hashed[:],sources[:])
 	return hash
 }
@@ -323,10 +317,11 @@ plugins_current :: proc(p:^project.Project,target:Target,compiler:string,dev:boo
 	libraries:=plugin_libraries(p,target,dev,context.temp_allocator)
 	if len(libraries)==0 {return true}
 	flags:=plugin_flags(p,dev,context.temp_allocator)
-	paths:=engine_paths(p.engine_root,engine==.Keep?ENGINE_MODE_HERE:engine,context.temp_allocator)
+	paths:=engine_paths(p.engine_root,engine,context.temp_allocator)
+	declared:=declared_read(paths.declared,context.temp_allocator)
 	for &lib in libraries {
 		saved,_,stamped:=stamp_read(lib.stamp)
-		hash:=plugin_library_hash(p,&lib,compiler,flags,paths)
+		hash:=plugin_library_hash(p,&lib,compiler,flags,paths,&declared)
 		plugin_library_name(p.root,&lib,hash,context.temp_allocator)
 		if !stamped || !os.is_file(lib.library) || saved!=hash {return false}
 	}

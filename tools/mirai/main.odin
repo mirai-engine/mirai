@@ -262,7 +262,8 @@ check_project :: proc(root,folder:string) -> int {
     opened,error:=project.open(folder,root,context.temp_allocator)
     if error.code!=.None {fmt.eprintfln("mirai check: could not open the project %s",folder);return 1}
     clean:=plugin_api_lint_project(&opened)
-    job:=build.job_run({project=&opened,target=.Editor,action=.Check})
+    // Against the declarations an agent builds with: a check comes before a --dev build.
+    job:=build.job_run({project=&opened,target=.Editor,action=.Check,engine=.Dev})
     defer build.job_destroy(job)
     for d in job.result.diagnostics {fmt.eprintfln("%s(%d:%d) %v: %s",d.file,d.line,d.column,d.severity,d.message)}
     if job.result.status==.Built {

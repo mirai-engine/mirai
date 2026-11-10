@@ -83,7 +83,7 @@ Desc :: struct {
     force:bool,                  // build even when nothing changed
     dev:bool,                   // -o:minimal whatever the manifest says: for checking a change, not for shipping
     incremental:bool,           // Game: the engine and its plugins come from one library compiled once per version (shipped.odin), next to the executable; the game alone compiles. Not for what ships: unset, they compile whole with the game
-    engine:Engine_Mode,          // the binaries of the engine a library is built against. Keep: ENGINE_MODE_HERE
+    engine:Engine_Mode,          // the binaries of the engine a library is built against
     action:Action,               // Check and Test: of the Editor or Play target
     test_package:string,         // Test: the folder of the package, absolute
     test_names:[]string,         // Test: the tests to run, by name; empty: all of them
@@ -143,6 +143,7 @@ Job :: struct {
     plugin_cache:bool,           // the libraries go to and come from the shared cache: without debug information, which names the build that made it
     plugin_stored:bool,          // it stored libraries in the shared cache, which it trims once they are all published
     engine_decl:string,
+    engine_folder:string,        // of the binaries of the engine the job builds against
     shipped:Shipped_Engine,      // Game with Desc.incremental (shipped.odin)
     masked:string,               // the declarations of the plugin libraries, which the target reads with their names masked (relink.odin)
     link_file:string,            // the record of the last compile of the target
@@ -261,7 +262,7 @@ job_start :: proc(desc:Desc) -> ^Job {
             if p.plugins[index].manifest.development {append(&job.development,strings.clone(p.plugins[index].folder,a))}
         }
         if assets:=project.folder_path(p.root,.Assets,a);os.is_dir(assets) {
-            job.cook={assets=assets,output=project.folder_path(folder,.Assets,a),manifest=project.path(p.root,COOK_FILE,allocator=a),texture_cache=project.cache_path(p.root,project.TEXTURE_CACHE,allocator=a),mesh_cache=project.cache_path(p.root,project.MESH_CACHE,allocator=a),root=p.root,server=desc.server,quick=desc.dev,import_program=engine_paths(p.engine_root,desc.engine==.Keep?ENGINE_MODE_HERE:desc.engine,a).import_program,allocator=a}
+            job.cook={assets=assets,output=project.folder_path(folder,.Assets,a),manifest=project.path(p.root,COOK_FILE,allocator=a),texture_cache=project.cache_path(p.root,project.TEXTURE_CACHE,allocator=a),mesh_cache=project.cache_path(p.root,project.MESH_CACHE,allocator=a),root=p.root,server=desc.server,quick=desc.dev,import_program=engine_paths(p.engine_root,desc.engine,a).import_program,allocator=a}
             job.plugin_assets=make([dynamic]project.Asset_Folder,a)
             for found in project.asset_folders(p,a) {
                 if found.prefix!="" {append(&job.plugin_assets,found)}
@@ -271,6 +272,7 @@ job_start :: proc(desc:Desc) -> ^Job {
     }
 
     job.flags=target_flags(p,desc.target,desc.flags,a,desc.dev,desc.engine,desc.incremental)
+    job.engine_folder=engine_paths(p.engine_root,desc.engine,a).folder
     job.force=desc.force
     job.compiles=make([dynamic]Compile,a)
     if desc.target!=.Game {
@@ -302,10 +304,11 @@ job_plugins_plan :: proc(job:^Job,p:^project.Project,desc:Desc) -> Failure {
     if len(job.plugins)==0 {return .None}
     job.plugin_flags=plugin_flags(p,desc.dev,a)
     job.plugin_cache=!p.manifest.build.debug
-    engine:=engine_paths(p.engine_root,desc.engine==.Keep?ENGINE_MODE_HERE:desc.engine,context.temp_allocator)
+    engine:=engine_paths(p.engine_root,desc.engine,context.temp_allocator)
     job.engine_decl=strings.clone(engine.decl,a)
+    declared:=declared_read(engine.declared,context.temp_allocator)
     for &lib,i in job.plugins {
-        job.plugin_hashes[i]=plugin_library_hash(p,&lib,job.compiler,job.plugin_flags,engine)
+        job.plugin_hashes[i]=plugin_library_hash(p,&lib,job.compiler,job.plugin_flags,engine,&declared)
         plugin_library_name(p.root,&lib,job.plugin_hashes[i],a)
         saved,_,stamped:=stamp_read(lib.stamp)
         if !desc.force && stamped && saved==job.plugin_hashes[i] && os.is_file(lib.library) {
@@ -325,7 +328,7 @@ job_plugins_plan :: proc(job:^Job,p:^project.Project,desc:Desc) -> Failure {
         // are the ones just written, and the library is copied.
         if !desc.force && job.plugin_cache && job_plugin_restore(job,i) {continue}
         // The declarations of what it links against are written by now.
-        job.plugin_compile_hashes[i]=plugin_library_compile_hash(p,&lib,job.compiler,job.plugin_flags,engine)
+        job.plugin_compile_hashes[i]=plugin_library_compile_hash(p,&lib,job.compiler,job.plugin_flags,engine,&declared)
         if !desc.force {
             record,recorded:=link_record_read(plugin_link_file(&lib),context.temp_allocator)
             job.plugin_relink[i]=recorded && link_record_stands(record,job.plugin_compile_hashes[i])
@@ -607,8 +610,7 @@ job_probe_start :: proc(job:^Job) -> ^Job {
         _=os.remove(job.test_report)
         append(&command,fmt.tprintf("-out:%s",job.staged),"-json-errors",fmt.tprintf("-define:ODIN_TEST_JSON_REPORT=%s",job.test_report),"-define:ODIN_TEST_FANCY=false")
         if len(job.test_names)>0 {append(&command,fmt.tprintf("-define:ODIN_TEST_NAMES=%s",strings.join(job.test_names,",",context.temp_allocator)))}
-        engine:=engine_paths(job.engine_root,.Keep,context.temp_allocator)
-        environment=child_environment(job.engine_root,context.temp_allocator,{engine.folder,plugins_libraries_folder(job.root,context.temp_allocator)})
+        environment=child_environment(job.engine_root,context.temp_allocator,{job.engine_folder,plugins_libraries_folder(job.root,context.temp_allocator)})
     }
     job.started=time.now()
     job_spawn(job,{library=-1,staged=job.staged,streams=job.stream_files},command[:],environment=environment)
@@ -801,12 +803,12 @@ target_output :: proc(p:^project.Project,target:Target,output:string,a:runtime.A
 // What the compiler is given for a target besides where it writes: what
 // identifies the build next to its sources.
 @(private)
-target_flags :: proc(p:^project.Project,target:Target,extra:[]string,a:runtime.Allocator,dev:=false,engine:=Engine_Mode.Keep,incremental:=false) -> []string {
+target_flags :: proc(p:^project.Project,target:Target,extra:[]string,a:runtime.Allocator,dev:=false,engine:=Engine_Mode.Release,incremental:=false) -> []string {
     flags:=make([dynamic]string,a)
     append(&flags,"build",generated_folder(p.root,target,a))
     shipped:=shipped_engine_paths(p.root,context.temp_allocator)
     // A library sees the engine through its declarations; the game, whole, or through those of its library.
-    mirai:=target==.Game?(incremental?shipped.decl:p.engine_root):engine_paths(p.engine_root,engine==.Keep?ENGINE_MODE_HERE:engine,context.temp_allocator).decl
+    mirai:=target==.Game?(incremental?shipped.decl:p.engine_root):engine_paths(p.engine_root,engine,context.temp_allocator).decl
     append(&flags,fmt.aprintf("-collection:mirai=%s",mirai,allocator=a),fmt.aprintf("-collection:project=%s",p.root,allocator=a))
     // A library sees the engine's plugins through the declarations of their libraries; the game, whole.
     plugins:=target==.Game?(incremental?shipped.decl_plugins:project.path(p.engine_root,"plugins",allocator=context.temp_allocator)):plugins_decl(p.root,plugins_mode(p,dev),context.temp_allocator)
@@ -845,7 +847,7 @@ Target_State :: enum u8 {
 
 // What job_start would find of a target, without writing anything: the game
 // is the one of the default folder. dev and engine as in Desc.
-target_state :: proc(p:^project.Project,target:Target,compiler:="",dev:=false,engine:=Engine_Mode.Keep) -> Target_State {
+target_state :: proc(p:^project.Project,target:Target,compiler:="",dev:=false,engine:=Engine_Mode.Release) -> Target_State {
     temp:=context.temp_allocator
     published:=target_output(p,target,"",temp)
     if !os.is_file(published) {return .Missing}

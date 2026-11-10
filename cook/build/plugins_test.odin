@@ -88,7 +88,7 @@ a_plugin_library_is_the_same_in_every_project :: proc(t:^testing.T) {
             testing.expect(t,os.make_directory_all(decl)==nil)
             testing.expect(t,os.write_entire_file(project.path(decl,"declared.odin"),need)==nil)
         }
-        hash=plugin_library_hash(&p,found,"odin",plugin_flags(&p,true),engine)
+        hash=plugin_library_hash(&p,found,"odin",plugin_flags(&p,true),engine,&Declared{})
     }
     testing.expect_value(t,hashes[1],hashes[0])
 }
@@ -520,16 +520,17 @@ a_plugin_library_follows_the_declarations_of_the_packages_it_reaches :: proc(t:^
         .Tool={part=.Editor,packages={"tool/editor"},stage=project.path(plugins,"stage-tool-editor")},
     }
     built:=project.path(folder,"built")
-    engine:=Engine_Paths{decl=project.path(built,"decl"),stamp=project.path(built,ENGINE_STAMP)}
+    engine:=Engine_Paths{decl=project.path(built,"decl"),declared=project.path(built,"engine.declared"),stamp=project.path(built,ENGINE_STAMP)}
     keys :: proc(p:^project.Project,libraries:^[Part]Plugin_Library,engine:Engine_Paths) -> (keys:[Part]u64) {
-        for &lib,part in libraries {keys[part]=plugin_library_hash(p,&lib,"",nil,engine)}
+        declared:=declared_read(engine.declared,context.temp_allocator)
+        for &lib,part in libraries {keys[part]=plugin_library_hash(p,&lib,"",nil,engine,&declared)}
         return
     }
-    // The engine declares its sources and stamps their hashes, as its build does.
+    // The engine declares its sources and what each declaration reaches, as its build does.
     declare_engine :: proc(t:^testing.T,root,built:string,engine:Engine_Paths) {
-        errors,_:=declare({root=root,packages={"core","render","engine/render","ui","editor"},binary="mirai",library=project.path(built,"mirai-engine.lib"),stage=project.path(built,"stage"),decl=engine.decl})
+        errors,_:=declare({root=root,packages={"core","render","engine/render","ui","editor"},binary="mirai",library=project.path(built,"mirai-engine.lib"),stage=project.path(built,"stage"),decl=engine.decl,names=true})
         testing.expectf(t,len(errors)==0,"the engine declares: %v",errors)
-        testing.expect(t,engine_stamp_write(engine.stamp,{declared=decl_hashes(engine.decl),declares=DECLARE_VERSION})==nil)
+        testing.expect(t,declared_write(engine.decl,engine.declared))
     }
     declare_engine(t,p.engine_root,built,engine)
     before:=keys(&p,&libraries,engine)
@@ -539,7 +540,8 @@ a_plugin_library_follows_the_declarations_of_the_packages_it_reaches :: proc(t:^
         {"a declaration of a package imported under another name","engine/render/view.odin","package engine_render\n\nimport \"mirai:render\"\n\nView :: struct {frames:[render.FRAMES]i32,layer:i32}\n",{.Drawn,.Over}},
         {"a field of a package the editor imports","ui/ui.odin","package ui\n\nimport \"mirai:core\"\n\nBox :: struct {width,height:i32}\n",{.Tool}},
         {"a declaration of the editor","editor/editor.odin","package editor\n\nimport \"mirai:ui\"\n\nPanel :: struct {box:ui.Box,open:bool}\n",{.Tool}},
-        {"the body of an inline procedure of a package all reach","core/core.odin","package core\n\nvalue :: proc() -> i32 {return 2}\n\nhalf :: #force_inline proc(v:i32) -> i32 {return v>>1}\n",{.Plain,.Drawn,.Over,.Tool}},
+        {"the body of an inline procedure, which only one of them calls","core/core.odin","package core\n\nvalue :: proc() -> i32 {return 2}\n\nhalf :: #force_inline proc(v:i32) -> i32 {return v>>1}\n",{.Plain}},
+        {"a declaration of a package all import that none names","core/core.odin","package core\n\nvalue :: proc() -> i32 {return 2}\n\nhalf :: #force_inline proc(v:i32) -> i32 {return v>>1}\n\nSpare :: struct {x:i32}\n",{}},
     }
     for c in cases {
         write(t,p.engine_root,c.file,c.text)
@@ -550,16 +552,13 @@ a_plugin_library_follows_the_declarations_of_the_packages_it_reaches :: proc(t:^
         }
         before=after
     }
-    // Without the hash of a package it reaches, a library follows every build of the engine.
-    stamp,_:=engine_stamp_read(engine.stamp)
-    editor,_:=engine_package_index("editor")
-    stamp.declared[editor]=0
-    for build in ([2]u64{1,2}) {
-        stamp.libraries[.Base].sources=build
-        testing.expect(t,engine_stamp_write(engine.stamp,stamp)==nil)
+    // Without the index of the declarations, a library follows every build of the engine.
+    testing.expect(t,os.remove(engine.declared)==nil)
+    for build in ([2]string{"1","2"}) {
+        testing.expect(t,os.write_entire_file(engine.stamp,build)==nil)
         after:=keys(&p,&libraries,engine)
         for part in Part {
-            testing.expectf(t,(after[part]!=before[part])==(part==.Tool),"without the hash of editor: %v built again %v",part,after[part]!=before[part])
+            testing.expectf(t,after[part]!=before[part],"without the index: %v follows the build %s",part,build)
         }
         before=after
     }

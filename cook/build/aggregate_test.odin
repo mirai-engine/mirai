@@ -40,11 +40,14 @@ no_store_of_an_aggregate_of_more_than_64_bytes :: proc(t:^testing.T) {
 
     paths:=engine_paths(folder,.Dev)
     decl:=paths.decl
-    libraries:=ENGINE_LIBRARIES
-    for info,library in libraries {
+    // The libraries of release hold every package in four compiles: the stores are the same at -o:minimal.
+    libraries:=engine_libraries(.Release)
+    for library in libraries {
         errors,_,staged:=engine_library_stage(root,paths,library)
-        if !testing.expectf(t,staged && len(errors)==0,"%s: %v",info.name,errors) {return}
-        if !ir(t,root,compiler,project.path(paths.stages[library],engine_library_entry(library)),project.path(folder,"ir",engine_library_file(library)),flags[:],fmt.tprintf("-collection:mirai=%s",paths.stages[library])) {return}
+        if !testing.expectf(t,staged && len(errors)==0,"%s: %v",library.name,errors) {return}
+    }
+    for library in libraries {
+        if !ir(t,root,compiler,project.path(paths.stage,engine_library_entry(library)),project.path(folder,"ir",library.file),flags[:],fmt.tprintf("-collection:mirai=%s",paths.decl),fmt.tprintf("-collection:%s=%s",ENGINE_STAGE_COLLECTION,paths.stage)) {return}
     }
 
     p,open_error:=project.open(project.path(root,"demo"),root)

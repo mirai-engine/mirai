@@ -40,7 +40,7 @@ cmd_play_test :: proc(root:string,args:[]string) -> int {
     files,problem:=play_scenario_files(folder,names[:])
     if problem!="" {fmt.eprintfln("mirai play test: %s",problem);return 2}
 
-    file,reused,code:=session_borrow(root,folder,mode,"play test")
+    file,reused,code:=session_borrow(root,folder,mode,slice.contains(args,"--dev") || slice.contains(args,"--release"),"play test")
     if code!=0 {return code}
     defer if !reused {session_close(folder,file,true)}
 

@@ -401,9 +401,8 @@ Each imported asset carries the `Cooked` flag and its `Import_Info` ([cache](#im
 engine build leaves next to the editor: the importers are engine code, and the tool compiles
 without them.
 
-- It first builds the engine if it is not up to date, in the mode of `--dev` or `--release`
-  (with neither, the last built); what that build says goes to stderr and stdout is left with the
-  report.
+- It first builds the engine if it is not up to date, in the mode of `--dev` (`--release`
+  without it); what that build says goes to stderr and stdout is left with the report.
 - It starts from the settings of `<file>.import`, applies the given options (`IMPORT_USAGE`) and
   writes the file again: repeating the command without options gives the same assets.
 - The report gives one line per asset (`id kind bytes path (detail)`), how many were already up to

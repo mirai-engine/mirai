@@ -110,7 +110,7 @@ build_start :: proc(s:^Session,target:=build.Target.Editor,folder:="") -> bool {
     } else {
         b.shaders=build.shaders_start(p,overlay=programs_overlay(s))
         b.started_sources=code_fingerprint(s.project_root)
-        b.job=build.job_start({project=p,target=.Editor,dev=build.ENGINE_MODE_HERE==.Dev})
+        b.job=build.job_start({project=p,target=.Editor,dev=build.ENGINE_MODE_HERE==.Dev,engine=build.ENGINE_MODE_HERE})
     }
     b.phase=.Running
     b.started=time.tick_now()
@@ -127,7 +127,7 @@ build_poll :: proc(s:^Session) {
     if b.phase!=.Running {return}
     if b.shaders!=nil && !build.shaders_poll(b.shaders) {return}
     if b.target==.Game && b.job==nil && b.shaders!=nil && b.shaders.result.status!=.Failed {
-        b.job=build.job_start({project=b.project,target=.Game,output=b.game_folder})
+        b.job=build.job_start({project=b.project,target=.Game,output=b.game_folder,engine=build.ENGINE_MODE_HERE})
         return
     }
     if b.job!=nil && !build.job_poll(b.job) {return}
@@ -272,7 +272,7 @@ files_fingerprint :: proc(path,extension:string,hash:^u64,depth:int) {
 // API: of the engine and of its plugins. Empty without the root of the engine.
 code_api_folders :: proc(s:^Session) -> (engine,plugins:string) {
     if s.engine_root=="" {return}
-    engine=build.engine_paths(s.engine_root,.Keep,context.temp_allocator).decl
+    engine=build.engine_paths(s.engine_root,build.ENGINE_MODE_HERE,context.temp_allocator).decl
     manifest,error:=project.manifest_read(project.path(s.project_root,project.PROJECT_FILE,allocator=context.temp_allocator))
     if error.code!=.None {return}
     opened:=project.Project{manifest=manifest}
@@ -349,7 +349,7 @@ code_probe :: proc(s:^Session,action:build.Action,test_package:string,test_names
     defer project.close(&opened)
     b.probing=true
     defer b.probing=false
-    job=build.job_start({project=&opened,target=.Editor,action=action,test_package=test_package,test_names=test_names})
+    job=build.job_start({project=&opened,target=.Editor,action=action,test_package=test_package,test_names=test_names,engine=build.ENGINE_MODE_HERE})
     started:=time.tick_now()
     for !build.job_poll(job) {
         if time.duration_seconds(time.tick_since(started))>seconds || api_stop_asked(s) || api_frames(s,1,0)==0 {

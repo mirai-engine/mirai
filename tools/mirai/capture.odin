@@ -52,7 +52,8 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
     position,target:string
     fov,threshold:f64=0,-1
     width,height,frames:=0,0,64
-    mode:Build_Mode=.Keep
+    mode:=Build_Mode.Release
+    mode_asked:=false
     repeat,plan,write:=false,false,false
     views,references:string
     usage :: proc() -> int {fmt.eprintfln("Usage: mirai %s",CAPTURE_USAGE);return 2}
@@ -86,8 +87,8 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
         case "--write": write=true
         case "--views":      views,ok=option_next(args,&i)
         case "--references": references,ok=option_next(args,&i)
-        case "--dev":  mode=.Dev
-        case "--release": mode=.Release
+        case "--dev":  mode,mode_asked=.Dev,true
+        case "--release": mode,mode_asked=.Release,true
         case:
             if !positional(args[i]) || folder!="." {return argument_unknown("capture",args[i])}
             folder=args[i]
@@ -96,7 +97,7 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
     }
     if plan {
         if out!="" || scene!="" || entity!="" || position!="" || reference!="" || view!="" {fmt.eprintln("mirai capture: --plan takes its views from captures.mirai: leave out --out, --scene, the camera, --view and --reference");return 2}
-        return capture_plan(root,folder,mode,views,references,write,repeat)
+        return capture_plan(root,folder,mode,mode_asked,views,references,write,repeat)
     }
     if (position=="")!=(target=="") {fmt.eprintln("mirai capture: --position and --target go together");return 2}
     if entity!="" && position!="" {fmt.eprintln("mirai capture: --camera-entity or --position/--target, not both");return 2}
@@ -107,7 +108,7 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
     folder=project.path_absolute(folder)
     out=out!=""?project.path_absolute(out):project.path(folder,".mirai/captures/capture.png")
 
-    file,reused,code:=session_borrow(root,folder,mode,"capture")
+    file,reused,code:=session_borrow(root,folder,mode,mode_asked,"capture")
     if code!=0 {return code}
     defer if !reused {session_close(folder,file,true)}
 
@@ -246,7 +247,7 @@ vector_parse :: proc(text:string) -> (vector:json.Array,ok:bool) {
 
 // The views of the plan of a project, each against its reference (--plan).
 @(private="file")
-capture_plan :: proc(root,folder:string,mode:Build_Mode,views,references:string,write,repeat:bool) -> int {
+capture_plan :: proc(root,folder:string,mode:Build_Mode,mode_asked:bool,views,references:string,write,repeat:bool) -> int {
     if !os.is_file(project.path(folder,project.PROJECT_FILE,allocator=context.temp_allocator)) {
         fmt.eprintfln("mirai capture: %s is not a project (%s is missing)",folder,project.PROJECT_FILE)
         return 2
@@ -279,7 +280,7 @@ capture_plan :: proc(root,folder:string,mode:Build_Mode,views,references:string,
     references=project.path_absolute(references)
     if os.make_directory_all(references)!=nil && !os.is_dir(references) {fmt.eprintfln("mirai capture: %s could not be made",references);return 1}
 
-    file,reused,code:=session_borrow(root,folder,mode,"capture")
+    file,reused,code:=session_borrow(root,folder,mode,mode_asked,"capture")
     if code!=0 {return code}
     defer if !reused {session_close(folder,file,true)}
     errors_now :: proc(port:int) -> (count:int,messages:[]string) {
