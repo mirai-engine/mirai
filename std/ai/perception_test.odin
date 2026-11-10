@@ -4,22 +4,27 @@ import "core:math/linalg"
 import "core:testing"
 import math "mirai:std/math"
 
+// The time to forget is seconds: at 60 and at 120 Hz it takes as long.
 @(test)
 a_memory_forgets_what_it_stops_perceiving :: proc(t:^testing.T) {
-    m:Perception_Memory
-    testing.expect_value(t,memory_perceive(&m,7,{1,0,0},.Sight,1,0),Memory_Change.New)
-    testing.expect_value(t,memory_perceive(&m,7,{2,0,0},.Hearing,0.5,0),Memory_Change.Again)
-    o:=memory_find(&m,7)
-    testing.expect(t,o!=nil && o.senses=={.Sight,.Hearing} && o.confidence==1 && o.position=={2,0,0})
-    gone:[4]u64
-    testing.expect_value(t,memory_forget(&m,0,2,gone[:]),0)
-    testing.expect_value(t,memory_forget(&m,1,2,gone[:]),0)
-    o=memory_find(&m,7)
-    testing.expect(t,o!=nil && abs(o.confidence-0.5)<1e-5 && o.senses=={})
-    // Perceived again, it is sure again; then forgotten after the time to forget.
-    memory_perceive(&m,7,{3,0,0},.Sight,1,1.5)
-    testing.expect_value(t,memory_forget(&m,3.5,2,gone[:]),1)
-    testing.expect(t,gone[0]==7 && m.count==0 && memory_find(&m,7)==nil)
+    for hz in ([]u64{60,120}) {
+        dt:=1/f32(hz)
+        m:Perception_Memory
+        testing.expect_value(t,memory_perceive(&m,7,{1,0,0},.Sight,1,0),Memory_Change.New)
+        testing.expect_value(t,memory_perceive(&m,7,{2,0,0},.Hearing,0.5,0),Memory_Change.Again)
+        o:=memory_find(&m,7)
+        testing.expect(t,o!=nil && o.senses=={.Sight,.Hearing} && o.confidence==1 && o.position=={2,0,0})
+        gone:[4]u64
+        testing.expect_value(t,memory_forget(&m,0,dt,2,gone[:]),0)
+        testing.expect_value(t,memory_forget(&m,hz,dt,2,gone[:]),0)
+        o=memory_find(&m,7)
+        testing.expect(t,o!=nil && abs(o.confidence-0.5)<1e-4 && o.senses=={})
+        // Perceived again, it is sure again; then forgotten after the time to forget.
+        memory_perceive(&m,7,{3,0,0},.Sight,1,hz*3/2)
+        testing.expect_value(t,memory_forget(&m,hz*7/2-1,dt,2,gone[:]),0)
+        testing.expect_value(t,memory_forget(&m,hz*7/2,dt,2,gone[:]),1)
+        testing.expect(t,gone[0]==7 && m.count==0 && memory_find(&m,7)==nil)
+    }
 }
 
 @(test)

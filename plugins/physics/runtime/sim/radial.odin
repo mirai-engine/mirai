@@ -57,21 +57,6 @@ falloff_curve :: proc "contextless" (x:f32,falloff:Radial_Falloff) -> f32 {
     return 0
 }
 
-// Weight at `distance` from the center of a volume of `radius`: zero outside it or for values that are not
-// valid.
-radial_weight :: proc "contextless" (distance,radius:f32,falloff:Radial_Falloff,range:Weight_Range={}) -> f32 {
-    if !(radius>0 && radius<=max(f32) && distance>=0 && distance<=radius) || falloff>.Logarithmic || !weight_range_valid(range) {return 0}
-    return weight_from_range(range,falloff_curve(max(1-distance/radius,0),falloff))
-}
-
-// Weight in an oriented box, whose border is its surface.
-box_weight :: proc "contextless" (point,center,half:Vec3,rotation:Quat,falloff:Radial_Falloff,range:Weight_Range={}) -> f32 {
-    for value in half {if !(value>0 && value<=max(f32)) {return 0}}
-    local:=vabs(q_inv_rotate(q_normalize(rotation),point-center))/half
-    distance:=max(local.x,local.y,local.z)
-    return radial_weight(distance,1,falloff,range)
-}
-
 // Weight of the noise of a volume at a point: 1 without noise, zero for a noise that is not valid.
 noise_weight :: proc "contextless" (point,center:Vec3,rotation:Quat,noise:Field_Noise) -> f32 {
     if noise.scale==0 {return 1}

@@ -21,6 +21,17 @@ Prefer the first that answers the question:
    goal ([playtester.md](testing/playtester.md)).
 5. One look at the state: [Look](#look) and [playtester.md](testing/playtester.md#inspect).
 6. Menus and HUD: [UI and menus](#ui-and-menus).
+7. A rule of one step, in milliseconds and without the editor: [Tests of steps](#tests-of-steps).
+
+## Tests of steps
+
+A `@(test)` in a `_test.odin` of the game builds a world of the tables the step reads and writes,
+runs the step and checks them; `mirai test game` (or `mirai test` inside the project) runs it.
+
+- The world is a struct that starts with `using world:core.Test_World`, with a `core.Table(T)` per
+  component and the value of each storage: `core.test_world_init(t,&w)` describes it from the
+  attributes of its types, `core.test_world_destroy` frees it.
+- A path in a test is relative to the root of the engine, not of the project.
 
 ## Look
 

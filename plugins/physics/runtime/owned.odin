@@ -136,6 +136,9 @@ settings_capacities :: proc(settings:Physics_Settings) -> Physics_Settings {
     if s.joints<=0 {s.joints=i32(desc.joint_capacity)}
     if s.characters<=0 {s.characters=i32(desc.character_capacity)}
     if s.fluids<=0 {s.fluids=i32(desc.fluid_capacity)}
+    if s.breakables<=0 {s.breakables=i32(desc.breakable_capacity)}
+    if s.pieces<=0 {s.pieces=i32(desc.piece_capacity)}
+    if s.bonds<=0 {s.bonds=i32(desc.bond_capacity)}
     if s.hulls<=0 {s.hulls=i32(desc.hull_capacity)}
     if s.meshes<=0 {s.meshes=i32(desc.mesh_capacity)}
     if s.heightfields<=0 {s.heightfields=i32(desc.heightfield_capacity)}
