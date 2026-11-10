@@ -1,4 +1,4 @@
-package ui_inspector_editor
+package author
 
 import "core:fmt"
 import "core:slice"
@@ -310,7 +310,6 @@ widget_walk :: proc(used:[]ui.Tree_Component,from,target:base.Asset_Id,uses:Widg
 }
 
 // True when it reached target, with the chain left as it was.
-@(private)
 widget_walk_down :: proc(w:^Widget_Walk,used:[]ui.Tree_Component) -> bool {
     broke :: proc(w:^Widget_Walk,component:ui.Tree_Component,cycle:bool) {
         if w.broken.widget=={} {w.broken,w.cycle=component,cycle}
@@ -331,10 +330,10 @@ widget_walk_down :: proc(w:^Widget_Walk,used:[]ui.Tree_Component) -> bool {
     return false
 }
 
-// The components of a .ui, read from its file. user: the ^host.Assets.
+// The components of a .ui, read from its file. user: the ^Assets.
 widget_uses_of_file :: proc(user:rawptr,id:base.Asset_Id) -> (used:[]ui.Tree_Component,read:bool) {
     records:Records
-    if !records_read((^host.Assets)(user),id,&records,context.temp_allocator) {return}
+    if !records_read((^Assets)(user)^,id,&records,context.temp_allocator) {return}
     return records.components[:],true
 }
 
@@ -368,14 +367,6 @@ records_anim_contents_drop :: proc(r:^Records,anim:int) {
 }
 
 // ---------------------------------------------------------------- what a widget takes
-
-// Whether the document can be a widget: one root, what a use names as its
-// parts and where what it holds goes.
-widget_declares :: proc(u:^Ui_Inspector) -> bool {
-    roots:=0
-    for &n in u.records.nodes {roots+=int(n.parent<0)}
-    return roots==1
-}
 
 // The node of the file called name; nil: none.
 records_node_named :: proc(r:^Records,name:string) -> ^ui.Tree_Node {
@@ -456,4 +447,4 @@ records_widget_params :: proc(r:^Records) {
 }
 
 // Parameters Make widget declares by itself at most.
-@(private) WIDGET_MADE_PARAMS :: 8
+WIDGET_MADE_PARAMS :: 8

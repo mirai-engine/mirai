@@ -5,6 +5,7 @@ import "core:mem"
 import "core:reflect"
 import "core:slice"
 import "mirai:asset"
+import "mirai:cook/author"
 import "mirai:core"
 
 // Undo and redo by rows, over the journal of the edited World (journal.odin).
@@ -431,12 +432,7 @@ edits_free :: proc(edits:^Edits) {
 // True when a scene saves something of a component: a field that is not
 // transient, or nothing at all (a tag).
 type_saved :: proc(info:^runtime.Type_Info) -> bool {
-    s,is_struct:=runtime.type_info_base(info).variant.(runtime.Type_Info_Struct)
-    if !is_struct || s.field_count==0 {return true}
-    for i in 0..<int(s.field_count) {
-        if _,transient:=core.field_option(reflect.Struct_Tag(s.tags[i]),"transient");!transient {return true}
-    }
-    return false
+    return author.type_saved(info)
 }
 
 // Exchanges a step with the World: its entities, its rows and its files. What the World drops or derives again of what was

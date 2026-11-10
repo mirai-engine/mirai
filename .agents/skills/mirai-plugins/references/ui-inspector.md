@@ -3,9 +3,14 @@
 Plugin `ui_inspector` (`Editor` only, enabled in the demo): it opens a `.ui` as an editor
 document, with its tab like that of a material, shows it as the game builds it and edits
 everything the file stores. Code in `plugins/ui_inspector/editor/`: the provider and the reading
-and writing of the file in `ui_inspector_editor.odin`, each operation on the records in
-`records.odin` and `records_ux.odin`, the hierarchy, the stage, the properties, the states, the
-texts and the paths in their own file, and the authoring API in `api_tree.odin`.
+and writing of the file in `ui_inspector_editor.odin`, the hierarchy, the stage, the properties,
+the states, the texts and the paths in their own file, and the methods of the authoring API in
+`api_tree.odin`. What is no editor lives below it, in `cook/author`: each operation on the records
+(`records.odin`, `records_ux.odin`), the document (`ui_document.odin`), the check of the paths
+(`ui_bindings.odin`) and what the uses of a widget give when its parameters move
+(`ui_follow.odin`). It fails a `Reading` with what is wrong and finds files through a registry
+and the types of its tables, so the methods here and
+[`mirai ui`](../../mirai-agent-api/references/api.md#mirai-ui-and-mirai-scene) run the same code.
 
 ## Document
 
@@ -174,7 +179,7 @@ made by hand, nothing is saved until Save, and one that would leave a tree that 
 changes nothing and says why.
 
 - `ui.inspect` gives the `.ui`, or with `node` that node and what it has, as the document that
-  `ui.write` takes back (`api_document.odin`): tokens, the files it `use`s, its `params`, named
+  `ui.write` takes back (`cook/author/ui_document.odin`): tokens, the files it `use`s, its `params`, named
   styles with `extends` and their states, layouts, named animations, and the nodes
   nested by `children`, each with what differs from a new node of its type and what its style does
   not give. Reading back names: what is written and read back is the same, and what the visual
@@ -248,9 +253,12 @@ that faces the camera) cards create the entity with the `.ui` chosen in the cont
 
 ## Verification
 
-`mirai test plugins/ui_inspector/editor`: insertion, deletion and drag in preorder, overrides that
-follow their instances, duplicating and pasting into another `.ui` with its rows, Make widget,
-unused rows, keys in order, renames, override fields, problems of a check and the preview.
+`mirai test cook/author`: insertion, deletion and drag in preorder, overrides that follow their
+instances, duplicating a node, unused rows, keys in order, renames, override fields, problems of
+a check, the document (`ui_document_test.odin`, and over files `ui_files_test.odin`) and the
+commands on a copy of the game template (`command_test.odin`).
+`mirai test plugins/ui_inspector/editor`: pasting into another `.ui` with its rows, Make widget,
+the texts of a copy and the preview.
 Over a project in the registry's memory, `project_files_test.odin`: the texts CSV
 (`texts_go_to_a_csv_and_back_with_commas_quotes_and_lines`,
 `a_csv_of_texts_says_why_it_refuses_a_language_the_game_lacks_and_rows_of_no_text`), the rename in

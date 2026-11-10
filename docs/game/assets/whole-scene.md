@@ -31,3 +31,17 @@ mirai rpc --project . --batch island.jsonl
   writes a scene.
 - The file is the recipe of a first version: to change the scene later, edit what it made
   (`scene.set`, `terrain.layer`, `foliage.type_set`) and save, as with any scene.
+
+## As a file of text
+
+`mirai scene` reads and writes a scene or a prefab as one nested document, with no editor running,
+against the components of the game as it was built (`mirai build editor . --dev` first):
+
+```sh
+mirai scene read arena/main.scene --out source/arena/main.scene.json
+mirai scene write source
+mirai scene check
+```
+
+The document, with presets, placed prefabs and how entities are matched:
+[text-sources.md](text-sources.md#a-scene).

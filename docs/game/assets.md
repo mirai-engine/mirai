@@ -13,9 +13,9 @@ has an id in its header: components and scenes name it by id; a prefab spawned f
 ## Map
 
 - Import a file: [Import](#import). Kinds: [Kinds](#kinds). Use an asset: [Reference](#reference).
-- Check or edit a file: [Inspect](#inspect). Generate assets by code:
-  [content-tool.md](assets/content-tool.md), low-poly props [props.md](assets/props.md), a whole
-  scene with terrain, foliage and sea [whole-scene.md](assets/whole-scene.md).
+- Check or edit a file: [Inspect](#inspect). Interfaces, scenes and prefabs as files of text:
+  [text-sources.md](assets/text-sources.md). By code: [content-tool.md](assets/content-tool.md),
+  props [props.md](assets/props.md), terrain and sea [whole-scene.md](assets/whole-scene.md).
 
 ## Import
 

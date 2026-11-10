@@ -1,17 +1,15 @@
-package ui_inspector_editor
+package author
 
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
-import "mirai:editor/api"
 import "mirai:ui"
 
-// The params of a call read against the types of the assets, with no file.
-@(private)
-call_args :: proc(call:^api.Call,types:^asset.Types,params:string) -> Tree_Args {
-    call^={raw=params,allocator=context.temp_allocator}
-    args:=Tree_Args{call=call,types=types}
-    args.keys,args.values,_=tree_object(call,params,"params")
+// The params of a reading read against the types of the assets, with no file.
+call_args :: proc(reading:^Reading,types:^asset.Types,params:string) -> Tree_Args {
+    reading^={raw=params,allocator=context.temp_allocator}
+    args:=Tree_Args{reading=reading,types=types}
+    args.keys,args.values,_=tree_object(reading,params,"params")
     return args
 }
 
@@ -35,10 +33,10 @@ a_new_node_takes_the_style_the_file_names_for_its_kind :: proc(t:^testing.T) {
     second:=records_insert(&r,0,.Button)
     testing.expect_value(t,int(r.nodes[second].style),look)
     // A style named for them takes its place.
-    call:api.Call
-    args:=call_args(&call,&types,"{}")
+    reading:Reading
+    args:=call_args(&reading,&types,"{}")
     _,_,ok:=document_apply(&args,&r,-1,`{"styles":{"primary":{"family":"Control","defaults":["Button","Checkbox"]}}}`)
-    if !testing.expectf(t,ok,"%s",call.error.message) {return}
+    if !testing.expectf(t,ok,"%s",reading.problem) {return}
     primary:=tree_style_row(&r,"primary")
     testing.expect(t,.Button not_in r.style_infos[look].defaults)
     third:=records_insert(&r,0,.Button)
@@ -46,8 +44,8 @@ a_new_node_takes_the_style_the_file_names_for_its_kind :: proc(t:^testing.T) {
     check:=records_insert(&r,0,.Checkbox)
     testing.expect_value(t,int(r.nodes[check].style),primary)
     // A kind takes only a style of its family.
-    args=call_args(&call,&types,"{}")
+    args=call_args(&reading,&types,"{}")
     _,_,ok=document_apply(&args,&r,-1,`{"styles":{"primary":{"family":"Control","defaults":["Text"]}}}`)
     testing.expect(t,!ok)
-    testing.expect(t,strings.has_prefix(call.error.message,"styles.primary: defaults: a Text takes a style of family Text"),call.error.message)
+    testing.expect(t,strings.has_prefix(reading.problem,"styles.primary: defaults: a Text takes a style of family Text"),reading.problem)
 }

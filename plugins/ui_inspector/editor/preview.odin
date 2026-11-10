@@ -7,6 +7,7 @@ import "core:mem"
 import "core:os"
 import "core:strings"
 import "mirai:asset"
+import "mirai:cook/author"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:engine/gui"
@@ -134,18 +135,6 @@ stage_navigate :: proc(ctx:^ui.Context,u:^Ui_Inspector,room:ui.Rect) {
     if .Home in ctx.input.keys_pressed && ctx.edit.id==0 {st.zoom,st.pan=1,{}}
 }
 
-// The nodes a node of the tree counts as when its components are expanded.
-@(private)
-preview_count :: proc(data:ui.Tree_Data,node:ui.Tree_Node,depth:int) -> int {
-    if node.kind!=.Component {return 1}
-    if node.component==0 || int(node.component)>len(data.components) || depth>ui.TREE_DEPTH {return 0}
-    c:=data.components[node.component-1]
-    if u64(c.first)+u64(c.count)>u64(len(data.component_nodes)) {return 0}
-    total:=0
-    for n in data.component_nodes[c.first:][:c.count] {total+=preview_count(data,n,depth+1)}
-    return total
-}
-
 // A node as the preview builds it. With samples its paths stay; without,
 // they go: bound texts show their field, templates their text, and a bound
 // list three elements. Its text goes to shown, from the texts of the records.
@@ -215,7 +204,7 @@ preview_textures :: proc(images:[]ui.Tree_Image,a:^host.Assets) -> []u32 {
 // name, a value of its type filled with samples. The values are read once,
 // when the tree is made: what Try writes in them (a Checkbox) stays.
 Preview_Samples :: struct {
-    types:Bind_Types,
+    types:author.Bind_Types,
     host:ui.Bind_Host,
     inner:ui.Bind_Host,    // what finds the types of the sources
     info:^core.World_Info,
@@ -231,7 +220,7 @@ SAMPLE_ASSET :: base.Asset_Id{1,1}
 SAMPLE_ENTITY :: base.Entity(1)
 
 preview_samples_free :: proc(s:^Preview_Samples) {
-    bind_types_free(&s.types)
+    author.bind_types_free(&s.types)
     for block in s.blocks {delete(block,s.allocator)}
     delete(s.blocks);delete(s.sources)
     s^={}
@@ -242,7 +231,7 @@ preview_samples_host :: proc(s:^Preview_Samples,info:^core.World_Info,allocator:
     s.allocator,s.info=allocator,info
     s.sources=make([dynamic]Sample_Source,allocator)
     s.blocks=make([dynamic][]u8,allocator)
-    s.inner=bind_types_host(&s.types,info,allocator)
+    s.inner=author.bind_types_host(&s.types,info,allocator)
     s.host={user=s,schema=s.inner.schema,
         source=proc(user:rawptr,name:u64) -> (type:serial.Type_Index,storage,ok:bool) {
             s:=(^Preview_Samples)(user)
@@ -391,7 +380,7 @@ preview_update :: proc(u:^Ui_Inspector,app:^host.App,allocator:runtime.Allocator
     preview_free(p)
     p.change,p.assets,p.info=u.change,a.revision,app.info
     p.center,p.drawn,p.scale,p.game=center,drawn,scale,game
-    data:=records_data(&u.records)
+    data:=author.records_data(&u.records)
     imports,imported:=imports_cached(&u.imports,a,data,u.allocator)
     if !imported {return}
     preview_load(p,app,data,imports,allocator)
@@ -407,7 +396,7 @@ preview_load :: proc(p:^Preview,app:^host.App,data:ui.Tree_Data,imports:[]ui.Tre
     if !linked_ok {return false}
     p.origins=make([dynamic]int,allocator)
     for n,row in linked.nodes {
-        for _ in 0..<preview_count(linked,n,0) {append(&p.origins,row)}
+        for _ in 0..<author.tree_node_count(linked,n,0) {append(&p.origins,row)}
     }
     if app.info!=nil && preview_build(p,app,linked,true,allocator) {
         p.sampled=true
