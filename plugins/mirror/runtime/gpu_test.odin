@@ -2,13 +2,13 @@ package mirror
 
 import "core:fmt"
 import "core:math"
-import "core:os"
 import "core:path/filepath"
 import "core:testing"
 import "mirai:host"
 import gpu "mirai:render"
 import "mirai:rhi"
 import "mirai:rhi/shared_device"
+import "mirai:std/base"
 import mm "mirai:std/math"
 
 // The nested view of a mirror on the GPU, with the shaders of the engine and
@@ -30,7 +30,6 @@ Gpu_Fixture :: struct {
 	assets:   host.Assets,
 	app:      host.App,
 	cube:     gpu.Mesh_Handle,
-	folder:   string,
 }
 
 @(private = "file")
@@ -50,10 +49,8 @@ gpu_fixture_init :: proc(t: ^testing.T, f: ^Gpu_Fixture) -> bool {
 	settings := gpu.DEFAULT_SETTINGS
 	settings.taa, settings.gi_enabled = false, false
 	if !testing.expect(t, gpu.renderer_init(&f.renderer, {device = device, width = WIDTH, height = HEIGHT, settings = settings, shaders = &loaded}), f.renderer.error) {return false}
-	directory, _ := os.temp_directory(context.temp_allocator)
-	f.folder = fmt.aprintf("%s/mirai-mirror-gpu-%d-%p", directory, os.get_pid(), f)
-	os.make_directory_all(f.folder)
-	if !testing.expect(t, host.assets_init(&f.assets, {root = f.folder, renderer = &f.renderer})) {return false}
+	folder := base.test_folder(t, "mirror-gpu")
+	if folder == "" || !testing.expect(t, host.assets_init(&f.assets, {root = folder, renderer = &f.renderer})) {return false}
 	f.app = host.App{allocator = context.allocator, renderer = &f.renderer, assets = &f.assets, device = device}
 	cube := host.assets_shape(&f.assets, .Cube)
 	if !testing.expect(t, cube != nil) {return false}
@@ -67,8 +64,6 @@ gpu_fixture_destroy :: proc(f: ^Gpu_Fixture) {
 	if f.device == nil {return}
 	host.assets_destroy(&f.assets)
 	gpu.renderer_destroy(&f.renderer)
-	os.remove_all(f.folder)
-	delete(f.folder)
 }
 
 @(private = "file")
