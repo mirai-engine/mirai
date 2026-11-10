@@ -87,37 +87,36 @@ detected unsaved one) and a clip library (by default, the one it plays). With `s
   type with names: without the physics plugin it fails with `Missing_Plugin`; a clip whose mode the
   project lacks is named in the detail. In-place clips that are neither locomotion nor jumps are
   gestures.
-- `clips` limits the classification to the clips it names. More locomotion clips than a `.match`
-  takes, or more gestures than an `.action` takes, fail with `Capacity`, their counts and a `fix`:
+- `clips` limits the classification to the clips it names. More locomotion clips or gestures than
+  a `.character` takes fail with `Capacity`, their counts and a `fix`:
   no clip is left out silently.
 - A clip travels at the speed measured from its feet
   ([metrics](../../mirai-std/references/anim-body.md#metrics-metricsodin)); `speeds` sets that of a
-  locomotion clip by hand and the `.match` keeps it.
-- `blends` puts [blends](animation.md#locomotion-by-motion-matching) in the `.match`: 2 to
+  locomotion clip by hand and the set keeps it.
+- `blends` puts [blends](animation.md#locomotion-by-motion-matching) in the match of the set: 2 to
   `MATCH_BLEND` looping locomotion clips of one mode and one duration (within a row), as the eight
   directions of a set, and samples, each with `MATCH_BLEND` `weights` (one per clip in order, 0
-  past them, a positive sum) and an optional `speed`. Its clips leave the `.match` as clips of their
+  past them, a positive sum) and an optional `speed`. Its clips leave the match as clips of their
   own, and the result lists each blend with its mode and samples. A clip that is not locomotion, a
   size, sum or weight out of place, no samples or clips of different durations fail with their
   path and a `fix`.
 - `min_rate`, `max_rate` and `trajectory_direction`, when given, replace those defaults of the
-  `.match`: the rates a clip plays at to follow the body, and the weight of where the trajectory
+  set: the rates a clip plays at to follow the body, and the weight of where the trajectory
   faces (0 for a body that never turns, as one that walks sideways). `rates` (per clip) and the
   `min_rate` and `max_rate` of a blend replace those rates for that source: a crouch authored at
   1.5 m/s and played at 2.25 m/s needs up to 1.5, which would let a jog beat the sprint.
   `landing_marker` (empty: no landing) and `landing_rates` replace those of the
   [landing](animation.md#landing).
-- Capabilities (`want`): locomotion (a `.match` with those clips and a warping `.motion`; the
-  `Animation` stays `In_Place` when a clip of its library has a root and `animation_physics` moves
-  it; its loops keep their phase and a
-  body that does not move, also against a wall, plays the loops that do not travel), look-at and
-  hands (off until
-  requested), feet (grounding: needs physics) and gestures (`.action` with a layer over the upper
-  body and one per arm). The IK pole of each arm is a fixed point of the world: with the character
-  turned the elbows do not follow it. Idle and walk are enough: the locomotion is `Ready`, and
-  beyond the walk velocity the warping stretches the stride.
-- It writes the assets and assigns `Animation` and `Pose_Modifiers` of the rig; existing files ask
-  for `replace`, which keeps their ids. With locomotion, `Animation` is left without a clip or
+- It writes one `.character` with what the capabilities (`want`) ask for: locomotion (match clips
+  and the warp of the pose; the `Animation` stays `In_Place` when a clip of its library has a root
+  and `animation_physics` moves it; its loops keep their phase and a body that does not move, also
+  against a wall, plays the loops that do not travel), look-at and hands (off until requested), feet
+  (grounding: needs physics) and gestures (layers over the upper body and one per arm, and an action
+  per gesture). The IK pole of each arm is a fixed point of the world: with the character turned the
+  elbows do not follow it. Idle and walk are enough: the locomotion is `Ready`, and beyond the walk
+  velocity the warping stretches the stride.
+- It sets the set as `Animation.asset` of the rig; an existing file asks for `replace`, which keeps
+  its id. With locomotion, `Animation` is left without a clip or
   previous parameters.
 - A clip turned sideways inside (a root joint rotated about up, as a 2.5D game does) travels to the
   side; `animation.clip.edit` with `Face_Rest` turns it back to the rest facing of the body, which
@@ -125,8 +124,8 @@ detected unsaved one) and a clip library (by default, the one it plays). With `s
   turn split between it and the joints above (a stop that turns toward a camera) goes whole.
 - With the body saved in the `.skeleton`, the assets name
   [parts and regions](animation.md#components-and-shared-data) (`@head`, `@upper_body`) and
-  serve another skeleton with a body; with a detected unsaved one they name bones. The warping spine
-  always names bones.
+  serve another skeleton with a body; with a detected unsaved one they name bones. Legs, pelvis and
+  the warped spine are never named: they are read from the body.
 - It returns the state of each capability (`Ready`, `Partial`, `Missing`) with its `fix` and the
   chosen clips with their velocities.
 
@@ -140,7 +139,8 @@ detected unsaved one) and a clip library (by default, the one it plays). With `s
   the key of a track at `time` or inserts one in order, moves it with `to` (replacing one already
   there) or removes it; a field of `key` left out keeps what the key holds, so only a new key needs
   `value`. `marker.set` changes a marker by `name` (`at` the time among several of the name, `add`
-  one more). Both work on tracks longer than the capacity of `track.set`.
+  one more); a `duration` makes it a span, which sections, action windows and warp windows name.
+  Both work on tracks longer than the capacity of `track.set`.
 - `animation.key.capture` keys at `time` every track of the clip of an `Animation` that moves an
   entity with what the entity has now (its local transform, the fields of its `@field` tracks): one
   step for all of them. A track names an entity as the runtime binds it: the entity of the
@@ -173,12 +173,12 @@ selected entity; the strip at the bottom has a lane of keys per track in view.
 
 ## Inspection
 
-- `animation.asset.inspect` reads any definition (`.anim`, `.skeleton`, `.pose`, `.blend`,
-  `.match`, `.motion`, `.action`) by sections and paged tables.
+- `animation.asset.inspect` reads any definition (`.anim`, `.skeleton`, `.character`) by sections
+  and paged tables.
 - `animation.inspect` reads an instance by parts (rig with the mirrored pair of each bone,
   matching, modifiers, actions with the parameters of the set, motion and morphs; `diagnostics`
   adds solver and fades). A part that does not apply answers `{available:false, code, reason}`
-  without failing the call; a `.match` that does not evaluate gives `Program_Error`. `entity`
+  without failing the call; a set that does not evaluate gives `Program_Error`. `entity`
   also takes, in Play or Simulate, the handle `play.inspect` gives, the only name of an entity
   the game made.
 - `animation.inspect` part `Match` lists the clips of the database and the candidates of its last
@@ -205,36 +205,38 @@ selected entity; the strip at the bottom has a lane of keys per track in view.
   the body does not weight). Removing or reparenting a bone is creating another skeleton.
 - Sockets belong to the shared skeleton, not to a clip or to the equipped entity, which carries
   `Bone_Attachment` with its own offset.
-- `pose.profile.set` replaces or appends the row with the key of its value (bone, name, curve and
+- `animation.modifier.set` replaces or appends the row of a modifier table of a `.character` with
+  the key of its value (bone, name, curve and
   bone, from and to: `engine.describe` lists them per table), or removes it. Targets are written
   as `Spatial_Target` without an entity (`{"position":[x,y,z]}`,
   `{"kind":"Socket","socket":"grip"}`); the entity arrives with the `goals` of `animation.request`.
   The definition stores bones and configuration; targets and fades belong to the instance. The
   quantities come from the lists, without counters or padding. Types: [rigs](animation-rigs.md) and
   [grounding](animation-grounding.md).
-- `pose.profile.poses` makes the `curve_poses` of a face from a clip with a frame per pose (as
+- `animation.modifier.poses` makes the `curve_poses` of a face from a clip with a frame per pose (as
   faces and pose assets are exported): each pose is the frame at its time measured from `base`, a
   row per bone that moves past `tolerance`, and replaces the rows of its curve; with `full` each
   row keeps the frame of its bone. Without `poses`, each marker of the clip is a pose of its name.
   A Float curve of the clip with a value at the frame of a pose is a drive from the pose's curve to
   it (what a pose asset carries, such as the ARKit remap), and replaces the drives from that pose.
-  Other drives and curve materials are rows of `pose.profile.set`
+  Other drives and curve materials are rows of `animation.modifier.set`
   ([curve poses](animation-rigs.md#curve-poses-and-drives)).
-- `animation.retarget.bake` bakes a new `.anim` from animation, source and destination skeletons and
-  profile ([bake](animation-rigs.md#bake)).
+- `animation.retarget.bake` bakes a new `.anim` from animation, source and destination skeletons
+  and, for another topology, the `.character` of the destination with its chains
+  ([bake](animation-rigs.md#bake)).
 
 ## Motion matching and additive spaces
 
-- The `.match` is written by `animation.character.setup` ([character](#character));
+- The match of a set is written by `animation.character.setup` ([character](#character));
   `animation.asset.inspect` describes it with its clips, the names of its modes and its entry, the
   clips and samples of each blend, and
   for each already loaded skeleton the rows, the bytes and the error of its database.
-- `animation.blend_space.set` builds the geometry of an aim offset or
-  additive from axes and samples; `sample` gives clips and weights at a position without advancing
-  the world. Each clip exists in the `.anim` of its sample or of the blend space; two axes with the
-  same name, duplicate positions and degenerate geometry are rejected. A `.blend` as the asset of
-  `animation.play` is `Layer_Space`: it is named in the `space` of a layer with
-  `animation.action.set` ([actions](animation-actions.md#profile-and-authoring)).
+- `animation.space.set` adds, replaces or removes a space of a `.character` by its name, an aim
+  offset or additive from axes and samples; `animation.space.sample` gives clips and weights at a
+  position without advancing the world. Each clip exists in the `.anim` of its sample or of the
+  set; two axes with the same name, duplicate positions and degenerate geometry are rejected. A
+  layer names it in its `space` with `animation.action.set`
+  ([actions](animation-actions.md#profile-and-authoring)).
 - Semantics and evaluation limits: [locomotion](animation.md#locomotion-by-motion-matching),
   [additive spaces](animation.md#additive-spaces) and
   [the layer stack](animation-actions.md#the-layer-stack).
@@ -249,18 +251,18 @@ asset lacks is `Missing_Clip`. Everything else that is asked of an instance is
   section), targets and controls of modifiers, targets of warping windows, locomotion and
   distance.
 - Intents, which write to those same queues:
-  - `locomote`: the forward velocity of the orientation and stride warping (asks for the `.motion`)
+  - `locomote`: the forward velocity of the orientation and stride warping of the set
     and, with root motion, the target of the `locomote` window. It does not move the body, which
     belongs to its controller (root delta or `Move_Input`), nor does it plan paths.
   - `look` and `reach`: target and fade of the head's Look or of the IK that ends at the hand;
-    requesting them turns the operation on even if the profile stores it off.
+    requesting them turns the operation on even if the set stores it off.
   - `gesture`: plays or stops the action of a gesture.
 - In Edit only `stop` is valid, as an undo step;
   everything else asks for Play or Simulation and the `fix` proposes `animation.preview` with the
   same fields.
-- What an intent lacks (no Look in the profile, no gesture) fails with the method that creates it.
+- What an intent lacks (no Look in the set, no gesture) fails with the method that creates it.
   The result lists what was applied.
-- A parameter is the name of a layer of its action set (its weight, from 0 to 1) or of an axis of
+- A parameter is the name of a layer of its set (its weight, from 0 to 1) or of an axis of
   the space of one, within its range (case-sensitive); another name fails with the ones the set
   declares. `Animation.library` changes the library that `inspect` and `preview` also use.
 
@@ -273,16 +275,16 @@ asset lacks is `Missing_Clip`. Everything else that is asked of an instance is
   names (`World` by default; `Entity`, `Bone` or `Socket` with its `entity`, the rig for bones and
   sockets); Multi IK names its effector and Spline IK its control. A field that does not correspond
   to the kind is rejected with its path.
-- Operations are named as `animation.inspect` part `Modifiers` lists them: IK and Contact by the
-  path of `end`, Look and Limit by `bone`, Grounding by `body`, the others by their name. An
-  ambiguous name fails without enqueuing; the target follows its operation if the profile is read
-  again.
-- Chain_Retarget uses `Animation.retarget` and `Animation.source`; the others,
-  `Pose_Modifiers.profile`. In Edit the defaults are edited with `pose.profile.set`.
+- Operations are named as `animation.inspect` part `Modifiers` lists them: IK by the path of `end`,
+  Look and Limit by `bone`, Grounding by `body`, the others by their name. An ambiguous name fails
+  without enqueuing; the target follows its operation if the set is read again.
+- Every operation is a row of the set the rig plays; Chain_Retarget applies to the sampled pose
+  its `Pose_Source` of stage `Sampled` takes. In Edit the defaults are edited with
+  `animation.modifier.set`.
 - The Grounding diagnostic gives residual and angular error against the active targets of the final
   pose, locked legs and `reached`; it does not consider the thickness of the mesh.
-- Solvers: [rigs](animation-rigs.md); actions: [actions](animation-actions.md); `.motion`, warping
-  and distance: [motion](animation-motion.md).
+- Solvers: [rigs](animation-rigs.md); actions: [actions](animation-actions.md); warping and
+  distance: [motion](animation-motion.md).
 
 `animation.preview` clones the world and applies the fields of `request`, with `time`, `ticks` and
 `dt` instead of stop and seek; `plays` and actions can be scheduled per tick. It returns

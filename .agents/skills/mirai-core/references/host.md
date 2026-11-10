@@ -518,7 +518,7 @@ the application, as the rows of the records (`host/texts.odin`).
   compression that ended is still written.
 - **A world does not start playing while its animations compress.** `content_animations_start`
   starts the first load of every `.anim` some ids name, directly or through the assets they
-  depend on in the registry (a spawner's prefab, its `.match`), without following scenes, and
+  depend on in the registry (a spawner's prefab, its `.character`), without following scenes, and
   `content_animations_pending` says whether one still compresses or waits for them. A
   [scene load](../../mirai-gameplay/references/libraries.md#scene) ends once those of its World
   are loaded; the [editor](../../mirai-editor/references/editor.md#play) starts those of a scene
