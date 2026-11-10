@@ -601,10 +601,13 @@ cells, makes static bodies of its own in the simulation (`owned.odin`) instead o
   primitive `Collider`, a pose in the frame of the body and its own index of the shape. What is
   not made says why: no room in `Physics_Settings`, or no memory.
 - It keeps the handles in a storage of the world, so a copy for Play or a rollback carries them
-  with the simulation, and ends them itself (`owned_body_destroy`, `owned_shape_destroy`): physics
-  never makes, moves or ends an owned body.
+  with the simulation, and moves and ends them itself (`owned_body_place`, `owned_body_destroy`,
+  `owned_shape_destroy`): physics never makes, moves or ends an owned body.
 - `owned_body_of` and `owned_shape_user` say from the body and the shape of a `Hit` whose they are
   and which ones, without the owner searching its own lists.
+- `body_info` reads any body of the simulation: of an entity, of a hit, owned or of a fracture.
+- A bake or a test that simulates without a world makes the simulation with `state_make` and
+  advances it with `simulate`, which applies only the requests of areas.
 - A cache outside the world that keeps bodies asks `simulation_replaced` whether they are still
   of this simulation. `settings_capacities` gives the capacities a world is made with, for a
   library that shares them out, as `terrain` does with the colliders of its chunks.

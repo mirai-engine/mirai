@@ -132,8 +132,9 @@ with networking ([networking](../mirai-networking/SKILL.md)).
   imposes the pose of another owner writes `core.Pose_Target`; whoever owns a body of another
   library uses proxies. Nobody writes the `Transform` of a body.
 - Only the physics plugin and the destruct plugins, whose fracture model is built on it, import
-  the solver: `mirai check` refuses the import in any other plugin and in a game. A library makes
-  static collision of its own with the owned bodies of the integration.
+  the solver: `mirai check` refuses the import in any other package of the engine, tests and tools
+  included, and in a game. A library makes static collision of its own with the owned bodies of
+  the integration.
 - A Character's body and its look both face -Z.
 - A character moves only through its `Character_Move`: locomotion writes it and, in a game mode,
   the step of that mode writes it first, to which locomotion only adds the layered movements.

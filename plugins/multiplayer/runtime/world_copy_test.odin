@@ -10,7 +10,6 @@ import "mirai:core"
 import phys "plugins:physics/runtime"
 import "mirai:host"
 import wire "mirai:net"
-import sim "plugins:physics/runtime/sim"
 
 @(private) Rollback_Allocation :: struct {owner:runtime.Allocator,remaining:int,requests:int}
 @(private)
@@ -198,7 +197,7 @@ net_test_same :: proc(info:^core.World_Info,a,b:^Net_Test_World) -> bool {
         size:=table.info.size*x.values.len
         if size>0 && mem.compare_ptrs(x.values.data,y.values.data,size)!=0 {return false}
     }
-    return a.time==b.time && sim.world_hash(&a.state.world)==sim.world_hash(&b.state.world) && slice.equal(a.entities.generation[:],b.entities.generation[:])
+    return a.time==b.time && phys.state_hash(core.ref(&a.state))==phys.state_hash(core.ref(&b.state)) && slice.equal(a.entities.generation[:],b.entities.generation[:])
 }
 
 @(test)

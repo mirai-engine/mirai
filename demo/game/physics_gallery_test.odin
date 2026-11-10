@@ -1,5 +1,6 @@
 package game
 
+import "core:math/linalg"
 import "core:testing"
 import "mirai:core"
 import destruct "plugins:destruct/runtime"
@@ -9,9 +10,9 @@ import render "mirai:engine/render"
 import "mirai:engine/scene"
 import "mirai:host"
 import fr "plugins:destruct/runtime/fracture"
-import model "plugins:physics/runtime/sim"
 import "mirai:std/base"
 import "mirai:std/geom"
+import "mirai:std/jobs"
 import mm "mirai:std/math"
 import cache "plugins:physics_cache/runtime"
 import fields "plugins:physics_fields/runtime"
@@ -68,10 +69,9 @@ gallery_internal_strain_holds_then_releases_a_suspended_collection_without_launc
     defer delete(requests.queue.items);defer delete(requests.waiting.items);defer delete(bodies.queue.items);defer delete(caches.queue.items);defer delete(ragdolls.queue.items)
     physics:phys.Physics_State;defer phys.state_destroy(&physics)
     fractures:destruct.Fracture_State;defer destruct.fracture_state_destroy(&fractures)
-    wd:=model.world_desc_default();wd.body_capacity,wd.shape_capacity,wd.contact_capacity,wd.joint_capacity=8,32,32,1
-    wd.hull_capacity=16
-    if !testing.expect(t,model.world_init(&physics.world,wd)) {return};physics.ready=true
-    fd:=fr.desc_default();fd.bodies,fd.destructibles,fd.pieces,fd.connections=wd.body_capacity,1,16,32
+    settings:=phys.Physics_Settings{bodies=8,shapes=32,contacts=32,joints=1,hulls=16}
+    if !testing.expect(t,phys.test_state_make(&physics,settings)) {return}
+    fd:=fr.desc_default();fd.bodies,fd.destructibles,fd.pieces,fd.connections=int(settings.bodies),1,16,32
     fractures.ready=fr.fracture_init(&fractures.fracture,fd);f:=&fractures.fracture
     cube:geom.Mesh_Buffer;geom.mesh_buffer_init(&cube);defer geom.mesh_buffer_destroy(&cube);geom.cube_build(&cube)
     sites:=[2][3]f32{{-.25,0,0},{.25,0,0}}
@@ -93,8 +93,8 @@ gallery_internal_strain_holds_then_releases_a_suspended_collection_without_launc
             testing.expect_value(t,command.kind,destruct.Fracture_Kind.Weaken)
             _,ok:=fr.destructible_weaken(f,&physics.world,h,command.region.point,command.region.radius,command.strain)
             testing.expect(t,ok);testing.expect_value(t,fr.destructible_revision(f,h),u32(0))
-            for _ in 0..<30 {model.world_step(&physics.world,1.0/60);fr.fracture_update(f,&physics.world)}
-            testing.expect_value(t,model.body_transform(&physics.world,root).p,dd.position)
+            for _ in 0..<30 {gallery_step(&physics,f)}
+            testing.expect_value(t,gallery_body(&physics,root).pose.position,dd.position)
         } else {
             testing.expect_value(t,command.kind,destruct.Fracture_Kind.Damage)
             _,ok:=fr.destructible_strain(f,&physics.world,h,command.region.point,command.region.radius,command.strain)
@@ -102,11 +102,11 @@ gallery_internal_strain_holds_then_releases_a_suspended_collection_without_launc
             pieces:[2]fr.Piece_Info;testing.expect_value(t,fr.destructible_pieces(f,&physics.world,h,pieces[:]),2)
             testing.expect(t,pieces[0].body!=pieces[1].body)
             falling:=pieces[0].body if pieces[0].body!=root else pieces[1].body
-            testing.expect_value(t,model.body_linear_velocity(&physics.world,falling),mm.Vec3{})
-            before:=model.body_transform(&physics.world,falling).p
-            for _ in 0..<30 {model.world_step(&physics.world,1.0/60);fr.fracture_update(f,&physics.world)}
-            testing.expect(t,model.body_transform(&physics.world,falling).p.y<before.y-.5)
-            testing.expect_value(t,model.body_transform(&physics.world,root).p,dd.position)
+            testing.expect_value(t,gallery_body(&physics,falling).linear,mm.Vec3{})
+            before:=gallery_body(&physics,falling).pose.position
+            for _ in 0..<30 {gallery_step(&physics,f)}
+            testing.expect(t,gallery_body(&physics,falling).pose.position.y<before.y-.5)
+            testing.expect_value(t,gallery_body(&physics,root).pose.position,dd.position)
         }
     }
     events:destruct.Destruct_Events;counts:Physics_Gallery_Events;app:host.App;spawned:core.Problems;spawner:=scene.Spawner{problems=&spawned}
@@ -131,11 +131,9 @@ gallery_keeps_initial_trigger_until_ready_and_slices_through_a_live_piece_center
     core.table_settle(&views,&entities);core.table_settle(&stations,&entities);core.entities_settle(&entities)
     physics_gallery_actions(&views,&stations,{actions=core.ref(&actions)},&requests,&bodies,&field_configs,&caches,&ragdolls,{playing=true,dt=1.0/60},destruct.Destruct_View{core.ref(&physics),core.ref(&fractures),core.read(&states),core.read(&groups)})
     testing.expect_value(t,core.get(&stations,station).activations,u32(0));testing.expect_value(t,len(requests.queue.items),0)
-    wd:=model.world_desc_default();wd.body_capacity,wd.shape_capacity,wd.contact_capacity,wd.joint_capacity=8,32,32,1
-    wd.hull_capacity=32
-
-    fd:=fr.desc_default();fd.bodies,fd.destructibles,fd.pieces,fd.connections=wd.body_capacity,1,32,64
-    testing.expect(t,model.world_init(&physics.world,wd));physics.ready=true
+    settings:=phys.Physics_Settings{bodies=8,shapes=32,contacts=32,joints=1,hulls=32}
+    fd:=fr.desc_default();fd.bodies,fd.destructibles,fd.pieces,fd.connections=int(settings.bodies),1,32,64
+    testing.expect(t,phys.test_state_make(&physics,settings))
     fractures.ready=fr.fracture_init(&fractures.fracture,fd);f:=&fractures.fracture
     cube:geom.Mesh_Buffer;geom.mesh_buffer_init(&cube);defer geom.mesh_buffer_destroy(&cube);geom.cube_build(&cube)
     sites:=[2][3]f32{{-.25,0,0},{.25,0,0}}
@@ -158,14 +156,20 @@ gallery_keeps_initial_trigger_until_ready_and_slices_through_a_live_piece_center
     launch:=bodies.queue.items[0]
     testing.expect_value(t,launch.kind,phys.Body_Request_Kind.Radial_Impulse)
     pieces:[8]destruct.Piece_Info;piece_count:=fr.destructible_pieces(f,&physics.world,h,pieces[:])
-    live:model.Body_Handle
+    live:phys.Body_Handle
     for piece in pieces[:min(piece_count,len(pieces))] {if piece.body!=0 {live=piece.body;break}}
     if !testing.expect(t,live!=0) {return}
-    before:=model.body_transform(&physics.world,live)
-    launched,ok:=model.world_apply_radial(&physics.world,launch.position,launch.radius,launch.strength,launch.falloff,true,launch.override)
-    testing.expect(t,ok && launched>=2)
-    model.world_step(&physics.world,1.0/60);fr.fracture_update(f,&physics.world)
-    testing.expect(t,model.body_transform(&physics.world,live).p!=before.p)
+    before:=gallery_body(&physics,live).pose
+    problems:core.Problems
+    gallery_step(&physics,f,&bodies,&problems)
+    testing.expect_value(t,problems.count,0)
+    launched:=0
+    for piece in pieces[:min(piece_count,len(pieces))] {
+        // A launch changes the velocity by its strength; one step of gravity, by a sixth of a m/s.
+        if piece.body!=0 && linalg.length(gallery_body(&physics,piece.body).linear)>launch.strength*.5 {launched+=1}
+    }
+    testing.expect(t,launched>=2)
+    testing.expect(t,gallery_body(&physics,live).pose.position!=before.position)
     core.get(&stations,station).station=10
     physics_gallery_events(core.read(&stations),&counts,core.ref(&events),spawner,&bodies)
     testing.expect_value(t,spawned.count,1)
@@ -199,11 +203,9 @@ gallery_fragments_remain_while_sleeping_and_fade_before_their_physical_expiry ::
     defer core.table_destroy(&stations);defer core.table_destroy(&states);defer core.table_destroy(&groups);defer core.table_destroy(&tints)
     physics:phys.Physics_State;defer phys.state_destroy(&physics)
     fractures:destruct.Fracture_State;defer destruct.fracture_state_destroy(&fractures)
-    wd:=model.world_desc_default();wd.body_capacity,wd.shape_capacity,wd.contact_capacity,wd.joint_capacity=8,32,32,1
-    wd.hull_capacity=16;wd.gravity={}
-    if !testing.expect(t,model.world_init(&physics.world,wd)) {return}
-    physics.ready=true
-    fd:=fr.desc_default();fd.bodies,fd.destructibles,fd.pieces,fd.connections=wd.body_capacity,1,16,32
+    settings:=phys.Physics_Settings{bodies=8,shapes=32,contacts=32,joints=1,hulls=16}
+    if !testing.expect(t,phys.test_state_make(&physics,settings)) {return}
+    fd:=fr.desc_default();fd.bodies,fd.destructibles,fd.pieces,fd.connections=int(settings.bodies),1,16,32
     fractures.ready=fr.fracture_init(&fractures.fracture,fd);f:=&fractures.fracture
     cube:geom.Mesh_Buffer;geom.mesh_buffer_init(&cube);defer geom.mesh_buffer_destroy(&cube);geom.cube_build(&cube)
     sites:=[2][3]f32{{-.25,0,0},{.25,0,0}}
@@ -216,7 +218,7 @@ gallery_fragments_remain_while_sleeping_and_fade_before_their_physical_expiry ::
     if !testing.expect(t,fractured) {return}
     root:=fr.destructible_body(f,handle)
     pieces:[8]destruct.Piece_Info;count:=fr.destructible_pieces(f,&physics.world,handle,pieces[:])
-    body:model.Body_Handle
+    body:phys.Body_Handle
     for piece in pieces[:min(count,len(pieces))] {if piece.body!=root && piece.body!=0 {body=piece.body;break}}
     if !testing.expect(t,body!=0) {return}
     phys.proxy_set(&physics,target,root,{},1);phys.proxy_set(&physics,fragment,body,{},1)
@@ -230,13 +232,30 @@ gallery_fragments_remain_while_sleeping_and_fade_before_their_physical_expiry ::
         physics_gallery_fade(core.read(&stations),destruct.Destruct_View{core.ref(&physics),core.ref(&fractures),core.read(&states),core.read(&groups)},&tints,{playing=true,dt=1.0/60})
         if tick==360 {testing.expect_value(t,core.at(core.read(&tints),core.row_of(&tints,fragment)).color.a,f32(1))}
         if tick==420 {testing.expect(t,abs(core.at(core.read(&tints),core.row_of(&tints,fragment)).color.a-.5)<.001)}
-        if tick==360 {testing.expect(t,!model.body_is_awake(&physics.world,body))}
-        testing.expect(t,model.body_valid(&physics.world,body))
+        info,valid:=phys.body_info(core.ref(&physics),body)
+        if tick==360 {testing.expect(t,!info.awake)}
+        testing.expect(t,valid)
         testing.expect_value(t,core.at(core.read(&tints),core.row_of(&tints,target)),original)
-        model.world_step(&physics.world,1.0/60);fr.fracture_update(f,&physics.world)
+        gallery_step(&physics,f,gravity={})
     }
     physics_gallery_fade(core.read(&stations),destruct.Destruct_View{core.ref(&physics),core.ref(&fractures),core.read(&states),core.read(&groups)},&tints,{playing=true,dt=1.0/60})
     testing.expect_value(t,core.at(core.read(&tints),core.row_of(&tints,fragment)).color.a,f32(0))
-    model.world_step(&physics.world,1.0/60);fr.fracture_update(f,&physics.world)
-    testing.expect(t,!model.body_valid(&physics.world,body) && model.body_valid(&physics.world,root))
+    gallery_step(&physics,f,gravity={})
+    _,kept:=phys.body_info(core.ref(&physics),body)
+    _,stays:=phys.body_info(core.ref(&physics),root)
+    testing.expect(t,!kept && stays)
+}
+
+// A tick of a simulation that only the fractures of a test fill: its step, then the fracture model.
+@(private="file")
+gallery_step :: proc(physics:^phys.Physics_State,f:^fr.Fracture,requests:^phys.Body_Requests=nil,problems:^core.Problems=nil,gravity:=[3]f32{0,-9.81,0}) {
+    job_system:jobs.Job_System
+    phys.simulate(physics,requests,&job_system,1.0/60,gravity,problems)
+    fr.fracture_update(f,&physics.world)
+}
+
+@(private="file")
+gallery_body :: proc(physics:^phys.Physics_State,body:phys.Body_Handle) -> phys.Body_Info {
+    info,_:=phys.body_info(core.ref(physics),body)
+    return info
 }

@@ -2,6 +2,9 @@ package physics
 
 import "mirai:core"
 import "mirai:host"
+import volume "mirai:engine/volume"
+import "mirai:std/jobs"
+import sim "plugins:physics/runtime/sim"
 
 // Advances only physics, outside the loops: the functions of this library in
 // the fixed phase of the editor loop, with the binding and the settle the
@@ -11,4 +14,26 @@ step_world :: proc(w:core.World_Ref,app:^host.App,dt:f32) -> bool {
     if !core.world_run(w,app.shared,nil,app,.Editor,.Fixed,{"physics"},{dt=dt,playing=dt>0}) {return false}
     state:=core.world_storage_of(w,Physics_State)
     return state!=nil && state.ready
+}
+
+// Advances by dt a simulation that no world steps, made with state_make: a bake, or the test of a library that
+// makes its bodies itself (owned bodies, a fracture). The requests of areas (fields, radial forces and
+// impulses) reach its bodies, which fall with gravity; one that names an entity does nothing and says so.
+// A world advances with physics_step.
+simulate :: proc(state:^Physics_State,requests:^Body_Requests,job_system:^jobs.Job_System,dt:f32,gravity:=volume.GRAVITY_WORLD,problems:^core.Problems=nil) -> bool {
+    if state==nil || !state.ready || job_system==nil || !(dt>0 && dt<=max(f32)) {return false}
+    for value in gravity {if !(value>=-max(f32) && value<=max(f32)) {return false}}
+    w:=&state.world
+    if requests!=nil {
+        s:=Sync{state=state,problems=problems}
+        for request in core.take(&requests.queue) {
+            if !area_apply(&s,request) {request_problem(&s,request.entity,request.kind,"physics.request_body","it is in a simulation without rows","send it to the Body_Requests of a world")}
+        }
+    }
+    sim.world_set_gravity(w,gravity)
+    parallel:=Parallel{job_system}
+    w.desc.parallel_user=&parallel
+    sim.world_step(w,dt)
+    w.desc.parallel_user=nil
+    return true
 }

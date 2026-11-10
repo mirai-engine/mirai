@@ -333,6 +333,35 @@ body_of :: proc(physics:core.Ref(Physics_State),e:core.Entity) -> sim.Body_Handl
     return link.body
 }
 
+// What the simulation holds of a body: that of an entity (body_of), of a Hit, of a library.
+Body_Info :: struct {
+    type:Body_Type, // Kinematic also while another owner or a manipulation holds it
+    pose:mm.Transform, // rigid
+    linear:[3]f32 `mirai:"unit=m/s"`,
+    angular:[3]f32 `mirai:"unit=rad/s"`,
+    awake:bool,
+    contacts:int, // the shapes an awake body touches after the last step
+}
+
+// False for a body that is gone, or while the simulation is not ready.
+body_info :: proc(physics:core.Ref(Physics_State),body:Body_Handle) -> (info:Body_Info,ok:bool) {
+    if physics.ptr==nil || !physics.ready || !sim.body_valid(&physics.world,body) {return}
+    w:=&physics.world
+    pose:=sim.body_transform(w,body)
+    return {
+        type=sim.body_type(w,body),pose={pose.p,pose.q,{1,1,1}},
+        linear=sim.body_linear_velocity(w,body),angular=sim.body_angular_velocity(w,body),
+        awake=sim.body_is_awake(w,body),contacts=sim.body_contacts(w,body,nil),
+    },true
+}
+
+// The hash of the whole simulation, the one core.Simulation_Hash records: two worlds whose simulations would
+// step alike give the same. Zero while it is not ready.
+state_hash :: proc(physics:core.Ref(Physics_State)) -> u64 {
+    if physics.ptr==nil || !physics.ready {return 0}
+    return sim.world_hash(&physics.world)
+}
+
 collider_debug_draw :: proc(physics:core.Ref(Physics_State),e:core.Entity,out:^sim.Debug_Draw) -> bool {
     out.line_count,out.point_count,out.lines_dropped,out.points_dropped=0,0,0,0
     if !physics.ready {return false}
@@ -772,7 +801,8 @@ physics_parallel_for :: proc(count,grain:int,data:rawptr,body:proc(data:rawptr,f
     jobs_parallel_for(link,count,grain,data,body)
 }
 
-@(private)
+// Makes the simulation of state with the capacities of settings, as the first physics_step of a world does;
+// true once it is ready. A tool or a test that simulates without a world (simulate) makes it here.
 state_make :: proc(state:^Physics_State,settings:^Physics_Settings,job_system:^jobs.Job_System,problems:^core.Problems) -> bool {
     if state.ready {return true}
     desc:=sim.world_desc_default()

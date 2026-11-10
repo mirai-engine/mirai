@@ -14,7 +14,6 @@ import render "mirai:engine/render"
 import "mirai:host"
 import gpu "mirai:render"
 import "mirai:rhi"
-import sim "plugins:physics/runtime/sim"
 import "mirai:std/base"
 import mm "mirai:std/math"
 
@@ -445,21 +444,24 @@ terrain_copy_republishes_identical_chunks_without_losing_contacts_or_changing_re
     tick:=core.Time{playing=true,dt=1.0/60}
     for _ in 0..<12 {terrain_test_update(w,&resident,&app,tick)}
     body:=phys.body_of({&w.state},ball)
-    contacts:[16]sim.Contact_Info
-    testing.expect(t,sim.body_contacts(&w.state.world,body,contacts[:])>0)
+    info :: proc(w:^Terrain_Test_World,body:phys.Body_Handle) -> phys.Body_Info {
+        found,_:=phys.body_info({&w.state},body)
+        return found
+    }
+    testing.expect(t,info(w,body).contacts>0)
     cloned:=&worlds[1]
     core.test_world_copy(&cloned.w,&w.w)
-    hash:=sim.world_hash(&cloned.state.world)
-    velocity:=sim.body_linear_velocity(&cloned.state.world,body)
+    hash:=phys.state_hash({&cloned.state})
+    velocity:=info(cloned,body).linear
     terrain_test_update(cloned,&resident,&app)
-    testing.expect_value(t,sim.world_hash(&cloned.state.world),hash)
-    testing.expect_value(t,sim.body_linear_velocity(&cloned.state.world,body),velocity)
-    testing.expect(t,sim.body_contacts(&cloned.state.world,body,contacts[:])>0)
+    testing.expect_value(t,phys.state_hash({&cloned.state}),hash)
+    testing.expect_value(t,info(cloned,body).linear,velocity)
+    testing.expect(t,info(cloned,body).contacts>0)
     for _ in 0..<6 {
         terrain_test_update(w,&resident,&app,tick)
         terrain_test_update(cloned,&resident,&app,tick)
-        testing.expect_value(t,sim.world_hash(&cloned.state.world),sim.world_hash(&w.state.world))
-        testing.expect_value(t,sim.body_linear_velocity(&cloned.state.world,body),sim.body_linear_velocity(&w.state.world,body))
+        testing.expect_value(t,phys.state_hash({&cloned.state}),phys.state_hash({&w.state}))
+        testing.expect_value(t,info(cloned,body).linear,info(w,body).linear)
     }
     }
 }

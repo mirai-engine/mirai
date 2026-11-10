@@ -4,7 +4,6 @@ import "core:testing"
 import "mirai:core"
 import "mirai:editor"
 import phys "plugins:physics/runtime"
-import sim "plugins:physics/runtime/sim"
 import terrain "plugins:terrain/runtime"
 import "mirai:std/base"
 
@@ -59,8 +58,7 @@ terrain_editor_budget_leaves_chunks_and_colliders_of_a_heightfield_to_the_runtim
     w:Budget_World
     if !core.test_world_init(t,&w,test_types) {return}
     defer core.test_world_destroy(&w)
-    testing.expect(t,sim.world_init(&w.physics.world,{body_capacity=4,shape_capacity=4,contact_capacity=4,joint_capacity=1,character_capacity=1,hull_capacity=1,mesh_capacity=1,heightfield_capacity=16}))
-    w.physics.ready=true
+    testing.expect(t,phys.test_state_make(&w.physics,{bodies=4,shapes=4,contacts=4,joints=1,characters=1,hulls=1,meshes=1,heightfields=16}))
     w.settings={chunks=64}
     source:terrain.Source;defer terrain.source_destroy(&source)
     testing.expect(t,terrain.source_make(&source,.Heightfield,{1025,1,1025},1,64))

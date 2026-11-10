@@ -80,10 +80,10 @@ test_types :: proc(types:^[dynamic]core.Test_Type) {
     )
 }
 
-// A simulation alone, with the default capacities: where the test of a library that owns bodies makes them.
-// state_destroy frees it.
-test_state_make :: proc(state:^Physics_State) -> bool {
-    settings:Physics_Settings
+// A simulation alone, with the capacities of settings: where the test of a library that makes its bodies itself
+// makes them, and steps them with simulate. state_destroy frees it.
+test_state_make :: proc(state:^Physics_State,settings:=Physics_Settings{}) -> bool {
+    settings:=settings
     job_system:jobs.Job_System
     problems:core.Problems
     return state_make(state,&settings,&job_system,&problems)
