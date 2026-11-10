@@ -8,27 +8,34 @@ import "mirai:std/base"
 @(private = "file")
 TEST_DEVICE :: Pipeline_Device{vendor = 0x10de, device = 0x2484, driver = 7, uuid = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}}
 
+// The blob of a pipeline: bytes of its own, and shared, when given, between
+// them, as a driver puts what all its blobs share in each.
 @(private = "file")
-test_blob :: proc(key: u64, size: int) -> []u8 {
-	data := make([]u8, size)
-	for &b, i in data {b = u8(key) ~ u8(i)}
+test_blob :: proc(key: u64, size: int, shared: []u8 = nil, allocator := context.allocator) -> []u8 {
+	data := make([]u8, size + len(shared), allocator)
+	state := base.hash_u64(key)
+	for &b in data[:size / 3] {state = state * 6364136223846793005 + 1442695040888963407; b = u8(state >> 56)}
+	copy(data[size / 3:], shared)
+	for &b in data[size / 3 + len(shared):] {state = state * 6364136223846793005 + 1442695040888963407; b = u8(state >> 56)}
 	return data
 }
 
 // A run: reads the store of path, uses the keys it finds and puts those it
-// does not, and writes it back. Returns the keys it found.
+// does not, and writes it back. Returns the keys it found whole.
 @(private = "file")
-test_run :: proc(path: string, keys: []u64, size := 1000, limit := PIPELINE_STORE_BYTES, device := TEST_DEVICE) -> (found: [dynamic]u64) {
+test_run :: proc(path: string, keys: []u64, size := 1000, limit := PIPELINE_STORE_BYTES, device := TEST_DEVICE, shared: []u8 = nil) -> (found: [dynamic]u64) {
 	found.allocator = context.temp_allocator
 	s: Pipeline_Store
 	pipeline_store_init(&s, device, limit)
 	defer pipeline_store_destroy(&s)
 	pipeline_store_load(&s, path)
 	for key in keys {
+		expected := test_blob(key, size, shared, context.temp_allocator)
 		if blob := pipeline_store_find(&s, key); blob != nil {
-			if len(blob) == size && blob[size - 1] == u8(key) ~ u8(size - 1) {append(&found, key)}
+			if string(blob) == string(expected) {append(&found, key)}
+			delete(blob)
 		} else {
-			pipeline_store_put(&s, key, test_blob(key, size))
+			pipeline_store_put(&s, key, expected)
 		}
 	}
 	pipeline_store_save(&s, path)
@@ -46,7 +53,7 @@ pipeline_store_keeps_the_pipelines_of_its_runs_within_its_limit :: proc(t: ^test
 	folder := base.test_folder(t, "pipeline-store")
 	if folder == "" {return}
 	path := fmt.tprintf("%s/pipelines.bin", folder)
-	limit := 40 + 5 * (24 + 1000)
+	limit := 48 + 5 * (24 + 1000 + 16 + 4)
 	first := test_run(path, {1, 2, 3}, limit = limit)
 	testing.expect_value(t, len(first), 0)
 	again := test_run(path, {1, 2, 3}, limit = limit)
@@ -58,6 +65,23 @@ pipeline_store_keeps_the_pipelines_of_its_runs_within_its_limit :: proc(t: ^test
 	kept := test_run(path, {11, 10, 9, 8, 7, 1}, limit = limit)
 	testing.expect(t, test_has(kept[:], 11) && test_has(kept[:], 10) && test_has(kept[:], 7), "the last used are kept")
 	testing.expect(t, !test_has(kept[:], 1), "the oldest went to make room")
+}
+
+// What every blob of a driver holds (NVIDIA a dictionary of megabytes) is kept
+// once, wherever it sits in each blob.
+@(test)
+pipeline_store_keeps_what_blobs_share_once :: proc(t: ^testing.T) {
+	folder := base.test_folder(t, "pipeline-store")
+	if folder == "" {return}
+	path := fmt.tprintf("%s/pipelines.bin", folder)
+	shared := test_blob(0, 2 << 20, nil, context.temp_allocator)
+	keys := [?]u64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
+	own := 30000
+	test_run(path, keys[:], size = own, shared = shared)
+	info, error := os.stat(path, context.temp_allocator)
+	if !testing.expect(t, error == nil) {return}
+	testing.expectf(t, info.size < i64(len(shared) + len(keys) * (own + 2 * PIPELINE_CHUNK_MAX)), "%d bytes for %d blobs of %d", info.size, len(keys), len(shared) + own)
+	testing.expect_value(t, len(test_run(path, keys[:], size = own, shared = shared)), len(keys))
 }
 
 // The pipelines of shaders that changed are never asked for again: they leave
@@ -89,19 +113,27 @@ pipeline_store_replaces_a_file_it_cannot_read :: proc(t: ^testing.T) {
 
 	Case :: struct {name: string, data: []u8}
 	cases := make([dynamic]Case, context.temp_allocator)
-	for size in ([]int{0, 1, 39, 40, 63, len(valid) - 1}) {append(&cases, Case{"truncated", valid[:size]})}
+	for size in ([]int{0, 1, 47, 48, 71, 100, len(valid) - 5, len(valid) - 1}) {append(&cases, Case{"truncated", valid[:size]})}
 	flipped := make([]u8, len(valid), context.temp_allocator)
 	copy(flipped, valid)
 	flipped[len(flipped) - 1] ~= 0xff
-	append(&cases, Case{"a byte of a blob changed", flipped})
+	append(&cases, Case{"the last chunk index changed", flipped})
+	chunk := make([]u8, len(valid), context.temp_allocator)
+	copy(chunk, valid)
+	chunk[48 + 24] ~= 1
+	append(&cases, Case{"a byte of a chunk changed", chunk})
 	huge := make([]u8, len(valid), context.temp_allocator)
 	copy(huge, valid)
-	store_write_u32(huge, 20, max(u32))
+	store_write_u32(huge, 24, max(u32))
 	append(&cases, Case{"a count past the file", huge})
 	overflow := make([]u8, len(valid), context.temp_allocator)
 	copy(overflow, valid)
-	store_write_u32(overflow, 40 + 20, max(u32))
-	append(&cases, Case{"a blob past the file", overflow})
+	store_write_u32(overflow, 48 + 16, max(u32))
+	append(&cases, Case{"a chunk past the file", overflow})
+	index := make([]u8, len(valid), context.temp_allocator)
+	copy(index, valid)
+	store_write_u32(index, len(index) - 4, 99)
+	append(&cases, Case{"an entry of a chunk that is not there", index})
 	longer := make([]u8, len(valid) + 3, context.temp_allocator)
 	copy(longer, valid)
 	append(&cases, Case{"bytes after the last entry", longer})
@@ -109,10 +141,11 @@ pipeline_store_replaces_a_file_it_cannot_read :: proc(t: ^testing.T) {
 	append(&cases, Case{"a driver blob of before", driver[:]})
 	state := u64(0x9e3779b97f4a7c15)
 	for _ in 0 ..< 32 {
-		random := make([]u8, 40 + int(state % 512), context.temp_allocator)
+		random := make([]u8, 48 + int(state % 512), context.temp_allocator)
 		for &b in random {state = state * 6364136223846793005 + 1442695040888963407; b = u8(state >> 56)}
-		copy(random, valid[:40])
+		copy(random, valid[:48])
 		store_write_u32(random, 20, u32(state % 4))
+		store_write_u32(random, 24, u32((state >> 8) % 4))
 		append(&cases, Case{"random entries", random})
 	}
 	for c in cases {
