@@ -38,6 +38,9 @@ Usually its prefab carries it: everything that appears from that prefab is repli
   replica goes on with its entity, which gains or loses the component. What a client holds is
   re-typed when it comes back, and of what each end simulates only the creation travels.
 - `replicated="owner"` sends it only to the owner, `replicated="others"` to everyone but the owner.
+  `replicated="object"` sends it to every end and makes an entity that has it replicated without a
+  `Replicate` of its own (`Simulation.Server`, `Audience.Always`): what a plugin writes that does
+  not know the network, such as removed foliage.
   The `local` field does not travel; `precision`, `bits`, `min` and `max` of the tag choose the
   serializer ([serial](networking.md)).
 - The pose carries one bit per component turned off by itself (`Pose.off`): whoever receives it
@@ -168,9 +171,7 @@ The network and physics share only `core` tables, each with one writer:
   ([networked joints](../../mirai-physics/references/engine.md#for-networking-and-saves)).
 
 `destruct_multiplayer` replicates fractures
-([networked destruction](../../mirai-physics/references/engine-destruct.md#network)),
-`foliage_multiplayer` the foliage instances taken out in play
-([foliage](../../mirai-world/references/foliage.md#instances-removed-in-play)) and
+([networked destruction](../../mirai-physics/references/engine-destruct.md#network)) and
 `terrain_multiplayer` terrain edits
 ([terrain](../../mirai-world/references/terrain.md#network)). The `behavior` minds decide only on
 the server, and clients see what each agent does in its replicated `Mind_Presentation`, without

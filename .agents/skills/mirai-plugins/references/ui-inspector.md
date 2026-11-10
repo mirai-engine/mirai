@@ -134,19 +134,19 @@ sequence or together parts of earlier rows (`records_part_add`, `records_part_re
 
 ### Texts
 
-- The bubble of the text row says whether the node is localized and opens a window with one row
-  per language of `UI_Settings.languages`: that of the language the interface is written in
-  (`UI_Settings.source`) is the node's text, and the others its translations, which the `.ui`
-  stores by the node's `text_id` (`records_translation`).
-- A text is not reused between nodes: the widget is reused. Duplicating or pasting gives another
-  id with copies of the translations (`records_texts_renew`); deleting takes them away
-  (`records_texts_prune`).
-- ASCII is typed, like all editable text; `ui.text.set` accepts any UTF-8. Languages that need an
+- The bubble of the text row says whether the node is localized and opens a window with its key
+  and one row per language of `UI_Settings.languages`: what the key says in each, read from and
+  written to the `.strings` of the project
+  ([one store](../../mirai-assets/references/kinds.md#texts)) as a step of history of that file.
+  Turning Localized on makes the key from the text of the node; turning it off leaves the node
+  what the key said.
+- A key is shared: the nodes that name it, copies and pasted ones included, show one text, and
+  changing it in the window changes it for all of them.
+- ASCII is typed, like all editable text; `texts.set` accepts any UTF-8. Languages that need an
   IME do not have their glyphs in the editor font.
-- `ui.text.export` and `ui.text.import` (`mirai texts export|import <csv>`) carry the localized
-  texts of all the `.ui`s to a CSV and back, as history steps. The import finds each row by the
-  asset's and the text's id (so it follows a moved `.ui`), an empty cell changes nothing and it
-  returns the rejected rows with their reason.
+- `texts.export` and `texts.import` (`mirai texts export|import <csv>`) carry every text of the
+  project to a CSV and back; an empty cell changes nothing, and a CSV that does not read
+  changes nothing and says its line.
 - A **Prompt** is just the prompts of its action. The action of a button or a prompt is chosen
   among the game's `Action` constants; one that the game no longer has is marked.
 
@@ -189,15 +189,15 @@ changes nothing and says why.
   person saves with Save). On the command line `document=@file` reads it from a file:
   - The document's nodes replace those of the part: they are matched by name and type (an unnamed
     one, by place among the unnamed ones of its type in the same container) and keep what ties
-    them to the file (the `text_id` of their text, the overrides of an instance); the others are
+    them to the file (the overrides of an instance); the others are
     made and those that the document does not declare go away. What a node does not give is that
     of a new node of its type; without `style` or `look` it takes the style of its type
     ([styles](#styles)), and an empty `style` is none. A `look` is a style without family; with
     `extends` it is the override of that style, and the node says it instead of `style`.
-  - A node with `translations` (language code to text) is `Localized` and its translations become
-    those; one without is not, and what the file had under its `text_id` stays there, as when a
-    person turns Localized off. A node gets its `text_id` when it becomes localized or takes its
-    first translation, unless the document gives one; two nodes never share one.
+  - A node with `key` is `Localized`: the file keeps the key, the document gives beside it, in
+    `text`, what the key says in the language texts are written in, and writing it sets that
+    text in the `.strings`. An empty `key` is made from the text; a node without `key` is not
+    localized ([texts](../../../../docs/game/ui/texts.md)).
   - The tokens, styles and animations it names become what it says, `null` removes them
     (a style that some node takes is not removed) and those it does not name stay. Without
     `nodes`, no node changes.
@@ -230,7 +230,8 @@ changes nothing and says why.
   `bind_*`, `data` and `fields` of the node; `ui.check` returns the problems of all the `.ui`s, the
   paths the game lacks included; `ui.path.rename` rewrites a path prefix in all of them, also in the
   templates.
-- The per-language texts: `ui.texts`, `ui.text.set` and the CSV ones.
+- The texts by key, of the editor itself: `texts.list`, `texts.set`, `texts.missing`,
+  `texts.export` and `texts.import`.
 
 ## Document bar
 
@@ -261,11 +262,9 @@ that faces the camera) cards create the entity with the `.ui` chosen in the cont
 instances, duplicating a node, unused rows, keys in order, renames, override fields, problems of
 a check, the document (`ui_document_test.odin`, and over files `ui_files_test.odin`) and the
 commands on a copy of the game template (`command_test.odin`).
-`mirai test plugins/ui_inspector/editor`: pasting into another `.ui` with its rows, Make widget,
-the texts of a copy and the preview.
-Over a project in the registry's memory, `project_files_test.odin`: the texts CSV
-(`texts_go_to_a_csv_and_back_with_commas_quotes_and_lines`,
-`a_csv_of_texts_says_why_it_refuses_a_language_the_game_lacks_and_rows_of_no_text`), the rename in
+`mirai test plugins/ui_inspector/editor`: pasting into another `.ui` with its rows, Make widget
+and the preview.
+Over a project in the registry's memory, `project_files_test.odin`: the rename in
 the `.ui`s that use the widget
 (`a_renamed_node_renames_the_overrides_of_the_interfaces_that_use_its_widget`), the incremental
 check

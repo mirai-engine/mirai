@@ -56,7 +56,7 @@ game_regen :: proc(healths:^core.Table(Health),time:core.Time) {
 ```
 
 - Parameters say what it touches: `^core.Table(C)` writes, `core.Read(C)` reads, `^S` writes a
-  storage, `core.Ref(S)` reads one, `core.Time`, `core.Input`, `core.Commands`, `^core.Entities`,
+  storage, `core.Ref(S)` reads one, `core.Time`, `core.Input`, `core.Commands`,
   `core.Placer`; of the application, its part (`^host.Assets`, `^render.Renderer`, `^audio.Mixer`,
   `runtime.Allocator`) or `^host.App`. No result or defaults. Names are unique in the whole world.
 - `core.get` and `core.at` read any table. `^core.Table` writes: `core.edit`, `core.edit_at`,

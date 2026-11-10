@@ -37,19 +37,18 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
   - **When.** A tile is marked when a box of the physics change log (`phys.static_changes`)
     touches it, a `Nav_Area` or obstacle that changed, the bounds or `nav_rebuild`. A log that
     fell behind (another simulation, a copied world) marks everything.
-  - **Residency.** `Nav_Unloaded` (application, per world) names the boxes where the static
-    collision is not loaded; whoever pages geometry writes it, like the `navigation_terrain`
-    bridge with the chunks of a solid terrain without a collider (not resident, beyond
-    `collision_distance`, without a slot or not built). A marked tile or zone that reads one is
-    left `unloaded`: it keeps what it has, built before or baked, and is built when it loads; a
-    search that finds no surface waits for it. In a running world (`Time.playing`), when those
-    boxes change, the tiles (with all the heights of their column) and zones whose input they
-    cover between them are dropped like those of a far section, with their mark and their
-    generated links, and count in `dropped`. `Navigation_Builds` remembers which ones and the hash
-    they had, which the coarse graph keeps counting; when the boxes stop covering one, it comes
-    back from the `.navmesh` of each `Navigation_Bake` of the world, one read of each file for all
-    those that come back, and is marked: the build finds it equal or builds what the bake did not
-    have. The edited world keeps everything: the editor rewrites the `.navmesh` from its meshes.
+  - **Residency.** The ground names the boxes where its static collision is not loaded
+    ([`core.Ground_Query.unloaded`](../../mirai-core/references/core.md#ground): the chunks of a
+    solid terrain without a collider), and the sections away theirs. A marked tile or zone that
+    reads one is left `unloaded`: it keeps what it has, built before or baked, and is built when it
+    loads; a search that finds no surface waits for it. In a running world (`Time.playing`), when
+    those boxes change, the tiles (with all the heights of their column) and zones whose input they
+    cover between them are dropped like those of a far section, with their mark and their generated
+    links, and count in `dropped`. `Navigation_Builds` remembers which ones and the hash they had,
+    which the coarse graph keeps counting; when the boxes stop covering one, it comes back from the
+    `.navmesh` of each `Navigation_Bake` of the world, one read of each file for all those that come
+    back, and is marked: the build finds it equal or builds what the bake did not have. The edited
+    world keeps everything: the editor rewrites the `.navmesh` from its meshes.
     The box of a far section counts the same ([sections](#sections)). Without `Nav_Bounds`, those
     boxes are added to that of the collision: dropping colliders does not take tiles away.
   - **How.** The input of each marked tile is collected on the loop thread and hashed, whatever
@@ -315,7 +314,7 @@ It needs no component or configuration.
   away and appears when its section loads, one that receives requests far away, one that flies far
   away along the air path of the unloaded section and the tiles over a far section in a column.
   `mirai test std/ai` builds and walks the coarse graph. `mirai test plugins/navigation/editor`
-  says what an agent does far away (`nav.agent`) and the next point of a drive, and
-  `mirai test plugins/navigation_terrain/runtime` extracts the unloaded boxes of a terrain.
+  says what an agent does far away (`nav.agent`) and the next point of a drive; the unloaded boxes
+  of a terrain are tested in [terrain](terrain.md#verification).
 - In a demo session: `nav.status` until no tiles are left waiting, `nav.path` between two points
   and, in Play, `nav.agent` of an agent that walks; the `Swarm` arena for the air.

@@ -26,7 +26,7 @@ Emitters_World :: struct {
     volumes:core.Table(Particle_Volume),
     textures:core.Table(Particle_World_Texture),
     meshes:core.Table(erender.Mesh_Renderer),
-    channels:Particle_Channels,
+    births:core.Births,
     hierarchy:core.Hierarchy,
     clocks:Particle_Clocks,
     requests:Particle_Requests,
@@ -69,7 +69,7 @@ fixture_emitter :: proc(f:^Emitters_Fixture,emitter:Particle_Emitter,position:[3
 
 @(private="file")
 fixture_tick :: proc(f:^Emitters_Fixture,time:core.Time,frame:=FRAME) {
-    particles_tick(core.read(&f.emitters),&f.overrides,&f.parameters,core.read(&f.worlds),core.ref(&f.hierarchy),&f.entities,&f.clocks,&f.requests,&f.channels,core.read(&f.listeners),time,frame,f.app.assets,&f.problems)
+    particles_tick(core.read(&f.emitters),&f.overrides,&f.parameters,core.read(&f.worlds),core.ref(&f.hierarchy),{entities=&f.entities},&f.clocks,&f.requests,&f.births,core.read(&f.listeners),time,frame,f.app.assets,&f.problems)
     fixture_settle(f)
 }
 
@@ -579,15 +579,15 @@ channel_births_start_once_through_a_rollback :: proc(t:^testing.T) {
     if !fixture_init(t,&f) {return}
     defer fixture_destroy(&f)
     e:=fixture_emitter(&f,Particle_Emitter{})
-    IMPACTS,NOBODY :: Particle_Channel_Name(CHANNEL_GAME),Particle_Channel_Name(CHANNEL_GAME+1)
+    IMPACTS,NOBODY :: core.Birth_Channel(core.CHANNEL_GAME),core.Birth_Channel(core.CHANNEL_GAME+1)
     listener:=Particle_Channel{name=IMPACTS}
     core.add(&f.listeners,e,listener)
     fixture_settle(&f)
     f.app.assets=nil
     id:=core.World_Id{0,1}
     tick :: proc(f:^Emitters_Fixture,at:int) {
-        if at%2==0 {channel_emit(&f.channels,IMPACTS,Channel_Birth{position={f32(at),0,0},count=3})}
-        channel_emit(&f.channels,NOBODY,Channel_Birth{count=1})
+        if at%2==0 {core.push(&f.births.queue,core.Birth{channel=IMPACTS,position={f32(at),0,0},count=3})}
+        core.push(&f.births.queue,core.Birth{channel=NOBODY,count=1})
         fixture_tick(f,TICK)
     }
     for at in 0..<4 {tick(&f,at)}

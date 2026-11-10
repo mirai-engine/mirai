@@ -1,7 +1,0 @@
-{
-  "name": "navigation_terrain",
-  "version": "0.1.0",
-  "dependencies": ["navigation", "terrain", "physics"],
-  "parts": ["Runtime"],
-  "automatic": true
-}

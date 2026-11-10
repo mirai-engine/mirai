@@ -73,6 +73,8 @@ end_tick :: proc(f:^End,resimulating:=false) {
     f.outbox.replaying=resimulating // as a correction of the network leaves it
     commands:=core.commands_of(core.test_world_ref(&f.w))
     destruct_net_follow(core.ref(&f.authority),&f.net,time,&f.requests,core.ref(&f.physics),core.read(&f.configs),core.read(&f.states),core.read(&f.ids),core.ref(&f.root))
+    // The logs of a tick, as their readers are handed them.
+    clear(&f.events.fractured.items);clear(&f.events.applied.items);clear(&f.events.replayed.items);clear(&f.events.grouped.items)
     destruct.test_step(&f.rows,&f.application,commands,time)
     core.test_world_settle(&f.w)
     destruct_net_send(core.ref(&f.authority),&f.net,time,&f.outbox,&f.adoptions,core.ref(&f.session),core.ref(&f.connections),core.ref(&f.events),core.ref(&f.physics),commands,

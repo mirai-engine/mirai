@@ -111,8 +111,8 @@ Save_Requests :: struct {queue:core.Queue(Request)}
 // Events: this library clears them at each frame and pushes one per request
 // served, and one per autosave it made by itself. A slot written later (its
 // thumbnail, a job) brings its own in the frame it is written.
-@(storage,events,keep)
-Save_Results :: struct {queue:core.Queue(Result)}
+@(storage,keep)
+Save_Results :: struct {queue:core.Events(Result)}
 
 // Where the slots are kept: the folder set, or <user data>/Mirai/<project>/saves.
 @(storage,host)
@@ -348,7 +348,6 @@ saves_serve :: proc(
     authority:core.Ref(core.Network),frame:core.Ref(core.Frame_Time),clock:core.Ref(core.Clock),
     references:core.Read(scene.Scene_Reference),problems:^core.Problems,
 ) {
-    core.queue_clear(&results.queue)
     if !profile.read {
         profile.read=true
         if error:=profile_read(world,app,state);error!=.None && error!=.Not_Found && error!=.Unavailable {

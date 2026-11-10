@@ -34,13 +34,14 @@ Table_Info :: struct {
 }
 
 // Which ends of a network session receive the values of a component of the
-// entities it replicates: @(component,replicated), replicated="owner" or
-// replicated="others".
+// entities it replicates: @(component,replicated), replicated="owner",
+// replicated="others" or replicated="object".
 Replication :: enum u8 {
     None,
     All,    // every end that has the entity
     Owner,  // only the end that owns it
     Others, // every end but the owner
+    Object, // every end: an entity with it is replicated without saying so, by the server to every connection
 }
 
 // Who sends a message of the network: @(net_message), from="client" or from="owner".
@@ -147,6 +148,7 @@ World_Info :: struct {
     steps:[]Step_Info,
     settles:Settle_Info, // what settle and the procedures of world_data look for in tables and storages
     loops:[Loop][Phase]Loop_Proc,
+    events_age:proc(world:rawptr,ticked:bool), // ages every log (events_age) of a World, those a fixed function reads only when ticked: what runs a frame of a World calls it at its end
     order:[Loop][Phase][]i32, // the steps each loop calls, by index, in its order
     tables_by_type,storages_by_type:map[typeid]int, // index in tables and in storages, by_world aside: world_info_index
     schema:^World_Schema, // world_info_index
@@ -258,6 +260,12 @@ world_run :: proc(w:World_Ref,shared,editor,app:rawptr,loop:Loop,phase:Phase,lib
     if clock!=nil {clock^=kept_clock}
     if frame!=nil {frame^=kept_frame}
     return true
+}
+
+// Ages the logs of a World (events_age) that no loop of the application runs:
+// what steps one with world_run calls it after each step it gives it.
+world_events_age :: proc(w:World_Ref) {
+    if w.info.events_age!=nil && w.place==.World {w.info.events_age(w.data,true)}
 }
 
 // One value of a storage of the application for each of its Worlds, at the

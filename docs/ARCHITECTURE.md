@@ -25,8 +25,8 @@ serves people and agents, with no second API that replicates the functionality.
 - **Component**: a flat struct with `@(component)`; one row per entity in a `core.Table(T)`.
   It reaches the game if it is in a library.
 - **Storage**: a flat struct with `@(storage)`; one per world.
-  It is the state of a library, a queue of requests (`queue`) or events (`events`) or the loop
-  parameters. It reaches the game if it is in a library.
+  It is the state of a library, a queue of requests (`queue`), the occurrences it reports
+  (`core.Events` fields) or the loop parameters. It reaches the game if it is in a library.
 - **Library**: a package with components, storages and game functions. It reaches the game.
 - **Plugin**: libraries (`runtime/`) plus an `editor/` package with editor-only components,
   storages and functions. Only its libraries reach the game.
@@ -36,7 +36,7 @@ is libraries (`engine/*`) and an editor that is the engine's editor part.
 
 The attributes belong to the compiler (`-custom-attribute`): `component`, `storage`, `step`,
 `loops`, `stage`, `after`, `before`, `server`, `shared`, `locks`, `host`, `by_world`, `copy`,
-`swap`, `free`, `replicated`, `setting`, `single`, `description`, `queue`, `events`, `keep`,
+`swap`, `free`, `replicated`, `setting`, `single`, `description`, `queue`, `keep`,
 `persist`, `reset`, `net_message`, `from`, `reliable`, `params`. The CLI and `cook/build` pass them
 on their own; a manual build needs the flag with `build.CUSTOM_ATTRIBUTES`.
 
@@ -167,9 +167,9 @@ door_move :: proc(
 | `^S` | Writes storage `S` |
 | `core.Ref(S)` | Reads storage `S` without copying it |
 | `S` | Reads a copy of storage `S`; for small ones (`Time`, `Input`, `View`) |
-| `^core.Entities` | Creates and destroys entities |
+| `core.Stamp(S)` | Asks `core.touched` whether storage `S` was written since it looked |
 | `core.Ref(core.Entities)` | Reads which entities are alive |
-| `core.Commands` | Creates entities with rows of any component |
+| `core.Commands` | Creates and destroys entities, with rows of any component |
 | `core.World_Ref` | The whole world by reflection: scenes, saving, network, editor |
 | `^host.Assets`, `^host.Frame_Extras`, `^render.Renderer`, `^audio.Mixer`, `^jobs.Job_System`, `runtime.Allocator` | A part of the application: its assets, what is added to the frame, its renderer, its mixer, its job system, its allocator |
 | `^host.App` | The application itself: its worlds, its window and views, its clock, its content |

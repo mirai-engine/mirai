@@ -24,8 +24,9 @@ import "mirai:std/subprocess"
 // game can reach, as the runtime loads them fastest.
 //
 // What is reached starts at the roots: every scene, every prefab (code reaches
-// one only by instantiating it) and every table of game data (.records, which
-// the code reads by the type of its rows) of the project and what cook.mirai
+// one only by instantiating it), every table of game data (.records, which
+// the code reads by the type of its rows) and every .strings (whose keys
+// interfaces, rows and code show) of the project and what cook.mirai
 // names, the other assets only code refers to. From them, everything an
 // asset depends on, and so on. The rest stays behind and is listed in the
 // report. A texture that stores RGBA8 is written in the blocks of its use,
@@ -195,7 +196,7 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
         append(pending,at)
     }
     for file,at in files {
-        if file.state==.Asset && (file.kind==asset.KIND_SCENE || file.kind==asset.KIND_RECORDS) {root_add(reached,&pending,&report,u32(at))}
+        if file.state==.Asset && (file.kind==asset.KIND_SCENE || file.kind==asset.KIND_RECORDS || file.kind==asset.KIND_STRINGS) {root_add(reached,&pending,&report,u32(at))}
         // What a plugin brings is for its code, which no scene names.
         for folder in desc.plugins {
             if strings.has_prefix(file.path,folder.prefix) && len(file.path)>len(folder.prefix) && file.path[len(folder.prefix)]=='/' {root_add(reached,&pending,&report,u32(at))}
