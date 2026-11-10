@@ -310,7 +310,7 @@ a_new_actions_asset_or_revision_interrupts_the_playing_action_and_fades_its_laye
         requests:Action_Requests;defer delete(requests.queue.items);actions:Action_Runtime;defer actions_runtime_free(&actions)
         tick :: proc(actions:^Action_Runtime,requests:^Action_Requests,cache:^Actions_Assets,descriptions:^core.Table(Animation),playback:^Playback,app:^host.App,content:^host.Content_Animation,events:^Animation_Events,dt:f32) -> bool {
             if !actions_prepare(actions,requests,cache,core.read(descriptions),playback,app.assets,app.allocator,nil) {return false}
-            state:=&playback.states[0];sampled,_:=core.get(core.read(descriptions),state.entity)
+            state:=&playback.states[0];sampled,_:=core.get(descriptions,state.entity)
             actions_sample(actions,state,&sampled,dt,nil,content,playback,events);layers_advance(playback,state,content,sampled,events,dt,nil);actions_finish(actions,playback,dt)
             return true
         }
@@ -348,19 +348,19 @@ actions_discover_changed_components_retry_requests_and_compact_generational_rows
     empty:=actions_prepare(&actions,&requests,&cache,core.read(&w.descriptions),&playback,app.assets,app.allocator,nil)
     context=saved;app.allocator=saved.allocator;actions.allocator=saved.allocator
     testing.expect(t,empty && len(actions.states)==0 && cap(actions.events.items)==0)
-    core.get(&w.descriptions,first).actions={3,4};core.get(&w.descriptions,second).actions={3,5}
+    core.edit(&w.descriptions,first).actions={3,4};core.edit(&w.descriptions,second).actions={3,5}
     action_fire(&requests,first,"attack")
-    observed:=actions.animation_version
+    observed:=actions.animations_seen
     context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;app.allocator=context.allocator
     prepared:=actions_prepare(&actions,&requests,&cache,core.read(&w.descriptions),&playback,app.assets,app.allocator,nil)
     context=saved;app.allocator=saved.allocator;actions.allocator=saved.allocator
-    testing.expect(t,!prepared && len(requests.queue.items)==1 && len(actions.states)==0 && actions.animation_version==observed)
+    testing.expect(t,!prepared && len(requests.queue.items)==1 && len(actions.states)==0 && actions.animations_seen==observed)
     testing.expect(t,actions_prepare(&actions,&requests,&cache,core.read(&w.descriptions),&playback,app.assets,app.allocator,nil) && len(actions.states)==2 && action_state(&actions,first).layers[0].active)
     copied:Action_Runtime;core.value_copy(&copied,&actions,type_info_of(Action_Runtime));defer actions_runtime_free(&copied)
     first_state:=action_state(&copied,first);first_state.layers[0].time=9
     testing.expect(t,action_state(&actions,first).layers[0].time!=9)
-    core.get(&w.descriptions,first).actions={3,5}
-    core.get(&w.descriptions,plain).weight=.4
+    core.edit(&w.descriptions,first).actions={3,5}
+    core.edit(&w.descriptions,plain).weight=.4
     context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;app.allocator=context.allocator
     prepared=actions_prepare(&actions,&requests,&cache,core.read(&w.descriptions),&playback,app.assets,app.allocator,nil)
     context=saved;app.allocator=saved.allocator;actions.allocator=saved.allocator;cache.allocator=saved.allocator
@@ -408,14 +408,14 @@ action_playing_answers_while_an_action_plays_and_animation_stop_frees_a_layer_th
     problems:core.Problems
     _,_,playing:=action_playing({&actions},entity,"attack");testing.expect(t,!playing)
     // A pose faded out to weight 0 keeps its clip, so the layer stays taken.
-    testing.expect(t,animation_play(core.get(&w.descriptions,entity),"wave",layer=1) && animation_weight(core.get(&w.descriptions,entity),1,0))
+    testing.expect(t,animation_play(core.edit(&w.descriptions,entity),"wave",layer=1) && animation_weight(core.edit(&w.descriptions,entity),1,0))
     action_fire(&requests,entity,"attack")
     testing.expect(t,actions_prepare(&actions,&requests,&cache,core.read(&w.descriptions),&playback,app.assets,app.allocator,&problems))
     _,_,playing=action_playing({&actions},entity,"attack")
     testing.expect(t,core.problem_find(&problems,entity,"animation.action_layer")!=nil && !playing)
     // animation_stop frees it in the same tick.
     core.problems_clear(&problems)
-    testing.expect(t,animation_stop(core.get(&w.descriptions,entity),1,.3) && core.get(&w.descriptions,entity).layers[0].fade==.3)
+    testing.expect(t,animation_stop(core.edit(&w.descriptions,entity),1,.3) && core.at(&w.descriptions,core.row_of(&w.descriptions,entity)).layers[0].fade==.3)
     action_fire(&requests,entity,"attack")
     testing.expect(t,actions_prepare(&actions,&requests,&cache,core.read(&w.descriptions),&playback,app.assets,app.allocator,&problems))
     time,section,ok:=action_playing({&actions},entity,"attack")

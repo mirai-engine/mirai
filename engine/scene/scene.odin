@@ -464,7 +464,7 @@ capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,des
     members:=core.world_table_of(w,Section_Member)
     doc_id :: proc(ids:core.Read(core.Id),members:^core.Table(Section_Member),section:core.Entity,e:core.Entity) -> base.Entity_Id {
         if section!=core.NONE && members!=nil {
-            if member,ok:=core.get(core.read(members),e);ok && member.local!=0 {return member.local}
+            if member,ok:=core.get(members,e);ok && member.local!=0 {return member.local}
         }
         return core.id_of(ids,e)
     }
@@ -679,11 +679,11 @@ scopes_restore :: proc(w:core.World_Ref) {
     parents:=core.world_table_of(w,core.Parent)
     if places==nil || references==nil || parents==nil {return}
     for row in 0..<core.count(places) {
-        if core.at(core.read(places),row).shape!=.Unbounded {continue}
+        if core.at(places,row).shape!=.Unbounded {continue}
         section:=core.ancestor_with(core.read(parents),core.read(references),core.entity_at(places,row))
-        reference,found:=core.get(core.read(references),section)
+        reference,found:=core.get(references,section)
         if !found {continue}
-        place:=core.at(places,row)
+        place:=core.edit_at(places,row)
         place.scope,place.scope_extents=section,reference.extents
     }
 }

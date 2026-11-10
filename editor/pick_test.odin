@@ -48,7 +48,7 @@ marquee_previews_the_committed_selection_without_changing_it :: proc(t:^testing.
     highlight_sync(&session,ref)
     core.table_settle(&world.highlights,&world.entities)
     testing.expect_value(t,entity_level(&viewport,owner),HIGHLIGHT_SELECTED)
-    testing.expect_value(t,core.get(&world.highlights,child).level,HIGHLIGHT_DESCENDANT)
+    testing.expect_value(t,core.at(&world.highlights,core.row_of(&world.highlights,child)).level,HIGHLIGHT_DESCENDANT)
     testing.expect_value(t,entity_level(&viewport,other),u8(0))
     testing.expect_value(t,selection.entities[0],other)
     testing.expect_value(t,selection.serial,serial)
@@ -57,12 +57,12 @@ marquee_previews_the_committed_selection_without_changing_it :: proc(t:^testing.
     testing.expect(t,world.highlights.version==version,"an unchanged rectangle does not rewrite highlight rows")
     viewport.pointer={350,250}
     highlight_sync(&session,ref)
-    testing.expect_value(t,core.get(&world.highlights,child).level,u8(0))
+    testing.expect_value(t,core.at(&world.highlights,core.row_of(&world.highlights,child)).level,u8(0))
     viewport.pointer={500,400}
     viewport.add=true
     highlight_sync(&session,ref)
     core.table_settle(&world.highlights,&world.entities)
-    testing.expect_value(t,core.get(&world.highlights,other).level,HIGHLIGHT_SELECTED)
+    testing.expect_value(t,core.at(&world.highlights,core.row_of(&world.highlights,other)).level,HIGHLIGHT_SELECTED)
     viewport.add=false
     core.add(&world.hidden,owner,{})
     core.table_settle(&world.hidden,&world.entities)
@@ -74,21 +74,21 @@ marquee_previews_the_committed_selection_without_changing_it :: proc(t:^testing.
     testing.expect_value(t,entity_level(&viewport,owner),HIGHLIGHT_SELECTED)
     viewport.capture=.None
     highlight_sync(&session,ref)
-    testing.expect(t,core.get(&world.highlights,child).level==0,"cancellation restores the existing selection")
-    testing.expect_value(t,core.get(&world.highlights,other).level,HIGHLIGHT_SELECTED)
+    testing.expect(t,core.at(&world.highlights,core.row_of(&world.highlights,child)).level==0,"cancellation restores the existing selection")
+    testing.expect_value(t,core.at(&world.highlights,core.row_of(&world.highlights,other)).level,HIGHLIGHT_SELECTED)
     testing.expect_value(t,selection.serial,serial)
     marquee_select(&session,ref,rect_from_points(viewport.press,viewport.pointer),false)
     highlight_sync(&session,ref)
     testing.expect_value(t,len(selection.entities),1)
     testing.expect_value(t,selection.entities[0],owner)
-    testing.expect_value(t,core.get(&world.highlights,child).level,HIGHLIGHT_DESCENDANT)
+    testing.expect_value(t,core.at(&world.highlights,core.row_of(&world.highlights,child)).level,HIGHLIGHT_DESCENDANT)
     session.mode=.Play
     highlight_sync(&session,ref)
-    testing.expect(t,entity_level(&viewport,owner)==0 && core.get(&world.highlights,child).level==0,"the game is drawn without the outline of the selection")
+    testing.expect(t,entity_level(&viewport,owner)==0 && core.at(&world.highlights,core.row_of(&world.highlights,child)).level==0,"the game is drawn without the outline of the selection")
     testing.expect_value(t,len(selection.entities),1)
     session.mode=.Edit
     highlight_sync(&session,ref)
-    testing.expect_value(t,core.get(&world.highlights,child).level,HIGHLIGHT_DESCENDANT)
+    testing.expect_value(t,core.at(&world.highlights,core.row_of(&world.highlights,child)).level,HIGHLIGHT_DESCENDANT)
 }
 
 @(test)

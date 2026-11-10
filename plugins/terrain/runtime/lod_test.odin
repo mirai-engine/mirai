@@ -156,7 +156,7 @@ far_chunks_show_coarser_levels_while_colliders_keep_every_sample :: proc(t:^test
     terrain_test_update(&w,&resident,&app,view=view,settings=settings)
     testing.expect(t,chunks[far].built.collision && !chunks[0].built.collision)
     with_collider:=0
-    for row in 0..<core.count(&w.chunks) {if core.has(core.read(&w.colliders),w.chunks.entities[row]) {with_collider+=1}}
+    for row in 0..<core.count(&w.chunks) {if core.has(&w.colliders,w.chunks.entities[row]) {with_collider+=1}}
     testing.expect(t,with_collider>0 && with_collider<64)
     _,ok=phys.raycast({&w.state},{-57,20,-57},{0,-1,0})
     testing.expect(t,!ok)

@@ -52,7 +52,7 @@ the_settle_of_a_world_comes_only_to_the_tables_that_wait :: proc(t:^testing.T) {
     }
     cases:=[]Case{
         {"nothing waits",proc(w:^World_Of_Probes,root,child,other:Entity) {},0,nil},
-        {"a row written in place",proc(w:^World_Of_Probes,root,child,other:Entity) {get(&w.probes,child).value=5},0,nil},
+        {"a row written in place",proc(w:^World_Of_Probes,root,child,other:Entity) {edit(&w.probes,child).value=5},0,nil},
         {"an add to one table",proc(w:^World_Of_Probes,root,child,other:Entity) {add(&w.probes,root,Probe{3})},1,
             proc(w:^World_Of_Probes,root,child,other:Entity) -> bool {return has(&w.probes,root)}},
         {"a remove by reflection",proc(w:^World_Of_Probes,root,child,other:Entity) {raw_remove(raw(&w.probes),root)},1,
@@ -137,7 +137,7 @@ a_component_turned_off_keeps_its_value_out_of_sight :: proc(t:^testing.T) {
     shape:=layout(&w.probes)
     test_world_settle(&w)
     testing.expect_value(t,count(&w.probes),2)
-    testing.expect(t,!has(&w.probes,a) && get(&w.probes,a)==nil && row_of(&w.probes,a)==-1)
+    testing.expect(t,!has(&w.probes,a) && !has(&w.probes,a) && row_of(&w.probes,a)==-1)
     testing.expect(t,layout(&w.probes)>shape)
     for row in 0..<count(&w.probes) {testing.expect(t,entity_at(&w.probes,row)!=a)}
     on,turned_off,found:=raw_state(raw(&w.probes),a)
@@ -155,7 +155,7 @@ a_component_turned_off_keeps_its_value_out_of_sight :: proc(t:^testing.T) {
     enable(&w.probes,a)
     test_world_settle(&w)
     testing.expect_value(t,count(&w.probes),3)
-    value,ok:=get(read(&w.probes),a)
+    value,ok:=get(&w.probes,a)
     testing.expect(t,ok && value==Probe{10})
     c2:=changes(&w.probes,&seen)
     testing.expect(t,!c2.all && len(c2.gone)==0)

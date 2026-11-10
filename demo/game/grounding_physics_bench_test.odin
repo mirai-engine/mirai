@@ -36,7 +36,7 @@ grounding_bench_fixture :: proc(f:^Grounding_Fixture,t:^testing.T,bones,legs:int
         append(&f.state.parents,i32(parent));append(&f.state.targets,base.name_hash(fmt.tprintf("detail.%d",bone)))
         append(&f.state.rest,pose);append(&f.state.local,pose);append(&f.state.world,pose)
     }
-    core.get(&f.configs,f.rig).mode=mode
+    core.edit(&f.configs,f.rig).mode=mode
     return lib.pose_world(f.state.parents[:],f.state.local[:],f.state.world[:])
 }
 

@@ -70,17 +70,17 @@ turning_a_sky_on_keeps_what_drives_its_change :: proc(t:^testing.T) {
     core.add(&w.skies,night,Sky{luminance={2,2,3}})
     core.disable(&w.skies,night)
     core.test_world_settle(&w)
-    driven:=(^Sky)(core.raw_get(core.raw(&w.skies),type_info_of(Sky),night))
+    driven:=(^Sky)(core.raw_edit(core.raw(&w.skies),type_info_of(Sky),night))
     driven.fade,driven.luminance=0.7,{5,5,5}
     activate(&w.requests,night,core.NONE,2)
     environment_activate(&w.requests,&w.skies,&w.suns,{dt=0},&problems)
     core.test_world_settle(&w)
-    sky:=core.at(core.read(&w.skies),0)
-    testing.expect(t,core.entity_at(core.read(&w.skies),0)==night && sky.fade==0.7 && sky.luminance==[3]f32{5,5,5} && sky.arrival==1)
-    core.get(&w.skies,night).fade=0.4
+    sky:=core.at(&w.skies,0)
+    testing.expect(t,core.entity_at(&w.skies,0)==night && sky.fade==0.7 && sky.luminance==[3]f32{5,5,5} && sky.arrival==1)
+    core.edit(&w.skies,night).fade=0.4
     environment_activate(&w.requests,&w.skies,&w.suns,{dt=0.5},&problems)
     core.test_world_settle(&w)
-    sky=core.at(core.read(&w.skies),0)
+    sky=core.at(&w.skies,0)
     testing.expect_value(t,sky.fade,f32(0.4))
     testing.expect_value(t,sky.arrival,f32(0.75))
 }

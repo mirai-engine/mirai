@@ -74,9 +74,7 @@ ids_follow :: proc(es:^Entities,table:Read(Id)) {
         return
     }
     for e in c.gone {ids_drop(es,table,e)}
-    if c.since==version(table) {return}
-    for row in 0..<count(table) {
-        if stamp(table,row)<=c.since {continue}
+    for row in each_changed(table,&c) {
         if !ids_put(es,table,entity_at(table,row),at(table,row).value) {
             x.whole=true
             return

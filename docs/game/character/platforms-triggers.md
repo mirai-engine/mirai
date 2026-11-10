@@ -47,8 +47,8 @@ game_zones :: proc(zones:core.Read(Heal_Zone),players:core.Read(Player),
                    events:core.Ref(phys.Physics_Events),healths:^core.Table(Health)) {
     for event in events.overlap_begin.items {
         if !core.has(zones,event.collider) || !core.has(players,event.other) {continue}
-        zone,_:=core.get(zones,event.collider)     // a Read returns (value, found)
-        if health:=core.get(healths,event.other);health!=nil {health.hp+=zone.amount}
+        zone,_:=core.get(zones,event.collider)
+        if health:=core.edit(healths,event.other);health!=nil {health.hp+=zone.amount}
     }
 }
 ```

@@ -73,7 +73,7 @@ simulation_settle :: proc(w:core.World_Ref,app:^host.App) {phys.step_world(w,app
 character_standing :: proc(w:core.World_Ref,body:core.Entity) -> (standing,known:bool) {
     states:=core.world_table_of(w,phys.Character_State)
     if states==nil {return}
-    state:=core.get(core.read(states),body) or_return
+    state:=core.get(states,body) or_return
     return state.standing,true
 }
 
@@ -82,13 +82,13 @@ character_standing :: proc(w:core.World_Ref,body:core.Entity) -> (standing,known
 character_measure :: proc(w:core.World_Ref,body:core.Entity) -> (measure:editor.Body_Measure,known:bool) {
     characters,states,walks:=core.world_table_of(w,phys.Character),core.world_table_of(w,phys.Character_State),core.world_table_of(w,phys.Walk)
     if characters==nil {return}
-    character:=core.get(core.read(characters),body) or_return
+    character:=core.get(characters,body) or_return
     measure.step_height=character.step_height
     if states!=nil {
-        if state,stepped:=core.get(core.read(states),body);stepped {measure.height=state.height}
+        if state,stepped:=core.get(states,body);stepped {measure.height=state.height}
     }
     if walks!=nil {
-        if walk,walks:=core.get(core.read(walks),body);walks {measure.speed,measure.jump_height=walk.max_speed,walk.jump_height}
+        if walk,walks:=core.get(walks,body);walks {measure.speed,measure.jump_height=walk.max_speed,walk.jump_height}
     }
     return measure,true
 }

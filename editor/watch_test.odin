@@ -46,11 +46,11 @@ an_agent_run_is_watched_without_input_or_edits_while_the_game_of_the_user_goes_o
     testing.expect_value(t,a.ticks.count,1)
     testing.expect_value(t,app.extras.layer_count,1)
     // What is watched is not edited.
-    before:=core.get(&a.transforms,original)^
+    before:=core.at(&a.transforms,core.row_of(&a.transforms,original))
     testing.expect(t,!transform_set(s,original,mm.Transform{position={9,9,9},rotation=1,scale=1}))
     testing.expect(t,entity_create(s,{})==core.NONE)
     testing.expect(t,command_state(s,"duplicate").disabled && command_state(s,"delete_in_game").disabled && command_state(s,"pause").disabled)
-    testing.expect_value(t,core.get(&a.transforms,original)^,before)
+    testing.expect_value(t,core.at(&a.transforms,core.row_of(&a.transforms,original)),before)
     testing.expect_value(t,a.entities.alive,1)
     // Stop returns to the game of the user.
     testing.expect(t,test_command(s,"stop"))

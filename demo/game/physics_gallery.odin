@@ -50,7 +50,7 @@ physics_gallery_actions :: proc(
     caches:^cache.Geometry_Requests,ragdolls:^Ragdoll_Gallery_Requests,time:core.Time,
     view:destruct.Destruct_View,
 ) {
-    if !time.playing || !(time.dt>0) || core.count(core.read(views))==0 {return}
+    if !time.playing || !(time.dt>0) || core.count(views)==0 {return}
     previous,next,overview:=inp.pressed(actions,.Gallery_Previous),inp.pressed(actions,.Gallery_Next),inp.pressed(actions,.Gallery_Overview)
     use:=inp.pressed(actions,.Use)
     if previous || next || overview || use {for &view in core.writable(views) {
@@ -61,12 +61,12 @@ physics_gallery_actions :: proc(
             for &item in core.writable(stations) {if i32(item.station)==view.station {item.trigger+=1}}
         }
     }}
-    for row in 0..<core.count(core.read(stations)) {
-        held:=core.at(core.read(stations),row)
+    for row in 0..<core.count(stations) {
+        held:=core.at(stations,row)
         if held.trigger==held.activations {continue}
         needs_destructible:=held.station>0 && held.station<17 && held.station!=8 && held.station!=12 && held.station!=14
         if needs_destructible && destruct.pieces(view,held.target,nil)==0 {continue}
-        item:=core.at(stations,row)
+        item:=core.edit_at(stations,row)
         item.activations=item.trigger
         point:=physics_gallery_piece_center(view,item.target,item.origin+mm.Vec3{0,.5,0}) if needs_destructible else item.origin
         switch item.station {
@@ -154,11 +154,11 @@ physics_gallery_fade :: proc(stations:core.Read(Physics_Gallery),view:destruct.D
         for group in poses[:count] {
             if !group.expires {continue}
             alpha:=clamp(core.seconds_of(time,u64(group.remaining_ticks))/station.fade_seconds,0,1)
-            tint,has:=core.get(core.read(tints),group.entity)
+            tint,has:=core.get(tints,group.entity)
             if !has {tint=render.TINT_DEFAULT}
             if tint.color.a==alpha {continue}
             tint.color.a=alpha
-            if has {core.get(tints,group.entity)^=tint} else {core.add(tints,group.entity,tint)}
+            if has {core.edit(tints,group.entity)^=tint} else {core.add(tints,group.entity,tint)}
         }
     }
 }
@@ -173,7 +173,7 @@ physics_gallery_camera :: proc(views:core.Read(Physics_Gallery_View),stations:co
             if i32(item.station)==config.station {target=item.origin+mm.Vec3{0,.8,0};position=target+mm.Vec3{3,2.5,5.5};break}
         }
         entity:=core.entity_at(views,row)
-        current,found:=core.get(core.read(transforms),entity)
+        current,found:=core.get(transforms,entity)
         rotation:=mm.quat_look(target-position,{0,1,0})
         if found && (current.position!=position || current.rotation!=rotation) {
             if output:=core.free(transforms,entity);output!=nil {output.position,output.rotation=position,rotation}
@@ -233,6 +233,6 @@ physics_gallery_hud :: proc(huds:^core.Table(Physics_Gallery_Hud),views:core.Rea
             }
             break
         }
-        if core.at(shown,row)!=next {core.at(huds,row)^=next}
+        if core.at(shown,row)!=next {core.edit_at(huds,row)^=next}
     }
 }

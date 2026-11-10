@@ -188,8 +188,8 @@ a_prefab_spawned_again_is_placed_as_read_anew_from_the_form_its_world_keeps :: p
     // and by its glass. Its root alone says the prefab it is of; the bulb the lamp places is of no prefab here.
     w:=p.kept
     testing.expect_value(t,core.count(&w.members),0)
-    lit,found:=core.get(core.read(&w.links),first)
-    light,has_light:=core.get(core.read(&w.lights),lit.target)
+    lit,found:=core.get(&w.links,first)
+    light,has_light:=core.get(&w.lights,lit.target)
     testing.expect(t,found && has_light && light.range==1 && light.intensity==4)
     placed,of_prefab:=prefab_instance(host.app_world_ref(&p.app,p.kept),first)
     testing.expect(t,of_prefab && placed.prefab==SPAWN_LAMP && placed.stamp==0)
@@ -207,8 +207,8 @@ a_prefab_spawned_again_is_placed_as_read_anew_from_the_form_its_world_keeps :: p
     for _ in 0..<2 {
         changed:=spawn_test_both(t,&p,{prefab=SPAWN_LAMP})
         spawn_test_same(t,&p)
-        lit,_=core.get(core.read(&w.links),changed)
-        light,_=core.get(core.read(&w.lights),lit.target)
+        lit,_=core.get(&w.links,changed)
+        light,_=core.get(&w.lights,lit.target)
         testing.expect(t,light.range==5 && light.intensity==4)
     }
     testing.expect_value(t,forms.prepared,2)

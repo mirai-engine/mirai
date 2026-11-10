@@ -169,7 +169,7 @@ authoring_motion_inspect :: proc(s:^editor.Session,call:^api.Call) {
         named:=SPATIAL_TARGET_PARAMS_DEFAULT
         named.kind=target.target.kind;named.bone=target.target.bone;named.socket=target.target.socket
         named.position,named.rotation,named.scale=target.target.position,target.target.rotation,target.target.scale
-        if id,found:=core.get(core.read(ids),target.target.entity);found {base.text_set(named.entity[:],fmt.tprintf("%016x",u64(id.value)))}
+        if id,found:=core.get(ids,target.target.entity);found {base.text_set(named.entity[:],fmt.tprintf("%016x",u64(id.value)))}
         api.write_key(call.out,"target");authoring_write_value(call,&named,type_info_of(Spatial_Target_Params))
         api.write_numbers(call.out,"world_position",target.world.position)
         rotation:=target.world.rotation;api.write_key(call.out,"world_rotation");authoring_write_value(call,&rotation,type_info_of(mm.Quat))
