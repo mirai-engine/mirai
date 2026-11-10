@@ -1920,7 +1920,7 @@ reflectance_in_frustum :: proc(r: ^Renderer, planes: [6]Vec4) -> (reflectance, l
 	for entry in r.scene.batch.reflective {
 		if reflectance && (layered || !entry.layered) {continue}
 		box := &r.scene.batch.boxes[entry.instance]
-		if mm.frustum_overlaps_aabb(frustum, {box.bounds_min, box.bounds_max}) {
+		if mm.frustum_overlaps_aabb(frustum, box^) {
 			reflectance = true
 			layered ||= entry.layered
 		}

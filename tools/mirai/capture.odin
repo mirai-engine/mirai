@@ -52,7 +52,7 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
     position,target:string
     fov,threshold:f64=0,-1
     width,height,frames:=0,0,64
-    mode:Build_Mode=.Keep
+    mode:=Build_Mode.Release
     repeat,plan,write:=false,false,false
     views,references:string
     usage :: proc() -> int {fmt.eprintfln("Usage: mirai %s",CAPTURE_USAGE);return 2}

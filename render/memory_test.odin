@@ -3,6 +3,7 @@ package mirai_render
 import "base:runtime"
 import "core:strings"
 import "core:testing"
+import mm "mirai:std/math"
 
 // An allocator that serves `remaining` requests of its owner and refuses the rest.
 @(private)
@@ -43,10 +44,10 @@ renderer_calls_without_memory_are_refused_and_keep_what_they_had :: proc(t: ^tes
 		v.normal, v.color, v.tangent = v.position * 2, {1, 1, 1}, {1, 0, 0, 1}
 	}
 	indices := [36]u32{0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4, 2, 6, 3, 3, 6, 7, 0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5}
-	items: [9]Bvh_Item
+	items: [9]mm.Aabb
 	for &item, i in items {
 		center := Vec3{f32(i % 3), f32(i / 3), 0} * 2
-		item = {bounds_min = center - 0.5, bounds_max = center + 0.5, center = center}
+		item = {center - 0.5, center + 0.5}
 	}
 	lights: [6]Gpu_Light
 	for &light, i in lights {

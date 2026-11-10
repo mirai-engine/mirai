@@ -15,7 +15,8 @@ Each technique states its status; what is listed as prepared is not implemented.
 
 ### BVH and acceleration structures
 
-- **BVH** (implemented, `render/bvh.odin`). SAH by bins with a depth that limits the shader
+- **BVH** (implemented, `render/bvh.odin`). Built by the one SAH builder of `std/spatial`
+  (`bvh_build`), its nodes uploaded as it lays them out, with a depth that limits the shader
   stack; compute traversal nearest-first, bounded by the nearest hit and with early exit for
   shadow rays.
 - **BLAS / TLAS** (implemented). One BLAS per ray cut of each mesh in object space, persistent:

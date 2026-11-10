@@ -112,7 +112,7 @@ spatial_box :: proc(s:^Session,w:core.World_Ref,items:[]Scene_Item,e:core.Entity
     box={{1e30,1e30,1e30},{-1e30,-1e30,-1e30}}
     for item in items {
         if !entity_under(w,item.entity,e) {continue}
-        low,high,known:=picker_bounds(s.picker,s.app.assets,item.mesh)
+        low,high,known:=mesh_bounds(s.app.assets,item.mesh)
         if !known {continue}
         placed:=mm.aabb_transform({low,high},by*mm.transform_matrix(item.world))
         box={linalg.min(box.min,placed.min),linalg.max(box.max,placed.max)}
