@@ -321,17 +321,18 @@ with its `World_Ref`.
 ## Ground
 
 `core/ground.odin`: the same shape for the ground. The library that makes it sets
-`Ground_Queries.open` once (terrain, in `terrain_update`); the storage is not `shared`, so its one
-writer runs before the readers of its stage. `ground_query` gives a `Ground_Query` or, without one,
-one without a probe, and whoever reads it keeps its own default (foliage the plane of its entity).
+`Ground_Queries.open` once and pushes where the ground changed to its logs (terrain, in
+`terrain_update`); the storage is not `shared`, so its one writer runs before the readers of its
+stage. `ground_query` gives a `Ground_Query` or, without one, one without a probe, and whoever
+reads it keeps its own default (foliage the plane of its entity).
 The probe answers the highest ground along a line: `Ground` with the point, normal and layer
 weights, `None` where no ground covers it, `Empty` where ground covers it without a surface, and
 `Unloaded` where it is not in memory, far from every viewer, which a change announces when it loads;
-`coarse` asks for the cheaper answer from what stays in memory. A reader keeps the revision it last
-read and takes the boxes of `changes` after it, or everything when the oldest kept is newer than the
-next one (a ring that overflowed, or a revision that started anew with another world). `unloaded`
-names where the collision of the ground is not loaded, for navigation. The query is valid during the
-function that opens it, and its probe may run from the jobs of that function.
+`coarse` asks for the cheaper answer from what stays in memory. Where the ground changed is two
+`core.Events` of boxes of the world, read as any other: `changed` (its surface, for foliage) and
+`unloaded` (whether its collision is loaded, which `Ground_Query.unloaded` names, for
+navigation). The query is valid during the function that opens it, and its probe may run from the
+jobs of that function.
 
 ## Births
 
