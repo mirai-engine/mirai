@@ -176,6 +176,7 @@ Action_Playing :: struct {
     action,section:i16,
     time:f32,
     active,starting,seeking,finishing,cancel_pending:bool,
+    entering:bool,          // the next sample starts it at its section, from the span of its clip, and tells it
     injected:bool,          // slot 0 over locomotion: its clip plays as the clip of the program
     windows:[ACTION_WINDOWS]u64, // the names of the spans of its clip it is inside of; 0: free
     delta,outgoing_delta:Root_Delta,
@@ -321,8 +322,12 @@ action_windows :: proc(runtime:^Action_Runtime,state:^Action_State,slot:^Action_
         if open>=0 && to>=end {slot.windows[open]=0;action_emit(runtime,state,slot,.Span_End,min(to,end),playback,events,problems,name)}
     }
 }
+// Ends the action of a slot; one that has not started playing yet ends without a word.
 @(private)
-action_end :: proc(runtime:^Action_Runtime,state:^Action_State,slot:^Action_Playing,interrupted:bool,playback:^Playback,events:^Animation_Events,problems:^core.Problems) {action_windows(runtime,state,slot,nil,0,slot.time,slot.time,playback,events,problems,leave=true);action_emit(runtime,state,slot,.Interrupted if interrupted else .Ended,slot.time,playback,events,problems);slot.finishing=true;slot.cancel_pending=false}
+action_end :: proc(runtime:^Action_Runtime,state:^Action_State,slot:^Action_Playing,interrupted:bool,playback:^Playback,events:^Animation_Events,problems:^core.Problems) {
+    if !(slot.entering && slot.starting) {action_windows(runtime,state,slot,nil,0,slot.time,slot.time,playback,events,problems,leave=true);action_emit(runtime,state,slot,.Interrupted if interrupted else .Ended,slot.time,playback,events,problems)}
+    slot.finishing=true;slot.cancel_pending=false
+}
 @(private)
 actions_interrupt :: proc(runtime:^Action_Runtime,state:^Action_State,playback:^Playback,events:^Animation_Events,problems:^core.Problems) {
     for &slot in state.slots {if slot.active && !slot.finishing {action_end(runtime,state,&slot,true,playback,events,problems)}}
@@ -436,23 +441,11 @@ actions_prepare :: proc(runtime:^Action_Runtime,requests:^Animation_Requests,cha
             }
             continue
         }
-        moving:=playing && section>=0
-        if section<0 {for value,i in profile.sections {if int(value.action)==index {section=i;break}}}
-        // Where a section starts is a span of the clip of the action, in the animation it names.
-        clip:=host.content_animation(app,source_effective(definition.animation,plan.animation,animations.table.values[row].library))
-        handle:=lib.clip_find(&clip.lib,base.name_hash(base.text_get(definition.clip[:]))) if clip!=nil else 0
-        start:=f32(0)
-        if section>=0 {
-            if clip==nil {requests.plays.items[pending]=request;pending+=1;continue}
-            ok:bool
-            if start,_,ok=section_span(profile,clip,handle,section);!ok {
-                core.report(problems,request.entity,"animation.action_section","a %s of action '%s' was refused: its clip has no span named '%s', its section; mark the span on the clip with animation.marker.set and a duration",verb,name,base.text_get(profile.sections[section].name[:]))
-                continue
-            }
-        }
-        // A section asked of the action while it plays moves it there.
-        if moving {
-            action_windows(runtime,state,slot,nil,0,slot.time,slot.time,playback,events,problems,leave=true);slot.section=i16(section);slot.time=start;slot.seeking=true;action_emit(runtime,state,slot,.Section,slot.time,playback,events,problems);action_windows(runtime,state,slot,clip,handle,slot.time,slot.time,playback,events,problems,true)
+        // A section asked of the action while it plays moves it there: its span starts it in the
+        // next sample, which tells the section and the windows it enters.
+        if playing && section>=0 {
+            action_windows(runtime,state,slot,nil,0,slot.time,slot.time,playback,events,problems,leave=true)
+            slot.section,slot.seeking,slot.entering=i16(section),true,true
             continue
         }
         if slot.active && !slot.finishing {
@@ -463,10 +456,8 @@ actions_prepare :: proc(runtime:^Action_Runtime,requests:^Animation_Requests,cha
             }
             action_end(runtime,state,slot,true,playback,events,problems)
         }
-        slot^=Action_Playing{active=true,starting=true,seeking=true,action=i16(index),section=i16(section),time=start,speed=definition.speed,fade_out=definition.fade_out,body=definition.body_move,body_vertical=definition.body_vertical}
-        action_emit(runtime,state,slot,.Started,slot.time,playback,events,problems)
-        if section>=0 {action_emit(runtime,state,slot,.Section,slot.time,playback,events,problems)}
-        action_windows(runtime,state,slot,clip,handle,slot.time,slot.time,playback,events,problems,true)
+        if section<0 {for value,i in profile.sections {if int(value.action)==index {section=i;break}}}
+        slot^=Action_Playing{active=true,starting=true,seeking=true,entering=true,action=i16(index),section=i16(section),speed=definition.speed,fade_out=definition.fade_out,body=definition.body_move,body_vertical=definition.body_vertical}
     }
     kept:=0
     for &state,i in runtime.states {
@@ -583,6 +574,13 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
         asked.clip,asked.space,asked.weight,asked.speed,asked.fade,asked.loop,asked.sync,asked.injected=source_clip_name(content.id,source,base.name_hash(base.text_get(definition.clip[:]))),0,definition.weight,0,definition.fade_in,false,false,injected
         handle:=lib.clip_find(&content.lib,asked.clip)
         duration:=lib.clip_duration(&content.lib,handle)
+        // A play asked in this tick starts at the span of its section, and tells it started.
+        entered:=slot.entering
+        if entered {
+            if start,_,spanned:=section_span(profile,content,handle,int(slot.section));spanned {slot.time=start}
+            if slot.starting {action_emit(runtime,active,&slot,.Started,slot.time,playback,events,problems)}
+            slot.entering=false
+        }
         valid:=true
         if handle==0 {valid,cause=false,"its clip is not in the animation it plays"} else if asked.mode==.Additive && asked.reference_clip==0 && asked.reference>duration {valid,cause=false,"the reference of its layer is past the end of its clip"}
         if definition.root_motion!=.None && valid {
@@ -629,6 +627,10 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
             case .Keep_Time: slot.time=clamp(state.time,0,duration)
             case .Match_Phase: if phase,phased:=lib.sync_phase(&content.lib,state.fader.current);phased && state.clip>=0 {if time,ok:=lib.sync_time(&content.lib,handle,phase);ok {slot.time=clamp(time,0,duration)}}
             }
+        }
+        if entered {
+            if slot.section>=0 {action_emit(runtime,active,&slot,.Section,slot.time,playback,events,problems)}
+            action_windows(runtime,active,&slot,content,handle,slot.time,slot.time,playback,events,problems,true)
         }
         if slot.starting || layer.clip!=asked.clip {
             lib.fader_play(&layer.fader,handle,speed,definition.fade_in if !injected && layer.clip!=0 && layer.space==0 else 0)

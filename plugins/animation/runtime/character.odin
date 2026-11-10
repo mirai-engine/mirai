@@ -189,13 +189,17 @@ character_content :: proc(cache:^Character_Assets,assets:^host.Assets,allocator:
     stamp:=[2]i64{}
     if found {stamp={record.size,record.time}}
     if content.checked!=0 && stamp==content.stamp {content.checked=assets_stamp(assets);return content if content.valid else nil}
-    character_content_release(content)
+    // Without memory for the new version the old one stays, and the next call reads it again.
+    next:=Character_Content{id=id}
     error:=asset.Error.Not_Found
-    if found {error=character_read(content,assets,allocator,id)}
-    if error!=.None {character_content_release(content)}
+    if found {error=character_read(&next,assets,allocator,id)}
+    if error!=.None {character_content_release(&next)}
+    if error==.Out_Of_Memory {content.error,content.checked=error,0;return nil}
+    revision:=content.revision
+    character_content_release(content)
+    content^=next
     content.error,content.valid=error,error==.None
-    content.stamp,content.revision=stamp,content.revision+1
-    content.checked=0 if error==.Out_Of_Memory else assets_stamp(assets)
+    content.stamp,content.revision,content.checked=stamp,revision+1,assets_stamp(assets)
     return content if content.valid else nil
 }
 @(private)
