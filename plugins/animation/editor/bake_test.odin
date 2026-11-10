@@ -11,7 +11,7 @@ import anim "plugins:animation/runtime"
 import mm "mirai:std/math"
 
 @(test)
-baking_retargets_clips_once_and_preserves_curves_markers_and_root_metadata :: proc(t:^testing.T) {
+baking_without_chains_pairs_bones_by_name_once_and_preserves_curves_markers_and_root_metadata :: proc(t:^testing.T) {
     bones:=[2]asset.Skeleton_Bone{{parent=-1,rotation=1,scale={1,1,1}},{parent=0,translation={0,1,0},rotation=1,scale={1,1,1}}}
     base.text_set(bones[0].name[:],"root");base.text_set(bones[0].path[:],"root");bones[0].target=base.name_hash("root")
     base.text_set(bones[1].name[:],"tip");base.text_set(bones[1].path[:],"root/tip");bones[1].target=base.name_hash("root/tip")
@@ -24,16 +24,15 @@ baking_retargets_clips_once_and_preserves_curves_markers_and_root_metadata :: pr
     keys:=[4]lib.Keyframe{{time=0,value={0,0,0,1}},{time=1,value={0,0,.70710677,.70710677}},{time=0,value={0,0,0,0}},{time=1,value={1,0,0,0}}}
     marker:=asset.Animation_Marker{time=.5};base.text_set(marker.name[:],"step")
     clips:=asset.Animation_View{clips={clip},tracks=tracks[:],keys=keys[:],markers={marker}}
-    mapping:=anim.RETARGET_MAPPING_DEFAULT;mapping.mode=.Paths;mapping.translation=.Scaled
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     rejected:asset.Document
     saved:=context;context.temp_allocator=runtime.nil_allocator()
-    error:=retarget_bake(&rejected,&types,{1,2},clips,{info=&info,bones=bones[:]},{info=&info,bones=target[:]},{retarget={mapping}},rate=30)
+    error:=retarget_bake(&rejected,&types,{1,2},clips,{info=&info,bones=bones[:]},{info=&info,bones=target[:]},nil,rate=30)
     context=saved
     testing.expect_value(t,error,asset.Error.Out_Of_Memory)
     testing.expect_value(t,len(rejected.tables),0)
     doc:asset.Document;defer asset.document_destroy(&doc)
-    testing.expect_value(t,retarget_bake(&doc,&types,{1,2},clips,{info=&info,bones=bones[:]},{info=&info,bones=target[:]},{retarget={mapping}},rate=30),asset.Error.None)
+    testing.expect_value(t,retarget_bake(&doc,&types,{1,2},clips,{info=&info,bones=bones[:]},{info=&info,bones=target[:]},nil,rate=30),asset.Error.None)
     bytes:serial.Writer;serial.writer_init(&bytes);defer serial.writer_destroy(&bytes)
     if !testing.expect_value(t,asset.document_write(&doc,&bytes),asset.Error.None) {return}
     file:asset.Asset
@@ -79,7 +78,7 @@ baking_semantic_chains_with_distinct_names_and_topologies_preserves_destination_
     chain.source_root,chain.source_end,chain.target_root,chain.target_end=anim.bone_ref("source0"),anim.bone_ref("source2"),anim.bone_ref("target0"),anim.bone_ref("target4")
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     doc:asset.Document;defer asset.document_destroy(&doc)
-    testing.expect_value(t,retarget_bake(&doc,&types,{9,10},clips,source_view,target_view,{retarget_chains={chain}},rate=20),asset.Error.None)
+    testing.expect_value(t,retarget_bake(&doc,&types,{9,10},clips,source_view,target_view,{chain},rate=20),asset.Error.None)
     bytes:serial.Writer;serial.writer_init(&bytes);defer serial.writer_destroy(&bytes)
     if !testing.expect_value(t,asset.document_write(&doc,&bytes),asset.Error.None) {return}
     file:asset.Asset;if !testing.expect_value(t,asset.asset_open(&file,serial.writer_bytes(&bytes)),asset.Error.None) {return};defer asset.asset_close(&file)
@@ -117,10 +116,10 @@ baking_semantic_chains_rejects_unbound_chains_and_allocation_failure_without_pub
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     doc:asset.Document
     saved:=context;context.temp_allocator=runtime.nil_allocator()
-    error:=retarget_bake(&doc,&types,{1,2},clips,{info=&si,bones=source[:]},{info=&ti,bones=target[:]},{retarget_chains={chain}})
+    error:=retarget_bake(&doc,&types,{1,2},clips,{info=&si,bones=source[:]},{info=&ti,bones=target[:]},{chain})
     context=saved
     testing.expect_value(t,error,asset.Error.Out_Of_Memory);testing.expect(t,len(doc.tables)==0)
     chain.target_end=anim.bone_ref("absent")
-    testing.expect_value(t,retarget_bake(&doc,&types,{1,2},clips,{info=&si,bones=source[:]},{info=&ti,bones=target[:]},{retarget_chains={chain}}),asset.Error.Invalid)
+    testing.expect_value(t,retarget_bake(&doc,&types,{1,2},clips,{info=&si,bones=source[:]},{info=&ti,bones=target[:]},{chain}),asset.Error.Invalid)
     testing.expect(t,len(doc.tables)==0)
 }

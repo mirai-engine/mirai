@@ -7,7 +7,7 @@ import "mirai:std/base"
 
 @(test)
 distance_playback_requests_select_named_clips_and_times_reject_invalid_data_and_reuse_queue_memory :: proc(t:^testing.T) {
-    entity:=core.entity_make(1,1);profile:=motion_test_profile();defer motion_profile_free(&profile)
+    entity:=core.entity_make(1,1);profile:=motion_test_profile();defer motion_test_free(&profile)
     requests:Animation_Requests;defer delete(requests.distances.items)
     motion_play_distance(&requests,entity,profile,"stop",2)
     testing.expect_value(t,requests.distances.items[0],Animation_Distance_Request{entity=entity,clip=base.name_hash("walk"),time=.5})

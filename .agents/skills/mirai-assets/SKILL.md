@@ -145,8 +145,8 @@ registry).
     `std/base/texts_test.odin` and `host/content_interface_test.odin`; the tools of the texts
     (keys, CSV, what is missing): `cook/author/texts_test.odin`; game data tables:
     `asset/records_test.odin`;
-  - versions: `asset/versions_test.odin`; a plugin's own steps, in its plugin (`.match` and
-    `.pose`); a renamed field and what a load reports it loses:
+  - versions: `asset/versions_test.odin`; a plugin's own steps, in its plugin (`.character`); a
+    renamed field and what a load reports it loses:
     `a_renamed_field_keeps_its_value_through_each_name_it_had` of `std/serial` and
     `a_scene_saved_with_another_layout_of_a_component_loads_it_by_field_names` of `engine/scene`;
   - the document of a scene or a `.ui` from a file outside the assets (what `dump` and git
@@ -164,7 +164,7 @@ registry).
   with `--release`) and `asset/types_memory_test.odin`. If schema validation changes, add
   `hostile_schema_binary` and `hostile_random_schemas_validate` of `std/serial/hostile_test.odin`
   with `--release` and `-define:SERIAL_HOSTILE_ROUNDS=20000`.
-- `.pose`, `.blend` and `.action` are verified in their [plugin](../mirai-plugins/SKILL.md).
+- `.character` is verified in its [plugin](../mirai-animation/SKILL.md).
 - Compression: `mirai test std/compressor/lz` and `mirai test cook/compressor/lz` (every level
   decodes through `std/compressor`),
   `asset/container_test.odin` (chunks with alignment and compression) and the pages in
